@@ -104,6 +104,91 @@ type rawShapeChildSlab struct {
 
 type rawShapeChildRange uint64
 
+// reclaimRawShapeStorage releases parser-only reduction-shape sidecars after
+// the returned result has been selected and fully materialized. Raw shapes are
+// not part of the public tree: queries, cursors, edits, and incremental reuse
+// read the materialized node structure instead.
+//
+// Clear every arena-owned payload's ref before resetting and trimming the
+// slabs. Returned trees can lazily materialize compact leaves and pending
+// parents after parse finalization, so clearing only the currently materialized
+// Node values would let a stale arena-relative ref escape through that later
+// materialization. Clearing all payload forms also prevents a reused subtree
+// from carrying a ref into a different parse arena, where the same numeric ref
+// could name an unrelated shape.
+func (a *nodeArena) reclaimRawShapeStorage() {
+	if a == nil {
+		return
+	}
+	clearNodeRawShapeRefs := func(nodes []Node, used int) {
+		if used > len(nodes) {
+			used = len(nodes)
+		}
+		for i := 0; i < used; i++ {
+			nodes[i].rawShape = 0
+		}
+	}
+	clearNoTreeRawShapeRefs := func(nodes []noTreeNode, used int) {
+		if used > len(nodes) {
+			used = len(nodes)
+		}
+		for i := 0; i < used; i++ {
+			nodes[i].rawShape = 0
+		}
+	}
+
+	primaryUsed := a.used
+	if primaryUsed > len(a.nodes) {
+		primaryUsed = len(a.nodes)
+	}
+	clearNodeRawShapeRefs(a.nodes, primaryUsed)
+	for i := range a.nodeSlabs {
+		clearNodeRawShapeRefs(a.nodeSlabs[i].data, a.nodeSlabs[i].used)
+	}
+	for i := range a.noTreeNodeSlabs {
+		clearNoTreeRawShapeRefs(a.noTreeNodeSlabs[i].data, a.noTreeNodeSlabs[i].used)
+	}
+	for i := range a.compactFullLeafSlabs {
+		slab := &a.compactFullLeafSlabs[i]
+		used := slab.used
+		if used > len(slab.data) {
+			used = len(slab.data)
+		}
+		for j := 0; j < used; j++ {
+			slab.data[j].rawShape = 0
+		}
+	}
+	for i := range a.pendingParentSlabs {
+		slab := &a.pendingParentSlabs[i]
+		used := slab.used
+		if used > len(slab.data) {
+			used = len(slab.data)
+		}
+		for j := 0; j < used; j++ {
+			slab.data[j].rawShape = 0
+		}
+	}
+	for i := range a.compactCheckpointLeafSlabs {
+		slab := &a.compactCheckpointLeafSlabs[i]
+		used := slab.used
+		if used > len(slab.data) {
+			used = len(slab.data)
+		}
+		for j := 0; j < used; j++ {
+			slab.data[j].rawShape = 0
+		}
+	}
+
+	// Reuse the arena's existing bounded reset policy: it drops pathological
+	// overflow while retaining a small warm prefix for the next parse. Nil'ing
+	// every slab here would force the 2 MiB full-parse base slabs to be allocated
+	// again on each pooled parse, turning reclamation into an allocation
+	// regression on ordinary files.
+	a.resetRawShapeSlabs()
+	a.resetRawShapeChildSlabs()
+	a.recomputeAllocatedBytes()
+}
+
 func rawShapeBytesForCap(n int) int64 {
 	if n <= 0 {
 		return 0

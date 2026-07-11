@@ -208,7 +208,9 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 		return nil, false
 	}
 	p.finalizeForestRoot(root, source)
-	return newTreeWithArenas(root, source, p.language, arena, nil), true
+	tree := newTreeWithArenas(root, source, p.language, arena, nil)
+	arena.reclaimRawShapeStorage()
+	return tree, true
 }
 
 // ForestDeclineInfo returns where/why the forest fast path last declined (fell
@@ -453,6 +455,7 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		progress.endDetail(time.Now(), "forest_normalize_end", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, fmt.Sprintf("root_end=%d", root.EndByte()))
 		progress.emit(time.Now(), "forest_try_success", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, fmt.Sprintf("root_end=%d", root.EndByte()))
 	}
+	arena.reclaimRawShapeStorage()
 	return tree
 }
 
