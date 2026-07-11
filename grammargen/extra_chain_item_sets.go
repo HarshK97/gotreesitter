@@ -109,8 +109,7 @@ func buildLALRNonterminalExtraStates(
 	worklist := make([]int, 0, cap(itemSets))
 	inWorklist := make([]bool, 0, cap(itemSets))
 
-	var findOrMerge func(*lrItemSet) int
-	findOrMerge = func(set *lrItemSet) int {
+	findOrMerge := func(set *lrItemSet) int {
 		for entry := coreMap[set.coreHash]; entry != nil; entry = entry.next {
 			existing := &itemSets[entry.state]
 			if !sameCoresUsingIndexed(existing, set) {
