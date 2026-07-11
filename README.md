@@ -634,11 +634,10 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.26.0**. The 206-grammar curated parity milestone is
-banked. v0.26.0 moves uncommon field metadata into bounded arena sidecars,
-caches current-arena error ranks inline, reclaims parser-only raw-shape overflow
-after finalization, synchronizes extension loading, and refreshes parser pools
-after registry updates. Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
+The current release is **v0.26.1**. The 206-grammar curated parity milestone is
+banked. v0.26.1 compacts exceptionally large completed full-parse results into
+right-sized arenas when doing so can reclaim substantial retained memory within
+the configured budget. Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ### Now — performance and extreme hygiene
 

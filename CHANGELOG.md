@@ -7,6 +7,35 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.26.1] - 2026-07-11
+
+Large-tree memory follow-up to v0.26.0. Exceptionally large completed full
+parses can now release arena storage retained by discarded GLR alternatives
+before returning to the caller. This patch does not change the public API.
+
+### Changed
+
+- Accepted fresh UTF-8 DFA full parses with unique arena ownership are copied
+  into a right-sized arena when the retained arena is at least 512 MiB, the
+  projected reclaim is at least 256 MiB and 30%, and the parser memory budget
+  leaves enough headroom for both arenas during the copy.
+- Compaction runs after retry selection, result normalization, and recovery
+  resolution. Forest, incremental, included-range, borrowed-arena, deferred
+  compatibility/checkpoint, and lazy final-child results remain unchanged.
+- Final-tree cloning now preserves arena-backed field metadata and avoids
+  empty external-scanner checkpoint lookups.
+
+### Performance
+
+- On the exact 3,447,275-byte JavaScript Poppler witness under a hard 2 GiB
+  container, retained heap after GC fell from 862,803,056 to 409,862,040 bytes
+  (-431.96 MiB, -52.50%) while preserving accepted error-free EOF output and
+  exact Go/C S-expression and deep parity.
+- The controlled full-parse, one-byte incremental, and no-edit incremental
+  benchmark trio was statistically unchanged. The Poppler macro probe's
+  elapsed time increased 7.98% and peak RSS increased 2.30%, so this release
+  makes no full-parse latency or peak-RSS improvement claim.
+
 ## [0.26.0] - 2026-07-11
 
 Parser-memory, registry-lifecycle, and build-hygiene release following v0.25.0.
@@ -1669,7 +1698,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.26.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.26.1...HEAD
+[0.26.1]: https://github.com/odvcencio/gotreesitter/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/odvcencio/gotreesitter/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/odvcencio/gotreesitter/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/odvcencio/gotreesitter/compare/v0.24.0...v0.24.1
