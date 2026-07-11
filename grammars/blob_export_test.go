@@ -68,6 +68,24 @@ func TestLoadLanguageAttachesExternalScannerSupport(t *testing.T) {
 	}
 }
 
+func TestLoadLanguageAttachesCertifiedJavaRetryProfile(t *testing.T) {
+	blob := BlobByName("java")
+	if len(blob) == 0 {
+		t.Fatal("expected java blob")
+	}
+	lang, err := LoadLanguage("java", blob)
+	if err != nil {
+		t.Fatalf("LoadLanguage(java) error = %v", err)
+	}
+	want := gotreesitter.FullParseAcceptedErrorRetryProfile{
+		MinSourceBytes:      64 * 1024,
+		InitialStackCeiling: 14,
+	}
+	if got := lang.FullParseAcceptedErrorRetryProfile; got != want {
+		t.Fatalf("LoadLanguage(java) retry profile = %+v, want %+v", got, want)
+	}
+}
+
 func TestLoadLanguageAcceptsAliases(t *testing.T) {
 	blob := BlobByName("golang")
 	if len(blob) == 0 {

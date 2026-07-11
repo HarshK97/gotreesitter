@@ -2761,9 +2761,9 @@ func (p *Parser) parseIncrementalInternal(source []byte, oldTree *Tree, ts Token
 		deterministicExternalConflicts := fullParseUsesDeterministicExternalConflicts(p.language)
 		initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth)
 		tree := p.parseInternal(source, ts, nil, nil, arenaClassFull, timing, initialMaxStacks, 0, 0, deterministicExternalConflicts)
-		tree = p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
+		tree = p.retryFullParseWithTokenSourceForOrigin(source, ts, initialMaxStacks, deterministicExternalConflicts, tree, fullParseRetryOriginIncremental)
 		if shouldRepeatExternalScannerFullParse(p.language, tree) {
-			tree = p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
+			tree = p.retryFullParseWithTokenSourceForOrigin(source, ts, initialMaxStacks, deterministicExternalConflicts, tree, fullParseRetryOriginIncremental)
 		}
 		return tree
 	}

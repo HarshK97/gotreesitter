@@ -31,6 +31,14 @@ for tags and release notes while still in `0.x`.
 - Removed two unexported transient-materialization wrappers used only by tests;
   tests now call the stop-aware implementations directly.
 
+### Performance
+
+- Java's exact built-in grammar profile keeps the initial 14-stack ceiling on
+  large fresh parses whose first result accepts at EOF with an error. The
+  cap-16 same-stack merge retry remains intact; only two proven-redundant
+  cap-64 passes are suppressed, while overrides and incremental paths retain
+  the conservative generic ladder.
+
 ## [0.24.1] - 2026-07-11
 
 Performance-contract and repository-hygiene follow-up to v0.24.0. This patch

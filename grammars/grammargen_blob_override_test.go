@@ -110,6 +110,43 @@ func TestJsonLanguageUsesPreferredGrammargenBlobOverride(t *testing.T) {
 	}
 }
 
+func TestJavaLanguageOverrideDoesNotInheritBuiltinRetryProfile(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	purgePreferredLanguageOverrideCache()
+	t.Cleanup(func() {
+		PurgeEmbeddedLanguageCache()
+		purgePreferredLanguageOverrideCache()
+	})
+
+	original, err := os.ReadFile(filepath.Join("grammar_blobs", "java.bin"))
+	if err != nil {
+		t.Fatalf("read checked-in java blob: %v", err)
+	}
+	lang, err := decodeLanguageBlobData("grammar_blobs/java.bin", original)
+	if err != nil {
+		t.Fatalf("decode checked-in java blob: %v", err)
+	}
+	lang.Name = "java-override"
+
+	overrideDir := t.TempDir()
+	overridePath := filepath.Join(overrideDir, "java.bin")
+	if err := os.WriteFile(overridePath, encodeLanguageBlobForTest(t, lang), 0o644); err != nil {
+		t.Fatalf("write override blob: %v", err)
+	}
+	t.Setenv(grammargenBlobDirEnv, overrideDir)
+
+	loaded := JavaLanguage()
+	if loaded == nil {
+		t.Fatal("JavaLanguage() returned nil with override present")
+	}
+	if loaded.Name != "java-override" {
+		t.Fatalf("JavaLanguage().Name = %q, want %q", loaded.Name, "java-override")
+	}
+	if got := loaded.FullParseAcceptedErrorRetryProfile; got.MinSourceBytes != 0 || got.InitialStackCeiling != 0 {
+		t.Fatalf("Java override inherited built-in retry profile: %+v", got)
+	}
+}
+
 func encodeLanguageBlobForTest(t *testing.T, lang interface{}) []byte {
 	t.Helper()
 

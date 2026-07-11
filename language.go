@@ -275,6 +275,18 @@ const (
 	ExternalScannerFullParseRetrySkipRepeat
 )
 
+// FullParseAcceptedErrorRetryProfile certifies a narrow full-parse retry
+// policy. When a fresh full parse accepts an error-bearing tree that covers
+// EOF, the parser may keep the initial GLR stack ceiling after the ordinary
+// same-stack merge retry instead of scheduling wider-stack passes. Both fields
+// must be non-zero; the zero value preserves the conservative generic ladder.
+//
+// Keep fields append-only: Language blobs encode this structure.
+type FullParseAcceptedErrorRetryProfile struct {
+	MinSourceBytes      uint32
+	InitialStackCeiling uint16
+}
+
 // Language holds all data needed to parse a specific language.
 // It mirrors tree-sitter's TSLanguage C struct, translated into
 // idiomatic Go types with slice-based tables instead of raw pointers.
@@ -474,6 +486,11 @@ type Language struct {
 	// for scheduling the extra external-scanner full-parse retry. Zero preserves
 	// the generic behavior for legacy blobs and caller-constructed languages.
 	ExternalScannerFullParseRetryPolicy ExternalScannerFullParseRetryPolicy
+
+	// FullParseAcceptedErrorRetryProfile is certified against an exact language
+	// blob. Zero preserves widened-stack retries for legacy blobs,
+	// caller-constructed languages, and language overrides.
+	FullParseAcceptedErrorRetryProfile FullParseAcceptedErrorRetryProfile
 }
 
 type symbolNameNamedKey struct {
