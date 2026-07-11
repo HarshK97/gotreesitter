@@ -1,6 +1,6 @@
 {
   "schema": "gts-wave3-perf-sweep-status/v1",
-  "generated_at": "2026-07-09T15:40:50Z",
+  "generated_at": "2026-07-11T09:17:00Z",
   "budget_path": "perf_scan/perf_ratio_budgets.json",
   "fleet_path": "tier_scan/exts.tsv",
   "budget_generated_at": "2026-07-09T15:05:20Z",
@@ -51,6 +51,7 @@
     "javascript_poppler_exact_default_20260709T145958Z",
     "javascript_poppler_scratch_20260709T1537Z",
     "pr142_evidence_and_wave2a_closeout_spore",
+    "v0240_javascript_poppler_evidence_20260711",
     "wave2b_green_20260707T0100Z",
     "wave2b_js_20260707T0000Z",
     "wave3_batch1_20260708T202820Z",
@@ -102,7 +103,7 @@
       "key": "javascript_poppler_memory_budget",
       "file": "javascript/deps/v8/test/mjsunit/asm/poppler/poppler.js (3447275 bytes; largest JavaScript corpus file selected by the strict Wave-3 basis)",
       "backlog_ref": "wave3_pending_javascript_strict_20260709T143849Z narrowed JavaScript to one remaining full-axis timeout; exact parse-gap probes on branch wave3/javascript-poppler-cliff reclassified that timeout as a memory-budget correctness/perf witness",
-      "action": "Keep JavaScript wave2b_pending. The strict row remains ratchetable via max_timeouts=1, but Poppler should be treated as a named Wave-2c/Wave-3 GSS-scratch memory-economy and C-faithful materialization backlog item, not as a pure throughput-only timeout."
+      "action": "Keep JavaScript wave2b_pending. v0.24.0 proves exact Poppler parity at an explicit 2048MB parser budget and a hard-2GiB single-runtime envelope, but the shipped 512MB parser-budget gap remains open. Refresh the strict largest-8 row on a pinned quiet host, then continue the Poppler/default-budget and wasm box2d/lua_binarytrees long tail."
     },
     {
       "key": "webworker_generated_d_ts",

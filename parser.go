@@ -6309,6 +6309,11 @@ func (p *Parser) tryDemoteSingleLinearGSS(stacks []glrStack, scratch *parserScra
 
 func (p *Parser) checkpointTransientScratch(stacks []glrStack, scratch *parserScratch, arena *nodeArena) ParseStopReason {
 	if p == nil || scratch == nil || arena == nil || scratch.transientCheckpointBytes <= 0 ||
+		// Pending-parent payloads can retain transient nodes outside the
+		// semantic/raw-shape graph walked below. Keep the checkpoint opt-in
+		// disabled for that independently experimental representation until its
+		// payload graph is materialized at the recycle boundary too.
+		p.pendingFullParents ||
 		len(stacks) != 1 || stacks[0].dead || stacks[0].gss.head != nil || len(stacks[0].entries) == 0 ||
 		len(p.pendingForkStacks) != 0 || len(p.pendingFrontierForkStacks) != 0 ||
 		scratch.reduce.transientParents == nil || scratch.reduce.transientChildren == nil ||

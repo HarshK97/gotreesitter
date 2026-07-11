@@ -1,6 +1,6 @@
 # Wave 3 Perf Sweep Status
 
-- generated_at: `2026-07-09T15:40:50Z`
+- generated_at: `2026-07-11T09:17:00Z`
 - budget: `perf_scan/perf_ratio_budgets.json`
 - fleet catalog: `tier_scan/exts.tsv`
 - budget_generated_at: `2026-07-09T15:05:20Z`
@@ -40,7 +40,7 @@ Held out of the ratchet: `d`, `fsharp`.
 | `d_expressionsem_go_rss_blowup` | d/compiler/src/dmd/expressionsem.d (685384 bytes; largest D corpus file, first selected file under largest-order probes) | D remains held out of the ratchet. The prior Go timeout/OOM class is contained under default settings, but excluding expressionsem.d is not enough: largest-order D next hits C timeouts and a dsymbolsem.d C noedit-base RSS watchdog. A ratchetable row needs a principled smaller-workload policy or an explicit D C-reference high-RSS witness exclusion set. |
 | `fsharp_providedtypes_c_reference_memory_blowup` | fsharp/examples/FSharp.Compiler/tests/EndToEndBuildTests/ProvidedTypes/ProvidedTypes.fs (755275 bytes; first active selected file after largest-8 selection) | F# remains held out. Do not rerun broad F# sweeps without a disposable hard RSS envelope. A ratchetable row needs either a principled corpus-selection policy for multi-MiB F# fixtures plus a default-budget truncation fix, or an explicit decision that these C-reference high-RSS giants are excluded workload witnesses rather than normal ratio samples. |
 | `groovy_pleac11_15_memory_blowup` | groovy/subprojects/performance/src/files/pleac11_15.groovy (102960 bytes, largest-file selection hit during the assisted fleet pass) | Groovy is now budgeted only under a scoped measurement basis that excludes the named pleac11_15.groovy witness. The exact witness remains a tracked correctness/perf gap: default policy contains the OOM, but the file is still C-shape divergent and ~60x C on full parse. |
-| `javascript_poppler_memory_budget` | javascript/deps/v8/test/mjsunit/asm/poppler/poppler.js (3447275 bytes; largest JavaScript corpus file selected by the strict Wave-3 basis) | Keep JavaScript wave2b_pending. The strict row remains ratchetable via max_timeouts=1, but Poppler should be treated as a named Wave-2c/Wave-3 GSS-scratch memory-economy and C-faithful materialization backlog item, not as a pure throughput-only timeout. |
+| `javascript_poppler_memory_budget` | javascript/deps/v8/test/mjsunit/asm/poppler/poppler.js (3447275 bytes; largest JavaScript corpus file selected by the strict Wave-3 basis) | Keep JavaScript wave2b_pending. v0.24.0 proves exact Poppler parity at an explicit 2048MB parser budget and a hard-2GiB single-runtime envelope, but the shipped 512MB parser-budget gap remains open. Refresh the strict largest-8 row on a pinned quiet host, then continue the Poppler/default-budget and wasm box2d/lua_binarytrees long tail. |
 | `webworker_generated_d_ts` | typescript/src/lib/webworker.generated.d.ts (786262 bytes, largest .d.ts in the corpus sample) | typescript's full_axis budget above is intentionally NOT tightened to reflect a 'fixed' webworker.generated.d.ts; GOT_FAITHFUL_CONDENSE (or an equivalent default-budget-aware condense path) remains a real wave-2b item. |
 
 ## Seed Sources
@@ -57,6 +57,7 @@ Held out of the ratchet: `d`, `fsharp`.
 - `javascript_poppler_exact_default_20260709T145958Z`
 - `javascript_poppler_scratch_20260709T1537Z`
 - `pr142_evidence_and_wave2a_closeout_spore`
+- `v0240_javascript_poppler_evidence_20260711`
 - `wave2b_green_20260707T0100Z`
 - `wave2b_js_20260707T0000Z`
 - `wave3_batch1_20260708T202820Z`

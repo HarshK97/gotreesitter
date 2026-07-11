@@ -589,6 +589,34 @@ func TestTransientScratchCheckpointMaterializesLiveStackAndReusesSlabs(t *testin
 	}
 }
 
+func TestTransientScratchCheckpointDefersWithPendingParents(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch parserScratch
+	scratch.transientCheckpointBytes = 1
+	scratch.reduce.transientParents = &scratch.transientParents
+	scratch.reduce.transientChildren = &scratch.transientChildren
+	parser := &Parser{pendingFullParents: true}
+
+	parent := scratch.transientParents.allocParent(arena, Symbol(2), true, nil, 0, false)
+	stack := glrStack{entries: []stackEntry{newStackEntryNode(7, parent)}, cacheEntries: true, byteOffset: 1}
+	usedBefore := scratch.transientParents.usedBytes()
+
+	if reason := parser.checkpointTransientScratch([]glrStack{stack}, &scratch, arena); reason != ParseStopNone {
+		t.Fatalf("checkpointTransientScratch() = %q, want no stop", reason)
+	}
+	if got := stackEntryNode(stack.entries[0]); got != parent {
+		t.Fatalf("pending-parent mode unexpectedly materialized stack node: got %p, want %p", got, parent)
+	}
+	if got := scratch.transientParents.usedBytes(); got != usedBefore {
+		t.Fatalf("pending-parent mode recycled transient storage: used=%d, want %d", got, usedBefore)
+	}
+	if scratch.transientCheckpoints != 0 {
+		t.Fatalf("pending-parent mode checkpoints = %d, want 0", scratch.transientCheckpoints)
+	}
+}
+
 func TestTransientScratchCheckpointRetargetsNestedRawShapeNodesBeforeSlabReuse(t *testing.T) {
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
