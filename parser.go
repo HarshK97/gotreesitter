@@ -6706,6 +6706,9 @@ func (p *Parser) tryRelexSingleParserState(tok Token, state StateID, ts TokenSou
 		restoreRejectedProbe()
 		return Token{}, false
 	}
+	// The returned token and committed scanner checkpoint belong to this parser
+	// state. Keep the source isolated through dispatch; the outer loop refreshes
+	// the live frontier before its next read, and same-pass re-lex paths set it.
 	return next, true
 }
 
