@@ -112,6 +112,31 @@ func TestParserSimpleExpression(t *testing.T) {
 	}
 }
 
+func TestParseNoResultCompatibilityBenchmarkOnlyMaterializesTree(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	parser := NewParser(lang)
+
+	tree, err := parser.ParseNoResultCompatibilityBenchmarkOnly([]byte("1+2"))
+	if err != nil {
+		t.Fatalf("ParseNoResultCompatibilityBenchmarkOnly: %v", err)
+	}
+	if tree == nil {
+		t.Fatal("parse returned nil tree")
+	}
+	defer tree.Release()
+
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("parse returned nil root")
+	}
+	if got := root.ChildCount(); got != 3 {
+		t.Fatalf("root child count = %d, want 3; no-compat mode must preserve tree materialization", got)
+	}
+	if parser.noResultCompatibilityBenchmarkOnly || parser.noTreeBenchmarkOnly || parser.noTreeCheckpointBenchmarkOnly {
+		t.Fatal("benchmark-only parser flags were not restored")
+	}
+}
+
 func TestParserChainedExpression(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)

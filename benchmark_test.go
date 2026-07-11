@@ -210,9 +210,8 @@ func BenchmarkGoParseFullDFA(b *testing.B) {
 	b.ResetTimer()
 
 	var lastRuntime gotreesitter.ParseRuntime
-	// The parse-gap harness gates public compatibility; this microbench tracks parser core.
 	for i := 0; i < b.N; i++ {
-		tree, err := parser.ParseNoResultCompatibilityBenchmarkOnly(src)
+		tree, err := parser.Parse(src)
 		if err != nil {
 			b.Fatalf("parse error: %v", err)
 		}
@@ -263,6 +262,27 @@ func BenchmarkGoParseFullDFA(b *testing.B) {
 			lastRuntime.MergeStacksIn, lastRuntime.MergeStacksOut, lastRuntime.MergeSlotsUsed,
 			lastRuntime.GlobalCullStacksIn, lastRuntime.GlobalCullStacksOut,
 		)
+	}
+}
+
+// BenchmarkGoParseCoreDFA isolates the parser loop by suppressing result-tree
+// materialization. It is a diagnostic, not a public full-parse benchmark.
+func BenchmarkGoParseCoreDFA(b *testing.B) {
+	lang := grammars.GoLanguage()
+	parser := gotreesitter.NewParser(lang)
+	src := makeGoBenchmarkSource(benchmarkFuncCount(b))
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(src)))
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		tree, err := parser.ParseNoTreeBenchmarkOnly(src)
+		if err != nil {
+			b.Fatalf("parse error: %v", err)
+		}
+		requireCompleteParse(b, tree, src, lang, "parser core dfa")
+		tree.Release()
 	}
 }
 
