@@ -21,6 +21,16 @@ for tags and release notes while still in `0.x`.
   pending descendants. Missing arena context and excessive depth fail closed
   instead of allowing a hash collision to collapse distinct alternatives.
 
+### Removed
+
+- Removed the retired direct `no_alias` reduction-attribution lane from
+  `ParseRuntime`, `ArenaBreakdown`, `PerfCounters`, and the Java/Python and
+  parse-gap reports. The path has had no production producer since reductions
+  moved to `all_visible` or `scratch_no_alias`; every exposed value was
+  permanently zero.
+- Removed two unexported transient-materialization wrappers used only by tests;
+  tests now call the stop-aware implementations directly.
+
 ## [0.24.1] - 2026-07-11
 
 Performance-contract and repository-hygiene follow-up to v0.24.0. This patch

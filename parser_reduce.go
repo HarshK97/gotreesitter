@@ -5892,7 +5892,7 @@ func reduceChildPathForLen(n int, nonEmptyPath reduceChildPath) reduceChildPath 
 
 func reduceChildPathMayDropSpan(path reduceChildPath) bool {
 	switch path {
-	case reduceChildPathAllVisible, reduceChildPathNoAlias, reduceChildPathFastGSS:
+	case reduceChildPathAllVisible, reduceChildPathFastGSS:
 		return false
 	default:
 		return true

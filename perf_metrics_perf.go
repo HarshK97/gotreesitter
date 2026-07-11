@@ -60,7 +60,6 @@ type perfCountersData struct {
 	parentChildPointers                  atomic.Uint64
 	reduceChildrenFastGSS                atomic.Uint64
 	reduceChildrenAllVis                 atomic.Uint64
-	reduceChildrenNoAlias                atomic.Uint64
 	reduceChildrenScratch                atomic.Uint64
 	reduceScratchNoAlias                 atomic.Uint64
 	reduceScratchGeneral                 atomic.Uint64
@@ -164,7 +163,6 @@ func ResetPerfCounters() {
 	perfCounters.parentChildPointers.Store(0)
 	perfCounters.reduceChildrenFastGSS.Store(0)
 	perfCounters.reduceChildrenAllVis.Store(0)
-	perfCounters.reduceChildrenNoAlias.Store(0)
 	perfCounters.reduceChildrenScratch.Store(0)
 	perfCounters.reduceScratchNoAlias.Store(0)
 	perfCounters.reduceScratchGeneral.Store(0)
@@ -297,7 +295,6 @@ func PerfCountersSnapshot() PerfCounters {
 	out.ParentChildPointers = perfCounters.parentChildPointers.Load()
 	out.ReduceChildrenFastGSS = perfCounters.reduceChildrenFastGSS.Load()
 	out.ReduceChildrenAllVis = perfCounters.reduceChildrenAllVis.Load()
-	out.ReduceChildrenNoAlias = perfCounters.reduceChildrenNoAlias.Load()
 	out.ReduceChildrenScratch = perfCounters.reduceChildrenScratch.Load()
 	out.ReduceScratchNoAlias = perfCounters.reduceScratchNoAlias.Load()
 	out.ReduceScratchGeneral = perfCounters.reduceScratchGeneral.Load()

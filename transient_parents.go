@@ -104,10 +104,6 @@ func (s *transientParentScratch) owns(node *Node) bool {
 	return false
 }
 
-func (s *transientParentScratch) materializeEntries(entries []stackEntry, arena *nodeArena, childScratch *transientChildScratch) {
-	s.materializeEntriesUntil(entries, arena, childScratch, nil)
-}
-
 func (s *transientParentScratch) materializeEntriesUntil(entries []stackEntry, arena *nodeArena, childScratch *transientChildScratch, p *Parser) ParseStopReason {
 	return s.materializeEntriesModeUntil(entries, arena, childScratch, p, false)
 }

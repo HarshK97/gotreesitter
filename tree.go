@@ -827,7 +827,6 @@ type ParseRuntime struct {
 	ChildPointersDroppedSameToken                 uint64
 	ReduceChildFastGSS                            ReduceChildPathRuntime
 	ReduceChildAllVisible                         ReduceChildPathRuntime
-	ReduceChildNoAlias                            ReduceChildPathRuntime
 	ReduceChildScratchGeneral                     ReduceChildPathRuntime
 	ReduceChildScratchNoAlias                     ReduceChildPathRuntime
 	TransientChildSlicesAllocated                 uint64
@@ -1061,7 +1060,6 @@ const (
 	reduceChildPathNone reduceChildPath = iota
 	reduceChildPathFastGSS
 	reduceChildPathAllVisible
-	reduceChildPathNoAlias
 	reduceChildPathScratchGeneral
 	reduceChildPathScratchNoAlias
 	reduceChildPathCount
@@ -1139,8 +1137,6 @@ type ArenaBreakdown struct {
 	ReduceChildPointersFastGSS        uint64
 	ReduceChildSlicesAllVisible       uint64
 	ReduceChildPointersAllVisible     uint64
-	ReduceChildSlicesNoAlias          uint64
-	ReduceChildPointersNoAlias        uint64
 	ReduceChildSlicesScratchGeneral   uint64
 	ReduceChildPointersScratchGeneral uint64
 	ReduceChildSlicesScratchNoAlias   uint64

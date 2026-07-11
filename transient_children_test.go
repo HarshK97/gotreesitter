@@ -48,7 +48,7 @@ func TestTransientChildScratchMaterializesReachableNode(t *testing.T) {
 	}
 
 	var stack []*Node
-	scratch.materializeNode(parent, arena, &stack)
+	scratch.materializeNodeUntil(parent, arena, &stack, nil)
 
 	if scratch.owns(parent.children) {
 		t.Fatal("expected parent children to be copied into arena storage")
@@ -88,7 +88,7 @@ func TestTransientParentScratchMaterializesReachableParent(t *testing.T) {
 	}
 
 	entries := []stackEntry{newStackEntryNode(parent.parseState, parent)}
-	parentScratch.materializeEntries(entries, arena, &childScratch)
+	parentScratch.materializeEntriesUntil(entries, arena, &childScratch, nil)
 
 	got := stackEntryNode(entries[0])
 	if got == nil {
@@ -140,7 +140,7 @@ func TestTransientChildScratchMaterializesFieldedArenaParent(t *testing.T) {
 	parent := newParentNodeInArenaNoLinksWithFieldSources(arena, Symbol(3), true, children, fieldIDs, fieldSources, 0, true)
 
 	var stack []*Node
-	scratch.materializeNode(parent, arena, &stack)
+	scratch.materializeNodeUntil(parent, arena, &stack, nil)
 
 	if scratch.owns(parent.children) {
 		t.Fatal("fielded parent still owns transient children")
@@ -436,7 +436,7 @@ func TestTransientParentScratchMaterializesSharedTransientParentOnce(t *testing.
 	root := parentScratch.allocParent(arena, Symbol(5), true, rootChildren, 31, true)
 
 	entries := []stackEntry{newStackEntryNode(root.parseState, root)}
-	parentScratch.materializeEntries(entries, arena, &childScratch)
+	parentScratch.materializeEntriesUntil(entries, arena, &childScratch, nil)
 
 	gotRoot := stackEntryNode(entries[0])
 	if gotRoot == nil || parentScratch.owns(gotRoot) {
