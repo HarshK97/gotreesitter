@@ -1754,13 +1754,16 @@ func (p *Parser) tryRelexCurrentStateDFA(tok Token, parserState StateID, ts Toke
 }
 
 // peekZeroWidthExternalShiftForState asks an external scanner whether one
-// parser version needs a zero-width token before the already-lexed shared
-// lookahead. The scanner and token-source state are restored before return;
-// callers apply the returned shift only to that version, then retry the real
-// lookahead. This mirrors tree-sitter C's per-version lexing without replacing
-// a real token that another live version may still consume.
+// JavaScript parser version needs a zero-width token before the already-lexed
+// shared lookahead. JavaScript's external scanner has no serialized state, so
+// the scanner and token-source state can be restored before return; callers
+// apply the returned shift only to that version, then retry the real lookahead.
+// This mirrors tree-sitter C's per-version lexing without replacing a real
+// token that another live version may still consume. Keep this JavaScript-only
+// until stateful scanners can transfer the probed post-scan checkpoint onto
+// the shifted version instead of restoring it.
 func (p *Parser) peekZeroWidthExternalShiftForState(tok Token, state StateID, ts TokenSource) (Token, ParseAction, bool) {
-	if p == nil || p.language == nil || tok.NoLookahead || tok.StartByte == tok.EndByte || p.language.ExternalScanner == nil {
+	if p == nil || p.language == nil || p.language.Name != "javascript" || tok.NoLookahead || tok.StartByte == tok.EndByte || p.language.ExternalScanner == nil {
 		return Token{}, ParseAction{}, false
 	}
 	dts, ok := ts.(*dfaTokenSource)
