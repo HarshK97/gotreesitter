@@ -67,9 +67,12 @@ func TestBuiltinExternalScannerRetryProfilesRequireCertifiedBlob(t *testing.T) {
 
 func TestAttachLanguageSupportDoesNotCertifyWithoutBlobIdentity(t *testing.T) {
 	base := KotlinLanguage()
-	lang := *base
-	lang.ExternalScannerFullParseRetryPolicy = gotreesitter.ExternalScannerFullParseRetryDefault
-	if !AttachLanguageSupport("kotlin", &lang) {
+	lang := &gotreesitter.Language{
+		Name:            base.Name,
+		ExternalSymbols: append([]gotreesitter.Symbol(nil), base.ExternalSymbols...),
+		SymbolNames:     append([]string(nil), base.SymbolNames...),
+	}
+	if !AttachLanguageSupport("kotlin", lang) {
 		t.Fatal("AttachLanguageSupport(kotlin) did not attach scanner support")
 	}
 	if got := lang.ExternalScannerFullParseRetryPolicy; got != gotreesitter.ExternalScannerFullParseRetryDefault {
