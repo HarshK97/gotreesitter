@@ -634,56 +634,53 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.24.1**. The 206-grammar curated parity milestone is
-banked; the remaining work is dominated by memory/throughput cliffs, runtime
-cleanup, and turning the existing low-level capabilities into a coherent
-Go-native analysis experience. C remains the behavioral oracle, not the product
-ceiling. Detailed release history lives in [CHANGELOG.md](CHANGELOG.md).
+The current release is **v0.25.0**. The 206-grammar curated parity milestone is
+banked. v0.25.0 also packed pending-parent field metadata with exact equality,
+trimmed redundant Java retries, and removed retired telemetry. Current main
+adds synchronized extension loading, fresh parser pools after registry updates,
+and authoring-guide cleanup. Detailed history lives in
+[CHANGELOG.md](CHANGELOG.md).
 
 ### Now — performance and extreme hygiene
 
 - Keep correctness, C-oracle parity, and performance gates separate. Every
-  optimization must preserve the selected tree before its timing or memory
-  result is considered.
-- Drive the named long-tail witnesses in the perf ledger one language and one
-  workload at a time. Track wall time, allocations, retained arena/scratch
-  bytes, and hard-cgroup maximum RSS; do not generalize from a microbenchmark.
-- Close JavaScript Poppler's shipped 512 MiB budget gap. v0.24.0 proves exact
-  parity with an explicit 2 GiB parser budget, but that is not the endpoint.
-- Remove dead diagnostics, compatibility helpers, temporary profilers, and
-  benchmark-only surface as soon as retained gates make them redundant. Add no
-  new parser-core language-name switch when a generated capability or runtime
-  invariant can express the decision.
-- Keep the canonical benchmark trio honest: public full parse, incremental
-  single-byte edit, and incremental no-edit. Parser-core/no-tree measurements
-  stay explicitly diagnostic.
+  optimization must preserve the selected full-span tree before its timing or
+  memory result is considered.
+- First eliminate avoidable invisible, unfielded reduction-parent construction.
+  Poppler's exact C parity and hard-2-GiB acceptance are banked; the remaining
+  targets are its shipped 512 MiB budget gap, retained memory, and 3.50x full
+  parse, followed by `wasm box2d` and `wasm lua_binarytrees`.
+- Move through generated-code cliffs one witness at a time: TypeScript
+  `webworker.generated.d.ts`, Rust `stdarch`, `SwiftSyntax`, Go `opGen.go` and
+  `rewriteAMD64.go`, C# Bicep, Crystal, and Scala `Implicits.scala`. Prioritize
+  timeouts, hard RSS, and absolute wall time before ratio alone.
+- A fresh full parse that stops before the expected input extent must report an
+  early stop, not unflagged success. Keep this full-span correctness firewall
+  separate from performance measurements.
+- Track wall time, allocations, retained arena/scratch bytes, and hard-cgroup
+  maximum RSS. Keep the public full-parse, incremental-edit, and incremental
+  no-edit benchmark trio canonical; no-tree measurements stay diagnostic.
+- Remove temporary telemetry and failed experimental paths when each lane
+  closes. Add no public parse variant or parser-core language-name switch when
+  an internal diagnostic or generated runtime profile can express the need.
 
-### Next — compact and explicit runtime boundaries
+### Next — only after the narrow memory proof
 
-- Pack pending-child metadata and make its equality collision-safe before
-  enabling broader compact-parent paths; then retry large-file RSS gates.
-- Prototype a pointer-light tree backing store with value node handles and
-  measure bytes/node, GC scan, query/cursor throughput, edit reuse, and peak RSS
-  before considering a representation migration.
-- Move language-specific runtime decisions into immutable, generated profiles.
-  Configuration and limits should become engine/request values rather than
-  process-global environment state.
-- Stop multiplying public parse variants. Pooling and experimental benchmark
-  modes should become implementation or diagnostics details behind one typed
-  parse request.
+- Widen compact hidden reductions from unary to binary, fielded, and
+  multi-stack cases only when each step improves the same parity and RSS gates.
+- If that path cannot materially lower retained memory, prototype a
+  pointer-light tree backing store and measure bytes/node, GC scan, cursor/query
+  throughput, edit reuse, and peak RSS before considering migration.
+- Re-ratchet the affected fleet rows on quiet, reproducible, one-language runs.
 
-### Then — a Go-native incremental analysis experience
+### Deferred — Go-native experience and broader architecture
 
-- Add context-aware `Engine`/`ParseRequest` primitives with typed stop reasons,
-  useful partial results, explicit registries, and safe ownership.
-- Compose the existing rewrite, query, highlight, tags, injection, UTF-16, and
-  incremental APIs into `Document`/`Snapshot` workflows that own edits, prior
-  trees, changed ranges, caches, and release lifetimes.
-- Extend incremental parsing into changed-range analysis plans so downstream
-  tools rerun only affected highlights, tags, definitions, and injections.
-- Follow with a provenance-rich, sectioned grammar bundle format and stronger
-  scanner authoring/conformance tooling. Optional AOT specialization remains a
-  measured tier, not the fleet default.
+- Context-aware `Engine`/`ParseRequest`, typed limits and stop reasons,
+  immutable registries/profiles, and internal pooling/diagnostic modes.
+- `Document`/`Snapshot` ownership for edits, changed ranges, cached queries,
+  highlights, tags, injections, and release lifetimes.
+- Changed-range analysis plans, a provenance-rich sectioned grammar bundle,
+  stronger scanner conformance tooling, and measured optional AOT tiers.
 
 ## License
 
