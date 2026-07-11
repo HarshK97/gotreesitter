@@ -807,7 +807,7 @@ func TestShouldTakeCleanWideRetryNoStacksAliveRequiresExpectedEOFCoverage(t *tes
 	}
 }
 
-func TestShouldRepeatExternalScannerFullParseSkipsDart(t *testing.T) {
+func TestShouldRepeatExternalScannerFullParseHonorsLanguagePolicy(t *testing.T) {
 	tree := &Tree{
 		root: &Node{
 			flags: nodeFlagHasError,
@@ -818,11 +818,15 @@ func TestShouldRepeatExternalScannerFullParseSkipsDart(t *testing.T) {
 	}
 	scanner := parserTestUnsafeExternalScanner{}
 
-	if shouldRepeatExternalScannerFullParse(&Language{Name: "dart", ExternalScanner: scanner}, tree) {
-		t.Fatal("shouldRepeatExternalScannerFullParse(dart accepted error) = true, want false")
-	}
-	if shouldRepeatExternalScannerFullParse(&Language{Name: "python", ExternalScanner: scanner}, tree) {
-		t.Fatal("shouldRepeatExternalScannerFullParse(python accepted error) = true, want false")
+	for _, name := range []string{"dart", "kotlin", "python"} {
+		lang := &Language{Name: name, ExternalScanner: scanner}
+		if !shouldRepeatExternalScannerFullParse(lang, tree) {
+			t.Fatalf("shouldRepeatExternalScannerFullParse(%s default accepted error) = false, want true", name)
+		}
+		lang.ExternalScannerFullParseRetryPolicy = ExternalScannerFullParseRetrySkipRepeat
+		if shouldRepeatExternalScannerFullParse(lang, tree) {
+			t.Fatalf("shouldRepeatExternalScannerFullParse(%s certified accepted error) = true, want false", name)
+		}
 	}
 	if !shouldRepeatExternalScannerFullParse(&Language{Name: "ruby", ExternalScanner: scanner}, tree) {
 		t.Fatal("shouldRepeatExternalScannerFullParse(ruby accepted error) = false, want true")
@@ -875,6 +879,13 @@ func TestRetryFullParseStopsSchedulingRetriesAfterTimeout(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("runRetry calls = %d, want 1", calls)
+	}
+	lang := &Language{
+		ExternalScanner:                     parserTestUnsafeExternalScanner{},
+		ExternalScannerFullParseRetryPolicy: ExternalScannerFullParseRetrySkipRepeat,
+	}
+	if shouldRepeatExternalScannerFullParse(lang, got) {
+		t.Fatal("certified first-ladder selected tree scheduled a second external-scanner retry")
 	}
 }
 

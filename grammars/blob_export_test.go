@@ -63,6 +63,9 @@ func TestLoadLanguageAttachesExternalScannerSupport(t *testing.T) {
 	if len(lang.ExternalLexStates) == 0 {
 		t.Fatal("LoadLanguage(python) did not attach external lex states")
 	}
+	if got := lang.ExternalScannerFullParseRetryPolicy; got != gotreesitter.ExternalScannerFullParseRetrySkipRepeat {
+		t.Fatalf("LoadLanguage(python) retry policy = %d, want certified skip-repeat policy", got)
+	}
 }
 
 func TestLoadLanguageAcceptsAliases(t *testing.T) {

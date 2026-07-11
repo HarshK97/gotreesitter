@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"container/list"
+	"crypto/sha256"
 	"encoding/gob"
 	"fmt"
 	"io"
@@ -44,6 +45,7 @@ func RegisterExternalLexStates(name string, states [][]bool) {
 
 type embeddedLanguageCacheEntry struct {
 	blobName   string
+	blobSHA256 [32]byte
 	lruNode    *list.Element
 	lastAccess time.Time
 	once       sync.Once
@@ -118,21 +120,24 @@ func loadEmbeddedLanguage(blobName string) *gotreesitter.Language {
 }
 
 // LoadLanguage deserializes a raw grammar blob and attaches registered
-// gotreesitter/grammars runtime support for name, including external scanners
-// and external lex-state tables. Use this instead of gotreesitter.LoadLanguage
-// when loading blobs that came from BlobByName, grammar_subset, or a remote WASM
-// bundle and the caller knows the language name.
+// gotreesitter/grammars runtime support for name, including external scanners,
+// external lex-state tables, and any runtime profile certified for this exact
+// blob. Use this instead of gotreesitter.LoadLanguage when loading blobs that
+// came from BlobByName, grammar_subset, or a remote WASM bundle and the caller
+// knows the language name.
 func LoadLanguage(name string, data []byte) (*gotreesitter.Language, error) {
 	lang, err := gotreesitter.LoadLanguage(data)
 	if err != nil {
 		return nil, err
 	}
 	AttachLanguageSupport(name, lang)
+	attachBuiltinLanguageRuntimeProfile(name, sha256.Sum256(data), lang)
 	return lang, nil
 }
 
-// AttachLanguageSupport attaches registered scanner support for name to lang.
-// It returns true when scanner or external lex-state support was attached.
+// AttachLanguageSupport attaches registered scanner and external lex-state
+// support for name to lang. Certified runtime profiles require the original
+// blob identity and are attached by LoadLanguage or the embedded loader.
 func AttachLanguageSupport(name string, lang *gotreesitter.Language) bool {
 	if lang == nil {
 		return false
@@ -161,12 +166,14 @@ func canonicalLanguageName(name string) string {
 func loadEmbeddedLanguageBase(blobName string) *gotreesitter.Language {
 	entry := getEmbeddedLanguageCacheEntry(blobName)
 	entry.once.Do(func() {
-		entry.lang, entry.err = decodeEmbeddedLanguage(blobName)
+		entry.lang, entry.blobSHA256, entry.err = decodeEmbeddedLanguage(blobName)
 		if entry.err == nil {
-			// Attach external scanner and lex states if registered.
+			// Attach external scanner, lex states, and certified runtime profile
+			// if registered.
 			name := strings.TrimSuffix(blobName, ".bin")
 			attachExternalScannerForLanguage(name, entry.lang)
 			attachRegisteredExternalLexStates(name, entry.lang)
+			attachBuiltinLanguageRuntimeProfile(name, entry.blobSHA256, entry.lang)
 		}
 	})
 	if entry.err != nil {
@@ -507,14 +514,16 @@ func attachRegisteredExternalLexStates(name string, targetLang *gotreesitter.Lan
 	gotreesitter.CertifyCRecoveryCostCompetition(targetLang)
 }
 
-func decodeEmbeddedLanguage(blobName string) (*gotreesitter.Language, error) {
+func decodeEmbeddedLanguage(blobName string) (*gotreesitter.Language, [32]byte, error) {
 	blob, err := readGrammarBlob(blobName)
 	if err != nil {
-		return nil, fmt.Errorf("read grammar blob %q: %w", blobName, err)
+		return nil, [32]byte{}, fmt.Errorf("read grammar blob %q: %w", blobName, err)
 	}
 	defer blob.close()
 
-	return decodeLanguageBlobData(blobName, blob.data)
+	sum := sha256.Sum256(blob.data)
+	lang, err := decodeLanguageBlobData(blobName, blob.data)
+	return lang, sum, err
 }
 
 func decodeLanguageBlobData(blobName string, data []byte) (*gotreesitter.Language, error) {
