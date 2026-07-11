@@ -2697,9 +2697,9 @@
    "angular/python/yaml clean; scss/wgsl classified recovery/error-shape IV"
   ],
   "staged_precise_els": [
-   "Docker: wave4-javascript-precise-els-staged-test",
-   "TestJavascriptExternalLexStatesRegression (-tags javascript_precise_els)",
-   "TestJavascriptExternalLexStatesRemainStagedByDefault",
+   "Docker: javascript-asi-comment-deep-review",
+   "TestJavascriptExternalLexStatesRegression",
+   "TestJavascriptExternalLexStatesDefaultWithoutRecoveryElection",
    "TestExternalLexStatesRecoveryElectionOptOutInventory"
   ],
   "wave3_inventory": [
@@ -2712,7 +2712,7 @@
   "cgo_harness/tier_scan/exts.tsv",
   "cgo_harness/tier_scan/tier_classification.tsv",
   "grammars/zzz_scanner_attachments.go",
-  "grammars/*_external_lex_states_gen.go",
+  "grammars/*_external_lex_states*.go (excluding tests and staged files)",
   "grammars/*_external_lex_states_staged.go",
   "grammars/z_subset_scanner_register_*.go"
  ],
@@ -2723,11 +2723,11 @@
   "staged_precise_els": "A precise ExternalLexStates table exists behind an opt-in build tag or explicit staging policy; default C recovery election is intentionally disabled."
  },
  "summary": {
-  "c_recovery_default_opt_out_count": 3,
-  "default_external_lex_state_count": 90,
+  "c_recovery_default_opt_out_count": 4,
+  "default_external_lex_state_count": 91,
   "external_scanner_count": 119,
   "grammar_count": 206,
-  "staged_external_lex_state_count": 1
+  "staged_external_lex_state_count": 0
  },
  "wave": "wave4-external-lex-state-elections"
 }
