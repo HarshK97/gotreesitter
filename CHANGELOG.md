@@ -28,6 +28,10 @@ for tags and release notes while still in `0.x`.
 - Added the explicitly diagnostic `BenchmarkGoParseCoreDFA` lane and withdrew
   the older generated-Go full-parse headline pending a pinned quiet-host rerun
   of the corrected public benchmark.
+- External-scanner full-parse retry suppression now uses explicit certified
+  language-profile metadata instead of parser-core language-name checks.
+  Python and Dart retain their existing behavior, and Kotlin now treats the
+  first retry ladder's selected tree as authoritative.
 
 ### Performance
 
@@ -36,6 +40,10 @@ for tags and release notes while still in `0.x`.
   2.07 GB/op and seconds before the certified row policy. The exact CGo deep
   parity gate and bounded runtime regression both pass; timing is not ratcheted
   until a quiet-host sample is available.
+- Kotlin's pinned eight-file performance set drops from 1.423 seconds to 790
+  milliseconds in a one-CPU Docker A/B after removing the redundant second
+  external-scanner retry ladder. All eight selected trees retain identical
+  S-expression hashes, stop reasons, EOF spans, and error states.
 
 ## [0.24.0] - 2026-07-11
 

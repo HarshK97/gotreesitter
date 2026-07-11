@@ -257,6 +257,24 @@ type ConflictPolicy struct {
 	ReduceSymbols []Symbol
 }
 
+// ExternalScannerFullParseRetryPolicy controls whether a full parse with an
+// external scanner may schedule the generic second retry ladder after the
+// normal retry ladder has already selected its best tree.
+//
+// Keep new values append-only: Language blobs encode these numeric values.
+type ExternalScannerFullParseRetryPolicy uint8
+
+const (
+	// ExternalScannerFullParseRetryDefault preserves the generic behavior: an
+	// accepted error-bearing tree may schedule one more full retry ladder.
+	ExternalScannerFullParseRetryDefault ExternalScannerFullParseRetryPolicy = iota
+
+	// ExternalScannerFullParseRetrySkipRepeat certifies that the tree selected
+	// by the first retry ladder is authoritative. The parser retains that exact
+	// selected tree and does not schedule the extra external-scanner retry.
+	ExternalScannerFullParseRetrySkipRepeat
+)
+
 // Language holds all data needed to parse a specific language.
 // It mirrors tree-sitter's TSLanguage C struct, translated into
 // idiomatic Go types with slice-based tables instead of raw pointers.
@@ -448,9 +466,14 @@ type Language struct {
 	// NonTerminalAliasMap mirrors tree-sitter C's ts_non_terminal_alias_map.
 	// Rows are indexed by nonterminal symbol and contain aliases that require
 	// preserving the wrapper during alias-bearing reductions. This is cold
-	// metadata and intentionally lives at the end of the struct so existing
-	// parser hot-field offsets stay stable.
+	// metadata and intentionally lives in the struct's cold tail so parser hot
+	// field offsets stay stable.
 	NonTerminalAliasMap [][]Symbol
+
+	// ExternalScannerFullParseRetryPolicy is a certified language-level policy
+	// for scheduling the extra external-scanner full-parse retry. Zero preserves
+	// the generic behavior for legacy blobs and caller-constructed languages.
+	ExternalScannerFullParseRetryPolicy ExternalScannerFullParseRetryPolicy
 }
 
 type symbolNameNamedKey struct {
