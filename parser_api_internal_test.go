@@ -2,6 +2,7 @@ package gotreesitter
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -584,6 +585,164 @@ func TestDLargeRetryUsesInitialStackCeiling(t *testing.T) {
 	tree.language = &Language{Name: "typescript"}
 	if fullParseRetryUsesInitialStackCeiling(tree, dLargeFileRetryMinBytes, dLargeFileRetryStackCeiling) {
 		t.Fatal("fullParseRetryUsesInitialStackCeiling(typescript) = true, want false")
+	}
+}
+
+func certifiedAcceptedErrorRetryTestTree(profile bool, sourceLen int) *Tree {
+	lang := &Language{Name: "java"}
+	if profile {
+		lang.FullParseAcceptedErrorRetryProfile = FullParseAcceptedErrorRetryProfile{
+			MinSourceBytes:      64 * 1024,
+			InitialStackCeiling: 14,
+		}
+	}
+	return &Tree{
+		language: lang,
+		root: &Node{
+			endByte: uint32(sourceLen),
+			flags:   nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:       ParseStopAccepted,
+			SourceLen:        uint32(sourceLen),
+			ExpectedEOFByte:  uint32(sourceLen),
+			RootEndByte:      uint32(sourceLen),
+			LastTokenEndByte: uint32(sourceLen),
+			LastTokenWasEOF:  true,
+			MaxStacksSeen:    18,
+			NodesAllocated:   100,
+		},
+	}
+}
+
+func TestCertifiedAcceptedErrorRetryStackCeilingScope(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_STACKS", "")
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	const sourceLen = 64 * 1024
+	eligible := certifiedAcceptedErrorRetryTestTree(true, sourceLen)
+	if !fullParseRetryUsesInitialStackCeilingForOrigin(eligible, sourceLen, 14, fullParseRetryOriginFresh) {
+		t.Fatal("certified fresh accepted-error parse did not keep its initial stack ceiling")
+	}
+	if got := fullParseRetryMaxStacksOverrideForOrigin(eligible, sourceLen, 14, fullParseRetryOriginFresh); got != 0 {
+		t.Fatalf("certified fresh max-stack override = %d, want 0", got)
+	}
+	if got := fullParseRetryMergePerKeyOverride(eligible, sourceLen, 14); got != javaFullParseRetryMaxMergePerKey {
+		t.Fatalf("certified same-stack merge override = %d, want %d", got, javaFullParseRetryMaxMergePerKey)
+	}
+
+	assertNotCertified := func(label string, tree *Tree, bytes, stacks int, origin fullParseRetryOrigin) {
+		t.Helper()
+		if fullParseRetryUsesInitialStackCeilingForOrigin(tree, bytes, stacks, origin) {
+			t.Fatalf("%s unexpectedly used the certified stack ceiling", label)
+		}
+	}
+
+	assertNotCertified("uncertified language", certifiedAcceptedErrorRetryTestTree(false, sourceLen), sourceLen, 14, fullParseRetryOriginFresh)
+	assertNotCertified("small source", certifiedAcceptedErrorRetryTestTree(true, sourceLen-1), sourceLen-1, 14, fullParseRetryOriginFresh)
+	assertNotCertified("different initial ceiling", certifiedAcceptedErrorRetryTestTree(true, sourceLen), sourceLen, 13, fullParseRetryOriginFresh)
+	assertNotCertified("incremental origin", certifiedAcceptedErrorRetryTestTree(true, sourceLen), sourceLen, 14, fullParseRetryOriginIncremental)
+
+	clean := certifiedAcceptedErrorRetryTestTree(true, sourceLen)
+	clean.root.flags = 0
+	assertNotCertified("clean tree", clean, sourceLen, 14, fullParseRetryOriginFresh)
+
+	otherStop := certifiedAcceptedErrorRetryTestTree(true, sourceLen)
+	otherStop.parseRuntime.StopReason = ParseStopNoStacksAlive
+	assertNotCertified("other stop reason", otherStop, sourceLen, 14, fullParseRetryOriginFresh)
+
+	truncated := certifiedAcceptedErrorRetryTestTree(true, sourceLen)
+	truncated.parseRuntime.Truncated = true
+	assertNotCertified("truncated result", truncated, sourceLen, 14, fullParseRetryOriginFresh)
+
+	earlyEOF := certifiedAcceptedErrorRetryTestTree(true, sourceLen)
+	earlyEOF.parseRuntime.TokenSourceEOFEarly = true
+	assertNotCertified("early token-source EOF", earlyEOF, sourceLen, 14, fullParseRetryOriginFresh)
+
+	shortTree := certifiedAcceptedErrorRetryTestTree(true, sourceLen)
+	shortTree.root.endByte--
+	shortTree.parseRuntime.RootEndByte--
+	shortTree.parseRuntime.LastTokenWasEOF = false
+	shortTree.parseRuntime.LastTokenEndByte--
+	assertNotCertified("tree not covering EOF", shortTree, sourceLen, 14, fullParseRetryOriginFresh)
+}
+
+func TestCertifiedAcceptedErrorRetryStackCeilingHonorsExplicitOverrides(t *testing.T) {
+	const sourceLen = 64 * 1024
+	tree := certifiedAcceptedErrorRetryTestTree(true, sourceLen)
+
+	for _, env := range []string{"GOT_GLR_MAX_STACKS", "GOT_GLR_MAX_MERGE_PER_KEY"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv("GOT_GLR_MAX_STACKS", "")
+			t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+			t.Setenv(env, "14")
+			if certifiedAcceptedErrorRetryUsesInitialStackCeiling(tree, sourceLen, 14) {
+				t.Fatalf("certified policy ignored explicit %s", env)
+			}
+		})
+	}
+}
+
+func TestCertifiedAcceptedErrorRetrySchedulingKeepsMergeAndSkipsWidening(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_STACKS", "")
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	const sourceLen = 64 * 1024
+	source := make([]byte, sourceLen)
+	type retryCall struct {
+		stacks int
+		merge  int
+		nodes  int
+	}
+
+	t.Run("fresh certified", func(t *testing.T) {
+		parser := &Parser{}
+		initial := certifiedAcceptedErrorRetryTestTree(true, sourceLen)
+		var calls []retryCall
+		parser.retryFullParse(source, 14, initial, func(maxStacks, maxMergePerKeyOverride, maxNodes int) *Tree {
+			calls = append(calls, retryCall{maxStacks, maxMergePerKeyOverride, maxNodes})
+			candidate := certifiedAcceptedErrorRetryTestTree(true, sourceLen)
+			candidate.parseRuntime.NodesAllocated = 99
+			return candidate
+		})
+		want := []retryCall{{stacks: 14, merge: javaFullParseRetryMaxMergePerKey}}
+		if !slices.Equal(calls, want) {
+			t.Fatalf("retry calls = %+v, want %+v", calls, want)
+		}
+	})
+
+	for _, tt := range []struct {
+		name    string
+		profile bool
+		origin  fullParseRetryOrigin
+	}{
+		{name: "uncertified fresh", profile: false, origin: fullParseRetryOriginFresh},
+		{name: "certified incremental", profile: true, origin: fullParseRetryOriginIncremental},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := &Parser{}
+			initial := certifiedAcceptedErrorRetryTestTree(tt.profile, sourceLen)
+			var calls []retryCall
+			parser.retryFullParseForOrigin(source, 14, initial, tt.origin, func(maxStacks, maxMergePerKeyOverride, maxNodes int) *Tree {
+				calls = append(calls, retryCall{maxStacks, maxMergePerKeyOverride, maxNodes})
+				if maxStacks == javaFullParseRetryMaxGLRStacks {
+					clean := certifiedAcceptedErrorRetryTestTree(tt.profile, sourceLen)
+					clean.root.flags = 0
+					clean.parseRuntime.NodesAllocated = 1
+					return clean
+				}
+				candidate := certifiedAcceptedErrorRetryTestTree(tt.profile, sourceLen)
+				candidate.parseRuntime.NodesAllocated = 99
+				return candidate
+			})
+			if len(calls) < 2 || calls[0] != (retryCall{stacks: 14, merge: javaFullParseRetryMaxMergePerKey}) || calls[1].stacks != javaFullParseRetryMaxGLRStacks {
+				t.Fatalf("retry calls = %+v, want same-stack merge followed by cap-%d widening", calls, javaFullParseRetryMaxGLRStacks)
+			}
+		})
 	}
 }
 

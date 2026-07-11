@@ -11,8 +11,9 @@ import (
 // parser core: loading the exact certified blob attaches its profile, while
 // caller-constructed and adapted languages retain conservative zero defaults.
 type builtinLanguageRuntimeProfile struct {
-	blobSHA256                    [32]byte
-	externalScannerFullParseRetry gotreesitter.ExternalScannerFullParseRetryPolicy
+	blobSHA256                         [32]byte
+	externalScannerFullParseRetry      gotreesitter.ExternalScannerFullParseRetryPolicy
+	fullParseAcceptedErrorRetryProfile gotreesitter.FullParseAcceptedErrorRetryProfile
 }
 
 var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
@@ -31,6 +32,17 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		blobSHA256:                    mustRuntimeProfileSHA256("cde4a67dc6af6e1232dbbd1eab8618478d1d73727020e8a8002542390a452d37"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
 	},
+	// On large accepted-error Java sources, the cap-16 same-stack merge retry
+	// remains authoritative; the subsequent cap-64 clean/recovery passes do not
+	// improve the selected tree. Keep this bound pinned to the exact built-in
+	// blob so overrides and caller-built languages retain the generic ladder.
+	"java": {
+		blobSHA256: mustRuntimeProfileSHA256("530c7257b13e1ce356edd251cac347b5e41f04f74343473c72f43bf1177ffa9c"),
+		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
+			MinSourceBytes:      64 * 1024,
+			InitialStackCeiling: 14,
+		},
+	},
 }
 
 func mustRuntimeProfileSHA256(raw string) (sum [32]byte) {
@@ -43,16 +55,24 @@ func mustRuntimeProfileSHA256(raw string) (sum [32]byte) {
 }
 
 func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang *gotreesitter.Language) bool {
-	if lang == nil || lang.ExternalScanner == nil {
+	if lang == nil {
 		return false
 	}
 	profile, ok := builtinLanguageRuntimeProfiles[canonicalLanguageName(name)]
 	if !ok || blobSHA256 != profile.blobSHA256 {
 		return false
 	}
-	if lang.ExternalScannerFullParseRetryPolicy == profile.externalScannerFullParseRetry {
-		return false
+	changed := false
+	if profile.externalScannerFullParseRetry != gotreesitter.ExternalScannerFullParseRetryDefault &&
+		lang.ExternalScanner != nil &&
+		lang.ExternalScannerFullParseRetryPolicy != profile.externalScannerFullParseRetry {
+		lang.ExternalScannerFullParseRetryPolicy = profile.externalScannerFullParseRetry
+		changed = true
 	}
-	lang.ExternalScannerFullParseRetryPolicy = profile.externalScannerFullParseRetry
-	return true
+	if profile.fullParseAcceptedErrorRetryProfile != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) &&
+		lang.FullParseAcceptedErrorRetryProfile != profile.fullParseAcceptedErrorRetryProfile {
+		lang.FullParseAcceptedErrorRetryProfile = profile.fullParseAcceptedErrorRetryProfile
+		changed = true
+	}
+	return changed
 }

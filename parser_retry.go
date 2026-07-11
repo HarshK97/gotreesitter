@@ -93,6 +93,13 @@ type resettableTokenSource interface {
 
 type fullParseRetryRunner func(maxStacks, maxMergePerKeyOverride, maxNodes int) *Tree
 
+type fullParseRetryOrigin uint8
+
+const (
+	fullParseRetryOriginFresh fullParseRetryOrigin = iota
+	fullParseRetryOriginIncremental
+)
+
 func shouldRetryFullParse(tree *Tree, sourceLen int) bool {
 	if tree == nil {
 		return false
@@ -1129,13 +1136,17 @@ func shouldRepeatExternalScannerFullParse(lang *Language, tree *Tree) bool {
 }
 
 func fullParseRetryMaxStacksOverride(tree *Tree, sourceLen int, initialMaxStacks int) int {
+	return fullParseRetryMaxStacksOverrideForOrigin(tree, sourceLen, initialMaxStacks, fullParseRetryOriginFresh)
+}
+
+func fullParseRetryMaxStacksOverrideForOrigin(tree *Tree, sourceLen int, initialMaxStacks int, origin fullParseRetryOrigin) int {
 	// An explicit GOT_GLR_MAX_STACKS is a true ceiling: diagnostics and
 	// experiments depend on the survivor cap actually holding, and the
 	// widening below silently defeated it (2026-07 cliff campaign finding).
 	if parseMaxGLRStacksEnvConfigured() {
 		return 0
 	}
-	if fullParseRetryUsesInitialStackCeiling(tree, sourceLen, initialMaxStacks) {
+	if fullParseRetryUsesInitialStackCeilingForOrigin(tree, sourceLen, initialMaxStacks, origin) {
 		return 0
 	}
 	retryMaxStacks := fullParseRetryMaxGLRStacks
@@ -1157,8 +1168,15 @@ func fullParseRetryMaxStacksOverride(tree *Tree, sourceLen int, initialMaxStacks
 }
 
 func fullParseRetryUsesInitialStackCeiling(tree *Tree, sourceLen int, initialMaxStacks int) bool {
+	return fullParseRetryUsesInitialStackCeilingForOrigin(tree, sourceLen, initialMaxStacks, fullParseRetryOriginFresh)
+}
+
+func fullParseRetryUsesInitialStackCeilingForOrigin(tree *Tree, sourceLen int, initialMaxStacks int, origin fullParseRetryOrigin) bool {
 	if tree == nil || tree.language == nil {
 		return false
+	}
+	if origin == fullParseRetryOriginFresh && certifiedAcceptedErrorRetryUsesInitialStackCeiling(tree, sourceLen, initialMaxStacks) {
+		return true
 	}
 	switch tree.language.Name {
 	case "groovy":
@@ -1178,6 +1196,25 @@ func fullParseRetryUsesInitialStackCeiling(tree *Tree, sourceLen int, initialMax
 	default:
 		return false
 	}
+}
+
+func certifiedAcceptedErrorRetryUsesInitialStackCeiling(tree *Tree, sourceLen int, initialMaxStacks int) bool {
+	if tree == nil || tree.language == nil || sourceLen <= 0 {
+		return false
+	}
+	profile := tree.language.FullParseAcceptedErrorRetryProfile
+	if profile.MinSourceBytes == 0 || profile.InitialStackCeiling == 0 ||
+		uint64(sourceLen) < uint64(profile.MinSourceBytes) ||
+		initialMaxStacks != int(profile.InitialStackCeiling) ||
+		parseMaxGLRStacksEnvConfigured() || parseMaxMergePerKeyEnvConfigured() {
+		return false
+	}
+	rt := tree.ParseRuntime()
+	return rt.StopReason == ParseStopAccepted &&
+		!rt.Truncated &&
+		!rt.TokenSourceEOFEarly &&
+		retryTreeHasError(tree) &&
+		retryTreeCoversExpectedEOF(tree)
 }
 
 func fullParseRetryNodeLimitOverride(tree *Tree, sourceLen int) int {
@@ -1319,7 +1356,11 @@ func shouldRunInitialFullParseMergeRetry(tree *Tree) bool {
 }
 
 func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree, runRetry fullParseRetryRunner) *Tree {
-	maxStacksOverride := fullParseRetryMaxStacksOverride(tree, len(source), initialMaxStacks)
+	return p.retryFullParseForOrigin(source, initialMaxStacks, tree, fullParseRetryOriginFresh, runRetry)
+}
+
+func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tree *Tree, origin fullParseRetryOrigin, runRetry fullParseRetryRunner) *Tree {
+	maxStacksOverride := fullParseRetryMaxStacksOverrideForOrigin(tree, len(source), initialMaxStacks, origin)
 	maxNodesOverride := fullParseRetryNodeLimitOverride(tree, len(source))
 	retryMaxStacks := initialMaxStacks
 	if maxStacksOverride > 0 {
@@ -1610,11 +1651,15 @@ func (p *Parser) retryFullParseWithDFA(source []byte, initialMaxStacks int, dete
 }
 
 func (p *Parser) retryFullParseWithTokenSource(source []byte, ts TokenSource, initialMaxStacks int, deterministicExternalConflicts bool, tree *Tree) *Tree {
+	return p.retryFullParseWithTokenSourceForOrigin(source, ts, initialMaxStacks, deterministicExternalConflicts, tree, fullParseRetryOriginFresh)
+}
+
+func (p *Parser) retryFullParseWithTokenSourceForOrigin(source []byte, ts TokenSource, initialMaxStacks int, deterministicExternalConflicts bool, tree *Tree, origin fullParseRetryOrigin) *Tree {
 	resettable, ok := ts.(resettableTokenSource)
 	if !ok {
 		return tree
 	}
-	result := p.retryFullParse(source, initialMaxStacks, tree, func(maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
+	result := p.retryFullParseForOrigin(source, initialMaxStacks, tree, origin, func(maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
 		resettable.Reset(source)
 		return p.parseInternal(
 			source,
@@ -1642,7 +1687,7 @@ func (p *Parser) retryIncrementalParseAsFullWithTokenSource(source []byte, ts To
 	}
 	deterministicExternalConflicts := fullParseUsesDeterministicExternalConflicts(p.language)
 	retryStart := time.Now()
-	result := p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
+	result := p.retryFullParseWithTokenSourceForOrigin(source, ts, initialMaxStacks, deterministicExternalConflicts, tree, fullParseRetryOriginIncremental)
 	if result == tree {
 		return tree
 	}
