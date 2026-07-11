@@ -344,14 +344,14 @@ heavy GLR forking, deep expression nesting where production GLR blows up on
 stack-equivalence checks (bash was the motivating case). For a mostly
 deterministic LR grammar it buys little.
 
-**Risk profile, honestly.** The forest path declines (falls back to the
-production parser) on any failure or truncation, so you cannot get a hard
-failure from enabling it. What you can get is a *clean but different* tree on
-ambiguous inputs, because your grammar bypasses the byte-range parity
-certification built-ins undergo — that trade is explicitly yours (see the
-`Language.WantsForest` doc comment in `language.go`). Error-bearing inputs
-decline to the production parser unless the language is in the internal
-forest-recovery list, which is name-keyed and not consumer-extensible today.
+**Risk profile, honestly.** By default, the forest path declines (falls back to
+the production parser) unless it produces a clean, complete tree. What you can
+get is a *clean but different* tree on ambiguous inputs, because your grammar
+bypasses the byte-range parity certification built-ins undergo — that trade is
+explicitly yours (see the `Language.WantsForest` doc comment in `language.go`).
+Forest error recovery defaults are name-keyed; `GOT_GLR_FOREST_RECOVER=1` or
+`gotreesitter.SetGLRForestRecover` enables recovery globally for experiments
+and tests, so validate error-bearing trees separately when using either.
 `GOT_GLR_FOREST=0` disables the forest globally at runtime;
 `gotreesitter.SetGLRForestEnabled` toggles it in tests.
 
@@ -399,7 +399,7 @@ scanner attachment — **nothing**. Things that genuinely still need a PR:
 
 ## Known limits: grammargen state budgets
 
-Verified against `grammargen/lr.go` and `grammargen/assemble.go` at v0.20.8:
+Verified against `grammargen/lr.go` and `grammargen/assemble.go` at v0.25.0:
 
 - **Runtime state IDs are uint32.** `StateID` was widened from uint16
   specifically for large grammars (COBOL generates ~67k states). The only
@@ -422,9 +422,8 @@ Verified against `grammargen/lr.go` and `grammargen/assemble.go` at v0.20.8:
   `ParseActions`, so a grammar needs to stay under 65,535 *distinct* action
   groups. Semantic deduplication in `buildParseTables`
   (`grammargen/assemble.go`) keeps even Markdown (50k+ productions, 78k+ raw
-  groups) under the limit, but there is currently **no hard-fail check** if
-  dedup is insufficient — the index would wrap and corrupt the table. This is
-  a known gap (see appendix).
+  groups) under the limit. Generation fails with a `parse action group` uint16
+  table-limit error if dedup is insufficient.
 - **No built-in generation timeout.** Pathological grammars can take a long
   time; wrap generation with
   `grammargen.GenerateLanguageAndBlobWithContext(ctx, g)` and a deadline.
@@ -480,28 +479,7 @@ here so the docs and the backlog agree:
    (`grammars/token_source_factory_registry.go`). Workaround documented above
    (`LangEntry.TokenSourceFactory`); exporting a `RegisterTokenSourceFactory`
    would remove the need to re-`Register` the whole entry.
-3. **Action-group uint16 overflow has no hard-fail.** `getOrAddActionGroup`
-   in `grammargen/assemble.go` returns `uint16(idx)` unchecked; a grammar that
-   defeats dedup would silently corrupt its parse table. Generation should
-   error with the count, like the LALR budget errors do.
-4. **Forest error recovery is name-keyed** (`languageWantsForestRecover`), so
-   a `WantsForest` consumer with error-bearing inputs always pays the
-   decline-to-production round trip; no public opt-in exists (only the global
-   experimental `GOT_GLR_FOREST_RECOVER=1`).
-5. **The error-mode token source capability is package-private.**
+3. **The error-mode token source capability is package-private.**
    `errorModeLexingTokenSource` (`parser_api.go`) uses an unexported method,
    so third-party token sources cannot declare C-equivalent error-mode lexing
    even if they implement it. See external-scanners.md, contract (c).
-6. **README should link these docs.** Suggested addition directly under the
-   `## Adding a language` heading (do not duplicate the numbered in-tree
-   steps):
-
-   ```markdown
-   > Adding a language to your own project does **not** require forking this
-   > repo or following the in-tree steps below. See
-   > [docs/authoring-languages.md](docs/authoring-languages.md) for the
-   > out-of-tree pipeline (grammar.json → blob → `LoadLanguage` /
-   > `RegisterExtension`) and
-   > [docs/external-scanners.md](docs/external-scanners.md) for external
-   > scanners in Go. The steps below are for grammars embedded in this repo.
-   ```
