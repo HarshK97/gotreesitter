@@ -9,6 +9,11 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Caddy's SHA-pinned recovered string-literal repetition row now follows C's
+  deterministic reduce after active recovery ends, preventing a quadratic GLR
+  fork/refold cliff while preserving exact C tree parity on the witness.
+- `cmd/ts2go` now accepts non-terminal aliases from the grammar's alias-symbol
+  range instead of incorrectly rejecting every alias ID above `SymbolCount`.
 - `BenchmarkGoParseFullDFA` now exercises the public `Parser.Parse` path and a
   fully materialized tree. The former implementation silently enabled the
   no-tree diagnostic and was mislabeled as a full parse.
@@ -23,6 +28,14 @@ for tags and release notes while still in `0.x`.
 - Added the explicitly diagnostic `BenchmarkGoParseCoreDFA` lane and withdrew
   the older generated-Go full-parse headline pending a pinned quiet-host rerun
   of the corrected public benchmark.
+
+### Performance
+
+- The 687-byte Caddy security-header witness now allocates about 5.4 MB/op and
+  completes in milliseconds in the loaded-host smoke probe, down from roughly
+  2.07 GB/op and seconds before the certified row policy. The exact CGo deep
+  parity gate and bounded runtime regression both pass; timing is not ratcheted
+  until a quiet-host sample is available.
 
 ## [0.24.0] - 2026-07-11
 

@@ -402,10 +402,138 @@ func TestCRepetitionSkipForestConflictChoiceHonorsOptOutAndRecoveryGate(t *testi
 	}
 }
 
+func TestRecoveredRepetitionReducePolicyAppliesOnlyToIdleRecoveredLineage(t *testing.T) {
+	lang := &Language{
+		Name: "caddy",
+		ConflictPolicies: []ConflictPolicy{{
+			State:         86,
+			Lookahead:     25,
+			Kind:          ConflictPolicyRecoveredRepetitionReduce,
+			ReduceSymbols: []Symbol{68},
+		}},
+	}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 68, ChildCount: 2},
+		{Type: ParseActionShift, State: 126, Repetition: true},
+	}
+	parser := NewParser(lang)
+	tok := Token{Symbol: 25}
+
+	if chosen, ok := conflictPolicyChoice(lang, tok, 86, actions); ok {
+		t.Fatalf("generic conflictPolicyChoice picked recovery-scoped policy %+v", chosen)
+	}
+
+	recovered := &glrStack{cEverErrored: true}
+	chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, recovered, tok, 86, actions, 2, nil)
+	if !ok {
+		t.Fatal("recovered policy did not choose the certified row")
+	}
+	if chosen.Type != ParseActionReduce || chosen.Symbol != 68 {
+		t.Fatalf("recovered policy picked %+v, want reduce symbol 68", chosen)
+	}
+	if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, recovered, tok, 86, actions, 2, &reuseCursor{}); ok {
+		t.Fatalf("incremental-reuse dispatch picked %+v, want ordinary reuse path", chosen)
+	}
+
+	activeRecovery := []*glrStack{
+		{cEverErrored: true, cRec: &cRecoverState{}},
+		{cEverErrored: true, cPaused: true},
+		{cEverErrored: true, cRecoverMissingGroup: &cRecGroup{}},
+	}
+	for i, stack := range activeRecovery {
+		if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, stack, tok, 86, actions, 2, nil); ok {
+			t.Fatalf("active recovery case %d picked %+v, want GLR fork", i, chosen)
+		}
+	}
+}
+
+func TestRecoveredRepetitionReducePolicyRequiresExactRowAndShape(t *testing.T) {
+	lang := &Language{
+		Name: "caddy",
+		ConflictPolicies: []ConflictPolicy{{
+			State:         86,
+			Lookahead:     25,
+			Kind:          ConflictPolicyRecoveredRepetitionReduce,
+			ReduceSymbols: []Symbol{68},
+		}},
+	}
+	parser := NewParser(lang)
+	stack := &glrStack{cEverErrored: true}
+	valid := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 68, ChildCount: 2},
+		{Type: ParseActionShift, State: 126, Repetition: true},
+	}
+	tests := []struct {
+		name    string
+		state   StateID
+		token   Symbol
+		actions []ParseAction
+	}{
+		{name: "wrong state", state: 87, token: 25, actions: valid},
+		{name: "wrong lookahead", state: 86, token: 24, actions: valid},
+		{name: "wrong reduce", state: 86, token: 25, actions: []ParseAction{{Type: ParseActionReduce, Symbol: 67}, {Type: ParseActionShift, State: 126, Repetition: true}}},
+		{name: "plain shift", state: 86, token: 25, actions: []ParseAction{{Type: ParseActionReduce, Symbol: 68}, {Type: ParseActionShift, State: 126}}},
+		{name: "multiple reduces", state: 86, token: 25, actions: []ParseAction{{Type: ParseActionReduce, Symbol: 68}, {Type: ParseActionReduce, Symbol: 68}, {Type: ParseActionShift, State: 126, Repetition: true}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, stack, Token{Symbol: tc.token}, tc.state, tc.actions, 2, nil); ok {
+				t.Fatalf("picked %+v, want ordinary GLR fork", chosen)
+			}
+		})
+	}
+}
+
+func TestRecoveredRepetitionReducePolicyDoesNotEnableGeneratedBoundaryVeto(t *testing.T) {
+	lang := &Language{
+		Name: "caddy",
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{GeneratedRepeatAux: true},
+		},
+		ConflictPolicies: []ConflictPolicy{{
+			State:         86,
+			Lookahead:     25,
+			Kind:          ConflictPolicyRecoveredRepetitionReduce,
+			ReduceSymbols: []Symbol{1},
+		}},
+	}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 1, ChildCount: 2},
+		{Type: ParseActionShift, State: 126, Repetition: true},
+	}
+	if generatedRepeatBoundaryConflict(lang, actions) {
+		t.Fatal("recovery-only policy enabled the generator boundary veto")
+	}
+}
+
+func TestRecoveredRepetitionReducePolicyDoesNotAffectForestRecovery(t *testing.T) {
+	lang := &Language{
+		Name: "caddy",
+		ConflictPolicies: []ConflictPolicy{{
+			State:         86,
+			Lookahead:     25,
+			Kind:          ConflictPolicyRecoveredRepetitionReduce,
+			ReduceSymbols: []Symbol{68},
+		}},
+	}
+	actions := []ParseAction{
+		{Type: ParseActionReduce, Symbol: 68, ChildCount: 2},
+		{Type: ParseActionShift, State: 126, Repetition: true},
+	}
+	got := NewParser(lang).forestResolveConflict(86, Token{Symbol: 25}, actions)
+	if len(got) != len(actions) {
+		t.Fatalf("forest returned %d actions, want original %d", len(got), len(actions))
+	}
+}
+
 func TestConflictPolicyGobRoundTrip(t *testing.T) {
 	lang := &Language{
-		Name:             "synthetic_policy_test",
-		ConflictPolicies: []ConflictPolicy{{State: 42, Lookahead: 7, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{3, 4}}},
+		Name: "synthetic_policy_test",
+		ConflictPolicies: []ConflictPolicy{
+			{State: 42, Lookahead: 7, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{3, 4}},
+			{State: 86, Lookahead: 25, Kind: ConflictPolicyRecoveredRepetitionReduce, ReduceSymbols: []Symbol{68}},
+		},
 	}
 
 	var buf bytes.Buffer
@@ -416,8 +544,8 @@ func TestConflictPolicyGobRoundTrip(t *testing.T) {
 	if err := gob.NewDecoder(&buf).Decode(&decoded); err != nil {
 		t.Fatalf("decode Language with ConflictPolicies: %v", err)
 	}
-	if len(decoded.ConflictPolicies) != 1 {
-		t.Fatalf("decoded %d policies, want 1", len(decoded.ConflictPolicies))
+	if len(decoded.ConflictPolicies) != 2 {
+		t.Fatalf("decoded %d policies, want 2", len(decoded.ConflictPolicies))
 	}
 	got := decoded.ConflictPolicies[0]
 	if got.State != 42 || got.Lookahead != 7 || got.Kind != ConflictPolicyRepetitionShift {
@@ -425,5 +553,9 @@ func TestConflictPolicyGobRoundTrip(t *testing.T) {
 	}
 	if len(got.ReduceSymbols) != 2 || got.ReduceSymbols[0] != 3 || got.ReduceSymbols[1] != 4 {
 		t.Fatalf("decoded ReduceSymbols = %v, want [3 4]", got.ReduceSymbols)
+	}
+	recovered := decoded.ConflictPolicies[1]
+	if recovered.State != 86 || recovered.Lookahead != 25 || recovered.Kind != ConflictPolicyRecoveredRepetitionReduce || len(recovered.ReduceSymbols) != 1 || recovered.ReduceSymbols[0] != 68 {
+		t.Fatalf("decoded recovered policy = %+v, want exact row preserved", recovered)
 	}
 }
