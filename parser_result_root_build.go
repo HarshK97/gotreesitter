@@ -777,16 +777,18 @@ func foldResultRootExtras(root *Node, extras []*Node, arena *nodeArena) {
 	}
 	root.children = merged
 
-	if len(root.fieldIDs) > 0 {
+	rootFieldIDs := root.fieldIDs()
+	if len(rootFieldIDs) > 0 {
 		trailingCount := len(extras) - leadingCount
-		padded := make([]FieldID, leadingCount+len(root.fieldIDs)+trailingCount)
-		copy(padded[leadingCount:], root.fieldIDs)
-		root.fieldIDs = padded
-		if len(root.fieldSources) > 0 {
-			paddedSources := make([]uint8, len(padded))
-			copy(paddedSources[leadingCount:], root.fieldSources)
-			root.fieldSources = paddedSources
+		padded := make([]FieldID, leadingCount+len(rootFieldIDs)+trailingCount)
+		copy(padded[leadingCount:], rootFieldIDs)
+		paddedSources := root.fieldSources()
+		if len(paddedSources) > 0 {
+			rootFieldSources := paddedSources
+			paddedSources = make([]uint8, len(padded))
+			copy(paddedSources[leadingCount:], rootFieldSources)
 		}
+		root.setFieldMetadata(padded, paddedSources)
 	}
 	extendResultRootRangeToExtras(root, extras)
 }

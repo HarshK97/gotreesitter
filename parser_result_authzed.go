@@ -56,8 +56,7 @@ func normalizeAuthzedCleanRootShape(root *Node, source []byte, lang *Language) {
 		}
 	}
 	root.children = cloneNodeSliceInArena(root.ownerArena, out)
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	root.clearFieldMetadata()
 	populateParentNode(root, root.children)
 	root.setHasError(false)
 	root.startByte = 0
@@ -227,8 +226,7 @@ func normalizeAuthzedUnclosedCaveatRecovery(root *Node, source []byte, lang *Lan
 	root.setExtra(false)
 	root.setMissing(false)
 	root.children = cloneNodeSliceInArena(arena, rootChildren)
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	root.clearFieldMetadata()
 	populateParentNode(root, root.children)
 	root.setHasError(true)
 	root.startByte = 0
@@ -311,8 +309,7 @@ func normalizeAuthzedMissingPermissionExpression(root *Node, source []byte, lang
 	root.setExtra(false)
 	root.setMissing(false)
 	root.children = cloneNodeSliceInArena(arena, rootChildren)
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	root.clearFieldMetadata()
 	populateParentNode(root, root.children)
 	root.setHasError(true)
 	root.startByte = 0
@@ -451,8 +448,7 @@ func normalizeAuthzedStrayCaveatTailRecovery(root *Node, source []byte, lang *La
 	root.setExtra(false)
 	root.setMissing(false)
 	root.children = cloneNodeSliceInArena(arena, rootChildren)
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	root.clearFieldMetadata()
 	populateParentNode(root, root.children)
 	root.setHasError(true)
 	root.startByte = 0
@@ -600,8 +596,7 @@ func normalizeAuthzedObjectCaveatRecovery(root *Node, source []byte, lang *Langu
 	root.setExtra(false)
 	root.setMissing(false)
 	root.children = cloneNodeSliceInArena(arena, rootChildren)
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	root.clearFieldMetadata()
 	populateParentNode(root, root.children)
 	root.setHasError(true)
 	root.startByte = 0
@@ -707,8 +702,7 @@ func normalizeAuthzedSingleQuotedCaveatRecovery(root *Node, source []byte, lang 
 	root.setExtra(false)
 	root.setMissing(false)
 	root.children = cloneNodeSliceInArena(arena, rootChildren)
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	root.clearFieldMetadata()
 	populateParentNode(root, root.children)
 	root.setHasError(true)
 	root.startByte = 0
@@ -820,8 +814,7 @@ func authzedRebuildSingleQuotedCaveatBlock(caveat *Node, source []byte, lang *La
 	}
 
 	block.children = cloneNodeSliceInArena(arena, []*Node{lbrace, newStmt, errNode, newline, rbrace})
-	block.fieldIDs = nil
-	block.fieldSources = nil
+	block.clearFieldMetadata()
 	populateParentNode(block, block.children)
 	block.setHasError(true)
 	caveat.setHasError(true)
@@ -997,8 +990,7 @@ func authzedNormalizeMalformedDefinitionErrorChild(root *Node, source []byte, la
 		return
 	}
 	errNode.children = cloneNodeSliceInArena(errNode.ownerArena, children)
-	errNode.fieldIDs = nil
-	errNode.fieldSources = nil
+	errNode.clearFieldMetadata()
 	populateParentNode(errNode, errNode.children)
 	errNode.startByte = 0
 	errNode.endByte = uint32(len(source))
@@ -1060,8 +1052,7 @@ func authzedCollapseToSourceFileError(root *Node, source []byte, lang *Language,
 	root.startPoint = Point{}
 	root.endPoint = errNode.endPoint
 	root.children = cloneNodeSliceInArena(arena, []*Node{errNode})
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	root.clearFieldMetadata()
 	populateParentNode(root, root.children)
 }
 
@@ -1090,8 +1081,7 @@ func authzedCollapseToSourceFileWithLeadingError(root *Node, source []byte, lang
 	root.startPoint = Point{}
 	root.endPoint = advancePointByBytes(Point{}, source)
 	root.children = cloneNodeSliceInArena(arena, rootChildren)
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	root.clearFieldMetadata()
 	populateParentNode(root, root.children)
 }
 

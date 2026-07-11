@@ -483,7 +483,7 @@ func stackEntryNodeChildCount(e stackEntry) int {
 
 func stackEntryNodeFieldIDCount(e stackEntry) int {
 	if n := stackEntryNode(e); n != nil {
-		return len(n.fieldIDs)
+		return len(n.fieldIDs())
 	}
 	if n := stackEntryPendingParent(e); n != nil && (n.hasFieldEntries() || n.hasDirectFieldEntries()) {
 		return n.childEntryCount()

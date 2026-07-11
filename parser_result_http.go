@@ -84,8 +84,10 @@ func mergeHTTPSectionIntoPrevious(prev, cur *Node, source []byte) {
 
 	fieldIDs, fieldSources := mergeHTTPSectionFieldMetadata(prev, cur, prevLen, curLen)
 	prev.children = cloneNodeSliceIfArena(prev.ownerArena, merged)
-	prev.fieldIDs = cloneFieldIDSliceInArena(prev.ownerArena, fieldIDs)
-	prev.fieldSources = cloneHTTPFieldSourceSliceInArena(prev.ownerArena, fieldSources)
+	prev.setFieldMetadata(
+		cloneFieldIDSliceInArena(prev.ownerArena, fieldIDs),
+		cloneHTTPFieldSourceSliceInArena(prev.ownerArena, fieldSources),
+	)
 	if prev.ownerArena != nil {
 		prev.ownerArena.clearFinalChildRefs(prev)
 	}
@@ -93,8 +95,10 @@ func mergeHTTPSectionIntoPrevious(prev, cur *Node, source []byte) {
 }
 
 func mergeHTTPSectionFieldMetadata(prev, cur *Node, prevLen, curLen int) ([]FieldID, []uint8) {
-	needFields := len(prev.fieldIDs) == prevLen || len(cur.fieldIDs) == curLen
-	needSources := len(prev.fieldSources) == prevLen || len(cur.fieldSources) == curLen
+	prevFieldIDs, curFieldIDs := prev.fieldIDs(), cur.fieldIDs()
+	prevFieldSources, curFieldSources := prev.fieldSources(), cur.fieldSources()
+	needFields := len(prevFieldIDs) == prevLen || len(curFieldIDs) == curLen
+	needSources := len(prevFieldSources) == prevLen || len(curFieldSources) == curLen
 	total := prevLen + curLen
 	var fieldIDs []FieldID
 	if needFields {
@@ -110,10 +114,10 @@ func mergeHTTPSectionFieldMetadata(prev, cur *Node, prevLen, curLen int) ([]Fiel
 	if needSources {
 		fieldSources = make([]uint8, total)
 		for i := 0; i < prevLen; i++ {
-			fieldSources[i] = fieldSourceAt(prev.fieldSources, i)
+			fieldSources[i] = fieldSourceAt(prevFieldSources, i)
 		}
 		for i := 0; i < curLen; i++ {
-			fieldSources[prevLen+i] = fieldSourceAt(cur.fieldSources, i)
+			fieldSources[prevLen+i] = fieldSourceAt(curFieldSources, i)
 		}
 	}
 	return fieldIDs, fieldSources

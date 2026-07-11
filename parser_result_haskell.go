@@ -145,8 +145,7 @@ func normalizeHaskellZeroWidthTokens(root *Node, lang *Language) {
 		return
 	}
 	root.children = cloneNodeSliceInArena(root.ownerArena, filtered)
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	root.clearFieldMetadata()
 	populateParentNode(root, root.children)
 }
 
@@ -158,7 +157,9 @@ func normalizeHaskellRootImportField(root *Node, lang *Language) {
 		return
 	}
 	view := resultMutableChildrenForMutation(root)
-	fieldStorageReady := len(root.fieldIDs) == view.Len() && len(root.fieldSources) == view.Len()
+	fieldIDs := root.fieldIDs()
+	fieldSources := root.fieldSources()
+	fieldStorageReady := len(fieldIDs) == view.Len() && len(fieldSources) == view.Len()
 	for i := 0; i < view.Len(); i++ {
 		entry, ok := view.Entry(i)
 		if !ok {
@@ -170,10 +171,12 @@ func normalizeHaskellRootImportField(root *Node, lang *Language) {
 		}
 		if !fieldStorageReady {
 			ensureNodeFieldStorage(root, view.Len())
+			fieldIDs = root.fieldIDs()
+			fieldSources = root.fieldSources()
 			fieldStorageReady = true
 		}
-		root.fieldIDs[i] = fid
-		root.fieldSources[i] = fieldSourceInherited
+		fieldIDs[i] = fid
+		fieldSources[i] = fieldSourceInherited
 	}
 }
 

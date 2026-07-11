@@ -78,7 +78,7 @@ func normalizeSwiftRecoveredTrailingClosureConditions(root *Node, source []byte,
 	}
 	root.symbol = newRoot.symbol
 	root.productionID = newRoot.productionID
-	root.fieldIDs = newRoot.fieldIDs
+	root.setFieldIDs(newRoot.fieldIDs())
 	root.children = cloneNodeSliceIfArena(root.ownerArena, newRoot.children)
 	// populateParentNode derives the span from the children; reassert the
 	// source_file bounds afterwards so leading/trailing trivia is covered, then
@@ -678,7 +678,7 @@ func (r *swiftRemap) remap(n *Node) (*Node, bool) {
 		}
 	}
 	kids = cloneNodeSliceInArena(r.arena, kids)
-	fieldIDs := cloneFieldIDSliceInArena(r.arena, n.fieldIDs)
+	fieldIDs := cloneFieldIDSliceInArena(r.arena, n.fieldIDs())
 	node := newParentNodeInArena(r.arena, n.symbol, n.isNamed(), kids, fieldIDs, n.productionID)
 	node.setExtra(n.IsExtra())
 	node.startByte = newStart

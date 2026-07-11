@@ -25,17 +25,17 @@ func TestNormalizeMakeConditionalConsequenceFieldsExtendsAcrossLeadingTabs(t *te
 	elseDir := newLeafNodeInArena(arena, 5, true, 12, 16, Point{Column: 12}, Point{Column: 16})
 	endif := newLeafNodeInArena(arena, 6, false, 16, 21, Point{Column: 16}, Point{Column: 21})
 	root := newParentNodeInArena(arena, 1, true, []*Node{directive, tab, recipe, elseDir, endif}, []FieldID{0, 0, 1, 1, 0}, 0)
-	root.fieldSources = []uint8{0, 0, fieldSourceDirect, fieldSourceDirect, 0}
+	root.setFieldSources([]uint8{0, 0, fieldSourceDirect, fieldSourceDirect, 0})
 
 	normalizeMakeConditionalConsequenceFields(root, lang)
 
-	if got, want := root.fieldIDs[1], FieldID(1); got != want {
+	if got, want := root.fieldIDs()[1], FieldID(1); got != want {
 		t.Fatalf("tab field = %d, want %d", got, want)
 	}
-	if got, want := fieldSourceAt(root.fieldSources, 1), uint8(fieldSourceDirect); got != want {
+	if got, want := fieldSourceAt(root.fieldSources(), 1), uint8(fieldSourceDirect); got != want {
 		t.Fatalf("tab field source = %d, want %d", got, want)
 	}
-	if got := root.fieldIDs[4]; got != 0 {
+	if got := root.fieldIDs()[4]; got != 0 {
 		t.Fatalf("endif field = %d, want 0", got)
 	}
 }
@@ -469,14 +469,14 @@ func TestNormalizeZigEmptyInitListFieldConstantCleared(t *testing.T) {
 	close := newLeafNodeInArena(arena, 5, false, 2, 3, Point{Column: 2}, Point{Column: 3})
 	initList := newParentNodeInArena(arena, 3, true, []*Node{open, close}, nil, 0)
 	parent := newParentNodeInArena(arena, 1, true, []*Node{dot, initList}, []FieldID{0, 1}, 0)
-	parent.fieldSources = []uint8{0, fieldSourceDirect}
+	parent.setFieldSources([]uint8{0, fieldSourceDirect})
 
 	normalizeZigEmptyInitListFields(parent, lang)
 
-	if got := parent.fieldIDs[1]; got != 0 {
+	if got := parent.fieldIDs()[1]; got != 0 {
 		t.Fatalf("fieldIDs[1] = %d, want 0", got)
 	}
-	if got := fieldSourceAt(parent.fieldSources, 1); got != 0 {
+	if got := fieldSourceAt(parent.fieldSources(), 1); got != 0 {
 		t.Fatalf("fieldSources[1] = %d, want 0", got)
 	}
 }
@@ -504,14 +504,14 @@ func TestNormalizeZigDottedInitListFieldConstantCleared(t *testing.T) {
 	close := newLeafNodeInArena(arena, 6, false, 6, 7, Point{Column: 6}, Point{Column: 7})
 	initList := newParentNodeInArena(arena, 3, true, []*Node{open, value, close}, nil, 0)
 	parent := newParentNodeInArena(arena, 1, true, []*Node{dot, initList}, []FieldID{0, 1}, 0)
-	parent.fieldSources = []uint8{0, fieldSourceDirect}
+	parent.setFieldSources([]uint8{0, fieldSourceDirect})
 
 	normalizeZigEmptyInitListFields(parent, lang)
 
-	if got := parent.fieldIDs[1]; got != 0 {
+	if got := parent.fieldIDs()[1]; got != 0 {
 		t.Fatalf("fieldIDs[1] = %d, want 0", got)
 	}
-	if got := fieldSourceAt(parent.fieldSources, 1); got != 0 {
+	if got := fieldSourceAt(parent.fieldSources(), 1); got != 0 {
 		t.Fatalf("fieldSources[1] = %d, want 0", got)
 	}
 }

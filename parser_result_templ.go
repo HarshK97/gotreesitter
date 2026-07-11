@@ -208,8 +208,7 @@ func templBuildQualifiedComponentImport(importNode, tailNode *Node, source []byt
 	argsView.startByte = tailNode.startByte + uint32(parts.argsStart)
 	argsView.startPoint = Point{Row: tailNode.startPoint.Row, Column: tailNode.startPoint.Column + uint32(parts.argsStart)}
 	argsView.children = nil
-	argsView.fieldIDs = nil
-	argsView.fieldSources = nil
+	argsView.clearFieldMetadata()
 	argList := templBuildSimpleArgumentList(&argsView, source, lang, argListSym, argListNamed)
 	if argList == nil {
 		return nil

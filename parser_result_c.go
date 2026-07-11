@@ -968,16 +968,18 @@ func normalizeCWhitespaceSeparatedFunctionMacro(node *Node, source []byte, lang 
 	node.setNamed(symbolIsNamed(lang, preprocDefSym))
 	node.children = children
 	ensureNodeFieldStorage(node, len(children))
-	for i := range node.fieldIDs {
-		node.fieldIDs[i] = 0
+	fieldIDs := node.fieldIDs()
+	fieldSources := node.fieldSources()
+	for i := range fieldIDs {
+		fieldIDs[i] = 0
 	}
-	for i := range node.fieldSources {
-		node.fieldSources[i] = fieldSourceNone
+	for i := range fieldSources {
+		fieldSources[i] = fieldSourceNone
 	}
-	node.fieldIDs[1] = nameFieldID
-	node.fieldIDs[2] = valueFieldID
-	node.fieldSources[1] = fieldSourceDirect
-	node.fieldSources[2] = fieldSourceDirect
+	fieldIDs[1] = nameFieldID
+	fieldIDs[2] = valueFieldID
+	fieldSources[1] = fieldSourceDirect
+	fieldSources[2] = fieldSourceDirect
 	populateParentNode(node, node.children)
 	return true
 }
@@ -1181,8 +1183,8 @@ func normalizeCSizeofUnknownTypeIdentifiers(root *Node, source []byte, lang *Lan
 						replaceChildRangeWithSingleNode(n, 1, 4, paren)
 						if hasValueField && len(n.children) > 1 {
 							ensureNodeFieldStorage(n, len(n.children))
-							n.fieldIDs[1] = valueFieldID
-							n.fieldSources[1] = fieldSourceDirect
+							n.fieldIDs()[1] = valueFieldID
+							n.fieldSources()[1] = fieldSourceDirect
 						}
 					}
 				}
@@ -1430,13 +1432,13 @@ func setCRewriteChildren(n *Node, symbol Symbol, named bool, children []*Node, f
 	n.symbol = symbol
 	n.setNamed(named)
 	n.children = children
-	n.fieldIDs = fieldIDs
-	n.fieldSources = make([]uint8, len(children))
+	fieldSources := make([]uint8, len(children))
 	for _, idx := range directFieldIndexes {
-		if idx >= 0 && idx < len(n.fieldSources) {
-			n.fieldSources[idx] = fieldSourceDirect
+		if idx >= 0 && idx < len(fieldSources) {
+			fieldSources[idx] = fieldSourceDirect
 		}
 	}
+	n.setFieldMetadata(fieldIDs, fieldSources)
 	n.productionID = 0
 	populateParentNode(n, n.children)
 }

@@ -1204,8 +1204,7 @@ func foldPythonTrailingSelfCallIntoNestedFunction(fnNode, trailingCall *Node, so
 	}
 
 	bodyClone := cloneNodeInArenaAppendingChildForMutation(body.ownerArena, body, trailingCall)
-	bodyClone.fieldIDs = nil
-	bodyClone.fieldSources = nil
+	bodyClone.clearFieldMetadata()
 
 	fnClone := cloneNodeInArenaReplacingChildForMutation(fnNode.ownerArena, fnNode, bodyIndex, bodyClone)
 	return fnClone, true
@@ -1273,15 +1272,13 @@ func rewriteMalformedPythonPrintStatement(node *Node, source []byte, lang *Langu
 	printLeaf.symbol = printSym
 	printLeaf.setNamed(printNamed)
 	printLeaf.children = nil
-	printLeaf.fieldIDs = nil
-	printLeaf.fieldSources = nil
+	printLeaf.clearFieldMetadata()
 
 	chevron := cloneNodeInArena(node.ownerArena, bin)
 	chevron.symbol = chevronSym
 	chevron.setNamed(chevronNamed)
 	chevron.children = cloneNodeSliceInArena(chevron.ownerArena, []*Node{op, dest})
-	chevron.fieldIDs = nil
-	chevron.fieldSources = nil
+	chevron.clearFieldMetadata()
 	chevron.productionID = 0
 	populateParentNode(chevron, chevron.children)
 
@@ -1292,8 +1289,7 @@ func rewriteMalformedPythonPrintStatement(node *Node, source []byte, lang *Langu
 	rewritten.symbol = printStmtSym
 	rewritten.setNamed(printStmtNamed)
 	rewritten.children = cloneNodeSliceInArena(rewritten.ownerArena, children)
-	rewritten.fieldIDs = nil
-	rewritten.fieldSources = nil
+	rewritten.clearFieldMetadata()
 	rewritten.productionID = 0
 	populateParentNode(rewritten, rewritten.children)
 	return rewritten, true
@@ -1465,8 +1461,7 @@ func repairPythonRootNode(root *Node, arena *nodeArena, lang *Language) *Node {
 		repaired = buf
 	}
 	cloned.children = repaired
-	cloned.fieldIDs = nil
-	cloned.fieldSources = nil
+	cloned.clearFieldMetadata()
 	if pythonModuleChildrenLookComplete(repaired, lang) {
 		cloned.setHasError(false)
 	}
@@ -2046,8 +2041,7 @@ func repairPythonBlock(node *Node, arena *nodeArena, lang *Language, allowHoist 
 		out = buf
 	}
 	cloned.children = out
-	cloned.fieldIDs = nil
-	cloned.fieldSources = nil
+	cloned.clearFieldMetadata()
 	firstNamed := pythonBlockStartAnchor(out, lang)
 	lastSpan := pythonBlockEndAnchor(out)
 	if firstNamed != nil {
@@ -2348,8 +2342,7 @@ func splitPythonOvernestedFunction(node *Node, arena *nodeArena, lang *Language)
 		kept = buf
 	}
 	newBody.children = kept
-	newBody.fieldIDs = nil
-	newBody.fieldSources = nil
+	newBody.clearFieldMetadata()
 	lastKept := kept[len(kept)-1]
 	newBody.endByte = lastKept.endByte
 	newBody.endPoint = lastKept.endPoint

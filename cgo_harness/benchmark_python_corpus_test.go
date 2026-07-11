@@ -117,6 +117,7 @@ type pythonRuntimeBenchStats struct {
 	multiStackGSSNodes                   uint64
 	arenaBytesAllocated                  int64
 	arenaNodeStructBytesAllocated        int64
+	arenaNodeFieldMetadataBytesAllocated int64
 	arenaNoTreeNodeBytesAllocated        int64
 	arenaCompactFullLeafBytesAllocated   int64
 	arenaPendingParentBytesAllocated     int64
@@ -514,6 +515,7 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 	if hasBreakdown {
 		s.arenaBreakdownSamples++
 		s.arenaNodeStructBytesAllocated += breakdown.NodeStructBytesAllocated
+		s.arenaNodeFieldMetadataBytesAllocated += breakdown.NodeFieldMetadataBytesAllocated
 		s.arenaNoTreeNodeBytesAllocated += breakdown.NoTreeNodeBytesAllocated
 		s.arenaCompactFullLeafBytesAllocated += breakdown.CompactFullLeafBytesAllocated
 		s.arenaPendingParentBytesAllocated += breakdown.PendingParentBytesAllocated
@@ -805,6 +807,7 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.errorSymbolNodesConstructed)/tokens, "error_nodes/token")
 		b.ReportMetric(float64(s.hasErrorNodesConstructed)/tokens, "has_error_nodes/token")
 		b.ReportMetric(float64(s.arenaNodeStructBytesAllocated)/tokens, "arena_node_B/token")
+		b.ReportMetric(float64(s.arenaNodeFieldMetadataBytesAllocated)/tokens, "arena_node_field_meta_B/token")
 		b.ReportMetric(float64(s.arenaNoTreeNodeBytesAllocated)/tokens, "arena_notree_node_B/token")
 		b.ReportMetric(float64(s.arenaCompactFullLeafBytesAllocated)/tokens, "arena_compact_full_leaf_B/token")
 		b.ReportMetric(float64(s.arenaPendingParentBytesAllocated)/tokens, "arena_pending_parent_B/token")

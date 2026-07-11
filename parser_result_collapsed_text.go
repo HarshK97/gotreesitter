@@ -23,7 +23,6 @@ func normalizeCollapsedTextToken(n *Node, source []byte, lang *Language, accept 
 	child.parent = n
 	child.childIndex = 0
 	n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
-	n.fieldIDs = cloneFieldIDSliceInArena(n.ownerArena, []FieldID{0})
-	n.fieldSources = nil
+	n.setFieldMetadata(cloneFieldIDSliceInArena(n.ownerArena, []FieldID{0}), nil)
 	return true
 }

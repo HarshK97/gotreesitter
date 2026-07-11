@@ -11,13 +11,15 @@ func normalizeErlangSourceFileForms(root *Node, lang *Language) {
 	}
 	view := resultMutableChildrenForMutation(root)
 	ensureNodeFieldStorage(root, view.Len())
+	fieldIDs := root.fieldIDs()
+	fieldSources := root.fieldSources()
 	for i := 0; i < view.Len(); i++ {
 		entry, ok := view.Entry(i)
 		if !ok || stackEntryNodeIsExtra(entry) {
 			continue
 		}
-		root.fieldIDs[i] = formsOnlyID
-		root.fieldSources[i] = fieldSourceDirect
+		fieldIDs[i] = formsOnlyID
+		fieldSources[i] = fieldSourceDirect
 		if stackEntryNodeChildCount(entry) > 0 {
 			normalizeErlangTopLevelFormBounds(view.Child(i))
 		}

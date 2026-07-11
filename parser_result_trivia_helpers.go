@@ -115,11 +115,19 @@ func trimTrailingExtraTriviaRoot(root *Node, source []byte, lang *Language) {
 	}
 	children := resultChildSliceForMutation(root)
 	root.children = cloneNodeSliceInArena(root.ownerArena, children[:len(children)-1])
-	if len(root.fieldIDs) > len(root.children) {
-		root.fieldIDs = root.fieldIDs[:len(root.children)]
+	fieldIDs := root.fieldIDs()
+	fieldSources := root.fieldSources()
+	metadataChanged := false
+	if len(fieldIDs) > len(root.children) {
+		fieldIDs = fieldIDs[:len(root.children)]
+		metadataChanged = true
 	}
-	if len(root.fieldSources) > len(root.children) {
-		root.fieldSources = root.fieldSources[:len(root.children)]
+	if len(fieldSources) > len(root.children) {
+		fieldSources = fieldSources[:len(root.children)]
+		metadataChanged = true
+	}
+	if metadataChanged {
+		root.setFieldMetadata(fieldIDs, fieldSources)
 	}
 	populateParentNode(root, root.children)
 }

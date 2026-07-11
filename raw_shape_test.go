@@ -962,8 +962,8 @@ func TestAcceptedStackTreeOrderDoesNotStripSemanticInvisibleWrappers(t *testing.
 		{
 			name: "direct-field-id",
 			configure: func(lang *Language, arena *nodeArena, wrap *Node) {
-				wrap.fieldIDs = cloneFieldIDSliceInArena(arena, []FieldID{1, 0, 0})
-				wrap.fieldSources = defaultFieldSourcesInArena(arena, wrap.fieldIDs)
+				fieldIDs := cloneFieldIDSliceInArena(arena, []FieldID{1, 0, 0})
+				wrap.setFieldMetadata(fieldIDs, defaultFieldSourcesInArena(arena, fieldIDs))
 			},
 		},
 		{

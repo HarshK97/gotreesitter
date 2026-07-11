@@ -21,8 +21,7 @@ type Node struct {
 	// Layout is performance-sensitive. Keep TestNodeLayoutSizeBudget updated
 	// when changing field order or adding fields.
 	children          []*Node
-	fieldIDs          []FieldID // parallel to children, 0 = no field
-	fieldSources      []uint8   // parallel to children, 0 = none, 1 = direct, 2 = inherited
+	fieldMetadata     *nodeFieldMetadata
 	parent            *Node
 	ownerArena        *nodeArena
 	startPoint        Point
@@ -540,10 +539,11 @@ func nodeChildrenForReason(n *Node, reason materializeReason) []*Node {
 }
 
 func nodeFieldIDAt(n *Node, i int) FieldID {
-	if n == nil || i < 0 || i >= len(n.fieldIDs) {
+	fieldIDs := n.fieldIDs()
+	if i < 0 || i >= len(fieldIDs) {
 		return 0
 	}
-	return n.fieldIDs[i]
+	return fieldIDs[i]
 }
 
 // ParseStopReason reports why parseInternal terminated.
@@ -1073,6 +1073,7 @@ func (p reduceChildPath) valid() bool {
 // populated only when EnableArenaBreakdown(true) is set before parsing.
 type ArenaBreakdown struct {
 	NodeStructBytesAllocated            int64
+	NodeFieldMetadataBytesAllocated     int64
 	NoTreeNodeBytesAllocated            int64
 	CompactFullLeafBytesAllocated       int64
 	PendingParentBytesAllocated         int64
@@ -1956,13 +1957,15 @@ func collectFinalNodeStats(n *Node, lang *Language, stats *finalTreeMaterializat
 	}
 	stats.childSlices++
 	stats.childPointers += uint64(childCount)
-	if len(n.fieldIDs) > 0 {
-		stats.fieldIDElements += uint64(len(n.fieldIDs))
+	fieldIDs := n.fieldIDs()
+	fieldSources := n.fieldSources()
+	if len(fieldIDs) > 0 {
+		stats.fieldIDElements += uint64(len(fieldIDs))
 	}
-	if len(n.fieldSources) > 0 {
-		stats.fieldSourceElements += uint64(len(n.fieldSources))
+	if len(fieldSources) > 0 {
+		stats.fieldSourceElements += uint64(len(fieldSources))
 	}
-	if hasParentFieldMetadata(n.fieldIDs, n.fieldSources) {
+	if hasParentFieldMetadata(fieldIDs, fieldSources) {
 		stats.fieldedParentNodes++
 	} else {
 		stats.unfieldedParentNodes++
@@ -2163,8 +2166,7 @@ func newParentNode(arena *nodeArena, sym Symbol, named bool, children []*Node, f
 	n.symbol = sym
 	n.setNamed(named)
 	n.children = children
-	n.fieldIDs = fieldIDs
-	n.fieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
+	n.setFieldMetadata(fieldIDs, defaultFieldSourcesInArena(arena, fieldIDs))
 	n.productionID = productionID
 	n.dynamicPrecedence = nodeSliceDynamicPrecedence(children)
 	n.childIndex = -1
@@ -2244,18 +2246,17 @@ func newParentNodeInArenaWithFieldSources(arena *nodeArena, sym Symbol, named bo
 	n.symbol = sym
 	n.setNamed(named)
 	n.children = children
-	n.fieldIDs = fieldIDs
-	if fieldSources != nil {
-		n.fieldSources = fieldSources
-	} else {
-		n.fieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
+	resolvedFieldSources := fieldSources
+	if resolvedFieldSources == nil {
+		resolvedFieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
 	}
+	n.setFieldMetadata(fieldIDs, resolvedFieldSources)
 	n.productionID = productionID
 	n.dynamicPrecedence = nodeSliceDynamicPrecedence(children)
 	n.childIndex = -1
 	arena.parentNodesConstructed++
 	if arena.breakdownEnabled {
-		arena.recordParentNodeConstructedBreakdown(len(children), fieldIDs, n.fieldSources, fieldSources != nil, false, false)
+		arena.recordParentNodeConstructedBreakdown(len(children), fieldIDs, resolvedFieldSources, fieldSources != nil, false, false)
 	}
 	populateParentNode(n, children)
 	nodeInitEquivVersion(n)
@@ -2277,18 +2278,17 @@ func newParentNodeInArenaNoLinksWithFieldSources(arena *nodeArena, sym Symbol, n
 	n.symbol = sym
 	n.setNamed(named)
 	n.children = children
-	n.fieldIDs = fieldIDs
-	if fieldSources != nil {
-		n.fieldSources = fieldSources
-	} else {
-		n.fieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
+	resolvedFieldSources := fieldSources
+	if resolvedFieldSources == nil {
+		resolvedFieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
 	}
+	n.setFieldMetadata(fieldIDs, resolvedFieldSources)
 	n.productionID = productionID
 	n.dynamicPrecedence = nodeSliceDynamicPrecedence(children)
 	n.childIndex = -1
 	arena.parentNodesConstructed++
 	if arena.breakdownEnabled {
-		arena.recordParentNodeConstructedBreakdown(len(children), fieldIDs, n.fieldSources, fieldSources != nil, true, trackChildErrors)
+		arena.recordParentNodeConstructedBreakdown(len(children), fieldIDs, resolvedFieldSources, fieldSources != nil, true, trackChildErrors)
 	}
 	populateParentNodeNoLinks(n, children, trackChildErrors)
 	nodeInitEquivVersion(n)
@@ -2977,8 +2977,7 @@ func cloneNodeHeaderInto(dst, src *Node, arena *nodeArena, offset *cloneOffset) 
 		dst.endPoint = offset.offsetPoint(src.endPoint)
 	}
 	dst.children = nil
-	dst.fieldIDs = nil
-	dst.fieldSources = nil
+	dst.clearFieldMetadata()
 	dst.parent = nil
 	dst.childIndex = -1
 	dst.ownerArena = arena
@@ -3004,16 +3003,36 @@ func (o *cloneOffset) offsetPoint(p Point) Point {
 }
 
 func cloneNodeFieldMetadataInto(dst, src *Node, arena *nodeArena) {
-	if n := len(src.fieldIDs); n > 0 {
-		fieldIDs := arena.allocFieldIDSlice(n)
-		copy(fieldIDs, src.fieldIDs)
-		dst.fieldIDs = fieldIDs
+	if dst == nil || src == nil {
+		return
 	}
-	if n := len(src.fieldSources); n > 0 {
-		fieldSources := arena.allocFieldSourceSlice(n)
-		copy(fieldSources, src.fieldSources)
-		dst.fieldSources = fieldSources
+	fieldIDs := cloneFieldIDsIntoArena(arena, src.fieldIDs())
+	fieldSources := cloneFieldSourcesIntoArena(arena, src.fieldSources())
+	dst.setFieldMetadata(fieldIDs, fieldSources)
+}
+
+func cloneFieldIDsIntoArena(arena *nodeArena, src []FieldID) []FieldID {
+	if src == nil {
+		return nil
 	}
+	if len(src) == 0 {
+		return []FieldID{}
+	}
+	dst := arena.allocFieldIDSlice(len(src))
+	copy(dst, src)
+	return dst
+}
+
+func cloneFieldSourcesIntoArena(arena *nodeArena, src []uint8) []uint8 {
+	if src == nil {
+		return nil
+	}
+	if len(src) == 0 {
+		return []uint8{}
+	}
+	dst := arena.allocFieldSourceSlice(len(src))
+	copy(dst, src)
+	return dst
 }
 
 type cloneMetricScope uint8

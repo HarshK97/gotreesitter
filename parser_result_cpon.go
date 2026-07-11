@@ -48,8 +48,7 @@ func normalizeCPONNullLeafChildren(root *Node, source []byte, lang *Language) {
 			return
 		}
 		n.children = nil
-		n.fieldIDs = nil
-		n.fieldSources = nil
+		n.clearFieldMetadata()
 		if n.ownerArena != nil {
 			n.ownerArena.clearFinalChildRefs(n)
 		}

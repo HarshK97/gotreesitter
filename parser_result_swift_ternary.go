@@ -134,7 +134,7 @@ func normalizeSwiftRecoveredTernaryExpressions(root *Node, source []byte, p *Par
 
 	root.symbol = newRoot.symbol
 	root.productionID = newRoot.productionID
-	root.fieldIDs = newRoot.fieldIDs
+	root.setFieldIDs(newRoot.fieldIDs())
 	root.children = cloneNodeSliceIfArena(arena, newRoot.children)
 	populateParentNode(root, root.children)
 	root.startByte = 0
@@ -198,7 +198,7 @@ func (b *swiftTernaryBuilder) rebuild(n *Node) *Node {
 		kids = append(kids, rc)
 	}
 	kids = cloneNodeSliceInArena(b.arena, kids)
-	fieldIDs := cloneFieldIDSliceInArena(b.arena, n.fieldIDs)
+	fieldIDs := cloneFieldIDSliceInArena(b.arena, n.fieldIDs())
 	node := newParentNodeInArena(b.arena, n.symbol, n.isNamed(), kids, fieldIDs, n.productionID)
 	node.setExtra(n.IsExtra())
 	// Preserve the original span but extend it to cover any child a nested

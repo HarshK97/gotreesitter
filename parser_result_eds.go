@@ -27,8 +27,7 @@ func normalizeEDSCompatibility(root *Node, source []byte, lang *Language) {
 	}
 	if changed {
 		root.children = cloneNodeSliceInArena(root.ownerArena, out)
-		root.fieldIDs = nil
-		root.fieldSources = nil
+		root.clearFieldMetadata()
 		populateParentNode(root, root.children)
 		nodeInitEquivVersion(root)
 	}
@@ -37,8 +36,7 @@ func normalizeEDSCompatibility(root *Node, source []byte, lang *Language) {
 	}
 	out = resultChildSliceForMutation(root)
 	root.children = cloneNodeSliceInArena(root.ownerArena, out)
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	root.clearFieldMetadata()
 	populateParentNode(root, root.children)
 	nodeInitEquivVersion(root)
 }
@@ -185,8 +183,7 @@ func normalizeEDSErrorLine(errNode *Node, source []byte, eqSym Symbol) bool {
 	errNode.endPoint = advancePointByBytes(errNode.startPoint, source[start:end])
 	errNode.setExtra(true)
 	errNode.children = buildEDSErrorLineChildren(errNode.ownerArena, source, start, end, eqSym)
-	errNode.fieldIDs = nil
-	errNode.fieldSources = nil
+	errNode.clearFieldMetadata()
 	populateParentNode(errNode, errNode.children)
 	nodeInitEquivVersion(errNode)
 	return true

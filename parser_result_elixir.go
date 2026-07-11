@@ -184,8 +184,9 @@ func normalizeElixirMapContentBinaryOperators(root *Node, lang *Language) {
 		originalChildren := resultChildSliceForMutation(n)
 		children := cloneNodeSliceInArena(n.ownerArena, originalChildren)
 		var fieldIDs []FieldID
-		if len(n.fieldIDs) == len(originalChildren) {
-			fieldIDs = cloneFieldIDSliceInArena(n.ownerArena, n.fieldIDs)
+		nodeFieldIDs := n.fieldIDs()
+		if len(nodeFieldIDs) == len(originalChildren) {
+			fieldIDs = cloneFieldIDSliceInArena(n.ownerArena, nodeFieldIDs)
 		}
 		wrapper := newParentNodeInArena(n.ownerArena, binaryOperatorSym, binaryOperatorNamed, children, fieldIDs, 0)
 		replaceChildRangeWithNodes(n, 0, 3, []*Node{wrapper})

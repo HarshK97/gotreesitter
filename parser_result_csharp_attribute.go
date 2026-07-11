@@ -520,11 +520,12 @@ func csharpPrependAttributeListsToDeclaration(decl *Node, attributeLists []*Node
 		children = buf
 	}
 	decl.children = children
-	if len(decl.fieldIDs) > 0 {
+	declFieldIDs := decl.fieldIDs()
+	if len(declFieldIDs) > 0 {
 		fieldIDs := make([]FieldID, len(children))
-		copy(fieldIDs[len(attributeLists):], decl.fieldIDs)
-		decl.fieldIDs = cloneFieldIDSliceInArena(arena, fieldIDs)
-		decl.fieldSources = defaultFieldSourcesInArena(arena, decl.fieldIDs)
+		copy(fieldIDs[len(attributeLists):], declFieldIDs)
+		fieldIDs = cloneFieldIDSliceInArena(arena, fieldIDs)
+		decl.setFieldMetadata(fieldIDs, defaultFieldSourcesInArena(arena, fieldIDs))
 	}
 	populateParentNode(decl, decl.children)
 	return decl

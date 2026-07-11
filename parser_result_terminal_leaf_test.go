@@ -262,7 +262,7 @@ func TestNormalizeResultTerminalLeafNodesPreservesFieldedTerminal(t *testing.T) 
 	if got, want := token.ChildCount(), 1; got != want {
 		t.Fatalf("token.ChildCount() = %d, want %d", got, want)
 	}
-	if got, want := token.fieldIDs[0], FieldID(1); got != want {
-		t.Fatalf("token.fieldIDs[0] = %d, want %d", got, want)
+	if got, want := token.fieldIDs()[0], FieldID(1); got != want {
+		t.Fatalf("token.fieldIDs()[0] = %d, want %d", got, want)
 	}
 }

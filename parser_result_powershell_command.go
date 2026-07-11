@@ -248,13 +248,13 @@ func buildPowerShellPipelineFromLine(arena *nodeArena, source []byte, lang *Lang
 		switch fieldName {
 		case "command_name":
 			ensureNodeFieldStorage(command, len(command.children))
-			command.fieldIDs[0] = FieldID(fieldIdx)
-			command.fieldSources[0] = fieldSourceDirect
+			command.fieldIDs()[0] = FieldID(fieldIdx)
+			command.fieldSources()[0] = fieldSourceDirect
 		case "command_elements":
 			if len(command.children) > 1 {
 				ensureNodeFieldStorage(command, len(command.children))
-				command.fieldIDs[1] = FieldID(fieldIdx)
-				command.fieldSources[1] = fieldSourceDirect
+				command.fieldIDs()[1] = FieldID(fieldIdx)
+				command.fieldSources()[1] = fieldSourceDirect
 			}
 		}
 	}

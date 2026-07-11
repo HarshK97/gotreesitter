@@ -123,6 +123,8 @@ type nodeArena struct {
 	compactCheckpointLeafSlabs      []compactCheckpointLeafSlab
 	compactCheckpointLeafSlabCursor int
 	finalChildSidecars              []finalChildSidecar
+	nodeFieldMetadataSlabs          []nodeFieldMetadataSlab
+	nodeFieldMetadataSlabCursor     int
 
 	childSlabs                         []childSliceSlab
 	fieldSlabs                         []fieldSliceSlab
@@ -529,6 +531,7 @@ func (a *nodeArena) reset() {
 	a.resetRawShapeChildSlabs()
 	a.resetFinalChildSidecars()
 	a.resetCompactCheckpointLeafSlabs()
+	a.resetNodeFieldMetadataSlabs()
 	a.resetChildSlabs()
 	a.resetCounters()
 	a.resetFieldSlabs()
@@ -1531,9 +1534,9 @@ func (a *nodeArena) allocFieldIDSlice(n int) []FieldID {
 		slab.used += n
 		a.fieldSlabCursor = i
 		// Cap at len: callers (e.g. parser_result_scala_compilation.go) reslice
-		// then append on parent.fieldIDs. Without the 3-index expression the
-		// spare slab capacity would let those appends silently overwrite the
-		// next parent's fieldIDs. Same defect class as allocNodeSlice.
+		// then append on a parent's field-ID slice. Without the 3-index
+		// expression the append can silently overwrite the next parent's field
+		// IDs. Same defect class as allocNodeSlice.
 		out := slab.data[start:slab.used:slab.used]
 		clear(out)
 		return out
@@ -1829,6 +1832,7 @@ func (a *nodeArena) recomputeAllocatedBytes() {
 		return
 	}
 	total := a.nodeStructBytesAllocated() +
+		a.nodeFieldMetadataBytesAllocated() +
 		a.noTreeNodeBytesAllocated() +
 		a.compactFullLeafBytesAllocated() +
 		a.pendingParentBytesAllocated() +
@@ -2186,6 +2190,7 @@ func (a *nodeArena) collectArenaBreakdown() *ArenaBreakdown {
 	}
 	breakdown := &ArenaBreakdown{
 		NodeStructBytesAllocated:            a.nodeStructBytesAllocated(),
+		NodeFieldMetadataBytesAllocated:     a.nodeFieldMetadataBytesAllocated(),
 		NoTreeNodeBytesAllocated:            a.noTreeNodeBytesAllocated(),
 		CompactFullLeafBytesAllocated:       a.compactFullLeafBytesAllocated(),
 		PendingParentBytesAllocated:         a.pendingParentBytesAllocated(),

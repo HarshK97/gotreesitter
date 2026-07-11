@@ -178,10 +178,11 @@ func gssNodeShallowMergeHash(h uint64, n *Node) uint64 {
 		h *= gssHashPrime
 		return h
 	}
-	h ^= uint64(len(n.fieldIDs))
+	fieldIDs := n.fieldIDs()
+	h ^= uint64(len(fieldIDs))
 	h *= gssHashPrime
-	for i := range n.fieldIDs {
-		h ^= uint64(n.fieldIDs[i])
+	for _, fieldID := range fieldIDs {
+		h ^= uint64(fieldID)
 		h *= gssHashPrime
 	}
 	for i := range n.children {
@@ -199,7 +200,7 @@ func gssNodeShallowMergeHash(h uint64, n *Node) uint64 {
 		h *= gssHashPrime
 		h ^= uint64(nodeChildCountNoMaterialize(child))
 		h *= gssHashPrime
-		h ^= uint64(len(child.fieldIDs))
+		h ^= uint64(len(child.fieldIDs()))
 		h *= gssHashPrime
 		h ^= uint64(uint32(child.dynamicPrecedence))
 		h *= gssHashPrime

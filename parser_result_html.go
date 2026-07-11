@@ -50,8 +50,7 @@ func normalizeHTMLRecoveredNestedCustomTags(root *Node, lang *Language) {
 	outerChildren = cloneNodeSliceIfArena(root.ownerArena, outerChildren)
 	outer := newParentNodeInArena(root.ownerArena, elementSym, symbolIsNamed(lang, elementSym), outerChildren, nil, 0)
 	root.children = cloneNodeSliceIfArena(root.ownerArena, []*Node{outer})
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	root.clearFieldMetadata()
 	retagResultRoot(root, documentSym, symbolIsNamed(lang, documentSym))
 	root.setHasError(outer.HasError())
 }

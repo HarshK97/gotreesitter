@@ -419,7 +419,7 @@ func TestNormalizeTypeScriptCompatibilityCandidatesApplyIndexedDirectRewrites(t 
 	identifier.endPoint = Point{Column: 4}
 	assignment := newLeafNodeInArena(arena, 14, true, 5, 6, Point{Column: 5}, Point{Column: 6})
 	enumBody := newParentNodeInArena(arena, 13, true, []*Node{assignment}, []FieldID{1}, 0)
-	enumBody.fieldSources = []uint8{fieldSourceDirect}
+	enumBody.setFieldSources([]uint8{fieldSourceDirect})
 	root := newParentNodeInArena(arena, 1, true, []*Node{identifier, enumBody}, nil, 0)
 
 	stats := normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang)
@@ -435,10 +435,10 @@ func TestNormalizeTypeScriptCompatibilityCandidatesApplyIndexedDirectRewrites(t 
 	if got := identifier.ChildCount(); got != 0 {
 		t.Fatalf("identifier child count after candidate compatibility = %d, want 0", got)
 	}
-	if got := enumBody.fieldIDs[0]; got != 0 {
+	if got := enumBody.fieldIDs()[0]; got != 0 {
 		t.Fatalf("enum_body fieldIDs[0] = %d, want cleared", got)
 	}
-	if got := enumBody.fieldSources[0]; got != fieldSourceNone {
+	if got := enumBody.fieldSources()[0]; got != fieldSourceNone {
 		t.Fatalf("enum_body fieldSources[0] = %d, want none", got)
 	}
 }

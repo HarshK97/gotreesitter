@@ -52,8 +52,7 @@ func normalizeNinjaRecoveredMetadataManifest(root *Node, source []byte, lang *La
 	}
 	next := []*Node{first, children[2], last}
 	root.children = cloneNodeSliceInArena(root.ownerArena, next)
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	root.clearFieldMetadata()
 	root.setHasError(true)
 	populateParentNode(root, root.children)
 	nodeInitEquivVersion(root)

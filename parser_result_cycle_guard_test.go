@@ -37,17 +37,19 @@ func TestStripResultTreeSelfCycles(t *testing.T) {
 	y := &Node{}
 	kept := &Node{}
 	y.children = []*Node{y, kept}
-	y.fieldIDs = []FieldID{1, 2}
-	y.fieldSources = []uint8{fieldSourceDirect, fieldSourceInherited}
+	y.setFieldMetadata(
+		[]FieldID{1, 2},
+		[]uint8{fieldSourceDirect, fieldSourceInherited},
+	)
 	stripResultTreeSelfCycles(y)
 	if len(y.children) != 1 || y.children[0] != kept {
 		t.Fatalf("children after cycle strip = %v, want only kept child", y.children)
 	}
-	if len(y.fieldIDs) != 1 || y.fieldIDs[0] != 2 {
-		t.Fatalf("fieldIDs after cycle strip = %v, want [2]", y.fieldIDs)
+	if len(y.fieldIDs()) != 1 || y.fieldIDs()[0] != 2 {
+		t.Fatalf("fieldIDs after cycle strip = %v, want [2]", y.fieldIDs())
 	}
-	if len(y.fieldSources) != 1 || y.fieldSources[0] != fieldSourceInherited {
-		t.Fatalf("fieldSources after cycle strip = %v, want inherited source", y.fieldSources)
+	if len(y.fieldSources()) != 1 || y.fieldSources()[0] != fieldSourceInherited {
+		t.Fatalf("fieldSources after cycle strip = %v, want inherited source", y.fieldSources())
 	}
 }
 

@@ -37,8 +37,7 @@ func normalizeSQLRecoveredSelectRoot(root *Node, lang *Language) {
 	selectClause := newParentNodeInArena(root.ownerArena, selectClauseSym, symbolIsNamed(lang, selectClauseSym), []*Node{root.children[0], selectClauseBody}, nil, 0)
 	selectStatement := newParentNodeInArena(root.ownerArena, selectStmtSym, symbolIsNamed(lang, selectStmtSym), []*Node{selectClause}, nil, 0)
 	root.children = cloneNodeSliceIfArena(root.ownerArena, []*Node{selectStatement})
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	root.clearFieldMetadata()
 	root.setHasError(selectStatement.HasError())
 }
 

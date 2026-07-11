@@ -86,8 +86,8 @@ func TestBuildResultFoldExtrasPreservesFieldMappings(t *testing.T) {
 	if fieldChild != valueChild {
 		t.Fatal("field mapping shifted after folding extras")
 	}
-	if len(root.fieldIDs) != 3 || root.fieldIDs[1] != 1 {
-		t.Fatalf("fieldIDs not re-aligned after folding extras: %#v", root.fieldIDs)
+	if len(root.fieldIDs()) != 3 || root.fieldIDs()[1] != 1 {
+		t.Fatalf("fieldIDs not re-aligned after folding extras: %#v", root.fieldIDs())
 	}
 	if leadingExtra.Parent() != root || trailingExtra.Parent() != root {
 		t.Fatal("extra child parent pointers were not updated during fold")
@@ -158,7 +158,7 @@ func TestBuildReduceChildrenInheritedFieldOverridesInheritedInnerFieldOnFlattene
 	withTok := newLeafNodeInArena(arena, 3, false, 13, 17, Point{Row: 0, Column: 13}, Point{Row: 0, Column: 17})
 	right := newLeafNodeInArena(arena, 2, true, 18, 25, Point{Row: 0, Column: 18}, Point{Row: 0, Column: 25})
 	hidden := newParentNodeInArena(arena, 1, false, []*Node{left, withTok, right}, []FieldID{2, 2, 2}, 0)
-	hidden.fieldSources = []uint8{fieldSourceInherited, fieldSourceInherited, fieldSourceInherited}
+	hidden.setFieldSources([]uint8{fieldSourceInherited, fieldSourceInherited, fieldSourceInherited})
 
 	children, fieldIDs, _ := parser.buildReduceChildren([]stackEntry{newStackEntryNode(0, hidden)}, 0, 1, 1, 4, 0, arena)
 	if got, want := len(children), 3; got != want {
@@ -197,7 +197,7 @@ func TestBuildReduceChildrenDirectFieldOverridesSingleIndirectNamedChild(t *test
 	arena := newNodeArena(arenaClassFull)
 	typ := newLeafNodeInArena(arena, 2, true, 0, 9, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 9})
 	hidden := newParentNodeInArena(arena, 1, false, []*Node{typ}, []FieldID{2}, 0)
-	hidden.fieldSources = []uint8{fieldSourceInherited}
+	hidden.setFieldSources([]uint8{fieldSourceInherited})
 
 	children, fieldIDs, _ := parser.buildReduceChildren([]stackEntry{newStackEntryNode(0, hidden)}, 0, 1, 1, 4, 0, arena)
 	if got, want := len(children), 1; got != want {
@@ -322,7 +322,7 @@ func TestBuildReduceChildrenDirectFieldPrefersNamedTargetsOnFlattenedSpan(t *tes
 	dot1 := newLeafNodeInArena(arena, 2, false, 8, 9, Point{Row: 0, Column: 8}, Point{Row: 0, Column: 9})
 	url := newLeafNodeInArena(arena, 3, true, 9, 12, Point{Row: 0, Column: 9}, Point{Row: 0, Column: 12})
 	hidden := newParentNodeInArena(arena, 1, false, []*Node{dot0, net, dot1, url}, []FieldID{0, 1, 0, 1}, 0)
-	hidden.fieldSources = []uint8{fieldSourceNone, fieldSourceDirect, fieldSourceNone, fieldSourceDirect}
+	hidden.setFieldSources([]uint8{fieldSourceNone, fieldSourceDirect, fieldSourceNone, fieldSourceDirect})
 
 	children, fieldIDs, _ := parser.buildReduceChildren([]stackEntry{newStackEntryNode(0, hidden)}, 0, 1, 1, 4, 0, arena)
 	if got, want := len(children), 4; got != want {
@@ -373,9 +373,9 @@ func TestBuildReduceChildrenRepeatedDirectFieldOnHiddenPathLeavesAnonymousGapUnf
 	url := newLeafNodeInArena(arena, 3, true, 9, 12, Point{Row: 0, Column: 9}, Point{Row: 0, Column: 12})
 
 	tail := newParentNodeInArena(arena, 1, false, []*Node{net, dot1, url}, []FieldID{1, 0, 1}, 0)
-	tail.fieldSources = []uint8{fieldSourceDirect, fieldSourceNone, fieldSourceDirect}
+	tail.setFieldSources([]uint8{fieldSourceDirect, fieldSourceNone, fieldSourceDirect})
 	outer := newParentNodeInArena(arena, 1, false, []*Node{java, dot0, tail}, []FieldID{1, 0, 1}, 0)
-	outer.fieldSources = []uint8{fieldSourceDirect, fieldSourceNone, fieldSourceDirect}
+	outer.setFieldSources([]uint8{fieldSourceDirect, fieldSourceNone, fieldSourceDirect})
 
 	children, fieldIDs, _ := parser.buildReduceChildren([]stackEntry{newStackEntryNode(0, outer)}, 0, 1, 1, 4, 0, arena)
 	if got, want := len(children), 5; got != want {
@@ -425,7 +425,7 @@ func TestBuildReduceChildrenInheritedFieldYieldsToDirectTargetOnHiddenSpan(t *te
 	retType := newLeafNodeInArena(arena, 6, true, 20, 23, Point{Row: 0, Column: 20}, Point{Row: 0, Column: 23})
 
 	hidden := newParentNodeInArena(arena, 1, false, []*Node{modifiers, defTok, name, colon, retType}, []FieldID{1, 0, 2, 0, 1}, 0)
-	hidden.fieldSources = []uint8{fieldSourceInherited, fieldSourceNone, fieldSourceDirect, fieldSourceNone, fieldSourceDirect}
+	hidden.setFieldSources([]uint8{fieldSourceInherited, fieldSourceNone, fieldSourceDirect, fieldSourceNone, fieldSourceDirect})
 
 	children := arena.allocNodeSlice(5)
 	fieldIDs := arena.allocFieldIDSlice(5)
@@ -504,7 +504,7 @@ func TestAppendFlattenedHiddenChildrenRepeatedDirectFieldSkipsCommaSeparator(t *
 	comma := newLeafNodeInArena(arena, 3, false, 1, 2, Point{Row: 0, Column: 1}, Point{Row: 0, Column: 2})
 	right := newLeafNodeInArena(arena, 2, true, 3, 4, Point{Row: 0, Column: 3}, Point{Row: 0, Column: 4})
 	hidden := newParentNodeInArena(arena, 1, false, []*Node{left, comma, right}, []FieldID{1, 0, 1}, 0)
-	hidden.fieldSources = []uint8{fieldSourceDirect, fieldSourceNone, fieldSourceDirect}
+	hidden.setFieldSources([]uint8{fieldSourceDirect, fieldSourceNone, fieldSourceDirect})
 
 	children := arena.allocNodeSlice(3)
 	fieldIDs := arena.allocFieldIDSlice(3)
@@ -618,7 +618,7 @@ func TestBuildReduceChildrenInheritedFieldSkipsProjectionWhenFlattenedSpanHasDir
 	name := newLeafNodeInArena(arena, 4, true, 14, 15, Point{Row: 0, Column: 14}, Point{Row: 0, Column: 15})
 	params := newLeafNodeInArena(arena, 5, true, 15, 21, Point{Row: 0, Column: 15}, Point{Row: 0, Column: 21})
 	hidden := newParentNodeInArena(arena, 1, false, []*Node{modifier, typ, name, params}, []FieldID{0, 1, 2, 3}, 0)
-	hidden.fieldSources = []uint8{fieldSourceNone, fieldSourceDirect, fieldSourceDirect, fieldSourceDirect}
+	hidden.setFieldSources([]uint8{fieldSourceNone, fieldSourceDirect, fieldSourceDirect, fieldSourceDirect})
 
 	children, fieldIDs, _ := parser.buildReduceChildren([]stackEntry{newStackEntryNode(0, hidden)}, 0, 1, 1, 6, 0, arena)
 	if got, want := len(children), 4; got != want {
@@ -665,7 +665,7 @@ func TestBuildReduceChildrenInheritedFieldSkipsProjectionWhenDescendantHasDirect
 	dot := newLeafNodeInArena(arena, 4, false, 8, 9, Point{Row: 0, Column: 8}, Point{Row: 0, Column: 9})
 	exprName := newLeafNodeInArena(arena, 3, true, 9, 11, Point{Row: 0, Column: 9}, Point{Row: 0, Column: 11})
 	access := newParentNodeInArena(arena, 5, true, []*Node{exprBase, dot, exprName}, []FieldID{2, 0, 3}, 0)
-	access.fieldSources = []uint8{fieldSourceDirect, fieldSourceNone, fieldSourceDirect}
+	access.setFieldSources([]uint8{fieldSourceDirect, fieldSourceNone, fieldSourceDirect})
 	hidden := newParentNodeInArena(arena, 1, false, []*Node{joinTok, ident, access}, nil, 0)
 
 	children, fieldIDs, _ := parser.buildReduceChildren([]stackEntry{newStackEntryNode(0, hidden)}, 0, 1, 1, 6, 0, arena)
@@ -708,7 +708,7 @@ func TestBuildReduceChildrenInheritedFieldProjectsSingleHiddenChildWhenDescendan
 	ident := newLeafNodeInArena(arena, 3, true, 0, 7, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 7})
 	callArgs := newLeafNodeInArena(arena, 4, true, 7, 10, Point{Row: 0, Column: 7}, Point{Row: 0, Column: 10})
 	call := newParentNodeInArena(arena, 2, true, []*Node{ident, callArgs}, []FieldID{1, 0}, 0)
-	call.fieldSources = []uint8{fieldSourceDirect, fieldSourceNone}
+	call.setFieldSources([]uint8{fieldSourceDirect, fieldSourceNone})
 	outerArgs := newLeafNodeInArena(arena, 4, true, 10, 13, Point{Row: 0, Column: 10}, Point{Row: 0, Column: 13})
 	hidden := newParentNodeInArena(arena, 1, false, []*Node{call, outerArgs}, nil, 0)
 
@@ -810,7 +810,7 @@ func TestBuildReduceChildrenCarriesHiddenChildFieldsThroughFieldlessParent(t *te
 	arena := newNodeArena(arenaClassFull)
 	fn := newLeafNodeInArena(arena, 3, true, 0, 8, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 8})
 	inner := newParentNodeInArena(arena, 1, false, []*Node{fn}, []FieldID{1}, 0)
-	inner.fieldSources = []uint8{fieldSourceDirect}
+	inner.setFieldSources([]uint8{fieldSourceDirect})
 	outer := newParentNodeInArena(arena, 2, false, []*Node{inner}, nil, 0)
 
 	children, fieldIDs, fieldSources := parser.buildReduceChildren([]stackEntry{newStackEntryNode(0, outer)}, 0, 1, 1, 4, 0, arena)
@@ -880,7 +880,7 @@ func TestBuildReduceChildrenDirectFieldWinsOverInheritedEntriesOnSameChild(t *te
 	params := newLeafNodeInArena(arena, 3, true, 1, 3, Point{Row: 0, Column: 1}, Point{Row: 0, Column: 3})
 	body := newLeafNodeInArena(arena, 4, true, 4, 7, Point{Row: 0, Column: 4}, Point{Row: 0, Column: 7})
 	decl := newParentNodeInArena(arena, 1, true, []*Node{name, params, body}, []FieldID{3, 4, 1}, 0)
-	decl.fieldSources = []uint8{fieldSourceDirect, fieldSourceDirect, fieldSourceDirect}
+	decl.setFieldSources([]uint8{fieldSourceDirect, fieldSourceDirect, fieldSourceDirect})
 
 	children, fieldIDs, fieldSources := parser.buildReduceChildren([]stackEntry{newStackEntryNode(0, decl)}, 0, 1, 1, 5, 0, arena)
 	if got, want := len(children), 1; got != want {
@@ -963,7 +963,7 @@ func TestBuildReduceChildrenDartHiddenConstructorParamDoesNotReceiveNameField(t 
 	name := newLeafNodeInArena(arena, 6, true, 5, 6, Point{Column: 5}, Point{Column: 6})
 	constructorParam := newParentNodeInArena(arena, 3, true, []*Node{thisLeaf, dot, name}, nil, 0)
 	hidden := newParentNodeInArena(arena, 2, false, []*Node{constructorParam}, []FieldID{1}, 0)
-	hidden.fieldSources = []uint8{fieldSourceDirect}
+	hidden.setFieldSources([]uint8{fieldSourceDirect})
 
 	children, fieldIDs, fieldSources := parser.buildReduceChildren([]stackEntry{newStackEntryNode(0, hidden)}, 0, 1, 1, 1, 0, arena)
 	if got, want := len(children), 1; got != want {
@@ -1557,10 +1557,10 @@ func TestFieldIDsAlignAfterExtrasFold(t *testing.T) {
 	root.children = merged
 
 	// Pad fieldIDs to match: extras get 0.
-	if len(root.fieldIDs) > 0 {
-		padded := make([]FieldID, leadingCount+len(root.fieldIDs))
-		copy(padded[leadingCount:], root.fieldIDs)
-		root.fieldIDs = padded
+	if len(root.fieldIDs()) > 0 {
+		padded := make([]FieldID, leadingCount+len(root.fieldIDs()))
+		copy(padded[leadingCount:], root.fieldIDs())
+		root.setFieldIDs(padded)
 	}
 
 	// Verify field lookups still return correct nodes.

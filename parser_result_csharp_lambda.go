@@ -51,7 +51,7 @@ func csharpSplitScopedLambdaStatementChildren(block *Node, source []byte, lang *
 	}
 	var rebuilt []*Node
 	var rebuiltFields []FieldID
-	hadFields := len(block.fieldIDs) > 0
+	hadFields := len(block.fieldIDs()) > 0
 	changed := false
 	for i, child := range block.children {
 		replacements, ok := csharpSplitScopedLambdaStatementChild(child, source, lang, block.ownerArena)
@@ -77,11 +77,10 @@ func csharpSplitScopedLambdaStatementChildren(block *Node, source []byte, lang *
 	copy(children, rebuilt)
 	block.children = children
 	if hadFields {
-		block.fieldIDs = cloneFieldIDSliceInArena(block.ownerArena, rebuiltFields)
-		block.fieldSources = defaultFieldSourcesInArena(block.ownerArena, block.fieldIDs)
+		fieldIDs := cloneFieldIDSliceInArena(block.ownerArena, rebuiltFields)
+		block.setFieldMetadata(fieldIDs, defaultFieldSourcesInArena(block.ownerArena, fieldIDs))
 	} else {
-		block.fieldIDs = nil
-		block.fieldSources = nil
+		block.clearFieldMetadata()
 	}
 	block.setHasError(false)
 	populateParentNode(block, block.children)
@@ -118,10 +117,11 @@ func csharpSplitScopedLambdaStatementChild(child *Node, source []byte, lang *Lan
 }
 
 func csharpFieldIDAt(n *Node, index int) FieldID {
-	if n == nil || index < 0 || index >= len(n.fieldIDs) {
+	fieldIDs := n.fieldIDs()
+	if index < 0 || index >= len(fieldIDs) {
 		return 0
 	}
-	return n.fieldIDs[index]
+	return fieldIDs[index]
 }
 
 func csharpRecoverScopedLambdaBlock(block *Node, source []byte, p *Parser) (*Node, bool) {

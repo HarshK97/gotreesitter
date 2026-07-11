@@ -148,11 +148,11 @@ func TestTransientChildScratchMaterializesFieldedArenaParent(t *testing.T) {
 	if len(parent.children) != 2 || parent.children[0] != first || parent.children[1] != second {
 		t.Fatalf("materialized children = %#v, want [%p %p]", parent.children, first, second)
 	}
-	if len(parent.fieldIDs) != 2 || parent.fieldIDs[0] != 7 {
-		t.Fatalf("field IDs = %#v, want first field 7", parent.fieldIDs)
+	if len(parent.fieldIDs()) != 2 || parent.fieldIDs()[0] != 7 {
+		t.Fatalf("field IDs = %#v, want first field 7", parent.fieldIDs())
 	}
-	if len(parent.fieldSources) != 2 || parent.fieldSources[0] != fieldSourceDirect {
-		t.Fatalf("field sources = %#v, want first direct", parent.fieldSources)
+	if len(parent.fieldSources()) != 2 || parent.fieldSources()[0] != fieldSourceDirect {
+		t.Fatalf("field sources = %#v, want first direct", parent.fieldSources())
 	}
 
 	scratch.reset()

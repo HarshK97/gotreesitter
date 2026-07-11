@@ -138,7 +138,7 @@ func normalizeTypeScriptCompatibility(root *Node, source []byte, lang *Language)
 				normalizeTypeScriptRecoveredMemberModifiers(n, &ctx)
 			}
 		case ctx.enumBodySym:
-			if ctx.canClearEnumBodyFields && len(n.fieldIDs) > 0 {
+			if ctx.canClearEnumBodyFields && len(n.fieldIDs()) > 0 {
 				normalizeTypeScriptEnumBodyCompatibility(n, &ctx)
 			}
 		}
@@ -629,7 +629,7 @@ func normalizeTypeScriptCompatibilityWithStats(root *Node, source []byte, lang *
 				}
 			}
 		case ctx.enumBodySym:
-			if ctx.canClearEnumBodyFields && len(n.fieldIDs) > 0 {
+			if ctx.canClearEnumBodyFields && len(n.fieldIDs()) > 0 {
 				stats.enumBodies.nodesVisited++
 				beforeCleared := typeScriptEnumBodyClearedFieldCount(n, &ctx)
 				normalizeTypeScriptEnumBodyCompatibility(n, &ctx)
@@ -772,37 +772,40 @@ func typeScriptCompatibilityChildNeedsErrorRefresh(child *Node, ctx *typeScriptN
 }
 
 func normalizeTypeScriptEnumBodyCompatibility(n *Node, ctx *typeScriptNormalizationContext) {
-	if n == nil || ctx == nil || !ctx.canClearEnumBodyFields || n.symbol != ctx.enumBodySym || len(n.fieldIDs) == 0 {
+	if n == nil || ctx == nil || !ctx.canClearEnumBodyFields || n.symbol != ctx.enumBodySym || len(n.fieldIDs()) == 0 {
 		return
 	}
+	fieldIDs := n.fieldIDs()
+	fieldSources := n.fieldSources()
 	limit := len(n.children)
-	if len(n.fieldIDs) < limit {
-		limit = len(n.fieldIDs)
+	if len(fieldIDs) < limit {
+		limit = len(fieldIDs)
 	}
 	for i := 0; i < limit; i++ {
 		child := n.children[i]
 		if child == nil || child.symbol != ctx.enumAssignmentSym {
 			continue
 		}
-		n.fieldIDs[i] = 0
-		if len(n.fieldSources) > i {
-			n.fieldSources[i] = fieldSourceNone
+		fieldIDs[i] = 0
+		if len(fieldSources) > i {
+			fieldSources[i] = fieldSourceNone
 		}
 	}
 }
 
 func typeScriptEnumBodyClearedFieldCount(n *Node, ctx *typeScriptNormalizationContext) int {
-	if n == nil || ctx == nil || len(n.fieldIDs) == 0 {
+	if n == nil || ctx == nil || len(n.fieldIDs()) == 0 {
 		return 0
 	}
+	fieldIDs := n.fieldIDs()
 	limit := len(n.children)
-	if len(n.fieldIDs) < limit {
-		limit = len(n.fieldIDs)
+	if len(fieldIDs) < limit {
+		limit = len(fieldIDs)
 	}
 	cleared := 0
 	for i := 0; i < limit; i++ {
 		child := n.children[i]
-		if child != nil && child.symbol == ctx.enumAssignmentSym && n.fieldIDs[i] == 0 {
+		if child != nil && child.symbol == ctx.enumAssignmentSym && fieldIDs[i] == 0 {
 			cleared++
 		}
 	}
@@ -810,16 +813,17 @@ func typeScriptEnumBodyClearedFieldCount(n *Node, ctx *typeScriptNormalizationCo
 }
 
 func typeScriptEnumBodyHasUnclearedAssignmentFields(n *Node, ctx *typeScriptNormalizationContext) bool {
-	if n == nil || ctx == nil || !ctx.canClearEnumBodyFields || n.symbol != ctx.enumBodySym || len(n.fieldIDs) == 0 {
+	if n == nil || ctx == nil || !ctx.canClearEnumBodyFields || n.symbol != ctx.enumBodySym || len(n.fieldIDs()) == 0 {
 		return false
 	}
+	fieldIDs := n.fieldIDs()
 	limit := len(n.children)
-	if len(n.fieldIDs) < limit {
-		limit = len(n.fieldIDs)
+	if len(fieldIDs) < limit {
+		limit = len(fieldIDs)
 	}
 	for i := 0; i < limit; i++ {
 		child := n.children[i]
-		if child != nil && child.symbol == ctx.enumAssignmentSym && n.fieldIDs[i] != 0 {
+		if child != nil && child.symbol == ctx.enumAssignmentSym && fieldIDs[i] != 0 {
 			return true
 		}
 	}
@@ -1022,8 +1026,7 @@ func normalizeTypeScriptIdentifierKeywordAliases(node *Node, ctx *typeScriptNorm
 		return
 	}
 	node.children = nil
-	node.fieldIDs = nil
-	node.fieldSources = nil
+	node.clearFieldMetadata()
 }
 
 func normalizeTypeScriptImportKeywordNamedness(node *Node, ctx *typeScriptNormalizationContext) {
@@ -1385,7 +1388,6 @@ func buildTypeScriptRecoveredCallExpression(arena *nodeArena, ctx *typeScriptNor
 		}
 	}
 	call := newParentNodeInArena(arena, ctx.callSym, ctx.callNamed, children, fieldIDs, 0)
-	call.fieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
 	return call
 }
 
@@ -2101,8 +2103,7 @@ func typeScriptAssignMemberFields(node *Node, ctx *typeScriptNormalizationContex
 		return
 	}
 	if ctx.nameFieldID == 0 {
-		node.fieldIDs = nil
-		node.fieldSources = nil
+		node.clearFieldMetadata()
 		return
 	}
 	var fieldIDs []FieldID
@@ -2140,8 +2141,7 @@ func typeScriptAssignMemberFields(node *Node, ctx *typeScriptNormalizationContex
 			}
 		}
 	}
-	node.fieldIDs = fieldIDs
-	node.fieldSources = defaultFieldSourcesInArena(node.ownerArena, fieldIDs)
+	node.setFieldMetadata(fieldIDs, defaultFieldSourcesInArena(node.ownerArena, fieldIDs))
 }
 
 func scanTypeScriptMemberPrefixTokens(source []byte, startByte, endByte uint32, startPoint Point) ([]typeScriptMemberToken, bool) {
@@ -2276,20 +2276,19 @@ func rewriteTypeScriptGenericArrowTypeAssertion(node *Node, ctx *typeScriptNorma
 	copy(children[1:], arrow.children)
 
 	var fieldIDs []FieldID
-	if ctx.typeParametersFieldID != 0 || len(arrow.fieldIDs) > 0 {
+	if ctx.typeParametersFieldID != 0 || len(arrow.fieldIDs()) > 0 {
 		if arena != nil {
 			fieldIDs = arena.allocFieldIDSlice(len(children))
 		} else {
 			fieldIDs = make([]FieldID, len(children))
 		}
 		fieldIDs[0] = ctx.typeParametersFieldID
-		copy(fieldIDs[1:], arrow.fieldIDs)
+		copy(fieldIDs[1:], arrow.fieldIDs())
 	}
 
 	rewritten := cloneNodeInArena(arena, arrow)
 	rewritten.children = children
-	rewritten.fieldIDs = fieldIDs
-	rewritten.fieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
+	rewritten.setFieldMetadata(fieldIDs, defaultFieldSourcesInArena(arena, fieldIDs))
 	populateParentNode(rewritten, rewritten.children)
 	return rewritten
 }
@@ -2321,7 +2320,6 @@ func convertTypeScriptTypeArgumentsToParameters(typeArgs *Node, ctx *typeScriptN
 			fieldIDs[0] = ctx.nameFieldID
 		}
 		param := newParentNodeInArena(arena, ctx.typeParameterSym, ctx.typeParameterNamed, paramChildren, fieldIDs, child.productionID)
-		param.fieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
 		children[i] = param
 		convertedNamed++
 	}
@@ -2355,12 +2353,12 @@ func rewriteTypeScriptClassExpressionStatement(node *Node, ctx *typeScriptNormal
 		return nil
 	}
 	children := cloneNodeSliceInArena(classNode.ownerArena, classNode.children)
-	fieldIDs := cloneFieldIDSliceInArena(classNode.ownerArena, classNode.fieldIDs)
-	decl := newParentNodeInArena(classNode.ownerArena, ctx.classDeclarationSym, ctx.classDeclarationNamed, children, fieldIDs, classNode.productionID)
-	decl.fieldSources = cloneFieldSourceSliceInArena(classNode.ownerArena, classNode.fieldSources)
-	if len(decl.fieldSources) == 0 {
-		decl.fieldSources = defaultFieldSourcesInArena(classNode.ownerArena, fieldIDs)
+	fieldIDs := cloneFieldIDSliceInArena(classNode.ownerArena, classNode.fieldIDs())
+	fieldSources := cloneFieldSourceSliceInArena(classNode.ownerArena, classNode.fieldSources())
+	if len(fieldSources) == 0 {
+		fieldSources = defaultFieldSourcesInArena(classNode.ownerArena, fieldIDs)
 	}
+	decl := newParentNodeInArenaWithFieldSources(classNode.ownerArena, ctx.classDeclarationSym, ctx.classDeclarationNamed, children, fieldIDs, fieldSources, classNode.productionID)
 	return decl
 }
 
@@ -2372,7 +2370,7 @@ func typeScriptClassExpressionHasName(node *Node, ctx *typeScriptNormalizationCo
 		if child == nil {
 			continue
 		}
-		if ctx.nameFieldID != 0 && i < len(node.fieldIDs) && node.fieldIDs[i] == ctx.nameFieldID {
+		if ctx.nameFieldID != 0 && i < len(node.fieldIDs()) && node.fieldIDs()[i] == ctx.nameFieldID {
 			return child.symbol == ctx.typeIdentifierSym && child.endByte > child.startByte
 		}
 		if child.symbol == ctx.typeIdentifierSym && child.endByte > child.startByte {
@@ -2446,7 +2444,6 @@ func rewriteTypeScriptPredefinedGenericCall(node *Node, ctx *typeScriptNormaliza
 		fieldIDs[2] = ctx.argumentsFieldID
 	}
 	call := newParentNodeInArena(arena, ctx.callSym, ctx.callNamed, callChildren, fieldIDs, node.productionID)
-	call.fieldSources = defaultFieldSourcesInArena(arena, fieldIDs)
 	return call
 }
 
@@ -2601,7 +2598,6 @@ func rewriteTypeScriptInstantiatedCall(node *Node, ctx *typeScriptNormalizationC
 		fieldIDs[2] = ctx.argumentsFieldID
 	}
 	call := newParentNodeInArena(node.ownerArena, ctx.callSym, ctx.callNamed, children, fieldIDs, node.productionID)
-	call.fieldSources = defaultFieldSourcesInArena(node.ownerArena, fieldIDs)
 	return call
 }
 

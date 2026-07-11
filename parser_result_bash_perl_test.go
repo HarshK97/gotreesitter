@@ -61,10 +61,10 @@ func TestNormalizeBashGeneratedCommandAssignmentsRewritesAssignmentShapedCommand
 	if got, want := value.children[2].Text(source), ".zip"; got != want {
 		t.Fatalf("value suffix = %q, want %q", got, want)
 	}
-	if got, want := command.fieldIDs[0], FieldID(1); got != want {
+	if got, want := command.fieldIDs()[0], FieldID(1); got != want {
 		t.Fatalf("name field = %d, want %d", got, want)
 	}
-	if got, want := command.fieldIDs[1], FieldID(2); got != want {
+	if got, want := command.fieldIDs()[1], FieldID(2); got != want {
 		t.Fatalf("value field = %d, want %d", got, want)
 	}
 }
@@ -166,11 +166,11 @@ func TestNormalizeBashProgramVariableAssignmentsAssignsIfConditionField(t *testi
 
 	normalizeBashProgramVariableAssignments(root, lang)
 
-	if got, want := ifStmt.fieldIDs[1], FieldID(1); got != want {
-		t.Fatalf("ifStmt.fieldIDs[1] = %d, want %d", got, want)
+	if got, want := ifStmt.fieldIDs()[1], FieldID(1); got != want {
+		t.Fatalf("ifStmt.fieldIDs()[1] = %d, want %d", got, want)
 	}
-	if got, want := ifStmt.fieldSources[1], fieldSourceDirect; got != want {
-		t.Fatalf("ifStmt.fieldSources[1] = %v, want %v", got, want)
+	if got, want := ifStmt.fieldSources()[1], fieldSourceDirect; got != want {
+		t.Fatalf("ifStmt.fieldSources()[1] = %v, want %v", got, want)
 	}
 }
 
@@ -202,11 +202,11 @@ func TestNormalizeBashProgramVariableAssignmentsExtendsIfConditionFieldToThenBou
 
 	normalizeBashProgramVariableAssignments(root, lang)
 
-	if got, want := ifStmt.fieldIDs[1], FieldID(1); got != want {
-		t.Fatalf("ifStmt.fieldIDs[1] = %d, want %d", got, want)
+	if got, want := ifStmt.fieldIDs()[1], FieldID(1); got != want {
+		t.Fatalf("ifStmt.fieldIDs()[1] = %d, want %d", got, want)
 	}
-	if got, want := ifStmt.fieldIDs[2], FieldID(1); got != want {
-		t.Fatalf("ifStmt.fieldIDs[2] = %d, want %d", got, want)
+	if got, want := ifStmt.fieldIDs()[2], FieldID(1); got != want {
+		t.Fatalf("ifStmt.fieldIDs()[2] = %d, want %d", got, want)
 	}
 }
 

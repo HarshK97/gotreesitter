@@ -161,15 +161,15 @@ func normalizeCSharpSurfaceCompatibility(root *Node, source []byte, lang *Langua
 			}
 			return
 		}
-		if hasLambda && hasIdentifier && hasModifier && n.symbol == lambdaSym && childCount > 0 && len(n.fieldIDs) > 0 {
+		if hasLambda && hasIdentifier && hasModifier && n.symbol == lambdaSym && childCount > 0 && len(n.fieldIDs()) > 0 {
 			first := resultChildAt(n, 0)
 			if first != nil && first.symbol == identifierSym && resultChildCount(first) == 0 &&
 				first.startByte < first.endByte && int(first.endByte) <= len(source) &&
 				string(source[first.startByte:first.endByte]) == "async" {
 				retagResultRoot(first, modifierSym, modifierNamed)
-				n.fieldIDs[0] = 0
-				if len(n.fieldSources) > 0 {
-					n.fieldSources[0] = fieldSourceNone
+				n.fieldIDs()[0] = 0
+				if len(n.fieldSources()) > 0 {
+					n.fieldSources()[0] = fieldSourceNone
 				}
 			}
 			return
@@ -354,8 +354,7 @@ func csharpRewriteScopedRefVariableDeclaration(decl *Node, source []byte, lang *
 	children := cloneNodeSliceIfArena(decl.ownerArena, []*Node{scopedType, newDeclarator})
 	fields := cloneFieldIDSliceInArena(decl.ownerArena, []FieldID{typeID, 0})
 	decl.children = children
-	decl.fieldIDs = fields
-	decl.fieldSources = defaultFieldSourcesInArena(decl.ownerArena, fields)
+	decl.setFieldMetadata(fields, defaultFieldSourcesInArena(decl.ownerArena, fields))
 	decl.startByte = typeCandidate.startByte
 	decl.endByte = newDeclarator.endByte
 	recomputeNodePointsFromBytes(decl, source)
@@ -529,8 +528,7 @@ func csharpMergeClassGenericBaseList(classNode *Node, lang *Language, genericNam
 		genericName.setHasError(false)
 		baseChildren := cloneNodeSliceIfArena(classNode.ownerArena, []*Node{colon, genericName})
 		baseList.children = baseChildren
-		baseList.fieldIDs = nil
-		baseList.fieldSources = nil
+		baseList.clearFieldMetadata()
 		if baseList.ownerArena != nil {
 			baseList.ownerArena.clearFinalChildRefs(baseList)
 		}
@@ -550,8 +548,7 @@ func csharpMergeClassGenericBaseList(classNode *Node, lang *Language, genericNam
 		if classNode.ownerArena != nil {
 			classNode.ownerArena.clearFinalChildRefs(classNode)
 		}
-		classNode.fieldIDs = nil
-		classNode.fieldSources = nil
+		classNode.clearFieldMetadata()
 		classNode.setHasError(false)
 		populateParentNode(classNode, classNode.children)
 		return true
@@ -583,8 +580,7 @@ func csharpUnwrapTypeArgumentListParameters(typeArgs *Node, lang *Language) bool
 		return false
 	}
 	typeArgs.children = cloneNodeSliceIfArena(typeArgs.ownerArena, children)
-	typeArgs.fieldIDs = nil
-	typeArgs.fieldSources = nil
+	typeArgs.clearFieldMetadata()
 	if typeArgs.ownerArena != nil {
 		typeArgs.ownerArena.clearFinalChildRefs(typeArgs)
 	}
@@ -1649,11 +1645,11 @@ func normalizeCSharpTypeConstraintKeywords(root *Node, lang *Language) {
 					n.children[0] = inner
 					inner.parent = n
 					inner.childIndex = 0
-					if len(n.fieldIDs) > 0 {
-						n.fieldIDs[0] = 0
+					if len(n.fieldIDs()) > 0 {
+						n.fieldIDs()[0] = 0
 					}
-					if len(n.fieldSources) > 0 {
-						n.fieldSources[0] = fieldSourceNone
+					if len(n.fieldSources()) > 0 {
+						n.fieldSources()[0] = fieldSourceNone
 					}
 				}
 			}

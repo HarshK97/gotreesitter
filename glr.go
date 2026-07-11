@@ -747,9 +747,10 @@ func stackNodeGenericEquivSignature(n *Node, depth int) uint64 {
 	}
 
 	h = mixStackEquivSignature(h, uint64(n.preGotoState))
-	h = mixStackEquivSignature(h, uint64(len(n.fieldIDs)))
-	for i := range n.fieldIDs {
-		h = mixStackEquivSignature(h, uint64(n.fieldIDs[i]))
+	fieldIDs := n.fieldIDs()
+	h = mixStackEquivSignature(h, uint64(len(fieldIDs)))
+	for _, fieldID := range fieldIDs {
+		h = mixStackEquivSignature(h, uint64(fieldID))
 	}
 
 	frontier := -1
@@ -781,8 +782,8 @@ func stackNodeGenericEquivSignature(n *Node, depth int) uint64 {
 		}
 	}
 	if len(n.children) <= 3 {
-		for i := range n.fieldIDs {
-			if n.fieldIDs[i] == 0 || i >= len(n.children) {
+		for i, fieldID := range fieldIDs {
+			if fieldID == 0 || i >= len(n.children) {
 				continue
 			}
 			child := n.children[i]
@@ -822,14 +823,15 @@ func stackNodeGenericFrontierChildSignature(n *Node) uint64 {
 	h = mixStackEquivSignature(h, uint64(n.symbol))
 	h = mixStackEquivSignature(h, (uint64(n.startByte)<<32)|uint64(n.endByte))
 	h = mixStackEquivSignature(h, uint64(len(n.children)))
-	h = mixStackEquivSignature(h, uint64(len(n.fieldIDs)))
+	fieldIDs := n.fieldIDs()
+	h = mixStackEquivSignature(h, uint64(len(fieldIDs)))
 	h = mixStackEquivSignature(h, uint64(n.flags&nodeStackEquivFlagMask))
 	h = mixStackEquivSignature(h, uint64(n.parseState))
 	h = mixStackEquivSignature(h, uint64(n.preGotoState))
 	h = mixStackEquivSignature(h, uint64(n.productionID))
 	h = mixStackEquivSignature(h, uint64(uint32(n.dynamicPrecedence)))
-	for i := range n.fieldIDs {
-		h = mixStackEquivSignature(h, uint64(n.fieldIDs[i]))
+	for _, fieldID := range fieldIDs {
+		h = mixStackEquivSignature(h, uint64(fieldID))
 	}
 	return h
 }
@@ -2165,13 +2167,14 @@ func stackEntryPendingFieldMetadataAt(arena *nodeArena, entry stackEntry, i int)
 		if i < 0 || i >= childCount {
 			return 0, fieldSourceNone, false
 		}
-		if len(node.fieldIDs) == 0 {
+		fieldIDs := node.fieldIDs()
+		if len(fieldIDs) == 0 {
 			return 0, fieldSourceNone, true
 		}
-		if len(node.fieldIDs) != childCount {
+		if len(fieldIDs) != childCount {
 			return 0, fieldSourceNone, false
 		}
-		return node.fieldIDs[i], fieldSourceAt(node.fieldSources, i), true
+		return fieldIDs[i], fieldSourceAt(node.fieldSources(), i), true
 	}
 	return 0, fieldSourceNone, false
 }
@@ -2201,9 +2204,10 @@ func stackEntryExactShallowSignature(e stackEntry) uint64 {
 	if n == nil {
 		return h
 	}
-	h = mixStackEquivSignature(h, uint64(len(n.fieldIDs)))
-	for i := range n.fieldIDs {
-		h = mixStackEquivSignature(h, uint64(n.fieldIDs[i]))
+	fieldIDs := n.fieldIDs()
+	h = mixStackEquivSignature(h, uint64(len(fieldIDs)))
+	for _, fieldID := range fieldIDs {
+		h = mixStackEquivSignature(h, uint64(fieldID))
 	}
 	h = mixStackEquivSignature(h, uint64(len(n.children)))
 	for i := range n.children {
@@ -2221,7 +2225,7 @@ func stackNodeExactHeaderSignature(n *Node) uint64 {
 	h = mixStackEquivSignature(h, uint64(n.symbol))
 	h = mixStackEquivSignature(h, (uint64(n.startByte)<<32)|uint64(n.endByte))
 	h = mixStackEquivSignature(h, uint64(len(n.children)))
-	h = mixStackEquivSignature(h, uint64(len(n.fieldIDs)))
+	h = mixStackEquivSignature(h, uint64(len(n.fieldIDs())))
 	h = mixStackEquivSignature(h, uint64(n.parseState))
 	h = mixStackEquivSignature(h, uint64(n.preGotoState))
 	h = mixStackEquivSignature(h, uint64(n.productionID))
@@ -2303,7 +2307,7 @@ func stackNodeNeedsDeepEquivalent(n *Node) bool {
 	if n == nil {
 		return false
 	}
-	if n.flags&nodeFlagExtra != 0 || n.preGotoState != 0 || len(n.fieldIDs) != 0 {
+	if n.flags&nodeFlagExtra != 0 || n.preGotoState != 0 || len(n.fieldIDs()) != 0 {
 		return true
 	}
 	for i := range n.children {
@@ -2311,7 +2315,7 @@ func stackNodeNeedsDeepEquivalent(n *Node) bool {
 		if child == nil {
 			continue
 		}
-		if child.flags&nodeFlagExtra != 0 || child.preGotoState != 0 || len(child.fieldIDs) != 0 || len(child.children) > 0 {
+		if child.flags&nodeFlagExtra != 0 || child.preGotoState != 0 || len(child.fieldIDs()) != 0 || len(child.children) > 0 {
 			return true
 		}
 	}
@@ -2408,13 +2412,8 @@ func stackEntryNodesEquivalentPythonShallow(a, b *Node) bool {
 	if a.flags&nodeFlagHasError != 0 {
 		return true
 	}
-	if len(a.fieldIDs) != len(b.fieldIDs) {
+	if !equalFieldIDSlices(a.fieldIDs(), b.fieldIDs()) {
 		return false
-	}
-	for i := range a.fieldIDs {
-		if a.fieldIDs[i] != b.fieldIDs[i] {
-			return false
-		}
 	}
 	for i := range a.children {
 		ca := a.children[i]
@@ -2434,13 +2433,8 @@ func stackEntryNodesEquivalentPythonShallow(a, b *Node) bool {
 			ca.productionID != cb.productionID ||
 			ca.dynamicPrecedence != cb.dynamicPrecedence ||
 			len(ca.children) != len(cb.children) ||
-			len(ca.fieldIDs) != len(cb.fieldIDs) {
+			!equalFieldIDSlices(ca.fieldIDs(), cb.fieldIDs()) {
 			return false
-		}
-		for j := range ca.fieldIDs {
-			if ca.fieldIDs[j] != cb.fieldIDs[j] {
-				return false
-			}
 		}
 	}
 	return true
@@ -2503,7 +2497,9 @@ func stackEntryNodesExactlyEquivalentWithAudit(scratch *glrMergeScratch, audit *
 		}
 		return false
 	}
-	if len(a.fieldIDs) != len(b.fieldIDs) {
+	aFieldIDs := a.fieldIDs()
+	bFieldIDs := b.fieldIDs()
+	if len(aFieldIDs) != len(bFieldIDs) {
 		if audit != nil {
 			audit.recordEquivSkipFieldMismatch()
 		}
@@ -2516,13 +2512,11 @@ func stackEntryNodesExactlyEquivalentWithAudit(scratch *glrMergeScratch, audit *
 		}
 		return true
 	}
-	for i := range a.fieldIDs {
-		if a.fieldIDs[i] != b.fieldIDs[i] {
-			if audit != nil {
-				audit.recordEquivSkipFieldMismatch()
-			}
-			return false
+	if !equalFieldIDSlices(aFieldIDs, bFieldIDs) {
+		if audit != nil {
+			audit.recordEquivSkipFieldMismatch()
 		}
+		return false
 	}
 	if len(a.children) == 0 {
 		if audit != nil {
@@ -2584,6 +2578,8 @@ func stackEntryNodesExactlyEquivalentNoAudit(scratch *glrMergeScratch, a, b *Nod
 	if hit, ok := lookupExactNodeEquivCacheNoAudit(scratch, a, b); ok {
 		return hit
 	}
+	aFieldIDs := a.fieldIDs()
+	bFieldIDs := b.fieldIDs()
 	if a.symbol != b.symbol ||
 		a.startByte != b.startByte ||
 		a.endByte != b.endByte ||
@@ -2593,16 +2589,14 @@ func stackEntryNodesExactlyEquivalentNoAudit(scratch *glrMergeScratch, a, b *Nod
 		a.preGotoState != b.preGotoState ||
 		a.productionID != b.productionID ||
 		a.dynamicPrecedence != b.dynamicPrecedence ||
-		len(a.fieldIDs) != len(b.fieldIDs) {
+		len(aFieldIDs) != len(bFieldIDs) {
 		return false
 	}
 	if a.flags&nodeFlagHasError != 0 {
 		return true
 	}
-	for i := range a.fieldIDs {
-		if a.fieldIDs[i] != b.fieldIDs[i] {
-			return false
-		}
+	if !equalFieldIDSlices(aFieldIDs, bFieldIDs) {
+		return false
 	}
 	if len(a.children) == 0 {
 		return true
@@ -2667,21 +2661,21 @@ func stackEntryNodesExactlyEquivalentTerminal(audit *runtimeAudit, a, b *Node) b
 		}
 		return false
 	}
-	if len(a.fieldIDs) != len(b.fieldIDs) {
+	aFieldIDs := a.fieldIDs()
+	bFieldIDs := b.fieldIDs()
+	if len(aFieldIDs) != len(bFieldIDs) {
 		if audit != nil {
 			audit.recordEquivSkipFieldMismatch()
 			audit.recordEquivExactTerminalFalse()
 		}
 		return false
 	}
-	for i := range a.fieldIDs {
-		if a.fieldIDs[i] != b.fieldIDs[i] {
-			if audit != nil {
-				audit.recordEquivSkipFieldMismatch()
-				audit.recordEquivExactTerminalFalse()
-			}
-			return false
+	if !equalFieldIDSlices(aFieldIDs, bFieldIDs) {
+		if audit != nil {
+			audit.recordEquivSkipFieldMismatch()
+			audit.recordEquivExactTerminalFalse()
 		}
+		return false
 	}
 	if a.flags&nodeFlagHasError != 0 {
 		if audit != nil {
@@ -2710,6 +2704,8 @@ func stackEntryNodesExactlyEquivalentTerminalNoAudit(a, b *Node) bool {
 	if a == nil || b == nil {
 		return false
 	}
+	aFieldIDs := a.fieldIDs()
+	bFieldIDs := b.fieldIDs()
 	if a.symbol != b.symbol ||
 		a.startByte != b.startByte ||
 		a.endByte != b.endByte ||
@@ -2719,13 +2715,11 @@ func stackEntryNodesExactlyEquivalentTerminalNoAudit(a, b *Node) bool {
 		a.preGotoState != b.preGotoState ||
 		a.productionID != b.productionID ||
 		a.dynamicPrecedence != b.dynamicPrecedence ||
-		len(a.fieldIDs) != len(b.fieldIDs) {
+		len(aFieldIDs) != len(bFieldIDs) {
 		return false
 	}
-	for i := range a.fieldIDs {
-		if a.fieldIDs[i] != b.fieldIDs[i] {
-			return false
-		}
+	if !equalFieldIDSlices(aFieldIDs, bFieldIDs) {
+		return false
 	}
 	return a.flags&nodeFlagHasError != 0 || len(a.children) == 0
 }
@@ -2770,15 +2764,15 @@ func stackEntryNodesEquivalentFrontierWithScratch(scratch *glrMergeScratch, a, b
 		}
 		return true
 	}
-	if len(a.fieldIDs) != len(b.fieldIDs) {
+	aFieldIDs := a.fieldIDs()
+	bFieldIDs := b.fieldIDs()
+	if len(aFieldIDs) != len(bFieldIDs) {
 		storeNodeEquivCache(scratch, a, b, depth, false)
 		return false
 	}
-	for i := range a.fieldIDs {
-		if a.fieldIDs[i] != b.fieldIDs[i] {
-			storeNodeEquivCache(scratch, a, b, depth, false)
-			return false
-		}
+	if !equalFieldIDSlices(aFieldIDs, bFieldIDs) {
+		storeNodeEquivCache(scratch, a, b, depth, false)
+		return false
 	}
 
 	frontier := -1
@@ -2807,15 +2801,9 @@ func stackEntryNodesEquivalentFrontierWithScratch(scratch *glrMergeScratch, a, b
 			ca.productionID != cb.productionID ||
 			ca.dynamicPrecedence != cb.dynamicPrecedence ||
 			len(ca.children) != len(cb.children) ||
-			len(ca.fieldIDs) != len(cb.fieldIDs) {
+			!equalFieldIDSlices(ca.fieldIDs(), cb.fieldIDs()) {
 			storeNodeEquivCache(scratch, a, b, depth, false)
 			return false
-		}
-		for j := range ca.fieldIDs {
-			if ca.fieldIDs[j] != cb.fieldIDs[j] {
-				storeNodeEquivCache(scratch, a, b, depth, false)
-				return false
-			}
 		}
 		if ca.flags&nodeFlagExtra == 0 && (ca.flags&nodeFlagNamed != 0 || len(ca.children) > 0) {
 			frontier = i
@@ -2847,7 +2835,7 @@ func stackEntryNodesEquivalentFrontierWithScratch(scratch *glrMergeScratch, a, b
 	}
 	if len(a.children) <= 3 {
 		for i := range a.children {
-			fielded := i < len(a.fieldIDs) && a.fieldIDs[i] != 0
+			fielded := i < len(aFieldIDs) && aFieldIDs[i] != 0
 			child := a.children[i]
 			if child == nil || child.flags&nodeFlagExtra != 0 {
 				continue
@@ -3339,6 +3327,8 @@ func stackEntryNodesEquivalentIgnoringDynamic(a, b *Node) bool {
 	if a == nil || b == nil {
 		return false
 	}
+	aFieldIDs := a.fieldIDs()
+	bFieldIDs := b.fieldIDs()
 	if a.symbol != b.symbol ||
 		a.startByte != b.startByte ||
 		a.endByte != b.endByte ||
@@ -3346,14 +3336,12 @@ func stackEntryNodesEquivalentIgnoringDynamic(a, b *Node) bool {
 		a.parseState != b.parseState ||
 		a.preGotoState != b.preGotoState ||
 		a.productionID != b.productionID ||
-		len(a.fieldIDs) != len(b.fieldIDs) ||
+		len(aFieldIDs) != len(bFieldIDs) ||
 		len(a.children) != len(b.children) {
 		return false
 	}
-	for i := range a.fieldIDs {
-		if a.fieldIDs[i] != b.fieldIDs[i] {
-			return false
-		}
+	if !equalFieldIDSlices(aFieldIDs, bFieldIDs) {
+		return false
 	}
 	if a.flags&nodeFlagHasError != 0 {
 		return true
@@ -3374,7 +3362,7 @@ func stackEntryNodesEquivalentIgnoringDynamic(a, b *Node) bool {
 			ca.parseState != cb.parseState ||
 			ca.preGotoState != cb.preGotoState ||
 			ca.productionID != cb.productionID ||
-			len(ca.fieldIDs) != len(cb.fieldIDs) ||
+			len(ca.fieldIDs()) != len(cb.fieldIDs()) ||
 			len(ca.children) != len(cb.children) {
 			return false
 		}

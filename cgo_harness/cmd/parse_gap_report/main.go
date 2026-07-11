@@ -1169,7 +1169,9 @@ func statsFromGoTree(r *runner, tree *gotreesitter.Tree, queryCaptures, cursorNo
 			breakdown.PendingChildEntryBytesAllocated +
 			breakdown.FinalChildSidecarBytesAllocated
 		stats.ArenaChildB = breakdown.ChildSliceBytesAllocated
-		stats.ArenaFieldB = breakdown.FieldIDBytesAllocated + breakdown.FieldSourceBytesAllocated
+		stats.ArenaFieldB = breakdown.NodeFieldMetadataBytesAllocated +
+			breakdown.FieldIDBytesAllocated +
+			breakdown.FieldSourceBytesAllocated
 		stats.ArenaRawShapeB = breakdown.RawShapeBytesAllocated
 		stats.ArenaRawShapeChildB = breakdown.RawShapeChildBytesAllocated
 		stats.ArenaLiveB = arenaLiveBytes(breakdown, rt.ExternalScannerCheckpointBytesAllocated)
@@ -1268,6 +1270,7 @@ func statsFromGoTree(r *runner, tree *gotreesitter.Tree, queryCaptures, cursorNo
 // bytes. The total must stay equal to ParseRuntime.ArenaBytesAllocated.
 func arenaLiveBytes(b gotreesitter.ArenaBreakdown, externalScannerCheckpointBytes int64) int64 {
 	return b.NodeStructBytesAllocated +
+		b.NodeFieldMetadataBytesAllocated +
 		b.NoTreeNodeBytesAllocated +
 		b.CompactFullLeafBytesAllocated +
 		b.PendingParentBytesAllocated +

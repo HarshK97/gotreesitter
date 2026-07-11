@@ -165,8 +165,7 @@ func normalizePowerShellProgramShape(root *Node, source []byte, lang *Language) 
 	}
 	children = cloneNodeSliceIfArena(root.ownerArena, children)
 	statementList.children = children
-	statementList.fieldIDs = nil
-	statementList.fieldSources = nil
+	statementList.clearFieldMetadata()
 	statementList.symbol = statementListSym
 	statementList.setNamed(symbolIsNamed(lang, statementListSym))
 	statementList.setHasError(true)
@@ -177,8 +176,7 @@ func normalizePowerShellProgramShape(root *Node, source []byte, lang *Language) 
 	out = append(out, statementList)
 	out = cloneNodeSliceIfArena(root.ownerArena, out)
 	root.children = out
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	root.clearFieldMetadata()
 	retagResultRoot(root, programSym, symbolIsNamed(lang, programSym))
 	root.setHasError(true)
 	extendNodeEndTo(root, statementListEnd, source)
@@ -364,8 +362,7 @@ trimmed:
 		}
 		truncated := cloneNodeInArena(arena, child)
 		truncated.children = nil
-		truncated.fieldIDs = nil
-		truncated.fieldSources = nil
+		truncated.clearFieldMetadata()
 		truncated.endByte = uint32(scriptEnd)
 		truncated.endPoint = advancePointByBytes(truncated.startPoint, source[truncated.startByte:uint32(scriptEnd)])
 		scriptChildren = append(scriptChildren, truncated)
@@ -411,8 +408,8 @@ trimmed:
 					continue
 				}
 				ensureNodeFieldStorage(body, len(body.children))
-				body.fieldIDs[0] = FieldID(fieldIdx)
-				body.fieldSources[0] = fieldSourceDirect
+				body.fieldIDs()[0] = FieldID(fieldIdx)
+				body.fieldSources()[0] = fieldSourceDirect
 				break
 			}
 			structured = append(structured, body)
@@ -436,8 +433,8 @@ trimmed:
 				continue
 			}
 			ensureNodeFieldStorage(scriptBlock, len(scriptBlock.children))
-			scriptBlock.fieldIDs[i] = FieldID(fieldIdx)
-			scriptBlock.fieldSources[i] = fieldSourceDirect
+			scriptBlock.fieldIDs()[i] = FieldID(fieldIdx)
+			scriptBlock.fieldSources()[i] = fieldSourceDirect
 			break
 		}
 		break
@@ -681,13 +678,13 @@ func buildPowerShellRecoveredIfStatement(arena *nodeArena, source []byte, lang *
 		switch fieldName {
 		case "condition":
 			ensureNodeFieldStorage(stmt, len(stmt.children))
-			stmt.fieldIDs[2] = FieldID(fieldIdx)
-			stmt.fieldSources[2] = fieldSourceDirect
+			stmt.fieldIDs()[2] = FieldID(fieldIdx)
+			stmt.fieldSources()[2] = fieldSourceDirect
 		case "else_clause":
 			if len(stmt.children) > 5 && stmt.children[5] != nil && stmt.children[5].Type(lang) == "else_clause" {
 				ensureNodeFieldStorage(stmt, len(stmt.children))
-				stmt.fieldIDs[5] = FieldID(fieldIdx)
-				stmt.fieldSources[5] = fieldSourceDirect
+				stmt.fieldIDs()[5] = FieldID(fieldIdx)
+				stmt.fieldSources()[5] = fieldSourceDirect
 			}
 		}
 	}
@@ -747,8 +744,8 @@ func buildPowerShellRecoveredStatementBlock(arena *nodeArena, source []byte, lan
 				continue
 			}
 			ensureNodeFieldStorage(block, len(block.children))
-			block.fieldIDs[i] = FieldID(fieldIdx)
-			block.fieldSources[i] = fieldSourceDirect
+			block.fieldIDs()[i] = FieldID(fieldIdx)
+			block.fieldSources()[i] = fieldSourceDirect
 			break
 		}
 		break
@@ -1043,8 +1040,8 @@ func buildPowerShellRecoveredAssignmentPipeline(arena *nodeArena, source []byte,
 			continue
 		}
 		ensureNodeFieldStorage(assignExpr, len(assignExpr.children))
-		assignExpr.fieldIDs[2] = FieldID(fieldIdx)
-		assignExpr.fieldSources[2] = fieldSourceDirect
+		assignExpr.fieldIDs()[2] = FieldID(fieldIdx)
+		assignExpr.fieldSources()[2] = fieldSourceDirect
 		break
 	}
 	pipelineChildren := []*Node{assignExpr}

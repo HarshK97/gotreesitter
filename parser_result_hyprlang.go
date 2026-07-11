@@ -59,8 +59,7 @@ func normalizeHyprlangBooleanAssignmentValues(root *Node, source []byte, lang *L
 			child.symbol = booleanSym
 			child.setNamed(true)
 			child.children = cloneNodeSliceInArena(child.ownerArena, []*Node{leaf})
-			child.fieldIDs = nil
-			child.fieldSources = nil
+			child.clearFieldMetadata()
 			if child.ownerArena != nil {
 				child.ownerArena.clearFinalChildRefs(child)
 			}

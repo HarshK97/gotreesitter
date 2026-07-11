@@ -45,7 +45,7 @@ func normalizeScalaObjectTemplateBodyFragments(root *Node, source []byte, parser
 		replacementChildren := make([]*Node, 0, len(obj.children)+1)
 		replacementChildren = append(replacementChildren, obj.children...)
 		replacementChildren = append(replacementChildren, newParentNodeInArena(arena, templateBodySym, templateBodyNamed, bodyChildren, nil, 0))
-		replacement := newParentNodeInArena(arena, obj.symbol, obj.isNamed(), replacementChildren, obj.fieldIDs, obj.productionID)
+		replacement := newParentNodeInArena(arena, obj.symbol, obj.isNamed(), replacementChildren, obj.fieldIDs(), obj.productionID)
 		replaceChildRangeWithSingleNode(root, i, closeIdx+1, replacement)
 		changed = true
 	}
@@ -513,23 +513,31 @@ func scalaRecoverTemplateBodyTailMembers(body *Node, start uint32, source []byte
 	newChildren = append(newChildren, recovered...)
 	newChildren = append(newChildren, body.children[closeIdx:]...)
 	body.children = newChildren
-	if len(body.fieldIDs) > 0 {
+	bodyFieldIDs := body.fieldIDs()
+	bodyFieldSources := body.fieldSources()
+	metadataChanged := false
+	if len(bodyFieldIDs) > 0 {
 		fieldIDs := make([]FieldID, 0, len(body.children))
-		fieldIDs = append(fieldIDs, body.fieldIDs[:closeIdx]...)
+		fieldIDs = append(fieldIDs, bodyFieldIDs[:closeIdx]...)
 		for range recovered {
 			fieldIDs = append(fieldIDs, 0)
 		}
-		fieldIDs = append(fieldIDs, body.fieldIDs[closeIdx:]...)
-		body.fieldIDs = fieldIDs
+		fieldIDs = append(fieldIDs, bodyFieldIDs[closeIdx:]...)
+		bodyFieldIDs = fieldIDs
+		metadataChanged = true
 	}
-	if len(body.fieldSources) > 0 {
+	if len(bodyFieldSources) > 0 {
 		fieldSources := make([]uint8, 0, len(body.children))
-		fieldSources = append(fieldSources, body.fieldSources[:closeIdx]...)
+		fieldSources = append(fieldSources, bodyFieldSources[:closeIdx]...)
 		for range recovered {
 			fieldSources = append(fieldSources, fieldSourceNone)
 		}
-		fieldSources = append(fieldSources, body.fieldSources[closeIdx:]...)
-		body.fieldSources = fieldSources
+		fieldSources = append(fieldSources, bodyFieldSources[closeIdx:]...)
+		bodyFieldSources = fieldSources
+		metadataChanged = true
+	}
+	if metadataChanged {
+		body.setFieldMetadata(bodyFieldIDs, bodyFieldSources)
 	}
 	for i, child := range body.children {
 		if child == nil {
