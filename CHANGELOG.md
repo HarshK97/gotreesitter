@@ -7,6 +7,15 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-07-11
+
+Performance-contract and repository-hygiene follow-up to v0.24.0. This patch
+corrects the canonical full-parse benchmark before the long-tail optimization
+campaign continues, banks focused Caddy and Kotlin wins with fail-closed
+certification, and deletes superseded conflict and profiling machinery. It does
+not change the v0.24.0 Poppler memory claim or declare the remaining fleet
+performance tail closed.
+
 ### Fixed
 
 - Caddy's SHA-pinned recovered string-literal repetition row now follows C's
@@ -31,7 +40,19 @@ for tags and release notes while still in `0.x`.
 - External-scanner full-parse retry suppression now uses explicit certified
   language-profile metadata instead of parser-core language-name checks.
   Python and Dart retain their existing behavior, and Kotlin now treats the
-  first retry ladder's selected tree as authoritative.
+  first retry ladder's selected tree as authoritative. Built-in policies are
+  pinned to the exact checked-in blob SHA-256; caller-constructed, adapted, and
+  override languages retain the conservative generic retry path.
+
+### Removed
+
+- Fourteen retired language-specific repetition/conflict dispatch helpers and
+  their dead Java, JavaScript, and TypeScript implementation closure. The
+  production C-faithful global repetition fold remains the sole active path.
+- The superseded Python compatibility profiler, temporary C# wave-2 profiler,
+  and an unreferenced perf-recording helper, removing 137 lines of obsolete
+  diagnostic surface in favor of `parse_gap_report`, the retained shape
+  harness, and standard Go profiles.
 
 ### Performance
 
@@ -1549,7 +1570,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.24.1...HEAD
+[0.24.1]: https://github.com/odvcencio/gotreesitter/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/odvcencio/gotreesitter/compare/v0.23.1...v0.24.0
 [0.23.1]: https://github.com/odvcencio/gotreesitter/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/odvcencio/gotreesitter/compare/v0.22.5...v0.23.0
