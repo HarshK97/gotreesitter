@@ -7,12 +7,58 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-07-11
+
+Parser-memory, registry-lifecycle, and build-hygiene release following v0.25.0.
+It shrinks common node state, removes a per-parse ranking memo, and stops
+returned trees from retaining parser-only shape overflow. This minor release
+adds an exported diagnostic field; callers using positional `ArenaBreakdown`
+literals must update them.
+
+### Added
+
+- `ArenaBreakdown.NodeFieldMetadataBytesAllocated` reports storage used by
+  arena-backed node field metadata.
+
+### Changed
+
+- Node field IDs and field-source slice headers now live in bounded arena
+  sidecars. Accessors preserve the previous shallow-copy and shared-backing
+  semantics across parsing, normalization, cloning, and tree mutation.
+- Documentation-only pull requests use an explicit CI scope gate so required
+  checks resolve without running compile, race, parity, or performance suites.
+- Language-authoring documentation now reflects forest fallback/recovery and
+  the hard parse-action group overflow check.
+
 ### Fixed
 
 - Extension grammar generation is now synchronized and memoized, including
   failures, so concurrent first access cannot race or regenerate repeatedly.
 - `ParseFilePooled` replaces a cached parser pool when a same-name registry
   update supplies a different language instance.
+- Parser-only raw-shape references and excess slab storage are reclaimed after
+  final tree materialization, including both forest result paths. Parse-time
+  arena accounting remains intact, and a bounded warm prefix is retained for
+  reuse.
+
+### Removed
+
+- Removed unused internal forwarding helpers from GLR stack-entry comparison
+  and performance-scan summarization.
+
+### Performance
+
+- Arena-backed field metadata shrinks `Node` from 144 to 104 bytes and removes
+  245,966,616 bytes from the exact Poppler arena allocation while preserving
+  exact structural parity.
+- Current-arena node error ranks are cached inline instead of in an arena-wide
+  map. The pinned full-parse benchmark improved from 7.813 ms to 6.750 ms and
+  from 100 to 30 allocations per operation; incremental and query baselines
+  were unchanged.
+- Bounded raw-shape reclamation reduces the hard-2-GiB Poppler probe's retained
+  post-GC heap by exactly 192 MiB with exact deep C parity. The controlled
+  primary benchmark was statistically unchanged; peak RSS is not claimed as
+  improved.
 
 ## [0.25.0] - 2026-07-11
 
@@ -1623,7 +1669,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.25.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/odvcencio/gotreesitter/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/odvcencio/gotreesitter/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/odvcencio/gotreesitter/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/odvcencio/gotreesitter/compare/v0.23.1...v0.24.0

@@ -634,12 +634,11 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.25.0**. The 206-grammar curated parity milestone is
-banked. v0.25.0 also packed pending-parent field metadata with exact equality,
-trimmed redundant Java retries, and removed retired telemetry. Current main
-adds synchronized extension loading, fresh parser pools after registry updates,
-and authoring-guide cleanup. Detailed history lives in
-[CHANGELOG.md](CHANGELOG.md).
+The current release is **v0.26.0**. The 206-grammar curated parity milestone is
+banked. v0.26.0 moves uncommon field metadata into bounded arena sidecars,
+caches current-arena error ranks inline, reclaims parser-only raw-shape overflow
+after finalization, synchronizes extension loading, and refreshes parser pools
+after registry updates. Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ### Now — performance and extreme hygiene
 
