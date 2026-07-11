@@ -195,8 +195,9 @@ func (pp *ParserPool) ParseNoTreeWithExternalCheckpointsBenchmarkOnly(source []b
 
 // ParseNoResultCompatibilityBenchmarkOnly delegates to
 // Parser.ParseNoResultCompatibilityBenchmarkOnly. It is intended only for
-// performance attribution of parser/tree construction versus compatibility
-// rewrites; the returned tree is not API-compatible.
+// performance attribution. The result tree is materialized, but other
+// diagnostic materialization strategies may still key off this mode, and the
+// returned tree is not API-compatible.
 func (pp *ParserPool) ParseNoResultCompatibilityBenchmarkOnly(source []byte) (*Tree, error) {
 	p := pp.checkout()
 	if p == nil {

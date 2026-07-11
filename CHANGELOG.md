@@ -7,6 +7,23 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- `BenchmarkGoParseFullDFA` now exercises the public `Parser.Parse` path and a
+  fully materialized tree. The former implementation silently enabled the
+  no-tree diagnostic and was mislabeled as a full parse.
+- `ParseNoResultCompatibilityBenchmarkOnly` no longer implicitly enables the
+  no-tree path. Its result is materialized, so `parse_gap_report` can separate
+  no-tree parser-core cost from the broader no-compat diagnostic. Some
+  large-input diagnostic materialization strategies still key off this mode,
+  so it is not yet a pure compatibility-only A/B.
+
+### Changed
+
+- Added the explicitly diagnostic `BenchmarkGoParseCoreDFA` lane and withdrew
+  the older generated-Go full-parse headline pending a pinned quiet-host rerun
+  of the corrected public benchmark.
+
 ## [0.24.0] - 2026-07-11
 
 JavaScript large-file parity and parser memory-economy release. With an explicit
@@ -69,8 +86,9 @@ focused gate is 25/25 no-error, S-expression, and deep parity. The shipped
   1,729,836 KiB maximum RSS. The separate Go/C deep-parity oracle remains in
   its 8 GiB envelope because it retains both giant trees for comparison.
 - Memory-budget diagnostics are embedded in `Parser` so attribution adds no
-  steady-state parse allocation; the primary benchmark trio remains 978 B and
-  5 allocs for full parse, with both incremental lanes at zero allocation.
+  steady-state parser-core allocation. The v0.24.0 `978 B`/`5 allocs` sample
+  used the then-mislabeled no-tree benchmark and is not a full-parse allocation
+  claim; both incremental lanes remained at zero allocation.
 
 ## [0.23.1] - 2026-07-10
 

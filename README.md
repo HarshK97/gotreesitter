@@ -329,58 +329,40 @@ for _, tag := range tags {
 
 ## Benchmarks
 
-All measurements below use the same workload: a generated Go source file with 500 functions (`19294` bytes).
-Numbers are medians from 10 runs on:
+The canonical public full-parse benchmark is `BenchmarkGoParseFullDFA`. It calls
+`Parser.Parse`, requires a complete root, and releases the materialized tree.
+`BenchmarkGoParseCoreDFA` is a separate parser-loop diagnostic that suppresses
+ordinary tree materialization; its numbers are not public full-parse numbers.
 
-```text
-goos: linux
-goarch: amd64
-cpu: Intel(R) Core(TM) Ultra 9 285
-```
+An audit on 2026-07-11 found that older versions of
+`BenchmarkGoParseFullDFA` called `ParseNoResultCompatibilityBenchmarkOnly`,
+which also enabled the no-tree path. The previously published `1.54 ms`,
+`728 B/op`, and `7 allocs/op` figures—and v0.24.0's later `978 B/op` and
+`5 allocs/op` figures—therefore described parser-core diagnostics, not a full
+materialized parse. Those headline comparisons have been withdrawn pending a
+pinned, quiet-host rerun of the corrected benchmark.
 
-| Runtime | Full parse | Incremental (1-byte edit) | Incremental (no edit) |
-|---|---:|---:|---:|
-| Native C (pure C runtime) | 1.76 ms | 102.3 μs | 101.7 μs |
-| CGo binding (C runtime via cgo) | ~2.0 ms | ~130 μs | — |
-| gotreesitter (pure Go) | 1.54 ms | 649 ns | 2.43 ns |
-
-On this workload:
-
-- Full parse is faster than both listed C baselines: ~1.15x faster than native C and ~1.29x faster than the CGo binding.
-- Incremental single-byte edits are ~158x faster than native C (~200x faster than CGo).
-- No-edit reparses are ~41,800x faster than native C, zero allocations.
-
-<details>
-<summary>Raw benchmark output</summary>
+The historical incremental measurements on the same generated 500-function Go
+workload were `649 ns` for a one-byte edit and `2.43 ns` for a no-edit reparse.
+They remain workload-specific; use the real-corpus perf scoreboard for
+per-language Go-vs-C claims.
 
 ```sh
-# Pure Go (this repo):
+# Public full parse plus incremental API lanes:
 GOMAXPROCS=1 go test . -run '^$' \
   -bench 'BenchmarkGoParseFullDFA|BenchmarkGoParseIncrementalSingleByteEditDFA|BenchmarkGoParseIncrementalNoEditDFA' \
   -benchmem -count=10 -benchtime=750ms
 
-# CGo binding benchmarks:
-cd cgo_harness
-GOMAXPROCS=1 go test . -run '^$' -tags treesitter_c_bench \
-  -bench 'BenchmarkCTreeSitterGoParseFull|BenchmarkCTreeSitterGoParseIncrementalSingleByteEdit|BenchmarkCTreeSitterGoParseIncrementalNoEdit' \
+# Parser-core attribution only:
+GOMAXPROCS=1 go test . -run '^$' \
+  -bench '^BenchmarkGoParseCoreDFA$' \
   -benchmem -count=10 -benchtime=750ms
-
-# Native C benchmarks (no Go, direct C binary):
-./pure_c/run_go_benchmark.sh 500 2000 20000
 ```
 
-| Benchmark | Median ns/op | B/op | allocs/op |
-|---|---:|---:|---:|
-| Native C full parse | 1,764,436 | — | — |
-| Native C incremental (1-byte edit) | 102,336 | — | — |
-| Native C incremental (no edit) | 101,740 | — | — |
-| `CTreeSitterGoParseFull` | ~1,990,000 | 600 | 6 |
-| `CTreeSitterGoParseIncrementalSingleByteEdit` | ~130,000 | 648 | 7 |
-| `GoParseFullDFA` | 1,538,089 | 728 | 7 |
-| `GoParseIncrementalSingleByteEditDFA` | 648.9 | 176 | 3 |
-| `GoParseIncrementalNoEditDFA` | 2.432 | 0 | 0 |
-
-</details>
+Correctness and performance are gated separately. For Go-vs-C real-corpus
+timing, see [`cgo_harness/perf_scan`](cgo_harness/perf_scan/README.md); its
+ratchet records caveats, timeouts, and resource gaps instead of extrapolating
+from this generated-Go microbenchmark.
 
 ### Benchmark matrix
 
