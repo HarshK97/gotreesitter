@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "testing"
+import (
+	"testing"
+	"unsafe"
+)
 
 const (
 	rawShapeSemanticRootSym Symbol = 1
@@ -12,6 +15,30 @@ const (
 	rawShapeSemanticAlias   Symbol = 7
 	rawShapeSemanticWrapPID        = 1
 )
+
+func TestRawShapeHeaderLayoutStaysCompact(t *testing.T) {
+	if got, want := unsafe.Sizeof(rawShape{}), uintptr(24); got != want {
+		t.Fatalf("rawShape header size = %d bytes, want %d", got, want)
+	}
+	if got, want := unsafe.Sizeof(rawShapeChild{}), uintptr(16); got != want {
+		t.Fatalf("rawShape child size = %d bytes, want %d", got, want)
+	}
+}
+
+func TestRawShapeChildPacksShapeRefAndRestoresCurrentState(t *testing.T) {
+	node := &Node{parseState: 41, rawShape: 73}
+	child := newRawShapeChild(newStackEntryNode(17, node))
+	if got := child.shapeRef(); got != 73 {
+		t.Fatalf("packed shape ref = %d, want 73", got)
+	}
+	entry := child.entry()
+	if got := stackEntryNode(entry); got != node {
+		t.Fatalf("restored node = %p, want %p", got, node)
+	}
+	if got := entry.state; got != 41 {
+		t.Fatalf("restored state = %d, want current node state 41", got)
+	}
+}
 
 func testRawShapeParser() *Parser {
 	lang := &Language{
@@ -244,7 +271,7 @@ func TestForestChildAlternativeResolutionUsesLocalSameSpanBest(t *testing.T) {
 		t.Fatal("root raw shape missing")
 	}
 	children := arena.rawShapeChildren(shape)
-	if len(children) != 1 || stackEntryNode(children[0].entry) != macro {
+	if len(children) != 1 || stackEntryNode(children[0].entry()) != macro {
 		t.Fatalf("root raw-shape child = %v, want macro alternative", children)
 	}
 }
@@ -332,7 +359,7 @@ func TestForestChildAlternativeResolutionRejectsIncompatibleSiblingPath(t *testi
 		t.Fatal("root raw shape missing")
 	}
 	children := arena.rawShapeChildren(shape)
-	if len(children) != 2 || stackEntryNode(children[0].entry) != root.children[0] || stackEntryNode(children[1].entry) != root.children[1] {
+	if len(children) != 2 || stackEntryNode(children[0].entry()) != root.children[0] || stackEntryNode(children[1].entry()) != root.children[1] {
 		t.Fatalf("root raw-shape children inconsistent with tree children: raw=%v tree=%v", children, root.children)
 	}
 }
@@ -444,7 +471,7 @@ func TestForestChildAlternativeResolutionPreservesVisibleContainerOverHiddenFlat
 		t.Fatal("root raw shape missing")
 	}
 	children := arena.rawShapeChildren(shape)
-	if len(children) != 1 || stackEntryNode(children[0].entry) != group {
+	if len(children) != 1 || stackEntryNode(children[0].entry()) != group {
 		t.Fatalf("root raw-shape child = %v, want visible group container", children)
 	}
 }

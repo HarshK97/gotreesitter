@@ -3145,12 +3145,13 @@ func rawStackEntryChildAt(arena *nodeArena, entry stackEntry, i int) (stackEntry
 			return stackEntry{}, false
 		}
 		child := children[i]
-		if child.shapeRef != 0 {
-			if n := stackEntryNode(child.entry); n != nil {
-				n.rawShape = child.shapeRef
+		childEntry := child.entry()
+		if ref := child.shapeRef(); ref != 0 {
+			if n := stackEntryNode(childEntry); n != nil {
+				n.rawShape = ref
 			}
 		}
-		return child.entry, stackEntryHasNode(child.entry)
+		return childEntry, stackEntryHasNode(childEntry)
 	}
 	if node := stackEntryNode(entry); node != nil {
 		return nodeChildEntryAtNoMaterialize(node, i)
