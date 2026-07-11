@@ -222,6 +222,7 @@ type Parser struct {
 	parseRuntimeMemoryBaselineBytes  uint64
 	parseRuntimeMemoryBaselineSys    uint64
 	parseRuntimeMemoryPoll           uint64
+	parseMemoryBudgetDiag            *parseMemoryBudgetDiagnostic
 	denseLimit                       int
 	smallBase                        int
 	smallLookup                      [][]smallActionPair
@@ -1429,6 +1430,7 @@ func resetSnippetParser(parser *Parser) {
 	parser.parseRuntimeMemoryBaselineBytes = 0
 	parser.parseRuntimeMemoryBaselineSys = 0
 	parser.parseRuntimeMemoryPoll = 0
+	parser.parseMemoryBudgetDiag = nil
 	// Release *Node refs so the arenas from the last incremental parse can be
 	// collected by the GC. Without this, a Parser sitting in a sync.Pool keeps
 	// its reuseCursor.topLevel/*Node alive, preventing arena reclamation.
@@ -3027,6 +3029,7 @@ func captureParseArenaStats(parseRuntime *ParseRuntime, arena *nodeArena, arenaB
 	arena.finalizeCompactFullLeafDropped()
 	arena.finalizePendingParentDropped()
 	parseRuntime.ArenaBytesAllocated = arena.allocatedBytes
+	parseRuntime.ArenaBaselineBytes = arena.budgetBaselineBytes
 	parseRuntime.MemoryBudgetBytes = arena.budgetBytes
 	parseRuntime.ExternalScannerCheckpointRecords = arena.externalScannerCheckpointRecords
 	parseRuntime.ExternalScannerCheckpointSlotsAllocated = arena.externalScannerCheckpointSlotsAllocated()
@@ -3814,6 +3817,12 @@ func (p *Parser) guardRealShiftGap(source []byte, s *glrStack, tok Token) bool {
 // merged; distinct alternatives are preserved.
 func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass, timing *incrementalParseTiming, maxStacksOverride int, maxNodesOverride int, maxMergePerKeyOverride int, deterministicExternalConflicts bool) *Tree {
 	parseStart := time.Now()
+	memoryBudgetDiag := parseMemoryBudgetDiagnostic{}
+	previousMemoryBudgetDiag := p.parseMemoryBudgetDiag
+	p.parseMemoryBudgetDiag = &memoryBudgetDiag
+	defer func() {
+		p.parseMemoryBudgetDiag = previousMemoryBudgetDiag
+	}()
 	endParseBudget := p.enterParseBudgetAt(parseStart)
 	defer endParseBudget()
 	parseFlags := p.applyParseModeFlags(source, reuse, oldTree, arenaClass)
@@ -4288,6 +4297,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		captureArenaStats()
 		captureScratchStats()
 		parseRuntime.StopReason = parseStopReasonWithTokenSourceEOF(stopReason, tokenSourceEOFEarly)
+		parseRuntime.MemoryBudgetStopSource = memoryBudgetDiag.source
+		parseRuntime.RuntimeHeapGrowthBytes = memoryBudgetDiag.runtimeHeapGrowthBytes
+		parseRuntime.RuntimeSysGrowthBytes = memoryBudgetDiag.runtimeSysGrowthBytes
 		parseRuntime.CRecoveryEnteredErrorState = p.crecoveryEnteredErrorState
 		parseRuntime.CRecoveryDroppedErrorForClean = p.crecoveryDroppedErrorForClean
 		recordParseRuntimeLoopStats(&parseRuntime, scratch, iterationsUsed, nodeCount, peakStackDepth, maxStacksSeen, singleStackIterations, multiStackIterations, singleStackTokens, multiStackTokens)
@@ -4523,7 +4535,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			return finalize(stacks, reason)
 		}
 		if scratch.budgetExhausted() {
-			return finalize(stacks, ParseStopMemoryBudget)
+			return finalize(stacks, p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch))
 		}
 
 		p.updateParserStateTokenSource(ts, stacks, scratch)
@@ -5526,7 +5538,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			return finalize(stacks, reason)
 		}
 		if scratch.budgetExhausted() {
-			return finalize(stacks, ParseStopMemoryBudget)
+			return finalize(stacks, p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch))
 		}
 
 		if numStacks > 1 && retryPass && allParseStacksDead(stacks) {
@@ -5924,7 +5936,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						return finalize(accepted, reason)
 					}
 					if scratch.budgetExhausted() {
-						return finalize(accepted, ParseStopMemoryBudget)
+						return finalize(accepted, p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch))
 					}
 					// Faithful C recovery port: ts_parser__accept rebuilds the
 					// root around trailing extras before the tree competes.
@@ -6205,7 +6217,7 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 		return result
 	}
 	if scratch.budgetExhausted() {
-		result.stop(ParseStopMemoryBudget, false)
+		result.stop(p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch), false)
 		return result
 	}
 	if allParseStacksDead(stacks) {

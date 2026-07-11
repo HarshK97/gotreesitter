@@ -152,7 +152,7 @@ func (p *Parser) resultMaterializationStopReason(arena *nodeArena) ParseStopReas
 		}
 	}
 	if arena != nil && arena.budgetExhausted() {
-		return ParseStopMemoryBudget
+		return p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceArena)
 	}
 	if p != nil {
 		if reason := p.runtimeMemoryBudgetStopReason(); reason == ParseStopMemoryBudget {
