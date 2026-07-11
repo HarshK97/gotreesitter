@@ -597,12 +597,6 @@ func perfRecordReduceChildrenAllVisible(count int) {
 	}
 }
 
-func perfRecordReduceChildrenNoAlias(count int) {
-	if count > 0 {
-		perfCounters.reduceChildrenNoAlias.Add(uint64(count))
-	}
-}
-
 func perfRecordReduceChildrenScratch(count int) {
 	if count > 0 {
 		perfCounters.reduceChildrenScratch.Add(uint64(count))
