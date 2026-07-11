@@ -7,6 +7,16 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-07-11
+
+Performance, memory, and runtime-hygiene release following v0.24.1. It makes
+pending-parent field metadata compact and exact, removes retired zero-only
+telemetry, and narrows redundant Java retry passes behind an exact-blob
+profile. This minor release intentionally includes the exported diagnostic
+telemetry removals listed below. It also re-certifies the exact Poppler witness
+inside a hard 2 GiB envelope without claiming that JavaScript's throughput tail
+is closed.
+
 ### Changed
 
 - Pending-parent child entries now pack their full 16-bit field ID and field
@@ -38,6 +48,10 @@ for tags and release notes while still in `0.x`.
   cap-16 same-stack merge retry remains intact; only two proven-redundant
   cap-64 passes are suppressed, while overrides and incremental paths retain
   the conservative generic ladder.
+- The exact 3,447,275-byte JavaScript Poppler witness now has a current-main
+  receipt for no-error, S-expression, and deep C parity plus a 1,708,712 KiB
+  hard-RSS run. Its full parse remains 3.50x C, so JavaScript stays pending on
+  throughput and retained-node work.
 
 ## [0.24.1] - 2026-07-11
 
@@ -1602,7 +1616,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.24.1...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/odvcencio/gotreesitter/compare/v0.24.1...v0.25.0
 [0.24.1]: https://github.com/odvcencio/gotreesitter/compare/v0.24.0...v0.24.1
 [0.24.0]: https://github.com/odvcencio/gotreesitter/compare/v0.23.1...v0.24.0
 [0.23.1]: https://github.com/odvcencio/gotreesitter/compare/v0.23.0...v0.23.1
