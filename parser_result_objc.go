@@ -106,8 +106,8 @@ func normalizeObjcSizeofTypeIdentifierOperands(root *Node, lang *Language) {
 		replaceChildRangeWithSingleNode(n, 1, 4, paren)
 		if hasValueField && len(n.children) > 1 {
 			ensureNodeFieldStorage(n, len(n.children))
-			n.fieldIDs[1] = valueFieldID
-			n.fieldSources[1] = fieldSourceDirect
+			n.fieldIDs()[1] = valueFieldID
+			n.fieldSources()[1] = fieldSourceDirect
 		}
 	})
 }

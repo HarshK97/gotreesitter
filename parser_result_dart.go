@@ -242,8 +242,7 @@ func rewriteDartNestedComplexTypeArgumentRelationalCall(n *Node, lang *Language)
 		cloneTreeNodesIntoArena(greaterOp, arena),
 		cloneTreeNodesIntoArena(paren, arena),
 	})
-	n.fieldIDs = nil
-	n.fieldSources = nil
+	n.clearFieldMetadata()
 	if n.ownerArena != nil {
 		n.ownerArena.clearFinalChildRefs(n)
 	}
@@ -560,13 +559,13 @@ func normalizeDartConstructorSignatureKinds(root *Node, source []byte, lang *Lan
 					}
 					sig.symbol = constructorSym
 					sig.setNamed(constructorNamed)
-					if len(sig.fieldIDs) != len(sig.children) {
+					if len(sig.fieldIDs()) != len(sig.children) {
 						ensureNodeFieldStorage(sig, len(sig.children))
 					}
-					if parametersID != 0 && len(sig.fieldIDs) > 1 {
-						sig.fieldIDs[1] = parametersID
-						if len(sig.fieldSources) == len(sig.children) {
-							sig.fieldSources[1] = fieldSourceDirect
+					if parametersID != 0 && len(sig.fieldIDs()) > 1 {
+						sig.fieldIDs()[1] = parametersID
+						if len(sig.fieldSources()) == len(sig.children) {
+							sig.fieldSources()[1] = fieldSourceDirect
 						}
 					}
 				}
@@ -612,9 +611,11 @@ func normalizeDartSwitchExpressionBodyFields(root *Node, lang *Language) {
 	walkResultTree(root, func(n *Node) {
 		if n.Type(lang) == "switch_expression" && len(n.children) > 0 {
 			ensureNodeFieldStorage(n, len(n.children))
+			fieldIDs := n.fieldIDs()
+			fieldSources := n.fieldSources()
 			start := -1
 			for i := 0; i < len(n.children); i++ {
-				if n.fieldIDs[i] == bodyID {
+				if fieldIDs[i] == bodyID {
 					start = i
 					break
 				}
@@ -624,9 +625,9 @@ func normalizeDartSwitchExpressionBodyFields(root *Node, lang *Language) {
 					if n.children[i] == nil {
 						continue
 					}
-					n.fieldIDs[i] = bodyID
-					if len(n.fieldSources) == len(n.children) {
-						n.fieldSources[i] = fieldSourceDirect
+					fieldIDs[i] = bodyID
+					if len(fieldSources) == len(n.children) {
+						fieldSources[i] = fieldSourceDirect
 					}
 				}
 			}

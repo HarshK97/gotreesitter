@@ -12,9 +12,11 @@ func normalizeMakeConditionalConsequenceFields(root *Node, lang *Language) {
 		switch n.Type(lang) {
 		case "conditional", "elsif_directive", "else_directive":
 			ensureNodeFieldStorage(n, len(n.children))
+			fieldIDs := n.fieldIDs()
+			fieldSources := n.fieldSources()
 			start, end := -1, -1
 			for i := 0; i < len(n.children); i++ {
-				if n.fieldIDs[i] != consequenceID {
+				if fieldIDs[i] != consequenceID {
 					continue
 				}
 				if start < 0 {
@@ -34,9 +36,9 @@ func normalizeMakeConditionalConsequenceFields(root *Node, lang *Language) {
 					if n.children[i] == nil {
 						continue
 					}
-					n.fieldIDs[i] = consequenceID
-					if len(n.fieldSources) == len(n.children) {
-						n.fieldSources[i] = fieldSourceDirect
+					fieldIDs[i] = consequenceID
+					if len(fieldSources) == len(n.children) {
+						fieldSources[i] = fieldSourceDirect
 					}
 				}
 			}

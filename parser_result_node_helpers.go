@@ -4,25 +4,33 @@ func ensureNodeFieldStorage(n *Node, childCount int) {
 	if n == nil || childCount <= 0 {
 		return
 	}
-	if len(n.fieldIDs) != childCount {
-		fieldIDs := make([]FieldID, childCount)
-		copy(fieldIDs, n.fieldIDs)
+	fieldIDs := n.fieldIDs()
+	fieldSources := n.fieldSources()
+	changed := false
+	if len(fieldIDs) != childCount {
+		rebuilt := make([]FieldID, childCount)
+		copy(rebuilt, fieldIDs)
 		if n.ownerArena != nil {
 			buf := n.ownerArena.allocFieldIDSlice(childCount)
-			copy(buf, fieldIDs)
-			fieldIDs = buf
+			copy(buf, rebuilt)
+			rebuilt = buf
 		}
-		n.fieldIDs = fieldIDs
+		fieldIDs = rebuilt
+		changed = true
 	}
-	if len(n.fieldSources) != childCount {
-		fieldSources := make([]uint8, childCount)
-		copy(fieldSources, n.fieldSources)
+	if len(fieldSources) != childCount {
+		rebuilt := make([]uint8, childCount)
+		copy(rebuilt, fieldSources)
 		if n.ownerArena != nil {
 			buf := n.ownerArena.allocFieldSourceSlice(childCount)
-			copy(buf, fieldSources)
-			fieldSources = buf
+			copy(buf, rebuilt)
+			rebuilt = buf
 		}
-		n.fieldSources = fieldSources
+		fieldSources = rebuilt
+		changed = true
+	}
+	if changed {
+		n.setFieldMetadata(fieldIDs, fieldSources)
 	}
 }
 
@@ -31,11 +39,13 @@ func setNodeChildField(n *Node, childIndex int, fid FieldID, source uint8, overw
 		return false
 	}
 	ensureNodeFieldStorage(n, len(n.children))
-	if !overwrite && n.fieldIDs[childIndex] != 0 {
+	fieldIDs := n.fieldIDs()
+	fieldSources := n.fieldSources()
+	if !overwrite && fieldIDs[childIndex] != 0 {
 		return false
 	}
-	n.fieldIDs[childIndex] = fid
-	n.fieldSources[childIndex] = source
+	fieldIDs[childIndex] = fid
+	fieldSources[childIndex] = source
 	return true
 }
 
@@ -51,11 +61,13 @@ func clearNodeChildField(n *Node, childIndex int) bool {
 	if n == nil || childIndex < 0 || childIndex >= len(n.children) {
 		return false
 	}
-	if len(n.fieldIDs) == len(n.children) {
-		n.fieldIDs[childIndex] = 0
+	fieldIDs := n.fieldIDs()
+	fieldSources := n.fieldSources()
+	if len(fieldIDs) == len(n.children) {
+		fieldIDs[childIndex] = 0
 	}
-	if len(n.fieldSources) == len(n.children) {
-		n.fieldSources[childIndex] = fieldSourceNone
+	if len(fieldSources) == len(n.children) {
+		fieldSources[childIndex] = fieldSourceNone
 	}
 	return true
 }
@@ -65,8 +77,7 @@ func replaceNodeChildrenUnfielded(n *Node, children []*Node) {
 		return
 	}
 	n.children = children
-	n.fieldIDs = nil
-	n.fieldSources = nil
+	n.clearFieldMetadata()
 	if n.ownerArena != nil {
 		n.ownerArena.clearFinalChildRefs(n)
 	}
@@ -314,33 +325,41 @@ func replaceChildRangeWithSingleNode(parent *Node, start, end int, replacement *
 	newChildren = append(newChildren, children[end:]...)
 	parent.children = newChildren
 
-	if len(parent.fieldIDs) == oldLen {
+	fieldIDs := parent.fieldIDs()
+	fieldSources := parent.fieldSources()
+	metadataChanged := false
+	if len(fieldIDs) == oldLen {
 		newFieldIDs := make([]FieldID, 0, len(newChildren))
-		newFieldIDs = append(newFieldIDs, parent.fieldIDs[:start]...)
+		newFieldIDs = append(newFieldIDs, fieldIDs[:start]...)
 		mergedField := FieldID(0)
 		for i := start; i < end; i++ {
-			if parent.fieldIDs[i] != 0 {
-				mergedField = parent.fieldIDs[i]
+			if fieldIDs[i] != 0 {
+				mergedField = fieldIDs[i]
 				break
 			}
 		}
 		newFieldIDs = append(newFieldIDs, mergedField)
-		newFieldIDs = append(newFieldIDs, parent.fieldIDs[end:]...)
-		parent.fieldIDs = newFieldIDs
+		newFieldIDs = append(newFieldIDs, fieldIDs[end:]...)
+		fieldIDs = newFieldIDs
+		metadataChanged = true
 	}
-	if len(parent.fieldSources) == oldLen {
+	if len(fieldSources) == oldLen {
 		newFieldSources := make([]uint8, 0, len(newChildren))
-		newFieldSources = append(newFieldSources, parent.fieldSources[:start]...)
+		newFieldSources = append(newFieldSources, fieldSources[:start]...)
 		mergedSource := uint8(fieldSourceNone)
 		for i := start; i < end; i++ {
-			if parent.fieldSources[i] != fieldSourceNone {
-				mergedSource = parent.fieldSources[i]
+			if fieldSources[i] != fieldSourceNone {
+				mergedSource = fieldSources[i]
 				break
 			}
 		}
 		newFieldSources = append(newFieldSources, mergedSource)
-		newFieldSources = append(newFieldSources, parent.fieldSources[end:]...)
-		parent.fieldSources = newFieldSources
+		newFieldSources = append(newFieldSources, fieldSources[end:]...)
+		fieldSources = newFieldSources
+		metadataChanged = true
+	}
+	if metadataChanged {
+		parent.setFieldMetadata(fieldIDs, fieldSources)
 	}
 	for i, child := range parent.children {
 		if child == nil {
@@ -370,23 +389,31 @@ func replaceChildRangeWithNodes(parent *Node, start, end int, replacements []*No
 		parent.ownerArena.clearFinalChildRefs(parent)
 	}
 
-	if len(parent.fieldIDs) == oldLen {
+	fieldIDs := parent.fieldIDs()
+	fieldSources := parent.fieldSources()
+	metadataChanged := false
+	if len(fieldIDs) == oldLen {
 		newFieldIDs := make([]FieldID, 0, len(newChildren))
-		newFieldIDs = append(newFieldIDs, parent.fieldIDs[:start]...)
+		newFieldIDs = append(newFieldIDs, fieldIDs[:start]...)
 		for range replacements {
 			newFieldIDs = append(newFieldIDs, 0)
 		}
-		newFieldIDs = append(newFieldIDs, parent.fieldIDs[end:]...)
-		parent.fieldIDs = newFieldIDs
+		newFieldIDs = append(newFieldIDs, fieldIDs[end:]...)
+		fieldIDs = newFieldIDs
+		metadataChanged = true
 	}
-	if len(parent.fieldSources) == oldLen {
+	if len(fieldSources) == oldLen {
 		newFieldSources := make([]uint8, 0, len(newChildren))
-		newFieldSources = append(newFieldSources, parent.fieldSources[:start]...)
+		newFieldSources = append(newFieldSources, fieldSources[:start]...)
 		for range replacements {
 			newFieldSources = append(newFieldSources, fieldSourceNone)
 		}
-		newFieldSources = append(newFieldSources, parent.fieldSources[end:]...)
-		parent.fieldSources = newFieldSources
+		newFieldSources = append(newFieldSources, fieldSources[end:]...)
+		fieldSources = newFieldSources
+		metadataChanged = true
+	}
+	if metadataChanged {
+		parent.setFieldMetadata(fieldIDs, fieldSources)
 	}
 	populateParentNode(parent, parent.children)
 }

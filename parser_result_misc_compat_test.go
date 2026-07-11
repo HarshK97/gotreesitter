@@ -506,14 +506,14 @@ func TestNormalizeErlangSourceFileFormsSetsFinalRefFieldsWithoutDrain(t *testing
 	if !nodeHasFinalChildRefs(root) {
 		t.Fatal("root lost final-child refs")
 	}
-	if got, want := root.fieldIDs[0], FieldID(0); got != want {
+	if got, want := root.fieldIDs()[0], FieldID(0); got != want {
 		t.Fatalf("fieldIDs[0] = %d, want %d", got, want)
 	}
 	for _, i := range []int{1, 2} {
-		if got, want := root.fieldIDs[i], FieldID(1); got != want {
+		if got, want := root.fieldIDs()[i], FieldID(1); got != want {
 			t.Fatalf("fieldIDs[%d] = %d, want %d", i, got, want)
 		}
-		if got, want := fieldSourceAt(root.fieldSources, i), uint8(fieldSourceDirect); got != want {
+		if got, want := fieldSourceAt(root.fieldSources(), i), uint8(fieldSourceDirect); got != want {
 			t.Fatalf("fieldSources[%d] = %d, want %d", i, got, want)
 		}
 	}

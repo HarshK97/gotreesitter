@@ -330,14 +330,15 @@ func normalizeScalaImportPathFields(root *Node, lang *Language) {
 				if child == nil || child.Type(lang) != "." {
 					continue
 				}
-				prevHasPath := i > 0 && i-1 < len(n.fieldIDs) && n.fieldIDs[i-1] == pathID
-				nextHasPath := i+1 < len(n.children) && i+1 < len(n.fieldIDs) && n.fieldIDs[i+1] == pathID
+				fieldIDs := n.fieldIDs()
+				prevHasPath := i > 0 && i-1 < len(fieldIDs) && fieldIDs[i-1] == pathID
+				nextHasPath := i+1 < len(n.children) && i+1 < len(fieldIDs) && fieldIDs[i+1] == pathID
 				if !prevHasPath || !nextHasPath {
 					continue
 				}
 				ensureNodeFieldStorage(n, len(n.children))
-				n.fieldIDs[i] = pathID
-				n.fieldSources[i] = fieldSourceDirect
+				n.fieldIDs()[i] = pathID
+				n.fieldSources()[i] = fieldSourceDirect
 			}
 		}
 	})
@@ -403,9 +404,9 @@ func normalizeScalaDefinitionFields(root *Node, source []byte, lang *Language) {
 					continue
 				}
 				ensureNodeFieldStorage(n, len(n.children))
-				if n.fieldIDs[i] == 0 {
-					n.fieldIDs[i] = want
-					n.fieldSources[i] = fieldSourceDirect
+				if n.fieldIDs()[i] == 0 {
+					n.fieldIDs()[i] = want
+					n.fieldSources()[i] = fieldSourceDirect
 				}
 			}
 		case "function_definition":
@@ -428,9 +429,9 @@ func normalizeScalaDefinitionFields(root *Node, source []byte, lang *Language) {
 					continue
 				}
 				ensureNodeFieldStorage(n, len(n.children))
-				if n.fieldIDs[i] == 0 {
-					n.fieldIDs[i] = want
-					n.fieldSources[i] = fieldSourceDirect
+				if n.fieldIDs()[i] == 0 {
+					n.fieldIDs()[i] = want
+					n.fieldSources()[i] = fieldSourceDirect
 				}
 			}
 		case "val_definition", "var_definition":
@@ -471,9 +472,9 @@ func normalizeScalaDefinitionFields(root *Node, source []byte, lang *Language) {
 					continue
 				}
 				ensureNodeFieldStorage(n, len(n.children))
-				if n.fieldIDs[i] == 0 {
-					n.fieldIDs[i] = want
-					n.fieldSources[i] = fieldSourceDirect
+				if n.fieldIDs()[i] == 0 {
+					n.fieldIDs()[i] = want
+					n.fieldSources()[i] = fieldSourceDirect
 				}
 			}
 		case "if_expression":
@@ -506,9 +507,9 @@ func normalizeScalaDefinitionFields(root *Node, source []byte, lang *Language) {
 					continue
 				}
 				ensureNodeFieldStorage(n, len(n.children))
-				if n.fieldIDs[i] == 0 {
-					n.fieldIDs[i] = want
-					n.fieldSources[i] = fieldSourceDirect
+				if n.fieldIDs()[i] == 0 {
+					n.fieldIDs()[i] = want
+					n.fieldSources()[i] = fieldSourceDirect
 				}
 			}
 		case "case_block":
@@ -564,21 +565,29 @@ func normalizeScalaTemplateBodyFunctionAnnotations(root *Node, source []byte, pa
 					newChildren = buf
 				}
 				child.children = newChildren
-				if len(child.fieldIDs) > 0 {
+				childFieldIDs := child.fieldIDs()
+				childFieldSources := child.fieldSources()
+				metadataChanged := false
+				if len(childFieldIDs) > 0 {
 					fieldIDs := make([]FieldID, 0, len(child.children))
 					for range annotations {
 						fieldIDs = append(fieldIDs, 0)
 					}
-					fieldIDs = append(fieldIDs, child.fieldIDs...)
-					child.fieldIDs = fieldIDs
+					fieldIDs = append(fieldIDs, childFieldIDs...)
+					childFieldIDs = fieldIDs
+					metadataChanged = true
 				}
-				if len(child.fieldSources) > 0 {
+				if len(childFieldSources) > 0 {
 					fieldSources := make([]uint8, 0, len(child.children))
 					for range annotations {
 						fieldSources = append(fieldSources, fieldSourceNone)
 					}
-					fieldSources = append(fieldSources, child.fieldSources...)
-					child.fieldSources = fieldSources
+					fieldSources = append(fieldSources, childFieldSources...)
+					childFieldSources = fieldSources
+					metadataChanged = true
+				}
+				if metadataChanged {
+					child.setFieldMetadata(childFieldIDs, childFieldSources)
 				}
 				populateParentNode(child, child.children)
 			}
@@ -749,21 +758,29 @@ func normalizeScalaTrailingCommentSiblings(parent *Node, source []byte, lang *La
 		rebuiltChildren = append(rebuiltChildren, added...)
 		body.children = rebuiltChildren
 
-		if len(body.fieldIDs) > 0 {
-			rebuiltFieldIDs := make([]FieldID, 0, len(body.fieldIDs)+len(added))
-			rebuiltFieldIDs = append(rebuiltFieldIDs, body.fieldIDs...)
+		bodyFieldIDs := body.fieldIDs()
+		bodyFieldSources := body.fieldSources()
+		metadataChanged := false
+		if len(bodyFieldIDs) > 0 {
+			rebuiltFieldIDs := make([]FieldID, 0, len(bodyFieldIDs)+len(added))
+			rebuiltFieldIDs = append(rebuiltFieldIDs, bodyFieldIDs...)
 			for range added {
 				rebuiltFieldIDs = append(rebuiltFieldIDs, 0)
 			}
-			body.fieldIDs = rebuiltFieldIDs
+			bodyFieldIDs = rebuiltFieldIDs
+			metadataChanged = true
 		}
-		if len(body.fieldSources) > 0 {
-			rebuiltFieldSources := make([]uint8, 0, len(body.fieldSources)+len(added))
-			rebuiltFieldSources = append(rebuiltFieldSources, body.fieldSources...)
+		if len(bodyFieldSources) > 0 {
+			rebuiltFieldSources := make([]uint8, 0, len(bodyFieldSources)+len(added))
+			rebuiltFieldSources = append(rebuiltFieldSources, bodyFieldSources...)
 			for range added {
 				rebuiltFieldSources = append(rebuiltFieldSources, 0)
 			}
-			body.fieldSources = rebuiltFieldSources
+			bodyFieldSources = rebuiltFieldSources
+			metadataChanged = true
+		}
+		if metadataChanged {
+			body.setFieldMetadata(bodyFieldIDs, bodyFieldSources)
 		}
 		if targetEndByte > body.endByte {
 			body.endByte = targetEndByte
@@ -775,11 +792,14 @@ func normalizeScalaTrailingCommentSiblings(parent *Node, source []byte, lang *La
 		}
 
 		parent.children = append(parent.children[:i], parent.children[j:]...)
-		if len(parent.fieldIDs) > 0 {
-			parent.fieldIDs = append(parent.fieldIDs[:i], parent.fieldIDs[j:]...)
-			if len(parent.fieldSources) > 0 {
-				parent.fieldSources = append(parent.fieldSources[:i], parent.fieldSources[j:]...)
+		parentFieldIDs := parent.fieldIDs()
+		parentFieldSources := parent.fieldSources()
+		if len(parentFieldIDs) > 0 {
+			parentFieldIDs = append(parentFieldIDs[:i], parentFieldIDs[j:]...)
+			if len(parentFieldSources) > 0 {
+				parentFieldSources = append(parentFieldSources[:i], parentFieldSources[j:]...)
 			}
+			parent.setFieldMetadata(parentFieldIDs, parentFieldSources)
 		}
 	}
 }
@@ -835,10 +855,10 @@ func normalizeScalaFunctionModifierFields(root *Node, lang *Language) {
 				if child == nil || child.Type(lang) != "modifiers" {
 					continue
 				}
-				if i < len(n.fieldIDs) && n.fieldIDs[i] == returnTypeID {
-					n.fieldIDs[i] = 0
-					if i < len(n.fieldSources) {
-						n.fieldSources[i] = fieldSourceNone
+				if i < len(n.fieldIDs()) && n.fieldIDs()[i] == returnTypeID {
+					n.fieldIDs()[i] = 0
+					if i < len(n.fieldSources()) {
+						n.fieldSources()[i] = fieldSourceNone
 					}
 				}
 			}

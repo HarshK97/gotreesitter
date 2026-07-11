@@ -133,15 +133,15 @@ func TestGSSNodeHashComputedLazilyForSingleStackNodes(t *testing.T) {
 
 func TestGSSEntryHashMatchesAccessorSemantics(t *testing.T) {
 	node := &Node{
-		children:     []*Node{{symbol: 20, startByte: 1, endByte: 2, preGotoState: 8, fieldIDs: []FieldID{3}, flags: nodeFlagNamed}},
-		fieldIDs:     []FieldID{2},
-		symbol:       10,
-		startByte:    1,
-		endByte:      3,
-		parseState:   4,
-		preGotoState: 14,
-		productionID: 5,
-		flags:        nodeFlagNamed | nodeFlagHasError,
+		children:      []*Node{{symbol: 20, startByte: 1, endByte: 2, preGotoState: 8, fieldMetadata: &nodeFieldMetadata{ids: []FieldID{3}}, flags: nodeFlagNamed}},
+		fieldMetadata: &nodeFieldMetadata{ids: []FieldID{2}},
+		symbol:        10,
+		startByte:     1,
+		endByte:       3,
+		parseState:    4,
+		preGotoState:  14,
+		productionID:  5,
+		flags:         nodeFlagNamed | nodeFlagHasError,
 	}
 	noTree := &noTreeNode{
 		symbol:       11,
@@ -733,10 +733,10 @@ func gssNodeShallowMergeHashViaAccessors(h uint64, n *Node) uint64 {
 		h *= gssHashPrime
 		return h
 	}
-	h ^= uint64(len(n.fieldIDs))
+	h ^= uint64(len(n.fieldIDs()))
 	h *= gssHashPrime
-	for i := range n.fieldIDs {
-		h ^= uint64(n.fieldIDs[i])
+	for i := range n.fieldIDs() {
+		h ^= uint64(n.fieldIDs()[i])
 		h *= gssHashPrime
 	}
 	for i := range n.children {
@@ -754,7 +754,7 @@ func gssNodeShallowMergeHashViaAccessors(h uint64, n *Node) uint64 {
 		h *= gssHashPrime
 		h ^= uint64(nodeChildCountNoMaterialize(child))
 		h *= gssHashPrime
-		h ^= uint64(len(child.fieldIDs))
+		h ^= uint64(len(child.fieldIDs()))
 		h *= gssHashPrime
 		h ^= uint64(uint32(child.dynamicPrecedence))
 		h *= gssHashPrime

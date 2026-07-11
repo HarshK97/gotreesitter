@@ -171,7 +171,6 @@ func TestNormalizeCSharpCollapsedLeafChildrenRestoresMatrixBlockers(t *testing.T
 	asyncIdent := newLeafNodeInArena(arena, 8, true, 20, 25, Point{Column: 20}, Point{Column: 25})
 	lambdaFields := cloneFieldIDSliceInArena(arena, []FieldID{1})
 	lambda := newParentNodeInArena(arena, 10, true, []*Node{asyncIdent}, lambdaFields, 0)
-	lambda.fieldSources = defaultFieldSourcesInArena(arena, lambdaFields)
 	stringLiteral := newLeafNodeInArena(arena, 12, true, 27, 30, Point{Column: 27}, Point{Column: 30})
 	argument := newParentNodeInArena(arena, 11, true, []*Node{stringLiteral}, nil, 0)
 	argument.startByte = 27

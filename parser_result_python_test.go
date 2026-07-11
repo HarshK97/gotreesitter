@@ -89,10 +89,10 @@ func TestBuildResultFromNodesCollapsesPythonTerminalIfSuffix(t *testing.T) {
 	if stmt == nil || stmt.Type(lang) != "if_statement" {
 		t.Fatalf("expected trailing if_statement, got %s", root.SExpr(lang))
 	}
-	if got, want := stmt.fieldIDs[1], FieldID(1); got != want {
+	if got, want := stmt.fieldIDs()[1], FieldID(1); got != want {
 		t.Fatalf("if condition field = %d, want %d", got, want)
 	}
-	if got, want := stmt.fieldIDs[3], FieldID(2); got != want {
+	if got, want := stmt.fieldIDs()[3], FieldID(2); got != want {
 		t.Fatalf("if consequence field = %d, want %d", got, want)
 	}
 }
@@ -174,23 +174,23 @@ func TestBuildResultFromNodesCollapsesPythonTerminalClassAndIfSuffix(t *testing.
 	if classDef == nil || classDef.Type(lang) != "class_definition" {
 		t.Fatalf("expected leading class_definition, got %s", root.SExpr(lang))
 	}
-	if got, want := classDef.fieldIDs[1], FieldID(1); got != want {
+	if got, want := classDef.fieldIDs()[1], FieldID(1); got != want {
 		t.Fatalf("class name field = %d, want %d", got, want)
 	}
-	if got, want := classDef.fieldIDs[2], FieldID(2); got != want {
+	if got, want := classDef.fieldIDs()[2], FieldID(2); got != want {
 		t.Fatalf("class superclasses field = %d, want %d", got, want)
 	}
-	if got, want := classDef.fieldIDs[4], FieldID(3); got != want {
+	if got, want := classDef.fieldIDs()[4], FieldID(3); got != want {
 		t.Fatalf("class body field = %d, want %d", got, want)
 	}
 	stmt := root.NamedChild(1)
 	if stmt == nil || stmt.Type(lang) != "if_statement" {
 		t.Fatalf("expected trailing if_statement, got %s", root.SExpr(lang))
 	}
-	if got, want := stmt.fieldIDs[1], FieldID(4); got != want {
+	if got, want := stmt.fieldIDs()[1], FieldID(4); got != want {
 		t.Fatalf("if condition field = %d, want %d", got, want)
 	}
-	if got, want := stmt.fieldIDs[3], FieldID(5); got != want {
+	if got, want := stmt.fieldIDs()[3], FieldID(5); got != want {
 		t.Fatalf("if consequence field = %d, want %d", got, want)
 	}
 }

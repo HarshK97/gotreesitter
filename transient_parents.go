@@ -53,8 +53,7 @@ func (s *transientParentScratch) allocParent(arena *nodeArena, sym Symbol, named
 		n.symbol = sym
 		n.setNamed(named)
 		n.children = children
-		n.fieldIDs = nil
-		n.fieldSources = nil
+		n.clearFieldMetadata()
 		n.productionID = productionID
 		n.childIndex = -1
 		populateParentNodeNoLinks(n, children, trackChildErrors)
@@ -316,8 +315,7 @@ func (s *transientParentScratch) materializeVisitedNodeUntil(n *Node, arena *nod
 	clone.ownerArena = arena
 	clone.symbol = n.symbol
 	clone.children = n.children
-	clone.fieldIDs = n.fieldIDs
-	clone.fieldSources = n.fieldSources
+	clone.setFieldMetadata(n.fieldIDs(), n.fieldSources())
 	clone.startPoint = n.startPoint
 	clone.endPoint = n.endPoint
 	clone.startByte = n.startByte
@@ -330,7 +328,7 @@ func (s *transientParentScratch) materializeVisitedNodeUntil(n *Node, arena *nod
 	clone.flags = n.flags
 	clone.childIndex = -1
 	nodeInitEquivVersion(clone)
-	arena.recordParentNodeConstructed(len(clone.children), clone.fieldIDs, clone.fieldSources, len(clone.fieldSources) > 0, true, false)
+	arena.recordParentNodeConstructed(len(clone.children), clone.fieldIDs(), clone.fieldSources(), len(clone.fieldSources()) > 0, true, false)
 	s.nodesMaterialized++
 	n.parent = clone
 	return ParseStopNone

@@ -496,8 +496,7 @@ func juliaRewriteReturnRange(ret *Node, source []byte, returnSym, rangeSym, quot
 	expr.symbol = binarySym
 	expr.setNamed(true)
 	expr.children = cloneNodeSliceInArena(expr.ownerArena, []*Node{left, err, innerOp, innerRight})
-	expr.fieldIDs = nil
-	expr.fieldSources = nil
+	expr.clearFieldMetadata()
 	expr.productionID = 0
 	expr.endByte = innerRight.endByte
 	expr.endPoint = innerRight.endPoint
@@ -532,15 +531,13 @@ func juliaRewriteBareReturnRange(ret, expr, left, colon, right *Node, source []b
 	expr.startByte = colon.startByte
 	expr.startPoint = colon.startPoint
 	expr.children = cloneNodeSliceInArena(expr.ownerArena, []*Node{colon, right})
-	expr.fieldIDs = nil
-	expr.fieldSources = nil
+	expr.clearFieldMetadata()
 	expr.productionID = 0
 	expr.setHasError(false)
 	populateParentNode(expr, expr.children)
 
 	ret.children = cloneNodeSliceInArena(ret.ownerArena, []*Node{resultChildAt(ret, 0), err, expr})
-	ret.fieldIDs = nil
-	ret.fieldSources = nil
+	ret.clearFieldMetadata()
 	ret.setHasError(true)
 	populateParentNode(ret, ret.children)
 	return true

@@ -165,8 +165,7 @@ func (v resultMutableChildView) FilterFinalRefs(keep func(i int, entry stackEntr
 		return false
 	}
 	v.parent.children = nil
-	v.parent.fieldIDs = nil
-	v.parent.fieldSources = nil
+	v.parent.clearFieldMetadata()
 	if len(kept) == 0 {
 		v.arena.clearFinalChildRefs(v.parent)
 		return true
@@ -215,43 +214,51 @@ func (v resultMutableChildView) ReplaceFinalRefRangeWithNode(start, end int, rep
 	sidecar.childRange = childRange
 	v.parent.children = nil
 
-	if len(v.parent.fieldIDs) == oldLen {
+	parentFieldIDs := v.parent.fieldIDs()
+	parentFieldSources := v.parent.fieldSources()
+	metadataChanged := false
+	if len(parentFieldIDs) == oldLen {
 		fieldIDs := make([]FieldID, 0, newLen)
-		fieldIDs = append(fieldIDs, v.parent.fieldIDs[:start]...)
+		fieldIDs = append(fieldIDs, parentFieldIDs[:start]...)
 		mergedField := FieldID(0)
 		for i := start; i < end; i++ {
-			if v.parent.fieldIDs[i] != 0 {
-				mergedField = v.parent.fieldIDs[i]
+			if parentFieldIDs[i] != 0 {
+				mergedField = parentFieldIDs[i]
 				break
 			}
 		}
 		fieldIDs = append(fieldIDs, mergedField)
-		fieldIDs = append(fieldIDs, v.parent.fieldIDs[end:]...)
+		fieldIDs = append(fieldIDs, parentFieldIDs[end:]...)
 		if v.parent.ownerArena != nil {
 			buf := v.parent.ownerArena.allocFieldIDSlice(len(fieldIDs))
 			copy(buf, fieldIDs)
 			fieldIDs = buf
 		}
-		v.parent.fieldIDs = fieldIDs
+		parentFieldIDs = fieldIDs
+		metadataChanged = true
 	}
-	if len(v.parent.fieldSources) == oldLen {
+	if len(parentFieldSources) == oldLen {
 		fieldSources := make([]uint8, 0, newLen)
-		fieldSources = append(fieldSources, v.parent.fieldSources[:start]...)
+		fieldSources = append(fieldSources, parentFieldSources[:start]...)
 		mergedSource := uint8(fieldSourceNone)
 		for i := start; i < end; i++ {
-			if v.parent.fieldSources[i] != fieldSourceNone {
-				mergedSource = v.parent.fieldSources[i]
+			if parentFieldSources[i] != fieldSourceNone {
+				mergedSource = parentFieldSources[i]
 				break
 			}
 		}
 		fieldSources = append(fieldSources, mergedSource)
-		fieldSources = append(fieldSources, v.parent.fieldSources[end:]...)
+		fieldSources = append(fieldSources, parentFieldSources[end:]...)
 		if v.parent.ownerArena != nil {
 			buf := v.parent.ownerArena.allocFieldSourceSlice(len(fieldSources))
 			copy(buf, fieldSources)
 			fieldSources = buf
 		}
-		v.parent.fieldSources = fieldSources
+		parentFieldSources = fieldSources
+		metadataChanged = true
+	}
+	if metadataChanged {
+		v.parent.setFieldMetadata(parentFieldIDs, parentFieldSources)
 	}
 	if perfCountersEnabled {
 		perfRecordMutationChildRefCopyOnWrite(newLen)
@@ -282,27 +289,35 @@ func (v resultMutableChildView) AppendFinalRefNode(child *Node) bool {
 	sidecar.childRange = childRange
 	v.parent.children = nil
 
-	if len(v.parent.fieldIDs) == oldLen {
+	parentFieldIDs := v.parent.fieldIDs()
+	parentFieldSources := v.parent.fieldSources()
+	metadataChanged := false
+	if len(parentFieldIDs) == oldLen {
 		fieldIDs := make([]FieldID, 0, newLen)
-		fieldIDs = append(fieldIDs, v.parent.fieldIDs...)
+		fieldIDs = append(fieldIDs, parentFieldIDs...)
 		fieldIDs = append(fieldIDs, 0)
 		if v.parent.ownerArena != nil {
 			buf := v.parent.ownerArena.allocFieldIDSlice(len(fieldIDs))
 			copy(buf, fieldIDs)
 			fieldIDs = buf
 		}
-		v.parent.fieldIDs = fieldIDs
+		parentFieldIDs = fieldIDs
+		metadataChanged = true
 	}
-	if len(v.parent.fieldSources) == oldLen {
+	if len(parentFieldSources) == oldLen {
 		fieldSources := make([]uint8, 0, newLen)
-		fieldSources = append(fieldSources, v.parent.fieldSources...)
+		fieldSources = append(fieldSources, parentFieldSources...)
 		fieldSources = append(fieldSources, uint8(fieldSourceNone))
 		if v.parent.ownerArena != nil {
 			buf := v.parent.ownerArena.allocFieldSourceSlice(len(fieldSources))
 			copy(buf, fieldSources)
 			fieldSources = buf
 		}
-		v.parent.fieldSources = fieldSources
+		parentFieldSources = fieldSources
+		metadataChanged = true
+	}
+	if metadataChanged {
+		v.parent.setFieldMetadata(parentFieldIDs, parentFieldSources)
 	}
 	if perfCountersEnabled {
 		perfRecordMutationChildRefCopyOnWrite(newLen)
@@ -377,25 +392,33 @@ func (v resultMutableChildView) SurroundFinalRefs(prefix, suffix []*Node) bool {
 	sidecar.childRange = childRange
 	v.parent.children = nil
 
-	if len(v.parent.fieldIDs) > 0 {
+	parentFieldIDs := v.parent.fieldIDs()
+	parentFieldSources := v.parent.fieldSources()
+	metadataChanged := false
+	if len(parentFieldIDs) > 0 {
 		fieldIDs := make([]FieldID, newLen)
-		copy(fieldIDs[leadingCount:], v.parent.fieldIDs)
+		copy(fieldIDs[leadingCount:], parentFieldIDs)
 		if v.parent.ownerArena != nil {
 			buf := v.parent.ownerArena.allocFieldIDSlice(len(fieldIDs))
 			copy(buf, fieldIDs)
 			fieldIDs = buf
 		}
-		v.parent.fieldIDs = fieldIDs
+		parentFieldIDs = fieldIDs
+		metadataChanged = true
 	}
-	if len(v.parent.fieldSources) > 0 {
+	if len(parentFieldSources) > 0 {
 		fieldSources := make([]uint8, newLen)
-		copy(fieldSources[leadingCount:], v.parent.fieldSources)
+		copy(fieldSources[leadingCount:], parentFieldSources)
 		if v.parent.ownerArena != nil {
 			buf := v.parent.ownerArena.allocFieldSourceSlice(len(fieldSources))
 			copy(buf, fieldSources)
 			fieldSources = buf
 		}
-		v.parent.fieldSources = fieldSources
+		parentFieldSources = fieldSources
+		metadataChanged = true
+	}
+	if metadataChanged {
+		v.parent.setFieldMetadata(parentFieldIDs, parentFieldSources)
 	}
 	if perfCountersEnabled {
 		perfRecordMutationChildRefCopyOnWrite(newLen)

@@ -20,10 +20,11 @@ func TestNodeLayoutSizeBudget(t *testing.T) {
 	var n Node
 	got := unsafe.Sizeof(n)
 	t.Logf(
-		"Node size=%d align=%d children=%d parent=%d ownerArena=%d startPoint=%d startByte=%d parseState=%d childIndex=%d symbol=%d rawShape=%d flags=%d dirtyFlag=%d",
+		"Node size=%d align=%d children=%d fieldMetadata=%d parent=%d ownerArena=%d startPoint=%d startByte=%d parseState=%d childIndex=%d symbol=%d rawShape=%d flags=%d dirtyFlag=%d",
 		got,
 		unsafe.Alignof(n),
 		unsafe.Offsetof(n.children),
+		unsafe.Offsetof(n.fieldMetadata),
 		unsafe.Offsetof(n.parent),
 		unsafe.Offsetof(n.ownerArena),
 		unsafe.Offsetof(n.startPoint),
@@ -35,12 +36,9 @@ func TestNodeLayoutSizeBudget(t *testing.T) {
 		unsafe.Offsetof(n.flags),
 		unsafe.Offsetof(n.dirtyFlag),
 	)
-	// Keep the 32-bit rawShape before the 16-bit symbol/production pair. The
-	// same fields occupy 144 bytes in this order; placing symbol first inserts
-	// an otherwise unnecessary 8-byte tail-alignment block on 64-bit targets.
-	const budget = 144
-	if got > budget {
-		t.Fatalf("Node size = %d, want <= %d", got, budget)
+	const want = 104
+	if got != want {
+		t.Fatalf("Node size = %d, want %d", got, want)
 	}
 }
 

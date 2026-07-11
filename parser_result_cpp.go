@@ -187,8 +187,7 @@ func cppRetagLeaf(n *Node, sym Symbol, named bool) {
 	n.symbol = sym
 	n.setNamed(named)
 	n.children = nil
-	n.fieldIDs = nil
-	n.fieldSources = nil
+	n.clearFieldMetadata()
 	n.setExtra(false)
 	n.setHasError(false)
 }
@@ -211,8 +210,7 @@ func cppNewParent(arena *nodeArena, sym Symbol, named bool, children []*Node) *N
 func cppCloneParentWithChildren(arena *nodeArena, template *Node, children []*Node) *Node {
 	n := cloneNodeInArena(arena, template)
 	n.children = cloneNodeSliceInArena(arena, children)
-	n.fieldIDs = nil
-	n.fieldSources = nil
+	n.clearFieldMetadata()
 	n.setExtra(false)
 	n.setHasError(false)
 	populateParentNode(n, n.children)

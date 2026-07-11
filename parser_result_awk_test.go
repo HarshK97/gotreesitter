@@ -74,11 +74,11 @@ func TestAwkRecoveredShellQuoteRedirectMatchesCShape(t *testing.T) {
 	if innerAssignment.Child(1).Type(lang) != "ERROR" || !innerAssignment.Child(1).IsExtra() {
 		t.Fatalf("assignment child[1] = %q extra:%v, want extra ERROR", innerAssignment.Child(1).Type(lang), innerAssignment.Child(1).IsExtra())
 	}
-	if got.fieldIDs[0] != FieldID(1) || got.fieldIDs[2] != FieldID(2) || got.fieldIDs[3] != FieldID(3) {
-		t.Fatalf("outer fields = %#v, want left/operator/right at 0/2/3", got.fieldIDs)
+	if got.fieldIDs()[0] != FieldID(1) || got.fieldIDs()[2] != FieldID(2) || got.fieldIDs()[3] != FieldID(3) {
+		t.Fatalf("outer fields = %#v, want left/operator/right at 0/2/3", got.fieldIDs())
 	}
-	if innerAssignment.fieldIDs[2] != 0 {
-		t.Fatalf("assignment '=' field = %d, want 0", innerAssignment.fieldIDs[2])
+	if innerAssignment.fieldIDs()[2] != 0 {
+		t.Fatalf("assignment '=' field = %d, want 0", innerAssignment.fieldIDs()[2])
 	}
 }
 
@@ -107,11 +107,11 @@ func TestAwkRecoveredShellInRedirectMovesOperatorOutOfError(t *testing.T) {
 	if redirectErr.Type(lang) != "ERROR" || !redirectErr.IsExtra() || redirectErr.Child(0).Type(lang) != ">" {
 		t.Fatalf("child[2] = %q extra:%v inner:%q, want extra ERROR wrapping >", redirectErr.Type(lang), redirectErr.IsExtra(), redirectErr.Child(0).Type(lang))
 	}
-	if got.fieldIDs[1] != FieldID(2) {
-		t.Fatalf("operator field = %d, want 2", got.fieldIDs[1])
+	if got.fieldIDs()[1] != FieldID(2) {
+		t.Fatalf("operator field = %d, want 2", got.fieldIDs()[1])
 	}
-	if got.fieldIDs[2] != 0 {
-		t.Fatalf("redirect ERROR field = %d, want 0", got.fieldIDs[2])
+	if got.fieldIDs()[2] != 0 {
+		t.Fatalf("redirect ERROR field = %d, want 0", got.fieldIDs()[2])
 	}
 }
 

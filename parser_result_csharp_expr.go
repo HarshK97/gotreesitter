@@ -104,8 +104,7 @@ func csharpRestoreConditionalExpressionTokens(n *Node, source []byte, lang *Lang
 	alternativeID, _ := lang.FieldByName("alternative")
 	fieldIDs := cloneFieldIDSliceInArena(n.ownerArena, []FieldID{conditionID, 0, consequenceID, 0, alternativeID})
 	n.children = children
-	n.fieldIDs = fieldIDs
-	n.fieldSources = defaultFieldSourcesInArena(n.ownerArena, fieldIDs)
+	n.setFieldMetadata(fieldIDs, defaultFieldSourcesInArena(n.ownerArena, fieldIDs))
 	if n.ownerArena != nil {
 		n.ownerArena.clearFinalChildRefs(n)
 	}
@@ -171,8 +170,7 @@ func csharpRewriteConditionalIsPatternExpression(n *Node, source []byte, lang *L
 	n.symbol = isPatternSym
 	n.setNamed(isPatternNamed)
 	n.children = children
-	n.fieldIDs = fieldIDs
-	n.fieldSources = defaultFieldSourcesInArena(n.ownerArena, fieldIDs)
+	n.setFieldMetadata(fieldIDs, defaultFieldSourcesInArena(n.ownerArena, fieldIDs))
 	n.productionID = 0
 	n.setHasError(false)
 	populateParentNode(n, n.children)
@@ -289,8 +287,7 @@ func csharpRewriteLogicalAndCastExpression(n *Node, source []byte, lang *Languag
 	n.symbol = castSym
 	n.setNamed(castNamed)
 	n.children = children
-	n.fieldIDs = fieldIDs
-	n.fieldSources = defaultFieldSourcesInArena(n.ownerArena, fieldIDs)
+	n.setFieldMetadata(fieldIDs, defaultFieldSourcesInArena(n.ownerArena, fieldIDs))
 	n.productionID = 0
 	n.setHasError(false)
 	populateParentNode(n, n.children)

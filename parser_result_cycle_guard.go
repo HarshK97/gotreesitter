@@ -128,11 +128,19 @@ func reportResultTreeSelfCycleStripped(parent, child *Node) {
 func removeResultTreeChildAt(n *Node, children []*Node, idx int) []*Node {
 	oldLen := len(children)
 	n.children = append(children[:idx], children[idx+1:]...)
-	if len(n.fieldIDs) == oldLen {
-		n.fieldIDs = append(n.fieldIDs[:idx], n.fieldIDs[idx+1:]...)
+	fieldIDs := n.fieldIDs()
+	fieldSources := n.fieldSources()
+	metadataChanged := false
+	if len(fieldIDs) == oldLen {
+		fieldIDs = append(fieldIDs[:idx], fieldIDs[idx+1:]...)
+		metadataChanged = true
 	}
-	if len(n.fieldSources) == oldLen {
-		n.fieldSources = append(n.fieldSources[:idx], n.fieldSources[idx+1:]...)
+	if len(fieldSources) == oldLen {
+		fieldSources = append(fieldSources[:idx], fieldSources[idx+1:]...)
+		metadataChanged = true
+	}
+	if metadataChanged {
+		n.setFieldMetadata(fieldIDs, fieldSources)
 	}
 	return n.children
 }

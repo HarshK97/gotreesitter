@@ -197,8 +197,10 @@ func rustNormalizeDocCommentMarkerField(node *Node, source []byte, lang *Languag
 	if childCount == 0 {
 		return
 	}
-	if len(node.fieldIDs) != childCount {
-		node.fieldIDs = cloneFieldIDSliceInArena(node.ownerArena, make([]FieldID, childCount))
+	fieldIDs := node.fieldIDs()
+	if len(fieldIDs) != childCount {
+		fieldIDs = cloneFieldIDSliceInArena(node.ownerArena, make([]FieldID, childCount))
+		node.setFieldIDs(fieldIDs)
 	}
 	for i := 0; i < childCount; i++ {
 		child := resultChildAt(node, i)
@@ -208,11 +210,11 @@ func rustNormalizeDocCommentMarkerField(node *Node, source []byte, lang *Languag
 		childType := child.Type(lang)
 		if childType == "outer_doc_comment_marker" || childType == "inner_doc_comment_marker" {
 			rustEnsureDocCommentMarkerToken(child, source, lang)
-			node.fieldIDs[i] = markerFID
+			fieldIDs[i] = markerFID
 			continue
 		}
 		if childType == "doc_comment" {
-			node.fieldIDs[i] = docFID
+			fieldIDs[i] = docFID
 		}
 	}
 }
@@ -304,8 +306,7 @@ func normalizeRustTokenBindingPatternNode(node *Node, source []byte, tokenTreePa
 		fragClone.symbol = fragmentSpecifierSym
 		fragClone.setNamed(fragmentSpecifierNamed)
 		fragClone.children = nil
-		fragClone.fieldIDs = nil
-		fragClone.fieldSources = nil
+		fragClone.clearFieldMetadata()
 
 		binding := cloneNodeInArena(node.ownerArena, meta)
 		binding.symbol = tokenBindingPatternSym

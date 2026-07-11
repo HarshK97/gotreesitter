@@ -66,8 +66,9 @@ func phpAssignmentLeft(n *Node, lang *Language) *Node {
 	}
 	count := resultChildCount(n)
 	children := resultChildSliceForMutation(n)
-	for i := 0; i < count && i < len(n.fieldIDs); i++ {
-		if n.fieldIDs[i] == leftField && i < len(children) {
+	fieldIDs := n.fieldIDs()
+	for i := 0; i < count && i < len(fieldIDs); i++ {
+		if fieldIDs[i] == leftField && i < len(children) {
 			return children[i]
 		}
 	}
@@ -248,8 +249,7 @@ func normalizePHPStaticFunctionFragments(root *Node, source []byte, parser *Pars
 	}
 	out = cloneNodeSliceIfArena(arena, out)
 	root.children = out
-	root.fieldIDs = nil
-	root.fieldSources = nil
+	root.clearFieldMetadata()
 	assignPHPTopLevelFragmentFields(root, lang, arena)
 	populateParentNode(root, out)
 	extendNodeToTrailingWhitespace(root, source)
@@ -755,8 +755,7 @@ func assignPHPTopLevelFragmentFields(root *Node, lang *Language, arena *nodeAren
 		}
 	}
 	if fieldIDs != nil {
-		root.fieldIDs = fieldIDs
-		root.fieldSources = fieldSources
+		root.setFieldMetadata(fieldIDs, fieldSources)
 	}
 }
 

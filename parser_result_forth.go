@@ -41,8 +41,7 @@ func normalizeForthUnterminatedDefinitions(root *Node, lang *Language) {
 		n.setNamed(true)
 		n.setExtra(false)
 		n.children = updated
-		n.fieldIDs = nil
-		n.fieldSources = nil
+		n.clearFieldMetadata()
 		n.setHasError(true)
 		populateParentNode(n, updated)
 	})

@@ -457,7 +457,7 @@ func TestAlternativeFieldMatchesUsesLazyFinalChildRefs(t *testing.T) {
 	if node == nil {
 		t.Fatal("materialized parent = nil")
 	}
-	node.fieldIDs = []FieldID{0, 1}
+	node.setFieldIDs([]FieldID{0, 1})
 	child := nodeChildAtForReason(node, 1, materializeForQuery)
 	if child == nil {
 		t.Fatal("nodeChildAtForReason = nil")
@@ -1610,11 +1610,11 @@ func TestPendingParentMaterializationPreservesPackedFieldEntries(t *testing.T) {
 	if node == nil {
 		t.Fatal("materialized node = nil")
 	}
-	if len(node.fieldIDs) != 2 || node.fieldIDs[0] != 0 || node.fieldIDs[1] != 9 {
-		t.Fatalf("fieldIDs = %#v, want [0 9]", node.fieldIDs)
+	if len(node.fieldIDs()) != 2 || node.fieldIDs()[0] != 0 || node.fieldIDs()[1] != 9 {
+		t.Fatalf("fieldIDs = %#v, want [0 9]", node.fieldIDs())
 	}
-	if len(node.fieldSources) != 2 || node.fieldSources[0] != fieldSourceNone || node.fieldSources[1] != fieldSourceDirect {
-		t.Fatalf("fieldSources = %#v, want [none direct]", node.fieldSources)
+	if len(node.fieldSources()) != 2 || node.fieldSources()[0] != fieldSourceNone || node.fieldSources()[1] != fieldSourceDirect {
+		t.Fatalf("fieldSources = %#v, want [none direct]", node.fieldSources())
 	}
 	if node.flags&(pendingParentFlagFieldEntries|pendingParentFlagDirectFieldEntry) != 0 {
 		t.Fatalf("internal pending field flags leaked to materialized node flags: %08b", node.flags)
@@ -1643,11 +1643,11 @@ func TestPendingParentMaterializationUsesPackedDirectFieldEntriesWithoutParser(t
 	if got := arena.pendingChildEntriesAllocated; got != 3 {
 		t.Fatalf("pendingChildEntriesAllocated = %d, want direct child slots only", got)
 	}
-	if len(node.fieldIDs) != 3 || node.fieldIDs[0] != 0 || node.fieldIDs[1] != 7 || node.fieldIDs[2] != 9 {
-		t.Fatalf("fieldIDs = %#v, want [0 7 9]", node.fieldIDs)
+	if len(node.fieldIDs()) != 3 || node.fieldIDs()[0] != 0 || node.fieldIDs()[1] != 7 || node.fieldIDs()[2] != 9 {
+		t.Fatalf("fieldIDs = %#v, want [0 7 9]", node.fieldIDs())
 	}
-	if len(node.fieldSources) != 3 || node.fieldSources[0] != fieldSourceNone || node.fieldSources[1] != fieldSourceDirect || node.fieldSources[2] != fieldSourceDirect {
-		t.Fatalf("fieldSources = %#v, want [none direct direct]", node.fieldSources)
+	if len(node.fieldSources()) != 3 || node.fieldSources()[0] != fieldSourceNone || node.fieldSources()[1] != fieldSourceDirect || node.fieldSources()[2] != fieldSourceDirect {
+		t.Fatalf("fieldSources = %#v, want [none direct direct]", node.fieldSources())
 	}
 	if node.flags&(pendingParentFlagFieldEntries|pendingParentFlagDirectFieldEntry) != 0 {
 		t.Fatalf("internal pending field flags leaked to materialized node flags: %08b", node.flags)
@@ -2671,44 +2671,44 @@ func TestPythonShallowEquivalentMatchesFrontierDepthZero(t *testing.T) {
 		{
 			name: "same immediate child",
 			a: &Node{
-				symbol:       10,
-				startByte:    0,
-				endByte:      5,
-				flags:        nodeFlagNamed,
-				parseState:   1,
-				preGotoState: 2,
-				productionID: 3,
-				fieldIDs:     []FieldID{4},
+				symbol:        10,
+				startByte:     0,
+				endByte:       5,
+				flags:         nodeFlagNamed,
+				parseState:    1,
+				preGotoState:  2,
+				productionID:  3,
+				fieldMetadata: &nodeFieldMetadata{ids: []FieldID{4}},
 				children: []*Node{{
-					symbol:    20,
-					startByte: 0,
-					endByte:   5,
-					flags:     nodeFlagNamed,
-					fieldIDs:  []FieldID{6},
+					symbol:        20,
+					startByte:     0,
+					endByte:       5,
+					flags:         nodeFlagNamed,
+					fieldMetadata: &nodeFieldMetadata{ids: []FieldID{6}},
 				}},
 			},
 			b: &Node{
-				symbol:       10,
-				startByte:    0,
-				endByte:      5,
-				flags:        nodeFlagNamed,
-				parseState:   1,
-				preGotoState: 2,
-				productionID: 3,
-				fieldIDs:     []FieldID{4},
+				symbol:        10,
+				startByte:     0,
+				endByte:       5,
+				flags:         nodeFlagNamed,
+				parseState:    1,
+				preGotoState:  2,
+				productionID:  3,
+				fieldMetadata: &nodeFieldMetadata{ids: []FieldID{4}},
 				children: []*Node{{
-					symbol:    20,
-					startByte: 0,
-					endByte:   5,
-					flags:     nodeFlagNamed,
-					fieldIDs:  []FieldID{6},
+					symbol:        20,
+					startByte:     0,
+					endByte:       5,
+					flags:         nodeFlagNamed,
+					fieldMetadata: &nodeFieldMetadata{ids: []FieldID{6}},
 				}},
 			},
 		},
 		{
 			name: "parent field mismatch",
-			a:    &Node{symbol: 10, startByte: 0, endByte: 5, fieldIDs: []FieldID{4}},
-			b:    &Node{symbol: 10, startByte: 0, endByte: 5, fieldIDs: []FieldID{5}},
+			a:    &Node{symbol: 10, startByte: 0, endByte: 5, fieldMetadata: &nodeFieldMetadata{ids: []FieldID{4}}},
+			b:    &Node{symbol: 10, startByte: 0, endByte: 5, fieldMetadata: &nodeFieldMetadata{ids: []FieldID{5}}},
 		},
 		{
 			name: "child symbol mismatch",

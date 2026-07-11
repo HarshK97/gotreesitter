@@ -583,8 +583,8 @@ func buildPowerShellArgumentList(arena *nodeArena, source []byte, lang *Language
 			continue
 		}
 		ensureNodeFieldStorage(argList, len(argList.children))
-		argList.fieldIDs[1] = FieldID(fieldIdx)
-		argList.fieldSources[1] = fieldSourceDirect
+		argList.fieldIDs()[1] = FieldID(fieldIdx)
+		argList.fieldSources()[1] = fieldSourceDirect
 		break
 	}
 	return argList

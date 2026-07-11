@@ -1167,8 +1167,8 @@ func awkSetStringConcatFields(n *Node, lang *Language) {
 	if n == nil || lang == nil || n.Type(lang) != "string_concat" || len(n.children) == 0 {
 		return
 	}
-	n.fieldIDs = cloneFieldIDSliceInArena(n.ownerArena, awkStringConcatFields(lang, len(n.children)))
-	n.fieldSources = defaultFieldSourcesInArena(n.ownerArena, n.fieldIDs)
+	fieldIDs := cloneFieldIDSliceInArena(n.ownerArena, awkStringConcatFields(lang, len(n.children)))
+	n.setFieldMetadata(fieldIDs, defaultFieldSourcesInArena(n.ownerArena, fieldIDs))
 }
 
 func awkLeftmostConcatOperand(n *Node, lang *Language) *Node {

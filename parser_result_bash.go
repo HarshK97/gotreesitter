@@ -39,8 +39,7 @@ func normalizeBashVariableAssignmentsInNode(node *Node, lang *Language) {
 		out = buf
 	}
 	node.children = out
-	node.fieldIDs = nil
-	node.fieldSources = nil
+	node.clearFieldMetadata()
 	assignBashIfConditionField(node, lang)
 }
 
@@ -218,8 +217,7 @@ func rewriteBashGeneratedCommandAssignment(node *Node, source []byte, lang *Lang
 	node.symbol = ctx.variableAssignmentSym
 	node.setNamed(true)
 	node.children = children
-	node.fieldIDs = bashGeneratedAssignmentFieldIDs(arena, ctx)
-	node.fieldSources = bashGeneratedAssignmentFieldSources(ctx)
+	node.setFieldMetadata(bashGeneratedAssignmentFieldIDs(arena, ctx), bashGeneratedAssignmentFieldSources(ctx))
 	node.setHasError(false)
 	populateParentNode(node, children)
 	return true
@@ -341,11 +339,13 @@ func assignBashIfConditionField(node *Node, lang *Language) {
 	if thenIndex < 0 {
 		thenIndex = len(node.children)
 	}
+	fieldIDs := node.fieldIDs()
+	fieldSources := node.fieldSources()
 	for i := 1; i < thenIndex; i++ {
 		if node.children[i] == nil {
 			continue
 		}
-		node.fieldIDs[i] = fid
-		node.fieldSources[i] = fieldSourceDirect
+		fieldIDs[i] = fid
+		fieldSources[i] = fieldSourceDirect
 	}
 }

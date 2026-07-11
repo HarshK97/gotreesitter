@@ -462,25 +462,29 @@ func normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n *Node,
 	for i := 0; i < childCount; i++ {
 		children = append(children, resultChildAt(n, i))
 	}
+	fieldIDs := n.fieldIDs()
+	fieldSources := n.fieldSources()
 	if first != nil && hasCloseBrace && first.symbol == closeBraceSym {
 		children[0] = keywordNode
-		if len(n.fieldIDs) == childCount {
-			n.fieldIDs[0] = 0
+		if len(fieldIDs) == childCount {
+			fieldIDs[0] = 0
 		}
-		if len(n.fieldSources) == childCount {
-			n.fieldSources[0] = fieldSourceNone
+		if len(fieldSources) == childCount {
+			fieldSources[0] = fieldSourceNone
 		}
 	} else if first == nil || first.startByte > n.startByte {
 		children = append([]*Node{keywordNode}, children...)
-		n.fieldIDs = prependFieldID(n.ownerArena, n.fieldIDs, childCount)
-		n.fieldSources = prependFieldSource(n.ownerArena, n.fieldSources, childCount)
+		n.setFieldMetadata(
+			prependFieldID(n.ownerArena, fieldIDs, childCount),
+			prependFieldSource(n.ownerArena, fieldSources, childCount),
+		)
 	} else {
 		children[0] = keywordNode
-		if len(n.fieldIDs) == childCount {
-			n.fieldIDs[0] = 0
+		if len(fieldIDs) == childCount {
+			fieldIDs[0] = 0
 		}
-		if len(n.fieldSources) == childCount {
-			n.fieldSources[0] = fieldSourceNone
+		if len(fieldSources) == childCount {
+			fieldSources[0] = fieldSourceNone
 		}
 	}
 	n.children = cloneNodeSliceInArena(n.ownerArena, children)
@@ -798,11 +802,14 @@ func extractJavaScriptTrailingContinueComment(node *Node, source []byte, lang *L
 		return nil, false
 	}
 	node.children = node.children[:len(node.children)-1]
-	if len(node.fieldIDs) > len(node.children) {
-		node.fieldIDs = node.fieldIDs[:len(node.children)]
-		if len(node.fieldSources) > len(node.children) {
-			node.fieldSources = node.fieldSources[:len(node.children)]
+	fieldIDs := node.fieldIDs()
+	fieldSources := node.fieldSources()
+	if len(fieldIDs) > len(node.children) {
+		fieldIDs = fieldIDs[:len(node.children)]
+		if len(fieldSources) > len(node.children) {
+			fieldSources = fieldSources[:len(node.children)]
 		}
+		node.setFieldMetadata(fieldIDs, fieldSources)
 	}
 	node.endByte = prev.endByte
 	node.endPoint = prev.endPoint
@@ -814,16 +821,19 @@ func insertJavaScriptStatementBlockComment(parent *Node, childIdx int, comment *
 		return
 	}
 	parent.children = append(parent.children[:childIdx+1], append([]*Node{comment}, parent.children[childIdx+1:]...)...)
-	if len(parent.fieldIDs) > 0 {
-		fieldIDs := append([]FieldID(nil), parent.fieldIDs[:childIdx+1]...)
+	parentFieldIDs := parent.fieldIDs()
+	if len(parentFieldIDs) > 0 {
+		fieldIDs := append([]FieldID(nil), parentFieldIDs[:childIdx+1]...)
 		fieldIDs = append(fieldIDs, 0)
-		fieldIDs = append(fieldIDs, parent.fieldIDs[childIdx+1:]...)
-		parent.fieldIDs = fieldIDs
-		if len(parent.fieldSources) > 0 {
-			fieldSources := append([]uint8(nil), parent.fieldSources[:childIdx+1]...)
+		fieldIDs = append(fieldIDs, parentFieldIDs[childIdx+1:]...)
+		parentFieldSources := parent.fieldSources()
+		if len(parentFieldSources) > 0 {
+			fieldSources := append([]uint8(nil), parentFieldSources[:childIdx+1]...)
 			fieldSources = append(fieldSources, fieldSourceNone)
-			fieldSources = append(fieldSources, parent.fieldSources[childIdx+1:]...)
-			parent.fieldSources = fieldSources
+			fieldSources = append(fieldSources, parentFieldSources[childIdx+1:]...)
+			parent.setFieldMetadata(fieldIDs, fieldSources)
+		} else {
+			parent.setFieldIDs(fieldIDs)
 		}
 	}
 	populateParentNode(parent, parent.children)
@@ -1858,12 +1868,12 @@ func rewriteJavaScriptTopLevelObjectLiteral(node *Node, lang *Language, arena *n
 		switch fieldName {
 		case "key":
 			ensureNodeFieldStorage(pair, len(pair.children))
-			pair.fieldIDs[0] = FieldID(fieldIdx)
-			pair.fieldSources[0] = fieldSourceDirect
+			pair.fieldIDs()[0] = FieldID(fieldIdx)
+			pair.fieldSources()[0] = fieldSourceDirect
 		case "value":
 			ensureNodeFieldStorage(pair, len(pair.children))
-			pair.fieldIDs[2] = FieldID(fieldIdx)
-			pair.fieldSources[2] = fieldSourceDirect
+			pair.fieldIDs()[2] = FieldID(fieldIdx)
+			pair.fieldSources()[2] = fieldSourceDirect
 		}
 	}
 	object := newParentNodeInArena(arena, objectSym, objectNamed, []*Node{

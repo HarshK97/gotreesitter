@@ -61,7 +61,7 @@ func TestNormalizeHTTPDocumentSectionsMergesContentUntilNextSeparator(t *testing
 	commentSection := newParentNodeInArena(arena, 2, true, []*Node{comment}, nil, 0)
 	request := newLeafNodeInArena(arena, 5, true, 10, 16, Point{Row: 2}, Point{Row: 3})
 	requestSection := newParentNodeInArena(arena, 2, true, []*Node{request}, []FieldID{1}, 0)
-	requestSection.fieldSources = []uint8{fieldSourceDirect}
+	requestSection.setFieldSources([]uint8{fieldSourceDirect})
 	secondSep := newLeafNodeInArena(arena, 3, true, 16, 22, Point{Row: 3}, Point{Row: 4})
 	secondSection := newParentNodeInArena(arena, 2, true, []*Node{secondSep}, nil, 0)
 	root := newParentNodeInArena(arena, 1, true, []*Node{firstSection, commentSection, requestSection, secondSection}, nil, 0)
@@ -81,7 +81,7 @@ func TestNormalizeHTTPDocumentSectionsMergesContentUntilNextSeparator(t *testing
 	if got, want := nodeFieldIDAt(merged, 2), FieldID(1); got != want {
 		t.Fatalf("request field ID = %d, want %d", got, want)
 	}
-	if got, want := fieldSourceAt(merged.fieldSources, 2), uint8(fieldSourceDirect); got != want {
+	if got, want := fieldSourceAt(merged.fieldSources(), 2), uint8(fieldSourceDirect); got != want {
 		t.Fatalf("request field source = %d, want %d", got, want)
 	}
 	if got, want := resultChildAt(root, 1), secondSection; got != want {

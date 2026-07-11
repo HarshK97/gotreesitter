@@ -4404,7 +4404,7 @@ func nodeTreeHasFieldIDs(n *Node) bool {
 	if n == nil {
 		return false
 	}
-	if len(n.fieldIDs) != 0 {
+	if len(n.fieldIDs()) != 0 {
 		return true
 	}
 	for _, child := range n.children {
@@ -5677,23 +5677,25 @@ func appendFlattenedHiddenChildrenWithFieldScratch(scratch *reduceBuildScratch, 
 	paddingStartByte := n.startByte
 	paddingStartPoint := n.startPoint
 	paddingSource := n
+	fieldIDs := n.fieldIDs()
+	fieldSources := n.fieldSources()
 	for i, child := range n.children {
 		spanStart := len(scratch.nodes)
 		appendFlattenedHiddenChildrenWithFieldScratch(scratch, child, symbolMeta, preservedHidden)
 		spanEnd := len(scratch.nodes)
 		paddingStartByte, paddingStartPoint = absorbFlattenedHiddenPaddingScratch(scratch, spanStart, paddingStartByte, paddingStartPoint, paddingSource, nil, symbolMeta)
 		paddingSource = child
-		if i >= len(n.fieldIDs) || n.fieldIDs[i] == 0 || spanStart >= spanEnd {
+		if i >= len(fieldIDs) || fieldIDs[i] == 0 || spanStart >= spanEnd {
 			continue
 		}
 		scratch.ensureFieldStorage()
-		source := fieldSourceAt(n.fieldSources, i)
+		source := fieldSourceAt(fieldSources, i)
 		if source == fieldSourceNone {
 			source = fieldSourceDirect
 		}
-		applyFieldToFlattenedSpan(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, spanStart, spanEnd, n.fieldIDs[i], source, false)
+		applyFieldToFlattenedSpan(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, spanStart, spanEnd, fieldIDs[i], source, false)
 		if source == fieldSourceDirect {
-			scratch.recordRepeatedField(repeatEpoch, n.fieldIDs[i], source)
+			scratch.recordRepeatedField(repeatEpoch, fieldIDs[i], source)
 		}
 	}
 	if scratch.trackFields {
@@ -6239,6 +6241,8 @@ func appendFlattenedHiddenChildrenWithFields(dst []*Node, fieldDst []FieldID, fi
 	nodeStart := out
 	paddingStartByte := n.startByte
 	paddingStartPoint := n.startPoint
+	fieldIDs := n.fieldIDs()
+	fieldSources := n.fieldSources()
 	type hiddenFieldSpan struct {
 		count  int
 		source uint8
@@ -6248,20 +6252,20 @@ func appendFlattenedHiddenChildrenWithFields(dst []*Node, fieldDst []FieldID, fi
 		spanStart := out
 		out = appendFlattenedHiddenChildrenWithFields(dst, fieldDst, fieldSrcDst, out, child, symbolMeta, preservedHidden)
 		paddingStartByte, paddingStartPoint = absorbFlattenedHiddenPaddingNodes(dst, spanStart, out, paddingStartByte, paddingStartPoint, child, nil, symbolMeta)
-		if fieldDst != nil && i < len(n.fieldIDs) && n.fieldIDs[i] != 0 {
-			source := fieldSourceAt(n.fieldSources, i)
+		if fieldDst != nil && i < len(fieldIDs) && fieldIDs[i] != 0 {
+			source := fieldSourceAt(fieldSources, i)
 			if source == fieldSourceNone {
 				source = fieldSourceDirect
 			}
-			applyFieldToFlattenedSpan(dst, fieldDst, fieldSrcDst, spanStart, out, n.fieldIDs[i], source, false)
+			applyFieldToFlattenedSpan(dst, fieldDst, fieldSrcDst, spanStart, out, fieldIDs[i], source, false)
 			if source == fieldSourceDirect && spanStart < out {
 				if repeated == nil {
 					repeated = make(map[FieldID]hiddenFieldSpan)
 				}
-				span := repeated[n.fieldIDs[i]]
+				span := repeated[fieldIDs[i]]
 				span.count++
 				span.source = source
-				repeated[n.fieldIDs[i]] = span
+				repeated[fieldIDs[i]] = span
 			}
 		}
 	}
@@ -6562,8 +6566,8 @@ func nodeHasDirectFieldID(n *Node, fid FieldID) bool {
 	if n == nil || fid == 0 {
 		return false
 	}
-	for i := range n.fieldIDs {
-		if n.fieldIDs[i] == fid {
+	for _, fieldID := range n.fieldIDs() {
+		if fieldID == fid {
 			return true
 		}
 	}
@@ -6574,8 +6578,10 @@ func nodeHasAnyDirectField(n *Node) bool {
 	if n == nil {
 		return false
 	}
-	for i := range n.fieldIDs {
-		if n.fieldIDs[i] != 0 && fieldSourceAt(n.fieldSources, i) == fieldSourceDirect {
+	fieldIDs := n.fieldIDs()
+	fieldSources := n.fieldSources()
+	for i := range fieldIDs {
+		if fieldIDs[i] != 0 && fieldSourceAt(fieldSources, i) == fieldSourceDirect {
 			return true
 		}
 	}
@@ -7951,6 +7957,7 @@ func aliasedNodeInArena(arena *nodeArena, lang *Language, n *Node, alias Symbol)
 	if arena == nil {
 		cloned := &Node{}
 		*cloned = *n
+		cloneNodeFieldMetadataHeaderInto(cloned, n, nil)
 		cloned.symbol = alias
 		if lang != nil && int(alias) < len(lang.SymbolMetadata) {
 			cloned.setNamed(lang.SymbolMetadata[alias].Named)
@@ -7960,6 +7967,7 @@ func aliasedNodeInArena(arena *nodeArena, lang *Language, n *Node, alias Symbol)
 
 	cloned := arena.allocNode()
 	*cloned = *n
+	cloneNodeFieldMetadataHeaderInto(cloned, n, arena)
 	cloned.symbol = alias
 	if lang != nil && int(alias) < len(lang.SymbolMetadata) {
 		cloned.setNamed(lang.SymbolMetadata[alias].Named)
@@ -8092,6 +8100,7 @@ func cloneNodeInArena(arena *nodeArena, n *Node) *Node {
 	if arena == nil {
 		cloned := &Node{}
 		*cloned = *n
+		cloneNodeFieldMetadataHeaderInto(cloned, n, nil)
 		if nodeHasFinalChildRefs(n) {
 			childCount := nodeChildCountNoMaterialize(n)
 			if childCount > 0 {
@@ -8107,6 +8116,7 @@ func cloneNodeInArena(arena *nodeArena, n *Node) *Node {
 	cloned := arena.allocNode()
 	*cloned = *n
 	cloned.ownerArena = arena
+	cloneNodeFieldMetadataHeaderInto(cloned, n, arena)
 	if nodeHasFinalChildRefs(n) {
 		childCount := nodeChildCountNoMaterialize(n)
 		if childCount > 0 {
@@ -8130,8 +8140,7 @@ func materializeHiddenNodeForAlias(arena *nodeArena, lang *Language, n *Node) *N
 	if normalizedCount == 0 {
 		cloned := cloneNodeInArena(arena, n)
 		cloned.children = nil
-		cloned.fieldIDs = nil
-		cloned.fieldSources = nil
+		cloned.clearFieldMetadata()
 		return cloned
 	}
 
@@ -8156,15 +8165,12 @@ func materializeHiddenNodeForAlias(arena *nodeArena, lang *Language, n *Node) *N
 			}
 		}
 		if hasField {
-			cloned.fieldIDs = fieldIDs
-			cloned.fieldSources = fieldSources
+			cloned.setFieldMetadata(fieldIDs, fieldSources)
 		} else {
-			cloned.fieldIDs = nil
-			cloned.fieldSources = nil
+			cloned.clearFieldMetadata()
 		}
 	} else {
-		cloned.fieldIDs = nil
-		cloned.fieldSources = nil
+		cloned.clearFieldMetadata()
 	}
 	return cloned
 }
@@ -8181,7 +8187,7 @@ func hiddenTreeHasFieldIDs(n *Node) bool {
 		return n.flags&nodeFlagFieldIDCacheHasFieldIDs != 0
 	}
 	result := false
-	for _, fid := range n.fieldIDs {
+	for _, fid := range n.fieldIDs() {
 		if fid != 0 {
 			result = true
 			break

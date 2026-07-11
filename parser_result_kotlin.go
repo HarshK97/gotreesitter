@@ -474,13 +474,14 @@ func normalizeKotlinReceiverFunctionNames(root *Node, source []byte, lang *Langu
 		children = append(children, n.children[:idx+1]...)
 		children = append(children, dotTok, nameTok)
 		children = append(children, n.children[idx+2:]...)
-		if len(n.fieldIDs) == cc {
+		nodeFieldIDs := n.fieldIDs()
+		if len(nodeFieldIDs) == cc {
 			fieldIDs := make([]FieldID, 0, cc+1)
-			fieldIDs = append(fieldIDs, n.fieldIDs[:idx+1]...)
+			fieldIDs = append(fieldIDs, nodeFieldIDs[:idx+1]...)
 			fieldIDs = append(fieldIDs, 0, 0)
-			fieldIDs = append(fieldIDs, n.fieldIDs[idx+2:]...)
-			n.fieldIDs = cloneFieldIDSliceInArena(n.ownerArena, fieldIDs)
-			n.fieldSources = defaultFieldSourcesInArena(n.ownerArena, n.fieldIDs)
+			fieldIDs = append(fieldIDs, nodeFieldIDs[idx+2:]...)
+			fieldIDs = cloneFieldIDSliceInArena(n.ownerArena, fieldIDs)
+			n.setFieldMetadata(fieldIDs, defaultFieldSourcesInArena(n.ownerArena, fieldIDs))
 		}
 		n.children = cloneNodeSliceInArena(n.ownerArena, children)
 		populateParentNode(n, n.children)
@@ -545,8 +546,7 @@ func normalizeKotlinCallableReferenceNavigations(root *Node, source []byte, lang
 		n.symbol = crSym
 		n.setNamed(true)
 		n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{base, op, target})
-		n.fieldIDs = nil
-		n.fieldSources = nil
+		n.clearFieldMetadata()
 		n.productionID = 0
 		populateParentNode(n, n.children)
 	})
@@ -650,8 +650,7 @@ func normalizeKotlinRawStringTrailingContent(root *Node, source []byte, lang *La
 		startPoint, endPoint := n.startPoint, n.endPoint
 		children = append(append([]*Node{}, children...), content)
 		n.children = cloneNodeSliceInArena(n.ownerArena, children)
-		n.fieldIDs = nil
-		n.fieldSources = nil
+		n.clearFieldMetadata()
 		populateParentNode(n, n.children)
 		n.startByte, n.endByte = startByte, endByte
 		n.startPoint, n.endPoint = startPoint, endPoint

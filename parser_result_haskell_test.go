@@ -167,19 +167,19 @@ func TestNormalizeHaskellRootImportFieldSetsImportsField(t *testing.T) {
 
 	normalizeHaskellRootImportField(root, lang)
 
-	if got, want := len(root.fieldIDs), len(root.children); got != want {
-		t.Fatalf("len(root.fieldIDs) = %d, want %d", got, want)
+	if got, want := len(root.fieldIDs()), len(root.children); got != want {
+		t.Fatalf("len(root.fieldIDs()) = %d, want %d", got, want)
 	}
-	if got, want := root.fieldIDs[3], FieldID(1); got != want {
+	if got, want := root.fieldIDs()[3], FieldID(1); got != want {
 		t.Fatalf("fieldIDs[3] = %d, want %d", got, want)
 	}
-	if got, want := fieldSourceAt(root.fieldSources, 3), uint8(fieldSourceInherited); got != want {
+	if got, want := fieldSourceAt(root.fieldSources(), 3), uint8(fieldSourceInherited); got != want {
 		t.Fatalf("fieldSources[3] = %d, want %d", got, want)
 	}
-	if got, want := root.fieldIDs[4], FieldID(2); got != want {
+	if got, want := root.fieldIDs()[4], FieldID(2); got != want {
 		t.Fatalf("fieldIDs[4] = %d, want %d", got, want)
 	}
-	if got, want := fieldSourceAt(root.fieldSources, 4), uint8(fieldSourceInherited); got != want {
+	if got, want := fieldSourceAt(root.fieldSources(), 4), uint8(fieldSourceInherited); got != want {
 		t.Fatalf("fieldSources[4] = %d, want %d", got, want)
 	}
 }
@@ -226,16 +226,16 @@ func TestNormalizeHaskellRootImportFieldSetsFinalRefFieldsWithoutDrain(t *testin
 	if !nodeHasFinalChildRefs(root) {
 		t.Fatal("root lost final-child refs")
 	}
-	if got, want := root.fieldIDs[1], FieldID(1); got != want {
+	if got, want := root.fieldIDs()[1], FieldID(1); got != want {
 		t.Fatalf("fieldIDs[1] = %d, want %d", got, want)
 	}
-	if got, want := fieldSourceAt(root.fieldSources, 1), uint8(fieldSourceInherited); got != want {
+	if got, want := fieldSourceAt(root.fieldSources(), 1), uint8(fieldSourceInherited); got != want {
 		t.Fatalf("fieldSources[1] = %d, want %d", got, want)
 	}
-	if got, want := root.fieldIDs[2], FieldID(2); got != want {
+	if got, want := root.fieldIDs()[2], FieldID(2); got != want {
 		t.Fatalf("fieldIDs[2] = %d, want %d", got, want)
 	}
-	if got, want := fieldSourceAt(root.fieldSources, 2), uint8(fieldSourceInherited); got != want {
+	if got, want := fieldSourceAt(root.fieldSources(), 2), uint8(fieldSourceInherited); got != want {
 		t.Fatalf("fieldSources[2] = %d, want %d", got, want)
 	}
 }

@@ -62,8 +62,7 @@ func normalizeResultTerminalLeafNodesWithStop(root *Node, lang *Language, stopCh
 		n.startPoint = child.startPoint
 		n.endPoint = child.endPoint
 		n.children = nil
-		n.fieldIDs = nil
-		n.fieldSources = nil
+		n.clearFieldMetadata()
 		if n.ownerArena != nil {
 			n.ownerArena.clearFinalChildRefs(n)
 		}
@@ -150,12 +149,12 @@ func resultNodeHasChildFields(n *Node) bool {
 	if n == nil {
 		return false
 	}
-	for _, fid := range n.fieldIDs {
+	for _, fid := range n.fieldIDs() {
 		if fid != 0 {
 			return true
 		}
 	}
-	for _, source := range n.fieldSources {
+	for _, source := range n.fieldSources() {
 		if source != fieldSourceNone {
 			return true
 		}

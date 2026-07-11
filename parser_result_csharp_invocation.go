@@ -85,7 +85,6 @@ func normalizeCSharpInvocationStatements(root *Node, source []byte, lang *Langua
 					if arguments, ok := csharpBuildArgumentListFromTuplePattern(varDecl.children[0], lang, argumentListSym, argumentListNamed, argumentSym, argumentNamed); ok {
 						invocationFields := cloneFieldIDSliceInArena(n.ownerArena, []FieldID{functionFieldID, argumentsFieldID})
 						invocation := newParentNodeInArena(n.ownerArena, invocationSym, invocationNamed, []*Node{function, arguments}, invocationFields, 0)
-						invocation.fieldSources = defaultFieldSourcesInArena(n.ownerArena, invocationFields)
 						n.symbol = exprStmtSym
 						n.setNamed(exprStmtNamed)
 						replaceNodeChildrenUnfielded(n, cloneNodeSliceIfArena(n.ownerArena, []*Node{invocation, semi}))
@@ -199,8 +198,7 @@ func csharpRewriteImplicitObjectCreationInvocation(n *Node, source []byte, lang 
 	retagResultRoot(newNode, newSym, newNamed)
 	n.symbol = implicitObjectCreationSym
 	n.setNamed(implicitObjectCreationNamed)
-	n.fieldIDs = nil
-	n.fieldSources = nil
+	n.clearFieldMetadata()
 	n.productionID = 0
 	n.setHasError(false)
 	return true
@@ -306,8 +304,7 @@ func csharpRewriteQualifiedNameAsMemberAccess(node *Node, lang *Language, member
 	}
 	node.symbol = memberAccessSym
 	node.setNamed(memberAccessNamed)
-	node.fieldIDs = fieldIDs
-	node.fieldSources = defaultFieldSourcesInArena(node.ownerArena, fieldIDs)
+	node.setFieldMetadata(fieldIDs, defaultFieldSourcesInArena(node.ownerArena, fieldIDs))
 	node.productionID = 0
 	node.setHasError(false)
 	populateParentNode(node, node.children)

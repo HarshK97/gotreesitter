@@ -28,19 +28,19 @@ func TestNormalizeCPointerAssignmentPrecedence(t *testing.T) {
 
 	assign := newParentNodeInArena(arena, 2, true, []*Node{ident, opAssign, number}, nil, 0)
 	ensureNodeFieldStorage(assign, 3)
-	assign.fieldIDs[0] = 1
-	assign.fieldIDs[1] = 2
-	assign.fieldIDs[2] = 3
-	assign.fieldSources[0] = fieldSourceDirect
-	assign.fieldSources[1] = fieldSourceDirect
-	assign.fieldSources[2] = fieldSourceDirect
+	assign.fieldIDs()[0] = 1
+	assign.fieldIDs()[1] = 2
+	assign.fieldIDs()[2] = 3
+	assign.fieldSources()[0] = fieldSourceDirect
+	assign.fieldSources()[1] = fieldSourceDirect
+	assign.fieldSources()[2] = fieldSourceDirect
 
 	ptr := newParentNodeInArena(arena, 3, true, []*Node{opStar, assign}, nil, 0)
 	ensureNodeFieldStorage(ptr, 2)
-	ptr.fieldIDs[0] = 2
-	ptr.fieldIDs[1] = 4
-	ptr.fieldSources[0] = fieldSourceDirect
-	ptr.fieldSources[1] = fieldSourceDirect
+	ptr.fieldIDs()[0] = 2
+	ptr.fieldIDs()[1] = 4
+	ptr.fieldSources()[0] = fieldSourceDirect
+	ptr.fieldSources()[1] = fieldSourceDirect
 
 	root := newParentNodeInArena(arena, 1, true, []*Node{ptr}, nil, 0)
 
@@ -103,19 +103,19 @@ func TestNormalizeCPointerCompoundAssignmentPrecedence(t *testing.T) {
 
 	assign := newParentNodeInArena(arena, 2, true, []*Node{ident, opAssign, number}, nil, 0)
 	ensureNodeFieldStorage(assign, 3)
-	assign.fieldIDs[0] = 1
-	assign.fieldIDs[1] = 2
-	assign.fieldIDs[2] = 3
-	assign.fieldSources[0] = fieldSourceDirect
-	assign.fieldSources[1] = fieldSourceDirect
-	assign.fieldSources[2] = fieldSourceDirect
+	assign.fieldIDs()[0] = 1
+	assign.fieldIDs()[1] = 2
+	assign.fieldIDs()[2] = 3
+	assign.fieldSources()[0] = fieldSourceDirect
+	assign.fieldSources()[1] = fieldSourceDirect
+	assign.fieldSources()[2] = fieldSourceDirect
 
 	ptr := newParentNodeInArena(arena, 3, true, []*Node{opStar, assign}, nil, 0)
 	ensureNodeFieldStorage(ptr, 2)
-	ptr.fieldIDs[0] = 2
-	ptr.fieldIDs[1] = 4
-	ptr.fieldSources[0] = fieldSourceDirect
-	ptr.fieldSources[1] = fieldSourceDirect
+	ptr.fieldIDs()[0] = 2
+	ptr.fieldIDs()[1] = 4
+	ptr.fieldSources()[0] = fieldSourceDirect
+	ptr.fieldSources()[1] = fieldSourceDirect
 
 	root := newParentNodeInArena(arena, 1, true, []*Node{ptr}, nil, 0)
 
