@@ -3,7 +3,11 @@
 package cgoharness
 
 import (
+	"bufio"
+	"os"
+	"regexp"
 	"sort"
+	"strings"
 	"testing"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -30,9 +34,16 @@ var allowedKnownDegradedStructural = map[string]struct{}{
 	// exemption, and PR #214 removed it from knownDegradedStructural.
 }
 
+var javascriptParityRegressionCITests = []string{
+	"TestParityJavaScriptAutomaticSemicolonBeforeTrailingComment",
+	"TestParityJavaScriptAdjacentBlockCommentsDoNotConsumeFollowingToken",
+}
+
 // TestParityGateCoverageRatchet prevents silent narrowing of correctness gates.
 // Update these thresholds only when intentionally tightening/loosening policy.
 func TestParityGateCoverageRatchet(t *testing.T) {
+	assertJavaScriptRegressionWorkflowCoverage(t)
+
 	if got := len(curatedStructuralLanguages); got < minCuratedStructuralLanguages {
 		t.Fatalf("curatedStructuralLanguages shrank: got=%d min=%d", got, minCuratedStructuralLanguages)
 	}
@@ -65,6 +76,80 @@ func TestParityGateCoverageRatchet(t *testing.T) {
 	}
 	if got := len(paritySkips); got > maxParitySkips {
 		t.Fatalf("paritySkips grew: got=%d max=%d", got, maxParitySkips)
+	}
+}
+
+func assertJavaScriptRegressionWorkflowCoverage(t *testing.T) {
+	t.Helper()
+
+	workflow, err := os.Open("../.github/workflows/ci.yml")
+	if err != nil {
+		t.Fatalf("open CI workflow: %v", err)
+	}
+	defer workflow.Close()
+
+	selectors := make(map[string]string)
+	var label string
+	scanner := bufio.NewScanner(workflow)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "--label ") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				label = strings.TrimSuffix(fields[1], "\\")
+			}
+			continue
+		}
+		if label == "" || !strings.HasPrefix(line, "--run ") {
+			continue
+		}
+		selector := strings.TrimSpace(strings.TrimPrefix(line, "--run "))
+		selector = strings.TrimSuffix(selector, "\\")
+		selectors[label] = strings.Trim(strings.TrimSpace(selector), "'")
+		label = ""
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan CI workflow: %v", err)
+	}
+
+	for _, label := range []string{"ci-parity-cgo-smoke", "ci-parity-cgo-exhaustive-fresh"} {
+		selector, ok := selectors[label]
+		if !ok {
+			t.Errorf("CI workflow is missing --run selector for --label %s", label)
+			continue
+		}
+		re, err := regexp.Compile(selector)
+		if err != nil {
+			t.Errorf("CI workflow selector for %s is invalid: %v", label, err)
+			continue
+		}
+		for _, testName := range javascriptParityRegressionCITests {
+			if !re.MatchString(testName) {
+				t.Errorf("CI workflow selector for %s does not run %s", label, testName)
+			}
+		}
+	}
+
+	for _, label := range []string{
+		"ci-parity-cgo-exhaustive-incremental",
+		"ci-parity-cgo-exhaustive-corpus",
+		"ci-parity-cgo-exhaustive-highlight-yaml",
+	} {
+		selector, ok := selectors[label]
+		if !ok {
+			t.Errorf("CI workflow is missing --run selector for --label %s", label)
+			continue
+		}
+		re, err := regexp.Compile(selector)
+		if err != nil {
+			t.Errorf("CI workflow selector for %s is invalid: %v", label, err)
+			continue
+		}
+		for _, testName := range javascriptParityRegressionCITests {
+			if re.MatchString(testName) {
+				t.Errorf("CI workflow selector for %s redundantly runs %s", label, testName)
+			}
+		}
 	}
 }
 

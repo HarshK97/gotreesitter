@@ -478,7 +478,7 @@ jobs:
             --goflags -p=1 \
             --test-parallel 1 \
             --timeout 20m \
-            --run '^TestParityFreshParse$|^TestParityIncrementalParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityGLRCanaryGo$|^TestParityGLRCanarySet$|^TestParityGLRCapPressureTopLanguages$|^TestParityGateCoverageRatchet$|^TestParityHighlight$'
+            --run '^TestParityFreshParse$|^TestParityIncrementalParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityGLRCanaryGo$|^TestParityGLRCanarySet$|^TestParityGLRCapPressureTopLanguages$|^TestParityGateCoverageRatchet$|^TestParityHighlight$|^TestParityJavaScriptAutomaticSemicolonBeforeTrailingComment$|^TestParityJavaScriptAdjacentBlockCommentsDoNotConsumeFollowingToken$'
 
   parity-cgo-exhaustive:
     needs: exhaustive_parity_scope
@@ -504,7 +504,7 @@ jobs:
             --goflags -p=1 \
             --test-parallel 1 \
             --timeout 30m \
-            --run '^TestParityFreshParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityKnownDegradedStructuralStillDiverges$'
+            --run '^TestParityFreshParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityKnownDegradedStructuralStillDiverges$|^TestParityJavaScriptAutomaticSemicolonBeforeTrailingComment$|^TestParityJavaScriptAdjacentBlockCommentsDoNotConsumeFollowingToken$'
 
       - name: CGo Structural Parity Exhaustive (Incremental + GLR)
         run: |

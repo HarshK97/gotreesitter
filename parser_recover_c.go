@@ -450,7 +450,7 @@ func generatedCRecoveryDefaultSafe(lang *Language) bool {
 
 func cRecoveryDefaultOptOut(name string) bool {
 	switch name {
-	case "cpp", "html", "julia":
+	case "cpp", "html", "javascript", "julia":
 		return true
 	default:
 		return false

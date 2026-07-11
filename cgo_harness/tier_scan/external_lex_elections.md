@@ -12,9 +12,9 @@ scanner.
 | --- | ---: |
 | grammars | 206 |
 | registered external scanners | 119 |
-| default precise ExternalLexStates tables | 90 |
-| staged precise ExternalLexStates tables | 1 |
-| C recovery default opt-outs | 3 |
+| default precise ExternalLexStates tables | 91 |
+| staged precise ExternalLexStates tables | 0 |
+| C recovery default opt-outs | 4 |
 
 | status | count |
 | --- | ---: |
@@ -26,7 +26,7 @@ scanner.
 ## Verification Receipts
 
 - `default_elected`: Docker: wave4-external-lex-election-inventory-test-v2; TestExternalLexStatesDefaultElectionInventory; Docker: wave4-cobol-default-precise-els; TestCobolExternalLexStatesDefaultElection
-- `staged_precise_els`: Docker: wave4-javascript-precise-els-staged-test; TestJavascriptExternalLexStatesRegression (-tags javascript_precise_els); TestJavascriptExternalLexStatesRemainStagedByDefault; TestExternalLexStatesRecoveryElectionOptOutInventory
+- `staged_precise_els`: Docker: javascript-asi-comment-deep-review; TestJavascriptExternalLexStatesRegression; TestJavascriptExternalLexStatesDefaultWithoutRecoveryElection; TestExternalLexStatesRecoveryElectionOptOutInventory
 - `sample_c_oracle_smoke`: Docker: wave4-external-lex-smoke-20260707T1928; angular/python/yaml clean; scss/wgsl classified recovery/error-shape IV
 - `wave3_inventory`: Docker: wave3-tier-plan-206; 206 visited; 202 planned files; 4 planned-empty
 
@@ -130,7 +130,7 @@ scanner.
 | `yaml` | default elected | CLEAN | 40/40 | yes | yes | no | no | `.yaml,.yml` |
 | `cpp` | staged precise ELS | IV-recovery | 9/40 | yes | yes | no | yes | `.cc,.cpp,.cxx,.h,.hh,.hpp,.hxx` |
 | `html` | staged precise ELS | IV-recovery | 0/40 | yes | yes | no | yes | `.htm,.html` |
-| `javascript` | staged precise ELS | CLEAN | 40/40 | yes | no | yes | no | `.cjs,.js,.mjs` |
+| `javascript` | staged precise ELS | CLEAN | 40/40 | yes | yes | no | yes | `.cjs,.js,.mjs` |
 | `julia` | staged precise ELS | IV-recovery | unmeasured | yes | yes | no | yes | `.jl` |
 | `agda` | blocked: missing precise ELS | IV-scanner | 2/40 | yes | no | no | no | `.agda` |
 | `comment` | blocked: missing precise ELS | IV-perf | unmeasured | yes | no | no | no | `.txt` |

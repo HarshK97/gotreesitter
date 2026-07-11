@@ -1,11 +1,3 @@
-//go:build javascript_precise_els
-
-// STAGED — runs only with -tags javascript_precise_els, alongside
-// javascript_external_lex_states_staged.go. See that file for why the
-// javascript precise-ELS table (and with it C-recovery election) is not
-// default yet: election is a measured perf regression on javascript's worst
-// perf_scan sweep slice while fixing no misparses there.
-
 package grammars
 
 import (
@@ -14,7 +6,7 @@ import (
 	"github.com/odvcencio/gotreesitter"
 )
 
-// TestJavascriptExternalLexStatesRegression guards the staged javascript
+// TestJavascriptExternalLexStatesRegression guards the default javascript
 // ExternalLexStates table against drift from the pinned
 // tree-sitter-javascript parser.c (ts_external_scanner_states[10][8]).
 func TestJavascriptExternalLexStatesRegression(t *testing.T) {
@@ -63,10 +55,13 @@ func TestJavascriptExternalLexStatesRegression(t *testing.T) {
 		t.Fatalf("LexModes reference external_lex_state %d but table only has %d rows", maxELS, len(lang.ExternalLexStates))
 	}
 
-	// With the table registered the C-recovery gate must be satisfiable —
-	// this is the election precondition the staged file documents.
+	// The table makes the C-recovery surface valid, but JavaScript remains an
+	// explicit default opt-out because its clean large-file path regresses.
 	diag := gotreesitter.DiagnoseCRecoveryGate(lang)
 	if !diag.Supported {
 		t.Fatalf("DiagnoseCRecoveryGate not supported with precise ELS: %s", diag.Reason)
+	}
+	if lang.CRecoveryCostCompetitionEnabledByDefault {
+		t.Fatal("javascript C recovery default-enabled despite performance opt-out")
 	}
 }

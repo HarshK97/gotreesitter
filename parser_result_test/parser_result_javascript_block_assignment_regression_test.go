@@ -41,6 +41,45 @@ func TestJavaScriptStandaloneBlockBeforeSimpleAssignment(t *testing.T) {
 	}
 }
 
+func TestJavaScriptAutomaticSemicolonPrecedesTrailingComment(t *testing.T) {
+	src := "function f() {\n  if (!size || !pre) { i--; break; } // counter\n  var curr = 1;\n}\n"
+	tree, lang := parseByLanguageName(t, "javascript", src)
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("unexpected javascript parse error: %s", root.SExpr(lang))
+	}
+
+	function := root.Child(0)
+	if function == nil || function.ChildCount() != 4 {
+		t.Fatalf("function shape mismatch: %s", root.SExpr(lang))
+	}
+	outer := function.Child(3)
+	if outer == nil || outer.Type(lang) != "statement_block" || outer.ChildCount() != 5 {
+		t.Fatalf("outer statement block mismatch: %s", root.SExpr(lang))
+	}
+	wantTypes := []string{"{", "if_statement", "comment", "variable_declaration", "}"}
+	for i, want := range wantTypes {
+		if got := outer.Child(i).Type(lang); got != want {
+			t.Fatalf("outer child %d type = %q, want %q: %s", i, got, want, root.SExpr(lang))
+		}
+	}
+	comment := outer.Child(2)
+	if !comment.IsExtra() || comment.StartByte() != 52 || comment.EndByte() != 62 {
+		t.Fatalf("outer comment range/flags = [%d:%d] extra=%v, want [52:62] extra: %s",
+			comment.StartByte(), comment.EndByte(), comment.IsExtra(), root.SExpr(lang))
+	}
+	ifStatement := outer.Child(1)
+	consequence := ifStatement.Child(2)
+	if consequence == nil || consequence.Type(lang) != "statement_block" || consequence.EndByte() != 51 {
+		t.Fatalf("if consequence must end at closing brace byte 51: %s", root.SExpr(lang))
+	}
+	for i := 0; i < consequence.ChildCount(); i++ {
+		if consequence.Child(i).Type(lang) == "comment" {
+			t.Fatalf("trailing comment remained inside if consequence: %s", root.SExpr(lang))
+		}
+	}
+}
+
 func TestJavaScriptJSXAttributeAfterExpressionStillParses(t *testing.T) {
 	tests := []string{
 		"<A a={b} c={d} />",

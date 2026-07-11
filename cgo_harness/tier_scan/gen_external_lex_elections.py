@@ -46,6 +46,7 @@ C_RECOVERY_DEFAULT_OPT_OUT = {
     # accepted trees for these grammars.
     "cpp",
     "html",
+    "javascript",
     "julia",
 }
 
@@ -57,9 +58,9 @@ RECEIPTS = {
         "TestCobolExternalLexStatesDefaultElection",
     ],
     "staged_precise_els": [
-        "Docker: wave4-javascript-precise-els-staged-test",
-        "TestJavascriptExternalLexStatesRegression (-tags javascript_precise_els)",
-        "TestJavascriptExternalLexStatesRemainStagedByDefault",
+        "Docker: javascript-asi-comment-deep-review",
+        "TestJavascriptExternalLexStatesRegression",
+        "TestJavascriptExternalLexStatesDefaultWithoutRecoveryElection",
         "TestExternalLexStatesRecoveryElectionOptOutInventory",
     ],
     "sample_c_oracle_smoke": [
@@ -137,7 +138,9 @@ def extract_go_map_literal(text, marker):
 
 def default_external_lex_states():
     names = set()
-    for path in GRAMMARS_DIR.glob("*_external_lex_states_gen.go"):
+    for path in GRAMMARS_DIR.glob("*_external_lex_states*.go"):
+        if path.name.endswith(("_test.go", "_staged.go")):
+            continue
         text = path.read_text(encoding="utf-8")
         names.update(re.findall(r'RegisterExternalLexStates\("([^"]+)"', text))
 
@@ -293,7 +296,7 @@ def build():
             "cgo_harness/tier_scan/exts.tsv",
             "cgo_harness/tier_scan/tier_classification.tsv",
             "grammars/zzz_scanner_attachments.go",
-            "grammars/*_external_lex_states_gen.go",
+            "grammars/*_external_lex_states*.go (excluding tests and staged files)",
             "grammars/*_external_lex_states_staged.go",
             "grammars/z_subset_scanner_register_*.go",
         ],

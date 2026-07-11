@@ -100,7 +100,7 @@ hyprlang	IV-unknown	1/2	diagnostic scan 20260621T035630Z-206-inventory-telemetry
 ini	IV-unknown	9/11	diagnostic scan 20260621T035630Z-206-inventory-telemetry: 9/11, trunc=1, errTree=1, panics=0; previous CLEAN row was stale: mypy-style continuation recovery normalized for both residual witnesses; bounded cgo oracle parity medianRatio=3.98x, verified 2026-06-12
 janet	CLEAN	40/40	in ratchet
 java	IV-unknown	22/40	diagnostic scan 20260621T035630Z-206-inventory-telemetry: 22/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet; java full-parse stack cap 14
-javascript	CLEAN	40/40	in ratchet
+javascript	CLEAN	40/40	precise ELS promoted for C-equivalent ASI/comment scanner ordering; faithful C recovery remains default-opted-out because it regresses clean large-file performance
 jinja2	IV-recovery	3/40	faithful C error-cost version competition (see spec)
 jq	IV-unknown	7/8	diagnostic scan 20260621T035630Z-206-inventory-telemetry: 7/8, trunc=1, errTree=0, panics=0; previous CLEAN row was stale: in ratchet
 jsdoc	IV-unknown	13/40	diagnostic scan 20260621T035630Z-206-inventory-telemetry: 13/40, trunc=27, errTree=0, panics=0; previous CLEAN row was stale: in ratchet; C-recovery gate (stage-2 redwood)
