@@ -3115,8 +3115,16 @@ func captureParseScratchStats(parseRuntime *ParseRuntime, scratch *parserScratch
 		return false
 	}
 	parseRuntime.ScratchBytesAllocated = scratch.allocatedBytes()
+	parseRuntime.ScratchBaselineBytes = scratch.budgetBaselineBytes
 	parseRuntime.EntryScratchBytesAllocated = scratch.entries.allocatedBytes
 	parseRuntime.GSSBytesAllocated = scratch.gss.allocatedBytes
+	parseRuntime.GSSBaselineBytes = scratch.gssBaselineBytes
+	parseRuntime.GSSSlabCount = len(scratch.gss.slabs)
+	parseRuntime.GSSNodesUsed = scratch.gss.usedTotal
+	parseRuntime.GSSNodesCapacity = scratch.gss.capacityNodes()
+	parseRuntime.GSSDemotions = scratch.gss.demotions
+	parseRuntime.GSSNodesDemoted = scratch.gss.nodesDemoted
+	parseRuntime.TransientScratchCheckpoints = scratch.transientCheckpoints
 	parseRuntime.TransientChildSlicesAllocated = scratch.transientChildren.slicesAllocated
 	parseRuntime.TransientChildPointersAllocated = scratch.transientChildren.pointersAllocated
 	parseRuntime.TransientChildSlicesMaterialized = scratch.transientChildren.slicesMaterialized
@@ -4495,6 +4503,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if stacks[0].dead {
 				return finalize(stacks, ParseStopNoStacksAlive)
 			}
+			p.tryDemoteSingleLinearGSS(stacks, scratch)
 			scratch.gss.singleStackMode = true
 			clearParseStackEntryCaches(stacks)
 		} else {
@@ -6209,6 +6218,7 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 			return result
 		}
 		scratch.gss.singleStackMode = true
+		p.tryDemoteSingleLinearGSS(stacks, scratch)
 		clearParseStackEntryCaches(stacks)
 		return result
 	}
@@ -6262,10 +6272,26 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 	}
 	if len(result.stacks) > 1 {
 		p.promotePrimaryStack(result.stacks)
+	} else {
+		p.tryDemoteSingleLinearGSS(result.stacks, scratch)
 	}
 	scratch.gss.singleStackMode = len(result.stacks) == 1
 	clearParseStackEntryCaches(result.stacks)
 	return result
+}
+
+func (p *Parser) tryDemoteSingleLinearGSS(stacks []glrStack, scratch *parserScratch) bool {
+	if p == nil || scratch == nil || len(stacks) != 1 || stacks[0].dead ||
+		len(p.pendingForkStacks) != 0 || len(p.pendingFrontierForkStacks) != 0 {
+		return false
+	}
+	depth := stacks[0].depth()
+	if !stacks[0].demoteLinearGSS(&scratch.entries) {
+		return false
+	}
+	scratch.gss.demotions++
+	scratch.gss.nodesDemoted += uint64(depth)
+	return true
 }
 
 func (p *Parser) traceCRecoverPrepareStacks(label string, stacks []glrStack) {

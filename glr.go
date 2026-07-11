@@ -472,6 +472,34 @@ func (s *glrStack) ensureEntries(entryScratch *glrEntryScratch) []stackEntry {
 	return s.entries
 }
 
+// demoteLinearGSS switches a lone stack back to the contiguous entries path
+// after GLR alternatives have collapsed. It deliberately leaves the GSS
+// scratch slabs untouched: merge/audit scratch may still contain immutable
+// pointers into those slabs, and address reuse would require a much broader
+// cache invalidation protocol. Packed links are live alternatives, so they
+// remain on the GSS path for result/reduce expansion.
+func (s *glrStack) demoteLinearGSS(entryScratch *glrEntryScratch) bool {
+	if s == nil || s.gss.head == nil || gssInlineChainHasPackedLinks(s.gss.head) {
+		return false
+	}
+	depth := s.gss.len()
+	if depth <= 0 {
+		return false
+	}
+	var entries []stackEntry
+	if entryScratch != nil {
+		entries = entryScratch.allocWithCap(depth, depth+1)
+	} else {
+		entries = make([]stackEntry, depth)
+	}
+	entries = s.gss.materialize(entries)
+	s.gss = gssStack{}
+	s.entries = entries
+	s.cacheEntries = true
+	s.byteOffset = stackByteOffset(entries)
+	return true
+}
+
 func (s *glrStack) entriesForRead(tmp []stackEntry) ([]stackEntry, bool) {
 	if s.entries != nil {
 		return s.entries, false

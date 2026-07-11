@@ -70,6 +70,8 @@ type gssScratch struct {
 	singleStackMode   bool
 	singleStackAllocs uint64
 	multiStackAllocs  uint64
+	demotions         uint64
+	nodesDemoted      uint64
 	audit             *runtimeAudit
 }
 
@@ -416,10 +418,7 @@ func (s *gssScratch) allocNodeSlow(entry stackEntry, prev *gssNode, depth int, h
 			if len(s.slabs) > 0 {
 				lastCap = len(s.slabs[len(s.slabs)-1].data)
 			}
-			capacity := lastCap * 2
-			if capacity < defaultGSSNodeSlabCap {
-				capacity = defaultGSSNodeSlabCap
-			}
+			capacity := boundedNextSlabCap(lastCap, defaultGSSNodeSlabCap, int(unsafe.Sizeof(gssNode{})))
 			s.slabs = append(s.slabs, gssNodeSlab{data: make([]gssNode, capacity)})
 			s.allocatedBytes += gssNodeBytesForCap(capacity)
 		}
@@ -456,6 +455,8 @@ func (s *gssScratch) reset() {
 		s.singleStackMode = false
 		s.singleStackAllocs = 0
 		s.multiStackAllocs = 0
+		s.demotions = 0
+		s.nodesDemoted = 0
 		s.skipClear = false
 		s.allocatedBytes = 0
 		s.audit = nil
@@ -500,6 +501,8 @@ func (s *gssScratch) reset() {
 	s.singleStackMode = false
 	s.singleStackAllocs = 0
 	s.multiStackAllocs = 0
+	s.demotions = 0
+	s.nodesDemoted = 0
 	s.audit = nil
 	s.recomputeAllocatedBytes()
 }
@@ -535,6 +538,17 @@ func gssNodeBytesForCap(n int) int64 {
 		return 0
 	}
 	return int64(n) * int64(unsafe.Sizeof(gssNode{}))
+}
+
+func (s *gssScratch) capacityNodes() int {
+	if s == nil {
+		return 0
+	}
+	var total int
+	for i := range s.slabs {
+		total += len(s.slabs[i].data)
+	}
+	return total
 }
 
 func (s *gssScratch) recomputeAllocatedBytes() {
