@@ -33,7 +33,7 @@ func (s *transientChildScratch) alloc(n int) []*Node {
 	for i := s.slabCursor; ; i++ {
 		if i >= len(s.slabs) {
 			lastCap := len(s.slabs[len(s.slabs)-1].data)
-			capacity := max(lastCap*2, n)
+			capacity := boundedNextSlabCap(lastCap, n, int(unsafe.Sizeof((*Node)(nil))))
 			s.slabs = append(s.slabs, childSliceSlab{data: make([]*Node, capacity)})
 			s.allocatedBytes += childSliceBytesForCap(capacity)
 		}
@@ -136,6 +136,32 @@ func (s *transientChildScratch) reset() {
 	s.pointersAllocated = 0
 	s.slicesMaterialized = 0
 	s.pointersMaterialized = 0
+}
+
+func (s *transientChildScratch) usedBytes() int64 {
+	if s == nil {
+		return 0
+	}
+	var used int64
+	for i := range s.slabs {
+		used += childSliceBytesForCap(s.slabs[i].used)
+	}
+	return used
+}
+
+func (s *transientChildScratch) recycleForParse() {
+	if s == nil {
+		return
+	}
+	slicesAllocated := s.slicesAllocated
+	pointersAllocated := s.pointersAllocated
+	slicesMaterialized := s.slicesMaterialized
+	pointersMaterialized := s.pointersMaterialized
+	s.reset()
+	s.slicesAllocated = slicesAllocated
+	s.pointersAllocated = pointersAllocated
+	s.slicesMaterialized = slicesMaterialized
+	s.pointersMaterialized = pointersMaterialized
 }
 
 func (s *transientChildScratch) resetForRelease() {

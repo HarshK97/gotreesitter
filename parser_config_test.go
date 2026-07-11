@@ -142,3 +142,14 @@ func TestTransientReduceScratchNoAliasLargeOnly(t *testing.T) {
 		t.Fatal("scratch no-alias transient reduce disabled at large-file threshold")
 	}
 }
+
+func TestTransientReduceCheckpointBytes(t *testing.T) {
+	t.Setenv("GOT_TRANSIENT_REDUCE_CHECKPOINT_MB", "128")
+	if got, want := parseTransientReduceCheckpointBytes(), int64(128<<20); got != want {
+		t.Fatalf("parseTransientReduceCheckpointBytes() = %d, want %d", got, want)
+	}
+	t.Setenv("GOT_TRANSIENT_REDUCE_CHECKPOINT_MB", "off")
+	if got := parseTransientReduceCheckpointBytes(); got != 0 {
+		t.Fatalf("parseTransientReduceCheckpointBytes() for invalid value = %d, want 0", got)
+	}
+}

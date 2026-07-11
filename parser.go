@@ -4527,6 +4527,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		} else {
 			multiStackIterations++
 		}
+		if reason := p.checkpointTransientScratch(stacks, scratch, arena); resultMaterializationShouldStop(reason) {
+			return finalize(stacks, reason)
+		}
 
 		// Safety: if the primary stack has grown beyond the depth cap,
 		// or we've allocated too many nodes, return what we have.
@@ -6014,6 +6017,11 @@ func (p *Parser) configureParseScratch(scratch *parserScratch, source []byte, re
 	scratch.merge.beginEquivEpoch()
 	scratch.merge.ensureMergeHotCaches()
 	transientReduceParents := p.shouldUseTransientReduceParents(source, reuse, oldTree, arenaClass)
+	if p.transientReduceChildren && transientReduceParents {
+		scratch.transientCheckpointBytes = parseTransientReduceCheckpointBytes()
+	} else {
+		scratch.transientCheckpointBytes = 0
+	}
 	p.transientReduceScratchNoAlias = p.transientReduceChildren && transientReduceParents && parseShouldUseTransientReduceScratchNoAlias(len(source))
 	scratch.merge.pythonShallow = p.language != nil && p.language.Name == "python" && len(source) <= 512*1024
 	if deferParentLinks {
@@ -6292,6 +6300,45 @@ func (p *Parser) tryDemoteSingleLinearGSS(stacks []glrStack, scratch *parserScra
 	scratch.gss.demotions++
 	scratch.gss.nodesDemoted += uint64(depth)
 	return true
+}
+
+func (p *Parser) checkpointTransientScratch(stacks []glrStack, scratch *parserScratch, arena *nodeArena) ParseStopReason {
+	if p == nil || scratch == nil || arena == nil || scratch.transientCheckpointBytes <= 0 ||
+		len(stacks) != 1 || stacks[0].dead || stacks[0].gss.head != nil || len(stacks[0].entries) == 0 ||
+		len(p.pendingForkStacks) != 0 || len(p.pendingFrontierForkStacks) != 0 ||
+		scratch.reduce.transientParents == nil || scratch.reduce.transientChildren == nil ||
+		scratch.audit.enabled || scratch.audit.equivEnabled || p.crecoveryEnteredErrorState {
+		return ParseStopNone
+	}
+	used := scratch.transientParents.usedBytes() + scratch.transientChildren.usedBytes()
+	if used < scratch.transientCheckpointBytes {
+		return ParseStopNone
+	}
+	if reason := materializeTransientParentEntries(
+		stacks[0].entries,
+		arena,
+		scratch.reduce.transientParents,
+		scratch.reduce.transientChildren,
+		p,
+	); resultMaterializationShouldStop(reason) {
+		return reason
+	}
+	// The materialized live stack no longer references transient slabs. Bump
+	// merge epochs and clear recovery memo state before slab addresses are
+	// reused, so pointer-keyed results from discarded alternatives cannot alias
+	// freshly allocated transient parents.
+	scratch.merge.beginEquivEpoch()
+	if p.cNodeMemo != nil {
+		clear(p.cNodeMemo)
+	}
+	if cap(scratch.tmpEntries) > 0 {
+		clear(scratch.tmpEntries[:cap(scratch.tmpEntries)])
+		scratch.tmpEntries = scratch.tmpEntries[:0]
+	}
+	scratch.transientParents.recycleForParse()
+	scratch.transientChildren.recycleForParse()
+	scratch.transientCheckpoints++
+	return ParseStopNone
 }
 
 func (p *Parser) traceCRecoverPrepareStacks(label string, stacks []glrStack) {

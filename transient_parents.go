@@ -38,7 +38,7 @@ func (s *transientParentScratch) allocParent(arena *nodeArena, sym Symbol, named
 	for i := s.slabCursor; ; i++ {
 		if i >= len(s.slabs) {
 			lastCap := len(s.slabs[len(s.slabs)-1].data)
-			capacity := max(lastCap*2, minArenaNodeCap)
+			capacity := boundedNextSlabCap(lastCap, minArenaNodeCap, int(unsafe.Sizeof(Node{})))
 			s.slabs = append(s.slabs, transientParentSlab{data: make([]Node, capacity)})
 			s.allocatedBytes += nodeStructBytesForCap(capacity)
 		}
@@ -285,6 +285,8 @@ func (s *transientParentScratch) materializeVisitedNodeUntil(n *Node, arena *nod
 	clone.endByte = n.endByte
 	clone.parseState = n.parseState
 	clone.preGotoState = n.preGotoState
+	clone.dynamicPrecedence = n.dynamicPrecedence
+	clone.rawShape = n.rawShape
 	clone.productionID = n.productionID
 	clone.flags = n.flags
 	clone.childIndex = -1
@@ -319,6 +321,28 @@ func (s *transientParentScratch) reset() {
 	s.nodesAllocated = 0
 	s.nodesMaterialized = 0
 	s.clearMaterializeScratch()
+}
+
+func (s *transientParentScratch) usedBytes() int64 {
+	if s == nil {
+		return 0
+	}
+	var used int64
+	for i := range s.slabs {
+		used += nodeStructBytesForCap(s.slabs[i].used)
+	}
+	return used
+}
+
+func (s *transientParentScratch) recycleForParse() {
+	if s == nil {
+		return
+	}
+	nodesAllocated := s.nodesAllocated
+	nodesMaterialized := s.nodesMaterialized
+	s.reset()
+	s.nodesAllocated = nodesAllocated
+	s.nodesMaterialized = nodesMaterialized
 }
 
 func (s *transientParentScratch) resetForRelease() {
