@@ -11,9 +11,10 @@ for tags and release notes while still in `0.x`.
 
 JavaScript large-file parity and parser memory-economy release. The 3,447,275-
 byte Poppler witness now reaches exact EOF with no error and exact structural
-parity, while its default Go full parse remains within the roadmap's 2x C
-target and uses materially less allocation and arena capacity. JavaScript's
-broader focused gate is 25/25 no-error, S-expression, and deep parity.
+parity. Its controlled release benchmark recorded a 1.63x Go/C ratio with
+materially less allocation and arena capacity, and a separate single-pass
+runtime gate completes inside a hard 2 GiB container. JavaScript's broader
+focused gate is 25/25 no-error, S-expression, and deep parity.
 
 ### Added
 
@@ -46,6 +47,9 @@ broader focused gate is 25/25 no-error, S-expression, and deep parity.
 - The JavaScript block-comment probe uses a labeled loop break; adjacent block
   comments can no longer consume the following token during speculative ASI
   scanning.
+- Transient checkpoint recycling now follows raw-shape-only sidecar edges and
+  retargets them to arena clones before slab addresses are reused, preventing
+  later ambiguity decisions from observing overwritten reductions.
 
 ### Performance
 
@@ -53,6 +57,10 @@ broader focused gate is 25/25 no-error, S-expression, and deep parity.
   to 3.328 GB/op in the same 8 GiB, 1-CPU diagnostic envelope. Arena capacity
   fell 9.8%, exact deep parity stayed green, and the measured Go/C ratio was
   1.63x.
+- A prebuilt single-pass Poppler runtime probe accepts the exact 3,447,275-byte
+  witness under a hard 2 GiB cgroup at 1,729,836 KiB maximum RSS. The separate
+  Go/C deep-parity oracle remains in its 8 GiB envelope because it retains both
+  giant trees for comparison.
 - Memory-budget diagnostics are embedded in `Parser` so attribution adds no
   steady-state parse allocation; the primary benchmark trio remains 978 B and
   5 allocs for full parse, with both incremental lanes at zero allocation.
