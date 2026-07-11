@@ -1,6 +1,6 @@
 {
   "schema": "gts-wave3-perf-sweep-status/v1",
-  "generated_at": "2026-07-09T15:05:20Z",
+  "generated_at": "2026-07-09T15:40:50Z",
   "budget_path": "perf_scan/perf_ratio_budgets.json",
   "fleet_path": "tier_scan/exts.tsv",
   "budget_generated_at": "2026-07-09T15:05:20Z",
@@ -49,6 +49,7 @@
     "groovy_ceiling_exact_20260709T075435Z",
     "javascript_poppler_exact_1024mb_20260709T1515Z",
     "javascript_poppler_exact_default_20260709T145958Z",
+    "javascript_poppler_scratch_20260709T1537Z",
     "pr142_evidence_and_wave2a_closeout_spore",
     "wave2b_green_20260707T0100Z",
     "wave2b_js_20260707T0000Z",
@@ -101,7 +102,7 @@
       "key": "javascript_poppler_memory_budget",
       "file": "javascript/deps/v8/test/mjsunit/asm/poppler/poppler.js (3447275 bytes; largest JavaScript corpus file selected by the strict Wave-3 basis)",
       "backlog_ref": "wave3_pending_javascript_strict_20260709T143849Z narrowed JavaScript to one remaining full-axis timeout; exact parse-gap probes on branch wave3/javascript-poppler-cliff reclassified that timeout as a memory-budget correctness/perf witness",
-      "action": "Keep JavaScript wave2b_pending. The strict row remains ratchetable via max_timeouts=1, but Poppler should be treated as a named Wave-2c/Wave-3 memory-economy and C-faithful materialization backlog item, not as a pure throughput-only timeout."
+      "action": "Keep JavaScript wave2b_pending. The strict row remains ratchetable via max_timeouts=1, but Poppler should be treated as a named Wave-2c/Wave-3 GSS-scratch memory-economy and C-faithful materialization backlog item, not as a pure throughput-only timeout."
     },
     {
       "key": "webworker_generated_d_ts",

@@ -45,6 +45,17 @@ type runtimeStats struct {
 	ArenaLiveB                      int64         `json:"arena_live_b,omitempty"`
 	ArenaCapacityB                  int64         `json:"arena_capacity_b,omitempty"`
 	ArenaCapacityWaste              uint64        `json:"arena_capacity_waste,omitempty"`
+	ScratchAllocatedB               int64         `json:"scratch_allocated_b,omitempty"`
+	ScratchBaselineB                int64         `json:"scratch_baseline_b,omitempty"`
+	EntryScratchAllocatedB          int64         `json:"entry_scratch_allocated_b,omitempty"`
+	GSSScratchAllocatedB            int64         `json:"gss_scratch_allocated_b,omitempty"`
+	GSSScratchBaselineB             int64         `json:"gss_scratch_baseline_b,omitempty"`
+	MergeScratchAllocatedB          int64         `json:"merge_scratch_allocated_b,omitempty"`
+	GSSSlabCount                    int           `json:"gss_slab_count,omitempty"`
+	GSSNodesUsed                    int           `json:"gss_nodes_used,omitempty"`
+	GSSNodesCapacity                int           `json:"gss_nodes_capacity,omitempty"`
+	SingleStackGSSNodes             uint64        `json:"single_stack_gss_nodes,omitempty"`
+	MultiStackGSSNodes              uint64        `json:"multi_stack_gss_nodes,omitempty"`
 	FinalChildRangeDrains           uint64        `json:"final_child_range_drains,omitempty"`
 	PublicNodesMaterialized         uint64        `json:"public_nodes_materialized,omitempty"`
 	DenseFallbacks                  uint64        `json:"dense_fallbacks,omitempty"`
@@ -54,6 +65,12 @@ type runtimeStats struct {
 	ResultParentLinkNS              int64         `json:"result_parent_link_ns,omitempty"`
 	ResultFinalizeRootNS            int64         `json:"result_finalize_root_ns,omitempty"`
 	ResultExtendTrailingNS          int64         `json:"result_extend_trailing_ns,omitempty"`
+	TransientChildSlicesAlloc       uint64        `json:"transient_child_slices_allocated,omitempty"`
+	TransientChildPointersAlloc     uint64        `json:"transient_child_pointers_allocated,omitempty"`
+	TransientChildSlicesMat         uint64        `json:"transient_child_slices_materialized,omitempty"`
+	TransientChildPointersMat       uint64        `json:"transient_child_pointers_materialized,omitempty"`
+	TransientParentNodesAlloc       uint64        `json:"transient_parent_nodes_allocated,omitempty"`
+	TransientParentNodesMat         uint64        `json:"transient_parent_nodes_materialized,omitempty"`
 	NormalizationNS                 int64         `json:"normalization_ns,omitempty"`
 	NormalizationNodes              uint64        `json:"normalization_nodes_visited,omitempty"`
 	NormalizationRewrites           uint64        `json:"normalization_nodes_rewritten,omitempty"`
@@ -398,6 +415,23 @@ func scoreRows(rows []reportRow) []langScore {
 			s.attrs["final_nodes_per_token"] = float64(r.FinalNodes) / tokens
 			s.attrs["arena_live_per_byte"] = float64(r.ArenaLiveB) / bytesDen
 			s.attrs["arena_capacity_waste_per_byte"] = float64(r.ArenaCapacityWaste) / bytesDen
+			s.attrs["scratch_per_byte"] = float64(r.ScratchAllocatedB) / bytesDen
+			s.attrs["scratch_growth_per_byte"] = float64(maxInt64(r.ScratchAllocatedB-r.ScratchBaselineB, 0)) / bytesDen
+			s.attrs["entry_scratch_per_byte"] = float64(r.EntryScratchAllocatedB) / bytesDen
+			s.attrs["gss_scratch_per_byte"] = float64(r.GSSScratchAllocatedB) / bytesDen
+			s.attrs["gss_scratch_growth_per_byte"] = float64(maxInt64(r.GSSScratchAllocatedB-r.GSSScratchBaselineB, 0)) / bytesDen
+			s.attrs["merge_scratch_per_byte"] = float64(r.MergeScratchAllocatedB) / bytesDen
+			s.attrs["gss_nodes_used_per_token"] = float64(r.GSSNodesUsed) / tokens
+			s.attrs["gss_nodes_capacity_per_token"] = float64(r.GSSNodesCapacity) / tokens
+			s.attrs["gss_capacity_use_share"] = safeRatioInt(r.GSSNodesUsed, r.GSSNodesCapacity)
+			s.attrs["single_stack_gss_share"] = safeRatioUint(r.SingleStackGSSNodes, r.SingleStackGSSNodes+r.MultiStackGSSNodes)
+			s.attrs["gss_slab_count"] = float64(r.GSSSlabCount)
+			s.attrs["transient_child_slices_allocated_per_token"] = float64(r.TransientChildSlicesAlloc) / tokens
+			s.attrs["transient_child_slices_materialized_per_token"] = float64(r.TransientChildSlicesMat) / tokens
+			s.attrs["transient_child_pointers_allocated_per_token"] = float64(r.TransientChildPointersAlloc) / tokens
+			s.attrs["transient_child_pointers_materialized_per_token"] = float64(r.TransientChildPointersMat) / tokens
+			s.attrs["transient_parent_nodes_allocated_per_token"] = float64(r.TransientParentNodesAlloc) / tokens
+			s.attrs["transient_parent_nodes_materialized_per_token"] = float64(r.TransientParentNodesMat) / tokens
 			s.attrs["public_materialized_per_token"] = float64(r.PublicNodesMaterialized) / tokens
 			s.attrs["final_child_drains_per_token"] = float64(r.FinalChildRangeDrains) / tokens
 			s.attrs["dense_fallbacks_per_token"] = float64(r.DenseFallbacks) / tokens
@@ -609,6 +643,8 @@ func render(scores []langScore) {
 			s.attrs["final_child_drains_per_token"],
 		)
 	}
+	printMemoryAttribution(scores)
+	printTransientAttribution(scores)
 	printActionAttribution(scores)
 	printReduceAttribution(scores)
 	printEquivAttribution(scores)
@@ -687,6 +723,66 @@ func render(scores []langScore) {
 	for _, key := range keys {
 		sort.Strings(buckets[key])
 		fmt.Printf("- `%s`: %s\n", key, strings.Join(buckets[key], ", "))
+	}
+}
+
+func printMemoryAttribution(scores []langScore) {
+	if !hasAnyAttr(scores,
+		"scratch_per_byte",
+		"gss_scratch_growth_per_byte",
+		"entry_scratch_per_byte",
+		"gss_scratch_per_byte",
+		"merge_scratch_per_byte",
+		"gss_nodes_used_per_token",
+		"gss_nodes_capacity_per_token",
+	) {
+		return
+	}
+	fmt.Println()
+	fmt.Println("## Memory Attribution")
+	fmt.Println()
+	fmt.Println("| lang | arena_B/byte | scratch_B/byte | scratch_growth_B/byte | gss_B/byte | gss_growth_B/byte | gss_used/token | gss_capacity/token | capacity_use% | single_gss% | slabs |")
+	fmt.Println("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+	for _, s := range scores {
+		fmt.Printf("| %s | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f | %.1f | %.1f | %.0f |\n",
+			s.lang,
+			s.attrs["arena_live_per_byte"],
+			s.attrs["scratch_per_byte"],
+			s.attrs["scratch_growth_per_byte"],
+			s.attrs["gss_scratch_per_byte"],
+			s.attrs["gss_scratch_growth_per_byte"],
+			s.attrs["gss_nodes_used_per_token"],
+			s.attrs["gss_nodes_capacity_per_token"],
+			100*s.attrs["gss_capacity_use_share"],
+			100*s.attrs["single_stack_gss_share"],
+			s.attrs["gss_slab_count"],
+		)
+	}
+}
+
+func printTransientAttribution(scores []langScore) {
+	if !hasAnyAttr(scores,
+		"transient_child_slices_allocated_per_token",
+		"transient_child_pointers_allocated_per_token",
+		"transient_parent_nodes_allocated_per_token",
+	) {
+		return
+	}
+	fmt.Println()
+	fmt.Println("## Transient Materialization Attribution")
+	fmt.Println()
+	fmt.Println("| lang | child_slices_alloc/token | child_slices_mat/token | child_ptr_alloc/token | child_ptr_mat/token | parent_alloc/token | parent_mat/token |")
+	fmt.Println("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+	for _, s := range scores {
+		fmt.Printf("| %s | %.3f | %.3f | %.3f | %.3f | %.3f | %.3f |\n",
+			s.lang,
+			s.attrs["transient_child_slices_allocated_per_token"],
+			s.attrs["transient_child_slices_materialized_per_token"],
+			s.attrs["transient_child_pointers_allocated_per_token"],
+			s.attrs["transient_child_pointers_materialized_per_token"],
+			s.attrs["transient_parent_nodes_allocated_per_token"],
+			s.attrs["transient_parent_nodes_materialized_per_token"],
+		)
 	}
 }
 
@@ -1382,6 +1478,17 @@ func (r *runtimeStats) add(o runtimeStats) {
 	r.ArenaLiveB += o.ArenaLiveB
 	r.ArenaCapacityB += o.ArenaCapacityB
 	r.ArenaCapacityWaste += o.ArenaCapacityWaste
+	r.ScratchAllocatedB += o.ScratchAllocatedB
+	r.ScratchBaselineB += o.ScratchBaselineB
+	r.EntryScratchAllocatedB += o.EntryScratchAllocatedB
+	r.GSSScratchAllocatedB += o.GSSScratchAllocatedB
+	r.GSSScratchBaselineB += o.GSSScratchBaselineB
+	r.MergeScratchAllocatedB += o.MergeScratchAllocatedB
+	r.GSSSlabCount += o.GSSSlabCount
+	r.GSSNodesUsed += o.GSSNodesUsed
+	r.GSSNodesCapacity += o.GSSNodesCapacity
+	r.SingleStackGSSNodes += o.SingleStackGSSNodes
+	r.MultiStackGSSNodes += o.MultiStackGSSNodes
 	r.FinalChildRangeDrains += o.FinalChildRangeDrains
 	r.PublicNodesMaterialized += o.PublicNodesMaterialized
 	r.DenseFallbacks += o.DenseFallbacks
@@ -1391,6 +1498,12 @@ func (r *runtimeStats) add(o runtimeStats) {
 	r.ResultParentLinkNS += o.ResultParentLinkNS
 	r.ResultFinalizeRootNS += o.ResultFinalizeRootNS
 	r.ResultExtendTrailingNS += o.ResultExtendTrailingNS
+	r.TransientChildSlicesAlloc += o.TransientChildSlicesAlloc
+	r.TransientChildPointersAlloc += o.TransientChildPointersAlloc
+	r.TransientChildSlicesMat += o.TransientChildSlicesMat
+	r.TransientChildPointersMat += o.TransientChildPointersMat
+	r.TransientParentNodesAlloc += o.TransientParentNodesAlloc
+	r.TransientParentNodesMat += o.TransientParentNodesMat
 	r.NormalizationNS += o.NormalizationNS
 	r.NormalizationNodes += o.NormalizationNodes
 	r.NormalizationRewrites += o.NormalizationRewrites
@@ -1483,6 +1596,13 @@ func ratio(num, den int64) float64 {
 
 func safeRatioUint(num, den uint64) float64 {
 	if den == 0 {
+		return 0
+	}
+	return float64(num) / float64(den)
+}
+
+func safeRatioInt(num, den int) float64 {
+	if den <= 0 {
 		return 0
 	}
 	return float64(num) / float64(den)

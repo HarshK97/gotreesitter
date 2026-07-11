@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -95,6 +96,149 @@ func TestRenderSummaryUsesRequestedLanguageOrder(t *testing.T) {
 	}
 	if !(ts < php && php < ruby) {
 		t.Fatalf("summary order mismatch:\n%s", summary)
+	}
+}
+
+func TestStatsFromRuntimeReportsScratchAndTransientMemory(t *testing.T) {
+	stats := statsFromRuntime(gotreesitter.ParseRuntime{
+		StopDiagnosticCaptured:             true,
+		StopDiagnosticTokenSymbol:          25,
+		MemoryBudgetStopSource:             "runtime_heap",
+		RuntimeHeapGrowthBytes:             567,
+		RuntimeSysGrowthBytes:              890,
+		ArenaBytesAllocated:                2000,
+		ArenaBaselineBytes:                 500,
+		ScratchBytesAllocated:              1234,
+		ScratchBaselineBytes:               100,
+		EntryScratchBytesAllocated:         234,
+		GSSBytesAllocated:                  345,
+		GSSBaselineBytes:                   50,
+		GSSSlabCount:                       4,
+		GSSNodesUsed:                       55,
+		GSSNodesCapacity:                   80,
+		GSSDemotions:                       6,
+		GSSNodesDemoted:                    77,
+		TransientScratchCheckpoints:        8,
+		SingleStackGSSNodes:                44,
+		MultiStackGSSNodes:                 11,
+		TransientChildSlicesAllocated:      12,
+		TransientChildPointersAllocated:    34,
+		TransientChildSlicesMaterialized:   5,
+		TransientChildPointersMaterialized: 8,
+		TransientParentNodesAllocated:      13,
+		TransientParentNodesMaterialized:   21,
+	})
+	if !strings.Contains(stats.StopDiagnostic, "stopDiag={") || !strings.Contains(stats.StopDiagnostic, "token=25[") {
+		t.Fatalf("StopDiagnostic = %q, want captured token diagnostic", stats.StopDiagnostic)
+	}
+
+	if got, want := stats.MemoryBudgetStopSource, "runtime_heap"; got != want {
+		t.Fatalf("MemoryBudgetStopSource = %q, want %q", got, want)
+	}
+	if got, want := stats.RuntimeHeapGrowthB, uint64(567); got != want {
+		t.Fatalf("RuntimeHeapGrowthB = %d, want %d", got, want)
+	}
+	if got, want := stats.RuntimeSysGrowthB, uint64(890); got != want {
+		t.Fatalf("RuntimeSysGrowthB = %d, want %d", got, want)
+	}
+	if got, want := stats.ArenaCapacityB, int64(2000); got != want {
+		t.Fatalf("ArenaCapacityB = %d, want %d", got, want)
+	}
+	if got, want := stats.ArenaBaselineB, int64(500); got != want {
+		t.Fatalf("ArenaBaselineB = %d, want %d", got, want)
+	}
+	if got, want := stats.ScratchAllocatedB, int64(1234); got != want {
+		t.Fatalf("ScratchAllocatedB = %d, want %d", got, want)
+	}
+	if got, want := stats.ScratchBaselineB, int64(100); got != want {
+		t.Fatalf("ScratchBaselineB = %d, want %d", got, want)
+	}
+	if got, want := stats.EntryScratchAllocatedB, int64(234); got != want {
+		t.Fatalf("EntryScratchAllocatedB = %d, want %d", got, want)
+	}
+	if got, want := stats.GSSScratchAllocatedB, int64(345); got != want {
+		t.Fatalf("GSSScratchAllocatedB = %d, want %d", got, want)
+	}
+	if got, want := stats.GSSScratchBaselineB, int64(50); got != want {
+		t.Fatalf("GSSScratchBaselineB = %d, want %d", got, want)
+	}
+	if got, want := stats.GSSSlabCount, 4; got != want {
+		t.Fatalf("GSSSlabCount = %d, want %d", got, want)
+	}
+	if got, want := stats.GSSNodesUsed, 55; got != want {
+		t.Fatalf("GSSNodesUsed = %d, want %d", got, want)
+	}
+	if got, want := stats.GSSNodesCapacity, 80; got != want {
+		t.Fatalf("GSSNodesCapacity = %d, want %d", got, want)
+	}
+	if got, want := stats.GSSDemotions, uint64(6); got != want {
+		t.Fatalf("GSSDemotions = %d, want %d", got, want)
+	}
+	if got, want := stats.GSSNodesDemoted, uint64(77); got != want {
+		t.Fatalf("GSSNodesDemoted = %d, want %d", got, want)
+	}
+	if got, want := stats.TransientScratchCheckpoints, uint64(8); got != want {
+		t.Fatalf("TransientScratchCheckpoints = %d, want %d", got, want)
+	}
+	if got, want := stats.SingleStackGSSNodes, uint64(44); got != want {
+		t.Fatalf("SingleStackGSSNodes = %d, want %d", got, want)
+	}
+	if got, want := stats.MultiStackGSSNodes, uint64(11); got != want {
+		t.Fatalf("MultiStackGSSNodes = %d, want %d", got, want)
+	}
+	if got, want := stats.TransientChildSlicesAllocated, uint64(12); got != want {
+		t.Fatalf("TransientChildSlicesAllocated = %d, want %d", got, want)
+	}
+	if got, want := stats.TransientChildPointersAllocated, uint64(34); got != want {
+		t.Fatalf("TransientChildPointersAllocated = %d, want %d", got, want)
+	}
+	if got, want := stats.TransientChildSlicesMaterialized, uint64(5); got != want {
+		t.Fatalf("TransientChildSlicesMaterialized = %d, want %d", got, want)
+	}
+	if got, want := stats.TransientChildPointersMaterialized, uint64(8); got != want {
+		t.Fatalf("TransientChildPointersMaterialized = %d, want %d", got, want)
+	}
+	if got, want := stats.TransientParentNodesAllocated, uint64(13); got != want {
+		t.Fatalf("TransientParentNodesAllocated = %d, want %d", got, want)
+	}
+	if got, want := stats.TransientParentNodesMaterialized, uint64(21); got != want {
+		t.Fatalf("TransientParentNodesMaterialized = %d, want %d", got, want)
+	}
+
+	payload, err := json.Marshal(stats)
+	if err != nil {
+		t.Fatalf("marshal stats: %v", err)
+	}
+	jsonText := string(payload)
+	for _, field := range []string{
+		`"memory_budget_stop_source":"runtime_heap"`,
+		`"runtime_heap_growth_b":567`,
+		`"runtime_sys_growth_b":890`,
+		`"arena_capacity_b":2000`,
+		`"arena_baseline_b":500`,
+		`"scratch_allocated_b":1234`,
+		`"scratch_baseline_b":100`,
+		`"entry_scratch_allocated_b":234`,
+		`"gss_scratch_allocated_b":345`,
+		`"gss_scratch_baseline_b":50`,
+		`"gss_slab_count":4`,
+		`"gss_nodes_used":55`,
+		`"gss_nodes_capacity":80`,
+		`"gss_demotions":6`,
+		`"gss_nodes_demoted":77`,
+		`"transient_scratch_checkpoints":8`,
+		`"single_stack_gss_nodes":44`,
+		`"multi_stack_gss_nodes":11`,
+		`"transient_child_slices_allocated":12`,
+		`"transient_child_pointers_allocated":34`,
+		`"transient_child_slices_materialized":5`,
+		`"transient_child_pointers_materialized":8`,
+		`"transient_parent_nodes_allocated":13`,
+		`"transient_parent_nodes_materialized":21`,
+	} {
+		if !strings.Contains(jsonText, field) {
+			t.Fatalf("marshal stats = %s, missing %s", jsonText, field)
+		}
 	}
 }
 
