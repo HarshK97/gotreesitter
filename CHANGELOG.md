@@ -7,7 +7,7 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
-## [0.24.0] - 2026-07-10
+## [0.24.0] - 2026-07-11
 
 JavaScript large-file parity and parser memory-economy release. The 3,447,275-
 byte Poppler witness now reaches exact EOF with no error and exact structural
@@ -46,6 +46,9 @@ broader focused gate is 25/25 no-error, S-expression, and deep parity.
 - The JavaScript block-comment probe uses a labeled loop break; adjacent block
   comments can no longer consume the following token during speculative ASI
   scanning.
+
+### Performance
+
 - Full Poppler parsing improved from 21.706 s to 11.754 s and from 4.150 GB/op
   to 3.328 GB/op in the same 8 GiB, 1-CPU diagnostic envelope. Arena capacity
   fell 9.8%, exact deep parity stayed green, and the measured Go/C ratio was
