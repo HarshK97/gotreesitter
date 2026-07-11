@@ -425,6 +425,13 @@ func materializeTransientParentEntries(entries []stackEntry, arena *nodeArena, t
 	return transientParents.materializeEntriesUntil(entries, arena, transientChildren, p)
 }
 
+func materializeTransientParentEntriesForRecycle(entries []stackEntry, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch, p *Parser) ParseStopReason {
+	if transientParents == nil {
+		return ParseStopNone
+	}
+	return transientParents.materializeEntriesForRecycleUntil(entries, arena, transientChildren, p)
+}
+
 func materializeTransientParentNodes(nodes []*Node, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch, p *Parser) ParseStopReason {
 	if transientParents == nil {
 		return ParseStopNone

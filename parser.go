@@ -6319,7 +6319,7 @@ func (p *Parser) checkpointTransientScratch(stacks []glrStack, scratch *parserSc
 	if used < scratch.transientCheckpointBytes {
 		return ParseStopNone
 	}
-	if reason := materializeTransientParentEntries(
+	if reason := materializeTransientParentEntriesForRecycle(
 		stacks[0].entries,
 		arena,
 		scratch.reduce.transientParents,
@@ -6328,10 +6328,10 @@ func (p *Parser) checkpointTransientScratch(stacks []glrStack, scratch *parserSc
 	); resultMaterializationShouldStop(reason) {
 		return reason
 	}
-	// The materialized live stack no longer references transient slabs. Bump
-	// merge epochs and clear recovery memo state before slab addresses are
-	// reused, so pointer-keyed results from discarded alternatives cannot alias
-	// freshly allocated transient parents.
+	// The materialized live stack, including its raw-shape-only sidecar graph,
+	// no longer references transient slabs. Bump merge epochs and clear recovery
+	// memo state before slab addresses are reused, so pointer-keyed results from
+	// discarded alternatives cannot alias freshly allocated transient parents.
 	scratch.merge.beginEquivEpoch()
 	if p.cNodeMemo != nil {
 		clear(p.cNodeMemo)

@@ -109,6 +109,18 @@ func (s *transientParentScratch) materializeEntries(entries []stackEntry, arena 
 }
 
 func (s *transientParentScratch) materializeEntriesUntil(entries []stackEntry, arena *nodeArena, childScratch *transientChildScratch, p *Parser) ParseStopReason {
+	return s.materializeEntriesModeUntil(entries, arena, childScratch, p, false)
+}
+
+// materializeEntriesForRecycleUntil also follows raw-shape-only edges. Normal
+// final-result materialization need not retain those parser-internal nodes, but
+// checkpoint callers will reuse the transient slabs while parsing continues,
+// so every sidecar pointer must be rebound to an arena clone first.
+func (s *transientParentScratch) materializeEntriesForRecycleUntil(entries []stackEntry, arena *nodeArena, childScratch *transientChildScratch, p *Parser) ParseStopReason {
+	return s.materializeEntriesModeUntil(entries, arena, childScratch, p, true)
+}
+
+func (s *transientParentScratch) materializeEntriesModeUntil(entries []stackEntry, arena *nodeArena, childScratch *transientChildScratch, p *Parser, preserveRawShapes bool) ParseStopReason {
 	if s == nil || len(entries) == 0 || arena == nil {
 		return ParseStopNone
 	}
@@ -124,7 +136,7 @@ func (s *transientParentScratch) materializeEntriesUntil(entries []stackEntry, a
 			roots = append(roots, node)
 		}
 	}
-	if reason := s.materializeNodesUntil(roots, arena, childScratch, p); resultMaterializationShouldStop(reason) {
+	if reason := s.materializeNodesUntil(roots, arena, childScratch, p, preserveRawShapes); resultMaterializationShouldStop(reason) {
 		return reason
 	}
 	for i := range entries {
@@ -153,7 +165,7 @@ func (s *transientParentScratch) materializeNodeSliceUntil(nodes []*Node, arena 
 		return ParseStopNone
 	}
 	defer s.clearMaterializeScratch()
-	if reason := s.materializeNodesUntil(nodes, arena, childScratch, p); resultMaterializationShouldStop(reason) {
+	if reason := s.materializeNodesUntil(nodes, arena, childScratch, p, false); resultMaterializationShouldStop(reason) {
 		return reason
 	}
 	for i := range nodes {
@@ -173,7 +185,7 @@ func (s *transientParentScratch) materializeNodeSliceUntil(nodes []*Node, arena 
 	return ParseStopNone
 }
 
-func (s *transientParentScratch) materializeNodesUntil(nodes []*Node, arena *nodeArena, childScratch *transientChildScratch, p *Parser) ParseStopReason {
+func (s *transientParentScratch) materializeNodesUntil(nodes []*Node, arena *nodeArena, childScratch *transientChildScratch, p *Parser, preserveRawShapes bool) ParseStopReason {
 	if s == nil || len(nodes) == 0 || arena == nil {
 		return ParseStopNone
 	}
@@ -207,10 +219,14 @@ func (s *transientParentScratch) materializeNodesUntil(nodes []*Node, arena *nod
 			continue
 		}
 		if frame.visited {
-			if reason := s.materializeVisitedNodeUntil(n, arena, childScratch, p); resultMaterializationShouldStop(reason) {
+			if reason := s.materializeVisitedNodeUntil(n, arena, childScratch, p, preserveRawShapes); resultMaterializationShouldStop(reason) {
 				return reason
 			}
 			continue
+		}
+		var rawChildren []rawShapeChild
+		if preserveRawShapes {
+			rawChildren = arena.rawShapeChildrenForNode(n)
 		}
 		if s.owns(n) {
 			if n.parent != nil {
@@ -218,7 +234,7 @@ func (s *transientParentScratch) materializeNodesUntil(nodes []*Node, arena *nod
 			}
 			n.parent = n
 		} else {
-			if len(n.children) == 0 {
+			if len(n.children) == 0 && len(rawChildren) == 0 {
 				continue
 			}
 			if s.seen == nil {
@@ -235,11 +251,17 @@ func (s *transientParentScratch) materializeNodesUntil(nodes []*Node, arena *nod
 				frames = append(frames, transientParentFrame{node: child})
 			}
 		}
+		for i := len(rawChildren) - 1; i >= 0; i-- {
+			child := stackEntryNode(rawChildren[i].packedEntry)
+			if child != nil {
+				frames = append(frames, transientParentFrame{node: child})
+			}
+		}
 	}
 	return ParseStopNone
 }
 
-func (s *transientParentScratch) materializeVisitedNodeUntil(n *Node, arena *nodeArena, childScratch *transientChildScratch, p *Parser) ParseStopReason {
+func (s *transientParentScratch) materializeVisitedNodeUntil(n *Node, arena *nodeArena, childScratch *transientChildScratch, p *Parser, preserveRawShapes bool) ParseStopReason {
 	if n == nil {
 		return ParseStopNone
 	}
@@ -267,6 +289,27 @@ func (s *transientParentScratch) materializeVisitedNodeUntil(n *Node, arena *nod
 			}
 		}
 		n.children = out
+	}
+	// Raw-shape sidecars preserve the grammar reduction before hidden-node
+	// flattening and can therefore retain nodes that do not appear in
+	// n.children. materializeNodesUntil walks those edges too; retarget them
+	// before checkpoint recycling while keeping the captured per-edge shape
+	// reference unchanged.
+	if preserveRawShapes {
+		rawChildren := arena.rawShapeChildrenForNode(n)
+		for i := range rawChildren {
+			child := stackEntryNode(rawChildren[i].packedEntry)
+			if child == nil {
+				continue
+			}
+			if replacement := s.transientReplacement(child); replacement != nil {
+				rawChildren[i].retargetNodePreservingShapeRef(replacement)
+				continue
+			}
+			if replacement, ok := s.seen[child]; ok && replacement != child {
+				rawChildren[i].retargetNodePreservingShapeRef(replacement)
+			}
+		}
 	}
 	if !s.owns(n) {
 		s.seen[n] = n

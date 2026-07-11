@@ -83,6 +83,15 @@ func (c rawShapeChild) shapeRef() rawShapeRef {
 	return rawShapeRef(c.packedEntry.state)
 }
 
+func (c *rawShapeChild) retargetNodePreservingShapeRef(node *Node) {
+	if c == nil || node == nil || stackEntryNode(c.packedEntry) == nil {
+		return
+	}
+	ref := c.packedEntry.state
+	setStackEntryNode(&c.packedEntry, node)
+	c.packedEntry.state = ref
+}
+
 type rawShapeSlab struct {
 	data []rawShape
 	used int
@@ -184,6 +193,17 @@ func (a *nodeArena) rawShapeChildren(shape *rawShape) []rawShapeChild {
 		return nil
 	}
 	return slab.data[start : start+count]
+}
+
+func (a *nodeArena) rawShapeChildrenForNode(node *Node) []rawShapeChild {
+	if a == nil || node == nil || node.rawShape == 0 {
+		return nil
+	}
+	shape, ok := a.rawShapeForRef(node.rawShape)
+	if !ok {
+		return nil
+	}
+	return a.rawShapeChildren(shape)
 }
 
 func (p *Parser) captureRawShape(arena *nodeArena, symbol Symbol, productionID uint16, entries []stackEntry, start, end int) rawShapeRef {

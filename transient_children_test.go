@@ -588,3 +588,91 @@ func TestTransientScratchCheckpointMaterializesLiveStackAndReusesSlabs(t *testin
 		t.Fatalf("transient parent slab was not reused: got %p want %p", reused, firstParentAddress)
 	}
 }
+
+func TestTransientScratchCheckpointRetargetsNestedRawShapeNodesBeforeSlabReuse(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch parserScratch
+	scratch.transientCheckpointBytes = 1
+	scratch.reduce.transientParents = &scratch.transientParents
+	scratch.reduce.transientChildren = &scratch.transientChildren
+	parser := &Parser{}
+
+	leaf := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Column: 1})
+	rawGrandchild := scratch.transientParents.allocParent(arena, Symbol(2), true, nil, 0, false)
+	rawGrandchild.rawShape = parser.captureRawShape(arena, Symbol(2), 0, []stackEntry{
+		newStackEntryNode(1, leaf),
+	}, 0, 1)
+	rawChild := scratch.transientParents.allocParent(arena, Symbol(3), true, nil, 0, false)
+	rawChild.rawShape = parser.captureRawShape(arena, Symbol(3), 0, []stackEntry{
+		newStackEntryNode(2, rawGrandchild),
+	}, 0, 1)
+	semanticChildren := scratch.transientChildren.alloc(1)
+	semanticChildren[0] = leaf
+	liveParent := scratch.transientParents.allocParent(arena, Symbol(4), true, semanticChildren, 0, false)
+	liveParent.rawShape = parser.captureRawShape(arena, Symbol(4), 0, []stackEntry{
+		newStackEntryNode(3, rawChild),
+	}, 0, 1)
+	wantRootChildShape := rawChild.rawShape
+	wantNestedChildShape := rawGrandchild.rawShape
+	stack := glrStack{entries: []stackEntry{newStackEntryNode(4, liveParent)}, cacheEntries: true, byteOffset: 1}
+
+	if reason := parser.checkpointTransientScratch([]glrStack{stack}, &scratch, arena); reason != ParseStopNone {
+		t.Fatalf("checkpointTransientScratch() = %q, want no stop", reason)
+	}
+	materializedRoot := stackEntryNode(stack.entries[0])
+	if materializedRoot == nil || scratch.transientParents.owns(materializedRoot) {
+		t.Fatalf("live stack parent was not materialized: %p", materializedRoot)
+	}
+	rootShape, ok := arena.rawShapeForRef(materializedRoot.rawShape)
+	if !ok {
+		t.Fatalf("materialized root raw shape %d was not retained", materializedRoot.rawShape)
+	}
+	rootRawChildren := arena.rawShapeChildren(rootShape)
+	if len(rootRawChildren) != 1 {
+		t.Fatalf("materialized root raw child count = %d, want 1", len(rootRawChildren))
+	}
+	if got := rootRawChildren[0].shapeRef(); got != wantRootChildShape {
+		t.Fatalf("materialized root child shape ref = %d, want captured ref %d", got, wantRootChildShape)
+	}
+	materializedRawChild := stackEntryNode(rootRawChildren[0].entry())
+	if materializedRawChild == nil || scratch.transientParents.owns(materializedRawChild) {
+		t.Fatalf("root raw-shape child still points into transient storage: %p", materializedRawChild)
+	}
+	childShape, ok := arena.rawShapeForRef(rootRawChildren[0].shapeRef())
+	if !ok {
+		t.Fatalf("materialized raw child shape %d was not retained", rootRawChildren[0].shapeRef())
+	}
+	childRawChildren := arena.rawShapeChildren(childShape)
+	if len(childRawChildren) != 1 {
+		t.Fatalf("materialized nested raw child count = %d, want 1", len(childRawChildren))
+	}
+	if got := childRawChildren[0].shapeRef(); got != wantNestedChildShape {
+		t.Fatalf("materialized nested child shape ref = %d, want captured ref %d", got, wantNestedChildShape)
+	}
+	materializedRawGrandchild := stackEntryNode(childRawChildren[0].entry())
+	if materializedRawGrandchild == nil || scratch.transientParents.owns(materializedRawGrandchild) {
+		t.Fatalf("nested raw-shape child still points into transient storage: %p", materializedRawGrandchild)
+	}
+
+	// Reuse every source slot immediately. The retained sidecar graph must keep
+	// pointing at its arena clones rather than observing these new reductions.
+	reusedGrandchild := scratch.transientParents.allocParent(arena, Symbol(90), true, nil, 0, false)
+	reusedChild := scratch.transientParents.allocParent(arena, Symbol(91), true, nil, 0, false)
+	reusedRoot := scratch.transientParents.allocParent(arena, Symbol(92), true, nil, 0, false)
+	if reusedGrandchild != rawGrandchild || reusedChild != rawChild || reusedRoot != liveParent {
+		t.Fatalf("transient parent addresses were not reused in allocation order: got (%p,%p,%p) want (%p,%p,%p)",
+			reusedGrandchild, reusedChild, reusedRoot, rawGrandchild, rawChild, liveParent)
+	}
+	if got := stackEntryNode(rootRawChildren[0].entry()); got != materializedRawChild {
+		t.Fatalf("root raw-shape child pointer changed after slab reuse: got %p, want %p", got, materializedRawChild)
+	} else if got.symbol != Symbol(3) {
+		t.Fatalf("root raw-shape child symbol after slab reuse = %d, want 3", got.symbol)
+	}
+	if got := stackEntryNode(childRawChildren[0].entry()); got != materializedRawGrandchild {
+		t.Fatalf("nested raw-shape child pointer changed after slab reuse: got %p, want %p", got, materializedRawGrandchild)
+	} else if got.symbol != Symbol(2) {
+		t.Fatalf("nested raw-shape child symbol after slab reuse = %d, want 2", got.symbol)
+	}
+}
