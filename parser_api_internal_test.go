@@ -761,7 +761,12 @@ func TestCertifiedAcceptedErrorRetrySchedulingKeepsMergeAndSkipsWidening(t *test
 
 func TestCppAcceptedErrorRetrySkipsCompleteTree(t *testing.T) {
 	tree := &Tree{
-		language: &Language{Name: "cpp"},
+		language: &Language{
+			Name: "cpp",
+			FullParseAcceptedErrorRetryProfile: FullParseAcceptedErrorRetryProfile{
+				SkipCompleteAcceptedErrorRetry: true,
+			},
+		},
 		root: &Node{
 			endByte: 128,
 			flags:   nodeFlagHasError,
@@ -805,7 +810,12 @@ func TestCppAcceptedErrorRetryPreservesTruncatedMergeRetry(t *testing.T) {
 
 func TestBashAcceptedErrorRetrySkipsCompleteTree(t *testing.T) {
 	tree := &Tree{
-		language: &Language{Name: "bash"},
+		language: &Language{
+			Name: "bash",
+			FullParseAcceptedErrorRetryProfile: FullParseAcceptedErrorRetryProfile{
+				SkipCompleteAcceptedErrorRetry: true,
+			},
+		},
 		root: &Node{
 			endByte: 128,
 			flags:   nodeFlagHasError,
@@ -844,6 +854,36 @@ func TestBashAcceptedErrorRetryPreservesTruncatedMergeRetry(t *testing.T) {
 
 	if got := fullParseRetryMergePerKeyOverride(tree, 128, 18); got != fullParseRetryMaxMergePerKey {
 		t.Fatalf("fullParseRetryMergePerKeyOverride(bash truncated accepted error) = %d, want %d", got, fullParseRetryMaxMergePerKey)
+	}
+}
+
+func TestCompleteAcceptedErrorRetrySkipRequiresCertification(t *testing.T) {
+	tree := &Tree{
+		language: &Language{Name: "rego"},
+		root: &Node{
+			endByte: 128,
+			flags:   nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:       ParseStopAccepted,
+			SourceLen:        128,
+			ExpectedEOFByte:  128,
+			RootEndByte:      128,
+			LastTokenEndByte: 128,
+			LastTokenWasEOF:  true,
+			MaxStacksSeen:    9,
+		},
+	}
+	if !shouldRetryAcceptedErrorParse(tree, 128, 8) {
+		t.Fatal("uncertified language name suppressed accepted-error retry")
+	}
+
+	tree.language.FullParseAcceptedErrorRetryProfile.SkipCompleteAcceptedErrorRetry = true
+	if shouldRetryAcceptedErrorParse(tree, 128, 8) {
+		t.Fatal("certified complete accepted-error tree scheduled a stack retry")
+	}
+	if got := fullParseRetryMergePerKeyOverride(tree, 128, 8); got != 0 {
+		t.Fatalf("certified complete accepted-error merge override = %d, want 0", got)
 	}
 }
 

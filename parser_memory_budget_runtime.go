@@ -3,7 +3,13 @@ package gotreesitter
 import "runtime"
 
 const (
-	parseRuntimeMemoryPollMask       = 15
+	// Arena and parser scratch enforce their budgets at every materialization
+	// boundary. The runtime-wide guard covers untracked Go heap growth, so a
+	// coarser poll avoids repeatedly stopping the world on recovery-heavy
+	// parses while keeping the maximum default-budget overshoot small.
+	parseRuntimeMemoryPollMask       = 255
+	parseRuntimeMemoryTightPollMask  = 15
+	parseRuntimeMemoryTightBudget    = 64 << 20
 	parseRuntimeMemoryMinSourceBytes = 64 * 1024
 
 	parseMemoryBudgetStopSourceArena       = "arena"
@@ -67,10 +73,17 @@ func (p *Parser) runtimeMemoryBudgetStopReason() ParseStopReason {
 		return ParseStopNone
 	}
 	p.parseRuntimeMemoryPoll++
-	if p.parseRuntimeMemoryPoll&parseRuntimeMemoryPollMask != 0 {
+	if p.parseRuntimeMemoryPoll&runtimeMemoryPollMask(p.parseRuntimeMemoryBudgetBytes) != 0 {
 		return ParseStopNone
 	}
 	return p.runtimeMemoryBudgetStopReasonNow()
+}
+
+func runtimeMemoryPollMask(budgetBytes int64) uint64 {
+	if budgetBytes <= parseRuntimeMemoryTightBudget {
+		return parseRuntimeMemoryTightPollMask
+	}
+	return parseRuntimeMemoryPollMask
 }
 
 func (p *Parser) runtimeMemoryBudgetStopReasonNow() ParseStopReason {

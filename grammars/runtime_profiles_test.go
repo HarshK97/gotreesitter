@@ -32,7 +32,7 @@ func TestBuiltinExternalScannerRetryProfilesAttach(t *testing.T) {
 }
 
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	if got, want := len(builtinLanguageRuntimeProfiles), 4; got != want {
+	if got, want := len(builtinLanguageRuntimeProfiles), 7; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -44,6 +44,28 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	}
 	if got := lang.FullParseAcceptedErrorRetryProfile; got != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) {
 		t.Fatalf("unknown runtime profile changed accepted-error retry profile to %+v", got)
+	}
+}
+
+func TestBuiltinCompleteAcceptedErrorRetryProfilesAttach(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	tests := []struct {
+		name string
+		load func() *gotreesitter.Language
+	}{
+		{name: "bash", load: BashLanguage},
+		{name: "cpp", load: CppLanguage},
+		{name: "rego", load: RegoLanguage},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			profile := tt.load().FullParseAcceptedErrorRetryProfile
+			if !profile.SkipCompleteAcceptedErrorRetry {
+				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want skip-complete certification", profile)
+			}
+		})
 	}
 }
 
@@ -110,6 +132,27 @@ func TestBuiltinJavaAcceptedErrorRetryProfileRequiresCertifiedBlob(t *testing.T)
 	}
 }
 
+func TestBuiltinCompleteAcceptedErrorRetryProfileRequiresCertifiedBlob(t *testing.T) {
+	lang := &gotreesitter.Language{Name: "rego"}
+	if attachBuiltinLanguageRuntimeProfile("rego", sha256.Sum256([]byte("uncertified")), lang) {
+		t.Fatal("uncertified Rego blob reported a runtime-profile attachment")
+	}
+	if got := lang.FullParseAcceptedErrorRetryProfile; got != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) {
+		t.Fatalf("uncertified Rego blob changed retry profile to %+v", got)
+	}
+
+	blob := BlobByName("rego")
+	if len(blob) == 0 {
+		t.Fatal("BlobByName(rego) returned no data")
+	}
+	if !attachBuiltinLanguageRuntimeProfile("rego", sha256.Sum256(blob), lang) {
+		t.Fatal("certified Rego blob did not attach its runtime profile")
+	}
+	if !lang.FullParseAcceptedErrorRetryProfile.SkipCompleteAcceptedErrorRetry {
+		t.Fatalf("certified Rego retry profile = %+v, want skip-complete certification", lang.FullParseAcceptedErrorRetryProfile)
+	}
+}
+
 func TestAttachLanguageSupportDoesNotCertifyWithoutBlobIdentity(t *testing.T) {
 	base := KotlinLanguage()
 	lang := &gotreesitter.Language{
@@ -128,5 +171,11 @@ func TestAttachLanguageSupportDoesNotCertifyWithoutBlobIdentity(t *testing.T) {
 	AttachLanguageSupport("java", java)
 	if got := java.FullParseAcceptedErrorRetryProfile; got != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) {
 		t.Fatalf("AttachLanguageSupport certified Java retry profile without blob identity: %+v", got)
+	}
+
+	rego := &gotreesitter.Language{Name: "rego"}
+	AttachLanguageSupport("rego", rego)
+	if got := rego.FullParseAcceptedErrorRetryProfile; got != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) {
+		t.Fatalf("AttachLanguageSupport certified Rego retry profile without blob identity: %+v", got)
 	}
 }
