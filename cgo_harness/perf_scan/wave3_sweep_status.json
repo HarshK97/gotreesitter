@@ -1,10 +1,10 @@
 {
   "schema": "gts-wave3-perf-sweep-status/v1",
-  "generated_at": "2026-07-11T09:17:00Z",
+  "generated_at": "2026-07-11T13:54:40Z",
   "budget_path": "perf_scan/perf_ratio_budgets.json",
   "fleet_path": "tier_scan/exts.tsv",
-  "budget_generated_at": "2026-07-09T15:05:20Z",
-  "budget_generated_by": "wave-3 fleet perf sweep ledger correction, branch wave3/javascript-poppler-cliff, naming the JavaScript Poppler default-budget gap after exact oracle probes",
+  "budget_generated_at": "2026-07-11T13:54:40Z",
+  "budget_generated_by": "Poppler hard-RSS and structural-parity ledger closeout at f407985a; JavaScript remains wave2b_pending for throughput",
   "measurement_basis": {
     "reps": 5,
     "warmup": 1,
@@ -42,6 +42,7 @@
     "after_cliffs_20260706T210143Z",
     "authoritative_20260706T145520Z",
     "d_expressionsem_default_20260709T083649Z",
+    "f407_javascript_poppler_hard_rss_20260711",
     "fleet_gap_close_assist_20260708T232019Z_to_20260709T003453Z",
     "fsharp_providedtypes_exact_default_20260709T094157Z",
     "fsharp_providedtypes_exact_full30s_20260709T094341Z",
@@ -102,8 +103,8 @@
     {
       "key": "javascript_poppler_memory_budget",
       "file": "javascript/deps/v8/test/mjsunit/asm/poppler/poppler.js (3447275 bytes; largest JavaScript corpus file selected by the strict Wave-3 basis)",
-      "backlog_ref": "wave3_pending_javascript_strict_20260709T143849Z narrowed JavaScript to one remaining full-axis timeout; exact parse-gap probes on branch wave3/javascript-poppler-cliff reclassified that timeout as a memory-budget correctness/perf witness",
-      "action": "Keep JavaScript wave2b_pending. v0.24.0 proves exact Poppler parity at an explicit 2048MB parser budget and a hard-2GiB single-runtime envelope, but the shipped 512MB parser-budget gap remains open. Refresh the strict largest-8 row on a pinned quiet host, then continue the Poppler/default-budget and wasm box2d/lua_binarytrees long tail."
+      "backlog_ref": "wave3_pending_javascript_strict_20260709T143849Z remains the largest-8 throughput ratchet; f407_javascript_poppler_hard_rss_20260711 is the authoritative exact-witness correctness/hard-RSS closeout at f407985ab08bfdacaeca3239f9f4c4202dde4f96, not a throughput reseed",
+      "action": "Keep JavaScript wave2b_pending. At f407985a, the exact Poppler witness passes no-error, S-expression, and deep parity in the separate 8GiB control and its Go-only parse fits a hard 2GiB container at 1708712 KiB max RSS, but the exact full parse remains 3.50x C (12.9079s vs 3.6867s). Continue Poppler retained-node/allocation work and the named wasm box2d/lua_binarytrees throughput cliffs; do not treat the hard-RSS/parity closeout as a language-wide throughput closeout."
     },
     {
       "key": "webworker_generated_d_ts",
