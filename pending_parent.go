@@ -30,12 +30,23 @@ type pendingChildEntry struct {
 type pendingChildRange uint64
 
 const (
-	pendingChildRangeCountBits                  = 20
-	pendingChildRangeOffsetBits                 = 24
-	pendingChildRangeCountMask                  = (uint64(1) << pendingChildRangeCountBits) - 1
-	pendingChildRangeOffsetMask                 = (uint64(1) << pendingChildRangeOffsetBits) - 1
-	pendingParentFlagFieldEntries     nodeFlags = 1 << 5
-	pendingParentFlagDirectFieldEntry nodeFlags = 1 << 6
+	pendingChildRangeCountBits                      = 20
+	pendingChildRangeOffsetBits                     = 24
+	pendingChildRangeCountMask                      = (uint64(1) << pendingChildRangeCountBits) - 1
+	pendingChildRangeOffsetMask                     = (uint64(1) << pendingChildRangeOffsetBits) - 1
+	pendingChildEntryKindBits                       = 2
+	pendingChildEntryFieldIDBits                    = 16
+	pendingChildEntryFieldSourceBits                = 2
+	pendingChildEntryFieldIDShift                   = pendingChildEntryKindBits
+	pendingChildEntryFieldSourceShift               = pendingChildEntryFieldIDShift + pendingChildEntryFieldIDBits
+	pendingChildEntryKindMask             uintptr   = (1 << pendingChildEntryKindBits) - 1
+	pendingChildEntryFieldIDValueMask     uintptr   = (1 << pendingChildEntryFieldIDBits) - 1
+	pendingChildEntryFieldSourceValueMask uintptr   = (1 << pendingChildEntryFieldSourceBits) - 1
+	pendingChildEntryFieldIDMask                    = pendingChildEntryFieldIDValueMask << pendingChildEntryFieldIDShift
+	pendingChildEntryFieldSourceMask                = pendingChildEntryFieldSourceValueMask << pendingChildEntryFieldSourceShift
+	pendingChildEntryFieldMetadataMask              = pendingChildEntryFieldIDMask | pendingChildEntryFieldSourceMask
+	pendingParentFlagFieldEntries         nodeFlags = 1 << 5
+	pendingParentFlagDirectFieldEntry     nodeFlags = 1 << 6
 
 	publicPendingParentNodeFlags nodeFlags = nodeFlagNamed | nodeFlagExtra | nodeFlagMissing | nodeFlagHasError | nodeFlagDirty
 )
@@ -109,10 +120,6 @@ func newPendingParentInArena(arena *nodeArena, sym Symbol, named bool, productio
 }
 
 func newPendingParentShellInArena(arena *nodeArena, sym Symbol, named bool, productionID uint16, childCount int, startByte, endByte uint32, startPoint, endPoint Point, hasError bool) *pendingParent {
-	return newPendingParentShellWithEntrySlotsInArena(arena, sym, named, productionID, childCount, childCount, startByte, endByte, startPoint, endPoint, hasError)
-}
-
-func newPendingParentShellWithEntrySlotsInArena(arena *nodeArena, sym Symbol, named bool, productionID uint16, childCount, entrySlots int, startByte, endByte uint32, startPoint, endPoint Point, hasError bool) *pendingParent {
 	var p *pendingParent
 	var childRange pendingChildRange
 	if arena == nil {
@@ -122,7 +129,7 @@ func newPendingParentShellWithEntrySlotsInArena(arena *nodeArena, sym Symbol, na
 		p = &pendingParent{}
 	} else {
 		p = arena.allocPendingParent()
-		childRange, _ = arena.allocPendingChildEntryRange(childCount, entrySlots)
+		childRange, _ = arena.allocPendingChildEntries(childCount)
 		arena.pendingParentCreated++
 	}
 	p.setChildEntries(childRange)
@@ -155,18 +162,6 @@ func (p *pendingParent) childRefs(arena *nodeArena) []pendingChildEntry {
 	return p.childRange.refs(arena)
 }
 
-func (p *pendingParent) fieldEntryRefs(arena *nodeArena) []pendingChildEntry {
-	if p == nil || arena == nil || !p.hasFieldEntries() || p.childRange.count() == 0 {
-		return nil
-	}
-	count := p.childRange.count()
-	refs := p.childRange.refsN(arena, count*2)
-	if len(refs) < count*2 {
-		return nil
-	}
-	return refs[count : count*2]
-}
-
 func (p *pendingParent) childEntryCount() int {
 	if p == nil {
 		return 0
@@ -193,7 +188,9 @@ func (p *pendingParent) setChildEntry(arena *nodeArena, i int, entry stackEntry)
 	if i >= len(refs) {
 		return
 	}
-	refs[i] = newPendingChildEntry(entry)
+	next := newPendingChildEntry(entry)
+	next.meta |= refs[i].meta & pendingChildEntryFieldMetadataMask
+	refs[i] = next
 }
 
 func (p *pendingParent) hasFieldEntries() bool {
@@ -204,6 +201,10 @@ func (p *pendingParent) setHasFieldEntries(v bool) {
 	p.setFlag(pendingParentFlagFieldEntries, v)
 }
 
+// hasDirectFieldEntries preserves the old hidden-flattening classification:
+// these direct fields were previously safe to reconstruct from visible
+// children. Their values are now packed and are never recomputed when the
+// pending parent materializes.
 func (p *pendingParent) hasDirectFieldEntries() bool {
 	return p != nil && p.hasFlag(pendingParentFlagDirectFieldEntry)
 }
@@ -216,18 +217,26 @@ func (p *pendingParent) setChildFieldEntry(arena *nodeArena, i int, fid FieldID,
 	if p == nil || i < 0 || i >= p.childEntryCount() {
 		return
 	}
-	refs := p.fieldEntryRefs(arena)
+	if uintptr(source)&^pendingChildEntryFieldSourceValueMask != 0 {
+		panic("pending child field source exceeds tag mask")
+	}
+	refs := p.childRefs(arena)
 	if i >= len(refs) {
 		return
 	}
-	refs[i] = newPendingChildFieldEntry(fid, source)
+	refs[i].meta = (refs[i].meta &^ pendingChildEntryFieldMetadataMask) |
+		uintptr(fid)<<pendingChildEntryFieldIDShift |
+		uintptr(source)<<pendingChildEntryFieldSourceShift
+	if (fid != 0 || source != fieldSourceNone) && !p.hasFieldEntries() && !p.hasDirectFieldEntries() {
+		p.setHasFieldEntries(true)
+	}
 }
 
 func (p *pendingParent) childFieldEntry(arena *nodeArena, i int) (FieldID, uint8) {
 	if p == nil || i < 0 || i >= p.childEntryCount() {
 		return 0, fieldSourceNone
 	}
-	refs := p.fieldEntryRefs(arena)
+	refs := p.childRefs(arena)
 	if i >= len(refs) {
 		return 0, fieldSourceNone
 	}
@@ -262,10 +271,7 @@ func (r pendingChildRange) offset() int {
 }
 
 func (r pendingChildRange) refs(arena *nodeArena) []pendingChildEntry {
-	return r.refsN(arena, r.count())
-}
-
-func (r pendingChildRange) refsN(arena *nodeArena, count int) []pendingChildEntry {
+	count := r.count()
 	if arena == nil || count == 0 {
 		return nil
 	}
@@ -292,19 +298,13 @@ func newPendingChildEntry(entry stackEntry) pendingChildEntry {
 	return pendingChildEntry{node: entry.node, meta: kind}
 }
 
-func newPendingChildFieldEntry(fid FieldID, source uint8) pendingChildEntry {
-	return pendingChildEntry{meta: uintptr(fid) | uintptr(source)<<16}
-}
-
 func (e pendingChildEntry) fieldID() FieldID {
-	return FieldID(e.meta & 0xffff)
+	return FieldID((e.meta & pendingChildEntryFieldIDMask) >> pendingChildEntryFieldIDShift)
 }
 
 func (e pendingChildEntry) fieldSource() uint8 {
-	return uint8((e.meta >> 16) & 0xff)
+	return uint8((e.meta & pendingChildEntryFieldSourceMask) >> pendingChildEntryFieldSourceShift)
 }
-
-const pendingChildEntryKindMask = uintptr(3)
 
 func (entry pendingChildEntry) stackEntry() stackEntry {
 	if entry.node == nil {
@@ -361,9 +361,8 @@ func materializeStackEntryPendingParentEntryWithParser(p *Parser, arena *nodeAre
 	children := arena.allocNodeSliceNoClear(childCount)
 	var fieldIDs []FieldID
 	var fieldSources []uint8
-	hasDenseFieldEntries := parent.hasFieldEntries()
-	hasDirectFieldEntries := parent.hasDirectFieldEntries()
-	if hasDenseFieldEntries || hasDirectFieldEntries {
+	hasFieldEntries := parent.hasFieldEntries() || parent.hasDirectFieldEntries()
+	if hasFieldEntries {
 		fieldIDs = arena.allocFieldIDSlice(childCount)
 		fieldSources = arena.allocFieldSourceSlice(childCount)
 	}
@@ -373,14 +372,11 @@ func materializeStackEntryPendingParentEntryWithParser(p *Parser, arena *nodeAre
 		children[i], updatedChild = materializeStackEntryPayloadEntryWithParser(p, arena, child, compactFullLeafMaterializeReason(reason), reason)
 		child = updatedChild
 		parent.setChildEntry(arena, i, child)
-		if hasDenseFieldEntries {
+		if hasFieldEntries {
 			fid, source := parent.childFieldEntry(arena, i)
 			fieldIDs[i] = fid
 			fieldSources[i] = source
 		}
-	}
-	if hasDirectFieldEntries {
-		p.populatePendingDirectFieldEntries(parent, children, fieldIDs, fieldSources, arena)
 	}
 	if fieldIDs != nil && p != nil {
 		p.suppressReducedChildFields(children, fieldIDs, fieldSources)

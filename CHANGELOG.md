@@ -7,6 +7,20 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Changed
+
+- Pending-parent child entries now pack their full 16-bit field ID and field
+  source beside the payload kind. Fielded parents use one 16-byte entry per
+  child instead of a second sidecar entry, and materialization no longer
+  reconstructs direct fields from grammar tables.
+
+### Fixed
+
+- Stack dedupe and GSS link merging now treat pending-parent hashes as coarse
+  prefilters and recursively verify packed fields, field sources, and nested
+  pending descendants. Missing arena context and excessive depth fail closed
+  instead of allowing a hash collision to collapse distinct alternatives.
+
 ## [0.24.1] - 2026-07-11
 
 Performance-contract and repository-hygiene follow-up to v0.24.0. This patch

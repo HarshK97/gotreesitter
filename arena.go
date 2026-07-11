@@ -1234,22 +1234,15 @@ func (a *nodeArena) allocPendingParent() *pendingParent {
 }
 
 func (a *nodeArena) allocPendingChildEntries(n int) (pendingChildRange, []pendingChildEntry) {
-	return a.allocPendingChildEntryRange(n, n)
-}
-
-func (a *nodeArena) allocPendingChildEntryRange(logicalCount, slotCount int) (pendingChildRange, []pendingChildEntry) {
-	if logicalCount <= 0 || slotCount <= 0 {
+	if n <= 0 {
 		return 0, nil
-	}
-	if slotCount < logicalCount {
-		panic("pending child entry slot count below logical count")
 	}
 	if a == nil {
 		panic("pending child entry ranges require an arena")
 	}
-	a.pendingChildEntriesAllocated += uint64(slotCount)
+	a.pendingChildEntriesAllocated += uint64(n)
 	if len(a.pendingChildEntrySlabs) == 0 {
-		capacity := max(defaultPendingChildEntrySlabCap(a.class), slotCount)
+		capacity := max(defaultPendingChildEntrySlabCap(a.class), n)
 		a.pendingChildEntrySlabs = append(a.pendingChildEntrySlabs, pendingChildEntrySlab{data: make([]pendingChildEntry, capacity)})
 		a.allocatedBytes += pendingChildEntryBytesForCap(capacity)
 		a.pendingChildEntrySlabCursor = 0
@@ -1260,19 +1253,19 @@ func (a *nodeArena) allocPendingChildEntryRange(logicalCount, slotCount int) (pe
 	for i := a.pendingChildEntrySlabCursor; ; i++ {
 		if i >= len(a.pendingChildEntrySlabs) {
 			lastCap := len(a.pendingChildEntrySlabs[len(a.pendingChildEntrySlabs)-1].data)
-			capacity := nextPendingChildEntrySlabCap(a.class, lastCap, slotCount)
+			capacity := nextPendingChildEntrySlabCap(a.class, lastCap, n)
 			a.pendingChildEntrySlabs = append(a.pendingChildEntrySlabs, pendingChildEntrySlab{data: make([]pendingChildEntry, capacity)})
 			a.allocatedBytes += pendingChildEntryBytesForCap(capacity)
 		}
 
 		slab := &a.pendingChildEntrySlabs[i]
-		if len(slab.data)-slab.used < slotCount {
+		if len(slab.data)-slab.used < n {
 			continue
 		}
 		start := slab.used
-		slab.used += slotCount
+		slab.used += n
 		a.pendingChildEntrySlabCursor = i
-		return newPendingChildRange(i, start, logicalCount), slab.data[start:slab.used]
+		return newPendingChildRange(i, start, n), slab.data[start:slab.used]
 	}
 }
 

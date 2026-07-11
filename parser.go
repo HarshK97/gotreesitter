@@ -829,6 +829,12 @@ func (p *Parser) stopFrontierSameHeaderSummary(stacks []glrStack) string {
 	gssWouldMerge := 0
 	pairBudgetHit := false
 	scratch := glrMergeScratch{language: p.language, cRecoveryCost: p.errorCostCompetitionEnabled()}
+	if p.mergeScratch != nil {
+		// stopFrontierSameHeaderSummary runs synchronously inside parseInternal;
+		// borrow the active arena so pending-parent diagnostics use the same exact
+		// equality as production merge decisions instead of failing closed.
+		scratch.arena = p.mergeScratch.arena
+	}
 	for gi := range groups {
 		size := len(groups[gi].indices)
 		if size > maxGroup {
@@ -3891,6 +3897,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	arena.skipChildClear = reuse == nil && oldTree == nil
 	arena.finalChildRefs = p.finalChildRefs
 	arena.audit = nil
+	scratch.merge.arena = arena
 	if scratch.audit.enabled || scratch.audit.equivEnabled {
 		scratch.merge.audit = &scratch.audit
 	}
