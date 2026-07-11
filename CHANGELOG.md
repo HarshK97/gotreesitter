@@ -7,6 +7,71 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-07-11
+
+JavaScript large-file parity and parser memory-economy release. With an explicit
+2 GiB parser budget, the 3,447,275-byte Poppler witness now reaches exact EOF
+with no error and exact structural parity. Its allocation and arena-capacity
+reductions reproduced in a same-day base/head audit, and a separate single-pass
+runtime gate completes inside a hard 2 GiB container. JavaScript's broader
+focused gate is 25/25 no-error, S-expression, and deep parity. The shipped
+512 MiB Poppler budget gap remains open and tracked in the performance ledger.
+
+### Added
+
+- Version-aware zero-width external-token relex probes for stateless scanners,
+  including transactional token-source rollback when a speculative relex is
+  rejected.
+- Parse-runtime memory attribution for arena, scratch, GSS, runtime heap, and
+  runtime sys budget stops, plus detailed arena/raw-shape/transient counters in
+  parse-gap reports.
+- An opt-in `GOT_TRANSIENT_REDUCE_CHECKPOINT_MB` path that materializes the
+  live linear stack and reuses transient slabs once a configured threshold is
+  crossed.
+
+### Changed
+
+- JavaScript's precise external lex-state table is now enabled for ordinary
+  scanner arbitration. Faithful C-recovery competition remains explicitly
+  default-opted-out because it still regresses clean large-file throughput.
+- Resolved single-path GSS stacks demote back to contiguous entries, and GSS,
+  transient-child, and transient-parent overflow slabs use bounded growth.
+- `Node`, `rawShape`, and `rawShapeChild` layouts remove alignment waste and
+  pack raw-shape edge metadata, shrinking the records from 152 to 144 bytes,
+  32 to 24 bytes, and 24 to 16 bytes respectively.
+
+### Fixed
+
+- JavaScript automatic-semicolon arbitration now probes same-line comments in
+  the pinned C-scanner order, so the zero-width ASI precedes a trailing comment
+  extra and the comment remains owned by the surrounding statement list.
+- The JavaScript block-comment probe uses a labeled loop break; adjacent block
+  comments can no longer consume the following token during speculative ASI
+  scanning.
+- Transient checkpoint recycling now follows raw-shape-only sidecar edges and
+  retargets them to arena clones before slab addresses are reused, preventing
+  later ambiguity decisions from observing overwritten reductions.
+- Transient checkpoints defer when pending-parent compaction is active; pending
+  payloads can retain nodes outside the semantic/raw-shape graph and must not
+  observe recycled transient slabs.
+
+### Performance
+
+- A same-day #221/#222 audit reproduced the Poppler memory gains: 4.150 GB/op
+  fell to 3.329 GB/op (-19.8%) and arena capacity fell from 1.422 GB to
+  1.282 GB (-9.8%) while exact deep parity stayed green. Go wall time moved
+  -2.1% in that sequential sample. An earlier sample recorded 11.754 s and a
+  1.63x Go/C ratio, but later loaded-host samples ranged from 2.92x to 3.46x;
+  v0.24.0 therefore does not ratchet Poppler timing until a pinned quiet-host
+  sweep replaces the variable measurements.
+- A prebuilt single-pass Poppler runtime probe accepts the exact 3,447,275-byte
+  witness with the explicit 2 GiB parser budget under a hard 2 GiB cgroup at
+  1,729,836 KiB maximum RSS. The separate Go/C deep-parity oracle remains in
+  its 8 GiB envelope because it retains both giant trees for comparison.
+- Memory-budget diagnostics are embedded in `Parser` so attribution adds no
+  steady-state parse allocation; the primary benchmark trio remains 978 B and
+  5 allocs for full parse, with both incremental lanes at zero allocation.
+
 ## [0.23.1] - 2026-07-10
 
 Generator throughput and certification follow-up. This cut banks the shared,
@@ -1445,7 +1510,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.23.1...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/odvcencio/gotreesitter/compare/v0.23.1...v0.24.0
 [0.23.1]: https://github.com/odvcencio/gotreesitter/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/odvcencio/gotreesitter/compare/v0.22.5...v0.23.0
 [0.22.5]: https://github.com/odvcencio/gotreesitter/compare/v0.22.4...v0.22.5
