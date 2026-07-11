@@ -702,17 +702,6 @@ def failure_family_entry(
     }
 
 
-def unmeasured_family_entry(name: str, description: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
-    sorted_entries = sorted(entries, key=lambda item: item["grammar"])
-    return {
-        "name": name,
-        "description": description,
-        "count": len(sorted_entries),
-        "grammars": [item["grammar"] for item in sorted_entries],
-        "entries": sorted_entries,
-    }
-
-
 def failure_families(
     measurements: dict[str, dict[str, Any]],
     unmeasured_entries: list[dict[str, Any]],
