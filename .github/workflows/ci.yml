@@ -566,17 +566,13 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           DRAFT_PR: ${{ github.event.pull_request.draft }}
           PERF_LEGACY_BASE_SHA: 7a29f591d7fcc54b3d0639b3e38a1bacd8fcb386
-          # Contract rebased for the v0.21.0 engine (second rebase; the first
-          # accepted the forest-default profile move). The generalized
-          # GLR+C-recovery engine deliberately changed the Go full-parse
-          # path (go held out of forest defaults, ASI external scanner,
-          # recovery hooks): B/op −91%, allocs −80%, incremental at parity
-          # with 0 allocs everywhere; full-parse ns is microarchitecture-
-          # dependent vs the old path (−20% on modern cores, +17% on 2-core
-          # CI runners) and the runner-side delta is consciously accepted —
-          # reclaim tracked in the post-v0.21.0 ledger. Gate future PRs
-          # against this engine's profile, not the retired one's.
-          PERF_BENCH_CONTRACT_BASE_SHA: 1e2e96f185d6a1e5261677d3bee4ff2b69731f07
+          # Contract rebased after the 2026-07-11 audit proved the old
+          # BenchmarkGoParseFullDFA silently enabled no-tree mode. This floor
+          # is the first commit where that benchmark calls Parser.Parse and
+          # measures a fully materialized tree; parser-core attribution moved
+          # to BenchmarkGoParseCoreDFA. Never compare the corrected public
+          # full-parse lane with the retired parser-core numbers.
+          PERF_BENCH_CONTRACT_BASE_SHA: 1717ce84179a850501ec86684f80a77e24d661a8
         run: |
           set -euo pipefail
 
