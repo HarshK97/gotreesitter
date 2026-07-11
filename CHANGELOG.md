@@ -7,6 +7,53 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-07-10
+
+JavaScript large-file parity and parser memory-economy release. The 3,447,275-
+byte Poppler witness now reaches exact EOF with no error and exact structural
+parity, while its default Go full parse remains within the roadmap's 2x C
+target and uses materially less allocation and arena capacity. JavaScript's
+broader focused gate is 25/25 no-error, S-expression, and deep parity.
+
+### Added
+
+- Version-aware zero-width external-token relex probes for stateless scanners,
+  including transactional token-source rollback when a speculative relex is
+  rejected.
+- Parse-runtime memory attribution for arena, scratch, GSS, runtime heap, and
+  runtime sys budget stops, plus detailed arena/raw-shape/transient counters in
+  parse-gap reports.
+- An opt-in `GOT_TRANSIENT_REDUCE_CHECKPOINT_MB` path that materializes the
+  live linear stack and reuses transient slabs once a configured threshold is
+  crossed.
+
+### Changed
+
+- JavaScript's precise external lex-state table is now enabled for ordinary
+  scanner arbitration. Faithful C-recovery competition remains explicitly
+  default-opted-out because it still regresses clean large-file throughput.
+- Resolved single-path GSS stacks demote back to contiguous entries, and GSS,
+  transient-child, and transient-parent overflow slabs use bounded growth.
+- `Node`, `rawShape`, and `rawShapeChild` layouts remove alignment waste and
+  pack raw-shape edge metadata, shrinking the records from 152 to 144 bytes,
+  32 to 24 bytes, and 24 to 16 bytes respectively.
+
+### Fixed
+
+- JavaScript automatic-semicolon arbitration now probes same-line comments in
+  the pinned C-scanner order, so the zero-width ASI precedes a trailing comment
+  extra and the comment remains owned by the surrounding statement list.
+- The JavaScript block-comment probe uses a labeled loop break; adjacent block
+  comments can no longer consume the following token during speculative ASI
+  scanning.
+- Full Poppler parsing improved from 21.706 s to 11.754 s and from 4.150 GB/op
+  to 3.328 GB/op in the same 8 GiB, 1-CPU diagnostic envelope. Arena capacity
+  fell 9.8%, exact deep parity stayed green, and the measured Go/C ratio was
+  1.63x.
+- Memory-budget diagnostics are embedded in `Parser` so attribution adds no
+  steady-state parse allocation; the primary benchmark trio remains 978 B and
+  5 allocs for full parse, with both incremental lanes at zero allocation.
+
 ## [0.23.1] - 2026-07-10
 
 Generator throughput and certification follow-up. This cut banks the shared,
@@ -1445,7 +1492,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.23.1...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/odvcencio/gotreesitter/compare/v0.23.1...v0.24.0
 [0.23.1]: https://github.com/odvcencio/gotreesitter/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/odvcencio/gotreesitter/compare/v0.22.5...v0.23.0
 [0.22.5]: https://github.com/odvcencio/gotreesitter/compare/v0.22.4...v0.22.5
