@@ -1753,6 +1753,74 @@ func (p *Parser) tryRelexCurrentStateDFA(tok Token, parserState StateID, ts Toke
 	return tok2, true
 }
 
+// peekZeroWidthExternalShiftForState asks an external scanner whether one
+// JavaScript parser version needs a zero-width token before the already-lexed
+// shared lookahead. JavaScript's external scanner has no serialized state, so
+// the scanner and token-source state can be restored before return; callers
+// apply the returned shift only to that version, then retry the real lookahead.
+// This mirrors tree-sitter C's per-version lexing without replacing a real
+// token that another live version may still consume. Keep this JavaScript-only
+// until stateful scanners can transfer the probed post-scan checkpoint onto
+// the shifted version instead of restoring it.
+func (p *Parser) peekZeroWidthExternalShiftForState(tok Token, state StateID, ts TokenSource) (Token, ParseAction, bool) {
+	if p == nil || p.language == nil || p.language.Name != "javascript" || tok.NoLookahead || tok.StartByte == tok.EndByte || p.language.ExternalScanner == nil {
+		return Token{}, ParseAction{}, false
+	}
+	stateful, statefulOK := ts.(parserStateTokenSource)
+	relexer, relexerOK := ts.(tokenSourceRelexer)
+	dts := underlyingDFATokenSource(ts)
+	if !statefulOK || !relexerOK || dts == nil || !relexer.CanRelexFromTokenStart(tok) {
+		return Token{}, ParseAction{}, false
+	}
+
+	hasZeroWidthShiftCandidate := false
+	for _, symbol := range p.language.ExternalSymbols {
+		actionIndex := p.lookupActionIndex(state, symbol)
+		if actionIndex == 0 || int(actionIndex) >= len(p.language.ParseActions) {
+			continue
+		}
+		actions := p.language.ParseActions[actionIndex].Actions
+		if len(actions) != 1 {
+			continue
+		}
+		action := actions[0]
+		if action.Type == ParseActionShift && !action.Extra && action.State != 0 && action.State != state {
+			hasZeroWidthShiftCandidate = true
+			break
+		}
+	}
+	if !hasZeroWidthShiftCandidate {
+		return Token{}, ParseAction{}, false
+	}
+
+	snapshot := dts.snapshotRelexState()
+	savedState := dts.state
+	savedGLRStates := dts.glrStates
+	stateful.SetParserState(state)
+	stateful.SetGLRStates(nil)
+	next, relexed := relexer.RelexFromTokenStart(tok)
+	snapshot.restore(dts)
+	dts.state = savedState
+	dts.glrStates = savedGLRStates
+
+	if !relexed || !next.ExternalScannerToken || next.StartByte != tok.StartByte || next.EndByte != next.StartByte {
+		return Token{}, ParseAction{}, false
+	}
+	actionIndex := p.lookupActionIndex(state, next.Symbol)
+	if actionIndex == 0 || int(actionIndex) >= len(p.language.ParseActions) {
+		return Token{}, ParseAction{}, false
+	}
+	actions := p.language.ParseActions[actionIndex].Actions
+	if len(actions) != 1 {
+		return Token{}, ParseAction{}, false
+	}
+	action := actions[0]
+	if action.Type != ParseActionShift || action.Extra || action.State == 0 || action.State == state {
+		return Token{}, ParseAction{}, false
+	}
+	return next, action, true
+}
+
 func (p *Parser) canRelexExternalTokenWithCurrentStateDFA(tok Token) bool {
 	if p == nil || p.language == nil || int(tok.Symbol) >= len(p.language.SymbolNames) {
 		return false
@@ -1843,7 +1911,7 @@ func (p *Parser) canFinalizeNoActionEOFAt(s *glrStack, expectedEOFByte uint32, s
 	return true
 }
 
-func (p *Parser) tryInsertMissingSingleShift(source []byte, s *glrStack, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
+func (p *Parser) tryInsertMissingSingleShift(source []byte, s *glrStack, tok Token, ts TokenSource, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
 	if p == nil || p.language == nil || s == nil || s.dead || tok.NoLookahead {
 		return false
 	}
@@ -1935,6 +2003,14 @@ func (p *Parser) tryInsertMissingSingleShift(source []byte, s *glrStack, tok Tok
 		if s.dead {
 			return false
 		}
+	}
+	if externalTok, externalAct, ok := p.peekZeroWidthExternalShiftForState(tok, s.top().state, ts); ok {
+		p.applyAction(source, s, externalAct, externalTok, new(bool), nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
+		if p.rejectUndrainedPendingForkStacks(s) {
+			return false
+		}
+		s.shifted = false
+		return true
 	}
 
 	p.crecoveryCostCompetitionRelevant = true // missing-token insertion makes costs relevant
@@ -4379,7 +4455,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	noTokenProgressHaveLast := false
 	missingShift := parseMissingShiftTracker{lastDepth: -1}
 	tryMissingSingleShift := func(stackIndex int, s *glrStack, currentState StateID) bool {
-		return missingShift.tryInsert(p, source, stackIndex, s, currentState, tok, &nodeCount, arena, scratch, &trackChildErrors)
+		return missingShift.tryInsert(p, source, stackIndex, s, currentState, tok, ts, &nodeCount, arena, scratch, &trackChildErrors)
 	}
 
 	for iter := 0; iter < maxIter; iter++ {
@@ -4864,6 +4940,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					return ns
 				}
 				sameState := parseStacksShareState(stacks, currentState)
+				canRelexNoLiveAction := !sameState && p.language != nil && p.language.Name == "javascript" && p.noLiveStackCanAcceptLookahead(stacks, tok)
 				if tok.Symbol == errorSymbol && tok.StartByte != tok.EndByte && p.errorCostCompetitionEnabled() {
 					// Faithful C recovery port: an unlexable-run lookahead has
 					// no table actions in C either; the version pauses and the
@@ -4963,6 +5040,17 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						recordNoActionTiming()
 					}
 					continue
+				}
+				if canRelexNoLiveAction {
+					if reTok, ok := p.tryRelexSingleParserState(tok, currentState, ts, stacks, scratch); ok {
+						tok = reTok
+						needToken = false
+						if actionTiming != nil {
+							ns := recordNoActionTiming()
+							actionTiming.actionNoActionRelexNanos += ns
+						}
+						goto retryAction
+					}
 				}
 				if sameState {
 					if reTok, ok := p.tryRelexCurrentStateDFA(tok, currentState, ts); ok {
@@ -6287,7 +6375,7 @@ func (t *parseMissingShiftTracker) resetForToken() {
 	t.consecutive = 0
 }
 
-func (t *parseMissingShiftTracker) tryInsert(p *Parser, source []byte, stackIndex int, s *glrStack, currentState StateID, tok Token, nodeCount *int, arena *nodeArena, scratch *parserScratch, trackChildErrors *bool) bool {
+func (t *parseMissingShiftTracker) tryInsert(p *Parser, source []byte, stackIndex int, s *glrStack, currentState StateID, tok Token, ts TokenSource, nodeCount *int, arena *nodeArena, scratch *parserScratch, trackChildErrors *bool) bool {
 	missingShiftDepth := s.depth()
 	if t.matches(currentState, missingShiftDepth, tok) && t.consecutive >= maxConsecutiveMissingSingleShifts {
 		if p.glrTrace {
@@ -6296,7 +6384,7 @@ func (t *parseMissingShiftTracker) tryInsert(p *Parser, source []byte, stackInde
 		}
 		return false
 	}
-	if !p.tryInsertMissingSingleShift(source, s, tok, nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors) {
+	if !p.tryInsertMissingSingleShift(source, s, tok, ts, nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors) {
 		return false
 	}
 	if t.matches(currentState, missingShiftDepth, tok) {
@@ -6586,6 +6674,54 @@ func (p *Parser) updateCurrentRelexParserStateTokenSource(ts TokenSource, stacks
 		return true
 	}
 	stateful.SetGLRStates(glrBuf)
+	return true
+}
+
+func (p *Parser) tryRelexSingleParserState(tok Token, state StateID, ts TokenSource, stacks []glrStack, scratch *parserScratch) (Token, bool) {
+	stateful, statefulOK := ts.(parserStateTokenSource)
+	relexer, relexerOK := ts.(tokenSourceRelexer)
+	dts := underlyingDFATokenSource(ts)
+	if !statefulOK || !relexerOK || dts == nil || !relexer.CanRelexFromTokenStart(tok) {
+		return Token{}, false
+	}
+	snapshot := dts.snapshotRelexState()
+	savedState := dts.state
+	savedGLRStates := dts.glrStates
+	restoreRejectedProbe := func() {
+		snapshot.restore(dts)
+		dts.state = savedState
+		dts.glrStates = savedGLRStates
+		p.updateCurrentRelexParserStateTokenSource(ts, stacks, scratch)
+	}
+	stateful.SetParserState(state)
+	clearGLRStateTokenSource(stateful, scratch)
+	next, ok := relexer.RelexFromTokenStart(tok)
+	actionIndex := p.lookupActionIndex(state, next.Symbol)
+	if !ok || !next.ExternalScannerToken || next.StartByte != tok.StartByte || next.EndByte != next.StartByte || (next.Symbol == tok.Symbol && next.StartByte == tok.StartByte && next.EndByte == tok.EndByte) || actionIndex == 0 || int(actionIndex) >= len(p.language.ParseActions) {
+		restoreRejectedProbe()
+		return Token{}, false
+	}
+	actions := p.language.ParseActions[actionIndex].Actions
+	if len(actions) != 1 || actions[0].Type != ParseActionShift || actions[0].Extra || actions[0].State == 0 || actions[0].State == state {
+		restoreRejectedProbe()
+		return Token{}, false
+	}
+	// The returned token and committed scanner checkpoint belong to this parser
+	// state. Keep the source isolated through dispatch; the outer loop refreshes
+	// the live frontier before its next read, and same-pass re-lex paths set it.
+	return next, true
+}
+
+func (p *Parser) noLiveStackCanAcceptLookahead(stacks []glrStack, tok Token) bool {
+	for stackIndex := range stacks {
+		candidate := &stacks[stackIndex]
+		if candidate.dead || candidate.accepted || candidate.shifted || candidate.cPaused || candidate.depth() == 0 {
+			continue
+		}
+		if p.lookupActionIndex(candidate.top().state, tok.Symbol) != 0 {
+			return false
+		}
+	}
 	return true
 }
 
