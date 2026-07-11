@@ -210,21 +210,14 @@ func (p *Parser) deterministicConflictChoiceForDispatch(source []byte, s *glrSta
 	if p.language.GeneratedByGrammargen {
 		return ParseAction{}, false
 	}
-	// The per-language repetition-boundary arms that used to populate this
-	// switch (java/c_sharp/c/rust/typescript/tsx/javascript/python/r/php/perl/
-	// sql/dart/hcl/haskell/make/d/clojure/awk/scheme/dot) are retired:
-	// cRepetitionSkipConflictChoice above makes the C-faithful choice for the
-	// exact {1 repetition-SHIFT + 1 REDUCE} shape those helpers were scoped
-	// to. Table-shape analysis (cmd/repskip_shapes) shows every state those
-	// helpers covered carries ONLY that exact shape (zero multi-reduce
-	// entries), so on error-free lineages the global fold fully shadows them;
-	// on wreckage lineages (cEverErrored and friends) the C-faithful behavior
-	// is the GLR fork feeding the recovery cost competition — the php
-	// TransportResponseTrait lesson — not a deterministic commitment, so the
-	// helpers' unconditional firing there was a latent recovery-shape hazard,
-	// not coverage worth keeping. The helper functions remain (with their
-	// unit tests) as documentation of the profiled states until integration
-	// deletes them. Arms that survive below are NOT repetition-boundary
+	// The old per-language repetition-boundary shortcuts are gone:
+	// cRepetitionSkipConflictChoice above makes the C-faithful choice for their
+	// exact {1 repetition-SHIFT + 1 REDUCE} shape. Prior table-shape analysis
+	// showed those states carry only that shape. On clean
+	// lineages the global fold therefore shadows them completely; on wreckage
+	// lineages (cEverErrored and friends), the correct behavior is the GLR fork
+	// feeding recovery cost competition, not an unconditional deterministic
+	// commitment. Arms that survive below are not retired repetition-boundary
 	// policies (or, for gomod above, run where the global fold does not).
 	var chosen ParseAction
 	var ok bool

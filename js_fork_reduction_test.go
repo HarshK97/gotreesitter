@@ -8,16 +8,14 @@ import (
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
-// TestJSForkReductionParity asserts that the extended
-// javascriptRepetitionShiftConflictChoice (resolving states 9 and 985 to the
-// repetition shift, matching tree-sitter C's deterministic behavior) does not
-// change the parse tree on the real-corpus JS files, and reports the total
+// TestJSForkReductionParity asserts that the C-faithful repetition fold does
+// not change the parse tree on the real-corpus JS files, and reports the total
 // GLR fork count so the reduction is visible in `go test -v` output.
 //
-// The parser change is unconditional (no env gate) — it extends an existing
-// deterministic conflict resolver. This test is the parity safety net: if the
-// extra shift resolutions were wrong, the tree would have errors or a
-// different shape, which we'd catch here against the structural expectations.
+// The fold is unconditional for clean JS lineages. This test is the parity
+// safety net: if repetition-boundary resolution were wrong, the tree would
+// have errors or a different shape, which we'd catch here against the
+// structural expectations.
 func TestJSForkReductionParity(t *testing.T) {
 	cases := []string{
 		"cgo_harness/corpus_real/javascript/large__text-editor-component.js",
@@ -39,7 +37,7 @@ func TestJSForkReductionParity(t *testing.T) {
 		}
 		root := tree.RootNode()
 		if root.HasError() {
-			t.Errorf("%s: tree has parse error after fork-reduction change", path)
+			t.Errorf("%s: tree has parse error with C-faithful repetition fold", path)
 		}
 		var totalForks uint64
 		for _, st := range profile.SnapshotTop(50) {
