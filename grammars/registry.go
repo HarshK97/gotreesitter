@@ -134,7 +134,8 @@ func Register(entry LangEntry) {
 // RegisterExtension registers a grammargen-based grammar extension with the
 // language registry. This enables detection by file extension, markdown code
 // fence highlighting, and LSP support. The language is generated lazily on
-// first access.
+// first access. Its result, including a generation error, is cached so the
+// generator is invoked at most once.
 //
 // Usage from an extension package:
 //
@@ -161,17 +162,19 @@ type ExtensionEntry struct {
 // RegisterExtension registers a grammar extension for file detection and
 // markdown code fence highlighting.
 func RegisterExtension(ext ExtensionEntry) {
-	var cached *gotreesitter.Language
+	var (
+		generateOnce sync.Once
+		cached       *gotreesitter.Language
+		cachedErr    error
+	)
 	loader := func() *gotreesitter.Language {
-		if cached != nil {
-			return cached
-		}
-		lang, err := ext.GenerateLanguage()
-		if err != nil {
+		generateOnce.Do(func() {
+			cached, cachedErr = ext.GenerateLanguage()
+		})
+		if cachedErr != nil {
 			return nil
 		}
-		cached = lang
-		return lang
+		return cached
 	}
 
 	Register(LangEntry{
