@@ -16,13 +16,13 @@ func getOrCreatePool(name string, lang *gotreesitter.Language) *gotreesitter.Par
 	poolsMu.RLock()
 	pp, ok := pools[name]
 	poolsMu.RUnlock()
-	if ok {
+	if ok && pp.Language() == lang {
 		return pp
 	}
 
 	poolsMu.Lock()
 	defer poolsMu.Unlock()
-	if pp, ok = pools[name]; ok {
+	if pp, ok = pools[name]; ok && pp.Language() == lang {
 		return pp
 	}
 	pp = gotreesitter.NewParserPool(lang)

@@ -7,6 +7,13 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Extension grammar generation is now synchronized and memoized, including
+  failures, so concurrent first access cannot race or regenerate repeatedly.
+- `ParseFilePooled` replaces a cached parser pool when a same-name registry
+  update supplies a different language instance.
+
 ## [0.25.0] - 2026-07-11
 
 Performance, memory, and runtime-hygiene release following v0.24.1. It makes
