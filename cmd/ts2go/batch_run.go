@@ -97,6 +97,9 @@ func RunBatchManifest(manifestPath, outDir, pkg string, compact bool) error {
 			blobPath := filepath.Join(blobDir, blobName)
 
 			lang := BuildLanguage(grammar)
+			if err := applyCertifiedConflictPolicyProfiles(source, grammar, lang); err != nil {
+				return fmt.Errorf("%s: certified conflict policy: %w", entry.Name, err)
+			}
 			if compact {
 				mu.Lock()
 				compactor.CompactLanguage(lang)

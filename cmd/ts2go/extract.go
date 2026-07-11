@@ -1555,8 +1555,9 @@ func extractNonTerminalAliasMap(source string, g *ExtractedGrammar) error {
 				return fmt.Errorf("resolve alias %q for symbol %d", tokens[i], sym)
 			}
 			i++
-			if aliasSym < 0 || aliasSym >= g.SymbolCount {
-				return fmt.Errorf("alias symbol %d outside symbol count %d", aliasSym, g.SymbolCount)
+			aliasSymbolCount := g.SymbolCount + g.AliasCount
+			if aliasSym < 0 || aliasSym >= aliasSymbolCount {
+				return fmt.Errorf("alias symbol %d outside symbol+alias count %d", aliasSym, aliasSymbolCount)
 			}
 			aliases = append(aliases, uint16(aliasSym))
 		}

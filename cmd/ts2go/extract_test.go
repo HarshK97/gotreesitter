@@ -1347,6 +1347,35 @@ static const uint16_t ts_non_terminal_alias_map[] = {
 	}
 }
 
+func TestExtractNonTerminalAliasMapAllowsAliasSymbolRange(t *testing.T) {
+	src := `
+#define SYMBOL_COUNT 6
+#define ALIAS_COUNT 1
+enum ts_symbol_identifiers {
+  sym_directive = 4,
+  alias_sym_option = 6,
+};
+
+static const uint16_t ts_non_terminal_alias_map[] = {
+  sym_directive, 2,
+    sym_directive,
+    alias_sym_option,
+  0,
+};
+`
+	g := &ExtractedGrammar{
+		SymbolCount: 6,
+		AliasCount:  1,
+		enumValues:  extractEnum(src),
+	}
+	if err := extractNonTerminalAliasMap(src, g); err != nil {
+		t.Fatal(err)
+	}
+	if got := g.NonTerminalAliasMap[4]; len(got) != 2 || got[0] != 4 || got[1] != 6 {
+		t.Fatalf("alias map[4] = %v, want [4 6]", got)
+	}
+}
+
 func TestBuildLanguageCarriesNonTerminalAliasMap(t *testing.T) {
 	g := &ExtractedGrammar{
 		Name:        "aliasmap",

@@ -234,6 +234,14 @@ const (
 	ConflictPolicyNone ConflictPolicyKind = iota
 	ConflictPolicyRepetitionShift
 	ConflictPolicyShift
+	// ConflictPolicyRecoveredRepetitionReduce is an exact-row certification
+	// for a recovered lineage. It chooses the single reduce from a
+	// {1 reduce, 1 repetition shift} row only after the lineage has previously
+	// entered recovery and only while no recovery action is currently active.
+	// Like other conflict policies, it is disabled during incremental reuse.
+	//
+	// Keep new kinds append-only: Language blobs encode these numeric values.
+	ConflictPolicyRecoveredRepetitionReduce
 )
 
 // ConflictPolicy describes one table row/lookahead conflict that can be

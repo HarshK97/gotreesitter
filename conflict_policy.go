@@ -1,12 +1,31 @@
 package gotreesitter
 
 func conflictPolicyChoice(lang *Language, tok Token, currentState StateID, actions []ParseAction) (ParseAction, bool) {
+	return conflictPolicyChoiceForContext(lang, nil, false, tok, currentState, actions)
+}
+
+func conflictPolicyChoiceForDispatch(lang *Language, stack *glrStack, tok Token, currentState StateID, actions []ParseAction) (ParseAction, bool) {
+	return conflictPolicyChoiceForContext(lang, stack, true, tok, currentState, actions)
+}
+
+func conflictPolicyChoiceForContext(lang *Language, stack *glrStack, allowRecovered bool, tok Token, currentState StateID, actions []ParseAction) (ParseAction, bool) {
 	if lang == nil || len(lang.ConflictPolicies) == 0 {
 		return ParseAction{}, false
 	}
 	for i := range lang.ConflictPolicies {
 		policy := &lang.ConflictPolicies[i]
 		if policy.State != currentState || policy.Lookahead != tok.Symbol {
+			continue
+		}
+		if policy.Kind == ConflictPolicyRecoveredRepetitionReduce {
+			if !allowRecovered || stack == nil || !stack.cEverErrored ||
+				stack.cRec != nil || stack.cPaused || stack.cRecoverMissingGroup != nil ||
+				len(policy.ReduceSymbols) == 0 || !conflictPolicyReducesMatch(policy, actions) {
+				continue
+			}
+			if chosen, ok := singleReduceAgainstRepetitionShiftConflictChoice(actions); ok {
+				return chosen, true
+			}
 			continue
 		}
 		if chosen, ok := conflictPolicyChoiceForPolicy(lang, policy, actions); ok {
@@ -159,9 +178,10 @@ var cRepetitionSkipOptOut = map[string]bool{
 // reduce versions, which our GLR fork approximates). Gated per-stack to
 // error-free lineages by the sticky !cEverErrored discipline established by
 // the recovery-wreckage counterexamples from the original php comma-list fold:
-// inside recovery wreckage the
-// repetition-shift arm can be the branch the recovery cost competition
-// keeps, so wreckage-descended lineages keep the ordinary GLR fork.
+// inside recovery wreckage the repetition-shift arm can be the branch the
+// recovery cost competition keeps, so wreckage-descended lineages keep the
+// ordinary GLR fork. Exact recovered-lineage exceptions are handled by
+// conflictPolicyChoiceForDispatch before this global rule.
 func (p *Parser) cRepetitionSkipConflictChoice(s *glrStack, actions []ParseAction) (ParseAction, bool) {
 	if p == nil || p.language == nil || cRepetitionSkipOptOut[p.language.Name] {
 		return ParseAction{}, false
@@ -191,7 +211,7 @@ func (p *Parser) deterministicConflictChoiceForDispatch(source []byte, s *glrSta
 	if reuse != nil {
 		return ParseAction{}, false
 	}
-	if chosen, ok := conflictPolicyChoice(p.language, tok, currentState, actions); ok {
+	if chosen, ok := conflictPolicyChoiceForDispatch(p.language, s, tok, currentState, actions); ok {
 		return chosen, true
 	}
 	// C's global repetition-skip fold. Runs after explicit generated
@@ -298,8 +318,9 @@ func generatedRepeatBoundaryConflict(lang *Language, actions []ParseAction) bool
 	// policies. For grammargen languages this is a no-op: both call sites
 	// (deterministicConflictChoiceForDispatch below, forestResolveConflict in
 	// parser.go) check GeneratedByGrammargen immediately after this predicate
-	// and bail out identically.
-	if !lang.GeneratedByGrammargen && len(lang.ConflictPolicies) == 0 {
+	// and bail out identically. Recovery-only certified rows do not activate
+	// this veto for otherwise unprofiled embedded grammars.
+	if !languageHasGeneratorConflictPolicy(lang) {
 		return false
 	}
 	shiftFound := false
@@ -320,6 +341,22 @@ func generatedRepeatBoundaryConflict(lang *Language, actions []ParseAction) bool
 		}
 	}
 	return shiftFound && generatedReduceFound
+}
+
+func languageHasGeneratorConflictPolicy(lang *Language) bool {
+	if lang == nil {
+		return false
+	}
+	if lang.GeneratedByGrammargen {
+		return true
+	}
+	for i := range lang.ConflictPolicies {
+		switch lang.ConflictPolicies[i].Kind {
+		case ConflictPolicyRepetitionShift, ConflictPolicyShift:
+			return true
+		}
+	}
+	return false
 }
 
 func languageSymbolIsGeneratedRepeatAux(lang *Language, sym Symbol) bool {

@@ -78,6 +78,10 @@ func main() {
 	blobPath := filepath.Join(blobDir, blobName)
 
 	lang := BuildLanguage(grammar)
+	if err := applyCertifiedConflictPolicyProfiles(source, grammar, lang); err != nil {
+		fmt.Fprintf(os.Stderr, "certified conflict policy: %v\n", err)
+		os.Exit(1)
+	}
 	if *compact {
 		NewLanguageCompactor().CompactLanguage(lang)
 	}
