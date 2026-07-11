@@ -37,7 +37,7 @@ type Node struct {
 	symbol            Symbol
 	productionID      uint16
 	flags             nodeFlags
-	dirtyFlag         bool
+	errorRankCache    uint8 // current parse arena only; 0 = unknown, rank + 1
 	subtreeHeight     uint8 // forest dedup tie-break cache (0 = uncomputed); see nodeCachedHeight
 }
 
@@ -86,14 +86,13 @@ func (n *Node) isExternalScannerToken() bool {
 }
 func (n *Node) setExternalScannerToken(v bool) { n.setFlag(nodeFlagExternalScannerToken, v) }
 func (n *Node) dirty() bool {
-	return n != nil && (n.dirtyFlag || n.hasFlag(nodeFlagDirty))
+	return n != nil && n.hasFlag(nodeFlagDirty)
 }
 
 func (n *Node) setDirty(v bool) {
 	if n == nil {
 		return
 	}
-	n.dirtyFlag = v
 	n.setFlag(nodeFlagDirty, v)
 }
 
@@ -114,6 +113,10 @@ func nodeBumpEquivVersion(n *Node) {
 	if n.equivVersion == 0 {
 		n.equivVersion = 1
 	}
+	// Error rank is a pure function of the node's current subtree. The same
+	// mutation choke point that invalidated the former version-keyed arena map
+	// now invalidates the inline cache directly.
+	n.errorRankCache = 0
 	// Any in-place node mutation can change the node's error cost / visible
 	// count, which invalidates every cached GSS prefix aggregate that may sum
 	// over it (see gssPrefixAggGen, parser_recover_c.go). Bumping the global
@@ -2970,6 +2973,7 @@ func cloneTreeNodesWithOffset(root *Node, offsetBytes uint32, offsetExtent Point
 
 func cloneNodeHeaderInto(dst, src *Node, arena *nodeArena, offset *cloneOffset) {
 	*dst = *src
+	dst.errorRankCache = 0
 	if offset != nil {
 		dst.startByte = addUint32Delta(src.startByte, int64(offset.byteDelta))
 		dst.endByte = addUint32Delta(src.endByte, int64(offset.byteDelta))

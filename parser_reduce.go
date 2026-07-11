@@ -7957,6 +7957,7 @@ func aliasedNodeInArena(arena *nodeArena, lang *Language, n *Node, alias Symbol)
 	if arena == nil {
 		cloned := &Node{}
 		*cloned = *n
+		cloned.errorRankCache = 0
 		cloneNodeFieldMetadataHeaderInto(cloned, n, nil)
 		cloned.symbol = alias
 		if lang != nil && int(alias) < len(lang.SymbolMetadata) {
@@ -7967,6 +7968,7 @@ func aliasedNodeInArena(arena *nodeArena, lang *Language, n *Node, alias Symbol)
 
 	cloned := arena.allocNode()
 	*cloned = *n
+	cloned.errorRankCache = 0
 	cloneNodeFieldMetadataHeaderInto(cloned, n, arena)
 	cloned.symbol = alias
 	if lang != nil && int(alias) < len(lang.SymbolMetadata) {
@@ -8100,6 +8102,7 @@ func cloneNodeInArena(arena *nodeArena, n *Node) *Node {
 	if arena == nil {
 		cloned := &Node{}
 		*cloned = *n
+		cloned.errorRankCache = 0
 		cloneNodeFieldMetadataHeaderInto(cloned, n, nil)
 		if nodeHasFinalChildRefs(n) {
 			childCount := nodeChildCountNoMaterialize(n)
@@ -8115,6 +8118,7 @@ func cloneNodeInArena(arena *nodeArena, n *Node) *Node {
 	}
 	cloned := arena.allocNode()
 	*cloned = *n
+	cloned.errorRankCache = 0
 	cloned.ownerArena = arena
 	cloneNodeFieldMetadataHeaderInto(cloned, n, arena)
 	if nodeHasFinalChildRefs(n) {

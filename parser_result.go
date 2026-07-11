@@ -905,29 +905,30 @@ func stackEntryResultErrorRank(entry stackEntry, arena *nodeArena, rank *int) {
 //
 // Node and pendingParent entries are the only kinds that can have children
 // (stackEntryNodeChildCount is 0 for every other kind), so they are the only
-// ones memoized — on the arena, not a heuristic gate: a cache miss always
-// falls back to computeStackEntryErrorRank, the same recursive walk that ran
-// unconditionally before this cache existed. This is what keeps forest
+// ones memoized. Nodes use a spare inline byte; pending parents use an arena
+// map. A cache miss always falls back to computeStackEntryErrorRank, the same
+// recursive walk that ran unconditionally before this cache existed. This is
+// what keeps forest
 // link-cap eviction scoring (glr_forest.go forestCapReplacementIndex) from
 // re-walking whole shared-prefix subtrees per comparison on shapes with many
 // raw-distinct alternatives (e.g. C# designer-style repeated-statement
-// blocks): once a given (sub)tree's rank is known, every later comparison
-// that references the same node reuses it in O(1). See
-// nodeErrorRankMemo/pendingParentErrorRankMemo's doc comment (arena.go) for
-// why Node needs equivVersion-keying and pendingParent does not.
+// blocks): once a current-arena (sub)tree's rank is known, later comparisons
+// reuse it in O(1). Foreign nodes stay read-only and recompute. See
+// Node.errorRankCache and pendingParentErrorRankMemo's doc comment (arena.go)
+// for their respective invalidation guarantees.
 func cachedStackEntryErrorRank(entry stackEntry, arena *nodeArena) int {
 	if n := stackEntryNode(entry); n != nil {
-		if arena != nil {
-			if e, ok := arena.nodeErrorRankMemo[n]; ok && e.ver == n.equivVersion {
-				return int(e.rank)
-			}
+		// Reused nodes belong to an older tree arena and may be read by more
+		// than one incremental parser. Keep their immutable read path free of
+		// cache writes, and never trust parse-time cache state after result
+		// normalization may have rewritten the returned tree.
+		cacheInline := arena != nil && n.ownerArena == arena
+		if cacheInline && n.errorRankCache != 0 {
+			return int(n.errorRankCache - 1)
 		}
 		rank := computeStackEntryErrorRank(entry, arena)
-		if arena != nil {
-			if arena.nodeErrorRankMemo == nil {
-				arena.nodeErrorRankMemo = make(map[*Node]nodeErrorRankMemoEntry, 256)
-			}
-			arena.nodeErrorRankMemo[n] = nodeErrorRankMemoEntry{ver: n.equivVersion, rank: int8(rank)}
+		if cacheInline {
+			n.errorRankCache = uint8(rank + 1)
 		}
 		return rank
 	}
@@ -955,7 +956,7 @@ func cachedStackEntryErrorRank(entry stackEntry, arena *nodeArena) int {
 // computeStackEntryErrorRank is the recursive computation
 // cachedStackEntryErrorRank memoizes: unchanged in substance from the
 // original uncached stackEntryResultErrorRank body, so every cache miss (and
-// every leaf, which is never cached) still runs exactly this logic.
+// every non-Node compact leaf, which is never cached) still runs this logic.
 func computeStackEntryErrorRank(entry stackEntry, arena *nodeArena) int {
 	if !stackEntryMaterializesForResult(entry) {
 		return 0
