@@ -441,8 +441,8 @@ func TestRecoveredRepetitionReducePolicyAppliesOnlyToIdleRecoveredLineage(t *tes
 		{cEverErrored: true, cRecoverMissingGroup: &cRecGroup{}},
 	}
 	for i, stack := range activeRecovery {
-		if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, stack, tok, 86, actions, 2, nil); ok {
-			t.Fatalf("active recovery case %d picked %+v, want GLR fork", i, chosen)
+		if chosen, ok := conflictPolicyChoiceForDispatch(lang, stack, tok, 86, actions); ok {
+			t.Fatalf("active recovery case %d picked recovered policy %+v, want policy miss", i, chosen)
 		}
 	}
 }

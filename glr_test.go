@@ -3047,6 +3047,40 @@ func TestMergeStacksCRecoveryCostBlocksGSSMerge(t *testing.T) {
 	}
 }
 
+func TestCRecoveryMergeCostComparisonReusesParserScratch(t *testing.T) {
+	var gssScratch gssScratch
+	node := NewLeafNode(11, true, 0, 5, Point{}, Point{Column: 5})
+	entries := []stackEntry{{state: 1}, newStackEntryNode(7, node)}
+	clean := glrStack{
+		gss:        buildGSSStack(entries, &gssScratch),
+		byteOffset: 5,
+	}
+	paused := clean
+	paused.cPaused = true
+
+	var mergeScratch glrMergeScratch
+	mergeScratch.beginEquivEpoch()
+	mergeScratch.ensureMergeHotCaches()
+	parser := &Parser{
+		language:                         &Language{},
+		errorCostCompetition:             true,
+		crecoveryCostCompetitionRelevant: true,
+		mergeScratch:                     &mergeScratch,
+	}
+	if !cRecoveryMergeCostsDifferForParser(parser, &clean, &paused) {
+		t.Fatal("cost comparison treated clean and paused stacks as equal")
+	}
+
+	allocs := testing.AllocsPerRun(100, func() {
+		if !cRecoveryMergeCostsDifferForParser(parser, &clean, &paused) {
+			panic("cost comparison changed after warmup")
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("warm recovery cost comparison allocations = %g, want 0", allocs)
+	}
+}
+
 func TestCNodeErrorCostScratchTracksEquivVersion(t *testing.T) {
 	lang := &Language{SymbolMetadata: make([]SymbolMetadata, 12)}
 	lang.SymbolMetadata[11].Visible = true

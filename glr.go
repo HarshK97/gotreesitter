@@ -1907,12 +1907,19 @@ func cRecoveryMergeCostsDifferForParser(p *Parser, a, b *glrStack) bool {
 		!(b != nil && (b.cPaused || b.cRec != nil)) {
 		return false
 	}
-	scratch := glrMergeScratch{
-		language:      p.language,
-		trace:         p.glrTrace,
-		cRecoveryCost: true,
+	scratch := p.mergeScratch
+	if scratch == nil {
+		local := glrMergeScratch{
+			language:      p.language,
+			trace:         p.glrTrace,
+			cRecoveryCost: true,
+		}
+		return cRecoveryMergeCostsDiffer(&local, a, b)
 	}
-	return cRecoveryMergeCostsDiffer(&scratch, a, b)
+	scratch.language = p.language
+	scratch.trace = p.glrTrace
+	scratch.cRecoveryCost = true
+	return cRecoveryMergeCostsDiffer(scratch, a, b)
 }
 
 func traceCRecoverMergeDecision(scratch *glrMergeScratch, phase, decision string, incumbent, candidate glrStack) {

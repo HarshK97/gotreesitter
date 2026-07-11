@@ -178,16 +178,13 @@ func TestGeneratedRepeatBoundaryConflictAllowsMixedReduces(t *testing.T) {
 	}
 }
 
-func TestDeterministicConflictChoiceUsesCRepetitionFoldOnCleanLineage(t *testing.T) {
-	// Wave-2b: the php state-2 SHIFT-preferring shortcut is retired in favor
-	// of the global C repetition-skip fold (cRepetitionSkipConflictChoice,
-	// C parser.c:1625 `if (action.shift.repetition) break;`). The contract
-	// pinned here is the fold's: an error-free lineage takes the single
-	// REDUCE deterministically (C folds and re-dispatches the same
-	// lookahead); without a stack (nil = no lineage evidence) dispatch makes
-	// no deterministic choice and the GLR fork stands.
+func TestDeterministicConflictChoiceUsesCRepetitionFoldOnRecoveryLineages(t *testing.T) {
+	// C parser.c:1625 (`if (action.shift.repetition) break;`) takes the single
+	// REDUCE and redispatches the same lookahead on both clean and previously
+	// recovered idle lineages. Without a stack (nil = no lineage evidence),
+	// dispatch makes no deterministic choice and the GLR fork stands.
 	lang := &Language{
-		Name:        "php",
+		Name:        "bash",
 		SymbolNames: []string{"end", "namespace", "\\", "name", "use", "new", "program_repeat1"},
 		SymbolMetadata: []SymbolMetadata{
 			{Name: "end"},
@@ -216,8 +213,24 @@ func TestDeterministicConflictChoiceUsesCRepetitionFoldOnCleanLineage(t *testing
 		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want program_repeat1 reduce (C repetition-skip fold)", chosen)
 	}
 	erroredStack := &glrStack{cEverErrored: true}
+	chosen, ok = parser.deterministicConflictChoiceForDispatch(nil, erroredStack, Token{Symbol: 1}, 2, actions, 2, nil)
+	if !ok || chosen.Type != ParseActionReduce || chosen.Symbol != 6 {
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v on recovered lineage, want C repetition reduce", chosen)
+	}
+	parser.language.Name = "php"
 	if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, erroredStack, Token{Symbol: 1}, 2, actions, 2, nil); ok {
-		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v on wreckage lineage, want GLR fork", chosen)
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v for recovered PHP lineage, want certified exception", chosen)
+	}
+	parser.language.Name = "bash"
+	for i, stack := range []*glrStack{
+		{cEverErrored: true, cRec: &cRecoverState{}},
+		{cEverErrored: true, cPaused: true},
+		{cEverErrored: true, cRecoverMissingGroup: &cRecGroup{}},
+	} {
+		chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, stack, Token{Symbol: 1}, 2, actions, 2, nil)
+		if !ok || chosen.Type != ParseActionReduce || chosen.Symbol != 6 {
+			t.Fatalf("active recovery case %d picked %+v, want C repetition reduce", i, chosen)
+		}
 	}
 }
 

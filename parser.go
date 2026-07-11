@@ -5290,6 +5290,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					chosen, choice = deterministicExternalConflictAction(actions), true
 				}
 				if choice {
+					skipRepetitionShift := false
+					if chosen.Type == ParseActionReduce {
+						if cReduce, ok := singleReduceAgainstRepetitionShiftConflictChoice(actions); ok && cReduce == chosen {
+							skipRepetitionShift = true
+						}
+					}
 					if chosen.Type == ParseActionShift && !p.guardRealShiftGap(source, s, tok) {
 						continue
 					}
@@ -5306,13 +5312,14 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					traceAfterPrimary(si, s)
 					if chosen.Type == ParseActionReduce {
 						p.completeConflictReduceFrontier(source, s, tok, conflictReduceFrontierSeed{
-							action:      chosen,
-							beforeState: actionBeforeState,
-							beforeByte:  actionBeforeByte,
-							beforeDepth: actionBeforeDepth,
-							afterState:  actionAfterState,
-							afterByte:   actionAfterByte,
-							afterDepth:  actionAfterDepth,
+							action:              chosen,
+							beforeState:         actionBeforeState,
+							beforeByte:          actionBeforeByte,
+							beforeDepth:         actionBeforeDepth,
+							afterState:          actionAfterState,
+							afterByte:           actionAfterByte,
+							afterDepth:          actionAfterDepth,
+							skipRepetitionShift: skipRepetitionShift,
 						}, len(stacks), frontierForkPopulationCap, allocBranchOrder, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, &trackChildErrors)
 						traceFrontier(si, s, traceFrontierResult(actionAfterState, actionAfterByte, actionAfterDepth, s))
 					}
@@ -6032,6 +6039,8 @@ func (p *Parser) configureParseScratch(scratch *parserScratch, source []byte, re
 	} else {
 		p.transientChildren = nil
 	}
+	scratch.merge.language = p.language
+	scratch.merge.trace = p.glrTrace
 	scratch.merge.beginEquivEpoch()
 	scratch.merge.ensureMergeHotCaches()
 	transientReduceParents := p.shouldUseTransientReduceParents(source, reuse, oldTree, arenaClass)
