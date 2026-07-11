@@ -4366,6 +4366,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				fmt.Sprintf("stop_reason=%s last_token_symbol=%d last_token_end=%d last_token_eof=%t", parseRuntime.StopReason, lastTokenSymbol, lastTokenEndByte, lastTokenWasEOF),
 			)
 		}
+		// Raw reduction shapes have served their final consumers by this point:
+		// result selection, transient materialization, diagnostics, and arena
+		// attribution are all complete. Do this after captureArenaStats so the
+		// returned runtime/breakdown continue to describe parse-time allocation.
+		arena.reclaimRawShapeStorage()
 		return tree
 	}
 	finalize := func(treeStacks []glrStack, stopReason ParseStopReason) *Tree {
