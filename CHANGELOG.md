@@ -9,12 +9,13 @@ for tags and release notes while still in `0.x`.
 
 ## [0.24.0] - 2026-07-11
 
-JavaScript large-file parity and parser memory-economy release. The 3,447,275-
-byte Poppler witness now reaches exact EOF with no error and exact structural
-parity. Its controlled release benchmark recorded a 1.63x Go/C ratio with
-materially less allocation and arena capacity, and a separate single-pass
+JavaScript large-file parity and parser memory-economy release. With an explicit
+2 GiB parser budget, the 3,447,275-byte Poppler witness now reaches exact EOF
+with no error and exact structural parity. Its allocation and arena-capacity
+reductions reproduced in a same-day base/head audit, and a separate single-pass
 runtime gate completes inside a hard 2 GiB container. JavaScript's broader
-focused gate is 25/25 no-error, S-expression, and deep parity.
+focused gate is 25/25 no-error, S-expression, and deep parity. The shipped
+512 MiB Poppler budget gap remains open and tracked in the performance ledger.
 
 ### Added
 
@@ -50,17 +51,23 @@ focused gate is 25/25 no-error, S-expression, and deep parity.
 - Transient checkpoint recycling now follows raw-shape-only sidecar edges and
   retargets them to arena clones before slab addresses are reused, preventing
   later ambiguity decisions from observing overwritten reductions.
+- Transient checkpoints defer when pending-parent compaction is active; pending
+  payloads can retain nodes outside the semantic/raw-shape graph and must not
+  observe recycled transient slabs.
 
 ### Performance
 
-- Full Poppler parsing improved from 21.706 s to 11.754 s and from 4.150 GB/op
-  to 3.328 GB/op in the same 8 GiB, 1-CPU diagnostic envelope. Arena capacity
-  fell 9.8%, exact deep parity stayed green, and the measured Go/C ratio was
-  1.63x.
+- A same-day #221/#222 audit reproduced the Poppler memory gains: 4.150 GB/op
+  fell to 3.329 GB/op (-19.8%) and arena capacity fell from 1.422 GB to
+  1.282 GB (-9.8%) while exact deep parity stayed green. Go wall time moved
+  -2.1% in that sequential sample. An earlier sample recorded 11.754 s and a
+  1.63x Go/C ratio, but later loaded-host samples ranged from 2.92x to 3.46x;
+  v0.24.0 therefore does not ratchet Poppler timing until a pinned quiet-host
+  sweep replaces the variable measurements.
 - A prebuilt single-pass Poppler runtime probe accepts the exact 3,447,275-byte
-  witness under a hard 2 GiB cgroup at 1,729,836 KiB maximum RSS. The separate
-  Go/C deep-parity oracle remains in its 8 GiB envelope because it retains both
-  giant trees for comparison.
+  witness with the explicit 2 GiB parser budget under a hard 2 GiB cgroup at
+  1,729,836 KiB maximum RSS. The separate Go/C deep-parity oracle remains in
+  its 8 GiB envelope because it retains both giant trees for comparison.
 - Memory-budget diagnostics are embedded in `Parser` so attribution adds no
   steady-state parse allocation; the primary benchmark trio remains 978 B and
   5 allocs for full parse, with both incremental lanes at zero allocation.
