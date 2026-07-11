@@ -12,9 +12,11 @@ for tags and release notes while still in `0.x`.
 - `BenchmarkGoParseFullDFA` now exercises the public `Parser.Parse` path and a
   fully materialized tree. The former implementation silently enabled the
   no-tree diagnostic and was mislabeled as a full parse.
-- `ParseNoResultCompatibilityBenchmarkOnly` now disables only compatibility
-  rewrites. Tree materialization remains enabled, so `parse_gap_report` can
-  finally distinguish compatibility cost from parser-core/no-tree cost.
+- `ParseNoResultCompatibilityBenchmarkOnly` no longer implicitly enables the
+  no-tree path. Its result is materialized, so `parse_gap_report` can separate
+  no-tree parser-core cost from the broader no-compat diagnostic. Some
+  large-input diagnostic materialization strategies still key off this mode,
+  so it is not yet a pure compatibility-only A/B.
 
 ### Changed
 

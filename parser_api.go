@@ -1194,9 +1194,10 @@ func (p *Parser) ParseNoTreeWithExternalCheckpointsBenchmarkOnly(source []byte) 
 }
 
 // ParseNoResultCompatibilityBenchmarkOnly parses source while suppressing
-// language-specific result compatibility rewrites while preserving ordinary
-// tree materialization. It is intended only for performance attribution; the
-// returned tree is not API-compatible.
+// language-specific result compatibility rewrites while preserving result-tree
+// materialization. Other diagnostic materialization strategies may still key
+// off this mode, so it is not a pure compatibility-only A/B. It is intended
+// only for performance attribution; the returned tree is not API-compatible.
 func (p *Parser) ParseNoResultCompatibilityBenchmarkOnly(source []byte) (*Tree, error) {
 	if p == nil {
 		return nil, ErrNoLanguage
