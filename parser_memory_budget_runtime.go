@@ -103,7 +103,7 @@ func (p *Parser) noteMemoryBudgetStop(source string) ParseStopReason {
 }
 
 func (p *Parser) noteRuntimeMemoryBudgetStop(source string, heapGrowth, sysGrowth uint64) ParseStopReason {
-	if p == nil || p.parseMemoryBudgetDiag == nil || p.parseMemoryBudgetDiag.source != "" {
+	if p == nil || !p.parseMemoryBudgetDiagActive || p.parseMemoryBudgetDiag.source != "" {
 		return ParseStopMemoryBudget
 	}
 	p.parseMemoryBudgetDiag.source = source

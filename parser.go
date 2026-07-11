@@ -222,7 +222,8 @@ type Parser struct {
 	parseRuntimeMemoryBaselineBytes  uint64
 	parseRuntimeMemoryBaselineSys    uint64
 	parseRuntimeMemoryPoll           uint64
-	parseMemoryBudgetDiag            *parseMemoryBudgetDiagnostic
+	parseMemoryBudgetDiag            parseMemoryBudgetDiagnostic
+	parseMemoryBudgetDiagActive      bool
 	denseLimit                       int
 	smallBase                        int
 	smallLookup                      [][]smallActionPair
@@ -1430,7 +1431,8 @@ func resetSnippetParser(parser *Parser) {
 	parser.parseRuntimeMemoryBaselineBytes = 0
 	parser.parseRuntimeMemoryBaselineSys = 0
 	parser.parseRuntimeMemoryPoll = 0
-	parser.parseMemoryBudgetDiag = nil
+	parser.parseMemoryBudgetDiag = parseMemoryBudgetDiagnostic{}
+	parser.parseMemoryBudgetDiagActive = false
 	// Release *Node refs so the arenas from the last incremental parse can be
 	// collected by the GC. Without this, a Parser sitting in a sync.Pool keeps
 	// its reuseCursor.topLevel/*Node alive, preventing arena reclamation.
@@ -3825,11 +3827,14 @@ func (p *Parser) guardRealShiftGap(source []byte, s *glrStack, tok Token) bool {
 // merged; distinct alternatives are preserved.
 func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass, timing *incrementalParseTiming, maxStacksOverride int, maxNodesOverride int, maxMergePerKeyOverride int, deterministicExternalConflicts bool) *Tree {
 	parseStart := time.Now()
-	memoryBudgetDiag := parseMemoryBudgetDiagnostic{}
 	previousMemoryBudgetDiag := p.parseMemoryBudgetDiag
-	p.parseMemoryBudgetDiag = &memoryBudgetDiag
+	previousMemoryBudgetDiagActive := p.parseMemoryBudgetDiagActive
+	p.parseMemoryBudgetDiag = parseMemoryBudgetDiagnostic{}
+	p.parseMemoryBudgetDiagActive = true
+	memoryBudgetDiag := &p.parseMemoryBudgetDiag
 	defer func() {
 		p.parseMemoryBudgetDiag = previousMemoryBudgetDiag
+		p.parseMemoryBudgetDiagActive = previousMemoryBudgetDiagActive
 	}()
 	endParseBudget := p.enterParseBudgetAt(parseStart)
 	defer endParseBudget()
