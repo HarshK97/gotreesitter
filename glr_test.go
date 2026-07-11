@@ -1593,16 +1593,17 @@ func TestResultMutableChildViewSurroundFinalRefsKeepsChildrenLazy(t *testing.T) 
 	}
 }
 
-func TestPendingParentMaterializationPreservesFieldEntries(t *testing.T) {
+func TestPendingParentMaterializationPreservesPackedFieldEntries(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
 	right := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
-	parent := newPendingParentShellWithEntrySlotsInArena(arena, 4, true, 5, 2, 4, 0, 2, Point{}, Point{Column: 2}, false)
-	parent.setHasFieldEntries(true)
+	parent := newPendingParentShellInArena(arena, 4, true, 5, 2, 0, 2, Point{}, Point{Column: 2}, false)
 	parent.setChildEntry(arena, 0, newStackEntryNode(6, left))
 	parent.setChildEntry(arena, 1, newStackEntryNode(7, right))
 	parent.setChildFieldEntry(arena, 1, 9, fieldSourceDirect)
-	parent.flags |= pendingParentFlagFieldEntries
+	if got := arena.pendingChildEntriesAllocated; got != 2 {
+		t.Fatalf("pendingChildEntriesAllocated = %d, want one packed slot per child", got)
+	}
 
 	entry := newStackEntryPendingParent(8, parent)
 	node := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
@@ -1615,40 +1616,27 @@ func TestPendingParentMaterializationPreservesFieldEntries(t *testing.T) {
 	if len(node.fieldSources) != 2 || node.fieldSources[0] != fieldSourceNone || node.fieldSources[1] != fieldSourceDirect {
 		t.Fatalf("fieldSources = %#v, want [none direct]", node.fieldSources)
 	}
-	if node.flags&pendingParentFlagFieldEntries != 0 {
-		t.Fatalf("internal pending field flag leaked to materialized node flags: %08b", node.flags)
+	if node.flags&(pendingParentFlagFieldEntries|pendingParentFlagDirectFieldEntry) != 0 {
+		t.Fatalf("internal pending field flags leaked to materialized node flags: %08b", node.flags)
 	}
 }
 
-func TestPendingParentMaterializationRecomputesDirectFieldEntries(t *testing.T) {
-	lang := &Language{
-		FieldMapSlices: [][2]uint16{
-			{},
-			{},
-			{},
-			{},
-			{},
-			{0, 2},
-		},
-		FieldMapEntries: []FieldMapEntry{
-			{FieldID: 7, ChildIndex: 0},
-			{FieldID: 9, ChildIndex: 1},
-		},
-	}
-	parser := NewParser(lang)
+func TestPendingParentMaterializationUsesPackedDirectFieldEntriesWithoutParser(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 	extra := newLeafNodeInArena(arena, 3, false, 0, 1, Point{}, Point{Column: 1})
 	extra.setExtra(true)
 	left := newLeafNodeInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
 	right := newLeafNodeInArena(arena, 2, true, 2, 3, Point{Column: 2}, Point{Column: 3})
-	parent := newPendingParentShellWithEntrySlotsInArena(arena, 4, true, 5, 3, 3, 0, 3, Point{}, Point{Column: 3}, false)
-	parent.setHasDirectFieldEntries(true)
+	parent := newPendingParentShellInArena(arena, 4, true, 5, 3, 0, 3, Point{}, Point{Column: 3}, false)
 	parent.setChildEntry(arena, 0, newStackEntryNode(6, extra))
 	parent.setChildEntry(arena, 1, newStackEntryNode(7, left))
 	parent.setChildEntry(arena, 2, newStackEntryNode(8, right))
+	parent.setHasDirectFieldEntries(true)
+	parent.setChildFieldEntry(arena, 1, 7, fieldSourceDirect)
+	parent.setChildFieldEntry(arena, 2, 9, fieldSourceDirect)
 
 	entry := newStackEntryPendingParent(9, parent)
-	node := materializeStackEntryPendingParentWithParser(parser, arena, &entry, pendingParentMaterializeForFinalTree)
+	node := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
 	if node == nil {
 		t.Fatal("materialized node = nil")
 	}
@@ -1661,80 +1649,129 @@ func TestPendingParentMaterializationRecomputesDirectFieldEntries(t *testing.T) 
 	if len(node.fieldSources) != 3 || node.fieldSources[0] != fieldSourceNone || node.fieldSources[1] != fieldSourceDirect || node.fieldSources[2] != fieldSourceDirect {
 		t.Fatalf("fieldSources = %#v, want [none direct direct]", node.fieldSources)
 	}
-	if node.flags&pendingParentFlagDirectFieldEntry != 0 {
-		t.Fatalf("internal pending direct-field flag leaked to materialized node flags: %08b", node.flags)
+	if node.flags&(pendingParentFlagFieldEntries|pendingParentFlagDirectFieldEntry) != 0 {
+		t.Fatalf("internal pending field flags leaked to materialized node flags: %08b", node.flags)
 	}
 }
 
-func TestPendingDirectFieldParentFieldsRecomputableWithTrailingHidden(t *testing.T) {
-	parser := &Parser{language: &Language{
-		SymbolMetadata: []SymbolMetadata{
-			{},
-			{Visible: true},
-			{Visible: false},
-		},
-		FieldMapSlices: [][2]uint16{
-			{},
-			{},
-			{},
-			{},
-			{},
-			{0, 2},
-		},
-		FieldMapEntries: []FieldMapEntry{
-			{FieldID: 7, ChildIndex: 0},
-			{FieldID: 9, ChildIndex: 1},
-		},
-	}}
+func TestPendingChildEntryPackedFieldMetadataSurvivesPayloadReplacement(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
-	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
-	right := newLeafNodeInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
-	hidden := newParentNodeInArenaNoLinksWithFieldSources(arena, 2, false, nil, nil, nil, 5, false)
-	entries := []stackEntry{
-		newStackEntryNode(1, left),
-		newStackEntryNode(2, right),
-		newStackEntryNode(3, hidden),
+	first := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	replacement := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	parent := newPendingParentShellInArena(arena, 4, true, 5, 1, 0, 1, Point{}, Point{Column: 1}, false)
+	parent.setChildEntry(arena, 0, newStackEntryNode(6, first))
+	parent.setChildFieldEntry(arena, 0, FieldID(^uint16(0)), fieldSourceInherited)
+
+	parent.setChildEntry(arena, 0, newStackEntryNode(7, replacement))
+	entry := parent.childEntry(arena, 0)
+	if stackEntryNode(entry) != replacement {
+		t.Fatalf("replacement payload = %p, want %p", stackEntryNode(entry), replacement)
 	}
-	rawFieldIDs := []FieldID{7, 9, 0}
-	rawInherited := []bool{false, false, false}
-	if !parser.pendingDirectFieldParentFieldsRecomputable(5, 2, entries, 0, len(entries), rawFieldIDs, rawInherited, parser.language.SymbolMetadata) {
-		t.Fatal("pendingDirectFieldParentFieldsRecomputable = false, want true for trailing hidden child")
+	if fid, source := parent.childFieldEntry(arena, 0); fid != FieldID(^uint16(0)) || source != fieldSourceInherited {
+		t.Fatalf("packed field metadata = (%d,%d), want (%d,%d)", fid, source, FieldID(^uint16(0)), fieldSourceInherited)
 	}
 }
 
-func TestPendingDirectFieldParentFieldsRecomputableRejectsShiftedHidden(t *testing.T) {
-	parser := &Parser{language: &Language{
-		SymbolMetadata: []SymbolMetadata{
-			{},
-			{Visible: true},
-			{Visible: false},
-		},
-		FieldMapSlices: [][2]uint16{
-			{},
-			{},
-			{},
-			{},
-			{},
-			{0, 2},
-		},
-		FieldMapEntries: []FieldMapEntry{
-			{FieldID: 7, ChildIndex: 0},
-			{FieldID: 9, ChildIndex: 2},
-		},
-	}}
+func TestPendingPackedDirectFieldsRemainTransparentToHiddenCompaction(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
-	left := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
-	hidden := newParentNodeInArenaNoLinksWithFieldSources(arena, 2, false, nil, nil, nil, 5, false)
-	right := newLeafNodeInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
-	entries := []stackEntry{
-		newStackEntryNode(1, left),
-		newStackEntryNode(2, hidden),
-		newStackEntryNode(3, right),
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	direct := newPendingParentInArena(arena, 4, true, 5, []stackEntry{newStackEntryNode(6, leaf)}, 0, 1, Point{}, Point{Column: 1}, false)
+	direct.setHasDirectFieldEntries(true)
+	direct.setChildFieldEntry(arena, 0, 7, fieldSourceDirect)
+	if direct.hasFieldEntries() || !direct.hasDirectFieldEntries() {
+		t.Fatalf("packed direct-field classification = dense:%t direct:%t", direct.hasFieldEntries(), direct.hasDirectFieldEntries())
 	}
-	rawFieldIDs := []FieldID{7, 0, 9}
-	rawInherited := []bool{false, false, false}
-	if parser.pendingDirectFieldParentFieldsRecomputable(5, 2, entries, 0, len(entries), rawFieldIDs, rawInherited, parser.language.SymbolMetadata) {
-		t.Fatal("pendingDirectFieldParentFieldsRecomputable = true, want false when hidden child shifts field map")
+	if stackEntryTreeHasFieldIDs(newStackEntryPendingParent(7, direct), arena) {
+		t.Fatal("packed direct fields became an opaque hidden-compaction barrier")
+	}
+
+	dense := newPendingParentInArena(arena, 4, true, 5, []stackEntry{newStackEntryNode(6, leaf)}, 0, 1, Point{}, Point{Column: 1}, false)
+	dense.setHasFieldEntries(true)
+	dense.setChildFieldEntry(arena, 0, 7, fieldSourceDirect)
+	if !stackEntryTreeHasFieldIDs(newStackEntryPendingParent(7, dense), arena) {
+		t.Fatal("dense packed fields lost their existing hidden-compaction barrier")
+	}
+}
+
+func TestPendingParentMergeEqualityVerifiesPackedFieldsAndDescendants(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	makeEntry := func(field FieldID, source uint8, leafSymbol Symbol) stackEntry {
+		leaf := newLeafNodeInArena(arena, leafSymbol, true, 0, 1, Point{}, Point{Column: 1})
+		leaf.parseState = 3
+		inner := newPendingParentInArena(arena, 10, true, 2, []stackEntry{newStackEntryNode(3, leaf)}, 0, 1, Point{}, Point{Column: 1}, false)
+		inner.parseState = 4
+		inner.setHasDirectFieldEntries(true)
+		inner.setChildFieldEntry(arena, 0, field, source)
+		outer := newPendingParentInArena(arena, 20, true, 3, []stackEntry{newStackEntryPendingParent(4, inner)}, 0, 1, Point{}, Point{Column: 1}, false)
+		outer.parseState = 5
+		return newStackEntryPendingParent(5, outer)
+	}
+	makeStack := func(entry stackEntry) glrStack {
+		return glrStack{
+			entries:    []stackEntry{{state: 1}, entry},
+			byteOffset: 1,
+		}
+	}
+
+	base := makeEntry(7, fieldSourceDirect, 1)
+	same := makeEntry(7, fieldSourceDirect, 1)
+	fieldCollision := makeEntry(8, fieldSourceDirect, 1)
+	fieldSourceCollision := makeEntry(7, fieldSourceInherited, 1)
+	descendantCollision := makeEntry(7, fieldSourceDirect, 2)
+	for name, candidate := range map[string]stackEntry{
+		"field":        fieldCollision,
+		"field-source": fieldSourceCollision,
+		"descendant":   descendantCollision,
+	} {
+		if got, want := gssEntryHash(gssHashSeed, base), gssEntryHash(gssHashSeed, candidate); got != want {
+			t.Fatalf("%s setup hashes differ: got %x want coarse collision %x", name, got, want)
+		}
+	}
+
+	scratch := glrMergeScratch{arena: arena}
+	scratch.beginEquivEpoch()
+	if !stackEquivalentForLanguageWithScratch(&scratch, nil, makeStack(base), makeStack(same)) {
+		t.Fatal("structurally identical pending parents were not equivalent")
+	}
+	materializedSame := same
+	if node := materializeStackEntryPendingParent(arena, &materializedSame, pendingParentMaterializeForFinalTree); node == nil {
+		t.Fatal("materializing equivalent pending parent returned nil")
+	}
+	if !stackEquivalentForLanguageWithScratch(&scratch, nil, makeStack(base), makeStack(materializedSame)) {
+		t.Fatal("pending and materialized representations of the same graph were not equivalent")
+	}
+	if stackEquivalentForLanguageWithScratch(&scratch, nil, makeStack(base), makeStack(fieldCollision)) {
+		t.Fatal("packed field mismatch survived exact pending-parent equality")
+	}
+	if stackEquivalentForLanguageWithScratch(&scratch, nil, makeStack(base), makeStack(fieldSourceCollision)) {
+		t.Fatal("packed field-source mismatch survived exact pending-parent equality")
+	}
+	if stackEquivalentForLanguageWithScratch(&scratch, nil, makeStack(base), makeStack(descendantCollision)) {
+		t.Fatal("recursive descendant mismatch survived exact pending-parent equality")
+	}
+
+	stacks := []glrStack{makeStack(base), makeStack(descendantCollision)}
+	if got := len(mergeStacksWithScratch(stacks, &scratch)); got != 2 {
+		t.Fatalf("merge result = %d stacks, want both coarse-hash collision alternatives", got)
+	}
+
+	var gssScratch gssScratch
+	sharedPrev := gssScratch.allocNode(stackEntry{state: 1}, nil, 1)
+	leftHead := gssScratch.allocNode(base, sharedPrev, 2)
+	rightHead := gssScratch.allocNode(descendantCollision, sharedPrev, 2)
+	leftStack := glrStack{gss: gssStack{head: leftHead}, byteOffset: 1}
+	rightStack := glrStack{gss: gssStack{head: rightHead}, byteOffset: 1}
+	if !gssMainMergeWithScratch(&scratch, &leftStack, &rightStack) {
+		t.Fatal("lossless GSS merge rejected distinct pending alternatives")
+	}
+	if got := leftHead.linkCount(); got != 2 {
+		t.Fatalf("GSS pending collision links = %d, want both alternatives", got)
+	}
+
+	noArena := glrMergeScratch{}
+	noArena.beginEquivEpoch()
+	if stackEquivalentForLanguageWithScratch(&noArena, nil, makeStack(base), makeStack(same)) {
+		t.Fatal("distinct pending parents without an arena must fail closed")
 	}
 }
 

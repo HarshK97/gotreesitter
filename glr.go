@@ -147,6 +147,7 @@ type glrMergeScratch struct {
 	largeSlots        []glrMergeLargeSlot
 	perKeyCap         int
 	language          *Language
+	arena             *nodeArena
 	deferExactDedupe  bool
 	frontierMergeHash bool
 	trace             bool
@@ -2043,6 +2044,9 @@ const (
 )
 
 func stackEntryPayloadsEquivalentForLanguageWithScratch(scratch *glrMergeScratch, lang *Language, a, b stackEntry) bool {
+	if stackEntryPendingParent(a) != nil || stackEntryPendingParent(b) != nil {
+		return pendingStackEntryPayloadsExactlyEquivalentForLanguageWithScratch(scratch, lang, a, b, 0, false)
+	}
 	an := stackEntryNode(a)
 	bn := stackEntryNode(b)
 	if an != nil && bn != nil {
@@ -2067,6 +2071,109 @@ func stackEntryPayloadsEquivalentForLanguageWithScratch(scratch *glrMergeScratch
 		return false
 	}
 	return true
+}
+
+// pendingStackEntryPayloadsExactlyEquivalentForLanguageWithScratch is the
+// collision-safe verifier behind the coarse GSS hash for pending parents.
+// Pending-parent hashes intentionally cover only the parent header; distinct
+// child graphs can therefore share a hash and must never be merged without
+// this recursive comparison. A missing arena fails closed for distinct
+// pending payloads: that can retain an extra stack, but cannot alter the tree.
+func pendingStackEntryPayloadsExactlyEquivalentForLanguageWithScratch(scratch *glrMergeScratch, lang *Language, a, b stackEntry, depth int, ignoreDynamic bool) bool {
+	if a.node == b.node && a.kind == b.kind {
+		return true
+	}
+	if depth >= maxTreeWalkDepth || !stackEntryHasNode(a) || !stackEntryHasNode(b) {
+		return false
+	}
+	if stackEntryNodeSymbol(a) != stackEntryNodeSymbol(b) ||
+		stackEntryNodeStartByte(a) != stackEntryNodeStartByte(b) ||
+		stackEntryNodeEndByte(a) != stackEntryNodeEndByte(b) ||
+		stackEntryNodeChildCount(a) != stackEntryNodeChildCount(b) ||
+		stackEntryNodeFieldIDCount(a) != stackEntryNodeFieldIDCount(b) ||
+		stackEntryNodeExactFlagBits(a) != stackEntryNodeExactFlagBits(b) ||
+		stackEntryNodeParseState(a) != stackEntryNodeParseState(b) ||
+		stackEntryNodePreGotoState(a) != stackEntryNodePreGotoState(b) ||
+		stackEntryNodeProductionID(a) != stackEntryNodeProductionID(b) {
+		return false
+	}
+	if !ignoreDynamic && stackEntryDynamicPrecedence(a) != stackEntryDynamicPrecedence(b) {
+		return false
+	}
+
+	childCount := stackEntryNodeChildCount(a)
+	if childCount == 0 {
+		return true
+	}
+	if scratch == nil || scratch.arena == nil {
+		return false
+	}
+	for i := 0; i < childCount; i++ {
+		af, as, aok := stackEntryPendingFieldMetadataAt(scratch.arena, a, i)
+		bf, bs, bok := stackEntryPendingFieldMetadataAt(scratch.arena, b, i)
+		if !aok || !bok || af != bf || as != bs {
+			return false
+		}
+		ac, aok := stackEntryPendingChildAt(scratch.arena, a, i)
+		bc, bok := stackEntryPendingChildAt(scratch.arena, b, i)
+		if !aok || !bok {
+			return false
+		}
+		if stackEntryPendingParent(ac) != nil || stackEntryPendingParent(bc) != nil {
+			if !pendingStackEntryPayloadsExactlyEquivalentForLanguageWithScratch(scratch, lang, ac, bc, depth+1, false) {
+				return false
+			}
+			continue
+		}
+		if !stackEntryPayloadsEquivalentForLanguageWithScratch(scratch, lang, ac, bc) {
+			return false
+		}
+	}
+	return true
+}
+
+func stackEntryPendingChildAt(arena *nodeArena, entry stackEntry, i int) (stackEntry, bool) {
+	if parent := stackEntryPendingParent(entry); parent != nil {
+		if arena == nil || i < 0 || i >= parent.childEntryCount() {
+			return stackEntry{}, false
+		}
+		refs := parent.childRefs(arena)
+		if i >= len(refs) {
+			return stackEntry{}, false
+		}
+		return refs[i].stackEntry(), true
+	}
+	if node := stackEntryNode(entry); node != nil {
+		return nodeChildEntryAtNoMaterialize(node, i)
+	}
+	return stackEntry{}, false
+}
+
+func stackEntryPendingFieldMetadataAt(arena *nodeArena, entry stackEntry, i int) (FieldID, uint8, bool) {
+	if parent := stackEntryPendingParent(entry); parent != nil {
+		if arena == nil || i < 0 || i >= parent.childEntryCount() {
+			return 0, fieldSourceNone, false
+		}
+		refs := parent.childRefs(arena)
+		if i >= len(refs) {
+			return 0, fieldSourceNone, false
+		}
+		return refs[i].fieldID(), refs[i].fieldSource(), true
+	}
+	if node := stackEntryNode(entry); node != nil {
+		childCount := nodeChildCountNoMaterialize(node)
+		if i < 0 || i >= childCount {
+			return 0, fieldSourceNone, false
+		}
+		if len(node.fieldIDs) == 0 {
+			return 0, fieldSourceNone, true
+		}
+		if len(node.fieldIDs) != childCount {
+			return 0, fieldSourceNone, false
+		}
+		return node.fieldIDs[i], fieldSourceAt(node.fieldSources, i), true
+	}
+	return 0, fieldSourceNone, false
 }
 
 func stackEntryExactHeaderSignature(e stackEntry) uint64 {
@@ -2930,6 +3037,9 @@ func gssMainCanMergeForParser(p *Parser, a, b *glrStack) bool {
 		}
 		return false
 	}
+	if p != nil {
+		return gssMainCanMergeWithScratch(p.mergeScratch, a, b)
+	}
 	return gssMainCanMergeWithScratch(nil, a, b)
 }
 
@@ -2937,7 +3047,11 @@ func tryGSSMainMergeForParser(p *Parser, a, b *glrStack) bool {
 	if !gssMainCanMergeForParser(p, a, b) {
 		return false
 	}
-	merged := gssMainMerge(a, b)
+	var scratch *glrMergeScratch
+	if p != nil {
+		scratch = p.mergeScratch
+	}
+	merged := gssMainMergeWithScratch(scratch, a, b)
 	if merged {
 		// a survives and absorbs b, so OR the sticky wreckage bit: cEverErrored
 		// is lineage history, not current shape, and a clean survivor must not
@@ -3185,6 +3299,17 @@ func gssNodeCleanZeroErrorAllLinksWithScratch(scratch *glrMergeScratch, n *gssNo
 }
 
 func stackEntryPayloadsEquivalentIgnoringDynamic(a, b stackEntry) bool {
+	return stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(nil, a, b)
+}
+
+func stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(scratch *glrMergeScratch, a, b stackEntry) bool {
+	if stackEntryPendingParent(a) != nil || stackEntryPendingParent(b) != nil {
+		var lang *Language
+		if scratch != nil {
+			lang = scratch.language
+		}
+		return pendingStackEntryPayloadsExactlyEquivalentForLanguageWithScratch(scratch, lang, a, b, 0, true)
+	}
 	an := stackEntryNode(a)
 	bn := stackEntryNode(b)
 	if an != nil && bn != nil {
@@ -3681,7 +3806,7 @@ func (p *gssMainPreflight) canAddLink(n *gssNode, prev *gssNode, entry stackEntr
 	}
 	for i := 0; i < p.linkCount(n); i++ {
 		existingPrev, existingEntry := p.linkAt(n, i)
-		if !stackEntryPayloadsEquivalentIgnoringDynamic(existingEntry, entry) {
+		if !stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(p.scratch, existingEntry, entry) {
 			continue
 		}
 		if existingPrev == prev {
@@ -3702,10 +3827,10 @@ func gssMainAddLinkSeen(n *gssNode, prev *gssNode, entry stackEntry, seen map[gs
 	if !gssMainCanAddLinkSeen(n, prev, entry, seen) {
 		return false
 	}
-	return gssMainAddLinkSeenMutate(n, prev, entry, seen)
+	return gssMainAddLinkSeenMutate(nil, n, prev, entry, seen)
 }
 
-func gssMainAddLinkSeenMutate(n *gssNode, prev *gssNode, entry stackEntry, seen map[gssMergePair]bool) bool {
+func gssMainAddLinkSeenMutate(scratch *glrMergeScratch, n *gssNode, prev *gssNode, entry stackEntry, seen map[gssMergePair]bool) bool {
 	if n == nil {
 		return false
 	}
@@ -3714,7 +3839,7 @@ func gssMainAddLinkSeenMutate(n *gssNode, prev *gssNode, entry stackEntry, seen 
 	}
 	for i := 0; i < n.linkCount(); i++ {
 		existingPrev, existingEntry := n.link(i)
-		if !stackEntryPayloadsEquivalentIgnoringDynamic(existingEntry, entry) {
+		if !stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(scratch, existingEntry, entry) {
 			continue
 		}
 		if existingPrev == prev {
@@ -3724,8 +3849,8 @@ func gssMainAddLinkSeenMutate(n *gssNode, prev *gssNode, entry stackEntry, seen 
 			n.hash = 0
 			return true
 		}
-		if gssNodesCanMerge(existingPrev, prev) {
-			merged := gssMainMergeNodesSeenMutate(existingPrev, prev, seen)
+		if gssNodesCanMergeWithScratch(scratch, existingPrev, prev) {
+			merged := gssMainMergeNodesSeenMutate(scratch, existingPrev, prev, seen)
 			if merged && stackEntryDynamicPrecedence(entry) > stackEntryDynamicPrecedence(existingEntry) {
 				setGSSMainLink(n, i, existingPrev, entry)
 			}
@@ -3734,7 +3859,7 @@ func gssMainAddLinkSeenMutate(n *gssNode, prev *gssNode, entry stackEntry, seen 
 		}
 	}
 	if n.linkCount() >= maxMainLinkCount {
-		if gssMainReplaceWorstEquivalentLinkIfBetterMutate(n, prev, entry, seen) {
+		if gssMainReplaceWorstEquivalentLinkIfBetterMutate(scratch, n, prev, entry, seen) {
 			n.hash = 0
 			return true
 		}
@@ -3755,7 +3880,7 @@ func (p *gssMainPreflight) canReplaceWorstEquivalentLinkIfBetter(n *gssNode, pre
 	var worstPrev *gssNode
 	for i := 0; i < p.linkCount(n); i++ {
 		existingPrev, existingEntry := p.linkAt(n, i)
-		if !stackEntryPayloadsEquivalentIgnoringDynamic(existingEntry, entry) {
+		if !stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(p.scratch, existingEntry, entry) {
 			continue
 		}
 		if existingPrev != prev && !p.nodesCanMerge(existingPrev, prev) {
@@ -3781,19 +3906,19 @@ func gssMainReplaceWorstEquivalentLinkIfBetter(n *gssNode, prev *gssNode, entry 
 	if !gssMainCanReplaceWorstEquivalentLinkIfBetter(n, prev, entry, make(map[gssMergePair]bool)) {
 		return false
 	}
-	return gssMainReplaceWorstEquivalentLinkIfBetterMutate(n, prev, entry, make(map[gssMergePair]bool))
+	return gssMainReplaceWorstEquivalentLinkIfBetterMutate(nil, n, prev, entry, make(map[gssMergePair]bool))
 }
 
-func gssMainReplaceWorstEquivalentLinkIfBetterMutate(n *gssNode, prev *gssNode, entry stackEntry, seen map[gssMergePair]bool) bool {
+func gssMainReplaceWorstEquivalentLinkIfBetterMutate(scratch *glrMergeScratch, n *gssNode, prev *gssNode, entry stackEntry, seen map[gssMergePair]bool) bool {
 	worst := -1
 	worstPrecedence := stackEntryDynamicPrecedence(entry)
 	var worstPrev *gssNode
 	for i := 0; i < n.linkCount(); i++ {
 		existingPrev, existingEntry := n.link(i)
-		if !stackEntryPayloadsEquivalentIgnoringDynamic(existingEntry, entry) {
+		if !stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(scratch, existingEntry, entry) {
 			continue
 		}
-		if existingPrev != prev && !gssNodesCanMerge(existingPrev, prev) {
+		if existingPrev != prev && !gssNodesCanMergeWithScratch(scratch, existingPrev, prev) {
 			continue
 		}
 		existingPrecedence := stackEntryDynamicPrecedence(existingEntry)
@@ -3807,7 +3932,7 @@ func gssMainReplaceWorstEquivalentLinkIfBetterMutate(n *gssNode, prev *gssNode, 
 		return false
 	}
 	if worstPrev != prev {
-		if !gssMainMergeNodesSeenMutate(worstPrev, prev, seen) {
+		if !gssMainMergeNodesSeenMutate(scratch, worstPrev, prev, seen) {
 			return false
 		}
 		prev = worstPrev
@@ -3855,10 +3980,10 @@ func gssMainMergeNodesSeen(a, b *gssNode, seen map[gssMergePair]bool) bool {
 	if !gssMainCanMergeNodesSeen(a, b, seen) {
 		return false
 	}
-	return gssMainMergeNodesSeenMutate(a, b, seen)
+	return gssMainMergeNodesSeenMutate(nil, a, b, seen)
 }
 
-func gssMainMergeNodesSeenMutate(a, b *gssNode, seen map[gssMergePair]bool) bool {
+func gssMainMergeNodesSeenMutate(scratch *glrMergeScratch, a, b *gssNode, seen map[gssMergePair]bool) bool {
 	if a == nil || b == nil || a == b {
 		return true
 	}
@@ -3874,7 +3999,7 @@ func gssMainMergeNodesSeenMutate(a, b *gssNode, seen map[gssMergePair]bool) bool
 	count := b.linkCount()
 	for i := 0; i < count; i++ {
 		prev, entry := b.link(i)
-		if !gssMainAddLinkSeenMutate(a, prev, entry, seen) {
+		if !gssMainAddLinkSeenMutate(scratch, a, prev, entry, seen) {
 			mergedAll = false
 		}
 	}
@@ -3904,7 +4029,7 @@ func gssMainMergeWithScratch(scratch *glrMergeScratch, a, b *glrStack) bool {
 	if !pf.canMergeNodes(ah, bh) {
 		return false
 	}
-	return gssMainMergeNodesSeenMutate(ah, bh, acquireMergeSeenForScratch(scratch))
+	return gssMainMergeNodesSeenMutate(scratch, ah, bh, acquireMergeSeenForScratch(scratch))
 }
 
 func tryGSSMainMergeResult(scratch *glrMergeScratch, result []glrStack, idx int, stack *glrStack) (merged bool, attempted bool) {
@@ -4975,6 +5100,7 @@ func (s *glrMergeScratch) reset() {
 	s.cleanZeroScan = 0
 	s.perKeyCap = 0
 	s.language = nil
+	s.arena = nil
 	s.trace = false
 	s.cRecoveryCost = false
 	s.audit = nil

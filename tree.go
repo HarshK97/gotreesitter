@@ -3185,11 +3185,7 @@ func cloneTreeNodesIntoArenaWithOffset(root *Node, arena *nodeArena, offset *clo
 
 func clonePendingParentIntoArena(srcArena, dstArena *nodeArena, src *pendingParent, offset *cloneOffset, metrics cloneMetricScope) *pendingParent {
 	childCount := src.childEntryCount()
-	entrySlots := childCount
-	if src.hasFieldEntries() {
-		entrySlots = childCount * 2
-	}
-	dst := newPendingParentShellWithEntrySlotsInArena(dstArena, src.symbol, src.isNamed(), src.productionID, childCount, entrySlots, src.startByte, src.endByte, src.startPoint, src.endPoint, src.hasError())
+	dst := newPendingParentShellInArena(dstArena, src.symbol, src.isNamed(), src.productionID, childCount, src.startByte, src.endByte, src.startPoint, src.endPoint, src.hasError())
 	dst.noTreeNode = src.noTreeNode
 	dst.startPoint = src.startPoint
 	dst.endPoint = src.endPoint
@@ -3198,7 +3194,7 @@ func clonePendingParentIntoArena(srcArena, dstArena *nodeArena, src *pendingPare
 	dst.setHasDirectFieldEntries(src.hasDirectFieldEntries())
 	for i := 0; i < childCount; i++ {
 		dst.setChildEntry(dstArena, i, cloneStackEntryIntoArena(srcArena, dstArena, src.childEntry(srcArena, i), offset, metrics))
-		if src.hasFieldEntries() {
+		if src.hasFieldEntries() || src.hasDirectFieldEntries() {
 			fid, source := src.childFieldEntry(srcArena, i)
 			dst.setChildFieldEntry(dstArena, i, fid, source)
 		}

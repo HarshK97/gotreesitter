@@ -4603,13 +4603,12 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 		startPoint = span.startPoint
 		endPoint = span.endPoint
 	}
-	parent := newPendingParentShellWithEntrySlotsInArena(
+	parent := newPendingParentShellInArena(
 		arena,
 		act.Symbol,
 		p.isNamedSymbol(act.Symbol),
 		act.ProductionID,
 		window.childCount,
-		pendingDirectFieldParentEntrySlots(window.childCount, useDenseFieldEntries),
 		startByte,
 		endByte,
 		startPoint,
@@ -4641,7 +4640,7 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 			continue
 		}
 		parent.setChildEntry(arena, out, entry)
-		if useDenseFieldEntries && fid != 0 {
+		if fid != 0 {
 			parent.setChildFieldEntry(arena, out, fid, fieldSourceDirect)
 		}
 		out++
@@ -4743,13 +4742,11 @@ func scanPendingDirectFieldParentWindow(entries []stackEntry, start, reducedEnd 
 	return window, window.childCount != 0
 }
 
-func pendingDirectFieldParentEntrySlots(childCount int, useDenseFieldEntries bool) int {
-	if useDenseFieldEntries {
-		return childCount * 2
-	}
-	return childCount
-}
-
+// pendingDirectFieldParentFieldsRecomputable now classifies hidden-flattening
+// behavior only. Packed child entries always retain the exact field metadata;
+// materialization never rebuilds it from the grammar. Keeping the old
+// classification prevents the representation change from making formerly
+// transparent direct-field parents block nested pending compaction.
 func (p *Parser) pendingDirectFieldParentFieldsRecomputable(productionID uint16, visibleChildCount int, entries []stackEntry, start, reducedEnd int, rawFieldIDs []FieldID, rawInherited []bool, symbolMeta []SymbolMetadata) bool {
 	visibleFieldIDs, visibleInherited := p.fixedFieldIDsForProduction(visibleChildCount, productionID)
 	structuralChildIndex := 0
@@ -4837,44 +4834,6 @@ func (p *Parser) fixedFieldIDsForProduction(childCount int, productionID uint16)
 		}
 	}
 	return fieldIDs, inherited
-}
-
-func (p *Parser) populatePendingDirectFieldEntries(parent *pendingParent, children []*Node, fieldIDs []FieldID, fieldSources []uint8, arena *nodeArena) {
-	if p == nil || parent == nil || len(children) == 0 || len(fieldIDs) == 0 {
-		return
-	}
-	structuralChildCount := 0
-	for _, child := range children {
-		if child != nil && !child.isExtra() {
-			structuralChildCount++
-		}
-	}
-	rawFieldIDs, rawInherited := p.buildFieldIDs(structuralChildCount, parent.productionID, arena)
-	if len(rawFieldIDs) == 0 {
-		return
-	}
-	structuralChildIndex := 0
-	for i, child := range children {
-		if child == nil || child.isExtra() {
-			continue
-		}
-		var fid FieldID
-		inherited := false
-		if structuralChildIndex < len(rawFieldIDs) {
-			fid = rawFieldIDs[structuralChildIndex]
-			if structuralChildIndex < len(rawInherited) {
-				inherited = rawInherited[structuralChildIndex]
-			}
-		}
-		structuralChildIndex++
-		if inherited || fid == 0 || p.shouldSuppressVisibleDirectField(child, fid) {
-			continue
-		}
-		fieldIDs[i] = fid
-		if i < len(fieldSources) {
-			fieldSources[i] = fieldSourceDirect
-		}
-	}
 }
 
 func stackEntryTreeHasFieldIDs(entry stackEntry, arena *nodeArena) bool {
