@@ -3,7 +3,7 @@
 // rows to distinguish ASI-valid states from expression-continuation states;
 // action-table fallback is broader and can reverse ASI/comment ordering.
 //
-// WHY IT IS STAGED (2026-07 cliff campaign measurement)
+// WHY PRECISE ELS IS DEFAULT BUT C RECOVERY IS NOT (2026-07 cliff campaign measurement)
 // Unlike c_sharp — whose stateful interpolation scanner was actively
 // corrupted by the union-mask fallback, so the precise table + election fixed
 // real misparses (DeclaredTypeManager.cs 31 ERROR nodes -> 0) — javascript's

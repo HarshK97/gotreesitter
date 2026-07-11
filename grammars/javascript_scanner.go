@@ -251,6 +251,7 @@ func jsProbeWhitespaceAndComments(lexer *gotreesitter.ExternalLexer, scannedComm
 			*scannedComment = true
 		case '*':
 			lexer.Advance(true)
+		scanBlock:
 			for lexer.Lookahead() != 0 {
 				switch lexer.Lookahead() {
 				case '*':
@@ -264,7 +265,7 @@ func jsProbeWhitespaceAndComments(lexer *gotreesitter.ExternalLexer, scannedComm
 							}
 							return jsWhitespaceNoNewline
 						}
-						break
+						break scanBlock
 					}
 				case '\n', 0x2028, 0x2029:
 					sawBlockNewline = true
