@@ -457,7 +457,6 @@ func TestRecoveredRepetitionReducePolicyRequiresExactRowAndShape(t *testing.T) {
 			ReduceSymbols: []Symbol{68},
 		}},
 	}
-	parser := NewParser(lang)
 	stack := &glrStack{cEverErrored: true}
 	valid := []ParseAction{
 		{Type: ParseActionReduce, Symbol: 68, ChildCount: 2},
@@ -477,8 +476,8 @@ func TestRecoveredRepetitionReducePolicyRequiresExactRowAndShape(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, stack, Token{Symbol: tc.token}, tc.state, tc.actions, 2, nil); ok {
-				t.Fatalf("picked %+v, want ordinary GLR fork", chosen)
+			if chosen, ok := conflictPolicyChoiceForDispatch(lang, stack, Token{Symbol: tc.token}, tc.state, tc.actions); ok {
+				t.Fatalf("picked recovered policy %+v, want policy miss", chosen)
 			}
 		})
 	}
