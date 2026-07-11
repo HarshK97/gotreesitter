@@ -8,12 +8,11 @@ on:
       - 'LICENSE'
       - 'docs/**'
       - '.github/*.md'
-  pull_request:
-    paths-ignore:
-      - '*.md'
-      - 'LICENSE'
-      - 'docs/**'
-      - '.github/*.md'
+  # A workflow that owns a required check must start for every PR or that check
+  # remains pending.
+  # The scope job below keeps docs-only PRs lightweight without suppressing the
+  # required aggregate `build` context.
+  pull_request: {}
   workflow_dispatch:
 
 concurrency:
@@ -22,6 +21,8 @@ concurrency:
 
 jobs:
   compile:
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -41,7 +42,8 @@ jobs:
         run: go test ./... -run '^$' -count=1
 
   race_root:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -59,7 +61,8 @@ jobs:
         run: go test . -race -count=1 -timeout 35m
 
   race_packages:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -135,7 +138,8 @@ jobs:
           fi
 
   grammargen_visibility:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -168,7 +172,8 @@ jobs:
           fi
 
   draft_focused_tests:
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == true
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && github.event_name == 'pull_request' && github.event.pull_request.draft == true
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -183,6 +188,8 @@ jobs:
           go test . -run '^(TestLookupActionIndexSmallUsesDenseTokenRows|TestLookupActionIndexSmallUsesFullTokenRowsForOtherLanguages|TestLookupActionIndexSmallUsesFullSymbolRowsForGo|TestRawShapePropagatesThroughNoTreeAndCollapsedUnary|TestParseRuntimeReportsNoTreeNodeVolume|TestParseRuntimeReportsNoTreeCheckpointLeavesRemainNodes|TestParseNoTreeBenchmarkDropsRetainedExternalCheckpointCapacity|TestSetLexerErrorRunLexStateUsesCRecoveryGate|TestErrorCostCompetitionLanguageRequiresCapabilityByDefault)$' -count=1
 
   parity_report:
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -204,6 +211,8 @@ jobs:
           path: parity.log
 
   perf_scan_budget:
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -225,6 +234,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      run_code_ci: ${{ steps.scope.outputs.run_code_ci }}
       run_exhaustive: ${{ steps.scope.outputs.run_exhaustive }}
     steps:
       - uses: actions/checkout@v4
@@ -232,18 +242,51 @@ jobs:
           fetch-depth: 0
 
       - id: scope
-        name: Detect exhaustive parity scope
+        name: Detect CI and exhaustive parity scope
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
 
+          run_code_ci=true
           run_exhaustive=false
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             run_exhaustive=true
           elif [ "$EVENT_NAME" = "pull_request" ]; then
-            git diff --name-only "${PR_BASE_SHA}...HEAD" > /tmp/changed-files.txt
+            # --no-renames makes a code-to-docs rename expose both paths, so it
+            # cannot accidentally take the lightweight docs-only route.
+            git diff --name-only --no-renames "${PR_BASE_SHA}...HEAD" > /tmp/changed-files.txt
+
+            if [ ! -s /tmp/changed-files.txt ]; then
+              echo "::error::Pull request changed-file list is empty; refusing to skip code CI"
+              exit 1
+            fi
+
+            run_code_ci=false
+            while IFS= read -r path; do
+              if [ "$path" = "LICENSE" ] ||
+                 [[ "$path" =~ ^[^/]+\.md$ ]] ||
+                 [[ "$path" =~ ^docs/ ]] ||
+                 [[ "$path" =~ ^\.github/[^/]+\.md$ ]]; then
+                continue
+              fi
+              run_code_ci=true
+              break
+            done < /tmp/changed-files.txt
+
+            if [ "$run_code_ci" = "false" ]; then
+              git diff --check "${PR_BASE_SHA}...HEAD"
+              {
+                echo "### CI scope"
+                echo
+                echo "Docs-only PR: full code CI is skipped after the changed-file and whitespace checks pass."
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "run_code_ci=${run_code_ci}" >> "$GITHUB_OUTPUT"
+              echo "run_exhaustive=${run_exhaustive}" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
             exhaustive_pattern='^(parser_result_.*\.go|parser_recover_c.*\.go|parser_result_test/.*\.go|cgo_harness/(parity_cgo_test|parity_gate_ratchet_test)\.go)$'
             if grep -Eq "$exhaustive_pattern" /tmp/changed-files.txt; then
               run_exhaustive=true
@@ -263,6 +306,7 @@ jobs:
             fi
           fi
 
+          echo "run_code_ci=${run_code_ci}" >> "$GITHUB_OUTPUT"
           echo "run_exhaustive=${run_exhaustive}" >> "$GITHUB_OUTPUT"
 
   build:
@@ -282,6 +326,7 @@ jobs:
       - name: Check Required Build Gate
         env:
           IS_DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == true }}
+          RUN_CODE_CI: ${{ needs.exhaustive_parity_scope.outputs.run_code_ci }}
           COMPILE_RESULT: ${{ needs.compile.result }}
           RACE_ROOT_RESULT: ${{ needs.race_root.result }}
           RACE_PACKAGES_RESULT: ${{ needs.race_packages.result }}
@@ -304,10 +349,24 @@ jobs:
             fi
           }
 
+          require_success "exhaustive_parity_scope" "$EXHAUSTIVE_PARITY_SCOPE_RESULT"
+
+          if [ "$RUN_CODE_CI" = "false" ]; then
+            if [ "$failed" -ne 0 ]; then
+              exit 1
+            fi
+            echo "Docs-only required build gate passed"
+            exit 0
+          fi
+
+          if [ "$RUN_CODE_CI" != "true" ]; then
+            echo "::error::exhaustive_parity_scope emitted invalid run_code_ci=${RUN_CODE_CI}"
+            exit 1
+          fi
+
           require_success "compile" "$COMPILE_RESULT"
           require_success "parity_report" "$PARITY_REPORT_RESULT"
           require_success "perf_scan_budget" "$PERF_SCAN_BUDGET_RESULT"
-          require_success "exhaustive_parity_scope" "$EXHAUSTIVE_PARITY_SCOPE_RESULT"
 
           if [ "$IS_DRAFT" = "true" ]; then
             require_success "draft_focused_tests" "$DRAFT_FOCUSED_RESULT"
@@ -355,7 +414,8 @@ jobs:
   draft-correctness:
     # Only meaningful for draft PRs: non-draft PRs already get the blocking
     # race suite through `race_root` and `race_packages`.
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == true
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && github.event_name == 'pull_request' && github.event.pull_request.draft == true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: false
@@ -382,6 +442,8 @@ jobs:
           go test . ./grammars -count=1 -timeout 25m
 
   freshness:
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -456,7 +518,8 @@ jobs:
           fi
 
   parity-cgo:
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -482,7 +545,7 @@ jobs:
 
   parity-cgo-exhaustive:
     needs: exhaustive_parity_scope
-    if: needs.exhaustive_parity_scope.outputs.run_exhaustive == 'true'
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && needs.exhaustive_parity_scope.outputs.run_exhaustive == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -549,7 +612,8 @@ jobs:
             --run '^TestParityHighlight$|^TestParityHighlightAllGrammars$|^TestParityYAMLCorpus$|^TestParityYAMLCorpusStructural$|^TestParityYAMLCorpusSummary$'
 
   perf-regression:
-    if: github.event_name == 'pull_request'
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
