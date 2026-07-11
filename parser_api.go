@@ -962,6 +962,7 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 		}
 		p.normalizeReturnedTreeForParse(tree, source)
 		tree = p.resolveCRecoverySwallowedError(source, tree)
+		tree = p.maybeCompactReturnedFullTree(tree, source)
 	}
 	return tree, nil
 }
