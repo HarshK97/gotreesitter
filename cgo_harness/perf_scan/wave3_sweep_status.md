@@ -1,10 +1,10 @@
 # Wave 3 Perf Sweep Status
 
-- generated_at: `2026-07-11T09:17:00Z`
+- generated_at: `2026-07-11T13:54:40Z`
 - budget: `perf_scan/perf_ratio_budgets.json`
 - fleet catalog: `tier_scan/exts.tsv`
-- budget_generated_at: `2026-07-09T15:05:20Z`
-- budget_generated_by: `wave-3 fleet perf sweep ledger correction, branch wave3/javascript-poppler-cliff, naming the JavaScript Poppler default-budget gap after exact oracle probes`
+- budget_generated_at: `2026-07-11T13:54:40Z`
+- budget_generated_by: `Poppler hard-RSS and structural-parity ledger closeout at f407985a; JavaScript remains wave2b_pending for throughput`
 
 ## Coverage
 
@@ -40,7 +40,7 @@ Held out of the ratchet: `d`, `fsharp`.
 | `d_expressionsem_go_rss_blowup` | d/compiler/src/dmd/expressionsem.d (685384 bytes; largest D corpus file, first selected file under largest-order probes) | D remains held out of the ratchet. The prior Go timeout/OOM class is contained under default settings, but excluding expressionsem.d is not enough: largest-order D next hits C timeouts and a dsymbolsem.d C noedit-base RSS watchdog. A ratchetable row needs a principled smaller-workload policy or an explicit D C-reference high-RSS witness exclusion set. |
 | `fsharp_providedtypes_c_reference_memory_blowup` | fsharp/examples/FSharp.Compiler/tests/EndToEndBuildTests/ProvidedTypes/ProvidedTypes.fs (755275 bytes; first active selected file after largest-8 selection) | F# remains held out. Do not rerun broad F# sweeps without a disposable hard RSS envelope. A ratchetable row needs either a principled corpus-selection policy for multi-MiB F# fixtures plus a default-budget truncation fix, or an explicit decision that these C-reference high-RSS giants are excluded workload witnesses rather than normal ratio samples. |
 | `groovy_pleac11_15_memory_blowup` | groovy/subprojects/performance/src/files/pleac11_15.groovy (102960 bytes, largest-file selection hit during the assisted fleet pass) | Groovy is now budgeted only under a scoped measurement basis that excludes the named pleac11_15.groovy witness. The exact witness remains a tracked correctness/perf gap: default policy contains the OOM, but the file is still C-shape divergent and ~60x C on full parse. |
-| `javascript_poppler_memory_budget` | javascript/deps/v8/test/mjsunit/asm/poppler/poppler.js (3447275 bytes; largest JavaScript corpus file selected by the strict Wave-3 basis) | Keep JavaScript wave2b_pending. v0.24.0 proves exact Poppler parity at an explicit 2048MB parser budget and a hard-2GiB single-runtime envelope, but the shipped 512MB parser-budget gap remains open. Refresh the strict largest-8 row on a pinned quiet host, then continue the Poppler/default-budget and wasm box2d/lua_binarytrees long tail. |
+| `javascript_poppler_memory_budget` | javascript/deps/v8/test/mjsunit/asm/poppler/poppler.js (3447275 bytes; largest JavaScript corpus file selected by the strict Wave-3 basis) | Keep JavaScript wave2b_pending. At f407985a, the exact Poppler witness passes no-error, S-expression, and deep parity in the separate 8GiB control and its Go-only parse fits a hard 2GiB container at 1708712 KiB max RSS, but the exact full parse remains 3.50x C (12.9079s vs 3.6867s). Continue Poppler retained-node/allocation work and the named wasm box2d/lua_binarytrees throughput cliffs; do not treat the hard-RSS/parity closeout as a language-wide throughput closeout. |
 | `webworker_generated_d_ts` | typescript/src/lib/webworker.generated.d.ts (786262 bytes, largest .d.ts in the corpus sample) | typescript's full_axis budget above is intentionally NOT tightened to reflect a 'fixed' webworker.generated.d.ts; GOT_FAITHFUL_CONDENSE (or an equivalent default-budget-aware condense path) remains a real wave-2b item. |
 
 ## Seed Sources
@@ -48,6 +48,7 @@ Held out of the ratchet: `d`, `fsharp`.
 - `after_cliffs_20260706T210143Z`
 - `authoritative_20260706T145520Z`
 - `d_expressionsem_default_20260709T083649Z`
+- `f407_javascript_poppler_hard_rss_20260711`
 - `fleet_gap_close_assist_20260708T232019Z_to_20260709T003453Z`
 - `fsharp_providedtypes_exact_default_20260709T094157Z`
 - `fsharp_providedtypes_exact_full30s_20260709T094341Z`
