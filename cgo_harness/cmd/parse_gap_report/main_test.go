@@ -242,6 +242,30 @@ func TestStatsFromRuntimeReportsScratchAndTransientMemory(t *testing.T) {
 	}
 }
 
+func TestArenaLiveBytesIncludesEveryRuntimeArenaComponent(t *testing.T) {
+	breakdown := gotreesitter.ArenaBreakdown{
+		NodeStructBytesAllocated:            1,
+		NoTreeNodeBytesAllocated:            2,
+		CompactFullLeafBytesAllocated:       3,
+		PendingParentBytesAllocated:         4,
+		PendingChildEntryBytesAllocated:     5,
+		RawShapeBytesAllocated:              6,
+		RawShapeChildBytesAllocated:         7,
+		FinalChildSidecarBytesAllocated:     8,
+		CompactCheckpointLeafBytesAllocated: 9,
+		ChildSliceBytesAllocated:            10,
+		FieldIDBytesAllocated:               11,
+		FieldSourceBytesAllocated:           12,
+	}
+	runtime := gotreesitter.ParseRuntime{
+		ExternalScannerCheckpointBytesAllocated: 13,
+		ArenaBytesAllocated:                     91,
+	}
+	if got, want := arenaLiveBytes(breakdown, runtime.ExternalScannerCheckpointBytesAllocated), runtime.ArenaBytesAllocated; got != want {
+		t.Fatalf("arenaLiveBytes = %d, runtime arena total = %d", got, want)
+	}
+}
+
 func TestRunGoEditReportsIncrementalAttribution(t *testing.T) {
 	lang := grammars.RustLanguage()
 	r := &runner{

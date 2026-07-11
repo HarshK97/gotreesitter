@@ -1174,15 +1174,7 @@ func statsFromGoTree(r *runner, tree *gotreesitter.Tree, queryCaptures, cursorNo
 		stats.ArenaFieldB = breakdown.FieldIDBytesAllocated + breakdown.FieldSourceBytesAllocated
 		stats.ArenaRawShapeB = breakdown.RawShapeBytesAllocated
 		stats.ArenaRawShapeChildB = breakdown.RawShapeChildBytesAllocated
-		stats.ArenaLiveB = breakdown.NodeStructBytesAllocated +
-			breakdown.NoTreeNodeBytesAllocated +
-			breakdown.CompactFullLeafBytesAllocated +
-			breakdown.PendingParentBytesAllocated +
-			breakdown.PendingChildEntryBytesAllocated +
-			breakdown.FinalChildSidecarBytesAllocated +
-			breakdown.ChildSliceBytesAllocated +
-			breakdown.FieldIDBytesAllocated +
-			breakdown.FieldSourceBytesAllocated
+		stats.ArenaLiveB = arenaLiveBytes(breakdown, rt.ExternalScannerCheckpointBytesAllocated)
 		stats.ArenaCapacityWaste = breakdown.NodeCapacityWaste
 		stats.MergeScratchAllocatedB = breakdown.MergeScratchBytesAllocated
 	}
@@ -1272,6 +1264,25 @@ func statsFromGoTree(r *runner, tree *gotreesitter.Tree, queryCaptures, cursorNo
 		stats.HotEquivStates = hotEquivStatesFromRuntime(rt.EquivStateStats, r.hotShapeLimit)
 	}
 	return stats
+}
+
+// arenaLiveBytes preserves the report schema's historical name, but these
+// inputs are allocated arena-capacity bytes rather than root-reachable live
+// bytes. The total must stay equal to ParseRuntime.ArenaBytesAllocated.
+func arenaLiveBytes(b gotreesitter.ArenaBreakdown, externalScannerCheckpointBytes int64) int64 {
+	return b.NodeStructBytesAllocated +
+		b.NoTreeNodeBytesAllocated +
+		b.CompactFullLeafBytesAllocated +
+		b.PendingParentBytesAllocated +
+		b.PendingChildEntryBytesAllocated +
+		b.RawShapeBytesAllocated +
+		b.RawShapeChildBytesAllocated +
+		b.FinalChildSidecarBytesAllocated +
+		b.CompactCheckpointLeafBytesAllocated +
+		b.ChildSliceBytesAllocated +
+		b.FieldIDBytesAllocated +
+		b.FieldSourceBytesAllocated +
+		externalScannerCheckpointBytes
 }
 
 func hotGLRStatesFromProfile(lang *gotreesitter.Language, stats []gotreesitter.AmbiguityStat) []hotGLRState {
