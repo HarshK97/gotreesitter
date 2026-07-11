@@ -50,7 +50,6 @@ type PerfCounters struct {
 	ParentChildPointers                  uint64
 	ReduceChildrenFastGSS                uint64
 	ReduceChildrenAllVis                 uint64
-	ReduceChildrenNoAlias                uint64
 	ReduceChildrenScratch                uint64
 	ReduceScratchNoAlias                 uint64
 	ReduceScratchGeneral                 uint64

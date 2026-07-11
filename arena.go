@@ -232,8 +232,6 @@ type nodeArena struct {
 	reduceChildPointersFastGSS           uint64
 	reduceChildSlicesAllVisible          uint64
 	reduceChildPointersAllVisible        uint64
-	reduceChildSlicesNoAlias             uint64
-	reduceChildPointersNoAlias           uint64
 	reduceChildSlicesScratchGeneral      uint64
 	reduceChildPointersScratchGeneral    uint64
 	reduceChildSlicesScratchNoAlias      uint64
@@ -979,8 +977,6 @@ func (a *nodeArena) resetCounters() {
 	a.reduceChildPointersFastGSS = 0
 	a.reduceChildSlicesAllVisible = 0
 	a.reduceChildPointersAllVisible = 0
-	a.reduceChildSlicesNoAlias = 0
-	a.reduceChildPointersNoAlias = 0
 	a.reduceChildSlicesScratchGeneral = 0
 	a.reduceChildPointersScratchGeneral = 0
 	a.reduceChildSlicesScratchNoAlias = 0
@@ -2249,8 +2245,6 @@ func (a *nodeArena) collectArenaBreakdown() *ArenaBreakdown {
 		ReduceChildPointersFastGSS:          a.reduceChildPointersFastGSS,
 		ReduceChildSlicesAllVisible:         a.reduceChildSlicesAllVisible,
 		ReduceChildPointersAllVisible:       a.reduceChildPointersAllVisible,
-		ReduceChildSlicesNoAlias:            a.reduceChildSlicesNoAlias,
-		ReduceChildPointersNoAlias:          a.reduceChildPointersNoAlias,
 		ReduceChildSlicesScratchGeneral:     a.reduceChildSlicesScratchGeneral,
 		ReduceChildPointersScratchGeneral:   a.reduceChildPointersScratchGeneral,
 		ReduceChildSlicesScratchNoAlias:     a.reduceChildSlicesScratchNoAlias,

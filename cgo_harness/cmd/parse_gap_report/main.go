@@ -330,7 +330,6 @@ type runtimeStats struct {
 	ParentChildPointers                   uint64        `json:"parent_child_pointers,omitempty"`
 	ReduceChildrenFastGSS                 uint64        `json:"reduce_children_fast_gss,omitempty"`
 	ReduceChildrenAllVisible              uint64        `json:"reduce_children_all_visible,omitempty"`
-	ReduceChildrenNoAlias                 uint64        `json:"reduce_children_no_alias,omitempty"`
 	ReduceChildrenScratch                 uint64        `json:"reduce_children_scratch,omitempty"`
 	ReduceScratchNoAlias                  uint64        `json:"reduce_scratch_no_alias,omitempty"`
 	ReduceScratchGeneral                  uint64        `json:"reduce_scratch_general,omitempty"`
@@ -367,7 +366,6 @@ type runtimeStats struct {
 	ForestCoalesceCapReplacements         uint64        `json:"forest_coalesce_cap_replacements,omitempty"`
 	ReduceChildFastGSS                    *pathStats    `json:"reduce_child_fast_gss,omitempty"`
 	ReduceChildAllVisible                 *pathStats    `json:"reduce_child_all_visible,omitempty"`
-	ReduceChildNoAlias                    *pathStats    `json:"reduce_child_no_alias,omitempty"`
 	ReduceChildScratchGeneral             *pathStats    `json:"reduce_child_scratch_general,omitempty"`
 	ReduceChildScratchNoAlias             *pathStats    `json:"reduce_child_scratch_no_alias,omitempty"`
 	NoTreeReduceNodes                     uint64        `json:"notree_reduce_nodes,omitempty"`
@@ -1210,7 +1208,6 @@ func statsFromGoTree(r *runner, tree *gotreesitter.Tree, queryCaptures, cursorNo
 	stats.ParentChildPointers = perf.ParentChildPointers
 	stats.ReduceChildrenFastGSS = perf.ReduceChildrenFastGSS
 	stats.ReduceChildrenAllVisible = perf.ReduceChildrenAllVis
-	stats.ReduceChildrenNoAlias = perf.ReduceChildrenNoAlias
 	stats.ReduceChildrenScratch = perf.ReduceChildrenScratch
 	stats.ReduceScratchNoAlias = perf.ReduceScratchNoAlias
 	stats.ReduceScratchGeneral = perf.ReduceScratchGeneral
@@ -1641,7 +1638,6 @@ func statsFromRuntime(rt gotreesitter.ParseRuntime) runtimeStats {
 		NoTreeLeafNodes:                       rt.NoTreeLeafNodesConstructed,
 		ReduceChildFastGSS:                    pathStatsFromRuntime(rt.ReduceChildFastGSS),
 		ReduceChildAllVisible:                 pathStatsFromRuntime(rt.ReduceChildAllVisible),
-		ReduceChildNoAlias:                    pathStatsFromRuntime(rt.ReduceChildNoAlias),
 		ReduceChildScratchGeneral:             pathStatsFromRuntime(rt.ReduceChildScratchGeneral),
 		ReduceChildScratchNoAlias:             pathStatsFromRuntime(rt.ReduceChildScratchNoAlias),
 	}

@@ -67,10 +67,6 @@ func (s *transientChildScratch) owns(children []*Node) bool {
 	return false
 }
 
-func (s *transientChildScratch) materializeNode(root *Node, arena *nodeArena, scratch *[]*Node) {
-	s.materializeNodeUntil(root, arena, scratch, nil)
-}
-
 func (s *transientChildScratch) materializeNodeUntil(root *Node, arena *nodeArena, scratch *[]*Node, p *Parser) ParseStopReason {
 	if s == nil || root == nil || arena == nil {
 		return ParseStopNone

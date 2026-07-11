@@ -84,7 +84,6 @@ type pythonRuntimeBenchStats struct {
 	childPointersDropped                 uint64
 	reduceChildFastGSS                   pythonReduceChildPathStats
 	reduceChildAllVisible                pythonReduceChildPathStats
-	reduceChildNoAlias                   pythonReduceChildPathStats
 	reduceChildScratchGeneral            pythonReduceChildPathStats
 	reduceChildScratchNoAlias            pythonReduceChildPathStats
 	transientChildSlicesAllocated        uint64
@@ -219,8 +218,6 @@ type pythonRuntimeBenchStats struct {
 	reduceChildPointersFastGSS           uint64
 	reduceChildSlicesAllVisible          uint64
 	reduceChildPointersAllVisible        uint64
-	reduceChildSlicesNoAlias             uint64
-	reduceChildPointersNoAlias           uint64
 	reduceChildSlicesScratchGeneral      uint64
 	reduceChildPointersScratchGeneral    uint64
 	reduceChildSlicesScratchNoAlias      uint64
@@ -401,7 +398,6 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 	s.childPointersDropped += rt.ChildPointersDroppedSameToken
 	s.reduceChildFastGSS.add(rt.ReduceChildFastGSS)
 	s.reduceChildAllVisible.add(rt.ReduceChildAllVisible)
-	s.reduceChildNoAlias.add(rt.ReduceChildNoAlias)
 	s.reduceChildScratchGeneral.add(rt.ReduceChildScratchGeneral)
 	s.reduceChildScratchNoAlias.add(rt.ReduceChildScratchNoAlias)
 	s.transientChildSlicesAllocated += rt.TransientChildSlicesAllocated
@@ -570,8 +566,6 @@ func (s *pythonRuntimeBenchStats) add(rt gotreesitter.ParseRuntime, breakdown go
 		s.reduceChildPointersFastGSS += breakdown.ReduceChildPointersFastGSS
 		s.reduceChildSlicesAllVisible += breakdown.ReduceChildSlicesAllVisible
 		s.reduceChildPointersAllVisible += breakdown.ReduceChildPointersAllVisible
-		s.reduceChildSlicesNoAlias += breakdown.ReduceChildSlicesNoAlias
-		s.reduceChildPointersNoAlias += breakdown.ReduceChildPointersNoAlias
 		s.reduceChildSlicesScratchGeneral += breakdown.ReduceChildSlicesScratchGeneral
 		s.reduceChildPointersScratchGeneral += breakdown.ReduceChildPointersScratchGeneral
 		s.reduceChildSlicesScratchNoAlias += breakdown.ReduceChildSlicesScratchNoAlias
@@ -703,7 +697,6 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.childPointersDropped)/tokens, "child_ptrs_discarded/token")
 		s.reduceChildFastGSS.report(b, tokens, "fast_gss")
 		s.reduceChildAllVisible.report(b, tokens, "all_visible")
-		s.reduceChildNoAlias.report(b, tokens, "no_alias")
 		s.reduceChildScratchGeneral.report(b, tokens, "scratch_general")
 		s.reduceChildScratchNoAlias.report(b, tokens, "scratch_no_alias")
 	}
@@ -785,8 +778,6 @@ func (s pythonRuntimeBenchStats) report(b *testing.B) {
 		b.ReportMetric(float64(s.reduceChildPointersFastGSS)/tokens, "reduce_child_ptrs_fast_gss/token")
 		b.ReportMetric(float64(s.reduceChildSlicesAllVisible)/tokens, "reduce_child_slices_all_visible/token")
 		b.ReportMetric(float64(s.reduceChildPointersAllVisible)/tokens, "reduce_child_ptrs_all_visible/token")
-		b.ReportMetric(float64(s.reduceChildSlicesNoAlias)/tokens, "reduce_child_slices_no_alias/token")
-		b.ReportMetric(float64(s.reduceChildPointersNoAlias)/tokens, "reduce_child_ptrs_no_alias/token")
 		b.ReportMetric(float64(s.reduceChildSlicesScratchGeneral)/tokens, "reduce_child_slices_scratch_general/token")
 		b.ReportMetric(float64(s.reduceChildPointersScratchGeneral)/tokens, "reduce_child_ptrs_scratch_general/token")
 		b.ReportMetric(float64(s.reduceChildSlicesScratchNoAlias)/tokens, "reduce_child_slices_scratch_no_alias/token")
