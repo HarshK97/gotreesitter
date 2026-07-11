@@ -6678,20 +6678,30 @@ func (p *Parser) updateCurrentRelexParserStateTokenSource(ts TokenSource, stacks
 func (p *Parser) tryRelexSingleParserState(tok Token, state StateID, ts TokenSource, stacks []glrStack, scratch *parserScratch) (Token, bool) {
 	stateful, statefulOK := ts.(parserStateTokenSource)
 	relexer, relexerOK := ts.(tokenSourceRelexer)
-	if !statefulOK || !relexerOK || !relexer.CanRelexFromTokenStart(tok) {
+	dts := underlyingDFATokenSource(ts)
+	if !statefulOK || !relexerOK || dts == nil || !relexer.CanRelexFromTokenStart(tok) {
 		return Token{}, false
+	}
+	snapshot := dts.snapshotRelexState()
+	savedState := dts.state
+	savedGLRStates := append([]StateID(nil), dts.glrStates...)
+	restoreRejectedProbe := func() {
+		snapshot.restore(dts)
+		dts.state = savedState
+		dts.glrStates = append(dts.glrStates[:0], savedGLRStates...)
+		p.updateCurrentRelexParserStateTokenSource(ts, stacks, scratch)
 	}
 	stateful.SetParserState(state)
 	clearGLRStateTokenSource(stateful, scratch)
 	next, ok := relexer.RelexFromTokenStart(tok)
 	actionIndex := p.lookupActionIndex(state, next.Symbol)
 	if !ok || !next.ExternalScannerToken || next.StartByte != tok.StartByte || next.EndByte != next.StartByte || (next.Symbol == tok.Symbol && next.StartByte == tok.StartByte && next.EndByte == tok.EndByte) || actionIndex == 0 || int(actionIndex) >= len(p.language.ParseActions) {
-		p.updateCurrentRelexParserStateTokenSource(ts, stacks, scratch)
+		restoreRejectedProbe()
 		return Token{}, false
 	}
 	actions := p.language.ParseActions[actionIndex].Actions
 	if len(actions) != 1 || actions[0].Type != ParseActionShift || actions[0].Extra || actions[0].State == 0 || actions[0].State == state {
-		p.updateCurrentRelexParserStateTokenSource(ts, stacks, scratch)
+		restoreRejectedProbe()
 		return Token{}, false
 	}
 	return next, true
