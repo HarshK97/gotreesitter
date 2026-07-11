@@ -1,18 +1,16 @@
-//go:build !javascript_precise_els
-
 package grammars
 
 import "testing"
 
-func TestJavascriptExternalLexStatesRemainStagedByDefault(t *testing.T) {
-	if got := len(LookupExternalLexStates("javascript")); got != 0 {
-		t.Fatalf("LookupExternalLexStates(\"javascript\") rows = %d, want 0 without javascript_precise_els", got)
+func TestJavascriptExternalLexStatesDefaultWithoutRecoveryElection(t *testing.T) {
+	if got := len(LookupExternalLexStates("javascript")); got != 10 {
+		t.Fatalf("LookupExternalLexStates(\"javascript\") rows = %d, want 10", got)
 	}
 	lang := JavascriptLanguage()
-	if len(lang.ExternalLexStates) != 0 {
-		t.Fatalf("JavascriptLanguage ExternalLexStates rows = %d, want 0 without javascript_precise_els", len(lang.ExternalLexStates))
+	if got := len(lang.ExternalLexStates); got != 10 {
+		t.Fatalf("JavascriptLanguage ExternalLexStates rows = %d, want 10", got)
 	}
 	if lang.CRecoveryCostCompetitionEnabledByDefault {
-		t.Fatal("javascript C recovery election default-enabled without javascript_precise_els")
+		t.Fatal("javascript C recovery election default-enabled despite performance opt-out")
 	}
 }

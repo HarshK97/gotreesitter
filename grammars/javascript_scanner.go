@@ -32,6 +32,14 @@ const (
 // JSX text, ternary question marks, and HTML comments for JavaScript.
 type JavaScriptExternalScanner struct{}
 
+type jsWhitespaceResult uint8
+
+const (
+	jsWhitespaceReject jsWhitespaceResult = iota
+	jsWhitespaceNoNewline
+	jsWhitespaceAccept
+)
+
 func (JavaScriptExternalScanner) Create() any                           { return nil }
 func (JavaScriptExternalScanner) Destroy(payload any)                   {}
 func (JavaScriptExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
@@ -122,6 +130,18 @@ func jsScanAutoSemicolon(lexer *gotreesitter.ExternalLexer, validSymbols []bool,
 		if ch == 0 {
 			return true
 		}
+		if ch == '/' {
+			result := jsProbeWhitespaceAndComments(lexer, scannedComment, false)
+			if result == jsWhitespaceReject {
+				return false
+			}
+			if result == jsWhitespaceAccept &&
+				!jsValid(validSymbols, jsTokLogicalOr) &&
+				lexer.Lookahead() != ',' && lexer.Lookahead() != '=' {
+				return true
+			}
+			ch = lexer.Lookahead()
+		}
 		if ch == '}' {
 			lexer.Advance(true)
 			for unicode.IsSpace(lexer.Lookahead()) {
@@ -203,6 +223,60 @@ func jsScanAutoSemicolon(lexer *gotreesitter.ExternalLexer, validSymbols []bool,
 	}
 
 	return true
+}
+
+// jsProbeWhitespaceAndComments mirrors the pinned JavaScript scanner's
+// same-line comment probe. In particular, a valid automatic semicolon is
+// emitted at the scanner's original mark before the comment is shifted as an
+// extra. Keeping that ordering is what lets the parser reduce `} ASI` first and
+// replay the following comment into the surrounding statement list.
+func jsProbeWhitespaceAndComments(lexer *gotreesitter.ExternalLexer, scannedComment *bool, consume bool) jsWhitespaceResult {
+	sawBlockNewline := false
+	for {
+		for unicode.IsSpace(lexer.Lookahead()) {
+			lexer.Advance(true)
+		}
+
+		if lexer.Lookahead() != '/' {
+			return jsWhitespaceAccept
+		}
+		lexer.Advance(true)
+		switch lexer.Lookahead() {
+		case '/':
+			lexer.Advance(true)
+			for lexer.Lookahead() != 0 && lexer.Lookahead() != '\n' &&
+				lexer.Lookahead() != 0x2028 && lexer.Lookahead() != 0x2029 {
+				lexer.Advance(true)
+			}
+			*scannedComment = true
+		case '*':
+			lexer.Advance(true)
+			for lexer.Lookahead() != 0 {
+				switch lexer.Lookahead() {
+				case '*':
+					lexer.Advance(true)
+					if lexer.Lookahead() == '/' {
+						lexer.Advance(true)
+						*scannedComment = true
+						if lexer.Lookahead() != '/' && !consume {
+							if sawBlockNewline {
+								return jsWhitespaceAccept
+							}
+							return jsWhitespaceNoNewline
+						}
+						break
+					}
+				case '\n', 0x2028, 0x2029:
+					sawBlockNewline = true
+					lexer.Advance(true)
+				default:
+					lexer.Advance(true)
+				}
+			}
+		default:
+			return jsWhitespaceReject
+		}
+	}
 }
 
 func jsScanWSAndComments(lexer *gotreesitter.ExternalLexer, scannedComment *bool) bool {

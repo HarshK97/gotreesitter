@@ -153,6 +153,7 @@ func TestExternalLexStatesRecoveryElectionOptOutInventory(t *testing.T) {
 	}{
 		{name: "cpp", load: CppLanguage},
 		{name: "html", load: HtmlLanguage},
+		{name: "javascript", load: JavascriptLanguage},
 		{name: "julia", load: JuliaLanguage},
 	}
 

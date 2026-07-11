@@ -1314,17 +1314,17 @@
    "tier_notes": "diagnostic scan 20260621T035630Z-206-inventory-telemetry: 22/40, trunc=0, errTree=0, panics=0; previous CLEAN row was stale: in ratchet; java full-parse stack cap 14"
   },
   {
-   "c_recovery_default_opt_out": false,
-   "default_external_lex_states": false,
+   "c_recovery_default_opt_out": true,
+   "default_external_lex_states": true,
    "extensions": ".cjs,.js,.mjs",
    "grammar": "javascript",
    "has_external_scanner": true,
    "parity": "40/40",
-   "staged_external_lex_states": true,
+   "staged_external_lex_states": false,
    "status": "staged_precise_els",
    "status_label": "staged precise ELS",
    "tier_classification": "CLEAN",
-   "tier_notes": "in ratchet"
+   "tier_notes": "precise ELS promoted for C-equivalent ASI/comment scanner ordering; faithful C recovery remains default-opted-out because it regresses clean large-file performance"
   },
   {
    "c_recovery_default_opt_out": false,

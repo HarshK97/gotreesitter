@@ -1,12 +1,7 @@
-//go:build javascript_precise_els
-
-// STAGED — inactive by default. Build/enable with: -tags javascript_precise_els
-//
 // Verbatim ts_external_scanner_states[10][8] from the pinned
-// tree-sitter-javascript parser.c. Registering it flips DiagnoseCRecoveryGate
-// for javascript (precise ExternalLexStates is the last missing gate input),
-// which ELECTS javascript into the faithful C error-recovery cost competition
-// by default.
+// tree-sitter-javascript parser.c. Ordinary scanner arbitration needs these
+// rows to distinguish ASI-valid states from expression-continuation states;
+// action-table fallback is broader and can reverse ASI/comment ordering.
 //
 // WHY IT IS STAGED (2026-07 cliff campaign measurement)
 // Unlike c_sharp — whose stateful interpolation scanner was actively
@@ -26,11 +21,10 @@
 // The elected path's per-token cost (cRecoveryEnabled lexing via
 // NextWithErrorRuns + acquire-token bookkeeping) is paid on CLEAN parses,
 // and javascript's actual sweep cliffs (asm.js megafunctions dying on
-// memory_budget) are unrelated to external-scanner validity. Enable this
-// only after the javascript memory-budget cliff class is fixed and a sweep
-// re-measurement shows election is at worst neutral. Full test suites
-// (go test . ./grammars) PASS with this table active and javascript elected,
-// so correctness is not the blocker — perf on the cliff slice is.
+// memory_budget) are unrelated to external-scanner validity. JavaScript is
+// therefore explicitly opted out of default C-recovery election even though
+// precise scanner validity is now always enabled. Re-enable recovery only
+// after the memory-budget cliff is fixed and a sweep shows it at worst neutral.
 //
 // Columns are the JavaScript external token indices, in the language's
 // ExternalSymbols order (== C enum order):
@@ -43,7 +37,7 @@
 // Source: https://github.com/tree-sitter/tree-sitter-javascript 58404d8cf191d69f2674a8fd507bd5776f46cb11 src/parser.c
 package grammars
 
-// javascriptExternalLexStates mirrors C tree-sitter ts_external_scanner_states.
+// javascriptExternalLexStates mirrors C tree-sitter's ts_external_scanner_states.
 var javascriptExternalLexStates = [][]bool{
 	/* 0 */ {false, false, false, false, false, false, false, false},
 	/* 1 */ {true, true, true, true, true, true, false, true},
