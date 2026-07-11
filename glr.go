@@ -3286,10 +3286,6 @@ func gssNodeCleanZeroErrorAllLinksWithScratch(scratch *glrMergeScratch, n *gssNo
 	return true
 }
 
-func stackEntryPayloadsEquivalentIgnoringDynamic(a, b stackEntry) bool {
-	return stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(nil, a, b)
-}
-
 func stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(scratch *glrMergeScratch, a, b stackEntry) bool {
 	if stackEntryPendingParent(a) != nil || stackEntryPendingParent(b) != nil {
 		var lang *Language
