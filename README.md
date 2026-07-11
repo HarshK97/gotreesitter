@@ -634,69 +634,56 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-v0.22.x — Roadmap checkpoint release after the v0.21 engine cut. Lands the
-runtime/recovery foundation, external lex-state election ledger, broad precise
-ExternalLexStates coverage, perf-scan scaffolding, and Cobol large-table
-recovery cleanup, including the mixed-error `HasError` preservation fix.
-Cobol's focused release gates are clean; the broader tier-IV ledger remains
-explicit, and universal near-C performance stays a follow-up ratchet rather
-than a v0.22.0 claim.
+The current release is **v0.24.1**. The 206-grammar curated parity milestone is
+banked; the remaining work is dominated by memory/throughput cliffs, runtime
+cleanup, and turning the existing low-level capabilities into a coherent
+Go-native analysis experience. C remains the behavioral oracle, not the product
+ceiling. Detailed release history lives in [CHANGELOG.md](CHANGELOG.md).
 
-v0.21.x — Engine release. The generalized GLR parser core replaces the
-v0.20.x per-language recovery approximations as the default runtime, with
-C-faithful error recovery for elected grammars, forest fast paths, real Go ASI,
-bounded C# designer-style parsing, and rebased parser performance contracts.
+### Now — performance and extreme hygiene
 
-v0.19.x — GLR materialization, query parity, and parser hot-path release.
-Compact/lazy final child refs now survive parser result assembly and public tree
-operations, so queries, cursors, edits, descendant lookup, and traversal can
-avoid broad eager materialization. Nested repeated query patterns now preserve
-tree-sitter-compatible match rows, including downstream Kotlin Orion queries
-such as `source_file -> import_list -> import_header`. The release also adds
-reduce-chain hints, GLR/action/result timing attribution, parse-gap reporting,
-and full-parse scratch tuning while restoring compatibility shapes for Go,
-JavaScript/TypeScript, Python, Rust, C, and Java edge cases.
+- Keep correctness, C-oracle parity, and performance gates separate. Every
+  optimization must preserve the selected tree before its timing or memory
+  result is considered.
+- Drive the named long-tail witnesses in the perf ledger one language and one
+  workload at a time. Track wall time, allocations, retained arena/scratch
+  bytes, and hard-cgroup maximum RSS; do not generalize from a microbenchmark.
+- Close JavaScript Poppler's shipped 512 MiB budget gap. v0.24.0 proves exact
+  parity with an explicit 2 GiB parser budget, but that is not the endpoint.
+- Remove dead diagnostics, compatibility helpers, temporary profilers, and
+  benchmark-only surface as soon as retained gates make them redundant. Add no
+  new parser-core language-name switch when a generated capability or runtime
+  invariant can express the decision.
+- Keep the canonical benchmark trio honest: public full parse, incremental
+  single-byte edit, and incremental no-edit. Parser-core/no-tree measurements
+  stay explicitly diagnostic.
 
-v0.18.x — Cold dependency extraction and parser materialization diagnostics
-release. Adds language-neutral import extraction APIs, source-vs-tree import
-parity fixtures, `cgo_harness/cmd/import_replay`, Python materialization
-benchmarks, and parser runtime attribution for arena usage, checkpoint storage,
-reduction/transient storage, final tree materialization, normalization timing,
-and GLR collapse behavior. Hybrid source extraction now gives downstream
-dependency scanners a fast path with structured fallback reporting.
+### Next — compact and explicit runtime boundaries
 
-v0.17.x — Java corpus parity and parser-performance release. Java now has
-bounded Docker corpus lanes for Apache Lucene, including largest-file, random,
-timeout-sweep, cgo comparison, no-tree diagnostic, UAX generated-file,
-ambiguity, materialization, traversal, and query/API-shape runs. Targeted Java
-lexer and GLR fixes close the correctness/timeout cliff for the sampled Lucene
-corpora, while deferred parent-link wiring and parser scratch reuse move Java
-full parses much closer to cgo. The release also expands `grammargen` top-50
-parity coverage and fixes Bash, Python, Swift, comment, gomod, ini, CPON, D,
-PowerShell, Julia, and Java parity gaps.
+- Pack pending-child metadata and make its equality collision-safe before
+  enabling broader compact-parent paths; then retry large-file RSS gates.
+- Prototype a pointer-light tree backing store with value node handles and
+  measure bytes/node, GC scan, query/cursor throughput, edit reuse, and peak RSS
+  before considering a representation migration.
+- Move language-specific runtime decisions into immutable, generated profiles.
+  Configuration and limits should become engine/request values rather than
+  process-global environment state.
+- Stop multiplying public parse variants. Pooling and experimental benchmark
+  modes should become implementation or diagnostics details behind one typed
+  parse request.
 
-v0.16.x — Grammar extensibility and parser-resilience release. Adds native
-UTF-16 parser/editor APIs, `grammargen` DSL constructors and extension smoke
-coverage for Kotlin, Swift, JavaScript, TypeScript/TSX, and Fortran, and
-grammar-update guardrails that block scanner-facing lock refreshes until
-regenerated artifacts and focused parity are handled. C# pathological recovery
-is bounded, TypeScript and Fortran `grammargen` parity advanced, Python
-f-string scanner checkpoints preserve interpolated-string state, and
-parser-result compatibility shims are isolated behind an explicit strut registry
-with language-owned helper files.
+### Then — a Go-native incremental analysis experience
 
-v0.15.x — Large-repo consumer safety and parser-maintenance release. `ParsePolicy.ShouldSkipDir` lets gateway callers prune generated/vendor directories before descent, the GLR node-equivalence cache is smaller and checks epoch first for L2-friendly lookups, `Tree.Edit` avoids scanning unchanged right-side siblings when there is no tail shift, and parser-result compatibility normalization now keeps language-specific call sequences beside the relevant `parser_result_*.go` helpers. The v0.15.1 patch also hardens arena release/GC behavior, releases retry loser arenas promptly, and fixes query predicate backtracking for nested Starlark dictionary matches. v0.15.2 folds the drifting `main` and release lines back together, adds a Swift ABI mangling grammar, and ships `grammar_updater` pin verification and manifest-only sync flags. v0.15.3 caps JavaScript/TypeScript full-parse merge survivors, tunes markdown retry and node budgets, tolerates external-scanner symbol-list drift, and adds a scoped Canopy harness runner for bounded repo analysis. This line carries the post-0.14 tier-1 grammar refreshes and reserved-word import fixes.
-
-v0.14.x — Go grammar now shipped as a grammargen-compiled blob (our own pure-Go LR(1) state-splitting compiler), eliminating a dead-end state inherited from tree-sitter-go that wrapped several valid Go files in ERROR. Combined with arena retention/initial-sizing fixes, retry-lifecycle cleanup, and a GLR cap update keyed to the new grammar's conflict profile, warm-reuse heap allocation across a six-file self-parse benchmark dropped ~54% (498 → 229 MB/iter); cold-case dropped ~61%.
-
-v0.12.x — 206 grammars (all OK), 116 external scanners, pure-Go runtime plus `grammargen`, ABI 15 support including reserved-word sets, GLR parser, incremental reparsing with external scanner checkpoints, query engine, tree cursor, highlighting, tagging, injection parser, typed query codegen, CST rewriter, parser pool, arena memory budgets, and structural parity against 100+ curated C reference grammars.
-
-Next:
-- Retire parser-result struts by moving C#, Rust, Scala, TypeScript, and Python recovery into runtime or grammar generation paths
-- Grammar refresh automation that moves from lock-only PRs to regenerated artifacts and focused parity for allow-listed `grammargen`-backed languages
-- Table-size and codegen compaction work for Unicode-heavy grammars
-
-Release history and retroactive notes are tracked in [CHANGELOG.md](CHANGELOG.md).
+- Add context-aware `Engine`/`ParseRequest` primitives with typed stop reasons,
+  useful partial results, explicit registries, and safe ownership.
+- Compose the existing rewrite, query, highlight, tags, injection, UTF-16, and
+  incremental APIs into `Document`/`Snapshot` workflows that own edits, prior
+  trees, changed ranges, caches, and release lifetimes.
+- Extend incremental parsing into changed-range analysis plans so downstream
+  tools rerun only affected highlights, tags, definitions, and injections.
+- Follow with a provenance-rich, sectioned grammar bundle format and stronger
+  scanner authoring/conformance tooling. Optional AOT specialization remains a
+  measured tier, not the fleet default.
 
 ## License
 
