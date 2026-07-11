@@ -152,7 +152,7 @@ func (p *Parser) resultMaterializationStopReason(arena *nodeArena) ParseStopReas
 		}
 	}
 	if arena != nil && arena.budgetExhausted() {
-		return ParseStopMemoryBudget
+		return p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceArena)
 	}
 	if p != nil {
 		if reason := p.runtimeMemoryBudgetStopReason(); reason == ParseStopMemoryBudget {
@@ -423,6 +423,13 @@ func materializeTransientParentEntries(entries []stackEntry, arena *nodeArena, t
 		return ParseStopNone
 	}
 	return transientParents.materializeEntriesUntil(entries, arena, transientChildren, p)
+}
+
+func materializeTransientParentEntriesForRecycle(entries []stackEntry, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch, p *Parser) ParseStopReason {
+	if transientParents == nil {
+		return ParseStopNone
+	}
+	return transientParents.materializeEntriesForRecycleUntil(entries, arena, transientChildren, p)
 }
 
 func materializeTransientParentNodes(nodes []*Node, arena *nodeArena, transientParents *transientParentScratch, transientChildren *transientChildScratch, p *Parser) ParseStopReason {

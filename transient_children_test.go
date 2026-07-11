@@ -4,6 +4,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 type cancelAtEOFArithmeticTokenSource struct {
@@ -76,6 +77,8 @@ func TestTransientParentScratchMaterializesReachableParent(t *testing.T) {
 	parent := parentScratch.allocParent(arena, Symbol(3), true, children, 11, true)
 	parent.parseState = 7
 	parent.preGotoState = 5
+	parent.dynamicPrecedence = 13
+	parent.rawShape = 17
 
 	if !parentScratch.owns(parent) {
 		t.Fatal("expected parent to use transient parent storage before materialization")
@@ -102,6 +105,9 @@ func TestTransientParentScratchMaterializesReachableParent(t *testing.T) {
 	}
 	if got.parseState != 7 || got.preGotoState != 5 || got.productionID != 11 {
 		t.Fatalf("materialized states = (%d,%d,%d), want (7,5,11)", got.parseState, got.preGotoState, got.productionID)
+	}
+	if got.dynamicPrecedence != 13 || got.rawShape != 17 {
+		t.Fatalf("materialized parse metadata = (%d,%d), want (13,17)", got.dynamicPrecedence, got.rawShape)
 	}
 	if got.StartByte() != 0 || got.EndByte() != 2 {
 		t.Fatalf("materialized span = [%d,%d], want [0,2]", got.StartByte(), got.EndByte())
@@ -454,5 +460,247 @@ func TestTransientParentScratchMaterializesSharedTransientParentOnce(t *testing.
 	}
 	if got := parentScratch.nodesMaterialized; got != 4 {
 		t.Fatalf("nodesMaterialized = %d, want 4", got)
+	}
+}
+
+func TestTransientChildScratchOverflowSlabGrowthBounded(t *testing.T) {
+	elemSize := int(unsafe.Sizeof((*Node)(nil)))
+	ceiling := maxOverflowSlabGrowthBytes / elemSize
+	if ceiling <= 0 {
+		t.Fatalf("invalid transient-child slab ceiling %d", ceiling)
+	}
+
+	initial := ceiling * 3 / 4
+	scratch := transientChildScratch{
+		slabs:          []childSliceSlab{{data: make([]*Node, initial)}},
+		allocatedBytes: childSliceBytesForCap(initial),
+	}
+	wantPointers := initial + ceiling*3
+	for allocated := 0; allocated < wantPointers; {
+		n := min(1024, wantPointers-allocated)
+		_ = scratch.alloc(n)
+		allocated += n
+	}
+
+	capacity := 0
+	used := 0
+	for i := range scratch.slabs {
+		slabCap := len(scratch.slabs[i].data)
+		capacity += slabCap
+		used += scratch.slabs[i].used
+		if i > 0 && slabCap > ceiling {
+			t.Fatalf("transient-child overflow slab %d capacity=%d exceeds ceiling=%d", i, slabCap, ceiling)
+		}
+	}
+	if waste := capacity - used; waste > ceiling {
+		t.Fatalf("transient-child capacity waste=%d pointers exceeds one ceiling slab=%d", waste, ceiling)
+	}
+	if got, want := scratch.allocatedBytes, childSliceBytesForCap(capacity); got != want {
+		t.Fatalf("transient-child allocatedBytes=%d, want %d", got, want)
+	}
+}
+
+func TestTransientParentScratchOverflowSlabGrowthBounded(t *testing.T) {
+	elemSize := int(unsafe.Sizeof(Node{}))
+	ceiling := maxOverflowSlabGrowthBytes / elemSize
+	if ceiling <= 0 {
+		t.Fatalf("invalid transient-parent slab ceiling %d", ceiling)
+	}
+
+	initial := ceiling * 3 / 4
+	scratch := transientParentScratch{
+		slabs:          []transientParentSlab{{data: make([]Node, initial)}},
+		allocatedBytes: nodeStructBytesForCap(initial),
+	}
+	wantNodes := initial + ceiling*3
+	for i := 0; i < wantNodes; i++ {
+		_ = scratch.allocParent(nil, 1, true, nil, 0, false)
+	}
+
+	capacity := 0
+	used := 0
+	for i := range scratch.slabs {
+		slabCap := len(scratch.slabs[i].data)
+		capacity += slabCap
+		used += scratch.slabs[i].used
+		if i > 0 && slabCap > ceiling {
+			t.Fatalf("transient-parent overflow slab %d capacity=%d exceeds ceiling=%d", i, slabCap, ceiling)
+		}
+	}
+	if waste := capacity - used; waste > ceiling {
+		t.Fatalf("transient-parent capacity waste=%d nodes exceeds one ceiling slab=%d", waste, ceiling)
+	}
+	if got, want := scratch.allocatedBytes, nodeStructBytesForCap(capacity); got != want {
+		t.Fatalf("transient-parent allocatedBytes=%d, want %d", got, want)
+	}
+}
+
+func TestTransientScratchCheckpointMaterializesLiveStackAndReusesSlabs(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch parserScratch
+	scratch.transientCheckpointBytes = 1
+	scratch.reduce.transientParents = &scratch.transientParents
+	scratch.reduce.transientChildren = &scratch.transientChildren
+	parser := &Parser{cNodeMemo: make(map[*Node]cNodeMemoEntry)}
+
+	leaf := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Column: 1})
+	children := scratch.transientChildren.alloc(1)
+	children[0] = leaf
+	parent := scratch.transientParents.allocParent(arena, Symbol(2), true, children, 0, true)
+	parent.dynamicPrecedence = 13
+	parent.rawShape = 17
+	parser.cNodeMemo[parent] = cNodeMemoEntry{hasCost: true}
+	stack := glrStack{entries: []stackEntry{newStackEntryNode(7, parent)}, cacheEntries: true, byteOffset: 1}
+	parentCapacityBytes := scratch.transientParents.allocatedBytes
+	childCapacityBytes := scratch.transientChildren.allocatedBytes
+	firstParentAddress := &scratch.transientParents.slabs[0].data[0]
+
+	if reason := parser.checkpointTransientScratch([]glrStack{stack}, &scratch, arena); reason != ParseStopNone {
+		t.Fatalf("checkpointTransientScratch() = %q, want no stop", reason)
+	}
+	materialized := stackEntryNode(stack.entries[0])
+	if materialized == nil || scratch.transientParents.owns(materialized) {
+		t.Fatalf("live stack parent was not materialized: %p", materialized)
+	}
+	if materialized.dynamicPrecedence != 13 || materialized.rawShape != 17 {
+		t.Fatalf("checkpoint parse metadata = precedence %d rawShape %d, want 13 and 17", materialized.dynamicPrecedence, materialized.rawShape)
+	}
+	if scratch.transientParents.usedBytes() != 0 || scratch.transientChildren.usedBytes() != 0 {
+		t.Fatalf("transient slabs still used after checkpoint: parents=%d children=%d", scratch.transientParents.usedBytes(), scratch.transientChildren.usedBytes())
+	}
+	if scratch.transientParents.allocatedBytes != parentCapacityBytes || scratch.transientChildren.allocatedBytes != childCapacityBytes {
+		t.Fatal("checkpoint dropped reusable transient slab capacity")
+	}
+	if scratch.transientParents.nodesAllocated != 1 || scratch.transientParents.nodesMaterialized != 1 {
+		t.Fatalf("parent counters not preserved: allocated=%d materialized=%d", scratch.transientParents.nodesAllocated, scratch.transientParents.nodesMaterialized)
+	}
+	if scratch.transientCheckpoints != 1 {
+		t.Fatalf("transient checkpoints = %d, want 1", scratch.transientCheckpoints)
+	}
+	if len(parser.cNodeMemo) != 0 {
+		t.Fatal("recovery node memo retained recycled transient pointers")
+	}
+
+	reused := scratch.transientParents.allocParent(arena, Symbol(3), true, nil, 0, false)
+	if reused != firstParentAddress {
+		t.Fatalf("transient parent slab was not reused: got %p want %p", reused, firstParentAddress)
+	}
+}
+
+func TestTransientScratchCheckpointDefersWithPendingParents(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch parserScratch
+	scratch.transientCheckpointBytes = 1
+	scratch.reduce.transientParents = &scratch.transientParents
+	scratch.reduce.transientChildren = &scratch.transientChildren
+	parser := &Parser{pendingFullParents: true}
+
+	parent := scratch.transientParents.allocParent(arena, Symbol(2), true, nil, 0, false)
+	stack := glrStack{entries: []stackEntry{newStackEntryNode(7, parent)}, cacheEntries: true, byteOffset: 1}
+	usedBefore := scratch.transientParents.usedBytes()
+
+	if reason := parser.checkpointTransientScratch([]glrStack{stack}, &scratch, arena); reason != ParseStopNone {
+		t.Fatalf("checkpointTransientScratch() = %q, want no stop", reason)
+	}
+	if got := stackEntryNode(stack.entries[0]); got != parent {
+		t.Fatalf("pending-parent mode unexpectedly materialized stack node: got %p, want %p", got, parent)
+	}
+	if got := scratch.transientParents.usedBytes(); got != usedBefore {
+		t.Fatalf("pending-parent mode recycled transient storage: used=%d, want %d", got, usedBefore)
+	}
+	if scratch.transientCheckpoints != 0 {
+		t.Fatalf("pending-parent mode checkpoints = %d, want 0", scratch.transientCheckpoints)
+	}
+}
+
+func TestTransientScratchCheckpointRetargetsNestedRawShapeNodesBeforeSlabReuse(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch parserScratch
+	scratch.transientCheckpointBytes = 1
+	scratch.reduce.transientParents = &scratch.transientParents
+	scratch.reduce.transientChildren = &scratch.transientChildren
+	parser := &Parser{}
+
+	leaf := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Column: 1})
+	rawGrandchild := scratch.transientParents.allocParent(arena, Symbol(2), true, nil, 0, false)
+	rawGrandchild.rawShape = parser.captureRawShape(arena, Symbol(2), 0, []stackEntry{
+		newStackEntryNode(1, leaf),
+	}, 0, 1)
+	rawChild := scratch.transientParents.allocParent(arena, Symbol(3), true, nil, 0, false)
+	rawChild.rawShape = parser.captureRawShape(arena, Symbol(3), 0, []stackEntry{
+		newStackEntryNode(2, rawGrandchild),
+	}, 0, 1)
+	semanticChildren := scratch.transientChildren.alloc(1)
+	semanticChildren[0] = leaf
+	liveParent := scratch.transientParents.allocParent(arena, Symbol(4), true, semanticChildren, 0, false)
+	liveParent.rawShape = parser.captureRawShape(arena, Symbol(4), 0, []stackEntry{
+		newStackEntryNode(3, rawChild),
+	}, 0, 1)
+	wantRootChildShape := rawChild.rawShape
+	wantNestedChildShape := rawGrandchild.rawShape
+	stack := glrStack{entries: []stackEntry{newStackEntryNode(4, liveParent)}, cacheEntries: true, byteOffset: 1}
+
+	if reason := parser.checkpointTransientScratch([]glrStack{stack}, &scratch, arena); reason != ParseStopNone {
+		t.Fatalf("checkpointTransientScratch() = %q, want no stop", reason)
+	}
+	materializedRoot := stackEntryNode(stack.entries[0])
+	if materializedRoot == nil || scratch.transientParents.owns(materializedRoot) {
+		t.Fatalf("live stack parent was not materialized: %p", materializedRoot)
+	}
+	rootShape, ok := arena.rawShapeForRef(materializedRoot.rawShape)
+	if !ok {
+		t.Fatalf("materialized root raw shape %d was not retained", materializedRoot.rawShape)
+	}
+	rootRawChildren := arena.rawShapeChildren(rootShape)
+	if len(rootRawChildren) != 1 {
+		t.Fatalf("materialized root raw child count = %d, want 1", len(rootRawChildren))
+	}
+	if got := rootRawChildren[0].shapeRef(); got != wantRootChildShape {
+		t.Fatalf("materialized root child shape ref = %d, want captured ref %d", got, wantRootChildShape)
+	}
+	materializedRawChild := stackEntryNode(rootRawChildren[0].entry())
+	if materializedRawChild == nil || scratch.transientParents.owns(materializedRawChild) {
+		t.Fatalf("root raw-shape child still points into transient storage: %p", materializedRawChild)
+	}
+	childShape, ok := arena.rawShapeForRef(rootRawChildren[0].shapeRef())
+	if !ok {
+		t.Fatalf("materialized raw child shape %d was not retained", rootRawChildren[0].shapeRef())
+	}
+	childRawChildren := arena.rawShapeChildren(childShape)
+	if len(childRawChildren) != 1 {
+		t.Fatalf("materialized nested raw child count = %d, want 1", len(childRawChildren))
+	}
+	if got := childRawChildren[0].shapeRef(); got != wantNestedChildShape {
+		t.Fatalf("materialized nested child shape ref = %d, want captured ref %d", got, wantNestedChildShape)
+	}
+	materializedRawGrandchild := stackEntryNode(childRawChildren[0].entry())
+	if materializedRawGrandchild == nil || scratch.transientParents.owns(materializedRawGrandchild) {
+		t.Fatalf("nested raw-shape child still points into transient storage: %p", materializedRawGrandchild)
+	}
+
+	// Reuse every source slot immediately. The retained sidecar graph must keep
+	// pointing at its arena clones rather than observing these new reductions.
+	reusedGrandchild := scratch.transientParents.allocParent(arena, Symbol(90), true, nil, 0, false)
+	reusedChild := scratch.transientParents.allocParent(arena, Symbol(91), true, nil, 0, false)
+	reusedRoot := scratch.transientParents.allocParent(arena, Symbol(92), true, nil, 0, false)
+	if reusedGrandchild != rawGrandchild || reusedChild != rawChild || reusedRoot != liveParent {
+		t.Fatalf("transient parent addresses were not reused in allocation order: got (%p,%p,%p) want (%p,%p,%p)",
+			reusedGrandchild, reusedChild, reusedRoot, rawGrandchild, rawChild, liveParent)
+	}
+	if got := stackEntryNode(rootRawChildren[0].entry()); got != materializedRawChild {
+		t.Fatalf("root raw-shape child pointer changed after slab reuse: got %p, want %p", got, materializedRawChild)
+	} else if got.symbol != Symbol(3) {
+		t.Fatalf("root raw-shape child symbol after slab reuse = %d, want 3", got.symbol)
+	}
+	if got := stackEntryNode(childRawChildren[0].entry()); got != materializedRawGrandchild {
+		t.Fatalf("nested raw-shape child pointer changed after slab reuse: got %p, want %p", got, materializedRawGrandchild)
+	} else if got.symbol != Symbol(2) {
+		t.Fatalf("nested raw-shape child symbol after slab reuse = %d, want 2", got.symbol)
 	}
 }

@@ -222,6 +222,8 @@ type Parser struct {
 	parseRuntimeMemoryBaselineBytes  uint64
 	parseRuntimeMemoryBaselineSys    uint64
 	parseRuntimeMemoryPoll           uint64
+	parseMemoryBudgetDiag            parseMemoryBudgetDiagnostic
+	parseMemoryBudgetDiagActive      bool
 	denseLimit                       int
 	smallBase                        int
 	smallLookup                      [][]smallActionPair
@@ -1429,6 +1431,8 @@ func resetSnippetParser(parser *Parser) {
 	parser.parseRuntimeMemoryBaselineBytes = 0
 	parser.parseRuntimeMemoryBaselineSys = 0
 	parser.parseRuntimeMemoryPoll = 0
+	parser.parseMemoryBudgetDiag = parseMemoryBudgetDiagnostic{}
+	parser.parseMemoryBudgetDiagActive = false
 	// Release *Node refs so the arenas from the last incremental parse can be
 	// collected by the GC. Without this, a Parser sitting in a sync.Pool keeps
 	// its reuseCursor.topLevel/*Node alive, preventing arena reclamation.
@@ -3029,6 +3033,7 @@ func captureParseArenaStats(parseRuntime *ParseRuntime, arena *nodeArena, arenaB
 	arena.finalizeCompactFullLeafDropped()
 	arena.finalizePendingParentDropped()
 	parseRuntime.ArenaBytesAllocated = arena.allocatedBytes
+	parseRuntime.ArenaBaselineBytes = arena.budgetBaselineBytes
 	parseRuntime.MemoryBudgetBytes = arena.budgetBytes
 	parseRuntime.ExternalScannerCheckpointRecords = arena.externalScannerCheckpointRecords
 	parseRuntime.ExternalScannerCheckpointSlotsAllocated = arena.externalScannerCheckpointSlotsAllocated()
@@ -3114,8 +3119,16 @@ func captureParseScratchStats(parseRuntime *ParseRuntime, scratch *parserScratch
 		return false
 	}
 	parseRuntime.ScratchBytesAllocated = scratch.allocatedBytes()
+	parseRuntime.ScratchBaselineBytes = scratch.budgetBaselineBytes
 	parseRuntime.EntryScratchBytesAllocated = scratch.entries.allocatedBytes
 	parseRuntime.GSSBytesAllocated = scratch.gss.allocatedBytes
+	parseRuntime.GSSBaselineBytes = scratch.gssBaselineBytes
+	parseRuntime.GSSSlabCount = len(scratch.gss.slabs)
+	parseRuntime.GSSNodesUsed = scratch.gss.usedTotal
+	parseRuntime.GSSNodesCapacity = scratch.gss.capacityNodes()
+	parseRuntime.GSSDemotions = scratch.gss.demotions
+	parseRuntime.GSSNodesDemoted = scratch.gss.nodesDemoted
+	parseRuntime.TransientScratchCheckpoints = scratch.transientCheckpoints
 	parseRuntime.TransientChildSlicesAllocated = scratch.transientChildren.slicesAllocated
 	parseRuntime.TransientChildPointersAllocated = scratch.transientChildren.pointersAllocated
 	parseRuntime.TransientChildSlicesMaterialized = scratch.transientChildren.slicesMaterialized
@@ -3816,6 +3829,15 @@ func (p *Parser) guardRealShiftGap(source []byte, s *glrStack, tok Token) bool {
 // merged; distinct alternatives are preserved.
 func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass, timing *incrementalParseTiming, maxStacksOverride int, maxNodesOverride int, maxMergePerKeyOverride int, deterministicExternalConflicts bool) *Tree {
 	parseStart := time.Now()
+	previousMemoryBudgetDiag := p.parseMemoryBudgetDiag
+	previousMemoryBudgetDiagActive := p.parseMemoryBudgetDiagActive
+	p.parseMemoryBudgetDiag = parseMemoryBudgetDiagnostic{}
+	p.parseMemoryBudgetDiagActive = true
+	memoryBudgetDiag := &p.parseMemoryBudgetDiag
+	defer func() {
+		p.parseMemoryBudgetDiag = previousMemoryBudgetDiag
+		p.parseMemoryBudgetDiagActive = previousMemoryBudgetDiagActive
+	}()
 	endParseBudget := p.enterParseBudgetAt(parseStart)
 	defer endParseBudget()
 	parseFlags := p.applyParseModeFlags(source, reuse, oldTree, arenaClass)
@@ -4290,6 +4312,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		captureArenaStats()
 		captureScratchStats()
 		parseRuntime.StopReason = parseStopReasonWithTokenSourceEOF(stopReason, tokenSourceEOFEarly)
+		parseRuntime.MemoryBudgetStopSource = memoryBudgetDiag.source
+		parseRuntime.RuntimeHeapGrowthBytes = memoryBudgetDiag.runtimeHeapGrowthBytes
+		parseRuntime.RuntimeSysGrowthBytes = memoryBudgetDiag.runtimeSysGrowthBytes
 		parseRuntime.CRecoveryEnteredErrorState = p.crecoveryEnteredErrorState
 		parseRuntime.CRecoveryDroppedErrorForClean = p.crecoveryDroppedErrorForClean
 		recordParseRuntimeLoopStats(&parseRuntime, scratch, iterationsUsed, nodeCount, peakStackDepth, maxStacksSeen, singleStackIterations, multiStackIterations, singleStackTokens, multiStackTokens)
@@ -4485,6 +4510,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if stacks[0].dead {
 				return finalize(stacks, ParseStopNoStacksAlive)
 			}
+			p.tryDemoteSingleLinearGSS(stacks, scratch)
 			scratch.gss.singleStackMode = true
 			clearParseStackEntryCaches(stacks)
 		} else {
@@ -4508,6 +4534,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		} else {
 			multiStackIterations++
 		}
+		if reason := p.checkpointTransientScratch(stacks, scratch, arena); resultMaterializationShouldStop(reason) {
+			return finalize(stacks, reason)
+		}
 
 		// Safety: if the primary stack has grown beyond the depth cap,
 		// or we've allocated too many nodes, return what we have.
@@ -4525,7 +4554,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			return finalize(stacks, reason)
 		}
 		if scratch.budgetExhausted() {
-			return finalize(stacks, ParseStopMemoryBudget)
+			return finalize(stacks, p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch))
 		}
 
 		p.updateParserStateTokenSource(ts, stacks, scratch)
@@ -5528,7 +5557,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			return finalize(stacks, reason)
 		}
 		if scratch.budgetExhausted() {
-			return finalize(stacks, ParseStopMemoryBudget)
+			return finalize(stacks, p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch))
 		}
 
 		if numStacks > 1 && retryPass && allParseStacksDead(stacks) {
@@ -5926,7 +5955,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						return finalize(accepted, reason)
 					}
 					if scratch.budgetExhausted() {
-						return finalize(accepted, ParseStopMemoryBudget)
+						return finalize(accepted, p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch))
 					}
 					// Faithful C recovery port: ts_parser__accept rebuilds the
 					// root around trailing extras before the tree competes.
@@ -5995,6 +6024,11 @@ func (p *Parser) configureParseScratch(scratch *parserScratch, source []byte, re
 	scratch.merge.beginEquivEpoch()
 	scratch.merge.ensureMergeHotCaches()
 	transientReduceParents := p.shouldUseTransientReduceParents(source, reuse, oldTree, arenaClass)
+	if p.transientReduceChildren && transientReduceParents {
+		scratch.transientCheckpointBytes = parseTransientReduceCheckpointBytes()
+	} else {
+		scratch.transientCheckpointBytes = 0
+	}
 	p.transientReduceScratchNoAlias = p.transientReduceChildren && transientReduceParents && parseShouldUseTransientReduceScratchNoAlias(len(source))
 	scratch.merge.pythonShallow = p.language != nil && p.language.Name == "python" && len(source) <= 512*1024
 	if deferParentLinks {
@@ -6199,6 +6233,7 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 			return result
 		}
 		scratch.gss.singleStackMode = true
+		p.tryDemoteSingleLinearGSS(stacks, scratch)
 		clearParseStackEntryCaches(stacks)
 		return result
 	}
@@ -6207,7 +6242,7 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 		return result
 	}
 	if scratch.budgetExhausted() {
-		result.stop(ParseStopMemoryBudget, false)
+		result.stop(p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch), false)
 		return result
 	}
 	if allParseStacksDead(stacks) {
@@ -6252,10 +6287,70 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 	}
 	if len(result.stacks) > 1 {
 		p.promotePrimaryStack(result.stacks)
+	} else {
+		p.tryDemoteSingleLinearGSS(result.stacks, scratch)
 	}
 	scratch.gss.singleStackMode = len(result.stacks) == 1
 	clearParseStackEntryCaches(result.stacks)
 	return result
+}
+
+func (p *Parser) tryDemoteSingleLinearGSS(stacks []glrStack, scratch *parserScratch) bool {
+	if p == nil || scratch == nil || len(stacks) != 1 || stacks[0].dead ||
+		len(p.pendingForkStacks) != 0 || len(p.pendingFrontierForkStacks) != 0 {
+		return false
+	}
+	depth := stacks[0].depth()
+	if !stacks[0].demoteLinearGSS(&scratch.entries) {
+		return false
+	}
+	scratch.gss.demotions++
+	scratch.gss.nodesDemoted += uint64(depth)
+	return true
+}
+
+func (p *Parser) checkpointTransientScratch(stacks []glrStack, scratch *parserScratch, arena *nodeArena) ParseStopReason {
+	if p == nil || scratch == nil || arena == nil || scratch.transientCheckpointBytes <= 0 ||
+		// Pending-parent payloads can retain transient nodes outside the
+		// semantic/raw-shape graph walked below. Keep the checkpoint opt-in
+		// disabled for that independently experimental representation until its
+		// payload graph is materialized at the recycle boundary too.
+		p.pendingFullParents ||
+		len(stacks) != 1 || stacks[0].dead || stacks[0].gss.head != nil || len(stacks[0].entries) == 0 ||
+		len(p.pendingForkStacks) != 0 || len(p.pendingFrontierForkStacks) != 0 ||
+		scratch.reduce.transientParents == nil || scratch.reduce.transientChildren == nil ||
+		scratch.audit.enabled || scratch.audit.equivEnabled || p.crecoveryEnteredErrorState {
+		return ParseStopNone
+	}
+	used := scratch.transientParents.usedBytes() + scratch.transientChildren.usedBytes()
+	if used < scratch.transientCheckpointBytes {
+		return ParseStopNone
+	}
+	if reason := materializeTransientParentEntriesForRecycle(
+		stacks[0].entries,
+		arena,
+		scratch.reduce.transientParents,
+		scratch.reduce.transientChildren,
+		p,
+	); resultMaterializationShouldStop(reason) {
+		return reason
+	}
+	// The materialized live stack, including its raw-shape-only sidecar graph,
+	// no longer references transient slabs. Bump merge epochs and clear recovery
+	// memo state before slab addresses are reused, so pointer-keyed results from
+	// discarded alternatives cannot alias freshly allocated transient parents.
+	scratch.merge.beginEquivEpoch()
+	if p.cNodeMemo != nil {
+		clear(p.cNodeMemo)
+	}
+	if cap(scratch.tmpEntries) > 0 {
+		clear(scratch.tmpEntries[:cap(scratch.tmpEntries)])
+		scratch.tmpEntries = scratch.tmpEntries[:0]
+	}
+	scratch.transientParents.recycleForParse()
+	scratch.transientChildren.recycleForParse()
+	scratch.transientCheckpoints++
+	return ParseStopNone
 }
 
 func (p *Parser) traceCRecoverPrepareStacks(label string, stacks []glrStack) {

@@ -113,6 +113,39 @@ func TestParserScratchResetRecomputesAllocatedBytes(t *testing.T) {
 	}
 }
 
+func TestCaptureParseScratchStatsReportsGSSShape(t *testing.T) {
+	var scratch parserScratch
+	first := scratch.gss.allocNode(stackEntry{state: 1}, nil, 1)
+	scratch.setBudget(64 << 20)
+	second := scratch.gss.allocNode(stackEntry{state: 2}, first, 2)
+	if second == nil {
+		t.Fatal("second GSS node is nil")
+	}
+
+	var runtime ParseRuntime
+	if !captureParseScratchStats(&runtime, &scratch, nil, nil) {
+		t.Fatal("captureParseScratchStats returned false")
+	}
+	if got, want := runtime.ScratchBaselineBytes, scratch.budgetBaselineBytes; got != want {
+		t.Fatalf("ScratchBaselineBytes = %d, want %d", got, want)
+	}
+	if got, want := runtime.GSSBaselineBytes, scratch.gssBaselineBytes; got != want {
+		t.Fatalf("GSSBaselineBytes = %d, want %d", got, want)
+	}
+	if got, want := runtime.GSSSlabCount, len(scratch.gss.slabs); got != want {
+		t.Fatalf("GSSSlabCount = %d, want %d", got, want)
+	}
+	if got, want := runtime.GSSNodesUsed, 2; got != want {
+		t.Fatalf("GSSNodesUsed = %d, want %d", got, want)
+	}
+	if got, want := runtime.GSSNodesCapacity, scratch.gss.capacityNodes(); got != want {
+		t.Fatalf("GSSNodesCapacity = %d, want %d", got, want)
+	}
+	if runtime.GSSNodesCapacity < runtime.GSSNodesUsed {
+		t.Fatalf("GSSNodesCapacity = %d, used = %d", runtime.GSSNodesCapacity, runtime.GSSNodesUsed)
+	}
+}
+
 // TestNodeLinksCapClearedOnRelease verifies that releaseParserScratch clears
 // the full capacity of nodeLinks, not just [:len].
 //

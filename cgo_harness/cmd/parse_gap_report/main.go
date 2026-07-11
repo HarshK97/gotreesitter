@@ -131,6 +131,7 @@ type paritySummary struct {
 
 type runtimeStats struct {
 	StopReason                            string        `json:"stop_reason,omitempty"`
+	StopDiagnostic                        string        `json:"stop_diagnostic,omitempty"`
 	SourceLen                             uint32        `json:"source_len,omitempty"`
 	ExpectedEOFByte                       uint32        `json:"expected_eof_byte,omitempty"`
 	RootEndByte                           uint32        `json:"root_end_byte,omitempty"`
@@ -143,6 +144,21 @@ type runtimeStats struct {
 	StackDepthLimit                       int           `json:"stack_depth_limit,omitempty"`
 	NodeLimit                             int           `json:"node_limit,omitempty"`
 	MemoryBudgetBytes                     int64         `json:"memory_budget_bytes,omitempty"`
+	MemoryBudgetStopSource                string        `json:"memory_budget_stop_source,omitempty"`
+	RuntimeHeapGrowthB                    uint64        `json:"runtime_heap_growth_b,omitempty"`
+	RuntimeSysGrowthB                     uint64        `json:"runtime_sys_growth_b,omitempty"`
+	ScratchAllocatedB                     int64         `json:"scratch_allocated_b,omitempty"`
+	ScratchBaselineB                      int64         `json:"scratch_baseline_b,omitempty"`
+	EntryScratchAllocatedB                int64         `json:"entry_scratch_allocated_b,omitempty"`
+	GSSScratchAllocatedB                  int64         `json:"gss_scratch_allocated_b,omitempty"`
+	GSSScratchBaselineB                   int64         `json:"gss_scratch_baseline_b,omitempty"`
+	MergeScratchAllocatedB                int64         `json:"merge_scratch_allocated_b,omitempty"`
+	GSSSlabCount                          int           `json:"gss_slab_count,omitempty"`
+	GSSNodesUsed                          int           `json:"gss_nodes_used,omitempty"`
+	GSSNodesCapacity                      int           `json:"gss_nodes_capacity,omitempty"`
+	GSSDemotions                          uint64        `json:"gss_demotions,omitempty"`
+	GSSNodesDemoted                       uint64        `json:"gss_nodes_demoted,omitempty"`
+	TransientScratchCheckpoints           uint64        `json:"transient_scratch_checkpoints,omitempty"`
 	Tokens                                uint64        `json:"tokens,omitempty"`
 	Iterations                            int           `json:"iterations,omitempty"`
 	NodesAllocated                        int           `json:"nodes_allocated,omitempty"`
@@ -153,6 +169,8 @@ type runtimeStats struct {
 	MultiStackIterations                  int           `json:"multi_stack_iterations,omitempty"`
 	SingleStackTokens                     uint64        `json:"single_stack_tokens,omitempty"`
 	MultiStackTokens                      uint64        `json:"multi_stack_tokens,omitempty"`
+	SingleStackGSSNodes                   uint64        `json:"single_stack_gss_nodes,omitempty"`
+	MultiStackGSSNodes                    uint64        `json:"multi_stack_gss_nodes,omitempty"`
 	MergeStacksIn                         uint64        `json:"merge_stacks_in,omitempty"`
 	MergeStacksOut                        uint64        `json:"merge_stacks_out,omitempty"`
 	MergeSlotsUsed                        uint64        `json:"merge_slots_used,omitempty"`
@@ -160,6 +178,12 @@ type runtimeStats struct {
 	GlobalCullStacksOut                   uint64        `json:"global_cull_stacks_out,omitempty"`
 	ArenaLiveB                            int64         `json:"arena_live_b,omitempty"`
 	ArenaCapacityB                        int64         `json:"arena_capacity_b,omitempty"`
+	ArenaBaselineB                        int64         `json:"arena_baseline_b,omitempty"`
+	ArenaNodeB                            int64         `json:"arena_node_b,omitempty"`
+	ArenaChildB                           int64         `json:"arena_child_b,omitempty"`
+	ArenaFieldB                           int64         `json:"arena_field_b,omitempty"`
+	ArenaRawShapeB                        int64         `json:"arena_raw_shape_b,omitempty"`
+	ArenaRawShapeChildB                   int64         `json:"arena_raw_shape_child_b,omitempty"`
 	ArenaCapacityWaste                    uint64        `json:"arena_capacity_waste,omitempty"`
 	FinalChildRangeDrains                 uint64        `json:"final_child_range_drains,omitempty"`
 	PublicNodesMaterialized               uint64        `json:"public_nodes_materialized,omitempty"`
@@ -173,6 +197,12 @@ type runtimeStats struct {
 	ResultNormalizeRootNS                 int64         `json:"result_normalize_root_start_ns,omitempty"`
 	TransientParentMatNS                  int64         `json:"transient_parent_materialize_ns,omitempty"`
 	TransientChildMatNS                   int64         `json:"transient_child_materialize_ns,omitempty"`
+	TransientChildSlicesAllocated         uint64        `json:"transient_child_slices_allocated,omitempty"`
+	TransientChildPointersAllocated       uint64        `json:"transient_child_pointers_allocated,omitempty"`
+	TransientChildSlicesMaterialized      uint64        `json:"transient_child_slices_materialized,omitempty"`
+	TransientChildPointersMaterialized    uint64        `json:"transient_child_pointers_materialized,omitempty"`
+	TransientParentNodesAllocated         uint64        `json:"transient_parent_nodes_allocated,omitempty"`
+	TransientParentNodesMaterialized      uint64        `json:"transient_parent_nodes_materialized,omitempty"`
 	NormalizationNS                       int64         `json:"normalization_ns,omitempty"`
 	NormalizationPassesRun                uint64        `json:"normalization_passes_run,omitempty"`
 	NormalizationNodes                    uint64        `json:"normalization_nodes_visited,omitempty"`
@@ -1134,16 +1164,19 @@ func statsFromGoTree(r *runner, tree *gotreesitter.Tree, queryCaptures, cursorNo
 	}
 	stats.CursorNodes = cursorNodes
 	if breakdown, ok := tree.ArenaBreakdown(); ok {
-		stats.ArenaLiveB = breakdown.NodeStructBytesAllocated +
+		stats.ArenaNodeB = breakdown.NodeStructBytesAllocated +
 			breakdown.NoTreeNodeBytesAllocated +
 			breakdown.CompactFullLeafBytesAllocated +
 			breakdown.PendingParentBytesAllocated +
 			breakdown.PendingChildEntryBytesAllocated +
-			breakdown.FinalChildSidecarBytesAllocated +
-			breakdown.ChildSliceBytesAllocated +
-			breakdown.FieldIDBytesAllocated +
-			breakdown.FieldSourceBytesAllocated
+			breakdown.FinalChildSidecarBytesAllocated
+		stats.ArenaChildB = breakdown.ChildSliceBytesAllocated
+		stats.ArenaFieldB = breakdown.FieldIDBytesAllocated + breakdown.FieldSourceBytesAllocated
+		stats.ArenaRawShapeB = breakdown.RawShapeBytesAllocated
+		stats.ArenaRawShapeChildB = breakdown.RawShapeChildBytesAllocated
+		stats.ArenaLiveB = arenaLiveBytes(breakdown, rt.ExternalScannerCheckpointBytesAllocated)
 		stats.ArenaCapacityWaste = breakdown.NodeCapacityWaste
+		stats.MergeScratchAllocatedB = breakdown.MergeScratchBytesAllocated
 	}
 	perf := gotreesitter.PerfCountersSnapshot()
 	stats.DenseFallbacks = perf.DenseMutationDrains
@@ -1231,6 +1264,25 @@ func statsFromGoTree(r *runner, tree *gotreesitter.Tree, queryCaptures, cursorNo
 		stats.HotEquivStates = hotEquivStatesFromRuntime(rt.EquivStateStats, r.hotShapeLimit)
 	}
 	return stats
+}
+
+// arenaLiveBytes preserves the report schema's historical name, but these
+// inputs are allocated arena-capacity bytes rather than root-reachable live
+// bytes. The total must stay equal to ParseRuntime.ArenaBytesAllocated.
+func arenaLiveBytes(b gotreesitter.ArenaBreakdown, externalScannerCheckpointBytes int64) int64 {
+	return b.NodeStructBytesAllocated +
+		b.NoTreeNodeBytesAllocated +
+		b.CompactFullLeafBytesAllocated +
+		b.PendingParentBytesAllocated +
+		b.PendingChildEntryBytesAllocated +
+		b.RawShapeBytesAllocated +
+		b.RawShapeChildBytesAllocated +
+		b.FinalChildSidecarBytesAllocated +
+		b.CompactCheckpointLeafBytesAllocated +
+		b.ChildSliceBytesAllocated +
+		b.FieldIDBytesAllocated +
+		b.FieldSourceBytesAllocated +
+		externalScannerCheckpointBytes
 }
 
 func hotGLRStatesFromProfile(lang *gotreesitter.Language, stats []gotreesitter.AmbiguityStat) []hotGLRState {
@@ -1472,6 +1524,20 @@ func statsFromRuntime(rt gotreesitter.ParseRuntime) runtimeStats {
 		StackDepthLimit:                       rt.StackDepthLimit,
 		NodeLimit:                             rt.NodeLimit,
 		MemoryBudgetBytes:                     rt.MemoryBudgetBytes,
+		MemoryBudgetStopSource:                rt.MemoryBudgetStopSource,
+		RuntimeHeapGrowthB:                    rt.RuntimeHeapGrowthBytes,
+		RuntimeSysGrowthB:                     rt.RuntimeSysGrowthBytes,
+		ScratchAllocatedB:                     rt.ScratchBytesAllocated,
+		ScratchBaselineB:                      rt.ScratchBaselineBytes,
+		EntryScratchAllocatedB:                rt.EntryScratchBytesAllocated,
+		GSSScratchAllocatedB:                  rt.GSSBytesAllocated,
+		GSSScratchBaselineB:                   rt.GSSBaselineBytes,
+		GSSSlabCount:                          rt.GSSSlabCount,
+		GSSNodesUsed:                          rt.GSSNodesUsed,
+		GSSNodesCapacity:                      rt.GSSNodesCapacity,
+		GSSDemotions:                          rt.GSSDemotions,
+		GSSNodesDemoted:                       rt.GSSNodesDemoted,
+		TransientScratchCheckpoints:           rt.TransientScratchCheckpoints,
 		Tokens:                                rt.TokensConsumed,
 		Iterations:                            rt.Iterations,
 		NodesAllocated:                        rt.NodesAllocated,
@@ -1482,12 +1548,15 @@ func statsFromRuntime(rt gotreesitter.ParseRuntime) runtimeStats {
 		MultiStackIterations:                  rt.MultiStackIterations,
 		SingleStackTokens:                     rt.SingleStackTokens,
 		MultiStackTokens:                      rt.MultiStackTokens,
+		SingleStackGSSNodes:                   rt.SingleStackGSSNodes,
+		MultiStackGSSNodes:                    rt.MultiStackGSSNodes,
 		MergeStacksIn:                         rt.MergeStacksIn,
 		MergeStacksOut:                        rt.MergeStacksOut,
 		MergeSlotsUsed:                        rt.MergeSlotsUsed,
 		GlobalCullStacksIn:                    rt.GlobalCullStacksIn,
 		GlobalCullStacksOut:                   rt.GlobalCullStacksOut,
 		ArenaCapacityB:                        rt.ArenaBytesAllocated,
+		ArenaBaselineB:                        rt.ArenaBaselineBytes,
 		FinalChildRangeDrains:                 rt.FinalChildRefMaterializedChildren,
 		PublicNodesMaterialized:               publicMaterialized,
 		ResultSelectionNS:                     rt.ResultSelectionNanos,
@@ -1499,6 +1568,12 @@ func statsFromRuntime(rt gotreesitter.ParseRuntime) runtimeStats {
 		ResultNormalizeRootNS:                 rt.ResultNormalizeRootStartNanos,
 		TransientParentMatNS:                  rt.TransientParentMaterializationNanos,
 		TransientChildMatNS:                   rt.TransientChildMaterializationNanos,
+		TransientChildSlicesAllocated:         rt.TransientChildSlicesAllocated,
+		TransientChildPointersAllocated:       rt.TransientChildPointersAllocated,
+		TransientChildSlicesMaterialized:      rt.TransientChildSlicesMaterialized,
+		TransientChildPointersMaterialized:    rt.TransientChildPointersMaterialized,
+		TransientParentNodesAllocated:         rt.TransientParentNodesAllocated,
+		TransientParentNodesMaterialized:      rt.TransientParentNodesMaterialized,
 		NormalizationNS:                       rt.NormalizationNanos,
 		NormalizationPassesRun:                rt.NormalizationPassesRun,
 		NormalizationNodes:                    rt.NormalizationNodesVisited,
@@ -1569,6 +1644,9 @@ func statsFromRuntime(rt gotreesitter.ParseRuntime) runtimeStats {
 		ReduceChildNoAlias:                    pathStatsFromRuntime(rt.ReduceChildNoAlias),
 		ReduceChildScratchGeneral:             pathStatsFromRuntime(rt.ReduceChildScratchGeneral),
 		ReduceChildScratchNoAlias:             pathStatsFromRuntime(rt.ReduceChildScratchNoAlias),
+	}
+	if rt.StopDiagnosticCaptured {
+		stats.StopDiagnostic = rt.Summary()
 	}
 	if reduceTiming := rt.ReduceTiming; reduceTiming != nil {
 		stats.ReduceRangeNS = reduceTiming.RangeNanos

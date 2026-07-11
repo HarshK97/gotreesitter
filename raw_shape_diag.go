@@ -200,7 +200,8 @@ func rawShapeDiagChildAt(arena *nodeArena, entry stackEntry, i int) (stackEntry,
 		if i < 0 || i >= len(children) {
 			return stackEntry{}, false
 		}
-		return children[i].entry, stackEntryHasNode(children[i].entry)
+		child := children[i].entry()
+		return child, stackEntryHasNode(child)
 	}
 	if node := stackEntryNode(entry); node != nil {
 		return nodeChildEntryAtNoMaterialize(node, i)

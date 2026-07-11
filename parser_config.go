@@ -136,6 +136,18 @@ func parseTransientReduceParentsEnabled() bool {
 	return parseTransientReduceEnabled("GOT_TRANSIENT_REDUCE_PARENTS")
 }
 
+func parseTransientReduceCheckpointBytes() int64 {
+	raw := strings.TrimSpace(os.Getenv("GOT_TRANSIENT_REDUCE_CHECKPOINT_MB"))
+	if raw == "" {
+		return 0
+	}
+	mb, err := strconv.Atoi(raw)
+	if err != nil || mb <= 0 {
+		return 0
+	}
+	return int64(mb) << 20
+}
+
 func parseCompactFullLeavesEnabled() bool {
 	_, enabled := parseCompactFullLeavesEnv()
 	return enabled

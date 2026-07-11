@@ -5,7 +5,18 @@ import "runtime"
 const (
 	parseRuntimeMemoryPollMask       = 15
 	parseRuntimeMemoryMinSourceBytes = 64 * 1024
+
+	parseMemoryBudgetStopSourceArena       = "arena"
+	parseMemoryBudgetStopSourceScratch     = "scratch"
+	parseMemoryBudgetStopSourceRuntimeHeap = "runtime_heap"
+	parseMemoryBudgetStopSourceRuntimeSys  = "runtime_sys"
 )
+
+type parseMemoryBudgetDiagnostic struct {
+	source                 string
+	runtimeHeapGrowthBytes uint64
+	runtimeSysGrowthBytes  uint64
+}
 
 type runtimeMemoryBudgetRestore struct {
 	parser      *Parser
@@ -68,16 +79,35 @@ func (p *Parser) runtimeMemoryBudgetStopReasonNow() ParseStopReason {
 	}
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
-	if stats.HeapAlloc <= p.parseRuntimeMemoryBaselineBytes {
-		if stats.Sys <= p.parseRuntimeMemoryBaselineSys {
-			return ParseStopNone
-		}
-	} else if int64(stats.HeapAlloc-p.parseRuntimeMemoryBaselineBytes) >= p.parseRuntimeMemoryBudgetBytes {
-		return ParseStopMemoryBudget
+	heapGrowth := runtimeMemoryGrowth(stats.HeapAlloc, p.parseRuntimeMemoryBaselineBytes)
+	sysGrowth := runtimeMemoryGrowth(stats.Sys, p.parseRuntimeMemoryBaselineSys)
+	budget := uint64(p.parseRuntimeMemoryBudgetBytes)
+	if heapGrowth >= budget {
+		return p.noteRuntimeMemoryBudgetStop(parseMemoryBudgetStopSourceRuntimeHeap, heapGrowth, sysGrowth)
 	}
-	if stats.Sys > p.parseRuntimeMemoryBaselineSys &&
-		int64(stats.Sys-p.parseRuntimeMemoryBaselineSys) >= p.parseRuntimeMemoryBudgetBytes {
-		return ParseStopMemoryBudget
+	if sysGrowth >= budget {
+		return p.noteRuntimeMemoryBudgetStop(parseMemoryBudgetStopSourceRuntimeSys, heapGrowth, sysGrowth)
 	}
 	return ParseStopNone
+}
+
+func runtimeMemoryGrowth(current, baseline uint64) uint64 {
+	if current <= baseline {
+		return 0
+	}
+	return current - baseline
+}
+
+func (p *Parser) noteMemoryBudgetStop(source string) ParseStopReason {
+	return p.noteRuntimeMemoryBudgetStop(source, 0, 0)
+}
+
+func (p *Parser) noteRuntimeMemoryBudgetStop(source string, heapGrowth, sysGrowth uint64) ParseStopReason {
+	if p == nil || !p.parseMemoryBudgetDiagActive || p.parseMemoryBudgetDiag.source != "" {
+		return ParseStopMemoryBudget
+	}
+	p.parseMemoryBudgetDiag.source = source
+	p.parseMemoryBudgetDiag.runtimeHeapGrowthBytes = heapGrowth
+	p.parseMemoryBudgetDiag.runtimeSysGrowthBytes = sysGrowth
+	return ParseStopMemoryBudget
 }

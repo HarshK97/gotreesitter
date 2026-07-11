@@ -3,21 +3,24 @@ package gotreesitter
 import "sync"
 
 type parserScratch struct {
-	merge               glrMergeScratch
-	entries             glrEntryScratch
-	gss                 gssScratch
-	audit               runtimeAudit
-	tmpEntries          []stackEntry
-	glrStates           []StateID
-	nodeLinks           []*Node
-	stackPick           []int
-	stackKeep           []bool
-	stackCull           []stackCullKey
-	reduce              reduceBuildScratch
-	transientChildren   transientChildScratch
-	transientParents    transientParentScratch
-	budgetBytes         int64
-	budgetBaselineBytes int64
+	merge                    glrMergeScratch
+	entries                  glrEntryScratch
+	gss                      gssScratch
+	audit                    runtimeAudit
+	tmpEntries               []stackEntry
+	glrStates                []StateID
+	nodeLinks                []*Node
+	stackPick                []int
+	stackKeep                []bool
+	stackCull                []stackCullKey
+	reduce                   reduceBuildScratch
+	transientChildren        transientChildScratch
+	transientParents         transientParentScratch
+	transientCheckpointBytes int64
+	transientCheckpoints     uint64
+	budgetBytes              int64
+	budgetBaselineBytes      int64
+	gssBaselineBytes         int64
 }
 
 var parserScratchPool = sync.Pool{
@@ -36,6 +39,7 @@ func (s *parserScratch) setBudget(bytes int64) {
 	}
 	s.budgetBytes = bytes
 	s.budgetBaselineBytes = s.allocatedBytes()
+	s.gssBaselineBytes = s.gss.allocatedBytes
 	s.merge.budgetBytes = bytes
 }
 
@@ -45,6 +49,7 @@ func (s *parserScratch) clearBudget() {
 	}
 	s.budgetBytes = 0
 	s.budgetBaselineBytes = 0
+	s.gssBaselineBytes = 0
 	s.merge.budgetBytes = 0
 }
 
@@ -131,6 +136,8 @@ func releaseParserScratch(s *parserScratch, skipGSSClear bool) {
 	}
 	s.transientChildren.resetForRelease()
 	s.transientParents.resetForRelease()
+	s.transientCheckpointBytes = 0
+	s.transientCheckpoints = 0
 	s.entries.reset()
 	s.gss.skipClear = skipGSSClear
 	s.gss.audit = nil

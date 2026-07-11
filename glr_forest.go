@@ -1193,7 +1193,7 @@ func forestRawShapesExactEqualRec(arena *nodeArena, a, b *rawShape, depth int) f
 		return forestRawUnknown
 	}
 	for i := range aChildren {
-		ae, be := aChildren[i].entry, bChildren[i].entry
+		ae, be := aChildren[i].entry(), bChildren[i].entry()
 		if stackEntryHasNode(ae) != stackEntryHasNode(be) {
 			return forestRawDifferent
 		}
@@ -1205,7 +1205,7 @@ func forestRawShapesExactEqualRec(arena *nodeArena, a, b *rawShape, depth int) f
 			stackEntryNodeEndByte(ae) != stackEntryNodeEndByte(be) {
 			return forestRawDifferent
 		}
-		aRef, bRef := aChildren[i].shapeRef, bChildren[i].shapeRef
+		aRef, bRef := aChildren[i].shapeRef(), bChildren[i].shapeRef()
 		if aRef == 0 || bRef == 0 {
 			if aRef != bRef {
 				return forestRawUnknown
@@ -1849,11 +1849,10 @@ func replaceRawShapeChildEntry(arena *nodeArena, parent, oldChild, newChild *Nod
 	}
 	children := arena.rawShapeChildren(shape)
 	for i := range children {
-		if stackEntryNode(children[i].entry) != oldChild {
+		if stackEntryNode(children[i].entry()) != oldChild {
 			continue
 		}
-		children[i].entry = newStackEntryNode(newChild.parseState, newChild)
-		children[i].shapeRef = newChild.rawShape
+		children[i] = newRawShapeChild(newStackEntryNode(newChild.parseState, newChild))
 	}
 }
 

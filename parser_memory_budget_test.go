@@ -36,12 +36,24 @@ func TestParserMemoryBudgetStopsParse(t *testing.T) {
 	if rt.MemoryBudgetBytes <= 0 {
 		t.Fatalf("MemoryBudgetBytes = %d, want > 0", rt.MemoryBudgetBytes)
 	}
-	if rt.ArenaBytesAllocated < rt.MemoryBudgetBytes && rt.ScratchBytesAllocated < rt.MemoryBudgetBytes {
-		t.Fatalf(
-			"budget stop without exhausted region: arena=%d scratch=%d budget=%d",
-			rt.ArenaBytesAllocated,
-			rt.ScratchBytesAllocated,
-			rt.MemoryBudgetBytes,
-		)
+	switch rt.MemoryBudgetStopSource {
+	case "arena":
+		if growth := rt.ArenaBytesAllocated - rt.ArenaBaselineBytes; growth < rt.MemoryBudgetBytes {
+			t.Fatalf("arena growth = %d, want >= budget %d (runtime=%s)", growth, rt.MemoryBudgetBytes, rt.Summary())
+		}
+	case "scratch":
+		if growth := rt.ScratchBytesAllocated - rt.ScratchBaselineBytes; growth < rt.MemoryBudgetBytes {
+			t.Fatalf("scratch growth = %d, want >= budget %d (runtime=%s)", growth, rt.MemoryBudgetBytes, rt.Summary())
+		}
+	case "runtime_heap":
+		if rt.RuntimeHeapGrowthBytes < uint64(rt.MemoryBudgetBytes) {
+			t.Fatalf("runtime heap growth = %d, want >= budget %d (runtime=%s)", rt.RuntimeHeapGrowthBytes, rt.MemoryBudgetBytes, rt.Summary())
+		}
+	case "runtime_sys":
+		if rt.RuntimeSysGrowthBytes < uint64(rt.MemoryBudgetBytes) {
+			t.Fatalf("runtime sys growth = %d, want >= budget %d (runtime=%s)", rt.RuntimeSysGrowthBytes, rt.MemoryBudgetBytes, rt.Summary())
+		}
+	default:
+		t.Fatalf("MemoryBudgetStopSource = %q, want exact attribution (runtime=%s)", rt.MemoryBudgetStopSource, rt.Summary())
 	}
 }

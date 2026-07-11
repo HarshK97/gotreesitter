@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "testing"
+import (
+	"testing"
+	"unsafe"
+)
 
 func TestGSSStackPushCloneAndTruncate(t *testing.T) {
 	var scratch gssScratch
@@ -789,6 +792,70 @@ func TestGSSStacksEqualWithLazyHashes(t *testing.T) {
 	}
 }
 
+func TestGLRStackDemoteLinearGSSPreservesStackAndCanRefork(t *testing.T) {
+	var entryScratch glrEntryScratch
+	var gssScratch gssScratch
+	stack := newGLRStackWithScratch(1, &entryScratch)
+	first := &Node{symbol: 11, startByte: 0, endByte: 3}
+	second := &Node{symbol: 12, startByte: 3, endByte: 7}
+	stack.push(2, first, &entryScratch, &gssScratch)
+	stack.push(3, second, &entryScratch, &gssScratch)
+	stack.score = 9
+	stack.recoverabilityKnown = true
+	stack.mayRecover = true
+	stack.ensureGSS(&gssScratch)
+	stack.entries = nil
+
+	if !stack.demoteLinearGSS(&entryScratch) {
+		t.Fatal("demoteLinearGSS() = false, want true for a linear GSS")
+	}
+	if stack.gss.head != nil {
+		t.Fatalf("GSS head after demotion = %p, want nil", stack.gss.head)
+	}
+	if got, want := len(stack.entries), 3; got != want {
+		t.Fatalf("entry depth after demotion = %d, want %d", got, want)
+	}
+	if got, want := stack.entries[0].state, StateID(1); got != want {
+		t.Fatalf("root state after demotion = %d, want %d", got, want)
+	}
+	if got := stackEntryNode(stack.entries[1]); got != first {
+		t.Fatalf("first node after demotion = %p, want %p", got, first)
+	}
+	if got := stackEntryNode(stack.entries[2]); got != second {
+		t.Fatalf("second node after demotion = %p, want %p", got, second)
+	}
+	if got, want := stack.byteOffset, uint32(7); got != want {
+		t.Fatalf("byte offset after demotion = %d, want %d", got, want)
+	}
+	if stack.score != 9 || !stack.recoverabilityKnown || !stack.mayRecover {
+		t.Fatalf("stack metadata changed after demotion: %+v", stack)
+	}
+
+	usedBeforeRefork := gssScratch.usedTotal
+	clone := stack.cloneWithScratch(&gssScratch)
+	if stack.gss.head == nil || clone.gss.head != stack.gss.head {
+		t.Fatalf("refork did not restore shared GSS head: stack=%p clone=%p", stack.gss.head, clone.gss.head)
+	}
+	if got, want := gssScratch.usedTotal-usedBeforeRefork, len(stack.entries); got != want {
+		t.Fatalf("refork GSS allocations = %d, want stack depth %d", got, want)
+	}
+}
+
+func TestGLRStackDemoteLinearGSSRejectsPackedLinks(t *testing.T) {
+	var scratch gssScratch
+	stack := glrStack{gss: buildGSSStack([]stackEntry{{state: 1}, {state: 2}, {state: 3}}, &scratch)}
+	packed := stack.gss.head.prev
+	packed.extraLinks = append(packed.extraLinks, gssMainLink{entry: stackEntry{state: 4}})
+	originalHead := stack.gss.head
+
+	if stack.demoteLinearGSS(nil) {
+		t.Fatal("demoteLinearGSS() = true, want false for a deep packed link")
+	}
+	if stack.gss.head != originalHead || stack.entries != nil {
+		t.Fatalf("packed stack mutated on rejected demotion: head=%p entries=%d", stack.gss.head, len(stack.entries))
+	}
+}
+
 func TestGSSScratchResetClearsTouchedSlots(t *testing.T) {
 	var scratch gssScratch
 	node := &Node{endByte: 1}
@@ -812,5 +879,41 @@ func TestGSSScratchResetClearsTouchedSlots(t *testing.T) {
 		if slab.data[i].prev != nil {
 			t.Fatalf("slab.data[%d].prev after reset = %p, want nil", i, slab.data[i].prev)
 		}
+	}
+}
+
+func TestGSSScratchOverflowSlabGrowthBounded(t *testing.T) {
+	elemSize := int(unsafe.Sizeof(gssNode{}))
+	ceiling := maxOverflowSlabGrowthBytes / elemSize
+	if ceiling <= 0 {
+		t.Fatalf("invalid GSS slab ceiling %d", ceiling)
+	}
+
+	var scratch gssScratch
+	// Start close enough to the ceiling that the old lastCap*2 policy would
+	// immediately overshoot it, while keeping the test allocation modest.
+	scratch.initialCap = ceiling * 3 / 4
+	total := scratch.initialCap + ceiling*3
+	var prev *gssNode
+	for depth := 1; depth <= total; depth++ {
+		prev = scratch.allocNode(stackEntry{state: 1}, prev, depth)
+	}
+
+	if len(scratch.slabs) < 3 {
+		t.Fatalf("expected multiple GSS overflow slabs, got %d", len(scratch.slabs))
+	}
+	capacity := 0
+	for i := range scratch.slabs {
+		slabCap := len(scratch.slabs[i].data)
+		capacity += slabCap
+		if i > 0 && slabCap > ceiling {
+			t.Fatalf("GSS overflow slab %d capacity=%d exceeds ceiling=%d", i, slabCap, ceiling)
+		}
+	}
+	if waste := capacity - scratch.usedTotal; waste > ceiling {
+		t.Fatalf("GSS capacity waste=%d nodes exceeds one ceiling slab=%d", waste, ceiling)
+	}
+	if got, want := scratch.allocatedBytes, gssNodeBytesForCap(capacity); got != want {
+		t.Fatalf("GSS allocatedBytes=%d, want capacity bytes=%d", got, want)
 	}
 }

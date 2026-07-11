@@ -7,9 +7,12 @@ type rawShapeRef uint32
 const rawShapeRefIndexBits = 20
 
 type rawShape struct {
+	// Keep the 8-byte fields first. This holds the sidecar header to 24 bytes
+	// on 64-bit targets instead of 32 bytes lost to alignment padding; large
+	// GLR parses retain millions of these headers.
+	childRange   rawShapeChildRange
 	symbol       Symbol
 	productionID uint16
-	childRange   rawShapeChildRange
 	childCount   uint16
 	// contentHash is a bottom-up structural fingerprint over (symbol,
 	// productionID, childCount) plus every child's (symbol, span, and — when
@@ -56,8 +59,37 @@ type rawShape struct {
 }
 
 type rawShapeChild struct {
-	entry    stackEntry
-	shapeRef rawShapeRef
+	// packedEntry.state stores the per-edge rawShapeRef snapshot. Raw-shape
+	// consumers inspect payload identity/kind but never LR state; packing the
+	// two uint32 values into the existing stackEntry slot keeps this record at
+	// 16 bytes instead of 24. entry() restores a meaningful current state for
+	// callers so the packed representation cannot escape accidentally.
+	packedEntry stackEntry
+}
+
+func newRawShapeChild(entry stackEntry) rawShapeChild {
+	ref := stackEntryRawShapeRef(entry)
+	entry.state = StateID(ref)
+	return rawShapeChild{packedEntry: entry}
+}
+
+func (c rawShapeChild) entry() stackEntry {
+	entry := c.packedEntry
+	entry.state = stackEntryNodeParseState(entry)
+	return entry
+}
+
+func (c rawShapeChild) shapeRef() rawShapeRef {
+	return rawShapeRef(c.packedEntry.state)
+}
+
+func (c *rawShapeChild) retargetNodePreservingShapeRef(node *Node) {
+	if c == nil || node == nil || stackEntryNode(c.packedEntry) == nil {
+		return
+	}
+	ref := c.packedEntry.state
+	setStackEntryNode(&c.packedEntry, node)
+	c.packedEntry.state = ref
 }
 
 type rawShapeSlab struct {
@@ -163,6 +195,17 @@ func (a *nodeArena) rawShapeChildren(shape *rawShape) []rawShapeChild {
 	return slab.data[start : start+count]
 }
 
+func (a *nodeArena) rawShapeChildrenForNode(node *Node) []rawShapeChild {
+	if a == nil || node == nil || node.rawShape == 0 {
+		return nil
+	}
+	shape, ok := a.rawShapeForRef(node.rawShape)
+	if !ok {
+		return nil
+	}
+	return a.rawShapeChildren(shape)
+}
+
 func (p *Parser) captureRawShape(arena *nodeArena, symbol Symbol, productionID uint16, entries []stackEntry, start, end int) rawShapeRef {
 	if arena == nil || start < 0 || end < start || end > len(entries) {
 		return 0
@@ -197,10 +240,7 @@ func (p *Parser) captureRawShape(arena *nodeArena, symbol Symbol, productionID u
 		if !stackEntryHasNode(entry) {
 			continue
 		}
-		children[out] = rawShapeChild{
-			entry:    entry,
-			shapeRef: stackEntryRawShapeRef(entry),
-		}
+		children[out] = newRawShapeChild(entry)
 		out++
 	}
 	shape.childRange = childRange
@@ -227,7 +267,7 @@ func rawShapeComputeContentHash(arena *nodeArena, symbol Symbol, productionID ui
 	h ^= uint64(childCount)
 	h *= gssHashPrime
 	for i := range children {
-		entry := children[i].entry
+		entry := children[i].entry()
 		if !stackEntryHasNode(entry) {
 			h ^= gssNilNodeSentinel
 			h *= gssHashPrime
@@ -237,7 +277,7 @@ func rawShapeComputeContentHash(arena *nodeArena, symbol Symbol, productionID ui
 		h *= gssHashPrime
 		h ^= (uint64(stackEntryNodeStartByte(entry)) << 32) | uint64(stackEntryNodeEndByte(entry))
 		h *= gssHashPrime
-		if ref := children[i].shapeRef; ref != 0 && arena != nil {
+		if ref := children[i].shapeRef(); ref != 0 && arena != nil {
 			if childShape, ok := arena.rawShapeForRef(ref); ok {
 				h ^= childShape.contentHash
 				h *= gssHashPrime

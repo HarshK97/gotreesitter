@@ -3761,19 +3761,19 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 		var ok bool
 		children, ok = p.cAppendVisibleSpliceUntil(children, n, childLimit)
 		if !ok {
-			return ParseStopMemoryBudget
+			return p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceArena)
 		}
 	}
 	var ok bool
 	children, ok = cAppendNodeSliceUntil(children, cand.children, childLimit)
 	if !ok {
-		return ParseStopMemoryBudget
+		return p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceArena)
 	}
 	for _, n := range nodes[rootIdx+1:] {
 		var ok bool
 		children, ok = p.cAppendVisibleSpliceUntil(children, n, childLimit)
 		if !ok {
-			return ParseStopMemoryBudget
+			return p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceArena)
 		}
 	}
 	if arena != nil && arena.budgetBytes > 0 {
@@ -3782,7 +3782,7 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 			used = 0
 		}
 		if used+childSliceBytesForCap(len(children)) >= arena.budgetBytes {
-			return ParseStopMemoryBudget
+			return p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceArena)
 		}
 	}
 	children = cloneNodeSliceInArena(arena, children)

@@ -34,8 +34,8 @@ type Node struct {
 	equivVersion      uint32
 	dynamicPrecedence int32
 	childIndex        int32
-	symbol            Symbol
 	rawShape          rawShapeRef
+	symbol            Symbol
 	productionID      uint16
 	flags             nodeFlags
 	dirtyFlag         bool
@@ -784,12 +784,24 @@ type ParseRuntime struct {
 	StackDepthLimit                               int
 	NodeLimit                                     int
 	MemoryBudgetBytes                             int64
+	MemoryBudgetStopSource                        string // First budget guard: arena, scratch, runtime_heap, or runtime_sys.
+	RuntimeHeapGrowthBytes                        uint64
+	RuntimeSysGrowthBytes                         uint64
 	Iterations                                    int
 	NodesAllocated                                int
 	ArenaBytesAllocated                           int64
+	ArenaBaselineBytes                            int64
 	ScratchBytesAllocated                         int64
+	ScratchBaselineBytes                          int64
 	EntryScratchBytesAllocated                    int64
 	GSSBytesAllocated                             int64
+	GSSBaselineBytes                              int64
+	GSSSlabCount                                  int
+	GSSNodesUsed                                  int
+	GSSNodesCapacity                              int
+	GSSDemotions                                  uint64
+	GSSNodesDemoted                               uint64
+	TransientScratchCheckpoints                   uint64
 	PeakStackDepth                                int
 	MaxStacksSeen                                 int
 	SingleStackIterations                         int
@@ -1187,6 +1199,15 @@ func (rt ParseRuntime) Summary() string {
 		rt.ScratchBytesAllocated, rt.EntryScratchBytesAllocated, rt.GSSBytesAllocated, rt.MemoryBudgetBytes,
 		rt.PeakStackDepth, rt.StackDepthLimit, rt.MaxStacksSeen,
 	)
+	if rt.MemoryBudgetStopSource != "" {
+		s += fmt.Sprintf(
+			" memoryBudgetStop={source=%s arenaBaseline=%d heapGrowth=%d sysGrowth=%d}",
+			rt.MemoryBudgetStopSource,
+			rt.ArenaBaselineBytes,
+			rt.RuntimeHeapGrowthBytes,
+			rt.RuntimeSysGrowthBytes,
+		)
+	}
 	if rt.StopDiagnosticCaptured {
 		s += fmt.Sprintf(
 			" stopDiag={cRecovery=%v recoverAction=%v stackState=%d stackByte=%d stackDepth=%d token=%d[%d:%d] noLookahead=%v root=%q[%d:%d] rootErr=%v firstError=%v[%d:%d]",
