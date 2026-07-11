@@ -1766,8 +1766,10 @@ func (p *Parser) peekZeroWidthExternalShiftForState(tok Token, state StateID, ts
 	if p == nil || p.language == nil || p.language.Name != "javascript" || tok.NoLookahead || tok.StartByte == tok.EndByte || p.language.ExternalScanner == nil {
 		return Token{}, ParseAction{}, false
 	}
-	dts, ok := ts.(*dfaTokenSource)
-	if !ok || dts == nil || !dts.CanRelexFromTokenStart(tok) {
+	stateful, statefulOK := ts.(parserStateTokenSource)
+	relexer, relexerOK := ts.(tokenSourceRelexer)
+	dts := underlyingDFATokenSource(ts)
+	if !statefulOK || !relexerOK || dts == nil || !relexer.CanRelexFromTokenStart(tok) {
 		return Token{}, ParseAction{}, false
 	}
 
@@ -1793,13 +1795,13 @@ func (p *Parser) peekZeroWidthExternalShiftForState(tok Token, state StateID, ts
 
 	snapshot := dts.snapshotRelexState()
 	savedState := dts.state
-	savedGLRStates := append([]StateID(nil), dts.glrStates...)
-	dts.state = state
-	dts.glrStates = nil
-	next, relexed := dts.RelexFromTokenStart(tok)
+	savedGLRStates := dts.glrStates
+	stateful.SetParserState(state)
+	stateful.SetGLRStates(nil)
+	next, relexed := relexer.RelexFromTokenStart(tok)
 	snapshot.restore(dts)
 	dts.state = savedState
-	dts.glrStates = append(dts.glrStates[:0], savedGLRStates...)
+	dts.glrStates = savedGLRStates
 
 	if !relexed || !next.ExternalScannerToken || next.StartByte != tok.StartByte || next.EndByte != next.StartByte {
 		return Token{}, ParseAction{}, false
@@ -6684,11 +6686,11 @@ func (p *Parser) tryRelexSingleParserState(tok Token, state StateID, ts TokenSou
 	}
 	snapshot := dts.snapshotRelexState()
 	savedState := dts.state
-	savedGLRStates := append([]StateID(nil), dts.glrStates...)
+	savedGLRStates := dts.glrStates
 	restoreRejectedProbe := func() {
 		snapshot.restore(dts)
 		dts.state = savedState
-		dts.glrStates = append(dts.glrStates[:0], savedGLRStates...)
+		dts.glrStates = savedGLRStates
 		p.updateCurrentRelexParserStateTokenSource(ts, stacks, scratch)
 	}
 	stateful.SetParserState(state)

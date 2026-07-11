@@ -186,6 +186,83 @@ func TestTryRelexSingleParserStateAcceptsOnlyZeroWidthExternalShift(t *testing.T
 	}
 }
 
+func TestPeekZeroWidthExternalShiftForStateWorksThroughSetIncludedRanges(t *testing.T) {
+	lang := &Language{
+		Name:            "javascript",
+		StateCount:      4,
+		SymbolCount:     4,
+		TokenCount:      4,
+		SymbolNames:     []string{"end", "original", "candidate", "_automatic_semicolon"},
+		ExternalSymbols: []Symbol{3},
+		ExternalScanner: zeroWidthRelexExternalScanner{},
+		LexStates: []LexState{
+			{
+				Default: -1,
+				EOF:     -1,
+				Transitions: []LexTransition{
+					{Lo: 'x', Hi: 'x', NextState: 1},
+				},
+			},
+			{AcceptToken: 2, Default: -1, EOF: -1},
+		},
+		LexModes: []LexMode{{LexState: 0}, {LexState: 0}, {LexState: 0}, {LexState: 0}},
+		ParseTable: [][]uint16{
+			make([]uint16, 4),
+			make([]uint16, 4),
+			make([]uint16, 4),
+			make([]uint16, 4),
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 3}}},
+		},
+	}
+	lang.ParseTable[1][3] = 1
+	p := NewParser(lang)
+	p.SetIncludedRanges([]Range{{StartByte: 0, EndByte: 2, EndPoint: Point{Column: 2}}})
+	externalValidByState := make([][]uint16, 4)
+	externalValidByState[1] = []uint16{0}
+	dts := newDFATokenSourceDirect(NewLexer(lang.LexStates, []byte("xx")), lang, p.lookupActionIndex, nil, externalValidByState, nil)
+	dts.lexer.pos = 2
+	dts.lexer.col = 2
+	dts.state = 2
+	dts.glrStates = []StateID{1, 2}
+	ts := p.wrapIncludedRanges(dts)
+	original := Token{
+		Symbol:     1,
+		StartByte:  1,
+		EndByte:    2,
+		StartPoint: Point{Column: 1},
+		EndPoint:   Point{Column: 2},
+	}
+
+	got, action, ok := p.peekZeroWidthExternalShiftForState(original, 1, ts)
+	if !ok {
+		t.Fatal("zero-width external shift was rejected through the included-range wrapper")
+	}
+	if got.Symbol != 3 || got.StartByte != 1 || got.EndByte != 1 {
+		t.Fatalf("relexed token = %+v, want zero-width external symbol 3 at byte 1", got)
+	}
+	if action.Type != ParseActionShift || action.State != 3 {
+		t.Fatalf("action = %+v, want shift to state 3", action)
+	}
+	if dts.state != 2 || len(dts.glrStates) != 2 || dts.glrStates[0] != 1 || dts.glrStates[1] != 2 {
+		t.Fatalf("parser/GLR states = %d/%v, want restored 2/[1 2]", dts.state, dts.glrStates)
+	}
+	if dts.lexer.pos != 2 || dts.lexer.col != 2 {
+		t.Fatalf("lexer = pos %d col %d, want restored 2/2", dts.lexer.pos, dts.lexer.col)
+	}
+	allocs := testing.AllocsPerRun(100, func() {
+		p.peekZeroWidthExternalShiftForState(original, 1, ts)
+	})
+	// Scanner snapshot/relex setup currently accounts for two allocations. The
+	// saved GLR frontier must remain a slice-header restore, not add save and
+	// restore copies to this per-version probe.
+	if allocs > 2 {
+		t.Fatalf("included-range zero-width probe allocations = %.1f, want at most 2", allocs)
+	}
+}
+
 func TestTryRelexSingleParserStateRejectedCandidateRestoresDFATransaction(t *testing.T) {
 	lang := &Language{
 		Name:            "javascript",
