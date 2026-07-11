@@ -251,6 +251,68 @@ func applyConflictFrontierReduceForTest(parser *Parser, stack *glrStack, reduce 
 	}
 }
 
+func TestConflictReduceFrontierScratchRetainsExactFlags(t *testing.T) {
+	if conflictReduceFrontierTableSize&(conflictReduceFrontierTableSize-1) != 0 {
+		t.Fatalf("table size %d is not a power of two", conflictReduceFrontierTableSize)
+	}
+	if conflictReduceFrontierTableSize < maxConflictReduceFrontierActions+1 {
+		t.Fatalf("table size %d cannot hold the %d-action frontier plus its seed", conflictReduceFrontierTableSize, maxConflictReduceFrontierActions)
+	}
+	var scratch conflictReduceFrontierScratch
+	scratch.begin()
+	if got, want := len(scratch.entries), conflictReduceFrontierTableSize; got != want {
+		t.Fatalf("entries = %d, want %d", got, want)
+	}
+
+	keys := make([]frontierReduceKey, maxConflictReduceFrontierActions+1)
+	for i := range keys {
+		keys[i] = frontierReduceKey{
+			state:             StateID(i),
+			byteOffset:        uint32(i * 7),
+			depth:             i + 1,
+			symbol:            Symbol(i * 3),
+			childCount:        uint8(i),
+			productionID:      uint16(i * 5),
+			dynamicPrecedence: int16(i - 128),
+			actionState:       StateID(i * 11),
+		}
+		scratch.add(keys[i], conflictReduceFrontierSeen)
+		if i%2 == 0 {
+			scratch.add(keys[i], conflictReduceFrontierForked)
+		}
+	}
+	for i, key := range keys {
+		if !scratch.has(key, conflictReduceFrontierSeen) {
+			t.Fatalf("key %d lost seen flag", i)
+		}
+		if got, want := scratch.has(key, conflictReduceFrontierForked), i%2 == 0; got != want {
+			t.Fatalf("key %d forked flag = %t, want %t", i, got, want)
+		}
+	}
+
+	oldGeneration := scratch.generation
+	scratch.begin()
+	if scratch.generation == oldGeneration {
+		t.Fatal("begin did not advance generation")
+	}
+	for i, key := range keys {
+		if scratch.has(key, conflictReduceFrontierSeen) || scratch.has(key, conflictReduceFrontierForked) {
+			t.Fatalf("key %d survived generation reset", i)
+		}
+	}
+
+	allocs := testing.AllocsPerRun(100, func() {
+		scratch.begin()
+		scratch.add(keys[0], conflictReduceFrontierSeen)
+		if !scratch.has(keys[0], conflictReduceFrontierSeen) {
+			panic("frontier scratch lost warm entry")
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("warm frontier scratch allocations = %g, want 0", allocs)
+	}
+}
+
 func TestConflictReduceFrontierCompletesSingleShift(t *testing.T) {
 	lang := buildConflictReduceFrontierLanguage(4, []ParseAction{
 		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
@@ -354,6 +416,35 @@ func TestConflictReduceFrontierDegenerateSameReduceShiftCompletes(t *testing.T) 
 	}
 	if got, want := nextBranchOrder, uint64(100); got != want {
 		t.Fatalf("next branch order = %d, want %d", got, want)
+	}
+}
+
+func TestConflictReduceFrontierSkipsRepetitionShiftAfterCFold(t *testing.T) {
+	lang := buildConflictReduceFrontierLanguage(6, []ParseAction{
+		{Type: ParseActionReduce, Symbol: 3, ChildCount: 1},
+		{Type: ParseActionShift, State: 3, Repetition: true},
+	})
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	var entries glrEntryScratch
+	var gss gssScratch
+	var tmp []stackEntry
+	nodeCount := 0
+	anyReduced := false
+	trackChildErrors := false
+
+	stack := newConflictReduceFrontierStackForTest(parser, arena, &entries, &gss)
+	tok := Token{Symbol: 2, StartByte: 1, EndByte: 2, StartPoint: Point{Column: 1}, EndPoint: Point{Column: 2}}
+	reduce := lang.ParseActions[6].Actions[0]
+	seed := applyConflictFrontierReduceForTest(parser, &stack, reduce, tok, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, &trackChildErrors)
+	seed.skipRepetitionShift = true
+
+	parser.completeConflictReduceFrontier(nil, &stack, tok, seed, 1, 0, nil, &anyReduced, &nodeCount, arena, &entries, &gss, &tmp, false, &trackChildErrors)
+	if stack.dead || stack.shifted {
+		t.Fatalf("C repetition fold branch dead=%t shifted=%t, want live reduce branch", stack.dead, stack.shifted)
+	}
+	if got := len(parser.pendingFrontierForkStacks); got != 0 {
+		t.Fatalf("pending frontier forks = %d, want 0", got)
 	}
 }
 

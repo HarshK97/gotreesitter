@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unsafe"
 )
 
 type reduceChainSignature struct {
@@ -586,13 +587,109 @@ func (p *Parser) applyActionWithReduceChain(source []byte, s *glrStack, act Pars
 }
 
 type conflictReduceFrontierSeed struct {
-	action      ParseAction
-	beforeState StateID
-	beforeByte  uint32
-	beforeDepth int
-	afterState  StateID
-	afterByte   uint32
-	afterDepth  int
+	action              ParseAction
+	beforeState         StateID
+	beforeByte          uint32
+	beforeDepth         int
+	afterState          StateID
+	afterByte           uint32
+	afterDepth          int
+	skipRepetitionShift bool
+}
+
+const (
+	maxConflictReduceFrontierActions = 256
+	conflictReduceFrontierTableSize  = 512
+)
+
+const (
+	conflictReduceFrontierSeen = uint8(1 << iota)
+	conflictReduceFrontierForked
+)
+
+type frontierReduceKey struct {
+	state             StateID
+	byteOffset        uint32
+	depth             int
+	symbol            Symbol
+	childCount        uint8
+	productionID      uint16
+	dynamicPrecedence int16
+	actionState       StateID
+}
+
+type conflictReduceFrontierEntry struct {
+	key        frontierReduceKey
+	generation uint32
+	flags      uint8
+}
+
+type conflictReduceFrontierScratch struct {
+	entries    []conflictReduceFrontierEntry
+	generation uint32
+}
+
+func (s *conflictReduceFrontierScratch) begin() {
+	if len(s.entries) != conflictReduceFrontierTableSize {
+		s.entries = make([]conflictReduceFrontierEntry, conflictReduceFrontierTableSize)
+	}
+	if s.generation == ^uint32(0) {
+		clear(s.entries)
+		s.generation = 0
+	}
+	s.generation++
+}
+
+func (s *conflictReduceFrontierScratch) allocatedBytes() int64 {
+	return int64(cap(s.entries)) * int64(unsafe.Sizeof(conflictReduceFrontierEntry{}))
+}
+
+func frontierReduceKeyHash(key frontierReduceKey) uint64 {
+	h := uint64(key.state) ^ uint64(key.byteOffset)<<16
+	h ^= uint64(uint32(key.depth)) * 0x9e3779b185ebca87
+	h ^= uint64(key.symbol)<<32 | uint64(key.childCount)
+	h ^= uint64(key.productionID)<<17 | uint64(uint16(key.dynamicPrecedence))
+	h ^= uint64(key.actionState) * 0xc2b2ae3d27d4eb4f
+	h ^= h >> 33
+	h *= 0xff51afd7ed558ccd
+	h ^= h >> 33
+	return h
+}
+
+func (s *conflictReduceFrontierScratch) entry(key frontierReduceKey, create bool) *conflictReduceFrontierEntry {
+	if s == nil || len(s.entries) == 0 || s.generation == 0 {
+		return nil
+	}
+	mask := len(s.entries) - 1
+	index := int(frontierReduceKeyHash(key)) & mask
+	for probes := 0; probes < len(s.entries); probes++ {
+		entry := &s.entries[index]
+		if entry.generation != s.generation {
+			if !create {
+				return nil
+			}
+			entry.key = key
+			entry.generation = s.generation
+			entry.flags = 0
+			return entry
+		}
+		if entry.key == key {
+			return entry
+		}
+		index = (index + 1) & mask
+	}
+	return nil
+}
+
+func (s *conflictReduceFrontierScratch) has(key frontierReduceKey, flag uint8) bool {
+	entry := s.entry(key, false)
+	return entry != nil && entry.flags&flag != 0
+}
+
+func (s *conflictReduceFrontierScratch) add(key frontierReduceKey, flag uint8) {
+	if entry := s.entry(key, true); entry != nil {
+		entry.flags |= flag
+	}
 }
 
 func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok Token, seed conflictReduceFrontierSeed, liveStacks, maxLiveStacks int, allocBranchOrder func() uint64, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) {
@@ -628,19 +725,16 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 	if seed.afterState != s.top().state || seed.afterByte != s.byteOffset || seed.afterDepth != s.depth() {
 		return
 	}
-	const maxConflictFrontierActions = 256
-	type frontierReduceKey struct {
-		state             StateID
-		byteOffset        uint32
-		depth             int
-		symbol            Symbol
-		childCount        uint8
-		productionID      uint16
-		dynamicPrecedence int16
-		actionState       StateID
+	var localFrontier conflictReduceFrontierScratch
+	frontier := &localFrontier
+	if gssScratch != nil {
+		frontier = &gssScratch.frontier
 	}
-	seenReduces := make(map[frontierReduceKey]struct{}, 4)
-	terminalForkedReduces := make(map[frontierReduceKey]struct{}, 4)
+	beforeFrontierBytes := frontier.allocatedBytes()
+	frontier.begin()
+	if gssScratch != nil {
+		gssScratch.allocatedBytes += frontier.allocatedBytes() - beforeFrontierBytes
+	}
 	seedKey := frontierReduceKey{
 		state:             seed.beforeState,
 		byteOffset:        seed.beforeByte,
@@ -663,7 +757,7 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 			actionState:       act.State,
 		}
 	}
-	seenReduces[seedKey] = struct{}{}
+	frontier.add(seedKey, conflictReduceFrontierSeen)
 	completeMultiActionFrontier := func(actions []ParseAction, step int) bool {
 		if len(actions) != 2 {
 			return false
@@ -699,11 +793,12 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 				fork.branchOrder = allocBranchOrder()
 			}
 			p.pendingFrontierForkStacks = append(p.pendingFrontierForkStacks, fork)
-			terminalForkedReduces[currentReduceKey] = struct{}{}
+			frontier.add(currentReduceKey, conflictReduceFrontierForked)
 		}
 		terminalAppended := false
-		_, terminalAlreadyForked := terminalForkedReduces[currentReduceKey]
-		if !terminalAlreadyForked && frontierForkAdmissible() {
+		terminalAlreadyForked := frontier.has(currentReduceKey, conflictReduceFrontierForked)
+		skipTerminalFork := seed.skipRepetitionShift && terminal.Type == ParseActionShift && terminal.Repetition
+		if !skipTerminalFork && !terminalAlreadyForked && frontierForkAdmissible() {
 			switch terminal.Type {
 			case ParseActionShift:
 				fork := s.cloneWithScratch(gssScratch)
@@ -735,20 +830,20 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 				return false
 			}
 		}
-		if _, ok := seenReduces[currentReduceKey]; ok {
+		if frontier.has(currentReduceKey, conflictReduceFrontierSeen) {
 			if terminalAppended || terminalAlreadyForked {
 				s.dead = true
 				return true
 			}
 			return false
 		}
-		seenReduces[currentReduceKey] = struct{}{}
+		frontier.add(currentReduceKey, conflictReduceFrontierSeen)
 		p.noteStopActionDiagnostic("conflict-frontier-fork-reduce", s, tok, reduce, len(actions), true, step, 0, false)
 		p.applyReduceActionDispatch(source, s, reduce, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 		p.noteStopActionResult(s)
 		return true
 	}
-	for step := 1; step <= maxConflictFrontierActions; step++ {
+	for step := 1; step <= maxConflictReduceFrontierActions; step++ {
 		if s.dead || s.accepted || s.shifted || s.cPaused || s.depth() == 0 {
 			return
 		}
@@ -767,10 +862,10 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 		switch act.Type {
 		case ParseActionReduce:
 			key := makeReduceKey(act)
-			if _, ok := seenReduces[key]; ok {
+			if frontier.has(key, conflictReduceFrontierSeen) {
 				return
 			}
-			seenReduces[key] = struct{}{}
+			frontier.add(key, conflictReduceFrontierSeen)
 			p.noteStopActionDiagnostic("conflict-frontier-reduce", s, tok, act, 1, true, step, 0, false)
 			p.applyReduceActionDispatch(source, s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 			p.noteStopActionResult(s)

@@ -2,11 +2,10 @@
 
 package grammars
 
-import gotreesitter "github.com/odvcencio/gotreesitter"
+import (
+	"unicode"
 
-// External token indexes for the uxntal grammar.
-const (
-	uxntalTokComment = 0
+	gotreesitter "github.com/odvcencio/gotreesitter"
 )
 
 const (
@@ -21,9 +20,9 @@ func (UxntalExternalScanner) Destroy(payload any)                   {}
 func (UxntalExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (UxntalExternalScanner) Deserialize(payload any, buf []byte)   {}
 
-func (UxntalExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
-	if !uxntalValid(validSymbols, uxntalTokComment) {
-		return false
+func (UxntalExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, _ []bool) bool {
+	for unicode.IsSpace(lexer.Lookahead()) {
+		lexer.Advance(false)
 	}
 	if lexer.Lookahead() != '(' {
 		return false
@@ -34,7 +33,7 @@ func (UxntalExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer
 	for depth > 0 {
 		ch := lexer.Lookahead()
 		if ch == 0 {
-			break
+			return false
 		}
 		if ch == '(' {
 			depth++
@@ -48,5 +47,3 @@ func (UxntalExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer
 	lexer.SetResultSymbol(uxntalSymComment)
 	return true
 }
-
-func uxntalValid(vs []bool, i int) bool { return i < len(vs) && vs[i] }

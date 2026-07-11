@@ -73,6 +73,7 @@ type gssScratch struct {
 	demotions         uint64
 	nodesDemoted      uint64
 	audit             *runtimeAudit
+	frontier          conflictReduceFrontierScratch
 }
 
 type gssNodeSlab struct {
@@ -459,7 +460,7 @@ func (s *gssScratch) reset() {
 		s.demotions = 0
 		s.nodesDemoted = 0
 		s.skipClear = false
-		s.allocatedBytes = 0
+		s.allocatedBytes = s.frontier.allocatedBytes()
 		s.audit = nil
 		return
 	}
@@ -560,5 +561,6 @@ func (s *gssScratch) recomputeAllocatedBytes() {
 	for i := range s.slabs {
 		total += gssNodeBytesForCap(len(s.slabs[i].data))
 	}
+	total += s.frontier.allocatedBytes()
 	s.allocatedBytes = total
 }

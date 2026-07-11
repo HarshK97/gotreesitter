@@ -159,6 +159,17 @@ var cRepetitionSkipOptOut = map[string]bool{
 	"c_sharp": true,
 }
 
+// cRecoveredRepetitionSkipOptOut lists languages whose current recovery
+// selection still depends on retaining the repetition-shift arm during or
+// after recovery. Clean lineages continue to use C's repetition fold.
+var cRecoveredRepetitionSkipOptOut = map[string]bool{
+	// PHP's recovered Symfony TransportResponseTrait and TwigExtensionTest
+	// witnesses change from their C-matching clean result to ERROR when the
+	// fold is applied after recovery. Keep the exception recovery-scoped so
+	// clean PHP lists retain the linear C path.
+	"php": true,
+}
+
 // cRepetitionSkipConflictChoice is C tree-sitter's dispatch rule for
 // {repetition SHIFT, REDUCE} conflicts, applied engine-wide. C's action loop
 // (parser-repos/tree-sitter/lib/src/parser.c:1625, ts_parser__advance)
@@ -175,18 +186,20 @@ var cRepetitionSkipOptOut = map[string]bool{
 //
 // Scope: exactly-1 REDUCE + exactly-1 repetition SHIFT (the shape where C's
 // semantics are a deterministic fold; with 2+ REDUCEs C itself forks the
-// reduce versions, which our GLR fork approximates). Gated per-stack to
-// error-free lineages by the sticky !cEverErrored discipline established by
-// the recovery-wreckage counterexamples from the original php comma-list fold:
-// inside recovery wreckage the repetition-shift arm can be the branch the
-// recovery cost competition keeps, so wreckage-descended lineages keep the
-// ordinary GLR fork. Exact recovered-lineage exceptions are handled by
+// reduce versions, which our GLR fork approximates). The C rule also applies
+// while a version is recovering. Languages with a confirmed Go recovery-
+// selection counterexample are held out by cRecoveredRepetitionSkipOptOut;
+// exact recovered-lineage exceptions are handled by
 // conflictPolicyChoiceForDispatch before this global rule.
 func (p *Parser) cRepetitionSkipConflictChoice(s *glrStack, actions []ParseAction) (ParseAction, bool) {
 	if p == nil || p.language == nil || cRepetitionSkipOptOut[p.language.Name] {
 		return ParseAction{}, false
 	}
-	if s == nil || s.cRec != nil || s.cPaused || s.cRecoverMissingGroup != nil || s.cEverErrored {
+	if s == nil {
+		return ParseAction{}, false
+	}
+	if cRecoveredRepetitionSkipOptOut[p.language.Name] &&
+		(s.cRec != nil || s.cPaused || s.cRecoverMissingGroup != nil || s.cEverErrored) {
 		return ParseAction{}, false
 	}
 	return singleReduceAgainstRepetitionShiftConflictChoice(actions)
