@@ -179,7 +179,7 @@ func TestConflictPolicyChoiceRejectsGeneratedRepeatBoundaryPolicyMiss(t *testing
 	}
 }
 
-func TestConflictPolicyChoiceAgreesWithLegacyRepetitionHelperShape(t *testing.T) {
+func TestConflictPolicyChoiceDispatchesConcreteProgramRepeatShape(t *testing.T) {
 	lang := &Language{
 		Name:                  "synthetic_policy_test",
 		GeneratedByGrammargen: true,
@@ -191,13 +191,12 @@ func TestConflictPolicyChoiceAgreesWithLegacyRepetitionHelperShape(t *testing.T)
 		{Type: ParseActionShift, State: 1846, Repetition: true},
 	}
 
-	legacy, legacyOK := phpRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 2, actions)
-	policy, policyOK := conflictPolicyChoice(lang, Token{Symbol: 1}, 2, actions)
-	if !legacyOK || !policyOK {
-		t.Fatalf("legacyOK=%v policyOK=%v, want both true", legacyOK, policyOK)
+	policy, ok := conflictPolicyChoice(lang, Token{Symbol: 1}, 2, actions)
+	if !ok {
+		t.Fatal("conflictPolicyChoice = false, want concrete program-repeat policy choice")
 	}
-	if legacy != policy {
-		t.Fatalf("policy picked %+v, legacy picked %+v", policy, legacy)
+	if policy.Type != ParseActionShift || policy.State != 1846 || !policy.Repetition {
+		t.Fatalf("conflictPolicyChoice picked %+v, want repetition shift", policy)
 	}
 
 	parser := &Parser{language: lang}
@@ -210,7 +209,7 @@ func TestConflictPolicyChoiceAgreesWithLegacyRepetitionHelperShape(t *testing.T)
 	}
 }
 
-func TestGeneratedConflictPolicyPrecedesLanguageSwitch(t *testing.T) {
+func TestGeneratedConflictPolicyPrecedesLanguageFallbacks(t *testing.T) {
 	for _, name := range []string{"java", "dart", "typescript"} {
 		t.Run(name, func(t *testing.T) {
 			lang := &Language{
@@ -225,12 +224,6 @@ func TestGeneratedConflictPolicyPrecedesLanguageSwitch(t *testing.T) {
 				{Type: ParseActionShift, State: 456, Repetition: true},
 			}
 
-			if name == "typescript" {
-				if _, ok := typescriptRepetitionShiftConflictChoiceForDispatch(lang, Token{Symbol: 1}, 123, actions); ok {
-					t.Fatal("typescript legacy shortcut unexpectedly matched synthetic policy conflict")
-				}
-			}
-
 			parser := &Parser{language: lang}
 			chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 1}, 123, actions, 1, nil)
 			if !ok {
@@ -243,7 +236,7 @@ func TestGeneratedConflictPolicyPrecedesLanguageSwitch(t *testing.T) {
 	}
 }
 
-func TestEmbeddedConflictPolicyPrecedesLanguageSwitch(t *testing.T) {
+func TestEmbeddedConflictPolicyPrecedesGlobalRepetitionFold(t *testing.T) {
 	lang := &Language{
 		Name:             "php",
 		SymbolNames:      []string{"end", "namespace", "\\", "name", "use", "new", "program_repeat1", "list"},
@@ -254,12 +247,8 @@ func TestEmbeddedConflictPolicyPrecedesLanguageSwitch(t *testing.T) {
 		{Type: ParseActionReduce, Symbol: 7, ChildCount: 2},
 		{Type: ParseActionShift, State: 456, Repetition: true},
 	}
-	if _, ok := phpRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 123, actions); ok {
-		t.Fatal("php legacy shortcut unexpectedly matched synthetic embedded policy conflict")
-	}
-
 	parser := &Parser{language: lang}
-	chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 1}, 123, actions, 1, nil)
+	chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, &glrStack{}, Token{Symbol: 1}, 123, actions, 1, nil)
 	if !ok {
 		t.Fatal("deterministicConflictChoiceForDispatch = false, want embedded policy choice")
 	}
@@ -268,7 +257,7 @@ func TestEmbeddedConflictPolicyPrecedesLanguageSwitch(t *testing.T) {
 	}
 }
 
-func TestGeneratedConflictPolicyMissDoesNotUseLanguageSwitch(t *testing.T) {
+func TestGeneratedConflictPolicyMissUsesGeneratedBoundaryVeto(t *testing.T) {
 	actions := []ParseAction{
 		{Type: ParseActionReduce, Symbol: 6, ChildCount: 2},
 		{Type: ParseActionShift, State: 1846, Repetition: true},
@@ -299,10 +288,6 @@ func TestGeneratedConflictPolicyMissDoesNotUseLanguageSwitch(t *testing.T) {
 				},
 				ConflictPolicies: tc.policies,
 			}
-			if _, ok := phpRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 2, actions); !ok {
-				t.Fatal("php legacy shortcut did not match synthetic fallback canary")
-			}
-
 			parser := &Parser{language: lang}
 			if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, nil, Token{Symbol: 1}, 2, actions, 1, nil); ok {
 				t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want no generated fallback", chosen)
@@ -331,7 +316,7 @@ func TestForestResolveConflictUsesGeneratedPolicy(t *testing.T) {
 	}
 }
 
-func TestForestResolveConflictGeneratedPolicyMissVetoesLegacy(t *testing.T) {
+func TestForestResolveConflictGeneratedPolicyMissKeepsActions(t *testing.T) {
 	actions := []ParseAction{
 		{Type: ParseActionReduce, Symbol: 6, ChildCount: 2},
 		{Type: ParseActionShift, State: 1846, Repetition: true},
@@ -351,10 +336,6 @@ func TestForestResolveConflictGeneratedPolicyMissVetoesLegacy(t *testing.T) {
 		},
 		ConflictPolicies: []ConflictPolicy{{State: 99, Lookahead: 1, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{6}}},
 	}
-	if _, ok := phpRepetitionShiftConflictChoice(lang, Token{Symbol: 1}, 2, actions); !ok {
-		t.Fatal("php legacy shortcut did not match synthetic fallback canary")
-	}
-
 	got := NewParser(lang).forestResolveConflict(2, Token{Symbol: 1}, actions)
 	if len(got) != len(actions) {
 		t.Fatalf("forestResolveConflict returned %d actions, want original %d", len(got), len(actions))

@@ -9,9 +9,8 @@ import (
 
 // Macro-heavy Rust that drives the delim_token_tree_repeat1 (state 83) boundary
 // on many continuation tokens — operators, nested delimiters, `$`, `=>`, `:` —
-// i.e. exactly the tokens the existing rustRepetitionShiftConflictChoice does
-// NOT yet cover. Each token inside a macro token-tree must continue the tree
-// (repetition shift); closing it early (reduce) is a dead-end.
+// across the C-faithful repetition fold. Each token inside a macro token-tree
+// must continue the tree; closing it early is a dead-end.
 const rustTokenTreeSource = `
 fn main() {
     let v = vec![1 + 2, 3 * 4, 5 - 6, a & b, c | d];
@@ -43,7 +42,7 @@ func countNodeType(n *gotreesitter.Node, lang *gotreesitter.Language, typ string
 
 // TestRustTokenTreeParity is the correctness gate: the macro token-tree source
 // must parse with no errors and the expected macro structure. Green before and
-// after the resolver change (fork resolution must not alter the output tree).
+// after repetition-fold changes (fork resolution must not alter the output tree).
 func TestRustTokenTreeParity(t *testing.T) {
 	lang := grammars.RustLanguage()
 	parser := gotreesitter.NewParser(lang)
@@ -65,9 +64,9 @@ func TestRustTokenTreeParity(t *testing.T) {
 }
 
 // TestRustTokenTreeForkCount measures SURVIVING GLR forks (perf counters, built
-// with -tags perf). On current code the uncovered state-83 operator/bracket
-// tokens fork; after extending the resolver they should collapse. Without the
-// perf build tag the counters are zero and the test logs + skips assertions.
+// with -tags perf). The C-faithful fold should keep state-83 continuation
+// forks collapsed. Without the perf build tag the counters are zero and the
+// test logs + skips assertions.
 func TestRustTokenTreeForkCount(t *testing.T) {
 	lang := grammars.RustLanguage()
 	gotreesitter.ResetPerfCounters()
