@@ -1878,6 +1878,7 @@ type finalTreeMaterializationStats struct {
 	nodes                uint64
 	parentNodes          uint64
 	leafNodes            uint64
+	nodeFieldMetadata    uint64
 	fieldedParentNodes   uint64
 	unfieldedParentNodes uint64
 	visibleParentNodes   uint64
@@ -1920,6 +1921,9 @@ func collectFinalNodeStats(n *Node, lang *Language, stats *finalTreeMaterializat
 		return
 	}
 	stats.nodes++
+	if n.fieldMetadata != nil {
+		stats.nodeFieldMetadata++
+	}
 	if childRange, ok := n.ownerArena.finalChildRange(n); ok {
 		childCount := childRange.count()
 		if childCount == 0 {
@@ -2878,7 +2882,7 @@ func cloneTreeNodesIntoArena(root *Node, arena *nodeArena) *Node {
 
 		cloneNodeFieldMetadataInto(newNode, oldNode, arena)
 
-		if cloneFinalChildRefsIntoArena(oldNode, newNode, arena, nil) {
+		if oldNode.ownerArena != nil && oldNode.ownerArena.finalChildRefs && cloneFinalChildRefsIntoArena(oldNode, newNode, arena, nil) {
 			continue
 		}
 		if n := len(oldNode.children); n > 0 {
@@ -2985,6 +2989,9 @@ func cloneNodeHeaderInto(dst, src *Node, arena *nodeArena, offset *cloneOffset) 
 	dst.parent = nil
 	dst.childIndex = -1
 	dst.ownerArena = arena
+	if src.ownerArena == nil || src.ownerArena.externalScannerCheckpointRecords == 0 {
+		return
+	}
 	if cp, ok := externalScannerCheckpointRefForNode(src); ok {
 		if cloned, ok := cloneExternalScannerCheckpointRef(src.ownerArena, arena, cp); ok && arena.setExternalScannerCheckpoint(dst, cloned) {
 			arena.externalScannerCheckpointRecords++
@@ -3010,8 +3017,12 @@ func cloneNodeFieldMetadataInto(dst, src *Node, arena *nodeArena) {
 	if dst == nil || src == nil {
 		return
 	}
-	fieldIDs := cloneFieldIDsIntoArena(arena, src.fieldIDs())
-	fieldSources := cloneFieldSourcesIntoArena(arena, src.fieldSources())
+	if src.fieldMetadata == nil {
+		dst.clearFieldMetadata()
+		return
+	}
+	fieldIDs := cloneFieldIDsIntoArena(arena, src.fieldMetadata.ids)
+	fieldSources := cloneFieldSourcesIntoArena(arena, src.fieldMetadata.sources)
 	dst.setFieldMetadata(fieldIDs, fieldSources)
 }
 
