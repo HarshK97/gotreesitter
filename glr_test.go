@@ -1,6 +1,7 @@
 package gotreesitter
 
 import (
+	"sync"
 	"testing"
 	"unsafe"
 )
@@ -2182,6 +2183,124 @@ func TestStackResultErrorRankIncludesCompactRefs(t *testing.T) {
 	parentStack := &glrStack{entries: []stackEntry{newStackEntryPendingParent(4, parent)}}
 	if got := stackResultErrorRank(parentStack, arena); got != 2 {
 		t.Fatalf("pending parent child error rank = %d, want 2", got)
+	}
+}
+
+func TestCachedStackEntryErrorRankUsesInlineNodeCache(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	entry := newStackEntryNode(2, leaf)
+
+	if got := cachedStackEntryErrorRank(entry, arena); got != 0 {
+		t.Fatalf("clean leaf rank = %d, want 0", got)
+	}
+	if got := leaf.errorRankCache; got != 1 {
+		t.Fatalf("clean leaf cache = %d, want encoded rank 1", got)
+	}
+	if got := cachedStackEntryErrorRank(entry, arena); got != 0 {
+		t.Fatalf("cached clean leaf rank = %d, want 0", got)
+	}
+
+	leaf.setHasError(true)
+	nodeBumpEquivVersion(leaf)
+	if leaf.errorRankCache != 0 {
+		t.Fatalf("cache after mutation = %d, want unknown", leaf.errorRankCache)
+	}
+	if got := cachedStackEntryErrorRank(entry, arena); got != 1 {
+		t.Fatalf("has-error leaf rank = %d, want 1", got)
+	}
+	if got := leaf.errorRankCache; got != 2 {
+		t.Fatalf("has-error leaf cache = %d, want encoded rank 2", got)
+	}
+
+	leaf.symbol = errorSymbol
+	nodeBumpEquivVersion(leaf)
+	if got := cachedStackEntryErrorRank(entry, arena); got != 2 {
+		t.Fatalf("ERROR leaf rank = %d, want 2", got)
+	}
+	if got := leaf.errorRankCache; got != 3 {
+		t.Fatalf("ERROR leaf cache = %d, want encoded rank 3", got)
+	}
+
+	cloned := cloneNodeInArena(arena, leaf)
+	if got := cloned.errorRankCache; got != 0 {
+		t.Fatalf("cloned leaf cache = %d, want unknown", got)
+	}
+	treeClone := cloneTreeNodesIntoArena(leaf, newNodeArena(arenaClassFull))
+	if got := treeClone.errorRankCache; got != 0 {
+		t.Fatalf("tree-cloned leaf cache = %d, want unknown", got)
+	}
+	aliased := aliasedNodeInArena(arena, nil, leaf, 2)
+	if got := aliased.errorRankCache; got != 0 {
+		t.Fatalf("aliased leaf cache = %d, want unknown", got)
+	}
+}
+
+func TestCachedStackEntryErrorRankCachesNestedNode(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	errorLeaf := newLeafNodeInArena(arena, errorSymbol, false, 0, 1, Point{}, Point{Column: 1})
+	parent := newParentNodeInArena(arena, 10, true, cloneNodeSliceInArena(arena, []*Node{errorLeaf}), nil, 0)
+
+	if got := cachedStackEntryErrorRank(newStackEntryNode(3, parent), arena); got != 2 {
+		t.Fatalf("parent rank = %d, want 2", got)
+	}
+	if got := parent.errorRankCache; got != 3 {
+		t.Fatalf("parent cache = %d, want encoded rank 3", got)
+	}
+	if got := errorLeaf.errorRankCache; got != 3 {
+		t.Fatalf("child cache = %d, want encoded rank 3", got)
+	}
+}
+
+func TestCachedStackEntryErrorRankDoesNotCacheForeignNode(t *testing.T) {
+	currentArena := newNodeArena(arenaClassIncremental)
+	oldTreeArena := newNodeArena(arenaClassFull)
+	errorLeaf := newLeafNodeInArena(oldTreeArena, errorSymbol, false, 0, 1, Point{}, Point{Column: 1})
+	parent := newParentNodeInArena(oldTreeArena, 10, true, cloneNodeSliceInArena(oldTreeArena, []*Node{errorLeaf}), nil, 0)
+	errorLeaf.errorRankCache = 1 // stale parse-time values from the old tree
+	parent.errorRankCache = 1
+
+	if got := cachedStackEntryErrorRank(newStackEntryNode(2, parent), currentArena); got != 2 {
+		t.Fatalf("foreign nested rank = %d, want 2", got)
+	}
+	if got := parent.errorRankCache; got != 1 {
+		t.Fatalf("foreign parent cache changed to %d, want untouched value 1", got)
+	}
+	if got := errorLeaf.errorRankCache; got != 1 {
+		t.Fatalf("foreign child cache changed to %d, want untouched value 1", got)
+	}
+}
+
+func TestCachedStackEntryErrorRankForeignNodeConcurrentReads(t *testing.T) {
+	oldTreeArena := newNodeArena(arenaClassFull)
+	errorLeaf := newLeafNodeInArena(oldTreeArena, errorSymbol, false, 0, 1, Point{}, Point{Column: 1})
+	parent := newParentNodeInArena(oldTreeArena, 10, true, cloneNodeSliceInArena(oldTreeArena, []*Node{errorLeaf}), nil, 0)
+	parent.errorRankCache = 1
+	entry := newStackEntryNode(2, parent)
+
+	const workers = 8
+	errCh := make(chan int, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			arena := newNodeArena(arenaClassIncremental)
+			for j := 0; j < 100; j++ {
+				if got := cachedStackEntryErrorRank(entry, arena); got != 2 {
+					errCh <- got
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for got := range errCh {
+		t.Fatalf("foreign concurrent rank = %d, want 2", got)
+	}
+	if got := parent.errorRankCache; got != 1 {
+		t.Fatalf("foreign parent cache changed to %d, want untouched value 1", got)
 	}
 }
 

@@ -264,31 +264,13 @@ type nodeArena struct {
 	pendingParentRejectedFieldsHiddenChildPlainMany  uint64
 	pendingParentRejectedFieldsHiddenChildWithFields uint64
 
-	// nodeErrorRankMemo/pendingParentErrorRankMemo memoize
-	// computeStackEntryErrorRank (parser_result.go) per node identity: an
-	// exact cache (never a heuristic — a miss always falls back to the same
-	// recursive computation the uncached path would run), so it cannot change
-	// any result, only avoid re-deriving it. Node entries are additionally
-	// keyed by equivVersion because a Node CAN mutate while it is still the
-	// top of a live stack (pushOrExtendErrorNode/pushLexErrorRunLeaf extend an
-	// open ERROR run and bump equivVersion each time — the same invalidation
-	// signal parser_recover_c.go's cNodeMemo already relies on); a version
-	// mismatch is a cache miss, never a stale hit. pendingParent has no
-	// equivVersion field and, once its child entries are filled at
-	// construction, is never mutated again, so pointer identity alone is
-	// enough there. Both maps are per-arena rather than per-Parser because
-	// nodeArena is already threaded through every caller that needs this
-	// (stackEntryResultErrorRank/stackCompareForResultSelectionWithRawShape/
-	// forestResultLinkCompareWithRawShape), avoiding a Parser struct change.
-	// Cleared in reset() because arena node slabs — and therefore these
-	// pointers — are reused across parses on the same arena.
-	nodeErrorRankMemo          map[*Node]nodeErrorRankMemoEntry
+	// pendingParentErrorRankMemo is the pending-parent counterpart to Node's
+	// inline error-rank cache. pendingParent has no spare cache byte and, once
+	// its child entries are filled at construction, is never mutated, so
+	// pointer identity is sufficient. The map is per-arena because nodeArena
+	// is already threaded through every result-rank caller. It is dropped in
+	// reset() because pending-parent slabs reuse their pointers across parses.
 	pendingParentErrorRankMemo map[*pendingParent]int8
-}
-
-type nodeErrorRankMemoEntry struct {
-	ver  uint32
-	rank int8
 }
 
 type nodeSlab struct {
@@ -547,15 +529,9 @@ func (a *nodeArena) reset() {
 	a.internLeaves.reset()
 	a.internLeavesFull.reset()
 	a.internShiftLeafObserved = 0
-	// Node/pendingParent slab memory is reused across parses on this arena
-	// (only `used`/slab cursors reset above, not the backing storage), so a
-	// stale entry from a previous parse could otherwise alias a
-	// structurally-different node at the same address in the next parse. Drop
-	// both maps rather than clear-in-place: they are allocated lazily on
-	// first use (see cachedStackEntryErrorRank, parser_result.go) and most
-	// parses never populate them at all (only reached via the
-	// !skipErrorRank / forest link-cap comparison paths).
-	a.nodeErrorRankMemo = nil
+	// pendingParent slab memory is reused across parses on this arena, so a
+	// stale entry could otherwise alias a structurally different parent at the
+	// same address. Drop the lazily allocated map rather than clear it in place.
 	a.pendingParentErrorRankMemo = nil
 }
 
