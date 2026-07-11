@@ -278,13 +278,16 @@ const (
 // FullParseAcceptedErrorRetryProfile certifies a narrow full-parse retry
 // policy. When a fresh full parse accepts an error-bearing tree that covers
 // EOF, the parser may keep the initial GLR stack ceiling after the ordinary
-// same-stack merge retry instead of scheduling wider-stack passes. Both fields
-// must be non-zero; the zero value preserves the conservative generic ladder.
+// same-stack merge retry instead of scheduling wider-stack passes. A grammar
+// may instead certify that a complete accepted-error tree is authoritative and
+// skip that retry ladder entirely. The zero value preserves the conservative
+// generic ladder.
 //
 // Keep fields append-only: Language blobs encode this structure.
 type FullParseAcceptedErrorRetryProfile struct {
-	MinSourceBytes      uint32
-	InitialStackCeiling uint16
+	MinSourceBytes                 uint32
+	InitialStackCeiling            uint16
+	SkipCompleteAcceptedErrorRetry bool
 }
 
 // Language holds all data needed to parse a specific language.

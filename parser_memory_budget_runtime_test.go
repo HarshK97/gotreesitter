@@ -6,7 +6,7 @@ func TestRuntimeMemoryBudgetStopReasonSamplesHeapGrowth(t *testing.T) {
 	parser := &Parser{
 		parseRuntimeMemoryBudgetBytes:   1,
 		parseRuntimeMemoryBaselineBytes: 0,
-		parseRuntimeMemoryPoll:          parseRuntimeMemoryPollMask,
+		parseRuntimeMemoryPoll:          parseRuntimeMemoryTightPollMask,
 		parseMemoryBudgetDiagActive:     true,
 	}
 	if got := parser.runtimeMemoryBudgetStopReason(); got != ParseStopMemoryBudget {
@@ -17,6 +17,27 @@ func TestRuntimeMemoryBudgetStopReasonSamplesHeapGrowth(t *testing.T) {
 	}
 	if parser.parseMemoryBudgetDiag.runtimeHeapGrowthBytes < 1 {
 		t.Fatalf("runtime heap growth = %d, want >= 1", parser.parseMemoryBudgetDiag.runtimeHeapGrowthBytes)
+	}
+}
+
+func TestRuntimeMemoryPollMaskKeepsTightBudgetsResponsive(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		budget int64
+		want   uint64
+	}{
+		{name: "tight", budget: parseRuntimeMemoryTightBudget - 1, want: parseRuntimeMemoryTightPollMask},
+		{name: "tight-boundary", budget: parseRuntimeMemoryTightBudget, want: parseRuntimeMemoryTightPollMask},
+		{name: "default-sized", budget: parseRuntimeMemoryTightBudget + 1, want: parseRuntimeMemoryPollMask},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := runtimeMemoryPollMask(tt.budget); got != tt.want {
+				t.Fatalf("runtimeMemoryPollMask(%d) = %d, want %d", tt.budget, got, tt.want)
+			}
+			if tt.want&(tt.want+1) != 0 {
+				t.Fatalf("poll mask %d is not a power-of-two interval minus one", tt.want)
+			}
+		})
 	}
 }
 
