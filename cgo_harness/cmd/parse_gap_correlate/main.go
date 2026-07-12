@@ -30,6 +30,11 @@ type paritySummary struct {
 	Query     *bool  `json:"query,omitempty"`
 	Deep      bool   `json:"deep"`
 	Error     string `json:"error,omitempty"`
+	// Clean mirrors parse_gap_report's per-sample corpus-policy classification:
+	// true when the Go parse had no ERROR nodes and did not stop early. It
+	// drives the clean/error ratio split below so a language's combined ratio
+	// cannot hide an error-dense corpus behind a healthy-looking aggregate.
+	Clean bool `json:"clean"`
 }
 
 type runtimeStats struct {
@@ -237,30 +242,47 @@ type langAgg struct {
 	queryFailures  int
 	highFailures   int
 	modes          map[string]*modeAgg
+	// cleanModes/errorModes mirror modes but are split by the corpus-policy
+	// classification (paritySummary.Clean) so a language-level ratio can be
+	// reported separately for clean-parsing files versus error-bearing ones.
+	cleanModes   map[string]*modeAgg
+	errorModes   map[string]*modeAgg
+	cleanSamples map[string]struct{}
+	errorSamples map[string]struct{}
 }
 
 type langScore struct {
-	lang                string
-	samples             int
-	parityFailures      int
-	queryFailures       int
-	highlightFailures   int
-	bytes               int64
-	cgoFull             int64
-	goFull              int64
-	goNoTree            int64
-	goQuery             int64
-	goCursor            int64
-	goEdit              int64
-	goNoop              int64
-	goFullRuntime       runtimeStats
-	goNoTreeRuntime     runtimeStats
-	goQueryRuntime      runtimeStats
-	fullRatio           float64
-	noTreeRatio         float64
-	queryRatio          float64
-	queryOverFull       float64
-	fullOverNoTree      float64
+	lang              string
+	samples           int
+	parityFailures    int
+	queryFailures     int
+	highlightFailures int
+	bytes             int64
+	cgoFull           int64
+	goFull            int64
+	goNoTree          int64
+	goQuery           int64
+	goCursor          int64
+	goEdit            int64
+	goNoop            int64
+	goFullRuntime     runtimeStats
+	goNoTreeRuntime   runtimeStats
+	goQueryRuntime    runtimeStats
+	fullRatio         float64
+	noTreeRatio       float64
+	queryRatio        float64
+	queryOverFull     float64
+	fullOverNoTree    float64
+	// cleanRatio/errorRatio are the go_full/cgo_full ratio computed
+	// separately over clean-parsing and error-bearing corpus files, kept
+	// alongside fullRatio (the existing combined ratio) rather than
+	// replacing it. cleanFileCount/errorFileCount/errorFileShare report the
+	// underlying per-language file split driving that distinction.
+	cleanRatio          float64
+	errorRatio          float64
+	cleanFileCount      int
+	errorFileCount      int
+	errorFileShare      float64
 	attrs               map[string]float64
 	hotAmbiguities      []hotGLRState
 	hotReduceChains     []hotGLRState
@@ -329,6 +351,10 @@ func scoreRows(rows []reportRow) []langScore {
 				samples:       map[string]struct{}{},
 				bytesBySample: map[string]int{},
 				modes:         map[string]*modeAgg{},
+				cleanModes:    map[string]*modeAgg{},
+				errorModes:    map[string]*modeAgg{},
+				cleanSamples:  map[string]struct{}{},
+				errorSamples:  map[string]struct{}{},
 			}
 			langs[row.Language] = agg
 		}
@@ -345,13 +371,26 @@ func scoreRows(rows []reportRow) []langScore {
 		if row.Parity.Highlight != nil && !*row.Parity.Highlight {
 			agg.highFailures++
 		}
+		splitModes := agg.errorModes
+		if row.Parity.Clean {
+			agg.cleanSamples[row.Sample] = struct{}{}
+			splitModes = agg.cleanModes
+		} else {
+			agg.errorSamples[row.Sample] = struct{}{}
+		}
 		m := agg.modes[row.Mode]
 		if m == nil {
 			m = &modeAgg{}
 			agg.modes[row.Mode] = m
 		}
+		sm := splitModes[row.Mode]
+		if sm == nil {
+			sm = &modeAgg{}
+			splitModes[row.Mode] = sm
+		}
 		if row.Error != "" {
 			m.errors++
+			sm.errors++
 		}
 		if row.MedianNS > 0 && row.Error == "" {
 			m.rows++
@@ -362,6 +401,15 @@ func scoreRows(rows []reportRow) []langScore {
 			m.runtime.add(row.Runtime)
 			if row.Runtime.MaxStacksSeen > m.maxStacks {
 				m.maxStacks = row.Runtime.MaxStacksSeen
+			}
+			sm.rows++
+			sm.ns += row.MedianNS
+			sm.bytes += int64(row.Bytes)
+			sm.bop += row.BOp
+			sm.allocs += row.AllocsOp
+			sm.runtime.add(row.Runtime)
+			if row.Runtime.MaxStacksSeen > sm.maxStacks {
+				sm.maxStacks = row.Runtime.MaxStacksSeen
 			}
 		}
 	}
@@ -390,6 +438,11 @@ func scoreRows(rows []reportRow) []langScore {
 		s.fullRatio = ratio(s.goFull, s.cgoFull)
 		s.noTreeRatio = ratio(s.goNoTree, s.cgoFull)
 		s.queryRatio = ratio(s.goQuery, s.cgoFull)
+		s.cleanRatio = ratio(modeNSFromMap(agg.cleanModes, "go_full"), modeNSFromMap(agg.cleanModes, "cgo_full"))
+		s.errorRatio = ratio(modeNSFromMap(agg.errorModes, "go_full"), modeNSFromMap(agg.errorModes, "cgo_full"))
+		s.cleanFileCount = len(agg.cleanSamples)
+		s.errorFileCount = len(agg.errorSamples)
+		s.errorFileShare = safeRatioInt(s.errorFileCount, s.cleanFileCount+s.errorFileCount)
 		s.queryOverFull = ratio(s.goQuery, s.goFull)
 		s.fullOverNoTree = ratio(s.goFull, s.goNoTree)
 		if nt := agg.modes["go_no_tree"]; nt != nil {
@@ -567,10 +620,17 @@ func assignHotShapes(s *langScore, r runtimeStats) {
 }
 
 func modeNS(agg *langAgg, mode string) int64 {
-	if agg == nil || agg.modes[mode] == nil {
+	if agg == nil {
 		return 0
 	}
-	return agg.modes[mode].ns
+	return modeNSFromMap(agg.modes, mode)
+}
+
+func modeNSFromMap(modes map[string]*modeAgg, mode string) int64 {
+	if modes == nil || modes[mode] == nil {
+		return 0
+	}
+	return modes[mode].ns
 }
 
 func classify(s langScore) string {
@@ -604,10 +664,12 @@ func render(scores []langScore) {
 	fmt.Println()
 	fmt.Println("Ratios use summed per-sample medians, so large and small files both contribute their measured lane cost. Correlations are directional; top-12 rings are intentionally small.")
 	fmt.Println()
-	fmt.Println("| lang | samples | parity_fail | full/cgo | no_tree/cgo | full/no_tree | query/full | bytes | bucket |")
-	fmt.Println("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
+	fmt.Println("Corpus-policy split: `clean/cgo` and `error/cgo` restrict the go_full/cgo_full ratio to samples whose Go parse was clean (no ERROR nodes, no early stop) versus samples that were not, so `full/cgo` (the combined ratio) cannot hide an error-dense corpus behind a healthy-looking aggregate. `clean_n`/`error_n`/`error_share` report the underlying per-language file split.")
+	fmt.Println()
+	fmt.Println("| lang | samples | parity_fail | full/cgo | no_tree/cgo | full/no_tree | query/full | clean/cgo | error/cgo | clean_n | error_n | error_share | bytes | bucket |")
+	fmt.Println("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
 	for _, s := range scores {
-		fmt.Printf("| %s | %d | %d | %s | %s | %s | %s | %d | %s |\n",
+		fmt.Printf("| %s | %d | %d | %s | %s | %s | %s | %s | %s | %d | %d | %s | %d | %s |\n",
 			s.lang,
 			s.samples,
 			s.parityFailures,
@@ -615,6 +677,11 @@ func render(scores []langScore) {
 			ratioText(s.noTreeRatio),
 			ratioText(s.fullOverNoTree),
 			ratioText(s.queryOverFull),
+			ratioText(s.cleanRatio),
+			ratioText(s.errorRatio),
+			s.cleanFileCount,
+			s.errorFileCount,
+			fileShareText(s.errorFileCount, s.cleanFileCount+s.errorFileCount),
 			s.bytes,
 			s.bucket,
 		)
@@ -1633,6 +1700,17 @@ func pctText(v float64) string {
 		return "n/a"
 	}
 	return fmt.Sprintf("%.1f%%", v*100)
+}
+
+// fileShareText reports what share of a language's corpus files were
+// error-bearing, formatted as a percentage. Unlike pctText, 0% is a valid,
+// meaningful result here (every file was clean), so it only falls back to
+// "n/a" when there is no file count to compute a share from.
+func fileShareText(errorFiles, total int) string {
+	if total <= 0 {
+		return "n/a"
+	}
+	return fmt.Sprintf("%.1f%%", 100*float64(errorFiles)/float64(total))
 }
 
 func finite(v float64) bool {
