@@ -114,16 +114,33 @@ func TestDetectLanguageByShebang(t *testing.T) {
 // loading only that grammar instead of all 206.
 func parseSupportForLang(t *testing.T, name string) ParseSupport {
 	t.Helper()
-	entries := AllLanguages()
-	for _, entry := range entries {
-		if entry.Name == name {
-			lang := entry.Language()
-			t.Cleanup(func() { UnloadEmbeddedLanguage(entry.Name + ".bin") })
-			return EvaluateParseSupport(entry, lang)
-		}
+	report, ok := ParseSupportFor(name)
+	if !ok {
+		t.Fatalf("language %q not registered", name)
 	}
-	t.Fatalf("language %q not registered", name)
-	return ParseSupport{}
+	t.Cleanup(func() { UnloadEmbeddedLanguage(name + ".bin") })
+	return report
+}
+
+func TestParseSupportForLoadsOnlyRequestedGrammar(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	report, ok := ParseSupportFor("go")
+	if !ok || report.Name != "go" || report.Backend != ParseBackendDFA {
+		t.Fatalf("ParseSupportFor(go) = (%+v, %t), want Go DFA report", report, ok)
+	}
+	loaded, _ := EmbeddedLanguageCacheStats()
+	if loaded != 1 {
+		t.Fatalf("ParseSupportFor(go) loaded %d grammars, want 1", loaded)
+	}
+	if report, ok := ParseSupportFor("not-a-language"); ok || report != (ParseSupport{}) {
+		t.Fatalf("ParseSupportFor(missing) = (%+v, %t), want zero report and false", report, ok)
+	}
+	loaded, _ = EmbeddedLanguageCacheStats()
+	if loaded != 1 {
+		t.Fatalf("ParseSupportFor(missing) changed loaded grammar count to %d, want 1", loaded)
+	}
 }
 
 func TestAuditParseSupportUsesDFAForGo(t *testing.T) {

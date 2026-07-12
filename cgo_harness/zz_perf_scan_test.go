@@ -545,7 +545,7 @@ func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flus
 	if !ok {
 		return finish("no_registry_entry", "language not present in grammars registry")
 	}
-	report, ok := paritySupportByName[lang]
+	report, ok := paritySupportForName(lang)
 	if !ok || report.Backend == grammars.ParseBackendUnsupported {
 		return finish("unsupported_backend", fmt.Sprintf("parse backend %q", report.Backend))
 	}

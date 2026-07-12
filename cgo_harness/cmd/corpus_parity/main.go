@@ -130,9 +130,11 @@ func main() {
 	for _, entry := range grammars.AllLanguages() {
 		entriesByName[entry.Name] = entry
 	}
-	supportByName := make(map[string]grammars.ParseSupport)
-	for _, report := range grammars.AuditParseSupport() {
-		supportByName[report.Name] = report
+	supportByName := make(map[string]grammars.ParseSupport, len(langs))
+	for _, name := range langs {
+		if report, ok := grammars.ParseSupportFor(name); ok {
+			supportByName[report.Name] = report
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(outFlag), 0o755); err != nil {
