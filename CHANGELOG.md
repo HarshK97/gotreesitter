@@ -68,6 +68,13 @@ for tags and release notes while still in `0.x`.
   maps, alias and supertype query tables are byte-identical, and supertype
   query predicates match by concrete descendant so observable trees and
   captures are unchanged. Canonical quiet-host full parse improves ~3.4%.
+- Raw-shape capture and content hashing are elided while a parse has only
+  ever had a single GLR stack and has not entered error recovery; capture
+  resumes permanently at the first fork or recovery event. Shape-dependent
+  tie-breaks are unaffected: elided prefix nodes are only ever compared to
+  themselves (structural pointer-sharing), evidenced by forced-descent and
+  recovery differential tests. Canonical quiet-host full parse improves
+  ~4.8% with allocations unchanged (9/0/0 preserved).
 
 - gssNode layout compacted to a 64-byte budget on 64-bit targets
   (pointer-backed extra links with uint8 count/cap, uint32 depth,
