@@ -27,10 +27,55 @@ func BenchmarkKDLParseRecurringTinyClean(b *testing.B) {
 	benchmarkRecurringTinyClean(b, grammars.KdlLanguage(), []byte("node\n"))
 }
 
-// BenchmarkJavaParseRecurringTinyClean is the fixed-floor witness for the
-// highest clean/parity-passing ratio in the post-refresh fleet sweep.
-func BenchmarkJavaParseRecurringTinyClean(b *testing.B) {
+// BenchmarkJavaParseRecurringTinyCleanDFA isolates the built-in DFA route. The
+// fleet scanner uses Java's registered TokenSourceFactory instead; keep this
+// variant explicit so it cannot be mistaken for the fleet witness below.
+func BenchmarkJavaParseRecurringTinyCleanDFA(b *testing.B) {
 	benchmarkRecurringTinyClean(b, grammars.JavaLanguage(), []byte("class A {}\n"))
+}
+
+// BenchmarkJavaParseRecurringTinyTokenSourceFactory matches perf_scan's Java
+// route: construct the registered custom token source inside the timed
+// operation, then parse it on a reused Parser.
+func BenchmarkJavaParseRecurringTinyTokenSourceFactory(b *testing.B) {
+	lang := grammars.JavaLanguage()
+	parser := gotreesitter.NewParser(lang)
+	src := []byte("class A {}\n")
+
+	warm := grammars.NewJavaTokenSourceOrEOF(src, lang)
+	warmTree, err := parser.ParseWithTokenSource(src, warm)
+	requireRecurringBenchmarkTree(b, warmTree, err, false)
+	warmTree.Release()
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(src)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ts := grammars.NewJavaTokenSourceOrEOF(src, lang)
+		tree, err := parser.ParseWithTokenSource(src, ts)
+		if err != nil {
+			b.Fatalf("parse error: %v", err)
+		}
+		tree.Release()
+	}
+}
+
+// BenchmarkJavaTokenSourceConstructRecurring isolates the per-call factory
+// floor, including immutable token-symbol binding and cached lexer-table
+// attachment, without parser work.
+func BenchmarkJavaTokenSourceConstructRecurring(b *testing.B) {
+	lang := grammars.JavaLanguage()
+	src := []byte("class A {}\n")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ts, err := grammars.NewJavaTokenSource(src, lang)
+		if err != nil {
+			b.Fatalf("token source: %v", err)
+		}
+		_ = ts
+	}
 }
 
 // BenchmarkCSharpParseRecurringTinyClean is a second clean fleet-tail witness
