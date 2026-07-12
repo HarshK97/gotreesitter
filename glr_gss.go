@@ -114,6 +114,7 @@ type gssScratch struct {
 	initialCap        int
 	skipClear         bool
 	usedTotal         int
+	peakUsed          int
 	allocatedBytes    int64
 	singleStackMode   bool
 	singleStackAllocs uint64
@@ -436,6 +437,9 @@ func (s *gssScratch) allocNode(entry stackEntry, prev *gssNode, depth uint32) *g
 			idx := slab.used
 			slab.used++
 			s.usedTotal++
+			if s.usedTotal > s.peakUsed {
+				s.peakUsed = s.usedTotal
+			}
 			if s.singleStackMode {
 				s.singleStackAllocs++
 			} else {
@@ -487,6 +491,9 @@ func (s *gssScratch) allocNodeSlow(entry stackEntry, prev *gssNode, depth uint32
 		idx := slab.used
 		slab.used++
 		s.usedTotal++
+		if s.usedTotal > s.peakUsed {
+			s.peakUsed = s.usedTotal
+		}
 		s.slabCursor = i
 		if s.singleStackMode {
 			s.singleStackAllocs++
@@ -510,6 +517,27 @@ func (s *gssScratch) allocNodeSlow(entry stackEntry, prev *gssNode, depth uint32
 	}
 }
 
+// recycleForParse makes every GSS slab slot available to the current parse.
+// The caller must first prove that no live parse stack points into the slabs
+// and invalidate every pointer-keyed merge/recovery cache. Keeping that proof
+// outside this allocator makes accidental address reuse impossible from lower
+// level allocation call sites.
+func (s *gssScratch) recycleForParse() {
+	if s == nil || s.usedTotal == 0 {
+		return
+	}
+	for i := range s.slabs {
+		used := s.slabs[i].used
+		if used > len(s.slabs[i].data) {
+			used = len(s.slabs[i].data)
+		}
+		clear(s.slabs[i].data[:used])
+		s.slabs[i].used = 0
+	}
+	s.slabCursor = 0
+	s.usedTotal = 0
+}
+
 func (s *gssScratch) reset() {
 	if cap(s.stackEntries) > maxRetainedGSSStackEntries {
 		s.stackEntries = nil
@@ -524,6 +552,7 @@ func (s *gssScratch) reset() {
 		s.demotions = 0
 		s.nodesDemoted = 0
 		s.skipClear = false
+		s.peakUsed = 0
 		s.allocatedBytes = s.frontier.allocatedBytes() + stackEntryBytesForCap(cap(s.stackEntries))
 		s.audit = nil
 		return
@@ -564,6 +593,7 @@ func (s *gssScratch) reset() {
 	s.slabCursor = 0
 	s.skipClear = false
 	s.usedTotal = 0
+	s.peakUsed = 0
 	s.singleStackMode = false
 	s.singleStackAllocs = 0
 	s.multiStackAllocs = 0

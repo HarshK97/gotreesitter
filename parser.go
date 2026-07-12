@@ -3137,7 +3137,7 @@ func captureParseScratchStats(parseRuntime *ParseRuntime, scratch *parserScratch
 	parseRuntime.GSSBytesAllocated = scratch.gss.allocatedBytes
 	parseRuntime.GSSBaselineBytes = scratch.gssBaselineBytes
 	parseRuntime.GSSSlabCount = len(scratch.gss.slabs)
-	parseRuntime.GSSNodesUsed = scratch.gss.usedTotal
+	parseRuntime.GSSNodesUsed = scratch.gss.peakUsed
 	parseRuntime.GSSNodesCapacity = scratch.gss.capacityNodes()
 	parseRuntime.GSSDemotions = scratch.gss.demotions
 	parseRuntime.GSSNodesDemoted = scratch.gss.nodesDemoted
@@ -6088,12 +6088,12 @@ func (p *Parser) recordParseArenaUsageOnReturn(arenaClass arenaClass, arena *nod
 					p.recordFullArenaUsage(arena.used)
 				}
 			}
-			p.recordFullGSSUsage(scratch.gss.usedTotal)
+			p.recordFullGSSUsage(scratch.gss.peakUsed)
 		}
 	}
 	return func() {
 		p.recordIncrementalArenaUsage(arena.used)
-		p.recordIncrementalGSSUsage(scratch.gss.usedTotal)
+		p.recordIncrementalGSSUsage(scratch.gss.peakUsed)
 	}
 }
 
@@ -6340,7 +6340,48 @@ func (p *Parser) tryDemoteSingleLinearGSS(stacks []glrStack, scratch *parserScra
 	}
 	scratch.gss.demotions++
 	scratch.gss.nodesDemoted += uint64(depth)
+	if !scratch.audit.enabled && !scratch.audit.equivEnabled {
+		p.recycleDemotedGSS(stacks, scratch)
+	}
 	return true
+}
+
+// recycleDemotedGSS reclaims GSS slab slots only after the sole live stack has
+// been materialized into entry scratch. The ordering is intentional: first
+// invalidate address-keyed caches and clear stale stack holders, then overwrite
+// the slab nodes. Runtime/equivalence audits stay on the append-only path
+// because their attribution state deliberately retains node identity across
+// token boundaries. C-recovery remains safe because its live version state is
+// carried by glrStack/cRecoverState, while both GSS prefix paths are cleared
+// here and the aggregate generation is advanced before address reuse.
+func (p *Parser) recycleDemotedGSS(stacks []glrStack, scratch *parserScratch) {
+	if p == nil || scratch == nil || len(stacks) != 1 || stacks[0].gss.head != nil ||
+		len(stacks[0].entries) == 0 || len(p.pendingForkStacks) != 0 ||
+		len(p.pendingFrontierForkStacks) != 0 || scratch.gss.usedTotal == 0 {
+		return
+	}
+
+	live := stacks[0]
+	scratch.merge.invalidateGSSPointersForReuse()
+	resetGSSPrefixPath(&p.cPrefixPath)
+	gssPrefixAggGen.Add(1)
+	if cap(scratch.merge.result) > 0 {
+		clear(scratch.merge.result[:cap(scratch.merge.result)])
+		scratch.merge.result = scratch.merge.result[:0]
+	}
+	if cap(stacks) > 0 {
+		clear(stacks[:cap(stacks)])
+		stacks[0] = live
+	}
+	if cap(p.pendingForkStacks) > 0 {
+		clear(p.pendingForkStacks[:cap(p.pendingForkStacks)])
+		p.pendingForkStacks = p.pendingForkStacks[:0]
+	}
+	if cap(p.pendingFrontierForkStacks) > 0 {
+		clear(p.pendingFrontierForkStacks[:cap(p.pendingFrontierForkStacks)])
+		p.pendingFrontierForkStacks = p.pendingFrontierForkStacks[:0]
+	}
+	scratch.gss.recycleForParse()
 }
 
 func (p *Parser) checkpointTransientScratch(stacks []glrStack, scratch *parserScratch, arena *nodeArena) ParseStopReason {

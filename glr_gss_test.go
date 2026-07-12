@@ -963,3 +963,147 @@ func TestGSSScratchOverflowSlabGrowthBounded(t *testing.T) {
 		t.Fatalf("GSS allocatedBytes=%d, want capacity bytes=%d", got, want)
 	}
 }
+
+func TestGSSScratchRecycleForParseReusesClearedSlots(t *testing.T) {
+	var scratch gssScratch
+	payload := &Node{symbol: 7, endByte: 3}
+	first := scratch.allocNode(newStackEntryNode(2, payload), nil, 1)
+	first.extraLinks = append(first.extraLinks, gssMainLink{entry: stackEntry{state: 9}})
+	first.aggGen = 12
+	first.aggVisGen = 13
+
+	scratch.recycleForParse()
+
+	if scratch.usedTotal != 0 {
+		t.Fatalf("used nodes after recycle = %d, want 0", scratch.usedTotal)
+	}
+	if first.prev != nil || first.entry.node != nil || first.extraLinks != nil || first.aggGen != 0 || first.aggVisGen != 0 {
+		t.Fatalf("recycled slot retained state: %+v", *first)
+	}
+	second := scratch.allocNode(stackEntry{state: 4}, nil, 1)
+	if second != first {
+		t.Fatalf("recycled pointer = %p, want %p", second, first)
+	}
+	if scratch.peakUsed != 1 || scratch.usedTotal != 1 {
+		t.Fatalf("allocation high-water peak=%d used=%d", scratch.peakUsed, scratch.usedTotal)
+	}
+}
+
+func TestParserRecycleDemotedGSSInvalidatesPointerHolders(t *testing.T) {
+	var scratch parserScratch
+	payload := &Node{symbol: 11, startByte: 1, endByte: 4}
+	stack := glrStack{
+		gss:          buildGSSStack([]stackEntry{{state: 1}, newStackEntryNode(2, payload)}, &scratch.gss),
+		byteOffset:   4,
+		cRec:         &cRecoverState{summary: []cStackSummaryEntry{{depth: 2, state: 2, posBytes: 4}}},
+		cEntryAggGen: gssPrefixAggGen.Load(),
+	}
+	oldHead := stack.gss.head
+	stale := stack.cloneWithScratch(&scratch.gss)
+
+	scratch.merge.beginEquivEpoch()
+	scratch.merge.result = append(scratch.merge.result, stack, stale)
+	stacks := scratch.merge.result[:1]
+	scratch.merge.cPrefixPath = append(scratch.merge.cPrefixPath, oldHead)
+	scratch.merge.cleanZeroCache = map[*gssNode]gssCleanZeroErrorCacheEntry{oldHead: {clean: true}}
+	scratch.merge.cleanZeroStack = append(scratch.merge.cleanZeroStack, oldHead)
+	scratch.merge.cleanZeroVisited = append(scratch.merge.cleanZeroVisited, oldHead)
+	scratch.merge.spineVisit = append(scratch.merge.spineVisit, spinePairKey{a: oldHead, b: oldHead.prev})
+	scratch.merge.mergeSeen = map[gssMergePair]bool{{a: oldHead, b: oldHead.prev}: true}
+	scratch.merge.preflight = newGSSMainPreflight(nil)
+	scratch.merge.preflight.addVirtualLink(oldHead, oldHead.prev, oldHead.entry)
+	equivEpochBefore := scratch.merge.equivEpoch
+	gssPointerEpochBefore := scratch.merge.gssPointerEpoch
+
+	parser := &Parser{crecoveryEnteredErrorState: true}
+	pending := []glrStack{stale}
+	parser.pendingForkStacks = pending[:0]
+	frontierPending := []glrStack{stale}
+	parser.pendingFrontierForkStacks = frontierPending[:0]
+	parser.cPrefixPath = append(parser.cPrefixPath, oldHead)
+	prefixGenBefore := gssPrefixAggGen.Load()
+
+	if !parser.tryDemoteSingleLinearGSS(stacks, &scratch) {
+		t.Fatal("tryDemoteSingleLinearGSS() = false")
+	}
+	if stacks[0].gss.head != nil || len(stacks[0].entries) != 2 || stackEntryNode(stacks[0].entries[1]) != payload ||
+		stacks[0].cRec == nil || len(stacks[0].cRec.summary) != 1 || stacks[0].cEntryAggGen != 0 {
+		t.Fatalf("live stack changed during recycle: %+v", stacks[0])
+	}
+	if scratch.gss.usedTotal != 0 {
+		t.Fatalf("GSS used nodes after recycle = %d, want 0", scratch.gss.usedTotal)
+	}
+	if got := gssPrefixAggGen.Load(); got == prefixGenBefore {
+		t.Fatalf("GSS prefix aggregate generation did not advance: %d", got)
+	}
+	if scratch.merge.equivEpoch != equivEpochBefore {
+		t.Fatalf("node/spine equivalence epoch = %d, want preserved %d", scratch.merge.equivEpoch, equivEpochBefore)
+	}
+	if scratch.merge.gssPointerEpoch == gssPointerEpochBefore {
+		t.Fatalf("GSS pointer epoch did not advance: %d", scratch.merge.gssPointerEpoch)
+	}
+	if len(scratch.merge.result) != 0 || len(scratch.merge.cPrefixPath) != 0 || len(scratch.merge.cleanZeroCache) != 0 || len(scratch.merge.mergeSeen) != 0 {
+		t.Fatalf("merge pointer holders not reset: result=%d prefix=%d clean=%d seen=%d", len(scratch.merge.result), len(scratch.merge.cPrefixPath), len(scratch.merge.cleanZeroCache), len(scratch.merge.mergeSeen))
+	}
+	if scratch.merge.preflight == nil || len(scratch.merge.preflight.virtualLink) != 0 || len(scratch.merge.preflight.reachCache) != 0 {
+		t.Fatal("preflight pointer holders not reset")
+	}
+	if parser.cPrefixPath != nil && len(parser.cPrefixPath) != 0 {
+		t.Fatalf("parser prefix path len=%d, want 0", len(parser.cPrefixPath))
+	}
+	if got := parser.pendingForkStacks[:cap(parser.pendingForkStacks)][0].gss.head; got != nil {
+		t.Fatalf("pending fork backing retained GSS head %p", got)
+	}
+	if got := parser.pendingFrontierForkStacks[:cap(parser.pendingFrontierForkStacks)][0].gss.head; got != nil {
+		t.Fatalf("frontier pending backing retained GSS head %p", got)
+	}
+	if oldHead.entry.node != nil || oldHead.prev != nil {
+		t.Fatalf("old slab node not cleared: %+v", *oldHead)
+	}
+
+	clone := stacks[0].cloneWithScratch(&scratch.gss)
+	if stacks[0].gss.head == nil || clone.gss.head != stacks[0].gss.head {
+		t.Fatalf("refork after recycle failed: stack=%p clone=%p", stacks[0].gss.head, clone.gss.head)
+	}
+	if got := stacks[0].gss.materialize(nil); len(got) != 2 || stackEntryNode(got[1]) != payload {
+		t.Fatalf("reforked stack entries = %+v", got)
+	}
+}
+
+func TestGSSReuseRetainsOnlyFingerprintedSpineCache(t *testing.T) {
+	var nodes gssScratch
+	a := nodes.allocNode(stackEntry{state: 1}, nil, 1)
+	b := nodes.allocNode(stackEntry{state: 1}, nil, 1)
+	var merge glrMergeScratch
+	merge.beginEquivEpoch()
+	merge.ensureMergeHotCaches()
+	storeSpineEquivCache(&merge, a, b, true)
+	storeGSSStackEquivCache(&merge, a, b, true)
+	storeShapePrefixCache(&merge, a, glrMaterializingShapeHash{hash: 9, count: 1})
+	storeCleanZeroFrontCache(&merge, a, true)
+
+	merge.invalidateGSSPointersForReuse()
+
+	if got, ok := lookupSpineEquivCache(&merge, a, b); !ok || !got {
+		t.Fatalf("fingerprinted spine cache after invalidation = %v, %v; want true, true", got, ok)
+	}
+	if _, ok := lookupGSSStackEquivCache(&merge, a, b); ok {
+		t.Fatal("address-only stack cache survived GSS pointer epoch")
+	}
+	if _, ok := lookupShapePrefixCache(&merge, a); ok {
+		t.Fatal("address-only shape-prefix cache survived GSS reuse invalidation")
+	}
+	if _, ok := lookupCleanZeroFrontCache(&merge, a); ok {
+		t.Fatal("address-only clean-zero cache survived GSS reuse invalidation")
+	}
+
+	nodes.recycleForParse()
+	a2 := nodes.allocNode(stackEntry{state: 2}, nil, 1)
+	b2 := nodes.allocNode(stackEntry{state: 3}, nil, 1)
+	if a2 != a || b2 != b {
+		t.Fatalf("expected recycled addresses a=%p/%p b=%p/%p", a2, a, b2, b)
+	}
+	if _, ok := lookupSpineEquivCache(&merge, a2, b2); ok {
+		t.Fatal("fingerprinted spine cache hit after recycled addresses changed content")
+	}
+}
