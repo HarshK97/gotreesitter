@@ -1,18 +1,7 @@
 package gotreesitter
 
-func normalizeNimTopLevelCallEnd(root *Node, source []byte, lang *Language) {
-	shrinkFirstTopLevelChildEndToLastNonTrivia(root, source, lang, "nim", "source_file", "call", true)
-}
-
 func normalizePascalTopLevelProgramEnd(root *Node, source []byte, lang *Language) {
 	shrinkFirstTopLevelChildEndToLastNonTrivia(root, source, lang, "pascal", "root", "program", false)
-}
-
-func normalizeCommentTrailingExtraTrivia(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "comment" || root.Type(lang) != "source" {
-		return
-	}
-	trimTrailingExtraTriviaRoot(root, source, lang)
 }
 
 func normalizePascalTrailingExtraTrivia(root *Node, source []byte, lang *Language) {
@@ -20,11 +9,6 @@ func normalizePascalTrailingExtraTrivia(root *Node, source []byte, lang *Languag
 		return
 	}
 	trimTrailingExtraTriviaRoot(root, source, lang)
-}
-
-func normalizeRSTTopLevelSectionEnd(root *Node, source []byte, lang *Language) {
-	trimTrailingExtraTriviaRoot(root, source, lang)
-	shrinkFirstTopLevelChildEndToLastNonTrivia(root, source, lang, "rst", "document", "section", false)
 }
 
 func shrinkFirstTopLevelChildEndToLastNonTrivia(root *Node, source []byte, lang *Language, languageName, rootType, childType string, requireSingleChild bool) bool {
@@ -201,25 +185,31 @@ func lineBreakEndAt(source []byte, start, limit uint32) uint32 {
 	}
 }
 
-func normalizeFortranStatementLineBreaks(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "fortran" || len(source) == 0 {
+// extendChildLineBreakBeforeNextSibling walks every parentType node and, for
+// each childType child that stops short of its next sibling, extends that
+// child's end to swallow an immediately following line break (formerly
+// normalizeFortranStatementLineBreaks, generalized for the shared
+// trailingSpanRule table in parser_result_trailing_span_rules.go).
+func extendChildLineBreakBeforeNextSibling(root *Node, source []byte, lang *Language, parentType, childType string) {
+	if root == nil || lang == nil || len(source) == 0 {
 		return
 	}
 	walkResultTreeBounded(root, func(n *Node) {
-		if n.Type(lang) == "program" {
-			childCount := resultChildCount(n)
-			for i := 0; i+1 < childCount; i++ {
-				cur := resultChildAt(n, i)
-				next := resultChildAt(n, i+1)
-				if cur == nil || next == nil || cur.endByte >= next.startByte {
-					continue
-				}
-				if cur.Type(lang) != "program_statement" {
-					continue
-				}
-				if end := lineBreakEndAt(source, cur.endByte, next.startByte); end > cur.endByte {
-					extendNodeEndTo(cur, end, source)
-				}
+		if n.Type(lang) != parentType {
+			return
+		}
+		childCount := resultChildCount(n)
+		for i := 0; i+1 < childCount; i++ {
+			cur := resultChildAt(n, i)
+			next := resultChildAt(n, i+1)
+			if cur == nil || next == nil || cur.endByte >= next.startByte {
+				continue
+			}
+			if cur.Type(lang) != childType {
+				continue
+			}
+			if end := lineBreakEndAt(source, cur.endByte, next.startByte); end > cur.endByte {
+				extendNodeEndTo(cur, end, source)
 			}
 		}
 	})

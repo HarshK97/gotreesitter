@@ -115,10 +115,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeCCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "c_sharp":
 		normalizeCSharpCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
-	case "caddy":
-		normalizeTopLevelTrailingLineBreakSpan(ctx.root, ctx.source, ctx.lang)
-	case "comment":
-		normalizeCommentTrailingExtraTrivia(ctx.root, ctx.source, ctx.lang)
+	case "caddy", "comment", "fortran", "nim", "pug", "rst":
+		normalizeResultTrailingSpanCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "cooklang":
 		normalizeCooklangCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "corn":
@@ -149,9 +147,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeEDSCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "erlang":
 		normalizeErlangSourceFileForms(ctx.root, ctx.lang)
-	case "fortran":
-		normalizeFortranStatementLineBreaks(ctx.root, ctx.source, ctx.lang)
-		normalizeTopLevelTrailingLineBreakSpan(ctx.root, ctx.source, ctx.lang)
 	case "fsharp":
 		normalizeFSharpCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "forth":
@@ -204,8 +199,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeNginxAttributeLineBreaks(ctx.root, ctx.source, ctx.lang)
 	case "ninja":
 		normalizeNinjaCompatibility(ctx.root, ctx.source, ctx.lang)
-	case "nim":
-		normalizeNimTopLevelCallEnd(ctx.root, ctx.source, ctx.lang)
 	case "ocaml":
 		normalizeOCamlCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "pascal":
@@ -221,16 +214,12 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizePowerShellAssignmentOperatorTokens(ctx.root, ctx.source, ctx.lang)
 		normalizePowerShellPathCommandNameVariables(ctx.root, ctx.source, ctx.lang)
 		normalizePowerShellEnumStatementKeywordSpans(ctx.root, ctx.source, ctx.lang)
-	case "pug":
-		normalizeTopLevelTrailingLineBreakSpan(ctx.root, ctx.source, ctx.lang)
 	case "ql":
 		normalizeQLCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "r":
 		normalizeRCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "python":
 		normalizePythonCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
-	case "rst":
-		normalizeRSTTopLevelSectionEnd(ctx.root, ctx.source, ctx.lang)
 	case "rescript":
 		normalizeRescriptCompatibility(ctx.root, ctx.lang)
 	case "robot":

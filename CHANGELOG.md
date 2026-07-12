@@ -7,6 +7,30 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Changed
+
+- Trailing-span compat shims for Caddy, Comment, Fortran, Nim, Pug, and RST
+  moved onto a single data-driven `trailingSpanRules` table
+  (`normalizeResultTrailingSpanCompatibility`) instead of six separate
+  `runLanguageResultCompatibility` switch arms and four hand-written wrapper
+  functions (`normalizeNimTopLevelCallEnd`, `normalizeCommentTrailingExtraTrivia`,
+  `normalizeRSTTopLevelSectionEnd`, `normalizeFortranStatementLineBreaks`).
+  Each row names the language, the shared primitive it drives (extend the
+  sole top-level child across a trailing line break, trim a trailing
+  invisible extra-trivia child at the root, shrink a top-level child's end
+  off trailing whitespace, or extend a statement across the line break
+  before its next sibling), and that primitive's node-kind parameters, so
+  adding another language to any of these four span shapes is a table row,
+  not a new function. Fortran's statement-vs-sibling pass is generalized
+  from a hardcoded `program`/`program_statement` walk into
+  `extendChildLineBreakBeforeNextSibling`, parameterized the same way.
+  The four wrapper functions being retired were already thin call-throughs
+  into shared primitives from an earlier consolidation, so this pass nets a
+  modest line increase (the switch/wrapper boilerplate shrinks, but the new
+  table and its per-row rationale comments are larger than the code they
+  replace) in exchange for one auditable, greppable rule set instead of six
+  scattered dispatch sites.
+
 ## [0.28.0] - 2026-07-12
 
 Containment closure and measurement-honesty release. The runtime memory
