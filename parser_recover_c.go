@@ -913,15 +913,15 @@ type cRecoverState struct {
 	summary []cStackSummaryEntry
 	// group ties the absorbing stacks that represent the same C version.
 	group *cRecGroup
-	// groupOrder preserves the path order inside the C merged error-state
-	// version. Later Go stack ordering can move members around, but C's
-	// strategy-1 summary scan still walks the merged paths in record order.
-	groupOrder int
 	// openErr is the open error region node on the stack top (the C
 	// error_repeat being accumulated). nil right after entering the error
 	// state — the C "ERROR_STATE head with NULL subtree" shape, which costs an
 	// extra ERROR_COST_PER_RECOVERY in ts_stack_error_cost.
 	openErr *Node
+	// groupOrder preserves the path order inside the C merged error-state
+	// version. Later Go stack ordering can move members around, but C's
+	// strategy-1 summary scan still walks the merged paths in record order.
+	groupOrder uint32
 	// extraRecoveries counts the additional error segments C opens while this
 	// version keeps absorbing: an unlexable-run (ERROR-token) lookahead has no
 	// action in the ERROR_STATE table row, so C pauses AGAIN mid-absorption,
@@ -934,14 +934,19 @@ type cRecoverState struct {
 	// engine's single flat open region charges its 500 once, so the extra
 	// per-segment recoveries are tracked here; forks drop cRec and with it
 	// these charges, exactly like C.
-	extraRecoveries int
+	extraRecoveries uint32
 }
 
 func (r *cRecoverState) clone() *cRecoverState {
 	if r == nil {
 		return nil
 	}
-	cp := &cRecoverState{openErr: r.openErr, group: r.group, groupOrder: r.groupOrder, extraRecoveries: r.extraRecoveries}
+	cp := &cRecoverState{
+		openErr:         r.openErr,
+		group:           r.group,
+		groupOrder:      r.groupOrder,
+		extraRecoveries: r.extraRecoveries,
+	}
 	if len(r.summary) > 0 {
 		cp.summary = append([]cStackSummaryEntry(nil), r.summary...)
 	}
@@ -1589,9 +1594,13 @@ func (p *Parser) cStackErrorCost(s *glrStack) uint32 {
 	}
 	var cost uint32
 	if len(s.entries) > 0 {
-		for i := range s.entries {
-			if n := stackEntryNode(s.entries[i]); n != nil {
-				cost += p.cNodeErrorCost(n)
+		if p != nil && p.cNodeMemo != nil && s.cRec != nil {
+			cost, _ = p.cStackEntryAgg(s)
+		} else {
+			for i := range s.entries {
+				if n := stackEntryNode(s.entries[i]); n != nil {
+					cost += p.cNodeErrorCost(n)
+				}
 			}
 		}
 	} else if p != nil && p.cNodeMemo != nil && s.gss.head != nil {
@@ -1616,6 +1625,34 @@ func (p *Parser) cStackErrorCost(s *glrStack) uint32 {
 		cost += cErrCostPerRecovery * uint32(s.cRec.extraRecoveries)
 	}
 	return cost
+}
+
+// cStackEntryAgg is the contiguous-stack counterpart of cStackPrefixAgg. It
+// computes both C recovery aggregates in one walk and keeps the answer on the
+// stack until either a recovery-relevant node mutation bumps gssPrefixAggGen
+// or a stack push/truncate/materialization explicitly invalidates it.
+func (p *Parser) cStackEntryAgg(s *glrStack) (uint32, int) {
+	if s == nil {
+		return 0, 0
+	}
+	gen := gssPrefixAggGen.Load()
+	if p != nil && p.cNodeMemo != nil && s.cRec != nil && s.cEntryAggGen == gen {
+		return s.cEntryAggCost, int(s.cEntryAggVis)
+	}
+	var cost uint32
+	var vis int32
+	for i := range s.entries {
+		if n := stackEntryNode(s.entries[i]); n != nil {
+			cost += p.cNodeErrorCost(n)
+			vis += int32(p.cNodeVisibleSubtreeCount(n))
+		}
+	}
+	if p != nil && p.cNodeMemo != nil && s.cRec != nil {
+		s.cEntryAggGen = gen
+		s.cEntryAggCost = cost
+		s.cEntryAggVis = vis
+	}
+	return cost, int(vis)
 }
 
 func cStackErrorCostForMerge(lang *Language, s *glrStack) uint32 {
@@ -1666,9 +1703,13 @@ func (p *Parser) cStackCumulativeNodeCount(s *glrStack) int {
 	}
 	count := 0
 	if len(s.entries) > 0 {
-		for i := range s.entries {
-			if n := stackEntryNode(s.entries[i]); n != nil {
-				count += p.cNodeVisibleSubtreeCount(n)
+		if p != nil && p.cNodeMemo != nil && s.cRec != nil {
+			_, count = p.cStackEntryAgg(s)
+		} else {
+			for i := range s.entries {
+				if n := stackEntryNode(s.entries[i]); n != nil {
+					count += p.cNodeVisibleSubtreeCount(n)
+				}
 			}
 		}
 		return count
@@ -1699,7 +1740,7 @@ func (p *Parser) cApplyMergedErrorGroupBaseline(versions []glrStack) int {
 		}
 	}
 	for vi := range versions {
-		versions[vi].cNodeBaseline = groupBaseline
+		versions[vi].cNodeBaseline = uint32(groupBaseline)
 		// Writing a node-count baseline is definitionally an error-state entry;
 		// set the sticky wreckage bit alongside it so the (untrustworthy — it can
 		// be written as 0 here, or clamped back to 0 by cNodeCountSinceError)
@@ -1718,10 +1759,10 @@ func (p *Parser) cNodeCountSinceError(s *glrStack) int {
 	if s == nil {
 		return 0
 	}
-	count := p.cStackCumulativeNodeCount(s) - s.cNodeBaseline
+	count := p.cStackCumulativeNodeCount(s) - int(s.cNodeBaseline)
 	if count < 0 {
 		// C clamps (and writes back) when the stack popped below the baseline.
-		s.cNodeBaseline = p.cStackCumulativeNodeCount(s)
+		s.cNodeBaseline = uint32(p.cStackCumulativeNodeCount(s))
 		return 0
 	}
 	return count
@@ -2479,7 +2520,7 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 				}
 			}
 		}
-		v.cRec = &cRecoverState{summary: p.cRecordSummary(entries), group: group, groupOrder: vi}
+		v.cRec = &cRecoverState{summary: p.cRecordSummary(entries), group: group, groupOrder: uint32(vi)}
 		v.cRecoverMissingGroup = nil
 	}
 
@@ -2979,7 +3020,7 @@ func (p *Parser) cRecoverEOFAccept(v *glrStack, tok Token, nodeCount *int, arena
 		cSetNodeSpan(root, tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
 	}
 	root.setHasError(true)
-	nodeBumpEquivVersion(root)
+	nodeBumpEquivVersionBeforePublication(root)
 	if perfCountersEnabled {
 		perfRecordErrorNode()
 	}
@@ -3183,7 +3224,7 @@ func (p *Parser) cRecoverToState(v *glrStack, depth int, goal StateID, arena *no
 		errNode.setExtra(true)
 		errNode.preGotoState = goal
 		errNode.parseState = goal
-		nodeBumpEquivVersion(errNode)
+		nodeBumpEquivVersionBeforePublication(errNode)
 		if perfCountersEnabled {
 			perfRecordErrorNode()
 		}
@@ -3339,7 +3380,7 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 	cSetNodeSpan(errNode, tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
 	errNode.setHasError(true)
 	errNode.parseState = cErrorState
-	nodeBumpEquivVersion(errNode)
+	nodeBumpEquivVersionBeforePublication(errNode)
 	if perfCountersEnabled {
 		perfRecordErrorNode()
 	}
@@ -3846,7 +3887,7 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 	if hasErr || cand.hasError() {
 		root.setHasError(true)
 	}
-	nodeBumpEquivVersion(root)
+	nodeBumpEquivVersionBeforePublication(root)
 	if !s.truncate(1) {
 		return ParseStopNone
 	}

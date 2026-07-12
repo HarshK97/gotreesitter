@@ -2104,6 +2104,7 @@ func (p *Parser) tryRecoverPreviousShiftAsError(s *glrStack, tok Token, nodeCoun
 	s.entries = entries
 	s.gss = gssStack{}
 	s.cacheEntries = true
+	s.invalidateCEntryAgg()
 	s.byteOffset = stackByteOffset(entries)
 	s.shifted = false
 	if s.recoverabilityKnown && !s.mayRecover && p.stateCanRecover(prevState) {
@@ -6484,6 +6485,7 @@ func clearParseStackEntryCaches(stacks []glrStack) {
 		stacks[i].cacheEntries = false
 		if stacks[i].gss.head != nil {
 			stacks[i].entries = nil
+			stacks[i].invalidateCEntryAgg()
 		}
 	}
 }

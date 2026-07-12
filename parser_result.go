@@ -400,6 +400,9 @@ func appendExpandedGSSResultPaths(dst []glrStack, source glrStack, capPerStack i
 			candidate := source
 			candidate.gss = gssStack{}
 			candidate.entries = entries
+			// The source aggregate describes its original contiguous path (if
+			// any), not this newly materialized packed-link alternative.
+			candidate.invalidateCEntryAgg()
 			dst = append(dst, candidate)
 			capPerStack--
 			return

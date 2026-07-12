@@ -106,11 +106,12 @@ func nodeInitEquivVersion(n *Node) {
 }
 
 // nodeBumpEquivVersionMetadata invalidates caches keyed by the node's complete
-// parser identity without invalidating GSS recovery-prefix aggregates. Use it
-// only for mutations that cannot change cNodeErrorCost or
+// parser identity without invalidating GSS recovery-prefix aggregates. Call it
+// directly only for mutations that cannot change cNodeErrorCost or
 // cNodeVisibleSubtreeCount: parser states, production/raw-shape metadata, and
-// dynamic precedence. Symbol, child, missing/extra, and ERROR-span mutations
-// must use nodeBumpEquivVersion instead.
+// dynamic precedence. On published nodes, symbol, child, missing/extra, and
+// ERROR-span mutations must use nodeBumpEquivVersion instead; fresh nodes use
+// nodeBumpEquivVersionBeforePublication.
 func nodeBumpEquivVersionMetadata(n *Node) {
 	if n == nil {
 		return
@@ -123,6 +124,17 @@ func nodeBumpEquivVersionMetadata(n *Node) {
 	// mutation choke point that invalidated the former version-keyed arena map
 	// now invalidates the inline cache directly.
 	n.errorRankCache = 0
+}
+
+// nodeBumpEquivVersionBeforePublication invalidates node-local caches after a
+// recovery-relevant mutation to a fresh node that is provably not reachable
+// from any GSS stack or returned tree yet. Because no cached GSS prefix can
+// include an unpublished node, changing its error-cost or visible-count
+// contribution must not invalidate every live prefix process-wide.
+//
+// Published nodes must use nodeBumpEquivVersion instead.
+func nodeBumpEquivVersionBeforePublication(n *Node) {
+	nodeBumpEquivVersionMetadata(n)
 }
 
 func nodeBumpEquivVersion(n *Node) {
