@@ -45,6 +45,11 @@ type gssMainLink struct {
 
 const maxMainLinkCount = maxStacksPerMergeKey
 
+// extraLinkCount/extraLinkCap are uint8; the compacted layout is only valid
+// while every possible link count fits. This conversion fails to compile if
+// maxMainLinkCount ever grows past what uint8 can carry.
+const _ = uint8(maxMainLinkCount - 1)
+
 func (n *gssNode) linkCount() int {
 	if n == nil {
 		return 0
