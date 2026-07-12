@@ -12,9 +12,9 @@ for tags and release notes while still in `0.x`.
 - A hard zero-cliff gate for nightly fleet perf sweeps, with a
   hard-gate-only mode on the perf-scan budget checker; the scheduled
   perf-scan gate is disabled in favor of the nightly hard gate.
-- Runtime profiles for ASM (bounded stack retries), haxe, odin, and scss.
+- Runtime profiles for ASM (bounded stack retries), Haxe, Odin, and SCSS.
 - Dedicated non-terminal alias-map parity coverage: derivation gates for
-  go, swift, and caddy mirroring the Lua gate, plus live-parse regression
+  Go, Swift, and Caddy mirroring the Lua gate, plus live-parse regression
   tests for each language's alias behaviors.
 - `BENCH.md`: the canonical performance-claims page, including the first
   pinned quiet-host receipt for the corrected full-parse benchmark and a
@@ -32,7 +32,7 @@ for tags and release notes while still in `0.x`.
 
 - Real-corpus parity floors regenerated against lock-pinned corpora:
   55 grammars, 851/1026 deep parity, including first-ever bash and dart
-  rows; the docker wrapper's default skip list shrinks to ocaml only.
+  rows; the docker wrapper's default skip list shrinks to OCaml only.
 - GLR replay stacks use interned structural nodes, and GSS prefix
   aggregate caching and scratch retention are tightened.
 - Certified full-parse retry passes are bounded, and redundant certified
@@ -45,10 +45,10 @@ for tags and release notes while still in `0.x`.
   field set, so shared IDs always carry identical fields). This removes
   60-87% orphaned entries from the shipped grammargen blobs
   (go.bin 673 to 267 entries, swift.bin 2904 to 384) and lifts the uint16
-  field-map ceiling that made bash (65,536) and dart (65,538) generation-
+  field-map ceiling that made Bash (65,536) and Dart (65,538) generation-
   fatal; both now generate and carry real-corpus floor rows. A regression
   test pins one-reachable-run-per-ID through the real compaction path.
-- The swift certified retry profile is re-pinned to the regenerated blob
+- The Swift certified retry profile is re-pinned to the regenerated blob
   SHA (fail-closed certification behaved as designed).
 
 ### Removed
