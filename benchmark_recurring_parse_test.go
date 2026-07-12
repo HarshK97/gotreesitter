@@ -1,0 +1,106 @@
+package gotreesitter_test
+
+import (
+	"testing"
+
+	"github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
+)
+
+func requireRecurringBenchmarkTree(b *testing.B, tree *gotreesitter.Tree, err error, wantError bool) {
+	b.Helper()
+	if err != nil {
+		b.Fatalf("parse error: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		b.Fatal("parse returned nil tree or root")
+	}
+	if got := tree.RootNode().HasError(); got != wantError {
+		b.Fatalf("root.HasError() = %v, want %v", got, wantError)
+	}
+}
+
+// BenchmarkKDLParseRecurringTinyClean isolates the fixed per-Parse floor on a
+// reused parser. The input is intentionally much smaller than the parser's
+// retained scratch caches, making recurring reset work visible.
+func BenchmarkKDLParseRecurringTinyClean(b *testing.B) {
+	lang := grammars.KdlLanguage()
+	parser := gotreesitter.NewParser(lang)
+	src := []byte("node\n")
+
+	warm, err := parser.Parse(src)
+	requireRecurringBenchmarkTree(b, warm, err, false)
+	warm.Release()
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(src)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tree, err := parser.Parse(src)
+		if err != nil {
+			b.Fatalf("parse error: %v", err)
+		}
+		tree.Release()
+	}
+}
+
+// BenchmarkKDLParseRecurringErrorCleanAlternate exercises an error parse that
+// grows recovery scratch followed by a tiny clean parse on the same Parser.
+// Each operation is one error+clean pair so reset costs cannot hide behind a
+// sub-benchmark boundary or a fresh parser.
+func BenchmarkKDLParseRecurringErrorCleanAlternate(b *testing.B) {
+	lang := grammars.KdlLanguage()
+	parser := gotreesitter.NewParser(lang)
+	errorSrc := makeKDLRecoveryGarbageSource(4, 8)
+	cleanSrc := []byte("node\n")
+
+	errorTree, err := parser.Parse(errorSrc)
+	requireRecurringBenchmarkTree(b, errorTree, err, true)
+	errorTree.Release()
+	cleanTree, err := parser.Parse(cleanSrc)
+	requireRecurringBenchmarkTree(b, cleanTree, err, false)
+	cleanTree.Release()
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(errorSrc) + len(cleanSrc)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		errorTree, err := parser.Parse(errorSrc)
+		if err != nil {
+			b.Fatalf("error parse: %v", err)
+		}
+		errorTree.Release()
+
+		cleanTree, err := parser.Parse(cleanSrc)
+		if err != nil {
+			b.Fatalf("clean parse: %v", err)
+		}
+		cleanTree.Release()
+	}
+}
+
+// BenchmarkJSONParseRecurringTinyTokenSourceFactory measures the recurring
+// floor when callers use the public factory route instead of Parser.Parse.
+func BenchmarkJSONParseRecurringTinyTokenSourceFactory(b *testing.B) {
+	lang := grammars.JsonLanguage()
+	parser := gotreesitter.NewParser(lang)
+	src := []byte("{}")
+	factory := func(source []byte) (gotreesitter.TokenSource, error) {
+		return grammars.NewJSONTokenSource(source, lang)
+	}
+
+	warm, err := parser.ParseWithTokenSourceFactory(src, factory)
+	requireRecurringBenchmarkTree(b, warm, err, false)
+	warm.Release()
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(src)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tree, err := parser.ParseWithTokenSourceFactory(src, factory)
+		if err != nil {
+			b.Fatalf("parse error: %v", err)
+		}
+		tree.Release()
+	}
+}
