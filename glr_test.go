@@ -3770,7 +3770,7 @@ func TestGSSCleanZeroAllLinksHandlesLongCleanChain(t *testing.T) {
 	var head *gssNode
 	const chainLen = 20000
 	for i := 0; i < chainLen; i++ {
-		head = gssScratch.allocNode(stackEntry{state: StateID(i%17 + 1)}, head, i+1)
+		head = gssScratch.allocNode(stackEntry{state: StateID(i%17 + 1)}, head, uint32(i+1))
 	}
 
 	if !gssNodeCleanZeroErrorAllLinksWithScratch(&mergeScratch, head) {
@@ -3791,7 +3791,7 @@ func TestGSSCleanZeroAllLinksRejectsErrorBearingPackedPredecessor(t *testing.T) 
 	head := gssScratch.allocNode(newStackEntryNode(2, NewLeafNode(11, true, 0, 1, Point{}, Point{Column: 1})), base, 2)
 	errorEntry := newStackEntryNode(2, NewLeafNode(99, true, 0, 1, Point{}, Point{Column: 1}))
 	stackEntryNode(errorEntry).setHasError(true)
-	head.extraLinks = append(head.extraLinks, gssMainLink{prev: extraPrev, entry: errorEntry})
+	head.appendExtraLink(gssMainLink{prev: extraPrev, entry: errorEntry})
 
 	if gssNodeCleanZeroErrorAllLinksWithScratch(&mergeScratch, head) {
 		t.Fatal("clean-zero scan accepted an error-bearing packed predecessor link")
@@ -3804,7 +3804,7 @@ func TestGSSNodesCanMergeAllowsCleanPackedPredecessorLinks(t *testing.T) {
 	extraPrev := scratch.allocNode(stackEntry{state: 9}, nil, 1)
 	extraEntry := newStackEntryNode(2, NewLeafNode(99, true, 0, 1, Point{}, Point{Column: 1}))
 	withExtra := scratch.allocNode(newStackEntryNode(2, NewLeafNode(11, true, 0, 1, Point{}, Point{Column: 1})), base, 2)
-	withExtra.extraLinks = append(withExtra.extraLinks, gssMainLink{prev: extraPrev, entry: extraEntry})
+	withExtra.appendExtraLink(gssMainLink{prev: extraPrev, entry: extraEntry})
 	candidate := scratch.allocNode(newStackEntryNode(2, NewLeafNode(11, true, 0, 1, Point{}, Point{Column: 1})), base, 2)
 
 	if !gssNodesCanMerge(withExtra, candidate) {
@@ -3813,7 +3813,7 @@ func TestGSSNodesCanMergeAllowsCleanPackedPredecessorLinks(t *testing.T) {
 
 	errorEntry := newStackEntryNode(2, NewLeafNode(99, true, 0, 1, Point{}, Point{Column: 1}))
 	stackEntryNode(errorEntry).setHasError(true)
-	withExtra.extraLinks[0] = gssMainLink{prev: extraPrev, entry: errorEntry}
+	withExtra.setExtraLink(0, gssMainLink{prev: extraPrev, entry: errorEntry})
 	if gssNodesCanMerge(withExtra, candidate) {
 		t.Fatal("gssNodesCanMerge = true for error-bearing packed predecessor")
 	}
@@ -3933,7 +3933,7 @@ func TestGSSMainMergePreservesCandidateBeyondUnsafeCLinkCap(t *testing.T) {
 	incumbent := buildStack(20)
 	for i := 1; i < maxMainLinkCount; i++ {
 		extraNode := NewLeafNode(Symbol(20+i), true, 0, 5, Point{}, Point{Column: 5})
-		incumbent.gss.head.extraLinks = append(incumbent.gss.head.extraLinks, gssMainLink{
+		incumbent.gss.head.appendExtraLink(gssMainLink{
 			prev:  incumbent.gss.head.prev,
 			entry: newStackEntryNode(7, extraNode),
 		})
@@ -3972,7 +3972,7 @@ func TestMergeStacksGeneralFaithfulGSSPreservesCandidateBeyondUnsafeCLinkCap(t *
 	incumbent := buildStack(7, 30, 0)
 	for i := 1; i < maxMainLinkCount; i++ {
 		extraNode := NewLeafNode(Symbol(30+i), true, 0, 5, Point{}, Point{Column: 5})
-		incumbent.gss.head.extraLinks = append(incumbent.gss.head.extraLinks, gssMainLink{
+		incumbent.gss.head.appendExtraLink(gssMainLink{
 			prev:  incumbent.gss.head.prev,
 			entry: newStackEntryNode(StateID(7+i), extraNode),
 		})
@@ -4027,7 +4027,7 @@ func TestMergeStacksDeferExactFaithfulGSSPreservesCandidateBeyondUnsafeCLinkCap(
 	incumbent := buildStack(7, 50, 0)
 	for i := 1; i < maxMainLinkCount; i++ {
 		extraNode := NewLeafNode(Symbol(50+i), true, 0, 5, Point{}, Point{Column: 5})
-		incumbent.gss.head.extraLinks = append(incumbent.gss.head.extraLinks, gssMainLink{
+		incumbent.gss.head.appendExtraLink(gssMainLink{
 			prev:  incumbent.gss.head.prev,
 			entry: newStackEntryNode(StateID(7+i), extraNode),
 		})
@@ -4079,13 +4079,13 @@ func TestMergeStacksSmallFaithfulGSSSameInlinePreservesCandidateBeyondUnsafeCLin
 	candidateHead := scratchGSS.allocNode(topEntry, prev, 2)
 	for i := 1; i < maxMainLinkCount; i++ {
 		extraNode := NewLeafNode(Symbol(30+i), true, 0, 5, Point{}, Point{Column: 5})
-		incumbentHead.extraLinks = append(incumbentHead.extraLinks, gssMainLink{
+		incumbentHead.appendExtraLink(gssMainLink{
 			prev:  prev,
 			entry: newStackEntryNode(StateID(7+i), extraNode),
 		})
 	}
 	candidateExtra := NewLeafNode(99, true, 0, 5, Point{}, Point{Column: 5})
-	candidateHead.extraLinks = append(candidateHead.extraLinks, gssMainLink{
+	candidateHead.appendExtraLink(gssMainLink{
 		prev:  prev,
 		entry: newStackEntryNode(99, candidateExtra),
 	})

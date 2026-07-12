@@ -72,7 +72,7 @@ func TestExternalNoActionDefaultReduceDrainsForksBetweenRounds(t *testing.T) {
 	altLeft := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
 	altLeftNode := gssScratch.allocNode(newStackEntryNode(8, altLeft), altBase, 2)
 	altRight := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
-	rightNode.extraLinks = append(rightNode.extraLinks, gssMainLink{
+	rightNode.appendExtraLink(gssMainLink{
 		prev:  altLeftNode,
 		entry: newStackEntryNode(7, altRight),
 	})

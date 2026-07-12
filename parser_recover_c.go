@@ -1429,7 +1429,7 @@ func (p *Parser) cNodeErrorCost(n *Node) uint32 {
 // merge / competition paths issue hundreds of such calls per token, which
 // dominates error-region parses even with warm per-node memos.
 //
-// The on-node aggregates below (gssNode.aggGen/aggCost/aggVisGen/aggVis)
+// The on-node aggregates below (gssNode.aggGen/aggCost/aggVis/aggVisValid)
 // restore C's shape: per gssNode, the cumulative aggregates of the prev-chain
 // prefix root..node inclusive. gssNode prev/entry links are write-once at
 // allocation except setGSSMainLink (link-0 rewrite), and node payload
@@ -1443,13 +1443,13 @@ func (p *Parser) cNodeErrorCost(n *Node) uint32 {
 // ---------------------------------------------------------------------------
 
 // gssPrefixAggGen is the global invalidation generation for the GSS prefix
-// aggregates stored on gssNode (aggGen/aggCost/aggVisGen/aggVis). Bumped by
+// aggregates stored on gssNode (aggGen/aggCost/aggVis/aggVisValid). Bumped by
 // recovery-relevant nodeBumpEquivVersion mutations (tree.go) and link-0
 // rewrites that change the predecessor or full-Node payload (glr.go). Global
 // rather than per-parser because nodeBumpEquivVersion has no parser in scope;
 // cross-parser over-invalidation only costs a rebuild, never staleness.
-// Initialized to 1 so the zero value of gssNode.aggGen / aggVisGen (fresh or
-// slab-cleared nodes) can never validate.
+// Initialized to 1 so the zero value of gssNode.aggGen (fresh or slab-cleared
+// nodes) can never validate.
 var gssPrefixAggGen atomic.Uint64
 
 const maxRetainedGSSPrefixPath = 4 * 1024
@@ -1480,7 +1480,7 @@ func (p *Parser) cStackPrefixAgg(head *gssNode) (uint32, int) {
 	path := p.cPrefixPath[:0]
 	gn := head
 	for gn != nil {
-		if gn.aggGen == gen && gn.aggVisGen == gen {
+		if gn.aggGen == gen && gn.aggVisValid {
 			cost, vis = gn.aggCost, gn.aggVis
 			break
 		}
@@ -1494,7 +1494,7 @@ func (p *Parser) cStackPrefixAgg(head *gssNode) (uint32, int) {
 			vis += int32(p.cNodeVisibleSubtreeCount(n))
 		}
 		gn.aggGen = gen
-		gn.aggVisGen = gen
+		gn.aggVisValid = true
 		gn.aggCost = cost
 		gn.aggVis = vis
 	}
@@ -1504,7 +1504,7 @@ func (p *Parser) cStackPrefixAgg(head *gssNode) (uint32, int) {
 
 // cStackPrefixCostForMerge is the merge-scratch twin of cStackPrefixAgg. It
 // fills cost only (the merge side has no memoized visible-count walk), so it
-// leaves aggVisGen untouched; the cost value is identical to the parser-side
+// marks visibility invalid; the cost value is identical to the parser-side
 // fill, letting both sides share aggCost.
 func cStackPrefixCostForMerge(scratch *glrMergeScratch, lang *Language, head *gssNode) uint32 {
 	gen := gssPrefixAggGen.Load()
@@ -1525,6 +1525,7 @@ func cStackPrefixCostForMerge(scratch *glrMergeScratch, lang *Language, head *gs
 			cost += cNodeErrorCostLangWithScratch(scratch, lang, n)
 		}
 		gn.aggGen = gen
+		gn.aggVisValid = false
 		gn.aggCost = cost
 	}
 	scratch.cPrefixPath = path

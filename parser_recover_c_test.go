@@ -656,7 +656,7 @@ func TestCDoAllPotentialReductionsCollapsesSamePopTargetSlicesByCParentSelection
 	rightNode := scratch.allocNode(newStackEntryNode(3, right), leftNode, 3)
 	altRight := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
 	altRight.dynamicPrecedence = 9
-	rightNode.extraLinks = append(rightNode.extraLinks, gssMainLink{
+	rightNode.appendExtraLink(gssMainLink{
 		prev:  leftNode,
 		entry: newStackEntryNode(3, altRight),
 	})
@@ -722,7 +722,7 @@ func TestCDoAllPotentialReductionsCollapsesSamePopWithTrailingExtra(t *testing.T
 	rightLowNode := scratch.allocNode(newStackEntryNode(3, rightLow), leftNode, 3)
 	rightHighNode := scratch.allocNode(newStackEntryNode(3, rightHigh), leftNode, 3)
 	head := scratch.allocNode(newStackEntryNode(3, extraLow), rightLowNode, 4)
-	head.extraLinks = append(head.extraLinks, gssMainLink{
+	head.appendExtraLink(gssMainLink{
 		prev:  rightHighNode,
 		entry: newStackEntryNode(3, extraHigh),
 	})

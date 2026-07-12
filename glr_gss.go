@@ -12,11 +12,7 @@ const (
 type gssNode struct {
 	entry stackEntry
 	prev  *gssNode
-	depth int
 	hash  uint64
-	// extraLinks holds links 1..k after a gated lossless condense merge. The
-	// inline (prev, entry) pair remains link 0.
-	extraLinks []gssMainLink
 
 	// Prefix aggregates for the C-recovery cost competition: the cumulative
 	// error cost / visible subtree count of the link-0 prev chain root..this
@@ -24,13 +20,22 @@ type gssNode struct {
 	// maintained at push (stack.c stack_node_new), read O(1) by
 	// ts_stack_error_cost (stack.c:493). Valid only while the matching gen
 	// field equals gssPrefixAggGen (parser_recover_c.go); allocNode resets the
-	// gens to 0 (never valid — the counter starts at 1). aggCost is filled by
-	// both the parser-side and merge-side walks (identical math); aggVis only
-	// by the parser side, hence the separate gen.
-	aggGen    uint64
-	aggVisGen uint64
-	aggCost   uint32
-	aggVis    int32
+	// generation to 0 (never valid — the counter starts at 1). aggCost is filled
+	// by both the parser-side and merge-side walks (identical math); aggVis only
+	// by the parser side, hence aggVisValid.
+	aggGen uint64
+
+	// extraLinks points at the backing array for links 1..k after a gated
+	// lossless condense merge. Keeping only a pointer and compact length/capacity
+	// on the overwhelmingly single-link node avoids paying a slice header on
+	// every GSS record. The inline (prev, entry) pair remains link 0.
+	extraLinks     *gssMainLink
+	aggCost        uint32
+	aggVis         int32
+	depth          uint32
+	extraLinkCount uint8
+	extraLinkCap   uint8
+	aggVisValid    bool
 }
 
 type gssMainLink struct {
@@ -40,19 +45,66 @@ type gssMainLink struct {
 
 const maxMainLinkCount = maxStacksPerMergeKey
 
+// extraLinkCount/extraLinkCap are uint8; the compacted layout is only valid
+// while every possible link count fits. This conversion fails to compile if
+// maxMainLinkCount ever grows past what uint8 can carry.
+const _ = uint8(maxMainLinkCount - 1)
+
 func (n *gssNode) linkCount() int {
 	if n == nil {
 		return 0
 	}
-	return 1 + len(n.extraLinks)
+	return 1 + int(n.extraLinkCount)
 }
 
 func (n *gssNode) link(i int) (prev *gssNode, entry stackEntry) {
 	if i == 0 {
 		return n.prev, n.entry
 	}
-	l := n.extraLinks[i-1]
+	l := n.extraLink(i - 1)
 	return l.prev, l.entry
+}
+
+func (n *gssNode) extraLink(i int) gssMainLink {
+	if n == nil || i < 0 || i >= int(n.extraLinkCount) || n.extraLinks == nil {
+		panic("gssNode.extraLink: index out of range")
+	}
+	return unsafe.Slice(n.extraLinks, int(n.extraLinkCount))[i]
+}
+
+func (n *gssNode) setExtraLink(i int, link gssMainLink) {
+	if n == nil || i < 0 || i >= int(n.extraLinkCount) || n.extraLinks == nil {
+		panic("gssNode.setExtraLink: index out of range")
+	}
+	unsafe.Slice(n.extraLinks, int(n.extraLinkCount))[i] = link
+}
+
+func (n *gssNode) appendExtraLink(link gssMainLink) {
+	if n == nil || int(n.extraLinkCount) >= maxMainLinkCount-1 {
+		panic("gssNode.appendExtraLink: link limit exceeded")
+	}
+	count := int(n.extraLinkCount)
+	capacity := int(n.extraLinkCap)
+	if count < capacity && n.extraLinks != nil {
+		unsafe.Slice(n.extraLinks, capacity)[count] = link
+		n.extraLinkCount++
+		return
+	}
+	newCapacity := 1
+	if capacity > 0 {
+		newCapacity = capacity * 2
+	}
+	if max := maxMainLinkCount - 1; newCapacity > max {
+		newCapacity = max
+	}
+	links := make([]gssMainLink, newCapacity)
+	if count > 0 {
+		copy(links, unsafe.Slice(n.extraLinks, count))
+	}
+	links[count] = link
+	n.extraLinks = &links[0]
+	n.extraLinkCount++
+	n.extraLinkCap = uint8(newCapacity)
 }
 
 // gssStack is a shared-prefix stack foundation for future GLR work.
@@ -67,6 +119,7 @@ type gssScratch struct {
 	initialCap        int
 	skipClear         bool
 	usedTotal         int
+	peakUsed          int
 	allocatedBytes    int64
 	singleStackMode   bool
 	singleStackAllocs uint64
@@ -244,7 +297,7 @@ func gssNodeHash(n *gssNode) uint64 {
 		pending = append(pending, cur)
 	}
 	prevHash := gssHashSeed
-	if len(pending) < n.depth {
+	if len(pending) < int(n.depth) {
 		prev := pending[len(pending)-1].prev
 		if prev != nil {
 			prevHash = prev.hash
@@ -281,7 +334,7 @@ func (s gssStack) len() int {
 	if s.head == nil {
 		return 0
 	}
-	return s.head.depth
+	return int(s.head.depth)
 }
 
 func (s gssStack) top() stackEntry {
@@ -305,11 +358,12 @@ func (s *gssStack) push(state StateID, node *Node, scratch *gssScratch) {
 }
 
 func (s *gssStack) pushEntry(entry stackEntry, scratch *gssScratch) {
-	var depth int
+	depth := uint32(1)
 	if s.head != nil {
+		if s.head.depth == ^uint32(0) {
+			panic("gssStack.pushEntry: stack depth overflow")
+		}
 		depth = s.head.depth + 1
-	} else {
-		depth = 1
 	}
 	n := scratch.allocNode(entry, s.head, depth)
 	s.head = n
@@ -323,14 +377,18 @@ func (s *gssStack) truncate(depth int) bool {
 	if s.head == nil {
 		return depth == 0
 	}
-	if depth > s.head.depth {
+	if uint64(depth) > uint64(^uint32(0)) {
+		return false
+	}
+	depth32 := uint32(depth)
+	if depth32 > s.head.depth {
 		return false
 	}
 	keep := s.head
-	for keep != nil && keep.depth > depth {
+	for keep != nil && keep.depth > depth32 {
 		keep = keep.prev
 	}
-	if keep == nil || keep.depth != depth {
+	if keep == nil || keep.depth != depth32 {
 		return false
 	}
 	s.head = keep
@@ -360,7 +418,7 @@ func (s gssStack) materialize(dst []stackEntry) []stackEntry {
 	return dst
 }
 
-func (s *gssScratch) allocNode(entry stackEntry, prev *gssNode, depth int) *gssNode {
+func (s *gssScratch) allocNode(entry stackEntry, prev *gssNode, depth uint32) *gssNode {
 	hash := uint64(0)
 	if s == nil || !s.singleStackMode {
 		prevHash := gssHashSeed
@@ -384,6 +442,9 @@ func (s *gssScratch) allocNode(entry stackEntry, prev *gssNode, depth int) *gssN
 			idx := slab.used
 			slab.used++
 			s.usedTotal++
+			if s.usedTotal > s.peakUsed {
+				s.peakUsed = s.usedTotal
+			}
 			if s.singleStackMode {
 				s.singleStackAllocs++
 			} else {
@@ -395,15 +456,17 @@ func (s *gssScratch) allocNode(entry stackEntry, prev *gssNode, depth int) *gssN
 			n.depth = depth
 			n.hash = hash
 			n.extraLinks = nil
+			n.extraLinkCount = 0
+			n.extraLinkCap = 0
 			n.aggGen = 0
-			n.aggVisGen = 0
+			n.aggVisValid = false
 			return n
 		}
 	}
 	return s.allocNodeSlow(entry, prev, depth, hash)
 }
 
-func (s *gssScratch) allocNodeSlow(entry stackEntry, prev *gssNode, depth int, hash uint64) *gssNode {
+func (s *gssScratch) allocNodeSlow(entry stackEntry, prev *gssNode, depth uint32, hash uint64) *gssNode {
 	if len(s.slabs) == 0 {
 		capacity := defaultGSSNodeSlabCap
 		if s.initialCap > capacity {
@@ -433,6 +496,9 @@ func (s *gssScratch) allocNodeSlow(entry stackEntry, prev *gssNode, depth int, h
 		idx := slab.used
 		slab.used++
 		s.usedTotal++
+		if s.usedTotal > s.peakUsed {
+			s.peakUsed = s.usedTotal
+		}
 		s.slabCursor = i
 		if s.singleStackMode {
 			s.singleStackAllocs++
@@ -445,13 +511,36 @@ func (s *gssScratch) allocNodeSlow(entry stackEntry, prev *gssNode, depth int, h
 		n.depth = depth
 		n.hash = hash
 		n.extraLinks = nil
+		n.extraLinkCount = 0
+		n.extraLinkCap = 0
 		n.aggGen = 0
-		n.aggVisGen = 0
+		n.aggVisValid = false
 		if s.audit != nil {
 			s.audit.recordGSSAlloc(n)
 		}
 		return n
 	}
+}
+
+// recycleForParse makes every GSS slab slot available to the current parse.
+// The caller must first prove that no live parse stack points into the slabs
+// and invalidate every pointer-keyed merge/recovery cache. Keeping that proof
+// outside this allocator makes accidental address reuse impossible from lower
+// level allocation call sites.
+func (s *gssScratch) recycleForParse() {
+	if s == nil || s.usedTotal == 0 {
+		return
+	}
+	for i := range s.slabs {
+		used := s.slabs[i].used
+		if used > len(s.slabs[i].data) {
+			used = len(s.slabs[i].data)
+		}
+		clear(s.slabs[i].data[:used])
+		s.slabs[i].used = 0
+	}
+	s.slabCursor = 0
+	s.usedTotal = 0
 }
 
 func (s *gssScratch) reset() {
@@ -468,6 +557,7 @@ func (s *gssScratch) reset() {
 		s.demotions = 0
 		s.nodesDemoted = 0
 		s.skipClear = false
+		s.peakUsed = 0
 		s.allocatedBytes = s.frontier.allocatedBytes() + stackEntryBytesForCap(cap(s.stackEntries))
 		s.audit = nil
 		return
@@ -508,6 +598,7 @@ func (s *gssScratch) reset() {
 	s.slabCursor = 0
 	s.skipClear = false
 	s.usedTotal = 0
+	s.peakUsed = 0
 	s.singleStackMode = false
 	s.singleStackAllocs = 0
 	s.multiStackAllocs = 0
@@ -530,7 +621,7 @@ func gssSpanIsLinear(head *gssNode, childCount int) bool {
 	}
 	nonExtraFound := 0
 	for n := head; n != nil; n = n.prev {
-		if len(n.extraLinks) > 0 {
+		if n.extraLinkCount > 0 {
 			return false
 		}
 		if stackEntryHasNode(n.entry) && !stackEntryNodeIsExtra(n.entry) {

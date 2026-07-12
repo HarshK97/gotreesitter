@@ -162,6 +162,7 @@ type glrMergeScratch struct {
 	cRecoveryCost     bool
 	audit             *runtimeAudit
 	equivEpoch        uint32
+	gssPointerEpoch   uint32
 	equivCache        []glrNodeEquivCacheEntry
 	stackEquivCache   []glrStackEquivCacheEntry
 	spineEquivCache   []glrSpineEquivCacheEntry
@@ -1015,12 +1016,11 @@ func (s *glrMergeScratch) beginEquivEpoch() {
 	s.beginCleanZeroEpoch()
 	if s.equivEpoch == ^uint32(0) {
 		clear(s.equivCache)
-		clear(s.stackEquivCache)
 		clear(s.spineEquivCache)
-		clear(s.frontierHashCache)
 		s.equivEpoch = 0
 	}
 	s.equivEpoch++
+	s.bumpGSSPointerEpoch()
 	if len(s.cErrorCost) > maxRetainedMergeResultCap {
 		s.cErrorCost = nil
 	} else if len(s.cErrorCost) > 0 {
@@ -1038,6 +1038,57 @@ func (s *glrMergeScratch) beginEquivEpoch() {
 	// empty backing array make that a correct no-memo fallback.
 }
 
+// bumpGSSPointerEpoch invalidates caches whose answer is keyed only by a GSS
+// address. The spine cache is deliberately excluded: it also validates both
+// nodes' complete rolling spine fingerprints, so recycled addresses with new
+// content miss without throwing away still-useful immutable-prefix answers.
+func (s *glrMergeScratch) bumpGSSPointerEpoch() {
+	if s == nil {
+		return
+	}
+	if s.gssPointerEpoch == ^uint32(0) {
+		clear(s.stackEquivCache)
+		clear(s.frontierHashCache)
+		s.gssPointerEpoch = 0
+	}
+	s.gssPointerEpoch++
+}
+
+// invalidateGSSPointersForReuse drops every merge-scratch reference whose
+// identity is tied to a gssNode address, then advances the epochs guarding the
+// uintptr-keyed caches. Callers may recycle GSS slab slots only after this and
+// after clearing any live glrStack slices that used the old graph.
+func (s *glrMergeScratch) invalidateGSSPointersForReuse() {
+	if s == nil {
+		return
+	}
+	s.beginCleanZeroEpoch()
+	s.bumpGSSPointerEpoch()
+	s.bumpShapePrefixEpoch()
+	resetGSSPrefixPath(&s.cPrefixPath)
+	if len(s.cleanZeroCache) > 0 {
+		clear(s.cleanZeroCache)
+	}
+	if cap(s.cleanZeroStack) > 0 {
+		clear(s.cleanZeroStack[:cap(s.cleanZeroStack)])
+		s.cleanZeroStack = s.cleanZeroStack[:0]
+	}
+	if cap(s.cleanZeroVisited) > 0 {
+		clear(s.cleanZeroVisited[:cap(s.cleanZeroVisited)])
+		s.cleanZeroVisited = s.cleanZeroVisited[:0]
+	}
+	if cap(s.spineVisit) > 0 {
+		clear(s.spineVisit[:cap(s.spineVisit)])
+		s.spineVisit = s.spineVisit[:0]
+	}
+	if s.preflight != nil {
+		s.preflight.clearGSSPointersForReuse()
+	}
+	if len(s.mergeSeen) > 0 {
+		clear(s.mergeSeen)
+	}
+}
+
 func stackFrontierHashCacheIndex(p uintptr) int {
 	h := uint64(p)
 	h ^= h >> 33
@@ -1049,17 +1100,17 @@ func stackFrontierHashCacheIndex(p uintptr) int {
 }
 
 func lookupStackFrontierHashCache(scratch *glrMergeScratch, n *gssNode) (uint64, bool) {
-	if scratch == nil || len(scratch.frontierHashCache) == 0 || scratch.equivEpoch == 0 || n == nil {
+	if scratch == nil || len(scratch.frontierHashCache) == 0 || scratch.gssPointerEpoch == 0 || n == nil {
 		return 0, false
 	}
 	p := uintptr(unsafe.Pointer(n))
 	idx := stackFrontierHashCacheIndex(p)
 	primary := &scratch.frontierHashCache[idx]
-	if primary.epoch == scratch.equivEpoch && primary.node == p {
+	if primary.epoch == scratch.gssPointerEpoch && primary.node == p {
 		return primary.hash, true
 	}
 	victim := &scratch.frontierHashCache[idx+1]
-	if victim.epoch == scratch.equivEpoch && victim.node == p {
+	if victim.epoch == scratch.gssPointerEpoch && victim.node == p {
 		scratch.frontierHashCache[idx], scratch.frontierHashCache[idx+1] = scratch.frontierHashCache[idx+1], scratch.frontierHashCache[idx]
 		return scratch.frontierHashCache[idx].hash, true
 	}
@@ -1067,7 +1118,7 @@ func lookupStackFrontierHashCache(scratch *glrMergeScratch, n *gssNode) (uint64,
 }
 
 func storeStackFrontierHashCache(scratch *glrMergeScratch, n *gssNode, hash uint64) {
-	if scratch == nil || scratch.equivEpoch == 0 || n == nil {
+	if scratch == nil || scratch.gssPointerEpoch == 0 || n == nil {
 		return
 	}
 	if len(scratch.frontierHashCache) == 0 {
@@ -1079,7 +1130,7 @@ func storeStackFrontierHashCache(scratch *glrMergeScratch, n *gssNode, hash uint
 	scratch.frontierHashCache[idx+1] = scratch.frontierHashCache[idx]
 	scratch.frontierHashCache[idx] = glrStackFrontierHashCacheEntry{
 		node:  p,
-		epoch: scratch.equivEpoch,
+		epoch: scratch.gssPointerEpoch,
 		hash:  hash,
 	}
 }
@@ -1109,7 +1160,7 @@ func stackEquivCacheIndex(ap, bp uintptr) int {
 }
 
 func lookupGSSStackEquivCache(scratch *glrMergeScratch, a, b *gssNode) (bool, bool) {
-	if scratch == nil || len(scratch.stackEquivCache) == 0 || scratch.equivEpoch == 0 {
+	if scratch == nil || len(scratch.stackEquivCache) == 0 || scratch.gssPointerEpoch == 0 {
 		return false, false
 	}
 	ap, bp, ok := orderedGSSNodePair(a, b)
@@ -1118,11 +1169,11 @@ func lookupGSSStackEquivCache(scratch *glrMergeScratch, a, b *gssNode) (bool, bo
 	}
 	idx := stackEquivCacheIndex(ap, bp)
 	primary := &scratch.stackEquivCache[idx]
-	if primary.epoch == scratch.equivEpoch && primary.a == ap && primary.b == bp {
+	if primary.epoch == scratch.gssPointerEpoch && primary.a == ap && primary.b == bp {
 		return primary.result, true
 	}
 	victim := &scratch.stackEquivCache[idx+1]
-	if victim.epoch == scratch.equivEpoch && victim.a == ap && victim.b == bp {
+	if victim.epoch == scratch.gssPointerEpoch && victim.a == ap && victim.b == bp {
 		scratch.stackEquivCache[idx], scratch.stackEquivCache[idx+1] = scratch.stackEquivCache[idx+1], scratch.stackEquivCache[idx]
 		return scratch.stackEquivCache[idx].result, true
 	}
@@ -1130,7 +1181,7 @@ func lookupGSSStackEquivCache(scratch *glrMergeScratch, a, b *gssNode) (bool, bo
 }
 
 func storeGSSStackEquivCache(scratch *glrMergeScratch, a, b *gssNode, result bool) {
-	if scratch == nil || scratch.equivEpoch == 0 {
+	if scratch == nil || scratch.gssPointerEpoch == 0 {
 		return
 	}
 	ap, bp, ok := orderedGSSNodePair(a, b)
@@ -1146,7 +1197,7 @@ func storeGSSStackEquivCache(scratch *glrMergeScratch, a, b *gssNode, result boo
 	scratch.stackEquivCache[idx] = glrStackEquivCacheEntry{
 		a:      ap,
 		b:      bp,
-		epoch:  scratch.equivEpoch,
+		epoch:  scratch.gssPointerEpoch,
 		result: result,
 	}
 }
@@ -3423,7 +3474,7 @@ func setGSSMainLink(n *gssNode, i int, prev *gssNode, entry stackEntry) {
 		n.entry = entry
 		return
 	}
-	n.extraLinks[i-1] = gssMainLink{prev: prev, entry: entry}
+	n.setExtraLink(i-1, gssMainLink{prev: prev, entry: entry})
 }
 
 func gssMainAddLink(n *gssNode, prev *gssNode, entry stackEntry) bool {
@@ -3460,6 +3511,37 @@ type gssMainPreflight struct {
 	// (cleared per use) so pooled preflights stop allocating two maps per
 	// nodesCanMerge call.
 	offsetSeen map[*gssNode]bool
+}
+
+func (p *gssMainPreflight) clearGSSPointersForReuse() {
+	if p == nil {
+		return
+	}
+	clear(p.seen)
+	clear(p.virtualLink)
+	clear(p.reachCache)
+	clear(p.reachSeen)
+	clear(p.cleanCache)
+	clear(p.cleanSeen)
+	clear(p.offsetSeen)
+	if cap(p.reachStack) > 0 {
+		clear(p.reachStack[:cap(p.reachStack)])
+		p.reachStack = p.reachStack[:0]
+	}
+	if cap(p.reachVisit) > 0 {
+		clear(p.reachVisit[:cap(p.reachVisit)])
+		p.reachVisit = p.reachVisit[:0]
+	}
+	if cap(p.cleanStack) > 0 {
+		clear(p.cleanStack[:cap(p.cleanStack)])
+		p.cleanStack = p.cleanStack[:0]
+	}
+	if cap(p.cleanVisit) > 0 {
+		clear(p.cleanVisit[:cap(p.cleanVisit)])
+		p.cleanVisit = p.cleanVisit[:0]
+	}
+	p.reachStrict = true
+	p.reachEpoch = 1
 }
 
 const maxGSSPreflightReachCacheEntries = 32768
@@ -3896,7 +3978,7 @@ func gssMainAddLinkSeenMutate(scratch *glrMergeScratch, n *gssNode, prev *gssNod
 		}
 		return false
 	}
-	n.extraLinks = append(n.extraLinks, gssMainLink{prev: prev, entry: entry})
+	n.appendExtraLink(gssMainLink{prev: prev, entry: entry})
 	n.hash = 0
 	return true
 }

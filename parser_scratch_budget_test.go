@@ -27,7 +27,7 @@ func TestParserScratchMemoryBudgetExhaustedByGSSSlabGrowth(t *testing.T) {
 	scratch.setBudget(1)
 
 	for depth := 2; depth <= defaultGSSNodeSlabCap; depth++ {
-		_ = scratch.gss.allocNode(stackEntry{state: 1}, nil, depth)
+		_ = scratch.gss.allocNode(stackEntry{state: 1}, nil, uint32(depth))
 	}
 	if scratch.budgetExhausted() {
 		t.Fatal("budget exhausted before gss-slab overflow")
@@ -110,7 +110,7 @@ func TestParserScratchResetRecomputesAllocatedBytes(t *testing.T) {
 	_ = scratch.entries.allocWithCap(defaultStackEntrySlabCap, defaultStackEntrySlabCap)
 	_ = scratch.entries.alloc(1)
 	for depth := 1; depth <= defaultGSSNodeSlabCap+1; depth++ {
-		_ = scratch.gss.allocNode(stackEntry{state: 1}, nil, depth)
+		_ = scratch.gss.allocNode(stackEntry{state: 1}, nil, uint32(depth))
 	}
 	_ = ensureMergeResultCap(&scratch.merge, 2)
 	_ = ensureMergeSlotCap(&scratch.merge, 2)

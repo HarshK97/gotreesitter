@@ -11,7 +11,7 @@ func buildTwoWindowFullGSSReduceCase(t *testing.T, scratch *gssScratch, arena *n
 	leftNode := scratch.allocNode(newStackEntryNode(2, left), base, 2)
 	rightNode := scratch.allocNode(newStackEntryNode(3, right), leftNode, 3)
 	altRight := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
-	rightNode.extraLinks = append(rightNode.extraLinks, gssMainLink{
+	rightNode.appendExtraLink(gssMainLink{
 		prev:  leftNode,
 		entry: newStackEntryNode(3, altRight),
 	})
@@ -80,7 +80,7 @@ func TestFastVisibleReduceFromGSSDeclinesMultiLinkSpan(t *testing.T) {
 	leftNode := scratch.allocNode(newStackEntryNode(2, left), base, 2)
 	rightNode := scratch.allocNode(newStackEntryNode(3, right), leftNode, 3)
 	altRight := NewLeafNode(2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
-	rightNode.extraLinks = append(rightNode.extraLinks, gssMainLink{
+	rightNode.appendExtraLink(gssMainLink{
 		prev:  leftNode,
 		entry: newStackEntryNode(3, altRight),
 	})
@@ -521,7 +521,7 @@ func TestReduceForkSelectionScansPastCrossProductRawCapForSameGroupWinner(t *tes
 				altLeft.dynamicPrecedence = 99
 				bestLeft = altLeft
 			}
-			leftHub.extraLinks = append(leftHub.extraLinks, gssMainLink{
+			leftHub.appendExtraLink(gssMainLink{
 				prev:  popTo,
 				entry: newStackEntryNode(8, altLeft),
 			})
@@ -535,7 +535,7 @@ func TestReduceForkSelectionScansPastCrossProductRawCapForSameGroupWinner(t *tes
 			head = scratch.allocNode(newStackEntryNode(9, right), leftHub, 3)
 			continue
 		}
-		head.extraLinks = append(head.extraLinks, gssMainLink{
+		head.appendExtraLink(gssMainLink{
 			prev:  leftHub,
 			entry: newStackEntryNode(9, right),
 		})
@@ -636,7 +636,7 @@ func TestReduceForkSelectionCapsDistinctCrossProductGroups(t *testing.T) {
 		for leftIdx := 1; leftIdx < maxMainLinkCount; leftIdx++ {
 			distinctPopTo := scratch.allocNode(stackEntry{state: StateID(20 + rightIdx*maxMainLinkCount + leftIdx)}, nil, 1)
 			altLeft := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
-			leftHub.extraLinks = append(leftHub.extraLinks, gssMainLink{
+			leftHub.appendExtraLink(gssMainLink{
 				prev:  distinctPopTo,
 				entry: newStackEntryNode(8, altLeft),
 			})
@@ -646,7 +646,7 @@ func TestReduceForkSelectionCapsDistinctCrossProductGroups(t *testing.T) {
 			head = scratch.allocNode(newStackEntryNode(9, right), leftHub, 3)
 			continue
 		}
-		head.extraLinks = append(head.extraLinks, gssMainLink{
+		head.appendExtraLink(gssMainLink{
 			prev:  leftHub,
 			entry: newStackEntryNode(9, right),
 		})
@@ -696,10 +696,10 @@ func TestSelectedReduceWindowsFromGSSCapsTraversalWork(t *testing.T) {
 	prev := popTo
 	for depth := 0; depth < childCount; depth++ {
 		leaf := newLeafNodeInArena(arena, Symbol(1+depth), true, uint32(depth), uint32(depth+1), Point{Column: uint32(depth)}, Point{Column: uint32(depth + 1)})
-		layer := scratch.allocNode(newStackEntryNode(StateID(20+depth), leaf), prev, depth+2)
+		layer := scratch.allocNode(newStackEntryNode(StateID(20+depth), leaf), prev, uint32(depth+2))
 		for alt := 1; alt < maxMainLinkCount; alt++ {
 			altLeaf := newLeafNodeInArena(arena, Symbol(1+depth), true, uint32(depth), uint32(depth+1), Point{Column: uint32(depth)}, Point{Column: uint32(depth + 1)})
-			layer.extraLinks = append(layer.extraLinks, gssMainLink{
+			layer.appendExtraLink(gssMainLink{
 				prev:  prev,
 				entry: newStackEntryNode(StateID(20+depth), altLeaf),
 			})
@@ -759,7 +759,7 @@ func TestFaithfulForkReduceTargetMismatchFallsBackToPendingFork(t *testing.T) {
 	altLeft := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
 	altLeftNode := scratch.allocNode(newStackEntryNode(8, altLeft), altBase, 2)
 	altRight := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
-	rightNode.extraLinks = append(rightNode.extraLinks, gssMainLink{
+	rightNode.appendExtraLink(gssMainLink{
 		prev:  altLeftNode,
 		entry: newStackEntryNode(7, altRight),
 	})
@@ -1043,7 +1043,7 @@ func TestNoTreeReduceFromGSSRejectsMultiLinkSpan(t *testing.T) {
 	leftNode := scratch.allocNode(newStackEntryNoTreeNode(2, left), base, 2)
 	rightNode := scratch.allocNode(newStackEntryNoTreeNode(3, right), leftNode, 3)
 	altRight := newNoTreeLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
-	rightNode.extraLinks = append(rightNode.extraLinks, gssMainLink{
+	rightNode.appendExtraLink(gssMainLink{
 		prev:  leftNode,
 		entry: newStackEntryNoTreeNode(3, altRight),
 	})
