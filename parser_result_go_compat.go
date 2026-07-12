@@ -40,10 +40,6 @@ func normalizeGoCompatibilityInRangesWithParser(root *Node, source []byte, lang 
 	return normalizeGoCompatibilityInRangesWithStopAndScratch(root, source, lang, incrementalRanges, stopCheck, frames)
 }
 
-func normalizeGoCompatibilityInRangesWithStop(root *Node, source []byte, lang *Language, incrementalRanges []Range, stopCheck parseStopCheck) ParseStopReason {
-	return normalizeGoCompatibilityInRangesWithStopAndScratch(root, source, lang, incrementalRanges, stopCheck, nil)
-}
-
 func normalizeGoCompatibilityInRangesWithStopAndScratch(root *Node, source []byte, lang *Language, incrementalRanges []Range, stopCheck parseStopCheck, frames *[]goCompatSubtreeFrame) ParseStopReason {
 	if root == nil || lang == nil || lang.Name != "go" || len(source) == 0 {
 		return ParseStopNone
@@ -309,10 +305,6 @@ func (s goCompatibilitySymbols) isStatementList(sym Symbol) bool {
 type goCompatSubtreeFrame struct {
 	node *Node
 	exit bool
-}
-
-func normalizeGoCompatibilitySubtreeWithStop(n *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range, poller *parseStopPoller) ParseStopReason {
-	return normalizeGoCompatibilitySubtreeWithStopAndScratch(n, source, syms, flags, incrementalRanges, poller, nil)
 }
 
 func normalizeGoCompatibilitySubtreeWithStopAndScratch(n *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range, poller *parseStopPoller, frames *[]goCompatSubtreeFrame) ParseStopReason {

@@ -16,10 +16,6 @@ func normalizeJavaScriptCompatibility(root *Node, source []byte, lang *Language)
 	normalizeJavaScriptProgramEnd(root, source, lang)
 }
 
-func normalizeTypeScriptTreeCompatibility(root *Node, source []byte, lang *Language) {
-	normalizeTypeScriptTreeCompatibilityWithParser(root, source, nil, lang)
-}
-
 func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, parser *Parser, lang *Language) {
 	recordPasses := parser != nil && parser.currentMaterializationTiming() != nil
 	if !recordPasses {

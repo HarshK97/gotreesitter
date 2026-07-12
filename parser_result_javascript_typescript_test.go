@@ -29,7 +29,7 @@ func TestNormalizeJavaScriptTopLevelExpressionStatementBoundsAlsoSnapsTypeScript
 	root.children[0].symbol = 0
 	root.children[1].symbol = 0
 
-	normalizeTypeScriptTreeCompatibility(root, nil, lang)
+	normalizeTypeScriptTreeCompatibilityWithParser(root, nil, nil, lang)
 
 	if got, want := stmt.StartByte(), uint32(73); got != want {
 		t.Fatalf("stmt.StartByte = %d, want %d", got, want)
@@ -70,7 +70,7 @@ func TestNormalizeJavaScriptTopLevelExpressionStatementBoundsSnapsFinalRefs(t *t
 		t.Fatalf("root did not retain final child refs")
 	}
 
-	normalizeTypeScriptTreeCompatibility(root, nil, lang)
+	normalizeTypeScriptTreeCompatibilityWithParser(root, nil, nil, lang)
 
 	view := resultMutableChildrenForMutation(root)
 	entry, ok := view.Entry(2)

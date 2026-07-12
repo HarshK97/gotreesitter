@@ -48,9 +48,9 @@ func TestNormalizeGoCompatibilitySubtreeTerminatesOnCycle(t *testing.T) {
 	syms, _ := goCompatibilitySymbolsForLanguage(lang)
 	root, _ := buildCyclicGoTree()
 	source := []byte(".")
-	runWithin(t, 15*time.Second, "normalizeGoCompatibilitySubtreeWithStop", func() {
+	runWithin(t, 15*time.Second, "normalizeGoCompatibilitySubtreeWithStopAndScratch", func() {
 		poller := parseStopPoller{}
-		normalizeGoCompatibilitySubtreeWithStop(root, source, syms, goCompatibilitySourceFlags{}, nil, &poller)
+		normalizeGoCompatibilitySubtreeWithStopAndScratch(root, source, syms, goCompatibilitySourceFlags{}, nil, &poller, nil)
 	})
 }
 

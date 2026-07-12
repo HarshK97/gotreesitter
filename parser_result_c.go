@@ -2,10 +2,6 @@ package gotreesitter
 
 import "strings"
 
-func normalizeCCompatibility(root *Node, source []byte, lang *Language) {
-	normalizeCCompatibilityWithParser(root, source, nil, lang)
-}
-
 func normalizeCCompatibilityWithParser(root *Node, source []byte, p *Parser, lang *Language) {
 	recordPasses := p != nil && p.currentMaterializationTiming() != nil
 	if recordPasses {
