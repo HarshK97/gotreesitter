@@ -50,6 +50,16 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		blobSHA256:                    mustRuntimeProfileSHA256("cde4a67dc6af6e1232dbbd1eab8618478d1d73727020e8a8002542390a452d37"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
 	},
+	// Large ASM accepted-error parses improve during the same-stack merge
+	// retry, but later widened-stack passes do not advance the selected tree.
+	// Keep that first retry while avoiding the redundant wider passes.
+	"asm": {
+		blobSHA256: mustRuntimeProfileSHA256("7001e89cc1c597efce3143c011d39a40855067fb06863b738d2c4d7e595fb71d"),
+		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
+			MinSourceBytes:      11 * 1024,
+			InitialStackCeiling: 8,
+		},
+	},
 	// These grammars have error-bearing real-corpus witnesses that legitimately
 	// reach EOF. Re-running the accepted-error ladder does not improve their
 	// selected trees, so the exact certified blobs keep the first result.
@@ -87,6 +97,16 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		blobSHA256: mustRuntimeProfileSHA256("0646d27248a96d865a717a2a020ede70762b8a0542fac32a316b34248af9a50e"),
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry: true,
+		},
+	},
+	// Tcl's complete accepted-error trees and first error-bearing no-stacks
+	// retry are authoritative for the certified corpus. Later widened passes
+	// repeat the same failure without advancing the selected tree.
+	"tcl": {
+		blobSHA256: mustRuntimeProfileSHA256("4c331e38860001c18b737f6be508f4b09f230c4b9ff95f4b4d12bdb00c176ad7"),
+		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
+			SkipCompleteAcceptedErrorRetry: true,
+			FreshErrorNoStacksMaxPasses:    1,
 		},
 	},
 	// Haskell's expression-list repeat has one exact comma row where C folds

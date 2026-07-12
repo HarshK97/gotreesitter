@@ -1219,6 +1219,18 @@ func certifiedAcceptedErrorRetrySkipsComplete(tree *Tree, sourceLen int) bool {
 		retryTreeCoversExpectedEOF(tree)
 }
 
+func certifiedFreshErrorNoStacksRetryPassLimit(tree *Tree, sourceLen int, origin fullParseRetryOrigin) int {
+	if tree == nil || tree.language == nil || origin != fullParseRetryOriginFresh ||
+		sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes {
+		return 0
+	}
+	limit := tree.language.FullParseAcceptedErrorRetryProfile.FreshErrorNoStacksMaxPasses
+	if limit == 0 || tree.ParseStopReason() != ParseStopNoStacksAlive || !retryTreeHasError(tree) {
+		return 0
+	}
+	return int(limit)
+}
+
 func fullParseRetryNodeLimitOverride(tree *Tree, sourceLen int) int {
 	if !shouldRetryNodeLimitParse(tree, sourceLen) {
 		return 0
@@ -1370,6 +1382,13 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 	// retries the budget was not re-checked. We honor the same budget as a
 	// wall-clock deadline shared across retry attempts.
 	retryStart := time.Now()
+	retryPassLimit := fullParseRetryMaxTotalPasses
+	if certifiedLimit := certifiedFreshErrorNoStacksRetryPassLimit(tree, len(source), origin); certifiedLimit > 0 && certifiedLimit < retryPassLimit {
+		retryPassLimit = certifiedLimit
+	}
+	retryPassLimitReached := func() bool {
+		return p != nil && p.fullParseRetryPassesTaken >= retryPassLimit
+	}
 	retryDeadlineExceeded := func() bool {
 		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
 			return true
@@ -1378,7 +1397,7 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 		// is a no-op without SetTimeoutMicros — see the KNOWN GAP below).
 		// Counted per top-level parse operation across every retryFullParse
 		// invocation; see fullParseRetryMaxTotalPasses.
-		if p != nil && p.fullParseRetryPassesTaken >= fullParseRetryMaxTotalPasses {
+		if retryPassLimitReached() {
 			return true
 		}
 		// KNOWN GAP (tracked, not fixed here): when the caller never
@@ -1464,7 +1483,7 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 	}
 	runRetryAttempt := func(maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
 		if p != nil {
-			if p.fullParseRetryPassesTaken >= fullParseRetryMaxTotalPasses {
+			if retryPassLimitReached() {
 				// Budget exhausted: a nil candidate is a no-op for every
 				// caller (replaceBest ignores nil), so the incumbent best
 				// tree flows through unchanged.

@@ -32,7 +32,7 @@ func TestBuiltinExternalScannerRetryProfilesAttach(t *testing.T) {
 }
 
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	if got, want := len(builtinLanguageRuntimeProfiles), 13; got != want {
+	if got, want := len(builtinLanguageRuntimeProfiles), 15; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -109,6 +109,7 @@ func TestBuiltinCompleteAcceptedErrorRetryProfilesAttach(t *testing.T) {
 		{name: "odin", load: OdinLanguage},
 		{name: "rego", load: RegoLanguage},
 		{name: "scss", load: ScssLanguage},
+		{name: "tcl", load: TclLanguage},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -116,24 +117,51 @@ func TestBuiltinCompleteAcceptedErrorRetryProfilesAttach(t *testing.T) {
 			if !profile.SkipCompleteAcceptedErrorRetry {
 				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want skip-complete certification", profile)
 			}
+			if tt.name == "tcl" && profile.FreshErrorNoStacksMaxPasses != 1 {
+				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want one fresh no-stacks retry", profile)
+			}
 		})
 	}
 }
 
-func TestBuiltinJavaAcceptedErrorRetryProfileAttaches(t *testing.T) {
+func TestBuiltinBoundedAcceptedErrorRetryProfilesAttach(t *testing.T) {
 	PurgeEmbeddedLanguageCache()
 	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
 
-	lang := JavaLanguage()
-	if lang.ExternalScanner != nil {
-		t.Fatal("Java ExternalScanner != nil; profile must not depend on scanner attachment")
+	tests := []struct {
+		name          string
+		load          func() *gotreesitter.Language
+		want          gotreesitter.FullParseAcceptedErrorRetryProfile
+		wantNoScanner bool
+	}{
+		{
+			name: "asm",
+			load: AsmLanguage,
+			want: gotreesitter.FullParseAcceptedErrorRetryProfile{
+				MinSourceBytes:      11 * 1024,
+				InitialStackCeiling: 8,
+			},
+		},
+		{
+			name: "java",
+			load: JavaLanguage,
+			want: gotreesitter.FullParseAcceptedErrorRetryProfile{
+				MinSourceBytes:      64 * 1024,
+				InitialStackCeiling: 14,
+			},
+			wantNoScanner: true,
+		},
 	}
-	want := gotreesitter.FullParseAcceptedErrorRetryProfile{
-		MinSourceBytes:      64 * 1024,
-		InitialStackCeiling: 14,
-	}
-	if got := lang.FullParseAcceptedErrorRetryProfile; got != want {
-		t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want %+v", got, want)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lang := tt.load()
+			if tt.wantNoScanner && lang.ExternalScanner != nil {
+				t.Fatalf("%s ExternalScanner != nil; profile must not depend on scanner attachment", tt.name)
+			}
+			if got := lang.FullParseAcceptedErrorRetryProfile; got != tt.want {
+				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -158,33 +186,40 @@ func TestBuiltinExternalScannerRetryProfilesRequireCertifiedBlob(t *testing.T) {
 	}
 }
 
-func TestBuiltinJavaAcceptedErrorRetryProfileRequiresCertifiedBlob(t *testing.T) {
-	lang := &gotreesitter.Language{Name: "java"}
-	if attachBuiltinLanguageRuntimeProfile("java", sha256.Sum256([]byte("uncertified")), lang) {
-		t.Fatal("uncertified Java blob reported a runtime-profile attachment")
+func TestBuiltinBoundedAcceptedErrorRetryProfilesRequireCertifiedBlob(t *testing.T) {
+	tests := []struct {
+		name string
+		want gotreesitter.FullParseAcceptedErrorRetryProfile
+	}{
+		{name: "asm", want: gotreesitter.FullParseAcceptedErrorRetryProfile{MinSourceBytes: 11 * 1024, InitialStackCeiling: 8}},
+		{name: "java", want: gotreesitter.FullParseAcceptedErrorRetryProfile{MinSourceBytes: 64 * 1024, InitialStackCeiling: 14}},
 	}
-	if got := lang.FullParseAcceptedErrorRetryProfile; got != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) {
-		t.Fatalf("uncertified Java blob changed retry profile to %+v", got)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lang := &gotreesitter.Language{Name: tt.name}
+			if attachBuiltinLanguageRuntimeProfile(tt.name, sha256.Sum256([]byte("uncertified")), lang) {
+				t.Fatalf("uncertified %s blob reported a runtime-profile attachment", tt.name)
+			}
+			if got := lang.FullParseAcceptedErrorRetryProfile; got != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) {
+				t.Fatalf("uncertified %s blob changed retry profile to %+v", tt.name, got)
+			}
 
-	blob := BlobByName("java")
-	if len(blob) == 0 {
-		t.Fatal("BlobByName(java) returned no data")
-	}
-	if !attachBuiltinLanguageRuntimeProfile("java", sha256.Sum256(blob), lang) {
-		t.Fatal("certified Java blob did not attach its runtime profile")
-	}
-	want := gotreesitter.FullParseAcceptedErrorRetryProfile{
-		MinSourceBytes:      64 * 1024,
-		InitialStackCeiling: 14,
-	}
-	if got := lang.FullParseAcceptedErrorRetryProfile; got != want {
-		t.Fatalf("certified Java retry profile = %+v, want %+v", got, want)
+			blob := BlobByName(tt.name)
+			if len(blob) == 0 {
+				t.Fatalf("BlobByName(%s) returned no data", tt.name)
+			}
+			if !attachBuiltinLanguageRuntimeProfile(tt.name, sha256.Sum256(blob), lang) {
+				t.Fatalf("certified %s blob did not attach its runtime profile", tt.name)
+			}
+			if got := lang.FullParseAcceptedErrorRetryProfile; got != tt.want {
+				t.Fatalf("certified %s retry profile = %+v, want %+v", tt.name, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestBuiltinCompleteAcceptedErrorRetryProfileRequiresCertifiedBlob(t *testing.T) {
-	for _, name := range []string{"caddy", "haxe", "kdl", "odin", "rego", "scss"} {
+	for _, name := range []string{"caddy", "haxe", "kdl", "odin", "rego", "scss", "tcl"} {
 		t.Run(name, func(t *testing.T) {
 			lang := &gotreesitter.Language{Name: name}
 			if attachBuiltinLanguageRuntimeProfile(name, sha256.Sum256([]byte("uncertified")), lang) {

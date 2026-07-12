@@ -278,19 +278,20 @@ const (
 	ExternalScannerFullParseRetrySkipRepeat
 )
 
-// FullParseAcceptedErrorRetryProfile certifies a narrow full-parse retry
-// policy. When a fresh full parse accepts an error-bearing tree that covers
+// FullParseAcceptedErrorRetryProfile certifies narrow full-parse retry
+// policies. When a fresh full parse accepts an error-bearing tree that covers
 // EOF, the parser may keep the initial GLR stack ceiling after the ordinary
-// same-stack merge retry instead of scheduling wider-stack passes. A grammar
-// may instead certify that a complete accepted-error tree is authoritative and
-// skip that retry ladder entirely. The zero value preserves the conservative
-// generic ladder.
+// same-stack merge retry or skip that ladder entirely. A grammar may also cap
+// retries for a fresh, error-bearing no-stacks result after proving that later
+// passes do not improve the selected tree. The zero value preserves the
+// conservative generic ladder.
 //
 // Keep fields append-only: Language blobs encode this structure.
 type FullParseAcceptedErrorRetryProfile struct {
 	MinSourceBytes                 uint32
 	InitialStackCeiling            uint16
 	SkipCompleteAcceptedErrorRetry bool
+	FreshErrorNoStacksMaxPasses    uint8
 }
 
 // Language holds all data needed to parse a specific language.
@@ -494,7 +495,7 @@ type Language struct {
 	ExternalScannerFullParseRetryPolicy ExternalScannerFullParseRetryPolicy
 
 	// FullParseAcceptedErrorRetryProfile is certified against an exact language
-	// blob. Zero preserves widened-stack retries for legacy blobs,
+	// blob. Zero preserves widened-stack and no-stacks retries for legacy blobs,
 	// caller-constructed languages, and language overrides.
 	FullParseAcceptedErrorRetryProfile FullParseAcceptedErrorRetryProfile
 }
