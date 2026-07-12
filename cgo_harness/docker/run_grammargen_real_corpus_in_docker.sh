@@ -23,9 +23,9 @@ GENERATE_TIMEOUT="${GENERATE_TIMEOUT:-300s}"
 # grammars that no longer run). Default is verify-only.
 RATCHET_UPDATE="${RATCHET_UPDATE:-0}"
 RATCHET_REBASE="${RATCHET_REBASE:-0}"
-# Grammars skipped by default: bash and dart currently exceed the uint16
-# field-map table limit in grammargen assembly (generation-fatal).
-REAL_CORPUS_SKIP="${REAL_CORPUS_SKIP:-bash,dart}"
+# Grammars skipped by default: ocaml's "attribute" nonterminal-extra chain
+# exceeds the synthetic-state budget (generation-fatal; see GEN_COST_RCA).
+REAL_CORPUS_SKIP="${REAL_CORPUS_SKIP:-ocaml}"
 SEED_DIR=""
 CONTAINER_SEED_DIR=""
 OFFLINE=0
