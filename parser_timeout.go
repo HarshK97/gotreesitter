@@ -10,12 +10,27 @@ type parseStopCheck func() ParseStopReason
 type parseStopPoller struct {
 	check parseStopCheck
 	count uint64
+	// memoryBudgetParser, when non-nil, makes poll/pollNow also force a
+	// runtime memory-budget check (see (*Parser).goCompatRuntimeMemoryBudgetStopReason)
+	// at the same coarse cadence as check, in addition to whatever check
+	// reports. check alone only ever reports Timeout/Cancelled (see
+	// parseStopReasonIsActive) — some long tree walks (the Go compat walk;
+	// see normalizeGoCompatibilityInRangesWithStopAndScratch) need to also
+	// bound their own runtime heap growth even when the parse loop itself
+	// never tripped the budget, so they opt in by setting this field. nil by
+	// default: every existing caller that only sets check keeps its exact
+	// current behavior, byte-for-byte, since the branches below are additive
+	// and only ever taken when this field is non-nil.
+	memoryBudgetParser *Parser
 }
 
 const parseStopPollMask = 1023
 
 func (p *parseStopPoller) poll() ParseStopReason {
-	if p == nil || p.check == nil {
+	if p == nil {
+		return ParseStopNone
+	}
+	if p.check == nil && p.memoryBudgetParser == nil {
 		return ParseStopNone
 	}
 	p.count++
@@ -26,14 +41,26 @@ func (p *parseStopPoller) poll() ParseStopReason {
 }
 
 func (p *parseStopPoller) pollNow() ParseStopReason {
-	if p == nil || p.check == nil {
+	if p == nil {
 		return ParseStopNone
 	}
-	reason := p.check()
-	if reason == "" {
-		return ParseStopNone
+	if p.check != nil {
+		// check() (always (*Parser).activeParseStopReason) never returns a Go
+		// empty string; its "nothing happened" sentinel is the ParseStopNone
+		// constant ("none"). Comparing against "" here would make this branch
+		// always return early — including the "none" case — and starve the
+		// memoryBudgetParser check below of ever running when check is set,
+		// which every Go compat caller does.
+		if reason := p.check(); reason != ParseStopNone && reason != "" {
+			return reason
+		}
 	}
-	return reason
+	if p.memoryBudgetParser != nil {
+		if reason := p.memoryBudgetParser.goCompatRuntimeMemoryBudgetStopReason(); reason == ParseStopMemoryBudget {
+			return reason
+		}
+	}
+	return ParseStopNone
 }
 
 func parseStopReasonIsActive(reason ParseStopReason) bool {

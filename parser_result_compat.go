@@ -38,7 +38,14 @@ func normalizeResultCompatibility(root *Node, source []byte, p *Parser) resultCo
 		return resultCompatibilityResult{stopReason: reason}
 	}
 	result := runLanguageResultCompatibility(ctx)
-	if parseStopReasonIsActive(result.stopReason) {
+	// resultMaterializationShouldStop (not parseStopReasonIsActive) here: Go's
+	// normalizer (the only one that can produce it — see
+	// normalizeGoReturnedTreeCompatibility) may now report ParseStopMemoryBudget,
+	// which parseStopReasonIsActive deliberately excludes (many callers rely on
+	// its narrower Timeout/Cancelled-only semantics). Without this, a
+	// budget-stopped Go result would still fall through into the generic
+	// trailing-trivia/terminal-leaf passes below.
+	if resultMaterializationShouldStop(result.stopReason) {
 		return result
 	}
 	if reason := ctx.stopReason(); parseStopReasonIsActive(reason) {

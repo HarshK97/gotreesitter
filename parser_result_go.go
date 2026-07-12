@@ -2,22 +2,65 @@ package gotreesitter
 
 import "bytes"
 
+// normalizeGoReturnedTreeCompatibility drives Go's post-build compatibility
+// pipeline. Every stage boundary already re-checked p.activeParseStopReason()
+// (Timeout/Cancelled); it now also re-checks the memory budget via
+// goCompatMemoryBudgetStopReason so a parse that is already over budget (the
+// parse loop stopped, or the arena/runtime heap grew past budget during an
+// earlier stage) skips the remaining Go compat work entirely instead of
+// normalizing a partial tree that carries no C-faithful normalization
+// guarantee. This mirrors the existing timeout/cancellation semantics at the
+// same call sites (see the 2026-07-12 gocompat-walk-containment-gap finding).
 func normalizeGoReturnedTreeCompatibility(root *Node, source []byte, p *Parser, lang *Language) ParseStopReason {
+	var arena *nodeArena
+	if root != nil {
+		arena = root.ownerArena
+	}
 	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
+		return reason
+	}
+	if reason := p.goCompatMemoryBudgetStopReason(arena); reason == ParseStopMemoryBudget {
 		return reason
 	}
 	normalizeGoSourceFileRoot(root, source, p)
 	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
 		return reason
 	}
-	if reason := normalizeGoCompatibilityWithParser(root, source, lang, p); parseStopReasonIsActive(reason) {
+	if reason := p.goCompatMemoryBudgetStopReason(arena); reason == ParseStopMemoryBudget {
+		return reason
+	}
+	if reason := normalizeGoCompatibilityWithParser(root, source, lang, p); resultMaterializationShouldStop(reason) {
 		return reason
 	}
 	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
 		return reason
 	}
+	if reason := p.goCompatMemoryBudgetStopReason(arena); reason == ParseStopMemoryBudget {
+		return reason
+	}
 	normalizeRootEOFNewlineSpan(root, source, lang)
-	return p.activeParseStopReason()
+	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
+		return reason
+	}
+	return p.goCompatMemoryBudgetStopReason(arena)
+}
+
+// goCompatMemoryBudgetStopReason forces a real (unmasked) memory-budget check
+// for the Go compat pipeline's stage boundaries in
+// normalizeGoReturnedTreeCompatibility. It is called a small, fixed number of
+// times per parse (never per node), so — unlike the walk-internal poll, which
+// intentionally samples at a coarse stride to stay cheap — it always reads
+// current arena/runtime state directly rather than relying on
+// resultMaterializationStopReason's shared, throttled poll counter, which can
+// otherwise miss an already-tripped budget at these infrequent checkpoints.
+func (p *Parser) goCompatMemoryBudgetStopReason(arena *nodeArena) ParseStopReason {
+	if p == nil {
+		return ParseStopNone
+	}
+	if arena != nil && arena.budgetExhausted() {
+		return p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceArena)
+	}
+	return p.goCompatRuntimeMemoryBudgetStopReason()
 }
 
 func normalizeGoSourceFileRoot(root *Node, source []byte, p *Parser) {

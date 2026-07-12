@@ -227,26 +227,37 @@ type Parser struct {
 	parseRuntimeMemoryHardCeilingBytes int64
 	parseMemoryBudgetDiag              parseMemoryBudgetDiagnostic
 	parseMemoryBudgetDiagActive        bool
-	denseLimit                         int
-	smallBase                          int
-	smallLookup                        [][]smallActionPair
-	smallTokenLookup                   [][]uint16
-	externalValidByState               [][]uint16
-	externalValidMaskByState           []uint64
-	hasExtraChainActions               bool
-	classifiedActions                  []classifiedParseAction
-	reduceChainHints                   []reduceChainHint
-	reduceChainHintByState             []int
-	reduceAliasSeq                     [][]Symbol
-	aliasTargetSymbol                  []bool
-	keepSameNamedAnonChildSymbol       []bool
-	sharedAnonymousTokenSymbol         []bool
-	reduceHasFields                    []bool
-	reduceFieldPlans                   []reduceFieldPlan
-	fieldIDScratch                     []FieldID
-	fieldInheritedScratch              []bool
-	fieldConflictedScratch             []bool
-	reduceScratch                      *reduceBuildScratch
+	// compatMemoryBudgetTripped latches true the moment Go compat
+	// normalization (normalizeGoReturnedTreeCompatibility /
+	// walkGoCompatSubtree's poller) observes a runtime memory-budget trip.
+	// The runtime heap/sys budget check is inherently non-monotonic (GC can
+	// make heap growth appear to recede), unlike arena.budgetExhausted(),
+	// which stays true for the rest of the parse once tripped — so without
+	// this sticky flag, a later, throttled resultMaterializationStopReason
+	// recheck (finalizeTree, after Go compat returns) could miss the trip
+	// entirely and stamp the tree with ParseStopAccepted despite Go compat
+	// having already bailed out mid-walk. See resultMaterializationStopReason.
+	compatMemoryBudgetTripped    bool
+	denseLimit                   int
+	smallBase                    int
+	smallLookup                  [][]smallActionPair
+	smallTokenLookup             [][]uint16
+	externalValidByState         [][]uint16
+	externalValidMaskByState     []uint64
+	hasExtraChainActions         bool
+	classifiedActions            []classifiedParseAction
+	reduceChainHints             []reduceChainHint
+	reduceChainHintByState       []int
+	reduceAliasSeq               [][]Symbol
+	aliasTargetSymbol            []bool
+	keepSameNamedAnonChildSymbol []bool
+	sharedAnonymousTokenSymbol   []bool
+	reduceHasFields              []bool
+	reduceFieldPlans             []reduceFieldPlan
+	fieldIDScratch               []FieldID
+	fieldInheritedScratch        []bool
+	fieldConflictedScratch       []bool
+	reduceScratch                *reduceBuildScratch
 	// mergeScratch points at the active parse's scratch.merge for the duration
 	// of parseInternal (set alongside reduceScratch, cleared on return). It lets
 	// dispatch-time helpers that only carry *Parser — tryGSSMainMergeForParser
@@ -1448,6 +1459,7 @@ func resetSnippetParser(parser *Parser) {
 	parser.parseRuntimeMemoryHardCeilingBytes = 0
 	parser.parseMemoryBudgetDiag = parseMemoryBudgetDiagnostic{}
 	parser.parseMemoryBudgetDiagActive = false
+	parser.compatMemoryBudgetTripped = false
 	// Release *Node refs so the arenas from the last incremental parse can be
 	// collected by the GC. Without this, a Parser sitting in a sync.Pool keeps
 	// its reuseCursor.topLevel/*Node alive, preventing arena reclamation.
@@ -3847,12 +3859,15 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	parseStart := time.Now()
 	previousMemoryBudgetDiag := p.parseMemoryBudgetDiag
 	previousMemoryBudgetDiagActive := p.parseMemoryBudgetDiagActive
+	previousCompatMemoryBudgetTripped := p.compatMemoryBudgetTripped
 	p.parseMemoryBudgetDiag = parseMemoryBudgetDiagnostic{}
 	p.parseMemoryBudgetDiagActive = true
+	p.compatMemoryBudgetTripped = false
 	memoryBudgetDiag := &p.parseMemoryBudgetDiag
 	defer func() {
 		p.parseMemoryBudgetDiag = previousMemoryBudgetDiag
 		p.parseMemoryBudgetDiagActive = previousMemoryBudgetDiagActive
+		p.compatMemoryBudgetTripped = previousCompatMemoryBudgetTripped
 	}()
 	endParseBudget := p.enterParseBudgetAt(parseStart)
 	defer endParseBudget()
