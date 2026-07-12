@@ -399,19 +399,26 @@ func TestNormalizePythonCompatibilityRecordsRuntimeStats(t *testing.T) {
 		SymbolNames: []string{
 			"",
 			"module",
+			"escape_sequence",
+			"string_content",
 		},
 		SymbolMetadata: []SymbolMetadata{
 			{},
 			{Name: "module", Visible: true, Named: true},
+			{Name: "escape_sequence", Visible: true, Named: true},
+			{Name: "string_content", Visible: true, Named: true},
 		},
 	}
 	parser := &Parser{}
 	root := newParentNodeInArena(nil, 1, true, nil, nil, 0)
 
-	normalizePythonCompatibilityWithParser(root, []byte(";"), parser, lang)
+	// A backslash-newline continuation is the only source-level trigger left
+	// (trailingSelfCalls was removed with foldPythonTrailingSelfCallIntoNestedFunction),
+	// so use it to exercise exactly one gated pass end-to-end.
+	normalizePythonCompatibilityWithParser(root, []byte("\\\n"), parser, lang)
 
 	stats := parser.normalizationStats
-	if got, want := stats.passesChecked, uint64(14); got != want {
+	if got, want := stats.passesChecked, uint64(13); got != want {
 		t.Fatalf("passesChecked = %d, want %d", got, want)
 	}
 	if got, want := stats.passesRun, uint64(1); got != want {
@@ -789,12 +796,6 @@ func TestNormalizePythonCompatibilityWrapsInlineTupleExpressionBlock(t *testing.
 }
 
 func TestPythonCompatibilitySourceGatesPreferCodeTokens(t *testing.T) {
-	if flags := pythonCompatibilitySourceFlagsFor([]byte(`x = ";"; y = 1`)); !flags.trailingSelfCalls {
-		t.Fatal("expected combined flags to detect code semicolon after string literal")
-	}
-	if flags := pythonCompatibilitySourceFlagsFor([]byte("\";\"\n# ;\n")); flags.trailingSelfCalls {
-		t.Fatal("did not expect combined flags to detect semicolon inside string/comment")
-	}
 	if flags := pythonCompatibilitySourceFlagsFor([]byte(`print >>sys.stderr, "x"`)); !flags.printChevron {
 		t.Fatal("expected combined flags to detect print-chevron statement")
 	}
@@ -1007,5 +1008,78 @@ func TestBuildResultFromNodesHoistsPythonClassSiblingsOutOfFunctionBody(t *testi
 	}
 	if block.NamedChild(2) == nil || block.NamedChild(2).Type(lang) != "function_definition" {
 		t.Fatalf("expected hoisted trailing function_definition, got %s", root.SExpr(lang))
+	}
+}
+
+// TestNormalizePythonCompatibilityDoesNotFoldTrailingSelfCallIntoNestedFunction
+// guards against reintroducing foldPythonTrailingSelfCallIntoNestedFunction
+// (removed): a same-named trailing call after a nested function whose body
+// ends in ';' must stay a sibling of that function, not get folded into its
+// block. See TestPythonNestedFunctionDedentTrailingSemicolonParity in
+// grammargen for the end-to-end real-corpus witness (python3.8_grammar.py /
+// python2-grammar.py) this protects.
+func TestNormalizePythonCompatibilityDoesNotFoldTrailingSelfCallIntoNestedFunction(t *testing.T) {
+	lang := &Language{
+		Name: "python",
+		SymbolNames: []string{
+			"",
+			"module",
+			"block",
+			"function_definition",
+			"identifier",
+			"parameters",
+			"comment",
+			"assignment",
+			";",
+			"call",
+			"argument_list",
+		},
+	}
+	arena := acquireNodeArena(arenaClassFull)
+	source := []byte("    def foo():\n        x = 1;\n    foo()\n")
+
+	fnName := newLeafNodeInArena(arena, 4, true, 8, 11, Point{Column: 8}, Point{Column: 11})
+	body := newParentNodeInArena(arena, 2, true, []*Node{
+		newLeafNodeInArena(arena, 7, true, 23, 28, Point{Row: 1, Column: 8}, Point{Row: 1, Column: 13}),
+		newLeafNodeInArena(arena, 8, false, 28, 29, Point{Row: 1, Column: 13}, Point{Row: 1, Column: 14}),
+	}, nil, 0)
+	fn := newParentNodeInArena(arena, 3, true, []*Node{
+		fnName,
+		newParentNodeInArena(arena, 5, true, nil, nil, 0),
+		newLeafNodeInArena(arena, 6, true, 15, 18, Point{Row: 1, Column: 0}, Point{Row: 1, Column: 3}),
+		body,
+	}, nil, 0)
+	fn.startByte = 4
+	fn.startPoint = Point{Column: 4}
+	call := newParentNodeInArena(arena, 9, true, []*Node{
+		newLeafNodeInArena(arena, 4, true, 34, 37, Point{Row: 2, Column: 4}, Point{Row: 2, Column: 7}),
+		newParentNodeInArena(arena, 10, true, nil, nil, 0),
+	}, nil, 0)
+	outerBlock := newParentNodeInArena(arena, 2, true, []*Node{fn, call}, nil, 0)
+	module := newParentNodeInArena(arena, 1, true, []*Node{outerBlock}, nil, 0)
+
+	normalizePythonCompatibilityWithParser(module, source, &Parser{}, lang)
+
+	block := module.Child(0)
+	if block == nil || block.Type(lang) != "block" {
+		t.Fatalf("expected block child, got %#v", block)
+	}
+	if got, want := block.ChildCount(), 2; got != want {
+		t.Fatalf("outer block child count = %d, want %d (call must stay a sibling, not fold into fn's block): %s", got, want, block.SExpr(lang))
+	}
+	gotFn := block.Child(0)
+	if gotFn == nil || gotFn.Type(lang) != "function_definition" {
+		t.Fatalf("expected function_definition child, got %s", block.SExpr(lang))
+	}
+	gotBody := gotFn.Child(gotFn.ChildCount() - 1)
+	if gotBody == nil || gotBody.Type(lang) != "block" {
+		t.Fatalf("expected nested block, got %s", gotFn.SExpr(lang))
+	}
+	if got, want := gotBody.ChildCount(), 2; got != want {
+		t.Fatalf("nested function body child count = %d, want %d (must not absorb trailing call): %s", got, want, gotBody.SExpr(lang))
+	}
+	gotCall := block.Child(1)
+	if gotCall == nil || gotCall.Type(lang) != "call" {
+		t.Fatalf("expected trailing call to remain a sibling of the function_definition, got %s", block.SExpr(lang))
 	}
 }

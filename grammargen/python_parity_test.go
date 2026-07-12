@@ -330,6 +330,33 @@ func pythonCorpusFenceForTest(line string, want rune) bool {
 	return true
 }
 
+// TestPythonNestedFunctionDedentTrailingSemicolonParity is the minimal
+// reducer for the E2 python-dedent floor witness (python3.8_grammar.py /
+// python2-grammar.py real-corpus samples): a nested function whose body ends
+// in a dangling ';' immediately before a dedent, followed by a same-named
+// call at the outer indentation. Root cause was NOT a table-construction /
+// reduce-lineage divergence (raw GLR parse actions and raw materialized
+// trees are byte-identical between the trailing-';' and no-';' variants,
+// and identical to the reference for both) — it was
+// foldPythonTrailingSelfCallIntoNestedFunction, a python compat-normalization
+// heuristic (added in 82f90e77, "restore python real-corpus parity") that
+// spuriously folded a same-named trailing call into the preceding function's
+// block whenever that block's raw last child was ';'. See CHANGELOG.
+func TestPythonNestedFunctionDedentTrailingSemicolonParity(t *testing.T) {
+	genLang := loadGeneratedPythonLanguageForParity(t)
+	refLang := grammars.PythonLanguage()
+	adaptExternalScanner(refLang, genLang)
+
+	t.Run("with_trailing_semicolon", func(t *testing.T) {
+		sample := "def m():\n    x=1\n    def foo():\n        x=1;\n    foo()\n"
+		assertPythonParity(t, genLang, refLang, sample)
+	})
+	t.Run("without_trailing_semicolon_control", func(t *testing.T) {
+		sample := "def m():\n    x=1\n    def foo():\n        x=1\n    foo()\n"
+		assertPythonParity(t, genLang, refLang, sample)
+	})
+}
+
 func assertPythonParity(t *testing.T, genLang, refLang *gotreesitter.Language, sample string) {
 	t.Helper()
 
