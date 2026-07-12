@@ -296,16 +296,45 @@ func (a *nodeArena) rawShapeChildrenForNode(node *Node) []rawShapeChild {
 // every reader of the resulting ref is nil-guarded with an explicit fallback
 // (memory-safe unconditionally — see rawShapeForStackEntry and callers), so
 // skipping the capture entirely while gssScratch.mayElideRawShape() is true
-// is always safe. It is NOT always behavior-neutral across a prefix-then-fork
-// transition (later tie-break comparisons, e.g. compareRawStackEntriesRec,
-// can consult a shape's pre-flattening structure), which is why
-// mayElideRawShape latches permanently false for the rest of a parse the
-// first time it ever forks (see gssScratch.everForked). Pass nil for
-// gssScratch from call sites that are already proven fork-only/reachable
-// only outside the pure single-stack path (e.g. reduceForkTemporaryParent) or
-// that are out of scope for this optimization (e.g. the noTreeBenchmarkOnly
-// lane): nil never elides, matching the pre-optimization behavior. See
-// spore.2026-07-12.hazel.rawshape-elision-rca.
+// is always safe.
+//
+// Behavior preservation is a separate, more careful argument. everForked
+// (see gssScratch.everForked) latches permanently once a parse has forked or
+// entered C-recovery — but that latch is NOT retroactive: it only stops
+// FUTURE captures from being elided. A node built earlier, while elision was
+// still active, stays shapeless forever; everForked cannot and does not go
+// back and backfill it.
+//
+// What actually makes that safe is structural, not the latch: any node built
+// while mayElideRawShape() was true predates this parse's first fork/
+// recovery event, and every subsequent stack (GLR fork clones, C-recovery
+// version-spawns) shares that node by pointer — clone()/cloneWithScratch()
+// and recovery's *stacks mutation never deep-copy prior GSS structure. So a
+// shapeless node is only ever compared against ITSELF (compareRawStackEntriesRec
+// recursing to the identical object on both sides, trivially symmetric),
+// never against a different object at the same tree position. The
+// comparison's one-sided-shape fallback (parser_reduce.go
+// compareRawStackEntriesRec, the aHasShape != bHasShape branch, falling back
+// to materialized childCount/symbol) is NOT proven sign-preserving in
+// isolation — TestRawShapeElisionAbstractComparisonFallbackCanFlipSign
+// constructs an artificial asymmetric pair where it does flip sign — but a
+// real parse under this gate can never feed it that asymmetric pair, for the
+// pointer-sharing reason above. That structural argument, not "the fallback
+// happens to agree", is the actual safety basis, and it is what
+// TestRawShapeElisionDifferentialPrefixThenForkSharedRootSymbol and
+// TestRawShapeElisionDifferentialRecoveryFromSingleStackPrefix (both
+// raw_shape_elision_test.go / raw_shape_elision_recovery_test.go) exist to
+// exercise empirically: same-root-symbol fork alternatives and a genuine
+// C-recovery episode, both with a shared single-stack prefix that has a
+// pre/post-flatten childCount mismatch, both pass tree-identical gate-on vs
+// gate-off.
+//
+// Pass nil for gssScratch from call sites that are already proven fork-only/
+// reachable only outside the pure single-stack path (e.g.
+// reduceForkTemporaryParent) or that are out of scope for this optimization
+// (e.g. the noTreeBenchmarkOnly lane, the forest engine, C-recovery's own
+// shape helpers): nil never elides, matching the pre-optimization behavior.
+// See spore.2026-07-12.hazel.rawshape-elision-rca.
 func (p *Parser) captureRawShape(gssScratch *gssScratch, arena *nodeArena, symbol Symbol, productionID uint16, entries []stackEntry, start, end int) rawShapeRef {
 	if arena == nil || start < 0 || end < start || end > len(entries) {
 		return 0

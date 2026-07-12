@@ -2365,6 +2365,26 @@ func (p *Parser) cTerminalNextState(state StateID, sym Symbol) (StateID, ParseAc
 // missing-token versions and strategy-1 recoveries) — the caller must force a
 // re-dispatch pass for the same token.
 func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool, ParseStopReason) {
+	// C-recovery reads raw shapes unconditionally once it runs (see
+	// cSelectReplacementParentEntry / compareRawStackEntries), and its
+	// version-spawning (cRecoverToState and friends) creates multi-stack
+	// exploration windows that the ordinary singleStackMode/everForked
+	// bookkeeping in parser.go never observes, because recovery mutates
+	// *stacks directly rather than going through the normal fork dispatch at
+	// "len(actions) > 1". Latch everForked here, at the single funnel entry
+	// for all C-recovery error handling, before cDoAllPotentialReductions (or
+	// anything else recovery does) can build a single node: this guarantees
+	// every reduction recovery performs from this point captures its raw
+	// shape, and — because everForked is sticky for the rest of the parse —
+	// also covers every later recovery version-spawn window and blocks a
+	// later setSingleStackMode(true) re-collapse from re-enabling elision.
+	// This does not retroactively add shapes to nodes already built before
+	// recovery started — see raw_shape.go captureRawShape's doc comment for
+	// why that is still safe (a structural pointer-sharing argument, not
+	// retroactive backfill).
+	if gssScratch != nil {
+		gssScratch.everForked = true
+	}
 	checkStop := func() ParseStopReason {
 		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 			return reason

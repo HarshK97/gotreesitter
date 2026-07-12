@@ -132,12 +132,23 @@ type gssScratch struct {
 	// everForked latches true the first time this parse observes more than
 	// one live GLR stack (see the singleStackMode writers in parser.go, and
 	// the explicit early latch at the "len(actions) > 1" conflict-fork
-	// decision point). It is intentionally sticky for the rest of the parse:
-	// once a parse has forked, raw-shape capture must resume for every later
-	// reduction even if the stack count later collapses back to one, because
-	// a subsequent fork's tie-break comparisons (compareRawStackEntries) may
-	// need shapes for nodes built during that "back to one stack" interval.
-	// See spore.2026-07-12.hazel.rawshape-elision-rca.
+	// decision point), OR enters the faithful C-recovery port (latched at
+	// cHandleError's entry in parser_recover_c.go, before it can build or
+	// compare a single node — recovery's version-spawning and its raw-shape
+	// reads, e.g. cSelectReplacementParentEntry, are not visible to the
+	// ordinary singleStackMode bookkeeping since recovery mutates *stacks
+	// directly). It is intentionally sticky for the rest of the parse: once
+	// true, every later reduction captures its raw shape normally, even if
+	// the live stack count later collapses back to one.
+	//
+	// IMPORTANT: this latch is NOT retroactive. It does not, and cannot, add
+	// shapes to nodes that were already built (and left shapeless) before it
+	// flipped true. Behavior preservation for those earlier, still-shapeless
+	// nodes does not come from this field — it comes from a structural
+	// property of GSS/C-recovery sharing (every subsequent stack shares such
+	// a node by pointer, so it is only ever compared against itself). See
+	// captureRawShape's doc comment (raw_shape.go) for the full argument, and
+	// spore.2026-07-12.hazel.rawshape-elision-rca for the originating RCA.
 	everForked bool
 }
 
