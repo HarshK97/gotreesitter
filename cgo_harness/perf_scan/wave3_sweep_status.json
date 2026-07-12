@@ -17,7 +17,10 @@
     ],
     "exclude_paths": [
       "groovy/subprojects/performance/src/files/pleac11_15.groovy"
-    ]
+    ],
+    "hard_max_full_parse_ratio": 10,
+    "fast_full_parse_ratio": 0.1,
+    "corpus_lock_sha256": "cf108b005fe41c4513bae14eafd4f4ec72e64454ca2eb6bbf4d18d25caab24f2"
   },
   "coverage": {
     "fleet_languages": 206,

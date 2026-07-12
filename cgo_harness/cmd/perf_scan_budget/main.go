@@ -17,6 +17,9 @@ const (
 	axisFull   = "full"
 	axisNoEdit = "noedit"
 	statusOK   = "ok"
+
+	hardMaxFullParseRatio = 10.0
+	fastFullParseRatio    = 0.10
 )
 
 type budgetFile struct {
@@ -27,13 +30,16 @@ type budgetFile struct {
 }
 
 type budgetMeasurementBasis struct {
-	Reps         int      `json:"reps"`
-	Warmup       int      `json:"warmup"`
-	FileBudgetMS int      `json:"file_budget_ms"`
-	MaxFiles     int      `json:"max_files,omitempty"`
-	Order        string   `json:"order,omitempty"`
-	Axes         []string `json:"axes"`
-	ExcludePaths []string `json:"exclude_paths,omitempty"`
+	Reps                  int      `json:"reps"`
+	Warmup                int      `json:"warmup"`
+	FileBudgetMS          int      `json:"file_budget_ms"`
+	MaxFiles              int      `json:"max_files,omitempty"`
+	Order                 string   `json:"order,omitempty"`
+	Axes                  []string `json:"axes"`
+	ExcludePaths          []string `json:"exclude_paths,omitempty"`
+	HardMaxFullParseRatio float64  `json:"hard_max_full_parse_ratio"`
+	FastFullParseRatio    float64  `json:"fast_full_parse_ratio"`
+	CorpusLockSHA256      string   `json:"corpus_lock_sha256"`
 }
 
 type budgetLang struct {
@@ -55,23 +61,33 @@ type scoreboardFile struct {
 	Schema    string           `json:"schema"`
 	Config    scoreboardConfig `json:"config"`
 	Languages []scoreboardLang `json:"languages"`
+	Corpus    scoreboardCorpus `json:"corpus_coverage"`
+	Gate      *scoreboardGate  `json:"hard_gate,omitempty"`
 }
 
 type scoreboardConfig struct {
-	Reps         int      `json:"reps"`
-	Warmup       int      `json:"warmup"`
-	FileBudgetMS int      `json:"file_budget_ms"`
-	MaxFiles     int      `json:"max_files"`
-	Order        string   `json:"order"`
-	Axes         []string `json:"axes"`
-	ExcludePaths []string `json:"exclude_paths,omitempty"`
+	Reps             int      `json:"reps"`
+	Warmup           int      `json:"warmup"`
+	FileBudgetMS     int      `json:"file_budget_ms"`
+	MaxFiles         int      `json:"max_files"`
+	Order            string   `json:"order"`
+	Axes             []string `json:"axes"`
+	ExcludePaths     []string `json:"exclude_paths,omitempty"`
+	HardGate         bool     `json:"hard_gate"`
+	RequireFleet     bool     `json:"require_fleet"`
+	CorpusLockSHA256 string   `json:"corpus_lock_sha256,omitempty"`
 }
 
 type scoreboardLang struct {
-	Language string                    `json:"language"`
-	Status   string                    `json:"status"`
-	Axes     map[string]scoreboardAxis `json:"axes"`
-	Files    []scoreboardFileRow       `json:"files"`
+	Language      string                    `json:"language"`
+	Status        string                    `json:"status"`
+	FilesSelected int                       `json:"files_selected"`
+	FilesMeasured int                       `json:"files_measured"`
+	Axes          map[string]scoreboardAxis `json:"axes"`
+	Files         []scoreboardFileRow       `json:"files"`
+	ActiveFile    string                    `json:"active_file,omitempty"`
+	ActiveAxis    string                    `json:"active_axis,omitempty"`
+	Stop          *scoreboardStop           `json:"stop,omitempty"`
 }
 
 type scoreboardAxis struct {
@@ -87,12 +103,53 @@ type scoreboardFileRow struct {
 }
 
 type scoreboardFileAxis struct {
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
+	Status     string          `json:"status"`
+	Detail     string          `json:"detail,omitempty"`
+	GoMedianNs int64           `json:"go_median_ns,omitempty"`
+	CMedianNs  int64           `json:"c_median_ns,omitempty"`
+	Ratio      float64         `json:"ratio,omitempty"`
+	Stop       *scoreboardStop `json:"stop,omitempty"`
+}
+
+type scoreboardStop struct {
+	Class          string `json:"class"`
+	Reason         string `json:"reason,omitempty"`
+	Implementation string `json:"implementation,omitempty"`
+	Phase          string `json:"phase,omitempty"`
+	Attempt        int    `json:"attempt,omitempty"`
+	Detail         string `json:"detail,omitempty"`
+}
+
+type scoreboardGate struct {
+	Status             string                  `json:"status"`
+	MaxFullParseRatio  float64                 `json:"max_full_parse_ratio"`
+	FastFullParseRatio float64                 `json:"fast_full_parse_ratio"`
+	FilesExpected      int                     `json:"files_expected"`
+	FilesMeasured      int                     `json:"files_measured"`
+	FullFilesEvaluated int                     `json:"full_files_evaluated"`
+	Failures           []scoreboardGateFinding `json:"failures,omitempty"`
+}
+
+type scoreboardCorpus struct {
+	LockSHA256          string   `json:"lock_sha256,omitempty"`
+	LockLanguages       int      `json:"lock_languages"`
+	SelectedLanguages   int      `json:"selected_languages"`
+	MissingFromLock     []string `json:"missing_from_lock,omitempty"`
+	MissingFromRegistry []string `json:"missing_from_registry,omitempty"`
+}
+
+type scoreboardGateFinding struct {
+	Kind     string `json:"kind"`
+	Language string `json:"language,omitempty"`
+	Path     string `json:"path,omitempty"`
+	Axis     string `json:"axis,omitempty"`
+	Status   string `json:"status,omitempty"`
+	Detail   string `json:"detail,omitempty"`
 }
 
 type evalFinding struct {
 	Language string
+	Path     string
 	Axis     string
 	Metric   string
 	Got      string
@@ -106,6 +163,7 @@ func main() {
 		langsRaw              string
 		requireAllBudgetLangs bool
 		strictConfig          bool
+		hardGateOnly          bool
 		outMD                 string
 	)
 
@@ -114,6 +172,7 @@ func main() {
 	flag.StringVar(&langsRaw, "langs", "", "optional comma-separated language filter")
 	flag.BoolVar(&requireAllBudgetLangs, "require-all-budget-langs", false, "fail if the scoreboard omits a budgeted language")
 	flag.BoolVar(&strictConfig, "strict-config", true, "require scoreboard measurement knobs to match structured budget metadata")
+	flag.BoolVar(&hardGateOnly, "hard-gate-only", false, "check fail-closed fleet coverage and per-file hard limits without applying historical aggregate ratchets")
 	flag.StringVar(&outMD, "out-md", "", "optional markdown summary output path")
 	flag.Parse()
 
@@ -137,6 +196,7 @@ func main() {
 			Languages:             langs,
 			RequireAllBudgetLangs: requireAllBudgetLangs,
 			StrictConfig:          strictConfig,
+			HardGateOnly:          hardGateOnly,
 		})
 	}
 
@@ -189,6 +249,15 @@ func validateBudget(b *budgetFile) []evalFinding {
 			out = append(out, evalFinding{Axis: axis, Metric: "measurement_basis.axes", Got: strings.Join(b.MeasurementBasis.Axes, ","), Want: "include " + axis})
 		}
 	}
+	if b.MeasurementBasis.HardMaxFullParseRatio != hardMaxFullParseRatio {
+		out = append(out, evalFinding{Axis: axisFull, Metric: "measurement_basis.hard_max_full_parse_ratio", Got: fmt.Sprintf("%.6g", b.MeasurementBasis.HardMaxFullParseRatio), Want: fmt.Sprintf("%.1f", hardMaxFullParseRatio)})
+	}
+	if b.MeasurementBasis.FastFullParseRatio != fastFullParseRatio {
+		out = append(out, evalFinding{Axis: axisFull, Metric: "measurement_basis.fast_full_parse_ratio", Got: fmt.Sprintf("%.6g", b.MeasurementBasis.FastFullParseRatio), Want: fmt.Sprintf("%.2f", fastFullParseRatio)})
+	}
+	if !validSHA256(b.MeasurementBasis.CorpusLockSHA256) {
+		out = append(out, evalFinding{Metric: "measurement_basis.corpus_lock_sha256", Got: b.MeasurementBasis.CorpusLockSHA256, Want: "64 lowercase hex characters"})
+	}
 	for _, pattern := range normalizedPathList(b.MeasurementBasis.ExcludePaths) {
 		if strings.ContainsAny(pattern, "*?[") {
 			if _, err := path.Match(pattern, "x"); err != nil {
@@ -231,6 +300,7 @@ type compareOptions struct {
 	Languages             []string
 	RequireAllBudgetLangs bool
 	StrictConfig          bool
+	HardGateOnly          bool
 }
 
 func compareScoreboard(b *budgetFile, s *scoreboardFile, opts compareOptions) []evalFinding {
@@ -239,7 +309,13 @@ func compareScoreboard(b *budgetFile, s *scoreboardFile, opts compareOptions) []
 		out = append(out, evalFinding{Metric: "scoreboard.schema", Got: s.Schema, Want: scoreboardSchema})
 	}
 	if opts.StrictConfig {
-		out = append(out, compareConfig(b.MeasurementBasis, s.Config)...)
+		out = append(out, compareConfig(b.MeasurementBasis, s.Config, opts.HardGateOnly)...)
+	}
+	if opts.HardGateOnly && !opts.StrictConfig && !s.Config.HardGate {
+		out = append(out, evalFinding{Metric: "config.hard_gate", Got: "false", Want: "true"})
+	}
+	if s.Config.HardGate {
+		out = append(out, compareHardCoverage(s)...)
 	}
 
 	filter := map[string]bool{}
@@ -252,9 +328,15 @@ func compareScoreboard(b *budgetFile, s *scoreboardFile, opts compareOptions) []
 			continue
 		}
 		scoreboardLangs[row.Language] = row
-		if _, ok := b.Languages[row.Language]; !ok {
+		if s.Config.HardGate || opts.HardGateOnly {
+			out = append(out, compareHardGate(row)...)
+		}
+		if _, ok := b.Languages[row.Language]; !ok && !opts.HardGateOnly && !(s.Config.HardGate && s.Config.RequireFleet && s.Gate != nil) {
 			out = append(out, evalFinding{Language: row.Language, Metric: "budget", Got: "missing", Want: "language budget"})
 		}
+	}
+	if opts.HardGateOnly {
+		return out
 	}
 
 	for _, lang := range sortedBudgetLanguages(b) {
@@ -278,7 +360,135 @@ func compareScoreboard(b *budgetFile, s *scoreboardFile, opts compareOptions) []
 	return out
 }
 
-func compareConfig(b budgetMeasurementBasis, s scoreboardConfig) []evalFinding {
+func compareHardCoverage(s *scoreboardFile) []evalFinding {
+	var out []evalFinding
+	if s.Gate == nil {
+		return append(out, evalFinding{Metric: "hard_gate_report", Got: "missing", Want: "embedded fail-closed report"})
+	}
+	if s.Gate.Status != "pass" {
+		out = append(out, evalFinding{Metric: "hard_gate_report", Got: s.Gate.Status, Want: "pass"})
+	}
+	if s.Gate.MaxFullParseRatio != hardMaxFullParseRatio {
+		out = append(out, evalFinding{Axis: axisFull, Metric: "hard_gate.max_full_parse_ratio", Got: fmt.Sprintf("%.6g", s.Gate.MaxFullParseRatio), Want: fmt.Sprintf("%.1f", hardMaxFullParseRatio)})
+	}
+	if s.Gate.FastFullParseRatio != fastFullParseRatio {
+		out = append(out, evalFinding{Axis: axisFull, Metric: "hard_gate.fast_full_parse_ratio", Got: fmt.Sprintf("%.6g", s.Gate.FastFullParseRatio), Want: fmt.Sprintf("%.2f", fastFullParseRatio)})
+	}
+	if s.Corpus.LockSHA256 != s.Config.CorpusLockSHA256 {
+		out = append(out, evalFinding{Metric: "hard_fleet_coverage", Got: "coverage lock=" + s.Corpus.LockSHA256, Want: "config lock=" + s.Config.CorpusLockSHA256})
+	}
+	if s.Corpus.LockLanguages <= 0 {
+		out = append(out, evalFinding{Metric: "hard_fleet_coverage", Got: fmt.Sprint(s.Corpus.LockLanguages), Want: "positive authenticated lock language count"})
+	}
+	if !s.Config.RequireFleet {
+		return out
+	}
+	if s.Corpus.SelectedLanguages != s.Corpus.LockLanguages {
+		out = append(out, evalFinding{Metric: "hard_fleet_coverage", Got: fmt.Sprintf("selected=%d lock=%d", s.Corpus.SelectedLanguages, s.Corpus.LockLanguages), Want: "selected=lock"})
+	}
+	if len(s.Languages) != s.Corpus.SelectedLanguages {
+		out = append(out, evalFinding{Metric: "hard_fleet_coverage", Got: fmt.Sprintf("rows=%d selected=%d", len(s.Languages), s.Corpus.SelectedLanguages), Want: "one row per selected language"})
+	}
+	if len(s.Corpus.MissingFromLock) > 0 {
+		out = append(out, evalFinding{Metric: "hard_fleet_coverage", Got: "missing_from_lock=" + strings.Join(s.Corpus.MissingFromLock, ","), Want: "none"})
+	}
+	if len(s.Corpus.MissingFromRegistry) > 0 {
+		out = append(out, evalFinding{Metric: "hard_fleet_coverage", Got: "missing_from_registry=" + strings.Join(s.Corpus.MissingFromRegistry, ","), Want: "none"})
+	}
+	return out
+}
+
+func compareHardGate(row scoreboardLang) []evalFinding {
+	var out []evalFinding
+	if row.Status != statusOK {
+		out = append(out, evalFinding{Language: row.Language, Path: row.ActiveFile, Axis: row.ActiveAxis, Metric: "hard_coverage", Got: row.Status, Want: statusOK})
+	}
+	if row.FilesMeasured != row.FilesSelected || len(row.Files) != row.FilesSelected {
+		out = append(out, evalFinding{
+			Language: row.Language,
+			Metric:   "hard_coverage",
+			Got:      fmt.Sprintf("measured=%d rows=%d selected=%d", row.FilesMeasured, len(row.Files), row.FilesSelected),
+			Want:     "complete selected-file coverage",
+		})
+	}
+	if scoreboardStopIsGo(row.Stop) {
+		out = append(out, evalFinding{
+			Language: row.Language,
+			Path:     row.ActiveFile,
+			Axis:     row.ActiveAxis,
+			Metric:   "hard_go_stop",
+			Got:      hardStopDescription(row.Stop, row.Status),
+			Want:     "no Go timeout, parser-budget, wall, RSS, or OOM stop",
+		})
+	}
+	for _, file := range row.Files {
+		for axis, result := range file.Axes {
+			if scoreboardStopIsGo(result.Stop) || legacyGoStopStatus(result.Status) {
+				out = append(out, evalFinding{
+					Language: row.Language,
+					Path:     file.Path,
+					Axis:     axis,
+					Metric:   "hard_go_stop",
+					Got:      hardStopDescription(result.Stop, result.Status),
+					Want:     "no Go timeout or parser-budget stop",
+				})
+			}
+		}
+		full, ok := file.Axes[axisFull]
+		if !ok {
+			out = append(out, evalFinding{Language: row.Language, Path: file.Path, Axis: axisFull, Metric: "hard_full_measurement", Got: "missing", Want: "exact per-file Go/C ratio"})
+			continue
+		}
+		if full.Status != statusOK || full.GoMedianNs <= 0 || full.CMedianNs <= 0 {
+			if !scoreboardStopIsGo(full.Stop) && !legacyGoStopStatus(full.Status) {
+				got := full.Status
+				if got == "" {
+					got = "missing timing"
+				}
+				out = append(out, evalFinding{Language: row.Language, Path: file.Path, Axis: axisFull, Metric: "hard_full_measurement", Got: got, Want: "status=ok with exact Go/C ratio"})
+			}
+			continue
+		}
+		ratio := float64(full.GoMedianNs) / float64(full.CMedianNs)
+		if ratio > hardMaxFullParseRatio {
+			out = append(out, evalFinding{
+				Language: row.Language,
+				Path:     file.Path,
+				Axis:     axisFull,
+				Metric:   "hard_full_ratio",
+				Got:      fmt.Sprintf("%.4fx", ratio),
+				Want:     fmt.Sprintf("<=%.1fx", hardMaxFullParseRatio),
+			})
+		}
+	}
+	return out
+}
+
+func scoreboardStopIsGo(stop *scoreboardStop) bool {
+	return stop != nil && stop.Implementation == "go"
+}
+
+func legacyGoStopStatus(status string) bool {
+	switch status {
+	case "go_timeout", "go_budget_stop", "go_stopped":
+		return true
+	default:
+		return false
+	}
+}
+
+func hardStopDescription(stop *scoreboardStop, status string) string {
+	if stop == nil {
+		return status
+	}
+	description := stop.Class
+	if stop.Reason != "" {
+		description += ":" + stop.Reason
+	}
+	return description
+}
+
+func compareConfig(b budgetMeasurementBasis, s scoreboardConfig, hardGateOnly bool) []evalFinding {
 	var out []evalFinding
 	if b.Reps > 0 && s.Reps != b.Reps {
 		out = append(out, evalFinding{Metric: "config.reps", Got: fmt.Sprint(s.Reps), Want: fmt.Sprint(b.Reps)})
@@ -300,14 +510,36 @@ func compareConfig(b budgetMeasurementBasis, s scoreboardConfig) []evalFinding {
 			out = append(out, evalFinding{Axis: axis, Metric: "config.axes", Got: strings.Join(s.Axes, ","), Want: "include " + axis})
 		}
 	}
-	if len(b.ExcludePaths) > 0 || len(s.ExcludePaths) > 0 {
+	if hardGateOnly {
+		if got := normalizedPathList(s.ExcludePaths); len(got) > 0 {
+			out = append(out, evalFinding{Metric: "config.exclude_paths", Got: strings.Join(got, ","), Want: "none for the universal hard gate"})
+		}
+	} else if len(b.ExcludePaths) > 0 || len(s.ExcludePaths) > 0 {
 		got := normalizedPathList(s.ExcludePaths)
 		want := normalizedPathList(b.ExcludePaths)
 		if !stringSlicesEqual(got, want) {
 			out = append(out, evalFinding{Metric: "config.exclude_paths", Got: strings.Join(got, ","), Want: strings.Join(want, ",")})
 		}
 	}
+	if !s.HardGate {
+		out = append(out, evalFinding{Metric: "config.hard_gate", Got: "false", Want: "true"})
+	}
+	if s.CorpusLockSHA256 != b.CorpusLockSHA256 {
+		out = append(out, evalFinding{Metric: "config.corpus_lock_sha256", Got: s.CorpusLockSHA256, Want: b.CorpusLockSHA256})
+	}
 	return out
+}
+
+func validSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, r := range value {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			return false
+		}
+	}
+	return true
 }
 
 func compareAxis(lang, axis string, budget budgetAxis, row scoreboardLang) []evalFinding {
@@ -399,11 +631,11 @@ func renderSummary(b *budgetFile, scoreboardPath string, findings []evalFinding)
 		return sb.String()
 	}
 	fmt.Fprintf(&sb, "- outcome: `FAIL`\n\n")
-	fmt.Fprintf(&sb, "| language | axis | metric | got | want |\n")
-	fmt.Fprintf(&sb, "|---|---|---|---|---|\n")
+	fmt.Fprintf(&sb, "| language | file | axis | metric | got | want |\n")
+	fmt.Fprintf(&sb, "|---|---|---|---|---|---|\n")
 	for _, f := range findings {
-		fmt.Fprintf(&sb, "| %s | %s | %s | %s | %s |\n",
-			mdCell(f.Language), mdCell(f.Axis), mdCell(f.Metric), mdCell(f.Got), mdCell(f.Want))
+		fmt.Fprintf(&sb, "| %s | %s | %s | %s | %s | %s |\n",
+			mdCell(f.Language), mdCell(f.Path), mdCell(f.Axis), mdCell(f.Metric), mdCell(f.Got), mdCell(f.Want))
 	}
 	return sb.String()
 }
@@ -411,7 +643,7 @@ func renderSummary(b *budgetFile, scoreboardPath string, findings []evalFinding)
 func printFindings(prefix string, findings []evalFinding) {
 	fmt.Fprintln(os.Stderr, prefix)
 	for _, f := range findings {
-		fmt.Fprintf(os.Stderr, "%s\t%s\t%s\tgot=%s\twant=%s\n", f.Language, f.Axis, f.Metric, f.Got, f.Want)
+		fmt.Fprintf(os.Stderr, "%s\t%s\t%s\t%s\tgot=%s\twant=%s\n", f.Language, f.Path, f.Axis, f.Metric, f.Got, f.Want)
 	}
 }
 

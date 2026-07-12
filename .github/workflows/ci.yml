@@ -226,7 +226,7 @@ jobs:
         working-directory: cgo_harness
         run: |
           set -euo pipefail
-          GOWORK=off go test ./cmd/perf_scan_budget -count=1
+          GOWORK=off go test ./cmd/perf_scan_budget ./cmd/perf_scan_status -count=1
           GOWORK=off go run ./cmd/perf_scan_budget \
             -budget perf_scan/perf_ratio_budgets.json
 

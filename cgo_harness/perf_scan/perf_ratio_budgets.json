@@ -5,7 +5,7 @@
     "RCA in its description -- i.e. a root-cause explanation of the perf/behavior",
     "change that made the old (tighter) budget unreachable, not just 'CI is flaky'",
     "or 'the new number is fine'. See cgo_harness/perf_scan/CI_PROPOSAL.md for the",
-    "non-blocking visibility job this file is meant to back, and cgo_harness/",
+    "hard-gate runner contract this file backs, and cgo_harness/",
     "perf_scan/README.md for the measurement protocol (verdict buckets, cliff",
     "containment, ratio_by_total vs ratio_median_of_files) these numbers assume.",
     "Every budget below was seeded from a REAL measurement (see _seed_sources)",
@@ -16,7 +16,8 @@
     "that isn't green today is worse than useless.",
     "Adding measurement_basis.exclude_paths is a budget-loosening operation and",
     "must carry the same mechanism/RCA evidence as loosening a ratio budget;",
-    "removing exclusions is a tightening operation."
+    "removing exclusions is a tightening operation. Historical per-language",
+    "timeout/error allowances do not weaken the independent fail-closed hard gate."
   ],
   "schema": "gts-perf-ratio-budgets/v1",
   "generated_at": "2026-07-11T13:54:40Z",
@@ -32,11 +33,14 @@
     "reps": 5,
     "warmup": 1,
     "file_budget_ms": 10000,
+    "hard_max_full_parse_ratio": 10.0,
+    "fast_full_parse_ratio": 0.10,
+    "corpus_lock_sha256": "cf108b005fe41c4513bae14eafd4f4ec72e64454ca2eb6bbf4d18d25caab24f2",
     "axes": ["full", "noedit"],
     "exclude_paths": [
       "groovy/subprojects/performance/src/files/pleac11_15.groovy"
     ],
-    "ratio_definition": "ratio = Go median ns / C median ns, per file; ratio_by_total = sum(Go medians)/sum(C medians) across completing files; ratio_median_of_files = median of per-file ratios. A file that hits the 10s per-attempt budget (wall-clock timeout or memory_budget stop) is excluded from both aggregates and counted in max_timeouts. A file whose Go tree completes but does not cover the full byte range (root.EndByte != len(source), status go_error/truncated) is counted in max_errors -- this is a DISTINCT failure mode from timeouts (silent-truncation-shaped correctness bugs, e.g. haskell/cpp/scala/crystal/typescript below) and is not caught by max_timeouts alone."
+    "ratio_definition": "ratio = Go median ns / C median ns, per file; ratio_by_total = sum(Go medians)/sum(C medians) across completing files; ratio_median_of_files = median of per-file ratios. The hard gate is independent of historical language ratchets: every locked full-parse file must produce an exact Go/C ratio <=10.0, and every Go parser timeout, parser-budget stop, language wall stop, RSS stop, or OOM/kill fails. Ratchet timeout/error allowances remain historical evidence only. Structural parity remains a separate correctness gate. Full-parse ratios <=0.10 are reported separately as 10x-or-better wins."
   },
   "_seed_sources": {
     "authoritative_20260706T145520Z": "pre-campaign baseline (cgo_harness/perf_scan/out/authoritative_20260706T145520Z)",

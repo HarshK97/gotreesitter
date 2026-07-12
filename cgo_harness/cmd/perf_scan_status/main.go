@@ -39,13 +39,16 @@ type budgetFile struct {
 }
 
 type measurementBasis struct {
-	Reps         int      `json:"reps"`
-	Warmup       int      `json:"warmup"`
-	FileBudgetMS int      `json:"file_budget_ms"`
-	MaxFiles     int      `json:"max_files,omitempty"`
-	Order        string   `json:"order,omitempty"`
-	Axes         []string `json:"axes"`
-	ExcludePaths []string `json:"exclude_paths,omitempty"`
+	Reps                  int      `json:"reps"`
+	Warmup                int      `json:"warmup"`
+	FileBudgetMS          int      `json:"file_budget_ms"`
+	MaxFiles              int      `json:"max_files,omitempty"`
+	Order                 string   `json:"order,omitempty"`
+	Axes                  []string `json:"axes"`
+	ExcludePaths          []string `json:"exclude_paths,omitempty"`
+	HardMaxFullParseRatio float64  `json:"hard_max_full_parse_ratio,omitempty"`
+	FastFullParseRatio    float64  `json:"fast_full_parse_ratio,omitempty"`
+	CorpusLockSHA256      string   `json:"corpus_lock_sha256,omitempty"`
 }
 
 type knownBudgetGap struct {
@@ -109,20 +112,25 @@ type scoreboardFile struct {
 	Host        scoreboardHost       `json:"host"`
 	Languages   []scoreboardLanguage `json:"languages"`
 	Summary     map[string]int       `json:"summary_verdicts"`
+	Corpus      scoreboardCorpus     `json:"corpus_coverage"`
+	Gate        *scoreboardGate      `json:"hard_gate,omitempty"`
 	SourcePath  string               `json:"-"`
 }
 
 type scoreboardConfig struct {
-	Reps          int      `json:"reps"`
-	Warmup        int      `json:"warmup"`
-	FileBudgetMS  int      `json:"file_budget_ms"`
-	LangTimeoutMS int      `json:"lang_timeout_ms"`
-	MaxFiles      int      `json:"max_files"`
-	Order         string   `json:"order"`
-	Axes          []string `json:"axes"`
-	ExcludePaths  []string `json:"exclude_paths,omitempty"`
-	Contended     bool     `json:"contended"`
-	ContendedNote string   `json:"contended_note,omitempty"`
+	Reps             int      `json:"reps"`
+	Warmup           int      `json:"warmup"`
+	FileBudgetMS     int      `json:"file_budget_ms"`
+	LangTimeoutMS    int      `json:"lang_timeout_ms"`
+	MaxFiles         int      `json:"max_files"`
+	Order            string   `json:"order"`
+	Axes             []string `json:"axes"`
+	ExcludePaths     []string `json:"exclude_paths,omitempty"`
+	Contended        bool     `json:"contended"`
+	ContendedNote    string   `json:"contended_note,omitempty"`
+	HardGate         bool     `json:"hard_gate"`
+	RequireFleet     bool     `json:"require_fleet"`
+	CorpusLockSHA256 string   `json:"corpus_lock_sha256,omitempty"`
 }
 
 type scoreboardHost struct {
@@ -138,35 +146,108 @@ type scoreboardLanguage struct {
 	BytesMeasured int64                     `json:"bytes_measured"`
 	Verdict       string                    `json:"verdict"`
 	Axes          map[string]scoreboardAxis `json:"axes"`
+	Files         []scoreboardFileRow       `json:"files,omitempty"`
+	ActiveFile    string                    `json:"active_file,omitempty"`
+	ActiveAxis    string                    `json:"active_axis,omitempty"`
+	Stop          *scoreboardStop           `json:"stop,omitempty"`
 }
 
 type scoreboardAxis struct {
 	FilesOK            int     `json:"files_ok"`
 	GoTimeouts         int     `json:"go_timeouts"`
+	GoStops            int     `json:"go_stops"`
 	Cliffs             int     `json:"cliffs"`
 	RatioByTotal       float64 `json:"ratio_by_total"`
 	RatioMedianOfFiles float64 `json:"ratio_median_of_files"`
 	Verdict            string  `json:"verdict"`
 }
 
+type scoreboardFileRow struct {
+	Path string                        `json:"path"`
+	Axes map[string]scoreboardFileAxis `json:"axes"`
+}
+
+type scoreboardFileAxis struct {
+	Status     string          `json:"status"`
+	Detail     string          `json:"detail,omitempty"`
+	GoMedianNs int64           `json:"go_median_ns,omitempty"`
+	CMedianNs  int64           `json:"c_median_ns,omitempty"`
+	Ratio      float64         `json:"ratio,omitempty"`
+	Stop       *scoreboardStop `json:"stop,omitempty"`
+}
+
+type scoreboardStop struct {
+	Class          string `json:"class"`
+	Reason         string `json:"reason,omitempty"`
+	Implementation string `json:"implementation,omitempty"`
+	Phase          string `json:"phase,omitempty"`
+	Attempt        int    `json:"attempt,omitempty"`
+	Detail         string `json:"detail,omitempty"`
+}
+
+type scoreboardCorpus struct {
+	LockPath            string   `json:"lock_path,omitempty"`
+	LockSHA256          string   `json:"lock_sha256,omitempty"`
+	LockLanguages       int      `json:"lock_languages"`
+	SelectedLanguages   int      `json:"selected_languages"`
+	MissingFromLock     []string `json:"missing_from_lock,omitempty"`
+	MissingFromRegistry []string `json:"missing_from_registry,omitempty"`
+}
+
+type scoreboardGateFinding struct {
+	Kind     string          `json:"kind"`
+	Language string          `json:"language,omitempty"`
+	Path     string          `json:"path,omitempty"`
+	Axis     string          `json:"axis,omitempty"`
+	Status   string          `json:"status,omitempty"`
+	Ratio    float64         `json:"ratio,omitempty"`
+	Limit    float64         `json:"limit,omitempty"`
+	Stop     *scoreboardStop `json:"stop,omitempty"`
+	Detail   string          `json:"detail,omitempty"`
+}
+
+type scoreboardGate struct {
+	Status             string                  `json:"status"`
+	MaxFullParseRatio  float64                 `json:"max_full_parse_ratio"`
+	FastFullParseRatio float64                 `json:"fast_full_parse_ratio"`
+	FilesExpected      int                     `json:"files_expected"`
+	FilesMeasured      int                     `json:"files_measured"`
+	FullFilesEvaluated int                     `json:"full_files_evaluated"`
+	FastFullFiles      []scoreboardGateFinding `json:"fast_full_files,omitempty"`
+	Failures           []scoreboardGateFinding `json:"failures,omitempty"`
+}
+
 type statusDocument struct {
-	Schema             string              `json:"schema"`
-	GeneratedAt        string              `json:"generated_at"`
-	BudgetPath         string              `json:"budget_path"`
-	FleetPath          string              `json:"fleet_path,omitempty"`
-	BudgetGeneratedAt  string              `json:"budget_generated_at"`
-	BudgetGeneratedBy  string              `json:"budget_generated_by"`
-	MeasurementBasis   measurementBasis    `json:"measurement_basis"`
-	Coverage           coverageSummary     `json:"coverage"`
-	HeldOutLanguages   []string            `json:"held_out_languages"`
-	BudgetStatusCounts map[string]int      `json:"budget_status_counts"`
-	SeedSources        []string            `json:"seed_sources"`
-	KnownGaps          []knownGapSummary   `json:"known_budget_class_gaps"`
-	ScoreboardPatterns []string            `json:"scoreboard_patterns,omitempty"`
-	ScoreboardCoverage *scoreboardCoverage `json:"scoreboard_coverage,omitempty"`
-	Scoreboards        []scoreboardSummary `json:"scoreboards,omitempty"`
-	MeasuredLanguages  []measuredLanguage  `json:"measured_languages,omitempty"`
-	Caveats            []string            `json:"caveats"`
+	Schema             string               `json:"schema"`
+	GeneratedAt        string               `json:"generated_at"`
+	BudgetPath         string               `json:"budget_path"`
+	FleetPath          string               `json:"fleet_path,omitempty"`
+	BudgetGeneratedAt  string               `json:"budget_generated_at"`
+	BudgetGeneratedBy  string               `json:"budget_generated_by"`
+	MeasurementBasis   measurementBasis     `json:"measurement_basis"`
+	Coverage           coverageSummary      `json:"coverage"`
+	HeldOutLanguages   []string             `json:"held_out_languages"`
+	BudgetStatusCounts map[string]int       `json:"budget_status_counts"`
+	SeedSources        []string             `json:"seed_sources"`
+	KnownGaps          []knownGapSummary    `json:"known_budget_class_gaps"`
+	ScoreboardPatterns []string             `json:"scoreboard_patterns,omitempty"`
+	ScoreboardCoverage *scoreboardCoverage  `json:"scoreboard_coverage,omitempty"`
+	Scoreboards        []scoreboardSummary  `json:"scoreboards,omitempty"`
+	MeasuredLanguages  []measuredLanguage   `json:"measured_languages,omitempty"`
+	HardGateFailures   []gateFindingSummary `json:"hard_gate_failures,omitempty"`
+	FastFullFiles      []gateFindingSummary `json:"fast_full_parse_files,omitempty"`
+	Caveats            []string             `json:"caveats"`
+}
+
+type gateFindingSummary struct {
+	SourcePath string  `json:"source_path"`
+	Kind       string  `json:"kind"`
+	Language   string  `json:"language,omitempty"`
+	Path       string  `json:"path,omitempty"`
+	Axis       string  `json:"axis,omitempty"`
+	Status     string  `json:"status,omitempty"`
+	Ratio      float64 `json:"ratio,omitempty"`
+	Detail     string  `json:"detail,omitempty"`
 }
 
 type coverageSummary struct {
@@ -193,6 +274,11 @@ type scoreboardCoverage struct {
 	MeasuredLanguages        int      `json:"measured_languages"`
 	MeasuredBudgetLanguages  int      `json:"measured_budget_languages"`
 	MeasuredHeldOutLanguages []string `json:"measured_held_out_languages,omitempty"`
+	HardGateScoreboards      int      `json:"hard_gate_scoreboards"`
+	HardGatePasses           int      `json:"hard_gate_passes"`
+	HardGateFailures         int      `json:"hard_gate_failures"`
+	LegacyScoreboards        int      `json:"legacy_scoreboards"`
+	FastFullParseFiles       int      `json:"fast_full_parse_files"`
 }
 
 type scoreboardSummary struct {
@@ -207,6 +293,12 @@ type scoreboardSummary struct {
 	LoadAvgStart     string         `json:"loadavg_start,omitempty"`
 	LoadAvgEnd       string         `json:"loadavg_end,omitempty"`
 	SummaryVerdicts  map[string]int `json:"summary_verdicts,omitempty"`
+	HardGateStatus   string         `json:"hard_gate_status"`
+	HardGateFailures int            `json:"hard_gate_failures"`
+	FullFilesChecked int            `json:"full_files_checked"`
+	FastFullFiles    int            `json:"fast_full_files"`
+	RequireFleet     bool           `json:"require_fleet"`
+	CorpusLockSHA256 string         `json:"corpus_lock_sha256,omitempty"`
 }
 
 type measuredLanguage struct {
@@ -226,6 +318,7 @@ type measuredLanguage struct {
 type axisSummary struct {
 	FilesOK            int     `json:"files_ok"`
 	GoTimeouts         int     `json:"go_timeouts"`
+	GoStops            int     `json:"go_stops"`
 	Cliffs             int     `json:"cliffs"`
 	RatioByTotal       float64 `json:"ratio_by_total"`
 	RatioMedianOfFiles float64 `json:"ratio_median_of_files"`
@@ -341,12 +434,15 @@ func buildStatus(opts options) (*statusDocument, error) {
 			return nil, err
 		}
 		doc.ScoreboardPatterns = patterns
-		doc.Scoreboards, doc.MeasuredLanguages, doc.ScoreboardCoverage, err = summarizeScoreboards(paths, budgetSet, setFromList(heldOut))
+		doc.Scoreboards, doc.MeasuredLanguages, doc.ScoreboardCoverage, doc.HardGateFailures, doc.FastFullFiles, err = summarizeScoreboards(paths, budgetSet, setFromList(heldOut))
 		if err != nil {
 			return nil, err
 		}
 		if doc.ScoreboardCoverage.ContendedScoreboards > 0 {
 			doc.Caveats = append(doc.Caveats, "At least one local scoreboard was harness-flagged as contended; treat those ratios as smoke or visibility evidence rather than quiet-box ratchets.")
+		}
+		if doc.ScoreboardCoverage.LegacyScoreboards > 0 {
+			doc.Caveats = append(doc.Caveats, "Legacy scoreboards remain readable, but they predate the structured hard-gate report and are shown as not_evaluated; rerun the harness for a fail-closed verdict.")
 		}
 	}
 
@@ -416,14 +512,15 @@ func expandGlobs(patterns []string) ([]string, error) {
 	return out, nil
 }
 
-func summarizeScoreboards(paths []string, budgetSet map[string]bool, heldOutSet map[string]bool) ([]scoreboardSummary, []measuredLanguage, *scoreboardCoverage, error) {
+func summarizeScoreboards(paths []string, budgetSet map[string]bool, heldOutSet map[string]bool) ([]scoreboardSummary, []measuredLanguage, *scoreboardCoverage, []gateFindingSummary, []gateFindingSummary, error) {
 	var summaries []scoreboardSummary
 	measured := map[string]measuredLanguage{}
-	var contended int
+	var contended, hardGateBoards, hardGatePasses, hardGateFailures, legacyBoards, fastFiles int
+	var failureFindings, fastFindings []gateFindingSummary
 	for _, path := range paths {
 		board, err := loadScoreboard(path)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, nil, err
 		}
 		budgetLangs := 0
 		var heldOut []string
@@ -451,6 +548,31 @@ func summarizeScoreboards(paths []string, budgetSet map[string]bool, heldOutSet 
 		if board.Config.Contended {
 			contended++
 		}
+		gateStatus := "not_evaluated"
+		gateFailureCount := 0
+		fullFilesChecked := 0
+		fastFullFiles := 0
+		if board.Gate == nil {
+			legacyBoards++
+		} else {
+			hardGateBoards++
+			gateStatus = board.Gate.Status
+			gateFailureCount = len(board.Gate.Failures)
+			fullFilesChecked = board.Gate.FullFilesEvaluated
+			fastFullFiles = len(board.Gate.FastFullFiles)
+			fastFiles += fastFullFiles
+			if strings.EqualFold(board.Gate.Status, "pass") {
+				hardGatePasses++
+			} else {
+				hardGateFailures++
+			}
+			for _, finding := range board.Gate.Failures {
+				failureFindings = append(failureFindings, summarizeGateFinding(path, finding))
+			}
+			for _, finding := range board.Gate.FastFullFiles {
+				fastFindings = append(fastFindings, summarizeGateFinding(path, finding))
+			}
+		}
 		summaries = append(summaries, scoreboardSummary{
 			Path:             path,
 			GeneratedAt:      board.GeneratedAt,
@@ -463,6 +585,12 @@ func summarizeScoreboards(paths []string, budgetSet map[string]bool, heldOutSet 
 			LoadAvgStart:     board.Host.LoadAvgStart,
 			LoadAvgEnd:       board.Host.LoadAvgEnd,
 			SummaryVerdicts:  board.Summary,
+			HardGateStatus:   gateStatus,
+			HardGateFailures: gateFailureCount,
+			FullFilesChecked: fullFilesChecked,
+			FastFullFiles:    fastFullFiles,
+			RequireFleet:     board.Config.RequireFleet,
+			CorpusLockSHA256: board.Corpus.LockSHA256,
 		})
 	}
 	measuredList := make([]measuredLanguage, 0, len(measured))
@@ -486,8 +614,47 @@ func summarizeScoreboards(paths []string, budgetSet map[string]bool, heldOutSet 
 		MeasuredLanguages:        len(measuredList),
 		MeasuredBudgetLanguages:  measuredBudget,
 		MeasuredHeldOutLanguages: sortedKeysBool(measuredHeldOut),
+		HardGateScoreboards:      hardGateBoards,
+		HardGatePasses:           hardGatePasses,
+		HardGateFailures:         hardGateFailures,
+		LegacyScoreboards:        legacyBoards,
+		FastFullParseFiles:       fastFiles,
 	}
-	return summaries, measuredList, coverage, nil
+	sortGateFindings(failureFindings)
+	sortGateFindings(fastFindings)
+	return summaries, measuredList, coverage, failureFindings, fastFindings, nil
+}
+
+func summarizeGateFinding(sourcePath string, finding scoreboardGateFinding) gateFindingSummary {
+	return gateFindingSummary{
+		SourcePath: sourcePath,
+		Kind:       finding.Kind,
+		Language:   finding.Language,
+		Path:       finding.Path,
+		Axis:       finding.Axis,
+		Status:     finding.Status,
+		Ratio:      finding.Ratio,
+		Detail:     finding.Detail,
+	}
+}
+
+func sortGateFindings(findings []gateFindingSummary) {
+	sort.Slice(findings, func(i, j int) bool {
+		a, b := findings[i], findings[j]
+		if a.SourcePath != b.SourcePath {
+			return a.SourcePath < b.SourcePath
+		}
+		if a.Language != b.Language {
+			return a.Language < b.Language
+		}
+		if a.Path != b.Path {
+			return a.Path < b.Path
+		}
+		if a.Axis != b.Axis {
+			return a.Axis < b.Axis
+		}
+		return a.Kind < b.Kind
+	})
 }
 
 func loadScoreboard(path string) (*scoreboardFile, error) {
@@ -512,6 +679,7 @@ func summarizeAxes(in map[string]scoreboardAxis) map[string]axisSummary {
 		out[axis] = axisSummary{
 			FilesOK:            row.FilesOK,
 			GoTimeouts:         row.GoTimeouts,
+			GoStops:            row.GoStops,
 			Cliffs:             row.Cliffs,
 			RatioByTotal:       row.RatioByTotal,
 			RatioMedianOfFiles: row.RatioMedianOfFiles,
@@ -556,6 +724,12 @@ func renderMarkdown(doc *statusDocument) string {
 		doc.MeasurementBasis.MaxFiles,
 		mdInline(doc.MeasurementBasis.Order),
 		mdInline(strings.Join(doc.MeasurementBasis.Axes, ",")))
+	if doc.MeasurementBasis.HardMaxFullParseRatio > 0 {
+		fmt.Fprintf(&sb, "Hard full-parse ceiling: every measured file must be `<=%.1fx`; full-parse files at `<=%.2fx` are reported separately as 10x-or-better wins. Corpus lock SHA-256: `%s`.\n\n",
+			doc.MeasurementBasis.HardMaxFullParseRatio,
+			doc.MeasurementBasis.FastFullParseRatio,
+			mdInline(doc.MeasurementBasis.CorpusLockSHA256))
+	}
 
 	if len(doc.MeasurementBasis.ExcludePaths) > 0 {
 		fmt.Fprintf(&sb, "Excluded paths: `%s`.\n\n", strings.Join(doc.MeasurementBasis.ExcludePaths, "`, `"))
@@ -614,20 +788,46 @@ func renderScoreboardMarkdown(sb *strings.Builder, doc *statusDocument) {
 	fmt.Fprintf(sb, "| contended scoreboards | %d |\n", doc.ScoreboardCoverage.ContendedScoreboards)
 	fmt.Fprintf(sb, "| measured languages | %d |\n", doc.ScoreboardCoverage.MeasuredLanguages)
 	fmt.Fprintf(sb, "| measured budget languages | %d |\n", doc.ScoreboardCoverage.MeasuredBudgetLanguages)
+	fmt.Fprintf(sb, "| structured hard-gate scoreboards | %d |\n", doc.ScoreboardCoverage.HardGateScoreboards)
+	fmt.Fprintf(sb, "| hard-gate passes | %d |\n", doc.ScoreboardCoverage.HardGatePasses)
+	fmt.Fprintf(sb, "| hard-gate failures | %d |\n", doc.ScoreboardCoverage.HardGateFailures)
+	fmt.Fprintf(sb, "| legacy/not-evaluated scoreboards | %d |\n", doc.ScoreboardCoverage.LegacyScoreboards)
+	fmt.Fprintf(sb, "| full-parse files at least 10x faster than C | %d |\n", doc.ScoreboardCoverage.FastFullParseFiles)
 	fmt.Fprintf(sb, "\n")
 
-	fmt.Fprintf(sb, "| scoreboard | languages | budgeted | contended | loadavg_start | verdicts |\n")
-	fmt.Fprintf(sb, "|---|---:|---:|---|---|---|\n")
+	fmt.Fprintf(sb, "| scoreboard | languages | budgeted | hard gate | failures | full files | fast files | contended | verdicts |\n")
+	fmt.Fprintf(sb, "|---|---:|---:|---|---:|---:|---:|---|---|\n")
 	for _, row := range doc.Scoreboards {
-		fmt.Fprintf(sb, "| `%s` | %d | %d | `%t` | `%s` | %s |\n",
+		fmt.Fprintf(sb, "| `%s` | %d | %d | `%s` | %d | %d | %d | `%t` | %s |\n",
 			mdCell(row.Path),
 			row.Languages,
 			row.BudgetLanguages,
+			mdCell(row.HardGateStatus),
+			row.HardGateFailures,
+			row.FullFilesChecked,
+			row.FastFullFiles,
 			row.Contended,
-			mdCell(row.LoadAvgStart),
 			mdCell(formatIntMap(row.SummaryVerdicts)))
 	}
 	fmt.Fprintf(sb, "\n")
+
+	if len(doc.HardGateFailures) > 0 {
+		fmt.Fprintf(sb, "### Hard-gate failures\n\n")
+		for _, finding := range doc.HardGateFailures {
+			fmt.Fprintf(sb, "- `%s` **%s** `%s` axis=%s kind=%s status=%s ratio=%.4fx — %s\n",
+				mdInline(finding.SourcePath), finding.Language, finding.Path, finding.Axis,
+				finding.Kind, finding.Status, finding.Ratio, finding.Detail)
+		}
+		fmt.Fprintf(sb, "\n")
+	}
+	if len(doc.FastFullFiles) > 0 {
+		fmt.Fprintf(sb, "### Full-parse files at least 10x faster than C\n\n")
+		for _, finding := range doc.FastFullFiles {
+			fmt.Fprintf(sb, "- `%s` **%s** `%s` ratio=%.4fx — %s\n",
+				mdInline(finding.SourcePath), finding.Language, finding.Path, finding.Ratio, finding.Detail)
+		}
+		fmt.Fprintf(sb, "\n")
+	}
 }
 
 func summarizeKnownGaps(gaps map[string]knownBudgetGap) []knownGapSummary {

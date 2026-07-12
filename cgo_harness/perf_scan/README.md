@@ -25,14 +25,17 @@ median, with min/max recorded. Per-file ratio = Go median / C median. Language
 aggregate = ratio-by-total (sum of Go medians / sum of C medians) plus
 median-of-file-ratios.
 
-Verdict buckets: `<=1.2x`, `<=2x`, `>2x`, `cliff>10x`. Any single file over
-10x — or a file that hits the parse budget — escalates the language to
-`cliff>10x` so cliffs cannot hide behind healthy averages.
+Verdict buckets: `<=0.10x`, `<=1.2x`, `<=2x`, `>2x`, `cliff>10x`. The first
+bucket is reported separately as a 10x-or-better win. The hard gate evaluates
+the exact per-file full-parse ratio: `<=10.0x` passes and `>10.0x` fails. A
+healthy aggregate can never hide a single cliff.
 
 Notes on interpretation:
-- The scan is timing-grade, not correctness-grade: structural parity is owned
-  by the parity suites / tier_scan. Truncated or errored parses are excluded
-  from medians and surfaced as per-file statuses.
+- The scan is a timing/resource gate, not a structural-correctness gate.
+  Structural and error-tree parity remain owned by the parity suites and
+  tier_scan. A missing or non-OK full-parse measurement still fails this gate
+  closed because no exact Go/C ratio was produced; that is coverage, not a
+  claim that this harness proved structural parity.
 - The Go no-edit path may legitimately short-circuit (near-zero ns) when the
   engine returns the old tree for an unchanged reparse; the C side always
   pays its reuse walk. The scoreboard reports honest wall time of the API call.
@@ -41,19 +44,20 @@ Notes on interpretation:
 
 ## Cliff containment (why one 17s file cannot hang the sweep)
 
-Two layers:
+Two layers, both represented by structured stop records in `scoreboard.json`:
 1. Per-attempt budget (`GTS_PERF_SCAN_FILE_BUDGET_MS`, default 5000): Go via
    `Parser.SetTimeoutMicros` (partial tree + `ParseStoppedEarly`), C via
    `ts_parser_set_timeout_micros` (nil tree + parser reset). A timed-out Go
-   file is recorded as `go_timeout` with a **lower-bound ratio**
-   (`budget / C median`, `ratio_is_lower_bound=true`) — the cliff is surfaced,
-   not hung on.
+   file is recorded as `go_timeout`, `go_budget_stop`, or `go_stopped`, with
+   the parser stop reason preserved. Lower-bound ratios remain telemetry, but
+   every Go parser timeout or budget stop fails the hard gate.
 2. Per-language subprocess with a hard wall-clock kill
    (`GTS_PERF_SCAN_LANG_TIMEOUT_MS`, default 10 min): the sweep re-execs the
    test binary per language, so hard hangs, native crashes in a C grammar, or
-   OOMs cost one language row (`lang_timeout` / `error` with log tail), never
-   the sweep. Partial per-file results survive because the child rewrites its
-   fragment after every file.
+   OOMs cost one language row, never the sweep. Wall timeout, RSS watchdog,
+   SIGKILL/OOM, and other process signals are classified separately and retain
+   the active file/axis/implementation when a fragment exists. A Go wall/RSS/
+   OOM stop fails the hard gate; incomplete coverage also fails closed.
 
 ## Running
 
@@ -62,45 +66,59 @@ and a corpus. C reference grammars are built/loaded by the existing parity
 machinery (`ParityCLanguage`, `grammars/languages.lock`, cached under
 `harness_out/parity_c_ref_cache/`).
 
-Smoke (explicit languages, default corpus `corpus_real/`):
+Exploratory smoke (explicit languages, default corpus `corpus_real/`). This
+opts out of the hard gate because it does not use the authenticated fleet lock:
 
 ```sh
 cd cgo_harness
-GOWORK=off GTS_PARITY_ALLOW_HOST=1 GTS_PERF_SCAN=1 \
+GOWORK=off GTS_PARITY_ALLOW_HOST=1 GTS_PERF_SCAN=1 GTS_PERF_SCAN_HARD_GATE=0 \
   GTS_PERF_SCAN_LANGS=go,python,bash,json,c_sharp \
   go test -tags "treesitter_c_parity treesitter_c_perfscan" \
   -run '^TestPerfScanSweep$' -v -count=1 -timeout 0 .
 ```
 
-Authoritative full sweep on a QUIET box (all languages that have both a corpus
-dir and a registry entry are auto-discovered from the corpus root):
+Authoritative full sweep on a quiet box. With no `GTS_PERF_SCAN_LANGS`, the
+hard gate selects every language in the authenticated corpus lock and requires
+complete fleet coverage:
 
 ```sh
 cd cgo_harness
 GOWORK=off GTS_PARITY_ALLOW_HOST=1 GTS_PERF_SCAN=1 \
   GTS_PERF_SCAN_CORPUS_ROOT=/home/draco/work/gotreesitter-corpora/corpus_sources \
   GTS_REAL_CORPUS_BENCH_LOCK=/home/draco/work/gotreesitter-corpora/corpus_sources.lock \
-  GTS_PERF_SCAN_MAX_FILES=16 GTS_PERF_SCAN_ORDER=largest \
-  GTS_PERF_SCAN_REPS=7 GTS_PERF_SCAN_FILE_BUDGET_MS=10000 \
+  GTS_PERF_SCAN_HARD_GATE=1 GTS_PERF_SCAN_REQUIRE_FLEET=1 \
+  GTS_PERF_SCAN_MAX_FILES=8 GTS_PERF_SCAN_ORDER=largest \
+  GTS_PERF_SCAN_REPS=5 GTS_PERF_SCAN_FILE_BUDGET_MS=10000 \
+  GTS_PERF_SCAN_CHILD_RSS_LIMIT_MB=6144 \
   GTS_PERF_SCAN_OUT=perf_scan/out/authoritative_$(date -u +%Y%m%dT%H%M%SZ) \
   go test -tags "treesitter_c_parity treesitter_c_perfscan" \
   -run '^TestPerfScanSweep$' -v -count=1 -timeout 0 .
 ```
 
-When the corpus root ends in `corpus_sources`/`corpus-sources` the existing
-lock-filter machinery restricts file selection to each language's subdir and
-extensions from the corpus lock (same rules as the real-corpus parity
-benchmarks). Point `GTS_REAL_CORPUS_BENCH_LOCK` at the corpus lock
-(`corpus_sources.lock` next to the corpus checkouts); without it the filter
-falls back to `grammars/languages.lock`, whose `subdir` column describes
-grammar repos, not corpus repos.
+Hard-gate mode requires `GTS_REAL_CORPUS_BENCH_LOCK`. Its SHA-256 must match
+`perf_scan/corpus_sources.lock.sha256` and the same digest in the budget file;
+a missing, changed, empty, or registry-incomplete lock aborts before timing.
+When the corpus root ends in `corpus_sources`/`corpus-sources`, the existing
+lock-filter machinery restricts file selection to each language's locked
+subdirectory and extensions. This prevents the unsafe fallback to
+`grammars/languages.lock`, whose `subdir` column describes grammar repos, not
+corpus repos.
+
+The dedicated workflow additionally verifies all 206 corpus checkout `HEAD`s,
+locked subpaths, and tracked worktree/index cleanliness before mounting the
+corpus read-only. It cannot require a completely empty untracked set because
+the corpus builder deliberately supplies nested dependency checkouts and
+`.gts-extracted` fixture trees that some lock rows select; see
+`CI_PROPOSAL.md` for that provisioning boundary.
 
 ## Knobs (all env)
 
 | env | default | meaning |
 |---|---|---|
 | `GTS_PERF_SCAN` | — | master gate; `1` to run |
-| `GTS_PERF_SCAN_LANGS` | auto-discover | comma list for the sweep |
+| `GTS_PERF_SCAN_HARD_GATE` | 1 | enforce the fail-closed per-file/full-fleet gate; set `0` only for exploratory telemetry |
+| `GTS_PERF_SCAN_REQUIRE_FLEET` | 1 when `GTS_PERF_SCAN_LANGS` is empty | require the selected language count to equal the authenticated lock |
+| `GTS_PERF_SCAN_LANGS` | locked fleet (hard) / auto-discover (exploratory) | comma list for a targeted sweep |
 | `GTS_PERF_SCAN_LANG` | — | single language (child mode; set by the sweep) |
 | `GTS_PERF_SCAN_OUT` | `perf_scan/out/scan_<UTC>` | output dir |
 | `GTS_PERF_SCAN_CORPUS_ROOT` | `corpus_real` | corpus root (per-language subdirs) |
@@ -117,6 +135,7 @@ grammar repos, not corpus repos.
 | `GTS_PERF_SCAN_INPROCESS` | 0 | debug: run languages in-process (no crash isolation) |
 | `GTS_PERF_SCAN_EDIT_CANDIDATES` | 16 | edit-site candidates tried per file |
 | `GTS_PERF_SCAN_CHILD_RSS_LIMIT_MB` | 0 | optional parent-side RSS watchdog for the per-language child process; when set, kills the child before a container cgroup OOM can kill the sweep parent |
+| `GTS_REAL_CORPUS_BENCH_LOCK` | required by hard gate | authenticated corpus selection lock; digest is checked before any language runs |
 
 Also honored: `GTS_PARITY_ALLOW_HOST`, `GTS_PARITY_SKIP_LANGS`,
 `GTS_PARITY_REPO_ROOT`, `GTS_PARITY_REPO_CACHE`,
@@ -132,8 +151,10 @@ Also honored: `GTS_PARITY_ALLOW_HOST`, `GTS_PARITY_SKIP_LANGS`,
 ```
 
 `scoreboard.json` carries host metadata (loadavg at start/end), the full
-config, a `contended` flag, per-language per-axis aggregates, and per-file
-medians/ratios/statuses.
+config, authenticated corpus coverage, a `contended` flag, structured stop
+records, per-language per-axis aggregates, per-file medians/ratios/statuses,
+and a `hard_gate` report. The report lists failures and separately lists
+full-parse files at `<=0.10x`.
 
 If a language child process is killed while measuring a file, the latest
 partial fragment includes `active_file`, 1-based `active_file_index`, and
@@ -223,13 +244,26 @@ GOWORK=off go run ./cmd/perf_scan_budget \
   -langs go
 ```
 
-The checker gates `ratio_by_total`, optional `ratio_median_of_files`,
-`go_timeout` counts, and Go-side error/truncation counts. It rejects C
-reference failures by default; a language row can opt into an explicit
-`max_c_reference_failures` allowance when the workload's C oracle itself is
-the known failure being ratcheted. By default, the checker also requires the
-scoreboard's structured measurement knobs (`reps`, `warmup`, `file_budget_ms`,
-`max_files`, `order`, and axes) to match the budget metadata.
+The checker first applies the independent hard rule to every file: each full
+axis must be `ok`, contain positive Go/C timings, and have ratio `<=10.0x`;
+every structured or legacy Go stop fails on every axis. It then applies the
+historical aggregate ratchets (`ratio_by_total`, optional
+`ratio_median_of_files`, timeout/error counts, and C-reference allowances).
+Those historical allowances cannot waive the hard rule. Strict config also
+requires `hard_gate=true` and the authenticated corpus-lock digest in addition
+to the measurement knobs (`reps`, `warmup`, `file_budget_ms`, `max_files`,
+`order`, exclusions, and axes).
+
+The universal hard-gate run passes `-hard-gate-only`. That mode requires an
+unexcluded scoreboard and checks authenticated fleet coverage plus the exact
+per-file hard rules without applying historical aggregates whose seeded sample
+basis included an exclusion. Historical ratchets remain available through the
+normal comparator on scoreboards produced with their exact recorded basis.
+
+Older `gts-perf-scan/v1` scoreboards still decode. They predate structured
+stops, corpus coverage, and the embedded hard-gate report, so use
+`-strict-config=false` only for historical analysis; they cannot establish a
+new hard-gate pass. `cmd/perf_scan_status` labels them `not_evaluated`.
 
 ## Phase 2 (documented, not built)
 

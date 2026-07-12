@@ -18,17 +18,20 @@ package cgoharness
 // (Go: Parser.SetTimeoutMicros -> ParseStoppedEarly; C: SetTimeoutMicros ->
 // nil tree), and every language runs in its own subprocess with a hard
 // wall-clock kill, so one pathological file or grammar cannot hang or crash
-// the sweep. Timed-out files are surfaced as lower-bound ratios and "cliff"
-// verdicts instead of hanging.
+// the sweep. Structured parser, wall, RSS, OOM/kill, and signal stops retain
+// active-attempt attribution. In hard-gate mode they fail closed instead of
+// being hidden behind language aggregates.
 //
 // Build/run discipline mirrors the parity suites: requires the build tags
 // "treesitter_c_parity treesitter_c_perfscan", the container-or-
 // GTS_PARITY_ALLOW_HOST=1 TestMain guard, and the GTS_PERF_SCAN=1 env gate,
-// so it never burdens normal builds or CI.
+// so it never burdens normal builds or the fast PR lane. The authenticated
+// fleet gate runs on its dedicated runner once that infrastructure is
+// provisioned.
 //
 // Usage (from cgo_harness/):
 //
-//	GOWORK=off GTS_PARITY_ALLOW_HOST=1 GTS_PERF_SCAN=1 \
+//	GOWORK=off GTS_PARITY_ALLOW_HOST=1 GTS_PERF_SCAN=1 GTS_PERF_SCAN_HARD_GATE=0 \
 //	  go test -tags "treesitter_c_parity treesitter_c_perfscan" \
 //	  -run '^TestPerfScanSweep$' -v -timeout 0 .
 //
@@ -36,6 +39,7 @@ package cgoharness
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -46,6 +50,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -57,55 +62,79 @@ import (
 const (
 	perfScanSchema = "gts-perf-scan/v1"
 
-	perfScanEnvGate        = "GTS_PERF_SCAN"
-	perfScanEnvLang        = "GTS_PERF_SCAN_LANG"
-	perfScanEnvLangs       = "GTS_PERF_SCAN_LANGS"
-	perfScanEnvOut         = "GTS_PERF_SCAN_OUT"
-	perfScanEnvCorpusRoot  = "GTS_PERF_SCAN_CORPUS_ROOT"
-	perfScanEnvReps        = "GTS_PERF_SCAN_REPS"
-	perfScanEnvWarmup      = "GTS_PERF_SCAN_WARMUP"
-	perfScanEnvFileBudget  = "GTS_PERF_SCAN_FILE_BUDGET_MS"
-	perfScanEnvLangTimeout = "GTS_PERF_SCAN_LANG_TIMEOUT_MS"
-	perfScanEnvMaxFiles    = "GTS_PERF_SCAN_MAX_FILES"
-	perfScanEnvMinBytes    = "GTS_PERF_SCAN_MIN_FILE_BYTES"
-	perfScanEnvMaxBytes    = "GTS_PERF_SCAN_MAX_FILE_BYTES"
-	perfScanEnvExclude     = "GTS_PERF_SCAN_EXCLUDE_PATHS"
-	perfScanEnvOrder       = "GTS_PERF_SCAN_ORDER"
-	perfScanEnvAxes        = "GTS_PERF_SCAN_AXES"
-	perfScanEnvContended   = "GTS_PERF_SCAN_CONTENDED"
-	perfScanEnvInProcess   = "GTS_PERF_SCAN_INPROCESS"
-	perfScanEnvEditCands   = "GTS_PERF_SCAN_EDIT_CANDIDATES"
-	perfScanEnvChildRSSMB  = "GTS_PERF_SCAN_CHILD_RSS_LIMIT_MB"
+	perfScanEnvGate         = "GTS_PERF_SCAN"
+	perfScanEnvLang         = "GTS_PERF_SCAN_LANG"
+	perfScanEnvLangs        = "GTS_PERF_SCAN_LANGS"
+	perfScanEnvOut          = "GTS_PERF_SCAN_OUT"
+	perfScanEnvCorpusRoot   = "GTS_PERF_SCAN_CORPUS_ROOT"
+	perfScanEnvReps         = "GTS_PERF_SCAN_REPS"
+	perfScanEnvWarmup       = "GTS_PERF_SCAN_WARMUP"
+	perfScanEnvFileBudget   = "GTS_PERF_SCAN_FILE_BUDGET_MS"
+	perfScanEnvLangTimeout  = "GTS_PERF_SCAN_LANG_TIMEOUT_MS"
+	perfScanEnvMaxFiles     = "GTS_PERF_SCAN_MAX_FILES"
+	perfScanEnvMinBytes     = "GTS_PERF_SCAN_MIN_FILE_BYTES"
+	perfScanEnvMaxBytes     = "GTS_PERF_SCAN_MAX_FILE_BYTES"
+	perfScanEnvExclude      = "GTS_PERF_SCAN_EXCLUDE_PATHS"
+	perfScanEnvOrder        = "GTS_PERF_SCAN_ORDER"
+	perfScanEnvAxes         = "GTS_PERF_SCAN_AXES"
+	perfScanEnvContended    = "GTS_PERF_SCAN_CONTENDED"
+	perfScanEnvInProcess    = "GTS_PERF_SCAN_INPROCESS"
+	perfScanEnvEditCands    = "GTS_PERF_SCAN_EDIT_CANDIDATES"
+	perfScanEnvChildRSSMB   = "GTS_PERF_SCAN_CHILD_RSS_LIMIT_MB"
+	perfScanEnvHardGate     = "GTS_PERF_SCAN_HARD_GATE"
+	perfScanEnvRequireFleet = "GTS_PERF_SCAN_REQUIRE_FLEET"
+	perfScanEnvCorpusLock   = "GTS_REAL_CORPUS_BENCH_LOCK"
 
 	perfScanAxisFull   = "full"
 	perfScanAxisNoEdit = "noedit"
 	perfScanAxisEdit   = "edit"
 
-	perfScanBucketLe12   = "<=1.2x"
-	perfScanBucketLe2    = "<=2x"
-	perfScanBucketGt2    = ">2x"
-	perfScanBucketCliff  = "cliff>10x"
-	perfScanBucketNoData = "n/a"
+	perfScanBucketLePoint1 = "<=0.10x"
+	perfScanBucketLe12     = "<=1.2x"
+	perfScanBucketLe2      = "<=2x"
+	perfScanBucketGt2      = ">2x"
+	perfScanBucketCliff    = "cliff>10x"
+	perfScanBucketNoData   = "n/a"
 
 	perfScanStatusOK      = "ok"
 	perfScanStatusRunning = "running"
+
+	perfScanGatePass = "pass"
+	perfScanGateFail = "fail"
+
+	perfScanHardFullRatio = 10.0
+	perfScanFastFullRatio = 0.10
+
+	perfScanStopParserTimeout = "parser_timeout"
+	perfScanStopParserBudget  = "parser_budget"
+	perfScanStopParserStopped = "parser_stopped"
+	perfScanStopCTimeout      = "c_timeout"
+	perfScanStopWallTimeout   = "wall_timeout"
+	perfScanStopRSSLimit      = "rss_limit"
+	perfScanStopOOMOrKill     = "oom_or_kill"
+	perfScanStopProcessSignal = "process_signal"
 )
 
 type perfScanConfig struct {
-	CorpusRoot    string   `json:"corpus_root"`
-	Reps          int      `json:"reps"`
-	Warmup        int      `json:"warmup"`
-	FileBudgetMS  int      `json:"file_budget_ms"`
-	LangTimeoutMS int      `json:"lang_timeout_ms"`
-	MaxFiles      int      `json:"max_files"`
-	MinFileBytes  int      `json:"min_file_bytes"`
-	MaxFileBytes  int      `json:"max_file_bytes"`
-	ExcludePaths  []string `json:"exclude_paths,omitempty"`
-	Order         string   `json:"order"`
-	Axes          []string `json:"axes"`
-	Contended     bool     `json:"contended"`
-	ContendedNote string   `json:"contended_note,omitempty"`
-	ChildRSSMB    int      `json:"child_rss_limit_mb,omitempty"`
+	CorpusRoot          string   `json:"corpus_root"`
+	Reps                int      `json:"reps"`
+	Warmup              int      `json:"warmup"`
+	FileBudgetMS        int      `json:"file_budget_ms"`
+	LangTimeoutMS       int      `json:"lang_timeout_ms"`
+	MaxFiles            int      `json:"max_files"`
+	MinFileBytes        int      `json:"min_file_bytes"`
+	MaxFileBytes        int      `json:"max_file_bytes"`
+	ExcludePaths        []string `json:"exclude_paths,omitempty"`
+	Order               string   `json:"order"`
+	Axes                []string `json:"axes"`
+	Contended           bool     `json:"contended"`
+	ContendedNote       string   `json:"contended_note,omitempty"`
+	ChildRSSMB          int      `json:"child_rss_limit_mb,omitempty"`
+	HardGate            bool     `json:"hard_gate"`
+	RequireFleet        bool     `json:"require_fleet"`
+	CorpusLock          string   `json:"corpus_lock,omitempty"`
+	CorpusLockSHA256    string   `json:"corpus_lock_sha256,omitempty"`
+	CorpusLockLanguages int      `json:"corpus_lock_languages,omitempty"`
 }
 
 type perfScanHost struct {
@@ -119,17 +148,27 @@ type perfScanHost struct {
 }
 
 type perfScanFileAxis struct {
-	Status            string  `json:"status"`
-	Detail            string  `json:"detail,omitempty"`
-	GoMedianNs        int64   `json:"go_median_ns,omitempty"`
-	CMedianNs         int64   `json:"c_median_ns,omitempty"`
-	GoMinNs           int64   `json:"go_min_ns,omitempty"`
-	GoMaxNs           int64   `json:"go_max_ns,omitempty"`
-	CMinNs            int64   `json:"c_min_ns,omitempty"`
-	CMaxNs            int64   `json:"c_max_ns,omitempty"`
-	Ratio             float64 `json:"ratio,omitempty"`
-	RatioIsLowerBound bool    `json:"ratio_is_lower_bound,omitempty"`
-	Verdict           string  `json:"verdict,omitempty"`
+	Status            string        `json:"status"`
+	Detail            string        `json:"detail,omitempty"`
+	GoMedianNs        int64         `json:"go_median_ns,omitempty"`
+	CMedianNs         int64         `json:"c_median_ns,omitempty"`
+	GoMinNs           int64         `json:"go_min_ns,omitempty"`
+	GoMaxNs           int64         `json:"go_max_ns,omitempty"`
+	CMinNs            int64         `json:"c_min_ns,omitempty"`
+	CMaxNs            int64         `json:"c_max_ns,omitempty"`
+	Ratio             float64       `json:"ratio,omitempty"`
+	RatioIsLowerBound bool          `json:"ratio_is_lower_bound,omitempty"`
+	Verdict           string        `json:"verdict,omitempty"`
+	Stop              *perfScanStop `json:"stop,omitempty"`
+}
+
+type perfScanStop struct {
+	Class          string `json:"class"`
+	Reason         string `json:"reason,omitempty"`
+	Implementation string `json:"implementation,omitempty"`
+	Phase          string `json:"phase,omitempty"`
+	Attempt        int    `json:"attempt,omitempty"`
+	Detail         string `json:"detail,omitempty"`
 }
 
 type perfScanFile struct {
@@ -146,6 +185,7 @@ type perfScanLangAxis struct {
 	RatioMedianOfFiles float64 `json:"ratio_median_of_files,omitempty"`
 	Cliffs             int     `json:"cliffs"`
 	GoTimeouts         int     `json:"go_timeouts"`
+	GoStops            int     `json:"go_stops"`
 	Verdict            string  `json:"verdict"`
 }
 
@@ -171,17 +211,52 @@ type perfScanLanguage struct {
 	Axes             map[string]*perfScanLangAxis `json:"axes,omitempty"`
 	Notes            []string                     `json:"notes,omitempty"`
 	Files            []*perfScanFile              `json:"files,omitempty"`
+	Stop             *perfScanStop                `json:"stop,omitempty"`
 	activeFileDetail string
 }
 
+type perfScanCorpusCoverage struct {
+	LockPath            string   `json:"lock_path,omitempty"`
+	LockSHA256          string   `json:"lock_sha256,omitempty"`
+	LockLanguages       int      `json:"lock_languages"`
+	SelectedLanguages   int      `json:"selected_languages"`
+	MissingFromLock     []string `json:"missing_from_lock,omitempty"`
+	MissingFromRegistry []string `json:"missing_from_registry,omitempty"`
+}
+
+type perfScanGateFinding struct {
+	Kind     string        `json:"kind"`
+	Language string        `json:"language,omitempty"`
+	Path     string        `json:"path,omitempty"`
+	Axis     string        `json:"axis,omitempty"`
+	Status   string        `json:"status,omitempty"`
+	Ratio    float64       `json:"ratio,omitempty"`
+	Limit    float64       `json:"limit,omitempty"`
+	Stop     *perfScanStop `json:"stop,omitempty"`
+	Detail   string        `json:"detail,omitempty"`
+}
+
+type perfScanGateReport struct {
+	Status             string                `json:"status"`
+	MaxFullParseRatio  float64               `json:"max_full_parse_ratio"`
+	FastFullParseRatio float64               `json:"fast_full_parse_ratio"`
+	FilesExpected      int                   `json:"files_expected"`
+	FilesMeasured      int                   `json:"files_measured"`
+	FullFilesEvaluated int                   `json:"full_files_evaluated"`
+	FastFullFiles      []perfScanGateFinding `json:"fast_full_files,omitempty"`
+	Failures           []perfScanGateFinding `json:"failures,omitempty"`
+}
+
 type perfScanScoreboard struct {
-	Schema      string              `json:"schema"`
-	GeneratedAt string              `json:"generated_at"`
-	Host        perfScanHost        `json:"host"`
-	Config      perfScanConfig      `json:"config"`
-	Notes       []string            `json:"notes,omitempty"`
-	Summary     map[string]int      `json:"summary_verdicts"`
-	Languages   []*perfScanLanguage `json:"languages"`
+	Schema      string                 `json:"schema"`
+	GeneratedAt string                 `json:"generated_at"`
+	Host        perfScanHost           `json:"host"`
+	Config      perfScanConfig         `json:"config"`
+	Notes       []string               `json:"notes,omitempty"`
+	Summary     map[string]int         `json:"summary_verdicts"`
+	Languages   []*perfScanLanguage    `json:"languages"`
+	Corpus      perfScanCorpusCoverage `json:"corpus_coverage"`
+	Gate        *perfScanGateReport    `json:"hard_gate,omitempty"`
 }
 
 func perfScanGateEnabled() bool {
@@ -201,6 +276,7 @@ func perfScanEnvIntDefault(name string, def int) int {
 }
 
 func perfScanLoadConfig() perfScanConfig {
+	requireFleetDefault := strings.TrimSpace(os.Getenv(perfScanEnvLangs)) == ""
 	cfg := perfScanConfig{
 		CorpusRoot:    perfScanCorpusRoot(),
 		Reps:          perfScanEnvIntDefault(perfScanEnvReps, 5),
@@ -214,6 +290,9 @@ func perfScanLoadConfig() perfScanConfig {
 		Order:         strings.TrimSpace(os.Getenv(perfScanEnvOrder)),
 		Axes:          perfScanAxes(),
 		ChildRSSMB:    perfScanEnvIntDefault(perfScanEnvChildRSSMB, 0),
+		HardGate:      parityEnvBool(perfScanEnvHardGate, true),
+		RequireFleet:  parityEnvBool(perfScanEnvRequireFleet, requireFleetDefault),
+		CorpusLock:    strings.TrimSpace(os.Getenv(perfScanEnvCorpusLock)),
 	}
 	if cfg.Reps < 1 {
 		cfg.Reps = 1
@@ -365,6 +444,8 @@ func perfScanVerdictBucket(ratio float64) string {
 	switch {
 	case ratio <= 0:
 		return perfScanBucketNoData
+	case ratio <= perfScanFastFullRatio:
+		return perfScanBucketLePoint1
 	case ratio <= 1.2:
 		return perfScanBucketLe12
 	case ratio <= 2:
@@ -418,6 +499,198 @@ func perfScanMinMaxNs(samples []int64) (int64, int64) {
 	return minV, maxV
 }
 
+func perfScanPrepareCorpusLock(cfg *perfScanConfig) (map[string]realCorpusBenchmarkLockEntry, perfScanCorpusCoverage, error) {
+	coverage := perfScanCorpusCoverage{}
+	if cfg == nil {
+		return nil, coverage, fmt.Errorf("nil perf scan config")
+	}
+	lockPath := strings.TrimSpace(cfg.CorpusLock)
+	if lockPath == "" {
+		if cfg.HardGate {
+			return nil, coverage, fmt.Errorf("%s must name the authenticated corpus lock in hard-gate mode", perfScanEnvCorpusLock)
+		}
+		return nil, coverage, nil
+	}
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		return nil, coverage, fmt.Errorf("read corpus lock %s: %w", lockPath, err)
+	}
+	actualDigest := fmt.Sprintf("%x", sha256.Sum256(data))
+	if cfg.HardGate {
+		expectedDigest, err := perfScanExpectedCorpusLockDigest()
+		if err != nil {
+			return nil, coverage, err
+		}
+		if actualDigest != expectedDigest {
+			return nil, coverage, fmt.Errorf("corpus lock sha256 %s, want %s from perf_scan/corpus_sources.lock.sha256", actualDigest, expectedDigest)
+		}
+	}
+	entries, err := realCorpusBenchmarkLockEntries(lockPath)
+	if err != nil {
+		return nil, coverage, fmt.Errorf("parse corpus lock %s: %w", lockPath, err)
+	}
+	if len(entries) == 0 {
+		return nil, coverage, fmt.Errorf("corpus lock %s contains no languages", lockPath)
+	}
+	cfg.CorpusLockSHA256 = actualDigest
+	cfg.CorpusLockLanguages = len(entries)
+	coverage.LockPath = lockPath
+	coverage.LockSHA256 = actualDigest
+	coverage.LockLanguages = len(entries)
+	for lang := range entries {
+		if _, ok := parityEntriesByName[lang]; !ok {
+			coverage.MissingFromRegistry = append(coverage.MissingFromRegistry, lang)
+		}
+	}
+	sort.Strings(coverage.MissingFromRegistry)
+	return entries, coverage, nil
+}
+
+func perfScanExpectedCorpusLockDigest() (string, error) {
+	var lastErr error
+	for _, candidate := range []string{
+		filepath.Join("perf_scan", "corpus_sources.lock.sha256"),
+		filepath.Join("cgo_harness", "perf_scan", "corpus_sources.lock.sha256"),
+		filepath.Join("..", "cgo_harness", "perf_scan", "corpus_sources.lock.sha256"),
+	} {
+		data, err := os.ReadFile(candidate)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		fields := strings.Fields(string(data))
+		if len(fields) == 0 || len(fields[0]) != sha256.Size*2 {
+			return "", fmt.Errorf("invalid corpus lock digest file %s", candidate)
+		}
+		for _, r := range fields[0] {
+			if !strings.ContainsRune("0123456789abcdef", r) {
+				return "", fmt.Errorf("invalid corpus lock sha256 %q in %s", fields[0], candidate)
+			}
+		}
+		return fields[0], nil
+	}
+	return "", fmt.Errorf("read perf_scan/corpus_sources.lock.sha256: %w", lastErr)
+}
+
+func perfScanFinalizeCorpusCoverage(coverage perfScanCorpusCoverage, entries map[string]realCorpusBenchmarkLockEntry, langs []string) perfScanCorpusCoverage {
+	coverage.SelectedLanguages = len(langs)
+	for _, lang := range langs {
+		if _, ok := entries[lang]; !ok {
+			coverage.MissingFromLock = append(coverage.MissingFromLock, lang)
+		}
+	}
+	sort.Strings(coverage.MissingFromLock)
+	return coverage
+}
+
+func perfScanIsGoStop(stop *perfScanStop) bool {
+	return stop != nil && stop.Implementation == "go"
+}
+
+func perfScanEvaluateHardGate(board *perfScanScoreboard) perfScanGateReport {
+	report := perfScanGateReport{
+		Status:             perfScanGatePass,
+		MaxFullParseRatio:  perfScanHardFullRatio,
+		FastFullParseRatio: perfScanFastFullRatio,
+	}
+	addFailure := func(finding perfScanGateFinding) {
+		report.Failures = append(report.Failures, finding)
+		report.Status = perfScanGateFail
+	}
+	if board == nil {
+		addFailure(perfScanGateFinding{Kind: "coverage", Detail: "nil scoreboard"})
+		return report
+	}
+	for _, lang := range board.Corpus.MissingFromLock {
+		addFailure(perfScanGateFinding{Kind: "coverage", Language: lang, Detail: "language missing from authenticated corpus lock"})
+	}
+	for _, lang := range board.Corpus.MissingFromRegistry {
+		addFailure(perfScanGateFinding{Kind: "coverage", Language: lang, Detail: "locked corpus language missing from grammar registry"})
+	}
+	if board.Config.RequireFleet && board.Corpus.SelectedLanguages != board.Corpus.LockLanguages {
+		addFailure(perfScanGateFinding{
+			Kind:   "coverage",
+			Status: "fleet_incomplete",
+			Detail: fmt.Sprintf("selected %d language(s), authenticated lock contains %d", board.Corpus.SelectedLanguages, board.Corpus.LockLanguages),
+		})
+	}
+	if board.Config.RequireFleet && len(board.Languages) != board.Corpus.SelectedLanguages {
+		addFailure(perfScanGateFinding{
+			Kind:   "coverage",
+			Status: "fleet_incomplete",
+			Detail: fmt.Sprintf("scoreboard has %d language row(s), selected %d", len(board.Languages), board.Corpus.SelectedLanguages),
+		})
+	}
+	for _, row := range board.Languages {
+		if row == nil {
+			addFailure(perfScanGateFinding{Kind: "coverage", Detail: "nil language row"})
+			continue
+		}
+		report.FilesExpected += row.FilesSelected
+		report.FilesMeasured += row.FilesMeasured
+		if perfScanIsGoStop(row.Stop) {
+			addFailure(perfScanGateFinding{
+				Kind:     "go_stop",
+				Language: row.Language,
+				Path:     row.ActiveFile,
+				Axis:     row.ActiveAxis,
+				Status:   row.Status,
+				Stop:     row.Stop,
+				Detail:   row.Detail,
+			})
+		}
+		if row.Status != perfScanStatusOK && !perfScanIsGoStop(row.Stop) {
+			addFailure(perfScanGateFinding{Kind: "coverage", Language: row.Language, Path: row.ActiveFile, Axis: row.ActiveAxis, Status: row.Status, Stop: row.Stop, Detail: row.Detail})
+		}
+		if row.FilesMeasured != row.FilesSelected || len(row.Files) != row.FilesSelected {
+			addFailure(perfScanGateFinding{
+				Kind:     "coverage",
+				Language: row.Language,
+				Status:   "files_incomplete",
+				Detail:   fmt.Sprintf("measured=%d rows=%d selected=%d", row.FilesMeasured, len(row.Files), row.FilesSelected),
+			})
+		}
+		for _, file := range row.Files {
+			if file == nil {
+				addFailure(perfScanGateFinding{Kind: "coverage", Language: row.Language, Detail: "nil file row"})
+				continue
+			}
+			for axis, result := range file.Axes {
+				if result != nil && perfScanIsGoStop(result.Stop) {
+					addFailure(perfScanGateFinding{Kind: "go_stop", Language: row.Language, Path: file.Path, Axis: axis, Status: result.Status, Stop: result.Stop, Detail: result.Detail})
+				}
+			}
+			full := file.Axes[perfScanAxisFull]
+			if full == nil {
+				addFailure(perfScanGateFinding{Kind: "coverage", Language: row.Language, Path: file.Path, Axis: perfScanAxisFull, Status: "missing", Detail: "full-parse axis missing"})
+				continue
+			}
+			if full.Status != perfScanStatusOK || full.GoMedianNs <= 0 || full.CMedianNs <= 0 {
+				if !perfScanIsGoStop(full.Stop) {
+					addFailure(perfScanGateFinding{Kind: "coverage", Language: row.Language, Path: file.Path, Axis: perfScanAxisFull, Status: full.Status, Stop: full.Stop, Detail: "full-parse Go/C ratio was not measured: " + full.Detail})
+				}
+				continue
+			}
+			report.FullFilesEvaluated++
+			ratio := float64(full.GoMedianNs) / float64(full.CMedianNs)
+			finding := perfScanGateFinding{Language: row.Language, Path: file.Path, Axis: perfScanAxisFull, Status: full.Status, Ratio: ratio}
+			switch {
+			case ratio > perfScanHardFullRatio:
+				finding.Kind = "ratio"
+				finding.Limit = perfScanHardFullRatio
+				finding.Detail = fmt.Sprintf("full-parse Go/C ratio %.4fx exceeds %.1fx", ratio, perfScanHardFullRatio)
+				addFailure(finding)
+			case ratio <= perfScanFastFullRatio:
+				finding.Kind = "fast"
+				finding.Limit = perfScanFastFullRatio
+				finding.Detail = fmt.Sprintf("full parse is %.2fx faster than C", 1/ratio)
+				report.FastFullFiles = append(report.FastFullFiles, finding)
+			}
+		}
+	}
+	return report
+}
+
 // ---------------------------------------------------------------------------
 // Child: measure one language.
 // ---------------------------------------------------------------------------
@@ -439,6 +712,9 @@ func TestPerfScanLanguage(t *testing.T) {
 		t.Fatalf("%s must be set in child mode", perfScanEnvOut)
 	}
 	cfg := perfScanLoadConfig()
+	if _, _, err := perfScanPrepareCorpusLock(&cfg); err != nil {
+		t.Fatalf("prepare authenticated corpus lock: %v", err)
+	}
 	row := perfScanMeasureLanguage(t, lang, cfg, func(partial *perfScanLanguage) {
 		if err := perfScanWriteLangFragment(outDir, partial); err != nil {
 			t.Logf("write partial fragment: %v", err)
@@ -752,6 +1028,7 @@ type perfScanAttempt struct {
 	ns     int64
 	status string // "" == ok
 	detail string
+	stop   *perfScanStop
 }
 
 func (m *perfScanLangMeasurer) benchCase(src []byte) realCorpusBenchmarkCase {
@@ -836,8 +1113,15 @@ func (m *perfScanLangMeasurer) classifyGoAttempt(tree *gotreesitter.Tree, err er
 		return nil, att
 	}
 	if tree.ParseStoppedEarly() {
-		att.status = "go_timeout"
-		att.detail = fmt.Sprintf("parse stopped early (%v) at file budget %s", tree.ParseStopReason(), m.budget)
+		reason := tree.ParseStopReason()
+		att.stop = perfScanGoParserStop(reason, m.budget)
+		att.status = "go_stopped"
+		if reason == gotreesitter.ParseStopTimeout {
+			att.status = "go_timeout"
+		} else if att.stop.Class == perfScanStopParserBudget {
+			att.status = "go_budget_stop"
+		}
+		att.detail = att.stop.Detail
 		releaseGoTree(tree)
 		return nil, att
 	}
@@ -898,6 +1182,11 @@ func (m *perfScanLangMeasurer) cAttempt(src []byte, oldTree *sitter.Tree, keepTr
 		m.cPsr.Reset()
 		att.status = "c_timeout"
 		att.detail = fmt.Sprintf("nil tree (halted at file budget %s)", m.budget)
+		att.stop = &perfScanStop{
+			Class:          perfScanStopCTimeout,
+			Implementation: "c",
+			Detail:         att.detail,
+		}
 		return nil, att
 	}
 	if !isCompleteRealCorpusCTree(tree, src) {
@@ -911,6 +1200,41 @@ func (m *perfScanLangMeasurer) cAttempt(src []byte, oldTree *sitter.Tree, keepTr
 		return nil, att
 	}
 	return tree, att
+}
+
+func perfScanGoParserStop(reason gotreesitter.ParseStopReason, budget time.Duration) *perfScanStop {
+	class := perfScanStopParserStopped
+	switch reason {
+	case gotreesitter.ParseStopTimeout:
+		class = perfScanStopParserTimeout
+	case gotreesitter.ParseStopMemoryBudget,
+		gotreesitter.ParseStopNodeLimit,
+		gotreesitter.ParseStopIterationLimit,
+		gotreesitter.ParseStopStackDepthLimit:
+		class = perfScanStopParserBudget
+	}
+	return &perfScanStop{
+		Class:          class,
+		Reason:         string(reason),
+		Implementation: "go",
+		Detail:         fmt.Sprintf("parse stopped early (%v) at file budget %s", reason, budget),
+	}
+}
+
+func perfScanRecordAttemptStop(out *perfScanFileAxis, att perfScanAttempt, phase string, attempt int) {
+	if out == nil || att.stop == nil {
+		return
+	}
+	stop := *att.stop
+	stop.Phase = phase
+	stop.Attempt = attempt
+	// Preserve a Go stop if the C side also stops later in the same axis. The
+	// hard gate must retain the causal Go failure instead of letting a
+	// subsequent C timeout overwrite it.
+	if out.Stop != nil && out.Stop.Implementation == "go" && stop.Implementation != "go" {
+		return
+	}
+	out.Stop = &stop
 }
 
 func perfScanRecover(fn func()) (panicked string) {
@@ -948,6 +1272,7 @@ func (m *perfScanLangMeasurer) measureFull(src []byte) *perfScanFileAxis {
 			goOK = false
 			out.Status = att.status
 			goDetail = att.detail
+			perfScanRecordAttemptStop(out, att, "warmup", i+1)
 			break
 		}
 	}
@@ -961,6 +1286,7 @@ func (m *perfScanLangMeasurer) measureFull(src []byte) *perfScanFileAxis {
 				out.Status = att.status
 			}
 			out.Detail = strings.TrimSpace(out.Detail + " " + att.detail)
+			perfScanRecordAttemptStop(out, att, "warmup", i+1)
 			break
 		}
 	}
@@ -974,6 +1300,7 @@ func (m *perfScanLangMeasurer) measureFull(src []byte) *perfScanFileAxis {
 				goOK = false
 				out.Status = att.status
 				goDetail = att.detail
+				perfScanRecordAttemptStop(out, att, "rep", i+1)
 			} else {
 				goSamples = append(goSamples, att.ns)
 			}
@@ -987,6 +1314,7 @@ func (m *perfScanLangMeasurer) measureFull(src []byte) *perfScanFileAxis {
 					out.Status = att.status
 				}
 				out.Detail = strings.TrimSpace(out.Detail + " " + att.detail)
+				perfScanRecordAttemptStop(out, att, "rep", i+1)
 			} else {
 				cSamples = append(cSamples, att.ns)
 			}
@@ -1010,6 +1338,7 @@ func (m *perfScanLangMeasurer) measureNoEdit(src []byte) *perfScanFileAxis {
 	if !goOK {
 		out.Status = baseAtt.status
 		out.Detail = "base full parse: " + baseAtt.detail
+		perfScanRecordAttemptStop(out, baseAtt, "base", 1)
 	} else {
 		for i := 0; i < m.cfg.Reps; i++ {
 			m.checkpoint(perfScanAxisNoEdit, "go", "rep", i+1)
@@ -1018,6 +1347,7 @@ func (m *perfScanLangMeasurer) measureNoEdit(src []byte) *perfScanFileAxis {
 				goOK = false
 				out.Status = att.status
 				out.Detail = strings.TrimSpace(out.Detail + " " + att.detail)
+				perfScanRecordAttemptStop(out, att, "rep", i+1)
 				break
 			}
 			goSamples = append(goSamples, att.ns)
@@ -1039,6 +1369,7 @@ func (m *perfScanLangMeasurer) measureNoEdit(src []byte) *perfScanFileAxis {
 			out.Status = cBaseAtt.status
 		}
 		out.Detail = strings.TrimSpace(out.Detail + " C base: " + cBaseAtt.detail)
+		perfScanRecordAttemptStop(out, cBaseAtt, "base", 1)
 	} else {
 		for i := 0; i < m.cfg.Reps; i++ {
 			m.checkpoint(perfScanAxisNoEdit, "c", "rep", i+1)
@@ -1049,6 +1380,7 @@ func (m *perfScanLangMeasurer) measureNoEdit(src []byte) *perfScanFileAxis {
 					out.Status = att.status
 				}
 				out.Detail = strings.TrimSpace(out.Detail + " " + att.detail)
+				perfScanRecordAttemptStop(out, att, "rep", i+1)
 				break
 			}
 			cSamples = append(cSamples, att.ns)
@@ -1086,6 +1418,7 @@ func (m *perfScanLangMeasurer) measureEdit(src []byte) *perfScanFileAxis {
 	if !goOK {
 		out.Status = baseAtt.status
 		out.Detail = "base full parse: " + baseAtt.detail
+		perfScanRecordAttemptStop(out, baseAtt, "base", 1)
 	} else {
 		for i := 0; i < m.cfg.Reps; i++ {
 			m.checkpoint(perfScanAxisEdit, "go", "tree_edit", i+1)
@@ -1097,6 +1430,7 @@ func (m *perfScanLangMeasurer) measureEdit(src []byte) *perfScanFileAxis {
 				goOK = false
 				out.Status = att.status
 				out.Detail = strings.TrimSpace(out.Detail + " " + att.detail)
+				perfScanRecordAttemptStop(out, att, "rep", i+1)
 				break
 			}
 			goSamples = append(goSamples, att.ns)
@@ -1119,6 +1453,7 @@ func (m *perfScanLangMeasurer) measureEdit(src []byte) *perfScanFileAxis {
 			out.Status = cBaseAtt.status
 		}
 		out.Detail = strings.TrimSpace(out.Detail + " C base: " + cBaseAtt.detail)
+		perfScanRecordAttemptStop(out, cBaseAtt, "base", 1)
 	} else {
 		cState := realCorpusCIncrementalState{tc: editCase, src: cSrc, tree: cTree}
 		for i := 0; i < m.cfg.Reps; i++ {
@@ -1133,6 +1468,7 @@ func (m *perfScanLangMeasurer) measureEdit(src []byte) *perfScanFileAxis {
 					out.Status = att.status
 				}
 				out.Detail = strings.TrimSpace(out.Detail + " " + att.detail)
+				perfScanRecordAttemptStop(out, att, "rep", i+1)
 				break
 			}
 			cSamples = append(cSamples, att.ns)
@@ -1244,7 +1580,10 @@ func perfScanAggregateLanguage(row *perfScanLanguage, cfg perfScanConfig) {
 			if fa.Status == "go_timeout" {
 				agg.GoTimeouts++
 			}
-			if fa.Verdict == perfScanBucketCliff || (fa.RatioIsLowerBound && fa.Ratio > 10) || fa.Status == "go_timeout" {
+			if perfScanIsGoStop(fa.Stop) {
+				agg.GoStops++
+			}
+			if fa.Verdict == perfScanBucketCliff || (fa.RatioIsLowerBound && fa.Ratio > perfScanHardFullRatio) || perfScanIsGoStop(fa.Stop) {
 				agg.Cliffs++
 			}
 			if fa.Status == perfScanStatusOK && fa.GoMedianNs > 0 && fa.CMedianNs > 0 {
@@ -1293,6 +1632,10 @@ func TestPerfScanSweep(t *testing.T) {
 		t.Skipf("%s is set; refusing to sweep inside a child invocation", perfScanEnvLang)
 	}
 	cfg := perfScanLoadConfig()
+	lockEntries, corpusCoverage, err := perfScanPrepareCorpusLock(&cfg)
+	if err != nil {
+		t.Fatalf("prepare authenticated corpus lock: %v", err)
+	}
 
 	outDir := strings.TrimSpace(os.Getenv(perfScanEnvOut))
 	if outDir == "" {
@@ -1309,10 +1652,11 @@ func TestPerfScanSweep(t *testing.T) {
 		t.Fatalf("create log dir: %v", err)
 	}
 
-	langs := perfScanSweepLanguages(t, cfg)
+	langs := perfScanSweepLanguages(t, cfg, lockEntries)
 	if len(langs) == 0 {
 		t.Fatalf("no languages selected: set %s or provide a corpus root with per-language dirs", perfScanEnvLangs)
 	}
+	corpusCoverage = perfScanFinalizeCorpusCoverage(corpusCoverage, lockEntries, langs)
 	t.Logf("perf scan sweep: %d language(s): %s", len(langs), strings.Join(langs, ","))
 	t.Logf("perf scan out dir: %s", absOut)
 
@@ -1320,6 +1664,7 @@ func TestPerfScanSweep(t *testing.T) {
 		Schema:      perfScanSchema,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Config:      cfg,
+		Corpus:      corpusCoverage,
 		Summary:     map[string]int{},
 		Host: perfScanHost{
 			Hostname:     perfScanHostname(),
@@ -1349,23 +1694,40 @@ func TestPerfScanSweep(t *testing.T) {
 			lang, row.Status, row.Verdict, row.FilesMeasured, row.FilesSelected, row.ElapsedMS, row.Detail)
 	}
 	board.Host.LoadavgEnd = perfScanReadLoadavg()
+	gate := perfScanEvaluateHardGate(board)
+	board.Gate = &gate
 
 	if err := perfScanWriteScoreboard(absOut, board); err != nil {
 		t.Fatalf("write scoreboard: %v", err)
 	}
 	t.Logf("scoreboard: %s", filepath.Join(absOut, "scoreboard.json"))
 	t.Logf("scoreboard: %s", filepath.Join(absOut, "scoreboard.md"))
+	if cfg.HardGate && gate.Status != perfScanGatePass {
+		t.Errorf("hard zero-cliff gate failed: %d finding(s), %d/%d full files evaluated; scoreboard: %s",
+			len(gate.Failures), gate.FullFilesEvaluated, gate.FilesExpected, filepath.Join(absOut, "scoreboard.json"))
+	}
 }
 
-func perfScanSweepLanguages(t *testing.T, cfg perfScanConfig) []string {
+func perfScanSweepLanguages(t *testing.T, cfg perfScanConfig, lockEntries map[string]realCorpusBenchmarkLockEntry) []string {
 	if raw := strings.TrimSpace(os.Getenv(perfScanEnvLangs)); raw != "" {
+		seen := map[string]bool{}
 		var out []string
 		for _, part := range strings.Split(raw, ",") {
 			name := strings.TrimSpace(part)
-			if name != "" {
+			if name != "" && !seen[name] {
+				seen[name] = true
 				out = append(out, name)
 			}
 		}
+		sort.Strings(out)
+		return out
+	}
+	if cfg.RequireFleet && len(lockEntries) > 0 {
+		out := make([]string, 0, len(lockEntries))
+		for lang := range lockEntries {
+			out = append(out, lang)
+		}
+		sort.Strings(out)
 		return out
 	}
 	entries, err := os.ReadDir(cfg.CorpusRoot)
@@ -1429,11 +1791,15 @@ func perfScanRunLanguageSubprocess(t *testing.T, lang string, cfg perfScanConfig
 	})
 
 	start := time.Now()
-	runErr, rssStop := perfScanRunChild(ctx, cmd, cfg.ChildRSSMB)
+	runErr, childStop := perfScanRunChild(ctx, cmd, cfg.ChildRSSMB)
 	elapsed := time.Since(start)
 
 	fragment, fragErr := perfScanReadLangFragment(absOut, lang)
-	timedOut := ctx.Err() == context.DeadlineExceeded
+	if childStop != nil && fragment != nil {
+		childStop = perfScanStopWithActiveAttempt(childStop, fragment)
+		fragment.Stop = childStop
+	}
+	timedOut := childStop != nil && childStop.Class == perfScanStopWallTimeout
 
 	switch {
 	case fragment != nil && fragment.Status == perfScanStatusOK && runErr == nil:
@@ -1451,14 +1817,14 @@ func perfScanRunLanguageSubprocess(t *testing.T, lang string, cfg perfScanConfig
 		return fragment
 	case fragment != nil:
 		stopDetail := fmt.Sprintf("%v", runErr)
-		if rssStop != "" {
-			stopDetail = rssStop
+		if childStop != nil {
+			stopDetail = childStop.Detail
 		}
 		if runErr != nil && fragment.Status == perfScanStatusOK {
 			fragment.Notes = append(fragment.Notes, "child exited with error after fragment write: "+stopDetail)
 		}
 		if fragment.Status == perfScanStatusRunning {
-			fragment.Status = "error"
+			fragment.Status = perfScanLanguageStopStatus(childStop)
 			fragment.Detail = strings.TrimSpace(fmt.Sprintf("child exited early (%s); partial results. %s", stopDetail, fragment.Detail))
 			perfScanAggregateLanguage(fragment, cfg)
 		}
@@ -1469,8 +1835,9 @@ func perfScanRunLanguageSubprocess(t *testing.T, lang string, cfg perfScanConfig
 		if timedOut {
 			status = "lang_timeout"
 			detail = fmt.Sprintf("killed after %s before any file completed", langTimeout)
-		} else if rssStop != "" {
-			detail = rssStop + " before any file completed"
+		} else if childStop != nil {
+			status = perfScanLanguageStopStatus(childStop)
+			detail = childStop.Detail + " before any file completed"
 		} else if fragErr != nil && runErr == nil {
 			detail = fmt.Sprintf("fragment read failed: %v", fragErr)
 		}
@@ -1483,16 +1850,18 @@ func perfScanRunLanguageSubprocess(t *testing.T, lang string, cfg perfScanConfig
 			Detail:    detail,
 			Verdict:   perfScanBucketNoData,
 			ElapsedMS: elapsed.Milliseconds(),
+			Stop:      childStop,
 		}
 	}
 }
 
-func perfScanRunChild(ctx context.Context, cmd *exec.Cmd, rssLimitMB int) (error, string) {
+func perfScanRunChild(ctx context.Context, cmd *exec.Cmd, rssLimitMB int) (error, *perfScanStop) {
 	if rssLimitMB <= 0 {
-		return cmd.Run(), ""
+		err := cmd.Run()
+		return err, perfScanChildExitStop(ctx, err)
 	}
 	if err := cmd.Start(); err != nil {
-		return err, ""
+		return err, nil
 	}
 
 	done := make(chan error, 1)
@@ -1506,37 +1875,100 @@ func perfScanRunChild(ctx context.Context, cmd *exec.Cmd, rssLimitMB int) (error
 	defer ticker.Stop()
 
 	limitBytes := int64(rssLimitMB) << 20
-	checkRSS := func() (bool, string) {
+	checkRSS := func() (bool, *perfScanStop) {
 		if cmd.Process == nil {
-			return false, ""
+			return false, nil
 		}
 		rssBytes, ok := perfScanProcessRSSBytes(cmd.Process.Pid)
 		if !ok || rssBytes < limitBytes {
-			return false, ""
+			return false, nil
 		}
-		return true, fmt.Sprintf("child rss exceeded %d MiB limit (rss=%d MiB)",
+		detail := fmt.Sprintf("child rss exceeded %d MiB limit (rss=%d MiB)",
 			rssLimitMB, (rssBytes+(1<<20)-1)>>20)
+		return true, &perfScanStop{Class: perfScanStopRSSLimit, Detail: detail}
 	}
 	for {
 		select {
 		case err := <-done:
-			return err, ""
+			return err, perfScanChildExitStop(ctx, err)
 		default:
 		}
-		if kill, detail := checkRSS(); kill {
+		if kill, stop := checkRSS(); kill {
 			_ = cmd.Process.Kill()
-			return <-done, detail
+			return <-done, stop
 		}
 		select {
 		case err := <-done:
-			return err, ""
+			return err, perfScanChildExitStop(ctx, err)
 		case <-ctx.Done():
 			if cmd.Process != nil {
 				_ = cmd.Process.Kill()
 			}
-			return <-done, ""
+			return <-done, &perfScanStop{Class: perfScanStopWallTimeout, Detail: "language subprocess exceeded hard wall timeout"}
 		case <-ticker.C:
 		}
+	}
+}
+
+func perfScanChildExitStop(ctx context.Context, err error) *perfScanStop {
+	if ctx != nil && ctx.Err() == context.DeadlineExceeded {
+		return &perfScanStop{Class: perfScanStopWallTimeout, Detail: "language subprocess exceeded hard wall timeout"}
+	}
+	return perfScanUnexpectedChildStop(err)
+}
+
+func perfScanUnexpectedChildStop(err error) *perfScanStop {
+	if err == nil {
+		return nil
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		return nil
+	}
+	waitStatus, ok := exitErr.Sys().(syscall.WaitStatus)
+	if !ok || !waitStatus.Signaled() {
+		return nil
+	}
+	signal := waitStatus.Signal()
+	class := perfScanStopProcessSignal
+	if signal == syscall.SIGKILL {
+		class = perfScanStopOOMOrKill
+	}
+	return &perfScanStop{
+		Class:  class,
+		Reason: signal.String(),
+		Detail: fmt.Sprintf("language subprocess terminated by %s", signal),
+	}
+}
+
+func perfScanStopWithActiveAttempt(stop *perfScanStop, row *perfScanLanguage) *perfScanStop {
+	if stop == nil || row == nil {
+		return stop
+	}
+	out := *stop
+	out.Implementation = row.ActiveImpl
+	out.Phase = row.ActivePhase
+	if row.ActiveAttempt != nil {
+		out.Attempt = *row.ActiveAttempt
+	}
+	return &out
+}
+
+func perfScanLanguageStopStatus(stop *perfScanStop) string {
+	if stop == nil {
+		return "error"
+	}
+	switch stop.Class {
+	case perfScanStopWallTimeout:
+		return "lang_timeout"
+	case perfScanStopRSSLimit:
+		return "rss_limit"
+	case perfScanStopOOMOrKill:
+		return "oom_or_kill"
+	case perfScanStopProcessSignal:
+		return "process_signal"
+	default:
+		return "error"
 	}
 }
 
@@ -1689,6 +2121,12 @@ func perfScanRenderMarkdown(board *perfScanScoreboard) string {
 		board.Config.CorpusRoot, board.Config.Order, board.Config.MaxFiles,
 		board.Config.Reps, board.Config.Warmup, board.Config.FileBudgetMS,
 		strings.Join(board.Config.Axes, ","))
+	fmt.Fprintf(&b, "- hard gate: `%t` require_fleet=`%t` max_full_ratio=`%.1fx` fast_full_ratio=`%.2fx`\n",
+		board.Config.HardGate, board.Config.RequireFleet, perfScanHardFullRatio, perfScanFastFullRatio)
+	if board.Corpus.LockSHA256 != "" {
+		fmt.Fprintf(&b, "- corpus lock: `%s` sha256=`%s` languages=%d selected=%d\n",
+			board.Corpus.LockPath, board.Corpus.LockSHA256, board.Corpus.LockLanguages, board.Corpus.SelectedLanguages)
+	}
 	if board.Config.ChildRSSMB > 0 {
 		fmt.Fprintf(&b, "- child RSS limit: `%d MiB`\n", board.Config.ChildRSSMB)
 	}
@@ -1700,9 +2138,32 @@ func perfScanRenderMarkdown(board *perfScanScoreboard) string {
 	}
 
 	fmt.Fprintf(&b, "\n## Verdict summary\n\n")
-	for _, bucket := range []string{perfScanBucketLe12, perfScanBucketLe2, perfScanBucketGt2, perfScanBucketCliff, perfScanBucketNoData} {
+	for _, bucket := range []string{perfScanBucketLePoint1, perfScanBucketLe12, perfScanBucketLe2, perfScanBucketGt2, perfScanBucketCliff, perfScanBucketNoData} {
 		if n := board.Summary[bucket]; n > 0 {
 			fmt.Fprintf(&b, "- `%s`: %d\n", bucket, n)
+		}
+	}
+
+	if board.Gate != nil {
+		fmt.Fprintf(&b, "\n## Hard zero-cliff gate\n\n")
+		fmt.Fprintf(&b, "- outcome: `%s`\n", strings.ToUpper(board.Gate.Status))
+		fmt.Fprintf(&b, "- full files evaluated: `%d/%d` (measured rows `%d`)\n",
+			board.Gate.FullFilesEvaluated, board.Gate.FilesExpected, board.Gate.FilesMeasured)
+		fmt.Fprintf(&b, "- failures: `%d`; full files at or below `%.2fx`: `%d`\n",
+			len(board.Gate.Failures), board.Gate.FastFullParseRatio, len(board.Gate.FastFullFiles))
+		fmt.Fprintf(&b, "\nThis is a timing/resource gate. Structural and error-tree parity remain owned by the separate correctness suites.\n")
+		if len(board.Gate.Failures) > 0 {
+			fmt.Fprintf(&b, "\n### Gate failures\n\n")
+			for _, finding := range board.Gate.Failures {
+				fmt.Fprintf(&b, "- **%s** `%s` axis=%s kind=%s status=%s ratio=%.4fx — %s\n",
+					finding.Language, finding.Path, finding.Axis, finding.Kind, finding.Status, finding.Ratio, finding.Detail)
+			}
+		}
+		if len(board.Gate.FastFullFiles) > 0 {
+			fmt.Fprintf(&b, "\n### Full-parse files at least 10x faster than C\n\n")
+			for _, finding := range board.Gate.FastFullFiles {
+				fmt.Fprintf(&b, "- **%s** `%s` ratio=%.4fx — %s\n", finding.Language, finding.Path, finding.Ratio, finding.Detail)
+			}
 		}
 	}
 
@@ -1730,7 +2191,7 @@ func perfScanRenderMarkdown(board *perfScanScoreboard) string {
 				if !ok {
 					continue
 				}
-				isCliff := fa.Verdict == perfScanBucketCliff || fa.Status == "go_timeout"
+				isCliff := fa.Verdict == perfScanBucketCliff || perfScanIsGoStop(fa.Stop)
 				if !isCliff {
 					continue
 				}
@@ -1765,8 +2226,8 @@ func perfScanRenderMarkdown(board *perfScanScoreboard) string {
 			fmt.Fprintf(&b, "%s\n", line)
 		}
 	}
-	fmt.Fprintf(&b, "\nBuckets: `%s` / `%s` / `%s` / `%s` (ratio = Go median / C median; per-language ratio-by-total = sum of Go file medians / sum of C file medians; `>=` marks a lower bound from a budget timeout).\n",
-		perfScanBucketLe12, perfScanBucketLe2, perfScanBucketGt2, perfScanBucketCliff)
+	fmt.Fprintf(&b, "\nBuckets: `%s` / `%s` / `%s` / `%s` / `%s` (ratio = Go median / C median; per-language ratio-by-total = sum of Go file medians / sum of C file medians; `>=` marks a lower bound from a budget timeout).\n",
+		perfScanBucketLePoint1, perfScanBucketLe12, perfScanBucketLe2, perfScanBucketGt2, perfScanBucketCliff)
 	return b.String()
 }
 
@@ -1775,6 +2236,9 @@ func perfScanRenderMarkdown(board *perfScanScoreboard) string {
 // ---------------------------------------------------------------------------
 
 func TestPerfScanHelpersUnit(t *testing.T) {
+	if got := perfScanVerdictBucket(0.10); got != perfScanBucketLePoint1 {
+		t.Fatalf("bucket(0.10)=%s", got)
+	}
 	if got := perfScanVerdictBucket(1.0); got != perfScanBucketLe12 {
 		t.Fatalf("bucket(1.0)=%s", got)
 	}
@@ -1835,6 +2299,21 @@ func TestPerfScanHelpersUnit(t *testing.T) {
 	t.Setenv(perfScanEnvChildRSSMB, "321")
 	if got := perfScanLoadConfig().ChildRSSMB; got != 321 {
 		t.Fatalf("ChildRSSMB = %d, want 321", got)
+	}
+	if got := perfScanGoParserStop(gotreesitter.ParseStopMemoryBudget, 5*time.Second); got.Class != perfScanStopParserBudget || got.Reason != string(gotreesitter.ParseStopMemoryBudget) {
+		t.Fatalf("memory stop classification = %+v", got)
+	}
+	if got := perfScanGoParserStop(gotreesitter.ParseStopTimeout, 5*time.Second); got.Class != perfScanStopParserTimeout {
+		t.Fatalf("timeout stop classification = %+v", got)
+	}
+	axisStop := &perfScanFileAxis{}
+	perfScanRecordAttemptStop(axisStop, perfScanAttempt{stop: &perfScanStop{Class: perfScanStopParserBudget, Implementation: "go"}}, "rep", 1)
+	perfScanRecordAttemptStop(axisStop, perfScanAttempt{stop: &perfScanStop{Class: perfScanStopCTimeout, Implementation: "c"}}, "rep", 2)
+	if axisStop.Stop == nil || axisStop.Stop.Implementation != "go" || axisStop.Stop.Class != perfScanStopParserBudget {
+		t.Fatalf("C stop overwrote causal Go stop: %+v", axisStop.Stop)
+	}
+	if got, err := perfScanExpectedCorpusLockDigest(); err != nil || got != "cf108b005fe41c4513bae14eafd4f4ec72e64454ca2eb6bbf4d18d25caab24f2" {
+		t.Fatalf("checked corpus lock digest = %q,%v", got, err)
 	}
 
 	fragDir := t.TempDir()
@@ -1912,5 +2391,58 @@ func TestPerfScanHelpersUnit(t *testing.T) {
 	_, att := (&perfScanLangMeasurer{budget: 5 * time.Second}).classifyGoAttempt(tree, nil, "", src, false, perfScanAttempt{})
 	if att.status != "go_error" || !strings.Contains(att.detail, "truncated[SILENT]") {
 		t.Fatalf("silent prefix tree classified as status=%q detail=%q, want go_error truncated[SILENT]", att.status, att.detail)
+	}
+}
+
+func TestPerfScanHardGateUnit(t *testing.T) {
+	fullAxis := func(ratio float64) *perfScanFileAxis {
+		return &perfScanFileAxis{
+			Status:     perfScanStatusOK,
+			GoMedianNs: int64(ratio * 1000),
+			CMedianNs:  1000,
+			Ratio:      ratio,
+		}
+	}
+	board := &perfScanScoreboard{
+		Config: perfScanConfig{RequireFleet: true},
+		Corpus: perfScanCorpusCoverage{LockLanguages: 1, SelectedLanguages: 1},
+		Languages: []*perfScanLanguage{{
+			Language:      "go",
+			Status:        perfScanStatusOK,
+			FilesSelected: 3,
+			FilesMeasured: 3,
+			Files: []*perfScanFile{
+				{Path: "boundary.go", Axes: map[string]*perfScanFileAxis{perfScanAxisFull: fullAxis(10)}},
+				{Path: "fast.go", Axes: map[string]*perfScanFileAxis{perfScanAxisFull: fullAxis(0.10)}},
+				{Path: "cliff.go", Axes: map[string]*perfScanFileAxis{perfScanAxisFull: fullAxis(10.001)}},
+			},
+		}},
+	}
+
+	report := perfScanEvaluateHardGate(board)
+	if report.Status != perfScanGateFail || len(report.Failures) != 1 || report.Failures[0].Kind != "ratio" {
+		t.Fatalf("cliff gate report = %+v", report)
+	}
+	if report.FullFilesEvaluated != 3 || len(report.FastFullFiles) != 1 || report.FastFullFiles[0].Path != "fast.go" {
+		t.Fatalf("full/fast file accounting = %+v", report)
+	}
+
+	board.Languages[0].Files[2].Axes[perfScanAxisFull] = fullAxis(10)
+	report = perfScanEvaluateHardGate(board)
+	if report.Status != perfScanGatePass || len(report.Failures) != 0 {
+		t.Fatalf("exact 10x boundary must pass: %+v", report)
+	}
+
+	board.Languages[0].Files[0].Axes[perfScanAxisNoEdit] = &perfScanFileAxis{
+		Status: "go_budget_stop",
+		Stop: &perfScanStop{
+			Class:          perfScanStopParserBudget,
+			Reason:         string(gotreesitter.ParseStopMemoryBudget),
+			Implementation: "go",
+		},
+	}
+	report = perfScanEvaluateHardGate(board)
+	if report.Status != perfScanGateFail || len(report.Failures) != 1 || report.Failures[0].Kind != "go_stop" {
+		t.Fatalf("Go parser-budget stop must fail independently of full ratio: %+v", report)
 	}
 }
