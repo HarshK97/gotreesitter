@@ -910,10 +910,25 @@ func buildFieldMaps(lang *gotreesitter.Language, ng *NormalizedGrammar) error {
 	lang.FieldMapSlices = make([][2]uint16, maxProdID+1)
 	var entries []gotreesitter.FieldMapEntry
 
+	// compactProductionIDs collapses productions with identical alias+field
+	// fingerprints onto a shared ProductionID (fields included in the
+	// fingerprint), so every production sharing a field-bearing ProductionID
+	// has an identical field set. Emit exactly one entry run per
+	// ProductionID: without this guard, every production after the first
+	// with the same ID would append a duplicate, unreachable run into
+	// entries and only the last write would survive in FieldMapSlices,
+	// inflating the table until the uint16 start-offset overflows on large
+	// grammars (bash, dart).
+	seen := make([]bool, maxProdID+1)
+
 	for _, prod := range ng.Productions {
 		if len(prod.Fields) == 0 {
 			continue
 		}
+		if seen[prod.ProductionID] {
+			continue
+		}
+		seen[prod.ProductionID] = true
 		start := len(entries)
 		for _, fa := range prod.Fields {
 			fid, ok := ng.fieldID(fa.FieldName)
