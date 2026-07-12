@@ -2132,6 +2132,8 @@ func (t *Tree) ensureResultCompatibility() {
 		}
 		if !parsePhaseTimingEnabled() {
 			result := normalizeResultCompatibility(t.root, t.source, &Parser{language: t.language})
+			t.resultErrorSummary = result.errorSummary
+			t.resultCompatibilityApplied = !parseStopReasonIsActive(result.stopReason)
 			t.finishDeferredResultCompatibility(result)
 			return
 		}
@@ -2142,6 +2144,8 @@ func (t *Tree) ensureResultCompatibility() {
 		}
 		start := materializationTimingStart(timing)
 		result := normalizeResultCompatibility(t.root, t.source, parser)
+		t.resultErrorSummary = result.errorSummary
+		t.resultCompatibilityApplied = !parseStopReasonIsActive(result.stopReason)
 		timing.addResultCompatibility(start)
 		t.parseRuntime.ResultCompatibilityNanos += timing.resultCompatibilityNanos
 		parser.copyNormalizationStats(&t.parseRuntime)
@@ -2467,6 +2471,14 @@ func hasParentFieldMetadata(fieldIDs []FieldID, fieldSources []uint8) bool {
 	return false
 }
 
+type resultErrorSummary uint8
+
+const (
+	resultErrorSummaryUnknown resultErrorSummary = iota
+	resultErrorSummaryClean
+	resultErrorSummaryPresent
+)
+
 // Tree holds a complete syntax tree along with its source text and language.
 // Tree is safe for concurrent reads after construction. Edit and Release are
 // not safe for concurrent use.
@@ -2487,9 +2499,13 @@ type Tree struct {
 	externalScannerCheckpointsDeferred bool
 	forestFastPath                     bool
 	incrementalReuseDisabled           bool
-	resultCompatibilityPending         bool
-	resultCompatibilityOnce            sync.Once
-	released                           bool
+	// Finalization state avoids repeated retry scans and compatibility passes.
+	// The error summary is not a persistent invariant of a caller-edited tree.
+	resultErrorSummary         resultErrorSummary
+	resultCompatibilityApplied bool
+	resultCompatibilityPending bool
+	resultCompatibilityOnce    sync.Once
+	released                   bool
 }
 
 const maxRetainedTreeEditCap = 8
@@ -2820,12 +2836,14 @@ func (t *Tree) Copy() *Tree {
 	t.ensureResultCompatibility()
 
 	out := &Tree{
-		source:         t.source,
-		sourceEncoding: t.sourceEncoding,
-		sourceUTF16:    t.sourceUTF16,
-		utf16Map:       t.utf16Map,
-		language:       t.language,
-		parseRuntime:   t.parseRuntime,
+		source:                     t.source,
+		sourceEncoding:             t.sourceEncoding,
+		sourceUTF16:                t.sourceUTF16,
+		utf16Map:                   t.utf16Map,
+		language:                   t.language,
+		parseRuntime:               t.parseRuntime,
+		resultErrorSummary:         t.resultErrorSummary,
+		resultCompatibilityApplied: t.resultCompatibilityApplied,
 	}
 	if len(t.edits) > 0 {
 		out.edits = make([]InputEdit, len(t.edits))

@@ -250,7 +250,10 @@ type Parser struct {
 	// and the retargetStackEntryPayload reduce sites — invalidate the
 	// materializing-shape prefix cache when they rewrite a spine node's
 	// root->head prefix. nil outside a parse; bumpShapePrefixEpoch is nil-safe.
-	mergeScratch                        *glrMergeScratch
+	mergeScratch *glrMergeScratch
+	// goCompatFrames points at the active parser scratch's reusable result-tree
+	// traversal stack. It is nil outside parseInternal.
+	goCompatFrames                      *[]goCompatSubtreeFrame
 	noTreeBenchmarkOnly                 bool
 	noTreeCheckpointBenchmarkOnly       bool
 	compactNoTreeShiftLeaves            bool
@@ -3860,6 +3863,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	defer releaseParserScratch(scratch, deferParentLinks)
 	p.reduceScratch = &scratch.reduce
 	p.mergeScratch = &scratch.merge
+	p.goCompatFrames = &scratch.goCompatFrames
 	if transientReduceParents {
 		p.reduceScratch.transientParents = &scratch.transientParents
 		p.reduceScratch.transientChildren = &scratch.transientChildren
@@ -3867,6 +3871,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	defer func() {
 		p.reduceScratch = nil
 		p.mergeScratch = nil
+		p.goCompatFrames = nil
 	}()
 	scratch.audit.beginParse()
 	scratch.merge.audit = nil
@@ -4308,7 +4313,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		// hasError=false is definitionally C-correct.
 		if tree != nil && p.crecoveryEnteredErrorState && stopReason == ParseStopAccepted {
 			if root := tree.root; root != nil && root.hasError() && root.endByte >= expectedEOFByte {
-				reconcileStaleHasErrorFlags(root, 0)
+				if reconcileStaleHasErrorFlags(root, 0) {
+					tree.resultErrorSummary = resultErrorSummaryPresent
+				} else {
+					tree.resultErrorSummary = resultErrorSummaryClean
+				}
 			}
 		}
 		// Env-gated (GOT_DEBUG_RECOVERY_INCREMENTAL_COST=1) one-line summary of the

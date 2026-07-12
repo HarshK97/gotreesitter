@@ -13,6 +13,7 @@ type resultCompatibilityResult struct {
 	iniMypyEnableErrorContinuation bool
 	iniContinuationStart           uint32
 	iniContinuationEnd             uint32
+	errorSummary                   resultErrorSummary
 }
 
 // normalizeResultCompatibility applies narrow post-build tree rewrites that
@@ -46,7 +47,7 @@ func normalizeResultCompatibility(root *Node, source []byte, p *Parser) resultCo
 	}
 	normalizeRootTrailingExtraTriviaCompatibility(root, source, lang)
 	var terminalReason ParseStopReason
-	_, terminalReason = normalizeResultTerminalLeafNodesWithStop(root, lang, ctx.stopCheck)
+	_, terminalReason, result.errorSummary = normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root, lang, ctx.stopCheck)
 	if parseStopReasonIsActive(terminalReason) {
 		result.stopReason = terminalReason
 		return result
