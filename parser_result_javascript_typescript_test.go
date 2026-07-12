@@ -213,7 +213,7 @@ func TestNormalizeJavaScriptTrailingContinueCommentSiblings(t *testing.T) {
 	close := newLeafNodeInArena(arena, 3, false, 86, 87, Point{Row: 1, Column: 24}, Point{Row: 1, Column: 25})
 	block := newParentNodeInArena(arena, 1, true, []*Node{open, ifStmt, lex, close}, nil, 0)
 
-	normalizeJavaScriptTrailingContinueComments(block, []byte(src), lang)
+	normalizeJavaScriptTrailingContinueComments(block, []byte(src), lang, nil)
 
 	if got, want := len(block.children), 5; got != want {
 		t.Fatalf("len(block.children) = %d, want %d", got, want)
@@ -261,7 +261,7 @@ func TestNormalizeJavaScriptTrailingContinueCommentSiblingsDirectContinue(t *tes
 	close := newLeafNodeInArena(arena, 3, false, 79, 80, Point{Row: 1, Column: 24}, Point{Row: 1, Column: 25})
 	block := newParentNodeInArena(arena, 1, true, []*Node{open, cont, lex, close}, nil, 0)
 
-	normalizeJavaScriptTrailingContinueComments(block, []byte(src), lang)
+	normalizeJavaScriptTrailingContinueComments(block, []byte(src), lang, nil)
 
 	if got, want := len(block.children), 5; got != want {
 		t.Fatalf("len(block.children) = %d, want %d", got, want)

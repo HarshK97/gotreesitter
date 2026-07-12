@@ -11,16 +11,17 @@ type parseStopPoller struct {
 	check parseStopCheck
 	count uint64
 	// memoryBudgetParser, when non-nil, makes poll/pollNow also force a
-	// runtime memory-budget check (see (*Parser).goCompatRuntimeMemoryBudgetStopReason)
+	// runtime memory-budget check (see (*Parser).compatRuntimeMemoryBudgetStopReason)
 	// at the same coarse cadence as check, in addition to whatever check
 	// reports. check alone only ever reports Timeout/Cancelled (see
-	// parseStopReasonIsActive) — some long tree walks (the Go compat walk;
-	// see normalizeGoCompatibilityInRangesWithStopAndScratch) need to also
-	// bound their own runtime heap growth even when the parse loop itself
-	// never tripped the budget, so they opt in by setting this field. nil by
-	// default: every existing caller that only sets check keeps its exact
-	// current behavior, byte-for-byte, since the branches below are additive
-	// and only ever taken when this field is non-nil.
+	// parseStopReasonIsActive) — some long tree walks (the Go compat walk,
+	// see normalizeGoCompatibilityInRangesWithStopAndScratch; and the JS/TS
+	// fused compat walk, see rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex)
+	// need to also bound their own runtime heap growth even when the parse
+	// loop itself never tripped the budget, so they opt in by setting this
+	// field. nil by default: every existing caller that only sets check
+	// keeps its exact current behavior, byte-for-byte, since the branches
+	// below are additive and only ever taken when this field is non-nil.
 	memoryBudgetParser *Parser
 }
 
@@ -56,7 +57,7 @@ func (p *parseStopPoller) pollNow() ParseStopReason {
 		}
 	}
 	if p.memoryBudgetParser != nil {
-		if reason := p.memoryBudgetParser.goCompatRuntimeMemoryBudgetStopReason(); reason == ParseStopMemoryBudget {
+		if reason := p.memoryBudgetParser.compatRuntimeMemoryBudgetStopReason(); reason == ParseStopMemoryBudget {
 			return reason
 		}
 	}

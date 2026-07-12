@@ -110,7 +110,7 @@ func TestNormalizeJavaScriptEmptyStatementRestoresSemicolonChild(t *testing.T) {
 	stmt := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
 	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
 
-	normalizeJavaScriptCompatibility(root, []byte(";"), lang)
+	normalizeJavaScriptCompatibility(root, []byte(";"), nil, lang)
 
 	if got, want := resultChildCount(stmt), 1; got != want {
 		t.Fatalf("empty_statement child count = %d, want %d", got, want)
@@ -434,7 +434,7 @@ func TestNormalizeTypeScriptCompatibilityCandidatesApplyIndexedDirectRewrites(t 
 	enumBody.setFieldSources([]uint8{fieldSourceDirect})
 	root := newParentNodeInArena(arena, 1, true, []*Node{identifier, enumBody}, nil, 0)
 
-	stats := normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang)
+	stats, _ := normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang, nil)
 	if !stats.typeScriptCompatibility.built {
 		t.Fatal("typeScriptCompatibility candidate index was not built")
 	}
@@ -577,7 +577,7 @@ func TestNormalizeJavaScriptStatementKeywordRestoresWhileLeaf(t *testing.T) {
 	stmt.endPoint = Point{Column: 12}
 	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
 
-	normalizeJavaScriptCompatibility(root, source, lang)
+	normalizeJavaScriptCompatibility(root, source, nil, lang)
 
 	first := resultChildAt(stmt, 0)
 	if first == nil {
@@ -623,7 +623,7 @@ func TestNormalizeJavaScriptStatementKeywordRestoresFinalRefWhileLeaf(t *testing
 	rootEntry := newStackEntryPendingParent(rootParent.parseState, rootParent)
 	root := materializeStackEntryPendingParent(arena, &rootEntry, pendingParentMaterializeForFinalTree)
 
-	normalizeJavaScriptCompatibility(root, source, lang)
+	normalizeJavaScriptCompatibility(root, source, nil, lang)
 
 	child := root.Child(0)
 	if child == nil {

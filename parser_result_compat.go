@@ -181,7 +181,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 	case "java":
 		normalizeJavaCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "javascript":
-		normalizeJavaScriptCompatibility(ctx.root, ctx.source, ctx.lang)
+		return resultCompatibilityResult{stopReason: normalizeJavaScriptCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)}
 	case "julia":
 		normalizeJuliaCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "just":
@@ -265,7 +265,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 	case "wolfram":
 		normalizeWolframCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "tsx", "typescript":
-		normalizeTypeScriptTreeCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
+		return resultCompatibilityResult{stopReason: normalizeTypeScriptTreeCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)}
 	case "typst":
 		normalizeTypstCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "yaml":

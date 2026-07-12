@@ -150,8 +150,9 @@ func (p *Parser) resultMaterializationStopReason(arena *nodeArena) ParseStopReas
 		if reason := p.parseStopReasonNow(); parseStopReasonIsActive(reason) {
 			return reason
 		}
-		// compatMemoryBudgetTripped is Go compat normalization's own sticky
-		// latch (see (*Parser).goCompatRuntimeMemoryBudgetStopReason): unlike
+		// compatMemoryBudgetTripped is compat normalization's own sticky
+		// latch, shared by the Go and JS/TS fused compat walks (see
+		// (*Parser).compatRuntimeMemoryBudgetStopReason): unlike
 		// arena.budgetExhausted() below, which stays true for the rest of the
 		// parse once tripped, a runtime heap/sys budget trip is inherently
 		// non-monotonic (GC can make heap growth appear to recede), so without
