@@ -882,6 +882,58 @@ func TestGSSScratchResetClearsTouchedSlots(t *testing.T) {
 	}
 }
 
+func TestGSSScratchResetClearsRetainedStackEntries(t *testing.T) {
+	var scratch gssScratch
+	scratch.stackEntries = make([]stackEntry, 0, 8)
+	scratch.stackEntries = append(scratch.stackEntries, newStackEntryNode(1, &Node{}))
+	backing := scratch.stackEntries[:cap(scratch.stackEntries)]
+	backing[len(backing)-1] = newStackEntryNode(2, &Node{})
+
+	scratch.reset()
+
+	if len(scratch.stackEntries) != 0 || cap(scratch.stackEntries) != cap(backing) {
+		t.Fatalf("retained stack entries len/cap = %d/%d, want 0/%d", len(scratch.stackEntries), cap(scratch.stackEntries), cap(backing))
+	}
+	if stackEntryHasNode(backing[0]) {
+		t.Fatal("retained stack entry still holds a node after reset")
+	}
+	if stackEntryHasNode(backing[len(backing)-1]) {
+		t.Fatal("retained stack entry beyond slice length still holds a node after reset")
+	}
+	if got, want := scratch.allocatedBytes, stackEntryBytesForCap(cap(backing)); got != want {
+		t.Fatalf("allocated bytes = %d, want %d", got, want)
+	}
+}
+
+func TestGSSScratchResetAccountsForNodesAndStackEntries(t *testing.T) {
+	var scratch gssScratch
+	_ = scratch.allocNode(stackEntry{state: 1}, nil, 1)
+	scratch.stackEntries = make([]stackEntry, 0, 8)
+	scratch.recomputeAllocatedBytes()
+	nodeCapacity := scratch.capacityNodes()
+
+	scratch.reset()
+
+	want := gssNodeBytesForCap(nodeCapacity) + stackEntryBytesForCap(8)
+	if scratch.allocatedBytes != want {
+		t.Fatalf("allocated bytes = %d, want %d", scratch.allocatedBytes, want)
+	}
+}
+
+func TestGSSScratchResetDropsOversizedStackEntries(t *testing.T) {
+	var scratch gssScratch
+	scratch.stackEntries = make([]stackEntry, 0, maxRetainedGSSStackEntries+1)
+
+	scratch.reset()
+
+	if scratch.stackEntries != nil {
+		t.Fatalf("stack entries capacity = %d, want released", cap(scratch.stackEntries))
+	}
+	if scratch.allocatedBytes != 0 {
+		t.Fatalf("allocated bytes = %d, want 0", scratch.allocatedBytes)
+	}
+}
+
 func TestGSSScratchOverflowSlabGrowthBounded(t *testing.T) {
 	elemSize := int(unsafe.Sizeof(gssNode{}))
 	ceiling := maxOverflowSlabGrowthBytes / elemSize

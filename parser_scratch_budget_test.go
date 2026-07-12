@@ -71,6 +71,23 @@ func TestParserScratchBudgetUsesPerParseGrowth(t *testing.T) {
 	}
 }
 
+func TestParserScratchBudgetCountsRecoveryStackEntryGrowth(t *testing.T) {
+	var scratch parserScratch
+	entries := make([]stackEntry, 8)
+	for i := range entries {
+		entries[i] = stackEntry{state: StateID(i + 1)}
+	}
+	stack := glrStack{entries: entries}
+	stack.ensureGSS(&scratch.gss)
+	scratch.setBudget(1)
+
+	_ = cStackEntriesTopFirst(&stack, &scratch.gss)
+
+	if !scratch.budgetExhausted() {
+		t.Fatal("budget not exhausted by recovery stack-entry growth")
+	}
+}
+
 func TestMergeAliveLimitHonorsScratchBudget(t *testing.T) {
 	var scratch glrMergeScratch
 	perStack := int64(unsafe.Sizeof(glrStack{}) + unsafe.Sizeof(glrMergeSlot{}))

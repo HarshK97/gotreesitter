@@ -1860,17 +1860,37 @@ func (p *Parser) cBetterVersionExists(stacks []glrStack, self int, isInError boo
 // Stack walking helpers
 // ---------------------------------------------------------------------------
 
-// cStackEntriesTopFirst materializes the stack spine top-first.
+// cStackEntriesTopFirst materializes the stack spine top-first. With non-nil
+// scratch the returned slice is borrowed and remains valid only until the next
+// call or scratch reset. A nil scratch returns independently owned storage.
 func cStackEntriesTopFirst(s *glrStack, gssScratch *gssScratch) []stackEntry {
 	s.ensureGSS(gssScratch)
 	depth := s.depth()
 	if depth == 0 {
+		if gssScratch != nil {
+			gssScratch.stackEntries = gssScratch.stackEntries[:0]
+		}
 		return nil
 	}
-	entries := make([]stackEntry, 0, depth)
+	if gssScratch == nil {
+		entries := make([]stackEntry, 0, depth)
+		for n := s.gss.head; n != nil; n = n.prev {
+			entries = append(entries, n.entry)
+		}
+		return entries
+	}
+	oldCap := cap(gssScratch.stackEntries)
+	if oldCap < depth {
+		gssScratch.stackEntries = make([]stackEntry, 0, depth)
+		gssScratch.allocatedBytes += stackEntryBytesForCap(depth) - stackEntryBytesForCap(oldCap)
+	} else {
+		gssScratch.stackEntries = gssScratch.stackEntries[:0]
+	}
+	entries := gssScratch.stackEntries
 	for n := s.gss.head; n != nil; n = n.prev {
 		entries = append(entries, n.entry)
 	}
+	gssScratch.stackEntries = entries
 	return entries
 }
 
@@ -1894,20 +1914,6 @@ func cEntryCountsTowardDepth(e stackEntry) bool {
 func (p *Parser) cRecordSummary(entries []stackEntry) []cStackSummaryEntry {
 	summary := make([]cStackSummaryEntry, 0, 8)
 	depth := 0
-	// Position of the node at-or-below each entry: C node positions are the
-	// cumulative input position at that stack node.
-	posBytesAt := make([]uint32, len(entries))
-	posRowAt := make([]uint32, len(entries))
-	var pb uint32
-	var pr uint32
-	for i := len(entries) - 1; i >= 0; i-- {
-		if stackEntryHasNode(entries[i]) {
-			pb = stackEntryNodeEndByte(entries[i])
-			pr = stackEntryNodeEndPoint(entries[i]).Row
-		}
-		posBytesAt[i] = pb
-		posRowAt[i] = pr
-	}
 	record := func(d int, st StateID, posBytes, posRow uint32) {
 		for j := len(summary) - 1; j >= 0; j-- {
 			if summary[j].depth < d {
@@ -1919,9 +1925,32 @@ func (p *Parser) cRecordSummary(entries []stackEntry) []cStackSummaryEntry {
 		}
 		summary = append(summary, cStackSummaryEntry{depth: d, state: st, posBytes: posBytes, posRow: posRow})
 	}
+	// A node-bearing entry owns its position. Node-less discontinuities use the
+	// next payload below them. The cached index advances monotonically, so this
+	// preserves the old bottom-up position table in O(depth) time without two
+	// full-depth allocations.
+	nextPayload := -1
 	for i := 0; i < len(entries); i++ {
-		record(depth, entries[i].state, posBytesAt[i], posRowAt[i])
-		if cEntryCountsTowardDepth(entries[i]) {
+		entry := entries[i]
+		var posBytes uint32
+		var posRow uint32
+		if stackEntryHasNode(entry) {
+			posBytes = stackEntryNodeEndByte(entry)
+			posRow = stackEntryNodeEndPoint(entry).Row
+		} else {
+			if nextPayload <= i {
+				nextPayload = i + 1
+				for nextPayload < len(entries) && !stackEntryHasNode(entries[nextPayload]) {
+					nextPayload++
+				}
+			}
+			if nextPayload < len(entries) {
+				posBytes = stackEntryNodeEndByte(entries[nextPayload])
+				posRow = stackEntryNodeEndPoint(entries[nextPayload]).Row
+			}
+		}
+		record(depth, entry.state, posBytes, posRow)
+		if cEntryCountsTowardDepth(entry) {
 			depth++
 			if depth > cRecoverMaxSummaryDepth {
 				break
