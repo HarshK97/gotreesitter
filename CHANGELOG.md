@@ -7,8 +7,48 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-07-12
+
+Containment closure and measurement-honesty release. The runtime memory
+budget is now path-uniform across every public parse construction: the
+parse loop, the Go compat walk, and the JS/TS fused compat walk all poll
+the same budget and surface the same stop reason. On the quiet host, a
+bare `Parse` of the Poppler witness (3.4 MB ambiguous JavaScript) stops
+bounded at ~1.78 GiB peak RSS under the default 512 MiB budget — a path
+that previously escaped accounting entirely — and completes clean under a
+2 GiB budget. Error-recovery throughput improves ~18% on recovery-heavy
+workloads, and the perf ledger tooling learns to separate clean-parse
+from error-recovery throughput so tail-language ratchet rows stop
+conflating the two.
+
+### Performance
+
+- The C-recovery per-subtree error-cost/visible-count memo
+  (`cNodeErrorCost`/`cNodeVisibleSubtreeCount`) is now a fixed-capacity,
+  pointer-keyed 2-way set-associative cache instead of a
+  `map[*Node]cNodeMemoEntry`: warm CPU profiles of error-bearing parses on
+  fleet-tail languages (kdl, uxntal) showed `runtime.mapaccess2_fast64` as
+  the single hottest leaf, driven almost entirely by these two lookups.
+  Every decision made by the recovery cost-competition machinery
+  (`cRecoverStrategy1Election`, `cHandleError`, `cCondenseAndResume`, etc.)
+  is unchanged — a cache miss simply falls back to the same full recompute
+  as before. The cache starts small (matching the old map's practical
+  per-parse footprint) and grows to its full working-set size only the
+  first time a parse actually enters C error handling, so clean parses of
+  recovery-capable grammars are unaffected (measured neutral-to-positive on
+  the canonical Go workload). A synthetic KDL truncated/garbage-suffix
+  recovery benchmark (`BenchmarkKDLRecoveryGarbageSuffix`) improves ~18%
+  (83.2ms to 68.2ms median, p=0.002, n=6).
+
 ### Added
 
+- A pointer-light tree measurement rig: benchmarks and a
+  structure-of-arrays prototype (`pointer_light_measurement_test.go`,
+  `pointer_light_soa_test.go`) that measure bytes-per-node, GC scan
+  cost, and walk throughput for the current pointer-rich node layout
+  against a contiguous index-based layout, plus a
+  constructed-versus-final node census. These are the standing gate
+  instruments for the frozen-tree store investigation.
 - `parse_gap_report` and `parse_gap_correlate` now split each language's
   Go/C ratio by corpus-file policy: every sample is classified `clean`
   (Go tree has no ERROR nodes and did not stop early) or error-bearing, and
@@ -39,24 +79,6 @@ for tags and release notes while still in `0.x`.
   byte-identical; no measurable regression on the canonical Go benchmark.
 
 ## [0.27.0] - 2026-07-12
-### Performance
-
-- The C-recovery per-subtree error-cost/visible-count memo
-  (`cNodeErrorCost`/`cNodeVisibleSubtreeCount`) is now a fixed-capacity,
-  pointer-keyed 2-way set-associative cache instead of a
-  `map[*Node]cNodeMemoEntry`: warm CPU profiles of error-bearing parses on
-  fleet-tail languages (kdl, uxntal) showed `runtime.mapaccess2_fast64` as
-  the single hottest leaf, driven almost entirely by these two lookups.
-  Every decision made by the recovery cost-competition machinery
-  (`cRecoverStrategy1Election`, `cHandleError`, `cCondenseAndResume`, etc.)
-  is unchanged — a cache miss simply falls back to the same full recompute
-  as before. The cache starts small (matching the old map's practical
-  per-parse footprint) and grows to its full working-set size only the
-  first time a parse actually enters C error handling, so clean parses of
-  recovery-capable grammars are unaffected (measured neutral-to-positive on
-  the canonical Go workload). A synthetic KDL truncated/garbage-suffix
-  recovery benchmark (`BenchmarkKDLRecoveryGarbageSuffix`) improves ~18%
-  (83.2ms to 68.2ms median, p=0.002, n=6).
 
 Containment and canonical-parse-lever release. Memory-budget enforcement is
 now layered (volume-triggered polling, in-merge checks, and an absolute hard
@@ -1875,7 +1897,9 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.26.1...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/odvcencio/gotreesitter/compare/v0.27.0...v0.28.0
+[0.27.0]: https://github.com/odvcencio/gotreesitter/compare/v0.26.1...v0.27.0
 [0.26.1]: https://github.com/odvcencio/gotreesitter/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/odvcencio/gotreesitter/compare/v0.25.0...v0.26.0
 [0.25.0]: https://github.com/odvcencio/gotreesitter/compare/v0.24.1...v0.25.0
