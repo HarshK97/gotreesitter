@@ -2,6 +2,10 @@ package gotreesitter
 
 import "sync"
 
+// Keep enough compatibility traversal storage for ordinary generated files
+// without retaining multi-megabyte backing arrays after unusually wide trees.
+const maxRetainedGoCompatFrames = 16 * 1024
+
 type parserScratch struct {
 	merge                    glrMergeScratch
 	entries                  glrEntryScratch
@@ -13,6 +17,7 @@ type parserScratch struct {
 	stackPick                []int
 	stackKeep                []bool
 	stackCull                []stackCullKey
+	goCompatFrames           []goCompatSubtreeFrame
 	reduce                   reduceBuildScratch
 	transientChildren        transientChildScratch
 	transientParents         transientParentScratch
@@ -115,6 +120,12 @@ func releaseParserScratch(s *parserScratch, skipGSSClear bool) {
 		s.stackCull = nil
 	} else if len(s.stackCull) > 0 {
 		s.stackCull = s.stackCull[:0]
+	}
+	if cap(s.goCompatFrames) > maxRetainedGoCompatFrames {
+		s.goCompatFrames = nil
+	} else if cap(s.goCompatFrames) > 0 {
+		clear(s.goCompatFrames[:cap(s.goCompatFrames)])
+		s.goCompatFrames = s.goCompatFrames[:0]
 	}
 	const maxRetainedReduceBuildScratch = 256 * 1024
 	if cap(s.reduce.nodes) > maxRetainedReduceBuildScratch {

@@ -31,10 +31,20 @@ func normalizeGoCompatibilityWithParser(root *Node, source []byte, lang *Languag
 }
 
 func normalizeGoCompatibilityInRangesWithParser(root *Node, source []byte, lang *Language, incrementalRanges []Range, p *Parser) ParseStopReason {
-	return normalizeGoCompatibilityInRangesWithStop(root, source, lang, incrementalRanges, p.activeParseStopCheck())
+	var frames *[]goCompatSubtreeFrame
+	var stopCheck parseStopCheck
+	if p != nil {
+		frames = p.goCompatFrames
+		stopCheck = p.activeParseStopCheck()
+	}
+	return normalizeGoCompatibilityInRangesWithStopAndScratch(root, source, lang, incrementalRanges, stopCheck, frames)
 }
 
 func normalizeGoCompatibilityInRangesWithStop(root *Node, source []byte, lang *Language, incrementalRanges []Range, stopCheck parseStopCheck) ParseStopReason {
+	return normalizeGoCompatibilityInRangesWithStopAndScratch(root, source, lang, incrementalRanges, stopCheck, nil)
+}
+
+func normalizeGoCompatibilityInRangesWithStopAndScratch(root *Node, source []byte, lang *Language, incrementalRanges []Range, stopCheck parseStopCheck, frames *[]goCompatSubtreeFrame) ParseStopReason {
 	if root == nil || lang == nil || lang.Name != "go" || len(source) == 0 {
 		return ParseStopNone
 	}
@@ -52,7 +62,7 @@ func normalizeGoCompatibilityInRangesWithStop(root *Node, source []byte, lang *L
 	if !ok {
 		return poller.pollNow()
 	}
-	if reason := normalizeGoCompatibilitySubtreeWithStop(root, source, syms, flags, incrementalRanges, &poller); parseStopReasonIsActive(reason) {
+	if reason := normalizeGoCompatibilitySubtreeWithStopAndScratch(root, source, syms, flags, incrementalRanges, &poller, frames); parseStopReasonIsActive(reason) {
 		return reason
 	}
 	return poller.pollNow()
@@ -302,6 +312,10 @@ type goCompatSubtreeFrame struct {
 }
 
 func normalizeGoCompatibilitySubtreeWithStop(n *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range, poller *parseStopPoller) ParseStopReason {
+	return normalizeGoCompatibilitySubtreeWithStopAndScratch(n, source, syms, flags, incrementalRanges, poller, nil)
+}
+
+func normalizeGoCompatibilitySubtreeWithStopAndScratch(n *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range, poller *parseStopPoller, frames *[]goCompatSubtreeFrame) ParseStopReason {
 	if n == nil {
 		return ParseStopNone
 	}
@@ -310,17 +324,24 @@ func normalizeGoCompatibilitySubtreeWithStop(n *Node, source []byte, syms goComp
 	// mutation here (semicolon-drop, sibling-boundary and trailing-extra span
 	// adjustment) is idempotent and keyed on node identity, so descending each
 	// distinct node once matches the well-formed fast path byte-for-byte.
-	reason, completed := walkGoCompatSubtree(n, source, syms, flags, incrementalRanges, poller, nil)
-	if completed {
-		return reason
+	var stack []goCompatSubtreeFrame
+	if frames != nil {
+		stack = (*frames)[:0]
 	}
-	return firstReturnReason(walkGoCompatSubtree(n, source, syms, flags, incrementalRanges, poller, make(map[*Node]struct{})))
+	reason, completed, stack := walkGoCompatSubtree(n, source, syms, flags, incrementalRanges, poller, nil, stack)
+	if !completed {
+		reason, _, stack = walkGoCompatSubtree(n, source, syms, flags, incrementalRanges, poller, make(map[*Node]struct{}), stack[:0])
+	}
+	if frames != nil {
+		*frames = stack[:0]
+	}
+	return reason
 }
 
-func walkGoCompatSubtree(root *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range, poller *parseStopPoller, seen map[*Node]struct{}) (ParseStopReason, bool) {
+func walkGoCompatSubtree(root *Node, source []byte, syms goCompatibilitySymbols, flags goCompatibilitySourceFlags, incrementalRanges []Range, poller *parseStopPoller, seen map[*Node]struct{}, stack []goCompatSubtreeFrame) (ParseStopReason, bool, []goCompatSubtreeFrame) {
 	budget := goNormalizerPopBudget(len(source))
 	pops := 0
-	stack := []goCompatSubtreeFrame{{node: root}}
+	stack = append(stack[:0], goCompatSubtreeFrame{node: root})
 	if seen != nil {
 		seen[root] = struct{}{}
 	}
@@ -340,7 +361,7 @@ func walkGoCompatSubtree(root *Node, source []byte, syms goCompatibilitySymbols,
 	}
 	for len(stack) > 0 {
 		if reason := poller.poll(); parseStopReasonIsActive(reason) {
-			return reason, true
+			return reason, true, stack
 		}
 		top := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
@@ -357,7 +378,7 @@ func walkGoCompatSubtree(root *Node, source []byte, syms goCompatibilitySymbols,
 		if seen == nil {
 			pops++
 			if pops > budget {
-				return ParseStopNone, false
+				return ParseStopNone, false, stack
 			}
 		}
 		if !goNodeOverlapsAnyRange(n, incrementalRanges) {
@@ -392,7 +413,7 @@ func walkGoCompatSubtree(root *Node, source []byte, syms goCompatibilitySymbols,
 			}
 		}
 	}
-	return poller.pollNow(), true
+	return poller.pollNow(), true, stack
 }
 
 func goNodeOverlapsAnyRange(n *Node, ranges []Range) bool {

@@ -118,9 +118,12 @@ func (p *Parser) normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []
 		finalizeDeferredReturnedTreeTruncation(tree, source)
 		return
 	}
-	if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
-		tree.setParseStopReason(reason)
-		return
+	if !tree.resultCompatibilityApplied {
+		if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
+			tree.setParseStopReason(reason)
+			return
+		}
+		tree.resultCompatibilityApplied = true
 	}
 	finalizeReturnedTreeRootSpan(tree, source)
 }
@@ -137,9 +140,12 @@ func (p *Parser) normalizeReturnedTreeForParse(tree *Tree, source []byte) {
 		finalizeDeferredReturnedTreeTruncation(tree, source)
 		return
 	}
-	if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
-		tree.setParseStopReason(reason)
-		return
+	if !tree.resultCompatibilityApplied {
+		if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
+			tree.setParseStopReason(reason)
+			return
+		}
+		tree.resultCompatibilityApplied = true
 	}
 	finalizeReturnedTreeRootSpan(tree, source)
 }

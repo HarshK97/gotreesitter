@@ -83,7 +83,7 @@ func TestNormalizeResultTerminalLeafNodesStopsOnActiveParseBudget(t *testing.T) 
 		return ParseStopNone
 	}
 
-	counters, reason := normalizeResultTerminalLeafNodesWithStop(root, lang, stopCheck)
+	counters, reason, errorSummary := normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root, lang, stopCheck)
 
 	if reason != ParseStopTimeout {
 		t.Fatalf("stop reason = %q, want %q", reason, ParseStopTimeout)
@@ -96,6 +96,104 @@ func TestNormalizeResultTerminalLeafNodesStopsOnActiveParseBudget(t *testing.T) 
 	}
 	if counters.nodesRewritten >= uint64(len(children)) {
 		t.Fatalf("nodesRewritten = %d, want partial rewrite before stop", counters.nodesRewritten)
+	}
+	if errorSummary != resultErrorSummaryUnknown {
+		t.Fatalf("error summary = %d, want unknown after interrupted traversal", errorSummary)
+	}
+}
+
+func TestNormalizeResultTerminalLeafNodesSummarizesCleanTree(t *testing.T) {
+	lang := &Language{
+		TokenCount: 2,
+		SymbolNames: []string{
+			"EOF",
+			"token",
+			"root",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "token", Visible: true},
+			{Name: "root", Visible: true, Named: true},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	leaf := newLeafNodeInArena(arena, 1, false, 0, 1, Point{}, Point{Column: 1})
+	root := newParentNodeInArena(arena, 2, true, []*Node{leaf}, nil, 0)
+
+	_, reason, errorSummary := normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root, lang, nil)
+
+	if reason != ParseStopNone {
+		t.Fatalf("stop reason = %q, want none", reason)
+	}
+	if errorSummary != resultErrorSummaryClean {
+		t.Fatalf("error summary = %d, want clean", errorSummary)
+	}
+}
+
+func TestNormalizeResultTerminalLeafNodesFindsUnderFlaggedErrorDescendant(t *testing.T) {
+	lang := &Language{
+		TokenCount: 1,
+		SymbolNames: []string{
+			"EOF",
+			"root",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "root", Visible: true, Named: true},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	errNode := newLeafNodeInArena(arena, errorSymbol, true, 0, 1, Point{}, Point{Column: 1})
+	errNode.setHasError(true)
+	root := newParentNodeInArena(arena, 1, true, []*Node{errNode}, nil, 0)
+	root.setHasError(false)
+
+	_, reason, errorSummary := normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root, lang, nil)
+
+	if reason != ParseStopNone {
+		t.Fatalf("stop reason = %q, want none", reason)
+	}
+	if root.HasError() {
+		t.Fatal("test setup changed root HasError to true")
+	}
+	if errorSummary != resultErrorSummaryPresent {
+		t.Fatalf("error summary = %d, want present", errorSummary)
+	}
+}
+
+func TestNormalizeResultTerminalLeafNodesWalksUnderFlaggedErrorRoot(t *testing.T) {
+	lang := &Language{
+		TokenCount: 3,
+		SymbolNames: []string{
+			"EOF",
+			".",
+			"token",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: ".", Visible: true},
+			{Name: "token", Visible: true, Named: true},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	leaf := newLeafNodeInArena(arena, 1, false, 0, 1, Point{}, Point{Column: 1})
+	token := newParentNodeInArena(arena, 2, true, []*Node{leaf}, nil, 0)
+	root := newParentNodeInArena(arena, errorSymbol, true, []*Node{token}, nil, 0)
+	root.setHasError(false)
+
+	counters, reason, errorSummary := normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root, lang, nil)
+
+	if reason != ParseStopNone {
+		t.Fatalf("stop reason = %q, want none", reason)
+	}
+	if got, want := counters.nodesRewritten, uint64(1); got != want {
+		t.Fatalf("nodesRewritten = %d, want %d", got, want)
+	}
+	if got := token.ChildCount(); got != 0 {
+		t.Fatalf("token.ChildCount() = %d, want 0", got)
+	}
+	if errorSummary != resultErrorSummaryPresent {
+		t.Fatalf("error summary = %d, want present", errorSummary)
 	}
 }
 

@@ -12,13 +12,28 @@ func normalizeResultTerminalLeafNodes(root *Node, lang *Language) normalizationP
 }
 
 func normalizeResultTerminalLeafNodesWithStop(root *Node, lang *Language, stopCheck parseStopCheck) (normalizationPassCounters, ParseStopReason) {
+	counters, stopReason, _ := normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root, lang, stopCheck)
+	return counters, stopReason
+}
+
+func normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root *Node, lang *Language, stopCheck parseStopCheck) (normalizationPassCounters, ParseStopReason, resultErrorSummary) {
 	var counters normalizationPassCounters
-	if root == nil || lang == nil || root.hasError() {
-		return counters, ParseStopNone
+	if root == nil || lang == nil {
+		return counters, ParseStopNone, resultErrorSummaryUnknown
+	}
+	if root.hasError() {
+		return counters, ParseStopNone, resultErrorSummaryPresent
+	}
+	errorSummary := resultErrorSummaryClean
+	if root.IsError() {
+		errorSummary = resultErrorSummaryPresent
 	}
 	poller := parseStopPoller{check: stopCheck}
 	if reason := poller.pollNow(); parseStopReasonIsActive(reason) {
-		return counters, reason
+		if errorSummary != resultErrorSummaryPresent {
+			errorSummary = resultErrorSummaryUnknown
+		}
+		return counters, reason, errorSummary
 	}
 	aliasTargets := resultVisibleAliasTargetSet(lang)
 	var stopReason ParseStopReason
@@ -28,6 +43,9 @@ func normalizeResultTerminalLeafNodesWithStop(root *Node, lang *Language, stopCh
 			return false
 		}
 		counters.nodesVisited++
+		if n.IsError() || n.hasError() {
+			errorSummary = resultErrorSummaryPresent
+		}
 		if !resultCanCollapseTerminalLeafNode(n, lang, aliasTargets) {
 			return true
 		}
@@ -70,9 +88,16 @@ func normalizeResultTerminalLeafNodesWithStop(root *Node, lang *Language, stopCh
 		return true
 	})
 	if parseStopReasonIsActive(stopReason) {
-		return counters, stopReason
+		if errorSummary != resultErrorSummaryPresent {
+			errorSummary = resultErrorSummaryUnknown
+		}
+		return counters, stopReason, errorSummary
 	}
-	return counters, poller.pollNow()
+	stopReason = poller.pollNow()
+	if parseStopReasonIsActive(stopReason) && errorSummary != resultErrorSummaryPresent {
+		errorSummary = resultErrorSummaryUnknown
+	}
+	return counters, stopReason, errorSummary
 }
 
 func resultCanCollapseTerminalLeafNode(n *Node, lang *Language, aliasTargets []bool) bool {

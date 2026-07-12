@@ -266,6 +266,12 @@ func TestTreeRootNodeRecordsDeferredTypeScriptCompatibilityTiming(t *testing.T) 
 	if tree.resultCompatibilityPending {
 		t.Fatal("resultCompatibilityPending = true after deferred compatibility ran")
 	}
+	if tree.resultErrorSummary != resultErrorSummaryClean {
+		t.Fatalf("resultErrorSummary = %d, want clean", tree.resultErrorSummary)
+	}
+	if !tree.resultCompatibilityApplied {
+		t.Fatal("resultCompatibilityApplied = false after deferred compatibility ran")
+	}
 	rt := tree.ParseRuntime()
 	if rt.NormalizationPassesRun == 0 {
 		t.Fatal("NormalizationPassesRun = 0, want deferred compatibility pass attribution")
@@ -277,6 +283,12 @@ func TestTreeRootNodeRecordsDeferredTypeScriptCompatibilityTiming(t *testing.T) 
 	_ = tree.RootNode()
 	if got := tree.ParseRuntime().NormalizationPassesRun; got != before {
 		t.Fatalf("NormalizationPassesRun after second RootNode = %d, want %d", got, before)
+	}
+
+	clone := tree.Copy()
+	defer clone.Release()
+	if clone.resultErrorSummary != tree.resultErrorSummary || clone.resultCompatibilityApplied != tree.resultCompatibilityApplied {
+		t.Fatal("Tree.Copy did not preserve finalized compatibility state")
 	}
 }
 

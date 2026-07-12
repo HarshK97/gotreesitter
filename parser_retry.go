@@ -193,8 +193,7 @@ func treeParseClean(tree *Tree) bool {
 	if tree == nil {
 		return false
 	}
-	root := rawRootOrNil(tree)
-	if root == nil || retryNodeSubtreeHasError(root, 0) {
+	if retryTreeHasError(tree) {
 		return false
 	}
 	rt := tree.ParseRuntime()
@@ -234,6 +233,15 @@ func retryTreeHasError(tree *Tree) bool {
 	}
 	root := rawRootOrNil(tree)
 	if root == nil {
+		return true
+	}
+	if root.IsError() || root.HasError() {
+		return true
+	}
+	switch tree.resultErrorSummary {
+	case resultErrorSummaryClean:
+		return false
+	case resultErrorSummaryPresent:
 		return true
 	}
 	return retryNodeSubtreeHasError(root, 0)

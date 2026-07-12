@@ -624,20 +624,22 @@ func (b *resultRootBuild) singleChildSlice(child *Node) []*Node {
 }
 
 func (b *resultRootBuild) finishTree(root *Node, wireParentLinks, extendTrailing bool) *Tree {
-	b.finalizeRoot(root, wireParentLinks, extendTrailing)
+	errorSummary, compatibilityApplied := b.finalizeRoot(root, wireParentLinks, extendTrailing)
 	borrowed := b.borrowedArenas()
 	if b.parser != nil {
 		borrowed = append(borrowed, b.parser.takeCompatibilityBorrowedArenas()...)
 	}
 	tree := newTreeWithArenas(root, b.source, b.lang, b.arena, borrowed)
+	tree.resultErrorSummary = errorSummary
+	tree.resultCompatibilityApplied = compatibilityApplied
 	if b.parser.shouldDeferResultCompatibility(root) {
 		tree.deferResultCompatibility()
 	}
 	return tree
 }
 
-func (b *resultRootBuild) finalizeRoot(root *Node, wireParentLinks, extendTrailing bool) {
-	b.parser.finalizeResultRoot(root, b.source, b.linkScratch, wireParentLinks, extendTrailing)
+func (b *resultRootBuild) finalizeRoot(root *Node, wireParentLinks, extendTrailing bool) (resultErrorSummary, bool) {
+	return b.parser.finalizeResultRoot(root, b.source, b.linkScratch, wireParentLinks, extendTrailing)
 }
 
 // finalizeWrappedSubtree applies subtree compatibility normalization to a node
@@ -812,22 +814,24 @@ func extendResultRootRangeToExtras(root *Node, extras []*Node) {
 	}
 }
 
-func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*Node, wireParentLinks, extendTrailing bool) {
+func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*Node, wireParentLinks, extendTrailing bool) (resultErrorSummary, bool) {
+	errorSummary := resultErrorSummaryUnknown
+	compatibilityApplied := false
 	if root == nil {
-		return
+		return errorSummary, compatibilityApplied
 	}
 	timing := p.currentMaterializationTiming()
 	finalizeStart := materializationTimingStart(timing)
 	defer timing.addResultFinalizeRoot(finalizeStart)
 	if reason := p.resultMaterializationStopReason(root.ownerArena); resultMaterializationShouldStop(reason) {
-		return
+		return errorSummary, compatibilityApplied
 	}
 	if p != nil {
 		root = flattenInvisibleRootChildren(root, root.ownerArena, p.language)
 	}
 	widenNodeSpanToRetainedChildren(root)
 	if reason := p.resultMaterializationStopReason(root.ownerArena); resultMaterializationShouldStop(reason) {
-		return
+		return errorSummary, compatibilityApplied
 	}
 	if extendTrailing {
 		start := materializationTimingStart(timing)
@@ -835,17 +839,20 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 		timing.addResultExtendTrailing(start)
 	}
 	if reason := p.resultMaterializationStopReason(root.ownerArena); resultMaterializationShouldStop(reason) {
-		return
+		return errorSummary, compatibilityApplied
 	}
 	start := materializationTimingStart(timing)
 	p.normalizeRootSourceStart(root, source)
 	timing.addResultNormalizeRootStart(start)
 	if reason := p.resultMaterializationStopReason(root.ownerArena); resultMaterializationShouldStop(reason) {
-		return
+		return errorSummary, compatibilityApplied
 	}
 	if p == nil || (!p.noResultCompatibilityBenchmarkOnly && !p.shouldDeferResultCompatibility(root)) {
 		start = materializationTimingStart(timing)
-		if compat := normalizeResultCompatibility(root, source, p); parseStopReasonIsActive(compat.stopReason) && p != nil {
+		compat := normalizeResultCompatibility(root, source, p)
+		errorSummary = compat.errorSummary
+		compatibilityApplied = p != nil && p.language != nil && !parseStopReasonIsActive(compat.stopReason)
+		if parseStopReasonIsActive(compat.stopReason) && p != nil {
 			p.markActiveParseStopped(compat.stopReason)
 		}
 		timing.addResultCompatibility(start)
@@ -859,7 +866,7 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 		}
 	}
 	if reason := p.resultMaterializationStopReason(root.ownerArena); resultMaterializationShouldStop(reason) {
-		return
+		return errorSummary, compatibilityApplied
 	}
 	if wireParentLinks {
 		start = materializationTimingStart(timing)
@@ -872,6 +879,7 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 		}
 		timing.addResultParentLink(start)
 	}
+	return errorSummary, compatibilityApplied
 }
 
 func (p *Parser) shouldDeferResultCompatibility(root *Node) bool {

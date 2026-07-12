@@ -186,3 +186,14 @@ func TestNodeLinksCapClearedOnRelease(t *testing.T) {
 			"clear(nodeLinks[:cap]) not applied")
 	}
 }
+
+func TestGoCompatFramesReleasedAboveRetentionCap(t *testing.T) {
+	var scratch parserScratch
+	scratch.goCompatFrames = make([]goCompatSubtreeFrame, 0, maxRetainedGoCompatFrames+1)
+
+	releaseParserScratch(&scratch, false)
+
+	if scratch.goCompatFrames != nil {
+		t.Fatalf("goCompatFrames capacity = %d, want released", cap(scratch.goCompatFrames))
+	}
+}
