@@ -365,7 +365,7 @@ func stackEntryHasNode(e stackEntry) bool {
 func retargetStackEntryPayload(e stackEntry, state StateID) (stackEntry, bool) {
 	if n := stackEntryNode(e); n != nil {
 		n.parseState = state
-		nodeBumpEquivVersion(n)
+		nodeBumpEquivVersionMetadata(n)
 		e.state = state
 		return e, true
 	}

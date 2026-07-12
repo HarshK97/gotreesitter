@@ -1387,13 +1387,13 @@ func (p *Parser) tryResyncErrorRecoveryMode(source []byte, s *glrStack, tok Toke
 				}
 				n.preGotoState = pushState
 				n.parseState = next
-				nodeBumpEquivVersion(n)
+				nodeBumpEquivVersionMetadata(n)
 				pushState = next
 				p.pushStackNode(s, next, n, entryScratch, gssScratch)
 			}
 			recovered.preGotoState = pushState
 			recovered.parseState = target
-			nodeBumpEquivVersion(recovered)
+			nodeBumpEquivVersionMetadata(recovered)
 			p.pushStackNode(s, target, recovered, entryScratch, gssScratch)
 			if nodeCount != nil {
 				*nodeCount = *nodeCount + 1
@@ -1452,7 +1452,7 @@ func (p *Parser) tryResyncErrorRecoveryMode(source []byte, s *glrStack, tok Toke
 		}
 		n.preGotoState = pushState
 		n.parseState = next
-		nodeBumpEquivVersion(n)
+		nodeBumpEquivVersionMetadata(n)
 		pushState = next
 		p.pushStackNode(s, next, n, entryScratch, gssScratch)
 	}
@@ -1711,7 +1711,7 @@ func (p *Parser) tryReplayTopLevelRecovery(source []byte, s *glrStack, tok Token
 		next := targets[i]
 		n.preGotoState = state
 		n.parseState = next
-		nodeBumpEquivVersion(n)
+		nodeBumpEquivVersionMetadata(n)
 		state = next
 		p.pushStackNode(s, state, n, entryScratch, gssScratch)
 	}
@@ -3057,7 +3057,7 @@ func addStackEntryDynamicPrecedence(entry *stackEntry, delta int16) {
 	}
 	if n := stackEntryNode(*entry); n != nil {
 		n.dynamicPrecedence += int32(delta)
-		nodeBumpEquivVersion(n)
+		nodeBumpEquivVersionMetadata(n)
 		return
 	}
 	if n := stackEntryNoTreeNode(*entry); n != nil {
@@ -3641,7 +3641,7 @@ func (p *Parser) tryFastUnaryCollapseFromGSS(s *glrStack, act ParseAction, tok T
 	collapsed.productionID = act.ProductionID
 	collapsed.preGotoState = topState
 	collapsed.parseState = targetState
-	nodeBumpEquivVersion(collapsed)
+	nodeBumpEquivVersionMetadata(collapsed)
 	if !s.truncateBeforePush(targetDepth) {
 		s.dead = true
 		if tmpEntries != nil {
@@ -3856,7 +3856,7 @@ func (p *Parser) applyReduceActionFromGSS(source []byte, s *glrStack, act ParseA
 			continue
 		}
 		extra.parseState = targetState
-		nodeBumpEquivVersion(extra)
+		nodeBumpEquivVersionMetadata(extra)
 		p.pushStackNode(s, targetState, extra, entryScratch, gssScratch)
 	}
 	if timing != nil {
@@ -3942,7 +3942,7 @@ func (p *Parser) applyReduceActionForked(source []byte, s *glrStack, act ParseAc
 				continue
 			}
 			extra.parseState = targetState
-			nodeBumpEquivVersion(extra)
+			nodeBumpEquivVersionMetadata(extra)
 			p.pushStackNode(target, targetState, extra, entryScratch, gssScratch)
 		}
 		target.byteOffset = target.gss.byteOffset()
@@ -4294,7 +4294,7 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(source []byte, s *glrS
 			continue
 		}
 		extra.parseState = targetState
-		nodeBumpEquivVersion(extra)
+		nodeBumpEquivVersionMetadata(extra)
 		p.pushStackNode(s, targetState, extra, entryScratch, gssScratch)
 	}
 	if timing != nil {
@@ -7015,7 +7015,7 @@ func (p *Parser) applyReduceAction(source []byte, s *glrStack, act ParseAction, 
 			continue
 		}
 		extra.parseState = targetState
-		nodeBumpEquivVersion(extra)
+		nodeBumpEquivVersionMetadata(extra)
 		p.pushStackNode(s, targetState, extra, entryScratch, gssScratch)
 	}
 	if timing != nil {
@@ -7194,7 +7194,7 @@ func (p *Parser) applyReduceActionTransientParents(source []byte, s *glrStack, a
 			continue
 		}
 		extra.parseState = targetState
-		nodeBumpEquivVersion(extra)
+		nodeBumpEquivVersionMetadata(extra)
 		p.pushStackNode(s, targetState, extra, entryScratch, gssScratch)
 	}
 	if timing != nil {
@@ -7351,7 +7351,8 @@ func (p *Parser) pushCollapsedUnaryReduceNode(s *glrStack, act ParseAction, tok 
 	if gotoState != 0 {
 		targetState = gotoState
 	}
-	if tok.NoLookahead && targetState == topState {
+	extra := tok.NoLookahead && targetState == topState
+	if extra {
 		child.setExtra(true)
 	}
 	child.productionID = act.ProductionID
@@ -7359,7 +7360,11 @@ func (p *Parser) pushCollapsedUnaryReduceNode(s *glrStack, act ParseAction, tok 
 	child.parseState = targetState
 	child.rawShape = rawShape
 	child.dynamicPrecedence += int32(act.DynamicPrecedence)
-	nodeBumpEquivVersion(child)
+	if extra {
+		nodeBumpEquivVersion(child)
+	} else {
+		nodeBumpEquivVersionMetadata(child)
+	}
 	p.pushStackNode(s, targetState, child, entryScratch, gssScratch)
 	for i := trailingStart; i < trailingEnd; i++ {
 		extra := stackEntryNode(entries[i])
@@ -7367,7 +7372,7 @@ func (p *Parser) pushCollapsedUnaryReduceNode(s *glrStack, act ParseAction, tok 
 			continue
 		}
 		extra.parseState = targetState
-		nodeBumpEquivVersion(extra)
+		nodeBumpEquivVersionMetadata(extra)
 		p.pushStackNode(s, targetState, extra, entryScratch, gssScratch)
 	}
 }
@@ -7412,7 +7417,11 @@ func setCollapsedUnaryEntryMetadata(entry *stackEntry, act ParseAction, extra bo
 		n.productionID = act.ProductionID
 		n.preGotoState = preGotoState
 		n.parseState = parseState
-		nodeBumpEquivVersion(n)
+		if extra {
+			nodeBumpEquivVersion(n)
+		} else {
+			nodeBumpEquivVersionMetadata(n)
+		}
 		entry.state = parseState
 		return
 	}

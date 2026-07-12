@@ -397,7 +397,7 @@ func setStackEntryRawShapeRef(entry *stackEntry, ref rawShapeRef) {
 	}
 	if n := stackEntryNode(*entry); n != nil {
 		n.rawShape = ref
-		nodeBumpEquivVersion(n)
+		nodeBumpEquivVersionMetadata(n)
 		return
 	}
 	if n := stackEntryNoTreeNode(*entry); n != nil {
