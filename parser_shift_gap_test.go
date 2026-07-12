@@ -197,7 +197,8 @@ func TestForestRecoveryGapRejectsNonTriviaSource(t *testing.T) {
 		EndByte:   uint32(len(source)),
 	}
 
-	nextIndex := newGSSForestIndex(0)
+	var nextIndex gssForestIndex
+	nextIndex.init(0)
 	var nextFrontier []*gssForestNode
 	parser := &Parser{glrTrace: false}
 	if parser.guardForestRealShiftGap(source, node, tok) {

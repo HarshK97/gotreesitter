@@ -254,6 +254,7 @@ type Parser struct {
 	reduceChainHintByState       []int
 	reduceAliasSeq               [][]Symbol
 	aliasTargetSymbol            []bool
+	visibleAliasTargetSymbol     []bool
 	keepSameNamedAnonChildSymbol []bool
 	sharedAnonymousTokenSymbol   []bool
 	reduceHasFields              []bool
@@ -1352,6 +1353,7 @@ func NewParser(lang *Language) *Parser {
 		p.reduceChainHintByState = buildReduceChainHintIndex(p.reduceChainHints)
 		p.reduceAliasSeq = buildReduceAliasSequences(lang)
 		p.aliasTargetSymbol = buildAliasTargetSymbols(lang)
+		p.visibleAliasTargetSymbol = buildVisibleAliasTargetSymbols(lang)
 		p.keepSameNamedAnonChildSymbol = buildKeepSameNamedAnonChildSymbols(lang)
 		p.sharedAnonymousTokenSymbol = buildSharedAnonymousTokenSymbols(lang)
 		p.reduceHasFields = buildReduceFieldPresence(lang)
@@ -4492,7 +4494,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		return finalizeRecoveredNodes(nodes), true
 	}
 
-	stacks, maxStacksSeen = p.newInitialParseStacks(scratch, reuse, timing)
+	stacks, maxStacksSeen = p.newInitialParseStacks(scratch, reuse, timing, len(source))
 	caps := p.configureParseCaps(source, reuse, arenaClass, scratch, maxStacksOverride, maxNodesOverride, maxMergePerKeyOverride)
 	maxStacks := caps.maxStacks
 	retryPass := caps.retryPass
@@ -6173,10 +6175,10 @@ func (p *Parser) ensureFullParseInitialCapacity(source []byte, arena *nodeArena,
 	scratch.entries.ensureInitialCap(parseFullEntryScratchCapacity(len(source)))
 }
 
-func (p *Parser) newInitialParseStacks(scratch *parserScratch, reuse *reuseCursor, timing *incrementalParseTiming) ([]glrStack, int) {
+func (p *Parser) newInitialParseStacks(scratch *parserScratch, reuse *reuseCursor, timing *incrementalParseTiming, sourceLen int) ([]glrStack, int) {
 	var stacksBuf [4]glrStack
 	stacks := stacksBuf[:1]
-	initialStackCap := 64 * 1024
+	initialStackCap := parseFullEntryScratchCapacity(sourceLen)
 	if reuse != nil {
 		initialStackCap = defaultStackEntrySlabCap
 	}

@@ -1592,8 +1592,8 @@ func (p *Parser) forestEOFRecoveryCouldCompete(idx *gssForestIndex, arena *nodeA
 		p.crecoveryHandleErrorSingleStack = true
 		defer func() { p.crecoveryHandleErrorSingleStack = prevSingleStack }()
 	}
-	for i := range idx.entries {
-		node := idx.entries[i].node
+	for i := 0; i < idx.len(); i++ {
+		node := idx.nodeAt(i)
 		if node == nil || node.byteOffset != eofByte {
 			continue
 		}
@@ -1997,12 +1997,12 @@ func replaceRawShapeChildEntry(arena *nodeArena, parent, oldChild, newChild *Nod
 // grammar's expected root symbol — retagged to errorSymbol when a fragment
 // carries an error (production's synthetic-root rule). Recovery-only.
 func (p *Parser) collectForestErrorRoot(idx *gssForestIndex, arena *nodeArena) *Node {
-	if idx == nil || len(idx.entries) == 0 {
+	if idx == nil || idx.len() == 0 {
 		return nil
 	}
 	var best *gssForestNode
-	for i := range idx.entries {
-		n := idx.entries[i].node
+	for i := 0; i < idx.len(); i++ {
+		n := idx.nodeAt(i)
 		if n == nil {
 			continue
 		}
@@ -2293,18 +2293,26 @@ type gssForestEntry struct {
 }
 
 type gssForestIndex struct {
-	entries   []gssForestEntry
+	inline    [16]gssForestEntry
+	spill     []gssForestEntry
+	inlineLen uint8
 	lastKey   gssForestKey
 	lastNode  *gssForestNode
 	lastValid bool
 }
 
-func newGSSForestIndex(capacity int) gssForestIndex {
-	return gssForestIndex{entries: make([]gssForestEntry, 0, capacity)}
+func (idx *gssForestIndex) init(capacity int) {
+	if capacity > len(idx.inline) {
+		idx.spill = make([]gssForestEntry, 0, capacity)
+	}
 }
 
 func (idx *gssForestIndex) reset() {
-	idx.entries = idx.entries[:0]
+	if idx.spill != nil {
+		idx.spill = idx.spill[:0]
+	} else {
+		idx.inlineLen = 0
+	}
 	idx.lastValid = false
 	idx.lastNode = nil
 }
@@ -2313,29 +2321,56 @@ func (idx *gssForestIndex) len() int {
 	if idx == nil {
 		return 0
 	}
-	return len(idx.entries)
+	if idx.spill != nil {
+		return len(idx.spill)
+	}
+	return int(idx.inlineLen)
 }
 
 func (idx *gssForestIndex) lookup(key gssForestKey) *gssForestNode {
 	if idx.lastValid && idx.lastKey == key {
 		return idx.lastNode
 	}
-	for i := range idx.entries {
-		if idx.entries[i].key == key {
+	entries := idx.spill
+	if entries == nil {
+		entries = idx.inline[:idx.inlineLen]
+	}
+	for i := range entries {
+		if entries[i].key == key {
 			idx.lastKey = key
-			idx.lastNode = idx.entries[i].node
+			idx.lastNode = entries[i].node
 			idx.lastValid = true
-			return idx.entries[i].node
+			return entries[i].node
 		}
 	}
 	return nil
 }
 
 func (idx *gssForestIndex) set(key gssForestKey, node *gssForestNode) {
-	idx.entries = append(idx.entries, gssForestEntry{key: key, node: node})
+	entry := gssForestEntry{key: key, node: node}
+	if idx.spill != nil {
+		idx.spill = append(idx.spill, entry)
+	} else if int(idx.inlineLen) < len(idx.inline) {
+		idx.inline[idx.inlineLen] = entry
+		idx.inlineLen++
+	} else {
+		idx.spill = make([]gssForestEntry, len(idx.inline), len(idx.inline)*2)
+		copy(idx.spill, idx.inline[:])
+		idx.spill = append(idx.spill, entry)
+	}
 	idx.lastKey = key
 	idx.lastNode = node
 	idx.lastValid = true
+}
+
+func (idx *gssForestIndex) nodeAt(i int) *gssForestNode {
+	if idx == nil || i < 0 || i >= idx.len() {
+		return nil
+	}
+	if idx.spill != nil {
+		return idx.spill[i].node
+	}
+	return idx.inline[i].node
 }
 
 const (
@@ -2531,8 +2566,11 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 	// Drive the production token source so keyword promotion, lex-mode
 	// selection, immediate tokens, external scanners and GLR-lexing all match
 	// the production parser. State is set per step from the frontier.
-	lexer := NewLexer(lang.LexStates, source)
-	ts := acquireDFATokenSourceWithCRecovery(lexer, lang, p.lookupActionIndexFunc(), p.hasKeywordState, p.externalValidByState, p.externalValidMaskByState, p.errorCostCompetitionEnabled())
+	ts := p.acquireParserDFATokenSource(source)
+	if ts == nil {
+		return nil, false
+	}
+	defer ts.Close()
 	ts.setExternalScannerCheckpointsEnabled(captureExternalCheckpoints)
 
 	// tree-sitter convention: state 0 is the error state, state 1 is the start.
@@ -2582,8 +2620,9 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 
 	// Per-step scratch reused across every token (cleared, not reallocated): the
 	// allocation/GC of fresh maps+slices each step dominated the profile.
-	curIndex := newGSSForestIndex(16)
-	nextIndex := newGSSForestIndex(16)
+	var curIndex, nextIndex gssForestIndex
+	curIndex.init(16)
+	nextIndex.init(16)
 	var work, nextFrontier, relex []*gssForestNode
 	alternatives := newForestAlternativeIndex(forestAlternativeIndexCapacityForSource(len(source)))
 	processEpoch := int32(0)
@@ -3179,8 +3218,8 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 			// reductions produced — but DROP states that themselves only emit a
 			// no-lookahead reduce, which would re-emit the synthetic EOF and loop.
 			relex = relex[:0]
-			for i := range curIndex.entries {
-				n := curIndex.entries[i].node
+			for i := 0; i < curIndex.len(); i++ {
+				n := curIndex.nodeAt(i)
 				if ts.lexStateForState(n.state) != noLookaheadLexState {
 					relex = append(relex, n)
 				}
@@ -3199,9 +3238,9 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 		}
 		noLookaheadSteps = 0
 		if len(nextFrontier) == 0 {
-			curStates := make([]StateID, 0, len(curIndex.entries))
-			for i := range curIndex.entries {
-				curStates = append(curStates, curIndex.entries[i].node.state)
+			curStates := make([]StateID, 0, curIndex.len())
+			for i := 0; i < curIndex.len(); i++ {
+				curStates = append(curStates, curIndex.nodeAt(i).state)
 			}
 			// No frontier node could shift this token: the production parser would
 			// recover here. EXPERIMENTAL: absorb the token into an error region and

@@ -48,6 +48,54 @@ func TestGLREntryScratchResetClearsReservedWrittenRange(t *testing.T) {
 	}
 }
 
+func TestInitialParseStackReservationMatchesCurrentFullParseSize(t *testing.T) {
+	var scratch parserScratch
+	scratch.entries.ensureInitialCap(64 * 1024)
+	parser := &Parser{language: &Language{InitialState: 1}}
+
+	tinySourceLen := len("{}")
+	stacks, _ := parser.newInitialParseStacks(&scratch, nil, nil, tinySourceLen)
+	wantTiny := parseFullEntryScratchCapacity(tinySourceLen)
+	if got := cap(stacks[0].entries); got != wantTiny {
+		t.Fatalf("tiny full-parse reservation = %d, want %d", got, wantTiny)
+	}
+	if got := scratch.entries.peakEntriesUsed(); got != wantTiny {
+		t.Fatalf("tiny full-parse reserved range = %d, want %d", got, wantTiny)
+	}
+
+	scratch.entries.reset()
+	largeSourceLen := 2 * 1024 * 1024
+	stacks, _ = parser.newInitialParseStacks(&scratch, nil, nil, largeSourceLen)
+	wantLarge := parseFullEntryScratchCapacity(largeSourceLen)
+	if got := cap(stacks[0].entries); got != wantLarge {
+		t.Fatalf("large full-parse reservation = %d, want %d", got, wantLarge)
+	}
+
+	scratch.entries.reset()
+	reuse := &reuseCursor{}
+	stacks, _ = parser.newInitialParseStacks(&scratch, reuse, nil, largeSourceLen)
+	if got := cap(stacks[0].entries); got != defaultStackEntrySlabCap {
+		t.Fatalf("incremental reservation = %d, want %d", got, defaultStackEntrySlabCap)
+	}
+}
+
+func BenchmarkInitialParseStackReservationAfterLarge(b *testing.B) {
+	var scratch parserScratch
+	scratch.entries.ensureInitialCap(64 * 1024)
+	parser := &Parser{language: &Language{InitialState: 1}}
+	tinySourceLen := len("{}")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		stacks, _ := parser.newInitialParseStacks(&scratch, nil, nil, tinySourceLen)
+		if len(stacks) != 1 {
+			b.Fatalf("initial stack count = %d, want 1", len(stacks))
+		}
+		scratch.entries.reset()
+	}
+}
+
 func TestGSSScratchResetClearsWrittenRange(t *testing.T) {
 	var scratch gssScratch
 	node := &Node{symbol: 1}
