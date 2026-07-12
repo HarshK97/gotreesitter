@@ -103,7 +103,7 @@ func TestNormalizeResultCollapsedNamedLeafChildrenApexKeywordWrapper(t *testing.
 	superNode := newLeafNodeInArena(arena, 2, true, 621, 626, Point{Row: 0, Column: 621}, Point{Row: 0, Column: 626})
 	root := newParentNodeInArena(arena, 1, true, []*Node{superNode}, nil, 0)
 
-	normalizeResultCollapsedNamedLeafChildren(root, lang)
+	normalizeResultCollapsedNamedLeafChildren(root, nil, lang)
 
 	if got, want := superNode.ChildCount(), 1; got != want {
 		t.Fatalf("super.ChildCount() = %d, want %d", got, want)

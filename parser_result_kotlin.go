@@ -8,7 +8,6 @@ func normalizeKotlinCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeKotlinGenericCallTypeArguments(root, source, lang)
 	normalizeKotlinPrefixComparisonExpressions(root, source, lang)
 	normalizeKotlinRawStringTrailingContent(root, source, lang)
-	normalizeKotlinCollapsedIdentifierChildren(root, source, lang)
 	normalizeKotlinCallableReferenceNavigations(root, source, lang)
 	normalizeKotlinReceiverFunctionNames(root, source, lang)
 	normalizeKotlinSourceFileLeadingTriviaStart(root, source, lang)
@@ -550,18 +549,6 @@ func normalizeKotlinCallableReferenceNavigations(root *Node, source []byte, lang
 		n.productionID = 0
 		populateParentNode(n, n.children)
 	})
-}
-
-// normalizeKotlinCollapsedIdentifierChildren restores the simple_identifier
-// child of a single-element `identifier` node (identifier is sep1 of
-// simple_identifier by "."): C tree-sitter always materializes the child
-// (e.g. in `import benchmarks.*` the identifier wraps one simple_identifier),
-// while the Go collapse logic strips lone children.
-func normalizeKotlinCollapsedIdentifierChildren(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "kotlin" || len(source) == 0 {
-		return
-	}
-	normalizeCollapsedNamedLeafChildren(root, lang, "identifier", "simple_identifier")
 }
 
 // normalizeKotlinSourceFileLeadingTriviaStart restores the C-aligned root

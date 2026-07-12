@@ -6,7 +6,6 @@ func normalizeElixirCompatibility(root *Node, source []byte, lang *Language) {
 	}
 	normalizeElixirNewlineBeforeCommentExtras(root, lang)
 	normalizeElixirNestedCallTargetFields(root, lang)
-	normalizeElixirCollapsedLiteralChildren(root, source, lang)
 	normalizeElixirMapContentKeywordPairs(root, lang)
 	normalizeElixirMapContentBinaryOperators(root, lang)
 }
@@ -79,10 +78,6 @@ func normalizeElixirNestedCallTargetFields(root *Node, lang *Language) {
 			}
 		}
 	})
-}
-
-func normalizeElixirCollapsedLiteralChildren(root *Node, source []byte, lang *Language) {
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "nil", "nil")
 }
 
 func normalizeElixirMapContentKeywordPairs(root *Node, lang *Language) {

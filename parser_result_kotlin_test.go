@@ -81,13 +81,17 @@ func kotlinLeadingTriviaTestLanguage() *Language {
 func TestNormalizeKotlinCollapsedIdentifierChildren(t *testing.T) {
 	lang := kotlinLeadingTriviaTestLanguage()
 	// Mirrors `import benchmarks.*`: a single-element identifier must wrap a
-	// simple_identifier child, as in C tree-sitter.
+	// simple_identifier child, as in C tree-sitter. This rule now lives in
+	// resultCollapsedNamedLeafRules (parser_result_collapsed_helpers.go) and
+	// runs via normalizeResultCollapsedNamedLeafChildren for every language;
+	// the former normalizeKotlinCollapsedIdentifierChildren adapter (called
+	// from normalizeKotlinCompatibility) was removed.
 	source := []byte("import benchmarks.*")
 	arena := newNodeArena(arenaClassFull)
 	identifier := newLeafNodeInArena(arena, 3, true, 7, 17, Point{Column: 7}, Point{Column: 17})
 	root := newParentNodeInArena(arena, 1, true, []*Node{identifier}, nil, 0)
 
-	normalizeKotlinCompatibility(root, source, lang)
+	normalizeResultCollapsedNamedLeafChildren(root, source, lang)
 
 	if got, want := identifier.ChildCount(), 1; got != want {
 		t.Fatalf("identifier child count = %d, want %d", got, want)

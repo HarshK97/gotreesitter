@@ -47,6 +47,14 @@ func TestNormalizeElixirCollapsedLiteralChildren(t *testing.T) {
 	// unconditionally on real parses (see
 	// TestElixirBooleanKeepsTrueTokenChildViaEngine in grammars/), so
 	// falseNode/trueNode above stay untouched by this call.
+	//
+	// "nil" is also NOT restored by normalizeElixirCompatibility anymore: the
+	// normalizeElixirCollapsedLiteralChildren adapter was removed and its rule
+	// moved into resultCollapsedNamedLeafRules
+	// (parser_result_collapsed_helpers.go), applied by
+	// normalizeResultCollapsedNamedLeafChildren for every language. Exercise
+	// that shared entry point directly to keep the coverage.
+	normalizeResultCollapsedNamedLeafChildren(root, source, lang)
 	assertCollapsedKeywordChild(t, nilNode, lang, "nil")
 }
 

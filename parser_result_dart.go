@@ -5,17 +5,8 @@ func normalizeDartCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeDartSingleTypeArgumentFreeCalls(root, lang)
 	normalizeDartComplexTypeArgumentRelationalFreeCalls(root, lang)
 	normalizeDartSwitchExpressionBodyFields(root, lang)
-	normalizeDartCollapsedLeafChildren(root, source, lang)
 	normalizeDartNestedComplexTypeArgumentRelationalCalls(root, lang)
 	normalizeDartComplexTypeArgumentFreeCalls(root, source, lang)
-}
-
-func normalizeDartCollapsedLeafChildren(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "dart" || len(source) == 0 {
-		return
-	}
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "super", "super")
-	normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, "this", "this")
 }
 
 func normalizeDartSingleTypeArgumentFreeCalls(root *Node, lang *Language) {

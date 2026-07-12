@@ -16,6 +16,14 @@ type collapsedNamedLeafRule struct {
 	languageName string
 	parentName   string
 	childName    string
+	// bySource selects the source-verified matcher
+	// (normalizeCollapsedNamedLeafChildrenBySource) instead of the plain
+	// structural matcher (normalizeCollapsedNamedLeafChildren). Use this when
+	// the parent's collapsed span must be confirmed to actually read as
+	// childName before the child is attached (e.g. the parent symbol is
+	// shared with unrelated collapsed shapes, or the rule was ported from a
+	// language-specific adapter that verified source text).
+	bySource bool
 }
 
 var resultCollapsedNamedLeafRules = []collapsedNamedLeafRule{
@@ -44,14 +52,33 @@ var resultCollapsedNamedLeafRules = []collapsedNamedLeafRule{
 	{languageName: "apex", parentName: "undelete", childName: "undelete"},
 	{languageName: "apex", parentName: "upsert", childName: "upsert"},
 	{languageName: "apex", parentName: "user", childName: "user"},
+	// Kotlin's `identifier` is sep1 of `simple_identifier` by "."; a
+	// single-element identifier (e.g. `import benchmarks.*`) collapses to a
+	// leaf in Go but C always materializes the simple_identifier child.
+	{languageName: "kotlin", parentName: "identifier", childName: "simple_identifier"},
+	// Hack's true/false/null literals wrap the identically-named anonymous
+	// keyword token (`true -> 'true'`, etc.); Go collapses the lone child.
+	{languageName: "hack", parentName: "true", childName: "true", bySource: true},
+	{languageName: "hack", parentName: "false", childName: "false", bySource: true},
+	{languageName: "hack", parentName: "null", childName: "null", bySource: true},
+	// Dart's `super`/`this` wrap the identically-named anonymous keyword
+	// token; Go collapses the lone child, C keeps it.
+	{languageName: "dart", parentName: "super", childName: "super", bySource: true},
+	{languageName: "dart", parentName: "this", childName: "this", bySource: true},
+	// Elixir's `nil` wraps the identically-named anonymous keyword token.
+	{languageName: "elixir", parentName: "nil", childName: "nil", bySource: true},
 }
 
-func normalizeResultCollapsedNamedLeafChildren(root *Node, lang *Language) {
+func normalizeResultCollapsedNamedLeafChildren(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil {
 		return
 	}
 	for _, rule := range resultCollapsedNamedLeafRules {
 		if rule.languageName != lang.Name {
+			continue
+		}
+		if rule.bySource {
+			normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, rule.parentName, rule.childName)
 			continue
 		}
 		normalizeCollapsedNamedLeafChildren(root, lang, rule.parentName, rule.childName)
