@@ -2,6 +2,46 @@ package gotreesitter
 
 import "testing"
 
+func TestBeforePublicationVersionBumpDoesNotInvalidateLivePrefixes(t *testing.T) {
+	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
+	p := &Parser{
+		language:  lang,
+		cNodeMemo: make(map[*Node]cNodeMemoEntry),
+	}
+	published := &Node{symbol: 1, equivVersion: 1}
+	head := &gssNode{entry: newStackEntryNode(1, published), depth: 1}
+	if cost, visible := p.cStackPrefixAgg(head); cost != 0 || visible != 1 {
+		t.Fatalf("initial published aggregate = (%d, %d), want (0, 1)", cost, visible)
+	}
+	gen := gssPrefixAggGen.Load()
+
+	fresh := &Node{symbol: 1, equivVersion: 1, errorRankCache: 3}
+	fresh.setMissing(true) // Recovery-relevant, but the node is not published.
+	nodeBumpEquivVersionBeforePublication(fresh)
+	if fresh.equivVersion != 2 {
+		t.Fatalf("fresh equiv version = %d, want 2", fresh.equivVersion)
+	}
+	if fresh.errorRankCache != 0 {
+		t.Fatalf("fresh error-rank cache = %d, want invalidated", fresh.errorRankCache)
+	}
+	if got := gssPrefixAggGen.Load(); got != gen {
+		t.Fatalf("before-publication bump changed prefix generation from %d to %d", gen, got)
+	}
+	if cost, visible := p.cStackPrefixAgg(head); cost != 0 || visible != 1 {
+		t.Fatalf("aggregate after fresh bump = (%d, %d), want (0, 1)", cost, visible)
+	}
+
+	published.setMissing(true)
+	nodeBumpEquivVersion(published)
+	if got := gssPrefixAggGen.Load(); got == gen {
+		t.Fatalf("published recovery mutation left prefix generation at %d", got)
+	}
+	wantCost := uint32(cErrCostPerMissingTree + cErrCostPerRecovery)
+	if cost, visible := p.cStackPrefixAgg(head); cost != wantCost || visible != 1 {
+		t.Fatalf("aggregate after published bump = (%d, %d), want (%d, 1)", cost, visible, wantCost)
+	}
+}
+
 func TestMetadataVersionBumpKeepsRecoveryPrefixAggregate(t *testing.T) {
 	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
 	p := &Parser{
@@ -44,6 +84,110 @@ func TestMetadataVersionBumpKeepsRecoveryPrefixAggregate(t *testing.T) {
 	wantCost := uint32(cErrCostPerMissingTree + cErrCostPerRecovery)
 	if cost != wantCost || visible != 1 {
 		t.Fatalf("post-missing aggregate = (%d, %d), want (%d, 1)", cost, visible, wantCost)
+	}
+}
+
+func TestContiguousRecoveryAggregateCacheTracksStackAndNodeMutations(t *testing.T) {
+	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
+	p := &Parser{
+		language:  lang,
+		cNodeMemo: make(map[*Node]cNodeMemoEntry),
+	}
+	first := &Node{symbol: 1, equivVersion: 1}
+	missing := &Node{symbol: 1, equivVersion: 1}
+	missing.setMissing(true)
+	stack := glrStack{
+		entries: []stackEntry{newStackEntryNode(1, first)},
+		cRec:    &cRecoverState{},
+	}
+
+	if cost, visible := p.cStackEntryAgg(&stack); cost != 0 || visible != 1 {
+		t.Fatalf("initial aggregate = (%d, %d), want (0, 1)", cost, visible)
+	}
+	if got, want := stack.cEntryAggGen, gssPrefixAggGen.Load(); got != want {
+		t.Fatalf("initial cache generation = %d, want %d", got, want)
+	}
+
+	stack.push(2, missing, nil, nil)
+	if stack.cEntryAggGen != 0 {
+		t.Fatalf("push left cache generation at %d, want invalid", stack.cEntryAggGen)
+	}
+	wantMissingCost := uint32(cErrCostPerMissingTree + cErrCostPerRecovery)
+	if cost, visible := p.cStackEntryAgg(&stack); cost != wantMissingCost || visible != 2 {
+		t.Fatalf("post-push aggregate = (%d, %d), want (%d, 2)", cost, visible, wantMissingCost)
+	}
+
+	if !stack.truncate(1) {
+		t.Fatal("truncate failed")
+	}
+	if stack.cEntryAggGen != 0 {
+		t.Fatalf("truncate left cache generation at %d, want invalid", stack.cEntryAggGen)
+	}
+	if cost, visible := p.cStackEntryAgg(&stack); cost != 0 || visible != 1 {
+		t.Fatalf("post-truncate aggregate = (%d, %d), want (0, 1)", cost, visible)
+	}
+
+	child := &Node{symbol: 1, equivVersion: 1}
+	first.children = append(first.children, child)
+	oldGen := gssPrefixAggGen.Load()
+	nodeBumpEquivVersion(first)
+	if got := gssPrefixAggGen.Load(); got == oldGen {
+		t.Fatalf("recovery-relevant mutation left generation at %d", got)
+	}
+	if cost, visible := p.cStackEntryAgg(&stack); cost != 0 || visible != 2 {
+		t.Fatalf("post-node-mutation aggregate = (%d, %d), want (0, 2)", cost, visible)
+	}
+
+	cachedGen := stack.cEntryAggGen
+	first.parseState++
+	nodeBumpEquivVersionMetadata(first)
+	if got := gssPrefixAggGen.Load(); got != cachedGen {
+		t.Fatalf("metadata-only mutation changed generation from %d to %d", cachedGen, got)
+	}
+	if cost, visible := p.cStackEntryAgg(&stack); cost != 0 || visible != 2 {
+		t.Fatalf("post-metadata aggregate = (%d, %d), want (0, 2)", cost, visible)
+	}
+}
+
+func TestExpandedGSSResultPathsKeepIndependentRecoveryAggregates(t *testing.T) {
+	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
+	p := &Parser{
+		language:  lang,
+		cNodeMemo: make(map[*Node]cNodeMemoEntry),
+	}
+	plain := &Node{symbol: 1, equivVersion: 1}
+	errChild := &Node{symbol: 1, equivVersion: 1, endByte: 1}
+	errNode := &Node{
+		symbol:       errorSymbol,
+		equivVersion: 1,
+		endByte:      1,
+		children:     []*Node{errChild},
+	}
+	head := &gssNode{
+		entry: newStackEntryNode(1, plain),
+		depth: 1,
+		extraLinks: []gssMainLink{{
+			entry: newStackEntryNode(1, errNode),
+		}},
+	}
+	source := glrStack{
+		gss:  gssStack{head: head},
+		cRec: &cRecoverState{},
+	}
+
+	paths := appendExpandedGSSResultPaths(nil, source, 2)
+	if len(paths) != 2 {
+		t.Fatalf("expanded path count = %d, want 2", len(paths))
+	}
+	if cost, visible := p.cStackEntryAgg(&paths[0]); cost != 0 || visible != 1 {
+		t.Fatalf("plain path aggregate = (%d, %d), want (0, 1)", cost, visible)
+	}
+	wantErrorCost := uint32(cErrCostPerRecovery + cErrCostPerSkippedTree + cErrCostPerSkippedChar)
+	if cost, visible := p.cStackEntryAgg(&paths[1]); cost != wantErrorCost || visible != 2 {
+		t.Fatalf("error path aggregate = (%d, %d), want (%d, 2)", cost, visible, wantErrorCost)
+	}
+	if paths[0].cEntryAggCost != 0 || paths[0].cEntryAggVis != 1 {
+		t.Fatalf("plain path cache changed to (%d, %d)", paths[0].cEntryAggCost, paths[0].cEntryAggVis)
 	}
 }
 

@@ -1120,7 +1120,7 @@ func (p *Parser) tryNearestActionStateRecovery(s *glrStack, tok Token, nodeCount
 	errNode := p.newRecoveryParentNodeInArena(arena, errorSymbol, true, errChildren, 0)
 	errNode.setHasError(true)
 	errNode.setExtra(true)
-	nodeBumpEquivVersion(errNode)
+	nodeBumpEquivVersionBeforePublication(errNode)
 	if perfCountersEnabled {
 		perfRecordErrorNode()
 	}
@@ -1424,7 +1424,7 @@ func (p *Parser) tryResyncErrorRecoveryMode(source []byte, s *glrStack, tok Toke
 	// map; eager link wiring here would link this ERROR under itself.
 	errNode := p.newRecoveryParentNodeInArena(arena, errorSymbol, true, errChildren, 0)
 	errNode.setHasError(true)
-	nodeBumpEquivVersion(errNode)
+	nodeBumpEquivVersionBeforePublication(errNode)
 	if perfCountersEnabled {
 		perfRecordErrorNode()
 	}
@@ -1502,7 +1502,7 @@ func (p *Parser) rebuildAliasPrefixedRecoveredSuffix(source []byte, state StateI
 	if shiftTarget, ok := p.shiftTargetForStateSymbol(state, alt); ok {
 		aliasLeaf.parseState = shiftTarget
 	}
-	nodeBumpEquivVersion(aliasLeaf)
+	nodeBumpEquivVersionBeforePublication(aliasLeaf)
 	children = append(children, aliasLeaf)
 	for i := 0; i < childCount; i++ {
 		child := nodeChildAtForReason(recovered, i, materializeForRecovery)
@@ -1528,6 +1528,8 @@ func (p *Parser) rebuildAliasPrefixedRecoveredSuffix(source []byte, state StateI
 	return rebuilt, target, true
 }
 
+// materializeAnonymousChildrenForRecoveredError operates only on a fresh
+// recovery node before its first attachment to a stack or returned tree.
 func (p *Parser) materializeAnonymousChildrenForRecoveredError(source []byte, n *Node, arena *nodeArena) {
 	if p == nil || p.language == nil || n == nil || n.symbol != errorSymbol || nodeChildCountNoMaterialize(n) != 0 {
 		return
@@ -1563,9 +1565,11 @@ func (p *Parser) materializeAnonymousChildrenForRecoveredError(source []byte, n 
 	n.children = children
 	n.setNamed(true)
 	n.setHasError(true)
-	nodeBumpEquivVersion(n)
+	nodeBumpEquivVersionBeforePublication(n)
 }
 
+// restoreAnonymousTokenForRecoveredTail operates only on a fresh clone before
+// it is attached to the rebuilt recovery suffix.
 func (p *Parser) restoreAnonymousTokenForRecoveredTail(source []byte, n *Node) {
 	if p == nil || p.language == nil || n == nil || nodeChildCountNoMaterialize(n) != 0 {
 		return
@@ -1588,7 +1592,7 @@ func (p *Parser) restoreAnonymousTokenForRecoveredTail(source []byte, n *Node) {
 		if symMeta.Visible && !symMeta.Named {
 			n.symbol = sym
 			n.setNamed(false)
-			nodeBumpEquivVersion(n)
+			nodeBumpEquivVersionBeforePublication(n)
 			return
 		}
 	}
@@ -3891,6 +3895,7 @@ func (p *Parser) applyReduceActionForked(source []byte, s *glrStack, act ParseAc
 		target.gss.head = fork.popTo
 		if target.entries != nil {
 			target.entries = nil
+			target.invalidateCEntryAgg()
 		}
 
 		if child := p.collapsibleUnarySelfReduction(act, tok, arena, window, 0, reducedEnd, children, fieldIDs); child != nil {

@@ -199,7 +199,7 @@ func TestCApplyMergedErrorGroupBaselineUsesMaxHeadNodeCount(t *testing.T) {
 		t.Fatalf("merged baseline = %d, want max cumulative node count 3", baseline)
 	}
 	for i := range versions {
-		if got := versions[i].cNodeBaseline; got != baseline {
+		if got := versions[i].cNodeBaseline; got != uint32(baseline) {
 			t.Fatalf("version %d baseline = %d, want shared %d", i, got, baseline)
 		}
 	}
@@ -212,7 +212,7 @@ func TestCApplyMergedErrorGroupBaselineUsesMaxHeadNodeCount(t *testing.T) {
 	if got := parser.cNodeCountSinceError(&versions[1]); got != 0 {
 		t.Fatalf("long version node count since error = %d, want 0", got)
 	}
-	if got := versions[1].cNodeBaseline; got != baseline {
+	if got := versions[1].cNodeBaseline; got != uint32(baseline) {
 		t.Fatalf("long version baseline after node count = %d, want shared %d", got, baseline)
 	}
 }
@@ -614,7 +614,7 @@ func cRecoveryElectionStack(arena *nodeArena, base, top StateID, endByte uint32,
 	s := cRecoveryElectionPlainStack(arena, base, top, endByte)
 	s.cRec = &cRecoverState{
 		group:      group,
-		groupOrder: groupOrder,
+		groupOrder: uint32(groupOrder),
 		summary:    summary,
 	}
 	s.cNodeBaseline = 1

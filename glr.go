@@ -54,15 +54,23 @@ type glrStack struct {
 	// lockstep token loop uses this to avoid letting an already-advanced
 	// sibling suppress that group's Strategy 1 recovery.
 	cRecoverMissingGroup *cRecGroup
+	// cEntryAgg* caches the recovery-cost and visible-node aggregates of this
+	// stack's contiguous entries representation. It lives on the stack value,
+	// not the shared cRecoverState pointer, so distinct materialized GSS paths
+	// cannot reuse one another's aggregate after a by-value stack copy.
+	cEntryAggGen  uint64
+	cEntryAggCost uint32
+	cEntryAggVis  int32
+	// cNodeBaseline mirrors C StackHead.node_count_at_last_error: the stack's
+	// cumulative visible-node count when the error discontinuity was last
+	// pushed. C stores this as uint32_t; keeping that width also leaves the
+	// recovery aggregates inside glrStack's existing 104-byte layout.
+	cNodeBaseline uint32
 	// cPaused mirrors C StackStatusPaused: the stack hit a no-action point
 	// under the gated recovery port and waits for the condense step to either
 	// resume it (ts_parser__handle_error) or remove it. Only ever set when
 	// errorCostCompetitionLanguage gates the grammar.
 	cPaused bool
-	// cNodeBaseline mirrors C StackHead.node_count_at_last_error: the stack's
-	// cumulative visible-node count when the error discontinuity was last
-	// pushed. Zero for stacks that never entered the C error state.
-	cNodeBaseline int
 	// cEverErrored is a sticky per-stack bit: true once this lineage has entered
 	// C's error handling at any point, even if it later recovered to a clean tree
 	// with cRec cleared and cNodeBaseline reset (or clamped) back to zero. Unlike
@@ -414,6 +422,9 @@ func (s *glrStack) clone() glrStack {
 			cRec:                       s.cRec.clone(),
 			cRecoverMissingGroup:       s.cRecoverMissingGroup,
 			cNodeBaseline:              s.cNodeBaseline,
+			cEntryAggGen:               s.cEntryAggGen,
+			cEntryAggCost:              s.cEntryAggCost,
+			cEntryAggVis:               s.cEntryAggVis,
 			cRecoveryUnvalidatedMarker: s.cRecoveryUnvalidatedMarker,
 			cEverErrored:               s.cEverErrored,
 		}
@@ -430,6 +441,9 @@ func (s *glrStack) clone() glrStack {
 		cRec:                       s.cRec.clone(),
 		cRecoverMissingGroup:       s.cRecoverMissingGroup,
 		cNodeBaseline:              s.cNodeBaseline,
+		cEntryAggGen:               s.cEntryAggGen,
+		cEntryAggCost:              s.cEntryAggCost,
+		cEntryAggVis:               s.cEntryAggVis,
 		cRecoveryUnvalidatedMarker: s.cRecoveryUnvalidatedMarker,
 		cEverErrored:               s.cEverErrored,
 	}
@@ -448,6 +462,9 @@ func (s *glrStack) cloneWithScratch(scratch *gssScratch) glrStack {
 		cRec:                       s.cRec.clone(),
 		cRecoverMissingGroup:       s.cRecoverMissingGroup,
 		cNodeBaseline:              s.cNodeBaseline,
+		cEntryAggGen:               s.cEntryAggGen,
+		cEntryAggCost:              s.cEntryAggCost,
+		cEntryAggVis:               s.cEntryAggVis,
 		cRecoveryUnvalidatedMarker: s.cRecoveryUnvalidatedMarker,
 		cEverErrored:               s.cEverErrored,
 	}
@@ -467,11 +484,20 @@ func (s *glrStack) ensureEntries(entryScratch *glrEntryScratch) []stackEntry {
 	if entryScratch != nil {
 		dst := entryScratch.allocWithCap(depth, depth+1)
 		s.entries = s.gss.materialize(dst)
+		s.invalidateCEntryAgg()
 		return s.entries
 	}
 	entries := make([]stackEntry, depth)
 	s.entries = s.gss.materialize(entries)
+	s.invalidateCEntryAgg()
 	return s.entries
+}
+
+func (s *glrStack) invalidateCEntryAgg() {
+	if s == nil {
+		return
+	}
+	s.cEntryAggGen = 0
 }
 
 // demoteLinearGSS switches a lone stack back to the contiguous entries path
@@ -498,6 +524,7 @@ func (s *glrStack) demoteLinearGSS(entryScratch *glrEntryScratch) bool {
 	s.gss = gssStack{}
 	s.entries = entries
 	s.cacheEntries = true
+	s.invalidateCEntryAgg()
 	s.byteOffset = stackByteOffset(entries)
 	return true
 }
@@ -517,6 +544,7 @@ func (s *glrStack) push(state StateID, node *Node, entryScratch *glrEntryScratch
 }
 
 func (s *glrStack) pushEntry(entry stackEntry, entryScratch *glrEntryScratch, gssScratch *gssScratch) {
+	s.invalidateCEntryAgg()
 	if s.gss.head != nil {
 		s.gss.pushEntry(entry, gssScratch)
 	}
@@ -552,6 +580,7 @@ func (s *glrStack) truncate(depth int) bool {
 			}
 		}
 		s.byteOffset = s.gss.byteOffset()
+		s.invalidateCEntryAgg()
 		return true
 	}
 	if depth < 0 || depth > len(s.entries) {
@@ -559,6 +588,7 @@ func (s *glrStack) truncate(depth int) bool {
 	}
 	s.entries = s.entries[:depth]
 	s.byteOffset = stackByteOffset(s.entries)
+	s.invalidateCEntryAgg()
 	return true
 }
 
@@ -574,12 +604,14 @@ func (s *glrStack) truncateBeforePush(depth int) bool {
 				s.entries = s.gss.materialize(s.entries[:0])
 			}
 		}
+		s.invalidateCEntryAgg()
 		return true
 	}
 	if depth < 0 || depth > len(s.entries) {
 		return false
 	}
 	s.entries = s.entries[:depth]
+	s.invalidateCEntryAgg()
 	return true
 }
 

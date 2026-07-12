@@ -12,6 +12,18 @@ func TestStackEntrySizeBudget(t *testing.T) {
 	}
 }
 
+func TestCRecoverStateSizeBudget(t *testing.T) {
+	if got := unsafe.Sizeof(cRecoverState{}); got != 48 {
+		t.Fatalf("cRecoverState size = %d, want 48", got)
+	}
+}
+
+func TestGLRStackSizeBudget(t *testing.T) {
+	if got := unsafe.Sizeof(glrStack{}); got != 104 {
+		t.Fatalf("glrStack size = %d, want 104", got)
+	}
+}
+
 func TestNoTreeNodeSizeBudget(t *testing.T) {
 	// Ratchet: e70dd873 ("Add raw shape tracking, GLR recovery flags, and
 	// refactor parser APIs") intentionally added rawShape (rawShapeRef,
