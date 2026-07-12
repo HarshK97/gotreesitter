@@ -968,16 +968,17 @@ func TestGSSScratchRecycleForParseReusesClearedSlots(t *testing.T) {
 	var scratch gssScratch
 	payload := &Node{symbol: 7, endByte: 3}
 	first := scratch.allocNode(newStackEntryNode(2, payload), nil, 1)
-	first.extraLinks = append(first.extraLinks, gssMainLink{entry: stackEntry{state: 9}})
+	first.appendExtraLink(gssMainLink{entry: stackEntry{state: 9}})
 	first.aggGen = 12
-	first.aggVisGen = 13
+	first.aggVisValid = true
 
 	scratch.recycleForParse()
 
 	if scratch.usedTotal != 0 {
 		t.Fatalf("used nodes after recycle = %d, want 0", scratch.usedTotal)
 	}
-	if first.prev != nil || first.entry.node != nil || first.extraLinks != nil || first.aggGen != 0 || first.aggVisGen != 0 {
+	if first.prev != nil || first.entry.node != nil || first.extraLinks != nil || first.extraLinkCount != 0 ||
+		first.extraLinkCap != 0 || first.aggGen != 0 || first.aggVisValid {
 		t.Fatalf("recycled slot retained state: %+v", *first)
 	}
 	second := scratch.allocNode(stackEntry{state: 4}, nil, 1)
