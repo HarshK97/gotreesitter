@@ -18,6 +18,14 @@ MAX_GRAMMARS="0"
 # grammars legitimately take much longer to generate (nix ~138s, make ~54s,
 # d ~180s, objc ~126s). 300s covers them with margin under Docker contention.
 GENERATE_TIMEOUT="${GENERATE_TIMEOUT:-300s}"
+# Opt-in floor regeneration: RATCHET_UPDATE=1 raises floors to observed;
+# RATCHET_REBASE=1 additionally replaces the metric set wholesale (pruning
+# grammars that no longer run). Default is verify-only.
+RATCHET_UPDATE="${RATCHET_UPDATE:-0}"
+RATCHET_REBASE="${RATCHET_REBASE:-0}"
+# Grammars skipped by default: bash and dart currently exceed the uint16
+# field-map table limit in grammargen assembly (generation-fatal).
+REAL_CORPUS_SKIP="${REAL_CORPUS_SKIP:-bash,dart}"
 SEED_DIR=""
 CONTAINER_SEED_DIR=""
 OFFLINE=0
@@ -55,7 +63,7 @@ Notes:
   - This wrapper sets:
       GTS_GRAMMARGEN_REAL_CORPUS_ENABLE=1
       GTS_GRAMMARGEN_REAL_CORPUS_ALLOW_PARTIAL=1
-      GTS_GRAMMARGEN_REAL_CORPUS_FLOORS_PATH=/tmp/real_corpus_parity_floors.json
+      GTS_GRAMMARGEN_REAL_CORPUS_FLOORS_PATH=/workspace/tmp_floors/real_corpus_parity_floors.json
 USAGE
 }
 
@@ -187,7 +195,7 @@ read -r -d '' CUSTOM_CMD <<EOF2 || true
 set -eo pipefail
 export PATH=/usr/local/go/bin:\$PATH
 mkdir -p /tmp/grammar_parity
-echo '{}' > /tmp/real_corpus_parity_floors.json
+mkdir -p /workspace/tmp_floors && cp /workspace/grammargen/testdata/real_corpus_parity_floors.json /workspace/tmp_floors/real_corpus_parity_floors.json
 
 SEED_DIR_IN_CONTAINER="$CONTAINER_SEED_DIR"
 OFFLINE_MODE="$OFFLINE"
@@ -249,7 +257,7 @@ if [[ "\$OFFLINE_MODE" != "1" ]]; then
   clone_repo cpon https://github.com/psvz/tree-sitter-cpon.git || true
   clone_repo textproto https://github.com/PorterAtGoogle/tree-sitter-textproto.git || true
   clone_repo promql https://github.com/MichaHoffmann/tree-sitter-promql.git || true
-  clone_repo gitignore https://github.com/shuber/tree-sitter-gitignore.git || true
+  clone_repo gitignore https://github.com/shunsambongi/tree-sitter-gitignore.git || true
   clone_repo eds https://github.com/uyha/tree-sitter-eds.git || true
   clone_repo go https://github.com/tree-sitter/tree-sitter-go.git || true
   clone_repo c https://github.com/tree-sitter/tree-sitter-c.git || true
@@ -267,7 +275,7 @@ if [[ "\$OFFLINE_MODE" != "1" ]]; then
   clone_repo elixir https://github.com/elixir-lang/tree-sitter-elixir.git || true
   clone_repo c_sharp https://github.com/tree-sitter/tree-sitter-c-sharp.git || true
   clone_repo ocaml https://github.com/tree-sitter/tree-sitter-ocaml.git || true
-  clone_repo dart https://github.com/UserNobworthy/tree-sitter-dart.git || true
+  clone_repo dart https://github.com/UserNobody14/tree-sitter-dart.git || true
   clone_repo scala https://github.com/tree-sitter/tree-sitter-scala.git || true
   clone_repo swift https://github.com/tree-sitter/tree-sitter-swift.git || true
   clone_repo haskell https://github.com/tree-sitter/tree-sitter-haskell.git || true
@@ -302,8 +310,10 @@ cd /workspace
   GTS_GRAMMARGEN_REAL_CORPUS_MAX_GRAMMARS=$MAX_GRAMMARS \
   GTS_GRAMMARGEN_REAL_CORPUS_GENERATE_TIMEOUT="$GENERATE_TIMEOUT" \
   GTS_GRAMMARGEN_REAL_CORPUS_ALLOW_PARTIAL=1 \
-  GTS_GRAMMARGEN_REAL_CORPUS_FLOORS_PATH=/tmp/real_corpus_parity_floors.json \
-  GTS_GRAMMARGEN_REAL_CORPUS_SKIP=rust,c_sharp,java,ruby,cpp,kotlin,css,scala,go_lang,c_lang,python,javascript,dockerfile,ocaml \
+  GTS_GRAMMARGEN_REAL_CORPUS_RATCHET_UPDATE="$RATCHET_UPDATE" \
+  GTS_GRAMMARGEN_REAL_CORPUS_RATCHET_REBASE="$RATCHET_REBASE" \
+  GTS_GRAMMARGEN_REAL_CORPUS_FLOORS_PATH="/workspace/tmp_floors/real_corpus_parity_floors.json" \
+  GTS_GRAMMARGEN_REAL_CORPUS_SKIP="$REAL_CORPUS_SKIP" \
   GOGC=50 GOMEMLIMIT=10GiB \
   go test ./grammargen -run '^TestMultiGrammarImportRealCorpusParity$' -count=1 -v -timeout 90m
 EOF2

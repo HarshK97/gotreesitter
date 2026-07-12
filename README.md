@@ -329,6 +329,10 @@ for _, tag := range tags {
 
 ## Benchmarks
 
+Canonical, linkable performance claims live in [BENCH.md](BENCH.md) — the
+pinned microbenchmark trio, the Go-vs-C fleet scoreboard, memory receipts,
+and the methodology that keeps them honest.
+
 The canonical public full-parse benchmark is `BenchmarkGoParseFullDFA`. It calls
 `Parser.Parse`, requires a complete root, and releases the materialized tree.
 `BenchmarkGoParseCoreDFA` is a separate parser-loop diagnostic that suppresses
@@ -426,6 +430,14 @@ Each `LangEntry` carries a `Quality` field:
 | `SetValues` (read `#set!` metadata from matches) | supported |
 
 All shipped highlight and tags queries compile (`156/156` highlight, `69/69` tags).
+
+## Repository layout note: the compat tier
+
+The root package carries ~177 `parser_result_<language>*.go` files — the
+C-faithful result-normalization tier that reshapes raw GLR output into the
+exact tree the C runtime selects. It is internal plumbing, oracle-gated per
+witness, and shrinks as certified engine mechanisms subsume shims. See
+[docs/compat-tier.md](docs/compat-tier.md).
 
 ## Known limitations
 
