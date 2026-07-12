@@ -26,16 +26,19 @@ type goCompatibilitySourceFlags struct {
 	trailingBoundary bool
 }
 
-// goCompatRuntimeMemoryBudgetStopReason forces a real runtime memory-budget
-// check and, when it trips, latches p.compatMemoryBudgetTripped. Every Go
-// compat call site that needs memory-budget awareness (the walk-internal
-// poller's memoryBudgetParser hook, and goCompatMemoryBudgetStopReason's
-// per-stage boundary check) goes through this instead of calling
+// compatRuntimeMemoryBudgetStopReason forces a real runtime memory-budget
+// check and, when it trips, latches p.compatMemoryBudgetTripped. Every
+// compat call site that needs memory-budget awareness — the Go compat
+// walk-internal poller's memoryBudgetParser hook and goCompatMemoryBudgetStopReason's
+// per-stage boundary check (this file / parser_result_go.go), and their JS/TS
+// fused-walk counterparts (javaScriptTypeScriptCompatMemoryBudgetStopReason
+// and the fused walk's own poller.memoryBudgetParser hook, parser_result_javascript_typescript.go)
+// — goes through this shared helper instead of calling
 // runtimeMemoryBudgetStopReasonNow directly, so a trip detected anywhere in
-// the Go compat pipeline is reliably surfaced later by
+// either compat pipeline is reliably surfaced later by
 // resultMaterializationStopReason (see compatMemoryBudgetTripped's doc
 // comment on the Parser struct for why a plain re-check is not enough).
-func (p *Parser) goCompatRuntimeMemoryBudgetStopReason() ParseStopReason {
+func (p *Parser) compatRuntimeMemoryBudgetStopReason() ParseStopReason {
 	if p == nil {
 		return ParseStopNone
 	}

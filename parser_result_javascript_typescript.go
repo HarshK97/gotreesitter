@@ -2,25 +2,104 @@ package gotreesitter
 
 import "bytes"
 
-func normalizeJavaScriptCompatibility(root *Node, source []byte, lang *Language) {
+// javaScriptTypeScriptCompatMemoryBudgetStopReason forces a real (unmasked)
+// memory-budget check for the JS/TS fused compat pipeline's stage boundaries
+// in normalizeJavaScriptCompatibility / normalizeTypeScriptTreeCompatibilityWithParser.
+// Mirrors (*Parser).goCompatMemoryBudgetStopReason (parser_result_go.go): the
+// JS/TS fused walk shared the identical containment gap the Go compat walk
+// had before the 2026-07-12 gocompat-walk-containment-gap fix — no stop
+// polling of any kind (no timeout, cancellation, or memory-budget check) —
+// so a parse that is already over budget (the parse loop stopped, or the
+// arena/runtime heap grew past budget during an earlier stage) would
+// otherwise normalize a partial tree with no guarantee of a consistent,
+// budget-honoring result.
+func (p *Parser) javaScriptTypeScriptCompatMemoryBudgetStopReason(arena *nodeArena) ParseStopReason {
+	if p == nil {
+		return ParseStopNone
+	}
+	if arena != nil && arena.budgetExhausted() {
+		return p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceArena)
+	}
+	return p.compatRuntimeMemoryBudgetStopReason()
+}
+
+// normalizeJavaScriptCompatibility drives JavaScript's post-build
+// compatibility pipeline. It mirrors normalizeGoReturnedTreeCompatibility's
+// containment discipline (parser_result_go.go): it is skipped entirely when
+// the parse already carries an active stop (timeout/cancellation) or an
+// already-tripped memory budget, and the fused walk plus the other
+// whole-tree passes below are wired with a parseStopPoller (timeout +
+// cancellation + runtime memory budget) at the same coarse, ~1024-node
+// stride the Go compat walk uses (parseStopPollMask), so a runaway tree can
+// no longer balloon heap growth budget-blind during result finalization.
+func normalizeJavaScriptCompatibility(root *Node, source []byte, p *Parser, lang *Language) ParseStopReason {
+	var arena *nodeArena
+	if root != nil {
+		arena = root.ownerArena
+	}
+	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
+		return reason
+	}
+	if reason := p.javaScriptTypeScriptCompatMemoryBudgetStopReason(arena); reason == ParseStopMemoryBudget {
+		return reason
+	}
 	normalizeJavaScriptProgramStart(root, lang)
+
+	poller := parseStopPoller{check: p.activeParseStopCheck(), memoryBudgetParser: p}
 	// Fused walk handles empty_statement, statement keywords (if/while),
 	// optional-chain leaves, call_expression precedence, and builds unary/
 	// binary candidate indexes — six separate full-tree walks collapsed into
 	// one walk + indexed rewrites.
-	normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedence(root, source, lang)
-	normalizeJavaScriptTrailingContinueComments(root, source, lang)
+	if _, reason := normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang, &poller); resultMaterializationShouldStop(reason) {
+		return reason
+	}
+	if reason := normalizeJavaScriptTrailingContinueComments(root, source, lang, &poller); resultMaterializationShouldStop(reason) {
+		return reason
+	}
+	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
+		return reason
+	}
+	if reason := p.javaScriptTypeScriptCompatMemoryBudgetStopReason(arena); reason == ParseStopMemoryBudget {
+		return reason
+	}
 	normalizeJavaScriptTopLevelExpressionStatementBounds(root, lang)
 	normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
 	normalizeJavaScriptTopLevelObjectLiterals(root, lang)
 	normalizeJavaScriptProgramEnd(root, source, lang)
+	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
+		return reason
+	}
+	return p.javaScriptTypeScriptCompatMemoryBudgetStopReason(arena)
 }
 
-func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, parser *Parser, lang *Language) {
+// normalizeTypeScriptTreeCompatibilityWithParser drives TypeScript/TSX's
+// post-build compatibility pipeline. It shares normalizeJavaScriptCompatibility's
+// containment discipline (see its doc comment above): skipped entirely when
+// the parse already carries an active stop or an already-tripped memory
+// budget, and the fused walk is wired with a parseStopPoller at the same
+// coarse ~1024-node stride the Go compat walk uses. Both the fast (default)
+// path and the metrics-recording path below share the same fused walk and
+// poller, so containment applies identically regardless of which path is
+// taken.
+func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, parser *Parser, lang *Language) ParseStopReason {
+	var arena *nodeArena
+	if root != nil {
+		arena = root.ownerArena
+	}
+	if reason := parser.activeParseStopReason(); parseStopReasonIsActive(reason) {
+		return reason
+	}
+	if reason := parser.javaScriptTypeScriptCompatMemoryBudgetStopReason(arena); reason == ParseStopMemoryBudget {
+		return reason
+	}
+	poller := parseStopPoller{check: parser.activeParseStopCheck(), memoryBudgetParser: parser}
 	recordPasses := parser != nil && parser.currentMaterializationTiming() != nil
 	if !recordPasses {
 		// Statement keyword and precedence normalizers share one indexed walk.
-		syntaxStats := normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang)
+		syntaxStats, reason := normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang, &poller)
+		if resultMaterializationShouldStop(reason) {
+			return reason
+		}
 		normalizeTypeScriptRecoveredTernaryGenericCallRoot(root, source, lang)
 		normalizeTypeScriptRecoveredNamespaceRoot(root, source, lang)
 		normalizeJavaScriptTopLevelDeclarationBounds(root, lang)
@@ -30,7 +109,10 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 			normalizeTypeScriptCompatibility(root, source, lang)
 		}
 		normalizeJavaScriptTopLevelExpressionStatementBounds(root, lang)
-		return
+		if reason := parser.activeParseStopReason(); parseStopReasonIsActive(reason) {
+			return reason
+		}
+		return parser.javaScriptTypeScriptCompatMemoryBudgetStopReason(arena)
 	}
 	run := func(name string, fn func() normalizationPassCounters) {
 		parser.runNamedNormalizationPass(name, func() bool { return true }, fn)
@@ -43,11 +125,14 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 	}
 	recordTypeScriptCompatSourceFlagMetrics(parser, typeScriptCompatSourceFlagsFor(source))
 
-	recordTypeScriptCompatCandidateMetrics(parser, root, lang)
+	if reason := recordTypeScriptCompatCandidateMetrics(parser, root, lang, &poller); resultMaterializationShouldStop(reason) {
+		return reason
+	}
 	var syntaxStats javaScriptTypeScriptSyntaxNormalizationStats
 	var haveSyntaxStats bool
+	var syntaxStopReason ParseStopReason
 	run("ts_statement_keyword_leaves", func() normalizationPassCounters {
-		syntaxStats = normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang)
+		syntaxStats, syntaxStopReason = normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang, &poller)
 		haveSyntaxStats = true
 		parser.recordNormalizationMetric("ts_syntax_precedence_index", 1, syntaxStats.indexBuilds, syntaxStats.indexNodesVisited, 0)
 		parser.recordNormalizationMetric("ts_empty_statement_candidates", 1, 1, syntaxStats.emptyStatement.nodesVisited, syntaxStats.emptyStatement.nodesRewritten)
@@ -58,6 +143,15 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 		parser.recordNormalizationMetric("ts_binary_precedence_candidates", 1, 1, syntaxStats.binary.nodesVisited, syntaxStats.binary.nodesRewritten)
 		return syntaxStats.statementKeyword
 	})
+	// resultMaterializationShouldStop (not parseStopReasonIsActive): the fused
+	// walk above may report ParseStopMemoryBudget, which parseStopReasonIsActive
+	// deliberately excludes. Skip every remaining metrics pass below once the
+	// walk itself has already bailed out — mirroring normalizeGoReturnedTreeCompatibility's
+	// per-stage bail-out discipline (parser_result_go.go) — rather than running
+	// more passes over a tree the walk stopped partway through.
+	if resultMaterializationShouldStop(syntaxStopReason) {
+		return syntaxStopReason
+	}
 	run("ts_empty_statement", func() normalizationPassCounters {
 		if haveSyntaxStats {
 			return syntaxStats.emptyStatement
@@ -121,6 +215,10 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 	runVoid("ts_top_level_expression_bounds", func() {
 		normalizeJavaScriptTopLevelExpressionStatementBounds(root, lang)
 	})
+	if reason := parser.activeParseStopReason(); parseStopReasonIsActive(reason) {
+		return reason
+	}
+	return parser.javaScriptTypeScriptCompatMemoryBudgetStopReason(arena)
 }
 
 type typeScriptCompatSourceFlags struct {
@@ -292,11 +390,17 @@ type typeScriptCompatCandidateMetrics struct {
 	namespaceNodes    uint64
 }
 
-func recordTypeScriptCompatCandidateMetrics(parser *Parser, root *Node, lang *Language) {
+// recordTypeScriptCompatCandidateMetrics is diagnostic-only (only reached
+// when parser.currentMaterializationTiming() != nil): it does its own
+// separate full-tree walk purely to record per-category candidate counts
+// before the fused walk runs. Threading poller through it (like every other
+// whole-tree pass in this file) means enabling detailed normalization
+// metrics can never itself create an unbounded, budget-blind walk.
+func recordTypeScriptCompatCandidateMetrics(parser *Parser, root *Node, lang *Language, poller *parseStopPoller) ParseStopReason {
 	if parser == nil || root == nil || lang == nil {
-		return
+		return ParseStopNone
 	}
-	metrics := typeScriptCompatCandidateMetricsFor(root, lang)
+	metrics, reason := typeScriptCompatCandidateMetricsFor(root, lang, poller)
 	parser.recordNormalizationMetric("ts_candidates_index", 1, 1, metrics.nodesVisited, 0)
 	parser.recordNormalizationMetric("ts_candidates_call_expression", 1, 1, metrics.callExpressions, 0)
 	parser.recordNormalizationMetric("ts_candidates_unary_expression", 1, 1, metrics.unaryExpressions, 0)
@@ -305,12 +409,20 @@ func recordTypeScriptCompatCandidateMetrics(parser *Parser, root *Node, lang *La
 	parser.recordNormalizationMetric("ts_candidates_import_nodes", 1, 1, metrics.importNodes, 0)
 	parser.recordNormalizationMetric("ts_candidates_member_nodes", 1, 1, metrics.memberNodes, 0)
 	parser.recordNormalizationMetric("ts_candidates_namespace_nodes", 1, 1, metrics.namespaceNodes, 0)
+	return reason
 }
 
-func typeScriptCompatCandidateMetricsFor(root *Node, lang *Language) typeScriptCompatCandidateMetrics {
+func typeScriptCompatCandidateMetricsFor(root *Node, lang *Language, poller *parseStopPoller) (typeScriptCompatCandidateMetrics, ParseStopReason) {
 	var metrics typeScriptCompatCandidateMetrics
+	var stopReason ParseStopReason
 	syms := typeScriptCompatCandidateSymbolsFor(lang)
-	walkResultTreeDenseFirst(root, func(n *Node) {
+	walkResultTreeUntil(root, func(n *Node) bool {
+		if poller != nil {
+			if reason := poller.poll(); resultMaterializationShouldStop(reason) {
+				stopReason = reason
+				return false
+			}
+		}
 		metrics.nodesVisited++
 		switch {
 		case syms.hasCallExpression && n.symbol == syms.callExpression:
@@ -338,8 +450,9 @@ func typeScriptCompatCandidateMetricsFor(root *Node, lang *Language) typeScriptC
 			(syms.hasIndexedAccessType && n.symbol == syms.indexedAccessType):
 			metrics.typeNodes++
 		}
+		return true
 	})
-	return metrics
+	return metrics, stopReason
 }
 
 type typeScriptCompatCandidateSymbols struct {
@@ -741,19 +854,28 @@ func setStackEntryStart(entry stackEntry, startByte uint32, startPoint Point) {
 	}
 }
 
-func normalizeJavaScriptTrailingContinueComments(root *Node, source []byte, lang *Language) {
+func normalizeJavaScriptTrailingContinueComments(root *Node, source []byte, lang *Language, poller *parseStopPoller) ParseStopReason {
 	if root == nil || lang == nil || lang.Name != "javascript" || len(source) == 0 {
-		return
+		return ParseStopNone
 	}
 	// Source-level gate: this pass only acts on continue_statement nodes
 	// with trailing comments. If source has neither "continue" nor "//",
 	// no candidate exists and the walk is wasted on large files like jquery.
 	if !bytes.Contains(source, []byte("continue")) || !bytes.Contains(source, []byte("//")) {
-		return
+		return ParseStopNone
 	}
-	walkResultTreeDenseFirst(root, func(n *Node) {
+	var stopReason ParseStopReason
+	walkResultTreeUntil(root, func(n *Node) bool {
+		if poller != nil {
+			if reason := poller.poll(); resultMaterializationShouldStop(reason) {
+				stopReason = reason
+				return false
+			}
+		}
 		normalizeJavaScriptTrailingContinueCommentSiblings(n, source, lang)
+		return true
 	})
+	return stopReason
 }
 
 func normalizeJavaScriptTrailingContinueCommentSiblings(parent *Node, source []byte, lang *Language) {
@@ -910,13 +1032,23 @@ type javaScriptTypeScriptSyntaxNormalizationStats struct {
 }
 
 func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedence(root *Node, source []byte, lang *Language) {
-	_ = normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang)
+	_, _ = normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang, nil)
 }
 
-func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root *Node, source []byte, lang *Language) javaScriptTypeScriptSyntaxNormalizationStats {
+// normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats
+// drives the fused walk (rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex)
+// and its follow-on candidate rewrites. poller, when non-nil, is threaded
+// through the fused walk and the unary-rewrite-triggered index rebuild
+// (buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex) — both real
+// whole-tree passes — so a timeout, cancellation, or runtime memory-budget
+// trip anywhere in this call chain aborts the remaining work instead of
+// running unbounded to completion. poller == nil (every caller other than
+// normalizeJavaScriptCompatibility / normalizeTypeScriptTreeCompatibilityWithParser)
+// preserves the exact prior unbounded behavior.
+func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root *Node, source []byte, lang *Language, poller *parseStopPoller) (javaScriptTypeScriptSyntaxNormalizationStats, ParseStopReason) {
 	var stats javaScriptTypeScriptSyntaxNormalizationStats
 	if root == nil || lang == nil {
-		return stats
+		return stats, ParseStopNone
 	}
 	switch lang.Name {
 	case "javascript", "typescript", "tsx":
@@ -928,7 +1060,7 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 		stats.binary = precedence.binary
 		stats.indexBuilds = precedence.indexBuilds
 		stats.indexNodesVisited = precedence.indexNodesVisited
-		return stats
+		return stats, ParseStopNone
 	}
 	callSym, hasCallSym := symbolByName(lang, "call_expression")
 	unarySym, hasUnarySym := symbolByName(lang, "unary_expression")
@@ -962,7 +1094,7 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 		}
 	}
 
-	index := rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex(
+	index, reason := rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex(
 		root, source, lang,
 		callSym, hasCallSym, unarySym, hasUnarySym, binarySym, hasBinarySym,
 		emptyStatementSym, hasEmptyStatement, semicolonSym, semicolonNamed, hasSemicolon,
@@ -973,6 +1105,7 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 		optionalChainSym, optionalChainTokenSym, optionalChainTokenNamed, enableOptionalChain,
 		dynamicImportSym, importKeywordSym, enableDynamicImport,
 		typeScriptCtx,
+		poller,
 	)
 	stats.emptyStatement = index.emptyStatement
 	stats.existentialType = index.existentialType
@@ -981,15 +1114,26 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 	stats.typeScriptCompatibility = index.typeScriptCompatibility
 	stats.indexBuilds += index.builds
 	stats.indexNodesVisited += index.nodesVisited
+	// resultMaterializationShouldStop (not a plain != ParseStopNone check, for
+	// clarity/consistency with every other bail-out in this file): the fused
+	// walk stopped mid-traversal, so unaryCandidates/binaryCandidates only
+	// cover a prefix of the tree — stop here rather than rewriting a partial,
+	// possibly misleading candidate list.
+	if resultMaterializationShouldStop(reason) {
+		return stats, reason
+	}
 	if hasUnarySym {
 		stats.unary = rewriteJavaScriptTypeScriptPrecedenceCandidates(index.unaryCandidates, func(n *Node) *Node {
 			return rewriteJavaScriptTypeScriptUnaryPrecedenceWithSymbol(n, lang, unarySym)
 		})
 		if stats.unary.nodesRewritten != 0 && hasBinarySym {
-			rebuild := buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex(root, unarySym, binarySym)
+			rebuild, rebuildReason := buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex(root, unarySym, binarySym, poller)
 			stats.indexBuilds += rebuild.builds
 			stats.indexNodesVisited += rebuild.nodesVisited
 			index.binaryCandidates = rebuild.binaryCandidates
+			if resultMaterializationShouldStop(rebuildReason) {
+				return stats, rebuildReason
+			}
 		}
 	}
 	if hasBinarySym {
@@ -997,7 +1141,7 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 			return rewriteJavaScriptTypeScriptBinaryPrecedenceWithSymbol(n, lang, binarySym)
 		})
 	}
-	return stats
+	return stats, ParseStopNone
 }
 
 func normalizeJavaScriptTypeScriptPrecedenceWithDetailedStats(root *Node, lang *Language) javaScriptTypeScriptPrecedenceStats {
@@ -1034,7 +1178,7 @@ func normalizeJavaScriptTypeScriptPrecedenceWithDetailedStats(root *Node, lang *
 		return rewriteJavaScriptTypeScriptUnaryPrecedenceWithSymbol(n, lang, unarySym)
 	})
 	if stats.unary.nodesRewritten != 0 {
-		rebuild := buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex(root, unarySym, binarySym)
+		rebuild, _ := buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex(root, unarySym, binarySym, nil)
 		stats.indexBuilds += rebuild.builds
 		stats.indexNodesVisited += rebuild.nodesVisited
 		index.binaryCandidates = rebuild.binaryCandidates
@@ -1085,10 +1229,11 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	importKeywordSym Symbol,
 	enableDynamicImport bool,
 	typeScriptCtx *typeScriptNormalizationContext,
-) javaScriptTypeScriptUnaryBinaryPrecedenceIndex {
+	poller *parseStopPoller,
+) (javaScriptTypeScriptUnaryBinaryPrecedenceIndex, ParseStopReason) {
 	var index javaScriptTypeScriptUnaryBinaryPrecedenceIndex
 	if root == nil {
-		return index
+		return index, ParseStopNone
 	}
 	// If none of the symbols this walk targets exists in the language, there
 	// is nothing to do; returning early avoids materializing final-ref
@@ -1098,7 +1243,7 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 		!hasEmptyStatement && !hasExistentialType &&
 		!hasIfStmt && !hasWhileStmt && !enableDynamicImport &&
 		typeScriptCtx == nil {
-		return index
+		return index, ParseStopNone
 	}
 	index.builds = 1
 	if typeScriptCtx != nil {
@@ -1118,10 +1263,31 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 			typeScriptCtx.canRewriteGenericArrows ||
 			typeScriptCtx.canRewriteClassDeclarations ||
 			typeScriptCtx.canRewriteDestructuring)
+	// stopReason/stopped let this walk bail out mid-traversal — checked once
+	// per node visited, at the coarse, poller-throttled cadence poll() applies
+	// (parseStopPollMask, the same ~1024-node stride walkGoCompatSubtree uses,
+	// see parser_result_go_compat.go) — on timeout, cancellation, or a runtime
+	// memory-budget trip. Every loop below re-checks the cheap `stopped` flag
+	// before doing further per-child rewrite work, so a trip anywhere in the
+	// recursion unwinds the whole walk immediately instead of continuing to
+	// materialize partial candidate lists (see the 2026-07-12
+	// gocompat-walk-containment-gap finding, which flagged this fused walk as
+	// sharing the Go compat walk's containment gap: before this, this walk
+	// polled nothing at all — no timeout, cancellation, or memory-budget
+	// check of any kind).
+	var stopReason ParseStopReason
+	stopped := false
 	var walk func(*Node)
 	walk = func(n *Node) {
-		if n == nil {
+		if n == nil || stopped {
 			return
+		}
+		if poller != nil {
+			if reason := poller.poll(); resultMaterializationShouldStop(reason) {
+				stopReason = reason
+				stopped = true
+				return
+			}
 		}
 		index.nodesVisited++
 		switch n.symbol {
@@ -1163,6 +1329,9 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 		if n.childIndex <= finalChildSidecarIndexBase && n.ownerArena != nil {
 			childCount := resultChildCount(n)
 			for i := 0; i < childCount; i++ {
+				if stopped {
+					break
+				}
 				child := resultChildAt(n, i)
 				if child == nil {
 					continue
@@ -1177,6 +1346,9 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 					}
 				}
 				walk(child)
+				if stopped {
+					break
+				}
 				switch child.symbol {
 				case unarySym:
 					if hasUnarySym {
@@ -1199,6 +1371,9 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 
 		children := n.children
 		for i, child := range children {
+			if stopped {
+				break
+			}
 			if child == nil {
 				continue
 			}
@@ -1277,6 +1452,9 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 				}
 			}
 			walk(child)
+			if stopped {
+				break
+			}
 			switch child.symbol {
 			case unarySym:
 				if hasUnarySym {
@@ -1296,7 +1474,7 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 		}
 	}
 	walk(root)
-	return index
+	return index, stopReason
 }
 
 func normalizeJavaScriptTypeScriptEmptyStatementLeafWithSymbolChanged(node *Node, source []byte, semicolonSym Symbol, semicolonNamed bool) bool {
@@ -1646,13 +1824,30 @@ type javaScriptTypeScriptUnaryBinaryPrecedenceIndex struct {
 	nodesVisited            uint64
 }
 
-func buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex(root *Node, unarySym, binarySym Symbol) javaScriptTypeScriptUnaryBinaryPrecedenceIndex {
+// buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex re-scans the whole tree
+// for unary/binary candidates after a unary rewrite has changed the tree
+// shape (see its call site above): a real, reachable whole-tree pass, not
+// just a diagnostic one, so poller is threaded through it exactly like the
+// fused walk it follows — a timeout, cancellation, or runtime memory-budget
+// trip aborts the rescan immediately rather than completing it budget-blind.
+// poller == nil preserves the exact prior unbounded behavior.
+func buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex(root *Node, unarySym, binarySym Symbol, poller *parseStopPoller) (javaScriptTypeScriptUnaryBinaryPrecedenceIndex, ParseStopReason) {
 	var index javaScriptTypeScriptUnaryBinaryPrecedenceIndex
 	if root == nil {
-		return index
+		return index, ParseStopNone
 	}
 	index.builds = 1
-	walkResultTreePostorder(root, func(n *Node) {
+	var stopReason ParseStopReason
+	walkResultTreePostorderUntil(root, func() bool {
+		if poller == nil {
+			return false
+		}
+		if reason := poller.poll(); resultMaterializationShouldStop(reason) {
+			stopReason = reason
+			return true
+		}
+		return false
+	}, func(n *Node) {
 		index.nodesVisited++
 		if n == nil {
 			return
@@ -1679,7 +1874,7 @@ func buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex(root *Node, unarySym, b
 			}
 		}
 	})
-	return index
+	return index, stopReason
 }
 
 func rewriteJavaScriptTypeScriptPrecedenceCandidates(candidates []javaScriptTypeScriptPrecedenceCandidate, rewrite func(*Node) *Node) normalizationPassCounters {

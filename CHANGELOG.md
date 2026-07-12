@@ -17,6 +17,15 @@ for tags and release notes while still in `0.x`.
   trees after the parse loop had stopped cleanly. Clean-parse trees are
   byte-identical. The JS/TS fused walk has the same blind spot (no stop
   polling at all) and is tracked separately.
+- The JS/TS fused compat walk (and its unary/binary candidate-index
+  rebuild) now carries the same containment as the Go compat walk above:
+  it is skipped when the parse already carries a budget stop, polls
+  timeout/cancellation/memory-budget at the same coarse, ~1024-node
+  stride, and surfaces the stop reason via the same sticky trip flag.
+  Previously this walk polled nothing at all — no timeout, cancellation,
+  or memory-budget check of any kind — and could run to completion
+  budget-blind regardless of tree size. Clean-parse JS/TS trees are
+  byte-identical; no measurable regression on the canonical Go benchmark.
 
 ## [0.27.0] - 2026-07-12
 ### Performance

@@ -229,15 +229,17 @@ type Parser struct {
 	parseRuntimeMemoryHardCeilingBytes int64
 	parseMemoryBudgetDiag              parseMemoryBudgetDiagnostic
 	parseMemoryBudgetDiagActive        bool
-	// compatMemoryBudgetTripped latches true the moment Go compat
-	// normalization (normalizeGoReturnedTreeCompatibility /
-	// walkGoCompatSubtree's poller) observes a runtime memory-budget trip.
-	// The runtime heap/sys budget check is inherently non-monotonic (GC can
-	// make heap growth appear to recede), unlike arena.budgetExhausted(),
-	// which stays true for the rest of the parse once tripped — so without
-	// this sticky flag, a later, throttled resultMaterializationStopReason
-	// recheck (finalizeTree, after Go compat returns) could miss the trip
-	// entirely and stamp the tree with ParseStopAccepted despite Go compat
+	// compatMemoryBudgetTripped latches true the moment compat normalization
+	// — Go's (normalizeGoReturnedTreeCompatibility / walkGoCompatSubtree's
+	// poller) or JS/TS's fused walk (normalizeJavaScriptCompatibility /
+	// normalizeTypeScriptTreeCompatibilityWithParser / rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex's
+	// poller) — observes a runtime memory-budget trip. The runtime heap/sys
+	// budget check is inherently non-monotonic (GC can make heap growth
+	// appear to recede), unlike arena.budgetExhausted(), which stays true for
+	// the rest of the parse once tripped — so without this sticky flag, a
+	// later, throttled resultMaterializationStopReason recheck (finalizeTree,
+	// after compat normalization returns) could miss the trip entirely and
+	// stamp the tree with ParseStopAccepted despite compat normalization
 	// having already bailed out mid-walk. See resultMaterializationStopReason.
 	compatMemoryBudgetTripped    bool
 	denseLimit                   int

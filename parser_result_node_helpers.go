@@ -184,6 +184,46 @@ func walkResultTreePostorder(root *Node, visit func(*Node)) {
 	walk(root)
 }
 
+// walkResultTreePostorderUntil performs a postorder traversal like
+// walkResultTreePostorder, but calls shouldStop before descending into each
+// node's children — not after, since a postorder visit callback only runs
+// once a node's children are already done, which would be too late to avoid
+// doing that work — and aborts the entire walk (propagating the abort up
+// through every recursion level immediately) the moment shouldStop reports
+// true. shouldStop == nil disables the check entirely (equivalent to
+// walkResultTreePostorder). Returns false iff the walk was aborted early
+// rather than completed.
+func walkResultTreePostorderUntil(root *Node, shouldStop func() bool, visit func(*Node)) bool {
+	if visit == nil {
+		return true
+	}
+	var walk func(*Node) bool
+	walk = func(n *Node) bool {
+		if n == nil {
+			return true
+		}
+		if shouldStop != nil && shouldStop() {
+			return false
+		}
+		if n.ownerArena == nil || n.childIndex > finalChildSidecarIndexBase {
+			for _, child := range n.children {
+				if !walk(child) {
+					return false
+				}
+			}
+		} else {
+			for i := 0; i < resultChildCount(n); i++ {
+				if !walk(resultChildAt(n, i)) {
+					return false
+				}
+			}
+		}
+		visit(n)
+		return true
+	}
+	return walk(root)
+}
+
 func walkResultTreeSidecarFirst(root *Node, visit func(*Node)) {
 	if visit == nil {
 		return

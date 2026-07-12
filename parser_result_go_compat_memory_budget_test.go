@@ -12,7 +12,10 @@ import (
 // excludes ParseStopMemoryBudget), so a C-recovery-widened Go tree's compat
 // walk could balloon heap growth during result finalization independent of
 // whatever the parse loop itself already enforced. The fix threads
-// (*Parser).goCompatRuntimeMemoryBudgetStopReason into the walk's poller
+// (*Parser).compatRuntimeMemoryBudgetStopReason (renamed from
+// goCompatRuntimeMemoryBudgetStopReason once the JS/TS fused walk started
+// sharing it — see parser_result_javascript_typescript_memory_budget_test.go)
+// into the walk's poller
 // (parseStopPoller.memoryBudgetParser) and into per-stage boundary checks in
 // normalizeGoReturnedTreeCompatibility (parser_result_go.go), and latches
 // compatMemoryBudgetTripped so a trip detected there is reliably surfaced by

@@ -60,7 +60,7 @@ func (p *Parser) goCompatMemoryBudgetStopReason(arena *nodeArena) ParseStopReaso
 	if arena != nil && arena.budgetExhausted() {
 		return p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceArena)
 	}
-	return p.goCompatRuntimeMemoryBudgetStopReason()
+	return p.compatRuntimeMemoryBudgetStopReason()
 }
 
 func normalizeGoSourceFileRoot(root *Node, source []byte, p *Parser) {
