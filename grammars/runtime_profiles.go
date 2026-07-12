@@ -89,6 +89,16 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 			SkipCompleteAcceptedErrorRetry: true,
 		},
 	},
+	// Tcl's complete accepted-error trees and first error-bearing no-stacks
+	// retry are authoritative for the certified corpus. Later widened passes
+	// repeat the same failure without advancing the selected tree.
+	"tcl": {
+		blobSHA256: mustRuntimeProfileSHA256("4c331e38860001c18b737f6be508f4b09f230c4b9ff95f4b4d12bdb00c176ad7"),
+		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
+			SkipCompleteAcceptedErrorRetry: true,
+			FreshErrorNoStacksMaxPasses:    1,
+		},
+	},
 	// Haskell's expression-list repeat has one exact comma row where C folds
 	// the reduce/repetition-shift pair deterministically. Retaining both arms
 	// grows a new GSS frontier for every list element.

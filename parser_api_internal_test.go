@@ -887,6 +887,91 @@ func TestCompleteAcceptedErrorRetrySkipRequiresCertification(t *testing.T) {
 	}
 }
 
+func certifiedFreshErrorNoStacksTestTree(profile bool, sourceLen int) *Tree {
+	lang := &Language{Name: "synthetic"}
+	if profile {
+		lang.FullParseAcceptedErrorRetryProfile.FreshErrorNoStacksMaxPasses = 1
+	}
+	return &Tree{
+		language: lang,
+		root: &Node{
+			endByte: uint32(sourceLen / 2),
+			flags:   nodeFlagHasError,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:       ParseStopNoStacksAlive,
+			Truncated:        true,
+			SourceLen:        uint32(sourceLen),
+			ExpectedEOFByte:  uint32(sourceLen),
+			RootEndByte:      uint32(sourceLen / 2),
+			LastTokenEndByte: uint32(sourceLen/2 + 1),
+			MaxStacksSeen:    8,
+			NodesAllocated:   100,
+		},
+	}
+}
+
+func TestCertifiedFreshErrorNoStacksRetryPassLimitScope(t *testing.T) {
+	const sourceLen = 128
+	eligible := certifiedFreshErrorNoStacksTestTree(true, sourceLen)
+	if got := certifiedFreshErrorNoStacksRetryPassLimit(eligible, sourceLen, fullParseRetryOriginFresh); got != 1 {
+		t.Fatalf("fresh certified retry limit = %d, want 1", got)
+	}
+	if got := certifiedFreshErrorNoStacksRetryPassLimit(eligible, sourceLen, fullParseRetryOriginIncremental); got != 0 {
+		t.Fatalf("incremental certified retry limit = %d, want 0", got)
+	}
+	if got := certifiedFreshErrorNoStacksRetryPassLimit(certifiedFreshErrorNoStacksTestTree(false, sourceLen), sourceLen, fullParseRetryOriginFresh); got != 0 {
+		t.Fatalf("uncertified retry limit = %d, want 0", got)
+	}
+	clean := certifiedFreshErrorNoStacksTestTree(true, sourceLen)
+	clean.root.flags = 0
+	if got := certifiedFreshErrorNoStacksRetryPassLimit(clean, sourceLen, fullParseRetryOriginFresh); got != 0 {
+		t.Fatalf("clean no-stacks retry limit = %d, want 0", got)
+	}
+	accepted := certifiedFreshErrorNoStacksTestTree(true, sourceLen)
+	accepted.parseRuntime.StopReason = ParseStopAccepted
+	if got := certifiedFreshErrorNoStacksRetryPassLimit(accepted, sourceLen, fullParseRetryOriginFresh); got != 0 {
+		t.Fatalf("accepted retry limit = %d, want 0", got)
+	}
+}
+
+func TestCertifiedFreshErrorNoStacksRetryPassLimitScheduling(t *testing.T) {
+	const sourceLen = 128
+	source := make([]byte, sourceLen)
+	parser := &Parser{}
+	initial := certifiedFreshErrorNoStacksTestTree(true, sourceLen)
+	var calls int
+	result := parser.retryFullParse(source, 8, initial, func(maxStacks, maxMergePerKeyOverride, maxNodes int) *Tree {
+		calls++
+		return certifiedFreshErrorNoStacksTestTree(true, sourceLen)
+	})
+	if calls != 1 {
+		t.Fatalf("certified retry calls = %d, want 1", calls)
+	}
+	if result == nil {
+		t.Fatal("certified retry returned nil tree")
+	}
+	calls = 0
+	parser.retryFullParse(source, 8, certifiedFreshErrorNoStacksTestTree(true, sourceLen), func(maxStacks, maxMergePerKeyOverride, maxNodes int) *Tree {
+		calls++
+		return certifiedFreshErrorNoStacksTestTree(true, sourceLen)
+	})
+	if calls != 0 {
+		t.Fatalf("second certified retry calls = %d, want shared per-operation limit", calls)
+	}
+
+	parser = &Parser{}
+	initial = certifiedFreshErrorNoStacksTestTree(false, sourceLen)
+	calls = 0
+	parser.retryFullParse(source, 8, initial, func(maxStacks, maxMergePerKeyOverride, maxNodes int) *Tree {
+		calls++
+		return certifiedFreshErrorNoStacksTestTree(false, sourceLen)
+	})
+	if calls <= 1 {
+		t.Fatalf("uncertified retry calls = %d, want conservative ladder", calls)
+	}
+}
+
 func TestJavaAcceptedErrorRetryUsesWideMergeRetry(t *testing.T) {
 	errChild := &Node{
 		symbol: errorSymbol,

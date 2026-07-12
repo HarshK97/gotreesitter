@@ -32,7 +32,7 @@ func TestBuiltinExternalScannerRetryProfilesAttach(t *testing.T) {
 }
 
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	if got, want := len(builtinLanguageRuntimeProfiles), 13; got != want {
+	if got, want := len(builtinLanguageRuntimeProfiles), 14; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -109,12 +109,16 @@ func TestBuiltinCompleteAcceptedErrorRetryProfilesAttach(t *testing.T) {
 		{name: "odin", load: OdinLanguage},
 		{name: "rego", load: RegoLanguage},
 		{name: "scss", load: ScssLanguage},
+		{name: "tcl", load: TclLanguage},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			profile := tt.load().FullParseAcceptedErrorRetryProfile
 			if !profile.SkipCompleteAcceptedErrorRetry {
 				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want skip-complete certification", profile)
+			}
+			if tt.name == "tcl" && profile.FreshErrorNoStacksMaxPasses != 1 {
+				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want one fresh no-stacks retry", profile)
 			}
 		})
 	}
@@ -184,7 +188,7 @@ func TestBuiltinJavaAcceptedErrorRetryProfileRequiresCertifiedBlob(t *testing.T)
 }
 
 func TestBuiltinCompleteAcceptedErrorRetryProfileRequiresCertifiedBlob(t *testing.T) {
-	for _, name := range []string{"caddy", "haxe", "kdl", "odin", "rego", "scss"} {
+	for _, name := range []string{"caddy", "haxe", "kdl", "odin", "rego", "scss", "tcl"} {
 		t.Run(name, func(t *testing.T) {
 			lang := &gotreesitter.Language{Name: name}
 			if attachBuiltinLanguageRuntimeProfile(name, sha256.Sum256([]byte("uncertified")), lang) {
