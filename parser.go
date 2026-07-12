@@ -195,6 +195,7 @@ type Parser struct {
 	// live on gssNode (aggGen/aggCost/aggVis), the engine analogue of C
 	// StackNode.error_cost / node_count maintained at push, making
 	// ts_stack_error_cost-equivalent reads O(1) instead of O(stack depth).
+	// Cleared and capacity-bounded at parse end so it cannot retain GSS slabs.
 	cPrefixPath     []*gssNode
 	forceRawSpanAll bool
 	// leafInternByLang enables canonical leaf interning for this language even
@@ -1408,6 +1409,7 @@ func resetSnippetParser(parser *Parser) {
 	if parser == nil {
 		return
 	}
+	resetGSSPrefixPath(&parser.cPrefixPath)
 	parser.reparseFactory = nil
 	parser.recoveryParser = nil
 	parser.skipRecoveryReparse = false
@@ -4380,6 +4382,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		// attribution are all complete. Do this after captureArenaStats so the
 		// returned runtime/breakdown continue to describe parse-time allocation.
 		arena.reclaimRawShapeStorage()
+		resetGSSPrefixPath(&p.cPrefixPath)
 		return tree
 	}
 	finalize := func(treeStacks []glrStack, stopReason ParseStopReason) *Tree {

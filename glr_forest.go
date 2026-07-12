@@ -2843,7 +2843,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 						for _, ex := range children[reducedEnd:] {
 							extra := (*Node)(ex.node)
 							extra.parseState = gotoState
-							nodeBumpEquivVersion(extra)
+							nodeBumpEquivVersionMetadata(extra)
 							exEnd := extra.endByte
 							top = coalesceForestWithRawAndAlternatives(p, arena, &curIndex, slab, gotoState, exEnd, top,
 								stackEntry{node: ex.node, state: gotoState, kind: stackEntryKindNode},

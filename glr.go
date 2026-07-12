@@ -161,7 +161,8 @@ type glrMergeScratch struct {
 	cErrorCost        map[*Node]glrCErrorCostEntry
 	// cPrefixPath is the descent scratch for merge-side GSS prefix-aggregate
 	// fills (cStackPrefixCostForMerge, parser_recover_c.go); the aggregates
-	// live on gssNode, validated against gssPrefixAggGen.
+	// live on gssNode, validated against gssPrefixAggGen. reset clears the full
+	// backing capacity so pooled scratch cannot retain GSS slabs.
 	cPrefixPath []*gssNode
 	// spineVisit is the reusable descent scratch for the spine-equality memo
 	// (gssSpineEqualMemo): the pairs walked before the deciding position, so the
@@ -3377,10 +3378,15 @@ func stackEntryNodesEquivalentIgnoringDynamic(a, b *Node) bool {
 
 func setGSSMainLink(n *gssNode, i int, prev *gssNode, entry stackEntry) {
 	if i == 0 {
-		// Rewriting link 0 changes n's prev chain and payload, so every
-		// cached GSS prefix aggregate at or above n is stale (see
-		// gssPrefixAggGen, parser_recover_c.go).
-		gssPrefixAggGen.Add(1)
+		// Recovery-prefix aggregates depend only on the link-0 predecessor and
+		// the full-Node payload's error-cost / visible-count contribution. A
+		// same-predecessor rewrite of the exact same Node (or of two compact
+		// entries, which both contribute zero here) changes parser metadata but
+		// not either aggregate. Keep the cache in that explicit identity case;
+		// every other rewrite remains conservatively globally invalidating.
+		if n.prev != prev || stackEntryNode(n.entry) != stackEntryNode(entry) {
+			gssPrefixAggGen.Add(1)
+		}
 		n.prev = prev
 		n.entry = entry
 		return
@@ -5022,7 +5028,7 @@ func (s *glrMergeScratch) allocatedBytes() int64 {
 	if s == nil {
 		return 0
 	}
-	return s.resultBytes + s.slotBytes + s.largeSlotBytes + s.equivCacheBytes + s.stackEquivBytes + s.spineEquivBytes + s.frontierHashBytes + s.shapePrefixBytes + s.cleanZeroBytes
+	return s.resultBytes + s.slotBytes + s.largeSlotBytes + s.equivCacheBytes + s.stackEquivBytes + s.spineEquivBytes + s.frontierHashBytes + s.shapePrefixBytes + s.cleanZeroBytes + int64(cap(s.cPrefixPath))*int64(unsafe.Sizeof((*gssNode)(nil)))
 }
 
 func (s *glrMergeScratch) reset() {
@@ -5063,6 +5069,7 @@ func (s *glrMergeScratch) reset() {
 	} else if len(s.cErrorCost) > 0 {
 		clear(s.cErrorCost)
 	}
+	resetGSSPrefixPath(&s.cPrefixPath)
 	// shapePrefixEpoch is intentionally NOT reset here: like equivEpoch it
 	// increases monotonically across parses so retained array entries can never
 	// alias into a fresh parse (reset would restart the epoch at 1 and collide

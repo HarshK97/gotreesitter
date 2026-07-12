@@ -1429,24 +1429,40 @@ func (p *Parser) cNodeErrorCost(n *Node) uint32 {
 // prefix root..node inclusive. gssNode prev/entry links are write-once at
 // allocation except setGSSMainLink (link-0 rewrite), and node payload
 // contents mutate only through nodeBumpEquivVersion call sites; both choke
-// points bump gssPrefixAggGen, so an aggregate with a matching generation is
-// exactly the full-walk answer. allocNode zeroes the gens on every (possibly
+// points invalidate gssPrefixAggGen whenever recovery contributions can
+// change, so an aggregate with a matching generation is exactly the full-walk
+// answer. Metadata-only node changes and identity-preserving link rewrites do
+// not affect these aggregates. allocNode zeroes the gens on every (possibly
 // slab-recycled) node and the generation counter starts at 1, so stale or
 // fresh nodes can never validate.
 // ---------------------------------------------------------------------------
 
 // gssPrefixAggGen is the global invalidation generation for the GSS prefix
 // aggregates stored on gssNode (aggGen/aggCost/aggVisGen/aggVis). Bumped by
-// nodeBumpEquivVersion (any in-place node content mutation, tree.go) and
-// setGSSMainLink link-0 rewrites (glr.go). Global rather than per-parser
-// because nodeBumpEquivVersion has no parser in scope; cross-parser
-// over-invalidation only costs a rebuild, never staleness. Initialized to 1
-// so the zero value of gssNode.aggGen / aggVisGen (fresh or slab-cleared
-// nodes) can never validate.
+// recovery-relevant nodeBumpEquivVersion mutations (tree.go) and link-0
+// rewrites that change the predecessor or full-Node payload (glr.go). Global
+// rather than per-parser because nodeBumpEquivVersion has no parser in scope;
+// cross-parser over-invalidation only costs a rebuild, never staleness.
+// Initialized to 1 so the zero value of gssNode.aggGen / aggVisGen (fresh or
+// slab-cleared nodes) can never validate.
 var gssPrefixAggGen atomic.Uint64
+
+const maxRetainedGSSPrefixPath = 4 * 1024
 
 func init() {
 	gssPrefixAggGen.Store(1)
+}
+
+func resetGSSPrefixPath(path *[]*gssNode) {
+	if path == nil || cap(*path) == 0 {
+		return
+	}
+	if cap(*path) > maxRetainedGSSPrefixPath {
+		*path = nil
+		return
+	}
+	clear((*path)[:cap(*path)])
+	*path = (*path)[:0]
 }
 
 // cStackPrefixAgg returns the cumulative (error cost, visible subtree count)
