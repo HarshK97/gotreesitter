@@ -367,11 +367,21 @@ func TestForestResolveConflictGeneratedPolicyMissKeepsActions(t *testing.T) {
 	}
 }
 
+// TestForestResolveConflictDotLegacyUsesStateAndLookahead exercises
+// forestResolveConflict's generic ConflictPolicy check using a synthetic
+// state/lookahead-scoped row shaped like dot's retired
+// dotRepetitionShiftConflictChoice helper. dot itself ships no such policy
+// (see grammars/runtime_profiles.go's "NOTE on dot", wave10/compat-t1c); this
+// only covers the state+lookahead exact-match mechanism the helper's shape
+// would have used had it been certified.
 func TestForestResolveConflictDotLegacyUsesStateAndLookahead(t *testing.T) {
 	lang := &Language{
 		Name:           "dot",
 		SymbolNames:    []string{"end", "identifier", "other", "stmt_list_repeat1"},
 		SymbolMetadata: []SymbolMetadata{{Name: "end"}, {Name: "identifier"}, {Name: "other"}, {Name: "stmt_list_repeat1"}},
+		ConflictPolicies: []ConflictPolicy{
+			{State: 4, Lookahead: 1, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{3}},
+		},
 	}
 	actions := []ParseAction{
 		{Type: ParseActionReduce, Symbol: 3, ChildCount: 2},

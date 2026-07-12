@@ -14,7 +14,10 @@ func conflictPolicyChoiceForContext(lang *Language, stack *glrStack, allowRecove
 	}
 	for i := range lang.ConflictPolicies {
 		policy := &lang.ConflictPolicies[i]
-		if policy.State != currentState || policy.Lookahead != tok.Symbol {
+		if policy.State != currentState && policy.State != ConflictPolicyAnyState {
+			continue
+		}
+		if policy.Lookahead != tok.Symbol && policy.Lookahead != ConflictPolicyAnyLookahead {
 			continue
 		}
 		if policy.Kind == ConflictPolicyRecoveredRepetitionReduce {
@@ -222,7 +225,14 @@ func (p *Parser) deterministicConflictChoiceForDispatch(source []byte, s *glrSta
 		return ParseAction{}, false
 	}
 	if p.language.Name == "gomod" {
-		if next, ok := gomodRepetitionShiftConflictChoice(p.language, currentState, actions); ok {
+		// go.mod's certified require-list rows apply even during incremental
+		// reuse dispatch (unlike the general ConflictPolicies path below,
+		// gated off during reuse): go.mod files are small enough that reuse
+		// dispatch still benefits from folding the list continuation, and this
+		// predates the reuse gate below. See grammars/runtime_profiles.go for
+		// the certified rows (wave10/compat-t1c; previously
+		// gomodRepetitionShiftConflictChoice).
+		if next, ok := conflictPolicyChoice(p.language, tok, currentState, actions); ok {
 			return next, true
 		}
 	}
@@ -257,6 +267,15 @@ func (p *Parser) deterministicConflictChoiceForDispatch(source []byte, s *glrSta
 	// feeding recovery cost competition, not an unconditional deterministic
 	// commitment. Arms that survive below are not retired repetition-boundary
 	// policies (or, for gomod above, run where the global fold does not).
+	//
+	// dart and c are also in cRepetitionSkipOptOut (the engine-wide fold is
+	// unsafe for both — see the opt-out entries) but each still has a
+	// certified narrow subset in ConflictPolicies (grammars/runtime_profiles.go,
+	// wave10/compat-t1c), checked above by conflictPolicyChoiceForDispatch
+	// before this switch is reached, INCLUDING on wreckage lineages: those
+	// rows carry no recovery gating, matching the retired
+	// dartRepetitionShiftConflictChoice / cRepetitionShiftConflictChoice
+	// helpers they replaced.
 	var chosen ParseAction
 	var ok bool
 	switch p.language.Name {
@@ -264,29 +283,6 @@ func (p *Parser) deterministicConflictChoiceForDispatch(source []byte, s *glrSta
 		// Non-repetition: `case A ->` switch-label disambiguation via a
 		// goto/action-table probe on the reduce's landing state.
 		chosen, ok = p.javaSwitchArrowConflictChoice(s, tok, actions)
-	case "dart":
-		// KEPT, and dart is also in cRepetitionSkipOptOut: dart's capped
-		// branch selection is tuned around this helper's deterministic
-		// repetition shift, INCLUDING on wreckage lineages where the global
-		// fold never applies. A/B evidence (wave-2b, 2026-07-07): removing
-		// the arm alone flips app_bar.dart's recovered tree and pushes
-		// generated_material_localizations.dart from accepted to
-		// memory_budget; the global fold instead of it drops
-		// back_button.dart from 75/88 to 62/88 C-oracle shape chunks. This
-		// is non-C dispatch policy papering over dart's recovery-selection
-		// gaps — revisit when dart is C-recovery-clean.
-		chosen, ok = dartRepetitionShiftConflictChoice(p.language, currentState, actions)
-	case "c":
-		// KEPT, and c is also in cRepetitionSkipOptOut: the C-language
-		// corpus is error-dense and its recovered shapes depend on this
-		// helper's deterministic translation_unit_repeat1 /
-		// preproc_if_repeat1 shift on all lineages. A/B evidence (wave-2b,
-		// 2026-07-07): retiring the arm dropped archive.c from 1354/2040 to
-		// 1061/2040 C-oracle-matching shape chunks, and the fold alone kept
-		// it there (pre-error folds reshape the stack recovery chews on).
-		// Non-C dispatch policy stabilizing recovery selection; revisit
-		// when c recovery is C-clean.
-		chosen, ok = cRepetitionShiftConflictChoice(p.language, actions)
 	case "haskell":
 		// KEPT, and haskell is also in cRepetitionSkipOptOut: this is the
 		// proven-safe scoped subset of the fold (REDUCE at states

@@ -234,7 +234,11 @@ func TestDeterministicConflictChoiceUsesCRepetitionFoldOnRecoveryLineages(t *tes
 	}
 }
 
-func TestDartRepetitionShiftConflictChoiceAllowsHotRepeats(t *testing.T) {
+// Dart's repeat-boundary states are now certified ConflictPolicy rows
+// (grammars/runtime_profiles.go, wave10/compat-t1c) instead of the retired
+// dartRepetitionShiftConflictChoice helper; these exercise the same shapes
+// through the generic data-driven path.
+func TestDartConflictPolicyRepetitionShiftCoversHotRepeats(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		state        StateID
@@ -244,30 +248,38 @@ func TestDartRepetitionShiftConflictChoiceAllowsHotRepeats(t *testing.T) {
 		{name: "extension_body_repeat1", state: 602, reduceSymbol: 2},
 		{name: "program_repeat4", state: 479, reduceSymbol: 3},
 	} {
-		lang := &Language{SymbolNames: []string{"end", "enum_body_repeat2", "extension_body_repeat1", "program_repeat4"}}
+		lang := &Language{
+			Name:             "dart",
+			SymbolNames:      []string{"end", "enum_body_repeat2", "extension_body_repeat1", "program_repeat4"},
+			ConflictPolicies: []ConflictPolicy{{State: tc.state, Lookahead: 7, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{tc.reduceSymbol}}},
+		}
 		actions := []ParseAction{
 			{Type: ParseActionReduce, Symbol: tc.reduceSymbol, ChildCount: 2},
 			{Type: ParseActionShift, State: 9, Repetition: true},
 		}
 
-		chosen, ok := dartRepetitionShiftConflictChoice(lang, tc.state, actions)
+		chosen, ok := conflictPolicyChoice(lang, Token{Symbol: 7}, tc.state, actions)
 		if !ok {
-			t.Fatalf("dartRepetitionShiftConflictChoice(%s) = false, want true", tc.name)
+			t.Fatalf("conflictPolicyChoice(%s) = false, want true", tc.name)
 		}
 		if chosen.Type != ParseActionShift || chosen.State != 9 || !chosen.Repetition {
-			t.Fatalf("dartRepetitionShiftConflictChoice(%s) picked %+v, want repetition shift", tc.name, chosen)
+			t.Fatalf("conflictPolicyChoice(%s) picked %+v, want repetition shift", tc.name, chosen)
 		}
 	}
 }
 
-func TestDartRepetitionShiftConflictChoiceRejectsOtherRepeat(t *testing.T) {
-	lang := &Language{SymbolNames: []string{"end", "enum_body_repeat2", "other_repeat1"}}
+func TestDartConflictPolicyRepetitionShiftRejectsOtherRepeat(t *testing.T) {
+	lang := &Language{
+		Name:             "dart",
+		SymbolNames:      []string{"end", "enum_body_repeat2", "other_repeat1"},
+		ConflictPolicies: []ConflictPolicy{{State: 596, Lookahead: 7, Kind: ConflictPolicyRepetitionShift, ReduceSymbols: []Symbol{1}}},
+	}
 	actions := []ParseAction{
 		{Type: ParseActionReduce, Symbol: 2, ChildCount: 2},
 		{Type: ParseActionShift, State: 9, Repetition: true},
 	}
-	if _, ok := dartRepetitionShiftConflictChoice(lang, 596, actions); ok {
-		t.Fatal("dartRepetitionShiftConflictChoice = true, want false")
+	if _, ok := conflictPolicyChoice(lang, Token{Symbol: 7}, 596, actions); ok {
+		t.Fatal("conflictPolicyChoice = true, want false")
 	}
 }
 
