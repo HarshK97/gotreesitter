@@ -26,7 +26,8 @@ package cgoharness
 // "treesitter_c_parity treesitter_c_perfscan", the container-or-
 // GTS_PARITY_ALLOW_HOST=1 TestMain guard, and the GTS_PERF_SCAN=1 env gate,
 // so it never burdens normal builds or the fast PR lane. The authenticated
-// fleet gate runs on its dedicated scheduled runner.
+// fleet gate runs on its dedicated runner once that infrastructure is
+// provisioned.
 //
 // Usage (from cgo_harness/):
 //

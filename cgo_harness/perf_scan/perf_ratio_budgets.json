@@ -5,7 +5,7 @@
     "RCA in its description -- i.e. a root-cause explanation of the perf/behavior",
     "change that made the old (tighter) budget unreachable, not just 'CI is flaky'",
     "or 'the new number is fine'. See cgo_harness/perf_scan/CI_PROPOSAL.md for the",
-    "scheduled hard-gate runner contract this file backs, and cgo_harness/",
+    "hard-gate runner contract this file backs, and cgo_harness/",
     "perf_scan/README.md for the measurement protocol (verdict buckets, cliff",
     "containment, ratio_by_total vs ratio_median_of_files) these numbers assume.",
     "Every budget below was seeded from a REAL measurement (see _seed_sources)",

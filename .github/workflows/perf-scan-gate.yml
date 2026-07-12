@@ -1,8 +1,6 @@
 name: perf-scan-hard-gate
 
 on:
-  schedule:
-    - cron: "17 6 * * *"
   workflow_dispatch:
 
 concurrency:
@@ -18,7 +16,7 @@ jobs:
     timeout-minutes: 360
     env:
       PERF_CORPUS_DIR: /srv/gotreesitter-perf
-      PERF_OUT: cgo_harness/perf_scan/out/nightly
+      PERF_OUT: cgo_harness/perf_scan/out/hard_gate
     steps:
       - uses: actions/checkout@v4
 
@@ -61,6 +59,9 @@ jobs:
 
             checkout="$root/$name"
             test -d "$checkout" || fail "missing corpus checkout for $name: $checkout"
+            actual_repo="$(git -C "$checkout" remote get-url origin)" || fail "cannot resolve origin URL for $name"
+            test "${actual_repo%.git}" = "${repo%.git}" || fail "corpus origin drift for $name: got $actual_repo, want $repo"
+            test ! -s "$checkout/.git/objects/info/alternates" || fail "external Git object alternate is not allowed for $name"
             git -C "$checkout" cat-file -e "$commit^{commit}" || fail "locked commit is unavailable for $name: $commit"
             head="$(git -C "$checkout" rev-parse --verify HEAD)" || fail "cannot resolve HEAD for $name"
             test "$head" = "$commit" || fail "corpus HEAD drift for $name: got $head, want $commit"
@@ -106,7 +107,7 @@ jobs:
               GTS_PERF_SCAN_FILE_BUDGET_MS=10000 \
               GTS_PERF_SCAN_LANG_TIMEOUT_MS=900000 \
               GTS_PERF_SCAN_CHILD_RSS_LIMIT_MB=6144 \
-              GTS_PERF_SCAN_OUT=perf_scan/out/nightly \
+              GTS_PERF_SCAN_OUT=perf_scan/out/hard_gate \
               go test -tags 'treesitter_c_parity treesitter_c_perfscan' \
                 -run '^TestPerfScanSweep$' -v -count=1 -timeout 0 -p 1 ."
 
@@ -119,19 +120,19 @@ jobs:
           GOWORK=off go test ./cmd/perf_scan_budget ./cmd/perf_scan_status -count=1
           GOWORK=off go run ./cmd/perf_scan_budget \
             -budget perf_scan/perf_ratio_budgets.json
-          if test -f perf_scan/out/nightly/scoreboard.json; then
+          if test -f perf_scan/out/hard_gate/scoreboard.json; then
             budget_result=0
             GOWORK=off go run ./cmd/perf_scan_budget \
               -budget perf_scan/perf_ratio_budgets.json \
-              -scoreboard perf_scan/out/nightly/scoreboard.json \
+              -scoreboard perf_scan/out/hard_gate/scoreboard.json \
               -hard-gate-only \
-              -out-md perf_scan/out/nightly/budget.md || budget_result=$?
+              -out-md perf_scan/out/hard_gate/budget.md || budget_result=$?
             GOWORK=off go run ./cmd/perf_scan_status \
               -budget perf_scan/perf_ratio_budgets.json \
               -fleet tier_scan/exts.tsv \
-              -scoreboards perf_scan/out/nightly/scoreboard.json \
-              -out-json perf_scan/out/nightly/status.json \
-              -out-md perf_scan/out/nightly/status.md
+              -scoreboards perf_scan/out/hard_gate/scoreboard.json \
+              -out-json perf_scan/out/hard_gate/status.json \
+              -out-md perf_scan/out/hard_gate/status.md
             exit "$budget_result"
           fi
 
@@ -141,7 +142,7 @@ jobs:
         with:
           name: perf-hard-gate-${{ github.run_id }}
           path: |
-            cgo_harness/perf_scan/out/nightly
+            cgo_harness/perf_scan/out/hard_gate
             harness_out/docker
           if-no-files-found: warn
           retention-days: 90
