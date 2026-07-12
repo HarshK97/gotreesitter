@@ -22,18 +22,30 @@ const shippedGrammarBlobsDir = "../grammars/grammar_blobs"
 // nonTerminalAliasMapExpectedNonEmptyLanguages lists every language whose
 // SHIPPING ts2go blob is known (per the Wave-7 audit, cross-checked by
 // TestShippedBlobsNonTerminalAliasMapInventory below) to carry a non-empty
-// Language.NonTerminalAliasMap. Lua is the only one today: its
-// _doublequote_string_content / _singlequote_string_content aux wrappers are
-// each referenced both unaliased (within their own repeat1 self-recursion)
-// and aliased to string_content (from _quote_string), so their possible
-// display genuinely varies by occurrence and can't be folded into a single
-// static entry the way single-target aliases can.
+// Language.NonTerminalAliasMap, each backed by its own dedicated parity test:
+//
+//   - lua (TestLuaNonTerminalAliasMapParity): _doublequote_string_content /
+//     _singlequote_string_content aux wrappers are each referenced both
+//     unaliased (within their own repeat1 self-recursion) and aliased to
+//     string_content (from _quote_string).
+//   - go (TestGoNonTerminalAliasMapParity): type_elem is referenced both
+//     unaliased (interface type-sets, type_arguments) and aliased to
+//     type_constraint (a generic type-parameter's constraint).
+//   - swift (TestSwiftNonTerminalAliasMapParity): several rules similarly
+//     vary by occurrence, e.g. simple_identifier (plain identifier vs.
+//     aliased to type_identifier in type-name position).
+//   - caddy (TestCaddyNonTerminalAliasMapParity): directive is referenced
+//     both unaliased (server address blocks) and aliased to option (global
+//     options / sub-option blocks).
 //
 // If this set ever needs to grow, add a dedicated parity test mirroring
 // TestLuaNonTerminalAliasMapParity for the new language before adding it
 // here — this map is a deliberate gate, not just documentation.
 var nonTerminalAliasMapExpectedNonEmptyLanguages = map[string]bool{
-	"lua": true,
+	"lua":   true,
+	"go":    true,
+	"swift": true,
+	"caddy": true,
 }
 
 // loadShippedBlob reads and decodes a shipped grammar blob by language name
@@ -370,6 +382,213 @@ func TestLuaNonTerminalAliasMapParity(t *testing.T) {
 			}
 		}
 	}
+}
+
+// goGrammarJSONPathForTest locates the pinned tree-sitter-go grammar.json (see
+// grammars/languages.lock for the pinned commit), following the same
+// candidate-path convention as rustGrammarJSONPathForTest / lua's. Seed it
+// locally with:
+//
+//	cgo_harness/seed_parity_repos.sh --langs go
+func goGrammarJSONPathForTest(t *testing.T) string {
+	t.Helper()
+
+	candidates := []string{
+		"/tmp/grammar_parity/go/src/grammar.json",
+		".parity_seed/go/src/grammar.json",
+		"../.parity_seed/go/src/grammar.json",
+	}
+	globs := []string{
+		"/tmp/gotreesitter-parity-*/repos/go/src/grammar.json",
+	}
+	for _, pattern := range globs {
+		matches, err := filepath.Glob(pattern)
+		if err == nil && len(matches) > 0 {
+			candidates = append(candidates, matches...)
+		}
+	}
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	t.Skip("go grammar.json not available (run cgo_harness/seed_parity_repos.sh --langs go)")
+	return ""
+}
+
+// swiftGrammarJSONPathForTest locates the pinned tree-sitter-swift
+// grammar.json (see grammars/languages.lock and grammars/swift_scanner.go's
+// UpstreamCommit for the pinned commit — both agree on
+// 41d6e5fe811ec94229ee71771174a8cce558dfee), following the same
+// candidate-path convention as rustGrammarJSONPathForTest / lua's. Seed it
+// locally with:
+//
+//	cgo_harness/seed_parity_repos.sh --langs swift
+func swiftGrammarJSONPathForTest(t *testing.T) string {
+	t.Helper()
+
+	candidates := []string{
+		"/tmp/grammar_parity/swift/src/grammar.json",
+		".parity_seed/swift/src/grammar.json",
+		"../.parity_seed/swift/src/grammar.json",
+	}
+	globs := []string{
+		"/tmp/gotreesitter-parity-*/repos/swift/src/grammar.json",
+	}
+	for _, pattern := range globs {
+		matches, err := filepath.Glob(pattern)
+		if err == nil && len(matches) > 0 {
+			candidates = append(candidates, matches...)
+		}
+	}
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	t.Skip("swift grammar.json not available (run cgo_harness/seed_parity_repos.sh --langs swift)")
+	return ""
+}
+
+// caddyGrammarJSONPathForTest locates the pinned tree-sitter-caddy
+// grammar.json (see grammars/languages.lock for the pinned commit), following
+// the same candidate-path convention as rustGrammarJSONPathForTest / lua's.
+// Seed it locally with:
+//
+//	cgo_harness/seed_parity_repos.sh --langs caddy
+func caddyGrammarJSONPathForTest(t *testing.T) string {
+	t.Helper()
+
+	candidates := []string{
+		"/tmp/grammar_parity/caddy/src/grammar.json",
+		".parity_seed/caddy/src/grammar.json",
+		"../.parity_seed/caddy/src/grammar.json",
+	}
+	globs := []string{
+		"/tmp/gotreesitter-parity-*/repos/caddy/src/grammar.json",
+	}
+	for _, pattern := range globs {
+		matches, err := filepath.Glob(pattern)
+		if err == nil && len(matches) > 0 {
+			candidates = append(candidates, matches...)
+		}
+	}
+	for _, path := range candidates {
+		if _, err := os.Stat(path); err == nil {
+			return path
+		}
+	}
+	t.Skip("caddy grammar.json not available (run cgo_harness/seed_parity_repos.sh --langs caddy)")
+	return ""
+}
+
+// nonTerminalAliasMapParityCheck is the shared body of every per-language
+// NonTerminalAliasMap parity gate (TestLuaNonTerminalAliasMapParity,
+// TestGoNonTerminalAliasMapParity, TestSwiftNonTerminalAliasMapParity,
+// TestCaddyNonTerminalAliasMapParity): import the exact pinned upstream
+// grammar.json, generate a Language through grammargen's own LR pipeline, and
+// assert the derived NonTerminalAliasMap is semantically identical (same
+// symbol-name -> alias-target-name-set entries; see nonTerminalAliasMapByName
+// for why correlation is name-based) to the map ts2go extracted from
+// tree-sitter's real generated parser.c and shipped in
+// grammars/grammar_blobs/<lang>.bin.
+//
+// A wrong alias map corrupts parse trees (see parser_reduce.go's
+// buildAliasPreservedWrapperSymbols), so this check is intentionally strict:
+// any row present on only one side, or any per-row alias-set mismatch, fails
+// with a full diagnostic rather than silently passing on a coincidental
+// partial match.
+func nonTerminalAliasMapParityCheck(t *testing.T, lang string, jsonPath string, genTimeout time.Duration) {
+	t.Helper()
+
+	refLang := loadShippedBlob(t, lang)
+	refEntries := nonTerminalAliasMapByName(refLang)
+	if len(refEntries) == 0 {
+		t.Fatalf("shipped %s blob unexpectedly has an empty NonTerminalAliasMap; nothing to verify parity against (has %s.bin regressed?)", lang, lang)
+	}
+
+	source, err := os.ReadFile(jsonPath)
+	if err != nil {
+		t.Skipf("%s grammar.json not available: %v", lang, err)
+	}
+	gram, err := ImportGrammarJSON(source)
+	if err != nil {
+		t.Fatalf("import %s grammar.json: %v", lang, err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), genTimeout)
+	defer cancel()
+	genLang, err := GenerateLanguageWithContext(ctx, gram)
+	if err != nil {
+		t.Fatalf("generate %s language via grammargen: %v", lang, err)
+	}
+	genEntries := nonTerminalAliasMapByName(genLang)
+	if len(genEntries) == 0 {
+		t.Fatalf("grammargen-derived %s NonTerminalAliasMap is empty; expected it to match the shipped ts2go blob's non-empty map", lang)
+	}
+
+	if diffs := diffNonTerminalAliasMapEntries(refEntries, genEntries); len(diffs) > 0 {
+		t.Fatalf("grammargen-derived NonTerminalAliasMap diverges from the shipped ts2go %s blob (%d row(s) in ts2go's map, %d in grammargen's):\n%s",
+			lang, len(refEntries), len(genEntries), strings.Join(diffs, "\n"))
+	}
+
+	// Non-fatal diagnostic: report (but do not fail on) any row-symbol or
+	// alias-target Named/Visible metadata differences between the two sides.
+	// See nonTerminalAliasMapByName's doc comment for why this is scoped out.
+	for name, refRow := range refEntries {
+		genRow, ok := genEntries[name]
+		if !ok {
+			continue
+		}
+		if refRow.symbol.named != genRow.symbol.named || refRow.symbol.visible != genRow.symbol.visible {
+			t.Logf("NOTE (non-fatal, pre-existing, out of scope): row symbol %q metadata differs: ts2go=%s grammargen=%s", name, refRow.symbol, genRow.symbol)
+		}
+		refAliasByName := make(map[string]symIdentity, len(refRow.aliases))
+		for _, v := range refRow.aliases {
+			refAliasByName[v.name] = v
+		}
+		for _, gv := range genRow.aliases {
+			if rv, ok := refAliasByName[gv.name]; ok && (rv.named != gv.named || rv.visible != gv.visible) {
+				t.Logf("NOTE (non-fatal, pre-existing, out of scope): alias-target %q metadata differs: ts2go=%s grammargen=%s", gv.name, rv, gv)
+			}
+		}
+	}
+}
+
+// TestGoNonTerminalAliasMapParity is THE GATE for grammargen's
+// NonTerminalAliasMap derivation for Go: shipped go.bin carries a non-empty
+// row for type_elem (unaliased when used directly inside interface type-sets
+// and type_arguments, aliased to type_constraint when used as a generic
+// type-parameter constraint in type_parameter_declaration) — see
+// nonTerminalAliasMapParityCheck's doc comment for what this asserts.
+func TestGoNonTerminalAliasMapParity(t *testing.T) {
+	nonTerminalAliasMapParityCheck(t, "go", goGrammarJSONPathForTest(t), 60*time.Second)
+}
+
+// TestSwiftNonTerminalAliasMapParity is THE GATE for grammargen's
+// NonTerminalAliasMap derivation for Swift: shipped swift.bin carries several
+// non-empty rows (e.g. simple_identifier unaliased as a plain identifier
+// expression vs. aliased to type_identifier in type-name position; the
+// analogous split for _parenthesized_type/tuple_type_item,
+// value_argument/interpolated_expression (string-interpolation arguments),
+// _three_dot_operator/fully_open_range, _bodyless_function_declaration and
+// function_body both folding into protocol_function_declaration inside
+// protocol bodies, and the pattern-binding trio
+// _binding_pattern_no_expr/_no_expr_pattern_already_bound/
+// _binding_kind_and_pattern all folding into pattern) — see
+// nonTerminalAliasMapParityCheck's doc comment for what this asserts.
+func TestSwiftNonTerminalAliasMapParity(t *testing.T) {
+	nonTerminalAliasMapParityCheck(t, "swift", swiftGrammarJSONPathForTest(t), 150*time.Second)
+}
+
+// TestCaddyNonTerminalAliasMapParity is THE GATE for grammargen's
+// NonTerminalAliasMap derivation for Caddy: shipped caddy.bin carries a
+// non-empty row for directive (unaliased when it's a top-level directive,
+// aliased to option when the same rule is nested as an option/sub-directive
+// inside a directive block) — see nonTerminalAliasMapParityCheck's doc
+// comment for what this asserts.
+func TestCaddyNonTerminalAliasMapParity(t *testing.T) {
+	nonTerminalAliasMapParityCheck(t, "caddy", caddyGrammarJSONPathForTest(t), 60*time.Second)
 }
 
 // TestNonTerminalAliasMapSyntheticSelfAndAlias is a fast, offline (no
