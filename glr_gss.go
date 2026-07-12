@@ -3,9 +3,10 @@ package gotreesitter
 import "unsafe"
 
 const (
-	defaultGSSNodeSlabCap   = 4 * 1024
-	fullParseGSSNodeSlabCap = 32 * 1024
-	maxRetainedGSSNodes     = 256 * 1024
+	defaultGSSNodeSlabCap      = 4 * 1024
+	fullParseGSSNodeSlabCap    = 32 * 1024
+	maxRetainedGSSNodes        = 256 * 1024
+	maxRetainedGSSStackEntries = 4 * 1024
 )
 
 type gssNode struct {
@@ -74,6 +75,7 @@ type gssScratch struct {
 	nodesDemoted      uint64
 	audit             *runtimeAudit
 	frontier          conflictReduceFrontierScratch
+	stackEntries      []stackEntry
 }
 
 type gssNodeSlab struct {
@@ -453,6 +455,12 @@ func (s *gssScratch) allocNodeSlow(entry stackEntry, prev *gssNode, depth int, h
 }
 
 func (s *gssScratch) reset() {
+	if cap(s.stackEntries) > maxRetainedGSSStackEntries {
+		s.stackEntries = nil
+	} else if cap(s.stackEntries) > 0 {
+		clear(s.stackEntries[:cap(s.stackEntries)])
+		s.stackEntries = s.stackEntries[:0]
+	}
 	if len(s.slabs) == 0 {
 		s.singleStackMode = false
 		s.singleStackAllocs = 0
@@ -460,7 +468,7 @@ func (s *gssScratch) reset() {
 		s.demotions = 0
 		s.nodesDemoted = 0
 		s.skipClear = false
-		s.allocatedBytes = s.frontier.allocatedBytes()
+		s.allocatedBytes = s.frontier.allocatedBytes() + stackEntryBytesForCap(cap(s.stackEntries))
 		s.audit = nil
 		return
 	}
@@ -562,5 +570,6 @@ func (s *gssScratch) recomputeAllocatedBytes() {
 		total += gssNodeBytesForCap(len(s.slabs[i].data))
 	}
 	total += s.frontier.allocatedBytes()
+	total += stackEntryBytesForCap(cap(s.stackEntries))
 	s.allocatedBytes = total
 }

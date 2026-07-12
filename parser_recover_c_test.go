@@ -236,6 +236,174 @@ func TestCRecordSummaryUsesCompactEntryPosition(t *testing.T) {
 	}
 }
 
+func TestCStackEntriesTopFirstReusesScratch(t *testing.T) {
+	const depth = 128
+	entries := make([]stackEntry, depth)
+	for i := range entries {
+		entries[i] = stackEntry{state: StateID(i + 1)}
+	}
+	stack := glrStack{entries: entries}
+	var scratch gssScratch
+
+	got := cStackEntriesTopFirst(&stack, &scratch)
+	if len(got) != depth {
+		t.Fatalf("entry count = %d, want %d", len(got), depth)
+	}
+	if got[0].state != entries[depth-1].state || got[depth-1].state != entries[0].state {
+		t.Fatal("entries are not top-first")
+	}
+
+	if allocs := testing.AllocsPerRun(100, func() {
+		got = cStackEntriesTopFirst(&stack, &scratch)
+	}); allocs != 0 {
+		t.Fatalf("allocs per reused walk = %g, want 0", allocs)
+	}
+	if len(got) != depth {
+		t.Fatalf("reused entry count = %d, want %d", len(got), depth)
+	}
+
+	ownedFirst := cStackEntriesTopFirst(&stack, nil)
+	ownedSecond := cStackEntriesTopFirst(&stack, nil)
+	ownedSecond[0].state++
+	if ownedFirst[0].state == ownedSecond[0].state {
+		t.Fatal("nil-scratch calls reused borrowed storage")
+	}
+	if ownedFirst[0].state != entries[depth-1].state {
+		t.Fatal("later nil-scratch call overwrote the earlier result")
+	}
+}
+
+func TestCRecordSummaryMatchesPositionTableReference(t *testing.T) {
+	parser := &Parser{}
+	const maxEntries = 10
+	nodes := make([]Node, maxEntries)
+	for i := range nodes {
+		nodes[i].endByte = uint32(100 + i)
+		nodes[i].endPoint = Point{Row: uint32(10 + i), Column: uint32(i)}
+	}
+
+	for count := 0; count <= maxEntries; count++ {
+		for mask := 0; mask < 1<<count; mask++ {
+			entries := make([]stackEntry, count)
+			for i := range entries {
+				state := StateID(i%7 + 1)
+				if mask&(1<<i) != 0 {
+					entries[i] = newStackEntryNode(state, &nodes[i])
+				} else {
+					if i%3 == 0 {
+						state = cErrorState
+					}
+					entries[i] = stackEntry{state: state}
+				}
+			}
+
+			got := parser.cRecordSummary(entries)
+			want := cRecordSummaryPositionTableReference(entries)
+			if len(got) != len(want) {
+				t.Fatalf("count=%d mask=%#x summary len = %d, want %d", count, mask, len(got), len(want))
+			}
+			for i := range got {
+				if got[i] != want[i] {
+					t.Fatalf("count=%d mask=%#x summary[%d] = %+v, want %+v", count, mask, i, got[i], want[i])
+				}
+			}
+		}
+	}
+
+	entries := make([]stackEntry, cRecoverMaxSummaryDepth+4)
+	boundaryNodes := make([]Node, len(entries))
+	for pattern := 0; pattern < 4; pattern++ {
+		for i := range entries {
+			state := StateID((i+pattern)%7 + 1)
+			if (i+pattern)%3 != 0 {
+				boundaryNodes[i].endByte = uint32(200 + i)
+				boundaryNodes[i].endPoint = Point{Row: uint32(20 + i)}
+				entries[i] = newStackEntryNode(state, &boundaryNodes[i])
+			} else {
+				if i%2 == 0 {
+					state = cErrorState
+				}
+				entries[i] = stackEntry{state: state}
+			}
+		}
+		got := parser.cRecordSummary(entries)
+		want := cRecordSummaryPositionTableReference(entries)
+		if len(got) != len(want) {
+			t.Fatalf("boundary pattern=%d summary len = %d, want %d", pattern, len(got), len(want))
+		}
+		for i := range got {
+			if got[i] != want[i] {
+				t.Fatalf("boundary pattern=%d summary[%d] = %+v, want %+v", pattern, i, got[i], want[i])
+			}
+		}
+	}
+}
+
+func TestCRecordSummaryAvoidsPositionAllocations(t *testing.T) {
+	parser := &Parser{}
+	entries := make([]stackEntry, 8)
+	nodes := make([]Node, len(entries))
+	for i := range entries {
+		nodes[i].endByte = uint32(i + 1)
+		nodes[i].endPoint = Point{Row: uint32(i)}
+		entries[i] = newStackEntryNode(StateID(i+1), &nodes[i])
+	}
+
+	var summary []cStackSummaryEntry
+	if allocs := testing.AllocsPerRun(100, func() {
+		summary = parser.cRecordSummary(entries)
+	}); allocs != 1 {
+		t.Fatalf("allocs per summary = %g, want 1 persistent result allocation", allocs)
+	}
+	if len(summary) != len(entries) {
+		t.Fatalf("summary len = %d, want %d", len(summary), len(entries))
+	}
+}
+
+func cRecordSummaryPositionTableReference(entries []stackEntry) []cStackSummaryEntry {
+	summary := make([]cStackSummaryEntry, 0, 8)
+	posBytesAt := make([]uint32, len(entries))
+	posRowAt := make([]uint32, len(entries))
+	var posBytes uint32
+	var posRow uint32
+	for i := len(entries) - 1; i >= 0; i-- {
+		if stackEntryHasNode(entries[i]) {
+			posBytes = stackEntryNodeEndByte(entries[i])
+			posRow = stackEntryNodeEndPoint(entries[i]).Row
+		}
+		posBytesAt[i] = posBytes
+		posRowAt[i] = posRow
+	}
+	depth := 0
+	for i := range entries {
+		duplicate := false
+		for j := len(summary) - 1; j >= 0; j-- {
+			if summary[j].depth < depth {
+				break
+			}
+			if summary[j].depth == depth && summary[j].state == entries[i].state {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			summary = append(summary, cStackSummaryEntry{
+				depth:    depth,
+				state:    entries[i].state,
+				posBytes: posBytesAt[i],
+				posRow:   posRowAt[i],
+			})
+		}
+		if cEntryCountsTowardDepth(entries[i]) {
+			depth++
+			if depth > cRecoverMaxSummaryDepth {
+				break
+			}
+		}
+	}
+	return summary
+}
+
 func TestCStackPosRowUsesCompactEntryPoint(t *testing.T) {
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
