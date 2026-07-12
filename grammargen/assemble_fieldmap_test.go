@@ -94,3 +94,73 @@ func TestBuildFieldMapsDedupesSharedProductionIDs(t *testing.T) {
 		t.Fatalf("FieldMapSlices[0] = %+v, want zero-value (no fields)", slice0)
 	}
 }
+
+// TestCompactProductionIDsSharesIDOnlyForIdenticalFieldSets pins the
+// invariant buildFieldMaps' dedup relies on: compactProductionIDs assigns a
+// shared ProductionID only to productions whose full field set (child index
+// and field name) is identical, so emitting one entry run per ID can never
+// drop a distinct field mapping. It drives the real compaction path rather
+// than hand-assigning IDs.
+func TestCompactProductionIDsSharesIDOnlyForIdenticalFieldSets(t *testing.T) {
+	ng := &NormalizedGrammar{
+		GrammarName: "synthetic",
+		FieldNames:  []string{"", "name", "value"},
+		Productions: []Production{
+			// Identical field sets on different rules: must share an ID.
+			{LHS: 10, RHS: []int{1, 2}, Fields: []FieldAssign{{ChildIndex: 1, FieldName: "name"}}},
+			{LHS: 11, RHS: []int{3, 2}, Fields: []FieldAssign{{ChildIndex: 1, FieldName: "name"}}},
+			// Same field name, different child index: must NOT share.
+			{LHS: 12, RHS: []int{2, 4}, Fields: []FieldAssign{{ChildIndex: 0, FieldName: "name"}}},
+			// Same child index, different field name: must NOT share.
+			{LHS: 13, RHS: []int{1, 2}, Fields: []FieldAssign{{ChildIndex: 1, FieldName: "value"}}},
+			// Fieldless: keeps the reserved zero ID.
+			{LHS: 14, RHS: []int{5}},
+		},
+	}
+
+	compactProductionIDs(ng)
+
+	ids := make([]int, len(ng.Productions))
+	for i := range ng.Productions {
+		ids[i] = ng.Productions[i].ProductionID
+	}
+	if ids[0] != ids[1] {
+		t.Errorf("identical field sets got distinct IDs: %d vs %d", ids[0], ids[1])
+	}
+	if ids[0] == ids[2] {
+		t.Errorf("different child index shared ID %d", ids[0])
+	}
+	if ids[0] == ids[3] || ids[2] == ids[3] {
+		t.Errorf("different field name shared an ID: ids=%v", ids)
+	}
+	if ids[4] != 0 {
+		t.Errorf("fieldless production got ID %d, want reserved 0", ids[4])
+	}
+
+	// The invariant end to end: after real compaction, buildFieldMaps must
+	// emit exactly one reachable run per distinct field-bearing ID.
+	lang := &gotreesitter.Language{}
+	if err := buildFieldMaps(lang, ng); err != nil {
+		t.Fatalf("buildFieldMaps after compaction: %v", err)
+	}
+	distinct := map[int]bool{}
+	for i := range ng.Productions {
+		if len(ng.Productions[i].Fields) > 0 {
+			distinct[ng.Productions[i].ProductionID] = true
+		}
+	}
+	reachable := 0
+	runs := 0
+	for _, sl := range lang.FieldMapSlices {
+		reachable += int(sl[1])
+		if sl[1] > 0 {
+			runs++
+		}
+	}
+	if reachable != len(lang.FieldMapEntries) {
+		t.Errorf("orphaned entries after compaction: reachable=%d total=%d", reachable, len(lang.FieldMapEntries))
+	}
+	if runs != len(distinct) {
+		t.Errorf("entry runs = %d, want %d (one per distinct field-bearing ID)", runs, len(distinct))
+	}
+}
