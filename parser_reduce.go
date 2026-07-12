@@ -7455,6 +7455,13 @@ func (p *Parser) collapsibleRawUnarySelfReductionEntry(act ParseAction, tok Toke
 	if p == nil || arena == nil {
 		return stackEntry{}, false
 	}
+	// See the identical act.ChildCount guard and comment in
+	// collapsibleUnarySelfReduction: only a genuine arity-1 production can
+	// ever collapse here, so multi-child reduces are skipped before any
+	// other work.
+	if act.ChildCount != 1 {
+		return stackEntry{}, false
+	}
 	diag := arena.breakdownEnabled
 	if diag {
 		arena.collapseRawUnaryAttempts++
@@ -7692,6 +7699,13 @@ func (p *Parser) collapsibleRawUnarySelfReduction(act ParseAction, tok Token, ar
 	if p == nil || arena == nil {
 		return nil
 	}
+	// See the identical act.ChildCount guard and comment in
+	// collapsibleUnarySelfReduction: only a genuine arity-1 production can
+	// ever collapse here, so multi-child reduces are skipped before any
+	// other work.
+	if act.ChildCount != 1 {
+		return nil
+	}
 	diag := arena.breakdownEnabled
 	if diag {
 		arena.collapseRawUnaryAttempts++
@@ -7743,6 +7757,22 @@ func (p *Parser) collapsibleRawUnarySelfReduction(act ParseAction, tok Token, ar
 
 func (p *Parser) collapsibleUnarySelfReduction(act ParseAction, tok Token, arena *nodeArena, entries []stackEntry, start, reducedEnd int, children []*Node, fieldIDs []FieldID) *Node {
 	if p == nil || arena == nil {
+		return nil
+	}
+	// A unary self-reduction (rename-through of the sole popped child) can
+	// only ever apply when the production's own arity is 1: the reduce
+	// window always contains at least act.ChildCount non-extra entries
+	// (computeReduceRange/computeReduceRangePayload/reduceWindowFromGSS all
+	// stop as soon as that many non-extra entries are found, so any window
+	// with reducedEnd-start==1 implies ChildCount==1 and vice versa; extra
+	// entries only ever add to the window, never shrink it below
+	// ChildCount). Checking act.ChildCount first — mirroring the identical
+	// fast-exit already used by tryFastUnaryCollapseFromGSS — skips the
+	// shape/child/grammar/rule checks and their arena breakdown bookkeeping
+	// entirely for the structurally-ineligible multi-child reduces, which
+	// can never collapse. This is a pure dead-path skip: no behavior change
+	// for any reduce that could have collapsed before.
+	if act.ChildCount != 1 {
 		return nil
 	}
 	diag := arena.breakdownEnabled
