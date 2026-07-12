@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"testing"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -87,16 +88,16 @@ var hasDedicatedSample = func() map[string]bool {
 }()
 
 // curatedStructuralLanguages is the merge-blocking structural parity set.
-// It includes every language with a dedicated smoke sample and supported parse
-// backend (DFA, partial DFA, or token source).
+// It includes every registered language with a dedicated smoke sample. Parse
+// support is evaluated lazily when a language is exercised so a focused test
+// does not decode the entire grammar fleet during package initialization.
 var curatedStructuralLanguages = func() map[string]bool {
 	out := make(map[string]bool, len(parityCases))
 	for _, tc := range parityCases {
 		if !hasDedicatedSample[tc.name] {
 			continue
 		}
-		report, ok := paritySupportByName[tc.name]
-		if !ok || report.Backend == grammars.ParseBackendUnsupported {
+		if _, ok := parityEntriesByName[tc.name]; !ok {
 			continue
 		}
 		out[tc.name] = true
@@ -104,23 +105,49 @@ var curatedStructuralLanguages = func() map[string]bool {
 	return out
 }()
 
-var parityEntriesByName, paritySupportByName = func() (map[string]grammars.LangEntry, map[string]grammars.ParseSupport) {
+var parityEntriesByName = func() map[string]grammars.LangEntry {
 	entries := make(map[string]grammars.LangEntry)
 	for _, entry := range grammars.AllLanguages() {
 		entries[entry.Name] = entry
 	}
-
-	support := make(map[string]grammars.ParseSupport)
-	for _, report := range grammars.AuditParseSupport() {
-		support[report.Name] = report
-	}
-	return entries, support
+	return entries
 }()
 
+type paritySupportLoad struct {
+	once   sync.Once
+	report grammars.ParseSupport
+	ok     bool
+}
+
+var paritySupportCache sync.Map // map[string]*paritySupportLoad
+
+func paritySupportForName(name string) (grammars.ParseSupport, bool) {
+	value, _ := paritySupportCache.LoadOrStore(name, &paritySupportLoad{})
+	load := value.(*paritySupportLoad)
+	load.once.Do(func() {
+		load.report, load.ok = grammars.ParseSupportFor(name)
+	})
+	return load.report, load.ok
+}
+
+func TestParitySupportForName(t *testing.T) {
+	report, ok := paritySupportForName("groovy")
+	if !ok || report.Name != "groovy" || report.Backend == grammars.ParseBackendUnsupported {
+		t.Fatalf("Groovy support = (%+v, %t), want supported report", report, ok)
+	}
+	if cached, cachedOK := paritySupportForName("groovy"); !cachedOK || cached != report {
+		t.Fatalf("cached Groovy support = (%+v, %t), want (%+v, true)", cached, cachedOK, report)
+	}
+	if report, ok := paritySupportForName("not-a-language"); ok || report != (grammars.ParseSupport{}) {
+		t.Fatalf("missing support = (%+v, %t), want zero report and false", report, ok)
+	}
+}
+
 // curatedHighlightLanguages scales independently of structural parity. Any
-// language with a dedicated smoke sample and shipped highlight query is part of
-// the merge-blocking highlight parity gate, as long as parsing is supported.
-// Divergence thresholds are controlled in parity_highlight_test.go.
+// registered language with a dedicated smoke sample and shipped highlight
+// query is part of the merge-blocking highlight parity gate. Parse support is
+// evaluated lazily when the language is exercised. Divergence thresholds are
+// controlled in parity_highlight_test.go.
 var curatedHighlightLanguages = func() map[string]bool {
 	out := make(map[string]bool, len(parityCases))
 	for _, tc := range parityCases {
@@ -129,9 +156,6 @@ var curatedHighlightLanguages = func() map[string]bool {
 		}
 		entry, ok := parityEntriesByName[tc.name]
 		if !ok || strings.TrimSpace(entry.HighlightQuery) == "" {
-			continue
-		}
-		if report, ok := paritySupportByName[tc.name]; ok && report.Backend == grammars.ParseBackendUnsupported {
 			continue
 		}
 		out[tc.name] = true
@@ -429,7 +453,7 @@ func parseWithGo(tc parityCase, src []byte, oldTree *gotreesitter.Tree) (*gotree
 	if !ok {
 		return nil, nil, fmt.Errorf("missing gotreesitter registry entry for %q", tc.name)
 	}
-	report, ok := paritySupportByName[tc.name]
+	report, ok := paritySupportForName(tc.name)
 	if !ok {
 		return nil, nil, fmt.Errorf("missing parse support report for %q", tc.name)
 	}

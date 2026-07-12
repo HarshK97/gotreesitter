@@ -273,7 +273,7 @@ func prepareRealCorpusBenchmarkCases(b *testing.B, name string) []realCorpusBenc
 	if !ok {
 		b.Fatalf("missing registry entry for %q", name)
 	}
-	report, ok := paritySupportByName[name]
+	report, ok := paritySupportForName(name)
 	if !ok {
 		b.Fatalf("missing parse support report for %q", name)
 	}

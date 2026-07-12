@@ -675,7 +675,7 @@ func main() {
 		fatalf("zero corpus samples for languages %s", strings.Join(langs, ","))
 	}
 
-	entries, support := registryMaps()
+	entries := registryEntries()
 	runners := make(map[string]*runner)
 	defer func() {
 		for _, r := range runners {
@@ -729,7 +729,7 @@ func main() {
 	unsupportedSamples := 0
 
 	for _, s := range samples {
-		r, err := runnerForLanguage(s.Language, entries, support, runners, hotShapeLimit)
+		r, err := runnerForLanguage(s.Language, entries, runners, hotShapeLimit)
 		if err != nil {
 			unsupportedSamples++
 			row := errorRow(common, s, "setup", countFlag, err)
@@ -866,19 +866,15 @@ func commonRowFields(repoRoot string) commonFields {
 	}
 }
 
-func registryMaps() (map[string]grammars.LangEntry, map[string]grammars.ParseSupport) {
+func registryEntries() map[string]grammars.LangEntry {
 	entries := make(map[string]grammars.LangEntry)
 	for _, entry := range grammars.AllLanguages() {
 		entries[entry.Name] = entry
 	}
-	support := make(map[string]grammars.ParseSupport)
-	for _, report := range grammars.AuditParseSupport() {
-		support[report.Name] = report
-	}
-	return entries, support
+	return entries
 }
 
-func runnerForLanguage(name string, entries map[string]grammars.LangEntry, support map[string]grammars.ParseSupport, cache map[string]*runner, hotShapeLimit int) (*runner, error) {
+func runnerForLanguage(name string, entries map[string]grammars.LangEntry, cache map[string]*runner, hotShapeLimit int) (*runner, error) {
 	if r := cache[name]; r != nil {
 		r.setHotShapeLimit(hotShapeLimit)
 		return r, nil
@@ -887,7 +883,7 @@ func runnerForLanguage(name string, entries map[string]grammars.LangEntry, suppo
 	if !ok {
 		return nil, fmt.Errorf("language %q is not in grammars registry", name)
 	}
-	report, ok := support[name]
+	report, ok := grammars.ParseSupportFor(name)
 	if !ok || report.Backend == grammars.ParseBackendUnsupported {
 		return nil, fmt.Errorf("language %q parse backend is unsupported", name)
 	}

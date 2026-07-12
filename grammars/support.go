@@ -79,6 +79,23 @@ func EvaluateParseSupport(entry LangEntry, lang *gotreesitter.Language) ParseSup
 	return report
 }
 
+// ParseSupportFor evaluates one registered language without loading the rest
+// of the grammar fleet. It returns false when name is not a canonical registry
+// name or the language loader returns nil.
+func ParseSupportFor(name string) (ParseSupport, bool) {
+	for _, entry := range AllLanguages() {
+		if entry.Name != name || entry.Language == nil {
+			continue
+		}
+		lang := entry.Language()
+		if lang == nil {
+			return ParseSupport{}, false
+		}
+		return EvaluateParseSupport(entry, lang), true
+	}
+	return ParseSupport{}, false
+}
+
 // AuditParseSupport evaluates parse support for all registered languages.
 func AuditParseSupport() []ParseSupport {
 	entries := AllLanguages()

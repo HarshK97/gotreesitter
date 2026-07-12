@@ -24,7 +24,7 @@ func TestParityQueryExactTop50Generated(t *testing.T) {
 		if parityLanguageExcluded(name) {
 			continue
 		}
-		report, ok := paritySupportByName[name]
+		report, ok := paritySupportForName(name)
 		if !ok || report.Backend == grammars.ParseBackendUnsupported {
 			continue
 		}

@@ -83,7 +83,7 @@ func prepareTop50BenchmarkCase(b *testing.B, name string) (top50BenchmarkCase, b
 	if !ok {
 		b.Fatalf("missing registry entry for %q", name)
 	}
-	report, ok := paritySupportByName[name]
+	report, ok := paritySupportForName(name)
 	if !ok {
 		b.Fatalf("missing parse support report for %q", name)
 	}
@@ -266,7 +266,7 @@ func TestParityTop50ParseSmoke(t *testing.T) {
 		if parityLanguageExcluded(name) {
 			continue
 		}
-		report, ok := paritySupportByName[name]
+		report, ok := paritySupportForName(name)
 		if !ok || report.Backend == grammars.ParseBackendUnsupported || !hasDedicatedSample[name] {
 			continue
 		}
@@ -293,7 +293,7 @@ func TestParityTop50ParseMaterializationTrends(t *testing.T) {
 		if parityLanguageExcluded(name) {
 			continue
 		}
-		report, ok := paritySupportByName[name]
+		report, ok := paritySupportForName(name)
 		if !ok || report.Backend == grammars.ParseBackendUnsupported || !hasDedicatedSample[name] {
 			continue
 		}
