@@ -32,7 +32,7 @@ func TestBuiltinExternalScannerRetryProfilesAttach(t *testing.T) {
 }
 
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	if got, want := len(builtinLanguageRuntimeProfiles), 10; got != want {
+	if got, want := len(builtinLanguageRuntimeProfiles), 13; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -104,8 +104,11 @@ func TestBuiltinCompleteAcceptedErrorRetryProfilesAttach(t *testing.T) {
 		{name: "bash", load: BashLanguage},
 		{name: "caddy", load: CaddyLanguage},
 		{name: "cpp", load: CppLanguage},
+		{name: "haxe", load: HaxeLanguage},
 		{name: "kdl", load: KdlLanguage},
+		{name: "odin", load: OdinLanguage},
 		{name: "rego", load: RegoLanguage},
+		{name: "scss", load: ScssLanguage},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -181,7 +184,7 @@ func TestBuiltinJavaAcceptedErrorRetryProfileRequiresCertifiedBlob(t *testing.T)
 }
 
 func TestBuiltinCompleteAcceptedErrorRetryProfileRequiresCertifiedBlob(t *testing.T) {
-	for _, name := range []string{"caddy", "kdl", "rego"} {
+	for _, name := range []string{"caddy", "haxe", "kdl", "odin", "rego", "scss"} {
 		t.Run(name, func(t *testing.T) {
 			lang := &gotreesitter.Language{Name: name}
 			if attachBuiltinLanguageRuntimeProfile(name, sha256.Sum256([]byte("uncertified")), lang) {
