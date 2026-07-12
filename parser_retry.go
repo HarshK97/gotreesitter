@@ -1146,12 +1146,18 @@ func fullParseRetryMaxStacksOverrideForOrigin(tree *Tree, sourceLen int, initial
 	if fullParseRetryUsesInitialStackCeilingForOrigin(tree, sourceLen, initialMaxStacks, origin) {
 		return 0
 	}
-	retryMaxStacks := fullParseRetryMaxGLRStacks
-	if tree != nil && tree.language != nil && tree.language.Name == "java" {
-		retryMaxStacks = javaFullParseRetryMaxGLRStacks
-	}
-	if initialMaxStacks > retryMaxStacks {
-		retryMaxStacks = initialMaxStacks * 2
+	certifiedRetryMaxStacks := certifiedFreshErrorNoStacksRetryMaxStacks(tree, sourceLen, origin)
+	retryMaxStacks := certifiedRetryMaxStacks
+	if certifiedRetryMaxStacks == 0 {
+		retryMaxStacks = fullParseRetryMaxGLRStacks
+		if tree != nil && tree.language != nil && tree.language.Name == "java" {
+			retryMaxStacks = javaFullParseRetryMaxGLRStacks
+		}
+		if initialMaxStacks > retryMaxStacks {
+			retryMaxStacks = initialMaxStacks * 2
+		}
+	} else if retryMaxStacks <= initialMaxStacks {
+		return 0
 	}
 	if parseMaxGLRStacksValue() >= retryMaxStacks {
 		return 0
@@ -1242,6 +1248,15 @@ func certifiedFreshErrorNoStacksRetryPassLimit(tree *Tree, sourceLen int, origin
 		return 0
 	}
 	return int(limit)
+}
+
+func certifiedFreshErrorNoStacksRetryMaxStacks(tree *Tree, sourceLen int, origin fullParseRetryOrigin) int {
+	if tree == nil || tree.language == nil || origin != fullParseRetryOriginFresh ||
+		sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes ||
+		tree.ParseStopReason() != ParseStopNoStacksAlive || !retryTreeHasError(tree) {
+		return 0
+	}
+	return int(tree.language.FullParseAcceptedErrorRetryProfile.FreshErrorNoStacksRetryMaxStacks)
 }
 
 func fullParseRetryNodeLimitOverride(tree *Tree, sourceLen int) int {

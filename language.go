@@ -282,9 +282,9 @@ const (
 // policies. When a fresh full parse accepts an error-bearing tree that covers
 // EOF, the parser may keep the initial GLR stack ceiling after the ordinary
 // same-stack merge retry or skip that ladder entirely. A grammar may also cap
-// retries for a fresh, error-bearing no-stacks result after proving that later
-// passes do not improve the selected tree. The zero value preserves the
-// conservative generic ladder.
+// retries or select a narrower widening target for a fresh, error-bearing
+// no-stacks result after proving the generic ladder does not improve the
+// selected tree. The zero value preserves the conservative generic ladder.
 //
 // Keep fields append-only: Language blobs encode this structure.
 type FullParseAcceptedErrorRetryProfile struct {
@@ -295,6 +295,10 @@ type FullParseAcceptedErrorRetryProfile struct {
 	// SkipCompleteMaxEntryScratchPeak limits the complete-tree skip to a
 	// certified peak number of live GLR scratch entries. Zero is unbounded.
 	SkipCompleteMaxEntryScratchPeak uint32
+	// FreshErrorNoStacksRetryMaxStacks replaces the generic widened-stack
+	// target for a fresh error-bearing no-stacks parse. Zero keeps the generic
+	// target. Incremental fallbacks and explicit environment overrides ignore it.
+	FreshErrorNoStacksRetryMaxStacks uint16
 }
 
 // Language holds all data needed to parse a specific language.
