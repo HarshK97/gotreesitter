@@ -50,6 +50,16 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		blobSHA256:                    mustRuntimeProfileSHA256("cde4a67dc6af6e1232dbbd1eab8618478d1d73727020e8a8002542390a452d37"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
 	},
+	// Large ASM accepted-error parses improve during the same-stack merge
+	// retry, but later widened-stack passes do not advance the selected tree.
+	// Keep that first retry while avoiding the redundant wider passes.
+	"asm": {
+		blobSHA256: mustRuntimeProfileSHA256("7001e89cc1c597efce3143c011d39a40855067fb06863b738d2c4d7e595fb71d"),
+		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
+			MinSourceBytes:      11 * 1024,
+			InitialStackCeiling: 8,
+		},
+	},
 	// These grammars have error-bearing real-corpus witnesses that legitimately
 	// reach EOF. Re-running the accepted-error ladder does not improve their
 	// selected trees, so the exact certified blobs keep the first result.
