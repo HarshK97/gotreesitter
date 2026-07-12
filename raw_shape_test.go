@@ -65,8 +65,8 @@ func TestRawShapeCompareDistinguishesHiddenFlattenedPublicShape(t *testing.T) {
 	flatParent := newParentNodeInArena(arena, 1, true, []*Node{leaf}, nil, 0)
 	hiddenParent := newParentNodeInArena(arena, 1, true, []*Node{leaf}, nil, 0)
 
-	flatParent.rawShape = parser.captureRawShape(arena, 1, 0, []stackEntry{newStackEntryNode(0, leaf)}, 0, 1)
-	hiddenParent.rawShape = parser.captureRawShape(arena, 1, 0, []stackEntry{newStackEntryNode(0, hidden)}, 0, 1)
+	flatParent.rawShape = parser.captureRawShape(nil, arena, 1, 0, []stackEntry{newStackEntryNode(0, leaf)}, 0, 1)
+	hiddenParent.rawShape = parser.captureRawShape(nil, arena, 1, 0, []stackEntry{newStackEntryNode(0, hidden)}, 0, 1)
 
 	flatEntry := newStackEntryNode(1, flatParent)
 	hiddenEntry := newStackEntryNode(1, hiddenParent)
@@ -87,8 +87,8 @@ func TestAcceptedStackSelectionUsesRawShapeBeforeBranchOrder(t *testing.T) {
 	leafB := newLeafNodeInArena(arena, 4, true, 0, 1, Point{}, Point{Column: 1})
 	rootA := newParentNodeInArena(arena, 1, true, []*Node{leafA}, nil, 0)
 	rootB := newParentNodeInArena(arena, 1, true, []*Node{leafA}, nil, 0)
-	rootA.rawShape = parser.captureRawShape(arena, 1, 0, []stackEntry{newStackEntryNode(0, leafA)}, 0, 1)
-	rootB.rawShape = parser.captureRawShape(arena, 1, 0, []stackEntry{newStackEntryNode(0, leafB)}, 0, 1)
+	rootA.rawShape = parser.captureRawShape(nil, arena, 1, 0, []stackEntry{newStackEntryNode(0, leafA)}, 0, 1)
+	rootB.rawShape = parser.captureRawShape(nil, arena, 1, 0, []stackEntry{newStackEntryNode(0, leafB)}, 0, 1)
 
 	laterBetter := glrStack{
 		accepted:    true,
@@ -137,7 +137,7 @@ func TestAcceptedStackRawShapeDoesNotOverrideDistinctMaterializedRoot(t *testing
 	varName := newLeafNodeInArena(arena, varSym, true, 1, 7, Point{Column: 1}, Point{Column: 7})
 	macroArgs := newLeafNodeInArena(arena, argsSym, true, 7, 22, Point{Column: 7}, Point{Column: 22})
 	macro := newParentNodeInArena(arena, macroCallSym, true, []*Node{qmark, varName, macroArgs}, nil, 0)
-	macro.rawShape = parser.captureRawShape(arena, replacementSym, 0, []stackEntry{
+	macro.rawShape = parser.captureRawShape(nil, arena, replacementSym, 0, []stackEntry{
 		newStackEntryNode(0, qmark),
 		newStackEntryNode(0, varName),
 		newStackEntryNode(0, macroArgs),
@@ -146,7 +146,7 @@ func TestAcceptedStackRawShapeDoesNotOverrideDistinctMaterializedRoot(t *testing
 	macroName := newLeafNodeInArena(arena, macroCallSym, true, 0, 7, Point{}, Point{Column: 7})
 	callArgs := newLeafNodeInArena(arena, argsSym, true, 7, 22, Point{Column: 7}, Point{Column: 22})
 	call := newParentNodeInArena(arena, callSym, true, []*Node{macroName, callArgs}, nil, 0)
-	call.rawShape = parser.captureRawShape(arena, replacementSym, 0, []stackEntry{
+	call.rawShape = parser.captureRawShape(nil, arena, replacementSym, 0, []stackEntry{
 		newStackEntryNode(0, macroName),
 		newStackEntryNode(0, callArgs),
 	}, 0, 2)
@@ -229,7 +229,7 @@ func TestForestChildAlternativeResolutionUsesLocalSameSpanBest(t *testing.T) {
 	macroA := newLeafNodeInArena(arena, partASym, true, 0, 2, Point{}, Point{Column: 2})
 	macroB := newLeafNodeInArena(arena, partBSym, true, 2, 4, Point{Column: 2}, Point{Column: 4})
 	macro := newParentNodeInArena(arena, macroCallSym, true, []*Node{macroA, macroB}, nil, 0)
-	macro.rawShape = parser.captureRawShape(arena, replacementSym, 0, []stackEntry{
+	macro.rawShape = parser.captureRawShape(nil, arena, replacementSym, 0, []stackEntry{
 		newStackEntryNode(0, macroA),
 		newStackEntryNode(0, macroB),
 	}, 0, 2)
@@ -238,14 +238,14 @@ func TestForestChildAlternativeResolutionUsesLocalSameSpanBest(t *testing.T) {
 	callB := newLeafNodeInArena(arena, partBSym, true, 1, 2, Point{Column: 1}, Point{Column: 2})
 	callC := newLeafNodeInArena(arena, partCSym, true, 2, 4, Point{Column: 2}, Point{Column: 4})
 	call := newParentNodeInArena(arena, callSym, true, []*Node{callA, callB, callC}, nil, 0)
-	call.rawShape = parser.captureRawShape(arena, replacementSym, 0, []stackEntry{
+	call.rawShape = parser.captureRawShape(nil, arena, replacementSym, 0, []stackEntry{
 		newStackEntryNode(0, callA),
 		newStackEntryNode(0, callB),
 		newStackEntryNode(0, callC),
 	}, 0, 3)
 
 	root := newParentNodeInArena(arena, rootSym, true, []*Node{call}, nil, 0)
-	root.rawShape = parser.captureRawShape(arena, rootSym, 0, []stackEntry{newStackEntryNode(0, call)}, 0, 1)
+	root.rawShape = parser.captureRawShape(nil, arena, rootSym, 0, []stackEntry{newStackEntryNode(0, call)}, 0, 1)
 
 	local := &gssForestNode{
 		state:      42,
@@ -310,7 +310,7 @@ func TestForestChildAlternativeResolutionRejectsIncompatibleSiblingPath(t *testi
 	macroA := newLeafNodeInArena(arena, partASym, true, 0, 1, Point{}, Point{Column: 1})
 	macroB := newLeafNodeInArena(arena, partBSym, true, 1, 2, Point{Column: 1}, Point{Column: 2})
 	macro := newParentNodeInArena(arena, macroCallSym, true, []*Node{macroA, macroB}, nil, 0)
-	macro.rawShape = parser.captureRawShape(arena, replacementSym, 0, []stackEntry{
+	macro.rawShape = parser.captureRawShape(nil, arena, replacementSym, 0, []stackEntry{
 		newStackEntryNode(0, macroA),
 		newStackEntryNode(0, macroB),
 	}, 0, 2)
@@ -318,14 +318,14 @@ func TestForestChildAlternativeResolutionRejectsIncompatibleSiblingPath(t *testi
 	callA := newLeafNodeInArena(arena, partASym, true, 0, 1, Point{}, Point{Column: 1})
 	callC := newLeafNodeInArena(arena, partCSym, true, 1, 2, Point{Column: 1}, Point{Column: 2})
 	call := newParentNodeInArena(arena, callSym, true, []*Node{callA, callC}, nil, 0)
-	call.rawShape = parser.captureRawShape(arena, replacementSym, 0, []stackEntry{
+	call.rawShape = parser.captureRawShape(nil, arena, replacementSym, 0, []stackEntry{
 		newStackEntryNode(0, callA),
 		newStackEntryNode(0, callC),
 	}, 0, 2)
 
 	sibling := newLeafNodeInArena(arena, siblingSym, true, 2, 4, Point{Column: 2}, Point{Column: 4})
 	root := newParentNodeInArena(arena, rootSym, true, []*Node{call, sibling}, nil, 0)
-	root.rawShape = parser.captureRawShape(arena, rootSym, 0, []stackEntry{
+	root.rawShape = parser.captureRawShape(nil, arena, rootSym, 0, []stackEntry{
 		newStackEntryNode(0, call),
 		newStackEntryNode(0, sibling),
 	}, 0, 2)
@@ -391,7 +391,7 @@ func TestForestChildAlternativeResolutionPreservesVisibleNamedUnaryWrapper(t *te
 	call := newParentNodeInArena(arena, callSym, true, []*Node{target}, nil, 0)
 	guard := newParentNodeInArena(arena, guardSym, true, []*Node{call}, nil, 0)
 	root := newParentNodeInArena(arena, rootSym, true, []*Node{guard}, nil, 0)
-	root.rawShape = parser.captureRawShape(arena, rootSym, 0, []stackEntry{newStackEntryNode(0, guard)}, 0, 1)
+	root.rawShape = parser.captureRawShape(nil, arena, rootSym, 0, []stackEntry{newStackEntryNode(0, guard)}, 0, 1)
 
 	alternatives := newForestAlternativeIndex(4)
 	alternatives.nodes[guard] = &gssForestNode{state: 10}
@@ -430,7 +430,7 @@ func TestForestChildAlternativeResolutionPreservesVisibleContainerOverHiddenFlat
 	groupA := newLeafNodeInArena(arena, partASym, true, 0, 2, Point{}, Point{Column: 2})
 	groupB := newLeafNodeInArena(arena, partBSym, true, 2, 4, Point{Column: 2}, Point{Column: 4})
 	group := newParentNodeInArena(arena, groupSym, true, []*Node{groupA, groupB}, nil, 0)
-	group.rawShape = parser.captureRawShape(arena, groupSym, 0, []stackEntry{
+	group.rawShape = parser.captureRawShape(nil, arena, groupSym, 0, []stackEntry{
 		newStackEntryNode(0, groupA),
 		newStackEntryNode(0, groupB),
 	}, 0, 2)
@@ -438,13 +438,13 @@ func TestForestChildAlternativeResolutionPreservesVisibleContainerOverHiddenFlat
 	repeatA := newLeafNodeInArena(arena, partASym, true, 0, 2, Point{}, Point{Column: 2})
 	repeatB := newLeafNodeInArena(arena, partBSym, true, 2, 4, Point{Column: 2}, Point{Column: 4})
 	flatRepeat := newParentNodeInArena(arena, repeatSym, false, []*Node{repeatA, repeatB}, nil, 0)
-	flatRepeat.rawShape = parser.captureRawShape(arena, repeatSym, 0, []stackEntry{
+	flatRepeat.rawShape = parser.captureRawShape(nil, arena, repeatSym, 0, []stackEntry{
 		newStackEntryNode(0, repeatA),
 		newStackEntryNode(0, repeatB),
 	}, 0, 2)
 
 	root := newParentNodeInArena(arena, rootSym, true, []*Node{group}, nil, 0)
-	root.rawShape = parser.captureRawShape(arena, rootSym, 0, []stackEntry{newStackEntryNode(42, group)}, 0, 1)
+	root.rawShape = parser.captureRawShape(nil, arena, rootSym, 0, []stackEntry{newStackEntryNode(42, group)}, 0, 1)
 
 	prev := &gssForestNode{state: 7}
 	local := &gssForestNode{
@@ -539,8 +539,8 @@ func TestAcceptedStackSelectionUsesDynamicPrecedenceBeforeRawShape(t *testing.T)
 	rawWorseLeaf := newLeafNodeInArena(arena, 4, true, 0, 1, Point{}, Point{Column: 1})
 	rawPreferredRoot := newParentNodeInArena(arena, 1, true, []*Node{rawPreferredLeaf}, nil, 0)
 	dynamicPreferredRoot := newParentNodeInArena(arena, 1, true, []*Node{rawWorseLeaf}, nil, 0)
-	rawPreferredRoot.rawShape = parser.captureRawShape(arena, 1, 0, []stackEntry{newStackEntryNode(0, rawPreferredLeaf)}, 0, 1)
-	dynamicPreferredRoot.rawShape = parser.captureRawShape(arena, 1, 0, []stackEntry{newStackEntryNode(0, rawWorseLeaf)}, 0, 1)
+	rawPreferredRoot.rawShape = parser.captureRawShape(nil, arena, 1, 0, []stackEntry{newStackEntryNode(0, rawPreferredLeaf)}, 0, 1)
+	dynamicPreferredRoot.rawShape = parser.captureRawShape(nil, arena, 1, 0, []stackEntry{newStackEntryNode(0, rawWorseLeaf)}, 0, 1)
 	dynamicPreferredRoot.dynamicPrecedence = 7
 
 	dynamicPreferred := glrStack{
@@ -603,13 +603,13 @@ func testGeneratedRepeatBoundaryStacks(t *testing.T, generated bool) (*Parser, *
 	tail := newLeafNodeInArena(arena, 3, true, 900, 1005, Point{Row: 20}, Point{Row: 24})
 
 	shortRepeat := newParentNodeInArena(arena, 2, false, []*Node{first, second}, nil, 0)
-	shortRepeat.rawShape = parser.captureRawShape(arena, 2, 0, []stackEntry{
+	shortRepeat.rawShape = parser.captureRawShape(nil, arena, 2, 0, []stackEntry{
 		newStackEntryNode(0, first),
 		newStackEntryNode(0, second),
 	}, 0, 2)
 
 	wideRepeat := newParentNodeInArena(arena, 2, false, []*Node{shortRepeat, tail}, nil, 0)
-	wideRepeat.rawShape = parser.captureRawShape(arena, 2, 0, []stackEntry{
+	wideRepeat.rawShape = parser.captureRawShape(nil, arena, 2, 0, []stackEntry{
 		newStackEntryNode(0, shortRepeat),
 		newStackEntryNode(0, tail),
 	}, 0, 2)
@@ -619,14 +619,14 @@ func testGeneratedRepeatBoundaryStacks(t *testing.T, generated bool) (*Parser, *
 	shortRoot.endByte = 1005
 	shortRoot.startPoint = Point{}
 	shortRoot.endPoint = Point{Row: 24}
-	shortRoot.rawShape = parser.captureRawShape(arena, 1, 0, []stackEntry{newStackEntryNode(0, shortRepeat)}, 0, 1)
+	shortRoot.rawShape = parser.captureRawShape(nil, arena, 1, 0, []stackEntry{newStackEntryNode(0, shortRepeat)}, 0, 1)
 
 	wideRoot := newParentNodeInArena(arena, 1, true, []*Node{wideRepeat}, nil, 0)
 	wideRoot.startByte = 0
 	wideRoot.endByte = 1005
 	wideRoot.startPoint = Point{}
 	wideRoot.endPoint = Point{Row: 24}
-	wideRoot.rawShape = parser.captureRawShape(arena, 1, 0, []stackEntry{newStackEntryNode(0, wideRepeat)}, 0, 1)
+	wideRoot.rawShape = parser.captureRawShape(nil, arena, 1, 0, []stackEntry{newStackEntryNode(0, wideRepeat)}, 0, 1)
 
 	shorter := glrStack{
 		accepted:    true,
@@ -673,13 +673,13 @@ func TestAcceptedStackSelectionPrefersSharedPrefixSpliceBeforeRawShape(t *testin
 	splicedC := newLeafNodeInArena(arena, 6, true, 2, 4, Point{Column: 2}, Point{Column: 4})
 	splicedRoot := newParentNodeInArena(arena, 1, true, []*Node{splicedA, splicedB, splicedC}, nil, 0)
 
-	wrap.rawShape = parser.captureRawShape(arena, 2, 0, []stackEntry{
+	wrap.rawShape = parser.captureRawShape(nil, arena, 2, 0, []stackEntry{
 		newStackEntryNode(0, wrappedA),
 		newStackEntryNode(0, wrappedB),
 		newStackEntryNode(0, wrappedC),
 	}, 0, 3)
-	wrappedRoot.rawShape = parser.captureRawShape(arena, 1, 0, []stackEntry{newStackEntryNode(0, wrap)}, 0, 1)
-	splicedRoot.rawShape = parser.captureRawShape(arena, 1, 0, []stackEntry{
+	wrappedRoot.rawShape = parser.captureRawShape(nil, arena, 1, 0, []stackEntry{newStackEntryNode(0, wrap)}, 0, 1)
+	splicedRoot.rawShape = parser.captureRawShape(nil, arena, 1, 0, []stackEntry{
 		newStackEntryNode(0, splicedA),
 		newStackEntryNode(0, splicedB),
 		newStackEntryNode(0, splicedC),
@@ -1041,13 +1041,13 @@ func testSemanticInvisibleWrapperRawShapeStacks(t *testing.T, arena *nodeArena, 
 	splicedC := newLeafNodeInArena(arena, rawShapeSemanticCSplice, true, 2, 4, Point{Column: 2}, Point{Column: 4})
 	splicedRoot := newParentNodeInArena(arena, rawShapeSemanticRootSym, true, []*Node{splicedA, splicedB, splicedC}, nil, 0)
 
-	wrap.rawShape = parser.captureRawShape(arena, rawShapeSemanticWrapSym, rawShapeSemanticWrapPID, []stackEntry{
+	wrap.rawShape = parser.captureRawShape(nil, arena, rawShapeSemanticWrapSym, rawShapeSemanticWrapPID, []stackEntry{
 		newStackEntryNode(0, wrappedA),
 		newStackEntryNode(0, wrappedB),
 		newStackEntryNode(0, wrappedC),
 	}, 0, 3)
-	wrappedRoot.rawShape = parser.captureRawShape(arena, rawShapeSemanticRootSym, 0, []stackEntry{newStackEntryNode(0, wrap)}, 0, 1)
-	splicedRoot.rawShape = parser.captureRawShape(arena, rawShapeSemanticRootSym, 0, []stackEntry{
+	wrappedRoot.rawShape = parser.captureRawShape(nil, arena, rawShapeSemanticRootSym, 0, []stackEntry{newStackEntryNode(0, wrap)}, 0, 1)
+	splicedRoot.rawShape = parser.captureRawShape(nil, arena, rawShapeSemanticRootSym, 0, []stackEntry{
 		newStackEntryNode(0, splicedA),
 		newStackEntryNode(0, splicedB),
 		newStackEntryNode(0, splicedC),
@@ -1074,7 +1074,7 @@ func TestDynamicPrecedencePropagatesThroughCompactMaterialization(t *testing.T) 
 	parser := testRawShapeParser()
 
 	leaf := newCompactFullLeafInArena(arena, 3, true, 0, 1, Point{}, Point{Column: 1})
-	leaf.rawShape = parser.captureRawShape(arena, 3, 0, []stackEntry{newStackEntryNode(0, newLeafNodeInArena(arena, 4, true, 0, 1, Point{}, Point{Column: 1}))}, 0, 1)
+	leaf.rawShape = parser.captureRawShape(nil, arena, 3, 0, []stackEntry{newStackEntryNode(0, newLeafNodeInArena(arena, 4, true, 0, 1, Point{}, Point{Column: 1}))}, 0, 1)
 	leaf.dynamicPrecedence = 11
 	leafEntry := newStackEntryCompactFullLeaf(1, leaf)
 	leafNode := materializeStackEntryCompactFullLeaf(arena, &leafEntry, compactFullLeafMaterializeForFinalTree)
@@ -1089,7 +1089,7 @@ func TestDynamicPrecedencePropagatesThroughCompactMaterialization(t *testing.T) 
 	}
 
 	parent := newPendingParentInArena(arena, 1, true, 0, []stackEntry{leafEntry}, 0, 1, Point{}, Point{Column: 1}, false)
-	parent.rawShape = parser.captureRawShape(arena, 1, 0, []stackEntry{leafEntry}, 0, 1)
+	parent.rawShape = parser.captureRawShape(nil, arena, 1, 0, []stackEntry{leafEntry}, 0, 1)
 	parent.dynamicPrecedence = 13
 	parentEntry := newStackEntryPendingParent(1, parent)
 	parentNode := materializeStackEntryPendingParent(arena, &parentEntry, pendingParentMaterializeForFinalTree)
@@ -1111,7 +1111,7 @@ func TestDynamicPrecedencePropagatesThroughPendingFinalChildRefs(t *testing.T) {
 
 	child := newLeafNodeInArena(arena, 3, true, 0, 1, Point{}, Point{Column: 1})
 	parent := newPendingParentInArena(arena, 1, true, 0, []stackEntry{newStackEntryNode(1, child)}, 0, 1, Point{}, Point{Column: 1}, false)
-	parent.rawShape = testRawShapeParser().captureRawShape(arena, 1, 0, []stackEntry{newStackEntryNode(1, child)}, 0, 1)
+	parent.rawShape = testRawShapeParser().captureRawShape(nil, arena, 1, 0, []stackEntry{newStackEntryNode(1, child)}, 0, 1)
 	parent.dynamicPrecedence = 17
 	parentEntry := newStackEntryPendingParent(1, parent)
 	parentNode := materializeStackEntryPendingParent(arena, &parentEntry, pendingParentMaterializeForFinalTree)
@@ -1240,7 +1240,7 @@ func TestRawShapePropagatesThroughNoTreeAndCollapsedUnary(t *testing.T) {
 	}
 
 	entry := entries[0]
-	raw := captureCollapsedUnaryRawShape(arena, ParseAction{Symbol: 2, ProductionID: 9}, entries, 1)
+	raw := captureCollapsedUnaryRawShape(nil, arena, ParseAction{Symbol: 2, ProductionID: 9}, entries, 1)
 	setStackEntryRawShapeRef(&entry, raw)
 	shape, ok = rawShapeForStackEntry(arena, entry)
 	if !ok {

@@ -129,6 +129,55 @@ type gssScratch struct {
 	audit             *runtimeAudit
 	frontier          conflictReduceFrontierScratch
 	stackEntries      []stackEntry
+	// everForked latches true the first time this parse observes more than
+	// one live GLR stack (see the singleStackMode writers in parser.go, and
+	// the explicit early latch at the "len(actions) > 1" conflict-fork
+	// decision point). It is intentionally sticky for the rest of the parse:
+	// once a parse has forked, raw-shape capture must resume for every later
+	// reduction even if the stack count later collapses back to one, because
+	// a subsequent fork's tie-break comparisons (compareRawStackEntries) may
+	// need shapes for nodes built during that "back to one stack" interval.
+	// See spore.2026-07-12.hazel.rawshape-elision-rca.
+	everForked bool
+}
+
+// rawShapeElisionDisabledForDiagnostics forces every reduction to capture its
+// raw shape, even on the pure single-stack happy path, matching parser
+// behavior before the single-stack capture elision optimization. It exists so
+// differential tests (and offline profiling harnesses) can A/B the
+// optimization directly against otherwise-identical parses. It is not
+// concurrency-safe and is intended for single-threaded test/benchmark use
+// only; normal parser paths leave it disabled.
+var rawShapeElisionDisabledForDiagnostics bool
+
+// SetRawShapeElisionDisabledForDiagnostics toggles rawShapeElisionDisabledForDiagnostics.
+// See its doc comment: this is a diagnostics-only hook, not part of the
+// parser's production behavior contract.
+func SetRawShapeElisionDisabledForDiagnostics(disabled bool) {
+	rawShapeElisionDisabledForDiagnostics = disabled
+}
+
+// mayElideRawShape reports whether it is safe to skip captureRawShape for the
+// reduction currently in flight. This is true only on the pure single-stack
+// happy path: exactly one GLR stack is live right now, and this parse has
+// never forked before. Once a parse forks even once, this permanently
+// returns false for the remainder of the parse (see everForked).
+func (s *gssScratch) mayElideRawShape() bool {
+	return s != nil && s.singleStackMode && !s.everForked && !rawShapeElisionDisabledForDiagnostics
+}
+
+// setSingleStackMode updates singleStackMode and latches everForked the
+// moment the parse is observed leaving single-stack mode. everForked is
+// sticky for the rest of the parse (cleared only by reset()), even if the
+// stack count later collapses back to one.
+func (s *gssScratch) setSingleStackMode(v bool) {
+	if s == nil {
+		return
+	}
+	s.singleStackMode = v
+	if !v {
+		s.everForked = true
+	}
 }
 
 type gssNodeSlab struct {
@@ -552,6 +601,7 @@ func (s *gssScratch) reset() {
 	}
 	if len(s.slabs) == 0 {
 		s.singleStackMode = false
+		s.everForked = false
 		s.singleStackAllocs = 0
 		s.multiStackAllocs = 0
 		s.demotions = 0
@@ -600,6 +650,7 @@ func (s *gssScratch) reset() {
 	s.usedTotal = 0
 	s.peakUsed = 0
 	s.singleStackMode = false
+	s.everForked = false
 	s.singleStackAllocs = 0
 	s.multiStackAllocs = 0
 	s.demotions = 0

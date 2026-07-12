@@ -291,8 +291,26 @@ func (a *nodeArena) rawShapeChildrenForNode(node *Node) []rawShapeChild {
 	return a.rawShapeChildren(shape)
 }
 
-func (p *Parser) captureRawShape(arena *nodeArena, symbol Symbol, productionID uint16, entries []stackEntry, start, end int) rawShapeRef {
+// captureRawShape captures the reduction-shape sidecar documented on rawShape
+// (raw_shape.go). gssScratch gates a single-stack happy-path optimization:
+// every reader of the resulting ref is nil-guarded with an explicit fallback
+// (memory-safe unconditionally — see rawShapeForStackEntry and callers), so
+// skipping the capture entirely while gssScratch.mayElideRawShape() is true
+// is always safe. It is NOT always behavior-neutral across a prefix-then-fork
+// transition (later tie-break comparisons, e.g. compareRawStackEntriesRec,
+// can consult a shape's pre-flattening structure), which is why
+// mayElideRawShape latches permanently false for the rest of a parse the
+// first time it ever forks (see gssScratch.everForked). Pass nil for
+// gssScratch from call sites that are already proven fork-only/reachable
+// only outside the pure single-stack path (e.g. reduceForkTemporaryParent) or
+// that are out of scope for this optimization (e.g. the noTreeBenchmarkOnly
+// lane): nil never elides, matching the pre-optimization behavior. See
+// spore.2026-07-12.hazel.rawshape-elision-rca.
+func (p *Parser) captureRawShape(gssScratch *gssScratch, arena *nodeArena, symbol Symbol, productionID uint16, entries []stackEntry, start, end int) rawShapeRef {
 	if arena == nil || start < 0 || end < start || end > len(entries) {
+		return 0
+	}
+	if gssScratch.mayElideRawShape() {
 		return 0
 	}
 	count := 0

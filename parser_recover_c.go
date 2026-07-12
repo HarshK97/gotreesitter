@@ -3958,7 +3958,11 @@ func captureRawShapeForEntries(arena *nodeArena, symbol Symbol, productionID uin
 		return 0
 	}
 	var p Parser
-	return p.captureRawShape(arena, symbol, productionID, entries, 0, len(entries))
+	// C-recovery error-path shape construction is out of scope for the
+	// single-stack elision (the RCA's reader inventory already gates every
+	// consumer on recovery among other things): nil never elides, preserving
+	// this lane's existing unconditional-capture behavior.
+	return p.captureRawShape(nil, arena, symbol, productionID, entries, 0, len(entries))
 }
 
 // cStackResultErrorCost is the result-selection cost: the error cost of the

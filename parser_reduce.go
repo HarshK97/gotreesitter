@@ -2913,7 +2913,12 @@ func (p *Parser) reduceForkTemporaryParent(arena *nodeArena, act ParseAction, en
 	if parent == nil {
 		return nil
 	}
-	parent.rawShape = p.captureRawShape(arena, act.Symbol, act.ProductionID, entries, 0, len(entries))
+	// No gssScratch in scope here: this helper builds a throwaway temporary
+	// parent purely to compare two in-flight reduce-fork alternatives
+	// (reduceForkWindowPreference), which only runs once len(forks) >= 2 --
+	// i.e. only after the parse has already forked, so unconditional capture
+	// here is always correct (mayElideRawShape would be false anyway).
+	parent.rawShape = p.captureRawShape(nil, arena, act.Symbol, act.ProductionID, entries, 0, len(entries))
 	setReduceNodeDynamicPrecedence(parent, entries, 0, len(entries), act)
 	return parent
 }
@@ -3555,7 +3560,7 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 	for i := 0; i < childCount; i++ {
 		rawWindow = append(rawWindow, newStackEntryNode(0, children[i]))
 	}
-	rawShape := p.captureRawShape(arena, act.Symbol, act.ProductionID, rawWindow, 0, len(rawWindow))
+	rawShape := p.captureRawShape(gssScratch, arena, act.Symbol, act.ProductionID, rawWindow, 0, len(rawWindow))
 	named := p.isNamedSymbol(act.Symbol)
 	var parent *Node
 	parentStart := time.Time{}
@@ -3780,7 +3785,7 @@ func (p *Parser) applyReduceActionFromGSS(source []byte, s *glrStack, act ParseA
 	if timing != nil {
 		childStart = time.Now()
 	}
-	rawShape := p.captureRawShape(arena, act.Symbol, act.ProductionID, windowEntries, window.start, window.reducedEnd)
+	rawShape := p.captureRawShape(gssScratch, arena, act.Symbol, act.ProductionID, windowEntries, window.start, window.reducedEnd)
 	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(windowEntries, window.start, window.reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
 	if timing != nil {
 		timing.reduceChildBuildNanos += time.Since(childStart).Nanoseconds()
@@ -3889,7 +3894,7 @@ func (p *Parser) applyReduceActionForked(source []byte, s *glrStack, act ParseAc
 		actualEnd := len(window)
 		childCount := int(act.ChildCount)
 
-		rawShape := p.captureRawShape(arena, act.Symbol, act.ProductionID, window, 0, reducedEnd)
+		rawShape := p.captureRawShape(gssScratch, arena, act.Symbol, act.ProductionID, window, 0, reducedEnd)
 		children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(window, 0, reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
 
 		target.gss.head = fork.popTo
@@ -4218,7 +4223,7 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(source []byte, s *glrS
 	if timing != nil {
 		childStart = time.Now()
 	}
-	rawShape := p.captureRawShape(arena, act.Symbol, act.ProductionID, windowEntries, 0, reducedEnd)
+	rawShape := p.captureRawShape(gssScratch, arena, act.Symbol, act.ProductionID, windowEntries, 0, reducedEnd)
 	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(windowEntries, 0, reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
 	if timing != nil {
 		timing.reduceChildBuildNanos += time.Since(childStart).Nanoseconds()
@@ -4613,7 +4618,7 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 		endPoint,
 		hasError,
 	)
-	parent.rawShape = p.captureRawShape(arena, act.Symbol, act.ProductionID, entries, start, reducedEnd)
+	parent.rawShape = p.captureRawShape(gssScratch, arena, act.Symbol, act.ProductionID, entries, start, reducedEnd)
 	parent.dynamicPrecedence = reduceWindowDynamicPrecedence(entries, start, reducedEnd, act)
 	out := 0
 	flattenedParents := 0
@@ -4715,7 +4720,7 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 		endPoint,
 		window.hasError,
 	)
-	parent.rawShape = p.captureRawShape(arena, act.Symbol, act.ProductionID, entries, start, reducedEnd)
+	parent.rawShape = p.captureRawShape(gssScratch, arena, act.Symbol, act.ProductionID, entries, start, reducedEnd)
 	parent.dynamicPrecedence = reduceWindowDynamicPrecedence(entries, start, reducedEnd, act)
 	if useDenseFieldEntries {
 		parent.setHasFieldEntries(true)
@@ -6936,7 +6941,7 @@ func (p *Parser) applyReduceAction(source []byte, s *glrStack, act ParseAction, 
 	if timing != nil {
 		childStart = time.Now()
 	}
-	rawShape := p.captureRawShape(arena, act.Symbol, act.ProductionID, entries, window.start, window.reducedEnd)
+	rawShape := p.captureRawShape(gssScratch, arena, act.Symbol, act.ProductionID, entries, window.start, window.reducedEnd)
 	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(entries, window.start, window.reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
 	if timing != nil {
 		timing.reduceChildBuildNanos += time.Since(childStart).Nanoseconds()
@@ -7122,7 +7127,7 @@ func (p *Parser) applyReduceActionTransientParents(source []byte, s *glrStack, a
 	if timing != nil {
 		childStart = time.Now()
 	}
-	rawShape := p.captureRawShape(arena, act.Symbol, act.ProductionID, entries, window.start, window.reducedEnd)
+	rawShape := p.captureRawShape(gssScratch, arena, act.Symbol, act.ProductionID, entries, window.start, window.reducedEnd)
 	children, fieldIDs, fieldSources, childPath := p.buildReduceChildrenWithPath(entries, window.start, window.reducedEnd, childCount, act.Symbol, act.ProductionID, arena)
 	if timing != nil {
 		timing.reduceChildBuildNanos += time.Since(childStart).Nanoseconds()
@@ -7290,7 +7295,11 @@ func newNoTreeReduceNodeInArenaWithRawShape(arena *nodeArena, act ParseAction, n
 	n.preGotoState = 0
 	n.productionID = act.ProductionID
 	if captureRawShape {
-		n.rawShape = captureRawShapeInArena(arena, act, entries, start, reducedEnd)
+		// No gssScratch threaded into this benchmark-only ("noTreeBenchmarkOnly")
+		// lane: it is not part of the canonical parse path the single-stack
+		// elision targets, so it keeps its pre-existing unconditional-capture
+		// behavior (nil never elides; see gssScratch.mayElideRawShape).
+		n.rawShape = captureRawShapeInArena(nil, arena, act, entries, start, reducedEnd)
 	} else {
 		n.rawShape = 0
 	}
@@ -7337,20 +7346,20 @@ func newNoTreeReduceNodeInArenaWithRawShape(arena *nodeArena, act ParseAction, n
 	return n
 }
 
-func captureRawShapeInArena(arena *nodeArena, act ParseAction, entries []stackEntry, start, end int) rawShapeRef {
+func captureRawShapeInArena(gssScratch *gssScratch, arena *nodeArena, act ParseAction, entries []stackEntry, start, end int) rawShapeRef {
 	if arena == nil {
 		return 0
 	}
 	var p Parser
-	return p.captureRawShape(arena, act.Symbol, act.ProductionID, entries, start, end)
+	return p.captureRawShape(gssScratch, arena, act.Symbol, act.ProductionID, entries, start, end)
 }
 
-func captureCollapsedUnaryRawShape(arena *nodeArena, act ParseAction, entries []stackEntry, reducedEnd int) rawShapeRef {
-	return captureRawShapeInArena(arena, act, entries, reducedEnd-1, reducedEnd)
+func captureCollapsedUnaryRawShape(gssScratch *gssScratch, arena *nodeArena, act ParseAction, entries []stackEntry, reducedEnd int) rawShapeRef {
+	return captureRawShapeInArena(gssScratch, arena, act, entries, reducedEnd-1, reducedEnd)
 }
 
 func (p *Parser) pushCollapsedUnaryReduceNode(s *glrStack, act ParseAction, tok Token, child *Node, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, trailingStart, trailingEnd int, topState StateID) {
-	rawShape := captureCollapsedUnaryRawShape(arena, act, entries, trailingStart)
+	rawShape := captureCollapsedUnaryRawShape(gssScratch, arena, act, entries, trailingStart)
 	gotoState := p.lookupGoto(topState, act.Symbol)
 	targetState := topState
 	if gotoState != 0 {
@@ -7383,7 +7392,7 @@ func (p *Parser) pushCollapsedUnaryReduceNode(s *glrStack, act ParseAction, tok 
 }
 
 func (p *Parser) pushCollapsedUnaryReduceEntry(s *glrStack, act ParseAction, tok Token, child stackEntry, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, entries []stackEntry, trailingStart, trailingEnd int, topState StateID) {
-	rawShape := captureCollapsedUnaryRawShape(arena, act, entries, trailingStart)
+	rawShape := captureCollapsedUnaryRawShape(gssScratch, arena, act, entries, trailingStart)
 	gotoState := p.lookupGoto(topState, act.Symbol)
 	targetState := topState
 	if gotoState != 0 {

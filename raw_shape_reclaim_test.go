@@ -83,7 +83,48 @@ func TestReclaimRawShapeStorageClearsArenaPayloadRefs(t *testing.T) {
 	}
 }
 
+// TestParseReclaimsRawShapeStorageAfterAccounting exercises the reclaim/
+// accounting invariant on a genuinely forking parse (buildPrefixForkLanguage,
+// proven to fork by TestPrefixForkLanguageActuallyForks in
+// raw_shape_elision_test.go). A single-stack input like "1+2+3+4" no longer
+// captures any raw shapes at all under the single-stack capture elision (see
+// gssScratch.mayElideRawShape / spore.2026-07-12.hazel.rawshape-elision-rca),
+// so it can no longer exercise "nonzero captured, then reclaimed" here; see
+// TestParseReclaimsRawShapeStorageAccountsForZeroOnSingleStackParse below for
+// that (now-zero) single-stack case.
 func TestParseReclaimsRawShapeStorageAfterAccounting(t *testing.T) {
+	EnableArenaBreakdown(true)
+	defer EnableArenaBreakdown(false)
+
+	lang := buildPrefixForkLanguage()
+	tree := mustParse(t, NewParser(lang), []byte("x x y"))
+	defer tree.Release()
+
+	rt := tree.ParseRuntime()
+	if rt.MaxStacksSeen <= 1 {
+		t.Fatalf("MaxStacksSeen = %d, want > 1 (this test requires a genuinely forking parse)", rt.MaxStacksSeen)
+	}
+	breakdown := assertParseRuntimeArenaBreakdown(t, tree, rt)
+	parseRawBytes := breakdown.RawShapeBytesAllocated + breakdown.RawShapeChildBytesAllocated
+	if parseRawBytes == 0 {
+		t.Fatal("parse-time raw-shape bytes = 0, want captured allocation once the parse has forked")
+	}
+	assertTreeRawShapeStorageReclaimed(t, tree)
+	retainedRawBytes := tree.arena.rawShapeBytesAllocated() + tree.arena.rawShapeChildBytesAllocated()
+	if got, want := tree.ParseRuntime().ArenaBytesAllocated-tree.arena.allocatedBytes, parseRawBytes-retainedRawBytes; got != want {
+		t.Fatalf("retained arena reduction = %d, want reclaimed raw-shape allocation %d", got, want)
+	}
+	assertReachableRawShapeRefsCleared(t, tree.RootNode())
+}
+
+// TestParseReclaimsRawShapeStorageAccountsForZeroOnSingleStackParse is the
+// single-stack counterpart the RCA asked for: a pure single-stack parse
+// (buildArithmeticLanguage has no GLR conflicts) now elides every
+// captureRawShape call, so the arena-breakdown accounting invariant must hold
+// with parse-time raw-shape bytes at zero, not just at some captured-then-
+// reclaimed nonzero value.
+func TestParseReclaimsRawShapeStorageAccountsForZeroOnSingleStackParse(t *testing.T) {
+	DrainArenaPools()
 	EnableArenaBreakdown(true)
 	defer EnableArenaBreakdown(false)
 
@@ -91,10 +132,14 @@ func TestParseReclaimsRawShapeStorageAfterAccounting(t *testing.T) {
 	tree := mustParse(t, NewParser(lang), []byte("1+2+3+4"))
 	defer tree.Release()
 
-	breakdown := assertParseRuntimeArenaBreakdown(t, tree, tree.ParseRuntime())
+	rt := tree.ParseRuntime()
+	if rt.MaxStacksSeen > 1 {
+		t.Fatalf("MaxStacksSeen = %d, want <= 1 (arithmetic grammar has no GLR conflicts)", rt.MaxStacksSeen)
+	}
+	breakdown := assertParseRuntimeArenaBreakdown(t, tree, rt)
 	parseRawBytes := breakdown.RawShapeBytesAllocated + breakdown.RawShapeChildBytesAllocated
-	if parseRawBytes == 0 {
-		t.Fatal("parse-time raw-shape bytes = 0, want captured allocation")
+	if parseRawBytes != 0 {
+		t.Fatalf("parse-time raw-shape bytes = %d, want 0 on a pure single-stack parse (elision should skip every capture)", parseRawBytes)
 	}
 	assertTreeRawShapeStorageReclaimed(t, tree)
 	retainedRawBytes := tree.arena.rawShapeBytesAllocated() + tree.arena.rawShapeChildBytesAllocated()
