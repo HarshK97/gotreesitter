@@ -441,7 +441,7 @@ witness, and shrinks as certified engine mechanisms subsume shims. See
 
 ## Known limitations
 
-- **Full-parse throughput**: the 500-function Go benchmark is now faster than the listed C baselines, but full-parse throughput still varies by grammar and corpus shape. Highly ambiguous languages and very large generated files remain the main parity/performance frontier.
+- **Full-parse throughput**: the corrected, materialized 500-function Go benchmark measures ~2.1x the C runtime on the same host (see [BENCH.md](BENCH.md); the earlier faster-than-C figure described the no-tree diagnostic path and was withdrawn). Incremental lanes beat the cgo binding path by orders of magnitude. Full-parse throughput varies by grammar and corpus shape; highly ambiguous languages and very large generated files remain the main performance frontier.
 - **GLR safety caps**: The parser enforces iteration, stack depth, and node count limits proportional to input size. These prevent pathological blowup on grammars with high ambiguity but impose a ceiling on the maximum input complexity that parses without error. The caps are tunable but not removable without risking unbounded resource consumption.
 
 ## Adding a language
