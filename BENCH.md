@@ -68,6 +68,13 @@ immediately after the Go lanes. Ratios cancel the hardware out:
 | One-byte incremental edit | 1.98 µs | 331 µs | **0.006x — 167x faster** |
 | No-edit reparse | 9.9 ns | 330 µs | **~33,000x faster** |
 
+The production lane for `.go` files (`BenchmarkGoParseFull`, hand-written
+stdlib-scanner token source — the registry default for Go) measures 9.70 ms
+median on the same host: **1.70x C**, though at 2,502 allocs/op from the
+scanner bridge versus the DFA lane's 9. The published headline ratio stays
+the DFA lane (worst-case, allocation-clean, grammar-generic); the production
+Go path is faster.
+
 Readings: the corrected, materialized full parse is ~2.1x the C runtime on
 this workload — consistent with the fleet median and honestly replacing the
 withdrawn pre-correction "faster than C" figure, which described the no-tree
