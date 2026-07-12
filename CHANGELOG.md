@@ -7,6 +7,17 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Added
+
+- `parse_gap_report` and `parse_gap_correlate` now split each language's
+  Go/C ratio by corpus-file policy: every sample is classified `clean`
+  (Go tree has no ERROR nodes and did not stop early) or error-bearing, and
+  the per-language ledger reports `clean_ratio`/`error_ratio` plus
+  `clean_file_count`/`error_file_count`/`error_file_share` alongside the
+  existing combined ratio. This keeps an error-dense tail-language corpus
+  from making clean-parse throughput look artificially slow in ratchet
+  decisions.
+
 ### Fixed
 
 - The Go compat-normalization walk now honors the parse memory budget: it

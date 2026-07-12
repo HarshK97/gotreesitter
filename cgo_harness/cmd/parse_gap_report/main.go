@@ -127,6 +127,16 @@ type paritySummary struct {
 	Query       *bool  `json:"query,omitempty"`
 	Incremental *bool  `json:"incremental,omitempty"`
 	Error       string `json:"error,omitempty"`
+	// GoHasError, GoStoppedEarly, and Clean classify this corpus sample's Go
+	// parse independently of the C reference, for the corpus-policy split:
+	// a language's combined Go/C ratio conflates clean-parse throughput with
+	// error-recovery throughput unless clean and error-bearing files are
+	// scored separately. Clean is true only when the Go tree has no ERROR
+	// nodes and the parse did not stop early (timeout, node/iteration/stack
+	// limit, memory budget, or token-source EOF).
+	GoHasError     bool `json:"go_has_error,omitempty"`
+	GoStoppedEarly bool `json:"go_stopped_early,omitempty"`
+	Clean          bool `json:"clean"`
 }
 
 type runtimeStats struct {
@@ -961,10 +971,15 @@ func computeParity(r *runner, source []byte, queries []querySpec, parseOnlyGate 
 	noError := !cRoot.HasError() && !goRoot.HasError()
 	diff := cgoharness.FirstDivergenceDumpV1(goRoot, r.goLang, cRoot)
 	deep := diff == nil
+	goHasError := goRoot.HasError()
+	goStoppedEarly := goTree.ParseStoppedEarly()
 	summary := paritySummary{
-		NoError: noError,
-		SExpr:   deep,
-		Deep:    deep,
+		NoError:        noError,
+		SExpr:          deep,
+		Deep:           deep,
+		GoHasError:     goHasError,
+		GoStoppedEarly: goStoppedEarly,
+		Clean:          !goHasError && !goStoppedEarly,
 	}
 	if !noError {
 		if goRoot.HasError() != cRoot.HasError() {
@@ -2440,9 +2455,16 @@ func renderSummary(rows []reportRow, languageOrder []string) string {
 		lang string
 		mode string
 	}
+	type cleanKey struct {
+		lang  string
+		mode  string
+		clean bool
+	}
 	by := make(map[key][]reportRow)
+	byClean := make(map[cleanKey][]reportRow)
 	for _, row := range rows {
 		by[key{row.Language, row.Mode}] = append(by[key{row.Language, row.Mode}], row)
+		byClean[cleanKey{row.Language, row.Mode, row.Parity.Clean}] = append(byClean[cleanKey{row.Language, row.Mode, row.Parity.Clean}], row)
 	}
 	langs := make([]string, 0)
 	seenLang := map[string]struct{}{}
@@ -2460,8 +2482,9 @@ func renderSummary(rows []reportRow, languageOrder []string) string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Parse Gap Report\n\n")
-	fmt.Fprintf(&b, "| lang | samples | parse | highlight | query | go_full/cgo | go_no_tree/cgo | go_query/cgo | go_edit | noop | blocker |\n")
-	fmt.Fprintf(&b, "| --- | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |\n")
+	fmt.Fprintf(&b, "Corpus-policy split: `clean_ratio`/`error_ratio` score the same go_full/cgo_full ratio as `go_full/cgo` but restricted to samples whose Go parse was clean (no ERROR nodes, no early stop) versus samples that were not; `clean_files`/`error_files`/`error_share` report the underlying per-language file counts so a language cannot look artificially slow (or fast) from an error-dense corpus without that being visible.\n\n")
+	fmt.Fprintf(&b, "| lang | samples | parse | highlight | query | go_full/cgo | go_no_tree/cgo | go_query/cgo | go_edit | noop | clean_ratio | error_ratio | clean_files | error_files | error_share | blocker |\n")
+	fmt.Fprintf(&b, "| --- | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n")
 	for _, lang := range langs {
 		sampleCount := uniqueSamples(rows, lang)
 		blockers := map[string]struct{}{}
@@ -2479,7 +2502,12 @@ func renderSummary(rows []reportRow, languageOrder []string) string {
 		goQuery := averageMedian(by[key{lang, "go_parse_query"}])
 		goEdit := averageMedian(by[key{lang, "go_edit"}])
 		goNoop := averageMedian(by[key{lang, "go_noop_incremental"}])
-		fmt.Fprintf(&b, "| %s | %d | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
+		cleanCgoFull := averageMedian(byClean[cleanKey{lang, "cgo_full", true}])
+		cleanGoFull := averageMedian(byClean[cleanKey{lang, "go_full", true}])
+		errorCgoFull := averageMedian(byClean[cleanKey{lang, "cgo_full", false}])
+		errorGoFull := averageMedian(byClean[cleanKey{lang, "go_full", false}])
+		cleanFileCount, errorFileCount := cleanErrorFileCounts(rows, lang)
+		fmt.Fprintf(&b, "| %s | %d | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | %d | %d | %s | %s |\n",
 			lang,
 			sampleCount,
 			parseGateString(rows, lang),
@@ -2490,10 +2518,50 @@ func renderSummary(rows []reportRow, languageOrder []string) string {
 			ratioString(goQuery, cgoFull),
 			nsString(goEdit),
 			nsString(goNoop),
+			ratioString(cleanGoFull, cleanCgoFull),
+			ratioString(errorGoFull, errorCgoFull),
+			cleanFileCount,
+			errorFileCount,
+			fileShareString(errorFileCount, cleanFileCount+errorFileCount),
 			joinSet(blockers),
 		)
 	}
 	return b.String()
+}
+
+// cleanErrorFileCounts reports how many unique corpus samples for lang were
+// classified clean (Go parse had no ERROR nodes and did not stop early)
+// versus not, per paritySummary.Clean. Each sample is counted once even
+// though it may appear across several timing modes.
+func cleanErrorFileCounts(rows []reportRow, lang string) (clean, errorCount int) {
+	seen := map[string]bool{}
+	for _, row := range rows {
+		if row.Language != lang {
+			continue
+		}
+		if _, ok := seen[row.Sample]; ok {
+			continue
+		}
+		seen[row.Sample] = row.Parity.Clean
+	}
+	for _, isClean := range seen {
+		if isClean {
+			clean++
+		} else {
+			errorCount++
+		}
+	}
+	return clean, errorCount
+}
+
+// fileShareString reports what share of total files were error files,
+// formatted as a percentage; it reports "n/a" only when there is no file
+// count to compute a share from (as opposed to a genuine 0%).
+func fileShareString(errorFiles, total int) string {
+	if total <= 0 {
+		return "n/a"
+	}
+	return fmt.Sprintf("%.1f%%", 100*float64(errorFiles)/float64(total))
 }
 
 func parseGateString(rows []reportRow, lang string) string {

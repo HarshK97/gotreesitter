@@ -99,6 +99,71 @@ func TestRenderSummaryUsesRequestedLanguageOrder(t *testing.T) {
 	}
 }
 
+func TestCleanErrorFileCountsSplitsUniqueSamplesByCleanliness(t *testing.T) {
+	rows := []reportRow{
+		{Language: "kdl", Sample: "clean1.kdl", Mode: "cgo_full", Parity: paritySummary{Clean: true}},
+		{Language: "kdl", Sample: "clean1.kdl", Mode: "go_full", Parity: paritySummary{Clean: true}},
+		{Language: "kdl", Sample: "clean2.kdl", Mode: "cgo_full", Parity: paritySummary{Clean: true}},
+		{Language: "kdl", Sample: "clean2.kdl", Mode: "go_full", Parity: paritySummary{Clean: true}},
+		{Language: "kdl", Sample: "err1.kdl", Mode: "cgo_full", Parity: paritySummary{Clean: false}},
+		{Language: "kdl", Sample: "err1.kdl", Mode: "go_full", Parity: paritySummary{Clean: false}},
+		{Language: "other", Sample: "x.other", Mode: "go_full", Parity: paritySummary{Clean: false}},
+	}
+
+	clean, errorCount := cleanErrorFileCounts(rows, "kdl")
+	if clean != 2 {
+		t.Fatalf("clean = %d, want 2", clean)
+	}
+	if errorCount != 1 {
+		t.Fatalf("errorCount = %d, want 1", errorCount)
+	}
+}
+
+func TestFileShareStringFormatsPercentageOrNA(t *testing.T) {
+	if got, want := fileShareString(0, 0), "n/a"; got != want {
+		t.Fatalf("fileShareString(0,0) = %q, want %q", got, want)
+	}
+	if got, want := fileShareString(0, 3), "0.0%"; got != want {
+		t.Fatalf("fileShareString(0,3) = %q, want %q", got, want)
+	}
+	if got, want := fileShareString(1, 3), "33.3%"; got != want {
+		t.Fatalf("fileShareString(1,3) = %q, want %q", got, want)
+	}
+	if got, want := fileShareString(3, 3), "100.0%"; got != want {
+		t.Fatalf("fileShareString(3,3) = %q, want %q", got, want)
+	}
+}
+
+func TestRenderSummaryReportsCleanAndErrorRatiosSeparately(t *testing.T) {
+	rows := []reportRow{
+		{Language: "kdl", Sample: "clean1.kdl", Mode: "cgo_full", MedianNS: 10, Parity: paritySummary{Clean: true}},
+		{Language: "kdl", Sample: "clean1.kdl", Mode: "go_full", MedianNS: 15, Parity: paritySummary{Clean: true}},
+		{Language: "kdl", Sample: "clean2.kdl", Mode: "cgo_full", MedianNS: 10, Parity: paritySummary{Clean: true}},
+		{Language: "kdl", Sample: "clean2.kdl", Mode: "go_full", MedianNS: 17, Parity: paritySummary{Clean: true}},
+		{Language: "kdl", Sample: "err1.kdl", Mode: "cgo_full", MedianNS: 10, Parity: paritySummary{Clean: false}},
+		{Language: "kdl", Sample: "err1.kdl", Mode: "go_full", MedianNS: 1000, Parity: paritySummary{Clean: false}},
+	}
+
+	summary := renderSummary(rows, []string{"kdl"})
+
+	// Combined ratio mixes clean and error samples: (15+17+1000)/(10+10+10) = 34.40x.
+	if !strings.Contains(summary, "34.40x") {
+		t.Fatalf("summary missing combined ratio 34.40x:\n%s", summary)
+	}
+	// Clean-only ratio should isolate the two well-behaved files: (15+17)/(10+10) = 1.60x.
+	if !strings.Contains(summary, "1.60x") {
+		t.Fatalf("summary missing clean_ratio 1.60x:\n%s", summary)
+	}
+	// Error-only ratio should isolate the single error-bearing file: 1000/10 = 100.00x.
+	if !strings.Contains(summary, "100.00x") {
+		t.Fatalf("summary missing error_ratio 100.00x:\n%s", summary)
+	}
+	// Two clean files, one error file, so error share is 1/3.
+	if !strings.Contains(summary, "33.3%") {
+		t.Fatalf("summary missing error_share 33.3%%:\n%s", summary)
+	}
+}
+
 func TestStatsFromRuntimeReportsScratchAndTransientMemory(t *testing.T) {
 	stats := statsFromRuntime(gotreesitter.ParseRuntime{
 		StopDiagnosticCaptured:             true,
