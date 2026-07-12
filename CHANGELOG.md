@@ -7,6 +7,69 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Added
+
+- A hard zero-cliff gate for nightly fleet perf sweeps, with a
+  hard-gate-only mode on the perf-scan budget checker; the scheduled
+  perf-scan gate is disabled in favor of the nightly hard gate.
+- Runtime profiles for ASM (bounded stack retries), haxe, odin, and scss.
+- Dedicated non-terminal alias-map parity coverage: derivation gates for
+  go, swift, and caddy mirroring the Lua gate, plus live-parse regression
+  tests for each language's alias behaviors.
+- `BENCH.md`: the canonical performance-claims page, including the first
+  pinned quiet-host receipt for the corrected full-parse benchmark and a
+  same-host C-baseline calibration (full parse 2.14x C on the canonical
+  workload; incremental lanes orders of magnitude faster than the cgo
+  binding path).
+- `docs/compat-tier.md` documenting the C-faithful result-normalization
+  tier and its retirement policy.
+- A reproducible real-corpus floors workflow: corpora seeded at
+  `grammars/languages.lock` SHAs (`scripts/seed_real_corpus_from_lock.sh`
+  plus a committed seed manifest), opt-in ratchet regeneration, and floor
+  artifacts captured in the mounted workspace.
+
+### Changed
+
+- Real-corpus parity floors regenerated against lock-pinned corpora:
+  55 grammars, 851/1026 deep parity, including first-ever bash and dart
+  rows; the docker wrapper's default skip list shrinks to ocaml only.
+- GLR replay stacks use interned structural nodes, and GSS prefix
+  aggregate caching and scratch retention are tightened.
+- Certified full-parse retry passes are bounded, and redundant certified
+  retries are skipped.
+
+### Fixed
+
+- grammargen field maps no longer emit one entry run per production:
+  entries deduplicate by ProductionID (compaction fingerprints include the
+  field set, so shared IDs always carry identical fields). This removes
+  60-87% orphaned entries from the shipped grammargen blobs
+  (go.bin 673 to 267 entries, swift.bin 2904 to 384) and lifts the uint16
+  field-map ceiling that made bash (65,536) and dart (65,538) generation-
+  fatal; both now generate and carry real-corpus floor rows. A regression
+  test pins one-reachable-run-per-ID through the real compaction path.
+- The swift certified retry profile is re-pinned to the regenerated blob
+  SHA (fail-closed certification behaved as designed).
+
+### Removed
+
+- Eight retired Python compat-normalization helpers and their orphaned
+  tests (test-only since the combined single-pass source-flags path), and
+  six test-only compat wrappers plus one dead Go range normalizer, with
+  all remaining test coverage redirected to the live variants.
+
+### Performance
+
+- gssNode layout compacted to a 64-byte budget on 64-bit targets
+  (pointer-backed extra links with uint8 count/cap, uint32 depth,
+  aggVisValid bool), enforced by a size-budget test and a compile-time
+  uint8 guard; transient GSS slabs are recycled after linear demotion with
+  address-keyed caches invalidated and fingerprinted spine memoization
+  preserved. Canonical quiet-host lanes are timing-neutral with
+  allocations unchanged (9/0/0).
+- Contiguous recovery cost calculation and recovery stack allocation are
+  optimized; tree error state is cached and compat walk frames reused.
+
 ## [0.26.1] - 2026-07-11
 
 Large-tree memory follow-up to v0.26.0. Exceptionally large completed full
