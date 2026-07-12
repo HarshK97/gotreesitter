@@ -36,6 +36,26 @@ GOMAXPROCS=1 go test . -run '^$' \
 materialization); its numbers are never quoted as full-parse numbers. See
 the benchmark-integrity note below.
 
+### Pinned quiet-host receipt (corrected benchmark)
+
+The v0.24.1 audit withdrew the pre-correction full-parse headlines pending a
+quiet-host rerun of the corrected public benchmark. First such receipt,
+2026-07-12, main @ 04f75d15, Intel Xeon D-2141I @ 2.20 GHz (idle host,
+`taskset -c 14`, `GOMAXPROCS=1`, `-count=10 -benchtime=750ms`), medians:
+
+| Lane | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| `BenchmarkGoParseFullDFA` | 12,245,000 | 1,527 | **9** |
+| `BenchmarkGoParseIncrementalSingleByteEditDFA` | 1,976 | 0 | **0** |
+| `BenchmarkGoParseIncrementalNoEditDFA` | 9.85 | 0 | **0** |
+| `BenchmarkGoParseCoreDFA` (diagnostic) | 8,737,000 | 996 | 6 |
+
+Wall-clock numbers are host-specific (this is a low-clock server part; do
+not compare against dev-box history). The hardware-independent figures are
+the allocation counts — 9 allocs/op for a fully materialized parse, zero for
+both incremental lanes — and the materialization attribution: full minus
+core ≈ 3.5 ms ≈ 29% of full-parse time on this host.
+
 ## Go-vs-C fleet scoreboard (full parse, real corpora)
 
 Source of truth: [`cgo_harness/perf_scan/perf_ratio_budgets.json`](cgo_harness/perf_scan/perf_ratio_budgets.json)
