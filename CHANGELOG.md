@@ -60,6 +60,15 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- grammargen's hidden-choice passthrough table no longer excludes supertype
+  symbols whose alternatives are all neutral-unary; Go's `_statement` and
+  `_simple_statement` wrappers now collapse in the zero-allocation unary
+  reduce path (1,500 wrapper nodes eliminated per canonical-workload parse).
+  Only two bits change in the regenerated go.bin — parse tables, field
+  maps, alias and supertype query tables are byte-identical, and supertype
+  query predicates match by concrete descendant so observable trees and
+  captures are unchanged. Canonical quiet-host full parse improves ~3.4%.
+
 - gssNode layout compacted to a 64-byte budget on 64-bit targets
   (pointer-backed extra links with uint8 count/cap, uint32 depth,
   aggVisValid bool), enforced by a size-budget test and a compile-time
