@@ -16,8 +16,12 @@ func TestRuntimeMemoryBudgetStopReasonSamplesHeapGrowth(t *testing.T) {
 	if got := parser.runtimeMemoryBudgetStopReason(0); got != ParseStopMemoryBudget {
 		t.Fatalf("runtimeMemoryBudgetStopReason(0) = %q, want %q", got, ParseStopMemoryBudget)
 	}
-	if got, want := parser.parseMemoryBudgetDiag.source, parseMemoryBudgetStopSourceRuntimeHeap; got != want {
-		t.Fatalf("memory budget stop source = %q, want %q", got, want)
+	// Either runtime source proves the volume trigger reached a real
+	// ReadMemStats check. Under -race the detector's shadow memory inflates
+	// MemStats.Sys, so the sys guard can legitimately fire before the heap
+	// guard; pinning "runtime_heap" alone made this test race-mode-flaky.
+	if got := parser.parseMemoryBudgetDiag.source; got != parseMemoryBudgetStopSourceRuntimeHeap && got != parseMemoryBudgetStopSourceRuntimeSys {
+		t.Fatalf("memory budget stop source = %q, want %q or %q", got, parseMemoryBudgetStopSourceRuntimeHeap, parseMemoryBudgetStopSourceRuntimeSys)
 	}
 	if parser.parseMemoryBudgetDiag.runtimeHeapGrowthBytes < 1 {
 		t.Fatalf("runtime heap growth = %d, want >= 1", parser.parseMemoryBudgetDiag.runtimeHeapGrowthBytes)
@@ -156,8 +160,12 @@ func TestRuntimeMemoryVolumeTriggerBypassesPollMask(t *testing.T) {
 	if got := parser.runtimeMemoryBudgetStopReason(parseRuntimeMemoryVolumePollThresholdBytes); got != ParseStopMemoryBudget {
 		t.Fatalf("runtimeMemoryBudgetStopReason(volume >= threshold) = %q, want %q (volume trigger should bypass the mask)", got, ParseStopMemoryBudget)
 	}
-	if got, want := parser.parseMemoryBudgetDiag.source, parseMemoryBudgetStopSourceRuntimeHeap; got != want {
-		t.Fatalf("memory budget stop source = %q, want %q", got, want)
+	// Either runtime source proves the volume trigger reached a real
+	// ReadMemStats check. Under -race the detector's shadow memory inflates
+	// MemStats.Sys, so the sys guard can legitimately fire before the heap
+	// guard; pinning "runtime_heap" alone made this test race-mode-flaky.
+	if got := parser.parseMemoryBudgetDiag.source; got != parseMemoryBudgetStopSourceRuntimeHeap && got != parseMemoryBudgetStopSourceRuntimeSys {
+		t.Fatalf("memory budget stop source = %q, want %q or %q", got, parseMemoryBudgetStopSourceRuntimeHeap, parseMemoryBudgetStopSourceRuntimeSys)
 	}
 	runtime.KeepAlive(ballast)
 }
