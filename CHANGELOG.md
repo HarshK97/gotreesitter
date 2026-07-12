@@ -9,6 +9,17 @@ for tags and release notes while still in `0.x`.
 
 ### Added
 
+- Memory-budget containment is now layered: volume-triggered polling
+  forces a real budget check whenever tracked arena growth exceeds 64 MiB
+  since the last check (bypassing the iteration-count poll mask), the GLR
+  stack-merge survivor loop polls the budget mid-grind, and a decoupled
+  absolute hard ceiling (`GOT_PARSE_MEMORY_HARD_CEILING_MB`, default
+  2048, 0 = off) stops runaway growth regardless of soft-budget
+  overshoot tolerance. A bare-`Parse` giant-table witness now stops with
+  `ParseStopMemoryBudget` at 2.6-4x budget instead of ballooning; the
+  Poppler witness still completes full-span under its certified 2 GiB
+  budget.
+
 - A hard zero-cliff gate for nightly fleet perf sweeps, with a
   hard-gate-only mode on the perf-scan budget checker; the scheduled
   perf-scan gate is disabled in favor of the nightly hard gate.
