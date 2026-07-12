@@ -140,6 +140,132 @@ func newRootFrameReplayReduceLanguage() *Language {
 	}
 }
 
+func TestSyntheticRootReplayStackCanonicalPushPop(t *testing.T) {
+	builder := resultRootBuild{}
+	empty := syntheticRootReplayFrame{}
+	if _, ok := builder.syntheticRootReplayTopState(empty); ok {
+		t.Fatal("empty replay stack unexpectedly has a top state")
+	}
+	if _, ok := builder.syntheticRootReplayPop(empty, 0); ok {
+		t.Fatal("empty replay stack unexpectedly supports pop")
+	}
+
+	base := builder.syntheticRootReplayPush(empty, 1)
+	if base.top == 0 {
+		t.Fatal("initial push returned an empty replay frame")
+	}
+	if got, ok := builder.syntheticRootReplayTopState(base); !ok || got != 1 {
+		t.Fatalf("base top = %d, %v; want 1, true", got, ok)
+	}
+	if duplicate := builder.syntheticRootReplayPush(empty, 1); duplicate.top != base.top {
+		t.Fatalf("canonical initial push top = %d, want %d", duplicate.top, base.top)
+	}
+
+	left := builder.syntheticRootReplayPush(base, 2)
+	right := builder.syntheticRootReplayPush(base, 3)
+	if left.top == right.top {
+		t.Fatal("distinct sibling pushes aliased the same replay frame")
+	}
+	if got, _ := builder.syntheticRootReplayTopState(base); got != 1 {
+		t.Fatalf("sibling pushes mutated base top to %d, want 1", got)
+	}
+	if duplicate := builder.syntheticRootReplayPush(base, 2); duplicate.top != left.top {
+		t.Fatalf("canonical shared-prefix push top = %d, want %d", duplicate.top, left.top)
+	}
+
+	popped, ok := builder.syntheticRootReplayPop(left, 1)
+	if !ok || popped.top != base.top {
+		t.Fatalf("pop(left, 1) = {%d, %v}, want base top %d", popped.top, ok, base.top)
+	}
+	if popped, ok := builder.syntheticRootReplayPop(left, 0); !ok || popped.top != left.top {
+		t.Fatalf("pop(left, 0) = {%d, %v}, want left top %d", popped.top, ok, left.top)
+	}
+	if _, ok := builder.syntheticRootReplayPop(left, 2); ok {
+		t.Fatal("pop through the initial state unexpectedly succeeded")
+	}
+	if _, ok := builder.syntheticRootReplayPop(left, 3); ok {
+		t.Fatal("pop beyond replay stack depth unexpectedly succeeded")
+	}
+}
+
+func TestSyntheticRootReplayCloseMemoPreservesCanonicalClosure(t *testing.T) {
+	lang := newRootFrameReplayReduceLanguage()
+	parser := newRootFrameReplayParser(lang)
+	builder := newResultRootBuild(parser, nil, nil, nil, nil, nil)
+	initial := builder.syntheticRootReplayPush(syntheticRootReplayFrame{}, lang.InitialState)
+	shifted := builder.syntheticRootReplayPush(initial, 3)
+
+	first := builder.syntheticRootReplayCloseLookahead([]syntheticRootReplayFrame{shifted}, 0)
+	if got, want := len(first), 3; got != want {
+		t.Fatalf("first EOF closure length = %d, want %d", got, want)
+	}
+	if cap(first) != len(first) {
+		t.Fatalf("cached EOF closure capacity = %d, want length %d", cap(first), len(first))
+	}
+	wantTops := make([]uint32, len(first))
+	for i := range first {
+		wantTops[i] = first[i].top
+	}
+	nodesAfterFirst := len(builder.replayStack.nodes)
+
+	appended := append(first, initial)
+	if got, want := len(appended), len(first)+1; got != want {
+		t.Fatalf("appended closure length = %d, want %d", got, want)
+	}
+	second := builder.syntheticRootReplayCloseLookahead([]syntheticRootReplayFrame{shifted}, 0)
+	if got, want := len(second), len(wantTops); got != want {
+		t.Fatalf("memoized EOF closure length = %d, want %d", got, want)
+	}
+	if got := len(builder.replayStack.nodes); got != nodesAfterFirst {
+		t.Fatalf("memoized EOF closure added stack nodes: got %d, want %d", got, nodesAfterFirst)
+	}
+	for i, want := range wantTops {
+		if got := second[i].top; got != want {
+			t.Fatalf("memoized EOF closure top %d = %d, want %d", i, got, want)
+		}
+	}
+}
+
+func TestExpectedRootCanFrameLongRepeatWithCanonicalReplayStacks(t *testing.T) {
+	const childCount = 4096
+	lang := newRootFrameReplayReduceLanguage()
+	parser := newRootFrameReplayParser(lang)
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	children := make([]*Node, childCount)
+	for i := range children {
+		children[i] = newLeafNodeInArena(arena, 3, true, uint32(i), uint32(i+1), Point{Column: uint32(i)}, Point{Column: uint32(i + 1)})
+	}
+	builder := newResultRootBuild(parser, nil, arena, nil, nil, nil)
+	if !builder.expectedRootCanFrameRecoveredFragments(children) {
+		t.Fatal("long repeated root did not reach an accepting replay frame")
+	}
+	if got, wantMax := len(builder.replayStack.nodes), 8; got > wantMax {
+		t.Fatalf("canonical replay stack nodes = %d, want <= %d for repeated state paths", got, wantMax)
+	}
+}
+
+func BenchmarkExpectedRootCanFrameLongRepeat(b *testing.B) {
+	const childCount = 4096
+	lang := newRootFrameReplayReduceLanguage()
+	parser := newRootFrameReplayParser(lang)
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	children := make([]*Node, childCount)
+	for i := range children {
+		children[i] = newLeafNodeInArena(arena, 3, true, uint32(i), uint32(i+1), Point{Column: uint32(i)}, Point{Column: uint32(i + 1)})
+	}
+	b.ReportAllocs()
+	b.SetBytes(childCount)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		builder := newResultRootBuild(parser, nil, arena, nil, nil, nil)
+		if !builder.expectedRootCanFrameRecoveredFragments(children) {
+			b.Fatal("long repeated root did not reach an accepting replay frame")
+		}
+	}
+}
+
 func TestFinalizeReturnedTreeRootSpanExtendsAcceptedCleanTailOnlyOnRoot(t *testing.T) {
 	lang := &Language{
 		Name:        "root_tail",
