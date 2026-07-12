@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "unsafe"
+import (
+	"sync/atomic"
+	"unsafe"
+)
 
 const (
 	defaultGSSNodeSlabCap      = 4 * 1024
@@ -156,16 +159,16 @@ type gssScratch struct {
 // raw shape, even on the pure single-stack happy path, matching parser
 // behavior before the single-stack capture elision optimization. It exists so
 // differential tests (and offline profiling harnesses) can A/B the
-// optimization directly against otherwise-identical parses. It is not
-// concurrency-safe and is intended for single-threaded test/benchmark use
-// only; normal parser paths leave it disabled.
-var rawShapeElisionDisabledForDiagnostics bool
+// optimization directly against otherwise-identical parses. Stored as an
+// atomic so concurrent parsers observe a consistent value; it remains a
+// diagnostics-only hook and normal parser paths leave it disabled.
+var rawShapeElisionDisabledForDiagnostics atomic.Bool
 
 // SetRawShapeElisionDisabledForDiagnostics toggles rawShapeElisionDisabledForDiagnostics.
 // See its doc comment: this is a diagnostics-only hook, not part of the
 // parser's production behavior contract.
 func SetRawShapeElisionDisabledForDiagnostics(disabled bool) {
-	rawShapeElisionDisabledForDiagnostics = disabled
+	rawShapeElisionDisabledForDiagnostics.Store(disabled)
 }
 
 // mayElideRawShape reports whether it is safe to skip captureRawShape for the
@@ -174,7 +177,7 @@ func SetRawShapeElisionDisabledForDiagnostics(disabled bool) {
 // never forked before. Once a parse forks even once, this permanently
 // returns false for the remainder of the parse (see everForked).
 func (s *gssScratch) mayElideRawShape() bool {
-	return s != nil && s.singleStackMode && !s.everForked && !rawShapeElisionDisabledForDiagnostics
+	return s != nil && s.singleStackMode && !s.everForked && !rawShapeElisionDisabledForDiagnostics.Load()
 }
 
 // setSingleStackMode updates singleStackMode and latches everForked the
