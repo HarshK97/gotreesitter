@@ -168,8 +168,81 @@ func TestBuildStatusWithScoreboards(t *testing.T) {
 	if doc.ScoreboardCoverage.ContendedScoreboards != 1 {
 		t.Fatalf("contended scoreboards = %d, want 1", doc.ScoreboardCoverage.ContendedScoreboards)
 	}
+	if doc.ScoreboardCoverage.LegacyScoreboards != 1 || doc.Scoreboards[0].HardGateStatus != "not_evaluated" {
+		t.Fatalf("legacy scoreboard accounting = %+v / %+v", doc.ScoreboardCoverage, doc.Scoreboards[0])
+	}
 	if got := strings.Join(doc.Scoreboards[0].ExcludePaths, ","); got != "groovy/large.groovy" {
 		t.Fatalf("scoreboard exclude paths = %q, want groovy/large.groovy", got)
+	}
+}
+
+func TestBuildStatusReportsStructuredHardGateAndFastFiles(t *testing.T) {
+	dir := t.TempDir()
+	budgetPath := filepath.Join(dir, "budget.json")
+	fleetPath := filepath.Join(dir, "exts.tsv")
+	scoreboardPath := filepath.Join(dir, "scoreboard.json")
+	writeFile(t, fleetPath, "go\t.go\n")
+	writeJSON(t, budgetPath, map[string]any{
+		"schema": budgetSchema,
+		"measurement_basis": map[string]any{
+			"reps": 5, "warmup": 1, "file_budget_ms": 10000, "max_files": 8,
+			"order": "largest", "axes": []string{"full", "noedit"},
+			"hard_max_full_parse_ratio": 10.0, "fast_full_parse_ratio": 0.10,
+			"corpus_lock_sha256": strings.Repeat("a", 64),
+		},
+		"languages": map[string]any{
+			"go": map[string]any{
+				"status":      "green",
+				"full_axis":   map[string]any{"max_timeouts": 0, "max_ratio_by_total": 2.0},
+				"noedit_axis": map[string]any{"max_timeouts": 0, "max_ratio_by_total": 1.0},
+			},
+		},
+	})
+	writeJSON(t, scoreboardPath, map[string]any{
+		"schema": scoreboardSchema,
+		"config": map[string]any{
+			"hard_gate": true, "require_fleet": true,
+			"corpus_lock_sha256": strings.Repeat("a", 64),
+		},
+		"corpus_coverage": map[string]any{
+			"lock_sha256": strings.Repeat("a", 64), "lock_languages": 1, "selected_languages": 1,
+		},
+		"hard_gate": map[string]any{
+			"status": "pass", "max_full_parse_ratio": 10.0, "fast_full_parse_ratio": 0.10,
+			"files_expected": 1, "files_measured": 1, "full_files_evaluated": 1,
+			"fast_full_files": []any{map[string]any{
+				"kind": "fast", "language": "go", "path": "fast.go", "axis": "full",
+				"status": "ok", "ratio": 0.08, "detail": "full parse is 12.50x faster than C",
+			}},
+		},
+		"languages": []any{map[string]any{
+			"language": "go", "status": "ok", "files_selected": 1, "files_measured": 1,
+			"verdict": "<=0.10x", "axes": map[string]any{
+				"full": map[string]any{"files_ok": 1, "go_stops": 0, "ratio_by_total": 0.08, "verdict": "<=0.10x"},
+			},
+		}},
+	})
+
+	doc, err := buildStatus(options{
+		BudgetPath:         budgetPath,
+		FleetPath:          fleetPath,
+		ScoreboardPatterns: scoreboardPath,
+		GeneratedAt:        "2026-07-11T20:00:00Z",
+	})
+	if err != nil {
+		t.Fatalf("buildStatus returned error: %v", err)
+	}
+	if doc.ScoreboardCoverage.HardGatePasses != 1 || doc.ScoreboardCoverage.HardGateFailures != 0 {
+		t.Fatalf("hard gate accounting = %+v", doc.ScoreboardCoverage)
+	}
+	if doc.ScoreboardCoverage.FastFullParseFiles != 1 || len(doc.FastFullFiles) != 1 {
+		t.Fatalf("fast-file accounting = %+v / %+v", doc.ScoreboardCoverage, doc.FastFullFiles)
+	}
+	md := renderMarkdown(doc)
+	for _, needle := range []string{"hard-gate passes", "Full-parse files at least 10x faster than C", "fast.go"} {
+		if !strings.Contains(md, needle) {
+			t.Fatalf("markdown missing %q:\n%s", needle, md)
+		}
 	}
 }
 

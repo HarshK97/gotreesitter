@@ -19,7 +19,7 @@ func TestValidateBudgetAcceptsCurrentFile(t *testing.T) {
 
 func TestCompareScoreboardPassesWithinBudget(t *testing.T) {
 	b := testBudget()
-	s := testScoreboard(2.5, 1, 1)
+	s := testScoreboard(2.5, 0, 0)
 
 	findings := compareScoreboard(b, s, compareOptions{
 		RequireAllBudgetLangs: true,
@@ -69,6 +69,45 @@ func TestCompareScoreboardReportsMedianRatioRegression(t *testing.T) {
 	}
 }
 
+func TestCompareScoreboardEnforcesExactPerFileFullRatio(t *testing.T) {
+	b := testBudget()
+	s := testScoreboard(1.5, 0, 0)
+	full := s.Languages[0].Files[0].Axes[axisFull]
+	full.GoMedianNs = 10_001
+	full.CMedianNs = 1_000
+	full.Ratio = 10.001
+	s.Languages[0].Files[0].Axes[axisFull] = full
+
+	findings := compareScoreboard(b, s, compareOptions{StrictConfig: true})
+	got := renderFindingKeys(findings)
+	if !strings.Contains(got, "go:full:hard_full_ratio") {
+		t.Fatalf("findings %q missing per-file >10x failure (%#v)", got, findings)
+	}
+
+	full.GoMedianNs = 10_000
+	full.Ratio = 10
+	s.Languages[0].Files[0].Axes[axisFull] = full
+	findings = compareScoreboard(b, s, compareOptions{StrictConfig: true})
+	if got := renderFindingKeys(findings); strings.Contains(got, "hard_full_ratio") {
+		t.Fatalf("exactly 10x must pass the hard ratio boundary: %q (%#v)", got, findings)
+	}
+}
+
+func TestCompareScoreboardRejectsStructuredParserBudgetStop(t *testing.T) {
+	b := testBudget()
+	s := testScoreboard(1.5, 0, 0)
+	full := s.Languages[0].Files[0].Axes[axisFull]
+	full.Status = "go_budget_stop"
+	full.Stop = &scoreboardStop{Class: "parser_budget", Reason: "memory_budget", Implementation: "go"}
+	s.Languages[0].Files[0].Axes[axisFull] = full
+
+	findings := compareScoreboard(b, s, compareOptions{StrictConfig: true})
+	got := renderFindingKeys(findings)
+	if !strings.Contains(got, "go:full:hard_go_stop") {
+		t.Fatalf("findings %q missing structured parser-budget failure (%#v)", got, findings)
+	}
+}
+
 func TestCompareScoreboardReportsStrictConfigMismatch(t *testing.T) {
 	b := testBudget()
 	s := testScoreboard(2.5, 0, 0)
@@ -78,6 +117,23 @@ func TestCompareScoreboardReportsStrictConfigMismatch(t *testing.T) {
 	got := renderFindingKeys(findings)
 	if !strings.Contains(got, "::config.reps") {
 		t.Fatalf("findings %q missing config reps failure (%#v)", got, findings)
+	}
+}
+
+func TestCompareScoreboardKeepsLegacyRatchetComparisonWithoutHardGate(t *testing.T) {
+	b := testBudget()
+	s := testScoreboard(2.5, 0, 0)
+	s.Config.HardGate = false
+	s.Gate = nil
+	// Legacy v1 rows did not need the exact per-file timing fields now used by
+	// the hard gate. Aggregate ratchets must remain comparable when strict
+	// config is explicitly disabled for historical analysis.
+	s.Languages[0].Files[0].Axes[axisFull] = scoreboardFileAxis{Status: statusOK}
+	s.Languages[0].Files[0].Axes[axisNoEdit] = scoreboardFileAxis{Status: statusOK}
+
+	findings := compareScoreboard(b, s, compareOptions{StrictConfig: false})
+	if len(findings) != 0 {
+		t.Fatalf("legacy ratchet comparison unexpectedly applied hard semantics: %#v", findings)
 	}
 }
 
@@ -130,7 +186,7 @@ func TestCompareScoreboardReportsCReferenceFailure(t *testing.T) {
 	}
 }
 
-func TestCompareScoreboardAllowsExplicitCReferenceFailureBudget(t *testing.T) {
+func TestCompareScoreboardRejectsMissingFullRatioDespiteHistoricalCFailureBudget(t *testing.T) {
 	b := testBudget()
 	lang := b.Languages["go"]
 	lang.FullAxis.MaxCReferenceFailures = intPtr(1)
@@ -140,32 +196,37 @@ func TestCompareScoreboardAllowsExplicitCReferenceFailureBudget(t *testing.T) {
 	s.Languages[0].Files[0].Axes[axisFull] = scoreboardFileAxis{Status: "c_timeout"}
 
 	findings := compareScoreboard(b, s, compareOptions{StrictConfig: true})
-	if len(findings) != 0 {
-		t.Fatalf("explicit C-reference failure budget should pass: %#v", findings)
+	got := renderFindingKeys(findings)
+	if !strings.Contains(got, "go:full:hard_full_measurement") {
+		t.Fatalf("hard gate must reject a missing full ratio despite the historical allowance: %q (%#v)", got, findings)
+	}
+	if strings.Contains(got, "go:full:c_reference_failures") {
+		t.Fatalf("historical C-reference allowance should still suppress the ratchet finding: %q (%#v)", got, findings)
 	}
 }
 
-func TestCompareScoreboardCountsDefensiveTruncationStatus(t *testing.T) {
+func TestCompareScoreboardKeepsCorrectnessFailureSeparateFromRatioGate(t *testing.T) {
 	b := testBudget()
 	s := testScoreboard(2.5, 0, 0)
 	s.Languages[0].Files[0].Axes[axisFull] = scoreboardFileAxis{Status: "go_truncated"}
 
 	findings := compareScoreboard(b, s, compareOptions{StrictConfig: true})
-	if len(findings) != 0 {
-		t.Fatalf("one truncation should be within the explicit full-axis budget: %#v", findings)
+	got := renderFindingKeys(findings)
+	if !strings.Contains(got, "go:full:hard_full_measurement") {
+		t.Fatalf("findings %q missing fail-closed full measurement (%#v)", got, findings)
 	}
 
 	lang := b.Languages["go"]
 	lang.FullAxis.MaxErrors = intPtr(0)
 	b.Languages["go"] = lang
 	findings = compareScoreboard(b, s, compareOptions{StrictConfig: true})
-	got := renderFindingKeys(findings)
+	got = renderFindingKeys(findings)
 	if !strings.Contains(got, "go:full:go_errors") {
 		t.Fatalf("findings %q missing go_truncated error accounting (%#v)", got, findings)
 	}
 }
 
-func TestCompareScoreboardAllowsAllTimeoutsWithinBudget(t *testing.T) {
+func TestCompareScoreboardRejectsTimeoutsDespiteHistoricalBudget(t *testing.T) {
 	b := testBudget()
 	lang := b.Languages["go"]
 	lang.FullAxis.MaxTimeouts = 2
@@ -187,8 +248,9 @@ func TestCompareScoreboardAllowsAllTimeoutsWithinBudget(t *testing.T) {
 	}
 
 	findings := compareScoreboard(b, s, compareOptions{StrictConfig: true})
-	if len(findings) != 0 {
-		t.Fatalf("all-timeout budget should pass when timeouts stay within budget: %#v", findings)
+	got := renderFindingKeys(findings)
+	if !strings.Contains(got, "go:full:hard_go_stop") || !strings.Contains(got, "go:noedit:hard_go_stop") {
+		t.Fatalf("hard gate must reject timeout allowances, got %q (%#v)", got, findings)
 	}
 }
 
@@ -212,8 +274,10 @@ func TestCompareScoreboardReportsUnknownBudgetLanguage(t *testing.T) {
 	b := testBudget()
 	s := testScoreboard(2.5, 0, 0)
 	s.Languages = append(s.Languages, scoreboardLang{
-		Language: "unknown",
-		Status:   statusOK,
+		Language:      "unknown",
+		Status:        statusOK,
+		FilesSelected: 1,
+		FilesMeasured: 1,
 		Axes: map[string]scoreboardAxis{
 			axisFull:   {FilesOK: 1, RatioByTotal: 1},
 			axisNoEdit: {FilesOK: 1, RatioByTotal: 1},
@@ -231,6 +295,51 @@ func TestCompareScoreboardReportsUnknownBudgetLanguage(t *testing.T) {
 	}
 }
 
+func TestCompareScoreboardAllowsUnbudgetedLanguageInAuthenticatedFleetGate(t *testing.T) {
+	b := testBudget()
+	s := testScoreboard(2.5, 0, 0)
+	s.Config.RequireFleet = true
+	s.Corpus = scoreboardCorpus{
+		LockSHA256:        strings.Repeat("a", 64),
+		LockLanguages:     2,
+		SelectedLanguages: 2,
+	}
+	s.Languages = append(s.Languages, scoreboardLang{
+		Language:      "unbudgeted",
+		Status:        statusOK,
+		FilesSelected: 1,
+		FilesMeasured: 1,
+		Axes: map[string]scoreboardAxis{
+			axisFull:   {FilesOK: 1, RatioByTotal: 1},
+			axisNoEdit: {FilesOK: 1, RatioByTotal: 0.1},
+		},
+		Files: []scoreboardFileRow{{Path: "x", Axes: map[string]scoreboardFileAxis{
+			axisFull:   {Status: statusOK, GoMedianNs: 1000, CMedianNs: 1000, Ratio: 1},
+			axisNoEdit: {Status: statusOK, GoMedianNs: 100, CMedianNs: 1000, Ratio: 0.1},
+		}}},
+	})
+	s.Gate.FilesExpected = 2
+	s.Gate.FilesMeasured = 2
+	s.Gate.FullFilesEvaluated = 2
+
+	findings := compareScoreboard(b, s, compareOptions{RequireAllBudgetLangs: true, StrictConfig: true})
+	if got := renderFindingKeys(findings); strings.Contains(got, "unbudgeted::budget") {
+		t.Fatalf("authenticated fleet hard gate must admit languages without historical ratchets: %q (%#v)", got, findings)
+	}
+}
+
+func TestCompareScoreboardRejectsIncompleteFleetCoverage(t *testing.T) {
+	b := testBudget()
+	s := testScoreboard(2.5, 0, 0)
+	s.Config.RequireFleet = true
+	s.Corpus = scoreboardCorpus{LockLanguages: 2, SelectedLanguages: 1}
+
+	findings := compareScoreboard(b, s, compareOptions{StrictConfig: true})
+	if got := renderFindingKeys(findings); !strings.Contains(got, "::hard_fleet_coverage") {
+		t.Fatalf("findings %q missing fail-closed fleet coverage failure (%#v)", got, findings)
+	}
+}
+
 func TestMainWritesMarkdownSummary(t *testing.T) {
 	dir := t.TempDir()
 	budgetPath := filepath.Join(dir, "budget.json")
@@ -239,7 +348,7 @@ func TestMainWritesMarkdownSummary(t *testing.T) {
 
 	writeFile(t, budgetPath, `{
   "schema": "gts-perf-ratio-budgets/v1",
-  "measurement_basis": {"reps": 5, "warmup": 1, "file_budget_ms": 10000, "max_files": 8, "order": "largest", "axes": ["full", "noedit"]},
+  "measurement_basis": {"reps": 5, "warmup": 1, "file_budget_ms": 10000, "max_files": 8, "order": "largest", "axes": ["full", "noedit"], "hard_max_full_parse_ratio": 10, "fast_full_parse_ratio": 0.1, "corpus_lock_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
   "languages": {
     "go": {
       "status": "green",
@@ -250,15 +359,19 @@ func TestMainWritesMarkdownSummary(t *testing.T) {
 }`)
 	writeFile(t, scoreboardPath, `{
   "schema": "gts-perf-scan/v1",
-  "config": {"reps": 5, "warmup": 1, "file_budget_ms": 10000, "max_files": 8, "order": "largest", "axes": ["full", "noedit"]},
+  "config": {"reps": 5, "warmup": 1, "file_budget_ms": 10000, "max_files": 8, "order": "largest", "axes": ["full", "noedit"], "hard_gate": true, "corpus_lock_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "corpus_coverage": {"lock_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "lock_languages": 1, "selected_languages": 1},
+  "hard_gate": {"status": "pass", "max_full_parse_ratio": 10, "fast_full_parse_ratio": 0.1, "files_expected": 1, "files_measured": 1, "full_files_evaluated": 1},
   "languages": [{
     "language": "go",
     "status": "ok",
+    "files_selected": 1,
+    "files_measured": 1,
     "axes": {
       "full": {"files_ok": 1, "ratio_by_total": 1.5, "ratio_median_of_files": 1.5, "go_timeouts": 0},
       "noedit": {"files_ok": 1, "ratio_by_total": 0.1, "ratio_median_of_files": 0.1, "go_timeouts": 0}
     },
-    "files": [{"path": "x.go", "axes": {"full": {"status": "ok"}, "noedit": {"status": "ok"}}}]
+    "files": [{"path": "x.go", "axes": {"full": {"status": "ok", "go_median_ns": 1500, "c_median_ns": 1000, "ratio": 1.5}, "noedit": {"status": "ok", "go_median_ns": 100, "c_median_ns": 1000, "ratio": 0.1}}}]
   }]
 }`)
 
@@ -290,12 +403,15 @@ func testBudget() *budgetFile {
 	return &budgetFile{
 		Schema: budgetSchema,
 		MeasurementBasis: budgetMeasurementBasis{
-			Reps:         5,
-			Warmup:       1,
-			FileBudgetMS: 10000,
-			MaxFiles:     8,
-			Order:        "largest",
-			Axes:         []string{axisFull, axisNoEdit},
+			Reps:                  5,
+			Warmup:                1,
+			FileBudgetMS:          10000,
+			MaxFiles:              8,
+			Order:                 "largest",
+			Axes:                  []string{axisFull, axisNoEdit},
+			HardMaxFullParseRatio: hardMaxFullParseRatio,
+			FastFullParseRatio:    fastFullParseRatio,
+			CorpusLockSHA256:      strings.Repeat("a", 64),
 		},
 		Languages: map[string]budgetLang{
 			"go": {
@@ -317,8 +433,8 @@ func testBudget() *budgetFile {
 func testScoreboard(fullRatio float64, timeouts, errors int) *scoreboardFile {
 	files := []scoreboardFileRow{
 		{Path: "ok.go", Axes: map[string]scoreboardFileAxis{
-			axisFull:   {Status: statusOK},
-			axisNoEdit: {Status: statusOK},
+			axisFull:   {Status: statusOK, GoMedianNs: int64(fullRatio * 1000), CMedianNs: 1000, Ratio: fullRatio},
+			axisNoEdit: {Status: statusOK, GoMedianNs: 100, CMedianNs: 1000, Ratio: 0.1},
 		}},
 	}
 	for i := 0; i < timeouts; i++ {
@@ -336,16 +452,25 @@ func testScoreboard(fullRatio float64, timeouts, errors int) *scoreboardFile {
 	return &scoreboardFile{
 		Schema: scoreboardSchema,
 		Config: scoreboardConfig{
-			Reps:         5,
-			Warmup:       1,
-			FileBudgetMS: 10000,
-			MaxFiles:     8,
-			Order:        "largest",
-			Axes:         []string{axisFull, axisNoEdit},
+			Reps:             5,
+			Warmup:           1,
+			FileBudgetMS:     10000,
+			MaxFiles:         8,
+			Order:            "largest",
+			Axes:             []string{axisFull, axisNoEdit},
+			HardGate:         true,
+			CorpusLockSHA256: strings.Repeat("a", 64),
+		},
+		Corpus: scoreboardCorpus{
+			LockSHA256:        strings.Repeat("a", 64),
+			LockLanguages:     1,
+			SelectedLanguages: 1,
 		},
 		Languages: []scoreboardLang{{
-			Language: "go",
-			Status:   statusOK,
+			Language:      "go",
+			Status:        statusOK,
+			FilesSelected: len(files),
+			FilesMeasured: len(files),
 			Axes: map[string]scoreboardAxis{
 				axisFull: {
 					FilesOK:            1,
@@ -362,6 +487,14 @@ func testScoreboard(fullRatio float64, timeouts, errors int) *scoreboardFile {
 			},
 			Files: files,
 		}},
+		Gate: &scoreboardGate{
+			Status:             "pass",
+			MaxFullParseRatio:  hardMaxFullParseRatio,
+			FastFullParseRatio: fastFullParseRatio,
+			FilesExpected:      len(files),
+			FilesMeasured:      len(files),
+			FullFilesEvaluated: len(files),
+		},
 	}
 }
 
