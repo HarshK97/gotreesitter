@@ -694,9 +694,21 @@ func coalesceForestWithRaw(p *Parser, arena *nodeArena, index *gssForestIndex, s
 }
 
 type forestAlternativeIndex struct {
-	nodes   map[*Node]*gssForestNode
-	byStart map[uint32][]*Node
-	slots   map[forestAlternativeSlotKey]forestAlternativeSlot
+	nodes            map[*Node]*gssForestNode
+	byStart          map[uint32][]*Node
+	slots            map[forestAlternativeSlotKey]forestAlternativeSlot
+	targetCapacity   int
+	promoted         bool
+	inlineNodeCount  uint8
+	inlineSlotCount  uint8
+	inlineNodes      [forestAlternativeIndexInlineCapacity]forestAlternativeNodeEntry
+	inlineSlots      [forestAlternativeIndexInlineCapacity]forestAlternativeSlotEntry
+	inlineCandidates [forestAlternativeIndexInlineCapacity]*Node
+}
+
+type forestAlternativeNodeEntry struct {
+	key   *Node
+	value *gssForestNode
 }
 
 type forestAlternativeSlotKey struct {
@@ -707,6 +719,11 @@ type forestAlternativeSlotKey struct {
 type forestAlternativeSlot struct {
 	node *gssForestNode
 	prev *gssForestNode
+}
+
+type forestAlternativeSlotEntry struct {
+	key   forestAlternativeSlotKey
+	value forestAlternativeSlot
 }
 
 // forestAlternativeIndexCapacityForSource sizes the alternative-index maps'
@@ -731,12 +748,119 @@ func forestAlternativeIndexCapacityForSource(sourceLen int) int {
 	return capacity
 }
 
-func newForestAlternativeIndex(capacity int) *forestAlternativeIndex {
-	return &forestAlternativeIndex{
-		nodes:   make(map[*Node]*gssForestNode, capacity),
-		byStart: make(map[uint32][]*Node, max(16, capacity/4)),
-		slots:   make(map[forestAlternativeSlotKey]forestAlternativeSlot, capacity),
+const forestAlternativeIndexInlineCapacity = 16
+
+func newForestAlternativeIndex(targetCapacity int) *forestAlternativeIndex {
+	return &forestAlternativeIndex{targetCapacity: targetCapacity}
+}
+
+func (alternatives *forestAlternativeIndex) promote() bool {
+	if alternatives == nil || alternatives.promoted {
+		return false
 	}
+	targetCapacity := max(forestAlternativeIndexInlineCapacity, alternatives.targetCapacity)
+	nodes := make(map[*Node]*gssForestNode, targetCapacity)
+	byStart := make(map[uint32][]*Node, max(16, targetCapacity/4))
+	for i := 0; i < int(alternatives.inlineNodeCount); i++ {
+		entry := alternatives.inlineNodes[i]
+		nodes[entry.key] = entry.value
+		byStart[entry.key.startByte] = append(byStart[entry.key.startByte], entry.key)
+	}
+	slots := make(map[forestAlternativeSlotKey]forestAlternativeSlot, targetCapacity)
+	for i := 0; i < int(alternatives.inlineSlotCount); i++ {
+		entry := alternatives.inlineSlots[i]
+		slots[entry.key] = entry.value
+	}
+	alternatives.nodes = nodes
+	alternatives.byStart = byStart
+	alternatives.slots = slots
+	clear(alternatives.inlineNodes[:])
+	clear(alternatives.inlineSlots[:])
+	clear(alternatives.inlineCandidates[:])
+	alternatives.inlineNodeCount = 0
+	alternatives.inlineSlotCount = 0
+	alternatives.promoted = true
+	return true
+}
+
+func (alternatives *forestAlternativeIndex) node(key *Node) *gssForestNode {
+	if alternatives == nil || key == nil {
+		return nil
+	}
+	if alternatives.promoted {
+		return alternatives.nodes[key]
+	}
+	for i := 0; i < int(alternatives.inlineNodeCount); i++ {
+		if alternatives.inlineNodes[i].key == key {
+			return alternatives.inlineNodes[i].value
+		}
+	}
+	return nil
+}
+
+func (alternatives *forestAlternativeIndex) setNode(key *Node, value *gssForestNode) {
+	if alternatives == nil || key == nil {
+		return
+	}
+	if alternatives.promoted {
+		if _, exists := alternatives.nodes[key]; !exists {
+			alternatives.byStart[key.startByte] = append(alternatives.byStart[key.startByte], key)
+		}
+		alternatives.nodes[key] = value
+		return
+	}
+	for i := 0; i < int(alternatives.inlineNodeCount); i++ {
+		if alternatives.inlineNodes[i].key == key {
+			alternatives.inlineNodes[i].value = value
+			return
+		}
+	}
+	if int(alternatives.inlineNodeCount) == len(alternatives.inlineNodes) {
+		alternatives.promote()
+		alternatives.setNode(key, value)
+		return
+	}
+	alternatives.inlineNodes[alternatives.inlineNodeCount] = forestAlternativeNodeEntry{key: key, value: value}
+	alternatives.inlineNodeCount++
+}
+
+func (alternatives *forestAlternativeIndex) slot(key forestAlternativeSlotKey) (forestAlternativeSlot, bool) {
+	if alternatives == nil {
+		return forestAlternativeSlot{}, false
+	}
+	if alternatives.promoted {
+		value, ok := alternatives.slots[key]
+		return value, ok
+	}
+	for i := 0; i < int(alternatives.inlineSlotCount); i++ {
+		if alternatives.inlineSlots[i].key == key {
+			return alternatives.inlineSlots[i].value, true
+		}
+	}
+	return forestAlternativeSlot{}, false
+}
+
+func (alternatives *forestAlternativeIndex) setSlot(key forestAlternativeSlotKey, value forestAlternativeSlot) {
+	if alternatives == nil {
+		return
+	}
+	if alternatives.promoted {
+		alternatives.slots[key] = value
+		return
+	}
+	for i := 0; i < int(alternatives.inlineSlotCount); i++ {
+		if alternatives.inlineSlots[i].key == key {
+			alternatives.inlineSlots[i].value = value
+			return
+		}
+	}
+	if int(alternatives.inlineSlotCount) == len(alternatives.inlineSlots) {
+		alternatives.promote()
+		alternatives.setSlot(key, value)
+		return
+	}
+	alternatives.inlineSlots[alternatives.inlineSlotCount] = forestAlternativeSlotEntry{key: key, value: value}
+	alternatives.inlineSlotCount++
 }
 
 func forestRecordAlternative(alternatives *forestAlternativeIndex, entry stackEntry, node *gssForestNode) {
@@ -744,19 +868,25 @@ func forestRecordAlternative(alternatives *forestAlternativeIndex, entry stackEn
 		return
 	}
 	if n := stackEntryNode(entry); n != nil {
-		if _, exists := alternatives.nodes[n]; !exists {
-			if alternatives.byStart == nil {
-				alternatives.byStart = make(map[uint32][]*Node, 16)
-			}
-			alternatives.byStart[n.startByte] = append(alternatives.byStart[n.startByte], n)
-		}
-		alternatives.nodes[n] = node
+		alternatives.setNode(n, node)
 	}
 }
 
 func forestAlternativeCandidatesStartingAt(alternatives *forestAlternativeIndex, startByte uint32) []*Node {
 	if alternatives == nil {
 		return nil
+	}
+	if !alternatives.promoted {
+		clear(alternatives.inlineCandidates[:])
+		count := 0
+		for i := 0; i < int(alternatives.inlineNodeCount); i++ {
+			n := alternatives.inlineNodes[i].key
+			if n != nil && n.startByte == startByte {
+				alternatives.inlineCandidates[count] = n
+				count++
+			}
+		}
+		return alternatives.inlineCandidates[:count]
 	}
 	if len(alternatives.byStart) == 0 && len(alternatives.nodes) > 0 {
 		alternatives.byStart = make(map[uint32][]*Node, max(16, len(alternatives.nodes)/4))
@@ -777,7 +907,7 @@ func forestRecordParentChildAlternatives(alternatives *forestAlternativeIndex, p
 		if child == nil || forestDirectReduceChildIndex(child, rawEntries) < 0 {
 			continue
 		}
-		forestNode := alternatives.nodes[child]
+		forestNode := alternatives.node(child)
 		if forestNode == nil {
 			continue
 		}
@@ -785,10 +915,10 @@ func forestRecordParentChildAlternatives(alternatives *forestAlternativeIndex, p
 		if !ok {
 			continue
 		}
-		alternatives.slots[forestAlternativeSlotKey{parent: parent, childIndex: i}] = forestAlternativeSlot{
+		alternatives.setSlot(forestAlternativeSlotKey{parent: parent, childIndex: i}, forestAlternativeSlot{
 			node: forestNode,
 			prev: prev,
-		}
+		})
 	}
 }
 
@@ -1771,7 +1901,7 @@ func resolveForestChildAlternatives(p *Parser, arena *nodeArena, parent *Node, a
 			continue
 		}
 		chosen := child
-		if slot, ok := alternatives.slots[forestAlternativeSlotKey{parent: parent, childIndex: i}]; ok {
+		if slot, ok := alternatives.slot(forestAlternativeSlotKey{parent: parent, childIndex: i}); ok {
 			if best := slot.node.bestResultLinkForPrev(p, arena, slot.prev); best != nil {
 				if bestNode := stackEntryNode(best.subtree); bestNode != nil && forestAlternativeFitsChildSlot(p, child, bestNode) {
 					chosen = bestNode
@@ -1800,11 +1930,11 @@ func forestRecordedUnaryDirectChildAlternative(p *Parser, arena *nodeArena, alte
 	if p == nil || arena == nil || alternatives == nil || wrapper == nil || depth > maxTreeWalkDepth {
 		return nil
 	}
-	if len(wrapper.children) != 1 || alternatives.nodes[wrapper] == nil {
+	if len(wrapper.children) != 1 || alternatives.node(wrapper) == nil {
 		return nil
 	}
 	direct := wrapper.children[0]
-	if direct == nil || len(direct.children) <= 1 || alternatives.nodes[direct] == nil {
+	if direct == nil || len(direct.children) <= 1 || alternatives.node(direct) == nil {
 		return nil
 	}
 	if !stackEntryUnaryWrapperContains(p, arena, newStackEntryNode(wrapper.parseState, wrapper), newStackEntryNode(direct.parseState, direct), depth+1) {
