@@ -184,12 +184,14 @@ type Parser struct {
 	// active source qualifies for engine-side error-mode substitution (see
 	// cRecoverCustomSourceEligibleFor).
 	cRecoverCustomSourceEligible bool
-	// cNodeMemo caches per-subtree error cost and visible node count for the
-	// gated recovery, keyed on (node pointer, equivVersion) — the engine
+	// cNodeMemoCache caches per-subtree error cost and visible node count for
+	// the gated recovery, keyed on (node pointer, equivVersion) — the engine
 	// analogue of C's SubtreeHeapData.error_cost/visible_descendant_count
-	// computed once in ts_subtree_summarize_children. Cleared at parse start;
-	// nil while the gate is off.
-	cNodeMemo map[*Node]cNodeMemoEntry
+	// computed once in ts_subtree_summarize_children. A fixed-capacity
+	// pointer-keyed 2-way set-associative cache (see cNodeMemoSlot,
+	// parser_recover_c.go) rather than a map: cleared at parse start, empty
+	// (len 0) while the gate is off.
+	cNodeMemoCache []cNodeMemoCacheEntry
 	// cPrefixPath is the reusable descent scratch for GSS prefix-aggregate
 	// fills (cStackPrefixAgg, parser_recover_c.go). The aggregates themselves
 	// live on gssNode (aggGen/aggCost/aggVis), the engine analogue of C
@@ -3902,11 +3904,15 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	if p.errorCostCompetitionEnabled() {
 		// Faithful C recovery port: arena nodes are pooled across parses, so
 		// stale (pointer, version) memo hits from a previous parse must be
-		// impossible.
-		if p.cNodeMemo == nil {
-			p.cNodeMemo = make(map[*Node]cNodeMemoEntry, 256)
+		// impossible. Start at the small per-parse default -- cCompareVersions
+		// cost competition participates in ordinary GLR disambiguation on
+		// well-formed input too, so this path is warm even on clean parses;
+		// growCNodeMemoCache upgrades it to the full working-set size the
+		// first time this parse actually enters C error handling.
+		if len(p.cNodeMemoCache) == 0 {
+			p.cNodeMemoCache = make([]cNodeMemoCacheEntry, cNodeMemoCacheInitialSize)
 		} else {
-			clear(p.cNodeMemo)
+			clear(p.cNodeMemoCache)
 		}
 		p.crecoveryEnteredErrorState = false
 		p.crecoveryDroppedErrorForClean = false
@@ -6453,8 +6459,8 @@ func (p *Parser) checkpointTransientScratch(stacks []glrStack, scratch *parserSc
 	// memo state before slab addresses are reused, so pointer-keyed results from
 	// discarded alternatives cannot alias freshly allocated transient parents.
 	scratch.merge.beginEquivEpoch()
-	if p.cNodeMemo != nil {
-		clear(p.cNodeMemo)
+	if len(p.cNodeMemoCache) != 0 {
+		clear(p.cNodeMemoCache)
 	}
 	if cap(scratch.tmpEntries) > 0 {
 		clear(scratch.tmpEntries[:cap(scratch.tmpEntries)])

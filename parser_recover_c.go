@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"unicode"
+	"unsafe"
 )
 
 // parser_recover_c.go is the stage-1 faithful port of tree-sitter C's error
@@ -1017,9 +1018,9 @@ func (p *Parser) cNodeVisibleSubtreeCount(n *Node) int {
 	if n == nil {
 		return 0
 	}
-	if p != nil && p.cNodeMemo != nil {
-		if e, ok := p.cNodeMemo[n]; ok && e.hasVis && e.ver == n.equivVersion {
-			return e.visCount
+	if p != nil && len(p.cNodeMemoCache) != 0 {
+		if slot := p.cNodeMemoSlot(n); slot.hasVis && slot.ver == n.equivVersion {
+			return slot.visCount
 		}
 	}
 	count := 0
@@ -1029,14 +1030,16 @@ func (p *Parser) cNodeVisibleSubtreeCount(n *Node) int {
 	for _, c := range n.children {
 		count += p.cNodeVisibleSubtreeCount(c)
 	}
-	if p != nil && p.cNodeMemo != nil {
-		e := p.cNodeMemo[n]
-		if e.ver != n.equivVersion {
-			e = cNodeMemoEntry{ver: n.equivVersion}
+	if p != nil && len(p.cNodeMemoCache) != 0 {
+		// Re-fetch the slot: the recursive calls above may have evicted n's
+		// slot (a child's pointer hashing into the same 2-way set), so the
+		// pointer captured before recursing could now be stale.
+		slot := p.cNodeMemoSlot(n)
+		if slot.ver != n.equivVersion {
+			*slot = cNodeMemoCacheEntry{node: uintptr(unsafe.Pointer(n)), ver: n.equivVersion}
 		}
-		e.visCount = count
-		e.hasVis = true
-		p.cNodeMemo[n] = e
+		slot.visCount = count
+		slot.hasVis = true
 	}
 	return count
 }
@@ -1149,19 +1152,101 @@ func cNodeErrorCostLangWithScratch(scratch *glrMergeScratch, lang *Language, n *
 	return cost
 }
 
-// cNodeMemoEntry caches the gated recovery's per-subtree aggregates, the
+// cNodeMemoCacheEntry caches the gated recovery's per-subtree aggregates, the
 // engine analogue of C SubtreeHeapData.error_cost / node counts computed once
 // per subtree in ts_subtree_summarize_children. Finished subtrees never
 // mutate during a parse; the open error region is bumped (equivVersion) on
 // every absorb, invalidating its entry. Without the memo every
 // condense/competition step rewalks whole accumulated subtrees per token,
 // which is O(n^2) on large gated files.
-type cNodeMemoEntry struct {
+//
+// This is one slot of a pointer-keyed 2-way set-associative cache (same
+// layout discipline as glrShapePrefixCacheEntry / glrNodeEquivCacheEntry in
+// glr.go): profiling error-recovery-heavy parses (kdl/uxntal-class
+// fleet-tail cliffs, see cRecoverStrategy1Election/cHandleError/
+// cCondenseAndResume) showed runtime.mapaccess2_fast64 as the single hottest
+// leaf in the whole parse, driven almost entirely by the two memo lookups
+// below (cNodeErrorCost, cNodeVisibleSubtreeCount) previously backed by a
+// map[*Node]cNodeMemoEntry. A miss here is always safe: every caller falls
+// through to a full recompute over n's children, so an approximate
+// (evictable) cache changes only how often the answer is recomputed, never
+// what the answer is.
+type cNodeMemoCacheEntry struct {
+	node     uintptr
 	ver      uint32
 	cost     uint32
 	visCount int
 	hasCost  bool
 	hasVis   bool
+}
+
+const (
+	// cNodeMemoCacheInitialSize is what every C-recovery-capable parse
+	// allocates up front (parseInternal), matching the previous
+	// map[*Node]cNodeMemoEntry's practical footprint (make(..., 256) measured
+	// ~3.8KiB): cCompareVersions-driven cost competition participates in
+	// ordinary GLR disambiguation on well-formed input too (see the doc
+	// comment above cVersionStatus), so this path is warm on every capable
+	// parse, clean or not, and must stay cheap for the common case.
+	cNodeMemoCacheInitialSize = 128
+	// cNodeMemoCacheSize is what the cache grows to the first time a lineage
+	// actually enters C error handling (cHandleError / cRecoverDispatchInError
+	// setting crecoveryEnteredErrorState), matching the sizing of the
+	// merge-scratch pointer-keyed caches (glrShapePrefixCacheSize et al.):
+	// 8192 sets, 2-way each. Growing loses whatever was cached at the smaller
+	// size, which only costs a recompute (see cNodeMemoSlot) -- never a wrong
+	// answer.
+	cNodeMemoCacheSize = 16384
+)
+
+func cNodeMemoCacheIndex(p uintptr, setCount int) int {
+	h := uint64(p)
+	h ^= h >> 33
+	h *= 0xff51afd7ed558ccd
+	h ^= h >> 33
+	h *= 0xc4ceb9fe1a85ec53
+	h ^= h >> 33
+	return int(h&uint64(setCount-1)) << 1
+}
+
+// growCNodeMemoCache upgrades the parser's per-subtree cost/vis memo from its
+// small per-parse default (cNodeMemoCacheInitialSize) to the full working-set
+// size (cNodeMemoCacheSize) the first time a lineage actually enters C error
+// handling. Called once per parse from cHandleError's crecoveryEnteredErrorState
+// transition; a no-op once already grown.
+func (p *Parser) growCNodeMemoCache() {
+	if p == nil || len(p.cNodeMemoCache) >= cNodeMemoCacheSize {
+		return
+	}
+	p.cNodeMemoCache = make([]cNodeMemoCacheEntry, cNodeMemoCacheSize)
+}
+
+// cNodeMemoSlot returns the writable 2-way set-associative slot for node n,
+// evicting the current occupant into the victim half of the pair if n is not
+// already resident. This mirrors map[*Node]cNodeMemoEntry lookup semantics:
+// an existing entry for n keeps its stored version/cost/vis fields until the
+// caller explicitly overwrites them; a newly-resident node starts zeroed
+// (matching a fresh map key's zero value). Returns nil only when the cache is
+// unprovisioned (recovery gate off) or n/p is nil.
+func (p *Parser) cNodeMemoSlot(n *Node) *cNodeMemoCacheEntry {
+	if p == nil || n == nil || len(p.cNodeMemoCache) == 0 {
+		return nil
+	}
+	setCount := len(p.cNodeMemoCache) >> 1
+	ptr := uintptr(unsafe.Pointer(n))
+	idx := cNodeMemoCacheIndex(ptr, setCount)
+	primary := &p.cNodeMemoCache[idx]
+	if primary.node == ptr {
+		return primary
+	}
+	victim := &p.cNodeMemoCache[idx+1]
+	if victim.node == ptr {
+		*primary, *victim = *victim, *primary
+		return primary
+	}
+	*victim = *primary
+	*primary = cNodeMemoCacheEntry{node: ptr}
+	return primary
 }
 
 // ---------------------------------------------------------------------------
@@ -1244,7 +1329,7 @@ type cErrRegionAbsorbPre struct {
 }
 
 func (p *Parser) cErrRegionPreAbsorb(n *Node) cErrRegionAbsorbPre {
-	if p == nil || p.cNodeMemo == nil || p.language == nil || n == nil {
+	if p == nil || len(p.cNodeMemoCache) == 0 || p.language == nil || n == nil {
 		return cErrRegionAbsorbPre{}
 	}
 	if n.symbol != errorSymbol || (n.isMissing() && len(n.children) == 0) {
@@ -1268,7 +1353,7 @@ func (p *Parser) cErrRegionPreAbsorb(n *Node) cErrRegionAbsorbPre {
 // cNodeErrorCostLang's ERROR-node summarization exactly; the primed values are
 // what a full walk at the new version returns.
 func (p *Parser) cErrRegionPostAbsorb(pre cErrRegionAbsorbPre, added ...*Node) {
-	if !pre.valid || p == nil || p.cNodeMemo == nil {
+	if !pre.valid || p == nil || len(p.cNodeMemoCache) == 0 {
 		return
 	}
 	n := pre.node
@@ -1296,12 +1381,15 @@ func (p *Parser) cErrRegionPostAbsorb(pre cErrRegionAbsorbPre, added ...*Node) {
 	if debugRecoveryIncrementalCost {
 		p.debugCheckErrRegionIncremental(n, cost, vis)
 	}
-	p.cNodeMemo[n] = cNodeMemoEntry{
-		ver:      n.equivVersion,
-		cost:     cost,
-		visCount: vis,
-		hasCost:  true,
-		hasVis:   true,
+	if slot := p.cNodeMemoSlot(n); slot != nil {
+		*slot = cNodeMemoCacheEntry{
+			node:     uintptr(unsafe.Pointer(n)),
+			ver:      n.equivVersion,
+			cost:     cost,
+			visCount: vis,
+			hasCost:  true,
+			hasVis:   true,
+		}
 	}
 	if ms := p.mergeScratch; ms != nil {
 		if ms.cErrorCost == nil {
@@ -1315,7 +1403,7 @@ func (p *Parser) cErrRegionPostAbsorb(pre cErrRegionAbsorbPre, added ...*Node) {
 // bumped) region node via the standard full walks — O(children) once, so the
 // per-token lookups that follow are O(1) until the next absorb re-primes.
 func (p *Parser) cErrRegionPrime(n *Node) {
-	if p == nil || p.cNodeMemo == nil || p.language == nil || n == nil {
+	if p == nil || len(p.cNodeMemoCache) == 0 || p.language == nil || n == nil {
 		return
 	}
 	cost := p.cNodeErrorCost(n)
@@ -1368,11 +1456,11 @@ func (p *Parser) cNodeErrorCost(n *Node) uint32 {
 	if n == nil {
 		return 0
 	}
-	if p.cNodeMemo == nil {
+	if len(p.cNodeMemoCache) == 0 {
 		return cNodeErrorCostLang(p.language, n)
 	}
-	if e, ok := p.cNodeMemo[n]; ok && e.hasCost && e.ver == n.equivVersion {
-		return e.cost
+	if slot := p.cNodeMemoSlot(n); slot.hasCost && slot.ver == n.equivVersion {
+		return slot.cost
 	}
 	if n.isMissing() && len(n.children) == 0 {
 		return cErrCostPerMissingTree + cErrCostPerRecovery
@@ -1407,13 +1495,15 @@ func (p *Parser) cNodeErrorCost(n *Node) uint32 {
 		}
 		cost += cErrCostPerRecovery + cErrCostPerSkippedChar*bytes + cErrCostPerSkippedLine*rows
 	}
-	e := p.cNodeMemo[n]
-	if e.ver != n.equivVersion {
-		e = cNodeMemoEntry{ver: n.equivVersion}
+	// Re-fetch the slot: the recursive p.cNodeErrorCost(c) calls above may
+	// have evicted n's slot (a child's pointer hashing into the same 2-way
+	// set), so the pointer captured before recursing could now be stale.
+	slot := p.cNodeMemoSlot(n)
+	if slot.ver != n.equivVersion {
+		*slot = cNodeMemoCacheEntry{node: uintptr(unsafe.Pointer(n)), ver: n.equivVersion}
 	}
-	e.cost = cost
-	e.hasCost = true
-	p.cNodeMemo[n] = e
+	slot.cost = cost
+	slot.hasCost = true
 	return cost
 }
 
@@ -1561,7 +1651,7 @@ func (p *Parser) debugCheckStackPrefixAgg(head *gssNode, gotCost uint32, gotVis 
 // debugCheckStackPrefixVisLang is the visible-subtree-count twin of
 // debugCheckStackPrefixCostLang: it re-derives the cumulative visible node
 // count of head's prev chain without any cache (via the uncached per-node walk
-// so a poisoned cNodeMemo cannot mask itself) and compares it against the
+// so a poisoned cNodeMemoCache cannot mask itself) and compares it against the
 // memoized aggVis the same way the cost check guards aggCost. A divergence here
 // means cStackCumulativeNodeCount / cNodeCountSinceError — and thus the php
 // baseline gate — would read a corrupt count.
@@ -1595,7 +1685,7 @@ func (p *Parser) cStackErrorCost(s *glrStack) uint32 {
 	}
 	var cost uint32
 	if len(s.entries) > 0 {
-		if p != nil && p.cNodeMemo != nil && s.cRec != nil {
+		if p != nil && len(p.cNodeMemoCache) != 0 && s.cRec != nil {
 			cost, _ = p.cStackEntryAgg(s)
 		} else {
 			for i := range s.entries {
@@ -1604,7 +1694,7 @@ func (p *Parser) cStackErrorCost(s *glrStack) uint32 {
 				}
 			}
 		}
-	} else if p != nil && p.cNodeMemo != nil && s.gss.head != nil {
+	} else if p != nil && len(p.cNodeMemoCache) != 0 && s.gss.head != nil {
 		var vis int
 		cost, vis = p.cStackPrefixAgg(s.gss.head)
 		if debugRecoveryIncrementalCost {
@@ -1637,7 +1727,7 @@ func (p *Parser) cStackEntryAgg(s *glrStack) (uint32, int) {
 		return 0, 0
 	}
 	gen := gssPrefixAggGen.Load()
-	if p != nil && p.cNodeMemo != nil && s.cRec != nil && s.cEntryAggGen == gen {
+	if p != nil && len(p.cNodeMemoCache) != 0 && s.cRec != nil && s.cEntryAggGen == gen {
 		return s.cEntryAggCost, int(s.cEntryAggVis)
 	}
 	var cost uint32
@@ -1648,7 +1738,7 @@ func (p *Parser) cStackEntryAgg(s *glrStack) (uint32, int) {
 			vis += int32(p.cNodeVisibleSubtreeCount(n))
 		}
 	}
-	if p != nil && p.cNodeMemo != nil && s.cRec != nil {
+	if p != nil && len(p.cNodeMemoCache) != 0 && s.cRec != nil {
 		s.cEntryAggGen = gen
 		s.cEntryAggCost = cost
 		s.cEntryAggVis = vis
@@ -1704,7 +1794,7 @@ func (p *Parser) cStackCumulativeNodeCount(s *glrStack) int {
 	}
 	count := 0
 	if len(s.entries) > 0 {
-		if p != nil && p.cNodeMemo != nil && s.cRec != nil {
+		if p != nil && len(p.cNodeMemoCache) != 0 && s.cRec != nil {
 			_, count = p.cStackEntryAgg(s)
 		} else {
 			for i := range s.entries {
@@ -1715,7 +1805,7 @@ func (p *Parser) cStackCumulativeNodeCount(s *glrStack) int {
 		}
 		return count
 	}
-	if p != nil && p.cNodeMemo != nil && s.gss.head != nil {
+	if p != nil && len(p.cNodeMemoCache) != 0 && s.gss.head != nil {
 		var cost uint32
 		cost, count = p.cStackPrefixAgg(s.gss.head)
 		if debugRecoveryIncrementalCost {
@@ -2412,6 +2502,12 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 	// actual suspicion signal is cRecoveryDroppedErrorForClean, scoped to the
 	// selected result's own lineage in buildResultFromGLR.
 	p.crecoveryEnteredErrorState = true
+	// This lineage is now doing real recovery-competition work (as opposed to
+	// the routine per-token GLR cost comparisons every capable parse runs even
+	// when well-formed), so it is worth upgrading the per-subtree memo from its
+	// small per-parse default to its full working-set size (see
+	// growCNodeMemoCache / cNodeMemoCacheInitialSize).
+	p.growCNodeMemoCache()
 	// Recovery machinery is running: stack error costs can now be nonzero, so
 	// the merge cost competition must run its walks from here on (sticky
 	// per-parse gate, see crecoveryCostCompetitionRelevant).

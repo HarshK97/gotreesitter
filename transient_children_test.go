@@ -543,7 +543,7 @@ func TestTransientScratchCheckpointMaterializesLiveStackAndReusesSlabs(t *testin
 	scratch.transientCheckpointBytes = 1
 	scratch.reduce.transientParents = &scratch.transientParents
 	scratch.reduce.transientChildren = &scratch.transientChildren
-	parser := &Parser{cNodeMemo: make(map[*Node]cNodeMemoEntry)}
+	parser := &Parser{cNodeMemoCache: make([]cNodeMemoCacheEntry, cNodeMemoCacheSize)}
 
 	leaf := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Column: 1})
 	children := scratch.transientChildren.alloc(1)
@@ -551,7 +551,9 @@ func TestTransientScratchCheckpointMaterializesLiveStackAndReusesSlabs(t *testin
 	parent := scratch.transientParents.allocParent(arena, Symbol(2), true, children, 0, true)
 	parent.dynamicPrecedence = 13
 	parent.rawShape = 17
-	parser.cNodeMemo[parent] = cNodeMemoEntry{hasCost: true}
+	if slot := parser.cNodeMemoSlot(parent); slot != nil {
+		*slot = cNodeMemoCacheEntry{node: uintptr(unsafe.Pointer(parent)), hasCost: true}
+	}
 	stack := glrStack{entries: []stackEntry{newStackEntryNode(7, parent)}, cacheEntries: true, byteOffset: 1}
 	parentCapacityBytes := scratch.transientParents.allocatedBytes
 	childCapacityBytes := scratch.transientChildren.allocatedBytes
@@ -579,8 +581,10 @@ func TestTransientScratchCheckpointMaterializesLiveStackAndReusesSlabs(t *testin
 	if scratch.transientCheckpoints != 1 {
 		t.Fatalf("transient checkpoints = %d, want 1", scratch.transientCheckpoints)
 	}
-	if len(parser.cNodeMemo) != 0 {
-		t.Fatal("recovery node memo retained recycled transient pointers")
+	for i := range parser.cNodeMemoCache {
+		if parser.cNodeMemoCache[i].node != 0 {
+			t.Fatal("recovery node memo retained recycled transient pointers")
+		}
 	}
 
 	reused := scratch.transientParents.allocParent(arena, Symbol(3), true, nil, 0, false)

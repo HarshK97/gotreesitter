@@ -5,8 +5,8 @@ import "testing"
 func TestBeforePublicationVersionBumpDoesNotInvalidateLivePrefixes(t *testing.T) {
 	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
 	p := &Parser{
-		language:  lang,
-		cNodeMemo: make(map[*Node]cNodeMemoEntry),
+		language:       lang,
+		cNodeMemoCache: make([]cNodeMemoCacheEntry, cNodeMemoCacheSize),
 	}
 	published := &Node{symbol: 1, equivVersion: 1}
 	head := &gssNode{entry: newStackEntryNode(1, published), depth: 1}
@@ -45,8 +45,8 @@ func TestBeforePublicationVersionBumpDoesNotInvalidateLivePrefixes(t *testing.T)
 func TestMetadataVersionBumpKeepsRecoveryPrefixAggregate(t *testing.T) {
 	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
 	p := &Parser{
-		language:  lang,
-		cNodeMemo: make(map[*Node]cNodeMemoEntry),
+		language:       lang,
+		cNodeMemoCache: make([]cNodeMemoCacheEntry, cNodeMemoCacheSize),
 	}
 	payload := &Node{symbol: 1, equivVersion: 1, errorRankCache: 3}
 	head := &gssNode{entry: newStackEntryNode(1, payload), depth: 1}
@@ -89,7 +89,7 @@ func TestMetadataVersionBumpKeepsRecoveryPrefixAggregate(t *testing.T) {
 
 func TestMergeCostFillInvalidatesAndParserRefillsVisibility(t *testing.T) {
 	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
-	p := &Parser{language: lang, cNodeMemo: make(map[*Node]cNodeMemoEntry)}
+	p := &Parser{language: lang, cNodeMemoCache: make([]cNodeMemoCacheEntry, cNodeMemoCacheSize)}
 	base := &gssNode{entry: newStackEntryNode(1, &Node{symbol: 1, equivVersion: 1}), depth: 1}
 	head := &gssNode{entry: newStackEntryNode(2, &Node{symbol: 1, equivVersion: 1}), prev: base, depth: 2}
 
@@ -119,8 +119,8 @@ func TestMergeCostFillInvalidatesAndParserRefillsVisibility(t *testing.T) {
 func TestContiguousRecoveryAggregateCacheTracksStackAndNodeMutations(t *testing.T) {
 	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
 	p := &Parser{
-		language:  lang,
-		cNodeMemo: make(map[*Node]cNodeMemoEntry),
+		language:       lang,
+		cNodeMemoCache: make([]cNodeMemoCacheEntry, cNodeMemoCacheSize),
 	}
 	first := &Node{symbol: 1, equivVersion: 1}
 	missing := &Node{symbol: 1, equivVersion: 1}
@@ -181,8 +181,8 @@ func TestContiguousRecoveryAggregateCacheTracksStackAndNodeMutations(t *testing.
 func TestExpandedGSSResultPathsKeepIndependentRecoveryAggregates(t *testing.T) {
 	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
 	p := &Parser{
-		language:  lang,
-		cNodeMemo: make(map[*Node]cNodeMemoEntry),
+		language:       lang,
+		cNodeMemoCache: make([]cNodeMemoCacheEntry, cNodeMemoCacheSize),
 	}
 	plain := &Node{symbol: 1, equivVersion: 1}
 	errChild := &Node{symbol: 1, equivVersion: 1, endByte: 1}
