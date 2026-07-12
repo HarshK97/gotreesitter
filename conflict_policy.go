@@ -50,6 +50,11 @@ func conflictPolicyChoiceForPolicy(lang *Language, policy *ConflictPolicy, actio
 			return ParseAction{}, false
 		}
 		return singleShiftConflictChoice(actions)
+	case ConflictPolicyRepetitionReduce:
+		if len(policy.ReduceSymbols) == 0 {
+			return ParseAction{}, false
+		}
+		return singleReduceAgainstRepetitionShiftConflictChoice(actions)
 	default:
 		return ParseAction{}, false
 	}

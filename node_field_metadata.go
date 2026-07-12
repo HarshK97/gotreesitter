@@ -76,6 +76,36 @@ func equalFieldIDSlices(a, b []FieldID) bool {
 	return true
 }
 
+func normalizedFieldSourceForID(fieldIDs []FieldID, fieldSources []uint8, i int) uint8 {
+	if i < 0 || i >= len(fieldIDs) || fieldIDs[i] == 0 {
+		return fieldSourceNone
+	}
+	source := fieldSourceAt(fieldSources, i)
+	if source == fieldSourceNone {
+		return fieldSourceDirect
+	}
+	return source
+}
+
+func equalNodeFieldMetadata(a, b *Node) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	aIDs := a.fieldIDs()
+	bIDs := b.fieldIDs()
+	if !equalFieldIDSlices(aIDs, bIDs) {
+		return false
+	}
+	aSources := a.fieldSources()
+	bSources := b.fieldSources()
+	for i := range aIDs {
+		if normalizedFieldSourceForID(aIDs, aSources, i) != normalizedFieldSourceForID(bIDs, bSources, i) {
+			return false
+		}
+	}
+	return true
+}
+
 func cloneNodeFieldMetadataHeaderInto(dst, src *Node, arena *nodeArena) {
 	if dst == nil || src == nil || src.fieldMetadata == nil {
 		if dst != nil {

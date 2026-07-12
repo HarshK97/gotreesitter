@@ -1776,6 +1776,33 @@ func TestPendingParentMergeEqualityVerifiesPackedFieldsAndDescendants(t *testing
 	}
 }
 
+func TestNodeMergeEqualityDistinguishesDeferredFieldSources(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	direct := newParentNodeInArenaWithFieldSources(
+		arena, 2, false, []*Node{leaf}, []FieldID{7}, []uint8{fieldSourceDirect}, 0,
+	)
+	defaultDirect := newParentNodeInArena(arena, 2, false, []*Node{leaf}, []FieldID{7}, 0)
+	deferred := newParentNodeInArenaWithFieldSources(
+		arena, 2, false, []*Node{leaf}, []FieldID{7}, []uint8{fieldSourceDeferredDirect}, 0,
+	)
+	makeStack := func(node *Node) glrStack {
+		return glrStack{
+			entries:    []stackEntry{{state: 1}, newStackEntryNode(2, node)},
+			byteOffset: 1,
+		}
+	}
+
+	scratch := glrMergeScratch{arena: arena}
+	scratch.beginEquivEpoch()
+	if !stackEquivalentForLanguageWithScratch(&scratch, nil, makeStack(direct), makeStack(defaultDirect)) {
+		t.Fatal("implicit and explicit direct field sources were not equivalent")
+	}
+	if stackEquivalentForLanguageWithScratch(&scratch, nil, makeStack(direct), makeStack(deferred)) {
+		t.Fatal("deferred and resolved field sources merged before the visible boundary")
+	}
+}
+
 func TestNoTreeNodeStackEntryKeepsBytesAndDropsPoints(t *testing.T) {
 	leaf := newNoTreeLeafNodeInArena(nil, 7, true, 11, 19, Point{Row: 3, Column: 5}, Point{Row: 3, Column: 13})
 	entry := newStackEntryNoTreeNode(2, leaf)

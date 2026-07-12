@@ -118,7 +118,7 @@ func TestBuildReduceChildrenHiddenChildDoesNotDuplicateExistingField(t *testing.
 	rhs := newLeafNodeInArena(arena, 3, true, 3, 4, Point{Row: 0, Column: 3}, Point{Row: 0, Column: 4})
 	hidden := newParentNodeInArena(arena, 1, false, []*Node{operator, rhs}, []FieldID{1, 0}, 0)
 
-	children, fieldIDs, _ := parser.buildReduceChildren([]stackEntry{newStackEntryNode(0, hidden)}, 0, 1, 1, 0, 0, arena)
+	children, fieldIDs, _ := parser.buildReduceChildren([]stackEntry{newStackEntryNode(0, hidden)}, 0, 1, 1, 3, 0, arena)
 	if got, want := len(children), 2; got != want {
 		t.Fatalf("len(children) = %d, want %d", got, want)
 	}
@@ -131,6 +131,204 @@ func TestBuildReduceChildrenHiddenChildDoesNotDuplicateExistingField(t *testing.
 	if got := fieldIDs[1]; got != 0 {
 		t.Fatalf("fieldIDs[1] = %d, want 0", got)
 	}
+}
+
+func TestBuildReduceChildrenDefersDirectHiddenFieldUntilVisibleBoundary(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "_inner", "_outer", ".", "identifier", "visible_parent"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false},
+			{Name: "_inner", Visible: false},
+			{Name: "_outer", Visible: false},
+			{Name: ".", Visible: true},
+			{Name: "identifier", Visible: true, Named: true},
+			{Name: "visible_parent", Visible: true, Named: true},
+		},
+		FieldNames:     []string{"", "path"},
+		FieldMapSlices: [][2]uint16{{0, 1}, {1, 0}},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 1, ChildIndex: 0},
+		},
+	}
+
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	dot0 := newLeafNodeInArena(arena, 3, false, 0, 1, Point{}, Point{Column: 1})
+	a := newLeafNodeInArena(arena, 4, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	dot1 := newLeafNodeInArena(arena, 3, false, 2, 3, Point{Column: 2}, Point{Column: 3})
+	b := newLeafNodeInArena(arena, 4, true, 3, 4, Point{Column: 3}, Point{Column: 4})
+	inner := newParentNodeInArena(arena, 1, false, []*Node{dot0, a, dot1, b}, nil, 0)
+
+	children, fieldIDs, fieldSources := parser.buildReduceChildren(
+		[]stackEntry{newStackEntryNode(0, inner)}, 0, 1, 1, 2, 0, arena,
+	)
+	if got, want := len(children), 1; got != want {
+		t.Fatalf("deferred len(children) = %d, want %d", got, want)
+	}
+	if children[0] != inner {
+		t.Fatal("deferred child does not retain the hidden subtree")
+	}
+	if got, want := fieldIDs[0], FieldID(1); got != want {
+		t.Fatalf("deferred field ID = %d, want %d", got, want)
+	}
+	if got, want := fieldSourceAt(fieldSources, 0), uint8(fieldSourceDeferredDirect); got != want {
+		t.Fatalf("deferred field source = %d, want %d", got, want)
+	}
+
+	outer := newParentNodeInArenaWithFieldSources(arena, 2, false, children, fieldIDs, fieldSources, 0)
+	children, fieldIDs, fieldSources = parser.buildReduceChildren(
+		[]stackEntry{newStackEntryNode(0, outer)}, 0, 1, 1, 5, 1, arena,
+	)
+	if got, want := len(children), 4; got != want {
+		t.Fatalf("visible len(children) = %d, want %d", got, want)
+	}
+	wantChildren := []*Node{dot0, a, dot1, b}
+	wantFields := []FieldID{0, 1, 0, 1}
+	wantSources := []uint8{fieldSourceNone, fieldSourceDirect, fieldSourceNone, fieldSourceDirect}
+	for i := range wantChildren {
+		if children[i] != wantChildren[i] {
+			t.Fatalf("children[%d] = %p, want %p", i, children[i], wantChildren[i])
+		}
+		if fieldIDs[i] != wantFields[i] {
+			t.Fatalf("fieldIDs[%d] = %d, want %d", i, fieldIDs[i], wantFields[i])
+		}
+		if got := fieldSourceAt(fieldSources, i); got != wantSources[i] {
+			t.Fatalf("fieldSources[%d] = %d, want %d", i, got, wantSources[i])
+		}
+	}
+}
+
+func TestBuildReduceChildrenDeferredInheritedFieldRespectsLaterDirectField(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "_inner", "_outer", "operator", "identifier", "visible_parent"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false},
+			{Name: "_inner", Visible: false},
+			{Name: "_outer", Visible: false},
+			{Name: "operator", Visible: true},
+			{Name: "identifier", Visible: true, Named: true},
+			{Name: "visible_parent", Visible: true, Named: true},
+		},
+		FieldNames:     []string{"", "value"},
+		FieldMapSlices: [][2]uint16{{0, 2}, {2, 0}},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 1, ChildIndex: 0, Inherited: true},
+			{FieldID: 1, ChildIndex: 1},
+		},
+	}
+
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	op := newLeafNodeInArena(arena, 3, false, 0, 1, Point{}, Point{Column: 1})
+	value := newLeafNodeInArena(arena, 4, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	inner := newParentNodeInArena(arena, 1, false, []*Node{op, value}, nil, 0)
+	tail := newLeafNodeInArena(arena, 4, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+
+	children, fieldIDs, fieldSources := parser.buildReduceChildren(
+		[]stackEntry{newStackEntryNode(0, inner), newStackEntryNode(0, tail)}, 0, 2, 2, 2, 0, arena,
+	)
+	if got, want := len(children), 2; got != want {
+		t.Fatalf("deferred len(children) = %d, want %d", got, want)
+	}
+	if got, want := fieldSourceAt(fieldSources, 0), uint8(fieldSourceDeferredInheritedLater); got != want {
+		t.Fatalf("first deferred field source = %d, want %d", got, want)
+	}
+	if got, want := fieldSourceAt(fieldSources, 1), uint8(fieldSourceDirect); got != want {
+		t.Fatalf("later field source = %d, want %d", got, want)
+	}
+
+	outer := newParentNodeInArenaWithFieldSources(arena, 2, false, children, fieldIDs, fieldSources, 0)
+	children, fieldIDs, fieldSources = parser.buildReduceChildren(
+		[]stackEntry{newStackEntryNode(0, outer)}, 0, 1, 1, 5, 1, arena,
+	)
+	wantChildren := []*Node{op, value, tail}
+	wantFields := []FieldID{0, 0, 1}
+	wantSources := []uint8{fieldSourceNone, fieldSourceNone, fieldSourceDirect}
+	for i := range wantChildren {
+		if children[i] != wantChildren[i] {
+			t.Fatalf("children[%d] = %p, want %p", i, children[i], wantChildren[i])
+		}
+		if fieldIDs[i] != wantFields[i] {
+			t.Fatalf("fieldIDs[%d] = %d, want %d", i, fieldIDs[i], wantFields[i])
+		}
+		if got := fieldSourceAt(fieldSources, i); got != wantSources[i] {
+			t.Fatalf("fieldSources[%d] = %d, want %d", i, got, wantSources[i])
+		}
+	}
+}
+
+func TestBuildReduceChildrenDeferredDirectCountsAsRepeatedField(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "_inner", "_outer", "identifier", "visible_parent"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false},
+			{Name: "_inner", Visible: false},
+			{Name: "_outer", Visible: false},
+			{Name: "identifier", Visible: true, Named: true},
+			{Name: "visible_parent", Visible: true, Named: true},
+		},
+		FieldNames:     []string{"", "path", "other"},
+		FieldMapSlices: [][2]uint16{{0, 2}, {2, 0}},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 1, ChildIndex: 0},
+			{FieldID: 1, ChildIndex: 2},
+		},
+	}
+
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	a := newLeafNodeInArena(arena, 3, true, 0, 1, Point{}, Point{Column: 1})
+	b := newLeafNodeInArena(arena, 3, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	c := newLeafNodeInArena(arena, 3, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	d := newLeafNodeInArena(arena, 3, true, 3, 4, Point{Column: 3}, Point{Column: 4})
+	middle := newParentNodeInArenaWithFieldSources(
+		arena, 1, false, []*Node{b, c}, []FieldID{2, 2}, []uint8{fieldSourceInherited, fieldSourceInherited}, 0,
+	)
+	tail := newParentNodeInArena(arena, 1, false, []*Node{d}, nil, 0)
+
+	compactChildren, compactIDs, compactSources := parser.buildReduceChildren(
+		[]stackEntry{newStackEntryNode(0, a), newStackEntryNode(0, middle), newStackEntryNode(0, tail)},
+		0, 3, 3, 2, 0, arena,
+	)
+	if got, want := len(compactChildren), 3; got != want {
+		t.Fatalf("compact len(children) = %d, want %d", got, want)
+	}
+	if got, want := fieldSourceAt(compactSources, 2), uint8(fieldSourceDeferredDirect); got != want {
+		t.Fatalf("tail field source = %d, want %d", got, want)
+	}
+	outer := newParentNodeInArenaWithFieldSources(arena, 2, false, compactChildren, compactIDs, compactSources, 0)
+
+	assertFlattened := func(label string, children []*Node, fieldIDs []FieldID, fieldSources []uint8) {
+		t.Helper()
+		wantChildren := []*Node{a, b, c, d}
+		if got, want := len(children), len(wantChildren); got != want {
+			t.Fatalf("%s len(children) = %d, want %d", label, got, want)
+		}
+		for i := range wantChildren {
+			if children[i] != wantChildren[i] {
+				t.Fatalf("%s children[%d] = %p, want %p", label, i, children[i], wantChildren[i])
+			}
+			if got, want := fieldIDs[i], FieldID(1); got != want {
+				t.Fatalf("%s fieldIDs[%d] = %d, want %d", label, i, got, want)
+			}
+			if got, want := fieldSourceAt(fieldSources, i), uint8(fieldSourceDirect); got != want {
+				t.Fatalf("%s fieldSources[%d] = %d, want %d", label, i, got, want)
+			}
+		}
+	}
+
+	children, fieldIDs, fieldSources := parser.buildReduceChildren(
+		[]stackEntry{newStackEntryNode(0, outer)}, 0, 1, 1, 4, 1, arena,
+	)
+	assertFlattened("scratch", children, fieldIDs, fieldSources)
+
+	arrayChildren := make([]*Node, 4)
+	arrayIDs := make([]FieldID, 4)
+	arraySources := make([]uint8, 4)
+	if got, want := appendFlattenedHiddenChildrenWithFields(arrayChildren, arrayIDs, arraySources, 0, outer, lang.SymbolMetadata, nil), 4; got != want {
+		t.Fatalf("array flattened count = %d, want %d", got, want)
+	}
+	assertFlattened("array", arrayChildren, arrayIDs, arraySources)
 }
 
 func TestBuildReduceChildrenInheritedFieldOverridesInheritedInnerFieldOnFlattenedSpan(t *testing.T) {

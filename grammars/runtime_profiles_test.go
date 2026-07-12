@@ -32,7 +32,7 @@ func TestBuiltinExternalScannerRetryProfilesAttach(t *testing.T) {
 }
 
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	if got, want := len(builtinLanguageRuntimeProfiles), 7; got != want {
+	if got, want := len(builtinLanguageRuntimeProfiles), 10; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -47,6 +47,52 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	}
 }
 
+func TestBuiltinHaskellConflictPolicyAttaches(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	lang := HaskellLanguage()
+	for _, policy := range lang.ConflictPolicies {
+		if policy.State != 11192 || policy.Lookahead != 4 {
+			continue
+		}
+		if policy.Kind != gotreesitter.ConflictPolicyRepetitionReduce ||
+			len(policy.ReduceSymbols) != 1 || policy.ReduceSymbols[0] != 500 {
+			t.Fatalf("Haskell conflict policy = %+v, want certified expression-list reduce", policy)
+		}
+		return
+	}
+	t.Fatal("Haskell expression-list conflict policy was not attached")
+}
+
+func TestBuiltinHaskellConflictPolicyRequiresCertifiedBlobAndAttachesOnce(t *testing.T) {
+	lang := &gotreesitter.Language{Name: "haskell"}
+	if attachBuiltinLanguageRuntimeProfile("haskell", sha256.Sum256([]byte("uncertified")), lang) {
+		t.Fatal("uncertified Haskell blob reported a runtime-profile attachment")
+	}
+	if len(lang.ConflictPolicies) != 0 {
+		t.Fatalf("uncertified Haskell blob attached %d conflict policies", len(lang.ConflictPolicies))
+	}
+
+	blob := BlobByName("haskell")
+	if len(blob) == 0 {
+		t.Fatal("BlobByName(haskell) returned no data")
+	}
+	sum := sha256.Sum256(blob)
+	if !attachBuiltinLanguageRuntimeProfile("haskell", sum, lang) {
+		t.Fatal("certified Haskell blob did not attach its runtime profile")
+	}
+	if got := len(lang.ConflictPolicies); got != 1 {
+		t.Fatalf("certified Haskell conflict policies = %d, want 1", got)
+	}
+	if attachBuiltinLanguageRuntimeProfile("haskell", sum, lang) {
+		t.Fatal("reattaching the same Haskell profile reported a change")
+	}
+	if got := len(lang.ConflictPolicies); got != 1 {
+		t.Fatalf("reattached Haskell conflict policies = %d, want 1", got)
+	}
+}
+
 func TestBuiltinCompleteAcceptedErrorRetryProfilesAttach(t *testing.T) {
 	PurgeEmbeddedLanguageCache()
 	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
@@ -56,7 +102,9 @@ func TestBuiltinCompleteAcceptedErrorRetryProfilesAttach(t *testing.T) {
 		load func() *gotreesitter.Language
 	}{
 		{name: "bash", load: BashLanguage},
+		{name: "caddy", load: CaddyLanguage},
 		{name: "cpp", load: CppLanguage},
+		{name: "kdl", load: KdlLanguage},
 		{name: "rego", load: RegoLanguage},
 	}
 	for _, tt := range tests {
@@ -133,23 +181,27 @@ func TestBuiltinJavaAcceptedErrorRetryProfileRequiresCertifiedBlob(t *testing.T)
 }
 
 func TestBuiltinCompleteAcceptedErrorRetryProfileRequiresCertifiedBlob(t *testing.T) {
-	lang := &gotreesitter.Language{Name: "rego"}
-	if attachBuiltinLanguageRuntimeProfile("rego", sha256.Sum256([]byte("uncertified")), lang) {
-		t.Fatal("uncertified Rego blob reported a runtime-profile attachment")
-	}
-	if got := lang.FullParseAcceptedErrorRetryProfile; got != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) {
-		t.Fatalf("uncertified Rego blob changed retry profile to %+v", got)
-	}
+	for _, name := range []string{"caddy", "kdl", "rego"} {
+		t.Run(name, func(t *testing.T) {
+			lang := &gotreesitter.Language{Name: name}
+			if attachBuiltinLanguageRuntimeProfile(name, sha256.Sum256([]byte("uncertified")), lang) {
+				t.Fatalf("uncertified %s blob reported a runtime-profile attachment", name)
+			}
+			if got := lang.FullParseAcceptedErrorRetryProfile; got != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) {
+				t.Fatalf("uncertified %s blob changed retry profile to %+v", name, got)
+			}
 
-	blob := BlobByName("rego")
-	if len(blob) == 0 {
-		t.Fatal("BlobByName(rego) returned no data")
-	}
-	if !attachBuiltinLanguageRuntimeProfile("rego", sha256.Sum256(blob), lang) {
-		t.Fatal("certified Rego blob did not attach its runtime profile")
-	}
-	if !lang.FullParseAcceptedErrorRetryProfile.SkipCompleteAcceptedErrorRetry {
-		t.Fatalf("certified Rego retry profile = %+v, want skip-complete certification", lang.FullParseAcceptedErrorRetryProfile)
+			blob := BlobByName(name)
+			if len(blob) == 0 {
+				t.Fatalf("BlobByName(%s) returned no data", name)
+			}
+			if !attachBuiltinLanguageRuntimeProfile(name, sha256.Sum256(blob), lang) {
+				t.Fatalf("certified %s blob did not attach its runtime profile", name)
+			}
+			if !lang.FullParseAcceptedErrorRetryProfile.SkipCompleteAcceptedErrorRetry {
+				t.Fatalf("certified %s retry profile = %+v, want skip-complete certification", name, lang.FullParseAcceptedErrorRetryProfile)
+			}
+		})
 	}
 }
 

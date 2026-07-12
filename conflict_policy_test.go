@@ -37,6 +37,26 @@ func TestConflictPolicyChoiceRepetitionShift(t *testing.T) {
 	}
 }
 
+func TestConflictPolicyChoiceRepetitionReduce(t *testing.T) {
+	lang := &Language{
+		Name:             "synthetic_policy_test",
+		ConflictPolicies: []ConflictPolicy{{State: 42, Lookahead: 7, Kind: ConflictPolicyRepetitionReduce, ReduceSymbols: []Symbol{3}}},
+	}
+	reduce := ParseAction{Type: ParseActionReduce, Symbol: 3, ChildCount: 2}
+	actions := []ParseAction{
+		reduce,
+		{Type: ParseActionShift, State: 99, Repetition: true},
+	}
+
+	chosen, ok := conflictPolicyChoice(lang, Token{Symbol: 7}, 42, actions)
+	if !ok {
+		t.Fatal("conflictPolicyChoice = false, want reduce policy choice")
+	}
+	if chosen != reduce {
+		t.Fatalf("conflictPolicyChoice picked %+v, want %+v", chosen, reduce)
+	}
+}
+
 func TestConflictPolicyChoiceShift(t *testing.T) {
 	lang := &Language{
 		Name:                  "synthetic_policy_test",

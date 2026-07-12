@@ -5536,7 +5536,40 @@ const (
 	fieldSourceNone uint8 = iota
 	fieldSourceDirect
 	fieldSourceInherited
+	// Deferred sources retain the raw field edge on a hidden child while its
+	// hidden parent is still being built. The edge is resolved with the same
+	// rules as the eager path when the chain reaches a visible boundary.
+	fieldSourceDeferredDirect
+	fieldSourceDeferredInherited
+	fieldSourceDeferredInheritedLater
 )
+
+func deferredFieldSource(inherited, appearsLater bool) uint8 {
+	if !inherited {
+		return fieldSourceDeferredDirect
+	}
+	if appearsLater {
+		return fieldSourceDeferredInheritedLater
+	}
+	return fieldSourceDeferredInherited
+}
+
+func decodeDeferredFieldSource(source uint8) (inherited, appearsLater, ok bool) {
+	switch source {
+	case fieldSourceDeferredDirect:
+		return false, false, true
+	case fieldSourceDeferredInherited:
+		return true, false, true
+	case fieldSourceDeferredInheritedLater:
+		return true, true, true
+	default:
+		return false, false, false
+	}
+}
+
+func fieldSourceIsDirect(source uint8) bool {
+	return source == fieldSourceDirect || source == fieldSourceDeferredDirect
+}
 
 func fieldSourceAt(fieldSources []uint8, i int) uint8 {
 	if i < 0 || i >= len(fieldSources) {
@@ -5593,7 +5626,7 @@ func flattenedSpanHasFieldID(fieldIDs []FieldID, start, end int, fid FieldID) bo
 
 func flattenedSpanHasAnyDirectField(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int) bool {
 	for i := start; i < end; i++ {
-		if i < len(fieldIDs) && fieldIDs[i] != 0 && fieldSourceAt(fieldSources, i) == fieldSourceDirect {
+		if i < len(fieldIDs) && fieldIDs[i] != 0 && fieldSourceIsDirect(fieldSourceAt(fieldSources, i)) {
 			return true
 		}
 		if i < len(children) && nodeHasAnyDirectField(children[i]) {
@@ -5785,6 +5818,15 @@ func appendFlattenedHiddenChildrenWithFieldScratch(scratch *reduceBuildScratch, 
 		}
 		scratch.ensureFieldStorage()
 		source := fieldSourceAt(fieldSources, i)
+		if direct, deferred := resolveDeferredParentField(
+			scratch.nodes, scratch.fieldIDs, scratch.fieldSources,
+			child, spanStart, spanEnd, fieldIDs[i], source,
+		); deferred {
+			if direct {
+				scratch.recordRepeatedField(repeatEpoch, fieldIDs[i], fieldSourceDirect)
+			}
+			continue
+		}
 		if source == fieldSourceNone {
 			source = fieldSourceDirect
 		}
@@ -6181,6 +6223,21 @@ func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, ite
 	if len(n.children) == 0 {
 		return len(scratch.nodes), len(scratch.nodes)
 	}
+	if !parentVisible {
+		spanStart := len(scratch.nodes)
+		scratch.appendNode(n)
+		if item.fieldID != 0 {
+			if !scratch.trackFields {
+				scratch.ensureFieldStorage()
+			}
+			scratch.fieldIDs[spanStart] = item.fieldID
+			scratch.fieldSources[spanStart] = deferredFieldSource(
+				item.inherited,
+				fieldIDAppearsLater(rawFieldIDs, nextStructuralChildIndex, item.fieldID),
+			)
+		}
+		return spanStart, len(scratch.nodes)
+	}
 
 	spanStart := len(scratch.nodes)
 	if hiddenTreeHasFieldIDs(n) {
@@ -6195,7 +6252,17 @@ func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, ite
 		scratch.ensureFieldStorage()
 	}
 	fieldEnd := len(scratch.fieldIDs)
-	applyParentFieldToFlattenedHiddenSpan(scratch, n, spanStart, fieldEnd, item.fieldID, item.inherited, rawFieldIDs, nextStructuralChildIndex)
+	applyParentFieldToFlattenedHiddenSpan(
+		scratch.nodes,
+		scratch.fieldIDs,
+		scratch.fieldSources,
+		n,
+		spanStart,
+		fieldEnd,
+		item.fieldID,
+		item.inherited,
+		fieldIDAppearsLater(rawFieldIDs, nextStructuralChildIndex, item.fieldID),
+	)
 	return spanStart, len(scratch.nodes)
 }
 
@@ -6211,23 +6278,35 @@ func (p *Parser) appendVisibleReduceChildToScratch(scratch *reduceBuildScratch, 
 	}
 }
 
-func applyParentFieldToFlattenedHiddenSpan(scratch *reduceBuildScratch, hiddenParent *Node, spanStart, fieldEnd int, fid FieldID, inherited bool, rawFieldIDs []FieldID, nextStructuralChildIndex int) {
+func applyParentFieldToFlattenedHiddenSpan(children []*Node, fieldIDs []FieldID, fieldSources []uint8, hiddenParent *Node, spanStart, fieldEnd int, fid FieldID, inherited, appearsLater bool) {
 	source := fieldSourceForInheritance(inherited)
-	hasField := flattenedSpanHasFieldID(scratch.fieldIDs, spanStart, fieldEnd, fid)
+	hasField := flattenedSpanHasFieldID(fieldIDs, spanStart, fieldEnd, fid)
 	if inherited && !hasField {
-		if assignSingleDescendantInheritedField(scratch, spanStart, fieldEnd, fid) {
-			normalizeMixedSourceFieldSpan(scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd)
+		if assignSingleDescendantInheritedField(children, fieldIDs, fieldSources, spanStart, fieldEnd, fid) {
+			normalizeMixedSourceFieldSpan(fieldIDs, fieldSources, spanStart, fieldEnd)
 			return
 		}
-		if shouldSkipInheritedParentFieldForFlattenedSpan(scratch, hiddenParent, spanStart, fieldEnd, fid) {
+		if shouldSkipInheritedParentFieldForFlattenedSpan(children, fieldIDs, fieldSources, hiddenParent, spanStart, fieldEnd, fid) {
 			return
 		}
 	}
-	if inherited && fieldIDAppearsLater(rawFieldIDs, nextStructuralChildIndex, fid) {
+	if inherited && appearsLater {
 		return
 	}
-	applyFieldToFlattenedSpan(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd, fid, source, true)
-	normalizeMixedSourceFieldSpan(scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd)
+	applyFieldToFlattenedSpan(children, fieldIDs, fieldSources, spanStart, fieldEnd, fid, source, true)
+	normalizeMixedSourceFieldSpan(fieldIDs, fieldSources, spanStart, fieldEnd)
+}
+
+func resolveDeferredParentField(children []*Node, fieldIDs []FieldID, fieldSources []uint8, hiddenParent *Node, spanStart, fieldEnd int, fid FieldID, source uint8) (direct, deferred bool) {
+	inherited, appearsLater, deferred := decodeDeferredFieldSource(source)
+	if !deferred {
+		return false, false
+	}
+	applyParentFieldToFlattenedHiddenSpan(
+		children, fieldIDs, fieldSources, hiddenParent,
+		spanStart, fieldEnd, fid, inherited, appearsLater,
+	)
+	return !inherited, true
 }
 
 func fieldSourceForInheritance(inherited bool) uint8 {
@@ -6237,33 +6316,33 @@ func fieldSourceForInheritance(inherited bool) uint8 {
 	return fieldSourceDirect
 }
 
-func assignSingleDescendantInheritedField(scratch *reduceBuildScratch, spanStart, fieldEnd int, fid FieldID) bool {
-	target, ok := flattenedSpanSingleDescendantFieldTarget(scratch.nodes, spanStart, fieldEnd, fid)
+func assignSingleDescendantInheritedField(children []*Node, fieldIDs []FieldID, fieldSources []uint8, spanStart, fieldEnd int, fid FieldID) bool {
+	target, ok := flattenedSpanSingleDescendantFieldTarget(children, spanStart, fieldEnd, fid)
 	if !ok {
 		return false
 	}
-	scratch.fieldIDs[target] = fid
-	scratch.fieldSources[target] = fieldSourceInherited
+	fieldIDs[target] = fid
+	fieldSources[target] = fieldSourceInherited
 	return true
 }
 
-func shouldSkipInheritedParentFieldForFlattenedSpan(scratch *reduceBuildScratch, hiddenParent *Node, spanStart, fieldEnd int, fid FieldID) bool {
+func shouldSkipInheritedParentFieldForFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSources []uint8, hiddenParent *Node, spanStart, fieldEnd int, fid FieldID) bool {
 	if fieldEnd-spanStart == 1 {
-		child := scratch.nodes[spanStart]
+		child := children[spanStart]
 		if child == nil || nodeHasDirectFieldID(child, fid) || len(child.children) == 0 {
 			return true
 		}
 	}
-	if hiddenParent.isNamed() && countEligibleNamedFieldTargets(scratch.nodes, scratch.fieldIDs, spanStart, fieldEnd) > 1 {
+	if hiddenParent.isNamed() && countEligibleNamedFieldTargets(children, fieldIDs, spanStart, fieldEnd) > 1 {
 		return true
 	}
-	if !flattenedSpanHasAnyDirectField(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, spanStart, fieldEnd) {
+	if !flattenedSpanHasAnyDirectField(children, fieldIDs, fieldSources, spanStart, fieldEnd) {
 		return false
 	}
 	if fieldEnd-spanStart != 1 {
 		return true
 	}
-	child := scratch.nodes[spanStart]
+	child := children[spanStart]
 	return child == nil || !nodeHasDirectFieldID(child, fid)
 }
 
@@ -6349,6 +6428,21 @@ func appendFlattenedHiddenChildrenWithFields(dst []*Node, fieldDst []FieldID, fi
 		paddingStartByte, paddingStartPoint = absorbFlattenedHiddenPaddingNodes(dst, spanStart, out, paddingStartByte, paddingStartPoint, child, nil, symbolMeta)
 		if fieldDst != nil && i < len(fieldIDs) && fieldIDs[i] != 0 {
 			source := fieldSourceAt(fieldSources, i)
+			if direct, deferred := resolveDeferredParentField(
+				dst, fieldDst, fieldSrcDst, child,
+				spanStart, out, fieldIDs[i], source,
+			); deferred {
+				if direct && spanStart < out {
+					if repeated == nil {
+						repeated = make(map[FieldID]hiddenFieldSpan)
+					}
+					span := repeated[fieldIDs[i]]
+					span.count++
+					span.source = fieldSourceDirect
+					repeated[fieldIDs[i]] = span
+				}
+				continue
+			}
 			if source == fieldSourceNone {
 				source = fieldSourceDirect
 			}
@@ -6676,7 +6770,7 @@ func nodeHasAnyDirectField(n *Node) bool {
 	fieldIDs := n.fieldIDs()
 	fieldSources := n.fieldSources()
 	for i := range fieldIDs {
-		if fieldIDs[i] != 0 && fieldSourceAt(fieldSources, i) == fieldSourceDirect {
+		if fieldIDs[i] != 0 && fieldSourceIsDirect(fieldSourceAt(fieldSources, i)) {
 			return true
 		}
 	}
