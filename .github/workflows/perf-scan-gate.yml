@@ -124,7 +124,7 @@ jobs:
             GOWORK=off go run ./cmd/perf_scan_budget \
               -budget perf_scan/perf_ratio_budgets.json \
               -scoreboard perf_scan/out/nightly/scoreboard.json \
-              -require-all-budget-langs \
+              -hard-gate-only \
               -out-md perf_scan/out/nightly/budget.md || budget_result=$?
             GOWORK=off go run ./cmd/perf_scan_status \
               -budget perf_scan/perf_ratio_budgets.json \

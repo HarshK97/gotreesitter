@@ -137,6 +137,26 @@ func TestCompareScoreboardKeepsLegacyRatchetComparisonWithoutHardGate(t *testing
 	}
 }
 
+func TestCompareScoreboardHardGateOnlyUsesUniversalUnexcludedBasis(t *testing.T) {
+	b := testBudget()
+	b.MeasurementBasis.ExcludePaths = []string{"groovy/heldout.groovy"}
+	lang := b.Languages["go"]
+	lang.FullAxis.MaxRatioByTotal = 1
+	b.Languages["go"] = lang
+	s := testScoreboard(2.5, 0, 0)
+
+	findings := compareScoreboard(b, s, compareOptions{StrictConfig: true, HardGateOnly: true})
+	if len(findings) != 0 {
+		t.Fatalf("hard-gate-only comparison applied historical basis or ratchet: %#v", findings)
+	}
+
+	s.Config.ExcludePaths = []string{"groovy/heldout.groovy"}
+	findings = compareScoreboard(b, s, compareOptions{StrictConfig: true, HardGateOnly: true})
+	if got := renderFindingKeys(findings); !strings.Contains(got, "::config.exclude_paths") {
+		t.Fatalf("hard-gate-only comparison accepted an exclusion: %q (%#v)", got, findings)
+	}
+}
+
 func TestCompareScoreboardReportsExcludePathConfigMismatch(t *testing.T) {
 	b := testBudget()
 	b.MeasurementBasis.ExcludePaths = []string{"d/compiler/src/dmd/expressionsem.d"}

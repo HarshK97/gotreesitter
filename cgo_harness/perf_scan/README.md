@@ -254,6 +254,12 @@ requires `hard_gate=true` and the authenticated corpus-lock digest in addition
 to the measurement knobs (`reps`, `warmup`, `file_budget_ms`, `max_files`,
 `order`, exclusions, and axes).
 
+The universal scheduled scan passes `-hard-gate-only`. That mode requires an
+unexcluded scoreboard and checks authenticated fleet coverage plus the exact
+per-file hard rules without applying historical aggregates whose seeded sample
+basis included an exclusion. Historical ratchets remain available through the
+normal comparator on scoreboards produced with their exact recorded basis.
+
 Older `gts-perf-scan/v1` scoreboards still decode. They predate structured
 stops, corpus coverage, and the embedded hard-gate report, so use
 `-strict-config=false` only for historical analysis; they cannot establish a

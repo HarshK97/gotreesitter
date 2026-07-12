@@ -163,6 +163,7 @@ func main() {
 		langsRaw              string
 		requireAllBudgetLangs bool
 		strictConfig          bool
+		hardGateOnly          bool
 		outMD                 string
 	)
 
@@ -171,6 +172,7 @@ func main() {
 	flag.StringVar(&langsRaw, "langs", "", "optional comma-separated language filter")
 	flag.BoolVar(&requireAllBudgetLangs, "require-all-budget-langs", false, "fail if the scoreboard omits a budgeted language")
 	flag.BoolVar(&strictConfig, "strict-config", true, "require scoreboard measurement knobs to match structured budget metadata")
+	flag.BoolVar(&hardGateOnly, "hard-gate-only", false, "check fail-closed fleet coverage and per-file hard limits without applying historical aggregate ratchets")
 	flag.StringVar(&outMD, "out-md", "", "optional markdown summary output path")
 	flag.Parse()
 
@@ -194,6 +196,7 @@ func main() {
 			Languages:             langs,
 			RequireAllBudgetLangs: requireAllBudgetLangs,
 			StrictConfig:          strictConfig,
+			HardGateOnly:          hardGateOnly,
 		})
 	}
 
@@ -297,6 +300,7 @@ type compareOptions struct {
 	Languages             []string
 	RequireAllBudgetLangs bool
 	StrictConfig          bool
+	HardGateOnly          bool
 }
 
 func compareScoreboard(b *budgetFile, s *scoreboardFile, opts compareOptions) []evalFinding {
@@ -305,7 +309,10 @@ func compareScoreboard(b *budgetFile, s *scoreboardFile, opts compareOptions) []
 		out = append(out, evalFinding{Metric: "scoreboard.schema", Got: s.Schema, Want: scoreboardSchema})
 	}
 	if opts.StrictConfig {
-		out = append(out, compareConfig(b.MeasurementBasis, s.Config)...)
+		out = append(out, compareConfig(b.MeasurementBasis, s.Config, opts.HardGateOnly)...)
+	}
+	if opts.HardGateOnly && !opts.StrictConfig && !s.Config.HardGate {
+		out = append(out, evalFinding{Metric: "config.hard_gate", Got: "false", Want: "true"})
 	}
 	if s.Config.HardGate {
 		out = append(out, compareHardCoverage(s)...)
@@ -321,12 +328,15 @@ func compareScoreboard(b *budgetFile, s *scoreboardFile, opts compareOptions) []
 			continue
 		}
 		scoreboardLangs[row.Language] = row
-		if s.Config.HardGate {
+		if s.Config.HardGate || opts.HardGateOnly {
 			out = append(out, compareHardGate(row)...)
 		}
-		if _, ok := b.Languages[row.Language]; !ok && !(s.Config.HardGate && s.Config.RequireFleet && s.Gate != nil) {
+		if _, ok := b.Languages[row.Language]; !ok && !opts.HardGateOnly && !(s.Config.HardGate && s.Config.RequireFleet && s.Gate != nil) {
 			out = append(out, evalFinding{Language: row.Language, Metric: "budget", Got: "missing", Want: "language budget"})
 		}
+	}
+	if opts.HardGateOnly {
+		return out
 	}
 
 	for _, lang := range sortedBudgetLanguages(b) {
@@ -478,7 +488,7 @@ func hardStopDescription(stop *scoreboardStop, status string) string {
 	return description
 }
 
-func compareConfig(b budgetMeasurementBasis, s scoreboardConfig) []evalFinding {
+func compareConfig(b budgetMeasurementBasis, s scoreboardConfig, hardGateOnly bool) []evalFinding {
 	var out []evalFinding
 	if b.Reps > 0 && s.Reps != b.Reps {
 		out = append(out, evalFinding{Metric: "config.reps", Got: fmt.Sprint(s.Reps), Want: fmt.Sprint(b.Reps)})
@@ -500,7 +510,11 @@ func compareConfig(b budgetMeasurementBasis, s scoreboardConfig) []evalFinding {
 			out = append(out, evalFinding{Axis: axis, Metric: "config.axes", Got: strings.Join(s.Axes, ","), Want: "include " + axis})
 		}
 	}
-	if len(b.ExcludePaths) > 0 || len(s.ExcludePaths) > 0 {
+	if hardGateOnly {
+		if got := normalizedPathList(s.ExcludePaths); len(got) > 0 {
+			out = append(out, evalFinding{Metric: "config.exclude_paths", Got: strings.Join(got, ","), Want: "none for the universal hard gate"})
+		}
+	} else if len(b.ExcludePaths) > 0 || len(s.ExcludePaths) > 0 {
 		got := normalizedPathList(s.ExcludePaths)
 		want := normalizedPathList(b.ExcludePaths)
 		if !stringSlicesEqual(got, want) {
