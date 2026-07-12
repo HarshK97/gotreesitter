@@ -36,6 +36,54 @@ GOMAXPROCS=1 go test . -run '^$' \
 materialization); its numbers are never quoted as full-parse numbers. See
 the benchmark-integrity note below.
 
+### Pinned quiet-host receipt (corrected benchmark)
+
+The v0.24.1 audit withdrew the pre-correction full-parse headlines pending a
+quiet-host rerun of the corrected public benchmark. First such receipt,
+2026-07-12, main @ 04f75d15, Intel Xeon D-2141I @ 2.20 GHz (idle host,
+`taskset -c 14`, `GOMAXPROCS=1`, `-count=10 -benchtime=750ms`), medians:
+
+| Lane | ns/op | B/op | allocs/op |
+|---|---|---|---|
+| `BenchmarkGoParseFullDFA` | 12,245,000 | 1,527 | **9** |
+| `BenchmarkGoParseIncrementalSingleByteEditDFA` | 1,976 | 0 | **0** |
+| `BenchmarkGoParseIncrementalNoEditDFA` | 9.85 | 0 | **0** |
+| `BenchmarkGoParseCoreDFA` (diagnostic) | 8,737,000 | 996 | 6 |
+
+Wall-clock numbers are host-specific (this is a low-clock server part; do
+not compare against dev-box history). The hardware-independent figures are
+the allocation counts — 9 allocs/op for a fully materialized parse, zero for
+both incremental lanes — and the materialization attribution: full minus
+core ≈ 3.5 ms ≈ 29% of full-parse time on this host.
+
+### Same-host C calibration (what makes wall-clock comparable)
+
+The C baselines (`BenchmarkCTreeSitterGoParse*`, via the go-tree-sitter cgo
+binding) were run on the same host, same pinned core, same workload,
+immediately after the Go lanes. Ratios cancel the hardware out:
+
+| Lane | pure Go | cgo binding (C) | Go / C |
+|---|---|---|---|
+| Full parse (materialized) | 12.25 ms | 5.72 ms | **2.14x** |
+| One-byte incremental edit | 1.98 µs | 331 µs | **0.006x — 167x faster** |
+| No-edit reparse | 9.9 ns | 330 µs | **~33,000x faster** |
+
+The production lane for `.go` files (`BenchmarkGoParseFull`, hand-written
+stdlib-scanner token source — the registry default for Go) measures 9.70 ms
+median on the same host: **1.70x C**, though at 2,502 allocs/op from the
+scanner bridge versus the DFA lane's 9. The published headline ratio stays
+the DFA lane (worst-case, allocation-clean, grammar-generic); the production
+Go path is faster.
+
+Readings: the corrected, materialized full parse is ~2.1x the C runtime on
+this workload — consistent with the fleet median and honestly replacing the
+withdrawn pre-correction "faster than C" figure, which described the no-tree
+diagnostic path. The incremental comparison is against the cgo binding a Go
+program would actually use: its fixed per-call overhead (~330 µs regardless
+of edit size) is precisely the FFI toll the pure runtime does not pay, which
+is why editor-style workloads through Go favor gotreesitter by two to five
+orders of magnitude.
+
 ## Go-vs-C fleet scoreboard (full parse, real corpora)
 
 Source of truth: [`cgo_harness/perf_scan/perf_ratio_budgets.json`](cgo_harness/perf_scan/perf_ratio_budgets.json)
