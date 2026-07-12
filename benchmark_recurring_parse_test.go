@@ -24,9 +24,30 @@ func requireRecurringBenchmarkTree(b *testing.B, tree *gotreesitter.Tree, err er
 // reused parser. The input is intentionally much smaller than the parser's
 // retained scratch caches, making recurring reset work visible.
 func BenchmarkKDLParseRecurringTinyClean(b *testing.B) {
-	lang := grammars.KdlLanguage()
+	benchmarkRecurringTinyClean(b, grammars.KdlLanguage(), []byte("node\n"))
+}
+
+// BenchmarkJavaParseRecurringTinyClean is the fixed-floor witness for the
+// highest clean/parity-passing ratio in the post-refresh fleet sweep.
+func BenchmarkJavaParseRecurringTinyClean(b *testing.B) {
+	benchmarkRecurringTinyClean(b, grammars.JavaLanguage(), []byte("class A {}\n"))
+}
+
+// BenchmarkCSharpParseRecurringTinyClean is a second clean fleet-tail witness
+// with substantially different grammar and conflict behavior from Java.
+func BenchmarkCSharpParseRecurringTinyClean(b *testing.B) {
+	benchmarkRecurringTinyClean(b, grammars.CSharpLanguage(), []byte("class A {}\n"))
+}
+
+// BenchmarkCSSParseRecurringTinyClean covers another clean/parity-passing row
+// from the post-refresh fleet tail at negligible additional benchmark cost.
+func BenchmarkCSSParseRecurringTinyClean(b *testing.B) {
+	benchmarkRecurringTinyClean(b, grammars.CssLanguage(), []byte("a{color:red}\n"))
+}
+
+func benchmarkRecurringTinyClean(b *testing.B, lang *gotreesitter.Language, src []byte) {
+	b.Helper()
 	parser := gotreesitter.NewParser(lang)
-	src := []byte("node\n")
 
 	warm, err := parser.Parse(src)
 	requireRecurringBenchmarkTree(b, warm, err, false)
