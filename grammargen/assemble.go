@@ -249,6 +249,30 @@ func buildHiddenChoicePassthroughSymbols(ng *NormalizedGrammar, symbolCount int)
 	}
 	aliasReferenced := make([]bool, symbolCount)
 	prodCount := make([]int, symbolCount)
+	// allNeutralUnary requires EVERY alternative of the LHS symbol to be a
+	// plain single-child reduction: no precedence/associativity annotation,
+	// no Fields, no Aliases on ANY alternative — not just the one actually
+	// fired at collapse time.
+	//
+	// A per-production (rather than whole-symbol) version of this check was
+	// prototyped and measured: it collapses ~3000 additional Go parse-parent
+	// wrappers (Go's `_expression` has one Alias()-bearing alternative for
+	// `new`/`make` alongside 20 plain Sym() alternatives, and the runtime
+	// already re-checks reduceProductionHasEffectiveFields /
+	// reduceAliasSequence(act.ProductionID) for the SPECIFIC fired production
+	// before collapsing — see collapsibleUnarySelfReduction /
+	// collapsibleRawUnarySelfReduction, parser_reduce.go). That per-production
+	// relaxation is UNSAFE in general, though: Markdown's `_block_not_section`
+	// hidden choice (setext_heading/block_quote/list/fenced_code_block/
+	// pipe_table alternatives Alias()'d, alongside plain paragraph/
+	// indented_code_block/thematic_break/blank_line/html_block/
+	// link_reference_definition alternatives) regresses
+	// TestMarkdownGrammarMdppCorpusParity's emoji and superscript-subscript
+	// fixtures — `(document (section (paragraph (inline))))` loses its
+	// `paragraph` node — the moment that per-production relaxation is
+	// applied, confirmed by reverting only this condition with the rest of
+	// the widening (Supertype removal, below) still in place. So Fields/
+	// Aliases stay a whole-symbol disqualifier.
 	allNeutralUnary := make([]bool, symbolCount)
 	for i := range allNeutralUnary {
 		allNeutralUnary[i] = true
@@ -277,7 +301,18 @@ func buildHiddenChoicePassthroughSymbols(ng *NormalizedGrammar, symbolCount int)
 		if i >= symbolCount || prodCount[i] <= 1 || !allNeutralUnary[i] || aliasReferenced[i] {
 			continue
 		}
-		if sym.Kind != SymbolNonterminal || sym.Visible || !sym.Named || sym.Supertype || sym.GeneratedRepeatAux {
+		// Supertype-declared hidden choices (e.g. Go's `_statement`,
+		// `_simple_statement`) are NOT excluded here: Supertype is purely a
+		// node-types.json/query-predicate classification (IsSupertype/
+		// SupertypeChildren, query_predicates.go), matched against the
+		// surviving concrete descendant's own symbol — it never requires the
+		// hidden supertype wrapper node to physically exist in the tree, so
+		// collapsing it away is transparent to that mechanism. Verified safe
+		// across the full grammargen parity suite, GSS/merge race tests, and
+		// root package tests (see spike notes); unlike the Fields/Aliases
+		// relaxation above, dropping Supertype alone introduced no
+		// regressions.
+		if sym.Kind != SymbolNonterminal || sym.Visible || !sym.Named || sym.GeneratedRepeatAux {
 			continue
 		}
 		if !strings.HasPrefix(sym.Name, "_") {
