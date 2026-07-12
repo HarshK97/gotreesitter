@@ -54,11 +54,11 @@ clone_pinned() {
 }
 
 fail=0
-while read -r name url sha _rest; do
+while read -r name url sha _rest || [[ -n "$name" ]]; do
   [[ -z "$name" || "$name" == \#* ]] && continue
   want "$name" || continue
   clone_pinned "$name" "$url" "$sha" || fail=1
-done < "$LOCK"
+done < <(tr -d '\r' < "$LOCK")
 
 echo "seed manifest: $MANIFEST"
 exit "$fail"
