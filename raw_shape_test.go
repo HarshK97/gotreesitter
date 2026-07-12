@@ -394,8 +394,8 @@ func TestForestChildAlternativeResolutionPreservesVisibleNamedUnaryWrapper(t *te
 	root.rawShape = parser.captureRawShape(nil, arena, rootSym, 0, []stackEntry{newStackEntryNode(0, guard)}, 0, 1)
 
 	alternatives := newForestAlternativeIndex(4)
-	alternatives.nodes[guard] = &gssForestNode{state: 10}
-	alternatives.nodes[call] = &gssForestNode{state: 20}
+	alternatives.setNode(guard, &gssForestNode{state: 10})
+	alternatives.setNode(call, &gssForestNode{state: 20})
 	resolveForestChildAlternatives(parser, arena, root, alternatives, nil, 0)
 	if got := root.children[0]; got != guard {
 		t.Fatalf("resolved child = %v, want visible guard_clause wrapper preserved", got)
@@ -518,7 +518,7 @@ func TestForestRootPreservesVisibleContainerAlternativeOverHiddenRepeatSlice(t *
 	container := newParentNodeInArena(arena, containerSym, true, []*Node{containerHeader, containerA, containerB}, nil, 0)
 
 	alternatives := newForestAlternativeIndex(4)
-	alternatives.nodes[container] = &gssForestNode{state: 10}
+	alternatives.setNode(container, &gssForestNode{state: 10})
 	if !forestPreserveRootVisibleContainerAlternatives(parser, arena, root, alternatives) {
 		t.Fatal("forestPreserveRootVisibleContainerAlternatives = false, want true")
 	}

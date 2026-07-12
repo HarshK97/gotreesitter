@@ -3,7 +3,100 @@ package gotreesitter
 import (
 	"fmt"
 	"testing"
+	"unsafe"
 )
+
+func TestForestAlternativeIndexCapacityForSource(t *testing.T) {
+	const maxCapacity = 1 << 20
+	tests := []struct {
+		name      string
+		sourceLen int
+		want      int
+	}{
+		{name: "empty", sourceLen: 0, want: 1024},
+		{name: "below floor", sourceLen: 8191, want: 1024},
+		{name: "at floor", sourceLen: 8192, want: 1024},
+		{name: "above floor", sourceLen: 8200, want: 1025},
+		{name: "at ceiling", sourceLen: maxCapacity * 8, want: maxCapacity},
+		{name: "above ceiling", sourceLen: maxCapacity*8 + 8, want: maxCapacity},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := forestAlternativeIndexCapacityForSource(tt.sourceLen); got != tt.want {
+				t.Fatalf("forestAlternativeIndexCapacityForSource(%d) = %d, want %d", tt.sourceLen, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestForestAlternativeIndexInlineTierBelowCapacity(t *testing.T) {
+	index := newForestAlternativeIndex(1024)
+	for i := 0; i < forestAlternativeIndexInlineCapacity; i++ {
+		node := &Node{startByte: uint32(i % 3)}
+		index.setNode(node, &gssForestNode{state: StateID(i + 1)})
+		index.setSlot(forestAlternativeSlotKey{parent: node, childIndex: i}, forestAlternativeSlot{node: &gssForestNode{state: StateID(i + 2)}})
+	}
+	if index.promoted || index.nodes != nil || index.slots != nil || index.byStart != nil {
+		t.Fatal("inline alternative index allocated maps at capacity")
+	}
+	if got := len(forestAlternativeCandidatesStartingAt(index, 1)); got != 5 {
+		t.Fatalf("inline by-start candidate count = %d, want 5", got)
+	}
+}
+
+func TestForestAlternativeIndexPromotionPreservesEntries(t *testing.T) {
+	index := newForestAlternativeIndex(1024)
+	var first *Node
+	var firstSlotKey forestAlternativeSlotKey
+	var firstSlot forestAlternativeSlot
+	for i := 0; i < forestAlternativeIndexInlineCapacity; i++ {
+		node := &Node{startByte: uint32(i)}
+		value := &gssForestNode{state: StateID(i + 1)}
+		slotKey := forestAlternativeSlotKey{parent: node, childIndex: i}
+		slot := forestAlternativeSlot{node: value, prev: &gssForestNode{state: StateID(i)}}
+		if i == 0 {
+			first, firstSlotKey, firstSlot = node, slotKey, slot
+		}
+		index.setNode(node, value)
+		index.setSlot(slotKey, slot)
+	}
+	extra := &Node{startByte: 99}
+	index.setNode(extra, &gssForestNode{state: 99})
+	if !index.promoted {
+		t.Fatal("alternative index did not promote on entry 17")
+	}
+	if index.node(first) == nil || index.node(extra) == nil {
+		t.Fatal("promotion lost node entries")
+	}
+	if got, ok := index.slot(firstSlotKey); !ok || got != firstSlot {
+		t.Fatalf("promotion lost slot entry: got %#v, %v want %#v", got, ok, firstSlot)
+	}
+	if got := forestAlternativeCandidatesStartingAt(index, first.startByte); len(got) != 1 || got[0] != first {
+		t.Fatalf("promotion lost by-start entry: %#v", got)
+	}
+	if index.inlineNodeCount != 0 || index.inlineSlotCount != 0 {
+		t.Fatalf("promotion retained inline counts: nodes=%d slots=%d", index.inlineNodeCount, index.inlineSlotCount)
+	}
+}
+
+func TestForestAlternativeIndexSlotPromotionRunsOnce(t *testing.T) {
+	index := newForestAlternativeIndex(1024)
+	for i := 0; i <= forestAlternativeIndexInlineCapacity; i++ {
+		index.setSlot(forestAlternativeSlotKey{parent: &Node{}, childIndex: i}, forestAlternativeSlot{node: &gssForestNode{state: StateID(i + 1)}})
+	}
+	if !index.promoted || len(index.slots) != forestAlternativeIndexInlineCapacity+1 {
+		t.Fatalf("slot promotion state: promoted=%v slots=%d", index.promoted, len(index.slots))
+	}
+	if index.promote() {
+		t.Fatal("alternative index promoted more than once")
+	}
+}
+
+func TestForestAlternativeIndexInlineLayoutBounded(t *testing.T) {
+	if got, maxSize := unsafe.Sizeof(forestAlternativeIndex{}), uintptr(1024); got > maxSize {
+		t.Fatalf("forest alternative inline index size = %d, exceeds %d", got, maxSize)
+	}
+}
 
 // pathsOf reduces childCount children over node and returns each visited path as
 // "child-states|popToState" so order and fan-out are easy to assert.
