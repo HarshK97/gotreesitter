@@ -46,10 +46,10 @@ var paritySkips = map[string]parityMeta{
 var knownDegradedStructural = map[string]string{
 	// Empty: the last known structural divergence (norg's `_word` alias
 	// hidden-wrapper collapse) was fixed by extending
-	// normalizeResultTerminalLeafNodes's visible-terminal guard to also
-	// preserve distinct-named children under reused alias-target symbol IDs
-	// (see parser_result_terminal_leaf.go). Fresh-parse structural parity is
-	// now 206/206 across the curated fleet.
+	// normalizeResultTerminalLeafNodesWithStopAndErrorSummary's
+	// visible-terminal guard to also preserve distinct-named children under
+	// reused alias-target symbol IDs (see parser_result_terminal_leaf.go).
+	// Fresh-parse structural parity is now 206/206 across the curated fleet.
 }
 
 // knownDegradedNoErrorClean preserves no-error coverage for structural backlog

@@ -50,7 +50,7 @@ func TestNormalizeCCollapsedKeywordChildrenRestoresNull(t *testing.T) {
 	nullNode := newLeafNodeInArena(arena, 2, true, 0, 4, Point{}, Point{Column: 4})
 	root := newParentNodeInArena(arena, 1, true, []*Node{nullNode}, nil, 0)
 
-	normalizeCCompatibility(root, source, lang)
+	normalizeCCompatibilityWithParser(root, source, nil, lang)
 
 	if got, want := nullNode.ChildCount(), 1; got != want {
 		t.Fatalf("null child count = %d, want %d", got, want)
@@ -144,7 +144,7 @@ func TestNormalizeCCollapsedKeywordChildrenRestoresStorageClassSpecifier(t *test
 	storage := newLeafNodeInArena(arena, 2, true, 0, 6, Point{}, Point{Column: 6})
 	root := newParentNodeInArena(arena, 1, true, []*Node{storage}, nil, 0)
 
-	normalizeCCompatibility(root, source, lang)
+	normalizeCCompatibilityWithParser(root, source, nil, lang)
 
 	if got, want := storage.ChildCount(), 1; got != want {
 		t.Fatalf("storage class child count = %d, want %d", got, want)
@@ -177,7 +177,7 @@ func TestNormalizeCCollapsedKeywordChildrenRestoresTypeQualifier(t *testing.T) {
 	qualifier := newLeafNodeInArena(arena, 2, true, 0, 5, Point{}, Point{Column: 5})
 	root := newParentNodeInArena(arena, 1, true, []*Node{qualifier}, nil, 0)
 
-	normalizeCCompatibility(root, source, lang)
+	normalizeCCompatibilityWithParser(root, source, nil, lang)
 
 	if got, want := qualifier.ChildCount(), 1; got != want {
 		t.Fatalf("type qualifier child count = %d, want %d", got, want)

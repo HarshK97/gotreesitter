@@ -380,7 +380,7 @@ func TestNormalizeTypeScriptSyntaxPassRestoresExistentialTypeStarChild(t *testin
 	existentialType := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
 	root := newParentNodeInArena(arena, 1, true, []*Node{existentialType}, nil, 0)
 
-	normalizeTypeScriptTreeCompatibility(root, []byte("*"), lang)
+	normalizeTypeScriptTreeCompatibilityWithParser(root, []byte("*"), nil, lang)
 
 	if got, want := resultChildCount(existentialType), 1; got != want {
 		t.Fatalf("existential_type child count = %d, want %d", got, want)
