@@ -3133,6 +3133,7 @@ func captureParseScratchStats(parseRuntime *ParseRuntime, scratch *parserScratch
 	parseRuntime.ScratchBytesAllocated = scratch.allocatedBytes()
 	parseRuntime.ScratchBaselineBytes = scratch.budgetBaselineBytes
 	parseRuntime.EntryScratchBytesAllocated = scratch.entries.allocatedBytes
+	parseRuntime.EntryScratchPeak = uint64(scratch.entries.peakEntriesUsed())
 	parseRuntime.GSSBytesAllocated = scratch.gss.allocatedBytes
 	parseRuntime.GSSBaselineBytes = scratch.gssBaselineBytes
 	parseRuntime.GSSSlabCount = len(scratch.gss.slabs)
