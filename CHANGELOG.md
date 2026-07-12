@@ -7,6 +7,17 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- The Go compat-normalization walk now honors the parse memory budget: it
+  is skipped when the parse already carries a budget stop, polls the
+  runtime budget at its existing walk stride, and surfaces the stop reason
+  on the final tree via a sticky trip flag. Previously the walk ran
+  budget-blind at result finalization and could balloon on recovered
+  trees after the parse loop had stopped cleanly. Clean-parse trees are
+  byte-identical. The JS/TS fused walk has the same blind spot (no stop
+  polling at all) and is tracked separately.
+
 ## [0.27.0] - 2026-07-12
 
 Containment and canonical-parse-lever release. Memory-budget enforcement is

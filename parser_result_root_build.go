@@ -975,7 +975,13 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 		start = materializationTimingStart(timing)
 		compat := normalizeResultCompatibility(root, source, p)
 		errorSummary = compat.errorSummary
-		compatibilityApplied = p != nil && p.language != nil && !parseStopReasonIsActive(compat.stopReason)
+		// resultMaterializationShouldStop (not parseStopReasonIsActive): Go's
+		// normalizer can now report ParseStopMemoryBudget (see
+		// normalizeGoReturnedTreeCompatibility), which parseStopReasonIsActive
+		// deliberately excludes. A budget-stopped compat pass did not apply
+		// cleanly and must not be treated as "compatibility applied" any more
+		// than a timeout/cancellation-stopped one is.
+		compatibilityApplied = p != nil && p.language != nil && !resultMaterializationShouldStop(compat.stopReason)
 		if parseStopReasonIsActive(compat.stopReason) && p != nil {
 			p.markActiveParseStopped(compat.stopReason)
 		}

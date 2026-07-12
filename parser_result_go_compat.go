@@ -26,6 +26,26 @@ type goCompatibilitySourceFlags struct {
 	trailingBoundary bool
 }
 
+// goCompatRuntimeMemoryBudgetStopReason forces a real runtime memory-budget
+// check and, when it trips, latches p.compatMemoryBudgetTripped. Every Go
+// compat call site that needs memory-budget awareness (the walk-internal
+// poller's memoryBudgetParser hook, and goCompatMemoryBudgetStopReason's
+// per-stage boundary check) goes through this instead of calling
+// runtimeMemoryBudgetStopReasonNow directly, so a trip detected anywhere in
+// the Go compat pipeline is reliably surfaced later by
+// resultMaterializationStopReason (see compatMemoryBudgetTripped's doc
+// comment on the Parser struct for why a plain re-check is not enough).
+func (p *Parser) goCompatRuntimeMemoryBudgetStopReason() ParseStopReason {
+	if p == nil {
+		return ParseStopNone
+	}
+	if reason := p.runtimeMemoryBudgetStopReasonNow(); reason == ParseStopMemoryBudget {
+		p.compatMemoryBudgetTripped = true
+		return reason
+	}
+	return ParseStopNone
+}
+
 func normalizeGoCompatibilityWithParser(root *Node, source []byte, lang *Language, p *Parser) ParseStopReason {
 	return normalizeGoCompatibilityInRangesWithParser(root, source, lang, nil, p)
 }
@@ -37,20 +57,31 @@ func normalizeGoCompatibilityInRangesWithParser(root *Node, source []byte, lang 
 		frames = p.goCompatFrames
 		stopCheck = p.activeParseStopCheck()
 	}
-	return normalizeGoCompatibilityInRangesWithStopAndScratch(root, source, lang, incrementalRanges, stopCheck, frames)
+	return normalizeGoCompatibilityInRangesWithStopAndScratch(root, source, lang, incrementalRanges, stopCheck, frames, p)
 }
 
-func normalizeGoCompatibilityInRangesWithStopAndScratch(root *Node, source []byte, lang *Language, incrementalRanges []Range, stopCheck parseStopCheck, frames *[]goCompatSubtreeFrame) ParseStopReason {
+// normalizeGoCompatibilityInRangesWithStopAndScratch drives the Go compat
+// walk. memBudgetParser, when non-nil, is wired into the poller so the walk
+// itself polls the runtime memory budget (see parseStopPoller.pollNow and
+// walkGoCompatSubtree/walkGoDotLeaves) instead of only ever reacting to
+// timeout/cancellation: a C-recovery-widened Go tree can make the walk's own
+// per-node work (semicolon-container filtering, sibling-boundary rewrites)
+// balloon heap growth independent of whatever the parse loop itself already
+// enforced (see the 2026-07-12 gocompat-walk-containment-gap finding).
+// resultMaterializationShouldStop (not parseStopReasonIsActive) gates every
+// bail-out below so a ParseStopMemoryBudget the poller reports is honored the
+// same way Timeout/Cancelled already are.
+func normalizeGoCompatibilityInRangesWithStopAndScratch(root *Node, source []byte, lang *Language, incrementalRanges []Range, stopCheck parseStopCheck, frames *[]goCompatSubtreeFrame, memBudgetParser *Parser) ParseStopReason {
 	if root == nil || lang == nil || lang.Name != "go" || len(source) == 0 {
 		return ParseStopNone
 	}
-	poller := parseStopPoller{check: stopCheck}
-	if reason := poller.pollNow(); parseStopReasonIsActive(reason) {
+	poller := parseStopPoller{check: stopCheck, memoryBudgetParser: memBudgetParser}
+	if reason := poller.pollNow(); resultMaterializationShouldStop(reason) {
 		return reason
 	}
 	flags := goCompatibilitySourceFlagsFor(source)
 	if flags.dot {
-		if reason := normalizeGoDotLeafChildrenWithStop(root, source, lang, &poller); parseStopReasonIsActive(reason) {
+		if reason := normalizeGoDotLeafChildrenWithStop(root, source, lang, &poller); resultMaterializationShouldStop(reason) {
 			return reason
 		}
 	}
@@ -58,7 +89,7 @@ func normalizeGoCompatibilityInRangesWithStopAndScratch(root *Node, source []byt
 	if !ok {
 		return poller.pollNow()
 	}
-	if reason := normalizeGoCompatibilitySubtreeWithStopAndScratch(root, source, syms, flags, incrementalRanges, &poller, frames); parseStopReasonIsActive(reason) {
+	if reason := normalizeGoCompatibilitySubtreeWithStopAndScratch(root, source, syms, flags, incrementalRanges, &poller, frames); resultMaterializationShouldStop(reason) {
 		return reason
 	}
 	return poller.pollNow()
@@ -90,7 +121,7 @@ func normalizeGoDotLeafChildrenWithStop(root *Node, source []byte, lang *Languag
 	if root == nil || lang == nil || len(source) == 0 {
 		return ParseStopNone
 	}
-	if reason := poller.pollNow(); parseStopReasonIsActive(reason) {
+	if reason := poller.pollNow(); resultMaterializationShouldStop(reason) {
 		return reason
 	}
 	parentSym, ok := lang.symbolByNameAndNamed("dot", true)
@@ -156,7 +187,7 @@ func walkGoDotLeaves(root *Node, source []byte, poller *parseStopPoller, parentS
 		stack = append(stack, n)
 	}
 	for len(stack) > 0 {
-		if reason := poller.poll(); parseStopReasonIsActive(reason) {
+		if reason := poller.poll(); resultMaterializationShouldStop(reason) {
 			return reason, true
 		}
 		n := stack[len(stack)-1]
@@ -352,7 +383,7 @@ func walkGoCompatSubtree(root *Node, source []byte, syms goCompatibilitySymbols,
 		stack = append(stack, goCompatSubtreeFrame{node: c})
 	}
 	for len(stack) > 0 {
-		if reason := poller.poll(); parseStopReasonIsActive(reason) {
+		if reason := poller.poll(); resultMaterializationShouldStop(reason) {
 			return reason, true, stack
 		}
 		top := stack[len(stack)-1]
