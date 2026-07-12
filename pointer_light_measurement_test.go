@@ -3,15 +3,41 @@ package gotreesitter_test
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
+
+// peakRSSLinux reads the process-lifetime high-water-mark resident set size
+// from /proc/self/status (VmHWM). It is monotonic for the life of the
+// process (never decreases), so within a single long-lived test process it
+// is only a clean "peak reached in this phase" reading for the FIRST phase
+// that meaningfully grows the heap -- later phases' readings are a floor,
+// not a delta, since prior phases' peak persists even after their memory is
+// freed. TestPointerLightPeakRSS below gets a clean per-representation
+// number by re-execing this test binary in isolated subprocesses instead.
+func peakRSSLinux() string {
+	if runtime.GOOS != "linux" {
+		return "n/a (non-linux)"
+	}
+	data, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return "n/a (read failed)"
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "VmHWM:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "VmHWM:"))
+		}
+	}
+	return "n/a (no VmHWM)"
+}
 
 // --- Wave7/plight measurement spike -----------------------------------------
 //
@@ -194,7 +220,7 @@ func TestPointerLightGCScan(t *testing.T) {
 		}
 		avg = total / repeats
 		heap = heapAlloc()
-		t.Logf("%-42s avg forced-GC=%-14v heap-alloc=%d bytes", label, avg, heap)
+		t.Logf("%-42s avg forced-GC=%-14v heap-alloc=%d bytes  peak-RSS(VmHWM)=%s", label, avg, heap, peakRSSLinux())
 		return avg, heap
 	}
 
@@ -418,3 +444,111 @@ func BenchmarkPointerLightQuerySimplePattern(b *testing.B) {
 // explicitly scoped to avoid (see task framing: prototype JUST ENOUGH to
 // measure, not the store). See the measurement report's blast-radius count
 // for how deep that coupling goes (*Node reference counts across the repo).
+
+const pointerLightRSSChildEnv = "GOT_PLIGHT_RSS_CHILD"
+
+// TestPointerLightPeakRSS is the "peak RSS" deliverable. VmHWM (the metric
+// peakRSSLinux reads) is a monotonic high-water mark for the life of a
+// process, so a clean per-representation number requires isolated processes:
+// this test re-execs the current test binary three times (baseline, current
+// *Node retained, SoA retained), routing each into
+// TestPointerLightPeakRSSChild via an env var, and reads back each
+// subprocess's own peak RSS.
+func TestPointerLightPeakRSS(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("peak-RSS probe reads /proc/self/status (Linux only)")
+	}
+	if os.Getenv(pointerLightRSSChildEnv) != "" {
+		t.Skip("this process is running as an RSS-child subprocess")
+	}
+
+	type result struct {
+		mode string
+		rss  string
+	}
+	var results []result
+	for _, mode := range []string{"baseline", "current", "soa"} {
+		cmd := exec.Command(os.Args[0], "-test.run", "^TestPointerLightPeakRSSChild$")
+		cmd.Env = append(os.Environ(), pointerLightRSSChildEnv+"="+mode)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("[%s] RSS-child subprocess failed: %v\n%s", mode, err, out)
+		}
+		rss := "unknown"
+		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(line, "PEAK_RSS=") {
+				rss = strings.TrimPrefix(line, "PEAK_RSS=")
+			}
+		}
+		results = append(results, result{mode: mode, rss: rss})
+	}
+
+	for _, r := range results {
+		t.Logf("%-10s isolated-subprocess peak RSS (VmHWM): %s", r.mode, r.rss)
+	}
+}
+
+// TestPointerLightPeakRSSChild is not meant to run standalone -- it only
+// does work when GOT_PLIGHT_RSS_CHILD is set, and is invoked as a
+// subprocess by TestPointerLightPeakRSS above.
+func TestPointerLightPeakRSSChild(t *testing.T) {
+	mode := os.Getenv(pointerLightRSSChildEnv)
+	if mode == "" {
+		t.Skip("only runs as a subprocess of TestPointerLightPeakRSS")
+	}
+
+	const n = 24 // matches TestPointerLightGCScan's retained-tree count
+
+	switch mode {
+	case "baseline":
+		// nothing retained; just report process-floor RSS.
+	case "current":
+		entry := pointerLightGoEntry(t)
+		lang := entry.Language()
+		src := makeGoBenchmarkSource(500)
+		trees := make([]*gotreesitter.Tree, 0, n)
+		for i := 0; i < n; i++ {
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			trees = append(trees, tree)
+		}
+		runtime.GC()
+		fmt.Println("PEAK_RSS=" + peakRSSLinux())
+		runtime.KeepAlive(trees)
+		return
+	case "soa":
+		// Convert-and-release one tree at a time (rather than building all N
+		// *Node trees first) so the transient peak during construction is
+		// O(1 tree), not O(N trees) -- otherwise "peak RSS while building
+		// the SoA form" would just re-measure "peak RSS of the *Node form"
+		// (SoA is a post-parse converter; it necessarily needs a *Node tree
+		// to exist first) and hide the steady-state retained-memory win
+		// this metric is supposed to isolate.
+		entry := pointerLightGoEntry(t)
+		lang := entry.Language()
+		src := makeGoBenchmarkSource(500)
+		soaTrees := make([]*soaTree, 0, n)
+		for i := 0; i < n; i++ {
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			soaTrees = append(soaTrees, buildSoATree(tree.RootNode()))
+			tree.Release()
+			gotreesitter.DrainArenaPools()
+		}
+		runtime.GC()
+		fmt.Println("PEAK_RSS=" + peakRSSLinux())
+		runtime.KeepAlive(soaTrees)
+		return
+	default:
+		t.Fatalf("unknown %s=%q", pointerLightRSSChildEnv, mode)
+	}
+
+	runtime.GC()
+	fmt.Println("PEAK_RSS=" + peakRSSLinux())
+}
