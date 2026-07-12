@@ -6695,6 +6695,15 @@ func (p *Parser) forestResolveConflict(state StateID, tok Token, actions []Parse
 	if p == nil || p.language == nil || len(actions) < 2 {
 		return actions
 	}
+	// The dot-only fallback that used to live here (dotRepetitionShiftConflictChoice)
+	// is retired, not migrated: dot was never opted out of the engine-wide C
+	// repetition-skip fold (cRepetitionSkipForestConflictChoice, applied by
+	// the forest dispatch loop right after this function returns), which
+	// already folds its stmt_list boundary with a flat (non-growing) parse
+	// stack. Reviving the old helper's repetition-shift preference as a
+	// certified policy instead grew the stack O(n) with statement count for
+	// no behavioral benefit (see the "NOTE on dot" comment in
+	// grammars/runtime_profiles.go).
 	if chosen, ok := conflictPolicyChoice(p.language, tok, state, actions); ok {
 		return p.forestSingletonActions(chosen)
 	}
@@ -6703,12 +6712,6 @@ func (p *Parser) forestResolveConflict(state StateID, tok Token, actions []Parse
 	}
 	if p.language.GeneratedByGrammargen {
 		return actions
-	}
-	switch p.language.Name {
-	case "dot":
-		if chosen, ok := dotRepetitionShiftConflictChoice(p.language, tok, state, actions); ok {
-			return p.forestSingletonActions(chosen)
-		}
 	}
 	return actions
 }
@@ -7233,28 +7236,6 @@ func kotlinObjectLiteralConflictChoice(lang *Language, actions []ParseAction) (P
 	return ParseAction{}, false
 }
 
-// gomodRepetitionShiftConflictChoice keeps parenthesized require lists on the
-// repetition-shift path. On real go.mod corpora, state 37 forks for every
-// following require_spec starter; C continues the list deterministically.
-func gomodRepetitionShiftConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
-	if lang == nil {
-		return ParseAction{}, false
-	}
-	switch state {
-	case 3:
-		if !allReducesHaveSymbol(lang, actions, "source_file_repeat1") {
-			return ParseAction{}, false
-		}
-	case 37:
-		if !allReducesHaveSymbol(lang, actions, "require_directive_repeat1") {
-			return ParseAction{}, false
-		}
-	default:
-		return ParseAction{}, false
-	}
-	return repetitionShiftConflictChoice(actions)
-}
-
 // haskellRepeatBoundaryConflictChoice collapses the two profiled Haskell
 // repeat-boundary forks that dominate large real-corpus parsing. Layout
 // declaration lists (state 9609) and export lists (state 10984) both offer a
@@ -7346,26 +7327,6 @@ func singleReduceAgainstShiftConflictChoice(lang *Language, actions []ParseActio
 		return ParseAction{}, false
 	}
 	return reduce, true
-}
-
-// dotRepetitionShiftConflictChoice collapses DOT's top-level statement-list
-// continuation fork. Upstream's `stmt_list` repeat closes only on `}`, so an
-// `identifier` after an existing statement is always another statement start;
-// taking the repetition shift matches C tree-sitter and prevents large graph
-// files from keeping both list-boundary interpretations alive.
-func dotRepetitionShiftConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
-	if lang == nil || state != 4 {
-		return ParseAction{}, false
-	}
-	if tok.Symbol != 0 && !symbolHasName(lang, tok.Symbol, "identifier") {
-		return ParseAction{}, false
-	}
-	for _, act := range actions {
-		if act.Type == ParseActionReduce && !symbolHasName(lang, act.Symbol, "stmt_list_repeat1") {
-			return ParseAction{}, false
-		}
-	}
-	return repetitionShiftConflictChoice(actions)
 }
 
 func singleReduceAgainstRepetitionShiftConflictChoice(actions []ParseAction) (ParseAction, bool) {
@@ -7493,55 +7454,6 @@ func allReducesHaveSymbol(lang *Language, actions []ParseAction, name string) bo
 			continue
 		}
 		if !symbolHasName(lang, act.Symbol, name) {
-			return false
-		}
-		found = true
-	}
-	return found
-}
-
-// cRepetitionShiftConflictChoice collapses the reduce/shift fork at the
-// top-level item list (translation_unit_repeat1) and the preprocessor
-// conditional body (preproc_if_repeat1). Both lists close only on terminators
-// that carry no continuation shift — EOF for translation_unit; #endif/#elif/
-// #else for preproc_if — so on any token that DOES have a continuation shift,
-// continuing the list is correct and the reduce is a zero-progress dead-end.
-// repetitionShiftConflictChoice enforces the single-repetition-shift shape, so
-// the no-continuation-shift terminators are excluded automatically.
-//
-// case_statement_repeat1 is deliberately NOT collapsible: a switch body's
-// `case`/`default` terminators are themselves shiftable, so reducing the inner
-// statement list on them is load-bearing, not a dead-end.
-//
-// C declares a top-level declaration/expression-statement ambiguity in its
-// conflicts: block, but that ambiguity resolves deeper than these list
-// boundaries — collapsing the continuation fork preserves it. Held to
-// byte-for-byte C parity by the treesitter_c_parity suite, including the
-// adversarial declaration/expression and preprocessor cases in
-// TestParityCTopLevelDeclAmbiguity / TestParityCPreprocConditional. On cluster.c
-// the translation_unit collapse alone cuts ~11.9k GLR forks (−57%, xC 1.30→1.03).
-func cRepetitionShiftConflictChoice(lang *Language, actions []ParseAction) (ParseAction, bool) {
-	if lang == nil {
-		return ParseAction{}, false
-	}
-	if !cReduceIsCollapsibleListRepeat(lang, actions) {
-		return ParseAction{}, false
-	}
-	return repetitionShiftConflictChoice(actions)
-}
-
-// cReduceIsCollapsibleListRepeat reports whether every reduce in the conflict
-// reduces a list repeat whose only terminators carry no continuation shift
-// (translation_unit_repeat1, preproc_if_repeat1), and at least one reduce
-// exists. Any other reduce symbol (e.g. case_statement_repeat1) disqualifies.
-func cReduceIsCollapsibleListRepeat(lang *Language, actions []ParseAction) bool {
-	found := false
-	for _, act := range actions {
-		if act.Type != ParseActionReduce {
-			continue
-		}
-		if !symbolHasName(lang, act.Symbol, "translation_unit_repeat1") &&
-			!symbolHasName(lang, act.Symbol, "preproc_if_repeat1") {
 			return false
 		}
 		found = true

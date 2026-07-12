@@ -34,7 +34,12 @@ func TestBuiltinExternalScannerRetryProfilesAttach(t *testing.T) {
 }
 
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	if got, want := len(builtinLanguageRuntimeProfiles), 17; got != want {
+	// 19 = the prior 17 plus gomod and c: their hardcoded compat-tier
+	// repetition-conflict helpers were retired in favor of certified
+	// ConflictPolicies rows here. dot's helper was
+	// retired outright, not migrated (see the "NOTE on dot" comment above
+	// the gomod entry), so it does not add a map entry.
+	if got, want := len(builtinLanguageRuntimeProfiles), 19; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -92,6 +97,144 @@ func TestBuiltinHaskellConflictPolicyRequiresCertifiedBlobAndAttachesOnce(t *tes
 	}
 	if got := len(lang.ConflictPolicies); got != 1 {
 		t.Fatalf("reattached Haskell conflict policies = %d, want 1", got)
+	}
+}
+
+// TestBuiltinDartConflictPoliciesAttach covers the three certified dart
+// repeat-boundary rows (enum bodies, extension bodies, top-level declaration
+// lists) that replaced the hardcoded dartRepetitionShiftConflictChoice helper
+// through the generic policy path.
+func TestBuiltinDartConflictPoliciesAttach(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	lang := DartLanguage()
+	wantStates := map[gotreesitter.StateID]gotreesitter.Symbol{596: 509, 602: 512, 479: 467}
+	gotStates := map[gotreesitter.StateID]bool{}
+	for _, policy := range lang.ConflictPolicies {
+		wantReduce, known := wantStates[policy.State]
+		if !known {
+			continue
+		}
+		gotStates[policy.State] = true
+		if policy.Lookahead != gotreesitter.ConflictPolicyAnyLookahead ||
+			policy.Kind != gotreesitter.ConflictPolicyRepetitionShift ||
+			len(policy.ReduceSymbols) != 1 || policy.ReduceSymbols[0] != wantReduce {
+			t.Fatalf("dart conflict policy at state %d = %+v, want repetition-shift over reduce symbol %d", policy.State, policy, wantReduce)
+		}
+	}
+	for state := range wantStates {
+		if !gotStates[state] {
+			t.Fatalf("dart conflict policy for state %d was not attached", state)
+		}
+	}
+	if got, want := len(lang.ConflictPolicies), 3; got != want {
+		t.Fatalf("dart ConflictPolicies = %d rows, want %d", got, want)
+	}
+}
+
+// TestBuiltinGomodConflictPoliciesAttach covers the certified go.mod
+// require-list rows that replaced gomodRepetitionShiftConflictChoice
+// through the generic policy path.
+func TestBuiltinGomodConflictPoliciesAttach(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	lang := GomodLanguage()
+	var state3, state37 int
+	for _, policy := range lang.ConflictPolicies {
+		if policy.Kind != gotreesitter.ConflictPolicyRepetitionShift {
+			t.Fatalf("gomod conflict policy = %+v, want repetition-shift kind", policy)
+		}
+		if policy.Lookahead != gotreesitter.ConflictPolicyAnyLookahead {
+			t.Fatalf("gomod conflict policy = %+v, want wildcard lookahead", policy)
+		}
+		switch policy.State {
+		case 3:
+			if len(policy.ReduceSymbols) != 1 || policy.ReduceSymbols[0] != 50 {
+				t.Fatalf("gomod state-3 conflict policy = %+v, want source_file_repeat1 (symbol 50)", policy)
+			}
+			state3++
+		case 37:
+			if len(policy.ReduceSymbols) != 1 || policy.ReduceSymbols[0] != 52 {
+				t.Fatalf("gomod state-37 conflict policy = %+v, want require_directive_repeat1 (symbol 52)", policy)
+			}
+			state37++
+		default:
+			t.Fatalf("unexpected gomod conflict policy state %d", policy.State)
+		}
+	}
+	if state3 != 1 {
+		t.Fatalf("gomod state-3 conflict policies = %d, want 1", state3)
+	}
+	if state37 != 1 {
+		t.Fatalf("gomod state-37 conflict policies = %d, want 1", state37)
+	}
+}
+
+// TestBuiltinDotHasNoConflictPolicies documents that dot's retired
+// compat-tier helper (dotRepetitionShiftConflictChoice) was NOT migrated to a
+// certified ConflictPolicy: dot already relied on the engine-wide C
+// repetition-skip fold (it is not in cRepetitionSkipOptOut), and A/B testing
+// found the helper's repetition-shift preference grows the LR parse-stack
+// depth O(n) with statement count for no behavioral benefit over that
+// already-flat fold (see the "NOTE on dot" comment in runtime_profiles.go).
+func TestBuiltinDotHasNoConflictPolicies(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	if got := len(DotLanguage().ConflictPolicies); got != 0 {
+		t.Fatalf("dot ConflictPolicies = %d rows, want 0 (helper retired, not migrated)", got)
+	}
+}
+
+// TestBuiltinCConflictPolicyAttachesWildcard covers the certified C
+// translation_unit_repeat1/preproc_if_repeat1 fold, the one profile using the
+// ConflictPolicyAnyState/AnyLookahead wildcards because the C-faithful rule
+// is scoped by reduce-symbol identity alone (thousands of real table rows).
+// Replaces cRepetitionShiftConflictChoice.
+func TestBuiltinCConflictPolicyAttachesWildcard(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	lang := CLanguage()
+	if got, want := len(lang.ConflictPolicies), 1; got != want {
+		t.Fatalf("c ConflictPolicies = %d rows, want %d", got, want)
+	}
+	policy := lang.ConflictPolicies[0]
+	if policy.State != gotreesitter.ConflictPolicyAnyState || policy.Lookahead != gotreesitter.ConflictPolicyAnyLookahead ||
+		policy.Kind != gotreesitter.ConflictPolicyRepetitionShift || len(policy.ReduceSymbols) != 2 ||
+		policy.ReduceSymbols[0] != 324 || policy.ReduceSymbols[1] != 326 {
+		t.Fatalf("c conflict policy = %+v, want wildcard repetition-shift over translation_unit_repeat1(324)/preproc_if_repeat1(326)", policy)
+	}
+}
+
+// TestBuiltinGomodCConflictPoliciesRequireCertifiedBlob mirrors the Haskell
+// fail-closed coverage for the two new certified profiles: an uncertified
+// blob identity must not attach any ConflictPolicies.
+func TestBuiltinGomodCConflictPoliciesRequireCertifiedBlob(t *testing.T) {
+	for _, name := range []string{"gomod", "c"} {
+		t.Run(name, func(t *testing.T) {
+			lang := &gotreesitter.Language{Name: name}
+			if attachBuiltinLanguageRuntimeProfile(name, sha256.Sum256([]byte("uncertified")), lang) {
+				t.Fatalf("uncertified %s blob reported a runtime-profile attachment", name)
+			}
+			if len(lang.ConflictPolicies) != 0 {
+				t.Fatalf("uncertified %s blob attached %d conflict policies", name, len(lang.ConflictPolicies))
+			}
+
+			blob := BlobByName(name)
+			if len(blob) == 0 {
+				t.Fatalf("BlobByName(%s) returned no data", name)
+			}
+			sum := sha256.Sum256(blob)
+			if !attachBuiltinLanguageRuntimeProfile(name, sum, lang) {
+				t.Fatalf("certified %s blob did not attach its runtime profile", name)
+			}
+			if len(lang.ConflictPolicies) == 0 {
+				t.Fatalf("certified %s blob attached no conflict policies", name)
+			}
+		})
 	}
 }
 

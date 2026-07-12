@@ -260,6 +260,18 @@ type ConflictPolicy struct {
 	ReduceSymbols []Symbol
 }
 
+// ConflictPolicyAnyState and ConflictPolicyAnyLookahead are sentinel State/
+// Lookahead values matching every state or every lookahead symbol instead of
+// one exact table row. They support policies scoped by state and/or reduce
+// symbol identity when enumerating every reachable row would add lookup cost
+// without strengthening the action-shape check. Built-in wildcard policies
+// are hand-certified and blob-SHA-pinned; callers supplying ConflictPolicies
+// directly are responsible for scoping their own wildcard policies safely.
+const (
+	ConflictPolicyAnyState     StateID = ^StateID(0)
+	ConflictPolicyAnyLookahead Symbol  = ^Symbol(0)
+)
+
 // ExternalScannerFullParseRetryPolicy controls whether a full parse with an
 // external scanner may schedule the generic second retry ladder after the
 // normal retry ladder has already selected its best tree.

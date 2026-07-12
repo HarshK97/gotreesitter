@@ -27,9 +27,19 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	// These scanner-backed grammars have certified the first retry ladder's
 	// selected accepted-error tree as authoritative. Repeating the whole ladder
 	// does not improve the selected tree and imposes a full additional parse.
+	//
+	// Dart also certifies its three profiled repeat-boundary folds (enum
+	// bodies, extension bodies, and top-level declaration lists) against this
+	// exact blob. The state and reduce-symbol checks preserve the retired
+	// helper's scope without a linear scan over every lookahead at each state.
 	"dart": {
 		blobSHA256:                    mustRuntimeProfileSHA256("06bac15a9921a2e6af2810fb37ecb29a358b120e137345b9af5fb5f6c6632f59"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
+		conflictPolicies: []gotreesitter.ConflictPolicy{
+			{State: 596, Lookahead: gotreesitter.ConflictPolicyAnyLookahead, Kind: gotreesitter.ConflictPolicyRepetitionShift, ReduceSymbols: []gotreesitter.Symbol{509}},
+			{State: 602, Lookahead: gotreesitter.ConflictPolicyAnyLookahead, Kind: gotreesitter.ConflictPolicyRepetitionShift, ReduceSymbols: []gotreesitter.Symbol{512}},
+			{State: 479, Lookahead: gotreesitter.ConflictPolicyAnyLookahead, Kind: gotreesitter.ConflictPolicyRepetitionShift, ReduceSymbols: []gotreesitter.Symbol{467}},
+		},
 	},
 	// C#'s certified low-pressure accepted-error trees are authoritative. A
 	// fresh no-stacks parse instead benefits from a bounded cap-16 retry; the
@@ -160,6 +170,59 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			MinSourceBytes:      64 * 1024,
 			InitialStackCeiling: 14,
+		},
+	},
+	// NOTE on dot: no certified row here (unlike gomod/dart/c below) — dot's
+	// retired dotRepetitionShiftConflictChoice is NOT migrated. dot isn't in
+	// cRepetitionSkipOptOut, so the engine-wide C repetition-skip fold
+	// already folded its stmt_list_repeat1 boundary (state 4) with a flat
+	// parse stack; the retired helper's only call site was forest-only and
+	// dot isn't in builtinForestDefaults, so it never actually ran for this
+	// blob. A/B validation found identical accepted trees, but
+	// reviving the helper's shift preference as a policy grows the LR stack
+	// O(n) with statement count (406 deep on a 400-statement file vs 8 for
+	// the fold already in place) for no fork-count benefit (both already
+	// MaxStacksSeen=1). Retired outright instead of migrated.
+	//
+	// go.mod's require-list continuation forks at two states: the top-level
+	// source_file list (state 3) and a parenthesized require block (state
+	// 37). Replaces gomodRepetitionShiftConflictChoice.
+	// Unlike dot, this is not a revival: the retired helper's dispatch call
+	// site (conflict_policy.go's gomod special case, still present) ran
+	// unconditionally ahead of the reuse gate and the engine-wide fold, so
+	// this exact preference was already the live, shipped behavior —
+	// confirmed byte-identical MaxStacksSeen/PeakStackDepth before and after
+	// this migration on a synthetic 400-require go.mod.
+	"gomod": {
+		blobSHA256: mustRuntimeProfileSHA256("e7dca79c1b4655caeee59c9bea3befdd199dd568e2e17640e2ff93832839d2c2"),
+		conflictPolicies: []gotreesitter.ConflictPolicy{
+			{State: 3, Lookahead: gotreesitter.ConflictPolicyAnyLookahead, Kind: gotreesitter.ConflictPolicyRepetitionShift, ReduceSymbols: []gotreesitter.Symbol{50}},
+			{State: 37, Lookahead: gotreesitter.ConflictPolicyAnyLookahead, Kind: gotreesitter.ConflictPolicyRepetitionShift, ReduceSymbols: []gotreesitter.Symbol{52}},
+		},
+	},
+	// C's top-level declaration list (translation_unit_repeat1) and
+	// preprocessor-conditional body (preproc_if_repeat1) close only on
+	// terminators with no continuation shift (EOF; #endif/#elif/#else), so
+	// any lookahead offering a continuation shift makes the competing reduce
+	// a zero-progress dead end. That C-faithful rule is scoped by reduce
+	// symbol identity alone, not by table position: it recurs at hundreds of
+	// (state, lookahead) rows across the grammar (a scan of this exact blob
+	// found 3242, across 446 states), which is why this is the one certified
+	// profile using the ConflictPolicyAnyState/AnyLookahead wildcards instead
+	// of an enumerated per-row table. case_statement_repeat1 is deliberately
+	// excluded: its list boundary is load-bearing, not a dead-end. Replaces
+	// cRepetitionShiftConflictChoice; byte-for-byte C
+	// parity held by TestParityCTopLevelDeclAmbiguity /
+	// TestParityCPreprocConditional.
+	"c": {
+		blobSHA256: mustRuntimeProfileSHA256("9aee42825fd1446ce5b754951db26edadcdba5d2f26b61578a30e87ed2dbbd3c"),
+		conflictPolicies: []gotreesitter.ConflictPolicy{
+			{
+				State:         gotreesitter.ConflictPolicyAnyState,
+				Lookahead:     gotreesitter.ConflictPolicyAnyLookahead,
+				Kind:          gotreesitter.ConflictPolicyRepetitionShift,
+				ReduceSymbols: []gotreesitter.Symbol{324, 326},
+			},
 		},
 	},
 }

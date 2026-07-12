@@ -30,6 +30,21 @@ for tags and release notes while still in `0.x`.
   table and its per-row rationale comments are larger than the code they
   replace) in exchange for one auditable, greppable rule set instead of six
   scattered dispatch sites.
+- The go.mod, Dart, and C repetition-conflict compat-tier helpers
+  (`gomodRepetitionShiftConflictChoice`, `dartRepetitionShiftConflictChoice`,
+  `cRepetitionShiftConflictChoice`) are retired in favor of certified,
+  blob-SHA-pinned `ConflictPolicies` rows in `grammars/runtime_profiles.go`.
+  C's rule recurs at thousands of table rows (reduce-symbol identity alone,
+  not table position), so it is the first profile to use two new sentinel
+  values, `ConflictPolicyAnyState`/`ConflictPolicyAnyLookahead`, matching
+  every state/lookahead instead of one exact row. Dot's equivalent helper is
+  retired outright rather than migrated: it was already dead code in the
+  shipped dispatch path (dot never opted out of the engine-wide C
+  repetition-skip fold, which already folds it with a flat parse stack), and
+  reviving it as a live policy grew the LR parse-stack depth O(n) with
+  statement count for no fork-count benefit. C#'s helper is left in place: it
+  depends on the literal source text of a contextual keyword (`scoped`),
+  which `ConflictPolicies`' state/lookahead-symbol matching cannot express.
 
 ## [0.28.0] - 2026-07-12
 
