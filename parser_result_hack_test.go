@@ -2,6 +2,13 @@ package gotreesitter
 
 import "testing"
 
+// Hack's true/false/null literal-wrapper rules used to live in a dedicated
+// normalizeHackCompatibility adapter (parser_result_hack.go, now removed).
+// They are data-driven now: see the "hack" entries in
+// resultCollapsedNamedLeafRules (parser_result_collapsed_helpers.go), applied
+// by normalizeResultCollapsedNamedLeafChildren for every language. The tests
+// below exercise that shared entry point directly.
+
 func TestNormalizeHackBooleanLiteralsRestoreTokenChildren(t *testing.T) {
 	lang := &Language{
 		Name:        "hack",
@@ -21,7 +28,7 @@ func TestNormalizeHackBooleanLiteralsRestoreTokenChildren(t *testing.T) {
 	falseNode := newLeafNodeInArena(arena, 3, true, 5, 10, Point{Column: 5}, Point{Column: 10})
 	root := newParentNodeInArena(arena, 1, true, []*Node{trueNode, falseNode}, nil, 0)
 
-	normalizeHackCompatibility(root, source, lang)
+	normalizeResultCollapsedNamedLeafChildren(root, source, lang)
 
 	if got, want := trueNode.ChildCount(), 1; got != want {
 		t.Fatalf("true child count = %d, want %d", got, want)
@@ -59,7 +66,7 @@ func TestNormalizeHackNullLiteralRestoresTokenChild(t *testing.T) {
 	nullNode := newLeafNodeInArena(arena, 2, true, 0, 4, Point{}, Point{Column: 4})
 	root := newParentNodeInArena(arena, 1, true, []*Node{nullNode}, nil, 0)
 
-	normalizeHackCompatibility(root, source, lang)
+	normalizeResultCollapsedNamedLeafChildren(root, source, lang)
 
 	if got, want := nullNode.ChildCount(), 1; got != want {
 		t.Fatalf("null child count = %d, want %d", got, want)

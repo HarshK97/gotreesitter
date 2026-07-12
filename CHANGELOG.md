@@ -55,6 +55,30 @@ rows), and parity floors are reproducible against lock-pinned corpora.
 
 ### Changed
 
+- Collapsed-named-leaf compat adapters for Kotlin, Hack, Dart, and Elixir
+  moved onto the data-driven `resultCollapsedNamedLeafRules` table
+  (previously data-driven for Ruby and Apex only): Kotlin's
+  `identifier -> simple_identifier`, Hack's `true`/`false`/`null` literal
+  wrappers, Dart's `super`/`this`, and Elixir's `nil` are now table rows
+  instead of hand-written adapter functions. The table gained a `bySource`
+  column so a row can pick the source-text-verified matcher
+  (`normalizeCollapsedNamedLeafChildrenBySource`, needed when the
+  collapsed span must be confirmed before a child is attached) instead of
+  the plain structural one. Hack's dedicated compat file and switch arm
+  are retired entirely (all three of its rules were table-eligible); Dart
+  and Elixir keep their compat functions for unrelated rewrites but lose
+  the adapter that only fired these rules. Net ~37 lines of per-language
+  adapter code retired in favor of ~7 declarative table rows. Haskell's
+  `wildcard -> "_"` was evaluated for the same migration but left
+  in place: the anonymous token name `"_"` collides with the special
+  query-wildcard sentinel in `Language.symbolByNameAndNamed`/`SymbolByName`
+  (both short-circuit to `(0, true)` for `name == "_"`), so migrating it
+  through the shared table resolves the child to `Symbol(0)` (EOF) instead
+  of the real anonymous `_` token; OCaml, HCL, and Rust were left
+  unmigrated too (OCaml's and most of HCL's rules need multi-candidate
+  source disambiguation the one-parent/one-child schema doesn't represent,
+  and HCL/Rust also fold their collapse checks into a single perf-tuned
+  tree walk that per-rule table entries would fragment).
 - Real-corpus parity floors regenerated against lock-pinned corpora:
   55 grammars, 851/1026 deep parity, including first-ever bash and dart
   rows; the docker wrapper's default skip list shrinks to OCaml only.

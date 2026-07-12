@@ -52,7 +52,7 @@ func normalizeResultCompatibility(root *Node, source []byte, p *Parser) resultCo
 		result.stopReason = terminalReason
 		return result
 	}
-	normalizeResultCollapsedNamedLeafChildren(root, lang)
+	normalizeResultCollapsedNamedLeafChildren(root, source, lang)
 	result.stopReason = ctx.stopReason()
 	return result
 }
@@ -155,8 +155,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		return resultCompatibilityResult{stopReason: normalizeGoReturnedTreeCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)}
 	case "gitcommit":
 		normalizeGitcommitCompatibility(ctx.root, ctx.source, ctx.lang)
-	case "hack":
-		normalizeHackCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "haskell":
 		normalizeHaskellCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "hcl":

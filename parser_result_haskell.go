@@ -34,6 +34,18 @@ func normalizeHaskellCollapsedNamedLeafChildren(root *Node, source []byte, lang 
 	})
 }
 
+// haskellCollapsedNamedLeafChildren cannot fully migrate to
+// resultCollapsedNamedLeafRules (parser_result_collapsed_helpers.go):
+// "deriving_strategy" has 3 candidate children (stock/anyclass/via), which
+// the plain one-parent-one-child table schema doesn't represent. "wildcard"
+// does reduce to a single-candidate name-pair ("_"), but the anonymous token
+// name "_" collides with the special-cased query wildcard sentinel baked
+// into Language.symbolByNameAndNamed/SymbolByName (both return (0, true) for
+// name == "_" unconditionally, for tree-sitter query "any node" matching)
+// which the shared normalizeCollapsedNamedLeafChildren(BySource) helpers use
+// for symbol lookup. Migrating "wildcard" through the generic mechanism
+// resolves its child to Symbol(0) (EOF) instead of the real anonymous "_"
+// token, so it stays here where symbol lookup walks SymbolMetadata directly.
 var haskellCollapsedNamedLeafChildren = map[string][]string{
 	"deriving_strategy": {"stock", "anyclass", "via"},
 	"wildcard":          {"_"},

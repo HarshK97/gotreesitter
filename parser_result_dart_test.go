@@ -76,6 +76,15 @@ func TestNormalizeDartCollapsedLeafChildrenRestoresDartWrappers(t *testing.T) {
 	// TestDartNullableTypeAndNullLiteralRestoreAnonymousChildren in grammars/),
 	// so finalNode/negationNode/relOpNode/gtNode/nullableNode/nullNode above
 	// stay untouched by this call.
+	//
+	// "super"/"this" are also NOT asserted via normalizeDartCompatibility
+	// anymore: the former normalizeDartCollapsedLeafChildren adapter was
+	// removed and its two rules moved into resultCollapsedNamedLeafRules
+	// (parser_result_collapsed_helpers.go), applied by
+	// normalizeResultCollapsedNamedLeafChildren for every language rather than
+	// from inside normalizeDartCompatibility. Exercise that shared entry point
+	// directly here to keep the coverage.
+	normalizeResultCollapsedNamedLeafChildren(root, source, lang)
 	assertCollapsedKeywordChild(t, superNode, lang, "super")
 	assertCollapsedKeywordChild(t, thisNode, lang, "this")
 }
