@@ -65,7 +65,7 @@ func TestNormalizeHTMLRecoveredNestedCustomTagsWrapsStartTagPrefix(t *testing.T)
 	}
 }
 
-func TestNormalizeHTMLRecoveredNestedCustomTagRangesExtendsInnerChain(t *testing.T) {
+func TestNormalizeReturnedTreeForParseExtendsHTMLInnerChain(t *testing.T) {
 	lang := &Language{
 		Name:        "html",
 		SymbolNames: []string{"EOF", "document", "element", "start_tag", "end_tag", "</", "tag_name", ">"},
@@ -100,7 +100,8 @@ func TestNormalizeHTMLRecoveredNestedCustomTagRangesExtendsInnerChain(t *testing
 
 	source := bytes.Repeat([]byte{'x'}, 27)
 	source[20] = '\n'
-	normalizeHTMLRecoveredNestedCustomTagRanges(root, source, lang)
+	tree := &Tree{root: root, source: source, language: lang, resultCompatibilityApplied: true}
+	(&Parser{language: lang}).normalizeReturnedTreeForParse(tree, source)
 
 	if got, want := inner.endByte, uint32(21); got != want {
 		t.Fatalf("inner.endByte = %d, want %d", got, want)
