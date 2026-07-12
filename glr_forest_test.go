@@ -302,8 +302,8 @@ func TestCoalesceForestKeepsEqualScoreRawDistinctLinks(t *testing.T) {
 	rightChild := newLeafNodeInArena(arena, 10, true, 1, 2, Point{}, Point{})
 	left := newParentNodeInArena(arena, 100, true, []*Node{leftChild}, nil, 0)
 	right := newParentNodeInArena(arena, 100, true, []*Node{rightChild}, nil, 0)
-	left.rawShape = p.captureRawShape(arena, 100, 1, []stackEntry{newStackEntryNode(11, leftChild)}, 0, 1)
-	right.rawShape = p.captureRawShape(arena, 100, 2, []stackEntry{newStackEntryNode(10, rightChild)}, 0, 1)
+	left.rawShape = p.captureRawShape(nil, arena, 100, 1, []stackEntry{newStackEntryNode(11, leftChild)}, 0, 1)
+	right.rawShape = p.captureRawShape(nil, arena, 100, 2, []stackEntry{newStackEntryNode(10, rightChild)}, 0, 1)
 
 	node := coalesceForestWithRaw(p, arena, &idx, slab, 5, 4, base, newStackEntryNode(100, left), 3, 0)
 	again := coalesceForestWithRaw(p, arena, &idx, slab, 5, 4, base, newStackEntryNode(100, right), 3, 0)
@@ -330,7 +330,7 @@ func TestCoalesceForestKeepsEqualScoreOneSidedRawUnknownLinks(t *testing.T) {
 	rightChild := newLeafNodeInArena(arena, 11, true, 1, 2, Point{}, Point{})
 	left := newParentNodeInArena(arena, 100, true, []*Node{leftChild}, nil, 0)
 	right := newParentNodeInArena(arena, 100, true, []*Node{rightChild}, nil, 0)
-	left.rawShape = p.captureRawShape(arena, 100, 1, []stackEntry{newStackEntryNode(11, leftChild)}, 0, 1)
+	left.rawShape = p.captureRawShape(nil, arena, 100, 1, []stackEntry{newStackEntryNode(11, leftChild)}, 0, 1)
 
 	node := coalesceForestWithRaw(p, arena, &idx, slab, 5, 4, base, newStackEntryNode(100, left), 3, 0)
 	again := coalesceForestWithRaw(p, arena, &idx, slab, 5, 4, base, newStackEntryNode(100, right), 3, 0)
@@ -352,7 +352,7 @@ func TestCoalesceForestCapPreservesRawDistinctCandidateOverDuplicateBucket(t *te
 	makeEntry := func(childSym Symbol, prod uint16) stackEntry {
 		child := newLeafNodeInArena(arena, childSym, true, 1, 2, Point{}, Point{})
 		parent := newParentNodeInArena(arena, 100, true, []*Node{child}, nil, 0)
-		parent.rawShape = p.captureRawShape(arena, 100, prod, []stackEntry{newStackEntryNode(StateID(childSym), child)}, 0, 1)
+		parent.rawShape = p.captureRawShape(nil, arena, 100, prod, []stackEntry{newStackEntryNode(StateID(childSym), child)}, 0, 1)
 		return newStackEntryNode(100, parent)
 	}
 
@@ -424,7 +424,7 @@ func TestCoalesceForestCapDoesNotLetLowerRankSameRawBucketEvictDistinctBucket(t 
 	makeEntry := func(childSym Symbol, prod uint16) stackEntry {
 		child := newLeafNodeInArena(arena, childSym, true, 1, 2, Point{}, Point{})
 		parent := newParentNodeInArena(arena, 100, true, []*Node{child}, nil, 0)
-		parent.rawShape = p.captureRawShape(arena, 100, prod, []stackEntry{newStackEntryNode(StateID(childSym), child)}, 0, 1)
+		parent.rawShape = p.captureRawShape(nil, arena, 100, prod, []stackEntry{newStackEntryNode(StateID(childSym), child)}, 0, 1)
 		return newStackEntryNode(100, parent)
 	}
 
@@ -515,7 +515,7 @@ func TestForestResultLinkUsesCumulativeDynamicPrecedenceBeforeMaterializedShape(
 	varNode := newLeafNodeInArena(arena, 4, true, 0, 3, Point{}, Point{Column: 3})
 	stringNode := newLeafNodeInArena(arena, 5, true, 4, 9, Point{Column: 4}, Point{Column: 9})
 	direct := newParentNodeInArena(arena, 3, true, []*Node{varNode, stringNode}, nil, 0)
-	direct.rawShape = parser.captureRawShape(arena, 3, 1, []stackEntry{
+	direct.rawShape = parser.captureRawShape(nil, arena, 3, 1, []stackEntry{
 		newStackEntryNode(4, varNode),
 		newStackEntryNode(5, stringNode),
 	}, 0, 2)
@@ -525,7 +525,7 @@ func TestForestResultLinkUsesCumulativeDynamicPrecedenceBeforeMaterializedShape(
 	wrappedConcat := newParentNodeInArena(arena, 3, true, []*Node{wrappedVar, wrappedString}, nil, 0)
 	wrapper := newParentNodeInArena(arena, 2, true, []*Node{wrappedConcat}, nil, 0)
 	wrapper.dynamicPrecedence = 4
-	wrapper.rawShape = parser.captureRawShape(arena, 2, 2, []stackEntry{newStackEntryNode(3, wrappedConcat)}, 0, 1)
+	wrapper.rawShape = parser.captureRawShape(nil, arena, 2, 2, []stackEntry{newStackEntryNode(3, wrappedConcat)}, 0, 1)
 
 	node := &gssForestNode{
 		state:      7,

@@ -4541,7 +4541,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				return finalize(stacks, ParseStopNoStacksAlive)
 			}
 			p.tryDemoteSingleLinearGSS(stacks, scratch)
-			scratch.gss.singleStackMode = true
+			scratch.gss.setSingleStackMode(true)
 			clearParseStackEntryCaches(stacks)
 		} else {
 			if progress.enabled {
@@ -5296,6 +5296,15 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				continue
 			}
 			if len(actions) > 1 {
+				// A real grammar conflict can grow the live stack count (a
+				// literal clone below, or a frontier/gated fork queued by
+				// completeConflictReduceFrontier) before the top-of-loop
+				// singleStackMode recompute runs on the next iteration. Latch
+				// everForked here, at the earliest possible point, so raw-shape
+				// capture resumes for every reduction from this token onward —
+				// including the actions[0] continuation applied to the
+				// original stack later in this same iteration.
+				scratch.gss.everForked = true
 				conflictStart := time.Time{}
 				if actionTiming != nil {
 					conflictStart = time.Now()
@@ -6271,7 +6280,7 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 			result.stop(ParseStopNoStacksAlive, false)
 			return result
 		}
-		scratch.gss.singleStackMode = true
+		scratch.gss.setSingleStackMode(true)
 		p.tryDemoteSingleLinearGSS(stacks, scratch)
 		clearParseStackEntryCaches(stacks)
 		return result
@@ -6338,7 +6347,7 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 	} else {
 		p.tryDemoteSingleLinearGSS(result.stacks, scratch)
 	}
-	scratch.gss.singleStackMode = len(result.stacks) == 1
+	scratch.gss.setSingleStackMode(len(result.stacks) == 1)
 	clearParseStackEntryCaches(result.stacks)
 	return result
 }

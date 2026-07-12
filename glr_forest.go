@@ -2822,7 +2822,12 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 							parent.setExtra(true)
 						}
 						parent.dynamicPrecedence = int32(score)
-						parent.rawShape = p.captureRawShape(arena, act.Symbol, act.ProductionID, children, 0, reducedEnd)
+						// The forest engine is a separate parsing path from the
+						// production GLR loop's scratch.gss bookkeeping (it does
+						// not thread a *gssScratch here), and it is out of scope
+						// for the single-stack raw-shape elision: nil never
+						// elides, preserving this lane's existing behavior.
+						parent.rawShape = p.captureRawShape(nil, arena, act.Symbol, act.ProductionID, children, 0, reducedEnd)
 						if len(childNodes) > 0 {
 							forestRecordParentChildAlternatives(alternatives, parent, childNodes, children[:reducedEnd])
 						}

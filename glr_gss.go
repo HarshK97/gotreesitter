@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "unsafe"
+import (
+	"sync/atomic"
+	"unsafe"
+)
 
 const (
 	defaultGSSNodeSlabCap      = 4 * 1024
@@ -129,6 +132,66 @@ type gssScratch struct {
 	audit             *runtimeAudit
 	frontier          conflictReduceFrontierScratch
 	stackEntries      []stackEntry
+	// everForked latches true the first time this parse observes more than
+	// one live GLR stack (see the singleStackMode writers in parser.go, and
+	// the explicit early latch at the "len(actions) > 1" conflict-fork
+	// decision point), OR enters the faithful C-recovery port (latched at
+	// cHandleError's entry in parser_recover_c.go, before it can build or
+	// compare a single node — recovery's version-spawning and its raw-shape
+	// reads, e.g. cSelectReplacementParentEntry, are not visible to the
+	// ordinary singleStackMode bookkeeping since recovery mutates *stacks
+	// directly). It is intentionally sticky for the rest of the parse: once
+	// true, every later reduction captures its raw shape normally, even if
+	// the live stack count later collapses back to one.
+	//
+	// IMPORTANT: this latch is NOT retroactive. It does not, and cannot, add
+	// shapes to nodes that were already built (and left shapeless) before it
+	// flipped true. Behavior preservation for those earlier, still-shapeless
+	// nodes does not come from this field — it comes from a structural
+	// property of GSS/C-recovery sharing (every subsequent stack shares such
+	// a node by pointer, so it is only ever compared against itself). See
+	// captureRawShape's doc comment (raw_shape.go) for the full argument, and
+	// spore.2026-07-12.hazel.rawshape-elision-rca for the originating RCA.
+	everForked bool
+}
+
+// rawShapeElisionDisabledForDiagnostics forces every reduction to capture its
+// raw shape, even on the pure single-stack happy path, matching parser
+// behavior before the single-stack capture elision optimization. It exists so
+// differential tests (and offline profiling harnesses) can A/B the
+// optimization directly against otherwise-identical parses. Stored as an
+// atomic so concurrent parsers observe a consistent value; it remains a
+// diagnostics-only hook and normal parser paths leave it disabled.
+var rawShapeElisionDisabledForDiagnostics atomic.Bool
+
+// SetRawShapeElisionDisabledForDiagnostics toggles rawShapeElisionDisabledForDiagnostics.
+// See its doc comment: this is a diagnostics-only hook, not part of the
+// parser's production behavior contract.
+func SetRawShapeElisionDisabledForDiagnostics(disabled bool) {
+	rawShapeElisionDisabledForDiagnostics.Store(disabled)
+}
+
+// mayElideRawShape reports whether it is safe to skip captureRawShape for the
+// reduction currently in flight. This is true only on the pure single-stack
+// happy path: exactly one GLR stack is live right now, and this parse has
+// never forked before. Once a parse forks even once, this permanently
+// returns false for the remainder of the parse (see everForked).
+func (s *gssScratch) mayElideRawShape() bool {
+	return s != nil && s.singleStackMode && !s.everForked && !rawShapeElisionDisabledForDiagnostics.Load()
+}
+
+// setSingleStackMode updates singleStackMode and latches everForked the
+// moment the parse is observed leaving single-stack mode. everForked is
+// sticky for the rest of the parse (cleared only by reset()), even if the
+// stack count later collapses back to one.
+func (s *gssScratch) setSingleStackMode(v bool) {
+	if s == nil {
+		return
+	}
+	s.singleStackMode = v
+	if !v {
+		s.everForked = true
+	}
 }
 
 type gssNodeSlab struct {
@@ -552,6 +615,7 @@ func (s *gssScratch) reset() {
 	}
 	if len(s.slabs) == 0 {
 		s.singleStackMode = false
+		s.everForked = false
 		s.singleStackAllocs = 0
 		s.multiStackAllocs = 0
 		s.demotions = 0
@@ -600,6 +664,7 @@ func (s *gssScratch) reset() {
 	s.usedTotal = 0
 	s.peakUsed = 0
 	s.singleStackMode = false
+	s.everForked = false
 	s.singleStackAllocs = 0
 	s.multiStackAllocs = 0
 	s.demotions = 0

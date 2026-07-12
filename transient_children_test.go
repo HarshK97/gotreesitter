@@ -629,17 +629,17 @@ func TestTransientScratchCheckpointRetargetsNestedRawShapeNodesBeforeSlabReuse(t
 
 	leaf := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Column: 1})
 	rawGrandchild := scratch.transientParents.allocParent(arena, Symbol(2), true, nil, 0, false)
-	rawGrandchild.rawShape = parser.captureRawShape(arena, Symbol(2), 0, []stackEntry{
+	rawGrandchild.rawShape = parser.captureRawShape(nil, arena, Symbol(2), 0, []stackEntry{
 		newStackEntryNode(1, leaf),
 	}, 0, 1)
 	rawChild := scratch.transientParents.allocParent(arena, Symbol(3), true, nil, 0, false)
-	rawChild.rawShape = parser.captureRawShape(arena, Symbol(3), 0, []stackEntry{
+	rawChild.rawShape = parser.captureRawShape(nil, arena, Symbol(3), 0, []stackEntry{
 		newStackEntryNode(2, rawGrandchild),
 	}, 0, 1)
 	semanticChildren := scratch.transientChildren.alloc(1)
 	semanticChildren[0] = leaf
 	liveParent := scratch.transientParents.allocParent(arena, Symbol(4), true, semanticChildren, 0, false)
-	liveParent.rawShape = parser.captureRawShape(arena, Symbol(4), 0, []stackEntry{
+	liveParent.rawShape = parser.captureRawShape(nil, arena, Symbol(4), 0, []stackEntry{
 		newStackEntryNode(3, rawChild),
 	}, 0, 1)
 	wantRootChildShape := rawChild.rawShape
