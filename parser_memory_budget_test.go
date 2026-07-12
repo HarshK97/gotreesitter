@@ -2,6 +2,10 @@ package gotreesitter_test
 
 import (
 	"bytes"
+	"fmt"
+	"runtime"
+	"runtime/debug"
+	"strconv"
 	"testing"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
@@ -56,4 +60,105 @@ func TestParserMemoryBudgetStopsParse(t *testing.T) {
 	default:
 		t.Fatalf("MemoryBudgetStopSource = %q, want exact attribution (runtime=%s)", rt.MemoryBudgetStopSource, rt.Summary())
 	}
+}
+
+// TestGoParseGiantTableLiteralStopsWithinMemoryBudget is the RCA's bare-Parse
+// witness (2026-07-12 budget-containment RCA), adapted to a SYNTHETIC
+// generated input rather than depending on any repo source file's content
+// (the RCA's own witness was a 70KiB prefix of query_test.go, which is not
+// used here). It constructs a large slice-of-struct-literal table -- a
+// "giant table literal", generated at test time -- sized to require real
+// arena/scratch allocation well past a small memory budget, and asserts bare
+// NewParser(...).Parse stops with ParseStopMemoryBudget while process heap
+// growth stays bounded rather than ballooning many multiples of the budget
+// past it (the RCA measured 16-26x overshoot before this fix).
+//
+// This validates the general containment path end-to-end: the hardened
+// runtime poll (parser_memory_budget_runtime.go), including its
+// volume-triggered forced check, and the decoupled hard ceiling, all wired
+// through bare Parse with the DFA lexer (the routing the RCA identified as
+// the asymmetric path -- the gateway token source for .go files keeps
+// survivor sets bounded and rarely needs this containment at all).
+//
+// It does NOT specifically exercise mergeStacksWithScratchLargeCap's
+// coarse-stride in-merge poll: Go's steady-state full-parse merge per-key
+// cap (3) never widens past maxStacksPerMergeKey (6) for well-formed input,
+// so the large-cap merge path is not reached by this witness. That path is
+// covered directly and deterministically by
+// TestMergeStacksWithScratchLargeCapPollsMemoryBudgetMidGrind in the
+// internal package (parser_memory_budget_merge_test.go), which constructs
+// the O(survivors^2) shape directly instead of relying on a natural-language
+// trigger.
+//
+// A malformed/truncated variant of this input (mirroring the RCA's
+// query_test.go-prefix witness more literally -- balanced braces up to a
+// dangling partial identifier at EOF) was investigated while building this
+// fix but is intentionally NOT used here: truncating mid-token reliably drove
+// the parser into pathological C-recovery, and the resulting tree tripped a
+// SEPARATE, pre-existing bug in Go-specific post-parse compatibility
+// normalization (walkGoCompatSubtree, parser_result_go_compat.go) that has no
+// memory-budget awareness at all -- it only polls for ParseStopTimeout /
+// ParseStopCancelled -- and runs unconditionally while finalizing the result
+// tree, even for a GLR loop that already stopped early on budget. That is a
+// distinct, out-of-scope escape vector (it OOMed a throwaway repro at
+// several GiB regardless of this change) and is being raised separately
+// rather than folded into this fix; a truncated input here would crash
+// unpredictably for a reason unrelated to what this change addresses.
+func TestGoParseGiantTableLiteralStopsWithinMemoryBudget(t *testing.T) {
+	// budgetMB must be strictly above the tight-poll-mask threshold (64MiB,
+	// parseRuntimeMemoryTightBudget) so this witness exercises the loose (255)
+	// poll mask this fix's volume-triggered bypass targets, not the
+	// already-responsive tight (15) mask a small budget would select.
+	const budgetMB = 96
+	t.Setenv("GOT_PARSE_MEMORY_BUDGET_MB", strconv.Itoa(budgetMB))
+	gotreesitter.ResetParseEnvConfigCacheForTests()
+	defer gotreesitter.ResetParseEnvConfigCacheForTests()
+
+	var src bytes.Buffer
+	src.WriteString("package p\n\ntype kv struct {\n\tName    string\n\tVisible bool\n\tNamed   bool\n}\n\nvar t = []kv{\n")
+	// entries is deliberately large (well beyond what's needed to cross the
+	// budget in an isolated run) so the stop is robust to ambient allocator/GC
+	// state from whatever else ran earlier in the same test binary, rather
+	// than depending on a razor-thin margin over the budget.
+	const entries = 300000
+	for i := 0; i < entries; i++ {
+		fmt.Fprintf(&src, "\t{Name: %q, Visible: true, Named: true}, // %d\n", fmt.Sprintf("identifier%d", i), i)
+	}
+	src.WriteString("}\n")
+
+	// Disable GC during the measured window so heap growth reflects true
+	// allocation volume rather than being masked by a GC cycle landing
+	// mid-parse; restore the default afterward.
+	debug.SetGCPercent(-1)
+	defer debug.SetGCPercent(100)
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+
+	parser := gotreesitter.NewParser(grammars.GoLanguage())
+	tree, err := parser.Parse(src.Bytes())
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	defer tree.Release()
+
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+	heapGrowth := int64(after.HeapAlloc) - int64(before.HeapAlloc)
+
+	if got, want := tree.ParseStopReason(), gotreesitter.ParseStopMemoryBudget; got != want {
+		t.Fatalf("ParseStopReason() = %q, want %q (runtime=%s)", got, want, tree.ParseRuntime().Summary())
+	}
+	if !tree.ParseStoppedEarly() {
+		t.Fatal("ParseStoppedEarly() = false, want true")
+	}
+
+	budgetBytes := int64(budgetMB) * 1024 * 1024
+	const maxOvershootFactor = 6
+	if heapGrowth > budgetBytes*maxOvershootFactor {
+		t.Fatalf(
+			"process heap growth = %d bytes (%.2fx budget), want < %dx budget %d bytes -- containment escape (runtime=%s)",
+			heapGrowth, float64(heapGrowth)/float64(budgetBytes), maxOvershootFactor, budgetBytes, tree.ParseRuntime().Summary(),
+		)
+	}
+	t.Logf("heap growth = %d bytes (%.2fx budget %d bytes), stop=%s", heapGrowth, float64(heapGrowth)/float64(budgetBytes), budgetBytes, tree.ParseRuntime().Summary())
 }

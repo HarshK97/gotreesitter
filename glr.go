@@ -147,6 +147,17 @@ const (
 	// per-key survivor arrays.
 	maxRetainedMergeResultCap = 4096
 	maxRetainedMergeSlotCap   = 1024
+	// mergeBudgetPollStride is the coarse comparison stride at which
+	// mergeStacksWithScratchLargeCap's survivor loop polls the runtime memory
+	// budget directly (see runtimeMemoryBudgetStopReasonNow). The large-cap
+	// merge path widens perKeyCap up to maxStacksPerMergeKeyCeiling, so a
+	// single call can perform on the order of maxMergeAliveStacks *
+	// maxStacksPerMergeKeyCeiling comparisons -- an O(survivors^2) grind that
+	// can allocate multiple GB (deep stack-equivalence walks) without ever
+	// returning to a normal materialization-boundary poll site. Polling every
+	// 4096 comparisons keeps overhead negligible in the ordinary case while
+	// bounding how far a pathological grind can run before it is stopped.
+	mergeBudgetPollStride = 4096
 )
 
 type glrMergeScratch struct {
@@ -202,6 +213,19 @@ type glrMergeScratch struct {
 	stackEquivBytes   int64
 	spineEquivBytes   int64
 	frontierHashBytes int64
+	// parser backs the in-merge memory-budget poll
+	// (mergeStacksWithScratchLargeCap's survivor loop): the O(survivors^2)
+	// merge-equivalence grind can allocate multiple GB without ever returning
+	// to a normal materialization-boundary poll site, so the large-cap merge
+	// polls the runtime budget itself at a coarse comparison stride. nil
+	// (e.g. the mergeStacks test helper) disables that poll, not the merge.
+	parser *Parser
+	// mergeBudgetStopReason is set by the large-cap merge loop's in-merge poll
+	// when it bails out early because the runtime memory budget (soft budget
+	// or the decoupled hard ceiling) tripped mid-grind. Reset to ParseStopNone
+	// at the top of every mergeStacksWithScratch call so a stale flag from a
+	// previous merge in the same pooled scratch can never leak forward.
+	mergeBudgetStopReason ParseStopReason
 }
 
 type glrCErrorCostEntry struct {
@@ -4457,6 +4481,9 @@ func mergeStacksSmallDeferExact(alive []glrStack, scratch *glrMergeScratch, lang
 //  3. within each key keep exact-equivalent dedupes plus at most N survivors
 //     chosen by stackCompareMerge (with hash prefilter before deep equivalence)
 func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrStack {
+	if scratch != nil {
+		scratch.mergeBudgetStopReason = ParseStopNone
+	}
 	if len(stacks) == 0 {
 		return stacks
 	}
@@ -4904,13 +4931,37 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 	result := ensureMergeResultCap(scratch, len(alive))
 	slots := ensureMergeLargeSlotCap(scratch, len(alive))
 	slotCount := 0
+	// comparisons is the running count of O(slot.count) inner-loop trips since
+	// the last budget poll. This is the coarse-stride in-merge poll (see
+	// mergeBudgetPollStride): the large-cap merge's O(survivors^2)
+	// deep-equivalence grind can otherwise allocate multiple GB without ever
+	// returning to a normal materialization-boundary poll site.
+	var comparisons uint64
 	for i := range alive {
+		if comparisons >= mergeBudgetPollStride {
+			comparisons = 0
+			if scratch != nil && scratch.parser != nil {
+				if reason := scratch.parser.runtimeMemoryBudgetStopReasonNow(); reason == ParseStopMemoryBudget {
+					scratch.mergeBudgetStopReason = reason
+					if perfCountersEnabled {
+						perfRecordMergeOut(len(result))
+					}
+					if scratch.audit != nil {
+						scratch.audit.recordMerge(len(alive), len(result), slotCount)
+					}
+					scratch.result = result
+					scratch.largeSlots = slots[:slotCount]
+					return result
+				}
+			}
+		}
 		stack := alive[i]
 		hash := stackHashForMerge(scratch, scratch.language, stack)
 		key := mergeKeyForStack(stack)
 
 		slotIndex := -1
 		for si := 0; si < slotCount; si++ {
+			comparisons++
 			if slots[si].key == key {
 				slotIndex = si
 				break
@@ -4929,6 +4980,7 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 		if slot.count > 0 {
 			mergedByGSS := false
 			for j := 0; j < slot.count; j++ {
+				comparisons++
 				idx := slot.indices[j]
 				merged, attempted := tryGSSMainMergeResult(scratch, result, idx, &stack)
 				if attempted && merged {
@@ -4945,6 +4997,7 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 		hashMatched := false
 		if slot.count > 0 && (slot.hashMask&mergeHashBit(hash)) != 0 {
 			for j := 0; j < slot.count; j++ {
+				comparisons++
 				if slot.hashes[j] != hash {
 					continue
 				}
@@ -5000,6 +5053,7 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 		if slot.worstIndex >= 0 {
 			replacedSlot := -1
 			for j := 0; j < slot.count; j++ {
+				comparisons++
 				if slot.indices[j] == slot.worstIndex {
 					replacedSlot = j
 					break
@@ -5219,6 +5273,10 @@ func (s *glrMergeScratch) reset() {
 	s.cRecoveryCost = false
 	s.audit = nil
 	s.budgetBytes = 0
+	// Pooled scratch must not retain a live *Parser across parses (GC
+	// retention) or leak a stale in-merge budget-stop flag forward.
+	s.parser = nil
+	s.mergeBudgetStopReason = ParseStopNone
 }
 
 func glrStackBytesForCap(n int) int64 {

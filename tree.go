@@ -811,7 +811,7 @@ type ParseRuntime struct {
 	StackDepthLimit                               int
 	NodeLimit                                     int
 	MemoryBudgetBytes                             int64
-	MemoryBudgetStopSource                        string // First budget guard: arena, scratch, runtime_heap, or runtime_sys.
+	MemoryBudgetStopSource                        string // First budget guard: arena, scratch, runtime_heap, runtime_sys, or hard_ceiling.
 	RuntimeHeapGrowthBytes                        uint64
 	RuntimeSysGrowthBytes                         uint64
 	Iterations                                    int

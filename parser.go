@@ -204,47 +204,49 @@ type Parser struct {
 	// where the deep stack-equivalence merge dominates and shared-leaf pointer
 	// identity short-circuits it (measured: swift 4.0x, bash 1.9x). Net-neutral
 	// or slightly negative on fast languages (go +4.9%), so it stays per-language.
-	leafInternByLang                 bool
-	forceRawSpanTable                []bool
-	spanExtendingInvisibleSymbols    []bool
-	nonSpanExtendingInvisibleSymbols []bool
-	aliasPreservedWrapperSymbols     []bool
-	included                         []Range
-	logger                           ParserLogger
-	glrTrace                         bool // verbose GLR stack tracing
-	ambiguityProfile                 *AmbiguityProfile
-	maxConflictWidth                 int // widest N-way conflict in the parse table
-	timeoutMicros                    uint64
-	cancellationFlag                 *uint32
-	parseBudgetDepth                 int
-	parseDeadline                    time.Time
-	parseStoppedReason               ParseStopReason
-	parseRuntimeMemoryBudgetBytes    int64
-	parseRuntimeMemoryBaselineBytes  uint64
-	parseRuntimeMemoryBaselineSys    uint64
-	parseRuntimeMemoryPoll           uint64
-	parseMemoryBudgetDiag            parseMemoryBudgetDiagnostic
-	parseMemoryBudgetDiagActive      bool
-	denseLimit                       int
-	smallBase                        int
-	smallLookup                      [][]smallActionPair
-	smallTokenLookup                 [][]uint16
-	externalValidByState             [][]uint16
-	externalValidMaskByState         []uint64
-	hasExtraChainActions             bool
-	classifiedActions                []classifiedParseAction
-	reduceChainHints                 []reduceChainHint
-	reduceChainHintByState           []int
-	reduceAliasSeq                   [][]Symbol
-	aliasTargetSymbol                []bool
-	keepSameNamedAnonChildSymbol     []bool
-	sharedAnonymousTokenSymbol       []bool
-	reduceHasFields                  []bool
-	reduceFieldPlans                 []reduceFieldPlan
-	fieldIDScratch                   []FieldID
-	fieldInheritedScratch            []bool
-	fieldConflictedScratch           []bool
-	reduceScratch                    *reduceBuildScratch
+	leafInternByLang                   bool
+	forceRawSpanTable                  []bool
+	spanExtendingInvisibleSymbols      []bool
+	nonSpanExtendingInvisibleSymbols   []bool
+	aliasPreservedWrapperSymbols       []bool
+	included                           []Range
+	logger                             ParserLogger
+	glrTrace                           bool // verbose GLR stack tracing
+	ambiguityProfile                   *AmbiguityProfile
+	maxConflictWidth                   int // widest N-way conflict in the parse table
+	timeoutMicros                      uint64
+	cancellationFlag                   *uint32
+	parseBudgetDepth                   int
+	parseDeadline                      time.Time
+	parseStoppedReason                 ParseStopReason
+	parseRuntimeMemoryBudgetBytes      int64
+	parseRuntimeMemoryBaselineBytes    uint64
+	parseRuntimeMemoryBaselineSys      uint64
+	parseRuntimeMemoryPoll             uint64
+	parseRuntimeMemoryVolumeAtPoll     uint64
+	parseRuntimeMemoryHardCeilingBytes int64
+	parseMemoryBudgetDiag              parseMemoryBudgetDiagnostic
+	parseMemoryBudgetDiagActive        bool
+	denseLimit                         int
+	smallBase                          int
+	smallLookup                        [][]smallActionPair
+	smallTokenLookup                   [][]uint16
+	externalValidByState               [][]uint16
+	externalValidMaskByState           []uint64
+	hasExtraChainActions               bool
+	classifiedActions                  []classifiedParseAction
+	reduceChainHints                   []reduceChainHint
+	reduceChainHintByState             []int
+	reduceAliasSeq                     [][]Symbol
+	aliasTargetSymbol                  []bool
+	keepSameNamedAnonChildSymbol       []bool
+	sharedAnonymousTokenSymbol         []bool
+	reduceHasFields                    []bool
+	reduceFieldPlans                   []reduceFieldPlan
+	fieldIDScratch                     []FieldID
+	fieldInheritedScratch              []bool
+	fieldConflictedScratch             []bool
+	reduceScratch                      *reduceBuildScratch
 	// mergeScratch points at the active parse's scratch.merge for the duration
 	// of parseInternal (set alongside reduceScratch, cleared on return). It lets
 	// dispatch-time helpers that only carry *Parser — tryGSSMainMergeForParser
@@ -1442,6 +1444,8 @@ func resetSnippetParser(parser *Parser) {
 	parser.parseRuntimeMemoryBaselineBytes = 0
 	parser.parseRuntimeMemoryBaselineSys = 0
 	parser.parseRuntimeMemoryPoll = 0
+	parser.parseRuntimeMemoryVolumeAtPoll = 0
+	parser.parseRuntimeMemoryHardCeilingBytes = 0
 	parser.parseMemoryBudgetDiag = parseMemoryBudgetDiagnostic{}
 	parser.parseMemoryBudgetDiagActive = false
 	// Release *Node refs so the arenas from the last incremental parse can be
@@ -3906,6 +3910,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	arena.finalChildRefs = p.finalChildRefs
 	arena.audit = nil
 	scratch.merge.arena = arena
+	scratch.merge.parser = p
 	if scratch.audit.enabled || scratch.audit.equivEnabled {
 		scratch.merge.audit = &scratch.audit
 	}
@@ -6304,6 +6309,15 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 		*glrMergeNanos += time.Since(mergeStart).Nanoseconds()
 	} else {
 		result.stacks = mergeStacksWithScratch(stacks, &scratch.merge)
+	}
+	// The large-cap merge path (mergeStacksWithScratchLargeCap) polls the
+	// runtime memory budget itself at a coarse comparison stride, because its
+	// O(survivors^2) grind can allocate multiple GB without returning to any
+	// other poll site. Honor a stop it detected before doing anything further
+	// with the (possibly partial) merge result.
+	if scratch.merge.mergeBudgetStopReason == ParseStopMemoryBudget {
+		result.stop(scratch.merge.mergeBudgetStopReason, false)
+		return result
 	}
 	if p.glrTrace {
 		p.traceCRecoverPrepareStacks("post-merge", result.stacks)

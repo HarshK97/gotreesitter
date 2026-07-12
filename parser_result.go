@@ -155,11 +155,22 @@ func (p *Parser) resultMaterializationStopReason(arena *nodeArena) ParseStopReas
 		return p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceArena)
 	}
 	if p != nil {
-		if reason := p.runtimeMemoryBudgetStopReason(); reason == ParseStopMemoryBudget {
+		if reason := p.runtimeMemoryBudgetStopReason(arenaAllocatedVolume(arena)); reason == ParseStopMemoryBudget {
 			return reason
 		}
 	}
 	return ParseStopNone
+}
+
+// arenaAllocatedVolume returns the arena's cheap, already-tracked allocated-bytes
+// counter as the volume signal for the runtime memory poll's volume-triggered
+// bypass (see runtimeMemoryBudgetStopReason). It costs no syscalls: allocatedBytes
+// is updated incrementally at every arena materialization boundary.
+func arenaAllocatedVolume(arena *nodeArena) uint64 {
+	if arena == nil || arena.allocatedBytes <= 0 {
+		return 0
+	}
+	return uint64(arena.allocatedBytes)
 }
 
 func resultMaterializationShouldStop(reason ParseStopReason) bool {

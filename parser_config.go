@@ -8,30 +8,32 @@ import (
 )
 
 var (
-	parseNodeLimitScaleOnce    sync.Once
-	parseNodeLimitScale        int
-	parseMemoryBudgetOnce      sync.Once
-	parseMemoryBudgetMBVal     int
-	parseMaxGLRStacksOnce      sync.Once
-	parseMaxGLRStacks          int
-	parseMaxMergePerKeyOnce    sync.Once
-	parseMaxMergePerKey        int
-	preMaterializationDiagOnce sync.Once
-	preMaterializationDiag     bool
-	parsePhaseTimingOnce       sync.Once
-	parsePhaseTiming           bool
-	parseReduceTimingOnce      sync.Once
-	parseReduceTiming          bool
-	parseActionTimingOnce      sync.Once
-	parseActionTiming          bool
-	parseReduceChainHintsOnce  sync.Once
-	parseReduceChainHints      bool
-	parseTSLazyCompatOnce      sync.Once
-	parseTSLazyCompat          bool
-	parseEagerDefaultOnce      sync.Once
-	parseEagerDefault          bool
-	parseEagerDefaultDebugOnce sync.Once
-	parseEagerDefaultDebug     bool
+	parseNodeLimitScaleOnce     sync.Once
+	parseNodeLimitScale         int
+	parseMemoryBudgetOnce       sync.Once
+	parseMemoryBudgetMBVal      int
+	parseMemoryHardCeilingOnce  sync.Once
+	parseMemoryHardCeilingMBVal int
+	parseMaxGLRStacksOnce       sync.Once
+	parseMaxGLRStacks           int
+	parseMaxMergePerKeyOnce     sync.Once
+	parseMaxMergePerKey         int
+	preMaterializationDiagOnce  sync.Once
+	preMaterializationDiag      bool
+	parsePhaseTimingOnce        sync.Once
+	parsePhaseTiming            bool
+	parseReduceTimingOnce       sync.Once
+	parseReduceTiming           bool
+	parseActionTimingOnce       sync.Once
+	parseActionTiming           bool
+	parseReduceChainHintsOnce   sync.Once
+	parseReduceChainHints       bool
+	parseTSLazyCompatOnce       sync.Once
+	parseTSLazyCompat           bool
+	parseEagerDefaultOnce       sync.Once
+	parseEagerDefault           bool
+	parseEagerDefaultDebugOnce  sync.Once
+	parseEagerDefaultDebug      bool
 )
 
 // ResetParseEnvConfigCacheForTests clears memoized parser env config.
@@ -43,6 +45,8 @@ func ResetParseEnvConfigCacheForTests() {
 	parseNodeLimitScale = 0
 	parseMemoryBudgetOnce = sync.Once{}
 	parseMemoryBudgetMBVal = 0
+	parseMemoryHardCeilingOnce = sync.Once{}
+	parseMemoryHardCeilingMBVal = 0
 	parseMaxGLRStacksOnce = sync.Once{}
 	parseMaxGLRStacks = 0
 	parseMaxMergePerKeyOnce = sync.Once{}
@@ -315,4 +319,36 @@ func parseMemoryBudgetMB() int {
 		}
 	})
 	return parseMemoryBudgetMBVal
+}
+
+// parseMemoryHardCeilingMB returns the absolute, decoupled heap-growth stop
+// that fires regardless of the soft per-parse budget's poll-mask overshoot
+// tolerance (see the 2026-07-12 budget-containment RCA). The default (2GiB)
+// sits comfortably above the known-good Poppler JS witness completion point
+// (~1.67GiB heap growth at the default soft budget), so legitimate large
+// parses that rely on bounded overshoot to finish are unaffected; it exists
+// to catch pathological lanes (e.g. the GLR merge survivor grind) that can
+// otherwise balloon to multiple GB before any soft-budget poll site is
+// reached. Set GOT_PARSE_MEMORY_HARD_CEILING_MB=0 to disable it entirely.
+func parseMemoryHardCeilingMB() int {
+	parseMemoryHardCeilingOnce.Do(func() {
+		parseMemoryHardCeilingMBVal = 2048
+		raw := strings.TrimSpace(os.Getenv("GOT_PARSE_MEMORY_HARD_CEILING_MB"))
+		if raw == "" {
+			return
+		}
+		n, err := strconv.Atoi(raw)
+		if err == nil && n >= 0 {
+			parseMemoryHardCeilingMBVal = n
+		}
+	})
+	return parseMemoryHardCeilingMBVal
+}
+
+func parseMemoryHardCeilingBytes() int64 {
+	mb := parseMemoryHardCeilingMB()
+	if mb <= 0 {
+		return 0
+	}
+	return int64(mb) * 1024 * 1024
 }
