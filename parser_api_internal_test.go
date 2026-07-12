@@ -885,6 +885,16 @@ func TestCompleteAcceptedErrorRetrySkipRequiresCertification(t *testing.T) {
 	if got := fullParseRetryMergePerKeyOverride(tree, 128, 8); got != 0 {
 		t.Fatalf("certified complete accepted-error merge override = %d, want 0", got)
 	}
+
+	tree.language.FullParseAcceptedErrorRetryProfile.SkipCompleteMaxEntryScratchPeak = 1024
+	tree.parseRuntime.EntryScratchPeak = 1025
+	if !shouldRetryAcceptedErrorParse(tree, 128, 8) {
+		t.Fatal("accepted-error tree above the certified entry-scratch peak skipped retry")
+	}
+	tree.parseRuntime.EntryScratchPeak = 1024
+	if shouldRetryAcceptedErrorParse(tree, 128, 8) {
+		t.Fatal("accepted-error tree at the certified entry-scratch peak scheduled retry")
+	}
 }
 
 func certifiedFreshErrorNoStacksTestTree(profile bool, sourceLen int) *Tree {

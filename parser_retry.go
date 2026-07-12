@@ -1219,7 +1219,12 @@ func certifiedAcceptedErrorRetrySkipsComplete(tree *Tree, sourceLen int) bool {
 		!tree.language.FullParseAcceptedErrorRetryProfile.SkipCompleteAcceptedErrorRetry {
 		return false
 	}
+	profile := tree.language.FullParseAcceptedErrorRetryProfile
 	rt := tree.ParseRuntime()
+	if profile.SkipCompleteMaxEntryScratchPeak > 0 &&
+		rt.EntryScratchPeak > uint64(profile.SkipCompleteMaxEntryScratchPeak) {
+		return false
+	}
 	return rt.StopReason == ParseStopAccepted &&
 		!rt.Truncated &&
 		!rt.TokenSourceEOFEarly &&

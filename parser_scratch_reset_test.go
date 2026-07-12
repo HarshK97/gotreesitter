@@ -30,8 +30,14 @@ func TestGLREntryScratchResetClearsReservedWrittenRange(t *testing.T) {
 	node := &Node{symbol: 1}
 	entries = entries[:cap(entries)]
 	entries[len(entries)-1] = newStackEntryNode(7, node)
+	if got := scratch.peakEntriesUsed(); got != 8 {
+		t.Fatalf("peak entries before reset = %d, want 8", got)
+	}
 
 	scratch.reset()
+	if got := scratch.peakEntriesUsed(); got != 0 {
+		t.Fatalf("peak entries after reset = %d, want 0", got)
+	}
 	if len(scratch.slabs) == 0 {
 		t.Fatal("expected retained entry slab")
 	}

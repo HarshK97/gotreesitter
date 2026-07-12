@@ -821,6 +821,7 @@ type ParseRuntime struct {
 	ScratchBytesAllocated                         int64
 	ScratchBaselineBytes                          int64
 	EntryScratchBytesAllocated                    int64
+	EntryScratchPeak                              uint64
 	GSSBytesAllocated                             int64
 	GSSBaselineBytes                              int64
 	GSSSlabCount                                  int

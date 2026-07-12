@@ -292,6 +292,9 @@ type FullParseAcceptedErrorRetryProfile struct {
 	InitialStackCeiling            uint16
 	SkipCompleteAcceptedErrorRetry bool
 	FreshErrorNoStacksMaxPasses    uint8
+	// SkipCompleteMaxEntryScratchPeak limits the complete-tree skip to a
+	// certified peak number of live GLR scratch entries. Zero is unbounded.
+	SkipCompleteMaxEntryScratchPeak uint32
 }
 
 // Language holds all data needed to parse a specific language.

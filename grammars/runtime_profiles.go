@@ -50,6 +50,17 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		blobSHA256:                    mustRuntimeProfileSHA256("cde4a67dc6af6e1232dbbd1eab8618478d1d73727020e8a8002542390a452d37"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
 	},
+	// Swift's low-pressure accepted-error parses select the same tree across
+	// the retry ladder. High-pressure parses still benefit from the first
+	// ladder, while repeating that ladder for the external scanner does not.
+	"swift": {
+		blobSHA256:                    mustRuntimeProfileSHA256("3837a017a16785dbd8daa9661dbd5688393f2c72cf18b568a7957bd35f2cac6d"),
+		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
+		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
+			SkipCompleteAcceptedErrorRetry:  true,
+			SkipCompleteMaxEntryScratchPeak: 3 * 64 * 1024,
+		},
+	},
 	// Large ASM accepted-error parses improve during the same-stack merge
 	// retry, but later widened-stack passes do not advance the selected tree.
 	// Keep that first retry while avoiding the redundant wider passes.
