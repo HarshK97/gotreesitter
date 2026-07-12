@@ -7,6 +7,20 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-07-12
+
+Containment and canonical-parse-lever release. Memory-budget enforcement is
+now layered (volume-triggered polling, in-merge checks, and an absolute hard
+ceiling) so runaway parses stop instead of ballooning, while certified
+bounded-overshoot witnesses still complete. Two independent hot-path levers
+land together: single-stack raw-shape elision and supertype hidden-choice
+collapse. Combined same-host receipt on the canonical Go workload: full
+parse 12.25 ms to 10.91 ms — 2.14x to **1.89x** the C runtime measured in
+the same session — with allocations unchanged (9 per full parse, zero on
+both incremental lanes). The compat tier continues shrinking, the field-map
+generation ceiling is lifted (Bash and Dart now carry real-corpus floor
+rows), and parity floors are reproducible against lock-pinned corpora.
+
 ### Added
 
 - Memory-budget containment is now layered: volume-triggered polling

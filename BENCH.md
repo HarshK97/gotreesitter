@@ -56,6 +56,14 @@ the allocation counts — 9 allocs/op for a fully materialized parse, zero for
 both incremental lanes — and the materialization attribution: full minus
 core ≈ 3.5 ms ≈ 29% of full-parse time on this host.
 
+### v0.27.0 combined receipt
+
+Same host, same pinned core, C baseline re-measured in the same session
+(5.756 ms): full parse median 10.907 ms = **1.895x C** (from 2.142x at the
+prior receipt — single-stack raw-shape elision plus supertype hidden-choice
+collapse, stacked), 9 allocs/op; one-byte edit 1.95 µs and no-edit reparse
+9.8 ns, both zero-alloc.
+
 ### Same-host C calibration (what makes wall-clock comparable)
 
 The C baselines (`BenchmarkCTreeSitterGoParse*`, via the go-tree-sitter cgo
