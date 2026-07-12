@@ -3423,7 +3423,7 @@ func setGSSMainLink(n *gssNode, i int, prev *gssNode, entry stackEntry) {
 		n.entry = entry
 		return
 	}
-	n.extraLinks[i-1] = gssMainLink{prev: prev, entry: entry}
+	n.setExtraLink(i-1, gssMainLink{prev: prev, entry: entry})
 }
 
 func gssMainAddLink(n *gssNode, prev *gssNode, entry stackEntry) bool {
@@ -3896,7 +3896,7 @@ func gssMainAddLinkSeenMutate(scratch *glrMergeScratch, n *gssNode, prev *gssNod
 		}
 		return false
 	}
-	n.extraLinks = append(n.extraLinks, gssMainLink{prev: prev, entry: entry})
+	n.appendExtraLink(gssMainLink{prev: prev, entry: entry})
 	n.hash = 0
 	return true
 }

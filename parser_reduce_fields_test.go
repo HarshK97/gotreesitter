@@ -1340,7 +1340,7 @@ func TestBuildResultFromGLRExpandsPackedGSSAlternateForFinalChoice(t *testing.T)
 	var scratch gssScratch
 	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
 	head := scratch.allocNode(newStackEntryNode(2, inlineErr), base, 2)
-	head.extraLinks = append(head.extraLinks, gssMainLink{
+	head.appendExtraLink(gssMainLink{
 		prev:  base,
 		entry: newStackEntryNode(2, good),
 	})
@@ -1376,7 +1376,7 @@ func TestBuildResultFromGLRExpandsNestedPackedGSSAlternate(t *testing.T) {
 	var scratch gssScratch
 	base := scratch.allocNode(stackEntry{state: 1}, nil, 1)
 	packedBelowHead := scratch.allocNode(newStackEntryNode(2, inlineErr), base, 2)
-	packedBelowHead.extraLinks = append(packedBelowHead.extraLinks, gssMainLink{
+	packedBelowHead.appendExtraLink(gssMainLink{
 		prev:  base,
 		entry: newStackEntryNode(2, good),
 	})

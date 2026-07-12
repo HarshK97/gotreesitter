@@ -5,6 +5,24 @@ import (
 	"unsafe"
 )
 
+func gssNodeWithExtraLinks(node gssNode, links ...gssMainLink) *gssNode {
+	n := &node
+	for _, link := range links {
+		n.appendExtraLink(link)
+	}
+	return n
+}
+
+func TestGSSNodeLayoutSizeBudget(t *testing.T) {
+	want := uintptr(64)
+	if unsafe.Sizeof(uintptr(0)) == 4 {
+		want = 52
+	}
+	if got := unsafe.Sizeof(gssNode{}); got != want {
+		t.Fatalf("gssNode size = %d bytes, want %d", got, want)
+	}
+}
+
 func TestGSSStackPushCloneAndTruncate(t *testing.T) {
 	var scratch gssScratch
 	base := newGSSStack(1, &scratch)
@@ -221,7 +239,7 @@ func TestGSSMainAddLinkAtCapRejectsUnsafeEquivalentReplacement(t *testing.T) {
 		depth: 2,
 	}
 	for i := 1; i < maxMainLinkCount; i++ {
-		head.extraLinks = append(head.extraLinks, gssMainLink{
+		head.appendExtraLink(gssMainLink{
 			prev:  &gssNode{entry: stackEntry{state: StateID(100 + i)}, depth: 1},
 			entry: newStackEntryNode(10, &Node{symbol: 20, startByte: 1, endByte: 2, flags: nodeFlagNamed, dynamicPrecedence: int32(i + 1)}),
 		})
@@ -265,7 +283,7 @@ func TestGSSMainAddLinkAtCapReplacesEquivalentSamePredecessorWithHigherDynamic(t
 		depth: 2,
 	}
 	for i := 1; i < maxMainLinkCount; i++ {
-		head.extraLinks = append(head.extraLinks, gssMainLink{
+		head.appendExtraLink(gssMainLink{
 			prev:  &gssNode{entry: stackEntry{state: StateID(100 + i)}, depth: 1},
 			entry: newStackEntryNode(10, &Node{symbol: Symbol(20 + i), startByte: 1, endByte: 2, flags: nodeFlagNamed, dynamicPrecedence: int32(i + 1)}),
 		})
@@ -302,15 +320,11 @@ func TestGSSMainAddLinkMergesNestedPackedPredecessorLinks(t *testing.T) {
 		return newStackEntryNode(3, &Node{symbol: 31, startByte: 1, endByte: 2, flags: nodeFlagNamed})
 	}
 
-	packedPred := &gssNode{
+	packedPred := gssNodeWithExtraLinks(gssNode{
 		entry: left(),
 		prev:  baseA,
 		depth: 2,
-		extraLinks: []gssMainLink{{
-			prev:  baseB,
-			entry: left(),
-		}},
-	}
+	}, gssMainLink{prev: baseB, entry: left()})
 	head := &gssNode{
 		entry: right(),
 		prev:  packedPred,
@@ -373,12 +387,12 @@ func TestGSSMainMergeFailureLeavesIncumbentPredecessorUnchanged(t *testing.T) {
 		depth: 2,
 	}
 	for i := 1; i < maxMainLinkCount-1; i++ {
-		w.extraLinks = append(w.extraLinks, gssMainLink{
+		w.appendExtraLink(gssMainLink{
 			prev:  base(StateID(1000 + i)),
 			entry: branchEntry(Symbol(100 + i)),
 		})
 	}
-	w.extraLinks = append(w.extraLinks, gssMainLink{
+	w.appendExtraLink(gssMainLink{
 		prev:  base(1999),
 		entry: branchEntry(199),
 	})
@@ -396,24 +410,16 @@ func TestGSSMainMergeFailureLeavesIncumbentPredecessorUnchanged(t *testing.T) {
 		prev:  base(3000),
 		depth: 2,
 	}
-	incumbentHead := &gssNode{
+	incumbentHead := gssNodeWithExtraLinks(gssNode{
 		entry: topEntry(1),
 		prev:  w,
 		depth: 3,
-		extraLinks: []gssMainLink{{
-			prev:  x,
-			entry: topEntry(2),
-		}},
-	}
-	incomingHead := &gssNode{
+	}, gssMainLink{prev: x, entry: topEntry(2)})
+	incomingHead := gssNodeWithExtraLinks(gssNode{
 		entry: topEntry(1),
 		prev:  y,
 		depth: 3,
-		extraLinks: []gssMainLink{{
-			prev:  x,
-			entry: topEntry(1),
-		}},
-	}
+	}, gssMainLink{prev: x, entry: topEntry(1)})
 	beforePred := snapshotGSSMainLinks(w)
 	beforeX := snapshotGSSMainLinks(x)
 	beforeHead := snapshotGSSMainLinks(incumbentHead)
@@ -448,7 +454,7 @@ func TestGSSMainCanMergeNodesEnumeratesVirtualSourceLinks(t *testing.T) {
 		depth: 2,
 	}
 	for i := 1; i < maxMainLinkCount; i++ {
-		dest.extraLinks = append(dest.extraLinks, gssMainLink{
+		dest.appendExtraLink(gssMainLink{
 			prev:  base(StateID(200 + i)),
 			entry: entry(Symbol(20 + i)),
 		})
@@ -518,7 +524,7 @@ func TestGSSMainPreflightCachedReachInvalidatesFalseBeforeCycleCheck(t *testing.
 
 func TestGSSMainPreflightCleanZeroCacheInvalidatesAfterVirtualErrorLink(t *testing.T) {
 	base := func(state StateID, prev *gssNode, depth int) *gssNode {
-		return &gssNode{entry: stackEntry{state: state}, prev: prev, depth: depth}
+		return &gssNode{entry: stackEntry{state: state}, prev: prev, depth: uint32(depth)}
 	}
 
 	tail := base(3, nil, 0)
@@ -565,17 +571,13 @@ func TestGSSMainMergeRejectsVirtualCycleWithoutPartialMutation(t *testing.T) {
 		depth: 2,
 	}
 
-	incumbentHead := &gssNode{
+	incumbentHead := gssNodeWithExtraLinks(gssNode{
 		entry: topEntry(20),
 		prev:  a,
 		depth: 3,
-		extraLinks: []gssMainLink{{
-			prev:  x,
-			entry: topEntry(21),
-		}},
-	}
+	}, gssMainLink{prev: x, entry: topEntry(21)})
 	for i := incumbentHead.linkCount(); i < maxMainLinkCount; i++ {
-		incumbentHead.extraLinks = append(incumbentHead.extraLinks, gssMainLink{
+		incumbentHead.appendExtraLink(gssMainLink{
 			prev:  base(StateID(200 + i)),
 			entry: topEntry(Symbol(30 + i)),
 		})
@@ -584,15 +586,11 @@ func TestGSSMainMergeRejectsVirtualCycleWithoutPartialMutation(t *testing.T) {
 		t.Fatalf("incumbent head link count = %d, want %d", got, maxMainLinkCount)
 	}
 
-	candidate := &gssNode{
+	candidate := gssNodeWithExtraLinks(gssNode{
 		entry: topEntry(21),
 		prev:  y,
 		depth: 3,
-		extraLinks: []gssMainLink{{
-			prev:  x,
-			entry: topEntry(20),
-		}},
-	}
+	}, gssMainLink{prev: x, entry: topEntry(20)})
 
 	beforeHead := snapshotGSSMainLinks(incumbentHead)
 	beforeX := snapshotGSSMainLinks(x)
@@ -623,7 +621,7 @@ func TestGSSMainEquivalentReplacementFailureLeavesWorstPredecessorUnchanged(t *t
 		depth: 2,
 	}
 	for i := 1; i < maxMainLinkCount-1; i++ {
-		worstPrev.extraLinks = append(worstPrev.extraLinks, gssMainLink{
+		worstPrev.appendExtraLink(gssMainLink{
 			prev:  base(StateID(3000 + i)),
 			entry: branchEntry(Symbol(300 + i)),
 		})
@@ -634,21 +632,17 @@ func TestGSSMainEquivalentReplacementFailureLeavesWorstPredecessorUnchanged(t *t
 
 	head := &gssNode{entry: equivEntry(1), prev: worstPrev, depth: 3}
 	for i := 1; i < maxMainLinkCount; i++ {
-		head.extraLinks = append(head.extraLinks, gssMainLink{
+		head.appendExtraLink(gssMainLink{
 			prev:  base(StateID(4000 + i)),
 			entry: equivEntry(int32(10 + i)),
 		})
 	}
 
-	incomingPrev := &gssNode{
+	incomingPrev := gssNodeWithExtraLinks(gssNode{
 		entry: branchEntry(400),
 		prev:  base(5000),
 		depth: 2,
-		extraLinks: []gssMainLink{{
-			prev:  base(5001),
-			entry: branchEntry(401),
-		}},
-	}
+	}, gssMainLink{prev: base(5001), entry: branchEntry(401)})
 	beforeWorst := snapshotGSSMainLinks(worstPrev)
 	beforeHead := snapshotGSSMainLinks(head)
 
@@ -845,7 +839,7 @@ func TestGLRStackDemoteLinearGSSRejectsPackedLinks(t *testing.T) {
 	var scratch gssScratch
 	stack := glrStack{gss: buildGSSStack([]stackEntry{{state: 1}, {state: 2}, {state: 3}}, &scratch)}
 	packed := stack.gss.head.prev
-	packed.extraLinks = append(packed.extraLinks, gssMainLink{entry: stackEntry{state: 4}})
+	packed.appendExtraLink(gssMainLink{entry: stackEntry{state: 4}})
 	originalHead := stack.gss.head
 
 	if stack.demoteLinearGSS(nil) {
@@ -948,7 +942,7 @@ func TestGSSScratchOverflowSlabGrowthBounded(t *testing.T) {
 	total := scratch.initialCap + ceiling*3
 	var prev *gssNode
 	for depth := 1; depth <= total; depth++ {
-		prev = scratch.allocNode(stackEntry{state: 1}, prev, depth)
+		prev = scratch.allocNode(stackEntry{state: 1}, prev, uint32(depth))
 	}
 
 	if len(scratch.slabs) < 3 {

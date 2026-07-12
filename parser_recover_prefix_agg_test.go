@@ -56,8 +56,8 @@ func TestMetadataVersionBumpKeepsRecoveryPrefixAggregate(t *testing.T) {
 		t.Fatalf("initial aggregate = (%d, %d), want (0, 1)", cost, visible)
 	}
 	gen := gssPrefixAggGen.Load()
-	if head.aggGen != gen || head.aggVisGen != gen {
-		t.Fatalf("initial cache generation = (%d, %d), want %d", head.aggGen, head.aggVisGen, gen)
+	if head.aggGen != gen || !head.aggVisValid {
+		t.Fatalf("initial cache generation = %d valid=%v, want %d valid", head.aggGen, head.aggVisValid, gen)
 	}
 
 	payload.parseState = 2
@@ -84,6 +84,35 @@ func TestMetadataVersionBumpKeepsRecoveryPrefixAggregate(t *testing.T) {
 	wantCost := uint32(cErrCostPerMissingTree + cErrCostPerRecovery)
 	if cost != wantCost || visible != 1 {
 		t.Fatalf("post-missing aggregate = (%d, %d), want (%d, 1)", cost, visible, wantCost)
+	}
+}
+
+func TestMergeCostFillInvalidatesAndParserRefillsVisibility(t *testing.T) {
+	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
+	p := &Parser{language: lang, cNodeMemo: make(map[*Node]cNodeMemoEntry)}
+	base := &gssNode{entry: newStackEntryNode(1, &Node{symbol: 1, equivVersion: 1}), depth: 1}
+	head := &gssNode{entry: newStackEntryNode(2, &Node{symbol: 1, equivVersion: 1}), prev: base, depth: 2}
+
+	if cost, visible := p.cStackPrefixAgg(head); cost != 0 || visible != 2 {
+		t.Fatalf("initial aggregate = (%d, %d), want (0, 2)", cost, visible)
+	}
+	if !base.aggVisValid || !head.aggVisValid {
+		t.Fatal("parser aggregate did not validate visibility")
+	}
+
+	gssPrefixAggGen.Add(1)
+	merge := glrMergeScratch{language: lang}
+	if cost := cStackPrefixCostForMerge(&merge, lang, head); cost != 0 {
+		t.Fatalf("merge-side cost = %d, want 0", cost)
+	}
+	if base.aggVisValid || head.aggVisValid {
+		t.Fatal("cost-only refill left stale visibility valid")
+	}
+	if cost, visible := p.cStackPrefixAgg(head); cost != 0 || visible != 2 {
+		t.Fatalf("parser refill = (%d, %d), want (0, 2)", cost, visible)
+	}
+	if !base.aggVisValid || !head.aggVisValid {
+		t.Fatal("parser refill did not restore visibility validity")
 	}
 }
 
@@ -163,13 +192,10 @@ func TestExpandedGSSResultPathsKeepIndependentRecoveryAggregates(t *testing.T) {
 		endByte:      1,
 		children:     []*Node{errChild},
 	}
-	head := &gssNode{
+	head := gssNodeWithExtraLinks(gssNode{
 		entry: newStackEntryNode(1, plain),
 		depth: 1,
-		extraLinks: []gssMainLink{{
-			entry: newStackEntryNode(1, errNode),
-		}},
-	}
+	}, gssMainLink{entry: newStackEntryNode(1, errNode)})
 	source := glrStack{
 		gss:  gssStack{head: head},
 		cRec: &cRecoverState{},
@@ -195,11 +221,11 @@ func TestSetGSSMainLinkInvalidatesOnlyChangedRecoveryContribution(t *testing.T) 
 	prev := &gssNode{depth: 1}
 	payload := &Node{symbol: 1, equivVersion: 1}
 	head := &gssNode{
-		prev:      prev,
-		entry:     newStackEntryNode(1, payload),
-		depth:     2,
-		aggGen:    gssPrefixAggGen.Load(),
-		aggVisGen: gssPrefixAggGen.Load(),
+		prev:        prev,
+		entry:       newStackEntryNode(1, payload),
+		depth:       2,
+		aggGen:      gssPrefixAggGen.Load(),
+		aggVisValid: true,
 	}
 
 	gen := gssPrefixAggGen.Load()
