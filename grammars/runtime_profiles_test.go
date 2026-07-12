@@ -36,7 +36,7 @@ func TestBuiltinExternalScannerRetryProfilesAttach(t *testing.T) {
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	// 19 = the prior 17 plus gomod and c: their hardcoded compat-tier
 	// repetition-conflict helpers were retired in favor of certified
-	// ConflictPolicies rows here (wave10/compat-t1c). dot's helper was
+	// ConflictPolicies rows here. dot's helper was
 	// retired outright, not migrated (see the "NOTE on dot" comment above
 	// the gomod entry), so it does not add a map entry.
 	if got, want := len(builtinLanguageRuntimeProfiles), 19; got != want {
@@ -103,7 +103,7 @@ func TestBuiltinHaskellConflictPolicyRequiresCertifiedBlobAndAttachesOnce(t *tes
 // TestBuiltinDartConflictPoliciesAttach covers the three certified dart
 // repeat-boundary rows (enum bodies, extension bodies, top-level declaration
 // lists) that replaced the hardcoded dartRepetitionShiftConflictChoice helper
-// (wave10/compat-t1c).
+// through the generic policy path.
 func TestBuiltinDartConflictPoliciesAttach(t *testing.T) {
 	PurgeEmbeddedLanguageCache()
 	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
@@ -117,7 +117,8 @@ func TestBuiltinDartConflictPoliciesAttach(t *testing.T) {
 			continue
 		}
 		gotStates[policy.State] = true
-		if policy.Kind != gotreesitter.ConflictPolicyRepetitionShift ||
+		if policy.Lookahead != gotreesitter.ConflictPolicyAnyLookahead ||
+			policy.Kind != gotreesitter.ConflictPolicyRepetitionShift ||
 			len(policy.ReduceSymbols) != 1 || policy.ReduceSymbols[0] != wantReduce {
 			t.Fatalf("dart conflict policy at state %d = %+v, want repetition-shift over reduce symbol %d", policy.State, policy, wantReduce)
 		}
@@ -127,14 +128,14 @@ func TestBuiltinDartConflictPoliciesAttach(t *testing.T) {
 			t.Fatalf("dart conflict policy for state %d was not attached", state)
 		}
 	}
-	if got, want := len(lang.ConflictPolicies), 54; got != want {
+	if got, want := len(lang.ConflictPolicies), 3; got != want {
 		t.Fatalf("dart ConflictPolicies = %d rows, want %d", got, want)
 	}
 }
 
 // TestBuiltinGomodConflictPoliciesAttach covers the certified go.mod
 // require-list rows that replaced gomodRepetitionShiftConflictChoice
-// (wave10/compat-t1c).
+// through the generic policy path.
 func TestBuiltinGomodConflictPoliciesAttach(t *testing.T) {
 	PurgeEmbeddedLanguageCache()
 	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
@@ -144,6 +145,9 @@ func TestBuiltinGomodConflictPoliciesAttach(t *testing.T) {
 	for _, policy := range lang.ConflictPolicies {
 		if policy.Kind != gotreesitter.ConflictPolicyRepetitionShift {
 			t.Fatalf("gomod conflict policy = %+v, want repetition-shift kind", policy)
+		}
+		if policy.Lookahead != gotreesitter.ConflictPolicyAnyLookahead {
+			t.Fatalf("gomod conflict policy = %+v, want wildcard lookahead", policy)
 		}
 		switch policy.State {
 		case 3:
@@ -160,11 +164,11 @@ func TestBuiltinGomodConflictPoliciesAttach(t *testing.T) {
 			t.Fatalf("unexpected gomod conflict policy state %d", policy.State)
 		}
 	}
-	if state3 != 9 {
-		t.Fatalf("gomod state-3 conflict policies = %d, want 9", state3)
+	if state3 != 1 {
+		t.Fatalf("gomod state-3 conflict policies = %d, want 1", state3)
 	}
-	if state37 != 3 {
-		t.Fatalf("gomod state-37 conflict policies = %d, want 3", state37)
+	if state37 != 1 {
+		t.Fatalf("gomod state-37 conflict policies = %d, want 1", state37)
 	}
 }
 
@@ -188,7 +192,7 @@ func TestBuiltinDotHasNoConflictPolicies(t *testing.T) {
 // translation_unit_repeat1/preproc_if_repeat1 fold, the one profile using the
 // ConflictPolicyAnyState/AnyLookahead wildcards because the C-faithful rule
 // is scoped by reduce-symbol identity alone (thousands of real table rows).
-// Replaces cRepetitionShiftConflictChoice (wave10/compat-t1c).
+// Replaces cRepetitionShiftConflictChoice.
 func TestBuiltinCConflictPolicyAttachesWildcard(t *testing.T) {
 	PurgeEmbeddedLanguageCache()
 	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })

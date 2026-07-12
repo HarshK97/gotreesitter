@@ -261,13 +261,12 @@ type ConflictPolicy struct {
 }
 
 // ConflictPolicyAnyState and ConflictPolicyAnyLookahead are sentinel State/
-// Lookahead values matching every state or every lookahead symbol, instead of
-// one exact table row. For certified engine-wide repetition folds whose
-// C-faithful rule is scoped by reduce-symbol identity alone (not table
-// position): enumerating every reachable row for such a rule can run into
-// the thousands, defeating a per-row certified table. Only hand-certified,
-// blob-SHA-pinned profiles (grammars/runtime_profiles.go) use these
-// sentinels, so a wildcard policy never attaches to an uncertified blob.
+// Lookahead values matching every state or every lookahead symbol instead of
+// one exact table row. They support policies scoped by state and/or reduce
+// symbol identity when enumerating every reachable row would add lookup cost
+// without strengthening the action-shape check. Built-in wildcard policies
+// are hand-certified and blob-SHA-pinned; callers supplying ConflictPolicies
+// directly are responsible for scoping their own wildcard policies safely.
 const (
 	ConflictPolicyAnyState     StateID = ^StateID(0)
 	ConflictPolicyAnyLookahead Symbol  = ^Symbol(0)

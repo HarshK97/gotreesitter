@@ -235,7 +235,7 @@ func TestDeterministicConflictChoiceUsesCRepetitionFoldOnRecoveryLineages(t *tes
 }
 
 // Dart's repeat-boundary states are now certified ConflictPolicy rows
-// (grammars/runtime_profiles.go, wave10/compat-t1c) instead of the retired
+// (grammars/runtime_profiles.go) instead of the retired
 // dartRepetitionShiftConflictChoice helper; these exercise the same shapes
 // through the generic data-driven path.
 func TestDartConflictPolicyRepetitionShiftCoversHotRepeats(t *testing.T) {

@@ -6,7 +6,7 @@ import "testing"
 
 // TestParityCTopLevelDeclAmbiguity is the adversarial safety gate for the C
 // translation_unit_repeat1 fork collapse (the certified "c" ConflictPolicy row
-// in grammars/runtime_profiles.go, wave10/compat-t1c; previously parser.go
+// in grammars/runtime_profiles.go; previously parser.go
 // cRepetitionShiftConflictChoice, state 43). Collapsing the top-level
 // list-continuation fork must NOT change how the deeper
 // declaration-vs-expression-statement ambiguity resolves — C's
@@ -73,7 +73,7 @@ func TestParityCTopLevelDeclAmbiguity(t *testing.T) {
 
 // TestParityCPreprocConditional is the adversarial safety gate for collapsing
 // the preproc_if_repeat1 fork (the certified "c" ConflictPolicy row in
-// grammars/runtime_profiles.go, wave10/compat-t1c; previously parser.go
+// grammars/runtime_profiles.go; previously parser.go
 // cRepetitionShiftConflictChoice). A
 // preprocessor conditional body continues on every content token and closes
 // only on #endif/#elif/#else (which carry no continuation shift), so collapsing

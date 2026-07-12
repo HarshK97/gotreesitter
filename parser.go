@@ -6703,7 +6703,7 @@ func (p *Parser) forestResolveConflict(state StateID, tok Token, actions []Parse
 	// stack. Reviving the old helper's repetition-shift preference as a
 	// certified policy instead grew the stack O(n) with statement count for
 	// no behavioral benefit (see the "NOTE on dot" comment in
-	// grammars/runtime_profiles.go, wave10/compat-t1c).
+	// grammars/runtime_profiles.go).
 	if chosen, ok := conflictPolicyChoice(p.language, tok, state, actions); ok {
 		return p.forestSingletonActions(chosen)
 	}

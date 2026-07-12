@@ -371,7 +371,7 @@ func TestForestResolveConflictGeneratedPolicyMissKeepsActions(t *testing.T) {
 // forestResolveConflict's generic ConflictPolicy check using a synthetic
 // state/lookahead-scoped row shaped like dot's retired
 // dotRepetitionShiftConflictChoice helper. dot itself ships no such policy
-// (see grammars/runtime_profiles.go's "NOTE on dot", wave10/compat-t1c); this
+// (see grammars/runtime_profiles.go's "NOTE on dot"); this
 // only covers the state+lookahead exact-match mechanism the helper's shape
 // would have used had it been certified.
 func TestForestResolveConflictDotLegacyUsesStateAndLookahead(t *testing.T) {

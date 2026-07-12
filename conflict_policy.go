@@ -230,8 +230,7 @@ func (p *Parser) deterministicConflictChoiceForDispatch(source []byte, s *glrSta
 		// gated off during reuse): go.mod files are small enough that reuse
 		// dispatch still benefits from folding the list continuation, and this
 		// predates the reuse gate below. See grammars/runtime_profiles.go for
-		// the certified rows (wave10/compat-t1c; previously
-		// gomodRepetitionShiftConflictChoice).
+		// the certified rows that replaced gomodRepetitionShiftConflictChoice.
 		if next, ok := conflictPolicyChoice(p.language, tok, currentState, actions); ok {
 			return next, true
 		}
@@ -270,8 +269,8 @@ func (p *Parser) deterministicConflictChoiceForDispatch(source []byte, s *glrSta
 	//
 	// dart and c are also in cRepetitionSkipOptOut (the engine-wide fold is
 	// unsafe for both — see the opt-out entries) but each still has a
-	// certified narrow subset in ConflictPolicies (grammars/runtime_profiles.go,
-	// wave10/compat-t1c), checked above by conflictPolicyChoiceForDispatch
+	// certified narrow subset in ConflictPolicies (grammars/runtime_profiles.go),
+	// checked above by conflictPolicyChoiceForDispatch
 	// before this switch is reached, INCLUDING on wreckage lineages: those
 	// rows carry no recovery gating, matching the retired
 	// dartRepetitionShiftConflictChoice / cRepetitionShiftConflictChoice
