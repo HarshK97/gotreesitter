@@ -14,6 +14,7 @@ func TestBuiltinExternalScannerRetryProfilesAttach(t *testing.T) {
 		name string
 		load func() *gotreesitter.Language
 	}{
+		{name: "c_sharp", load: CSharpLanguage},
 		{name: "dart", load: DartLanguage},
 		{name: "kotlin", load: KotlinLanguage},
 		{name: "python", load: PythonLanguage},
@@ -33,7 +34,7 @@ func TestBuiltinExternalScannerRetryProfilesAttach(t *testing.T) {
 }
 
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	if got, want := len(builtinLanguageRuntimeProfiles), 16; got != want {
+	if got, want := len(builtinLanguageRuntimeProfiles), 17; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -104,6 +105,7 @@ func TestBuiltinCompleteAcceptedErrorRetryProfilesAttach(t *testing.T) {
 	}{
 		{name: "bash", load: BashLanguage},
 		{name: "caddy", load: CaddyLanguage},
+		{name: "c_sharp", load: CSharpLanguage},
 		{name: "cpp", load: CppLanguage},
 		{name: "haxe", load: HaxeLanguage},
 		{name: "kdl", load: KdlLanguage},
@@ -121,6 +123,10 @@ func TestBuiltinCompleteAcceptedErrorRetryProfilesAttach(t *testing.T) {
 			}
 			if tt.name == "swift" && profile.SkipCompleteMaxEntryScratchPeak != 3*64*1024 {
 				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want first-growth entry-scratch ceiling", profile)
+			}
+			if tt.name == "c_sharp" && (profile.SkipCompleteMaxEntryScratchPeak != csharpAcceptedErrorRetryMaxEntryScratchPeak ||
+				profile.FreshErrorNoStacksRetryMaxStacks != csharpFreshErrorNoStacksRetryMaxStacks) {
+				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want bounded C# retry profile", profile)
 			}
 			if tt.name == "tcl" && profile.FreshErrorNoStacksMaxPasses != 1 {
 				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want one fresh no-stacks retry", profile)
@@ -191,6 +197,38 @@ func TestBuiltinExternalScannerRetryProfilesRequireCertifiedBlob(t *testing.T) {
 	}
 }
 
+func TestBuiltinCSharpRetryProfileRequiresCertifiedBlob(t *testing.T) {
+	lang := &gotreesitter.Language{ExternalScanner: CSharpExternalScanner{}}
+	if attachBuiltinLanguageRuntimeProfile("c_sharp", sha256.Sum256([]byte("uncertified")), lang) {
+		t.Fatal("uncertified C# blob reported a runtime-profile attachment")
+	}
+	if got := lang.ExternalScannerFullParseRetryPolicy; got != gotreesitter.ExternalScannerFullParseRetryDefault {
+		t.Fatalf("uncertified C# blob changed scanner retry policy to %d", got)
+	}
+	if got := lang.FullParseAcceptedErrorRetryProfile; got != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) {
+		t.Fatalf("uncertified C# blob changed retry profile to %+v", got)
+	}
+
+	blob := BlobByName("c_sharp")
+	if len(blob) == 0 {
+		t.Fatal("BlobByName(c_sharp) returned no data")
+	}
+	if !attachBuiltinLanguageRuntimeProfile("c_sharp", sha256.Sum256(blob), lang) {
+		t.Fatal("certified C# blob did not attach its runtime profile")
+	}
+	if got := lang.ExternalScannerFullParseRetryPolicy; got != gotreesitter.ExternalScannerFullParseRetrySkipRepeat {
+		t.Fatalf("certified C# scanner retry policy = %d, want skip-repeat", got)
+	}
+	want := gotreesitter.FullParseAcceptedErrorRetryProfile{
+		SkipCompleteAcceptedErrorRetry:   true,
+		SkipCompleteMaxEntryScratchPeak:  csharpAcceptedErrorRetryMaxEntryScratchPeak,
+		FreshErrorNoStacksRetryMaxStacks: csharpFreshErrorNoStacksRetryMaxStacks,
+	}
+	if got := lang.FullParseAcceptedErrorRetryProfile; got != want {
+		t.Fatalf("certified C# retry profile = %+v, want %+v", got, want)
+	}
+}
+
 func TestBuiltinBoundedAcceptedErrorRetryProfilesRequireCertifiedBlob(t *testing.T) {
 	tests := []struct {
 		name string
@@ -224,7 +262,7 @@ func TestBuiltinBoundedAcceptedErrorRetryProfilesRequireCertifiedBlob(t *testing
 }
 
 func TestBuiltinCompleteAcceptedErrorRetryProfileRequiresCertifiedBlob(t *testing.T) {
-	for _, name := range []string{"caddy", "haxe", "kdl", "odin", "rego", "scss", "swift", "tcl"} {
+	for _, name := range []string{"caddy", "c_sharp", "haxe", "kdl", "odin", "rego", "scss", "swift", "tcl"} {
 		t.Run(name, func(t *testing.T) {
 			lang := &gotreesitter.Language{Name: name}
 			if attachBuiltinLanguageRuntimeProfile(name, sha256.Sum256([]byte("uncertified")), lang) {

@@ -982,6 +982,109 @@ func TestCertifiedFreshErrorNoStacksRetryPassLimitScheduling(t *testing.T) {
 	}
 }
 
+func certifiedFreshErrorNoStacksRetryTargetTestTree(target uint16, sourceLen int) *Tree {
+	tree := certifiedFreshErrorNoStacksTestTree(false, sourceLen)
+	tree.language.FullParseAcceptedErrorRetryProfile = FullParseAcceptedErrorRetryProfile{
+		SkipCompleteAcceptedErrorRetry:   true,
+		FreshErrorNoStacksRetryMaxStacks: target,
+	}
+	return tree
+}
+
+func TestCertifiedFreshErrorNoStacksRetryMaxStacksScope(t *testing.T) {
+	const sourceLen = 128
+	eligible := certifiedFreshErrorNoStacksRetryTargetTestTree(16, sourceLen)
+	if got := certifiedFreshErrorNoStacksRetryMaxStacks(eligible, sourceLen, fullParseRetryOriginFresh); got != 16 {
+		t.Fatalf("fresh certified retry target = %d, want 16", got)
+	}
+	if got := certifiedFreshErrorNoStacksRetryMaxStacks(eligible, sourceLen, fullParseRetryOriginIncremental); got != 0 {
+		t.Fatalf("incremental certified retry target = %d, want 0", got)
+	}
+	if got := certifiedFreshErrorNoStacksRetryMaxStacks(certifiedFreshErrorNoStacksRetryTargetTestTree(0, sourceLen), sourceLen, fullParseRetryOriginFresh); got != 0 {
+		t.Fatalf("uncertified retry target = %d, want 0", got)
+	}
+	clean := certifiedFreshErrorNoStacksRetryTargetTestTree(16, sourceLen)
+	clean.root.flags = 0
+	if got := certifiedFreshErrorNoStacksRetryMaxStacks(clean, sourceLen, fullParseRetryOriginFresh); got != 0 {
+		t.Fatalf("clean no-stacks retry target = %d, want 0", got)
+	}
+	accepted := certifiedFreshErrorNoStacksRetryTargetTestTree(16, sourceLen)
+	accepted.parseRuntime.StopReason = ParseStopAccepted
+	if got := certifiedFreshErrorNoStacksRetryMaxStacks(accepted, sourceLen, fullParseRetryOriginFresh); got != 0 {
+		t.Fatalf("accepted retry target = %d, want 0", got)
+	}
+	if got := certifiedFreshErrorNoStacksRetryMaxStacks(eligible, fullParseRetryMaxSourceBytes+1, fullParseRetryOriginFresh); got != 0 {
+		t.Fatalf("oversize retry target = %d, want 0", got)
+	}
+}
+
+func TestCertifiedFreshErrorNoStacksRetryMaxStacksScheduling(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_STACKS", "")
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	t.Cleanup(ResetParseEnvConfigCacheForTests)
+
+	const sourceLen = 128
+	initial := certifiedFreshErrorNoStacksRetryTargetTestTree(16, sourceLen)
+	if got := fullParseRetryMaxStacksOverrideForOrigin(initial, sourceLen, 8, fullParseRetryOriginFresh); got != 16 {
+		t.Fatalf("fresh certified max-stacks override = %d, want 16", got)
+	}
+	if got := fullParseRetryMaxStacksOverrideForOrigin(initial, sourceLen, 16, fullParseRetryOriginFresh); got != 0 {
+		t.Fatalf("already-at-target max-stacks override = %d, want 0", got)
+	}
+	if got := fullParseRetryMaxStacksOverrideForOrigin(initial, sourceLen, 8, fullParseRetryOriginIncremental); got != fullParseRetryMaxGLRStacks {
+		t.Fatalf("incremental max-stacks override = %d, want generic %d", got, fullParseRetryMaxGLRStacks)
+	}
+
+	t.Setenv("GOT_GLR_MAX_STACKS", "12")
+	ResetParseEnvConfigCacheForTests()
+	if got := fullParseRetryMaxStacksOverrideForOrigin(initial, sourceLen, 8, fullParseRetryOriginFresh); got != 0 {
+		t.Fatalf("explicit max-stacks override scheduled certified retry target %d", got)
+	}
+	t.Setenv("GOT_GLR_MAX_STACKS", "")
+	ResetParseEnvConfigCacheForTests()
+	if got := fullParseRetryMaxStacksOverrideForOrigin(initial, sourceLen, 8, fullParseRetryOriginFresh); got != 16 {
+		t.Fatalf("reset certified max-stacks override = %d, want 16", got)
+	}
+}
+
+func TestCertifiedFreshErrorNoStacksRetryMaxStacksFlowsThroughLadder(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_STACKS", "")
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	t.Cleanup(ResetParseEnvConfigCacheForTests)
+
+	const sourceLen = 128
+	source := make([]byte, sourceLen)
+	initial := certifiedFreshErrorNoStacksRetryTargetTestTree(16, sourceLen)
+	type retryCall struct {
+		stacks int
+		merge  int
+	}
+	var calls []retryCall
+	parser := &Parser{}
+	result := parser.retryFullParse(source, 8, initial, func(maxStacks, maxMergePerKeyOverride, _ int) *Tree {
+		calls = append(calls, retryCall{stacks: maxStacks, merge: maxMergePerKeyOverride})
+		candidate := certifiedFreshErrorNoStacksRetryTargetTestTree(16, sourceLen)
+		if maxStacks == 16 {
+			candidate.root.endByte = sourceLen
+			candidate.parseRuntime.StopReason = ParseStopAccepted
+			candidate.parseRuntime.Truncated = false
+			candidate.parseRuntime.RootEndByte = sourceLen
+			candidate.parseRuntime.LastTokenEndByte = sourceLen
+			candidate.parseRuntime.LastTokenWasEOF = true
+		}
+		return candidate
+	})
+	want := []retryCall{{stacks: 8, merge: fullParseRetryMaxMergePerKey}, {stacks: 16}, {stacks: 16}}
+	if !slices.Equal(calls, want) {
+		t.Fatalf("retry calls = %+v, want %+v", calls, want)
+	}
+	if result == nil || result.ParseStopReason() != ParseStopAccepted {
+		t.Fatalf("retry result = %v, want accepted tree", result)
+	}
+}
+
 func TestJavaAcceptedErrorRetryUsesWideMergeRetry(t *testing.T) {
 	errChild := &Node{
 		symbol: errorSymbol,

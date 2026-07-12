@@ -18,6 +18,11 @@ type builtinLanguageRuntimeProfile struct {
 	conflictPolicies                   []gotreesitter.ConflictPolicy
 }
 
+const (
+	csharpAcceptedErrorRetryMaxEntryScratchPeak = 690_365
+	csharpFreshErrorNoStacksRetryMaxStacks      = 16
+)
+
 var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	// These scanner-backed grammars have certified the first retry ladder's
 	// selected accepted-error tree as authoritative. Repeating the whole ladder
@@ -25,6 +30,18 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	"dart": {
 		blobSHA256:                    mustRuntimeProfileSHA256("06bac15a9921a2e6af2810fb37ecb29a358b120e137345b9af5fb5f6c6632f59"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
+	},
+	// C#'s certified low-pressure accepted-error trees are authoritative. A
+	// fresh no-stacks parse instead benefits from a bounded cap-16 retry; the
+	// generic cap-48 ladder exceeds the large-file memory and time budgets.
+	"c_sharp": {
+		blobSHA256:                    mustRuntimeProfileSHA256("7ad425e89733339dde94e3c03b762ae478fb453b530493f5d62e1ae7537e1784"),
+		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
+		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
+			SkipCompleteAcceptedErrorRetry:   true,
+			SkipCompleteMaxEntryScratchPeak:  csharpAcceptedErrorRetryMaxEntryScratchPeak,
+			FreshErrorNoStacksRetryMaxStacks: csharpFreshErrorNoStacksRetryMaxStacks,
+		},
 	},
 	// Haxe's accepted-error retry ladder selects the same tree on every pass.
 	// Keep the first accepted result instead of running either retry ladder.
