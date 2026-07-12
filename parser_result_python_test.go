@@ -4,29 +4,6 @@ import (
 	"testing"
 )
 
-func TestPythonSourceMayContainFString(t *testing.T) {
-	tests := []struct {
-		name string
-		src  string
-		want bool
-	}{
-		{name: "plain", src: `{"key": "value"}`, want: false},
-		{name: "f single", src: `f'{x}'`, want: true},
-		{name: "f double", src: `f"{x}"`, want: true},
-		{name: "raw f", src: `rf"{x}"`, want: true},
-		{name: "f raw", src: `Fr"{x}"`, want: true},
-		{name: "ordinary raw", src: `r"{x}"`, want: false},
-		{name: "identifier suffix", src: `self"{x}"`, want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := pythonSourceMayContainFString([]byte(tt.src)); got != tt.want {
-				t.Fatalf("pythonSourceMayContainFString(%q) = %v, want %v", tt.src, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestBuildResultFromNodesCollapsesPythonTerminalIfSuffix(t *testing.T) {
 	lang := &Language{
 		Name:       "python",
@@ -416,91 +393,6 @@ func TestRepairPythonBlockPreservesOriginalEndAfterTrailingSemicolon(t *testing.
 	}
 }
 
-func TestNormalizePythonTrailingSelfCallsFoldsIntoNestedFunctionBlock(t *testing.T) {
-	lang := &Language{
-		Name: "python",
-		SymbolNames: []string{
-			"",
-			"module",
-			"block",
-			"function_definition",
-			"identifier",
-			"parameters",
-			"comment",
-			"assignment",
-			";",
-			"call",
-			"argument_list",
-		},
-	}
-	arena := acquireNodeArena(arenaClassFull)
-	source := mustReadParserResultFixture(t, "python/trailing_self_call.py")
-
-	fnName := newLeafNodeInArena(arena, 4, true, 8, 11, Point{Column: 8}, Point{Column: 11})
-	body := newParentNodeInArena(arena, 2, true, []*Node{
-		newLeafNodeInArena(arena, 7, true, 23, 28, Point{Row: 1, Column: 8}, Point{Row: 1, Column: 13}),
-		newLeafNodeInArena(arena, 8, false, 28, 29, Point{Row: 1, Column: 13}, Point{Row: 1, Column: 14}),
-	}, nil, 0)
-	fn := newParentNodeInArena(arena, 3, true, []*Node{
-		fnName,
-		newParentNodeInArena(arena, 5, true, nil, nil, 0),
-		newLeafNodeInArena(arena, 6, true, 15, 18, Point{Row: 1, Column: 0}, Point{Row: 1, Column: 3}),
-		body,
-	}, nil, 0)
-	fn.startByte = 4
-	fn.startPoint = Point{Column: 4}
-	call := newParentNodeInArena(arena, 9, true, []*Node{
-		newLeafNodeInArena(arena, 4, true, 34, 37, Point{Row: 2, Column: 4}, Point{Row: 2, Column: 7}),
-		newParentNodeInArena(arena, 10, true, nil, nil, 0),
-	}, nil, 0)
-	outerBlock := newParentNodeInArena(arena, 2, true, []*Node{fn, call}, nil, 0)
-	module := newParentNodeInArena(arena, 1, true, []*Node{outerBlock}, nil, 0)
-
-	normalizePythonTrailingSelfCalls(module, source, lang)
-
-	block := module.Child(0)
-	if block == nil || block.Type(lang) != "block" {
-		t.Fatalf("expected block child, got %#v", block)
-	}
-	if got, want := block.ChildCount(), 1; got != want {
-		t.Fatalf("outer block child count = %d, want %d", got, want)
-	}
-	gotFn := block.Child(0)
-	if gotFn == nil || gotFn.Type(lang) != "function_definition" {
-		t.Fatalf("expected function_definition child, got %s", block.SExpr(lang))
-	}
-	gotBody := gotFn.Child(gotFn.ChildCount() - 1)
-	if gotBody == nil || gotBody.Type(lang) != "block" {
-		t.Fatalf("expected nested block, got %s", gotFn.SExpr(lang))
-	}
-	last := gotBody.Child(gotBody.ChildCount() - 1)
-	if last == nil || last.Type(lang) != "call" {
-		t.Fatalf("expected trailing call folded into function body, got %s", gotBody.SExpr(lang))
-	}
-}
-
-func TestPythonSourceMayContainFStringPatternNormalization(t *testing.T) {
-	tests := []struct {
-		name string
-		src  string
-		want bool
-	}{
-		{name: "simple interpolation", src: `f"{name}"`, want: false},
-		{name: "debug interpolation", src: `f"{value=}"`, want: false},
-		{name: "tuple interpolation", src: `f"{a, b}"`, want: true},
-		{name: "splat interpolation", src: `f"{*items}"`, want: true},
-		{name: "literal braces", src: `f"{{a, b}}"`, want: false},
-		{name: "non f string", src: `"regular {a, b}"`, want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := pythonSourceMayContainFStringPatternNormalization([]byte(tt.src)); got != tt.want {
-				t.Fatalf("pythonSourceMayContainFStringPatternNormalization(%q) = %v, want %v", tt.src, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestNormalizePythonCompatibilityRecordsRuntimeStats(t *testing.T) {
 	lang := &Language{
 		Name: "python",
@@ -812,44 +704,6 @@ func TestNormalizePythonCompatibilityWrapsInlineRaiseBlock(t *testing.T) {
 	}
 }
 
-func TestNormalizePythonAssignmentRightExpressionLists(t *testing.T) {
-	lang := &Language{
-		Name: "python",
-		SymbolNames: []string{
-			"",
-			"module",
-			"assignment",
-			"identifier",
-			"=",
-			"pattern_list",
-			"expression_list",
-		},
-		SymbolMetadata: []SymbolMetadata{
-			{},
-			{Name: "module", Visible: true, Named: true},
-			{Name: "assignment", Visible: true, Named: true},
-			{Name: "identifier", Visible: true, Named: true},
-			{Name: "=", Visible: true, Named: false},
-			{Name: "pattern_list", Visible: true, Named: true},
-			{Name: "expression_list", Visible: true, Named: true},
-		},
-	}
-	arena := newNodeArena(arenaClassFull)
-	left := newLeafNodeInArena(arena, 3, true, 0, 3, Point{}, Point{Column: 3})
-	eq := newLeafNodeInArena(arena, 4, false, 4, 5, Point{Column: 4}, Point{Column: 5})
-	right := newParentNodeInArena(arena, 5, true, []*Node{
-		newLeafNodeInArena(arena, 3, true, 6, 7, Point{Column: 6}, Point{Column: 7}),
-	}, nil, 0)
-	assign := newParentNodeInArena(arena, 2, true, []*Node{left, eq, right}, nil, 0)
-	root := newParentNodeInArena(arena, 1, true, []*Node{assign}, nil, 0)
-
-	normalizePythonAssignmentRightExpressionListsWithStats(root, lang)
-
-	if got, want := right.Type(lang), "expression_list"; got != want {
-		t.Fatalf("assignment RHS type = %q, want %q", got, want)
-	}
-}
-
 func TestNormalizePythonCompatibilityWrapsInlineYieldBlock(t *testing.T) {
 	lang := &Language{
 		Name: "python",
@@ -935,38 +789,20 @@ func TestNormalizePythonCompatibilityWrapsInlineTupleExpressionBlock(t *testing.
 }
 
 func TestPythonCompatibilitySourceGatesPreferCodeTokens(t *testing.T) {
-	if pythonSourceMayContainCodeByte([]byte(`x = ";"; y = 1`), ';') != true {
-		t.Fatal("expected code semicolon after string literal")
-	}
 	if flags := pythonCompatibilitySourceFlagsFor([]byte(`x = ";"; y = 1`)); !flags.trailingSelfCalls {
 		t.Fatal("expected combined flags to detect code semicolon after string literal")
-	}
-	if pythonSourceMayContainCodeByte([]byte("\";\"\n# ;\n"), ';') {
-		t.Fatal("did not expect semicolon inside string/comment to pass code gate")
 	}
 	if flags := pythonCompatibilitySourceFlagsFor([]byte("\";\"\n# ;\n")); flags.trailingSelfCalls {
 		t.Fatal("did not expect combined flags to detect semicolon inside string/comment")
 	}
-	if !pythonSourceMayContainPrintChevron([]byte(`print >>sys.stderr, "x"`)) {
-		t.Fatal("expected print-chevron statement gate")
-	}
 	if flags := pythonCompatibilitySourceFlagsFor([]byte(`print >>sys.stderr, "x"`)); !flags.printChevron {
 		t.Fatal("expected combined flags to detect print-chevron statement")
-	}
-	if pythonSourceMayContainPrintChevron([]byte("\"print >> x\"\nprint_value = 1\nx >> 1")) {
-		t.Fatal("did not expect split print/chevron occurrences to pass gate")
 	}
 	if flags := pythonCompatibilitySourceFlagsFor([]byte("\"print >> x\"\nprint_value = 1\nx >> 1")); flags.printChevron {
 		t.Fatal("did not expect combined flags to detect split print/chevron occurrences")
 	}
-	if !pythonSourceMayContainCodeWord([]byte("if ok:\n    pass\n"), "pass") {
-		t.Fatal("expected pass statement code word")
-	}
 	if flags := pythonCompatibilitySourceFlagsFor([]byte("if ok:\n    pass\n")); !flags.passWord {
 		t.Fatal("expected combined flags to detect pass statement code word")
-	}
-	if pythonSourceMayContainCodeWord([]byte("\"may pass NULL\"\npassword = 1\n# pass\n"), "pass") {
-		t.Fatal("did not expect pass inside string/comment or identifier to pass code gate")
 	}
 	if flags := pythonCompatibilitySourceFlagsFor([]byte("\"may pass NULL\"\npassword = 1\n# pass\n")); flags.passWord {
 		t.Fatal("did not expect combined flags to detect pass inside string/comment or identifier")
@@ -1003,13 +839,6 @@ func TestPythonCompatibilitySourceGatesPreferCodeTokens(t *testing.T) {
 	}
 	if flags := pythonCompatibilitySourceFlagsFor([]byte("x = \"a\\\nb\"")); !flags.continuationEscape {
 		t.Fatal("expected combined flags to detect continuation escape")
-	}
-}
-
-func TestPythonContinuationEscapeOffsets(t *testing.T) {
-	got := pythonContinuationEscapeOffsets([]byte("a\\\nb\\\r\nc\\td"))
-	if len(got) != 2 || got[0] != 1 || got[1] != 4 {
-		t.Fatalf("pythonContinuationEscapeOffsets() = %#v, want []uint32{1, 4}", got)
 	}
 }
 

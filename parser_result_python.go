@@ -638,44 +638,6 @@ func pythonCompatibilitySourceFlagsFor(source []byte) pythonCompatibilitySourceF
 	return flags
 }
 
-func normalizePythonAssignmentRightExpressionListsWithStats(root *Node, lang *Language) normalizationPassCounters {
-	var counters normalizationPassCounters
-	if root == nil || lang == nil {
-		return counters
-	}
-	patternListSym, patternOK := symbolByName(lang, "pattern_list")
-	expressionListSym, expressionOK := symbolByName(lang, "expression_list")
-	if !patternOK || !expressionOK {
-		return counters
-	}
-	expressionListNamed := symbolIsNamed(lang, expressionListSym)
-	walkResultTree(root, func(n *Node) {
-		counters.nodesVisited++
-		if n.Type(lang) != "assignment" {
-			return
-		}
-		sawEquals := false
-		childCount := resultChildCount(n)
-		for i := 0; i < childCount; i++ {
-			child := resultChildAt(n, i)
-			if child == nil {
-				continue
-			}
-			if child.Type(lang) == "=" {
-				sawEquals = true
-				continue
-			}
-			if sawEquals && child.symbol == patternListSym {
-				child.symbol = expressionListSym
-				child.setNamed(expressionListNamed)
-				counters.nodesRewritten++
-				return
-			}
-		}
-	})
-	return counters
-}
-
 func pythonAsPatternTargetLooksLikeTuple(n *Node, lang *Language, childCount int) bool {
 	if n == nil || childCount < 3 {
 		return false
@@ -726,10 +688,6 @@ func pythonSourceContinuationEscapeAt(source []byte, i int) bool {
 		(source[i+1] == '\n' || (i+2 < len(source) && source[i+1] == '\r' && source[i+2] == '\n'))
 }
 
-func pythonContinuationEscapeOffsets(source []byte) []uint32 {
-	return appendPythonContinuationEscapeOffsets(source, nil)
-}
-
 func appendPythonContinuationEscapeOffsets(source []byte, offsets []uint32) []uint32 {
 	for i := 0; i+1 < len(source); i++ {
 		if !pythonSourceContinuationEscapeAt(source, i) {
@@ -743,67 +701,6 @@ func appendPythonContinuationEscapeOffsets(source []byte, offsets []uint32) []ui
 		}
 	}
 	return offsets
-}
-
-func pythonSourceMayContainFString(source []byte) bool {
-	for i, c := range source {
-		if c != '"' && c != '\'' {
-			continue
-		}
-		start := i
-		for start > 0 && i-start < 3 && pythonStringPrefixByte(source[start-1]) {
-			start--
-		}
-		if start == i {
-			continue
-		}
-		if start > 0 && pythonIdentifierByte(source[start-1]) {
-			continue
-		}
-		for _, p := range source[start:i] {
-			if p == 'f' || p == 'F' {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func pythonSourceMayContainFStringPatternNormalization(source []byte) bool {
-	for i := 0; i < len(source); {
-		switch source[i] {
-		case '#':
-			i = pythonSkipLineComment(source, i+1)
-			continue
-		case '\'', '"':
-		default:
-			i++
-			continue
-		}
-		start := pythonStringPrefixStart(source, i)
-		validPrefix := start < i && (start == 0 || !pythonIdentifierByte(source[start-1]))
-		hasFPrefix := false
-		if validPrefix {
-			for _, p := range source[start:i] {
-				if p == 'f' || p == 'F' {
-					hasFPrefix = true
-					break
-				}
-			}
-		}
-		end, ok := pythonSkipQuotedLiteral(source, i)
-		if !ok {
-			return true
-		}
-		if hasFPrefix {
-			contentStart, contentEnd := pythonQuotedLiteralContentRange(source, i, end)
-			if contentStart < contentEnd && pythonFStringContentMayNeedPatternNormalization(source[contentStart:contentEnd]) {
-				return true
-			}
-		}
-		i = end
-	}
-	return false
 }
 
 func pythonStringPrefixStart(source []byte, quoteIndex int) int {
@@ -856,83 +753,6 @@ func pythonFStringContentMayNeedPatternNormalization(content []byte) bool {
 		}
 		return true
 	nextInterpolation:
-	}
-	return false
-}
-
-func pythonSourceMayContainCodeByte(source []byte, want byte) bool {
-	for i := 0; i < len(source); {
-		switch source[i] {
-		case '#':
-			i = pythonSkipLineComment(source, i+1)
-			continue
-		case '\'', '"':
-			next, ok := pythonSkipQuotedLiteral(source, i)
-			if !ok {
-				return true
-			}
-			i = next
-			continue
-		}
-		if source[i] == want {
-			return true
-		}
-		i++
-	}
-	return false
-}
-
-func pythonSourceMayContainCodeWord(source []byte, word string) bool {
-	if word == "" {
-		return false
-	}
-	for i := 0; i < len(source); {
-		switch source[i] {
-		case '#':
-			i = pythonSkipLineComment(source, i+1)
-			continue
-		case '\'', '"':
-			next, ok := pythonSkipQuotedLiteral(source, i)
-			if !ok {
-				return true
-			}
-			i = next
-			continue
-		}
-		if pythonSourceWordAt(source, i, word) {
-			return true
-		}
-		i++
-	}
-	return false
-}
-
-func pythonSourceMayContainPrintChevron(source []byte) bool {
-	for i := 0; i < len(source); {
-		switch source[i] {
-		case '#':
-			i = pythonSkipLineComment(source, i+1)
-			continue
-		case '\'', '"':
-			next, ok := pythonSkipQuotedLiteral(source, i)
-			if !ok {
-				return true
-			}
-			i = next
-			continue
-		}
-		if !pythonSourceWordAt(source, i, "print") {
-			i++
-			continue
-		}
-		j := i + len("print")
-		for j < len(source) && (source[j] == ' ' || source[j] == '\t' || source[j] == '\f') {
-			j++
-		}
-		if j+1 < len(source) && source[j] == '>' && source[j+1] == '>' {
-			return true
-		}
-		i += len("print")
 	}
 	return false
 }
@@ -1071,10 +891,6 @@ func normalizePythonPrintStatements(root *Node, source []byte, lang *Language) n
 		}
 	})
 	return counters
-}
-
-func normalizePythonTrailingSelfCalls(root *Node, source []byte, lang *Language) normalizationPassCounters {
-	return normalizePythonTrailingSelfCallsWithSemicolons(root, source, lang, nil)
 }
 
 func normalizePythonTrailingSelfCallsWithSemicolons(root *Node, source []byte, lang *Language, semicolons *pythonTrailingSelfCallSemicolons) normalizationPassCounters {
