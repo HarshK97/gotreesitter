@@ -2,6 +2,7 @@ package grammars
 
 import (
 	"encoding/hex"
+	"slices"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 )
@@ -14,6 +15,7 @@ type builtinLanguageRuntimeProfile struct {
 	blobSHA256                         [32]byte
 	externalScannerFullParseRetry      gotreesitter.ExternalScannerFullParseRetryPolicy
 	fullParseAcceptedErrorRetryProfile gotreesitter.FullParseAcceptedErrorRetryProfile
+	conflictPolicies                   []gotreesitter.ConflictPolicy
 }
 
 var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
@@ -41,8 +43,20 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 			SkipCompleteAcceptedErrorRetry: true,
 		},
 	},
+	"caddy": {
+		blobSHA256: mustRuntimeProfileSHA256("e1af0dcba90bca6949ac1a2756e1a6db2271061b40570b9a7fa2ada29478f6fa"),
+		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
+			SkipCompleteAcceptedErrorRetry: true,
+		},
+	},
 	"cpp": {
 		blobSHA256: mustRuntimeProfileSHA256("d351f902c8f2ca85257a9296d3c9991862d57701ac6e9006e386ae173fd35178"),
+		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
+			SkipCompleteAcceptedErrorRetry: true,
+		},
+	},
+	"kdl": {
+		blobSHA256: mustRuntimeProfileSHA256("ef6d000123c053eddebd200a1cbd44d6df5dcab7c4b3d34ae18acdf2f14989f5"),
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry: true,
 		},
@@ -51,6 +65,20 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		blobSHA256: mustRuntimeProfileSHA256("b10816c87dc847492fbbc1fd97c5096ed35d7abe69d0cd2ef5dd7e02aabac25c"),
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry: true,
+		},
+	},
+	// Haskell's expression-list repeat has one exact comma row where C folds
+	// the reduce/repetition-shift pair deterministically. Retaining both arms
+	// grows a new GSS frontier for every list element.
+	"haskell": {
+		blobSHA256: mustRuntimeProfileSHA256("fcfc8794bca4442ebf5688d88e2397c78a22c8f0b585c4e1b868986cfa52dd09"),
+		conflictPolicies: []gotreesitter.ConflictPolicy{
+			{
+				State:         11192,
+				Lookahead:     4,
+				Kind:          gotreesitter.ConflictPolicyRepetitionReduce,
+				ReduceSymbols: []gotreesitter.Symbol{500},
+			},
 		},
 	},
 	// On large accepted-error Java sources, the cap-16 same-stack merge retry
@@ -95,5 +123,28 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 		lang.FullParseAcceptedErrorRetryProfile = profile.fullParseAcceptedErrorRetryProfile
 		changed = true
 	}
+	for _, policy := range profile.conflictPolicies {
+		if languageHasConflictPolicy(lang, policy) {
+			continue
+		}
+		policy.ReduceSymbols = append([]gotreesitter.Symbol(nil), policy.ReduceSymbols...)
+		lang.ConflictPolicies = append(lang.ConflictPolicies, policy)
+		changed = true
+	}
 	return changed
+}
+
+func languageHasConflictPolicy(lang *gotreesitter.Language, want gotreesitter.ConflictPolicy) bool {
+	if lang == nil {
+		return false
+	}
+	for _, policy := range lang.ConflictPolicies {
+		if policy.State == want.State &&
+			policy.Lookahead == want.Lookahead &&
+			policy.Kind == want.Kind &&
+			slices.Equal(policy.ReduceSymbols, want.ReduceSymbols) {
+			return true
+		}
+	}
+	return false
 }

@@ -242,6 +242,9 @@ const (
 	//
 	// Keep new kinds append-only: Language blobs encode these numeric values.
 	ConflictPolicyRecoveredRepetitionReduce
+	// ConflictPolicyRepetitionReduce is an exact-row certification for the
+	// ordinary C repetition fold: one reduce wins over one repetition shift.
+	ConflictPolicyRepetitionReduce
 )
 
 // ConflictPolicy describes one table row/lookahead conflict that can be
