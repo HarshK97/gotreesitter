@@ -919,7 +919,7 @@ func buildFieldMaps(lang *gotreesitter.Language, ng *NormalizedGrammar) error {
 	// entries and only the last write would survive in FieldMapSlices,
 	// inflating the table until the uint16 start-offset overflows on large
 	// grammars (bash, dart).
-	seen := make(map[int]bool, maxProdID+1)
+	seen := make([]bool, maxProdID+1)
 
 	for _, prod := range ng.Productions {
 		if len(prod.Fields) == 0 {
