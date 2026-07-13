@@ -154,7 +154,7 @@ func TestBeancountDefaultSkipsForestButExplicitRemainsAvailable(t *testing.T) {
 	}
 }
 
-func TestOrgAndVimdocDefaultSkipForestButExplicitRemainAvailable(t *testing.T) {
+func TestExplicitOnlyLanguagesSkipDefaultForestButRemainAvailable(t *testing.T) {
 	// Follow this file's existing non-parallel convention around the global
 	// test/benchmark forest switch.
 	gts.SetGLRForestEnabled(true)
@@ -167,6 +167,8 @@ func TestOrgAndVimdocDefaultSkipForestButExplicitRemainAvailable(t *testing.T) {
 	}{
 		{name: "org", lang: grm.OrgLanguage, src: "# The GNU Free Documentation License.\n#+begin_center\nVersion 1.3, 3 November 2008\n#+end_center\n\n#+begin_verse\nCopyright 2008 Free Software Foundation, Inc.\n#+end_verse\n\n* ADDENDUM: How to use this License for your documents\n:PROPERTIES:\n:UNNUMBERED: notoc\n:END:\n"},
 		{name: "vimdoc", lang: grm.VimdocLanguage, src: "*lua-guide.txt*                        Nvim\n\n                            NVIM REFERENCE MANUAL\n\n==============================================================================\nIntroduction                                                         *lua-guide*\n\nThis guide introduces Lua usage in Nvim.\n\nvim:tw=78:ts=8:sw=4:sts=4:et:ft=help:norl:\n"},
+		{name: "fish", lang: grm.FishLanguage, src: "function greet\n    echo hello\nend\n"},
+		{name: "racket", lang: grm.RacketLanguage, src: "#lang racket\n(define (square x) (* x x))\n(displayln (square 4))\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
