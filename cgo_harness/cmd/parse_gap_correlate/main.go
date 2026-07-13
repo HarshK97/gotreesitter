@@ -31,9 +31,10 @@ type paritySummary struct {
 	Deep      bool   `json:"deep"`
 	Error     string `json:"error,omitempty"`
 	// Clean mirrors parse_gap_report's per-sample corpus-policy classification:
-	// true when the Go parse had no ERROR nodes and did not stop early. It
-	// drives the clean/error ratio split below so a language's combined ratio
-	// cannot hide an error-dense corpus behind a healthy-looking aggregate.
+	// true when the Go parse produced an accepted full-span tree with no ERROR
+	// nodes and no early stop. It drives the clean/error ratio split below so a
+	// language's combined ratio cannot hide an error-dense corpus behind a
+	// healthy-looking aggregate.
 	Clean bool `json:"clean"`
 }
 
@@ -664,7 +665,7 @@ func render(scores []langScore) {
 	fmt.Println()
 	fmt.Println("Ratios use summed per-sample medians, so large and small files both contribute their measured lane cost. Correlations are directional; top-12 rings are intentionally small.")
 	fmt.Println()
-	fmt.Println("Corpus-policy split: `clean/cgo` and `error/cgo` restrict the go_full/cgo_full ratio to samples whose Go parse was clean (no ERROR nodes, no early stop) versus samples that were not, so `full/cgo` (the combined ratio) cannot hide an error-dense corpus behind a healthy-looking aggregate. `clean_n`/`error_n`/`error_share` report the underlying per-language file split.")
+	fmt.Println("Corpus-policy split: `clean/cgo` and `error/cgo` restrict the go_full/cgo_full ratio to samples whose Go parse produced an accepted full-span tree (root spans [0,len(source)), no ERROR nodes, no early stop) versus samples that did not, so `full/cgo` (the combined ratio) cannot hide an error-dense corpus behind a healthy-looking aggregate. `clean_n`/`error_n`/`error_share` report the underlying per-language file split.")
 	fmt.Println()
 	fmt.Println("| lang | samples | parity_fail | full/cgo | no_tree/cgo | full/no_tree | query/full | clean/cgo | error/cgo | clean_n | error_n | error_share | bytes | bucket |")
 	fmt.Println("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |")

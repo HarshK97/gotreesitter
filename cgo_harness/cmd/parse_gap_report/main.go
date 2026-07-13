@@ -131,9 +131,9 @@ type paritySummary struct {
 	// parse independently of the C reference, for the corpus-policy split:
 	// a language's combined Go/C ratio conflates clean-parse throughput with
 	// error-recovery throughput unless clean and error-bearing files are
-	// scored separately. Clean is true only when the Go tree has no ERROR
-	// nodes and the parse did not stop early (timeout, node/iteration/stack
-	// limit, memory budget, or token-source EOF).
+	// scored separately. Clean uses cgoharness.IsAcceptedFullSpanCleanGoTree:
+	// the parse did not stop early, its root spans [0,len(source)), and neither
+	// the root nor any descendant is an ERROR node.
 	GoHasError     bool `json:"go_has_error,omitempty"`
 	GoStoppedEarly bool `json:"go_stopped_early,omitempty"`
 	Clean          bool `json:"clean"`
@@ -973,13 +973,14 @@ func computeParity(r *runner, source []byte, queries []querySpec, parseOnlyGate 
 	deep := diff == nil
 	goHasError := goRoot.HasError()
 	goStoppedEarly := goTree.ParseStoppedEarly()
+	goClean := cgoharness.IsAcceptedFullSpanCleanGoTree(goTree, len(source))
 	summary := paritySummary{
 		NoError:        noError,
 		SExpr:          deep,
 		Deep:           deep,
 		GoHasError:     goHasError,
 		GoStoppedEarly: goStoppedEarly,
-		Clean:          !goHasError && !goStoppedEarly,
+		Clean:          goClean,
 	}
 	if !noError {
 		if goRoot.HasError() != cRoot.HasError() {
@@ -2482,7 +2483,7 @@ func renderSummary(rows []reportRow, languageOrder []string) string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Parse Gap Report\n\n")
-	fmt.Fprintf(&b, "Corpus-policy split: `clean_ratio`/`error_ratio` score the same go_full/cgo_full ratio as `go_full/cgo` but restricted to samples whose Go parse was clean (no ERROR nodes, no early stop) versus samples that were not; `clean_files`/`error_files`/`error_share` report the underlying per-language file counts so a language cannot look artificially slow (or fast) from an error-dense corpus without that being visible.\n\n")
+	fmt.Fprintf(&b, "Corpus-policy split: `clean_ratio`/`error_ratio` score the same go_full/cgo_full ratio as `go_full/cgo` but restricted to samples whose Go parse produced an accepted full-span tree (root spans [0,len(source)), no ERROR nodes, no early stop) versus samples that did not; `clean_files`/`error_files`/`error_share` report the underlying per-language file counts so a language cannot look artificially slow (or fast) from an error-dense corpus without that being visible.\n\n")
 	fmt.Fprintf(&b, "| lang | samples | parse | highlight | query | go_full/cgo | go_no_tree/cgo | go_query/cgo | go_edit | noop | clean_ratio | error_ratio | clean_files | error_files | error_share | blocker |\n")
 	fmt.Fprintf(&b, "| --- | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |\n")
 	for _, lang := range langs {
@@ -2530,8 +2531,8 @@ func renderSummary(rows []reportRow, languageOrder []string) string {
 }
 
 // cleanErrorFileCounts reports how many unique corpus samples for lang were
-// classified clean (Go parse had no ERROR nodes and did not stop early)
-// versus not, per paritySummary.Clean. Each sample is counted once even
+// classified as an accepted full-span clean tree per paritySummary.Clean
+// versus not. Each sample is counted once even
 // though it may appear across several timing modes.
 func cleanErrorFileCounts(rows []reportRow, lang string) (clean, errorCount int) {
 	seen := map[string]bool{}

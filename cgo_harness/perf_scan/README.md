@@ -25,6 +25,31 @@ median, with min/max recorded. Per-file ratio = Go median / C median. Language
 aggregate = ratio-by-total (sum of Go medians / sum of C medians) plus
 median-of-file-ratios.
 
+The full axis also records an untimed corpus-policy classification for each
+file. `clean` requires a successful Go parse whose root spans `[0,len(source))`,
+did not stop early, and contains no `ERROR` nodes. Every other result is
+non-clean: ordinary full-span error trees are `error`, while timeout, memory,
+node/iteration/stack, and other early-stop results are `stopped` with their
+parser reason retained. The first Go warmup supplies the classification when
+warmups are enabled and remains authoritative even if a later timed attempt
+fails. With `GTS_PERF_SCAN_WARMUP=0`, a distinct classification parse always
+runs after all timed full-parse samples, including after a timed failure, so it
+cannot warm the measurement it describes. A probe that returns an ordinary
+parse error or structured parser stop does not modify timing samples, axis
+status, structured timing stops, verdicts, or the hard gate. Root error
+presence is a precomputed flag; the scan does not add a tree walk to the timed
+path. Both this tool and `parse_gap_report` use the shared
+`IsAcceptedFullSpanCleanGoTree` predicate for the tree policy.
+
+Per-language `full_parse_split` totals report clean and non-clean/error files
+separately. Stopped files are a named subset of the error side, matching the
+`Clean=false` corpus policy used by `parse_gap_report` and
+`parse_gap_correlate`; because stopped files have no exact ratio, only
+status=`ok` rows contribute to class timing totals and ratios. `error_share`
+is non-clean files divided by all classified files. These fields are
+diagnostic only: they do not alter file selection, coverage, verdict buckets,
+or the existing hard-gate thresholds.
+
 Verdict buckets: `<=0.10x`, `<=1.2x`, `<=2x`, `>2x`, `cliff>10x`. The first
 bucket is reported separately as a 10x-or-better win. The hard gate evaluates
 the exact per-file full-parse ratio: `<=10.0x` passes and `>10.0x` fails. A
@@ -153,8 +178,10 @@ Also honored: `GTS_PARITY_ALLOW_HOST`, `GTS_PARITY_SKIP_LANGS`,
 `scoreboard.json` carries host metadata (loadavg at start/end), the full
 config, authenticated corpus coverage, a `contended` flag, structured stop
 records, per-language per-axis aggregates, per-file medians/ratios/statuses,
-and a `hard_gate` report. The report lists failures and separately lists
-full-parse files at `<=0.10x`.
+optional per-file full-parse classifications, per-language clean/error timing
+splits, and a `hard_gate` report. The markdown renders the same class totals
+and lists each non-clean file with its reason. The report lists failures and
+separately lists full-parse files at `<=0.10x`.
 
 If a language child process is killed while measuring a file, the latest
 partial fragment includes `active_file`, 1-based `active_file_index`, and
@@ -264,6 +291,9 @@ Older `gts-perf-scan/v1` scoreboards still decode. They predate structured
 stops, corpus coverage, and the embedded hard-gate report, so use
 `-strict-config=false` only for historical analysis; they cannot establish a
 new hard-gate pass. `cmd/perf_scan_status` labels them `not_evaluated`.
+The clean/error fields are optional additions to the same v1 schema: readers
+must continue to accept rows without `classification` or `full_parse_split`,
+and current Go decoders do so.
 
 ## Phase 2 (documented, not built)
 
