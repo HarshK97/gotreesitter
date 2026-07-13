@@ -1707,6 +1707,17 @@ func (p *Parser) cStackErrorCost(s *glrStack) uint32 {
 			}
 		}
 	}
+	return cost + cStackOpenRecoveryCost(s)
+}
+
+// cStackOpenRecoveryCost is the part of ts_stack_error_cost that does not
+// come from materialized subtrees. Keeping it separate lets the condense path
+// skip a provably-zero subtree walk without duplicating recovery semantics.
+func cStackOpenRecoveryCost(s *glrStack) uint32 {
+	if s == nil {
+		return 0
+	}
+	var cost uint32
 	if s.cPaused || (s.cRec != nil && s.cRec.openErr == nil) {
 		cost += cErrCostPerRecovery
 	}
@@ -1892,6 +1903,52 @@ func (p *Parser) cVersionStatus(s *glrStack) cErrorStatus {
 		// C ts_parser__version_status: in error when paused or at ERROR_STATE.
 		isInError: s.cPaused || s.cRec != nil,
 	}
+}
+
+func (p *Parser) cCondenseVersionStatus(s *glrStack, subtreeCostRelevant bool) cErrorStatus {
+	var cost uint32
+	if subtreeCostRelevant {
+		cost = p.cStackErrorCost(s)
+	} else {
+		// trackChildErrors is false only on a fresh full parse before any ERROR
+		// or MISSING subtree has been inserted. The recursive subtree component
+		// is therefore exactly zero, but paused/open-recovery costs still apply.
+		cost = cStackOpenRecoveryCost(s)
+	}
+	if s.cPaused {
+		cost += cErrCostPerSkippedTree
+	}
+	status := cErrorStatus{
+		cost:      cost,
+		dynPrec:   s.score,
+		isInError: s.cPaused || s.cRec != nil,
+	}
+	// cNodeCountSinceError clamps a baseline that has moved above the current
+	// stack count. Preserve that eager side effect for recovery lineages even
+	// when this comparison branch will not read nodeCount.
+	if s.cNodeBaseline != 0 {
+		status.nodeCount = p.cNodeCountSinceError(s)
+	}
+	return status
+}
+
+// cCompareCondenseVersions preserves cCompareVersions' literal C semantics
+// while deferring the fresh-lineage visible-node walk until the one
+// unequal-cost branch that actually reads the cheaper side's count.
+func (p *Parser) cCompareCondenseVersions(a, b cErrorStatus, aStack, bStack *glrStack) cErrorComparison {
+	if a.isInError == b.isInError {
+		if a.cost < b.cost {
+			a.nodeCount = p.cNodeCountSinceError(aStack)
+		} else if b.cost < a.cost {
+			b.nodeCount = p.cNodeCountSinceError(bStack)
+		}
+	}
+	return cCompareVersions(a, b)
+}
+
+func (p *Parser) cVersionStatusForTrace(s *glrStack, status cErrorStatus) cErrorStatus {
+	status.nodeCount = p.cNodeCountSinceError(s)
+	return status
 }
 
 // A condense-step drop of a recovery-owning version in favor of a marker-free
@@ -3633,12 +3690,15 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 		alive = append(alive, stacks[i])
 	}
 	stacks = alive
+	// No stack payloads are inserted during the pairwise phase, so the sticky
+	// construction proof cannot change until the resume phase below.
+	subtreeCostRelevant := trackChildErrors == nil || *trackChildErrors
 	statusProbe := 0
 	for i := 1; i < len(stacks); i++ {
 		if reason := checkStop(); reason != ParseStopNone {
 			return stacks, false, tok, reason
 		}
-		statusI := p.cVersionStatus(&stacks[i])
+		statusI := p.cCondenseVersionStatus(&stacks[i], subtreeCostRelevant)
 		for j := 0; j < i; j++ {
 			statusProbe++
 			if statusProbe&63 == 0 {
@@ -3654,32 +3714,38 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 			}
 			if cRecoverVersionShouldStayBefore(stacks[i], stacks[j]) {
 				stacks[i], stacks[j] = stacks[j], stacks[i]
-				statusI = p.cVersionStatus(&stacks[i])
+				statusI = p.cCondenseVersionStatus(&stacks[i], subtreeCostRelevant)
 				continue
 			}
-			statusJ := p.cVersionStatus(&stacks[j])
-			switch cCompareVersions(statusJ, statusI) {
+			statusJ := p.cCondenseVersionStatus(&stacks[j], subtreeCostRelevant)
+			switch p.cCompareCondenseVersions(statusJ, statusI, &stacks[j], &stacks[i]) {
 			case cErrorComparisonTakeLeft:
 				if p.glrTrace {
-					p.traceCCondenseDrop("take-left", i, j, stacks[i], stacks[j], statusI, statusJ)
+					p.traceCCondenseDrop("take-left", i, j, stacks[i], stacks[j],
+						p.cVersionStatusForTrace(&stacks[i], statusI),
+						p.cVersionStatusForTrace(&stacks[j], statusJ))
 				}
 				stacks = append(stacks[:i], stacks[i+1:]...)
 				i--
 				j = i
 			case cErrorComparisonPreferRight:
 				if p.glrTrace {
-					p.traceCCondenseSwap("prefer-right", i, j, stacks[i], stacks[j], statusI, statusJ)
+					p.traceCCondenseSwap("prefer-right", i, j, stacks[i], stacks[j],
+						p.cVersionStatusForTrace(&stacks[i], statusI),
+						p.cVersionStatusForTrace(&stacks[j], statusJ))
 				}
 				stacks[i], stacks[j] = stacks[j], stacks[i]
-				statusI = p.cVersionStatus(&stacks[i])
+				statusI = p.cCondenseVersionStatus(&stacks[i], subtreeCostRelevant)
 			case cErrorComparisonTakeRight:
 				if p.glrTrace {
-					p.traceCCondenseDrop("take-right", j, i, stacks[j], stacks[i], statusJ, statusI)
+					p.traceCCondenseDrop("take-right", j, i, stacks[j], stacks[i],
+						p.cVersionStatusForTrace(&stacks[j], statusJ),
+						p.cVersionStatusForTrace(&stacks[i], statusI))
 				}
 				stacks = append(stacks[:j], stacks[j+1:]...)
 				i--
 				j--
-				statusI = p.cVersionStatus(&stacks[i])
+				statusI = p.cCondenseVersionStatus(&stacks[i], subtreeCostRelevant)
 			}
 			if i < 1 {
 				break

@@ -29,6 +29,20 @@ func makeGoBenchmarkSource(funcCount int) []byte {
 	return []byte(sb.String())
 }
 
+// makeGoLargeCompositeBenchmarkSource exercises the Go grammar's recurring
+// paused-clean version comparisons without introducing recovery or malformed
+// input. It guards the scaling behavior of large generated declarations.
+func makeGoLargeCompositeBenchmarkSource(entryCount int) []byte {
+	var sb strings.Builder
+	sb.Grow(128 + entryCount*32)
+	sb.WriteString("package p\n\ntype S struct { A string; B int; C int; D string }\nconst Method = 1\nvar X = map[string][]S{\"k\": {\n")
+	for i := 0; i < entryCount; i++ {
+		fmt.Fprintf(&sb, "{\"x%d\", Method, 1, \"\"},\n", i)
+	}
+	sb.WriteString("}}\n")
+	return []byte(sb.String())
+}
+
 func pointAtOffset(src []byte, offset int) gotreesitter.Point {
 	var row uint32
 	var col uint32
@@ -262,6 +276,28 @@ func BenchmarkGoParseFullDFA(b *testing.B) {
 			lastRuntime.MergeStacksIn, lastRuntime.MergeStacksOut, lastRuntime.MergeSlotsUsed,
 			lastRuntime.GlobalCullStacksIn, lastRuntime.GlobalCullStacksOut,
 		)
+	}
+}
+
+func BenchmarkGoParseLargeCompositeDFA(b *testing.B) {
+	lang := grammars.GoLanguage()
+	parser := gotreesitter.NewParser(lang)
+	src := makeGoLargeCompositeBenchmarkSource(4096)
+
+	b.ReportAllocs()
+	b.SetBytes(int64(len(src)))
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		tree, err := parser.Parse(src)
+		if err != nil {
+			b.Fatalf("parse error: %v", err)
+		}
+		root := requireCompleteParse(b, tree, src, lang, "large composite dfa")
+		if root.HasError() {
+			b.Fatal("large composite parse returned an error-bearing tree")
+		}
+		tree.Release()
 	}
 }
 

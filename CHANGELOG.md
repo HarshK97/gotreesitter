@@ -7,6 +7,27 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Performance
+
+- Clean full parses now make C-recovery condense summaries demand-driven.
+  Before any error-bearing payload exists, condense charges only the exact
+  open-recovery costs instead of recursively re-summing clean subtrees; visible
+  node counts are evaluated only by the unequal-cost comparison branch that
+  consumes them. On a 4,096-entry generated Go composite witness this reduces
+  a full accepted parse from 18.72 s to 93 ms and one-shot maximum RSS from
+  1,388,988 KiB to 498,240 KiB, with the same full, error-free S-expression.
+  The exact 726,532-byte Go manifest witness now completes in 0.39 s with full
+  span and no error. The standard full/incremental/no-edit benchmark trio and
+  KDL recovery benchmark retain unchanged allocations and show no candidate
+  regression.
+
+### Fixed
+
+- Missing extra shifts, including the C-family zero-width missing-token case,
+  and alias-prefixed recovered-suffix resyncs now mark error-bearing content
+  before the next condense pass. This keeps the clean-subtree proof exact
+  without adding node metadata, parser caches, or language-specific fast paths.
+
 ## [0.31.0] - 2026-07-13
 
 Memory containment, Python parity, and authenticated fleet-reporting release.

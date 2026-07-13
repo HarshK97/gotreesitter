@@ -33,6 +33,101 @@ func TestCVersionStatusAddsPausedSkippedTreeCost(t *testing.T) {
 	}
 }
 
+func TestCCondenseFreshTreeGatePreservesOpenRecoveryCosts(t *testing.T) {
+	parser := &Parser{language: &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}}
+	open := &Node{symbol: errorSymbol}
+	for _, tc := range []struct {
+		name  string
+		stack glrStack
+	}{
+		{name: "clean"},
+		{name: "paused", stack: glrStack{cPaused: true}},
+		{name: "open recovery", stack: glrStack{cRec: &cRecoverState{}}},
+		{name: "open recovery segments", stack: glrStack{cRec: &cRecoverState{extraRecoveries: 2}}},
+		{name: "materialized recovery", stack: glrStack{cRec: &cRecoverState{openErr: open, extraRecoveries: 2}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parser.cCondenseVersionStatus(&tc.stack, false)
+			want := parser.cVersionStatus(&tc.stack)
+			if got != want {
+				t.Fatalf("fresh-tree status = %+v, want eager %+v", got, want)
+			}
+		})
+	}
+
+	missing := &Node{symbol: 1}
+	missing.setMissing(true)
+	stack := glrStack{entries: []stackEntry{newStackEntryNode(1, missing)}}
+	got := parser.cCondenseVersionStatus(&stack, true)
+	want := parser.cVersionStatus(&stack)
+	if got.cost != want.cost || got.dynPrec != want.dynPrec || got.isInError != want.isInError {
+		t.Fatalf("error-bearing status = %+v, want eager cost/category %+v", got, want)
+	}
+}
+
+func TestCCondenseVersionStatusPreservesBaselineClamp(t *testing.T) {
+	parser := &Parser{language: &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}}
+	stack := glrStack{
+		entries:       []stackEntry{newStackEntryNode(1, &Node{symbol: 1})},
+		cNodeBaseline: 2,
+	}
+	status := parser.cCondenseVersionStatus(&stack, false)
+	if status.nodeCount != 0 {
+		t.Fatalf("node count = %d, want 0 after clamp", status.nodeCount)
+	}
+	if stack.cNodeBaseline != 1 {
+		t.Fatalf("baseline = %d, want clamped 1", stack.cNodeBaseline)
+	}
+}
+
+func TestCCompareCondenseVersionsEvaluatesOnlyReadNodeCount(t *testing.T) {
+	parser := &Parser{language: &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}}
+	leaf := &Node{symbol: 1}
+	baselineStack := glrStack{
+		entries:       []stackEntry{newStackEntryNode(1, leaf)},
+		cNodeBaseline: 2,
+	}
+	parser.cCondenseVersionStatus(&baselineStack, false)
+	if baselineStack.cNodeBaseline != 1 {
+		t.Fatalf("condense status did not preserve baseline clamp: baseline = %d, want 1", baselineStack.cNodeBaseline)
+	}
+
+	stack := glrStack{
+		entries:       []stackEntry{newStackEntryNode(1, leaf)},
+		cNodeBaseline: 2,
+	}
+
+	clean := cErrorStatus{cost: 1}
+	inError := cErrorStatus{cost: 2, isInError: true}
+	if got := parser.cCompareCondenseVersions(clean, inError, &stack, &stack); got != cCompareVersions(clean, inError) {
+		t.Fatalf("category comparison = %v, want %v", got, cCompareVersions(clean, inError))
+	}
+	if stack.cNodeBaseline != 2 {
+		t.Fatalf("category comparison evaluated node count: baseline = %d, want 2", stack.cNodeBaseline)
+	}
+
+	equalA := cErrorStatus{cost: 3, dynPrec: 1}
+	equalB := cErrorStatus{cost: 3}
+	if got := parser.cCompareCondenseVersions(equalA, equalB, &stack, &stack); got != cCompareVersions(equalA, equalB) {
+		t.Fatalf("equal-cost comparison = %v, want %v", got, cCompareVersions(equalA, equalB))
+	}
+	if stack.cNodeBaseline != 2 {
+		t.Fatalf("equal-cost comparison evaluated node count: baseline = %d, want 2", stack.cNodeBaseline)
+	}
+
+	cheaper := cErrorStatus{cost: 1}
+	dearer := cErrorStatus{cost: 2}
+	eagerCheaper := cheaper
+	stackForWant := stack
+	eagerCheaper.nodeCount = parser.cNodeCountSinceError(&stackForWant)
+	if got, want := parser.cCompareCondenseVersions(cheaper, dearer, &stack, &stack), cCompareVersions(eagerCheaper, dearer); got != want {
+		t.Fatalf("unequal-cost comparison = %v, want %v", got, want)
+	}
+	if stack.cNodeBaseline != 1 {
+		t.Fatalf("unequal-cost comparison did not evaluate cheaper node count: baseline = %d, want 1", stack.cNodeBaseline)
+	}
+}
+
 func TestCRecoveryCostCompetitionDisabledInNoTreeModes(t *testing.T) {
 	parser := &Parser{errorCostCompetition: true}
 	if !parser.errorCostCompetitionEnabled() {

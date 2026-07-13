@@ -67,6 +67,46 @@ func TestApplyActionNonterminalExtraShiftUsesActionState(t *testing.T) {
 	}
 }
 
+func TestApplyExtraShiftMissingMarksChildErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		language string
+		explicit bool
+	}{
+		{name: "explicit missing", explicit: true},
+		{name: "C zero-width missing", language: "c"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lang := buildArithmeticLanguage()
+			lang.Name = tc.language
+			parser := NewParser(lang)
+			arena := newNodeArena(arenaClassFull)
+			stack := newGLRStack(lang.InitialState)
+			scratch := &parserScratch{}
+			trackChildErrors := false
+			tok := Token{
+				Symbol:    1,
+				StartByte: 4,
+				EndByte:   4,
+				Missing:   tc.explicit,
+			}
+
+			parser.applyExtraShiftAction(&stack, lang.InitialState, ParseAction{
+				Type:  ParseActionShift,
+				Extra: true,
+			}, tok, arena, scratch, &trackChildErrors)
+
+			if !trackChildErrors {
+				t.Fatal("missing extra shift did not mark child-error tracking")
+			}
+			leaf := stackEntryNode(stack.top())
+			if leaf == nil || !leaf.isMissing() || !leaf.hasError() {
+				t.Fatalf("missing extra leaf = %#v", leaf)
+			}
+		})
+	}
+}
+
 func TestApplyActionNonExtraShiftUsesActionState(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)
