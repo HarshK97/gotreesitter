@@ -44,7 +44,7 @@ func TestBuiltinForestDefaultsCuratedSet(t *testing.T) {
 		"bash", "erlang", "cmake", "css", "scss", "awk", "javascript", "c_sharp",
 		"gitignore", "nix", "squirrel", "prisma",
 		"agda", "org", "ledger", "yuck", "json5", "commonlisp", "vimdoc",
-		"bibtex", "faust", "arduino", "authzed", "make", "csv", "fish", "racket", "tlaplus", "beancount",
+		"bibtex", "faust", "arduino", "authzed", "make", "fish", "racket", "tlaplus", "beancount",
 		"gitattributes",
 	}
 	if len(builtinForestDefaults) != len(want) {
@@ -58,10 +58,22 @@ func TestBuiltinForestDefaultsCuratedSet(t *testing.T) {
 	// A handful of explicitly-NOT-forest-amenable languages (see the doc
 	// comment) must stay out of the curated set. "go" is intentionally held
 	// out of default dispatch (commit 6894fc9f) even though it is forest-clean.
-	notWanted := []string{"python", "rust", "dart", "ruby", "haskell", "php", "go"}
+	notWanted := []string{"python", "rust", "dart", "ruby", "haskell", "php", "go", "csv"}
 	for _, name := range notWanted {
 		if builtinForestDefaults[name] {
 			t.Errorf("builtinForestDefaults unexpectedly contains %q", name)
 		}
+	}
+
+	// CSV is a default-dispatch demotion, not removal of the experimental
+	// mechanisms. Callers can still opt a CSV language into the forest path
+	// explicitly, and its certified forest-recovery policy remains available
+	// to that path.
+	csv := &Parser{language: &Language{Name: "csv", WantsForest: true}}
+	if !parserWantsForest(csv) {
+		t.Error("explicit Language.WantsForest should still dispatch CSV to forest")
+	}
+	if !languageWantsForestRecover("csv") {
+		t.Error("CSV forest recovery should remain available to explicit forest runs")
 	}
 }
