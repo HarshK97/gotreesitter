@@ -450,6 +450,13 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 // a corpus gate proves the forest actually returns its tree and produces a net
 // wall-time win instead of paying a failed attempt first.
 //
+// Beancount recovery likewise remains available to explicit forest experiments,
+// but automatic dispatch is held out. The exact four-file clean corpus produced
+// zero forest returns: every attempt reached EOF and conservatively declined
+// with eof-recovery-conflict before repeating the parse in production. On the
+// largest 347 KiB witness that retry raised the Go/C ratio from 1.72x on the
+// production path to 30.26x under automatic dispatch.
+//
 // Non-built-in languages opt in per-Language via Language.WantsForest (see
 // parserWantsForest) instead of joining this map — e.g. a grammargen consumer
 // generating its own grammar (a Pawn grammar, say) sets WantsForest directly
@@ -514,7 +521,6 @@ var builtinForestDefaults = map[string]bool{
 	"fish":      true,
 	"racket":    true,
 	"tlaplus":   true,
-	"beancount": true,
 
 	// Promoted 2026-06-08 against the C ORACLE, not production. gitattributes
 	// is parity-blocked (production diverges from C), but the forest matches

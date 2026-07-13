@@ -27,6 +27,14 @@ compatibility code is removed.
 
 ### Changed
 
+- Automatic forest dispatch no longer speculates through Beancount by default.
+  The exact four-file clean corpus produced no forest return, so every parse
+  paid for a discarded forest before production. In matched automatic-parser
+  scans, removing that retry cut the 347 KiB witness from 30.255x to 2.130x C
+  and the corpus aggregate from 27.621x to 2.088x, eliminating the only ratio
+  above 10x while returning the same accepted, full-span, error-free trees.
+  Explicit forest experiments and Beancount's certified recovery policy remain
+  available.
 - Automatic forest dispatch now remembers stable semantic declines for a small,
   bounded set of unchanged sources and routes warm recurring full parses
   directly to the production parser after exact source verification. Explicit
