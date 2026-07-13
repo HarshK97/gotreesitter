@@ -739,19 +739,34 @@ func (p *Parser) recordFullGSSUsage(used int) {
 	}
 }
 
-func parseFullEntryScratchCapacity(sourceLen int) int {
+const (
+	fullParseEntryScratchEntriesPerSourceByte = 12
+	maxFullParseEntryScratchEntries           = 64 * 1024
+)
+
+func parseFullEntryScratchEstimate(sourceLen int) int {
 	if sourceLen <= 0 {
-		return defaultStackEntrySlabCap
+		return 0
 	}
-	estimate := sourceLen * 12
+	if sourceLen > maxFullParseEntryScratchEntries/fullParseEntryScratchEntriesPerSourceByte {
+		return maxFullParseEntryScratchEntries
+	}
+	return sourceLen * fullParseEntryScratchEntriesPerSourceByte
+}
+
+func parseFullEntryScratchCapacity(sourceLen int) int {
+	estimate := parseFullEntryScratchEstimate(sourceLen)
 	if estimate < defaultStackEntrySlabCap {
 		estimate = defaultStackEntrySlabCap
 	}
-	// Keep initial scratch growth bounded; larger capacities are still
-	// reached on demand and retained up to maxRetainedStackEntryCap.
-	const maxPreallocEntries = 64 * 1024
-	if estimate > maxPreallocEntries {
-		estimate = maxPreallocEntries
+	return estimate
+}
+
+func parseFullEntryScratchReservation(sourceLen int) int {
+	const minReservedEntries = 8
+	estimate := parseFullEntryScratchEstimate(sourceLen)
+	if estimate < minReservedEntries {
+		return minReservedEntries
 	}
 	return estimate
 }

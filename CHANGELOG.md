@@ -16,6 +16,9 @@ for tags and release notes while still in `0.x`.
   reduced the five-byte KDL floor by 11.2% and Java's registered token-source
   path by 14.9%, with unchanged bytes and allocations per operation; the
   standard full/incremental benchmark trio remained neutral.
+- Tiny fresh full parses now reserve a source-scaled logical range from the
+  existing physical entry-scratch slab, avoiding repeated clearing of unused
+  stack entries while preserving incremental and large-source reservations.
 - The exact bundled C# grammar now advertises native result compatibility for
   `notnull` constraints, Unicode identifier spans, scoped-lambda statements and
   blocks, and LINQ query expressions, allowing the runtime to skip the five

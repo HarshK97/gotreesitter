@@ -6183,9 +6183,9 @@ func (p *Parser) ensureFullParseInitialCapacity(source []byte, arena *nodeArena,
 func (p *Parser) newInitialParseStacks(scratch *parserScratch, reuse *reuseCursor, timing *incrementalParseTiming, sourceLen int) ([]glrStack, int) {
 	var stacksBuf [4]glrStack
 	stacks := stacksBuf[:1]
-	initialStackCap := parseFullEntryScratchCapacity(sourceLen)
-	if reuse != nil {
-		initialStackCap = defaultStackEntrySlabCap
+	initialStackCap := defaultStackEntrySlabCap
+	if reuse == nil {
+		initialStackCap = parseFullEntryScratchReservation(sourceLen)
 	}
 	stacks[0] = newGLRStackWithScratchCap(p.language.InitialState, &scratch.entries, initialStackCap)
 	stacks[0].recoverabilityKnown = true
