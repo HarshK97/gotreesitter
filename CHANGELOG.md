@@ -32,6 +32,25 @@ valid failing scoreboards while certification remains blocking.
   committed tier board remains explicitly unreleased until a fresh full scan
   is intentionally published.
 
+### Removed
+
+- Six confirmed-dead post-parse rewrite passes from the fused JavaScript/
+  TypeScript/TSX compat walk: statement-keyword (`if`/`while`) leaf retype,
+  `empty_statement` semicolon retype, `existential_type` collapse, call-
+  precedence reshape, and unary- and binary-precedence rotation, plus their
+  exclusively-owned helpers and an already-unreachable standalone fallback
+  path from an earlier compat-tier sunset. A census over roughly 23 MB of
+  real JavaScript/TypeScript/TSX (including undici.js and TypeScript's own
+  checker.ts, parser.ts, and utilities.ts), the original regression corpus
+  that added these passes, and independent adversarial precedence chains
+  found zero rewrites from any of the six; later grammargen table fixes
+  already produce the correct tree shape directly, so the passes had become
+  dead weight on every JS/TS/TSX parse. The compat pipeline's two remaining
+  live fixups (top-level object-literal reinterpretation and trailing-
+  continue-comment reattachment) and the memory-budget stop-polling on the
+  surviving walk are unaffected. Net ~1,100 lines removed; verified byte-
+  identical (S-expression and spans) on real JS, TS, and TSX samples.
+
 ### Performance
 
 - Forest parsing now applies the parser's existing runtime heap and system

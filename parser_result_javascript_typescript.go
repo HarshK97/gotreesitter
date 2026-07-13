@@ -131,17 +131,18 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 	var syntaxStats javaScriptTypeScriptSyntaxNormalizationStats
 	var haveSyntaxStats bool
 	var syntaxStopReason ParseStopReason
-	run("ts_statement_keyword_leaves", func() normalizationPassCounters {
+	// ts_compat_index_walk drives the fused walk: dynamic-import leaf
+	// retyping plus building the TypeScript-compatibility candidate index.
+	// Renamed from ts_statement_keyword_leaves by the wave11 compat-sunset
+	// (juniper), which removed the walk's empty_statement, existential_type,
+	// statement-keyword, call-precedence, and unary/binary-precedence-
+	// rotation work (confirmed dead: zero rewrites census, see the fused
+	// walk's doc comment above) along with their per-pass metric recording.
+	run("ts_compat_index_walk", func() normalizationPassCounters {
 		syntaxStats, syntaxStopReason = normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang, &poller)
 		haveSyntaxStats = true
 		parser.recordNormalizationMetric("ts_syntax_precedence_index", 1, syntaxStats.indexBuilds, syntaxStats.indexNodesVisited, 0)
-		parser.recordNormalizationMetric("ts_empty_statement_candidates", 1, 1, syntaxStats.emptyStatement.nodesVisited, syntaxStats.emptyStatement.nodesRewritten)
-		parser.recordNormalizationMetric("ts_existential_type_candidates", 1, 1, syntaxStats.existentialType.nodesVisited, syntaxStats.existentialType.nodesRewritten)
-		parser.recordNormalizationMetric("ts_statement_keyword_candidates", 1, 1, syntaxStats.statementKeyword.nodesVisited, syntaxStats.statementKeyword.nodesRewritten)
-		parser.recordNormalizationMetric("ts_call_precedence_candidates", 1, 1, syntaxStats.call.nodesVisited, syntaxStats.call.nodesRewritten)
-		parser.recordNormalizationMetric("ts_unary_precedence_candidates", 1, 1, syntaxStats.unary.nodesVisited, syntaxStats.unary.nodesRewritten)
-		parser.recordNormalizationMetric("ts_binary_precedence_candidates", 1, 1, syntaxStats.binary.nodesVisited, syntaxStats.binary.nodesRewritten)
-		return syntaxStats.statementKeyword
+		return normalizationPassCounters{}
 	})
 	// resultMaterializationShouldStop (not parseStopReasonIsActive): the fused
 	// walk above may report ParseStopMemoryBudget, which parseStopReasonIsActive
@@ -152,33 +153,6 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 	if resultMaterializationShouldStop(syntaxStopReason) {
 		return syntaxStopReason
 	}
-	run("ts_empty_statement", func() normalizationPassCounters {
-		if haveSyntaxStats {
-			return syntaxStats.emptyStatement
-		}
-		return normalizeCollapsedNamedLeafChildrenBySourceWithStats(root, source, lang, "empty_statement", ";")
-	})
-	run("ts_call_precedence", func() normalizationPassCounters {
-		if haveSyntaxStats {
-			return syntaxStats.call
-		}
-		stats := normalizeJavaScriptTypeScriptCallPrecedenceWithDetailedStats(root, lang)
-		parser.recordNormalizationMetric("ts_call_precedence_index", 1, stats.indexBuilds, stats.indexNodesVisited, 0)
-		parser.recordNormalizationMetric("ts_call_precedence_candidates", 1, 1, stats.candidateCalls, stats.nodesRewritten)
-		return stats.normalizationPassCounters
-	})
-	run("ts_unary_precedence", func() normalizationPassCounters {
-		if haveSyntaxStats {
-			return syntaxStats.unary
-		}
-		return normalizeJavaScriptTypeScriptUnaryPrecedenceWithStats(root, lang)
-	})
-	run("ts_binary_precedence", func() normalizationPassCounters {
-		if haveSyntaxStats {
-			return syntaxStats.binary
-		}
-		return normalizeJavaScriptTypeScriptBinaryPrecedenceWithStats(root, lang)
-	})
 	runVoid("ts_recovered_ternary_generic_call_root", func() {
 		normalizeTypeScriptRecoveredTernaryGenericCallRoot(root, source, lang)
 	})
@@ -514,119 +488,6 @@ func typeScriptCompatCandidateSymbolsFor(lang *Language) typeScriptCompatCandida
 	return syms
 }
 
-func normalizeJavaScriptTypeScriptStatementKeywordLeavesWithStats(root *Node, source []byte, lang *Language) normalizationPassCounters {
-	var counters normalizationPassCounters
-	if root == nil || lang == nil || len(source) == 0 {
-		return counters
-	}
-	switch lang.Name {
-	case "javascript", "typescript", "tsx":
-	default:
-		return counters
-	}
-	ifStmtSym, hasIfStmt := symbolByName(lang, "if_statement")
-	whileStmtSym, hasWhileStmt := symbolByName(lang, "while_statement")
-	ifSym, ifNamed, hasIf := symbolMeta(lang, "if")
-	whileSym, whileNamed, hasWhile := symbolMeta(lang, "while")
-	closeBraceSym, hasCloseBrace := symbolByName(lang, "}")
-	if (!hasIfStmt || !hasIf) && (!hasWhileStmt || !hasWhile) {
-		return counters
-	}
-
-	walkResultTreeDenseFirst(root, func(n *Node) {
-		counters.nodesVisited++
-		if hasIfStmt && hasIf && n.symbol == ifStmtSym {
-			if normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n, source, "if", ifSym, ifNamed, closeBraceSym, hasCloseBrace) {
-				counters.nodesRewritten++
-			}
-			return
-		}
-		if hasWhileStmt && hasWhile && n.symbol == whileStmtSym {
-			if normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n, source, "while", whileSym, whileNamed, closeBraceSym, hasCloseBrace) {
-				counters.nodesRewritten++
-			}
-		}
-	})
-	return counters
-}
-
-func normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n *Node, source []byte, keyword string, keywordSym Symbol, keywordNamed bool, closeBraceSym Symbol, hasCloseBrace bool) bool {
-	end := n.startByte + uint32(len(keyword))
-	if int(end) > len(source) || !bytes.Equal(source[n.startByte:end], []byte(keyword)) {
-		return false
-	}
-	childCount := resultChildCount(n)
-	if childCount == 0 {
-		keywordNode := newLeafNodeInArena(n.ownerArena, keywordSym, keywordNamed, n.startByte, end, n.startPoint, advancePointByBytes(n.startPoint, source[n.startByte:end]))
-		replaceNodeChildrenUnfielded(n, cloneNodeSliceInArena(n.ownerArena, []*Node{keywordNode}))
-		return true
-	}
-	first := resultChildAt(n, 0)
-	if first != nil && first.symbol == keywordSym && first.startByte == n.startByte && first.endByte == end {
-		return false
-	}
-	keywordNode := newLeafNodeInArena(n.ownerArena, keywordSym, keywordNamed, n.startByte, end, n.startPoint, advancePointByBytes(n.startPoint, source[n.startByte:end]))
-
-	children := make([]*Node, 0, childCount+1)
-	for i := 0; i < childCount; i++ {
-		children = append(children, resultChildAt(n, i))
-	}
-	fieldIDs := n.fieldIDs()
-	fieldSources := n.fieldSources()
-	if first != nil && hasCloseBrace && first.symbol == closeBraceSym {
-		children[0] = keywordNode
-		if len(fieldIDs) == childCount {
-			fieldIDs[0] = 0
-		}
-		if len(fieldSources) == childCount {
-			fieldSources[0] = fieldSourceNone
-		}
-	} else if first == nil || first.startByte > n.startByte {
-		children = append([]*Node{keywordNode}, children...)
-		n.setFieldMetadata(
-			prependFieldID(n.ownerArena, fieldIDs, childCount),
-			prependFieldSource(n.ownerArena, fieldSources, childCount),
-		)
-	} else {
-		children[0] = keywordNode
-		if len(fieldIDs) == childCount {
-			fieldIDs[0] = 0
-		}
-		if len(fieldSources) == childCount {
-			fieldSources[0] = fieldSourceNone
-		}
-	}
-	n.children = cloneNodeSliceInArena(n.ownerArena, children)
-	if n.ownerArena != nil {
-		n.ownerArena.clearFinalChildRefs(n)
-	}
-	populateParentNode(n, n.children)
-	return true
-}
-
-func prependFieldID(arena *nodeArena, fieldIDs []FieldID, oldLen int) []FieldID {
-	if len(fieldIDs) != oldLen {
-		return nil
-	}
-	out := make([]FieldID, oldLen+1)
-	copy(out[1:], fieldIDs)
-	return cloneFieldIDSliceInArena(arena, out)
-}
-
-func prependFieldSource(arena *nodeArena, fieldSources []uint8, oldLen int) []uint8 {
-	if len(fieldSources) != oldLen {
-		return nil
-	}
-	out := make([]uint8, oldLen+1)
-	copy(out[1:], fieldSources)
-	if arena != nil {
-		buf := arena.allocFieldSourceSlice(len(out))
-		copy(buf, out)
-		return buf
-	}
-	return out
-}
-
 func normalizeJavaScriptTopLevelObjectLiterals(root *Node, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "javascript" || root.Type(lang) != "program" {
 		return
@@ -957,94 +818,32 @@ func insertJavaScriptStatementBlockComment(parent *Node, childIdx int, comment *
 	populateParentNode(parent, parent.children)
 }
 
-func normalizeJavaScriptTypeScriptCallPrecedenceWithStats(root *Node, lang *Language) normalizationPassCounters {
-	return normalizeJavaScriptTypeScriptCallPrecedenceWithDetailedStats(root, lang).normalizationPassCounters
-}
-
-type javaScriptTypeScriptCallPrecedenceStats struct {
-	normalizationPassCounters
-	indexBuilds       uint64
-	indexNodesVisited uint64
-	candidateCalls    uint64
-}
-
-func normalizeJavaScriptTypeScriptCallPrecedenceWithDetailedStats(root *Node, lang *Language) javaScriptTypeScriptCallPrecedenceStats {
-	var stats javaScriptTypeScriptCallPrecedenceStats
-	if root == nil || lang == nil {
-		return stats
-	}
-	switch lang.Name {
-	case "javascript", "typescript", "tsx":
-	default:
-		return stats
-	}
-	callSym, ok := symbolByName(lang, "call_expression")
-	if !ok {
-		return stats
-	}
-	if lang.Name == "javascript" {
-		stats.normalizationPassCounters = normalizeJavaScriptTypeScriptCallPrecedenceFullWalk(root, lang, callSym)
-		return stats
-	}
-
-	index := buildJavaScriptTypeScriptCallPrecedenceIndex(root, callSym)
-	stats.indexBuilds = index.builds
-	stats.indexNodesVisited = index.nodesVisited
-	stats.candidateCalls = uint64(len(index.candidates))
-	stats.normalizationPassCounters = rewriteJavaScriptTypeScriptCallPrecedenceCandidates(index.candidates, lang, callSym)
-	return stats
-}
-
-func normalizeJavaScriptTypeScriptCallPrecedenceFullWalk(root *Node, lang *Language, callSym Symbol) normalizationPassCounters {
-	var counters normalizationPassCounters
-	walkResultTreeDenseFirst(root, func(n *Node) {
-		counters.nodesVisited++
-		for i, child := range n.children {
-			if rewritten := rewriteJavaScriptTypeScriptCallPrecedenceWithSymbol(child, lang, callSym); rewritten != nil {
-				counters.nodesRewritten++
-				n.children[i] = rewritten
-				rewritten.parent = n
-				rewritten.childIndex = int32(i)
-			}
-		}
-	})
-	return counters
-}
-
-type javaScriptTypeScriptPrecedenceStats struct {
-	call              normalizationPassCounters
-	unary             normalizationPassCounters
-	binary            normalizationPassCounters
-	indexBuilds       uint64
-	indexNodesVisited uint64
-}
-
 type javaScriptTypeScriptSyntaxNormalizationStats struct {
-	emptyStatement          normalizationPassCounters
-	existentialType         normalizationPassCounters
-	statementKeyword        normalizationPassCounters
-	call                    normalizationPassCounters
-	unary                   normalizationPassCounters
-	binary                  normalizationPassCounters
 	typeScriptCompatibility typeScriptCompatibilityCandidates
 	indexBuilds             uint64
 	indexNodesVisited       uint64
 }
 
-func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedence(root *Node, source []byte, lang *Language) {
-	_, _ = normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang, nil)
-}
-
 // normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats
-// drives the fused walk (rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex)
-// and its follow-on candidate rewrites. poller, when non-nil, is threaded
-// through the fused walk and the unary-rewrite-triggered index rebuild
-// (buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex) — both real
-// whole-tree passes — so a timeout, cancellation, or runtime memory-budget
-// trip anywhere in this call chain aborts the remaining work instead of
-// running unbounded to completion. poller == nil (every caller other than
-// normalizeJavaScriptCompatibility / normalizeTypeScriptTreeCompatibilityWithParser)
-// preserves the exact prior unbounded behavior.
+// drives the fused walk (rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex).
+// poller, when non-nil, is threaded through that walk — a real whole-tree
+// pass — so a timeout, cancellation, or runtime memory-budget trip aborts
+// the remaining work instead of running unbounded to completion. poller ==
+// nil (every caller other than normalizeJavaScriptCompatibility /
+// normalizeTypeScriptTreeCompatibilityWithParser) preserves the exact prior
+// unbounded behavior.
+//
+// The wave11 compat-sunset (juniper) removed this function's empty_statement,
+// existential_type, statement-keyword (if/while), call-precedence, and
+// unary/binary-precedence-rotation handling: a census over ~23MB of real
+// JS/TS/TSX (undici.js, TypeScript's own checker.ts/parser.ts/utilities.ts,
+// real TSX) plus the 5003ac64 regression snippets and independent adversarial
+// precedence chains showed zero rewrites from any of those six passes —
+// later grammargen table fixes made the GLR tables produce the already-
+// correct shape directly, so the post-hoc rewrite passes had become dead
+// weight on every JS/TS/TSX parse. What remains — dynamic-import leaf
+// retyping and the TypeScript-compatibility candidate index — still does
+// real, live work and keeps the exact same containment discipline.
 func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root *Node, source []byte, lang *Language, poller *parseStopPoller) (javaScriptTypeScriptSyntaxNormalizationStats, ParseStopReason) {
 	var stats javaScriptTypeScriptSyntaxNormalizationStats
 	if root == nil || lang == nil {
@@ -1053,27 +852,8 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 	switch lang.Name {
 	case "javascript", "typescript", "tsx":
 	default:
-		stats.statementKeyword = normalizeJavaScriptTypeScriptStatementKeywordLeavesWithStats(root, source, lang)
-		precedence := normalizeJavaScriptTypeScriptPrecedenceWithDetailedStats(root, lang)
-		stats.call = precedence.call
-		stats.unary = precedence.unary
-		stats.binary = precedence.binary
-		stats.indexBuilds = precedence.indexBuilds
-		stats.indexNodesVisited = precedence.indexNodesVisited
 		return stats, ParseStopNone
 	}
-	callSym, hasCallSym := symbolByName(lang, "call_expression")
-	unarySym, hasUnarySym := symbolByName(lang, "unary_expression")
-	binarySym, hasBinarySym := symbolByName(lang, "binary_expression")
-	emptyStatementSym, hasEmptyStatement := symbolByName(lang, "empty_statement")
-	semicolonSym, semicolonNamed, hasSemicolon := symbolMeta(lang, ";")
-	existentialTypeSym, hasExistentialType := symbolByName(lang, "existential_type")
-	starSym, starNamed, hasStar := symbolMeta(lang, "*")
-	ifStmtSym, hasIfStmt := symbolByName(lang, "if_statement")
-	whileStmtSym, hasWhileStmt := symbolByName(lang, "while_statement")
-	ifSym, ifNamed, hasIf := symbolMeta(lang, "if")
-	whileSym, whileNamed, hasWhile := symbolMeta(lang, "while")
-	closeBraceSym, hasCloseBrace := symbolByName(lang, "}")
 
 	// Source-level gate: only enable the optional-chain leaf handler when "?."
 	// actually appears in the file, mirroring the standalone pass's gate so we
@@ -1096,131 +876,29 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 
 	index, reason := rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex(
 		root, source, lang,
-		callSym, hasCallSym, unarySym, hasUnarySym, binarySym, hasBinarySym,
-		emptyStatementSym, hasEmptyStatement, semicolonSym, semicolonNamed, hasSemicolon,
-		existentialTypeSym, hasExistentialType, starSym, starNamed, hasStar,
-		ifStmtSym, hasIfStmt, ifSym, ifNamed, hasIf,
-		whileStmtSym, hasWhileStmt, whileSym, whileNamed, hasWhile,
-		closeBraceSym, hasCloseBrace,
 		optionalChainSym, optionalChainTokenSym, optionalChainTokenNamed, enableOptionalChain,
 		dynamicImportSym, importKeywordSym, enableDynamicImport,
 		typeScriptCtx,
 		poller,
 	)
-	stats.emptyStatement = index.emptyStatement
-	stats.existentialType = index.existentialType
-	stats.statementKeyword = index.statementKeyword
-	stats.call = index.call
 	stats.typeScriptCompatibility = index.typeScriptCompatibility
 	stats.indexBuilds += index.builds
 	stats.indexNodesVisited += index.nodesVisited
-	// resultMaterializationShouldStop (not a plain != ParseStopNone check, for
-	// clarity/consistency with every other bail-out in this file): the fused
-	// walk stopped mid-traversal, so unaryCandidates/binaryCandidates only
-	// cover a prefix of the tree — stop here rather than rewriting a partial,
-	// possibly misleading candidate list.
-	if resultMaterializationShouldStop(reason) {
-		return stats, reason
-	}
-	if hasUnarySym {
-		stats.unary = rewriteJavaScriptTypeScriptPrecedenceCandidates(index.unaryCandidates, func(n *Node) *Node {
-			return rewriteJavaScriptTypeScriptUnaryPrecedenceWithSymbol(n, lang, unarySym)
-		})
-		if stats.unary.nodesRewritten != 0 && hasBinarySym {
-			rebuild, rebuildReason := buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex(root, unarySym, binarySym, poller)
-			stats.indexBuilds += rebuild.builds
-			stats.indexNodesVisited += rebuild.nodesVisited
-			index.binaryCandidates = rebuild.binaryCandidates
-			if resultMaterializationShouldStop(rebuildReason) {
-				return stats, rebuildReason
-			}
-		}
-	}
-	if hasBinarySym {
-		stats.binary = rewriteJavaScriptTypeScriptPrecedenceCandidates(index.binaryCandidates, func(n *Node) *Node {
-			return rewriteJavaScriptTypeScriptBinaryPrecedenceWithSymbol(n, lang, binarySym)
-		})
-	}
-	return stats, ParseStopNone
+	return stats, reason
 }
 
-func normalizeJavaScriptTypeScriptPrecedenceWithDetailedStats(root *Node, lang *Language) javaScriptTypeScriptPrecedenceStats {
-	var stats javaScriptTypeScriptPrecedenceStats
-	if root == nil || lang == nil {
-		return stats
-	}
-	switch lang.Name {
-	case "typescript", "tsx":
-	default:
-		stats.call = normalizeJavaScriptTypeScriptCallPrecedenceWithStats(root, lang)
-		stats.unary = normalizeJavaScriptTypeScriptUnaryPrecedenceWithStats(root, lang)
-		stats.binary = normalizeJavaScriptTypeScriptBinaryPrecedenceWithStats(root, lang)
-		return stats
-	}
-	callSym, ok := symbolByName(lang, "call_expression")
-	if !ok {
-		return stats
-	}
-	unarySym, ok := symbolByName(lang, "unary_expression")
-	if !ok {
-		return stats
-	}
-	binarySym, ok := symbolByName(lang, "binary_expression")
-	if !ok {
-		return stats
-	}
-
-	index := rewriteJavaScriptTypeScriptCallPrecedenceAndBuildUnaryBinaryIndex(root, lang, callSym, unarySym, binarySym)
-	stats.call = index.call
-	stats.indexBuilds += index.builds
-	stats.indexNodesVisited += index.nodesVisited
-	stats.unary = rewriteJavaScriptTypeScriptPrecedenceCandidates(index.unaryCandidates, func(n *Node) *Node {
-		return rewriteJavaScriptTypeScriptUnaryPrecedenceWithSymbol(n, lang, unarySym)
-	})
-	if stats.unary.nodesRewritten != 0 {
-		rebuild, _ := buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex(root, unarySym, binarySym, nil)
-		stats.indexBuilds += rebuild.builds
-		stats.indexNodesVisited += rebuild.nodesVisited
-		index.binaryCandidates = rebuild.binaryCandidates
-	}
-	stats.binary = rewriteJavaScriptTypeScriptPrecedenceCandidates(index.binaryCandidates, func(n *Node) *Node {
-		return rewriteJavaScriptTypeScriptBinaryPrecedenceWithSymbol(n, lang, binarySym)
-	})
-	return stats
-}
-
+// rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex
+// walks the whole JS/TS/TSX result tree once, doing dynamic-import leaf
+// retyping and building the TypeScript-compatibility candidate index (see
+// normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats's
+// doc comment for the wave11 census that removed this walk's former
+// empty_statement, existential_type, statement-keyword, call-precedence, and
+// unary/binary-precedence-rotation work — all confirmed dead: zero rewrites
+// across the census corpus).
 func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex(
 	root *Node,
 	source []byte,
 	lang *Language,
-	callSym Symbol,
-	hasCallSym bool,
-	unarySym Symbol,
-	hasUnarySym bool,
-	binarySym Symbol,
-	hasBinarySym bool,
-	emptyStatementSym Symbol,
-	hasEmptyStatement bool,
-	semicolonSym Symbol,
-	semicolonNamed bool,
-	hasSemicolon bool,
-	existentialTypeSym Symbol,
-	hasExistentialType bool,
-	starSym Symbol,
-	starNamed bool,
-	hasStar bool,
-	ifStmtSym Symbol,
-	hasIfStmt bool,
-	ifSym Symbol,
-	ifNamed bool,
-	hasIf bool,
-	whileStmtSym Symbol,
-	hasWhileStmt bool,
-	whileSym Symbol,
-	whileNamed bool,
-	hasWhile bool,
-	closeBraceSym Symbol,
-	hasCloseBrace bool,
 	optionalChainSym Symbol,
 	optionalChainTokenSym Symbol,
 	optionalChainTokenNamed bool,
@@ -1239,10 +917,7 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	// is nothing to do; returning early avoids materializing final-ref
 	// children for callers (e.g. mock-lang unit tests) that exercise only
 	// other compat passes.
-	if !hasCallSym && !hasUnarySym && !hasBinarySym &&
-		!hasEmptyStatement && !hasExistentialType &&
-		!hasIfStmt && !hasWhileStmt && !enableDynamicImport &&
-		typeScriptCtx == nil {
+	if !enableDynamicImport && typeScriptCtx == nil {
 		return index, ParseStopNone
 	}
 	index.builds = 1
@@ -1268,14 +943,22 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	// (parseStopPollMask, the same ~1024-node stride walkGoCompatSubtree uses,
 	// see parser_result_go_compat.go) — on timeout, cancellation, or a runtime
 	// memory-budget trip. Every loop below re-checks the cheap `stopped` flag
-	// before doing further per-child rewrite work, so a trip anywhere in the
+	// before doing further per-child work, so a trip anywhere in the
 	// recursion unwinds the whole walk immediately instead of continuing to
-	// materialize partial candidate lists (see the 2026-07-12
+	// materialize a partial candidate index (see the 2026-07-12
 	// gocompat-walk-containment-gap finding, which flagged this fused walk as
 	// sharing the Go compat walk's containment gap: before this, this walk
 	// polled nothing at all — no timeout, cancellation, or memory-budget
 	// check of any kind).
-	var stopReason ParseStopReason
+	// stopReason starts at ParseStopNone (not the ParseStopReason zero value,
+	// which is "" — distinct from ParseStopNone's "none") so a walk that
+	// completes without ever tripping the poller reports ParseStopNone, not
+	// "": the pre-wave11 code achieved this by having the caller
+	// (normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats)
+	// return a literal ParseStopNone on its success path instead of
+	// forwarding this walk's raw return value; that caller now forwards this
+	// return value directly, so the normalization has to happen here.
+	stopReason := ParseStopNone
 	stopped := false
 	var walk func(*Node)
 	walk = func(n *Node) {
@@ -1290,39 +973,8 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 			}
 		}
 		index.nodesVisited++
-		switch n.symbol {
-		case emptyStatementSym:
-			if hasEmptyStatement && hasSemicolon {
-				index.emptyStatement.nodesVisited++
-				if normalizeJavaScriptTypeScriptEmptyStatementLeafWithSymbolChanged(n, source, semicolonSym, semicolonNamed) {
-					index.emptyStatement.nodesRewritten++
-				}
-			}
-		case existentialTypeSym:
-			if hasExistentialType && hasStar {
-				index.existentialType.nodesVisited++
-				if normalizeJavaScriptTypeScriptCollapsedLeafWithSymbolChanged(n, starSym, starNamed) {
-					index.existentialType.nodesRewritten++
-				}
-			}
-		case ifStmtSym:
-			if hasIfStmt && hasIf {
-				index.statementKeyword.nodesVisited++
-				if normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n, source, "if", ifSym, ifNamed, closeBraceSym, hasCloseBrace) {
-					index.statementKeyword.nodesRewritten++
-				}
-			}
-		case whileStmtSym:
-			if hasWhileStmt && hasWhile {
-				index.statementKeyword.nodesVisited++
-				if normalizeJavaScriptTypeScriptStatementKeywordLeafWithSymbolChanged(n, source, "while", whileSym, whileNamed, closeBraceSym, hasCloseBrace) {
-					index.statementKeyword.nodesRewritten++
-				}
-			}
-		case dynamicImportSym:
-			if enableDynamicImport {
-				normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged(n, importKeywordSym)
-			}
+		if enableDynamicImport && n.symbol == dynamicImportSym {
+			normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged(n, importKeywordSym)
 		}
 		collectTypeScriptCompatibilityNodeCandidate(&index.typeScriptCompatibility, n, typeScriptCtx)
 
@@ -1336,34 +988,9 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 				if child == nil {
 					continue
 				}
-				if hasCallSym && child.symbol == callSym {
-					index.call.nodesVisited++
-					if rewritten := rewriteJavaScriptTypeScriptCallPrecedenceWithSymbol(child, lang, callSym); rewritten != nil {
-						if replaceJavaScriptTypeScriptPrecedenceCandidate(javaScriptTypeScriptPrecedenceCandidate{parent: n, childIndex: i}, rewritten) {
-							child = rewritten
-							index.call.nodesRewritten++
-						}
-					}
-				}
 				walk(child)
 				if stopped {
 					break
-				}
-				switch child.symbol {
-				case unarySym:
-					if hasUnarySym {
-						index.unaryCandidates = append(index.unaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
-							parent:     n,
-							childIndex: i,
-						})
-					}
-				case binarySym:
-					if hasBinarySym {
-						index.binaryCandidates = append(index.binaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
-							parent:     n,
-							childIndex: i,
-						})
-					}
 				}
 			}
 			return
@@ -1376,15 +1003,6 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 			}
 			if child == nil {
 				continue
-			}
-			if hasCallSym && child.symbol == callSym {
-				index.call.nodesVisited++
-				if rewritten := rewriteJavaScriptTypeScriptCallPrecedenceWithSymbol(child, lang, callSym); rewritten != nil {
-					children[i] = rewritten
-					setNodeParentLink(rewritten, n, i)
-					child = rewritten
-					index.call.nodesRewritten++
-				}
 			}
 			if enableTypeScriptChildCompatibility {
 				switch child.symbol {
@@ -1455,50 +1073,10 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 			if stopped {
 				break
 			}
-			switch child.symbol {
-			case unarySym:
-				if hasUnarySym {
-					index.unaryCandidates = append(index.unaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
-						parent:     n,
-						childIndex: i,
-					})
-				}
-			case binarySym:
-				if hasBinarySym {
-					index.binaryCandidates = append(index.binaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
-						parent:     n,
-						childIndex: i,
-					})
-				}
-			}
 		}
 	}
 	walk(root)
 	return index, stopReason
-}
-
-func normalizeJavaScriptTypeScriptEmptyStatementLeafWithSymbolChanged(node *Node, source []byte, semicolonSym Symbol, semicolonNamed bool) bool {
-	if node == nil || resultChildCount(node) != 0 || len(source) == 0 {
-		return false
-	}
-	if node.startByte > node.endByte || int(node.endByte) > len(source) {
-		return false
-	}
-	if node.endByte-node.startByte != 1 || source[node.startByte] != ';' {
-		return false
-	}
-	leaf := newLeafNodeInArena(node.ownerArena, semicolonSym, semicolonNamed, node.startByte, node.endByte, node.startPoint, node.endPoint)
-	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, []*Node{leaf}))
-	return true
-}
-
-func normalizeJavaScriptTypeScriptCollapsedLeafWithSymbolChanged(node *Node, childSym Symbol, childNamed bool) bool {
-	if node == nil || resultChildCount(node) != 0 {
-		return false
-	}
-	child := newLeafNodeInArena(node.ownerArena, childSym, childNamed, node.startByte, node.endByte, node.startPoint, node.endPoint)
-	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, []*Node{child}))
-	return true
 }
 
 func normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged(node *Node, importKeywordSym Symbol) bool {
@@ -1510,142 +1088,9 @@ func normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged(node *Node,
 	return true
 }
 
-func rewriteJavaScriptTypeScriptCallPrecedenceAndBuildUnaryBinaryIndex(root *Node, lang *Language, callSym, unarySym, binarySym Symbol) javaScriptTypeScriptUnaryBinaryPrecedenceIndex {
-	var index javaScriptTypeScriptUnaryBinaryPrecedenceIndex
-	if root == nil {
-		return index
-	}
-	index.builds = 1
-	var walk func(*Node)
-	walk = func(n *Node) {
-		if n == nil {
-			return
-		}
-		index.nodesVisited++
-		if nodeHasFinalChildRefs(n) {
-			childCount := resultChildCount(n)
-			for i := 0; i < childCount; i++ {
-				child := resultChildAt(n, i)
-				if child == nil {
-					continue
-				}
-				if child.symbol == callSym {
-					index.call.nodesVisited++
-					if rewritten := rewriteJavaScriptTypeScriptCallPrecedenceWithSymbol(child, lang, callSym); rewritten != nil {
-						if replaceJavaScriptTypeScriptPrecedenceCandidate(javaScriptTypeScriptPrecedenceCandidate{parent: n, childIndex: i}, rewritten) {
-							child = rewritten
-							index.call.nodesRewritten++
-						}
-					}
-				}
-				walk(child)
-				switch child.symbol {
-				case unarySym:
-					index.unaryCandidates = append(index.unaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
-						parent:     n,
-						childIndex: i,
-					})
-				case binarySym:
-					index.binaryCandidates = append(index.binaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
-						parent:     n,
-						childIndex: i,
-					})
-				}
-			}
-			return
-		}
-
-		children := n.children
-		for i, child := range children {
-			if child == nil || child.symbol != callSym {
-				continue
-			}
-			index.call.nodesVisited++
-			rewritten := rewriteJavaScriptTypeScriptCallPrecedenceWithSymbol(child, lang, callSym)
-			if rewritten == nil {
-				continue
-			}
-			children[i] = rewritten
-			setNodeParentLink(rewritten, n, i)
-			index.call.nodesRewritten++
-		}
-		for _, child := range children {
-			walk(child)
-		}
-		for i, child := range children {
-			if child == nil {
-				continue
-			}
-			switch child.symbol {
-			case unarySym:
-				index.unaryCandidates = append(index.unaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
-					parent:     n,
-					childIndex: i,
-				})
-			case binarySym:
-				index.binaryCandidates = append(index.binaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
-					parent:     n,
-					childIndex: i,
-				})
-			}
-		}
-	}
-	walk(root)
-	return index
-}
-
-type javaScriptTypeScriptCallPrecedenceIndex struct {
-	candidates   []javaScriptTypeScriptPrecedenceCandidate
-	builds       uint64
-	nodesVisited uint64
-}
-
 type javaScriptTypeScriptPrecedenceCandidate struct {
 	parent     *Node
 	childIndex int
-}
-
-func buildJavaScriptTypeScriptCallPrecedenceIndex(root *Node, callSym Symbol) javaScriptTypeScriptCallPrecedenceIndex {
-	var index javaScriptTypeScriptCallPrecedenceIndex
-	if root == nil {
-		return index
-	}
-	index.builds = 1
-	walkResultTreeDenseFirst(root, func(n *Node) {
-		index.nodesVisited++
-		if n == nil {
-			return
-		}
-		for i, child := range n.children {
-			if child == nil || child.symbol != callSym {
-				continue
-			}
-			index.candidates = append(index.candidates, javaScriptTypeScriptPrecedenceCandidate{
-				parent:     n,
-				childIndex: i,
-			})
-		}
-	})
-	return index
-}
-
-func rewriteJavaScriptTypeScriptCallPrecedenceCandidates(candidates []javaScriptTypeScriptPrecedenceCandidate, lang *Language, callSym Symbol) normalizationPassCounters {
-	var counters normalizationPassCounters
-	if len(candidates) == 0 || lang == nil {
-		return counters
-	}
-	for _, candidate := range candidates {
-		counters.nodesVisited++
-		node := javaScriptTypeScriptPrecedenceCandidateNode(candidate)
-		rewritten := rewriteJavaScriptTypeScriptCallPrecedenceWithSymbol(node, lang, callSym)
-		if rewritten == nil {
-			continue
-		}
-		if replaceJavaScriptTypeScriptPrecedenceCandidate(candidate, rewritten) {
-			counters.nodesRewritten++
-		}
-	}
-	return counters
 }
 
 func javaScriptTypeScriptPrecedenceCandidateNode(candidate javaScriptTypeScriptPrecedenceCandidate) *Node {
@@ -1677,360 +1122,16 @@ func replaceJavaScriptTypeScriptPrecedenceCandidate(candidate javaScriptTypeScri
 	return true
 }
 
-func rewriteJavaScriptTypeScriptCallPrecedenceWithSymbol(node *Node, lang *Language, callSym Symbol) *Node {
-	if node == nil || lang == nil || node.symbol != callSym || len(node.children) != 2 {
-		return nil
-	}
-	function := node.children[0]
-	arguments := node.children[1]
-	if function == nil || arguments == nil {
-		return nil
-	}
-	return rewriteJavaScriptTypeScriptCallTarget(function, arguments, node, lang)
-}
-
-func rewriteJavaScriptTypeScriptCallTarget(target, arguments, callNode *Node, lang *Language) *Node {
-	if target == nil || arguments == nil || callNode == nil || lang == nil {
-		return nil
-	}
-	if isJavaScriptTypeScriptCallableShape(target, lang) {
-		if len(callNode.children) == 2 && target == callNode.children[0] && arguments == callNode.children[1] {
-			return nil
-		}
-		rewrittenCall := cloneNodeInArena(callNode.ownerArena, callNode)
-		rewrittenCall.children = cloneNodeSliceInArena(callNode.ownerArena, []*Node{target, arguments})
-		populateParentNode(rewrittenCall, rewrittenCall.children)
-		return rewrittenCall
-	}
-
-	switch target.Type(lang) {
-	case "unary_expression":
-		if len(target.children) < 2 {
-			return nil
-		}
-		operandIdx := len(target.children) - 1
-		rewrittenOperand := rewriteJavaScriptTypeScriptCallTarget(target.children[operandIdx], arguments, callNode, lang)
-		if rewrittenOperand == nil {
-			return nil
-		}
-		rewrittenUnary := cloneNodeInArena(callNode.ownerArena, target)
-		unaryChildren := cloneNodeSliceInArena(callNode.ownerArena, target.children)
-		unaryChildren[operandIdx] = rewrittenOperand
-		rewrittenUnary.children = unaryChildren
-		populateParentNode(rewrittenUnary, rewrittenUnary.children)
-		return rewrittenUnary
-	case "binary_expression":
-		operator, rightIdx, ok := javaScriptTypeScriptBinaryOperatorAndRight(target, lang)
-		if !ok || rightIdx < 0 || rightIdx >= len(target.children) {
-			return nil
-		}
-		if operator == nil {
-			return nil
-		}
-		if _, ok := javaScriptTypeScriptBinaryOperatorPrecedence(operator.Type(lang)); !ok {
-			return nil
-		}
-		rewrittenRight := rewriteJavaScriptTypeScriptCallTarget(target.children[rightIdx], arguments, callNode, lang)
-		if rewrittenRight == nil {
-			return nil
-		}
-		rewrittenBinary := cloneNodeInArena(callNode.ownerArena, target)
-		binaryChildren := cloneNodeSliceInArena(callNode.ownerArena, target.children)
-		binaryChildren[rightIdx] = rewrittenRight
-		rewrittenBinary.children = binaryChildren
-		populateParentNode(rewrittenBinary, rewrittenBinary.children)
-		return rewrittenBinary
-	default:
-		return nil
-	}
-}
-
-func javaScriptTypeScriptBinaryOperatorAndRight(node *Node, lang *Language) (*Node, int, bool) {
-	if node == nil || lang == nil || node.Type(lang) != "binary_expression" || len(node.children) < 3 {
-		return nil, -1, false
-	}
-	operatorIdx := -1
-	rightIdx := -1
-	for i := 0; i < len(node.children); i++ {
-		switch node.FieldNameForChild(i, lang) {
-		case "operator":
-			operatorIdx = i
-		case "right":
-			rightIdx = i
-		}
-	}
-	if operatorIdx < 0 && len(node.children) >= 2 {
-		operatorIdx = 1
-	}
-	if rightIdx < 0 {
-		for i := len(node.children) - 1; i >= 0; i-- {
-			child := node.children[i]
-			if child == nil || child.isExtra() {
-				continue
-			}
-			if i != operatorIdx {
-				rightIdx = i
-				break
-			}
-		}
-	}
-	if operatorIdx < 0 || rightIdx < 0 || operatorIdx >= len(node.children) {
-		return nil, -1, false
-	}
-	return node.children[operatorIdx], rightIdx, true
-}
-
-func isJavaScriptTypeScriptCallableShape(node *Node, lang *Language) bool {
-	if node == nil || lang == nil {
-		return false
-	}
-	switch node.Type(lang) {
-	case "identifier", "member_expression", "subscript_expression", "call_expression", "parenthesized_expression":
-		return true
-	default:
-		return false
-	}
-}
-
-func normalizeJavaScriptTypeScriptUnaryPrecedenceWithStats(root *Node, lang *Language) normalizationPassCounters {
-	var counters normalizationPassCounters
-	if root == nil || lang == nil {
-		return counters
-	}
-	switch lang.Name {
-	case "javascript", "typescript", "tsx":
-	default:
-		return counters
-	}
-	unarySym, ok := symbolByName(lang, "unary_expression")
-	if !ok {
-		return counters
-	}
-
-	return rewriteResultTreeChildrenPostorderWithStats(root, func(n *Node) *Node {
-		return rewriteJavaScriptTypeScriptUnaryPrecedenceWithSymbol(n, lang, unarySym)
-	})
-}
-
+// javaScriptTypeScriptUnaryBinaryPrecedenceIndex is the fused walk's return
+// type. The wave11 compat-sunset (juniper) removed its emptyStatement,
+// existentialType, statementKeyword, call, unaryCandidates, and
+// binaryCandidates fields along with the dead rewrite passes that populated
+// them (see the fused walk's doc comment above); typeScriptCompatibility,
+// builds, and nodesVisited are still real, live bookkeeping.
 type javaScriptTypeScriptUnaryBinaryPrecedenceIndex struct {
-	emptyStatement          normalizationPassCounters
-	existentialType         normalizationPassCounters
-	statementKeyword        normalizationPassCounters
-	call                    normalizationPassCounters
 	typeScriptCompatibility typeScriptCompatibilityCandidates
-	unaryCandidates         []javaScriptTypeScriptPrecedenceCandidate
-	binaryCandidates        []javaScriptTypeScriptPrecedenceCandidate
 	builds                  uint64
 	nodesVisited            uint64
-}
-
-// buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex re-scans the whole tree
-// for unary/binary candidates after a unary rewrite has changed the tree
-// shape (see its call site above): a real, reachable whole-tree pass, not
-// just a diagnostic one, so poller is threaded through it exactly like the
-// fused walk it follows — a timeout, cancellation, or runtime memory-budget
-// trip aborts the rescan immediately rather than completing it budget-blind.
-// poller == nil preserves the exact prior unbounded behavior.
-func buildJavaScriptTypeScriptUnaryBinaryPrecedenceIndex(root *Node, unarySym, binarySym Symbol, poller *parseStopPoller) (javaScriptTypeScriptUnaryBinaryPrecedenceIndex, ParseStopReason) {
-	var index javaScriptTypeScriptUnaryBinaryPrecedenceIndex
-	if root == nil {
-		return index, ParseStopNone
-	}
-	index.builds = 1
-	var stopReason ParseStopReason
-	walkResultTreePostorderUntil(root, func() bool {
-		if poller == nil {
-			return false
-		}
-		if reason := poller.poll(); resultMaterializationShouldStop(reason) {
-			stopReason = reason
-			return true
-		}
-		return false
-	}, func(n *Node) {
-		index.nodesVisited++
-		if n == nil {
-			return
-		}
-		children := n.children
-		if n.childIndex <= finalChildSidecarIndexBase && n.ownerArena != nil {
-			children = resultDenseChildrenFallbackForMutation(n)
-		}
-		for i, child := range children {
-			if child == nil {
-				continue
-			}
-			switch child.symbol {
-			case unarySym:
-				index.unaryCandidates = append(index.unaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
-					parent:     n,
-					childIndex: i,
-				})
-			case binarySym:
-				index.binaryCandidates = append(index.binaryCandidates, javaScriptTypeScriptPrecedenceCandidate{
-					parent:     n,
-					childIndex: i,
-				})
-			}
-		}
-	})
-	return index, stopReason
-}
-
-func rewriteJavaScriptTypeScriptPrecedenceCandidates(candidates []javaScriptTypeScriptPrecedenceCandidate, rewrite func(*Node) *Node) normalizationPassCounters {
-	var counters normalizationPassCounters
-	if len(candidates) == 0 || rewrite == nil {
-		return counters
-	}
-	for _, candidate := range candidates {
-		counters.nodesVisited++
-		for {
-			node := javaScriptTypeScriptPrecedenceCandidateNode(candidate)
-			rewritten := rewrite(node)
-			if rewritten == nil {
-				break
-			}
-			if !replaceJavaScriptTypeScriptPrecedenceCandidate(candidate, rewritten) {
-				break
-			}
-			counters.nodesRewritten++
-		}
-	}
-	return counters
-}
-
-func rewriteJavaScriptTypeScriptUnaryPrecedenceWithSymbol(node *Node, lang *Language, unarySym Symbol) *Node {
-	if node == nil || lang == nil || node.symbol != unarySym || len(node.children) < 2 {
-		return nil
-	}
-	operandIdx := len(node.children) - 1
-	operand := node.children[operandIdx]
-	if operand == nil || operand.Type(lang) != "binary_expression" || len(operand.children) != 3 {
-		return nil
-	}
-	if _, ok := javaScriptTypeScriptBinaryOperatorPrecedence(operand.children[1].Type(lang)); !ok {
-		return nil
-	}
-
-	rewrittenUnary := cloneNodeInArena(node.ownerArena, node)
-	unaryChildren := cloneNodeSliceInArena(node.ownerArena, node.children)
-	unaryChildren[operandIdx] = operand.children[0]
-	rewrittenUnary.children = unaryChildren
-	populateParentNode(rewrittenUnary, rewrittenUnary.children)
-
-	rewrittenBinary := cloneNodeInArena(node.ownerArena, operand)
-	binaryChildren := cloneNodeSliceInArena(node.ownerArena, operand.children)
-	binaryChildren[0] = rewrittenUnary
-	rewrittenBinary.children = binaryChildren
-	populateParentNode(rewrittenBinary, rewrittenBinary.children)
-	return rewrittenBinary
-}
-
-func normalizeJavaScriptTypeScriptBinaryPrecedenceWithStats(root *Node, lang *Language) normalizationPassCounters {
-	var counters normalizationPassCounters
-	if root == nil || lang == nil {
-		return counters
-	}
-	switch lang.Name {
-	case "javascript", "typescript", "tsx":
-	default:
-		return counters
-	}
-	binarySym, ok := symbolByName(lang, "binary_expression")
-	if !ok {
-		return counters
-	}
-
-	return rewriteResultTreeChildrenPostorderWithStats(root, func(n *Node) *Node {
-		return rewriteJavaScriptTypeScriptBinaryPrecedenceWithSymbol(n, lang, binarySym)
-	})
-}
-
-func rewriteJavaScriptTypeScriptBinaryPrecedenceWithSymbol(node *Node, lang *Language, binarySym Symbol) *Node {
-	if node == nil || lang == nil || node.symbol != binarySym || len(node.children) != 3 {
-		return nil
-	}
-	left := node.children[0]
-	op := node.children[1]
-	right := node.children[2]
-	if left == nil || op == nil || right == nil {
-		return nil
-	}
-	parentPrec, ok := javaScriptTypeScriptBinaryOperatorPrecedence(op.Type(lang))
-	if !ok {
-		return nil
-	}
-
-	if left.Type(lang) == "binary_expression" && len(left.children) == 3 {
-		leftOp := left.children[1]
-		if leftOp != nil {
-			leftPrec, ok := javaScriptTypeScriptBinaryOperatorPrecedence(leftOp.Type(lang))
-			if ok && parentPrec > leftPrec {
-				rotatedInner := cloneNodeInArena(node.ownerArena, node)
-				rotatedInner.children = cloneNodeSliceInArena(node.ownerArena, []*Node{left.children[2], op, right})
-				populateParentNode(rotatedInner, rotatedInner.children)
-
-				rotatedOuter := cloneNodeInArena(node.ownerArena, left)
-				rotatedOuter.children = cloneNodeSliceInArena(node.ownerArena, []*Node{left.children[0], leftOp, rotatedInner})
-				populateParentNode(rotatedOuter, rotatedOuter.children)
-				return rotatedOuter
-			}
-		}
-	}
-
-	if right.Type(lang) == "binary_expression" && len(right.children) == 3 {
-		rightOp := right.children[1]
-		if rightOp != nil {
-			rightPrec, ok := javaScriptTypeScriptBinaryOperatorPrecedence(rightOp.Type(lang))
-			if ok && parentPrec >= rightPrec && !javaScriptTypeScriptBinaryOperatorRightAssociative(op.Type(lang)) {
-				rotatedInner := cloneNodeInArena(node.ownerArena, node)
-				rotatedInner.children = cloneNodeSliceInArena(node.ownerArena, []*Node{left, op, right.children[0]})
-				populateParentNode(rotatedInner, rotatedInner.children)
-
-				rotatedOuter := cloneNodeInArena(node.ownerArena, right)
-				rotatedOuter.children = cloneNodeSliceInArena(node.ownerArena, []*Node{rotatedInner, rightOp, right.children[2]})
-				populateParentNode(rotatedOuter, rotatedOuter.children)
-				return rotatedOuter
-			}
-		}
-	}
-
-	return nil
-}
-
-func javaScriptTypeScriptBinaryOperatorPrecedence(op string) (int, bool) {
-	switch op {
-	case "??":
-		return 1, true
-	case "||":
-		return 2, true
-	case "&&":
-		return 3, true
-	case "|":
-		return 4, true
-	case "^":
-		return 5, true
-	case "&":
-		return 6, true
-	case "==", "!=", "===", "!==":
-		return 7, true
-	case "<", "<=", ">", ">=", "instanceof", "in":
-		return 8, true
-	case "<<", ">>", ">>>":
-		return 9, true
-	case "+", "-":
-		return 10, true
-	case "*", "/", "%":
-		return 11, true
-	case "**":
-		return 12, true
-	default:
-		return 0, false
-	}
-}
-
-func javaScriptTypeScriptBinaryOperatorRightAssociative(op string) bool {
-	return op == "**"
 }
 
 func rewriteJavaScriptTopLevelObjectLiteral(node *Node, lang *Language, arena *nodeArena, exprSym Symbol, exprNamed bool, objectSym Symbol, objectNamed bool, pairSym Symbol, pairNamed bool, propSym Symbol) (*Node, bool) {

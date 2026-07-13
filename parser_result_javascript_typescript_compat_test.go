@@ -94,146 +94,75 @@ func TestNormalizeJavaScriptTopLevelExpressionStatementBoundsSnapToChildren(t *t
 	}
 }
 
-func TestNormalizeJavaScriptEmptyStatementRestoresSemicolonChild(t *testing.T) {
-	lang := &Language{
-		Name:        "javascript",
-		SymbolNames: []string{"EOF", "program", "empty_statement", ";"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "program", Visible: true, Named: true},
-			{Name: "empty_statement", Visible: true, Named: true},
-			{Name: ";", Visible: true, Named: false},
-		},
-	}
-
-	arena := newNodeArena(arenaClassFull)
-	stmt := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
-	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
-
-	normalizeJavaScriptCompatibility(root, []byte(";"), nil, lang)
-
-	if got, want := resultChildCount(stmt), 1; got != want {
-		t.Fatalf("empty_statement child count = %d, want %d", got, want)
-	}
-	child := resultChildAt(stmt, 0)
-	if child == nil {
-		t.Fatal("empty_statement child is nil")
-	}
-	if got, want := child.Type(lang), ";"; got != want {
-		t.Fatalf("empty_statement child type = %q, want %q", got, want)
-	}
-}
-
-func TestNormalizeTypeScriptSyntaxPassRestoresEmptyStatementSemicolonChild(t *testing.T) {
+// newDeferredCompatDynamicImportFixture builds a minimal "program" root with
+// one childless dynamic-import leaf (named "import", symbol 2) over source
+// "import". normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged
+// (still live — not part of the wave11 compat-sunset's six confirmed-dead
+// classes) retypes it into a single-child node the same way the removed
+// empty_statement leaf-retype used to, so it's the fixture below's stand-in
+// observable marker for "did deferred JS/TS compat actually run".
+func newDeferredCompatDynamicImportFixture() (*Language, *Node, *Node) {
 	lang := &Language{
 		Name:        "typescript",
-		SymbolNames: []string{"EOF", "program", "empty_statement", ";", "call_expression", "unary_expression", "binary_expression"},
+		SymbolNames: []string{"EOF", "program", "import", "import"},
 		SymbolMetadata: []SymbolMetadata{
 			{Name: "EOF", Visible: false, Named: false},
 			{Name: "program", Visible: true, Named: true},
-			{Name: "empty_statement", Visible: true, Named: true},
-			{Name: ";", Visible: true, Named: false},
-			{Name: "call_expression", Visible: true, Named: true},
-			{Name: "unary_expression", Visible: true, Named: true},
-			{Name: "binary_expression", Visible: true, Named: true},
+			{Name: "import", Visible: true, Named: true},
+			{Name: "import", Visible: true, Named: false},
 		},
 	}
-
 	arena := newNodeArena(arenaClassFull)
-	stmt := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	stmt := newLeafNodeInArena(arena, 2, true, 0, 6, Point{}, Point{Column: 6})
 	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
-
-	normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedence(root, []byte(";"), lang)
-
-	if got, want := resultChildCount(stmt), 1; got != want {
-		t.Fatalf("empty_statement child count = %d, want %d", got, want)
-	}
-	child := resultChildAt(stmt, 0)
-	if child == nil {
-		t.Fatal("empty_statement child is nil")
-	}
-	if got, want := child.Type(lang), ";"; got != want {
-		t.Fatalf("empty_statement child type = %q, want %q", got, want)
-	}
+	return lang, root, stmt
 }
 
 func TestTreeRootNodeAppliesDeferredTypeScriptCompatibility(t *testing.T) {
-	lang := &Language{
-		Name:        "typescript",
-		SymbolNames: []string{"EOF", "program", "empty_statement", ";", "call_expression", "unary_expression", "binary_expression"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "program", Visible: true, Named: true},
-			{Name: "empty_statement", Visible: true, Named: true},
-			{Name: ";", Visible: true, Named: false},
-			{Name: "call_expression", Visible: true, Named: true},
-			{Name: "unary_expression", Visible: true, Named: true},
-			{Name: "binary_expression", Visible: true, Named: true},
-		},
-	}
-
-	arena := newNodeArena(arenaClassFull)
-	stmt := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
-	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
-	tree := newTreeWithArenas(root, []byte(";"), lang, arena, nil)
+	lang, root, stmt := newDeferredCompatDynamicImportFixture()
+	tree := newTreeWithArenas(root, []byte("import"), lang, root.ownerArena, nil)
 	tree.deferResultCompatibility()
 
 	if got := resultChildCount(stmt); got != 0 {
-		t.Fatalf("empty_statement child count before RootNode = %d, want 0", got)
+		t.Fatalf("import child count before RootNode = %d, want 0", got)
 	}
 	if tree.RootNode() != root {
 		t.Fatal("RootNode returned a different root")
 	}
 	if got, want := resultChildCount(stmt), 1; got != want {
-		t.Fatalf("empty_statement child count after RootNode = %d, want %d", got, want)
+		t.Fatalf("import child count after RootNode = %d, want %d", got, want)
 	}
 	child := resultChildAt(stmt, 0)
 	if child == nil {
-		t.Fatal("empty_statement child is nil")
+		t.Fatal("import child is nil")
 	}
-	if got, want := child.Type(lang), ";"; got != want {
-		t.Fatalf("empty_statement child type = %q, want %q", got, want)
+	if got, want := child.Type(lang), "import"; got != want {
+		t.Fatalf("import child type = %q, want %q", got, want)
 	}
 }
 
 func TestTreeUTF16DescendantAppliesDeferredTypeScriptCompatibility(t *testing.T) {
-	lang := &Language{
-		Name:        "typescript",
-		SymbolNames: []string{"EOF", "program", "empty_statement", ";", "call_expression", "unary_expression", "binary_expression"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "program", Visible: true, Named: true},
-			{Name: "empty_statement", Visible: true, Named: true},
-			{Name: ";", Visible: true, Named: false},
-			{Name: "call_expression", Visible: true, Named: true},
-			{Name: "unary_expression", Visible: true, Named: true},
-			{Name: "binary_expression", Visible: true, Named: true},
-		},
-	}
-
-	arena := newNodeArena(arenaClassFull)
-	stmt := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
-	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
-	source, sourceMap := encodeUTF16ToUTF8WithMap([]uint16{';'})
-	tree := newTreeWithArenas(root, source, lang, arena, nil)
+	lang, root, stmt := newDeferredCompatDynamicImportFixture()
+	source, sourceMap := encodeUTF16ToUTF8WithMap([]uint16{'i', 'm', 'p', 'o', 'r', 't'})
+	tree := newTreeWithArenas(root, source, lang, root.ownerArena, nil)
 	tree.utf16Map = sourceMap
 	tree.deferResultCompatibility()
 
 	if got := resultChildCount(stmt); got != 0 {
-		t.Fatalf("empty_statement child count before UTF16 descendant = %d, want 0", got)
+		t.Fatalf("import child count before UTF16 descendant = %d, want 0", got)
 	}
-	if got := tree.NamedDescendantForUTF16Range(0, 1); got != stmt {
-		t.Fatalf("NamedDescendantForUTF16Range returned %p, want empty_statement %p", got, stmt)
+	if got := tree.NamedDescendantForUTF16Range(0, 6); got != stmt {
+		t.Fatalf("NamedDescendantForUTF16Range returned %p, want import %p", got, stmt)
 	}
 	if got, want := resultChildCount(stmt), 1; got != want {
-		t.Fatalf("empty_statement child count after UTF16 descendant = %d, want %d", got, want)
+		t.Fatalf("import child count after UTF16 descendant = %d, want %d", got, want)
 	}
 	child := resultChildAt(stmt, 0)
 	if child == nil {
-		t.Fatal("empty_statement child is nil")
+		t.Fatal("import child is nil")
 	}
-	if got, want := child.Type(lang), ";"; got != want {
-		t.Fatalf("empty_statement child type = %q, want %q", got, want)
+	if got, want := child.Type(lang), "import"; got != want {
+		t.Fatalf("import child type = %q, want %q", got, want)
 	}
 }
 
@@ -242,24 +171,8 @@ func TestTreeRootNodeRecordsDeferredTypeScriptCompatibilityTiming(t *testing.T) 
 	ResetParseEnvConfigCacheForTests()
 	t.Cleanup(ResetParseEnvConfigCacheForTests)
 
-	lang := &Language{
-		Name:        "typescript",
-		SymbolNames: []string{"EOF", "program", "empty_statement", ";", "call_expression", "unary_expression", "binary_expression"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "program", Visible: true, Named: true},
-			{Name: "empty_statement", Visible: true, Named: true},
-			{Name: ";", Visible: true, Named: false},
-			{Name: "call_expression", Visible: true, Named: true},
-			{Name: "unary_expression", Visible: true, Named: true},
-			{Name: "binary_expression", Visible: true, Named: true},
-		},
-	}
-
-	arena := newNodeArena(arenaClassFull)
-	stmt := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
-	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
-	tree := newTreeWithArenas(root, []byte(";"), lang, arena, nil)
+	lang, root, _ := newDeferredCompatDynamicImportFixture()
+	tree := newTreeWithArenas(root, []byte("import"), lang, root.ownerArena, nil)
 	tree.deferResultCompatibility()
 
 	_ = tree.RootNode()
@@ -293,104 +206,39 @@ func TestTreeRootNodeRecordsDeferredTypeScriptCompatibilityTiming(t *testing.T) 
 }
 
 func TestReturnedTreeNormalizationUsesRawRootForDeferredTypeScriptCompatibility(t *testing.T) {
-	lang := &Language{
-		Name:        "typescript",
-		SymbolNames: []string{"EOF", "program", "empty_statement", ";", "call_expression", "unary_expression", "binary_expression"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "program", Visible: true, Named: true},
-			{Name: "empty_statement", Visible: true, Named: true},
-			{Name: ";", Visible: true, Named: false},
-			{Name: "call_expression", Visible: true, Named: true},
-			{Name: "unary_expression", Visible: true, Named: true},
-			{Name: "binary_expression", Visible: true, Named: true},
-		},
-	}
-
-	arena := newNodeArena(arenaClassFull)
-	stmt := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
-	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
-	tree := newTreeWithArenas(root, []byte(";"), lang, arena, nil)
+	lang, root, stmt := newDeferredCompatDynamicImportFixture()
+	tree := newTreeWithArenas(root, []byte("import"), lang, root.ownerArena, nil)
 	tree.deferResultCompatibility()
 
-	normalizeReturnedTree(rawRootOrNil(tree), []byte(";"), lang)
+	normalizeReturnedTree(rawRootOrNil(tree), []byte("import"), lang)
 	if got := resultChildCount(stmt); got != 0 {
-		t.Fatalf("empty_statement child count after returned-tree normalization = %d, want deferred", got)
+		t.Fatalf("import child count after returned-tree normalization = %d, want deferred", got)
 	}
 	_ = tree.RootNode()
 	if got, want := resultChildCount(stmt), 1; got != want {
-		t.Fatalf("empty_statement child count after RootNode = %d, want %d", got, want)
+		t.Fatalf("import child count after RootNode = %d, want %d", got, want)
 	}
 }
 
 func TestParseRuntimeRootStatsUsesRawRootForDeferredTypeScriptCompatibility(t *testing.T) {
-	lang := &Language{
-		Name:        "typescript",
-		SymbolNames: []string{"EOF", "program", "empty_statement", ";", "call_expression", "unary_expression", "binary_expression"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "program", Visible: true, Named: true},
-			{Name: "empty_statement", Visible: true, Named: true},
-			{Name: ";", Visible: true, Named: false},
-			{Name: "call_expression", Visible: true, Named: true},
-			{Name: "unary_expression", Visible: true, Named: true},
-			{Name: "binary_expression", Visible: true, Named: true},
-		},
-	}
-
-	arena := newNodeArena(arenaClassFull)
-	stmt := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
-	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
-	tree := newTreeWithArenas(root, []byte(";"), lang, arena, nil)
+	lang, root, stmt := newDeferredCompatDynamicImportFixture()
+	tree := newTreeWithArenas(root, []byte("import"), lang, root.ownerArena, nil)
 	tree.deferResultCompatibility()
 
 	var rt ParseRuntime
 	recordParseRuntimeRootStats(&rt, tree, tree.Source(), 1, nil, false, lang)
-	if got, want := rt.RootEndByte, uint32(1); got != want {
+	if got, want := rt.RootEndByte, uint32(6); got != want {
 		t.Fatalf("RootEndByte = %d, want %d", got, want)
 	}
 	if rt.Truncated {
 		t.Fatal("Truncated = true, want false")
 	}
 	if got := resultChildCount(stmt); got != 0 {
-		t.Fatalf("empty_statement child count after ParseRuntime stats = %d, want deferred", got)
+		t.Fatalf("import child count after ParseRuntime stats = %d, want deferred", got)
 	}
 	_ = tree.RootNode()
 	if got, want := resultChildCount(stmt), 1; got != want {
-		t.Fatalf("empty_statement child count after RootNode = %d, want %d", got, want)
-	}
-}
-
-func TestNormalizeTypeScriptSyntaxPassRestoresExistentialTypeStarChild(t *testing.T) {
-	lang := &Language{
-		Name:        "typescript",
-		SymbolNames: []string{"EOF", "program", "existential_type", "*", "call_expression", "unary_expression", "binary_expression"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "program", Visible: true, Named: true},
-			{Name: "existential_type", Visible: true, Named: true},
-			{Name: "*", Visible: true, Named: false},
-			{Name: "call_expression", Visible: true, Named: true},
-			{Name: "unary_expression", Visible: true, Named: true},
-			{Name: "binary_expression", Visible: true, Named: true},
-		},
-	}
-
-	arena := newNodeArena(arenaClassFull)
-	existentialType := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
-	root := newParentNodeInArena(arena, 1, true, []*Node{existentialType}, nil, 0)
-
-	normalizeTypeScriptTreeCompatibilityWithParser(root, []byte("*"), nil, lang)
-
-	if got, want := resultChildCount(existentialType), 1; got != want {
-		t.Fatalf("existential_type child count = %d, want %d", got, want)
-	}
-	child := resultChildAt(existentialType, 0)
-	if child == nil {
-		t.Fatal("existential_type child is nil")
-	}
-	if got, want := child.Type(lang), "*"; got != want {
-		t.Fatalf("existential_type child type = %q, want %q", got, want)
+		t.Fatalf("import child count after RootNode = %d, want %d", got, want)
 	}
 }
 
@@ -547,97 +395,6 @@ func TestTypeScriptCallInstantiatedCompatibilityGate(t *testing.T) {
 	callee.symbol = ctx.instantiationExprSym
 	if !typeScriptCallCouldBeInstantiated(call, &ctx) {
 		t.Fatal("instantiation_expression callee should be an instantiated-call candidate")
-	}
-}
-
-func TestNormalizeJavaScriptStatementKeywordRestoresWhileLeaf(t *testing.T) {
-	lang := &Language{
-		Name:        "javascript",
-		SymbolNames: []string{"EOF", "program", "while_statement", "while", "parenthesized_expression", "statement_block", "}"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "program", Visible: true, Named: true},
-			{Name: "while_statement", Visible: true, Named: true},
-			{Name: "while", Visible: true, Named: false},
-			{Name: "parenthesized_expression", Visible: true, Named: true},
-			{Name: "statement_block", Visible: true, Named: true},
-			{Name: "}", Visible: true, Named: false},
-		},
-	}
-
-	arena := newNodeArena(arenaClassFull)
-	source := []byte("while (x) {}")
-	strayClose := newLeafNodeInArena(arena, 6, false, 11, 12, Point{Column: 11}, Point{Column: 12})
-	condition := newLeafNodeInArena(arena, 4, true, 6, 9, Point{Column: 6}, Point{Column: 9})
-	body := newLeafNodeInArena(arena, 5, true, 10, 12, Point{Column: 10}, Point{Column: 12})
-	stmt := newParentNodeInArena(arena, 2, true, []*Node{strayClose, condition, body}, nil, 0)
-	stmt.startByte = 0
-	stmt.startPoint = Point{}
-	stmt.endByte = 12
-	stmt.endPoint = Point{Column: 12}
-	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
-
-	normalizeJavaScriptCompatibility(root, source, nil, lang)
-
-	first := resultChildAt(stmt, 0)
-	if first == nil {
-		t.Fatal("while_statement first child is nil")
-	}
-	if got, want := first.Type(lang), "while"; got != want {
-		t.Fatalf("while_statement first child type = %q, want %q", got, want)
-	}
-	if got, want := resultChildCount(stmt), 3; got != want {
-		t.Fatalf("while_statement child count = %d, want %d", got, want)
-	}
-}
-
-func TestNormalizeJavaScriptStatementKeywordRestoresFinalRefWhileLeaf(t *testing.T) {
-	lang := &Language{
-		Name:        "javascript",
-		SymbolNames: []string{"EOF", "program", "while_statement", "while", "parenthesized_expression", "statement_block", "}"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "program", Visible: true, Named: true},
-			{Name: "while_statement", Visible: true, Named: true},
-			{Name: "while", Visible: true, Named: false},
-			{Name: "parenthesized_expression", Visible: true, Named: true},
-			{Name: "statement_block", Visible: true, Named: true},
-			{Name: "}", Visible: true, Named: false},
-		},
-	}
-
-	arena := newNodeArena(arenaClassFull)
-	arena.finalChildRefs = true
-	source := []byte("while (x) {}")
-	strayClose := newCompactFullLeafInArena(arena, 6, false, 11, 12, Point{Column: 11}, Point{Column: 12})
-	condition := newCompactFullLeafInArena(arena, 4, true, 6, 9, Point{Column: 6}, Point{Column: 9})
-	body := newCompactFullLeafInArena(arena, 5, true, 10, 12, Point{Column: 10}, Point{Column: 12})
-	stmt := newPendingParentInArena(arena, 2, true, 0, []stackEntry{
-		newStackEntryCompactFullLeaf(strayClose.parseState, strayClose),
-		newStackEntryCompactFullLeaf(condition.parseState, condition),
-		newStackEntryCompactFullLeaf(body.parseState, body),
-	}, 0, 12, Point{}, Point{Column: 12}, false)
-	rootParent := newPendingParentInArena(arena, 1, true, 0, []stackEntry{
-		newStackEntryPendingParent(stmt.parseState, stmt),
-	}, 0, 12, Point{}, Point{Column: 12}, false)
-	rootEntry := newStackEntryPendingParent(rootParent.parseState, rootParent)
-	root := materializeStackEntryPendingParent(arena, &rootEntry, pendingParentMaterializeForFinalTree)
-
-	normalizeJavaScriptCompatibility(root, source, nil, lang)
-
-	child := root.Child(0)
-	if child == nil {
-		t.Fatal("program child is nil")
-	}
-	first := resultChildAt(child, 0)
-	if first == nil {
-		t.Fatal("while_statement first child is nil")
-	}
-	if got, want := first.Type(lang), "while"; got != want {
-		t.Fatalf("while_statement first child type = %q, want %q", got, want)
-	}
-	if got, want := resultChildCount(child), 3; got != want {
-		t.Fatalf("while_statement child count = %d, want %d", got, want)
 	}
 }
 

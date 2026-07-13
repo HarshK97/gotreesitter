@@ -254,24 +254,30 @@ func TestTransientChildFinalizationAbortReturnsErrorTree(t *testing.T) {
 }
 
 func TestTransientChildReturnedTreeMaterializationUsesRawRoot(t *testing.T) {
+	// Observable marker: a childless dynamic-import leaf (named "import"),
+	// retyped into a single-child node by
+	// normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged when
+	// deferred TS compat runs. Mirrors newDeferredCompatDynamicImportFixture
+	// in parser_result_javascript_typescript_compat_test.go: this test used
+	// to use an empty_statement leaf as its marker, but the wave11
+	// compat-sunset (juniper) removed empty_statement leaf-retype as one of
+	// six confirmed-dead JS/TS rewrite classes (zero rewrites across a
+	// ~23MB real JS/TS/TSX census).
 	lang := &Language{
 		Name:        "typescript",
-		SymbolNames: []string{"EOF", "program", "empty_statement", ";", "call_expression", "unary_expression", "binary_expression"},
+		SymbolNames: []string{"EOF", "program", "import", "import"},
 		SymbolMetadata: []SymbolMetadata{
 			{Name: "EOF", Visible: false, Named: false},
 			{Name: "program", Visible: true, Named: true},
-			{Name: "empty_statement", Visible: true, Named: true},
-			{Name: ";", Visible: true, Named: false},
-			{Name: "call_expression", Visible: true, Named: true},
-			{Name: "unary_expression", Visible: true, Named: true},
-			{Name: "binary_expression", Visible: true, Named: true},
+			{Name: "import", Visible: true, Named: true},
+			{Name: "import", Visible: true, Named: false},
 		},
 	}
 
 	arena := newNodeArena(arenaClassFull)
-	stmt := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	stmt := newLeafNodeInArena(arena, 2, true, 0, 6, Point{}, Point{Column: 6})
 	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
-	tree := newTreeWithArenas(root, []byte(";"), lang, arena, nil)
+	tree := newTreeWithArenas(root, []byte("import"), lang, arena, nil)
 	tree.deferResultCompatibility()
 
 	parser := &Parser{}
@@ -283,11 +289,11 @@ func TestTransientChildReturnedTreeMaterializationUsesRawRoot(t *testing.T) {
 		t.Fatal("resultCompatibilityPending = false after transient child materialization, want deferred")
 	}
 	if got := resultChildCount(stmt); got != 0 {
-		t.Fatalf("empty_statement child count after transient child materialization = %d, want deferred", got)
+		t.Fatalf("import child count after transient child materialization = %d, want deferred", got)
 	}
 	_ = tree.RootNode()
 	if got, want := resultChildCount(stmt), 1; got != want {
-		t.Fatalf("empty_statement child count after RootNode = %d, want %d", got, want)
+		t.Fatalf("import child count after RootNode = %d, want %d", got, want)
 	}
 }
 
