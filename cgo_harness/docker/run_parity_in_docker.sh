@@ -9,6 +9,7 @@ LABEL=""
 IMAGE_TAG="gotreesitter/cgo-harness:go1.25-local"
 MEMORY_LIMIT="8g"
 CPUS_LIMIT="4"
+CONTAINER_HOSTNAME=""
 # CPUSET_CPUS pins the container to a specific set of physical CPUs via
 # docker's --cpuset-cpus. Pinning matters more than CFS quota for benchmark
 # stability — without it, the kernel scheduler can move the container
@@ -47,6 +48,9 @@ Options:
   --label <name>         Optional run label (used in container/artifact naming)
   --memory <limit>       Container memory limit (default: 8g)
   --cpus <count>         CPU limit passed to Docker (default: 4)
+  --hostname <name>      Fixed container hostname recorded by benchmark shards.
+                         Use one stable name per physical host when a campaign
+                         runs one language per container.
   --cpuset-cpus <list>   Pin container to specific CPUs via --cpuset-cpus
                          (e.g. "18" or "16-19"). Empty = no pinning, but
                          benchmark stability suffers — use this for any
@@ -123,6 +127,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --cpus)
       CPUS_LIMIT="$2"
+      shift 2
+      ;;
+    --hostname)
+      CONTAINER_HOSTNAME="$2"
       shift 2
       ;;
     --cpuset-cpus)
@@ -349,6 +357,11 @@ if [[ -n "$CPUSET_CPUS" ]]; then
   CPUSET_ARGS+=(--cpuset-cpus "$CPUSET_CPUS")
 fi
 
+HOSTNAME_ARGS=()
+if [[ -n "$CONTAINER_HOSTNAME" ]]; then
+  HOSTNAME_ARGS+=(--hostname "$CONTAINER_HOSTNAME")
+fi
+
 RUN_START_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 RUN_START_NS="$(date +%s%N)"
 
@@ -388,6 +401,7 @@ CID="$(docker create \
   --memory-swap "$MEMORY_LIMIT" \
   --cpus "$CPUS_LIMIT" \
   "${CPUSET_ARGS[@]}" \
+  "${HOSTNAME_ARGS[@]}" \
   --pids-limit "$PIDS_LIMIT" \
   --mount "type=bind,src=$REPO_ROOT,dst=/workspace" \
   "${EXTRA_MOUNT_ARGS[@]}" \
@@ -414,6 +428,7 @@ STATE_ERROR="$(docker inspect -f '{{.State.Error}}' "$CID")"
   echo "memory=$MEMORY_LIMIT"
   echo "cpus=$CPUS_LIMIT"
   echo "cpuset_cpus=$CPUSET_CPUS"
+  echo "hostname=$CONTAINER_HOSTNAME"
   echo "pids=$PIDS_LIMIT"
   echo "gomemlimit=$GOMEMLIMIT_VALUE"
   echo "goflags=$GOFLAGS_VALUE"

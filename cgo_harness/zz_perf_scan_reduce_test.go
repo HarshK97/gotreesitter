@@ -20,7 +20,13 @@ import (
 	"time"
 )
 
-const perfScanEnvReduceInputs = "GTS_PERF_SCAN_REDUCE_INPUTS"
+const (
+	perfScanEnvReduceInputs = "GTS_PERF_SCAN_REDUCE_INPUTS"
+	perfScanEnvReduceMode   = "GTS_PERF_SCAN_REDUCE_MODE"
+
+	perfScanReduceModeReport  = "report"
+	perfScanReduceModeCertify = "certify"
+)
 
 // TestPerfScanReduce authenticates and merges one completed scoreboard for
 // every language in the corpus lock. It never invokes a parser, so interrupted
@@ -32,6 +38,10 @@ func TestPerfScanReduce(t *testing.T) {
 	}
 	if strings.TrimSpace(os.Getenv(perfScanEnvLang)) != "" {
 		t.Fatalf("%s is set; refusing to reduce inside a language child", perfScanEnvLang)
+	}
+	reduceMode, err := perfScanResolveReduceMode(os.Getenv(perfScanEnvReduceMode))
+	if err != nil {
+		t.Fatal(err)
 	}
 	paths, err := perfScanReduceInputPaths(os.Getenv(perfScanEnvReduceInputs))
 	if err != nil {
@@ -75,15 +85,52 @@ func TestPerfScanReduce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve output directory: %v", err)
 	}
-	if err := os.MkdirAll(absOut, 0o755); err != nil {
-		t.Fatalf("create output directory: %v", err)
-	}
-	if err := perfScanWriteScoreboard(absOut, board); err != nil {
-		t.Fatalf("write reduced scoreboard: %v", err)
+	if err := perfScanPublishReducedScoreboard(absOut, board, reduceMode); err != nil {
+		t.Fatal(err)
 	}
 	t.Logf("reduced %d authenticated shard scoreboards at %s", len(board.Languages), board.GitRevision)
+	t.Logf("reducer mode: %s; hard gate: %s", reduceMode, strings.ToUpper(board.Gate.Status))
 	t.Logf("scoreboard: %s", filepath.Join(absOut, "scoreboard.json"))
 	t.Logf("scoreboard: %s", filepath.Join(absOut, "scoreboard.md"))
+}
+
+func perfScanResolveReduceMode(raw string) (string, error) {
+	mode := strings.TrimSpace(raw)
+	if mode == "" {
+		return perfScanReduceModeCertify, nil
+	}
+	switch mode {
+	case perfScanReduceModeReport, perfScanReduceModeCertify:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("%s must be %q or %q, got %q", perfScanEnvReduceMode, perfScanReduceModeReport, perfScanReduceModeCertify, raw)
+	}
+}
+
+// perfScanPublishReducedScoreboard publishes the exact same recomputed board
+// in both reducer modes. Report mode preserves a failing gate as evidence;
+// certify mode publishes that evidence first and then returns a blocking error.
+func perfScanPublishReducedScoreboard(absOut string, board *perfScanScoreboard, mode string) error {
+	if mode != perfScanReduceModeReport && mode != perfScanReduceModeCertify {
+		return fmt.Errorf("invalid resolved reducer mode %q", mode)
+	}
+	if board == nil || board.Gate == nil {
+		return fmt.Errorf("cannot publish reduced scoreboard without a recomputed hard gate")
+	}
+	if board.Gate.Status != perfScanGatePass && board.Gate.Status != perfScanGateFail {
+		return fmt.Errorf("cannot publish reduced scoreboard with hard gate status %q", board.Gate.Status)
+	}
+	if err := os.MkdirAll(absOut, 0o755); err != nil {
+		return fmt.Errorf("create reduced scoreboard output directory: %w", err)
+	}
+	if err := perfScanWriteScoreboard(absOut, board); err != nil {
+		return fmt.Errorf("write reduced scoreboard: %w", err)
+	}
+	if mode == perfScanReduceModeCertify && board.Gate.Status == perfScanGateFail {
+		findings := len(board.Gate.Failures)
+		return fmt.Errorf("reduced fleet hard gate failed with %d finding(s); scoreboard: %s", findings, filepath.Join(absOut, "scoreboard.json"))
+	}
+	return nil
 }
 
 func perfScanAuthenticateReducer(board *perfScanScoreboard, provenance perfScanRepositoryState) error {
@@ -231,9 +278,6 @@ func perfScanReduceScoreboards(paths []string, lockPath, lockSHA string, lockLan
 		if _, exists := rowsByLang[lang]; exists {
 			return nil, fmt.Errorf("duplicate shard language %q", lang)
 		}
-		if row.FilesSelected <= 0 || row.FilesMeasured <= 0 || len(row.Files) <= 0 {
-			return nil, fmt.Errorf("shard %s language %q has no selected, measured, and classified file evidence", shardPath, lang)
-		}
 		seenPaths := map[string]bool{}
 		for _, file := range row.Files {
 			if file == nil || file.Classification == nil {
@@ -264,8 +308,14 @@ func perfScanReduceScoreboards(paths []string, lockPath, lockSHA string, lockLan
 		}
 
 		recomputedGate := perfScanEvaluateHardGate(shard)
-		if shard.Gate == nil || shard.Gate.Status != perfScanGatePass || recomputedGate.Status != perfScanGatePass || !reflect.DeepEqual(*shard.Gate, recomputedGate) {
-			return nil, fmt.Errorf("shard %s has an absent, failed, stale, or otherwise invalid hard gate", shardPath)
+		if shard.Gate == nil {
+			return nil, fmt.Errorf("shard %s has no stored hard gate", shardPath)
+		}
+		if shard.Gate.Status != perfScanGatePass && shard.Gate.Status != perfScanGateFail {
+			return nil, fmt.Errorf("shard %s stored hard gate has unknown status %q", shardPath, shard.Gate.Status)
+		}
+		if !reflect.DeepEqual(*shard.Gate, recomputedGate) {
+			return nil, fmt.Errorf("shard %s stored hard gate is stale or contradicts its file evidence", shardPath)
 		}
 		rowsByLang[lang] = row
 		if ts, err := time.Parse(time.RFC3339, shard.GeneratedAt); err == nil && ts.After(generatedMax) {
@@ -322,9 +372,6 @@ func perfScanReduceScoreboards(paths []string, lockPath, lockSHA string, lockLan
 	board.FullParseSplit = perfScanAggregateFleetCleanErrorSplit(board.Languages)
 	gate := perfScanEvaluateHardGate(board)
 	board.Gate = &gate
-	if gate.Status != perfScanGatePass {
-		return nil, fmt.Errorf("reduced fleet hard gate failed with %d finding(s)", len(gate.Failures))
-	}
 	return board, nil
 }
 
@@ -515,6 +562,94 @@ func TestPerfScanReduceScoreboards(t *testing.T) {
 		}
 	})
 
+	for _, tc := range []struct {
+		name     string
+		mutate   func(*perfScanScoreboard)
+		wantKind string
+	}{
+		{
+			name: "ratio cliff remains authenticated evidence",
+			mutate: func(shard *perfScanScoreboard) {
+				shard.Languages[0].Files[0].Axes[perfScanAxisFull].GoMedianNs = 11_001
+			},
+			wantKind: "ratio",
+		},
+		{
+			name: "parser stop remains authenticated evidence",
+			mutate: func(shard *perfScanScoreboard) {
+				file := shard.Languages[0].Files[0]
+				file.Classification = &perfScanFileClassification{
+					Class:        perfScanClassStopped,
+					Reason:       "Go parser stopped before accepting the full source",
+					GoStatus:     "go_timeout",
+					StoppedEarly: true,
+					StopReason:   perfScanStopParserTimeout,
+				}
+				file.Axes[perfScanAxisFull] = &perfScanFileAxis{
+					Status: "go_timeout",
+					Detail: "parser timeout",
+					Stop: &perfScanStop{
+						Class:          perfScanStopParserTimeout,
+						Reason:         perfScanStopParserTimeout,
+						Implementation: "go",
+						Phase:          "timed",
+					},
+				}
+			},
+			wantKind: "go_stop",
+		},
+		{
+			name: "missing ratio remains authenticated evidence",
+			mutate: func(shard *perfScanScoreboard) {
+				shard.Languages[0].Files[0].Axes[perfScanAxisFull].GoMedianNs = 0
+			},
+			wantKind: "coverage",
+		},
+		{
+			name: "partial coverage remains authenticated evidence",
+			mutate: func(shard *perfScanScoreboard) {
+				shard.Languages[0].FilesSelected = 2
+			},
+			wantKind: "coverage",
+		},
+		{
+			name: "zero coverage remains authenticated evidence",
+			mutate: func(shard *perfScanScoreboard) {
+				row := shard.Languages[0]
+				row.FilesSelected = 0
+				row.FilesMeasured = 0
+				row.BytesMeasured = 0
+				row.Files = nil
+			},
+			wantKind: "coverage",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			paths := makeInputs(t, func(_ *perfScanScoreboard, pythonShard *perfScanScoreboard) {
+				tc.mutate(pythonShard)
+				gate := perfScanEvaluateHardGate(pythonShard)
+				pythonShard.Gate = &gate
+			})
+			board, err := reduce(paths)
+			if err != nil {
+				t.Fatalf("reduce valid failing evidence: %v", err)
+			}
+			if board.Gate == nil || board.Gate.Status != perfScanGateFail {
+				t.Fatalf("combined gate = %+v, want FAIL", board.Gate)
+			}
+			found := false
+			for _, finding := range board.Gate.Failures {
+				if finding.Language == "python" && finding.Kind == tc.wantKind {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("combined gate did not retain %s finding: %+v", tc.wantKind, board.Gate)
+			}
+		})
+	}
+
 	tests := []struct {
 		name   string
 		paths  func(*testing.T) []string
@@ -629,17 +764,6 @@ func TestPerfScanReduceScoreboards(t *testing.T) {
 			want: "incomplete full-parse classification coverage",
 		},
 		{
-			name: "zero file evidence",
-			mutate: func(_, pythonShard *perfScanScoreboard) {
-				row := pythonShard.Languages[0]
-				row.FilesSelected = 0
-				row.FilesMeasured = 0
-				row.BytesMeasured = 0
-				row.Files = nil
-			},
-			want: "no selected, measured, and classified file evidence",
-		},
-		{
 			name: "duplicate file path",
 			mutate: func(_, pythonShard *perfScanScoreboard) {
 				row := pythonShard.Languages[0]
@@ -680,11 +804,36 @@ func TestPerfScanReduceScoreboards(t *testing.T) {
 			want: "unknown class",
 		},
 		{
-			name: "invalid shard hard gate",
+			name: "missing shard hard gate",
 			mutate: func(_, pythonShard *perfScanScoreboard) {
-				pythonShard.Gate.Status = perfScanGateFail
+				pythonShard.Gate = nil
 			},
-			want: "invalid hard gate",
+			want: "no stored hard gate",
+		},
+		{
+			name: "stale stored pass for failing evidence",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Languages[0].Files[0].Axes[perfScanAxisFull].GoMedianNs = 11_001
+			},
+			want: "stale or contradicts",
+		},
+		{
+			name: "stale stored fail for passing evidence",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				full := pythonShard.Languages[0].Files[0].Axes[perfScanAxisFull]
+				full.GoMedianNs = 11_001
+				gate := perfScanEvaluateHardGate(pythonShard)
+				pythonShard.Gate = &gate
+				full.GoMedianNs = 1_000
+			},
+			want: "stale or contradicts",
+		},
+		{
+			name: "unknown stored hard gate status",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Gate.Status = "unknown"
+			},
+			want: "unknown status",
 		},
 		{
 			name: "multiple language rows",
@@ -801,6 +950,110 @@ func TestPerfScanAuthenticateReducer(t *testing.T) {
 	}
 	if err := perfScanAuthenticateReducer(board, perfScanRepositoryState{Revision: revision, Clean: false}); err == nil || !strings.Contains(err.Error(), "clean repository") {
 		t.Fatalf("dirty reducer provenance error = %v", err)
+	}
+}
+
+func TestPerfScanReduceModes(t *testing.T) {
+	revision := strings.Repeat("a", 40)
+	passBoard := perfScanTestShard("go", "/corpus.lock", strings.Repeat("b", 64), 1, revision)
+	failBoard := perfScanTestShard("go", "/corpus.lock", strings.Repeat("b", 64), 1, revision)
+	failBoard.Languages[0].Files[0].Axes[perfScanAxisFull].GoMedianNs = 11_001
+	perfScanRefreshLanguageAggregates(failBoard.Languages[0], failBoard.Config)
+	failBoard.Summary = map[string]int{failBoard.Languages[0].Verdict: 1}
+	failBoard.FullParseSplit = perfScanAggregateFleetCleanErrorSplit(failBoard.Languages)
+	failGate := perfScanEvaluateHardGate(failBoard)
+	failBoard.Gate = &failGate
+
+	t.Run("default is certify", func(t *testing.T) {
+		mode, err := perfScanResolveReduceMode("")
+		if err != nil || mode != perfScanReduceModeCertify {
+			t.Fatalf("default reduce mode = %q, %v", mode, err)
+		}
+		out := filepath.Join(t.TempDir(), "default-certify")
+		err = perfScanPublishReducedScoreboard(out, failBoard, mode)
+		assertPerfScanCertificationFailure(t, out, err, 1)
+	})
+
+	t.Run("FAIL artifacts are mode-equivalent while exit behavior differs", func(t *testing.T) {
+		reportOut := filepath.Join(t.TempDir(), "report")
+		certifyOut := filepath.Join(t.TempDir(), "certify")
+		if err := perfScanPublishReducedScoreboard(reportOut, failBoard, perfScanReduceModeReport); err != nil {
+			t.Fatalf("report publication: %v", err)
+		}
+		assertPerfScanPublishedGate(t, reportOut, perfScanGateFail)
+		err := perfScanPublishReducedScoreboard(certifyOut, failBoard, perfScanReduceModeCertify)
+		assertPerfScanCertificationFailure(t, certifyOut, err, 1)
+		assertPerfScanPublishedArtifactsEqual(t, reportOut, certifyOut)
+	})
+
+	t.Run("PASS artifacts are mode-equivalent", func(t *testing.T) {
+		reportOut := filepath.Join(t.TempDir(), "report")
+		certifyOut := filepath.Join(t.TempDir(), "certify")
+		if err := perfScanPublishReducedScoreboard(reportOut, passBoard, perfScanReduceModeReport); err != nil {
+			t.Fatalf("report PASS publication: %v", err)
+		}
+		if err := perfScanPublishReducedScoreboard(certifyOut, passBoard, perfScanReduceModeCertify); err != nil {
+			t.Fatalf("certify PASS publication: %v", err)
+		}
+		assertPerfScanPublishedArtifactsEqual(t, reportOut, certifyOut)
+	})
+
+	t.Run("unknown mode fails before output", func(t *testing.T) {
+		for _, raw := range []string{"observe", "REPORT"} {
+			if _, err := perfScanResolveReduceMode(raw); err == nil || !strings.Contains(err.Error(), perfScanEnvReduceMode) {
+				t.Fatalf("unknown reduce mode %q error = %v", raw, err)
+			}
+		}
+		out := filepath.Join(t.TempDir(), "unknown")
+		if err := perfScanPublishReducedScoreboard(out, passBoard, "observe"); err == nil {
+			t.Fatal("unknown reduce mode unexpectedly published")
+		}
+		if _, err := os.Stat(out); !os.IsNotExist(err) {
+			t.Fatalf("unknown reduce mode created output before failing: %v", err)
+		}
+	})
+}
+
+func assertPerfScanCertificationFailure(t *testing.T, out string, err error, findings int) {
+	t.Helper()
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("%d finding(s)", findings)) || !strings.Contains(err.Error(), filepath.Join(out, "scoreboard.json")) {
+		t.Fatalf("certification error = %v", err)
+	}
+	assertPerfScanPublishedGate(t, out, perfScanGateFail)
+}
+
+func assertPerfScanPublishedGate(t *testing.T, out, wantStatus string) {
+	t.Helper()
+	board, err := perfScanReadScoreboard(filepath.Join(out, "scoreboard.json"))
+	if err != nil {
+		t.Fatalf("read published JSON: %v", err)
+	}
+	if board.Gate == nil || board.Gate.Status != wantStatus {
+		t.Fatalf("published gate = %+v, want %s", board.Gate, wantStatus)
+	}
+	markdown, err := os.ReadFile(filepath.Join(out, "scoreboard.md"))
+	if err != nil {
+		t.Fatalf("read published Markdown: %v", err)
+	}
+	if !strings.Contains(string(markdown), "outcome: `"+strings.ToUpper(wantStatus)+"`") {
+		t.Fatalf("published Markdown does not render %s gate", wantStatus)
+	}
+}
+
+func assertPerfScanPublishedArtifactsEqual(t *testing.T, reportOut, certifyOut string) {
+	t.Helper()
+	for _, name := range []string{"scoreboard.json", "scoreboard.md"} {
+		reportData, err := os.ReadFile(filepath.Join(reportOut, name))
+		if err != nil {
+			t.Fatalf("read report %s: %v", name, err)
+		}
+		certifyData, err := os.ReadFile(filepath.Join(certifyOut, name))
+		if err != nil {
+			t.Fatalf("read certify %s: %v", name, err)
+		}
+		if !reflect.DeepEqual(reportData, certifyData) {
+			t.Fatalf("%s differs by mode", name)
+		}
 	}
 }
 
