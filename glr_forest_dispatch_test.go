@@ -110,6 +110,50 @@ func TestForestExperimentalAppliesBashCompatibility(t *testing.T) {
 	}
 }
 
+func TestBeancountDefaultSkipsForestButExplicitRemainsAvailable(t *testing.T) {
+	// This external-package test follows the file's existing non-parallel
+	// convention: no public getter exists for the test/benchmark-only global
+	// switch, so restore its process default rather than expanding the API.
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	// The leading comment is the smallest corpus-shaped witness that reaches
+	// the explicit forest's conservative EOF recovery-conflict fallback.
+	src := []byte(";;; comment\n2024-01-01 open Assets:Bank\n")
+	lang := grm.BeancountLanguage()
+	parser := gts.NewParser(lang)
+	automatic, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("automatic Beancount parse: %v", err)
+	}
+	defer automatic.Release()
+	if rt := automatic.ParseRuntime(); rt.ForestFastPath {
+		t.Fatalf("automatic Beancount parse used forest fast path: %s", rt.Summary())
+	}
+	if offset, sym, reason, states := parser.ForestDeclineInfo(); reason != "" {
+		t.Fatalf("automatic Beancount parse attempted forest: offset=%d symbol=%d reason=%q states=%v", offset, sym, reason, states)
+	}
+
+	explicitParser := gts.NewParser(lang)
+	explicit, ok := explicitParser.ParseForestExperimental(src)
+	if !ok || explicit == nil || explicit.RootNode() == nil {
+		t.Fatalf("explicit Beancount forest parse ok=%v tree nil=%v", ok, explicit == nil)
+	}
+	defer explicit.Release()
+	if offset, sym, reason, states := explicitParser.ForestDeclineInfo(); reason != "eof-recovery-conflict" {
+		t.Fatalf("explicit Beancount forest decline: offset=%d symbol=%d reason=%q states=%v, want reason=%q", offset, sym, reason, states, "eof-recovery-conflict")
+	}
+	if got, want := explicit.RootNode().SExpr(lang), automatic.RootNode().SExpr(lang); got != want {
+		t.Fatalf("explicit Beancount forest result mismatch\n got: %s\nwant: %s", got, want)
+	}
+	if got, want := explicit.RootNode().EndByte(), automatic.RootNode().EndByte(); got != want {
+		t.Fatalf("explicit Beancount root endByte = %d, want %d", got, want)
+	}
+	if got, want := explicit.RootNode().HasError(), automatic.RootNode().HasError(); got != want {
+		t.Fatalf("explicit Beancount HasError = %v, want %v", got, want)
+	}
+}
+
 func TestForestDispatchReportsAcceptedRuntime(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)

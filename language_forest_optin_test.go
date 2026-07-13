@@ -44,7 +44,7 @@ func TestBuiltinForestDefaultsCuratedSet(t *testing.T) {
 		"bash", "erlang", "cmake", "css", "scss", "awk", "javascript", "c_sharp",
 		"gitignore", "nix", "squirrel", "prisma",
 		"agda", "org", "ledger", "yuck", "json5", "commonlisp", "vimdoc",
-		"bibtex", "faust", "arduino", "authzed", "make", "fish", "racket", "tlaplus", "beancount",
+		"bibtex", "faust", "arduino", "authzed", "make", "fish", "racket", "tlaplus",
 		"gitattributes",
 	}
 	if len(builtinForestDefaults) != len(want) {
@@ -58,7 +58,7 @@ func TestBuiltinForestDefaultsCuratedSet(t *testing.T) {
 	// A handful of explicitly-NOT-forest-amenable languages (see the doc
 	// comment) must stay out of the curated set. "go" is intentionally held
 	// out of default dispatch (commit 6894fc9f) even though it is forest-clean.
-	notWanted := []string{"python", "rust", "dart", "ruby", "haskell", "php", "go", "csv"}
+	notWanted := []string{"python", "rust", "dart", "ruby", "haskell", "php", "go", "csv", "beancount"}
 	for _, name := range notWanted {
 		if builtinForestDefaults[name] {
 			t.Errorf("builtinForestDefaults unexpectedly contains %q", name)
@@ -75,5 +75,16 @@ func TestBuiltinForestDefaultsCuratedSet(t *testing.T) {
 	}
 	if !languageWantsForestRecover("csv") {
 		t.Error("CSV forest recovery should remain available to explicit forest runs")
+	}
+
+	// Beancount has the same policy split: the certified built-in no longer
+	// speculates automatically, while explicit callers retain both the forest
+	// entry point and its certified recovery behavior.
+	beancount := &Parser{language: &Language{Name: "beancount", WantsForest: true}}
+	if !parserWantsForest(beancount) {
+		t.Error("explicit Language.WantsForest should still dispatch Beancount to forest")
+	}
+	if !languageWantsForestRecover("beancount") {
+		t.Error("Beancount forest recovery should remain available to explicit forest runs")
 	}
 }
