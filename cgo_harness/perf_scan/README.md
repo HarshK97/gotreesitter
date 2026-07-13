@@ -117,8 +117,70 @@ GOWORK=off GTS_PARITY_ALLOW_HOST=1 GTS_PERF_SCAN=1 \
   GTS_PERF_SCAN_CHILD_RSS_LIMIT_MB=6144 \
   GTS_PERF_SCAN_OUT=perf_scan/out/authoritative_$(date -u +%Y%m%dT%H%M%SZ) \
   go test -tags "treesitter_c_parity treesitter_c_perfscan" \
+      -run '^TestPerfScanSweep$' -v -count=1 -timeout 0 .
+```
+
+### Resumable one-language shards and blocking reduction
+
+Long fleet refreshes can run as independent one-language scoreboards. Keep the
+measurement knobs identical, set `GTS_PERF_SCAN_REQUIRE_FLEET=0`, and give each
+language its own output directory:
+
+```sh
+cd cgo_harness
+GOWORK=off GTS_PARITY_ALLOW_HOST=1 GTS_PERF_SCAN=1 \
+  GTS_PERF_SCAN_CORPUS_ROOT=/home/draco/work/gotreesitter-corpora/corpus_sources \
+  GTS_REAL_CORPUS_BENCH_LOCK=/home/draco/work/gotreesitter-corpora/corpus_sources.lock \
+  GTS_PERF_SCAN_HARD_GATE=1 GTS_PERF_SCAN_REQUIRE_FLEET=0 \
+  GTS_PERF_SCAN_LANGS=go GTS_PERF_SCAN_MAX_FILES=8 \
+  GTS_PERF_SCAN_ORDER=largest GTS_PERF_SCAN_REPS=5 \
+  GTS_PERF_SCAN_FILE_BUDGET_MS=10000 \
+  GTS_PERF_SCAN_OUT=perf_scan/out/shards/go \
+  go test -tags "treesitter_c_parity treesitter_c_perfscan" \
   -run '^TestPerfScanSweep$' -v -count=1 -timeout 0 .
 ```
+
+Repeat for every language in the authenticated lock. Completed shard
+scoreboards are durable checkpoints; the reducer reads them without invoking a
+parser, so an interrupted campaign resumes from the missing languages rather
+than restarting the fleet. Once every shard exists, run the blocking reducer:
+
+```sh
+cd cgo_harness
+GOWORK=off GTS_PARITY_ALLOW_HOST=1 GTS_PERF_SCAN=1 \
+  GTS_REAL_CORPUS_BENCH_LOCK=/home/draco/work/gotreesitter-corpora/corpus_sources.lock \
+  GTS_PERF_SCAN_REDUCE_INPUTS='perf_scan/out/shards/*/scoreboard.json' \
+  GTS_PERF_SCAN_OUT=perf_scan/out/authoritative_reduced \
+  go test -tags "treesitter_c_parity treesitter_c_perfscan" \
+  -run '^TestPerfScanReduce$' -v -count=1 -timeout 0 .
+```
+
+Reduction succeeds only with exactly one scoreboard for every locked language.
+It rejects missing or duplicate languages, schema or measurement-config drift,
+corpus-lock drift, path exclusions, contended runs, mixed or absent repository
+revisions, dirty source trees, mixed host/runtime identities, incomplete or
+contradictory file evidence, and absent, stale, or failed shard hard gates. A
+host identity includes hostname, GOOS/GOARCH, CPU count, `GOMAXPROCS`, and Go
+version; both start and end load averages must remain below the contention
+threshold. The
+only permitted per-shard config differences are the one-element `languages`
+selection and `require_fleet=false`; the combined config is rewritten to the
+full lock language list with `require_fleet=true`. The reducer recomputes every
+language aggregate, verdict summary, fleet clean/error split, coverage record,
+and the full hard gate before writing authoritative JSON and Markdown. The
+reducer execution is authenticated independently: its checkout/build must be
+clean and at the same revision recorded by every shard, so one runtime version
+cannot silently reinterpret another version's evidence.
+
+New scoreboards record the full repository revision and clean-source attestation.
+Revisionless v1 JSON still decodes for existing readers, but is deliberately
+ineligible for authoritative reduction. Git and Go build VCS metadata must
+agree and neither may report modification. `GTS_PERF_SCAN_GIT_REVISION` cannot
+override discovered metadata; it accepts a full 40- or 64-hex revision only
+when neither source is available, together with explicit
+`GTS_PERF_SCAN_GIT_CLEAN=1`. Exploratory `GTS_PERF_SCAN_HARD_GATE=0` runs may
+record `git_clean=false` so uncommitted candidates remain benchmarkable, but
+those scoreboards cannot enter authoritative reduction.
 
 Hard-gate mode requires `GTS_REAL_CORPUS_BENCH_LOCK`. Its SHA-256 must match
 `perf_scan/corpus_sources.lock.sha256` and the same digest in the budget file;
@@ -146,6 +208,9 @@ the corpus builder deliberately supplies nested dependency checkouts and
 | `GTS_PERF_SCAN_LANGS` | locked fleet (hard) / auto-discover (exploratory) | comma list for a targeted sweep |
 | `GTS_PERF_SCAN_LANG` | — | single language (child mode; set by the sweep) |
 | `GTS_PERF_SCAN_OUT` | `perf_scan/out/scan_<UTC>` | output dir |
+| `GTS_PERF_SCAN_REDUCE_INPUTS` | — | reducer-only comma list of scoreboard paths/globs; requires exactly one authenticated shard per lock language |
+| `GTS_PERF_SCAN_GIT_REVISION` | auto-discovered | full repository object ID override for metadata-poor build environments |
+| `GTS_PERF_SCAN_GIT_CLEAN` | — | explicit clean-source attestation required with a metadata-poor revision override |
 | `GTS_PERF_SCAN_CORPUS_ROOT` | `corpus_real` | corpus root (per-language subdirs) |
 | `GTS_PERF_SCAN_REPS` | 5 | timed reps per file/axis/impl |
 | `GTS_PERF_SCAN_WARMUP` | 1 | untimed warmup attempts |
@@ -175,13 +240,16 @@ Also honored: `GTS_PARITY_ALLOW_HOST`, `GTS_PARITY_SKIP_LANGS`,
 <out>/logs/<lang>.log   child stdout/stderr per language
 ```
 
-`scoreboard.json` carries host metadata (loadavg at start/end), the full
-config, authenticated corpus coverage, a `contended` flag, structured stop
-records, per-language per-axis aggregates, per-file medians/ratios/statuses,
+`scoreboard.json` carries the repository revision, host metadata (loadavg at
+start/end), the full config, authenticated corpus coverage, a `contended` flag,
+structured stop records, per-language per-axis aggregates, per-file medians/ratios/statuses,
 optional per-file full-parse classifications, per-language clean/error timing
-splits, and a `hard_gate` report. The markdown renders the same class totals
-and lists each non-clean file with its reason. The report lists failures and
-separately lists full-parse files at `<=0.10x`.
+splits, a fleet clean/error timing split, and a `hard_gate` report. The markdown
+renders the same class totals and lists each non-clean file with its reason.
+The report lists failures and separately lists full-parse files at `<=0.10x`.
+Both files are staged and synced before publication; Markdown is published
+first and `scoreboard.json` is the final commit marker. A failed JSON publish
+rolls Markdown back, and temporary checkpoint files are removed on failure.
 
 If a language child process is killed while measuring a file, the latest
 partial fragment includes `active_file`, 1-based `active_file_index`, and
@@ -291,9 +359,11 @@ Older `gts-perf-scan/v1` scoreboards still decode. They predate structured
 stops, corpus coverage, and the embedded hard-gate report, so use
 `-strict-config=false` only for historical analysis; they cannot establish a
 new hard-gate pass. `cmd/perf_scan_status` labels them `not_evaluated`.
-The clean/error fields are optional additions to the same v1 schema: readers
-must continue to accept rows without `classification` or `full_parse_split`,
-and current Go decoders do so.
+The clean/error and repository-revision fields are optional additions to the
+same v1 schema: readers must continue to accept rows without `classification`,
+`full_parse_split`, or `git_revision`, and current Go decoders do so. The
+authoritative shard reducer applies a stronger provenance policy after decoding
+and rejects revisionless inputs.
 
 ## Phase 2 (documented, not built)
 
