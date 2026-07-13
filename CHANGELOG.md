@@ -7,6 +7,14 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Changed
+
+- Large D and Groovy accepted-error parses now retain their certified initial
+  stack ceilings through exact-blob runtime profiles, and C# skips its
+  redundant first same-stack merge retry through the same fail-closed profile
+  mechanism. Caller-adapted grammars, incremental fallbacks, and explicit
+  diagnostic overrides retain the conservative retry ladder.
+
 ## [0.29.0] - 2026-07-12
 
 Recurring-parser performance and compatibility-cleanup release. Repeated small

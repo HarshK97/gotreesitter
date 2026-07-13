@@ -34,12 +34,14 @@ func TestBuiltinExternalScannerRetryProfilesAttach(t *testing.T) {
 }
 
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	// 19 = the prior 17 plus gomod and c: their hardcoded compat-tier
+	// 21 = the prior 19 plus D and Groovy: their retry ceilings moved out of
+	// parser-core name switches and onto exact-blob profiles. The prior gomod
+	// and C additions moved hardcoded compat-tier
 	// repetition-conflict helpers were retired in favor of certified
 	// ConflictPolicies rows here. dot's helper was
 	// retired outright, not migrated (see the "NOTE on dot" comment above
 	// the gomod entry), so it does not add a map entry.
-	if got, want := len(builtinLanguageRuntimeProfiles), 19; got != want {
+	if got, want := len(builtinLanguageRuntimeProfiles), 21; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -268,7 +270,8 @@ func TestBuiltinCompleteAcceptedErrorRetryProfilesAttach(t *testing.T) {
 				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want first-growth entry-scratch ceiling", profile)
 			}
 			if tt.name == "c_sharp" && (profile.SkipCompleteMaxEntryScratchPeak != csharpAcceptedErrorRetryMaxEntryScratchPeak ||
-				profile.FreshErrorNoStacksRetryMaxStacks != csharpFreshErrorNoStacksRetryMaxStacks) {
+				profile.FreshErrorNoStacksRetryMaxStacks != csharpFreshErrorNoStacksRetryMaxStacks ||
+				!profile.SkipInitialCompleteAcceptedErrorMergeRetry) {
 				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want bounded C# retry profile", profile)
 			}
 			if tt.name == "tcl" && profile.FreshErrorNoStacksMaxPasses != 1 {
@@ -304,6 +307,23 @@ func TestBuiltinBoundedAcceptedErrorRetryProfilesAttach(t *testing.T) {
 				InitialStackCeiling: 14,
 			},
 			wantNoScanner: true,
+		},
+		{
+			name: "groovy",
+			load: GroovyLanguage,
+			want: gotreesitter.FullParseAcceptedErrorRetryProfile{
+				MinSourceBytes:      64 * 1024,
+				InitialStackCeiling: 2,
+			},
+			wantNoScanner: true,
+		},
+		{
+			name: "d",
+			load: DLanguage,
+			want: gotreesitter.FullParseAcceptedErrorRetryProfile{
+				MinSourceBytes:      64 * 1024,
+				InitialStackCeiling: 3,
+			},
 		},
 	}
 	for _, tt := range tests {
@@ -363,9 +383,10 @@ func TestBuiltinCSharpRetryProfileRequiresCertifiedBlob(t *testing.T) {
 		t.Fatalf("certified C# scanner retry policy = %d, want skip-repeat", got)
 	}
 	want := gotreesitter.FullParseAcceptedErrorRetryProfile{
-		SkipCompleteAcceptedErrorRetry:   true,
-		SkipCompleteMaxEntryScratchPeak:  csharpAcceptedErrorRetryMaxEntryScratchPeak,
-		FreshErrorNoStacksRetryMaxStacks: csharpFreshErrorNoStacksRetryMaxStacks,
+		SkipCompleteAcceptedErrorRetry:             true,
+		SkipCompleteMaxEntryScratchPeak:            csharpAcceptedErrorRetryMaxEntryScratchPeak,
+		FreshErrorNoStacksRetryMaxStacks:           csharpFreshErrorNoStacksRetryMaxStacks,
+		SkipInitialCompleteAcceptedErrorMergeRetry: true,
 	}
 	if got := lang.FullParseAcceptedErrorRetryProfile; got != want {
 		t.Fatalf("certified C# retry profile = %+v, want %+v", got, want)
@@ -379,6 +400,8 @@ func TestBuiltinBoundedAcceptedErrorRetryProfilesRequireCertifiedBlob(t *testing
 	}{
 		{name: "asm", want: gotreesitter.FullParseAcceptedErrorRetryProfile{MinSourceBytes: 11 * 1024, InitialStackCeiling: 8}},
 		{name: "java", want: gotreesitter.FullParseAcceptedErrorRetryProfile{MinSourceBytes: 64 * 1024, InitialStackCeiling: 14}},
+		{name: "groovy", want: gotreesitter.FullParseAcceptedErrorRetryProfile{MinSourceBytes: 64 * 1024, InitialStackCeiling: 2}},
+		{name: "d", want: gotreesitter.FullParseAcceptedErrorRetryProfile{MinSourceBytes: 64 * 1024, InitialStackCeiling: 3}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -399,6 +422,60 @@ func TestBuiltinBoundedAcceptedErrorRetryProfilesRequireCertifiedBlob(t *testing
 			}
 			if got := lang.FullParseAcceptedErrorRetryProfile; got != tt.want {
 				t.Fatalf("certified %s retry profile = %+v, want %+v", tt.name, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResidualRetryProfilesRequireExactBlobIdentity(t *testing.T) {
+	tests := []struct {
+		name string
+		want gotreesitter.FullParseAcceptedErrorRetryProfile
+	}{
+		{
+			name: "groovy",
+			want: gotreesitter.FullParseAcceptedErrorRetryProfile{MinSourceBytes: 64 * 1024, InitialStackCeiling: 2},
+		},
+		{
+			name: "d",
+			want: gotreesitter.FullParseAcceptedErrorRetryProfile{MinSourceBytes: 64 * 1024, InitialStackCeiling: 3},
+		},
+		{
+			name: "c_sharp",
+			want: gotreesitter.FullParseAcceptedErrorRetryProfile{
+				SkipCompleteAcceptedErrorRetry:             true,
+				SkipCompleteMaxEntryScratchPeak:            csharpAcceptedErrorRetryMaxEntryScratchPeak,
+				FreshErrorNoStacksRetryMaxStacks:           csharpFreshErrorNoStacksRetryMaxStacks,
+				SkipInitialCompleteAcceptedErrorMergeRetry: true,
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wrongSHA := &gotreesitter.Language{Name: tt.name}
+			if attachBuiltinLanguageRuntimeProfile(tt.name, sha256.Sum256([]byte("uncertified")), wrongSHA) {
+				t.Fatal("wrong blob SHA reported a runtime-profile attachment")
+			}
+			if got := wrongSHA.FullParseAcceptedErrorRetryProfile; got != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) {
+				t.Fatalf("wrong blob SHA attached retry profile %+v", got)
+			}
+
+			adapted := &gotreesitter.Language{Name: tt.name}
+			AttachLanguageSupport(tt.name, adapted)
+			if got := adapted.FullParseAcceptedErrorRetryProfile; got != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) {
+				t.Fatalf("adapted same-name language attached retry profile %+v", got)
+			}
+
+			blob := BlobByName(tt.name)
+			if len(blob) == 0 {
+				t.Fatal("BlobByName returned no data")
+			}
+			exact := &gotreesitter.Language{Name: tt.name}
+			if !attachBuiltinLanguageRuntimeProfile(tt.name, sha256.Sum256(blob), exact) {
+				t.Fatal("exact blob did not attach its runtime profile")
+			}
+			if got := exact.FullParseAcceptedErrorRetryProfile; got != tt.want {
+				t.Fatalf("exact blob retry profile = %+v, want %+v", got, tt.want)
 			}
 		})
 	}

@@ -48,9 +48,10 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		blobSHA256:                    mustRuntimeProfileSHA256("7ad425e89733339dde94e3c03b762ae478fb453b530493f5d62e1ae7537e1784"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
-			SkipCompleteAcceptedErrorRetry:   true,
-			SkipCompleteMaxEntryScratchPeak:  csharpAcceptedErrorRetryMaxEntryScratchPeak,
-			FreshErrorNoStacksRetryMaxStacks: csharpFreshErrorNoStacksRetryMaxStacks,
+			SkipCompleteAcceptedErrorRetry:             true,
+			SkipCompleteMaxEntryScratchPeak:            csharpAcceptedErrorRetryMaxEntryScratchPeak,
+			FreshErrorNoStacksRetryMaxStacks:           csharpFreshErrorNoStacksRetryMaxStacks,
+			SkipInitialCompleteAcceptedErrorMergeRetry: true,
 		},
 	},
 	// Haxe's accepted-error retry ladder selects the same tree on every pass.
@@ -170,6 +171,25 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			MinSourceBytes:      64 * 1024,
 			InitialStackCeiling: 14,
+		},
+	},
+	// Large Groovy and D accepted-error parses stay inside their certified
+	// initial stack ceilings. Widening does not improve the selected tree and
+	// reintroduces their real-corpus time/RSS cliffs. The generic profile gate
+	// keeps incremental fallbacks and explicit diagnostic overrides
+	// conservative.
+	"groovy": {
+		blobSHA256: mustRuntimeProfileSHA256("a1d1bb30d9971f1c3d645aab456521943a5f0da419b57a0986fc9b2a502a90d9"),
+		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
+			MinSourceBytes:      64 * 1024,
+			InitialStackCeiling: 2,
+		},
+	},
+	"d": {
+		blobSHA256: mustRuntimeProfileSHA256("1e2bf6c9d37193dad050a3e2f35d450973245dbee60550ef6cc24fca2b0e0016"),
+		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
+			MinSourceBytes:      64 * 1024,
+			InitialStackCeiling: 3,
 		},
 	},
 	// NOTE on dot: no certified row here (unlike gomod/dart/c below) — dot's

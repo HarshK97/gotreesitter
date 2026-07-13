@@ -471,7 +471,12 @@ func TestFullParseRetrySecondaryNodeLimitOverride(t *testing.T) {
 }
 
 func TestShouldRunInitialFullParseMergeRetry(t *testing.T) {
-	if shouldRunInitialFullParseMergeRetry(nil) {
+	t.Setenv("GOT_GLR_MAX_STACKS", "")
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	if shouldRunInitialFullParseMergeRetry(nil, 0, fullParseRetryOriginFresh) {
 		t.Fatal("shouldRunInitialFullParseMergeRetry(nil) = true, want false")
 	}
 	tree := &Tree{
@@ -479,11 +484,11 @@ func TestShouldRunInitialFullParseMergeRetry(t *testing.T) {
 			StopReason: ParseStopNodeLimit,
 		},
 	}
-	if shouldRunInitialFullParseMergeRetry(tree) {
+	if shouldRunInitialFullParseMergeRetry(tree, 128, fullParseRetryOriginFresh) {
 		t.Fatal("shouldRunInitialFullParseMergeRetry(node_limit) = true, want false")
 	}
 	tree.parseRuntime.StopReason = ParseStopNoStacksAlive
-	if !shouldRunInitialFullParseMergeRetry(tree) {
+	if !shouldRunInitialFullParseMergeRetry(tree, 128, fullParseRetryOriginFresh) {
 		t.Fatal("shouldRunInitialFullParseMergeRetry(no_stacks_alive) = false, want true")
 	}
 	tree = &Tree{
@@ -499,12 +504,76 @@ func TestShouldRunInitialFullParseMergeRetry(t *testing.T) {
 			MaxStacksSeen:   64,
 		},
 	}
-	if shouldRunInitialFullParseMergeRetry(tree) {
-		t.Fatal("shouldRunInitialFullParseMergeRetry(c_sharp accepted error) = true, want false")
+	if !shouldRunInitialFullParseMergeRetry(tree, 128, fullParseRetryOriginFresh) {
+		t.Fatal("uncertified same-name C# tree skipped the initial merge retry")
+	}
+	tree.language.FullParseAcceptedErrorRetryProfile.SkipInitialCompleteAcceptedErrorMergeRetry = true
+	if shouldRunInitialFullParseMergeRetry(tree, 128, fullParseRetryOriginFresh) {
+		t.Fatal("certified complete accepted-error tree scheduled the initial merge retry")
+	}
+	if !shouldRunInitialFullParseMergeRetry(tree, 128, fullParseRetryOriginIncremental) {
+		t.Fatal("certified incremental fallback skipped the conservative initial merge retry")
 	}
 	tree.parseRuntime.Truncated = true
-	if !shouldRunInitialFullParseMergeRetry(tree) {
-		t.Fatal("shouldRunInitialFullParseMergeRetry(c_sharp truncated accepted error) = false, want true")
+	if !shouldRunInitialFullParseMergeRetry(tree, 128, fullParseRetryOriginFresh) {
+		t.Fatal("certified truncated accepted-error tree skipped the initial merge retry")
+	}
+}
+
+func TestCertifiedInitialMergeRetrySkipHonorsExplicitOverrides(t *testing.T) {
+	for _, env := range []string{"GOT_GLR_MAX_STACKS", "GOT_GLR_MAX_MERGE_PER_KEY"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv("GOT_GLR_MAX_STACKS", "")
+			t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+			t.Setenv(env, "8")
+			ResetParseEnvConfigCacheForTests()
+			defer ResetParseEnvConfigCacheForTests()
+
+			tree := certifiedAcceptedErrorRetryTestTree(false, 128)
+			tree.language.Name = "c_sharp"
+			tree.language.FullParseAcceptedErrorRetryProfile.SkipInitialCompleteAcceptedErrorMergeRetry = true
+			if !shouldRunInitialFullParseMergeRetry(tree, 128, fullParseRetryOriginFresh) {
+				t.Fatalf("certified policy ignored explicit %s", env)
+			}
+		})
+	}
+}
+
+func TestCertifiedInitialMergeRetrySkipKeepsWideningAndTreeSelection(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_STACKS", "")
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	const sourceLen = 128
+	source := make([]byte, sourceLen)
+	initial := certifiedAcceptedErrorRetryTestTree(false, sourceLen)
+	initial.language.Name = "c_sharp"
+	initial.language.FullParseAcceptedErrorRetryProfile.SkipInitialCompleteAcceptedErrorMergeRetry = true
+	initial.parseRuntime.MaxStacksSeen = 8
+
+	candidate := certifiedAcceptedErrorRetryTestTree(false, sourceLen)
+	candidate.language.Name = "c_sharp"
+	candidate.root.flags = 0
+	candidate.parseRuntime.NodesAllocated = 1
+
+	type retryCall struct {
+		stacks int
+		merge  int
+		nodes  int
+	}
+	var calls []retryCall
+	parser := &Parser{}
+	got := parser.retryFullParse(source, 8, initial, func(maxStacks, maxMergePerKeyOverride, maxNodes int) *Tree {
+		calls = append(calls, retryCall{stacks: maxStacks, merge: maxMergePerKeyOverride, nodes: maxNodes})
+		return candidate
+	})
+	if got != candidate {
+		t.Fatalf("retryFullParse returned %p, want widened clean tree %p", got, candidate)
+	}
+	want := []retryCall{{stacks: fullParseRetryMaxGLRStacks}}
+	if !slices.Equal(calls, want) {
+		t.Fatalf("retry calls = %+v, want widened pass %+v with no initial same-stack merge", calls, want)
 	}
 }
 
@@ -553,63 +622,42 @@ func TestCSharpAcceptedErrorTreeCanUseNamespaceRecovery(t *testing.T) {
 	}
 }
 
-func TestGroovyLargeAcceptedErrorRetryUsesInitialStackCeiling(t *testing.T) {
+func TestCertifiedLargeAcceptedErrorRetryUsesInitialStackCeiling(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_STACKS", "")
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
 	ResetParseEnvConfigCacheForTests()
 	defer ResetParseEnvConfigCacheForTests()
 
-	const dExpressionsemWitnessBytes = 685384
+	const sourceLen = 96 * 1024
+	for _, tt := range []struct {
+		name string
+		cap  uint16
+	}{
+		{name: "groovy", cap: 2},
+		{name: "d", cap: 3},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := certifiedAcceptedErrorRetryTestTree(false, sourceLen)
+			tree.language.Name = tt.name
+			tree.language.FullParseAcceptedErrorRetryProfile = FullParseAcceptedErrorRetryProfile{
+				MinSourceBytes:      64 * 1024,
+				InitialStackCeiling: tt.cap,
+			}
+			if got := fullParseRetryMaxStacksOverrideForOrigin(tree, sourceLen, int(tt.cap), fullParseRetryOriginFresh); got != 0 {
+				t.Fatalf("certified fresh stack override = %d, want 0", got)
+			}
+			if got := fullParseRetryMaxStacksOverrideForOrigin(tree, sourceLen, int(tt.cap), fullParseRetryOriginIncremental); got != fullParseRetryMaxGLRStacks {
+				t.Fatalf("incremental stack override = %d, want %d", got, fullParseRetryMaxGLRStacks)
+			}
+			if got := fullParseRetryMaxStacksOverride(tree, 1024, int(tt.cap)); got != fullParseRetryMaxGLRStacks {
+				t.Fatalf("small-source stack override = %d, want %d", got, fullParseRetryMaxGLRStacks)
+			}
 
-	tree := &Tree{
-		language: &Language{Name: "groovy"},
-		root: &Node{
-			endByte: 102960,
-			flags:   nodeFlagHasError,
-		},
-		parseRuntime: ParseRuntime{
-			StopReason:      ParseStopAccepted,
-			ExpectedEOFByte: 102960,
-			RootEndByte:     102960,
-			MaxStacksSeen:   35,
-		},
-	}
-
-	if got := fullParseRetryMaxStacksOverride(tree, 102960, 2); got != 0 {
-		t.Fatalf("fullParseRetryMaxStacksOverride(large groovy) = %d, want 0", got)
-	}
-	if got := fullParseRetryMaxStacksOverride(tree, 1024, 2); got != fullParseRetryMaxGLRStacks {
-		t.Fatalf("fullParseRetryMaxStacksOverride(small groovy) = %d, want %d", got, fullParseRetryMaxGLRStacks)
-	}
-	tree.language = &Language{Name: "d"}
-	tree.root.endByte = dExpressionsemWitnessBytes
-	tree.parseRuntime.ExpectedEOFByte = dExpressionsemWitnessBytes
-	tree.parseRuntime.RootEndByte = dExpressionsemWitnessBytes
-	if got := fullParseRetryMaxStacksOverride(tree, dExpressionsemWitnessBytes, dLargeFileRetryStackCeiling); got != 0 {
-		t.Fatalf("fullParseRetryMaxStacksOverride(large d) = %d, want 0", got)
-	}
-	if got := fullParseRetryMaxStacksOverride(tree, dLargeFileRetryMinBytes-1, dLargeFileRetryStackCeiling); got != fullParseRetryMaxGLRStacks {
-		t.Fatalf("fullParseRetryMaxStacksOverride(small d) = %d, want %d", got, fullParseRetryMaxGLRStacks)
-	}
-	tree.language = &Language{Name: "typescript"}
-	if got := fullParseRetryMaxStacksOverride(tree, 102960, 2); got != fullParseRetryMaxGLRStacks {
-		t.Fatalf("fullParseRetryMaxStacksOverride(typescript) = %d, want %d", got, fullParseRetryMaxGLRStacks)
-	}
-}
-
-func TestDLargeRetryUsesInitialStackCeiling(t *testing.T) {
-	tree := &Tree{language: &Language{Name: "d"}}
-	if !fullParseRetryUsesInitialStackCeiling(tree, dLargeFileRetryMinBytes, dLargeFileRetryStackCeiling) {
-		t.Fatal("fullParseRetryUsesInitialStackCeiling(d large) = false, want true")
-	}
-	if fullParseRetryUsesInitialStackCeiling(tree, dLargeFileRetryMinBytes-1, dLargeFileRetryStackCeiling) {
-		t.Fatal("fullParseRetryUsesInitialStackCeiling(d below threshold) = true, want false")
-	}
-	if fullParseRetryUsesInitialStackCeiling(tree, dLargeFileRetryMinBytes, dLargeFileRetryStackCeiling+1) {
-		t.Fatal("fullParseRetryUsesInitialStackCeiling(d widened cap) = true, want false")
-	}
-	tree.language = &Language{Name: "typescript"}
-	if fullParseRetryUsesInitialStackCeiling(tree, dLargeFileRetryMinBytes, dLargeFileRetryStackCeiling) {
-		t.Fatal("fullParseRetryUsesInitialStackCeiling(typescript) = true, want false")
+			tree.language.FullParseAcceptedErrorRetryProfile = FullParseAcceptedErrorRetryProfile{}
+			if got := fullParseRetryMaxStacksOverride(tree, sourceLen, int(tt.cap)); got != fullParseRetryMaxGLRStacks {
+				t.Fatalf("uncertified same-name stack override = %d, want %d", got, fullParseRetryMaxGLRStacks)
+			}
+		})
 	}
 }
 
