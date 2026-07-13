@@ -7,6 +7,17 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-07-12
+
+Recurring-parser performance and fleet-measurement integrity release. Reused
+parsers now invalidate the 16,384-entry clean-zero front cache by epoch,
+reducing recurring one-byte KDL and JSON wall time by 33.10% and 35.67% with
+unchanged allocation counts while the primary benchmark trio remains neutral.
+Certified runtime profiles retain the required D, Groovy, and C# retry
+policies. The real-corpus tooling now distinguishes clean, error-bearing, and
+stopped parses and can reduce revision-pinned one-language checkpoints into a
+single authenticated fleet report without rerunning parsers.
+
 ### Changed
 
 - The real-corpus performance scan now supports resumable one-language shard
@@ -2004,7 +2015,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.29.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.30.0...HEAD
+[0.30.0]: https://github.com/odvcencio/gotreesitter/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/odvcencio/gotreesitter/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/odvcencio/gotreesitter/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/odvcencio/gotreesitter/compare/v0.26.1...v0.27.0
