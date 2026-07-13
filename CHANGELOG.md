@@ -37,6 +37,20 @@ for tags and release notes while still in `0.x`.
   `BenchmarkParse_C` show a statistically significant ~13-27% drop in parse
   time and 26-50% drop in allocations per parse from dropping the two
   full-tree walks.
+- Rust's collapsed named-leaf-children compat pass
+  (`parser_result_rust_recovery.go`), a full-tree walk gated on the source
+  containing `true`, `false`, `..`, or `;` — a gate that opens on essentially
+  every real Rust file. A full-corpus re-verification (all 37,127 `.rs` files
+  under the rust corpus, parsed both clean and truncated to 55% on every
+  second file — 55,691 parses total) recorded 130,018 gate fires and zero
+  rewrites. The companion candidate, Rust's dot-range-expressions walk, was
+  re-verified the same way and found live (3,030 real rewrites on the same
+  corpus, the simplest case being a bare `..` full-range slice index such as
+  `s[..]`) and is therefore kept untouched. Net 228 lines removed; verified
+  byte-identical (S-expression and full node-span dumps) on 30 real Rust
+  files spanning size and content (macro-heavy, `..`-heavy), with the Rust
+  parity suite, including the dot-range-motivated weird-expressions fixture,
+  unaffected.
 
 ## [0.33.0] - 2026-07-13
 
