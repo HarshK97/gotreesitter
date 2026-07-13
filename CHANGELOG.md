@@ -7,6 +7,18 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Changed
+
+- The authenticated performance-shard reducer now distinguishes reporting from
+  certification. `report` mode publishes a recomputed PASS or FAIL fleet board
+  without turning valid failure evidence into a reducer error; the default
+  `certify` mode publishes the same artifact before blocking on a combined
+  FAIL. Exact stored shard gates may be PASS or FAIL, while missing, stale, or
+  malformed evidence still fails closed.
+- The Docker parity wrapper accepts a fixed `--hostname` and records it in run
+  metadata so one-language containers on the same physical benchmark host can
+  produce a consistent authenticated host identity.
+
 ## [0.30.0] - 2026-07-12
 
 Recurring-parser performance and fleet-measurement integrity release. Reused

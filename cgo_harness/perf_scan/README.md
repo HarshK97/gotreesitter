@@ -120,7 +120,7 @@ GOWORK=off GTS_PARITY_ALLOW_HOST=1 GTS_PERF_SCAN=1 \
       -run '^TestPerfScanSweep$' -v -count=1 -timeout 0 .
 ```
 
-### Resumable one-language shards and blocking reduction
+### Resumable one-language shards and authenticated reduction
 
 Long fleet refreshes can run as independent one-language scoreboards. Keep the
 measurement knobs identical, set `GTS_PERF_SCAN_REQUIRE_FLEET=0`, and give each
@@ -143,26 +143,40 @@ GOWORK=off GTS_PARITY_ALLOW_HOST=1 GTS_PERF_SCAN=1 \
 Repeat for every language in the authenticated lock. Completed shard
 scoreboards are durable checkpoints; the reducer reads them without invoking a
 parser, so an interrupted campaign resumes from the missing languages rather
-than restarting the fleet. Once every shard exists, run the blocking reducer:
+than restarting the fleet. When each shard runs in its own Docker container,
+pass the same `--hostname` value to `run_parity_in_docker.sh` for every
+container on one physical host (for example `--hostname gts-perf-quiet-01`).
+Container-generated hostnames are unique and therefore cannot authenticate as
+one measurement host. Once every shard exists, run the reducer:
+
+A shard with a measured hard-gate FAIL writes its scoreboard and then returns
+nonzero. The campaign coordinator must validate and retain that scoreboard,
+record the failed gate, and continue with the next language; do not let a bare
+`set -e` stop the fleet at its first valid cliff. Process crashes or missing,
+stale, or unauthenticated scoreboards remain retry conditions.
 
 ```sh
 cd cgo_harness
 GOWORK=off GTS_PARITY_ALLOW_HOST=1 GTS_PERF_SCAN=1 \
   GTS_REAL_CORPUS_BENCH_LOCK=/home/draco/work/gotreesitter-corpora/corpus_sources.lock \
   GTS_PERF_SCAN_REDUCE_INPUTS='perf_scan/out/shards/*/scoreboard.json' \
+  GTS_PERF_SCAN_REDUCE_MODE=report \
   GTS_PERF_SCAN_OUT=perf_scan/out/authoritative_reduced \
   go test -tags "treesitter_c_parity treesitter_c_perfscan" \
   -run '^TestPerfScanReduce$' -v -count=1 -timeout 0 .
 ```
 
-Reduction succeeds only with exactly one scoreboard for every locked language.
-It rejects missing or duplicate languages, schema or measurement-config drift,
+Reduction requires exactly one scoreboard for every locked language. It
+rejects missing or duplicate languages, schema or measurement-config drift,
 corpus-lock drift, path exclusions, contended runs, mixed or absent repository
-revisions, dirty source trees, mixed host/runtime identities, incomplete or
-contradictory file evidence, and absent, stale, or failed shard hard gates. A
-host identity includes hostname, GOOS/GOARCH, CPU count, `GOMAXPROCS`, and Go
-version; both start and end load averages must remain below the contention
-threshold. The
+revisions, dirty source trees, mixed host/runtime identities, contradictory or
+malformed file classifications, and absent or stale shard hard gates. A stored
+shard gate may be either PASS or FAIL, but it must exactly equal the gate
+recomputed from that shard's evidence. Ratio cliffs, parser stops, missing
+ratios, and partial or zero file coverage are valid failure evidence and remain
+visible in the combined FAIL board. A host identity includes hostname,
+GOOS/GOARCH, CPU count, `GOMAXPROCS`, and Go version; both start and end load
+averages must remain below the contention threshold. The
 only permitted per-shard config differences are the one-element `languages`
 selection and `require_fleet=false`; the combined config is rewritten to the
 full lock language list with `require_fleet=true`. The reducer recomputes every
@@ -171,6 +185,12 @@ and the full hard gate before writing authoritative JSON and Markdown. The
 reducer execution is authenticated independently: its checkout/build must be
 clean and at the same revision recorded by every shard, so one runtime version
 cannot silently reinterpret another version's evidence.
+
+`GTS_PERF_SCAN_REDUCE_MODE=report` writes the recomputed PASS or FAIL board and
+returns success after evidence authentication. `certify` is the default; it
+writes the identical board, then fails the test when the combined hard gate is
+FAIL and reports the artifact path and finding count. An unknown mode fails
+before any scoreboard is published.
 
 New scoreboards record the full repository revision and clean-source attestation.
 Revisionless v1 JSON still decodes for existing readers, but is deliberately
@@ -209,6 +229,7 @@ the corpus builder deliberately supplies nested dependency checkouts and
 | `GTS_PERF_SCAN_LANG` | — | single language (child mode; set by the sweep) |
 | `GTS_PERF_SCAN_OUT` | `perf_scan/out/scan_<UTC>` | output dir |
 | `GTS_PERF_SCAN_REDUCE_INPUTS` | — | reducer-only comma list of scoreboard paths/globs; requires exactly one authenticated shard per lock language |
+| `GTS_PERF_SCAN_REDUCE_MODE` | `certify` | `report` always publishes and returns success for authenticated PASS/FAIL evidence; `certify` publishes the same board and then blocks on combined FAIL |
 | `GTS_PERF_SCAN_GIT_REVISION` | auto-discovered | full repository object ID override for metadata-poor build environments |
 | `GTS_PERF_SCAN_GIT_CLEAN` | — | explicit clean-source attestation required with a metadata-poor revision override |
 | `GTS_PERF_SCAN_CORPUS_ROOT` | `corpus_real` | corpus root (per-language subdirs) |
