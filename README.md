@@ -658,11 +658,11 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.33.0**. The 206-grammar curated parity milestone is
-banked. v0.33.0 reduces recurring parser and failed-forest work, reuses
-missing-shift recovery state, skips certified C# compatibility passes, tightens
-arena and browser-WASM lifetimes, and removes confirmed-dead compatibility
-code. Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
+The current release is **v0.34.0**. The 206-grammar curated parity milestone is
+banked. v0.34.0 removes discarded automatic forest work for Beancount, Org,
+Vimdoc, Fish, and Racket, and deletes confirmed-dead C, C++, and Rust
+compatibility passes after full-corpus verification. Detailed history lives in
+[CHANGELOG.md](CHANGELOG.md).
 
 ### Now — performance and extreme hygiene
 
