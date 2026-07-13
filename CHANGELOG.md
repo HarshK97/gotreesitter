@@ -7,6 +7,37 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-07-12
+
+Recurring-parser performance and compatibility-cleanup release. Repeated small
+parses now pay for the current input rather than stale pooled capacity, forest
+parsing returns its token-source resources promptly, and the common small
+forest indexes stay inline. On the recurring C# and CSS witnesses, wall time
+falls 34–35% and allocated bytes fall 81–82%; across a selected six-language
+family, geomean wall time falls 3.18% and bytes fall 6.81%. The primary Go
+benchmark trio remains neutral while full-parse bytes fall 18.68%.
+
+### Performance
+
+- Forest parsing now acquires the parser's reusable DFA token source and closes
+  it at the parse boundary. This removes the recurring scanner buffer and
+  source/lexer allocations while preserving external-scanner checkpoints in
+  the result arena before the source is returned.
+- `gssForestIndex` and `forestAlternativeIndex` keep their common small sets in
+  inline storage and allocate spill space only when needed. Insertion order,
+  lookup identity, and cache reset semantics are unchanged.
+- Full parses size their initial GLR entry reservation from the current source
+  length. A large prior parse can no longer make every later tiny parse clear a
+  retained 65,536-entry slab; incremental reuse keeps its established capacity.
+- Visible alias targets are precomputed once per parser, removing repeated
+  language-table scans during result normalization without treating hidden
+  aliases as visible terminal leaves.
+
+### Added
+
+- Recurring tiny-input benchmarks for JSON, C#, CSS, Java, and the DFA parser
+  expose warm-pool lifecycle and fixed-overhead regressions directly.
+
 ### Changed
 
 - Trailing-span compat shims for Caddy, Comment, Fortran, Nim, Pug, and RST
@@ -1936,7 +1967,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/odvcencio/gotreesitter/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/odvcencio/gotreesitter/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/odvcencio/gotreesitter/compare/v0.26.1...v0.27.0
 [0.26.1]: https://github.com/odvcencio/gotreesitter/compare/v0.26.0...v0.26.1

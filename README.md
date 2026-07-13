@@ -646,10 +646,10 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.26.1**. The 206-grammar curated parity milestone is
-banked. v0.26.1 compacts exceptionally large completed full-parse results into
-right-sized arenas when doing so can reclaim substantial retained memory within
-the configured budget. Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
+The current release is **v0.29.0**. The 206-grammar curated parity milestone is
+banked. v0.29.0 reduces recurring parser overhead, keeps common forest indexes
+inline, and continues consolidating compatibility behavior into auditable data.
+Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ### Now — performance and extreme hygiene
 
