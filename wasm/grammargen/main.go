@@ -3,7 +3,6 @@
 package main
 
 import (
-	"encoding/json"
 	"syscall/js"
 
 	"github.com/odvcencio/gotreesitter"
@@ -95,12 +94,22 @@ func parse(this js.Value, args []js.Value) interface{} {
 	if err != nil {
 		return errorResult(err.Error())
 	}
+	if tree == nil {
+		return errorResult("parse returned no tree")
+	}
+	defer tree.Release()
 
 	root := tree.RootNode()
+	sexp := ""
+	hasError := false
+	if root != nil {
+		sexp = root.SExpr(lang)
+		hasError = root.HasError()
+	}
 	return map[string]interface{}{
 		"ok":       true,
-		"sexp":     root.SExpr(lang),
-		"hasError": root.HasError(),
+		"sexp":     sexp,
+		"hasError": hasError,
 	}
 }
 
@@ -171,6 +180,3 @@ func errorResult(msg string) interface{} {
 		"error": msg,
 	}
 }
-
-// Suppress unused import
-var _ = json.Marshal

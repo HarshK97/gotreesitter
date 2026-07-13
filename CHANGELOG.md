@@ -22,39 +22,26 @@ for tags and release notes while still in `0.x`.
   capability round-trip and identity gates, and direct embedded-grammar Unicode,
   scoped-lambda, and LINQ regressions.
 
-### Performance
-
-- Clean full parses now make C-recovery condense summaries demand-driven.
-  Before any error-bearing payload exists, condense charges only the exact
-  open-recovery costs instead of recursively re-summing clean subtrees; visible
-  node counts are evaluated only by the unequal-cost comparison branch that
-  consumes them. On a 4,096-entry generated Go composite witness this reduces
-  a full accepted parse from 18.72 s to 93 ms and one-shot maximum RSS from
-  1,388,988 KiB to 498,240 KiB, with the same full, error-free S-expression.
-  The exact 726,532-byte Go manifest witness now completes in 0.39 s with full
-  span and no error. The standard full/incremental/no-edit benchmark trio and
-  KDL recovery benchmark retain unchanged allocations and show no candidate
-  regression.
-
 ### Fixed
 
-- Missing extra shifts, including the C-family zero-width missing-token case,
-  and alias-prefixed recovered-suffix resyncs now mark error-bearing content
-  before the next condense pass. This keeps the clean-subtree proof exact
-  without adding node metadata, parser caches, or language-specific fast paths.
-### Added
+- The browser runtime now releases every parse tree returned by both the
+  runtime and grammargen WASM bridges. Runtime queries stream through a
+  500-match cursor limit instead of materializing an unbounded result before
+  slicing it, and structured trees report `truncated` only when the 20,000-node
+  payload limit actually omits a node rather than when a tree exactly fills it.
+  Empty sources now return stable empty results from both bridges instead of
+  dereferencing a nil root; unexpected nil parse results and language handles
+  now fail safely at the browser boundary.
+- Blob-loaded browser languages now retain any registered token-source factory
+  for parsing, queries, and highlighting, matching the certified registry path
+  used outside WASM. Grammar-subset builds now attach those factories regardless
+  of file-init order and no longer revive Go's intentionally disabled scanner
+  path. Reloads publish a language and highlighter together, clear stale
+  highlighters when no query is supplied, and leave the prior pair intact when a
+  replacement query is invalid.
 
-- A dedicated bash real-corpus parity witness (`grammargen/bash_parity_test.go`),
-  mirroring the existing Python witness. Previously the bash entry in the
-  `real_corpus_parity_floors.json` v3 floor file (25 eligible / 9 no-error / 6
-  S-expression / 6 deep) was phantom: the generic real-corpus loop skips any
-  grammar without a `jsonPath`/`path`, and bash had neither and no dedicated
-  test, so nothing exercised that floor. The new witness grammargen-compiles
-  the locked tree-sitter-bash grammar and reproduces the floor exactly,
-  skipping (not failing) when the corpus is not seeded locally. A companion
-  reducer test pins `echo ${x}` and `echo ${#x}` as working controls and
-  `echo ${x:-y}` as a self-healing known-defect witness for the underlying
-  grammargen expansion-suffix table defect.
+### Removed
+
 - Four confirmed-dead post-parse compatibility passes, found by a full-corpus
   census (every source file under go ~11.4k, java ~9.2k, ruby ~3.5k, and
   haskell ~2.2k real-world corpora, each parsed both clean and truncated to
@@ -81,6 +68,75 @@ for tags and release notes while still in `0.x`.
   gate either way) shows a statistically significant ~37% drop in
   allocations per parse from dropping the walk.
 
+## [0.32.0] - 2026-07-13
+
+Browser query/structured-tree, compatibility cleanup, clean-parse recovery
+performance, and Bash parity-coverage release. The runtime WASM target now
+exposes structured parsing and queries with both UTF-8 and UTF-16 spans. Six
+dead JavaScript/TypeScript rewrites are gone, clean parses avoid recursively
+re-summing C-recovery subtrees, and Bash's committed real-corpus floor is backed
+by an executable witness.
+
+### Added
+
+- The browser-focused WASM runtime now parses JavaScript strings through the
+  UTF-16 parser entry point and exposes structured JSON trees and bounded query
+  results for languages loaded through `loadBlob`. Tree nodes and query
+  captures carry both canonical UTF-8 byte offsets and JavaScript UTF-16
+  code-unit offsets; node- and match-count limits report when results were
+  truncated.
+- A dedicated bash real-corpus parity witness (`grammargen/bash_parity_test.go`),
+  mirroring the existing Python witness. Previously the bash entry in the
+  `real_corpus_parity_floors.json` v3 floor file (25 eligible / 9 no-error / 6
+  S-expression / 6 deep) was phantom: the generic real-corpus loop skips any
+  grammar without a `jsonPath`/`path`, and bash had neither and no dedicated
+  test, so nothing exercised that floor. The new witness grammargen-compiles
+  the locked tree-sitter-bash grammar and reproduces the floor exactly,
+  skipping (not failing) when the corpus is not seeded locally. A companion
+  reducer test pins `echo ${x}` and `echo ${#x}` as working controls and
+  `echo ${x:-y}` as a self-healing known-defect witness for the underlying
+  grammargen expansion-suffix table defect.
+
+### Removed
+
+- Six confirmed-dead post-parse rewrite passes from the fused JavaScript/
+  TypeScript/TSX compat walk: statement-keyword (`if`/`while`) leaf retype,
+  `empty_statement` semicolon retype, `existential_type` collapse, call-
+  precedence reshape, and unary- and binary-precedence rotation, plus their
+  exclusively-owned helpers and an already-unreachable standalone fallback
+  path from an earlier compat-tier sunset. A census over roughly 23 MB of
+  real JavaScript/TypeScript/TSX (including undici.js and TypeScript's own
+  checker.ts, parser.ts, and utilities.ts), the original regression corpus
+  that added these passes, and independent adversarial precedence chains
+  found zero rewrites from any of the six; later grammargen table fixes
+  already produce the correct tree shape directly, so the passes had become
+  dead weight on every JS/TS/TSX parse. The compat pipeline's two remaining
+  live fixups (top-level object-literal reinterpretation and trailing-
+  continue-comment reattachment) and the memory-budget stop-polling on the
+  surviving walk are unaffected. Net ~1,100 lines removed; verified byte-
+  identical (S-expression and spans) on real JS, TS, and TSX samples.
+
+### Performance
+
+- Clean full parses now make C-recovery condense summaries demand-driven.
+  Before any error-bearing payload exists, condense charges only the exact
+  open-recovery costs instead of recursively re-summing clean subtrees; visible
+  node counts are evaluated only by the unequal-cost comparison branch that
+  consumes them. On a 4,096-entry generated Go composite witness this reduces
+  a full accepted parse from 18.72 s to 93 ms and one-shot maximum RSS from
+  1,388,988 KiB to 498,240 KiB, with the same full, error-free S-expression.
+  The exact 726,532-byte Go manifest witness now completes in 0.39 s with full
+  span and no error. The standard full/incremental/no-edit benchmark trio and
+  KDL recovery benchmark retain unchanged allocations and show no candidate
+  regression.
+
+### Fixed
+
+- Missing extra shifts, including the C-family zero-width missing-token case,
+  and alias-prefixed recovered-suffix resyncs now mark error-bearing content
+  before the next condense pass. This keeps the clean-subtree proof exact
+  without adding node metadata, parser caches, or language-specific fast paths.
+
 ## [0.31.0] - 2026-07-13
 
 Memory containment, Python parity, and authenticated fleet-reporting release.
@@ -105,25 +161,6 @@ valid failing scoreboards while certification remains blocking.
   release gate instead of claiming the 33 GB scan runs for every release. The
   committed tier board remains explicitly unreleased until a fresh full scan
   is intentionally published.
-
-### Removed
-
-- Six confirmed-dead post-parse rewrite passes from the fused JavaScript/
-  TypeScript/TSX compat walk: statement-keyword (`if`/`while`) leaf retype,
-  `empty_statement` semicolon retype, `existential_type` collapse, call-
-  precedence reshape, and unary- and binary-precedence rotation, plus their
-  exclusively-owned helpers and an already-unreachable standalone fallback
-  path from an earlier compat-tier sunset. A census over roughly 23 MB of
-  real JavaScript/TypeScript/TSX (including undici.js and TypeScript's own
-  checker.ts, parser.ts, and utilities.ts), the original regression corpus
-  that added these passes, and independent adversarial precedence chains
-  found zero rewrites from any of the six; later grammargen table fixes
-  already produce the correct tree shape directly, so the passes had become
-  dead weight on every JS/TS/TSX parse. The compat pipeline's two remaining
-  live fixups (top-level object-literal reinterpretation and trailing-
-  continue-comment reattachment) and the memory-budget stop-polling on the
-  surviving walk are unaffected. Net ~1,100 lines removed; verified byte-
-  identical (S-expression and spans) on real JS, TS, and TSX samples.
 
 ### Performance
 
@@ -2165,7 +2202,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.31.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.32.0...HEAD
+[0.32.0]: https://github.com/odvcencio/gotreesitter/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/odvcencio/gotreesitter/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/odvcencio/gotreesitter/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/odvcencio/gotreesitter/compare/v0.28.0...v0.29.0

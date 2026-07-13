@@ -1,19 +1,11 @@
-// gotreesitter WASM loader
+// Shared loader for the gotreesitter runtime and grammargen WASM builds.
+// Use the wasm_exec.js from the same Go toolchain that built the .wasm file.
 // Usage:
 //   <script src="wasm_exec.js"></script>
 //   <script src="loader.js"></script>
 //   <script>
 //     loadGotreesitter("gotreesitter.wasm").then(() => {
-//       // Import a grammar from JSON
-//       const result = gotreesitter.importGrammar(grammarJSON);
-//       if (!result.ok) throw new Error(result.error);
-//
-//       // Generate the parser
-//       gotreesitter.generateLanguage(result.name);
-//
-//       // Highlight source code
-//       const hl = gotreesitter.highlight(result.name, sourceCode, highlightQuery);
-//       // hl.ranges = [{startByte, endByte, capture}, ...]
+//       // gotreesitter now exposes the API for the selected build.
 //     });
 //   </script>
 
