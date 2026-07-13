@@ -2588,11 +2588,15 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 	defer releaseGSSForestNodeSlab(slab)
 	linkCap := forestLinkCapForLanguage(lang.Name)
 
-	// Honor the same per-parse memory budget the production loop enforces
-	// (parser.go: arena.budgetExhausted → ParseStopMemoryBudget). The forest has
-	// no partial-tree/error-recovery path, so on exhaustion it declines (returns
-	// false) and the production parser re-runs and reports ParseStopMemoryBudget.
-	arena.setBudget(parseMemoryBudgetForParser(p, len(source)))
+	// Honor the same per-parse memory budget the production loop enforces.
+	// The arena counter covers tree materialization, while the runtime-wide
+	// guard also covers forest-only heap such as GSS slabs and the alternative
+	// indexes. The forest has no partial-tree/error-recovery path, so on
+	// exhaustion it declines and lets the production parser report the stop.
+	restoreRuntimeMemoryBudget := p.enterForestMemoryBudget(arena, len(source))
+	if restoreRuntimeMemoryBudget.parser != nil {
+		defer restoreRuntimeMemoryBudget.restore()
+	}
 
 	// Honor the same caller-configured timeout/cancellation the production
 	// loop enforces (parser.go's `for iter := ...` checks p.parseStopReasonNow()
@@ -2649,7 +2653,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 			progress.beginDetail(time.Now(), "forest_step_begin", "", iter, tokens, Token{}, false, nil, 0, 0, 0, true, 0, 0,
 				forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, nil, ""))
 		}
-		if arena.budgetExhausted() {
+		if p.forestMemoryBudgetExceeded(arena, false) {
 			// Memory budget hit; decline so the production parser re-runs and
 			// reports ParseStopMemoryBudget (the forest has no partial-tree path).
 			p.recordForestDecline("budget", Token{StartByte: frontier[len(frontier)-1].byteOffset}, nil)
@@ -3115,6 +3119,15 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 			progress.endDetail(time.Now(), "forest_reduce_worklist_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
 				forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, ""))
 		}
+		// A single token's reduce worklist is bounded by the visit/step caps, but
+		// it can still materialize enough nodes to cross the arena budget before
+		// the next outer-token poll. Catch that cheap, exact accounting boundary
+		// here. Forest-only heap is sampled at the next token and unconditionally
+		// before an accepted return below.
+		if arena.budgetExhausted() {
+			p.recordForestDecline("budget", tok, nil)
+			return nil, false
+		}
 
 		if eof {
 			// A genuinely CLEAN forest accept (zero recovery cost, no ERROR/MISSING
@@ -3162,6 +3175,10 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 						if int(eroot.endByte) < len(source) && bytesAreTrivia(source[eroot.endByte:]) {
 							extendNodeEndTo(eroot, uint32(len(source)), source)
 						}
+						if p.forestMemoryBudgetExceeded(arena, true) {
+							p.recordForestDecline("budget", tok, nil)
+							return nil, false
+						}
 						if progress.enabled {
 							progress.endDetail(time.Now(), "forest_collect_error_root_end", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
 								forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted,
@@ -3208,6 +3225,10 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 					progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
 						forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, "decline_reason=noncontiguous_root"))
 				}
+				return nil, false
+			}
+			if p.forestMemoryBudgetExceeded(arena, true) {
+				p.recordForestDecline("budget", tok, nil)
 				return nil, false
 			}
 			if progress.enabled {
@@ -3327,6 +3348,22 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 				forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, "via=shift"))
 		}
 	}
+}
+
+func (p *Parser) enterForestMemoryBudget(arena *nodeArena, sourceLen int) runtimeMemoryBudgetRestore {
+	memoryBudget := parseMemoryBudgetForParser(p, sourceLen)
+	arena.setBudget(memoryBudget)
+	return p.enterRuntimeMemoryBudget(memoryBudget, sourceLen)
+}
+
+func (p *Parser) forestMemoryBudgetExceeded(arena *nodeArena, final bool) bool {
+	if arena.budgetExhausted() {
+		return true
+	}
+	if final {
+		return p.runtimeMemoryBudgetStopReasonNow() == ParseStopMemoryBudget
+	}
+	return p.runtimeMemoryBudgetStopReason(arenaAllocatedVolume(arena)) == ParseStopMemoryBudget
 }
 
 // maxForestNoLookaheadSteps bounds consecutive no-lookahead re-lex steps at one

@@ -19,6 +19,21 @@ for tags and release notes while still in `0.x`.
   metadata so one-language containers on the same physical benchmark host can
   produce a consistent authenticated host identity.
 
+### Performance
+
+- Forest parsing now applies the parser's existing runtime heap and system
+  memory guard in addition to its node-arena budget, covering GSS slabs and
+  alternative indexes before a failed forest attempt falls back to production
+  parsing. On the default-budget JavaScript Poppler witness, this moved the
+  forest decline from byte 1,147,865 to roughly byte 360,000, cut combined
+  elapsed time from 5.313 s to 2.610 s, total allocation from 2.450 GB to
+  1.289 GB, and maximum RSS from 1,961,948 KiB to 1,012,296 KiB while
+  preserving exact stopped-tree hashes. Final-diff successful-forest B-C-C-B
+  timing remained neutral (+1.4%, p=0.142), with a small measured allocation
+  cost (+0.28% B/op and +0.01% allocs/op). This bounds a failed attempt;
+  Poppler still reports the ordinary 512 MiB production fallback stop and is
+  not claimed to complete within that policy.
+
 ### Fixed
 
 - The pooled forest GSS slab now clears outer batch references discarded by
