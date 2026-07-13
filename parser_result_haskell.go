@@ -1,88 +1,10 @@
 package gotreesitter
 
 func normalizeHaskellCompatibility(root *Node, source []byte, lang *Language) {
-	normalizeHaskellCollapsedNamedLeafChildren(root, source, lang)
 	normalizeHaskellImportsSpan(root, source, lang)
 	normalizeHaskellZeroWidthTokens(root, lang)
 	normalizeHaskellRootImportField(root, lang)
 	normalizeHaskellDeclarationsSpan(root, source, lang)
-	normalizeHaskellLocalBindsStarts(root, source, lang)
-	normalizeHaskellQuasiquoteStarts(root, source, lang)
-}
-
-func normalizeHaskellCollapsedNamedLeafChildren(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "haskell" || len(source) == 0 {
-		return
-	}
-	parentRules, childNamed := haskellCollapsedNamedLeafSymbols(lang)
-	if len(parentRules) == 0 {
-		return
-	}
-	walkResultTree(root, func(n *Node) {
-		childSyms := parentRules[n.symbol]
-		if len(childSyms) == 0 || resultChildCount(n) != 0 || int(n.startByte) > len(source) || int(n.endByte) > len(source) || n.startByte > n.endByte {
-			return
-		}
-		childSym, ok := childSyms[string(source[n.startByte:n.endByte])]
-		if !ok {
-			return
-		}
-		child := newLeafNodeInArena(n.ownerArena, childSym, childNamed[childSym], n.startByte, n.endByte, n.startPoint, n.endPoint)
-		child.parent = n
-		child.childIndex = 0
-		n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
-	})
-}
-
-// haskellCollapsedNamedLeafChildren cannot fully migrate to
-// resultCollapsedNamedLeafRules (parser_result_collapsed_helpers.go):
-// "deriving_strategy" has 3 candidate children (stock/anyclass/via), which
-// the plain one-parent-one-child table schema doesn't represent. "wildcard"
-// does reduce to a single-candidate name-pair ("_"), but the anonymous token
-// name "_" collides with the special-cased query wildcard sentinel baked
-// into Language.symbolByNameAndNamed/SymbolByName (both return (0, true) for
-// name == "_" unconditionally, for tree-sitter query "any node" matching)
-// which the shared normalizeCollapsedNamedLeafChildren(BySource) helpers use
-// for symbol lookup. Migrating "wildcard" through the generic mechanism
-// resolves its child to Symbol(0) (EOF) instead of the real anonymous "_"
-// token, so it stays here where symbol lookup walks SymbolMetadata directly.
-var haskellCollapsedNamedLeafChildren = map[string][]string{
-	"deriving_strategy": {"stock", "anyclass", "via"},
-	"wildcard":          {"_"},
-}
-
-func haskellCollapsedNamedLeafSymbols(lang *Language) (map[Symbol]map[string]Symbol, map[Symbol]bool) {
-	if lang == nil {
-		return nil, nil
-	}
-	anonymousSymbols := make(map[string]Symbol)
-	childNamed := make(map[Symbol]bool)
-	for i, meta := range lang.SymbolMetadata {
-		if !meta.Named {
-			sym := Symbol(i)
-			anonymousSymbols[meta.Name] = sym
-			childNamed[sym] = meta.Named
-		}
-	}
-	parentRules := make(map[Symbol]map[string]Symbol)
-	for parentName, childNames := range haskellCollapsedNamedLeafChildren {
-		childSyms := make(map[string]Symbol, len(childNames))
-		for _, childName := range childNames {
-			childSym, ok := anonymousSymbols[childName]
-			if ok {
-				childSyms[childName] = childSym
-			}
-		}
-		if len(childSyms) == 0 {
-			continue
-		}
-		for i, meta := range lang.SymbolMetadata {
-			if meta.Name == parentName && meta.Named {
-				parentRules[Symbol(i)] = childSyms
-			}
-		}
-	}
-	return parentRules, childNamed
 }
 
 func normalizeHaskellImportsSpan(root *Node, source []byte, lang *Language) {
@@ -210,42 +132,4 @@ func normalizeHaskellDeclarationsSpan(root *Node, source []byte, lang *Language)
 		}
 		extendNodeEndTo(child, root.endByte, source)
 	}
-}
-
-func normalizeHaskellLocalBindsStarts(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "haskell" || len(source) == 0 {
-		return
-	}
-	walkResultTree(root, func(n *Node) {
-		if n.Type(lang) == "let_in" && resultChildCount(n) >= 2 {
-			letNode := resultChildAt(n, 0)
-			localBinds := resultChildAt(n, 1)
-			if letNode != nil && localBinds != nil && letNode.Type(lang) == "let" && localBinds.Type(lang) == "local_binds" && letNode.endByte < localBinds.startByte && localBinds.startByte <= uint32(len(source)) {
-				gap := source[letNode.endByte:localBinds.startByte]
-				if len(gap) > 0 && bytesAreTrivia(gap) && !bytesContainLineBreak(gap) {
-					localBinds.startByte = letNode.endByte
-					localBinds.startPoint = letNode.endPoint
-				}
-			}
-		}
-	})
-}
-
-func normalizeHaskellQuasiquoteStarts(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "haskell" || len(source) == 0 {
-		return
-	}
-	walkResultTree(root, func(n *Node) {
-		if n.Type(lang) == "quasiquote" && n.startByte > 0 {
-			start := int(n.startByte)
-			if source[start-1] == ' ' && start < len(source) && source[start] == '[' {
-				n.startByte--
-				if n.startPoint.Column > 0 {
-					n.startPoint.Column--
-				} else if n.startPoint.Row > 0 {
-					n.startPoint = advancePointByBytes(Point{}, source[:n.startByte])
-				}
-			}
-		}
-	})
 }

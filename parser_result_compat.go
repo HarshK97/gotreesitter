@@ -173,8 +173,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		normalizeHyprlangCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "ini":
 		return normalizeIniCompatibility(ctx.root, ctx.source, ctx.lang)
-	case "java":
-		normalizeJavaCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "javascript":
 		return resultCompatibilityResult{stopReason: normalizeJavaScriptCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)}
 	case "julia":
@@ -227,7 +225,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 	case "rust":
 		normalizeRustCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
 	case "ruby":
-		normalizeRubyThenStarts(ctx.root, ctx.lang)
 		normalizeRubyTopLevelModuleBounds(ctx.root, ctx.source, ctx.lang)
 	case "scala":
 		normalizeScalaCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)

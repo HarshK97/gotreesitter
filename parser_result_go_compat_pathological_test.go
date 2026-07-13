@@ -33,16 +33,6 @@ func buildCyclicGoTree() (*Node, *nodeArena) {
 	return root, arena
 }
 
-func TestNormalizeGoDotLeafChildrenTerminatesOnCycle(t *testing.T) {
-	lang := goDotCompatibilityTestLanguage()
-	root, _ := buildCyclicGoTree()
-	source := []byte(".")
-	runWithin(t, 15*time.Second, "normalizeGoDotLeafChildrenWithStop", func() {
-		poller := parseStopPoller{}
-		normalizeGoDotLeafChildrenWithStop(root, source, lang, &poller)
-	})
-}
-
 func TestNormalizeGoCompatibilitySubtreeTerminatesOnCycle(t *testing.T) {
 	lang := goDotCompatibilityTestLanguage()
 	syms, _ := goCompatibilitySymbolsForLanguage(lang)
@@ -52,55 +42,4 @@ func TestNormalizeGoCompatibilitySubtreeTerminatesOnCycle(t *testing.T) {
 		poller := parseStopPoller{}
 		normalizeGoCompatibilitySubtreeWithStopAndScratch(root, source, syms, goCompatibilitySourceFlags{}, nil, &poller, nil)
 	})
-}
-
-// buildWideDotFinalRefsTree builds a source_file whose n "dot" leaf children are
-// stored as final child refs — the transient form the dot walker traverses via
-// resultChildAt / view — so the scaling test exercises the real hot path.
-func buildWideDotFinalRefsTree(n int) *Node {
-	arena := newNodeArena(arenaClassFull)
-	childRange, entries := arena.allocPendingChildEntries(n)
-	for i := 0; i < n; i++ {
-		leaf := newLeafNodeInArena(arena, 2 /* dot */, true, 0, 1, Point{}, Point{Column: 1})
-		entries[i] = newPendingChildEntry(newStackEntryNode(leaf.parseState, leaf))
-	}
-	return newParentNodeInArenaWithFinalChildRefs(arena, 3 /* source_file */, true, childRange, 0, false)
-}
-
-func timeDotNormalizerMin(lang *Language, n, runs int) time.Duration {
-	// Size the source so the fast-path pop budget (a small multiple of the
-	// source length, mirroring the O(len(source)) node-count bound of a real
-	// parse) comfortably exceeds the synthetic node count; otherwise a tiny
-	// source would falsely trip the cyclic-descent fallback. Leaves span [0,1];
-	// only byte 0 is read (the "." check), so the padding is never inspected.
-	source := make([]byte, n+64)
-	source[0] = '.'
-	var best time.Duration
-	for r := 0; r < runs; r++ {
-		root := buildWideDotFinalRefsTree(n)
-		poller := parseStopPoller{}
-		start := time.Now()
-		normalizeGoDotLeafChildrenWithStop(root, source, lang, &poller)
-		d := time.Since(start)
-		if r == 0 || d < best {
-			best = d
-		}
-	}
-	return best
-}
-
-// TestNormalizeGoDotLeafChildrenScalesLinearly asserts the dot walker is linear
-// (not quadratic) in the width of a flat sibling list. A 4x width increase costs
-// ~4x for a linear walk and ~16x for a quadratic one; the < 8x bound cleanly
-// separates the two while tolerating allocator/GC noise.
-func TestNormalizeGoDotLeafChildrenScalesLinearly(t *testing.T) {
-	lang := goDotCompatibilityTestLanguage()
-	const nSmall, nLarge = 20000, 80000
-	small := timeDotNormalizerMin(lang, nSmall, 6)
-	large := timeDotNormalizerMin(lang, nLarge, 6)
-	ratio := float64(large) / float64(small)
-	t.Logf("n=%d %v  n=%d %v  4x-width ratio=%.2f", nSmall, small, nLarge, large, ratio)
-	if small > 0 && ratio > 8.0 {
-		t.Fatalf("dot normalizer scaling looks super-linear: 4x width -> %.2fx time (want < 8x)", ratio)
-	}
 }

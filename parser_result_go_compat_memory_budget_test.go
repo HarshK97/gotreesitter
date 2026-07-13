@@ -7,8 +7,8 @@ import (
 )
 
 // This file regression-tests the 2026-07-12 gocompat-walk-containment-gap
-// fix: walkGoCompatSubtree (and normalizeGoDotLeafChildrenWithStop) used to
-// poll only for timeout/cancellation (parseStopReasonIsActive explicitly
+// fix: walkGoCompatSubtree used to poll only for timeout/cancellation
+// (parseStopReasonIsActive explicitly
 // excludes ParseStopMemoryBudget), so a C-recovery-widened Go tree's compat
 // walk could balloon heap growth during result finalization independent of
 // whatever the parse loop itself already enforced. The fix threads

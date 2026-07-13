@@ -187,21 +187,6 @@ func TestNormalizeGoCompatibilityStopsWhenCancelled(t *testing.T) {
 	}
 }
 
-func TestNormalizeGoCompatibilityAddsDotChildWhenRunning(t *testing.T) {
-	lang := buildGoDotLeafLanguage()
-	arena := newNodeArena(arenaClassFull)
-	root := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
-
-	normalizeGoCompatibilityWithParser(root, []byte("."), lang, &Parser{language: lang})
-
-	if got := root.ChildCount(); got != 1 {
-		t.Fatalf("root.ChildCount() = %d, want 1", got)
-	}
-	if child := root.Child(0); child == nil || child.Type(lang) != "." {
-		t.Fatalf("dot child = %v, want anonymous . child", child)
-	}
-}
-
 func TestReturnedTreeNormalizationMarksAcceptedTreeStoppedOnTimeout(t *testing.T) {
 	lang := buildGoDotLeafLanguage()
 	arena := newNodeArena(arenaClassFull)
