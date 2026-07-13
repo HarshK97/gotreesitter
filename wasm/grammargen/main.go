@@ -94,6 +94,9 @@ func parse(this js.Value, args []js.Value) interface{} {
 	if err != nil {
 		return errorResult(err.Error())
 	}
+	if tree == nil {
+		return errorResult("parse returned no tree")
+	}
 	defer tree.Release()
 
 	root := tree.RootNode()

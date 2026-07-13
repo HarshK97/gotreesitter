@@ -84,6 +84,40 @@ func TestBuildJSONParseResultHandlesEmptyTree(t *testing.T) {
 	}
 }
 
+func TestRuntimeBoundaryNilInputsStaySafe(t *testing.T) {
+	loaded := newRuntimeLanguage("json", nil)
+	if loaded.language != nil || loaded.tokenSourceFactory != nil {
+		t.Fatalf("nil runtime language = %+v, want no language or token-source factory", loaded)
+	}
+
+	if start16, end16 := spans16(nil, 7, 19); start16 != 7 || end16 != 19 {
+		t.Fatalf("nil-tree UTF-16 fallback = (%d, %d), want (7, 19)", start16, end16)
+	}
+
+	if matches, truncated := executeQueryJSON(nil, nil, nil, maxQueryMatches); len(matches) != 0 || truncated {
+		t.Fatalf("nil-input query = (%d matches, truncated=%v), want no matches and no truncation", len(matches), truncated)
+	}
+}
+
+func TestExecuteQueryJSONHandlesEmptyRoot(t *testing.T) {
+	entry := grammars.DetectLanguageByName("go")
+	if entry == nil {
+		t.Skip("Go is not included in this grammar subset")
+	}
+	lang := entry.Language()
+	query, err := gotreesitter.NewQuery(`(identifier) @id`, lang)
+	if err != nil {
+		t.Fatalf("compile query: %v", err)
+	}
+	tree := gotreesitter.NewTree(nil, nil, lang)
+	t.Cleanup(tree.Release)
+
+	matches, truncated := executeQueryJSON(query, tree, lang, maxQueryMatches)
+	if len(matches) != 0 || truncated {
+		t.Fatalf("empty-root query = (%d matches, truncated=%v), want no matches and no truncation", len(matches), truncated)
+	}
+}
+
 func goIdentifiersSource(variableCount int) string {
 	var source strings.Builder
 	source.WriteString("package p\n\nvar (\n")

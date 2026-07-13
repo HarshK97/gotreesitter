@@ -30,7 +30,8 @@ for tags and release notes while still in `0.x`.
   slicing it, and structured trees report `truncated` only when the 20,000-node
   payload limit actually omits a node rather than when a tree exactly fills it.
   Empty sources now return stable empty results from both bridges instead of
-  dereferencing a nil root.
+  dereferencing a nil root; unexpected nil parse results and language handles
+  now fail safely at the browser boundary.
 - Blob-loaded browser languages now retain any registered token-source factory
   for parsing, queries, and highlighting, matching the certified registry path
   used outside WASM. Grammar-subset builds now attach those factories regardless

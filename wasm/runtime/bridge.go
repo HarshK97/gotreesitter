@@ -15,6 +15,9 @@ type runtimeLanguage struct {
 
 func newRuntimeLanguage(name string, lang *gotreesitter.Language) runtimeLanguage {
 	loaded := runtimeLanguage{language: lang}
+	if lang == nil {
+		return loaded
+	}
 	entry := grammars.DetectLanguageByName(name)
 	if entry != nil && entry.TokenSourceFactory != nil {
 		loaded.tokenSourceFactory = func(source []byte) gotreesitter.TokenSource {
@@ -68,11 +71,13 @@ type jsonNode struct {
 const maxTreeNodes = 20000
 
 func spans16(tree *gotreesitter.Tree, startByte, endByte uint32) (uint32, uint32) {
-	if rng, has := tree.UTF16RangeForByteRange(startByte, endByte); has {
-		return rng.StartCodeUnit, rng.EndCodeUnit
+	if tree != nil {
+		if rng, has := tree.UTF16RangeForByteRange(startByte, endByte); has {
+			return rng.StartCodeUnit, rng.EndCodeUnit
+		}
 	}
-	// Unreachable for ParseUTF16 trees; degrade to byte offsets rather
-	// than lying with zeros.
+	// A parsed UTF-16 tree should always have a source map. For nil trees or a
+	// missing map entry, degrade to byte offsets rather than lying with zeros.
 	return startByte, endByte
 }
 
@@ -175,7 +180,11 @@ func executeQueryJSON(q *gotreesitter.Query, tree *gotreesitter.Tree, lang *gotr
 		return nil, false
 	}
 
-	cursor := q.Exec(tree.RootNode(), lang, tree.Source())
+	root := tree.RootNode()
+	if root == nil {
+		return nil, false
+	}
+	cursor := q.Exec(root, lang, tree.Source())
 	cursor.SetMatchLimit(limit)
 
 	capacity := int(limit)

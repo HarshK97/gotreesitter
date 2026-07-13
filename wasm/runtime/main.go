@@ -78,6 +78,9 @@ func parse(this js.Value, args []js.Value) interface{} {
 	if parseErr != nil {
 		return err(parseErr.Error())
 	}
+	if tree == nil {
+		return err("parse returned no tree")
+	}
 	defer tree.Release()
 
 	result, marshalErr := buildJSONParseResult(tree, loaded.language, tree.RootNode(), maxTreeNodes)
@@ -121,6 +124,9 @@ func query(this js.Value, args []js.Value) interface{} {
 	tree, parseErr := loaded.parseUTF16(args[1].String())
 	if parseErr != nil {
 		return err(parseErr.Error())
+	}
+	if tree == nil {
+		return err("parse returned no tree")
 	}
 	defer tree.Release()
 
