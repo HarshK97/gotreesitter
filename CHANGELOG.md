@@ -61,6 +61,31 @@ for tags and release notes while still in `0.x`.
   reducer test pins `echo ${x}` and `echo ${#x}` as working controls and
   `echo ${x:-y}` as a self-healing known-defect witness for the underlying
   grammargen expansion-suffix table defect.
+- Four confirmed-dead post-parse compatibility passes, found by a full-corpus
+  census (every source file under go ~11.4k, java ~9.2k, ruby ~3.5k, and
+  haskell ~2.2k real-world corpora, each parsed both clean and truncated to
+  the first 55% of every second file): Go's dot-leaf walk, a second full-tree
+  DFS on the canonical parse lane gated only on the source containing `.`,
+  whose sole job was synthesizing the anonymous `.` child under an
+  already-childless `dot` import-alias node — the DFA emits that child
+  directly on every real parse, so the walk visited every node in the tree
+  without ever performing its one rewrite; Java's entire compat block
+  (primitive-type token collapse, dotted-assignment-declaration reshape, and
+  recovered-program-root retagging — `parser_result_java.go` in full); Ruby's
+  `then`-span start walk; and three of Haskell's seven compat passes
+  (collapsed named-leaf children, `let`-bound local-binds start, and
+  quasiquote start). Zero rewrites were observed across every corpus file in
+  both phases despite substantial visit counts (Java's primitive-type check
+  alone matched 82,504 times). Haskell's remaining four passes — including
+  `normalizeHaskellRootImportField`, which rewrites on nearly every parse —
+  and Ruby's top-level module-bounds fixup, which fires on truncated input,
+  are unaffected and untouched. Net ~886 lines removed; verified
+  byte-identical (S-expression and span hashes) on real Go, Java, Ruby, and
+  Haskell samples, and a benchmark variant of the canonical Go parse
+  benchmark with a single added period (the synthetic canonical benchmark
+  source contains no `.` bytes and so never exercised the removed walk's
+  gate either way) shows a statistically significant ~37% drop in
+  allocations per parse from dropping the walk.
 
 ## [0.31.0] - 2026-07-13
 

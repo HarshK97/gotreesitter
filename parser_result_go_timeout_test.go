@@ -25,43 +25,6 @@ func goDotCompatibilityTestLanguage() *Language {
 	}
 }
 
-func TestNormalizeGoDotLeafChildrenHonorsStopCheck(t *testing.T) {
-	lang := goDotCompatibilityTestLanguage()
-	arena := newNodeArena(arenaClassFull)
-	const dotLeaves = 4096
-	children := make([]*Node, 0, dotLeaves)
-	for i := 0; i < dotLeaves; i++ {
-		children = append(children, newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1}))
-	}
-	root := newParentNodeInArena(arena, 3, true, children, nil, 0)
-	source := []byte(".")
-	checks := 0
-	poller := parseStopPoller{
-		check: func() ParseStopReason {
-			checks++
-			if checks < 2 {
-				return ParseStopNone
-			}
-			return ParseStopTimeout
-		},
-	}
-
-	reason := normalizeGoDotLeafChildrenWithStop(root, source, lang, &poller)
-
-	if reason != ParseStopTimeout {
-		t.Fatalf("normalizeGoDotLeafChildrenWithStop reason = %q, want %q", reason, ParseStopTimeout)
-	}
-	var rewritten int
-	for i := 0; i < resultChildCount(root); i++ {
-		if resultChildCount(resultChildAt(root, i)) > 0 {
-			rewritten++
-		}
-	}
-	if rewritten == 0 || rewritten >= dotLeaves {
-		t.Fatalf("rewritten dot leaves = %d, want partial rewrite before timeout", rewritten)
-	}
-}
-
 func TestParseForRecoveryHonorsExpiredActiveBudget(t *testing.T) {
 	parser := NewParser(buildArithmeticLanguage())
 	parser.SetTimeoutMicros(1)
