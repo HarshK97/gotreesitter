@@ -739,6 +739,119 @@ func TestGSSForestNodeSlabReleaseClearsPointers(t *testing.T) {
 	}
 }
 
+func TestGSSForestNodeSlabTrimClearsDiscardedBatchReferences(t *testing.T) {
+	nodeBatches := [][]gssForestNode{
+		make([]gssForestNode, 1),
+		make([]gssForestNode, 1),
+		make([]gssForestNode, 1),
+	}
+	linkBatches := [][]gssLink{
+		make([]gssLink, forestMaxLinksPerNode),
+		make([]gssLink, forestMaxLinksPerNode),
+		make([]gssLink, forestMaxLinksPerNode),
+	}
+	slab := &gssForestNodeSlab{
+		nodeBatches: nodeBatches,
+		linkBatches: linkBatches,
+	}
+	retainedNode := &nodeBatches[0][0]
+	retainedLink := &linkBatches[0][0]
+	limit := cap(nodeBatches[0])*int(unsafe.Sizeof(gssForestNode{})) +
+		cap(linkBatches[0])*int(unsafe.Sizeof(gssLink{}))
+
+	slab.trimToRetentionLimit(limit)
+	if got := len(slab.nodeBatches); got != 1 {
+		t.Fatalf("retained node batches = %d, want 1", got)
+	}
+	if got := len(slab.linkBatches); got != 1 {
+		t.Fatalf("retained link batches = %d, want 1", got)
+	}
+	if got := slab.retainedBytes(); got != limit {
+		t.Fatalf("retained bytes = %d, want %d", got, limit)
+	}
+	if got := &slab.nodeBatches[0][0]; got != retainedNode {
+		t.Fatalf("retained node batch moved: got %p, want %p", got, retainedNode)
+	}
+	if got := &slab.linkBatches[0][0]; got != retainedLink {
+		t.Fatalf("retained link batch moved: got %p, want %p", got, retainedLink)
+	}
+	for i, batch := range slab.nodeBatches[:cap(slab.nodeBatches)] {
+		if i >= len(slab.nodeBatches) && batch != nil {
+			t.Fatalf("discarded node batch %d remains reachable", i)
+		}
+	}
+	for i, batch := range slab.linkBatches[:cap(slab.linkBatches)] {
+		if i >= len(slab.linkBatches) && batch != nil {
+			t.Fatalf("discarded link batch %d remains reachable", i)
+		}
+	}
+
+	if got := slab.alloc(7, 11, 0, 0); got != retainedNode {
+		t.Fatalf("first allocation after trim = %p, want retained node %p", got, retainedNode)
+	}
+	if got := &slab.linkBatches[0][0]; got != retainedLink {
+		t.Fatalf("first link allocation after trim moved: got %p, want %p", got, retainedLink)
+	}
+
+	// Exhaust the retained prefix once, then prove append reuses the cleared
+	// outer slots and a second release can clear those references again.
+	slab.nodeIdx = len(slab.nodeBatches[0])
+	slab.linkIdx = len(slab.linkBatches[0])
+	slab.alloc(8, 12, 0, 0)
+	if len(slab.nodeBatches) != 2 {
+		t.Fatalf("node batch count after reuse = %d, want 2", len(slab.nodeBatches))
+	}
+	if slab.nodeBatches[1] == nil {
+		t.Fatal("node batch append did not reuse a cleared outer slot")
+	}
+	if len(slab.linkBatches) != 2 {
+		t.Fatalf("link batch count after reuse = %d, want 2", len(slab.linkBatches))
+	}
+	if slab.linkBatches[1] == nil {
+		t.Fatal("link batch append did not reuse a cleared outer slot")
+	}
+	slab.resetForRelease()
+	slab.trimToRetentionLimit(limit)
+	if slab.nodeBatches[:cap(slab.nodeBatches)][1] != nil {
+		t.Fatal("reused node batch remains reachable after second trim")
+	}
+	if slab.linkBatches[:cap(slab.linkBatches)][1] != nil {
+		t.Fatal("reused link batch remains reachable after second trim")
+	}
+}
+
+func TestGSSForestNodeSlabTrimLimitBoundaries(t *testing.T) {
+	var empty gssForestNodeSlab
+	empty.trimToRetentionLimit(0)
+	if len(empty.nodeBatches) != 0 || len(empty.linkBatches) != 0 {
+		t.Fatalf("empty trim created batches: nodes=%d links=%d", len(empty.nodeBatches), len(empty.linkBatches))
+	}
+
+	slab := &gssForestNodeSlab{
+		nodeBatches: [][]gssForestNode{
+			make([]gssForestNode, 1),
+			make([]gssForestNode, 1),
+		},
+		linkBatches: [][]gssLink{
+			make([]gssLink, 1),
+			make([]gssLink, 1),
+		},
+	}
+	exact := slab.retainedBytes()
+	slab.trimToRetentionLimit(exact)
+	if len(slab.nodeBatches) != 2 || len(slab.linkBatches) != 2 {
+		t.Fatalf("exact-limit trim changed batches: nodes=%d links=%d", len(slab.nodeBatches), len(slab.linkBatches))
+	}
+
+	slab.trimToRetentionLimit(exact - 1)
+	if len(slab.nodeBatches) != 2 || len(slab.linkBatches) != 1 {
+		t.Fatalf("over-limit trim removed wrong suffix: nodes=%d links=%d", len(slab.nodeBatches), len(slab.linkBatches))
+	}
+	if slab.linkBatches[:cap(slab.linkBatches)][1] != nil {
+		t.Fatal("over-limit link suffix remains reachable")
+	}
+}
+
 func TestForestRootMustDeclineErrorRoot(t *testing.T) {
 	if forestRootMustDecline(nil) {
 		t.Fatal("nil root should not decline")

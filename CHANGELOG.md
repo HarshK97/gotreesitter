@@ -19,6 +19,18 @@ for tags and release notes while still in `0.x`.
   metadata so one-language containers on the same physical benchmark host can
   produce a consistent authenticated host identity.
 
+### Fixed
+
+- The pooled forest GSS slab now clears outer batch references discarded by
+  its 32 MiB retention cap. On the 3,447,275-byte JavaScript Poppler witness
+  under the default 512 MiB parser budget, this reduced one-GC live heap from
+  1,475,142,360 to 608,167,688 bytes and eliminated all 866,975,744 bytes of
+  hidden tail references while preserving the 33,488,896-byte warm prefix and
+  identical parse output. Peak RSS remained effectively unchanged because the
+  batches are still allocated before release; a recurring successful-forest
+  benchmark was neutral (2.627 ms to 2.636 ms, p=0.947, n=20) with unchanged
+  bytes and allocations.
+
 ## [0.30.0] - 2026-07-12
 
 Recurring-parser performance and fleet-measurement integrity release. Reused

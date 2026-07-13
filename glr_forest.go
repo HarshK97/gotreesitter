@@ -2424,19 +2424,25 @@ func releaseGSSForestNodeSlab(s *gssForestNodeSlab) {
 // of batches lets them be reused (acquire resets linkBatch/nodeBatch to 0), so a
 // large parse re-allocates only the overflow, at the SAME 32 MiB memory bound.
 func (s *gssForestNodeSlab) trimToRetentionCap() {
+	s.trimToRetentionLimit(maxRetainedGSSForestScratchBytes)
+}
+
+func (s *gssForestNodeSlab) trimToRetentionLimit(maxRetainedBytes int) {
 	nodeSize := int(unsafe.Sizeof(gssForestNode{}))
 	linkSize := int(unsafe.Sizeof(gssLink{}))
 	total := s.retainedBytes()
 	// Link batches dominate; trim them first, then node batches. Always keep at
 	// least one batch of each so the slab stays warm.
-	for total > maxRetainedGSSForestScratchBytes && len(s.linkBatches) > 1 {
+	for total > maxRetainedBytes && len(s.linkBatches) > 1 {
 		last := len(s.linkBatches) - 1
 		total -= cap(s.linkBatches[last]) * linkSize
+		s.linkBatches[last] = nil
 		s.linkBatches = s.linkBatches[:last]
 	}
-	for total > maxRetainedGSSForestScratchBytes && len(s.nodeBatches) > 1 {
+	for total > maxRetainedBytes && len(s.nodeBatches) > 1 {
 		last := len(s.nodeBatches) - 1
 		total -= cap(s.nodeBatches[last]) * nodeSize
+		s.nodeBatches[last] = nil
 		s.nodeBatches = s.nodeBatches[:last]
 	}
 }
