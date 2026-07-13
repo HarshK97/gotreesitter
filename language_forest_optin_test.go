@@ -43,7 +43,7 @@ func TestBuiltinForestDefaultsCuratedSet(t *testing.T) {
 	want := []string{
 		"bash", "erlang", "cmake", "css", "scss", "awk", "javascript", "c_sharp",
 		"gitignore", "nix", "squirrel", "prisma",
-		"agda", "org", "ledger", "yuck", "json5", "commonlisp", "vimdoc",
+		"agda", "ledger", "yuck", "json5", "commonlisp",
 		"bibtex", "faust", "arduino", "authzed", "make", "fish", "racket", "tlaplus",
 		"gitattributes",
 	}
@@ -58,7 +58,7 @@ func TestBuiltinForestDefaultsCuratedSet(t *testing.T) {
 	// A handful of explicitly-NOT-forest-amenable languages (see the doc
 	// comment) must stay out of the curated set. "go" is intentionally held
 	// out of default dispatch (commit 6894fc9f) even though it is forest-clean.
-	notWanted := []string{"python", "rust", "dart", "ruby", "haskell", "php", "go", "csv", "beancount"}
+	notWanted := []string{"python", "rust", "dart", "ruby", "haskell", "php", "go", "csv", "beancount", "org", "vimdoc"}
 	for _, name := range notWanted {
 		if builtinForestDefaults[name] {
 			t.Errorf("builtinForestDefaults unexpectedly contains %q", name)
@@ -86,5 +86,17 @@ func TestBuiltinForestDefaultsCuratedSet(t *testing.T) {
 	}
 	if !languageWantsForestRecover("beancount") {
 		t.Error("Beancount forest recovery should remain available to explicit forest runs")
+	}
+
+	// Org and Vimdoc retain the same explicit-only split without losing their
+	// certified recovery profiles.
+	for _, name := range []string{"org", "vimdoc"} {
+		parser := &Parser{language: &Language{Name: name, WantsForest: true}}
+		if !parserWantsForest(parser) {
+			t.Errorf("explicit Language.WantsForest should still dispatch %s to forest", name)
+		}
+		if !languageWantsForestRecover(name) {
+			t.Errorf("%s forest recovery should remain available to explicit forest runs", name)
+		}
 	}
 }

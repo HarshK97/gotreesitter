@@ -154,6 +154,56 @@ func TestBeancountDefaultSkipsForestButExplicitRemainsAvailable(t *testing.T) {
 	}
 }
 
+func TestOrgAndVimdocDefaultSkipForestButExplicitRemainAvailable(t *testing.T) {
+	// Follow this file's existing non-parallel convention around the global
+	// test/benchmark forest switch.
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	tests := []struct {
+		name string
+		lang func() *gts.Language
+		src  string
+	}{
+		{name: "org", lang: grm.OrgLanguage, src: "# The GNU Free Documentation License.\n#+begin_center\nVersion 1.3, 3 November 2008\n#+end_center\n\n#+begin_verse\nCopyright 2008 Free Software Foundation, Inc.\n#+end_verse\n\n* ADDENDUM: How to use this License for your documents\n:PROPERTIES:\n:UNNUMBERED: notoc\n:END:\n"},
+		{name: "vimdoc", lang: grm.VimdocLanguage, src: "*lua-guide.txt*                        Nvim\n\n                            NVIM REFERENCE MANUAL\n\n==============================================================================\nIntroduction                                                         *lua-guide*\n\nThis guide introduces Lua usage in Nvim.\n\nvim:tw=78:ts=8:sw=4:sts=4:et:ft=help:norl:\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lang := tt.lang()
+			src := []byte(tt.src)
+			automaticParser := gts.NewParser(lang)
+			automatic, err := automaticParser.Parse(src)
+			if err != nil {
+				t.Fatalf("automatic parse: %v", err)
+			}
+			defer automatic.Release()
+			if rt := automatic.ParseRuntime(); rt.ForestFastPath {
+				t.Fatalf("automatic parse used forest fast path: %s", rt.Summary())
+			}
+			if offset, sym, reason, states := automaticParser.ForestDeclineInfo(); reason != "" {
+				t.Fatalf("automatic parse attempted forest: offset=%d symbol=%d reason=%q states=%v", offset, sym, reason, states)
+			}
+
+			explicitParser := gts.NewParser(lang)
+			explicit, ok := explicitParser.ParseForestExperimental(src)
+			if !ok || explicit == nil || explicit.RootNode() == nil {
+				t.Fatalf("explicit forest parse ok=%v tree nil=%v", ok, explicit == nil)
+			}
+			defer explicit.Release()
+			if got, want := explicit.RootNode().SExpr(lang), automatic.RootNode().SExpr(lang); got != want {
+				t.Fatalf("explicit forest result mismatch\n got: %s\nwant: %s", got, want)
+			}
+			if got, want := explicit.RootNode().EndByte(), automatic.RootNode().EndByte(); got != want {
+				t.Fatalf("explicit forest root endByte = %d, want %d", got, want)
+			}
+			if got, want := explicit.RootNode().HasError(), automatic.RootNode().HasError(); got != want {
+				t.Fatalf("explicit forest HasError = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
 func TestForestDispatchReportsAcceptedRuntime(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)
