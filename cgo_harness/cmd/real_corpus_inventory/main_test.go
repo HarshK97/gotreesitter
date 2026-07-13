@@ -378,6 +378,205 @@ func TestBuildInventoryTracksCorpusSourceCheckouts(t *testing.T) {
 	}
 }
 
+func TestValidateRequiredCorpusSources(t *testing.T) {
+	tests := []struct {
+		name    string
+		inv     inventory
+		wantErr string
+	}{
+		{
+			name: "valid",
+			inv: inventory{
+				Summary: inventorySummary{TotalLanguages: 2, WithPinnedCorpusSource: 2, WithCorpusSourceFiles: 2},
+				Languages: []languageStatus{
+					{Language: "git_rebase", Corpus: corpusStatus{Source: sourceStatus{Pinned: true, MatchingFiles: 1}}},
+					{Language: "go", Corpus: corpusStatus{Source: sourceStatus{Pinned: true, MatchingFiles: 2}}},
+				},
+			},
+		},
+		{
+			name: "missing checkout preserves pinning failure",
+			inv: inventory{
+				Summary: inventorySummary{TotalLanguages: 2, WithPinnedCorpusSource: 1, WithCorpusSourceFiles: 1, MissingCorpusSource: 1},
+				Languages: []languageStatus{
+					{Language: "git_rebase"},
+					{Language: "go", Corpus: corpusStatus{Source: sourceStatus{Pinned: true, MatchingFiles: 2}}},
+				},
+			},
+			wantErr: "missing pinned corpus source checkouts for 1/2 languages",
+		},
+		{
+			name: "pinned checkout has no policy matches",
+			inv: inventory{
+				Summary: inventorySummary{TotalLanguages: 2, WithPinnedCorpusSource: 2, WithCorpusSourceFiles: 1, MissingCorpusSourceFiles: 1},
+				Languages: []languageStatus{
+					{Language: "git_rebase", Corpus: corpusStatus{Source: sourceStatus{CheckedOut: true, Pinned: true}}},
+					{Language: "go", Corpus: corpusStatus{Source: sourceStatus{CheckedOut: true, Pinned: true, MatchingFiles: 2}}},
+				},
+			},
+			wantErr: "pinned corpus source checkouts with no matching files for 1/2 languages: git_rebase",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRequiredCorpusSources(tt.inv)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateRequiredCorpusSources: %v", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("validateRequiredCorpusSources error = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateRequiredCorpusSourcesRejectsPinnedCheckoutWithoutMatchingFiles(t *testing.T) {
+	dir := t.TempDir()
+	grammarDir := filepath.Join(dir, "grammar_blobs")
+	mustMkdir(t, grammarDir)
+	mustWrite(t, filepath.Join(grammarDir, "git_rebase.bin"), "git_rebase")
+
+	root := filepath.Join(dir, "corpus_sources")
+	checkout := filepath.Join(root, "git_rebase")
+	commit := initGitRepo(t, checkout, "https://example.invalid/git-rebase-corpus")
+	lockPath := filepath.Join(dir, "languages.lock")
+	mustWrite(t, lockPath, "git_rebase https://example.invalid/git-rebase-corpus "+commit+" . .git-rebase-todo\n")
+
+	inv, err := buildInventoryWithOptions(grammarDir, lockPath, nil, "", inventoryOptions{CorpusSourceRoot: root})
+	if err != nil {
+		t.Fatalf("buildInventoryWithOptions: %v", err)
+	}
+	source := languageStatusesByName(inv.Languages)["git_rebase"].Corpus.Source
+	if !source.Pinned || source.MatchingFiles != 0 {
+		t.Fatalf("expected pinned source with no policy matches: %+v", source)
+	}
+	if err := validateRequiredCorpusSources(inv); err == nil || !strings.Contains(err.Error(), "git_rebase") {
+		t.Fatalf("validateRequiredCorpusSources error = %v, want git_rebase empty-source failure", err)
+	}
+}
+
+func TestBuildInventoryDoesNotCountSymlinkOnlyCorpusMatches(t *testing.T) {
+	dir := t.TempDir()
+	grammarDir := filepath.Join(dir, "grammar_blobs")
+	mustMkdir(t, grammarDir)
+	mustWrite(t, filepath.Join(grammarDir, "go.bin"), "go")
+
+	root := filepath.Join(dir, "corpus_sources")
+	checkout := filepath.Join(root, "go")
+	initGitRepo(t, checkout, "https://example.invalid/go-corpus")
+	if err := os.Symlink("sample.txt", filepath.Join(checkout, "main.go")); err != nil {
+		t.Skipf("create symlink: %v", err)
+	}
+	runGitTest(t, checkout, "add", "main.go")
+	runGitTest(t, checkout, "-c", "user.name=gotreesitter-test", "-c", "user.email=test@example.invalid", "commit", "-m", "add symlink")
+	commit := strings.TrimSpace(runGitTest(t, checkout, "rev-parse", "HEAD"))
+	lockPath := filepath.Join(dir, "languages.lock")
+	mustWrite(t, lockPath, "go https://example.invalid/go-corpus "+commit+" . .go\n")
+
+	inv, err := buildInventoryWithOptions(grammarDir, lockPath, nil, "", inventoryOptions{CorpusSourceRoot: root})
+	if err != nil {
+		t.Fatalf("buildInventoryWithOptions: %v", err)
+	}
+	source := languageStatusesByName(inv.Languages)["go"].Corpus.Source
+	if !source.Pinned || source.MatchingFiles != 0 {
+		t.Fatalf("symlink must not count as a benchmark-eligible regular file: %+v", source)
+	}
+	if err := validateRequiredCorpusSources(inv); err == nil {
+		t.Fatal("expected symlink-only corpus source to fail required-source validation")
+	}
+}
+
+func TestBuildInventoryIncludesVendorAndDistCorpusMatches(t *testing.T) {
+	dir := t.TempDir()
+	grammarDir := filepath.Join(dir, "grammar_blobs")
+	mustMkdir(t, grammarDir)
+	mustWrite(t, filepath.Join(grammarDir, "go.bin"), "go")
+
+	root := filepath.Join(dir, "corpus_sources")
+	checkout := filepath.Join(root, "go")
+	initGitRepo(t, checkout, "https://example.invalid/go-corpus")
+	mustMkdir(t, filepath.Join(checkout, "vendor"))
+	mustMkdir(t, filepath.Join(checkout, "dist"))
+	mustWrite(t, filepath.Join(checkout, "vendor", "dependency.go"), "package dependency\n")
+	mustWrite(t, filepath.Join(checkout, "dist", "generated.go"), "package generated\n")
+	runGitTest(t, checkout, "add", "vendor/dependency.go", "dist/generated.go")
+	runGitTest(t, checkout, "-c", "user.name=gotreesitter-test", "-c", "user.email=test@example.invalid", "commit", "-m", "add generated sources")
+	commit := strings.TrimSpace(runGitTest(t, checkout, "rev-parse", "HEAD"))
+	lockPath := filepath.Join(dir, "languages.lock")
+	mustWrite(t, lockPath, "go https://example.invalid/go-corpus "+commit+" . .go\n")
+
+	inv, err := buildInventoryWithOptions(grammarDir, lockPath, nil, "", inventoryOptions{CorpusSourceRoot: root})
+	if err != nil {
+		t.Fatalf("buildInventoryWithOptions: %v", err)
+	}
+	source := languageStatusesByName(inv.Languages)["go"].Corpus.Source
+	if source.MatchingFiles != 2 || source.MatchingBytes == 0 {
+		t.Fatalf("vendor and dist files should follow benchmark eligibility: %+v", source)
+	}
+}
+
+func TestBuildInventoryRejectsInvalidCorpusSourceSubdir(t *testing.T) {
+	dir := t.TempDir()
+	grammarDir := filepath.Join(dir, "grammar_blobs")
+	mustMkdir(t, grammarDir)
+	mustWrite(t, filepath.Join(grammarDir, "go.bin"), "go")
+	grammarLockPath := filepath.Join(dir, "languages.lock")
+	mustWrite(t, grammarLockPath, "go https://example.invalid/go-grammar grammarcommit src .go\n")
+	sourceLockPath := filepath.Join(dir, "corpus_sources.lock")
+	mustWrite(t, sourceLockPath, "go https://example.invalid/go-corpus corpuscommit ../escape .go\n")
+
+	_, err := buildInventoryWithOptions(grammarDir, grammarLockPath, nil, "", inventoryOptions{
+		CorpusSourceRoot:     filepath.Join(dir, "corpus_sources"),
+		CorpusSourceLockPath: sourceLockPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), `resolve corpus source for go: invalid corpus source lock subdir "../escape"`) {
+		t.Fatalf("buildInventoryWithOptions error = %v, want invalid subdir", err)
+	}
+}
+
+func TestBuildInventoryReportsCorpusSourceScanErrors(t *testing.T) {
+	dir := t.TempDir()
+	grammarDir := filepath.Join(dir, "grammar_blobs")
+	mustMkdir(t, grammarDir)
+	mustWrite(t, filepath.Join(grammarDir, "go.bin"), "go")
+
+	root := filepath.Join(dir, "corpus_sources")
+	checkout := filepath.Join(root, "go")
+	commit := initGitRepo(t, checkout, "https://example.invalid/go-corpus")
+	grammarLockPath := filepath.Join(dir, "languages.lock")
+	mustWrite(t, grammarLockPath, "go https://example.invalid/go-grammar grammarcommit src .go\n")
+	sourceLockPath := filepath.Join(dir, "corpus_sources.lock")
+	mustWrite(t, sourceLockPath, "go https://example.invalid/go-corpus "+commit+" missing .go\n")
+
+	_, err := buildInventoryWithOptions(grammarDir, grammarLockPath, nil, "", inventoryOptions{
+		CorpusSourceRoot:     root,
+		CorpusSourceLockPath: sourceLockPath,
+	})
+	if err == nil || !strings.Contains(err.Error(), "resolve corpus source for go: scan") || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("buildInventoryWithOptions error = %v, want actionable missing-subdir scan error", err)
+	}
+}
+
+func TestBuildInventoryReportsNonDirectoryCorpusSource(t *testing.T) {
+	dir := t.TempDir()
+	grammarDir := filepath.Join(dir, "grammar_blobs")
+	mustMkdir(t, grammarDir)
+	mustWrite(t, filepath.Join(grammarDir, "go.bin"), "go")
+	root := filepath.Join(dir, "corpus_sources")
+	mustMkdir(t, root)
+	mustWrite(t, filepath.Join(root, "go"), "not a checkout\n")
+	lockPath := filepath.Join(dir, "languages.lock")
+	mustWrite(t, lockPath, "go https://example.invalid/go-corpus commit . .go\n")
+
+	_, err := buildInventoryWithOptions(grammarDir, lockPath, nil, "", inventoryOptions{CorpusSourceRoot: root})
+	if err == nil || !strings.Contains(err.Error(), "corpus source checkout is not a directory") {
+		t.Fatalf("buildInventoryWithOptions error = %v, want non-directory source error", err)
+	}
+}
+
 func TestBuildInventoryCanUseSeparateCorpusSourceLock(t *testing.T) {
 	dir := t.TempDir()
 	grammarDir := filepath.Join(dir, "grammar_blobs")

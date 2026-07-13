@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/odvcencio/gotreesitter/cgo_harness/internal/realcorpus"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
@@ -198,7 +198,7 @@ func main() {
 	flag.StringVar(&outLangs, "out-langs", "", "optional newline-separated selected language output path")
 	flag.StringVar(&selector, "select", "all", "language selector for -print-langs/-out-langs")
 	flag.BoolVar(&printLangs, "print-langs", false, "print selected languages and suppress default JSON stdout")
-	flag.BoolVar(&requireCorpusSources, "require-corpus-sources", false, "fail if any language is missing a pinned external corpus source checkout")
+	flag.BoolVar(&requireCorpusSources, "require-corpus-sources", false, "fail if any language lacks a pinned external corpus source checkout with matching files")
 	flag.Parse()
 
 	resolvedGrammarDir, err := resolvePath(grammarDir, []string{
@@ -239,9 +239,10 @@ func main() {
 	if err != nil {
 		fatalf("build inventory: %v", err)
 	}
-	if requireCorpusSources && inv.Summary.WithPinnedCorpusSource < inv.Summary.TotalLanguages {
-		missingPinned := inv.Summary.TotalLanguages - inv.Summary.WithPinnedCorpusSource
-		fatalf("missing pinned corpus source checkouts for %d/%d languages", missingPinned, inv.Summary.TotalLanguages)
+	if requireCorpusSources {
+		if err := validateRequiredCorpusSources(inv); err != nil {
+			fatalf("%v", err)
+		}
 	}
 	selectedLangs, err := selectLanguageNames(inv.Languages, selector)
 	if err != nil {
@@ -272,6 +273,24 @@ func main() {
 			fatalf("write stdout: %v", err)
 		}
 	}
+}
+
+func validateRequiredCorpusSources(inv inventory) error {
+	if inv.Summary.WithPinnedCorpusSource < inv.Summary.TotalLanguages {
+		missingPinned := inv.Summary.TotalLanguages - inv.Summary.WithPinnedCorpusSource
+		return fmt.Errorf("missing pinned corpus source checkouts for %d/%d languages", missingPinned, inv.Summary.TotalLanguages)
+	}
+
+	empty := make([]string, 0, inv.Summary.MissingCorpusSourceFiles)
+	for _, status := range inv.Languages {
+		if status.Corpus.Source.Pinned && status.Corpus.Source.MatchingFiles == 0 {
+			empty = append(empty, status.Language)
+		}
+	}
+	if len(empty) > 0 {
+		return fmt.Errorf("pinned corpus source checkouts with no matching files for %d/%d languages: %s", len(empty), inv.Summary.TotalLanguages, strings.Join(empty, ", "))
+	}
+	return nil
 }
 
 type inventoryOptions struct {
@@ -352,7 +371,10 @@ func buildInventoryWithOptions(grammarDir, lockPath string, manifestPaths []stri
 		if corpus, ok := corpusByLanguage[name]; ok {
 			status.Corpus = corpus
 		}
-		status.Corpus.Source = resolveSourceStatus(opts.CorpusSourceRoot, name, sourceLockForLanguage(name, status.Lock, sourceLockEntries, hasCorpusSourceLock))
+		status.Corpus.Source, err = resolveSourceStatus(opts.CorpusSourceRoot, name, sourceLockForLanguage(name, status.Lock, sourceLockEntries, hasCorpusSourceLock))
+		if err != nil {
+			return inventory{}, fmt.Errorf("resolve corpus source for %s: %w", name, err)
+		}
 		if bench, ok := benchByLanguage[name]; ok {
 			status.Benchmark = bench
 		}
@@ -505,9 +527,9 @@ func loadCorpusStatuses(paths []string) (map[string]corpusStatus, error) {
 	return out, nil
 }
 
-func resolveSourceStatus(root, language string, lock lockStatus) sourceStatus {
+func resolveSourceStatus(root, language string, lock lockStatus) (sourceStatus, error) {
 	if strings.TrimSpace(root) == "" {
-		return sourceStatus{}
+		return sourceStatus{}, nil
 	}
 	expectedPath := filepath.Clean(filepath.Join(root, language))
 	status := sourceStatus{
@@ -515,36 +537,37 @@ func resolveSourceStatus(root, language string, lock lockStatus) sourceStatus {
 		RepoURL:        lock.RepoURL,
 		ExpectedCommit: lock.Commit,
 	}
-	if st, err := os.Stat(expectedPath); err == nil && st.IsDir() {
-		status.CheckedOut = true
-		status.ActualCommit = gitHead(expectedPath)
-		status.RemoteURL = gitRemoteURL(expectedPath)
-		status.RemoteMatches = sameGitRemote(status.RemoteURL, lock.RepoURL)
-		status.Pinned = lock.Commit != "" && status.ActualCommit == lock.Commit && status.RemoteMatches
-		status.MatchExtensions, status.MatchBasenames, status.MatchPaths = sourceMatchersForLanguage(language, lock.Exts)
-		scanPath := expectedPath
-		if subdir := cleanSourceSubdir(lock.Subdir); subdir != "" {
-			status.Subdir = filepath.ToSlash(subdir)
-			scanPath = filepath.Join(expectedPath, subdir)
-			status.ScanPath = scanPath
+	subdir, ok := realcorpus.CleanSubdir(lock.Subdir)
+	if !ok {
+		return status, fmt.Errorf("invalid corpus source lock subdir %q", lock.Subdir)
+	}
+	st, err := os.Stat(expectedPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return status, nil
 		}
-		if st, err := os.Stat(scanPath); err == nil && st.IsDir() {
-			status.MatchingFiles, status.MatchingBytes = countMatchingSourceFiles(scanPath, status.MatchExtensions, status.MatchBasenames, status.MatchPaths)
-		}
+		return status, fmt.Errorf("stat %s: %w", expectedPath, err)
 	}
-	return status
-}
-
-func cleanSourceSubdir(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == "." {
-		return ""
+	if !st.IsDir() {
+		return status, fmt.Errorf("corpus source checkout is not a directory: %s", expectedPath)
 	}
-	clean := filepath.Clean(filepath.FromSlash(raw))
-	if clean == "." || clean == "" || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return ""
+	status.CheckedOut = true
+	status.ActualCommit = gitHead(expectedPath)
+	status.RemoteURL = gitRemoteURL(expectedPath)
+	status.RemoteMatches = sameGitRemote(status.RemoteURL, lock.RepoURL)
+	status.Pinned = lock.Commit != "" && status.ActualCommit == lock.Commit && status.RemoteMatches
+	status.MatchExtensions, status.MatchBasenames, status.MatchPaths = sourceMatchersForLanguage(language, lock.Exts)
+	scanPath := expectedPath
+	if subdir != "" {
+		status.Subdir = filepath.ToSlash(subdir)
+		scanPath = filepath.Join(expectedPath, subdir)
+		status.ScanPath = scanPath
 	}
-	return clean
+	status.MatchingFiles, status.MatchingBytes, err = countMatchingSourceFiles(scanPath, status.MatchExtensions, status.MatchBasenames, status.MatchPaths)
+	if err != nil {
+		return status, fmt.Errorf("scan %s: %w", scanPath, err)
+	}
+	return status, nil
 }
 
 func sameGitRemote(actual, expected string) bool {
@@ -661,43 +684,23 @@ func registryExtensionsForLanguage(language string) []string {
 	return nil
 }
 
-func countMatchingSourceFiles(root string, exts []string, basenames []string, paths []string) (int, int64) {
-	if len(exts) == 0 && len(basenames) == 0 && len(paths) == 0 {
-		return 0, 0
-	}
+func countMatchingSourceFiles(root string, exts []string, basenames []string, paths []string) (int, int64, error) {
 	extSet := stringSet(exts)
 	baseSet := stringSet(basenames)
 	pathSet := stringSet(paths)
 	var count int
 	var bytes int64
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if d.IsDir() {
-			switch strings.ToLower(d.Name()) {
-			case ".git", ".gradle", "bazel-bin", "bazel-out", "bazel-testlogs", "build", "dist", "node_modules", "target", "vendor":
-				return filepath.SkipDir
-			default:
-				return nil
-			}
-		}
-		relPath := path
-		if rel, err := filepath.Rel(root, path); err == nil {
-			relPath = rel
-		}
-		if !sourcePathMatches(relPath, extSet, baseSet, pathSet) {
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
+	err := realcorpus.WalkMatchingFiles(root, func(relPath string) bool {
+		return sourcePathMatches(relPath, extSet, baseSet, pathSet)
+	}, func(file realcorpus.File) error {
 		count++
-		bytes += info.Size()
+		bytes += file.Size
 		return nil
 	})
-	return count, bytes
+	if err != nil {
+		return 0, 0, err
+	}
+	return count, bytes, nil
 }
 
 func stringSet(values []string) map[string]struct{} {

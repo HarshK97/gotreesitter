@@ -15,6 +15,14 @@ for tags and release notes while still in `0.x`.
   mechanism. Caller-adapted grammars, incremental fallbacks, and explicit
   diagnostic overrides retain the conservative retry ladder.
 
+### Fixed
+
+- `real_corpus_inventory --require-corpus-sources` now rejects pinned corpus
+  checkouts that contain no benchmark-eligible regular files matching the
+  language's source policy. Inventory and benchmarks share traversal and
+  subdirectory validation, so invalid paths and scan failures are reported
+  instead of allowing an empty language sweep to appear complete.
+
 ## [0.29.0] - 2026-07-12
 
 Recurring-parser performance and compatibility-cleanup release. Repeated small
