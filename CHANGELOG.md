@@ -7,26 +7,20 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
-### Removed
+### Changed
 
-- Five confirmed-dead C# post-parse compat/recovery passes: `notnull`
-  type-constraint keyword unwrap, Unicode identifier span extension, scoped-
-  lambda statement splitting, scoped-lambda block recovery, and LINQ query-
-  expression recovery, plus their exclusively-owned helpers (call-graph
-  verified, not file-size estimated; shared builders such as the query-clause
-  and interpolated-string-expression recovery machinery are unaffected and
-  stay). Grammar-native output now produces `notnull` constraints and full
-  Unicode identifier spans directly, scoped lambdas parse without splitting,
-  and query expressions parse clean, making all five rewrites permanently
-  unreachable. Verified with a corpus sweep (1,700-file real-world C# corpus,
-  clean and truncated-55%-every-2nd phases), each pass's original motivating
-  snippets, and — for the query-expression cut specifically — an 84-program
-  LINQ battery (75 authored programs plus the full upstream tree-sitter-c-sharp
-  query-syntax corpus) covering from/where/select/group/join/let/orderby/
-  into-continuation/nested/degenerate/anonymous-type/method-mixed forms: zero
-  rewrites fired anywhere. Byte-identical (S-expression and spans) on 25
-  representative real-world files and the full LINQ battery. Net ~745 lines
-  removed.
+- The exact bundled C# grammar now advertises native result compatibility for
+  `notnull` constraints, Unicode identifier spans, scoped-lambda statements and
+  blocks, and LINQ query expressions, allowing the runtime to skip the five
+  corresponding post-parse passes for that certified blob. The implementations
+  remain quarantined conservative fallbacks for legacy blobs, grammargen output,
+  caller-built languages, and overrides unless those artifacts explicitly carry
+  the relevant append-only capability bits. Runtime-profile attachment remains
+  pinned to the exact blob SHA; attaching scanner support by name alone does not
+  certify native result shapes. The skip is backed by the 1,700-file C# corpus
+  sweep, the original motivating fixtures, an 84-program LINQ battery, explicit
+  capability round-trip and identity gates, and direct embedded-grammar Unicode,
+  scoped-lambda, and LINQ regressions.
 
 ### Performance
 

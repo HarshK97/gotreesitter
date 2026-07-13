@@ -318,6 +318,20 @@ type FullParseAcceptedErrorRetryProfile struct {
 	SkipInitialCompleteAcceptedErrorMergeRetry bool
 }
 
+// ResultCompatibilityCapability records result-tree shapes that a language
+// produces natively and therefore does not need the runtime to repair after
+// parsing. Keep capability values append-only: Language blobs encode these
+// numeric bits, and a zero value deliberately preserves legacy behavior.
+type ResultCompatibilityCapability uint64
+
+const (
+	ResultCompatibilityCSharpNativeNotNull                ResultCompatibilityCapability = 1 << 0
+	ResultCompatibilityCSharpNativeUnicodeIdentifiers     ResultCompatibilityCapability = 1 << 1
+	ResultCompatibilityCSharpNativeScopedLambdaStatements ResultCompatibilityCapability = 1 << 2
+	ResultCompatibilityCSharpNativeScopedLambdaBlocks     ResultCompatibilityCapability = 1 << 3
+	ResultCompatibilityCSharpNativeQueryExpressions       ResultCompatibilityCapability = 1 << 4
+)
+
 // Language holds all data needed to parse a specific language.
 // It mirrors tree-sitter's TSLanguage C struct, translated into
 // idiomatic Go types with slice-based tables instead of raw pointers.
@@ -522,6 +536,12 @@ type Language struct {
 	// blob. Zero preserves widened-stack and no-stacks retries for legacy blobs,
 	// caller-constructed languages, and language overrides.
 	FullParseAcceptedErrorRetryProfile FullParseAcceptedErrorRetryProfile
+
+	// NativeResultCompatibility identifies result-tree shapes produced natively
+	// by this exact language artifact. Zero keeps conservative post-parse
+	// compatibility fallbacks for legacy blobs, generated grammars, caller-built
+	// languages, and overrides whose native behavior has not been certified.
+	NativeResultCompatibility ResultCompatibilityCapability
 }
 
 type symbolNameNamedKey struct {

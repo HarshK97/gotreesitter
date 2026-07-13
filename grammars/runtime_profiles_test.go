@@ -481,6 +481,51 @@ func TestResidualRetryProfilesRequireExactBlobIdentity(t *testing.T) {
 	}
 }
 
+func TestCSharpNativeResultCompatibilityRequiresExactBlobIdentity(t *testing.T) {
+	want := gotreesitter.ResultCompatibilityCSharpNativeNotNull |
+		gotreesitter.ResultCompatibilityCSharpNativeUnicodeIdentifiers |
+		gotreesitter.ResultCompatibilityCSharpNativeScopedLambdaStatements |
+		gotreesitter.ResultCompatibilityCSharpNativeScopedLambdaBlocks |
+		gotreesitter.ResultCompatibilityCSharpNativeQueryExpressions
+
+	wrongSHA := &gotreesitter.Language{Name: "c_sharp"}
+	if attachBuiltinLanguageRuntimeProfile("c_sharp", sha256.Sum256([]byte("uncertified")), wrongSHA) {
+		t.Fatal("wrong blob SHA reported a runtime-profile attachment")
+	}
+	if got := wrongSHA.NativeResultCompatibility; got != 0 {
+		t.Fatalf("wrong blob SHA attached native result compatibility %#x", got)
+	}
+
+	adapted := &gotreesitter.Language{Name: "c_sharp"}
+	AttachLanguageSupport("c_sharp", adapted)
+	if got := adapted.NativeResultCompatibility; got != 0 {
+		t.Fatalf("AttachLanguageSupport certified native result compatibility without blob identity: %#x", got)
+	}
+
+	blob := BlobByName("c_sharp")
+	if len(blob) == 0 {
+		t.Fatal("BlobByName(c_sharp) returned no data")
+	}
+	exact := &gotreesitter.Language{Name: "c_sharp"}
+	if !attachBuiltinLanguageRuntimeProfile("c_sharp", sha256.Sum256(blob), exact) {
+		t.Fatal("exact C# blob did not attach its runtime profile")
+	}
+	if got := exact.NativeResultCompatibility; got != want {
+		t.Fatalf("exact profile NativeResultCompatibility = %#x, want %#x", got, want)
+	}
+
+	loaded, err := LoadLanguage("c_sharp", blob)
+	if err != nil {
+		t.Fatalf("LoadLanguage(c_sharp): %v", err)
+	}
+	if got := loaded.NativeResultCompatibility; got != want {
+		t.Fatalf("LoadLanguage NativeResultCompatibility = %#x, want %#x", got, want)
+	}
+	if got := CSharpLanguage().NativeResultCompatibility; got != want {
+		t.Fatalf("embedded CSharpLanguage NativeResultCompatibility = %#x, want %#x", got, want)
+	}
+}
+
 func TestBuiltinCompleteAcceptedErrorRetryProfileRequiresCertifiedBlob(t *testing.T) {
 	for _, name := range []string{"caddy", "c_sharp", "haxe", "kdl", "odin", "rego", "scss", "swift", "tcl"} {
 		t.Run(name, func(t *testing.T) {
