@@ -457,6 +457,13 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 // largest 347 KiB witness that retry raised the Go/C ratio from 1.72x on the
 // production path to 30.26x under automatic dispatch.
 //
+// Org and Vimdoc retain their certified recovery policies for explicit forest
+// experiments, but automatic dispatch is held out. Representative clean
+// witnesses produced zero forest returns: both reached EOF and declined with
+// eof-recovery-conflict before returning the exact production tree. That retry
+// made fresh parses more than 30x slower; Vimdoc's 227 KiB witness also exceeds
+// the bounded decline-memo ceiling, so reused parsers repeated the same cost.
+//
 // Non-built-in languages opt in per-Language via Language.WantsForest (see
 // parserWantsForest) instead of joining this map — e.g. a grammargen consumer
 // generating its own grammar (a Pawn grammar, say) sets WantsForest directly
@@ -494,16 +501,15 @@ var builtinForestDefaults = map[string]bool{
 	"squirrel":  true,
 	"prisma":    true,
 
-	// Phase 2 promotions 2026-06-08: forest+recovery, introduced=0 vs C, large
-	// net-wall win (agda 0.95x/prod28x, org 1.70x/25x, ledger 2.27x/345x,
-	// yuck 1.28x/14x, json5 1.81x/50x). See languageWantsForestRecover.
+	// Phase 2 promotions 2026-06-08: forest+recovery, introduced=0 vs C and a
+	// large net-wall win. Org and Vimdoc later moved back to explicit-only
+	// routing after current clean witnesses showed only discarded attempts;
+	// their certified recovery profiles remain in languageWantsForestRecover.
 	"agda":       true,
-	"org":        true,
 	"ledger":     true,
 	"yuck":       true,
 	"json5":      true,
 	"commonlisp": true,
-	"vimdoc":     true,
 
 	// Promoted 2026-06-08 via the forest-vs-C sweep (TestForestVsCSources):
 	// the forest introduces ZERO C-divergences (every divergence is inherited
@@ -513,14 +519,14 @@ var builtinForestDefaults = map[string]bool{
 	// arduino 10/19 production-mismatches that are the forest being C-correct).
 	// Held: make (forest=C-clean but net-wall NEUTRAL 1.0x — no lift) and
 	// commonlisp (net-wall unverified; rich corpus times out — revisit).
-	"bibtex":    true,
-	"faust":     true,
-	"arduino":   true,
-	"authzed":   true,
-	"make":      true,
-	"fish":      true,
-	"racket":    true,
-	"tlaplus":   true,
+	"bibtex":  true,
+	"faust":   true,
+	"arduino": true,
+	"authzed": true,
+	"make":    true,
+	"fish":    true,
+	"racket":  true,
+	"tlaplus": true,
 
 	// Promoted 2026-06-08 against the C ORACLE, not production. gitattributes
 	// is parity-blocked (production diverges from C), but the forest matches
