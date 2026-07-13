@@ -3928,6 +3928,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		p.cRecoverCustomResyncActive = false
 		p.cRecoverCustomResyncByte = 0
 	}
+	// Fresh full parses defer parent links and start with no error-bearing
+	// payload. Besides controlling parent metadata propagation, this is a
+	// sticky proof consumed by C-recovery condense: every path that inserts an
+	// ERROR or MISSING payload must flip it before the next condense pass.
+	// Incremental/reuse parses start true because old subtrees may carry errors.
 	trackChildErrors := !deferParentLinks
 
 	arena := acquireNodeArena(arenaClass)
@@ -4998,7 +5003,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					continue
 				}
 				traceVisit(si, s, "extra-shift", 0, len(actions), actions[0])
-				p.applyExtraShiftAction(s, currentState, actions[0], tok, arena, scratch)
+				p.applyExtraShiftAction(s, currentState, actions[0], tok, arena, scratch, &trackChildErrors)
 				nodeCount++
 				traceAfterPrimary(si, s)
 				consumeCurrentToken(s)
@@ -6981,17 +6986,21 @@ func clearGLRStateTokenSource(stateful parserStateTokenSource, scratch *parserSc
 	stateful.SetGLRStates(nil)
 }
 
-func (p *Parser) applyExtraShiftAction(s *glrStack, currentState StateID, act ParseAction, tok Token, arena *nodeArena, scratch *parserScratch) {
+func (p *Parser) applyExtraShiftAction(s *glrStack, currentState StateID, act ParseAction, tok Token, arena *nodeArena, scratch *parserScratch, trackChildErrors *bool) {
 	named := p.isNamedSymbol(tok.Symbol)
 	targetState := extraShiftTargetState(currentState, act)
-	if p.useCompactNoTreeShiftLeaf() && !p.shiftTokenIsMissingError(tok) {
+	isMissing := p.shiftTokenIsMissingError(tok)
+	if p.useCompactNoTreeShiftLeaf() && !isMissing {
 		p.applyCompactExtraShiftAction(s, currentState, targetState, tok, named, arena, scratch)
 		return
 	}
 	leaf := newLeafNodeInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
-	if tok.Missing {
+	if isMissing {
 		leaf.setMissing(true)
 		leaf.setHasError(true)
+		if trackChildErrors != nil {
+			*trackChildErrors = true
+		}
 	}
 	leaf.setExtra(true)
 	leaf.setExternalScannerToken(tok.ExternalScannerToken)

@@ -1389,6 +1389,9 @@ func (p *Parser) tryResyncErrorRecoveryMode(source []byte, s *glrStack, tok Toke
 	}
 	if status == resyncRetry {
 		if recovered, target, ok := p.rebuildAliasPrefixedRecoveredSuffix(source, gotoState, poppedNodes[preservedEnd:], tok.Symbol, arena); ok {
+			if trackChildErrors != nil {
+				*trackChildErrors = true
+			}
 			keepDepth := len(entries) - recoverIdx
 			if !s.truncate(keepDepth) {
 				return resyncNone
@@ -2528,7 +2531,8 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 	named := p.isNamedSymbol(tok.Symbol)
 	currentState := s.top().state
 	targetState := extraShiftTargetState(currentState, act)
-	if p.useCompactNoTreeShiftLeaf() && !p.shiftTokenIsMissingError(tok) {
+	isMissing := p.shiftTokenIsMissingError(tok)
+	if p.useCompactNoTreeShiftLeaf() && !isMissing {
 		extra := act.Extra
 		if cp, ok := p.currentExternalNoTreeLeafCheckpointRef(arena, tok); ok {
 			leaf := newCompactCheckpointLeafInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, cp)
@@ -2566,7 +2570,6 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 		// allocation entirely on hit. The previous post-allocation
 		// variant paid hash+lookup overhead per shift without saving
 		// the allocation, which net-regressed wall time on JS.
-		isMissing := p.shiftTokenIsMissingError(tok)
 		var flags nodeFlags
 		if named {
 			flags |= nodeFlagNamed
