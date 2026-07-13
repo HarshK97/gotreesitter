@@ -7,6 +7,10 @@ package gotreesitter
 // visible anonymous terminal child and no semantic decorations should keep
 // the parent's symbol/flags and adopt the child's token span.
 func normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root *Node, lang *Language, stopCheck parseStopCheck) (normalizationPassCounters, ParseStopReason, resultErrorSummary) {
+	return normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root, lang, buildVisibleAliasTargetSymbols(lang), stopCheck)
+}
+
+func normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root *Node, lang *Language, aliasTargets []bool, stopCheck parseStopCheck) (normalizationPassCounters, ParseStopReason, resultErrorSummary) {
 	var counters normalizationPassCounters
 	if root == nil || lang == nil {
 		return counters, ParseStopNone, resultErrorSummaryUnknown
@@ -25,7 +29,6 @@ func normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root *Node, lang *L
 		}
 		return counters, reason, errorSummary
 	}
-	aliasTargets := resultVisibleAliasTargetSet(lang)
 	var stopReason ParseStopReason
 	walkResultTreeUntil(root, func(n *Node) bool {
 		if reason := poller.poll(); parseStopReasonIsActive(reason) {
@@ -123,21 +126,6 @@ func resultSymbolIsVisibleAliasTarget(lang *Language, sym Symbol, aliasTargets [
 		return false
 	}
 	return aliasTargets[sym]
-}
-
-func resultVisibleAliasTargetSet(lang *Language) []bool {
-	if lang == nil || len(lang.AliasSequences) == 0 {
-		return nil
-	}
-	aliasTargets := make([]bool, len(lang.SymbolNames))
-	for _, seq := range lang.AliasSequences {
-		for _, alias := range seq {
-			if int(alias) < len(aliasTargets) && symbolIsVisible(lang, alias) {
-				aliasTargets[alias] = true
-			}
-		}
-	}
-	return aliasTargets
 }
 
 // resultSymbolNamesEqual mirrors Parser.sameSymbolName for callers (like this

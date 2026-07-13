@@ -278,6 +278,36 @@ func TestNormalizeResultTerminalLeafNodesCollapsesTerminalAliasTarget(t *testing
 	}
 }
 
+func TestVisibleAliasTargetsExcludeHiddenAliases(t *testing.T) {
+	lang := &Language{
+		TokenCount:  2,
+		SymbolNames: []string{"EOF", "]", "root", "]"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "]", Visible: true},
+			{Name: "root", Visible: true, Named: true},
+			{Name: "]", Visible: false},
+		},
+		AliasSequences: [][]Symbol{{3}},
+	}
+	parser := NewParser(lang)
+	if !parser.aliasTargetSymbol[3] {
+		t.Fatal("general alias-target cache omitted hidden alias")
+	}
+	if parser.visibleAliasTargetSymbol[3] {
+		t.Fatal("visible alias-target cache included hidden alias")
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	child := newLeafNodeInArena(arena, 1, false, 0, 1, Point{}, Point{Column: 1})
+	hiddenAlias := newParentNodeInArena(arena, 3, false, []*Node{child}, nil, 0)
+	root := newParentNodeInArena(arena, 2, true, []*Node{hiddenAlias}, nil, 0)
+	counters, _, _ := normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root, lang, parser.visibleAliasTargetSymbol, nil)
+	if counters.nodesRewritten != 0 || hiddenAlias.ChildCount() != 1 {
+		t.Fatalf("hidden alias was normalized as visible: rewritten=%d children=%d", counters.nodesRewritten, hiddenAlias.ChildCount())
+	}
+}
+
 // TestNormalizeResultTerminalLeafNodesPreservesDistinctChildUnderReusedAliasTargetID
 // mirrors norg's "_word" alias: a symbol ID can simultaneously be a genuine
 // visible terminal (ID within TokenCount) AND a visible alias target

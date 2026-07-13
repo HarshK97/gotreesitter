@@ -248,6 +248,21 @@ func buildAliasTargetSymbols(lang *Language) []bool {
 	return out
 }
 
+func buildVisibleAliasTargetSymbols(lang *Language) []bool {
+	if lang == nil || len(lang.AliasSequences) == 0 {
+		return nil
+	}
+	out := make([]bool, len(lang.SymbolNames))
+	for _, seq := range lang.AliasSequences {
+		for _, sym := range seq {
+			if int(sym) < len(out) && symbolIsVisible(lang, sym) {
+				out[sym] = true
+			}
+		}
+	}
+	return out
+}
+
 func buildReduceFieldPresence(lang *Language) []bool {
 	if lang == nil || len(lang.FieldMapSlices) == 0 {
 		return nil

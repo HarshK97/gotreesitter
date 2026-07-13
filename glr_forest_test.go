@@ -328,7 +328,8 @@ func TestReduceOverForestLinearPrefixForkedWithExtra(t *testing.T) {
 // TestCoalesceForestSharesNode proves coalesceForest dedups by (state,byteOffset)
 // into one node with multiple links — the O(1), no-deep-compare mechanism.
 func TestCoalesceForestSharesNode(t *testing.T) {
-	idx := newGSSForestIndex(0)
+	var idx gssForestIndex
+	idx.init(0)
 	slab := &gssForestNodeSlab{}
 	base := &gssForestNode{state: 0}
 	// Two distinct parses reach (state=5, byteOffset=42).
@@ -356,8 +357,40 @@ func TestCoalesceForestSharesNode(t *testing.T) {
 	}
 }
 
+func TestGSSForestIndexUsesInlineTierAndPreservesEntriesOnSpill(t *testing.T) {
+	var idx gssForestIndex
+	idx.init(len(idx.inline))
+	if idx.spill != nil {
+		t.Fatal("small index allocated spill storage during initialization")
+	}
+	for i := range idx.inline {
+		key := gssForestKey{state: StateID(i + 1), byteOffset: uint32(i)}
+		idx.set(key, &gssForestNode{state: key.state, byteOffset: key.byteOffset})
+	}
+	if got := idx.len(); got != len(idx.inline) {
+		t.Fatalf("inline index length = %d, want %d", got, len(idx.inline))
+	}
+
+	spillKey := gssForestKey{state: 99, byteOffset: 99}
+	spillNode := &gssForestNode{state: spillKey.state, byteOffset: spillKey.byteOffset}
+	idx.set(spillKey, spillNode)
+	if idx.spill == nil {
+		t.Fatal("index did not spill after exhausting inline storage")
+	}
+	for i := range idx.inline {
+		key := gssForestKey{state: StateID(i + 1), byteOffset: uint32(i)}
+		if got := idx.lookup(key); got == nil || got.state != key.state || got.byteOffset != key.byteOffset {
+			t.Fatalf("lookup after spill for %+v = %+v", key, got)
+		}
+	}
+	if got := idx.lookup(spillKey); got != spillNode {
+		t.Fatalf("spill lookup = %p, want %p", got, spillNode)
+	}
+}
+
 func TestCoalesceForestRefreshesMinLinkScoreOnReplacement(t *testing.T) {
-	idx := newGSSForestIndex(0)
+	var idx gssForestIndex
+	idx.init(0)
 	slab := &gssForestNodeSlab{}
 	base := &gssForestNode{state: 0}
 	loser := newStackEntryNode(100, &Node{symbol: 100, startByte: 1, endByte: 4})
@@ -384,7 +417,8 @@ func TestCoalesceForestRefreshesMinLinkScoreOnReplacement(t *testing.T) {
 }
 
 func TestCoalesceForestKeepsEqualScoreRawDistinctLinks(t *testing.T) {
-	idx := newGSSForestIndex(0)
+	var idx gssForestIndex
+	idx.init(0)
 	slab := &gssForestNodeSlab{}
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
@@ -412,7 +446,8 @@ func TestCoalesceForestKeepsEqualScoreRawDistinctLinks(t *testing.T) {
 }
 
 func TestCoalesceForestKeepsEqualScoreOneSidedRawUnknownLinks(t *testing.T) {
-	idx := newGSSForestIndex(0)
+	var idx gssForestIndex
+	idx.init(0)
 	slab := &gssForestNodeSlab{}
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
@@ -436,7 +471,8 @@ func TestCoalesceForestKeepsEqualScoreOneSidedRawUnknownLinks(t *testing.T) {
 }
 
 func TestCoalesceForestCapPreservesRawDistinctCandidateOverDuplicateBucket(t *testing.T) {
-	idx := newGSSForestIndex(0)
+	var idx gssForestIndex
+	idx.init(0)
 	slab := &gssForestNodeSlab{}
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
@@ -485,7 +521,8 @@ func TestCoalesceForestCapPreservesRawDistinctCandidateOverDuplicateBucket(t *te
 }
 
 func TestForestCoalesceWouldDropForCapDefersUntilRawShapeExists(t *testing.T) {
-	idx := newGSSForestIndex(0)
+	var idx gssForestIndex
+	idx.init(0)
 	node := &gssForestNode{
 		state:        5,
 		byteOffset:   4,
@@ -508,7 +545,8 @@ func TestForestCoalesceWouldDropForCapDefersUntilRawShapeExists(t *testing.T) {
 }
 
 func TestCoalesceForestCapDoesNotLetLowerRankSameRawBucketEvictDistinctBucket(t *testing.T) {
-	idx := newGSSForestIndex(0)
+	var idx gssForestIndex
+	idx.init(0)
 	slab := &gssForestNodeSlab{}
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
@@ -556,7 +594,8 @@ func TestCollectForestErrorRootUsesResultLinkErrorCost(t *testing.T) {
 			{prev: start, subtree: newStackEntryNode(101, lowScoreLowError), score: 1, errorCost: 2},
 		},
 	}
-	idx := newGSSForestIndex(1)
+	var idx gssForestIndex
+	idx.init(1)
 	idx.set(gssForestKey{state: partial.state, byteOffset: partial.byteOffset}, partial)
 
 	parser := &Parser{rootSymbol: 1}
@@ -636,7 +675,8 @@ func TestForestResultLinkUsesCumulativeDynamicPrecedenceBeforeMaterializedShape(
 }
 
 func TestCoalesceForestMarksDirtyWhenPredecessorChanges(t *testing.T) {
-	idx := newGSSForestIndex(0)
+	var idx gssForestIndex
+	idx.init(0)
 	slab := &gssForestNodeSlab{}
 	prev := &gssForestNode{state: 1, dirty: 1}
 	entry := newStackEntryNode(2, &Node{symbol: 7, startByte: 10, endByte: 20})
@@ -659,7 +699,8 @@ func TestCoalesceForestMarksDirtyWhenPredecessorChanges(t *testing.T) {
 }
 
 func TestGSSForestIndexLookupCacheClearsOnReset(t *testing.T) {
-	idx := newGSSForestIndex(0)
+	var idx gssForestIndex
+	idx.init(0)
 	key := gssForestKey{state: 7, byteOffset: 11}
 	node := &gssForestNode{state: 7, byteOffset: 11}
 
