@@ -23,12 +23,6 @@ const (
 	javaFullParseRetryMaxGLRStacks   = 64
 	javaFullParseRetryMaxMergePerKey = 16
 	javaTightMergeCapSourceLen       = 256 * 1024
-	// D's tuned default starts at cap 2, then fullParseInitialMaxStacks raises
-	// the effective parse cap to this conflict floor. Large D accepted-error
-	// retries must not widen beyond it, or expressionsem.d re-enters the
-	// survivor-population RSS cliff.
-	dLargeFileRetryStackCeiling = 3
-	dLargeFileRetryMinBytes     = 64 * 1024
 	// goAcceptedErrorMergePerKeyRetry widens Go's merge-per-key survivor
 	// budget only on the retry rung, when a fresh full parse at the
 	// steady-state cap (3, see the "go" case in effectiveParseMergePerKeyCap)
@@ -1178,27 +1172,8 @@ func fullParseRetryUsesInitialStackCeilingForOrigin(tree *Tree, sourceLen int, i
 	if tree == nil || tree.language == nil {
 		return false
 	}
-	if origin == fullParseRetryOriginFresh && certifiedAcceptedErrorRetryUsesInitialStackCeiling(tree, sourceLen, initialMaxStacks) {
-		return true
-	}
-	switch tree.language.Name {
-	case "groovy":
-		// The large Groovy corpus cliff accepts at the tuned cap=2 but the
-		// widened retry spends the entire file budget and still returns an
-		// error-bearing tree. Treat the language-tuned cap as the ceiling for
-		// large files. Cap-2 merge retries remain available, and explicit env
-		// overrides are handled above as diagnostic ceilings. This contains the
-		// timeout/OOM class only; the exact witness remains a tracked C-shape gap.
-		return sourceLen >= 64*1024 && initialMaxStacks <= 2
-	case "d":
-		// D's expressionsem.d accepts under the tuned cap (raised to 3 by the
-		// grammar conflict floor) and stays below the prior Go-side RSS cliff.
-		// Widening accepted-error retry stacks reintroduces the survivor
-		// population blowup, so keep large D retries at the initial ceiling.
-		return sourceLen >= dLargeFileRetryMinBytes && initialMaxStacks <= dLargeFileRetryStackCeiling
-	default:
-		return false
-	}
+	return origin == fullParseRetryOriginFresh &&
+		certifiedAcceptedErrorRetryUsesInitialStackCeiling(tree, sourceLen, initialMaxStacks)
 }
 
 func certifiedAcceptedErrorRetryUsesInitialStackCeiling(tree *Tree, sourceLen int, initialMaxStacks int) bool {
@@ -1362,7 +1337,7 @@ func fullParseNoStacksAliveCleanEOFNeedsMergeRetry(tree *Tree, rt ParseRuntime) 
 		!retryTreeHasError(tree)
 }
 
-func shouldRunInitialFullParseMergeRetry(tree *Tree) bool {
+func shouldRunInitialFullParseMergeRetry(tree *Tree, sourceLen int, origin fullParseRetryOrigin) bool {
 	if tree == nil {
 		return false
 	}
@@ -1375,19 +1350,24 @@ func shouldRunInitialFullParseMergeRetry(tree *Tree) bool {
 	if rt.StopReason == ParseStopNodeLimit {
 		return false
 	}
-	if tree.language != nil && tree.language.Name == "c_sharp" &&
-		rt.StopReason == ParseStopAccepted &&
-		retryTreeHasError(tree) &&
-		!rt.Truncated &&
-		!rt.TokenSourceEOFEarly {
-		// Large C# namespace bodies that accept with an error under the narrow
-		// first-pass stack cap have repeatedly spent close to a second in this
-		// same-stack merge retry without clearing the error. The existing clean
-		// widened-stack retry is the next useful pass; keep later merge retries
-		// available if that widened pass still returns an error.
+	if certifiedAcceptedErrorRetrySkipsInitialMerge(tree, sourceLen, origin) {
 		return false
 	}
 	return true
+}
+
+func certifiedAcceptedErrorRetrySkipsInitialMerge(tree *Tree, sourceLen int, origin fullParseRetryOrigin) bool {
+	if tree == nil || tree.language == nil || sourceLen <= 0 || origin != fullParseRetryOriginFresh ||
+		!tree.language.FullParseAcceptedErrorRetryProfile.SkipInitialCompleteAcceptedErrorMergeRetry ||
+		parseMaxGLRStacksEnvConfigured() || parseMaxMergePerKeyEnvConfigured() {
+		return false
+	}
+	rt := tree.ParseRuntime()
+	return rt.StopReason == ParseStopAccepted &&
+		!rt.Truncated &&
+		!rt.TokenSourceEOFEarly &&
+		retryTreeHasError(tree) &&
+		retryTreeCoversExpectedEOF(tree)
 }
 
 func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree, runRetry fullParseRetryRunner) *Tree {
@@ -1548,7 +1528,7 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 	}
 
 	bestTree := tree
-	if shouldRunInitialFullParseMergeRetry(tree) {
+	if shouldRunInitialFullParseMergeRetry(tree, len(source), origin) {
 		if initialMergePerKey := fullParseRetryMergePerKeyOverride(tree, len(source), initialMaxStacks); initialMergePerKey != 0 {
 			mergeRetryTree := runRetryAttempt(initialMaxStacks, initialMergePerKey, 0)
 			replaceBest(&bestTree, mergeRetryTree)

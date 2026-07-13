@@ -311,6 +311,11 @@ type FullParseAcceptedErrorRetryProfile struct {
 	// target for a fresh error-bearing no-stacks parse. Zero keeps the generic
 	// target. Incremental fallbacks and explicit environment overrides ignore it.
 	FreshErrorNoStacksRetryMaxStacks uint16
+	// SkipInitialCompleteAcceptedErrorMergeRetry skips only the first
+	// same-stack merge retry for a fresh, complete accepted-error parse. Later
+	// widened-stack and merge retries remain available. Incremental fallbacks
+	// and explicit stack/merge environment overrides ignore it.
+	SkipInitialCompleteAcceptedErrorMergeRetry bool
 }
 
 // Language holds all data needed to parse a specific language.
