@@ -441,6 +441,15 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 // both parity-clean and perf-clean for default Go parsing (commit 6894fc9f;
 // that decision stands).
 //
+// CSV recovery remains available to explicit forest experiments, but CSV is
+// intentionally held out of default dispatch. An all-23-file corpus census
+// produced zero forest fast-path returns: the two largest inputs exhausted the
+// forest budget, while the other 21 reached EOF and conservatively declined
+// with eof-recovery-conflict before repeating the parse in production. The
+// accepted production parses were full-span and error-free; keep CSV out until
+// a corpus gate proves the forest actually returns its tree and produces a net
+// wall-time win instead of paying a failed attempt first.
+//
 // Non-built-in languages opt in per-Language via Language.WantsForest (see
 // parserWantsForest) instead of joining this map — e.g. a grammargen consumer
 // generating its own grammar (a Pawn grammar, say) sets WantsForest directly
@@ -502,7 +511,6 @@ var builtinForestDefaults = map[string]bool{
 	"arduino":   true,
 	"authzed":   true,
 	"make":      true,
-	"csv":       true,
 	"fish":      true,
 	"racket":    true,
 	"tlaplus":   true,

@@ -27,6 +27,11 @@ for tags and release notes while still in `0.x`.
   18 KiB parse and the 129 KiB
   error-bearing parse by about 90% while preserving the returned production
   trees and runtime status.
+- Automatic forest dispatch no longer speculates through CSV by default. An
+  all-23-file corpus census produced no forest fast-path returns: the two
+  largest files exhausted the forest budget and the other 21 conservatively
+  declined at EOF before repeating the parse in production. Explicit forest
+  experiments and CSV's certified recovery policy remain available.
 - Internal retry and tree-selection decisions now inspect each tree's stored
   parse-runtime record in place instead of repeatedly copying the 2,928-byte
   public snapshot. `Tree.ParseRuntime()` remains a value API with its live
