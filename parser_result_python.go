@@ -17,13 +17,6 @@ func normalizePythonCompatibilityWithParser(root *Node, source []byte, parser *P
 		}()
 	}
 	sourceFlags := pythonCompatibilitySourceFlagsFor(source)
-	// Postorder passes: trailingSelfCalls + printChevron. Run separately
-	// because they require a different walk order.
-	parser.runNormalizationPass(func() bool {
-		return sourceFlags.trailingSelfCalls
-	}, func() normalizationPassCounters {
-		return normalizePythonTrailingSelfCallsWithSemicolons(root, source, lang, &sourceFlags.trailingSelfCallSemicolons)
-	})
 	parser.runNormalizationPass(func() bool {
 		return sourceFlags.printChevron
 	}, func() normalizationPassCounters {
@@ -477,7 +470,6 @@ func applyCollapsedKeywordRewrite(n *Node, lang *Language, ck pythonCollapsedKey
 }
 
 type pythonCompatibilitySourceFlags struct {
-	trailingSelfCalls  bool
 	printChevron       bool
 	fStringPattern     bool
 	passWord           bool
@@ -492,42 +484,6 @@ type pythonCompatibilitySourceFlags struct {
 	asPattern          bool
 	casePattern        bool
 	continuationEscape bool
-
-	trailingSelfCallSemicolons pythonTrailingSelfCallSemicolons
-}
-
-const pythonTrailingSelfCallInlineSemicolonLimit = 32
-
-type pythonTrailingSelfCallSemicolons struct {
-	count    int
-	inline   [pythonTrailingSelfCallInlineSemicolonLimit]uint32
-	overflow []uint32
-}
-
-func (s *pythonTrailingSelfCallSemicolons) add(offset uint32) {
-	if s == nil {
-		return
-	}
-	if s.count < len(s.inline) {
-		s.inline[s.count] = offset
-	} else {
-		s.overflow = append(s.overflow, offset)
-	}
-	s.count++
-}
-
-func (s *pythonTrailingSelfCallSemicolons) rangeMayContain(start, end uint32) bool {
-	if s == nil || s.count == 0 || start == end {
-		return true
-	}
-	inlineCount := s.count
-	if inlineCount > len(s.inline) {
-		inlineCount = len(s.inline)
-	}
-	if pythonSortedOffsetsMayIntersectRange(s.inline[:inlineCount], start, end) {
-		return true
-	}
-	return pythonSortedOffsetsMayIntersectRange(s.overflow, start, end)
 }
 
 func pythonCompatibilitySourceFlagsFor(source []byte) pythonCompatibilitySourceFlags {
@@ -565,7 +521,6 @@ func pythonCompatibilitySourceFlagsFor(source []byte) pythonCompatibilitySourceF
 				flags.continuationEscape = true
 			}
 			if !ok {
-				flags.trailingSelfCalls = true
 				flags.printChevron = true
 				flags.fStringPattern = true
 				flags.passWord = true
@@ -580,10 +535,6 @@ func pythonCompatibilitySourceFlagsFor(source []byte) pythonCompatibilitySourceF
 			}
 			i = end
 			continue
-		}
-		if source[i] == ';' {
-			flags.trailingSelfCalls = true
-			flags.trailingSelfCallSemicolons.add(uint32(i))
 		}
 		if !flags.assignmentList && source[i] == '=' && bytes.IndexByte(source[i+1:], ',') >= 0 {
 			flags.assignmentList = true
@@ -893,52 +844,6 @@ func normalizePythonPrintStatements(root *Node, source []byte, lang *Language) n
 	return counters
 }
 
-func normalizePythonTrailingSelfCallsWithSemicolons(root *Node, source []byte, lang *Language, semicolons *pythonTrailingSelfCallSemicolons) normalizationPassCounters {
-	var counters normalizationPassCounters
-	if root == nil || lang == nil || lang.Name != "python" || len(source) == 0 {
-		return counters
-	}
-	blockSym, ok := symbolByName(lang, "block")
-	if !ok {
-		walkResultTreePostorder(root, func(node *Node) {
-			counters.nodesVisited++
-		})
-		return counters
-	}
-	normalizePythonTrailingSelfCallsPostorder(root, source, lang, blockSym, semicolons, &counters)
-	return counters
-}
-
-func normalizePythonTrailingSelfCallsPostorder(node *Node, source []byte, lang *Language, blockSym Symbol, semicolons *pythonTrailingSelfCallSemicolons, counters *normalizationPassCounters) {
-	if node == nil {
-		return
-	}
-	if semicolons != nil && semicolons.count > 0 && !semicolons.rangeMayContain(node.startByte, node.endByte) {
-		return
-	}
-	if node.ownerArena == nil || node.childIndex > finalChildSidecarIndexBase {
-		for _, child := range node.children {
-			normalizePythonTrailingSelfCallsPostorder(child, source, lang, blockSym, semicolons, counters)
-		}
-	} else {
-		childCount := resultChildCount(node)
-		for i := 0; i < childCount; i++ {
-			normalizePythonTrailingSelfCallsPostorder(resultChildAt(node, i), source, lang, blockSym, semicolons, counters)
-		}
-	}
-	counters.nodesVisited++
-	if node.symbol != blockSym {
-		return
-	}
-	children := resultChildSliceForMutation(node)
-	rewritten, changed := foldPythonTrailingSelfCallsInBlock(children, source, lang)
-	if !changed {
-		return
-	}
-	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, rewritten))
-	counters.nodesRewritten++
-}
-
 func pythonSortedOffsetsMayIntersectRange(offsets []uint32, start, end uint32) bool {
 	if len(offsets) == 0 {
 		return false
@@ -956,74 +861,6 @@ func pythonSortedOffsetsMayIntersectRange(offsets []uint32, start, end uint32) b
 		}
 	}
 	return lo < len(offsets) && offsets[lo] < end
-}
-
-func foldPythonTrailingSelfCallsInBlock(children []*Node, source []byte, lang *Language) ([]*Node, bool) {
-	if len(children) < 2 || lang == nil || lang.Name != "python" || len(source) == 0 {
-		return children, false
-	}
-	var out []*Node
-	for i := 0; i < len(children); i++ {
-		cur := children[i]
-		if i+1 >= len(children) {
-			if out != nil {
-				out = append(out, cur)
-			}
-			continue
-		}
-		next := children[i+1]
-		rewritten, ok := foldPythonTrailingSelfCallIntoNestedFunction(cur, next, source, lang)
-		if !ok {
-			if out != nil {
-				out = append(out, cur)
-			}
-			continue
-		}
-		if out == nil {
-			out = make([]*Node, 0, len(children))
-			out = append(out, children[:i]...)
-		}
-		out = append(out, rewritten)
-		i++
-	}
-	if out == nil {
-		return children, false
-	}
-	return out, true
-}
-
-func foldPythonTrailingSelfCallIntoNestedFunction(fnNode, trailingCall *Node, source []byte, lang *Language) (*Node, bool) {
-	if fnNode == nil || trailingCall == nil || lang == nil || lang.Name != "python" || len(source) == 0 {
-		return nil, false
-	}
-	if fnNode.Type(lang) != "function_definition" || trailingCall.Type(lang) != "call" {
-		return nil, false
-	}
-	if trailingCall.startPoint.Column != fnNode.startPoint.Column {
-		return nil, false
-	}
-	fnName, ok := pythonFunctionDefinitionNameNode(fnNode, lang)
-	if !ok || fnName == nil {
-		return nil, false
-	}
-	callName, ok := pythonCallIdentifierNode(trailingCall, lang)
-	if !ok || callName == nil {
-		return nil, false
-	}
-	if !pythonNodeTextEqual(fnName, callName, source) {
-		return nil, false
-	}
-	bodyIndex := pythonChildIndexByTypeNoMaterialize(fnNode, lang, "block")
-	body := resultChildAt(fnNode, bodyIndex)
-	if bodyIndex < 0 || body == nil || !pythonBlockEndsWithSemicolon(body, lang) {
-		return nil, false
-	}
-
-	bodyClone := cloneNodeInArenaAppendingChildForMutation(body.ownerArena, body, trailingCall)
-	bodyClone.clearFieldMetadata()
-
-	fnClone := cloneNodeInArenaReplacingChildForMutation(fnNode.ownerArena, fnNode, bodyIndex, bodyClone)
-	return fnClone, true
 }
 
 func rewritePythonStatementList(children []*Node, source []byte, lang *Language) ([]*Node, bool) {
@@ -2035,31 +1872,6 @@ func pythonBlockLastChildNode(node *Node) *Node {
 	return nil
 }
 
-func pythonBlockEndsWithSemicolon(node *Node, lang *Language) bool {
-	childCount := resultChildCount(node)
-	if node == nil || lang == nil || childCount == 0 {
-		return false
-	}
-	if semiSym, ok := symbolByName(lang, ";"); ok {
-		if entry, ok := nodeChildEntryAtNoMaterialize(node, childCount-1); ok && stackEntryHasNode(entry) {
-			return stackEntryNodeSymbol(entry) == semiSym
-		}
-	}
-	lastChild := resultChildAt(node, childCount-1)
-	return lastChild != nil && lastChild.Type(lang) == ";"
-}
-
-func pythonFunctionDefinitionNameNode(node *Node, lang *Language) (*Node, bool) {
-	if node == nil || lang == nil || node.Type(lang) != "function_definition" {
-		return nil, false
-	}
-	if index := pythonChildIndexByTypeNoMaterialize(node, lang, "identifier"); index >= 0 {
-		child := resultChildAt(node, index)
-		return child, child != nil
-	}
-	return nil, false
-}
-
 func pythonChildIndexByTypeNoMaterialize(node *Node, lang *Language, typ string) int {
 	if node == nil || lang == nil || typ == "" {
 		return -1
@@ -2088,33 +1900,6 @@ func pythonChildIndexByTypeNoMaterialize(node *Node, lang *Language, typ string)
 		}
 	}
 	return -1
-}
-
-func pythonCallIdentifierNode(node *Node, lang *Language) (*Node, bool) {
-	if node == nil || lang == nil || node.Type(lang) != "call" || resultChildCount(node) == 0 {
-		return nil, false
-	}
-	fn := resultChildAt(node, 0)
-	if fn != nil && fn.Type(lang) == "identifier" {
-		return fn, true
-	}
-	return nil, false
-}
-
-func pythonNodeTextEqual(a, b *Node, source []byte) bool {
-	if a == nil || b == nil || len(source) == 0 {
-		return false
-	}
-	if a.startByte >= a.endByte || b.startByte >= b.endByte {
-		return false
-	}
-	if int(a.endByte) > len(source) || int(b.endByte) > len(source) {
-		return false
-	}
-	if a.endByte-a.startByte != b.endByte-b.startByte {
-		return false
-	}
-	return bytes.Equal(source[a.startByte:a.endByte], source[b.startByte:b.endByte])
 }
 
 func splitPythonOvernestedFunction(node *Node, arena *nodeArena, lang *Language) (*Node, []*Node, bool) {
