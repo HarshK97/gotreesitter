@@ -19,8 +19,29 @@ for tags and release notes while still in `0.x`.
   metadata so one-language containers on the same physical benchmark host can
   produce a consistent authenticated host identity.
 
+### Performance
+
+- Forest parsing now applies the parser's existing runtime heap and system
+  memory guard in addition to its node-arena budget, covering GSS slabs and
+  alternative indexes before a failed forest attempt falls back to production
+  parsing. On the default-budget JavaScript Poppler witness, this moved the
+  forest decline from byte 1,147,865 to roughly byte 360,000, cut combined
+  elapsed time from 5.313 s to 2.610 s, total allocation from 2.450 GB to
+  1.289 GB, and maximum RSS from 1,961,948 KiB to 1,012,296 KiB while
+  preserving exact stopped-tree hashes. Final-diff successful-forest B-C-C-B
+  timing remained neutral (+1.4%, p=0.142), with a small measured allocation
+  cost (+0.28% B/op and +0.01% allocs/op). This bounds a failed attempt;
+  Poppler still reports the ordinary 512 MiB production fallback stop and is
+  not claimed to complete within that policy.
+
 ### Fixed
 
+- Removed `foldPythonTrailingSelfCallIntoNestedFunction`, a Python
+  compat-normalization heuristic that spuriously folded a same-named trailing
+  call into a preceding nested function's block when that function's body
+  ended in a dangling `;` before a dedent. Raw parser results already matched
+  the reference; only the post-parse fold diverged. Python real-corpus
+  S-expression and deep parity both improve from 20/25 to 25/25.
 - The pooled forest GSS slab now clears outer batch references discarded by
   its 32 MiB retention cap. On the 3,447,275-byte JavaScript Poppler witness
   under the default 512 MiB parser budget, this reduced one-GC live heap from
@@ -148,19 +169,6 @@ benchmark trio remains neutral while full-parse bytes fall 18.68%.
   statement count for no fork-count benefit. C#'s helper is left in place: it
   depends on the literal source text of a contextual keyword (`scoped`),
   which `ConflictPolicies`' state/lookahead-symbol matching cannot express.
-### Fixed
-
-- Removed `foldPythonTrailingSelfCallIntoNestedFunction`, a Python
-  compat-normalization heuristic that spuriously folded a same-named
-  trailing call into a preceding nested function's block whenever that
-  function's own body ended in a dangling `;` before a dedent (e.g. `def
-  foo(): x = 1;` followed by a sibling `foo()` at the outer indent). Raw
-  GLR parse actions and materialized trees were already byte-identical
-  between the trailing-`;` and no-`;` forms and matched the reference
-  parser; only this post-parse fold diverged. Python real-corpus deep
-  parity goes from 20/25 to 25/25 (`python3.8_grammar.py` /
-  `python2-grammar.py` witnesses now match exactly).
-
 ## [0.28.0] - 2026-07-12
 
 Containment closure and measurement-honesty release. The runtime memory
