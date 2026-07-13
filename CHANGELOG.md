@@ -9,6 +9,13 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
+- Internal retry and tree-selection decisions now inspect each tree's stored
+  parse-runtime record in place instead of repeatedly copying the 2,928-byte
+  public snapshot. `Tree.ParseRuntime()` remains a value API with its live
+  final-child-counter overlay unchanged. In pinned recurring benchmarks this
+  reduced the five-byte KDL floor by 11.2% and Java's registered token-source
+  path by 14.9%, with unchanged bytes and allocations per operation; the
+  standard full/incremental benchmark trio remained neutral.
 - The exact bundled C# grammar now advertises native result compatibility for
   `notnull` constraints, Unicode identifier spans, scoped-lambda statements and
   blocks, and LINQ query expressions, allowing the runtime to skip the five

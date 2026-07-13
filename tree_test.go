@@ -42,6 +42,41 @@ func TestNodeLayoutSizeBudget(t *testing.T) {
 	}
 }
 
+func TestParseRuntimeReadOnlyUsesStoredRecordWithoutArenaOverlay(t *testing.T) {
+	var nilTree *Tree
+	if got := nilTree.parseRuntimeReadOnly(); got != nil {
+		t.Fatalf("nil tree runtime = %p, want nil", got)
+	}
+	if got := nilTree.ParseRuntime().StopReason; got != ParseStopNone {
+		t.Fatalf("nil tree public stop reason = %q, want %q", got, ParseStopNone)
+	}
+
+	tree := &Tree{
+		arena: &nodeArena{
+			finalChildRefsCreated: 23,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:     ParseStopAccepted,
+			FinalChildRefs: 7,
+			NodeLimit:      41,
+		},
+	}
+	stored := tree.parseRuntimeReadOnly()
+	if stored != &tree.parseRuntime {
+		t.Fatal("internal runtime accessor returned a copy")
+	}
+	if stored.StopReason != ParseStopAccepted || stored.NodeLimit != 41 || stored.FinalChildRefs != 7 {
+		t.Fatalf("stored runtime = {stop:%q node_limit:%d child_refs:%d}", stored.StopReason, stored.NodeLimit, stored.FinalChildRefs)
+	}
+	public := tree.ParseRuntime()
+	if public.FinalChildRefs != 23 {
+		t.Fatalf("public FinalChildRefs = %d, want live arena count 23", public.FinalChildRefs)
+	}
+	if stored.FinalChildRefs != 7 {
+		t.Fatalf("public runtime overlay mutated stored FinalChildRefs to %d", stored.FinalChildRefs)
+	}
+}
+
 func TestLeafNode(t *testing.T) {
 	lang := testLanguage()
 

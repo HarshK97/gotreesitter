@@ -3391,6 +3391,16 @@ func (t *Tree) ParseRuntime() ParseRuntime {
 	return out
 }
 
+// parseRuntimeReadOnly returns the runtime record stored on the tree without
+// the public accessor's live arena-counter overlay. Internal decision helpers
+// may use it only while the tree is alive and must not mutate the result.
+func (t *Tree) parseRuntimeReadOnly() *ParseRuntime {
+	if t == nil {
+		return nil
+	}
+	return &t.parseRuntime
+}
+
 // ArenaBreakdown returns optional arena/materialization attribution captured
 // when EnableArenaBreakdown(true) was set before parsing.
 func (t *Tree) ArenaBreakdown() (ArenaBreakdown, bool) {
