@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestGLRMergeScratchResetInvalidatesEquivCacheByEpoch(t *testing.T) {
 	var scratch glrMergeScratch
@@ -128,12 +131,22 @@ func TestGLREntryScratchResetClearsReservedWrittenRange(t *testing.T) {
 
 func TestInitialParseStackReservationMatchesCurrentFullParseSize(t *testing.T) {
 	var scratch parserScratch
-	scratch.entries.ensureInitialCap(64 * 1024)
+	scratch.entries.ensureInitialCap(maxFullParseEntryScratchEntries)
 	parser := &Parser{language: &Language{InitialState: 1}}
 
-	tinySourceLen := len("{}")
+	tinySourceLen := len("node\n")
+	if got := len(scratch.entries.slabs[0].data); got != maxFullParseEntryScratchEntries {
+		t.Fatalf("retained full-parse physical slab = %d, want %d", got, maxFullParseEntryScratchEntries)
+	}
 	stacks, _ := parser.newInitialParseStacks(&scratch, nil, nil, tinySourceLen)
-	wantTiny := parseFullEntryScratchCapacity(tinySourceLen)
+	wantTiny := parseFullEntryScratchReservation(tinySourceLen)
+	wantTinyScaled := tinySourceLen * fullParseEntryScratchEntriesPerSourceByte
+	if wantTiny != wantTinyScaled {
+		t.Fatalf("tiny full-parse logical reservation = %d, want source-scaled %d", wantTiny, wantTinyScaled)
+	}
+	if wantTiny >= defaultStackEntrySlabCap {
+		t.Fatalf("tiny full-parse logical reservation = %d, want less than physical slab %d", wantTiny, defaultStackEntrySlabCap)
+	}
 	if got := cap(stacks[0].entries); got != wantTiny {
 		t.Fatalf("tiny full-parse reservation = %d, want %d", got, wantTiny)
 	}
@@ -144,7 +157,7 @@ func TestInitialParseStackReservationMatchesCurrentFullParseSize(t *testing.T) {
 	scratch.entries.reset()
 	largeSourceLen := 2 * 1024 * 1024
 	stacks, _ = parser.newInitialParseStacks(&scratch, nil, nil, largeSourceLen)
-	wantLarge := parseFullEntryScratchCapacity(largeSourceLen)
+	wantLarge := parseFullEntryScratchReservation(largeSourceLen)
 	if got := cap(stacks[0].entries); got != wantLarge {
 		t.Fatalf("large full-parse reservation = %d, want %d", got, wantLarge)
 	}
@@ -154,6 +167,74 @@ func TestInitialParseStackReservationMatchesCurrentFullParseSize(t *testing.T) {
 	stacks, _ = parser.newInitialParseStacks(&scratch, reuse, nil, largeSourceLen)
 	if got := cap(stacks[0].entries); got != defaultStackEntrySlabCap {
 		t.Fatalf("incremental reservation = %d, want %d", got, defaultStackEntrySlabCap)
+	}
+}
+
+func TestInitialParseStackTinyReservationGrowsAndResetsSafely(t *testing.T) {
+	var scratch parserScratch
+	parser := &Parser{language: &Language{InitialState: 1}}
+	sourceLen := len("node\n")
+	scratch.entries.ensureInitialCap(parseFullEntryScratchCapacity(sourceLen))
+	if got := len(scratch.entries.slabs[0].data); got != defaultStackEntrySlabCap {
+		t.Fatalf("fresh tiny full-parse physical slab = %d, want %d", got, defaultStackEntrySlabCap)
+	}
+
+	stacks, _ := parser.newInitialParseStacks(&scratch, nil, nil, sourceLen)
+	stack := &stacks[0]
+	reserved := cap(stack.entries)
+	for len(stack.entries) <= reserved {
+		stack.pushEntry(stackEntry{state: StateID(len(stack.entries) + 1)}, &scratch.entries, nil)
+	}
+	if got := len(stack.entries); got != reserved+1 {
+		t.Fatalf("grown stack length = %d, want %d", got, reserved+1)
+	}
+	if got := cap(stack.entries); got < reserved+1 {
+		t.Fatalf("grown stack capacity = %d, want at least %d", got, reserved+1)
+	}
+	for i, entry := range stack.entries {
+		if want := StateID(i + 1); entry.state != want {
+			t.Fatalf("grown stack entry %d state = %d, want %d", i, entry.state, want)
+		}
+	}
+
+	scratch.entries.reset()
+	for slabIndex := range scratch.entries.slabs {
+		for entryIndex, entry := range scratch.entries.slabs[slabIndex].data {
+			if entry != (stackEntry{}) {
+				t.Fatalf("entry scratch slab %d slot %d after reset = %#v, want zero", slabIndex, entryIndex, entry)
+			}
+		}
+	}
+}
+
+func TestFullEntryScratchReservationNeverExceedsPhysicalCapacity(t *testing.T) {
+	threshold := maxFullParseEntryScratchEntries / fullParseEntryScratchEntriesPerSourceByte
+	for _, tc := range []struct {
+		sourceLen    int
+		wantReserved int
+		wantPhysical int
+	}{
+		{sourceLen: -1, wantReserved: 8, wantPhysical: defaultStackEntrySlabCap},
+		{sourceLen: 0, wantReserved: 8, wantPhysical: defaultStackEntrySlabCap},
+		{sourceLen: 1, wantReserved: fullParseEntryScratchEntriesPerSourceByte, wantPhysical: defaultStackEntrySlabCap},
+		{sourceLen: len("node\n"), wantReserved: len("node\n") * fullParseEntryScratchEntriesPerSourceByte, wantPhysical: defaultStackEntrySlabCap},
+		{sourceLen: threshold - 1, wantReserved: (threshold - 1) * fullParseEntryScratchEntriesPerSourceByte, wantPhysical: (threshold - 1) * fullParseEntryScratchEntriesPerSourceByte},
+		{sourceLen: threshold, wantReserved: threshold * fullParseEntryScratchEntriesPerSourceByte, wantPhysical: threshold * fullParseEntryScratchEntriesPerSourceByte},
+		{sourceLen: threshold + 1, wantReserved: maxFullParseEntryScratchEntries, wantPhysical: maxFullParseEntryScratchEntries},
+		{sourceLen: 2 * 1024 * 1024, wantReserved: maxFullParseEntryScratchEntries, wantPhysical: maxFullParseEntryScratchEntries},
+		{sourceLen: math.MaxInt, wantReserved: maxFullParseEntryScratchEntries, wantPhysical: maxFullParseEntryScratchEntries},
+	} {
+		reserved := parseFullEntryScratchReservation(tc.sourceLen)
+		physical := parseFullEntryScratchCapacity(tc.sourceLen)
+		if reserved != tc.wantReserved {
+			t.Fatalf("source length %d reservation = %d, want %d", tc.sourceLen, reserved, tc.wantReserved)
+		}
+		if physical != tc.wantPhysical {
+			t.Fatalf("source length %d physical capacity = %d, want %d", tc.sourceLen, physical, tc.wantPhysical)
+		}
+		if reserved > physical {
+			t.Fatalf("source length %d reservation = %d, exceeds physical capacity %d", tc.sourceLen, reserved, physical)
+		}
 	}
 }
 
