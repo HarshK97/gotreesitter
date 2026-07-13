@@ -9,6 +9,10 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
+- The real-corpus Go/C performance scoreboard now classifies each full parse
+  as clean, error-bearing, or stopped outside the timed path, and reports
+  per-language clean/error counts, timing totals, ratios, stopped subsets, and
+  error share. Existing coverage and zero-cliff gates remain unchanged.
 - Large D and Groovy accepted-error parses now retain their certified initial
   stack ceilings through exact-blob runtime profiles, and C# skips its
   redundant first same-stack merge retry through the same fail-closed profile

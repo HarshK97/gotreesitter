@@ -99,6 +99,10 @@ const (
 	perfScanStatusOK      = "ok"
 	perfScanStatusRunning = "running"
 
+	perfScanClassClean   = "clean"
+	perfScanClassError   = "error"
+	perfScanClassStopped = "stopped"
+
 	perfScanGatePass = "pass"
 	perfScanGateFail = "fail"
 
@@ -172,9 +176,44 @@ type perfScanStop struct {
 }
 
 type perfScanFile struct {
-	Path  string                       `json:"path"`
-	Bytes int                          `json:"bytes"`
-	Axes  map[string]*perfScanFileAxis `json:"axes"`
+	Path           string                       `json:"path"`
+	Bytes          int                          `json:"bytes"`
+	Classification *perfScanFileClassification  `json:"classification,omitempty"`
+	Axes           map[string]*perfScanFileAxis `json:"axes"`
+}
+
+// perfScanFileClassification records the untimed Go full-parse corpus-policy
+// classification. A clean file completed, spans the source, and has no ERROR
+// nodes. Stopped is kept distinct at file level for attribution; language
+// summaries include stopped files in the non-clean/error side, matching the
+// parse-gap tools' existing Clean=false policy.
+type perfScanFileClassification struct {
+	Class        string `json:"class"`
+	Reason       string `json:"reason"`
+	GoStatus     string `json:"go_status"`
+	FullSpan     bool   `json:"full_span"`
+	RootHasError bool   `json:"root_has_error"`
+	StoppedEarly bool   `json:"stopped_early"`
+	StopReason   string `json:"stop_reason,omitempty"`
+}
+
+type perfScanClassTiming struct {
+	Files              int     `json:"files"`
+	FilesOK            int     `json:"files_ok"`
+	GoTotalNs          int64   `json:"go_total_ns"`
+	CTotalNs           int64   `json:"c_total_ns"`
+	RatioByTotal       float64 `json:"ratio_by_total,omitempty"`
+	RatioMedianOfFiles float64 `json:"ratio_median_of_files,omitempty"`
+}
+
+type perfScanCleanErrorSplit struct {
+	ClassifiedFiles int                 `json:"classified_files"`
+	StoppedFiles    int                 `json:"stopped_files"`
+	ErrorShare      float64             `json:"error_share"`
+	Clean           perfScanClassTiming `json:"clean"`
+	// Error includes every non-clean file. StoppedFiles is the stopped subset;
+	// only status=ok rows contribute timings and ratios.
+	Error perfScanClassTiming `json:"error"`
 }
 
 type perfScanLangAxis struct {
@@ -209,6 +248,7 @@ type perfScanLanguage struct {
 	ActivePhase      string                       `json:"active_phase,omitempty"`
 	ActiveAttempt    *int                         `json:"active_attempt,omitempty"`
 	Axes             map[string]*perfScanLangAxis `json:"axes,omitempty"`
+	FullParseSplit   *perfScanCleanErrorSplit     `json:"full_parse_split,omitempty"`
 	Notes            []string                     `json:"notes,omitempty"`
 	Files            []*perfScanFile              `json:"files,omitempty"`
 	Stop             *perfScanStop                `json:"stop,omitempty"`
@@ -913,6 +953,10 @@ func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flus
 			}
 		}
 		for _, axis := range cfg.Axes {
+			if axis == perfScanAxisFull {
+				fileRow.Axes[axis], fileRow.Classification = m.measureFull(src)
+				continue
+			}
 			fileRow.Axes[axis] = m.measureFileAxis(axis, src)
 		}
 		row.Files = append(row.Files, fileRow)
@@ -1022,6 +1066,10 @@ type perfScanLangMeasurer struct {
 	budget   time.Duration
 	editMax  int
 	progress func(axis, impl, phase string, attempt int)
+	// Full-axis hooks are nil in production and exist so protocol tests can
+	// deterministically separate timed failures from classification probes.
+	goFullAttempt func(src []byte, keepTree bool) (*gotreesitter.Tree, perfScanAttempt)
+	cFullAttempt  func(src []byte, oldTree *sitter.Tree, keepTree bool) (*sitter.Tree, perfScanAttempt)
 }
 
 type perfScanAttempt struct {
@@ -1049,9 +1097,34 @@ func (m *perfScanLangMeasurer) checkpoint(axis, impl, phase string, attempt int)
 	}
 }
 
+func (m *perfScanLangMeasurer) attemptGoFull(src []byte, keepTree bool) (*gotreesitter.Tree, perfScanAttempt) {
+	if m.goFullAttempt != nil {
+		return m.goFullAttempt(src, keepTree)
+	}
+	return m.goAttemptFullForClassification(src, keepTree)
+}
+
+func (m *perfScanLangMeasurer) attemptCFull(src []byte, oldTree *sitter.Tree, keepTree bool) (*sitter.Tree, perfScanAttempt) {
+	if m.cFullAttempt != nil {
+		return m.cFullAttempt(src, oldTree, keepTree)
+	}
+	return m.cAttempt(src, oldTree, keepTree)
+}
+
 // goAttemptFull runs one timed Go full parse. The returned tree is nil unless
 // the parse completed cleanly.
 func (m *perfScanLangMeasurer) goAttemptFull(src []byte, keepTree bool) (*gotreesitter.Tree, perfScanAttempt) {
+	return m.goAttemptFullWithRetention(src, keepTree, false)
+}
+
+// goAttemptFullForClassification preserves a valid rejected tree when the
+// caller asks to retain it, allowing diagnostics to inspect the rejection
+// before measureFull releases the tree.
+func (m *perfScanLangMeasurer) goAttemptFullForClassification(src []byte, keepTree bool) (*gotreesitter.Tree, perfScanAttempt) {
+	return m.goAttemptFullWithRetention(src, keepTree, keepTree)
+}
+
+func (m *perfScanLangMeasurer) goAttemptFullWithRetention(src []byte, keepTree, retainRejected bool) (*gotreesitter.Tree, perfScanAttempt) {
 	var tree *gotreesitter.Tree
 	var err error
 	att := perfScanAttempt{}
@@ -1069,7 +1142,7 @@ func (m *perfScanLangMeasurer) goAttemptFull(src []byte, keepTree bool) (*gotree
 		}
 		att.ns = time.Since(start).Nanoseconds()
 	})
-	return m.classifyGoAttempt(tree, err, panicked, src, keepTree, att)
+	return m.classifyGoAttemptWithRetention(tree, err, panicked, src, keepTree, retainRejected, att)
 }
 
 func (m *perfScanLangMeasurer) goAttemptIncremental(src []byte, oldTree *gotreesitter.Tree, keepTree bool) (*gotreesitter.Tree, perfScanAttempt) {
@@ -1094,6 +1167,10 @@ func (m *perfScanLangMeasurer) goAttemptIncremental(src []byte, oldTree *gotrees
 }
 
 func (m *perfScanLangMeasurer) classifyGoAttempt(tree *gotreesitter.Tree, err error, panicked string, src []byte, keepTree bool, att perfScanAttempt) (*gotreesitter.Tree, perfScanAttempt) {
+	return m.classifyGoAttemptWithRetention(tree, err, panicked, src, keepTree, false, att)
+}
+
+func (m *perfScanLangMeasurer) classifyGoAttemptWithRetention(tree *gotreesitter.Tree, err error, panicked string, src []byte, keepTree, retainRejected bool, att perfScanAttempt) (*gotreesitter.Tree, perfScanAttempt) {
 	if panicked != "" {
 		att.status = "go_panic"
 		att.detail = panicked
@@ -1122,6 +1199,9 @@ func (m *perfScanLangMeasurer) classifyGoAttempt(tree *gotreesitter.Tree, err er
 			att.status = "go_budget_stop"
 		}
 		att.detail = att.stop.Detail
+		if keepTree && retainRejected {
+			return tree, att
+		}
 		releaseGoTree(tree)
 		return nil, att
 	}
@@ -1144,6 +1224,9 @@ func (m *perfScanLangMeasurer) classifyGoAttempt(tree *gotreesitter.Tree, err er
 		att.status = "go_error"
 		att.detail = fmt.Sprintf("truncated[%s]: root.EndByte=%d want=%d hasErr=%v Truncated=%v",
 			signal, got, want, root.HasError(), rt.Truncated)
+		if keepTree && retainRejected {
+			return tree, att
+		}
 		releaseGoTree(tree)
 		return nil, att
 	}
@@ -1153,6 +1236,9 @@ func (m *perfScanLangMeasurer) classifyGoAttempt(tree *gotreesitter.Tree, err er
 		// Coverage and the Truncated flag disagree: an internal inconsistency.
 		att.status = "go_error"
 		att.detail = fmt.Sprintf("inconsistent: root covers %d but ParseRuntime.Truncated=true", got)
+		if keepTree && retainRejected {
+			return tree, att
+		}
 		releaseGoTree(tree)
 		return nil, att
 	}
@@ -1161,6 +1247,9 @@ func (m *perfScanLangMeasurer) classifyGoAttempt(tree *gotreesitter.Tree, err er
 		// one ERROR node); 'ok' used to mask this (the webworker case).
 		att.status = "go_error"
 		att.detail = "error_root: root symbol is ERROR spanning the input"
+		if keepTree && retainRejected {
+			return tree, att
+		}
 		releaseGoTree(tree)
 		return nil, att
 	}
@@ -1250,7 +1339,8 @@ func perfScanRecover(fn func()) (panicked string) {
 func (m *perfScanLangMeasurer) measureFileAxis(axis string, src []byte) *perfScanFileAxis {
 	switch axis {
 	case perfScanAxisFull:
-		return m.measureFull(src)
+		out, _ := m.measureFull(src)
+		return out
 	case perfScanAxisNoEdit:
 		return m.measureNoEdit(src)
 	case perfScanAxisEdit:
@@ -1260,14 +1350,83 @@ func (m *perfScanLangMeasurer) measureFileAxis(axis string, src []byte) *perfSca
 	}
 }
 
-func (m *perfScanLangMeasurer) measureFull(src []byte) *perfScanFileAxis {
+func perfScanClassifyGoFull(tree *gotreesitter.Tree, att perfScanAttempt, sourceBytes int) *perfScanFileClassification {
+	status := att.status
+	if status == "" {
+		status = perfScanStatusOK
+	}
+	classification := &perfScanFileClassification{
+		Class:    perfScanClassError,
+		Reason:   att.detail,
+		GoStatus: status,
+	}
+	if tree != nil && tree.RootNode() != nil {
+		root := tree.RootNode()
+		classification.FullSpan = root.StartByte() == 0 && root.EndByte() == uint32(sourceBytes)
+		classification.RootHasError = root.HasError() || root.IsError()
+		classification.StoppedEarly = tree.ParseStoppedEarly()
+	}
+	if att.stop != nil {
+		classification.Class = perfScanClassStopped
+		classification.StoppedEarly = true
+		classification.StopReason = att.stop.Reason
+		if classification.Reason == "" {
+			classification.Reason = att.stop.Detail
+		}
+		if classification.Reason == "" {
+			classification.Reason = "Go full parse stopped before acceptance"
+		}
+		return classification
+	}
+	if att.status != "" {
+		if classification.Reason == "" {
+			classification.Reason = "Go full parse did not produce an accepted full-span tree"
+		}
+		return classification
+	}
+	if tree == nil || tree.RootNode() == nil {
+		classification.Reason = "Go full parse returned a nil tree"
+		return classification
+	}
+
+	root := tree.RootNode()
+	if IsAcceptedFullSpanCleanGoTree(tree, sourceBytes) {
+		classification.Class = perfScanClassClean
+		classification.Reason = "accepted full-span Go tree without ERROR nodes"
+		return classification
+	}
+	if classification.StoppedEarly {
+		classification.Class = perfScanClassStopped
+		classification.StopReason = string(tree.ParseStopReason())
+		classification.Reason = fmt.Sprintf("Go full parse stopped early (%s)", classification.StopReason)
+		return classification
+	}
+	if !classification.FullSpan {
+		classification.Reason = fmt.Sprintf("Go root spans bytes [%d,%d), want [0,%d)", root.StartByte(), root.EndByte(), sourceBytes)
+		return classification
+	}
+	if classification.RootHasError {
+		classification.Reason = "Go root contains ERROR nodes"
+		return classification
+	}
+	classification.Reason = "Go full parse was not accepted as a clean full-span tree"
+	return classification
+}
+
+func (m *perfScanLangMeasurer) measureFull(src []byte) (*perfScanFileAxis, *perfScanFileClassification) {
 	out := &perfScanFileAxis{Status: perfScanStatusOK}
+	var classification *perfScanFileClassification
 
 	goOK := true
 	var goDetail string
 	for i := 0; i < m.cfg.Warmup; i++ {
 		m.checkpoint(perfScanAxisFull, "go", "warmup", i+1)
-		_, att := m.goAttemptFull(src, false)
+		keepTree := i == 0
+		tree, att := m.attemptGoFull(src, keepTree)
+		if i == 0 {
+			classification = perfScanClassifyGoFull(tree, att, len(src))
+		}
+		releaseGoTree(tree)
 		if att.status != "" {
 			goOK = false
 			out.Status = att.status
@@ -1279,7 +1438,7 @@ func (m *perfScanLangMeasurer) measureFull(src []byte) *perfScanFileAxis {
 	cOK := true
 	for i := 0; i < m.cfg.Warmup; i++ {
 		m.checkpoint(perfScanAxisFull, "c", "warmup", i+1)
-		_, att := m.cAttempt(src, nil, false)
+		_, att := m.attemptCFull(src, nil, false)
 		if att.status != "" {
 			cOK = false
 			if out.Status == perfScanStatusOK {
@@ -1295,7 +1454,7 @@ func (m *perfScanLangMeasurer) measureFull(src []byte) *perfScanFileAxis {
 	for i := 0; i < m.cfg.Reps; i++ {
 		if goOK {
 			m.checkpoint(perfScanAxisFull, "go", "rep", i+1)
-			_, att := m.goAttemptFull(src, false)
+			_, att := m.attemptGoFull(src, false)
 			if att.status != "" {
 				goOK = false
 				out.Status = att.status
@@ -1307,7 +1466,7 @@ func (m *perfScanLangMeasurer) measureFull(src []byte) *perfScanFileAxis {
 		}
 		if cOK {
 			m.checkpoint(perfScanAxisFull, "c", "rep", i+1)
-			_, att := m.cAttempt(src, nil, false)
+			_, att := m.attemptCFull(src, nil, false)
 			if att.status != "" {
 				cOK = false
 				if out.Status == perfScanStatusOK {
@@ -1320,11 +1479,20 @@ func (m *perfScanLangMeasurer) measureFull(src []byte) *perfScanFileAxis {
 			}
 		}
 	}
+	// With warmup=0, classify after the timed samples so the classification
+	// probe cannot warm parser caches or otherwise alter the requested timing
+	// protocol. Its elapsed time is deliberately discarded.
+	if m.cfg.Warmup == 0 {
+		m.checkpoint(perfScanAxisFull, "go", "classify", 1)
+		tree, att := m.attemptGoFull(src, true)
+		classification = perfScanClassifyGoFull(tree, att, len(src))
+		releaseGoTree(tree)
+	}
 	if goDetail != "" {
 		out.Detail = strings.TrimSpace(goDetail + " " + out.Detail)
 	}
 	perfScanFillAxis(out, goSamples, cSamples, goOK, cOK, m.budget)
-	return out
+	return out, classification
 }
 
 func (m *perfScanLangMeasurer) measureNoEdit(src []byte) *perfScanFileAxis {
@@ -1615,6 +1783,51 @@ func perfScanAggregateLanguage(row *perfScanLanguage, cfg perfScanConfig) {
 		}
 	}
 	row.Verdict = worst
+	perfScanAggregateCleanErrorSplit(row)
+}
+
+func perfScanAggregateCleanErrorSplit(row *perfScanLanguage) {
+	if row == nil {
+		return
+	}
+	split := &perfScanCleanErrorSplit{}
+	var cleanRatios, errorRatios []float64
+	for _, file := range row.Files {
+		if file == nil || file.Classification == nil {
+			continue
+		}
+		split.ClassifiedFiles++
+		timing := &split.Error
+		ratios := &errorRatios
+		if file.Classification.Class == perfScanClassClean {
+			timing = &split.Clean
+			ratios = &cleanRatios
+		} else if file.Classification.Class == perfScanClassStopped {
+			split.StoppedFiles++
+		}
+		timing.Files++
+		full := file.Axes[perfScanAxisFull]
+		if full == nil || full.Status != perfScanStatusOK || full.GoMedianNs <= 0 || full.CMedianNs <= 0 {
+			continue
+		}
+		timing.FilesOK++
+		timing.GoTotalNs += full.GoMedianNs
+		timing.CTotalNs += full.CMedianNs
+		*ratios = append(*ratios, float64(full.GoMedianNs)/float64(full.CMedianNs))
+	}
+	if split.ClassifiedFiles == 0 {
+		return
+	}
+	if split.Clean.CTotalNs > 0 {
+		split.Clean.RatioByTotal = float64(split.Clean.GoTotalNs) / float64(split.Clean.CTotalNs)
+	}
+	if split.Error.CTotalNs > 0 {
+		split.Error.RatioByTotal = float64(split.Error.GoTotalNs) / float64(split.Error.CTotalNs)
+	}
+	split.Clean.RatioMedianOfFiles = perfScanMedianFloat(cleanRatios)
+	split.Error.RatioMedianOfFiles = perfScanMedianFloat(errorRatios)
+	split.ErrorShare = float64(split.Error.Files) / float64(split.ClassifiedFiles)
+	row.FullParseSplit = split
 }
 
 // ---------------------------------------------------------------------------
@@ -2110,6 +2323,67 @@ func perfScanFmtRatio(agg *perfScanLangAxis) string {
 	return s
 }
 
+func perfScanFmtClassRatio(agg perfScanClassTiming) string {
+	if agg.RatioByTotal <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.2fx", agg.RatioByTotal)
+}
+
+func perfScanFmtShare(share float64) string {
+	return fmt.Sprintf("%.1f%%", share*100)
+}
+
+func perfScanRenderCleanErrorSplit(b *strings.Builder, rows []*perfScanLanguage) {
+	hasSplit := false
+	for _, row := range rows {
+		if row.FullParseSplit != nil {
+			hasSplit = true
+			break
+		}
+	}
+	if !hasSplit {
+		return
+	}
+	fmt.Fprintf(b, "\n## Full-parse clean/error split\n\n")
+	fmt.Fprintf(b, "`error` includes every non-clean file; `stopped` is the stopped subset. Only status=`ok` files contribute timing totals and ratios.\n\n")
+	fmt.Fprintf(b, "| language | clean timed/files | clean Go | clean C | clean ratio | error timed/files | stopped | error Go | error C | error ratio | error share |\n")
+	fmt.Fprintf(b, "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+	for _, row := range rows {
+		split := row.FullParseSplit
+		if split == nil {
+			continue
+		}
+		fmt.Fprintf(b, "| %s | %d/%d | %s | %s | %s | %d/%d | %d | %s | %s | %s | %s |\n",
+			row.Language,
+			split.Clean.FilesOK, split.Clean.Files,
+			perfScanFmtNs(split.Clean.GoTotalNs), perfScanFmtNs(split.Clean.CTotalNs), perfScanFmtClassRatio(split.Clean),
+			split.Error.FilesOK, split.Error.Files, split.StoppedFiles,
+			perfScanFmtNs(split.Error.GoTotalNs), perfScanFmtNs(split.Error.CTotalNs), perfScanFmtClassRatio(split.Error),
+			perfScanFmtShare(split.ErrorShare))
+	}
+}
+
+func perfScanRenderNonCleanClassifications(b *strings.Builder, rows []*perfScanLanguage) {
+	var lines []string
+	for _, row := range rows {
+		for _, file := range row.Files {
+			if file.Classification == nil || file.Classification.Class == perfScanClassClean {
+				continue
+			}
+			lines = append(lines, fmt.Sprintf("- **%s** `%s` class=%s status=%s — %s",
+				row.Language, file.Path, file.Classification.Class, file.Classification.GoStatus, file.Classification.Reason))
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "\n## Non-clean full-parse classifications\n\n")
+	for _, line := range lines {
+		fmt.Fprintf(b, "%s\n", line)
+	}
+}
+
 func perfScanRenderMarkdown(board *perfScanScoreboard) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Go-vs-C real-corpus perf scoreboard\n\n")
@@ -2183,6 +2457,8 @@ func perfScanRenderMarkdown(board *perfScanScoreboard) string {
 			perfScanFmtRatio(full), perfScanFmtRatio(noedit), row.Verdict)
 	}
 
+	perfScanRenderCleanErrorSplit(&b, board.Languages)
+
 	var cliffLines []string
 	for _, row := range board.Languages {
 		for _, file := range row.Files {
@@ -2213,6 +2489,8 @@ func perfScanRenderMarkdown(board *perfScanScoreboard) string {
 			fmt.Fprintf(&b, "%s\n", line)
 		}
 	}
+
+	perfScanRenderNonCleanClassifications(&b, board.Languages)
 
 	var problems []string
 	for _, row := range board.Languages {
@@ -2444,5 +2722,398 @@ func TestPerfScanHardGateUnit(t *testing.T) {
 	report = perfScanEvaluateHardGate(board)
 	if report.Status != perfScanGateFail || len(report.Failures) != 1 || report.Failures[0].Kind != "go_stop" {
 		t.Fatalf("Go parser-budget stop must fail independently of full ratio: %+v", report)
+	}
+}
+
+func TestPerfScanFullParseClassificationUnit(t *testing.T) {
+	src := []byte("abcdef")
+	cleanRoot := gotreesitter.NewLeafNode(1, true, 0, uint32(len(src)), gotreesitter.Point{}, gotreesitter.Point{Column: uint32(len(src))})
+	cleanTree := gotreesitter.NewTree(cleanRoot, src, nil)
+	clean := perfScanClassifyGoFull(cleanTree, perfScanAttempt{}, len(src))
+	cleanTree.Release()
+	if clean.Class != perfScanClassClean || !clean.FullSpan || clean.RootHasError || clean.StoppedEarly || clean.GoStatus != perfScanStatusOK {
+		t.Fatalf("clean classification = %+v", clean)
+	}
+
+	prefixRoot := gotreesitter.NewLeafNode(1, true, 1, uint32(len(src)), gotreesitter.Point{Column: 1}, gotreesitter.Point{Column: uint32(len(src))})
+	prefixTree := gotreesitter.NewTree(prefixRoot, src, nil)
+	prefix := perfScanClassifyGoFull(prefixTree, perfScanAttempt{}, len(src))
+	prefixTree.Release()
+	if prefix.Class != perfScanClassError || prefix.FullSpan || !strings.Contains(prefix.Reason, "want [0,6)") {
+		t.Fatalf("prefix-only classification = %+v", prefix)
+	}
+
+	errorRoot := gotreesitter.NewLeafNode(gotreesitter.Symbol(65535), true, 0, uint32(len(src)), gotreesitter.Point{}, gotreesitter.Point{Column: uint32(len(src))})
+	errorTree := gotreesitter.NewTree(errorRoot, src, nil)
+	errorClass := perfScanClassifyGoFull(errorTree, perfScanAttempt{}, len(src))
+	errorTree.Release()
+	if errorClass.Class != perfScanClassError || !errorClass.FullSpan || !errorClass.RootHasError || !strings.Contains(errorClass.Reason, "ERROR") {
+		t.Fatalf("error classification = %+v", errorClass)
+	}
+
+	stopped := perfScanClassifyGoFull(nil, perfScanAttempt{
+		status: "go_budget_stop",
+		detail: "parse stopped early (memory_budget)",
+		stop: &perfScanStop{
+			Class:  perfScanStopParserBudget,
+			Reason: string(gotreesitter.ParseStopMemoryBudget),
+			Detail: "parse stopped early (memory_budget)",
+		},
+	}, len(src))
+	if stopped.Class != perfScanClassStopped || !stopped.StoppedEarly || stopped.StopReason != string(gotreesitter.ParseStopMemoryBudget) || stopped.GoStatus != "go_budget_stop" {
+		t.Fatalf("stopped classification = %+v", stopped)
+	}
+}
+
+func perfScanSyntheticCleanTree(src []byte) *gotreesitter.Tree {
+	root := gotreesitter.NewLeafNode(1, true, 0, uint32(len(src)), gotreesitter.Point{}, gotreesitter.Point{Column: uint32(len(src))})
+	return gotreesitter.NewTree(root, src, nil)
+}
+
+func perfScanSyntheticTimeoutAttempt() perfScanAttempt {
+	return perfScanAttempt{
+		ns:     500,
+		status: "go_timeout",
+		detail: "timed Go parse stopped",
+		stop: &perfScanStop{
+			Class:          perfScanStopParserTimeout,
+			Reason:         string(gotreesitter.ParseStopTimeout),
+			Implementation: "go",
+			Detail:         "timed Go parse stopped",
+		},
+	}
+}
+
+func TestPerfScanWarmupClassificationSurvivesTimedFailureUnit(t *testing.T) {
+	src := []byte("{}")
+	goCalls := 0
+	m := &perfScanLangMeasurer{
+		cfg:    perfScanConfig{Warmup: 1, Reps: 1},
+		budget: time.Second,
+		goFullAttempt: func(_ []byte, keepTree bool) (*gotreesitter.Tree, perfScanAttempt) {
+			goCalls++
+			if goCalls == 1 {
+				if !keepTree {
+					t.Fatal("first warmup did not retain its classification tree")
+				}
+				return perfScanSyntheticCleanTree(src), perfScanAttempt{ns: 100}
+			}
+			return nil, perfScanSyntheticTimeoutAttempt()
+		},
+		cFullAttempt: func([]byte, *sitter.Tree, bool) (*sitter.Tree, perfScanAttempt) {
+			return nil, perfScanAttempt{ns: 50}
+		},
+	}
+
+	axis, classification := m.measureFull(src)
+	if goCalls != 2 {
+		t.Fatalf("Go full attempts=%d, want warmup+timed=2", goCalls)
+	}
+	if classification == nil || classification.Class != perfScanClassClean {
+		t.Fatalf("timed failure overwrote first warmup classification: %+v", classification)
+	}
+	if axis.Status != "go_timeout" || axis.Stop == nil || axis.Stop.Phase != "rep" {
+		t.Fatalf("timed failure was not retained on timing axis: %+v", axis)
+	}
+}
+
+func TestPerfScanRejectedErrorRootRetainsClassificationFactsUnit(t *testing.T) {
+	src := []byte("invalid")
+	var retained *gotreesitter.Tree
+	m := &perfScanLangMeasurer{
+		cfg:    perfScanConfig{Warmup: 1, Reps: 1},
+		budget: time.Second,
+		cFullAttempt: func([]byte, *sitter.Tree, bool) (*sitter.Tree, perfScanAttempt) {
+			return nil, perfScanAttempt{ns: 50}
+		},
+	}
+	m.goFullAttempt = func(_ []byte, keepTree bool) (*gotreesitter.Tree, perfScanAttempt) {
+		root := gotreesitter.NewLeafNode(gotreesitter.Symbol(65535), true, 0, uint32(len(src)), gotreesitter.Point{}, gotreesitter.Point{Column: uint32(len(src))})
+		tree := gotreesitter.NewTree(root, src, nil)
+		retained = tree
+		return m.classifyGoAttemptWithRetention(tree, nil, "", src, keepTree, keepTree, perfScanAttempt{ns: 100})
+	}
+
+	axis, classification := m.measureFull(src)
+	if axis.Status != "go_error" {
+		t.Fatalf("rejected ERROR-root axis = %+v, want go_error", axis)
+	}
+	if classification == nil || classification.Class != perfScanClassError || !classification.FullSpan || !classification.RootHasError {
+		t.Fatalf("rejected ERROR-root classification = %+v", classification)
+	}
+	encoded, err := json.Marshal(classification)
+	if err != nil {
+		t.Fatalf("marshal classification: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"full_span":true`) || !strings.Contains(string(encoded), `"root_has_error":true`) {
+		t.Fatalf("serialized ERROR-root facts = %s", encoded)
+	}
+	if retained == nil || retained.RootNode() != nil {
+		t.Fatalf("classification tree was not released after measurement")
+	}
+}
+
+func TestPerfScanWarmupZeroTimedFailureStillRunsClassificationProbeUnit(t *testing.T) {
+	src := []byte("{}")
+	goCalls := 0
+	var phases []string
+	m := &perfScanLangMeasurer{
+		cfg:    perfScanConfig{Warmup: 0, Reps: 1},
+		budget: time.Second,
+		progress: func(axis, impl, phase string, attempt int) {
+			phases = append(phases, fmt.Sprintf("%s/%s/%s/%d", axis, impl, phase, attempt))
+		},
+		goFullAttempt: func(_ []byte, keepTree bool) (*gotreesitter.Tree, perfScanAttempt) {
+			goCalls++
+			if goCalls == 1 {
+				return nil, perfScanSyntheticTimeoutAttempt()
+			}
+			if !keepTree {
+				t.Fatal("classification probe did not retain its tree")
+			}
+			return perfScanSyntheticCleanTree(src), perfScanAttempt{ns: 100}
+		},
+		cFullAttempt: func([]byte, *sitter.Tree, bool) (*sitter.Tree, perfScanAttempt) {
+			return nil, perfScanAttempt{ns: 50}
+		},
+	}
+
+	axis, classification := m.measureFull(src)
+	if goCalls != 2 || len(phases) == 0 || phases[len(phases)-1] != "full/go/classify/1" {
+		t.Fatalf("warmup=0 attempts=%d phases=%v, want timed failure then distinct probe", goCalls, phases)
+	}
+	if classification == nil || classification.Class != perfScanClassClean {
+		t.Fatalf("post-failure classification probe = %+v", classification)
+	}
+	if axis.Status != "go_timeout" || axis.Stop == nil || axis.Stop.Phase != "rep" {
+		t.Fatalf("classification probe changed timed failure: %+v", axis)
+	}
+}
+
+func TestPerfScanClassificationProbeFailureDoesNotAffectGateUnit(t *testing.T) {
+	src := []byte("{}")
+	goCalls := 0
+	m := &perfScanLangMeasurer{
+		cfg:    perfScanConfig{Warmup: 0, Reps: 1},
+		budget: time.Second,
+		goFullAttempt: func([]byte, bool) (*gotreesitter.Tree, perfScanAttempt) {
+			goCalls++
+			if goCalls == 1 {
+				return nil, perfScanAttempt{ns: 200}
+			}
+			return nil, perfScanAttempt{
+				status: "go_budget_stop",
+				detail: "classification probe stopped",
+				stop: &perfScanStop{
+					Class:          perfScanStopParserBudget,
+					Reason:         string(gotreesitter.ParseStopMemoryBudget),
+					Implementation: "go",
+					Detail:         "classification probe stopped",
+				},
+			}
+		},
+		cFullAttempt: func([]byte, *sitter.Tree, bool) (*sitter.Tree, perfScanAttempt) {
+			return nil, perfScanAttempt{ns: 100}
+		},
+	}
+
+	axis, classification := m.measureFull(src)
+	if classification == nil || classification.Class != perfScanClassStopped {
+		t.Fatalf("classification-only failure = %+v", classification)
+	}
+	if axis.Status != perfScanStatusOK || axis.Stop != nil || axis.GoMedianNs != 200 || axis.CMedianNs != 100 || axis.Ratio != 2 {
+		t.Fatalf("classification-only failure mutated timing axis: %+v", axis)
+	}
+	file := &perfScanFile{Path: "probe.json", Classification: classification, Axes: map[string]*perfScanFileAxis{perfScanAxisFull: axis}}
+	board := &perfScanScoreboard{Languages: []*perfScanLanguage{{
+		Language: "json", Status: perfScanStatusOK, FilesSelected: 1, FilesMeasured: 1, Files: []*perfScanFile{file},
+	}}}
+	report := perfScanEvaluateHardGate(board)
+	if report.Status != perfScanGatePass || len(report.Failures) != 0 || report.FullFilesEvaluated != 1 {
+		t.Fatalf("classification-only failure changed hard gate: %+v", report)
+	}
+}
+
+func TestPerfScanCleanErrorSplitUnit(t *testing.T) {
+	file := func(path, class string, goNs, cNs int64, status string) *perfScanFile {
+		axis := &perfScanFileAxis{Status: status, GoMedianNs: goNs, CMedianNs: cNs}
+		if goNs > 0 && cNs > 0 {
+			axis.Ratio = float64(goNs) / float64(cNs)
+		}
+		return &perfScanFile{
+			Path: path,
+			Classification: &perfScanFileClassification{
+				Class:    class,
+				Reason:   class + " fixture",
+				GoStatus: status,
+			},
+			Axes: map[string]*perfScanFileAxis{perfScanAxisFull: axis},
+		}
+	}
+
+	t.Run("mixed", func(t *testing.T) {
+		row := &perfScanLanguage{Language: "mixed", Files: []*perfScanFile{
+			file("clean-a", perfScanClassClean, 200, 100, perfScanStatusOK),
+			file("clean-b", perfScanClassClean, 400, 100, perfScanStatusOK),
+			file("error-a", perfScanClassError, 900, 100, perfScanStatusOK),
+			file("stopped-a", perfScanClassStopped, 0, 0, "go_budget_stop"),
+		}}
+		perfScanAggregateCleanErrorSplit(row)
+		split := row.FullParseSplit
+		if split == nil || split.ClassifiedFiles != 4 || split.Clean.Files != 2 || split.Clean.FilesOK != 2 || split.Error.Files != 2 || split.Error.FilesOK != 1 || split.StoppedFiles != 1 {
+			t.Fatalf("mixed counts = %+v", split)
+		}
+		if split.Clean.GoTotalNs != 600 || split.Clean.CTotalNs != 200 || split.Clean.RatioByTotal != 3 || split.Error.GoTotalNs != 900 || split.Error.CTotalNs != 100 || split.Error.RatioByTotal != 9 || split.ErrorShare != 0.5 {
+			t.Fatalf("mixed timings = %+v", split)
+		}
+	})
+
+	t.Run("all-clean", func(t *testing.T) {
+		row := &perfScanLanguage{Files: []*perfScanFile{
+			file("clean-a", perfScanClassClean, 100, 100, perfScanStatusOK),
+			file("clean-b", perfScanClassClean, 200, 100, perfScanStatusOK),
+		}}
+		perfScanAggregateCleanErrorSplit(row)
+		if row.FullParseSplit == nil || row.FullParseSplit.Clean.Files != 2 || row.FullParseSplit.Error.Files != 0 || row.FullParseSplit.ErrorShare != 0 {
+			t.Fatalf("all-clean split = %+v", row.FullParseSplit)
+		}
+	})
+
+	t.Run("all-error", func(t *testing.T) {
+		row := &perfScanLanguage{Files: []*perfScanFile{
+			file("error-a", perfScanClassError, 300, 100, perfScanStatusOK),
+			file("stopped-a", perfScanClassStopped, 0, 0, "go_timeout"),
+		}}
+		perfScanAggregateCleanErrorSplit(row)
+		if row.FullParseSplit == nil || row.FullParseSplit.Clean.Files != 0 || row.FullParseSplit.Error.Files != 2 || row.FullParseSplit.StoppedFiles != 1 || row.FullParseSplit.ErrorShare != 1 {
+			t.Fatalf("all-error split = %+v", row.FullParseSplit)
+		}
+	})
+}
+
+func TestPerfScanCleanErrorSerializationAndMarkdownUnit(t *testing.T) {
+	row := &perfScanLanguage{
+		Language:      "synthetic",
+		Status:        perfScanStatusOK,
+		FilesSelected: 2,
+		FilesMeasured: 2,
+		Axes:          map[string]*perfScanLangAxis{},
+		Files: []*perfScanFile{
+			{
+				Path: "clean.go",
+				Classification: &perfScanFileClassification{
+					Class: perfScanClassClean, Reason: "accepted full-span Go tree without ERROR nodes", GoStatus: perfScanStatusOK, FullSpan: true,
+				},
+				Axes: map[string]*perfScanFileAxis{perfScanAxisFull: {Status: perfScanStatusOK, GoMedianNs: 200, CMedianNs: 100, Ratio: 2}},
+			},
+			{
+				Path: "broken.go",
+				Classification: &perfScanFileClassification{
+					Class: perfScanClassError, Reason: "Go root contains ERROR nodes", GoStatus: perfScanStatusOK, FullSpan: true, RootHasError: true,
+				},
+				Axes: map[string]*perfScanFileAxis{perfScanAxisFull: {Status: perfScanStatusOK, GoMedianNs: 600, CMedianNs: 100, Ratio: 6}},
+			},
+		},
+	}
+	perfScanAggregateCleanErrorSplit(row)
+	board := &perfScanScoreboard{
+		Schema:    perfScanSchema,
+		Config:    perfScanConfig{Axes: []string{perfScanAxisFull}},
+		Summary:   map[string]int{},
+		Languages: []*perfScanLanguage{row},
+	}
+
+	data, err := json.Marshal(board)
+	if err != nil {
+		t.Fatalf("marshal scoreboard: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{`"classification"`, `"class":"error"`, `"full_parse_split"`, `"error_share":0.5`, `"ratio_by_total":6`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("scoreboard JSON missing %s: %s", want, text)
+		}
+	}
+
+	var old perfScanFile
+	if err := json.Unmarshal([]byte(`{"path":"old.go","bytes":1,"axes":{}}`), &old); err != nil {
+		t.Fatalf("unmarshal legacy file row: %v", err)
+	}
+	if old.Classification != nil {
+		t.Fatalf("legacy row unexpectedly classified: %+v", old.Classification)
+	}
+
+	markdown := perfScanRenderMarkdown(board)
+	for _, want := range []string{
+		"## Full-parse clean/error split",
+		"| synthetic | 1/1 |",
+		"6.00x | 50.0% |",
+		"## Non-clean full-parse classifications",
+		"`broken.go` class=error status=ok — Go root contains ERROR nodes",
+	} {
+		if !strings.Contains(markdown, want) {
+			t.Fatalf("scoreboard markdown missing %q:\n%s", want, markdown)
+		}
+	}
+}
+
+func TestPerfScanWarmupZeroClassifiesAfterTimedSamplesUnit(t *testing.T) {
+	const lang = "json"
+	entry, ok := parityEntriesByName[lang]
+	if !ok {
+		t.Fatal("json registry entry is unavailable")
+	}
+	report, ok := paritySupportForName(lang)
+	if !ok {
+		t.Fatal("json support report is unavailable")
+	}
+	goLang := entry.Language()
+	if goLang == nil {
+		t.Fatal("json Go language is nil")
+	}
+	cLang, err := ParityCLanguage(lang)
+	if err != nil {
+		t.Fatalf("load JSON C language: %v", err)
+	}
+	cParser := sitter.NewParser()
+	defer cParser.Close()
+	if err := cParser.SetLanguage(cLang); err != nil {
+		t.Fatalf("set JSON C language: %v", err)
+	}
+
+	const reps = 2
+	var phases []string
+	m := &perfScanLangMeasurer{
+		cfg:    perfScanConfig{Reps: reps, Warmup: 0},
+		lang:   lang,
+		entry:  entry,
+		report: report,
+		goLang: goLang,
+		cLang:  cLang,
+		goPsr:  gotreesitter.NewParser(goLang),
+		cPsr:   cParser,
+		budget: 5 * time.Second,
+		progress: func(axis, impl, phase string, attempt int) {
+			phases = append(phases, fmt.Sprintf("%s/%s/%s/%d", axis, impl, phase, attempt))
+		},
+	}
+	m.goPsr.SetTimeoutMicros(uint64(m.budget.Microseconds()))
+	m.cPsr.SetTimeoutMicros(uint64(m.budget.Microseconds()))
+
+	axis, classification := m.measureFull([]byte(`{"answer":42}`))
+	if axis.Status != perfScanStatusOK || axis.GoMedianNs <= 0 || axis.CMedianNs <= 0 || axis.Ratio <= 0 {
+		t.Fatalf("warmup=0 full axis lost successful timing totals: %+v", axis)
+	}
+	if classification == nil || classification.Class != perfScanClassClean {
+		t.Fatalf("warmup=0 classification = %+v", classification)
+	}
+	want := []string{
+		"full/go/rep/1",
+		"full/c/rep/1",
+		"full/go/rep/2",
+		"full/c/rep/2",
+		"full/go/classify/1",
+	}
+	if strings.Join(phases, ",") != strings.Join(want, ",") {
+		t.Fatalf("warmup=0 phase order = %v, want %v", phases, want)
 	}
 }
