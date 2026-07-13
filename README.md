@@ -48,6 +48,17 @@ func main() {}
 
 `grammars.DetectLanguage("main.go")` resolves a filename to the appropriate `LangEntry`.
 
+### Browser and WebAssembly
+
+The repository ships two `GOOS=js GOARCH=wasm` targets: a blob-loading runtime
+and a grammargen build that imports Tree-sitter
+grammar JSON and generates tables in the browser. The runtime exposes parsing,
+queries, and highlighting; structured parse and query results include both
+UTF-8 byte offsets and JavaScript UTF-16 code-unit offsets.
+
+See the [WebAssembly guide](wasm/README.md) for build commands, the complete
+JavaScript APIs, node and match limits, and a browser example.
+
 ### Strict parsing and partial trees
 
 The default parse methods preserve tree-sitter's partial-tree behavior: if a
@@ -646,11 +657,12 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.31.0**. The 206-grammar curated parity milestone is
-banked. v0.31.0 strengthens failed forest-attempt memory containment, releases
-discarded GSS slab references, restores Python real-corpus S-expression and
-deep parity to 25/25, and separates fleet reporting from blocking
-certification. Detailed history lives in
+The current release is **v0.32.0**. The 206-grammar curated parity milestone is
+banked. v0.32.0 adds structured parsing and queries to the browser runtime,
+removes six dead JavaScript/TypeScript compatibility rewrites and recursive
+clean-subtree work from C-recovery condense, and gives Bash's committed
+real-corpus parity floor a dedicated executable witness. Detailed history lives
+in
 [CHANGELOG.md](CHANGELOG.md).
 
 ### Now — performance and extreme hygiene
