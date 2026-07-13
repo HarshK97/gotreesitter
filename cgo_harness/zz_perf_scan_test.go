@@ -40,6 +40,7 @@ package cgoharness
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -47,6 +48,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -84,6 +86,8 @@ const (
 	perfScanEnvHardGate     = "GTS_PERF_SCAN_HARD_GATE"
 	perfScanEnvRequireFleet = "GTS_PERF_SCAN_REQUIRE_FLEET"
 	perfScanEnvCorpusLock   = "GTS_REAL_CORPUS_BENCH_LOCK"
+	perfScanEnvRevision     = "GTS_PERF_SCAN_GIT_REVISION"
+	perfScanEnvGitClean     = "GTS_PERF_SCAN_GIT_CLEAN"
 
 	perfScanAxisFull   = "full"
 	perfScanAxisNoEdit = "noedit"
@@ -139,6 +143,7 @@ type perfScanConfig struct {
 	CorpusLock          string   `json:"corpus_lock,omitempty"`
 	CorpusLockSHA256    string   `json:"corpus_lock_sha256,omitempty"`
 	CorpusLockLanguages int      `json:"corpus_lock_languages,omitempty"`
+	Languages           []string `json:"languages,omitempty"`
 }
 
 type perfScanHost struct {
@@ -146,6 +151,7 @@ type perfScanHost struct {
 	GOOS         string `json:"goos"`
 	GOARCH       string `json:"goarch"`
 	NumCPU       int    `json:"num_cpu"`
+	GOMAXPROCS   int    `json:"gomaxprocs"`
 	GoVersion    string `json:"go_version"`
 	LoadavgStart string `json:"loadavg_start,omitempty"`
 	LoadavgEnd   string `json:"loadavg_end,omitempty"`
@@ -288,15 +294,18 @@ type perfScanGateReport struct {
 }
 
 type perfScanScoreboard struct {
-	Schema      string                 `json:"schema"`
-	GeneratedAt string                 `json:"generated_at"`
-	Host        perfScanHost           `json:"host"`
-	Config      perfScanConfig         `json:"config"`
-	Notes       []string               `json:"notes,omitempty"`
-	Summary     map[string]int         `json:"summary_verdicts"`
-	Languages   []*perfScanLanguage    `json:"languages"`
-	Corpus      perfScanCorpusCoverage `json:"corpus_coverage"`
-	Gate        *perfScanGateReport    `json:"hard_gate,omitempty"`
+	Schema         string                   `json:"schema"`
+	GeneratedAt    string                   `json:"generated_at"`
+	GitRevision    string                   `json:"git_revision,omitempty"`
+	GitClean       bool                     `json:"git_clean"`
+	Host           perfScanHost             `json:"host"`
+	Config         perfScanConfig           `json:"config"`
+	Notes          []string                 `json:"notes,omitempty"`
+	Summary        map[string]int           `json:"summary_verdicts"`
+	Languages      []*perfScanLanguage      `json:"languages"`
+	FullParseSplit *perfScanCleanErrorSplit `json:"full_parse_split,omitempty"`
+	Corpus         perfScanCorpusCoverage   `json:"corpus_coverage"`
+	Gate           *perfScanGateReport      `json:"hard_gate,omitempty"`
 }
 
 func perfScanGateEnabled() bool {
@@ -333,6 +342,7 @@ func perfScanLoadConfig() perfScanConfig {
 		HardGate:      parityEnvBool(perfScanEnvHardGate, true),
 		RequireFleet:  parityEnvBool(perfScanEnvRequireFleet, requireFleetDefault),
 		CorpusLock:    strings.TrimSpace(os.Getenv(perfScanEnvCorpusLock)),
+		Languages:     perfScanLanguageList(os.Getenv(perfScanEnvLangs)),
 	}
 	if cfg.Reps < 1 {
 		cfg.Reps = 1
@@ -342,6 +352,159 @@ func perfScanLoadConfig() perfScanConfig {
 	}
 	cfg.Contended, cfg.ContendedNote = perfScanContended()
 	return cfg
+}
+
+func perfScanLanguageList(raw string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		name := strings.TrimSpace(part)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
+type perfScanVCSCandidate struct {
+	Revision   string
+	Known      bool
+	CleanKnown bool
+	Modified   bool
+}
+
+type perfScanRepositoryState struct {
+	Revision string
+	Clean    bool
+}
+
+func perfScanRepositoryProvenance(requireClean bool) (perfScanRepositoryState, error) {
+	git, err := perfScanGitCandidate()
+	if err != nil {
+		return perfScanRepositoryState{}, err
+	}
+	build := perfScanBuildCandidate()
+	return perfScanSelectRepositoryProvenance(
+		git,
+		build,
+		strings.TrimSpace(os.Getenv(perfScanEnvRevision)),
+		parityEnvBool(perfScanEnvGitClean, false),
+		requireClean,
+	)
+}
+
+func perfScanGitCandidate() (perfScanVCSCandidate, error) {
+	cmd := exec.Command("git", "rev-parse", "--verify", "HEAD")
+	data, err := cmd.Output()
+	if err != nil {
+		return perfScanVCSCandidate{}, nil
+	}
+	revision, err := perfScanNormalizeRevision(string(data))
+	if err != nil {
+		return perfScanVCSCandidate{}, fmt.Errorf("git HEAD: %w", err)
+	}
+	status, err := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all").Output()
+	if err != nil {
+		return perfScanVCSCandidate{}, fmt.Errorf("inspect git worktree: %w", err)
+	}
+	return perfScanVCSCandidate{Revision: revision, Known: true, CleanKnown: true, Modified: strings.TrimSpace(string(status)) != ""}, nil
+}
+
+func perfScanBuildCandidate() perfScanVCSCandidate {
+	var candidate perfScanVCSCandidate
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, setting := range info.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				candidate.Revision = strings.TrimSpace(setting.Value)
+				candidate.Known = candidate.Revision != ""
+			case "vcs.modified":
+				value := strings.TrimSpace(setting.Value)
+				candidate.CleanKnown = strings.EqualFold(value, "true") || strings.EqualFold(value, "false")
+				candidate.Modified = strings.EqualFold(value, "true")
+			}
+		}
+	}
+	return candidate
+}
+
+func perfScanSelectRepositoryProvenance(git, build perfScanVCSCandidate, override string, assertedClean, requireClean bool) (perfScanRepositoryState, error) {
+	override = strings.TrimSpace(override)
+	validateOverride := func(revision string) error {
+		if override == "" {
+			return nil
+		}
+		normalized, err := perfScanNormalizeRevision(override)
+		if err != nil {
+			return fmt.Errorf("%s: %w", perfScanEnvRevision, err)
+		}
+		if normalized != revision {
+			return fmt.Errorf("%s=%s cannot supersede discovered repository revision %s", perfScanEnvRevision, normalized, revision)
+		}
+		return nil
+	}
+	var discoveredRevision string
+	clean := true
+	for _, source := range []struct {
+		name      string
+		candidate perfScanVCSCandidate
+	}{{"git", git}, {"Go build", build}} {
+		if !source.candidate.Known {
+			continue
+		}
+		revision, err := perfScanNormalizeRevision(source.candidate.Revision)
+		if err != nil {
+			return perfScanRepositoryState{}, fmt.Errorf("%s repository revision: %w", source.name, err)
+		}
+		if source.candidate.Modified {
+			clean = false
+			if requireClean {
+				return perfScanRepositoryState{}, fmt.Errorf("%s reports a dirty or modified repository; authoritative scoreboards require tracked and untracked cleanliness", source.name)
+			}
+		}
+		if !source.candidate.CleanKnown && !assertedClean {
+			clean = false
+			if requireClean {
+				return perfScanRepositoryState{}, fmt.Errorf("%s does not report repository cleanliness; explicit %s=1 is required", source.name, perfScanEnvGitClean)
+			}
+		}
+		if discoveredRevision == "" {
+			discoveredRevision = revision
+		} else if discoveredRevision != revision {
+			return perfScanRepositoryState{}, fmt.Errorf("Git and Go build repository revisions disagree: %s != %s", discoveredRevision, revision)
+		}
+	}
+	if discoveredRevision != "" {
+		if err := validateOverride(discoveredRevision); err != nil {
+			return perfScanRepositoryState{}, err
+		}
+		return perfScanRepositoryState{Revision: discoveredRevision, Clean: clean}, nil
+	}
+	if override == "" {
+		return perfScanRepositoryState{}, fmt.Errorf("determine repository revision (set %s and %s=1 only when git and Go VCS metadata are unavailable)", perfScanEnvRevision, perfScanEnvGitClean)
+	}
+	revision, err := perfScanNormalizeRevision(override)
+	if err != nil {
+		return perfScanRepositoryState{}, fmt.Errorf("%s: %w", perfScanEnvRevision, err)
+	}
+	if !assertedClean && requireClean {
+		return perfScanRepositoryState{}, fmt.Errorf("metadata-poor revision override requires explicit %s=1", perfScanEnvGitClean)
+	}
+	return perfScanRepositoryState{Revision: revision, Clean: assertedClean}, nil
+}
+
+func perfScanNormalizeRevision(raw string) (string, error) {
+	revision := strings.ToLower(strings.TrimSpace(raw))
+	if len(revision) != 40 && len(revision) != 64 {
+		return "", fmt.Errorf("repository revision %q must be a full 40- or 64-hex object ID", raw)
+	}
+	if _, err := hex.DecodeString(revision); err != nil {
+		return "", fmt.Errorf("repository revision %q is not hexadecimal: %w", raw, err)
+	}
+	return revision, nil
 }
 
 func perfScanAxes() []string {
@@ -641,6 +804,9 @@ func perfScanEvaluateHardGate(board *perfScanScoreboard) perfScanGateReport {
 		addFailure(perfScanGateFinding{Kind: "coverage", Detail: "nil scoreboard"})
 		return report
 	}
+	if len(board.Languages) == 0 {
+		addFailure(perfScanGateFinding{Kind: "coverage", Status: "no_evidence", Detail: "scoreboard contains no language rows"})
+	}
 	for _, lang := range board.Corpus.MissingFromLock {
 		addFailure(perfScanGateFinding{Kind: "coverage", Language: lang, Detail: "language missing from authenticated corpus lock"})
 	}
@@ -665,6 +831,9 @@ func perfScanEvaluateHardGate(board *perfScanScoreboard) perfScanGateReport {
 		if row == nil {
 			addFailure(perfScanGateFinding{Kind: "coverage", Detail: "nil language row"})
 			continue
+		}
+		if row.FilesSelected <= 0 || row.FilesMeasured <= 0 || len(row.Files) <= 0 {
+			addFailure(perfScanGateFinding{Kind: "coverage", Language: row.Language, Status: "no_evidence", Detail: "language has no selected and measured file evidence"})
 		}
 		report.FilesExpected += row.FilesSelected
 		report.FilesMeasured += row.FilesMeasured
@@ -727,6 +896,9 @@ func perfScanEvaluateHardGate(board *perfScanScoreboard) perfScanGateReport {
 				report.FastFullFiles = append(report.FastFullFiles, finding)
 			}
 		}
+	}
+	if report.FullFilesEvaluated == 0 {
+		addFailure(perfScanGateFinding{Kind: "coverage", Status: "no_evidence", Detail: "scoreboard contains no evaluated full-parse file ratios"})
 	}
 	return report
 }
@@ -1845,6 +2017,10 @@ func TestPerfScanSweep(t *testing.T) {
 		t.Skipf("%s is set; refusing to sweep inside a child invocation", perfScanEnvLang)
 	}
 	cfg := perfScanLoadConfig()
+	provenance, err := perfScanRepositoryProvenance(cfg.HardGate)
+	if err != nil {
+		t.Fatalf("repository provenance: %v", err)
+	}
 	lockEntries, corpusCoverage, err := perfScanPrepareCorpusLock(&cfg)
 	if err != nil {
 		t.Fatalf("prepare authenticated corpus lock: %v", err)
@@ -1876,6 +2052,8 @@ func TestPerfScanSweep(t *testing.T) {
 	board := &perfScanScoreboard{
 		Schema:      perfScanSchema,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		GitRevision: provenance.Revision,
+		GitClean:    provenance.Clean,
 		Config:      cfg,
 		Corpus:      corpusCoverage,
 		Summary:     map[string]int{},
@@ -1884,6 +2062,7 @@ func TestPerfScanSweep(t *testing.T) {
 			GOOS:         runtime.GOOS,
 			GOARCH:       runtime.GOARCH,
 			NumCPU:       runtime.NumCPU(),
+			GOMAXPROCS:   runtime.GOMAXPROCS(0),
 			GoVersion:    runtime.Version(),
 			LoadavgStart: perfScanReadLoadavg(),
 		},
@@ -1906,7 +2085,17 @@ func TestPerfScanSweep(t *testing.T) {
 		t.Logf("  %-14s status=%-14s verdict=%-9s files=%d/%d elapsed=%dms %s",
 			lang, row.Status, row.Verdict, row.FilesMeasured, row.FilesSelected, row.ElapsedMS, row.Detail)
 	}
+	board.FullParseSplit = perfScanAggregateFleetCleanErrorSplit(board.Languages)
 	board.Host.LoadavgEnd = perfScanReadLoadavg()
+	if contended, note := perfScanContended(); contended {
+		board.Config.Contended = true
+		if board.Config.ContendedNote == "" {
+			board.Config.ContendedNote = "end of run: " + note
+		} else {
+			board.Config.ContendedNote += "; end of run: " + note
+		}
+		board.Notes = append(board.Notes, "CONTENDED END OF RUN — measurements are not authoritative ("+note+").")
+	}
 	gate := perfScanEvaluateHardGate(board)
 	board.Gate = &gate
 
@@ -1922,18 +2111,8 @@ func TestPerfScanSweep(t *testing.T) {
 }
 
 func perfScanSweepLanguages(t *testing.T, cfg perfScanConfig, lockEntries map[string]realCorpusBenchmarkLockEntry) []string {
-	if raw := strings.TrimSpace(os.Getenv(perfScanEnvLangs)); raw != "" {
-		seen := map[string]bool{}
-		var out []string
-		for _, part := range strings.Split(raw, ",") {
-			name := strings.TrimSpace(part)
-			if name != "" && !seen[name] {
-				seen[name] = true
-				out = append(out, name)
-			}
-		}
-		sort.Strings(out)
-		return out
+	if len(cfg.Languages) > 0 {
+		return append([]string(nil), cfg.Languages...)
 	}
 	if cfg.RequireFleet && len(lockEntries) > 0 {
 		out := make([]string, 0, len(lockEntries))
@@ -2280,14 +2459,118 @@ func perfScanHostname() string {
 // ---------------------------------------------------------------------------
 
 func perfScanWriteScoreboard(outDir string, board *perfScanScoreboard) error {
+	return perfScanWriteScoreboardWithRename(outDir, board, os.Rename)
+}
+
+func perfScanWriteScoreboardWithRename(outDir string, board *perfScanScoreboard, rename func(string, string) error) error {
 	data, err := json.MarshalIndent(board, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "scoreboard.json"), append(data, '\n'), 0o644); err != nil {
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(outDir, "scoreboard.md"), []byte(perfScanRenderMarkdown(board)), 0o644)
+	markdownTemp, err := perfScanStageScoreboardFile(outDir, "scoreboard.md", []byte(perfScanRenderMarkdown(board)))
+	if err != nil {
+		return err
+	}
+	defer os.Remove(markdownTemp)
+	jsonTemp, err := perfScanStageScoreboardFile(outDir, "scoreboard.json", append(data, '\n'))
+	if err != nil {
+		return err
+	}
+	defer os.Remove(jsonTemp)
+
+	markdownPath := filepath.Join(outDir, "scoreboard.md")
+	jsonPath := filepath.Join(outDir, "scoreboard.json")
+	var markdownBackup string
+	if info, statErr := os.Stat(markdownPath); statErr == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("existing %s is not a regular file", markdownPath)
+		}
+		backup, createErr := os.CreateTemp(outDir, ".scoreboard.md.backup-")
+		if createErr != nil {
+			return createErr
+		}
+		markdownBackup = backup.Name()
+		if closeErr := backup.Close(); closeErr != nil {
+			_ = os.Remove(markdownBackup)
+			return closeErr
+		}
+		if removeErr := os.Remove(markdownBackup); removeErr != nil {
+			return removeErr
+		}
+		if err := rename(markdownPath, markdownBackup); err != nil {
+			return err
+		}
+		defer os.Remove(markdownBackup)
+	} else if !os.IsNotExist(statErr) {
+		return statErr
+	}
+	restoreMarkdown := func() error {
+		_ = os.Remove(markdownPath)
+		if markdownBackup != "" {
+			return rename(markdownBackup, markdownPath)
+		}
+		return nil
+	}
+
+	// Publish Markdown first and JSON last. scoreboard.json is the commit
+	// marker; if that final rename fails, roll Markdown back before returning.
+	if err := rename(markdownTemp, markdownPath); err != nil {
+		if restoreErr := restoreMarkdown(); restoreErr != nil {
+			return fmt.Errorf("publish markdown: %v (restore: %v)", err, restoreErr)
+		}
+		return err
+	}
+	if err := rename(jsonTemp, jsonPath); err != nil {
+		if restoreErr := restoreMarkdown(); restoreErr != nil {
+			return fmt.Errorf("publish JSON: %v (restore markdown: %v)", err, restoreErr)
+		}
+		return err
+	}
+	if markdownBackup != "" {
+		_ = os.Remove(markdownBackup)
+		markdownBackup = ""
+	}
+	dir, err := os.Open(outDir)
+	if err != nil {
+		return err
+	}
+	syncErr := dir.Sync()
+	closeErr := dir.Close()
+	if syncErr != nil {
+		return syncErr
+	}
+	return closeErr
+}
+
+func perfScanStageScoreboardFile(outDir, name string, data []byte) (tempPath string, err error) {
+	file, err := os.CreateTemp(outDir, "."+name+".tmp-")
+	if err != nil {
+		return "", err
+	}
+	tempPath = file.Name()
+	cleanupPath := tempPath
+	defer func() {
+		if err != nil {
+			_ = file.Close()
+			_ = os.Remove(cleanupPath)
+		}
+	}()
+	if err = file.Chmod(0o644); err != nil {
+		return "", err
+	}
+	if _, err = file.Write(data); err != nil {
+		return "", err
+	}
+	if err = file.Sync(); err != nil {
+		return "", err
+	}
+	if err = file.Close(); err != nil {
+		return "", err
+	}
+	return tempPath, nil
 }
 
 func perfScanFmtNs(ns int64) string {
@@ -2388,8 +2671,12 @@ func perfScanRenderMarkdown(board *perfScanScoreboard) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Go-vs-C real-corpus perf scoreboard\n\n")
 	fmt.Fprintf(&b, "- schema: `%s` generated: %s\n", board.Schema, board.GeneratedAt)
-	fmt.Fprintf(&b, "- host: %s %s/%s cpus=%d %s\n",
-		board.Host.Hostname, board.Host.GOOS, board.Host.GOARCH, board.Host.NumCPU, board.Host.GoVersion)
+	if board.GitRevision != "" {
+		fmt.Fprintf(&b, "- git revision: `%s`\n", board.GitRevision)
+		fmt.Fprintf(&b, "- git worktree clean: `%t`\n", board.GitClean)
+	}
+	fmt.Fprintf(&b, "- host: %s %s/%s cpus=%d gomaxprocs=%d %s\n",
+		board.Host.Hostname, board.Host.GOOS, board.Host.GOARCH, board.Host.NumCPU, board.Host.GOMAXPROCS, board.Host.GoVersion)
 	fmt.Fprintf(&b, "- loadavg start `%s` end `%s`\n", board.Host.LoadavgStart, board.Host.LoadavgEnd)
 	fmt.Fprintf(&b, "- corpus: `%s` order=%s max_files=%d reps=%d warmup=%d file_budget=%dms axes=%s\n",
 		board.Config.CorpusRoot, board.Config.Order, board.Config.MaxFiles,
@@ -2439,6 +2726,18 @@ func perfScanRenderMarkdown(board *perfScanScoreboard) string {
 				fmt.Fprintf(&b, "- **%s** `%s` ratio=%.4fx — %s\n", finding.Language, finding.Path, finding.Ratio, finding.Detail)
 			}
 		}
+	}
+
+	if split := board.FullParseSplit; split != nil {
+		fmt.Fprintf(&b, "\n## Fleet full-parse clean/error split\n\n")
+		fmt.Fprintf(&b, "- classified files: `%d`; stopped subset: `%d`; error share: `%s`\n",
+			split.ClassifiedFiles, split.StoppedFiles, perfScanFmtShare(split.ErrorShare))
+		fmt.Fprintf(&b, "- clean: `%d/%d` timed, Go `%s`, C `%s`, ratio `%s`\n",
+			split.Clean.FilesOK, split.Clean.Files, perfScanFmtNs(split.Clean.GoTotalNs),
+			perfScanFmtNs(split.Clean.CTotalNs), perfScanFmtClassRatio(split.Clean))
+		fmt.Fprintf(&b, "- error/non-clean: `%d/%d` timed, Go `%s`, C `%s`, ratio `%s`\n",
+			split.Error.FilesOK, split.Error.Files, perfScanFmtNs(split.Error.GoTotalNs),
+			perfScanFmtNs(split.Error.CTotalNs), perfScanFmtClassRatio(split.Error))
 	}
 
 	fmt.Fprintf(&b, "\n## Per-language scoreboard\n\n")

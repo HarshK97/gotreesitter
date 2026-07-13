@@ -9,6 +9,14 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
+- The real-corpus performance scan now supports resumable one-language shard
+  campaigns with a blocking merge-only reducer. New scoreboards record their
+  repository revision and clean-source state; reduction requires exactly one
+  quiet, unexcluded, hard-gate-clean shard per authenticated lock language at
+  one revision, host/runtime identity, and measurement configuration, then
+  recomputes the fleet aggregates,
+  clean/error split, coverage, and hard gate before emitting authoritative
+  JSON and Markdown.
 - The real-corpus Go/C performance scoreboard now classifies each full parse
   as clean, error-bearing, or stopped outside the timed path, and reports
   per-language clean/error counts, timing totals, ratios, stopped subsets, and
