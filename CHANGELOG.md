@@ -7,6 +7,13 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-07-13
+
+Forest-routing performance and compatibility-hygiene release. Automatic
+dispatch now avoids five language paths that consistently discarded their
+forest result, while confirmed-dead C, C++, and Rust compatibility walks are
+removed after full-corpus verification.
+
 ### Changed
 
 - Automatic forest dispatch no longer speculates through Beancount by default.
@@ -2318,7 +2325,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.33.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.34.0...HEAD
+[0.34.0]: https://github.com/odvcencio/gotreesitter/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/odvcencio/gotreesitter/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/odvcencio/gotreesitter/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/odvcencio/gotreesitter/compare/v0.30.0...v0.31.0
