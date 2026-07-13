@@ -7,6 +7,37 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Removed
+
+- Five confirmed-dead C/C++ post-parse compatibility passes, found by a
+  full-corpus census (c: ~974 files from git/git; cpp: ~71 files from fmt;
+  each parsed both clean and truncated to the first 55% of every second file,
+  through the production C token-source backend, not the generic DFA lexer):
+  pointer-assignment precedence rewriting (a full-tree postorder walk on
+  every c/cpp parse); collapsed-keyword-children restoration (a second
+  full-tree walk on every c/cpp parse, covering the null/type-qualifier/
+  storage-class/noexcept/lambda-default-capture rule families); both
+  preprocessor-directive-shape sub-rewrites (whitespace-separated
+  function-macro reshape and directive-range extension); the
+  declaration-bounds and variadic-ellipsis handlers from the fused
+  declaration/variadic walk, plus their now-exclusive comment-scan helper
+  cluster; and the top-level-item-wrapper collapse (also checked for any
+  error/recovery path that could construct a visible `_top_level_item` node
+  before cutting; none found, including on the truncated/error-inducing
+  corpus phase). Zero rewrites were observed across every corpus file in both
+  phases for all five passes. The fused walk itself remains — its builtin
+  primitive-type-identifier promotion and preprocessor newline-span extension
+  handlers are confirmed live and unaffected. `normalizeCTranslationUnitRoot`
+  and the typedef-struct error-recovery branch remain untouched pending their
+  own repros. Net ~575 lines removed from `parser_result_c.go` (~944
+  including pruned dead-pass-only tests); verified byte-identical
+  (S-expression and span hashes) across the entire c and cpp corpora (1,045
+  files), and both the root package's production-backed
+  `BenchmarkCPPConditionClauseAmbiguityDFA` and the grammars package's
+  `BenchmarkParse_C` show a statistically significant ~13-27% drop in parse
+  time and 26-50% drop in allocations per parse from dropping the two
+  full-tree walks.
+
 ## [0.33.0] - 2026-07-13
 
 Recurring parser and forest performance, recovery allocation, compatibility,
