@@ -1948,7 +1948,7 @@ func (p *Parser) canFinalizeNoActionEOFAt(s *glrStack, expectedEOFByte uint32, s
 	return true
 }
 
-func (p *Parser) tryInsertMissingSingleShift(source []byte, s *glrStack, tok Token, ts TokenSource, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
+func (p *Parser) tryInsertMissingSingleShift(source []byte, s *glrStack, tok Token, ts TokenSource, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, stateScratch *missingShiftStateScratch, trackChildErrors *bool) bool {
 	if p == nil || p.language == nil || s == nil || s.dead || tok.NoLookahead {
 		return false
 	}
@@ -1994,6 +1994,12 @@ func (p *Parser) tryInsertMissingSingleShift(source []byte, s *glrStack, tok Tok
 	})
 	var reducePrefix []ParseAction
 	if candidateCnt != 1 {
+		localStateScratch := missingShiftStateScratch{}
+		if stateScratch == nil {
+			stateScratch = &localStateScratch
+		}
+		baseStates := p.collectStackStatesInto(s, stateScratch.baseStates[:0])
+		stateScratch.baseStates = baseStates
 		// Mirror tree-sitter's ts_parser__recover_with_missing: when the strict
 		// single-shift heuristic above did not isolate a unique visible/named
 		// candidate, fall back to the C runtime's exact algorithm. Scan terminal
@@ -2014,10 +2020,10 @@ func (p *Parser) tryInsertMissingSingleShift(source []byte, s *glrStack, tok Tok
 		// lookahead be shifted, so this returns false and the parser falls through
 		// to its established ERROR recovery; for Zig's `struct {}` the missing
 		// `_identifier` reduces up to a state that can shift the closing `}`.
-		if sym, act, ok := p.findRecoverWithMissingShift(s, state, tok.Symbol); ok {
+		if sym, act, ok := p.findRecoverWithMissingShiftAtStatesScratch(baseStates, state, tok.Symbol, &stateScratch.simStates); ok {
 			candidateSym = sym
 			candidateAct = act
-		} else if reduces, sym, act, ok := p.findRecoverWithMissingAfterReductions(s, state, tok.Symbol); ok {
+		} else if reduces, sym, act, ok := p.findRecoverWithMissingAfterReductionsAtStates(baseStates, state, tok.Symbol, &stateScratch.reduceStates, &stateScratch.simStates); ok {
 			// C's ts_parser__handle_error runs do_all_potential_reductions
 			// BEFORE per-version missing insertion, so the missing terminal is
 			// often only insertable after pending reductions land (jq: REDUCE
@@ -2161,6 +2167,10 @@ func (p *Parser) findRecoverWithMissingAfterReductions(s *glrStack, state StateI
 		return nil, 0, ParseAction{}, false
 	}
 	baseStates := p.collectStackStates(s)
+	return p.findRecoverWithMissingAfterReductionsAtStates(baseStates, state, lookahead, nil, nil)
+}
+
+func (p *Parser) findRecoverWithMissingAfterReductionsAtStates(baseStates []StateID, state StateID, lookahead Symbol, reduceScratch, simScratch *[]StateID) ([]ParseAction, Symbol, ParseAction, bool) {
 	if len(baseStates) == 0 {
 		return nil, 0, ParseAction{}, false
 	}
@@ -2169,7 +2179,16 @@ func (p *Parser) findRecoverWithMissingAfterReductions(s *glrStack, state StateI
 	// missing-token insertion — deeper chains find insertions C never takes
 	// (PHP's `static function …` recovery is pinned on NOT inserting).
 	const maxReduceChase = 1
-	states := append([]StateID(nil), baseStates...)
+	var states []StateID
+	if reduceScratch != nil {
+		states = resizeMissingShiftStateScratch((*reduceScratch)[:0], len(baseStates))
+		defer func() {
+			*reduceScratch = states[:0]
+		}()
+	} else {
+		states = make([]StateID, len(baseStates))
+	}
+	copy(states, baseStates)
 	var reduces []ParseAction
 	cur := state
 	for step := 0; step < maxReduceChase; step++ {
@@ -2189,7 +2208,7 @@ func (p *Parser) findRecoverWithMissingAfterReductions(s *glrStack, state StateI
 		states = append(states, gotoState)
 		reduces = append(reduces, reduceAct)
 		cur = gotoState
-		if sym, act, ok := p.findRecoverWithMissingShiftAtStates(states, cur, lookahead); ok {
+		if sym, act, ok := p.findRecoverWithMissingShiftAtStatesScratch(states, cur, lookahead, simScratch); ok {
 			return reduces, sym, act, true
 		}
 	}
@@ -2225,8 +2244,18 @@ func (p *Parser) anyLookaheadReduceAction(state StateID) (ParseAction, bool) {
 // findRecoverWithMissingShiftAtStates is findRecoverWithMissingShift's scan
 // over an explicit (simulated) state chain instead of the live stack.
 func (p *Parser) findRecoverWithMissingShiftAtStates(baseStates []StateID, state StateID, lookahead Symbol) (Symbol, ParseAction, bool) {
+	return p.findRecoverWithMissingShiftAtStatesScratch(baseStates, state, lookahead, nil)
+}
+
+func (p *Parser) findRecoverWithMissingShiftAtStatesScratch(baseStates []StateID, state StateID, lookahead Symbol, simScratch *[]StateID) (Symbol, ParseAction, bool) {
 	tokenCount := Symbol(p.language.TokenCount)
 	var sim []StateID
+	if simScratch != nil {
+		sim = (*simScratch)[:0]
+		defer func() {
+			*simScratch = sim[:0]
+		}()
+	}
 	for ms := Symbol(1); ms < tokenCount; ms++ {
 		if ms == lookahead {
 			continue
@@ -2271,7 +2300,6 @@ func (p *Parser) findRecoverWithMissingShift(s *glrStack, state StateID, lookahe
 	if p == nil || p.language == nil || s == nil {
 		return 0, ParseAction{}, false
 	}
-	tokenCount := Symbol(p.language.TokenCount)
 	// Materialize the current stack's state chain once; the per-candidate
 	// reduction simulation works on a scratch copy so the real stack is never
 	// mutated.
@@ -2279,66 +2307,57 @@ func (p *Parser) findRecoverWithMissingShift(s *glrStack, state StateID, lookahe
 	if len(baseStates) == 0 {
 		return 0, ParseAction{}, false
 	}
-	var sim []StateID
-	for ms := Symbol(1); ms < tokenCount; ms++ {
-		if ms == lookahead {
-			continue
-		}
-		idx := p.lookupActionIndex(state, ms)
-		if idx == 0 || int(idx) >= len(p.language.ParseActions) {
-			continue
-		}
-		actions := p.language.ParseActions[idx].Actions
-		if len(actions) == 0 {
-			continue
-		}
-		// ts_language_next_state uses the LAST action of the entry — for GLR
-		// conflict entries like [REDUCE, SHIFT] the shift is the next-state
-		// candidate (jq's `?` after `if … end` is exactly this shape).
-		act := actions[len(actions)-1]
-		if act.Type != ParseActionShift || act.Extra {
-			continue
-		}
-		nextState := act.State
-		// ts_language_next_state skips when the target is 0 or unchanged.
-		if nextState == 0 || nextState == state {
-			continue
-		}
-		if !p.stateHasLeadingReduceAction(nextState, lookahead) {
-			continue
-		}
-		// Simulate inserting the missing terminal (shift to nextState) followed
-		// by all potential reductions, then check the lookahead can be shifted.
-		sim = append(sim[:0], baseStates...)
-		sim = append(sim, nextState)
-		if p.canShiftAfterReductions(sim, lookahead) {
-			return ms, act, true
-		}
-	}
-	return 0, ParseAction{}, false
+	return p.findRecoverWithMissingShiftAtStates(baseStates, state, lookahead)
 }
 
 // collectStackStates returns the chain of parser states for s, bottom-to-top.
 func (p *Parser) collectStackStates(s *glrStack) []StateID {
+	return p.collectStackStatesInto(s, nil)
+}
+
+func (p *Parser) collectStackStatesInto(s *glrStack, dst []StateID) []StateID {
 	if s == nil {
 		return nil
 	}
 	if s.gss.head == nil && len(s.entries) > 0 {
-		states := make([]StateID, len(s.entries))
+		states := resizeMissingShiftStateScratch(dst, len(s.entries))
 		for i := range s.entries {
 			states[i] = s.entries[i].state
 		}
 		return states
 	}
-	entries := s.gss.materialize(nil)
-	if len(entries) == 0 {
+	n := s.gss.len()
+	if n == 0 {
 		return nil
 	}
-	states := make([]StateID, len(entries))
-	for i := range entries {
-		states[i] = entries[i].state
+	states := resizeMissingShiftStateScratch(dst, n)
+	i := n - 1
+	for node := s.gss.head; node != nil && i >= 0; node = node.prev {
+		states[i] = node.entry.state
+		i--
+	}
+	if i >= 0 {
+		panic("collectStackStatesInto: corrupt GSS depth metadata")
 	}
 	return states
+}
+
+func resizeMissingShiftStateScratch(dst []StateID, n int) []StateID {
+	if n == 0 {
+		return dst[:0]
+	}
+	if cap(dst) < n {
+		capacity := cap(dst) * 2
+		if capacity < 64 {
+			capacity = 64
+		}
+		if capacity < n {
+			capacity = n
+		}
+		dst = make([]StateID, n, capacity)
+		return dst
+	}
+	return dst[:n]
 }
 
 // stateHasLeadingReduceAction mirrors ts_language_has_reduce_action: the first
@@ -6592,11 +6611,28 @@ type parseMissingShiftTracker struct {
 	lastStartByte uint32
 	lastEndByte   uint32
 	consecutive   int
+	stateScratch  missingShiftStateScratch
+}
+
+type missingShiftStateScratch struct {
+	baseStates   []StateID
+	reduceStates []StateID
+	simStates    []StateID
+}
+
+func (s *missingShiftStateScratch) reset() {
+	if s == nil {
+		return
+	}
+	s.baseStates = s.baseStates[:0]
+	s.reduceStates = s.reduceStates[:0]
+	s.simStates = s.simStates[:0]
 }
 
 func (t *parseMissingShiftTracker) resetForToken() {
 	t.lastDepth = -1
 	t.consecutive = 0
+	t.stateScratch.reset()
 }
 
 func (t *parseMissingShiftTracker) tryInsert(p *Parser, source []byte, stackIndex int, s *glrStack, currentState StateID, tok Token, ts TokenSource, nodeCount *int, arena *nodeArena, scratch *parserScratch, trackChildErrors *bool) bool {
@@ -6608,7 +6644,7 @@ func (t *parseMissingShiftTracker) tryInsert(p *Parser, source []byte, stackInde
 		}
 		return false
 	}
-	if !p.tryInsertMissingSingleShift(source, s, tok, ts, nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors) {
+	if !p.tryInsertMissingSingleShift(source, s, tok, ts, nodeCount, arena, &scratch.entries, &scratch.gss, &t.stateScratch, trackChildErrors) {
 		return false
 	}
 	if t.matches(currentState, missingShiftDepth, tok) {
