@@ -2,8 +2,6 @@ package gotreesitter
 
 import (
 	"bytes"
-	"unicode"
-	"unicode/utf8"
 )
 
 const (
@@ -63,11 +61,9 @@ const (
 
 func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *Language) {
 	if p != nil && p.skipRecoveryReparse {
-		normalizeCSharpUnicodeIdentifierSpans(root, source, lang)
 		normalizeCSharpQuotedStringContentIdentifiers(root, source, lang)
 		normalizeCSharpSurfaceCompatibility(root, source, lang)
 		normalizeCSharpMissingAttributedProperties(root, source, lang)
-		normalizeCSharpSplitScopedLambdaStatements(root, source, lang)
 		normalizeCSharpInvocationStatements(root, source, lang)
 		normalizeCSharpDereferenceLogicalAndCasts(root, source, lang)
 		normalizeCSharpConditionalIsPatternInitializers(root, source, lang)
@@ -79,20 +75,15 @@ func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *La
 		normalizeCSharpImplicitVarTypes(root, source, lang)
 		normalizeCSharpParenthesizedVarPatterns(root, source, lang)
 		normalizeCSharpGenericBaseLists(root, lang)
-		normalizeCSharpTypeConstraintKeywords(root, lang)
 		normalizeCSharpSwitchTupleCasePatterns(root, lang)
 		return
 	}
 	normalizeCSharpRecoveredTopLevelChunks(root, source, p)
 	normalizeCSharpRecoveredNamespaces(root, source, p, lang)
 	normalizeCSharpRecoveredTypeDeclarations(root, source, p, lang)
-	normalizeCSharpUnicodeIdentifierSpans(root, source, lang)
 	normalizeCSharpQuotedStringContentIdentifiers(root, source, lang)
 	normalizeCSharpSurfaceCompatibility(root, source, lang)
 	normalizeCSharpMissingAttributedProperties(root, source, lang)
-	normalizeCSharpQueryExpressions(root, source, p)
-	normalizeCSharpSplitScopedLambdaStatements(root, source, lang)
-	normalizeCSharpRecoveredScopedLambdaBlocks(root, source, p)
 	normalizeCSharpRecoveredMethodBlocks(root, source, p)
 	normalizeCSharpInvocationStatements(root, source, lang)
 	normalizeCSharpDereferenceLogicalAndCasts(root, source, lang)
@@ -105,7 +96,6 @@ func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *La
 	normalizeCSharpImplicitVarTypes(root, source, lang)
 	normalizeCSharpParenthesizedVarPatterns(root, source, lang)
 	normalizeCSharpGenericBaseLists(root, lang)
-	normalizeCSharpTypeConstraintKeywords(root, lang)
 	normalizeCSharpSwitchTupleCasePatterns(root, lang)
 }
 
@@ -1400,67 +1390,6 @@ func csharpExtractRecoveredTopLevelNode(root *Node, lang *Language, arena *nodeA
 	return cloneTreeNodesIntoArena(node, arena), true
 }
 
-func normalizeCSharpUnicodeIdentifierSpans(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "c_sharp" || len(source) == 0 {
-		return
-	}
-	walkResultTree(root, func(n *Node) {
-		if n.Type(lang) == "identifier" && len(n.children) == 0 {
-			if end := csharpUnicodeIdentifierEnd(source, n.startByte); end > n.endByte && csharpCanExtendLeafNodeTo(n, end) {
-				n.endByte = end
-				n.endPoint = advancePointByBytes(Point{}, source[:end])
-			}
-		}
-	})
-}
-
-func csharpUnicodeIdentifierEnd(source []byte, start uint32) uint32 {
-	if int(start) >= len(source) {
-		return start
-	}
-	r, size := utf8.DecodeRune(source[start:])
-	if size == 0 || r == utf8.RuneError && size == 1 || !csharpIdentifierStartRune(r) {
-		return start
-	}
-	pos := start + uint32(size)
-	for int(pos) < len(source) {
-		r, size = utf8.DecodeRune(source[pos:])
-		if size == 0 || r == utf8.RuneError && size == 1 || !csharpIdentifierContinueRune(r) {
-			break
-		}
-		pos += uint32(size)
-	}
-	return pos
-}
-
-func csharpIdentifierStartRune(r rune) bool {
-	return r == '_' || unicode.IsLetter(r) || unicode.In(r, unicode.Nl)
-}
-
-func csharpIdentifierContinueRune(r rune) bool {
-	return csharpIdentifierStartRune(r) ||
-		unicode.IsDigit(r) ||
-		unicode.In(r, unicode.Mn, unicode.Mc, unicode.Pc, unicode.Cf)
-}
-
-func csharpCanExtendLeafNodeTo(n *Node, end uint32) bool {
-	if n == nil || end <= n.endByte {
-		return false
-	}
-	if n.parent == nil {
-		return true
-	}
-	for _, sibling := range n.parent.children {
-		if sibling == nil || sibling == n {
-			continue
-		}
-		if sibling.startByte >= n.endByte && sibling.startByte < end {
-			return false
-		}
-	}
-	return true
-}
-
 func normalizeCSharpRecoveredTypeDeclarations(root *Node, source []byte, p *Parser, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "c_sharp" || root.Type(lang) != "ERROR" || len(source) == 0 || root.ownerArena == nil {
 		return
@@ -1629,66 +1558,4 @@ func csharpBuildEmptyDeclarationListNode(arena *nodeArena, source []byte, lang *
 	}
 	named := symbolIsNamed(lang, sym)
 	return newParentNodeInArena(arena, sym, named, []*Node{openTok, closeTok}, nil, 0), true
-}
-
-func normalizeCSharpTypeConstraintKeywords(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "c_sharp" {
-		return
-	}
-	walkResultTree(root, func(n *Node) {
-		if n.Type(lang) == "type_parameter_constraint" && len(n.children) == 1 {
-			child := n.children[0]
-			if child != nil && child.Type(lang) == "identifier" && len(child.children) == 1 {
-				inner := child.children[0]
-				if inner != nil && inner.Type(lang) == "notnull" && !inner.isNamed() &&
-					child.startByte == inner.startByte && child.endByte == inner.endByte {
-					n.children[0] = inner
-					inner.parent = n
-					inner.childIndex = 0
-					if len(n.fieldIDs()) > 0 {
-						n.fieldIDs()[0] = 0
-					}
-					if len(n.fieldSources()) > 0 {
-						n.fieldSources()[0] = fieldSourceNone
-					}
-				}
-			}
-		}
-	})
-}
-
-type csharpSimpleJoinQuerySpec struct {
-	queryStart uint32
-	queryEnd   uint32
-	semiPos    uint32
-
-	fromStart uint32
-	fromEnd   uint32
-	rangeName [2]uint32
-	in1Start  uint32
-	in1End    uint32
-	source1   [2]uint32
-
-	joinStart uint32
-	joinEnd   uint32
-	joinName  [2]uint32
-	in2Start  uint32
-	in2End    uint32
-	source2   [2]uint32
-
-	onStart    uint32
-	onEnd      uint32
-	leftObj    [2]uint32
-	leftDotPos uint32
-	leftProp   [2]uint32
-
-	equalsStart uint32
-	equalsEnd   uint32
-	rightObj    [2]uint32
-	rightDotPos uint32
-	rightProp   [2]uint32
-
-	selectStart uint32
-	selectEnd   uint32
-	selectName  [2]uint32
 }

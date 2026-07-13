@@ -2,35 +2,6 @@ package gotreesitter
 
 import "bytes"
 
-func normalizeCSharpQueryExpressions(root *Node, source []byte, p *Parser) {
-	if root == nil || p == nil || p.language == nil || p.language.Name != "c_sharp" || len(source) == 0 {
-		return
-	}
-	if root.ownerArena == nil {
-		return
-	}
-	if !root.HasError() && root.EndByte() >= uint32(len(source)) {
-		return
-	}
-	if recovered, ok := csharpRecoverQueryAssignmentsRoot(source, p, root.ownerArena); ok {
-		*root = *recovered
-		root.parent = nil
-		root.childIndex = -1
-		return
-	}
-	spec, ok := csharpFindSimpleJoinQuerySpec(source)
-	if !ok {
-		return
-	}
-	recovered, ok := csharpRecoverQuerySkeletonRoot(source, p, root.ownerArena, spec)
-	if !ok {
-		return
-	}
-	*root = *recovered
-	root.parent = nil
-	root.childIndex = -1
-}
-
 type csharpQueryClauseKind uint8
 
 const (
@@ -64,89 +35,6 @@ type csharpQueryAssignmentSpec struct {
 	queryEnd   uint32
 	semiPos    uint32
 	clauses    []csharpQueryClauseSpec
-}
-
-func csharpRecoverQueryAssignmentsRoot(source []byte, p *Parser, arena *nodeArena) (*Node, bool) {
-	if p == nil || p.language == nil || arena == nil {
-		return nil, false
-	}
-	specs, ok := csharpFindQueryAssignmentSpecs(source)
-	if !ok || len(specs) == 0 {
-		return nil, false
-	}
-	skeleton := append([]byte(nil), source...)
-	for _, spec := range specs {
-		for i := spec.queryStart; i < spec.queryEnd; i++ {
-			skeleton[i] = ' '
-		}
-		if spec.queryStart < uint32(len(skeleton)) {
-			skeleton[spec.queryStart] = '0'
-		}
-	}
-	tree, err := p.parseForRecovery(skeleton)
-	if err != nil || tree == nil || tree.RootNode() == nil {
-		if tree != nil {
-			tree.Release()
-		}
-		return nil, false
-	}
-	defer tree.Release()
-	rt := tree.ParseRuntime()
-	recoveredRoot := tree.RootNode()
-	if rt.StopReason != ParseStopAccepted || rt.Truncated || rt.TokenSourceEOFEarly || recoveredRoot.HasError() {
-		return nil, false
-	}
-	cloned := cloneTreeNodesIntoArena(recoveredRoot, arena)
-	if cloned == nil {
-		return nil, false
-	}
-	for _, spec := range specs {
-		queryExpr, ok := csharpBuildRecoveredQueryExpression(arena, source, p, spec)
-		if !ok {
-			return nil, false
-		}
-		if !csharpReplaceRecoveredQueryExpression(cloned, p.language, spec.queryStart, spec.queryEnd, queryExpr) {
-			return nil, false
-		}
-	}
-	return cloned, true
-}
-
-func csharpFindQueryAssignmentSpecs(source []byte) ([]csharpQueryAssignmentSpec, bool) {
-	var specs []csharpQueryAssignmentSpec
-	cursor := uint32(0)
-	for cursor < uint32(len(source)) {
-		eqRel := bytes.IndexByte(source[cursor:], '=')
-		if eqRel < 0 {
-			break
-		}
-		eqPos := cursor + uint32(eqRel)
-		queryStart := csharpSkipSpaceBytes(source, eqPos+1)
-		if !csharpHasKeywordAt(source, queryStart, "from") {
-			cursor = eqPos + 1
-			continue
-		}
-		spec, ok := csharpParseQueryAssignmentSpec(source, queryStart)
-		if !ok {
-			cursor = eqPos + 1
-			continue
-		}
-		specs = append(specs, spec)
-		cursor = spec.semiPos + 1
-	}
-	return specs, len(specs) > 0
-}
-
-func csharpParseQueryAssignmentSpec(source []byte, queryStart uint32) (csharpQueryAssignmentSpec, bool) {
-	var spec csharpQueryAssignmentSpec
-	spec.queryStart = queryStart
-	semiRel := bytes.IndexByte(source[queryStart:], ';')
-	if semiRel < 0 {
-		return spec, false
-	}
-	spec.semiPos = queryStart + uint32(semiRel)
-	spec.queryEnd = csharpTrimRightSpaceBytes(source, spec.semiPos)
-	return csharpParseQueryExpressionSpec(source, spec)
 }
 
 func csharpParseQueryExpressionSpec(source []byte, spec csharpQueryAssignmentSpec) (csharpQueryAssignmentSpec, bool) {
@@ -555,15 +443,6 @@ func csharpFindTrailingDirection(source []byte, start, end uint32) (uint32, uint
 		}
 	}
 	return 0, 0, false
-}
-
-func csharpBuildRecoveredQueryExpression(arena *nodeArena, source []byte, p *Parser, spec csharpQueryAssignmentSpec) (*Node, bool) {
-	if arena == nil || p == nil || p.language == nil || len(spec.clauses) == 0 {
-		return nil, false
-	}
-	return csharpBuildRecoveredQueryExpressionWithExpr(arena, source, p.language, spec, func(span [2]uint32) (*Node, bool) {
-		return csharpRecoverExpressionNodeFromRange(source, span[0], span[1], p, arena)
-	})
 }
 
 func csharpBuildRecoveredQueryExpressionWithoutParser(arena *nodeArena, source []byte, lang *Language, spec csharpQueryAssignmentSpec) (*Node, bool) {
