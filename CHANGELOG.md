@@ -7,6 +7,15 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-07-13
+
+Memory containment, Python parity, and authenticated fleet-reporting release.
+Failed forest attempts now apply the parser's runtime heap and system memory
+guard, and discarded forest GSS slab batches no longer remain live behind the
+retention cap. Python real-corpus S-expression and deep parity return to 25/25
+after removal of a misfiring compatibility fold. Fleet reducers can publish
+valid failing scoreboards while certification remains blocking.
+
 ### Changed
 
 - The authenticated performance-shard reducer now distinguishes reporting from
@@ -2059,7 +2068,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.30.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.31.0...HEAD
+[0.31.0]: https://github.com/odvcencio/gotreesitter/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/odvcencio/gotreesitter/compare/v0.29.0...v0.30.0
 [0.29.0]: https://github.com/odvcencio/gotreesitter/compare/v0.28.0...v0.29.0
 [0.28.0]: https://github.com/odvcencio/gotreesitter/compare/v0.27.0...v0.28.0
