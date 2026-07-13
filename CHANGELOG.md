@@ -27,6 +27,19 @@ for tags and release notes while still in `0.x`.
   and alias-prefixed recovered-suffix resyncs now mark error-bearing content
   before the next condense pass. This keeps the clean-subtree proof exact
   without adding node metadata, parser caches, or language-specific fast paths.
+### Added
+
+- A dedicated bash real-corpus parity witness (`grammargen/bash_parity_test.go`),
+  mirroring the existing Python witness. Previously the bash entry in the
+  `real_corpus_parity_floors.json` v3 floor file (25 eligible / 9 no-error / 6
+  S-expression / 6 deep) was phantom: the generic real-corpus loop skips any
+  grammar without a `jsonPath`/`path`, and bash had neither and no dedicated
+  test, so nothing exercised that floor. The new witness grammargen-compiles
+  the locked tree-sitter-bash grammar and reproduces the floor exactly,
+  skipping (not failing) when the corpus is not seeded locally. A companion
+  reducer test pins `echo ${x}` and `echo ${#x}` as working controls and
+  `echo ${x:-y}` as a self-healing known-defect witness for the underlying
+  grammargen expansion-suffix table defect.
 
 ## [0.31.0] - 2026-07-13
 
