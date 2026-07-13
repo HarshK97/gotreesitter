@@ -14,6 +14,7 @@ import (
 	"time"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/cgo_harness/internal/realcorpus"
 	"github.com/odvcencio/gotreesitter/grammars"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -370,7 +371,7 @@ func realCorpusBenchmarkLanguageRoot(tb testing.TB, root string, language string
 	if !ok || strings.TrimSpace(entry.Subdir) == "" || strings.TrimSpace(entry.Subdir) == "." {
 		return langRoot
 	}
-	subdir, ok := realCorpusBenchmarkCleanLockSubdir(entry.Subdir)
+	subdir, ok := realcorpus.CleanSubdir(entry.Subdir)
 	if !ok {
 		tb.Fatalf("invalid real corpus lock subdir for %s: %q", language, entry.Subdir)
 	}
@@ -382,32 +383,10 @@ func loadRealCorpusBenchmarkFiles(tb testing.TB, root string, filters realCorpus
 	minBytes := realCorpusBenchmarkEnvInt(tb, "GTS_REAL_CORPUS_BENCH_MIN_BYTES", 0)
 	maxFileBytes := realCorpusBenchmarkEnvInt(tb, "GTS_REAL_CORPUS_BENCH_MAX_FILE_BYTES", 0)
 	var files []realCorpusBenchmarkFile
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			switch d.Name() {
-			case ".git", ".gradle", "bazel-bin", "bazel-out", "bazel-testlogs", "build", "node_modules", "target":
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		relPath := path
-		if rel, err := filepath.Rel(root, path); err == nil {
-			relPath = rel
-		}
-		if !realCorpusBenchmarkFileAllowed(relPath, filters) {
-			return nil
-		}
-		src, err := os.ReadFile(path)
+	err := realcorpus.WalkMatchingFiles(root, func(relPath string) bool {
+		return realCorpusBenchmarkFileAllowed(relPath, filters)
+	}, func(file realcorpus.File) error {
+		src, err := os.ReadFile(file.Path)
 		if err != nil {
 			return err
 		}
@@ -417,7 +396,7 @@ func loadRealCorpusBenchmarkFiles(tb testing.TB, root string, filters realCorpus
 		if maxFileBytes > 0 && len(src) > maxFileBytes {
 			return nil
 		}
-		files = append(files, realCorpusBenchmarkFile{path: path, source: src})
+		files = append(files, realCorpusBenchmarkFile{path: file.Path, source: src})
 		return nil
 	})
 	if err != nil {
@@ -962,18 +941,6 @@ func realCorpusBenchmarkLockEntries(path string) (map[string]realCorpusBenchmark
 		return nil, err
 	}
 	return out, nil
-}
-
-func realCorpusBenchmarkCleanLockSubdir(raw string) (string, bool) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" || raw == "." {
-		return "", true
-	}
-	clean := filepath.Clean(filepath.FromSlash(raw))
-	if clean == "." || clean == "" || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return "", false
-	}
-	return clean, true
 }
 
 func sortRealCorpusBenchmarkFiles(tb testing.TB, files []realCorpusBenchmarkFile) {

@@ -24,6 +24,84 @@ func TestGLRMergeScratchResetInvalidatesEquivCacheByEpoch(t *testing.T) {
 	}
 }
 
+func TestGLRMergeScratchResetPreservesCleanZeroEpochAndRejectsReusedAddress(t *testing.T) {
+	var nodes gssScratch
+	old := nodes.allocNode(stackEntry{state: 1}, nil, 1)
+	var pooled parserScratch
+	scratch := &pooled.merge
+	scratch.ensureMergeHotCaches()
+	scratch.beginCleanZeroEpoch()
+	storeCleanZeroFrontCache(scratch, old, true)
+	scratch.cleanZeroCache = map[*gssNode]gssCleanZeroErrorCacheEntry{
+		old: {resultEpoch: scratch.cleanZeroEpoch, clean: true},
+	}
+	scratch.cleanZeroStack = append(scratch.cleanZeroStack, old)
+	scratch.cleanZeroVisited = append(scratch.cleanZeroVisited, old)
+
+	epochBefore := scratch.cleanZeroEpoch
+	scratch.reset()
+	if scratch.cleanZeroEpoch != epochBefore {
+		t.Fatalf("clean-zero epoch after reset = %d, want preserved %d", scratch.cleanZeroEpoch, epochBefore)
+	}
+	if got, ok := lookupCleanZeroFrontCache(scratch, old); !ok || !got {
+		t.Fatalf("clean-zero front after reset = %v, %v; want retained true, true", got, ok)
+	}
+	if len(scratch.cleanZeroCache) != 0 {
+		t.Fatalf("clean-zero map retained %d GSS pointers", len(scratch.cleanZeroCache))
+	}
+	if len(scratch.cleanZeroStack) != 0 || len(scratch.cleanZeroVisited) != 0 {
+		t.Fatalf("clean-zero traversal scratch not reset: stack=%d visited=%d", len(scratch.cleanZeroStack), len(scratch.cleanZeroVisited))
+	}
+	if cap(scratch.cleanZeroStack) > 0 && scratch.cleanZeroStack[:cap(scratch.cleanZeroStack)][0] != nil {
+		t.Fatal("clean-zero stack backing retained a GSS pointer")
+	}
+	if cap(scratch.cleanZeroVisited) > 0 && scratch.cleanZeroVisited[:cap(scratch.cleanZeroVisited)][0] != nil {
+		t.Fatal("clean-zero visited backing retained a GSS pointer")
+	}
+
+	nodes.recycleForParse()
+	reused := nodes.allocNode(stackEntry{state: 2}, nil, 1)
+	if reused != old {
+		t.Fatalf("recycled GSS address = %p, want %p", reused, old)
+	}
+	parser := NewParser(buildArithmeticLanguage())
+	parser.configureParseScratch(&pooled, nil, nil, nil, arenaClassFull, true)
+	if scratch.cleanZeroEpoch != epochBefore+1 {
+		t.Fatalf("clean-zero epoch after acquisition = %d, want %d", scratch.cleanZeroEpoch, epochBefore+1)
+	}
+	if _, ok := lookupCleanZeroFrontCache(scratch, reused); ok {
+		t.Fatal("clean-zero front hit after a GSS address was reused in a new parse epoch")
+	}
+}
+
+func TestGLRMergeScratchCleanZeroEpochWrapClearsFront(t *testing.T) {
+	var nodes gssScratch
+	node := nodes.allocNode(stackEntry{state: 1}, nil, 1)
+	var scratch glrMergeScratch
+	scratch.ensureMergeHotCaches()
+	scratch.cleanZeroEpoch = ^uint32(0)
+	storeCleanZeroFrontCache(&scratch, node, true)
+	scratch.cleanZeroCache = map[*gssNode]gssCleanZeroErrorCacheEntry{
+		node: {resultEpoch: scratch.cleanZeroEpoch, clean: true},
+	}
+
+	scratch.beginCleanZeroEpoch()
+	if scratch.cleanZeroEpoch != 1 {
+		t.Fatalf("clean-zero epoch after wrap = %d, want 1", scratch.cleanZeroEpoch)
+	}
+	if len(scratch.cleanZeroCache) != 0 {
+		t.Fatalf("clean-zero map retained %d entries across wrap", len(scratch.cleanZeroCache))
+	}
+	if _, ok := lookupCleanZeroFrontCache(&scratch, node); ok {
+		t.Fatal("clean-zero front entry survived epoch wrap")
+	}
+	for i, entry := range scratch.cleanZeroFront {
+		if entry != (glrCleanZeroFrontCacheEntry{}) {
+			t.Fatalf("clean-zero front slot %d after wrap = %#v, want zero", i, entry)
+		}
+	}
+}
+
 func TestGLREntryScratchResetClearsReservedWrittenRange(t *testing.T) {
 	var scratch glrEntryScratch
 	entries := scratch.allocWithCap(1, 8)

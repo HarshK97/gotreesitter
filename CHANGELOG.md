@@ -15,6 +15,23 @@ for tags and release notes while still in `0.x`.
   mechanism. Caller-adapted grammars, incremental fallbacks, and explicit
   diagnostic overrides retain the conservative retry ladder.
 
+### Performance
+
+- Reused parsers now invalidate the pointer-free clean-zero front cache by
+  advancing its epoch instead of clearing all 16,384 entries between parses.
+  On recurring one-byte KDL and JSON witnesses this reduces wall time by
+  33.10% and 35.67%, respectively, with unchanged allocation counts; the
+  materialized full-parse, single-byte incremental, and no-edit benchmark trio
+  remains neutral.
+
+### Fixed
+
+- `real_corpus_inventory --require-corpus-sources` now rejects pinned corpus
+  checkouts that contain no benchmark-eligible regular files matching the
+  language's source policy. Inventory and benchmarks share traversal and
+  subdirectory validation, so invalid paths and scan failures are reported
+  instead of allowing an empty language sweep to appear complete.
+
 ## [0.29.0] - 2026-07-12
 
 Recurring-parser performance and compatibility-cleanup release. Repeated small
