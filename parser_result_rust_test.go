@@ -2,150 +2,6 @@ package gotreesitter
 
 import "testing"
 
-func TestNormalizeRustBooleanLiteralRestoresKeywordChild(t *testing.T) {
-	lang := &Language{
-		Name:        "rust",
-		SymbolNames: []string{"", "source_file", "boolean_literal", "true", "false", "empty_statement", ";"},
-		SymbolMetadata: []SymbolMetadata{
-			{},
-			{Name: "source_file", Visible: true, Named: true},
-			{Name: "boolean_literal", Visible: true, Named: true},
-			{Name: "true", Visible: true, Named: false},
-			{Name: "false", Visible: true, Named: false},
-			{Name: "empty_statement", Visible: true, Named: true},
-			{Name: ";", Visible: true, Named: false},
-		},
-	}
-	parser := &Parser{language: lang}
-	arena := acquireNodeArena(arenaClassFull)
-	source := []byte("true")
-	booleanLiteral := newLeafNodeInArena(arena, 2, true, 0, 4, Point{}, Point{Column: 4})
-	root := newParentNodeInArena(arena, 1, true, []*Node{booleanLiteral}, nil, 0)
-
-	normalizeResultCompatibility(root, source, parser)
-
-	if got, want := booleanLiteral.ChildCount(), 1; got != want {
-		t.Fatalf("boolean literal child count = %d, want %d", got, want)
-	}
-	child := booleanLiteral.Child(0)
-	if child == nil {
-		t.Fatal("boolean literal child = nil")
-	}
-	if got, want := child.Type(lang), "true"; got != want {
-		t.Fatalf("boolean literal child type = %q, want %q", got, want)
-	}
-	if child.IsNamed() {
-		t.Fatal("restored true child should be anonymous")
-	}
-}
-
-func TestNormalizeRustEmptyStatementRestoresSemicolonChild(t *testing.T) {
-	lang := &Language{
-		Name:        "rust",
-		SymbolNames: []string{"", "source_file", "empty_statement", ";", "remaining_field_pattern", ".."},
-		SymbolMetadata: []SymbolMetadata{
-			{},
-			{Name: "source_file", Visible: true, Named: true},
-			{Name: "empty_statement", Visible: true, Named: true},
-			{Name: ";", Visible: true, Named: false},
-			{Name: "remaining_field_pattern", Visible: true, Named: true},
-			{Name: "..", Visible: true, Named: false},
-		},
-	}
-	parser := &Parser{language: lang}
-	arena := acquireNodeArena(arenaClassFull)
-	source := []byte(";")
-	emptyStatement := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
-	root := newParentNodeInArena(arena, 1, true, []*Node{emptyStatement}, nil, 0)
-
-	normalizeResultCompatibility(root, source, parser)
-
-	if got, want := emptyStatement.ChildCount(), 1; got != want {
-		t.Fatalf("empty statement child count = %d, want %d", got, want)
-	}
-	child := emptyStatement.Child(0)
-	if child == nil {
-		t.Fatal("empty statement child = nil")
-	}
-	if got, want := child.Type(lang), ";"; got != want {
-		t.Fatalf("empty statement child type = %q, want %q", got, want)
-	}
-	if child.IsNamed() {
-		t.Fatal("restored semicolon child should be anonymous")
-	}
-}
-
-func TestNormalizeRustRemainingFieldPatternRestoresDotDotChild(t *testing.T) {
-	lang := &Language{
-		Name:        "rust",
-		SymbolNames: []string{"", "source_file", "remaining_field_pattern", "..", "range_expression", "..="},
-		SymbolMetadata: []SymbolMetadata{
-			{},
-			{Name: "source_file", Visible: true, Named: true},
-			{Name: "remaining_field_pattern", Visible: true, Named: true},
-			{Name: "..", Visible: true, Named: false},
-			{Name: "range_expression", Visible: true, Named: true},
-			{Name: "..=", Visible: true, Named: false},
-		},
-	}
-	parser := &Parser{language: lang}
-	arena := acquireNodeArena(arenaClassFull)
-	source := []byte("..")
-	remaining := newLeafNodeInArena(arena, 2, true, 0, 2, Point{}, Point{Column: 2})
-	root := newParentNodeInArena(arena, 1, true, []*Node{remaining}, nil, 0)
-
-	normalizeResultCompatibility(root, source, parser)
-
-	if got, want := remaining.ChildCount(), 1; got != want {
-		t.Fatalf("remaining field pattern child count = %d, want %d", got, want)
-	}
-	child := remaining.Child(0)
-	if child == nil {
-		t.Fatal("remaining field pattern child = nil")
-	}
-	if got, want := child.Type(lang), ".."; got != want {
-		t.Fatalf("remaining field pattern child type = %q, want %q", got, want)
-	}
-	if child.IsNamed() {
-		t.Fatal("restored .. child should be anonymous")
-	}
-}
-
-func TestNormalizeRustRangeExpressionRestoresOperatorChild(t *testing.T) {
-	lang := &Language{
-		Name:        "rust",
-		SymbolNames: []string{"", "source_file", "range_expression", "..", "..="},
-		SymbolMetadata: []SymbolMetadata{
-			{},
-			{Name: "source_file", Visible: true, Named: true},
-			{Name: "range_expression", Visible: true, Named: true},
-			{Name: "..", Visible: true, Named: false},
-			{Name: "..=", Visible: true, Named: false},
-		},
-	}
-	parser := &Parser{language: lang}
-	arena := acquireNodeArena(arenaClassFull)
-	source := []byte("..=")
-	rangeExpr := newLeafNodeInArena(arena, 2, true, 0, 3, Point{}, Point{Column: 3})
-	root := newParentNodeInArena(arena, 1, true, []*Node{rangeExpr}, nil, 0)
-
-	normalizeResultCompatibility(root, source, parser)
-
-	if got, want := rangeExpr.ChildCount(), 1; got != want {
-		t.Fatalf("range expression child count = %d, want %d", got, want)
-	}
-	child := rangeExpr.Child(0)
-	if child == nil {
-		t.Fatal("range expression child = nil")
-	}
-	if got, want := child.Type(lang), "..="; got != want {
-		t.Fatalf("range expression child type = %q, want %q", got, want)
-	}
-	if child.IsNamed() {
-		t.Fatal("restored ..= child should be anonymous")
-	}
-}
-
 func TestRustExtractRecoveredTopLevelNodesWithOffsetClonesIntoDestinationArena(t *testing.T) {
 	lang := &Language{
 		Name:        "rust",
@@ -628,14 +484,11 @@ func TestRustRetagCleanTopLevelErrorRootKeepsFinalChildRefsLazy(t *testing.T) {
 }
 
 func TestRustCompatibilitySourceFlags(t *testing.T) {
-	if flags := rustCompatibilitySourceFlagsFor([]byte("let x = 1\n")); flags.collapsedNamedLeafChildren || flags.dotRangeExpressions || flags.docCommentRanges || flags.tokenBindingPatterns || flags.recoveredFunctionItems {
+	if flags := rustCompatibilitySourceFlagsFor([]byte("let x = 1\n")); flags.dotRangeExpressions || flags.docCommentRanges || flags.tokenBindingPatterns || flags.recoveredFunctionItems {
 		t.Fatalf("unexpected Rust compatibility flags for plain binding: %+v", flags)
 	}
-	if flags := rustCompatibilitySourceFlagsFor([]byte("let x = true;")); !flags.collapsedNamedLeafChildren {
-		t.Fatalf("expected collapsed leaf flag for true/semicolon source: %+v", flags)
-	}
-	if flags := rustCompatibilitySourceFlagsFor([]byte("let r = 1..=3;")); !flags.dotRangeExpressions || !flags.collapsedNamedLeafChildren {
-		t.Fatalf("expected dot range and collapsed leaf flags for range source: %+v", flags)
+	if flags := rustCompatibilitySourceFlagsFor([]byte("let r = 1..=3;")); !flags.dotRangeExpressions {
+		t.Fatalf("expected dot range flag for range source: %+v", flags)
 	}
 	if flags := rustCompatibilitySourceFlagsFor([]byte("/// docs\nfn f() {}\n")); !flags.docCommentRanges || !flags.recoveredFunctionItems {
 		t.Fatalf("expected doc comment and recovered function flags: %+v", flags)

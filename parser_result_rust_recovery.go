@@ -3,11 +3,10 @@ package gotreesitter
 import "bytes"
 
 type rustCompatibilitySourceFlags struct {
-	collapsedNamedLeafChildren bool
-	dotRangeExpressions        bool
-	docCommentRanges           bool
-	tokenBindingPatterns       bool
-	recoveredFunctionItems     bool
+	dotRangeExpressions    bool
+	docCommentRanges       bool
+	tokenBindingPatterns   bool
+	recoveredFunctionItems bool
 }
 
 func normalizeRustCompatibility(root *Node, source []byte, p *Parser, lang *Language) {
@@ -53,96 +52,16 @@ func normalizeRustCompatibility(root *Node, source []byte, p *Parser, lang *Lang
 	run("rust_doc_comment_ranges", flags.docCommentRanges, func() {
 		normalizeRustDocCommentRanges(root, source, lang)
 	})
-	run("rust_collapsed_named_leaf_children", flags.collapsedNamedLeafChildren, func() {
-		normalizeRustCollapsedNamedLeafChildren(root, source, lang)
-	})
 }
 
 func rustCompatibilitySourceFlagsFor(source []byte) rustCompatibilitySourceFlags {
 	hasDotDot := bytes.Contains(source, []byte(".."))
 	return rustCompatibilitySourceFlags{
-		collapsedNamedLeafChildren: bytes.Contains(source, []byte("true")) ||
-			bytes.Contains(source, []byte("false")) ||
-			hasDotDot ||
-			bytes.IndexByte(source, ';') >= 0,
 		dotRangeExpressions:    hasDotDot,
 		docCommentRanges:       bytes.Contains(source, []byte("///")) || bytes.Contains(source, []byte("//!")),
 		tokenBindingPatterns:   bytes.IndexByte(source, '$') >= 0,
 		recoveredFunctionItems: bytes.Contains(source, []byte("fn")),
 	}
-}
-
-func normalizeRustCollapsedNamedLeafChildren(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "rust" || len(source) == 0 {
-		return
-	}
-	booleanLiteralSym, hasBooleanLiteral := rustResultSymbolByName(lang, "boolean_literal", true)
-	emptyStatementSym, hasEmptyStatement := rustResultSymbolByName(lang, "empty_statement", true)
-	remainingFieldPatternSym, hasRemainingFieldPattern := rustResultSymbolByName(lang, "remaining_field_pattern", true)
-	rangeExpressionSym, hasRangeExpression := rustResultSymbolByName(lang, "range_expression", true)
-	trueSym, hasTrue := rustResultSymbolByName(lang, "true", false)
-	falseSym, hasFalse := rustResultSymbolByName(lang, "false", false)
-	semicolonSym, hasSemicolon := rustResultSymbolByName(lang, ";", false)
-	dotDotSym, hasDotDot := rustResultSymbolByName(lang, "..", false)
-	dotDotEqSym, hasDotDotEq := rustResultSymbolByName(lang, "..=", false)
-	trueNamed := symbolIsNamed(lang, trueSym)
-	falseNamed := symbolIsNamed(lang, falseSym)
-	semicolonNamed := symbolIsNamed(lang, semicolonSym)
-	dotDotNamed := symbolIsNamed(lang, dotDotSym)
-	dotDotEqNamed := symbolIsNamed(lang, dotDotEqSym)
-
-	walkResultTreeSidecarFirst(root, func(n *Node) {
-		if n == nil || resultChildCount(n) != 0 || n.startByte > n.endByte || int(n.endByte) > len(source) {
-			return
-		}
-		start := int(n.startByte)
-		width := int(n.endByte - n.startByte)
-		var childSym Symbol
-		var childNamed bool
-		ok := false
-		switch {
-		case hasBooleanLiteral && n.symbol == booleanLiteralSym:
-			switch {
-			case hasTrue && width == 4 && source[start] == 't' && source[start+1] == 'r' && source[start+2] == 'u' && source[start+3] == 'e':
-				childSym, childNamed, ok = trueSym, trueNamed, true
-			case hasFalse && width == 5 && source[start] == 'f' && source[start+1] == 'a' && source[start+2] == 'l' && source[start+3] == 's' && source[start+4] == 'e':
-				childSym, childNamed, ok = falseSym, falseNamed, true
-			}
-		case hasEmptyStatement && n.symbol == emptyStatementSym:
-			if hasSemicolon && width == 1 && source[start] == ';' {
-				childSym, childNamed, ok = semicolonSym, semicolonNamed, true
-			}
-		case hasRemainingFieldPattern && n.symbol == remainingFieldPatternSym:
-			if hasDotDot && width == 2 && source[start] == '.' && source[start+1] == '.' {
-				childSym, childNamed, ok = dotDotSym, dotDotNamed, true
-			}
-		case hasRangeExpression && n.symbol == rangeExpressionSym:
-			switch {
-			case hasDotDot && width == 2 && source[start] == '.' && source[start+1] == '.':
-				childSym, childNamed, ok = dotDotSym, dotDotNamed, true
-			case hasDotDotEq && width == 3 && source[start] == '.' && source[start+1] == '.' && source[start+2] == '=':
-				childSym, childNamed, ok = dotDotEqSym, dotDotEqNamed, true
-			}
-		}
-		if !ok {
-			return
-		}
-		child := newLeafNodeInArena(n.ownerArena, childSym, childNamed, n.startByte, n.endByte, n.startPoint, n.endPoint)
-		child.parent = n
-		child.childIndex = 0
-		n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
-	})
-}
-
-func rustResultSymbolByName(lang *Language, name string, named bool) (Symbol, bool) {
-	if lang == nil {
-		return 0, false
-	}
-	sym, ok := lang.symbolByNameAndNamed(name, named)
-	if ok {
-		return sym, true
-	}
-	return symbolByName(lang, name)
 }
 
 func normalizeRustDocCommentRanges(root *Node, source []byte, lang *Language) {
