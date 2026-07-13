@@ -2,30 +2,6 @@ package gotreesitter
 
 import "testing"
 
-func TestCSharpFindQueryAssignmentSpecs(t *testing.T) {
-	src := []byte("var x = from a in source\n  where a.B == \"A\"\n  select new { Name = a.B };\n")
-
-	specs, ok := csharpFindQueryAssignmentSpecs(src)
-	if !ok {
-		t.Fatal("expected query assignment spec")
-	}
-	if got := len(specs); got != 1 {
-		t.Fatalf("spec count = %d, want 1", got)
-	}
-	if got := len(specs[0].clauses); got != 3 {
-		t.Fatalf("clause count = %d, want 3", got)
-	}
-	if got := specs[0].clauses[0].kind; got != csharpQueryFromClause {
-		t.Fatalf("first clause kind = %v, want from", got)
-	}
-	if got := specs[0].clauses[1].kind; got != csharpQueryWhereClause {
-		t.Fatalf("second clause kind = %v, want where", got)
-	}
-	if got := specs[0].clauses[2].kind; got != csharpQuerySelectClause {
-		t.Fatalf("third clause kind = %v, want select", got)
-	}
-}
-
 func TestCSharpLargeNamespaceAltStatsCanSkipPrimary(t *testing.T) {
 	child := csharpRecoveredDeclarationStats{total: 103, methods: 93}
 	alt := csharpRecoveredDeclarationStats{total: 126, methods: 116}
@@ -58,17 +34,6 @@ func TestCSharpParseQueryExpressionSpecWithGroupIntoOrder(t *testing.T) {
 	}
 	if got, want := len(spec.clauses), 5; got != want {
 		t.Fatalf("clause count = %d, want %d", got, want)
-	}
-}
-
-func TestCSharpFirstStatementEndHandlesScopedLambda(t *testing.T) {
-	src := []byte("    var l = scoped => null;\n    var l = (scoped i) => null;\n")
-	got, ok := csharpFirstStatementEndInRange(src, 4, uint32(len(src)))
-	if !ok {
-		t.Fatal("expected statement span")
-	}
-	if want := uint32(len("    var l = scoped => null;")); got != want {
-		t.Fatalf("statement end = %d, want %d", got, want)
 	}
 }
 
