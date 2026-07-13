@@ -7,6 +7,15 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Performance
+
+- Missing-token recovery now materializes each parser-state chain once per
+  attempt and reuses pointer-free state buffers across candidate simulations,
+  instead of rebuilding and allocating the same deep chain for each fallback.
+  On the pinned 163 KB C++ recovery witness this reduced full-parse time by
+  28.4%, allocated bytes by 79.9%, and allocation count by 41.1%, while
+  preserving the accepted full-span error tree and parser-runtime counters.
+
 ### Changed
 
 - Internal retry and tree-selection decisions now inspect each tree's stored
