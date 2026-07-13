@@ -27,6 +27,10 @@ valid failing scoreboards while certification remains blocking.
 - The Docker parity wrapper accepts a fixed `--hostname` and records it in run
   metadata so one-language containers on the same physical benchmark host can
   produce a consistent authenticated host identity.
+- The tier-scan guide now describes full-corpus tier publication as a staged
+  release gate instead of claiming the 33 GB scan runs for every release. The
+  committed tier board remains explicitly unreleased until a fresh full scan
+  is intentionally published.
 
 ### Performance
 
