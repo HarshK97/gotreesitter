@@ -60,10 +60,17 @@ const (
 )
 
 func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *Language) {
+	missing := csharpMissingNativeResultCompatibility(lang)
 	if p != nil && p.skipRecoveryReparse {
+		if missing&ResultCompatibilityCSharpNativeUnicodeIdentifiers != 0 {
+			normalizeCSharpUnicodeIdentifierSpans(root, source, lang)
+		}
 		normalizeCSharpQuotedStringContentIdentifiers(root, source, lang)
 		normalizeCSharpSurfaceCompatibility(root, source, lang)
 		normalizeCSharpMissingAttributedProperties(root, source, lang)
+		if missing&ResultCompatibilityCSharpNativeScopedLambdaStatements != 0 {
+			normalizeCSharpSplitScopedLambdaStatements(root, source, lang)
+		}
 		normalizeCSharpInvocationStatements(root, source, lang)
 		normalizeCSharpDereferenceLogicalAndCasts(root, source, lang)
 		normalizeCSharpConditionalIsPatternInitializers(root, source, lang)
@@ -75,15 +82,30 @@ func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *La
 		normalizeCSharpImplicitVarTypes(root, source, lang)
 		normalizeCSharpParenthesizedVarPatterns(root, source, lang)
 		normalizeCSharpGenericBaseLists(root, lang)
+		if missing&ResultCompatibilityCSharpNativeNotNull != 0 {
+			normalizeCSharpTypeConstraintKeywords(root, lang)
+		}
 		normalizeCSharpSwitchTupleCasePatterns(root, lang)
 		return
 	}
 	normalizeCSharpRecoveredTopLevelChunks(root, source, p)
 	normalizeCSharpRecoveredNamespaces(root, source, p, lang)
 	normalizeCSharpRecoveredTypeDeclarations(root, source, p, lang)
+	if missing&ResultCompatibilityCSharpNativeUnicodeIdentifiers != 0 {
+		normalizeCSharpUnicodeIdentifierSpans(root, source, lang)
+	}
 	normalizeCSharpQuotedStringContentIdentifiers(root, source, lang)
 	normalizeCSharpSurfaceCompatibility(root, source, lang)
 	normalizeCSharpMissingAttributedProperties(root, source, lang)
+	if missing&ResultCompatibilityCSharpNativeQueryExpressions != 0 {
+		normalizeCSharpQueryExpressions(root, source, p)
+	}
+	if missing&ResultCompatibilityCSharpNativeScopedLambdaStatements != 0 {
+		normalizeCSharpSplitScopedLambdaStatements(root, source, lang)
+	}
+	if missing&ResultCompatibilityCSharpNativeScopedLambdaBlocks != 0 {
+		normalizeCSharpRecoveredScopedLambdaBlocks(root, source, p)
+	}
 	normalizeCSharpRecoveredMethodBlocks(root, source, p)
 	normalizeCSharpInvocationStatements(root, source, lang)
 	normalizeCSharpDereferenceLogicalAndCasts(root, source, lang)
@@ -96,6 +118,9 @@ func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *La
 	normalizeCSharpImplicitVarTypes(root, source, lang)
 	normalizeCSharpParenthesizedVarPatterns(root, source, lang)
 	normalizeCSharpGenericBaseLists(root, lang)
+	if missing&ResultCompatibilityCSharpNativeNotNull != 0 {
+		normalizeCSharpTypeConstraintKeywords(root, lang)
+	}
 	normalizeCSharpSwitchTupleCasePatterns(root, lang)
 }
 

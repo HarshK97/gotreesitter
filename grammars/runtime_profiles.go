@@ -15,6 +15,7 @@ type builtinLanguageRuntimeProfile struct {
 	blobSHA256                         [32]byte
 	externalScannerFullParseRetry      gotreesitter.ExternalScannerFullParseRetryPolicy
 	fullParseAcceptedErrorRetryProfile gotreesitter.FullParseAcceptedErrorRetryProfile
+	nativeResultCompatibility          gotreesitter.ResultCompatibilityCapability
 	conflictPolicies                   []gotreesitter.ConflictPolicy
 }
 
@@ -47,6 +48,11 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	"c_sharp": {
 		blobSHA256:                    mustRuntimeProfileSHA256("7ad425e89733339dde94e3c03b762ae478fb453b530493f5d62e1ae7537e1784"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
+		nativeResultCompatibility: gotreesitter.ResultCompatibilityCSharpNativeNotNull |
+			gotreesitter.ResultCompatibilityCSharpNativeUnicodeIdentifiers |
+			gotreesitter.ResultCompatibilityCSharpNativeScopedLambdaStatements |
+			gotreesitter.ResultCompatibilityCSharpNativeScopedLambdaBlocks |
+			gotreesitter.ResultCompatibilityCSharpNativeQueryExpressions,
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry:             true,
 			SkipCompleteMaxEntryScratchPeak:            csharpAcceptedErrorRetryMaxEntryScratchPeak,
@@ -274,6 +280,10 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 	if profile.fullParseAcceptedErrorRetryProfile != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) &&
 		lang.FullParseAcceptedErrorRetryProfile != profile.fullParseAcceptedErrorRetryProfile {
 		lang.FullParseAcceptedErrorRetryProfile = profile.fullParseAcceptedErrorRetryProfile
+		changed = true
+	}
+	if missing := profile.nativeResultCompatibility &^ lang.NativeResultCompatibility; missing != 0 {
+		lang.NativeResultCompatibility |= missing
 		changed = true
 	}
 	for _, policy := range profile.conflictPolicies {
