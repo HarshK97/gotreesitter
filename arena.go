@@ -403,6 +403,32 @@ func (p *nodeArenaPool) release(a *nodeArena) {
 	p.mu.Unlock()
 }
 
+// discard clears a stale checkout reference when an arena is rejected instead
+// of returned to the pool. Ordinary checkout and successful repooling stay on
+// their original hot path. Match the exact arena so concurrent checkouts in
+// other unused backing slots retain their own lifecycle bookkeeping.
+func (p *nodeArenaPool) discard(a *nodeArena) {
+	if a == nil {
+		return
+	}
+	p.mu.Lock()
+	all := p.free[:cap(p.free)]
+	for i := len(p.free); i < len(all); i++ {
+		if all[i] == a {
+			all[i] = nil
+		}
+	}
+	p.mu.Unlock()
+}
+
+// discardRejectedFullArena keeps oversized-arena eviction bookkeeping out of
+// the ordinary nodeArena.Release instruction path.
+//
+//go:noinline
+func discardRejectedFullArena(a *nodeArena) {
+	fullArenaPool.discard(a)
+}
+
 func (p *nodeArenaPool) drain() {
 	p.mu.Lock()
 	clear(p.free[:cap(p.free)]) // nil all pointers so GC can collect the arenas
@@ -488,6 +514,7 @@ func (a *nodeArena) Release() {
 	// Checking after reset() means an arena that grew to hundreds of MB during a
 	// large parse would report a small retained size and slip back into the pool.
 	if a.class == arenaClassFull && a.allocatedBytes > maxRetainedFullArenaBytes {
+		discardRejectedFullArena(a)
 		return // drop; GC collects the backing arrays without reset overhead
 	}
 	a.reset()

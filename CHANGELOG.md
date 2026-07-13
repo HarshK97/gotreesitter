@@ -24,6 +24,10 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Oversized full arenas rejected by `Release` now clear every matching stale
+  checkout reference from the pool's unused backing slots instead of remaining
+  reachable after rejection. Ordinary checkout and successful repooling remain
+  unchanged.
 - The browser runtime now releases every parse tree returned by both the
   runtime and grammargen WASM bridges. Runtime queries stream through a
   500-match cursor limit instead of materializing an unbounded result before
