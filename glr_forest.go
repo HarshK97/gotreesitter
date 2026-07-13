@@ -1,6 +1,7 @@
 package gotreesitter
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"sync"
@@ -145,6 +146,173 @@ const forestRecoverCap = 1 << 20
 var forestLastDeclineReason string
 
 const forestDeclineEOFRecoveryConflict = "eof-recovery-conflict"
+const forestDeclineErrorRoot = "error_root"
+const forestDeclineRootHasError = "root_has_error"
+
+// The automatic forest path is speculative: a decline always falls back to
+// the production parser. Repeating the same deterministic decline for an
+// unchanged source can cost far more than the production parse itself. Keep a
+// small, lazy parser-local memo for stable semantic declines: EOF recovery
+// competition, a root ERROR, or an error-bearing root on a language that has
+// not certified forest recovery. These are pure functions of the language
+// tables, exact source bytes, and forest/recovery mode. Resource-budget,
+// timeout, cancellation, dead-end, and work-cap declines deliberately remain
+// uncached.
+const (
+	forestDeclineMemoSlots                  = 8
+	forestDeclineMemoMaxSourceBytes         = 128 << 10
+	forestDeclineMemoMaxRetainedSourceBytes = 256 << 10
+)
+
+const (
+	forestDeclineModeRecoverEnabled uint8 = 1 << iota
+	forestDeclineModeRecoverCertified
+	forestDeclineModeCRecovery
+	forestDeclineModeNoTree
+	forestDeclineModeNoTreeCheckpoints
+)
+
+type forestDeclineMemoEntry struct {
+	source     []byte
+	sourceHash uint64
+	mode       uint8
+}
+
+type forestDeclineMemoState struct {
+	entries             [forestDeclineMemoSlots]forestDeclineMemoEntry
+	head                uint8
+	count               uint8
+	retainedSourceBytes int
+}
+
+// forestDeclineReasonIsMemoizable is intentionally a closed allowlist. Adding
+// a reason requires proof that it is a deterministic semantic outcome for the
+// same language, exact source bytes, and mode. Transient resource and control
+// outcomes must remain absent from this function.
+func forestDeclineReasonIsMemoizable(reason string) bool {
+	switch reason {
+	case forestDeclineEOFRecoveryConflict, forestDeclineErrorRoot, forestDeclineRootHasError:
+		return true
+	default:
+		return false
+	}
+}
+
+func forestDeclineSourceHash(source []byte) uint64 {
+	// FNV-1a is only a prefilter. A hit also requires bytes.Equal against the
+	// memo's defensive source copy, so collisions cannot skip forest dispatch.
+	const (
+		offset64 = uint64(14695981039346656037)
+		prime64  = uint64(1099511628211)
+	)
+	h := offset64
+	for _, b := range source {
+		h ^= uint64(b)
+		h *= prime64
+	}
+	return h
+}
+
+func (p *Parser) forestDeclineMemoMode() uint8 {
+	if p == nil || p.language == nil {
+		return 0
+	}
+	var mode uint8
+	if glrForestRecover {
+		mode |= forestDeclineModeRecoverEnabled
+	}
+	if languageWantsForestRecover(p.language.Name) {
+		mode |= forestDeclineModeRecoverCertified
+	}
+	if p.errorCostCompetitionEnabled() {
+		mode |= forestDeclineModeCRecovery
+	}
+	if p.noTreeBenchmarkOnly {
+		mode |= forestDeclineModeNoTree
+	}
+	if p.noTreeCheckpointBenchmarkOnly {
+		mode |= forestDeclineModeNoTreeCheckpoints
+	}
+	return mode
+}
+
+func (p *Parser) forestDeclineMemoHit(source []byte) bool {
+	if p == nil || p.forestDeclineMemo == nil || len(source) > forestDeclineMemoMaxSourceBytes {
+		return false
+	}
+	mode := p.forestDeclineMemoMode()
+	memo := p.forestDeclineMemo
+	needHash := false
+	for offset := 0; offset < int(memo.count); offset++ {
+		index := (int(memo.head) + offset) % forestDeclineMemoSlots
+		entry := &memo.entries[index]
+		if len(entry.source) == len(source) && entry.mode == mode {
+			needHash = true
+			break
+		}
+	}
+	if !needHash {
+		return false
+	}
+	hash := forestDeclineSourceHash(source)
+	for offset := 0; offset < int(memo.count); offset++ {
+		index := (int(memo.head) + offset) % forestDeclineMemoSlots
+		entry := &memo.entries[index]
+		if len(entry.source) == len(source) && entry.mode == mode && entry.sourceHash == hash && bytes.Equal(entry.source, source) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *forestDeclineMemoState) evictOldest() {
+	if m == nil || m.count == 0 {
+		return
+	}
+	index := int(m.head)
+	m.retainedSourceBytes -= len(m.entries[index].source)
+	m.entries[index] = forestDeclineMemoEntry{}
+	m.head = uint8((index + 1) % forestDeclineMemoSlots)
+	m.count--
+}
+
+func (p *Parser) rememberForestDecline(source []byte, reason string) {
+	if p == nil ||
+		!forestDeclineReasonIsMemoizable(reason) ||
+		len(source) > forestDeclineMemoMaxSourceBytes ||
+		len(source) > forestDeclineMemoMaxRetainedSourceBytes {
+		return
+	}
+	mode := p.forestDeclineMemoMode()
+	hash := forestDeclineSourceHash(source)
+	if p.forestDeclineMemo == nil {
+		p.forestDeclineMemo = new(forestDeclineMemoState)
+	}
+	memo := p.forestDeclineMemo
+	for offset := 0; offset < int(memo.count); offset++ {
+		index := (int(memo.head) + offset) % forestDeclineMemoSlots
+		entry := &memo.entries[index]
+		if len(entry.source) == len(source) && entry.mode == mode && entry.sourceHash == hash && bytes.Equal(entry.source, source) {
+			return
+		}
+	}
+	for memo.count > 0 && (memo.count >= forestDeclineMemoSlots || memo.retainedSourceBytes+len(source) > forestDeclineMemoMaxRetainedSourceBytes) {
+		memo.evictOldest()
+	}
+	if memo.count >= forestDeclineMemoSlots || memo.retainedSourceBytes+len(source) > forestDeclineMemoMaxRetainedSourceBytes {
+		return
+	}
+	sourceCopy := make([]byte, len(source))
+	copy(sourceCopy, source)
+	index := (int(memo.head) + int(memo.count)) % forestDeclineMemoSlots
+	memo.entries[index] = forestDeclineMemoEntry{
+		source:     sourceCopy,
+		sourceHash: hash,
+		mode:       mode,
+	}
+	memo.count++
+	memo.retainedSourceBytes += len(sourceCopy)
+}
 
 func forestProgressExtra(frontier, work, nextFrontier []*gssForestNode, curIndex, nextIndex gssForestIndex, processEpoch int32, recoverCount int, reducer *forestReducer, accepted *gssForestNode, more string) string {
 	curLen := curIndex.len()
@@ -379,6 +547,9 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		}
 		return nil
 	}
+	if p.forestDeclineMemoHit(source) {
+		return nil
+	}
 	progress := newParseProgressTelemetry(p, len(source), uint32(len(source)), time.Now())
 	if progress.enabled {
 		progress.emit(time.Now(), "forest_try_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
@@ -395,6 +566,9 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		progress.endDetail(time.Now(), "forest_parse_call_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, fmt.Sprintf("ok=%t root_present=%t decline_reason=%s", ok, root != nil, forestLastDeclineReason))
 	}
 	if !ok || root == nil {
+		if p.forestDeclineReason == forestDeclineEOFRecoveryConflict {
+			p.rememberForestDecline(source, p.forestDeclineReason)
+		}
 		if progress.enabled {
 			progress.emit(time.Now(), "forest_try_decline", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, fmt.Sprintf("reason=parse_forest_failed ok=%t root_present=%t decline_reason=%s", ok, root != nil, forestLastDeclineReason))
 		}
@@ -402,6 +576,8 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		return nil
 	}
 	if forestRootMustDecline(root) {
+		p.recordForestDecline(forestDeclineErrorRoot, Token{StartByte: root.EndByte()}, nil)
+		p.rememberForestDecline(source, p.forestDeclineReason)
 		if progress.enabled {
 			progress.emit(time.Now(), "forest_try_decline", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "reason=error_root")
 		}
@@ -409,6 +585,8 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		return nil
 	}
 	if root.HasError() && !languageWantsForestRecover(p.language.Name) {
+		p.recordForestDecline(forestDeclineRootHasError, Token{StartByte: root.EndByte()}, nil)
+		p.rememberForestDecline(source, p.forestDeclineReason)
 		if progress.enabled {
 			progress.emit(time.Now(), "forest_try_decline", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "reason=root_has_error")
 		}

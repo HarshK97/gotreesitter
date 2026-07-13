@@ -303,6 +303,12 @@ type Parser struct {
 	pendingFrontierForkStacks  []glrStack
 	disablePostReduceForkMerge bool
 	stopActionDiag             *parseStopActionDiagnostic
+	// forestDeclineMemo lazily remembers a small, strictly bounded set of
+	// deterministic automatic-forest declines for exact source bytes. Keep the
+	// pointer at the end so parsers that never cache a decline pay no sidecar
+	// allocation and the established hot Parser fields retain their layout.
+	// Explicit ParseForestExperimental calls intentionally ignore this memo.
+	forestDeclineMemo *forestDeclineMemoState
 }
 
 var snippetParserPools sync.Map
