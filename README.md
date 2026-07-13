@@ -646,10 +646,11 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.30.0**. The 206-grammar curated parity milestone is
-banked. v0.30.0 reduces recurring parser reset cost and makes fleet performance
-reports clean/error-aware, resumable, revision-pinned, and fail-closed across
-one-language checkpoints. Detailed history lives in
+The current release is **v0.31.0**. The 206-grammar curated parity milestone is
+banked. v0.31.0 strengthens failed forest-attempt memory containment, releases
+discarded GSS slab references, restores Python real-corpus S-expression and
+deep parity to 25/25, and separates fleet reporting from blocking
+certification. Detailed history lives in
 [CHANGELOG.md](CHANGELOG.md).
 
 ### Now — performance and extreme hygiene
