@@ -5243,11 +5243,11 @@ func (s *glrMergeScratch) reset() {
 	// alias into a fresh parse (reset would restart the epoch at 1 and collide
 	// with surviving epoch-1 entries once gss slab pointers get reused).
 	s.shapePrefixBytes = int64(cap(s.shapePrefixCache)) * int64(unsafe.Sizeof(glrShapePrefixCacheEntry{}))
-	// cleanZeroEpoch (below) restarts at 0 per reset, so the epoch-validated
-	// front array MUST be cleared or stale entries could match a future epoch.
-	if len(s.cleanZeroFront) > 0 {
-		clear(s.cleanZeroFront)
-	}
+	// cleanZeroEpoch, like shapePrefixEpoch above, remains monotonic across
+	// pooled parses. The front stores uintptr values rather than Go pointers,
+	// so advancing the epoch at parse acquisition invalidates its entries in
+	// O(1) without retaining a GSS slab. beginCleanZeroEpoch clears the array
+	// when the uint32 epoch wraps, before epoch values can alias.
 	s.cleanZeroBytes = int64(cap(s.cleanZeroFront)) * int64(unsafe.Sizeof(glrCleanZeroFrontCacheEntry{}))
 	if len(s.cleanZeroCache) > 0 {
 		clear(s.cleanZeroCache)
@@ -5264,7 +5264,6 @@ func (s *glrMergeScratch) reset() {
 		clear(s.cleanZeroVisited[:cap(s.cleanZeroVisited)])
 		s.cleanZeroVisited = s.cleanZeroVisited[:0]
 	}
-	s.cleanZeroEpoch = 0
 	s.cleanZeroScan = 0
 	s.perKeyCap = 0
 	s.language = nil
