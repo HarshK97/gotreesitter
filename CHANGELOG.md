@@ -163,6 +163,18 @@ benchmark trio remains neutral while full-parse bytes fall 18.68%.
   statement count for no fork-count benefit. C#'s helper is left in place: it
   depends on the literal source text of a contextual keyword (`scoped`),
   which `ConflictPolicies`' state/lookahead-symbol matching cannot express.
+### Fixed
+
+- Removed `foldPythonTrailingSelfCallIntoNestedFunction`, a Python
+  compat-normalization heuristic that spuriously folded a same-named
+  trailing call into a preceding nested function's block whenever that
+  function's own body ended in a dangling `;` before a dedent (e.g. `def
+  foo(): x = 1;` followed by a sibling `foo()` at the outer indent). Raw
+  GLR parse actions and materialized trees were already byte-identical
+  between the trailing-`;` and no-`;` forms and matched the reference
+  parser; only this post-parse fold diverged. Python real-corpus deep
+  parity goes from 20/25 to 25/25 (`python3.8_grammar.py` /
+  `python2-grammar.py` witnesses now match exactly).
 
 ## [0.28.0] - 2026-07-12
 
