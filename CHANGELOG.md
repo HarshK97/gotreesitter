@@ -24,6 +24,13 @@ for tags and release notes while still in `0.x`.
   repeated 97% Vimdoc penalty, while Org's bounded decline memo had already
   made warm parses production-like. Explicit forest experiments and both
   certified recovery policies remain available.
+- Automatic forest dispatch no longer speculates through Fish or Racket by
+  default. Two locked clean witnesses per language produced no forest return
+  and returned the exact production tree after declining at EOF. Removing the
+  discarded attempt cut fresh Fish parses by 90-95% and fresh Racket parses by
+  94-95%; reused 234-248 KiB witnesses improved by 94-96%, while smaller warm
+  parses were already protected by the bounded decline memo. Explicit forest
+  experiments and both certified recovery policies remain available.
 
 ### Removed
 

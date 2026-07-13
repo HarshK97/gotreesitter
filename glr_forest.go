@@ -464,6 +464,14 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 // made fresh parses more than 30x slower; Vimdoc's 227 KiB witness also exceeds
 // the bounded decline-memo ceiling, so reused parsers repeated the same cost.
 //
+// Fish and Racket are held out for the same reason. Two locked clean witnesses
+// per language produced zero forest returns: each attempt reached EOF, declined
+// with eof-recovery-conflict, and returned the exact production tree. Fresh
+// automatic parses were 10-22x slower for Fish and 16-19x slower for Racket;
+// their 234-248 KiB witnesses exceed the decline-memo ceiling and repeated the
+// same cost on reused parsers. Their recovery policies remain available to
+// explicit forest experiments.
+//
 // Non-built-in languages opt in per-Language via Language.WantsForest (see
 // parserWantsForest) instead of joining this map — e.g. a grammargen consumer
 // generating its own grammar (a Pawn grammar, say) sets WantsForest directly
@@ -524,8 +532,6 @@ var builtinForestDefaults = map[string]bool{
 	"arduino": true,
 	"authzed": true,
 	"make":    true,
-	"fish":    true,
-	"racket":  true,
 	"tlaplus": true,
 
 	// Promoted 2026-06-08 against the C ORACLE, not production. gitattributes
