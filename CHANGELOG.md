@@ -7,6 +7,15 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.33.0] - 2026-07-13
+
+Recurring parser and forest performance, recovery allocation, compatibility,
+and lifecycle-hygiene release. Warm parsers avoid repeated stable forest
+declines and oversized runtime-record copies, missing-shift recovery reuses
+parser-state chains, exact bundled C# blobs skip redundant post-parse work,
+arena and browser-WASM lifetimes are tightened, and confirmed-dead
+compatibility code is removed.
+
 ### Performance
 
 - Missing-token recovery now materializes each parser-state chain once per
@@ -2239,7 +2248,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.32.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.33.0...HEAD
+[0.33.0]: https://github.com/odvcencio/gotreesitter/compare/v0.32.0...v0.33.0
 [0.32.0]: https://github.com/odvcencio/gotreesitter/compare/v0.31.0...v0.32.0
 [0.31.0]: https://github.com/odvcencio/gotreesitter/compare/v0.30.0...v0.31.0
 [0.30.0]: https://github.com/odvcencio/gotreesitter/compare/v0.29.0...v0.30.0

@@ -354,8 +354,9 @@ An audit on 2026-07-11 found that older versions of
 which also enabled the no-tree path. The previously published `1.54 ms`,
 `728 B/op`, and `7 allocs/op` figures—and v0.24.0's later `978 B/op` and
 `5 allocs/op` figures—therefore described parser-core diagnostics, not a full
-materialized parse. Those headline comparisons have been withdrawn pending a
-pinned, quiet-host rerun of the corrected benchmark.
+materialized parse. Those headline comparisons have been withdrawn. The
+corrected pinned quiet-host result is 10.907 ms, or 1.895x C, with the full
+receipt and same-host calibration in [BENCH.md](BENCH.md).
 
 The historical incremental measurements on the same generated 500-function Go
 workload were `649 ns` for a one-byte edit and `2.43 ns` for a no-edit reparse.
@@ -657,30 +658,27 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.32.0**. The 206-grammar curated parity milestone is
-banked. v0.32.0 adds structured parsing and queries to the browser runtime,
-removes six dead JavaScript/TypeScript compatibility rewrites and recursive
-clean-subtree work from C-recovery condense, and gives Bash's committed
-real-corpus parity floor a dedicated executable witness. Detailed history lives
-in
-[CHANGELOG.md](CHANGELOG.md).
+The current release is **v0.33.0**. The 206-grammar curated parity milestone is
+banked. v0.33.0 reduces recurring parser and failed-forest work, reuses
+missing-shift recovery state, skips certified C# compatibility passes, tightens
+arena and browser-WASM lifetimes, and removes confirmed-dead compatibility
+code. Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ### Now — performance and extreme hygiene
 
 - Keep correctness, C-oracle parity, and performance gates separate. Every
   optimization must preserve the selected full-span tree before its timing or
   memory result is considered.
-- First eliminate avoidable invisible, unfielded reduction-parent construction.
-  Poppler's exact C parity and hard-2-GiB acceptance are banked; the remaining
-  targets are its shipped 512 MiB budget gap, retained memory, and 3.50x full
-  parse, followed by `wasm box2d` and `wasm lua_binarytrees`.
-- Move through generated-code cliffs one witness at a time: TypeScript
-  `webworker.generated.d.ts`, Rust `stdarch`, `SwiftSyntax`, Go `opGen.go` and
-  `rewriteAMD64.go`, C# Bicep, Crystal, and Scala `Implicits.scala`. Prioritize
-  timeouts, hard RSS, and absolute wall time before ratio alone.
-- A fresh full parse that stops before the expected input extent must report an
-  early stop, not unflagged success. Keep this full-span correctness firewall
-  separate from performance measurements.
+- Hold the corrected, materialized canonical full parse at or below the pinned
+  1.895x C result. No-tree and parser-core lanes remain attribution tools, not
+  substitutes for the public benchmark.
+- Keep the exact-revision fleet sweep current with clean/error splits and
+  C-oracle fingerprints. Eliminate valid rows above 3x and all timeout, hard-RSS,
+  truncation, or unreported-stop cliffs, prioritizing absolute user cost over
+  ratio noise on tiny files.
+- Reduce recurring fixed work, discarded forest attempts, recovery and GLR
+  construction debris, retained scratch, and compatibility walks only through
+  mechanisms that generalize across measured witnesses.
 - Track wall time, allocations, retained arena/scratch bytes, and hard-cgroup
   maximum RSS. Keep the public full-parse, incremental-edit, and incremental
   no-edit benchmark trio canonical; no-tree measurements stay diagnostic.
@@ -688,14 +686,15 @@ in
   closes. Add no public parse variant or parser-core language-name switch when
   an internal diagnostic or generated runtime profile can express the need.
 
-### Next — only after the narrow memory proof
+### Measured memory boundary
 
-- Widen compact hidden reductions from unary to binary, fielded, and
-  multi-stack cases only when each step improves the same parity and RSS gates.
-- If that path cannot materially lower retained memory, prototype a
-  pointer-light tree backing store and measure bytes/node, GC scan, cursor/query
-  throughput, edit reuse, and peak RSS before considering migration.
-- Re-ratchet the affected fleet rows on quiet, reproducible, one-language runs.
+- A production frozen-tree store remains closed by the current measurements:
+  whole-tree conversion does not recover enough full-parse time and regresses
+  incremental reuse. Do not treat pointer-light migration as an authorized next
+  step without new evidence that clears those gates.
+- Bounded semispace retention, earlier reclamation of unselected construction
+  debris, and tighter parser-budget-to-process-RSS behavior remain viable
+  experiments. Each must preserve query, cursor, and incremental semantics.
 
 ### Deferred — Go-native experience and broader architecture
 
