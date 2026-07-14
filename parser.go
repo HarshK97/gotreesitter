@@ -4341,10 +4341,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		return errorTreeWithOwnedArena(reason)
 	}
 	finalizeTree := func(tree *Tree, stopReason ParseStopReason) *Tree {
-		workCountBeginFinalizeParseAttempt(workCountAttempt)
-		defer func() {
-			workCountEndFinalizeParseAttempt(workCountAttempt, stopReason, tree)
-		}()
+		if workCountInstrumentationEnabled { // work-count-assembly: finalize-defer guard
+			workCountBeginFinalizeParseAttempt(workCountAttempt)
+			defer func() {
+				workCountEndFinalizeParseAttempt(workCountAttempt, stopReason, tree)
+			}()
+		}
 		if phaseTiming && parserLoopNanos == 0 {
 			parserLoopNanos = time.Since(parseStart).Nanoseconds()
 		}

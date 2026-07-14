@@ -81,6 +81,8 @@ type DiagnosticWorkCountAttempt struct {
 
 const DiagnosticWorkCountContract = "gts-work-count/v2"
 
+const workCountInstrumentationEnabled = true
+
 var activeDiagnosticWorkCount *DiagnosticWorkCount
 
 var pendingDiagnosticWorkCountAttempt struct {
@@ -402,6 +404,16 @@ func workCountAddPopPaths(paths, payloads uint64) {
 		workCountSaturatingAdd(&c.EmittedPopPaths, paths)
 		workCountSaturatingAdd(&c.EmittedPopPayloads, payloads)
 	}
+}
+
+func workCountObservePopWindow(window []stackEntry) {
+	payloads := uint64(0)
+	for _, entry := range window {
+		if stackEntryHasNode(entry) {
+			payloads++
+		}
+	}
+	workCountAddPopPaths(1, payloads)
 }
 
 func workCountRecordVersionCreation() {

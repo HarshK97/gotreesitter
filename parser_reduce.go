@@ -3445,13 +3445,7 @@ func (p *Parser) selectedReduceWindowsFromGSSWithBudget(arena *nodeArena, act Pa
 					for j := 0; j < pathLen; j++ {
 						window[j] = revPath[pathLen-1-j]
 					}
-					payloads := uint64(0)
-					for _, pathEntry := range window {
-						if stackEntryHasNode(pathEntry) {
-							payloads++
-						}
-					}
-					workCountAddPopPaths(1, payloads)
+					workCountObservePopWindow(window) // work-count-assembly: payload-census seam
 					addFork(reduceFork{
 						window:   window,
 						topState: prev.entry.state,
