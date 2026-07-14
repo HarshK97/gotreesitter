@@ -340,6 +340,11 @@ func workCountExtractTar(path, destination string) error {
 		if err != nil {
 			return err
 		}
+		// Git archives may carry a global PAX record containing the source
+		// commit identity. It is archive metadata, not a filesystem entry.
+		if header.Typeflag == tar.TypeXGlobalHeader || header.Typeflag == tar.TypeXHeader {
+			continue
+		}
 		target, err := workCountSafeSnapshotTarget(destination, header.Name)
 		if err != nil {
 			return err
@@ -675,6 +680,46 @@ func TestWorkCountRunCapturedKillsDescendantProcessGroup(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	if _, statErr := os.Stat(marker); !errors.Is(statErr, fs.ErrNotExist) {
 		t.Fatalf("timed-out descendant escaped process-group kill: %v", statErr)
+	}
+}
+
+func TestWorkCountExtractTarAcceptsPAXMetadata(t *testing.T) {
+	root := t.TempDir()
+	archivePath := filepath.Join(root, "snapshot.tar")
+	file, err := os.OpenFile(archivePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := tar.NewWriter(file)
+	if err := writer.WriteHeader(&tar.Header{
+		Typeflag:   tar.TypeXGlobalHeader,
+		PAXRecords: map[string]string{"comment": "0123456789abcdef"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("package fixture\n")
+	if err := writer.WriteHeader(&tar.Header{Name: "fixture.go", Mode: 0o644, Size: int64(len(payload))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(root, "extracted")
+	if err := workCountExtractTar(archivePath, destination); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(destination, "fixture.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("extracted payload=%q want=%q", got, payload)
 	}
 }
 
