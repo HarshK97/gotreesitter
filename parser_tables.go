@@ -238,6 +238,7 @@ func (p *Parser) lookupActionIndexFunc() func(state StateID, sym Symbol) uint16 
 // lookupActionIndex returns the parse action index for (state, symbol).
 // Returns 0 (the error/no-action entry) if not found.
 func (p *Parser) lookupActionIndex(state StateID, sym Symbol) uint16 {
+	workCountRecordTableLookup()
 	if int(state) < p.denseLimit {
 		if int(state) >= len(p.language.ParseTable) {
 			return 0

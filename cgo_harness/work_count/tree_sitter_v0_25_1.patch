@@ -1,0 +1,262 @@
+diff --git a/lib/src/language.c b/lib/src/language.c
+index b341a670..07ac8155 100644
+--- a/lib/src/language.c
++++ b/lib/src/language.c
+@@ -1,6 +1,7 @@
+ #include "./language.h"
+ #include "./wasm_store.h"
+ #include "tree_sitter/api.h"
++#include "./work_count.h"
+ #include <string.h>
+ 
+ const TSLanguage *ts_language_copy(const TSLanguage *self) {
+@@ -75,6 +76,7 @@ void ts_language_table_entry(
+   TSSymbol symbol,
+   TableEntry *result
+ ) {
++  gts_work_count_add(&gts_work_count_current.table_lookups_proxy, 1);
+   if (symbol == ts_builtin_sym_error || symbol == ts_builtin_sym_error_repeat) {
+     result->action_count = 0;
+     result->is_reusable = false;
+@@ -87,6 +89,10 @@ void ts_language_table_entry(
+     result->is_reusable = entry->entry.reusable;
+     result->actions = (const TSParseAction *)(entry + 1);
+   }
++  gts_work_count_add(
++    &gts_work_count_current.action_entries_examined_proxy,
++    result->action_count
++  );
+ }
+ 
+ TSLexerMode ts_language_lex_mode_for_state(
+diff --git a/lib/src/parser.c b/lib/src/parser.c
+index 7aac259e..49ffbcfa 100644
+--- a/lib/src/parser.c
++++ b/lib/src/parser.c
+@@ -20,6 +20,17 @@
+ #include "./tree.h"
+ #include "./ts_assert.h"
+ #include "./wasm_store.h"
++#include "./work_count.h"
++
++_Thread_local GTSWorkCount gts_work_count_current;
++
++void gts_work_count_reset(void) {
++  gts_work_count_current = (GTSWorkCount) {0};
++}
++
++GTSWorkCount gts_work_count_snapshot(void) {
++  return gts_work_count_current;
++}
+ 
+ #define LOG(...)                                                                            \
+   if (self->lexer.logger.log || self->dot_graph_file) {                                     \
+@@ -509,6 +520,7 @@ static Subtree ts_parser__lex(
+   StackVersion version,
+   TSStateId parse_state
+ ) {
++  gts_work_count_add(&gts_work_count_current.lexer_front_door_calls_proxy, 1);
+   TSLexerMode lex_mode = ts_language_lex_mode_for_state(self->language, parse_state);
+   if (lex_mode.lex_state == (uint16_t)-1) {
+     LOG("no_lookahead_after_non_terminal_extra");
+@@ -912,6 +924,7 @@ static void ts_parser__shift(
+   Subtree lookahead,
+   bool extra
+ ) {
++  gts_work_count_add(&gts_work_count_current.shifts, 1);
+   bool is_leaf = ts_subtree_child_count(lookahead) == 0;
+   Subtree subtree_to_push = lookahead;
+   if (extra != ts_subtree_extra(lookahead) && is_leaf) {
+@@ -938,6 +951,7 @@ static StackVersion ts_parser__reduce(
+   bool is_fragile,
+   bool end_of_non_terminal_extra
+ ) {
++  gts_work_count_add(&gts_work_count_current.reductions, 1);
+   uint32_t initial_version_count = ts_stack_version_count(self->stack);
+ 
+   // Pop the given number of nodes from the given version of the parse stack.
+@@ -1048,6 +1062,7 @@ static void ts_parser__accept(
+   StackVersion version,
+   Subtree lookahead
+ ) {
++  gts_work_count_add(&gts_work_count_current.accept_actions, 1);
+   ts_assert(ts_subtree_is_eof(lookahead));
+   ts_stack_push(self->stack, version, lookahead, false, 1);
+ 
+@@ -1664,6 +1679,7 @@ static bool ts_parser__advance(
+         }
+ 
+         case TSParseActionTypeRecover: {
++          gts_work_count_add(&gts_work_count_current.explicit_recover_actions, 1);
+           if (ts_subtree_child_count(lookahead) > 0) {
+             ts_parser__breakdown_lookahead(self, &lookahead, ERROR_STATE, &self->reusable_node);
+           }
+diff --git a/lib/src/stack.c b/lib/src/stack.c
+index f0d57108..3fd2a602 100644
+--- a/lib/src/stack.c
++++ b/lib/src/stack.c
+@@ -4,6 +4,7 @@
+ #include "./array.h"
+ #include "./stack.h"
+ #include "./length.h"
++#include "./work_count.h"
+ #include <assert.h>
+ #include <inttypes.h>
+ #include <stdio.h>
+@@ -158,6 +159,7 @@ static StackNode *stack_node_new(
+       .subtree = subtree,
+       .is_pending = is_pending,
+     };
++    gts_work_count_add(&gts_work_count_current.graph_link_additions_proxy, 1);
+ 
+     node->position = previous_node->position;
+     node->error_cost = previous_node->error_cost;
+@@ -252,6 +254,7 @@ static void stack_node_add_link(
+   unsigned node_count = link.node->node_count;
+   int dynamic_precedence = link.node->dynamic_precedence;
+   self->links[self->link_count++] = link;
++  gts_work_count_add(&gts_work_count_current.graph_link_additions_proxy, 1);
+ 
+   if (link.subtree.ptr) {
+     ts_subtree_retain(link.subtree);
+@@ -296,6 +299,7 @@ static StackVersion ts_stack__add_version(
+     .lookahead_when_paused = NULL_SUBTREE,
+   };
+   array_push(&self->heads, head);
++  gts_work_count_add(&gts_work_count_current.stack_version_creations_proxy, 1);
+   stack_node_retain(node);
+   if (head.last_external_token.ptr) ts_subtree_retain(head.last_external_token);
+   return (StackVersion)(self->heads.size - 1);
+@@ -521,7 +525,16 @@ forceinline StackAction pop_count_callback(void *payload, const StackIterator *i
+ }
+ 
+ StackSliceArray ts_stack_pop_count(Stack *self, StackVersion version, uint32_t count) {
+-  return stack__iter(self, version, pop_count_callback, &count, (int)count);
++  gts_work_count_add(&gts_work_count_current.reduction_pop_requests, 1);
++  StackSliceArray result = stack__iter(self, version, pop_count_callback, &count, (int)count);
++  gts_work_count_add(&gts_work_count_current.emitted_pop_paths, result.size);
++  for (uint32_t i = 0; i < result.size; i++) {
++    gts_work_count_add(
++      &gts_work_count_current.emitted_pop_payloads,
++      result.contents[i].subtrees.size
++    );
++  }
++  return result;
+ }
+ 
+ forceinline StackAction pop_pending_callback(void *payload, const StackIterator *iterator) {
+@@ -685,6 +698,7 @@ void ts_stack_swap_versions(Stack *self, StackVersion v1, StackVersion v2) {
+ StackVersion ts_stack_copy_version(Stack *self, StackVersion version) {
+   ts_assert(version < self->heads.size);
+   array_push(&self->heads, self->heads.contents[version]);
++  gts_work_count_add(&gts_work_count_current.stack_version_creations_proxy, 1);
+   StackHead *head = array_back(&self->heads);
+   stack_node_retain(head->node);
+   if (head->last_external_token.ptr) ts_subtree_retain(head->last_external_token);
+@@ -693,6 +707,7 @@ StackVersion ts_stack_copy_version(Stack *self, StackVersion version) {
+ }
+ 
+ bool ts_stack_merge(Stack *self, StackVersion version1, StackVersion version2) {
++  gts_work_count_add(&gts_work_count_current.merge_attempts_proxy, 1);
+   if (!ts_stack_can_merge(self, version1, version2)) return false;
+   StackHead *head1 = &self->heads.contents[version1];
+   StackHead *head2 = &self->heads.contents[version2];
+@@ -703,6 +718,7 @@ bool ts_stack_merge(Stack *self, StackVersion version1, StackVersion version2) {
+     head1->node_count_at_last_error = head1->node->node_count;
+   }
+   ts_stack_remove_version(self, version2);
++  gts_work_count_add(&gts_work_count_current.merge_successes_proxy, 1);
+   return true;
+ }
+ 
+@@ -762,6 +778,7 @@ void ts_stack_clear(Stack *self) {
+     .last_external_token = NULL_SUBTREE,
+     .lookahead_when_paused = NULL_SUBTREE,
+   }));
++  gts_work_count_add(&gts_work_count_current.stack_version_creations_proxy, 1);
+ }
+ 
+ bool ts_stack_print_dot_graph(Stack *self, const TSLanguage *language, FILE *f) {
+diff --git a/lib/src/subtree.c b/lib/src/subtree.c
+index 42794de7..c814693e 100644
+--- a/lib/src/subtree.c
++++ b/lib/src/subtree.c
+@@ -10,6 +10,7 @@
+ #include "./length.h"
+ #include "./language.h"
+ #include "./error_costs.h"
++#include "./work_count.h"
+ #include "./ts_assert.h"
+ #include <stddef.h>
+ 
+@@ -169,6 +170,7 @@ Subtree ts_subtree_new_leaf(
+   bool has_external_tokens, bool depends_on_column,
+   bool is_keyword, const TSLanguage *language
+ ) {
++  gts_work_count_add(&gts_work_count_current.leaf_constructions_proxy, 1);
+   TSSymbolMetadata metadata = ts_language_symbol_metadata(language, symbol);
+   bool extra = symbol == ts_builtin_sym_end;
+ 
+@@ -478,6 +480,7 @@ MutableSubtree ts_subtree_new_node(
+   unsigned production_id,
+   const TSLanguage *language
+ ) {
++  gts_work_count_add(&gts_work_count_current.parent_constructions_proxy, 1);
+   TSSymbolMetadata metadata = ts_language_symbol_metadata(language, symbol);
+   bool fragile = symbol == ts_builtin_sym_error || symbol == ts_builtin_sym_error_repeat;
+ 
+diff --git a/lib/src/work_count.h b/lib/src/work_count.h
+new file mode 100644
+index 00000000..963fac8a
+--- /dev/null
++++ b/lib/src/work_count.h
+@@ -0,0 +1,49 @@
++#ifndef TREE_SITTER_WORK_COUNT_H_
++#define TREE_SITTER_WORK_COUNT_H_
++
++#include <stdbool.h>
++#include <stdint.h>
++
++typedef struct {
++  bool overflow;
++
++  uint64_t shifts;
++  uint64_t reductions;
++  uint64_t accept_actions;
++  uint64_t explicit_recover_actions;
++  uint64_t reduction_pop_requests;
++  uint64_t emitted_pop_paths;
++  uint64_t emitted_pop_payloads;
++  uint64_t selected_nodes;
++  uint64_t selected_parent_nodes;
++  uint64_t selected_leaf_nodes;
++
++  uint64_t table_lookups_proxy;
++  uint64_t action_entries_examined_proxy;
++  uint64_t lexer_front_door_calls_proxy;
++  uint64_t stack_version_creations_proxy;
++  uint64_t merge_attempts_proxy;
++  uint64_t merge_successes_proxy;
++  uint64_t graph_link_additions_proxy;
++  uint64_t leaf_constructions_proxy;
++  uint64_t parent_constructions_proxy;
++  uint64_t pending_parent_constructions_proxy;
++  uint64_t no_tree_parent_constructions_proxy;
++} GTSWorkCount;
++
++extern _Thread_local GTSWorkCount gts_work_count_current;
++
++void gts_work_count_reset(void);
++GTSWorkCount gts_work_count_snapshot(void);
++
++static inline void gts_work_count_add(uint64_t *slot, uint64_t delta) {
++  if (!slot || delta == 0) return;
++  if (UINT64_MAX - *slot < delta) {
++    *slot = UINT64_MAX;
++    gts_work_count_current.overflow = true;
++    return;
++  }
++  *slot += delta;
++}
++
++#endif

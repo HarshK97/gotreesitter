@@ -2242,6 +2242,7 @@ func newLeafNodeInArena(arena *nodeArena, sym Symbol, named bool, startByte, end
 	n.childIndex = -1
 	n.ownerArena = arena
 	arena.leafNodesConstructed++
+	workCountRecordLeafConstruction()
 	if arena.audit != nil {
 		arena.audit.recordNodeAlloc(n, runtimeAuditNodeKindLeaf)
 	}
@@ -2291,6 +2292,7 @@ func newParentNodeInArenaWithFieldSources(arena *nodeArena, sym Symbol, named bo
 	n.dynamicPrecedence = nodeSliceDynamicPrecedence(children)
 	n.childIndex = -1
 	arena.parentNodesConstructed++
+	workCountRecordParentConstruction()
 	if arena.breakdownEnabled {
 		arena.recordParentNodeConstructedBreakdown(len(children), fieldIDs, resolvedFieldSources, fieldSources != nil, false, false)
 	}
@@ -2323,6 +2325,7 @@ func newParentNodeInArenaNoLinksWithFieldSources(arena *nodeArena, sym Symbol, n
 	n.dynamicPrecedence = nodeSliceDynamicPrecedence(children)
 	n.childIndex = -1
 	arena.parentNodesConstructed++
+	workCountRecordParentConstruction()
 	if arena.breakdownEnabled {
 		arena.recordParentNodeConstructedBreakdown(len(children), fieldIDs, resolvedFieldSources, fieldSources != nil, true, trackChildErrors)
 	}
@@ -2349,6 +2352,7 @@ func newParentNodeInArenaWithFinalChildRefs(arena *nodeArena, sym Symbol, named 
 	n.productionID = productionID
 	n.childIndex = -1
 	arena.parentNodesConstructed++
+	workCountRecordParentConstruction()
 	if arena.breakdownEnabled {
 		arena.recordParentNodeConstructedBreakdown(childCount, nil, nil, false, true, trackChildErrors)
 	}
@@ -2365,6 +2369,7 @@ func (a *nodeArena) recordParentNodeConstructed(childCount int, fieldIDs []Field
 		return
 	}
 	a.parentNodesConstructed++
+	workCountRecordParentConstruction()
 	if !a.breakdownEnabled {
 		return
 	}

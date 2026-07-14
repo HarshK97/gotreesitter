@@ -2536,6 +2536,7 @@ func (p *Parser) applyAction(source []byte, s *glrStack, act ParseAction, tok To
 }
 
 func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) {
+	workCountRecordShift()
 	named := p.isNamedSymbol(tok.Symbol)
 	currentState := s.top().state
 	targetState := extraShiftTargetState(currentState, act)
@@ -2662,6 +2663,8 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 }
 
 func (p *Parser) applyReduceActionDispatch(source []byte, s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool) {
+	workCountRecordReduce()
+	workCountObserveReductionPop(s, int(act.ChildCount))
 	entries := s.entries
 	borrowed := false
 	if entries == nil {
@@ -2701,6 +2704,7 @@ func (p *Parser) applyReduceActionDispatch(source []byte, s *glrStack, act Parse
 }
 
 func (p *Parser) applyAcceptAction(s *glrStack) {
+	workCountRecordAccept()
 	s.accepted = true
 	if p != nil && p.glrTrace {
 		fmt.Printf("      -> ACCEPT\n")
@@ -2708,6 +2712,7 @@ func (p *Parser) applyAcceptAction(s *glrStack) {
 }
 
 func (p *Parser) applyRecoverAction(s *glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) {
+	workCountRecordExplicitRecover()
 	if tok.Symbol == 0 && tok.StartByte == tok.EndByte {
 		s.accepted = true
 		return
@@ -3440,6 +3445,13 @@ func (p *Parser) selectedReduceWindowsFromGSSWithBudget(arena *nodeArena, act Pa
 					for j := 0; j < pathLen; j++ {
 						window[j] = revPath[pathLen-1-j]
 					}
+					payloads := uint64(0)
+					for _, pathEntry := range window {
+						if stackEntryHasNode(pathEntry) {
+							payloads++
+						}
+					}
+					workCountAddPopPaths(1, payloads)
 					addFork(reduceFork{
 						window:   window,
 						topState: prev.entry.state,
@@ -7313,6 +7325,7 @@ func newNoTreeReduceNodeInArenaWithRawShape(arena *nodeArena, act ParseAction, n
 	} else {
 		n = arena.allocNoTreeNode()
 		arena.noTreeReduceNodesConstructed++
+		workCountRecordNoTreeParentConstruction()
 	}
 	n.symbol = act.Symbol
 	n.startByte = tok.StartByte

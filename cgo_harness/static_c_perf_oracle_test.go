@@ -869,7 +869,7 @@ func staticCFirstFor(language string, fileIndex int) bool {
 	return (int(sum[0]&1)+fileIndex)%2 == 1
 }
 
-var staticLanguageSymbolPattern = regexp.MustCompile(`(?m)const\s+TSLanguage\s*\*\s*(tree_sitter_[A-Za-z0-9_]+)\s*\(void\)`)
+var staticLanguageSymbolPattern = regexp.MustCompile(`(?m)const\s+TSLanguage\s*\*\s*(tree_sitter_[A-Za-z0-9_]+)\s*\(\s*(?:void\s*)?\)\s*\{`)
 
 func buildStaticCPerfOracle(language string) (*staticCPerfOracle, error) {
 	lockPath, err := findParityLockPath()
@@ -1099,7 +1099,7 @@ func staticCLanguageSymbol(entry parityLockEntry, parserPath string) (string, er
 		return "", err
 	}
 	found := make(map[string]bool)
-	for _, match := range staticLanguageSymbolPattern.FindAllSubmatch(data, -1) {
+	for _, match := range staticLanguageSymbolPattern.FindAllSubmatch(staticCCodeOnly(data), -1) {
 		found[string(match[1])] = true
 	}
 	for _, candidate := range parityLanguageSymbols(entry) {
@@ -1118,6 +1118,83 @@ func staticCLanguageSymbol(entry parityLockEntry, parserPath string) (string, er
 	}
 	sort.Strings(symbols)
 	return "", fmt.Errorf("%s: cannot select language symbol from %v", entry.Name, symbols)
+}
+
+// staticCCodeOnly preserves C token boundaries while blanking comments and
+// string/character literals. Language entry-point discovery must never accept
+// a prototype or text that merely mentions a definition-shaped signature.
+func staticCCodeOnly(source []byte) []byte {
+	out := append([]byte(nil), source...)
+	const (
+		code = iota
+		lineComment
+		blockComment
+		stringLiteral
+		charLiteral
+	)
+	state := code
+	escaped := false
+	for i := 0; i < len(out); i++ {
+		current := out[i]
+		next := byte(0)
+		if i+1 < len(out) {
+			next = out[i+1]
+		}
+		switch state {
+		case code:
+			switch {
+			case current == '/' && next == '/':
+				out[i], out[i+1] = ' ', ' '
+				i++
+				state = lineComment
+			case current == '/' && next == '*':
+				out[i], out[i+1] = ' ', ' '
+				i++
+				state = blockComment
+			case current == '"':
+				out[i] = ' '
+				state = stringLiteral
+				escaped = false
+			case current == '\'':
+				out[i] = ' '
+				state = charLiteral
+				escaped = false
+			}
+		case lineComment:
+			if current == '\n' {
+				state = code
+			} else {
+				out[i] = ' '
+			}
+		case blockComment:
+			if current == '*' && next == '/' {
+				out[i], out[i+1] = ' ', ' '
+				i++
+				state = code
+			} else if current != '\n' {
+				out[i] = ' '
+			}
+		case stringLiteral, charLiteral:
+			quote := byte('"')
+			if state == charLiteral {
+				quote = '\''
+			}
+			if current == '\n' {
+				state = code
+				escaped = false
+				continue
+			}
+			out[i] = ' '
+			if escaped {
+				escaped = false
+			} else if current == '\\' {
+				escaped = true
+			} else if current == quote {
+				state = code
+			}
+		}
+	}
+	return out
 }
 
 func staticCScannerSources(srcDir string) []string {
