@@ -709,6 +709,47 @@ func TestResetPooledDFATokenSourcePreservesScannerScratch(t *testing.T) {
 	}
 }
 
+func TestResetPooledDFATokenSourcePreservesClearedGLRUnionOverflow(t *testing.T) {
+	ts := &dfaTokenSource{noPool: true}
+	ts.glrUnionScanScratch = ts.glrUnionScanInline[:0]
+	retainedText := string(make([]byte, 64))
+	for state := StateID(0); state < 9; state++ {
+		ts.glrUnionScanScratch = append(ts.glrUnionScanScratch, glrUnionDFAScan{
+			state: state,
+			tok:   Token{Text: retainedText},
+		})
+	}
+	if cap(ts.glrUnionScanScratch) <= len(ts.glrUnionScanInline) {
+		t.Fatalf("test did not force overflow: cap=%d inline=%d", cap(ts.glrUnionScanScratch), len(ts.glrUnionScanInline))
+	}
+
+	overflowCap := cap(ts.glrUnionScanScratch)
+	overflow := ts.glrUnionScanScratch[:overflowCap]
+	overflowBase := &overflow[0]
+	ts.Close()
+	for i := range overflow {
+		if overflow[i].tok.Text != "" {
+			t.Fatalf("Close retained source text in overflow entry %d", i)
+		}
+	}
+
+	resetPooledDFATokenSource(ts)
+	if got := cap(ts.glrUnionScanScratch); got != overflowCap {
+		t.Fatalf("reset overflow cap=%d want=%d", got, overflowCap)
+	}
+	if len(ts.glrUnionScanScratch) != 0 {
+		t.Fatalf("reset overflow len=%d want=0", len(ts.glrUnionScanScratch))
+	}
+	if got := &ts.glrUnionScanScratch[:overflowCap][0]; got != overflowBase {
+		t.Fatal("reset replaced GLR union overflow backing")
+	}
+	for i := range ts.glrUnionScanScratch[:overflowCap] {
+		if ts.glrUnionScanScratch[:overflowCap][i].tok.Text != "" {
+			t.Fatalf("reset restored source text in overflow entry %d", i)
+		}
+	}
+}
+
 func TestDFATokenSourceResetClearsScannerAndLexerState(t *testing.T) {
 	lang := &Language{
 		Name:            "test",
