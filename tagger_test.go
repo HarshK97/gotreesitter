@@ -17,24 +17,32 @@ func TestTaggerTimeoutOptionConfiguresParser(t *testing.T) {
 }
 
 func TestTagIncrementalStrictReportsTimeout(t *testing.T) {
-	tagger, err := NewTagger(queryTestLanguage(), "",
+	tagger, err := NewTagger(buildArithmeticLanguage(), "",
 		WithTaggerTimeoutMicros(100),
 		WithTaggerTokenSourceFactory(func(source []byte) TokenSource {
-			time.Sleep(2 * time.Millisecond)
-			return &eofTokenSource{pos: uint32(len(source))}
+			return &slowArithmeticTokenSource{
+				delay: 2 * time.Millisecond,
+				tokens: []Token{
+					{Symbol: 1, StartByte: 0, EndByte: 1},
+					{Symbol: 0, StartByte: 1, EndByte: 1},
+				},
+			}
 		}),
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	tags, tree, err := tagger.TagIncrementalStrict([]byte("func main"), nil)
+	tags, tree, err := tagger.TagIncrementalStrict([]byte("1"), nil)
 	if tree == nil {
 		t.Fatal("strict tagger returned nil partial tree")
 	}
 	defer tree.Release()
 	if !errors.Is(err, ErrParseStoppedEarly) {
 		t.Fatalf("error = %v, want ErrParseStoppedEarly", err)
+	}
+	if got := tree.ParseStopReason(); got != ParseStopTimeout {
+		t.Fatalf("stop reason = %q, want %q", got, ParseStopTimeout)
 	}
 	if tags != nil {
 		t.Fatalf("tags = %#v, want nil", tags)
