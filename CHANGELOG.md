@@ -41,6 +41,14 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Automatic forest routing now covers the exact checked-in AWK, KDL, and
+  Uxntal grammar artifacts after authenticated corpus gates found zero
+  forest/C-oracle divergence on accepted forest files, zero
+  routed/production divergence on every file, and an aggregate route wall-time
+  win. The opt-in is attached through blob-identity runtime profiles, so
+  same-name custom and adapted grammars remain on the conservative production
+  path.
+
 - Multi-stack DFA token elections now scan each unique active parser state once
   and reuse that result while scoring candidates, instead of rescanning the
   state for every candidate. The authenticated real-Go matrix avoided

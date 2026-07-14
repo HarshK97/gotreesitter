@@ -478,7 +478,6 @@ var builtinForestDefaults = map[string]bool{
 	"cmake":      true,
 	"css":        true,
 	"scss":       true,
-	"awk":        true,
 	"javascript": true,
 	"c_sharp":    true,
 
@@ -541,10 +540,11 @@ var builtinForestDefaults = map[string]bool{
 
 // parserWantsForest reports whether p's language dispatches to the GSS-forest
 // GLR fast path: either the Language opted in directly (WantsForest, set by a
-// grammargen consumer) or it is one of the curated built-ins in
-// builtinForestDefaults.
+// grammargen consumer), its exact artifact received a certified automatic
+// profile, or it is one of the older curated built-ins in builtinForestDefaults.
 func parserWantsForest(p *Parser) bool {
-	return p != nil && p.language != nil && (p.language.WantsForest || builtinForestDefaults[p.language.Name])
+	return p != nil && p.language != nil &&
+		(p.language.WantsForest || p.language.AutomaticForestEnabledByDefault || builtinForestDefaults[p.language.Name])
 }
 
 func automaticForestMemoryBudget(p *Parser, operationBudget int64) int64 {
