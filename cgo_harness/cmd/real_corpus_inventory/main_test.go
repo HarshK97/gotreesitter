@@ -5,8 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/odvcencio/gotreesitter/cgo_harness/internal/realcorpus"
 )
 
 func TestBuildInventoryUsesGrammarBlobsAsLanguageUniverse(t *testing.T) {
@@ -237,15 +240,13 @@ func TestSourceMatchersForLanguageAddsCanonicalNames(t *testing.T) {
 	}
 	for _, tc := range tests {
 		gotExts, gotNames, _ := sourceMatchersForLanguage(tc.language, nil)
-		extSet := stringSet(gotExts)
-		nameSet := stringSet(gotNames)
 		for _, want := range tc.wantExts {
-			if _, ok := extSet[want]; !ok {
+			if !slices.Contains(gotExts, want) {
 				t.Fatalf("%s extension matchers missing %q: %#v", tc.language, want, gotExts)
 			}
 		}
 		for _, want := range tc.wantNames {
-			if _, ok := nameSet[want]; !ok {
+			if !slices.Contains(gotNames, want) {
 				t.Fatalf("%s basename matchers missing %q: %#v", tc.language, want, gotNames)
 			}
 		}
@@ -254,19 +255,16 @@ func TestSourceMatchersForLanguageAddsCanonicalNames(t *testing.T) {
 
 func TestSourceMatchersForLanguageHonorsExplicitLockMatchers(t *testing.T) {
 	gotExts, gotNames, gotPaths := sourceMatchersForLanguage("kconfig", []string{".config", "Kconfig"})
-	extSet := stringSet(gotExts)
-	nameSet := stringSet(gotNames)
-	pathSet := stringSet(gotPaths)
-	if _, ok := extSet[".config"]; !ok {
+	if !slices.Contains(gotExts, ".config") {
 		t.Fatalf("extension matchers missing .config: %#v", gotExts)
 	}
-	if _, ok := nameSet["kconfig"]; !ok {
+	if !slices.Contains(gotNames, "kconfig") {
 		t.Fatalf("basename matchers missing kconfig: %#v", gotNames)
 	}
-	if _, ok := nameSet["kconfig.*"]; ok {
+	if slices.Contains(gotNames, "kconfig.*") {
 		t.Fatalf("explicit lock matchers should not add canonical kconfig.*: %#v", gotNames)
 	}
-	if len(pathSet) != 0 {
+	if len(gotPaths) != 0 {
 		t.Fatalf("unexpected path matchers: %#v", gotPaths)
 	}
 }
@@ -279,9 +277,8 @@ func TestSourceMatchersForLanguageKeepsBasenameOnlyLockMatchers(t *testing.T) {
 	if len(gotPaths) != 0 {
 		t.Fatalf("expected no path matchers, got %#v", gotPaths)
 	}
-	nameSet := stringSet(gotNames)
 	for _, want := range []string{"controldict", "fvschemes"} {
-		if _, ok := nameSet[want]; !ok {
+		if !slices.Contains(gotNames, want) {
 			t.Fatalf("basename matchers missing %q: %#v", want, gotNames)
 		}
 	}
@@ -295,36 +292,36 @@ func TestSourceMatchersForLanguageHonorsExplicitPathMatchers(t *testing.T) {
 	if len(gotNames) != 0 {
 		t.Fatalf("expected no basename matchers, got %#v", gotNames)
 	}
-	pathSet := stringSet(gotPaths)
 	for _, want := range []string{"lib/tomllib/mypy.ini", "tools/jit/mypy.ini", "root.ini"} {
-		if _, ok := pathSet[want]; !ok {
+		if !slices.Contains(gotPaths, want) {
 			t.Fatalf("path matchers missing %q: %#v", want, gotPaths)
 		}
 	}
-	if !sourcePathMatches("Lib/tomllib/mypy.ini", nil, nil, pathSet) {
+	matcher := realcorpus.NewFileMatcherFromParts(gotExts, gotNames, gotPaths)
+	if !matcher.Matches("Lib/tomllib/mypy.ini") {
 		t.Fatalf("expected exact relative path match: %#v", gotPaths)
 	}
-	if sourcePathMatches("Lib/_pyrepl/mypy.ini", nil, nil, pathSet) {
+	if matcher.Matches("Lib/_pyrepl/mypy.ini") {
 		t.Fatalf("unexpected duplicate basename path match: %#v", gotPaths)
 	}
-	if !sourcePathMatches("root.ini", nil, nil, pathSet) {
+	if !matcher.Matches("root.ini") {
 		t.Fatalf("expected exact root path match: %#v", gotPaths)
 	}
-	if sourcePathMatches("nested/root.ini", nil, nil, pathSet) {
+	if matcher.Matches("nested/root.ini") {
 		t.Fatalf("unexpected duplicate root basename path match: %#v", gotPaths)
 	}
 }
 
-func TestSourcePathMatchesAllowsKconfigPrefixBasenames(t *testing.T) {
-	_, gotNames, _ := sourceMatchersForLanguage("kconfig", nil)
-	nameSet := stringSet(gotNames)
-	if !sourcePathMatches("arch/Kconfig", nil, nameSet, nil) {
+func TestSourceMatcherAllowsKconfigPrefixBasenames(t *testing.T) {
+	gotExts, gotNames, gotPaths := sourceMatchersForLanguage("kconfig", nil)
+	matcher := realcorpus.NewFileMatcherFromParts(gotExts, gotNames, gotPaths)
+	if !matcher.Matches("arch/Kconfig") {
 		t.Fatalf("expected Kconfig basename match: %#v", gotNames)
 	}
-	if !sourcePathMatches("arch/Kconfig.nxp", nil, nameSet, nil) {
+	if !matcher.Matches("arch/Kconfig.nxp") {
 		t.Fatalf("expected Kconfig.* basename match: %#v", gotNames)
 	}
-	if sourcePathMatches("arch/not-kconfig.txt", nil, nameSet, nil) {
+	if matcher.Matches("arch/not-kconfig.txt") {
 		t.Fatalf("unexpected generic config match: %#v", gotNames)
 	}
 }

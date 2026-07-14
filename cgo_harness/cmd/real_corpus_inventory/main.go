@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -577,97 +576,7 @@ func sameGitRemote(actual, expected string) bool {
 }
 
 func sourceMatchersForLanguage(language string, exts []string) ([]string, []string, []string) {
-	matchExts, matchNames, matchPaths := splitMatcherList(exts)
-	if len(matchExts) == 0 && len(matchNames) == 0 && len(matchPaths) == 0 {
-		matchExts, matchNames, matchPaths = splitMatcherList(registryExtensionsForLanguage(language))
-	} else {
-		sort.Strings(matchExts)
-		sort.Strings(matchNames)
-		sort.Strings(matchPaths)
-		return matchExts, matchNames, matchPaths
-	}
-	switch strings.ToLower(strings.TrimSpace(language)) {
-	case "caddy":
-		matchNames = appendUnique(matchNames, "caddyfile")
-	case "cmake":
-		matchExts = appendUnique(matchExts, ".cmake")
-		matchNames = appendUnique(matchNames, "cmakelists.txt")
-	case "dockerfile":
-		matchExts = appendUnique(matchExts, ".dockerfile")
-		matchNames = appendUnique(matchNames, "dockerfile")
-		matchNames = appendUnique(matchNames, "containerfile")
-		for i := 1; i <= 9; i++ {
-			matchNames = appendUnique(matchNames, strconv.Itoa(i))
-		}
-	case "earthfile":
-		matchExts = appendUnique(matchExts, ".earth")
-		matchNames = appendUnique(matchNames, "earthfile")
-	case "git_rebase":
-		matchExts = appendUnique(matchExts, ".git-rebase-todo")
-		matchNames = appendUnique(matchNames, "git-rebase-todo")
-		matchNames = appendUnique(matchNames, "rebase-todo")
-	case "gomod":
-		matchNames = appendUnique(matchNames, "go.mod")
-	case "kconfig":
-		matchNames = appendUnique(matchNames, "kconfig")
-		matchNames = appendUnique(matchNames, "kconfig.*")
-	case "make":
-		matchExts = appendUnique(matchExts, ".mk")
-		matchNames = appendUnique(matchNames, "makefile")
-	case "markdown":
-		matchExts = appendUnique(matchExts, ".md")
-		matchNames = appendUnique(matchNames, "readme.md")
-	case "meson":
-		matchNames = appendUnique(matchNames, "meson.build")
-		matchNames = appendUnique(matchNames, "meson_options.txt")
-	case "nginx":
-		matchExts = appendUnique(matchExts, ".nginx")
-		matchNames = appendUnique(matchNames, "nginx.conf")
-		matchNames = appendUnique(matchNames, "conf.nginx")
-	case "requirements":
-		matchNames = appendUnique(matchNames, "requirements.txt")
-	case "ssh_config":
-		matchNames = appendUnique(matchNames, "ssh_config")
-		matchNames = appendUnique(matchNames, "sshd_config")
-		matchNames = appendUnique(matchNames, "known_hosts")
-		matchNames = appendUnique(matchNames, "authorized_keys")
-	case "tmux":
-		matchNames = appendUnique(matchNames, "tmux.conf")
-		matchNames = appendUnique(matchNames, ".tmux.conf")
-	case "todotxt":
-		matchNames = appendUnique(matchNames, "todo.txt")
-	}
-	sort.Strings(matchExts)
-	sort.Strings(matchNames)
-	sort.Strings(matchPaths)
-	return matchExts, matchNames, matchPaths
-}
-
-func splitMatcherList(values []string) ([]string, []string, []string) {
-	var exts []string
-	var names []string
-	var paths []string
-	for _, value := range normalizeMatcherList(values) {
-		if strings.ContainsAny(value, `/\`) {
-			paths = appendUnique(paths, normalizeRelativeMatcherPath(value))
-		} else if strings.HasPrefix(value, ".") {
-			exts = appendUnique(exts, value)
-		} else {
-			names = appendUnique(names, value)
-		}
-	}
-	return exts, names, paths
-}
-
-func normalizeMatcherList(values []string) []string {
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.ToLower(strings.TrimSpace(value))
-		if value != "" {
-			out = appendUnique(out, value)
-		}
-	}
-	return out
+	return realcorpus.NewFileMatcher(language, exts, registryExtensionsForLanguage(language)).Matchers()
 }
 
 func registryExtensionsForLanguage(language string) []string {
@@ -679,19 +588,17 @@ func registryExtensionsForLanguage(language string) []string {
 		if strings.ToLower(strings.TrimSpace(entry.Name)) != language {
 			continue
 		}
-		return normalizeMatcherList(entry.Extensions)
+		return append([]string(nil), entry.Extensions...)
 	}
 	return nil
 }
 
 func countMatchingSourceFiles(root string, exts []string, basenames []string, paths []string) (int, int64, error) {
-	extSet := stringSet(exts)
-	baseSet := stringSet(basenames)
-	pathSet := stringSet(paths)
+	matcher := realcorpus.NewFileMatcherFromParts(exts, basenames, paths)
 	var count int
 	var bytes int64
 	err := realcorpus.WalkMatchingFiles(root, func(relPath string) bool {
-		return sourcePathMatches(relPath, extSet, baseSet, pathSet)
+		return matcher.Matches(relPath)
 	}, func(file realcorpus.File) error {
 		count++
 		bytes += file.Size
@@ -701,59 +608,6 @@ func countMatchingSourceFiles(root string, exts []string, basenames []string, pa
 		return 0, 0, err
 	}
 	return count, bytes, nil
-}
-
-func stringSet(values []string) map[string]struct{} {
-	out := map[string]struct{}{}
-	for _, value := range values {
-		value = strings.ToLower(strings.TrimSpace(value))
-		if value != "" {
-			out[value] = struct{}{}
-		}
-	}
-	return out
-}
-
-func sourcePathMatches(path string, extSet, baseSet, pathSet map[string]struct{}) bool {
-	lowerPath := strings.ToLower(filepath.ToSlash(path))
-	cleanPath := normalizeRelativeMatcherPath(lowerPath)
-	if _, ok := pathSet[cleanPath]; ok {
-		return true
-	}
-	for ext := range extSet {
-		if strings.HasSuffix(lowerPath, ext) {
-			return true
-		}
-	}
-	base := strings.ToLower(filepath.Base(path))
-	return basenameMatches(base, baseSet)
-}
-
-func basenameMatches(base string, baseSet map[string]struct{}) bool {
-	if _, ok := baseSet[base]; ok {
-		return true
-	}
-	for pattern := range baseSet {
-		if pattern == "kconfig.*" {
-			if strings.HasPrefix(base, "kconfig.") && !strings.HasSuffix(base, ".txt") && !strings.HasSuffix(base, ".md") && !strings.HasSuffix(base, ".rst") {
-				return true
-			}
-			continue
-		}
-		if strings.HasSuffix(pattern, "*") && strings.HasPrefix(base, strings.TrimSuffix(pattern, "*")) {
-			return true
-		}
-	}
-	return false
-}
-
-func normalizeRelativeMatcherPath(path string) string {
-	path = strings.ReplaceAll(strings.TrimSpace(path), "\\", "/")
-	path = strings.ToLower(filepath.ToSlash(filepath.Clean(filepath.FromSlash(path))))
-	if path == "." {
-		return ""
-	}
-	return path
 }
 
 func gitHead(path string) string {

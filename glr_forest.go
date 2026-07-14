@@ -141,10 +141,6 @@ func languageWantsForestRecover(name string) bool {
 // belt-and-suspenders guard, not the progress mechanism).
 const forestRecoverCap = 1 << 20
 
-// forestLastDeclineReason records why parseForest last declined (diagnostic only,
-// not thread-safe; for single-threaded prototyping/measurement).
-var forestLastDeclineReason string
-
 const forestDeclineEOFRecoveryConflict = "eof-recovery-conflict"
 const forestDeclineErrorRoot = "error_root"
 const forestDeclineRootHasError = "root_has_error"
@@ -345,10 +341,11 @@ func forestProgressExtra(frontier, work, nextFrontier []*gssForestNode, curIndex
 }
 
 // ParseForestExperimental parses source with the experimental GSS-forest GLR
-// path and returns a releasable tree (or nil,false if the parse dies — the
-// forest path has no error recovery yet). Exported so out-of-tree benchmarks
-// and validation in packages that attach external scanners (e.g. grammars) can
-// drive it; not part of the stable API.
+// path and returns a releasable forest-produced tree. It returns nil,false when
+// the forest declines for any reason; unlike Parse, this diagnostic entry point
+// never hides a decline by running the production parser. Exported so
+// out-of-tree benchmarks and validation in packages that attach external
+// scanners (e.g. grammars) can drive it; not part of the stable API.
 func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 	// Every other public parse entry point (parser_api.go: Parse,
 	// ParseWithTokenSource, ParseIncremental...) establishes the
@@ -363,29 +360,25 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 	endBudget := p.enterParseBudget()
 	defer endBudget()
 	arena := acquireNodeArena(arenaClassFull)
-	root, ok := p.parseForest(arena, source, true)
+	root, ok := p.parseForest(arena, source, true, parseMemoryBudgetForParser(p, len(source)))
 	if !ok || root == nil {
 		arena.Release()
-		if forestLastDeclineReason == forestDeclineEOFRecoveryConflict {
-			prev := glrForestEnabled
-			glrForestEnabled = false
-			tree, err := p.Parse(source)
-			glrForestEnabled = prev
-			return tree, err == nil && tree != nil
-		}
 		return nil, false
 	}
 	p.finalizeForestRoot(root, source)
 	tree := newTreeWithArenas(root, source, p.language, arena, nil)
+	tree.setParseRuntime(forestAcceptedRuntime(root, source))
+	tree.forestFastPath = true
 	arena.reclaimRawShapeStorage()
 	return tree, true
 }
 
-// ForestDeclineInfo returns where/why the forest fast path last declined (fell
-// back to production): the byte offset and lookahead symbol at the decline, a
-// short reason code, and (for reason "dead_end") the surviving GLR states. It
-// drives language-burndown triage of forest dead-ends without re-instrumenting.
-// Valid after a ParseForestExperimental that returned ok=false.
+// ForestDeclineInfo returns where/why the forest fast path last declined: the
+// byte offset and lookahead symbol at the decline, a short reason code, and (for
+// reason "dead_end") the surviving GLR states. The normal Parse path may then
+// fall back to production; ParseForestExperimental does not. This drives
+// language-burndown triage without re-instrumenting. Valid after a
+// ParseForestExperimental that returned ok=false.
 func (p *Parser) ForestDeclineInfo() (offset uint32, sym Symbol, reason string, states []StateID) {
 	return p.forestDeclineByte, p.forestDeclineSym, p.forestDeclineReason, p.forestDeclineStates
 }
@@ -395,16 +388,16 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 	p.forestDeclineSym = tok.Symbol
 	p.forestDeclineReason = reason
 	p.forestDeclineStates = append(p.forestDeclineStates[:0], states...)
-	forestLastDeclineReason = reason
 }
 
 // builtinForestDefaults is the curated set of built-in languages that dispatch
 // to the GSS-forest GLR fast path by default. Restricted to languages whose
 // production GLR parse suffers the super-linear deep-stack-equivalence blowup
-// AND that are verified byte-identical to production on their real corpus by
-// TestForestCorpusParity (which compares full node BYTE RANGES, not just
-// s-expressions — an s-expr-only gate hid systematic span bugs). Measured
-// byte-range-clean production-vs-forest speedups on the real corpus: bash
+// AND that are verified identical to production on their real corpus by
+// TestForestCorpusParity (which compares all nodes, byte ranges, points,
+// named/extra/missing bits, child counts, and fields — named-only gates hid
+// systematic span bugs).
+// Measured production-vs-forest speedups on the real corpus: bash
 // 803x, erlang 664x, cmake 166x, awk 202x, javascript 36x, css 5x, scss 3x,
 // c_sharp 3x. GraphQL is clean against production here too, but stays out
 // until the production tree is C-oracle-clean on the ring matrix. The forest
@@ -445,29 +438,28 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 // intentionally held out of default dispatch. An all-23-file corpus census
 // produced zero forest fast-path returns: the two largest inputs exhausted the
 // forest budget, while the other 21 reached EOF and conservatively declined
-// with eof-recovery-conflict before repeating the parse in production. The
-// accepted production parses were full-span and error-free; keep CSV out until
-// a corpus gate proves the forest actually returns its tree and produces a net
-// wall-time win instead of paying a failed attempt first.
+// with eof-recovery-conflict. Keep CSV out until a corpus gate proves the forest
+// actually returns its tree and produces a net wall-time win instead of paying
+// a failed attempt before the normal Parse path falls back to production.
 //
 // Beancount recovery likewise remains available to explicit forest experiments,
 // but automatic dispatch is held out. The exact four-file clean corpus produced
 // zero forest returns: every attempt reached EOF and conservatively declined
-// with eof-recovery-conflict before repeating the parse in production. On the
-// largest 347 KiB witness that retry raised the Go/C ratio from 1.72x on the
-// production path to 30.26x under automatic dispatch.
+// with eof-recovery-conflict. On the largest 347 KiB witness an automatic retry
+// followed by production raised the Go/C ratio from 1.72x on the production
+// path to 30.26x under automatic dispatch.
 //
 // Org and Vimdoc retain their certified recovery policies for explicit forest
 // experiments, but automatic dispatch is held out. Representative clean
 // witnesses produced zero forest returns: both reached EOF and declined with
-// eof-recovery-conflict before returning the exact production tree. That retry
+// eof-recovery-conflict. An automatic-dispatch retry followed by production
 // made fresh parses more than 30x slower; Vimdoc's 227 KiB witness also exceeds
 // the bounded decline-memo ceiling, so reused parsers repeated the same cost.
 //
 // Fish and Racket are held out for the same reason. Two locked clean witnesses
-// per language produced zero forest returns: each attempt reached EOF, declined
-// with eof-recovery-conflict, and returned the exact production tree. Fresh
-// automatic parses were 10-22x slower for Fish and 16-19x slower for Racket;
+// per language produced zero forest returns: each attempt reached EOF and
+// declined with eof-recovery-conflict. Fresh automatic parses that then fell
+// back to production were 10-22x slower for Fish and 16-19x slower for Racket;
 // their 234-248 KiB witnesses exceed the decline-memo ceiling and repeated the
 // same cost on reused parsers. Their recovery policies remain available to
 // explicit forest experiments.
@@ -486,7 +478,6 @@ var builtinForestDefaults = map[string]bool{
 	"cmake":      true,
 	"css":        true,
 	"scss":       true,
-	"awk":        true,
 	"javascript": true,
 	"c_sharp":    true,
 
@@ -549,10 +540,25 @@ var builtinForestDefaults = map[string]bool{
 
 // parserWantsForest reports whether p's language dispatches to the GSS-forest
 // GLR fast path: either the Language opted in directly (WantsForest, set by a
-// grammargen consumer) or it is one of the curated built-ins in
-// builtinForestDefaults.
+// grammargen consumer), its exact artifact received a certified automatic
+// profile, or it is one of the older curated built-ins in builtinForestDefaults.
 func parserWantsForest(p *Parser) bool {
-	return p != nil && p.language != nil && (p.language.WantsForest || builtinForestDefaults[p.language.Name])
+	return p != nil && p.language != nil &&
+		(p.language.WantsForest || p.language.AutomaticForestEnabledByDefault || builtinForestDefaults[p.language.Name])
+}
+
+func automaticForestMemoryBudget(p *Parser, operationBudget int64) int64 {
+	if p == nil || p.language == nil || operationBudget <= 0 {
+		return operationBudget
+	}
+	allowance := p.language.AutomaticForestMemoryAllowanceBytes
+	if allowance <= 0 {
+		return operationBudget
+	}
+	if allowance > operationBudget {
+		allowance = operationBudget
+	}
+	return allowance
 }
 
 // tryForestFastPath attempts a full parse via the GSS-forest path and returns a
@@ -587,16 +593,18 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		progress.endDetail(time.Now(), "forest_arena_acquire_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
 		progress.beginDetail(time.Now(), "forest_parse_call_begin", "forest_parse_call_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
 	}
-	root, ok := p.parseForest(arena, source, allowIncremental)
+	operationBudget := parseMemoryBudgetForParser(p, len(source))
+	forestBudget := automaticForestMemoryBudget(p, operationBudget)
+	root, ok := p.parseForest(arena, source, allowIncremental, forestBudget)
 	if progress.enabled {
-		progress.endDetail(time.Now(), "forest_parse_call_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, fmt.Sprintf("ok=%t root_present=%t decline_reason=%s", ok, root != nil, forestLastDeclineReason))
+		progress.endDetail(time.Now(), "forest_parse_call_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, fmt.Sprintf("ok=%t root_present=%t decline_reason=%s", ok, root != nil, p.forestDeclineReason))
 	}
 	if !ok || root == nil {
 		if p.forestDeclineReason == forestDeclineEOFRecoveryConflict {
 			p.rememberForestDecline(source, p.forestDeclineReason)
 		}
 		if progress.enabled {
-			progress.emit(time.Now(), "forest_try_decline", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, fmt.Sprintf("reason=parse_forest_failed ok=%t root_present=%t decline_reason=%s", ok, root != nil, forestLastDeclineReason))
+			progress.emit(time.Now(), "forest_try_decline", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, fmt.Sprintf("reason=parse_forest_failed ok=%t root_present=%t decline_reason=%s", ok, root != nil, p.forestDeclineReason))
 		}
 		arena.Release()
 		return nil
@@ -2750,14 +2758,13 @@ func (s *gssForestNodeSlab) retainedBytes() int {
 // returned, or (nil,false) if the parse dies. This is the forest path the
 // GOT_GLR_FOREST flag dispatches into; parity-iteration (extras, recovery,
 // external scanners, full GLR-lexing) is layered on this core.
-func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalCheckpoints bool) (*Node, bool) {
+func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalCheckpoints bool, memoryBudget int64) (*Node, bool) {
 	lang := p.language
 	meta := lang.SymbolMetadata
 	named := func(sym Symbol) bool { return int(sym) < len(meta) && meta[sym].Named }
 	p.forestDeclineReason = ""
 	p.forestDeclineByte, p.forestDeclineSym = 0, 0
 	p.forestDeclineStates = p.forestDeclineStates[:0]
-	forestLastDeclineReason = ""
 	progress := newParseProgressTelemetry(p, len(source), uint32(len(source)), time.Now())
 	if progress.enabled {
 		progress.emit(time.Now(), "forest_parse_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
@@ -2792,12 +2799,11 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 	defer releaseGSSForestNodeSlab(slab)
 	linkCap := forestLinkCapForLanguage(lang.Name)
 
-	// Honor the same per-parse memory budget the production loop enforces.
-	// The arena counter covers tree materialization, while the runtime-wide
-	// guard also covers forest-only heap such as GSS slabs and the alternative
-	// indexes. The forest has no partial-tree/error-recovery path, so on
-	// exhaustion it declines and lets the production parser report the stop.
-	restoreRuntimeMemoryBudget := p.enterForestMemoryBudget(arena, len(source))
+	// Apply this attempt's memory limit to both arena-backed tree materialization
+	// and forest-only heap such as GSS slabs and the alternative indexes. The
+	// forest has no partial-tree/error-recovery path, so exhaustion declines and
+	// leaves authoritative completion and stop semantics to the production parser.
+	restoreRuntimeMemoryBudget := p.enterForestMemoryBudgetWithLimit(arena, len(source), memoryBudget)
 	if restoreRuntimeMemoryBudget.parser != nil {
 		defer restoreRuntimeMemoryBudget.restore()
 	}
@@ -2824,12 +2830,10 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 	// own enterParseBudget-established deadline is the SAME one (nesting, not
 	// reset), so its very first p.parseStopReasonNow() check fires immediately
 	// and returns a proper ParseStopTimeout/ParseStopCancelled tree cheaply.
-	// ParseForestExperimental's fallback, by contrast, only re-runs production
-	// internally for forestDeclineEOFRecoveryConflict specifically (see below);
-	// a timeout/cancellation decline reason does not match that string, so it
-	// takes the plain `return nil, false` path with no internal fallback
-	// attempt at all — callers of that standalone entry point get a bare
-	// failure on timeout, not a production retry.
+	// ParseForestExperimental is a strict diagnostic entry point: every decline,
+	// including timeout/cancellation and EOF recovery competition, returns
+	// nil,false without a production retry. Only the normal Parse dispatch owns
+	// fallback semantics.
 	stopPoller := parseStopPoller{check: p.activeParseStopCheck()}
 
 	// Per-step scratch reused across every token (cleared, not reallocated): the
@@ -2858,8 +2862,9 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 				forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, nil, ""))
 		}
 		if p.forestMemoryBudgetExceeded(arena, false) {
-			// Memory budget hit; decline so the production parser re-runs and
-			// reports ParseStopMemoryBudget (the forest has no partial-tree path).
+			// Memory budget hit; decline so the production parser retains
+			// authoritative completion and stop semantics. The forest has no
+			// partial-tree path and may have a narrower speculative allowance.
 			p.recordForestDecline("budget", Token{StartByte: frontier[len(frontier)-1].byteOffset}, nil)
 			if progress.enabled {
 				progress.emit(time.Now(), "forest_decline", iter, tokens, Token{}, false, nil, 0, 0, 0, false, 0, 0,
@@ -3556,6 +3561,10 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 
 func (p *Parser) enterForestMemoryBudget(arena *nodeArena, sourceLen int) runtimeMemoryBudgetRestore {
 	memoryBudget := parseMemoryBudgetForParser(p, sourceLen)
+	return p.enterForestMemoryBudgetWithLimit(arena, sourceLen, memoryBudget)
+}
+
+func (p *Parser) enterForestMemoryBudgetWithLimit(arena *nodeArena, sourceLen int, memoryBudget int64) runtimeMemoryBudgetRestore {
 	arena.setBudget(memoryBudget)
 	return p.enterRuntimeMemoryBudget(memoryBudget, sourceLen)
 }

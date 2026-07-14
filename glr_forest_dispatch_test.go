@@ -1,12 +1,161 @@
 package gotreesitter_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	gts "github.com/odvcencio/gotreesitter"
 	grm "github.com/odvcencio/gotreesitter/grammars"
 )
+
+func TestCertifiedAutomaticForestRoutingRequiresExactArtifact(t *testing.T) {
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+
+	tests := []struct {
+		name string
+		load func() *gts.Language
+		src  string
+	}{
+		{
+			name: "awk",
+			load: grm.AwkLanguage,
+			src: `BEGIN {
+	str="\342\200\257"
+	print length(str)
+	match(str,/^/)
+	print RSTART, RLENGTH
+}
+`,
+		},
+		{
+			name: "kdl",
+			load: grm.KdlLanguage,
+			src: `package {
+    name kdl
+    version "0.0.0"
+    description "The kdl document language"
+}
+`,
+		},
+		{name: "uxntal", load: grm.UxntalLanguage, src: "( comment )\n|0100 BRK\n"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builtin := tt.load()
+			if !builtin.AutomaticForestEnabledByDefault {
+				t.Fatal("built-in artifact is missing its automatic forest profile")
+			}
+			parser := gts.NewParser(builtin)
+			tree, err := parser.Parse([]byte(tt.src))
+			if err != nil {
+				t.Fatalf("built-in parse: %v", err)
+			}
+			defer tree.Release()
+			_, _, decline, _ := parser.ForestDeclineInfo()
+			if !tree.ParseRuntime().ForestFastPath && decline == "" {
+				t.Fatal("built-in artifact did not attempt the automatic forest route")
+			}
+
+			custom, err := gts.LoadLanguage(grm.BlobByName(tt.name))
+			if err != nil {
+				t.Fatalf("load caller-owned same-name grammar: %v", err)
+			}
+			grm.AttachLanguageSupport(tt.name, custom)
+			if custom.AutomaticForestEnabledByDefault {
+				t.Fatal("caller-owned same-name grammar inherited built-in certification")
+			}
+			customParser := gts.NewParser(custom)
+			customTree, err := customParser.Parse([]byte(tt.src))
+			if err != nil {
+				t.Fatalf("caller-owned same-name parse: %v", err)
+			}
+			defer customTree.Release()
+			if rt := customTree.ParseRuntime(); rt.ForestFastPath {
+				t.Fatalf("caller-owned same-name grammar used forest: %s", rt.Summary())
+			}
+			if offset, sym, reason, states := customParser.ForestDeclineInfo(); reason != "" {
+				t.Fatalf("caller-owned same-name grammar attempted forest: offset=%d symbol=%d reason=%q states=%v", offset, sym, reason, states)
+			}
+		})
+	}
+}
+
+func TestCertifiedKDLForestDeclineFallsBackExactly(t *testing.T) {
+	lang := grm.KdlLanguage()
+	src := []byte(`package {
+    name kdl
+    version "0.0.0"
+    description "The kdl document language"
+    authors "Kat Marchan"
+    license-file LICENSE.md
+    edition "2018"
+}
+
+dependencies {
+    nom "6.0.1"
+    thiserror "1.0.22"
+}
+`)
+
+	gts.SetGLRForestEnabled(false)
+	production, err := gts.NewParser(lang).Parse(src)
+	if err != nil {
+		t.Fatalf("production parse: %v", err)
+	}
+	defer production.Release()
+
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+	parser := gts.NewParser(lang)
+	routed, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("automatic parse: %v", err)
+	}
+	defer routed.Release()
+	if rt := routed.ParseRuntime(); rt.ForestFastPath {
+		t.Fatalf("declined witness unexpectedly returned a forest tree: %s", rt.Summary())
+	}
+	if offset, sym, reason, states := parser.ForestDeclineInfo(); reason == "" {
+		t.Fatalf("declined witness did not record a forest attempt: offset=%d symbol=%d states=%v", offset, sym, states)
+	}
+	requireForestFallbackNodeIdentity(t, "root", routed.RootNode(), production.RootNode(), lang)
+}
+
+func requireForestFallbackNodeIdentity(t *testing.T, path string, got, want *gts.Node, lang *gts.Language) {
+	t.Helper()
+	if got == nil || want == nil {
+		if got != want {
+			t.Fatalf("%s presence got=%t want=%t", path, got != nil, want != nil)
+		}
+		return
+	}
+	if got.Type(lang) != want.Type(lang) || got.Symbol() != want.Symbol() {
+		t.Fatalf("%s identity got=%q/%d want=%q/%d", path, got.Type(lang), got.Symbol(), want.Type(lang), want.Symbol())
+	}
+	if got.StartByte() != want.StartByte() || got.EndByte() != want.EndByte() ||
+		got.StartPoint() != want.StartPoint() || got.EndPoint() != want.EndPoint() {
+		t.Fatalf("%s range got=%d:%d %v:%v want=%d:%d %v:%v", path,
+			got.StartByte(), got.EndByte(), got.StartPoint(), got.EndPoint(),
+			want.StartByte(), want.EndByte(), want.StartPoint(), want.EndPoint())
+	}
+	if got.IsNamed() != want.IsNamed() || got.IsExtra() != want.IsExtra() ||
+		got.IsMissing() != want.IsMissing() || got.HasError() != want.HasError() {
+		t.Fatalf("%s flags differ", path)
+	}
+	if got.ChildCount() != want.ChildCount() {
+		t.Fatalf("%s child count got=%d want=%d", path, got.ChildCount(), want.ChildCount())
+	}
+	for i := 0; i < got.ChildCount(); i++ {
+		childPath := fmt.Sprintf("%s/%d", path, i)
+		if got.FieldNameForChild(i, lang) != want.FieldNameForChild(i, lang) {
+			t.Fatalf("%s field got=%q want=%q", childPath, got.FieldNameForChild(i, lang), want.FieldNameForChild(i, lang))
+		}
+		requireForestFallbackNodeIdentity(t, childPath, got.Child(i), want.Child(i), lang)
+	}
+}
 
 // TestForestDispatchParity verifies the (default-on) forest fast path is
 // invisible: for a dispatched language (css ∈ builtinForestDefaults) the forest
@@ -108,9 +257,13 @@ func TestForestExperimentalAppliesBashCompatibility(t *testing.T) {
 	if got, want := root.NamedChildCount(), prod.RootNode().NamedChildCount(); got != want {
 		t.Fatalf("forest Bash root named child count = %d, want production count %d; root=%s", got, want, root.SExpr(lang))
 	}
+	runtime := forest.ParseRuntime()
+	if runtime.StopReason != gts.ParseStopAccepted || !runtime.ForestFastPath || runtime.SourceLen != uint32(len(src)) || runtime.RootEndByte != root.EndByte() {
+		t.Fatalf("forest experimental runtime = %s, want accepted forest provenance", runtime.Summary())
+	}
 }
 
-func TestBeancountDefaultSkipsForestButExplicitRemainsAvailable(t *testing.T) {
+func TestBeancountDefaultSkipsForestAndExplicitReportsDecline(t *testing.T) {
 	// This external-package test follows the file's existing non-parallel
 	// convention: no public getter exists for the test/benchmark-only global
 	// switch, so restore its process default rather than expanding the API.
@@ -118,7 +271,7 @@ func TestBeancountDefaultSkipsForestButExplicitRemainsAvailable(t *testing.T) {
 	defer gts.SetGLRForestEnabled(true)
 
 	// The leading comment is the smallest corpus-shaped witness that reaches
-	// the explicit forest's conservative EOF recovery-conflict fallback.
+	// the explicit forest's conservative EOF recovery-conflict decline.
 	src := []byte(";;; comment\n2024-01-01 open Assets:Bank\n")
 	lang := grm.BeancountLanguage()
 	parser := gts.NewParser(lang)
@@ -136,25 +289,18 @@ func TestBeancountDefaultSkipsForestButExplicitRemainsAvailable(t *testing.T) {
 
 	explicitParser := gts.NewParser(lang)
 	explicit, ok := explicitParser.ParseForestExperimental(src)
-	if !ok || explicit == nil || explicit.RootNode() == nil {
-		t.Fatalf("explicit Beancount forest parse ok=%v tree nil=%v", ok, explicit == nil)
+	if ok || explicit != nil {
+		if explicit != nil {
+			explicit.Release()
+		}
+		t.Fatalf("explicit Beancount forest outcome ok=%v tree nil=%v, want strict decline", ok, explicit == nil)
 	}
-	defer explicit.Release()
 	if offset, sym, reason, states := explicitParser.ForestDeclineInfo(); reason != "eof-recovery-conflict" {
 		t.Fatalf("explicit Beancount forest decline: offset=%d symbol=%d reason=%q states=%v, want reason=%q", offset, sym, reason, states, "eof-recovery-conflict")
 	}
-	if got, want := explicit.RootNode().SExpr(lang), automatic.RootNode().SExpr(lang); got != want {
-		t.Fatalf("explicit Beancount forest result mismatch\n got: %s\nwant: %s", got, want)
-	}
-	if got, want := explicit.RootNode().EndByte(), automatic.RootNode().EndByte(); got != want {
-		t.Fatalf("explicit Beancount root endByte = %d, want %d", got, want)
-	}
-	if got, want := explicit.RootNode().HasError(), automatic.RootNode().HasError(); got != want {
-		t.Fatalf("explicit Beancount HasError = %v, want %v", got, want)
-	}
 }
 
-func TestExplicitOnlyLanguagesSkipDefaultForestButRemainAvailable(t *testing.T) {
+func TestExplicitOnlyLanguagesHaveStrictForestOutcomes(t *testing.T) {
 	// Follow this file's existing non-parallel convention around the global
 	// test/benchmark forest switch.
 	gts.SetGLRForestEnabled(true)
@@ -189,8 +335,17 @@ func TestExplicitOnlyLanguagesSkipDefaultForestButRemainAvailable(t *testing.T) 
 
 			explicitParser := gts.NewParser(lang)
 			explicit, ok := explicitParser.ParseForestExperimental(src)
-			if !ok || explicit == nil || explicit.RootNode() == nil {
-				t.Fatalf("explicit forest parse ok=%v tree nil=%v", ok, explicit == nil)
+			if ok != (explicit != nil) {
+				if explicit != nil {
+					explicit.Release()
+				}
+				t.Fatalf("explicit forest outcome is incoherent: ok=%v tree nil=%v", ok, explicit == nil)
+			}
+			if !ok {
+				if offset, sym, reason, states := explicitParser.ForestDeclineInfo(); reason == "" {
+					t.Fatalf("explicit forest decline has no diagnostic: offset=%d symbol=%d states=%v", offset, sym, states)
+				}
+				return
 			}
 			defer explicit.Release()
 			if got, want := explicit.RootNode().SExpr(lang), automatic.RootNode().SExpr(lang); got != want {
@@ -198,9 +353,6 @@ func TestExplicitOnlyLanguagesSkipDefaultForestButRemainAvailable(t *testing.T) 
 			}
 			if got, want := explicit.RootNode().EndByte(), automatic.RootNode().EndByte(); got != want {
 				t.Fatalf("explicit forest root endByte = %d, want %d", got, want)
-			}
-			if got, want := explicit.RootNode().HasError(), automatic.RootNode().HasError(); got != want {
-				t.Fatalf("explicit forest HasError = %v, want %v", got, want)
 			}
 		})
 	}

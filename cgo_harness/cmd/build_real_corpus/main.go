@@ -14,10 +14,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
+	"github.com/odvcencio/gotreesitter/cgo_harness/internal/realcorpus"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
@@ -1112,91 +1112,7 @@ func profileSourceCheckoutKey(src profileSource) string {
 }
 
 func candidateMatchersForLanguage(lang string, exts []string) ([]string, []string, []string) {
-	outExts, names, paths := splitCandidateMatchers(exts)
-	if len(outExts) != 0 || len(names) != 0 || len(paths) != 0 {
-		return outExts, names, paths
-	}
-	outExts = registryExtensionsForLanguage(lang)
-	switch lang {
-	case "awk":
-		outExts = appendUniqueString(outExts, ".awk")
-		outExts = appendUniqueString(outExts, ".gawk")
-	case "caddy":
-		names = appendUniqueString(names, "caddyfile")
-	case "cmake":
-		outExts = appendUniqueString(outExts, ".cmake")
-		names = appendUniqueString(names, "cmakelists.txt")
-	case "d":
-		outExts = appendUniqueString(outExts, ".d")
-		outExts = appendUniqueString(outExts, ".di")
-	case "dart":
-		outExts = appendUniqueString(outExts, ".dart")
-	case "dockerfile":
-		outExts = appendUniqueString(outExts, ".dockerfile")
-		names = appendUniqueString(names, "dockerfile")
-		names = appendUniqueString(names, "containerfile")
-		for i := 1; i <= 9; i++ {
-			names = appendUniqueString(names, strconv.Itoa(i))
-		}
-	case "earthfile":
-		outExts = appendUniqueString(outExts, ".earth")
-		names = appendUniqueString(names, "earthfile")
-	case "erlang":
-		outExts = appendUniqueString(outExts, ".erl")
-		outExts = appendUniqueString(outExts, ".hrl")
-	case "git_rebase":
-		outExts = appendUniqueString(outExts, ".git-rebase-todo")
-		names = appendUniqueString(names, "git-rebase-todo")
-		names = appendUniqueString(names, "rebase-todo")
-	case "gomod":
-		names = appendUniqueString(names, "go.mod")
-	case "make":
-		outExts = appendUniqueString(outExts, ".mk")
-		names = appendUniqueString(names, "makefile")
-	case "markdown":
-		outExts = appendUniqueString(outExts, ".md")
-		names = appendUniqueString(names, "readme.md")
-	case "meson":
-		names = appendUniqueString(names, "meson.build")
-		names = appendUniqueString(names, "meson_options.txt")
-	case "nginx":
-		outExts = appendUniqueString(outExts, ".nginx")
-		names = appendUniqueString(names, "nginx.conf")
-		names = appendUniqueString(names, "conf.nginx")
-	case "requirements":
-		names = appendUniqueString(names, "requirements.txt")
-	case "ssh_config":
-		names = appendUniqueString(names, "ssh_config")
-		names = appendUniqueString(names, "sshd_config")
-		names = appendUniqueString(names, "known_hosts")
-		names = appendUniqueString(names, "authorized_keys")
-	case "tmux":
-		names = appendUniqueString(names, "tmux.conf")
-		names = appendUniqueString(names, ".tmux.conf")
-	case "todotxt":
-		names = appendUniqueString(names, "todo.txt")
-	}
-	return outExts, names, paths
-}
-
-func splitCandidateMatchers(values []string) ([]string, []string, []string) {
-	var exts []string
-	var names []string
-	var paths []string
-	for _, value := range values {
-		value = strings.ToLower(strings.TrimSpace(value))
-		if value == "" {
-			continue
-		}
-		if strings.ContainsAny(value, `/\`) {
-			paths = appendUniqueString(paths, normalizeRelativeMatcherPath(value))
-		} else if strings.HasPrefix(value, ".") {
-			exts = appendUniqueString(exts, value)
-		} else {
-			names = appendUniqueString(names, value)
-		}
-	}
-	return exts, names, paths
+	return realcorpus.NewFileMatcher(lang, exts, registryExtensionsForLanguage(lang)).Matchers()
 }
 
 func normalizeRelativeMatcherPath(path string) string {
@@ -1206,19 +1122,6 @@ func normalizeRelativeMatcherPath(path string) string {
 		return ""
 	}
 	return path
-}
-
-func appendUniqueString(values []string, value string) []string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if value == "" {
-		return values
-	}
-	for _, existing := range values {
-		if strings.ToLower(strings.TrimSpace(existing)) == value {
-			return values
-		}
-	}
-	return append(values, value)
 }
 
 func registryExtensionsForLanguage(lang string) []string {

@@ -18,6 +18,18 @@ func TestParserWantsForestFieldDrivesDispatch(t *testing.T) {
 		t.Errorf("Language{Name:x, WantsForest:false} (non-builtin) should NOT dispatch to forest")
 	}
 
+	certified := &Parser{language: &Language{Name: "x", AutomaticForestEnabledByDefault: true}}
+	if !parserWantsForest(certified) {
+		t.Error("certified automatic forest profile should dispatch")
+	}
+
+	for _, name := range []string{"awk", "kdl", "uxntal"} {
+		sameNameCustom := &Parser{language: &Language{Name: name}}
+		if parserWantsForest(sameNameCustom) {
+			t.Errorf("same-name custom language %q unexpectedly dispatched", name)
+		}
+	}
+
 	builtinNoField := &Parser{language: &Language{Name: "bash", WantsForest: false}}
 	if !parserWantsForest(builtinNoField) {
 		t.Errorf("built-in language %q should dispatch to forest via builtinForestDefaults even with WantsForest=false", "bash")
@@ -41,7 +53,7 @@ func TestParserWantsForestFieldDrivesDispatch(t *testing.T) {
 // ordinary path does not need; see the builtinForestDefaults doc comment.
 func TestBuiltinForestDefaultsCuratedSet(t *testing.T) {
 	want := []string{
-		"bash", "erlang", "cmake", "css", "scss", "awk", "javascript", "c_sharp",
+		"bash", "erlang", "cmake", "css", "scss", "javascript", "c_sharp",
 		"gitignore", "nix", "squirrel", "prisma",
 		"agda", "ledger", "yuck", "json5", "commonlisp",
 		"bibtex", "faust", "arduino", "authzed", "make", "tlaplus",

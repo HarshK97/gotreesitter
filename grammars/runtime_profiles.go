@@ -15,6 +15,8 @@ type builtinLanguageRuntimeProfile struct {
 	blobSHA256                         [32]byte
 	externalScannerFullParseRetry      gotreesitter.ExternalScannerFullParseRetryPolicy
 	fullParseAcceptedErrorRetryProfile gotreesitter.FullParseAcceptedErrorRetryProfile
+	automaticForestMemoryAllowance     int64
+	automaticForestEnabled             bool
 	nativeResultCompatibility          gotreesitter.ResultCompatibilityCapability
 	conflictPolicies                   []gotreesitter.ConflictPolicy
 }
@@ -23,9 +25,18 @@ const (
 	csharpAcceptedErrorRetryMaxEntryScratchPeak = 690_365
 	csharpFreshErrorNoStacksRetryMaxStacks      = 16
 	mesonAcceptedErrorRetryMinSourceBytes       = 2 * 1024
+	javascriptAutomaticForestMemoryAllowance    = 128 * 1024 * 1024
 )
 
 var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
+	// JavaScript's speculative automatic forest phase is bounded separately
+	// from the production fallback. The exact locked corpus retained identical
+	// trees and outcomes across all files while cutting aggregate allocations;
+	// explicit forest parsing and non-certified languages keep the full budget.
+	"javascript": {
+		blobSHA256:                     mustRuntimeProfileSHA256("6706f93890f24d8ea90d6a140df5dde29c02ec8a3213bae16e8cc4df37e33ee0"),
+		automaticForestMemoryAllowance: javascriptAutomaticForestMemoryAllowance,
+	},
 	// These scanner-backed grammars have certified the first retry ladder's
 	// selected accepted-error tree as authoritative. Repeating the whole ladder
 	// does not improve the selected tree and imposes a full additional parse.
@@ -139,10 +150,23 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		},
 	},
 	"kdl": {
-		blobSHA256: mustRuntimeProfileSHA256("ef6d000123c053eddebd200a1cbd44d6df5dcab7c4b3d34ae18acdf2f14989f5"),
+		blobSHA256:             mustRuntimeProfileSHA256("ef6d000123c053eddebd200a1cbd44d6df5dcab7c4b3d34ae18acdf2f14989f5"),
+		automaticForestEnabled: true,
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry: true,
 		},
+	},
+	// These exact built-in artifacts have authenticated corpus receipts with no
+	// forest/C-oracle divergence on accepted forest files, no
+	// routed/production divergence on any file, and an aggregate route wall-time
+	// win after conservative production fallbacks.
+	"awk": {
+		blobSHA256:             mustRuntimeProfileSHA256("925312ca0bc6e279602402c64700b8198c55ed949ac967ce92bae40f7f21cedf"),
+		automaticForestEnabled: true,
+	},
+	"uxntal": {
+		blobSHA256:             mustRuntimeProfileSHA256("cca71a0e6385fd9b2791eb6fefc1fe493f93eb2bf58e903f8989096884c31fe4"),
+		automaticForestEnabled: true,
 	},
 	// Meson's retry ladder changes selected trees on small error-bearing files,
 	// but is redundant for complete accepted-error sources at or above this
@@ -302,6 +326,15 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 	if profile.fullParseAcceptedErrorRetryProfile != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) &&
 		lang.FullParseAcceptedErrorRetryProfile != profile.fullParseAcceptedErrorRetryProfile {
 		lang.FullParseAcceptedErrorRetryProfile = profile.fullParseAcceptedErrorRetryProfile
+		changed = true
+	}
+	if profile.automaticForestMemoryAllowance > 0 &&
+		lang.AutomaticForestMemoryAllowanceBytes != profile.automaticForestMemoryAllowance {
+		lang.AutomaticForestMemoryAllowanceBytes = profile.automaticForestMemoryAllowance
+		changed = true
+	}
+	if profile.automaticForestEnabled && !lang.AutomaticForestEnabledByDefault {
+		lang.AutomaticForestEnabledByDefault = true
 		changed = true
 	}
 	if missing := profile.nativeResultCompatibility &^ lang.NativeResultCompatibility; missing != 0 {

@@ -24,6 +24,8 @@ Usage: run_java_uax_stress.sh [options]
 Run the generated Lucene UAX29URLEmailTokenizerImpl.java stress lane in Docker.
 The source file is copied from the external seeded Lucene corpus into a one-file
 temporary corpus. The Java file is not vendored into this repository.
+The underlying historical corpus probe uses treesitter_c_bench_legacy and is
+not a publication C-oracle lane.
 
 Options:
   --mode <name>              Run mode: timeout-sweep|benchmark|both (default: both)

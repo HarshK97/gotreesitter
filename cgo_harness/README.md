@@ -435,7 +435,26 @@ GOMAXPROCS=1 go test . -run '^$' -tags treesitter_c_bench \
   -benchmem -count=10 -benchtime=750ms
 ```
 
-These harnesses are intentionally split into a separate module so the root `gotreesitter` module remains pure-Go in dependency metadata.
+`treesitter_c_bench` and `treesitter_c_parity` use the same
+`COracleLanguage` binding and the exact grammar commit from
+`grammars/languages.lock`. The Go baseline therefore no longer uses the
+unrelated smacker runtime or its bundled grammar. This in-process transport is
+for parity and diagnostic calibration: the upstream runtime is statically
+included in the Go test binary, while the locked grammar is compiled with
+`-O2` and loaded as a shared object. It is not the static publication oracle.
+
+Inspect the full runtime, grammar, compiler, linkage, artifact path and SHA-256
+before measuring:
+
+```sh
+go test . -tags treesitter_c_bench \
+  -run '^TestCOracleContractPreflight$' -count=1 -v
+```
+
+These harnesses are intentionally kept in a separate module so the root
+`gotreesitter` module remains pure-Go in dependency metadata. Historical
+smacker-backed corpus probes remain behind the explicit
+`treesitter_c_bench_legacy` tag and are not admissible for C/Go ratio claims.
 
 ## Run Pure-C Runtime Matrix (No CGo)
 
@@ -457,8 +476,24 @@ The matrix currently runs full-parse benchmarks for:
 
 ## Run Pure-C Go Incremental Benchmark (No CGo)
 
-This reproduces full parse, incremental single-byte edit, and incremental
-random-edit incremental, and no-edit numbers against the native C runtime:
+This is the publication C oracle. It checks out and records these exact inputs:
+
+- `github.com/tree-sitter/go-tree-sitter` `v0.25.0`, binding commit
+  `adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3`;
+- upstream tree-sitter runtime commit
+  `f5afe475deb7c0bae6407fb776c76824f717bb61` (`0.25.1`);
+- tree-sitter-go commit from `grammars/languages.lock`, currently
+  `2346a3ab1bb3857b48b29d779a1ef9799a248cd7`.
+
+The runtime and grammar are compiled with fixed `-O2` flags, archived, and
+statically linked into one standalone benchmark executable. The platform C
+library still follows the host toolchain. The runner prints compiler identity,
+source hashes, artifact path/SHA-256, and a `gts-deep-tree-v1` structural digest
+before timing. Set `GTS_C_ORACLE_EXPECTED_DEEP_SHA256` to require a digest
+already admitted by gotreesitter and the cgo parity transport.
+
+The synthetic LR control reproduces full parse, incremental single-byte edit,
+random-edit, and no-edit numbers:
 
 ```sh
 ./pure_c/run_go_benchmark.sh
@@ -467,7 +502,7 @@ random-edit incremental, and no-edit numbers against the native C runtime:
 Optional arguments:
 
 ```sh
-./pure_c/run_go_benchmark.sh <func_count> <full_iters> <inc_iters>
+./pure_c/run_go_benchmark.sh <func_count> <full_iters> <inc_iters> [source.go]
 ```
 
 Example:
@@ -476,11 +511,33 @@ Example:
 ./pure_c/run_go_benchmark.sh 500 2000 20000
 ```
 
-Optional compiler tuning flags:
+Passing a real Go source file runs the full-parse lane only. The artifact does
+one untimed warm parse and deep validation before its internal timing loop:
 
 ```sh
-CFLAGS_EXTRA="-march=native -flto" ./pure_c/run_go_benchmark.sh
+./pure_c/run_go_benchmark.sh 500 2000 20000 ../query_compile.go
 ```
+
+Validate that the static and cgo transports produce the frozen deep digest on
+all four canonical fixtures:
+
+```sh
+go test . -tags treesitter_c_bench \
+  -run '^TestCOracleStaticDeepParity$' -count=1 -v
+```
+
+From the repository root, the strict publication driver performs that
+admission, materializes the authenticated real-Go fixture matrix, calibrates
+the static C loop, and collects ten pinned-core Go-C-C-Go samples per backend
+and fixture:
+
+```sh
+bash cgo_harness/pure_c/run_canonical_go_full_parse.sh --core <idle-cpu>
+```
+
+Publication mode requires a clean worktree, a quiet Docker-capable host, and no
+parser or Go runtime tuning overrides. Short smoke runs require `--diagnostic`;
+their receipts are explicitly marked `NONPUBLICATION_DIAGNOSTIC`.
 
 ## Run Go Head-to-Head Comparison
 

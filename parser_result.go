@@ -360,7 +360,7 @@ func (p *Parser) cResultSelectionTraceSummary(s *glrStack, arena *nodeArena) str
 		return "<nil>"
 	}
 	return fmt.Sprintf("{kind:%s accepted:%v state:%d byte:%d depth:%d score:%d cost:%d dyn:%d errRank:%d}",
-		cRecoverStackTraceKind(*s),
+		cRecoverStackTraceKind(s),
 		s.accepted,
 		s.top().state,
 		s.byteOffset,

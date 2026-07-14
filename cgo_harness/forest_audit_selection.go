@@ -1,0 +1,298 @@
+package cgoharness
+
+import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/odvcencio/gotreesitter/cgo_harness/internal/realcorpus"
+)
+
+type forestCorpusCandidate struct {
+	path string
+	size int64
+}
+
+func parseForestCorpusLock(lockPath string, data []byte) (map[string]forestCorpusLockEntry, error) {
+	entries := map[string]forestCorpusLockEntry{}
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for lineNo := 1; scanner.Scan(); lineNo++ {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			return nil, fmt.Errorf("%s:%d: expected language repository revision", lockPath, lineNo)
+		}
+		if err := forestManifestLanguage(fields[0]); err != nil {
+			return nil, fmt.Errorf("%s:%d: %w", lockPath, lineNo, err)
+		}
+		if _, exists := entries[fields[0]]; exists {
+			return nil, fmt.Errorf("%s:%d: duplicate language %q", lockPath, lineNo, fields[0])
+		}
+		if err := forestManifestRevision(fields[2]); err != nil {
+			return nil, fmt.Errorf("%s:%d: %w", lockPath, lineNo, err)
+		}
+		entry := forestCorpusLockEntry{Language: fields[0], Repository: fields[1], Revision: fields[2], Subdir: "."}
+		if len(fields) >= 4 {
+			entry.Subdir = fields[3]
+		}
+		if _, err := forestManifestPath("/", "corpus subdir", entry.Subdir); err != nil && entry.Subdir != "." {
+			return nil, fmt.Errorf("%s:%d: %w", lockPath, lineNo, err)
+		}
+		if len(fields) >= 5 {
+			entry.Matchers = strings.Split(fields[4], ",")
+		}
+		entries[entry.Language] = entry
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("corpus lock %s has no entries", lockPath)
+	}
+	return entries, nil
+}
+
+func selectForestCorpusLanguages(entries map[string]forestCorpusLockEntry, requested []string) ([]string, error) {
+	if len(requested) == 0 {
+		requested = make([]string, 0, len(entries))
+		for language := range entries {
+			requested = append(requested, language)
+		}
+	}
+	seen := map[string]bool{}
+	var languages []string
+	for _, raw := range requested {
+		language := strings.TrimSpace(raw)
+		if language == "" || seen[language] {
+			continue
+		}
+		if _, ok := entries[language]; !ok {
+			return nil, fmt.Errorf("language %q absent from corpus lock", language)
+		}
+		seen[language] = true
+		languages = append(languages, language)
+	}
+	sort.Strings(languages)
+	return languages, nil
+}
+
+func normalizeForestCorpusSelection(selection ForestCorpusSelection) (ForestCorpusSelection, error) {
+	selection.Order = strings.TrimSpace(selection.Order)
+	if selection.Order == "" {
+		selection.Order = "largest"
+	}
+	switch selection.Order {
+	case "largest", "smallest", "path":
+	default:
+		return selection, fmt.Errorf("invalid forest corpus order %q", selection.Order)
+	}
+	if selection.MaxFiles < 0 || selection.MinFileBytes < 0 || selection.MaxFileBytes < 0 {
+		return selection, fmt.Errorf("forest corpus selection limits must be non-negative")
+	}
+	selection.ExcludePaths = normalizeForestExcludePaths(selection.ExcludePaths)
+	return selection, nil
+}
+
+func selectForestCorpusFiles(root string, entry forestCorpusLockEntry, matcher realcorpus.FileMatcher, selection ForestCorpusSelection) ([]ForestCorpusManifestFile, error) {
+	checkoutRoot, walkRoot := forestCorpusRoots(root, entry)
+	candidates, err := walkForestCorpusCandidates(checkoutRoot, walkRoot, entry, matcher, selection)
+	if err != nil {
+		return nil, fmt.Errorf("walk %s corpus: %w", entry.Language, err)
+	}
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no corpus files selected for %s", entry.Language)
+	}
+	sortForestCorpusCandidates(candidates, selection.Order)
+	if selection.MaxFiles > 0 && len(candidates) > selection.MaxFiles {
+		candidates = candidates[:selection.MaxFiles]
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].path < candidates[j].path })
+	return materializeForestCorpusFiles(checkoutRoot, entry, candidates)
+}
+
+func forestCorpusRoots(root string, entry forestCorpusLockEntry) (string, string) {
+	checkoutRoot := filepath.Join(root, entry.Language)
+	walkRoot := checkoutRoot
+	if entry.Subdir != "" && entry.Subdir != "." {
+		walkRoot = filepath.Join(checkoutRoot, filepath.FromSlash(entry.Subdir))
+	}
+	return checkoutRoot, walkRoot
+}
+
+func walkForestCorpusCandidates(checkoutRoot, walkRoot string, entry forestCorpusLockEntry, matcher realcorpus.FileMatcher, selection ForestCorpusSelection) ([]forestCorpusCandidate, error) {
+	var candidates []forestCorpusCandidate
+	err := realcorpus.WalkMatchingFiles(walkRoot, func(relativePath string) bool {
+		return matcher.Matches(relativePath) && !forestCorpusPathExcluded(entry.Language, relativePath, selection.ExcludePaths)
+	}, func(file realcorpus.File) error {
+		candidate, eligible, err := forestCorpusCandidateForFile(checkoutRoot, file, selection)
+		if err != nil {
+			return err
+		}
+		if eligible {
+			candidates = append(candidates, candidate)
+		}
+		return nil
+	})
+	return candidates, err
+}
+
+func forestCorpusCandidateForFile(checkoutRoot string, file realcorpus.File, selection ForestCorpusSelection) (forestCorpusCandidate, bool, error) {
+	if !forestCorpusSizeEligible(file.Size, selection) {
+		return forestCorpusCandidate{}, false, nil
+	}
+	relCheckout, err := filepath.Rel(checkoutRoot, file.Path)
+	if err != nil {
+		return forestCorpusCandidate{}, false, err
+	}
+	return forestCorpusCandidate{path: filepath.ToSlash(relCheckout), size: file.Size}, true, nil
+}
+
+func forestCorpusSizeEligible(size int64, selection ForestCorpusSelection) bool {
+	if selection.MinFileBytes > 0 && size < selection.MinFileBytes {
+		return false
+	}
+	return selection.MaxFileBytes == 0 || size <= selection.MaxFileBytes
+}
+
+func sortForestCorpusCandidates(candidates []forestCorpusCandidate, order string) {
+	sort.Slice(candidates, func(i, j int) bool {
+		if order == "path" {
+			return candidates[i].path < candidates[j].path
+		}
+		if candidates[i].size != candidates[j].size {
+			if order == "smallest" {
+				return candidates[i].size < candidates[j].size
+			}
+			return candidates[i].size > candidates[j].size
+		}
+		return candidates[i].path < candidates[j].path
+	})
+}
+
+func materializeForestCorpusFiles(checkoutRoot string, entry forestCorpusLockEntry, candidates []forestCorpusCandidate) ([]ForestCorpusManifestFile, error) {
+	files := make([]ForestCorpusManifestFile, 0, len(candidates))
+	for _, candidate := range candidates {
+		filePath := filepath.Join(checkoutRoot, filepath.FromSlash(candidate.path))
+		digest, err := forestFileSHA256(filePath)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, ForestCorpusManifestFile{
+			Language: entry.Language, Repository: entry.Repository, Revision: entry.Revision,
+			Path: candidate.path, Bytes: candidate.size, SHA256: digest,
+		})
+	}
+	return files, nil
+}
+
+func verifyForestCorpusCheckout(root string, entry forestCorpusLockEntry) error {
+	checkout := filepath.Join(root, entry.Language)
+	git := func(args ...string) ([]byte, error) {
+		prefix := []string{"-c", "safe.directory=" + checkout, "-C", checkout}
+		return exec.Command("git", append(prefix, args...)...).Output()
+	}
+	out, err := git("rev-parse", "HEAD")
+	if err != nil {
+		return fmt.Errorf("verify %s corpus checkout: %w", entry.Language, err)
+	}
+	head := strings.TrimSpace(string(out))
+	if head != entry.Revision {
+		return fmt.Errorf("%s corpus checkout revision %s, lock requires %s", entry.Language, head, entry.Revision)
+	}
+	status, err := git("status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil {
+		return fmt.Errorf("verify %s corpus checkout cleanliness: %w", entry.Language, err)
+	}
+	if err := verifyForestCorpusCheckoutStatus(entry, status); err != nil {
+		return err
+	}
+	remote, err := git("remote", "get-url", "origin")
+	if err != nil {
+		return fmt.Errorf("verify %s corpus checkout origin: %w", entry.Language, err)
+	}
+	if !forestSameRepository(strings.TrimSpace(string(remote)), entry.Repository) {
+		return fmt.Errorf("%s corpus checkout origin %q, lock requires %q", entry.Language, strings.TrimSpace(string(remote)), entry.Repository)
+	}
+	return nil
+}
+
+func verifyForestCorpusCheckoutStatus(entry forestCorpusLockEntry, status []byte) error {
+	for len(status) > 0 {
+		end := bytes.IndexByte(status, 0)
+		if end < 0 {
+			return fmt.Errorf("%s corpus checkout returned malformed git status", entry.Language)
+		}
+		record := status[:end]
+		status = status[end+1:]
+		if len(record) < 4 || record[2] != ' ' {
+			return fmt.Errorf("%s corpus checkout returned malformed git status", entry.Language)
+		}
+		state, rel := string(record[:2]), string(record[3:])
+		if state == "??" && forestCorpusGeneratedPathAllowed(entry, rel) {
+			continue
+		}
+		return fmt.Errorf("%s corpus checkout is dirty (%s %s)", entry.Language, state, rel)
+	}
+	return nil
+}
+
+func forestCorpusGeneratedPathAllowed(entry forestCorpusLockEntry, rel string) bool {
+	if err := forestManifestLanguage(entry.Language); err != nil {
+		return false
+	}
+	generatedSubdir := path.Join(".gts-extracted", entry.Language)
+	if entry.Subdir != generatedSubdir {
+		return false
+	}
+	if rel == "" || strings.ContainsRune(rel, '\\') || filepath.IsAbs(rel) {
+		return false
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel)))
+	return clean == rel && strings.HasPrefix(rel, generatedSubdir+"/")
+}
+
+func forestSameRepository(left, right string) bool {
+	normalize := func(value string) string {
+		return strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(value), "/"), ".git")
+	}
+	return normalize(left) == normalize(right)
+}
+
+func normalizeForestExcludePaths(raw []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, item := range raw {
+		item = strings.Trim(strings.ReplaceAll(strings.TrimSpace(item), "\\", "/"), "/")
+		if item != "" && !seen[item] {
+			seen[item] = true
+			out = append(out, item)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func forestCorpusPathExcluded(language, rel string, patterns []string) bool {
+	rel = strings.Trim(filepath.ToSlash(rel), "/")
+	for _, pattern := range patterns {
+		for _, candidate := range []string{rel, language + "/" + rel} {
+			if pattern == candidate || strings.HasSuffix(pattern, "/") && strings.HasPrefix(candidate, pattern) {
+				return true
+			}
+			if strings.ContainsAny(pattern, "*?[") {
+				if ok, err := path.Match(pattern, candidate); err == nil && ok {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}

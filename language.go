@@ -365,9 +365,8 @@ type Language struct {
 	// metadata and conservative table validation.
 	CRecoveryCostCompetitionEnabledByDefault bool
 
-	// WantsForest opts this language into the GSS-forest GLR fast path. Built-in
-	// languages are enabled via the curated builtinForestDefaults map instead;
-	// consumers generating a Language via grammargen set this (directly or via
+	// WantsForest opts this language into the GSS-forest GLR fast path.
+	// Consumers generating a Language via grammargen set this (directly or via
 	// grammargen.Grammar.WantsForest) to enable forest for their own grammar. This
 	// bypasses the byte-range parity certification built-ins undergo — the
 	// decline->production fallback still prevents hard failures on declined inputs,
@@ -548,6 +547,19 @@ type Language struct {
 	// blob. Zero preserves widened-stack and no-stacks retries for legacy blobs,
 	// caller-constructed languages, and language overrides.
 	FullParseAcceptedErrorRetryProfile FullParseAcceptedErrorRetryProfile
+
+	// AutomaticForestMemoryAllowanceBytes bounds only the speculative forest
+	// phase used by automatic dispatch. Zero preserves the full parse budget for
+	// legacy blobs, caller-constructed languages, language overrides, and
+	// explicit ParseForestExperimental calls. Built-in values are certified and
+	// attached only after exact blob-identity verification.
+	AutomaticForestMemoryAllowanceBytes int64
+
+	// AutomaticForestEnabledByDefault certifies the speculative forest route for
+	// this exact language artifact. Checked-in built-ins receive this bit only
+	// from an exact-blob runtime profile; legacy blobs, same-name custom grammars,
+	// adapted grammars, and overrides retain the conservative false default.
+	AutomaticForestEnabledByDefault bool
 
 	// NativeResultCompatibility identifies result-tree shapes produced natively
 	// by this exact language artifact. Zero keeps conservative post-parse

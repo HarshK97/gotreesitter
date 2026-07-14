@@ -1,4 +1,4 @@
-//go:build cgo && treesitter_c_parity
+//go:build cgo && (treesitter_c_parity || treesitter_c_bench)
 
 package cgoharness
 
@@ -39,9 +39,12 @@ import "C"
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,6 +81,45 @@ const (
 	parityCBuildJobsEnv      = "GTS_PARITY_C_REF_BUILD_JOBS"
 )
 
+// The C oracle contract is intentionally explicit. The Go binding release is
+// pinned by cgo_harness/go.mod; its repository commit pins the upstream
+// tree-sitter runtime submodule below. Grammar commits come from
+// grammars/languages.lock.
+const (
+	COracleContractVersion = "tree-sitter-c-v1"
+	COracleBindingModule   = "github.com/tree-sitter/go-tree-sitter"
+	COracleBindingVersion  = "v0.25.0"
+	COracleBindingCommit   = "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3"
+	COracleRuntimeVersion  = "0.25.1"
+	COracleRuntimeCommit   = "f5afe475deb7c0bae6407fb776c76824f717bb61"
+	COracleGrammarCFlags   = "-O2 -fPIC"
+)
+
+// COracleBuildIdentity describes the in-process cgo parity transport. The
+// tree-sitter runtime is statically included by go-tree-sitter in the Go test
+// binary. The exact locked grammar is an -O2 shared object loaded with dlopen.
+// Publication throughput uses pure_c/run_go_benchmark.sh instead, which links
+// both the same runtime and grammar statically into a standalone executable.
+type COracleBuildIdentity struct {
+	Contract              string `json:"contract"`
+	Transport             string `json:"transport"`
+	BindingModule         string `json:"binding_module"`
+	BindingVersion        string `json:"binding_version"`
+	BindingCommit         string `json:"binding_commit"`
+	RuntimeVersion        string `json:"runtime_version"`
+	RuntimeCommit         string `json:"runtime_commit"`
+	RuntimeLinkage        string `json:"runtime_linkage"`
+	Language              string `json:"language"`
+	GrammarRepo           string `json:"grammar_repo"`
+	GrammarCommit         string `json:"grammar_commit"`
+	GrammarLinkage        string `json:"grammar_linkage"`
+	GrammarCompileFlags   string `json:"grammar_compile_flags"`
+	CompilerPath          string `json:"compiler_path"`
+	CompilerVersion       string `json:"compiler_version"`
+	GrammarArtifactPath   string `json:"grammar_artifact_path"`
+	GrammarArtifactSHA256 string `json:"grammar_artifact_sha256"`
+}
+
 var languageVersionPattern = regexp.MustCompile(`(?m)^#define\s+LANGUAGE_VERSION\s+(\d+)`)
 
 type parityCRefBuild struct {
@@ -99,9 +141,10 @@ var parityCRefState = struct {
 	err      error
 }{}
 
-// ParityCLanguage loads a C reference language compiled from the pinned
-// grammars/languages.lock commit for the given language name.
-func ParityCLanguage(name string) (*sitter.Language, error) {
+// COracleLanguage loads a C reference language compiled from the pinned
+// grammars/languages.lock commit. It is the single in-process binding used by
+// both treesitter_c_parity and treesitter_c_bench.
+func COracleLanguage(name string) (*sitter.Language, error) {
 	parityCRefState.once.Do(func() {
 		lockPath, err := findParityLockPath()
 		if err != nil {
@@ -177,6 +220,115 @@ func ParityCLanguage(name string) (*sitter.Language, error) {
 	return ref.lang, nil
 }
 
+// ParityCLanguage is retained as the parity-facing name for the shared oracle
+// binding. Benchmark code must use COracleLanguage rather than another C
+// runtime or grammar package.
+func ParityCLanguage(name string) (*sitter.Language, error) {
+	return COracleLanguage(name)
+}
+
+// COracleIdentity loads the language if necessary and returns the exact
+// runtime, grammar, compiler and grammar-artifact identity used by the cgo
+// transport.
+func COracleIdentity(name string) (COracleBuildIdentity, error) {
+	if _, err := COracleLanguage(name); err != nil {
+		return COracleBuildIdentity{}, err
+	}
+
+	parityCRefState.mu.Lock()
+	entry := parityCRefState.lock[name]
+	ref := parityCRefState.refs[name]
+	parityCRefState.mu.Unlock()
+	if ref == nil {
+		return COracleBuildIdentity{}, fmt.Errorf("C oracle %q has no loaded reference", name)
+	}
+
+	artifactSHA, err := fileSHA256(ref.soPath)
+	if err != nil {
+		return COracleBuildIdentity{}, fmt.Errorf("hash C oracle grammar artifact: %w", err)
+	}
+	compilerPath, compilerVersion := cOracleCompilerIdentity()
+	return COracleBuildIdentity{
+		Contract:              COracleContractVersion,
+		Transport:             "cgo_parity_binding",
+		BindingModule:         COracleBindingModule,
+		BindingVersion:        COracleBindingVersion,
+		BindingCommit:         COracleBindingCommit,
+		RuntimeVersion:        COracleRuntimeVersion,
+		RuntimeCommit:         COracleRuntimeCommit,
+		RuntimeLinkage:        "static_cgo_test_binary",
+		Language:              name,
+		GrammarRepo:           entry.RepoURL,
+		GrammarCommit:         entry.Commit,
+		GrammarLinkage:        "shared_dlopen",
+		GrammarCompileFlags:   COracleGrammarCFlags,
+		CompilerPath:          compilerPath,
+		CompilerVersion:       compilerVersion,
+		GrammarArtifactPath:   ref.soPath,
+		GrammarArtifactSHA256: artifactSHA,
+	}, nil
+}
+
+// COracleDeepDigest returns the gts-deep-tree-v1 structural digest emitted by the
+// static publication artifact's --dump mode. It covers cross-runtime symbol
+// identity through type+named, byte and point spans, extra/missing/error
+// flags, child order and incoming field identity.
+func COracleDeepDigest(tree *sitter.Tree) (string, error) {
+	if tree == nil || tree.RootNode() == nil {
+		return "", fmt.Errorf("cannot digest nil C oracle tree")
+	}
+	h := sha256.New()
+	_, _ = h.Write([]byte("gts-deep-tree-v1\x00"))
+	writeCOracleDeepNode(h, tree.RootNode(), "")
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func writeCOracleDeepNode(h hash.Hash, node *sitter.Node, field string) {
+	writeCOracleDeepString(h, node.Kind())
+	writeCOracleDeepString(h, field)
+	writeCOracleDeepU32(h, uint32(node.StartByte()))
+	writeCOracleDeepU32(h, uint32(node.EndByte()))
+	start := node.StartPosition()
+	end := node.EndPosition()
+	writeCOracleDeepU32(h, uint32(start.Row))
+	writeCOracleDeepU32(h, uint32(start.Column))
+	writeCOracleDeepU32(h, uint32(end.Row))
+	writeCOracleDeepU32(h, uint32(end.Column))
+	var flags byte
+	if node.IsNamed() {
+		flags |= 1 << 0
+	}
+	if node.IsExtra() {
+		flags |= 1 << 1
+	}
+	if node.IsMissing() {
+		flags |= 1 << 2
+	}
+	if node.IsError() {
+		flags |= 1 << 3
+	}
+	if node.HasError() {
+		flags |= 1 << 4
+	}
+	_, _ = h.Write([]byte{flags})
+	childCount := node.ChildCount()
+	writeCOracleDeepU32(h, uint32(childCount))
+	for i := uint(0); i < childCount; i++ {
+		writeCOracleDeepNode(h, node.Child(i), node.FieldNameForChild(uint32(i)))
+	}
+}
+
+func writeCOracleDeepU32(h hash.Hash, value uint32) {
+	var buf [4]byte
+	binary.LittleEndian.PutUint32(buf[:], value)
+	_, _ = h.Write(buf[:])
+}
+
+func writeCOracleDeepString(h hash.Hash, value string) {
+	writeCOracleDeepU32(h, uint32(len(value)))
+	_, _ = h.Write([]byte(value))
+}
+
 func findParityLockPath() (string, error) {
 	candidates := []string{
 		filepath.Join("grammars", "languages.lock"),
@@ -195,8 +347,8 @@ func buildParityCRef(rootDir, cacheDir string, entry parityLockEntry) (*parityCR
 		return ref, nil
 	}
 
-	repoDir, ok := parityLocalRepoDir(entry)
-	if !ok {
+	repoDir, localRepo := parityLocalRepoDir(entry)
+	if !localRepo {
 		// Compute a temp clone destination under rootDir.
 		repoDir = filepath.Join(rootDir, "repos", paritySafeName(entry.Name))
 		commitShort := entry.Commit
@@ -214,6 +366,13 @@ func buildParityCRef(rootDir, cacheDir string, entry parityLockEntry) (*parityCR
 		} else if err := clonePinnedRepo(entry.RepoURL, entry.Commit, repoDir); err != nil {
 			return nil, fmt.Errorf("%s: clone pinned repo: %w", entry.Name, err)
 		}
+	}
+	repoKind := "pinned parity repository"
+	if localRepo {
+		repoKind = "local parity repository"
+	}
+	if err := verifyPinnedRepo(repoDir, entry.Commit); err != nil {
+		return nil, fmt.Errorf("%s: %s %s rejected: %w", entry.Name, repoKind, repoDir, err)
 	}
 
 	buildDir := filepath.Join(rootDir, "build", paritySafeName(entry.Name))
@@ -273,11 +432,15 @@ func parityCachedSOPath(cacheDir string, entry parityLockEntry) string {
 	if strings.TrimSpace(cacheDir) == "" {
 		return ""
 	}
+	compilerPath, compilerVersion := cOracleCompilerIdentity()
 	keyInput := strings.Join([]string{
 		entry.Name,
 		entry.RepoURL,
 		entry.Commit,
 		entry.Subdir,
+		COracleGrammarCFlags,
+		compilerPath,
+		compilerVersion,
 		strconv.Itoa(parityMinLanguageVersion),
 		strconv.Itoa(parityMaxLanguageVersion),
 		strconv.Itoa(parityGenerateABI),
@@ -474,12 +637,156 @@ func findCachedParityRepo(cacheDir, name, commitShort string) (string, error) {
 }
 
 func clonePinnedRepoFromLocalCache(cacheRepoDir, commit, dest string) error {
+	if err := verifyPinnedRepo(cacheRepoDir, commit); err != nil {
+		return fmt.Errorf("cached parity repository %s rejected: %w", cacheRepoDir, err)
+	}
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return err
 	}
-	// The host cache is already pinned to the requested commit, so copying it is
-	// enough and avoids Git safe.directory checks on the bind mount.
+	// The verified host cache can be copied directly. Both the bind-mounted
+	// source and copied destination are verified with a repository-scoped
+	// safe.directory setting before compilation.
 	return runCommand("", "cp", "-a", cacheRepoDir+string(filepath.Separator)+".", dest)
+}
+
+func verifyPinnedRepo(repoDir, commit string) error {
+	commit = strings.TrimSpace(commit)
+	if commit == "" {
+		return fmt.Errorf("pinned commit is empty")
+	}
+
+	head, err := parityGitOutput(repoDir, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return fmt.Errorf("read HEAD: %w", err)
+	}
+	want, err := parityGitOutput(repoDir, "rev-parse", "--verify", commit+"^{commit}")
+	if err != nil {
+		return fmt.Errorf("resolve pinned commit %s: %w", commit, err)
+	}
+	head = strings.TrimSpace(head)
+	want = strings.TrimSpace(want)
+	if head != want {
+		return fmt.Errorf("HEAD mismatch: got %s, want pinned commit %s", head, want)
+	}
+
+	status, err := parityGitOutput(repoDir, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
+	if err != nil {
+		return fmt.Errorf("inspect working tree: %w", err)
+	}
+	if status = strings.TrimSpace(status); status != "" {
+		// Some upstream grammar commits contain blobs whose line endings conflict
+		// with their own .gitattributes. Git reports those fresh checkouts as
+		// modified even though the worktree bytes still exactly match HEAD. Keep
+		// the fail-closed provenance gate, but distinguish that filter artifact
+		// from a real source mutation by comparing the reported paths without
+		// applying Git's clean filters.
+		if err := verifyPinnedRepoStatusBytes(repoDir); err != nil {
+			return fmt.Errorf("working tree is not clean (tracked and untracked files must match the pinned commit):\n%s\nexact-byte verification: %w", status, err)
+		}
+	}
+	return nil
+}
+
+func verifyPinnedRepoStatusBytes(repoDir string) error {
+	untracked, err := parityGitStdout(repoDir, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return fmt.Errorf("inspect untracked files: %w", err)
+	}
+	if untracked != "" {
+		return fmt.Errorf("untracked path %q", strings.Split(untracked, "\x00")[0])
+	}
+
+	changed, err := parityGitStdout(repoDir, "diff", "--name-only", "-z", "HEAD", "--")
+	if err != nil {
+		return fmt.Errorf("list changed paths: %w", err)
+	}
+	for _, rel := range strings.Split(changed, "\x00") {
+		if rel == "" {
+			continue
+		}
+		entry, err := parityGitStdout(repoDir, "ls-tree", "-z", "HEAD", "--", rel)
+		if err != nil {
+			return fmt.Errorf("read pinned tree entry %q: %w", rel, err)
+		}
+		entry = strings.TrimSuffix(entry, "\x00")
+		fields := strings.Fields(strings.SplitN(entry, "\t", 2)[0])
+		if len(fields) != 3 || fields[1] != "blob" {
+			return fmt.Errorf("path %q is not a pinned blob", rel)
+		}
+
+		info, err := os.Lstat(filepath.Join(repoDir, filepath.FromSlash(rel)))
+		if err != nil {
+			return fmt.Errorf("stat %q: %w", rel, err)
+		}
+		if !pinnedRepoModeMatches(fields[0], info.Mode()) {
+			return fmt.Errorf("path %q mode differs from pinned mode %s", rel, fields[0])
+		}
+		got, err := parityGitStdout(repoDir, "hash-object", "--no-filters", "--", rel)
+		if err != nil {
+			return fmt.Errorf("hash raw bytes for %q: %w", rel, err)
+		}
+		if strings.TrimSpace(got) != fields[2] {
+			return fmt.Errorf("path %q bytes differ from pinned blob", rel)
+		}
+	}
+	return nil
+}
+
+func pinnedRepoModeMatches(want string, got os.FileMode) bool {
+	switch want {
+	case "100644":
+		return got.IsRegular() && got.Perm()&0o111 == 0
+	case "100755":
+		return got.IsRegular() && got.Perm()&0o111 != 0
+	case "120000":
+		return got&os.ModeSymlink != 0
+	default:
+		return false
+	}
+}
+
+func parityGitStdout(repoDir string, args ...string) (string, error) {
+	gitArgs := append([]string{"-c", "safe.directory=" + repoDir, "-C", repoDir}, args...)
+	cmd := exec.Command("git", gitArgs...)
+	cmd.Env = append(
+		os.Environ(),
+		"GIT_HTTP_VERSION=HTTP/1.1",
+		"GIT_TERMINAL_PROMPT=0",
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err == nil {
+		return string(out), nil
+	}
+	msg := strings.TrimSpace(stderr.String())
+	if msg == "" {
+		msg = err.Error()
+	}
+	return "", fmt.Errorf("git %s: %s", strings.Join(gitArgs, " "), msg)
+}
+
+func parityGitOutput(repoDir string, args ...string) (string, error) {
+	// A cache mounted into a root-owned Docker container can legitimately have a
+	// different owner. Scope safe.directory to the exact repository being
+	// verified instead of mutating global Git configuration or weakening the
+	// check for arbitrary paths.
+	gitArgs := append([]string{"-c", "safe.directory=" + repoDir, "-C", repoDir}, args...)
+	cmd := exec.Command("git", gitArgs...)
+	cmd.Env = append(
+		os.Environ(),
+		"GIT_HTTP_VERSION=HTTP/1.1",
+		"GIT_TERMINAL_PROMPT=0",
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return string(out), nil
+	}
+	msg := strings.TrimSpace(string(out))
+	if msg == "" {
+		msg = err.Error()
+	}
+	return "", fmt.Errorf("git %s: %s", strings.Join(gitArgs, " "), msg)
 }
 
 func clonePinnedRepo(repoURL, commit, dest string) error {
@@ -831,6 +1138,34 @@ func retryableCommandError(err error) bool {
 		strings.Contains(msg, "Operation timed out") ||
 		strings.Contains(msg, "Connection reset by peer") ||
 		strings.Contains(msg, "connection reset by peer")
+}
+
+func cOracleCompilerIdentity() (string, string) {
+	path, err := exec.LookPath("cc")
+	if err != nil {
+		return "cc", "unknown"
+	}
+	out, err := exec.Command(path, "--version").Output()
+	if err != nil {
+		return path, "unknown"
+	}
+	version := strings.TrimSpace(string(out))
+	if idx := strings.IndexByte(version, '\n'); idx >= 0 {
+		version = version[:idx]
+	}
+	if version == "" {
+		version = "unknown"
+	}
+	return path, version
+}
+
+func fileSHA256(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func findParserC(repoDir string) (string, error) {
