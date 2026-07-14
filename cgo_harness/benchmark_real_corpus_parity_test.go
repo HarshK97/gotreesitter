@@ -332,12 +332,7 @@ type realCorpusBenchmarkFile struct {
 	source []byte
 }
 
-type realCorpusBenchmarkFileFilters struct {
-	allowAll   bool
-	extensions map[string]struct{}
-	basenames  map[string]struct{}
-	paths      map[string]struct{}
-}
+type realCorpusBenchmarkFileFilters = realcorpus.FileMatcher
 
 func realCorpusBenchmarkRoot(b *testing.B) string {
 	b.Helper()
@@ -483,179 +478,25 @@ func realCorpusBenchmarkShardSelection(tb testing.TB) (int, int, bool) {
 }
 
 func realCorpusBenchmarkFileAllowed(path string, filters realCorpusBenchmarkFileFilters) bool {
-	if len(filters.extensions) == 0 && len(filters.basenames) == 0 && len(filters.paths) == 0 {
-		return filters.allowAll
-	}
-	if realCorpusBenchmarkPathAllowed(path, filters.paths) {
-		return true
-	}
-	if realCorpusBenchmarkPathHasAllowedExtension(path, filters.extensions) {
-		return true
-	}
-	base := strings.ToLower(filepath.Base(path))
-	return realCorpusBenchmarkBasenameAllowed(base, filters.basenames)
-}
-
-func realCorpusBenchmarkBasenameAllowed(base string, basenames map[string]struct{}) bool {
-	if _, ok := basenames[base]; ok {
-		return true
-	}
-	for pattern := range basenames {
-		if pattern == "kconfig.*" {
-			if strings.HasPrefix(base, "kconfig.") && !strings.HasSuffix(base, ".txt") && !strings.HasSuffix(base, ".md") && !strings.HasSuffix(base, ".rst") {
-				return true
-			}
-			continue
-		}
-		if strings.HasSuffix(pattern, "*") && strings.HasPrefix(base, strings.TrimSuffix(pattern, "*")) {
-			return true
-		}
-	}
-	return false
-}
-
-func realCorpusBenchmarkPathAllowed(path string, paths map[string]struct{}) bool {
-	path = strings.ToLower(filepath.ToSlash(filepath.Clean(path)))
-	if path == "." || path == "" {
-		return false
-	}
-	_, ok := paths[path]
-	return ok
-}
-
-func realCorpusBenchmarkPathHasAllowedExtension(path string, extensions map[string]struct{}) bool {
-	path = strings.ToLower(filepath.ToSlash(path))
-	for ext := range extensions {
-		if ext == "" {
-			continue
-		}
-		if strings.HasSuffix(path, strings.ToLower(ext)) {
-			return true
-		}
-	}
-	return false
+	return filters.Matches(path)
 }
 
 func realCorpusBenchmarkFileFiltersFor(tb testing.TB, language string, root string) realCorpusBenchmarkFileFilters {
 	tb.Helper()
 	if !realCorpusBenchmarkUseLockFilter(root) {
-		return realCorpusBenchmarkFileFilters{allowAll: true}
+		return realcorpus.AllowAllFiles()
 	}
 	entry, _ := realCorpusBenchmarkLockEntryFor(tb, language)
-	filters := realCorpusBenchmarkFileFilters{
-		extensions: map[string]struct{}{},
-		basenames:  map[string]struct{}{},
-		paths:      map[string]struct{}{},
-	}
-	for _, ext := range entry.Exts {
-		ext = strings.ToLower(strings.TrimSpace(ext))
-		if ext == "" {
-			continue
-		}
-		if strings.ContainsAny(ext, `/\`) {
-			path := strings.ReplaceAll(ext, "\\", "/")
-			path = strings.ToLower(filepath.ToSlash(filepath.Clean(filepath.FromSlash(path))))
-			if path != "." && path != "" {
-				filters.paths[path] = struct{}{}
-			}
-		} else if strings.HasPrefix(ext, ".") {
-			filters.extensions[ext] = struct{}{}
-		} else {
-			filters.basenames[ext] = struct{}{}
-		}
-	}
-	hasExplicitMatchers := len(filters.extensions) != 0 || len(filters.basenames) != 0 || len(filters.paths) != 0
-	if len(filters.extensions) == 0 && len(filters.basenames) == 0 && len(filters.paths) == 0 {
-		for _, ext := range realCorpusBenchmarkRegistryExtensions(language) {
-			if strings.HasPrefix(ext, ".") {
-				filters.extensions[ext] = struct{}{}
-			} else {
-				filters.basenames[ext] = struct{}{}
-			}
-		}
-	}
-	if len(filters.extensions) == 0 && len(filters.basenames) == 0 && len(filters.paths) == 0 {
+	fallback := realCorpusBenchmarkRegistryExtensions(language)
+	if len(fallback) == 0 {
 		if entry, ok := parityEntriesByName[language]; ok {
-			for _, ext := range entry.Extensions {
-				ext = strings.ToLower(strings.TrimSpace(ext))
-				if ext == "" {
-					continue
-				}
-				if strings.HasPrefix(ext, ".") {
-					filters.extensions[ext] = struct{}{}
-				} else {
-					filters.basenames[ext] = struct{}{}
-				}
-			}
+			fallback = append([]string(nil), entry.Extensions...)
 		}
 	}
-	if !hasExplicitMatchers {
-		addRealCorpusBenchmarkLanguageFilters(language, filters.extensions, filters.basenames)
-	}
-	if len(filters.extensions) == 0 && len(filters.basenames) == 0 && len(filters.paths) == 0 {
-		return realCorpusBenchmarkFileFilters{}
-	}
-	return filters
+	return realcorpus.NewFileMatcher(language, entry.Exts, fallback)
 }
 
-func addRealCorpusBenchmarkLanguageFilters(language string, extensions, basenames map[string]struct{}) {
-	addExt := func(ext string) {
-		ext = strings.ToLower(strings.TrimSpace(ext))
-		if ext != "" {
-			extensions[ext] = struct{}{}
-		}
-	}
-	addBase := func(name string) {
-		name = strings.ToLower(strings.TrimSpace(name))
-		if name != "" {
-			basenames[name] = struct{}{}
-		}
-	}
-	switch strings.ToLower(strings.TrimSpace(language)) {
-	case "caddy":
-		addBase("caddyfile")
-	case "dockerfile":
-		addExt(".dockerfile")
-		addBase("dockerfile")
-		addBase("containerfile")
-		for i := 1; i <= 9; i++ {
-			addBase(strconv.Itoa(i))
-		}
-	case "earthfile":
-		addExt(".earth")
-		addBase("earthfile")
-	case "git_rebase":
-		addExt(".git-rebase-todo")
-		addBase("git-rebase-todo")
-		addBase("rebase-todo")
-	case "gomod":
-		addBase("go.mod")
-	case "kconfig":
-		addBase("kconfig")
-		addBase("kconfig.*")
-	case "meson":
-		addBase("meson.build")
-		addBase("meson_options.txt")
-	case "nginx":
-		addExt(".nginx")
-		addBase("nginx.conf")
-		addBase("conf.nginx")
-	case "requirements":
-		addBase("requirements.txt")
-	case "ssh_config":
-		addBase("ssh_config")
-		addBase("sshd_config")
-		addBase("known_hosts")
-		addBase("authorized_keys")
-	case "tmux":
-		addBase("tmux.conf")
-		addBase(".tmux.conf")
-	case "todotxt":
-		addBase("todo.txt")
-	}
-}
-
-func TestAddRealCorpusBenchmarkLanguageFiltersAddsCanonicalNames(t *testing.T) {
+func TestRealCorpusBenchmarkMatcherAddsCanonicalNames(t *testing.T) {
 	tests := []struct {
 		language   string
 		allowed    []string
@@ -673,11 +514,7 @@ func TestAddRealCorpusBenchmarkLanguageFiltersAddsCanonicalNames(t *testing.T) {
 		{language: "todotxt", allowed: []string{"examples/todo.txt"}, disallowed: "corpus/mix.txt"},
 	}
 	for _, tc := range tests {
-		filters := realCorpusBenchmarkFileFilters{
-			extensions: map[string]struct{}{},
-			basenames:  map[string]struct{}{},
-		}
-		addRealCorpusBenchmarkLanguageFilters(tc.language, filters.extensions, filters.basenames)
+		filters := realcorpus.NewFileMatcher(tc.language, nil, nil)
 		for _, path := range tc.allowed {
 			if !realCorpusBenchmarkFileAllowed(path, filters) {
 				t.Fatalf("%s should allow %q: %#v", tc.language, path, filters)
@@ -826,9 +663,7 @@ func TestLoadRealCorpusBenchmarkFilesSkipsNonRegularMatchingPaths(t *testing.T) 
 		t.Skipf("create symlink: %v", err)
 	}
 
-	files := loadRealCorpusBenchmarkFiles(t, dir, realCorpusBenchmarkFileFilters{
-		extensions: map[string]struct{}{".prisma": {}},
-	})
+	files := loadRealCorpusBenchmarkFiles(t, dir, realcorpus.NewFileMatcher("", []string{".prisma"}, nil))
 	if len(files) != 1 {
 		t.Fatalf("selected files=%d, want 1: %#v", len(files), files)
 	}

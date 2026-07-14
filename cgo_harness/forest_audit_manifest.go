@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/odvcencio/gotreesitter/cgo_harness/internal/realcorpus"
 )
 
 func MaterializeForestCorpusManifest(options ForestCorpusMaterializeOptions) (ForestCorpusManifest, error) {
@@ -61,11 +63,8 @@ func MaterializeForestCorpusManifest(options ForestCorpusMaterializeOptions) (Fo
 		if err := verifyForestCorpusCheckout(root, entry); err != nil {
 			return ForestCorpusManifest{}, err
 		}
-		matchers := entry.Matchers
-		if len(matchers) == 0 {
-			matchers = options.RegistryExtensions[language]
-		}
-		files, err := selectForestCorpusFiles(root, entry, matchers, selection)
+		matcher := realcorpus.NewFileMatcher(language, entry.Matchers, options.RegistryExtensions[language])
+		files, err := selectForestCorpusFiles(root, entry, matcher, selection)
 		if err != nil {
 			return ForestCorpusManifest{}, err
 		}

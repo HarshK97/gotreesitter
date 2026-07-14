@@ -33,6 +33,11 @@ for tags and release notes while still in `0.x`.
   out. The reducer skips the potentially expensive production lane for that
   non-promotable class while leaving missing and timeout-ambiguous evidence
   incomplete.
+- Forest manifests, real-corpus benchmarks, and corpus inventory now share one
+  file-selection policy for lock matchers, registry extensions, and canonical
+  extensionless filenames such as `go.mod`. This lets authenticated manifests
+  cover every lock entry that has an eligible source while keeping explicit
+  lock matchers authoritative.
 
 ### Performance
 

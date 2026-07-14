@@ -68,6 +68,35 @@ func TestMaterializeAndLoadForestCorpusManifestAuthenticatesSources(t *testing.T
 	}
 }
 
+func TestMaterializeForestCorpusManifestUsesCanonicalBasenamesWithoutRegistryExtensions(t *testing.T) {
+	root := t.TempDir()
+	revision := strings.Repeat("a", 40)
+	corpusRevision := initForestManifestTestRepo(t, root, "gomod", map[string]string{
+		"go.mod":          "module example.invalid/test\n",
+		"nested/go.mod":   "module example.invalid/nested\n",
+		"go.sum":          "not selected\n",
+		"test/corpus.txt": "not selected\n",
+	})
+	lockPath := filepath.Join(root, "corpus_sources.lock")
+	lock := fmt.Sprintf("gomod https://example.invalid/gomod %s .\n", corpusRevision)
+	if err := os.WriteFile(lockPath, []byte(lock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := MaterializeForestCorpusManifest(ForestCorpusMaterializeOptions{
+		GotreesitterRevision: revision,
+		CorpusLockPath:       lockPath,
+		CorpusRoot:           root,
+		Languages:            []string{"gomod"},
+		Selection:            ForestCorpusSelection{Order: "path"},
+	})
+	if err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+	if len(manifest.Files) != 2 || manifest.Files[0].Path != "go.mod" || manifest.Files[1].Path != "nested/go.mod" {
+		t.Fatalf("files = %#v", manifest.Files)
+	}
+}
+
 func TestLoadForestCorpusManifestRejectsRevisionAndCheckoutDrift(t *testing.T) {
 	root := t.TempDir()
 	revision := strings.Repeat("a", 40)

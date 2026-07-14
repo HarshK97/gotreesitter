@@ -4,12 +4,13 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"io/fs"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/odvcencio/gotreesitter/cgo_harness/internal/realcorpus"
 )
 
 type forestCorpusCandidate struct {
@@ -100,9 +101,9 @@ func normalizeForestCorpusSelection(selection ForestCorpusSelection) (ForestCorp
 	return selection, nil
 }
 
-func selectForestCorpusFiles(root string, entry forestCorpusLockEntry, matchers []string, selection ForestCorpusSelection) ([]ForestCorpusManifestFile, error) {
+func selectForestCorpusFiles(root string, entry forestCorpusLockEntry, matcher realcorpus.FileMatcher, selection ForestCorpusSelection) ([]ForestCorpusManifestFile, error) {
 	checkoutRoot, walkRoot := forestCorpusRoots(root, entry)
-	candidates, err := walkForestCorpusCandidates(checkoutRoot, walkRoot, entry, matchers, selection)
+	candidates, err := walkForestCorpusCandidates(checkoutRoot, walkRoot, entry, matcher, selection)
 	if err != nil {
 		return nil, fmt.Errorf("walk %s corpus: %w", entry.Language, err)
 	}
@@ -126,16 +127,12 @@ func forestCorpusRoots(root string, entry forestCorpusLockEntry) (string, string
 	return checkoutRoot, walkRoot
 }
 
-func walkForestCorpusCandidates(checkoutRoot, walkRoot string, entry forestCorpusLockEntry, matchers []string, selection ForestCorpusSelection) ([]forestCorpusCandidate, error) {
+func walkForestCorpusCandidates(checkoutRoot, walkRoot string, entry forestCorpusLockEntry, matcher realcorpus.FileMatcher, selection ForestCorpusSelection) ([]forestCorpusCandidate, error) {
 	var candidates []forestCorpusCandidate
-	err := filepath.WalkDir(walkRoot, func(filePath string, dirEntry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if dirEntry.IsDir() {
-			return forestCorpusDirectoryAction(filePath, walkRoot, dirEntry.Name())
-		}
-		candidate, eligible, err := forestCorpusCandidateForFile(checkoutRoot, walkRoot, filePath, dirEntry, entry, matchers, selection)
+	err := realcorpus.WalkMatchingFiles(walkRoot, func(relativePath string) bool {
+		return matcher.Matches(relativePath) && !forestCorpusPathExcluded(entry.Language, relativePath, selection.ExcludePaths)
+	}, func(file realcorpus.File) error {
+		candidate, eligible, err := forestCorpusCandidateForFile(checkoutRoot, file, selection)
 		if err != nil {
 			return err
 		}
@@ -147,39 +144,15 @@ func walkForestCorpusCandidates(checkoutRoot, walkRoot string, entry forestCorpu
 	return candidates, err
 }
 
-func forestCorpusDirectoryAction(filePath, walkRoot, name string) error {
-	if filePath == walkRoot {
-		return nil
-	}
-	switch name {
-	case ".git", ".gradle", "bazel-bin", "bazel-out", "bazel-testlogs", "build", "node_modules", "target":
-		return filepath.SkipDir
-	default:
-		return nil
-	}
-}
-
-func forestCorpusCandidateForFile(checkoutRoot, walkRoot, filePath string, dirEntry fs.DirEntry, entry forestCorpusLockEntry, matchers []string, selection ForestCorpusSelection) (forestCorpusCandidate, bool, error) {
-	info, err := dirEntry.Info()
-	if err != nil || !info.Mode().IsRegular() {
+func forestCorpusCandidateForFile(checkoutRoot string, file realcorpus.File, selection ForestCorpusSelection) (forestCorpusCandidate, bool, error) {
+	if !forestCorpusSizeEligible(file.Size, selection) {
 		return forestCorpusCandidate{}, false, nil
 	}
-	relWalk, err := filepath.Rel(walkRoot, filePath)
+	relCheckout, err := filepath.Rel(checkoutRoot, file.Path)
 	if err != nil {
 		return forestCorpusCandidate{}, false, err
 	}
-	relWalk = filepath.ToSlash(relWalk)
-	if !forestCorpusPathMatches(relWalk, matchers) || forestCorpusPathExcluded(entry.Language, relWalk, selection.ExcludePaths) {
-		return forestCorpusCandidate{}, false, nil
-	}
-	if !forestCorpusSizeEligible(info.Size(), selection) {
-		return forestCorpusCandidate{}, false, nil
-	}
-	relCheckout, err := filepath.Rel(checkoutRoot, filePath)
-	if err != nil {
-		return forestCorpusCandidate{}, false, err
-	}
-	return forestCorpusCandidate{path: filepath.ToSlash(relCheckout), size: info.Size()}, true, nil
+	return forestCorpusCandidate{path: filepath.ToSlash(relCheckout), size: file.Size}, true, nil
 }
 
 func forestCorpusSizeEligible(size int64, selection ForestCorpusSelection) bool {
@@ -291,36 +264,6 @@ func forestSameRepository(left, right string) bool {
 		return strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(value), "/"), ".git")
 	}
 	return normalize(left) == normalize(right)
-}
-
-func forestCorpusPathMatches(rel string, matchers []string) bool {
-	if len(matchers) == 0 {
-		return false
-	}
-	rel = strings.ToLower(filepath.ToSlash(rel))
-	base := strings.ToLower(filepath.Base(rel))
-	for _, raw := range matchers {
-		matcher := strings.ToLower(strings.TrimSpace(raw))
-		switch {
-		case matcher == "":
-			continue
-		case strings.ContainsAny(matcher, `/\`):
-			if rel == filepath.ToSlash(filepath.Clean(matcher)) {
-				return true
-			}
-		case strings.HasPrefix(matcher, "."):
-			if strings.HasSuffix(rel, matcher) {
-				return true
-			}
-		case strings.HasSuffix(matcher, "*"):
-			if strings.HasPrefix(base, strings.TrimSuffix(matcher, "*")) {
-				return true
-			}
-		case base == matcher:
-			return true
-		}
-	}
-	return false
 }
 
 func normalizeForestExcludePaths(raw []string) []string {
