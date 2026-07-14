@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	statusSchema     = "gts-wave3-perf-sweep-status/v1"
-	budgetSchema     = "gts-perf-ratio-budgets/v1"
-	scoreboardSchema = "gts-perf-scan/v1"
+	statusSchema       = "gts-wave3-perf-sweep-status/v1"
+	budgetSchema       = "gts-perf-ratio-budgets/v1"
+	scoreboardSchemaV1 = "gts-perf-scan/v1"
+	scoreboardSchemaV2 = "gts-perf-scan/v2"
 )
 
 type options struct {
@@ -283,6 +284,7 @@ type scoreboardCoverage struct {
 
 type scoreboardSummary struct {
 	Path             string         `json:"path"`
+	Schema           string         `json:"schema"`
 	GeneratedAt      string         `json:"generated_at,omitempty"`
 	Languages        int            `json:"languages"`
 	BudgetLanguages  int            `json:"budget_languages"`
@@ -442,7 +444,7 @@ func buildStatus(opts options) (*statusDocument, error) {
 			doc.Caveats = append(doc.Caveats, "At least one local scoreboard was harness-flagged as contended; treat those ratios as smoke or visibility evidence rather than quiet-box ratchets.")
 		}
 		if doc.ScoreboardCoverage.LegacyScoreboards > 0 {
-			doc.Caveats = append(doc.Caveats, "Legacy scoreboards remain readable, but they predate the structured hard-gate report and are shown as not_evaluated; rerun the harness for a fail-closed verdict.")
+			doc.Caveats = append(doc.Caveats, "Historical v1 scoreboards and v2 scoreboards without a structured hard-gate report remain readable but are shown as not_evaluated; rerun the current harness for a fail-closed verdict.")
 		}
 	}
 
@@ -552,7 +554,7 @@ func summarizeScoreboards(paths []string, budgetSet map[string]bool, heldOutSet 
 		gateFailureCount := 0
 		fullFilesChecked := 0
 		fastFullFiles := 0
-		if board.Gate == nil {
+		if board.Schema != scoreboardSchemaV2 || board.Gate == nil {
 			legacyBoards++
 		} else {
 			hardGateBoards++
@@ -575,6 +577,7 @@ func summarizeScoreboards(paths []string, budgetSet map[string]bool, heldOutSet 
 		}
 		summaries = append(summaries, scoreboardSummary{
 			Path:             path,
+			Schema:           board.Schema,
 			GeneratedAt:      board.GeneratedAt,
 			Languages:        len(board.Languages),
 			BudgetLanguages:  budgetLangs,
@@ -666,8 +669,8 @@ func loadScoreboard(path string) (*scoreboardFile, error) {
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("decode scoreboard %s: %w", path, err)
 	}
-	if out.Schema != scoreboardSchema {
-		return nil, fmt.Errorf("scoreboard %s schema %q, want %q", path, out.Schema, scoreboardSchema)
+	if out.Schema != scoreboardSchemaV1 && out.Schema != scoreboardSchemaV2 {
+		return nil, fmt.Errorf("scoreboard %s schema %q, want %q or %q", path, out.Schema, scoreboardSchemaV1, scoreboardSchemaV2)
 	}
 	out.SourcePath = path
 	return &out, nil

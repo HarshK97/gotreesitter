@@ -117,7 +117,7 @@ func TestBuildStatusWithScoreboards(t *testing.T) {
 		},
 	})
 	writeJSON(t, scoreboardPath, map[string]any{
-		"schema":       scoreboardSchema,
+		"schema":       scoreboardSchemaV1,
 		"generated_at": "2026-07-09T04:34:09Z",
 		"config": map[string]any{
 			"reps": 5, "warmup": 1, "file_budget_ms": 10000, "lang_timeout_ms": 900000,
@@ -199,7 +199,7 @@ func TestBuildStatusReportsStructuredHardGateAndFastFiles(t *testing.T) {
 		},
 	})
 	writeJSON(t, scoreboardPath, map[string]any{
-		"schema": scoreboardSchema,
+		"schema": scoreboardSchemaV2,
 		"config": map[string]any{
 			"hard_gate": true, "require_fleet": true,
 			"corpus_lock_sha256": strings.Repeat("a", 64),
@@ -238,11 +238,31 @@ func TestBuildStatusReportsStructuredHardGateAndFastFiles(t *testing.T) {
 	if doc.ScoreboardCoverage.FastFullParseFiles != 1 || len(doc.FastFullFiles) != 1 {
 		t.Fatalf("fast-file accounting = %+v / %+v", doc.ScoreboardCoverage, doc.FastFullFiles)
 	}
+	if len(doc.Scoreboards) != 1 || doc.Scoreboards[0].Schema != scoreboardSchemaV2 {
+		t.Fatalf("scoreboard schema provenance = %+v", doc.Scoreboards)
+	}
 	md := renderMarkdown(doc)
 	for _, needle := range []string{"hard-gate passes", "Full-parse files at least 10x faster than C", "fast.go"} {
 		if !strings.Contains(md, needle) {
 			t.Fatalf("markdown missing %q:\n%s", needle, md)
 		}
+	}
+}
+
+func TestLoadScoreboardAcceptsHistoricalAndCurrentSchemasOnly(t *testing.T) {
+	dir := t.TempDir()
+	for _, schema := range []string{scoreboardSchemaV1, scoreboardSchemaV2} {
+		path := filepath.Join(dir, strings.ReplaceAll(schema, "/", "_")+".json")
+		writeJSON(t, path, map[string]any{"schema": schema})
+		if _, err := loadScoreboard(path); err != nil {
+			t.Fatalf("loadScoreboard(%q): %v", schema, err)
+		}
+	}
+
+	path := filepath.Join(dir, "unknown.json")
+	writeJSON(t, path, map[string]any{"schema": "gts-perf-scan/v99"})
+	if _, err := loadScoreboard(path); err == nil {
+		t.Fatal("loadScoreboard accepted an unknown schema")
 	}
 }
 

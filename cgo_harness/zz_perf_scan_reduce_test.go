@@ -215,6 +215,7 @@ func perfScanReduceScoreboards(paths []string, lockPath, lockSHA string, lockLan
 	var (
 		baseConfig   *perfScanConfig
 		baseHost     perfScanHost
+		baseOracle   *perfScanOracleCommonIdentity
 		revision     string
 		rowsByLang   = make(map[string]*perfScanLanguage, len(wantLanguages))
 		generatedMax time.Time
@@ -292,6 +293,15 @@ func perfScanReduceScoreboards(paths []string, lockPath, lockSHA string, lockLan
 			if err := perfScanValidateClassification(file.Classification); err != nil {
 				return nil, fmt.Errorf("shard %s language %q file %q classification: %w", shardPath, lang, file.Path, err)
 			}
+		}
+		if err := perfScanValidateOracleEvidence(shard); err != nil {
+			return nil, fmt.Errorf("shard %s static C oracle evidence: %w", shardPath, err)
+		}
+		if baseOracle == nil {
+			common := shard.Oracle.Common
+			baseOracle = &common
+		} else if !reflect.DeepEqual(*baseOracle, shard.Oracle.Common) {
+			return nil, fmt.Errorf("shard %s static C oracle common identity differs from earlier shards", shardPath)
 		}
 
 		comparable := perfScanComparableShardConfig(shard.Config)
@@ -372,6 +382,11 @@ func perfScanReduceScoreboards(paths []string, lockPath, lockSHA string, lockLan
 		board.Languages = append(board.Languages, row)
 		board.Summary[row.Verdict]++
 	}
+	oracleIdentity, err := perfScanOracleBoardFromRows(board.Languages)
+	if err != nil {
+		return nil, fmt.Errorf("assemble reduced static C oracle identity: %w", err)
+	}
+	board.Oracle = oracleIdentity
 	board.FullParseSplit = perfScanAggregateFleetCleanErrorSplit(board.Languages)
 	gate := perfScanEvaluateHardGate(board)
 	board.Gate = &gate
@@ -734,6 +749,83 @@ func TestPerfScanReduceScoreboards(t *testing.T) {
 		})
 	}
 
+	t.Run("typed C admission timeout remains authenticated failing evidence", func(t *testing.T) {
+		paths := makeInputs(t, func(_ *perfScanScoreboard, pythonShard *perfScanScoreboard) {
+			row := pythonShard.Languages[0]
+			file := row.Files[0]
+			admission := file.OracleAdmission
+			admission.Admitted = false
+			admission.StaticDeepSHA256 = ""
+			admission.ParityDeepSHA256 = ""
+			admission.Status = staticCStatusParserTimeout
+			admission.Detail = "static C deep dump reached the per-file timeout"
+			full := file.Axes[perfScanAxisFull]
+			full.Status = staticCStatusParserTimeout
+			full.Detail = admission.Detail
+			full.CMedianNs = 0
+			full.CMinNs = 0
+			full.CMaxNs = 0
+			full.Ratio = 0
+			full.RatioIsLowerBound = false
+			full.Verdict = perfScanBucketNoData
+			full.GoMinNs = full.GoMedianNs
+			full.GoMaxNs = full.GoMedianNs
+			row.Status = staticCStatusParserTimeout
+			row.Detail = admission.Detail
+			gate := perfScanEvaluateHardGate(pythonShard)
+			pythonShard.Gate = &gate
+		})
+		board, err := reduce(paths)
+		if err != nil {
+			t.Fatalf("reduce typed C timeout evidence: %v", err)
+		}
+		if board.Gate == nil || board.Gate.Status != perfScanGateFail {
+			t.Fatalf("typed C timeout did not fail closure: %+v", board.Gate)
+		}
+		var sawCFailure bool
+		for _, finding := range board.Gate.Failures {
+			if finding.Kind == "oracle" {
+				t.Fatalf("typed C timeout was misclassified as unauthenticated provenance: %+v", board.Gate)
+			}
+			if finding.Language == "python" && finding.Status == staticCStatusParserTimeout {
+				sawCFailure = true
+			}
+		}
+		if !sawCFailure {
+			t.Fatalf("typed C timeout was not retained as a closure failure: %+v", board.Gate)
+		}
+	})
+
+	t.Run("typed C measurement protocol failure remains authenticated failing evidence", func(t *testing.T) {
+		paths := makeInputs(t, func(_ *perfScanScoreboard, pythonShard *perfScanScoreboard) {
+			row := pythonShard.Languages[0]
+			file := row.Files[0]
+			full := file.Axes[perfScanAxisFull]
+			full.Status = staticCStatusProtocolError
+			full.Detail = "static C response omitted its schema"
+			full.CMedianNs = 0
+			full.CMinNs = 0
+			full.CMaxNs = 0
+			full.Ratio = 0
+			full.RatioIsLowerBound = false
+			full.Verdict = perfScanBucketNoData
+			gate := perfScanEvaluateHardGate(pythonShard)
+			pythonShard.Gate = &gate
+		})
+		board, err := reduce(paths)
+		if err != nil {
+			t.Fatalf("reduce typed C measurement failure: %v", err)
+		}
+		if board.Gate == nil || board.Gate.Status != perfScanGateFail {
+			t.Fatalf("typed C measurement failure did not fail closure: %+v", board.Gate)
+		}
+		for _, finding := range board.Gate.Failures {
+			if finding.Kind == "oracle" {
+				t.Fatalf("typed C measurement failure was misclassified as unauthenticated provenance: %+v", board.Gate)
+			}
+		}
+	})
+
 	tests := []struct {
 		name   string
 		paths  func(*testing.T) []string
@@ -752,6 +844,8 @@ func TestPerfScanReduceScoreboards(t *testing.T) {
 			mutate: func(_, pythonShard *perfScanScoreboard) {
 				pythonShard.Config.Languages = []string{"go"}
 				pythonShard.Languages[0].Language = "go"
+				pythonShard.Languages[0].Oracle = perfScanTestOracleIdentity("go")
+				pythonShard.Oracle, _ = perfScanOracleBoardFromRows(pythonShard.Languages)
 			},
 			want: "duplicate shard language",
 		},
@@ -761,6 +855,197 @@ func TestPerfScanReduceScoreboards(t *testing.T) {
 				pythonShard.Schema = "gts-perf-scan/v0"
 			},
 			want: "schema",
+		},
+		{
+			name: "missing static oracle identity",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Oracle = nil
+			},
+			want: "missing static C oracle identity",
+		},
+		{
+			name: "dynamic oracle linkage",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Oracle.Common.Linkage = "shared_dlopen"
+				pythonShard.Languages[0].Oracle.Common.Linkage = "shared_dlopen"
+			},
+			want: "contract/transport/linkage",
+		},
+		{
+			name: "missing deep admission",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Languages[0].Files[0].OracleAdmission = nil
+			},
+			want: "missing oracle admission",
+		},
+		{
+			name: "wrong measurement order",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				file := pythonShard.Languages[0].Files[0]
+				file.MeasurementOrder = "go_then_static_c"
+				if perfScanTestMeasurementOrder("python", 0) == file.MeasurementOrder {
+					file.MeasurementOrder = "static_c_then_go"
+				}
+			},
+			want: "measurement order",
+		},
+		{
+			name: "deep admission mismatch",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Languages[0].Files[0].OracleAdmission.ParityDeepSHA256 = strings.Repeat("a", 64)
+			},
+			want: "invalid static/cgo deep admission",
+		},
+		{
+			name: "untyped failed admission",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				admission := pythonShard.Languages[0].Files[0].OracleAdmission
+				admission.Admitted = false
+				admission.StaticDeepSHA256 = ""
+				admission.ParityDeepSHA256 = ""
+				admission.Detail = "untyped failure"
+			},
+			want: "unrecognized failed oracle admission status",
+		},
+		{
+			name: "failed admission legacy c error",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				file := pythonShard.Languages[0].Files[0]
+				admission := file.OracleAdmission
+				admission.Admitted = false
+				admission.StaticDeepSHA256 = ""
+				admission.ParityDeepSHA256 = ""
+				admission.Status = "c_error"
+				admission.Detail = "legacy C failure"
+				full := file.Axes[perfScanAxisFull]
+				full.Status = admission.Status
+				full.Detail = admission.Detail
+				full.CMedianNs = 0
+				full.CMinNs = 0
+				full.CMaxNs = 0
+				full.Ratio = 0
+				full.Verdict = perfScanBucketNoData
+			},
+			want: "unrecognized failed oracle admission status",
+		},
+		{
+			name: "failed admission removed generic oracle error",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				file := pythonShard.Languages[0].Files[0]
+				admission := file.OracleAdmission
+				admission.Admitted = false
+				admission.StaticDeepSHA256 = ""
+				admission.ParityDeepSHA256 = ""
+				admission.Status = "c_oracle_error"
+				admission.Detail = "removed generic failure"
+				full := file.Axes[perfScanAxisFull]
+				full.Status = admission.Status
+				full.Detail = admission.Detail
+				full.CMedianNs = 0
+				full.CMinNs = 0
+				full.CMaxNs = 0
+				full.Ratio = 0
+				full.Verdict = perfScanBucketNoData
+			},
+			want: "unrecognized failed oracle admission status",
+		},
+		{
+			name: "failed admission missing bounded Go evidence",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				file := pythonShard.Languages[0].Files[0]
+				admission := file.OracleAdmission
+				admission.Admitted = false
+				admission.StaticDeepSHA256 = ""
+				admission.ParityDeepSHA256 = ""
+				admission.Status = staticCStatusParserTimeout
+				admission.Detail = "static C timeout"
+				full := file.Axes[perfScanAxisFull]
+				full.Status = staticCStatusParserTimeout
+				full.Detail = admission.Detail
+				full.GoMedianNs = 0
+				full.CMedianNs = 0
+				full.Ratio = 0
+				full.Verdict = perfScanBucketNoData
+			},
+			want: "neither Go timing nor a typed Go failure",
+		},
+		{
+			name: "admitted file arbitrary measurement status",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				full := pythonShard.Languages[0].Files[0].Axes[perfScanAxisFull]
+				full.Status = "c_timeout"
+				full.Detail = "legacy untyped measurement failure"
+				full.CMedianNs = 0
+				full.CMinNs = 0
+				full.CMaxNs = 0
+				full.Ratio = 0
+				full.Verdict = perfScanBucketNoData
+			},
+			want: "unrecognized full-parse status",
+		},
+		{
+			name: "admitted file removed generic oracle error",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				full := pythonShard.Languages[0].Files[0].Axes[perfScanAxisFull]
+				full.Status = "c_oracle_error"
+				full.Detail = "removed generic measurement failure"
+				full.CMedianNs = 0
+				full.CMinNs = 0
+				full.CMaxNs = 0
+				full.Ratio = 0
+				full.Verdict = perfScanBucketNoData
+			},
+			want: "unrecognized full-parse status",
+		},
+		{
+			name: "grammar commit mismatch",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Oracle.Languages[0].GrammarCommit = strings.Repeat("b", 40)
+				pythonShard.Languages[0].Oracle.Language.GrammarCommit = strings.Repeat("b", 40)
+			},
+			want: "grammar identity is not the languages.lock entry",
+		},
+		{
+			name: "mixed compiler identity",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Oracle.Common.CompilerVersion = "another cc"
+				pythonShard.Languages[0].Oracle.Common.CompilerVersion = "another cc"
+				identity := pythonShard.Languages[0].Oracle
+				identity.Language.BuildKeySHA256 = staticCBuildKey(identity.Common, identity.Language)
+				pythonShard.Oracle.Languages[0] = identity.Language
+			},
+			want: "common identity differs",
+		},
+		{
+			name: "wrong locked compile flags",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Oracle.Common.RuntimeCFlags = "-O0"
+				pythonShard.Languages[0].Oracle.Common.RuntimeCFlags = "-O0"
+			},
+			want: "compile/link/timing/digest contract",
+		},
+		{
+			name: "wrong parser compile flags",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Oracle.Languages[0].Parser.CompileFlags = "-O0"
+				pythonShard.Languages[0].Oracle.Language.Parser.CompileFlags = "-O0"
+			},
+			want: "parser compile identity",
+		},
+		{
+			name: "wrong static build key",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Oracle.Languages[0].BuildKeySHA256 = strings.Repeat("0", 64)
+				pythonShard.Languages[0].Oracle.Language.BuildKeySHA256 = strings.Repeat("0", 64)
+			},
+			want: "build key does not match",
+		},
+		{
+			name: "non-full authoritative axes",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Config.Axes = []string{perfScanAxisFull, perfScanAxisNoEdit}
+			},
+			want: "authoritative static C scoreboard axes",
 		},
 		{
 			name: "chained reduction provenance",
@@ -1309,9 +1594,18 @@ func perfScanTestShard(lang, lockPath, lockSHA string, lockLanguages int, revisi
 		FilesMeasured: 1,
 		BytesMeasured: 64,
 		Axes:          map[string]*perfScanLangAxis{},
+		Oracle:        perfScanTestOracleIdentity(lang),
 		Files: []*perfScanFile{{
-			Path:  "fixture." + lang,
-			Bytes: 64,
+			Path:             "fixture." + lang,
+			Bytes:            64,
+			MeasurementOrder: perfScanTestMeasurementOrder(lang, 0),
+			OracleAdmission: &perfScanOracleAdmission{
+				DigestFormat:     "gts-deep-tree-v1",
+				SourceSHA256:     strings.Repeat("1", 64),
+				StaticDeepSHA256: strings.Repeat("2", 64),
+				ParityDeepSHA256: strings.Repeat("2", 64),
+				Admitted:         true,
+			},
 			Classification: &perfScanFileClassification{
 				Class:    perfScanClassClean,
 				Reason:   "accepted full-span tree without ERROR nodes",
@@ -1364,10 +1658,76 @@ func perfScanTestShard(lang, lockPath, lockSHA string, lockLanguages int, revisi
 			SelectedLanguages: 1,
 		},
 	}
+	board.Oracle, _ = perfScanOracleBoardFromRows(board.Languages)
 	board.FullParseSplit = perfScanAggregateFleetCleanErrorSplit(board.Languages)
 	gate := perfScanEvaluateHardGate(board)
 	board.Gate = &gate
 	return board
+}
+
+func perfScanTestMeasurementOrder(lang string, fileIndex int) string {
+	if staticCFirstFor(lang, fileIndex) {
+		return "static_c_then_go"
+	}
+	return "go_then_static_c"
+}
+
+func perfScanTestOracleIdentity(lang string) *perfScanOracleIdentity {
+	lockPath, err := findParityLockPath()
+	if err != nil {
+		panic(err)
+	}
+	lock, err := loadParityLock(lockPath)
+	if err != nil {
+		panic(err)
+	}
+	entry := lock[lang]
+	common := perfScanOracleCommonIdentity{
+		Contract:             COracleContractVersion,
+		Transport:            staticCPerfTransport,
+		Linkage:              staticCPerfLinkage,
+		BindingModule:        COracleBindingModule,
+		BindingVersion:       COracleBindingVersion,
+		BindingCommit:        COracleBindingCommit,
+		RuntimeRepo:          staticCPerfRuntimeRepo,
+		RuntimeVersion:       COracleRuntimeVersion,
+		RuntimeCommit:        COracleRuntimeCommit,
+		RuntimeSourceTreeOID: strings.Repeat("3", 40),
+		RuntimeSourceSHA256:  strings.Repeat("4", 64),
+		OptimizationFlags:    staticCPerfOptimizationFlags,
+		RuntimeCFlags:        staticCPerfRuntimeCFlags,
+		GrammarCFlags:        staticCPerfGrammarCFlags,
+		GrammarCXXFlags:      staticCPerfGrammarCXXFlags,
+		DriverCFlags:         staticCPerfDriverCFlags,
+		LinkFlags:            staticCPerfLinkFlags,
+		TimingRegion:         staticCPerfTimingRegion,
+		OrderProtocol:        staticCPerfOrderProtocol,
+		FailureVocabulary:    staticCPerfFailureVocabulary,
+		TargetOS:             "linux",
+		TargetArch:           "amd64",
+		CompilerPath:         "/usr/bin/cc",
+		CompilerVersion:      "cc test",
+		CompilerSHA256:       strings.Repeat("a", 64),
+		DriverSHA256:         strings.Repeat("5", 64),
+		DeepDigestFormat:     "gts-deep-tree-v1",
+	}
+	language := perfScanOracleLanguageIdentity{
+		Language:          lang,
+		GrammarRepo:       entry.RepoURL,
+		GrammarCommit:     entry.Commit,
+		GrammarSourceTree: strings.Repeat("6", 40),
+		GrammarSourceMode: staticCSourceLocked,
+		LanguageSymbol:    "tree_sitter_" + paritySafeName(lang),
+		Parser:            perfScanOracleSourceIdentity{Path: "parser.c", SHA256: strings.Repeat("7", 64), CompileFlags: staticCPerfGrammarCFlags},
+		LinkerPath:        "/usr/bin/cc",
+		LinkerVersion:     "cc test",
+		LinkerSHA256:      strings.Repeat("a", 64),
+		ArtifactSHA256:    strings.Repeat("9", 64),
+		ArtifactStatic:    true,
+		ArtifactLinkage:   staticCPerfLinkageProof,
+	}
+	language.BuildKeySHA256 = staticCBuildKey(common, language)
+	return &perfScanOracleIdentity{Common: common, Language: language}
 }
 
 func perfScanWriteTestScoreboard(t *testing.T, dir, name string, board *perfScanScoreboard) string {

@@ -43,6 +43,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"os"
@@ -274,16 +275,61 @@ func COracleIdentity(name string) (COracleBuildIdentity, error) {
 // identity through type+named, byte and point spans, extra/missing/error
 // flags, child order and incoming field identity.
 func COracleDeepDigest(tree *sitter.Tree) (string, error) {
+	return cOracleDeepDigest(tree, time.Time{})
+}
+
+var errCOracleDeepDigestTimeout = errors.New("C oracle deep digest exceeded wall timeout")
+
+// cOracleDeepDigestWithin applies a wall bound to digest materialization. The
+// parser timeout has already ended when admission reaches this walk, so the
+// digest needs its own independent bound.
+func cOracleDeepDigestWithin(tree *sitter.Tree, timeout time.Duration) (string, error) {
+	if timeout <= 0 {
+		return "", errCOracleDeepDigestTimeout
+	}
+	return cOracleDeepDigest(tree, time.Now().Add(timeout))
+}
+
+func cOracleDeepDigest(tree *sitter.Tree, deadline time.Time) (string, error) {
 	if tree == nil || tree.RootNode() == nil {
 		return "", fmt.Errorf("cannot digest nil C oracle tree")
 	}
+	checkDeadline := func() error {
+		if !deadline.IsZero() && !time.Now().Before(deadline) {
+			return errCOracleDeepDigestTimeout
+		}
+		return nil
+	}
+	if err := checkDeadline(); err != nil {
+		return "", err
+	}
 	h := sha256.New()
 	_, _ = h.Write([]byte("gts-deep-tree-v1\x00"))
-	writeCOracleDeepNode(h, tree.RootNode(), "")
-	return hex.EncodeToString(h.Sum(nil)), nil
+	root := tree.RootNode()
+	cursor := root.Walk()
+	defer cursor.Close()
+	writeCOracleDeepNodeHeader(h, root, "")
+	for {
+		if err := checkDeadline(); err != nil {
+			return "", err
+		}
+		if cursor.GotoFirstChild() {
+			writeCOracleDeepNodeHeader(h, cursor.Node(), cursor.FieldName())
+			continue
+		}
+		for !cursor.GotoNextSibling() {
+			if err := checkDeadline(); err != nil {
+				return "", err
+			}
+			if !cursor.GotoParent() {
+				return hex.EncodeToString(h.Sum(nil)), nil
+			}
+		}
+		writeCOracleDeepNodeHeader(h, cursor.Node(), cursor.FieldName())
+	}
 }
 
-func writeCOracleDeepNode(h hash.Hash, node *sitter.Node, field string) {
+func writeCOracleDeepNodeHeader(h hash.Hash, node *sitter.Node, field string) {
 	writeCOracleDeepString(h, node.Kind())
 	writeCOracleDeepString(h, field)
 	writeCOracleDeepU32(h, uint32(node.StartByte()))
@@ -313,9 +359,6 @@ func writeCOracleDeepNode(h hash.Hash, node *sitter.Node, field string) {
 	_, _ = h.Write([]byte{flags})
 	childCount := node.ChildCount()
 	writeCOracleDeepU32(h, uint32(childCount))
-	for i := uint(0); i < childCount; i++ {
-		writeCOracleDeepNode(h, node.Child(i), node.FieldNameForChild(uint32(i)))
-	}
 }
 
 func writeCOracleDeepU32(h hash.Hash, value uint32) {

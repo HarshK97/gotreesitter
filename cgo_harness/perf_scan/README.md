@@ -2,9 +2,8 @@
 
 Measures gotreesitter (pure Go) against the C tree-sitter reference, per
 language, on real corpus files, and emits a scoreboard (JSON + markdown).
-This is the measurement half of the "drop-in tree-sitter replacement" bar:
-universal C-similar performance on full parse / no-edit reparse /
-incremental edit.
+This is the measurement half of the fresh full-parse performance bar:
+universal C-similar performance on materialized trees from real source files.
 
 The tool lives in `cgo_harness/zz_perf_scan_test.go` behind the build tags
 `treesitter_c_parity treesitter_c_perfscan` — it never compiles into normal
@@ -13,17 +12,66 @@ builds or the parity suites. Outputs land under `cgo_harness/perf_scan/out/`
 
 ## What is measured (per language, per file)
 
-| axis | Go side | C side | default |
+| axis | Go side | C side | authoritative |
 |---|---|---|---|
-| `full` | `Parser.Parse` / `ParseWithTokenSource` (fresh) | `ts_parser_parse(NULL, src)` | on |
-| `noedit` | `ParseIncremental(src, oldTree)`, unchanged source | `ts_parser_parse(oldTree, src)` | on |
-| `edit` | single-byte replace + `Tree.Edit` + incremental reparse | same via C `Tree.Edit` | opt-in (`GTS_PERF_SCAN_AXES=full,noedit,edit`) |
+| `full` | `Parser.Parse` / `ParseWithTokenSource` (fresh) | locked upstream `ts_parser_parse_string(NULL, src)` in a fully static sidecar | yes |
 
-Protocol per file/axis: `warmup` untimed attempts, then `reps` timed attempts
-alternating Go/C (drift-resistant on shared boxes); the reported number is the
-median, with min/max recorded. Per-file ratio = Go median / C median. Language
-aggregate = ratio-by-total (sum of Go medians / sum of C medians) plus
-median-of-file-ratios.
+Protocol per file: `warmup` untimed attempts, then `reps` timed attempts on
+each implementation; the reported number is the median, with min/max recorded.
+The C timing process loads the immutable source snapshot and constructs its
+parser before sampling. Its timer covers only `ts_parser_parse_string`; process
+startup, source loading, parser setup, and tree deletion are excluded. Go
+sampling retains the existing parser and parse-call timing path. To avoid a
+systematic implementation-order bias while keeping C process setup outside the
+timer, each selected file contains one whole Go measurement block and one whole
+static-C measurement block. Their order alternates across selected-file
+ordinals; there is no within-file AB/BA interleaving or per-repetition
+alternation. The language-name SHA-256 low bit selects the first file's block
+order, so one-file rows start on different sides across the fleet. The common
+protocol and each file's actual order are serialized and reducer-checked.
+Per-file ratio = Go median / C median. Language aggregate = ratio-by-total
+(sum of Go medians / sum of C medians) plus median-of-file-ratios.
+
+Before accepting any C sample, the harness parses that exact source through
+both the in-process parity binding and the fully static sidecar and requires an
+identical `gts-deep-tree-v1` digest. Each shard serializes the locked binding,
+runtime, grammar, parser/scanner source hashes, exact C/C++ compile and static
+link flags, compiler/linker paths, versions, executable hashes, artifact hash,
+linkage proof, and every per-file admission digest. The reducer rejects missing
+or mixed identity,
+dynamic linkage, wrong commits or flags, and absent deep admission. The
+content-keyed artifact cache installs the executable and a build-key/artifact-
+hash manifest together by atomic directory rename. After linking and before a
+manifest or shared cache path becomes visible, the harness rechecks the
+already-resolved compiler/linker versions and hashes, pinned runtime/grammar
+worktrees and tree identities, and every runtime/parser/scanner/driver hash
+used by that build. Cache hits repeat the same input check before use. Drift
+retries once from a fresh identity capture and generated-source workspace;
+persistent instability fails closed. Reuse also rechecks the manifest,
+executable hash, required symbols, and static linkage; an absent or mismatched
+manifest quarantines the entry and forces a verified rebuild.
+After validation, execution uses a private copy whose hash and linkage are
+reverified, so replacing the shared cache path cannot change an in-flight
+shard's executable. This closes realistic same-user concurrent source/tool/cache
+replacement; it does not claim adversarial protection from a privileged actor
+that can alter a running compiler or process memory. Publication schema is
+fresh-full-only. Legacy `noedit` and `edit` diagnostics
+can still be requested locally, but any such shard is reducer-inadmissible.
+
+Deep admission uses iterative tree cursors in both the static sidecar and the
+in-process cgo binding, so deep or wide witnesses do not consume one call-stack
+frame per syntax node. The dump parse and cgo digest each have an explicit
+wall bound independent of the parser timeout. Admission, parser, transport,
+digest, measurement, and protocol failures use a closed `c_oracle_*`
+vocabulary with distinct parser/transport/digest timeout statuses; generic
+`c_error` and `c_oracle_error` evidence is inadmissible. Any C timeout,
+incomplete tree, transport error, or digest mismatch fails the hard gate, but
+it does not suppress the bounded Go full parse: Go completion/stop
+classification and timing evidence are still emitted, with no fabricated
+ratio. The reducer accepts such a row as authenticated failure evidence only
+when its source hash, typed C status/detail, measurement order, static identity,
+and bounded Go evidence are complete; missing or contradictory provenance
+remains inadmissible.
 
 The full axis also records an untimed corpus-policy classification for each
 file. `clean` requires a successful Go parse whose root spans `[0,len(source))`,
@@ -61,11 +109,8 @@ Notes on interpretation:
   tier_scan. A missing or non-OK full-parse measurement still fails this gate
   closed because no exact Go/C ratio was produced; that is coverage, not a
   claim that this harness proved structural parity.
-- The Go no-edit path may legitimately short-circuit (near-zero ns) when the
-  engine returns the old tree for an unchanged reparse; the C side always
-  pays its reuse walk. The scoreboard reports honest wall time of the API call.
-- The `edit` axis verifies only that both incremental reparses complete
-  (completeness, not structural parity) before timing — see Phase 2.
+- Incremental and no-edit performance use separate benchmark lanes. They are
+  deliberately outside this publication scoreboard.
 
 ## Cliff containment (why one 17s file cannot hang the sweep)
 
@@ -86,10 +131,12 @@ Two layers, both represented by structured stop records in `scoreboard.json`:
 
 ## Running
 
-Requires: cgo + C toolchain, the parity container OR `GTS_PARITY_ALLOW_HOST=1`,
-and a corpus. C reference grammars are built/loaded by the existing parity
-machinery (`ParityCLanguage`, `grammars/languages.lock`, cached under
-`harness_out/parity_c_ref_cache/`).
+Requires: cgo, a C/C++ toolchain with static runtime libraries, `nm`, `readelf`,
+the parity container OR `GTS_PARITY_ALLOW_HOST=1`, and a corpus. The admission
+binding uses the existing parity machinery (`ParityCLanguage`). The timing
+sidecar independently builds the same locked runtime and grammar from
+`grammars/languages.lock`, cached under `harness_out/c_oracle/fleet_static/` by
+default.
 
 Exploratory smoke (explicit languages, default corpus `corpus_real/`). This
 opts out of the hard gate because it does not use the authenticated fleet lock:
@@ -166,12 +213,16 @@ GOWORK=off GTS_PARITY_ALLOW_HOST=1 GTS_PERF_SCAN=1 \
   -run '^TestPerfScanReduce$' -v -count=1 -timeout 0 .
 ```
 
-Reduction requires exactly one scoreboard for every locked language. It
+Reduction requires exactly one fresh-full `gts-perf-scan/v2` scoreboard for
+every locked language. It
 rejects missing or duplicate languages, schema or measurement-config drift,
 corpus-lock drift, path exclusions, contended runs, mixed or absent repository
 revisions, dirty source trees, mixed host/runtime identities, contradictory or
 malformed file classifications, pre-existing reduction provenance, and absent
-or stale shard hard gates. Raw one-language measurement shards must not contain
+or stale shard hard gates. It also rejects absent or mixed static-C identities,
+non-static linkage, compile/link flag drift, wrong runtime or grammar commits,
+and any selected file without matching static/cgo deep-tree admission. Raw
+one-language measurement shards must not contain
 a `reduction` object. A stored shard gate may be either PASS or FAIL, but it
 must exactly equal the gate recomputed from that shard's evidence after
 canonical ordering. Published `failures` and `fast_full_files` are sorted by
@@ -248,12 +299,13 @@ the corpus builder deliberately supplies nested dependency checkouts and
 | `GTS_PERF_SCAN_MIN_FILE_BYTES` / `_MAX_FILE_BYTES` | 0 / 4MiB | size filters |
 | `GTS_PERF_SCAN_EXCLUDE_PATHS` | — | comma-separated language-relative or `language/path` exact paths/globs to omit from selection; globs use Go `path.Match` semantics (`*` does not cross `/`, and `**` is not recursive), while trailing `/` means recursive directory prefix. Intended for named C-oracle cliff witnesses that remain tracked in the ledger |
 | `GTS_PERF_SCAN_ORDER` | `largest` | `largest` / `smallest` / `path` selection order |
-| `GTS_PERF_SCAN_AXES` | `full,noedit` | add `edit` for the incremental-edit axis |
+| `GTS_PERF_SCAN_AXES` | `full` | publication accepts only `full`; legacy `noedit`/`edit` requests are diagnostic and reducer-inadmissible |
 | `GTS_PERF_SCAN_CONTENDED` | auto (loadavg) | mark run as contended (smoke-only numbers) |
 | `GTS_PERF_SCAN_INPROCESS` | 0 | debug: run languages in-process (no crash isolation) |
 | `GTS_PERF_SCAN_EDIT_CANDIDATES` | 16 | edit-site candidates tried per file |
-| `GTS_PERF_SCAN_CHILD_RSS_LIMIT_MB` | 0 | optional parent-side RSS watchdog for the per-language child process; when set, kills the child before a container cgroup OOM can kill the sweep parent |
+| `GTS_PERF_SCAN_CHILD_RSS_LIMIT_MB` | 0 | optional parent-side RSS watchdog for the per-language child process group; when set, kills and reaps the child and its descendants before a container cgroup OOM can kill the sweep parent |
 | `GTS_REAL_CORPUS_BENCH_LOCK` | required by hard gate | authenticated corpus selection lock; digest is checked before any language runs |
+| `GTS_C_ORACLE_CACHE` | `harness_out/c_oracle/fleet_static` | cache for pinned runtime/grammar sources and content-keyed fully static timing artifacts |
 
 Also honored: `GTS_PARITY_ALLOW_HOST`, `GTS_PARITY_SKIP_LANGS`,
 `GTS_PARITY_REPO_ROOT`, `GTS_PARITY_REPO_CACHE`,
@@ -262,7 +314,7 @@ Also honored: `GTS_PARITY_ALLOW_HOST`, `GTS_PARITY_SKIP_LANGS`,
 ## Outputs
 
 ```
-<out>/scoreboard.json   machine-readable (schema gts-perf-scan/v1)
+<out>/scoreboard.json   machine-readable (schema gts-perf-scan/v2)
 <out>/scoreboard.md     human scoreboard + cliff appendix
 <out>/langs/<lang>.json per-language fragments (partial results survive kills)
 <out>/logs/<lang>.log   child stdout/stderr per language
@@ -270,7 +322,8 @@ Also honored: `GTS_PARITY_ALLOW_HOST`, `GTS_PARITY_SKIP_LANGS`,
 
 `scoreboard.json` carries the repository revision, host metadata (loadavg at
 start/end), the full config, authenticated corpus coverage, a `contended` flag,
-structured stop records, per-language per-axis aggregates, per-file medians/ratios/statuses,
+static-C oracle identity and admissions, structured stop records, per-language
+full-parse aggregates, per-file medians/ratios/statuses,
 optional per-file full-parse classifications, per-language clean/error timing
 splits, a fleet clean/error timing split, and a `hard_gate` report. The markdown
 renders the same class totals and lists each non-clean file with its reason.
@@ -322,7 +375,7 @@ requiring git-ignored local scoreboard artifacts. To fold in local scoreboards
 when they exist, add `-scoreboards 'perf_scan/out/wave3_batch*/scoreboard.json'`;
 contended runs remain explicitly labeled as smoke/visibility evidence.
 
-Compare an authoritative scoreboard against the ratchet:
+Compare a historical v1 scoreboard against the matching aggregate ratchet:
 
 ```sh
 cd cgo_harness
@@ -333,9 +386,11 @@ GOWORK=off go run ./cmd/perf_scan_budget \
   -out-md perf_scan/out/authoritative_YYYYMMDDTHHMMSSZ/budget.md
 ```
 
-The checked-in budget was seeded with `order=largest`, `max_files=8`,
-`reps=5`, `warmup=1`, `file_budget_ms=10000`, and axes `full,noedit`. Generate
-a strict ratchet scoreboard with those same knobs inside the parity container:
+The checked-in historical budget was seeded with `order=largest`,
+`max_files=8`, `reps=5`, `warmup=1`, `file_budget_ms=10000`, and the former
+in-process C transport. It remains historical context, not admissible v2
+publication evidence. Generate the replacement static-C full-parse board with
+the same corpus-selection knobs inside the parity container:
 
 ```sh
 bash cgo_harness/docker/run_parity_in_docker.sh \
@@ -357,13 +412,31 @@ bash cgo_harness/docker/run_parity_in_docker.sh \
       -run '^TestPerfScanSweep$' -v -count=1 -timeout 0 ."
 ```
 
-For a targeted language refresh, scope the comparison:
+Evaluate the resulting v2 board with the current fail-closed contract:
+
+```sh
+cd cgo_harness
+GOWORK=off go run ./cmd/perf_scan_budget \
+  -budget perf_scan/perf_ratio_budgets.json \
+  -scoreboard perf_scan/out/ratchet_YYYYMMDDTHHMMSSZ/scoreboard.json \
+  -hard-gate-only \
+  -out-md perf_scan/out/ratchet_YYYYMMDDTHHMMSSZ/hard-gate.md
+```
+
+The budget command deliberately keeps the transports separate: v1 boards may
+only be compared with the historical aggregate ratchets, while v2 boards may
+only be evaluated with `-hard-gate-only`. A v2 board contains exactly the
+`full` axis, so applying old `noedit` allowances or ratios to it would be a
+false comparison.
+
+For a targeted v2 language refresh, scope the hard-gate evaluation:
 
 ```sh
 cd cgo_harness
 GOWORK=off go run ./cmd/perf_scan_budget \
   -budget perf_scan/perf_ratio_budgets.json \
   -scoreboard perf_scan/out/go_refresh/scoreboard.json \
+  -hard-gate-only \
   -langs go
 ```
 
@@ -377,21 +450,16 @@ requires `hard_gate=true` and the authenticated corpus-lock digest in addition
 to the measurement knobs (`reps`, `warmup`, `file_budget_ms`, `max_files`,
 `order`, exclusions, and axes).
 
-The universal hard-gate run passes `-hard-gate-only`. That mode requires an
+The universal hard-gate run passes `-hard-gate-only`. That mode requires a v2,
+full-only,
 unexcluded scoreboard and checks authenticated fleet coverage plus the exact
 per-file hard rules without applying historical aggregates whose seeded sample
 basis included an exclusion. Historical ratchets remain available through the
 normal comparator on scoreboards produced with their exact recorded basis.
 
-Older `gts-perf-scan/v1` scoreboards still decode. They predate structured
-stops, corpus coverage, and the embedded hard-gate report, so use
-`-strict-config=false` only for historical analysis; they cannot establish a
-new hard-gate pass. `cmd/perf_scan_status` labels them `not_evaluated`.
-The clean/error, repository-revision, and reduction-provenance fields are
-optional additions to the same v1 schema: readers must continue to accept rows
-without `classification`, `full_parse_split`, `git_revision`, or `reduction`,
-and current Go decoders do so. The authoritative shard reducer applies a
-stronger provenance policy after decoding and rejects revisionless inputs.
+Older `gts-perf-scan/v1` scoreboards remain historical analysis only. They do
+not carry the fully static oracle identity or per-file cgo/static admission and
+cannot establish a new hard-gate pass or enter the v2 shard reducer.
 
 ## Phase 2 (documented, not built)
 

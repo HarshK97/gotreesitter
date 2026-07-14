@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	budgetSchema     = "gts-perf-ratio-budgets/v1"
-	scoreboardSchema = "gts-perf-scan/v1"
+	budgetSchema       = "gts-perf-ratio-budgets/v1"
+	scoreboardSchemaV1 = "gts-perf-scan/v1"
+	scoreboardSchemaV2 = "gts-perf-scan/v2"
 
 	axisFull   = "full"
 	axisNoEdit = "noedit"
@@ -305,8 +306,17 @@ type compareOptions struct {
 
 func compareScoreboard(b *budgetFile, s *scoreboardFile, opts compareOptions) []evalFinding {
 	var out []evalFinding
-	if s.Schema != scoreboardSchema {
-		out = append(out, evalFinding{Metric: "scoreboard.schema", Got: s.Schema, Want: scoreboardSchema})
+	switch s.Schema {
+	case scoreboardSchemaV1:
+		if opts.HardGateOnly {
+			out = append(out, evalFinding{Metric: "scoreboard.schema_mode", Got: s.Schema, Want: scoreboardSchemaV2 + " for a current hard-gate verdict"})
+		}
+	case scoreboardSchemaV2:
+		if !opts.HardGateOnly {
+			out = append(out, evalFinding{Metric: "scoreboard.schema_mode", Got: s.Schema, Want: "--hard-gate-only (historical v1 aggregate ratchets are not comparable to the static full-only transport)"})
+		}
+	default:
+		out = append(out, evalFinding{Metric: "scoreboard.schema", Got: s.Schema, Want: scoreboardSchemaV1 + " or " + scoreboardSchemaV2})
 	}
 	if opts.StrictConfig {
 		out = append(out, compareConfig(b.MeasurementBasis, s.Config, opts.HardGateOnly)...)
@@ -505,9 +515,15 @@ func compareConfig(b budgetMeasurementBasis, s scoreboardConfig, hardGateOnly bo
 	if b.Order != "" && s.Order != b.Order {
 		out = append(out, evalFinding{Metric: "config.order", Got: s.Order, Want: b.Order})
 	}
-	for _, axis := range b.Axes {
-		if !contains(s.Axes, axis) {
-			out = append(out, evalFinding{Axis: axis, Metric: "config.axes", Got: strings.Join(s.Axes, ","), Want: "include " + axis})
+	if hardGateOnly {
+		if len(s.Axes) != 1 || s.Axes[0] != axisFull {
+			out = append(out, evalFinding{Axis: axisFull, Metric: "config.axes", Got: strings.Join(s.Axes, ","), Want: axisFull + " only"})
+		}
+	} else {
+		for _, axis := range b.Axes {
+			if !contains(s.Axes, axis) {
+				out = append(out, evalFinding{Axis: axis, Metric: "config.axes", Got: strings.Join(s.Axes, ","), Want: "include " + axis})
+			}
 		}
 	}
 	if hardGateOnly {

@@ -4,15 +4,76 @@ package cgoharness
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
+
+func TestCOracleDeepDigestIterativeDeepAndWide(t *testing.T) {
+	language, err := COracleLanguage("json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parser := sitter.NewParser()
+	defer parser.Close()
+	if err := parser.SetLanguage(language); err != nil {
+		t.Fatal(err)
+	}
+	fixtures := map[string]string{
+		"deep": strings.Repeat("[", 4096) + "0" + strings.Repeat("]", 4096),
+		"wide": "[" + strings.Repeat("0,", 20000) + "0]",
+	}
+	for name, source := range fixtures {
+		t.Run(name, func(t *testing.T) {
+			tree := parser.Parse([]byte(source), nil)
+			if tree == nil || tree.RootNode() == nil || tree.RootNode().HasError() {
+				if tree != nil {
+					tree.Close()
+				}
+				t.Fatal("C oracle did not produce a complete regression tree")
+			}
+			defer tree.Close()
+			bounded, err := cOracleDeepDigestWithin(tree, 10*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			unbounded, err := COracleDeepDigest(tree)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bounded != unbounded || len(bounded) != 64 {
+				t.Fatalf("digest mismatch bounded=%q unbounded=%q", bounded, unbounded)
+			}
+		})
+	}
+}
+
+func TestCOracleDeepDigestWallTimeout(t *testing.T) {
+	language, err := COracleLanguage("json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parser := sitter.NewParser()
+	defer parser.Close()
+	if err := parser.SetLanguage(language); err != nil {
+		t.Fatal(err)
+	}
+	tree := parser.Parse([]byte("[0,1,2,3]"), nil)
+	if tree == nil {
+		t.Fatal("C oracle returned nil timeout fixture")
+	}
+	defer tree.Close()
+	if _, err := cOracleDeepDigestWithin(tree, 0); !errors.Is(err, errCOracleDeepDigestTimeout) {
+		t.Fatalf("digest timeout error=%v", err)
+	}
+}
 
 func TestCOracleContractPreflight(t *testing.T) {
 	identity, err := COracleIdentity("go")
