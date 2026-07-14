@@ -359,10 +359,11 @@ which also enabled the no-tree path. The previously published `1.54 ms`,
 `728 B/op`, and `7 allocs/op` figures—and v0.24.0's later `978 B/op` and
 `5 allocs/op` figures—therefore described parser-core diagnostics, not a full
 materialized parse. Those headline comparisons have been withdrawn. The
-later measured 10.907 ms on a pinned quiet host. A second audit found that this
-source never forks and that its C comparison used a different Go grammar from
-gotreesitter. The former 1.895x ratio and 29% materialization decomposition are
-therefore withdrawn rather than promoted as representative claims.
+corrected historical control later measured 10.907 ms on a pinned quiet host.
+A second audit found that this source never forks and that its C comparison
+used a different Go grammar from gotreesitter. The former 1.895x ratio and 29%
+materialization decomposition are therefore withdrawn rather than promoted as
+representative claims.
 
 The replacement canonical matrix freezes four clean, human-authored Go files
 spanning 5-236 KiB. They reach 12-18 live stacks and constructed-to-selected
@@ -481,7 +482,7 @@ witness, and shrinks as certified engine mechanisms subsume shims. See
 
 ## Known limitations
 
-- **Full-parse throughput**: the corrected, materialized 500-function Go benchmark measures ~2.1x the C runtime on the same host (see [BENCH.md](BENCH.md); the earlier faster-than-C figure described the no-tree diagnostic path and was withdrawn). Incremental lanes beat the cgo binding path by orders of magnitude. Full-parse throughput varies by grammar and corpus shape; highly ambiguous languages and very large generated files remain the main performance frontier.
+- **Full-parse throughput**: the locked four-file real-Go matrix measures **5.481673x C** by equal-fixture geomean and **6.313799x C** by fixed-suite sum of medians against the exact static `-O2` oracle (see [BENCH.md](BENCH.md)). The former ~2.1x row used a straight-LR synthetic and a different Go grammar, so it is historical only. Incremental lanes remain dramatically faster than the cgo binding on their workload-specific controls. Full-parse throughput varies by grammar and corpus shape; GLR-heavy code, highly ambiguous languages, and very large generated files are the main performance frontier.
 - **GLR safety caps**: The parser enforces iteration, stack depth, and node count limits proportional to input size. These prevent pathological blowup on grammars with high ambiguity but impose a ceiling on the maximum input complexity that parses without error. The caps are tunable but not removable without risking unbounded resource consumption.
 
 ## Adding a language

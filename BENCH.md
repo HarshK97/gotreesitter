@@ -25,10 +25,11 @@ the incremental fast paths and single-stack regressions, but it is not a
 representative full-parse headline.
 
 The former **1.895x C** full-parse headline and its **29% materialization**
-decomposition are withdrawn pending the locked real-code replacement below.
-The old comparison also used different Go grammar artifacts: gotreesitter used
-the project-locked 1,425-state/214-symbol grammar while the C benchmark used a
-1,404-state/212-symbol grammar bundled by the old smacker binding.
+decomposition are withdrawn in favor of the locked real-code replacement
+below. The old comparison also used different Go grammar artifacts:
+gotreesitter used the project-locked 1,425-state/214-symbol grammar while the C
+benchmark used a 1,404-state/212-symbol grammar bundled by the old smacker
+binding.
 
 Historical control results, retained as workload-specific receipts:
 
