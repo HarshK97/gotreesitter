@@ -605,8 +605,19 @@ func TestStaticCPerfOracleClosedFailureVocabulary(t *testing.T) {
 }
 
 func perfScanOracleBoardFromRows(rows []*perfScanLanguage) (*perfScanOracleBoardIdentity, error) {
+	return perfScanOracleBoardFromRowsForMode(rows, perfScanReduceModeCertify)
+}
+
+func perfScanOracleBoardFromRowsForMode(rows []*perfScanLanguage, mode string) (*perfScanOracleBoardIdentity, error) {
+	allowReportClosures := mode == perfScanReduceModeReport
 	board := &perfScanOracleBoardIdentity{}
 	for _, row := range rows {
+		if allowReportClosures && row != nil && perfScanReportClosureStatus(row.Status) {
+			if err := perfScanValidateReportClosureRow(row); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		if row == nil || row.Oracle == nil {
 			return nil, fmt.Errorf("language row is missing static C oracle identity")
 		}
@@ -617,11 +628,19 @@ func perfScanOracleBoardFromRows(rows []*perfScanLanguage) (*perfScanOracleBoard
 		}
 		board.Languages = append(board.Languages, row.Oracle.Language)
 	}
+	if board.Common.Contract == "" || len(board.Languages) == 0 {
+		return nil, fmt.Errorf("reduced scoreboard has no authenticated static C oracle identity")
+	}
 	sort.Slice(board.Languages, func(i, j int) bool { return board.Languages[i].Language < board.Languages[j].Language })
 	return board, nil
 }
 
 func perfScanValidateOracleEvidence(board *perfScanScoreboard) error {
+	return perfScanValidateOracleEvidenceForMode(board, perfScanReduceModeCertify)
+}
+
+func perfScanValidateOracleEvidenceForMode(board *perfScanScoreboard, mode string) error {
+	allowReportClosures := mode == perfScanReduceModeReport
 	if board == nil || board.Oracle == nil {
 		return fmt.Errorf("scoreboard is missing static C oracle identity")
 	}
@@ -681,10 +700,27 @@ func perfScanValidateOracleEvidence(board *perfScanScoreboard) error {
 		}
 		boardByLanguage[identity.Language] = identity
 	}
-	if len(boardByLanguage) != len(board.Languages) {
-		return fmt.Errorf("oracle identity has %d languages, scoreboard has %d", len(boardByLanguage), len(board.Languages))
+	wantOracleLanguages := len(board.Languages)
+	if allowReportClosures {
+		for _, row := range board.Languages {
+			if row != nil && perfScanReportClosureStatus(row.Status) {
+				if err := perfScanValidateReportClosureRow(row); err != nil {
+					return fmt.Errorf("language %q report closure: %w", row.Language, err)
+				}
+				if _, exists := boardByLanguage[row.Language]; exists {
+					return fmt.Errorf("language %q typed closure contradicts a scoreboard oracle identity", row.Language)
+				}
+				wantOracleLanguages--
+			}
+		}
+	}
+	if len(boardByLanguage) != wantOracleLanguages {
+		return fmt.Errorf("oracle identity has %d languages, scoreboard requires %d", len(boardByLanguage), wantOracleLanguages)
 	}
 	for _, row := range board.Languages {
+		if allowReportClosures && row != nil && perfScanReportClosureStatus(row.Status) {
+			continue
+		}
 		if row == nil || row.Oracle == nil {
 			return fmt.Errorf("language row is missing oracle identity")
 		}

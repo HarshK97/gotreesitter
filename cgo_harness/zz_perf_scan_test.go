@@ -865,6 +865,14 @@ func perfScanCompareGateStop(a, b *perfScanStop) int {
 }
 
 func perfScanEvaluateHardGate(board *perfScanScoreboard) perfScanGateReport {
+	return perfScanEvaluateHardGateForMode(board, perfScanReduceModeCertify)
+}
+
+func perfScanEvaluateHardGateWithReportClosures(board *perfScanScoreboard) perfScanGateReport {
+	return perfScanEvaluateHardGateForMode(board, perfScanReduceModeReport)
+}
+
+func perfScanEvaluateHardGateForMode(board *perfScanScoreboard, mode string) perfScanGateReport {
 	report := perfScanGateReport{
 		Status:             perfScanGatePass,
 		MaxFullParseRatio:  perfScanHardFullRatio,
@@ -882,7 +890,7 @@ func perfScanEvaluateHardGate(board *perfScanScoreboard) perfScanGateReport {
 		addFailure(perfScanGateFinding{Kind: "coverage", Status: "no_evidence", Detail: "scoreboard contains no language rows"})
 	}
 	if board.Schema == perfScanSchema {
-		if err := perfScanValidateOracleEvidence(board); err != nil {
+		if err := perfScanValidateOracleEvidenceForMode(board, mode); err != nil {
 			addFailure(perfScanGateFinding{Kind: "oracle", Status: "inadmissible", Detail: err.Error()})
 		}
 	}

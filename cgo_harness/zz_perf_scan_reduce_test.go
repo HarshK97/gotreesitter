@@ -71,7 +71,7 @@ func TestPerfScanReduce(t *testing.T) {
 	}
 	sort.Strings(lockLanguages)
 
-	board, err := perfScanReduceScoreboards(paths, coverage.LockPath, coverage.LockSHA256, lockLanguages, time.Now().UTC())
+	board, err := perfScanReduceScoreboardsForMode(paths, coverage.LockPath, coverage.LockSHA256, lockLanguages, time.Now().UTC(), reduceMode)
 	if err != nil {
 		t.Fatalf("reduce shard scoreboards: %v", err)
 	}
@@ -192,6 +192,13 @@ func perfScanReadScoreboard(path string) (*perfScanScoreboard, error) {
 }
 
 func perfScanReduceScoreboards(paths []string, lockPath, lockSHA string, lockLanguages []string, generatedAt time.Time) (*perfScanScoreboard, error) {
+	return perfScanReduceScoreboardsForMode(paths, lockPath, lockSHA, lockLanguages, generatedAt, perfScanReduceModeCertify)
+}
+
+func perfScanReduceScoreboardsForMode(paths []string, lockPath, lockSHA string, lockLanguages []string, generatedAt time.Time, mode string) (*perfScanScoreboard, error) {
+	if mode != perfScanReduceModeReport && mode != perfScanReduceModeCertify {
+		return nil, fmt.Errorf("invalid resolved reducer mode %q", mode)
+	}
 	if len(paths) == 0 {
 		return nil, fmt.Errorf("no shard scoreboards")
 	}
@@ -294,14 +301,24 @@ func perfScanReduceScoreboards(paths []string, lockPath, lockSHA string, lockLan
 				return nil, fmt.Errorf("shard %s language %q file %q classification: %w", shardPath, lang, file.Path, err)
 			}
 		}
-		if err := perfScanValidateOracleEvidence(shard); err != nil {
-			return nil, fmt.Errorf("shard %s static C oracle evidence: %w", shardPath, err)
-		}
-		if baseOracle == nil {
-			common := shard.Oracle.Common
-			baseOracle = &common
-		} else if !reflect.DeepEqual(*baseOracle, shard.Oracle.Common) {
-			return nil, fmt.Errorf("shard %s static C oracle common identity differs from earlier shards", shardPath)
+		reportClosure := perfScanReportClosureStatus(row.Status)
+		if reportClosure {
+			if mode != perfScanReduceModeReport {
+				return nil, fmt.Errorf("shard %s status %q is authenticated failure evidence only in report mode", shardPath, row.Status)
+			}
+			if err := perfScanValidateReportClosureShard(shard); err != nil {
+				return nil, fmt.Errorf("shard %s report closure evidence: %w", shardPath, err)
+			}
+		} else {
+			if err := perfScanValidateOracleEvidence(shard); err != nil {
+				return nil, fmt.Errorf("shard %s static C oracle evidence: %w", shardPath, err)
+			}
+			if baseOracle == nil {
+				common := shard.Oracle.Common
+				baseOracle = &common
+			} else if !reflect.DeepEqual(*baseOracle, shard.Oracle.Common) {
+				return nil, fmt.Errorf("shard %s static C oracle common identity differs from earlier shards", shardPath)
+			}
 		}
 
 		comparable := perfScanComparableShardConfig(shard.Config)
@@ -378,19 +395,75 @@ func perfScanReduceScoreboards(paths []string, lockPath, lockSHA string, lockLan
 	}
 	for _, lang := range wantLanguages {
 		row := rowsByLang[lang]
-		perfScanRefreshLanguageAggregates(row, outputConfig)
+		if mode != perfScanReduceModeReport || !perfScanReportClosureStatus(row.Status) {
+			perfScanRefreshLanguageAggregates(row, outputConfig)
+		}
 		board.Languages = append(board.Languages, row)
 		board.Summary[row.Verdict]++
 	}
-	oracleIdentity, err := perfScanOracleBoardFromRows(board.Languages)
+	oracleIdentity, err := perfScanOracleBoardFromRowsForMode(board.Languages, mode)
 	if err != nil {
 		return nil, fmt.Errorf("assemble reduced static C oracle identity: %w", err)
 	}
 	board.Oracle = oracleIdentity
 	board.FullParseSplit = perfScanAggregateFleetCleanErrorSplit(board.Languages)
 	gate := perfScanEvaluateHardGate(board)
+	if mode == perfScanReduceModeReport {
+		gate = perfScanEvaluateHardGateWithReportClosures(board)
+	}
 	board.Gate = &gate
 	return board, nil
+}
+
+func perfScanReportClosureStatus(status string) bool {
+	switch status {
+	case "no_static_c_oracle", "no_corpus", "no_corpus_files":
+		return true
+	default:
+		return false
+	}
+}
+
+func perfScanValidateReportClosureShard(shard *perfScanScoreboard) error {
+	if shard == nil || len(shard.Languages) != 1 || shard.Languages[0] == nil {
+		return fmt.Errorf("closure shard must contain exactly one language row")
+	}
+	if shard.Oracle != nil {
+		return fmt.Errorf("typed closure shard contradicts its status with a scoreboard oracle identity")
+	}
+	return perfScanValidateReportClosureRow(shard.Languages[0])
+}
+
+func perfScanValidateReportClosureRow(row *perfScanLanguage) error {
+	if row == nil || !perfScanReportClosureStatus(row.Status) {
+		return fmt.Errorf("unrecognized report closure status %q", row.Status)
+	}
+	if strings.TrimSpace(row.Language) == "" || strings.TrimSpace(row.Detail) == "" || strings.TrimSpace(row.Backend) == "" {
+		return fmt.Errorf("typed closure must record language, detail, and backend")
+	}
+	if row.Oracle != nil {
+		return fmt.Errorf("typed closure status %q contradicts a language oracle identity", row.Status)
+	}
+	if row.FilesMeasured != 0 || row.BytesMeasured != 0 || len(row.Files) != 0 || len(row.Axes) != 0 || row.FullParseSplit != nil {
+		return fmt.Errorf("typed closure status %q contains measured file, byte, axis, or split evidence", row.Status)
+	}
+	if row.ActiveFile != "" || row.ActiveFileIndex != nil || row.ActiveFileBytes != nil || row.ActiveAxis != "" || row.ActiveImpl != "" || row.ActivePhase != "" || row.ActiveAttempt != nil || row.Stop != nil {
+		return fmt.Errorf("typed closure status %q contains active or stopped measurement state", row.Status)
+	}
+	if row.Verdict != perfScanBucketNoData {
+		return fmt.Errorf("typed closure status %q has verdict %q, want %q", row.Status, row.Verdict, perfScanBucketNoData)
+	}
+	switch row.Status {
+	case "no_static_c_oracle":
+		if row.FilesSelected <= 0 {
+			return fmt.Errorf("no_static_c_oracle closure has no selected corpus files")
+		}
+	case "no_corpus", "no_corpus_files":
+		if row.FilesSelected != 0 {
+			return fmt.Errorf("%s closure selected %d corpus files", row.Status, row.FilesSelected)
+		}
+	}
+	return nil
 }
 
 func perfScanComparableShardConfig(cfg perfScanConfig) perfScanConfig {
@@ -1235,6 +1308,181 @@ func TestPerfScanReduceScoreboards(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPerfScanReduceReportTypedClosures(t *testing.T) {
+	const (
+		lockPath = "/corpus/corpus_sources.lock"
+		lockSHA  = "cf108b005fe41c4513bae14eafd4f4ec72e64454ca2eb6bbf4d18d25caab24f2"
+		revision = "7b797554397b814f981e9a3fb462b84a3d0f1837"
+	)
+	lockLanguages := []string{"go", "python"}
+	configureClosure := func(shard *perfScanScoreboard, status string) {
+		row := shard.Languages[0]
+		row.Status = status
+		row.Detail = "typed terminal closure evidence"
+		row.Backend = "dfa"
+		row.FilesMeasured = 0
+		row.BytesMeasured = 0
+		row.Verdict = perfScanBucketNoData
+		row.Oracle = nil
+		row.Axes = nil
+		row.FullParseSplit = nil
+		row.Files = nil
+		row.Stop = nil
+		if status == "no_static_c_oracle" {
+			row.FilesSelected = 1
+		} else {
+			row.FilesSelected = 0
+		}
+		shard.Oracle = nil
+		shard.FullParseSplit = nil
+		shard.Summary = map[string]int{perfScanBucketNoData: 1}
+		gate := perfScanEvaluateHardGate(shard)
+		shard.Gate = &gate
+	}
+	makeInputs := func(t *testing.T, status string, mutate func(*perfScanScoreboard)) []string {
+		t.Helper()
+		goShard := perfScanTestShard("go", lockPath, lockSHA, len(lockLanguages), revision)
+		pythonShard := perfScanTestShard("python", lockPath, lockSHA, len(lockLanguages), revision)
+		configureClosure(pythonShard, status)
+		if mutate != nil {
+			mutate(pythonShard)
+		}
+		if pythonShard.Gate != nil {
+			gate := perfScanEvaluateHardGate(pythonShard)
+			pythonShard.Gate = &gate
+		}
+		dir := t.TempDir()
+		return []string{
+			perfScanWriteTestScoreboard(t, dir, "go.json", goShard),
+			perfScanWriteTestScoreboard(t, dir, "python.json", pythonShard),
+		}
+	}
+	reduceReport := func(paths []string) (*perfScanScoreboard, error) {
+		return perfScanReduceScoreboardsForMode(paths, lockPath, lockSHA, lockLanguages, time.Unix(1_752_400_000, 0), perfScanReduceModeReport)
+	}
+
+	for _, status := range []string{"no_static_c_oracle", "no_corpus", "no_corpus_files"} {
+		t.Run(status+" is published as fatal closure evidence", func(t *testing.T) {
+			paths := makeInputs(t, status, nil)
+			board, err := reduceReport(paths)
+			if err != nil {
+				t.Fatalf("report reduction: %v", err)
+			}
+			if len(board.Languages) != 2 || board.Oracle == nil || len(board.Oracle.Languages) != 1 || board.Oracle.Languages[0].Language != "go" {
+				t.Fatalf("report closure identities = languages:%d oracle:%+v", len(board.Languages), board.Oracle)
+			}
+			if err := perfScanValidateOracleEvidenceForMode(board, perfScanReduceModeReport); err != nil {
+				t.Fatalf("combined report oracle evidence: %v", err)
+			}
+			if err := perfScanValidateOracleEvidence(board); err == nil {
+				t.Fatal("strict oracle validation accepted a report-only closure")
+			}
+			if board.Gate == nil || board.Gate.Status != perfScanGateFail {
+				t.Fatalf("combined report gate = %+v", board.Gate)
+			}
+			var found bool
+			for _, finding := range board.Gate.Failures {
+				if finding.Kind == "oracle" {
+					t.Fatalf("typed closure was downgraded to generic oracle evidence: %+v", board.Gate)
+				}
+				if finding.Language == "python" && finding.Status == status {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("typed closure status %q absent from gate: %+v", status, board.Gate)
+			}
+			out := filepath.Join(t.TempDir(), "report")
+			if err := perfScanPublishReducedScoreboard(out, board, perfScanReduceModeReport); err != nil {
+				t.Fatalf("publish report closure: %v", err)
+			}
+			assertPerfScanPublishedGate(t, out, perfScanGateFail)
+
+			if _, err := perfScanReduceScoreboards(paths, lockPath, lockSHA, lockLanguages, time.Unix(1_752_400_000, 0)); err == nil || !strings.Contains(err.Error(), "report mode") {
+				t.Fatalf("certify reduction error = %v, want report-only failure", err)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name   string
+		status string
+		mutate func(*perfScanScoreboard)
+		want   string
+	}{
+		{
+			name:   "untyped missing oracle",
+			status: "no_static_c_oracle",
+			mutate: func(shard *perfScanScoreboard) { shard.Languages[0].Status = "oracle_unavailable" },
+			want:   "missing static C oracle identity",
+		},
+		{
+			name:   "missing closure detail",
+			status: "no_static_c_oracle",
+			mutate: func(shard *perfScanScoreboard) { shard.Languages[0].Detail = "" },
+			want:   "must record language, detail, and backend",
+		},
+		{
+			name:   "closure retains measured evidence",
+			status: "no_static_c_oracle",
+			mutate: func(shard *perfScanScoreboard) { shard.Languages[0].FilesMeasured = 1 },
+			want:   "contains measured file, byte, axis, or split evidence",
+		},
+		{
+			name:   "closure retains language identity",
+			status: "no_static_c_oracle",
+			mutate: func(shard *perfScanScoreboard) { shard.Languages[0].Oracle = perfScanTestOracleIdentity("python") },
+			want:   "contradicts a language oracle identity",
+		},
+		{
+			name:   "closure retains scoreboard identity",
+			status: "no_static_c_oracle",
+			mutate: func(shard *perfScanScoreboard) {
+				shard.Oracle, _ = perfScanOracleBoardFromRows([]*perfScanLanguage{perfScanTestShard("python", lockPath, lockSHA, len(lockLanguages), revision).Languages[0]})
+			},
+			want: "contradicts its status with a scoreboard oracle identity",
+		},
+		{
+			name:   "no corpus contradicts selection",
+			status: "no_corpus",
+			mutate: func(shard *perfScanScoreboard) { shard.Languages[0].FilesSelected = 1 },
+			want:   "selected 1 corpus files",
+		},
+		{
+			name:   "missing stored closure gate",
+			status: "no_corpus",
+			mutate: func(shard *perfScanScoreboard) { shard.Gate = nil },
+			want:   "no stored hard gate",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := reduceReport(makeInputs(t, tc.status, tc.mutate)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("report reduction error = %v, want substring %q", err, tc.want)
+			}
+		})
+	}
+
+	t.Run("report mode still rejects mixed ordinary oracle identity", func(t *testing.T) {
+		goShard := perfScanTestShard("go", lockPath, lockSHA, len(lockLanguages), revision)
+		pythonShard := perfScanTestShard("python", lockPath, lockSHA, len(lockLanguages), revision)
+		pythonShard.Oracle.Common.CompilerVersion = "another cc"
+		pythonShard.Languages[0].Oracle.Common.CompilerVersion = "another cc"
+		identity := pythonShard.Languages[0].Oracle
+		identity.Language.BuildKeySHA256 = staticCBuildKey(identity.Common, identity.Language)
+		pythonShard.Oracle.Languages[0] = identity.Language
+		gate := perfScanEvaluateHardGate(pythonShard)
+		pythonShard.Gate = &gate
+		dir := t.TempDir()
+		paths := []string{
+			perfScanWriteTestScoreboard(t, dir, "go.json", goShard),
+			perfScanWriteTestScoreboard(t, dir, "python.json", pythonShard),
+		}
+		if _, err := reduceReport(paths); err == nil || !strings.Contains(err.Error(), "common identity differs") {
+			t.Fatalf("mixed ordinary identity error = %v", err)
+		}
+	})
 }
 
 func TestPerfScanRefreshLanguageAggregatesClearsStaleAxes(t *testing.T) {
