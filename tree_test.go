@@ -1015,6 +1015,199 @@ func TestTreeChangedRanges(t *testing.T) {
 	}
 }
 
+func TestTreeEditShiftsPointsAfterMultilineInsertion(t *testing.T) {
+	left := NewLeafNode(Symbol(1), true, 0, 1, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 1})
+	right := NewLeafNode(Symbol(2), true, 2, 3, Point{Row: 1, Column: 0}, Point{Row: 1, Column: 1})
+	root := NewParentNode(Symbol(3), true, []*Node{left, right}, nil, 0)
+	tree := NewTree(root, []byte("a\nb"), testLanguage())
+
+	tree.Edit(InputEdit{
+		StartByte:   1,
+		OldEndByte:  1,
+		NewEndByte:  3,
+		StartPoint:  Point{Row: 0, Column: 1},
+		OldEndPoint: Point{Row: 0, Column: 1},
+		NewEndPoint: Point{Row: 1, Column: 0},
+	})
+
+	if got, want := root.EndPoint(), (Point{Row: 2, Column: 1}); got != want {
+		t.Fatalf("root EndPoint = %+v, want %+v", got, want)
+	}
+	if got, want := right.StartPoint(), (Point{Row: 2, Column: 0}); got != want {
+		t.Fatalf("right StartPoint = %+v, want %+v", got, want)
+	}
+	if got, want := right.EndPoint(), (Point{Row: 2, Column: 1}); got != want {
+		t.Fatalf("right EndPoint = %+v, want %+v", got, want)
+	}
+
+	left = NewLeafNode(Symbol(1), true, 0, 3, Point{Row: 0, Column: 0}, Point{Row: 1, Column: 1})
+	right = NewLeafNode(Symbol(2), true, 3, 4, Point{Row: 1, Column: 1}, Point{Row: 1, Column: 2})
+	last := NewLeafNode(Symbol(3), true, 5, 6, Point{Row: 2, Column: 0}, Point{Row: 2, Column: 1})
+	root = NewParentNode(Symbol(4), true, []*Node{left, right, last}, nil, 0)
+	tree = NewTree(root, []byte("a\nxy\nz"), testLanguage())
+
+	tree.Edit(InputEdit{
+		StartByte:   3,
+		OldEndByte:  3,
+		NewEndByte:  4,
+		StartPoint:  Point{Row: 1, Column: 1},
+		OldEndPoint: Point{Row: 1, Column: 1},
+		NewEndPoint: Point{Row: 2, Column: 0},
+	})
+
+	if got, want := root.EndPoint(), (Point{Row: 3, Column: 1}); got != want {
+		t.Fatalf("multiline root EndPoint = %+v, want %+v", got, want)
+	}
+	if got, want := right.StartPoint(), (Point{Row: 2, Column: 0}); got != want {
+		t.Fatalf("same-row tail StartPoint = %+v, want %+v", got, want)
+	}
+	if got, want := last.StartPoint(), (Point{Row: 3, Column: 0}); got != want {
+		t.Fatalf("later-row tail StartPoint = %+v, want %+v", got, want)
+	}
+}
+
+func TestEditStackEntryShiftsMultilineEndPoint(t *testing.T) {
+	leaf := &compactFullLeaf{
+		noTreeNode: noTreeNode{startByte: 0, endByte: 6},
+		startPoint: Point{Row: 0, Column: 0},
+		endPoint:   Point{Row: 2, Column: 1},
+	}
+	entry := newStackEntryCompactFullLeaf(0, leaf)
+	edit := InputEdit{
+		StartByte:   3,
+		OldEndByte:  3,
+		NewEndByte:  4,
+		StartPoint:  Point{Row: 1, Column: 1},
+		OldEndPoint: Point{Row: 1, Column: 1},
+		NewEndPoint: Point{Row: 2, Column: 0},
+	}
+	var scratch []*Node
+	editStackEntryWithDelta(nil, entry, edit, 1, 1, true, &scratch, nil)
+
+	if got, want := stackEntryNodeEndByte(entry), uint32(7); got != want {
+		t.Fatalf("compact entry EndByte = %d, want %d", got, want)
+	}
+	if got, want := stackEntryNodeEndPoint(entry), (Point{Row: 3, Column: 1}); got != want {
+		t.Fatalf("compact entry EndPoint = %+v, want %+v", got, want)
+	}
+}
+
+func TestTreeEditMatchesCMultilineDeletionAndReplacement(t *testing.T) {
+	tests := []struct {
+		name                  string
+		edit                  InputEdit
+		wantRootEnd           Point
+		wantInsidePoint       Point
+		wantTrailingStart     Point
+		wantTrailingEnd       Point
+		wantRootEndByte       uint32
+		wantInsideByte        uint32
+		wantTrailingStartByte uint32
+	}{
+		{
+			name: "deletion",
+			edit: InputEdit{
+				StartByte: 10, OldEndByte: 20, NewEndByte: 10,
+				StartPoint: Point{Row: 1, Column: 2}, OldEndPoint: Point{Row: 3, Column: 5}, NewEndPoint: Point{Row: 1, Column: 2},
+			},
+			wantRootEnd: Point{Row: 2, Column: 2}, wantInsidePoint: Point{Row: 1, Column: 2},
+			wantTrailingStart: Point{Row: 1, Column: 4}, wantTrailingEnd: Point{Row: 2, Column: 2},
+			wantRootEndByte: 14, wantInsideByte: 10, wantTrailingStartByte: 12,
+		},
+		{
+			name: "replacement",
+			edit: InputEdit{
+				StartByte: 10, OldEndByte: 20, NewEndByte: 25,
+				StartPoint: Point{Row: 1, Column: 2}, OldEndPoint: Point{Row: 3, Column: 5}, NewEndPoint: Point{Row: 2, Column: 4},
+			},
+			wantRootEnd: Point{Row: 3, Column: 2}, wantInsidePoint: Point{Row: 2, Column: 4},
+			wantTrailingStart: Point{Row: 2, Column: 6}, wantTrailingEnd: Point{Row: 3, Column: 2},
+			wantRootEndByte: 29, wantInsideByte: 25, wantTrailingStartByte: 27,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			inside := NewLeafNode(Symbol(1), true, 12, 18, Point{Row: 1, Column: 4}, Point{Row: 3, Column: 3})
+			trailing := NewLeafNode(Symbol(2), true, 22, 24, Point{Row: 3, Column: 7}, Point{Row: 4, Column: 2})
+			root := NewParentNode(Symbol(3), true, []*Node{inside, trailing}, nil, 0)
+			root.startByte, root.endByte = 0, 24
+			root.startPoint, root.endPoint = Point{}, (Point{Row: 4, Column: 2})
+			tree := NewTree(root, make([]byte, 24), testLanguage())
+
+			tree.Edit(tc.edit)
+
+			if got := root.EndByte(); got != tc.wantRootEndByte {
+				t.Fatalf("root EndByte = %d, want %d", got, tc.wantRootEndByte)
+			}
+			if got := root.EndPoint(); got != tc.wantRootEnd {
+				t.Fatalf("root EndPoint = %+v, want %+v", got, tc.wantRootEnd)
+			}
+			if got := inside.StartByte(); got != tc.wantInsideByte {
+				t.Fatalf("inside StartByte = %d, want %d", got, tc.wantInsideByte)
+			}
+			if got := inside.EndByte(); got != tc.wantInsideByte {
+				t.Fatalf("inside EndByte = %d, want %d", got, tc.wantInsideByte)
+			}
+			if got := inside.StartPoint(); got != tc.wantInsidePoint {
+				t.Fatalf("inside StartPoint = %+v, want %+v", got, tc.wantInsidePoint)
+			}
+			if got := inside.EndPoint(); got != tc.wantInsidePoint {
+				t.Fatalf("inside EndPoint = %+v, want %+v", got, tc.wantInsidePoint)
+			}
+			if got := trailing.StartByte(); got != tc.wantTrailingStartByte {
+				t.Fatalf("trailing StartByte = %d, want %d", got, tc.wantTrailingStartByte)
+			}
+			if got := trailing.StartPoint(); got != tc.wantTrailingStart {
+				t.Fatalf("trailing StartPoint = %+v, want %+v", got, tc.wantTrailingStart)
+			}
+			if got := trailing.EndPoint(); got != tc.wantTrailingEnd {
+				t.Fatalf("trailing EndPoint = %+v, want %+v", got, tc.wantTrailingEnd)
+			}
+		})
+	}
+}
+
+func TestEditPendingParentAndChildrenMatchesCMultilineCoordinates(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	inside := newCompactFullLeafInArena(arena, 1, true, 12, 18, Point{Row: 1, Column: 4}, Point{Row: 3, Column: 3})
+	trailing := newCompactFullLeafInArena(arena, 2, true, 22, 24, Point{Row: 3, Column: 7}, Point{Row: 4, Column: 2})
+	parent := newPendingParentInArena(arena, 3, true, 0, []stackEntry{
+		newStackEntryCompactFullLeaf(1, inside),
+		newStackEntryCompactFullLeaf(2, trailing),
+	}, 12, 24, Point{Row: 1, Column: 4}, Point{Row: 4, Column: 2}, false)
+	entry := newStackEntryPendingParent(3, parent)
+	edit := InputEdit{
+		StartByte: 10, OldEndByte: 20, NewEndByte: 25,
+		StartPoint: Point{Row: 1, Column: 2}, OldEndPoint: Point{Row: 3, Column: 5}, NewEndPoint: Point{Row: 2, Column: 4},
+	}
+	var scratch []*Node
+
+	editStackEntryWithDelta(arena, entry, edit, 5, -1, true, &scratch, nil)
+
+	if got, want := parent.startByte, uint32(25); got != want {
+		t.Fatalf("parent startByte = %d, want %d", got, want)
+	}
+	if got, want := parent.startPoint, (Point{Row: 2, Column: 4}); got != want {
+		t.Fatalf("parent startPoint = %+v, want %+v", got, want)
+	}
+	if got, want := parent.endPoint, (Point{Row: 3, Column: 2}); got != want {
+		t.Fatalf("parent endPoint = %+v, want %+v", got, want)
+	}
+	if got, want := inside.startPoint, (Point{Row: 2, Column: 4}); got != want {
+		t.Fatalf("inside startPoint = %+v, want %+v", got, want)
+	}
+	if got, want := inside.endPoint, (Point{Row: 2, Column: 4}); got != want {
+		t.Fatalf("inside endPoint = %+v, want %+v", got, want)
+	}
+	if got, want := trailing.startPoint, (Point{Row: 2, Column: 6}); got != want {
+		t.Fatalf("trailing startPoint = %+v, want %+v", got, want)
+	}
+	if got, want := trailing.endPoint, (Point{Row: 3, Column: 2}); got != want {
+		t.Fatalf("trailing endPoint = %+v, want %+v", got, want)
+	}
+}
+
 func TestNodeEditFromSubnodeMutatesContainingRoot(t *testing.T) {
 	left := NewLeafNode(Symbol(1), true, 0, 3, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 3})
 	right := NewLeafNode(Symbol(2), true, 3, 6, Point{Row: 0, Column: 3}, Point{Row: 0, Column: 6})
