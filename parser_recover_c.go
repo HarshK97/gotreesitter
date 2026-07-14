@@ -2249,7 +2249,7 @@ func (p *Parser) cBetterVersionExists(stacks []glrStack, self int, isInError boo
 		case cErrorComparisonPreferRight:
 			// C: only when the two versions could merge (ts_stack_can_merge:
 			// same state, position, and error cost).
-			if stacksHeaderEquivalent(stacks[self], stacks[i]) &&
+			if stacksHeaderEquivalent(&stacks[self], &stacks[i]) &&
 				p.cStackErrorCost(&stacks[self]) == p.cStackErrorCost(&stacks[i]) {
 				return true
 			}
@@ -2603,7 +2603,7 @@ func (p *Parser) cTryMergeReductionVersion(target, candidate *glrStack) bool {
 	if target.entries != nil || candidate.entries != nil || target.gss.head == nil || candidate.gss.head == nil {
 		return false
 	}
-	if !stacksHeaderEquivalent(*target, *candidate) {
+	if !stacksHeaderEquivalent(target, candidate) {
 		return false
 	}
 	return tryGSSMainMergeForParser(p, target, candidate)
@@ -2621,7 +2621,7 @@ func (p *Parser) cTryCollapseSamePopReductionVersion(target, candidate *glrStack
 	if !ok || targetPopTo != candidatePopTo {
 		return false
 	}
-	if targetPopTo == nil || !stacksHeaderEquivalent(*target, *candidate) {
+	if targetPopTo == nil || !stacksHeaderEquivalent(target, candidate) {
 		return false
 	}
 	if p.cSelectReplacementParentEntry(arena, targetParent.entry, candidateParent.entry) {
@@ -4084,10 +4084,10 @@ func (p *Parser) traceCCondenseDrop(reason string, dropIndex, keepIndex int, dro
 	fmt.Printf("      -> C-CONDENSE-DROP reason=%s drop=%d %s %s keep=%d %s %s\n",
 		reason,
 		dropIndex,
-		cRecoverStackTraceKind(drop),
+		cRecoverStackTraceKind(&drop),
 		cCondenseStackTraceSummary(drop, dropStatus),
 		keepIndex,
-		cRecoverStackTraceKind(keep),
+		cRecoverStackTraceKind(&keep),
 		cCondenseStackTraceSummary(keep, keepStatus),
 	)
 }
@@ -4096,10 +4096,10 @@ func (p *Parser) traceCCondenseSwap(reason string, i, j int, left, right glrStac
 	fmt.Printf("      -> C-CONDENSE-SWAP reason=%s i=%d %s %s j=%d %s %s\n",
 		reason,
 		i,
-		cRecoverStackTraceKind(left),
+		cRecoverStackTraceKind(&left),
 		cCondenseStackTraceSummary(left, leftStatus),
 		j,
-		cRecoverStackTraceKind(right),
+		cRecoverStackTraceKind(&right),
 		cCondenseStackTraceSummary(right, rightStatus),
 	)
 }
@@ -4107,7 +4107,7 @@ func (p *Parser) traceCCondenseSwap(reason string, i, j int, left, right glrStac
 func (p *Parser) traceCCondenseTrim(index int, stack glrStack) {
 	fmt.Printf("      -> C-CONDENSE-TRIM index=%d %s state=%d byte=%d depth=%d score=%d\n",
 		index,
-		cRecoverStackTraceKind(stack),
+		cRecoverStackTraceKind(&stack),
 		stack.top().state,
 		stack.byteOffset,
 		stack.depth(),

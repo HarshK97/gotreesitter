@@ -674,7 +674,7 @@ func stackByteOffset(entries []stackEntry) uint32 {
 	return 0
 }
 
-func mergeKeyForStack(s glrStack) glrMergeKey {
+func mergeKeyForStack(s *glrStack) glrMergeKey {
 	if s.depth() == 0 {
 		return glrMergeKey{}
 	}
@@ -685,7 +685,7 @@ func mergeKeyForStack(s glrStack) glrMergeKey {
 	}
 }
 
-func stackHash(s glrStack) uint64 {
+func stackHash(s *glrStack) uint64 {
 	if s.gss.head != nil {
 		return gssNodeHash(s.gss.head)
 	}
@@ -704,7 +704,7 @@ func stackHash(s glrStack) uint64 {
 	return h
 }
 
-func stackHashForMerge(scratch *glrMergeScratch, lang *Language, s glrStack) uint64 {
+func stackHashForMerge(scratch *glrMergeScratch, lang *Language, s *glrStack) uint64 {
 	if scratch != nil && scratch.frontierMergeHash && languageUsesGenericFrontierMergeHash(lang) {
 		return stackHashGenericFrontier(scratch, s)
 	}
@@ -715,7 +715,7 @@ func languageUsesGenericFrontierMergeHash(lang *Language) bool {
 	return lang != nil && lang.Name == "perl"
 }
 
-func stackHashGenericFrontier(scratch *glrMergeScratch, s glrStack) uint64 {
+func stackHashGenericFrontier(scratch *glrMergeScratch, s *glrStack) uint64 {
 	if s.gss.head != nil {
 		return gssNodeGenericFrontierHash(scratch, s.gss.head)
 	}
@@ -907,7 +907,7 @@ func stackNodeGenericFrontierChildSignature(n *Node) uint64 {
 	return h
 }
 
-func stackMaterializingShapeHashWithScratch(scratch *glrMergeScratch, s glrStack) (uint64, bool) {
+func stackMaterializingShapeHashWithScratch(scratch *glrMergeScratch, s *glrStack) (uint64, bool) {
 	if len(s.entries) == 0 {
 		if s.gss.head == nil {
 			return 0, false
@@ -980,8 +980,8 @@ func gssStacksHaveDistinctMaterializingShapesWithScratch(scratch *glrMergeScratc
 	if a == nil || b == nil {
 		return false
 	}
-	aHash, aOK := stackMaterializingShapeHashWithScratch(scratch, *a)
-	bHash, bOK := stackMaterializingShapeHashWithScratch(scratch, *b)
+	aHash, aOK := stackMaterializingShapeHashWithScratch(scratch, a)
+	bHash, bOK := stackMaterializingShapeHashWithScratch(scratch, b)
 	return aOK && bOK && aHash != bHash
 }
 
@@ -1641,8 +1641,8 @@ func activeEquivAudit(scratch *glrMergeScratch) *runtimeAudit {
 	return scratch.audit
 }
 
-func stackEquivalentForMergeState(scratch *glrMergeScratch, lang *Language, state StateID, a, b glrStack) bool {
-	if cRecoveryMergeCostsDiffer(scratch, &a, &b) {
+func stackEquivalentForMergeState(scratch *glrMergeScratch, lang *Language, state StateID, a, b *glrStack) bool {
+	if cRecoveryMergeCostsDiffer(scratch, a, b) {
 		return false
 	}
 	audit := activeEquivAudit(scratch)
@@ -1851,15 +1851,7 @@ func gssStacksEqualForLanguageWithScratch(scratch *glrMergeScratch, lang *Langua
 	return true
 }
 
-func stackEquivalent(a, b glrStack) bool {
-	return stackEquivalentForLanguage(nil, a, b)
-}
-
-func stackEquivalentForLanguage(lang *Language, a, b glrStack) bool {
-	return stackEquivalentForLanguageWithScratch(nil, lang, a, b)
-}
-
-func stackEquivalentForLanguageWithScratch(scratch *glrMergeScratch, lang *Language, a, b glrStack) bool {
+func stackEquivalentForLanguageWithScratch(scratch *glrMergeScratch, lang *Language, a, b *glrStack) bool {
 	if perfCountersEnabled {
 		perfRecordStackEquivalentCall()
 	}
@@ -1933,7 +1925,7 @@ func stackEquivalentForLanguageWithScratch(scratch *glrMergeScratch, lang *Langu
 // scanner is a parser-singleton (not per-stack), so the comparison would
 // be tautologically true. If we ever per-stack the external scanner, this
 // helper should grow that field too.
-func stacksHeaderEquivalent(a, b glrStack) bool {
+func stacksHeaderEquivalent(a, b *glrStack) bool {
 	aTop := a.top()
 	bTop := b.top()
 	if aTop.state != bTop.state {
@@ -1942,7 +1934,7 @@ func stacksHeaderEquivalent(a, b glrStack) bool {
 	return a.byteOffset == b.byteOffset
 }
 
-func cRecoverStackTraceKind(s glrStack) string {
+func cRecoverStackTraceKind(s *glrStack) string {
 	switch {
 	case s.cRec != nil && s.cRec.group != nil:
 		return "error-group"
@@ -1955,7 +1947,7 @@ func cRecoverStackTraceKind(s glrStack) string {
 	}
 }
 
-func cRecoverTraceInteresting(a, b glrStack) bool {
+func cRecoverTraceInteresting(a, b *glrStack) bool {
 	return a.cRec != nil || b.cRec != nil || a.cRecoverMissingGroup != nil || b.cRecoverMissingGroup != nil
 }
 
@@ -2010,7 +2002,7 @@ func cRecoveryMergeCostsDiffer(scratch *glrMergeScratch, a, b *glrStack) bool {
 	if scratch == nil || !scratch.cRecoveryCost || a == nil || b == nil {
 		return false
 	}
-	if !stacksHeaderEquivalent(*a, *b) {
+	if !stacksHeaderEquivalent(a, b) {
 		return false
 	}
 	return cStackErrorCostForMergeCached(scratch, scratch.language, a) != cStackErrorCostForMergeCached(scratch, scratch.language, b)
@@ -2046,7 +2038,7 @@ func cRecoveryMergeCostsDifferForParser(p *Parser, a, b *glrStack) bool {
 	return cRecoveryMergeCostsDiffer(scratch, a, b)
 }
 
-func traceCRecoverMergeDecision(scratch *glrMergeScratch, phase, decision string, incumbent, candidate glrStack) {
+func traceCRecoverMergeDecision(scratch *glrMergeScratch, phase, decision string, incumbent, candidate *glrStack) {
 	if scratch == nil || !scratch.trace || !cRecoverTraceInteresting(incumbent, candidate) {
 		return
 	}
@@ -2078,7 +2070,7 @@ func recordMergeHeaderDivergenceForAudit(audit *runtimeAudit, headerEq, deepEq b
 	audit.recordMergeDeepResult(headerEq, deepEq)
 }
 
-func stackEquivPairKeyForAudit(a, b glrStack) (runtimeAuditStackEquivPairKey, bool) {
+func stackEquivPairKeyForAudit(a, b *glrStack) (runtimeAuditStackEquivPairKey, bool) {
 	if a.gss.head == nil || b.gss.head == nil {
 		return runtimeAuditStackEquivPairKey{}, false
 	}
@@ -3152,7 +3144,7 @@ func gssMainCanMergeForParser(p *Parser, a, b *glrStack) bool {
 	if cRecoveryMergeCostsDifferForParser(p, a, b) {
 		if p != nil && p.glrTrace {
 			scratch := glrMergeScratch{language: p.language, trace: true, cRecoveryCost: true}
-			traceCRecoverMergeDecision(&scratch, "gss-direct", "reject-cost", *a, *b)
+			traceCRecoverMergeDecision(&scratch, "gss-direct", "reject-cost", a, b)
 		}
 		return false
 	}
@@ -4191,7 +4183,7 @@ func tryGSSMainMergeResult(scratch *glrMergeScratch, result []glrStack, idx int,
 		return false, false
 	}
 	if cRecoveryMergeCostsDiffer(scratch, &result[idx], stack) {
-		traceCRecoverMergeDecision(scratch, "gss", "reject-cost", result[idx], *stack)
+		traceCRecoverMergeDecision(scratch, "gss", "reject-cost", &result[idx], stack)
 		return false, false
 	}
 	if !gssMainCanMergeWithScratch(scratch, &result[idx], stack) {
@@ -4295,7 +4287,7 @@ func cRecoveryCostClassForSlot(scratch *glrMergeScratch, result []glrStack, slot
 	sawDifferentCost := false
 	for j, n := 0, mergeSlotTrackedCount(slot); j < n; j++ {
 		idx := mergeSlotIndexAt(slot, j)
-		if idx < 0 || idx >= len(result) || !stacksHeaderEquivalent(result[idx], *stack) {
+		if idx < 0 || idx >= len(result) || !stacksHeaderEquivalent(&result[idx], stack) {
 			continue
 		}
 		if cStackErrorCostForMergeCached(scratch, scratch.language, &result[idx]) == candidateCost {
@@ -4313,7 +4305,7 @@ func cRecoveryCostClassForSlice(scratch *glrMergeScratch, result []glrStack, key
 	candidateCost := cStackErrorCostForMergeCached(scratch, scratch.language, stack)
 	sawDifferentCost := false
 	for j := range result {
-		if mergeKeyForStack(result[j]) != key || !stacksHeaderEquivalent(result[j], *stack) {
+		if mergeKeyForStack(&result[j]) != key || !stacksHeaderEquivalent(&result[j], stack) {
 			continue
 		}
 		if cStackErrorCostForMergeCached(scratch, scratch.language, &result[j]) == candidateCost {
@@ -4344,7 +4336,7 @@ func mergeStacksSmallForLanguage(alive []glrStack, scratch *glrMergeScratch, lan
 	result := alive[:0]
 	for i := range alive {
 		stack := alive[i]
-		key := mergeKeyForStack(stack)
+		key := mergeKeyForStack(&stack)
 		duplicateIndex := -1
 		mergedByGSS := false
 		preserveByGSS := false
@@ -4354,23 +4346,23 @@ func mergeStacksSmallForLanguage(alive []glrStack, scratch *glrMergeScratch, lan
 			cRecoverySameCostIndex, cRecoveryPreserveNewCost = cRecoveryCostClassForSlice(scratch, result, key, &stack)
 		}
 		for j := range result {
-			if mergeKeyForStack(result[j]) != key {
+			if mergeKeyForStack(&result[j]) != key {
 				continue
 			}
 			if merged, attempted := tryGSSMainMergeResult(scratch, result, j, &stack); attempted {
 				if merged {
-					traceCRecoverMergeDecision(scratch, "small", "gss-merged", result[j], stack)
+					traceCRecoverMergeDecision(scratch, "small", "gss-merged", &result[j], &stack)
 					duplicateIndex = j
 					mergedByGSS = true
 				} else {
-					traceCRecoverMergeDecision(scratch, "small", "gss-preserve", result[j], stack)
+					traceCRecoverMergeDecision(scratch, "small", "gss-preserve", &result[j], &stack)
 					preserveByGSS = true
 				}
 				break
 			}
 			if scratch != nil && scratch.perKeyCap == 1 {
 				if cRecoveryPreserveNewCost {
-					traceCRecoverMergeDecision(scratch, "small", "preserve-cost", result[j], stack)
+					traceCRecoverMergeDecision(scratch, "small", "preserve-cost", &result[j], &stack)
 					preserveByGSS = true
 					break
 				}
@@ -4388,8 +4380,8 @@ func mergeStacksSmallForLanguage(alive []glrStack, scratch *glrMergeScratch, lan
 					break
 				}
 			}
-			if stackEquivalentForMergeState(scratch, lang, key.state, result[j], stack) {
-				traceCRecoverMergeDecision(scratch, "small", "equivalent", result[j], stack)
+			if stackEquivalentForMergeState(scratch, lang, key.state, &result[j], &stack) {
+				traceCRecoverMergeDecision(scratch, "small", "equivalent", &result[j], &stack)
 				duplicateIndex = j
 				break
 			}
@@ -4402,10 +4394,10 @@ func mergeStacksSmallForLanguage(alive []glrStack, scratch *glrMergeScratch, lan
 			continue
 		}
 		if stackCompareMerge(&stack, &result[duplicateIndex]) >= 0 {
-			traceCRecoverMergeDecision(scratch, "small", "replace-duplicate", result[duplicateIndex], stack)
+			traceCRecoverMergeDecision(scratch, "small", "replace-duplicate", &result[duplicateIndex], &stack)
 			result[duplicateIndex] = stack
 		} else {
-			traceCRecoverMergeDecision(scratch, "small", "drop-duplicate", result[duplicateIndex], stack)
+			traceCRecoverMergeDecision(scratch, "small", "drop-duplicate", &result[duplicateIndex], &stack)
 		}
 	}
 	return result
@@ -4420,7 +4412,7 @@ func mergeStacksSmallDeferExact(alive []glrStack, scratch *glrMergeScratch, lang
 	var resultKeys [maxGLRStacks]glrMergeKey
 	for i := range alive {
 		stack := alive[i]
-		key := mergeKeyForStack(stack)
+		key := mergeKeyForStack(&stack)
 		duplicateIndex := -1
 		mergedByGSS := false
 		sameKeyCount := 0
@@ -4436,18 +4428,18 @@ func mergeStacksSmallDeferExact(alive []glrStack, scratch *glrMergeScratch, lang
 			sameKeyCount++
 			if merged, attempted := tryGSSMainMergeResult(scratch, result, j, &stack); attempted {
 				if merged {
-					traceCRecoverMergeDecision(scratch, "small-defer", "gss-merged", result[j], stack)
+					traceCRecoverMergeDecision(scratch, "small-defer", "gss-merged", &result[j], &stack)
 					duplicateIndex = j
 					mergedByGSS = true
 				} else {
-					traceCRecoverMergeDecision(scratch, "small-defer", "gss-preserve", result[j], stack)
+					traceCRecoverMergeDecision(scratch, "small-defer", "gss-preserve", &result[j], &stack)
 					sameKeyCount = perKeyCap
 				}
 				break
 			}
 			if scratch != nil && scratch.perKeyCap == 1 {
 				if cRecoveryPreserveNewCost {
-					traceCRecoverMergeDecision(scratch, "small-defer", "preserve-cost", result[j], stack)
+					traceCRecoverMergeDecision(scratch, "small-defer", "preserve-cost", &result[j], &stack)
 					sameKeyCount = perKeyCap
 					break
 				}
@@ -4468,8 +4460,8 @@ func mergeStacksSmallDeferExact(alive []glrStack, scratch *glrMergeScratch, lang
 			if sameKeyCount < perKeyCap {
 				continue
 			}
-			if stackEquivalentForMergeState(scratch, lang, key.state, result[j], stack) {
-				traceCRecoverMergeDecision(scratch, "small-defer", "equivalent", result[j], stack)
+			if stackEquivalentForMergeState(scratch, lang, key.state, &result[j], &stack) {
+				traceCRecoverMergeDecision(scratch, "small-defer", "equivalent", &result[j], &stack)
 				duplicateIndex = j
 				break
 			}
@@ -4483,10 +4475,10 @@ func mergeStacksSmallDeferExact(alive []glrStack, scratch *glrMergeScratch, lang
 			continue
 		}
 		if stackCompareMerge(&stack, &result[duplicateIndex]) >= 0 {
-			traceCRecoverMergeDecision(scratch, "small-defer", "replace-duplicate", result[duplicateIndex], stack)
+			traceCRecoverMergeDecision(scratch, "small-defer", "replace-duplicate", &result[duplicateIndex], &stack)
 			result[duplicateIndex] = stack
 		} else {
-			traceCRecoverMergeDecision(scratch, "small-defer", "drop-duplicate", result[duplicateIndex], stack)
+			traceCRecoverMergeDecision(scratch, "small-defer", "drop-duplicate", &result[duplicateIndex], &stack)
 		}
 	}
 	return result
@@ -4577,8 +4569,8 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 	slotCount := 0
 	for i := range alive {
 		stack := alive[i]
-		hash := stackHashForMerge(scratch, scratch.language, stack)
-		key := mergeKeyForStack(stack)
+		hash := stackHashForMerge(scratch, scratch.language, &stack)
+		key := mergeKeyForStack(&stack)
 
 		slotIndex := -1
 		for si := 0; si < slotCount; si++ {
@@ -4618,7 +4610,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 			idx, preserveCost := cRecoveryCostClassForSlot(scratch, result, slot, &stack)
 			if preserveCost {
 				idx = mergeSlotIndexAt(slot, 0)
-				traceCRecoverMergeDecision(scratch, "default", "preserve-cost", result[idx], stack)
+				traceCRecoverMergeDecision(scratch, "default", "preserve-cost", &result[idx], &stack)
 				_ = preserveCapOneStackInSlot(&result, slot, stack, hash)
 				continue
 			}
@@ -4662,7 +4654,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 				hashMatched = true
 				idx := mergeSlotIndexAt(slot, j)
 				existing := &result[idx]
-				if stackEquivalentForMergeState(scratch, scratch.language, key.state, *existing, stack) {
+				if stackEquivalentForMergeState(scratch, scratch.language, key.state, existing, &stack) {
 					duplicateIndex = idx
 					break
 				}
@@ -4766,8 +4758,8 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 	slotCount := 0
 	for i := range alive {
 		stack := alive[i]
-		hash := stackHashForMerge(scratch, scratch.language, stack)
-		key := mergeKeyForStack(stack)
+		hash := stackHashForMerge(scratch, scratch.language, &stack)
+		key := mergeKeyForStack(&stack)
 
 		slotIndex := -1
 		for si := 0; si < slotCount; si++ {
@@ -4807,7 +4799,7 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 			idx, preserveCost := cRecoveryCostClassForSlot(scratch, result, slot, &stack)
 			if preserveCost {
 				idx = mergeSlotIndexAt(slot, 0)
-				traceCRecoverMergeDecision(scratch, "defer", "preserve-cost", result[idx], stack)
+				traceCRecoverMergeDecision(scratch, "defer", "preserve-cost", &result[idx], &stack)
 				_ = preserveCapOneStackInSlot(&result, slot, stack, hash)
 				continue
 			}
@@ -4851,7 +4843,7 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 				hashMatched = true
 				idx := mergeSlotIndexAt(slot, j)
 				existing := &result[idx]
-				if stackEquivalentForMergeState(scratch, scratch.language, key.state, *existing, stack) {
+				if stackEquivalentForMergeState(scratch, scratch.language, key.state, existing, &stack) {
 					duplicateIndex = idx
 					break
 				}
@@ -4973,8 +4965,8 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 			}
 		}
 		stack := alive[i]
-		hash := stackHashForMerge(scratch, scratch.language, stack)
-		key := mergeKeyForStack(stack)
+		hash := stackHashForMerge(scratch, scratch.language, &stack)
+		key := mergeKeyForStack(&stack)
 
 		slotIndex := -1
 		for si := 0; si < slotCount; si++ {
@@ -5021,7 +5013,7 @@ func mergeStacksWithScratchLargeCap(alive []glrStack, scratch *glrMergeScratch, 
 				hashMatched = true
 				idx := slot.indices[j]
 				existing := &result[idx]
-				if stackEquivalentForMergeState(scratch, scratch.language, key.state, *existing, stack) {
+				if stackEquivalentForMergeState(scratch, scratch.language, key.state, existing, &stack) {
 					duplicateIndex = idx
 					break
 				}

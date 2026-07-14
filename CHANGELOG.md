@@ -15,6 +15,11 @@ for tags and release notes while still in `0.x`.
   80-84% of those repeated scans and improved full parse by 3.5-9.8% across
   four fixtures, with unchanged parser shape, arena bytes, allocations, and
   exact 25/25 strict Go parity.
+- GLR merge, hashing, shape, equivalence, and recovery-trace helpers now pass
+  stack descriptors by pointer instead of repeatedly copying the 104-byte
+  values. The authenticated real-Go matrix improved by 3.54% geomean, with
+  every fixture improved or statistically unchanged and identical arena,
+  token, stack, iteration, node, depth, and normalization counters.
 - Fresh full parses now share the parser's existing no-error-payload proof with
   GSS merge and C-recovery cost selection, avoiding recursive graph and subtree
   walks until an `ERROR`, `MISSING`, or inherited error is actually

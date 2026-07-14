@@ -6,6 +6,8 @@ import (
 	"unsafe"
 )
 
+func testGLRStackPtr(s glrStack) *glrStack { return &s }
+
 func TestStackEntrySizeBudget(t *testing.T) {
 	if got := unsafe.Sizeof(stackEntry{}); got != 16 {
 		t.Fatalf("stackEntry size = %d, want 16", got)
@@ -1743,23 +1745,23 @@ func TestPendingParentMergeEqualityVerifiesPackedFieldsAndDescendants(t *testing
 
 	scratch := glrMergeScratch{arena: arena}
 	scratch.beginEquivEpoch()
-	if !stackEquivalentForLanguageWithScratch(&scratch, nil, makeStack(base), makeStack(same)) {
+	if !stackEquivalentForLanguageWithScratch(&scratch, nil, testGLRStackPtr(makeStack(base)), testGLRStackPtr(makeStack(same))) {
 		t.Fatal("structurally identical pending parents were not equivalent")
 	}
 	materializedSame := same
 	if node := materializeStackEntryPendingParent(arena, &materializedSame, pendingParentMaterializeForFinalTree); node == nil {
 		t.Fatal("materializing equivalent pending parent returned nil")
 	}
-	if !stackEquivalentForLanguageWithScratch(&scratch, nil, makeStack(base), makeStack(materializedSame)) {
+	if !stackEquivalentForLanguageWithScratch(&scratch, nil, testGLRStackPtr(makeStack(base)), testGLRStackPtr(makeStack(materializedSame))) {
 		t.Fatal("pending and materialized representations of the same graph were not equivalent")
 	}
-	if stackEquivalentForLanguageWithScratch(&scratch, nil, makeStack(base), makeStack(fieldCollision)) {
+	if stackEquivalentForLanguageWithScratch(&scratch, nil, testGLRStackPtr(makeStack(base)), testGLRStackPtr(makeStack(fieldCollision))) {
 		t.Fatal("packed field mismatch survived exact pending-parent equality")
 	}
-	if stackEquivalentForLanguageWithScratch(&scratch, nil, makeStack(base), makeStack(fieldSourceCollision)) {
+	if stackEquivalentForLanguageWithScratch(&scratch, nil, testGLRStackPtr(makeStack(base)), testGLRStackPtr(makeStack(fieldSourceCollision))) {
 		t.Fatal("packed field-source mismatch survived exact pending-parent equality")
 	}
-	if stackEquivalentForLanguageWithScratch(&scratch, nil, makeStack(base), makeStack(descendantCollision)) {
+	if stackEquivalentForLanguageWithScratch(&scratch, nil, testGLRStackPtr(makeStack(base)), testGLRStackPtr(makeStack(descendantCollision))) {
 		t.Fatal("recursive descendant mismatch survived exact pending-parent equality")
 	}
 
@@ -1783,7 +1785,7 @@ func TestPendingParentMergeEqualityVerifiesPackedFieldsAndDescendants(t *testing
 
 	noArena := glrMergeScratch{}
 	noArena.beginEquivEpoch()
-	if stackEquivalentForLanguageWithScratch(&noArena, nil, makeStack(base), makeStack(same)) {
+	if stackEquivalentForLanguageWithScratch(&noArena, nil, testGLRStackPtr(makeStack(base)), testGLRStackPtr(makeStack(same))) {
 		t.Fatal("distinct pending parents without an arena must fail closed")
 	}
 }
@@ -1807,10 +1809,10 @@ func TestNodeMergeEqualityDistinguishesDeferredFieldSources(t *testing.T) {
 
 	scratch := glrMergeScratch{arena: arena}
 	scratch.beginEquivEpoch()
-	if !stackEquivalentForLanguageWithScratch(&scratch, nil, makeStack(direct), makeStack(defaultDirect)) {
+	if !stackEquivalentForLanguageWithScratch(&scratch, nil, testGLRStackPtr(makeStack(direct)), testGLRStackPtr(makeStack(defaultDirect))) {
 		t.Fatal("implicit and explicit direct field sources were not equivalent")
 	}
-	if stackEquivalentForLanguageWithScratch(&scratch, nil, makeStack(direct), makeStack(deferred)) {
+	if stackEquivalentForLanguageWithScratch(&scratch, nil, testGLRStackPtr(makeStack(direct)), testGLRStackPtr(makeStack(deferred))) {
 		t.Fatal("deferred and resolved field sources merged before the visible boundary")
 	}
 }
@@ -2527,7 +2529,7 @@ func TestAliasSequenceFrontierEquivalenceChecksAllSmallSemanticChildren(t *testi
 	scratch.language = lang
 	scratch.beginEquivEpoch()
 
-	if stackEquivalentForMergeState(&scratch, lang, 7, leftStack, rightStack) {
+	if stackEquivalentForMergeState(&scratch, lang, 7, &leftStack, &rightStack) {
 		t.Fatal("stackEquivalentForMergeState = true, want false for distinct earlier semantic child")
 	}
 }
@@ -2747,12 +2749,12 @@ func TestPerlFrontierMergeHashPreservesGenericEquivalentStacks(t *testing.T) {
 	a := perlFrontierHashTestStack(perlFrontierHashTestNode(30))
 	b := perlFrontierHashTestStack(perlFrontierHashTestNode(30))
 
-	hashA := stackHashForMerge(&merge, lang, a)
-	hashB := stackHashForMerge(&merge, lang, b)
+	hashA := stackHashForMerge(&merge, lang, &a)
+	hashB := stackHashForMerge(&merge, lang, &b)
 	if hashA != hashB {
 		t.Fatalf("Perl frontier merge hashes differ for equivalent stacks: %x != %x", hashA, hashB)
 	}
-	if !stackEquivalentForLanguageWithScratch(&merge, lang, a, b) {
+	if !stackEquivalentForLanguageWithScratch(&merge, lang, &a, &b) {
 		t.Fatal("Perl frontier hash test stacks are not generically equivalent")
 	}
 }
@@ -2766,11 +2768,11 @@ func TestPerlFrontierMergeHashRejectsDeepDivergentStacks(t *testing.T) {
 	a := perlFrontierHashTestStack(perlFrontierHashTestNode(30))
 	b := perlFrontierHashTestStack(perlFrontierHashTestNode(31))
 
-	if stackEquivalentForLanguageWithScratch(&merge, lang, a, b) {
+	if stackEquivalentForLanguageWithScratch(&merge, lang, &a, &b) {
 		t.Fatal("Perl frontier hash test stacks are unexpectedly equivalent")
 	}
-	hashA := stackHashForMerge(&merge, lang, a)
-	hashB := stackHashForMerge(&merge, lang, b)
+	hashA := stackHashForMerge(&merge, lang, &a)
+	hashB := stackHashForMerge(&merge, lang, &b)
 	if hashA == hashB {
 		t.Fatalf("Perl frontier merge hashes matched for divergent stacks: %x", hashA)
 	}
@@ -3246,7 +3248,7 @@ func TestRetargetStackEntryPayloadParseStateFeedsShapePrefixCache(t *testing.T) 
 	scratch.beginEquivEpoch()
 	scratch.ensureMergeHotCaches()
 
-	hashBefore, ok := stackMaterializingShapeHashWithScratch(&scratch, stack)
+	hashBefore, ok := stackMaterializingShapeHashWithScratch(&scratch, &stack)
 	if !ok {
 		t.Fatalf("could not compute initial materializing shape hash")
 	}
@@ -3266,14 +3268,14 @@ func TestRetargetStackEntryPayloadParseStateFeedsShapePrefixCache(t *testing.T) 
 	}
 
 	// Same epoch: the cache still serves the pre-retarget hash.
-	if staleHash, ok := stackMaterializingShapeHashWithScratch(&scratch, stack); !ok || staleHash != hashBefore {
+	if staleHash, ok := stackMaterializingShapeHashWithScratch(&scratch, &stack); !ok || staleHash != hashBefore {
 		t.Fatalf("expected stale cached hash %d before invalidation, got %d (ok=%v)", hashBefore, staleHash, ok)
 	}
 
 	// The reduce-site fix bumps the epoch; the gate must then observe the fresh
 	// parseState.
 	scratch.bumpShapePrefixEpoch()
-	freshHash, ok := stackMaterializingShapeHashWithScratch(&scratch, stack)
+	freshHash, ok := stackMaterializingShapeHashWithScratch(&scratch, &stack)
 	if !ok {
 		t.Fatalf("could not recompute materializing shape hash")
 	}
@@ -4474,8 +4476,8 @@ func TestGLRForkPrunesErroringAlternative(t *testing.T) {
 	}
 }
 
-// TestMergeKeyGroupsEquivalentStacks proves stackEquivalent(a,b)==true
-// implies mergeKeyForStack(a)==mergeKeyForStack(b). With coarse merge keys,
+// TestMergeKeyGroupsEquivalentStacks proves stack equivalence implies equal
+// merge keys. With coarse merge keys,
 // this ensures equivalent stacks are always deduped in the same bucket.
 func TestMergeKeyGroupsEquivalentStacks(t *testing.T) {
 	scratch := &gssScratch{}
@@ -4494,11 +4496,11 @@ func TestMergeKeyGroupsEquivalentStacks(t *testing.T) {
 	a := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node1a)})
 	b := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node1b)})
 
-	if !stackEquivalent(a, b) {
+	if !stackEquivalentForLanguageWithScratch(nil, nil, &a, &b) {
 		t.Fatal("case 1: expected equivalent stacks")
 	}
-	ka := mergeKeyForStack(a)
-	kb := mergeKeyForStack(b)
+	ka := mergeKeyForStack(&a)
+	kb := mergeKeyForStack(&b)
 	if ka != kb {
 		t.Fatalf("case 1: equivalent stacks have different merge keys: %+v vs %+v", ka, kb)
 	}
@@ -4508,11 +4510,11 @@ func TestMergeKeyGroupsEquivalentStacks(t *testing.T) {
 	node2b := &Node{symbol: 11, startByte: 0, endByte: 5, parseState: 1}
 	c := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node2a)})
 	d := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node2b)})
-	if stackEquivalent(c, d) {
+	if stackEquivalentForLanguageWithScratch(nil, nil, &c, &d) {
 		t.Fatal("case 2: expected non-equivalent stacks")
 	}
-	kc := mergeKeyForStack(c)
-	kd := mergeKeyForStack(d)
+	kc := mergeKeyForStack(&c)
+	kd := mergeKeyForStack(&d)
 	if kc == kd {
 		t.Log("case 2: non-equivalent stacks share coarse merge key (expected collision)")
 	}
@@ -4522,18 +4524,18 @@ func TestMergeKeyGroupsEquivalentStacks(t *testing.T) {
 	node3b := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, flags: nodeFlagMissing}
 	e := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node3a)})
 	f := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node3b)})
-	if stackEquivalent(e, f) {
+	if stackEquivalentForLanguageWithScratch(nil, nil, &e, &f) {
 		t.Fatal("case 3: isMissing differs, stacks should not be equivalent")
 	}
 
 	// Case 4: nil nodes on both sides → equivalent, same hash.
 	g := buildStack([]stackEntry{{state: 1}, {state: 2}})
 	h := buildStack([]stackEntry{{state: 1}, {state: 2}})
-	if !stackEquivalent(g, h) {
+	if !stackEquivalentForLanguageWithScratch(nil, nil, &g, &h) {
 		t.Fatal("case 4: expected equivalent nil-node stacks")
 	}
-	kg := mergeKeyForStack(g)
-	kh := mergeKeyForStack(h)
+	kg := mergeKeyForStack(&g)
+	kh := mergeKeyForStack(&h)
 	if kg != kh {
 		t.Fatalf("case 4: equivalent nil-node stacks have different merge keys: %+v vs %+v", kg, kh)
 	}
@@ -4545,11 +4547,11 @@ func TestMergeKeyGroupsEquivalentStacks(t *testing.T) {
 	node5b := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, children: []*Node{child2}}
 	i := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node5a)})
 	j := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node5b)})
-	if !stackEquivalent(i, j) {
+	if !stackEquivalentForLanguageWithScratch(nil, nil, &i, &j) {
 		t.Fatal("case 5: expected equivalent stacks with same children")
 	}
-	ki := mergeKeyForStack(i)
-	kj := mergeKeyForStack(j)
+	ki := mergeKeyForStack(&i)
+	kj := mergeKeyForStack(&j)
 	if ki != kj {
 		t.Fatalf("case 5: equivalent stacks with children have different merge keys: %+v vs %+v", ki, kj)
 	}
@@ -4562,7 +4564,7 @@ func TestMergeKeyGroupsEquivalentStacks(t *testing.T) {
 	node6b := &Node{symbol: 10, startByte: 0, endByte: 5, parseState: 1, children: []*Node{child4}}
 	k := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node6a)})
 	l := buildStack([]stackEntry{{state: 1}, newStackEntryNode(2, node6b)})
-	if stackEquivalent(k, l) {
+	if stackEquivalentForLanguageWithScratch(nil, nil, &k, &l) {
 		t.Fatal("case 6: expected non-equivalent stacks with different children")
 	}
 	// These may share the same coarse merge key; that's fine because
@@ -4605,7 +4607,7 @@ func TestStackEquivalentForAliasLanguageRejectsDeepAliasMismatch(t *testing.T) {
 	a := glrStack{entries: []stackEntry{{state: 1}, newStackEntryNode(2, buildDeepNode(10))}, byteOffset: 5}
 	b := glrStack{entries: []stackEntry{{state: 1}, newStackEntryNode(2, buildDeepNode(12))}, byteOffset: 5}
 
-	if stackEquivalentForLanguage(lang, a, b) {
+	if stackEquivalentForLanguageWithScratch(nil, lang, &a, &b) {
 		t.Fatal("expected deep alias mismatch to remain distinct for alias language")
 	}
 }
@@ -4666,7 +4668,7 @@ func TestStackEquivalentForTypeScriptChecksNonFrontierChildren(t *testing.T) {
 
 	a := glrStack{entries: []stackEntry{{state: 1}, newStackEntryNode(2, aNode)}, byteOffset: 10}
 	b := glrStack{entries: []stackEntry{{state: 1}, newStackEntryNode(2, bNode)}, byteOffset: 10}
-	if stackEquivalentForLanguage(lang, a, b) {
+	if stackEquivalentForLanguageWithScratch(nil, lang, &a, &b) {
 		t.Fatal("expected TypeScript stack equivalence to compare non-frontier children")
 	}
 }
