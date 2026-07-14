@@ -1,0 +1,116 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	cgoharness "github.com/odvcencio/gotreesitter/cgo_harness"
+	"github.com/odvcencio/gotreesitter/grammars"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		fatalf("usage: forest_audit <manifest|reduce> [options]")
+	}
+	var err error
+	switch os.Args[1] {
+	case "manifest":
+		err = runManifest(os.Args[2:])
+	case "reduce":
+		err = runReduce(os.Args[2:])
+	default:
+		err = fmt.Errorf("unknown command %q", os.Args[1])
+	}
+	if err != nil {
+		fatalf("%v", err)
+	}
+}
+
+func runManifest(args []string) error {
+	flags := flag.NewFlagSet("manifest", flag.ContinueOnError)
+	var revision, lockPath, corpusRoot, languagesRaw, order, excludesRaw, out string
+	var maxFiles int
+	var minBytes, maxBytes int64
+	flags.StringVar(&revision, "gotreesitter-revision", "", "exact clean gotreesitter revision being audited")
+	flags.StringVar(&lockPath, "corpus-lock", "", "authenticated corpus_sources.lock path")
+	flags.StringVar(&corpusRoot, "corpus-root", "", "root containing one locked checkout per language")
+	flags.StringVar(&languagesRaw, "langs", "all", "comma-separated languages or all")
+	flags.StringVar(&order, "order", "largest", "selection order: largest, smallest, or path")
+	flags.IntVar(&maxFiles, "max-files", 8, "maximum selected files per language; zero means all")
+	flags.Int64Var(&minBytes, "min-file-bytes", 0, "minimum selected file size")
+	flags.Int64Var(&maxBytes, "max-file-bytes", 4<<20, "maximum selected file size; zero means unlimited")
+	flags.StringVar(&excludesRaw, "exclude-paths", "", "comma-separated exact or glob paths")
+	flags.StringVar(&out, "out", "", "output manifest JSON path")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if out == "" {
+		return fmt.Errorf("--out is required")
+	}
+	languages := splitList(languagesRaw)
+	if len(languages) == 1 && strings.EqualFold(languages[0], "all") {
+		languages = nil
+	}
+	registryExtensions := map[string][]string{}
+	for _, entry := range grammars.AllLanguages() {
+		registryExtensions[entry.Name] = append([]string(nil), entry.Extensions...)
+	}
+	manifest, err := cgoharness.MaterializeForestCorpusManifest(cgoharness.ForestCorpusMaterializeOptions{
+		GotreesitterRevision: revision,
+		CorpusLockPath:       lockPath,
+		CorpusRoot:           corpusRoot,
+		Languages:            languages,
+		RegistryExtensions:   registryExtensions,
+		Selection: cgoharness.ForestCorpusSelection{
+			Order: order, MaxFiles: maxFiles, MinFileBytes: minBytes,
+			MaxFileBytes: maxBytes, ExcludePaths: splitList(excludesRaw),
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return cgoharness.WriteForestCorpusManifest(out, manifest)
+}
+
+func runReduce(args []string) error {
+	flags := flag.NewFlagSet("reduce", flag.ContinueOnError)
+	var manifestPath, resultsRoot, out string
+	flags.StringVar(&manifestPath, "manifest", "", "authenticated input manifest")
+	flags.StringVar(&resultsRoot, "results-root", "", "root containing per-language result JSON")
+	flags.StringVar(&out, "out", "", "output reduced report JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if manifestPath == "" || resultsRoot == "" || out == "" {
+		return fmt.Errorf("--manifest, --results-root, and --out are required")
+	}
+	report, err := cgoharness.ReduceForestAuditResults(manifestPath, resultsRoot)
+	if err != nil {
+		return err
+	}
+	return cgoharness.WriteForestAuditReport(out, report)
+}
+
+func splitList(raw string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, item := range strings.Split(raw, ",") {
+		item = strings.TrimSpace(item)
+		if item != "" && !seen[item] {
+			seen[item] = true
+			out = append(out, item)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func fatalf(format string, args ...any) {
+	program := filepath.Base(os.Args[0])
+	fmt.Fprintf(os.Stderr, "%s: %s\n", program, fmt.Sprintf(format, args...))
+	os.Exit(2)
+}

@@ -7,6 +7,22 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Changed
+
+- `ParseForestExperimental` now reports only a tree produced by the
+  experimental forest parser. A forest decline returns `nil, false` with
+  `ForestDeclineInfo` diagnostics instead of silently substituting a
+  production-parser result, so callers can measure and certify forest routing
+  without mistaking fallback work for a forest success.
+
+### Tooling
+
+- Forest eligibility sweeps now share an authenticated, revision-pinned corpus
+  manifest between production and C-oracle lanes. Per-language Docker runs
+  verify clean source checkouts and exact file hashes, compare complete trees
+  including anonymous children, points, flags, and fields, and emit strict
+  resumable result shards for deterministic fleet reduction.
+
 ### Performance
 
 - Multi-stack DFA token elections now scan each unique active parser state once

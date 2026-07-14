@@ -108,9 +108,13 @@ func TestForestExperimentalAppliesBashCompatibility(t *testing.T) {
 	if got, want := root.NamedChildCount(), prod.RootNode().NamedChildCount(); got != want {
 		t.Fatalf("forest Bash root named child count = %d, want production count %d; root=%s", got, want, root.SExpr(lang))
 	}
+	runtime := forest.ParseRuntime()
+	if runtime.StopReason != gts.ParseStopAccepted || !runtime.ForestFastPath || runtime.SourceLen != uint32(len(src)) || runtime.RootEndByte != root.EndByte() {
+		t.Fatalf("forest experimental runtime = %s, want accepted forest provenance", runtime.Summary())
+	}
 }
 
-func TestBeancountDefaultSkipsForestButExplicitRemainsAvailable(t *testing.T) {
+func TestBeancountDefaultSkipsForestAndExplicitReportsDecline(t *testing.T) {
 	// This external-package test follows the file's existing non-parallel
 	// convention: no public getter exists for the test/benchmark-only global
 	// switch, so restore its process default rather than expanding the API.
@@ -118,7 +122,7 @@ func TestBeancountDefaultSkipsForestButExplicitRemainsAvailable(t *testing.T) {
 	defer gts.SetGLRForestEnabled(true)
 
 	// The leading comment is the smallest corpus-shaped witness that reaches
-	// the explicit forest's conservative EOF recovery-conflict fallback.
+	// the explicit forest's conservative EOF recovery-conflict decline.
 	src := []byte(";;; comment\n2024-01-01 open Assets:Bank\n")
 	lang := grm.BeancountLanguage()
 	parser := gts.NewParser(lang)
@@ -136,25 +140,18 @@ func TestBeancountDefaultSkipsForestButExplicitRemainsAvailable(t *testing.T) {
 
 	explicitParser := gts.NewParser(lang)
 	explicit, ok := explicitParser.ParseForestExperimental(src)
-	if !ok || explicit == nil || explicit.RootNode() == nil {
-		t.Fatalf("explicit Beancount forest parse ok=%v tree nil=%v", ok, explicit == nil)
+	if ok || explicit != nil {
+		if explicit != nil {
+			explicit.Release()
+		}
+		t.Fatalf("explicit Beancount forest outcome ok=%v tree nil=%v, want strict decline", ok, explicit == nil)
 	}
-	defer explicit.Release()
 	if offset, sym, reason, states := explicitParser.ForestDeclineInfo(); reason != "eof-recovery-conflict" {
 		t.Fatalf("explicit Beancount forest decline: offset=%d symbol=%d reason=%q states=%v, want reason=%q", offset, sym, reason, states, "eof-recovery-conflict")
 	}
-	if got, want := explicit.RootNode().SExpr(lang), automatic.RootNode().SExpr(lang); got != want {
-		t.Fatalf("explicit Beancount forest result mismatch\n got: %s\nwant: %s", got, want)
-	}
-	if got, want := explicit.RootNode().EndByte(), automatic.RootNode().EndByte(); got != want {
-		t.Fatalf("explicit Beancount root endByte = %d, want %d", got, want)
-	}
-	if got, want := explicit.RootNode().HasError(), automatic.RootNode().HasError(); got != want {
-		t.Fatalf("explicit Beancount HasError = %v, want %v", got, want)
-	}
 }
 
-func TestExplicitOnlyLanguagesSkipDefaultForestButRemainAvailable(t *testing.T) {
+func TestExplicitOnlyLanguagesHaveStrictForestOutcomes(t *testing.T) {
 	// Follow this file's existing non-parallel convention around the global
 	// test/benchmark forest switch.
 	gts.SetGLRForestEnabled(true)
@@ -189,8 +186,17 @@ func TestExplicitOnlyLanguagesSkipDefaultForestButRemainAvailable(t *testing.T) 
 
 			explicitParser := gts.NewParser(lang)
 			explicit, ok := explicitParser.ParseForestExperimental(src)
-			if !ok || explicit == nil || explicit.RootNode() == nil {
-				t.Fatalf("explicit forest parse ok=%v tree nil=%v", ok, explicit == nil)
+			if ok != (explicit != nil) {
+				if explicit != nil {
+					explicit.Release()
+				}
+				t.Fatalf("explicit forest outcome is incoherent: ok=%v tree nil=%v", ok, explicit == nil)
+			}
+			if !ok {
+				if offset, sym, reason, states := explicitParser.ForestDeclineInfo(); reason == "" {
+					t.Fatalf("explicit forest decline has no diagnostic: offset=%d symbol=%d states=%v", offset, sym, states)
+				}
+				return
 			}
 			defer explicit.Release()
 			if got, want := explicit.RootNode().SExpr(lang), automatic.RootNode().SExpr(lang); got != want {
@@ -198,9 +204,6 @@ func TestExplicitOnlyLanguagesSkipDefaultForestButRemainAvailable(t *testing.T) 
 			}
 			if got, want := explicit.RootNode().EndByte(), automatic.RootNode().EndByte(); got != want {
 				t.Fatalf("explicit forest root endByte = %d, want %d", got, want)
-			}
-			if got, want := explicit.RootNode().HasError(), automatic.RootNode().HasError(); got != want {
-				t.Fatalf("explicit forest HasError = %v, want %v", got, want)
 			}
 		})
 	}
