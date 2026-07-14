@@ -143,6 +143,36 @@ fails closed on dirty source, parser or Go runtime overrides, noisy-host
 admission, identity drift, and incomplete receipts. Shortened or skipped gates
 require `--diagnostic` and are labeled `NONPUBLICATION_DIAGNOSTIC`.
 
+### First locked-oracle publication receipt
+
+The first complete publication receipt was collected on 2026-07-14 from
+`3ffad7778199a17270efe6791d09036242667233` on the pinned quiet host, using
+core 7 and Go 1.22.2. All four Go, cgo, and static-C deep trees matched before
+timing. Medians from ten process-isolated samples per backend and fixture:
+
+| Fixture | Go median | static C median | Go / C | Go max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|
+| `query_compile.go` | 31.525 ms | 5.469 ms | **5.764366x** | 67,560 KiB | 2,816 KiB |
+| `rewrite.go` | 5.556 ms | 1.197 ms | **4.639849x** | 56,344 KiB | 2,304 KiB |
+| `language.go` | 30.106 ms | 5.809 ms | **5.182694x** | 69,136 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 376.938 ms | 57.867 ms | **6.513909x** | 192,560 KiB | 9,216 KiB |
+
+The canonical equal-fixture geomean is **5.481673x C**. The fixed-suite sum of
+medians is **6.313799x C**; it is reported separately because the largest file
+dominates aggregate wall time. This is the baseline for future full-parse
+claims, not a retrospective adjustment to the withdrawn straight-LR ratio.
+
+Receipt identities:
+
+- manifest SHA-256:
+  `a850d60ec93c2ff3a49b3ccf9266f32421c04a87c5cb5ce807f2f4fe3f70c1cb`;
+- report SHA-256:
+  `36fded16ad1ffa34eab8d4f3e61d0a634bcc30e70237101825f73394d797c1b8`;
+- complete receipt bundle SHA-256:
+  `aecb7f76e3df4832877f4526280849257826f3d84f2f104379a57748f4f6f310`;
+- static C artifact SHA-256:
+  `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
+
 ### Diagnostic workload-regime receipt
 
 Before the static publication artifact was built, a strict-admitted quiet run

@@ -50,7 +50,10 @@ for tags and release notes while still in `0.x`.
   exercised the multi-stack path. A checked-in strict receipt driver now
   reproduces the pinned-core Go-C-C-Go schedule; both C transports reject dirty
   pinned-source caches, and the static lane snapshots each input once before
-  identity, parity, and timing checks.
+  identity, parity, and timing checks. The first complete publication receipt
+  establishes the corrected full-parse baseline at 5.481673x C by equal-fixture
+  geomean and 6.313799x C for the fixed-suite sum of medians, with per-fixture
+  ratios from 4.639849x to 6.513909x.
 
 ## [0.36.0] - 2026-07-13
 

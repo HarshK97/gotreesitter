@@ -372,6 +372,12 @@ oracle: upstream tree-sitter v0.25.1 commit `f5afe475…`, tree-sitter-go commit
 benchmark and parity lanes share those oracle sources and identity; see
 [BENCH.md](BENCH.md) for the full contract and fixture hashes.
 
+The first strict publication receipt measured **5.481673x C** by equal-fixture
+geomean and **6.313799x C** for the fixed-suite sum of medians. Those corrected
+real-code results, rather than the withdrawn 1.895x straight-LR comparison, are
+the full-parse baseline; [BENCH.md](BENCH.md) records every per-fixture median,
+RSS value, and receipt hash.
+
 The historical incremental measurements on the same generated 500-function Go
 workload were `649 ns` for a one-byte edit and `2.43 ns` for a no-edit reparse.
 They remain workload-specific; use the real-corpus perf scoreboard for
