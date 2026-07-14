@@ -120,8 +120,11 @@ func TestReduceForestAuditResultsIsDeterministicAndResumable(t *testing.T) {
 	result.Files = []ForestAuditFileResult{{
 		Path: "a.go", Bytes: 1, SHA256: strings.Repeat("d", 64), Disposition: "accepted",
 		Forest: forestAuditTestAcceptedOutcome(1, true), Peer: forestAuditTestAcceptedOutcome(1, false),
+		Routed: forestAuditTestAcceptedOutcome(1, false), RoutedProvenance: forestAuditRouteProductionFallback, RoutedNanos: 1,
 	}}
 	result.FilesTotal, result.FilesAccepted = 1, 1
+	result.FilesRoutedFallback = 1
+	result.PeerNanos, result.RoutedNanos, result.RoutedImproved = 2, 1, true
 	if err := WriteForestAuditResult(filepath.Join(dir, "results", "production", "go.json"), result); err != nil {
 		t.Fatal(err)
 	}
@@ -130,6 +133,7 @@ func TestReduceForestAuditResultsIsDeterministicAndResumable(t *testing.T) {
 	bad.Files[0].Bytes++
 	bad.Files[0].Forest = forestAuditTestAcceptedOutcome(2, true)
 	bad.Files[0].Peer = forestAuditTestAcceptedOutcome(2, false)
+	bad.Files[0].Routed = forestAuditTestAcceptedOutcome(2, false)
 	badRoot := filepath.Join(dir, "bad-results")
 	if err := WriteForestAuditResult(filepath.Join(badRoot, "production", "go.json"), bad); err != nil {
 		t.Fatal(err)
@@ -153,6 +157,7 @@ func TestReduceForestAuditResultsIsDeterministicAndResumable(t *testing.T) {
 		peer.Files = []ForestAuditFileResult{{
 			Path: "a.go", Bytes: 1, SHA256: strings.Repeat("d", 64), Disposition: "accepted",
 			Forest: forestAuditTestAcceptedOutcome(1, true), Peer: forestAuditTestAcceptedOutcome(1, false),
+			Routed: forestAuditTestNotRunOutcome(1), RoutedProvenance: forestAuditRouteNotRun,
 		}}
 		peer.FilesTotal, peer.FilesAccepted = 1, 1
 		if err := WriteForestAuditResult(filepath.Join(dir, "results", mode, "go.json"), peer); err != nil {
@@ -163,7 +168,8 @@ func TestReduceForestAuditResultsIsDeterministicAndResumable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.LanguagesComplete != 1 || report.Languages[0].Language != "go" || report.Languages[0].Status != "pass" {
+	if report.LanguagesComplete != 1 || report.Languages[0].Language != "go" || report.Languages[0].Status != "pass" ||
+		!report.Languages[0].PromotionEligible || report.Languages[0].RoutedSpeedup != 2 || len(report.Languages[0].PromotionBlockers) != 0 {
 		t.Fatalf("resumed report = %#v", report)
 	}
 	data, err := json.Marshal(report)
@@ -207,11 +213,14 @@ func TestValidateForestAuditResultRejectsIncoherentOutcomes(t *testing.T) {
 		Schema: ForestAuditResultSchema, Mode: "production", GotreesitterRevision: strings.Repeat("a", 40),
 		CorpusManifestSHA256: strings.Repeat("b", 64), CorpusLockSHA256: strings.Repeat("c", 64),
 		Language: "go", Status: "pass", FilesTotal: 1, FilesAccepted: 1,
+		PeerNanos: 2, RoutedNanos: 1, RoutedImproved: true,
 		Files: []ForestAuditFileResult{{
 			Path: "a.go", Bytes: 1, SHA256: strings.Repeat("d", 64), Disposition: "accepted",
 			Forest: forestAuditTestAcceptedOutcome(1, true), Peer: forestAuditTestAcceptedOutcome(1, false),
+			Routed: forestAuditTestAcceptedOutcome(1, false), RoutedProvenance: forestAuditRouteProductionFallback, RoutedNanos: 1,
 		}},
 	}
+	valid.FilesRoutedFallback = 1
 	clone := func() ForestAuditResult {
 		result := valid
 		result.Files = append([]ForestAuditFileResult(nil), valid.Files...)
@@ -222,6 +231,19 @@ func TestValidateForestAuditResultRejectsIncoherentOutcomes(t *testing.T) {
 		"peer_not_accepted":  func(result *ForestAuditResult) { result.Files[0].Peer.Accepted = false },
 		"source_mismatch":    func(result *ForestAuditResult) { result.Files[0].Forest.SourceLen = 0 },
 		"full_and_truncated": func(result *ForestAuditResult) { result.Files[0].Peer.Truncated = true },
+		"routed_bad_provenance": func(result *ForestAuditResult) {
+			result.Files[0].RoutedProvenance = forestAuditRouteForestFastPath
+		},
+		"routed_aggregate_mismatch": func(result *ForestAuditResult) {
+			result.FilesRoutedFallback = 0
+		},
+		"routed_not_run": func(result *ForestAuditResult) {
+			result.Status = "fail"
+			result.FilesRoutedFallback = 0
+			result.RoutedNanos, result.Files[0].RoutedNanos, result.RoutedImproved = 0, 0, false
+			result.Files[0].Routed = forestAuditTestNotRunOutcome(1)
+			result.Files[0].RoutedProvenance = forestAuditRouteNotRun
+		},
 		"declined_accepted": func(result *ForestAuditResult) {
 			result.Status = "fail"
 			result.FilesAccepted, result.FilesDeclined = 0, 1
@@ -245,8 +267,41 @@ func TestValidateForestAuditResultRejectsIncoherentOutcomes(t *testing.T) {
 	diverged.Files[0].Disposition = "diverged"
 	diverged.Files[0].Diff = "peer failed"
 	diverged.Files[0].Peer = ForestAuditOutcome{StopReason: "no_tree", SourceLen: 1, ExpectedEOF: 1}
+	diverged.FilesRoutedDiverged = 1
+	diverged.Files[0].RoutedDiff = "production tree missing"
 	if err := validateForestAuditResult(diverged); err != nil {
 		t.Fatalf("diverged result may encode coherent peer failure: %v", err)
+	}
+
+	routedForest := clone()
+	routedForest.FilesRoutedFallback = 0
+	routedForest.FilesRoutedForest = 1
+	routedForest.Files[0].Routed = forestAuditTestAcceptedOutcome(1, true)
+	routedForest.Files[0].RoutedProvenance = forestAuditRouteForestFastPath
+	if err := validateForestAuditResult(routedForest); err != nil {
+		t.Fatalf("forest-fast-path routed evidence should validate: %v", err)
+	}
+
+	routedDiverged := clone()
+	routedDiverged.Status = "fail"
+	routedDiverged.FilesRoutedDiverged = 1
+	routedDiverged.Files[0].RoutedDiff = "routed shape mismatch"
+	if err := validateForestAuditResult(routedDiverged); err != nil {
+		t.Fatalf("routed divergence should remain admissible evidence: %v", err)
+	}
+	blockers := forestPromotionBlockers(&routedDiverged, &ForestAuditResult{Status: "pass"})
+	if len(blockers) != 1 || blockers[0] != "routed_divergence" {
+		t.Fatalf("routed divergence blockers = %v", blockers)
+	}
+
+	routedSlower := clone()
+	routedSlower.RoutedNanos, routedSlower.Files[0].RoutedNanos, routedSlower.RoutedImproved = 2, 2, false
+	if err := validateForestAuditResult(routedSlower); err != nil {
+		t.Fatalf("slower routed result should pass correctness validation: %v", err)
+	}
+	blockers = forestPromotionBlockers(&routedSlower, &ForestAuditResult{Status: "pass"})
+	if len(blockers) != 1 || blockers[0] != "routed_not_faster" {
+		t.Fatalf("slower routed blockers = %v", blockers)
 	}
 }
 
@@ -254,8 +309,12 @@ func forestAuditTestAcceptedOutcome(sourceLen uint32, forest bool) ForestAuditOu
 	return ForestAuditOutcome{
 		Present: true, Accepted: true, FullSpan: true, StopReason: "accepted",
 		SourceLen: sourceLen, ExpectedEOF: sourceLen, RootEndByte: sourceLen,
-		LastTokenEOF: forest, ForestFastPath: forest,
+		LastTokenEOF: true, ForestFastPath: forest,
 	}
+}
+
+func forestAuditTestNotRunOutcome(sourceLen uint32) ForestAuditOutcome {
+	return ForestAuditOutcome{StopReason: "not_run", SourceLen: sourceLen, ExpectedEOF: sourceLen}
 }
 
 func initForestManifestTestRepo(t *testing.T, root, language string, files map[string]string) string {

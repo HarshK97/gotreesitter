@@ -11,6 +11,12 @@ import (
 	"strings"
 )
 
+const (
+	forestAuditRouteNotRun             = "not_run"
+	forestAuditRouteForestFastPath     = "forest_fast_path"
+	forestAuditRouteProductionFallback = "production_fallback"
+)
+
 type ForestAuditOutcome struct {
 	Present        bool   `json:"present"`
 	Accepted       bool   `json:"accepted"`
@@ -27,14 +33,18 @@ type ForestAuditOutcome struct {
 }
 
 type ForestAuditFileResult struct {
-	Path        string             `json:"path"`
-	Bytes       int64              `json:"bytes"`
-	SHA256      string             `json:"sha256"`
-	Forest      ForestAuditOutcome `json:"forest"`
-	Peer        ForestAuditOutcome `json:"peer"`
-	Disposition string             `json:"disposition"`
-	Diff        string             `json:"diff,omitempty"`
-	Decline     string             `json:"decline,omitempty"`
+	Path             string             `json:"path"`
+	Bytes            int64              `json:"bytes"`
+	SHA256           string             `json:"sha256"`
+	Forest           ForestAuditOutcome `json:"forest"`
+	Peer             ForestAuditOutcome `json:"peer"`
+	Routed           ForestAuditOutcome `json:"routed"`
+	RoutedProvenance string             `json:"routed_provenance"`
+	RoutedNanos      int64              `json:"routed_nanos"`
+	RoutedDiff       string             `json:"routed_diff,omitempty"`
+	Disposition      string             `json:"disposition"`
+	Diff             string             `json:"diff,omitempty"`
+	Decline          string             `json:"decline,omitempty"`
 }
 
 type ForestAuditResult struct {
@@ -49,16 +59,24 @@ type ForestAuditResult struct {
 	FilesAccepted        int                     `json:"files_accepted"`
 	FilesDeclined        int                     `json:"files_declined"`
 	FilesDiverged        int                     `json:"files_diverged"`
+	FilesRoutedDiverged  int                     `json:"files_routed_diverged"`
+	FilesRoutedForest    int                     `json:"files_routed_forest"`
+	FilesRoutedFallback  int                     `json:"files_routed_fallback"`
 	ForestNanos          int64                   `json:"forest_nanos"`
 	PeerNanos            int64                   `json:"peer_nanos"`
+	RoutedNanos          int64                   `json:"routed_nanos"`
+	RoutedImproved       bool                    `json:"routed_improved"`
 	Files                []ForestAuditFileResult `json:"files"`
 }
 
 type ForestAuditLanguageReport struct {
-	Language   string             `json:"language"`
-	Status     string             `json:"status"`
-	Production *ForestAuditResult `json:"production,omitempty"`
-	COracle    *ForestAuditResult `json:"c_oracle,omitempty"`
+	Language          string             `json:"language"`
+	Status            string             `json:"status"`
+	PromotionEligible bool               `json:"promotion_eligible"`
+	RoutedSpeedup     float64            `json:"routed_speedup,omitempty"`
+	PromotionBlockers []string           `json:"promotion_blockers,omitempty"`
+	Production        *ForestAuditResult `json:"production,omitempty"`
+	COracle           *ForestAuditResult `json:"c_oracle,omitempty"`
 }
 
 type ForestAuditReport struct {
@@ -232,6 +250,10 @@ func (reduction *forestAuditReduction) languageReport(language string) ForestAud
 	row := ForestAuditLanguageReport{Language: language, Status: "incomplete"}
 	row.Production = reduction.results[language]["production"]
 	row.COracle = reduction.results[language]["c_oracle"]
+	row.PromotionBlockers = forestPromotionBlockers(row.Production, row.COracle)
+	if row.Production != nil && row.Production.RoutedNanos > 0 {
+		row.RoutedSpeedup = float64(row.Production.PeerNanos) / float64(row.Production.RoutedNanos)
+	}
 	if row.Production == nil || row.COracle == nil {
 		return row
 	}
@@ -239,7 +261,34 @@ func (reduction *forestAuditReduction) languageReport(language string) ForestAud
 	if row.Production.Status != "pass" || row.COracle.Status != "pass" {
 		row.Status = "fail"
 	}
+	row.PromotionEligible = row.Status == "pass" && len(row.PromotionBlockers) == 0
 	return row
+}
+
+func forestPromotionBlockers(production, cOracle *ForestAuditResult) []string {
+	var blockers []string
+	if production == nil {
+		blockers = append(blockers, "missing_production")
+	} else {
+		if production.FilesDiverged > 0 {
+			blockers = append(blockers, "forest_divergence")
+		}
+		if production.FilesRoutedDiverged > 0 {
+			blockers = append(blockers, "routed_divergence")
+		}
+		if !production.RoutedImproved {
+			blockers = append(blockers, "routed_not_faster")
+		}
+		if production.Status != "pass" && len(blockers) == 0 {
+			blockers = append(blockers, "production_audit_failed")
+		}
+	}
+	if cOracle == nil {
+		blockers = append(blockers, "missing_c_oracle")
+	} else if cOracle.Status != "pass" {
+		blockers = append(blockers, "c_oracle_failed")
+	}
+	return blockers
 }
 
 func mergeForestAuditReportStatus(current, next string) string {
@@ -260,17 +309,19 @@ func validateForestAuditResult(result ForestAuditResult) error {
 	if err := validateForestAuditResultMetadata(result); err != nil {
 		return err
 	}
-	counts, err := validateForestAuditResultFiles(result.Files)
+	counts, err := validateForestAuditResultFiles(result.Mode, result.Files)
 	if err != nil {
 		return err
 	}
 	if result.FilesTotal != len(result.Files) || result.FilesAccepted != counts.accepted ||
 		result.FilesDeclined != counts.declined || result.FilesDiverged != counts.diverged ||
+		result.FilesRoutedDiverged != counts.routedDiverged || result.RoutedNanos != counts.routedNanos ||
+		result.FilesRoutedForest != counts.routedForest || result.FilesRoutedFallback != counts.routedFallback ||
 		counts.accepted+counts.declined != result.FilesTotal {
 		return fmt.Errorf("incoherent forest audit file counts")
 	}
-	if (result.FilesDiverged > 0 || result.FilesAccepted == 0) && result.Status != "fail" {
-		return fmt.Errorf("forest audit result status must fail with divergences or zero accepted files")
+	if err := validateForestAuditModeEvidence(result); err != nil {
+		return err
 	}
 	return nil
 }
@@ -301,17 +352,21 @@ func validateForestAuditResultMetadata(result ForestAuditResult) error {
 }
 
 type forestAuditResultCounts struct {
-	accepted int
-	declined int
-	diverged int
+	accepted       int
+	declined       int
+	diverged       int
+	routedDiverged int
+	routedForest   int
+	routedFallback int
+	routedNanos    int64
 }
 
-func validateForestAuditResultFiles(files []ForestAuditFileResult) (forestAuditResultCounts, error) {
+func validateForestAuditResultFiles(mode string, files []ForestAuditFileResult) (forestAuditResultCounts, error) {
 	var counts forestAuditResultCounts
 	seen := make(map[string]bool, len(files))
 	previous := ""
 	for i, file := range files {
-		if err := validateForestAuditResultFile(file, i, previous, seen); err != nil {
+		if err := validateForestAuditResultFile(mode, file, i, previous, seen); err != nil {
 			return counts, err
 		}
 		previous = file.Path
@@ -324,11 +379,21 @@ func validateForestAuditResultFiles(files []ForestAuditFileResult) (forestAuditR
 			counts.accepted++
 			counts.diverged++
 		}
+		counts.routedNanos += file.RoutedNanos
+		if file.RoutedDiff != "" {
+			counts.routedDiverged++
+		}
+		switch file.RoutedProvenance {
+		case forestAuditRouteForestFastPath:
+			counts.routedForest++
+		case forestAuditRouteProductionFallback:
+			counts.routedFallback++
+		}
 	}
 	return counts, nil
 }
 
-func validateForestAuditResultFile(file ForestAuditFileResult, index int, previous string, seen map[string]bool) error {
+func validateForestAuditResultFile(mode string, file ForestAuditFileResult, index int, previous string, seen map[string]bool) error {
 	if _, err := forestManifestPath("/", "result file", file.Path); err != nil {
 		return fmt.Errorf("forest audit result file %d: %w", index, err)
 	}
@@ -342,13 +407,16 @@ func validateForestAuditResultFile(file ForestAuditFileResult, index int, previo
 	if file.Bytes < 0 {
 		return fmt.Errorf("forest audit result file %d has negative byte count", index)
 	}
+	if file.RoutedNanos < 0 {
+		return fmt.Errorf("forest audit result file %d has negative routed time", index)
+	}
 	if _, err := forestManifestDigest("result file", file.SHA256); err != nil {
 		return fmt.Errorf("forest audit result file %d: %w", index, err)
 	}
 	if err := validateForestAuditDisposition(file, index); err != nil {
 		return err
 	}
-	return validateForestAuditOutcomes(file, index)
+	return validateForestAuditOutcomes(mode, file, index)
 }
 
 func validateForestAuditDisposition(file ForestAuditFileResult, index int) error {
@@ -370,7 +438,7 @@ func validateForestAuditDisposition(file ForestAuditFileResult, index int) error
 	}
 }
 
-func validateForestAuditOutcomes(file ForestAuditFileResult, index int) error {
+func validateForestAuditOutcomes(mode string, file ForestAuditFileResult, index int) error {
 	if file.Bytes <= math.MaxUint32 {
 		want := uint32(file.Bytes)
 		if file.Forest.SourceLen != want || file.Forest.ExpectedEOF != want {
@@ -379,11 +447,20 @@ func validateForestAuditOutcomes(file ForestAuditFileResult, index int) error {
 		if file.Peer.SourceLen != want || file.Peer.ExpectedEOF != want {
 			return fmt.Errorf("forest audit result file %d peer source length does not match authenticated bytes", index)
 		}
+		if file.Routed.SourceLen != want || file.Routed.ExpectedEOF != want {
+			return fmt.Errorf("forest audit result file %d routed source length does not match authenticated bytes", index)
+		}
 	}
 	if err := validateForestAuditOutcomeCoherence(file.Forest, "forest", index); err != nil {
 		return err
 	}
 	if err := validateForestAuditOutcomeCoherence(file.Peer, "peer", index); err != nil {
+		return err
+	}
+	if err := validateForestAuditOutcomeCoherence(file.Routed, "routed", index); err != nil {
+		return err
+	}
+	if err := validateForestAuditRoutedEvidence(mode, file, index); err != nil {
 		return err
 	}
 	switch file.Disposition {
@@ -400,6 +477,36 @@ func validateForestAuditOutcomes(file ForestAuditFileResult, index int) error {
 		}
 	case "diverged":
 		return validateForestAcceptedOutcome(file.Forest, index)
+	}
+	return nil
+}
+
+func validateForestAuditRoutedEvidence(mode string, file ForestAuditFileResult, index int) error {
+	if mode == "c_oracle" {
+		if file.Routed.Present || file.Routed.Accepted || file.Routed.StopReason != "not_run" ||
+			file.RoutedProvenance != forestAuditRouteNotRun || file.RoutedNanos != 0 || file.RoutedDiff != "" {
+			return fmt.Errorf("forest audit result file %d C-oracle routed evidence must be not_run", index)
+		}
+		return nil
+	}
+	if file.Routed.StopReason == "not_run" || file.RoutedNanos == 0 {
+		return fmt.Errorf("forest audit result file %d production audit lacks routed evidence", index)
+	}
+	wantProvenance := forestAuditRouteProductionFallback
+	if file.Routed.ForestFastPath {
+		wantProvenance = forestAuditRouteForestFastPath
+	}
+	if file.RoutedProvenance != wantProvenance {
+		return fmt.Errorf("forest audit result file %d routed provenance %q does not match forest-fast-path=%t", index, file.RoutedProvenance, file.Routed.ForestFastPath)
+	}
+	if file.RoutedDiff != "" {
+		return nil
+	}
+	if file.RoutedProvenance == forestAuditRouteForestFastPath {
+		return validateForestRoutedAcceptedOutcome(file.Routed, index)
+	}
+	if file.Routed != file.Peer {
+		return fmt.Errorf("forest audit result file %d routed fallback outcome does not match production", index)
 	}
 	return nil
 }
@@ -424,6 +531,39 @@ func validateForestAcceptedOutcome(outcome ForestAuditOutcome, index int) error 
 	if !outcome.Present || !outcome.Accepted || !outcome.FullSpan || !outcome.LastTokenEOF ||
 		outcome.RootHasError || outcome.Truncated || outcome.StoppedEarly || !outcome.ForestFastPath {
 		return fmt.Errorf("forest audit result file %d accepted without complete forest-fast-path outcome", index)
+	}
+	return nil
+}
+
+func validateForestRoutedAcceptedOutcome(outcome ForestAuditOutcome, index int) error {
+	if !outcome.Present || !outcome.Accepted || !outcome.FullSpan || !outcome.LastTokenEOF ||
+		outcome.RootHasError || outcome.Truncated || outcome.StoppedEarly {
+		return fmt.Errorf("forest audit result file %d routed parse is not a complete accepted tree", index)
+	}
+	return nil
+}
+
+func validateForestAuditModeEvidence(result ForestAuditResult) error {
+	if result.Mode == "c_oracle" {
+		if result.FilesRoutedDiverged != 0 || result.FilesRoutedForest != 0 || result.FilesRoutedFallback != 0 ||
+			result.RoutedNanos != 0 || result.RoutedImproved {
+			return fmt.Errorf("C-oracle result carries routed aggregate evidence")
+		}
+	} else {
+		if result.FilesRoutedForest+result.FilesRoutedFallback != result.FilesTotal {
+			return fmt.Errorf("production routed provenance does not cover every file")
+		}
+		improved := result.PeerNanos > 0 && result.RoutedNanos < result.PeerNanos
+		if result.RoutedImproved != improved {
+			return fmt.Errorf("production routed improvement does not match aggregate timing")
+		}
+	}
+	failed := result.FilesDiverged > 0 || result.FilesAccepted == 0
+	if result.Mode == "production" {
+		failed = failed || result.FilesRoutedDiverged > 0
+	}
+	if failed && result.Status != "fail" {
+		return fmt.Errorf("forest audit result status must fail its correctness gates")
 	}
 	return nil
 }

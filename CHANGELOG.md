@@ -21,7 +21,10 @@ for tags and release notes while still in `0.x`.
   manifest between production and C-oracle lanes. Per-language Docker runs
   verify clean source checkouts and exact file hashes, compare complete trees
   including anonymous children, points, flags, and fields, and emit strict
-  resumable result shards for deterministic fleet reduction.
+  resumable result shards for deterministic fleet reduction. The production
+  lane separately times and verifies the actual forest-enabled automatic route
+  on every file, so promotion requires exact routed parity and a net wall-time
+  improvement after production fallbacks, not merely a fast forest attempt.
 
 ### Performance
 

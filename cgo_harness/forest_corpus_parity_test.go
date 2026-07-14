@@ -133,8 +133,13 @@ type forestProductionAudit struct {
 	diverged         int
 	prodNanos        int64
 	forestNanos      int64
+	routedNanos      int64
+	routedForest     int
+	routedFallback   int
 	auditFailed      bool
 	divergedFiles    []string
+	routedDiverged   int
+	routedDiffFiles  []string
 	fallbackReasons  map[string]int
 	verboseFallbacks bool
 }
@@ -181,16 +186,40 @@ func (audit *forestProductionAudit) evaluateFile(filePath string) {
 	notRun := forestAuditNotRunOutcome(src)
 	fileResult := ForestAuditFileResult{
 		Path: meta.Path, Bytes: meta.Bytes, SHA256: meta.SHA256,
-		Forest: notRun, Peer: notRun,
+		Forest: notRun, Peer: notRun, Routed: notRun, RoutedProvenance: forestAuditRouteNotRun,
 	}
 	defer func() { audit.result.Files = append(audit.result.Files, fileResult) }()
 
 	prodTree := audit.parseProduction(src)
 	fileResult.Peer = forestGoTreeOutcome(prodTree, src)
-	if prodTree == nil || prodTree.RootNode() == nil {
-		if prodTree != nil {
-			prodTree.Release()
-		}
+	if prodTree != nil {
+		defer prodTree.Release()
+	}
+	var prodRoot *gts.Node
+	if prodTree != nil {
+		prodRoot = prodTree.RootNode()
+	}
+
+	routedTree, routedNanos := audit.parseRouted(src)
+	fileResult.RoutedNanos = routedNanos
+	fileResult.Routed = forestGoTreeOutcome(routedTree, src)
+	fileResult.RoutedProvenance = forestAuditRouteProductionFallback
+	if fileResult.Routed.ForestFastPath {
+		fileResult.RoutedProvenance = forestAuditRouteForestFastPath
+		audit.routedForest++
+	} else {
+		audit.routedFallback++
+	}
+	if routedTree != nil {
+		defer routedTree.Release()
+	}
+	var routedRoot *gts.Node
+	if routedTree != nil {
+		routedRoot = routedTree.RootNode()
+	}
+	audit.compareRouted(filePath, routedRoot, prodRoot, &fileResult)
+
+	if prodRoot == nil {
 		fileResult.Disposition = "declined"
 		fileResult.Decline = "production_no_tree"
 		audit.fellBack++
@@ -198,7 +227,6 @@ func (audit *forestProductionAudit) evaluateFile(filePath string) {
 		audit.t.Errorf("%s: production produced no tree for %s", audit.name, filepath.Base(filePath))
 		return
 	}
-	defer prodTree.Release()
 
 	forestTree, forestOK := audit.parseForest(src)
 	if forestTree != nil {
@@ -209,20 +237,33 @@ func (audit *forestProductionAudit) evaluateFile(filePath string) {
 		forestRoot = forestTree.RootNode()
 	}
 	fileResult.Forest = forestGoTreeOutcome(forestTree, src)
-	if audit.forestDeclined(filePath, src, forestOK, forestRoot, prodTree.RootNode(), fileResult.Forest, &fileResult) {
+	if audit.forestDeclined(filePath, src, forestOK, forestRoot, prodRoot, fileResult.Forest, &fileResult) {
 		return
 	}
 	audit.dispatched++
 	fileResult.Disposition = "accepted"
-	audit.compareProduction(filePath, forestRoot, prodTree.RootNode(), &fileResult)
+	audit.compareProduction(filePath, forestRoot, prodRoot, &fileResult)
 }
 
 func (audit *forestProductionAudit) parseProduction(src []byte) *gts.Tree {
 	gts.SetGLRForestEnabled(false)
+	defer gts.SetGLRForestEnabled(true)
 	start := time.Now()
 	tree, _ := gts.NewParser(audit.lang).Parse(src)
 	audit.prodNanos += time.Since(start).Nanoseconds()
 	return tree
+}
+
+func (audit *forestProductionAudit) parseRouted(src []byte) (*gts.Tree, int64) {
+	previous := audit.lang.WantsForest
+	audit.lang.WantsForest = true
+	defer func() { audit.lang.WantsForest = previous }()
+	gts.SetGLRForestEnabled(true)
+	start := time.Now()
+	tree, _ := gts.NewParser(audit.lang).Parse(src)
+	elapsed := time.Since(start).Nanoseconds()
+	audit.routedNanos += elapsed
+	return tree, elapsed
 }
 
 func (audit *forestProductionAudit) parseForest(src []byte) (*gts.Tree, bool) {
@@ -276,14 +317,33 @@ func (audit *forestProductionAudit) compareProduction(filePath string, forestRoo
 	audit.divergedFiles = append(audit.divergedFiles, filepath.Base(filePath)+": "+fileResult.Diff)
 }
 
+func (audit *forestProductionAudit) compareRouted(filePath string, routedRoot, productionRoot *gts.Node, fileResult *ForestAuditFileResult) {
+	if productionRoot == nil {
+		fileResult.RoutedDiff = "production tree missing"
+	} else if routedRoot == nil {
+		fileResult.RoutedDiff = "routed tree missing"
+	} else if diff := completeGoTreeIdentityDiff(routedRoot, productionRoot, audit.lang); diff != "" {
+		fileResult.RoutedDiff = diff
+	} else {
+		return
+	}
+	audit.routedDiverged++
+	audit.routedDiffFiles = append(audit.routedDiffFiles, filepath.Base(filePath)+": "+fileResult.RoutedDiff)
+}
+
 func (audit *forestProductionAudit) finish() ForestAuditResult {
 	speedup := 0.0
 	if audit.forestNanos > 0 {
 		speedup = float64(audit.prodNanos) / float64(audit.forestNanos)
 	}
-	audit.t.Logf("%-8s files=%d dispatched=%d fellback=%d diverged=%d | prod=%.1fms forest=%.1fms speedup=%.1fx",
-		audit.name, audit.total, audit.dispatched, audit.fellBack, audit.diverged,
-		float64(audit.prodNanos)/1e6, float64(audit.forestNanos)/1e6, speedup)
+	routedSpeedup := 0.0
+	if audit.routedNanos > 0 {
+		routedSpeedup = float64(audit.prodNanos) / float64(audit.routedNanos)
+	}
+	audit.t.Logf("%-8s files=%d dispatched=%d fellback=%d diverged=%d routed_forest=%d routed_fallback=%d routed_diverged=%d | prod=%.1fms forest=%.1fms raw_speedup=%.1fx routed=%.1fms routed_speedup=%.2fx",
+		audit.name, audit.total, audit.dispatched, audit.fellBack, audit.diverged, audit.routedForest, audit.routedFallback, audit.routedDiverged,
+		float64(audit.prodNanos)/1e6, float64(audit.forestNanos)/1e6, speedup,
+		float64(audit.routedNanos)/1e6, routedSpeedup)
 	if audit.fellBack > 0 {
 		audit.t.Logf("%-8s fallback reasons: %s", audit.name, formatFallbackReasons(audit.fallbackReasons))
 	}
@@ -295,13 +355,23 @@ func (audit *forestProductionAudit) finish() ForestAuditResult {
 		audit.t.Errorf("%s: %d/%d dispatched files DIVERGED from production (blocks forest default-on): %s",
 			audit.name, audit.diverged, audit.dispatched, strings.Join(audit.divergedFiles, ", "))
 	}
+	if audit.routedDiverged > 0 {
+		sort.Strings(audit.routedDiffFiles)
+		audit.t.Errorf("%s: %d/%d routed files DIVERGED from production (blocks forest promotion): %s",
+			audit.name, audit.routedDiverged, audit.total, strings.Join(audit.routedDiffFiles, ", "))
+	}
 	audit.result.FilesTotal = audit.total
 	audit.result.FilesAccepted = audit.dispatched
 	audit.result.FilesDeclined = audit.fellBack
 	audit.result.FilesDiverged = audit.diverged
+	audit.result.FilesRoutedDiverged = audit.routedDiverged
+	audit.result.FilesRoutedForest = audit.routedForest
+	audit.result.FilesRoutedFallback = audit.routedFallback
 	audit.result.ForestNanos = audit.forestNanos
 	audit.result.PeerNanos = audit.prodNanos
-	if audit.auditFailed || audit.diverged > 0 || audit.dispatched == 0 {
+	audit.result.RoutedNanos = audit.routedNanos
+	audit.result.RoutedImproved = audit.prodNanos > 0 && audit.routedNanos < audit.prodNanos
+	if audit.auditFailed || audit.diverged > 0 || audit.routedDiverged > 0 || audit.dispatched == 0 {
 		audit.result.Status = "fail"
 	}
 	sort.Slice(audit.result.Files, func(i, j int) bool { return audit.result.Files[i].Path < audit.result.Files[j].Path })
@@ -580,6 +650,52 @@ func TestCompleteGoTreeIdentityIncludesAnonymousChildrenAndFields(t *testing.T) 
 	defer missingClose.Release()
 	if diff := completeGoTreeIdentityDiff(left.RootNode(), missingClose.RootNode(), lang); diff == "" {
 		t.Fatal("complete identity ignored anonymous/missing closing syntax")
+	}
+}
+
+func TestForestProductionAuditRoutedParseUsesAndRestoresLanguageOptIn(t *testing.T) {
+	gts.SetGLRForestEnabled(true)
+	defer gts.SetGLRForestEnabled(true)
+	lang := grm.JsonLanguage()
+	previous := lang.WantsForest
+	lang.WantsForest = false
+	defer func() { lang.WantsForest = previous }()
+
+	for _, tc := range []struct {
+		name       string
+		source     string
+		wantForest bool
+	}{
+		{name: "accepted", source: `{"key":1}`, wantForest: true},
+		{name: "declined", source: `{"key":1`, wantForest: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			audit := &forestProductionAudit{t: t, name: "json", lang: lang}
+			production := audit.parseProduction([]byte(tc.source))
+			if production == nil || production.RootNode() == nil {
+				t.Fatal("production parse returned no tree")
+			}
+			defer production.Release()
+			routed, _ := audit.parseRouted([]byte(tc.source))
+			if routed == nil || routed.RootNode() == nil {
+				t.Fatal("routed parse returned no tree")
+			}
+			defer routed.Release()
+			if lang.WantsForest {
+				t.Fatal("routed parse did not restore Language.WantsForest")
+			}
+			if got := routed.ParseRuntime().ForestFastPath; got != tc.wantForest {
+				t.Fatalf("routed ForestFastPath = %t, want %t", got, tc.wantForest)
+			}
+			file := ForestAuditFileResult{
+				Peer:   forestGoTreeOutcome(production, []byte(tc.source)),
+				Routed: forestGoTreeOutcome(routed, []byte(tc.source)),
+			}
+			audit.compareRouted(tc.name, routed.RootNode(), production.RootNode(), &file)
+			if file.RoutedDiff != "" {
+				t.Fatalf("routed parse differs from production: %s", file.RoutedDiff)
+			}
+		})
 	}
 }
 

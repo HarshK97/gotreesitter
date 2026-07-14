@@ -177,7 +177,7 @@ func (audit *forestCOracleAudit) evaluateFile(filePath string) {
 	notRun := forestAuditNotRunOutcome(src)
 	fileResult := ForestAuditFileResult{
 		Path: meta.Path, Bytes: meta.Bytes, SHA256: meta.SHA256,
-		Forest: notRun, Peer: notRun,
+		Forest: notRun, Peer: notRun, Routed: notRun, RoutedProvenance: forestAuditRouteNotRun,
 	}
 	defer func() { audit.result.Files = append(audit.result.Files, fileResult) }()
 

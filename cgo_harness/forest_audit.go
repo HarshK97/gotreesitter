@@ -14,8 +14,8 @@ import (
 
 const (
 	ForestCorpusManifestSchema = "forest-corpus-manifest-v2"
-	ForestAuditResultSchema    = "forest-audit-result-v1"
-	ForestAuditReportSchema    = "forest-audit-report-v1"
+	ForestAuditResultSchema    = "forest-audit-result-v2"
+	ForestAuditReportSchema    = "forest-audit-report-v2"
 )
 
 type ForestCorpusManifest struct {
