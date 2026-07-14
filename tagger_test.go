@@ -1,6 +1,10 @@
 package gotreesitter
 
-import "testing"
+import (
+	"errors"
+	"testing"
+	"time"
+)
 
 func TestTaggerTimeoutOptionConfiguresParser(t *testing.T) {
 	tagger, err := NewTagger(queryTestLanguage(), "", WithTaggerTimeoutMicros(54_321))
@@ -9,6 +13,31 @@ func TestTaggerTimeoutOptionConfiguresParser(t *testing.T) {
 	}
 	if got := tagger.parser.TimeoutMicros(); got != 54_321 {
 		t.Fatalf("timeout = %d, want 54321", got)
+	}
+}
+
+func TestTagIncrementalStrictReportsTimeout(t *testing.T) {
+	tagger, err := NewTagger(queryTestLanguage(), "",
+		WithTaggerTimeoutMicros(100),
+		WithTaggerTokenSourceFactory(func(source []byte) TokenSource {
+			time.Sleep(2 * time.Millisecond)
+			return &eofTokenSource{pos: uint32(len(source))}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tags, tree, err := tagger.TagIncrementalStrict([]byte("func main"), nil)
+	if tree == nil {
+		t.Fatal("strict tagger returned nil partial tree")
+	}
+	defer tree.Release()
+	if !errors.Is(err, ErrParseStoppedEarly) {
+		t.Fatalf("error = %v, want ErrParseStoppedEarly", err)
+	}
+	if tags != nil {
+		t.Fatalf("tags = %#v, want nil", tags)
 	}
 }
 

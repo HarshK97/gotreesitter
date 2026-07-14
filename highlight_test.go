@@ -1,7 +1,9 @@
 package gotreesitter
 
 import (
+	"errors"
 	"testing"
+	"time"
 )
 
 func TestHighlighterTimeoutOptionConfiguresParser(t *testing.T) {
@@ -11,6 +13,31 @@ func TestHighlighterTimeoutOptionConfiguresParser(t *testing.T) {
 	}
 	if got := highlighter.parser.TimeoutMicros(); got != 12_345 {
 		t.Fatalf("timeout = %d, want 12345", got)
+	}
+}
+
+func TestHighlightIncrementalStrictReportsTimeout(t *testing.T) {
+	highlighter, err := NewHighlighter(queryTestLanguage(), "",
+		WithHighlighterTimeoutMicros(100),
+		WithTokenSourceFactory(func(source []byte) TokenSource {
+			time.Sleep(2 * time.Millisecond)
+			return &eofTokenSource{pos: uint32(len(source))}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ranges, tree, err := highlighter.HighlightIncrementalStrict([]byte("func main"), nil)
+	if tree == nil {
+		t.Fatal("strict highlight returned nil partial tree")
+	}
+	defer tree.Release()
+	if !errors.Is(err, ErrParseStoppedEarly) {
+		t.Fatalf("error = %v, want ErrParseStoppedEarly", err)
+	}
+	if ranges != nil {
+		t.Fatalf("ranges = %#v, want nil", ranges)
 	}
 }
 

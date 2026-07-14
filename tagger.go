@@ -146,6 +146,26 @@ func (tg *Tagger) TagIncremental(source []byte, oldTree *Tree) ([]Tag, *Tree) {
 	return tg.tagTree(tree), tree
 }
 
+// TagIncrementalStrict is like TagIncremental, but reports
+// ErrParseStoppedEarly and skips query execution when parsing is stopped by a
+// timeout, cancellation, token-source EOF, or parser safety limit. The partial
+// tree is returned so callers can release it or use it for diagnostics.
+func (tg *Tagger) TagIncrementalStrict(source []byte, oldTree *Tree) ([]Tag, *Tree, error) {
+	if len(source) == 0 {
+		return nil, NewTree(nil, source, tg.lang), nil
+	}
+
+	tree := tg.parse(source, oldTree)
+	if err := parseStoppedEarlyError(tree); err != nil {
+		return nil, tree, err
+	}
+	if tree.RootNode() == nil {
+		return nil, tree, nil
+	}
+
+	return tg.tagTree(tree), tree, nil
+}
+
 // TagIncrementalUTF16 re-tags UTF-16 source after edits to oldTree. Call
 // oldTree.EditUTF16 before calling this.
 func (tg *Tagger) TagIncrementalUTF16(source []uint16, oldTree *Tree) ([]UTF16Tag, *Tree) {
