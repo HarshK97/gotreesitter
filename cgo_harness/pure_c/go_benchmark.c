@@ -21,11 +21,6 @@ static uint64_t now_ns(void) {
   return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 
-static void dump_u16(uint16_t value) {
-  unsigned char bytes[2] = {(unsigned char)value, (unsigned char)(value >> 8)};
-  fwrite(bytes, 1u, sizeof(bytes), stdout);
-}
-
 static void dump_u32(uint32_t value) {
   unsigned char bytes[4] = {
       (unsigned char)value, (unsigned char)(value >> 8),
@@ -42,14 +37,13 @@ static void dump_string(const char *value) {
 }
 
 // Deep dump v1 is a deterministic, little-endian preorder stream. Each node
-// carries public symbol identity, type name, byte and point spans,
+// carries cross-runtime symbol identity through type+named, byte and point spans,
 // named/extra/missing/error flags, child count, incoming field name, and child
 // order. Hashing this stream lets the static publication transport be admitted
 // against the cgo parity binding and gotreesitter before any timing begins.
 static void dump_node(TSNode node, const char *field_name) {
   dump_string(ts_node_type(node));
   dump_string(field_name);
-  dump_u16((uint16_t)ts_node_symbol(node));
   dump_u32(ts_node_start_byte(node));
   dump_u32(ts_node_end_byte(node));
   TSPoint start = ts_node_start_point(node);

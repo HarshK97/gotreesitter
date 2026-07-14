@@ -269,8 +269,8 @@ func COracleIdentity(name string) (COracleBuildIdentity, error) {
 }
 
 // COracleDeepDigest returns the gts-deep-tree-v1 structural digest emitted by the
-// static publication artifact's --dump mode. It covers public symbol identity,
-// type name, byte and point spans, named/extra/missing/error
+// static publication artifact's --dump mode. It covers cross-runtime symbol
+// identity through type+named, byte and point spans, extra/missing/error
 // flags, child order and incoming field identity.
 func COracleDeepDigest(tree *sitter.Tree) (string, error) {
 	if tree == nil || tree.RootNode() == nil {
@@ -285,7 +285,6 @@ func COracleDeepDigest(tree *sitter.Tree) (string, error) {
 func writeCOracleDeepNode(h hash.Hash, node *sitter.Node, field string) {
 	writeCOracleDeepString(h, node.Kind())
 	writeCOracleDeepString(h, field)
-	writeCOracleDeepU16(h, node.KindId())
 	writeCOracleDeepU32(h, uint32(node.StartByte()))
 	writeCOracleDeepU32(h, uint32(node.EndByte()))
 	start := node.StartPosition()
@@ -316,12 +315,6 @@ func writeCOracleDeepNode(h hash.Hash, node *sitter.Node, field string) {
 	for i := uint(0); i < childCount; i++ {
 		writeCOracleDeepNode(h, node.Child(i), node.FieldNameForChild(uint32(i)))
 	}
-}
-
-func writeCOracleDeepU16(h hash.Hash, value uint16) {
-	var buf [2]byte
-	binary.LittleEndian.PutUint16(buf[:], value)
-	_, _ = h.Write(buf[:])
 }
 
 func writeCOracleDeepU32(h hash.Hash, value uint32) {

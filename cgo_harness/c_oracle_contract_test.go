@@ -22,10 +22,10 @@ var canonicalGoOracleFixtures = []struct {
 	sha256 string
 	deep   string
 }{
-	{path: "../query_compile.go", sha256: "b788ee19b0075f0b9b567a9f93ea657e715bc8a6a40a99d3ca5c761404e71894", deep: "0c4f2288bcd473cbb3332aed4e5514320e71ce2b36f70e705192f1c94da7d316"},
-	{path: "../rewrite.go", sha256: "74c0705f8729670559492fb5460a01b2a1a2a109928e1aeb52736e485e8ff097", deep: "2ea60dfb7e3267acd2d3b674b44fcca8d049d3ecb5510119b6d62b5c1b8ad61a"},
-	{path: "../language.go", sha256: "009aa9fd5352c712f3839670c7df8a9b00ae878ee20dc88131a438b2d5edfd9a", deep: "08c379c72bf24b5bf8a38f45b2076b43add92013df35c8fb507cfce9ce9ce6cd"},
-	{path: "../grammargen/lr.go", sha256: "a7e4a1a64b25a60aea36183b9d6d53dcd9240942cdb10e67a3cf9e6ce30f95b2", deep: "f7f59f98c4c052e545e6b936a303c73fa42c06386fea202923e61c264c3a7eee"},
+	{path: "../query_compile.go", sha256: "b788ee19b0075f0b9b567a9f93ea657e715bc8a6a40a99d3ca5c761404e71894", deep: "ecc090a83a4343a1c7c2afbad63277f5b4d60c42d8d94a2af2a9b16e46f2ccb5"},
+	{path: "../rewrite.go", sha256: "74c0705f8729670559492fb5460a01b2a1a2a109928e1aeb52736e485e8ff097", deep: "b3f9814b65763642d4eac58b9065018048ea13e6f10d56afb28a0479bf5a68a1"},
+	{path: "../language.go", sha256: "009aa9fd5352c712f3839670c7df8a9b00ae878ee20dc88131a438b2d5edfd9a", deep: "583df223904fe414c33bba3b474c6557ecdb20e7f47e304b9a09bfcc2da44539"},
+	{path: "../grammargen/lr.go", sha256: "a7e4a1a64b25a60aea36183b9d6d53dcd9240942cdb10e67a3cf9e6ce30f95b2", deep: "1472cfd9a014d4034dbc1456afd12c282630ef787c3543cf0cecb73619883ad2"},
 }
 
 func TestCOracleContractPreflight(t *testing.T) {
