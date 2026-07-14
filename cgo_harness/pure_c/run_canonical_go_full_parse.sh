@@ -411,10 +411,10 @@ if ((SKIP_QUIET_ADMISSION == 0)); then
     IFS=$'\t' read -r load1 io10 mem_available_kb < <(read_host_telemetry)
     result="RETRY"
     if [[ "$io10" != "unavailable" ]] && awk \
-      -v load="$load1" -v max_load="$QUIET_MAX_LOAD1" \
+      -v load_value="$load1" -v max_load="$QUIET_MAX_LOAD1" \
       -v io="$io10" -v max_io="$QUIET_MAX_IO_AVG10" \
       -v mem="$mem_available_kb" -v min_mem="$QUIET_MIN_MEM_KB" \
-      'BEGIN { exit !(load < max_load && io <= max_io && mem >= min_mem) }'; then
+      'BEGIN { exit !(load_value < max_load && io <= max_io && mem >= min_mem) }'; then
       result="PASS"
       consecutive=$((consecutive + 1))
     else
