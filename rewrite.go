@@ -91,6 +91,12 @@ func (r *Rewriter) Apply() (newSource []byte, edits []InputEdit, err error) {
 		}
 		return sorted[i].endByte < sorted[j].endByte
 	})
+	for _, edit := range sorted {
+		if edit.startByte > edit.endByte || uint64(edit.endByte) > uint64(len(r.source)) {
+			return nil, nil, fmt.Errorf("rewrite: invalid edit range [%d,%d) for source length %d",
+				edit.startByte, edit.endByte, len(r.source))
+		}
+	}
 
 	// Validate no overlaps: edit N's endByte <= edit N+1's startByte.
 	// Zero-width insertions at the same point are allowed only if they don't
