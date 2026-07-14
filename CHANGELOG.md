@@ -7,6 +7,11 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Multiline tree edits now keep node byte and point ranges aligned with the C
+  runtime across insertions, deletions, and replacements.
+
 ### Tooling
 
 - The authenticated fleet scoreboard now times fresh full parses against a

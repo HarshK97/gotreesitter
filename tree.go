@@ -3564,10 +3564,9 @@ func (t *Tree) Edit(edit InputEdit) {
 	if t.root != nil {
 		byteDelta := int64(edit.NewEndByte) - int64(edit.OldEndByte)
 		rowDelta := int64(edit.NewEndPoint.Row) - int64(edit.OldEndPoint.Row)
-		colDelta := int64(edit.NewEndPoint.Column) - int64(edit.OldEndPoint.Column)
 		hasTailShift := byteDelta != 0 || edit.NewEndPoint != edit.OldEndPoint
 		var shiftScratch []*Node
-		editNodeWithDelta(t.root, edit, byteDelta, rowDelta, colDelta, hasTailShift, &shiftScratch, &t.lastEditedLeaf)
+		editNodeWithDelta(t.root, edit, byteDelta, rowDelta, hasTailShift, &shiftScratch, &t.lastEditedLeaf)
 	}
 }
 
@@ -3633,10 +3632,9 @@ func coalesceRanges(in []Range) []Range {
 func editNode(n *Node, edit InputEdit) {
 	byteDelta := int64(edit.NewEndByte) - int64(edit.OldEndByte)
 	rowDelta := int64(edit.NewEndPoint.Row) - int64(edit.OldEndPoint.Row)
-	colDelta := int64(edit.NewEndPoint.Column) - int64(edit.OldEndPoint.Column)
 	hasTailShift := byteDelta != 0 || edit.NewEndPoint != edit.OldEndPoint
 	var shiftScratch []*Node
-	editNodeWithDelta(n, edit, byteDelta, rowDelta, colDelta, hasTailShift, &shiftScratch, nil)
+	editNodeWithDelta(n, edit, byteDelta, rowDelta, hasTailShift, &shiftScratch, nil)
 }
 
 func addUint32Delta(value uint32, delta int64) uint32 {
@@ -3650,7 +3648,7 @@ func addUint32Delta(value uint32, delta int64) uint32 {
 	return uint32(next)
 }
 
-func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta, colDelta int64, hasTailShift bool, shiftScratch *[]*Node, leafHint **Node) {
+func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta int64, hasTailShift bool, shiftScratch *[]*Node, leafHint **Node) {
 	// If the node ends before the edit starts, it's completely unaffected.
 	if n.endByte <= edit.StartByte {
 		return
@@ -3665,7 +3663,7 @@ func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta, colDelta in
 		n.endByte = addUint32Delta(n.endByte, byteDelta)
 		n.startPoint = shiftPointAfterEdit(n.startPoint, edit, rowDelta)
 		n.endPoint = shiftPointAfterEdit(n.endPoint, edit, rowDelta)
-		shiftNodeChildrenAfterEdit(n, edit, byteDelta, rowDelta, colDelta, shiftScratch)
+		shiftNodeChildrenAfterEdit(n, edit, byteDelta, rowDelta, shiftScratch)
 		return
 	}
 
@@ -3673,6 +3671,10 @@ func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta, colDelta in
 	n.setDirty(true)
 	if perfCountersEnabled {
 		perfRecordNodeEditMarked()
+	}
+	if n.startByte > edit.StartByte {
+		n.startByte = edit.NewEndByte
+		n.startPoint = edit.NewEndPoint
 	}
 	if n.endByte <= edit.OldEndByte {
 		// Node is fully within the edited region.
@@ -3696,11 +3698,11 @@ func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta, colDelta in
 				if !hasTailShift {
 					break
 				}
-				shiftSubtreeNodeAfterEdit(c, edit, byteDelta, rowDelta, colDelta, shiftScratch)
+				shiftSubtreeNodeAfterEdit(c, edit, byteDelta, rowDelta, shiftScratch)
 				continue
 			}
 			descended = true
-			editNodeWithDelta(c, edit, byteDelta, rowDelta, colDelta, hasTailShift, shiftScratch, leafHint)
+			editNodeWithDelta(c, edit, byteDelta, rowDelta, hasTailShift, shiftScratch, leafHint)
 		}
 	} else {
 		for i := 0; i < childCount; i++ {
@@ -3715,11 +3717,11 @@ func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta, colDelta in
 				if !hasTailShift {
 					break
 				}
-				shiftStackEntrySubtreeAfterEdit(n.ownerArena, entry, edit, byteDelta, rowDelta, colDelta)
+				shiftStackEntrySubtreeAfterEdit(n.ownerArena, entry, edit, byteDelta, rowDelta)
 				continue
 			}
 			descended = true
-			editStackEntryWithDelta(n.ownerArena, entry, edit, byteDelta, rowDelta, colDelta, hasTailShift, shiftScratch, leafHint)
+			editStackEntryWithDelta(n.ownerArena, entry, edit, byteDelta, rowDelta, hasTailShift, shiftScratch, leafHint)
 		}
 	}
 	if leafHint != nil && !descended && childCount == 0 {
@@ -3727,9 +3729,9 @@ func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta, colDelta in
 	}
 }
 
-func editStackEntryWithDelta(arena *nodeArena, entry stackEntry, edit InputEdit, byteDelta, rowDelta, colDelta int64, hasTailShift bool, shiftScratch *[]*Node, leafHint **Node) {
+func editStackEntryWithDelta(arena *nodeArena, entry stackEntry, edit InputEdit, byteDelta, rowDelta int64, hasTailShift bool, shiftScratch *[]*Node, leafHint **Node) {
 	if node := stackEntryNode(entry); node != nil {
-		editNodeWithDelta(node, edit, byteDelta, rowDelta, colDelta, hasTailShift, shiftScratch, leafHint)
+		editNodeWithDelta(node, edit, byteDelta, rowDelta, hasTailShift, shiftScratch, leafHint)
 		return
 	}
 	if !stackEntryHasNode(entry) || stackEntryNodeEndByte(entry) <= edit.StartByte {
@@ -3737,7 +3739,7 @@ func editStackEntryWithDelta(arena *nodeArena, entry stackEntry, edit InputEdit,
 	}
 	if stackEntryNodeStartByte(entry) >= edit.OldEndByte {
 		if hasTailShift {
-			shiftStackEntrySubtreeAfterEdit(arena, entry, edit, byteDelta, rowDelta, colDelta)
+			shiftStackEntrySubtreeAfterEdit(arena, entry, edit, byteDelta, rowDelta)
 		}
 		return
 	}
@@ -3745,6 +3747,9 @@ func editStackEntryWithDelta(arena *nodeArena, entry stackEntry, edit InputEdit,
 	setStackEntryDirty(entry, true)
 	if perfCountersEnabled {
 		perfRecordNodeEditMarked()
+	}
+	if stackEntryNodeStartByte(entry) > edit.StartByte {
+		setStackEntryStart(entry, edit.NewEndByte, edit.NewEndPoint)
 	}
 	if stackEntryNodeEndByte(entry) <= edit.OldEndByte {
 		setStackEntryEnd(entry, edit.NewEndByte, edit.NewEndPoint)
@@ -3768,13 +3773,13 @@ func editStackEntryWithDelta(arena *nodeArena, entry stackEntry, edit InputEdit,
 			if !hasTailShift {
 				break
 			}
-			shiftStackEntrySubtreeAfterEdit(arena, child, edit, byteDelta, rowDelta, colDelta)
+			shiftStackEntrySubtreeAfterEdit(arena, child, edit, byteDelta, rowDelta)
 			continue
 		}
 		if perfCountersEnabled {
 			perfRecordNodeEditCompactRef()
 		}
-		editStackEntryWithDelta(arena, child, edit, byteDelta, rowDelta, colDelta, hasTailShift, shiftScratch, leafHint)
+		editStackEntryWithDelta(arena, child, edit, byteDelta, rowDelta, hasTailShift, shiftScratch, leafHint)
 	}
 }
 
@@ -3793,6 +3798,27 @@ func setStackEntryDirty(entry stackEntry, dirty bool) {
 	}
 	if parent := stackEntryPendingParent(entry); parent != nil {
 		parent.setDirty(dirty)
+	}
+}
+
+func setStackEntryStart(entry stackEntry, startByte uint32, startPoint Point) {
+	if node := stackEntryNode(entry); node != nil {
+		node.startByte = startByte
+		node.startPoint = startPoint
+		return
+	}
+	if node := stackEntryNoTreeNode(entry); node != nil {
+		node.startByte = startByte
+		return
+	}
+	if leaf := stackEntryCompactFullLeaf(entry); leaf != nil {
+		leaf.startByte = startByte
+		leaf.startPoint = startPoint
+		return
+	}
+	if parent := stackEntryPendingParent(entry); parent != nil {
+		parent.startByte = startByte
+		parent.startPoint = startPoint
 	}
 }
 
@@ -3817,31 +3843,13 @@ func setStackEntryEnd(entry stackEntry, endByte uint32, endPoint Point) {
 	}
 }
 
-func setStackEntryEndByte(entry stackEntry, endByte uint32) {
-	if node := stackEntryNode(entry); node != nil {
-		node.endByte = endByte
-		return
-	}
-	if node := stackEntryNoTreeNode(entry); node != nil {
-		node.endByte = endByte
-		return
-	}
-	if leaf := stackEntryCompactFullLeaf(entry); leaf != nil {
-		leaf.endByte = endByte
-		return
-	}
-	if parent := stackEntryPendingParent(entry); parent != nil {
-		parent.endByte = endByte
-	}
-}
-
-func shiftNodeChildrenAfterEdit(parent *Node, edit InputEdit, byteDelta, rowDelta, colDelta int64, shiftScratch *[]*Node) {
+func shiftNodeChildrenAfterEdit(parent *Node, edit InputEdit, byteDelta, rowDelta int64, shiftScratch *[]*Node) {
 	childCount := nodeChildCountNoMaterialize(parent)
 	if childCount == 0 {
 		return
 	}
 	if !nodeHasFinalChildRefs(parent) {
-		shiftSubtreeAfterEdit(parent.children, edit, byteDelta, rowDelta, colDelta, shiftScratch)
+		shiftSubtreeAfterEdit(parent.children, edit, byteDelta, rowDelta, shiftScratch)
 		return
 	}
 	for i := 0; i < childCount; i++ {
@@ -3852,11 +3860,11 @@ func shiftNodeChildrenAfterEdit(parent *Node, edit InputEdit, byteDelta, rowDelt
 		if !ok {
 			continue
 		}
-		shiftStackEntrySubtreeAfterEdit(parent.ownerArena, entry, edit, byteDelta, rowDelta, colDelta)
+		shiftStackEntrySubtreeAfterEdit(parent.ownerArena, entry, edit, byteDelta, rowDelta)
 	}
 }
 
-func shiftSubtreeAfterEdit(roots []*Node, edit InputEdit, byteDelta, rowDelta, colDelta int64, shiftScratch *[]*Node) {
+func shiftSubtreeAfterEdit(roots []*Node, edit InputEdit, byteDelta, rowDelta int64, shiftScratch *[]*Node) {
 	if len(roots) == 0 {
 		return
 	}
@@ -3888,7 +3896,7 @@ func shiftSubtreeAfterEdit(roots []*Node, edit InputEdit, byteDelta, rowDelta, c
 				if !ok {
 					continue
 				}
-				shiftStackEntrySubtreeAfterEdit(n.ownerArena, entry, edit, byteDelta, rowDelta, colDelta)
+				shiftStackEntrySubtreeAfterEdit(n.ownerArena, entry, edit, byteDelta, rowDelta)
 			}
 		}
 	}
@@ -3897,26 +3905,26 @@ func shiftSubtreeAfterEdit(roots []*Node, edit InputEdit, byteDelta, rowDelta, c
 	}
 }
 
-func shiftSubtreeNodeAfterEdit(root *Node, edit InputEdit, byteDelta, rowDelta, colDelta int64, shiftScratch *[]*Node) {
+func shiftSubtreeNodeAfterEdit(root *Node, edit InputEdit, byteDelta, rowDelta int64, shiftScratch *[]*Node) {
 	if root == nil {
 		return
 	}
 	var roots [1]*Node
 	roots[0] = root
-	shiftSubtreeAfterEdit(roots[:], edit, byteDelta, rowDelta, colDelta, shiftScratch)
+	shiftSubtreeAfterEdit(roots[:], edit, byteDelta, rowDelta, shiftScratch)
 }
 
-func shiftStackEntrySubtreeAfterEdit(arena *nodeArena, entry stackEntry, edit InputEdit, byteDelta, rowDelta, colDelta int64) {
+func shiftStackEntrySubtreeAfterEdit(arena *nodeArena, entry stackEntry, edit InputEdit, byteDelta, rowDelta int64) {
 	if node := stackEntryNode(entry); node != nil {
-		shiftSubtreeNodeAfterEdit(node, edit, byteDelta, rowDelta, colDelta, nil)
+		shiftSubtreeNodeAfterEdit(node, edit, byteDelta, rowDelta, nil)
 		return
 	}
 	if leaf := stackEntryCompactFullLeaf(entry); leaf != nil {
-		shiftCompactFullLeafAfterEdit(leaf, edit, byteDelta, rowDelta, colDelta)
+		shiftCompactFullLeafAfterEdit(leaf, edit, byteDelta, rowDelta)
 		return
 	}
 	if parent := stackEntryPendingParent(entry); parent != nil {
-		shiftPendingParentAfterEdit(arena, parent, edit, byteDelta, rowDelta, colDelta)
+		shiftPendingParentAfterEdit(arena, parent, edit, byteDelta, rowDelta)
 		return
 	}
 	if noTree := stackEntryNoTreeNode(entry); noTree != nil {
@@ -3935,7 +3943,7 @@ func shiftNoTreeNodeAfterEdit(n *noTreeNode, byteDelta int64) {
 	}
 }
 
-func shiftCompactFullLeafAfterEdit(n *compactFullLeaf, edit InputEdit, byteDelta, rowDelta, colDelta int64) {
+func shiftCompactFullLeafAfterEdit(n *compactFullLeaf, edit InputEdit, byteDelta, rowDelta int64) {
 	if n == nil {
 		return
 	}
@@ -3944,7 +3952,7 @@ func shiftCompactFullLeafAfterEdit(n *compactFullLeaf, edit InputEdit, byteDelta
 	n.endPoint = shiftPointAfterEdit(n.endPoint, edit, rowDelta)
 }
 
-func shiftPendingParentAfterEdit(arena *nodeArena, n *pendingParent, edit InputEdit, byteDelta, rowDelta, colDelta int64) {
+func shiftPendingParentAfterEdit(arena *nodeArena, n *pendingParent, edit InputEdit, byteDelta, rowDelta int64) {
 	if n == nil {
 		return
 	}
@@ -3960,7 +3968,7 @@ func shiftPendingParentAfterEdit(arena *nodeArena, n *pendingParent, edit InputE
 		if perfCountersEnabled {
 			perfRecordNodeEditCompactRef()
 		}
-		shiftStackEntrySubtreeAfterEdit(arena, child, edit, byteDelta, rowDelta, colDelta)
+		shiftStackEntrySubtreeAfterEdit(arena, child, edit, byteDelta, rowDelta)
 	}
 }
 
@@ -3973,7 +3981,11 @@ func shiftPointAfterEdit(p Point, edit InputEdit, rowDelta int64) Point {
 		return p
 	}
 	p.Row = addUint32Delta(p.Row, rowDelta)
-	p.Column = addUint32Delta(edit.NewEndPoint.Column, int64(p.Column)-int64(edit.OldEndPoint.Column))
+	columnDelta := uint32(0)
+	if p.Column >= edit.OldEndPoint.Column {
+		columnDelta = p.Column - edit.OldEndPoint.Column
+	}
+	p.Column = addUint32Delta(edit.NewEndPoint.Column, int64(columnDelta))
 	return p
 }
 
