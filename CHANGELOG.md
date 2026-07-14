@@ -16,6 +16,11 @@ for tags and release notes while still in `0.x`.
 
 ### Tooling
 
+- Report-mode fleet reduction now preserves closed-vocabulary
+  `no_static_c_oracle`, `no_corpus`, and `no_corpus_files` shards as fatal
+  closure findings in the combined artifact. Certification remains fail-closed,
+  and report mode still rejects untyped, contradictory, or mixed oracle
+  evidence.
 - Add a diagnostic-only, authenticated Go/static-C GLR work-count contract for
   the locked real-Go `query_compile` fixture. A separate ordinary untagged Go
   child performs admission before tagged Go and fully static C diagnostic

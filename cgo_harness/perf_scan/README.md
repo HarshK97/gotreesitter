@@ -250,6 +250,14 @@ writes the identical board, then fails the test when the combined hard gate is
 FAIL and reports the artifact path and finding count. An unknown mode fails
 before any scoreboard is published.
 
+Only report mode can close a complete fleet cohort around a terminal
+`no_static_c_oracle`, `no_corpus`, or `no_corpus_files` shard. The reducer
+authenticates that closed status and requires an otherwise empty measurement
+payload, preserves it as a fatal coverage finding, and omits only that row from
+the combined static-oracle language manifest. Certification rejects the same
+row before publication. Missing, generic, contradictory, or mixed identity
+evidence remains inadmissible in both modes.
+
 New scoreboards record the full repository revision and clean-source attestation.
 Revisionless v1 JSON still decodes for existing readers, but is deliberately
 ineligible for authoritative reduction. Git and Go build VCS metadata must

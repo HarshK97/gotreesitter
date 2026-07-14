@@ -303,6 +303,13 @@ Named large-file witnesses (tracked, not hidden): JavaScript
 generated-table class (Go `opGen.go` / `rewriteAMD64.go` and in-repo
 witnesses).
 
+Fleet report reduction can preserve a terminal shard only when it carries the
+closed status `no_static_c_oracle`, `no_corpus`, or `no_corpus_files` and no
+measurement or oracle payload. These rows remain fatal closure findings and
+are omitted from the combined oracle-language manifest. Certification still
+rejects them; both modes reject missing, generic, contradictory, or mixed
+identity evidence.
+
 ### Forest-routing screen and confirmation
 
 The authenticated forest audit separates discovery from promotion. A
