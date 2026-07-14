@@ -7,6 +7,11 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Rewriter edits now reject reversed and out-of-source byte ranges instead of
+  panicking while applying them.
+
 ### Tooling
 
 - The authenticated fleet scoreboard now times fresh full parses against a
