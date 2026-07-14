@@ -2819,6 +2819,7 @@ func (p *Parser) parseIncrementalInternal(source []byte, oldTree *Tree, ts Token
 		// correctness footing as Parse.
 		deterministicExternalConflicts := fullParseUsesDeterministicExternalConflicts(p.language)
 		initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth)
+		workCountSetNextParseAttempt("initial_full", "incremental_token_source_fallback_full_parse")
 		tree := p.parseInternal(source, ts, nil, nil, arenaClassFull, timing, initialMaxStacks, 0, 0, deterministicExternalConflicts)
 		tree = p.retryFullParseWithTokenSourceForOrigin(source, ts, initialMaxStacks, deterministicExternalConflicts, tree, fullParseRetryOriginIncremental)
 		if shouldRepeatExternalScannerFullParse(p.language, tree) {
@@ -3893,6 +3894,7 @@ func (p *Parser) guardRealShiftGap(source []byte, s *glrStack, tok Token) bool {
 // Stacks that error out are dropped. Only duplicate stack versions are
 // merged; distinct alternatives are preserved.
 func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor, oldTree *Tree, arenaClass arenaClass, timing *incrementalParseTiming, maxStacksOverride int, maxNodesOverride int, maxMergePerKeyOverride int, deterministicExternalConflicts bool) *Tree {
+	workCountAttempt := workCountBeginParseAttempt(maxStacksOverride, maxNodesOverride, maxMergePerKeyOverride)
 	parseStart := time.Now()
 	previousMemoryBudgetDiag := p.parseMemoryBudgetDiag
 	previousMemoryBudgetDiagActive := p.parseMemoryBudgetDiagActive
@@ -4339,6 +4341,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		return errorTreeWithOwnedArena(reason)
 	}
 	finalizeTree := func(tree *Tree, stopReason ParseStopReason) *Tree {
+		if workCountInstrumentationEnabled { // work-count-assembly: finalize-defer guard
+			workCountBeginFinalizeParseAttempt(workCountAttempt)
+			defer func() {
+				workCountEndFinalizeParseAttempt(workCountAttempt, stopReason, tree)
+			}()
+		}
 		if phaseTiming && parserLoopNanos == 0 {
 			parserLoopNanos = time.Since(parseStart).Nanoseconds()
 		}
@@ -4535,6 +4543,15 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 
 	stacks, maxStacksSeen = p.newInitialParseStacks(scratch, reuse, timing, len(source))
 	caps := p.configureParseCaps(source, reuse, arenaClass, scratch, maxStacksOverride, maxNodesOverride, maxMergePerKeyOverride)
+	workCountResolveParseAttempt(
+		workCountAttempt,
+		caps.maxStacks,
+		caps.retryPass,
+		caps.mergePerKeyCap,
+		caps.maxStackCullTrigger,
+		caps.maxIter,
+		caps.maxNodes,
+	)
 	maxStacks := caps.maxStacks
 	retryPass := caps.retryPass
 	mergePerKeyCap := caps.mergePerKeyCap
@@ -5009,6 +5026,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if actionIdx != 0 && int(actionIdx) < len(parseActions) {
 				actions = parseActions[actionIdx].Actions
 			}
+			workCountAddActionEntries(len(actions))
 			if phaseTiming {
 				actionLookupNanos += time.Since(actionStart).Nanoseconds()
 			}
@@ -7036,6 +7054,7 @@ func clearGLRStateTokenSource(stateful parserStateTokenSource, scratch *parserSc
 }
 
 func (p *Parser) applyExtraShiftAction(s *glrStack, currentState StateID, act ParseAction, tok Token, arena *nodeArena, scratch *parserScratch, trackChildErrors *bool) {
+	workCountRecordShift()
 	named := p.isNamedSymbol(tok.Symbol)
 	targetState := extraShiftTargetState(currentState, act)
 	isMissing := p.shiftTokenIsMissingError(tok)

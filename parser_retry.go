@@ -1522,7 +1522,7 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 	if csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree, source) {
 		return tree
 	}
-	runRetryAttempt := func(maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
+	runRetryAttempt := func(logicalRung, operationCause string, maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
 		if p != nil {
 			if retryPassLimitReached() {
 				// Budget exhausted: a nil candidate is a no-op for every
@@ -1537,6 +1537,7 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 			t0 = time.Now()
 		}
 		var result *Tree
+		workCountSetNextParseAttempt(logicalRung, operationCause)
 		if !structuralResyncRetry || p == nil || p.forceCleanRetryPass {
 			result = runRetry(maxStacks, maxMergePerKeyOverride, maxNodes)
 		} else {
@@ -1563,7 +1564,13 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 	bestTree := tree
 	if shouldRunInitialFullParseMergeRetry(tree, len(source), origin) {
 		if initialMergePerKey := fullParseRetryMergePerKeyOverride(tree, len(source), initialMaxStacks); initialMergePerKey != 0 {
-			mergeRetryTree := runRetryAttempt(initialMaxStacks, initialMergePerKey, 0)
+			mergeRetryTree := runRetryAttempt(
+				"initial_merge",
+				"initial_result_requires_merge_width",
+				initialMaxStacks,
+				initialMergePerKey,
+				0,
+			)
 			replaceBest(&bestTree, mergeRetryTree)
 			if treeParseClean(bestTree) {
 				return bestTree
@@ -1591,7 +1598,13 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 	// retry-pass-enabled retry below, preserving prior recovery behavior.
 	if maxStacksOverride > 0 && p != nil && !p.forceCleanRetryPass {
 		p.forceCleanRetryPass = true
-		cleanRetryTree := runRetryAttempt(retryMaxStacks, 0, maxNodesOverride)
+		cleanRetryTree := runRetryAttempt(
+			"clean_wide",
+			"stack_or_node_budget_requires_clean_wide",
+			retryMaxStacks,
+			0,
+			maxNodesOverride,
+		)
 		p.forceCleanRetryPass = false
 		// A clean (non-retry-pass) wider-budget parse legitimately ends on
 		// ParseStopNoStacksAlive after the winning branch reduces to the start
@@ -1607,7 +1620,13 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 			}
 			if cleanMergePerKey != 0 && !retryDeadlineExceeded() {
 				p.forceCleanRetryPass = true
-				cleanMergeTree := runRetryAttempt(retryMaxStacks, cleanMergePerKey, maxNodesOverride)
+				cleanMergeTree := runRetryAttempt(
+					"clean_wide_merge",
+					"clean_wide_result_requires_merge_width",
+					retryMaxStacks,
+					cleanMergePerKey,
+					maxNodesOverride,
+				)
 				p.forceCleanRetryPass = false
 				replaceBest(&bestTree, cleanMergeTree)
 				if !retryTreeHasError(bestTree) && retryTreeCoversExpectedEOF(bestTree) {
@@ -1633,7 +1652,13 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 			retryTree = reusableCleanWideTree
 			reusableCleanWideTree = nil
 		} else {
-			retryTree = runRetryAttempt(retryMaxStacks, 0, maxNodesOverride)
+			retryTree = runRetryAttempt(
+				"recovery_wide_or_node",
+				"stack_or_node_budget_requires_recovery_wide",
+				retryMaxStacks,
+				0,
+				maxNodesOverride,
+			)
 		}
 		// nodeRetryTree is read below for stop-reason inspection, so we hold
 		// a pointer to it without handing it through replaceBest until the
@@ -1645,7 +1670,13 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 			return bestTree
 		}
 		if extraNodeLimit := fullParseRetrySecondaryNodeLimitOverride(retryTree, len(source)); extraNodeLimit > 0 {
-			secondaryTree := runRetryAttempt(retryMaxStacks, 0, extraNodeLimit)
+			secondaryTree := runRetryAttempt(
+				"secondary_node",
+				"primary_node_retry_requires_secondary_node_budget",
+				retryMaxStacks,
+				0,
+				extraNodeLimit,
+			)
 			// Fold the primary retry into bestTree before we overwrite
 			// nodeRetryTree, so the loser's arena is returned.
 			if retryTree != nil {
@@ -1681,7 +1712,13 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 	if retryDeadlineExceeded() {
 		return bestTree
 	}
-	mergeRetryTree := runRetryAttempt(retryMaxStacks, maxMergePerKeyOverride, maxNodesOverride)
+	mergeRetryTree := runRetryAttempt(
+		"final_merge",
+		"best_retry_result_requires_merge_width",
+		retryMaxStacks,
+		maxMergePerKeyOverride,
+		maxNodesOverride,
+	)
 	// nodeRetryTree is no longer needed; drop it before potentially replacing
 	// bestTree so we don't leak it if it was also the incumbent.
 	if nodeRetryTree != nil && nodeRetryTree != bestTree && nodeRetryTree != tree {

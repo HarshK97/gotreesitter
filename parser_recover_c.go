@@ -637,6 +637,7 @@ func (p *Parser) errorCostCompetitionEnabled() bool {
 // engine's own DFA from the group position and resynchronize the custom
 // source afterwards (SkipToByte) once normal parsing resumes.
 func (p *Parser) cRecoverAcquireToken(ts TokenSource, stacks []glrStack, source []byte) Token {
+	workCountRecordLexerFrontDoor()
 	if !p.errorCostCompetitionEnabled() {
 		return ts.Next()
 	}

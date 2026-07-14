@@ -505,6 +505,7 @@ func newNoTreeLeafNodeInArena(arena *nodeArena, sym Symbol, named bool, startByt
 	} else {
 		n = arena.allocNoTreeNode()
 		arena.noTreeLeafNodesConstructed++
+		workCountRecordLeafConstruction()
 	}
 	n.symbol = sym
 	n.startByte = startByte
@@ -524,6 +525,7 @@ func newCompactCheckpointLeafInArena(arena *nodeArena, sym Symbol, named bool, s
 		n = &compactCheckpointLeaf{}
 	} else {
 		n = arena.allocCompactCheckpointLeaf()
+		workCountRecordLeafConstruction()
 	}
 	n.symbol = sym
 	n.startByte = startByte
@@ -545,6 +547,7 @@ func newCompactFullLeafInArena(arena *nodeArena, sym Symbol, named bool, startBy
 	} else {
 		n = arena.allocCompactFullLeaf()
 		arena.compactFullLeafCreated++
+		workCountRecordLeafConstruction()
 	}
 	n.symbol = sym
 	n.startByte = startByte

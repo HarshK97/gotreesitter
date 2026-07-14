@@ -397,6 +397,7 @@ func newGLRStackWithScratch(initial StateID, scratch *glrEntryScratch) glrStack 
 }
 
 func newGLRStackWithScratchCap(initial StateID, scratch *glrEntryScratch, maxInitialCap int) glrStack {
+	workCountRecordVersionCreation()
 	if scratch == nil {
 		return newGLRStack(initial)
 	}
@@ -444,6 +445,7 @@ func (s *glrStack) top() stackEntry {
 }
 
 func (s *glrStack) clone() glrStack {
+	workCountRecordVersionCreation()
 	if s.gss.head == nil && len(s.entries) > 0 {
 		entries := make([]stackEntry, len(s.entries))
 		copy(entries, s.entries)
@@ -486,6 +488,7 @@ func (s *glrStack) clone() glrStack {
 }
 
 func (s *glrStack) cloneWithScratch(scratch *gssScratch) glrStack {
+	workCountRecordVersionCreation()
 	s.ensureGSS(scratch)
 	return glrStack{
 		gss:                        s.gss.clone(),
@@ -3155,6 +3158,7 @@ func gssMainCanMergeForParser(p *Parser, a, b *glrStack) bool {
 }
 
 func tryGSSMainMergeForParser(p *Parser, a, b *glrStack) bool {
+	workCountRecordMergeAttempt()
 	if !gssMainCanMergeForParser(p, a, b) {
 		return false
 	}
@@ -3164,6 +3168,7 @@ func tryGSSMainMergeForParser(p *Parser, a, b *glrStack) bool {
 	}
 	merged := gssMainMergeWithScratch(scratch, a, b)
 	if merged {
+		workCountRecordMergeSuccess()
 		// a survives and absorbs b, so OR the sticky wreckage bit: cEverErrored
 		// is lineage history, not current shape, and a clean survivor must not
 		// shed a merged-in recovered-wreckage lineage's error history (see
@@ -4179,6 +4184,7 @@ func gssMainMergeWithScratch(scratch *glrMergeScratch, a, b *glrStack) bool {
 }
 
 func tryGSSMainMergeResult(scratch *glrMergeScratch, result []glrStack, idx int, stack *glrStack) (merged bool, attempted bool) {
+	workCountRecordMergeAttempt()
 	if idx < 0 || idx >= len(result) || stack == nil {
 		return false, false
 	}
@@ -4195,6 +4201,7 @@ func tryGSSMainMergeResult(scratch *glrMergeScratch, result []glrStack, idx int,
 	}
 	merged = gssMainMergeWithScratch(scratch, &result[idx], stack)
 	if merged {
+		workCountRecordMergeSuccess()
 		// result[idx] survives and absorbs stack, so OR the sticky wreckage bit:
 		// a clean survivor that merges a recovered-wreckage lineage must inherit
 		// its error history (see glrStack.cEverErrored / tryGSSMainMergeForParser).
