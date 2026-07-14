@@ -36,7 +36,10 @@ for tags and release notes while still in `0.x`.
   The generated 500-function source remains a straight-LR regression control;
   its former 1.895x headline and 29% materialization decomposition are
   withdrawn because the C lane used a different grammar and the source never
-  exercised the multi-stack path.
+  exercised the multi-stack path. A checked-in strict receipt driver now
+  reproduces the pinned-core Go-C-C-Go schedule; both C transports reject dirty
+  pinned-source caches, and the static lane snapshots each input once before
+  identity, parity, and timing checks.
 
 ## [0.36.0] - 2026-07-13
 

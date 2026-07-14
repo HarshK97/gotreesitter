@@ -346,8 +346,8 @@ func buildParityCRef(rootDir, cacheDir string, entry parityLockEntry) (*parityCR
 		return ref, nil
 	}
 
-	repoDir, ok := parityLocalRepoDir(entry)
-	if !ok {
+	repoDir, localRepo := parityLocalRepoDir(entry)
+	if !localRepo {
 		// Compute a temp clone destination under rootDir.
 		repoDir = filepath.Join(rootDir, "repos", paritySafeName(entry.Name))
 		commitShort := entry.Commit
@@ -365,6 +365,13 @@ func buildParityCRef(rootDir, cacheDir string, entry parityLockEntry) (*parityCR
 		} else if err := clonePinnedRepo(entry.RepoURL, entry.Commit, repoDir); err != nil {
 			return nil, fmt.Errorf("%s: clone pinned repo: %w", entry.Name, err)
 		}
+	}
+	repoKind := "pinned parity repository"
+	if localRepo {
+		repoKind = "local parity repository"
+	}
+	if err := verifyPinnedRepo(repoDir, entry.Commit); err != nil {
+		return nil, fmt.Errorf("%s: %s %s rejected: %w", entry.Name, repoKind, repoDir, err)
 	}
 
 	buildDir := filepath.Join(rootDir, "build", paritySafeName(entry.Name))
@@ -629,12 +636,69 @@ func findCachedParityRepo(cacheDir, name, commitShort string) (string, error) {
 }
 
 func clonePinnedRepoFromLocalCache(cacheRepoDir, commit, dest string) error {
+	if err := verifyPinnedRepo(cacheRepoDir, commit); err != nil {
+		return fmt.Errorf("cached parity repository %s rejected: %w", cacheRepoDir, err)
+	}
 	if err := os.MkdirAll(dest, 0o755); err != nil {
 		return err
 	}
-	// The host cache is already pinned to the requested commit, so copying it is
-	// enough and avoids Git safe.directory checks on the bind mount.
+	// The verified host cache can be copied directly. Both the bind-mounted
+	// source and copied destination are verified with a repository-scoped
+	// safe.directory setting before compilation.
 	return runCommand("", "cp", "-a", cacheRepoDir+string(filepath.Separator)+".", dest)
+}
+
+func verifyPinnedRepo(repoDir, commit string) error {
+	commit = strings.TrimSpace(commit)
+	if commit == "" {
+		return fmt.Errorf("pinned commit is empty")
+	}
+
+	head, err := parityGitOutput(repoDir, "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return fmt.Errorf("read HEAD: %w", err)
+	}
+	want, err := parityGitOutput(repoDir, "rev-parse", "--verify", commit+"^{commit}")
+	if err != nil {
+		return fmt.Errorf("resolve pinned commit %s: %w", commit, err)
+	}
+	head = strings.TrimSpace(head)
+	want = strings.TrimSpace(want)
+	if head != want {
+		return fmt.Errorf("HEAD mismatch: got %s, want pinned commit %s", head, want)
+	}
+
+	status, err := parityGitOutput(repoDir, "status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
+	if err != nil {
+		return fmt.Errorf("inspect working tree: %w", err)
+	}
+	if status = strings.TrimSpace(status); status != "" {
+		return fmt.Errorf("working tree is not clean (tracked and untracked files must match the pinned commit):\n%s", status)
+	}
+	return nil
+}
+
+func parityGitOutput(repoDir string, args ...string) (string, error) {
+	// A cache mounted into a root-owned Docker container can legitimately have a
+	// different owner. Scope safe.directory to the exact repository being
+	// verified instead of mutating global Git configuration or weakening the
+	// check for arbitrary paths.
+	gitArgs := append([]string{"-c", "safe.directory=" + repoDir, "-C", repoDir}, args...)
+	cmd := exec.Command("git", gitArgs...)
+	cmd.Env = append(
+		os.Environ(),
+		"GIT_HTTP_VERSION=HTTP/1.1",
+		"GIT_TERMINAL_PROMPT=0",
+	)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return string(out), nil
+	}
+	msg := strings.TrimSpace(string(out))
+	if msg == "" {
+		msg = err.Error()
+	}
+	return "", fmt.Errorf("git %s: %s", strings.Join(gitArgs, " "), msg)
 }
 
 func clonePinnedRepo(repoURL, commit, dest string) error {

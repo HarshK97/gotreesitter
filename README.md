@@ -378,7 +378,15 @@ They remain workload-specific; use the real-corpus perf scoreboard for
 per-language Go-vs-C claims.
 
 ```sh
-# Public full parse plus incremental API lanes:
+# Authenticated real-code Go full-parse lanes:
+GOMAXPROCS=1 go test . -run '^$' \
+  -bench '^BenchmarkGoParseWarmRealDFA$' \
+  -benchmem -count=10 -benchtime=750ms
+
+# Complete locked static-C publication receipt (clean, quiet, Docker host):
+bash cgo_harness/pure_c/run_canonical_go_full_parse.sh --core <idle-cpu>
+
+# Historical straight-LR full parse plus incremental API controls:
 GOMAXPROCS=1 go test . -run '^$' \
   -bench 'BenchmarkGoParseFullDFA|BenchmarkGoParseIncrementalSingleByteEditDFA|BenchmarkGoParseIncrementalNoEditDFA' \
   -benchmem -count=10 -benchtime=750ms

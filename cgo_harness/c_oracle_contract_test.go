@@ -140,7 +140,10 @@ func TestCOracleStaticDeepParity(t *testing.T) {
 				"oracle_linkage=runtime_and_grammar_statically_linked",
 				"oracle_binding_commit=" + identity.BindingCommit,
 				"oracle_runtime_commit=" + identity.RuntimeCommit,
+				"oracle_runtime_checkout_clean=true",
 				"oracle_grammar_commit=" + identity.GrammarCommit,
+				"oracle_grammar_checkout_clean=true",
+				"oracle_source_mode=immutable_snapshot",
 				"oracle_source_sha256=" + fixture.Fixture.SHA256,
 			} {
 				if !strings.Contains(string(out), required+"\n") {
@@ -150,6 +153,15 @@ func TestCOracleStaticDeepParity(t *testing.T) {
 			artifactSHA := oracleOutputValue(string(out), "oracle_artifact_sha256")
 			if len(artifactSHA) != 64 {
 				t.Fatalf("static C oracle artifact sha256=%q\n%s", artifactSHA, out)
+			}
+			buildKey := oracleOutputValue(string(out), "oracle_build_key_sha256")
+			if len(buildKey) != 64 {
+				t.Fatalf("static C oracle build key sha256=%q\n%s", buildKey, out)
+			}
+			for _, key := range []string{"oracle_runtime_lib_src_tree_oid", "oracle_grammar_src_tree_oid"} {
+				if oid := oracleOutputValue(string(out), key); len(oid) != 40 && len(oid) != 64 {
+					t.Fatalf("static C oracle %s=%q is not a Git object ID\n%s", key, oid, out)
+				}
 			}
 			t.Logf("source_sha256=%s deep_sha256=%s artifact_sha256=%s", fixture.Fixture.SHA256, digest, artifactSHA)
 		})

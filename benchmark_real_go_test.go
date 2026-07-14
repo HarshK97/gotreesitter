@@ -1,8 +1,11 @@
 package gotreesitter_test
 
 import (
+	"crypto/sha256"
+	_ "embed"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 
@@ -11,25 +14,39 @@ import (
 	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
 )
 
+//go:embed grammars/languages.lock
+var benchmarkLanguagesLock string
+
 // BenchmarkGoParseWarmRealDFA measures warm full-parse lifecycle cost on
 // authenticated snapshots of human-authored Go source. Fixture decompression,
 // grammar loading, parser construction, arena-pool draining, and one explicit
 // warm-up parse all happen outside the timed region. Each timed operation owns
 // and releases exactly one fully validated tree.
 func BenchmarkGoParseWarmRealDFA(b *testing.B) {
+	if err := verifyRealGoBenchmarkGrammarIdentity(); err != nil {
+		b.Fatal(err)
+	}
+	statsEnabled, err := validateRealGoBenchmarkEnvironment(os.Environ())
+	if err != nil {
+		b.Fatal(err)
+	}
 	fixtures, err := benchfixtures.LoadGoFullParseFixtures()
 	if err != nil {
 		b.Fatal(err)
 	}
-	statsEnabled := strings.TrimSpace(os.Getenv("GOT_STATS")) != ""
 	if statsEnabled {
+		b.Log("GOT_STATS enabled: diagnostic/non-publication benchmark lane")
 		gotreesitter.EnableRuntimeAudit(true)
 		defer gotreesitter.EnableRuntimeAudit(false)
 	}
 
 	for _, fixture := range fixtures {
 		fixture := fixture
-		b.Run(fixture.Fixture.ID, func(b *testing.B) {
+		name := fixture.Fixture.ID
+		if statsEnabled {
+			name += "_diagnostic_stats_nonpublication"
+		}
+		b.Run(name, func(b *testing.B) {
 			benchmarkWarmRealGoDFA(b, fixture)
 		})
 	}
@@ -41,8 +58,34 @@ func benchmarkWarmRealGoDFA(b *testing.B, fixture benchfixtures.LoadedFixture) {
 		b.Fatal(err)
 	}
 
-	gotreesitter.DrainArenaPools()
 	lang := grammars.GoLanguage()
+
+	// Deep fixture/tree admission intentionally precedes the measured warm
+	// state. Its full traversal can materialize lazy tree state and grow arena
+	// pools, so discard that state before the single shallow warm parse.
+	gotreesitter.DrainArenaPools()
+	admissionParser := gotreesitter.NewParser(lang)
+	admissionTree, err := admissionParser.Parse(fixture.Source)
+	if err != nil {
+		releaseBenchmarkTree(admissionTree)
+		b.Fatalf("%s admission parse: %v", fixture.Fixture.ID, err)
+	}
+	if err := validateRealGoBenchmarkTree(admissionTree, fixture.Source, lang); err != nil {
+		releaseBenchmarkTree(admissionTree)
+		b.Fatalf("%s admission parse: %v", fixture.Fixture.ID, err)
+	}
+	admissionDigest, err := benchfixtures.DigestGoTree(admissionTree.RootNode(), lang)
+	if err != nil {
+		releaseBenchmarkTree(admissionTree)
+		b.Fatalf("%s admission parse digest: %v", fixture.Fixture.ID, err)
+	}
+	if err := fixture.Fixture.VerifyDeepTreeDigest(admissionDigest); err != nil {
+		releaseBenchmarkTree(admissionTree)
+		b.Fatalf("%s admission parse digest: %v", fixture.Fixture.ID, err)
+	}
+	admissionTree.Release()
+
+	gotreesitter.DrainArenaPools()
 	parser := gotreesitter.NewParser(lang)
 	warmTree, err := parser.Parse(fixture.Source)
 	if err != nil {
@@ -52,15 +95,6 @@ func benchmarkWarmRealGoDFA(b *testing.B, fixture benchfixtures.LoadedFixture) {
 	if err := validateRealGoBenchmarkTree(warmTree, fixture.Source, lang); err != nil {
 		releaseBenchmarkTree(warmTree)
 		b.Fatalf("%s warm parse: %v", fixture.Fixture.ID, err)
-	}
-	warmDigest, err := benchfixtures.DigestGoTree(warmTree.RootNode(), lang)
-	if err != nil {
-		releaseBenchmarkTree(warmTree)
-		b.Fatalf("%s warm parse digest: %v", fixture.Fixture.ID, err)
-	}
-	if err := fixture.Fixture.VerifyDeepTreeDigest(warmDigest); err != nil {
-		releaseBenchmarkTree(warmTree)
-		b.Fatalf("%s warm parse digest: %v", fixture.Fixture.ID, err)
 	}
 	warmTree.Release()
 
@@ -86,6 +120,53 @@ func benchmarkWarmRealGoDFA(b *testing.B, fixture benchfixtures.LoadedFixture) {
 	}
 	b.StopTimer()
 	reportRealGoRuntime(b, lastRuntime)
+}
+
+func verifyRealGoBenchmarkGrammarIdentity() error {
+	commit, err := lockedGrammarCommit(benchmarkLanguagesLock, "go")
+	if err != nil {
+		return err
+	}
+	blob := grammars.BlobByName("go")
+	if len(blob) == 0 {
+		return fmt.Errorf("Go benchmark grammar blob is empty")
+	}
+	blobSHA256 := fmt.Sprintf("%x", sha256.Sum256(blob))
+	return benchfixtures.VerifyGoGrammarIdentity(commit, blobSHA256)
+}
+
+func lockedGrammarCommit(lock, language string) (string, error) {
+	for _, line := range strings.Split(lock, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 0 && fields[0] == language {
+			if len(fields) < 3 {
+				return "", fmt.Errorf("languages.lock row for %q has %d fields, want at least 3", language, len(fields))
+			}
+			return fields[2], nil
+		}
+	}
+	return "", fmt.Errorf("languages.lock has no row for %q", language)
+}
+
+func validateRealGoBenchmarkEnvironment(environ []string) (bool, error) {
+	statsEnabled := false
+	var forbidden []string
+	for _, entry := range environ {
+		name, value, _ := strings.Cut(entry, "=")
+		if !strings.HasPrefix(name, "GOT_") {
+			continue
+		}
+		if name == "GOT_STATS" {
+			statsEnabled = strings.TrimSpace(value) != ""
+			continue
+		}
+		forbidden = append(forbidden, name)
+	}
+	if len(forbidden) > 0 {
+		sort.Strings(forbidden)
+		return false, fmt.Errorf("publication benchmark refuses GOT_* overrides; unset %s", strings.Join(forbidden, ", "))
+	}
+	return statsEnabled, nil
 }
 
 func validateRealGoBenchmarkTree(tree *gotreesitter.Tree, source []byte, lang *gotreesitter.Language) error {
@@ -139,6 +220,9 @@ func reportRealGoRuntime(b *testing.B, rt gotreesitter.ParseRuntime) {
 }
 
 func TestGoFullParseBenchmarkFixturesParseClean(t *testing.T) {
+	if err := verifyRealGoBenchmarkGrammarIdentity(); err != nil {
+		t.Fatal(err)
+	}
 	fixtures, err := benchfixtures.LoadGoFullParseFixtures()
 	if err != nil {
 		t.Fatal(err)
@@ -165,5 +249,25 @@ func TestGoFullParseBenchmarkFixturesParseClean(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestRealGoBenchmarkPublicationEnvironment(t *testing.T) {
+	stats, err := validateRealGoBenchmarkEnvironment([]string{"PATH=/bin", "GOT_STATS=1"})
+	if err != nil || !stats {
+		t.Fatalf("diagnostic stats lane: stats=%v err=%v", stats, err)
+	}
+	if _, err := validateRealGoBenchmarkEnvironment([]string{"GOT_GLR_FOREST=0", "GOT_PARSE_NODE_LIMIT_SCALE=3"}); err == nil {
+		t.Fatal("publication environment unexpectedly admitted parser overrides")
+	}
+}
+
+func TestLockedGrammarCommit(t *testing.T) {
+	commit, err := lockedGrammarCommit("go https://example.test/go abc123 src .go\n", "go")
+	if err != nil || commit != "abc123" {
+		t.Fatalf("commit=%q err=%v", commit, err)
+	}
+	if _, err := lockedGrammarCommit("go too-short\n", "go"); err == nil {
+		t.Fatal("malformed lock row unexpectedly admitted")
 	}
 }

@@ -30,6 +30,8 @@ Usage: run_java_materialization_profiles.sh [options]
 Profile Java full-tree DFA against no-tree DFA in a bounded Docker container.
 This builds the cgo_harness test binary into the writable artifact directory,
 then captures CPU and alloc_space profiles for identical corpus settings.
+The historical corpus benchmarks use treesitter_c_bench_legacy and are not a
+publication C-oracle lane.
 
 Options:
   --repo-root <path>         Repository/worktree root mounted at /workspace
@@ -198,7 +200,7 @@ docker run "${DOCKER_ARGS[@]}" "${ENV_ARGS[@]}" "$IMAGE_TAG" bash -lc '
   set -euo pipefail
   export PATH=/usr/local/go/bin:$PATH
   cd /workspace/cgo_harness
-  go test -c -tags treesitter_c_bench -o /out/cgo_harness.test .
+  go test -c -tags treesitter_c_bench_legacy -o /out/cgo_harness.test .
 ' 2>&1 | tee "$OUT_DIR/build.log"
 
 run_profile() {

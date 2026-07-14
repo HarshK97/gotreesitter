@@ -129,6 +129,20 @@ admitting revision. Generated code is reported separately and never blended
 into the human-code headline. A pinned external-project fixture will be added
 to check repository self-reference.
 
+Produce the complete publication receipt from a clean worktree on a quiet
+Docker-capable host:
+
+```sh
+bash cgo_harness/pure_c/run_canonical_go_full_parse.sh --core <idle-cpu>
+```
+
+The driver authenticates and materializes the four snapshots, admits exact Go,
+cgo, and static-C trees, builds the locked `-O2` oracle, and collects ten
+process-isolated samples per backend and fixture in five Go-C-C-Go cycles. It
+fails closed on dirty source, parser or Go runtime overrides, noisy-host
+admission, identity drift, and incomplete receipts. Shortened or skipped gates
+require `--diagnostic` and are labeled `NONPUBLICATION_DIAGNOSTIC`.
+
 ### Diagnostic workload-regime receipt
 
 Before the static publication artifact was built, a strict-admitted quiet run
@@ -205,7 +219,8 @@ witness; memory wins that break the selected tree do not merge.
    forked and that its C lane used a different grammar. Those claims are also
    withdrawn rather than patched around.
 6. **Quiet-host discipline.** Publication runs use `GOMAXPROCS=1`, a pinned
-   core, paired ABBA samples, `-count=10`, `-benchtime=750ms`, and `-benchmem`.
+   core, ten process-isolated samples per backend and fixture in five paired
+   Go-C-C-Go cycles, at least 750 ms of internal timing, and Go `benchmem`.
    Contended-box measurements are smoke evidence only.
 
 ## Multi-workload tracking

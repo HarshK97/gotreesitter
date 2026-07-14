@@ -526,6 +526,19 @@ go test . -tags treesitter_c_bench \
   -run '^TestCOracleStaticDeepParity$' -count=1 -v
 ```
 
+From the repository root, the strict publication driver performs that
+admission, materializes the authenticated real-Go fixture matrix, calibrates
+the static C loop, and collects ten pinned-core Go-C-C-Go samples per backend
+and fixture:
+
+```sh
+bash cgo_harness/pure_c/run_canonical_go_full_parse.sh --core <idle-cpu>
+```
+
+Publication mode requires a clean worktree, a quiet Docker-capable host, and no
+parser or Go runtime tuning overrides. Short smoke runs require `--diagnostic`;
+their receipts are explicitly marked `NONPUBLICATION_DIAGNOSTIC`.
+
 ## Run Go Head-to-Head Comparison
 
 This runs both:
