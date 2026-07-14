@@ -12,19 +12,33 @@ gotreesitter trades some raw full-parse speed for portability: pure Go, no
 cgo, cross-compiles anywhere Go does (including `wasip1`), fully visible to
 `go test -race`. Editor-style incremental workloads are where it is fast
 outright — a no-edit reparse is nanoseconds and a one-byte edit is
-sub-microsecond on the canonical workload, both zero-allocation. Full parses
+microsecond-scale on the historical control, both zero-allocation. Full parses
 are ratcheted against the C runtime language-by-language with explicit
 caveats instead of averaged marketing numbers.
 
-## Canonical microbenchmark trio (generated 500-function Go file)
+## Canonical benchmark status
 
-| Lane | Benchmark | Pinned result | Receipt |
-|---|---|---|---|
-| Full parse (materialized) | `BenchmarkGoParseFullDFA` | 7.813 ms → **6.750 ms**, 100 → **30 allocs/op** | v0.26.0 |
-| One-byte incremental edit | `BenchmarkGoParseIncrementalSingleByteEditDFA` | **649 ns/op**, 0 allocs | README history |
-| No-edit reparse | `BenchmarkGoParseIncrementalNoEditDFA` | **2.43 ns/op**, 0 allocs | README history |
+The generated 500-function Go source is a historical straight-LR control. It
+contains no imports, selectors, methods, types, comments, strings, or control
+flow and never forks under the current parser. It remains useful for tracking
+the incremental fast paths and single-stack regressions, but it is not a
+representative full-parse headline.
 
-Reproduce:
+The former **1.895x C** full-parse headline and its **29% materialization**
+decomposition are withdrawn pending the locked real-code replacement below.
+The old comparison also used different Go grammar artifacts: gotreesitter used
+the project-locked 1,425-state/214-symbol grammar while the C benchmark used a
+1,404-state/212-symbol grammar bundled by the old smacker binding.
+
+Historical control results, retained as workload-specific receipts:
+
+| Lane | Benchmark | Historical result |
+|---|---|---|
+| Full parse (materialized, straight LR) | `BenchmarkGoParseFullDFA` | 10.907 ms on the pinned quiet host |
+| One-byte incremental edit | `BenchmarkGoParseIncrementalSingleByteEditDFA` | 649 ns/op, 0 allocs |
+| No-edit reparse | `BenchmarkGoParseIncrementalNoEditDFA` | 2.43 ns/op, 0 allocs |
+
+Reproduce the historical control:
 
 ```sh
 GOMAXPROCS=1 go test . -run '^$' \
@@ -36,7 +50,7 @@ GOMAXPROCS=1 go test . -run '^$' \
 materialization); its numbers are never quoted as full-parse numbers. See
 the benchmark-integrity note below.
 
-### Pinned quiet-host receipt (corrected benchmark)
+### Historical quiet-host receipt
 
 The v0.24.1 audit withdrew the pre-correction full-parse headlines pending a
 quiet-host rerun of the corrected public benchmark. First such receipt,
@@ -50,25 +64,22 @@ quiet-host rerun of the corrected public benchmark. First such receipt,
 | `BenchmarkGoParseIncrementalNoEditDFA` | 9.85 | 0 | **0** |
 | `BenchmarkGoParseCoreDFA` (diagnostic) | 8,737,000 | 996 | 6 |
 
-Wall-clock numbers are host-specific (this is a low-clock server part; do
-not compare against dev-box history). The hardware-independent figures are
-the allocation counts — 9 allocs/op for a fully materialized parse, zero for
-both incremental lanes — and the materialization attribution: full minus
-core ≈ 3.5 ms ≈ 29% of full-parse time on this host.
+Wall-clock numbers are host-specific (this is a low-clock server part; do not
+compare against dev-box history). The allocation counts remain valid for this
+fixture. The full-minus-core decomposition is not generalized beyond this
+straight-LR control.
 
 ### v0.27.0 combined receipt
 
-Same host, same pinned core, C baseline re-measured in the same session
-(5.756 ms): full parse median 10.907 ms = **1.895x C** (from 2.142x at the
-prior receipt — single-stack raw-shape elision plus supertype hidden-choice
-collapse, stacked), 9 allocs/op; one-byte edit 1.95 µs and no-edit reparse
-9.8 ns, both zero-alloc.
+Same host and pinned core, the historical full parse measured 10.907 ms and
+the mismatched-grammar C baseline measured 5.756 ms. Their former 1.895x ratio
+is recorded only to explain earlier releases; it is not a current claim.
 
-### Same-host C calibration (what makes wall-clock comparable)
+### Withdrawn same-host C calibration
 
-The C baselines (`BenchmarkCTreeSitterGoParse*`, via the go-tree-sitter cgo
-binding) were run on the same host, same pinned core, same workload,
-immediately after the Go lanes. Ratios cancel the hardware out:
+The old C baselines were run on the same host and workload, but through the
+smacker binding and its different Go grammar. Same-host scheduling does not
+repair an oracle-identity mismatch. These rows are historical only:
 
 | Lane | pure Go | cgo binding (C) | Go / C |
 |---|---|---|---|
@@ -76,21 +87,58 @@ immediately after the Go lanes. Ratios cancel the hardware out:
 | One-byte incremental edit | 1.98 µs | 331 µs | **0.006x — 167x faster** |
 | No-edit reparse | 9.9 ns | 330 µs | **~33,000x faster** |
 
-The production lane for `.go` files (`BenchmarkGoParseFull`, hand-written
-stdlib-scanner token source — the registry default for Go) measures 9.70 ms
-median on the same host: **1.70x C**, though at 2,502 allocs/op from the
-scanner bridge versus the DFA lane's 9. The published headline ratio stays
-the DFA lane (worst-case, allocation-clean, grammar-generic); the production
-Go path is faster.
+`BenchmarkGoParseFull` is also not the registry production route: built-in Go
+uses the generated DFA path, while the hand-written Go token source remains an
+explicit alternate. Its old 1.70x row is therefore withdrawn as both
+oracle-mismatched and mislabeled.
 
-Readings: the corrected, materialized full parse is ~2.1x the C runtime on
-this workload — consistent with the fleet median and honestly replacing the
-withdrawn pre-correction "faster than C" figure, which described the no-tree
-diagnostic path. The incremental comparison is against the cgo binding a Go
-program would actually use: its fixed per-call overhead (~330 µs regardless
-of edit size) is precisely the FFI toll the pure runtime does not pay, which
-is why editor-style workloads through Go favor gotreesitter by two to five
-orders of magnitude.
+## The one C oracle
+
+Every new "versus C" claim names and fingerprints the same oracle inputs:
+
+- upstream tree-sitter runtime v0.25.1, commit
+  `f5afe475deb7c0bae6407fb776c76824f717bb61`;
+- `github.com/tree-sitter/go-tree-sitter v0.25.0` wrapper commit
+  `adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3` for in-process parity;
+- tree-sitter-go commit
+  `2346a3ab1bb3857b48b29d779a1ef9799a248cd7`, from
+  `grammars/languages.lock`;
+- C runtime and grammar compiled with `-O2` into the static publication
+  artifact, with compiler identity, flags, and artifact SHA-256 in the receipt.
+
+The in-process cgo parity transport and the static throughput artifact must
+consume those same runtime and grammar sources. The former
+`treesitter_c_bench`/`treesitter_c_parity` binding split is a harness defect,
+not an accepted source of two oracles.
+
+## Canonical real-Go full-parse matrix
+
+The replacement headline uses immutable snapshots of clean, human-authored Go
+that exercise genuine GLR forking:
+
+| Fixture | Bytes | SHA-256 |
+|---|---:|---|
+| `rewrite.go` | 5,116 | `74c0705f8729670559492fb5460a01b2a1a2a109928e1aeb52736e485e8ff097` |
+| `query_compile.go` | 20,168 | `b788ee19b0075f0b9b567a9f93ea657e715bc8a6a40a99d3ca5c761404e71894` |
+| `language.go` | 41,387 | `009aa9fd5352c712f3839670c7df8a9b00ae878ee20dc88131a438b2d5edfd9a` |
+| `grammargen/lr.go` | 235,626 | `a7e4a1a64b25a60aea36183b9d6d53dcd9240942cdb10e67a3cf9e6ce30f95b2` |
+
+These reach 12-18 live stacks, thousands to tens of thousands of multi-stack
+iterations, and constructed-to-selected-node ratios of 3.65-4.47 on the
+admitting revision. Generated code is reported separately and never blended
+into the human-code headline. A pinned external-project fixture will be added
+to check repository self-reference.
+
+### Diagnostic workload-regime receipt
+
+Before the static publication artifact was built, a strict-admitted quiet run
+used the exact locked Go grammar through the existing dynamic parity loader.
+On `a5df0aa5`, ten 750 ms samples measured the synthetic at 1.0437x locked C
+and the nearly size-matched `query_compile.go` at 2.8890x. The synthetic had one
+stack and no forks or merges; the real file reached 12 stacks, 1,765 forks,
+5,216 merges, and constructed 31,847 nodes for 7,524 selected. This proves the
+workload-regime defect, not the final C ratio. Report SHA-256:
+`c6de42e12724f72393162a0a50ecb8247f97312eaaff6cb5b093746b1206b4ab`.
 
 ## Go-vs-C fleet scoreboard (full parse, real corpora)
 
@@ -137,21 +185,28 @@ witness; memory wins that break the selected tree do not merge.
 
 ## Methodology (why these numbers can be trusted)
 
-1. **Correctness and performance are separate gates.** An optimization must
-   preserve the exact selected full-span tree (byte-exact S-expression and
-   deep parity against the cgo-backed C oracle) before its timing or memory
-   result is considered. See `cgo_harness/`.
+1. **Correctness and performance are separate gates.** Before timing, every
+   fixture must be clean and full-span and must preserve exact symbol, byte and
+   point ranges, named/extra/missing flags, field ownership, and child order
+   against the locked C oracle. See `cgo_harness/`.
 2. **Ratchets, not snapshots.** Perf budgets only tighten
    (`cmd/benchgate`, `perf_scan` hard zero-cliff gate); parity exemptions
    only shrink (currently zero).
-3. **Benchmark integrity is audited.** A 2026-07-11 audit found the then-
+3. **Benchmark identity fails closed.** Fixture bytes, runtime commit, grammar
+   commit, compiler, flags, and C artifact hash are recorded. A mismatch aborts
+   admission instead of silently producing another ratio.
+4. **Lifecycle and warm state are symmetric.** Each backend receives an
+   untimed warm parse; the timed lane includes parse, first root validation,
+   and tree release/close. Cold construction/loading is measured separately.
+5. **Benchmark integrity is audited.** A 2026-07-11 audit found the then-
    canonical full-parse benchmark silently ran a no-tree diagnostic path;
    the affected headline numbers (1.54 ms / 7 allocs and successors) were
-   **withdrawn**, the benchmark was corrected to the public `Parser.Parse`
-   path, and headlines wait for pinned quiet-host reruns (v0.24.1).
-4. **Quiet-host discipline.** Contended-box measurements are recorded as
-   smoke evidence only; ratchets move on quiet, reproducible, one-language
-   runs.
+   withdrawn. A 2026-07-14 audit then found that the replacement workload never
+   forked and that its C lane used a different grammar. Those claims are also
+   withdrawn rather than patched around.
+6. **Quiet-host discipline.** Publication runs use `GOMAXPROCS=1`, a pinned
+   core, paired ABBA samples, `-count=10`, `-benchtime=750ms`, and `-benchmem`.
+   Contended-box measurements are smoke evidence only.
 
 ## Multi-workload tracking
 

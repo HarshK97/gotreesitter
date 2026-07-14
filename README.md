@@ -344,13 +344,14 @@ for _, tag := range tags {
 ## Benchmarks
 
 Canonical, linkable performance claims live in [BENCH.md](BENCH.md) — the
-pinned microbenchmark trio, the Go-vs-C fleet scoreboard, memory receipts,
-and the methodology that keeps them honest.
+real-code full-parse matrix, historical incremental controls, the Go-vs-C
+fleet scoreboard, memory receipts, and the methodology that keeps them honest.
 
-The canonical public full-parse benchmark is `BenchmarkGoParseFullDFA`. It calls
-`Parser.Parse`, requires a complete root, and releases the materialized tree.
-`BenchmarkGoParseCoreDFA` is a separate parser-loop diagnostic that suppresses
-ordinary tree materialization; its numbers are not public full-parse numbers.
+`BenchmarkGoParseFullDFA` calls `Parser.Parse`, requires a complete root, and
+releases the materialized tree. Its generated 500-function source is now a
+historical straight-LR control, not the representative full-parse headline.
+`BenchmarkGoParseCoreDFA` remains a parser-loop diagnostic that suppresses
+ordinary tree materialization.
 
 An audit on 2026-07-11 found that older versions of
 `BenchmarkGoParseFullDFA` called `ParseNoResultCompatibilityBenchmarkOnly`,
@@ -358,8 +359,18 @@ which also enabled the no-tree path. The previously published `1.54 ms`,
 `728 B/op`, and `7 allocs/op` figures—and v0.24.0's later `978 B/op` and
 `5 allocs/op` figures—therefore described parser-core diagnostics, not a full
 materialized parse. Those headline comparisons have been withdrawn. The
-corrected pinned quiet-host result is 10.907 ms, or 1.895x C, with the full
-receipt and same-host calibration in [BENCH.md](BENCH.md).
+later measured 10.907 ms on a pinned quiet host. A second audit found that this
+source never forks and that its C comparison used a different Go grammar from
+gotreesitter. The former 1.895x ratio and 29% materialization decomposition are
+therefore withdrawn rather than promoted as representative claims.
+
+The replacement canonical matrix freezes four clean, human-authored Go files
+spanning 5-236 KiB. They reach 12-18 live stacks and constructed-to-selected
+node ratios of 3.65-4.47. Admission requires exact deep parity against one
+oracle: upstream tree-sitter v0.25.1 commit `f5afe475…`, tree-sitter-go commit
+`2346a3ab…`, compiled with `-O2` into a fingerprinted static C artifact. The
+benchmark and parity lanes share those oracle sources and identity; see
+[BENCH.md](BENCH.md) for the full contract and fixture hashes.
 
 The historical incremental measurements on the same generated 500-function Go
 workload were `649 ns` for a one-byte edit and `2.43 ns` for a no-edit reparse.
@@ -674,8 +685,9 @@ published Go module tag. Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
   optimization must preserve the selected full-span tree before its timing or
   memory result is considered.
 - Hold the corrected, materialized canonical full parse at or below the pinned
-  1.895x C result. No-tree and parser-core lanes remain attribution tools, not
-  substitutes for the public benchmark.
+  new locked, real-code baseline once admitted. The historical 1.895x result
+  is not a target. No-tree, parser-core, and straight-LR lanes remain
+  attribution tools, not substitutes for the public benchmark.
 - Keep the exact-revision fleet sweep current with clean/error splits and
   C-oracle fingerprints. Eliminate valid rows above 3x and all timeout, hard-RSS,
   truncation, or unreported-stop cliffs, prioritizing absolute user cost over
@@ -685,7 +697,8 @@ published Go module tag. Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
   mechanisms that generalize across measured witnesses.
 - Track wall time, allocations, retained arena/scratch bytes, and hard-cgroup
   maximum RSS. Keep the public full-parse, incremental-edit, and incremental
-  no-edit benchmark trio canonical; no-tree measurements stay diagnostic.
+  no-edit benchmark lanes alongside the forking real-code full-parse matrix;
+  no-tree and synthetic straight-LR measurements stay diagnostic.
 - Remove temporary telemetry and failed experimental paths when each lane
   closes. Add no public parse variant or parser-core language-name switch when
   an internal diagnostic or generated runtime profile can express the need.

@@ -28,6 +28,16 @@ for tags and release notes while still in `0.x`.
   allocated bytes by 2.96%, and peak RSS by 19.02%. Caller-provided, modified,
   and same-name grammars retain the existing full-budget behavior.
 
+### Fixed
+
+- Go/C benchmark admission now uses the same locked upstream runtime and Go
+  grammar as structural parity, fingerprints the `-O2` C artifact, and times
+  immutable, clean, forking real-Go fixtures with symmetric tree lifecycles.
+  The generated 500-function source remains a straight-LR regression control;
+  its former 1.895x headline and 29% materialization decomposition are
+  withdrawn because the C lane used a different grammar and the source never
+  exercised the multi-stack path.
+
 ## [0.36.0] - 2026-07-13
 
 Parser recovery, recurring-work, grammar-contract, and browser-runtime release.
