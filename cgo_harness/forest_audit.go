@@ -15,7 +15,7 @@ import (
 const (
 	ForestCorpusManifestSchema = "forest-corpus-manifest-v2"
 	ForestAuditResultSchema    = "forest-audit-result-v2"
-	ForestAuditReportSchema    = "forest-audit-report-v3"
+	ForestAuditReportSchema    = "forest-audit-report-v4"
 )
 
 type ForestCorpusManifest struct {
@@ -225,6 +225,10 @@ func readForestAuditJSON(filePath string, value any) error {
 	if err != nil {
 		return err
 	}
+	return decodeForestAuditJSON(data, value)
+}
+
+func decodeForestAuditJSON(data []byte, value any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(value); err != nil {
@@ -234,6 +238,14 @@ func readForestAuditJSON(filePath string, value any) error {
 }
 
 func writeForestAuditJSON(filePath string, value any) error {
+	return writeForestAuditJSONMode(filePath, value, false)
+}
+
+func writeForestAuditJSONExclusive(filePath string, value any) error {
+	return writeForestAuditJSONMode(filePath, value, true)
+}
+
+func writeForestAuditJSONMode(filePath string, value any, exclusive bool) error {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
@@ -242,6 +254,27 @@ func writeForestAuditJSON(filePath string, value any) error {
 	dir := filepath.Dir(filePath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
+	}
+	if exclusive {
+		destination, err := os.OpenFile(filePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err != nil {
+			return err
+		}
+		if _, err := destination.Write(data); err != nil {
+			destination.Close()
+			_ = os.Remove(filePath)
+			return err
+		}
+		if err := destination.Sync(); err != nil {
+			destination.Close()
+			_ = os.Remove(filePath)
+			return err
+		}
+		if err := destination.Close(); err != nil {
+			_ = os.Remove(filePath)
+			return err
+		}
+		return nil
 	}
 	temp, err := os.CreateTemp(dir, ".forest-audit-*.tmp")
 	if err != nil {

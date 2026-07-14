@@ -31,6 +31,18 @@ for tags and release notes while still in `0.x`.
   wall/RSS stops kill the entire child process group. The budget and status
   tools read both schema generations while keeping v1
   historical ratchets separate from v2 full-only hard-gate verdicts.
+- Forest-routing performance screens now require fresh order-balanced
+  confirmation before promotion. Immutable content-addressed trial, run-config,
+  cohort, and index receipts bind the selected head to the recorded host
+  fingerprint, image, and single-CPU resource configuration. Failed or
+  drifting attempts remain unpublished: the runner executes the recorded image
+  digest, verifies the created container identity, and reauthenticates every
+  corpus read by manifest size and SHA-256 before timing. The reducer requires
+  locked-C coverage for every routed path, emits explicit A+B or A-B-B-A
+  plans, pools reverse-order evidence, and keeps possible C-oracle corrections
+  review-required. Repeated trials release every tree on success and negative
+  paths, complete the full corpus before the next sweep, and remain isolated
+  to one language per container.
 
 ## [0.37.0] - 2026-07-14
 

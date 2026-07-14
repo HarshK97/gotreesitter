@@ -1,8 +1,10 @@
 package cgoharness
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"math"
 	"os"
@@ -10,6 +12,74 @@ import (
 	"sort"
 	"strings"
 )
+
+const (
+	forestAuditMaxArtifactBytes = int64(64 << 20)
+	forestAuditMaxArtifacts     = 4096
+)
+
+type forestAuditArtifact struct {
+	path   string
+	data   []byte
+	schema string
+	digest string
+}
+
+func readForestAuditArtifact(filePath string) (forestAuditArtifact, error) {
+	artifact := forestAuditArtifact{path: filePath}
+	pathInfo, err := os.Lstat(filePath)
+	if err != nil {
+		return artifact, err
+	}
+	if !pathInfo.Mode().IsRegular() {
+		return artifact, fmt.Errorf("forest audit artifact %s is not a regular file", filePath)
+	}
+	if pathInfo.Size() < 1 || pathInfo.Size() > forestAuditMaxArtifactBytes {
+		return artifact, fmt.Errorf("forest audit artifact %s size %d outside 1..%d", filePath, pathInfo.Size(), forestAuditMaxArtifactBytes)
+	}
+	file, err := os.Open(filePath)
+	if err != nil {
+		return artifact, err
+	}
+	defer file.Close()
+	openInfo, err := file.Stat()
+	if err != nil {
+		return artifact, err
+	}
+	if !openInfo.Mode().IsRegular() || !os.SameFile(pathInfo, openInfo) || openInfo.Size() != pathInfo.Size() ||
+		!openInfo.ModTime().Equal(pathInfo.ModTime()) {
+		return artifact, fmt.Errorf("forest audit artifact %s changed while opening", filePath)
+	}
+	data, err := io.ReadAll(io.LimitReader(file, forestAuditMaxArtifactBytes+1))
+	if err != nil {
+		return artifact, err
+	}
+	if int64(len(data)) != openInfo.Size() {
+		return artifact, fmt.Errorf("forest audit artifact %s changed while reading", filePath)
+	}
+	afterInfo, err := os.Lstat(filePath)
+	if err != nil || !afterInfo.Mode().IsRegular() || !os.SameFile(openInfo, afterInfo) ||
+		afterInfo.Size() != openInfo.Size() || !afterInfo.ModTime().Equal(openInfo.ModTime()) {
+		return artifact, fmt.Errorf("forest audit artifact %s changed after reading", filePath)
+	}
+	var header struct {
+		Schema string `json:"schema"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return artifact, fmt.Errorf("decode forest audit schema for %s: %w", filePath, err)
+	}
+	if strings.TrimSpace(header.Schema) == "" {
+		return artifact, fmt.Errorf("forest audit artifact %s has no schema", filePath)
+	}
+	artifact.data = data
+	artifact.schema = header.Schema
+	artifact.digest = fmt.Sprintf("%x", sha256.Sum256(data))
+	return artifact, nil
+}
+
+func (artifact forestAuditArtifact) decode(value any) error {
+	return decodeForestAuditJSON(artifact.data, value)
+}
 
 const (
 	forestAuditRouteNotRun             = "not_run"
@@ -71,26 +141,34 @@ type ForestAuditResult struct {
 }
 
 type ForestAuditLanguageReport struct {
-	Language          string             `json:"language"`
-	Status            string             `json:"status"`
-	Classification    string             `json:"classification,omitempty"`
-	PromotionEligible bool               `json:"promotion_eligible"`
-	RoutedSpeedup     float64            `json:"routed_speedup,omitempty"`
-	PromotionBlockers []string           `json:"promotion_blockers,omitempty"`
-	Production        *ForestAuditResult `json:"production,omitempty"`
-	COracle           *ForestAuditResult `json:"c_oracle,omitempty"`
+	Language                 string                          `json:"language"`
+	Status                   string                          `json:"status"`
+	Classification           string                          `json:"classification,omitempty"`
+	CorrectnessRelation      string                          `json:"correctness_relation,omitempty"`
+	ScreeningEligible        bool                            `json:"screening_eligible"`
+	PromotionEligible        bool                            `json:"promotion_eligible"`
+	RoutedSpeedup            float64                         `json:"routed_speedup,omitempty"`
+	ScreenRoutedSpeedup      float64                         `json:"screen_routed_speedup,omitempty"`
+	ConfirmationStatus       string                          `json:"confirmation_status,omitempty"`
+	Confirmation             *ForestAuditConfirmationSummary `json:"confirmation,omitempty"`
+	ConfirmationCohortSHA256 string                          `json:"confirmation_cohort_sha256,omitempty"`
+	ThreeWay                 *ForestAuditThreeWayRelation    `json:"three_way,omitempty"`
+	PromotionBlockers        []string                        `json:"promotion_blockers,omitempty"`
+	Production               *ForestAuditResult              `json:"production,omitempty"`
+	COracle                  *ForestAuditResult              `json:"c_oracle,omitempty"`
 }
 
 type ForestAuditReport struct {
-	Schema               string                      `json:"schema"`
-	GotreesitterRevision string                      `json:"gotreesitter_revision"`
-	CorpusManifestSHA256 string                      `json:"corpus_manifest_sha256"`
-	CorpusLockSHA256     string                      `json:"corpus_lock_sha256"`
-	Status               string                      `json:"status"`
-	LanguagesExpected    int                         `json:"languages_expected"`
-	LanguagesComplete    int                         `json:"languages_complete"`
-	LanguagesNoCoverage  int                         `json:"languages_no_forest_coverage"`
-	Languages            []ForestAuditLanguageReport `json:"languages"`
+	Schema                  string                      `json:"schema"`
+	GotreesitterRevision    string                      `json:"gotreesitter_revision"`
+	CorpusManifestSHA256    string                      `json:"corpus_manifest_sha256"`
+	CorpusLockSHA256        string                      `json:"corpus_lock_sha256"`
+	ConfirmationIndexSHA256 string                      `json:"confirmation_index_sha256,omitempty"`
+	Status                  string                      `json:"status"`
+	LanguagesExpected       int                         `json:"languages_expected"`
+	LanguagesComplete       int                         `json:"languages_complete"`
+	LanguagesNoCoverage     int                         `json:"languages_no_forest_coverage"`
+	Languages               []ForestAuditLanguageReport `json:"languages"`
 }
 
 func NewForestAuditResult(mode, revision, manifestPath, lockSHA, language string) (ForestAuditResult, error) {
@@ -116,7 +194,33 @@ func WriteForestAuditResult(path string, result ForestAuditResult) error {
 	return writeForestAuditJSON(path, result)
 }
 
+func PublishForestAuditResult(resultsRoot, stagedPath string) (string, error) {
+	artifact, err := readForestAuditArtifact(stagedPath)
+	if err != nil {
+		return "", err
+	}
+	if artifact.schema != ForestAuditResultSchema {
+		return "", fmt.Errorf("forest audit result schema %q", artifact.schema)
+	}
+	var result ForestAuditResult
+	if err := artifact.decode(&result); err != nil {
+		return "", err
+	}
+	if err := validateForestAuditResult(result); err != nil {
+		return "", err
+	}
+	target := filepath.Join(resultsRoot, result.Mode, result.Language+".json")
+	if err := copyForestAuditArtifactExclusive(target, artifact.data); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
 func ReduceForestAuditResults(manifestPath, resultsRoot string) (ForestAuditReport, error) {
+	return ReduceForestAuditResultsWithConfirmations(manifestPath, resultsRoot, "")
+}
+
+func ReduceForestAuditResultsWithConfirmations(manifestPath, resultsRoot, confirmationIndexPath string) (ForestAuditReport, error) {
 	reduction, err := newForestAuditReduction(manifestPath)
 	if err != nil {
 		return ForestAuditReport{}, err
@@ -124,31 +228,52 @@ func ReduceForestAuditResults(manifestPath, resultsRoot string) (ForestAuditRepo
 	if err := reduction.loadResults(resultsRoot); err != nil {
 		return ForestAuditReport{}, err
 	}
+	if confirmationIndexPath != "" {
+		if err := reduction.loadConfirmationIndex(resultsRoot, confirmationIndexPath); err != nil {
+			return ForestAuditReport{}, err
+		}
+	}
+	if err := reduction.validateConfirmationEvidence(); err != nil {
+		return ForestAuditReport{}, err
+	}
 	return reduction.report(), nil
 }
 
 type forestAuditReduction struct {
-	manifestDigest string
-	manifest       ForestCorpusManifest
-	languages      []string
-	manifestFiles  map[string]map[string]ForestCorpusManifestFile
-	results        map[string]map[string]*ForestAuditResult
+	manifestDigest          string
+	manifest                ForestCorpusManifest
+	languages               []string
+	manifestFiles           map[string]map[string]ForestCorpusManifestFile
+	results                 map[string]map[string]*ForestAuditResult
+	confirmations           map[string]map[string]ForestAuditConfirmationTrial
+	runConfigs              map[string]ForestAuditRunConfig
+	confirmationCohorts     map[string]string
+	confirmationIndexDigest string
 }
 
 func newForestAuditReduction(manifestPath string) (*forestAuditReduction, error) {
-	manifest, err := decodeForestCorpusManifest(manifestPath)
+	artifact, err := readForestAuditArtifact(manifestPath)
 	if err != nil {
 		return nil, err
 	}
-	digest, err := forestFileSHA256(manifestPath)
-	if err != nil {
+	if artifact.schema != ForestCorpusManifestSchema {
+		return nil, fmt.Errorf("forest corpus manifest schema %q, want %q", artifact.schema, ForestCorpusManifestSchema)
+	}
+	var manifest ForestCorpusManifest
+	if err := artifact.decode(&manifest); err != nil {
+		return nil, fmt.Errorf("decode forest corpus manifest: %w", err)
+	}
+	if err := validateForestCorpusManifestMetadata(manifest); err != nil {
 		return nil, err
 	}
 	reduction := &forestAuditReduction{
-		manifestDigest: digest,
-		manifest:       manifest,
-		manifestFiles:  make(map[string]map[string]ForestCorpusManifestFile),
-		results:        make(map[string]map[string]*ForestAuditResult),
+		manifestDigest:      artifact.digest,
+		manifest:            manifest,
+		manifestFiles:       make(map[string]map[string]ForestCorpusManifestFile),
+		results:             make(map[string]map[string]*ForestAuditResult),
+		confirmations:       make(map[string]map[string]ForestAuditConfirmationTrial),
+		runConfigs:          make(map[string]ForestAuditRunConfig),
+		confirmationCohorts: make(map[string]string),
 	}
 	for _, file := range manifest.Files {
 		if reduction.manifestFiles[file.Language] == nil {
@@ -162,48 +287,61 @@ func newForestAuditReduction(manifestPath string) (*forestAuditReduction, error)
 }
 
 func (reduction *forestAuditReduction) loadResults(resultsRoot string) error {
+	artifactCount := 0
 	return filepath.WalkDir(resultsRoot, func(filePath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+		if entry.IsDir() {
+			rel, err := filepath.Rel(resultsRoot, filePath)
+			if err != nil {
+				return err
+			}
+			if filepath.ToSlash(rel) == "confirmation" {
+				return filepath.SkipDir
+			}
 			return nil
 		}
-		isReport, err := forestAuditFileIsReport(filePath)
+		if !strings.HasSuffix(entry.Name(), ".json") {
+			return nil
+		}
+		artifactCount++
+		if artifactCount > forestAuditMaxArtifacts {
+			return fmt.Errorf("forest audit bundle exceeds %d JSON artifacts", forestAuditMaxArtifacts)
+		}
+		artifact, err := readForestAuditArtifact(filePath)
 		if err != nil {
 			return err
 		}
-		if isReport {
+		switch artifact.schema {
+		case ForestAuditReportSchema, "forest-audit-report-v3", "forest-audit-report-v2":
 			return nil
+		case ForestAuditResultSchema:
+			return reduction.admitResult(artifact, resultsRoot)
+		default:
+			return fmt.Errorf("unsupported forest audit schema %q in %s", artifact.schema, filePath)
 		}
-		return reduction.admitResult(filePath)
 	})
 }
 
-func forestAuditFileIsReport(filePath string) (bool, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return false, err
-	}
-	var header struct {
-		Schema string `json:"schema"`
-	}
-	if err := json.Unmarshal(data, &header); err != nil {
-		return false, nil
-	}
-	return header.Schema == ForestAuditReportSchema || header.Schema == "forest-audit-report-v2", nil
-}
-
-func (reduction *forestAuditReduction) admitResult(filePath string) error {
+func (reduction *forestAuditReduction) admitResult(artifact forestAuditArtifact, resultsRoot string) error {
 	var result ForestAuditResult
-	if err := readForestAuditJSON(filePath, &result); err != nil {
-		return fmt.Errorf("read result %s: %w", filePath, err)
+	if err := artifact.decode(&result); err != nil {
+		return fmt.Errorf("read result %s: %w", artifact.path, err)
 	}
 	if err := validateForestAuditResult(result); err != nil {
-		return fmt.Errorf("validate result %s: %w", filePath, err)
+		return fmt.Errorf("validate result %s: %w", artifact.path, err)
 	}
 	if err := reduction.validateResultIdentity(result); err != nil {
-		return fmt.Errorf("result %s: %w", filePath, err)
+		return fmt.Errorf("result %s: %w", artifact.path, err)
+	}
+	rel, err := filepath.Rel(resultsRoot, artifact.path)
+	if err != nil {
+		return err
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) != 2 || parts[0] != result.Mode || parts[1] != result.Language+".json" {
+		return fmt.Errorf("result %s is outside %s/<language>.json layout", artifact.path, result.Mode)
 	}
 	if reduction.results[result.Language] == nil {
 		reduction.results[result.Language] = make(map[string]*ForestAuditResult)
@@ -231,12 +369,13 @@ func (reduction *forestAuditReduction) validateResultIdentity(result ForestAudit
 
 func (reduction *forestAuditReduction) report() ForestAuditReport {
 	report := ForestAuditReport{
-		Schema:               ForestAuditReportSchema,
-		GotreesitterRevision: reduction.manifest.GotreesitterRevision,
-		CorpusManifestSHA256: reduction.manifestDigest,
-		CorpusLockSHA256:     reduction.manifest.CorpusLock.SHA256,
-		Status:               "pass",
-		LanguagesExpected:    len(reduction.languages),
+		Schema:                  ForestAuditReportSchema,
+		GotreesitterRevision:    reduction.manifest.GotreesitterRevision,
+		CorpusManifestSHA256:    reduction.manifestDigest,
+		CorpusLockSHA256:        reduction.manifest.CorpusLock.SHA256,
+		ConfirmationIndexSHA256: reduction.confirmationIndexDigest,
+		Status:                  "pass",
+		LanguagesExpected:       len(reduction.languages),
 	}
 	for _, language := range reduction.languages {
 		row := reduction.languageReport(language)
@@ -254,11 +393,13 @@ func (reduction *forestAuditReduction) report() ForestAuditReport {
 
 func (reduction *forestAuditReduction) languageReport(language string) ForestAuditLanguageReport {
 	row := ForestAuditLanguageReport{Language: language, Status: "incomplete"}
+	row.ConfirmationCohortSHA256 = reduction.confirmationCohorts[language]
 	row.Production = reduction.results[language]["production"]
 	row.COracle = reduction.results[language]["c_oracle"]
 	row.PromotionBlockers = forestPromotionBlockers(row.Production, row.COracle)
 	if row.Production != nil && row.Production.RoutedNanos > 0 {
 		row.RoutedSpeedup = float64(row.Production.PeerNanos) / float64(row.Production.RoutedNanos)
+		row.ScreenRoutedSpeedup = row.RoutedSpeedup
 	}
 	if row.Production == nil && forestCOracleProvesNoCoverage(row.COracle) {
 		row.Status = "pass"
@@ -269,12 +410,84 @@ func (reduction *forestAuditReduction) languageReport(language string) ForestAud
 	if row.Production == nil || row.COracle == nil {
 		return row
 	}
+	row.CorrectnessRelation, row.ThreeWay = forestAuditCorrectnessRelation(row.Production, row.COracle)
+	if row.CorrectnessRelation == forestAuditRelationOracleCorrectionReview {
+		row.Status = "incomplete"
+		row.ConfirmationStatus = forestAuditRelationOracleCorrectionReview
+		row.PromotionBlockers = []string{forestAuditRelationOracleCorrectionReview}
+		return row
+	}
 	row.Status = "pass"
-	if row.Production.Status != "pass" || row.COracle.Status != "pass" {
+	if row.Production.Status != "pass" || row.COracle.Status != "pass" || row.CorrectnessRelation != forestAuditRelationProductionIdentity {
 		row.Status = "fail"
 	}
-	row.PromotionEligible = row.Status == "pass" && len(row.PromotionBlockers) == 0
+	baseBlockers := forestPromotionBlockers(row.Production, row.COracle)
+	row.ScreeningEligible = row.Status == "pass" && len(baseBlockers) == 0
+	row.PromotionBlockers = baseBlockers
+	if !row.ScreeningEligible {
+		return row
+	}
+	confirmation := summarizeForestAuditConfirmations(reduction.confirmations[language])
+	row.Confirmation = &confirmation
+	row.ConfirmationStatus = confirmation.Status
+	if confirmation.Status == forestAuditConfirmationConfirmed {
+		row.PromotionEligible = true
+		row.PromotionBlockers = nil
+	} else {
+		row.PromotionBlockers = append(row.PromotionBlockers, confirmation.Status)
+		if confirmation.Status != forestAuditConfirmationNeutral {
+			row.Status = "incomplete"
+		}
+	}
 	return row
+}
+
+func forestAuditCorrectnessRelation(production, cOracle *ForestAuditResult) (string, *ForestAuditThreeWayRelation) {
+	if production == nil || cOracle == nil {
+		return "", nil
+	}
+	if production.FilesDiverged == 0 && production.FilesRoutedDiverged == 0 {
+		return forestAuditRelationProductionIdentity, nil
+	}
+	paths, ok := forestPotentialOracleCorrectionPaths(production, cOracle)
+	if ok {
+		return forestAuditRelationOracleCorrectionReview, &ForestAuditThreeWayRelation{
+			Classification:   forestAuditRelationOracleCorrectionReview,
+			Paths:            paths,
+			EvidenceComplete: false,
+		}
+	}
+	return forestAuditRelationUnresolvedDivergence, &ForestAuditThreeWayRelation{
+		Classification:   forestAuditRelationUnresolvedDivergence,
+		EvidenceComplete: false,
+	}
+}
+
+func forestPotentialOracleCorrectionPaths(production, cOracle *ForestAuditResult) ([]string, bool) {
+	if production == nil || cOracle == nil || cOracle.Status != "pass" || production.FilesRoutedDiverged == 0 {
+		return nil, false
+	}
+	oracleByPath := make(map[string]ForestAuditFileResult, len(cOracle.Files))
+	for _, file := range cOracle.Files {
+		oracleByPath[file.Path] = file
+	}
+	var paths []string
+	for _, file := range production.Files {
+		if file.RoutedDiff == "" && file.Diff == "" {
+			continue
+		}
+		oracle, ok := oracleByPath[file.Path]
+		if !ok || oracle.Disposition != "accepted" || oracle.Diff != "" ||
+			file.RoutedProvenance != forestAuditRouteForestFastPath || !file.Routed.Accepted || !file.Forest.Accepted {
+			return nil, false
+		}
+		paths = append(paths, file.Path)
+	}
+	if len(paths) == 0 {
+		return nil, false
+	}
+	sort.Strings(paths)
+	return paths, true
 }
 
 func forestPromotionBlockers(production, cOracle *ForestAuditResult) []string {
@@ -287,6 +500,9 @@ func forestPromotionBlockers(production, cOracle *ForestAuditResult) []string {
 		}
 		if production.FilesRoutedDiverged > 0 {
 			blockers = append(blockers, "routed_divergence")
+		}
+		if production.FilesRoutedForest == 0 {
+			blockers = append(blockers, "no_routed_forest_coverage")
 		}
 		if !production.RoutedImproved {
 			blockers = append(blockers, "routed_not_faster")
@@ -351,6 +567,21 @@ func mergeForestAuditReportStatus(current, next string) string {
 
 func WriteForestAuditReport(path string, report ForestAuditReport) error {
 	return writeForestAuditJSON(path, report)
+}
+
+func ReadForestAuditReport(path string) (ForestAuditReport, error) {
+	var report ForestAuditReport
+	artifact, err := readForestAuditArtifact(path)
+	if err != nil {
+		return report, err
+	}
+	if err := artifact.decode(&report); err != nil {
+		return report, err
+	}
+	if report.Schema != ForestAuditReportSchema {
+		return report, fmt.Errorf("forest audit report schema %q, want %q", report.Schema, ForestAuditReportSchema)
+	}
+	return report, nil
 }
 
 func validateForestAuditResult(result ForestAuditResult) error {

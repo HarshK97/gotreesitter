@@ -165,17 +165,21 @@ func runForestCOracleAudit(t *testing.T, name string, lang *gts.Language, cLang 
 }
 
 func (audit *forestCOracleAudit) evaluateFile(filePath string) {
-	src, err := os.ReadFile(filePath)
-	if err != nil {
-		audit.t.Errorf("%s: read %s: %v", audit.name, filePath, err)
-		return
-	}
-	audit.total++
 	meta, ok := audit.metadata[filePath]
 	if !ok {
 		audit.t.Errorf("%s: authenticated metadata missing for %s", audit.name, filePath)
 		return
 	}
+	src, err := os.ReadFile(filePath)
+	if err != nil {
+		audit.t.Errorf("%s: read %s: %v", audit.name, filePath, err)
+		return
+	}
+	if err := validateForestAuditSourceIdentity(src, meta); err != nil {
+		audit.t.Errorf("%s: authenticated source drift for %s before C-oracle parse: %v", audit.name, filePath, err)
+		return
+	}
+	audit.total++
 	notRun := forestAuditNotRunOutcome(src)
 	fileResult := ForestAuditFileResult{
 		Path: meta.Path, Bytes: meta.Bytes, SHA256: meta.SHA256,
