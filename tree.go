@@ -3663,19 +3663,8 @@ func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta, colDelta in
 		}
 		n.startByte = addUint32Delta(n.startByte, byteDelta)
 		n.endByte = addUint32Delta(n.endByte, byteDelta)
-		// Shift points approximately (row stays, col shifts if same row).
-		if n.startPoint.Row == edit.OldEndPoint.Row {
-			n.startPoint.Row = addUint32Delta(n.startPoint.Row, rowDelta)
-			if rowDelta == 0 {
-				n.startPoint.Column = addUint32Delta(n.startPoint.Column, colDelta)
-			}
-		}
-		if n.endPoint.Row == edit.OldEndPoint.Row {
-			n.endPoint.Row = addUint32Delta(n.endPoint.Row, rowDelta)
-			if rowDelta == 0 {
-				n.endPoint.Column = addUint32Delta(n.endPoint.Column, colDelta)
-			}
-		}
+		n.startPoint = shiftPointAfterEdit(n.startPoint, edit, rowDelta)
+		n.endPoint = shiftPointAfterEdit(n.endPoint, edit, rowDelta)
 		shiftNodeChildrenAfterEdit(n, edit, byteDelta, rowDelta, colDelta, shiftScratch)
 		return
 	}
@@ -3692,6 +3681,7 @@ func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta, colDelta in
 	} else {
 		// Node extends past the edit — adjust end.
 		n.endByte = addUint32Delta(n.endByte, byteDelta)
+		n.endPoint = shiftPointAfterEdit(n.endPoint, edit, rowDelta)
 	}
 
 	// Recurse only into children that can be affected.
@@ -3759,7 +3749,9 @@ func editStackEntryWithDelta(arena *nodeArena, entry stackEntry, edit InputEdit,
 	if stackEntryNodeEndByte(entry) <= edit.OldEndByte {
 		setStackEntryEnd(entry, edit.NewEndByte, edit.NewEndPoint)
 	} else {
-		setStackEntryEndByte(entry, addUint32Delta(stackEntryNodeEndByte(entry), byteDelta))
+		setStackEntryEnd(entry,
+			addUint32Delta(stackEntryNodeEndByte(entry), byteDelta),
+			shiftPointAfterEdit(stackEntryNodeEndPoint(entry), edit, rowDelta))
 	}
 
 	parent := stackEntryPendingParent(entry)
@@ -3881,18 +3873,8 @@ func shiftSubtreeAfterEdit(roots []*Node, edit InputEdit, byteDelta, rowDelta, c
 		n.startByte = addUint32Delta(n.startByte, byteDelta)
 		n.endByte = addUint32Delta(n.endByte, byteDelta)
 
-		if n.startPoint.Row == edit.OldEndPoint.Row {
-			n.startPoint.Row = addUint32Delta(n.startPoint.Row, rowDelta)
-			if rowDelta == 0 {
-				n.startPoint.Column = addUint32Delta(n.startPoint.Column, colDelta)
-			}
-		}
-		if n.endPoint.Row == edit.OldEndPoint.Row {
-			n.endPoint.Row = addUint32Delta(n.endPoint.Row, rowDelta)
-			if rowDelta == 0 {
-				n.endPoint.Column = addUint32Delta(n.endPoint.Column, colDelta)
-			}
-		}
+		n.startPoint = shiftPointAfterEdit(n.startPoint, edit, rowDelta)
+		n.endPoint = shiftPointAfterEdit(n.endPoint, edit, rowDelta)
 
 		if !nodeHasFinalChildRefs(n) {
 			stack = append(stack, n.children...)
@@ -3958,8 +3940,8 @@ func shiftCompactFullLeafAfterEdit(n *compactFullLeaf, edit InputEdit, byteDelta
 		return
 	}
 	shiftNoTreeNodeAfterEdit(&n.noTreeNode, byteDelta)
-	n.startPoint = shiftPointAfterEdit(n.startPoint, edit, rowDelta, colDelta)
-	n.endPoint = shiftPointAfterEdit(n.endPoint, edit, rowDelta, colDelta)
+	n.startPoint = shiftPointAfterEdit(n.startPoint, edit, rowDelta)
+	n.endPoint = shiftPointAfterEdit(n.endPoint, edit, rowDelta)
 }
 
 func shiftPendingParentAfterEdit(arena *nodeArena, n *pendingParent, edit InputEdit, byteDelta, rowDelta, colDelta int64) {
@@ -3967,8 +3949,8 @@ func shiftPendingParentAfterEdit(arena *nodeArena, n *pendingParent, edit InputE
 		return
 	}
 	shiftNoTreeNodeAfterEdit(&n.noTreeNode, byteDelta)
-	n.startPoint = shiftPointAfterEdit(n.startPoint, edit, rowDelta, colDelta)
-	n.endPoint = shiftPointAfterEdit(n.endPoint, edit, rowDelta, colDelta)
+	n.startPoint = shiftPointAfterEdit(n.startPoint, edit, rowDelta)
+	n.endPoint = shiftPointAfterEdit(n.endPoint, edit, rowDelta)
 	childCount := n.childEntryCount()
 	for i := 0; i < childCount; i++ {
 		child := n.childEntry(arena, i)
@@ -3982,14 +3964,16 @@ func shiftPendingParentAfterEdit(arena *nodeArena, n *pendingParent, edit InputE
 	}
 }
 
-func shiftPointAfterEdit(p Point, edit InputEdit, rowDelta, colDelta int64) Point {
-	if p.Row != edit.OldEndPoint.Row {
+func shiftPointAfterEdit(p Point, edit InputEdit, rowDelta int64) Point {
+	if p.Row < edit.OldEndPoint.Row {
+		return p
+	}
+	if p.Row > edit.OldEndPoint.Row {
+		p.Row = addUint32Delta(p.Row, rowDelta)
 		return p
 	}
 	p.Row = addUint32Delta(p.Row, rowDelta)
-	if rowDelta == 0 {
-		p.Column = addUint32Delta(p.Column, colDelta)
-	}
+	p.Column = addUint32Delta(edit.NewEndPoint.Column, int64(p.Column)-int64(edit.OldEndPoint.Column))
 	return p
 }
 

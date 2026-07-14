@@ -1015,6 +1015,83 @@ func TestTreeChangedRanges(t *testing.T) {
 	}
 }
 
+func TestTreeEditShiftsPointsAfterMultilineInsertion(t *testing.T) {
+	left := NewLeafNode(Symbol(1), true, 0, 1, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 1})
+	right := NewLeafNode(Symbol(2), true, 2, 3, Point{Row: 1, Column: 0}, Point{Row: 1, Column: 1})
+	root := NewParentNode(Symbol(3), true, []*Node{left, right}, nil, 0)
+	tree := NewTree(root, []byte("a\nb"), testLanguage())
+
+	tree.Edit(InputEdit{
+		StartByte:   1,
+		OldEndByte:  1,
+		NewEndByte:  3,
+		StartPoint:  Point{Row: 0, Column: 1},
+		OldEndPoint: Point{Row: 0, Column: 1},
+		NewEndPoint: Point{Row: 1, Column: 0},
+	})
+
+	if got, want := root.EndPoint(), (Point{Row: 2, Column: 1}); got != want {
+		t.Fatalf("root EndPoint = %+v, want %+v", got, want)
+	}
+	if got, want := right.StartPoint(), (Point{Row: 2, Column: 0}); got != want {
+		t.Fatalf("right StartPoint = %+v, want %+v", got, want)
+	}
+	if got, want := right.EndPoint(), (Point{Row: 2, Column: 1}); got != want {
+		t.Fatalf("right EndPoint = %+v, want %+v", got, want)
+	}
+
+	left = NewLeafNode(Symbol(1), true, 0, 3, Point{Row: 0, Column: 0}, Point{Row: 1, Column: 1})
+	right = NewLeafNode(Symbol(2), true, 3, 4, Point{Row: 1, Column: 1}, Point{Row: 1, Column: 2})
+	last := NewLeafNode(Symbol(3), true, 5, 6, Point{Row: 2, Column: 0}, Point{Row: 2, Column: 1})
+	root = NewParentNode(Symbol(4), true, []*Node{left, right, last}, nil, 0)
+	tree = NewTree(root, []byte("a\nxy\nz"), testLanguage())
+
+	tree.Edit(InputEdit{
+		StartByte:   3,
+		OldEndByte:  3,
+		NewEndByte:  4,
+		StartPoint:  Point{Row: 1, Column: 1},
+		OldEndPoint: Point{Row: 1, Column: 1},
+		NewEndPoint: Point{Row: 2, Column: 0},
+	})
+
+	if got, want := root.EndPoint(), (Point{Row: 3, Column: 1}); got != want {
+		t.Fatalf("multiline root EndPoint = %+v, want %+v", got, want)
+	}
+	if got, want := right.StartPoint(), (Point{Row: 2, Column: 0}); got != want {
+		t.Fatalf("same-row tail StartPoint = %+v, want %+v", got, want)
+	}
+	if got, want := last.StartPoint(), (Point{Row: 3, Column: 0}); got != want {
+		t.Fatalf("later-row tail StartPoint = %+v, want %+v", got, want)
+	}
+}
+
+func TestEditStackEntryShiftsMultilineEndPoint(t *testing.T) {
+	leaf := &compactFullLeaf{
+		noTreeNode: noTreeNode{startByte: 0, endByte: 6},
+		startPoint: Point{Row: 0, Column: 0},
+		endPoint:   Point{Row: 2, Column: 1},
+	}
+	entry := newStackEntryCompactFullLeaf(0, leaf)
+	edit := InputEdit{
+		StartByte:   3,
+		OldEndByte:  3,
+		NewEndByte:  4,
+		StartPoint:  Point{Row: 1, Column: 1},
+		OldEndPoint: Point{Row: 1, Column: 1},
+		NewEndPoint: Point{Row: 2, Column: 0},
+	}
+	var scratch []*Node
+	editStackEntryWithDelta(nil, entry, edit, 1, 1, -1, true, &scratch, nil)
+
+	if got, want := stackEntryNodeEndByte(entry), uint32(7); got != want {
+		t.Fatalf("compact entry EndByte = %d, want %d", got, want)
+	}
+	if got, want := stackEntryNodeEndPoint(entry), (Point{Row: 3, Column: 1}); got != want {
+		t.Fatalf("compact entry EndPoint = %+v, want %+v", got, want)
+	}
+}
+
 func TestNodeEditFromSubnodeMutatesContainingRoot(t *testing.T) {
 	left := NewLeafNode(Symbol(1), true, 0, 3, Point{Row: 0, Column: 0}, Point{Row: 0, Column: 3})
 	right := NewLeafNode(Symbol(2), true, 3, 6, Point{Row: 0, Column: 3}, Point{Row: 0, Column: 6})
