@@ -173,6 +173,25 @@ func TestRewriteOverlappingInsertionsError(t *testing.T) {
 	}
 }
 
+func TestRewriteInvalidRangeReturnsError(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		start, end uint32
+	}{
+		{name: "end beyond source", start: 0, end: 6},
+		{name: "start beyond source", start: 6, end: 6},
+		{name: "reversed range", start: 4, end: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rw := NewRewriter([]byte("hello"))
+			rw.ReplaceRange(tc.start, tc.end, []byte("x"))
+			if _, _, err := rw.Apply(); err == nil {
+				t.Fatal("Apply() succeeded for an invalid range")
+			}
+		})
+	}
+}
+
 func TestRewriteAdjacentEdits(t *testing.T) {
 	source := []byte("abcdef")
 
