@@ -50,6 +50,14 @@ func WithTaggerTokenSourceFactory(factory func(source []byte) TokenSource) Tagge
 	}
 }
 
+// WithTaggerTimeoutMicros bounds every full and incremental parse performed
+// by the tagger. A value of zero disables timeout checks.
+func WithTaggerTimeoutMicros(timeoutMicros uint64) TaggerOption {
+	return func(tagger *Tagger) {
+		tagger.parser.SetTimeoutMicros(timeoutMicros)
+	}
+}
+
 // NewTagger creates a Tagger for the given language and tags query.
 func NewTagger(lang *Language, tagsQuery string, opts ...TaggerOption) (*Tagger, error) {
 	q, err := NewQuery(tagsQuery, lang)

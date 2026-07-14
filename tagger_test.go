@@ -2,6 +2,16 @@ package gotreesitter
 
 import "testing"
 
+func TestTaggerTimeoutOptionConfiguresParser(t *testing.T) {
+	tagger, err := NewTagger(queryTestLanguage(), "", WithTaggerTimeoutMicros(54_321))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tagger.parser.TimeoutMicros(); got != 54_321 {
+		t.Fatalf("timeout = %d, want 54321", got)
+	}
+}
+
 func TestTaggerBasic(t *testing.T) {
 	lang := queryTestLanguage()
 

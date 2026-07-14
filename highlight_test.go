@@ -4,6 +4,16 @@ import (
 	"testing"
 )
 
+func TestHighlighterTimeoutOptionConfiguresParser(t *testing.T) {
+	highlighter, err := NewHighlighter(queryTestLanguage(), "", WithHighlighterTimeoutMicros(12_345))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := highlighter.parser.TimeoutMicros(); got != 12_345 {
+		t.Fatalf("timeout = %d, want 12345", got)
+	}
+}
+
 // --------------------------------------------------------------------------
 // Unit tests with hand-built trees
 // --------------------------------------------------------------------------

@@ -57,6 +57,14 @@ func WithTokenSourceFactory(factory func(source []byte) TokenSource) Highlighter
 	}
 }
 
+// WithHighlighterTimeoutMicros bounds every full and incremental parse
+// performed by the highlighter. A value of zero disables timeout checks.
+func WithHighlighterTimeoutMicros(timeoutMicros uint64) HighlighterOption {
+	return func(h *Highlighter) {
+		h.parser.SetTimeoutMicros(timeoutMicros)
+	}
+}
+
 // NewHighlighter creates a Highlighter for the given language and highlight
 // query (in tree-sitter .scm format). Returns an error if the query fails
 // to compile.
