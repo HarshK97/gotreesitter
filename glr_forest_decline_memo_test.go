@@ -240,14 +240,13 @@ func TestForestDeclineMemoWarmSemanticDeclineMatchesProduction(t *testing.T) {
 	}
 
 	parser.forestDeclineReason = ""
-	forestLastDeclineReason = ""
 	warm, err := parser.Parse(bytes.Clone(source))
 	if err != nil || warm == nil || warm.RootNode() == nil {
 		t.Fatalf("warm automatic parse: tree_nil=%t err=%v", warm == nil, err)
 	}
 	defer warm.Release()
-	if parser.forestDeclineReason != "" || forestLastDeclineReason != "" {
-		t.Fatalf("warm parse entered forest: parser_reason=%q global_reason=%q", parser.forestDeclineReason, forestLastDeclineReason)
+	if parser.forestDeclineReason != "" {
+		t.Fatalf("warm parse entered forest: parser_reason=%q", parser.forestDeclineReason)
 	}
 	if got := warm.RootNode().SExpr(lang); got != wantSExpr {
 		t.Fatalf("warm tree differs from production\n got: %s\nwant: %s", got, wantSExpr)

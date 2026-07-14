@@ -34,16 +34,17 @@ func TestBuiltinExternalScannerRetryProfilesAttach(t *testing.T) {
 }
 
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	// 24 = the prior 19 plus D and Groovy, whose retry ceilings moved out of
+	// 26 = the prior 19 plus D and Groovy, whose retry ceilings moved out of
 	// parser-core name switches and onto exact-blob profiles. The prior gomod
 	// and C additions moved hardcoded compat-tier behavior to profiles. Meson
 	// and Enforce add two exact-blob retry policies. JavaScript adds one
 	// exact-blob automatic-forest memory allowance. The
 	// repetition-conflict helpers were retired in favor of certified
-	// ConflictPolicies rows here. dot's helper was
+	// ConflictPolicies rows here. AWK and Uxntal add exact-blob automatic forest
+	// routing; KDL reuses its existing retry profile. dot's helper was
 	// retired outright, not migrated (see the "NOTE on dot" comment above
 	// the gomod entry), so it does not add a map entry.
-	if got, want := len(builtinLanguageRuntimeProfiles), 24; got != want {
+	if got, want := len(builtinLanguageRuntimeProfiles), 26; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -58,6 +59,42 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	}
 	if got := lang.AutomaticForestMemoryAllowanceBytes; got != 0 {
 		t.Fatalf("unknown runtime profile changed automatic forest allowance to %d", got)
+	}
+}
+
+func TestBuiltinAutomaticForestProfilesRequireExactBlobIdentity(t *testing.T) {
+	tests := []struct {
+		name string
+		load func() *gotreesitter.Language
+	}{
+		{name: "awk", load: AwkLanguage},
+		{name: "kdl", load: KdlLanguage},
+		{name: "uxntal", load: UxntalLanguage},
+	}
+
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builtin := tt.load()
+			if !builtin.AutomaticForestEnabledByDefault {
+				t.Fatal("exact built-in artifact did not receive automatic forest certification")
+			}
+
+			wrongIdentity := &gotreesitter.Language{Name: tt.name}
+			if attachBuiltinLanguageRuntimeProfile(tt.name, sha256.Sum256([]byte("uncertified")), wrongIdentity) {
+				t.Fatal("wrong blob identity unexpectedly attached a runtime profile")
+			}
+			if wrongIdentity.AutomaticForestEnabledByDefault {
+				t.Fatal("wrong blob identity enabled automatic forest routing")
+			}
+
+			adapted := &gotreesitter.Language{Name: tt.name}
+			AttachLanguageSupport(tt.name, adapted)
+			if adapted.AutomaticForestEnabledByDefault {
+				t.Fatal("same-name adapted language enabled automatic forest routing")
+			}
+		})
 	}
 }
 

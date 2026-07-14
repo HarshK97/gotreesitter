@@ -62,6 +62,14 @@ type dfaTokenSource struct {
 	// generated keyword DFA stores upper-case literals.
 	sqlKeywordScratch []byte
 
+	// glrUnionScanScratch retains one preferred DFA result per parser state
+	// during a single GLR token election. Token text may alias lexer source, so
+	// the inline and overflow storage are cleared before the token source can
+	// return to its pool. Most elections fit inline; exceptional wider elections
+	// retain their overflow capacity across parser-pool cycles.
+	glrUnionScanInline  [8]glrUnionDFAScan
+	glrUnionScanScratch []glrUnionDFAScan
+
 	// Zero-width external token loop prevention.
 	// Tracks which external token indices have been produced as zero-width
 	// tokens at the current (position, state) pair, so they can be excluded
@@ -121,6 +129,14 @@ type tokenFrontier struct {
 	StartByte  uint32
 	StartPoint Point
 	Candidates []tokenCandidate
+}
+
+type glrUnionDFAScan struct {
+	state  StateID
+	tok    Token
+	endPos int
+	endRow uint32
+	endCol uint32
 }
 
 var dfaTokenSourcePool = sync.Pool{
@@ -254,6 +270,13 @@ func resetPooledDFATokenSource(ts *dfaTokenSource) {
 	savedSQLKeywordScratch := ts.sqlKeywordScratch[:0]
 	savedExtZeroTried := ts.extZeroTried[:0]
 	savedOwnedLexer := ts.ownedLexer
+	var savedGLRUnionScanScratch []glrUnionDFAScan
+	if cap(ts.glrUnionScanScratch) > len(ts.glrUnionScanInline) {
+		// Close clears every Token before the source enters the pool. Preserve
+		// only separately allocated overflow storage; the inline array belongs
+		// to the struct that is about to be replaced.
+		savedGLRUnionScanScratch = ts.glrUnionScanScratch[:0]
+	}
 	*ts = dfaTokenSource{
 		extZeroPos:             -1,
 		zeroWidthPos:           -1,
@@ -269,6 +292,11 @@ func resetPooledDFATokenSource(ts *dfaTokenSource) {
 	ts.maskedScratch = savedMasked
 	ts.sqlKeywordScratch = savedSQLKeywordScratch
 	ts.extZeroTried = savedExtZeroTried
+	if savedGLRUnionScanScratch != nil {
+		ts.glrUnionScanScratch = savedGLRUnionScanScratch
+	} else {
+		ts.glrUnionScanScratch = ts.glrUnionScanInline[:0]
+	}
 }
 
 func newDFATokenSourceDirect(lexer *Lexer, language *Language, lookupActionIndex func(state StateID, sym Symbol) uint16, hasKeywordState []bool, externalValidByState [][]uint16, externalValidMaskByState []uint64) *dfaTokenSource {
@@ -337,6 +365,7 @@ func (d *dfaTokenSource) Reset(source []byte) {
 	if d == nil {
 		return
 	}
+	d.clearGLRUnionScanCache()
 	if d.lexer == nil {
 		d.lexer = NewLexer(nil, source)
 	}
@@ -382,6 +411,7 @@ func (d *dfaTokenSource) Reset(source []byte) {
 }
 
 func (d *dfaTokenSource) Close() {
+	d.clearGLRUnionScanCache()
 	if d.language != nil && d.language.ExternalScanner != nil && d.externalPayload != nil {
 		d.language.ExternalScanner.Destroy(d.externalPayload)
 		d.externalPayload = nil
@@ -1102,6 +1132,7 @@ func (d *dfaTokenSource) nextGLRUnionDFAToken() (Token, bool) {
 	startPos := d.lexer.pos
 	startRow := d.lexer.row
 	startCol := d.lexer.col
+	d.beginGLRUnionScanCache()
 
 	bestScore := 0
 	bestFound := false
@@ -1138,7 +1169,7 @@ func (d *dfaTokenSource) nextGLRUnionDFAToken() (Token, bool) {
 		}
 		seen = append(seen, key)
 
-		candTok, candEndPos, candEndRow, candEndCol := d.scanPreferredTokenForState(st)
+		candTok, candEndPos, candEndRow, candEndCol := d.glrUnionScanForState(st)
 
 		score := 0
 		for liveIdx, liveState := range d.glrStates {
@@ -1148,7 +1179,8 @@ func (d *dfaTokenSource) nextGLRUnionDFAToken() (Token, bool) {
 			if d.lookupActionIndex(liveState, candTok.Symbol) == 0 {
 				continue
 			}
-			if !d.stateProducesTokenFrontierCandidate(liveState, candTok, candEndPos, candEndRow, candEndCol) {
+			stateTok, stateEndPos, stateEndRow, stateEndCol := d.glrUnionScanForState(liveState)
+			if stateTok != candTok || stateEndPos != candEndPos || stateEndRow != candEndRow || stateEndCol != candEndCol {
 				continue
 			}
 			score++
@@ -1233,6 +1265,42 @@ func (d *dfaTokenSource) nextGLRUnionDFAToken() (Token, bool) {
 	d.lexer.row = bestEndRow
 	d.lexer.col = bestEndCol
 	return bestTok, true
+}
+
+func (d *dfaTokenSource) glrUnionScanForState(state StateID) (Token, int, uint32, uint32) {
+	for i := range d.glrUnionScanScratch {
+		cached := &d.glrUnionScanScratch[i]
+		if cached.state == state {
+			return cached.tok, cached.endPos, cached.endRow, cached.endCol
+		}
+	}
+	tok, endPos, endRow, endCol := d.scanPreferredTokenForState(state)
+	d.glrUnionScanScratch = append(d.glrUnionScanScratch, glrUnionDFAScan{
+		state:  state,
+		tok:    tok,
+		endPos: endPos,
+		endRow: endRow,
+		endCol: endCol,
+	})
+	return tok, endPos, endRow, endCol
+}
+
+func (d *dfaTokenSource) beginGLRUnionScanCache() {
+	if cap(d.glrUnionScanScratch) > len(d.glrUnionScanInline) {
+		d.glrUnionScanScratch = d.glrUnionScanScratch[:0]
+		return
+	}
+	d.glrUnionScanScratch = d.glrUnionScanInline[:0]
+}
+
+func (d *dfaTokenSource) clearGLRUnionScanCache() {
+	clear(d.glrUnionScanInline[:])
+	if cap(d.glrUnionScanScratch) > len(d.glrUnionScanInline) {
+		clear(d.glrUnionScanScratch[:cap(d.glrUnionScanScratch)])
+		d.glrUnionScanScratch = d.glrUnionScanScratch[:0]
+		return
+	}
+	d.glrUnionScanScratch = d.glrUnionScanInline[:0]
 }
 
 // realTokenBeatsZeroWidthSentinelAcrossStacks reports whether real (a

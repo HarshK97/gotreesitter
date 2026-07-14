@@ -7,8 +7,69 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Changed
+
+- `ParseForestExperimental` now reports only a tree produced by the
+  experimental forest parser. A forest decline returns `nil, false` with
+  `ForestDeclineInfo` diagnostics instead of silently substituting a
+  production-parser result, so callers can measure and certify forest routing
+  without mistaking fallback work for a forest success.
+
+### Tooling
+
+- Canonical real-Go benchmark admission now ratchets each fixture's multi-stack
+  runtime regime and required syntax coverage across Go, cgo, and static-C
+  preflights. Publication samples fail closed if a fixture drifts back toward a
+  straight-LR control workload.
+- The authenticated real-corpus source for Git rebase fixtures now uses the
+  grammar repository's committed highlight corpus, so performance and forest
+  audit manifests cover all 206 languages.
+- One-language forest audit shards now revalidate only their selected corpus
+  checkout and files while retaining the complete manifest identity, avoiding
+  a repeated fleet-wide authentication pass for every isolated container.
+- Forest eligibility sweeps now share an authenticated, revision-pinned corpus
+  manifest between production and C-oracle lanes. Per-language Docker runs
+  verify source checkout identity and exact file hashes, compare complete trees
+  including anonymous children, points, flags, and fields, and emit strict
+  resumable result shards for deterministic fleet reduction. Generated corpus
+  files may be untracked only beneath the lock-declared
+  `.gts-extracted/<language>` directory; tracked changes and untracked files
+  elsewhere still fail authentication. The production lane separately times
+  and verifies the actual forest-enabled automatic route on every file, so
+  promotion requires exact routed parity and a net wall-time improvement after
+  production fallbacks, not merely a fast forest attempt.
+- C-first forest screening now terminally records `no_forest_coverage` when a
+  complete authenticated C-oracle shard declines every file without timing
+  out. The reducer skips the potentially expensive production lane for that
+  non-promotable class while leaving missing and timeout-ambiguous evidence
+  incomplete.
+- Forest manifests, real-corpus benchmarks, and corpus inventory now share one
+  file-selection policy for lock matchers, registry extensions, and canonical
+  extensionless filenames such as `go.mod`. This lets authenticated manifests
+  cover every lock entry that has an eligible source while keeping explicit
+  lock matchers authoritative.
+
 ### Performance
 
+- Automatic forest routing now covers the exact checked-in AWK, KDL, and
+  Uxntal grammar artifacts after authenticated corpus gates found zero
+  forest/C-oracle divergence on accepted forest files, zero
+  routed/production divergence on every file, and an aggregate route wall-time
+  win. The opt-in is attached through blob-identity runtime profiles, so
+  same-name custom and adapted grammars remain on the conservative production
+  path.
+
+- Multi-stack DFA token elections now scan each unique active parser state once
+  and reuse that result while scoring candidates, instead of rescanning the
+  state for every candidate. The authenticated real-Go matrix avoided
+  80-84% of those repeated scans and improved full parse by 3.5-9.8% across
+  four fixtures, with unchanged parser shape, arena bytes, allocations, and
+  exact 25/25 strict Go parity.
+- GLR merge, hashing, shape, equivalence, and recovery-trace helpers now pass
+  stack descriptors by pointer instead of repeatedly copying the 104-byte
+  values. The authenticated real-Go matrix improved by 3.54% geomean, with
+  every fixture improved or statistically unchanged and identical arena,
+  token, stack, iteration, node, depth, and normalization counters.
 - Fresh full parses now share the parser's existing no-error-payload proof with
   GSS merge and C-recovery cost selection, avoiding recursive graph and subtree
   walks until an `ERROR`, `MISSING`, or inherited error is actually
@@ -27,6 +88,34 @@ for tags and release notes while still in `0.x`.
   error, and stop outcome while reducing aggregate parse time by 3.09%,
   allocated bytes by 2.96%, and peak RSS by 19.02%. Caller-provided, modified,
   and same-name grammars retain the existing full-budget behavior.
+
+### Fixed
+
+- Accept pinned C-oracle checkouts whose raw tracked bytes match the locked
+  commit even when an upstream `.gitattributes` rule makes Git report a fresh
+  clone as modified, while continuing to reject real byte, mode, and untracked
+  changes.
+- Real-Go benchmark fixture admission now drains its arena-pool state after
+  validation, and the arena GC-retention regression establishes its own clean
+  pool boundary instead of measuring memory retained by earlier tests.
+- C-oracle forest audits now compare wide syntax nodes with a linear tree
+  cursor, avoiding quadratic indexed-child walks while retaining exact fields,
+  spans, flags, anonymous children, and child order.
+- Forest audit timeouts now stop the parser synchronously instead of leaving
+  abandoned parse goroutines to contend with later files in the same shard.
+- Go/C benchmark admission now uses the same locked upstream runtime and Go
+  grammar as structural parity, fingerprints the `-O2` C artifact, and times
+  immutable, clean, forking real-Go fixtures with symmetric tree lifecycles.
+  The generated 500-function source remains a straight-LR regression control;
+  its former 1.895x headline and 29% materialization decomposition are
+  withdrawn because the C lane used a different grammar and the source never
+  exercised the multi-stack path. A checked-in strict receipt driver now
+  reproduces the pinned-core Go-C-C-Go schedule; both C transports reject dirty
+  pinned-source caches, and the static lane snapshots each input once before
+  identity, parity, and timing checks. The first complete publication receipt
+  establishes the corrected full-parse baseline at 5.481673x C by equal-fixture
+  geomean and 6.313799x C for the fixed-suite sum of medians, with per-fixture
+  ratios from 4.639849x to 6.513909x.
 
 ## [0.36.0] - 2026-07-13
 

@@ -839,7 +839,7 @@ func (p *Parser) stopFrontierSameHeaderSummary(stacks []glrStack) string {
 		if stacks[i].dead || stacks[i].depth() == 0 {
 			continue
 		}
-		key := mergeKeyForStack(stacks[i])
+		key := mergeKeyForStack(&stacks[i])
 		found := -1
 		for gi := range groups {
 			if groups[gi].state == key.state && groups[gi].offset == key.byteOffset {
@@ -890,7 +890,7 @@ func (p *Parser) stopFrontierSameHeaderSummary(stacks []glrStack) string {
 				if cRecoveryMergeCostsDiffer(&scratch, a, b) {
 					costDiff++
 				}
-				if !stackEquivalentForMergeState(&scratch, p.language, groups[gi].state, *a, *b) {
+				if !stackEquivalentForMergeState(&scratch, p.language, groups[gi].state, a, b) {
 					deepRejected++
 				}
 				if gssMainCanMergeWithScratch(&scratch, a, b) {
@@ -6529,7 +6529,7 @@ func (p *Parser) traceCRecoverPrepareStacks(label string, stacks []glrStack) {
 		fmt.Printf("  %s[%d]: kind=%s st=%d dead=%v shift=%v dep=%d score=%d byte=%d\n",
 			label,
 			i,
-			cRecoverStackTraceKind(stacks[i]),
+			cRecoverStackTraceKind(&stacks[i]),
 			stacks[i].top().state,
 			stacks[i].dead,
 			stacks[i].shifted,
@@ -7676,7 +7676,7 @@ func buildStackCullKeys(stacks []glrStack, lang *Language, buf *[]stackCullKey) 
 			flags:      flags,
 		}
 		if needHash {
-			keys[i].hash = stackHash(*s)
+			keys[i].hash = stackHash(s)
 		}
 	}
 	return keys

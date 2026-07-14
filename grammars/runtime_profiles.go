@@ -16,6 +16,7 @@ type builtinLanguageRuntimeProfile struct {
 	externalScannerFullParseRetry      gotreesitter.ExternalScannerFullParseRetryPolicy
 	fullParseAcceptedErrorRetryProfile gotreesitter.FullParseAcceptedErrorRetryProfile
 	automaticForestMemoryAllowance     int64
+	automaticForestEnabled             bool
 	nativeResultCompatibility          gotreesitter.ResultCompatibilityCapability
 	conflictPolicies                   []gotreesitter.ConflictPolicy
 }
@@ -149,10 +150,23 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		},
 	},
 	"kdl": {
-		blobSHA256: mustRuntimeProfileSHA256("ef6d000123c053eddebd200a1cbd44d6df5dcab7c4b3d34ae18acdf2f14989f5"),
+		blobSHA256:             mustRuntimeProfileSHA256("ef6d000123c053eddebd200a1cbd44d6df5dcab7c4b3d34ae18acdf2f14989f5"),
+		automaticForestEnabled: true,
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry: true,
 		},
+	},
+	// These exact built-in artifacts have authenticated corpus receipts with no
+	// forest/C-oracle divergence on accepted forest files, no
+	// routed/production divergence on any file, and an aggregate route wall-time
+	// win after conservative production fallbacks.
+	"awk": {
+		blobSHA256:             mustRuntimeProfileSHA256("925312ca0bc6e279602402c64700b8198c55ed949ac967ce92bae40f7f21cedf"),
+		automaticForestEnabled: true,
+	},
+	"uxntal": {
+		blobSHA256:             mustRuntimeProfileSHA256("cca71a0e6385fd9b2791eb6fefc1fe493f93eb2bf58e903f8989096884c31fe4"),
+		automaticForestEnabled: true,
 	},
 	// Meson's retry ladder changes selected trees on small error-bearing files,
 	// but is redundant for complete accepted-error sources at or above this
@@ -317,6 +331,10 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 	if profile.automaticForestMemoryAllowance > 0 &&
 		lang.AutomaticForestMemoryAllowanceBytes != profile.automaticForestMemoryAllowance {
 		lang.AutomaticForestMemoryAllowanceBytes = profile.automaticForestMemoryAllowance
+		changed = true
+	}
+	if profile.automaticForestEnabled && !lang.AutomaticForestEnabledByDefault {
+		lang.AutomaticForestEnabledByDefault = true
 		changed = true
 	}
 	if missing := profile.nativeResultCompatibility &^ lang.NativeResultCompatibility; missing != 0 {

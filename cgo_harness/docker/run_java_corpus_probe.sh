@@ -15,7 +15,7 @@ PIDS_LIMIT="4096"
 WALL_TIMEOUT="90m"
 KILL_GRACE="30s"
 GO_TEST_TIMEOUT="75m"
-GO_TEST_TAGS="${GOT_JAVA_GO_TEST_TAGS:-treesitter_c_bench}"
+GO_TEST_TAGS="${GOT_JAVA_GO_TEST_TAGS:-treesitter_c_bench_legacy}"
 BUILD_IMAGE=1
 DRY_RUN=0
 
@@ -54,7 +54,7 @@ Options:
   --wall-timeout <duration>  Host-side wall deadline (default: 90m)
   --kill-grace <duration>    Grace period after wall timeout before SIGKILL (default: 30s)
   --go-timeout <duration>    go test -timeout value inside the container (default: 75m)
-  --go-tags <tags>           go test -tags value (default: treesitter_c_bench)
+  --go-tags <tags>           go test -tags value (default: treesitter_c_bench_legacy)
   --out-root <path>          Artifact output root (default: <repo-root>/harness_out/docker-java-corpus)
   --label <name>             Optional run label suffix (default: java-corpus)
   --no-build                 Skip docker build step
@@ -100,6 +100,9 @@ Environment passthrough:
 Examples:
   cgo_harness/docker/run_java_corpus_probe.sh --mode timeout-sweep --max-files 50
   cgo_harness/docker/run_java_corpus_probe.sh --mode benchmark --bench-timeout 2s --max-files 25
+
+This historical Java corpus harness is compiled with
+treesitter_c_bench_legacy and is not a publication C-oracle lane.
 EOF
 }
 
