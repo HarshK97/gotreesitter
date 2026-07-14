@@ -74,7 +74,8 @@ func (r *Rewriter) Delete(node *Node) {
 
 // Apply sorts edits, validates no overlaps, applies them, and returns the
 // new source bytes plus InputEdit records for incremental reparsing.
-// Returns error if edits overlap.
+// Returns an error if edits overlap, use reversed ranges, or extend beyond
+// the source.
 func (r *Rewriter) Apply() (newSource []byte, edits []InputEdit, err error) {
 	if len(r.edits) == 0 {
 		out := make([]byte, len(r.source))
