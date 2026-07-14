@@ -693,12 +693,14 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.36.0**. The 206-grammar curated parity milestone is
-banked. v0.36.0 reduces recurring recovery work, hardens retry selection and
-generated-language provenance, and adds persistent incremental browser
-documents plus reproducible selected-language Go and TinyGo bundles. It
-supersedes the incomplete v0.35.0 release ancestry without rewriting that
-published Go module tag. Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
+The current release is **v0.37.0**. The 206-grammar curated parity milestone is
+banked. v0.37.0 rebuilds full-parse publication on one locked static C oracle
+and authenticated, forking real-Go fixtures; banks general multi-stack parser
+improvements and the first C-certified automatic forest routes; and adds
+bounded high-level highlight and tag parsing. The invalid historical 1.895x
+headline remains withdrawn: the current materialized real-Go baseline is
+5.481673x C by equal-fixture geomean and 6.313799x C for the fixed-suite sum of
+medians. Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ### Now — performance and extreme hygiene
 

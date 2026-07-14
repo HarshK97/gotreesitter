@@ -7,6 +7,15 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.37.0] - 2026-07-14
+
+Full-parse benchmark-integrity, forest-certification, and GLR-performance
+release. Publication now uses one locked static C oracle and authenticated,
+forking real-Go fixtures; authenticated C-first fleet evidence gates automatic
+forest routes; general multi-stack work is reduced; and high-level highlight
+and tag parsing can be bounded. The 206-grammar curated structural-parity
+milestone remains banked.
+
 ### Added
 
 - Highlighter and tagger construction now accept parser timeout options, and
@@ -2512,7 +2521,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.36.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.37.0...HEAD
+[0.37.0]: https://github.com/odvcencio/gotreesitter/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/odvcencio/gotreesitter/compare/v0.34.0...v0.36.0
 [0.34.0]: https://github.com/odvcencio/gotreesitter/compare/v0.33.0...v0.34.0
 [0.33.0]: https://github.com/odvcencio/gotreesitter/compare/v0.32.0...v0.33.0
