@@ -128,6 +128,57 @@ func TestLoadForestCorpusManifestRejectsRevisionAndCheckoutDrift(t *testing.T) {
 	}
 }
 
+func TestLoadForestCorpusManifestLanguageShardAuthenticatesOnlySelection(t *testing.T) {
+	root := t.TempDir()
+	revision := strings.Repeat("a", 40)
+	goRevision := initForestManifestTestRepo(t, root, "go", map[string]string{
+		"input.go": "package p\n",
+	})
+	rustRevision := initForestManifestTestRepo(t, root, "rust", map[string]string{
+		"input.rs": "fn main() {}\n",
+	})
+	lockPath := filepath.Join(root, "corpus_sources.lock")
+	lock := fmt.Sprintf("go https://example.invalid/go %s . .go\nrust https://example.invalid/rust %s . .rs\n", goRevision, rustRevision)
+	if err := os.WriteFile(lockPath, []byte(lock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := MaterializeForestCorpusManifest(ForestCorpusMaterializeOptions{
+		GotreesitterRevision: revision, CorpusLockPath: lockPath, CorpusRoot: root,
+		Languages: []string{"go", "rust"}, Selection: ForestCorpusSelection{Order: "path"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(root, "manifest.json")
+	if err := WriteForestCorpusManifest(manifestPath, manifest); err != nil {
+		t.Fatal(err)
+	}
+
+	rustPath := filepath.Join(root, "rust", "input.rs")
+	if err := os.WriteFile(rustPath, []byte("fn changed() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, files, err := loadForestCorpusManifestLanguages(
+		manifestPath, root, lockPath, revision, manifest.CorpusLock.SHA256, []string{"go"},
+	)
+	if err != nil {
+		t.Fatalf("load selected Go shard: %v", err)
+	}
+	if len(files) != 1 || len(files["go"]) != 1 || files["rust"] != nil {
+		t.Fatalf("selected files = %#v", files)
+	}
+	if _, _, err := loadForestCorpusManifestLanguages(
+		manifestPath, root, lockPath, revision, manifest.CorpusLock.SHA256, []string{"rust"},
+	); err == nil || !strings.Contains(err.Error(), "checkout is dirty") {
+		t.Fatalf("selected tampered Rust load error = %v", err)
+	}
+	if _, _, err := LoadForestCorpusManifest(
+		manifestPath, root, lockPath, revision, manifest.CorpusLock.SHA256,
+	); err == nil || !strings.Contains(err.Error(), "checkout is dirty") {
+		t.Fatalf("full-manifest tampered Rust load error = %v", err)
+	}
+}
+
 func TestMaterializeAndLoadForestCorpusManifestAllowsLockedGeneratedSources(t *testing.T) {
 	root := t.TempDir()
 	revision := strings.Repeat("a", 40)

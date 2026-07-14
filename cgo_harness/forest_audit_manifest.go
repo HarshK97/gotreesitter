@@ -80,6 +80,14 @@ func MaterializeForestCorpusManifest(options ForestCorpusMaterializeOptions) (Fo
 }
 
 func LoadForestCorpusManifest(manifestPath, corpusRoot, corpusLockPath, expectedRevision, expectedLockSHA256 string) (ForestCorpusManifest, map[string][]string, error) {
+	return loadForestCorpusManifestLanguages(manifestPath, corpusRoot, corpusLockPath, expectedRevision, expectedLockSHA256, nil)
+}
+
+// loadForestCorpusManifestLanguages authenticates only the requested language
+// sources while preserving the identity of the complete fleet manifest. A nil
+// language list retains the full-manifest behavior used by callers that need
+// to authenticate every source checkout in one pass.
+func loadForestCorpusManifestLanguages(manifestPath, corpusRoot, corpusLockPath, expectedRevision, expectedLockSHA256 string, languages []string) (ForestCorpusManifest, map[string][]string, error) {
 	manifest, err := decodeForestCorpusManifest(manifestPath)
 	if err != nil {
 		return ForestCorpusManifest{}, nil, err
@@ -91,7 +99,7 @@ func LoadForestCorpusManifest(manifestPath, corpusRoot, corpusLockPath, expected
 	if err != nil {
 		return manifest, nil, err
 	}
-	files, err := authenticateForestCorpusManifestFiles(manifest, root, entries)
+	files, err := authenticateForestCorpusManifestFiles(manifest, root, entries, languages)
 	if err != nil {
 		return manifest, nil, err
 	}
@@ -173,10 +181,17 @@ func verifyForestCorpusLockDigests(manifestDigest, expectedDigest string, lockDa
 	return nil
 }
 
-func authenticateForestCorpusManifestFiles(manifest ForestCorpusManifest, root string, entries map[string]forestCorpusLockEntry) (map[string][]string, error) {
+func authenticateForestCorpusManifestFiles(manifest ForestCorpusManifest, root string, entries map[string]forestCorpusLockEntry, languages []string) (map[string][]string, error) {
+	requested, err := forestManifestRequestedLanguages(languages, entries)
+	if err != nil {
+		return nil, err
+	}
 	verifiedCheckouts := make(map[string]bool)
 	filesByLanguage := make(map[string][]string)
 	for i, file := range manifest.Files {
+		if requested != nil && !requested[file.Language] {
+			continue
+		}
 		filePath, err := authenticateForestCorpusManifestFile(root, file, entries, verifiedCheckouts)
 		if err != nil {
 			return nil, fmt.Errorf("forest corpus manifest file %d: %w", i, err)
@@ -186,7 +201,36 @@ func authenticateForestCorpusManifestFiles(manifest ForestCorpusManifest, root s
 	for language := range filesByLanguage {
 		sort.Strings(filesByLanguage[language])
 	}
+	for language := range requested {
+		if len(filesByLanguage[language]) == 0 {
+			return nil, fmt.Errorf("requested language %q absent from forest corpus manifest", language)
+		}
+	}
 	return filesByLanguage, nil
+}
+
+func forestManifestRequestedLanguages(languages []string, entries map[string]forestCorpusLockEntry) (map[string]bool, error) {
+	if languages == nil {
+		return nil, nil
+	}
+	requested := make(map[string]bool, len(languages))
+	for _, raw := range languages {
+		language := strings.TrimSpace(raw)
+		if language == "" || requested[language] {
+			continue
+		}
+		if err := forestManifestLanguage(language); err != nil {
+			return nil, err
+		}
+		if _, ok := entries[language]; !ok {
+			return nil, fmt.Errorf("requested language %q absent from corpus lock", language)
+		}
+		requested[language] = true
+	}
+	if len(requested) == 0 {
+		return nil, fmt.Errorf("forest corpus language selection is empty")
+	}
+	return requested, nil
 }
 
 func authenticateForestCorpusManifestFile(root string, file ForestCorpusManifestFile, entries map[string]forestCorpusLockEntry, verifiedCheckouts map[string]bool) (string, error) {

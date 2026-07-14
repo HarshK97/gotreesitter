@@ -51,12 +51,13 @@ func TestForestCorpusParity(t *testing.T) {
 	if manifestPath != "" {
 		var err error
 		var files map[string][]string
-		manifest, files, err = LoadForestCorpusManifest(
+		manifest, files, err = loadForestCorpusManifestLanguages(
 			manifestPath,
 			strings.TrimSpace(os.Getenv("GTS_FOREST_CORPUS_ROOT")),
 			strings.TrimSpace(os.Getenv("GTS_FOREST_CORPUS_LOCK_PATH")),
 			strings.TrimSpace(os.Getenv("GTS_FOREST_GOTREESITTER_REVISION")),
 			strings.TrimSpace(os.Getenv("GTS_FOREST_CORPUS_LOCK_SHA256")),
+			langs,
 		)
 		if err != nil {
 			t.Fatalf("authenticate forest corpus manifest: %v", err)

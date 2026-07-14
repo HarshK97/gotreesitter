@@ -87,12 +87,13 @@ func loadForestOracleSetup(t *testing.T) forestOracleSetup {
 		resultOut:    strings.TrimSpace(os.Getenv("GTS_FOREST_AUDIT_RESULT_OUT")),
 	}
 	var err error
-	setup.manifest, setup.files, err = LoadForestCorpusManifest(
+	setup.manifest, setup.files, err = loadForestCorpusManifestLanguages(
 		setup.manifestPath,
 		strings.TrimSpace(os.Getenv("GTS_FOREST_CORPUS_ROOT")),
 		strings.TrimSpace(os.Getenv("GTS_FOREST_CORPUS_LOCK_PATH")),
 		strings.TrimSpace(os.Getenv("GTS_FOREST_GOTREESITTER_REVISION")),
 		strings.TrimSpace(os.Getenv("GTS_FOREST_CORPUS_LOCK_SHA256")),
+		setup.langs,
 	)
 	if err != nil {
 		t.Fatalf("authenticate forest corpus manifest: %v", err)
