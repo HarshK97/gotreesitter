@@ -253,6 +253,10 @@ func writeForestAuditJSON(filePath string, value any) error {
 		temp.Close()
 		return err
 	}
+	if err := temp.Chmod(0o644); err != nil {
+		temp.Close()
+		return err
+	}
 	if err := temp.Close(); err != nil {
 		return err
 	}

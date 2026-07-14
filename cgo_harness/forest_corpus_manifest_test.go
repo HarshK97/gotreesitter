@@ -43,6 +43,13 @@ func TestMaterializeAndLoadForestCorpusManifestAuthenticatesSources(t *testing.T
 	if err := WriteForestCorpusManifest(manifestPath, manifest); err != nil {
 		t.Fatal(err)
 	}
+	info, err := os.Stat(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("manifest mode = %v, want 0644", info.Mode().Perm())
+	}
 	lockDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(lock)))
 	gotManifest, files, err := LoadForestCorpusManifest(manifestPath, root, lockPath, revision, lockDigest)
 	if err != nil {
