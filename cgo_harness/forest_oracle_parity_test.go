@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -182,9 +183,9 @@ func (audit *forestCOracleAudit) evaluateFile(filePath string) {
 	}
 	defer func() { audit.result.Files = append(audit.result.Files, fileResult) }()
 
-	forestTree, forestOK, timedOut, elapsed := parseForestWithBudget(audit.lang, src, forestOracleBudget())
+	forestTree, forestOK, declineReason, elapsed := parseForestWithBudget(audit.lang, src, forestOracleBudget())
 	audit.forestNanos += elapsed
-	if timedOut {
+	if declineReason == string(gts.ParseStopTimeout) {
 		audit.recordDecline("timeout", &fileResult)
 		return
 	}
@@ -204,27 +205,56 @@ func (audit *forestCOracleAudit) evaluateFile(filePath string) {
 	audit.compareCOracle(filePath, src, forestRoot, &fileResult)
 }
 
-type forestBudgetParseResult struct {
-	tree *gts.Tree
-	ok   bool
+func parseForestWithBudget(lang *gts.Language, src []byte, budget time.Duration) (*gts.Tree, bool, string, int64) {
+	parser := gts.NewParser(lang)
+	timeoutMicros := uint64(budget / time.Microsecond)
+	if budget > 0 && timeoutMicros == 0 {
+		timeoutMicros = 1
+	}
+	parser.SetTimeoutMicros(timeoutMicros)
+	start := time.Now()
+	tree, ok := parser.ParseForestExperimental(src)
+	declineReason := ""
+	if !ok {
+		_, _, declineReason, _ = parser.ForestDeclineInfo()
+	}
+	return tree, ok, declineReason, time.Since(start).Nanoseconds()
 }
 
-func parseForestWithBudget(lang *gts.Language, src []byte, budget time.Duration) (*gts.Tree, bool, bool, int64) {
-	results := make(chan forestBudgetParseResult, 1)
-	parser := gts.NewParser(lang)
-	start := time.Now()
-	go func() {
-		tree, ok := parser.ParseForestExperimental(src)
-		results <- forestBudgetParseResult{tree: tree, ok: ok}
-	}()
-	select {
-	case result := <-results:
-		return result.tree, result.ok, false, time.Since(start).Nanoseconds()
-	case <-time.After(budget):
-		// The parse goroutine intentionally survives until process exit. Its
-		// eventual tree cannot be touched without racing the active parser.
-		return nil, false, true, time.Since(start).Nanoseconds()
+func TestParseForestWithBudgetStopsSynchronously(t *testing.T) {
+	load := forestLanguageLoaders()["json"]
+	if load == nil {
+		t.Fatal("json forest language loader is unavailable")
 	}
+	source := []byte("[" + strings.Repeat("0,", 250_000) + "0]")
+	before := forestExperimentalGoroutines(t)
+
+	tree, ok, reason, elapsed := parseForestWithBudget(load(), source, time.Nanosecond)
+	if tree != nil {
+		tree.Release()
+	}
+	if ok {
+		t.Fatal("forest parse accepted despite the one-microsecond rounded timeout")
+	}
+	if reason != string(gts.ParseStopTimeout) {
+		t.Fatalf("forest decline reason = %q, want %q", reason, gts.ParseStopTimeout)
+	}
+	if elapsed > int64(time.Second) {
+		t.Fatalf("timed forest parse took %s, want <= 1s", time.Duration(elapsed))
+	}
+	if after := forestExperimentalGoroutines(t); after != before {
+		t.Fatalf("ParseForestExperimental goroutines after return = %d, before = %d", after, before)
+	}
+}
+
+func forestExperimentalGoroutines(t *testing.T) int {
+	t.Helper()
+	stack := make([]byte, 1<<20)
+	n := runtime.Stack(stack, true)
+	if n == len(stack) {
+		t.Fatal("goroutine stack snapshot was truncated")
+	}
+	return strings.Count(string(stack[:n]), ".ParseForestExperimental(")
 }
 
 func (audit *forestCOracleAudit) forestDeclined(src []byte, ok bool, root *gts.Node, outcome ForestAuditOutcome, fileResult *ForestAuditFileResult) bool {

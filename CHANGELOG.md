@@ -87,6 +87,8 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Forest audit timeouts now stop the parser synchronously instead of leaving
+  abandoned parse goroutines to contend with later files in the same shard.
 - Go/C benchmark admission now uses the same locked upstream runtime and Go
   grammar as structural parity, fingerprints the `-O2` C artifact, and times
   immutable, clean, forking real-Go fixtures with symmetric tree lifecycles.
