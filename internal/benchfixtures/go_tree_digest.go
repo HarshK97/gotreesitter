@@ -6,17 +6,18 @@ import (
 	gotreesitter "github.com/odvcencio/gotreesitter"
 )
 
-// DigestGoTree computes the shared deep structural digest for a gotreesitter
-// tree. The static C oracle implements the same DeepTreeDigestVersion stream.
-func DigestGoTree(root *gotreesitter.Node, lang *gotreesitter.Language) (string, error) {
+// InspectGoTree computes the shared digest and node-kind coverage in one
+// untimed admission traversal. The static C oracle implements the same
+// DeepTreeDigestVersion stream.
+func InspectGoTree(root *gotreesitter.Node, lang *gotreesitter.Language) (DeepTreeInspection, error) {
 	if root == nil || lang == nil {
-		return "", fmt.Errorf("deep tree digest requires a root and language")
+		return DeepTreeInspection{}, fmt.Errorf("deep tree digest requires a root and language")
 	}
 	digest := NewDeepTreeDigest()
 	if err := addGoTreeDigestNode(digest, root, lang, ""); err != nil {
-		return "", err
+		return DeepTreeInspection{}, err
 	}
-	return digest.Hex()
+	return digest.Inspection()
 }
 
 func addGoTreeDigestNode(digest *DeepTreeDigest, node *gotreesitter.Node, lang *gotreesitter.Language, field string) error {

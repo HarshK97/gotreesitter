@@ -54,3 +54,31 @@ func TestDeepTreeDigestFailsClosed(t *testing.T) {
 		t.Fatal("extra node unexpectedly admitted")
 	}
 }
+
+func TestDeepTreeInspectionRecordsNodeKindsDefensively(t *testing.T) {
+	digest := NewDeepTreeDigest()
+	for _, node := range []DeepNode{
+		{Type: "root", ChildCount: 2},
+		{Type: "child"},
+		{Type: "child"},
+	} {
+		if err := digest.Add(node); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inspection, err := digest.Inspection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.NodeKinds["root"] != 1 || inspection.NodeKinds["child"] != 2 {
+		t.Fatalf("node kinds=%v", inspection.NodeKinds)
+	}
+	inspection.NodeKinds["child"] = 99
+	again, err := digest.Inspection()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.NodeKinds["child"] != 2 {
+		t.Fatalf("inspection leaked mutable coverage: %v", again.NodeKinds)
+	}
+}

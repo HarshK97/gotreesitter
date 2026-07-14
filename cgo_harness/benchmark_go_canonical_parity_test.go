@@ -79,6 +79,8 @@ func preflightCanonicalGoFixtures(tb testing.TB, fixtures []benchfixtures.Loaded
 	if err := cParser.SetLanguage(cLang); err != nil {
 		tb.Fatalf("set pinned Go C reference: %v", err)
 	}
+	goSuiteCoverage := make(benchfixtures.NodeKindCoverage)
+	cSuiteCoverage := make(benchfixtures.NodeKindCoverage)
 
 	for _, fixture := range fixtures {
 		if err := fixture.Fixture.VerifySource(fixture.Source); err != nil {
@@ -101,36 +103,54 @@ func preflightCanonicalGoFixtures(tb testing.TB, fixtures []benchfixtures.Loaded
 			tb.Fatalf("%s C preflight: %v", fixture.Fixture.ID, err)
 		}
 
-		goDigest, err := benchfixtures.DigestGoTree(goTree.RootNode(), goLang)
+		goInspection, err := benchfixtures.InspectGoTree(goTree.RootNode(), goLang)
 		if err != nil {
 			releaseCanonicalGoTree(goTree)
 			cTree.Close()
 			tb.Fatalf("%s Go digest: %v", fixture.Fixture.ID, err)
 		}
-		if err := fixture.Fixture.VerifyDeepTreeDigest(goDigest); err != nil {
+		if err := fixture.Fixture.VerifyDeepTreeDigest(goInspection.SHA256); err != nil {
 			releaseCanonicalGoTree(goTree)
 			cTree.Close()
 			tb.Fatalf("%s Go digest: %v", fixture.Fixture.ID, err)
 		}
-		cDigest, err := canonicalCTreeDigest(cTree.RootNode())
+		if err := fixture.Fixture.VerifyWorkloadIdentity(goTree.ParseRuntime(), goInspection.NodeKinds); err != nil {
+			releaseCanonicalGoTree(goTree)
+			cTree.Close()
+			tb.Fatalf("%s Go workload identity: %v", fixture.Fixture.ID, err)
+		}
+		cInspection, err := canonicalCTreeInspection(cTree.RootNode())
 		if err != nil {
 			releaseCanonicalGoTree(goTree)
 			cTree.Close()
 			tb.Fatalf("%s C digest: %v", fixture.Fixture.ID, err)
 		}
-		if err := fixture.Fixture.VerifyDeepTreeDigest(cDigest); err != nil {
+		if err := fixture.Fixture.VerifyDeepTreeDigest(cInspection.SHA256); err != nil {
 			releaseCanonicalGoTree(goTree)
 			cTree.Close()
 			tb.Fatalf("%s C digest: %v", fixture.Fixture.ID, err)
 		}
-		if goDigest != cDigest {
+		if err := fixture.Fixture.VerifyNodeKindCoverage(cInspection.NodeKinds); err != nil {
+			releaseCanonicalGoTree(goTree)
+			cTree.Close()
+			tb.Fatalf("%s C workload identity: %v", fixture.Fixture.ID, err)
+		}
+		if goInspection.SHA256 != cInspection.SHA256 {
 			first := FirstDivergenceDumpV1(goTree.RootNode(), goLang, cTree.RootNode())
 			releaseCanonicalGoTree(goTree)
 			cTree.Close()
-			tb.Fatalf("%s deep parity digest mismatch Go=%s C=%s first=%s", fixture.Fixture.ID, goDigest, cDigest, formatRealCorpusDivergence(first))
+			tb.Fatalf("%s deep parity digest mismatch Go=%s C=%s first=%s", fixture.Fixture.ID, goInspection.SHA256, cInspection.SHA256, formatRealCorpusDivergence(first))
 		}
+		goSuiteCoverage.Merge(goInspection.NodeKinds)
+		cSuiteCoverage.Merge(cInspection.NodeKinds)
 		releaseCanonicalGoTree(goTree)
 		cTree.Close()
+	}
+	if err := benchfixtures.VerifyGoFullParseSuiteNodeKindCoverage(goSuiteCoverage); err != nil {
+		tb.Fatalf("Go workload identity: %v", err)
+	}
+	if err := benchfixtures.VerifyGoFullParseSuiteNodeKindCoverage(cSuiteCoverage); err != nil {
+		tb.Fatalf("C workload identity: %v", err)
 	}
 }
 
@@ -230,12 +250,12 @@ func validateCanonicalCTree(tree *sitter.Tree, source []byte) error {
 	return nil
 }
 
-func canonicalCTreeDigest(root *sitter.Node) (string, error) {
+func canonicalCTreeInspection(root *sitter.Node) (benchfixtures.DeepTreeInspection, error) {
 	digest := benchfixtures.NewDeepTreeDigest()
 	if err := addCanonicalCDigestNode(digest, root, ""); err != nil {
-		return "", err
+		return benchfixtures.DeepTreeInspection{}, err
 	}
-	return digest.Hex()
+	return digest.Inspection()
 }
 
 func addCanonicalCDigestNode(digest *benchfixtures.DeepTreeDigest, node *sitter.Node, field string) error {

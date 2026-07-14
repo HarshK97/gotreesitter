@@ -34,6 +34,7 @@ func BenchmarkGoParseWarmRealDFA(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
+	lang := grammars.GoLanguage()
 	if statsEnabled {
 		b.Log("GOT_STATS enabled: diagnostic/non-publication benchmark lane")
 		gotreesitter.EnableRuntimeAudit(true)
@@ -47,44 +48,51 @@ func BenchmarkGoParseWarmRealDFA(b *testing.B) {
 			name += "_diagnostic_stats_nonpublication"
 		}
 		b.Run(name, func(b *testing.B) {
-			benchmarkWarmRealGoDFA(b, fixture)
+			benchmarkWarmRealGoDFA(b, fixture, lang)
 		})
 	}
 }
 
-func benchmarkWarmRealGoDFA(b *testing.B, fixture benchfixtures.LoadedFixture) {
+func admitRealGoBenchmarkFixture(tb testing.TB, fixture benchfixtures.LoadedFixture, lang *gotreesitter.Language) benchfixtures.NodeKindCoverage {
+	tb.Helper()
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(fixture.Source)
+	if err != nil {
+		releaseBenchmarkTree(tree)
+		tb.Fatalf("%s admission parse: %v", fixture.Fixture.ID, err)
+	}
+	if err := validateRealGoBenchmarkTree(tree, fixture.Source, lang); err != nil {
+		releaseBenchmarkTree(tree)
+		tb.Fatalf("%s admission parse: %v", fixture.Fixture.ID, err)
+	}
+	inspection, err := benchfixtures.InspectGoTree(tree.RootNode(), lang)
+	if err != nil {
+		releaseBenchmarkTree(tree)
+		tb.Fatalf("%s admission parse inspection: %v", fixture.Fixture.ID, err)
+	}
+	if err := fixture.Fixture.VerifyDeepTreeDigest(inspection.SHA256); err != nil {
+		releaseBenchmarkTree(tree)
+		tb.Fatalf("%s admission parse digest: %v", fixture.Fixture.ID, err)
+	}
+	if err := fixture.Fixture.VerifyWorkloadIdentity(tree.ParseRuntime(), inspection.NodeKinds); err != nil {
+		releaseBenchmarkTree(tree)
+		tb.Fatalf("%s admission workload identity: %v", fixture.Fixture.ID, err)
+	}
+	tree.Release()
+	return inspection.NodeKinds
+}
+
+func benchmarkWarmRealGoDFA(b *testing.B, fixture benchfixtures.LoadedFixture, lang *gotreesitter.Language) {
 	b.Helper()
 	if err := fixture.Fixture.VerifySource(fixture.Source); err != nil {
 		b.Fatal(err)
 	}
 
-	lang := grammars.GoLanguage()
-
 	// Deep fixture/tree admission intentionally precedes the measured warm
 	// state. Its full traversal can materialize lazy tree state and grow arena
 	// pools, so discard that state before the single shallow warm parse.
 	gotreesitter.DrainArenaPools()
-	admissionParser := gotreesitter.NewParser(lang)
-	admissionTree, err := admissionParser.Parse(fixture.Source)
-	if err != nil {
-		releaseBenchmarkTree(admissionTree)
-		b.Fatalf("%s admission parse: %v", fixture.Fixture.ID, err)
-	}
-	if err := validateRealGoBenchmarkTree(admissionTree, fixture.Source, lang); err != nil {
-		releaseBenchmarkTree(admissionTree)
-		b.Fatalf("%s admission parse: %v", fixture.Fixture.ID, err)
-	}
-	admissionDigest, err := benchfixtures.DigestGoTree(admissionTree.RootNode(), lang)
-	if err != nil {
-		releaseBenchmarkTree(admissionTree)
-		b.Fatalf("%s admission parse digest: %v", fixture.Fixture.ID, err)
-	}
-	if err := fixture.Fixture.VerifyDeepTreeDigest(admissionDigest); err != nil {
-		releaseBenchmarkTree(admissionTree)
-		b.Fatalf("%s admission parse digest: %v", fixture.Fixture.ID, err)
-	}
-	admissionTree.Release()
-
+	admitRealGoBenchmarkFixture(b, fixture, lang)
 	gotreesitter.DrainArenaPools()
 	parser := gotreesitter.NewParser(lang)
 	warmTree, err := parser.Parse(fixture.Source)
@@ -228,27 +236,12 @@ func TestGoFullParseBenchmarkFixturesParseClean(t *testing.T) {
 		t.Fatal(err)
 	}
 	lang := grammars.GoLanguage()
-	parser := gotreesitter.NewParser(lang)
+	suiteCoverage := make(benchfixtures.NodeKindCoverage)
 	for _, fixture := range fixtures {
-		fixture := fixture
-		t.Run(fixture.Fixture.ID, func(t *testing.T) {
-			tree, err := parser.Parse(fixture.Source)
-			if err != nil {
-				releaseBenchmarkTree(tree)
-				t.Fatal(err)
-			}
-			defer tree.Release()
-			if err := validateRealGoBenchmarkTree(tree, fixture.Source, lang); err != nil {
-				t.Fatal(err)
-			}
-			digest, err := benchfixtures.DigestGoTree(tree.RootNode(), lang)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := fixture.Fixture.VerifyDeepTreeDigest(digest); err != nil {
-				t.Fatal(err)
-			}
-		})
+		suiteCoverage.Merge(admitRealGoBenchmarkFixture(t, fixture, lang))
+	}
+	if err := benchfixtures.VerifyGoFullParseSuiteNodeKindCoverage(suiteCoverage); err != nil {
+		t.Fatalf("admission workload identity: %v", err)
 	}
 }
 

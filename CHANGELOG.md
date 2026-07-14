@@ -17,6 +17,10 @@ for tags and release notes while still in `0.x`.
 
 ### Tooling
 
+- Canonical real-Go benchmark admission now ratchets each fixture's multi-stack
+  runtime regime and required syntax coverage across Go, cgo, and static-C
+  preflights. Publication samples fail closed if a fixture drifts back toward a
+  straight-LR control workload.
 - The authenticated real-corpus source for Git rebase fixtures now uses the
   grammar repository's committed highlight corpus, so performance and forest
   audit manifests cover all 206 languages.

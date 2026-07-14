@@ -100,6 +100,7 @@ func TestCOracleStaticDeepParity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	suiteCoverage := make(benchfixtures.NodeKindCoverage)
 	for _, fixture := range fixtures {
 		fixture := fixture
 		t.Run(fixture.Fixture.ID, func(t *testing.T) {
@@ -112,6 +113,12 @@ func TestCOracleStaticDeepParity(t *testing.T) {
 				tree.Close()
 				t.Fatalf("cgo C oracle incomplete: root=%v", root)
 			}
+			coverage := cOracleNodeKindCoverage(root)
+			if err := fixture.Fixture.VerifyNodeKindCoverage(coverage); err != nil {
+				tree.Close()
+				t.Fatalf("cgo C oracle workload identity: %v", err)
+			}
+			suiteCoverage.Merge(coverage)
 			digest, err := COracleDeepDigest(tree)
 			tree.Close()
 			if err != nil {
@@ -166,6 +173,25 @@ func TestCOracleStaticDeepParity(t *testing.T) {
 			t.Logf("source_sha256=%s deep_sha256=%s artifact_sha256=%s", fixture.Fixture.SHA256, digest, artifactSHA)
 		})
 	}
+	if err := benchfixtures.VerifyGoFullParseSuiteNodeKindCoverage(suiteCoverage); err != nil {
+		t.Fatalf("cgo/static C oracle workload identity: %v", err)
+	}
+}
+
+func cOracleNodeKindCoverage(root *sitter.Node) benchfixtures.NodeKindCoverage {
+	coverage := make(benchfixtures.NodeKindCoverage)
+	var walk func(*sitter.Node)
+	walk = func(node *sitter.Node) {
+		if node == nil {
+			return
+		}
+		coverage[node.Kind()]++
+		for i := uint(0); i < node.ChildCount(); i++ {
+			walk(node.Child(i))
+		}
+	}
+	walk(root)
+	return coverage
 }
 
 func oracleOutputValue(output, key string) string {

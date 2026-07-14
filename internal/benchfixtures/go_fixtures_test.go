@@ -3,6 +3,8 @@ package benchfixtures
 import (
 	"strings"
 	"testing"
+
+	gotreesitter "github.com/odvcencio/gotreesitter"
 )
 
 func TestGoFullParseFixturesLoadAuthenticatedSnapshots(t *testing.T) {
@@ -48,6 +50,75 @@ func TestFixtureAdmissionFailsClosed(t *testing.T) {
 	if err := fixture.VerifyDeepTreeDigest("deadbeef"); err == nil || !strings.Contains(err.Error(), "deep tree sha256") {
 		t.Fatalf("corrupt deep digest error=%v, want deep tree sha256 failure", err)
 	}
+	corruptMetadata = fixture
+	corruptMetadata.WorkloadIdentity = WorkloadIdentity{}
+	if _, err := corruptMetadata.Load(); err == nil || !strings.Contains(err.Error(), "workload identity") {
+		t.Fatalf("missing workload identity error=%v, want workload identity failure", err)
+	}
+}
+
+func TestFixtureWorkloadIdentityFailsClosed(t *testing.T) {
+	fixture := GoFullParseFixtures()[0]
+	expect := fixture.WorkloadIdentity
+	runtime := gotreesitter.ParseRuntime{
+		MaxStacksSeen:        expect.MinMaxStacksSeen,
+		MultiStackIterations: expect.MinMultiStackIterations,
+		MultiStackTokens:     expect.MinMultiStackTokens,
+	}
+	coverage := admittedFixtureNodeKindCoverage()
+	if err := fixture.VerifyWorkloadIdentity(runtime, coverage); err != nil {
+		t.Fatalf("verified workload identity: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		runtime gotreesitter.ParseRuntime
+		want    string
+	}{
+		{name: "straight LR", runtime: gotreesitter.ParseRuntime{MaxStacksSeen: 1, MultiStackIterations: expect.MinMultiStackIterations, MultiStackTokens: expect.MinMultiStackTokens}, want: "max stacks"},
+		{name: "few multi iterations", runtime: gotreesitter.ParseRuntime{MaxStacksSeen: expect.MinMaxStacksSeen, MultiStackIterations: expect.MinMultiStackIterations - 1, MultiStackTokens: expect.MinMultiStackTokens}, want: "multi-stack iterations"},
+		{name: "few multi tokens", runtime: gotreesitter.ParseRuntime{MaxStacksSeen: expect.MinMaxStacksSeen, MultiStackIterations: expect.MinMultiStackIterations, MultiStackTokens: expect.MinMultiStackTokens - 1}, want: "multi-stack tokens"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := fixture.VerifyRuntimeIdentity(tc.runtime); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error=%v, want %q failure", err, tc.want)
+			}
+		})
+	}
+
+	delete(coverage, "comment")
+	if err := fixture.VerifyNodeKindCoverage(coverage); err == nil || !strings.Contains(err.Error(), "comment") {
+		t.Fatalf("error=%v, want missing comment failure", err)
+	}
+}
+
+func TestGoFullParseSuiteNodeKindCoverageFailsClosed(t *testing.T) {
+	coverage := admittedFixtureNodeKindCoverage()
+	for _, kind := range goSuiteRequiredNodeKinds {
+		coverage[kind] = 1
+	}
+	coverage[goSuiteRequiredAnyNodeKinds[0]] = 1
+	if err := VerifyGoFullParseSuiteNodeKindCoverage(coverage); err != nil {
+		t.Fatalf("verified suite coverage: %v", err)
+	}
+
+	delete(coverage, "qualified_type")
+	if err := VerifyGoFullParseSuiteNodeKindCoverage(coverage); err == nil || !strings.Contains(err.Error(), "qualified_type") {
+		t.Fatalf("error=%v, want missing qualified_type failure", err)
+	}
+	coverage["qualified_type"] = 1
+	delete(coverage, goSuiteRequiredAnyNodeKinds[0])
+	if err := VerifyGoFullParseSuiteNodeKindCoverage(coverage); err == nil || !strings.Contains(err.Error(), "neither") {
+		t.Fatalf("error=%v, want missing switch/select failure", err)
+	}
+}
+
+func admittedFixtureNodeKindCoverage() NodeKindCoverage {
+	coverage := make(NodeKindCoverage)
+	for _, kind := range goFixtureRequiredNodeKinds {
+		coverage[kind] = 1
+	}
+	return coverage
 }
 
 func TestVerifyGoGrammarIdentityFailsClosed(t *testing.T) {

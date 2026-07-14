@@ -211,19 +211,28 @@ fi
 echo "receipt_class=$RECEIPT_CLASS"
 echo "output_dir=$OUT_DIR"
 
+readonly FIXTURE_REQUIRED_NODE_KINDS="import_declaration,comment,method_declaration,selector_expression,parameter_declaration,composite_literal,index_expression,call_expression"
+readonly SUITE_REQUIRED_NODE_KINDS="type_arguments,generic_type,qualified_type"
+readonly SUITE_REQUIRED_ANY_NODE_KINDS="expression_switch_statement,select_statement"
 readonly FIXTURE_SPECS=(
-  "query_compile|query_compile.go.gz|20168|b788ee19b0075f0b9b567a9f93ea657e715bc8a6a40a99d3ca5c761404e71894|8811a477187606ab2a0be003924e2750c8d10cb5e6ef29e8f0f673c5bd5ccfa4|ecc090a83a4343a1c7c2afbad63277f5b4d60c42d8d94a2af2a9b16e46f2ccb5"
-  "rewrite|rewrite.go.gz|5116|74c0705f8729670559492fb5460a01b2a1a2a109928e1aeb52736e485e8ff097|e8c92713adda73b661c1e41dae09d4f76f1447b3f8ddd5b3348b67ce655ee243|b3f9814b65763642d4eac58b9065018048ea13e6f10d56afb28a0479bf5a68a1"
-  "language|language.go.gz|41387|009aa9fd5352c712f3839670c7df8a9b00ae878ee20dc88131a438b2d5edfd9a|a064d45748fd555209971728d9740510c2ca7449870b54acb861909afea2c8c9|583df223904fe414c33bba3b474c6557ecdb20e7f47e304b9a09bfcc2da44539"
-  "grammargen_lr|grammargen_lr.go.gz|235626|a7e4a1a64b25a60aea36183b9d6d53dcd9240942cdb10e67a3cf9e6ce30f95b2|7d64368d4dbffca1b3cc472ff3397871c23e082efb1a2bdba5f9670564cc7b22|1472cfd9a014d4034dbc1456afd12c282630ef787c3543cf0cecb73619883ad2"
+  "query_compile|query_compile.go.gz|20168|b788ee19b0075f0b9b567a9f93ea657e715bc8a6a40a99d3ca5c761404e71894|8811a477187606ab2a0be003924e2750c8d10cb5e6ef29e8f0f673c5bd5ccfa4|ecc090a83a4343a1c7c2afbad63277f5b4d60c42d8d94a2af2a9b16e46f2ccb5|8|500|400"
+  "rewrite|rewrite.go.gz|5116|74c0705f8729670559492fb5460a01b2a1a2a109928e1aeb52736e485e8ff097|e8c92713adda73b661c1e41dae09d4f76f1447b3f8ddd5b3348b67ce655ee243|b3f9814b65763642d4eac58b9065018048ea13e6f10d56afb28a0479bf5a68a1|8|500|400"
+  "language|language.go.gz|41387|009aa9fd5352c712f3839670c7df8a9b00ae878ee20dc88131a438b2d5edfd9a|a064d45748fd555209971728d9740510c2ca7449870b54acb861909afea2c8c9|583df223904fe414c33bba3b474c6557ecdb20e7f47e304b9a09bfcc2da44539|8|500|400"
+  "grammargen_lr|grammargen_lr.go.gz|235626|a7e4a1a64b25a60aea36183b9d6d53dcd9240942cdb10e67a3cf9e6ce30f95b2|7d64368d4dbffca1b3cc472ff3397871c23e082efb1a2bdba5f9670564cc7b22|1472cfd9a014d4034dbc1456afd12c282630ef787c3543cf0cecb73619883ad2|8|500|400"
 )
 
 declare -a FIXTURE_IDS=()
 declare -A FIXTURE_SOURCE_SHA=()
 declare -A FIXTURE_DEEP_SHA=()
-printf 'fixture\tsource_path\tbytes\tsource_sha256\tcompressed_sha256\tdeep_sha256\n' > "$OUT_DIR/fixture_manifest.tsv"
+declare -A FIXTURE_MIN_MAX_STACKS=()
+declare -A FIXTURE_MIN_MULTI_ITERS=()
+declare -A FIXTURE_MIN_MULTI_TOKENS=()
+printf 'fixture\tsource_path\tbytes\tsource_sha256\tcompressed_sha256\tdeep_sha256\tmin_max_stacks\tmin_multi_iters\tmin_multi_tokens\trequired_node_kinds\tsuite_required_node_kinds\tsuite_required_any_node_kinds\n' > "$OUT_DIR/fixture_manifest.tsv"
 for spec in "${FIXTURE_SPECS[@]}"; do
-  IFS='|' read -r fixture asset_name expected_bytes source_sha compressed_sha deep_sha <<< "$spec"
+  IFS='|' read -r fixture asset_name expected_bytes source_sha compressed_sha deep_sha min_max_stacks min_multi_iters min_multi_tokens <<< "$spec"
+  require_uint "$fixture min max stacks" "$min_max_stacks"
+  require_uint "$fixture min multi-stack iterations" "$min_multi_iters"
+  require_uint "$fixture min multi-stack tokens" "$min_multi_tokens"
   asset_path="$REPO_ROOT/internal/benchfixtures/testdata/$asset_name"
   source_path="$OUT_DIR/fixtures/$fixture.go"
   tmp_path="$source_path.tmp"
@@ -240,7 +249,13 @@ for spec in "${FIXTURE_SPECS[@]}"; do
   FIXTURE_IDS+=("$fixture")
   FIXTURE_SOURCE_SHA["$fixture"]="$source_sha"
   FIXTURE_DEEP_SHA["$fixture"]="$deep_sha"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$fixture" "$source_path" "$expected_bytes" "$source_sha" "$compressed_sha" "$deep_sha" >> "$OUT_DIR/fixture_manifest.tsv"
+  FIXTURE_MIN_MAX_STACKS["$fixture"]="$min_max_stacks"
+  FIXTURE_MIN_MULTI_ITERS["$fixture"]="$min_multi_iters"
+  FIXTURE_MIN_MULTI_TOKENS["$fixture"]="$min_multi_tokens"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$fixture" "$source_path" "$expected_bytes" "$source_sha" "$compressed_sha" "$deep_sha" \
+    "$min_max_stacks" "$min_multi_iters" "$min_multi_tokens" "$FIXTURE_REQUIRED_NODE_KINDS" \
+    "$SUITE_REQUIRED_NODE_KINDS" "$SUITE_REQUIRED_ANY_NODE_KINDS" >> "$OUT_DIR/fixture_manifest.tsv"
 done
 
 GO_BIN="$OUT_DIR/bin/gotreesitter.test"
@@ -250,6 +265,8 @@ GO_BIN="$OUT_DIR/bin/gotreesitter.test"
 ) > "$OUT_DIR/preflight/go_build.txt" 2>&1
 "$GO_BIN" -test.list '^BenchmarkGoParseWarmRealDFA$' > "$OUT_DIR/preflight/go_benchmark_list.txt"
 grep -qx 'BenchmarkGoParseWarmRealDFA' "$OUT_DIR/preflight/go_benchmark_list.txt" || die "prebuilt Go test binary does not contain BenchmarkGoParseWarmRealDFA"
+"$GO_BIN" -test.run '^TestGoFullParseBenchmarkFixturesParseClean$' -test.count=1 -test.v \
+  > "$OUT_DIR/preflight/go_workload_identity.txt" 2>&1 || die "Go workload-identity preflight failed"
 GO_BIN_SHA="$(sha256sum "$GO_BIN" | awk '{print $1}')"
 go version -m "$GO_BIN" > "$OUT_DIR/preflight/go_binary_modules.txt"
 
@@ -548,6 +565,33 @@ expected_samples=$((4 * CYCLES * 4))
 actual_samples=$(($(wc -l < "$OUT_DIR/samples.tsv") - 1))
 [[ "$actual_samples" == "$expected_samples" ]] || die "sample rows=$actual_samples want=$expected_samples"
 
+verify_go_workload_floor() {
+  local fixture="$1"
+  local min_max_stacks="${FIXTURE_MIN_MAX_STACKS[$fixture]}"
+  local min_multi_iters="${FIXTURE_MIN_MULTI_ITERS[$fixture]}"
+  local min_multi_tokens="${FIXTURE_MIN_MULTI_TOKENS[$fixture]}"
+  awk -F'\t' \
+    -v fixture="$fixture" \
+    -v min_max_stacks="$min_max_stacks" \
+    -v min_multi_iters="$min_multi_iters" \
+    -v min_multi_tokens="$min_multi_tokens" '
+      $2 == fixture && $5 == "go" {
+        seen++
+        if ($11 == "NA" || $11 + 0 < min_max_stacks ||
+            $14 == "NA" || $14 + 0 < min_multi_iters ||
+            $15 == "NA" || $15 + 0 < min_multi_tokens) {
+          printf "fixture %s sample %s workload identity max_stacks=%s multi_iters=%s multi_tokens=%s want >=%s/>=%s/>=%s\n", fixture, $6, $11, $14, $15, min_max_stacks, min_multi_iters, min_multi_tokens > "/dev/stderr"
+          failed = 1
+        }
+      }
+      END { exit !(seen > 0 && !failed) }
+    ' "$OUT_DIR/samples.tsv"
+}
+
+for fixture in "${FIXTURE_IDS[@]}"; do
+  verify_go_workload_floor "$fixture" || die "$fixture sampled workload identity failed"
+done
+
 median_column() {
   local fixture="$1" backend="$2" column="$3"
   awk -F'\t' -v fixture="$fixture" -v backend="$backend" -v column="$column" \
@@ -629,6 +673,10 @@ SAMPLES_SHA="$(sha256sum "$OUT_DIR/samples.tsv" | awk '{print $1}')"
   printf 'benchtime=%s\n' "$BENCHTIME"
   printf 'c_calibration_min_ns=%s\n' "$BENCHTIME_NS"
   printf 'cgo_static_deep_admission=%s\n' "$CGO_ADMISSION"
+  printf 'workload_identity=runtime_and_node_kind_admission_v1\n'
+  printf 'fixture_required_node_kinds=%s\n' "$FIXTURE_REQUIRED_NODE_KINDS"
+  printf 'suite_required_node_kinds=%s\n' "$SUITE_REQUIRED_NODE_KINDS"
+  printf 'suite_required_any_node_kinds=%s\n' "$SUITE_REQUIRED_ANY_NODE_KINDS"
   printf 'quiet_admission=%s\n' "$QUIET_ADMISSION"
   printf 'quiet_max_load1=%s\n' "$QUIET_MAX_LOAD1"
   printf 'quiet_max_io_avg10=%s\n' "$QUIET_MAX_IO_AVG10"
