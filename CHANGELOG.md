@@ -91,6 +91,9 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Real-Go benchmark fixture admission now drains its arena-pool state after
+  validation, and the arena GC-retention regression establishes its own clean
+  pool boundary instead of measuring memory retained by earlier tests.
 - C-oracle forest audits now compare wide syntax nodes with a linear tree
   cursor, avoiding quadratic indexed-child walks while retaining exact fields,
   spans, flags, anonymous children, and child order.

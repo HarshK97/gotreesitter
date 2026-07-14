@@ -228,6 +228,8 @@ func reportRealGoRuntime(b *testing.B, rt gotreesitter.ParseRuntime) {
 }
 
 func TestGoFullParseBenchmarkFixturesParseClean(t *testing.T) {
+	gotreesitter.DrainArenaPools()
+	t.Cleanup(gotreesitter.DrainArenaPools)
 	if err := verifyRealGoBenchmarkGrammarIdentity(); err != nil {
 		t.Fatal(err)
 	}
