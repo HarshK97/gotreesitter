@@ -50,7 +50,8 @@ func TestForestCorpusParity(t *testing.T) {
 	var manifest ForestCorpusManifest
 	if manifestPath != "" {
 		var err error
-		manifest, files, err := LoadForestCorpusManifest(
+		var files map[string][]string
+		manifest, files, err = LoadForestCorpusManifest(
 			manifestPath,
 			strings.TrimSpace(os.Getenv("GTS_FOREST_CORPUS_ROOT")),
 			strings.TrimSpace(os.Getenv("GTS_FOREST_CORPUS_LOCK_PATH")),
