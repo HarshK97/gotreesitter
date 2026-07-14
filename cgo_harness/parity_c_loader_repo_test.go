@@ -17,6 +17,31 @@ func TestVerifyPinnedRepoAcceptsCleanExactHead(t *testing.T) {
 	}
 }
 
+func TestVerifyPinnedRepoAcceptsAttributeFilterFalseDirty(t *testing.T) {
+	repoDir := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runPinnedTestGit(t, repoDir, "init")
+	runPinnedTestGit(t, repoDir, "config", "user.name", "Gotreesitter Test")
+	runPinnedTestGit(t, repoDir, "config", "user.email", "gotreesitter@example.invalid")
+	writePinnedTestFile(t, filepath.Join(repoDir, ".gitattributes"), "*.txt text eol=lf\n")
+	writePinnedTestFile(t, filepath.Join(repoDir, "crlf.txt"), "line\r\n")
+	runPinnedTestGit(t, repoDir, "add", ".gitattributes")
+	blob := strings.TrimSpace(runPinnedTestGit(t, repoDir, "hash-object", "-w", "--no-filters", "crlf.txt"))
+	runPinnedTestGit(t, repoDir, "update-index", "--add", "--cacheinfo", "100644", blob, "crlf.txt")
+	runPinnedTestGit(t, repoDir, "commit", "-m", "inconsistent attributes fixture")
+	head := strings.TrimSpace(runPinnedTestGit(t, repoDir, "rev-parse", "HEAD"))
+
+	status := runPinnedTestGit(t, repoDir, "status", "--porcelain=v1")
+	if !strings.Contains(status, "crlf.txt") {
+		t.Fatalf("fixture status = %q, want Git filter false-dirty path", status)
+	}
+	if err := verifyPinnedRepo(repoDir, head); err != nil {
+		t.Fatalf("verify exact raw bytes despite attribute filter: %v", err)
+	}
+}
+
 func TestVerifyPinnedRepoRejectsWrongHead(t *testing.T) {
 	repoDir, pinnedHead := newPinnedTestRepo(t)
 	writePinnedTestFile(t, filepath.Join(repoDir, "tracked.txt"), "second\n")

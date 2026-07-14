@@ -91,6 +91,10 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Accept pinned C-oracle checkouts whose raw tracked bytes match the locked
+  commit even when an upstream `.gitattributes` rule makes Git report a fresh
+  clone as modified, while continuing to reject real byte, mode, and untracked
+  changes.
 - Real-Go benchmark fixture admission now drains its arena-pool state after
   validation, and the arena GC-retention regression establishes its own clean
   pool boundary instead of measuring memory retained by earlier tests.

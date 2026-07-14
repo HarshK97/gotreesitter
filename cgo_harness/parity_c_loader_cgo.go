@@ -39,6 +39,7 @@ import "C"
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -673,9 +674,96 @@ func verifyPinnedRepo(repoDir, commit string) error {
 		return fmt.Errorf("inspect working tree: %w", err)
 	}
 	if status = strings.TrimSpace(status); status != "" {
-		return fmt.Errorf("working tree is not clean (tracked and untracked files must match the pinned commit):\n%s", status)
+		// Some upstream grammar commits contain blobs whose line endings conflict
+		// with their own .gitattributes. Git reports those fresh checkouts as
+		// modified even though the worktree bytes still exactly match HEAD. Keep
+		// the fail-closed provenance gate, but distinguish that filter artifact
+		// from a real source mutation by comparing the reported paths without
+		// applying Git's clean filters.
+		if err := verifyPinnedRepoStatusBytes(repoDir); err != nil {
+			return fmt.Errorf("working tree is not clean (tracked and untracked files must match the pinned commit):\n%s\nexact-byte verification: %w", status, err)
+		}
 	}
 	return nil
+}
+
+func verifyPinnedRepoStatusBytes(repoDir string) error {
+	untracked, err := parityGitStdout(repoDir, "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return fmt.Errorf("inspect untracked files: %w", err)
+	}
+	if untracked != "" {
+		return fmt.Errorf("untracked path %q", strings.Split(untracked, "\x00")[0])
+	}
+
+	changed, err := parityGitStdout(repoDir, "diff", "--name-only", "-z", "HEAD", "--")
+	if err != nil {
+		return fmt.Errorf("list changed paths: %w", err)
+	}
+	for _, rel := range strings.Split(changed, "\x00") {
+		if rel == "" {
+			continue
+		}
+		entry, err := parityGitStdout(repoDir, "ls-tree", "-z", "HEAD", "--", rel)
+		if err != nil {
+			return fmt.Errorf("read pinned tree entry %q: %w", rel, err)
+		}
+		entry = strings.TrimSuffix(entry, "\x00")
+		fields := strings.Fields(strings.SplitN(entry, "\t", 2)[0])
+		if len(fields) != 3 || fields[1] != "blob" {
+			return fmt.Errorf("path %q is not a pinned blob", rel)
+		}
+
+		info, err := os.Lstat(filepath.Join(repoDir, filepath.FromSlash(rel)))
+		if err != nil {
+			return fmt.Errorf("stat %q: %w", rel, err)
+		}
+		if !pinnedRepoModeMatches(fields[0], info.Mode()) {
+			return fmt.Errorf("path %q mode differs from pinned mode %s", rel, fields[0])
+		}
+		got, err := parityGitStdout(repoDir, "hash-object", "--no-filters", "--", rel)
+		if err != nil {
+			return fmt.Errorf("hash raw bytes for %q: %w", rel, err)
+		}
+		if strings.TrimSpace(got) != fields[2] {
+			return fmt.Errorf("path %q bytes differ from pinned blob", rel)
+		}
+	}
+	return nil
+}
+
+func pinnedRepoModeMatches(want string, got os.FileMode) bool {
+	switch want {
+	case "100644":
+		return got.IsRegular() && got.Perm()&0o111 == 0
+	case "100755":
+		return got.IsRegular() && got.Perm()&0o111 != 0
+	case "120000":
+		return got&os.ModeSymlink != 0
+	default:
+		return false
+	}
+}
+
+func parityGitStdout(repoDir string, args ...string) (string, error) {
+	gitArgs := append([]string{"-c", "safe.directory=" + repoDir, "-C", repoDir}, args...)
+	cmd := exec.Command("git", gitArgs...)
+	cmd.Env = append(
+		os.Environ(),
+		"GIT_HTTP_VERSION=HTTP/1.1",
+		"GIT_TERMINAL_PROMPT=0",
+	)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err == nil {
+		return string(out), nil
+	}
+	msg := strings.TrimSpace(stderr.String())
+	if msg == "" {
+		msg = err.Error()
+	}
+	return "", fmt.Errorf("git %s: %s", strings.Join(gitArgs, " "), msg)
 }
 
 func parityGitOutput(repoDir string, args ...string) (string, error) {
