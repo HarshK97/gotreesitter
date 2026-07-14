@@ -379,59 +379,134 @@ func forestCTreeOutcome(tree *sitter.Tree, source []byte) ForestAuditOutcome {
 }
 
 func completeForestCIdentityDiff(goNode *gts.Node, goLang *gts.Language, cNode *sitter.Node) string {
+	if goNode == nil || cNode == nil {
+		if goNode == nil && cNode == nil {
+			return ""
+		}
+		return fmt.Sprintf("root presence go=%t c=%t", goNode != nil, cNode != nil)
+	}
+	cursor := cNode.Walk()
+	defer cursor.Close()
+
 	path := make([]int, 0, 32)
-	var walk func(*gts.Node, *sitter.Node) string
-	walk = func(goNode *gts.Node, cNode *sitter.Node) string {
+	var walk func(*gts.Node) string
+	walk = func(goNode *gts.Node) string {
 		location := forestIdentityPath(path)
-		if goNode == nil || cNode == nil {
-			if goNode == nil && cNode == nil {
+		cCurrent := cursor.Node()
+		if goNode == nil || cCurrent == nil {
+			if goNode == nil && cCurrent == nil {
 				return ""
 			}
-			return fmt.Sprintf("%s presence go=%t c=%t", location, goNode != nil, cNode != nil)
+			return fmt.Sprintf("%s presence go=%t c=%t", location, goNode != nil, cCurrent != nil)
 		}
-		if goNode.Type(goLang) != cNode.Kind() {
-			return fmt.Sprintf("%s type go=%q c=%q", location, goNode.Type(goLang), cNode.Kind())
+		if goNode.Type(goLang) != cCurrent.Kind() {
+			return fmt.Sprintf("%s type go=%q c=%q", location, goNode.Type(goLang), cCurrent.Kind())
 		}
-		if goNode.StartByte() != uint32(cNode.StartByte()) || goNode.EndByte() != uint32(cNode.EndByte()) {
-			return fmt.Sprintf("%s range go=%d:%d c=%d:%d", location, goNode.StartByte(), goNode.EndByte(), cNode.StartByte(), cNode.EndByte())
+		if goNode.StartByte() != uint32(cCurrent.StartByte()) || goNode.EndByte() != uint32(cCurrent.EndByte()) {
+			return fmt.Sprintf("%s range go=%d:%d c=%d:%d", location, goNode.StartByte(), goNode.EndByte(), cCurrent.StartByte(), cCurrent.EndByte())
 		}
 		goStart, goEnd := goNode.StartPoint(), goNode.EndPoint()
-		cStart, cEnd := cNode.StartPosition(), cNode.EndPosition()
+		cStart, cEnd := cCurrent.StartPosition(), cCurrent.EndPosition()
 		if goStart.Row != uint32(cStart.Row) || goStart.Column != uint32(cStart.Column) ||
 			goEnd.Row != uint32(cEnd.Row) || goEnd.Column != uint32(cEnd.Column) {
 			return fmt.Sprintf("%s points go=%v:%v c=%v:%v", location, goStart, goEnd, cStart, cEnd)
 		}
-		if goNode.IsNamed() != cNode.IsNamed() {
-			return fmt.Sprintf("%s named go=%t c=%t", location, goNode.IsNamed(), cNode.IsNamed())
+		if goNode.IsNamed() != cCurrent.IsNamed() {
+			return fmt.Sprintf("%s named go=%t c=%t", location, goNode.IsNamed(), cCurrent.IsNamed())
 		}
-		if goNode.IsExtra() != cNode.IsExtra() {
-			return fmt.Sprintf("%s extra go=%t c=%t", location, goNode.IsExtra(), cNode.IsExtra())
+		if goNode.IsExtra() != cCurrent.IsExtra() {
+			return fmt.Sprintf("%s extra go=%t c=%t", location, goNode.IsExtra(), cCurrent.IsExtra())
 		}
-		if goNode.IsMissing() != cNode.IsMissing() {
-			return fmt.Sprintf("%s missing go=%t c=%t", location, goNode.IsMissing(), cNode.IsMissing())
+		if goNode.IsMissing() != cCurrent.IsMissing() {
+			return fmt.Sprintf("%s missing go=%t c=%t", location, goNode.IsMissing(), cCurrent.IsMissing())
 		}
-		if goNode.HasError() != cNode.HasError() {
-			return fmt.Sprintf("%s has_error go=%t c=%t", location, goNode.HasError(), cNode.HasError())
+		if goNode.HasError() != cCurrent.HasError() {
+			return fmt.Sprintf("%s has_error go=%t c=%t", location, goNode.HasError(), cCurrent.HasError())
 		}
-		goChildren, cChildren := goNode.ChildCount(), int(cNode.ChildCount())
+		goChildren, cChildren := goNode.ChildCount(), int(cCurrent.ChildCount())
 		if goChildren != cChildren {
 			return fmt.Sprintf("%s child_count go=%d c=%d", location, goChildren, cChildren)
 		}
+		if goChildren == 0 {
+			return ""
+		}
+		if !cursor.GotoFirstChild() {
+			return fmt.Sprintf("%s child_count go=%d c=0", location, goChildren)
+		}
 		for i := 0; i < goChildren; i++ {
 			path = append(path, i)
-			goField, cField := goNode.FieldNameForChild(i, goLang), cNode.FieldNameForChild(uint32(i))
+			goField, cField := goNode.FieldNameForChild(i, goLang), cursor.FieldName()
 			if goField != cField {
 				diff := fmt.Sprintf("%s field go=%q c=%q", forestIdentityPath(path), goField, cField)
 				path = path[:len(path)-1]
 				return diff
 			}
-			if diff := walk(goNode.Child(i), cNode.Child(uint(i))); diff != "" {
+			if diff := walk(goNode.Child(i)); diff != "" {
 				path = path[:len(path)-1]
 				return diff
 			}
 			path = path[:len(path)-1]
+			if i+1 < goChildren && !cursor.GotoNextSibling() {
+				return fmt.Sprintf("%s child_count go=%d c=%d", location, goChildren, i+1)
+			}
+		}
+		if cursor.GotoNextSibling() {
+			return fmt.Sprintf("%s child_count go=%d c>%d", location, goChildren, cChildren)
+		}
+		if !cursor.GotoParent() {
+			return fmt.Sprintf("%s cursor_parent_unavailable", location)
 		}
 		return ""
 	}
-	return walk(goNode, cNode)
+	return walk(goNode)
+}
+
+func TestCompleteForestCIdentityWideNodeIsLinear(t *testing.T) {
+	const elements = 50_000
+	load := forestLanguageLoaders()["json"]
+	if load == nil {
+		t.Fatal("json forest language loader is unavailable")
+	}
+	goLang := load()
+	source := []byte(`{"wide":[` + strings.Repeat("0,", elements-1) + "0]}")
+	goTree, err := gts.NewParser(goLang).Parse(source)
+	if err != nil || goTree == nil || goTree.RootNode() == nil {
+		t.Fatalf("parse Go JSON fixture: tree_nil=%t err=%v", goTree == nil, err)
+	}
+	defer goTree.Release()
+	object := goTree.RootNode().Child(0)
+	if object == nil || object.ChildCount() < 2 {
+		t.Fatal("wide fixture root has no object pair")
+	}
+	pair := object.Child(1)
+	wide := pair.ChildByFieldName("value", goLang)
+	if wide == nil {
+		t.Fatal("wide fixture pair has no value field")
+	}
+	if wide.ChildCount() < elements {
+		t.Fatalf("wide fixture child count = %d, want at least %d", wide.ChildCount(), elements)
+	}
+
+	cLang, err := ParityCLanguage("json")
+	if err != nil {
+		t.Fatalf("load pinned C JSON grammar: %v", err)
+	}
+	cParser := sitter.NewParser()
+	defer cParser.Close()
+	if err := cParser.SetLanguage(cLang); err != nil {
+		t.Fatalf("set C JSON grammar: %v", err)
+	}
+	cTree := cParser.Parse(source, nil)
+	if cTree == nil || cTree.RootNode() == nil {
+		t.Fatal("C JSON parse returned no tree")
+	}
+	defer cTree.Close()
+
+	start := time.Now()
+	if diff := completeForestCIdentityDiff(goTree.RootNode(), goLang, cTree.RootNode()); diff != "" {
+		t.Fatalf("wide identical trees differ: %s", diff)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("wide identity comparison took %s, want <= 5s", elapsed)
+	}
 }

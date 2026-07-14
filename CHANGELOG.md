@@ -87,6 +87,9 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- C-oracle forest audits now compare wide syntax nodes with a linear tree
+  cursor, avoiding quadratic indexed-child walks while retaining exact fields,
+  spans, flags, anonymous children, and child order.
 - Forest audit timeouts now stop the parser synchronously instead of leaving
   abandoned parse goroutines to contend with later files in the same shard.
 - Go/C benchmark admission now uses the same locked upstream runtime and Go
