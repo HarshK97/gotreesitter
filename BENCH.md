@@ -185,6 +185,94 @@ stack and no forks or merges; the real file reached 12 stacks, 1,765 forks,
 workload-regime defect, not the final C ratio. Report SHA-256:
 `c6de42e12724f72393162a0a50ecb8247f97312eaaff6cb5b093746b1206b4ab`.
 
+### Authenticated work-count diagnostic harness
+
+Wall time alone cannot distinguish excess GLR work from higher cost per event.
+The diagnostic-only `gts-work-count/v2` contract therefore runs one fresh
+public `query_compile.go` parse invocation through a tagged diagnostic Go test
+binary and a fully static C binary built from the same locked runtime and
+grammar as the publication oracle. The tagged parse is diagnostic, not a
+production-path claim. It is not a timing lane, does not modify the production
+static timing artifact, and emits no elapsed time. Every internal Go retry or
+recovery reparse triggered by that single public invocation remains inside the
+counter window.
+
+Admission happens before instrumentation: a separate ordinary untagged Go
+binary and the unmodified static C oracle must both reproduce the frozen
+`gts-deep-tree-v1` digest. The tagged Go child independently authenticates the
+fixture hash, grammar commit/blob, GLR workload regime, full clean span, and
+deep tree before reporting counters. The C child must reproduce the same tree.
+The complete unmodified-C cold build and admission runs in a dedicated,
+wall-bounded process group, so repository acquisition, compiler/linker,
+identity, `nm`, and `readelf` descendants are killed together on timeout.
+
+The Go schema attributes counter deltas to every `parseInternal` attempt at
+entry, after cap resolution, and during finalization. A logical retry rung is
+reported separately from the resolved `retry_pass` mode. The aggregate must
+equal the sum of attempt counters plus the explicitly reported outside-attempt
+residual. On the frozen canonical fixture, `accept_actions=3` means three GLR
+accept actions inside one `initial_full` attempt; it does not mean three parse
+attempts. A content-addressed valid-Go retry witness pins the two-attempt
+`initial_full` accepted-error to `initial_merge` accepted-clean sequence, and a
+separate content-addressed straight-LR control pins the one-stack case.
+
+`accept_actions` is a terminal-event counter, not a convergence counter. C can
+accept once and then emit multiple packed roots during `pop_all`, while Go can
+apply multiple accept actions inside one attempt. Contract v2 therefore
+reserves, but does not yet implement, a bounded convergence-frontier record:
+the first 256 events plus the first rejection for each reason, keyed by
+attempt, lookahead, phase, head state/byte/status/error/scanner identity, with
+before/after links and packed paths, cumulative counters, and separate
+`accept_actions` and `packed_roots_emitted`. No current receipt makes a
+convergence claim from the accept-action row.
+
+An authoritative `gts-work-count-receipt/v3` requires a clean Git checkout and
+records `HEAD`, `HEAD^{tree}`, and `git_clean=true`. Both Go binaries compile
+from one sealed content-addressed Git source snapshot. C compiles from private
+snapshots of the runtime, grammar, patch, and driver. Ambient `GOT_*`,
+`GOFLAGS`, `GOAMD64`, `GOEXPERIMENT`, and `GODEBUG` values are removed and the
+chosen build/runtime environments are serialized. Build, patch, link, and
+child process groups are wall-bounded. A stale receipt is removed before work
+starts, and a successful receipt is published atomically in its destination
+directory.
+
+Directly comparable counters are limited to applied shift/reduce/recover
+actions, reduction pop requests and emitted paths/payloads, and the selected
+tree census. Accept actions are reported as terminal evidence but require the
+future packed-root/convergence record for interpretation. Table
+lookups, lexer calls, stack versions, merges, graph links, and transient
+payload construction remain explicitly labeled representation-specific
+proxies.
+
+Run the focused Docker gate from a linked worktree by mounting its absolute
+Git common directory and selecting the worktree-specific Git directory inside
+the container:
+
+```sh
+git_common=$(git rev-parse --path-format=absolute --git-common-dir)
+git_dir_name=$(basename "$(git rev-parse --path-format=absolute --git-dir)")
+bash cgo_harness/docker/run_parity_in_docker.sh \
+  --label work-count-query-compile --memory 8g --cpus 2 --timeout 12m \
+  --mount "$git_common:/git-common:ro" -- \
+  "export GIT_DIR=/git-common/worktrees/$git_dir_name GIT_WORK_TREE=/workspace; \
+   cd /workspace/cgo_harness && env \
+   GTS_WORK_COUNT_ORACLE=1 \
+   GTS_WORK_COUNT_RECEIPT=/workspace/harness_out/work_count/query_compile.json \
+   go test . -tags 'treesitter_c_parity treesitter_c_perfscan' \
+   -run '^TestAuthenticatedWorkCountOracle$|^TestWorkCountSanitizedEnvDropsParserAndGoOverrides$|^TestWorkCountRunCapturedKillsDescendantProcessGroup$|^TestStaticCLanguageSymbol' \
+   -count=1 -parallel 1 -timeout 12m -v"
+```
+
+The checkout must expose usable Git metadata inside the container. Dirty
+source fails closed. `GTS_WORK_COUNT_ALLOW_DIRTY=1` exists only for focused
+pre-commit harness tests; its receipt records `authoritative=false` and cannot
+enter the evidence ledger.
+The checked-in semantic contract is
+[`cgo_harness/work_count/contract_v2.json`](cgo_harness/work_count/contract_v2.json).
+`construction_surplus` means representation-specific leaf plus parent
+constructions minus selected nodes; it must never be relabeled as a count of
+discarded nodes.
+
 ## Go-vs-C fleet scoreboard (full parse, real corpora)
 
 Source of truth: [`cgo_harness/perf_scan/perf_ratio_budgets.json`](cgo_harness/perf_scan/perf_ratio_budgets.json)

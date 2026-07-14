@@ -1,10 +1,6 @@
 package gotreesitter
 
-import (
-	"runtime"
-	"runtime/debug"
-	"testing"
-)
+import "testing"
 
 // TestMergeStacksWithScratchLargeCapPollsMemoryBudgetMidGrind exercises the
 // coarse-stride in-merge poll added to mergeStacksWithScratchLargeCap (2026-07-12
@@ -20,16 +16,6 @@ import (
 // result, far short of the full input) with mergeBudgetStopReason set, proving
 // the stride poll actually fires mid-grind rather than only at entry/exit.
 func TestMergeStacksWithScratchLargeCapPollsMemoryBudgetMidGrind(t *testing.T) {
-	// Disable GC for the duration of the measured window. This package's full
-	// test binary allocates heavily elsewhere (including deliberately huge,
-	// short-lived allocations in nearby memory-budget tests); a concurrent GC
-	// cycle reclaiming that unrelated garbage can otherwise make this test's
-	// own net HeapAlloc delta read as flat or negative at the exact instant
-	// the poll samples it, even though real, live growth occurred. Disabling
-	// GC makes HeapAlloc monotonically non-decreasing for the test's duration.
-	oldGC := debug.SetGCPercent(-1)
-	defer debug.SetGCPercent(oldGC)
-
 	const n = 4000
 	stacks := make([]glrStack, n)
 	for i := range stacks {
@@ -47,15 +33,16 @@ func TestMergeStacksWithScratchLargeCapPollsMemoryBudgetMidGrind(t *testing.T) {
 	}
 
 	parser := &Parser{}
-	var stats runtime.MemStats
-	runtime.ReadMemStats(&stats)
-	// Arm the runtime budget directly (bypassing enterRuntimeMemoryBudget's
-	// min-source-length gate, irrelevant when calling the merge function
-	// directly): baseline "now", budget of 1 byte so any further heap growth
-	// trips the very first real check the stride poll performs.
+	// Arm an already-exceeded runtime budget directly (bypassing
+	// enterRuntimeMemoryBudget's min-source-length gate, irrelevant when calling
+	// the merge function directly). A zero baseline makes the first real
+	// ReadMemStats check trip deterministically, independent of whether the race
+	// allocator can reuse spans from earlier package tests. Separate runtime
+	// budget tests cover HeapAlloc/Sys delta accounting; this test's contract is
+	// that the O(n^2) merge reaches its coarse poll and stops mid-grind.
 	parser.parseRuntimeMemoryBudgetBytes = 1
-	parser.parseRuntimeMemoryBaselineBytes = stats.HeapAlloc
-	parser.parseRuntimeMemoryBaselineSys = stats.Sys
+	parser.parseRuntimeMemoryBaselineBytes = 0
+	parser.parseRuntimeMemoryBaselineSys = 0
 	parser.parseMemoryBudgetDiagActive = true
 
 	scratch := &glrMergeScratch{

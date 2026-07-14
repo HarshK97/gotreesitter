@@ -91,6 +91,7 @@ func (n *gssNode) appendExtraLink(link gssMainLink) {
 	if count < capacity && n.extraLinks != nil {
 		unsafe.Slice(n.extraLinks, capacity)[count] = link
 		n.extraLinkCount++
+		workCountRecordGraphLinkAddition()
 		return
 	}
 	newCapacity := 1
@@ -108,6 +109,7 @@ func (n *gssNode) appendExtraLink(link gssMainLink) {
 	n.extraLinks = &links[0]
 	n.extraLinkCount++
 	n.extraLinkCap = uint8(newCapacity)
+	workCountRecordGraphLinkAddition()
 }
 
 // gssStack is a shared-prefix stack foundation for future GLR work.
@@ -430,6 +432,9 @@ func (s *gssStack) pushEntry(entry stackEntry, scratch *gssScratch) {
 		depth = s.head.depth + 1
 	}
 	n := scratch.allocNode(entry, s.head, depth)
+	if s.head != nil {
+		workCountRecordGraphLinkAddition()
+	}
 	s.head = n
 }
 

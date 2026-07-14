@@ -1,0 +1,127 @@
+{
+  "schema": "gts-work-count-contract/v2",
+  "counter_contract": "gts-work-count/v2",
+  "scope": "one fresh public full-parse invocation in one tagged diagnostic child process; all internal parseInternal attempts and retry/reparse work are counted and attributed; no elapsed-time evidence",
+  "direct": {
+    "shifts": "shift actions applied",
+    "reductions": "reduce actions applied",
+    "explicit_recover_actions": "explicit recover parse actions applied",
+    "reduction_pop_requests": "pop-count requests issued by reduce actions",
+    "emitted_pop_paths": "concrete pop paths emitted by a pop-count request",
+    "emitted_pop_payloads": "payload entries carried by emitted pop paths",
+    "selected_nodes": "nodes in the selected returned tree",
+    "selected_parent_nodes": "selected returned-tree nodes with children",
+    "selected_leaf_nodes": "selected returned-tree nodes without children"
+  },
+  "terminal": {
+    "accept_actions": "terminal accept actions applied; multiple actions may occur inside one parseInternal attempt, and this count alone does not measure convergence or packed roots emitted"
+  },
+  "proxy": {
+    "table_lookups_proxy": "implementation-specific parse-table lookup front-door calls",
+    "action_entries_examined_proxy": "implementation-specific action entries exposed at instrumented dispatch lookups",
+    "lexer_front_door_calls_proxy": "implementation-specific production lexer front-door calls",
+    "stack_version_creations_proxy": "implementation-specific initial-stack and clone/version creation events",
+    "merge_attempts_proxy": "implementation-specific merge front-door candidate calls",
+    "merge_successes_proxy": "implementation-specific successful merge front-door calls",
+    "graph_link_additions_proxy": "implementation-specific physical primary or alternate stack-graph links added",
+    "leaf_constructions_proxy": "representation-specific transient leaf payload constructions",
+    "parent_constructions_proxy": "representation-specific transient parent payload constructions",
+    "pending_parent_constructions_proxy": "Go-only pending-parent subset; always zero in C",
+    "no_tree_parent_constructions_proxy": "Go-only no-tree parent subset; always zero in C"
+  },
+  "derived": {
+    "construction_surplus": "leaf_constructions_proxy + parent_constructions_proxy - selected_nodes; never described as discarded nodes"
+  },
+  "attempt_attribution": {
+    "logical_rungs": [
+      "initial_full",
+      "initial_merge",
+      "clean_wide",
+      "clean_wide_merge",
+      "recovery_wide_or_node",
+      "secondary_node",
+      "final_merge"
+    ],
+    "resolved_retry_pass_is_independent": true,
+    "phases": [
+      "entry_to_caps",
+      "caps_to_finalize",
+      "finalize"
+    ],
+    "require_aggregate_equals_attempts_plus_outside": true,
+    "canonical_query_compile_attempts": 1,
+    "canonical_query_compile_accept_actions": 3,
+    "retry_witness": {
+      "path": "testdata/work_count/retry_go_query_kotlin_regression.go",
+      "bytes": 3435,
+      "sha256": "ada50bc6eef16b831e7ca0c44f11dffbcff7d9695515519cd5090b2aacf4789a",
+      "expected_rungs": [
+        "initial_full",
+        "initial_merge"
+      ]
+    },
+    "straight_lr_control": {
+      "path": "testdata/work_count/straight_lr_control.go",
+      "bytes": 154,
+      "sha256": "4c584e187fdd4fb62dbf3953ca771e868bd3037e44abe5349c1cc0b3faf6532b",
+      "expected_max_stacks": 1
+    }
+  },
+  "convergence_frontier": {
+    "status": "schema_reserved_not_implemented",
+    "max_events": 256,
+    "record_first_reject_per_reason": true,
+    "identity": [
+      "attempt",
+      "lookahead",
+      "phase",
+      "head_state",
+      "head_byte",
+      "head_status",
+      "head_error",
+      "head_scanner"
+    ],
+    "outcomes": [
+      "status",
+      "score",
+      "shifted",
+      "error_cost",
+      "scanner",
+      "not_gss",
+      "not_clean",
+      "distinct_shape",
+      "payload",
+      "cycle",
+      "link_cap",
+      "cull"
+    ],
+    "snapshots": [
+      "links_before",
+      "links_after",
+      "packed_paths_before",
+      "packed_paths_after"
+    ],
+    "include_cumulative_direct_and_proxy_counts": true,
+    "terminal_counters": [
+      "accept_actions",
+      "packed_roots_emitted"
+    ],
+    "interpretation": "accept actions and packed roots emitted are distinct; neither action count nor attempt count alone establishes convergence work"
+  },
+  "admission": {
+    "digest_format": "gts-deep-tree-v1",
+    "fixture": "query_compile",
+    "require_uninstrumented_go_static_c_digest_match_first": true,
+    "require_instrumented_digest_match": true,
+    "require_full_span": true,
+    "require_clean_root": true,
+    "require_no_overflow": true,
+    "require_exact_fields": true,
+    "require_ordinary_untagged_go_child_first": true,
+    "require_clean_git_source_for_authoritative_receipt": true,
+    "require_private_content_addressed_go_source_snapshot": true,
+    "require_private_c_input_snapshot": true,
+    "sanitize_go_and_parser_environment": true,
+    "atomic_receipt_publish": true
+  }
+}

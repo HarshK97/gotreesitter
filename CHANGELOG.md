@@ -21,6 +21,27 @@ for tags and release notes while still in `0.x`.
   closure findings in the combined artifact. Certification remains fail-closed,
   and report mode still rejects untyped, contradictory, or mixed oracle
   evidence.
+- Add a diagnostic-only, authenticated Go/static-C GLR work-count contract for
+  the locked real-Go `query_compile` fixture. A separate ordinary untagged Go
+  child performs admission before tagged Go and fully static C diagnostic
+  children report saturating direct action/pop/selected-tree counters and
+  explicitly labeled representation proxies. Go counters attribute each
+  `parseInternal` attempt to a logical retry rung, resolved cap mode, parser
+  loop, and finalization; `accept_actions` is explicitly an action count, and
+  aggregate counters must equal attempts plus the outside-attempt residual.
+  Frozen retry-active and straight-LR witnesses pin the attribution semantics;
+  the contract reserves a bounded convergence-frontier schema and distinguishes
+  accept actions from packed roots without claiming that instrumentation yet.
+  Authoritative receipts require a clean Git source identity; compile from
+  sealed private Go and C input snapshots; bind sanitized build/runtime
+  environments; independently verify fixture, grammar, GLR-regime, span, and
+  deep-tree identities; contain the complete cold static-C admission plus all
+  repository, compiler, linker, identity, and linkage-verifier descendants in
+  wall-bounded process groups; and publish atomically only after all rechecks
+  pass.
+- The static C oracle now recognizes locked grammar entry points declared with
+  either C's empty `()` or `(void)` parameter spelling, restoring artifact
+  construction for SCSS while rejecting genuinely parameterized near misses.
 - The authenticated fleet scoreboard now times fresh full parses against a
   per-language, fully static executable built from the locked upstream runtime
   and grammar sources. Every selected file requires matching static/cgo deep

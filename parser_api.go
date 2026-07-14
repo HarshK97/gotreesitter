@@ -614,6 +614,7 @@ func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFact
 	}()
 	deterministicExternalConflicts := fullParseUsesDeterministicExternalConflicts(p.language)
 	initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth)
+	workCountSetNextParseAttempt("initial_full", "fresh_token_source_full_parse")
 	tree := p.parseInternal(source, p.wrapIncludedRanges(ts), nil, nil, arenaClassFull, nil, initialMaxStacks, 0, 0, deterministicExternalConflicts)
 	if tree != nil && !tree.ParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) {
 		tree = p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
@@ -968,6 +969,7 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	if progress.enabled {
 		progress.emit(time.Now(), "parse_internal_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, fmt.Sprintf("initial_max_stacks=%d deterministic_external_conflicts=%t", initialMaxStacks, deterministicExternalConflicts))
 	}
+	workCountSetNextParseAttempt("initial_full", "fresh_dfa_full_parse")
 	tree := p.parseInternal(source, p.wrapIncludedRanges(ts), nil, nil, arenaClassFull, nil, initialMaxStacks, 0, 0, deterministicExternalConflicts)
 	if progress.enabled {
 		progress.emit(time.Now(), "parse_internal_end", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "")

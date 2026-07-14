@@ -131,6 +131,7 @@ func newPendingParentShellInArena(arena *nodeArena, sym Symbol, named bool, prod
 		p = arena.allocPendingParent()
 		childRange, _ = arena.allocPendingChildEntries(childCount)
 		arena.pendingParentCreated++
+		workCountRecordPendingParentConstruction()
 	}
 	p.setChildEntries(childRange)
 	p.symbol = sym
