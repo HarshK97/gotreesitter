@@ -205,6 +205,9 @@ func BenchmarkGoParseFull(b *testing.B) {
 	}
 }
 
+// BenchmarkGoParseFullDFA is the historical generated straight-LR control.
+// Keep it for longitudinal regression comparisons, but use
+// BenchmarkGoParseWarmRealDFA for representative human-authored Go source.
 func BenchmarkGoParseFullDFA(b *testing.B) {
 	lang := grammars.GoLanguage()
 	parser := gotreesitter.NewParser(lang)
