@@ -2962,7 +2962,7 @@ func TestPerfScanHelpersUnit(t *testing.T) {
 	if axisStop.Stop == nil || axisStop.Stop.Implementation != "go" || axisStop.Stop.Class != perfScanStopParserBudget {
 		t.Fatalf("C stop overwrote causal Go stop: %+v", axisStop.Stop)
 	}
-	if got, err := perfScanExpectedCorpusLockDigest(); err != nil || got != "cf108b005fe41c4513bae14eafd4f4ec72e64454ca2eb6bbf4d18d25caab24f2" {
+	if got, err := perfScanExpectedCorpusLockDigest(); err != nil || got != "41c744279c8b1d7c9fe7b1b8e26fba733423e77cd48efea46927309c22d163ea" {
 		t.Fatalf("checked corpus lock digest = %q,%v", got, err)
 	}
 

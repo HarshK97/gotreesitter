@@ -17,6 +17,9 @@ for tags and release notes while still in `0.x`.
 
 ### Tooling
 
+- The authenticated real-corpus source for Git rebase fixtures now uses the
+  grammar repository's committed highlight corpus, so performance and forest
+  audit manifests cover all 206 languages.
 - Forest eligibility sweeps now share an authenticated, revision-pinned corpus
   manifest between production and C-oracle lanes. Per-language Docker runs
   verify source checkout identity and exact file hashes, compare complete trees

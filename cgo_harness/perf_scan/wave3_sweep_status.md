@@ -21,7 +21,7 @@
 
 Measurement basis: `reps=5`, `warmup=1`, `file_budget_ms=10000`, `max_files=8`, `order=largest`, `axes=full,noedit`.
 
-Hard full-parse ceiling: every measured file must be `<=10.0x`; full-parse files at `<=0.10x` are reported separately as 10x-or-better wins. Corpus lock SHA-256: `cf108b005fe41c4513bae14eafd4f4ec72e64454ca2eb6bbf4d18d25caab24f2`.
+Hard full-parse ceiling: every measured file must be `<=10.0x`; full-parse files at `<=0.10x` are reported separately as 10x-or-better wins. Corpus lock SHA-256: `41c744279c8b1d7c9fe7b1b8e26fba733423e77cd48efea46927309c22d163ea`.
 
 Excluded paths: `groovy/subprojects/performance/src/files/pleac11_15.groovy`.
 
