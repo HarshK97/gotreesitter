@@ -50,6 +50,14 @@ func WithTaggerTokenSourceFactory(factory func(source []byte) TokenSource) Tagge
 	}
 }
 
+// WithTaggerTimeoutMicros bounds every full and incremental parse performed
+// by the tagger. A value of zero disables timeout checks.
+func WithTaggerTimeoutMicros(timeoutMicros uint64) TaggerOption {
+	return func(tagger *Tagger) {
+		tagger.parser.SetTimeoutMicros(timeoutMicros)
+	}
+}
+
 // NewTagger creates a Tagger for the given language and tags query.
 func NewTagger(lang *Language, tagsQuery string, opts ...TaggerOption) (*Tagger, error) {
 	q, err := NewQuery(tagsQuery, lang)
@@ -136,6 +144,26 @@ func (tg *Tagger) TagIncremental(source []byte, oldTree *Tree) ([]Tag, *Tree) {
 	}
 
 	return tg.tagTree(tree), tree
+}
+
+// TagIncrementalStrict is like TagIncremental, but reports
+// ErrParseStoppedEarly and skips query execution when parsing is stopped by a
+// timeout, cancellation, token-source EOF, or parser safety limit. The partial
+// tree is returned so callers can release it or use it for diagnostics.
+func (tg *Tagger) TagIncrementalStrict(source []byte, oldTree *Tree) ([]Tag, *Tree, error) {
+	if len(source) == 0 {
+		return nil, NewTree(nil, source, tg.lang), nil
+	}
+
+	tree := tg.parse(source, oldTree)
+	if err := parseStoppedEarlyError(tree); err != nil {
+		return nil, tree, err
+	}
+	if tree.RootNode() == nil {
+		return nil, tree, nil
+	}
+
+	return tg.tagTree(tree), tree, nil
 }
 
 // TagIncrementalUTF16 re-tags UTF-16 source after edits to oldTree. Call

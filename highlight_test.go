@@ -1,8 +1,53 @@
 package gotreesitter
 
 import (
+	"errors"
 	"testing"
+	"time"
 )
+
+func TestHighlighterTimeoutOptionConfiguresParser(t *testing.T) {
+	highlighter, err := NewHighlighter(queryTestLanguage(), "", WithHighlighterTimeoutMicros(12_345))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := highlighter.parser.TimeoutMicros(); got != 12_345 {
+		t.Fatalf("timeout = %d, want 12345", got)
+	}
+}
+
+func TestHighlightIncrementalStrictReportsTimeout(t *testing.T) {
+	highlighter, err := NewHighlighter(buildArithmeticLanguage(), "",
+		WithHighlighterTimeoutMicros(100),
+		WithTokenSourceFactory(func(source []byte) TokenSource {
+			return &slowArithmeticTokenSource{
+				delay: 2 * time.Millisecond,
+				tokens: []Token{
+					{Symbol: 1, StartByte: 0, EndByte: 1},
+					{Symbol: 0, StartByte: 1, EndByte: 1},
+				},
+			}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ranges, tree, err := highlighter.HighlightIncrementalStrict([]byte("1"), nil)
+	if tree == nil {
+		t.Fatal("strict highlight returned nil partial tree")
+	}
+	defer tree.Release()
+	if !errors.Is(err, ErrParseStoppedEarly) {
+		t.Fatalf("error = %v, want ErrParseStoppedEarly", err)
+	}
+	if got := tree.ParseStopReason(); got != ParseStopTimeout {
+		t.Fatalf("stop reason = %q, want %q", got, ParseStopTimeout)
+	}
+	if ranges != nil {
+		t.Fatalf("ranges = %#v, want nil", ranges)
+	}
+}
 
 // --------------------------------------------------------------------------
 // Unit tests with hand-built trees

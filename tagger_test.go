@@ -1,6 +1,53 @@
 package gotreesitter
 
-import "testing"
+import (
+	"errors"
+	"testing"
+	"time"
+)
+
+func TestTaggerTimeoutOptionConfiguresParser(t *testing.T) {
+	tagger, err := NewTagger(queryTestLanguage(), "", WithTaggerTimeoutMicros(54_321))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := tagger.parser.TimeoutMicros(); got != 54_321 {
+		t.Fatalf("timeout = %d, want 54321", got)
+	}
+}
+
+func TestTagIncrementalStrictReportsTimeout(t *testing.T) {
+	tagger, err := NewTagger(buildArithmeticLanguage(), "",
+		WithTaggerTimeoutMicros(100),
+		WithTaggerTokenSourceFactory(func(source []byte) TokenSource {
+			return &slowArithmeticTokenSource{
+				delay: 2 * time.Millisecond,
+				tokens: []Token{
+					{Symbol: 1, StartByte: 0, EndByte: 1},
+					{Symbol: 0, StartByte: 1, EndByte: 1},
+				},
+			}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tags, tree, err := tagger.TagIncrementalStrict([]byte("1"), nil)
+	if tree == nil {
+		t.Fatal("strict tagger returned nil partial tree")
+	}
+	defer tree.Release()
+	if !errors.Is(err, ErrParseStoppedEarly) {
+		t.Fatalf("error = %v, want ErrParseStoppedEarly", err)
+	}
+	if got := tree.ParseStopReason(); got != ParseStopTimeout {
+		t.Fatalf("stop reason = %q, want %q", got, ParseStopTimeout)
+	}
+	if tags != nil {
+		t.Fatalf("tags = %#v, want nil", tags)
+	}
+}
 
 func TestTaggerBasic(t *testing.T) {
 	lang := queryTestLanguage()

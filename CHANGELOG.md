@@ -7,6 +7,12 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Added
+
+- Highlighter and tagger construction now accept parser timeout options, and
+  their byte-oriented incremental APIs have strict variants that return the
+  partial tree with `ErrParseStoppedEarly` while skipping query execution.
+
 ### Changed
 
 - `ParseForestExperimental` now reports only a tree produced by the

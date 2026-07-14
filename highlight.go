@@ -57,6 +57,14 @@ func WithTokenSourceFactory(factory func(source []byte) TokenSource) Highlighter
 	}
 }
 
+// WithHighlighterTimeoutMicros bounds every full and incremental parse
+// performed by the highlighter. A value of zero disables timeout checks.
+func WithHighlighterTimeoutMicros(timeoutMicros uint64) HighlighterOption {
+	return func(h *Highlighter) {
+		h.parser.SetTimeoutMicros(timeoutMicros)
+	}
+}
+
 // NewHighlighter creates a Highlighter for the given language and highlight
 // query (in tree-sitter .scm format). Returns an error if the query fails
 // to compile.
@@ -103,6 +111,26 @@ func (h *Highlighter) HighlightIncremental(source []byte, oldTree *Tree) ([]High
 	}
 
 	return h.highlightTree(tree, source), tree
+}
+
+// HighlightIncrementalStrict is like HighlightIncremental, but reports
+// ErrParseStoppedEarly and skips query execution when parsing is stopped by a
+// timeout, cancellation, token-source EOF, or parser safety limit. The partial
+// tree is returned so callers can release it or use it for diagnostics.
+func (h *Highlighter) HighlightIncrementalStrict(source []byte, oldTree *Tree) ([]HighlightRange, *Tree, error) {
+	if len(source) == 0 {
+		return nil, NewTree(nil, source, h.lang), nil
+	}
+
+	tree := h.parse(source, oldTree)
+	if err := parseStoppedEarlyError(tree); err != nil {
+		return nil, tree, err
+	}
+	if tree.RootNode() == nil {
+		return nil, tree, nil
+	}
+
+	return h.highlightTree(tree, source), tree, nil
 }
 
 // HighlightIncrementalUTF16 re-highlights UTF-16 source after edits were

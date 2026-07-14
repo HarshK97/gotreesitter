@@ -84,6 +84,12 @@ if errors.Is(err, gotreesitter.ErrParseStoppedEarly) {
 Strict variants are available for full parse, incremental parse, token-source
 parse, factory parse, `ParseWith`, and `ParserPool`.
 
+High-level analysis can use `WithHighlighterTimeoutMicros` or
+`WithTaggerTimeoutMicros` to bound parser work. The
+`HighlightIncrementalStrict` and `TagIncrementalStrict` methods return the
+partial tree together with `ErrParseStoppedEarly` and do not run queries after
+an early stop.
+
 ### Tree lookup helpers
 
 Use `NodeAtByte` or `NamedNodeAtByte` when turning an editor byte offset into a
