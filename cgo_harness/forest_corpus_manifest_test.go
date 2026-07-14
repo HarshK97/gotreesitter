@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -327,6 +328,84 @@ func TestReduceForestAuditResultsIsDeterministicAndResumable(t *testing.T) {
 	data, err := json.Marshal(report)
 	if err != nil || len(data) == 0 {
 		t.Fatalf("marshal report: bytes=%d err=%v", len(data), err)
+	}
+}
+
+func TestReduceForestAuditResultsClassifiesCFirstNoCoverage(t *testing.T) {
+	for _, tc := range []struct {
+		name                 string
+		decline              string
+		wantRowStatus        string
+		wantClassification   string
+		wantReportStatus     string
+		wantComplete         int
+		wantNoCoverage       int
+		wantPromotionBlocker []string
+	}{
+		{
+			name: "completed semantic declines", decline: "parse_failed",
+			wantRowStatus: "pass", wantClassification: forestAuditClassNoForestCoverage, wantReportStatus: "pass",
+			wantComplete: 1, wantNoCoverage: 1,
+			wantPromotionBlocker: []string{forestAuditClassNoForestCoverage},
+		},
+		{
+			name: "timeout is ambiguous", decline: "timeout",
+			wantRowStatus: "incomplete", wantReportStatus: "incomplete",
+			wantPromotionBlocker: []string{"missing_production", "c_oracle_timeout", "c_oracle_failed"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			manifest := ForestCorpusManifest{
+				Schema: ForestCorpusManifestSchema, GotreesitterRevision: strings.Repeat("a", 40),
+				CorpusLock: ForestCorpusManifestLock{Path: "corpus.lock", SHA256: strings.Repeat("b", 64)},
+				Selection:  ForestCorpusSelection{Order: "largest", MaxFiles: 8},
+				Files: []ForestCorpusManifestFile{{
+					Language: "go", Repository: "repo", Revision: strings.Repeat("c", 40),
+					Path: "a.go", Bytes: 1, SHA256: strings.Repeat("d", 64),
+				}},
+			}
+			manifestPath := filepath.Join(dir, "manifest.json")
+			if err := WriteForestCorpusManifest(manifestPath, manifest); err != nil {
+				t.Fatal(err)
+			}
+			result, err := NewForestAuditResult("c_oracle", manifest.GotreesitterRevision, manifestPath, manifest.CorpusLock.SHA256, "go")
+			if err != nil {
+				t.Fatal(err)
+			}
+			result.Status = "fail"
+			result.FilesTotal, result.FilesDeclined = 1, 1
+			notRun := forestAuditTestNotRunOutcome(1)
+			result.Files = []ForestAuditFileResult{{
+				Path: "a.go", Bytes: 1, SHA256: strings.Repeat("d", 64),
+				Forest: notRun, Peer: notRun, Routed: notRun,
+				RoutedProvenance: forestAuditRouteNotRun,
+				Disposition:      "declined", Decline: tc.decline,
+			}}
+			if err := WriteForestAuditResult(filepath.Join(dir, "results", "c_oracle", "go.json"), result); err != nil {
+				t.Fatal(err)
+			}
+			// A resumed result directory may still contain the previous reduced
+			// report. Schema evolution must not make that artifact look like a
+			// malformed per-language result shard.
+			if err := os.WriteFile(filepath.Join(dir, "results", "report-v2.json"), []byte(`{"schema":"forest-audit-report-v2"}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			report, err := ReduceForestAuditResults(manifestPath, filepath.Join(dir, "results"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report.Status != tc.wantReportStatus || report.LanguagesComplete != tc.wantComplete ||
+				report.LanguagesNoCoverage != tc.wantNoCoverage || len(report.Languages) != 1 {
+				t.Fatalf("report = %#v", report)
+			}
+			row := report.Languages[0]
+			if row.Status != tc.wantRowStatus || row.Classification != tc.wantClassification || row.PromotionEligible ||
+				!reflect.DeepEqual(row.PromotionBlockers, tc.wantPromotionBlocker) {
+				t.Fatalf("row = %#v", row)
+			}
+		})
 	}
 }
 

@@ -28,6 +28,11 @@ for tags and release notes while still in `0.x`.
   and verifies the actual forest-enabled automatic route on every file, so
   promotion requires exact routed parity and a net wall-time improvement after
   production fallbacks, not merely a fast forest attempt.
+- C-first forest screening now terminally records `no_forest_coverage` when a
+  complete authenticated C-oracle shard declines every file without timing
+  out. The reducer skips the potentially expensive production lane for that
+  non-promotable class while leaving missing and timeout-ambiguous evidence
+  incomplete.
 
 ### Performance
 

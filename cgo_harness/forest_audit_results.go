@@ -15,6 +15,7 @@ const (
 	forestAuditRouteNotRun             = "not_run"
 	forestAuditRouteForestFastPath     = "forest_fast_path"
 	forestAuditRouteProductionFallback = "production_fallback"
+	forestAuditClassNoForestCoverage   = "no_forest_coverage"
 )
 
 type ForestAuditOutcome struct {
@@ -72,6 +73,7 @@ type ForestAuditResult struct {
 type ForestAuditLanguageReport struct {
 	Language          string             `json:"language"`
 	Status            string             `json:"status"`
+	Classification    string             `json:"classification,omitempty"`
 	PromotionEligible bool               `json:"promotion_eligible"`
 	RoutedSpeedup     float64            `json:"routed_speedup,omitempty"`
 	PromotionBlockers []string           `json:"promotion_blockers,omitempty"`
@@ -87,6 +89,7 @@ type ForestAuditReport struct {
 	Status               string                      `json:"status"`
 	LanguagesExpected    int                         `json:"languages_expected"`
 	LanguagesComplete    int                         `json:"languages_complete"`
+	LanguagesNoCoverage  int                         `json:"languages_no_forest_coverage"`
 	Languages            []ForestAuditLanguageReport `json:"languages"`
 }
 
@@ -188,7 +191,7 @@ func forestAuditFileIsReport(filePath string) (bool, error) {
 	if err := json.Unmarshal(data, &header); err != nil {
 		return false, nil
 	}
-	return header.Schema == ForestAuditReportSchema, nil
+	return header.Schema == ForestAuditReportSchema || header.Schema == "forest-audit-report-v2", nil
 }
 
 func (reduction *forestAuditReduction) admitResult(filePath string) error {
@@ -240,6 +243,9 @@ func (reduction *forestAuditReduction) report() ForestAuditReport {
 		if row.Status != "incomplete" {
 			report.LanguagesComplete++
 		}
+		if row.Classification == forestAuditClassNoForestCoverage {
+			report.LanguagesNoCoverage++
+		}
 		report.Status = mergeForestAuditReportStatus(report.Status, row.Status)
 		report.Languages = append(report.Languages, row)
 	}
@@ -253,6 +259,12 @@ func (reduction *forestAuditReduction) languageReport(language string) ForestAud
 	row.PromotionBlockers = forestPromotionBlockers(row.Production, row.COracle)
 	if row.Production != nil && row.Production.RoutedNanos > 0 {
 		row.RoutedSpeedup = float64(row.Production.PeerNanos) / float64(row.Production.RoutedNanos)
+	}
+	if row.Production == nil && forestCOracleProvesNoCoverage(row.COracle) {
+		row.Status = "pass"
+		row.Classification = forestAuditClassNoForestCoverage
+		row.PromotionBlockers = []string{forestAuditClassNoForestCoverage}
+		return row
 	}
 	if row.Production == nil || row.COracle == nil {
 		return row
@@ -285,10 +297,46 @@ func forestPromotionBlockers(production, cOracle *ForestAuditResult) []string {
 	}
 	if cOracle == nil {
 		blockers = append(blockers, "missing_c_oracle")
-	} else if cOracle.Status != "pass" {
-		blockers = append(blockers, "c_oracle_failed")
+	} else {
+		if forestCOracleHasTimeout(cOracle) {
+			blockers = append(blockers, "c_oracle_timeout")
+		}
+		if cOracle.Status != "pass" {
+			blockers = append(blockers, "c_oracle_failed")
+		}
 	}
 	return blockers
+}
+
+// forestCOracleProvesNoCoverage recognizes a completed C-first screening lane
+// that found no file on which the forest returned a candidate tree. This is a
+// terminal ineligibility result for the authenticated corpus, not a correctness
+// or performance promotion: no production lane is needed (or worth risking) to
+// prove that an automatic forest route would have no fast-path coverage.
+func forestCOracleProvesNoCoverage(result *ForestAuditResult) bool {
+	if result == nil || result.Mode != "c_oracle" || result.FilesTotal == 0 ||
+		result.FilesAccepted != 0 || result.FilesDiverged != 0 ||
+		result.FilesDeclined != result.FilesTotal || forestCOracleHasTimeout(result) {
+		return false
+	}
+	for _, file := range result.Files {
+		if file.Disposition != "declined" || strings.TrimSpace(file.Decline) == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func forestCOracleHasTimeout(result *ForestAuditResult) bool {
+	if result == nil || result.Mode != "c_oracle" {
+		return false
+	}
+	for _, file := range result.Files {
+		if file.Disposition == "declined" && file.Decline == "timeout" {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeForestAuditReportStatus(current, next string) string {
