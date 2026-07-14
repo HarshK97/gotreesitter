@@ -353,10 +353,10 @@ func TestReduceForestAuditResultsIsDeterministicAndResumable(t *testing.T) {
 	result.Files = []ForestAuditFileResult{{
 		Path: "a.go", Bytes: 1, SHA256: strings.Repeat("d", 64), Disposition: "accepted",
 		Forest: forestAuditTestAcceptedOutcome(1, true), Peer: forestAuditTestAcceptedOutcome(1, false),
-		Routed: forestAuditTestAcceptedOutcome(1, false), RoutedProvenance: forestAuditRouteProductionFallback, RoutedNanos: 1,
+		Routed: forestAuditTestAcceptedOutcome(1, true), RoutedProvenance: forestAuditRouteForestFastPath, RoutedNanos: 1,
 	}}
 	result.FilesTotal, result.FilesAccepted = 1, 1
-	result.FilesRoutedFallback = 1
+	result.FilesRoutedForest = 1
 	result.PeerNanos, result.RoutedNanos, result.RoutedImproved = 2, 1, true
 	if err := WriteForestAuditResult(filepath.Join(dir, "results", "production", "go.json"), result); err != nil {
 		t.Fatal(err)
@@ -366,7 +366,7 @@ func TestReduceForestAuditResultsIsDeterministicAndResumable(t *testing.T) {
 	bad.Files[0].Bytes++
 	bad.Files[0].Forest = forestAuditTestAcceptedOutcome(2, true)
 	bad.Files[0].Peer = forestAuditTestAcceptedOutcome(2, false)
-	bad.Files[0].Routed = forestAuditTestAcceptedOutcome(2, false)
+	bad.Files[0].Routed = forestAuditTestAcceptedOutcome(2, true)
 	badRoot := filepath.Join(dir, "bad-results")
 	if err := WriteForestAuditResult(filepath.Join(badRoot, "production", "go.json"), bad); err != nil {
 		t.Fatal(err)
@@ -401,14 +401,181 @@ func TestReduceForestAuditResultsIsDeterministicAndResumable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.LanguagesComplete != 1 || report.Languages[0].Language != "go" || report.Languages[0].Status != "pass" ||
-		!report.Languages[0].PromotionEligible || report.Languages[0].RoutedSpeedup != 2 || len(report.Languages[0].PromotionBlockers) != 0 {
+	if report.Status != "incomplete" || report.LanguagesComplete != 0 || report.Languages[0].Language != "go" || report.Languages[0].Status != "incomplete" ||
+		!report.Languages[0].ScreeningEligible || report.Languages[0].PromotionEligible ||
+		report.Languages[0].CorrectnessRelation != forestAuditRelationProductionIdentity ||
+		report.Languages[0].ConfirmationStatus != forestAuditConfirmationRequired ||
+		report.Languages[0].RoutedSpeedup != 2 || report.Languages[0].ScreenRoutedSpeedup != 2 ||
+		!reflect.DeepEqual(report.Languages[0].PromotionBlockers, []string{forestAuditConfirmationRequired}) {
 		t.Fatalf("resumed report = %#v", report)
 	}
 	data, err := json.Marshal(report)
 	if err != nil || len(data) == 0 {
 		t.Fatalf("marshal report: bytes=%d err=%v", len(data), err)
 	}
+
+	verifyForestAuditConfirmationLayout(t, manifestPath, filepath.Join(dir, "results"), result)
+}
+
+type forestAuditConfirmationLayoutFixture struct {
+	runConfigSHA  string
+	runConfigPath string
+	runConfig     ForestAuditRunConfig
+	finalPath     string
+	finalTrial    ForestAuditConfirmationTrial
+	indexPath     string
+	cohortSHA     string
+}
+
+func verifyForestAuditConfirmationLayout(t *testing.T, manifestPath, resultsRoot string, screen ForestAuditResult) {
+	t.Helper()
+	fixture := writeForestAuditTestConfirmationChain(t, resultsRoot, screen)
+	report, err := ReduceForestAuditResultsWithConfirmations(manifestPath, resultsRoot, fixture.indexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Languages[0].PromotionEligible || report.Languages[0].ConfirmationStatus != forestAuditConfirmationConfirmed ||
+		report.Status != "incomplete" || report.LanguagesComplete != 1 || len(report.Languages[0].PromotionBlockers) != 0 ||
+		report.ConfirmationIndexSHA256+".json" != filepath.Base(fixture.indexPath) ||
+		report.Languages[0].ConfirmationCohortSHA256 != fixture.cohortSHA {
+		t.Fatalf("confirmed report = %#v", report)
+	}
+	verifyForestAuditCLIConfirmationFlow(t, manifestPath, resultsRoot, fixture)
+	verifyForestAuditConfirmationTamperRejection(t, manifestPath, resultsRoot, fixture)
+}
+
+func verifyForestAuditCLIConfirmationFlow(t *testing.T, manifestPath, resultsRoot string, fixture forestAuditConfirmationLayoutFixture) {
+	t.Helper()
+	runCLI := func(args ...string) {
+		t.Helper()
+		command := exec.Command("go", append([]string{"run", "./cmd/forest_audit"}, args...)...)
+		command.Dir = "."
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("forest_audit %v: %v\n%s", args, err, output)
+		}
+	}
+	runCLI("publish-confirmation", "--results-root", resultsRoot, "--run-config", fixture.runConfigPath, "--trial", fixture.finalPath)
+	runCLI("publish-result", "--results-root", resultsRoot, "--result", filepath.Join(resultsRoot, "production", "go.json"))
+	reportPath := filepath.Join(t.TempDir(), "report.json")
+	runCLI("reduce", "--manifest", manifestPath, "--results-root", resultsRoot, "--confirmation-index", fixture.indexPath, "--out", reportPath)
+	runCLI("index-confirmations", "--report", reportPath, "--results-root", resultsRoot, "--cohorts", "go="+fixture.cohortSHA)
+	planPath := filepath.Join(resultsRoot, "confirmation", "plan.json")
+	runCLI("plan-confirmations", "--report", reportPath, "--out", planPath)
+	secondReportPath := filepath.Join(t.TempDir(), "report.json")
+	runCLI("reduce", "--manifest", manifestPath, "--results-root", resultsRoot, "--confirmation-index", fixture.indexPath, "--out", secondReportPath)
+}
+
+func writeForestAuditTestConfirmationChain(t *testing.T, resultsRoot string, screen ForestAuditResult) forestAuditConfirmationLayoutFixture {
+	t.Helper()
+	runConfigSHA, stagedRunConfigPath, runConfig := writeForestAuditTestRunConfig(t)
+	var previousTrialSHA string
+	var finalTrialPath, finalIndexPath, finalCohortSHA string
+	var finalTrial ForestAuditConfirmationTrial
+	for _, spec := range []struct {
+		id, order   string
+		repeats     int
+		peerNanos   int64
+		routedNanos int64
+	}{
+		{id: forestAuditConfirmationPairA, order: ForestAuditOrderProductionFirst, repeats: 1, peerNanos: 1_030_000_000, routedNanos: 1_000_000_000},
+		{id: forestAuditConfirmationPairB, order: ForestAuditOrderRoutedFirst, repeats: 1, peerNanos: 1_020_000_000, routedNanos: 1_000_000_000},
+		{id: forestAuditConfirmationABBAA1, order: ForestAuditOrderProductionFirst, repeats: 2, peerNanos: 2_400_000_000, routedNanos: 2_000_000_000},
+		{id: forestAuditConfirmationABBAB1, order: ForestAuditOrderRoutedFirst, repeats: 2, peerNanos: 2_300_000_000, routedNanos: 2_000_000_000},
+		{id: forestAuditConfirmationABBAB2, order: ForestAuditOrderRoutedFirst, repeats: 2, peerNanos: 2_200_000_000, routedNanos: 2_000_000_000},
+		{id: forestAuditConfirmationABBAA2, order: ForestAuditOrderProductionFirst, repeats: 2, peerNanos: 2_300_000_000, routedNanos: 2_000_000_000},
+	} {
+		confirmedResult := screen
+		confirmedResult.Files = append([]ForestAuditFileResult(nil), screen.Files...)
+		confirmedResult.PeerNanos = spec.peerNanos
+		confirmedResult.RoutedNanos = spec.routedNanos
+		confirmedResult.RoutedImproved = true
+		confirmedResult.Files[0].RoutedNanos = spec.routedNanos
+		trial, err := NewForestAuditConfirmationTrial(spec.id, runConfigSHA, previousTrialSHA, ForestAuditRunPlan{
+			ExecutionOrder: spec.order, RepeatCount: spec.repeats,
+		}, confirmedResult)
+		if err != nil {
+			t.Fatal(err)
+		}
+		trialPath := filepath.Join(t.TempDir(), spec.id+".json")
+		if err := WriteForestAuditConfirmationTrial(trialPath, trial); err != nil {
+			t.Fatal(err)
+		}
+		stored, err := StoreForestAuditConfirmation(resultsRoot, stagedRunConfigPath, trialPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		previousTrialSHA = stored.TrialSHA256
+		finalTrialPath = filepath.Join(resultsRoot, "confirmation", "trials", stored.TrialSHA256+".json")
+		finalIndexPath, finalCohortSHA, finalTrial = stored.IndexPath, stored.CohortSHA256, trial
+	}
+	return forestAuditConfirmationLayoutFixture{
+		runConfigSHA: runConfigSHA, runConfigPath: filepath.Join(resultsRoot, "confirmation", "run-configs", runConfigSHA+".json"), runConfig: runConfig,
+		finalPath: finalTrialPath, finalTrial: finalTrial, indexPath: finalIndexPath, cohortSHA: finalCohortSHA,
+	}
+}
+
+func verifyForestAuditConfirmationTamperRejection(t *testing.T, manifestPath, resultsRoot string, fixture forestAuditConfirmationLayoutFixture) {
+	t.Helper()
+	if err := os.Remove(fixture.runConfigPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReduceForestAuditResultsWithConfirmations(manifestPath, resultsRoot, fixture.indexPath); err == nil || !strings.Contains(err.Error(), "read run config") {
+		t.Fatalf("missing run config error = %v", err)
+	}
+	if err := writeForestAuditJSON(fixture.runConfigPath, fixture.runConfig); err != nil {
+		t.Fatal(err)
+	}
+	forgedConfig := fixture.runConfig
+	forgedConfig.HostLabel = "forged-host"
+	if err := writeForestAuditJSON(fixture.runConfigPath, forgedConfig); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReduceForestAuditResultsWithConfirmations(manifestPath, resultsRoot, fixture.indexPath); err == nil || !strings.Contains(err.Error(), "content hash") {
+		t.Fatalf("forged run config error = %v", err)
+	}
+	if err := writeForestAuditJSON(fixture.runConfigPath, fixture.runConfig); err != nil {
+		t.Fatal(err)
+	}
+	fixture.finalTrial.Result.PeerNanos += 500_000_000
+	fixture.finalTrial.Result.Files[0].RoutedNanos = fixture.finalTrial.Result.RoutedNanos
+	if err := writeForestAuditJSON(fixture.finalPath, fixture.finalTrial); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReduceForestAuditResultsWithConfirmations(manifestPath, resultsRoot, fixture.indexPath); err == nil || !strings.Contains(err.Error(), "content hash") {
+		t.Fatalf("tampered head timing error = %v", err)
+	}
+	fixture.finalTrial.Result.PeerNanos -= 500_000_000
+	if err := writeForestAuditJSON(fixture.finalPath, fixture.finalTrial); err != nil {
+		t.Fatal(err)
+	}
+	var index ForestAuditConfirmationIndex
+	if err := readForestAuditJSON(fixture.indexPath, &index); err != nil {
+		t.Fatal(err)
+	}
+	index.Cohorts[0].CohortSHA256 = strings.Repeat("f", 64)
+	if err := writeForestAuditJSON(fixture.indexPath, index); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReduceForestAuditResultsWithConfirmations(manifestPath, resultsRoot, fixture.indexPath); err == nil || !strings.Contains(err.Error(), "not named by content hash") {
+		t.Fatalf("forged confirmation index error = %v", err)
+	}
+}
+
+func writeForestAuditTestRunConfig(t *testing.T) (string, string, ForestAuditRunConfig) {
+	t.Helper()
+	config := ForestAuditRunConfig{
+		Schema: ForestAuditRunConfigSchema, HostLabel: "quiet-box", HostFingerprint: strings.Repeat("b", 64), ImageID: "sha256:" + strings.Repeat("a", 64),
+		Memory: "4g", CPUs: "1", CPUSetCPUs: "7", PIDs: "4096", GoMemLimit: "3GiB", GOMAXPROCS: 1, TestTimeout: "10m",
+	}
+	tempPath := filepath.Join(t.TempDir(), "run-config.json")
+	if err := writeForestAuditJSON(tempPath, config); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := forestFileSHA256(tempPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return digest, tempPath, config
 }
 
 func TestReduceForestAuditResultsClassifiesCFirstNoCoverage(t *testing.T) {
@@ -595,7 +762,11 @@ func TestValidateForestAuditResultRejectsIncoherentOutcomes(t *testing.T) {
 
 	routedDiverged := clone()
 	routedDiverged.Status = "fail"
+	routedDiverged.FilesRoutedFallback = 0
+	routedDiverged.FilesRoutedForest = 1
 	routedDiverged.FilesRoutedDiverged = 1
+	routedDiverged.Files[0].Routed = forestAuditTestAcceptedOutcome(1, true)
+	routedDiverged.Files[0].RoutedProvenance = forestAuditRouteForestFastPath
 	routedDiverged.Files[0].RoutedDiff = "routed shape mismatch"
 	if err := validateForestAuditResult(routedDiverged); err != nil {
 		t.Fatalf("routed divergence should remain admissible evidence: %v", err)
@@ -606,6 +777,10 @@ func TestValidateForestAuditResultRejectsIncoherentOutcomes(t *testing.T) {
 	}
 
 	routedSlower := clone()
+	routedSlower.FilesRoutedFallback = 0
+	routedSlower.FilesRoutedForest = 1
+	routedSlower.Files[0].Routed = forestAuditTestAcceptedOutcome(1, true)
+	routedSlower.Files[0].RoutedProvenance = forestAuditRouteForestFastPath
 	routedSlower.RoutedNanos, routedSlower.Files[0].RoutedNanos, routedSlower.RoutedImproved = 2, 2, false
 	if err := validateForestAuditResult(routedSlower); err != nil {
 		t.Fatalf("slower routed result should pass correctness validation: %v", err)

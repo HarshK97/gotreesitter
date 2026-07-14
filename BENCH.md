@@ -215,6 +215,45 @@ Named large-file witnesses (tracked, not hidden): JavaScript
 generated-table class (Go `opGen.go` / `rewriteAMD64.go` and in-repo
 witnesses).
 
+### Forest-routing screen and confirmation
+
+The authenticated forest audit separates discovery from promotion. A
+`forest-audit-result-v2` production shard is a directional screen: it can show
+that the routed parser was faster on that run, but it cannot by itself promote
+a language. Promotion requires fresh, isolated confirmation trials with the
+same hashed host fingerprint, image, and resource configuration. Confirmation
+uses `--cpus 1` and one numeric `--cpuset-cpus`; `--host-label` is an operator
+label and is recorded separately from the automatically hashed host
+fingerprint:
+
+1. run one complete production-first trial (`pair-a`);
+2. run one complete routed-first trial (`pair-b`);
+3. pool the two orders only when both preserve exact production identity;
+4. confirm only when the pooled routed speedup is at least 1.05x, each timed
+   side lasts at least 750 ms, and order speedups stay within 10%;
+5. escalate short, marginal, sign-changing, or order-sensitive results to an
+   A-B-B-A sequence, increasing complete-corpus repetitions up to 20 for the
+   duration floor.
+
+The runner writes into an attempt directory, mounts the source tree read-only,
+and publishes only after a successful container exit and a same-HEAD clean
+worktree postcheck. Trial, run-config, and cohort receipts are immutable and
+content-addressed. The reducer admits a cohort only through an explicitly
+selected, content-addressed confirmation index; an unindexed or failed attempt
+cannot complete a trial. `plan-confirmations` output is a planning artifact,
+not evidence, and should live outside the results bundle (the reducer also
+ignores its schema if it is copied there).
+
+The reducer emits a win-only confirmation plan, keeps a screen win `incomplete`,
+and records screening eligibility separately from promotion eligibility. Trees
+are released after every repetition, including error, decline, nil-tree, and
+divergence paths, and authoritative shards run exactly one language per
+container. Every routed path must have accepted coverage in the locked C
+shard. The locked C oracle remains the correctness authority: if forest and
+routed results appear to correct a production-parser divergence, the reducer
+records `oracle_correction_review_required` for direct three-way review instead
+of auto-promoting or forcing a second four-runtime benchmark lane.
+
 ## Memory receipts (the v0.24 → v0.26.1 campaign)
 
 On the exact Poppler witness under a hard 2 GiB container:
