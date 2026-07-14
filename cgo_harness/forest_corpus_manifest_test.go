@@ -98,6 +98,158 @@ func TestLoadForestCorpusManifestRejectsRevisionAndCheckoutDrift(t *testing.T) {
 	}
 }
 
+func TestMaterializeAndLoadForestCorpusManifestAllowsLockedGeneratedSources(t *testing.T) {
+	root := t.TempDir()
+	revision := strings.Repeat("a", 40)
+	corpusRevision := initForestManifestTestRepo(t, root, "comment", map[string]string{
+		"tracked.txt": "tracked source identity\n",
+	})
+	generatedPath := filepath.Join(root, "comment", ".gts-extracted", "comment", "input.c")
+	if err := os.MkdirAll(filepath.Dir(generatedPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	generatedSource := []byte("// generated corpus source\n")
+	if err := os.WriteFile(generatedPath, generatedSource, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(root, "corpus_sources.lock")
+	lock := fmt.Sprintf("comment https://example.invalid/comment %s .gts-extracted/comment .c\n", corpusRevision)
+	if err := os.WriteFile(lockPath, []byte(lock), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := MaterializeForestCorpusManifest(ForestCorpusMaterializeOptions{
+		GotreesitterRevision: revision, CorpusLockPath: lockPath, CorpusRoot: root,
+		Languages: []string{"comment"}, Selection: ForestCorpusSelection{Order: "path"},
+	})
+	if err != nil {
+		t.Fatalf("materialize generated corpus: %v", err)
+	}
+	wantPath := ".gts-extracted/comment/input.c"
+	if len(manifest.Files) != 1 || manifest.Files[0].Path != wantPath {
+		t.Fatalf("files = %#v, want %s", manifest.Files, wantPath)
+	}
+	manifestPath := filepath.Join(root, "manifest.json")
+	if err := WriteForestCorpusManifest(manifestPath, manifest); err != nil {
+		t.Fatal(err)
+	}
+	_, files, err := LoadForestCorpusManifest(manifestPath, root, lockPath, revision, manifest.CorpusLock.SHA256)
+	if err != nil {
+		t.Fatalf("load generated corpus: %v", err)
+	}
+	if len(files["comment"]) != 1 || files["comment"][0] != generatedPath {
+		t.Fatalf("files = %#v, want %s", files, generatedPath)
+	}
+	checkout := filepath.Join(root, "comment")
+	runForestManifestGit(t, checkout, "remote", "set-url", "origin", "https://example.invalid/wrong")
+	if _, _, err := LoadForestCorpusManifest(manifestPath, root, lockPath, revision, manifest.CorpusLock.SHA256); err == nil ||
+		!strings.Contains(err.Error(), "checkout origin") {
+		t.Fatalf("origin drift load error = %v", err)
+	}
+	runForestManifestGit(t, checkout, "remote", "set-url", "origin", "https://example.invalid/comment")
+
+	tamperedSource := append([]byte(nil), generatedSource...)
+	tamperedSource[0] = '!'
+	if err := os.WriteFile(generatedPath, tamperedSource, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadForestCorpusManifest(manifestPath, root, lockPath, revision, manifest.CorpusLock.SHA256); err == nil ||
+		!strings.Contains(err.Error(), "sha256") {
+		t.Fatalf("tampered generated load error = %v", err)
+	}
+}
+
+func TestVerifyForestCorpusCheckoutRejectsDirtOutsideExactGeneratedSubdir(t *testing.T) {
+	tests := map[string]struct {
+		subdir string
+		mutate func(t *testing.T, checkout string)
+	}{
+		"untracked elsewhere": {
+			subdir: ".gts-extracted/comment",
+			mutate: func(t *testing.T, checkout string) {
+				t.Helper()
+				writeForestManifestTestFile(t, checkout, "outside.c", "outside\n")
+			},
+		},
+		"sibling prefix": {
+			subdir: ".gts-extracted/comment",
+			mutate: func(t *testing.T, checkout string) {
+				t.Helper()
+				writeForestManifestTestFile(t, checkout, ".gts-extracted/commentary/input.c", "sibling\n")
+			},
+		},
+		"broader generated directory": {
+			subdir: ".gts-extracted",
+			mutate: func(t *testing.T, checkout string) {
+				t.Helper()
+				writeForestManifestTestFile(t, checkout, ".gts-extracted/comment/input.c", "broad\n")
+			},
+		},
+		"other language directory": {
+			subdir: ".gts-extracted/other",
+			mutate: func(t *testing.T, checkout string) {
+				t.Helper()
+				writeForestManifestTestFile(t, checkout, ".gts-extracted/other/input.c", "other\n")
+			},
+		},
+		"traversal declaration": {
+			subdir: ".gts-extracted/comment/../comment",
+			mutate: func(t *testing.T, checkout string) {
+				t.Helper()
+				writeForestManifestTestFile(t, checkout, ".gts-extracted/comment/input.c", "traversal\n")
+			},
+		},
+		"tracked modification": {
+			subdir: ".gts-extracted/comment",
+			mutate: func(t *testing.T, checkout string) {
+				t.Helper()
+				writeForestManifestTestFile(t, checkout, "tracked.txt", "modified\n")
+			},
+		},
+		"tracked deletion": {
+			subdir: ".gts-extracted/comment",
+			mutate: func(t *testing.T, checkout string) {
+				t.Helper()
+				if err := os.Remove(filepath.Join(checkout, "tracked.txt")); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		"staged generated source": {
+			subdir: ".gts-extracted/comment",
+			mutate: func(t *testing.T, checkout string) {
+				t.Helper()
+				writeForestManifestTestFile(t, checkout, ".gts-extracted/comment/input.c", "staged\n")
+				runForestManifestGit(t, checkout, "add", ".gts-extracted/comment/input.c")
+			},
+		},
+	}
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			revision := initForestManifestTestRepo(t, root, "comment", map[string]string{
+				"tracked.txt": "tracked\n",
+			})
+			checkout := filepath.Join(root, "comment")
+			test.mutate(t, checkout)
+			entry := forestCorpusLockEntry{
+				Language: "comment", Repository: "https://example.invalid/comment",
+				Revision: revision, Subdir: test.subdir,
+			}
+			if err := verifyForestCorpusCheckout(root, entry); err == nil || !strings.Contains(err.Error(), "checkout is dirty") {
+				t.Fatalf("verify error = %v", err)
+			}
+		})
+	}
+}
+
+func TestParseForestCorpusLockRejectsGeneratedSubdirTraversal(t *testing.T) {
+	revision := strings.Repeat("a", 40)
+	lock := fmt.Sprintf("comment https://example.invalid/comment %s .gts-extracted/comment/../comment .c\n", revision)
+	if _, err := parseForestCorpusLock("corpus_sources.lock", []byte(lock)); err == nil || !strings.Contains(err.Error(), "invalid corpus subdir path") {
+		t.Fatalf("parse error = %v", err)
+	}
+}
+
 func TestReduceForestAuditResultsIsDeterministicAndResumable(t *testing.T) {
 	dir := t.TempDir()
 	manifest := ForestCorpusManifest{
@@ -340,6 +492,17 @@ func initForestManifestTestRepo(t *testing.T, root, language string, files map[s
 	runForestManifestGit(t, dir, "commit", "-q", "-m", "fixture")
 	out := runForestManifestGit(t, dir, "rev-parse", "HEAD")
 	return strings.TrimSpace(out)
+}
+
+func writeForestManifestTestFile(t *testing.T, root, name, content string) {
+	t.Helper()
+	filePath := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(filePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func runForestManifestGit(t *testing.T, dir string, args ...string) string {

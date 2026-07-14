@@ -19,12 +19,15 @@ for tags and release notes while still in `0.x`.
 
 - Forest eligibility sweeps now share an authenticated, revision-pinned corpus
   manifest between production and C-oracle lanes. Per-language Docker runs
-  verify clean source checkouts and exact file hashes, compare complete trees
+  verify source checkout identity and exact file hashes, compare complete trees
   including anonymous children, points, flags, and fields, and emit strict
-  resumable result shards for deterministic fleet reduction. The production
-  lane separately times and verifies the actual forest-enabled automatic route
-  on every file, so promotion requires exact routed parity and a net wall-time
-  improvement after production fallbacks, not merely a fast forest attempt.
+  resumable result shards for deterministic fleet reduction. Generated corpus
+  files may be untracked only beneath the lock-declared
+  `.gts-extracted/<language>` directory; tracked changes and untracked files
+  elsewhere still fail authentication. The production lane separately times
+  and verifies the actual forest-enabled automatic route on every file, so
+  promotion requires exact routed parity and a net wall-time improvement after
+  production fallbacks, not merely a fast forest attempt.
 
 ### Performance
 

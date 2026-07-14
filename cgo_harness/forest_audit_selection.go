@@ -234,12 +234,12 @@ func verifyForestCorpusCheckout(root string, entry forestCorpusLockEntry) error 
 	if head != entry.Revision {
 		return fmt.Errorf("%s corpus checkout revision %s, lock requires %s", entry.Language, head, entry.Revision)
 	}
-	status, err := git("status", "--porcelain=v1", "--untracked-files=all")
+	status, err := git("status", "--porcelain=v1", "-z", "--untracked-files=all")
 	if err != nil {
 		return fmt.Errorf("verify %s corpus checkout cleanliness: %w", entry.Language, err)
 	}
-	if len(bytes.TrimSpace(status)) != 0 {
-		return fmt.Errorf("%s corpus checkout is dirty", entry.Language)
+	if err := verifyForestCorpusCheckoutStatus(entry, status); err != nil {
+		return err
 	}
 	remote, err := git("remote", "get-url", "origin")
 	if err != nil {
@@ -249,6 +249,41 @@ func verifyForestCorpusCheckout(root string, entry forestCorpusLockEntry) error 
 		return fmt.Errorf("%s corpus checkout origin %q, lock requires %q", entry.Language, strings.TrimSpace(string(remote)), entry.Repository)
 	}
 	return nil
+}
+
+func verifyForestCorpusCheckoutStatus(entry forestCorpusLockEntry, status []byte) error {
+	for len(status) > 0 {
+		end := bytes.IndexByte(status, 0)
+		if end < 0 {
+			return fmt.Errorf("%s corpus checkout returned malformed git status", entry.Language)
+		}
+		record := status[:end]
+		status = status[end+1:]
+		if len(record) < 4 || record[2] != ' ' {
+			return fmt.Errorf("%s corpus checkout returned malformed git status", entry.Language)
+		}
+		state, rel := string(record[:2]), string(record[3:])
+		if state == "??" && forestCorpusGeneratedPathAllowed(entry, rel) {
+			continue
+		}
+		return fmt.Errorf("%s corpus checkout is dirty (%s %s)", entry.Language, state, rel)
+	}
+	return nil
+}
+
+func forestCorpusGeneratedPathAllowed(entry forestCorpusLockEntry, rel string) bool {
+	if err := forestManifestLanguage(entry.Language); err != nil {
+		return false
+	}
+	generatedSubdir := path.Join(".gts-extracted", entry.Language)
+	if entry.Subdir != generatedSubdir {
+		return false
+	}
+	if rel == "" || strings.ContainsRune(rel, '\\') || filepath.IsAbs(rel) {
+		return false
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel)))
+	return clean == rel && strings.HasPrefix(rel, generatedSubdir+"/")
 }
 
 func forestSameRepository(left, right string) bool {
