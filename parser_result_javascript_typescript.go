@@ -694,27 +694,6 @@ func firstAndLastStackEntryChild(arena *nodeArena, entry stackEntry) (stackEntry
 	return first, last, true
 }
 
-func setStackEntryStart(entry stackEntry, startByte uint32, startPoint Point) {
-	if node := stackEntryNode(entry); node != nil {
-		node.startByte = startByte
-		node.startPoint = startPoint
-		return
-	}
-	if node := stackEntryNoTreeNode(entry); node != nil {
-		node.startByte = startByte
-		return
-	}
-	if leaf := stackEntryCompactFullLeaf(entry); leaf != nil {
-		leaf.startByte = startByte
-		leaf.startPoint = startPoint
-		return
-	}
-	if parent := stackEntryPendingParent(entry); parent != nil {
-		parent.startByte = startByte
-		parent.startPoint = startPoint
-	}
-}
-
 func normalizeJavaScriptTrailingContinueComments(root *Node, source []byte, lang *Language, poller *parseStopPoller) ParseStopReason {
 	if root == nil || lang == nil || lang.Name != "javascript" || len(source) == 0 {
 		return ParseStopNone

@@ -9,6 +9,8 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Multiline tree edits now keep node byte and point ranges aligned with the C
+  runtime across insertions, deletions, and replacements.
 - Rewriter edits now reject reversed and out-of-source byte ranges instead of
   panicking while applying them.
 
