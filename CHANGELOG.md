@@ -7,6 +7,31 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Tooling
+
+- The authenticated fleet scoreboard now times fresh full parses against a
+  per-language, fully static executable built from the locked upstream runtime
+  and grammar sources. Every selected file requires matching static/cgo deep
+  tree digests, and reduction fails closed on missing or mixed oracle identity,
+  dynamic linkage, source/flag drift, or legacy incremental axes. Deep dumps
+  and cgo admissions use iterative cursors with independent wall bounds; C
+  failures retain bounded Go evidence without fabricating ratios. Each file
+  measures one whole Go block and one whole static-C block, alternating their
+  order across file ordinals; compiler/linker absolute paths and executable
+  hashes are part of the serialized protocol. The reducer preserves complete,
+  typed C-oracle failures as authenticated closure
+  failures while rejecting untyped, generic, or incomplete evidence. Admission,
+  parser, transport, digest, measurement, and protocol failures now have a
+  closed serialized status vocabulary. Content-keyed
+  static executables are atomically installed with build-key/artifact-hash
+  manifests only after a post-link recheck of the captured compiler, linker,
+  pinned source trees, and every compiled source hash; cache hits repeat that
+  check before use, and unstable inputs are recaptured once before failing.
+  Shards execute a reverified private artifact snapshot, and per-language
+  wall/RSS stops kill the entire child process group. The budget and status
+  tools read both schema generations while keeping v1
+  historical ratchets separate from v2 full-only hard-gate verdicts.
+
 ## [0.37.0] - 2026-07-14
 
 Full-parse benchmark-integrity, forest-certification, and GLR-performance

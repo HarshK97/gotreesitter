@@ -144,6 +144,7 @@ func TestCompareScoreboardHardGateOnlyUsesUniversalUnexcludedBasis(t *testing.T)
 	lang.FullAxis.MaxRatioByTotal = 1
 	b.Languages["go"] = lang
 	s := testScoreboard(2.5, 0, 0)
+	makeV2FullBoard(s)
 
 	findings := compareScoreboard(b, s, compareOptions{StrictConfig: true, HardGateOnly: true})
 	if len(findings) != 0 {
@@ -154,6 +155,41 @@ func TestCompareScoreboardHardGateOnlyUsesUniversalUnexcludedBasis(t *testing.T)
 	findings = compareScoreboard(b, s, compareOptions{StrictConfig: true, HardGateOnly: true})
 	if got := renderFindingKeys(findings); !strings.Contains(got, "::config.exclude_paths") {
 		t.Fatalf("hard-gate-only comparison accepted an exclusion: %q (%#v)", got, findings)
+	}
+}
+
+func TestCompareScoreboardKeepsV1HistoricalAndV2HardGateModesSeparate(t *testing.T) {
+	b := testBudget()
+
+	legacy := testScoreboard(1.5, 0, 0)
+	findings := compareScoreboard(b, legacy, compareOptions{StrictConfig: true, HardGateOnly: true})
+	if got := renderFindingKeys(findings); !strings.Contains(got, "::scoreboard.schema_mode") {
+		t.Fatalf("v1 scoreboard established a current hard-gate verdict: %q (%#v)", got, findings)
+	}
+
+	current := testScoreboard(1.5, 0, 0)
+	makeV2FullBoard(current)
+	findings = compareScoreboard(b, current, compareOptions{StrictConfig: true})
+	if got := renderFindingKeys(findings); !strings.Contains(got, "::scoreboard.schema_mode") {
+		t.Fatalf("v2 scoreboard entered historical aggregate comparison: %q (%#v)", got, findings)
+	}
+
+	current.Schema = "gts-perf-scan/v99"
+	findings = compareScoreboard(b, current, compareOptions{StrictConfig: true, HardGateOnly: true})
+	if got := renderFindingKeys(findings); !strings.Contains(got, "::scoreboard.schema") {
+		t.Fatalf("unknown scoreboard schema was accepted: %q (%#v)", got, findings)
+	}
+}
+
+func TestCompareScoreboardV2HardGateRequiresFullOnlyAxis(t *testing.T) {
+	b := testBudget()
+	s := testScoreboard(1.5, 0, 0)
+	makeV2FullBoard(s)
+	s.Config.Axes = []string{axisFull, axisNoEdit}
+
+	findings := compareScoreboard(b, s, compareOptions{StrictConfig: true, HardGateOnly: true})
+	if got := renderFindingKeys(findings); !strings.Contains(got, ":full:config.axes") {
+		t.Fatalf("v2 publication admitted a legacy axis: %q (%#v)", got, findings)
 	}
 }
 
@@ -378,7 +414,7 @@ func TestMainWritesMarkdownSummary(t *testing.T) {
   }
 }`)
 	writeFile(t, scoreboardPath, `{
-  "schema": "gts-perf-scan/v1",
+	  "schema": "gts-perf-scan/v1",
   "config": {"reps": 5, "warmup": 1, "file_budget_ms": 10000, "max_files": 8, "order": "largest", "axes": ["full", "noedit"], "hard_gate": true, "corpus_lock_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
   "corpus_coverage": {"lock_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "lock_languages": 1, "selected_languages": 1},
   "hard_gate": {"status": "pass", "max_full_parse_ratio": 10, "fast_full_parse_ratio": 0.1, "files_expected": 1, "files_measured": 1, "full_files_evaluated": 1},
@@ -470,7 +506,7 @@ func testScoreboard(fullRatio float64, timeouts, errors int) *scoreboardFile {
 		}})
 	}
 	return &scoreboardFile{
-		Schema: scoreboardSchema,
+		Schema: scoreboardSchemaV1,
 		Config: scoreboardConfig{
 			Reps:             5,
 			Warmup:           1,
@@ -515,6 +551,17 @@ func testScoreboard(fullRatio float64, timeouts, errors int) *scoreboardFile {
 			FilesMeasured:      len(files),
 			FullFilesEvaluated: len(files),
 		},
+	}
+}
+
+func makeV2FullBoard(s *scoreboardFile) {
+	s.Schema = scoreboardSchemaV2
+	s.Config.Axes = []string{axisFull}
+	for i := range s.Languages {
+		delete(s.Languages[i].Axes, axisNoEdit)
+		for j := range s.Languages[i].Files {
+			delete(s.Languages[i].Files[j].Axes, axisNoEdit)
+		}
 	}
 }
 

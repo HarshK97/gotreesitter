@@ -10,9 +10,9 @@ package cgoharness
 // corpus files:
 //
 //   - full     fresh full-parse wall time, Go vs C, median of N reps
-//   - noedit   no-edit reparse with the previous tree (Go ParseIncremental /
-//              C ts_parser_parse with old tree), median of N reps
-//   - edit     single-byte-edit incremental reparse (opt-in axis; see README)
+// The authoritative lane measures materialized fresh full parses only. Legacy
+// no-edit and edit axes remain available for diagnostics, but the reducer will
+// not certify them as publication evidence.
 //
 // Cliff containment: every parse attempt runs under a per-file budget
 // (Go: Parser.SetTimeoutMicros -> ParseStoppedEarly; C: SetTimeoutMicros ->
@@ -43,6 +43,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -63,7 +64,7 @@ import (
 )
 
 const (
-	perfScanSchema = "gts-perf-scan/v1"
+	perfScanSchema = "gts-perf-scan/v2"
 
 	perfScanEnvGate         = "GTS_PERF_SCAN"
 	perfScanEnvLang         = "GTS_PERF_SCAN_LANG"
@@ -183,10 +184,12 @@ type perfScanStop struct {
 }
 
 type perfScanFile struct {
-	Path           string                       `json:"path"`
-	Bytes          int                          `json:"bytes"`
-	Classification *perfScanFileClassification  `json:"classification,omitempty"`
-	Axes           map[string]*perfScanFileAxis `json:"axes"`
+	Path             string                       `json:"path"`
+	Bytes            int                          `json:"bytes"`
+	MeasurementOrder string                       `json:"measurement_order,omitempty"`
+	OracleAdmission  *perfScanOracleAdmission     `json:"oracle_admission,omitempty"`
+	Classification   *perfScanFileClassification  `json:"classification,omitempty"`
+	Axes             map[string]*perfScanFileAxis `json:"axes"`
 }
 
 // perfScanFileClassification records the untimed Go full-parse corpus-policy
@@ -236,15 +239,16 @@ type perfScanLangAxis struct {
 }
 
 type perfScanLanguage struct {
-	Language      string `json:"language"`
-	Status        string `json:"status"`
-	Detail        string `json:"detail,omitempty"`
-	Backend       string `json:"backend,omitempty"`
-	FilesSelected int    `json:"files_selected"`
-	FilesMeasured int    `json:"files_measured"`
-	BytesMeasured int64  `json:"bytes_measured"`
-	ElapsedMS     int64  `json:"elapsed_ms"`
-	Verdict       string `json:"verdict"`
+	Language      string                  `json:"language"`
+	Status        string                  `json:"status"`
+	Detail        string                  `json:"detail,omitempty"`
+	Backend       string                  `json:"backend,omitempty"`
+	FilesSelected int                     `json:"files_selected"`
+	FilesMeasured int                     `json:"files_measured"`
+	BytesMeasured int64                   `json:"bytes_measured"`
+	ElapsedMS     int64                   `json:"elapsed_ms"`
+	Verdict       string                  `json:"verdict"`
+	Oracle        *perfScanOracleIdentity `json:"oracle,omitempty"`
 	// ActiveFile is the canonical active-measurement signal. The numeric
 	// fields are pointers so active zero-byte files still serialize bytes=0.
 	ActiveFile       string                       `json:"active_file,omitempty"`
@@ -305,6 +309,7 @@ type perfScanScoreboard struct {
 	GitRevision    string                       `json:"git_revision,omitempty"`
 	GitClean       bool                         `json:"git_clean"`
 	Host           perfScanHost                 `json:"host"`
+	Oracle         *perfScanOracleBoardIdentity `json:"oracle,omitempty"`
 	Config         perfScanConfig               `json:"config"`
 	Notes          []string                     `json:"notes,omitempty"`
 	Summary        map[string]int               `json:"summary_verdicts"`
@@ -517,7 +522,7 @@ func perfScanNormalizeRevision(raw string) (string, error) {
 func perfScanAxes() []string {
 	raw := strings.TrimSpace(os.Getenv(perfScanEnvAxes))
 	if raw == "" {
-		return []string{perfScanAxisFull, perfScanAxisNoEdit}
+		return []string{perfScanAxisFull}
 	}
 	var axes []string
 	for _, part := range strings.Split(raw, ",") {
@@ -528,7 +533,7 @@ func perfScanAxes() []string {
 		}
 	}
 	if len(axes) == 0 {
-		return []string{perfScanAxisFull, perfScanAxisNoEdit}
+		return []string{perfScanAxisFull}
 	}
 	return axes
 }
@@ -876,6 +881,11 @@ func perfScanEvaluateHardGate(board *perfScanScoreboard) perfScanGateReport {
 	if len(board.Languages) == 0 {
 		addFailure(perfScanGateFinding{Kind: "coverage", Status: "no_evidence", Detail: "scoreboard contains no language rows"})
 	}
+	if board.Schema == perfScanSchema {
+		if err := perfScanValidateOracleEvidence(board); err != nil {
+			addFailure(perfScanGateFinding{Kind: "oracle", Status: "inadmissible", Detail: err.Error()})
+		}
+	}
 	for _, lang := range board.Corpus.MissingFromLock {
 		addFailure(perfScanGateFinding{Kind: "coverage", Language: lang, Detail: "language missing from authenticated corpus lock"})
 	}
@@ -1132,6 +1142,13 @@ func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flus
 		}
 		return finish("no_c_reference", fmt.Sprintf("load C parser: %v", err))
 	}
+	staticOracle, err := buildStaticCPerfOracle(lang)
+	if err != nil {
+		return finish("no_static_c_oracle", fmt.Sprintf("build locked static C oracle: %v", err))
+	}
+	defer staticOracle.Close()
+	identity := staticOracle.identity
+	row.Oracle = &identity
 
 	goLang := entry.Language()
 	if goLang == nil {
@@ -1145,6 +1162,7 @@ func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flus
 		report:  report,
 		goLang:  goLang,
 		cLang:   cLang,
+		staticC: staticOracle,
 		budget:  time.Duration(cfg.FileBudgetMS) * time.Millisecond,
 		goPsr:   gotreesitter.NewParser(goLang),
 		editMax: perfScanEnvIntDefault(perfScanEnvEditCands, 16),
@@ -1159,6 +1177,8 @@ func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flus
 	m.cPsr = cParser
 	defer cParser.Close()
 
+	measurementStatus := perfScanStatusOK
+	var measurementDetails []string
 	for i, file := range files {
 		perfScanSetActiveFile(row, file, i+1, len(files))
 		if flush != nil {
@@ -1177,10 +1197,36 @@ func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flus
 			continue
 		}
 		fileRow := &perfScanFile{
-			Path:  file.rel,
-			Bytes: len(src),
-			Axes:  map[string]*perfScanFileAxis{},
+			Path:             file.rel,
+			Bytes:            len(src),
+			MeasurementOrder: "go_then_static_c",
+			Axes:             map[string]*perfScanFileAxis{},
 		}
+		m.staticCFirst = staticCFirstFor(lang, i)
+		if m.staticCFirst {
+			fileRow.MeasurementOrder = "static_c_then_go"
+		}
+		m.staticAdmissionStatus = ""
+		m.staticAdmissionDetail = ""
+		if flush != nil {
+			perfScanSetActiveAttempt(row, perfScanAxisFull, "c", "oracle_admission", 1)
+			row.ElapsedMS = time.Since(start).Milliseconds()
+			flush(row)
+		}
+		admission, admissionErr := m.admitStaticOracle(src)
+		fileRow.OracleAdmission = admission
+		if admissionErr != nil {
+			status := staticCOracleErrorStatus(admissionErr)
+			admission.Status = status
+			admission.Detail = admissionErr.Error()
+			m.staticAdmissionStatus = status
+			m.staticAdmissionDetail = admissionErr.Error()
+			if measurementStatus == perfScanStatusOK {
+				measurementStatus = status
+			}
+			measurementDetails = append(measurementDetails, fmt.Sprintf("%s: %s: %v", file.rel, status, admissionErr))
+		}
+		perfScanClearActiveAttempt(row)
 		m.progress = nil
 		if flush != nil {
 			fileIndex := i + 1
@@ -1198,6 +1244,10 @@ func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flus
 				fileRow.Axes[axis], fileRow.Classification = m.measureFull(src)
 				continue
 			}
+			if admissionErr != nil {
+				fileRow.Axes[axis] = &perfScanFileAxis{Status: m.staticAdmissionStatus, Detail: m.staticAdmissionDetail, Verdict: perfScanBucketNoData}
+				continue
+			}
 			fileRow.Axes[axis] = m.measureFileAxis(axis, src)
 		}
 		row.Files = append(row.Files, fileRow)
@@ -1211,6 +1261,9 @@ func perfScanMeasureLanguage(t *testing.T, lang string, cfg perfScanConfig, flus
 	}
 
 	perfScanAggregateLanguage(row, cfg)
+	if measurementStatus != perfScanStatusOK {
+		return finish(measurementStatus, strings.Join(measurementDetails, "; "))
+	}
 	return finish(perfScanStatusOK, "")
 }
 
@@ -1296,17 +1349,21 @@ func perfScanSelectFiles(t *testing.T, lang string, cfg perfScanConfig, langRoot
 // ---------------------------------------------------------------------------
 
 type perfScanLangMeasurer struct {
-	cfg      perfScanConfig
-	lang     string
-	entry    grammars.LangEntry
-	report   grammars.ParseSupport
-	goLang   *gotreesitter.Language
-	cLang    *sitter.Language
-	goPsr    *gotreesitter.Parser
-	cPsr     *sitter.Parser
-	budget   time.Duration
-	editMax  int
-	progress func(axis, impl, phase string, attempt int)
+	cfg                   perfScanConfig
+	lang                  string
+	entry                 grammars.LangEntry
+	report                grammars.ParseSupport
+	goLang                *gotreesitter.Language
+	cLang                 *sitter.Language
+	goPsr                 *gotreesitter.Parser
+	cPsr                  *sitter.Parser
+	staticC               *staticCPerfOracle
+	staticCFirst          bool
+	staticAdmissionStatus string
+	staticAdmissionDetail string
+	budget                time.Duration
+	editMax               int
+	progress              func(axis, impl, phase string, attempt int)
 	// Full-axis hooks are nil in production and exist so protocol tests can
 	// deterministically separate timed failures from classification probes.
 	goFullAttempt func(src []byte, keepTree bool) (*gotreesitter.Tree, perfScanAttempt)
@@ -1532,6 +1589,50 @@ func (m *perfScanLangMeasurer) cAttempt(src []byte, oldTree *sitter.Tree, keepTr
 	return tree, att
 }
 
+// admitStaticOracle proves that the per-language static timing artifact and
+// the single in-process parity binding materialize the same deep tree for this
+// exact source before any C timing sample is accepted.
+func (m *perfScanLangMeasurer) admitStaticOracle(src []byte) (*perfScanOracleAdmission, error) {
+	admission := &perfScanOracleAdmission{DigestFormat: "gts-deep-tree-v1"}
+	if m.staticC == nil {
+		return admission, newStaticCOracleError(staticCStatusAdmissionError, "static C oracle is not configured")
+	}
+	staticDigest, sourceSHA, err := m.staticC.deepDigest(src, m.budget)
+	admission.SourceSHA256 = sourceSHA
+	admission.StaticDeepSHA256 = staticDigest
+	if err != nil {
+		return admission, err
+	}
+	if m.cPsr == nil {
+		return admission, newStaticCOracleError(staticCStatusAdmissionError, "cgo parity admission parser is not configured")
+	}
+	m.cPsr.Reset()
+	tree, att := m.cAttempt(src, nil, true)
+	if att.status != "" {
+		status := staticCStatusParserError
+		if att.status == "c_timeout" {
+			status = staticCStatusParserTimeout
+		} else if att.status == "c_error" {
+			status = staticCStatusIncomplete
+		}
+		return admission, newStaticCOracleError(status, fmt.Sprintf("cgo parity admission parse: %s: %s", att.status, att.detail))
+	}
+	defer tree.Close()
+	parityDigest, err := cOracleDeepDigestWithin(tree, m.budget)
+	if err != nil {
+		if errors.Is(err, errCOracleDeepDigestTimeout) {
+			return admission, newStaticCOracleError(staticCStatusDigestTimeout, fmt.Sprintf("cgo parity deep digest exceeded independent wall budget %s", m.budget))
+		}
+		return admission, newStaticCOracleError(staticCStatusDigestError, fmt.Sprintf("cgo parity deep digest: %v", err))
+	}
+	admission.ParityDeepSHA256 = parityDigest
+	if staticDigest != parityDigest {
+		return admission, newStaticCOracleError(staticCStatusMismatch, fmt.Sprintf("static/cgo parity deep digest mismatch: static=%s parity=%s", staticDigest, parityDigest))
+	}
+	admission.Admitted = true
+	return admission, nil
+}
+
 func perfScanGoParserStop(reason gotreesitter.ParseStopReason, budget time.Duration) *perfScanStop {
 	class := perfScanStopParserStopped
 	switch reason {
@@ -1657,6 +1758,38 @@ func perfScanClassifyGoFull(tree *gotreesitter.Tree, att perfScanAttempt, source
 func (m *perfScanLangMeasurer) measureFull(src []byte) (*perfScanFileAxis, *perfScanFileClassification) {
 	out := &perfScanFileAxis{Status: perfScanStatusOK}
 	var classification *perfScanFileClassification
+	var goSamples, cSamples []int64
+
+	cOK := m.staticAdmissionStatus == ""
+	if !cOK {
+		out.Status = m.staticAdmissionStatus
+		out.Detail = m.staticAdmissionDetail
+		if staticCTimeoutStatus(m.staticAdmissionStatus) {
+			out.Stop = &perfScanStop{Class: perfScanStopCTimeout, Implementation: "c", Phase: "oracle_admission", Attempt: 1, Detail: m.staticAdmissionDetail}
+		}
+	}
+	measureStatic := func() {
+		if !cOK || m.staticC == nil {
+			return
+		}
+		m.checkpoint(perfScanAxisFull, "c", "static_sidecar", 1)
+		measurement := m.staticC.measure(src, perfScanAxisFull, m.cfg.Warmup, m.cfg.Reps, m.budget)
+		if measurement.Status != perfScanStatusOK {
+			cOK = false
+			if out.Status == perfScanStatusOK {
+				out.Status = measurement.Status
+			}
+			out.Detail = strings.TrimSpace(out.Detail + " " + measurement.Detail)
+			if staticCTimeoutStatus(measurement.Status) {
+				out.Stop = &perfScanStop{Class: perfScanStopCTimeout, Implementation: "c", Phase: "static_sidecar", Attempt: 1, Detail: measurement.Detail}
+			}
+			return
+		}
+		cSamples = append(cSamples, measurement.Samples...)
+	}
+	if m.staticC != nil && m.staticCFirst {
+		measureStatic()
+	}
 
 	goOK := true
 	var goDetail string
@@ -1670,42 +1803,46 @@ func (m *perfScanLangMeasurer) measureFull(src []byte) (*perfScanFileAxis, *perf
 		releaseGoTree(tree)
 		if att.status != "" {
 			goOK = false
-			out.Status = att.status
+			if out.Status == perfScanStatusOK {
+				out.Status = att.status
+			}
 			goDetail = att.detail
 			perfScanRecordAttemptStop(out, att, "warmup", i+1)
 			break
 		}
 	}
-	cOK := true
-	for i := 0; i < m.cfg.Warmup; i++ {
-		m.checkpoint(perfScanAxisFull, "c", "warmup", i+1)
-		_, att := m.attemptCFull(src, nil, false)
-		if att.status != "" {
-			cOK = false
-			if out.Status == perfScanStatusOK {
-				out.Status = att.status
+	if m.staticC == nil {
+		for i := 0; i < m.cfg.Warmup; i++ {
+			m.checkpoint(perfScanAxisFull, "c", "warmup", i+1)
+			_, att := m.attemptCFull(src, nil, false)
+			if att.status != "" {
+				cOK = false
+				if out.Status == perfScanStatusOK {
+					out.Status = att.status
+				}
+				out.Detail = strings.TrimSpace(out.Detail + " " + att.detail)
+				perfScanRecordAttemptStop(out, att, "warmup", i+1)
+				break
 			}
-			out.Detail = strings.TrimSpace(out.Detail + " " + att.detail)
-			perfScanRecordAttemptStop(out, att, "warmup", i+1)
-			break
 		}
 	}
 
-	var goSamples, cSamples []int64
 	for i := 0; i < m.cfg.Reps; i++ {
 		if goOK {
 			m.checkpoint(perfScanAxisFull, "go", "rep", i+1)
 			_, att := m.attemptGoFull(src, false)
 			if att.status != "" {
 				goOK = false
-				out.Status = att.status
+				if out.Status == perfScanStatusOK {
+					out.Status = att.status
+				}
 				goDetail = att.detail
 				perfScanRecordAttemptStop(out, att, "rep", i+1)
 			} else {
 				goSamples = append(goSamples, att.ns)
 			}
 		}
-		if cOK {
+		if cOK && m.staticC == nil {
 			m.checkpoint(perfScanAxisFull, "c", "rep", i+1)
 			_, att := m.attemptCFull(src, nil, false)
 			if att.status != "" {
@@ -1719,6 +1856,9 @@ func (m *perfScanLangMeasurer) measureFull(src []byte) (*perfScanFileAxis, *perf
 				cSamples = append(cSamples, att.ns)
 			}
 		}
+	}
+	if m.staticC != nil && !m.staticCFirst {
+		measureStatic()
 	}
 	// With warmup=0, classify after the timed samples so the classification
 	// probe cannot warm parser caches or otherwise alter the requested timing
@@ -2154,6 +2294,12 @@ func TestPerfScanSweep(t *testing.T) {
 		t.Logf("  %-14s status=%-14s verdict=%-9s files=%d/%d elapsed=%dms %s",
 			lang, row.Status, row.Verdict, row.FilesMeasured, row.FilesSelected, row.ElapsedMS, row.Detail)
 	}
+	oracleIdentity, oracleErr := perfScanOracleBoardFromRows(board.Languages)
+	if oracleErr != nil {
+		board.Notes = append(board.Notes, "STATIC C ORACLE IDENTITY FAILURE — "+oracleErr.Error())
+	} else {
+		board.Oracle = oracleIdentity
+	}
 	board.FullParseSplit = perfScanAggregateFleetCleanErrorSplit(board.Languages)
 	board.Host.LoadavgEnd = perfScanReadLoadavg()
 	if contended, note := perfScanContended(); contended {
@@ -2317,6 +2463,9 @@ func perfScanRunLanguageSubprocess(t *testing.T, lang string, cfg perfScanConfig
 }
 
 func perfScanRunChild(ctx context.Context, cmd *exec.Cmd, rssLimitMB int) (error, *perfScanStop) {
+	if err := perfScanConfigureChildProcessGroup(cmd); err != nil {
+		return err, nil
+	}
 	if rssLimitMB <= 0 {
 		err := cmd.Run()
 		return err, perfScanChildExitStop(ctx, err)
@@ -2355,7 +2504,7 @@ func perfScanRunChild(ctx context.Context, cmd *exec.Cmd, rssLimitMB int) (error
 		default:
 		}
 		if kill, stop := checkRSS(); kill {
-			_ = cmd.Process.Kill()
+			_ = perfScanKillChildProcessGroup(cmd)
 			return <-done, stop
 		}
 		select {
@@ -2363,12 +2512,45 @@ func perfScanRunChild(ctx context.Context, cmd *exec.Cmd, rssLimitMB int) (error
 			return err, perfScanChildExitStop(ctx, err)
 		case <-ctx.Done():
 			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
+				_ = perfScanKillChildProcessGroup(cmd)
 			}
 			return <-done, &perfScanStop{Class: perfScanStopWallTimeout, Detail: "language subprocess exceeded hard wall timeout"}
 		case <-ticker.C:
 		}
 	}
+}
+
+func perfScanConfigureChildProcessGroup(cmd *exec.Cmd) error {
+	if cmd == nil {
+		return fmt.Errorf("language subprocess command is nil")
+	}
+	if cmd.Process != nil {
+		return fmt.Errorf("language subprocess already started")
+	}
+	attr := syscall.SysProcAttr{}
+	if cmd.SysProcAttr != nil {
+		attr = *cmd.SysProcAttr
+	}
+	attr.Setpgid = true
+	cmd.SysProcAttr = &attr
+	cmd.Cancel = func() error {
+		err := perfScanKillChildProcessGroup(cmd)
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
+	return nil
+}
+
+func perfScanKillChildProcessGroup(cmd *exec.Cmd) error {
+	if cmd == nil || cmd.Process == nil {
+		return os.ErrProcessDone
+	}
+	// Setpgid makes the direct child's PID the process-group ID. A negative
+	// target kills the child and every compiler/oracle descendant before Wait
+	// reaps the direct child.
+	return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 }
 
 func perfScanChildExitStop(ctx context.Context, err error) *perfScanStop {
@@ -2458,6 +2640,27 @@ func perfScanParseStatusRSSBytes(status string) (int64, bool) {
 		return kib * 1024, true
 	}
 	return 0, false
+}
+
+func TestPerfScanRunChildKillsDescendantProcessGroupOnWallStop(t *testing.T) {
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "descendant.pid")
+	markerPath := filepath.Join(dir, "descendant-survived")
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	script := fmt.Sprintf("(sleep 0.4; touch %q) & echo $! > %q; wait", markerPath, pidPath)
+	cmd := exec.CommandContext(ctx, "sh", "-c", script)
+	err, stop := perfScanRunChild(ctx, cmd, 0)
+	if err == nil || stop == nil || stop.Class != perfScanStopWallTimeout {
+		t.Fatalf("wall-stopped child err=%v stop=%+v", err, stop)
+	}
+	if _, statErr := os.Stat(pidPath); statErr != nil {
+		t.Fatalf("descendant was not started before wall stop: %v", statErr)
+	}
+	time.Sleep(450 * time.Millisecond)
+	if _, statErr := os.Stat(markerPath); !os.IsNotExist(statErr) {
+		t.Fatalf("descendant survived process-group kill: stat=%v", statErr)
+	}
 }
 
 func perfScanReadLangFragment(outDir, lang string) (*perfScanLanguage, error) {
@@ -2761,6 +2964,19 @@ func perfScanRenderMarkdown(board *perfScanScoreboard) string {
 		fmt.Fprintf(&b, "- corpus lock: `%s` sha256=`%s` languages=%d selected=%d\n",
 			board.Corpus.LockPath, board.Corpus.LockSHA256, board.Corpus.LockLanguages, board.Corpus.SelectedLanguages)
 	}
+	if board.Oracle != nil {
+		oracle := board.Oracle.Common
+		fmt.Fprintf(&b, "- C oracle: `%s@%s` binding_commit=`%s`, upstream runtime `%s@%s` commit=`%s`, flags=`%s`, linkage=`%s`\n",
+			oracle.BindingModule, oracle.BindingVersion, oracle.BindingCommit,
+			oracle.RuntimeRepo, oracle.RuntimeVersion, oracle.RuntimeCommit,
+			oracle.OptimizationFlags, oracle.Linkage)
+		fmt.Fprintf(&b, "- C oracle runtime flags=`%s`; grammar C/C++ flags=`%s` / `%s`; link flags=`%s`\n",
+			oracle.RuntimeCFlags, oracle.GrammarCFlags, oracle.GrammarCXXFlags, oracle.LinkFlags)
+		fmt.Fprintf(&b, "- C oracle driver sha256=`%s`; runtime tree=`%s`; admitted deep format=`%s`; timing=`%s`\n",
+			oracle.DriverSHA256, oracle.RuntimeSourceTreeOID, oracle.DeepDigestFormat, oracle.TimingRegion)
+		fmt.Fprintf(&b, "- C oracle compiler sha256=`%s`; measurement order=`%s`\n",
+			oracle.CompilerSHA256, oracle.OrderProtocol)
+	}
 	if board.Config.ChildRSSMB > 0 {
 		fmt.Fprintf(&b, "- child RSS limit: `%d MiB`\n", board.Config.ChildRSSMB)
 	}
@@ -2814,19 +3030,18 @@ func perfScanRenderMarkdown(board *perfScanScoreboard) string {
 	}
 
 	fmt.Fprintf(&b, "\n## Per-language scoreboard\n\n")
-	fmt.Fprintf(&b, "| language | status | files | bytes | full Go | full C | full ratio | noedit ratio | verdict |\n")
-	fmt.Fprintf(&b, "|---|---|---|---|---|---|---|---|---|\n")
+	fmt.Fprintf(&b, "| language | status | files | bytes | full Go | full C | full ratio | verdict |\n")
+	fmt.Fprintf(&b, "|---|---|---|---|---|---|---|---|\n")
 	for _, row := range board.Languages {
 		full := row.Axes[perfScanAxisFull]
-		noedit := row.Axes[perfScanAxisNoEdit]
 		var goNs, cNs int64
 		if full != nil {
 			goNs, cNs = full.GoTotalNs, full.CTotalNs
 		}
-		fmt.Fprintf(&b, "| %s | %s | %d/%d | %d | %s | %s | %s | %s | %s |\n",
+		fmt.Fprintf(&b, "| %s | %s | %d/%d | %d | %s | %s | %s | %s |\n",
 			row.Language, row.Status, row.FilesMeasured, row.FilesSelected, row.BytesMeasured,
 			perfScanFmtNs(goNs), perfScanFmtNs(cNs),
-			perfScanFmtRatio(full), perfScanFmtRatio(noedit), row.Verdict)
+			perfScanFmtRatio(full), row.Verdict)
 	}
 
 	perfScanRenderCleanErrorSplit(&b, board.Languages)
@@ -3361,6 +3576,39 @@ func TestPerfScanCleanErrorSplitUnit(t *testing.T) {
 			t.Fatalf("all-error split = %+v", row.FullParseSplit)
 		}
 	})
+}
+
+func TestPerfScanStaticAdmissionFailureRetainsGoEvidenceUnit(t *testing.T) {
+	const lang = "go"
+	entry, ok := parityEntriesByName[lang]
+	if !ok {
+		t.Fatal("Go registry entry is unavailable")
+	}
+	report, ok := paritySupportForName(lang)
+	if !ok {
+		t.Fatal("Go support report is unavailable")
+	}
+	goLang := entry.Language()
+	if goLang == nil {
+		t.Fatal("Go language is nil")
+	}
+	parser := gotreesitter.NewParser(goLang)
+	const budget = time.Second
+	parser.SetTimeoutMicros(uint64(budget.Microseconds()))
+	m := &perfScanLangMeasurer{
+		cfg: perfScanConfig{Warmup: 1, Reps: 2}, lang: lang,
+		entry: entry, report: report, goLang: goLang, goPsr: parser,
+		staticC: &staticCPerfOracle{}, budget: budget,
+		staticAdmissionStatus: staticCStatusParserTimeout,
+		staticAdmissionDetail: "bounded static C admission timeout",
+	}
+	axis, classification := m.measureFull([]byte("package p\n\nvar X = 1\n"))
+	if axis.Status != staticCStatusParserTimeout || axis.GoMedianNs <= 0 || axis.CMedianNs != 0 || axis.Ratio != 0 || axis.Verdict != perfScanBucketNoData {
+		t.Fatalf("C admission failure fabricated or dropped timing evidence: %+v", axis)
+	}
+	if classification == nil || classification.GoStatus != perfScanStatusOK || !classification.FullSpan || classification.StoppedEarly {
+		t.Fatalf("bounded Go classification was not retained: %+v", classification)
+	}
 }
 
 func TestPerfScanCleanErrorSerializationAndMarkdownUnit(t *testing.T) {
