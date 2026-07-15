@@ -1,0 +1,217 @@
+{
+  "schema": "gts-work-count-contract/v3",
+  "counter_contract": "gts-work-count/v2",
+  "scope": "one fresh public full-parse invocation in one tagged diagnostic child process; all internal parseInternal attempts and retry/reparse work are counted and attributed; no elapsed-time evidence",
+  "historical_compatibility": {
+    "v2_manifest": "contract_v2.json remains an immutable historical contract",
+    "direct_and_proxy_counter_semantics": "unchanged gts-work-count/v2 semantics for Go and static C",
+    "detailed_convergence": "additive Go-only diagnostic capability; static C does not emit comparable convergence events"
+  },
+  "direct": {
+    "shifts": "shift actions applied",
+    "reductions": "reduce actions applied",
+    "explicit_recover_actions": "explicit recover parse actions applied",
+    "reduction_pop_requests": "pop-count requests issued by reduce actions",
+    "emitted_pop_paths": "concrete pop paths emitted by a pop-count request",
+    "emitted_pop_payloads": "payload entries carried by emitted pop paths",
+    "selected_nodes": "nodes in the selected returned tree",
+    "selected_parent_nodes": "selected returned-tree nodes with children",
+    "selected_leaf_nodes": "selected returned-tree nodes without children"
+  },
+  "terminal": {
+    "accept_actions": "terminal accept actions applied; multiple actions may occur inside one parseInternal attempt, and this count alone does not measure convergence or packed roots emitted"
+  },
+  "proxy": {
+    "table_lookups_proxy": "implementation-specific parse-table lookup front-door calls",
+    "action_entries_examined_proxy": "implementation-specific action entries exposed at instrumented dispatch lookups",
+    "lexer_front_door_calls_proxy": "implementation-specific production lexer front-door calls",
+    "stack_version_creations_proxy": "implementation-specific initial-stack and clone/version creation events",
+    "merge_attempts_proxy": "implementation-specific merge front-door candidate calls",
+    "merge_successes_proxy": "implementation-specific successful merge front-door calls",
+    "graph_link_additions_proxy": "implementation-specific physical primary or alternate stack-graph links added",
+    "leaf_constructions_proxy": "representation-specific transient leaf payload constructions",
+    "parent_constructions_proxy": "representation-specific transient parent payload constructions",
+    "pending_parent_constructions_proxy": "Go-only pending-parent subset; always zero in C",
+    "no_tree_parent_constructions_proxy": "Go-only no-tree parent subset; always zero in C"
+  },
+  "derived": {
+    "construction_surplus": "leaf_constructions_proxy + parent_constructions_proxy - selected_nodes; never described as discarded nodes"
+  },
+  "attempt_attribution": {
+    "logical_rungs": [
+      "initial_full",
+      "initial_merge",
+      "clean_wide",
+      "clean_wide_merge",
+      "recovery_wide_or_node",
+      "secondary_node",
+      "final_merge"
+    ],
+    "resolved_retry_pass_is_independent": true,
+    "phases": [
+      "entry_to_caps",
+      "caps_to_finalize",
+      "finalize"
+    ],
+    "require_aggregate_equals_attempts_plus_outside": true,
+    "canonical_query_compile_attempts": 1,
+    "canonical_query_compile_accept_actions": 3,
+    "retry_witness": {
+      "path": "testdata/work_count/retry_go_query_kotlin_regression.go",
+      "bytes": 3435,
+      "sha256": "ada50bc6eef16b831e7ca0c44f11dffbcff7d9695515519cd5090b2aacf4789a",
+      "expected_rungs": [
+        "initial_full",
+        "initial_merge"
+      ]
+    },
+    "straight_lr_control": {
+      "path": "testdata/work_count/straight_lr_control.go",
+      "bytes": 154,
+      "sha256": "4c584e187fdd4fb62dbf3953ca771e868bd3037e44abe5349c1cc0b3faf6532b",
+      "expected_max_stacks": 1
+    }
+  },
+  "convergence_frontier": {
+    "status": "implemented",
+    "capability": "go_only_detailed_convergence",
+    "static_c_emits_comparable_events": false,
+    "max_events": 256,
+    "max_packed_path_count": 7,
+    "packed_path_parse_work_budget": 16384,
+    "packed_path_per_walk_work_budget": 256,
+    "packed_path_depth_budget": 128,
+    "record_first_reject_per_reason": true,
+    "first_reject_semantics": "one exact copy of the minimum-sequence rejected event for every observed closed-vocabulary reason; reasons and sequences are unique",
+    "decision_ids": "attempt-local monotonically increasing identifiers for a target/candidate decision-pair, correlated through a fixed 256-slot recent-key table; zero if and only if both heads are absent; table keys may use in-process addresses but addresses are never serialized and retention cannot grow with the parse",
+    "head_status_priority": ["dead", "accepted", "paused", "live"],
+    "phases": [
+      "reduce_window_select",
+      "post_reduce_primary",
+      "post_reduce_pending",
+      "boundary_gss",
+      "boundary_equivalence",
+      "boundary_cull",
+      "pending_work",
+      "final_expand",
+      "final_select",
+      "terminal_accept"
+    ],
+    "phase_outcomes": {
+      "reduce_window_select": ["candidate", "cap_hit"],
+      "post_reduce_primary": ["candidate", "packed", "rejected", "mutation_partial"],
+      "post_reduce_pending": ["candidate", "packed", "rejected", "mutation_partial"],
+      "boundary_gss": ["candidate", "packed", "rejected", "mutation_partial"],
+      "boundary_equivalence": ["rejected"],
+      "boundary_cull": ["rejected"],
+      "pending_work": ["pending_queued", "pending_drained", "pending_discarded"],
+      "final_expand": ["packed_root_emitted", "observation_unknown"],
+      "final_select": ["selected"],
+      "terminal_accept": ["accepted_head"]
+    },
+    "outcomes": [
+      "candidate",
+      "packed",
+      "rejected",
+      "pending_queued",
+      "pending_drained",
+      "pending_discarded",
+      "accepted_head",
+      "packed_root_emitted",
+      "mutation_partial",
+      "cap_hit",
+      "observation_unknown",
+      "selected"
+    ],
+    "reject_reasons": [
+      "status",
+      "score",
+      "shifted",
+      "error_cost",
+      "not_gss",
+      "not_clean",
+      "distinct_shape",
+      "preflight",
+      "cull"
+    ],
+    "identity": [
+      "attempt",
+      "iteration",
+      "decision_id",
+      "lookahead_symbol",
+      "lookahead_byte_range",
+      "phase",
+      "head_state",
+      "head_byte",
+      "head_status",
+      "head_error_or_recovery",
+      "head_score",
+      "election_scanner_checkpoint_presence_and_hash",
+      "head_and_predecessor_content_hash",
+      "head_depth_and_gss_link_count",
+      "head_link_count_capped",
+      "head_dead_accepted_paused_bits",
+      "head_node_baseline_and_error_cost",
+      "head_error_cost_comparable",
+      "election_scanner_comparable",
+      "lookahead_present",
+      "lookahead_no_lookahead_and_external_bits"
+    ],
+    "snapshots": [
+      "candidate_count_before",
+      "candidate_count_after",
+      "links_before",
+      "links_after",
+      "packed_paths_before",
+      "packed_paths_after"
+    ],
+    "event_invariants": [
+      "canonical fixture events use attempt 1",
+      "absent heads are otherwise zero",
+      "accepted-head and final-result events have no candidate head",
+      "non-comparable error cost is zero",
+      "non-GSS heads have zero links and graph hashes",
+      "capped link counts equal uint16 maximum",
+      "non-comparable scanner elections have no checkpoint or hash",
+      "absent scanner checkpoints have zero hash",
+      "unset lookahead has zero identity fields",
+      "packed-path sentinel 7 requires capped or unknown snapshot evidence",
+      "untruncated aggregates equal retained events; truncated aggregates are lower-bounded by retained events",
+      "top-level capped and unknown flags are the OR of event evidence when untruncated and retain every observed true signal when truncated"
+    ],
+    "candidate_count_units": "phase-local populations: reduce_window_select reports 1 to fork-count; post-reduce and boundary pair decisions report 2 to 1 when packed and 2 to 2 while still candidates or rejected; pending_work reports queue population; boundary_cull reports the whole frontier; final_expand reports 1 to emitted alternatives; final_select reports N to 1; never interpreted universally as pending work",
+    "bounded_trace": "the first 256 chronological events plus the first rejection for each closed reason; after the chronological cap, non-first-rejection traffic updates scalar saturating aggregates without decision correlation, formatted detail, or head snapshots; bounded shape and scalar aggregate work still runs; link counts saturate independently at uint16 maximum with explicit capped evidence; packed-path walks alone stop at the actual result cap plus one, a 256-node per-walk budget, a 16384-node parse-global budget, and depth 128; exhausted walks report an unknown observation without claiming a runtime cap hit or packed root emission, and paths or pointers are never serialized",
+    "separate_integrity_signals": [
+      "event_truncated",
+      "arithmetic_overflow",
+      "vocabulary_violation",
+      "snapshot_count_capped",
+      "snapshot_count_unknown",
+      "mutation_partial",
+      "cap_hit"
+    ],
+    "include_saturating_aggregates": true,
+    "terminal_counters": [
+      "accept_actions",
+      "accepted_heads",
+      "packed_roots_emitted"
+    ],
+    "interpretation": "detailed events and their aggregates describe Go implementation behavior only; accept actions and packed roots emitted remain distinct, and neither action count nor attempt count alone establishes convergence work"
+  },
+  "admission": {
+    "digest_format": "gts-deep-tree-v1",
+    "fixture": "query_compile",
+    "require_uninstrumented_go_static_c_digest_match_first": true,
+    "require_instrumented_digest_match": true,
+    "require_full_span": true,
+    "require_clean_root": true,
+    "require_no_overflow": true,
+    "require_exact_fields": true,
+    "require_ordinary_untagged_go_child_first": true,
+    "require_clean_git_source_for_authoritative_receipt": true,
+    "require_private_content_addressed_go_source_snapshot": true,
+    "require_private_c_input_snapshot": true,
+    "sanitize_go_and_parser_environment": true,
+    "atomic_receipt_publish": true
+  }
+}

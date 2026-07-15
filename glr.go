@@ -3144,6 +3144,9 @@ func gssMainCanMerge(a, b *glrStack) bool {
 }
 
 func gssMainCanMergeForParser(p *Parser, a, b *glrStack) bool {
+	if workCountInstrumentationEnabled {
+		return gssMainCanMergeForParserPhase(p, a, b, workCountConvergencePhaseBoundaryGSS)
+	}
 	if cRecoveryMergeCostsDifferForParser(p, a, b) {
 		if p != nil && p.glrTrace {
 			scratch := glrMergeScratch{language: p.language, trace: true, cRecoveryCost: true}
@@ -3157,7 +3160,25 @@ func gssMainCanMergeForParser(p *Parser, a, b *glrStack) bool {
 	return gssMainCanMergeWithScratch(nil, a, b)
 }
 
+func gssMainCanMergeForParserPhase(p *Parser, a, b *glrStack, phase string) bool {
+	if cRecoveryMergeCostsDifferForParser(p, a, b) {
+		workCountRecordGSSReject(p, phase, workCountConvergenceReasonErrorCost, "GSS merge rejected by recovery cost", a, b)
+		if p != nil && p.glrTrace {
+			scratch := glrMergeScratch{language: p.language, trace: true, cRecoveryCost: true}
+			traceCRecoverMergeDecision(&scratch, "gss-direct", "reject-cost", a, b)
+		}
+		return false
+	}
+	if p != nil {
+		return gssMainCanMergeWithScratchPhase(p.mergeScratch, a, b, phase)
+	}
+	return gssMainCanMergeWithScratchPhase(nil, a, b, phase)
+}
+
 func tryGSSMainMergeForParser(p *Parser, a, b *glrStack) bool {
+	if workCountInstrumentationEnabled {
+		return tryGSSMainMergeForParserPhase(p, a, b, workCountConvergencePhaseBoundaryGSS, true)
+	}
 	workCountRecordMergeAttempt()
 	if !gssMainCanMergeForParser(p, a, b) {
 		return false
@@ -3167,6 +3188,34 @@ func tryGSSMainMergeForParser(p *Parser, a, b *glrStack) bool {
 		scratch = p.mergeScratch
 	}
 	merged := gssMainMergeWithScratch(scratch, a, b)
+	if merged {
+		workCountRecordMergeSuccess()
+		a.cEverErrored = a.cEverErrored || b.cEverErrored
+		if p != nil {
+			p.mergeScratch.bumpShapePrefixEpoch()
+		}
+	}
+	return merged
+}
+
+func tryGSSMainMergeForParserPhase(p *Parser, a, b *glrStack, phase string, recordDecision bool) bool {
+	workCountRecordMergeAttempt()
+	if recordDecision {
+		workCountRecordPairCandidate(p, phase, "GSS merge entered eligibility preflight", a, b) // work-count-assembly: convergence GSS seam
+	}
+	if !gssMainCanMergeForParserPhase(p, a, b, phase) {
+		return false
+	}
+	var scratch *glrMergeScratch
+	if p != nil {
+		scratch = p.mergeScratch
+	}
+	merged := false
+	if workCountInstrumentationEnabled {
+		merged = workCountMergeGSSObserved(p, scratch, phase, "GSS merge", a, b)
+	} else {
+		merged = gssMainMergeWithScratch(scratch, a, b)
+	}
 	if merged {
 		workCountRecordMergeSuccess()
 		// a survives and absorbs b, so OR the sticky wreckage bit: cEverErrored
@@ -3201,6 +3250,29 @@ func gssMainCanMergeWithScratch(scratch *glrMergeScratch, a, b *glrStack) bool {
 	}
 	return gssNodeCleanZeroErrorAllLinksWithScratch(scratch, a.gss.head) &&
 		gssNodeCleanZeroErrorAllLinksWithScratch(scratch, b.gss.head)
+}
+
+func gssMainCanMergeWithScratchPhase(scratch *glrMergeScratch, a, b *glrStack, phase string) bool {
+	if a.gss.head == nil || b.gss.head == nil {
+		workCountRecordGSSReject(workCountParserFromMergeScratch(scratch), phase, workCountConvergenceReasonNotGSS, "GSS merge requires packed heads", a, b)
+		return false
+	}
+	if a.dead || b.dead || a.accepted != b.accepted {
+		workCountRecordGSSReject(workCountParserFromMergeScratch(scratch), phase, workCountConvergenceReasonStatus, "GSS merge status differs", a, b)
+		return false
+	}
+	if a.score != b.score || a.shifted != b.shifted {
+		workCountRecordGSSScoreShiftReject(workCountParserFromMergeScratch(scratch), phase, a, b)
+		return false
+	}
+	if a.top().state != b.top().state || a.byteOffset != b.byteOffset {
+		workCountRecordGSSReject(workCountParserFromMergeScratch(scratch), phase, workCountConvergenceReasonStatus, "GSS merge state or byte differs", a, b)
+		return false
+	}
+	clean := gssNodeCleanZeroErrorAllLinksWithScratch(scratch, a.gss.head) &&
+		gssNodeCleanZeroErrorAllLinksWithScratch(scratch, b.gss.head)
+	workCountRecordGSSCleanReject(workCountParserFromMergeScratch(scratch), phase, a, b, clean)
+	return clean
 }
 
 func gssNodeByteOffset(n *gssNode) uint32 {
@@ -3505,14 +3577,22 @@ func setGSSMainLink(n *gssNode, i int, prev *gssNode, entry stackEntry) {
 		// entries, which both contribute zero here) changes parser metadata but
 		// not either aggregate. Keep the cache in that explicit identity case;
 		// every other rewrite remains conservatively globally invalidating.
+		changed := n.prev != prev || n.entry != entry
 		if n.prev != prev || stackEntryNode(n.entry) != stackEntryNode(entry) {
 			gssPrefixAggGen.Add(1)
 		}
 		n.prev = prev
 		n.entry = entry
+		if changed {
+			workCountRecordGSSMutation() // work-count-assembly: GSS mutation set-primary seam
+		}
 		return
 	}
+	old := n.extraLink(i - 1)
 	n.setExtraLink(i-1, gssMainLink{prev: prev, entry: entry})
+	if old.prev != prev || old.entry != entry {
+		workCountRecordGSSMutation() // work-count-assembly: GSS mutation set-extra seam
+	}
 }
 
 func gssMainAddLink(n *gssNode, prev *gssNode, entry stackEntry) bool {
@@ -4188,18 +4268,35 @@ func tryGSSMainMergeResult(scratch *glrMergeScratch, result []glrStack, idx int,
 	if idx < 0 || idx >= len(result) || stack == nil {
 		return false, false
 	}
+	if workCountInstrumentationEnabled {
+		workCountRecordPairCandidate(workCountParserFromMergeScratch(scratch), workCountConvergencePhaseBoundaryGSS, "boundary merge entered eligibility preflight", &result[idx], stack)
+	}
 	if cRecoveryMergeCostsDiffer(scratch, &result[idx], stack) {
 		traceCRecoverMergeDecision(scratch, "gss", "reject-cost", &result[idx], stack)
+		if workCountInstrumentationEnabled {
+			workCountRecordGSSReject(workCountParserFromMergeScratch(scratch), workCountConvergencePhaseBoundaryGSS, workCountConvergenceReasonErrorCost, "boundary merge rejected by recovery cost", &result[idx], stack)
+		}
 		return false, false
 	}
-	if !gssMainCanMergeWithScratch(scratch, &result[idx], stack) {
+	if workCountInstrumentationEnabled {
+		if !gssMainCanMergeWithScratchPhase(scratch, &result[idx], stack, workCountConvergencePhaseBoundaryGSS) {
+			return false, false
+		}
+	} else if !gssMainCanMergeWithScratch(scratch, &result[idx], stack) {
 		return false, false
 	}
 	if (scratch == nil || scratch.perKeyCap != 1) &&
 		gssStacksHaveDistinctMaterializingShapesWithScratch(scratch, &result[idx], stack) {
+		if workCountInstrumentationEnabled {
+			workCountRecordGSSReject(workCountParserFromMergeScratch(scratch), workCountConvergencePhaseBoundaryEquivalence, workCountConvergenceReasonDistinctShape, "boundary merge retained distinct materializing shapes", &result[idx], stack)
+		}
 		return false, true
 	}
-	merged = gssMainMergeWithScratch(scratch, &result[idx], stack)
+	if workCountInstrumentationEnabled {
+		merged = workCountMergeGSSObserved(workCountParserFromMergeScratch(scratch), scratch, workCountConvergencePhaseBoundaryGSS, "boundary merge", &result[idx], stack)
+	} else {
+		merged = gssMainMergeWithScratch(scratch, &result[idx], stack)
+	}
 	if merged {
 		workCountRecordMergeSuccess()
 		// result[idx] survives and absorbs stack, so OR the sticky wreckage bit:

@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,14 +25,17 @@ import (
 )
 
 const (
-	workCountEnableEnv     = "GTS_WORK_COUNT_ORACLE"
-	workCountReceiptEnv    = "GTS_WORK_COUNT_RECEIPT"
-	workCountFixtureID     = "query_compile"
-	workCountGoChildSchema = "gts-work-count-go-child/v3"
-	workCountCChildSchema  = "gts-work-count-c-child/v3"
-	workCountContract      = "gts-work-count/v2"
-	workCountReceiptSchema = "gts-work-count-receipt/v3"
-	workCountTimeout       = 2 * time.Minute
+	workCountEnableEnv                 = "GTS_WORK_COUNT_ORACLE"
+	workCountReceiptEnv                = "GTS_WORK_COUNT_RECEIPT"
+	workCountFixtureID                 = "query_compile"
+	workCountGoAdmissionChildSchema    = "gts-work-count-go-child/v3"
+	workCountTaggedGoChildSchema       = "gts-work-count-go-child/v4"
+	workCountCChildSchema              = "gts-work-count-c-child/v3"
+	workCountContract                  = "gts-work-count/v2"
+	workCountReceiptSchema             = "gts-work-count-receipt/v4"
+	workCountTimeout                   = 2 * time.Minute
+	workCountSharedManifestSHA256      = "a438ddae8eaaf8c343faeb5efccdc15035911ee4bf7d22e627091d123a9ff46d"
+	workCountConvergenceManifestSHA256 = "a4f28e92b4916277c56683b39a9e8da7358a9c8dd824b08f7f2be470e0daadde"
 
 	workCountCAdmissionChildEnv    = "GTS_WORK_COUNT_C_ADMISSION_CHILD"
 	workCountCAdmissionSourceEnv   = "GTS_WORK_COUNT_C_ADMISSION_SOURCE"
@@ -59,6 +64,33 @@ var workCountProxyFields = []string{
 	"graph_link_additions_proxy", "leaf_constructions_proxy",
 	"parent_constructions_proxy", "pending_parent_constructions_proxy",
 	"no_tree_parent_constructions_proxy",
+}
+
+var workCountConvergenceManifestPhases = []string{
+	"reduce_window_select", "post_reduce_primary", "post_reduce_pending", "boundary_gss", "boundary_equivalence",
+	"boundary_cull", "pending_work", "final_expand", "final_select", "terminal_accept",
+}
+
+var workCountConvergenceManifestOutcomes = []string{
+	"candidate", "packed", "rejected", "pending_queued", "pending_drained", "pending_discarded",
+	"accepted_head", "packed_root_emitted", "mutation_partial", "cap_hit", "observation_unknown", "selected",
+}
+
+var workCountConvergenceManifestReasons = []string{
+	"status", "score", "shifted", "error_cost", "not_gss", "not_clean", "distinct_shape", "preflight", "cull",
+}
+
+var workCountConvergencePhaseOutcomes = map[string][]string{
+	"reduce_window_select": {"candidate", "cap_hit"},
+	"post_reduce_primary":  {"candidate", "packed", "rejected", "mutation_partial"},
+	"post_reduce_pending":  {"candidate", "packed", "rejected", "mutation_partial"},
+	"boundary_gss":         {"candidate", "packed", "rejected", "mutation_partial"},
+	"boundary_equivalence": {"rejected"},
+	"boundary_cull":        {"rejected"},
+	"pending_work":         {"pending_queued", "pending_drained", "pending_discarded"},
+	"final_expand":         {"packed_root_emitted", "observation_unknown"},
+	"final_select":         {"selected"},
+	"terminal_accept":      {"accepted_head"},
 }
 
 type workCountCounters struct {
@@ -122,6 +154,136 @@ type workCountGoCounters struct {
 	workCountCounters
 	Attempts       []workCountAttempt     `json:"attempts"`
 	OutsideAttempt workCountCounterValues `json:"outside_attempt"`
+	Convergence    workCountConvergence   `json:"convergence_frontier"`
+}
+
+type workCountConvergence struct {
+	Capability            string                      `json:"capability"`
+	MaxEvents             uint16                      `json:"max_events"`
+	MaxPackedPathCount    uint16                      `json:"max_packed_path_count"`
+	EventsSeen            uint64                      `json:"events_seen"`
+	EventTruncated        bool                        `json:"event_truncated"`
+	ArithmeticOverflow    bool                        `json:"arithmetic_overflow"`
+	VocabularyViolation   bool                        `json:"vocabulary_violation"`
+	SnapshotCountCapped   bool                        `json:"snapshot_count_capped"`
+	SnapshotCountUnknown  bool                        `json:"snapshot_count_unknown"`
+	PathWalkWorkBudget    uint32                      `json:"path_walk_work_budget"`
+	PathWalkWorkUsed      uint32                      `json:"path_walk_work_used"`
+	PathWalkWorkExhausted bool                        `json:"path_walk_work_exhausted"`
+	Events                []workCountConvergenceEvent `json:"events"`
+	FirstRejects          []workCountConvergenceEvent `json:"first_rejects"`
+	Aggregates            workCountConvergenceTotals  `json:"aggregates"`
+}
+
+type workCountConvergenceTotals struct {
+	Phases                    workCountConvergencePhaseTotals   `json:"phases"`
+	Outcomes                  workCountConvergenceOutcomeTotals `json:"outcomes"`
+	Rejections                workCountConvergenceRejectTotals  `json:"rejections"`
+	CandidateCountBeforeTotal uint64                            `json:"candidate_count_before_total"`
+	CandidateCountAfterTotal  uint64                            `json:"candidate_count_after_total"`
+	LinksBeforeTotal          uint64                            `json:"links_before_total"`
+	LinksAfterTotal           uint64                            `json:"links_after_total"`
+	PathsBeforeTotal          uint64                            `json:"packed_paths_before_total"`
+	PathsAfterTotal           uint64                            `json:"packed_paths_after_total"`
+	MutationPartial           uint64                            `json:"mutation_partial"`
+	CapHits                   uint64                            `json:"cap_hits"`
+	AcceptedHeads             uint64                            `json:"accepted_heads"`
+	PackedRoots               uint64                            `json:"packed_roots_emitted"`
+}
+
+type workCountConvergencePhaseTotals struct {
+	ReduceWindowSelect  uint64 `json:"reduce_window_select"`
+	PostReducePrimary   uint64 `json:"post_reduce_primary"`
+	PostReducePending   uint64 `json:"post_reduce_pending"`
+	BoundaryGSS         uint64 `json:"boundary_gss"`
+	BoundaryEquivalence uint64 `json:"boundary_equivalence"`
+	BoundaryCull        uint64 `json:"boundary_cull"`
+	PendingWork         uint64 `json:"pending_work"`
+	FinalExpand         uint64 `json:"final_expand"`
+	FinalSelect         uint64 `json:"final_select"`
+	TerminalAccept      uint64 `json:"terminal_accept"`
+}
+
+type workCountConvergenceOutcomeTotals struct {
+	Candidate          uint64 `json:"candidate"`
+	Packed             uint64 `json:"packed"`
+	Rejected           uint64 `json:"rejected"`
+	PendingQueued      uint64 `json:"pending_queued"`
+	PendingDrained     uint64 `json:"pending_drained"`
+	PendingDiscarded   uint64 `json:"pending_discarded"`
+	AcceptedHead       uint64 `json:"accepted_head"`
+	PackedRoot         uint64 `json:"packed_root_emitted"`
+	MutationPartial    uint64 `json:"mutation_partial"`
+	CapHit             uint64 `json:"cap_hit"`
+	ObservationUnknown uint64 `json:"observation_unknown"`
+	Selected           uint64 `json:"selected"`
+}
+
+type workCountConvergenceRejectTotals struct {
+	Status        uint64 `json:"status"`
+	Score         uint64 `json:"score"`
+	Shifted       uint64 `json:"shifted"`
+	ErrorCost     uint64 `json:"error_cost"`
+	NotGSS        uint64 `json:"not_gss"`
+	NotClean      uint64 `json:"not_clean"`
+	DistinctShape uint64 `json:"distinct_shape"`
+	Preflight     uint64 `json:"preflight"`
+	Cull          uint64 `json:"cull"`
+}
+
+type workCountConvergenceEvent struct {
+	Sequence                         uint64                   `json:"sequence"`
+	Attempt                          uint32                   `json:"attempt"`
+	Iteration                        uint64                   `json:"iteration"`
+	DecisionID                       uint32                   `json:"decision_id"`
+	LookaheadSymbol                  uint32                   `json:"lookahead_symbol"`
+	LookaheadStartByte               uint32                   `json:"lookahead_start_byte"`
+	LookaheadEndByte                 uint32                   `json:"lookahead_end_byte"`
+	LookaheadPresent                 bool                     `json:"lookahead_present"`
+	LookaheadNoLookahead             bool                     `json:"lookahead_no_lookahead"`
+	LookaheadExternal                bool                     `json:"lookahead_external"`
+	ElectionScannerComparable        bool                     `json:"election_scanner_comparable"`
+	ElectionScannerCheckpointPresent bool                     `json:"election_scanner_checkpoint_present"`
+	ElectionScannerCheckpointHash    uint64                   `json:"election_scanner_checkpoint_hash"`
+	Phase                            string                   `json:"phase"`
+	Outcome                          string                   `json:"outcome"`
+	RejectReason                     string                   `json:"reject_reason,omitempty"`
+	Detail                           string                   `json:"detail,omitempty"`
+	Target                           workCountConvergenceHead `json:"target"`
+	Candidate                        workCountConvergenceHead `json:"candidate"`
+	CandidateCountBefore             uint32                   `json:"candidate_count_before"`
+	CandidateCountAfter              uint32                   `json:"candidate_count_after"`
+	LinksBefore                      uint16                   `json:"links_before"`
+	LinksAfter                       uint16                   `json:"links_after"`
+	PathsBefore                      uint16                   `json:"packed_paths_before"`
+	PathsAfter                       uint16                   `json:"packed_paths_after"`
+	MutationPartial                  bool                     `json:"mutation_partial"`
+	CapHit                           bool                     `json:"cap_hit"`
+	SnapshotCapped                   bool                     `json:"snapshot_capped"`
+	SnapshotUnknown                  bool                     `json:"snapshot_unknown"`
+}
+
+type workCountConvergenceHead struct {
+	State               uint32 `json:"state"`
+	Byte                uint32 `json:"byte"`
+	Status              string `json:"status"`
+	HasError            bool   `json:"has_error"`
+	Recovering          bool   `json:"recovering"`
+	Shifted             bool   `json:"shifted"`
+	Score               int64  `json:"score"`
+	BranchOrder         uint64 `json:"branch_order"`
+	Depth               uint32 `json:"depth"`
+	Dead                bool   `json:"dead"`
+	Accepted            bool   `json:"accepted"`
+	Paused              bool   `json:"paused"`
+	NodeBaseline        uint32 `json:"node_baseline"`
+	ErrorCost           uint32 `json:"error_cost"`
+	ErrorCostComparable bool   `json:"error_cost_comparable"`
+	HasGSS              bool   `json:"has_gss"`
+	LinkCount           uint16 `json:"link_count"`
+	LinkCountCapped     bool   `json:"link_count_capped"`
+	HeadContentHash     uint64 `json:"head_content_hash"`
+	PredecessorHash     uint64 `json:"predecessor_content_hash"`
 }
 
 type workCountGoChildResult struct {
@@ -203,23 +365,24 @@ type workCountRatio struct {
 }
 
 type workCountReceipt struct {
-	Schema         string                    `json:"schema"`
-	Fixture        string                    `json:"fixture"`
-	SourceSHA256   string                    `json:"source_sha256"`
-	SourceBytes    int                       `json:"source_bytes"`
-	DigestFormat   string                    `json:"digest_format"`
-	DeepTreeSHA256 string                    `json:"deep_tree_sha256"`
-	ManifestSHA256 string                    `json:"contract_manifest_sha256"`
-	Source         workCountGitProvenance    `json:"source"`
-	GoEnvironment  workCountEnvironment      `json:"go_environment"`
-	GoAdmission    workCountArtifactIdentity `json:"go_admission_artifact"`
-	GoArtifact     workCountArtifactIdentity `json:"go_work_count_artifact"`
-	CArtifact      workCountCIdentity        `json:"static_c_artifact"`
-	GoCounts       workCountGoCounters       `json:"go_counts"`
-	CCounts        workCountCounters         `json:"static_c_counts"`
-	Ratios         []workCountRatio          `json:"ratios"`
-	GoSurplus      uint64                    `json:"go_construction_surplus"`
-	CSurplus       uint64                    `json:"static_c_construction_surplus"`
+	Schema                      string                    `json:"schema"`
+	Fixture                     string                    `json:"fixture"`
+	SourceSHA256                string                    `json:"source_sha256"`
+	SourceBytes                 int                       `json:"source_bytes"`
+	DigestFormat                string                    `json:"digest_format"`
+	DeepTreeSHA256              string                    `json:"deep_tree_sha256"`
+	SharedCounterManifestSHA256 string                    `json:"shared_counter_manifest_sha256"`
+	ConvergenceManifestSHA256   string                    `json:"convergence_manifest_sha256"`
+	Source                      workCountGitProvenance    `json:"source"`
+	GoEnvironment               workCountEnvironment      `json:"go_environment"`
+	GoAdmission                 workCountArtifactIdentity `json:"go_admission_artifact"`
+	GoArtifact                  workCountArtifactIdentity `json:"go_work_count_artifact"`
+	CArtifact                   workCountCIdentity        `json:"static_c_artifact"`
+	GoCounts                    workCountGoCounters       `json:"go_counts"`
+	CCounts                     workCountCounters         `json:"static_c_counts"`
+	Ratios                      []workCountRatio          `json:"ratios"`
+	GoSurplus                   uint64                    `json:"go_construction_surplus"`
+	CSurplus                    uint64                    `json:"static_c_construction_surplus"`
 }
 
 type workCountCBuild struct {
@@ -242,13 +405,20 @@ func TestAuthenticatedWorkCountOracle(t *testing.T) {
 	// operations performed later by the static-C builders.
 	workCountClearAmbientGitRouting(t)
 	fixture := workCountLoadFixture(t)
-	manifestPath := filepath.Join(sourceSnapshot.Root, "cgo_harness", "work_count", "contract_v2.json")
+	sharedManifestPath := filepath.Join(sourceSnapshot.Root, "cgo_harness", "work_count", "contract_v2.json")
+	convergenceManifestPath := filepath.Join(sourceSnapshot.Root, "cgo_harness", "work_count", "contract_v3.json")
 	patchPath := filepath.Join(sourceSnapshot.Root, "cgo_harness", "work_count", "tree_sitter_v0_25_1.patch")
 	driverPath := filepath.Join(sourceSnapshot.Root, "cgo_harness", "pure_c", "work_count_oracle.c")
-	manifestSHA := workCountFileSHA(t, manifestPath)
+	sharedManifestSHA := workCountFileSHA(t, sharedManifestPath)
+	convergenceManifestSHA := workCountFileSHA(t, convergenceManifestPath)
+	if sharedManifestSHA != workCountSharedManifestSHA256 || convergenceManifestSHA != workCountConvergenceManifestSHA256 {
+		t.Fatalf("work-count manifest identity shared=%s/%s convergence=%s/%s", sharedManifestSHA, workCountSharedManifestSHA256, convergenceManifestSHA, workCountConvergenceManifestSHA256)
+	}
 	patchSHA := workCountFileSHA(t, patchPath)
 	driverSHA := workCountFileSHA(t, driverPath)
-	workCountValidateManifest(t, manifestPath)
+	workCountValidateManifest(t, sharedManifestPath)
+	workCountValidateConvergenceManifest(t, convergenceManifestPath)
+	workCountValidateManifestAgreement(t, sharedManifestPath, convergenceManifestPath)
 
 	sourcePath := filepath.Join(tempRoot, "query_compile.go")
 	if err := os.WriteFile(sourcePath, fixture.Source, 0o600); err != nil {
@@ -266,7 +436,7 @@ func TestAuthenticatedWorkCountOracle(t *testing.T) {
 	goAdmissionArtifact, goAdmissionIdentity, goAdmissionRecheck := workCountBuildGo(t, sourceSnapshot, tempRoot, goEnvironment, false)
 	t.Log("admission: ordinary untagged Go child")
 	uninstGo := workCountRunGoAdmission(t, goAdmissionArtifact, sourcePath, tempRoot, goEnvironment)
-	workCountValidateGoChild(t, "ordinary Go admission", "go-production-glr-untagged", uninstGo, fixture)
+	workCountValidateGoChild(t, "ordinary Go admission", workCountGoAdmissionChildSchema, "go-production-glr-untagged", uninstGo, fixture)
 	t.Log("admission: unmodified static C")
 	uninstC := workCountUninstrumentedCAdmission(t, fixture, sourcePath, tempRoot)
 	if uninstGo.DeepTreeSHA256 != uninstC || uninstGo.DeepTreeSHA256 != fixture.Fixture.DeepTreeSHA256 {
@@ -284,7 +454,7 @@ func TestAuthenticatedWorkCountOracle(t *testing.T) {
 	t.Log("run: tagged diagnostic Go child")
 	goResult := workCountRunGo(t, goArtifact, sourcePath, tempRoot, goEnvironment)
 	workCountValidateCChild(t, "static C", "static-c-instrumented-glr", cResult, fixture, uninstC)
-	workCountValidateGoChild(t, "tagged Go", "go-production-glr-tagged-diagnostic", goResult.workCountGoChildResult, fixture)
+	workCountValidateGoChild(t, "tagged Go", workCountTaggedGoChildSchema, "go-production-glr-tagged-diagnostic", goResult.workCountGoChildResult, fixture)
 	workCountValidateGoCounters(t, "tagged Go", goResult.Counters, uint32(len(fixture.Source)))
 	if cResult.DeepTreeSHA256 != goResult.DeepTreeSHA256 {
 		t.Fatalf("instrumented deep digest mismatch: go=%s static_c=%s", goResult.DeepTreeSHA256, cResult.DeepTreeSHA256)
@@ -305,7 +475,10 @@ func TestAuthenticatedWorkCountOracle(t *testing.T) {
 		t.Fatalf("source snapshot identity drift: got %s want %s", got, fixture.Fixture.SHA256)
 	}
 	for label, pathAndSHA := range map[string][2]string{
-		"manifest": {manifestPath, manifestSHA}, "patch": {patchPath, patchSHA}, "driver": {driverPath, driverSHA},
+		"shared counter manifest": {sharedManifestPath, sharedManifestSHA},
+		"convergence manifest":    {convergenceManifestPath, convergenceManifestSHA},
+		"patch":                   {patchPath, patchSHA},
+		"driver":                  {driverPath, driverSHA},
 	} {
 		if got := workCountFileSHA(t, pathAndSHA[0]); got != pathAndSHA[1] {
 			t.Fatalf("%s identity drift: got %s want %s", label, got, pathAndSHA[1])
@@ -316,7 +489,8 @@ func TestAuthenticatedWorkCountOracle(t *testing.T) {
 		Schema: workCountReceiptSchema, Fixture: fixture.Fixture.ID,
 		SourceSHA256: fixture.Fixture.SHA256, SourceBytes: len(fixture.Source),
 		DigestFormat: benchfixtures.DeepTreeDigestVersion, DeepTreeSHA256: uninstGo.DeepTreeSHA256,
-		ManifestSHA256: manifestSHA, Source: sourceSnapshot.Provenance,
+		SharedCounterManifestSHA256: sharedManifestSHA, ConvergenceManifestSHA256: convergenceManifestSHA,
+		Source:        sourceSnapshot.Provenance,
 		GoEnvironment: goEnvironment, GoAdmission: goAdmissionIdentity,
 		GoArtifact: goIdentity, CArtifact: cBuild.Identity,
 		GoCounts: goResult.Counters, CCounts: cResult.Counters,
@@ -1063,9 +1237,10 @@ func workCountValidateGoCounterObject(t *testing.T, data json.RawMessage) {
 	counterKeys := append([]string{"contract", "overflow"}, workCountDirectFields...)
 	counterKeys = append(counterKeys, workCountTerminalFields...)
 	counterKeys = append(counterKeys, workCountProxyFields...)
-	counterKeys = append(counterKeys, "attempts", "outside_attempt")
+	counterKeys = append(counterKeys, "attempts", "outside_attempt", "convergence_frontier")
 	workCountRequireKeys(t, "Go counters", counterRaw, counterKeys)
 	workCountValidateCounterValuesObject(t, "Go outside-attempt counters", counterRaw["outside_attempt"])
+	workCountValidateGoConvergenceObject(t, counterRaw["convergence_frontier"])
 	var attempts []json.RawMessage
 	if err := json.Unmarshal(counterRaw["attempts"], &attempts); err != nil {
 		t.Fatal(err)
@@ -1087,6 +1262,473 @@ func workCountValidateGoCounterObject(t *testing.T, data json.RawMessage) {
 			workCountValidateCounterValuesObject(t, fmt.Sprintf("Go attempt %d %s", i+1, key), attempt[key])
 		}
 	}
+}
+
+func workCountValidateGoConvergenceObject(t *testing.T, data json.RawMessage) {
+	t.Helper()
+	raw := workCountDecodeRawObject(t, "Go convergence frontier", data)
+	workCountRequireKeys(t, "Go convergence frontier", raw, []string{
+		"capability", "max_events", "max_packed_path_count", "events_seen", "event_truncated",
+		"arithmetic_overflow", "vocabulary_violation", "snapshot_count_capped", "snapshot_count_unknown",
+		"path_walk_work_budget", "path_walk_work_used", "path_walk_work_exhausted",
+		"events", "first_rejects", "aggregates",
+	})
+	var frontier workCountConvergence
+	workCountDecodeExact(t, data, &frontier)
+	var events, firstRejects []json.RawMessage
+	if err := json.Unmarshal(raw["events"], &events); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw["first_rejects"], &firstRejects); err != nil {
+		t.Fatal(err)
+	}
+	for i, event := range events {
+		workCountValidateConvergenceEvent(t, fmt.Sprintf("Go convergence event %d", i+1), event)
+	}
+	for i, event := range firstRejects {
+		workCountValidateConvergenceEvent(t, fmt.Sprintf("Go convergence first reject %d", i+1), event)
+	}
+	workCountValidateConvergenceAggregates(t, raw["aggregates"])
+	workCountValidateGoConvergence(t, frontier)
+}
+
+func workCountValidateGoConvergence(t *testing.T, frontier workCountConvergence) {
+	t.Helper()
+	workCountValidateConvergenceBounds(t, frontier)
+	workCountValidateConvergenceEvents(t, frontier)
+	workCountValidatePostReduceLifecycle(t, frontier)
+	reasons := workCountConvergenceRejectMap(frontier.Aggregates.Rejections)
+	workCountValidateConvergenceFirstRejects(t, frontier, reasons)
+	workCountValidateConvergenceTotals(t, frontier, reasons)
+}
+
+func workCountValidatePostReduceLifecycle(t *testing.T, frontier workCountConvergence) {
+	t.Helper()
+	isPostReduce := func(phase string) bool {
+		return phase == "post_reduce_primary" || phase == "post_reduce_pending"
+	}
+	isTerminal := func(outcome string) bool {
+		return outcome == "packed" || outcome == "rejected" || outcome == "mutation_partial"
+	}
+	for i, event := range frontier.Events {
+		if !isPostReduce(event.Phase) {
+			continue
+		}
+		switch {
+		case event.Outcome == "candidate":
+			if i+1 == len(frontier.Events) && frontier.EventTruncated {
+				// The retained chronological prefix may end between the candidate
+				// observation and its terminal event.
+				continue
+			}
+			if i+1 == len(frontier.Events) {
+				t.Fatalf("Go convergence post-reduce candidate sequence=%d has no terminal event", event.Sequence)
+			}
+			next := frontier.Events[i+1]
+			if next.DecisionID != event.DecisionID || next.Phase != event.Phase || !isTerminal(next.Outcome) {
+				t.Fatalf("Go convergence post-reduce candidate sequence=%d is not followed by one same-decision terminal: next=%+v", event.Sequence, next)
+			}
+		case isTerminal(event.Outcome):
+			if i == 0 {
+				t.Fatalf("Go convergence post-reduce terminal sequence=%d has no candidate event", event.Sequence)
+			}
+			previous := frontier.Events[i-1]
+			if previous.DecisionID != event.DecisionID || previous.Phase != event.Phase || previous.Outcome != "candidate" {
+				t.Fatalf("Go convergence post-reduce terminal sequence=%d is not preceded by its same-decision candidate: previous=%+v", event.Sequence, previous)
+			}
+		}
+	}
+}
+
+func workCountValidateConvergenceBounds(t *testing.T, frontier workCountConvergence) {
+	t.Helper()
+	if frontier.Capability != "go_only_detailed_convergence" || frontier.MaxEvents != 256 || frontier.MaxPackedPathCount != 7 || frontier.PathWalkWorkBudget != 16*1024 {
+		t.Fatalf("Go convergence capability/bounds=%q events=%d paths=%d work=%d", frontier.Capability, frontier.MaxEvents, frontier.MaxPackedPathCount, frontier.PathWalkWorkBudget)
+	}
+	if frontier.ArithmeticOverflow || frontier.VocabularyViolation || frontier.PathWalkWorkUsed > frontier.PathWalkWorkBudget || (frontier.PathWalkWorkExhausted && !frontier.SnapshotCountUnknown) {
+		t.Fatalf("Go convergence integrity overflow=%v vocabulary=%v snapshots=%v/%v path_work=%d/%d exhausted=%v", frontier.ArithmeticOverflow, frontier.VocabularyViolation, frontier.SnapshotCountCapped, frontier.SnapshotCountUnknown, frontier.PathWalkWorkUsed, frontier.PathWalkWorkBudget, frontier.PathWalkWorkExhausted)
+	}
+	wantRetained := frontier.EventsSeen
+	if wantRetained > uint64(frontier.MaxEvents) {
+		wantRetained = uint64(frontier.MaxEvents)
+	}
+	if frontier.EventsSeen == 0 || uint64(len(frontier.Events)) != wantRetained || frontier.EventTruncated != (frontier.EventsSeen > uint64(frontier.MaxEvents)) {
+		t.Fatalf("Go convergence event bound seen=%d retained=%d truncated=%v max=%d", frontier.EventsSeen, len(frontier.Events), frontier.EventTruncated, frontier.MaxEvents)
+	}
+}
+
+func workCountValidateConvergenceEvents(t *testing.T, frontier workCountConvergence) {
+	t.Helper()
+	for i, event := range frontier.Events {
+		if event.Sequence != uint64(i+1) {
+			t.Fatalf("Go convergence event %d sequence=%d want=%d", i+1, event.Sequence, i+1)
+		}
+		workCountValidateConvergenceEventValue(t, fmt.Sprintf("Go convergence event %d", i+1), event)
+		if event.SnapshotCapped && !frontier.SnapshotCountCapped {
+			t.Fatalf("Go convergence event %d capped snapshot missing top-level signal", i+1)
+		}
+		if event.SnapshotUnknown && !frontier.SnapshotCountUnknown {
+			t.Fatalf("Go convergence event %d unknown snapshot missing top-level signal", i+1)
+		}
+	}
+	var retainedCapped, retainedUnknown bool
+	for _, event := range frontier.Events {
+		retainedCapped = retainedCapped || event.SnapshotCapped
+		retainedUnknown = retainedUnknown || event.SnapshotUnknown
+	}
+	if !frontier.EventTruncated && (frontier.SnapshotCountCapped != retainedCapped || frontier.SnapshotCountUnknown != retainedUnknown) {
+		t.Fatalf("Go convergence top-level snapshot OR capped=%v/%v unknown=%v/%v", frontier.SnapshotCountCapped, retainedCapped, frontier.SnapshotCountUnknown, retainedUnknown)
+	}
+}
+
+func workCountValidateConvergenceFirstRejects(t *testing.T, frontier workCountConvergence, reasons map[string]uint64) {
+	t.Helper()
+	seenReasons := make(map[string]bool, len(frontier.FirstRejects))
+	seenSequences := make(map[uint64]bool, len(frontier.FirstRejects))
+	for i, event := range frontier.FirstRejects {
+		workCountValidateConvergenceEventValue(t, fmt.Sprintf("Go convergence first reject %d", i+1), event)
+		if event.Sequence == 0 || event.Sequence > frontier.EventsSeen || event.Outcome != "rejected" || event.RejectReason == "" || seenReasons[event.RejectReason] || seenSequences[event.Sequence] {
+			t.Fatalf("Go convergence first reject %d invalid/duplicate: %+v", i+1, event)
+		}
+		seenReasons[event.RejectReason] = true
+		seenSequences[event.Sequence] = true
+		if event.Sequence <= uint64(len(frontier.Events)) {
+			chronological := frontier.Events[event.Sequence-1]
+			if !reflect.DeepEqual(event, chronological) {
+				t.Fatalf("Go convergence first reject %d is not exact chronological event %d", i+1, event.Sequence)
+			}
+		}
+		for _, chronological := range frontier.Events {
+			if chronological.Sequence >= event.Sequence {
+				break
+			}
+			if chronological.RejectReason == event.RejectReason {
+				t.Fatalf("Go convergence first reject %d reason=%s is not minimal; earlier sequence=%d", i+1, event.RejectReason, chronological.Sequence)
+			}
+		}
+	}
+	for reason, count := range reasons {
+		if (count != 0) != seenReasons[reason] {
+			t.Fatalf("Go convergence first-reject coverage reason=%s count=%d retained=%v", reason, count, seenReasons[reason])
+		}
+	}
+}
+
+func workCountValidateConvergenceTotals(t *testing.T, frontier workCountConvergence, reasons map[string]uint64) {
+	t.Helper()
+	phases := workCountConvergencePhaseMap(frontier.Aggregates.Phases)
+	outcomes := workCountConvergenceOutcomeMap(frontier.Aggregates.Outcomes)
+	if workCountSumUint64Fields(t, "Go convergence phases", phases) != frontier.EventsSeen || workCountSumUint64Fields(t, "Go convergence outcomes", outcomes) != frontier.EventsSeen {
+		t.Fatalf("Go convergence aggregate/event mismatch seen=%d phases=%v outcomes=%v", frontier.EventsSeen, phases, outcomes)
+	}
+	if workCountSumUint64Fields(t, "Go convergence rejections", reasons) != outcomes["rejected"] {
+		t.Fatalf("Go convergence rejection sum=%d rejected=%d", workCountSumUint64Fields(t, "Go convergence rejections", reasons), outcomes["rejected"])
+	}
+	if frontier.Aggregates.AcceptedHeads != outcomes["accepted_head"] {
+		t.Fatalf("Go convergence accepted heads scalar=%d outcomes=%d", frontier.Aggregates.AcceptedHeads, outcomes["accepted_head"])
+	}
+	if frontier.Aggregates.MutationPartial != outcomes["mutation_partial"] {
+		t.Fatalf("Go convergence mutation-partial scalar=%d outcomes=%d", frontier.Aggregates.MutationPartial, outcomes["mutation_partial"])
+	}
+	if frontier.Aggregates.CapHits < outcomes["cap_hit"] {
+		t.Fatalf("Go convergence cap-hit scalar=%d cap-hit outcomes=%d", frontier.Aggregates.CapHits, outcomes["cap_hit"])
+	}
+	workCountValidatePackedRootTotals(t, frontier, outcomes["packed_root_emitted"])
+	workCountValidateRetainedAggregateBounds(t, frontier, phases, outcomes, reasons)
+}
+
+func workCountValidateRetainedAggregateBounds(t *testing.T, frontier workCountConvergence, phases, outcomes, reasons map[string]uint64) {
+	t.Helper()
+	retainedPhases := make(map[string]uint64, len(phases))
+	retainedOutcomes := make(map[string]uint64, len(outcomes))
+	retainedReasons := make(map[string]uint64, len(reasons))
+	var beforeCandidates, afterCandidates, beforeLinks, afterLinks, beforePaths, afterPaths uint64
+	for _, event := range frontier.Events {
+		retainedPhases[event.Phase]++
+		retainedOutcomes[event.Outcome]++
+		if event.RejectReason != "" {
+			retainedReasons[event.RejectReason]++
+		}
+		beforeCandidates += uint64(event.CandidateCountBefore)
+		afterCandidates += uint64(event.CandidateCountAfter)
+		beforeLinks += uint64(event.LinksBefore)
+		afterLinks += uint64(event.LinksAfter)
+		beforePaths += uint64(event.PathsBefore)
+		afterPaths += uint64(event.PathsAfter)
+	}
+	checkMap := func(label string, aggregate, retained map[string]uint64) {
+		for key, got := range aggregate {
+			want := retained[key]
+			if (!frontier.EventTruncated && got != want) || (frontier.EventTruncated && got < want) {
+				t.Fatalf("Go convergence %s aggregate %s=%d retained=%d truncated=%v", label, key, got, want, frontier.EventTruncated)
+			}
+		}
+	}
+	checkMap("phase", phases, retainedPhases)
+	checkMap("outcome", outcomes, retainedOutcomes)
+	checkMap("reason", reasons, retainedReasons)
+	values := [][3]uint64{
+		{frontier.Aggregates.CandidateCountBeforeTotal, beforeCandidates, 0}, {frontier.Aggregates.CandidateCountAfterTotal, afterCandidates, 0},
+		{frontier.Aggregates.LinksBeforeTotal, beforeLinks, 0}, {frontier.Aggregates.LinksAfterTotal, afterLinks, 0},
+		{frontier.Aggregates.PathsBeforeTotal, beforePaths, 0}, {frontier.Aggregates.PathsAfterTotal, afterPaths, 0},
+	}
+	for i, pair := range values {
+		if (!frontier.EventTruncated && pair[0] != pair[1]) || (frontier.EventTruncated && pair[0] < pair[1]) {
+			t.Fatalf("Go convergence scalar total %d=%d retained=%d truncated=%v", i, pair[0], pair[1], frontier.EventTruncated)
+		}
+	}
+	workCountValidateRetainedScalarTotals(t, frontier)
+}
+
+func workCountValidatePackedRootTotals(t *testing.T, frontier workCountConvergence, packedRootEvents uint64) {
+	t.Helper()
+	if packedRootEvents == 0 {
+		if frontier.Aggregates.PackedRoots != 0 {
+			t.Fatalf("Go convergence packed roots=%d without packed-root events", frontier.Aggregates.PackedRoots)
+		}
+	} else {
+		maxRoots := packedRootEvents * uint64(frontier.MaxPackedPathCount-1)
+		if frontier.Aggregates.PackedRoots < packedRootEvents || frontier.Aggregates.PackedRoots > maxRoots || frontier.Aggregates.PackedRoots > frontier.Aggregates.PathsAfterTotal {
+			t.Fatalf("Go convergence packed roots=%d events=%d max=%d paths-after=%d", frontier.Aggregates.PackedRoots, packedRootEvents, maxRoots, frontier.Aggregates.PathsAfterTotal)
+		}
+	}
+}
+
+func workCountValidateRetainedScalarTotals(t *testing.T, frontier workCountConvergence) {
+	t.Helper()
+	var mutationPartial, capHits, acceptedHeads, packedRoots uint64
+	for _, event := range frontier.Events {
+		if event.MutationPartial {
+			mutationPartial++
+		}
+		if event.CapHit {
+			capHits++
+		}
+		if event.Outcome == "accepted_head" {
+			acceptedHeads++
+		}
+		if event.Outcome == "packed_root_emitted" {
+			packedRoots += uint64(event.PathsAfter)
+		}
+	}
+	exact := !frontier.EventTruncated
+	bad := func(total, retained uint64) bool { return (exact && total != retained) || (!exact && total < retained) }
+	if bad(frontier.Aggregates.MutationPartial, mutationPartial) || bad(frontier.Aggregates.CapHits, capHits) || bad(frontier.Aggregates.AcceptedHeads, acceptedHeads) || bad(frontier.Aggregates.PackedRoots, packedRoots) {
+		t.Fatalf("Go convergence scalar aggregate drift mutation=%d/%d caps=%d/%d accepted=%d/%d roots=%d/%d", frontier.Aggregates.MutationPartial, mutationPartial, frontier.Aggregates.CapHits, capHits, frontier.Aggregates.AcceptedHeads, acceptedHeads, frontier.Aggregates.PackedRoots, packedRoots)
+	}
+}
+
+func workCountValidateConvergenceEventValue(t *testing.T, label string, event workCountConvergenceEvent) {
+	t.Helper()
+	workCountValidateConvergenceEventIdentity(t, label, event)
+	workCountValidateConvergenceEventSnapshots(t, label, event)
+	workCountValidateConvergenceEventHeads(t, label, event)
+}
+
+func workCountValidateConvergenceEventIdentity(t *testing.T, label string, event workCountConvergenceEvent) {
+	t.Helper()
+	if event.Sequence == 0 || event.Attempt != 1 || !workCountStringIn(event.Phase, workCountConvergenceManifestPhases) || !workCountStringIn(event.Outcome, workCountConvergenceManifestOutcomes) || (event.RejectReason != "" && !workCountStringIn(event.RejectReason, workCountConvergenceManifestReasons)) {
+		t.Fatalf("%s closed vocabulary/identity=%+v", label, event)
+	}
+	if (event.Outcome == "rejected") != (event.RejectReason != "") {
+		t.Fatalf("%s rejected/reason mismatch outcome=%q reason=%q", label, event.Outcome, event.RejectReason)
+	}
+	if !workCountConvergencePhaseAllowsOutcome(event.Phase, event.Outcome) {
+		t.Fatalf("%s phase/outcome mismatch phase=%q outcome=%q", label, event.Phase, event.Outcome)
+	}
+	if (event.DecisionID == 0) != (event.Target.Status == "absent" && event.Candidate.Status == "absent") {
+		t.Fatalf("%s decision/head identity mismatch decision=%d target=%q candidate=%q", label, event.DecisionID, event.Target.Status, event.Candidate.Status)
+	}
+	if !event.LookaheadPresent && (event.LookaheadSymbol != 0 || event.LookaheadStartByte != 0 || event.LookaheadEndByte != 0 || event.LookaheadNoLookahead || event.LookaheadExternal) {
+		t.Fatalf("%s unset lookahead carries data: %+v", label, event)
+	}
+	if !event.ElectionScannerComparable && (event.ElectionScannerCheckpointPresent || event.ElectionScannerCheckpointHash != 0) {
+		t.Fatalf("%s non-comparable election scanner carries checkpoint evidence", label)
+	}
+	if !event.ElectionScannerCheckpointPresent && event.ElectionScannerCheckpointHash != 0 {
+		t.Fatalf("%s absent election scanner checkpoint carries hash=%d", label, event.ElectionScannerCheckpointHash)
+	}
+	if event.ElectionScannerCheckpointPresent && !event.ElectionScannerComparable {
+		t.Fatalf("%s present election scanner checkpoint is not comparable", label)
+	}
+}
+
+func workCountValidateConvergenceEventSnapshots(t *testing.T, label string, event workCountConvergenceEvent) {
+	t.Helper()
+	if event.Outcome == "observation_unknown" && (!event.SnapshotUnknown || event.CapHit || event.PathsAfter != 0) {
+		t.Fatalf("%s unknown observation claims result: %+v", label, event)
+	}
+	if event.Outcome == "packed_root_emitted" && (event.SnapshotUnknown || event.PathsAfter == 0) {
+		t.Fatalf("%s packed-root emission is not proven: %+v", label, event)
+	}
+	if event.PathsBefore > 7 || event.PathsAfter > 7 {
+		t.Fatalf("%s packed-path snapshot exceeds contract bound: before=%d after=%d", label, event.PathsBefore, event.PathsAfter)
+	}
+	if (event.PathsBefore == 7 || event.PathsAfter == 7) && !event.SnapshotCapped && !event.SnapshotUnknown {
+		t.Fatalf("%s packed-path sentinel lacks capped or unknown evidence: before=%d after=%d", label, event.PathsBefore, event.PathsAfter)
+	}
+	if event.LookaheadStartByte > event.LookaheadEndByte {
+		t.Fatalf("%s lookahead range is reversed: start=%d end=%d", label, event.LookaheadStartByte, event.LookaheadEndByte)
+	}
+}
+
+func workCountValidateConvergenceEventHeads(t *testing.T, label string, event workCountConvergenceEvent) {
+	t.Helper()
+	workCountValidateConvergenceHeadValue(t, label+" target", event.Target)
+	workCountValidateConvergenceHeadValue(t, label+" candidate", event.Candidate)
+	if event.Outcome == "accepted_head" && (event.Target.Status != "accepted" || event.Candidate.Status != "absent") {
+		t.Fatalf("%s accepted-head event target status=%q", label, event.Target.Status)
+	}
+	if event.Phase == "final_expand" || event.Phase == "final_select" {
+		if event.Target.Status == "absent" || event.Candidate.Status != "absent" {
+			t.Fatalf("%s final event head identity target=%q candidate=%q", label, event.Target.Status, event.Candidate.Status)
+		}
+	}
+	if event.Outcome == "selected" && event.Candidate.Status != "absent" {
+		t.Fatalf("%s selected event has candidate head=%q", label, event.Candidate.Status)
+	}
+}
+
+func workCountConvergencePhaseAllowsOutcome(phase, outcome string) bool {
+	return workCountStringIn(outcome, workCountConvergencePhaseOutcomes[phase])
+}
+
+func workCountValidateConvergenceHeadValue(t *testing.T, label string, head workCountConvergenceHead) {
+	t.Helper()
+	if !workCountStringIn(head.Status, []string{"absent", "live", "dead", "accepted", "paused"}) {
+		t.Fatalf("%s status=%q is outside the closed vocabulary", label, head.Status)
+	}
+	if head.Status == "absent" {
+		if head != (workCountConvergenceHead{Status: "absent"}) {
+			t.Fatalf("%s absent head carries data: %+v", label, head)
+		}
+		return
+	}
+	if !head.ErrorCostComparable && head.ErrorCost != 0 {
+		t.Fatalf("%s non-comparable head reports error cost=%d", label, head.ErrorCost)
+	}
+	if !head.HasGSS && (head.LinkCount != 0 || head.LinkCountCapped || head.HeadContentHash != 0 || head.PredecessorHash != 0) {
+		t.Fatalf("%s non-GSS head reports graph identity: %+v", label, head)
+	}
+	if head.LinkCountCapped && head.LinkCount != math.MaxUint16 {
+		t.Fatalf("%s capped link count=%d want=%d", label, head.LinkCount, uint16(math.MaxUint16))
+	}
+	wantStatus := "live"
+	if head.Dead {
+		wantStatus = "dead"
+	} else if head.Accepted {
+		wantStatus = "accepted"
+	} else if head.Paused {
+		wantStatus = "paused"
+	}
+	if head.Status != wantStatus {
+		t.Fatalf("%s status/bit mismatch: %+v", label, head)
+	}
+}
+
+func workCountValidateConvergenceEvent(t *testing.T, label string, data json.RawMessage) {
+	t.Helper()
+	raw := workCountDecodeRawObject(t, label, data)
+	workCountRequireKeysWithOptional(t, label, raw, []string{
+		"sequence", "attempt", "iteration", "decision_id",
+		"lookahead_symbol", "lookahead_start_byte", "lookahead_end_byte", "lookahead_present", "lookahead_no_lookahead", "lookahead_external",
+		"election_scanner_comparable", "election_scanner_checkpoint_present", "election_scanner_checkpoint_hash",
+		"phase", "outcome", "target", "candidate",
+		"candidate_count_before", "candidate_count_after", "links_before", "links_after", "packed_paths_before", "packed_paths_after",
+		"mutation_partial", "cap_hit", "snapshot_capped", "snapshot_unknown",
+	}, []string{"reject_reason", "detail"})
+	workCountValidateConvergenceHead(t, label+" target", raw["target"])
+	workCountValidateConvergenceHead(t, label+" candidate", raw["candidate"])
+	var event workCountConvergenceEvent
+	workCountDecodeExact(t, data, &event)
+	workCountValidateConvergenceEventValue(t, label, event)
+}
+
+func workCountValidateConvergenceHead(t *testing.T, label string, data json.RawMessage) {
+	t.Helper()
+	raw := workCountDecodeRawObject(t, label, data)
+	workCountRequireKeys(t, label, raw, []string{
+		"state", "byte", "status", "has_error", "recovering", "shifted", "score", "branch_order", "depth",
+		"dead", "accepted", "paused", "node_baseline", "error_cost", "error_cost_comparable",
+		"has_gss", "link_count", "link_count_capped",
+		"head_content_hash", "predecessor_content_hash",
+	})
+	var head workCountConvergenceHead
+	workCountDecodeExact(t, data, &head)
+	workCountValidateConvergenceHeadValue(t, label, head)
+}
+
+func workCountValidateConvergenceAggregates(t *testing.T, data json.RawMessage) {
+	t.Helper()
+	raw := workCountDecodeRawObject(t, "Go convergence aggregates", data)
+	workCountRequireKeys(t, "Go convergence aggregates", raw, []string{
+		"phases", "outcomes", "rejections", "candidate_count_before_total", "candidate_count_after_total",
+		"links_before_total", "links_after_total", "packed_paths_before_total", "packed_paths_after_total",
+		"mutation_partial", "cap_hits", "accepted_heads", "packed_roots_emitted",
+	})
+	workCountRequireKeys(t, "Go convergence phase aggregates", workCountDecodeRawObject(t, "Go convergence phase aggregates", raw["phases"]), workCountConvergenceManifestPhases)
+	workCountRequireKeys(t, "Go convergence outcome aggregates", workCountDecodeRawObject(t, "Go convergence outcome aggregates", raw["outcomes"]), workCountConvergenceManifestOutcomes)
+	workCountRequireKeys(t, "Go convergence rejection aggregates", workCountDecodeRawObject(t, "Go convergence rejection aggregates", raw["rejections"]), workCountConvergenceManifestReasons)
+	var aggregates workCountConvergenceTotals
+	workCountDecodeExact(t, data, &aggregates)
+}
+
+func workCountConvergencePhaseMap(value workCountConvergencePhaseTotals) map[string]uint64 {
+	return map[string]uint64{
+		"reduce_window_select": value.ReduceWindowSelect,
+		"post_reduce_primary":  value.PostReducePrimary,
+		"post_reduce_pending":  value.PostReducePending,
+		"boundary_gss":         value.BoundaryGSS,
+		"boundary_equivalence": value.BoundaryEquivalence,
+		"boundary_cull":        value.BoundaryCull,
+		"pending_work":         value.PendingWork,
+		"final_expand":         value.FinalExpand,
+		"final_select":         value.FinalSelect,
+		"terminal_accept":      value.TerminalAccept,
+	}
+}
+
+func workCountConvergenceOutcomeMap(value workCountConvergenceOutcomeTotals) map[string]uint64 {
+	return map[string]uint64{
+		"candidate":           value.Candidate,
+		"packed":              value.Packed,
+		"rejected":            value.Rejected,
+		"pending_queued":      value.PendingQueued,
+		"pending_drained":     value.PendingDrained,
+		"pending_discarded":   value.PendingDiscarded,
+		"accepted_head":       value.AcceptedHead,
+		"packed_root_emitted": value.PackedRoot,
+		"mutation_partial":    value.MutationPartial,
+		"cap_hit":             value.CapHit,
+		"observation_unknown": value.ObservationUnknown,
+		"selected":            value.Selected,
+	}
+}
+
+func workCountConvergenceRejectMap(value workCountConvergenceRejectTotals) map[string]uint64 {
+	return map[string]uint64{
+		"status":         value.Status,
+		"score":          value.Score,
+		"shifted":        value.Shifted,
+		"error_cost":     value.ErrorCost,
+		"not_gss":        value.NotGSS,
+		"not_clean":      value.NotClean,
+		"distinct_shape": value.DistinctShape,
+		"preflight":      value.Preflight,
+		"cull":           value.Cull,
+	}
+}
+
+func workCountSumUint64Fields(t *testing.T, label string, values map[string]uint64) uint64 {
+	t.Helper()
+	var sum uint64
+	for field, value := range values {
+		if ^uint64(0)-sum < value {
+			t.Fatalf("%s field %s sum overflow", label, field)
+		}
+		sum += value
+	}
+	return sum
 }
 
 func workCountValidateCounterValuesObject(t *testing.T, label string, data json.RawMessage) {
@@ -1112,9 +1754,9 @@ func workCountDecodeExact(t *testing.T, data []byte, result any) {
 	}
 }
 
-func workCountValidateGoChild(t *testing.T, label, expectedEngine string, result workCountGoChildResult, fixture benchfixtures.LoadedFixture) {
+func workCountValidateGoChild(t *testing.T, label, expectedSchema, expectedEngine string, result workCountGoChildResult, fixture benchfixtures.LoadedFixture) {
 	t.Helper()
-	if result.Schema != workCountGoChildSchema || result.DigestFormat != benchfixtures.DeepTreeDigestVersion {
+	if result.Schema != expectedSchema || result.DigestFormat != benchfixtures.DeepTreeDigestVersion {
 		t.Fatalf("%s mixed contract: schema=%q digest=%q", label, result.Schema, result.DigestFormat)
 	}
 	if result.Engine != expectedEngine {
@@ -1171,6 +1813,10 @@ func workCountValidateCounters(t *testing.T, label string, c workCountCounters) 
 func workCountValidateGoCounters(t *testing.T, label string, c workCountGoCounters, sourceBytes uint32) {
 	t.Helper()
 	workCountValidateCounters(t, label, c.workCountCounters)
+	if c.Convergence.Capability == "" {
+		t.Fatalf("%s convergence frontier is absent", label)
+	}
+	workCountValidateGoConvergence(t, c.Convergence)
 	if len(c.Attempts) != 1 {
 		t.Fatalf("%s attempts=%d want=1", label, len(c.Attempts))
 	}
@@ -1310,11 +1956,7 @@ func workCountValidateManifest(t *testing.T, path string) {
 		Convergence map[string]any `json:"convergence_frontier"`
 		Admission   map[string]any `json:"admission"`
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manifest); err != nil {
-		t.Fatal(err)
-	}
+	workCountDecodeExact(t, data, &manifest)
 	if manifest.Schema != "gts-work-count-contract/v2" || manifest.CounterContract != workCountContract || strings.TrimSpace(manifest.Scope) == "" {
 		t.Fatalf("manifest contract mismatch: schema=%q counters=%q scope=%q", manifest.Schema, manifest.CounterContract, manifest.Scope)
 	}
@@ -1381,6 +2023,181 @@ func workCountValidateManifest(t *testing.T, path string) {
 	})
 }
 
+func workCountValidateManifestAgreement(t *testing.T, sharedPath, convergencePath string) {
+	t.Helper()
+	shared, err := os.ReadFile(sharedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	convergence, err := os.ReadFile(convergencePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := workCountManifestAgreementError(shared, convergence); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func workCountManifestAgreementError(shared, convergence []byte) error {
+	var sharedRaw, convergenceRaw map[string]json.RawMessage
+	if err := json.Unmarshal(shared, &sharedRaw); err != nil {
+		return fmt.Errorf("decode shared counter manifest: %w", err)
+	}
+	if err := json.Unmarshal(convergence, &convergenceRaw); err != nil {
+		return fmt.Errorf("decode convergence manifest: %w", err)
+	}
+	for _, section := range []string{"direct", "terminal", "proxy", "derived", "attempt_attribution"} {
+		sharedSection, ok := sharedRaw[section]
+		if !ok {
+			return fmt.Errorf("shared counter manifest lacks %s", section)
+		}
+		convergenceSection, ok := convergenceRaw[section]
+		if !ok {
+			return fmt.Errorf("convergence manifest lacks %s", section)
+		}
+		var sharedValue, convergenceValue any
+		if err := json.Unmarshal(sharedSection, &sharedValue); err != nil {
+			return fmt.Errorf("decode shared counter manifest %s: %w", section, err)
+		}
+		if err := json.Unmarshal(convergenceSection, &convergenceValue); err != nil {
+			return fmt.Errorf("decode convergence manifest %s: %w", section, err)
+		}
+		if !reflect.DeepEqual(sharedValue, convergenceValue) {
+			return fmt.Errorf("convergence manifest %s drifts from immutable shared counter manifest", section)
+		}
+	}
+	return nil
+}
+
+func workCountValidateConvergenceManifest(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := workCountDecodeRawObject(t, "convergence manifest", data)
+	workCountRequireKeys(t, "convergence manifest", raw, []string{
+		"schema", "counter_contract", "scope", "historical_compatibility", "direct", "terminal", "proxy", "derived",
+		"attempt_attribution", "convergence_frontier", "admission",
+	})
+	var manifest struct {
+		Schema          string            `json:"schema"`
+		CounterContract string            `json:"counter_contract"`
+		Scope           string            `json:"scope"`
+		Historical      map[string]string `json:"historical_compatibility"`
+		Direct          map[string]string `json:"direct"`
+		Terminal        map[string]string `json:"terminal"`
+		Proxy           map[string]string `json:"proxy"`
+		Derived         map[string]string `json:"derived"`
+		Attempt         struct {
+			LogicalRungs                     []string `json:"logical_rungs"`
+			ResolvedRetryPassIsIndependent   bool     `json:"resolved_retry_pass_is_independent"`
+			Phases                           []string `json:"phases"`
+			RequireAggregateEqualsAttributed bool     `json:"require_aggregate_equals_attempts_plus_outside"`
+			CanonicalAttempts                int      `json:"canonical_query_compile_attempts"`
+			CanonicalAcceptActions           uint64   `json:"canonical_query_compile_accept_actions"`
+			RetryWitness                     struct {
+				Path          string   `json:"path"`
+				Bytes         int      `json:"bytes"`
+				SHA256        string   `json:"sha256"`
+				ExpectedRungs []string `json:"expected_rungs"`
+			} `json:"retry_witness"`
+			StraightLRControl struct {
+				Path              string `json:"path"`
+				Bytes             int    `json:"bytes"`
+				SHA256            string `json:"sha256"`
+				ExpectedMaxStacks int    `json:"expected_max_stacks"`
+			} `json:"straight_lr_control"`
+		} `json:"attempt_attribution"`
+		Convergence struct {
+			Status               string              `json:"status"`
+			Capability           string              `json:"capability"`
+			StaticCComparable    bool                `json:"static_c_emits_comparable_events"`
+			MaxEvents            int                 `json:"max_events"`
+			MaxPackedPaths       int                 `json:"max_packed_path_count"`
+			ParseWorkBudget      int                 `json:"packed_path_parse_work_budget"`
+			PerWalkWorkBudget    int                 `json:"packed_path_per_walk_work_budget"`
+			DepthBudget          int                 `json:"packed_path_depth_budget"`
+			RecordFirstReject    bool                `json:"record_first_reject_per_reason"`
+			FirstRejectSemantics string              `json:"first_reject_semantics"`
+			DecisionIDs          string              `json:"decision_ids"`
+			HeadStatusPriority   []string            `json:"head_status_priority"`
+			Phases               []string            `json:"phases"`
+			PhaseOutcomes        map[string][]string `json:"phase_outcomes"`
+			Outcomes             []string            `json:"outcomes"`
+			Reasons              []string            `json:"reject_reasons"`
+			Identity             []string            `json:"identity"`
+			Snapshots            []string            `json:"snapshots"`
+			EventInvariants      []string            `json:"event_invariants"`
+			CandidateCountUnits  string              `json:"candidate_count_units"`
+			BoundedTrace         string              `json:"bounded_trace"`
+			IntegritySignals     []string            `json:"separate_integrity_signals"`
+			SaturatingAggregates bool                `json:"include_saturating_aggregates"`
+			TerminalCounters     []string            `json:"terminal_counters"`
+			Interpretation       string              `json:"interpretation"`
+		} `json:"convergence_frontier"`
+		Admission map[string]any `json:"admission"`
+	}
+	workCountDecodeExact(t, data, &manifest)
+	if manifest.Schema != "gts-work-count-contract/v3" || manifest.CounterContract != workCountContract || strings.TrimSpace(manifest.Scope) == "" {
+		t.Fatalf("convergence manifest contract mismatch: schema=%q counters=%q scope=%q", manifest.Schema, manifest.CounterContract, manifest.Scope)
+	}
+	workCountRequireStringKeys(t, "convergence manifest history", manifest.Historical, []string{"v2_manifest", "direct_and_proxy_counter_semantics", "detailed_convergence"})
+	workCountRequireStringKeys(t, "convergence manifest direct", manifest.Direct, workCountDirectFields)
+	workCountRequireStringKeys(t, "convergence manifest terminal", manifest.Terminal, workCountTerminalFields)
+	workCountRequireStringKeys(t, "convergence manifest proxy", manifest.Proxy, workCountProxyFields)
+	workCountRequireStringKeys(t, "convergence manifest derived", manifest.Derived, []string{"construction_surplus"})
+	workCountRequireKeys(t, "convergence manifest attempt attribution", workCountDecodeRawObject(t, "convergence manifest attempt attribution", raw["attempt_attribution"]), []string{
+		"logical_rungs", "resolved_retry_pass_is_independent", "phases", "require_aggregate_equals_attempts_plus_outside",
+		"canonical_query_compile_attempts", "canonical_query_compile_accept_actions", "retry_witness", "straight_lr_control",
+	})
+	if strings.Join(manifest.Attempt.LogicalRungs, ",") != "initial_full,initial_merge,clean_wide,clean_wide_merge,recovery_wide_or_node,secondary_node,final_merge" ||
+		strings.Join(manifest.Attempt.Phases, ",") != "entry_to_caps,caps_to_finalize,finalize" || !manifest.Attempt.ResolvedRetryPassIsIndependent ||
+		!manifest.Attempt.RequireAggregateEqualsAttributed || manifest.Attempt.CanonicalAttempts != 1 || manifest.Attempt.CanonicalAcceptActions != 3 {
+		t.Fatalf("convergence manifest attempt invariants=%+v", manifest.Attempt)
+	}
+	workCountRequireKeys(t, "convergence manifest frontier", workCountDecodeRawObject(t, "convergence manifest frontier", raw["convergence_frontier"]), []string{
+		"status", "capability", "static_c_emits_comparable_events", "max_events", "max_packed_path_count",
+		"packed_path_parse_work_budget", "packed_path_per_walk_work_budget", "packed_path_depth_budget",
+		"record_first_reject_per_reason", "first_reject_semantics", "decision_ids", "head_status_priority", "phases", "phase_outcomes", "outcomes", "reject_reasons", "identity", "snapshots", "event_invariants",
+		"candidate_count_units", "bounded_trace", "separate_integrity_signals", "include_saturating_aggregates", "terminal_counters", "interpretation",
+	})
+	c := manifest.Convergence
+	if c.Status != "implemented" || c.Capability != "go_only_detailed_convergence" || c.StaticCComparable || c.MaxEvents != 256 || c.MaxPackedPaths != 7 ||
+		c.ParseWorkBudget != 16*1024 || c.PerWalkWorkBudget != 256 || c.DepthBudget != 128 || !c.RecordFirstReject || !c.SaturatingAggregates ||
+		strings.TrimSpace(c.FirstRejectSemantics) == "" || strings.TrimSpace(c.DecisionIDs) == "" || !reflect.DeepEqual(c.HeadStatusPriority, []string{"dead", "accepted", "paused", "live"}) || len(c.EventInvariants) == 0 || strings.TrimSpace(c.CandidateCountUnits) == "" || strings.TrimSpace(c.BoundedTrace) == "" || strings.TrimSpace(c.Interpretation) == "" {
+		t.Fatalf("convergence manifest frontier invariants=%+v", c)
+	}
+	if strings.Join(c.Phases, ",") != strings.Join(workCountConvergenceManifestPhases, ",") || strings.Join(c.Outcomes, ",") != strings.Join(workCountConvergenceManifestOutcomes, ",") || strings.Join(c.Reasons, ",") != strings.Join(workCountConvergenceManifestReasons, ",") {
+		t.Fatalf("convergence manifest vocabulary phases=%v outcomes=%v reasons=%v", c.Phases, c.Outcomes, c.Reasons)
+	}
+	if !reflect.DeepEqual(c.PhaseOutcomes, workCountConvergencePhaseOutcomes) {
+		t.Fatalf("convergence manifest phase/outcome matrix=%v want=%v", c.PhaseOutcomes, workCountConvergencePhaseOutcomes)
+	}
+	for _, required := range []string{"decision_id", "lookahead_present", "head_link_count_capped", "election_scanner_comparable", "election_scanner_checkpoint_presence_and_hash"} {
+		if !workCountStringIn(required, c.Identity) {
+			t.Fatalf("convergence manifest identity misses %q", required)
+		}
+	}
+	if strings.Join(c.TerminalCounters, ",") != "accept_actions,accepted_heads,packed_roots_emitted" {
+		t.Fatalf("convergence manifest terminal counters=%v", c.TerminalCounters)
+	}
+	workCountRequireKeys(t, "convergence manifest admission", workCountDecodeRawObject(t, "convergence manifest admission", raw["admission"]), []string{
+		"digest_format", "fixture", "require_uninstrumented_go_static_c_digest_match_first", "require_instrumented_digest_match",
+		"require_full_span", "require_clean_root", "require_no_overflow", "require_exact_fields", "require_ordinary_untagged_go_child_first",
+		"require_clean_git_source_for_authoritative_receipt", "require_private_content_addressed_go_source_snapshot", "require_private_c_input_snapshot",
+		"sanitize_go_and_parser_environment", "atomic_receipt_publish",
+	})
+	for key, value := range manifest.Admission {
+		if (strings.HasPrefix(key, "require_") || key == "sanitize_go_and_parser_environment" || key == "atomic_receipt_publish") && value != true {
+			t.Fatalf("convergence manifest admission %s=%v want true", key, value)
+		}
+	}
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(path), "..", ".."))
+	workCountValidateFrozenWitness(t, repoRoot, "retry", manifest.Attempt.RetryWitness.Path, manifest.Attempt.RetryWitness.Bytes, manifest.Attempt.RetryWitness.SHA256)
+	workCountValidateFrozenWitness(t, repoRoot, "straight-LR", manifest.Attempt.StraightLRControl.Path, manifest.Attempt.StraightLRControl.Bytes, manifest.Attempt.StraightLRControl.SHA256)
+}
+
 func workCountValidateFrozenWitness(t *testing.T, repoRoot, label, relativePath string, wantBytes int, wantSHA string) {
 	t.Helper()
 	if relativePath == "" || filepath.IsAbs(relativePath) {
@@ -1415,6 +2232,46 @@ func workCountRequireKeys(t *testing.T, label string, values map[string]json.Raw
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("%s fields=%v want=%v", label, got, want)
 	}
+}
+
+func workCountRequireKeysWithOptional(t *testing.T, label string, values map[string]json.RawMessage, required, optional []string) {
+	t.Helper()
+	allowed := make(map[string]bool, len(required)+len(optional))
+	for _, key := range required {
+		allowed[key] = true
+		if _, ok := values[key]; !ok {
+			t.Fatalf("%s missing required field %q", label, key)
+		}
+	}
+	for _, key := range optional {
+		allowed[key] = true
+	}
+	for key := range values {
+		if !allowed[key] {
+			t.Fatalf("%s unexpected field %q", label, key)
+		}
+	}
+}
+
+func workCountDecodeRawObject(t *testing.T, label string, data json.RawMessage) map[string]json.RawMessage {
+	t.Helper()
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("decode %s: %v", label, err)
+	}
+	if raw == nil {
+		t.Fatalf("%s is not an object", label)
+	}
+	return raw
+}
+
+func workCountStringIn(value string, values []string) bool {
+	for _, candidate := range values {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
 }
 
 func workCountRequireStringKeys(t *testing.T, label string, values map[string]string, want []string) {
