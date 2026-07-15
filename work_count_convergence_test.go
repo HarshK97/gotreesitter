@@ -142,6 +142,53 @@ func TestWorkCountContractV3Stability(t *testing.T) {
 	}
 }
 
+func TestWorkCountConvergenceRetainsScorePrefilterDecision(t *testing.T) {
+	var nodes gssScratch
+	node := NewLeafNode(11, true, 0, 5, Point{}, Point{Column: 5})
+	entries := []stackEntry{{state: 1}, newStackEntryNode(7, node)}
+	makeStack := func(score int, paused bool) glrStack {
+		return glrStack{
+			gss:        buildGSSStack(entries, &nodes),
+			byteOffset: 5,
+			score:      score,
+			cPaused:    paused,
+		}
+	}
+	left := makeStack(1, false)
+	right := makeStack(2, true)
+	if !stacksHeaderEquivalent(&left, &right) {
+		t.Fatal("test setup did not produce same-header stacks")
+	}
+	if leftCost, rightCost := cStackErrorCostForMerge(nil, &left), cStackErrorCostForMerge(nil, &right); leftCost == rightCost {
+		t.Fatalf("test setup recovery costs equal: left=%d right=%d", leftCost, rightCost)
+	}
+	result := []glrStack{left}
+	leftHead := left.gss.head
+	leftLinks := leftHead.linkCount()
+	scratch := glrMergeScratch{cRecoveryCost: true}
+
+	token := beginWorkCountConvergenceAttempt(t)
+	merged, attempted := tryGSSMainMergeResult(&scratch, result, 0, &right)
+	counts := endWorkCountConvergenceAttempt(t, token)
+	if merged || attempted {
+		t.Fatalf("distinct-score GSS merge = merged:%v attempted:%v, want false/false", merged, attempted)
+	}
+	if result[0].gss.head != leftHead || leftHead.linkCount() != leftLinks {
+		t.Fatal("distinct-score GSS prefilter mutated the retained stack")
+	}
+	if counts.MergeAttemptsProxy != 1 {
+		t.Fatalf("merge front-door calls = %d, want 1", counts.MergeAttemptsProxy)
+	}
+	if len(counts.Convergence.Events) != 2 {
+		t.Fatalf("retained convergence events = %d, want candidate+rejection", len(counts.Convergence.Events))
+	}
+	candidate, rejected := counts.Convergence.Events[0], counts.Convergence.Events[1]
+	if candidate.Outcome != workCountConvergenceOutcomeCandidate || rejected.Outcome != workCountConvergenceOutcomeRejected ||
+		rejected.RejectReason != workCountConvergenceReasonScore || candidate.DecisionID != rejected.DecisionID {
+		t.Fatalf("score prefilter events = candidate:%+v rejected:%+v", candidate, rejected)
+	}
+}
+
 func TestWorkCountConvergenceRetainsFirstRejectBeyondEventCap(t *testing.T) {
 	token := beginWorkCountConvergenceAttempt(t)
 	for i := 0; i < workCountConvergenceMaxEvents; i++ {

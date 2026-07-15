@@ -14,6 +14,13 @@ for tags and release notes while still in `0.x`.
 - Rewriter edits now reject reversed and out-of-source byte ranges instead of
   panicking while applying them.
 
+### Performance
+
+- GLR boundary merging now rejects candidates with unequal cumulative scores
+  before recovery-cost and graph-equivalence work. The order-balanced canonical
+  real-Go benchmark improved by 4.3% geomean with unchanged parser work, tree
+  identity, arena use, and stack maxima.
+
 ### Tooling
 
 - Report-mode fleet reduction now preserves closed-vocabulary
