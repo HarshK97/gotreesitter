@@ -119,6 +119,10 @@ authenticated static-C, fleet, and forest measurements are stricter.
 
 ### Tooling
 
+- Compact parser-core diagnostics can now start the generic scheduler from an
+  authenticated unshifted seed. A shadow gate matches all 103 scanner elections
+  and the exact packed frontier of the previous route while eliminating two
+  dead no-action dispatch charges and speculative subtrees.
 - Compact parser-core diagnostics now authenticate an exclusive EOF-accept
   frontier and can materialize the selected derivation as an exact, full-span
   tree. Materialization validates compact ownership and production metadata,
