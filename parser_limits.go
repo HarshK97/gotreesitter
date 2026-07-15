@@ -771,16 +771,6 @@ func parseFullEntryScratchReservation(sourceLen int) int {
 	return estimate
 }
 
-func tuneIncrementalGLRCaps(maxStacks, mergePerKeyCap int) (int, int) {
-	if maxStacks > 2 {
-		maxStacks = 2
-	}
-	if mergePerKeyCap > 2 {
-		mergePerKeyCap = 2
-	}
-	return maxStacks, mergePerKeyCap
-}
-
 func parseIncrementalArenaNodeCapacity(sourceLen, hint int) int {
 	base := nodeCapacityForClass(arenaClassIncremental)
 	target := base

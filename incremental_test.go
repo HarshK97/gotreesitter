@@ -524,23 +524,39 @@ func TestReuseTargetStateAmbiguousShiftMustMatchNodeState(t *testing.T) {
 	}
 }
 
-func TestForestLeafReuseRejectsMismatchedNodeState(t *testing.T) {
+func TestLeafReuseRejectsMismatchedNodeState(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)
 	lookahead := Token{Symbol: 1}
 
 	leaf := &Node{symbol: 1, parseState: 4}
+	if _, ok := parser.reuseTargetState(0, leaf, lookahead); ok {
+		t.Fatal("expected leaf reuse to reject a unique shift that does not match the stored parse state")
+	}
+
+	leaf.parseState = 0
 	nextState, ok := parser.reuseTargetState(0, leaf, lookahead)
 	if !ok {
-		t.Fatal("expected generic unique-shift fallback to remain available")
-	}
-	if !rejectForestLeafStateMismatch(leaf, nextState) {
-		t.Fatal("expected forest leaf reuse to reject mismatched parseState")
+		t.Fatal("expected unique-shift fallback for a leaf without stored parse-state metadata")
 	}
 
 	leaf.parseState = nextState
-	if rejectForestLeafStateMismatch(leaf, nextState) {
-		t.Fatal("expected forest leaf reuse to accept matching parseState")
+	if got, ok := parser.reuseTargetState(0, leaf, lookahead); !ok || got != nextState {
+		t.Fatalf("expected matching stored parse state %d, got state=%d ok=%t", nextState, got, ok)
+	}
+}
+
+func TestConfigureIncrementalParseCapsPreservesConfiguredWidth(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_STACKS", "18")
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "16")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	parser := NewParser(buildArithmeticLanguage())
+	var scratch parserScratch
+	caps := parser.configureParseCaps([]byte("1+2"), &reuseCursor{}, arenaClassIncremental, &scratch, 0, 0, 0)
+	if caps.maxStacks != 18 || caps.mergePerKeyCap != 16 {
+		t.Fatalf("incremental caps = stacks:%d merge:%d, want stacks:18 merge:16", caps.maxStacks, caps.mergePerKeyCap)
 	}
 }
 

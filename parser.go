@@ -6291,7 +6291,9 @@ func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClas
 	if mergePerKeyCap > maxStacksPerMergeKeyCeiling {
 		mergePerKeyCap = maxStacksPerMergeKeyCeiling
 	}
-	maxStacks, mergePerKeyCap = p.tuneParseGLRCaps(maxStacks, mergePerKeyCap, reuse)
+	if reuse == nil && p.language != nil && p.language.Name == "c_sharp" && mergePerKeyCap < 16 {
+		mergePerKeyCap = 16
+	}
 	scratch.merge.perKeyCap = mergePerKeyCap
 
 	maxNodes := parseNodeLimitForLanguage(len(source), p.language)
@@ -6315,16 +6317,6 @@ func javaFullParseNeedsAnnotationDeclarationMergeWidth(lang *Language, source []
 		reuse == nil &&
 		!parseMaxMergePerKeyEnvConfigured() &&
 		bytes.Contains(source, []byte("@interface"))
-}
-
-func (p *Parser) tuneParseGLRCaps(maxStacks, mergePerKeyCap int, reuse *reuseCursor) (int, int) {
-	if reuse == nil && p.language != nil && p.language.Name == "c_sharp" && mergePerKeyCap < 16 {
-		mergePerKeyCap = 16
-	}
-	if reuse != nil {
-		maxStacks, mergePerKeyCap = tuneIncrementalGLRCaps(maxStacks, mergePerKeyCap)
-	}
-	return maxStacks, mergePerKeyCap
 }
 
 func languageName(lang *Language) string {
