@@ -13,8 +13,9 @@ type DiagnosticWorkCount struct {
 	Overflow bool   `json:"overflow"`
 	DiagnosticWorkCountValues
 
-	Attempts       []DiagnosticWorkCountAttempt `json:"attempts"`
-	OutsideAttempt DiagnosticWorkCountValues    `json:"outside_attempt"`
+	Attempts       []DiagnosticWorkCountAttempt   `json:"attempts"`
+	OutsideAttempt DiagnosticWorkCountValues      `json:"outside_attempt"`
+	Convergence    DiagnosticWorkCountConvergence `json:"convergence_frontier"`
 }
 
 // DiagnosticWorkCountValues is one additive counter vector. The aggregate
@@ -98,6 +99,7 @@ func BeginDiagnosticWorkCount() {
 		panic("gotreesitter: diagnostic work-count parse already active")
 	}
 	activeDiagnosticWorkCount = &DiagnosticWorkCount{Contract: DiagnosticWorkCountContract}
+	workCountBeginConvergence(activeDiagnosticWorkCount)
 	pendingDiagnosticWorkCountAttempt = struct {
 		logicalRung    string
 		operationCause string
@@ -117,6 +119,7 @@ func EndDiagnosticWorkCount() DiagnosticWorkCount {
 	}
 	activeDiagnosticWorkCount.reconcileOutsideAttempt()
 	out := *activeDiagnosticWorkCount
+	workCountEndConvergence()
 	activeDiagnosticWorkCount = nil
 	return out
 }
@@ -219,6 +222,7 @@ func workCountBeginParseAttempt(maxStacks, maxNodes, maxMergePerKey int) workCou
 		RequestedMaxMergePerKey: maxMergePerKey,
 		entrySnapshot:           workCountValuesSnapshot(c),
 	})
+	workCountResetConvergenceAttempt(index)
 	return workCountAttemptToken(index)
 }
 

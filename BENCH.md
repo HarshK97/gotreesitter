@@ -218,15 +218,28 @@ separate content-addressed straight-LR control pins the one-stack case.
 
 `accept_actions` is a terminal-event counter, not a convergence counter. C can
 accept once and then emit multiple packed roots during `pop_all`, while Go can
-apply multiple accept actions inside one attempt. Contract v2 therefore
-reserves, but does not yet implement, a bounded convergence-frontier record:
-the first 256 events plus the first rejection for each reason, keyed by
-attempt, lookahead, phase, head state/byte/status/error/scanner identity, with
-before/after links and packed paths, cumulative counters, and separate
-`accept_actions` and `packed_roots_emitted`. No current receipt makes a
-convergence claim from the accept-action row.
+apply multiple accept actions inside one attempt. The historical v2 contract
+therefore remains the shared Go/static-C counter vocabulary. The diagnostic
+v3 supplement implements a Go-only convergence frontier; the static C child
+does not fabricate equivalent events.
 
-An authoritative `gts-work-count-receipt/v3` requires a clean Git checkout and
+The v3 frontier retains at most the first 256 events plus the first rejection
+for each closed-vocabulary reason. Events are keyed by attempt-local decision
+IDs for a target/candidate pair, lookahead, and exact phase: reduce-window selection, post-reduce primary
+and pending packing, boundary GSS/equivalence/cull, pending work, final path
+expansion and selection, and terminal acceptance. Records contain values only,
+never Go pointers. External-scanner comparability and checkpoint identity are
+captured for the current token election, not inferred from either stack head.
+Link and packed-path counts saturate independently from event truncation.
+After chronological retention fills, scalar aggregates and bounded shapes
+continue to update, while decision correlation, formatted detail, and head
+snapshots are omitted. Packed final-path observation is bounded to the production
+expansion limit plus one path (currently seven) and by a parse-global traversal
+budget; an exhausted observation reports unknown snapshot evidence rather
+than claiming that the production cap fired. This lane remains diagnostic and
+untimed.
+
+An authoritative `gts-work-count-receipt/v4` requires a clean Git checkout and
 records `HEAD`, `HEAD^{tree}`, and `git_clean=true`. Both Go binaries compile
 from one sealed content-addressed Git source snapshot. C compiles from private
 snapshots of the runtime, grammar, patch, and driver. Ambient `GOT_*`,
@@ -235,14 +248,17 @@ chosen build/runtime environments are serialized. Build, patch, link, and
 child process groups are wall-bounded. A stale receipt is removed before work
 starts, and a successful receipt is published atomically in its destination
 directory.
+The ordinary untagged Go admission child remains on
+`gts-work-count-go-child/v3`; the tagged diagnostic child is v4, while the
+static-C child retains its historical schema.
 
 Directly comparable counters are limited to applied shift/reduce/recover
 actions, reduction pop requests and emitted paths/payloads, and the selected
-tree census. Accept actions are reported as terminal evidence but require the
-future packed-root/convergence record for interpretation. Table
-lookups, lexer calls, stack versions, merges, graph links, and transient
-payload construction remain explicitly labeled representation-specific
-proxies.
+tree census. Accept actions remain terminal evidence rather than packed-root
+counts. The Go-only v3 frontier supplies the missing interpretation without
+changing shared counter semantics. Table lookups, lexer calls, stack versions,
+merges, graph links, and transient payload construction remain explicitly
+labeled representation-specific proxies.
 
 Run the focused Docker gate from a linked worktree by mounting its absolute
 Git common directory and selecting the worktree-specific Git directory inside
@@ -267,8 +283,10 @@ The checkout must expose usable Git metadata inside the container. Dirty
 source fails closed. `GTS_WORK_COUNT_ALLOW_DIRTY=1` exists only for focused
 pre-commit harness tests; its receipt records `authoritative=false` and cannot
 enter the evidence ledger.
-The checked-in semantic contract is
+The checked-in shared semantic contract remains
 [`cgo_harness/work_count/contract_v2.json`](cgo_harness/work_count/contract_v2.json).
+The independently validated Go-only frontier vocabulary is
+[`cgo_harness/work_count/contract_v3.json`](cgo_harness/work_count/contract_v3.json).
 `construction_surplus` means representation-specific leaf plus parent
 constructions minus selected nodes; it must never be relabeled as a count of
 discarded nodes.

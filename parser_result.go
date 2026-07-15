@@ -233,6 +233,7 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 	if len(stacks) == 0 {
 		return parseErrorTreeWithArena(source, p.language, arena)
 	}
+	workCountRecordFinalExpansions(p, stacks) // work-count-assembly: convergence final-expand seam
 	stacks = expandPackedGSSResultPaths(stacks)
 	p.emitRawShapeDiag("pre_result_selection", stacks, arena)
 	selectionStart := time.Time{}
@@ -258,6 +259,7 @@ func (p *Parser) buildResultFromGLR(stacks []glrStack, source []byte, arena *nod
 		materializationTiming.resultSelectionNanos += time.Since(selectionStart).Nanoseconds()
 	}
 	selected := stacks[best]
+	workCountRecordFinalSelect(p, stacks, &selected)
 	// crecoveryDroppedErrorForClean is set ONLY here, and only for the stack
 	// that is actually about to become the returned tree — never for a drop
 	// or fork that happened on some other, discarded lineage elsewhere in the

@@ -30,8 +30,17 @@ for tags and release notes while still in `0.x`.
   loop, and finalization; `accept_actions` is explicitly an action count, and
   aggregate counters must equal attempts plus the outside-attempt residual.
   Frozen retry-active and straight-LR witnesses pin the attribution semantics;
-  the contract reserves a bounded convergence-frontier schema and distinguishes
-  accept actions from packed roots without claiming that instrumentation yet.
+  a Go-only v3 supplement now records a bounded, attempt-local convergence
+  frontier across reduction selection, post-reduce packing, boundary merge and
+  cull, pending work, terminal acceptance, packed-root expansion, and final
+  selection. It retains the first 256 events plus first rejection evidence,
+  uses attempt-local decision IDs for target/candidate pairs, records scanner
+  checkpoint identity at the current token election, detects partial merge
+  mutations from exact semantic GSS writes, separates saturation from
+  truncation, serializes no pointer identities, and
+  leaves the shared v2 Go/static-C counter semantics unchanged. Authenticated
+  v4 receipts bind both manifests and fail closed on malformed convergence
+  payloads.
   Authoritative receipts require a clean Git source identity; compile from
   sealed private Go and C input snapshots; bind sanitized build/runtime
   environments; independently verify fixture, grammar, GLR-regime, span, and

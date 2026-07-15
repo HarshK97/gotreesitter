@@ -13,12 +13,13 @@ import (
 )
 
 const (
-	workCountFixtureID       = "query_compile"
-	workCountSourcePathEnv   = "GTS_WORK_COUNT_SOURCE"
-	workCountResultPathEnv   = "GTS_WORK_COUNT_RESULT"
-	workCountGoChildSchema   = "gts-work-count-go-child/v3"
-	workCountAdmissionEngine = "go-production-glr-untagged"
-	workCountTaggedEngine    = "go-production-glr-tagged-diagnostic"
+	workCountFixtureID           = "query_compile"
+	workCountSourcePathEnv       = "GTS_WORK_COUNT_SOURCE"
+	workCountResultPathEnv       = "GTS_WORK_COUNT_RESULT"
+	workCountGoChildSchema       = "gts-work-count-go-child/v3"
+	workCountTaggedGoChildSchema = "gts-work-count-go-child/v4"
+	workCountAdmissionEngine     = "go-production-glr-untagged"
+	workCountTaggedEngine        = "go-production-glr-tagged-diagnostic"
 )
 
 type workCountGoChildResult struct {

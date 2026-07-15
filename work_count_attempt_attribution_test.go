@@ -11,6 +11,7 @@ import (
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
 )
 
 const (
@@ -24,6 +25,7 @@ const (
 
 func TestDiagnosticWorkCountAttemptAttributionRetryWitness(t *testing.T) {
 	source := loadWorkCountAttributionFixture(t, retryAttributionFixturePath, retryAttributionFixtureBytes, retryAttributionFixtureSHA256)
+	baselineDigest := attributionBaselineTreeDigest(t, source)
 	counts, tree := parseWithDiagnosticWorkCount(t, source)
 	defer tree.Release()
 
@@ -41,10 +43,13 @@ func TestDiagnosticWorkCountAttemptAttributionRetryWitness(t *testing.T) {
 		t.Fatalf("returned tree error=%v end=%d want=%d", tree.RootNode().HasError(), tree.RootNode().EndByte(), len(source))
 	}
 	requireWorkCountAttributionSum(t, counts)
+	requireAttributionTreeDigest(t, "retry_go_query_kotlin", tree, baselineDigest)
+	logWorkCountConvergenceReceipt(t, "retry_go_query_kotlin", counts)
 }
 
 func TestDiagnosticWorkCountAttemptAttributionStraightLRControl(t *testing.T) {
 	source := loadWorkCountAttributionFixture(t, straightLRFixturePath, straightLRFixtureBytes, straightLRFixtureSHA256)
+	baselineDigest := attributionBaselineTreeDigest(t, source)
 	counts, tree := parseWithDiagnosticWorkCount(t, source)
 	defer tree.Release()
 
@@ -59,6 +64,35 @@ func TestDiagnosticWorkCountAttemptAttributionStraightLRControl(t *testing.T) {
 		t.Fatalf("straight-LR identity: max_stacks=%d multi_stack_iterations=%d", runtime.MaxStacksSeen, runtime.MultiStackIterations)
 	}
 	requireWorkCountAttributionSum(t, counts)
+	requireAttributionTreeDigest(t, "straight_lr_control", tree, baselineDigest)
+	logWorkCountConvergenceReceipt(t, "straight_lr_control", counts)
+}
+
+func attributionBaselineTreeDigest(t *testing.T, source []byte) string {
+	t.Helper()
+	lang := grammars.GoLanguage()
+	baseline, err := gotreesitter.NewParser(lang).Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer baseline.Release()
+	baselineInspection, err := benchfixtures.InspectGoTree(baseline.RootNode(), lang)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return baselineInspection.SHA256
+}
+
+func requireAttributionTreeDigest(t *testing.T, label string, observed *gotreesitter.Tree, baselineDigest string) {
+	t.Helper()
+	observedInspection, err := benchfixtures.InspectGoTree(observed.RootNode(), grammars.GoLanguage())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if observedInspection.SHA256 != baselineDigest {
+		t.Fatalf("%s diagnostic digest=%s baseline=%s", label, observedInspection.SHA256, baselineDigest)
+	}
+	t.Logf("deep_tree_receipt fixture=%s format=%s sha256=%s", label, benchfixtures.DeepTreeDigestVersion, observedInspection.SHA256)
 }
 
 func loadWorkCountAttributionFixture(t *testing.T, path string, wantBytes int, wantSHA string) []byte {

@@ -53,6 +53,7 @@ func TestDiagnosticWorkCountChild(t *testing.T) {
 		t.Fatalf("selected tree census: %v", err)
 	}
 	base.Engine = workCountTaggedEngine
+	base.Schema = workCountTaggedGoChildSchema
 	result := workCountTaggedChildResult{workCountGoChildResult: base, Counters: counts}
 	if err := writeWorkCountChildResult(result); err != nil {
 		t.Fatal(err)

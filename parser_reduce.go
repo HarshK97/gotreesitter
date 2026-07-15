@@ -808,7 +808,9 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 			if allocBranchOrder != nil {
 				fork.branchOrder = allocBranchOrder()
 			}
+			pendingBefore := len(p.pendingFrontierForkStacks)
 			p.pendingFrontierForkStacks = append(p.pendingFrontierForkStacks, fork)
+			workCountRecordPendingQueued(p, s, &fork, pendingBefore, len(p.pendingFrontierForkStacks), "conflict-frontier candidate queued")
 			if currentReduceEntry != nil {
 				currentReduceEntry.flags |= conflictReduceFrontierForked
 			}
@@ -2706,6 +2708,7 @@ func (p *Parser) applyReduceActionDispatch(source []byte, s *glrStack, act Parse
 func (p *Parser) applyAcceptAction(s *glrStack) {
 	workCountRecordAccept()
 	s.accepted = true
+	workCountRecordAcceptedHead(p, s, "parse-action accept")
 	if p != nil && p.glrTrace {
 		fmt.Printf("      -> ACCEPT\n")
 	}
@@ -2715,6 +2718,7 @@ func (p *Parser) applyRecoverAction(s *glrStack, act ParseAction, tok Token, nod
 	workCountRecordExplicitRecover()
 	if tok.Symbol == 0 && tok.StartByte == tok.EndByte {
 		s.accepted = true
+		workCountRecordAcceptedHead(p, s, "EOF recovery accepted head")
 		return
 	}
 	recoverState := s.top().state
@@ -3466,6 +3470,7 @@ func (p *Parser) selectedReduceWindowsFromGSSWithBudget(arena *nodeArena, act Pa
 	}
 
 	dfs(s.gss.head, childCount)
+	workCountRecordReduceWindow(p, s, len(forks), work, workBudget, capped)
 	return forks, work, capped
 }
 
@@ -3475,16 +3480,35 @@ func markReduceApplied(s *glrStack, act ParseAction, anyReduced *bool) {
 }
 
 func tryMergePostReduceFork(p *Parser, target, fork *glrStack) bool {
-	if target == nil || fork == nil || target.accepted || fork.accepted {
-		return false
-	}
-	if target.entries != nil || fork.entries != nil || target.gss.head == nil || fork.gss.head == nil {
-		return false
-	}
-	if target.top().state != fork.top().state || target.byteOffset != fork.byteOffset {
-		return false
+	if workCountInstrumentationEnabled {
+		if postReduceForkMergePreflight(target, fork) != workCountConvergenceReasonNone {
+			return false
+		}
+	} else {
+		if target == nil || fork == nil || target.accepted || fork.accepted {
+			return false
+		}
+		if target.entries != nil || fork.entries != nil || target.gss.head == nil || fork.gss.head == nil {
+			return false
+		}
+		if target.top().state != fork.top().state || target.byteOffset != fork.byteOffset {
+			return false
+		}
 	}
 	return tryGSSMainMergeForParser(p, target, fork)
+}
+
+func postReduceForkMergePreflight(target, fork *glrStack) string {
+	if target == nil || fork == nil || target.accepted || fork.accepted {
+		return workCountConvergenceReasonStatus
+	}
+	if target.entries != nil || fork.entries != nil || target.gss.head == nil || fork.gss.head == nil {
+		return workCountConvergenceReasonNotGSS
+	}
+	if target.top().state != fork.top().state || target.byteOffset != fork.byteOffset {
+		return workCountConvergenceReasonStatus
+	}
+	return workCountConvergenceReasonNone
 }
 
 func (p *Parser) postReduceForkMergeHasFinalizationRisk(s *glrStack, tok Token) bool {
@@ -3999,11 +4023,24 @@ func (p *Parser) applyReduceActionForked(source []byte, s *glrStack, act ParseAc
 		applyForkToStack(&clone, forks[i])
 		clone.score = base.score + int(act.DynamicPrecedence)
 		if !p.disablePostReduceForkMerge {
-			if !p.postReduceForkMergeHasFinalizationRisk(&clone, tok) {
+			finalizationRisk := p.postReduceForkMergeHasFinalizationRisk(&clone, tok)
+			if finalizationRisk {
+				workCountRecordPostReduceCandidate(p, workCountConvergencePhasePostReducePrimary, "post-reduce candidate has finalization risk", s, &clone, workCountConvergenceReasonStatus)
+				if perfCountersEnabled {
+					perfRecordPostReduceMergeFinalizationRiskSkip()
+				}
+			} else {
+				workCountRecordPostReduceCandidate(p, workCountConvergencePhasePostReducePrimary, "post-reduce candidate is eligible for packing", s, &clone, workCountConvergenceReasonNone)
 				if perfCountersEnabled {
 					perfRecordPostReduceMergeAttempt()
 				}
-				if tryMergePostReduceFork(p, s, &clone) {
+				primaryMerged := false
+				if workCountInstrumentationEnabled {
+					primaryMerged = workCountTryPostReduceMergeObserved(p, workCountConvergencePhasePostReducePrimary, "post-reduce candidate packed into primary", s, &clone)
+				} else {
+					primaryMerged = tryMergePostReduceFork(p, s, &clone)
+				}
+				if primaryMerged {
 					if perfCountersEnabled {
 						perfRecordPostReduceMergePrimarySuccess()
 					}
@@ -4014,7 +4051,14 @@ func (p *Parser) applyReduceActionForked(source []byte, s *glrStack, act ParseAc
 					if perfCountersEnabled {
 						perfRecordPostReduceMergeAttempt()
 					}
-					if tryMergePostReduceFork(p, &p.pendingForkStacks[j], &clone) {
+					workCountRecordPostReduceCandidate(p, workCountConvergencePhasePostReducePending, "pending head entered post-reduce packing", &p.pendingForkStacks[j], &clone, workCountConvergenceReasonNone)
+					pendingMerged := false
+					if workCountInstrumentationEnabled {
+						pendingMerged = workCountTryPostReduceMergeObserved(p, workCountConvergencePhasePostReducePending, "post-reduce candidate packed into pending head", &p.pendingForkStacks[j], &clone)
+					} else {
+						pendingMerged = tryMergePostReduceFork(p, &p.pendingForkStacks[j], &clone)
+					}
+					if pendingMerged {
 						if perfCountersEnabled {
 							perfRecordPostReduceMergePendingSuccess()
 						}
@@ -4025,13 +4069,13 @@ func (p *Parser) applyReduceActionForked(source []byte, s *glrStack, act ParseAc
 				if merged {
 					continue
 				}
-			} else if perfCountersEnabled {
-				perfRecordPostReduceMergeFinalizationRiskSkip()
 			}
 		} else if perfCountersEnabled {
 			perfRecordPostReduceMergeDisabledSkip()
 		}
+		pendingBefore := len(p.pendingForkStacks)
 		p.pendingForkStacks = append(p.pendingForkStacks, clone)
+		workCountRecordPendingQueued(p, s, &clone, pendingBefore, len(p.pendingForkStacks), "post-reduce candidate queued")
 		if perfCountersEnabled {
 			perfRecordPendingForkStackAppend(len(p.pendingForkStacks))
 		}

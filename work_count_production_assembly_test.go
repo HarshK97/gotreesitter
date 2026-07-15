@@ -16,8 +16,15 @@ import (
 )
 
 const (
-	finalizeDeferGuardMarker = "work-count-assembly: finalize-defer guard"
-	popPayloadCensusMarker   = "work-count-assembly: payload-census seam"
+	finalizeDeferGuardMarker     = "work-count-assembly: finalize-defer guard"
+	popPayloadCensusMarker       = "work-count-assembly: payload-census seam"
+	convergenceIterationMarker   = "work-count-assembly: convergence iteration seam"
+	convergenceFinalExpandMarker = "work-count-assembly: convergence final-expand seam"
+	convergenceGSSMarker         = "work-count-assembly: convergence GSS seam"
+	gssMutationSetPrimaryMarker  = "work-count-assembly: GSS mutation set-primary seam"
+	gssMutationSetExtraMarker    = "work-count-assembly: GSS mutation set-extra seam"
+	gssMutationAppendReuseMarker = "work-count-assembly: GSS mutation append-reuse seam"
+	gssMutationAppendGrowMarker  = "work-count-assembly: GSS mutation append-grow seam"
 )
 
 func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
@@ -27,6 +34,16 @@ func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
 	productionWorkCountSymbol := regexp.MustCompile(`(?m)^\s*[0-9a-f]+\s+\S\s+github\.com/odvcencio/gotreesitter\.(?:\(\*[^)]*\)\.)?workCount`)
 	if match := productionWorkCountSymbol.Find(nm); match != nil {
 		t.Fatalf("untagged binary retains a production work-count symbol: %s", match)
+	}
+	for _, forbidden := range []string{
+		"gssMainCanMergeForParserPhase",
+		"gssMainCanMergeWithScratchPhase",
+		"tryGSSMainMergeForParserPhase",
+		"postReduceForkMergePreflight",
+	} {
+		if bytes.Contains(nm, []byte("github.com/odvcencio/gotreesitter."+forbidden)) {
+			t.Fatalf("untagged binary retains diagnostic merge helper %s", forbidden)
+		}
 	}
 
 	finalizeLine := sourceMarkerLine(t, "parser.go", finalizeDeferGuardMarker) - 1
@@ -43,12 +60,38 @@ func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
 		t.Fatalf("untagged reduction path retains instructions at the payload-census seam:\n%s", reduceAssembly)
 	}
 	assertNoDiagnosticAssembly(t, reduceAssembly)
+
+	assertNoAssemblyAtMarker(t, closures, "parser.go", convergenceIterationMarker)
+	resultAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.buildResultFromGLR`, testBinary)
+	assertNoAssemblyAtMarker(t, resultAssembly, "parser_result.go", convergenceFinalExpandMarker)
+	assertNoDiagnosticAssembly(t, resultAssembly)
+	gssAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.tryGSSMainMergeForParser`, testBinary)
+	assertNoAssemblyAtMarker(t, gssAssembly, "glr.go", convergenceGSSMarker)
+	assertNoDiagnosticAssembly(t, gssAssembly)
+	gssMutationAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.(?:setGSSMainLink|gssMainAddLinkSeenMutate|gssMainReplaceWorstEquivalentLinkIfBetterMutate|gssMainMergeNodesSeenMutate|gssMainMergeWithScratch|tryGSSMainMergeResult|\(\*gssNode\)\.appendExtraLink)`, testBinary)
+	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr.go", gssMutationSetPrimaryMarker)
+	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr.go", gssMutationSetExtraMarker)
+	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr_gss.go", gssMutationAppendReuseMarker)
+	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr_gss.go", gssMutationAppendGrowMarker)
+	assertNoDiagnosticAssembly(t, gssMutationAssembly)
+	postReduceAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.(?:tryMergePostReduceFork|postReduceForkMergePreflight|\(\*Parser\)\.(?:applyReduceActionForked|applyReduceActionFromGSS))`, testBinary)
+	assertNoDiagnosticAssembly(t, postReduceAssembly)
+}
+
+func assertNoAssemblyAtMarker(t *testing.T, assembly []byte, file, marker string) {
+	t.Helper()
+	line := sourceMarkerLine(t, file, marker)
+	if hasAssemblyForLine(assembly, file, line) {
+		t.Fatalf("untagged build retains instructions at %s:%d (%s):\n%s", file, line, marker, assembly)
+	}
 }
 
 func assertNoDiagnosticAssembly(t *testing.T, assembly []byte) {
 	t.Helper()
 	for _, forbidden := range [][]byte{
 		[]byte("workCount"),
+		[]byte("workCountConvergence"),
+		[]byte("work_count_convergence.go:"),
 		[]byte("work_count_hooks.go:"),
 	} {
 		if bytes.Contains(assembly, forbidden) {

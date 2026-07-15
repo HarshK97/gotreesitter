@@ -92,6 +92,7 @@ func (n *gssNode) appendExtraLink(link gssMainLink) {
 		unsafe.Slice(n.extraLinks, capacity)[count] = link
 		n.extraLinkCount++
 		workCountRecordGraphLinkAddition()
+		workCountRecordGSSMutation() // work-count-assembly: GSS mutation append-reuse seam
 		return
 	}
 	newCapacity := 1
@@ -110,6 +111,7 @@ func (n *gssNode) appendExtraLink(link gssMainLink) {
 	n.extraLinkCount++
 	n.extraLinkCap = uint8(newCapacity)
 	workCountRecordGraphLinkAddition()
+	workCountRecordGSSMutation() // work-count-assembly: GSS mutation append-grow seam
 }
 
 // gssStack is a shared-prefix stack foundation for future GLR work.

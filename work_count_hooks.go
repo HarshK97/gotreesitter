@@ -32,3 +32,38 @@ func workCountRecordLeafConstruction()                                          
 func workCountRecordParentConstruction()                                                {}
 func workCountRecordPendingParentConstruction()                                         {}
 func workCountRecordNoTreeParentConstruction()                                          {}
+func workCountSetConvergenceIteration(int)                                              {}
+func workCountConvergenceActive() bool                                                  { return false }
+func workCountSetConvergenceLookahead(Token)                                            {}
+func workCountConvergenceShapeOf(*glrStack) workCountConvergenceShape {
+	return workCountConvergenceShape{}
+}
+func workCountRecordConvergence(*Parser, string, string, string, string, *glrStack, *glrStack, int, int, workCountConvergenceShape, workCountConvergenceShape, bool, bool) {
+}
+func workCountConvergencePackedResultExpansion(*glrStack, int) (int, bool, bool) {
+	return 0, false, false
+}
+func workCountRecordPairCandidate(*Parser, string, string, *glrStack, *glrStack) {}
+func workCountRecordGSSReject(*Parser, string, string, string, *glrStack, *glrStack) {
+}
+func workCountRecordGSSScoreShiftReject(*Parser, string, *glrStack, *glrStack)  {}
+func workCountRecordGSSCleanReject(*Parser, string, *glrStack, *glrStack, bool) {}
+func workCountGSSMutationEpoch() uint64                                         { return 0 }
+func workCountRecordGSSMutation()                                               {}
+func workCountMergeGSSObserved(_ *Parser, scratch *glrMergeScratch, _ string, _ string, target, candidate *glrStack) bool {
+	return gssMainMergeWithScratch(scratch, target, candidate)
+}
+func workCountRecordPostReduceCandidate(*Parser, string, string, *glrStack, *glrStack, string) {
+}
+func workCountRecordPendingQueued(*Parser, *glrStack, *glrStack, int, int, string)  {}
+func workCountRecordAcceptedHead(*Parser, *glrStack, string)                        {}
+func workCountRecordReduceWindow(*Parser, *glrStack, int, int, int, bool)           {}
+func workCountRecordPendingTransition(*Parser, *glrStack, int, int, string, string) {}
+func workCountRecordFinalPendingDiscards(*Parser, []glrStack, []glrStack)           {}
+func workCountRecordBoundaryCull(*Parser, int, int)                                 {}
+func workCountRecordFinalExpand(*Parser, *glrStack, int, bool, bool)                {}
+func workCountRecordFinalExpansions(*Parser, []glrStack)                            {}
+func workCountRecordFinalSelect(*Parser, []glrStack, *glrStack)                     {}
+func workCountTryPostReduceMergeObserved(p *Parser, _ string, _ string, target, candidate *glrStack) bool {
+	return tryMergePostReduceFork(p, target, candidate)
+}

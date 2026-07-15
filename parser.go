@@ -2160,6 +2160,7 @@ func (p *Parser) rejectUndrainedPendingForkStacks(s *glrStack) bool {
 	if p == nil || !glrFaithfulCapOneMerge || len(p.pendingForkStacks) == 0 {
 		return false
 	}
+	workCountRecordPendingTransition(p, &p.pendingForkStacks[0], len(p.pendingForkStacks), 0, workCountConvergenceOutcomePendingDiscarded, "undrained post-reduce candidates rejected")
 	p.pendingForkStacks = p.pendingForkStacks[:0]
 	if s != nil {
 		s.dead = true
@@ -4093,6 +4094,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if !glrFaithfulCapOneMerge || len(p.pendingForkStacks) == 0 {
 			return
 		}
+		pendingCount := len(p.pendingForkStacks)
+		workCountRecordPendingTransition(p, &p.pendingForkStacks[0], pendingCount, 0, workCountConvergenceOutcomePendingDrained, "post-reduce pending queue drained into live frontier")
 		if progress.enabled {
 			for i := range p.pendingForkStacks {
 				pending := &p.pendingForkStacks[i]
@@ -4131,6 +4134,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if len(p.pendingFrontierForkStacks) == 0 {
 			return
 		}
+		pendingCount := len(p.pendingFrontierForkStacks)
+		workCountRecordPendingTransition(p, &p.pendingFrontierForkStacks[0], pendingCount, 0, workCountConvergenceOutcomePendingDrained, "frontier pending queue drained into live frontier")
 		if progress.enabled {
 			for i := range p.pendingFrontierForkStacks {
 				pending := &p.pendingFrontierForkStacks[i]
@@ -4341,7 +4346,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		return errorTreeWithOwnedArena(reason)
 	}
 	finalizeTree := func(tree *Tree, stopReason ParseStopReason) *Tree {
-		if workCountInstrumentationEnabled { // work-count-assembly: finalize-defer guard
+		if workCountInstrumentationEnabled && workCountConvergenceActive() { // work-count-assembly: finalize-defer guard
 			workCountBeginFinalizeParseAttempt(workCountAttempt)
 			defer func() {
 				workCountEndFinalizeParseAttempt(workCountAttempt, stopReason, tree)
@@ -4468,6 +4473,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if phaseTiming && parserLoopNanos == 0 {
 			parserLoopNanos = time.Since(parseStart).Nanoseconds()
 		}
+		workCountRecordFinalPendingDiscards(p, p.pendingForkStacks, p.pendingFrontierForkStacks)
 		if p.noTreeBenchmarkOnly {
 			rootEndByte := expectedEOFByte
 			if stopReason != ParseStopAccepted && stopReason != ParseStopNone {
@@ -4604,6 +4610,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			return finalize(stacks, reason)
 		}
 		iterationsUsed = iter + 1
+		workCountSetConvergenceIteration(iterationsUsed) // work-count-assembly: convergence iteration seam
 		if perfCountersEnabled {
 			perfRecordMaxConcurrentStacks(len(stacks))
 		}
@@ -4692,6 +4699,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				progress.emit(time.Now(), "token_end", iterationsUsed, perfTokensConsumed+1, tok, true, stacks, maxStacksSeen, nodeCount, peakStackDepth, needToken, singleStackIterations, multiStackIterations, "")
 			}
 			p.updateCurrentExternalTokenCheckpoint(ts, tok)
+			workCountSetConvergenceLookahead(tok)
 			if p.logger != nil {
 				p.logf(ParserLogLex, "token sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
 			}
@@ -6607,6 +6615,7 @@ func (p *Parser) cullParseStacksForIteration(stacks []glrStack, scratch *parserS
 		stacks = retainTopStacksForLanguageWithScratch(stacks, maxStacks, cullLang, &scratch.stackPick, &scratch.stackKeep, &scratch.stackCull)
 	}
 	scratch.audit.recordGlobalCull(cullIn, len(stacks))
+	workCountRecordBoundaryCull(p, cullIn, len(stacks))
 	if p.glrTrace {
 		p.traceParseStackCull("kept", stacks, maxStacks, maxStackCullTrigger)
 	}
