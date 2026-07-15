@@ -147,6 +147,12 @@ authenticated static-C, fleet, and forest measurements are stricter.
   immutable reduction parents created within one reduction batch now share one
   payload when link identity remains distinct, reducing that fanout to a
   three-node, three-link, two-subtree, one-child physical delta.
+  The cached-dot continuation now shifts only its two runnable primary headers
+  through one shared ordinary terminal, retains the already-consumed secondary
+  header, canonicalizes the complete frontier, and authenticates the following
+  ordered `edits` election before either next action is dispatched. Closure and
+  receipt publication remain atomic across arena, path, dispatch, and token
+  caps.
   Conflict-frontier cells are visible in ambiguity profiles; generalized
   repetition, no-lookahead, no-action, and recovery paths still decline before
   unsupported execution, and ordinary builds retain no diagnostic driver
