@@ -153,6 +153,13 @@ authenticated static-C, fleet, and forest measurements are stricter.
   ordered `edits` election before either next action is dispatched. Closure and
   receipt publication remain atomic across arena, path, dispatch, and token
   caps.
+  Compact-core transactions now journal boundary mutations instead of cloning
+  the complete boundary map, preserving nested and panic rollback while making
+  no-op transactions allocation-free regardless of the number of published
+  boundaries. An opt-in table-driven diagnostic scheduler continues from the
+  authenticated `edits` handoff through ordinary cohorts and deterministic
+  reductions, publishing reproducible work counters and the first typed
+  unsupported semantic without fixture-directed dispatch.
   Conflict-frontier cells are visible in ambiguity profiles; generalized
   repetition, no-lookahead, no-action, and recovery paths still decline before
   unsupported execution, and ordinary builds retain no diagnostic driver
