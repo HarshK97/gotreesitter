@@ -119,6 +119,11 @@ authenticated static-C, fleet, and forest measurements are stricter.
 
 ### Tooling
 
+- The generic parser-core diagnostic scheduler now applies a sole
+  action-owned extra shift while preserving external-token provenance, and can
+  publish a typed checkpoint-authenticated closed-byte completion before
+  reading another lookahead. Mixed or multi-head extra frontiers and cap
+  failures remain transactional and fail closed.
 - Compact parser-core diagnostics now retain external-token provenance as one
   subtree identity bit and publish scanner-authenticated external-shift
   receipts for ordinary cohorts and conflict arms without embedding scanner
