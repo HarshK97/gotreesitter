@@ -119,6 +119,11 @@ authenticated static-C, fleet, and forest measurements are stricter.
 
 ### Tooling
 
+- Compact parser-core diagnostics now retain bounded pop-enumeration traversal
+  and per-path buffers across warm parses while rejecting reentrant reductions
+  and clearing logical scratch on rollback and reset. On the authenticated
+  real-Go scheduler benchmark, this reduced time by 4.5%, allocated bytes by
+  20.7%, and allocations by 33.0% with unchanged exact tree and work totals.
 - Compact parser-core diagnostics now retain double-buffered header
   canonicalization scratch across a parse while preserving winner order,
   rollback, and full conflict receipts. On the authenticated real-Go scheduler
