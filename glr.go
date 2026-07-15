@@ -4271,6 +4271,18 @@ func tryGSSMainMergeResult(scratch *glrMergeScratch, result []glrStack, idx int,
 	if workCountInstrumentationEnabled {
 		workCountRecordPairCandidate(workCountParserFromMergeScratch(scratch), workCountConvergencePhaseBoundaryGSS, "boundary merge entered eligibility preflight", &result[idx], stack)
 	}
+	// Score is an unconditional GSS merge identity component (see
+	// gssMainCanMergeWithScratch). Reject it before recovery-cost attribution
+	// and deeper graph/equivalence work: on ambiguity-heavy parses most
+	// same-state, same-offset candidates carry distinct cumulative dynamic
+	// precedence, so walking recovery state for those pairs can never affect the
+	// outcome. Diagnostic builds still retain the candidate and score rejection.
+	if result[idx].score != stack.score {
+		if workCountInstrumentationEnabled {
+			workCountRecordGSSScoreShiftReject(workCountParserFromMergeScratch(scratch), workCountConvergencePhaseBoundaryGSS, &result[idx], stack)
+		}
+		return false, false
+	}
 	if cRecoveryMergeCostsDiffer(scratch, &result[idx], stack) {
 		traceCRecoverMergeDecision(scratch, "gss", "reject-cost", &result[idx], stack)
 		if workCountInstrumentationEnabled {

@@ -3184,6 +3184,42 @@ func TestTryGSSMainMergeResultClearsMaterializingCache(t *testing.T) {
 	}
 }
 
+func TestTryGSSMainMergeResultRejectsDistinctScoreBeforeMutation(t *testing.T) {
+	var gssScratch gssScratch
+	node := NewLeafNode(11, true, 0, 5, Point{}, Point{Column: 5})
+	entries := []stackEntry{{state: 1}, newStackEntryNode(7, node)}
+	left := glrStack{
+		gss:        buildGSSStack(entries, &gssScratch),
+		byteOffset: 5,
+		score:      1,
+	}
+	right := glrStack{
+		gss:        buildGSSStack(entries, &gssScratch),
+		byteOffset: 5,
+		score:      2,
+		cPaused:    true,
+	}
+	if !stacksHeaderEquivalent(&left, &right) {
+		t.Fatal("test setup did not produce same-header stacks")
+	}
+	if leftCost, rightCost := cStackErrorCostForMerge(nil, &left), cStackErrorCostForMerge(nil, &right); leftCost == rightCost {
+		t.Fatalf("test setup recovery costs equal: left=%d right=%d", leftCost, rightCost)
+	}
+	leftHead := left.gss.head
+	leftLinks := leftHead.linkCount()
+
+	scratch := glrMergeScratch{cRecoveryCost: true}
+	scratch.beginEquivEpoch()
+	result := []glrStack{left}
+	merged, attempted := tryGSSMainMergeResult(&scratch, result, 0, &right)
+	if merged || attempted {
+		t.Fatalf("distinct-score GSS merge = merged:%v attempted:%v, want false/false", merged, attempted)
+	}
+	if result[0].gss.head != leftHead || leftHead.linkCount() != leftLinks {
+		t.Fatal("distinct-score GSS prefilter mutated the retained stack")
+	}
+}
+
 func TestTryGSSMainMergeForParserBumpsShapePrefixEpoch(t *testing.T) {
 	// Cross-token invalidation guard for the DISPATCH-time GSS main merge
 	// (reached through tryGSSMainMergeForParser from parser_reduce /
