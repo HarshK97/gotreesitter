@@ -1899,17 +1899,17 @@ func TestPreferRetryTreeAcceptedCandidateCanBeatStoppedIncumbent(t *testing.T) {
 }
 
 func TestGLRStackCullTrigger(t *testing.T) {
-	if got := glrStackCullTrigger(8, arenaClassFull, "go"); got != 12 {
-		t.Fatalf("glrStackCullTrigger(full, go) = %d, want 12", got)
+	// The slack window is arena-class-invariant: fresh and incremental parses
+	// of the same source must cull GLR branches at the same population, or
+	// the memory pool an arena came from changes the selected tree.
+	if got := glrStackCullTrigger(8, "go"); got != 12 {
+		t.Fatalf("glrStackCullTrigger(go) = %d, want 12", got)
 	}
-	if got := glrStackCullTrigger(8, arenaClassFull, "c_sharp"); got != 8 {
-		t.Fatalf("glrStackCullTrigger(full, c_sharp) = %d, want 8", got)
-	}
-	if got := glrStackCullTrigger(8, arenaClassIncremental, "go"); got != 8 {
-		t.Fatalf("glrStackCullTrigger(incremental, go) = %d, want 8", got)
+	if got := glrStackCullTrigger(8, "c_sharp"); got != 8 {
+		t.Fatalf("glrStackCullTrigger(c_sharp) = %d, want 8", got)
 	}
 	maxInt := int(^uint(0) >> 1)
-	if got := glrStackCullTrigger(maxInt, arenaClassFull, "go"); got != maxInt {
+	if got := glrStackCullTrigger(maxInt, "go"); got != maxInt {
 		t.Fatalf("glrStackCullTrigger(maxInt) = %d, want %d", got, maxInt)
 	}
 }

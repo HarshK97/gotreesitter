@@ -6323,7 +6323,7 @@ func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClas
 		maxStacks:           maxStacks,
 		retryPass:           retryPass,
 		mergePerKeyCap:      mergePerKeyCap,
-		maxStackCullTrigger: glrStackCullTrigger(maxStacks, arenaClass, languageName(p.language)),
+		maxStackCullTrigger: glrStackCullTrigger(maxStacks, languageName(p.language)),
 		maxIter:             parseIterationsForLanguage(len(source), p.language),
 		maxDepth:            parseStackDepth(len(source)),
 		maxNodes:            maxNodes,
@@ -7625,11 +7625,16 @@ func stackCullLanguageForArena(lang *Language, class arenaClass) *Language {
 	return lang
 }
 
-func glrStackCullTrigger(maxStacks int, class arenaClass, langName string) int {
+// glrStackCullTrigger returns the live-stack population at which per-iteration
+// culling engages. The slack window is a function of the language only: which
+// memory pool the arena came from must never influence which GLR branches
+// survive, or incremental parses select different trees than fresh parses of
+// the same source (the early_newline canonical witness).
+func glrStackCullTrigger(maxStacks int, langName string) int {
 	if maxStacks <= 0 {
 		return maxStacks
 	}
-	if class != arenaClassFull || langName == "c_sharp" {
+	if langName == "c_sharp" {
 		return maxStacks
 	}
 	maxInt := int(^uint(0) >> 1)

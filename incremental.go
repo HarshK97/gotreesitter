@@ -530,6 +530,12 @@ func reuseNode(p *Parser, s *glrStack, n *Node, nextState StateID, startState St
 		}
 	}
 	p.pushStackNode(s, nextState, n, entryScratch, gssScratch)
+	// A fresh parse accumulates every reduction's dynamic precedence into the
+	// stack score; a reused subtree carries that same contribution precomputed
+	// in its cumulative dynamicPrecedence. Credit it so score-sensitive
+	// decisions (merge survival, culls, result selection) see the score a
+	// fresh parse of the identical structure would.
+	s.score += int(n.dynamicPrecedence)
 	reusedBytes := n.EndByte() - n.StartByte()
 
 	// If the reused node reaches EOF, we can synthesize EOF directly
