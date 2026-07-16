@@ -9,13 +9,12 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
-- Large sources dominated by a single literal or comment body no longer
-  preallocate a full-parse node arena sized off their byte length. A bounded
-  structural-density sample now caps the first-pass estimate, cutting arena
-  preallocation (and its memory-budget charge) by more than an order of
-  magnitude on such files with byte-identical trees; dense generated code
-  keeps its existing preallocation, and learned per-parser hints keep
-  priority.
+- The exact locked Odin grammar now caps first-pass arena preallocation for
+  large ASCII token-sparse sources using a complete structural-density scan.
+  This cuts arena allocation by 72% and full-parse time by 6% on the locked
+  6.2 MB Odin test-vector witness with a byte-identical tree. Non-ASCII input
+  fails open, while custom, same-name, stale-blob, and other fleet grammars
+  retain the baseline policy.
 
 ### Fixed
 

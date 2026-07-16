@@ -17,6 +17,7 @@ type builtinLanguageRuntimeProfile struct {
 	fullParseAcceptedErrorRetryProfile gotreesitter.FullParseAcceptedErrorRetryProfile
 	automaticForestMemoryAllowance     int64
 	automaticForestEnabled             bool
+	fullParseArenaDensityCap           bool
 	nativeResultCompatibility          gotreesitter.ResultCompatibilityCapability
 	conflictPolicies                   []gotreesitter.ConflictPolicy
 }
@@ -84,10 +85,12 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		blobSHA256:                    mustRuntimeProfileSHA256("643a3e6b60d07846dd972849b612159ff9bf09734b09fb00013229c8593a8c78"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
 	},
-	// Odin's accepted-error retry ladder selects the same tree on every pass.
-	// Keep the first accepted result instead of running either retry ladder.
+	// Odin's accepted-error retry ladder selects the same tree on every pass,
+	// and its locked large test-vector witness certifies the ASCII full-arena
+	// density cap. Both policies remain bound to this exact blob identity.
 	"odin": {
-		blobSHA256: mustRuntimeProfileSHA256("9b376bcbbe677780b9031ae84eee4fb59eb37a14fbe169c7c17d35f2b5b776ed"),
+		blobSHA256:               mustRuntimeProfileSHA256("9b376bcbbe677780b9031ae84eee4fb59eb37a14fbe169c7c17d35f2b5b776ed"),
+		fullParseArenaDensityCap: true,
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry: true,
 		},
@@ -335,6 +338,10 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 	}
 	if profile.automaticForestEnabled && !lang.AutomaticForestEnabledByDefault {
 		lang.AutomaticForestEnabledByDefault = true
+		changed = true
+	}
+	if profile.fullParseArenaDensityCap && !lang.FullParseArenaDensityCapEnabled {
+		lang.FullParseArenaDensityCapEnabled = true
 		changed = true
 	}
 	if missing := profile.nativeResultCompatibility &^ lang.NativeResultCompatibility; missing != 0 {
