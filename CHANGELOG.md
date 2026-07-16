@@ -13,6 +13,11 @@ for tags and release notes while still in `0.x`.
   rejects reused leaves whose stored parser state conflicts with the current
   shift. This prevents stale leaf context and over-aggressive two-stack
   pruning from changing selected trees on token-class and recovery edits.
+- An incremental parse whose full-parse retry produces no strictly better
+  tree now keeps its first-pass result instead of replacing it with a
+  quality-tied fresh tree. This stops spurious `incremental_parse_full_retry`
+  reporting on grammars whose intended trees contain ERROR productions and
+  legitimately use the full GLR width.
 - Multiline tree edits now keep node byte and point ranges aligned with the C
   runtime across insertions, deletions, and replacements.
 - Rewriter edits now reject reversed and out-of-source byte ranges instead of
