@@ -56,7 +56,7 @@ func TestDiagnosticParserCoreGenericReductionPauseIsFinite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cell := diagnosticParserCoreGenericCell{headerIndex: 0, receipt: before[0], actions: core.NewActionRow(table.cells[genericConflictCell{state: 3, symbol: 9}])}
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, scheduler.headers[0], 9)
 	if err := scheduler.applyGenericReduction(before, cell); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,8 @@ func TestDiagnosticParserCoreGenericReductionPauseIsFinite(t *testing.T) {
 		options: DiagnosticParserCorePrefixOptions{MaxDispatches: 20}, receipt: &DiagnosticParserCoreGenericScheduler{},
 	}
 	soleBefore, _ := diagnosticParserCoreHeaderReceipts(compact, sole.headers)
-	if err := sole.applyGenericReduction(soleBefore, diagnosticParserCoreGenericCell{headerIndex: 0, receipt: soleBefore[0], actions: cell.actions}); err != nil {
+	soleCell := mustDiagnosticParserCoreGenericCell(t, compact, 0, sole.headers[0], 9)
+	if err := sole.applyGenericReduction(soleBefore, soleCell); err != nil {
 		t.Fatal(err)
 	}
 	stop, err := sole.dispatchPass()
@@ -121,9 +122,8 @@ func TestDiagnosticParserCoreGenericReductionSequenceOverflowRollsBack(t *testin
 	beforeStats, _ := compact.Stats(head)
 	beforeHeaders := append([]diagnosticParserCoreHeader(nil), scheduler.headers...)
 	before, _ := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
-	err = scheduler.applyGenericReduction(before, diagnosticParserCoreGenericCell{
-		headerIndex: 0, receipt: before[0], actions: core.NewActionRow(table.cells[genericConflictCell{state: 3, symbol: 9}]),
-	})
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, scheduler.headers[0], 9)
+	err = scheduler.applyGenericReduction(before, cell)
 	if err == nil {
 		t.Fatal("overflowing reduction unexpectedly succeeded")
 	}
@@ -181,9 +181,8 @@ func TestDiagnosticParserCoreUpdatedReductionAdoptsActiveSibling(t *testing.T) {
 		options: DiagnosticParserCorePrefixOptions{MaxDispatches: 20}, receipt: &DiagnosticParserCoreGenericScheduler{},
 	}
 	before, _ := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
-	if err := scheduler.applyGenericReduction(before, diagnosticParserCoreGenericCell{
-		headerIndex: 0, receipt: before[0], actions: core.NewActionRow(table.cells[genericConflictCell{state: 3, symbol: 9}]),
-	}); err != nil {
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, scheduler.headers[0], 9)
+	if err := scheduler.applyGenericReduction(before, cell); err != nil {
 		t.Fatal(err)
 	}
 	if len(scheduler.headers) != 2 || !scheduler.headers[0].paused || scheduler.headers[1].paused || scheduler.headers[1].creationSeq != 11 || scheduler.nextSeq != math.MaxUint64 {
@@ -227,7 +226,8 @@ func TestDiagnosticParserCoreConflictUpdatedOutputPreservesSuffixIdentity(t *tes
 		options: DiagnosticParserCorePrefixOptions{MaxDispatches: 20}, receipt: &DiagnosticParserCoreGenericScheduler{},
 	}
 	before, _ := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
-	if err := scheduler.applyGenericConflict(before, diagnosticParserCoreGenericCell{headerIndex: 0, receipt: before[0], actions: core.NewActionRow(actions)}); err != nil {
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, scheduler.headers[0], 9)
+	if err := scheduler.applyGenericConflict(before, cell); err != nil {
 		t.Fatal(err)
 	}
 	receipts, _ := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
@@ -284,7 +284,8 @@ func TestDiagnosticParserCoreConflictSecondaryUpdateAdoptsActiveSibling(t *testi
 				options: DiagnosticParserCorePrefixOptions{MaxDispatches: 20}, receipt: &DiagnosticParserCoreGenericScheduler{},
 			}
 			before, _ := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
-			if err := scheduler.applyGenericConflict(before, diagnosticParserCoreGenericCell{headerIndex: sourceIndex, receipt: before[sourceIndex], actions: core.NewActionRow(actions)}); err != nil {
+			cell := mustDiagnosticParserCoreGenericCell(t, compact, sourceIndex, scheduler.headers[sourceIndex], 9)
+			if err := scheduler.applyGenericConflict(before, cell); err != nil {
 				t.Fatal(err)
 			}
 			receipts, _ := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
@@ -333,7 +334,8 @@ func TestDiagnosticParserCoreConflictAllUnchangedPauses(t *testing.T) {
 		options: DiagnosticParserCorePrefixOptions{MaxDispatches: 20}, receipt: &DiagnosticParserCoreGenericScheduler{},
 	}
 	before, _ := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
-	if err := scheduler.applyGenericConflict(before, diagnosticParserCoreGenericCell{headerIndex: 0, receipt: before[0], actions: core.NewActionRow(actions)}); err != nil {
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, scheduler.headers[0], 9)
+	if err := scheduler.applyGenericConflict(before, cell); err != nil {
 		t.Fatal(err)
 	}
 	if len(scheduler.headers) != 1 || !scheduler.headers[0].paused || scheduler.headers[0].freshness != 0 || scheduler.branchOrder != 8 || scheduler.nextSeq != math.MaxUint64 || scheduler.epochProgress {
@@ -365,7 +367,8 @@ func TestDiagnosticParserCoreConflictPostExecutionFailureRollsBack(t *testing.T)
 	beforeStats, _ := compact.Stats(source)
 	beforeHeaders := append([]diagnosticParserCoreHeader(nil), scheduler.headers...)
 	before, _ := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
-	err = scheduler.applyGenericConflict(before, diagnosticParserCoreGenericCell{headerIndex: 0, receipt: before[0], actions: core.NewActionRow(actions)})
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, scheduler.headers[0], 9)
+	err = scheduler.applyGenericConflict(before, cell)
 	if err == nil {
 		t.Fatal("post-execution fault unexpectedly succeeded")
 	}
@@ -407,7 +410,8 @@ func TestDiagnosticParserCoreSummaryConflictFailureRollsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = scheduler.applyGenericConflict(before, diagnosticParserCoreGenericCell{headerIndex: 0, receipt: before[0], actions: core.NewActionRow(actions)})
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, scheduler.headers[0], 9)
+	err = scheduler.applyGenericConflict(before, cell)
 	if err == nil {
 		t.Fatal("summary post-execution fault unexpectedly succeeded")
 	}
@@ -448,7 +452,8 @@ func TestDiagnosticParserCoreConflictFiltersUnchangedArm(t *testing.T) {
 		options: DiagnosticParserCorePrefixOptions{MaxDispatches: 20}, receipt: &DiagnosticParserCoreGenericScheduler{},
 	}
 	before, _ := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
-	if err := scheduler.applyGenericConflict(before, diagnosticParserCoreGenericCell{headerIndex: 0, receipt: before[0], actions: core.NewActionRow(actions)}); err != nil {
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, scheduler.headers[0], 9)
+	if err := scheduler.applyGenericConflict(before, cell); err != nil {
 		t.Fatal(err)
 	}
 	receipts, _ := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
@@ -470,7 +475,8 @@ func TestDiagnosticParserCoreConflictFiltersUnchangedArm(t *testing.T) {
 	}
 	rollbackBefore, _ := diagnosticParserCoreHeaderReceipts(compact, rollback.headers)
 	if err := compact.ApplyAtomic(func() error {
-		return rollback.applyGenericConflict(rollbackBefore, diagnosticParserCoreGenericCell{headerIndex: 0, receipt: rollbackBefore[0], actions: core.NewActionRow(actions)})
+		cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, rollback.headers[0], 9)
+		return rollback.applyGenericConflict(rollbackBefore, cell)
 	}); err == nil {
 		t.Fatal("capped filtered conflict unexpectedly succeeded")
 	}

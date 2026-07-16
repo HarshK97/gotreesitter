@@ -303,8 +303,11 @@ var parserCoreCertifiedGoBlob []byte
 func (e *diagnosticParserCoreDecline) Error() string { return string(e.boundary) + ": " + e.detail }
 
 type parserCoreRootTables struct {
-	parser     *Parser
-	actionRows []core.ActionRow
+	parser              *Parser
+	actionRows          []core.ActionRow
+	reductionPlans      []core.ReductionPlan
+	reductionPlanIndex  []uint16
+	reductionPlanStride int
 }
 
 func newParserCoreRootTables(parser *Parser) (*parserCoreRootTables, error) {
@@ -323,7 +326,55 @@ func newParserCoreRootTables(parser *Parser) (*parserCoreRootTables, error) {
 		}
 		rows[index] = core.NewActionRow(converted)
 	}
-	return &parserCoreRootTables{parser: parser, actionRows: rows}, nil
+	tables := &parserCoreRootTables{parser: parser, actionRows: rows}
+	maxProductionID, maxChildCount := 0, 0
+	for _, row := range rows {
+		for ordinal := 0; ordinal < row.Len(); ordinal++ {
+			action := row.At(ordinal)
+			if action.Type != core.ActionReduce {
+				continue
+			}
+			maxProductionID = max(maxProductionID, int(action.ProductionID))
+			maxChildCount = max(maxChildCount, int(action.ChildCount))
+		}
+	}
+	tables.reductionPlanStride = maxChildCount + 1
+	if tables.reductionPlanStride > 0 {
+		if maxProductionID > (math.MaxInt/tables.reductionPlanStride)-1 {
+			return nil, errors.New("parser-core phase zero: reduction plan pair index overflow")
+		}
+		tables.reductionPlanIndex = make([]uint16, (maxProductionID+1)*tables.reductionPlanStride)
+	}
+	for _, row := range rows {
+		for ordinal := 0; ordinal < row.Len(); ordinal++ {
+			action := row.At(ordinal)
+			if action.Type != core.ActionReduce {
+				continue
+			}
+			pairIndex := int(action.ProductionID)*tables.reductionPlanStride + int(action.ChildCount)
+			if tables.reductionPlanIndex[pairIndex] != 0 {
+				continue
+			}
+			fields, err := tables.ProductionFields(action.ProductionID, int(action.ChildCount))
+			if err != nil {
+				return nil, err
+			}
+			aliases, err := tables.ProductionAliases(action.ProductionID, int(action.ChildCount))
+			if err != nil {
+				return nil, err
+			}
+			plan, err := core.NewReductionPlan(action.ProductionID, int(action.ChildCount), fields, aliases)
+			if err != nil {
+				return nil, err
+			}
+			if len(tables.reductionPlans) >= math.MaxUint16 {
+				return nil, errors.New("parser-core phase zero: reduction plan count exceeds uint16")
+			}
+			tables.reductionPlans = append(tables.reductionPlans, plan)
+			tables.reductionPlanIndex[pairIndex] = uint16(len(tables.reductionPlans))
+		}
+	}
+	return tables, nil
 }
 
 func (a *parserCoreRootTables) Actions(state core.StateID, symbol core.Symbol) (core.ActionRow, error) {
@@ -371,6 +422,21 @@ func (a *parserCoreRootTables) ProductionAliases(productionID uint16, childCount
 		out[i] = core.Symbol(symbol)
 	}
 	return out, nil
+}
+
+func (a *parserCoreRootTables) ReductionPlan(productionID uint16, childCount int) (core.ReductionPlan, error) {
+	if a == nil || childCount < 0 || childCount >= a.reductionPlanStride {
+		return core.ReductionPlan{}, errors.New("parser-core phase zero: reduction plan pair is outside authenticated index")
+	}
+	pairIndex := int(productionID)*a.reductionPlanStride + childCount
+	if pairIndex < 0 || pairIndex >= len(a.reductionPlanIndex) {
+		return core.ReductionPlan{}, errors.New("parser-core phase zero: reduction plan production is outside authenticated index")
+	}
+	planID := a.reductionPlanIndex[pairIndex]
+	if planID == 0 || int(planID) > len(a.reductionPlans) {
+		return core.ReductionPlan{}, errors.New("parser-core phase zero: reduction plan pair was not authenticated from an action row")
+	}
+	return a.reductionPlans[planID-1], nil
 }
 
 func parserCoreAction(action ParseAction) (core.Action, error) {
@@ -680,10 +746,11 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 	incoming diagnosticParserCoreHeader,
 	headerIndex int,
 	token Token,
-	actions core.ActionRow,
+	classified core.ClassifiedBoundary,
 	branchOrder uint64,
 	collectReceipts bool,
 ) (diagnosticParserCoreConflictExecution, error) {
+	actions := classified.Actions()
 	var before DiagnosticParserCoreHeaderReceipt
 	if collectReceipts {
 		var err error
@@ -711,7 +778,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 		for ordinal := 1; ordinal < actions.Len(); ordinal++ {
 			action := actions.At(ordinal)
 			trialOrder++
-			outputs, applyErr := applyParserCoreConflictAction(compact, incoming.head, token, action, ordinal, core.ForkOrder{Present: true, Value: trialOrder})
+			outputs, applyErr := applyParserCoreConflictAction(compact, classified, token, action, ordinal, core.ForkOrder{Present: true, Value: trialOrder})
 			if applyErr != nil {
 				return applyErr
 			}
@@ -734,7 +801,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 			}
 		}
 		primaryAction := actions.At(0)
-		outputs, applyErr := applyParserCoreConflictAction(compact, incoming.head, token, primaryAction, 0, core.ForkOrder{})
+		outputs, applyErr := applyParserCoreConflictAction(compact, classified, token, primaryAction, 0, core.ForkOrder{})
 		if applyErr != nil {
 			return applyErr
 		}
@@ -1018,6 +1085,7 @@ type diagnosticParserCoreGenericScheduler struct {
 	dispatchScratch            diagnosticParserCoreDispatchScratch
 	reductionOutputs           []core.ReductionOutput
 	reductionReplacements      []diagnosticParserCoreHeader
+	classifiedBoundaries       []core.ClassifiedBoundary
 	work                       DiagnosticParserCoreGenericWork
 	epochProgress              bool
 	acceptedHead               core.Head
@@ -1109,9 +1177,10 @@ func newDiagnosticParserCoreGenericScheduler(
 
 type diagnosticParserCoreGenericCell struct {
 	headerIndex int
-	receipt     DiagnosticParserCoreHeaderReceipt
-	actions     core.ActionRow
+	boundary    core.ClassifiedBoundary
 }
+
+func (cell diagnosticParserCoreGenericCell) actions() core.ActionRow { return cell.boundary.Actions() }
 
 type diagnosticParserCoreDispatchScratch struct {
 	busy            bool
@@ -1446,9 +1515,13 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPass() (*diagnosticParser
 			}, nil
 		}
 	}
-	before, err := s.headerReceipts(s.headers)
-	if err != nil {
-		return nil, err
+	var before []DiagnosticParserCoreHeaderReceipt
+	if s.fullReceipts() {
+		var err error
+		before, err = s.headerReceipts(s.headers)
+		if err != nil {
+			return nil, err
+		}
 	}
 	for index, header := range s.headers {
 		if header.shifted || header.accepted {
@@ -1458,22 +1531,22 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPass() (*diagnosticParser
 			s.dispatchScratch.noActionIndices = append(s.dispatchScratch.noActionIndices, index)
 			continue
 		}
-		receipt := before[index]
-		actions, err := s.compact.Actions(core.StateID(receipt.State), core.Symbol(s.token.Symbol))
+		boundary, err := s.compact.ClassifyBoundary(header.head, core.Symbol(s.token.Symbol))
 		if err != nil {
 			return nil, err
 		}
 		s.work.ActionLookups++
+		actions := boundary.Actions()
 		if actions.Len() == 0 {
 			s.dispatchScratch.noActionIndices = append(s.dispatchScratch.noActionIndices, index)
 			continue
 		}
-		s.dispatchScratch.cells = append(s.dispatchScratch.cells, diagnosticParserCoreGenericCell{headerIndex: index, receipt: receipt, actions: actions})
+		s.dispatchScratch.cells = append(s.dispatchScratch.cells, diagnosticParserCoreGenericCell{headerIndex: index, boundary: boundary})
 	}
 	cells := s.dispatchScratch.cells
 	noActionIndices := s.dispatchScratch.noActionIndices
 	for _, cell := range cells {
-		if unsupported := diagnosticParserCoreGenericUnsupportedCell(cell.headerIndex, s.token, cell.actions); unsupported != nil {
+		if unsupported := diagnosticParserCoreGenericUnsupportedCell(cell.headerIndex, s.token, cell.actions()); unsupported != nil {
 			return unsupported, nil
 		}
 	}
@@ -1494,14 +1567,14 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPass() (*diagnosticParser
 	}
 	acceptCell := -1
 	for index, cell := range cells {
-		if diagnosticParserCoreActionsContain(cell.actions, core.ActionAccept) {
+		if diagnosticParserCoreActionsContain(cell.actions(), core.ActionAccept) {
 			acceptCell = index
 			break
 		}
 	}
 	if acceptCell >= 0 {
 		cell := cells[acceptCell]
-		if len(s.headers) != 1 || len(cells) != 1 || len(noActionIndices) != 0 || cell.headerIndex != 0 || cell.actions.Len() != 1 || cell.actions.At(0).Type != core.ActionAccept {
+		if len(s.headers) != 1 || len(cells) != 1 || len(noActionIndices) != 0 || cell.headerIndex != 0 || cell.actions().Len() != 1 || cell.actions().At(0).Type != core.ActionAccept {
 			return &diagnosticParserCoreGenericUnsupported{
 				boundary: DiagnosticParserCoreAccept, detail: "generic scheduler requires a sole homogeneous accept frontier", headerIndex: cell.headerIndex,
 			}, nil
@@ -1510,7 +1583,7 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPass() (*diagnosticParser
 	}
 	extraCells := 0
 	for _, cell := range cells {
-		if cell.actions.At(0).Extra {
+		if cell.actions().At(0).Extra {
 			extraCells++
 		}
 	}
@@ -1526,18 +1599,18 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPass() (*diagnosticParser
 	// One reduction-bearing cell is applied per pass. This deliberately
 	// reclassifies the complete frontier before any shift is allowed.
 	for _, cell := range cells {
-		if !diagnosticParserCoreActionsContain(cell.actions, core.ActionReduce) {
+		if !diagnosticParserCoreActionsContain(cell.actions(), core.ActionReduce) {
 			continue
 		}
-		if cell.actions.Len() > 1 {
+		if cell.actions().Len() > 1 {
 			return nil, s.applyGenericConflict(before, cell)
 		}
-		if cell.actions.At(0).Type == core.ActionReduce {
+		if cell.actions().At(0).Type == core.ActionReduce {
 			return nil, s.applyGenericReduction(before, cell)
 		}
 	}
 	for _, cell := range cells {
-		if cell.actions.Len() > 1 {
+		if cell.actions().Len() > 1 {
 			return nil, s.applyGenericConflict(before, cell)
 		}
 	}
@@ -1556,7 +1629,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericAccept(before []Diagn
 		s.dispatches, s.work, s.epochProgress = dispatchesBefore, workBefore, epochProgressBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 	}()
-	if cell.actions.Len() != 1 || cell.actions.At(0).Type != core.ActionAccept {
+	if cell.actions().Len() != 1 || cell.actions().At(0).Type != core.ActionAccept {
 		return errors.New("parser-core phase zero: generic accept requires one accept action")
 	}
 	if s.token.Symbol != 0 || s.token.StartByte != s.token.EndByte || s.token.Missing || s.token.NoLookahead || s.token.ExternalScannerToken {
@@ -1581,8 +1654,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericAccept(before []Diagn
 		s.receipt.Rounds = append(s.receipt.Rounds, DiagnosticParserCoreDispatchRound{
 			Index: len(s.receipt.Rounds), Before: before,
 			Actions: []DiagnosticParserCoreRoundAction{{
-				HeaderIndex: cell.headerIndex, State: cell.receipt.State, ByteOffset: cell.receipt.ByteOffset,
-				Ordinal: 0, Action: rootParserCoreAction(cell.actions.At(0)),
+				HeaderIndex: cell.headerIndex, State: StateID(cell.boundary.State()), ByteOffset: cell.boundary.ByteOffset(),
+				Ordinal: 0, Action: rootParserCoreAction(cell.actions().At(0)),
 			}},
 			After: after,
 		})
@@ -1734,7 +1807,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionAtomic(befor
 	if err := s.reserveDispatches(1); err != nil {
 		return err
 	}
-	outputs, err := s.compact.ReduceOutputsInto(s.reductionOutputs, s.headers[cell.headerIndex].head, core.Symbol(s.token.Symbol), 0, core.ForkOrder{})
+	outputs, err := s.compact.ReduceOutputsClassifiedInto(s.reductionOutputs, cell.boundary, 0, core.ForkOrder{})
 	if err != nil {
 		return err
 	}
@@ -1800,8 +1873,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionAtomic(befor
 		s.receipt.Rounds = append(s.receipt.Rounds, DiagnosticParserCoreDispatchRound{
 			Index: len(s.receipt.Rounds), Before: before,
 			Actions: []DiagnosticParserCoreRoundAction{{
-				HeaderIndex: cell.headerIndex, State: cell.receipt.State, ByteOffset: cell.receipt.ByteOffset,
-				Ordinal: 0, Action: rootParserCoreAction(cell.actions.At(0)),
+				HeaderIndex: cell.headerIndex, State: StateID(cell.boundary.State()), ByteOffset: cell.boundary.ByteOffset(),
+				Ordinal: 0, Action: rootParserCoreAction(cell.actions().At(0)),
 			}},
 			After: after,
 		})
@@ -1884,7 +1957,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictAtomic(before
 		return err
 	}
 	execution, err := executeDiagnosticParserCoreGenericConflictDetailed(
-		s.compact, s.headers[cell.headerIndex], cell.headerIndex, s.token, cell.actions,
+		s.compact, s.headers[cell.headerIndex], cell.headerIndex, s.token, cell.boundary,
 		s.branchOrder, s.fullReceipts(),
 	)
 	if err != nil {
@@ -1962,8 +2035,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictAtomic(before
 		s.epochProgress = true
 	}
 	s.work.Conflicts++
-	s.work.ConflictActions += uint64(cell.actions.Len())
-	s.work.Forks += uint64(cell.actions.Len() - 1)
+	s.work.ConflictActions += uint64(cell.actions().Len())
+	s.work.Forks += uint64(cell.actions().Len() - 1)
 	s.work.ConflictHeads += uint64(outputCount)
 	s.work.Dispatches++
 	if err := s.canonicalize(); err != nil {
@@ -2045,7 +2118,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShifts(before []Diagn
 	}
 	if len(cells) == 1 {
 		cell := cells[0]
-		head, err := s.compact.Shift(s.headers[cell.headerIndex].head, core.Symbol(s.token.Symbol), 0, core.Token{
+		head, err := s.compact.ShiftClassified(cell.boundary, 0, core.Token{
 			Symbol: core.Symbol(s.token.Symbol), StartByte: s.token.StartByte, EndByte: s.token.EndByte, External: s.token.ExternalScannerToken,
 		}, core.ForkOrder{})
 		if err != nil {
@@ -2054,11 +2127,11 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShifts(before []Diagn
 		s.headers[cell.headerIndex].head = head
 		s.headers[cell.headerIndex].shifted = true
 	} else {
-		inputs := make([]core.OrdinaryCohortShiftInput, len(cells))
-		for index, cell := range cells {
-			inputs[index] = core.OrdinaryCohortShiftInput{Head: s.headers[cell.headerIndex].head, ActionOrdinal: 0}
+		s.classifiedBoundaries = s.classifiedBoundaries[:0]
+		for _, cell := range cells {
+			s.classifiedBoundaries = append(s.classifiedBoundaries, cell.boundary)
 		}
-		heads, err := s.compact.ShiftOrdinaryCohort(inputs, core.Symbol(s.token.Symbol), core.Token{
+		heads, err := s.compact.ShiftOrdinaryClassifiedCohort(s.classifiedBoundaries, core.Token{
 			Symbol: core.Symbol(s.token.Symbol), StartByte: s.token.StartByte, EndByte: s.token.EndByte, External: s.token.ExternalScannerToken,
 		})
 		if err != nil {
@@ -2081,8 +2154,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShifts(before []Diagn
 		actions := make([]DiagnosticParserCoreRoundAction, len(cells))
 		for index, cell := range cells {
 			actions[index] = DiagnosticParserCoreRoundAction{
-				HeaderIndex: cell.headerIndex, State: cell.receipt.State, ByteOffset: cell.receipt.ByteOffset,
-				Ordinal: 0, Action: rootParserCoreAction(cell.actions.At(0)),
+				HeaderIndex: cell.headerIndex, State: StateID(cell.boundary.State()), ByteOffset: cell.boundary.ByteOffset(),
+				Ordinal: 0, Action: rootParserCoreAction(cell.actions().At(0)),
 			}
 		}
 		after, err := diagnosticParserCoreHeaderReceipts(s.compact, s.headers)
@@ -2116,7 +2189,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 			return errors.New("parser-core phase zero: empty extra shift cohort")
 		}
 		for _, cell := range cells {
-			if cell.actions.Len() != 1 || cell.actions.At(0).Type != core.ActionShift || !cell.actions.At(0).Extra {
+			if cell.actions().Len() != 1 || cell.actions().At(0).Type != core.ActionShift || !cell.actions().At(0).Extra {
 				return errors.New("parser-core phase zero: extra cohort requires one decoded extra action per head")
 			}
 		}
@@ -2127,11 +2200,11 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 		if err != nil {
 			return err
 		}
-		inputs := make([]core.ExtraCohortShiftInput, len(cells))
-		for index, cell := range cells {
-			inputs[index] = core.ExtraCohortShiftInput{Head: s.headers[cell.headerIndex].head, ActionOrdinal: 0}
+		s.classifiedBoundaries = s.classifiedBoundaries[:0]
+		for _, cell := range cells {
+			s.classifiedBoundaries = append(s.classifiedBoundaries, cell.boundary)
 		}
-		heads, err := s.compact.ShiftExtraCohort(inputs, core.Symbol(s.token.Symbol), core.Token{
+		heads, err := s.compact.ShiftExtraClassifiedCohort(s.classifiedBoundaries, core.Token{
 			Symbol: core.Symbol(s.token.Symbol), StartByte: s.token.StartByte, EndByte: s.token.EndByte,
 			Extra: true, External: s.token.ExternalScannerToken,
 		})
@@ -2165,8 +2238,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 			actions := make([]DiagnosticParserCoreRoundAction, len(cells))
 			for index, cell := range cells {
 				actions[index] = DiagnosticParserCoreRoundAction{
-					HeaderIndex: cell.headerIndex, State: cell.receipt.State, ByteOffset: cell.receipt.ByteOffset,
-					Ordinal: 0, Action: rootParserCoreAction(cell.actions.At(0)),
+					HeaderIndex: cell.headerIndex, State: StateID(cell.boundary.State()), ByteOffset: cell.boundary.ByteOffset(),
+					Ordinal: 0, Action: rootParserCoreAction(cell.actions().At(0)),
 				}
 			}
 			round := DiagnosticParserCoreDispatchRound{
@@ -2339,7 +2412,9 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 	if err := s.compact.BeginFrontier(); err != nil {
 		return err
 	}
-	s.compact.SetPhaseCheckpoint(after.SHA256)
+	if err := s.compact.SetPhaseCheckpoint(after.SHA256); err != nil {
+		return err
+	}
 	for index := range s.headers {
 		s.headers[index].shifted = false
 		s.headers[index].paused = false
@@ -2485,9 +2560,22 @@ func applyParserCorePrefixAction(compact *core.Core, head core.Head, token Token
 	}
 }
 
-func applyParserCoreConflictAction(compact *core.Core, head core.Head, token Token, action core.Action, ordinal int, fork core.ForkOrder) ([]diagnosticParserCoreActionOutput, error) {
+func applyParserCoreConflictAction(compact *core.Core, classified core.ClassifiedBoundary, token Token, action core.Action, ordinal int, fork core.ForkOrder) ([]diagnosticParserCoreActionOutput, error) {
 	if action.Type != core.ActionReduce {
-		heads, err := applyParserCorePrefixAction(compact, head, token, action, ordinal, fork)
+		var heads []core.Head
+		var err error
+		switch action.Type {
+		case core.ActionShift:
+			var head core.Head
+			head, err = compact.ShiftClassified(classified, ordinal, core.Token{Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte, Extra: action.Extra, External: token.ExternalScannerToken}, fork)
+			heads = []core.Head{head}
+		case core.ActionRecover:
+			err = &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreRecovery, detail: "unexpected recover action in generic conflict"}
+		case core.ActionAccept:
+			err = &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreAccept, detail: "unexpected accept action in generic conflict"}
+		default:
+			err = errors.New("parser-core phase zero: unknown conflict action")
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -2497,7 +2585,7 @@ func applyParserCoreConflictAction(compact *core.Core, head core.Head, token Tok
 		}
 		return outputs, nil
 	}
-	outputs, err := compact.ReduceOutputs(head, core.Symbol(token.Symbol), ordinal, fork)
+	outputs, err := compact.ReduceOutputsClassifiedInto(nil, classified, ordinal, fork)
 	if err != nil {
 		return nil, err
 	}

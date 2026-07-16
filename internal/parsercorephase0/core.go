@@ -57,6 +57,33 @@ type ActionRow struct {
 	actions []Action
 }
 
+// ClassifiedBoundary is one authenticated action-table classification for a
+// compact head in the current scheduler phase. Its owner and monotonically
+// advancing phase prevent a cached classification from being replayed against
+// another core or after Reset/BeginFrontier has invalidated its arena/frontier
+// identity. The action row remains immutable.
+type ClassifiedBoundary struct {
+	owner      *Core
+	actions    ActionRow
+	phase      uint64
+	head       Head
+	state      StateID
+	byteOffset uint32
+	lookahead  Symbol
+}
+
+// Head returns the compact head authenticated by this classification.
+func (b ClassifiedBoundary) Head() Head { return b.head }
+
+// State returns the LR state authenticated by this classification.
+func (b ClassifiedBoundary) State() StateID { return b.state }
+
+// ByteOffset returns the source byte boundary authenticated by this classification.
+func (b ClassifiedBoundary) ByteOffset() uint32 { return b.byteOffset }
+
+// Actions returns the immutable decoded action row for this classification.
+func (b ClassifiedBoundary) Actions() ActionRow { return b.actions }
+
 // NewActionRow snapshots actions into an immutable row.
 func NewActionRow(actions []Action) ActionRow {
 	if len(actions) == 0 {
@@ -78,6 +105,41 @@ type FieldMapEntry struct {
 	FieldID    FieldID
 	ChildIndex uint8
 	Inherited  bool
+}
+
+// ReductionPlan is immutable production metadata authenticated for one exact
+// (production ID, structural child count) pair. It intentionally is not stored
+// on Action: adapters may share one plan across many decoded action cells.
+type ReductionPlan struct {
+	fields       []FieldMapEntry
+	aliases      []Symbol
+	productionID uint16
+	childCount   uint8
+}
+
+// NewReductionPlan snapshots one exact production/child-count pair.
+func NewReductionPlan(productionID uint16, childCount int, fields []FieldMapEntry, aliases []Symbol) (ReductionPlan, error) {
+	if childCount < 0 || childCount > math.MaxUint8 {
+		return ReductionPlan{}, errors.New("parser-core phase zero: reduction plan child count exceeds uint8")
+	}
+	for _, field := range fields {
+		if int(field.ChildIndex) >= childCount {
+			return ReductionPlan{}, fmt.Errorf("parser-core phase zero: reduction plan field child index %d exceeds structural child count %d", field.ChildIndex, childCount)
+		}
+	}
+	if len(aliases) > childCount {
+		return ReductionPlan{}, fmt.Errorf("parser-core phase zero: reduction plan alias count %d exceeds structural child count %d", len(aliases), childCount)
+	}
+	return ReductionPlan{
+		fields: append([]FieldMapEntry(nil), fields...), aliases: append([]Symbol(nil), aliases...),
+		productionID: productionID, childCount: uint8(childCount),
+	}, nil
+}
+
+// ReductionPlanProvider optionally supplies pair-indexed immutable plans.
+// TableView remains source-compatible for small diagnostic adapters.
+type ReductionPlanProvider interface {
+	ReductionPlan(uint16, int) (ReductionPlan, error)
 }
 
 // TableView is the dependency-neutral parser-table boundary. The adapter owns
@@ -338,25 +400,27 @@ type Work struct {
 // Core is the compact, persistent diagnostic graph. All records are indexes
 // into pointer-free slices; the production parser is unaffected.
 type Core struct {
-	tables           TableView
-	limits           Limits
-	diagnostics      diagnosticOptions
-	nodes            []nodeRecord
-	links            []linkRecord
-	subtrees         []subtreeRecord
-	children         []SubtreeID
-	fields           []FieldMapEntry
-	aliases          []Symbol
-	frontier         uint64
-	checkpoint       [32]byte
-	boundaries       map[boundaryKey]NodeID
-	boundaryKeys     []boundaryKey
-	boundaryJournal  []boundaryMutation
-	transactions     []uint64
-	nextTransaction  uint64
-	work             Work
-	popScratch       popEnumerationScratch
-	reductionScratch reductionOutputScratch
+	tables              TableView
+	plans               ReductionPlanProvider
+	limits              Limits
+	diagnostics         diagnosticOptions
+	nodes               []nodeRecord
+	links               []linkRecord
+	subtrees            []subtreeRecord
+	children            []SubtreeID
+	fields              []FieldMapEntry
+	aliases             []Symbol
+	frontier            uint64
+	checkpoint          [32]byte
+	boundaries          map[boundaryKey]NodeID
+	boundaryKeys        []boundaryKey
+	boundaryJournal     []boundaryMutation
+	transactions        []uint64
+	nextTransaction     uint64
+	classificationPhase uint64
+	work                Work
+	popScratch          popEnumerationScratch
+	reductionScratch    reductionOutputScratch
 }
 
 type diagnosticOptions struct {
@@ -392,6 +456,14 @@ func (c *Core) mark() checkpoint {
 
 func (c *Core) restore(mark checkpoint) {
 	c.assertTopTransaction(mark)
+	// A classification may have escaped from any nested operation that
+	// published arena records after this mark. Rollback makes those NodeIDs
+	// reusable, so invalidate every outstanding capability before truncating
+	// storage. Successful commits deliberately keep the phase stable.
+	if c.classificationPhase == math.MaxUint64 {
+		panic("parser-core phase zero: classification phase overflow during rollback")
+	}
+	c.classificationPhase++
 	c.nodes = c.nodes[:mark.nodes]
 	c.links = c.links[:mark.links]
 	c.subtrees = c.subtrees[:mark.subtrees]
@@ -466,10 +538,13 @@ func New(tables TableView, limits Limits) (*Core, error) {
 		return nil, errors.New("parser-core phase zero: nil table view")
 	}
 	limits = limits.withDefaults()
-	return &Core{
+	core := &Core{
 		tables: tables, limits: limits, frontier: 1, boundaries: make(map[boundaryKey]NodeID),
-		diagnostics: diagnosticOptions{foldSamePredecessorShallowPayloads: true},
-	}, nil
+		classificationPhase: 1,
+		diagnostics:         diagnosticOptions{foldSamePredecessorShallowPayloads: true},
+	}
+	core.plans, _ = tables.(ReductionPlanProvider)
+	return core, nil
 }
 
 // Reset returns the compact core to the same empty frontier created by New
@@ -486,6 +561,10 @@ func (c *Core) Reset() error {
 	if len(c.transactions) != 0 {
 		return errors.New("parser-core phase zero: reset during active transaction")
 	}
+	if c.classificationPhase == math.MaxUint64 {
+		return errors.New("parser-core phase zero: classification phase overflow")
+	}
+	c.classificationPhase++
 	c.nodes = c.nodes[:0]
 	c.links = c.links[:0]
 	c.subtrees = c.subtrees[:0]
@@ -515,18 +594,33 @@ func (c *Core) BeginFrontier() error {
 	if c.frontier == math.MaxUint64 {
 		return errors.New("parser-core phase zero: frontier epoch overflow")
 	}
+	if c.classificationPhase == math.MaxUint64 {
+		return errors.New("parser-core phase zero: classification phase overflow")
+	}
 	for _, key := range c.boundaryKeys {
 		delete(c.boundaries, key)
 	}
 	c.boundaryKeys = c.boundaryKeys[:0]
 	c.frontier++
+	c.classificationPhase++
 	c.checkpoint = [32]byte{}
 	return nil
 }
 
 // SetPhaseCheckpoint binds subsequent condensation to the exact scanner
-// checkpoint for the current lookahead epoch. It does not advance the epoch.
-func (c *Core) SetPhaseCheckpoint(checkpoint [32]byte) { c.checkpoint = checkpoint }
+// checkpoint for the current lookahead epoch. A changed checkpoint advances
+// classified-boundary authentication without advancing the frontier epoch.
+func (c *Core) SetPhaseCheckpoint(checkpoint [32]byte) error {
+	if checkpoint == c.checkpoint {
+		return nil
+	}
+	if c.classificationPhase == math.MaxUint64 {
+		return errors.New("parser-core phase zero: classification phase overflow")
+	}
+	c.classificationPhase++
+	c.checkpoint = checkpoint
+	return nil
+}
 
 func (c *Core) boundaryKey(state StateID, byteOffset uint32) boundaryKey {
 	return boundaryKey{frontier: c.frontier, state: state, byteOffset: byteOffset, checkpoint: c.checkpoint}
@@ -604,33 +698,77 @@ func (c *Core) Actions(state StateID, lookahead Symbol) (ActionRow, error) {
 	return c.tables.Actions(state, lookahead)
 }
 
+// ClassifyBoundary resolves one compact head and its immutable action row once
+// for the current scheduler phase. Classified execution methods validate this
+// capability before consuming it, avoiding a second table lookup per action.
+func (c *Core) ClassifyBoundary(head Head, lookahead Symbol) (ClassifiedBoundary, error) {
+	node, err := c.node(head.Node)
+	if err != nil {
+		return ClassifiedBoundary{}, err
+	}
+	actions, err := c.tables.Actions(node.state, lookahead)
+	if err != nil {
+		return ClassifiedBoundary{}, err
+	}
+	return ClassifiedBoundary{
+		owner: c, actions: actions, phase: c.classificationPhase,
+		head: head, state: node.state, byteOffset: node.byteOffset, lookahead: lookahead,
+	}, nil
+}
+
+func (c *Core) validateClassification(boundary ClassifiedBoundary) error {
+	if boundary.owner != c {
+		return errors.New("parser-core phase zero: classified boundary belongs to another core")
+	}
+	if boundary.phase == 0 || boundary.phase != c.classificationPhase {
+		return errors.New("parser-core phase zero: classified boundary is stale")
+	}
+	return nil
+}
+
+func (c *Core) classifiedAction(boundary ClassifiedBoundary, ordinal int) (Action, error) {
+	if err := c.validateClassification(boundary); err != nil {
+		return Action{}, err
+	}
+	if ordinal < 0 || ordinal >= boundary.actions.Len() {
+		return Action{}, fmt.Errorf("parser-core phase zero: action ordinal %d out of range", ordinal)
+	}
+	return boundary.actions.At(ordinal), nil
+}
+
 // Shift applies one authentic decoded shift action and condenses the resulting
 // exact path at its (state, byte) boundary.
-func (c *Core) Shift(head Head, lookahead Symbol, actionOrdinal int, token Token, fork ForkOrder) (out Head, err error) {
+func (c *Core) Shift(head Head, lookahead Symbol, actionOrdinal int, token Token, fork ForkOrder) (Head, error) {
+	boundary, err := c.ClassifyBoundary(head, lookahead)
+	if err != nil {
+		return Head{}, err
+	}
+	return c.ShiftClassified(boundary, actionOrdinal, token, fork)
+}
+
+// ShiftClassified applies one shift using a current owner-authenticated
+// classification, avoiding a duplicate action-table lookup.
+func (c *Core) ShiftClassified(boundary ClassifiedBoundary, actionOrdinal int, token Token, fork ForkOrder) (out Head, err error) {
 	mark := c.mark()
 	defer c.completeTransaction(mark, &err)
-	act, err := c.action(head, lookahead, actionOrdinal)
+	act, err := c.classifiedAction(boundary, actionOrdinal)
 	if err != nil {
 		return Head{}, err
 	}
 	if act.Type != ActionShift {
 		return Head{}, fmt.Errorf("parser-core phase zero: action %d is %v, not shift", actionOrdinal, act.Type)
 	}
-	if token.Symbol != lookahead {
-		return Head{}, fmt.Errorf("parser-core phase zero: token symbol %d != lookahead %d", token.Symbol, lookahead)
+	if token.Symbol != boundary.lookahead {
+		return Head{}, fmt.Errorf("parser-core phase zero: token symbol %d != lookahead %d", token.Symbol, boundary.lookahead)
 	}
 	if token.Extra != act.Extra {
 		return Head{}, fmt.Errorf("parser-core phase zero: token extra=%t disagrees with decoded action extra=%t", token.Extra, act.Extra)
-	}
-	current, err := c.node(head.Node)
-	if err != nil {
-		return Head{}, err
 	}
 	targetState := act.State
 	if act.Extra && targetState == 0 {
 		// Match production extraShiftTargetState: an extra shift with target
 		// zero leaves the LR state unchanged.
-		targetState = current.state
+		targetState = boundary.state
 	}
 	payload, err := c.appendSubtree(subtreeRecord{
 		symbol: token.Symbol, startByte: token.StartByte, endByte: token.EndByte,
@@ -640,7 +778,7 @@ func (c *Core) Shift(head Head, lookahead Symbol, actionOrdinal int, token Token
 		return Head{}, err
 	}
 	out, err = c.condense(c.shiftedBoundaryKey(targetState, token.EndByte), linkInput{
-		prev: head.Node, payload: payload, order: fork,
+		prev: boundary.head.Node, payload: payload, order: fork,
 	})
 	if err != nil {
 		return Head{}, err
@@ -660,26 +798,48 @@ func (c *Core) ShiftOrdinaryCohort(inputs []OrdinaryCohortShiftInput, lookahead 
 	if len(inputs) == 0 {
 		return nil, errors.New("parser-core phase zero: empty ordinary shift cohort")
 	}
-	if token.Symbol != lookahead {
-		return nil, fmt.Errorf("parser-core phase zero: token symbol %d != lookahead %d", token.Symbol, lookahead)
+	boundaries := make([]ClassifiedBoundary, len(inputs))
+	for index, input := range inputs {
+		if input.ActionOrdinal != 0 {
+			return nil, fmt.Errorf("parser-core phase zero: head %d does not select one ordinary shift", input.Head.Node)
+		}
+		boundary, err := c.ClassifyBoundary(input.Head, lookahead)
+		if err != nil {
+			return nil, err
+		}
+		boundaries[index] = boundary
+	}
+	return c.ShiftOrdinaryClassifiedCohort(boundaries, token)
+}
+
+// ShiftOrdinaryClassifiedCohort is the classified scheduler form of
+// ShiftOrdinaryCohort. Every boundary must select one ordinary shift.
+func (c *Core) ShiftOrdinaryClassifiedCohort(boundaries []ClassifiedBoundary, token Token) (out []Head, err error) {
+	if len(boundaries) == 0 {
+		return nil, errors.New("parser-core phase zero: empty ordinary classified shift cohort")
 	}
 	if token.Extra || token.EndByte <= token.StartByte {
 		return nil, errors.New("parser-core phase zero: cohort token is not an ordinary positive-width terminal")
 	}
-	targets := make([]StateID, len(inputs))
-	seen := make(map[NodeID]struct{}, len(inputs))
-	for index, input := range inputs {
-		if _, duplicate := seen[input.Head.Node]; duplicate {
-			return nil, fmt.Errorf("parser-core phase zero: duplicate ordinary cohort head %d", input.Head.Node)
+	targets := make([]StateID, len(boundaries))
+	seen := make(map[NodeID]struct{}, len(boundaries))
+	for index, boundary := range boundaries {
+		if token.Symbol != boundary.lookahead {
+			return nil, fmt.Errorf("parser-core phase zero: token symbol %d != lookahead %d", token.Symbol, boundary.lookahead)
 		}
-		seen[input.Head.Node] = struct{}{}
-		target, err := c.ordinaryCohortShiftTarget(input, lookahead)
+		if _, duplicate := seen[boundary.head.Node]; duplicate {
+			return nil, fmt.Errorf("parser-core phase zero: duplicate ordinary cohort head %d", boundary.head.Node)
+		}
+		seen[boundary.head.Node] = struct{}{}
+		action, err := c.classifiedAction(boundary, 0)
 		if err != nil {
 			return nil, err
 		}
-		targets[index] = target
+		if boundary.actions.Len() != 1 || action.State == 0 || action != (Action{Type: ActionShift, State: action.State}) {
+			return nil, fmt.Errorf("parser-core phase zero: head %d does not select one ordinary shift", boundary.head.Node)
+		}
+		targets[index] = action.State
 	}
-
 	err = c.ApplyAtomic(func() error {
 		payload, err := c.appendSubtree(subtreeRecord{
 			symbol: token.Symbol, startByte: token.StartByte, endByte: token.EndByte,
@@ -688,41 +848,19 @@ func (c *Core) ShiftOrdinaryCohort(inputs []OrdinaryCohortShiftInput, lookahead 
 		if err != nil {
 			return err
 		}
-		out = make([]Head, len(inputs))
-		for index, input := range inputs {
+		out = make([]Head, len(boundaries))
+		for index, boundary := range boundaries {
 			out[index], err = c.condense(c.shiftedBoundaryKey(targets[index], token.EndByte), linkInput{
-				prev: input.Head.Node, payload: payload,
+				prev: boundary.head.Node, payload: payload,
 			})
 			if err != nil {
 				return err
 			}
 		}
-		c.addWork(&c.work.Shifts, uint64(len(inputs)))
+		c.addWork(&c.work.Shifts, uint64(len(boundaries)))
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *Core) ordinaryCohortShiftTarget(input OrdinaryCohortShiftInput, lookahead Symbol) (StateID, error) {
-	current, err := c.node(input.Head.Node)
-	if err != nil {
-		return 0, err
-	}
-	actions, err := c.Actions(current.state, lookahead)
-	if err != nil {
-		return 0, err
-	}
-	if actions.Len() != 1 || input.ActionOrdinal != 0 {
-		return 0, fmt.Errorf("parser-core phase zero: head %d does not select one ordinary shift", input.Head.Node)
-	}
-	action := actions.At(0)
-	if action.State == 0 || action != (Action{Type: ActionShift, State: action.State}) {
-		return 0, fmt.Errorf("parser-core phase zero: head %d does not select one ordinary shift", input.Head.Node)
-	}
-	return action.State, nil
+	return out, err
 }
 
 // ShiftExtraCohort applies one positive-width extra terminal election to
@@ -734,26 +872,51 @@ func (c *Core) ShiftExtraCohort(inputs []ExtraCohortShiftInput, lookahead Symbol
 	if len(inputs) == 0 {
 		return nil, errors.New("parser-core phase zero: empty extra shift cohort")
 	}
-	if token.Symbol != lookahead {
-		return nil, fmt.Errorf("parser-core phase zero: token symbol %d != lookahead %d", token.Symbol, lookahead)
+	boundaries := make([]ClassifiedBoundary, len(inputs))
+	for index, input := range inputs {
+		if input.ActionOrdinal != 0 {
+			return nil, fmt.Errorf("parser-core phase zero: head %d does not select one extra shift", input.Head.Node)
+		}
+		boundary, err := c.ClassifyBoundary(input.Head, lookahead)
+		if err != nil {
+			return nil, err
+		}
+		boundaries[index] = boundary
+	}
+	return c.ShiftExtraClassifiedCohort(boundaries, token)
+}
+
+// ShiftExtraClassifiedCohort is the classified scheduler form of
+// ShiftExtraCohort. Every boundary must select one extra shift.
+func (c *Core) ShiftExtraClassifiedCohort(boundaries []ClassifiedBoundary, token Token) (out []Head, err error) {
+	if len(boundaries) == 0 {
+		return nil, errors.New("parser-core phase zero: empty extra classified shift cohort")
 	}
 	if !token.Extra || token.EndByte <= token.StartByte {
 		return nil, errors.New("parser-core phase zero: cohort token is not a positive-width extra terminal")
 	}
-	targets := make([]StateID, len(inputs))
-	seen := make(map[NodeID]struct{}, len(inputs))
-	for index, input := range inputs {
-		if _, duplicate := seen[input.Head.Node]; duplicate {
-			return nil, fmt.Errorf("parser-core phase zero: duplicate extra cohort head %d", input.Head.Node)
+	targets := make([]StateID, len(boundaries))
+	seen := make(map[NodeID]struct{}, len(boundaries))
+	for index, boundary := range boundaries {
+		if token.Symbol != boundary.lookahead {
+			return nil, fmt.Errorf("parser-core phase zero: token symbol %d != lookahead %d", token.Symbol, boundary.lookahead)
 		}
-		seen[input.Head.Node] = struct{}{}
-		target, err := c.extraCohortShiftTarget(input, lookahead)
+		if _, duplicate := seen[boundary.head.Node]; duplicate {
+			return nil, fmt.Errorf("parser-core phase zero: duplicate extra cohort head %d", boundary.head.Node)
+		}
+		seen[boundary.head.Node] = struct{}{}
+		action, err := c.classifiedAction(boundary, 0)
 		if err != nil {
 			return nil, err
 		}
-		targets[index] = target
+		if boundary.actions.Len() != 1 || action != (Action{Type: ActionShift, State: action.State, Extra: true}) {
+			return nil, fmt.Errorf("parser-core phase zero: head %d does not select one extra shift", boundary.head.Node)
+		}
+		targets[index] = action.State
+		if targets[index] == 0 {
+			targets[index] = boundary.state
+		}
 	}
-
 	err = c.ApplyAtomic(func() error {
 		payload, err := c.appendSubtree(subtreeRecord{
 			symbol: token.Symbol, startByte: token.StartByte, endByte: token.EndByte,
@@ -762,44 +925,19 @@ func (c *Core) ShiftExtraCohort(inputs []ExtraCohortShiftInput, lookahead Symbol
 		if err != nil {
 			return err
 		}
-		out = make([]Head, len(inputs))
-		for index, input := range inputs {
+		out = make([]Head, len(boundaries))
+		for index, boundary := range boundaries {
 			out[index], err = c.condense(c.shiftedBoundaryKey(targets[index], token.EndByte), linkInput{
-				prev: input.Head.Node, payload: payload,
+				prev: boundary.head.Node, payload: payload,
 			})
 			if err != nil {
 				return err
 			}
 		}
-		c.addWork(&c.work.Shifts, uint64(len(inputs)))
+		c.addWork(&c.work.Shifts, uint64(len(boundaries)))
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *Core) extraCohortShiftTarget(input ExtraCohortShiftInput, lookahead Symbol) (StateID, error) {
-	current, err := c.node(input.Head.Node)
-	if err != nil {
-		return 0, err
-	}
-	actions, err := c.Actions(current.state, lookahead)
-	if err != nil {
-		return 0, err
-	}
-	if actions.Len() != 1 || input.ActionOrdinal != 0 {
-		return 0, fmt.Errorf("parser-core phase zero: head %d does not select one extra shift", input.Head.Node)
-	}
-	action := actions.At(0)
-	if action != (Action{Type: ActionShift, State: action.State, Extra: true}) {
-		return 0, fmt.Errorf("parser-core phase zero: head %d does not select one extra shift", input.Head.Node)
-	}
-	if action.State == 0 {
-		return current.state, nil
-	}
-	return action.State, nil
+	return out, err
 }
 
 // appendDiagnosticPayload adds an already-authenticated terminal payload. It
@@ -854,21 +992,30 @@ type reductionBoundaryOutput struct {
 // without hashing. Unusual wider reductions spill to an indexed map while the
 // slice remains the authoritative stable output order.
 type reductionOutputScratch struct {
-	boundaries    []reductionBoundaryOutput
-	boundaryByKey map[boundaryKey]int
-	batchParents  []SubtreeID
-	spilled       bool
+	boundaries          []reductionBoundaryOutput
+	boundaryByKey       map[boundaryKey]int
+	batchParents        []SubtreeID
+	structuralPositions []uint16
+	remappedFields      []FieldMapEntry
+	remappedAliases     []Symbol
+	spilled             bool
 }
 
 func (s *reductionOutputScratch) begin() {
 	s.boundaries = s.boundaries[:0]
 	s.batchParents = s.batchParents[:0]
+	s.structuralPositions = s.structuralPositions[:0]
+	s.remappedFields = s.remappedFields[:0]
+	s.remappedAliases = s.remappedAliases[:0]
 	s.spilled = false
 }
 
 func (s *reductionOutputScratch) finish() {
 	s.boundaries = s.boundaries[:0]
 	s.batchParents = s.batchParents[:0]
+	s.structuralPositions = s.structuralPositions[:0]
+	s.remappedFields = s.remappedFields[:0]
+	s.remappedAliases = s.remappedAliases[:0]
 	if len(s.boundaryByKey) != 0 {
 		clear(s.boundaryByKey)
 	}
@@ -948,6 +1095,16 @@ func (c *Core) ReduceOutputs(head Head, lookahead Symbol, actionOrdinal int, for
 // boundary order as ReduceOutputs. Core-owned aggregation scratch is ephemeral
 // and is always cleared on success, error, or panic; dst remains caller-owned.
 func (c *Core) ReduceOutputsInto(dst []ReductionOutput, head Head, lookahead Symbol, actionOrdinal int, fork ForkOrder) (frontier []ReductionOutput, err error) {
+	boundary, err := c.ClassifyBoundary(head, lookahead)
+	if err != nil {
+		return nil, err
+	}
+	return c.ReduceOutputsClassifiedInto(dst, boundary, actionOrdinal, fork)
+}
+
+// ReduceOutputsClassifiedInto applies one reduction using a current
+// owner-authenticated classification and caller-owned destination storage.
+func (c *Core) ReduceOutputsClassifiedInto(dst []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) (frontier []ReductionOutput, err error) {
 	frontier = dst[:0]
 	mark := c.mark()
 	defer c.completeTransaction(mark, &err)
@@ -958,17 +1115,18 @@ func (c *Core) ReduceOutputsInto(dst []ReductionOutput, head Head, lookahead Sym
 	defer c.popScratch.resetLogical()
 	c.reductionScratch.begin()
 	defer c.reductionScratch.finish()
-	act, err := c.action(head, lookahead, actionOrdinal)
+	act, err := c.classifiedAction(boundary, actionOrdinal)
 	if err != nil {
 		return nil, err
 	}
 	if act.Type != ActionReduce {
 		return nil, fmt.Errorf("parser-core phase zero: action %d is %v, not reduce", actionOrdinal, act.Type)
 	}
-	if _, err := c.node(head.Node); err != nil {
+	plan, err := c.reductionPlan(act)
+	if err != nil {
 		return nil, err
 	}
-	paths, err := c.popPaths(head.Node, int(act.ChildCount))
+	paths, err := c.popPaths(boundary.head.Node, int(act.ChildCount))
 	if err != nil {
 		return nil, err
 	}
@@ -995,7 +1153,7 @@ func (c *Core) ReduceOutputsInto(dst []ReductionOutput, head Head, lookahead Sym
 			return nil, fmt.Errorf("parser-core phase zero: no goto from state %d for reduced symbol %d", prev.state, act.Symbol)
 		}
 		key := c.boundaryKey(gotoState, path.structuralEnd)
-		payload, scoreDelta, order, err := c.reductionParentForPath(act, path, key, fork, &scratch.batchParents)
+		payload, scoreDelta, order, err := c.reductionParentForPath(act, &plan, path, key, fork, scratch)
 		if err != nil {
 			return nil, err
 		}
@@ -1059,20 +1217,13 @@ func (c *Core) ReduceOutputsInto(dst []ReductionOutput, head Head, lookahead Sym
 
 func (c *Core) reductionParentForPath(
 	act Action,
+	plan *ReductionPlan,
 	path popPath,
 	key boundaryKey,
 	fork ForkOrder,
-	batchParents *[]SubtreeID,
+	scratch *reductionOutputScratch,
 ) (SubtreeID, int64, ForkOrder, error) {
-	fields, err := c.tables.ProductionFields(act.ProductionID, int(act.ChildCount))
-	if err != nil {
-		return 0, 0, ForkOrder{}, err
-	}
-	aliases, err := c.tables.ProductionAliases(act.ProductionID, int(act.ChildCount))
-	if err != nil {
-		return 0, 0, ForkOrder{}, err
-	}
-	fields, aliases, err = c.remapProductionMetadata(path.children, int(act.ChildCount), fields, aliases)
+	fields, aliases, err := c.remapReductionPlan(path.children, plan, scratch)
 	if err != nil {
 		return 0, 0, ForkOrder{}, err
 	}
@@ -1092,7 +1243,7 @@ func (c *Core) reductionParentForPath(
 	var payload SubtreeID
 	var found bool
 	if len(path.trailing) == 0 {
-		payload, found, err = c.findReductionBatchParent(*batchParents, parent, path.children, fields, aliases)
+		payload, found, err = c.findReductionBatchParent(scratch.batchParents, parent, path.children, fields, aliases)
 		if err != nil {
 			return 0, 0, ForkOrder{}, err
 		}
@@ -1112,10 +1263,87 @@ func (c *Core) reductionParentForPath(
 			return 0, 0, ForkOrder{}, err
 		}
 		if len(path.trailing) == 0 {
-			*batchParents = append(*batchParents, payload)
+			scratch.batchParents = append(scratch.batchParents, payload)
 		}
 	}
 	return payload, scoreDelta, order, nil
+}
+
+func (c *Core) reductionPlan(act Action) (ReductionPlan, error) {
+	return c.reductionPlanForPair(act.ProductionID, int(act.ChildCount))
+}
+
+func (c *Core) reductionPlanForPair(productionID uint16, childCount int) (ReductionPlan, error) {
+	if c.plans != nil {
+		plan, err := c.plans.ReductionPlan(productionID, childCount)
+		if err != nil {
+			return ReductionPlan{}, err
+		}
+		if plan.productionID != productionID || int(plan.childCount) != childCount {
+			return ReductionPlan{}, errors.New("parser-core phase zero: reduction plan pair identity mismatch")
+		}
+		return plan, nil
+	}
+	fields, err := c.tables.ProductionFields(productionID, childCount)
+	if err != nil {
+		return ReductionPlan{}, err
+	}
+	aliases, err := c.tables.ProductionAliases(productionID, childCount)
+	if err != nil {
+		return ReductionPlan{}, err
+	}
+	return NewReductionPlan(productionID, childCount, fields, aliases)
+}
+
+func (c *Core) remapReductionPlan(children []SubtreeID, plan *ReductionPlan, scratch *reductionOutputScratch) ([]FieldMapEntry, []Symbol, error) {
+	if plan == nil {
+		return nil, nil, errors.New("parser-core phase zero: nil reduction plan")
+	}
+	structuralCount := int(plan.childCount)
+	positions := scratch.structuralPositions[:0]
+	for index, child := range children {
+		payload, err := c.subtree(child)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !payload.extra {
+			if index > math.MaxUint16 {
+				return nil, nil, errors.New("parser-core phase zero: structural child position exceeds uint16")
+			}
+			positions = append(positions, uint16(index))
+		}
+	}
+	scratch.structuralPositions = positions
+	if len(positions) != structuralCount {
+		return nil, nil, fmt.Errorf("parser-core phase zero: reduction stored %d structural children, want %d", len(positions), structuralCount)
+	}
+	if cap(scratch.remappedFields) < len(plan.fields) {
+		scratch.remappedFields = make([]FieldMapEntry, len(plan.fields))
+	}
+	fields := scratch.remappedFields[:len(plan.fields)]
+	for index, field := range plan.fields {
+		actual := positions[field.ChildIndex]
+		if actual > math.MaxUint8 {
+			return nil, nil, errors.New("parser-core phase zero: remapped field child index exceeds uint8")
+		}
+		field.ChildIndex = uint8(actual)
+		fields[index] = field
+	}
+	scratch.remappedFields = fields
+	if len(plan.aliases) == 0 {
+		scratch.remappedAliases = scratch.remappedAliases[:0]
+		return fields, nil, nil
+	}
+	if cap(scratch.remappedAliases) < len(children) {
+		scratch.remappedAliases = make([]Symbol, len(children))
+	}
+	aliases := scratch.remappedAliases[:len(children)]
+	clear(aliases)
+	for index, alias := range plan.aliases {
+		aliases[positions[index]] = alias
+	}
+	scratch.remappedAliases = aliases
+	return fields, aliases, nil
 }
 
 func (c *Core) condenseInputExists(key boundaryKey, in linkInput) (bool, error) {
@@ -1187,45 +1415,6 @@ func reductionParentIdentityEqual(
 	right.firstField, right.fieldCount = 0, uint32(len(rightFields))
 	right.firstAlias, right.aliasCount = 0, uint32(len(rightAliases))
 	return left == right && slices.Equal(leftChildren, rightChildren) && slices.Equal(leftFields, rightFields) && slices.Equal(leftAliases, rightAliases)
-}
-
-func (c *Core) remapProductionMetadata(children []SubtreeID, structuralCount int, fields []FieldMapEntry, aliases []Symbol) ([]FieldMapEntry, []Symbol, error) {
-	structuralPositions := make([]int, 0, structuralCount)
-	for index, child := range children {
-		payload, err := c.subtree(child)
-		if err != nil {
-			return nil, nil, err
-		}
-		if !payload.extra {
-			structuralPositions = append(structuralPositions, index)
-		}
-	}
-	if len(structuralPositions) != structuralCount {
-		return nil, nil, fmt.Errorf("parser-core phase zero: reduction stored %d structural children, want %d", len(structuralPositions), structuralCount)
-	}
-	remappedFields := make([]FieldMapEntry, len(fields))
-	for index, field := range fields {
-		if int(field.ChildIndex) >= len(structuralPositions) {
-			return nil, nil, fmt.Errorf("parser-core phase zero: field child index %d exceeds structural child count %d", field.ChildIndex, structuralCount)
-		}
-		actual := structuralPositions[field.ChildIndex]
-		if actual > math.MaxUint8 {
-			return nil, nil, errors.New("parser-core phase zero: remapped field child index exceeds uint8")
-		}
-		field.ChildIndex = uint8(actual)
-		remappedFields[index] = field
-	}
-	if len(aliases) == 0 {
-		return remappedFields, nil, nil
-	}
-	if len(aliases) > structuralCount {
-		return nil, nil, fmt.Errorf("parser-core phase zero: alias count %d exceeds structural child count %d", len(aliases), structuralCount)
-	}
-	remappedAliases := make([]Symbol, len(children))
-	for index, alias := range aliases {
-		remappedAliases[structuralPositions[index]] = alias
-	}
-	return remappedFields, remappedAliases, nil
 }
 
 // appendPrivate adds one exact single-link node without publishing an
@@ -2258,15 +2447,11 @@ func (c *Core) validateMaterializationMetadata(id SubtreeID, record subtreeRecor
 			structuralCount++
 		}
 	}
-	fields, err := c.tables.ProductionFields(record.productionID, structuralCount)
+	plan, err := c.reductionPlanForPair(record.productionID, structuralCount)
 	if err != nil {
 		return err
 	}
-	aliases, err := c.tables.ProductionAliases(record.productionID, structuralCount)
-	if err != nil {
-		return err
-	}
-	fields, aliases, err = c.remapProductionMetadata(children, structuralCount, fields, aliases)
+	fields, aliases, err := c.remapReductionPlan(children, &plan, &c.reductionScratch)
 	if err != nil {
 		return err
 	}

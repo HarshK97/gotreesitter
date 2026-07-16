@@ -99,9 +99,8 @@ func TestDiagnosticParserCoreGenericConflictArbitraryNOrdering(t *testing.T) {
 		},
 		receipt: &DiagnosticParserCoreGenericScheduler{},
 	}
-	if err := scheduler.applyGenericConflict(before, diagnosticParserCoreGenericCell{
-		headerIndex: 2, receipt: before[2], actions: core.NewActionRow(actions),
-	}); err != nil {
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 2, headers[2], 9)
+	if err := scheduler.applyGenericConflict(before, cell); err != nil {
 		t.Fatal(err)
 	}
 	receipts, err := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
@@ -234,9 +233,8 @@ func TestDiagnosticParserCoreGenericConflictMultiOutputSequencing(t *testing.T) 
 				branchOrder: test.branchOrder, nextSeq: test.nextSeq,
 				options: DiagnosticParserCorePrefixOptions{MaxDispatches: 100}, receipt: receipt,
 			}
-			err := scheduler.applyGenericConflict(before, diagnosticParserCoreGenericCell{
-				headerIndex: 1, receipt: before[1], actions: core.NewActionRow(actions),
-			})
+			cell := mustDiagnosticParserCoreGenericCell(t, compact, 1, headers[1], 10)
+			err := scheduler.applyGenericConflict(before, cell)
 			if err == nil {
 				t.Fatal("overflowing conflict unexpectedly succeeded")
 			}
@@ -257,9 +255,8 @@ func TestDiagnosticParserCoreGenericConflictMultiOutputSequencing(t *testing.T) 
 		branchOrder: 7, nextSeq: 10, options: DiagnosticParserCorePrefixOptions{MaxDispatches: 100},
 		receipt: &DiagnosticParserCoreGenericScheduler{},
 	}
-	if err := scheduler.applyGenericConflict(before, diagnosticParserCoreGenericCell{
-		headerIndex: 1, receipt: before[1], actions: core.NewActionRow(actions),
-	}); err != nil {
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 1, headers[1], 10)
+	if err := scheduler.applyGenericConflict(before, cell); err != nil {
 		t.Fatal(err)
 	}
 	receipts, err := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
@@ -380,10 +377,9 @@ func TestDiagnosticParserCoreGenericConflictArenaCapsRollback(t *testing.T) {
 				token: Token{Symbol: 9, StartByte: 0, EndByte: 1}, branchOrder: 7, nextSeq: 10,
 				options: DiagnosticParserCorePrefixOptions{MaxDispatches: 100}, receipt: &DiagnosticParserCoreGenericScheduler{},
 			}
+			cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, header, 9)
 			if err := compact.ApplyAtomic(func() error {
-				return scheduler.applyGenericConflict([]DiagnosticParserCoreHeaderReceipt{receipt}, diagnosticParserCoreGenericCell{
-					headerIndex: 0, receipt: receipt, actions: core.NewActionRow(actions),
-				})
+				return scheduler.applyGenericConflict([]DiagnosticParserCoreHeaderReceipt{receipt}, cell)
 			}); err == nil {
 				t.Fatal("capped conflict unexpectedly succeeded")
 			}

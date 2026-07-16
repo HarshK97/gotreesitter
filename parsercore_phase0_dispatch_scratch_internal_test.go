@@ -70,7 +70,7 @@ func assertDiagnosticParserCoreDispatchScratchClean(t *testing.T, scheduler *dia
 		t.Fatalf("dispatch scratch retained logical state: %+v", scratch)
 	}
 	for index, cell := range scratch.cells[:cap(scratch.cells)] {
-		if cell.actions.Len() != 0 {
+		if cell.actions().Len() != 0 {
 			t.Fatalf("dispatch scratch cell %d retained an action row", index)
 		}
 	}
@@ -195,21 +195,20 @@ func TestDiagnosticParserCoreDispatchScratchCleansAfterConflictRollback(t *testi
 }
 
 func TestDiagnosticParserCoreDispatchScratchSteadyStateDoesNotAllocate(t *testing.T) {
-	row := core.NewActionRow([]core.Action{{Type: core.ActionShift, State: 2}})
 	scratch := diagnosticParserCoreDispatchScratch{
 		cells: make([]diagnosticParserCoreGenericCell, 0, 2), noActionIndices: make([]int, 0, 2),
 	}
 	var runErr error
 	if allocs := testing.AllocsPerRun(1000, func() {
 		runErr = scratch.begin()
-		scratch.cells = append(scratch.cells, diagnosticParserCoreGenericCell{headerIndex: 1, actions: row})
+		scratch.cells = append(scratch.cells, diagnosticParserCoreGenericCell{headerIndex: 1})
 		scratch.noActionIndices = append(scratch.noActionIndices, 0)
 		scratch.finish()
 	}); allocs != 0 || runErr != nil {
 		t.Fatalf("steady dispatch scratch allocs=%v err=%v", allocs, runErr)
 	}
 	for index, cell := range scratch.cells[:cap(scratch.cells)] {
-		if cell.actions.Len() != 0 {
+		if cell.actions().Len() != 0 {
 			t.Fatalf("finished cell %d retained an action row", index)
 		}
 	}

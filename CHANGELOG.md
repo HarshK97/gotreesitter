@@ -119,6 +119,13 @@ authenticated static-C, fleet, and forest measurements are stricter.
 
 ### Tooling
 
+- Compact parser-core diagnostics now classify each authenticated boundary once
+  per scheduler phase and reuse immutable reduction metadata keyed by exact
+  production/child-count pairs with retained remap scratch. On the quiet host,
+  the real-Go scheduler improved 3.4% in time, 13.4% in allocated bytes, and
+  42.5% in allocations; total compact parse improved 5.8%, 13.7%, and 40.8%
+  respectively, with unchanged exact trees, parser work, and selected-node
+  census.
 - Compact parser-core diagnostics now persist exact outer-edge convergence
   through one bounded predecessor layer, applying C-compatible shallow link
   folding before local capacity checks. All four locked real-Go fixtures now

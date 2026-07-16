@@ -61,7 +61,9 @@ func newRecursiveInsertFixtureWithCheckpoint(t *testing.T, checkpoint [32]byte) 
 		t.Fatal(err)
 	}
 	top := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 30, startByte: 10, endByte: 11})
-	core.SetPhaseCheckpoint(checkpoint)
+	if err := core.SetPhaseCheckpoint(checkpoint); err != nil {
+		t.Fatal(err)
+	}
 	oldTop, err := core.condense(core.boundaryKey(8, 11), linkInput{prev: leftID, payload: top})
 	if err != nil {
 		t.Fatal(err)

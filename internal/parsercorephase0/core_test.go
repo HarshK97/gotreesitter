@@ -435,12 +435,16 @@ func TestScannerCheckpointPreventsSameBoundaryCondensation(t *testing.T) {
 	payload, _ := core.appendSubtree(subtreeRecord{symbol: 1, terminal: true, endByte: 1}, nil, nil, nil)
 	firstCheckpoint := [32]byte{1}
 	secondCheckpoint := [32]byte{2}
-	core.SetPhaseCheckpoint(firstCheckpoint)
+	if err := core.SetPhaseCheckpoint(firstCheckpoint); err != nil {
+		t.Fatal(err)
+	}
 	first, err := core.condense(core.boundaryKey(2, 1), linkInput{prev: seed.Node, payload: payload})
 	if err != nil {
 		t.Fatal(err)
 	}
-	core.SetPhaseCheckpoint(secondCheckpoint)
+	if err := core.SetPhaseCheckpoint(secondCheckpoint); err != nil {
+		t.Fatal(err)
+	}
 	second, err := core.condense(core.boundaryKey(2, 1), linkInput{prev: seed.Node, payload: payload})
 	if err != nil {
 		t.Fatal(err)
@@ -588,7 +592,9 @@ func TestMutationJournalRestoresScalarsAndArenas(t *testing.T) {
 	beforeKeys := append([]boundaryKey(nil), compact.boundaryKeys...)
 	beforeFrontier, beforeCheckpoint := compact.frontier, compact.checkpoint
 	wantCheckpoint := [32]byte{1, 2, 3}
-	compact.SetPhaseCheckpoint(wantCheckpoint)
+	if err := compact.SetPhaseCheckpoint(wantCheckpoint); err != nil {
+		t.Fatal(err)
+	}
 	beforeCheckpoint = compact.checkpoint
 	sentinel := errors.New("rollback")
 	err = compact.ApplyAtomic(func() error {
@@ -2168,6 +2174,9 @@ func TestReductionReturnsEveryDistinctGotoBoundary(t *testing.T) {
 }
 
 func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
+	if got := unsafe.Sizeof(ClassifiedBoundary{}); got > 56 {
+		t.Fatalf("ClassifiedBoundary size = %d, want <= 56", got)
+	}
 	for name, typ := range map[string]reflect.Type{
 		"node":    reflect.TypeFor[nodeRecord](),
 		"link":    reflect.TypeFor[linkRecord](),
@@ -2189,6 +2198,211 @@ func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
 	if got := unsafe.Sizeof(subtreeRecord{}); got > 64 {
 		t.Fatalf("subtreeRecord size = %d, want <= 64", got)
 	}
+}
+
+func TestClassifiedBoundaryAuthenticatesOwnerAndMonotonicPhase(t *testing.T) {
+	tables := &fakeTable{actions: map[tableCell][]Action{
+		{state: 1, symbol: 9}: {{Type: ActionShift, State: 2}},
+	}}
+	compact, err := New(tables, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	classified, err := compact.ClassifyBoundary(head, 9)
+	if err != nil || classified.Head() != head || classified.State() != 1 || classified.ByteOffset() != 0 || classified.Actions().Len() != 1 {
+		t.Fatalf("classification=%+v err=%v", classified, err)
+	}
+	other, err := New(tables, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.ShiftClassified(classified, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); err == nil {
+		t.Fatal("foreign core accepted classified boundary")
+	}
+	if err := compact.SetPhaseCheckpoint([32]byte{1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := compact.ShiftClassified(classified, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); err == nil {
+		t.Fatal("new scanner checkpoint accepted stale classified boundary")
+	}
+	classified, err = compact.ClassifyBoundary(head, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compact.BeginFrontier(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := compact.ShiftClassified(classified, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); err == nil {
+		t.Fatal("new frontier accepted stale classified boundary")
+	}
+	classified, err = compact.ClassifyBoundary(head, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compact.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := compact.ShiftClassified(classified, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); err == nil {
+		t.Fatal("reset core accepted stale classified boundary")
+	}
+}
+
+func TestClassifiedBoundaryRollbackInvalidatesReusedNodeIDs(t *testing.T) {
+	tables := &fakeTable{
+		actions: map[tableCell][]Action{
+			{state: 1, symbol: 9}: {{Type: ActionShift, State: 2}},
+			{state: 2, symbol: 9}: {
+				{Type: ActionShift, State: 4},
+				{Type: ActionReduce, Symbol: 7, ChildCount: 0},
+			},
+			{state: 3, symbol: 9}: {{Type: ActionShift, State: 5}},
+		},
+		gotos: map[tableCell]StateID{{state: 2, symbol: 7}: 6},
+	}
+	sentinel := errors.New("rollback")
+
+	t.Run("escaped capability rejects reused node", func(t *testing.T) {
+		compact, err := New(tables, Limits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var escaped ClassifiedBoundary
+		var rolledBackNode NodeID
+		err = compact.ApplyAtomic(func() error {
+			head, err := compact.Seed(2, 0)
+			if err != nil {
+				return err
+			}
+			rolledBackNode = head.Node
+			escaped, err = compact.ClassifyBoundary(head, 9)
+			if err != nil {
+				return err
+			}
+			return sentinel
+		})
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("failed transaction err=%v, want sentinel", err)
+		}
+		reused, err := compact.Seed(3, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reused.Node != rolledBackNode {
+			t.Fatalf("rollback NodeID=%d reused=%d, adversarial reuse was not established", rolledBackNode, reused.Node)
+		}
+		if _, err := compact.ShiftClassified(escaped, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); err == nil {
+			t.Fatal("stale classified shift accepted a reused NodeID")
+		}
+		if _, err := compact.ReduceOutputsClassifiedInto(nil, escaped, 1, ForkOrder{}); err == nil {
+			t.Fatal("stale classified reduction accepted a reused NodeID")
+		}
+		fresh, err := compact.ClassifyBoundary(reused, 9)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shifted, err := compact.ShiftClassified(fresh, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		state, _, err := compact.Boundary(shifted)
+		if err != nil || state != 5 {
+			t.Fatalf("fresh post-rollback shift state=%d err=%v, want 5", state, err)
+		}
+	})
+
+	t.Run("nested rollback invalidates preexisting capability", func(t *testing.T) {
+		compact, err := New(tables, Limits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stable, err := compact.Seed(1, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before, err := compact.ClassifyBoundary(stable, 9)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var innerEscaped ClassifiedBoundary
+		err = compact.ApplyAtomic(func() error {
+			innerErr := compact.ApplyAtomic(func() error {
+				head, err := compact.Seed(2, 0)
+				if err != nil {
+					return err
+				}
+				innerEscaped, err = compact.ClassifyBoundary(head, 9)
+				if err != nil {
+					return err
+				}
+				return sentinel
+			})
+			if !errors.Is(innerErr, sentinel) {
+				return fmt.Errorf("inner rollback err=%v, want sentinel", innerErr)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := compact.ShiftClassified(before, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); err == nil {
+			t.Fatal("capability predating nested rollback remained valid")
+		}
+		if _, err := compact.ShiftClassified(innerEscaped, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); err == nil {
+			t.Fatal("capability escaping nested rollback remained valid")
+		}
+		fresh, err := compact.ClassifyBoundary(stable, 9)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := compact.ShiftClassified(fresh, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); err != nil {
+			t.Fatalf("fresh classification after nested rollback failed: %v", err)
+		}
+	})
+
+	t.Run("successful transaction preserves capability", func(t *testing.T) {
+		compact, err := New(tables, Limits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		stable, err := compact.Seed(1, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		classified, err := compact.ClassifyBoundary(stable, 9)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := compact.ApplyAtomic(func() error {
+			_, err := compact.Seed(3, 0)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := compact.ShiftClassified(classified, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); err != nil {
+			t.Fatalf("successful transaction invalidated classification: %v", err)
+		}
+	})
+
+	t.Run("rollback phase overflow fails closed", func(t *testing.T) {
+		compact, err := New(tables, Limits{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		compact.classificationPhase = math.MaxUint64
+		defer func() {
+			if recovered := recover(); recovered == nil {
+				t.Fatal("rollback classification phase overflow did not panic")
+			}
+			if compact.classificationPhase != math.MaxUint64 {
+				t.Fatalf("rollback classification phase wrapped to %d", compact.classificationPhase)
+			}
+		}()
+		_ = compact.ApplyAtomic(func() error { return sentinel })
+	})
 }
 
 func TestCycleAndOverflowDeclineFailClosed(t *testing.T) {

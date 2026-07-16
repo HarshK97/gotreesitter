@@ -39,7 +39,9 @@ func TestResetRetainsConfigurationAndArenaCapacity(t *testing.T) {
 	if err := compact.BeginFrontier(); err != nil {
 		t.Fatal(err)
 	}
-	compact.SetPhaseCheckpoint([32]byte{1, 2, 3})
+	if err := compact.SetPhaseCheckpoint([32]byte{1, 2, 3}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := compact.Seed(4, 2); err != nil {
 		t.Fatal(err)
 	}
