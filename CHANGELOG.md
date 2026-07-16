@@ -119,6 +119,11 @@ authenticated static-C, fleet, and forest measurements are stricter.
 
 ### Tooling
 
+- Compact parser-core diagnostics now persist exact outer-edge convergence
+  through one bounded predecessor layer, applying C-compatible shallow link
+  folding before local capacity checks. All four locked real-Go fixtures now
+  reach exact EOF and deep-tree parity under the eight-link bound; external,
+  recovery, ancestry, and deeper recursive cases remain fail closed.
 - Compact parser-core diagnostics now retain dispatch classification scratch
   while rejecting nested dispatch and clearing borrowed action rows on every
   exit. The authenticated real-Go scheduler benchmark remained statistically
