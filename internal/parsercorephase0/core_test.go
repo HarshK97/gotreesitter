@@ -1436,6 +1436,14 @@ func TestReduceOutputsAggregatesFreshnessPerFinalBoundary(t *testing.T) {
 		if err != nil || len(paths) != 1 || paths[0].Score != 10 {
 			t.Fatalf("selected final canonical paths=%+v err=%v", paths, err)
 		}
+		stable := outputs[0]
+		again, err := compact.ReduceOutputs(head, 9, 0, ForkOrder{})
+		if err != nil || len(again) != 1 || again[0].Freshness != ReductionUnchanged {
+			t.Fatalf("repeat outputs=%+v err=%v", again, err)
+		}
+		if outputs[0] != stable {
+			t.Fatalf("later reduction mutated stable compatibility output: got=%+v want=%+v", outputs[0], stable)
+		}
 	})
 
 	t.Run("mixed-unchanged-and-new", func(t *testing.T) {
@@ -1469,14 +1477,91 @@ func TestReduceOutputsAggregatesFreshnessPerFinalBoundary(t *testing.T) {
 		if _, err := compact.condense(compact.boundaryKey(4, 1), linkInput{prev: firstSeed.Node, payload: incumbentParent, scoreDelta: 7}); err != nil {
 			t.Fatal(err)
 		}
-		outputs, err := compact.ReduceOutputs(head, 9, 0, ForkOrder{})
+		dst := make([]ReductionOutput, 0, 2)
+		backing := &dst[:1][0]
+		outputs, err := compact.ReduceOutputsInto(dst, head, 9, 0, ForkOrder{})
 		if err != nil || len(outputs) != 2 {
 			t.Fatalf("mixed outputs=%+v err=%v", outputs, err)
+		}
+		if &outputs[0] != backing {
+			t.Fatal("caller-owned reduction destination was not reused")
 		}
 		state0, _, _ := compact.Boundary(outputs[0].Head)
 		state1, _, _ := compact.Boundary(outputs[1].Head)
 		if state0 != 4 || outputs[0].Freshness != ReductionUnchanged || state1 != 5 || outputs[1].Freshness != ReductionNew {
 			t.Fatalf("mixed output order/freshness=%+v states=(%d,%d)", outputs, state0, state1)
+		}
+	})
+
+	t.Run("spill-aggregates-a-b-c-c-with-canonical-head", func(t *testing.T) {
+		tables := &fakeTable{
+			actions: map[tableCell][]Action{{state: 3, symbol: 9}: {{Type: ActionReduce, Symbol: 2, ChildCount: 1}}},
+			gotos: map[tableCell]StateID{
+				{state: 1, symbol: 2}: 4,
+				{state: 2, symbol: 2}: 5,
+				{state: 6, symbol: 2}: 7,
+				{state: 8, symbol: 2}: 7,
+			},
+		}
+		compact, err := New(tables, Limits{MaxDerivations: 8, MaxPopPaths: 8})
+		if err != nil {
+			t.Fatal(err)
+		}
+		states := []StateID{1, 2, 6, 8}
+		seeds := make([]Head, len(states))
+		children := make([]SubtreeID, len(states))
+		var head Head
+		for index, state := range states {
+			seeds[index], err = compact.Seed(state, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			children[index], err = compact.appendSubtree(subtreeRecord{symbol: Symbol(10 + index), endByte: 1, terminal: true}, nil, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			head, err = compact.condense(compact.boundaryKey(3, 1), linkInput{
+				prev: seeds[index].Node, payload: children[index], scoreDelta: int64(index),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		// The first C path already exists. Its repeat is unchanged, while the
+		// second C path adds a distinct predecessor to the same canonical head.
+		incumbentC, err := compact.appendSubtree(subtreeRecord{symbol: 2, endByte: 1}, []SubtreeID{children[2]}, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := compact.condense(compact.boundaryKey(7, 1), linkInput{
+			prev: seeds[2].Node, payload: incumbentC, scoreDelta: 2,
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		outputs, err := compact.ReduceOutputsInto(make([]ReductionOutput, 0, 3), head, 9, 0, ForkOrder{})
+		if err != nil || len(outputs) != 3 {
+			t.Fatalf("A/B/C/C outputs=%+v err=%v", outputs, err)
+		}
+		wantStates := []StateID{4, 5, 7}
+		wantFreshness := []ReductionFreshness{ReductionNew, ReductionNew, ReductionUpdated}
+		for index := range outputs {
+			state, _, err := compact.Boundary(outputs[index].Head)
+			if err != nil || state != wantStates[index] || outputs[index].Freshness != wantFreshness[index] {
+				t.Fatalf("A/B/C/C output %d=%+v state=%d err=%v, want state=%d freshness=%d", index, outputs[index], state, err, wantStates[index], wantFreshness[index])
+			}
+		}
+		canonicalC, ok := compact.CanonicalBoundary(7, 1, false, [32]byte{})
+		if !ok || outputs[2].Head != canonicalC {
+			t.Fatalf("C output head=%+v canonical=%+v ok=%t", outputs[2].Head, canonicalC, ok)
+		}
+		paths, err := compact.Derivations(outputs[2].Head)
+		if err != nil || len(paths) != 2 {
+			t.Fatalf("C canonical derivations=%+v err=%v, want two", paths, err)
+		}
+		if compact.reductionScratch.spilled || len(compact.reductionScratch.boundaries) != 0 || len(compact.reductionScratch.boundaryByKey) != 0 || len(compact.reductionScratch.batchParents) != 0 {
+			t.Fatalf("successful spill retained logical scratch: %+v", compact.reductionScratch)
 		}
 	})
 
@@ -1520,6 +1605,32 @@ func TestReduceOutputsAggregatesFreshnessPerFinalBoundary(t *testing.T) {
 			t.Fatalf("updated aggregate final paths=%+v err=%v", paths, err)
 		}
 	})
+}
+
+func TestReductionOutputScratchSpilledAbsentKeyUsesAppendIndex(t *testing.T) {
+	var scratch reductionOutputScratch
+	keys := []boundaryKey{
+		{frontier: 1, state: 1},
+		{frontier: 1, state: 2},
+		{frontier: 1, state: 3},
+		{frontier: 1, state: 4},
+	}
+	for index, key := range keys {
+		got, seen := scratch.boundary(key)
+		if seen || got != index {
+			t.Fatalf("absent key %d index=%d seen=%t, want index=%d unseen", index, got, seen, index)
+		}
+		scratch.store(got, seen, reductionBoundaryOutput{key: key, head: Head{Node: NodeID(index + 1)}})
+	}
+	if !scratch.spilled || len(scratch.boundaries) != len(keys) {
+		t.Fatalf("spill state=%+v, want four ordered boundaries", scratch)
+	}
+	for index, key := range keys {
+		got, seen := scratch.boundary(key)
+		if !seen || got != index || scratch.boundaries[got].head.Node != NodeID(index+1) {
+			t.Fatalf("stored key %d index=%d seen=%t output=%+v", index, got, seen, scratch.boundaries[got])
+		}
+	}
 }
 
 func TestReductionParentIdentityIncludesScalarsFlagsAndOrderedSides(t *testing.T) {

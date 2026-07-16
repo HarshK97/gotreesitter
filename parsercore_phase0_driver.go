@@ -942,6 +942,8 @@ type diagnosticParserCoreGenericScheduler struct {
 	summaryHeaderScratch       []DiagnosticParserCoreHeaderReceipt
 	canonicalScratch           diagnosticParserCoreCanonicalScratch
 	dispatchScratch            diagnosticParserCoreDispatchScratch
+	reductionOutputs           []core.ReductionOutput
+	reductionReplacements      []diagnosticParserCoreHeader
 	work                       DiagnosticParserCoreGenericWork
 	epochProgress              bool
 	acceptedHead               core.Head
@@ -1658,11 +1660,13 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionAtomic(befor
 	if err := s.reserveDispatches(1); err != nil {
 		return err
 	}
-	outputs, err := s.compact.ReduceOutputs(s.headers[cell.headerIndex].head, core.Symbol(s.token.Symbol), 0, core.ForkOrder{})
+	outputs, err := s.compact.ReduceOutputsInto(s.reductionOutputs, s.headers[cell.headerIndex].head, core.Symbol(s.token.Symbol), 0, core.ForkOrder{})
 	if err != nil {
 		return err
 	}
-	replacements := make([]diagnosticParserCoreHeader, 0, len(outputs))
+	s.reductionOutputs = outputs
+	s.reductionReplacements = s.reductionReplacements[:0]
+	replacements := s.reductionReplacements
 	madeFreshProgress := false
 	for _, output := range outputs {
 		switch output.Freshness {
@@ -1694,12 +1698,15 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionAtomic(befor
 		}
 		replacements = append(replacements, replacement)
 	}
+	s.reductionReplacements = replacements
 	if len(replacements) == 0 {
 		// The canonical outputs already exist and have been processed in this
 		// election. Keep this version paused until a sibling makes real progress;
 		// the ordinary no-action drop then removes it under the same safety rule.
 		s.headers[cell.headerIndex].paused = true
 		s.work.ReductionPauses++
+	} else if len(replacements) == 1 {
+		s.headers[cell.headerIndex] = replacements[0]
 	} else {
 		s.headers = replaceDiagnosticParserCoreHeader(s.headers, cell.headerIndex, replacements)
 	}

@@ -327,23 +327,24 @@ type Work struct {
 // Core is the compact, persistent diagnostic graph. All records are indexes
 // into pointer-free slices; the production parser is unaffected.
 type Core struct {
-	tables          TableView
-	limits          Limits
-	diagnostics     diagnosticOptions
-	nodes           []nodeRecord
-	links           []linkRecord
-	subtrees        []subtreeRecord
-	children        []SubtreeID
-	fields          []FieldMapEntry
-	aliases         []Symbol
-	frontier        uint64
-	checkpoint      [32]byte
-	boundaries      map[boundaryKey]NodeID
-	boundaryJournal []boundaryMutation
-	transactions    []uint64
-	nextTransaction uint64
-	work            Work
-	popScratch      popEnumerationScratch
+	tables           TableView
+	limits           Limits
+	diagnostics      diagnosticOptions
+	nodes            []nodeRecord
+	links            []linkRecord
+	subtrees         []subtreeRecord
+	children         []SubtreeID
+	fields           []FieldMapEntry
+	aliases          []Symbol
+	frontier         uint64
+	checkpoint       [32]byte
+	boundaries       map[boundaryKey]NodeID
+	boundaryJournal  []boundaryMutation
+	transactions     []uint64
+	nextTransaction  uint64
+	work             Work
+	popScratch       popEnumerationScratch
+	reductionScratch reductionOutputScratch
 }
 
 type diagnosticOptions struct {
@@ -481,6 +482,7 @@ func (c *Core) Reset() error {
 	c.nextTransaction = 0
 	c.work = Work{}
 	c.popScratch.resetLogical()
+	c.reductionScratch.finish()
 	return nil
 }
 
@@ -798,6 +800,84 @@ type ReductionOutput struct {
 	Freshness ReductionFreshness
 }
 
+const inlineReductionBoundaryOutputs = 2
+
+type reductionBoundaryOutput struct {
+	key       boundaryKey
+	head      Head
+	freshness ReductionFreshness
+}
+
+// reductionOutputScratch owns the ephemeral aggregation state for one
+// reduction. Canonical query_compile reductions produce one output 95% of the
+// time and never more than two, so the ordered inline slice handles that path
+// without hashing. Unusual wider reductions spill to an indexed map while the
+// slice remains the authoritative stable output order.
+type reductionOutputScratch struct {
+	boundaries    []reductionBoundaryOutput
+	boundaryByKey map[boundaryKey]int
+	batchParents  []SubtreeID
+	spilled       bool
+}
+
+func (s *reductionOutputScratch) begin() {
+	s.boundaries = s.boundaries[:0]
+	s.batchParents = s.batchParents[:0]
+	s.spilled = false
+}
+
+func (s *reductionOutputScratch) finish() {
+	s.boundaries = s.boundaries[:0]
+	s.batchParents = s.batchParents[:0]
+	if len(s.boundaryByKey) != 0 {
+		clear(s.boundaryByKey)
+	}
+	s.spilled = false
+}
+
+func (s *reductionOutputScratch) boundary(key boundaryKey) (int, bool) {
+	if s.spilled {
+		index, ok := s.boundaryByKey[key]
+		if !ok {
+			return len(s.boundaries), false
+		}
+		return index, ok
+	}
+	for index := range s.boundaries {
+		if s.boundaries[index].key == key {
+			return index, true
+		}
+	}
+	if len(s.boundaries) < inlineReductionBoundaryOutputs {
+		return len(s.boundaries), false
+	}
+	if s.boundaryByKey == nil {
+		s.boundaryByKey = make(map[boundaryKey]int, inlineReductionBoundaryOutputs*2)
+	} else {
+		clear(s.boundaryByKey)
+	}
+	for index := range s.boundaries {
+		s.boundaryByKey[s.boundaries[index].key] = index
+	}
+	s.spilled = true
+	index, ok := s.boundaryByKey[key]
+	if !ok {
+		return len(s.boundaries), false
+	}
+	return index, ok
+}
+
+func (s *reductionOutputScratch) store(index int, seen bool, output reductionBoundaryOutput) {
+	if seen {
+		s.boundaries[index] = output
+		return
+	}
+	s.boundaries = append(s.boundaries, output)
+	if s.spilled {
+		s.boundaryByKey[output.key] = index
+	}
+}
+
 // Reduce preserves the compatibility surface used by earlier phase-zero
 // diagnostics: it returns every canonical output, including unchanged ones.
 // Worklist schedulers must use ReduceOutputs and inspect Freshness explicitly.
@@ -818,6 +898,17 @@ func (c *Core) Reduce(head Head, lookahead Symbol, actionOrdinal int, fork ForkO
 // C-shallow clean links from the same exact predecessor; other derivations
 // remain distinct.
 func (c *Core) ReduceOutputs(head Head, lookahead Symbol, actionOrdinal int, fork ForkOrder) (frontier []ReductionOutput, err error) {
+	// A nil destination gives the compatibility caller its own stable result.
+	// Hot schedulers use ReduceOutputsInto with retained destination storage.
+	return c.ReduceOutputsInto(nil, head, lookahead, actionOrdinal, fork)
+}
+
+// ReduceOutputsInto is ReduceOutputs with caller-owned destination storage.
+// It resets dst's logical length and appends outputs in the same stable first-
+// boundary order as ReduceOutputs. Core-owned aggregation scratch is ephemeral
+// and is always cleared on success, error, or panic; dst remains caller-owned.
+func (c *Core) ReduceOutputsInto(dst []ReductionOutput, head Head, lookahead Symbol, actionOrdinal int, fork ForkOrder) (frontier []ReductionOutput, err error) {
+	frontier = dst[:0]
 	mark := c.mark()
 	defer c.completeTransaction(mark, &err)
 	if c.popScratch.busy {
@@ -825,6 +916,8 @@ func (c *Core) ReduceOutputs(head Head, lookahead Symbol, actionOrdinal int, for
 	}
 	c.popScratch.busy = true
 	defer c.popScratch.resetLogical()
+	c.reductionScratch.begin()
+	defer c.reductionScratch.finish()
 	act, err := c.action(head, lookahead, actionOrdinal)
 	if err != nil {
 		return nil, err
@@ -848,13 +941,7 @@ func (c *Core) ReduceOutputs(head Head, lookahead Symbol, actionOrdinal int, for
 	for _, path := range paths {
 		c.addWork(&c.work.EmittedPopPayloads, uint64(len(path.children)+len(path.trailing)))
 	}
-	type reductionBoundaryOutput struct {
-		head      Head
-		freshness ReductionFreshness
-	}
-	frontierByBoundary := make(map[boundaryKey]reductionBoundaryOutput)
-	var boundaryOrder []boundaryKey
-	var batchParents []SubtreeID
+	scratch := &c.reductionScratch
 	for _, path := range paths {
 		prev, err := c.node(path.prev)
 		if err != nil {
@@ -868,7 +955,7 @@ func (c *Core) ReduceOutputs(head Head, lookahead Symbol, actionOrdinal int, for
 			return nil, fmt.Errorf("parser-core phase zero: no goto from state %d for reduced symbol %d", prev.state, act.Symbol)
 		}
 		key := c.boundaryKey(gotoState, path.structuralEnd)
-		payload, scoreDelta, order, err := c.reductionParentForPath(act, path, key, fork, &batchParents)
+		payload, scoreDelta, order, err := c.reductionParentForPath(act, path, key, fork, &scratch.batchParents)
 		if err != nil {
 			return nil, err
 		}
@@ -904,9 +991,10 @@ func (c *Core) ReduceOutputs(head Head, lookahead Symbol, actionOrdinal int, for
 				return nil, err
 			}
 		}
-		previous, seen := frontierByBoundary[key]
-		if !seen {
-			boundaryOrder = append(boundaryOrder, key)
+		boundaryIndex, seen := scratch.boundary(key)
+		var previous reductionBoundaryOutput
+		if seen {
+			previous = scratch.boundaries[boundaryIndex]
 		}
 		freshness := previous.freshness
 		switch outcome.change {
@@ -921,11 +1009,9 @@ func (c *Core) ReduceOutputs(head Head, lookahead Symbol, actionOrdinal int, for
 				freshness = ReductionUpdated
 			}
 		}
-		frontierByBoundary[key] = reductionBoundaryOutput{head: out, freshness: freshness}
+		scratch.store(boundaryIndex, seen, reductionBoundaryOutput{key: key, head: out, freshness: freshness})
 	}
-	frontier = make([]ReductionOutput, 0, len(boundaryOrder))
-	for _, key := range boundaryOrder {
-		output := frontierByBoundary[key]
+	for _, output := range scratch.boundaries {
 		frontier = append(frontier, ReductionOutput{Head: output.head, Freshness: output.freshness})
 	}
 	return frontier, nil

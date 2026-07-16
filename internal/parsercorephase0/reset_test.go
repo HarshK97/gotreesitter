@@ -51,6 +51,7 @@ func TestResetRetainsConfigurationAndArenaCapacity(t *testing.T) {
 		cap(compact.nodes), cap(compact.links), cap(compact.subtrees),
 		cap(compact.children), cap(compact.fields), cap(compact.aliases),
 		cap(compact.boundaryJournal), cap(compact.transactions),
+		cap(compact.reductionScratch.boundaries), cap(compact.reductionScratch.batchParents),
 	}
 	if err := compact.Reset(); err != nil {
 		t.Fatal(err)
@@ -63,6 +64,7 @@ func TestResetRetainsConfigurationAndArenaCapacity(t *testing.T) {
 		cap(compact.nodes), cap(compact.links), cap(compact.subtrees),
 		cap(compact.children), cap(compact.fields), cap(compact.aliases),
 		cap(compact.boundaryJournal), cap(compact.transactions),
+		cap(compact.reductionScratch.boundaries), cap(compact.reductionScratch.batchParents),
 	}
 	if gotCaps != wantCaps {
 		t.Fatalf("reset changed retained capacities: got=%v want=%v", gotCaps, wantCaps)
@@ -72,6 +74,9 @@ func TestResetRetainsConfigurationAndArenaCapacity(t *testing.T) {
 	}
 	if compact.frontier != 1 || compact.checkpoint != ([32]byte{}) || compact.nextTransaction != 0 || compact.Work() != (Work{}) {
 		t.Fatalf("reset scalar drift: frontier=%d checkpoint=%x next_transaction=%d work=%+v", compact.frontier, compact.checkpoint, compact.nextTransaction, compact.Work())
+	}
+	if compact.reductionScratch.spilled || len(compact.reductionScratch.boundaries) != 0 || len(compact.reductionScratch.boundaryByKey) != 0 || len(compact.reductionScratch.batchParents) != 0 {
+		t.Fatalf("reset retained logical reduction scratch: %+v", compact.reductionScratch)
 	}
 	if _, _, err := compact.Boundary(seed); err == nil {
 		t.Fatal("pre-reset head remained valid")

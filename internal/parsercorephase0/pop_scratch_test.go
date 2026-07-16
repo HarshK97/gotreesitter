@@ -14,6 +14,32 @@ type reentrantGotoTable struct {
 	fired bool
 }
 
+type panicNthGotoTable struct {
+	base    *fakeTable
+	calls   int
+	panicAt int
+}
+
+func (p *panicNthGotoTable) Actions(state StateID, symbol Symbol) (ActionRow, error) {
+	return p.base.Actions(state, symbol)
+}
+
+func (p *panicNthGotoTable) Goto(state StateID, symbol Symbol) (StateID, error) {
+	p.calls++
+	if p.panicAt != 0 && p.calls == p.panicAt {
+		panic("reduction scratch panic")
+	}
+	return p.base.Goto(state, symbol)
+}
+
+func (p *panicNthGotoTable) ProductionFields(productionID uint16, childCount int) ([]FieldMapEntry, error) {
+	return p.base.ProductionFields(productionID, childCount)
+}
+
+func (p *panicNthGotoTable) ProductionAliases(productionID uint16, childCount int) ([]Symbol, error) {
+	return p.base.ProductionAliases(productionID, childCount)
+}
+
 func (r *reentrantGotoTable) Actions(state StateID, symbol Symbol) (ActionRow, error) {
 	return r.base.Actions(state, symbol)
 }
@@ -256,10 +282,71 @@ func TestPopScratchRejectsReentrantReductionAndRollsBackOuterCall(t *testing.T) 
 	if compact.popScratch.busy || len(compact.popScratch.visiting) != 0 || len(compact.popScratch.rev) != 0 || len(compact.popScratch.revScores) != 0 || len(compact.popScratch.revOrders) != 0 || len(compact.popScratch.trailing) != 0 || len(compact.popScratch.paths) != 0 {
 		t.Fatalf("reentrant rollback retained logical scratch: %+v", compact.popScratch)
 	}
+	if compact.reductionScratch.spilled || len(compact.reductionScratch.boundaries) != 0 || len(compact.reductionScratch.boundaryByKey) != 0 || len(compact.reductionScratch.batchParents) != 0 {
+		t.Fatalf("reentrant rollback retained logical reduction scratch: %+v", compact.reductionScratch)
+	}
 	assertTransactionJournalClean(t, compact)
 
 	outputs, err := compact.ReduceOutputs(head, 9, 0, ForkOrder{})
 	if err != nil || len(outputs) != 1 {
+		t.Fatalf("retry outputs=%+v err=%v", outputs, err)
+	}
+}
+
+func TestReductionScratchPanicRollsBackAndRetriesCleanly(t *testing.T) {
+	compact, head := newSharedReductionFixture(t, false)
+	base, ok := compact.tables.(*fakeTable)
+	if !ok {
+		t.Fatalf("fixture tables type=%T, want *fakeTable", compact.tables)
+	}
+	tables := &panicNthGotoTable{base: base, panicAt: 2}
+	compact.tables = tables
+
+	before, err := compact.Stats(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeBoundaries := cloneBoundaryMap(compact.boundaries)
+	beforeWork := compact.Work()
+	beforeArenas := [...]int{
+		len(compact.nodes), len(compact.links), len(compact.subtrees),
+		len(compact.children), len(compact.fields), len(compact.aliases),
+	}
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != "reduction scratch panic" {
+				t.Fatalf("recovered=%v, want reduction scratch panic", recovered)
+			}
+		}()
+		_, _ = compact.ReduceOutputsInto(make([]ReductionOutput, 0, 2), head, 9, 0, ForkOrder{})
+	}()
+	if tables.calls != 2 || cap(compact.reductionScratch.boundaries) == 0 {
+		t.Fatalf("panic timing calls=%d reduction_boundary_cap=%d, want second goto after scratch use", tables.calls, cap(compact.reductionScratch.boundaries))
+	}
+
+	after, err := compact.Stats(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterArenas := [...]int{
+		len(compact.nodes), len(compact.links), len(compact.subtrees),
+		len(compact.children), len(compact.fields), len(compact.aliases),
+	}
+	if after != before || afterArenas != beforeArenas || !reflect.DeepEqual(compact.boundaries, beforeBoundaries) || compact.Work() != beforeWork {
+		t.Fatalf("panic rollback drifted: stats=%+v/%+v arenas=%v/%v boundaries=%v/%v work=%+v/%+v", after, before, afterArenas, beforeArenas, compact.boundaries, beforeBoundaries, compact.Work(), beforeWork)
+	}
+	if compact.popScratch.busy || len(compact.popScratch.visiting) != 0 || len(compact.popScratch.rev) != 0 || len(compact.popScratch.revScores) != 0 || len(compact.popScratch.revOrders) != 0 || len(compact.popScratch.trailing) != 0 || len(compact.popScratch.paths) != 0 {
+		t.Fatalf("panic retained logical pop scratch: %+v", compact.popScratch)
+	}
+	if compact.reductionScratch.spilled || len(compact.reductionScratch.boundaries) != 0 || len(compact.reductionScratch.boundaryByKey) != 0 || len(compact.reductionScratch.batchParents) != 0 {
+		t.Fatalf("panic retained logical reduction scratch: %+v", compact.reductionScratch)
+	}
+	assertTransactionJournalClean(t, compact)
+
+	tables.calls = 0
+	tables.panicAt = 0
+	outputs, err := compact.ReduceOutputsInto(make([]ReductionOutput, 0, 2), head, 9, 0, ForkOrder{})
+	if err != nil || len(outputs) != 2 {
 		t.Fatalf("retry outputs=%+v err=%v", outputs, err)
 	}
 }
