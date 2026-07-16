@@ -83,7 +83,17 @@ index 7aac259e..49ffbcfa 100644
    ts_assert(ts_subtree_is_eof(lookahead));
    ts_stack_push(self->stack, version, lookahead, false, 1);
  
-@@ -1664,6 +1679,7 @@ static bool ts_parser__advance(
+@@ -1617,5 +1632,9 @@ static bool ts_parser__advance(
+     // version, whereas SHIFT actions update the existing stack version
+     // and terminate this loop.
++    gts_work_count_add(&gts_work_count_current.resolved_action_cells_examined, 1);
++    if (table_entry.action_count > 1) {
++      gts_work_count_add(&gts_work_count_current.raw_action_entries_beyond_first, table_entry.action_count - 1);
++    }
+     StackVersion last_reduction_version = STACK_VERSION_NONE;
+     for (uint32_t i = 0; i < table_entry.action_count; i++) {
+       TSParseAction action = table_entry.actions[i];
+@@ -1664,6 +1683,7 @@ static bool ts_parser__advance(
          }
  
          case TSParseActionTypeRecover: {
@@ -111,15 +121,16 @@ index f0d57108..3fd2a602 100644
  
      node->position = previous_node->position;
      node->error_cost = previous_node->error_cost;
-@@ -252,6 +254,7 @@ static void stack_node_add_link(
+@@ -252,6 +254,8 @@ static void stack_node_add_link(
    unsigned node_count = link.node->node_count;
    int dynamic_precedence = link.node->dynamic_precedence;
    self->links[self->link_count++] = link;
 +  gts_work_count_add(&gts_work_count_current.graph_link_additions_proxy, 1);
++  gts_work_count_add(&gts_work_count_current.alternate_predecessor_links_appended, 1);
  
    if (link.subtree.ptr) {
      ts_subtree_retain(link.subtree);
-@@ -296,6 +299,7 @@ static StackVersion ts_stack__add_version(
+@@ -296,6 +300,7 @@ static StackVersion ts_stack__add_version(
      .lookahead_when_paused = NULL_SUBTREE,
    };
    array_push(&self->heads, head);
@@ -127,7 +138,7 @@ index f0d57108..3fd2a602 100644
    stack_node_retain(node);
    if (head.last_external_token.ptr) ts_subtree_retain(head.last_external_token);
    return (StackVersion)(self->heads.size - 1);
-@@ -521,7 +525,16 @@ forceinline StackAction pop_count_callback(void *payload, const StackIterator *i
+@@ -521,7 +526,16 @@ forceinline StackAction pop_count_callback(void *payload, const StackIterator *i
  }
  
  StackSliceArray ts_stack_pop_count(Stack *self, StackVersion version, uint32_t count) {
@@ -145,7 +156,7 @@ index f0d57108..3fd2a602 100644
  }
  
  forceinline StackAction pop_pending_callback(void *payload, const StackIterator *iterator) {
-@@ -685,6 +698,7 @@ void ts_stack_swap_versions(Stack *self, StackVersion v1, StackVersion v2) {
+@@ -685,6 +699,7 @@ void ts_stack_swap_versions(Stack *self, StackVersion v1, StackVersion v2) {
  StackVersion ts_stack_copy_version(Stack *self, StackVersion version) {
    ts_assert(version < self->heads.size);
    array_push(&self->heads, self->heads.contents[version]);
@@ -153,7 +164,7 @@ index f0d57108..3fd2a602 100644
    StackHead *head = array_back(&self->heads);
    stack_node_retain(head->node);
    if (head->last_external_token.ptr) ts_subtree_retain(head->last_external_token);
-@@ -693,6 +707,7 @@ StackVersion ts_stack_copy_version(Stack *self, StackVersion version) {
+@@ -693,6 +708,7 @@ StackVersion ts_stack_copy_version(Stack *self, StackVersion version) {
  }
  
  bool ts_stack_merge(Stack *self, StackVersion version1, StackVersion version2) {
@@ -161,7 +172,7 @@ index f0d57108..3fd2a602 100644
    if (!ts_stack_can_merge(self, version1, version2)) return false;
    StackHead *head1 = &self->heads.contents[version1];
    StackHead *head2 = &self->heads.contents[version2];
-@@ -703,6 +718,7 @@ bool ts_stack_merge(Stack *self, StackVersion version1, StackVersion version2) {
+@@ -703,6 +719,7 @@ bool ts_stack_merge(Stack *self, StackVersion version1, StackVersion version2) {
      head1->node_count_at_last_error = head1->node->node_count;
    }
    ts_stack_remove_version(self, version2);
@@ -169,7 +180,7 @@ index f0d57108..3fd2a602 100644
    return true;
  }
  
-@@ -762,6 +778,7 @@ void ts_stack_clear(Stack *self) {
+@@ -762,6 +779,7 @@ void ts_stack_clear(Stack *self) {
      .last_external_token = NULL_SUBTREE,
      .lookahead_when_paused = NULL_SUBTREE,
    }));
@@ -210,7 +221,7 @@ new file mode 100644
 index 00000000..963fac8a
 --- /dev/null
 +++ b/lib/src/work_count.h
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,52 @@
 +#ifndef TREE_SITTER_WORK_COUNT_H_
 +#define TREE_SITTER_WORK_COUNT_H_
 +
@@ -242,6 +253,9 @@ index 00000000..963fac8a
 +  uint64_t parent_constructions_proxy;
 +  uint64_t pending_parent_constructions_proxy;
 +  uint64_t no_tree_parent_constructions_proxy;
++  uint64_t resolved_action_cells_examined;
++  uint64_t raw_action_entries_beyond_first;
++  uint64_t alternate_predecessor_links_appended;
 +} GTSWorkCount;
 +
 +extern _Thread_local GTSWorkCount gts_work_count_current;

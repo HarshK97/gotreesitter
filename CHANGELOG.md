@@ -7,6 +7,27 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Incremental parses that accept a full-span ERROR tree under a wider merge
+  policy may retry once with the corresponding fresh-parse policy and adopt
+  only a strictly better result. Runtime and profile diagnostics report the
+  retry attempt, selection, cap, cause, and whether old-tree reuse was active.
+- Token-invariant single-leaf edits stay outside accepted-error retry routing,
+  avoiding a whole-tree error scan on the one-token validation path.
+
+### Tooling
+
+- Add the four-fixture authenticated Go/static-C work-count board with direct
+  counters at their exact hook boundaries, Go-only representation rows marked
+  incomparable, and missing mandatory instrumentation reported separately from
+  out-of-band work-ratio audit findings.
+- Add a versioned, locked incremental admission matrix that separates identity,
+  leaf-validation, real-code GLR, recovery, and stateful-scanner behavior using
+  runtime evidence. It rejects full-parse fallback, authenticates both edit
+  directions against fresh Go and C trees, and atomically publishes a
+  machine-readable closure receipt only after every row passes.
+
 ## [0.38.0] - 2026-07-16
 
 Incremental-correctness, full-parse-efficiency, and benchmark-hardening release.

@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
+	"testing"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
@@ -13,11 +16,11 @@ import (
 )
 
 const (
-	workCountFixtureID           = "query_compile"
+	workCountFixtureIDEnv        = "GTS_WORK_COUNT_FIXTURE"
 	workCountSourcePathEnv       = "GTS_WORK_COUNT_SOURCE"
 	workCountResultPathEnv       = "GTS_WORK_COUNT_RESULT"
 	workCountGoChildSchema       = "gts-work-count-go-child/v3"
-	workCountTaggedGoChildSchema = "gts-work-count-go-child/v4"
+	workCountTaggedGoChildSchema = "gts-work-count-go-child/v5"
 	workCountAdmissionEngine     = "go-production-glr-untagged"
 	workCountTaggedEngine        = "go-production-glr-tagged-diagnostic"
 )
@@ -47,6 +50,10 @@ type workCountChildInput struct {
 }
 
 func loadWorkCountChildInput() (workCountChildInput, error) {
+	fixtureID := strings.TrimSpace(os.Getenv(workCountFixtureIDEnv))
+	if fixtureID == "" {
+		return workCountChildInput{}, fmt.Errorf("%s is empty", workCountFixtureIDEnv)
+	}
 	sourcePath := os.Getenv(workCountSourcePathEnv)
 	if sourcePath == "" {
 		return workCountChildInput{}, fmt.Errorf("%s is empty", workCountSourcePathEnv)
@@ -58,14 +65,14 @@ func loadWorkCountChildInput() (workCountChildInput, error) {
 	var fixture benchfixtures.LoadedFixture
 	found := false
 	for _, candidate := range fixtures {
-		if candidate.Fixture.ID == workCountFixtureID {
+		if candidate.Fixture.ID == fixtureID {
 			fixture = candidate
 			found = true
 			break
 		}
 	}
 	if !found {
-		return workCountChildInput{}, fmt.Errorf("fixture %s is absent", workCountFixtureID)
+		return workCountChildInput{}, fmt.Errorf("fixture %s is absent", fixtureID)
 	}
 	source, err := os.ReadFile(sourcePath)
 	if err != nil {
@@ -140,4 +147,29 @@ func writeWorkCountChildResult(value any) error {
 		return fmt.Errorf("write result: %w", err)
 	}
 	return nil
+}
+
+func TestLoadWorkCountChildInputSelectsEveryCanonicalFixture(t *testing.T) {
+	fixtures, err := benchfixtures.LoadGoFullParseFixtures()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range fixtures {
+		fixture := fixture
+		t.Run(fixture.Fixture.ID, func(t *testing.T) {
+			sourcePath := filepath.Join(t.TempDir(), fixture.Fixture.ID+".go")
+			if err := os.WriteFile(sourcePath, fixture.Source, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv(workCountFixtureIDEnv, fixture.Fixture.ID)
+			t.Setenv(workCountSourcePathEnv, sourcePath)
+			input, err := loadWorkCountChildInput()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if input.fixture.Fixture.ID != fixture.Fixture.ID || input.blobSHA != benchfixtures.GoGrammarBlobSHA256 {
+				t.Fatalf("selected fixture/grammar=%q/%s want=%q/%s", input.fixture.Fixture.ID, input.blobSHA, fixture.Fixture.ID, benchfixtures.GoGrammarBlobSHA256)
+			}
+		})
+	}
 }

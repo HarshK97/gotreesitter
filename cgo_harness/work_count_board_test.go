@@ -1,0 +1,683 @@
+//go:build cgo && treesitter_c_parity && treesitter_c_perfscan
+
+package cgoharness
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
+)
+
+const (
+	workCountBoardEnableEnv               = "GTS_WORK_COUNT_BOARD"
+	workCountBoardReceiptEnv              = "GTS_WORK_COUNT_BOARD_RECEIPT"
+	workCountBoardSchema                  = "gts-work-count-board/v2"
+	workCountBoardContractSchema          = "gts-work-count-board-contract/v1"
+	workCountBoardContractSHA256          = "be47dbc87423d4e7a3abfc8865ac7f186fa08076b3b996bc5913c118d1537e03"
+	workCountBoardInstrumentationRule     = "blocked unless every mandatory event has one identical semantic definition, a present direct counter in both engines, and a comparable relationship"
+	workCountBoardWorkAuditRule           = "a mandatory comparable event with present nonzero-denominator counts outside the inclusive Go/C interval [0.8,1.2] produces a work-audit finding but does not change instrumentation completeness"
+	workCountBoardWorkAuditMinimum        = 0.8
+	workCountBoardWorkAuditMaximum        = 1.2
+	workCountBoardInstrumentationBlocked  = "blocked"
+	workCountBoardInstrumentationComplete = "complete"
+	workCountBoardWorkAuditClear          = "clear"
+	workCountBoardWorkAuditFindings       = "findings"
+	workCountBoardStatePresent            = "present"
+	workCountBoardStateUnavailable        = "unavailable"
+	workCountBoardComparable              = "comparable"
+	workCountBoardIncomparable            = "incomparable"
+	workCountBoardRatioComputed           = "computed"
+	workCountBoardRatioZero               = "zero_denominator"
+	workCountBoardRatioUnavailable        = "unavailable"
+	workCountBoardRatioIncomparable       = "incomparable"
+)
+
+var workCountBoardFixtureIDs = []string{"query_compile", "rewrite", "language", "grammargen_lr"}
+
+type workCountBoardContract struct {
+	Schema                string                         `json:"schema"`
+	BoardSchema           string                         `json:"board_schema"`
+	CounterContract       string                         `json:"counter_contract"`
+	EngineStates          []string                       `json:"engine_states"`
+	ComparisonStates      []string                       `json:"comparison_states"`
+	RatioStates           []string                       `json:"ratio_states"`
+	InstrumentationStates []string                       `json:"instrumentation_states"`
+	WorkAuditStates       []string                       `json:"work_audit_states"`
+	InstrumentationRule   string                         `json:"instrumentation_rule"`
+	WorkAuditRule         string                         `json:"work_audit_rule"`
+	Metrics               []workCountBoardMetricContract `json:"metrics"`
+}
+
+type workCountBoardMetricContract struct {
+	ID                 string `json:"id"`
+	Category           string `json:"category"`
+	SemanticDefinition string `json:"semantic_definition"`
+	GoUnit             string `json:"go_unit"`
+	StaticCUnit        string `json:"static_c_unit"`
+	Mandatory          bool   `json:"mandatory"`
+}
+
+// A pointer is intentional: present zero is serialized as value:0, while an
+// unavailable hook has no value at all. Never use zero as an availability
+// sentinel.
+type workCountBoardEngineValue struct {
+	State  string  `json:"state"`
+	Unit   string  `json:"unit"`
+	Value  *uint64 `json:"value,omitempty"`
+	Reason string  `json:"reason,omitempty"`
+}
+
+type workCountBoardMetric struct {
+	ID               string                    `json:"id"`
+	Category         string                    `json:"category"`
+	Mandatory        bool                      `json:"mandatory"`
+	Go               workCountBoardEngineValue `json:"go"`
+	StaticC          workCountBoardEngineValue `json:"static_c"`
+	Comparison       string                    `json:"comparison"`
+	ComparisonReason string                    `json:"comparison_reason,omitempty"`
+	RatioStatus      string                    `json:"ratio_status"`
+	GoOverC          *float64                  `json:"go_over_c,omitempty"`
+}
+
+type workCountBoardScheduling struct {
+	MaxStacksSeen    int    `json:"max_stacks_seen"`
+	MultiStackIters  int    `json:"multi_stack_iterations"`
+	MultiStackTokens uint64 `json:"multi_stack_tokens"`
+}
+
+type workCountBoardProof struct {
+	DiagnosticArtifactsTimingEligible bool     `json:"diagnostic_artifacts_timing_eligible"`
+	PublicationTimingArtifact         string   `json:"publication_timing_artifact"`
+	UntaggedAssemblyTest              string   `json:"untagged_assembly_test"`
+	UntaggedAssemblyPassed            bool     `json:"untagged_assembly_passed"`
+	SchedulingFields                  []string `json:"scheduling_fields"`
+}
+
+type workCountBoardRow struct {
+	Fixture              string                   `json:"fixture"`
+	SourceSHA256         string                   `json:"source_sha256"`
+	SourceBytes          uint32                   `json:"source_bytes"`
+	DeepTreeSHA256       string                   `json:"deep_tree_sha256"`
+	GrammarCommit        string                   `json:"grammar_commit"`
+	GrammarBlobSHA256    string                   `json:"grammar_blob_sha256"`
+	UntaggedGoScheduling workCountBoardScheduling `json:"untagged_go_scheduling"`
+	TaggedGoScheduling   workCountBoardScheduling `json:"tagged_go_scheduling"`
+	Metrics              []workCountBoardMetric   `json:"metrics"`
+}
+
+type workCountBoard struct {
+	Schema                      string                    `json:"schema"`
+	InstrumentationStatus       string                    `json:"instrumentation_status"`
+	InstrumentationBlockers     []string                  `json:"instrumentation_blockers,omitempty"`
+	WorkAuditStatus             string                    `json:"work_audit_status"`
+	WorkAuditFindings           []string                  `json:"work_audit_findings,omitempty"`
+	CounterContract             string                    `json:"counter_contract"`
+	SharedCounterManifestSHA256 string                    `json:"shared_counter_manifest_sha256"`
+	BoardContract               string                    `json:"board_contract"`
+	BoardContractSHA256         string                    `json:"board_contract_sha256"`
+	DigestFormat                string                    `json:"digest_format"`
+	Source                      workCountGitProvenance    `json:"source"`
+	GoEnvironment               workCountEnvironment      `json:"go_environment"`
+	GoAdmission                 workCountArtifactIdentity `json:"go_admission_artifact"`
+	GoArtifact                  workCountArtifactIdentity `json:"go_work_count_artifact"`
+	CArtifact                   workCountCIdentity        `json:"static_c_artifact"`
+	Proof                       workCountBoardProof       `json:"instrumentation_proof"`
+	Rows                        []workCountBoardRow       `json:"rows"`
+}
+
+// TestAuthenticatedFourFixtureWorkCountBoard builds each diagnostic artifact
+// once, then runs the complete frozen real-Go suite through both production Go
+// GLR and the locked static -O2 C oracle. It is separate from the publication
+// receipt: this diagnostic board compares work counts and never times either
+// implementation.
+func TestAuthenticatedFourFixtureWorkCountBoard(t *testing.T) {
+	if os.Getenv(workCountBoardEnableEnv) != "1" {
+		t.Skip(workCountBoardEnableEnv + "=1 is required")
+	}
+	repoRoot := workCountRepoRoot(t)
+	receiptPath := workCountPrepareBoardReceiptPath(t)
+	tempRoot := t.TempDir()
+	sourceSnapshot := workCountPrepareSourceSnapshot(t, repoRoot, tempRoot)
+	workCountClearAmbientGitRouting(t)
+
+	sharedManifestPath := filepath.Join(sourceSnapshot.Root, "cgo_harness", "work_count", "contract_v2.json")
+	sharedManifestSHA := workCountFileSHA(t, sharedManifestPath)
+	if sharedManifestSHA != workCountSharedManifestSHA256 {
+		t.Fatalf("work-count shared manifest identity=%s want=%s", sharedManifestSHA, workCountSharedManifestSHA256)
+	}
+	workCountValidateManifest(t, sharedManifestPath)
+	boardContractPath := filepath.Join(sourceSnapshot.Root, "cgo_harness", "work_count", "board_contract_v1.json")
+	boardContractSHA := workCountFileSHA(t, boardContractPath)
+	if boardContractSHA != workCountBoardContractSHA256 {
+		t.Fatalf("work-count board contract identity=%s want=%s", boardContractSHA, workCountBoardContractSHA256)
+	}
+	boardContract := workCountLoadBoardContract(t, boardContractPath)
+	patchPath := filepath.Join(sourceSnapshot.Root, "cgo_harness", "work_count", "tree_sitter_v0_25_1.patch")
+	driverPath := filepath.Join(sourceSnapshot.Root, "cgo_harness", "pure_c", "work_count_oracle.c")
+	if got := workCountFileSHA(t, patchPath); got == "" {
+		t.Fatal("work-count C patch identity is empty")
+	}
+	if got := workCountFileSHA(t, driverPath); got == "" {
+		t.Fatal("work-count C driver identity is empty")
+	}
+
+	fixtures, err := benchfixtures.LoadGoFullParseFixtures()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fixtures) != len(workCountBoardFixtureIDs) {
+		t.Fatalf("canonical fixture count=%d want=%d", len(fixtures), len(workCountBoardFixtureIDs))
+	}
+	for index, id := range workCountBoardFixtureIDs {
+		if fixtures[index].Fixture.ID != id {
+			t.Fatalf("canonical fixture %d=%q want=%q", index, fixtures[index].Fixture.ID, id)
+		}
+	}
+
+	goEnvironment := workCountChosenEnvironment()
+	t.Log("build: ordinary untagged Go admission child")
+	goAdmissionArtifact, goAdmissionIdentity, goAdmissionRecheck := workCountBuildGo(t, sourceSnapshot, tempRoot, goEnvironment, false)
+	t.Log("build: tagged diagnostic Go child")
+	goArtifact, goIdentity, goRecheck := workCountBuildGo(t, sourceSnapshot, tempRoot, goEnvironment, true)
+	t.Log("build: instrumented locked static C child")
+	cBuild := workCountBuildC(t, repoRoot, sourceSnapshot.Root, patchPath, driverPath)
+	defer cBuild.Cleanup()
+
+	board := workCountBoard{
+		Schema: workCountBoardSchema, CounterContract: workCountContract,
+		SharedCounterManifestSHA256: sharedManifestSHA,
+		BoardContract:               boardContract.Schema,
+		BoardContractSHA256:         boardContractSHA,
+		DigestFormat:                benchfixtures.DeepTreeDigestVersion,
+		Source:                      sourceSnapshot.Provenance, GoEnvironment: goEnvironment,
+		GoAdmission: goAdmissionIdentity, GoArtifact: goIdentity, CArtifact: cBuild.Identity,
+		Proof: workCountBoardProof{
+			DiagnosticArtifactsTimingEligible: false,
+			PublicationTimingArtifact:         "ordinary untagged Go plus locked uninstrumented static C only",
+			UntaggedAssemblyTest:              "TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding",
+			SchedulingFields:                  []string{"max_stacks_seen", "multi_stack_iterations", "multi_stack_tokens"},
+		},
+		Rows: make([]workCountBoardRow, 0, len(fixtures)),
+	}
+	for _, fixture := range fixtures {
+		fixture := fixture
+		t.Run(fixture.Fixture.ID, func(t *testing.T) {
+			fixtureTemp := filepath.Join(tempRoot, "fixtures", fixture.Fixture.ID)
+			if err := os.MkdirAll(fixtureTemp, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			sourcePath := filepath.Join(fixtureTemp, fixture.Fixture.ID+".go")
+			if err := os.WriteFile(sourcePath, fixture.Source, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if got := workCountFileSHA(t, sourcePath); got != fixture.Fixture.SHA256 {
+				t.Fatalf("source snapshot sha=%s want=%s", got, fixture.Fixture.SHA256)
+			}
+
+			uninstGo := workCountRunGoAdmission(t, goAdmissionArtifact, fixture.Fixture.ID, sourcePath, fixtureTemp, goEnvironment)
+			workCountValidateGoChild(t, "ordinary Go admission", workCountGoAdmissionChildSchema, "go-production-glr-untagged", uninstGo, fixture)
+			uninstC := workCountUninstrumentedCAdmission(t, fixture, sourcePath, fixtureTemp)
+			if uninstGo.DeepTreeSHA256 != uninstC || uninstC != fixture.Fixture.DeepTreeSHA256 {
+				t.Fatalf("uninstrumented admission mismatch: go=%s static_c=%s frozen=%s", uninstGo.DeepTreeSHA256, uninstC, fixture.Fixture.DeepTreeSHA256)
+			}
+
+			cResult := workCountRunC(t, cBuild.Artifact, sourcePath, fixtureTemp)
+			goResult := workCountRunGo(t, goArtifact, fixture.Fixture.ID, sourcePath, fixtureTemp, goEnvironment)
+			workCountValidateCChild(t, "static C", "static-c-instrumented-glr", cResult, fixture, fixture.Fixture.DeepTreeSHA256)
+			workCountValidateGoChild(t, "tagged Go", workCountTaggedGoChildSchema, "go-production-glr-tagged-diagnostic", goResult.workCountGoChildResult, fixture)
+			workCountValidateGoBoardCounters(t, goResult.Counters, uint32(len(fixture.Source)))
+			if cResult.DeepTreeSHA256 != goResult.DeepTreeSHA256 {
+				t.Fatalf("instrumented deep digest mismatch: go=%s static_c=%s", goResult.DeepTreeSHA256, cResult.DeepTreeSHA256)
+			}
+			untaggedScheduling := workCountScheduling(uninstGo)
+			taggedScheduling := workCountScheduling(goResult.workCountGoChildResult)
+			if untaggedScheduling != taggedScheduling {
+				t.Fatalf("diagnostic scheduling changed: untagged=%+v tagged=%+v", untaggedScheduling, taggedScheduling)
+			}
+			if got := workCountFileSHA(t, sourcePath); got != fixture.Fixture.SHA256 {
+				t.Fatalf("source snapshot drift after diagnostic runs: sha=%s want=%s", got, fixture.Fixture.SHA256)
+			}
+
+			metrics := workCountBuildBoardMetrics(t, boardContract, goResult.Counters.workCountCounters, cResult.Counters, goResult.BoardDirect, cResult.BoardDirect)
+			board.Rows = append(board.Rows, workCountBoardRow{
+				Fixture: fixture.Fixture.ID, SourceSHA256: fixture.Fixture.SHA256,
+				SourceBytes: uint32(len(fixture.Source)), DeepTreeSHA256: fixture.Fixture.DeepTreeSHA256,
+				GrammarCommit: goResult.GrammarCommit, GrammarBlobSHA256: goResult.GrammarBlobSHA256,
+				UntaggedGoScheduling: untaggedScheduling, TaggedGoScheduling: taggedScheduling,
+				Metrics: metrics,
+			})
+		})
+	}
+	if len(board.Rows) != len(fixtures) {
+		t.Fatalf("board rows=%d want=%d", len(board.Rows), len(fixtures))
+	}
+	board.Proof.UntaggedAssemblyPassed = workCountRunUntaggedAssemblyProof(t, sourceSnapshot.Root, goAdmissionArtifact, goEnvironment)
+	board.InstrumentationStatus, board.InstrumentationBlockers, board.WorkAuditStatus, board.WorkAuditFindings = workCountBoardStatuses(boardContract, board.Rows)
+	workCountValidateBoard(t, boardContract, board)
+	if err := cBuild.Recheck(); err != nil {
+		t.Fatalf("static C identity drift: %v", err)
+	}
+	if err := goRecheck(); err != nil {
+		t.Fatalf("Go identity drift: %v", err)
+	}
+	if err := goAdmissionRecheck(); err != nil {
+		t.Fatalf("Go admission identity drift: %v", err)
+	}
+	if err := sourceSnapshot.Recheck(); err != nil {
+		t.Fatalf("source provenance drift: %v", err)
+	}
+
+	data, err := json.MarshalIndent(board, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = append(data, '\n')
+	if receiptPath != "" {
+		if err := workCountAtomicPublish(receiptPath, data); err != nil {
+			t.Fatal(err)
+		}
+		if sourceSnapshot.Provenance.Authoritative {
+			t.Logf("authenticated four-fixture work-count board: %s", receiptPath)
+		} else {
+			t.Logf("non-authoritative dirty-source four-fixture work-count board: %s", receiptPath)
+		}
+		return
+	}
+	t.Logf("four-fixture work-count board (set %s to publish):\n%s", workCountBoardReceiptEnv, data)
+}
+
+func workCountValidateGoBoardCounters(t *testing.T, counts workCountGoCounters, sourceBytes uint32) {
+	t.Helper()
+	workCountValidateCounters(t, "tagged Go", counts.workCountCounters)
+	if len(counts.Attempts) != 1 {
+		t.Fatalf("tagged Go canonical parse attempts=%d want=1", len(counts.Attempts))
+	}
+	for index, attempt := range counts.Attempts {
+		if attempt.Index != uint32(index+1) || !attempt.CapsResolved {
+			t.Fatalf("tagged Go attempt %d identity/caps=%d/%v", index, attempt.Index, attempt.CapsResolved)
+		}
+		if attempt.StopReason == "" {
+			t.Fatalf("tagged Go attempt %d has no stop reason", index)
+		}
+		workCountRequireValueSum(t, fmt.Sprintf("tagged Go attempt %d phases", index+1), attempt.Counters, attempt.EntryToCaps, attempt.CapsToFinalize, attempt.Finalize)
+	}
+	finalAttempt := counts.Attempts[len(counts.Attempts)-1]
+	if finalAttempt.Index != 1 || finalAttempt.LogicalRung != "initial_full" || finalAttempt.OperationCause != "fresh_dfa_full_parse" {
+		t.Fatalf("tagged Go attempt identity=%d/%q/%q want=1/initial_full/fresh_dfa_full_parse", finalAttempt.Index, finalAttempt.LogicalRung, finalAttempt.OperationCause)
+	}
+	if finalAttempt.StopReason != "accepted" || finalAttempt.RootHasError || finalAttempt.RootEndByte != sourceBytes {
+		t.Fatalf("tagged Go final attempt stop=%q error=%v end=%d want=%d", finalAttempt.StopReason, finalAttempt.RootHasError, finalAttempt.RootEndByte, sourceBytes)
+	}
+	parts := make([]workCountCounterValues, 0, len(counts.Attempts)+1)
+	for _, attempt := range counts.Attempts {
+		parts = append(parts, attempt.Counters)
+	}
+	parts = append(parts, counts.OutsideAttempt)
+	workCountRequireValueSum(t, "tagged Go aggregate attribution", counts.workCountCounterValues, parts...)
+}
+
+func workCountLoadBoardContract(t *testing.T, path string) workCountBoardContract {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contract workCountBoardContract
+	if err := json.Unmarshal(data, &contract); err != nil {
+		t.Fatalf("decode work-count board contract: %v", err)
+	}
+	if contract.Schema != workCountBoardContractSchema || contract.BoardSchema != workCountBoardSchema || contract.CounterContract != workCountContract {
+		t.Fatalf("board contract identity=%q/%q/%q", contract.Schema, contract.BoardSchema, contract.CounterContract)
+	}
+	if strings.Join(contract.EngineStates, ",") != workCountBoardStatePresent+","+workCountBoardStateUnavailable ||
+		strings.Join(contract.ComparisonStates, ",") != workCountBoardComparable+","+workCountBoardIncomparable ||
+		strings.Join(contract.RatioStates, ",") != strings.Join([]string{workCountBoardRatioComputed, workCountBoardRatioZero, workCountBoardRatioIncomparable, workCountBoardRatioUnavailable}, ",") ||
+		strings.Join(contract.InstrumentationStates, ",") != workCountBoardInstrumentationComplete+","+workCountBoardInstrumentationBlocked ||
+		strings.Join(contract.WorkAuditStates, ",") != workCountBoardWorkAuditClear+","+workCountBoardWorkAuditFindings ||
+		contract.InstrumentationRule != workCountBoardInstrumentationRule ||
+		contract.WorkAuditRule != workCountBoardWorkAuditRule {
+		t.Fatalf("board contract status vocabularies drifted: %+v", contract)
+	}
+	seen := make(map[string]bool, len(contract.Metrics))
+	for _, metric := range contract.Metrics {
+		if strings.TrimSpace(metric.ID) == "" || strings.TrimSpace(metric.Category) == "" || strings.TrimSpace(metric.SemanticDefinition) == "" || strings.TrimSpace(metric.GoUnit) == "" || strings.TrimSpace(metric.StaticCUnit) == "" {
+			t.Fatalf("incomplete board metric contract: %+v", metric)
+		}
+		if seen[metric.ID] {
+			t.Fatalf("duplicate board metric contract %q", metric.ID)
+		}
+		seen[metric.ID] = true
+	}
+	return contract
+}
+
+func workCountPresent(unit string, value uint64) workCountBoardEngineValue {
+	return workCountBoardEngineValue{State: workCountBoardStatePresent, Unit: unit, Value: &value}
+}
+
+func workCountUnavailable(unit, reason string) workCountBoardEngineValue {
+	return workCountBoardEngineValue{State: workCountBoardStateUnavailable, Unit: unit, Reason: reason}
+}
+
+func workCountBoardMetricValue(contract workCountBoardMetricContract, goValue, cValue workCountBoardEngineValue, comparison, reason string) workCountBoardMetric {
+	metric := workCountBoardMetric{
+		ID: contract.ID, Category: contract.Category, Mandatory: contract.Mandatory,
+		Go: goValue, StaticC: cValue, Comparison: comparison, ComparisonReason: reason,
+	}
+	switch {
+	case goValue.State == workCountBoardStateUnavailable || cValue.State == workCountBoardStateUnavailable:
+		metric.RatioStatus = workCountBoardRatioUnavailable
+	case comparison == workCountBoardIncomparable:
+		metric.RatioStatus = workCountBoardRatioIncomparable
+	case cValue.Value == nil || *cValue.Value == 0:
+		metric.RatioStatus = workCountBoardRatioZero
+	default:
+		ratio := float64(*goValue.Value) / float64(*cValue.Value)
+		metric.RatioStatus = workCountBoardRatioComputed
+		metric.GoOverC = &ratio
+	}
+	return metric
+}
+
+func workCountBuildBoardMetrics(t *testing.T, contract workCountBoardContract, goCounts, cCounts workCountCounters, goDirect, cDirect workCountBoardDirectCounts) []workCountBoardMetric {
+	t.Helper()
+	workCountValidateCounters(t, "Go", goCounts)
+	workCountValidateCounters(t, "static C", cCounts)
+	if goDirect.Schema != "gts-work-count-board-direct/v1" || cDirect.Schema != goDirect.Schema || goDirect.Overflow || cDirect.Overflow {
+		t.Fatalf("invalid paired board-direct counters: go=%+v C=%+v", goDirect, cDirect)
+	}
+	goSurplus := workCountConstructionSurplus(t, "Go", goCounts)
+	cSurplus := workCountConstructionSurplus(t, "static C", cCounts)
+	metrics := make([]workCountBoardMetric, 0, len(contract.Metrics))
+	for _, definition := range contract.Metrics {
+		present := func(goValue, cValue uint64, comparison, reason string) {
+			metrics = append(metrics, workCountBoardMetricValue(definition, workCountPresent(definition.GoUnit, goValue), workCountPresent(definition.StaticCUnit, cValue), comparison, reason))
+		}
+		missing := func(goValue, cValue workCountBoardEngineValue, comparison, reason string) {
+			metrics = append(metrics, workCountBoardMetricValue(definition, goValue, cValue, comparison, reason))
+		}
+		switch definition.ID {
+		case "lexer_elections":
+			missing(workCountPresent(definition.GoUnit, goCounts.LexerFrontDoorCallsProxy), workCountUnavailable(definition.StaticCUnit, "locked C has only per-version ts_parser__lex calls at lib/src/parser.c:ts_parser__lex; add one direct counter at a precisely specified runnable-frontier election boundary"), workCountBoardComparable, "C frontier election hook absent")
+		case "lexer_calls":
+			missing(workCountUnavailable(definition.GoUnit, "Go has only frontier-election hook workCountRecordLexerFrontDoor at parser_recover_c.go; add a direct counter at every production lexer invocation"), workCountPresent(definition.StaticCUnit, cCounts.LexerFrontDoorCallsProxy), workCountBoardComparable, "Go per-invocation lexer hook absent")
+		case "resolved_action_cells_examined":
+			present(goDirect.ResolvedActionCellsExamined, cDirect.ResolvedActionCellsExamined, workCountBoardComparable, "")
+		case "action_table_lookups_proxy":
+			present(goCounts.TableLookupsProxy, cCounts.TableLookupsProxy, workCountBoardIncomparable, "implementation-specific lookup front doors")
+		case "action_entries_examined_proxy":
+			present(goCounts.ActionEntriesExaminedProxy, cCounts.ActionEntriesExaminedProxy, workCountBoardIncomparable, "implementation-specific dispatch entry exposure")
+		case "shifts":
+			present(goCounts.Shifts, cCounts.Shifts, workCountBoardComparable, "")
+		case "reductions":
+			present(goCounts.Reductions, cCounts.Reductions, workCountBoardComparable, "")
+		case "explicit_recover_actions":
+			present(goCounts.ExplicitRecoverActions, cCounts.ExplicitRecoverActions, workCountBoardComparable, "")
+		case "accept_actions":
+			present(goCounts.AcceptActions, cCounts.AcceptActions, workCountBoardComparable, "")
+		case "true_forks":
+			missing(workCountUnavailable(definition.GoUnit, "glrStack.cloneWithScratch at glr.go and the conflict loop at parser.go:conflict-fork lack a causal direct counter excluding initialization and non-conflict clones"), workCountUnavailable(definition.StaticCUnit, "ts_stack_copy_version in lib/src/stack.c is counted only as generic version creation; add a counter at the multiple-action copy call site"), workCountBoardComparable, "paired causal fork hook absent")
+		case "raw_action_entries_beyond_first":
+			present(goDirect.RawActionEntriesBeyondFirst, cDirect.RawActionEntriesBeyondFirst, workCountBoardComparable, "")
+		case "stack_version_creations_proxy":
+			present(goCounts.StackVersionCreationsProxy, cCounts.StackVersionCreationsProxy, workCountBoardIncomparable, "initialization and implementation-specific copies are included")
+		case "reduction_pop_requests":
+			present(goCounts.ReductionPopRequests, cCounts.ReductionPopRequests, workCountBoardComparable, "")
+		case "emitted_pop_paths":
+			present(goCounts.EmittedPopPaths, cCounts.EmittedPopPaths, workCountBoardComparable, "")
+		case "emitted_pop_payloads":
+			present(goCounts.EmittedPopPayloads, cCounts.EmittedPopPayloads, workCountBoardComparable, "")
+		case "graph_links":
+			missing(workCountUnavailable(definition.GoUnit, "glr_gss.go hooks count physical primary/extra mutations without a shared reachability contract"), workCountUnavailable(definition.StaticCUnit, "lib/src/stack.c hooks count StackNode links under C ownership semantics"), workCountBoardComparable, "paired semantic graph-link hook absent")
+		case "graph_link_additions_proxy":
+			present(goCounts.GraphLinkAdditionsProxy, cCounts.GraphLinkAdditionsProxy, workCountBoardIncomparable, "representation-specific physical graph links")
+		case "subtree_leaf_constructions":
+			missing(workCountUnavailable(definition.GoUnit, "tree.go/no_tree_node.go leaf hooks mix full, compact, and no-tree payload representations"), workCountUnavailable(definition.StaticCUnit, "lib/src/subtree.c hook counts inline and heap subtree construction under C representation semantics"), workCountBoardComparable, "paired representation-class leaf hook absent")
+		case "subtree_parent_constructions":
+			missing(workCountUnavailable(definition.GoUnit, "tree.go parent hooks include pending/no-tree representation classes"), workCountUnavailable(definition.StaticCUnit, "lib/src/subtree.c hook counts C MutableSubtree node construction"), workCountBoardComparable, "paired representation-class parent hook absent")
+		case "subtree_leaf_constructions_proxy":
+			present(goCounts.LeafConstructionsProxy, cCounts.LeafConstructionsProxy, workCountBoardIncomparable, "representation-specific transient payloads")
+		case "subtree_parent_constructions_proxy":
+			present(goCounts.ParentConstructionsProxy, cCounts.ParentConstructionsProxy, workCountBoardIncomparable, "representation-specific transient payloads")
+		case "subtree_go_pending_parent_constructions":
+			missing(workCountPresent(definition.GoUnit, goCounts.PendingParentConstructionsProxy), workCountUnavailable(definition.StaticCUnit, "locked C has no pending-parent representation class"), workCountBoardIncomparable, "Go-only representation class")
+		case "subtree_go_no_tree_parent_constructions":
+			missing(workCountPresent(definition.GoUnit, goCounts.NoTreeParentConstructionsProxy), workCountUnavailable(definition.StaticCUnit, "locked C has no no-tree parent representation class"), workCountBoardIncomparable, "Go-only representation class")
+		case "merge_attempts", "merge_successes":
+			missing(workCountUnavailable(definition.GoUnit, "glr.go merge hooks use Go-specific candidate and frontier rules"), workCountUnavailable(definition.StaticCUnit, "lib/src/stack.c ts_stack_merge uses C version-pair eligibility"), workCountBoardComparable, "paired canonical-boundary merge hook absent")
+		case "merge_attempts_proxy":
+			present(goCounts.MergeAttemptsProxy, cCounts.MergeAttemptsProxy, workCountBoardIncomparable, "implementation-specific merge front doors")
+		case "merge_successes_proxy":
+			present(goCounts.MergeSuccessesProxy, cCounts.MergeSuccessesProxy, workCountBoardIncomparable, "implementation-specific merge success boundaries")
+		case "alternate_predecessor_links_appended":
+			present(goDirect.AlternatePredecessorLinksAppended, cDirect.AlternatePredecessorLinksAppended, workCountBoardComparable, "")
+		case "discarded_leaf_records", "discarded_parent_records", "discarded_graph_link_records":
+			missing(workCountUnavailable(definition.GoUnit, "Go arenas and GSS do not publish classed reachability losses at convergence/cull/final selection"), workCountUnavailable(definition.StaticCUnit, "locked C reference counting/destruction hooks do not attribute last-release cause to convergence/cull/final selection"), workCountBoardComparable, "paired causal discard hook absent")
+		case "construction_surplus_proxy":
+			present(goSurplus, cSurplus, workCountBoardIncomparable, "representation-specific arithmetic proxy; never discarded-record evidence")
+		case "selected_nodes":
+			present(goCounts.SelectedNodes, cCounts.SelectedNodes, workCountBoardComparable, "")
+		case "selected_parent_nodes":
+			present(goCounts.SelectedParentNodes, cCounts.SelectedParentNodes, workCountBoardComparable, "")
+		case "selected_leaf_nodes":
+			present(goCounts.SelectedLeafNodes, cCounts.SelectedLeafNodes, workCountBoardComparable, "")
+		default:
+			t.Fatalf("board contract metric %q has no mapping", definition.ID)
+		}
+	}
+	return metrics
+}
+
+func workCountScheduling(result workCountGoChildResult) workCountBoardScheduling {
+	return workCountBoardScheduling{MaxStacksSeen: result.MaxStacksSeen, MultiStackIters: result.MultiStackIters, MultiStackTokens: result.MultiStackTokens}
+}
+
+func workCountBoardStatuses(contract workCountBoardContract, rows []workCountBoardRow) (string, []string, string, []string) {
+	mandatory := make(map[string]bool, len(contract.Metrics))
+	for _, definition := range contract.Metrics {
+		mandatory[definition.ID] = definition.Mandatory
+	}
+	var instrumentationBlockers []string
+	var workAuditFindings []string
+	seenBlocker := make(map[string]bool)
+	for _, row := range rows {
+		for _, metric := range row.Metrics {
+			if !mandatory[metric.ID] {
+				continue
+			}
+			if metric.Go.State != workCountBoardStatePresent || metric.StaticC.State != workCountBoardStatePresent || metric.Comparison != workCountBoardComparable {
+				reason := metric.ComparisonReason
+				if reason == "" {
+					reason = fmt.Sprintf("Go state=%s, static C state=%s, comparison=%s", metric.Go.State, metric.StaticC.State, metric.Comparison)
+				}
+				blocker := metric.ID + ": " + reason
+				if !seenBlocker[blocker] {
+					seenBlocker[blocker] = true
+					instrumentationBlockers = append(instrumentationBlockers, blocker)
+				}
+				continue
+			}
+			if metric.RatioStatus != workCountBoardRatioComputed || metric.GoOverC == nil {
+				continue
+			}
+			if ratio := *metric.GoOverC; ratio < workCountBoardWorkAuditMinimum || ratio > workCountBoardWorkAuditMaximum {
+				identity := metric.ID
+				if row.Fixture != "" {
+					identity = row.Fixture + "/" + identity
+				}
+				workAuditFindings = append(workAuditFindings, fmt.Sprintf("%s: Go/C ratio %.6f outside [%.1f,%.1f]", identity, ratio, workCountBoardWorkAuditMinimum, workCountBoardWorkAuditMaximum))
+			}
+		}
+	}
+	instrumentationStatus := workCountBoardInstrumentationComplete
+	if len(instrumentationBlockers) != 0 {
+		instrumentationStatus = workCountBoardInstrumentationBlocked
+	}
+	workAuditStatus := workCountBoardWorkAuditClear
+	if len(workAuditFindings) != 0 {
+		workAuditStatus = workCountBoardWorkAuditFindings
+	}
+	return instrumentationStatus, instrumentationBlockers, workAuditStatus, workAuditFindings
+}
+
+func workCountValidateBoard(t *testing.T, contract workCountBoardContract, board workCountBoard) {
+	t.Helper()
+	if board.Schema != workCountBoardSchema || board.BoardContract != contract.Schema || board.BoardContractSHA256 != workCountBoardContractSHA256 {
+		t.Fatalf("board identity drifted: %+v", board)
+	}
+	if board.Proof.DiagnosticArtifactsTimingEligible || !board.Proof.UntaggedAssemblyPassed {
+		t.Fatalf("board instrumentation proof invalid: %+v", board.Proof)
+	}
+	for _, row := range board.Rows {
+		if row.UntaggedGoScheduling != row.TaggedGoScheduling || len(row.Metrics) != len(contract.Metrics) {
+			t.Fatalf("row scheduling/metric contract drift: %+v", row)
+		}
+		for index, metric := range row.Metrics {
+			if metric.ID != contract.Metrics[index].ID || metric.Category != contract.Metrics[index].Category || metric.Mandatory != contract.Metrics[index].Mandatory {
+				t.Fatalf("metric contract drift: %+v want=%+v", metric, contract.Metrics[index])
+			}
+			if metric.Go.State == workCountBoardStatePresent && metric.Go.Value == nil || metric.StaticC.State == workCountBoardStatePresent && metric.StaticC.Value == nil {
+				t.Fatalf("present metric lacks value: %+v", metric)
+			}
+			if metric.Go.State == workCountBoardStateUnavailable && metric.Go.Value != nil || metric.StaticC.State == workCountBoardStateUnavailable && metric.StaticC.Value != nil {
+				t.Fatalf("unavailable metric carries value: %+v", metric)
+			}
+			switch metric.RatioStatus {
+			case workCountBoardRatioComputed:
+				if metric.GoOverC == nil || metric.Comparison != workCountBoardComparable || metric.Go.Value == nil || metric.StaticC.Value == nil || *metric.StaticC.Value == 0 {
+					t.Fatalf("invalid computed ratio: %+v", metric)
+				}
+			case workCountBoardRatioZero:
+				if metric.GoOverC != nil || metric.Comparison != workCountBoardComparable || metric.StaticC.Value == nil || *metric.StaticC.Value != 0 {
+					t.Fatalf("invalid zero-denominator ratio: %+v", metric)
+				}
+			case workCountBoardRatioIncomparable:
+				if metric.GoOverC != nil || metric.Comparison != workCountBoardIncomparable {
+					t.Fatalf("invalid incomparable ratio: %+v", metric)
+				}
+			case workCountBoardRatioUnavailable:
+				if metric.GoOverC != nil || metric.Go.State != workCountBoardStateUnavailable && metric.StaticC.State != workCountBoardStateUnavailable {
+					t.Fatalf("invalid unavailable ratio: %+v", metric)
+				}
+			default:
+				t.Fatalf("unknown ratio status: %+v", metric)
+			}
+		}
+	}
+	instrumentationStatus, instrumentationBlockers, workAuditStatus, workAuditFindings := workCountBoardStatuses(contract, board.Rows)
+	if instrumentationStatus != board.InstrumentationStatus ||
+		strings.Join(instrumentationBlockers, "\n") != strings.Join(board.InstrumentationBlockers, "\n") ||
+		workAuditStatus != board.WorkAuditStatus ||
+		strings.Join(workAuditFindings, "\n") != strings.Join(board.WorkAuditFindings, "\n") {
+		t.Fatalf("board statuses drifted: got=%q/%v %q/%v want=%q/%v %q/%v",
+			board.InstrumentationStatus, board.InstrumentationBlockers, board.WorkAuditStatus, board.WorkAuditFindings,
+			instrumentationStatus, instrumentationBlockers, workAuditStatus, workAuditFindings)
+	}
+}
+
+func workCountRunUntaggedAssemblyProof(t *testing.T, sourceRoot, artifact string, environment workCountEnvironment) bool {
+	t.Helper()
+	env := workCountSanitizedEnv(os.Environ(), environment.Runtime, nil)
+	stdout, stderr, err := workCountRunCaptured(sourceRoot, env, workCountBuildTimeout, artifact,
+		"-test.run", "^TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding$", "-test.count=1", "-test.v")
+	if err != nil {
+		t.Fatalf("untagged assembly proof: %v: stdout=%s stderr=%s", err, strings.TrimSpace(string(stdout)), strings.TrimSpace(string(stderr)))
+	}
+	if len(stderr) != 0 {
+		t.Fatalf("untagged assembly proof wrote stderr: %s", strings.TrimSpace(string(stderr)))
+	}
+	const pass = "--- PASS: TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding"
+	if !strings.Contains(string(stdout), pass) {
+		t.Fatalf("untagged assembly proof lacks explicit pass marker: %s", strings.TrimSpace(string(stdout)))
+	}
+	return true
+}
+
+func TestWorkCountBoardMetricStatusAndRatios(t *testing.T) {
+	contract := workCountLoadBoardContract(t, filepath.Join("work_count", "board_contract_v1.json"))
+	counts := workCountCounters{Contract: workCountContract, workCountCounterValues: workCountCounterValues{
+		Shifts: 8, Reductions: 5, AcceptActions: 1, ReductionPopRequests: 5,
+		EmittedPopPaths: 6, EmittedPopPayloads: 9, SelectedNodes: 3, SelectedParentNodes: 1, SelectedLeafNodes: 2,
+		TableLookupsProxy: 12, ActionEntriesExaminedProxy: 10, LexerFrontDoorCallsProxy: 7,
+		StackVersionCreationsProxy: 5, MergeAttemptsProxy: 4, MergeSuccessesProxy: 2,
+		GraphLinkAdditionsProxy: 11, LeafConstructionsProxy: 6, ParentConstructionsProxy: 4,
+	}}
+	direct := workCountBoardDirectCounts{
+		Schema:                            "gts-work-count-board-direct/v1",
+		ResolvedActionCellsExamined:       12,
+		RawActionEntriesBeyondFirst:       4,
+		AlternatePredecessorLinksAppended: 3,
+	}
+	metrics := workCountBuildBoardMetrics(t, contract, counts, counts, direct, direct)
+	byID := make(map[string]workCountBoardMetric, len(metrics))
+	for _, metric := range metrics {
+		byID[metric.ID] = metric
+	}
+	if metric := byID["explicit_recover_actions"]; metric.Go.Value == nil || *metric.Go.Value != 0 || metric.RatioStatus != workCountBoardRatioZero {
+		t.Fatalf("present-zero encoding drifted: %+v", metric)
+	}
+	if metric := byID["action_table_lookups_proxy"]; metric.RatioStatus != workCountBoardRatioIncomparable || metric.GoOverC != nil {
+		t.Fatalf("incomparable ratio drifted: %+v", metric)
+	}
+	if metric := byID["true_forks"]; metric.Go.State != workCountBoardStateUnavailable || metric.StaticC.State != workCountBoardStateUnavailable || metric.RatioStatus != workCountBoardRatioUnavailable {
+		t.Fatalf("unavailable fork encoding drifted: %+v", metric)
+	}
+	if metric := byID["selected_nodes"]; metric.RatioStatus != workCountBoardRatioComputed || metric.GoOverC == nil || *metric.GoOverC != 1 {
+		t.Fatalf("computed ratio drifted: %+v", metric)
+	}
+	if metric := byID["raw_action_entries_beyond_first"]; metric.RatioStatus != workCountBoardRatioComputed || metric.GoOverC == nil || *metric.GoOverC != 1 {
+		t.Fatalf("conflict-alternative ratio drifted: %+v", metric)
+	}
+	for _, id := range []string{"subtree_go_pending_parent_constructions", "subtree_go_no_tree_parent_constructions"} {
+		if metric := byID[id]; metric.Comparison != workCountBoardIncomparable || metric.RatioStatus != workCountBoardRatioUnavailable {
+			t.Fatalf("Go-only representation metric %q status drifted: %+v", id, metric)
+		}
+	}
+	row := workCountBoardRow{UntaggedGoScheduling: workCountBoardScheduling{MaxStacksSeen: 2}, TaggedGoScheduling: workCountBoardScheduling{MaxStacksSeen: 2}, Metrics: metrics}
+	instrumentationStatus, instrumentationBlockers, workAuditStatus, workAuditFindings := workCountBoardStatuses(contract, []workCountBoardRow{row})
+	if instrumentationStatus != workCountBoardInstrumentationBlocked || len(instrumentationBlockers) == 0 {
+		t.Fatalf("mandatory unavailable metrics must block instrumentation: status=%q blockers=%v", instrumentationStatus, instrumentationBlockers)
+	}
+	if workAuditStatus != workCountBoardWorkAuditClear || len(workAuditFindings) != 0 {
+		t.Fatalf("equal available metrics must not create work-audit findings: status=%q findings=%v", workAuditStatus, workAuditFindings)
+	}
+	lowRatio := byID["alternate_predecessor_links_appended"]
+	zero := 0.0
+	lowRatio.GoOverC = &zero
+	lowRatio.RatioStatus = workCountBoardRatioComputed
+	lowRatio.Go = workCountPresent(lowRatio.Go.Unit, 0)
+	lowRatio.StaticC = workCountPresent(lowRatio.StaticC.Unit, 1)
+	row.Metrics = append([]workCountBoardMetric(nil), metrics...)
+	for index := range row.Metrics {
+		if row.Metrics[index].ID == lowRatio.ID {
+			row.Metrics[index] = lowRatio
+		}
+	}
+	lowInstrumentationStatus, lowInstrumentationBlockers, lowWorkAuditStatus, lowWorkAuditFindings := workCountBoardStatuses(contract, []workCountBoardRow{row})
+	if lowInstrumentationStatus != instrumentationStatus || strings.Join(lowInstrumentationBlockers, "\n") != strings.Join(instrumentationBlockers, "\n") {
+		t.Fatalf("work-ratio finding changed instrumentation completeness: before=%q/%v after=%q/%v", instrumentationStatus, instrumentationBlockers, lowInstrumentationStatus, lowInstrumentationBlockers)
+	}
+	if lowWorkAuditStatus != workCountBoardWorkAuditFindings || !strings.Contains(strings.Join(lowWorkAuditFindings, "\n"), "alternate_predecessor_links_appended: Go/C ratio 0.000000 outside [0.8,1.2]") {
+		t.Fatalf("low-ratio work-audit finding missing: status=%q findings=%v", lowWorkAuditStatus, lowWorkAuditFindings)
+	}
+	highRatio := byID["resolved_action_cells_examined"]
+	highRatioValue := 1.25
+	highRatio.GoOverC = &highRatioValue
+	highRatio.Go = workCountPresent(highRatio.Go.Unit, 5)
+	highRatio.StaticC = workCountPresent(highRatio.StaticC.Unit, 4)
+	row.Metrics = append([]workCountBoardMetric(nil), metrics...)
+	for index := range row.Metrics {
+		if row.Metrics[index].ID == highRatio.ID {
+			row.Metrics[index] = highRatio
+		}
+	}
+	_, _, highWorkAuditStatus, highWorkAuditFindings := workCountBoardStatuses(contract, []workCountBoardRow{row})
+	if highWorkAuditStatus != workCountBoardWorkAuditFindings || !strings.Contains(strings.Join(highWorkAuditFindings, "\n"), "resolved_action_cells_examined: Go/C ratio 1.250000 outside [0.8,1.2]") {
+		t.Fatalf("high-ratio work-audit finding missing: status=%q findings=%v", highWorkAuditStatus, highWorkAuditFindings)
+	}
+}

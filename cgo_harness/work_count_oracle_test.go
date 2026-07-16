@@ -29,8 +29,8 @@ const (
 	workCountReceiptEnv                = "GTS_WORK_COUNT_RECEIPT"
 	workCountFixtureID                 = "query_compile"
 	workCountGoAdmissionChildSchema    = "gts-work-count-go-child/v3"
-	workCountTaggedGoChildSchema       = "gts-work-count-go-child/v4"
-	workCountCChildSchema              = "gts-work-count-c-child/v3"
+	workCountTaggedGoChildSchema       = "gts-work-count-go-child/v5"
+	workCountCChildSchema              = "gts-work-count-c-child/v4"
 	workCountContract                  = "gts-work-count/v2"
 	workCountReceiptSchema             = "gts-work-count-receipt/v4"
 	workCountTimeout                   = 2 * time.Minute
@@ -47,6 +47,7 @@ const (
 	workCountRepoCommitEnv         = "GTS_WORK_COUNT_REPO_COMMIT"
 	workCountRepoDestinationEnv    = "GTS_WORK_COUNT_REPO_DESTINATION"
 	workCountRepoLanguageEnv       = "GTS_WORK_COUNT_REPO_LANGUAGE"
+	workCountFixtureEnv            = "GTS_WORK_COUNT_FIXTURE"
 )
 
 var workCountDirectFields = []string{
@@ -305,18 +306,28 @@ type workCountGoChildResult struct {
 
 type workCountTaggedChildResult struct {
 	workCountGoChildResult
-	Counters workCountGoCounters `json:"counters"`
+	Counters    workCountGoCounters        `json:"counters"`
+	BoardDirect workCountBoardDirectCounts `json:"board_direct"`
+}
+
+type workCountBoardDirectCounts struct {
+	Schema                            string `json:"schema"`
+	ResolvedActionCellsExamined       uint64 `json:"resolved_action_cells_examined"`
+	RawActionEntriesBeyondFirst       uint64 `json:"raw_action_entries_beyond_first"`
+	AlternatePredecessorLinksAppended uint64 `json:"alternate_predecessor_links_appended"`
+	Overflow                          bool   `json:"overflow"`
 }
 
 type workCountCChildResult struct {
-	Schema         string            `json:"schema"`
-	Engine         string            `json:"engine"`
-	DigestFormat   string            `json:"digest_format"`
-	DeepTreeSHA256 string            `json:"deep_tree_sha256,omitempty"`
-	SourceBytes    uint32            `json:"source_bytes"`
-	RootEndByte    uint32            `json:"root_end_byte"`
-	RootHasError   bool              `json:"root_has_error"`
-	Counters       workCountCounters `json:"counters"`
+	Schema         string                     `json:"schema"`
+	Engine         string                     `json:"engine"`
+	DigestFormat   string                     `json:"digest_format"`
+	DeepTreeSHA256 string                     `json:"deep_tree_sha256,omitempty"`
+	SourceBytes    uint32                     `json:"source_bytes"`
+	RootEndByte    uint32                     `json:"root_end_byte"`
+	RootHasError   bool                       `json:"root_has_error"`
+	BoardDirect    workCountBoardDirectCounts `json:"board_direct"`
+	Counters       workCountCounters          `json:"counters"`
 }
 
 type workCountCAdmissionChildResult struct {
@@ -435,7 +446,7 @@ func TestAuthenticatedWorkCountOracle(t *testing.T) {
 	t.Log("build: ordinary untagged Go admission child")
 	goAdmissionArtifact, goAdmissionIdentity, goAdmissionRecheck := workCountBuildGo(t, sourceSnapshot, tempRoot, goEnvironment, false)
 	t.Log("admission: ordinary untagged Go child")
-	uninstGo := workCountRunGoAdmission(t, goAdmissionArtifact, sourcePath, tempRoot, goEnvironment)
+	uninstGo := workCountRunGoAdmission(t, goAdmissionArtifact, fixture.Fixture.ID, sourcePath, tempRoot, goEnvironment)
 	workCountValidateGoChild(t, "ordinary Go admission", workCountGoAdmissionChildSchema, "go-production-glr-untagged", uninstGo, fixture)
 	t.Log("admission: unmodified static C")
 	uninstC := workCountUninstrumentedCAdmission(t, fixture, sourcePath, tempRoot)
@@ -452,7 +463,7 @@ func TestAuthenticatedWorkCountOracle(t *testing.T) {
 	t.Log("run: instrumented static C child")
 	cResult := workCountRunC(t, cBuild.Artifact, sourcePath, tempRoot)
 	t.Log("run: tagged diagnostic Go child")
-	goResult := workCountRunGo(t, goArtifact, sourcePath, tempRoot, goEnvironment)
+	goResult := workCountRunGo(t, goArtifact, fixture.Fixture.ID, sourcePath, tempRoot, goEnvironment)
 	workCountValidateCChild(t, "static C", "static-c-instrumented-glr", cResult, fixture, uninstC)
 	workCountValidateGoChild(t, "tagged Go", workCountTaggedGoChildSchema, "go-production-glr-tagged-diagnostic", goResult.workCountGoChildResult, fixture)
 	workCountValidateGoCounters(t, "tagged Go", goResult.Counters, uint32(len(fixture.Source)))
@@ -1117,6 +1128,9 @@ func workCountBuildGo(t *testing.T, source workCountSourceSnapshot, tempRoot str
 func workCountRunC(t *testing.T, artifact, sourcePath, tempRoot string) workCountCChildResult {
 	t.Helper()
 	dumpPath := filepath.Join(tempRoot, "c.deep")
+	if err := os.Remove(dumpPath); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
 	environment := workCountSanitizedEnv(os.Environ(), workCountCBuildEnvironment(), nil)
 	stdout, stderr, err := workCountRunCaptured("", environment, workCountTimeout+staticCPerfWallGrace, artifact, sourcePath, dumpPath, strconv.FormatInt(workCountTimeout.Microseconds(), 10))
 	if err != nil {
@@ -1130,10 +1144,10 @@ func workCountRunC(t *testing.T, artifact, sourcePath, tempRoot string) workCoun
 	return result
 }
 
-func workCountRunGoAdmission(t *testing.T, artifact, sourcePath, tempRoot string, environment workCountEnvironment) workCountGoChildResult {
+func workCountRunGoAdmission(t *testing.T, artifact, fixtureID, sourcePath, tempRoot string, environment workCountEnvironment) workCountGoChildResult {
 	t.Helper()
 	resultPath := filepath.Join(tempRoot, "go-admission.json")
-	workCountRunGoChild(t, artifact, "^TestWorkCountAdmissionChild$", sourcePath, resultPath, environment)
+	workCountRunGoChild(t, artifact, "^TestWorkCountAdmissionChild$", fixtureID, sourcePath, resultPath, environment)
 	data, err := os.ReadFile(resultPath)
 	if err != nil {
 		t.Fatal(err)
@@ -1141,10 +1155,10 @@ func workCountRunGoAdmission(t *testing.T, artifact, sourcePath, tempRoot string
 	return workCountDecodeGoChild(t, data)
 }
 
-func workCountRunGo(t *testing.T, artifact, sourcePath, tempRoot string, environment workCountEnvironment) workCountTaggedChildResult {
+func workCountRunGo(t *testing.T, artifact, fixtureID, sourcePath, tempRoot string, environment workCountEnvironment) workCountTaggedChildResult {
 	t.Helper()
 	resultPath := filepath.Join(tempRoot, "go-work-count.json")
-	workCountRunGoChild(t, artifact, "^TestDiagnosticWorkCountChild$", sourcePath, resultPath, environment)
+	workCountRunGoChild(t, artifact, "^TestDiagnosticWorkCountChild$", fixtureID, sourcePath, resultPath, environment)
 	data, err := os.ReadFile(resultPath)
 	if err != nil {
 		t.Fatal(err)
@@ -1152,12 +1166,16 @@ func workCountRunGo(t *testing.T, artifact, sourcePath, tempRoot string, environ
 	return workCountDecodeTaggedGoChild(t, data)
 }
 
-func workCountRunGoChild(t *testing.T, artifact, testPattern, sourcePath, resultPath string, environment workCountEnvironment) {
+func workCountRunGoChild(t *testing.T, artifact, testPattern, fixtureID, sourcePath, resultPath string, environment workCountEnvironment) {
 	t.Helper()
+	if strings.TrimSpace(fixtureID) == "" {
+		t.Fatal("Go child fixture ID is empty")
+	}
 	if err := os.Remove(resultPath); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
 	runtimeEnv := workCountSanitizedEnv(os.Environ(), environment.Runtime, map[string]string{
+		workCountFixtureEnv:     fixtureID,
 		"GTS_WORK_COUNT_SOURCE": sourcePath,
 		"GTS_WORK_COUNT_RESULT": resultPath,
 	})
@@ -1195,9 +1213,10 @@ func workCountDecodeTaggedGoChild(t *testing.T, data []byte) workCountTaggedChil
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("decode child object: %v: %s", err, data)
 	}
-	fields := append(append([]string(nil), workCountGoChildFields...), "counters")
+	fields := append(append([]string(nil), workCountGoChildFields...), "counters", "board_direct")
 	workCountRequireKeys(t, "tagged Go child", raw, fields)
 	workCountValidateGoCounterObject(t, raw["counters"])
+	workCountValidateBoardDirectObject(t, raw["board_direct"])
 	var result workCountTaggedChildResult
 	workCountDecodeExact(t, data, &result)
 	return result
@@ -1209,11 +1228,26 @@ func workCountDecodeCChild(t *testing.T, data []byte) workCountCChildResult {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatalf("decode C child object: %v: %s", err, data)
 	}
-	workCountRequireKeys(t, "C child", raw, []string{"schema", "engine", "digest_format", "source_bytes", "root_end_byte", "root_has_error", "counters"})
+	workCountRequireKeys(t, "C child", raw, []string{"schema", "engine", "digest_format", "source_bytes", "root_end_byte", "root_has_error", "board_direct", "counters"})
 	workCountValidateCounterObject(t, raw["counters"])
+	workCountValidateBoardDirectObject(t, raw["board_direct"])
 	var result workCountCChildResult
 	workCountDecodeExact(t, data, &result)
 	return result
+}
+
+func workCountValidateBoardDirectObject(t *testing.T, data json.RawMessage) {
+	t.Helper()
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	workCountRequireKeys(t, "board direct", raw, []string{"schema", "resolved_action_cells_examined", "raw_action_entries_beyond_first", "alternate_predecessor_links_appended", "overflow"})
+	var direct workCountBoardDirectCounts
+	workCountDecodeExact(t, data, &direct)
+	if direct.Schema != "gts-work-count-board-direct/v1" || direct.Overflow {
+		t.Fatalf("invalid board direct counts: %+v", direct)
+	}
 }
 
 func workCountValidateCounterObject(t *testing.T, data json.RawMessage) {

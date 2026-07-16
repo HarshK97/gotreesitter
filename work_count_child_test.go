@@ -12,7 +12,8 @@ import (
 
 type workCountTaggedChildResult struct {
 	workCountGoChildResult
-	Counters gotreesitter.DiagnosticWorkCount `json:"counters"`
+	Counters    gotreesitter.DiagnosticWorkCount            `json:"counters"`
+	BoardDirect gotreesitter.DiagnosticWorkCountBoardDirect `json:"board_direct"`
 }
 
 // TestDiagnosticWorkCountChild is an executable protocol endpoint, not a
@@ -54,7 +55,7 @@ func TestDiagnosticWorkCountChild(t *testing.T) {
 	}
 	base.Engine = workCountTaggedEngine
 	base.Schema = workCountTaggedGoChildSchema
-	result := workCountTaggedChildResult{workCountGoChildResult: base, Counters: counts}
+	result := workCountTaggedChildResult{workCountGoChildResult: base, Counters: counts, BoardDirect: counts.BoardDirect()}
 	if err := writeWorkCountChildResult(result); err != nil {
 		t.Fatal(err)
 	}
