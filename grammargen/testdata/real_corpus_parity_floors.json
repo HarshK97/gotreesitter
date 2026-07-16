@@ -1,16 +1,16 @@
 {
   "version": 3,
-  "generated_at": "2026-07-16T20:14:41Z",
-  "commit_sha": "d476a86a9e58",
+  "generated_at": "2026-07-16T23:30:24Z",
+  "commit_sha": "38bd8dabac1b",
   "corpus_root": "durable pinned-grammar corpus (grammar_parity.lock)",
   "profile": "aggressive",
   "max_cases": 30,
   "max_sample_bytes": 524288,
   "grammar_count": 177,
-  "total_eligible": 4323,
-  "total_no_error": 3431,
-  "total_sexpr_parity": 3146,
-  "total_deep_parity": 3143,
+  "total_eligible": 4167,
+  "total_no_error": 3415,
+  "total_sexpr_parity": 3131,
+  "total_deep_parity": 3128,
   "metrics": {
     "ada": {
       "eligible": 30,
@@ -55,16 +55,16 @@
       "deep_parity": 10
     },
     "awk": {
-      "eligible": 100,
-      "no_error": 1,
-      "sexpr_parity": 1,
-      "deep_parity": 1
+      "eligible": 30,
+      "no_error": 0,
+      "sexpr_parity": 0,
+      "deep_parity": 0
     },
     "bash": {
-      "eligible": 31,
-      "no_error": 11,
-      "sexpr_parity": 8,
-      "deep_parity": 8
+      "eligible": 30,
+      "no_error": 10,
+      "sexpr_parity": 7,
+      "deep_parity": 7
     },
     "bass": {
       "eligible": 11,
@@ -91,10 +91,10 @@
       "deep_parity": 14
     },
     "bitbake": {
-      "eligible": 33,
-      "no_error": 3,
-      "sexpr_parity": 3,
-      "deep_parity": 3
+      "eligible": 30,
+      "no_error": 2,
+      "sexpr_parity": 2,
+      "deep_parity": 2
     },
     "blade": {
       "eligible": 30,
@@ -103,10 +103,10 @@
       "deep_parity": 4
     },
     "brightscript": {
-      "eligible": 32,
-      "no_error": 4,
-      "sexpr_parity": 4,
-      "deep_parity": 4
+      "eligible": 30,
+      "no_error": 3,
+      "sexpr_parity": 3,
+      "deep_parity": 3
     },
     "c_lang": {
       "eligible": 30,
@@ -193,10 +193,10 @@
       "deep_parity": 20
     },
     "crystal": {
-      "eligible": 31,
-      "no_error": 13,
-      "sexpr_parity": 12,
-      "deep_parity": 12
+      "eligible": 30,
+      "no_error": 12,
+      "sexpr_parity": 11,
+      "deep_parity": 11
     },
     "css": {
       "eligible": 30,
@@ -415,10 +415,10 @@
       "deep_parity": 29
     },
     "fortran": {
-      "eligible": 47,
-      "no_error": 3,
-      "sexpr_parity": 3,
-      "deep_parity": 3
+      "eligible": 30,
+      "no_error": 2,
+      "sexpr_parity": 2,
+      "deep_parity": 2
     },
     "fsharp": {
       "eligible": 30,
@@ -613,16 +613,16 @@
       "deep_parity": 19
     },
     "just": {
-      "eligible": 31,
-      "no_error": 27,
-      "sexpr_parity": 27,
-      "deep_parity": 27
+      "eligible": 30,
+      "no_error": 26,
+      "sexpr_parity": 26,
+      "deep_parity": 26
     },
     "kotlin": {
-      "eligible": 31,
-      "no_error": 20,
-      "sexpr_parity": 19,
-      "deep_parity": 19
+      "eligible": 30,
+      "no_error": 19,
+      "sexpr_parity": 18,
+      "deep_parity": 18
     },
     "less": {
       "eligible": 30,
@@ -709,8 +709,8 @@
       "deep_parity": 28
     },
     "norg": {
-      "eligible": 71,
-      "no_error": 1,
+      "eligible": 30,
+      "no_error": 0,
       "sexpr_parity": 0,
       "deep_parity": 0
     },
@@ -745,10 +745,10 @@
       "deep_parity": 3
     },
     "php": {
-      "eligible": 33,
-      "no_error": 9,
-      "sexpr_parity": 7,
-      "deep_parity": 7
+      "eligible": 30,
+      "no_error": 8,
+      "sexpr_parity": 6,
+      "deep_parity": 6
     },
     "pkl": {
       "eligible": 30,
@@ -793,10 +793,10 @@
       "deep_parity": 13
     },
     "pug": {
-      "eligible": 32,
-      "no_error": 15,
-      "sexpr_parity": 12,
-      "deep_parity": 12
+      "eligible": 30,
+      "no_error": 14,
+      "sexpr_parity": 11,
+      "deep_parity": 11
     },
     "puppet": {
       "eligible": 1,
@@ -841,10 +841,10 @@
       "deep_parity": 30
     },
     "rego": {
-      "eligible": 32,
-      "no_error": 26,
-      "sexpr_parity": 23,
-      "deep_parity": 23
+      "eligible": 30,
+      "no_error": 25,
+      "sexpr_parity": 22,
+      "deep_parity": 22
     },
     "requirements": {
       "eligible": 10,
@@ -871,10 +871,10 @@
       "deep_parity": 0
     },
     "ruby": {
-      "eligible": 33,
-      "no_error": 18,
-      "sexpr_parity": 17,
-      "deep_parity": 17
+      "eligible": 30,
+      "no_error": 17,
+      "sexpr_parity": 16,
+      "deep_parity": 16
     },
     "rust": {
       "eligible": 30,
@@ -883,10 +883,10 @@
       "deep_parity": 29
     },
     "scala": {
-      "eligible": 31,
-      "no_error": 16,
-      "sexpr_parity": 9,
-      "deep_parity": 9
+      "eligible": 30,
+      "no_error": 15,
+      "sexpr_parity": 8,
+      "deep_parity": 8
     },
     "scheme": {
       "eligible": 28,
@@ -913,10 +913,10 @@
       "deep_parity": 28
     },
     "sparql": {
-      "eligible": 31,
-      "no_error": 20,
-      "sexpr_parity": 20,
-      "deep_parity": 20
+      "eligible": 30,
+      "no_error": 19,
+      "sexpr_parity": 19,
+      "deep_parity": 19
     },
     "sql": {
       "eligible": 30,
@@ -1021,10 +1021,10 @@
       "deep_parity": 29
     },
     "typst": {
-      "eligible": 37,
-      "no_error": 12,
-      "sexpr_parity": 8,
-      "deep_parity": 8
+      "eligible": 30,
+      "no_error": 11,
+      "sexpr_parity": 7,
+      "deep_parity": 7
     },
     "uxntal": {
       "eligible": 29,

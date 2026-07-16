@@ -379,6 +379,12 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 						return
 					}
 					metrics.Eligible++
+					// The eligible-sample cap applies even when the generated
+					// parse stops, errors, or diverges below. Record that this is
+					// the final admitted sample before any of those early returns.
+					if metrics.Eligible >= maxCases {
+						stop = true
+					}
 
 					genStop := realCorpusParseStopReason(genErr)
 					if realCorpusParseStopActive(genStop) {
@@ -536,9 +542,6 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 								}
 							}
 						}
-					}
-					if metrics.Eligible >= maxCases {
-						stop = true
 					}
 				}()
 				if stop {
@@ -807,7 +810,7 @@ func defaultMaxCasesForProfile(p realCorpusProfile) int {
 	case realCorpusProfileBalanced:
 		return 16
 	default:
-		return 24
+		return 30
 	}
 }
 
@@ -890,7 +893,27 @@ func loadRealCorpusFloorFile(path string) (realCorpusFloorFile, bool, error) {
 	if out.Version == 0 {
 		out.Version = realCorpusFloorsFileVersion
 	}
+	if err := validateRealCorpusFloorFile(out); err != nil {
+		return out, false, err
+	}
 	return out, true, nil
+}
+
+func validateRealCorpusFloorFile(f realCorpusFloorFile) error {
+	if f.MaxCases <= 0 {
+		return nil
+	}
+	for grammarName, metrics := range f.Metrics {
+		if metrics.Eligible > f.MaxCases {
+			return fmt.Errorf(
+				"grammar %q eligible floor %d exceeds max_cases %d",
+				grammarName,
+				metrics.Eligible,
+				f.MaxCases,
+			)
+		}
+	}
+	return nil
 }
 
 func writeRealCorpusFloorFile(path string, f realCorpusFloorFile) error {
