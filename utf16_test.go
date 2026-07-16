@@ -667,8 +667,12 @@ func TestDescendantForUTF16Range(t *testing.T) {
 		t.Fatalf("ParseUTF16 failed: %v", err)
 	}
 
-	if got := tree.RootNode().DescendantForByteRange(0, uint32(len(source))*2); got != nil {
-		t.Fatalf("DescendantForByteRange with UTF16 byte offsets = %s, want nil", got.Type(lang))
+	// UTF-16 code-unit offsets misused as byte offsets over-run the byte span.
+	// The byte API mirrors C tree-sitter, which returns the node itself for an
+	// unsatisfiable range (never nil) — so this yields the whole root, not a
+	// precise descendant. Use DescendantForUTF16Range for UTF-16 coordinates.
+	if got := tree.RootNode().DescendantForByteRange(0, uint32(len(source))*2); got != tree.RootNode() {
+		t.Fatalf("out-of-range byte range = %v, want the root node (C semantics)", got)
 	}
 
 	root := tree.DescendantForUTF16Range(0, uint32(len(source)))

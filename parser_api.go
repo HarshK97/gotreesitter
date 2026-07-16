@@ -221,7 +221,10 @@ func (p *Parser) disabledOldTreeTokenInvariantLeafAllowed(source []byte, oldTree
 	}
 	node := oldTree.lastEditedLeaf
 	if node == nil || !node.containsByteRange(edit.StartByte, edit.OldEndByte) {
-		node = root.DescendantForByteRange(edit.StartByte, edit.OldEndByte)
+		// Incremental reuse needs the fully-contained (nil-on-miss) semantics,
+		// not the C-faithful public walk (which returns the node itself on a
+		// miss). Use the contained helper so this fast path is unchanged.
+		node = root.descendantForByteRangeContained(edit.StartByte, edit.OldEndByte, false)
 	}
 	if p.canReuseLanguageTextInvariantNode(source, oldTree, node, edit) {
 		return true
