@@ -1287,6 +1287,9 @@ func TestUnescapeCString(t *testing.T) {
 		{`line\nbreak`, "line\nbreak"},
 		{`tab\there`, "tab\there"},
 		{`back\\slash`, `back\slash`},
+		{`lambda\u03bb`, "lambdaλ"},
+		{`snowman\U00002603`, "snowman☃"},
+		{`invalid\u12`, `invalid\u12`},
 	}
 
 	for _, tt := range tests {

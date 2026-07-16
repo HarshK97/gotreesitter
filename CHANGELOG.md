@@ -18,6 +18,11 @@ for tags and release notes while still in `0.x`.
   quality-tied fresh tree. This stops spurious `incremental_parse_full_retry`
   reporting on grammars whose intended trees contain ERROR productions and
   legitimately use the full GLR width.
+- A parse whose result materialization stops on a terminal condition (for
+  example the memory budget tripping while the tree is being built) after the
+  parser loop already accepted now reports that condition through
+  `Tree.ParseStopReason` instead of `accepted`. Previously such a parse could
+  return a sentinel full-span ERROR root labeled as a successful parse.
 - Multiline tree edits now keep node byte and point ranges aligned with the C
   runtime across insertions, deletions, and replacements.
 - Rewriter edits now reject reversed and out-of-source byte ranges instead of

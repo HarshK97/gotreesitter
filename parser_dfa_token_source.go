@@ -3633,7 +3633,11 @@ func (d *dfaTokenSource) allowRepeatedZeroWidthExternalSymbol(sym Symbol) bool {
 	case "_virtual_end_section":
 		return d.language.Name == "elm"
 	case "_dedent":
-		return d.language.Name == "gdscript"
+		// Indentation scanners may legitimately emit several zero-width
+		// DEDENTs at one byte while unwinding nested blocks.  Bend uses the
+		// same Tree-sitter contract as GDScript; applying the global cap here
+		// drops a structural dedent and changes the winning parse branch.
+		return d.language.Name == "gdscript" || d.language.Name == "bend"
 	default:
 		return false
 	}
