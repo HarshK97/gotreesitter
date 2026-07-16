@@ -41,6 +41,12 @@ for tags and release notes while still in `0.x`.
   directions against fresh Go and C trees, and atomically publishes a
   machine-readable closure receipt only after every row passes.
 
+- Real-corpus grammar parity can use a durable configurable corpus root and
+  split-grammar corpus layouts without silently losing colliding basenames.
+  Eligible-sample caps now apply on every generated-result path, committed
+  floors reject over-cap rows, and the aggressive runner and floor share the
+  same 30-sample limit.
+
 ## [0.38.0] - 2026-07-16
 
 Incremental-correctness, full-parse-efficiency, and benchmark-hardening release.

@@ -257,6 +257,7 @@ func main() {
 		if err := os.MkdirAll(langOutDir, 0o755); err != nil {
 			fatalf("create output directory for %q: %v", lang, err)
 		}
+		usedNames := make(map[string]bool)
 		for _, sf := range selected {
 			content, err := os.ReadFile(sf.AbsPath)
 			if err != nil {
@@ -265,7 +266,9 @@ func main() {
 			outputs := materializeCorpusOutputs(sf, content)
 			for _, out := range outputs {
 				sum := sha256.Sum256(out.Content)
-				outputPath := filepath.Join(langOutDir, out.Name)
+				name := disambiguateOutputName(usedNames, sf.RelPath, out.Name)
+				usedNames[name] = true
+				outputPath := filepath.Join(langOutDir, name)
 				if err := os.WriteFile(outputPath, out.Content, 0o644); err != nil {
 					fatalf("write %s: %v", outputPath, err)
 				}
@@ -1179,6 +1182,38 @@ type materializedCorpusOutput struct {
 type treeSitterCorpusCase struct {
 	Title  string
 	Source []byte
+}
+
+// disambiguateOutputName keeps distinct selected files with colliding
+// basenames (e.g. many kubernetes API groups shipping generated.pb.go) from
+// silently overwriting each other in the language output directory. On
+// collision the name gains source-path components, innermost first, then a
+// numeric suffix as a last resort.
+func disambiguateOutputName(used map[string]bool, relPath, name string) string {
+	if !used[name] {
+		return name
+	}
+	bucket, rest, hasBucket := strings.Cut(name, "__")
+	dirParts := strings.Split(filepath.ToSlash(filepath.Dir(relPath)), "/")
+	for i := len(dirParts) - 1; i >= 0; i-- {
+		qual := safeName(strings.Join(dirParts[i:], "_"))
+		if qual == "" || qual == "." {
+			continue
+		}
+		candidate := name + "__" + qual
+		if hasBucket {
+			candidate = bucket + "__" + qual + "__" + rest
+		}
+		if !used[candidate] {
+			return candidate
+		}
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s__dup%d", name, i)
+		if !used[candidate] {
+			return candidate
+		}
+	}
 }
 
 func materializeCorpusOutputs(sf selectedCorpusFile, content []byte) []materializedCorpusOutput {

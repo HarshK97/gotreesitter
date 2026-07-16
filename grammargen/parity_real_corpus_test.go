@@ -195,7 +195,22 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 		if repoRoot == "" {
 			continue
 		}
-		candidates := collectGrammarCorpusCandidates(t, repoRoot, collectCfg)
+		// Split-grammar repos (tree-sitter-markdown, tree-sitter-xml, ...)
+		// nest each grammar's corpus beside its grammar.json rather than at
+		// the repo top; probe the grammar's own directory first and fall
+		// back to the repo root.
+		collectRoot := repoRoot
+		if jp := remapParityCorpusPath(g.jsonPath, root); jp != "" {
+			if grammarDir := filepath.Dir(filepath.Dir(jp)); grammarDir != repoRoot {
+				if info, statErr := os.Stat(grammarDir); statErr == nil && info.IsDir() {
+					collectRoot = grammarDir
+				}
+			}
+		}
+		candidates := collectGrammarCorpusCandidates(t, collectRoot, collectCfg)
+		if len(candidates) == 0 && collectRoot != repoRoot {
+			candidates = collectGrammarCorpusCandidates(t, repoRoot, collectCfg)
+		}
 		if len(candidates) == 0 {
 			continue
 		}
@@ -215,7 +230,7 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 				t.Fatalf("generate timeout override: %v", err)
 			}
 			logRealCorpusDiag("subtest_start", g.name, "timeout=%s jsonPath=%s path=%s", timeout, g.jsonPath, g.path)
-			gram, err := importParityGrammarSource(g)
+			gram, err := importParityGrammarSourceAt(g, root)
 			if err != nil {
 				t.Fatalf("import failed: %v", err)
 			}
@@ -364,6 +379,12 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 						return
 					}
 					metrics.Eligible++
+					// The eligible-sample cap applies even when the generated
+					// parse stops, errors, or diverges below. Record that this is
+					// the final admitted sample before any of those early returns.
+					if metrics.Eligible >= maxCases {
+						stop = true
+					}
 
 					genStop := realCorpusParseStopReason(genErr)
 					if realCorpusParseStopActive(genStop) {
@@ -521,9 +542,6 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 								}
 							}
 						}
-					}
-					if metrics.Eligible >= maxCases {
-						stop = true
 					}
 				}()
 				if stop {
@@ -792,7 +810,7 @@ func defaultMaxCasesForProfile(p realCorpusProfile) int {
 	case realCorpusProfileBalanced:
 		return 16
 	default:
-		return 24
+		return 30
 	}
 }
 
@@ -875,7 +893,27 @@ func loadRealCorpusFloorFile(path string) (realCorpusFloorFile, bool, error) {
 	if out.Version == 0 {
 		out.Version = realCorpusFloorsFileVersion
 	}
+	if err := validateRealCorpusFloorFile(out); err != nil {
+		return out, false, err
+	}
 	return out, true, nil
+}
+
+func validateRealCorpusFloorFile(f realCorpusFloorFile) error {
+	if f.MaxCases <= 0 {
+		return nil
+	}
+	for grammarName, metrics := range f.Metrics {
+		if metrics.Eligible > f.MaxCases {
+			return fmt.Errorf(
+				"grammar %q eligible floor %d exceeds max_cases %d",
+				grammarName,
+				metrics.Eligible,
+				f.MaxCases,
+			)
+		}
+	}
+	return nil
 }
 
 func writeRealCorpusFloorFile(path string, f realCorpusFloorFile) error {
@@ -906,6 +944,7 @@ func parityGrammarRepoRoot(g importParityGrammar, root string) string {
 		if p == "" {
 			continue
 		}
+		p = remapParityCorpusPath(p, root)
 		rel, err := filepath.Rel(root, p)
 		if err != nil {
 			continue
@@ -927,18 +966,40 @@ func parityGrammarRepoRoot(g importParityGrammar, root string) string {
 }
 
 func importParityGrammarSource(g importParityGrammar) (*Grammar, error) {
+	return importParityGrammarSourceAt(g, "")
+}
+
+// importParityGrammarSourceAt resolves the grammar source against a corpus
+// root that may differ from the legacy /tmp/grammar_parity location the
+// importParityGrammars table hardcodes.
+func importParityGrammarSourceAt(g importParityGrammar, root string) (*Grammar, error) {
 	if g.jsonPath != "" {
-		source, err := os.ReadFile(fallbackParitySeedPath(g.jsonPath))
+		source, err := os.ReadFile(fallbackParitySeedPath(remapParityCorpusPath(g.jsonPath, root)))
 		if err != nil {
 			return nil, fmt.Errorf("read grammar.json: %w", err)
 		}
 		return ImportGrammarJSON(source)
 	}
-	source, err := os.ReadFile(fallbackParitySeedPath(g.path))
+	source, err := os.ReadFile(fallbackParitySeedPath(remapParityCorpusPath(g.path, root)))
 	if err != nil {
 		return nil, fmt.Errorf("read grammar.js: %w", err)
 	}
 	return ImportGrammarJS(source)
+}
+
+// remapParityCorpusPath rewrites the legacy /tmp/grammar_parity/ prefix onto
+// the configured corpus root so the corpus can live at a durable location
+// (GTS_GRAMMARGEN_REAL_CORPUS_ROOT). Paths outside the legacy root and the
+// legacy root itself pass through unchanged.
+func remapParityCorpusPath(path, root string) string {
+	const legacyRoot = "/tmp/grammar_parity"
+	if root == "" || root == legacyRoot || path == "" {
+		return path
+	}
+	if !strings.HasPrefix(path, legacyRoot+"/") {
+		return path
+	}
+	return filepath.Join(root, strings.TrimPrefix(path, legacyRoot+"/"))
 }
 
 func fallbackParitySeedPath(path string) string {

@@ -12,7 +12,7 @@ PIDS_LIMIT="4096"
 OUT_ROOT=""
 LABEL="grammargen-real-corpus"
 PROFILE="aggressive"
-MAX_CASES="25"
+MAX_CASES="30"
 MAX_GRAMMARS="0"
 # Per-grammar generation timeout. The default test cap is 30s, but the slowest
 # grammars legitimately take much longer to generate (nix ~138s, make ~54s,
@@ -48,7 +48,7 @@ Options:
   --out-root <path>       Artifact output root (optional)
   --label <name>          Run label suffix (default: grammargen-real-corpus)
   --profile <name>        Real-corpus profile: smoke|balanced|aggressive (default: aggressive)
-  --max-cases <n>         Max eligible samples per grammar (default: 25)
+  --max-cases <n>         Max eligible samples per grammar (default: 30)
   --max-grammars <n>      Max grammars to exercise (0 = unlimited, default: 12)
   --seed-dir <path>       Host seed directory under repo root with grammar repos to copy into /tmp/grammar_parity
   --offline               Do not attempt network cloning; require --seed-dir
