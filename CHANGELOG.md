@@ -119,6 +119,13 @@ authenticated static-C, fleet, and forest measurements are stricter.
 
 ### Tooling
 
+- Compact parser-core conflict dispatch now reuses flat arm, reduction-output,
+  adoption-count, and header-assembly scratch while preserving action order,
+  rollback, and full receipts. Across the four locked real-Go fixtures on the
+  quiet host, total compact parse improved 2.2% in time, 23.7% in allocated
+  bytes, and 27.1% in allocations by geomean, with every fixture median faster
+  and exact trees, selected-node census, and parser work unchanged. The
+  scheduler control improved 2.9%, 25.7%, and 27.2% respectively.
 - Compact parser-core materialization now reuses one parent-entry buffer and
   one reduction-build scratch across each accepted tree while restoring parser
   state on every exit. Across the four locked real-Go fixtures on the quiet

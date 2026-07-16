@@ -728,12 +728,82 @@ func validateDiagnosticParserCoreCell(token Token, actions core.ActionRow) error
 }
 
 type diagnosticParserCoreConflictExecution struct {
-	primaries     []diagnosticParserCoreHeader
-	secondaries   []diagnosticParserCoreHeader
-	secondaryArms [][]diagnosticParserCoreHeader
-	round         DiagnosticParserCoreDispatchRound
-	branchOrder   uint64
-	nextSeq       uint64
+	outputs     []diagnosticParserCoreHeader
+	armRanges   []diagnosticParserCoreConflictArmRange
+	round       DiagnosticParserCoreDispatchRound
+	branchOrder uint64
+	nextSeq     uint64
+}
+
+func (e diagnosticParserCoreConflictExecution) arm(ordinal int) []diagnosticParserCoreHeader {
+	if ordinal < 0 || ordinal >= len(e.armRanges) {
+		return nil
+	}
+	arm := e.armRanges[ordinal]
+	return e.outputs[arm.start:arm.end]
+}
+
+type diagnosticParserCoreConflictArmRange struct {
+	start int
+	end   int
+}
+
+type diagnosticParserCoreConflictScratch struct {
+	busy             bool
+	actionOutputs    []diagnosticParserCoreActionOutput
+	reductionOutputs []core.ReductionOutput
+	outputs          []diagnosticParserCoreHeader
+	armRanges        []diagnosticParserCoreConflictArmRange
+	adopted          []int
+	headerAssembly   []diagnosticParserCoreHeader
+}
+
+func (s *diagnosticParserCoreConflictScratch) begin(actionCount int) error {
+	if s == nil {
+		return errors.New("parser-core phase zero: nil conflict scratch")
+	}
+	if s.busy {
+		return errors.New("parser-core phase zero: reentrant conflict scratch")
+	}
+	s.busy = true
+	s.actionOutputs = s.actionOutputs[:0]
+	s.reductionOutputs = s.reductionOutputs[:0]
+	clear(s.outputs)
+	s.outputs = s.outputs[:0]
+	if cap(s.armRanges) < actionCount {
+		s.armRanges = make([]diagnosticParserCoreConflictArmRange, actionCount)
+	} else {
+		s.armRanges = s.armRanges[:actionCount]
+		clear(s.armRanges)
+	}
+	if cap(s.adopted) < actionCount {
+		s.adopted = make([]int, actionCount)
+	} else {
+		s.adopted = s.adopted[:actionCount]
+		clear(s.adopted)
+	}
+	clear(s.headerAssembly)
+	s.headerAssembly = s.headerAssembly[:0]
+	return nil
+}
+
+func (s *diagnosticParserCoreConflictScratch) finish() {
+	if s == nil {
+		return
+	}
+	clear(s.actionOutputs)
+	s.actionOutputs = s.actionOutputs[:0]
+	clear(s.reductionOutputs)
+	s.reductionOutputs = s.reductionOutputs[:0]
+	clear(s.outputs)
+	s.outputs = s.outputs[:0]
+	clear(s.armRanges)
+	s.armRanges = s.armRanges[:0]
+	clear(s.adopted)
+	s.adopted = s.adopted[:0]
+	clear(s.headerAssembly)
+	s.headerAssembly = s.headerAssembly[:0]
+	s.busy = false
 }
 
 type diagnosticParserCoreActionOutput struct {
@@ -749,8 +819,12 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 	classified core.ClassifiedBoundary,
 	branchOrder uint64,
 	collectReceipts bool,
+	scratch *diagnosticParserCoreConflictScratch,
 ) (diagnosticParserCoreConflictExecution, error) {
 	actions := classified.Actions()
+	if scratch == nil || !scratch.busy || len(scratch.armRanges) != actions.Len() {
+		return diagnosticParserCoreConflictExecution{}, errors.New("parser-core phase zero: conflict scratch is not initialized")
+	}
 	var before DiagnosticParserCoreHeaderReceipt
 	if collectReceipts {
 		var err error
@@ -770,29 +844,27 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 		return diagnosticParserCoreConflictExecution{}, errors.New("parser-core phase zero: conflict branch order overflow")
 	}
 	trialOrder := branchOrder
-	var primaries []diagnosticParserCoreHeader
-	var secondaries []diagnosticParserCoreHeader
-	var secondaryArms [][]diagnosticParserCoreHeader
 	var receipts []DiagnosticParserCoreRoundAction
 	err := compact.ApplyAtomic(func() error {
 		for ordinal := 1; ordinal < actions.Len(); ordinal++ {
 			action := actions.At(ordinal)
 			trialOrder++
-			outputs, applyErr := applyParserCoreConflictAction(compact, classified, token, action, ordinal, core.ForkOrder{Present: true, Value: trialOrder})
+			var applyErr error
+			scratch.actionOutputs, scratch.reductionOutputs, applyErr = applyParserCoreConflictActionInto(
+				scratch.actionOutputs[:0], scratch.reductionOutputs[:0], compact, classified, token,
+				action, ordinal, core.ForkOrder{Present: true, Value: trialOrder},
+			)
 			if applyErr != nil {
 				return applyErr
 			}
-			arm := make([]diagnosticParserCoreHeader, 0, len(outputs))
-			if len(outputs) != 0 {
-				for _, output := range outputs {
-					arm = append(arm, diagnosticParserCoreHeader{
-						head: output.head, shifted: action.Type == core.ActionShift,
-						freshness: output.freshness, checkpoint: incoming.checkpoint,
-					})
-				}
+			start := len(scratch.outputs)
+			for _, output := range scratch.actionOutputs {
+				scratch.outputs = append(scratch.outputs, diagnosticParserCoreHeader{
+					head: output.head, shifted: action.Type == core.ActionShift,
+					freshness: output.freshness, checkpoint: incoming.checkpoint,
+				})
 			}
-			secondaryArms = append(secondaryArms, arm)
-			secondaries = append(secondaries, arm...)
+			scratch.armRanges[ordinal] = diagnosticParserCoreConflictArmRange{start: start, end: len(scratch.outputs)}
 			if collectReceipts {
 				receipts = append(receipts, DiagnosticParserCoreRoundAction{
 					HeaderIndex: headerIndex, State: before.State, ByteOffset: before.ByteOffset,
@@ -801,18 +873,23 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 			}
 		}
 		primaryAction := actions.At(0)
-		outputs, applyErr := applyParserCoreConflictAction(compact, classified, token, primaryAction, 0, core.ForkOrder{})
+		var applyErr error
+		scratch.actionOutputs, scratch.reductionOutputs, applyErr = applyParserCoreConflictActionInto(
+			scratch.actionOutputs[:0], scratch.reductionOutputs[:0], compact, classified, token,
+			primaryAction, 0, core.ForkOrder{},
+		)
 		if applyErr != nil {
 			return applyErr
 		}
-		primaries = make([]diagnosticParserCoreHeader, len(outputs))
-		for index, output := range outputs {
+		start := len(scratch.outputs)
+		for _, output := range scratch.actionOutputs {
 			primary := incoming
 			primary.head = output.head
 			primary.shifted = primaryAction.Type == core.ActionShift
 			primary.freshness = output.freshness
-			primaries[index] = primary
+			scratch.outputs = append(scratch.outputs, primary)
 		}
+		scratch.armRanges[0] = diagnosticParserCoreConflictArmRange{start: start, end: len(scratch.outputs)}
 		if collectReceipts {
 			receipts = append(receipts, DiagnosticParserCoreRoundAction{
 				HeaderIndex: headerIndex, State: before.State, ByteOffset: before.ByteOffset,
@@ -827,19 +904,11 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 
 	var round DiagnosticParserCoreDispatchRound
 	if collectReceipts {
-		headers := append(primaries, secondaries...)
-		after, err := diagnosticParserCoreHeaderReceipts(compact, headers)
-		if err != nil {
-			return diagnosticParserCoreConflictExecution{}, err
-		}
-		round = DiagnosticParserCoreDispatchRound{
-			Before: []DiagnosticParserCoreHeaderReceipt{before}, Actions: receipts, After: after,
-		}
+		round.Actions = receipts
 	}
 	return diagnosticParserCoreConflictExecution{
-		primaries: primaries, secondaries: secondaries, secondaryArms: secondaryArms,
-		round:       round,
-		branchOrder: trialOrder,
+		outputs: scratch.outputs, armRanges: scratch.armRanges,
+		round: round, branchOrder: trialOrder,
 	}, nil
 }
 
@@ -1083,6 +1152,7 @@ type diagnosticParserCoreGenericScheduler struct {
 	summaryHeaderScratch       []DiagnosticParserCoreHeaderReceipt
 	canonicalScratch           diagnosticParserCoreCanonicalScratch
 	dispatchScratch            diagnosticParserCoreDispatchScratch
+	conflictScratch            diagnosticParserCoreConflictScratch
 	reductionOutputs           []core.ReductionOutput
 	reductionReplacements      []diagnosticParserCoreHeader
 	classifiedBoundaries       []core.ClassifiedBoundary
@@ -1946,7 +2016,7 @@ func (s *diagnosticParserCoreGenericScheduler) adoptUpdatedReductionSibling(sour
 }
 
 func (s *diagnosticParserCoreGenericScheduler) reconcileGenericConflictOutputs(source int, outputs []diagnosticParserCoreHeader) ([]diagnosticParserCoreHeader, int, error) {
-	kept := make([]diagnosticParserCoreHeader, 0, len(outputs))
+	kept := outputs[:0]
 	adopted := 0
 	for _, output := range outputs {
 		if output.freshness == core.ReductionUpdated {
@@ -1995,9 +2065,14 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictAtomic(before
 	if err != nil {
 		return err
 	}
+	actions := cell.actions()
+	if err := s.conflictScratch.begin(actions.Len()); err != nil {
+		return err
+	}
+	defer s.conflictScratch.finish()
 	execution, err := executeDiagnosticParserCoreGenericConflictDetailed(
 		s.compact, s.headers[cell.headerIndex], cell.headerIndex, s.token, cell.boundary,
-		s.branchOrder, s.fullReceipts(),
+		s.branchOrder, s.fullReceipts(), &s.conflictScratch,
 	)
 	if err != nil {
 		return err
@@ -2007,75 +2082,85 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictAtomic(before
 			return err
 		}
 	}
-	primaryAdopted := 0
-	execution.primaries, primaryAdopted, err = s.reconcileGenericConflictOutputs(cell.headerIndex, execution.primaries)
-	if err != nil {
-		return err
-	}
-	secondaryAdopted := make([]int, len(execution.secondaryArms))
-	execution.secondaries = execution.secondaries[:0]
-	for index, arm := range execution.secondaryArms {
-		execution.secondaryArms[index], secondaryAdopted[index], err = s.reconcileGenericConflictOutputs(cell.headerIndex, arm)
-		if err != nil {
-			return err
+	for ordinal := range execution.armRanges {
+		arm := execution.arm(ordinal)
+		kept, adopted, reconcileErr := s.reconcileGenericConflictOutputs(cell.headerIndex, arm)
+		if reconcileErr != nil {
+			return reconcileErr
 		}
-		execution.secondaries = append(execution.secondaries, execution.secondaryArms[index]...)
+		execution.armRanges[ordinal].end = execution.armRanges[ordinal].start + len(kept)
+		s.conflictScratch.adopted[ordinal] = adopted
 	}
 	trialSeq := nextSeqBefore
-	for index := range execution.secondaryArms {
-		for output := range execution.secondaryArms[index] {
+	for ordinal := 1; ordinal < len(execution.armRanges); ordinal++ {
+		arm := execution.arm(ordinal)
+		for output := range arm {
 			if trialSeq == math.MaxUint64 {
 				return errors.New("parser-core phase zero: conflict creation sequence overflow")
 			}
-			execution.secondaryArms[index][output].creationSeq = trialSeq
+			arm[output].creationSeq = trialSeq
 			trialSeq++
 		}
 	}
-	if len(execution.primaries) != 0 {
-		execution.primaries[0].creationSeq = s.headers[cell.headerIndex].creationSeq
-		for index := 1; index < len(execution.primaries); index++ {
+	primaries := execution.arm(0)
+	if len(primaries) != 0 {
+		primaries[0].creationSeq = s.headers[cell.headerIndex].creationSeq
+		for index := 1; index < len(primaries); index++ {
 			if trialSeq == math.MaxUint64 {
 				return errors.New("parser-core phase zero: conflict creation sequence overflow")
 			}
-			execution.primaries[index].creationSeq = trialSeq
+			primaries[index].creationSeq = trialSeq
 			trialSeq++
 		}
-	}
-	execution.secondaries = execution.secondaries[:0]
-	for _, arm := range execution.secondaryArms {
-		execution.secondaries = append(execution.secondaries, arm...)
 	}
 	execution.nextSeq = trialSeq
 	prefix := s.headers[:cell.headerIndex]
 	suffix := s.headers[cell.headerIndex+1:]
-	outputCount := len(execution.primaries) + len(execution.secondaries)
-	headers := make([]diagnosticParserCoreHeader, 0, outputCount+len(prefix)+len(suffix)+1)
+	outputCount := 0
+	for ordinal := range execution.armRanges {
+		outputCount += len(execution.arm(ordinal))
+	}
+	assemblySize := outputCount + len(prefix) + len(suffix)
+	if outputCount == 0 {
+		assemblySize++
+	}
+	if cap(s.conflictScratch.headerAssembly) < assemblySize {
+		s.conflictScratch.headerAssembly = make([]diagnosticParserCoreHeader, 0, assemblySize)
+	} else {
+		s.conflictScratch.headerAssembly = s.conflictScratch.headerAssembly[:0]
+	}
+	headers := s.conflictScratch.headerAssembly
 	headers = append(headers, prefix...)
-	if len(execution.primaries) != 0 {
-		headers = append(headers, execution.primaries[0])
+	if len(primaries) != 0 {
+		headers = append(headers, primaries[0])
 	}
 	headers = append(headers, suffix...)
-	headers = append(headers, execution.secondaries...)
-	if len(execution.primaries) > 1 {
-		headers = append(headers, execution.primaries[1:]...)
+	for ordinal := 1; ordinal < len(execution.armRanges); ordinal++ {
+		headers = append(headers, execution.arm(ordinal)...)
+	}
+	if len(primaries) > 1 {
+		headers = append(headers, primaries[1:]...)
 	}
 	if outputCount == 0 {
 		paused := s.headers[cell.headerIndex]
 		paused.paused = true
-		headers = append(append(append([]diagnosticParserCoreHeader(nil), prefix...), paused), suffix...)
+		headers = headers[:len(prefix)]
+		headers = append(headers, paused)
+		headers = append(headers, suffix...)
 	}
+	s.conflictScratch.headerAssembly = headers
 	s.headers = headers
 	s.branchOrder, s.nextSeq = execution.branchOrder, execution.nextSeq
-	adoptedCount := primaryAdopted
-	for _, count := range secondaryAdopted {
+	adoptedCount := 0
+	for _, count := range s.conflictScratch.adopted {
 		adoptedCount += count
 	}
 	if outputCount != 0 || adoptedCount != 0 {
 		s.epochProgress = true
 	}
 	s.work.Conflicts++
-	s.work.ConflictActions += uint64(cell.actions().Len())
-	s.work.Forks += uint64(cell.actions().Len() - 1)
+	s.work.ConflictActions += uint64(actions.Len())
+	s.work.Forks += uint64(actions.Len() - 1)
 	s.work.ConflictHeads += uint64(outputCount)
 	s.work.Dispatches++
 	if err := s.canonicalize(); err != nil {
@@ -2083,7 +2168,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictAtomic(before
 	}
 	roundIndex := -1
 	if s.fullReceipts() {
-		primaryReceipts, err := diagnosticParserCoreHeaderReceipts(s.compact, execution.primaries)
+		primaryReceipts, err := diagnosticParserCoreHeaderReceipts(s.compact, primaries)
 		if err != nil {
 			return err
 		}
@@ -2095,16 +2180,17 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictAtomic(before
 		if err != nil {
 			return err
 		}
-		secondaryArms := make([]DiagnosticParserCoreGenericConflictArm, len(execution.secondaryArms))
-		for index, arm := range execution.secondaryArms {
+		secondaryArms := make([]DiagnosticParserCoreGenericConflictArm, actions.Len()-1)
+		for ordinal := 1; ordinal < actions.Len(); ordinal++ {
+			arm := execution.arm(ordinal)
 			outputs, receiptErr := diagnosticParserCoreHeaderReceipts(s.compact, arm)
 			if receiptErr != nil {
 				return receiptErr
 			}
-			secondaryArms[index] = DiagnosticParserCoreGenericConflictArm{
-				Ordinal: index + 1, BranchOrder: execution.round.Actions[index].BranchOrder,
-				Outputs: outputs, Paused: len(outputs) == 0 && secondaryAdopted[index] == 0,
-				Adopted: secondaryAdopted[index] != 0,
+			secondaryArms[ordinal-1] = DiagnosticParserCoreGenericConflictArm{
+				Ordinal: ordinal, BranchOrder: execution.round.Actions[ordinal-1].BranchOrder,
+				Outputs: outputs, Paused: len(outputs) == 0 && s.conflictScratch.adopted[ordinal] == 0,
+				Adopted: s.conflictScratch.adopted[ordinal] != 0,
 			}
 		}
 		after, err := diagnosticParserCoreHeaderReceipts(s.compact, s.headers)
@@ -2122,7 +2208,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictAtomic(before
 			BranchOrderBefore: branchOrderBefore, BranchOrderAfter: s.branchOrder,
 			NextCreationSeqBefore: nextSeqBefore, NextCreationSeqAfter: s.nextSeq,
 			Round: round, Prefix: prefixReceipts,
-			PrimaryPaused: len(primaryReceipts) == 0 && primaryAdopted == 0, PrimaryAdopted: primaryAdopted != 0,
+			PrimaryPaused: len(primaryReceipts) == 0 && s.conflictScratch.adopted[0] == 0, PrimaryAdopted: s.conflictScratch.adopted[0] != 0,
 			OriginalSuffix: suffixReceipts,
 			SecondaryArms:  secondaryArms, After: after,
 		}
@@ -2599,46 +2685,46 @@ func applyParserCorePrefixAction(compact *core.Core, head core.Head, token Token
 	}
 }
 
-func applyParserCoreConflictAction(compact *core.Core, classified core.ClassifiedBoundary, token Token, action core.Action, ordinal int, fork core.ForkOrder) ([]diagnosticParserCoreActionOutput, error) {
+func applyParserCoreConflictActionInto(
+	dst []diagnosticParserCoreActionOutput,
+	reductionDst []core.ReductionOutput,
+	compact *core.Core,
+	classified core.ClassifiedBoundary,
+	token Token,
+	action core.Action,
+	ordinal int,
+	fork core.ForkOrder,
+) ([]diagnosticParserCoreActionOutput, []core.ReductionOutput, error) {
 	if action.Type != core.ActionReduce {
-		var heads []core.Head
-		var err error
 		switch action.Type {
 		case core.ActionShift:
-			var head core.Head
-			head, err = compact.ShiftClassified(classified, ordinal, core.Token{Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte, Extra: action.Extra, External: token.ExternalScannerToken}, fork)
-			heads = []core.Head{head}
+			head, err := compact.ShiftClassified(classified, ordinal, core.Token{Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte, Extra: action.Extra, External: token.ExternalScannerToken}, fork)
+			if err != nil {
+				return nil, reductionDst, err
+			}
+			return append(dst, diagnosticParserCoreActionOutput{head: head, freshness: core.ReductionNew}), reductionDst, nil
 		case core.ActionRecover:
-			err = &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreRecovery, detail: "unexpected recover action in generic conflict"}
+			return nil, reductionDst, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreRecovery, detail: "unexpected recover action in generic conflict"}
 		case core.ActionAccept:
-			err = &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreAccept, detail: "unexpected accept action in generic conflict"}
+			return nil, reductionDst, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreAccept, detail: "unexpected accept action in generic conflict"}
 		default:
-			err = errors.New("parser-core phase zero: unknown conflict action")
+			return nil, reductionDst, errors.New("parser-core phase zero: unknown conflict action")
 		}
-		if err != nil {
-			return nil, err
-		}
-		outputs := make([]diagnosticParserCoreActionOutput, len(heads))
-		for index, output := range heads {
-			outputs[index] = diagnosticParserCoreActionOutput{head: output, freshness: core.ReductionNew}
-		}
-		return outputs, nil
 	}
-	outputs, err := compact.ReduceOutputsClassifiedInto(nil, classified, ordinal, fork)
+	outputs, err := compact.ReduceOutputsClassifiedInto(reductionDst, classified, ordinal, fork)
 	if err != nil {
-		return nil, err
+		return nil, outputs, err
 	}
-	filtered := make([]diagnosticParserCoreActionOutput, 0, len(outputs))
 	for _, output := range outputs {
 		switch output.Freshness {
 		case core.ReductionUnchanged:
 		case core.ReductionNew, core.ReductionUpdated:
-			filtered = append(filtered, diagnosticParserCoreActionOutput{head: output.Head, freshness: output.Freshness})
+			dst = append(dst, diagnosticParserCoreActionOutput{head: output.Head, freshness: output.Freshness})
 		default:
-			return nil, errors.New("parser-core phase zero: reduction returned invalid freshness")
+			return nil, outputs, errors.New("parser-core phase zero: reduction returned invalid freshness")
 		}
 	}
-	return filtered, nil
+	return dst, outputs, nil
 }
 
 func rootParserCoreAction(action core.Action) ParseAction {
