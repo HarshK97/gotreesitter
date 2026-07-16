@@ -213,6 +213,7 @@ const workCountConvergenceDecisionSlots = workCountConvergenceMaxEvents
 var activeWorkCountConvergence struct {
 	attempt           uint32
 	iteration         uint64
+	electionOrdinal   uint64
 	lookahead         Token
 	lookaheadPresent  bool
 	nextDecision      uint32
@@ -228,6 +229,7 @@ func workCountBeginConvergence(c *DiagnosticWorkCount) {
 	activeWorkCountConvergence = struct {
 		attempt           uint32
 		iteration         uint64
+		electionOrdinal   uint64
 		lookahead         Token
 		lookaheadPresent  bool
 		nextDecision      uint32
@@ -251,6 +253,7 @@ func workCountBeginConvergence(c *DiagnosticWorkCount) {
 func workCountResetConvergenceAttempt(index uint32) {
 	activeWorkCountConvergence.attempt = index
 	activeWorkCountConvergence.iteration = 0
+	activeWorkCountConvergence.electionOrdinal = 0
 	activeWorkCountConvergence.lookahead = Token{}
 	activeWorkCountConvergence.lookaheadPresent = false
 	activeWorkCountConvergence.nextDecision = 0
@@ -263,6 +266,7 @@ func workCountEndConvergence() {
 	activeWorkCountConvergence = struct {
 		attempt           uint32
 		iteration         uint64
+		electionOrdinal   uint64
 		lookahead         Token
 		lookaheadPresent  bool
 		nextDecision      uint32
@@ -288,6 +292,22 @@ func workCountConvergenceActive() bool {
 }
 
 func workCountSetConvergenceLookahead(tok Token) {
+	if activeWorkCountConvergence.electionOrdinal == math.MaxUint64 {
+		if c := activeDiagnosticWorkCount; c != nil {
+			c.Convergence.ArithmeticOverflow = true
+			c.Overflow = true
+		}
+	} else {
+		activeWorkCountConvergence.electionOrdinal++
+	}
+	activeWorkCountConvergence.lookahead = tok
+	activeWorkCountConvergence.lookaheadPresent = true
+}
+
+// workCountRefreshConvergenceLookahead replaces the token attached to the
+// current election without advancing its ordinal. Relexing changes the
+// decision input, not the identity of the parser election that requested it.
+func workCountRefreshConvergenceLookahead(tok Token) {
 	activeWorkCountConvergence.lookahead = tok
 	activeWorkCountConvergence.lookaheadPresent = true
 }
@@ -633,6 +653,7 @@ func workCountRecordConvergence(p *Parser, phase, outcome, reason, detail string
 		workCountConvergenceVocabularyViolation()
 		return
 	}
+	semanticPhaseTraceRecordDecision(p, phase, outcome, reason, target, candidate, candidateCountBefore, candidateCountAfter)
 	if activeWorkCountConvergence.attempt == 0 {
 		workCountConvergenceVocabularyViolation()
 		return

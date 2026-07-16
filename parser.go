@@ -1025,7 +1025,8 @@ func (d *parseStopActionDiagnostic) beginDispatch() {
 	d.lastReduceCaptured = false
 }
 
-func (p *Parser) noteStopActionDiagnostic(phase string, s *glrStack, tok Token, act ParseAction, actionCount int, inReduceChain bool, chainStep int, repeatedCount int, cycle bool) {
+func (p *Parser) noteStopActionDiagnostic(phase string, s *glrStack, tok Token, act ParseAction, actionOrdinal, actionCount int, inReduceChain bool, chainStep int, repeatedCount int, cycle bool) {
+	semanticPhaseTraceRecordActionExecution(p, s, tok, act, actionOrdinal, phase, cycle) // semantic-phase-assembly: action-execution seam
 	if p == nil || p.stopActionDiag == nil || s == nil || s.dead || s.accepted || s.depth() == 0 {
 		return
 	}
@@ -2572,8 +2573,14 @@ func (p *Parser) tryAdvanceEOFOnSingleStack(s *glrStack, tok Token, expectedEOFB
 			return false
 		}
 		act := actions[0]
+		if semanticPhaseTraceActive() {
+			semanticPhaseTraceRecordActionCell(p, s, s.top().state, tok, actions) // semantic-phase-assembly: EOF-prefix action-cell seam
+		}
 		switch act.Type {
 		case ParseActionReduce:
+			if semanticPhaseTraceActive() {
+				semanticPhaseTraceRecordActionExecution(p, s, tok, act, 0, "eof-prefix-reduce", false) // semantic-phase-assembly: EOF-prefix action-execution seam
+			}
 			p.applyAction(nil, s, act, tok, &anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, false, nil)
 			if p.rejectUndrainedPendingForkStacks(s) {
 				return false
@@ -2582,6 +2589,9 @@ func (p *Parser) tryAdvanceEOFOnSingleStack(s *glrStack, tok Token, expectedEOFB
 				return false
 			}
 		case ParseActionAccept:
+			if semanticPhaseTraceActive() {
+				semanticPhaseTraceRecordActionExecution(p, s, tok, act, 0, "eof-prefix-accept", false)
+			}
 			s.accepted = true
 			return true
 		default:
@@ -4759,6 +4769,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if reuse != nil && len(stacks) == 1 && !stacks[0].dead && tok.Symbol != 0 {
 			if nextTok, ok := p.tryReuseCurrentParseSubtree(&stacks[0], tok, ts, reuse, scratch, arena, &reuseState, timing); ok {
 				tok = nextTok
+				workCountRefreshConvergenceLookahead(tok)
 				needToken = false
 				consecutiveReduces = 0
 				consecutiveNoTokenDispatches = 0
@@ -5006,6 +5017,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 								tok.Symbol, tok.StartByte, tok.EndByte, nextTok.Symbol, nextTok.StartByte, nextTok.EndByte)
 						}
 						tok = nextTok
+						workCountRefreshConvergenceLookahead(tok)
 						noteStopDiagnosticToken(tok)
 						p.updateCurrentExternalTokenCheckpoint(ts, tok)
 						lastTokenEndByte = tok.EndByte
@@ -5073,6 +5085,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if actionIdx != 0 && int(actionIdx) < len(parseActions) {
 				actions = parseActions[actionIdx].Actions
 			}
+			semanticPhaseTraceRecordActionCell(p, s, currentState, tok, actions) // semantic-phase-assembly: action-cell seam
 			workCountRecordResolvedActionCell(len(actions))
 			workCountAddActionEntries(len(actions))
 			if phaseTiming {
@@ -5081,6 +5094,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if keywordSym, ok := p.typeScriptContextualPropertyKeywordSymbol(tok, source); ok && parseStacksShareState(stacks[:numStacks], currentState) {
 				if p.typeScriptContextualPropertyKeywordHasAction(keywordSym, currentState) {
 					tok.Symbol = keywordSym
+					workCountRefreshConvergenceLookahead(tok)
 					needToken = false
 					goto retryAction
 				}
@@ -5103,6 +5117,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					continue
 				}
 				traceVisit(si, s, "extra-shift", 0, len(actions), actions[0])
+				semanticPhaseTraceRecordActionExecution(p, s, tok, actions[0], 0, "extra-shift", false) // semantic-phase-assembly: extra-shift-execution seam
 				p.applyExtraShiftAction(s, currentState, actions[0], tok, arena, scratch, trackChildErrors)
 				nodeCount++
 				traceAfterPrimary(si, s)
@@ -5169,6 +5184,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					if sameState {
 						if reTok, ok := p.tryRelexCurrentStateDFA(tok, currentState, ts); ok {
 							tok = reTok
+							workCountRefreshConvergenceLookahead(tok)
 							needToken = false
 							if actionTiming != nil {
 								ns := recordNoActionTiming()
@@ -5233,6 +5249,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if canRelexNoLiveAction {
 					if reTok, ok := p.tryRelexSingleParserState(tok, currentState, ts, stacks, scratch); ok {
 						tok = reTok
+						workCountRefreshConvergenceLookahead(tok)
 						needToken = false
 						if actionTiming != nil {
 							ns := recordNoActionTiming()
@@ -5244,6 +5261,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if sameState {
 					if reTok, ok := p.tryRelexCurrentStateDFA(tok, currentState, ts); ok {
 						tok = reTok
+						workCountRefreshConvergenceLookahead(tok)
 						needToken = false
 						if actionTiming != nil {
 							ns := recordNoActionTiming()
@@ -5253,6 +5271,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					}
 					if reTok, ok := p.tryRelexBroadDFA(tok, currentState, ts); ok {
 						tok = reTok
+						workCountRefreshConvergenceLookahead(tok)
 						needToken = false
 						if actionTiming != nil {
 							ns := recordNoActionTiming()
@@ -5355,7 +5374,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					if !p.guardRealTokenAttachmentGap(source, s, tok, "recover") {
 						continue
 					}
-					p.noteStopActionDiagnostic("no-action-recover", s, tok, recoverAct, 1, false, 0, 0, false)
+					p.noteStopActionDiagnostic("no-action-recover", s, tok, recoverAct, -1, 1, false, 0, 0, false)
 					p.applyAction(source, s, recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, trackChildErrors)
 					p.noteStopActionResult(s)
 					drainPendingForkStacks()
@@ -5440,12 +5459,16 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					conflictStart = time.Now()
 				}
 				var chosen ParseAction
+				chosenOrdinal := -1
 				choice := false
 				if next, ok := p.deterministicConflictChoiceForDispatch(source, s, tok, currentState, actions, maxStacksSeen, reuse); ok {
 					chosen, choice = next, true
+					// The diagnostic tagged seam may infer a unique ordinal. The
+					// production build deliberately performs no reconstruction scan.
+					chosenOrdinal = -2
 				}
 				if !choice && deterministicExternalConflicts && p.language != nil && p.language.Name == "yaml" && p.language.ExternalScanner != nil {
-					chosen, choice = deterministicExternalConflictAction(actions), true
+					chosen, chosenOrdinal, choice = deterministicExternalConflictActionAt(actions)
 				}
 				if choice {
 					skipRepetitionShift := false
@@ -5462,7 +5485,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					}
 					traceVisit(si, s, "conflict-choice", -1, len(actions), chosen)
 					setPendingTrace("conflict-choice", si, -1, len(actions), chosen)
-					p.noteStopActionDiagnostic("conflict-choice", s, tok, chosen, len(actions), false, 0, 0, false)
+					p.noteStopActionDiagnostic("conflict-choice", s, tok, chosen, chosenOrdinal, len(actions), false, 0, 0, false)
 					actionBeforeState, actionBeforeByte, actionBeforeDepth := stackTraceState(s)
 					p.applyAction(source, s, chosen, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, trackChildErrors)
 					p.noteStopActionResult(s)
@@ -5517,7 +5540,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					}
 					traceVisit(si, s, "conflict-depth-cap", 0, len(actions), actions[0])
 					setPendingTrace("conflict-depth-cap", si, 0, len(actions), actions[0])
-					p.noteStopActionDiagnostic("conflict-depth-cap", s, tok, actions[0], len(actions), false, 0, 0, false)
+					p.noteStopActionDiagnostic("conflict-depth-cap", s, tok, actions[0], 0, len(actions), false, 0, 0, false)
 					actionBeforeState, actionBeforeByte, actionBeforeDepth := stackTraceState(s)
 					p.applyAction(source, s, actions[0], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, trackChildErrors)
 					p.noteStopActionResult(s)
@@ -5554,7 +5577,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					if actions[ai].Type != ParseActionShift || p.guardRealShiftGap(source, &fork, tok) {
 						if actions[ai].Type != ParseActionRecover || p.guardRealTokenAttachmentGap(source, &fork, tok, "recover") {
 							setPendingTrace("conflict-fork", si, ai, len(actions), actions[ai])
-							p.noteStopActionDiagnostic("conflict-fork", &fork, tok, actions[ai], len(actions), false, 0, 0, false)
+							p.noteStopActionDiagnostic("conflict-fork", &fork, tok, actions[ai], ai, len(actions), false, 0, 0, false)
 							actionBeforeState, actionBeforeByte, actionBeforeDepth := stackTraceState(&fork)
 							p.applyAction(source, &fork, actions[ai], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, trackChildErrors)
 							p.noteStopActionResult(&fork)
@@ -5602,7 +5625,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 				traceVisit(si, s, "conflict-original", 0, len(actions), actions[0])
 				setPendingTrace("conflict-original", si, 0, len(actions), actions[0])
-				p.noteStopActionDiagnostic("conflict-original", s, tok, actions[0], len(actions), false, 0, 0, false)
+				p.noteStopActionDiagnostic("conflict-original", s, tok, actions[0], 0, len(actions), false, 0, 0, false)
 				actionBeforeState, actionBeforeByte, actionBeforeDepth := stackTraceState(s)
 				p.applyAction(source, s, actions[0], tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, trackChildErrors)
 				p.noteStopActionResult(s)
@@ -5642,7 +5665,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if act.Type == ParseActionReduce && !disableBashReduceChain {
 				traceVisit(si, s, "single-reduce", 0, len(actions), act)
 				setPendingTrace("single-reduce", si, 0, len(actions), act)
-				p.noteStopActionDiagnostic("single-reduce", s, tok, act, len(actions), false, 0, 0, false)
+				p.noteStopActionDiagnostic("single-reduce", s, tok, act, 0, len(actions), false, 0, 0, false)
 				if p.applyActionWithReduceChain(source, s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, trackChildErrors) {
 					forceAdvanceAfterReduce = true
 				}
@@ -5666,7 +5689,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						continue
 					}
 					traceVisit(si, s, "single-shift", 0, len(actions), act)
-					p.noteStopActionDiagnostic("single-shift", s, tok, act, len(actions), false, 0, 0, false)
+					p.noteStopActionDiagnostic("single-shift", s, tok, act, 0, len(actions), false, 0, 0, false)
 					p.applyShiftAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors)
 					p.noteStopActionResult(s)
 					traceAfterPrimary(si, s)
@@ -5678,7 +5701,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					}
 				case ParseActionAccept:
 					traceVisit(si, s, "single-accept", 0, len(actions), act)
-					p.noteStopActionDiagnostic("single-accept", s, tok, act, len(actions), false, 0, 0, false)
+					p.noteStopActionDiagnostic("single-accept", s, tok, act, 0, len(actions), false, 0, 0, false)
 					p.applyAcceptAction(s)
 					p.noteStopActionResult(s)
 					traceAfterPrimary(si, s)
@@ -5697,7 +5720,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						continue
 					}
 					traceVisit(si, s, "single-recover", 0, len(actions), act)
-					p.noteStopActionDiagnostic("single-recover", s, tok, act, len(actions), false, 0, 0, false)
+					p.noteStopActionDiagnostic("single-recover", s, tok, act, 0, len(actions), false, 0, 0, false)
 					p.applyRecoverAction(s, act, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors)
 					p.noteStopActionResult(s)
 					traceAfterPrimary(si, s)
@@ -5710,7 +5733,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				default:
 					traceVisit(si, s, "single-other", 0, len(actions), act)
 					setPendingTrace("single-other", si, 0, len(actions), act)
-					p.noteStopActionDiagnostic("single-other", s, tok, act, len(actions), false, 0, 0, false)
+					p.noteStopActionDiagnostic("single-other", s, tok, act, 0, len(actions), false, 0, 0, false)
 					p.applyAction(source, s, act, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, trackChildErrors)
 					p.noteStopActionResult(s)
 					traceAfterPrimary(si, s)
@@ -5761,7 +5784,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					if !p.guardRealTokenAttachmentGap(source, &stacks[0], tok, "recover") {
 						continue
 					}
-					p.noteStopActionDiagnostic("retry-recover", &stacks[0], tok, recoverAct, 1, false, 0, 0, false)
+					p.noteStopActionDiagnostic("retry-recover", &stacks[0], tok, recoverAct, -1, 1, false, 0, 0, false)
 					p.applyAction(source, &stacks[0], recoverAct, tok, &anyReduced, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, trackChildErrors)
 					p.noteStopActionResult(&stacks[0])
 					drainPendingForkStacks()
@@ -5795,6 +5818,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			condenseRan = true
 			var reason ParseStopReason
 			stacks, resumed, tok, reason = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors)
+			workCountRefreshConvergenceLookahead(tok)
 			if resultMaterializationShouldStop(reason) {
 				return finalize(stacks, reason)
 			}
@@ -5835,6 +5859,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 									tok.Symbol, tok.StartByte, tok.EndByte, nextTok.Symbol, nextTok.StartByte, nextTok.EndByte)
 							}
 							tok = nextTok
+							workCountRefreshConvergenceLookahead(tok)
 							noteStopDiagnosticToken(tok)
 							p.updateCurrentExternalTokenCheckpoint(ts, tok)
 							lastTokenEndByte = tok.EndByte
@@ -5917,7 +5942,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 							needToken = false
 							break
 						}
-						p.noteStopActionDiagnostic("post-reduce-terminal-frontier-shift", s, tok, item.action, 1, false, 0, 0, false)
+						p.noteStopActionDiagnostic("post-reduce-terminal-frontier-shift", s, tok, item.action, 0, 1, false, 0, 0, false)
 						p.applyShiftAction(s, item.action, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors)
 						p.noteStopActionResult(s)
 					case ParseActionRecover:
@@ -5927,12 +5952,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 							needToken = false
 							break
 						}
-						p.noteStopActionDiagnostic("post-reduce-terminal-frontier-recover", s, tok, item.action, 1, false, 0, 0, false)
+						p.noteStopActionDiagnostic("post-reduce-terminal-frontier-recover", s, tok, item.action, 0, 1, false, 0, 0, false)
 						p.applyRecoverAction(s, item.action, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors)
 						s.shifted = true
 						p.noteStopActionResult(s)
 					case ParseActionAccept:
-						p.noteStopActionDiagnostic("post-reduce-terminal-frontier-accept", s, tok, item.action, 1, false, 0, 0, false)
+						p.noteStopActionDiagnostic("post-reduce-terminal-frontier-accept", s, tok, item.action, 0, 1, false, 0, 0, false)
 						p.applyAcceptAction(s)
 						p.noteStopActionResult(s)
 					}
@@ -6864,17 +6889,27 @@ func (p *Parser) traceStackActions(stackIndex int, state StateID, symbol Symbol,
 }
 
 func deterministicExternalConflictAction(actions []ParseAction) ParseAction {
+	chosen, _, _ := deterministicExternalConflictActionAt(actions)
+	return chosen
+}
+
+func deterministicExternalConflictActionAt(actions []ParseAction) (ParseAction, int, bool) {
+	if len(actions) == 0 {
+		return ParseAction{}, -1, false
+	}
 	chosen := actions[0]
+	chosenOrdinal := 0
 	for ai := 1; ai < len(actions); ai++ {
 		cand := actions[ai]
 		if cand.Type == ParseActionShift {
-			return cand
+			return cand, ai, true
 		}
 		if chosen.Type == ParseActionReduce && cand.Type == ParseActionReduce && cand.DynamicPrecedence > chosen.DynamicPrecedence {
 			chosen = cand
+			chosenOrdinal = ai
 		}
 	}
-	return chosen
+	return chosen, chosenOrdinal, true
 }
 
 func (p *Parser) traceParseFork(currentState StateID, actions []ParseAction) {

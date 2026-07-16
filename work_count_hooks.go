@@ -37,6 +37,13 @@ func workCountRecordNoTreeParentConstruction()                                  
 func workCountSetConvergenceIteration(int)                                              {}
 func workCountConvergenceActive() bool                                                  { return false }
 func workCountSetConvergenceLookahead(Token)                                            {}
+func workCountRefreshConvergenceLookahead(Token)                                        {}
+
+func semanticPhaseTraceRecordActionCell(*Parser, *glrStack, StateID, Token, []ParseAction) {}
+func semanticPhaseTraceActive() bool                                                       { return false }
+func semanticPhaseTraceRecordActionExecution(*Parser, *glrStack, Token, ParseAction, int, string, bool) {
+}
+
 func workCountConvergenceShapeOf(*glrStack) workCountConvergenceShape {
 	return workCountConvergenceShape{}
 }

@@ -21,6 +21,10 @@ for tags and release notes while still in `0.x`.
 
 ### Tooling
 
+- Add a bounded, build-tagged parser trace that records action lookup, dispatch,
+  and convergence context without retaining physical stack IDs. Coarse boundary
+  classes are labeled non-canonical; observer equality and untagged assembly
+  tests keep the trace diagnostic-only.
 - Add the four-fixture authenticated Go/static-C work-count board with direct
   counters at their exact hook boundaries, Go-only representation rows marked
   incomparable, and missing mandatory instrumentation reported separately from

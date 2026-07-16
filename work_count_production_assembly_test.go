@@ -16,15 +16,20 @@ import (
 )
 
 const (
-	finalizeDeferGuardMarker     = "work-count-assembly: finalize-defer guard"
-	popPayloadCensusMarker       = "work-count-assembly: payload-census seam"
-	convergenceIterationMarker   = "work-count-assembly: convergence iteration seam"
-	convergenceFinalExpandMarker = "work-count-assembly: convergence final-expand seam"
-	convergenceGSSMarker         = "work-count-assembly: convergence GSS seam"
-	gssMutationSetPrimaryMarker  = "work-count-assembly: GSS mutation set-primary seam"
-	gssMutationSetExtraMarker    = "work-count-assembly: GSS mutation set-extra seam"
-	gssMutationAppendReuseMarker = "work-count-assembly: GSS mutation append-reuse seam"
-	gssMutationAppendGrowMarker  = "work-count-assembly: GSS mutation append-grow seam"
+	finalizeDeferGuardMarker               = "work-count-assembly: finalize-defer guard"
+	popPayloadCensusMarker                 = "work-count-assembly: payload-census seam"
+	convergenceIterationMarker             = "work-count-assembly: convergence iteration seam"
+	convergenceFinalExpandMarker           = "work-count-assembly: convergence final-expand seam"
+	convergenceGSSMarker                   = "work-count-assembly: convergence GSS seam"
+	gssMutationSetPrimaryMarker            = "work-count-assembly: GSS mutation set-primary seam"
+	gssMutationSetExtraMarker              = "work-count-assembly: GSS mutation set-extra seam"
+	gssMutationAppendReuseMarker           = "work-count-assembly: GSS mutation append-reuse seam"
+	gssMutationAppendGrowMarker            = "work-count-assembly: GSS mutation append-grow seam"
+	semanticPhaseActionCellMarker          = "semantic-phase-assembly: action-cell seam"
+	semanticPhaseActionExecutionMarker     = "semantic-phase-assembly: action-execution seam"
+	semanticPhaseExtraShiftExecutionMarker = "semantic-phase-assembly: extra-shift-execution seam"
+	semanticPhaseEOFActionCellMarker       = "semantic-phase-assembly: EOF-prefix action-cell seam"
+	semanticPhaseEOFActionExecutionMarker  = "semantic-phase-assembly: EOF-prefix action-execution seam"
 )
 
 func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
@@ -34,6 +39,9 @@ func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
 	productionWorkCountSymbol := regexp.MustCompile(`(?m)^\s*[0-9a-f]+\s+\S\s+github\.com/odvcencio/gotreesitter\.(?:\(\*[^)]*\)\.)?workCount`)
 	if match := productionWorkCountSymbol.Find(nm); match != nil {
 		t.Fatalf("untagged binary retains a production work-count symbol: %s", match)
+	}
+	if bytes.Contains(nm, []byte("github.com/odvcencio/gotreesitter.semanticPhaseTrace")) {
+		t.Fatal("untagged binary retains semantic-phase trace symbols")
 	}
 	for _, forbidden := range []string{
 		"gssMainCanMergeForParserPhase",
@@ -62,6 +70,15 @@ func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
 	assertNoDiagnosticAssembly(t, reduceAssembly)
 
 	assertNoAssemblyAtMarker(t, closures, "parser.go", convergenceIterationMarker)
+	assertNoAssemblyAtMarker(t, closures, "parser.go", semanticPhaseActionCellMarker)
+	assertNoAssemblyAtMarker(t, closures, "parser.go", semanticPhaseExtraShiftExecutionMarker)
+	eofAdvanceAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.tryAdvanceEOFOnSingleStack`, testBinary)
+	assertNoAssemblyAtMarker(t, eofAdvanceAssembly, "parser.go", semanticPhaseEOFActionCellMarker)
+	assertNoAssemblyAtMarker(t, eofAdvanceAssembly, "parser.go", semanticPhaseEOFActionExecutionMarker)
+	assertNoDiagnosticAssembly(t, eofAdvanceAssembly)
+	noteStopAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.noteStopActionDiagnostic`, testBinary)
+	assertNoAssemblyAtMarker(t, noteStopAssembly, "parser.go", semanticPhaseActionExecutionMarker)
+	assertNoDiagnosticAssembly(t, noteStopAssembly)
 	resultAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.buildResultFromGLR`, testBinary)
 	assertNoAssemblyAtMarker(t, resultAssembly, "parser_result.go", convergenceFinalExpandMarker)
 	assertNoDiagnosticAssembly(t, resultAssembly)
@@ -76,6 +93,10 @@ func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
 	assertNoDiagnosticAssembly(t, gssMutationAssembly)
 	postReduceAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.(?:tryMergePostReduceFork|postReduceForkMergePreflight|\(\*Parser\)\.(?:applyReduceActionForked|applyReduceActionFromGSS))`, testBinary)
 	assertNoDiagnosticAssembly(t, postReduceAssembly)
+	allSymbols := runGoTool(t, "nm", testBinary)
+	if bytes.Contains(allSymbols, []byte("uniqueActionOrdinal")) {
+		t.Fatalf("untagged binary retains action-ordinal reconstruction symbol:\n%s", allSymbols)
+	}
 }
 
 func assertNoAssemblyAtMarker(t *testing.T, assembly []byte, file, marker string) {
@@ -93,6 +114,8 @@ func assertNoDiagnosticAssembly(t *testing.T, assembly []byte) {
 		[]byte("workCountConvergence"),
 		[]byte("work_count_convergence.go:"),
 		[]byte("work_count_hooks.go:"),
+		[]byte("semanticPhaseTrace"),
+		[]byte("work_count_semantic_phase_trace.go:"),
 	} {
 		if bytes.Contains(assembly, forbidden) {
 			t.Fatalf("untagged assembly retains diagnostic code %q:\n%s", forbidden, assembly)

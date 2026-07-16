@@ -1,0 +1,124 @@
+{
+  "schema": "gts-semantic-phase-trace-contract/v4",
+  "event_contract": "gts-semantic-phase-trace/v4",
+  "scope": "Diagnostic Go full-parse action lookup, dispatch, and convergence events. The contract and all ordinal reconstruction are absent from untagged builds.",
+  "retention": {
+    "maximum_events": 8192,
+    "policy": "retain_chronological_prefix",
+    "overflow": "saturate counters and expose events_dropped plus arithmetic_overflow"
+  },
+  "classification": {
+    "name": "coarse_go_lookup_class",
+    "purpose": "Locate candidate repetition classes that justify a later paired canonical Go/C trace.",
+    "not_proved": [
+      "semantic replay",
+      "full predecessor-spine equality",
+      "exact scanner-checkpoint equality",
+      "whole-parse repetition rate",
+      "Go/C event equivalence"
+    ],
+    "collision_policy": "The coarse boundary hash may collide or merge distinct predecessor spines. Repeated classes are attribution hints only."
+  },
+  "event_context": {
+    "action_lookup": "The actual election ordinal, parse-loop iteration, stack state/byte, current lookahead, ordered action-cell fingerprint, action ordinal/type, and coarse current-head class.",
+    "action_execution": "Direct table dispatches thread the selected action ordinal. The deterministic-conflict seam passes an inference sentinel whose uniqueness scan exists only in the tagged trace implementation; duplicate-equal actions remain explicit unknown ordinal. Synthetic no-action and retry recovery actions always use unknown ordinal.",
+    "decision": "Election ordinal, iteration, and current lookahead come from the active parse attempt. Relex refreshes the lookahead without advancing the election ordinal. State, byte, and coarse classes come from the actual target and candidate. Action-cell fingerprint and ordinal/type are unset because convergence decisions are not assigned by last-writer context to an action lookup."
+  },
+  "dispatch_bypass_audit": {
+    "parse_table_routes_instrumented": [
+      "ordinary single action",
+      "conflict original and forks",
+      "deterministic conflict selection",
+      "reduce chains and conflict frontiers",
+      "extra-shift fast path",
+      "post-reduce terminal frontier",
+      "trailing-EOF prefix single-action REDUCE and ACCEPT"
+    ],
+    "synthetic_routes_not_claimed_as_table_ordinals": [
+      "no-action recovery found by stack search",
+      "retry recovery found by stack search",
+      "missing-token insertion",
+      "external no-action default reduction",
+      "eager default reduction",
+      "C-shaped error-state recovery"
+    ],
+    "ordinal_policy": "A table ordinal is emitted only when it is directly threaded or uniquely inferred inside the tagged implementation. Synthetic routes and duplicate-equal candidates emit -1.",
+    "trailing_eof_call_site_audit": "Both calls in advanceTrailingEOFPrefix enter the same instrumented tryAdvanceEOFOnSingleStack loop: the first before missing insertion and the second after it. The focused route admission proves the loop's ordinal-0 REDUCE followed by ordinal-0 ACCEPT path."
+  },
+  "physical_identity": {
+    "excluded": [
+      "stack_pointer",
+      "stack_version_id",
+      "gss_node_id",
+      "subtree_pointer"
+    ],
+    "scanner_checkpoint": "Not represented in v4. This omission is one reason the coarse class is not semantic identity."
+  },
+  "hash": {
+    "algorithm": "fnv1a-64",
+    "word_encoding": "eight little-endian bytes per unsigned 64-bit word",
+    "action_cell_words": [
+      "action_count",
+      "for each ordered action: type",
+      "state",
+      "symbol",
+      "child_count",
+      "dynamic_precedence_as_uint16",
+      "production_id",
+      "flags(extra=1, extra_chain=2, repetition=4)"
+    ],
+    "coarse_boundary_words": [
+      "stack_byte_offset",
+      "logical_depth",
+      "top_state",
+      "top_symbol",
+      "top_start_byte<<32 | top_end_byte",
+      "top_child_count",
+      "top_production_id",
+      "top_dynamic_precedence_as_uint32",
+      "flags(extra=1, missing=2, has_error=4, dead=8, accepted=16, paused=32)"
+    ]
+  },
+  "paired_canonical_trace_plan": {
+    "prerequisite": "Do not compare v4 coarse hashes across engines. First define canonical variable-length fields and audit hash collisions by full field equality.",
+    "canonical_fields": [
+      "parse attempt and lexer election ordinal",
+      "lookahead symbol, byte/point span, and no-lookahead/external flags",
+      "exact serialized scanner checkpoint bytes and length; hashes are transport checks only",
+      "ordered action cell with exact action fields and table ordinal",
+      "stack status, state, byte/point position, error cost, dynamic precedence, and node count",
+      "ordered predecessor spine to the reduction boundary",
+      "for each popped subtree: symbol, padding, size, child count, production id, flags, dynamic precedence, and exact external scanner state bytes",
+      "decision outcome and resulting canonical boundary fields"
+    ],
+    "collision_audit": "Retain canonical fields alongside any digest. Fail admission if equal digests have unequal canonical fields in either engine.",
+    "hooks": [
+      {
+        "file": "lib/src/parser.c",
+        "function": "ts_parser__advance",
+        "point": "After ts_language_table_entry and before the ordered action loop; then at each action-loop iteration before dispatch."
+      },
+      {
+        "file": "lib/src/parser.c",
+        "function": "ts_parser__reduce",
+        "point": "Around ts_stack_pop_count and each produced StackSlice/version."
+      },
+      {
+        "file": "lib/src/stack.c",
+        "function": "ts_stack_pop_count",
+        "point": "Expose the ordered predecessor spine, popped subtree descriptors, and exact external states for each path."
+      },
+      {
+        "file": "lib/src/stack.c",
+        "function": "ts_stack_merge",
+        "point": "Before can-merge and after merge/removal."
+      },
+      {
+        "file": "lib/src/parser.c",
+        "function": "ts_parser__condense_stack",
+        "point": "At pause, resume, remove, and cull decisions."
+      }
+    ],
+    "oracle_policy": "Extend only the locked diagnostic work-count patch and static driver. Do not change the grammar, compiler flags, parser options, tree admission, or timing oracle."
+  }
+}
