@@ -119,6 +119,13 @@ authenticated static-C, fleet, and forest measurements are stricter.
 
 ### Tooling
 
+- Compact parser-core materialization now reuses one parent-entry buffer and
+  one reduction-build scratch across each accepted tree while restoring parser
+  state on every exit. Across the four locked real-Go fixtures on the quiet
+  host, materialization improved 22.1% in time, 80.5% in allocated bytes, and
+  99.7% in allocations; total compact parse improved 3.9%, 20.9%, and 32.7%
+  respectively, with every fixture faster and exact trees, selected-node
+  census, and parser work unchanged.
 - Compact parser-core graph nodes now authenticate strictly older
   predecessors at publication, allowing pop enumeration to reject corrupted
   edges without a cycle map. Boundary condensation keeps the default

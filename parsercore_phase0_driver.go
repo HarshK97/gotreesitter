@@ -1244,6 +1244,52 @@ type diagnosticParserCorePointIndex struct {
 	lineStarts []uint32
 }
 
+// diagnosticParserCoreMaterializationScratch retains parent-build storage for
+// one accepted-tree materialization. Parent construction consumes entries
+// synchronously and copies every surviving child/field slice into the result
+// arena, so the next postorder parent may safely reuse both buffers.
+type diagnosticParserCoreMaterializationScratch struct {
+	entries []stackEntry
+	reduce  reduceBuildScratch
+}
+
+func (scratch *diagnosticParserCoreMaterializationScratch) entriesFor(width int) []stackEntry {
+	if width <= 0 {
+		scratch.entries = scratch.entries[:0]
+		return nil
+	}
+	if cap(scratch.entries) < width {
+		capacity := max(width, cap(scratch.entries)*2)
+		scratch.entries = make([]stackEntry, width, capacity)
+		return scratch.entries
+	}
+	scratch.entries = scratch.entries[:width]
+	return scratch.entries
+}
+
+func (scratch *diagnosticParserCoreMaterializationScratch) reset() {
+	if scratch == nil {
+		return
+	}
+	clear(scratch.entries[:cap(scratch.entries)])
+	scratch.entries = scratch.entries[:0]
+	scratch.reduce.reset()
+}
+
+func withDiagnosticParserCoreMaterializationScratch(parser *Parser, visit func(*diagnosticParserCoreMaterializationScratch) error) (err error) {
+	if parser == nil || visit == nil {
+		return errors.New("parser-core phase zero: materialization scratch requires a parser and visitor")
+	}
+	var scratch diagnosticParserCoreMaterializationScratch
+	previousReduceScratch := parser.reduceScratch
+	parser.reduceScratch = &scratch.reduce
+	defer func() {
+		parser.reduceScratch = previousReduceScratch
+		scratch.reset()
+	}()
+	return visit(&scratch)
+}
+
 func newDiagnosticParserCorePointIndex(source []byte, poll func() error) (diagnosticParserCorePointIndex, error) {
 	if uint64(len(source)) > math.MaxUint32 {
 		return diagnosticParserCorePointIndex{}, errors.New("parser-core phase zero: materialization source exceeds uint32 offsets")
@@ -1314,65 +1360,67 @@ func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.H
 	if err := poll(); err != nil {
 		return nil, err
 	}
-	err = compact.VisitMaterializationPostorder(derivations[0].Payloads, poll, func(id core.SubtreeID, view core.MaterializationSubtreeView) error {
-		if view.EndByte < view.StartByte || view.EndByte > uint32(len(source)) {
-			return errors.New("parser-core phase zero: compact subtree extent is outside source")
-		}
-		named := parser.isNamedSymbol(Symbol(view.Symbol))
-		if view.Terminal {
-			node := newLeafNodeInArena(
-				arena, Symbol(view.Symbol), named, view.StartByte, view.EndByte,
-				points.point(view.StartByte), points.point(view.EndByte),
-			)
-			node.setExtra(view.Extra)
-			node.setExternalScannerToken(view.External)
-			nodesByID[id] = node
-			return nil
-		}
+	err = withDiagnosticParserCoreMaterializationScratch(parser, func(materializationScratch *diagnosticParserCoreMaterializationScratch) error {
+		return compact.VisitMaterializationPostorder(derivations[0].Payloads, poll, func(id core.SubtreeID, view core.MaterializationSubtreeView) error {
+			if view.EndByte < view.StartByte || view.EndByte > uint32(len(source)) {
+				return errors.New("parser-core phase zero: compact subtree extent is outside source")
+			}
+			named := parser.isNamedSymbol(Symbol(view.Symbol))
+			if view.Terminal {
+				node := newLeafNodeInArena(
+					arena, Symbol(view.Symbol), named, view.StartByte, view.EndByte,
+					points.point(view.StartByte), points.point(view.EndByte),
+				)
+				node.setExtra(view.Extra)
+				node.setExternalScannerToken(view.External)
+				nodesByID[id] = node
+				return nil
+			}
 
-		entries := make([]stackEntry, len(view.Children))
-		structuralChildren := 0
-		for index, childID := range view.Children {
-			if uint64(childID) >= uint64(len(nodesByID)) || nodesByID[childID] == nil {
-				return errors.New("parser-core phase zero: compact materialization traversal omitted a child")
+			entries := materializationScratch.entriesFor(len(view.Children))
+			structuralChildren := 0
+			for index, childID := range view.Children {
+				if uint64(childID) >= uint64(len(nodesByID)) || nodesByID[childID] == nil {
+					return errors.New("parser-core phase zero: compact materialization traversal omitted a child")
+				}
+				child := nodesByID[childID]
+				entries[index] = newStackEntryNode(0, child)
+				if !child.isExtra() {
+					structuralChildren++
+				}
 			}
-			child := nodesByID[childID]
-			entries[index] = newStackEntryNode(0, child)
-			if !child.isExtra() {
-				structuralChildren++
+			action := ParseAction{
+				Type: ParseActionReduce, Symbol: Symbol(view.Symbol), ChildCount: uint8(structuralChildren),
+				DynamicPrecedence: view.DynamicPrecedence, ProductionID: view.ProductionID,
 			}
-		}
-		action := ParseAction{
-			Type: ParseActionReduce, Symbol: Symbol(view.Symbol), ChildCount: uint8(structuralChildren),
-			DynamicPrecedence: view.DynamicPrecedence, ProductionID: view.ProductionID,
-		}
-		if child := parser.collapsibleRawUnarySelfReduction(action, Token{}, arena, entries, 0, len(entries)); child != nil {
-			child.productionID = view.ProductionID
-			child.dynamicPrecedence += int32(view.DynamicPrecedence)
-			nodesByID[id] = child
+			if child := parser.collapsibleRawUnarySelfReduction(action, Token{}, arena, entries, 0, len(entries)); child != nil {
+				child.productionID = view.ProductionID
+				child.dynamicPrecedence += int32(view.DynamicPrecedence)
+				nodesByID[id] = child
+				return nil
+			}
+			children, fieldIDs, fieldSources, _ := parser.buildReduceChildrenWithPath(
+				entries, 0, len(entries), structuralChildren,
+				Symbol(view.Symbol), view.ProductionID, arena,
+			)
+			if child := parser.collapsibleUnarySelfReduction(action, Token{}, arena, entries, 0, len(entries), children, fieldIDs); child != nil {
+				child.productionID = view.ProductionID
+				child.dynamicPrecedence += int32(view.DynamicPrecedence)
+				nodesByID[id] = child
+				return nil
+			}
+			parent := newParentNodeInArenaWithFieldSources(
+				arena, Symbol(view.Symbol), named, children, fieldIDs, fieldSources, view.ProductionID,
+			)
+			parent.dynamicPrecedence += int32(view.DynamicPrecedence)
+			parent.startByte = view.StartByte
+			parent.endByte = view.EndByte
+			parent.startPoint = points.point(view.StartByte)
+			parent.endPoint = points.point(view.EndByte)
+			parent.setExtra(view.Extra)
+			nodesByID[id] = parent
 			return nil
-		}
-		children, fieldIDs, fieldSources, _ := parser.buildReduceChildrenWithPath(
-			entries, 0, len(entries), structuralChildren,
-			Symbol(view.Symbol), view.ProductionID, arena,
-		)
-		if child := parser.collapsibleUnarySelfReduction(action, Token{}, arena, entries, 0, len(entries), children, fieldIDs); child != nil {
-			child.productionID = view.ProductionID
-			child.dynamicPrecedence += int32(view.DynamicPrecedence)
-			nodesByID[id] = child
-			return nil
-		}
-		parent := newParentNodeInArenaWithFieldSources(
-			arena, Symbol(view.Symbol), named, children, fieldIDs, fieldSources, view.ProductionID,
-		)
-		parent.dynamicPrecedence += int32(view.DynamicPrecedence)
-		parent.startByte = view.StartByte
-		parent.endByte = view.EndByte
-		parent.startPoint = points.point(view.StartByte)
-		parent.endPoint = points.point(view.EndByte)
-		parent.setExtra(view.Extra)
-		nodesByID[id] = parent
-		return nil
+		})
 	})
 	if err != nil {
 		return nil, err
