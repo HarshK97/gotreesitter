@@ -1,0 +1,65 @@
+{
+  "schema": "gts-paired-semantic-trace-receipt/v1",
+  "contract": "gts-paired-semantic-trace-contract/v1",
+  "production": {
+    "base_commit": "1743205133e5776b82d175ccf157927198e365de",
+	"patch_manifest": "cgo_harness/work_count/paired_semantic_trace_patch_manifest_v1.json",
+	"patch_manifest_sha256": "59d7865f59ec682977281b4903f74b420cc595c6569746a72568bba5081930df",
+	"patch_set_sha256": "64926965abe387ab4ccc2efa74f1799333e54674af4cf3991a7e5eeb7eaa603f",
+    "trace_contract": "gts-semantic-phase-trace/v5",
+    "observer": "diagnostic_only"
+  },
+  "compact": {
+    "commit": "44b3a2e5a81eb6b277d8c323eb950173f2364030",
+    "tree": "6e08be29b830920ef70733762fd559886087af12",
+    "receipt_mode": "summary",
+    "exact_eof_and_tree_admission": true
+  },
+  "static_c": {
+    "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+    "grammar_commit": "2346a3ab1bb3857b48b29d779a1ef9799a248cd7",
+    "compiler_contract": "-O2 -DNDEBUG static",
+    "semantic_event_trace": "unavailable",
+    "aggregate_reference": "gts-work-count-board/v2"
+  },
+  "grammar_blob_sha256": "9cf914d26d962d1a62e7954f8b20b302337a44cb7d4a07218eec482c45a57a08",
+  "rows": [
+    {
+      "fixture": "query_compile",
+      "source_sha256": "b788ee19b0075f0b9b567a9f93ea657e715bc8a6a40a99d3ca5c761404e71894",
+      "source_bytes": 20168,
+      "deep_tree_sha256": "ecc090a83a4343a1c7c2afbad63277f5b4d60c42d8d94a2af2a9b16e46f2ccb5",
+      "production": {"trace_sha256":"5ce16cd7427b99c0dfdba543319d4198b2c0daf391c527a8988d6514d30e922e","events_seen":83689,"events_dropped":75497,"action_lookups":18503,"action_executions":33592,"decisions":31594,"shifts":15986,"reductions":17603,"accepts":3,"scanner_exact_retained":0,"scanner_unavailable_retained":8192,"action_cell_distinct_hashes":267,"boundary_distinct_hashes":14987,"action_cell_audit_truncated":false,"boundary_audit_truncated":false,"collision_audit_complete":true},
+      "compact": {"tokens":5126,"dispatches":13441,"action_lookups":17384,"canonicalizations":12302,"shifts":6685,"reductions":7440,"accepts":1,"emitted_pop_paths":8103,"emitted_pop_payloads":14703}
+    },
+    {
+      "fixture": "rewrite",
+      "source_sha256": "74c0705f8729670559492fb5460a01b2a1a2a109928e1aeb52736e485e8ff097",
+      "source_bytes": 5116,
+      "deep_tree_sha256": "b3f9814b65763642d4eac58b9065018048ea13e6f10d56afb28a0479bf5a68a1",
+      "production": {"trace_sha256":"e0c8cce327229f8f533e4184dc4ba81661bdd7bbb973f12d048be628edb10583","events_seen":14001,"events_dropped":5809,"action_lookups":3347,"action_executions":5818,"decisions":4836,"shifts":2760,"reductions":3057,"accepts":1,"scanner_exact_retained":0,"scanner_unavailable_retained":8192,"action_cell_distinct_hashes":216,"boundary_distinct_hashes":2959,"action_cell_audit_truncated":false,"boundary_audit_truncated":false,"collision_audit_complete":true},
+      "compact": {"tokens":1036,"dispatches":2682,"action_lookups":3545,"canonicalizations":2443,"shifts":1348,"reductions":1501,"accepts":1,"emitted_pop_paths":1646,"emitted_pop_payloads":2995}
+    },
+    {
+      "fixture": "language",
+      "source_sha256": "009aa9fd5352c712f3839670c7df8a9b00ae878ee20dc88131a438b2d5edfd9a",
+      "source_bytes": 41387,
+      "deep_tree_sha256": "583df223904fe414c33bba3b474c6557ecdb20e7f47e304b9a09bfcc2da44539",
+      "production": {"trace_sha256":"c101eddc92f559719ff0eac994691eeeb86ff45e4fa1f4d9a5e9689cac7c07ab","events_seen":85359,"events_dropped":77167,"action_lookups":18504,"action_executions":33403,"decisions":33452,"shifts":16008,"reductions":17392,"accepts":3,"scanner_exact_retained":0,"scanner_unavailable_retained":8192,"action_cell_distinct_hashes":288,"boundary_distinct_hashes":15048,"action_cell_audit_truncated":false,"boundary_audit_truncated":false,"collision_audit_complete":true},
+      "compact": {"tokens":5058,"dispatches":13456,"action_lookups":18687,"canonicalizations":12319,"shifts":6512,"reductions":7561,"accepts":1,"emitted_pop_paths":8408,"emitted_pop_payloads":15864}
+    },
+    {
+      "fixture": "grammargen_lr",
+      "source_sha256": "a7e4a1a64b25a60aea36183b9d6d53dcd9240942cdb10e67a3cf9e6ce30f95b2",
+      "source_bytes": 235626,
+      "deep_tree_sha256": "1472cfd9a014d4034dbc1456afd12c282630ef787c3543cf0cecb73619883ad2",
+      "production": {"trace_sha256":"820eb5e9f19a7a15535eb8d439de4c3d85022806d7c1260f69c38da35172ff30","events_seen":886966,"events_dropped":878774,"action_lookups":194781,"action_executions":346390,"decisions":345795,"shifts":163713,"reductions":182675,"accepts":2,"scanner_exact_retained":0,"scanner_unavailable_retained":8192,"action_cell_distinct_hashes":389,"boundary_distinct_hashes":151917,"action_cell_audit_truncated":false,"boundary_audit_truncated":false,"collision_audit_complete":true},
+      "compact": {"tokens":49912,"dispatches":133952,"action_lookups":184717,"canonicalizations":121730,"shifts":66119,"reductions":75988,"accepts":1,"emitted_pop_paths":84924,"emitted_pop_payloads":153451}
+    }
+  ],
+  "decision": {
+    "event_level_replay_status": "blocked",
+    "aggregate_route_hypothesis": "production executes materially more action/reduction work than the accepted compact route on every fixture; investigate whole-pass replay and route ownership before additional local instruction tuning",
+    "claim_limit": "counts are descriptive across production and compact until one shared semantic counter contract exists; do not publish ratios as equivalent work"
+  }
+}

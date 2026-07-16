@@ -1,0 +1,77 @@
+{
+  "schema": "gts-paired-semantic-trace-contract/v1",
+  "receipt_schema": "gts-paired-semantic-trace-receipt/v1",
+  "purpose": "Decide whether production full-parse work can be routed to the compact scheduler without asserting event equality that the engines do not expose.",
+  "engines": {
+    "production_go": "gts-semantic-phase-trace/v5",
+    "compact_go": "diagnostic parsercorephase0 summary at an exact Git commit",
+    "static_c": "locked gts-work-count-c-child/v4 aggregate oracle"
+  },
+	"production_provenance": {
+		"manifest_schema": "gts-base-pinned-patch-manifest/v1",
+		"hash_contract": "gts-base-pinned-patch-set/v1",
+		"base_commit": "1743205133e5776b82d175ccf157927198e365de",
+		"canonical_encoding": "SHA-256 over NUL-terminated hash-contract and base-commit fields followed by each path-sorted file's status, path, base-content SHA-256, and current-content SHA-256 as NUL-terminated UTF-8 fields",
+		"self_reference_rule": "The manifest and generated paired receipt are excluded from the patch set. The receipt pins both the manifest file SHA-256 and its non-self-referential patch-set SHA-256."
+	},
+  "retention": {
+    "production_events": "chronological prefix of 8192 events",
+    "production_aggregates": "whole parse, saturating uint64",
+	"production_action_cell_collision_keys": "at most 4096 distinct hashes; additional unseen hashes set truncation and fail completeness",
+	"production_boundary_collision_keys": "at most 262144 distinct hashes; additional unseen hashes set truncation and fail completeness",
+    "compact_events": "not retained; exact scheduler and compact-core aggregate work only",
+    "static_c_events": "not available; aggregate work counters only"
+  },
+  "identity": {
+    "fixture": "source SHA-256 plus byte length",
+    "grammar": "tree-sitter-go commit plus embedded grammar-blob SHA-256",
+    "selected_tree": "gts-deep-tree-v1 SHA-256",
+	"scanner_checkpoint": "current event token start/end bytes plus exact serialized start/end lengths and SHA-256 under gts-semantic-scanner-checkpoint/v2; cached checkpoint spans must equal the event token span, and unavailable is distinct from empty",
+    "ordered_predecessor_spine": "unavailable cross-engine: production exposes a collision-audited shallow head key and compact exposes implementation-specific header paths, but neither exports one shared canonical ordered-spine record"
+  },
+  "action_cells": {
+    "lookup": "fingerprint the exact ordered table cell passed by the production lookup seam",
+    "execution": "re-read the action cell from the execution-time stack state and current lookahead, then fingerprint it independently",
+    "hash": "FNV-1a 64 over versioned fixed-width action fields",
+	"collision_policy": "retain complete canonical action-cell keys up to the declared cap; fail the collision audit on collision, capacity truncation, unaudited keys, or arithmetic overflow"
+  },
+  "boundaries": {
+    "hash": "FNV-1a 64 over the documented shallow production head key",
+	"collision_policy": "retain complete shallow keys up to the declared cap; fail the collision audit on collision, capacity truncation, unaudited keys, or arithmetic overflow",
+    "not_proved": "equal hashes do not prove equal predecessor spines, derivations, scanner states, or cross-engine semantic boundaries"
+  },
+  "comparison_matrix": [
+    {
+      "field": "fixture_grammar_selected_tree",
+      "production_compact": "comparable",
+      "production_static_c": "comparable"
+    },
+    {
+      "field": "aggregate_shifts_reductions_accepts",
+      "production_compact": "descriptive_only_until_one_shared_counter_contract",
+      "production_static_c": "use_gts-work-count-board-v2"
+    },
+    {
+      "field": "ordered_action_cell_and_execution",
+      "production_compact": "unavailable_compact_summary_has_no_ordered_cells",
+      "production_static_c": "unavailable_locked_c_patch_has_no_semantic_cell_events"
+    },
+    {
+      "field": "exact_scanner_checkpoint",
+      "production_compact": "unavailable_when_production_current_token_checkpoint_is_not_exposed",
+      "production_static_c": "unavailable_locked_c_patch_has_no_checkpoint_events"
+    },
+    {
+      "field": "ordered_predecessor_spine",
+      "production_compact": "unavailable_no_shared_canonical_spine_contract",
+      "production_static_c": "unavailable_no_shared_canonical_spine_contract"
+    },
+    {
+      "field": "event_order_or_replay_ratio",
+      "production_compact": "blocked",
+      "production_static_c": "blocked"
+    }
+  ],
+	"admission": "A routing hypothesis may use aggregate replay counts to select the next experiment only when every collision audit used by that hypothesis is complete and untruncated. No semantic event-elision or cross-engine replay claim is admitted until ordered action cells, token-span-bound exact scanner checkpoints, and ordered predecessor spines are comparable and collision-audited in both engines.",
+  "static_c_extension_boundary": "A direct C semantic trace requires new hooks in ts_parser__advance, ts_parser__reduce, ts_stack_pop_count, ts_stack_merge, and ts_parser__condense_stack. This contract deliberately does not modify the locked upstream patch because aggregate C work is sufficient for the current route decision and the event-level patch would be invasive."
+}

@@ -21,10 +21,16 @@ for tags and release notes while still in `0.x`.
 
 ### Tooling
 
-- Add a bounded, build-tagged parser trace that records action lookup, dispatch,
-  and convergence context without retaining physical stack IDs. Coarse boundary
-  classes are labeled non-canonical; observer equality and untagged assembly
-  tests keep the trace diagnostic-only.
+- Add a bounded, build-tagged parser trace that separates lookup cells from
+  execution-time cell reconstruction and retains whole-parse aggregates after
+  its chronological event prefix fills. Scanner checkpoints bind their cached
+  state to the current event token span and remain distinct from unavailable
+  state after relexing. Collision keys have explicit memory caps; reaching a
+  cap exposes unaudited counts, marks the audit incomplete, and blocks claims
+  that require complete collision evidence. A base-pinned content manifest and
+  fail-closed paired receipt identify which production, compact, and locked-C
+  observations can actually be compared. Observer equality and untagged
+  assembly tests keep the trace diagnostic-only.
 - Add the four-fixture authenticated Go/static-C work-count board with direct
   counters at their exact hook boundaries, Go-only representation rows marked
   incomparable, and missing mandatory instrumentation reported separately from

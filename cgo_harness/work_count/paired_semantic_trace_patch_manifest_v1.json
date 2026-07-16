@@ -1,0 +1,48 @@
+{
+  "schema": "gts-base-pinned-patch-manifest/v1",
+  "hash_contract": "gts-base-pinned-patch-set/v1",
+  "base_commit": "1743205133e5776b82d175ccf157927198e365de",
+  "patch_set_sha256": "64926965abe387ab4ccc2efa74f1799333e54674af4cf3991a7e5eeb7eaa603f",
+  "files": [
+    {
+      "path": "CHANGELOG.md",
+      "status": "modified",
+      "base_content_sha256": "90caf2620f5528bc1902bd09088b3c13598ad719869877c4572ab4d83635eeff",
+      "content_sha256": "b6c2dadb5eba91f24ba1e6676d48073cea13f74049bb41ba4e0558776faf81a3"
+    },
+    {
+      "path": "cgo_harness/work_count/paired_semantic_trace_contract_v1.json",
+      "status": "added",
+      "base_content_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "content_sha256": "1ca1b5822396b995c0b3d0760c011daa6dcf5b4e91977a449d10490899c9ccac"
+    },
+    {
+      "path": "cgo_harness/work_count/semantic_phase_trace_contract_v5.json",
+      "status": "added",
+      "base_content_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "content_sha256": "dafbe93d17e9ceee9ef5a015440a8452c981eaaf22e794cff2069bcefdc89f8d"
+    },
+    {
+      "path": "work_count_semantic_phase_trace.go",
+      "status": "modified",
+      "base_content_sha256": "274d73e033b33187baa41609a6b4a78928815e69c549e8c236b02946f3420cb0",
+      "content_sha256": "b65fd47799b74ed947c3c1e2f6349b67d394d0407bc49f7b74014e96c523eb92"
+    },
+    {
+      "path": "work_count_semantic_phase_trace_internal_test.go",
+      "status": "modified",
+      "base_content_sha256": "128d981b0cba4184205022957f91561c34d1bc6e259b6ae1424fd3b7b2dff642",
+      "content_sha256": "0960ea156efce5f6beccb9f015e4c3b7efa2f1faea78cc2c776fa57c8fddaa8d"
+    },
+    {
+      "path": "work_count_semantic_phase_trace_test.go",
+      "status": "modified",
+      "base_content_sha256": "3997d2a8f47e42b03f888a8f5376c2bb470e4f7489621e5e3e360643d4d9b776",
+      "content_sha256": "8080c28221af123b5a5e56b7c86317aeb099b2a44a9acd5538255464143f56a5"
+    }
+  ],
+  "excluded_generated": [
+    "cgo_harness/work_count/paired_semantic_trace_patch_manifest_v1.json",
+    "cgo_harness/work_count/paired_semantic_trace_receipt_v1.json"
+  ]
+}
