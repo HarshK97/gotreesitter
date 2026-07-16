@@ -183,7 +183,7 @@ func TestPopScratchAdjacencyFramesRejectCorruptionAndRetryCleanly(t *testing.T) 
 			if _, err := compact.popPaths(head.Node, 2); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("corruption error=%v, want %q", err, test.want)
 			}
-			if compact.popScratch.busy || len(compact.popScratch.visiting) != 0 || len(compact.popScratch.rev) != 0 || len(compact.popScratch.revScores) != 0 || len(compact.popScratch.revOrders) != 0 || len(compact.popScratch.trailing) != 0 || len(compact.popScratch.paths) != 0 {
+			if compact.popScratch.busy || len(compact.popScratch.rev) != 0 || len(compact.popScratch.revScores) != 0 || len(compact.popScratch.revOrders) != 0 || len(compact.popScratch.trailing) != 0 || len(compact.popScratch.paths) != 0 {
 				t.Fatalf("failed traversal retained logical scratch: %+v", compact.popScratch)
 			}
 			for depth, frame := range compact.popScratch.linkFrames {
@@ -227,7 +227,7 @@ func TestPopScratchCapFailureClearsLogicalStateAndRetries(t *testing.T) {
 	if _, err := compact.popPaths(head.Node, 2); err == nil || !strings.Contains(err.Error(), "pop enumeration cap") {
 		t.Fatalf("cap error=%v", err)
 	}
-	if compact.popScratch.busy || len(compact.popScratch.visiting) != 0 || len(compact.popScratch.rev) != 0 || len(compact.popScratch.revScores) != 0 || len(compact.popScratch.revOrders) != 0 || len(compact.popScratch.trailing) != 0 || len(compact.popScratch.paths) != 0 {
+	if compact.popScratch.busy || len(compact.popScratch.rev) != 0 || len(compact.popScratch.revScores) != 0 || len(compact.popScratch.revOrders) != 0 || len(compact.popScratch.trailing) != 0 || len(compact.popScratch.paths) != 0 {
 		t.Fatalf("failed pop retained logical scratch: %+v", compact.popScratch)
 	}
 	compact.limits.MaxPopPaths = 2
@@ -279,7 +279,7 @@ func TestPopScratchRejectsReentrantReductionAndRollsBackOuterCall(t *testing.T) 
 	if after != before || !reflect.DeepEqual(compact.boundaries, beforeBoundaries) || compact.Work() != beforeWork {
 		t.Fatalf("reentrant rollback mutated core: stats=%+v/%+v boundaries=%v/%v work=%+v/%+v", after, before, compact.boundaries, beforeBoundaries, compact.Work(), beforeWork)
 	}
-	if compact.popScratch.busy || len(compact.popScratch.visiting) != 0 || len(compact.popScratch.rev) != 0 || len(compact.popScratch.revScores) != 0 || len(compact.popScratch.revOrders) != 0 || len(compact.popScratch.trailing) != 0 || len(compact.popScratch.paths) != 0 {
+	if compact.popScratch.busy || len(compact.popScratch.rev) != 0 || len(compact.popScratch.revScores) != 0 || len(compact.popScratch.revOrders) != 0 || len(compact.popScratch.trailing) != 0 || len(compact.popScratch.paths) != 0 {
 		t.Fatalf("reentrant rollback retained logical scratch: %+v", compact.popScratch)
 	}
 	if compact.reductionScratch.spilled || len(compact.reductionScratch.boundaries) != 0 || len(compact.reductionScratch.boundaryByKey) != 0 || len(compact.reductionScratch.batchParents) != 0 {
@@ -335,7 +335,7 @@ func TestReductionScratchPanicRollsBackAndRetriesCleanly(t *testing.T) {
 	if after != before || afterArenas != beforeArenas || !reflect.DeepEqual(compact.boundaries, beforeBoundaries) || compact.Work() != beforeWork {
 		t.Fatalf("panic rollback drifted: stats=%+v/%+v arenas=%v/%v boundaries=%v/%v work=%+v/%+v", after, before, afterArenas, beforeArenas, compact.boundaries, beforeBoundaries, compact.Work(), beforeWork)
 	}
-	if compact.popScratch.busy || len(compact.popScratch.visiting) != 0 || len(compact.popScratch.rev) != 0 || len(compact.popScratch.revScores) != 0 || len(compact.popScratch.revOrders) != 0 || len(compact.popScratch.trailing) != 0 || len(compact.popScratch.paths) != 0 {
+	if compact.popScratch.busy || len(compact.popScratch.rev) != 0 || len(compact.popScratch.revScores) != 0 || len(compact.popScratch.revOrders) != 0 || len(compact.popScratch.trailing) != 0 || len(compact.popScratch.paths) != 0 {
 		t.Fatalf("panic retained logical pop scratch: %+v", compact.popScratch)
 	}
 	if compact.reductionScratch.spilled || len(compact.reductionScratch.boundaries) != 0 || len(compact.reductionScratch.boundaryByKey) != 0 || len(compact.reductionScratch.batchParents) != 0 {
@@ -408,13 +408,10 @@ func TestResetClearsPopScratchAndRetainsCapacity(t *testing.T) {
 	for depth, frame := range compact.popScratch.linkFrames {
 		wantFrameCaps[depth] = cap(frame)
 	}
-	if compact.popScratch.visiting == nil {
-		t.Fatal("pop visiting map was not initialized")
-	}
 	if err := compact.Reset(); err != nil {
 		t.Fatal(err)
 	}
-	if compact.popScratch.busy || len(compact.popScratch.visiting) != 0 || len(compact.popScratch.rev) != 0 || len(compact.popScratch.revScores) != 0 || len(compact.popScratch.revOrders) != 0 || len(compact.popScratch.trailing) != 0 || len(compact.popScratch.paths) != 0 {
+	if compact.popScratch.busy || len(compact.popScratch.rev) != 0 || len(compact.popScratch.revScores) != 0 || len(compact.popScratch.revOrders) != 0 || len(compact.popScratch.trailing) != 0 || len(compact.popScratch.paths) != 0 {
 		t.Fatalf("reset retained logical pop scratch: %+v", compact.popScratch)
 	}
 	if len(compact.popScratch.linkFrames) != len(wantFrameCaps) {
@@ -431,7 +428,7 @@ func TestResetClearsPopScratchAndRetainsCapacity(t *testing.T) {
 		cap(compact.popScratch.revOrders), cap(compact.popScratch.trailing),
 		cap(compact.popScratch.paths), cap(retained.children), cap(retained.trailing),
 	}
-	if gotCaps != wantCaps || compact.popScratch.visiting == nil {
-		t.Fatalf("reset pop capacities=%v want=%v map_nil=%t", gotCaps, wantCaps, compact.popScratch.visiting == nil)
+	if gotCaps != wantCaps {
+		t.Fatalf("reset pop capacities=%v want=%v", gotCaps, wantCaps)
 	}
 }

@@ -439,6 +439,11 @@ type Core struct {
 	reductionScratch    reductionOutputScratch
 }
 
+// inlineAdjacencyCapacity covers the production default without forcing a
+// fixed fan-out contract on callers that deliberately configure a wider
+// boundary. nodeLinksInto spills to a bounded slice only above this width.
+const inlineAdjacencyCapacity = 8
+
 type diagnosticOptions struct {
 	foldSamePredecessorShallowPayloads bool
 }
@@ -1371,7 +1376,8 @@ func (c *Core) condenseInputExists(key boundaryKey, in linkInput) (bool, error) 
 	if err != nil {
 		return false, err
 	}
-	links, err := c.nodeLinks(*node)
+	var inline [inlineAdjacencyCapacity]linkRecord
+	links, err := c.publishedNodeLinksInto(inline[:0], *node)
 	if err != nil {
 		return false, err
 	}
@@ -1535,7 +1541,8 @@ func (c *Core) condenseWithOutcome(key boundaryKey, in linkInput) (condenseOutco
 			return condenseOutcome{}, err
 		}
 		old = *oldRecord
-		oldLinks, err = c.nodeLinks(old)
+		var inline [inlineAdjacencyCapacity]linkRecord
+		oldLinks, err = c.publishedNodeLinksInto(inline[:0], old)
 		if err != nil {
 			return condenseOutcome{}, err
 		}
@@ -1760,11 +1767,13 @@ func (c *Core) mergePredecessorsOneLayer(leftID, rightID NodeID) (NodeID, bool, 
 		return 0, false, errors.New("parser-core phase zero: recursive predecessors are ancestry-related")
 	}
 
-	links, err := c.nodeLinks(*left)
+	var leftInline [inlineAdjacencyCapacity]linkRecord
+	links, err := c.publishedNodeLinksInto(leftInline[:0], *left)
 	if err != nil {
 		return 0, false, err
 	}
-	rightLinks, err := c.nodeLinks(*right)
+	var rightInline [inlineAdjacencyCapacity]linkRecord
+	rightLinks, err := c.publishedNodeLinksInto(rightInline[:0], *right)
 	if err != nil {
 		return 0, false, err
 	}
@@ -1920,39 +1929,44 @@ func (c *Core) linkRecordsEqual(left, right linkRecord) bool {
 }
 
 func (c *Core) nodesAncestryRelated(left, right NodeID) (bool, error) {
-	leftReaches, err := c.nodeReaches(left, right)
-	if err != nil || leftReaches {
-		return leftReaches, err
+	if left == right {
+		return true, nil
+	}
+	// Published edges strictly decrease, so only the newer ID can reach the
+	// older one. Avoid a second traversal that is impossible by construction.
+	if left > right {
+		return c.nodeReaches(left, right)
 	}
 	return c.nodeReaches(right, left)
 }
 
 func (c *Core) nodeReaches(start, target NodeID) (bool, error) {
 	seen := make(map[NodeID]bool)
-	visiting := make(map[NodeID]bool)
 	var walk func(NodeID) (bool, error)
 	walk = func(id NodeID) (bool, error) {
 		if id == target {
 			return true, nil
 		}
-		if visiting[id] {
-			return false, errors.New("parser-core phase zero: graph cycle during recursive insertion")
+		if id < target {
+			return false, nil
 		}
 		if seen[id] {
 			return false, nil
 		}
 		seen[id] = true
-		visiting[id] = true
-		defer delete(visiting, id)
 		node, err := c.node(id)
 		if err != nil {
 			return false, err
 		}
-		links, err := c.nodeLinks(*node)
+		var inline [inlineAdjacencyCapacity]linkRecord
+		links, err := c.publishedNodeLinksInto(inline[:0], *node)
 		if err != nil {
 			return false, err
 		}
 		for _, link := range links {
+			if link.prev == 0 || link.prev >= id {
+				return false, errors.New("parser-core phase zero: graph predecessor does not decrease during recursive insertion")
+			}
 			reaches, err := walk(link.prev)
 			if err != nil || reaches {
 				return reaches, err
@@ -1976,8 +1990,12 @@ func (c *Core) appendAdjacencyNode(state StateID, byteOffset uint32, links []lin
 	if uint64(len(c.nodes))+1 > uint64(c.limits.MaxNodes) || len(c.nodes) >= math.MaxUint32 {
 		return 0, errors.New("parser-core phase zero: node arena cap")
 	}
+	next := NodeID(len(c.nodes) + 1)
 	pathCount := uint64(0)
 	for _, link := range links {
+		if link.prev == 0 || link.prev >= next {
+			return 0, fmt.Errorf("parser-core phase zero: graph predecessor %d must be lower than new node %d", link.prev, next)
+		}
 		prev, err := c.node(link.prev)
 		if err != nil {
 			return 0, err
@@ -2088,7 +2106,6 @@ type pathPayload struct {
 
 type popEnumerationScratch struct {
 	busy       bool
-	visiting   map[NodeID]bool
 	linkFrames [][]linkRecord
 	rev        []SubtreeID
 	revScores  []int64
@@ -2098,11 +2115,6 @@ type popEnumerationScratch struct {
 }
 
 func (s *popEnumerationScratch) begin() {
-	if s.visiting == nil {
-		s.visiting = make(map[NodeID]bool)
-	} else {
-		clear(s.visiting)
-	}
 	for index := range s.linkFrames {
 		s.linkFrames[index] = s.linkFrames[index][:0]
 	}
@@ -2114,7 +2126,6 @@ func (s *popEnumerationScratch) begin() {
 }
 
 func (s *popEnumerationScratch) finishTraversal() {
-	clear(s.visiting)
 	for index := range s.linkFrames {
 		s.linkFrames[index] = s.linkFrames[index][:0]
 	}
@@ -2171,15 +2182,10 @@ func (c *Core) popPaths(head NodeID, childCount int) (out []popPath, err error) 
 	}
 	var walk func(NodeID, int, bool, uint32, int) error
 	walk = func(id NodeID, remaining int, peelingTrailing bool, structuralEnd uint32, depth int) error {
-		if scratch.visiting[id] {
-			return errors.New("parser-core phase zero: graph cycle")
-		}
 		n, err := c.node(id)
 		if err != nil {
 			return err
 		}
-		scratch.visiting[id] = true
-		defer delete(scratch.visiting, id)
 		for len(scratch.linkFrames) <= depth {
 			scratch.linkFrames = append(scratch.linkFrames, nil)
 		}
@@ -2189,6 +2195,12 @@ func (c *Core) popPaths(head NodeID, childCount int) (out []popPath, err error) 
 			return err
 		}
 		for _, link := range links {
+			// Every published graph edge points to an older node. The strict local
+			// decrease proves acyclicity without a traversal map while still
+			// rejecting corrupted diagnostic arena records before recursion.
+			if link.prev == 0 || link.prev >= id {
+				return errors.New("parser-core phase zero: graph predecessor does not decrease")
+			}
 			payload, err := c.subtree(link.payload)
 			if err != nil {
 				return err
@@ -2594,8 +2606,51 @@ func (c *Core) appendNode(r nodeRecord) (NodeID, error) {
 	if uint64(len(c.nodes))+1 > uint64(c.limits.MaxNodes) || len(c.nodes) >= math.MaxUint32 {
 		return 0, errors.New("parser-core phase zero: node arena cap")
 	}
+	next := NodeID(len(c.nodes) + 1)
+	if err := c.validatePublishedNodeDAG(r, next); err != nil {
+		return 0, err
+	}
 	c.nodes = append(c.nodes, r)
-	return NodeID(len(c.nodes)), nil
+	return next, nil
+}
+
+// validatePublishedNodeDAG authenticates the append-only persistent graph at
+// its single publication point. Since NodeIDs are dense arena ordinals, a
+// strict predecessor decrease is both necessary and sufficient to rule out a
+// cycle. The bounded adjacency walk also keeps malformed internal/diagnostic
+// records fail closed without a hash table.
+func (c *Core) validatePublishedNodeDAG(r nodeRecord, next NodeID) error {
+	count := uint64(r.linkCount)
+	if count == 0 {
+		if r.firstLink != 0 {
+			return errors.New("parser-core phase zero: empty adjacency has nonzero first link")
+		}
+		return nil
+	}
+	if count > uint64(c.limits.MaxLinks) || count > uint64(c.limits.MaxLinksPerBoundary) {
+		return errors.New("parser-core phase zero: recorded link count exceeds configured limit")
+	}
+	if count > uint64(len(c.links)) {
+		return errors.New("parser-core phase zero: recorded link count exceeds link arena")
+	}
+	id := LinkID(r.firstLink)
+	for remaining := r.linkCount; remaining > 0; remaining-- {
+		if id == 0 {
+			return errors.New("parser-core phase zero: adjacency shorter than recorded link count")
+		}
+		if uint64(id) > uint64(len(c.links)) {
+			return errors.New("parser-core phase zero: link adjacency out of range")
+		}
+		link := c.links[id-1]
+		if link.prev == 0 || link.prev >= next {
+			return fmt.Errorf("parser-core phase zero: graph predecessor %d must be lower than new node %d", link.prev, next)
+		}
+		id = link.next
+	}
+	if id != 0 {
+		return errors.New("parser-core phase zero: adjacency exceeds recorded link count or cycles")
+	}
+	return nil
 }
 
 func (c *Core) appendSubtree(r subtreeRecord, children []SubtreeID, fields []FieldMapEntry, aliases []Symbol) (SubtreeID, error) {
@@ -2682,8 +2737,20 @@ func (c *Core) nodeLinks(n nodeRecord) ([]linkRecord, error) {
 // traversal: an early zero is short, while a nonzero successor after exactly
 // that many records is either overlong or cyclic and is rejected fail closed.
 func (c *Core) nodeLinksInto(dst []linkRecord, n nodeRecord) ([]linkRecord, error) {
+	return c.nodeLinksIntoBounded(dst, n, c.limits.MaxLinksPerBoundary)
+}
+
+// publishedNodeLinksInto reads an already-authenticated immutable node. A
+// caller may lower MaxLinksPerBoundary after publication to ratchet subsequent
+// writes, so an older legal node remains readable up to its recorded width.
+// appendNode authenticated that width against the then-current configured cap.
+func (c *Core) publishedNodeLinksInto(dst []linkRecord, n nodeRecord) ([]linkRecord, error) {
+	return c.nodeLinksIntoBounded(dst, n, n.linkCount)
+}
+
+func (c *Core) nodeLinksIntoBounded(dst []linkRecord, n nodeRecord, maxCount uint32) ([]linkRecord, error) {
 	count := uint64(n.linkCount)
-	if count > uint64(c.limits.MaxLinks) || count > uint64(c.limits.MaxLinksPerBoundary) {
+	if count > uint64(c.limits.MaxLinks) || count > uint64(maxCount) {
 		return dst[:0], errors.New("parser-core phase zero: recorded link count exceeds configured limit")
 	}
 	if count > uint64(len(c.links)) {

@@ -119,6 +119,16 @@ authenticated static-C, fleet, and forest measurements are stricter.
 
 ### Tooling
 
+- Compact parser-core graph nodes now authenticate strictly older
+  predecessors at publication, allowing pop enumeration to reject corrupted
+  edges without a cycle map. Boundary condensation keeps the default
+  adjacency width inline and spills only for wider configured bounds. Across
+  the four locked real-Go fixtures on the quiet host, total compact parse
+  improved 4.2% in time by geomean, and every total fixture improved 3.0-5.9%.
+  Across the scheduler and total lanes, allocated bytes improved 2.9% and
+  allocations improved 4.5% by geomean, with unchanged exact trees,
+  selected-node census, and parser work. The scheduler control improved 5.1%
+  by geomean with no fixture regression.
 - Compact parser-core materialization now validates unique ownership and
   production metadata while constructing public nodes in one iterative
   postorder pass, avoiding a separate order arena and copied compact-subtree
