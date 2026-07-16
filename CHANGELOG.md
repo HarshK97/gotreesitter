@@ -7,6 +7,14 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.38.0] - 2026-07-16
+
+Incremental-correctness, full-parse-efficiency, and benchmark-hardening release.
+Incremental parsing now preserves fresh-parse selection across GLR reuse, score,
+cull, and retry edges; terminal materialization stops and multiline edits report
+accurately; evidence-gated arena and merge policies reduce full-parse cost; and
+authenticated static-C, fleet, and forest measurements are stricter.
+
 ### Performance
 
 - The exact locked Odin grammar now caps first-pass arena preallocation for
@@ -15,6 +23,10 @@ for tags and release notes while still in `0.x`.
   6.2 MB Odin test-vector witness with a byte-identical tree. Non-ASCII input
   fails open, while custom, same-name, stale-blob, and other fleet grammars
   retain the baseline policy.
+- GLR boundary merging now rejects candidates with unequal cumulative scores
+  before recovery-cost and graph-equivalence work. The order-balanced canonical
+  real-Go benchmark improved by 4.3% geomean with unchanged parser work, tree
+  identity, arena use, and stack maxima.
 
 ### Fixed
 
@@ -43,13 +55,6 @@ for tags and release notes while still in `0.x`.
   runtime across insertions, deletions, and replacements.
 - Rewriter edits now reject reversed and out-of-source byte ranges instead of
   panicking while applying them.
-
-### Performance
-
-- GLR boundary merging now rejects candidates with unequal cumulative scores
-  before recovery-cost and graph-equivalence work. The order-balanced canonical
-  real-Go benchmark improved by 4.3% geomean with unchanged parser work, tree
-  identity, arena use, and stack maxima.
 
 ### Tooling
 
@@ -2637,7 +2642,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.37.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.38.0...HEAD
+[0.38.0]: https://github.com/odvcencio/gotreesitter/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/odvcencio/gotreesitter/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/odvcencio/gotreesitter/compare/v0.34.0...v0.36.0
 [0.34.0]: https://github.com/odvcencio/gotreesitter/compare/v0.33.0...v0.34.0
