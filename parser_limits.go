@@ -111,10 +111,84 @@ const typeScriptFourslashLargeCommentArenaNodeCap = 64 * 1024
 
 func parseFullArenaNodeCapacityForSource(source []byte, lang *Language, hint int) int {
 	target := parseFullArenaNodeCapacity(len(source), hint)
+	if lang != nil && lang.FullParseArenaDensityCapEnabled {
+		if densityCap, ok := parseFullArenaStructuralDensityNodeCap(source); ok && target > densityCap {
+			// The density cap bounds only the byte-length estimate. A learned
+			// hint reflects real node usage from a previous parse on this parser
+			// and keeps priority, exactly as parseFullArenaNodeCapacity granted
+			// it (bounded by parseFullArenaHintLimit).
+			floor := nodeCapacityForClass(arenaClassFull)
+			if hint > 0 {
+				if capped := min(hint, parseFullArenaHintLimit(len(source))); capped > floor {
+					floor = capped
+				}
+			}
+			target = max(densityCap, floor)
+		}
+	}
 	if !typeScriptLargeFourslashSource(source, lang) || target <= typeScriptFourslashLargeCommentArenaNodeCap {
 		return target
 	}
 	return max(nodeCapacityForClass(arenaClassFull), typeScriptFourslashLargeCommentArenaNodeCap)
+}
+
+// parseFullArenaStructuralDensityNodeCap bounds the first-pass node estimate
+// for large ASCII sources by structural byte density. Parse-tree nodes sit
+// at token boundaries, and token boundaries sit at structural bytes —
+// whitespace, delimiters, separators, and the complete ASCII punctuation
+// range used by operators. Dense generated code measures about two final nodes
+// per structural byte, so three per structural byte leaves headroom for fork
+// debris; a large source dominated by one giant low-punctuation literal or
+// generated payload has almost no structural bytes, and the plain
+// byte-length estimate overshoots it by orders of magnitude, front-loading
+// tens of megabytes of arena that the memory budget then charges. The scan is
+// linear and only sources of at least 1 MiB pay for it. Any non-ASCII or
+// unexpected control byte fails open because fleet grammars may treat it as
+// an operator, delimiter, or whitespace; those sources keep the existing
+// estimate.
+func parseFullArenaStructuralDensityNodeCap(source []byte) (int, bool) {
+	const minSourceBytes = 1024 * 1024
+	if len(source) < minSourceBytes {
+		return 0, false
+	}
+	structural := 0
+	for _, b := range source {
+		if b >= 0x80 {
+			return 0, false
+		}
+		if (b < ' ' && b != '\t' && b != '\n' && b != '\r') || b == 0x7f {
+			return 0, false
+		}
+		if parseFullArenaStructuralDensityByte(b) {
+			structural++
+		}
+	}
+	maxInt := int(^uint(0) >> 1)
+	if structural > maxInt/3 {
+		return maxInt, true
+	}
+	return structural * 3, true
+}
+
+func parseFullArenaStructuralDensityByte(b byte) bool {
+	switch {
+	case b == '\t', b == '\n', b == '\r', b == ' ':
+		return true
+	case b >= '!' && b <= '/':
+		return true
+	case b >= ':' && b <= '@':
+		return true
+	case b >= '[' && b <= '^':
+		return true
+	case b == '_':
+		return true
+	case b == '`':
+		return true
+	case b >= '{' && b <= '~':
+		return true
+	default:
+		return false
+	}
 }
 
 func typeScriptLargeFourslashSource(source []byte, lang *Language) bool {

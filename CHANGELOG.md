@@ -7,6 +7,15 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Performance
+
+- The exact locked Odin grammar now caps first-pass arena preallocation for
+  large ASCII token-sparse sources using a complete structural-density scan.
+  This cuts arena allocation by 72% and full-parse time by 6% on the locked
+  6.2 MB Odin test-vector witness with a byte-identical tree. Non-ASCII input
+  fails open, while custom, same-name, stale-blob, and other fleet grammars
+  retain the baseline policy.
+
 ### Fixed
 
 - Incremental parsing now preserves the configured bounded GLR width and

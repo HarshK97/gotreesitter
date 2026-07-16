@@ -60,6 +60,47 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	if got := lang.AutomaticForestMemoryAllowanceBytes; got != 0 {
 		t.Fatalf("unknown runtime profile changed automatic forest allowance to %d", got)
 	}
+	if lang.FullParseArenaDensityCapEnabled {
+		t.Fatal("unknown runtime profile enabled the full-parse arena density cap")
+	}
+}
+
+func TestBuiltinOdinArenaDensityProfileRequiresExactBlobIdentity(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	builtin := OdinLanguage()
+	if !builtin.FullParseArenaDensityCapEnabled {
+		t.Fatal("exact built-in Odin artifact did not receive the arena density certification")
+	}
+
+	custom := &gotreesitter.Language{Name: "odin"}
+	AttachLanguageSupport("odin", custom)
+	if custom.FullParseArenaDensityCapEnabled {
+		t.Fatal("same-name custom Odin grammar enabled the arena density cap")
+	}
+
+	blob := BlobByName("odin")
+	if len(blob) == 0 {
+		t.Fatal("BlobByName(odin) returned no data")
+	}
+	staleBlob := append([]byte(nil), blob...)
+	staleBlob[len(staleBlob)-1] ^= 1
+	stale := &gotreesitter.Language{Name: "odin"}
+	if attachBuiltinLanguageRuntimeProfile("odin", sha256.Sum256(staleBlob), stale) {
+		t.Fatal("stale Odin blob unexpectedly attached a runtime profile")
+	}
+	if stale.FullParseArenaDensityCapEnabled {
+		t.Fatal("stale Odin blob enabled the arena density cap")
+	}
+
+	exact := &gotreesitter.Language{Name: "odin"}
+	if !attachBuiltinLanguageRuntimeProfile("odin", sha256.Sum256(blob), exact) {
+		t.Fatal("exact Odin blob did not attach its runtime profile")
+	}
+	if !exact.FullParseArenaDensityCapEnabled {
+		t.Fatal("exact Odin blob did not enable the arena density cap")
+	}
 }
 
 func TestBuiltinAutomaticForestProfilesRequireExactBlobIdentity(t *testing.T) {

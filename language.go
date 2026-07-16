@@ -561,6 +561,12 @@ type Language struct {
 	// adapted grammars, and overrides retain the conservative false default.
 	AutomaticForestEnabledByDefault bool
 
+	// FullParseArenaDensityCapEnabled explicitly opts this language into the ASCII
+	// structural-density arena cap. Checked-in built-ins are enabled automatically
+	// only through an exact-blob runtime profile. Callers may explicitly opt in
+	// custom or adapted languages; false preserves the baseline arena policy.
+	FullParseArenaDensityCapEnabled bool
+
 	// NativeResultCompatibility identifies result-tree shapes produced natively
 	// by this exact language artifact. Zero keeps conservative post-parse
 	// compatibility fallbacks for legacy blobs, generated grammars, caller-built
