@@ -920,3 +920,37 @@ func containsString(items []string, want string) bool {
 	}
 	return false
 }
+
+func TestDisambiguateOutputName(t *testing.T) {
+	used := map[string]bool{}
+	first := disambiguateOutputName(used, "apps/v1/generated.pb.go", "large__generated.pb.go")
+	if first != "large__generated.pb.go" {
+		t.Fatalf("first use should keep name, got %q", first)
+	}
+	used[first] = true
+
+	second := disambiguateOutputName(used, "batch/v1/generated.pb.go", "large__generated.pb.go")
+	if second != "large__v1__generated.pb.go" {
+		t.Fatalf("collision should gain innermost dir qualifier, got %q", second)
+	}
+	used[second] = true
+
+	third := disambiguateOutputName(used, "core/v1/generated.pb.go", "large__generated.pb.go")
+	if third != "large__core_v1__generated.pb.go" {
+		t.Fatalf("second collision should widen qualifier, got %q", third)
+	}
+	used[third] = true
+
+	// Same paths exhausted: numeric fallback.
+	fourth := disambiguateOutputName(used, "core/v1/generated.pb.go", "large__generated.pb.go")
+	if fourth != "large__generated.pb.go__dup2" {
+		t.Fatalf("exhausted qualifiers should fall back to dup suffix, got %q", fourth)
+	}
+
+	// Names without a bucket prefix still disambiguate.
+	used2 := map[string]bool{"doc.go": true}
+	plain := disambiguateOutputName(used2, "api/resource/doc.go", "doc.go")
+	if plain != "doc.go__resource" {
+		t.Fatalf("bucketless name should append qualifier, got %q", plain)
+	}
+}

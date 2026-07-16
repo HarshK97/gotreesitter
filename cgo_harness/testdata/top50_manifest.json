@@ -139,6 +139,16 @@
       "language": "awk",
       "repo_url": "https://github.com/onetrueawk/awk",
       "commit": "61a7c75e225e3035390be32d635545e40d8c5faf"
+    },
+    {
+      "language": "go",
+      "repo_url": "https://github.com/grpc/grpc-go",
+      "commit": "d01db5ccc8d3dfc89d4481c1d2a613e9fa44520b"
+    },
+    {
+      "language": "go",
+      "repo_url": "https://github.com/kubernetes/api",
+      "commit": "83e86af0041ff45347a425182506d7c28d173d1f"
     }
   ]
 }
