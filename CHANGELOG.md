@@ -119,6 +119,12 @@ authenticated static-C, fleet, and forest measurements are stricter.
 
 ### Tooling
 
+- Compact parser-core canonical boundaries now use a retained, generation-
+  stamped exact index with transactional slot rollback. Across the four locked
+  real-Go fixtures on the quiet host, recurring total compact parse improved
+  3.2% in time by geomean and every fixture improved 2.9-4.1%, with unchanged
+  exact trees and effectively unchanged allocation volume. The scheduler
+  control improved 4.6% with no fixture regression.
 - Compact parser-core conflict dispatch now reuses flat arm, reduction-output,
   adoption-count, and header-assembly scratch while preserving action order,
   rollback, and full receipts. Across the four locked real-Go fixtures on the

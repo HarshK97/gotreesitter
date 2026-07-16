@@ -45,8 +45,8 @@ func TestResetRetainsConfigurationAndArenaCapacity(t *testing.T) {
 	if _, err := compact.Seed(4, 2); err != nil {
 		t.Fatal(err)
 	}
-	if compact.Work() == (Work{}) || len(compact.boundaries) == 0 {
-		t.Fatalf("reset fixture was not populated: work=%+v boundaries=%d", compact.Work(), len(compact.boundaries))
+	if compact.Work() == (Work{}) || compact.boundaries.count == 0 {
+		t.Fatalf("reset fixture was not populated: work=%+v boundaries=%d", compact.Work(), compact.boundaries.count)
 	}
 
 	wantTables := compact.tables
@@ -55,7 +55,7 @@ func TestResetRetainsConfigurationAndArenaCapacity(t *testing.T) {
 	wantCaps := [...]int{
 		cap(compact.nodes), cap(compact.links), cap(compact.subtrees),
 		cap(compact.children), cap(compact.fields), cap(compact.aliases),
-		cap(compact.boundaryKeys), cap(compact.boundaryJournal), cap(compact.transactions),
+		cap(compact.boundaries.slots), cap(compact.boundaryJournal), cap(compact.transactions),
 		cap(compact.reductionScratch.boundaries), cap(compact.reductionScratch.batchParents),
 	}
 	if err := compact.Reset(); err != nil {
@@ -68,14 +68,14 @@ func TestResetRetainsConfigurationAndArenaCapacity(t *testing.T) {
 	gotCaps := [...]int{
 		cap(compact.nodes), cap(compact.links), cap(compact.subtrees),
 		cap(compact.children), cap(compact.fields), cap(compact.aliases),
-		cap(compact.boundaryKeys), cap(compact.boundaryJournal), cap(compact.transactions),
+		cap(compact.boundaries.slots), cap(compact.boundaryJournal), cap(compact.transactions),
 		cap(compact.reductionScratch.boundaries), cap(compact.reductionScratch.batchParents),
 	}
 	if gotCaps != wantCaps {
 		t.Fatalf("reset changed retained capacities: got=%v want=%v", gotCaps, wantCaps)
 	}
-	if len(compact.nodes) != 0 || len(compact.links) != 0 || len(compact.subtrees) != 0 || len(compact.children) != 0 || len(compact.fields) != 0 || len(compact.aliases) != 0 || len(compact.boundaries) != 0 || len(compact.boundaryKeys) != 0 || len(compact.boundaryJournal) != 0 || len(compact.transactions) != 0 {
-		t.Fatalf("reset retained logical state: nodes=%d links=%d subtrees=%d children=%d fields=%d aliases=%d boundaries=%d keys=%d journal=%d transactions=%d", len(compact.nodes), len(compact.links), len(compact.subtrees), len(compact.children), len(compact.fields), len(compact.aliases), len(compact.boundaries), len(compact.boundaryKeys), len(compact.boundaryJournal), len(compact.transactions))
+	if len(compact.nodes) != 0 || len(compact.links) != 0 || len(compact.subtrees) != 0 || len(compact.children) != 0 || len(compact.fields) != 0 || len(compact.aliases) != 0 || compact.boundaries.count != 0 || len(compact.boundaryJournal) != 0 || len(compact.transactions) != 0 {
+		t.Fatalf("reset retained logical state: nodes=%d links=%d subtrees=%d children=%d fields=%d aliases=%d boundaries=%d journal=%d transactions=%d", len(compact.nodes), len(compact.links), len(compact.subtrees), len(compact.children), len(compact.fields), len(compact.aliases), compact.boundaries.count, len(compact.boundaryJournal), len(compact.transactions))
 	}
 	if compact.frontier != 1 || compact.checkpoint != ([32]byte{}) || compact.nextTransaction != 0 || compact.Work() != (Work{}) {
 		t.Fatalf("reset scalar drift: frontier=%d checkpoint=%x next_transaction=%d work=%+v", compact.frontier, compact.checkpoint, compact.nextTransaction, compact.Work())
@@ -116,11 +116,8 @@ func TestResetRejectsNilAndActiveTransactionWithoutMutation(t *testing.T) {
 		beforeChildren := append([]SubtreeID(nil), compact.children...)
 		beforeFields := append([]FieldMapEntry(nil), compact.fields...)
 		beforeAliases := append([]Symbol(nil), compact.aliases...)
-		beforeBoundaries := make(map[boundaryKey]NodeID, len(compact.boundaries))
-		for key, value := range compact.boundaries {
-			beforeBoundaries[key] = value
-		}
-		beforeBoundaryKeys := append([]boundaryKey(nil), compact.boundaryKeys...)
+		beforeBoundaries := cloneBoundaryMap(compact.boundaries)
+		beforeBoundaryIndex := compact.boundaries.snapshot()
 		beforeJournal := append([]boundaryMutation(nil), compact.boundaryJournal...)
 		beforeTransactions := append([]uint64(nil), compact.transactions...)
 		beforeFrontier, beforeCheckpoint := compact.frontier, compact.checkpoint
@@ -129,7 +126,7 @@ func TestResetRejectsNilAndActiveTransactionWithoutMutation(t *testing.T) {
 		if err := compact.Reset(); err == nil {
 			t.Fatal("reset during active transaction unexpectedly succeeded")
 		}
-		if !reflect.DeepEqual(compact.nodes, beforeNodes) || !reflect.DeepEqual(compact.links, beforeLinks) || !reflect.DeepEqual(compact.subtrees, beforeSubtrees) || !reflect.DeepEqual(compact.children, beforeChildren) || !reflect.DeepEqual(compact.fields, beforeFields) || !reflect.DeepEqual(compact.aliases, beforeAliases) || !reflect.DeepEqual(compact.boundaries, beforeBoundaries) || !reflect.DeepEqual(compact.boundaryKeys, beforeBoundaryKeys) || !reflect.DeepEqual(compact.boundaryJournal, beforeJournal) || !reflect.DeepEqual(compact.transactions, beforeTransactions) || compact.frontier != beforeFrontier || compact.checkpoint != beforeCheckpoint || compact.nextTransaction != beforeNext || compact.work != beforeWork {
+		if !reflect.DeepEqual(compact.nodes, beforeNodes) || !reflect.DeepEqual(compact.links, beforeLinks) || !reflect.DeepEqual(compact.subtrees, beforeSubtrees) || !reflect.DeepEqual(compact.children, beforeChildren) || !reflect.DeepEqual(compact.fields, beforeFields) || !reflect.DeepEqual(compact.aliases, beforeAliases) || !reflect.DeepEqual(compact.boundaries.logicalMap(), beforeBoundaries) || !reflect.DeepEqual(compact.boundaries.snapshot(), beforeBoundaryIndex) || !reflect.DeepEqual(compact.boundaryJournal, beforeJournal) || !reflect.DeepEqual(compact.transactions, beforeTransactions) || compact.frontier != beforeFrontier || compact.checkpoint != beforeCheckpoint || compact.nextTransaction != beforeNext || compact.work != beforeWork {
 			t.Fatal("rejected active reset mutated compact state")
 		}
 		if state, offset, err := compact.Boundary(seed); err != nil || state != 1 || offset != 0 {

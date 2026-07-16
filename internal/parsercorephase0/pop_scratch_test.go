@@ -276,8 +276,8 @@ func TestPopScratchRejectsReentrantReductionAndRollsBackOuterCall(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after != before || !reflect.DeepEqual(compact.boundaries, beforeBoundaries) || compact.Work() != beforeWork {
-		t.Fatalf("reentrant rollback mutated core: stats=%+v/%+v boundaries=%v/%v work=%+v/%+v", after, before, compact.boundaries, beforeBoundaries, compact.Work(), beforeWork)
+	if after != before || !reflect.DeepEqual(compact.boundaries.logicalMap(), beforeBoundaries) || compact.Work() != beforeWork {
+		t.Fatalf("reentrant rollback mutated core: stats=%+v/%+v boundaries=%v/%v work=%+v/%+v", after, before, compact.boundaries.logicalMap(), beforeBoundaries, compact.Work(), beforeWork)
 	}
 	if compact.popScratch.busy || len(compact.popScratch.rev) != 0 || len(compact.popScratch.revScores) != 0 || len(compact.popScratch.revOrders) != 0 || len(compact.popScratch.trailing) != 0 || len(compact.popScratch.paths) != 0 {
 		t.Fatalf("reentrant rollback retained logical scratch: %+v", compact.popScratch)
@@ -332,8 +332,8 @@ func TestReductionScratchPanicRollsBackAndRetriesCleanly(t *testing.T) {
 		len(compact.nodes), len(compact.links), len(compact.subtrees),
 		len(compact.children), len(compact.fields), len(compact.aliases),
 	}
-	if after != before || afterArenas != beforeArenas || !reflect.DeepEqual(compact.boundaries, beforeBoundaries) || compact.Work() != beforeWork {
-		t.Fatalf("panic rollback drifted: stats=%+v/%+v arenas=%v/%v boundaries=%v/%v work=%+v/%+v", after, before, afterArenas, beforeArenas, compact.boundaries, beforeBoundaries, compact.Work(), beforeWork)
+	if after != before || afterArenas != beforeArenas || !reflect.DeepEqual(compact.boundaries.logicalMap(), beforeBoundaries) || compact.Work() != beforeWork {
+		t.Fatalf("panic rollback drifted: stats=%+v/%+v arenas=%v/%v boundaries=%v/%v work=%+v/%+v", after, before, afterArenas, beforeArenas, compact.boundaries.logicalMap(), beforeBoundaries, compact.Work(), beforeWork)
 	}
 	if compact.popScratch.busy || len(compact.popScratch.rev) != 0 || len(compact.popScratch.revScores) != 0 || len(compact.popScratch.revOrders) != 0 || len(compact.popScratch.trailing) != 0 || len(compact.popScratch.paths) != 0 {
 		t.Fatalf("panic retained logical pop scratch: %+v", compact.popScratch)

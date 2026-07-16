@@ -428,8 +428,7 @@ type Core struct {
 	aliases             []Symbol
 	frontier            uint64
 	checkpoint          [32]byte
-	boundaries          map[boundaryKey]NodeID
-	boundaryKeys        []boundaryKey
+	boundaries          boundaryIndex
 	boundaryJournal     []boundaryMutation
 	transactions        []uint64
 	nextTransaction     uint64
@@ -452,7 +451,7 @@ type checkpoint struct {
 	nodes, links, subtrees, children, fields, aliases int
 	frontier                                          uint64
 	checkpoint                                        [32]byte
-	boundaryKeys                                      int
+	boundaryIndex                                     boundaryIndexSnapshot
 	journal                                           int
 	transaction                                       uint64
 	work                                              Work
@@ -467,8 +466,8 @@ func (c *Core) mark() checkpoint {
 		nodes: len(c.nodes), links: len(c.links), subtrees: len(c.subtrees),
 		children: len(c.children), fields: len(c.fields), aliases: len(c.aliases),
 		frontier: c.frontier, checkpoint: c.checkpoint,
-		boundaryKeys: len(c.boundaryKeys),
-		journal:      len(c.boundaryJournal), transaction: c.nextTransaction,
+		boundaryIndex: c.boundaries.snapshot(),
+		journal:       len(c.boundaryJournal), transaction: c.nextTransaction,
 		work: c.work,
 	}
 	c.transactions = append(c.transactions, mark.transaction)
@@ -496,14 +495,11 @@ func (c *Core) restore(mark checkpoint) {
 	c.work = mark.work
 	for index := len(c.boundaryJournal) - 1; index >= mark.journal; index-- {
 		mutation := c.boundaryJournal[index]
-		if mutation.existed {
-			c.boundaries[mutation.key] = mutation.previous
-		} else {
-			delete(c.boundaries, mutation.key)
-		}
+		mutation.slots[mutation.index] = mutation.previous
 	}
+	c.boundaries.restore(mark.boundaryIndex)
+	clear(c.boundaryJournal[mark.journal:])
 	c.boundaryJournal = c.boundaryJournal[:mark.journal]
-	c.boundaryKeys = c.boundaryKeys[:mark.boundaryKeys]
 	c.finishTransaction()
 }
 
@@ -521,6 +517,7 @@ func (c *Core) assertTopTransaction(mark checkpoint) {
 func (c *Core) finishTransaction() {
 	c.transactions = c.transactions[:len(c.transactions)-1]
 	if len(c.transactions) == 0 {
+		clear(c.boundaryJournal)
 		c.boundaryJournal = c.boundaryJournal[:0]
 	}
 }
@@ -537,21 +534,8 @@ func (c *Core) completeTransaction(mark checkpoint, err *error) {
 	}
 }
 
-type boundaryMutation struct {
-	key      boundaryKey
-	previous NodeID
-	existed  bool
-}
-
-func (c *Core) writeBoundary(key boundaryKey, id NodeID) {
-	previous, existed := c.boundaries[key]
-	if len(c.transactions) != 0 {
-		c.boundaryJournal = append(c.boundaryJournal, boundaryMutation{key: key, previous: previous, existed: existed})
-	}
-	if !existed {
-		c.boundaryKeys = append(c.boundaryKeys, key)
-	}
-	c.boundaries[key] = id
+func (c *Core) writeBoundary(key boundaryKey, id NodeID) error {
+	return c.boundaries.set(key, id, &c.boundaryJournal, len(c.transactions) != 0)
 }
 
 func New(tables TableView, limits Limits) (*Core, error) {
@@ -559,8 +543,12 @@ func New(tables TableView, limits Limits) (*Core, error) {
 		return nil, errors.New("parser-core phase zero: nil table view")
 	}
 	limits = limits.withDefaults()
+	boundaries, err := newBoundaryIndex(limits.MaxNodes)
+	if err != nil {
+		return nil, err
+	}
 	core := &Core{
-		tables: tables, limits: limits, frontier: 1, boundaries: make(map[boundaryKey]NodeID),
+		tables: tables, limits: limits, frontier: 1, boundaries: boundaries,
 		classificationPhase: 1,
 		diagnostics:         diagnosticOptions{foldSamePredecessorShallowPayloads: true},
 	}
@@ -594,8 +582,8 @@ func (c *Core) Reset() error {
 	c.aliases = c.aliases[:0]
 	c.frontier = 1
 	c.checkpoint = [32]byte{}
-	clear(c.boundaries)
-	c.boundaryKeys = c.boundaryKeys[:0]
+	c.boundaries.reset()
+	clear(c.boundaryJournal)
 	c.boundaryJournal = c.boundaryJournal[:0]
 	c.transactions = c.transactions[:0]
 	c.nextTransaction = 0
@@ -618,10 +606,7 @@ func (c *Core) BeginFrontier() error {
 	if c.classificationPhase == math.MaxUint64 {
 		return errors.New("parser-core phase zero: classification phase overflow")
 	}
-	for _, key := range c.boundaryKeys {
-		delete(c.boundaries, key)
-	}
-	c.boundaryKeys = c.boundaryKeys[:0]
+	c.boundaries.advanceGeneration()
 	c.frontier++
 	c.classificationPhase++
 	c.checkpoint = [32]byte{}
@@ -656,26 +641,24 @@ func (c *Core) BoundaryIndexStats() BoundaryIndexStats {
 	if c == nil {
 		return BoundaryIndexStats{}
 	}
-	stats := BoundaryIndexStats{Frontier: c.frontier, RetainedEntries: uint64(len(c.boundaries))}
-	for key := range c.boundaries {
-		if key.frontier == c.frontier {
-			stats.CurrentEntries++
-		}
-	}
-	return stats
+	count := uint64(c.boundaries.count)
+	return BoundaryIndexStats{Frontier: c.frontier, CurrentEntries: count, RetainedEntries: count}
 }
 
 // Seed creates one empty derivation at a parser boundary.
 func (c *Core) Seed(state StateID, byteOffset uint32) (Head, error) {
 	key := c.boundaryKey(state, byteOffset)
-	if id := c.boundaries[key]; id != 0 {
+	if id, ok := c.boundaries.get(key); ok {
 		return Head{Node: id}, nil
 	}
 	id, err := c.appendNode(nodeRecord{state: state, byteOffset: byteOffset, pathCount: 1})
 	if err != nil {
 		return Head{}, err
 	}
-	c.writeBoundary(key, id)
+	if err := c.writeBoundary(key, id); err != nil {
+		c.nodes = c.nodes[:len(c.nodes)-1]
+		return Head{}, err
+	}
 	return Head{Node: id}, nil
 }
 
@@ -694,11 +677,11 @@ func (c *Core) Boundary(head Head) (StateID, uint32, error) {
 // same-lookahead scheduler phase identity. Headers use it at pass barriers to
 // replace stale immutable NodeIDs without changing their first-slot order.
 func (c *Core) CanonicalBoundary(state StateID, byteOffset uint32, consumed bool, checkpoint [32]byte) (Head, bool) {
-	id := c.boundaries[boundaryKey{
+	id, ok := c.boundaries.get(boundaryKey{
 		frontier: c.frontier, state: state, byteOffset: byteOffset,
 		shifted: consumed, checkpoint: checkpoint,
-	}]
-	return Head{Node: id}, id != 0
+	})
+	return Head{Node: id}, ok
 }
 
 // ApplyAtomic rolls back every compact arena and boundary mutation if fn
@@ -1368,8 +1351,8 @@ func (c *Core) remapReductionPlan(children []SubtreeID, plan *ReductionPlan, scr
 }
 
 func (c *Core) condenseInputExists(key boundaryKey, in linkInput) (bool, error) {
-	id := c.boundaries[key]
-	if id == 0 {
+	id, ok := c.boundaries.get(key)
+	if !ok {
 		return false, nil
 	}
 	node, err := c.node(id)
@@ -1534,7 +1517,7 @@ func (c *Core) condenseWithOutcome(key boundaryKey, in linkInput) (condenseOutco
 	var oldID NodeID
 	var old nodeRecord
 	var oldLinks []linkRecord
-	oldID = c.boundaries[key]
+	oldID, _ = c.boundaries.get(key)
 	if oldID != 0 {
 		oldRecord, err := c.node(oldID)
 		if err != nil {
@@ -1631,7 +1614,9 @@ func (c *Core) condenseWithOutcome(key boundaryKey, in linkInput) (condenseOutco
 	if err != nil {
 		return condenseOutcome{}, err
 	}
-	c.writeBoundary(key, id)
+	if err := c.writeBoundary(key, id); err != nil {
+		return condenseOutcome{}, err
+	}
 	change := condenseNew
 	if oldID != 0 {
 		change = condenseUpdated
@@ -1738,7 +1723,9 @@ func (c *Core) factorExactPredecessor(key boundaryKey, oldID NodeID, oldLinks []
 		if appendErr != nil {
 			return condenseOutcome{}, true, appendErr
 		}
-		c.writeBoundary(key, id)
+		if err := c.writeBoundary(key, id); err != nil {
+			return condenseOutcome{}, true, err
+		}
 		return condenseOutcome{head: Head{Node: id}, change: condenseUpdated}, true, nil
 	}
 	return condenseOutcome{}, false, nil
@@ -2084,7 +2071,9 @@ func (c *Core) replaceBoundaryLink(key boundaryKey, old nodeRecord, oldLinks []l
 		c.links = c.links[:linkMark]
 		return Head{}, err
 	}
-	c.writeBoundary(key, id)
+	if err := c.writeBoundary(key, id); err != nil {
+		return Head{}, err
+	}
 	return Head{Node: id}, nil
 }
 
