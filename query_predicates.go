@@ -1,7 +1,6 @@
 package gotreesitter
 
 import (
-	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -52,10 +51,13 @@ func (q *Query) matchesPredicate(pred QueryPredicate, captures []QueryCapture, l
 		return parentPredicateMatches(pred, captures, lang, false)
 	case predicateNotHasParent:
 		return parentPredicateMatches(pred, captures, lang, true)
-	case predicateIs:
-		return predicateIsSatisfied(pred, captures)
-	case predicateIsNot:
-		return !predicateIsSatisfied(pred, captures)
+	case predicateIs, predicateIsNot:
+		// #is? / #is-not? are property predicates: in upstream tree-sitter
+		// they are inert metadata consumed by the host application (e.g.
+		// locals.scm tracking via "local"/"local.definition" properties)
+		// and never filter the match set. See PredicatesForPattern for the
+		// exposed-metadata path hosts should use instead.
+		return true
 	case predicateCount:
 		return countPredicateMatches(pred, captures)
 	case predicateIsExported:
@@ -145,7 +147,7 @@ func exportedPredicateStillViable(pred QueryPredicate, captures []QueryCapture, 
 func predicatesCanRejectMatch(predicates []QueryPredicate) bool {
 	for _, pred := range predicates {
 		switch pred.kind {
-		case predicateSet, predicateOffset, predicateSelectAdjacent, predicateStrip:
+		case predicateSet, predicateOffset, predicateSelectAdjacent, predicateStrip, predicateIs, predicateIsNot:
 			continue
 		default:
 			return true
@@ -464,44 +466,6 @@ func nodeHasAncestorType(node *Node, typeNames []string, lang *Language) bool {
 	}
 	for p := node.Parent(); p != nil; p = p.Parent() {
 		if nodeTypeMatchesAny(p, typeNames, lang) {
-			return true
-		}
-	}
-	return false
-}
-
-func capturePropertyMatches(captureName string, property string) bool {
-	prop := strings.Trim(property, "\"")
-	switch prop {
-	case "local":
-		return strings.Contains(captureName, "local") || strings.Contains(captureName, "parameter")
-	case "local.parameter", "parameter":
-		return strings.Contains(captureName, "parameter")
-	case "function":
-		return strings.Contains(captureName, "function")
-	case "var", "variable":
-		return strings.Contains(captureName, "var") || strings.Contains(captureName, "variable")
-	}
-	if captureName == prop {
-		return true
-	}
-	return strings.HasSuffix(captureName, "."+prop)
-}
-
-func predicateIsSatisfied(pred QueryPredicate, captures []QueryCapture) bool {
-	if pred.property == "" {
-		return false
-	}
-	if pred.leftCapture != "" {
-		nodes := captureNodes(pred.leftCapture, captures)
-		if len(nodes) == 0 {
-			return false
-		}
-		return capturePropertyMatches(pred.leftCapture, pred.property)
-	}
-
-	for _, c := range captures {
-		if capturePropertyMatches(c.Name, pred.property) {
 			return true
 		}
 	}

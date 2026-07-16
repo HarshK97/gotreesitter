@@ -62,6 +62,21 @@ type QueryStep struct {
 	// textMatch is for string literal matching ("func", "return", etc.).
 	// When non-empty, we match anonymous nodes whose symbol name equals this.
 	textMatch string
+	// isMissing marks a step compiled from the special "MISSING" node
+	// pattern ((MISSING), (MISSING kind), or (MISSING "token")). Such a
+	// step only matches nodes for which Node.IsMissing() is true, in
+	// addition to any symbol/textMatch constraint carried above. This
+	// mirrors upstream tree-sitter 0.24+ query semantics.
+	isMissing bool
+	// supertypeSymbol is set when this step's node-type name resolved to a
+	// supertype (e.g. "expression", "_statement"). Supertype symbols never
+	// appear as a concrete node's own symbol in the tree (the concrete
+	// subtype node takes their place), so -- mirroring upstream
+	// tree-sitter's compiler (step->supertype_symbol / WILDCARD_SYMBOL) --
+	// `symbol` is reset to 0 (wildcard) and matching instead requires the
+	// candidate node's symbol to be a (possibly transitive) member of
+	// supertypeSymbol's subtype set (see nodeMatchesSupertypeStep).
+	supertypeSymbol Symbol
 }
 
 type queryQuantifier uint8
@@ -155,6 +170,11 @@ type alternativeSymbol struct {
 	// [(function_declaration name: (identifier) @name) ...].
 	steps      []QueryStep
 	predicates []QueryPredicate
+	// supertypeSymbol mirrors QueryStep.supertypeSymbol for alternation
+	// branches whose node-type name resolved to a supertype (e.g.
+	// `[(expression) (statement)] @x`): symbol is reset to 0 (wildcard)
+	// and this field carries the supertype to check against instead.
+	supertypeSymbol Symbol
 }
 
 // QueryMatch represents a successful pattern match with its captures.

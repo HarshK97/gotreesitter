@@ -132,9 +132,9 @@ func (p *queryParser) resolveSymbol(name string) (Symbol, bool, error) {
 	if name == "ERROR" {
 		return errorSymbol, true, nil
 	}
-	if name == "MISSING" {
-		return 0, false, nil
-	}
+	// "MISSING" is handled specially by stepFromIdentifierName /
+	// stepFromMissingKeyword before resolveSymbol is ever reached for that
+	// name; it is a query-language keyword, not a grammar node type.
 
 	sym, ok := p.lang.symbolByNamePreferNamed(name)
 	if !ok {

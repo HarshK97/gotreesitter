@@ -4,6 +4,13 @@ type queryAlternationIndex struct {
 	bySymbolNamed map[uint64][]int
 	byText        map[string][]int
 	wildcard      []int
+	// supertype holds alternative indices whose node-type name resolved to
+	// a supertype (e.g. `[(expression) (statement)] @x`). These can't be
+	// bucketed by exact symbol (no concrete node ever carries a
+	// supertype's own symbol) or treated as unconditional wildcards
+	// (that would match every node), so they're checked individually via
+	// alternativeSupertypeMatchesNode / alternativeSupertypeMatchesStackEntry.
+	supertype []int
 }
 
 func alternationSymbolNamedKey(symbol Symbol, isNamed bool) uint64 {
@@ -34,6 +41,8 @@ func buildAlternationIndicesForSteps(steps []QueryStep) {
 				buildAlternationIndicesForSteps(alt.steps)
 			}
 			switch {
+			case alt.symbol == 0 && alt.textMatch == "" && alt.supertypeSymbol != 0:
+				idx.supertype = append(idx.supertype, ai)
 			case alt.symbol == 0 && alt.textMatch == "":
 				idx.wildcard = append(idx.wildcard, ai)
 			case alt.textMatch != "":
