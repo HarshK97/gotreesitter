@@ -395,7 +395,12 @@ func parserCoreAction(action ParseAction) (core.Action, error) {
 	}, nil
 }
 
+var parserCoreEmptyCheckpoint = DiagnosticParserCoreScannerCheckpoint{SHA256: sha256.Sum256(nil)}
+
 func parserCoreCheckpoint(bytes []byte) DiagnosticParserCoreScannerCheckpoint {
+	if len(bytes) == 0 {
+		return parserCoreEmptyCheckpoint
+	}
 	return DiagnosticParserCoreScannerCheckpoint{Length: len(bytes), SHA256: sha256.Sum256(bytes)}
 }
 

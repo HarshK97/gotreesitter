@@ -3,12 +3,25 @@
 package gotreesitter
 
 import (
+	"crypto/sha256"
 	"errors"
 	"reflect"
 	"testing"
 
 	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
 )
+
+func TestParserCoreCheckpointPreservesExactEmptyAndNonEmptyIdentity(t *testing.T) {
+	empty := parserCoreCheckpoint(nil)
+	if empty.Length != 0 || empty.SHA256 != sha256.Sum256(nil) || empty != parserCoreCheckpoint([]byte{}) {
+		t.Fatalf("empty checkpoint identity=%+v", empty)
+	}
+	payload := []byte{0, 1, 2, 3}
+	nonEmpty := parserCoreCheckpoint(payload)
+	if nonEmpty.Length != len(payload) || nonEmpty.SHA256 != sha256.Sum256(payload) || nonEmpty == empty {
+		t.Fatalf("non-empty checkpoint identity=%+v", nonEmpty)
+	}
+}
 
 func TestDiagnosticParserCoreSeedPublicationRejectsMaterializationTransactionally(t *testing.T) {
 	base := DiagnosticParserCorePrefixResult{
