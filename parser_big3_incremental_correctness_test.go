@@ -150,6 +150,96 @@ func TestCleanGoIncrementalDoesNotRunAcceptedErrorRetry(t *testing.T) {
 	}
 }
 
+func TestTokenInvariantGoLeafDoesNotEnterAcceptedErrorRetryRoute(t *testing.T) {
+	lang := grammars.GoLanguage()
+	original := []byte("package p\nfunc f() { v := 0 }\n")
+	edited := append([]byte(nil), original...)
+	offset := bytes.Index(original, []byte("v := 0")) + len("v := ")
+	if offset < len("v := ") || original[offset] != '0' {
+		t.Fatal("token-invariant Go fixture missing numeric leaf")
+	}
+	edited[offset] = '1'
+
+	oldTree, err := gotreesitter.NewParser(lang).Parse(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer oldTree.Release()
+	oldTree.Edit(gotreesitter.InputEdit{
+		StartByte:   uint32(offset),
+		OldEndByte:  uint32(offset + 1),
+		NewEndByte:  uint32(offset + 1),
+		StartPoint:  pointForOffset(original, offset),
+		OldEndPoint: pointForOffset(original, offset+1),
+		NewEndPoint: pointForOffset(edited, offset+1),
+	})
+	incremental, profile, err := gotreesitter.NewParser(lang).ParseIncrementalProfiled(edited, oldTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer incremental.Release()
+
+	rt := incremental.ParseRuntime()
+	if incremental.RootNode().HasError() || profile.ReusedSubtrees != 1 || profile.TokensConsumed != 1 ||
+		profile.NewNodesAllocated != 0 || profile.MaxStacksSeen != 1 {
+		t.Fatalf("clean leaf validation did not stay on the one-token route: profile=%+v runtime=%s", profile, rt.Summary())
+	}
+	if profile.OldTreeReuseRoute || rt.IncrementalOldTreeReuseRoute ||
+		profile.AcceptedErrorRetryAttempts != 0 || rt.IncrementalAcceptedErrorRetryAttempts != 0 ||
+		profile.AcceptedErrorRetryAdopted || rt.IncrementalAcceptedErrorRetryAdopted {
+		t.Fatalf("clean leaf validation entered accepted-error retry routing: profile=%+v runtime=%s", profile, rt.Summary())
+	}
+}
+
+func TestMalformedTokenInvariantGoLeafDoesNotRunBaseMergeRetry(t *testing.T) {
+	lang := grammars.GoLanguage()
+	original := []byte("package p\nfunc f() { v := 0\n")
+	edited := append([]byte(nil), original...)
+	offset := bytes.Index(original, []byte("v := 0")) + len("v := ")
+	if offset < len("v := ") || original[offset] != '0' {
+		t.Fatal("malformed token-invariant Go fixture missing numeric leaf")
+	}
+	edited[offset] = '1'
+
+	oldTree, err := gotreesitter.NewParser(lang).Parse(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer oldTree.Release()
+	if !oldTree.RootNode().HasError() {
+		t.Fatal("malformed token-invariant Go fixture parsed cleanly")
+	}
+	oldTree.Edit(gotreesitter.InputEdit{
+		StartByte:   uint32(offset),
+		OldEndByte:  uint32(offset + 1),
+		NewEndByte:  uint32(offset + 1),
+		StartPoint:  pointForOffset(original, offset),
+		OldEndPoint: pointForOffset(original, offset+1),
+		NewEndPoint: pointForOffset(edited, offset+1),
+	})
+	incremental, profile, err := gotreesitter.NewParser(lang).ParseIncrementalProfiled(edited, oldTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer incremental.Release()
+	fresh, err := gotreesitter.NewParser(lang).Parse(edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fresh.Release()
+
+	rt := incremental.ParseRuntime()
+	if !incremental.RootNode().HasError() || incremental.RootNode().SExpr(lang) != fresh.RootNode().SExpr(lang) ||
+		profile.ReusedSubtrees != 1 || profile.TokensConsumed != 1 || profile.NewNodesAllocated != 0 {
+		t.Fatalf("malformed leaf validation diverged from fresh syntax: profile=%+v runtime=%s incremental=%s fresh=%s", profile, rt.Summary(), incremental.RootNode().SExpr(lang), fresh.RootNode().SExpr(lang))
+	}
+	if profile.OldTreeReuseRoute || rt.IncrementalOldTreeReuseRoute ||
+		profile.AcceptedErrorRetryAttempts != 0 || rt.IncrementalAcceptedErrorRetryAttempts != 0 ||
+		profile.AcceptedErrorRetryAdopted || rt.IncrementalAcceptedErrorRetryAdopted {
+		t.Fatalf("malformed leaf validation scheduled a base-merge retry: profile=%+v runtime=%s", profile, rt.Summary())
+	}
+}
+
 func TestMalformedGoIncrementalRunsOneBaseMergeRetryAndKeepsFirstResult(t *testing.T) {
 	lang := grammars.GoLanguage()
 	original := []byte("package p\nfunc f() {}\n")

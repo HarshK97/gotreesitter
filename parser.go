@@ -2818,12 +2818,6 @@ func (p *Parser) parseIncrementalInternalWithMergePerKeyOverride(source []byte, 
 		return oldTree
 	}
 	if tree, ok := p.tryTokenInvariantLeafEdit(source, oldTree, ts, timing); ok {
-		if tree != nil && oldTree != nil {
-			tree.parseRuntime.IncrementalOldTreeReuseRoute = true
-			if timing != nil {
-				timing.oldTreeReuseRoute = true
-			}
-		}
 		return tree
 	}
 

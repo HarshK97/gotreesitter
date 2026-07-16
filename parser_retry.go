@@ -205,16 +205,15 @@ func incrementalAcceptedErrorBaseMergeCap(p *Parser, tree *Tree, source []byte) 
 }
 
 func shouldRetryIncrementalAcceptedErrorAtBaseMergeCap(tree *Tree, sourceLen int) bool {
-	if tree == nil || sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes ||
-		!retryTreeHasError(tree) {
+	if tree == nil || sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes {
 		return false
 	}
 	rt := tree.parseRuntimeReadOnly()
-	return rt.StopReason == ParseStopAccepted &&
-		!rt.Truncated &&
-		!rt.TokenSourceEOFEarly &&
-		rt.IncrementalOldTreeReuseRoute &&
-		retryTreeCoversExpectedEOF(tree)
+	if rt.StopReason != ParseStopAccepted || rt.Truncated || rt.TokenSourceEOFEarly ||
+		!rt.IncrementalOldTreeReuseRoute || !retryTreeCoversExpectedEOF(tree) {
+		return false
+	}
+	return retryTreeHasError(tree)
 }
 
 // retryIncrementalAcceptedErrorWithBaseMergeCap performs at most one second

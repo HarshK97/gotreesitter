@@ -13,6 +13,8 @@ for tags and release notes while still in `0.x`.
   policy may retry once with the corresponding fresh-parse policy and adopt
   only a strictly better result. Runtime and profile diagnostics report the
   retry attempt, selection, cap, cause, and whether old-tree reuse was active.
+- Token-invariant single-leaf edits stay outside accepted-error retry routing,
+  avoiding a whole-tree error scan on the one-token validation path.
 
 ### Tooling
 
