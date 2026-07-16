@@ -379,11 +379,12 @@ oracle: upstream tree-sitter v0.25.1 commit `f5afe475…`, tree-sitter-go commit
 benchmark and parity lanes share those oracle sources and identity; see
 [BENCH.md](BENCH.md) for the full contract and fixture hashes.
 
-The first strict publication receipt measured **5.481673x C** by equal-fixture
-geomean and **6.313799x C** for the fixed-suite sum of medians. Those corrected
-real-code results, rather than the withdrawn 1.895x straight-LR comparison, are
-the full-parse baseline; [BENCH.md](BENCH.md) records every per-fixture median,
-RSS value, and receipt hash.
+The first strict materialized real-Go publication receipt, shipped with
+v0.37.0, measured **5.481673x C** by equal-fixture geomean and **6.313799x C**
+for the fixed-suite sum of medians. Those corrected real-code results, rather
+than the withdrawn 1.895x straight-LR comparison, established the full-parse
+baseline; [BENCH.md](BENCH.md) records every per-fixture median, RSS value, and
+receipt hash.
 
 The historical incremental measurements on the same generated 500-function Go
 workload were `649 ns` for a one-byte edit and `2.43 ns` for a no-edit reparse.
@@ -488,7 +489,7 @@ witness, and shrinks as certified engine mechanisms subsume shims. See
 
 ## Known limitations
 
-- **Full-parse throughput**: the locked four-file real-Go matrix measures **5.481673x C** by equal-fixture geomean and **6.313799x C** by fixed-suite sum of medians against the exact static `-O2` oracle (see [BENCH.md](BENCH.md)). The former ~2.1x row used a straight-LR synthetic and a different Go grammar, so it is historical only. Incremental lanes remain dramatically faster than the cgo binding on their workload-specific controls. Full-parse throughput varies by grammar and corpus shape; GLR-heavy code, highly ambiguous languages, and very large generated files are the main performance frontier.
+- **Full-parse throughput**: the first strict materialized real-Go publication receipt, shipped with v0.37.0, measured **5.481673x C** by equal-fixture geomean and **6.313799x C** by fixed-suite sum of medians against the exact static `-O2` oracle (see [BENCH.md](BENCH.md)). v0.38.0 does not claim a replacement suite-wide ratio. The former ~2.1x row used a straight-LR synthetic and a different Go grammar, so it is historical only. Incremental lanes remain dramatically faster than the cgo binding on their workload-specific controls. Full-parse throughput varies by grammar and corpus shape; GLR-heavy code, highly ambiguous languages, and very large generated files are the main performance frontier.
 - **GLR safety caps**: The parser enforces iteration, stack depth, and node count limits proportional to input size. These prevent pathological blowup on grammars with high ambiguity but impose a ceiling on the maximum input complexity that parses without error. The caps are tunable but not removable without risking unbounded resource consumption.
 
 ## Adding a language
@@ -693,22 +694,25 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.37.0**. The 206-grammar curated parity milestone is
-banked. v0.37.0 rebuilds full-parse publication on one locked static C oracle
-and authenticated, forking real-Go fixtures; banks general multi-stack parser
-improvements and the first C-certified automatic forest routes; and adds
-bounded high-level highlight and tag parsing. The invalid historical 1.895x
-headline remains withdrawn: the current materialized real-Go baseline is
+The current release is **v0.38.0**. The 206-grammar curated parity milestone is
+banked. v0.38.0 strengthens incremental tree parity across GLR reuse, scoring,
+culling, and retry selection; reports terminal materialization stops and edit
+ranges accurately; and banks evidence-gated full-parse savings from early
+cumulative-score rejection and exact-profile Odin arena sizing. Its static-C
+fleet, work-count, and forest-confirmation tooling also closes measurement
+gaps. The invalid historical 1.895x headline remains withdrawn. The first
+strict materialized real-Go publication receipt, shipped with v0.37.0, measured
 5.481673x C by equal-fixture geomean and 6.313799x C for the fixed-suite sum of
-medians. Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
+medians; v0.38.0 does not claim a replacement suite-wide ratio. Detailed
+history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ### Now — performance and extreme hygiene
 
 - Keep correctness, C-oracle parity, and performance gates separate. Every
   optimization must preserve the selected full-span tree before its timing or
   memory result is considered.
-- Hold the corrected, materialized canonical full parse at or below the pinned
-  new locked, real-code baseline once admitted. The historical 1.895x result
+- Hold the corrected materialized canonical full parse against the locked,
+  authenticated real-code publication benchmark. The historical 1.895x result
   is not a target. No-tree, parser-core, and straight-LR lanes remain
   attribution tools, not substitutes for the public benchmark.
 - Keep the exact-revision fleet sweep current with clean/error splits and
