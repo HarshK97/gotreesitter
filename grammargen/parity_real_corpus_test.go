@@ -195,7 +195,22 @@ func TestMultiGrammarImportRealCorpusParity(t *testing.T) {
 		if repoRoot == "" {
 			continue
 		}
-		candidates := collectGrammarCorpusCandidates(t, repoRoot, collectCfg)
+		// Split-grammar repos (tree-sitter-markdown, tree-sitter-xml, ...)
+		// nest each grammar's corpus beside its grammar.json rather than at
+		// the repo top; probe the grammar's own directory first and fall
+		// back to the repo root.
+		collectRoot := repoRoot
+		if jp := remapParityCorpusPath(g.jsonPath, root); jp != "" {
+			if grammarDir := filepath.Dir(filepath.Dir(jp)); grammarDir != repoRoot {
+				if info, statErr := os.Stat(grammarDir); statErr == nil && info.IsDir() {
+					collectRoot = grammarDir
+				}
+			}
+		}
+		candidates := collectGrammarCorpusCandidates(t, collectRoot, collectCfg)
+		if len(candidates) == 0 && collectRoot != repoRoot {
+			candidates = collectGrammarCorpusCandidates(t, repoRoot, collectCfg)
+		}
 		if len(candidates) == 0 {
 			continue
 		}
