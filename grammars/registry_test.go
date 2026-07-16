@@ -642,18 +642,21 @@ func TestHighlightInheritanceComposesDefaultChains(t *testing.T) {
 		}
 		return entry.HighlightQuery
 	}
-	jsQ, tsQ, tsxQ := get("javascript"), get("typescript"), get("tsx")
-	cQ, cppQ := get("c"), get("cpp")
-
-	if !strings.HasPrefix(tsQ, jsQ) || len(tsQ) <= len(jsQ) {
-		t.Errorf("typescript highlight query should compose javascript base ahead of its additions (js=%dB ts=%dB)", len(jsQ), len(tsQ))
+	for child, parent := range defaultHighlightInherits {
+		childQuery, parentQuery := get(child), get(parent)
+		if reason := blockedDefaultHighlightInherits[child]; reason != "" {
+			entry := DetectLanguageByName(child)
+			if childQuery != entry.rawHighlightQuery {
+				t.Errorf("%s blocked inheritance should keep its raw query (%s)", child, reason)
+			}
+			continue
+		}
+		if !strings.HasPrefix(childQuery, parentQuery) || len(childQuery) <= len(parentQuery) {
+			t.Errorf("%s highlight query should compose %s base ahead of its additions (%s=%dB %s=%dB)",
+				child, parent, parent, len(parentQuery), child, len(childQuery))
+		}
 	}
-	if !strings.HasPrefix(tsxQ, tsQ) {
-		t.Errorf("tsx highlight query should compose the already-composed typescript query (ts=%dB tsx=%dB)", len(tsQ), len(tsxQ))
-	}
-	if !strings.HasPrefix(cppQ, cQ) || len(cppQ) <= len(cQ) {
-		t.Errorf("cpp highlight query should compose c base ahead of its additions (c=%dB cpp=%dB)", len(cQ), len(cppQ))
-	}
+	jsQ := get("javascript")
 
 	goEntry := DetectLanguageByName("go")
 	if goEntry == nil {
@@ -685,6 +688,48 @@ func TestHighlightInheritanceIdempotentAcrossReregistration(t *testing.T) {
 	}
 }
 
+func TestHighlightInheritanceSameNameReplacementRecapturesRawQuery(t *testing.T) {
+	oldRegistry := append([]LangEntry(nil), registry...)
+	oldResolved := highlightInheritanceResolved
+	t.Cleanup(func() {
+		registry = oldRegistry
+		highlightInheritanceResolved = oldResolved
+		extIndex = nil
+	})
+
+	entry := DetectLanguageByName("typescript")
+	if entry == nil {
+		t.Fatal("expected typescript to be registered")
+	}
+	replacement := *entry
+	replacementQuery := "(type_identifier) @type.definition"
+	replacement.HighlightQuery = replacementQuery
+	Register(replacement)
+
+	got := DetectLanguageByName("typescript")
+	parent := DetectLanguageByName("javascript")
+	if got == nil || parent == nil {
+		t.Fatal("expected typescript and javascript to remain registered")
+	}
+	if !strings.HasPrefix(got.HighlightQuery, parent.HighlightQuery) {
+		t.Fatal("replacement should retain javascript inheritance")
+	}
+	if strings.Count(got.HighlightQuery, replacementQuery) != 1 {
+		t.Fatalf("replacement query count = %d, want 1", strings.Count(got.HighlightQuery, replacementQuery))
+	}
+
+	// DetectLanguageByName historically returns the registry entry itself, so
+	// recapture an in-place public query update too rather than mistaking it for
+	// an unchanged composed query.
+	inPlaceQuery := "(predefined_type) @type.builtin"
+	got.HighlightQuery = inPlaceQuery
+	Register(*got)
+	got = DetectLanguageByName("typescript")
+	if strings.Count(got.HighlightQuery, inPlaceQuery) != 1 {
+		t.Fatalf("in-place replacement query count = %d, want 1", strings.Count(got.HighlightQuery, inPlaceQuery))
+	}
+}
+
 func TestHighlightInheritanceCycleTerminates(t *testing.T) {
 	oldRegistry := append([]LangEntry(nil), registry...)
 	oldResolved := highlightInheritanceResolved
@@ -696,10 +741,12 @@ func TestHighlightInheritanceCycleTerminates(t *testing.T) {
 
 	Register(LangEntry{Name: "zz_cycle_a", HighlightQuery: "(a) @x", InheritHighlights: "zz_cycle_b"})
 	Register(LangEntry{Name: "zz_cycle_b", HighlightQuery: "(b) @y", InheritHighlights: "zz_cycle_a"})
+	Register(LangEntry{Name: "zz_self_cycle", HighlightQuery: "(self) @z", InheritHighlights: "zz_self_cycle"})
 
 	a := DetectLanguageByName("zz_cycle_a")
 	b := DetectLanguageByName("zz_cycle_b")
-	if a == nil || b == nil {
+	self := DetectLanguageByName("zz_self_cycle")
+	if a == nil || b == nil || self == nil {
 		t.Fatal("cycle entries should still be registered")
 	}
 	if !strings.Contains(a.HighlightQuery, "(a) @x") || !strings.Contains(b.HighlightQuery, "(b) @y") {
@@ -707,5 +754,8 @@ func TestHighlightInheritanceCycleTerminates(t *testing.T) {
 	}
 	if strings.Count(a.HighlightQuery, "(a) @x") != 1 || strings.Count(b.HighlightQuery, "(b) @y") != 1 {
 		t.Error("cycle resolution must not duplicate queries")
+	}
+	if strings.Count(self.HighlightQuery, "(self) @z") != 1 {
+		t.Errorf("self-cycle query count = %d, want 1", strings.Count(self.HighlightQuery, "(self) @z"))
 	}
 }

@@ -48,8 +48,9 @@ type LangEntry struct {
 	// rawHighlightQuery preserves the entry's pre-composition highlight query
 	// so re-running inheritance resolution (any Register call resets it) stays
 	// idempotent instead of prepending parent queries a second time.
-	rawHighlightQuery    string
-	highlightRawCaptured bool
+	rawHighlightQuery      string
+	resolvedHighlightQuery string
+	highlightRawCaptured   bool
 }
 
 var registry []LangEntry
@@ -126,12 +127,25 @@ func Register(entry LangEntry) {
 	defer registryMu.Unlock()
 	for i := range registry {
 		if registry[i].Name == entry.Name {
+			// Copies returned by AllLanguages and DetectLanguageByName retain the
+			// private raw-query metadata. Preserve that metadata when callers
+			// re-register an otherwise unchanged composed query, but recapture a
+			// deliberately replaced public query as the new raw child query.
+			if entry.highlightRawCaptured && entry.HighlightQuery == registry[i].resolvedHighlightQuery {
+				entry.rawHighlightQuery = registry[i].rawHighlightQuery
+			} else {
+				entry.rawHighlightQuery = entry.HighlightQuery
+				entry.highlightRawCaptured = true
+			}
+			entry.resolvedHighlightQuery = ""
 			registry[i] = entry
 			highlightInheritanceResolved = false
 			extIndex = nil
 			return
 		}
 	}
+	entry.rawHighlightQuery = entry.HighlightQuery
+	entry.highlightRawCaptured = true
 	registry = append(registry, entry)
 	highlightInheritanceResolved = false
 	extIndex = nil
@@ -215,9 +229,22 @@ var extensionAliases = map[string]string{}
 // language-specific additions and expects the parent's query ahead of it.
 // An entry's explicit InheritHighlights always takes priority.
 var defaultHighlightInherits = map[string]string{
+	"blade":      "html",
+	"cpp":        "c",
+	"cuda":       "cpp",
+	"glsl":       "c",
+	"objc":       "c",
+	"svelte":     "html",
+	"templ":      "go",
 	"typescript": "javascript",
 	"tsx":        "typescript",
-	"cpp":        "c",
+}
+
+// blockedDefaultHighlightInherits keeps upstream inheritance metadata visible
+// when the locked child grammar cannot compile the current parent's query.
+// The edge remains fail-closed until the grammar/query revisions are aligned.
+var blockedDefaultHighlightInherits = map[string]string{
+	"cuda": "the locked CUDA grammar lacks C++'s module_name node",
 }
 
 // resolveHighlightInheritance composes highlight queries for languages that
@@ -241,25 +268,41 @@ func resolveHighlightInheritance() {
 			registry[i].highlightRawCaptured = true
 		}
 	}
+	const (
+		resolveVisiting uint8 = iota + 1
+		resolveDone
+	)
+	state := make(map[string]uint8, len(registry))
 	composed := make(map[string]string, len(registry))
+	cyclic := make(map[string]bool, len(registry))
 
-	var resolve func(name string, chain map[string]bool) string
-	resolve = func(name string, chain map[string]bool) string {
-		if q, ok := composed[name]; ok {
-			return q
+	var resolve func(name string) (string, bool)
+	resolve = func(name string) (string, bool) {
+		switch state[name] {
+		case resolveVisiting:
+			return "", true
+		case resolveDone:
+			return composed[name], cyclic[name]
 		}
 		i, ok := index[name]
 		if !ok {
-			return ""
+			return "", false
 		}
+		state[name] = resolveVisiting
 		query := registry[i].rawHighlightQuery
 		parent := registry[i].InheritHighlights
+		blocked := false
 		if parent == "" {
 			parent = defaultHighlightInherits[name]
+			_, blocked = blockedDefaultHighlightInherits[name]
 		}
-		if parent != "" && !chain[parent] {
-			chain[name] = true
-			if parentQuery := resolve(parent, chain); strings.TrimSpace(parentQuery) != "" {
+		if parent != "" && !blocked {
+			parentQuery, parentCyclic := resolve(parent)
+			if parentCyclic {
+				// Fail closed for the entire invalid inheritance chain. Every
+				// affected language keeps exactly its own raw query.
+				cyclic[name] = true
+			} else if strings.TrimSpace(parentQuery) != "" {
 				if strings.TrimSpace(query) == "" {
 					// Prepend parent query so child overrides win (last match wins in tree-sitter).
 					query = parentQuery
@@ -269,11 +312,13 @@ func resolveHighlightInheritance() {
 			}
 		}
 		composed[name] = query
-		return query
+		state[name] = resolveDone
+		return query, cyclic[name]
 	}
 
 	for i := range registry {
-		registry[i].HighlightQuery = resolve(registry[i].Name, map[string]bool{})
+		registry[i].HighlightQuery, _ = resolve(registry[i].Name)
+		registry[i].resolvedHighlightQuery = registry[i].HighlightQuery
 	}
 }
 
