@@ -1132,6 +1132,11 @@ type IncrementalParseProfile struct {
 	NewNodesAllocated                   uint64
 	ReuseUnsupported                    bool
 	ReuseUnsupportedReason              string
+	AcceptedErrorRetryAttempts          uint8
+	AcceptedErrorRetryAdopted           bool
+	AcceptedErrorRetryMergePerKey       int
+	AcceptedErrorRetryCause             IncrementalRetryCause
+	OldTreeReuseRoute                   bool
 	ReuseRejectDirty                    uint64
 	ReuseRejectAncestorDirtyBeforeEdit  uint64
 	ReuseRejectHasError                 uint64
@@ -1223,6 +1228,11 @@ type incrementalParseTiming struct {
 	newNodes                            uint64
 	reuseUnsupported                    bool
 	reuseUnsupportedReason              string
+	acceptedErrorRetryAttempts          uint8
+	acceptedErrorRetryAdopted           bool
+	acceptedErrorRetryMergePerKey       int
+	acceptedErrorRetryCause             IncrementalRetryCause
+	oldTreeReuseRoute                   bool
 	reuseRejectDirty                    uint64
 	reuseRejectAncestorDirtyBeforeEdit  uint64
 	reuseRejectHasError                 uint64
@@ -2799,11 +2809,21 @@ func (p *Parser) appendTrailingEOFRecoveryNodes(nodes []*Node, entries []stackEn
 }
 
 func (p *Parser) parseIncrementalInternal(source []byte, oldTree *Tree, ts TokenSource, timing *incrementalParseTiming) *Tree {
+	return p.parseIncrementalInternalWithMergePerKeyOverride(source, oldTree, ts, timing, 0)
+}
+
+func (p *Parser) parseIncrementalInternalWithMergePerKeyOverride(source []byte, oldTree *Tree, ts TokenSource, timing *incrementalParseTiming, maxMergePerKeyOverride int) *Tree {
 	// Fast path: unchanged source and no recorded edits.
 	if canReuseUnchangedTree(source, oldTree, p.language) {
 		return oldTree
 	}
 	if tree, ok := p.tryTokenInvariantLeafEdit(source, oldTree, ts, timing); ok {
+		if tree != nil && oldTree != nil {
+			tree.parseRuntime.IncrementalOldTreeReuseRoute = true
+			if timing != nil {
+				timing.oldTreeReuseRoute = true
+			}
+		}
 		return tree
 	}
 
@@ -2849,7 +2869,13 @@ func (p *Parser) parseIncrementalInternal(source []byte, oldTree *Tree, ts Token
 		reuse = p.reuseCursor.reset(oldTree, source, &p.reuseScratch)
 	}
 	arenaClass := incrementalArenaClassForSource(source)
-	tree := p.parseInternal(source, ts, reuse, oldTree, arenaClass, timing, 0, 0, 0, false)
+	tree := p.parseInternal(source, ts, reuse, oldTree, arenaClass, timing, 0, 0, maxMergePerKeyOverride, false)
+	if tree != nil && reuse != nil {
+		tree.parseRuntime.IncrementalOldTreeReuseRoute = true
+		if timing != nil {
+			timing.oldTreeReuseRoute = true
+		}
+	}
 	if reuse != nil {
 		if timing != nil {
 			timing.reuseRejectDirty += reuse.rejectDirty
@@ -6290,29 +6316,7 @@ func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClas
 	if p.forceCleanRetryPass {
 		retryPass = false
 	}
-	mergePerKeyCap := effectiveParseMergePerKeyCap(p.language, parseMaxMergePerKeyValue(), reuse != nil, len(source))
-	tsNeedsTypedArrow := typeScriptFullParseNeedsTypedArrowMergeWidth(p.language, source, reuse)
-	if typeScriptFullParseNeedsDestructuredArrowReturnMergeWidth(p.language, source, reuse) {
-		if mergePerKeyCap < maxStacksPerMergeKey {
-			mergePerKeyCap = maxStacksPerMergeKey
-		}
-	} else if tsNeedsTypedArrow && mergePerKeyCap < 2 {
-		mergePerKeyCap = 2
-	}
-	if javaFullParseNeedsAnnotationDeclarationMergeWidth(p.language, source, reuse) && mergePerKeyCap < javaFullParseRetryMaxMergePerKey {
-		mergePerKeyCap = javaFullParseRetryMaxMergePerKey
-	}
-	if maxMergePerKeyOverride < 0 {
-		mergePerKeyCap = -maxMergePerKeyOverride
-	} else if maxMergePerKeyOverride > mergePerKeyCap {
-		mergePerKeyCap = maxMergePerKeyOverride
-	}
-	if mergePerKeyCap > maxStacksPerMergeKeyCeiling {
-		mergePerKeyCap = maxStacksPerMergeKeyCeiling
-	}
-	if reuse == nil && p.language != nil && p.language.Name == "c_sharp" && mergePerKeyCap < 16 {
-		mergePerKeyCap = 16
-	}
+	mergePerKeyCap := p.resolveParseMergePerKeyCap(source, reuse, maxMergePerKeyOverride)
 	scratch.merge.perKeyCap = mergePerKeyCap
 
 	maxNodes := parseNodeLimitForLanguage(len(source), p.language)
@@ -6328,6 +6332,41 @@ func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClas
 		maxDepth:            parseStackDepth(len(source)),
 		maxNodes:            maxNodes,
 	}
+}
+
+// resolveParseMergePerKeyCap computes the final cap used by parseInternal,
+// including source-sensitive grammar guards. Retry scheduling must use this
+// same computation so an exact override never narrows below a fresh parse's
+// required policy.
+func (p *Parser) resolveParseMergePerKeyCap(source []byte, reuse *reuseCursor, maxMergePerKeyOverride int) int {
+	mergePerKeyCap := effectiveParseMergePerKeyCap(p.language, parseMaxMergePerKeyValue(), reuse != nil, len(source))
+	tsNeedsTypedArrow := typeScriptFullParseNeedsTypedArrowMergeWidth(p.language, source, reuse)
+	if typeScriptFullParseNeedsDestructuredArrowReturnMergeWidth(p.language, source, reuse) {
+		if mergePerKeyCap < maxStacksPerMergeKey {
+			mergePerKeyCap = maxStacksPerMergeKey
+		}
+	} else if tsNeedsTypedArrow && mergePerKeyCap < 2 {
+		mergePerKeyCap = 2
+	}
+	if javaFullParseNeedsAnnotationDeclarationMergeWidth(p.language, source, reuse) && mergePerKeyCap < javaFullParseRetryMaxMergePerKey {
+		mergePerKeyCap = javaFullParseRetryMaxMergePerKey
+	}
+	// C#'s certified fresh default needs a wider floor, but explicit policy is
+	// authoritative. Environment configuration and the negative internal exact
+	// override both remain exact rather than being silently raised afterward.
+	if reuse == nil && p.language != nil && p.language.Name == "c_sharp" &&
+		!parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap < 16 {
+		mergePerKeyCap = 16
+	}
+	if maxMergePerKeyOverride < 0 {
+		mergePerKeyCap = -maxMergePerKeyOverride
+	} else if maxMergePerKeyOverride > mergePerKeyCap {
+		mergePerKeyCap = maxMergePerKeyOverride
+	}
+	if mergePerKeyCap > maxStacksPerMergeKeyCeiling {
+		mergePerKeyCap = maxStacksPerMergeKeyCeiling
+	}
+	return mergePerKeyCap
 }
 
 func javaFullParseNeedsAnnotationDeclarationMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {

@@ -825,6 +825,172 @@ func certifiedAcceptedErrorRetryTestTree(profile bool, sourceLen int) *Tree {
 	}
 }
 
+func incrementalAcceptedErrorRetryTestTree(sourceLen int, hasError bool, maxStacks int) *Tree {
+	flags := nodeFlags(0)
+	if hasError {
+		flags |= nodeFlagHasError
+	}
+	lang := &Language{Name: "go"}
+	return &Tree{
+		language: lang,
+		root: &Node{
+			endByte: uint32(sourceLen),
+			flags:   flags,
+		},
+		parseRuntime: ParseRuntime{
+			StopReason:                   ParseStopAccepted,
+			SourceLen:                    uint32(sourceLen),
+			ExpectedEOFByte:              uint32(sourceLen),
+			RootEndByte:                  uint32(sourceLen),
+			LastTokenEndByte:             uint32(sourceLen),
+			LastTokenWasEOF:              true,
+			MaxStacksSeen:                maxStacks,
+			NodesAllocated:               100,
+			IncrementalOldTreeReuseRoute: true,
+		},
+	}
+}
+
+func TestIncrementalAcceptedErrorBaseMergeRetryDoesNotRequireFullParseStackFloor(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	const sourceLen = 128
+	tree := incrementalAcceptedErrorRetryTestTree(sourceLen, true, 24)
+	parser := &Parser{language: tree.language}
+	if shouldRetryAcceptedErrorParse(tree, sourceLen, 32) {
+		t.Fatal("full-parse accepted-error retry unexpectedly eligible below stack floor")
+	}
+	if got := incrementalAcceptedErrorBaseMergeCap(parser, tree, make([]byte, sourceLen)); got != 3 {
+		t.Fatalf("incremental accepted-error base merge cap = %d, want 3", got)
+	}
+}
+
+func TestIncrementalAcceptedErrorBaseMergeRetryHonorsExplicitPolicy(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "8")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	tree := incrementalAcceptedErrorRetryTestTree(128, true, 24)
+	parser := &Parser{language: tree.language}
+	if got := incrementalAcceptedErrorBaseMergeCap(parser, tree, make([]byte, 128)); got != 0 {
+		t.Fatalf("incremental accepted-error base merge cap = %d, want explicit policy preserved", got)
+	}
+}
+
+func TestIncrementalAcceptedErrorBaseMergeRetryUsesFinalFreshPolicy(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	tests := []struct {
+		name     string
+		language string
+		source   []byte
+		want     int
+	}{
+		{name: "typescript typed arrow", language: "typescript", source: []byte("const f = (str: string) => str;"), want: 2},
+		{name: "typescript destructured arrow", language: "typescript", source: []byte("const f = ([x]): T => x;"), want: 0},
+		{name: "tsx typed arrow", language: "tsx", source: []byte("const f = (str: string) => str;"), want: 2},
+		{name: "tsx destructured arrow", language: "tsx", source: []byte("const f = ([x]): T => x;"), want: 0},
+		{name: "java annotation declaration", language: "java", source: []byte("@interface Demo {}"), want: 0},
+		{name: "csharp certified fresh floor", language: "c_sharp", source: []byte("class Demo {}"), want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree := incrementalAcceptedErrorRetryTestTree(len(tt.source), true, 24)
+			tree.language = &Language{Name: tt.language}
+			parser := &Parser{language: tree.language}
+			if got := incrementalAcceptedErrorBaseMergeCap(parser, tree, tt.source); got != tt.want {
+				t.Fatalf("base retry cap = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveParseMergePerKeyCapCSharpPolicyPrecedence(t *testing.T) {
+	t.Run("certified fresh default", func(t *testing.T) {
+		t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+		ResetParseEnvConfigCacheForTests()
+		defer ResetParseEnvConfigCacheForTests()
+		parser := &Parser{language: &Language{Name: "c_sharp"}}
+		if got := parser.resolveParseMergePerKeyCap([]byte("class Demo {}"), nil, 0); got != 16 {
+			t.Fatalf("C# certified fresh cap = %d, want 16", got)
+		}
+		if got := parser.resolveParseMergePerKeyCap([]byte("class Demo {}"), nil, -3); got != 3 {
+			t.Fatalf("C# negative exact cap = %d, want 3", got)
+		}
+	})
+	t.Run("explicit environment", func(t *testing.T) {
+		t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "4")
+		ResetParseEnvConfigCacheForTests()
+		defer ResetParseEnvConfigCacheForTests()
+		parser := &Parser{language: &Language{Name: "c_sharp"}}
+		if got := parser.resolveParseMergePerKeyCap([]byte("class Demo {}"), nil, 0); got != 4 {
+			t.Fatalf("C# explicit environment cap = %d, want exact 4", got)
+		}
+	})
+}
+
+func TestIncrementalAcceptedErrorBaseMergeRetryRequiresOldTreeRoute(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	tree := incrementalAcceptedErrorRetryTestTree(128, true, 24)
+	tree.parseRuntime.IncrementalOldTreeReuseRoute = false
+	parser := &Parser{language: tree.language}
+	if got := incrementalAcceptedErrorBaseMergeCap(parser, tree, make([]byte, 128)); got != 0 {
+		t.Fatalf("internal-fresh result base retry cap = %d, want no retry", got)
+	}
+}
+
+func TestIncrementalAcceptedErrorBaseMergeRetryReleasesFirstPassWhenAdopted(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	first := incrementalAcceptedErrorRetryTestTree(128, true, 24)
+	candidate := incrementalAcceptedErrorRetryTestTree(128, false, 18)
+	parser := &Parser{language: first.language}
+	got := parser.retryIncrementalAcceptedErrorWithBaseMergeCap(make([]byte, 128), first, nil, func(override int, _ *incrementalParseTiming) *Tree {
+		if override != -3 {
+			t.Fatalf("merge override = %d, want exact cap -3", override)
+		}
+		return candidate
+	})
+	if got != candidate || !first.released || candidate.released {
+		t.Fatalf("selection gotCandidate=%v firstReleased=%v candidateReleased=%v", got == candidate, first.released, candidate.released)
+	}
+	rt := got.ParseRuntime()
+	if rt.IncrementalAcceptedErrorRetryAttempts != 1 || !rt.IncrementalAcceptedErrorRetryAdopted ||
+		rt.IncrementalAcceptedErrorRetryMergePerKey != 3 || rt.IncrementalAcceptedErrorRetryCause != IncrementalRetryCauseAcceptedErrorBaseMerge {
+		t.Fatalf("retry attribution = %+v", rt)
+	}
+}
+
+func TestIncrementalAcceptedErrorBaseMergeRetryReleasesLosingCandidate(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	first := incrementalAcceptedErrorRetryTestTree(128, true, 24)
+	candidate := incrementalAcceptedErrorRetryTestTree(128, true, 24)
+	candidate.parseRuntime.NodesAllocated = first.parseRuntime.NodesAllocated + 1
+	parser := &Parser{language: first.language}
+	got := parser.retryIncrementalAcceptedErrorWithBaseMergeCap(make([]byte, 128), first, nil, func(int, *incrementalParseTiming) *Tree {
+		return candidate
+	})
+	if got != first || first.released || !candidate.released {
+		t.Fatalf("selection keptFirst=%v firstReleased=%v candidateReleased=%v", got == first, first.released, candidate.released)
+	}
+	rt := got.ParseRuntime()
+	if rt.IncrementalAcceptedErrorRetryAttempts != 1 || rt.IncrementalAcceptedErrorRetryAdopted {
+		t.Fatalf("retry attribution attempts=%d adopted=%v", rt.IncrementalAcceptedErrorRetryAttempts, rt.IncrementalAcceptedErrorRetryAdopted)
+	}
+}
+
 func TestCertifiedAcceptedErrorRetryStackCeilingScope(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_STACKS", "")
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")

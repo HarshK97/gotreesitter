@@ -7,6 +7,21 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Incremental parses that accept a full-span ERROR tree under a wider merge
+  policy may retry once with the corresponding fresh-parse policy and adopt
+  only a strictly better result. Runtime and profile diagnostics report the
+  retry attempt, selection, cap, cause, and whether old-tree reuse was active.
+
+### Tooling
+
+- Add a versioned, locked incremental admission matrix that separates identity,
+  leaf-validation, real-code GLR, recovery, and stateful-scanner behavior using
+  runtime evidence. It rejects full-parse fallback, authenticates both edit
+  directions against fresh Go and C trees, and atomically publishes a
+  machine-readable closure receipt only after every row passes.
+
 ## [0.38.0] - 2026-07-16
 
 Incremental-correctness, full-parse-efficiency, and benchmark-hardening release.

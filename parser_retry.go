@@ -87,6 +87,8 @@ type resettableTokenSource interface {
 
 type fullParseRetryRunner func(maxStacks, maxMergePerKeyOverride, maxNodes int) *Tree
 
+type incrementalAcceptedErrorRetryRunner func(maxMergePerKeyOverride int, timing *incrementalParseTiming) *Tree
+
 type fullParseRetryOrigin uint8
 
 const (
@@ -181,6 +183,84 @@ func shouldRetryIncrementalParseAsFull(tree *Tree, sourceLen int, initialMaxStac
 	return shouldRetryFullParse(tree, sourceLen) ||
 		shouldRetryAcceptedErrorParse(tree, sourceLen, initialMaxStacks) ||
 		shouldRetryNodeLimitParse(tree, sourceLen)
+}
+
+// incrementalAcceptedErrorBaseMergeCap returns the ordinary full-parse merge
+// cap when an incremental parse accepted a full-span ERROR tree under a wider,
+// implicit incremental policy. The mismatch matters because the wider policy
+// is not monotonic: retaining more same-key survivors can select a worse tree.
+// Explicit diagnostic policy is authoritative and is never narrowed here.
+func incrementalAcceptedErrorBaseMergeCap(p *Parser, tree *Tree, source []byte) int {
+	sourceLen := len(source)
+	if p == nil || p.language == nil || parseMaxMergePerKeyEnvConfigured() ||
+		!shouldRetryIncrementalAcceptedErrorAtBaseMergeCap(tree, sourceLen) {
+		return 0
+	}
+	incrementalCap := p.resolveParseMergePerKeyCap(source, &reuseCursor{}, 0)
+	baseCap := p.resolveParseMergePerKeyCap(source, nil, 0)
+	if baseCap <= 0 || baseCap >= incrementalCap {
+		return 0
+	}
+	return baseCap
+}
+
+func shouldRetryIncrementalAcceptedErrorAtBaseMergeCap(tree *Tree, sourceLen int) bool {
+	if tree == nil || sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes ||
+		!retryTreeHasError(tree) {
+		return false
+	}
+	rt := tree.parseRuntimeReadOnly()
+	return rt.StopReason == ParseStopAccepted &&
+		!rt.Truncated &&
+		!rt.TokenSourceEOFEarly &&
+		rt.IncrementalOldTreeReuseRoute &&
+		retryTreeCoversExpectedEOF(tree)
+}
+
+// retryIncrementalAcceptedErrorWithBaseMergeCap performs at most one second
+// incremental pass. The runner must rebuild both the reuse cursor and token
+// source against the same edited old tree. It deliberately does not use the
+// full-parse retry ladder: reuse and old-tree semantics are the point of this
+// retry, and a fresh fallback would conceal an incremental correctness defect.
+func (p *Parser) retryIncrementalAcceptedErrorWithBaseMergeCap(source []byte, first *Tree, timing *incrementalParseTiming, run incrementalAcceptedErrorRetryRunner) *Tree {
+	baseCap := incrementalAcceptedErrorBaseMergeCap(p, first, source)
+	if baseCap == 0 || run == nil || p.fullParseRetryPassesTaken >= fullParseRetryMaxTotalPasses {
+		return first
+	}
+
+	p.fullParseRetryPassesTaken++
+	workCountSetNextParseAttempt("incremental_base_merge", "accepted_error_under_wide_incremental_merge")
+	var retryTiming *incrementalParseTiming
+	if timing != nil {
+		retryTiming = &incrementalParseTiming{}
+	}
+	// A negative override is an exact cap. Positive overrides only widen the
+	// effective cap and therefore cannot lower the incremental default.
+	candidate := run(-baseCap, retryTiming)
+	adopted := candidate != nil && candidate != first && preferRetryTreeOverFirstPass(p, candidate, first)
+	result := first
+	if adopted {
+		result = candidate
+		first.Release()
+	} else if candidate != nil && candidate != first {
+		candidate.Release()
+	}
+
+	if retryTiming != nil {
+		timing.addAttempt(retryTiming)
+		timing.selectResult(result)
+		timing.acceptedErrorRetryAttempts = 1
+		timing.acceptedErrorRetryAdopted = adopted
+		timing.acceptedErrorRetryMergePerKey = baseCap
+		timing.acceptedErrorRetryCause = IncrementalRetryCauseAcceptedErrorBaseMerge
+	}
+	if result != nil {
+		result.parseRuntime.IncrementalAcceptedErrorRetryAttempts = 1
+		result.parseRuntime.IncrementalAcceptedErrorRetryAdopted = adopted
+		result.parseRuntime.IncrementalAcceptedErrorRetryMergePerKey = baseCap
+		result.parseRuntime.IncrementalAcceptedErrorRetryCause = IncrementalRetryCauseAcceptedErrorBaseMerge
+	}
+	return result
 }
 
 func treeParseClean(tree *Tree) bool {

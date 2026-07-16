@@ -98,7 +98,58 @@ go test . -tags treesitter_c_parity -run '^$' \
   -benchmem -count=10 -benchtime=750ms
 ```
 
-## Run Real-Corpus Parser Benchmarks
+## Run Locked Canonical Incremental Benchmarks
+
+`BenchmarkParityGoCanonicalIncremental` uses a versioned, hash-locked matrix
+that distinguishes unchanged-snapshot identity, same-length leaf validation,
+real-code incremental GLR work, recovery, and stateful external-scanner edits.
+Every changed-source lane runs in both directions and requires fresh Go = C and
+C incremental = fresh C, including exact deep digests, full spans, and accepted
+stop state. Timing-eligible lanes also require Go incremental = fresh Go.
+Runtime/profile assertions prove the named mechanism actually ran and reject
+any unplanned full-parse fallback. The manifest never searches dynamically for
+an easier edit.
+
+The locked `language.go` length-change row proves the bounded accepted-error
+retry path in both directions. The retry retains the edited old-tree route,
+uses the ordinary fresh-parse merge policy, and is admitted only when the
+second result is strictly better. The receipt records the attempt, adoption,
+merge cap, typed cause, and route alongside exact four-way parity evidence.
+
+The unchanged-snapshot identity lane, small Go leaf fixture, and Python scanner
+fixture are semantic controls. They remain timing eligible but are reported
+separately and must not be included in representative real-code aggregates or
+performance headlines. The representative aggregate contains only the four
+genuine real-code edit rows.
+
+```sh
+bash cgo_harness/docker/run_parity_in_docker.sh --cpus 1 -- \
+  "cd /workspace/cgo_harness && GOMAXPROCS=1 go test . \
+    -tags treesitter_c_parity -run '^$' \
+    -bench '^BenchmarkParityGoCanonicalIncremental/' \
+    -benchmem -count=10 -benchtime=750ms"
+```
+
+Run the same admission without timing and atomically publish its machine-readable
+before-state receipt under `cgo_harness` with:
+
+```sh
+bash cgo_harness/docker/run_parity_in_docker.sh --cpus 1 -- \
+  "cd /workspace/cgo_harness && GOMAXPROCS=1 \
+    GTS_CANONICAL_GO_INCREMENTAL=1 \
+    GTS_CANONICAL_INCREMENTAL_RECEIPT_OUT=testdata/canonical_incremental_before_state_receipt_v1.json \
+    go test . \
+    -tags treesitter_c_parity \
+    -run '^TestCanonicalGoIncrementalParity$' -count=1 -v"
+```
+
+The receipt destination is removed before admission and replaced through a
+same-directory atomic rename only after every lane matches its locked expected
+outcome. This prevents a failed run from leaving a stale artifact while still
+publishing only a fully admitted `status: passed` closure receipt. Paths outside
+`cgo_harness` are rejected.
+
+## Run Dynamic Real-Corpus Parser Benchmarks
 
 `BenchmarkParityRealCorpusParse*` uses `cgo_harness/corpus_real/<language>`
 fixtures and compares gotreesitter against the C tree-sitter runtime for full

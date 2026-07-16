@@ -1358,8 +1358,26 @@ func (p *Parser) parseIncrementalChanged(source []byte, oldTree *Tree) (*Tree, e
 	ts := p.acquireParserDFATokenSource(source)
 	defer ts.Close()
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), nil)
+	tree = p.retryIncrementalAcceptedErrorWithDFA(source, oldTree, tree, nil)
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
 	return tree, nil
+}
+
+func (p *Parser) retryIncrementalAcceptedErrorWithDFA(source []byte, oldTree, tree *Tree, timing *incrementalParseTiming) *Tree {
+	if oldTree == nil || tree == nil || tree == oldTree {
+		return tree
+	}
+	return p.retryIncrementalAcceptedErrorWithBaseMergeCap(source, tree, timing, func(maxMergePerKeyOverride int, retryTiming *incrementalParseTiming) *Tree {
+		retryTS := p.acquireParserDFATokenSource(source)
+		defer retryTS.Close()
+		return p.parseIncrementalInternalWithMergePerKeyOverride(
+			source,
+			oldTree,
+			p.wrapIncludedRanges(retryTS),
+			retryTiming,
+			maxMergePerKeyOverride,
+		)
+	})
 }
 
 // ParseIncrementalStrict is like ParseIncremental, but returns
@@ -1498,6 +1516,7 @@ func (p *Parser) parseIncrementalChangedProfiled(source []byte, oldTree *Tree) (
 	defer ts.Close()
 	timing := &incrementalParseTiming{}
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), timing)
+	tree = p.retryIncrementalAcceptedErrorWithDFA(source, oldTree, tree, timing)
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
 	return tree, timing.toProfile(), nil
 }

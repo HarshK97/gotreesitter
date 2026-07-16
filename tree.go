@@ -687,10 +687,37 @@ type ParseEquivStateRuntime struct {
 	EquivFrontierCandidateCompares        uint64
 }
 
+// IncrementalRetryCause identifies why an incremental parse ran an additional
+// bounded attempt.
+type IncrementalRetryCause uint8
+
+const (
+	IncrementalRetryCauseNone IncrementalRetryCause = iota
+	IncrementalRetryCauseAcceptedErrorBaseMerge
+)
+
 // ParseRuntime captures parser-loop diagnostics for a completed tree.
 type ParseRuntime struct {
 	StopReason     ParseStopReason
 	ForestFastPath bool
+	// IncrementalAcceptedErrorRetryAttempts records the bounded second
+	// incremental pass used when an accepted, full-span ERROR tree was produced
+	// under the wider incremental merge policy. The retry keeps the edited old
+	// tree and reruns with the ordinary full-parse merge cap; it is not a fresh
+	// parse fallback.
+	IncrementalAcceptedErrorRetryAttempts uint8
+	// IncrementalAcceptedErrorRetryAdopted is true only when that retry produced
+	// a strictly better tree and replaced the first incremental result.
+	IncrementalAcceptedErrorRetryAdopted bool
+	// IncrementalAcceptedErrorRetryMergePerKey is the exact merge-per-key cap
+	// used by the bounded retry.
+	IncrementalAcceptedErrorRetryMergePerKey int
+	// IncrementalAcceptedErrorRetryCause is a stable diagnostic reason for the
+	// retry so corpus and benchmark matrices can distinguish this path.
+	IncrementalAcceptedErrorRetryCause IncrementalRetryCause
+	// IncrementalOldTreeReuseRoute reports whether this result was produced by
+	// an actual old-tree reuse parse rather than an internal fresh fallback.
+	IncrementalOldTreeReuseRoute bool
 	// CRecoveryEnteredErrorState is true when the faithful C error-recovery
 	// port (parser_recover_c.go) actually ran ts_parser__handle_error at
 	// least once while producing this specific tree — i.e. some no-action
