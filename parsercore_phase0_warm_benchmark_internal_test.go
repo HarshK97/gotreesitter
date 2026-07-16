@@ -246,6 +246,35 @@ func parserCoreWarmAdmitAgainstProduction(t testing.TB, prepared *parserCoreWarm
 	parserCoreWarmRequireDeepEqual(t, candidate, production, prepared.lang)
 }
 
+func parserCoreWarmRequireParentLinks(t testing.TB, tree *Tree) {
+	t.Helper()
+	if tree == nil || tree.root == nil {
+		t.Fatal("parser-core materialization produced no root")
+	}
+	if tree.root.Parent() != nil {
+		t.Fatal("parser-core materialization root has a parent")
+	}
+	stack := []*Node{tree.root}
+	for len(stack) != 0 {
+		last := len(stack) - 1
+		parent := stack[last]
+		stack = stack[:last]
+		for index := 0; index < parent.ChildCount(); index++ {
+			child := parent.Child(index)
+			if child == nil || child.Parent() != parent {
+				t.Fatalf("parser-core materialization child %d/%d has incorrect parent", index, parent.ChildCount())
+			}
+			if index+1 < parent.ChildCount() && child.NextSibling() != parent.Child(index+1) {
+				t.Fatalf("parser-core materialization child %d/%d has incorrect sibling index", index, parent.ChildCount())
+			}
+			if index+1 == parent.ChildCount() && child.NextSibling() != nil {
+				t.Fatalf("parser-core materialization final child %d/%d has a next sibling", index, parent.ChildCount())
+			}
+			stack = append(stack, child)
+		}
+	}
+}
+
 func TestDiagnosticParserCoreWarmBenchmarkPreflight(t *testing.T) {
 	prepared, err := parserCoreWarmPrepare()
 	if err != nil {
@@ -261,6 +290,7 @@ func TestDiagnosticParserCoreWarmBenchmarkPreflight(t *testing.T) {
 	}
 	t.Cleanup(tree.Release)
 	parserCoreWarmRequireExactTree(t, tree, len(prepared.source))
+	parserCoreWarmRequireParentLinks(t, tree)
 
 	first, err := prepared.materialize(prepared.acceptedCore, prepared.acceptedHead)
 	if err != nil {
@@ -273,6 +303,7 @@ func TestDiagnosticParserCoreWarmBenchmarkPreflight(t *testing.T) {
 		t.Fatalf("repeated immutable materialization changed behavior: %v", err)
 	}
 	parserCoreWarmRequireExactTree(t, second, len(prepared.source))
+	parserCoreWarmRequireParentLinks(t, second)
 	second.Release()
 
 	production, err := prepared.parser.Parse(prepared.source)

@@ -369,6 +369,22 @@ type SubtreeView struct {
 	Terminal          bool
 }
 
+// MaterializationSubtreeView is a callback-scoped borrowed view of one compact
+// subtree. Children aliases compact arena storage and must not be retained or
+// mutated by the visitor. The copying Subtree diagnostic API remains the
+// stable inspection surface.
+type MaterializationSubtreeView struct {
+	Symbol            Symbol
+	ProductionID      uint16
+	DynamicPrecedence int16
+	StartByte         uint32
+	EndByte           uint32
+	Children          []SubtreeID
+	Extra             bool
+	External          bool
+	Terminal          bool
+}
+
 // Stats reports physical storage separately from semantic path counts. It is
 // not a replacement for production work-count emissions.
 type Stats struct {
@@ -2425,6 +2441,100 @@ func (c *Core) MaterializationOrder(roots []SubtreeID, poll func() error) ([]Sub
 		return nil, err
 	}
 	return order, nil
+}
+
+// VisitMaterializationPostorder authenticates roots as one ownership tree and
+// invokes visit exactly once per subtree after all of its children. It fuses
+// unique-ownership validation, iterative postorder traversal, metadata
+// authentication, and borrowed compact access so production materialization
+// does not allocate an order or copy subtree sidecars.
+func (c *Core) VisitMaterializationPostorder(
+	roots []SubtreeID,
+	poll func() error,
+	visit func(SubtreeID, MaterializationSubtreeView) error,
+) error {
+	if c == nil || len(roots) == 0 {
+		return errors.New("parser-core phase zero: materialization requires at least one compact root")
+	}
+	if visit == nil {
+		return errors.New("parser-core phase zero: materialization requires a visitor")
+	}
+	if poll == nil {
+		poll = func() error { return nil }
+	}
+	if err := poll(); err != nil {
+		return err
+	}
+
+	// Zero is unseen, one is the active path, and two is already owned. This
+	// single state vector proves both acyclicity and unique public ownership.
+	colors := make([]uint8, len(c.subtrees)+1)
+	type frame struct {
+		id   SubtreeID
+		next uint32
+	}
+	stack := make([]frame, 0, 64)
+	var visited, work uint64
+	for _, root := range roots {
+		if _, err := c.subtree(root); err != nil {
+			return err
+		}
+		if colors[root] != 0 {
+			return errors.New("parser-core phase zero: compact subtree has repeated public-tree ownership")
+		}
+		colors[root] = 1
+		stack = append(stack, frame{id: root})
+		for len(stack) != 0 {
+			work++
+			if work&255 == 0 {
+				if err := poll(); err != nil {
+					return err
+				}
+			}
+			top := &stack[len(stack)-1]
+			record, err := c.subtree(top.id)
+			if err != nil {
+				return err
+			}
+			if top.next < record.childCount {
+				child := c.children[record.firstChild+top.next]
+				top.next++
+				if _, err := c.subtree(child); err != nil {
+					return err
+				}
+				switch colors[child] {
+				case 0:
+					colors[child] = 1
+					stack = append(stack, frame{id: child})
+					continue
+				case 1:
+					return errors.New("parser-core phase zero: compact subtree cycle during materialization")
+				default:
+					return errors.New("parser-core phase zero: compact subtree has repeated public-tree ownership")
+				}
+			}
+			if err := c.validateMaterializationMetadata(top.id, *record); err != nil {
+				return err
+			}
+			view := MaterializationSubtreeView{
+				Symbol: record.symbol, ProductionID: record.productionID,
+				DynamicPrecedence: record.dynamicPrecedence,
+				StartByte:         record.startByte, EndByte: record.endByte,
+				Children: c.children[record.firstChild : record.firstChild+record.childCount],
+				Extra:    record.extra, External: record.external, Terminal: record.terminal,
+			}
+			if err := visit(top.id, view); err != nil {
+				return err
+			}
+			colors[top.id] = 2
+			visited++
+			stack = stack[:len(stack)-1]
+		}
+	}
+	if visited > uint64(len(c.subtrees)) {
+		return errors.New("parser-core phase zero: materialization exceeded compact subtree arena")
+	}
+	return poll()
 }
 
 func (c *Core) validateMaterializationMetadata(id SubtreeID, record subtreeRecord) error {

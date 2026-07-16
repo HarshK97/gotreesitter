@@ -1303,33 +1303,20 @@ func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.H
 		}
 		return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreCap, detail: "accepted-tree materialization stopped: " + string(reason)}
 	}
-	order, err := compact.MaterializationOrder(derivations[0].Payloads, poll)
-	if err != nil {
-		return nil, err
-	}
-	if uint64(len(order)) > uint64(stats.Subtrees) {
-		return nil, errors.New("parser-core phase zero: materialization order exceeds compact subtree arena")
-	}
 	points, err := newDiagnosticParserCorePointIndex(source, poll)
 	if err != nil {
 		return nil, err
 	}
+	// The visitor proves unique ownership, so this is a transient child-build
+	// table rather than a memoization or sharing mechanism: every populated
+	// compact ID owns exactly one public node in this tree.
 	nodesByID := make([]*Node, uint64(stats.Subtrees)+1)
 	if err := poll(); err != nil {
 		return nil, err
 	}
-	for orderIndex, id := range order {
-		if orderIndex&255 == 0 {
-			if err := poll(); err != nil {
-				return nil, err
-			}
-		}
-		view, err := compact.Subtree(id)
-		if err != nil {
-			return nil, err
-		}
+	err = compact.VisitMaterializationPostorder(derivations[0].Payloads, poll, func(id core.SubtreeID, view core.MaterializationSubtreeView) error {
 		if view.EndByte < view.StartByte || view.EndByte > uint32(len(source)) {
-			return nil, errors.New("parser-core phase zero: compact subtree extent is outside source")
+			return errors.New("parser-core phase zero: compact subtree extent is outside source")
 		}
 		named := parser.isNamedSymbol(Symbol(view.Symbol))
 		if view.Terminal {
@@ -1340,14 +1327,14 @@ func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.H
 			node.setExtra(view.Extra)
 			node.setExternalScannerToken(view.External)
 			nodesByID[id] = node
-			continue
+			return nil
 		}
 
 		entries := make([]stackEntry, len(view.Children))
 		structuralChildren := 0
 		for index, childID := range view.Children {
 			if uint64(childID) >= uint64(len(nodesByID)) || nodesByID[childID] == nil {
-				return nil, errors.New("parser-core phase zero: compact materialization order omitted a child")
+				return errors.New("parser-core phase zero: compact materialization traversal omitted a child")
 			}
 			child := nodesByID[childID]
 			entries[index] = newStackEntryNode(0, child)
@@ -1363,7 +1350,7 @@ func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.H
 			child.productionID = view.ProductionID
 			child.dynamicPrecedence += int32(view.DynamicPrecedence)
 			nodesByID[id] = child
-			continue
+			return nil
 		}
 		children, fieldIDs, fieldSources, _ := parser.buildReduceChildrenWithPath(
 			entries, 0, len(entries), structuralChildren,
@@ -1373,7 +1360,7 @@ func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.H
 			child.productionID = view.ProductionID
 			child.dynamicPrecedence += int32(view.DynamicPrecedence)
 			nodesByID[id] = child
-			continue
+			return nil
 		}
 		parent := newParentNodeInArenaWithFieldSources(
 			arena, Symbol(view.Symbol), named, children, fieldIDs, fieldSources, view.ProductionID,
@@ -1385,6 +1372,10 @@ func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.H
 		parent.endPoint = points.point(view.EndByte)
 		parent.setExtra(view.Extra)
 		nodesByID[id] = parent
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	nodes := make([]*Node, len(derivations[0].Payloads))

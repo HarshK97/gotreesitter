@@ -119,6 +119,14 @@ authenticated static-C, fleet, and forest measurements are stricter.
 
 ### Tooling
 
+- Compact parser-core materialization now validates unique ownership and
+  production metadata while constructing public nodes in one iterative
+  postorder pass, avoiding a separate order arena and copied compact-subtree
+  views. Across the four locked real-Go fixtures on the quiet host,
+  materialization improved 13.4% in time, 16.9% in allocated bytes, and 34.5%
+  in allocations; total compact parse improved 2.5%, 5.8%, and 14.3%
+  respectively, with unchanged exact trees, parser work, and selected-node
+  census.
 - Compact parser-core diagnostics now classify each authenticated boundary once
   per scheduler phase and reuse immutable reduction metadata keyed by exact
   production/child-count pairs with retained remap scratch. On the quiet host,
