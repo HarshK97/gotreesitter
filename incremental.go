@@ -147,13 +147,6 @@ func (c *reuseCursor) releaseNodeRefs() {
 	}
 }
 
-func rejectForestLeafStateMismatch(n *Node, nextState StateID) bool {
-	return n != nil &&
-		n.ChildCount() == 0 &&
-		n.parseState != 0 &&
-		n.parseState != nextState
-}
-
 // releaseNodeRefs nils *Node pointers in the scratch buffers.
 func (s *reuseScratch) releaseNodeRefs() {
 	if cap(s.stack) > 0 {
@@ -440,9 +433,6 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 		if !ok {
 			continue
 		}
-		if idx.forestFastPath && rejectForestLeafStateMismatch(n, nextState) {
-			continue
-		}
 		if !reuseSubtreeGapIsParserPadding(idx.newSource, s.byteOffset, n.StartByte()) {
 			continue
 		}
@@ -649,7 +639,7 @@ func (p *Parser) reuseTargetState(state StateID, n *Node, lookahead Token) (Stat
 			}
 			shiftCount++
 		}
-		if shiftCount == 1 {
+		if n.parseState == 0 && shiftCount == 1 {
 			return uniqueShiftState, true
 		}
 		return 0, false

@@ -358,6 +358,29 @@ func preferRetryTree(p *Parser, candidate, incumbent *Tree) bool {
 	return candRT.NodesAllocated < incRT.NodesAllocated
 }
 
+// preferRetryTreeOverFirstPass gates replacement of the ORIGINAL first-pass
+// tree. NodesAllocated is parse-run bookkeeping, not tree quality: two
+// byte-identical trees differ in it purely by how they were parsed
+// (incremental relex overhead vs a fresh pass). A retry must therefore be
+// strictly better on a tree-quality axis to displace the first-pass tree; on
+// a full quality tie the first pass wins, so an equal retry cannot burn the
+// incremental route's bookkeeping (ReuseUnsupportedReason) or release a good
+// tree. Retry-vs-retry replacement keeps the NodesAllocated tie-break so the
+// established ladder accounting is unchanged.
+func preferRetryTreeOverFirstPass(p *Parser, candidate, firstPass *Tree) bool {
+	if !preferRetryTree(p, candidate, firstPass) {
+		return false
+	}
+	// preferRetryTree said yes; reject the replacement if its only winning
+	// axis was the NodesAllocated bookkeeping tie-break, i.e. the reverse
+	// comparison with NodesAllocated ignored would also say yes.
+	saved := candidate.parseRuntime.NodesAllocated
+	candidate.parseRuntime.NodesAllocated = firstPass.parseRuntimeReadOnly().NodesAllocated
+	strict := preferRetryTree(p, candidate, firstPass)
+	candidate.parseRuntime.NodesAllocated = saved
+	return strict
+}
+
 func shouldTakeCleanWideRetry(incumbent, candidate *Tree, sourceLen int, initialMaxStacks int) bool {
 	if candidate == nil || retryTreeHasError(candidate) {
 		return false
@@ -1778,6 +1801,15 @@ func (p *Parser) retryFullParseWithTokenSourceForOrigin(source []byte, ts TokenS
 			deterministicExternalConflicts,
 		)
 	})
+	if origin == fullParseRetryOriginIncremental && result != tree && !preferRetryTreeOverFirstPass(p, result, tree) {
+		// The retry ladder finished without producing a strictly better tree
+		// on any quality axis. Keep the incremental first pass: replacing it
+		// with a quality-tied fresh tree would falsely report
+		// incremental_parse_full_retry and discard a good tree over parse-run
+		// bookkeeping (NodesAllocated).
+		result.Release()
+		return tree
+	}
 	// Same as retryFullParseWithDFA: release the original tree if a retry won.
 	if result != tree {
 		tree.Release()
