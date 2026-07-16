@@ -38,6 +38,17 @@ func TestDiagnosticWorkCountLinearReductionPop(t *testing.T) {
 	}
 }
 
+func TestDiagnosticWorkCountBoardDirectEvents(t *testing.T) {
+	BeginDiagnosticWorkCount()
+	workCountRecordResolvedActionCell(4)
+	workCountRecordResolvedActionCell(1)
+	workCountRecordAlternatePredecessorLinkAppended()
+	counts := EndDiagnosticWorkCount().BoardDirect()
+	if counts.Schema != "gts-work-count-board-direct/v1" || counts.Overflow || counts.ResolvedActionCellsExamined != 2 || counts.RawActionEntriesBeyondFirst != 3 || counts.AlternatePredecessorLinksAppended != 1 {
+		t.Fatalf("board direct counts=%+v", counts)
+	}
+}
+
 func TestDiagnosticWorkCountSelectedCensusSaturates(t *testing.T) {
 	counts := DiagnosticWorkCount{
 		DiagnosticWorkCountValues: DiagnosticWorkCountValues{SelectedNodes: math.MaxUint64},

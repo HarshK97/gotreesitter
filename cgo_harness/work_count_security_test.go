@@ -202,8 +202,12 @@ func workCountPrepareSourceSnapshot(t *testing.T, repoRoot, tempRoot string) wor
 		"GIT_CONFIG_NOSYSTEM": "1",
 		"GIT_TERMINAL_PROMPT": "0",
 	})
+	gitRun := func(args ...string) ([]byte, error) {
+		gitArgs := append([]string{"-c", "safe.directory=" + repoRoot}, args...)
+		return workCountRunBounded(repoRoot, gitEnv, workCountGitTimeout, "git", gitArgs...)
+	}
 	gitOutput := func(args ...string) []byte {
-		output, err := workCountRunBounded(repoRoot, gitEnv, workCountGitTimeout, "git", args...)
+		output, err := gitRun(args...)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -228,7 +232,7 @@ func workCountPrepareSourceSnapshot(t *testing.T, repoRoot, tempRoot string) wor
 	mode := "git-archive-head"
 	if clean {
 		archivePath := filepath.Join(tempRoot, "go-source.tar")
-		if _, err := workCountRunBounded(repoRoot, gitEnv, workCountGitTimeout, "git", "archive", "--format=tar", "-o", archivePath, head); err != nil {
+		if _, err := gitRun("archive", "--format=tar", "-o", archivePath, head); err != nil {
 			t.Fatal(err)
 		}
 		if err := workCountExtractTar(archivePath, staging); err != nil {
@@ -290,21 +294,59 @@ func workCountPrepareSourceSnapshot(t *testing.T, repoRoot, tempRoot string) wor
 		if !authoritative {
 			return nil
 		}
-		gotHead, err := workCountRunBounded(repoRoot, gitEnv, workCountGitTimeout, "git", "rev-parse", "--verify", "HEAD^{commit}")
+		gotHead, err := gitRun("rev-parse", "--verify", "HEAD^{commit}")
 		if err != nil || strings.TrimSpace(string(gotHead)) != head {
 			return fmt.Errorf("Git HEAD drift: got=%q want=%q err=%v", strings.TrimSpace(string(gotHead)), head, err)
 		}
-		gotTree, err := workCountRunBounded(repoRoot, gitEnv, workCountGitTimeout, "git", "rev-parse", "--verify", "HEAD^{tree}")
+		gotTree, err := gitRun("rev-parse", "--verify", "HEAD^{tree}")
 		if err != nil || strings.TrimSpace(string(gotTree)) != headTree {
 			return fmt.Errorf("Git tree drift: got=%q want=%q err=%v", strings.TrimSpace(string(gotTree)), headTree, err)
 		}
-		gotStatus, err := workCountRunBounded(repoRoot, gitEnv, workCountGitTimeout, "git", "status", "--porcelain=v1", "-z", "--untracked-files=all")
+		gotStatus, err := gitRun("status", "--porcelain=v1", "-z", "--untracked-files=all")
 		if err != nil || len(gotStatus) != 0 {
 			return fmt.Errorf("Git worktree ceased to be clean: status=%q err=%v", gotStatus, err)
 		}
 		return nil
 	}
 	return workCountSourceSnapshot{Root: root, Provenance: provenance, Recheck: recheck}
+}
+
+func workCountPrepareBoardReceiptPath(t *testing.T) string {
+	t.Helper()
+	path := strings.TrimSpace(os.Getenv(workCountBoardReceiptEnv))
+	if path == "" {
+		return ""
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(absolute), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resolvedDirectory, err := filepath.EvalSymlinks(filepath.Dir(absolute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	absolute = filepath.Join(resolvedDirectory, filepath.Base(absolute))
+	if err := os.Remove(absolute); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+	return absolute
+}
+
+func TestWorkCountPrepareBoardReceiptPathRemovesStaleOutput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "board.json")
+	if err := os.WriteFile(path, []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(workCountBoardReceiptEnv, path)
+	if got := workCountPrepareBoardReceiptPath(t); got != path {
+		t.Fatalf("prepared receipt path=%q want=%q", got, path)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("stale receipt remains: %v", err)
+	}
 }
 
 func workCountClearAmbientGitRouting(t *testing.T) {

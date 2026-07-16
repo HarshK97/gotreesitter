@@ -17,8 +17,8 @@ const workCountConvergenceCorruptionEnv = "GTS_WORK_COUNT_CONVERGENCE_CORRUPTION
 
 func TestWorkCountV4SchemaBoundaries(t *testing.T) {
 	if workCountGoAdmissionChildSchema != "gts-work-count-go-child/v3" ||
-		workCountTaggedGoChildSchema != "gts-work-count-go-child/v4" ||
-		workCountCChildSchema != "gts-work-count-c-child/v3" ||
+		workCountTaggedGoChildSchema != "gts-work-count-go-child/v5" ||
+		workCountCChildSchema != "gts-work-count-c-child/v4" ||
 		workCountReceiptSchema != "gts-work-count-receipt/v4" ||
 		workCountContract != "gts-work-count/v2" {
 		t.Fatalf("mixed work-count schema boundary: admission=%q tagged=%q C=%q receipt=%q counters=%q", workCountGoAdmissionChildSchema, workCountTaggedGoChildSchema, workCountCChildSchema, workCountReceiptSchema, workCountContract)

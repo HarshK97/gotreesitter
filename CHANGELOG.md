@@ -16,6 +16,10 @@ for tags and release notes while still in `0.x`.
 
 ### Tooling
 
+- Add the four-fixture authenticated Go/static-C work-count board with direct
+  counters at their exact hook boundaries, Go-only representation rows marked
+  incomparable, and missing mandatory instrumentation reported separately from
+  out-of-band work-ratio audit findings.
 - Add a versioned, locked incremental admission matrix that separates identity,
   leaf-validation, real-code GLR, recovery, and stateful-scanner behavior using
   runtime evidence. It rejects full-parse fallback, authenticates both edit

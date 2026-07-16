@@ -590,6 +590,33 @@ Publication mode requires a clean worktree, a quiet Docker-capable host, and no
 parser or Go runtime tuning overrides. Short smoke runs require `--diagnostic`;
 their receipts are explicitly marked `NONPUBLICATION_DIAGNOSTIC`.
 
+## Run the Authenticated Work-Count Board
+
+The four-fixture work-count board compares diagnostic Go and locked static-C
+parser events without timing either instrumented artifact. Its versioned event
+contract records whether each engine's value is present or unavailable and
+whether the two definitions are comparable. A present zero is distinct from a
+missing hook; a Go/C ratio is emitted only for comparable, present values with
+a nonzero C denominator.
+
+```sh
+cd cgo_harness
+GTS_WORK_COUNT_BOARD=1 \
+GTS_WORK_COUNT_BOARD_RECEIPT=/tmp/gotreesitter-work-count-board.json \
+go test -tags 'treesitter_c_parity treesitter_c_perfscan' . \
+  -run '^TestAuthenticatedFourFixtureWorkCountBoard$' -count=1 -v
+```
+
+Authoritative receipts require a clean source tree. The admission verifies all
+four frozen source and deep-tree identities, locked grammar and runtime inputs,
+static linkage, identical tagged/untagged Go scheduling, and absence of
+diagnostic scaffolding in the ordinary Go build. Instrumented artifacts are
+always marked timing-ineligible. `instrumentation_status` is `blocked` until
+every mandatory event has a paired direct hook with one shared semantic
+definition. Independently, `work_audit_status` is `findings` when a comparable,
+present mandatory-event ratio falls outside the inclusive `[0.8,1.2]` band;
+those findings do not change instrumentation completeness.
+
 ## Run Go Head-to-Head Comparison
 
 This runs both:

@@ -131,12 +131,19 @@ static unsigned long long parse_timeout(const char *raw) {
 static void print_counts(GTSWorkCount c, uint32_t source_len,
                          uint32_t root_end_byte, bool root_has_error) {
   printf("{\n");
-  printf("  \"schema\": \"gts-work-count-c-child/v3\",\n");
+  printf("  \"schema\": \"gts-work-count-c-child/v4\",\n");
   printf("  \"engine\": \"static-c-instrumented-glr\",\n");
   printf("  \"digest_format\": \"gts-deep-tree-v1\",\n");
   printf("  \"source_bytes\": %u,\n", source_len);
   printf("  \"root_end_byte\": %u,\n", root_end_byte);
   printf("  \"root_has_error\": %s,\n", root_has_error ? "true" : "false");
+  printf("  \"board_direct\": {\n");
+  printf("    \"schema\": \"gts-work-count-board-direct/v1\",\n");
+  printf("    \"resolved_action_cells_examined\": %llu,\n", (unsigned long long)c.resolved_action_cells_examined);
+  printf("    \"raw_action_entries_beyond_first\": %llu,\n", (unsigned long long)c.raw_action_entries_beyond_first);
+  printf("    \"alternate_predecessor_links_appended\": %llu,\n", (unsigned long long)c.alternate_predecessor_links_appended);
+  printf("    \"overflow\": %s\n", c.overflow ? "true" : "false");
+  printf("  },\n");
   printf("  \"counters\": {\n");
   printf("    \"contract\": \"gts-work-count/v2\",\n");
   printf("    \"overflow\": %s,\n", c.overflow ? "true" : "false");

@@ -5079,6 +5079,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if actionIdx != 0 && int(actionIdx) < len(parseActions) {
 				actions = parseActions[actionIdx].Actions
 			}
+			workCountRecordResolvedActionCell(len(actions))
 			workCountAddActionEntries(len(actions))
 			if phaseTiming {
 				actionLookupNanos += time.Since(actionStart).Nanoseconds()

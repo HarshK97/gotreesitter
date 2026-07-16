@@ -16,6 +16,18 @@ type DiagnosticWorkCount struct {
 	Attempts       []DiagnosticWorkCountAttempt   `json:"attempts"`
 	OutsideAttempt DiagnosticWorkCountValues      `json:"outside_attempt"`
 	Convergence    DiagnosticWorkCountConvergence `json:"convergence_frontier"`
+	boardDirect    DiagnosticWorkCountBoardDirect
+}
+
+// DiagnosticWorkCountBoardDirect contains board events whose definitions
+// are shared with the locked C diagnostic oracle. It is emitted beside, not
+// inside, the immutable gts-work-count/v2 counter object.
+type DiagnosticWorkCountBoardDirect struct {
+	Schema                            string `json:"schema"`
+	ResolvedActionCellsExamined       uint64 `json:"resolved_action_cells_examined"`
+	RawActionEntriesBeyondFirst       uint64 `json:"raw_action_entries_beyond_first"`
+	AlternatePredecessorLinksAppended uint64 `json:"alternate_predecessor_links_appended"`
+	Overflow                          bool   `json:"overflow"`
 }
 
 // DiagnosticWorkCountValues is one additive counter vector. The aggregate
@@ -98,12 +110,18 @@ func BeginDiagnosticWorkCount() {
 	if activeDiagnosticWorkCount != nil {
 		panic("gotreesitter: diagnostic work-count parse already active")
 	}
-	activeDiagnosticWorkCount = &DiagnosticWorkCount{Contract: DiagnosticWorkCountContract}
+	activeDiagnosticWorkCount = &DiagnosticWorkCount{Contract: DiagnosticWorkCountContract, boardDirect: DiagnosticWorkCountBoardDirect{Schema: "gts-work-count-board-direct/v1"}}
 	workCountBeginConvergence(activeDiagnosticWorkCount)
 	pendingDiagnosticWorkCountAttempt = struct {
 		logicalRung    string
 		operationCause string
 	}{}
+}
+
+// BoardDirect returns the paired board-counter extension. The base v2
+// counter contract remains byte-for-byte unchanged.
+func (c DiagnosticWorkCount) BoardDirect() DiagnosticWorkCountBoardDirect {
+	return c.boardDirect
 }
 
 // EndDiagnosticWorkCount returns the current parse-local counters and disables
@@ -320,6 +338,23 @@ func workCountRecordLexerFrontDoor() {
 func workCountRecordTableLookup() {
 	if c := activeDiagnosticWorkCount; c != nil {
 		workCountSaturatingAdd(&c.TableLookupsProxy, 1)
+	}
+}
+
+func workCountRecordResolvedActionCell(actionCount int) {
+	if c := activeDiagnosticWorkCount; c != nil {
+		diagnosticWorkCountSaturatingAdd(c, &c.boardDirect.ResolvedActionCellsExamined, 1)
+		if actionCount > 1 {
+			diagnosticWorkCountSaturatingAdd(c, &c.boardDirect.RawActionEntriesBeyondFirst, uint64(actionCount-1))
+		}
+		c.boardDirect.Overflow = c.Overflow
+	}
+}
+
+func workCountRecordAlternatePredecessorLinkAppended() {
+	if c := activeDiagnosticWorkCount; c != nil {
+		diagnosticWorkCountSaturatingAdd(c, &c.boardDirect.AlternatePredecessorLinksAppended, 1)
+		c.boardDirect.Overflow = c.Overflow
 	}
 }
 
