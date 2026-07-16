@@ -450,6 +450,60 @@ func TestTryReuseSubtreeReusesFirstEligibleNonLeafCandidate(t *testing.T) {
 	}
 }
 
+func TestReuseNodePreservesFreshDynamicPrecedenceSelection(t *testing.T) {
+	lang := buildArithmeticLanguage()
+	parser := NewParser(lang)
+
+	// Fresh reductions credit their dynamic precedence directly to the stack.
+	// Give the fresh lineage the later branch order so an exact score tie must
+	// select the incremental lineage below; without reuseNode restoring the
+	// subtree's cumulative credit, the fresh lineage wins on score instead.
+	var freshEntries glrEntryScratch
+	var freshGSS gssScratch
+	reducedSubtree := func() *Node {
+		leaf := NewLeafNode(1, true, 0, 1, Point{}, Point{Column: 1})
+		parent := NewParentNode(3, true, []*Node{leaf}, nil, 0)
+		parent.dynamicPrecedence = 7
+		return parent
+	}
+	freshNode := reducedSubtree()
+	fresh := newGLRStackWithScratch(lang.InitialState, &freshEntries)
+	fresh.branchOrder = 2
+	parser.pushStackNode(&fresh, 1, freshNode, &freshEntries, &freshGSS)
+	var reduced bool
+	markReduceApplied(&fresh, ParseAction{DynamicPrecedence: 7}, &reduced)
+	if !reduced {
+		t.Fatal("fresh reduction was not recorded")
+	}
+
+	var incrementalEntries glrEntryScratch
+	var incrementalGSS gssScratch
+	reusedNode := reducedSubtree()
+	incremental := newGLRStackWithScratch(lang.InitialState, &incrementalEntries)
+	incremental.branchOrder = 1
+	_, reusedBytes, ok := reuseNode(
+		parser,
+		&incremental,
+		reusedNode,
+		1,
+		lang.InitialState,
+		Token{},
+		nil,
+		&reuseCursor{sourceLen: 1},
+		&incrementalEntries,
+		&incrementalGSS,
+		externalScannerCheckpointRef{},
+	)
+	if !ok || reusedBytes != 1 {
+		t.Fatalf("reuseNode = (bytes=%d, ok=%v), want (1, true)", reusedBytes, ok)
+	}
+	stacks := []glrStack{fresh, incremental}
+	parser.promotePrimaryStack(stacks)
+	if got := stackEntryNode(stacks[0].top()); got != reusedNode {
+		t.Fatalf("fresh/incremental score skew changed the selected lineage: incremental=%d fresh=%d", incremental.score, fresh.score)
+	}
+}
+
 func TestTryReuseSubtreeSkipsLargeNonLeafCandidate(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)

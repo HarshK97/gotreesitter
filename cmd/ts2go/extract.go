@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // ExtractedGrammar holds all data extracted from a tree-sitter parser.c file.
@@ -2583,7 +2584,30 @@ func unescapeCString(s string) string {
 	s = strings.ReplaceAll(s, `\t`, "\t")
 	s = strings.ReplaceAll(s, `\r`, "\r")
 	s = strings.ReplaceAll(s, "\x00BACKSLASH\x00", `\`)
-	return s
+	// Tree-sitter emits universal-character escapes in generated C symbol
+	// names (for example, "\\u03bb" for λ). Decode them so a language loaded
+	// from parser.c exposes the same symbol names as the C runtime.
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if i+6 <= len(s) && s[i] == '\\' && s[i+1] == 'u' {
+			if v, err := strconv.ParseUint(s[i+2:i+6], 16, 32); err == nil {
+				b.WriteRune(rune(v))
+				i += 6
+				continue
+			}
+		}
+		if i+10 <= len(s) && s[i] == '\\' && s[i+1] == 'U' {
+			if v, err := strconv.ParseUint(s[i+2:i+10], 16, 32); err == nil {
+				b.WriteRune(rune(v))
+				i += 10
+				continue
+			}
+		}
+		r, n := utf8.DecodeRuneInString(s[i:])
+		b.WriteRune(r)
+		i += n
+	}
+	return b.String()
 }
 
 // parseUint16List parses a comma-separated list of uint16 values from

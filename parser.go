@@ -3219,6 +3219,24 @@ func parseStopReasonWithTokenSourceEOF(stopReason ParseStopReason, tokenSourceEO
 	return stopReason
 }
 
+// rescueMaterializationStopReason preserves a stop reason that result
+// materialization stamped onto a replacement error tree after the parse loop
+// had already accepted. buildResultFromGLR can discard the accepted stacks and
+// return a sentinel error tree carrying its own terminal reason (for example
+// memory_budget when the budget trips during materialization); the loop-level
+// stopReason still says accepted at that point, and stamping it over the tree
+// would report a full-span sentinel ERROR root as a successful parse.
+func rescueMaterializationStopReason(loopReason ParseStopReason, tree *Tree) ParseStopReason {
+	if loopReason != ParseStopAccepted || tree == nil {
+		return loopReason
+	}
+	already := tree.parseRuntimeReadOnly().StopReason
+	if already == "" || already == ParseStopNone || already == ParseStopAccepted {
+		return loopReason
+	}
+	return already
+}
+
 func recordParseRuntimeLoopStats(parseRuntime *ParseRuntime, scratch *parserScratch, iterationsUsed, nodeCount, peakStackDepth, maxStacksSeen, singleStackIterations, multiStackIterations int, singleStackTokens, multiStackTokens uint64) {
 	if parseRuntime == nil {
 		return
@@ -4412,6 +4430,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		scratch.audit.finishParse(stacks)
 		captureArenaStats()
 		captureScratchStats()
+		stopReason = rescueMaterializationStopReason(stopReason, tree)
 		parseRuntime.StopReason = parseStopReasonWithTokenSourceEOF(stopReason, tokenSourceEOFEarly)
 		parseRuntime.MemoryBudgetStopSource = memoryBudgetDiag.source
 		parseRuntime.RuntimeHeapGrowthBytes = memoryBudgetDiag.runtimeHeapGrowthBytes

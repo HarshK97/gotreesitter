@@ -148,6 +148,22 @@ func TestAllowRepeatedZeroWidthExternalGDScriptDedent(t *testing.T) {
 	}
 }
 
+func TestAllowRepeatedZeroWidthExternalBendDedent(t *testing.T) {
+	lang := &Language{
+		Name:            "bend",
+		SymbolNames:     []string{"end", "_dedent", "_other"},
+		ExternalSymbols: []Symbol{1, 2},
+	}
+	d := &dfaTokenSource{language: lang}
+
+	if !d.allowRepeatedZeroWidthExternalSymbol(1) {
+		t.Fatal("expected Bend _dedent to be repeatable")
+	}
+	if d.allowRepeatedZeroWidthExternalSymbol(2) {
+		t.Fatal("expected non-dedent external symbol to remain guarded")
+	}
+}
+
 func TestTrackZeroWidthExternalRepeatableSymbolClearsLoopGuard(t *testing.T) {
 	lang := &Language{
 		SymbolNames:     []string{"end", "_implicit_end_tag"},
