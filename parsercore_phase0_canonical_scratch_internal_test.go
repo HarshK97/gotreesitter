@@ -150,3 +150,47 @@ func TestDiagnosticParserCoreCanonicalScratchSteadyStateDoesNotAllocate(t *testi
 		t.Fatalf("steady canonicalization allocs=%v err=%v", allocs, runErr)
 	}
 }
+
+func TestDiagnosticParserCoreCanonicalScratchMappedSpillPreservesSemantics(t *testing.T) {
+	compact, err := core.New(&genericConflictTable{}, core.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	heads := make([]core.Head, 9)
+	for index := range heads {
+		heads[index], err = compact.Seed(core.StateID(index+1), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkpoint := [32]byte{7}
+	headers := make([]diagnosticParserCoreHeader, 0, 10)
+	headers = append(headers, diagnosticParserCoreHeader{
+		head: heads[0], checkpoint: checkpoint, creationSeq: 1, paused: true, freshness: core.ReductionNew,
+	})
+	for index := 1; index < len(heads); index++ {
+		headers = append(headers, diagnosticParserCoreHeader{
+			head: heads[index], checkpoint: checkpoint, creationSeq: uint64(index + 1),
+		})
+	}
+	headers = append(headers, diagnosticParserCoreHeader{
+		head: heads[0], checkpoint: checkpoint, creationSeq: 99,
+	})
+	var scratch diagnosticParserCoreCanonicalScratch
+	out, err := scratch.canonicalize(compact, headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != len(heads) || scratch.groups == nil {
+		t.Fatalf("mapped spill output=%+v groups=%v", out, scratch.groups)
+	}
+	for index := 0; index < len(out)-1; index++ {
+		if out[index].head != heads[index+1] || out[index].creationSeq != uint64(index+2) {
+			t.Fatalf("mapped spill winner %d=%+v", index, out[index])
+		}
+	}
+	last := out[len(out)-1]
+	if last.head != heads[0] || last.creationSeq != 99 || last.paused || last.freshness != 0 || last.checkpoint != checkpoint {
+		t.Fatalf("mapped spill duplicate winner=%+v", last)
+	}
+}

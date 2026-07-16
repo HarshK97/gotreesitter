@@ -782,9 +782,15 @@ type diagnosticParserCoreCanonicalScratch struct {
 	headerBuffers [2][]diagnosticParserCoreHeader
 	nextBuffer    uint8
 	keys          []diagnosticParserCorePhaseHead
-	winners       map[diagnosticParserCorePhaseHead]int
-	runnable      map[diagnosticParserCorePhaseHead]bool
+	groups        map[diagnosticParserCorePhaseHead]diagnosticParserCoreCanonicalGroup
 }
+
+type diagnosticParserCoreCanonicalGroup struct {
+	winner   int
+	runnable bool
+}
+
+const diagnosticParserCoreLinearCanonicalLimit = 8
 
 func (s *diagnosticParserCoreCanonicalScratch) canonicalize(compact *core.Core, headers []diagnosticParserCoreHeader) ([]diagnosticParserCoreHeader, error) {
 	if s == nil {
@@ -807,16 +813,6 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalize(compact *core.Core, 
 	} else {
 		s.keys = s.keys[:len(headers)]
 	}
-	if s.winners == nil {
-		s.winners = make(map[diagnosticParserCorePhaseHead]int, len(headers))
-	} else {
-		clear(s.winners)
-	}
-	if s.runnable == nil {
-		s.runnable = make(map[diagnosticParserCorePhaseHead]bool, len(headers))
-	} else {
-		clear(s.runnable)
-	}
 	for index, header := range normalized {
 		state, byteOffset, err := compact.Boundary(header.head)
 		if err != nil {
@@ -828,35 +824,108 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalize(compact *core.Core, 
 		key := diagnosticParserCorePhaseHead{head: header.head, shifted: header.shifted, accepted: header.accepted, checkpoint: header.checkpoint}
 		normalized[index] = header
 		s.keys[index] = key
-		if !header.paused {
-			s.runnable[key] = true
-		}
-		if existing, duplicate := s.winners[key]; duplicate {
-			incumbent := normalized[existing]
-			incumbentFresh := incumbent.freshness != 0
-			headerFresh := header.freshness != 0
-			if (incumbentFresh && !headerFresh) ||
-				(incumbentFresh == headerFresh && incumbent.paused && !header.paused) {
-				s.winners[key] = index
+	}
+	var out []diagnosticParserCoreHeader
+	switch {
+	case len(normalized) == 0:
+		out = normalized
+	case len(normalized) == 1:
+		normalized[0].freshness = 0
+		out = normalized
+	case len(normalized) <= diagnosticParserCoreLinearCanonicalLimit:
+		out = s.canonicalizeLinear(normalized)
+	default:
+		out = s.canonicalizeMapped(normalized)
+	}
+	s.headerBuffers[target] = out
+	s.nextBuffer = uint8(target ^ 1)
+	return out, nil
+}
+
+func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(normalized []diagnosticParserCoreHeader) []diagnosticParserCoreHeader {
+	type linearGroup struct {
+		keyIndex int
+		diagnosticParserCoreCanonicalGroup
+	}
+	var groups [diagnosticParserCoreLinearCanonicalLimit]linearGroup
+	groupCount := 0
+	for index, header := range normalized {
+		groupIndex := -1
+		for candidate := 0; candidate < groupCount; candidate++ {
+			if s.keys[groups[candidate].keyIndex] == s.keys[index] {
+				groupIndex = candidate
+				break
 			}
-		} else {
-			s.winners[key] = index
+		}
+		if groupIndex < 0 {
+			groups[groupCount] = linearGroup{
+				keyIndex: index,
+				diagnosticParserCoreCanonicalGroup: diagnosticParserCoreCanonicalGroup{
+					winner: index, runnable: !header.paused,
+				},
+			}
+			groupCount++
+			continue
+		}
+		group := &groups[groupIndex].diagnosticParserCoreCanonicalGroup
+		group.runnable = group.runnable || !header.paused
+		if diagnosticParserCoreCanonicalCandidateWins(normalized[group.winner], header) {
+			group.winner = index
 		}
 	}
 	write := 0
 	for index, header := range normalized {
-		if s.winners[s.keys[index]] != index {
+		for groupIndex := 0; groupIndex < groupCount; groupIndex++ {
+			group := groups[groupIndex].diagnosticParserCoreCanonicalGroup
+			if group.winner != index {
+				continue
+			}
+			header.paused = !group.runnable
+			header.freshness = 0
+			normalized[write] = header
+			write++
+			break
+		}
+	}
+	return normalized[:write]
+}
+
+func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMapped(normalized []diagnosticParserCoreHeader) []diagnosticParserCoreHeader {
+	if s.groups == nil {
+		s.groups = make(map[diagnosticParserCorePhaseHead]diagnosticParserCoreCanonicalGroup, len(normalized))
+	} else {
+		clear(s.groups)
+	}
+	for index, header := range normalized {
+		key := s.keys[index]
+		group, duplicate := s.groups[key]
+		if !duplicate {
+			group.winner = index
+		} else if diagnosticParserCoreCanonicalCandidateWins(normalized[group.winner], header) {
+			group.winner = index
+		}
+		group.runnable = group.runnable || !header.paused
+		s.groups[key] = group
+	}
+	write := 0
+	for index, header := range normalized {
+		group := s.groups[s.keys[index]]
+		if group.winner != index {
 			continue
 		}
-		header.paused = !s.runnable[s.keys[index]]
+		header.paused = !group.runnable
 		header.freshness = 0
 		normalized[write] = header
 		write++
 	}
-	out := normalized[:write]
-	s.headerBuffers[target] = out
-	s.nextBuffer = uint8(target ^ 1)
-	return out, nil
+	return normalized[:write]
+}
+
+func diagnosticParserCoreCanonicalCandidateWins(incumbent, candidate diagnosticParserCoreHeader) bool {
+	incumbentFresh := incumbent.freshness != 0
+	candidateFresh := candidate.freshness != 0
+	return incumbentFresh && !candidateFresh ||
+		incumbentFresh == candidateFresh && incumbent.paused && !candidate.paused
 }
 
 func canonicalizeDiagnosticParserCoreHeaders(compact *core.Core, headers []diagnosticParserCoreHeader) ([]diagnosticParserCoreHeader, error) {
