@@ -7,6 +7,16 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Performance
+
+- Large sources dominated by a single literal or comment body no longer
+  preallocate a full-parse node arena sized off their byte length. A bounded
+  structural-density sample now caps the first-pass estimate, cutting arena
+  preallocation (and its memory-budget charge) by more than an order of
+  magnitude on such files with byte-identical trees; dense generated code
+  keeps its existing preallocation, and learned per-parser hints keep
+  priority.
+
 ### Fixed
 
 - Incremental parsing now preserves the configured bounded GLR width and

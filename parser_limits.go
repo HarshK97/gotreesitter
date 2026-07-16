@@ -111,10 +111,69 @@ const typeScriptFourslashLargeCommentArenaNodeCap = 64 * 1024
 
 func parseFullArenaNodeCapacityForSource(source []byte, lang *Language, hint int) int {
 	target := parseFullArenaNodeCapacity(len(source), hint)
+	if densityCap, ok := parseFullArenaStructuralDensityNodeCap(source); ok && target > densityCap {
+		// The density cap bounds only the byte-length estimate. A learned
+		// hint reflects real node usage from a previous parse on this parser
+		// and keeps priority, exactly as parseFullArenaNodeCapacity granted
+		// it (bounded by parseFullArenaHintLimit).
+		floor := nodeCapacityForClass(arenaClassFull)
+		if hint > 0 {
+			if capped := min(hint, parseFullArenaHintLimit(len(source))); capped > floor {
+				floor = capped
+			}
+		}
+		target = max(densityCap, floor)
+	}
 	if !typeScriptLargeFourslashSource(source, lang) || target <= typeScriptFourslashLargeCommentArenaNodeCap {
 		return target
 	}
 	return max(nodeCapacityForClass(arenaClassFull), typeScriptFourslashLargeCommentArenaNodeCap)
+}
+
+// parseFullArenaStructuralDensityNodeCap bounds the first-pass node estimate
+// for large sources by sampled structural byte density. Parse-tree nodes sit
+// at token boundaries, and token boundaries sit at structural bytes —
+// whitespace, delimiters, separators, operators. Dense generated code
+// measures about two final nodes per structural byte, so three per structural
+// byte leaves headroom for fork debris; a large source dominated by one giant
+// literal or comment body has almost no structural bytes, and the plain
+// byte-length estimate overshoots it by orders of magnitude, front-loading
+// tens of megabytes of arena that the memory budget then charges. Sampling is
+// bounded (at most 64 windows of 16 KiB) and only sources of at least 1 MiB
+// pay for it; smaller sources keep the existing estimate unchanged.
+func parseFullArenaStructuralDensityNodeCap(source []byte) (int, bool) {
+	const minSourceBytes = 1024 * 1024
+	if len(source) < minSourceBytes {
+		return 0, false
+	}
+	const windowSize = 16 * 1024
+	const maxWindows = 64
+	windows := len(source) / windowSize
+	if windows > maxWindows {
+		windows = maxWindows
+	}
+	if windows == 0 {
+		return 0, false
+	}
+	stride := len(source) / windows
+	structural := 0
+	sampled := 0
+	for w := 0; w < windows; w++ {
+		start := w * stride
+		end := min(start+windowSize, len(source))
+		for _, b := range source[start:end] {
+			switch b {
+			case '\n', '\t', ' ', '(', ')', '{', '}', '[', ']', ';', ',', '=', '.', ':':
+				structural++
+			}
+		}
+		sampled += end - start
+	}
+	if sampled == 0 {
+		return 0, false
+	}
+	est := 3 * structural * len(source) / sampled
+	return est, true
 }
 
 func typeScriptLargeFourslashSource(source []byte, lang *Language) bool {
