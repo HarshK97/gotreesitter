@@ -187,6 +187,17 @@ type boundaryKey struct {
 	checkpoint [32]byte
 }
 
+// BoundaryIndexStats reports the diagnostic canonical-boundary index shape.
+// CurrentEntries is the active frontier's live width; RetainedEntries includes
+// historical frontier entries still held by the index. Reading these counters
+// is diagnostic-only and deliberately scans the map rather than taxing the hot
+// mutation path.
+type BoundaryIndexStats struct {
+	Frontier        uint64
+	CurrentEntries  uint64
+	RetainedEntries uint64
+}
+
 type nodeRecord struct {
 	state      StateID
 	byteOffset uint32
@@ -339,6 +350,7 @@ type Core struct {
 	frontier         uint64
 	checkpoint       [32]byte
 	boundaries       map[boundaryKey]NodeID
+	boundaryKeys     []boundaryKey
 	boundaryJournal  []boundaryMutation
 	transactions     []uint64
 	nextTransaction  uint64
@@ -355,6 +367,7 @@ type checkpoint struct {
 	nodes, links, subtrees, children, fields, aliases int
 	frontier                                          uint64
 	checkpoint                                        [32]byte
+	boundaryKeys                                      int
 	journal                                           int
 	transaction                                       uint64
 	work                                              Work
@@ -369,7 +382,8 @@ func (c *Core) mark() checkpoint {
 		nodes: len(c.nodes), links: len(c.links), subtrees: len(c.subtrees),
 		children: len(c.children), fields: len(c.fields), aliases: len(c.aliases),
 		frontier: c.frontier, checkpoint: c.checkpoint,
-		journal: len(c.boundaryJournal), transaction: c.nextTransaction,
+		boundaryKeys: len(c.boundaryKeys),
+		journal:      len(c.boundaryJournal), transaction: c.nextTransaction,
 		work: c.work,
 	}
 	c.transactions = append(c.transactions, mark.transaction)
@@ -396,6 +410,7 @@ func (c *Core) restore(mark checkpoint) {
 		}
 	}
 	c.boundaryJournal = c.boundaryJournal[:mark.journal]
+	c.boundaryKeys = c.boundaryKeys[:mark.boundaryKeys]
 	c.finishTransaction()
 }
 
@@ -440,6 +455,9 @@ func (c *Core) writeBoundary(key boundaryKey, id NodeID) {
 	if len(c.transactions) != 0 {
 		c.boundaryJournal = append(c.boundaryJournal, boundaryMutation{key: key, previous: previous, existed: existed})
 	}
+	if !existed {
+		c.boundaryKeys = append(c.boundaryKeys, key)
+	}
 	c.boundaries[key] = id
 }
 
@@ -477,6 +495,7 @@ func (c *Core) Reset() error {
 	c.frontier = 1
 	c.checkpoint = [32]byte{}
 	clear(c.boundaries)
+	c.boundaryKeys = c.boundaryKeys[:0]
 	c.boundaryJournal = c.boundaryJournal[:0]
 	c.transactions = c.transactions[:0]
 	c.nextTransaction = 0
@@ -490,9 +509,16 @@ func (c *Core) Reset() error {
 // Boundary condensation never crosses generations, even when state and byte
 // position repeat. Existing heads remain valid persistent predecessors.
 func (c *Core) BeginFrontier() error {
+	if len(c.transactions) != 0 {
+		return errors.New("parser-core phase zero: begin frontier during active transaction")
+	}
 	if c.frontier == math.MaxUint64 {
 		return errors.New("parser-core phase zero: frontier epoch overflow")
 	}
+	for _, key := range c.boundaryKeys {
+		delete(c.boundaries, key)
+	}
+	c.boundaryKeys = c.boundaryKeys[:0]
 	c.frontier++
 	c.checkpoint = [32]byte{}
 	return nil
@@ -508,6 +534,20 @@ func (c *Core) boundaryKey(state StateID, byteOffset uint32) boundaryKey {
 
 func (c *Core) shiftedBoundaryKey(state StateID, byteOffset uint32) boundaryKey {
 	return boundaryKey{frontier: c.frontier, state: state, byteOffset: byteOffset, shifted: true, checkpoint: c.checkpoint}
+}
+
+// BoundaryIndexStats returns the live and retained canonical lookup census.
+func (c *Core) BoundaryIndexStats() BoundaryIndexStats {
+	if c == nil {
+		return BoundaryIndexStats{}
+	}
+	stats := BoundaryIndexStats{Frontier: c.frontier, RetainedEntries: uint64(len(c.boundaries))}
+	for key := range c.boundaries {
+		if key.frontier == c.frontier {
+			stats.CurrentEntries++
+		}
+	}
+	return stats
 }
 
 // Seed creates one empty derivation at a parser boundary.

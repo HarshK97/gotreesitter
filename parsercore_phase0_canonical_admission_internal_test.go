@@ -49,58 +49,59 @@ type diagnosticParserCoreCanonicalAdmission struct {
 	work            core.Work
 }
 
+var diagnosticParserCoreCanonicalAdmissions = []diagnosticParserCoreCanonicalAdmission{
+	{
+		id: "rewrite", bytes: 5116,
+		sourceSHA256:   "74c0705f8729670559492fb5460a01b2a1a2a109928e1aeb52736e485e8ff097",
+		deepTreeSHA256: "b3f9814b65763642d4eac58b9065018048ea13e6f10d56afb28a0479bf5a68a1",
+		selectedNodes:  1524, selectedParents: 572, selectedLeaves: 952,
+		work: core.Work{
+			Shifts: 1348, Reductions: 1501, ReductionPopRequests: 1501,
+			EmittedPopPaths: 1646, EmittedPopPayloads: 2995,
+			GraphLinkAdditionsProxy: 3004, LeafConstructionsProxy: 1109,
+			ParentConstructionsProxy: 1515,
+		},
+	},
+	{
+		id: "query_compile", bytes: 20168,
+		sourceSHA256:   "b788ee19b0075f0b9b567a9f93ea657e715bc8a6a40a99d3ca5c761404e71894",
+		deepTreeSHA256: "ecc090a83a4343a1c7c2afbad63277f5b4d60c42d8d94a2af2a9b16e46f2ccb5",
+		selectedNodes:  7524, selectedParents: 2853, selectedLeaves: 4671,
+		work: core.Work{
+			Shifts: 6685, Reductions: 7440, ReductionPopRequests: 7440,
+			EmittedPopPaths: 8103, EmittedPopPayloads: 14703,
+			GraphLinkAdditionsProxy: 14749, LeafConstructionsProxy: 5546,
+			ParentConstructionsProxy: 7537,
+		},
+	},
+	{
+		id: "language", bytes: 41387,
+		sourceSHA256:   "009aa9fd5352c712f3839670c7df8a9b00ae878ee20dc88131a438b2d5edfd9a",
+		deepTreeSHA256: "583df223904fe414c33bba3b474c6557ecdb20e7f47e304b9a09bfcc2da44539",
+		selectedNodes:  7082, selectedParents: 2631, selectedLeaves: 4451,
+		work: core.Work{
+			Shifts: 6512, Reductions: 7561, ReductionPopRequests: 7561,
+			EmittedPopPaths: 8408, EmittedPopPayloads: 15864,
+			GraphLinkAdditionsProxy: 15145, LeafConstructionsProxy: 5375,
+			ParentConstructionsProxy: 7707,
+		},
+	},
+	{
+		id: "grammargen_lr", bytes: 235626,
+		sourceSHA256:   "a7e4a1a64b25a60aea36183b9d6d53dcd9240942cdb10e67a3cf9e6ce30f95b2",
+		deepTreeSHA256: "1472cfd9a014d4034dbc1456afd12c282630ef787c3543cf0cecb73619883ad2",
+		selectedNodes:  71768, selectedParents: 26371, selectedLeaves: 45397,
+		work: core.Work{
+			Shifts: 66119, Reductions: 75988, ReductionPopRequests: 75988,
+			EmittedPopPaths: 84924, EmittedPopPayloads: 153451,
+			GraphLinkAdditionsProxy: 150271, LeafConstructionsProxy: 53897,
+			ParentConstructionsProxy: 78426,
+		},
+	},
+}
+
 func TestDiagnosticParserCoreCanonicalAdmissions(t *testing.T) {
-	rows := []diagnosticParserCoreCanonicalAdmission{
-		{
-			id: "rewrite", bytes: 5116,
-			sourceSHA256:   "74c0705f8729670559492fb5460a01b2a1a2a109928e1aeb52736e485e8ff097",
-			deepTreeSHA256: "b3f9814b65763642d4eac58b9065018048ea13e6f10d56afb28a0479bf5a68a1",
-			selectedNodes:  1524, selectedParents: 572, selectedLeaves: 952,
-			work: core.Work{
-				Shifts: 1348, Reductions: 1501, ReductionPopRequests: 1501,
-				EmittedPopPaths: 1646, EmittedPopPayloads: 2995,
-				GraphLinkAdditionsProxy: 3004, LeafConstructionsProxy: 1109,
-				ParentConstructionsProxy: 1515,
-			},
-		},
-		{
-			id: "query_compile", bytes: 20168,
-			sourceSHA256:   "b788ee19b0075f0b9b567a9f93ea657e715bc8a6a40a99d3ca5c761404e71894",
-			deepTreeSHA256: "ecc090a83a4343a1c7c2afbad63277f5b4d60c42d8d94a2af2a9b16e46f2ccb5",
-			selectedNodes:  7524, selectedParents: 2853, selectedLeaves: 4671,
-			work: core.Work{
-				Shifts: 6685, Reductions: 7440, ReductionPopRequests: 7440,
-				EmittedPopPaths: 8103, EmittedPopPayloads: 14703,
-				GraphLinkAdditionsProxy: 14749, LeafConstructionsProxy: 5546,
-				ParentConstructionsProxy: 7537,
-			},
-		},
-		{
-			id: "language", bytes: 41387,
-			sourceSHA256:   "009aa9fd5352c712f3839670c7df8a9b00ae878ee20dc88131a438b2d5edfd9a",
-			deepTreeSHA256: "583df223904fe414c33bba3b474c6557ecdb20e7f47e304b9a09bfcc2da44539",
-			selectedNodes:  7082, selectedParents: 2631, selectedLeaves: 4451,
-			work: core.Work{
-				Shifts: 6512, Reductions: 7561, ReductionPopRequests: 7561,
-				EmittedPopPaths: 8408, EmittedPopPayloads: 15864,
-				GraphLinkAdditionsProxy: 15145, LeafConstructionsProxy: 5375,
-				ParentConstructionsProxy: 7707,
-			},
-		},
-		{
-			id: "grammargen_lr", bytes: 235626,
-			sourceSHA256:   "a7e4a1a64b25a60aea36183b9d6d53dcd9240942cdb10e67a3cf9e6ce30f95b2",
-			deepTreeSHA256: "1472cfd9a014d4034dbc1456afd12c282630ef787c3543cf0cecb73619883ad2",
-			selectedNodes:  71768, selectedParents: 26371, selectedLeaves: 45397,
-			work: core.Work{
-				Shifts: 66119, Reductions: 75988, ReductionPopRequests: 75988,
-				EmittedPopPaths: 84924, EmittedPopPayloads: 153451,
-				GraphLinkAdditionsProxy: 150271, LeafConstructionsProxy: 53897,
-				ParentConstructionsProxy: 78426,
-			},
-		},
-	}
-	for _, row := range rows {
+	for _, row := range diagnosticParserCoreCanonicalAdmissions {
 		row := row
 		t.Run(row.id, func(t *testing.T) {
 			fixture := loadDiagnosticParserCoreCanonicalFixture(t, row.id)
@@ -152,6 +153,118 @@ func TestDiagnosticParserCoreCanonicalAdmissions(t *testing.T) {
 				t.Fatalf("production canonical deep-tree digest=%s want=%s", got, fixture.DeepTreeSHA256)
 			}
 			parserCoreWarmRequireDeepEqual(t, result.MaterializedTree, production, lang)
+		})
+	}
+}
+
+func TestDiagnosticParserCoreBoundaryIndexCensus(t *testing.T) {
+	for _, row := range diagnosticParserCoreCanonicalAdmissions {
+		row := row
+		t.Run(row.id, func(t *testing.T) {
+			fixture := loadDiagnosticParserCoreCanonicalFixture(t, row.id)
+			requireDiagnosticParserCoreCanonicalFixtureIdentity(t, fixture, row)
+			lang, err := authenticatedParserCoreGoLanguage(parserCoreWarmGoScanner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			parser := NewParser(lang)
+			tables, err := newParserCoreRootTables(parser)
+			if err != nil {
+				t.Fatal(err)
+			}
+			compact, err := core.New(tables, diagnosticParserCoreCanonicalLimits())
+			if err != nil {
+				t.Fatal(err)
+			}
+			tokenSource := parser.acquireParserDFATokenSource(fixture.Source)
+			if tokenSource == nil {
+				t.Fatal("canonical boundary census could not acquire DFA token source")
+			}
+			defer tokenSource.Close()
+			var elections, peakCurrent, peakRetained uint64
+			maxCheckpointBytes := 0
+			observer := diagnosticParserCoreSeedObserver{beforeElection: func(s *diagnosticParserCoreGenericScheduler) error {
+				stats := s.compact.BoundaryIndexStats()
+				elections++
+				if stats.CurrentEntries > peakCurrent {
+					peakCurrent = stats.CurrentEntries
+				}
+				if stats.RetainedEntries > peakRetained {
+					peakRetained = stats.RetainedEntries
+				}
+				if s.checkpoint.Length > maxCheckpointBytes {
+					maxCheckpointBytes = s.checkpoint.Length
+				}
+				return nil
+			}}
+			var scannerScratch []byte
+			scheduler, err := executeDiagnosticParserCoreGenericSchedulerFromSeed(
+				compact, tokenSource, &scannerScratch, lang.InitialState,
+				DiagnosticParserCorePrefixOptions{
+					ReceiptMode: DiagnosticParserCoreReceiptSummary,
+					MaxTokens:   300000, MaxDispatches: 600000,
+					Limits: diagnosticParserCoreCanonicalLimits(),
+				},
+				observer,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if scheduler == nil || scheduler.acceptedHead.Node == 0 || compact.Work() != row.work {
+				t.Fatalf("canonical boundary census did not preserve acceptance: scheduler=%v work=%+v", scheduler != nil, compact.Work())
+			}
+			final := compact.BoundaryIndexStats()
+			t.Logf("boundary-index fixture=%s elections=%d peak_current=%d peak_retained=%d final_current=%d final_retained=%d max_checkpoint_bytes=%d",
+				row.id, elections, peakCurrent, peakRetained, final.CurrentEntries, final.RetainedEntries, maxCheckpointBytes)
+		})
+	}
+}
+
+func BenchmarkDiagnosticParserCoreCanonicalSchedulerCold(b *testing.B) {
+	for _, row := range diagnosticParserCoreCanonicalAdmissions {
+		row := row
+		b.Run(row.id, func(b *testing.B) {
+			fixture := loadDiagnosticParserCoreCanonicalFixture(b, row.id)
+			requireDiagnosticParserCoreCanonicalFixtureIdentity(b, fixture, row)
+			lang, err := authenticatedParserCoreGoLanguage(parserCoreWarmGoScanner)
+			if err != nil {
+				b.Fatal(err)
+			}
+			parser := NewParser(lang)
+			tables, err := newParserCoreRootTables(parser)
+			if err != nil {
+				b.Fatal(err)
+			}
+			options := DiagnosticParserCorePrefixOptions{
+				ReceiptMode: DiagnosticParserCoreReceiptSummary,
+				MaxTokens:   300000, MaxDispatches: 600000,
+				Limits: diagnosticParserCoreCanonicalLimits(),
+			}
+			var scannerScratch []byte
+			b.ReportAllocs()
+			b.SetBytes(int64(len(fixture.Source)))
+			b.ResetTimer()
+			for range b.N {
+				compact, err := core.New(tables, diagnosticParserCoreCanonicalLimits())
+				if err != nil {
+					b.Fatal(err)
+				}
+				tokenSource := parser.acquireParserDFATokenSource(fixture.Source)
+				if tokenSource == nil {
+					b.Fatal("canonical cold scheduler could not acquire DFA token source")
+				}
+				scheduler, runErr := executeDiagnosticParserCoreGenericSchedulerFromSeed(
+					compact, tokenSource, &scannerScratch, lang.InitialState, options,
+					diagnosticParserCoreSeedObserver{},
+				)
+				tokenSource.Close()
+				if runErr != nil {
+					b.Fatal(runErr)
+				}
+				if scheduler == nil || scheduler.acceptedHead.Node == 0 || compact.Work() != row.work {
+					b.Fatalf("canonical cold scheduler acceptance drifted: scheduler=%v work=%+v", scheduler != nil, compact.Work())
+				}
+			}
 		})
 	}
 }

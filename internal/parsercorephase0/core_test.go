@@ -456,34 +456,24 @@ func TestScannerCheckpointPreventsSameBoundaryCondensation(t *testing.T) {
 	}
 }
 
-func TestApplyAtomicRollsBackEarlierConflictArm(t *testing.T) {
+func TestBeginFrontierRejectsActiveTransactionWithoutMutation(t *testing.T) {
 	core := newTinyCore(t, 4)
-	seed, _ := core.Seed(1, 0)
-	payload, _ := core.appendSubtree(subtreeRecord{symbol: 1, terminal: true, endByte: 1}, nil, nil, nil)
-	before, _ := core.Stats(seed)
+	_, _ = core.Seed(1, 0)
+	beforeBoundaries := cloneBoundaryMap(core.boundaries)
+	beforeKeys := append([]boundaryKey(nil), core.boundaryKeys...)
 	beforeFrontier, beforeCheckpoint := core.frontier, core.checkpoint
 	err := core.ApplyAtomic(func() error {
-		if err := core.BeginFrontier(); err != nil {
-			return err
+		if err := core.BeginFrontier(); err == nil || !strings.Contains(err.Error(), "active transaction") {
+			return fmt.Errorf("begin frontier error=%v", err)
 		}
-		core.SetPhaseCheckpoint([32]byte{1})
-		if _, err := core.condense(core.boundaryKey(2, 1), linkInput{prev: seed.Node, payload: payload}); err != nil {
-			return err
-		}
-		return errors.New("later primary arm declined")
+		return nil
 	})
-	if err == nil || !strings.Contains(err.Error(), "primary") {
-		t.Fatalf("atomic conflict error=%v", err)
+	if err != nil {
+		t.Fatal(err)
 	}
-	after, _ := core.Stats(seed)
-	if after != before {
-		t.Fatalf("atomic conflict rollback mutated core: before=%+v after=%+v", before, after)
-	}
-	if core.frontier != beforeFrontier || core.checkpoint != beforeCheckpoint {
-		t.Fatalf("atomic phase rollback=(%d,%x), want (%d,%x)", core.frontier, core.checkpoint, beforeFrontier, beforeCheckpoint)
-	}
-	if _, ok := core.CanonicalBoundary(2, 1, false, [32]byte{}); ok {
-		t.Fatal("rolled-back conflict boundary remains published")
+	if core.frontier != beforeFrontier || core.checkpoint != beforeCheckpoint || !reflect.DeepEqual(core.boundaries, beforeBoundaries) || !reflect.DeepEqual(core.boundaryKeys, beforeKeys) {
+		t.Fatalf("rejected frontier advance mutated core: frontier=%d/%d checkpoint=%x/%x boundaries=%v/%v keys=%v/%v",
+			core.frontier, beforeFrontier, core.checkpoint, beforeCheckpoint, core.boundaries, beforeBoundaries, core.boundaryKeys, beforeKeys)
 	}
 }
 
@@ -516,6 +506,9 @@ func TestBoundaryMutationJournalRollback(t *testing.T) {
 		if !errors.Is(err, sentinel) || compact.boundaries[key] != head.Node {
 			t.Fatalf("same-key rollback err=%v boundary=%d, want %d", err, compact.boundaries[key], head.Node)
 		}
+		if len(compact.boundaryKeys) != 1 {
+			t.Fatalf("same-key rollback touched keys=%d, want 1", len(compact.boundaryKeys))
+		}
 		assertTransactionJournalClean(t, compact)
 	})
 
@@ -531,6 +524,9 @@ func TestBoundaryMutationJournalRollback(t *testing.T) {
 		}
 		if _, exists := compact.boundaries[key]; exists {
 			t.Fatal("absent boundary survived rollback")
+		}
+		if len(compact.boundaryKeys) != 1 {
+			t.Fatalf("absent-key rollback touched keys=%d, want 1", len(compact.boundaryKeys))
 		}
 		assertTransactionJournalClean(t, compact)
 	})
@@ -589,14 +585,13 @@ func TestMutationJournalRestoresScalarsAndArenas(t *testing.T) {
 	}
 	beforeStats, _ := compact.Stats(head)
 	beforeBoundaries := cloneBoundaryMap(compact.boundaries)
+	beforeKeys := append([]boundaryKey(nil), compact.boundaryKeys...)
 	beforeFrontier, beforeCheckpoint := compact.frontier, compact.checkpoint
 	wantCheckpoint := [32]byte{1, 2, 3}
+	compact.SetPhaseCheckpoint(wantCheckpoint)
+	beforeCheckpoint = compact.checkpoint
 	sentinel := errors.New("rollback")
 	err = compact.ApplyAtomic(func() error {
-		if err := compact.BeginFrontier(); err != nil {
-			return err
-		}
-		compact.SetPhaseCheckpoint(wantCheckpoint)
 		payload, err := compact.appendSubtree(subtreeRecord{symbol: 7, terminal: true}, nil, nil, nil)
 		if err != nil {
 			return err
@@ -613,11 +608,79 @@ func TestMutationJournalRestoresScalarsAndArenas(t *testing.T) {
 		t.Fatalf("scalar/arena rollback err=%v", err)
 	}
 	afterStats, _ := compact.Stats(head)
-	if afterStats != beforeStats || compact.frontier != beforeFrontier || compact.checkpoint != beforeCheckpoint || !reflect.DeepEqual(compact.boundaries, beforeBoundaries) {
+	if afterStats != beforeStats || compact.frontier != beforeFrontier || compact.checkpoint != beforeCheckpoint || !reflect.DeepEqual(compact.boundaries, beforeBoundaries) || !reflect.DeepEqual(compact.boundaryKeys, beforeKeys) {
 		t.Fatalf("scalar/arena rollback stats=%+v/%+v frontier=%d/%d checkpoint=%x/%x boundaries=%v/%v",
 			afterStats, beforeStats, compact.frontier, beforeFrontier, compact.checkpoint, beforeCheckpoint, compact.boundaries, beforeBoundaries)
 	}
 	assertTransactionJournalClean(t, compact)
+}
+
+func TestBeginFrontierRetiresCanonicalLookupButPreservesGraphHistory(t *testing.T) {
+	compact := newTinyCore(t, 8)
+	seed, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := compact.appendSubtree(subtreeRecord{symbol: 1, terminal: true, endByte: 1}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := compact.condense(compact.boundaryKey(2, 1), linkInput{prev: seed.Node, payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKey := compact.boundaryKey(2, 1)
+	if got := compact.BoundaryIndexStats(); got.CurrentEntries != 2 || got.RetainedEntries != 2 {
+		t.Fatalf("pre-advance boundary stats=%+v, want 2/2", got)
+	}
+	before, err := compact.Derivations(old)
+	if err != nil || len(before) != 1 {
+		t.Fatalf("pre-advance derivations=%+v err=%v", before, err)
+	}
+	if err := compact.BeginFrontier(); err != nil {
+		t.Fatal(err)
+	}
+	if got := compact.BoundaryIndexStats(); got.CurrentEntries != 0 || got.RetainedEntries != 0 {
+		t.Fatalf("retired boundary stats=%+v, want 0/0", got)
+	}
+	if _, exists := compact.boundaries[oldKey]; exists || len(compact.boundaryKeys) != 0 {
+		t.Fatalf("historical canonical lookup survived: exists=%t keys=%d", exists, len(compact.boundaryKeys))
+	}
+	state, offset, err := compact.Boundary(old)
+	if err != nil || state != 2 || offset != 1 {
+		t.Fatalf("historical head invalid after frontier advance: state=%d offset=%d err=%v", state, offset, err)
+	}
+	after, err := compact.Derivations(old)
+	if err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("historical derivation drifted after frontier advance: got=%+v want=%+v err=%v", after, before, err)
+	}
+	newHead, err := compact.condense(compact.boundaryKey(2, 1), linkInput{prev: seed.Node, payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newHead == old {
+		t.Fatalf("new frontier reused historical canonical head %+v", old)
+	}
+	if got := compact.BoundaryIndexStats(); got.CurrentEntries != 1 || got.RetainedEntries != 1 {
+		t.Fatalf("new-frontier boundary stats=%+v, want 1/1", got)
+	}
+}
+
+func TestBeginFrontierWarmPathAllocations(t *testing.T) {
+	compact := newTinyCore(t, 8)
+	const width = 32
+	cycle := func() {
+		for index := 0; index < width; index++ {
+			compact.writeBoundary(compact.boundaryKey(StateID(index+1), uint32(index)), NodeID(index+1))
+		}
+		if err := compact.BeginFrontier(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cycle()
+	if got := testing.AllocsPerRun(100, cycle); got != 0 {
+		t.Fatalf("warm frontier cycle allocations=%v, want 0", got)
+	}
 }
 
 func TestOuterRollbackUndoesSuccessfulNestedParserOperations(t *testing.T) {
