@@ -44,6 +44,12 @@ type LangEntry struct {
 	TagsQuery          string                                                                 // tree-sitter tags.scm query for symbol extraction
 	TokenSourceFactory func(src []byte, lang *gotreesitter.Language) gotreesitter.TokenSource // nil = use DFA
 	Quality            ParseQuality                                                           // populated by AuditParseSupport
+
+	// rawHighlightQuery preserves the entry's pre-composition highlight query
+	// so re-running inheritance resolution (any Register call resets it) stays
+	// idempotent instead of prepending parent queries a second time.
+	rawHighlightQuery    string
+	highlightRawCaptured bool
 }
 
 var registry []LangEntry
@@ -203,26 +209,71 @@ func RegisterExtension(ext ExtensionEntry) {
 // Protected by registryMu.
 var extensionAliases = map[string]string{}
 
+// defaultHighlightInherits records the upstream tree-sitter highlight
+// inheritance convention for grammars whose generated registry entries do
+// not populate InheritHighlights: their bundled highlights.scm contains only
+// language-specific additions and expects the parent's query ahead of it.
+// An entry's explicit InheritHighlights always takes priority.
+var defaultHighlightInherits = map[string]string{
+	"typescript": "javascript",
+	"tsx":        "typescript",
+	"cpp":        "c",
+}
+
 // resolveHighlightInheritance composes highlight queries for languages that
-// inherit from a parent. MUST be called with registryMu.Lock() held.
-// Callers are responsible for ensuring builtins are registered first.
+// inherit from a parent, walking multi-level chains (tsx -> typescript ->
+// javascript) regardless of registration order and guarding against cycles.
+// The parent is the entry's InheritHighlights, falling back to the upstream
+// convention in defaultHighlightInherits. MUST be called with registryMu
+// .Lock() held. Callers are responsible for ensuring builtins are registered
+// first.
 func resolveHighlightInheritance() {
 	if highlightInheritanceResolved {
 		return
 	}
 	highlightInheritanceResolved = true
+
+	index := make(map[string]int, len(registry))
 	for i := range registry {
+		index[registry[i].Name] = i
+		if !registry[i].highlightRawCaptured {
+			registry[i].rawHighlightQuery = registry[i].HighlightQuery
+			registry[i].highlightRawCaptured = true
+		}
+	}
+	composed := make(map[string]string, len(registry))
+
+	var resolve func(name string, chain map[string]bool) string
+	resolve = func(name string, chain map[string]bool) string {
+		if q, ok := composed[name]; ok {
+			return q
+		}
+		i, ok := index[name]
+		if !ok {
+			return ""
+		}
+		query := registry[i].rawHighlightQuery
 		parent := registry[i].InheritHighlights
 		if parent == "" {
-			continue
+			parent = defaultHighlightInherits[name]
 		}
-		for j := range registry {
-			if registry[j].Name == parent {
-				// Prepend parent query so child overrides win (last match wins in tree-sitter).
-				registry[i].HighlightQuery = registry[j].HighlightQuery + "\n" + registry[i].HighlightQuery
-				break
+		if parent != "" && !chain[parent] {
+			chain[name] = true
+			if parentQuery := resolve(parent, chain); strings.TrimSpace(parentQuery) != "" {
+				if strings.TrimSpace(query) == "" {
+					// Prepend parent query so child overrides win (last match wins in tree-sitter).
+					query = parentQuery
+				} else {
+					query = parentQuery + "\n" + query
+				}
 			}
 		}
+		composed[name] = query
+		return query
+	}
+
+	for i := range registry {
+		registry[i].HighlightQuery = resolve(registry[i].Name, map[string]bool{})
 	}
 }
 

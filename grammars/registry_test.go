@@ -633,3 +633,79 @@ func TestDetectLanguageByNameRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestHighlightInheritanceComposesDefaultChains(t *testing.T) {
+	get := func(name string) string {
+		entry := DetectLanguageByName(name)
+		if entry == nil {
+			t.Fatalf("expected %s to be registered", name)
+		}
+		return entry.HighlightQuery
+	}
+	jsQ, tsQ, tsxQ := get("javascript"), get("typescript"), get("tsx")
+	cQ, cppQ := get("c"), get("cpp")
+
+	if !strings.HasPrefix(tsQ, jsQ) || len(tsQ) <= len(jsQ) {
+		t.Errorf("typescript highlight query should compose javascript base ahead of its additions (js=%dB ts=%dB)", len(jsQ), len(tsQ))
+	}
+	if !strings.HasPrefix(tsxQ, tsQ) {
+		t.Errorf("tsx highlight query should compose the already-composed typescript query (ts=%dB tsx=%dB)", len(tsQ), len(tsxQ))
+	}
+	if !strings.HasPrefix(cppQ, cQ) || len(cppQ) <= len(cQ) {
+		t.Errorf("cpp highlight query should compose c base ahead of its additions (c=%dB cpp=%dB)", len(cQ), len(cppQ))
+	}
+
+	goEntry := DetectLanguageByName("go")
+	if goEntry == nil {
+		t.Fatal("expected go to be registered")
+	}
+	if strings.HasPrefix(goEntry.HighlightQuery, jsQ) {
+		t.Error("go has no highlight parent and must not gain one")
+	}
+}
+
+func TestHighlightInheritanceIdempotentAcrossReregistration(t *testing.T) {
+	before := DetectLanguageByName("typescript").HighlightQuery
+
+	oldRegistry := append([]LangEntry(nil), registry...)
+	oldResolved := highlightInheritanceResolved
+	t.Cleanup(func() {
+		registry = oldRegistry
+		highlightInheritanceResolved = oldResolved
+		extIndex = nil
+	})
+
+	// Any registration resets highlightInheritanceResolved; the next lookup
+	// re-runs resolution over already-composed entries.
+	Register(LangEntry{Name: "zz_idempotency_probe", HighlightQuery: "(identifier) @variable"})
+
+	after := DetectLanguageByName("typescript").HighlightQuery
+	if after != before {
+		t.Fatalf("re-resolution must be idempotent: typescript query changed %dB -> %dB", len(before), len(after))
+	}
+}
+
+func TestHighlightInheritanceCycleTerminates(t *testing.T) {
+	oldRegistry := append([]LangEntry(nil), registry...)
+	oldResolved := highlightInheritanceResolved
+	t.Cleanup(func() {
+		registry = oldRegistry
+		highlightInheritanceResolved = oldResolved
+		extIndex = nil
+	})
+
+	Register(LangEntry{Name: "zz_cycle_a", HighlightQuery: "(a) @x", InheritHighlights: "zz_cycle_b"})
+	Register(LangEntry{Name: "zz_cycle_b", HighlightQuery: "(b) @y", InheritHighlights: "zz_cycle_a"})
+
+	a := DetectLanguageByName("zz_cycle_a")
+	b := DetectLanguageByName("zz_cycle_b")
+	if a == nil || b == nil {
+		t.Fatal("cycle entries should still be registered")
+	}
+	if !strings.Contains(a.HighlightQuery, "(a) @x") || !strings.Contains(b.HighlightQuery, "(b) @y") {
+		t.Error("cycle members must keep their own query")
+	}
+	if strings.Count(a.HighlightQuery, "(a) @x") != 1 || strings.Count(b.HighlightQuery, "(b) @y") != 1 {
+		t.Error("cycle resolution must not duplicate queries")
+	}
+}
