@@ -778,22 +778,26 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 			return false
 		}
 		var terminal ParseAction
+		terminalOrdinal := -1
 		terminalSet := false
 		var reduce ParseAction
+		reduceOrdinal := -1
 		reduceSet := false
-		for _, act := range actions {
+		for actionOrdinal, act := range actions {
 			switch act.Type {
 			case ParseActionReduce:
 				if reduceSet {
 					return false
 				}
 				reduce = act
+				reduceOrdinal = actionOrdinal
 				reduceSet = true
 			case ParseActionShift, ParseActionRecover, ParseActionAccept:
 				if terminalSet {
 					return false
 				}
 				terminal = act
+				terminalOrdinal = actionOrdinal
 				terminalSet = true
 			default:
 				return false
@@ -823,7 +827,7 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 			case ParseActionShift:
 				fork := s.cloneWithScratch(gssScratch)
 				if p.guardRealShiftGap(source, &fork, tok) {
-					p.noteStopActionDiagnostic("conflict-frontier-fork-shift", &fork, tok, terminal, len(actions), true, step, 0, false)
+					p.noteStopActionDiagnostic("conflict-frontier-fork-shift", &fork, tok, terminal, terminalOrdinal, len(actions), true, step, 0, false)
 					p.applyShiftAction(&fork, terminal, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 					p.noteStopActionResult(&fork)
 					appendTerminalFork(fork)
@@ -831,7 +835,7 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 				}
 			case ParseActionAccept:
 				fork := s.cloneWithScratch(gssScratch)
-				p.noteStopActionDiagnostic("conflict-frontier-fork-accept", &fork, tok, terminal, len(actions), true, step, 0, false)
+				p.noteStopActionDiagnostic("conflict-frontier-fork-accept", &fork, tok, terminal, terminalOrdinal, len(actions), true, step, 0, false)
 				p.applyAcceptAction(&fork)
 				p.noteStopActionResult(&fork)
 				appendTerminalFork(fork)
@@ -839,7 +843,7 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 			case ParseActionRecover:
 				fork := s.cloneWithScratch(gssScratch)
 				if p.guardRealTokenAttachmentGap(source, &fork, tok, "conflict-frontier-fork-recover") {
-					p.noteStopActionDiagnostic("conflict-frontier-fork-recover", &fork, tok, terminal, len(actions), true, step, 0, false)
+					p.noteStopActionDiagnostic("conflict-frontier-fork-recover", &fork, tok, terminal, terminalOrdinal, len(actions), true, step, 0, false)
 					p.applyRecoverAction(&fork, terminal, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 					fork.shifted = true
 					p.noteStopActionResult(&fork)
@@ -860,7 +864,7 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 		if currentReduceEntry != nil {
 			currentReduceEntry.flags |= conflictReduceFrontierSeen
 		}
-		p.noteStopActionDiagnostic("conflict-frontier-fork-reduce", s, tok, reduce, len(actions), true, step, 0, false)
+		p.noteStopActionDiagnostic("conflict-frontier-fork-reduce", s, tok, reduce, reduceOrdinal, len(actions), true, step, 0, false)
 		p.applyReduceActionDispatch(source, s, reduce, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 		p.noteStopActionResult(s)
 		return true
@@ -891,19 +895,19 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 			if entry != nil {
 				entry.flags |= conflictReduceFrontierSeen
 			}
-			p.noteStopActionDiagnostic("conflict-frontier-reduce", s, tok, act, 1, true, step, 0, false)
+			p.noteStopActionDiagnostic("conflict-frontier-reduce", s, tok, act, 0, 1, true, step, 0, false)
 			p.applyReduceActionDispatch(source, s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 			p.noteStopActionResult(s)
 		case ParseActionShift:
 			if !p.guardRealShiftGap(source, s, tok) {
 				return
 			}
-			p.noteStopActionDiagnostic("conflict-frontier-shift", s, tok, act, 1, true, step, 0, false)
+			p.noteStopActionDiagnostic("conflict-frontier-shift", s, tok, act, 0, 1, true, step, 0, false)
 			p.applyShiftAction(s, act, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			p.noteStopActionResult(s)
 			return
 		case ParseActionAccept:
-			p.noteStopActionDiagnostic("conflict-frontier-accept", s, tok, act, 1, true, step, 0, false)
+			p.noteStopActionDiagnostic("conflict-frontier-accept", s, tok, act, 0, 1, true, step, 0, false)
 			p.applyAcceptAction(s)
 			p.noteStopActionResult(s)
 			return
@@ -911,7 +915,7 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 			if !p.guardRealTokenAttachmentGap(source, s, tok, "conflict-frontier-recover") {
 				return
 			}
-			p.noteStopActionDiagnostic("conflict-frontier-recover", s, tok, act, 1, true, step, 0, false)
+			p.noteStopActionDiagnostic("conflict-frontier-recover", s, tok, act, 0, 1, true, step, 0, false)
 			p.applyRecoverAction(s, act, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			s.shifted = true
 			p.noteStopActionResult(s)
@@ -1993,14 +1997,14 @@ func (p *Parser) chainSingleReduceActions(source []byte, s *glrStack, tok Token,
 					fmt.Printf("      -> REDUCE-CHAIN CYCLE state=%d depth=%d sym=%d prod=%d count=%d\n",
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
-				p.noteStopActionDiagnostic("reduce-chain-cycle", s, tok, next, 1, true, chainLen+1, repeatedSigCount, true)
+				p.noteStopActionDiagnostic("reduce-chain-cycle", s, tok, next, 0, 1, true, chainLen+1, repeatedSigCount, true)
 				return p.recoverReduceChainCycle(source, s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
 			if perfCountersEnabled {
 				perfRecordReduceChainStep(chainLen)
 			}
-			p.noteStopActionDiagnostic("reduce-chain", s, tok, next, 1, true, chainLen, repeatedSigCount, false)
+			p.noteStopActionDiagnostic("reduce-chain", s, tok, next, 0, 1, true, chainLen, repeatedSigCount, false)
 			p.applyReduceActionDispatch(source, s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 			p.noteStopActionResult(s)
 			if s.dead || s.accepted || s.shifted {
@@ -2131,7 +2135,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedHinted(source []byte, s *glrS
 			perfRecordReduceChainStep(steps)
 			perfRecordReduceChainHintSteps(1)
 		}
-		p.noteStopActionDiagnostic("reduce-chain-hint", s, tok, classified.action, 1, true, steps, 0, false)
+		p.noteStopActionDiagnostic("reduce-chain-hint", s, tok, classified.action, 0, 1, true, steps, 0, false)
 		p.applyReduceActionDispatch(source, s, classified.action, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 		p.noteStopActionResult(s)
 		if s.dead || s.accepted || s.shifted {
@@ -2175,14 +2179,14 @@ func (p *Parser) chainSingleReduceActionsClassifiedDefault(source []byte, s *glr
 					fmt.Printf("      -> REDUCE-CHAIN CYCLE state=%d depth=%d sym=%d prod=%d count=%d\n",
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
-				p.noteStopActionDiagnostic("reduce-chain-cycle", s, tok, next, 1, true, chainLen+1, repeatedSigCount, true)
+				p.noteStopActionDiagnostic("reduce-chain-cycle", s, tok, next, 0, 1, true, chainLen+1, repeatedSigCount, true)
 				return p.recoverReduceChainCycle(source, s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
 			if perfCountersEnabled {
 				perfRecordReduceChainStep(chainLen)
 			}
-			p.noteStopActionDiagnostic("reduce-chain", s, tok, next, 1, true, chainLen, repeatedSigCount, false)
+			p.noteStopActionDiagnostic("reduce-chain", s, tok, next, 0, 1, true, chainLen, repeatedSigCount, false)
 			p.applyReduceActionDispatch(source, s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 			p.noteStopActionResult(s)
 			if s.dead || s.accepted || s.shifted {
@@ -2290,7 +2294,7 @@ func (p *Parser) chainSingleReduceActionsProfiled(source []byte, s *glrStack, to
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
 				p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, currentState, classifiedParseActionSingleReduce, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopCycle)
-				p.noteStopActionDiagnostic("reduce-chain-cycle", s, tok, next, 1, true, chainLen+1, repeatedSigCount, true)
+				p.noteStopActionDiagnostic("reduce-chain-cycle", s, tok, next, 0, 1, true, chainLen+1, repeatedSigCount, true)
 				return p.recoverReduceChainCycle(source, s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
@@ -2298,7 +2302,7 @@ func (p *Parser) chainSingleReduceActionsProfiled(source []byte, s *glrStack, to
 				perfRecordReduceChainStep(chainLen)
 			}
 			reduceStart := time.Now()
-			p.noteStopActionDiagnostic("reduce-chain-profiled", s, tok, next, 1, true, chainLen, repeatedSigCount, false)
+			p.noteStopActionDiagnostic("reduce-chain-profiled", s, tok, next, 0, 1, true, chainLen, repeatedSigCount, false)
 			p.applyReduceActionDispatch(source, s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 			p.noteStopActionResult(s)
 			p.ambiguityProfile.recordReduceChainStep(currentState, tok.Symbol, next, chainLen, time.Since(reduceStart).Nanoseconds())
@@ -2413,7 +2417,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedHintedProfiled(source []byte,
 			perfRecordReduceChainHintSteps(1)
 		}
 		reduceStart := time.Now()
-		p.noteStopActionDiagnostic("reduce-chain-hint-profiled", s, tok, next, 1, true, chainLen, 0, false)
+		p.noteStopActionDiagnostic("reduce-chain-hint-profiled", s, tok, next, 0, 1, true, chainLen, 0, false)
 		p.applyReduceActionDispatch(source, s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 		p.noteStopActionResult(s)
 		p.ambiguityProfile.recordReduceChainStep(currentState, tok.Symbol, next, chainLen, time.Since(reduceStart).Nanoseconds())
@@ -2469,7 +2473,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedProfiledDefault(source []byte
 						currentState, currentDepth, next.Symbol, next.ProductionID, repeatedSigCount)
 				}
 				p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, currentState, classifiedParseActionSingleReduce, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopCycle)
-				p.noteStopActionDiagnostic("reduce-chain-cycle", s, tok, next, 1, true, chainLen+1, repeatedSigCount, true)
+				p.noteStopActionDiagnostic("reduce-chain-cycle", s, tok, next, 0, 1, true, chainLen+1, repeatedSigCount, true)
 				return p.recoverReduceChainCycle(source, s, currentState, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			}
 			chainLen++
@@ -2477,7 +2481,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedProfiledDefault(source []byte
 				perfRecordReduceChainStep(chainLen)
 			}
 			reduceStart := time.Now()
-			p.noteStopActionDiagnostic("reduce-chain-profiled", s, tok, next, 1, true, chainLen, repeatedSigCount, false)
+			p.noteStopActionDiagnostic("reduce-chain-profiled", s, tok, next, 0, 1, true, chainLen, repeatedSigCount, false)
 			p.applyReduceActionDispatch(source, s, next, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
 			p.noteStopActionResult(s)
 			p.ambiguityProfile.recordReduceChainStep(currentState, tok.Symbol, next, chainLen, time.Since(reduceStart).Nanoseconds())
