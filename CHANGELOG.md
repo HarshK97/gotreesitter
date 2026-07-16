@@ -18,6 +18,13 @@ for tags and release notes while still in `0.x`.
   quality-tied fresh tree. This stops spurious `incremental_parse_full_retry`
   reporting on grammars whose intended trees contain ERROR productions and
   legitimately use the full GLR width.
+- Reused subtrees now credit their cumulative dynamic precedence to the GLR
+  stack score, so score-sensitive merge, cull, and result-selection decisions
+  in an incremental parse match a fresh parse of the same structure.
+- The GLR stack-cull trigger no longer depends on the arena class: incremental
+  parses keep the same cull slack window as fresh parses, which previously
+  pruned disambiguating forks early and changed selected trees on the
+  early-newline canonical witness.
 - Multiline tree edits now keep node byte and point ranges aligned with the C
   runtime across insertions, deletions, and replacements.
 - Rewriter edits now reject reversed and out-of-source byte ranges instead of
