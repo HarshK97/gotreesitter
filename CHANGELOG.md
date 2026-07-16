@@ -9,6 +9,9 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Highlight queries now resolve supported built-in inheritance chains across
+  registration order and same-name replacements without duplicating cyclic
+  queries. Incompatible locked grammar/query pairs remain fail-closed.
 - Incremental parses that accept a full-span ERROR tree under a wider merge
   policy may retry once with the corresponding fresh-parse policy and adopt
   only a strictly better result. Runtime and profile diagnostics report the
