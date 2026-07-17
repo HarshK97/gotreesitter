@@ -169,7 +169,7 @@ func TestAcceptedStackRawShapeDoesNotOverrideDistinctMaterializedRoot(t *testing
 		branchOrder: 7,
 		entries:     []stackEntry{callEntry},
 	}
-	if cmp := compareAcceptedStackRawShapePreference(parser, arena, laterCall, earlierMacro); cmp <= 0 {
+	if cmp := compareAcceptedStackRawShapePreference(parser, arena, &laterCall, &earlierMacro); cmp <= 0 {
 		t.Fatalf("accepted raw-shape compare(call, macro) = %d, want later call raw-shape preferred in the full-root ordering", cmp)
 	}
 	if cmp := stackCompareForResultSelection(parser, arena, &laterCall, &earlierMacro, false); cmp <= 0 {
@@ -698,13 +698,13 @@ func TestAcceptedStackSelectionPrefersSharedPrefixSpliceBeforeRawShape(t *testin
 		entries:     []stackEntry{newStackEntryNode(1, splicedRoot)},
 	}
 
-	if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, wrapped, spliced); cmp >= 0 {
+	if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, &wrapped, &spliced); cmp >= 0 {
 		t.Fatalf("tree-order compare(wrapped, spliced) = %d, want wrapped loser", cmp)
 	}
-	if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, spliced, wrapped); cmp <= 0 {
+	if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, &spliced, &wrapped); cmp <= 0 {
 		t.Fatalf("tree-order compare(spliced, wrapped) = %d, want spliced winner", cmp)
 	}
-	if cmp := compareAcceptedStackRawShapePreference(parser, arena, wrapped, spliced); cmp <= 0 {
+	if cmp := compareAcceptedStackRawShapePreference(parser, arena, &wrapped, &spliced); cmp <= 0 {
 		t.Fatalf("raw-shape compare(wrapped, spliced) = %d, want wrapped raw shape winner before result-selection override", cmp)
 	}
 	if cmp := stackCompareForResultSelection(parser, arena, &spliced, &wrapped, false); cmp <= 0 {
@@ -767,10 +767,10 @@ func TestAcceptedStackSelectionDoesNotSpliceVisibleNamedStructuralContainer(t *t
 		entries:     []stackEntry{newStackEntryNode(1, splicedRoot)},
 	}
 
-	if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, wrapped, spliced); cmp != 0 {
+	if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, &wrapped, &spliced); cmp != 0 {
 		t.Fatalf("tree-order compare(wrapped, spliced) = %d, want neutral when splice would remove section", cmp)
 	}
-	if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, spliced, wrapped); cmp != 0 {
+	if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, &spliced, &wrapped); cmp != 0 {
 		t.Fatalf("tree-order compare(spliced, wrapped) = %d, want neutral when splice would remove section", cmp)
 	}
 	if cmp := stackCompareForResultSelection(parser, arena, &wrapped, &spliced, false); cmp <= 0 {
@@ -884,10 +884,10 @@ func TestAcceptedStackTreeOrderPreservesVisibleNamedUnaryWrapper(t *testing.T) {
 		entries:     []stackEntry{newStackEntryNode(1, directRoot)},
 	}
 
-	if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, directStack, wrapped); cmp != 0 {
+	if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, &directStack, &wrapped); cmp != 0 {
 		t.Fatalf("tree-order compare(direct, wrapped) = %d, want neutral for visible semantic wrapper", cmp)
 	}
-	if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, wrapped, directStack); cmp != 0 {
+	if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, &wrapped, &directStack); cmp != 0 {
 		t.Fatalf("tree-order compare(wrapped, direct) = %d, want neutral for visible semantic wrapper", cmp)
 	}
 	if cmp := stackCompareForResultSelection(parser, arena, &wrapped, &directStack, false); cmp <= 0 {
@@ -946,7 +946,7 @@ func TestAcceptedStackTreeOrderPrefersDirectChildOverTransparentUnaryWrapperChai
 		entries:     []stackEntry{newStackEntryNode(1, directRoot)},
 	}
 
-	if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, directStack, wrapped); cmp <= 0 {
+	if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, &directStack, &wrapped); cmp <= 0 {
 		t.Fatalf("tree-order compare(direct, wrapped) = %d, want direct child winner", cmp)
 	}
 	if cmp := stackCompareForResultSelection(parser, arena, &directStack, &wrapped, false); cmp <= 0 {
@@ -990,13 +990,13 @@ func TestAcceptedStackTreeOrderDoesNotStripSemanticInvisibleWrappers(t *testing.
 
 			parser, wrapped, spliced := testSemanticInvisibleWrapperRawShapeStacks(t, arena, tt.configure)
 
-			if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, wrapped, spliced); cmp != 0 {
+			if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, &wrapped, &spliced); cmp != 0 {
 				t.Fatalf("tree-order compare(wrapped, spliced) = %d, want neutral for semantic wrapper", cmp)
 			}
-			if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, spliced, wrapped); cmp != 0 {
+			if cmp := compareAcceptedStackTreeOrderPreference(parser, arena, &spliced, &wrapped); cmp != 0 {
 				t.Fatalf("tree-order compare(spliced, wrapped) = %d, want neutral for semantic wrapper", cmp)
 			}
-			if cmp := compareAcceptedStackRawShapePreference(parser, arena, wrapped, spliced); cmp <= 0 {
+			if cmp := compareAcceptedStackRawShapePreference(parser, arena, &wrapped, &spliced); cmp <= 0 {
 				t.Fatalf("raw-shape compare(wrapped, spliced) = %d, want semantic wrapper protected", cmp)
 			}
 			if cmp := stackCompareForResultSelection(parser, arena, &wrapped, &spliced, false); cmp <= 0 {

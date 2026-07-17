@@ -552,14 +552,14 @@ func stackCompareForResultSelectionWithRawShape(p *Parser, arena *nodeArena, a, 
 		}
 		return -1
 	}
-	if cmp := compareAcceptedStackAliasPreference(p, arena, *a, *b); cmp != 0 {
+	if cmp := compareAcceptedStackAliasPreference(p, arena, a, b); cmp != 0 {
 		return cmp
 	}
-	if cmp := compareAcceptedStackTreeOrderPreference(p, arena, *a, *b); cmp != 0 {
+	if cmp := compareAcceptedStackTreeOrderPreference(p, arena, a, b); cmp != 0 {
 		return cmp
 	}
 	if useRawShape {
-		if cmp := compareAcceptedStackRawShapePreference(p, arena, *a, *b); cmp != 0 {
+		if cmp := compareAcceptedStackRawShapePreference(p, arena, a, b); cmp != 0 {
 			return cmp
 		}
 	}
@@ -597,7 +597,7 @@ func stackCompareForResultSelectionWithRawShape(p *Parser, arena *nodeArena, a, 
 // does not count descendants. It only compares candidates whose top-level
 // result entries have identical envelopes, and it only prefers a sibling-spliced
 // tree when both sides preserve a concrete shared prefix.
-func compareAcceptedStackTreeOrderPreference(p *Parser, arena *nodeArena, a, b glrStack) int {
+func compareAcceptedStackTreeOrderPreference(p *Parser, arena *nodeArena, a, b *glrStack) int {
 	if !a.accepted || !b.accepted {
 		return 0
 	}
@@ -1011,7 +1011,7 @@ func computeStackEntryErrorRank(entry stackEntry, arena *nodeArena) int {
 	return rank
 }
 
-func compareAcceptedStackAliasPreference(p *Parser, arena *nodeArena, a, b glrStack) int {
+func compareAcceptedStackAliasPreference(p *Parser, arena *nodeArena, a, b *glrStack) int {
 	if p == nil || p.language == nil {
 		return 0
 	}
@@ -1046,7 +1046,7 @@ func compareAcceptedStackAliasPreference(p *Parser, arena *nodeArena, a, b glrSt
 	return 0
 }
 
-func compareAcceptedStackNodeAliasPreference(p *Parser, arena *nodeArena, a, b glrStack) int {
+func compareAcceptedStackNodeAliasPreference(p *Parser, arena *nodeArena, a, b *glrStack) int {
 	aNodes := resultNodesFromStack(a)
 	bNodes := resultNodesFromStack(b)
 	if len(aNodes) != len(bNodes) {
@@ -1111,7 +1111,7 @@ func stackEntryHasCompactResultPayload(entry stackEntry) bool {
 	return stackEntryCompactFullLeaf(entry) != nil || stackEntryPendingParent(entry) != nil
 }
 
-func stackHasCompactResultPayload(s glrStack) bool {
+func stackHasCompactResultPayload(s *glrStack) bool {
 	if len(s.entries) > 0 {
 		for i := range s.entries {
 			if stackEntryHasCompactResultPayload(s.entries[i]) {
@@ -1128,7 +1128,7 @@ func stackHasCompactResultPayload(s glrStack) bool {
 	return false
 }
 
-func stackMaterializingResultEntryCount(s glrStack) int {
+func stackMaterializingResultEntryCount(s *glrStack) int {
 	if len(s.entries) > 0 {
 		return countMaterializingResultEntries(s.entries)
 	}
@@ -1144,7 +1144,7 @@ func stackMaterializingResultEntryCount(s glrStack) int {
 	return count
 }
 
-func stackMaterializingResultEntries(s glrStack, dst []stackEntry, materializingCount int) ([]stackEntry, bool) {
+func stackMaterializingResultEntries(s *glrStack, dst []stackEntry, materializingCount int) ([]stackEntry, bool) {
 	if materializingCount == 0 || cap(dst) < materializingCount {
 		return nil, false
 	}
@@ -1177,7 +1177,7 @@ func stackMaterializingResultEntries(s glrStack, dst []stackEntry, materializing
 	return dst, index == -1
 }
 
-func resultNodesFromStack(s glrStack) []*Node {
+func resultNodesFromStack(s *glrStack) []*Node {
 	if len(s.entries) > 0 {
 		count := 0
 		for i := range s.entries {
