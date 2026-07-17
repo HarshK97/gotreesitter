@@ -101,7 +101,7 @@ func makeCSSBenchmarkSource(ruleCount int) []byte {
 	var sb strings.Builder
 	sb.Grow(ruleCount * 140)
 	for i := 0; i < ruleCount; i++ {
-		fmt.Fprintf(&sb, ".item-%d { color: #%06x; margin: %dpx; padding: 4px; }\n", i, (i*2654435761)&0xffffff, i%24)
+		fmt.Fprintf(&sb, ".item-%d { color: #%06x; margin: %dpx; padding: 4px; }\n", i, (uint32(i)*uint32(2654435761))&0xffffff, i%24)
 		fmt.Fprintf(&sb, "@media (min-width: 640px) { .item-%d:hover { transform: translateX(%dpx); } }\n", i, i%16)
 	}
 	return []byte(sb.String())

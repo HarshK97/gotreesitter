@@ -5,6 +5,7 @@ package cgoharness
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -145,6 +146,7 @@ call();
 			assertExactQueryParity(t, tc)
 		})
 	}
+
 }
 
 func TestParityQueryExactKeywordStringPatterns(t *testing.T) {
@@ -155,6 +157,18 @@ func TestParityQueryExactKeywordStringPatterns(t *testing.T) {
 			source: grammars.ParseSmokeSample("kotlin"),
 			query:  `"val" @keyword`,
 		},
+		{
+			name:   "predicate_newline_escape",
+			lang:   "go",
+			source: "package p\n/*line\nbreak*/\n",
+			query:  `((comment) @comment (#eq? @comment "/*line\nbreak*/"))`,
+		},
+		{
+			name:   "predicate_quote_and_backslash_escapes",
+			lang:   "go",
+			source: "package p\n// q\"q a\\b\n",
+			query:  `((comment) @comment (#eq? @comment "// q\"q a\\b"))`,
+		},
 	}
 
 	for _, tc := range cases {
@@ -162,6 +176,179 @@ func TestParityQueryExactKeywordStringPatterns(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assertExactQueryParity(t, tc)
 		})
+	}
+
+}
+
+func TestParityQueryPointRangeEmptyNodeBoundaries(t *testing.T) {
+	const (
+		langName = "typescript"
+		source   = "const { value: [dirPath, { dirName, options, fileNames }] } = result;\nswitch (x) { case: }\n"
+		queryStr = `(identifier) @candidate
+(switch_case) @clause`
+	)
+	src := []byte(source)
+	goTree, goLang, err := parseWithGo(parityCase{name: langName, source: source}, src, nil)
+	if err != nil {
+		t.Fatalf("Go parse error: %v", err)
+	}
+	defer releaseGoTree(goTree)
+	cLang, err := ParityCLanguage(langName)
+	if err != nil {
+		t.Fatalf("load C parser: %v", err)
+	}
+	cParser := sitter.NewParser()
+	defer cParser.Close()
+	if err := cParser.SetLanguage(cLang); err != nil {
+		t.Fatalf("C SetLanguage: %v", err)
+	}
+	cTree := cParser.Parse(src, nil)
+	if cTree == nil {
+		t.Fatal("C parser returned nil tree")
+	}
+	defer cTree.Close()
+
+	goQuery, err := gotreesitter.NewQuery(queryStr, goLang)
+	if err != nil {
+		t.Fatalf("Go NewQuery: %v", err)
+	}
+	cQuery, queryErr := sitter.NewQuery(cLang, queryStr)
+	if queryErr != nil {
+		t.Fatalf("C NewQuery: %v", queryErr)
+	}
+	defer cQuery.Close()
+
+	var missing *gotreesitter.Node
+	gotreesitter.Walk(goTree.RootNode(), func(node *gotreesitter.Node, _ int) gotreesitter.WalkAction {
+		if missing == nil && node.IsMissing() {
+			missing = node
+		}
+		return gotreesitter.WalkContinue
+	})
+	if missing == nil || !missing.IsMissing() {
+		t.Fatalf("Go missing identifier = %+v; tree=%s", missing, goTree.RootNode().SExpr(goLang))
+	}
+	boundary := missing.StartPoint()
+	before := pointBefore(boundary)
+	after := gotreesitter.Point{Row: boundary.Row + 1}
+
+	cases := []struct {
+		name       string
+		start, end gotreesitter.Point
+		want       []string
+	}{
+		{name: "zero_width_at_start", start: boundary, end: after, want: []string{"candidate", "clause"}},
+		{name: "zero_width_at_end", start: before, end: boundary, want: []string{"clause"}},
+		{name: "strictly_outside", start: after, end: gotreesitter.Point{Row: after.Row + 1}},
+		{name: "reversed_is_ignored", start: after, end: boundary, want: []string{"candidate", "candidate", "candidate", "candidate", "clause"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			goNames := collectGoPointRangeCaptureNames(goQuery, goTree, goLang, src, tc.start, tc.end)
+			cNames := collectCPointRangeCaptureNames(cQuery, cTree, src, tc.start, tc.end)
+			slices.Sort(goNames)
+			slices.Sort(cNames)
+			want := append([]string(nil), tc.want...)
+			slices.Sort(want)
+			if !reflect.DeepEqual(goNames, cNames) || !reflect.DeepEqual(goNames, want) {
+				t.Fatalf("captures Go=%v C=%v want=%v", goNames, cNames, want)
+			}
+		})
+	}
+
+	t.Run("zero_end_sentinels_are_unbounded", func(t *testing.T) {
+		goPointNames := collectGoPointRangeCaptureNames(goQuery, goTree, goLang, src, boundary, gotreesitter.Point{})
+		cPointNames := collectCPointRangeCaptureNames(cQuery, cTree, src, boundary, gotreesitter.Point{})
+		slices.Sort(goPointNames)
+		slices.Sort(cPointNames)
+		if len(goPointNames) == 0 || !reflect.DeepEqual(goPointNames, cPointNames) {
+			t.Fatalf("zero point end captures Go=%v C=%v, want equal non-empty unbounded suffix", goPointNames, cPointNames)
+		}
+
+		startByte := missing.StartByte()
+		goByteNames := collectGoByteRangeCaptureNames(goQuery, goTree, goLang, src, startByte, 0)
+		cByteNames := collectCByteRangeCaptureNames(cQuery, cTree, src, startByte, 0)
+		slices.Sort(goByteNames)
+		slices.Sort(cByteNames)
+		if len(goByteNames) == 0 || !reflect.DeepEqual(goByteNames, cByteNames) {
+			t.Fatalf("zero byte end captures Go=%v C=%v, want equal non-empty unbounded suffix", goByteNames, cByteNames)
+		}
+	})
+}
+
+func pointBefore(p gotreesitter.Point) gotreesitter.Point {
+	if p.Column > 0 {
+		p.Column--
+	}
+	return p
+}
+
+func collectGoPointRangeCaptureNames(q *gotreesitter.Query, tree *gotreesitter.Tree, lang *gotreesitter.Language, source []byte, start, end gotreesitter.Point) []string {
+	cursor := q.Exec(tree.RootNode(), lang, source)
+	cursor.SetPointRange(start, end)
+	var names []string
+	for {
+		capture, ok := cursor.NextCapture()
+		if !ok {
+			return names
+		}
+		names = append(names, capture.Name)
+	}
+}
+
+func collectCPointRangeCaptureNames(q *sitter.Query, tree *sitter.Tree, source []byte, start, end gotreesitter.Point) []string {
+	cursor := sitter.NewQueryCursor()
+	defer cursor.Close()
+	cursor.SetPointRange(
+		sitter.NewPoint(uint(start.Row), uint(start.Column)),
+		sitter.NewPoint(uint(end.Row), uint(end.Column)),
+	)
+	namesByID := q.CaptureNames()
+	matches := cursor.Matches(q, tree.RootNode(), source)
+	var names []string
+	for {
+		match := matches.Next()
+		if match == nil {
+			return names
+		}
+		for _, capture := range match.Captures {
+			if int(capture.Index) < len(namesByID) {
+				names = append(names, namesByID[capture.Index])
+			}
+		}
+	}
+}
+
+func collectGoByteRangeCaptureNames(q *gotreesitter.Query, tree *gotreesitter.Tree, lang *gotreesitter.Language, source []byte, start, end uint32) []string {
+	cursor := q.Exec(tree.RootNode(), lang, source)
+	cursor.SetByteRange(start, end)
+	var names []string
+	for {
+		capture, ok := cursor.NextCapture()
+		if !ok {
+			return names
+		}
+		names = append(names, capture.Name)
+	}
+}
+
+func collectCByteRangeCaptureNames(q *sitter.Query, tree *sitter.Tree, source []byte, start, end uint32) []string {
+	cursor := sitter.NewQueryCursor()
+	defer cursor.Close()
+	cursor.SetByteRange(uint(start), uint(end))
+	namesByID := q.CaptureNames()
+	matches := cursor.Matches(q, tree.RootNode(), source)
+	var names []string
+	for {
+		match := matches.Next()
+		if match == nil {
+			return names
+		}
+		for _, capture := range match.Captures {
+			if int(capture.Index) < len(namesByID) {
+				names = append(names, namesByID[capture.Index])
+			}
+		}
 	}
 }
 

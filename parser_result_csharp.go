@@ -1198,7 +1198,7 @@ func csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree *Tree, source []byte) b
 	if tree == nil || len(source) == 0 || tree.language == nil || tree.language.Name != "c_sharp" {
 		return false
 	}
-	rt := tree.ParseRuntime()
+	rt := *tree.rawParseRuntime()
 	if rt.StopReason != ParseStopAccepted || rt.Truncated || rt.TokenSourceEOFEarly {
 		return false
 	}

@@ -408,6 +408,66 @@ func TestParseErrorUnterminatedString(t *testing.T) {
 	}
 }
 
+func TestReadStringDecodesTreeSitterEscapes(t *testing.T) {
+	cases := map[string]string{
+		`"\n"`:    "\n",
+		`"\t\r"`:  "\t\r",
+		`"a\\b"`:  "a\\b",
+		`"q\"q"`:  "q\"q",
+		`"\0"`:    "\x00",
+		`"plain"`: "plain",
+	}
+	for input, want := range cases {
+		p := &queryParser{input: input, q: &Query{}}
+		got, err := p.readString()
+		if err != nil {
+			t.Fatalf("readString(%q): %v", input, err)
+		}
+		if got != want {
+			t.Errorf("readString(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestQueryStringRejectsUnescapedNewline(t *testing.T) {
+	lang := queryTestLanguage()
+	if _, err := NewQuery("(identifier) @value (#eq? @value \"a\nb\")", lang); err == nil {
+		t.Fatal("NewQuery accepted an unescaped newline in a string literal")
+	}
+}
+
+func TestQueryEscapesSurviveCompilationAndExecution(t *testing.T) {
+	lang := queryTestLanguage()
+	cases := []struct {
+		name   string
+		source string
+		query  string
+	}{
+		{name: "newline", source: "a\nb", query: `(identifier) @value (#eq? @value "a\nb")`},
+		{name: "quote", source: `q"q`, query: `(identifier) @value (#eq? @value "q\"q")`},
+		{name: "backslash", source: `a\b`, query: `(identifier) @value (#eq? @value "a\\b")`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			source := []byte(tc.source)
+			identifier := leaf(Symbol(1), true, 0, uint32(len(source)))
+			program := parent(Symbol(7), true, []*Node{identifier}, []FieldID{0})
+			tree := NewTree(program, source, lang)
+			query, err := NewQuery(tc.query, lang)
+			if err != nil {
+				t.Fatalf("NewQuery: %v", err)
+			}
+			matches := query.Execute(tree)
+			if len(matches) != 1 || len(matches[0].Captures) != 1 {
+				t.Fatalf("matches = %+v, want one capture", matches)
+			}
+			if got := matches[0].Captures[0].Text(source); got != tc.source {
+				t.Fatalf("capture text = %q, want %q", got, tc.source)
+			}
+		})
+	}
+}
+
 func TestParseErrorEmptyAlternation(t *testing.T) {
 	lang := queryTestLanguage()
 	_, err := NewQuery(`[] @empty`, lang)
@@ -2783,6 +2843,123 @@ func TestQueryCursorSetPointRange(t *testing.T) {
 	}
 	if len(got) != 1 || got[0] != "main" {
 		t.Fatalf("captures in point range: got %v, want [main]", got)
+	}
+}
+
+func TestQueryCursorZeroRangeEndsUseLockedCUnboundedSentinel(t *testing.T) {
+	lang := queryTestLanguage()
+	tree := buildSimpleTree(lang)
+	query, err := NewQuery(`[(identifier) (number)] @value`, lang)
+	if err != nil {
+		t.Fatalf("NewQuery: %v", err)
+	}
+
+	byteCursor := query.Exec(tree.RootNode(), lang, tree.Source())
+	byteCursor.SetByteRange(5, 0)
+	if byteCursor.endByte != ^uint32(0) {
+		t.Fatalf("byte end sentinel = %d, want max uint32", byteCursor.endByte)
+	}
+	if _, ok := byteCursor.NextMatch(); !ok {
+		t.Fatal("zero byte end should be unbounded, not an empty/reversed range")
+	}
+
+	pointCursor := query.Exec(tree.RootNode(), lang, tree.Source())
+	pointCursor.SetPointRange(Point{Column: 5}, Point{})
+	if pointCursor.endPoint != (Point{Row: ^uint32(0), Column: ^uint32(0)}) {
+		t.Fatalf("point end sentinel = %+v, want max point", pointCursor.endPoint)
+	}
+	if _, ok := pointCursor.NextMatch(); !ok {
+		t.Fatal("zero point end should be unbounded, not an empty/reversed range")
+	}
+}
+
+func TestQueryCursorPointRangeUsesLockedCEmptyNodeBoundaries(t *testing.T) {
+	lang := queryTestLanguage()
+	zero := leaf(Symbol(1), true, 5, 5)
+	nonEmpty := leaf(Symbol(2), true, 1, 5)
+	tail := leaf(Symbol(15), true, 5, 6)
+	program := parent(Symbol(7), true, []*Node{nonEmpty, zero, tail}, []FieldID{0, 0, 0})
+	tree := NewTree(program, []byte("12345x"), lang)
+	query, err := NewQuery(`[(identifier) (number)] @value`, lang)
+	if err != nil {
+		t.Fatalf("NewQuery: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		start, end Point
+		wantZero   bool
+		wantNumber bool
+	}{
+		{name: "zero_at_start", start: Point{Column: 5}, end: Point{Column: 6}, wantZero: true},
+		{name: "zero_at_end", start: Point{Column: 4}, end: Point{Column: 5}, wantNumber: true},
+		{name: "strictly_after", start: Point{Column: 6}, end: Point{Column: 7}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cursor := query.Exec(tree.RootNode(), lang, tree.Source())
+			cursor.SetPointRange(tc.start, tc.end)
+			gotZero, gotNumber := false, false
+			for {
+				capture, ok := cursor.NextCapture()
+				if !ok {
+					break
+				}
+				gotZero = gotZero || capture.Node == zero
+				gotNumber = gotNumber || capture.Node == nonEmpty
+			}
+			if gotZero != tc.wantZero || gotNumber != tc.wantNumber {
+				t.Fatalf("matches zero=%t number=%t, want zero=%t number=%t", gotZero, gotNumber, tc.wantZero, tc.wantNumber)
+			}
+
+			entry := newStackEntryNode(1, zero)
+			if got := cursor.stackEntryIntersectsRanges(entry); got != tc.wantZero {
+				t.Fatalf("stack entry intersects = %t, want %t", got, tc.wantZero)
+			}
+		})
+	}
+
+	reversed := query.Exec(tree.RootNode(), lang, tree.Source())
+	reversed.SetPointRange(Point{Column: 7}, Point{Column: 6})
+	if _, ok := reversed.NextMatch(); !ok {
+		t.Fatal("reversed SetPointRange should be ignored like locked C")
+	}
+}
+
+func TestQueryCursorRangeGateRejectsFinalChildRefBeforeMaterialization(t *testing.T) {
+	lang := queryTestLanguage()
+	arena := newNodeArena(arenaClassFull)
+	defer arena.Release()
+	arena.finalChildRefs = true
+
+	child := newCompactFullLeafInArena(arena, Symbol(2), true, 1, 5, Point{Column: 1}, Point{Column: 5})
+	pendingRoot := newPendingParentInArena(arena, Symbol(7), true, 0, []stackEntry{
+		newStackEntryCompactFullLeaf(child.parseState, child),
+	}, 1, 6, Point{Column: 1}, Point{Column: 6}, false)
+	rootEntry := newStackEntryPendingParent(pendingRoot.parseState, pendingRoot)
+	root := materializeStackEntryPendingParent(arena, &rootEntry, pendingParentMaterializeForFinalTree)
+	if root == nil || !nodeHasFinalChildRefs(root) {
+		t.Fatal("test root did not retain final child refs")
+	}
+
+	query, err := NewQuery(`(number) @value`, lang)
+	if err != nil {
+		t.Fatalf("NewQuery: %v", err)
+	}
+	cursor := query.Exec(root, lang, []byte("12345x"))
+	// The root overlaps [5,6), but its non-empty child only ends at 5 and must
+	// be rejected by the stack-entry gate before nodeChildAtForReason runs.
+	cursor.SetByteRange(5, 6)
+	parentsBefore := arena.finalChildRefsMaterializedParents
+	childrenBefore := arena.finalChildRefsSingleChildMaterializedChildren
+	if _, ok := cursor.NextMatch(); ok {
+		t.Fatal("boundary-touching non-empty child unexpectedly matched")
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != parentsBefore {
+		t.Fatalf("range rejection materialized parent refs: before=%d after=%d", parentsBefore, got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != childrenBefore {
+		t.Fatalf("range rejection materialized child: before=%d after=%d", childrenBefore, got)
 	}
 }
 

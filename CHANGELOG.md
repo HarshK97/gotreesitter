@@ -9,6 +9,16 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Deferred result-compatibility finalization stays lazy while trees are owned by
+  parser retry/selection code, then synchronizes every public read that can
+  observe normalized nodes or diagnostics, including pooled tree values.
+- Query byte and point ranges now match the locked C runtime for half-open
+  boundaries, zero-width nodes at the range start, reversed range updates, and
+  zero-valued unbounded-end sentinels.
+- DFA token-source seeks clamp past-EOF offsets before integer narrowing and
+  preserve exact EOF coordinates across both skip APIs, including 32-bit builds.
+- Query string literals now decode control, quote, and backslash escapes through
+  execution and reject unescaped newlines like the locked C query parser.
 - Highlight queries now resolve supported built-in inheritance chains across
   registration order and same-name replacements without duplicating cyclic
   queries. Incompatible locked grammar/query pairs remain fail-closed.

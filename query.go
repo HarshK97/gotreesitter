@@ -8,7 +8,12 @@ import (
 // Query holds compiled patterns parsed from a tree-sitter .scm query file.
 // It can be executed against a syntax tree to find matching nodes and
 // return captured names.
-// Query is safe for concurrent use after construction.
+//
+// Query is safe for concurrent calls to Execute, ExecuteInto, ExecuteNode, and
+// Exec after construction. Each goroutine must use its own QueryCursor and any
+// ExecuteInto destination slice must remain caller-owned. The mutating methods
+// DisableCapture and DisablePattern are NOT safe to call concurrently with
+// execution (or with each other); call them before sharing the Query.
 type Query struct {
 	patterns []Pattern
 	captures []string // capture name by index
@@ -324,13 +329,42 @@ func (q *Query) Exec(node *Node, lang *Language, source []byte) *QueryCursor {
 }
 
 // SetByteRange restricts matches to nodes that intersect [startByte, endByte).
+// As in tree-sitter C, endByte == 0 is the unbounded-end sentinel.
 func (c *QueryCursor) SetByteRange(startByte, endByte uint32) {
-	if c == nil {
-		return
+	if endByte == 0 {
+		endByte = ^uint32(0)
+	}
+	c.setByteRangeExact(startByte, endByte)
+}
+
+// setByteRangeExact stores an exact half-open byte range. Unlike the public C-
+// compatible setter, a zero end remains zero; the UTF-16 adapter needs this to
+// represent an actual empty range at the beginning of a document.
+func (c *QueryCursor) setByteRangeExact(startByte, endByte uint32) bool {
+	if c == nil || endByte < startByte {
+		return false
 	}
 	c.hasByteRange = true
 	c.startByte = startByte
 	c.endByte = endByte
+	return true
+}
+
+func pointRangeEndSentinel(endPoint Point) Point {
+	if endPoint == (Point{}) {
+		return Point{Row: ^uint32(0), Column: ^uint32(0)}
+	}
+	return endPoint
+}
+
+func (c *QueryCursor) setPointRangeExact(startPoint, endPoint Point) bool {
+	if c == nil || pointLessThan(endPoint, startPoint) {
+		return false
+	}
+	c.hasPointRange = true
+	c.startPoint = startPoint
+	c.endPoint = endPoint
+	return true
 }
 
 // SetUTF16Range restricts matches to nodes that intersect the given UTF-16
@@ -347,18 +381,13 @@ func (c *QueryCursor) SetUTF16Range(tree *Tree, startCodeUnit, endCodeUnit uint3
 	if !ok {
 		return false
 	}
-	c.SetByteRange(startByte, endByte)
-	return true
+	return c.setByteRangeExact(startByte, endByte)
 }
 
 // SetPointRange restricts matches to nodes that intersect [startPoint, endPoint).
+// As in tree-sitter C, an all-zero end point is the unbounded-end sentinel.
 func (c *QueryCursor) SetPointRange(startPoint, endPoint Point) {
-	if c == nil {
-		return
-	}
-	c.hasPointRange = true
-	c.startPoint = startPoint
-	c.endPoint = endPoint
+	c.setPointRangeExact(startPoint, pointRangeEndSentinel(endPoint))
 }
 
 // SetMatchLimit sets the maximum number of matches this cursor can return.
@@ -391,26 +420,41 @@ func (c *QueryCursor) SetMaxStartDepth(depth uint32) {
 	c.maxStartDepth = depth
 }
 
+func byteRangeIntersects(start, end, rangeStart, rangeEnd uint32) bool {
+	if rangeEnd < rangeStart {
+		return false
+	}
+	isEmpty := start == end
+	if end < rangeStart || (!isEmpty && end == rangeStart) {
+		return false
+	}
+	return start < rangeEnd
+}
+
+func pointRangeIntersects(start, end, rangeStart, rangeEnd Point, isEmpty bool) bool {
+	if pointLessThan(rangeEnd, rangeStart) {
+		return false
+	}
+	if pointLessThan(end, rangeStart) || (!isEmpty && end == rangeStart) {
+		return false
+	}
+	return pointLessThan(start, rangeEnd)
+}
+
 func (c *QueryCursor) nodeIntersectsRanges(n *Node) bool {
 	if n == nil {
 		return false
 	}
 	if c.hasByteRange {
-		if c.endByte <= c.startByte {
-			return false
-		}
-		if n.endByte <= c.startByte || n.startByte >= c.endByte {
+		if !byteRangeIntersects(n.startByte, n.endByte, c.startByte, c.endByte) {
 			return false
 		}
 	}
 	if c.hasPointRange {
-		if !pointLessThan(c.startPoint, c.endPoint) && c.startPoint != c.endPoint {
-			return false
-		}
-		if !pointLessThan(n.startPoint, c.endPoint) && n.startPoint != c.endPoint {
-			return false
-		}
-		if !pointLessThan(c.startPoint, n.endPoint) && c.startPoint != n.endPoint {
+		// Locked tree-sitter treats a zero-width node at range start as
+		// intersecting, while ordinary nodes that merely end there do not. A
+		// node beginning at range end is always outside the half-open range.
+		if !pointRangeIntersects(n.startPoint, n.endPoint, c.startPoint, c.endPoint, n.startByte == n.endByte) {
 			return false
 		}
 	}
@@ -422,10 +466,7 @@ func (c *QueryCursor) stackEntryIntersectsRanges(e stackEntry) bool {
 		return false
 	}
 	if c.hasByteRange {
-		if c.endByte <= c.startByte {
-			return false
-		}
-		if stackEntryNodeEndByte(e) <= c.startByte || stackEntryNodeStartByte(e) >= c.endByte {
+		if !byteRangeIntersects(stackEntryNodeStartByte(e), stackEntryNodeEndByte(e), c.startByte, c.endByte) {
 			return false
 		}
 	}
@@ -435,13 +476,8 @@ func (c *QueryCursor) stackEntryIntersectsRanges(e stackEntry) bool {
 		}
 		startPoint := stackEntryNodeStartPoint(e)
 		endPoint := stackEntryNodeEndPoint(e)
-		if !pointLessThan(c.startPoint, c.endPoint) && c.startPoint != c.endPoint {
-			return false
-		}
-		if !pointLessThan(startPoint, c.endPoint) && startPoint != c.endPoint {
-			return false
-		}
-		if !pointLessThan(c.startPoint, endPoint) && c.startPoint != endPoint {
+		isEmpty := stackEntryNodeStartByte(e) == stackEntryNodeEndByte(e)
+		if !pointRangeIntersects(startPoint, endPoint, c.startPoint, c.endPoint, isEmpty) {
 			return false
 		}
 	}

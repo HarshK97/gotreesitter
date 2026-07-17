@@ -2618,8 +2618,30 @@ func (d *dfaTokenSource) eofTokenAtLexerPos() Token {
 	}
 }
 
+// clampedSkipTarget validates the parser-internal source invariant defensively
+// and compares in uint64 before narrowing to int. On 32-bit builds this avoids
+// turning a large uint32 offset into a negative target. The bool reports a
+// past-EOF request so SkipToByteWithPoint can derive the real EOF point instead
+// of trusting a point associated with an out-of-source offset.
+func (d *dfaTokenSource) clampedSkipTarget(offset uint32) (target int, pastEOF, ok bool) {
+	if d == nil || d.lexer == nil {
+		return 0, false, false
+	}
+	sourceLen := len(d.lexer.source)
+	if uint64(offset) > uint64(sourceLen) {
+		return sourceLen, true, true
+	}
+	return int(offset), false, true
+}
+
 func (d *dfaTokenSource) SkipToByte(offset uint32) Token {
-	target := int(offset)
+	target, _, ok := d.clampedSkipTarget(offset)
+	if !ok {
+		return Token{}
+	}
+	// Clamp past-EOF targets (e.g. an out-of-range included range): skipOneRune
+	// is a no-op at EOF, so an unclamped target > len(source) would spin the
+	// loop below forever.
 	if target < d.lexer.pos {
 		// Rewind isn't supported for DFA token sources during parse.
 		return d.Next()
@@ -2642,9 +2664,14 @@ func (d *dfaTokenSource) SkipToByte(offset uint32) Token {
 }
 
 func (d *dfaTokenSource) SkipToByteWithPoint(offset uint32, pt Point) Token {
-	target := int(offset)
-	if target > len(d.lexer.source) {
-		target = len(d.lexer.source)
+	target, pastEOF, ok := d.clampedSkipTarget(offset)
+	if !ok {
+		return Token{}
+	}
+	if pastEOF {
+		// The supplied point describes the invalid requested offset, not EOF.
+		// Use the bounded scanning variant to preserve exact EOF coordinates.
+		return d.SkipToByte(offset)
 	}
 	if target >= d.lexer.pos {
 		d.lexer.pos = target
