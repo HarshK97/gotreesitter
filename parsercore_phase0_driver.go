@@ -853,6 +853,7 @@ type diagnosticParserCoreActionOutput struct {
 
 func executeDiagnosticParserCoreGenericConflictDetailed(
 	compact *core.Core,
+	owner core.SchedulerTransactionToken,
 	incoming diagnosticParserCoreHeader,
 	headerIndex int,
 	token Token,
@@ -885,13 +886,13 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 	}
 	trialOrder := branchOrder
 	var receipts []DiagnosticParserCoreRoundAction
-	err := compact.ApplyAtomic(func() error {
+	err := compact.RunSchedulerOwned(owner, func() error {
 		for ordinal := 1; ordinal < actions.Len(); ordinal++ {
 			action := actions.At(ordinal)
 			trialOrder++
 			var applyErr error
 			scratch.actionOutputs, scratch.reductionOutputs, applyErr = applyParserCoreConflictActionInto(
-				scratch.actionOutputs[:0], scratch.reductionOutputs[:0], compact, classified, token,
+				scratch.actionOutputs[:0], scratch.reductionOutputs[:0], compact, owner, classified, token,
 				action, ordinal, core.ForkOrder{Present: true, Value: trialOrder},
 			)
 			if applyErr != nil {
@@ -915,7 +916,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 		primaryAction := actions.At(0)
 		var applyErr error
 		scratch.actionOutputs, scratch.reductionOutputs, applyErr = applyParserCoreConflictActionInto(
-			scratch.actionOutputs[:0], scratch.reductionOutputs[:0], compact, classified, token,
+			scratch.actionOutputs[:0], scratch.reductionOutputs[:0], compact, owner, classified, token,
 			primaryAction, 0, core.ForkOrder{},
 		)
 		if applyErr != nil {
@@ -2027,16 +2028,16 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReduction(before []Di
 		s.work, s.epochProgress = workBefore, epochProgressBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 	}()
-	return s.compact.ApplyAtomic(func() error {
-		return s.applyGenericReductionAtomic(before, cell)
+	return s.compact.ApplySchedulerAtomic(func(owner core.SchedulerTransactionToken) error {
+		return s.applyGenericReductionOwned(owner, before, cell)
 	})
 }
 
-func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionAtomic(before []DiagnosticParserCoreHeaderReceipt, cell diagnosticParserCoreGenericCell) error {
+func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner core.SchedulerTransactionToken, before []DiagnosticParserCoreHeaderReceipt, cell diagnosticParserCoreGenericCell) error {
 	if err := s.reserveDispatches(1); err != nil {
 		return err
 	}
-	outputs, err := s.compact.ReduceOutputsClassifiedInto(s.reductionOutputs, cell.boundary, 0, core.ForkOrder{})
+	outputs, err := s.compact.ReduceOutputsClassifiedIntoOwned(owner, s.reductionOutputs, cell.boundary, 0, core.ForkOrder{})
 	if err != nil {
 		return err
 	}
@@ -2173,12 +2174,12 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflict(before []Dia
 		s.receipt.Conflicts = s.receipt.Conflicts[:conflictsBefore]
 		s.receipt.ExternalShifts = s.receipt.ExternalShifts[:externalShiftsBefore]
 	}()
-	return s.compact.ApplyAtomic(func() error {
-		return s.applyGenericConflictAtomic(before, cell)
+	return s.compact.ApplySchedulerAtomic(func(owner core.SchedulerTransactionToken) error {
+		return s.applyGenericConflictOwned(owner, before, cell)
 	})
 }
 
-func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictAtomic(before []DiagnosticParserCoreHeaderReceipt, cell diagnosticParserCoreGenericCell) (err error) {
+func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner core.SchedulerTransactionToken, before []DiagnosticParserCoreHeaderReceipt, cell diagnosticParserCoreGenericCell) (err error) {
 	branchOrderBefore, nextSeqBefore := s.branchOrder, s.nextSeq
 	if err = s.reserveDispatches(1); err != nil {
 		return err
@@ -2193,7 +2194,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictAtomic(before
 	}
 	defer s.conflictScratch.finish()
 	execution, err := executeDiagnosticParserCoreGenericConflictDetailed(
-		s.compact, s.headers[cell.headerIndex], cell.headerIndex, s.token, cell.boundary,
+		s.compact, owner, s.headers[cell.headerIndex], cell.headerIndex, s.token, cell.boundary,
 		s.branchOrder, s.fullReceipts(), &s.conflictScratch,
 	)
 	if err != nil {
@@ -2360,6 +2361,12 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShifts(before []Diagn
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 		s.receipt.ExternalShifts = s.receipt.ExternalShifts[:externalBefore]
 	}()
+	return s.compact.ApplySchedulerAtomic(func(owner core.SchedulerTransactionToken) error {
+		return s.applyGenericShiftsOwned(owner, before, cells)
+	})
+}
+
+func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner core.SchedulerTransactionToken, before []DiagnosticParserCoreHeaderReceipt, cells []diagnosticParserCoreGenericCell) error {
 	if err := s.reserveDispatches(uint64(len(cells))); err != nil {
 		return err
 	}
@@ -2369,7 +2376,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShifts(before []Diagn
 	}
 	if len(cells) == 1 {
 		cell := cells[0]
-		head, err := s.compact.ShiftClassified(cell.boundary, 0, core.Token{
+		head, err := s.compact.ShiftClassifiedOwned(owner, cell.boundary, 0, core.Token{
 			Symbol: core.Symbol(s.token.Symbol), StartByte: s.token.StartByte, EndByte: s.token.EndByte, External: s.token.ExternalScannerToken,
 		}, core.ForkOrder{})
 		if err != nil {
@@ -2382,7 +2389,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShifts(before []Diagn
 		for _, cell := range cells {
 			s.classifiedBoundaries = append(s.classifiedBoundaries, cell.boundary)
 		}
-		heads, err := s.compact.ShiftOrdinaryClassifiedCohort(s.classifiedBoundaries, core.Token{
+		heads, err := s.compact.ShiftOrdinaryClassifiedCohortOwned(owner, s.classifiedBoundaries, core.Token{
 			Symbol: core.Symbol(s.token.Symbol), StartByte: s.token.StartByte, EndByte: s.token.EndByte, External: s.token.ExternalScannerToken,
 		})
 		if err != nil {
@@ -2437,7 +2444,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 		s.receipt.ExternalShifts = s.receipt.ExternalShifts[:externalShiftsBefore]
 	}()
-	return s.compact.ApplyAtomic(func() error {
+	return s.compact.ApplySchedulerAtomic(func(owner core.SchedulerTransactionToken) error {
 		if len(cells) == 0 {
 			return errors.New("parser-core phase zero: empty extra shift cohort")
 		}
@@ -2457,7 +2464,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 		for _, cell := range cells {
 			s.classifiedBoundaries = append(s.classifiedBoundaries, cell.boundary)
 		}
-		heads, err := s.compact.ShiftExtraClassifiedCohort(s.classifiedBoundaries, core.Token{
+		heads, err := s.compact.ShiftExtraClassifiedCohortOwned(owner, s.classifiedBoundaries, core.Token{
 			Symbol: core.Symbol(s.token.Symbol), StartByte: s.token.StartByte, EndByte: s.token.EndByte,
 			Extra: true, External: s.token.ExternalScannerToken,
 		})
@@ -2826,6 +2833,7 @@ func applyParserCoreConflictActionInto(
 	dst []diagnosticParserCoreActionOutput,
 	reductionDst []core.ReductionOutput,
 	compact *core.Core,
+	owner core.SchedulerTransactionToken,
 	classified core.ClassifiedBoundary,
 	token Token,
 	action core.Action,
@@ -2835,7 +2843,7 @@ func applyParserCoreConflictActionInto(
 	if action.Type != core.ActionReduce {
 		switch action.Type {
 		case core.ActionShift:
-			head, err := compact.ShiftClassified(classified, ordinal, core.Token{Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte, Extra: action.Extra, External: token.ExternalScannerToken}, fork)
+			head, err := compact.ShiftClassifiedOwned(owner, classified, ordinal, core.Token{Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte, Extra: action.Extra, External: token.ExternalScannerToken}, fork)
 			if err != nil {
 				return nil, reductionDst, err
 			}
@@ -2848,7 +2856,7 @@ func applyParserCoreConflictActionInto(
 			return nil, reductionDst, errors.New("parser-core phase zero: unknown conflict action")
 		}
 	}
-	outputs, err := compact.ReduceOutputsClassifiedInto(reductionDst, classified, ordinal, fork)
+	outputs, err := compact.ReduceOutputsClassifiedIntoOwned(owner, reductionDst, classified, ordinal, fork)
 	if err != nil {
 		return nil, outputs, err
 	}

@@ -68,7 +68,7 @@ func TestEmptyCheckpointReceiptIsConstantAndAllocationFree(t *testing.T) {
 
 func BenchmarkCheckpointReceiptEmpty(b *testing.B) {
 	interner := newCheckpointInterner(1, 1)
-	for b.Loop() {
+	for i := 0; i < b.N; i++ {
 		_, _, _ = interner.receipt(0)
 	}
 }
