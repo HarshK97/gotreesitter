@@ -435,24 +435,6 @@ func (q *Query) matchChildStepsRecursiveAll(
 
 	cs := childSteps[childPos]
 	step := &steps[cs.stepIdx]
-
-	// A synthetic step with a quantifier other than "exactly one" is the
-	// root of a multi-step quantified group, e.g. ((a) (b)?)* used as a
-	// child pattern. Such groups represent a repeatable SEQUENCE of
-	// sibling patterns within `parent`'s own children -- not a single
-	// wildcard-matched node whose children happen to satisfy the group's
-	// members (that interpretation is only correct for ungrouped/root
-	// patterns, where the synthetic wildcard genuinely stands in for an
-	// unknown containing node). See matchGroupStep for the fix (D5).
-	if step.synthetic && step.quantifier != queryQuantifierOne {
-		q.matchGroupStep(
-			parent, children, namedPosByIndex, parentLastNamedPos,
-			steps, childSteps, childPos, nextChildIdx, prevHasNamed, prevLastNamedPos,
-			lang, source, predicates, captures, emit,
-		)
-		return
-	}
-
 	minCount, maxCount, ok := quantifierBounds(step.quantifier)
 	if !ok {
 		return
@@ -562,248 +544,6 @@ func (q *Query) matchChildStepsRecursiveAll(
 
 		tryCombinations(0, 0, nextChildIdx, false, -1, -1, captures)
 		if step.quantifier != queryQuantifierOne && emittedForCount {
-			return
-		}
-	}
-}
-
-// collectDirectMemberSteps scans steps[start:] for entries at exactly
-// parentDepth+1, stopping once a step at depth <= parentDepth is reached.
-// This is the same "direct children in the flat step array" scan used by
-// matchStepChildrenAll, applied instead to a quantified group's inner
-// member sequence (which is compiled one depth level below its synthetic
-// wrapper step, using the same nesting convention as an ordinary node
-// pattern's children).
-func collectDirectMemberSteps(steps []QueryStep, start int, parentDepth int) []queryChildStepInfo {
-	childDepth := parentDepth + 1
-	var memberSteps []queryChildStepInfo
-	for i := start; i < len(steps); i++ {
-		if steps[i].depth <= parentDepth {
-			break
-		}
-		if steps[i].depth == childDepth {
-			memberSteps = append(memberSteps, queryChildStepInfo{
-				stepIdx: i,
-				field:   steps[i].field,
-			})
-		}
-	}
-	return memberSteps
-}
-
-// matchGroupInnerSequence matches one repetition of a quantified group's
-// inner member sequence (memberSteps) against parent's children, starting
-// the search at nextChildIdx. It mirrors matchChildStepsRecursiveAll's
-// algorithm (greedy per-member candidate counts, anchors relative to
-// `parent`) but reports, via emit, the child index immediately after the
-// last consumed sibling so that matchGroupStep can chain multiple
-// repetitions and know where each one left off.
-func (q *Query) matchGroupInnerSequence(
-	parent *Node,
-	children []*Node,
-	namedPosByIndex []int,
-	parentLastNamedPos int,
-	steps []QueryStep,
-	memberSteps []queryChildStepInfo,
-	memberPos int,
-	nextChildIdx int,
-	prevHasNamed bool,
-	prevLastNamedPos int,
-	lang *Language,
-	source []byte,
-	predicates []QueryPredicate,
-	captures []QueryCapture,
-	emit func(captures []QueryCapture, nextChildIdx int, hasNamed bool, lastNamedPos int),
-) {
-	if memberPos >= len(memberSteps) {
-		emit(captures, nextChildIdx, prevHasNamed, prevLastNamedPos)
-		return
-	}
-
-	cs := memberSteps[memberPos]
-	step := &steps[cs.stepIdx]
-	minCount, maxCount, ok := quantifierBounds(step.quantifier)
-	if !ok {
-		return
-	}
-
-	var candidateIndicesBuf [32]int
-	candidateIndices, candidatesOK := q.collectChildCandidateIndices(parent, children, step, cs.field, nextChildIdx, lang, candidateIndicesBuf[:0])
-	if !candidatesOK {
-		return
-	}
-	if maxCount < 0 || maxCount > len(candidateIndices) {
-		maxCount = len(candidateIndices)
-	}
-	if minCount > len(candidateIndices) {
-		return
-	}
-
-	for count := maxCount; count >= minCount; count-- {
-		emitted := false
-
-		var tryCombinations func(candidatePos, chosen, nextIdx int, hasNamed bool, firstNamedPos, lastNamedPos int, current []QueryCapture)
-		tryCombinations = func(candidatePos, chosen, nextIdx int, hasNamed bool, firstNamedPos, lastNamedPos int, current []QueryCapture) {
-			if chosen == count {
-				if count > 0 && !q.stepAnchorsSatisfied(
-					step, memberPos, hasNamed, firstNamedPos, lastNamedPos,
-					prevHasNamed, prevLastNamedPos, parentLastNamedPos,
-				) {
-					return
-				}
-				nextPrevHasNamed := prevHasNamed || hasNamed
-				nextPrevLastNamedPos := prevLastNamedPos
-				if hasNamed {
-					nextPrevLastNamedPos = lastNamedPos
-				}
-				q.matchGroupInnerSequence(
-					parent, children, namedPosByIndex, parentLastNamedPos,
-					steps, memberSteps, memberPos+1, nextIdx,
-					nextPrevHasNamed, nextPrevLastNamedPos,
-					lang, source, predicates, current,
-					func(next []QueryCapture, endIdx int, hn bool, lnp int) {
-						emitted = true
-						emit(next, endIdx, hn, lnp)
-					},
-				)
-				return
-			}
-
-			remaining := count - chosen
-			limit := len(candidateIndices) - remaining
-			for i := candidatePos; i <= limit; i++ {
-				childIdx := candidateIndices[i]
-				child := materializedQueryChild(parent, children, childIdx)
-				if child == nil {
-					continue
-				}
-
-				nextIdxForChoice := nextIdx
-				if childIdx+1 > nextIdxForChoice {
-					nextIdxForChoice = childIdx + 1
-				}
-
-				hasNamedForChoice := hasNamed
-				firstNamedForChoice := firstNamedPos
-				lastNamedForChoice := lastNamedPos
-				if np := namedPosByIndex[childIdx]; np >= 0 {
-					if !hasNamedForChoice {
-						hasNamedForChoice = true
-						firstNamedForChoice = np
-					}
-					lastNamedForChoice = np
-				}
-
-				q.matchStepsAllWithParentPredicates(
-					steps, cs.stepIdx, child, parent, childIdx, lang, source, predicates, current,
-					func(next []QueryCapture) {
-						tryCombinations(
-							i+1, chosen+1, nextIdxForChoice,
-							hasNamedForChoice, firstNamedForChoice, lastNamedForChoice,
-							next,
-						)
-					},
-				)
-			}
-		}
-
-		tryCombinations(0, 0, nextChildIdx, false, -1, -1, captures)
-		if emitted {
-			return
-		}
-	}
-}
-
-// matchGroupStep handles a childStepInfo entry whose step is the synthetic
-// root of a multi-step quantified group (e.g. ((a) (b)?)* used as a child
-// pattern -- see the synthetic/quantifier guard in
-// matchChildStepsRecursiveAll). It repeats the group's inner member
-// sequence as many times as the group's own quantifier allows -- trying
-// the greediest (most repetitions) option first and backing off only if
-// the rest of the pattern then fails to match, mirroring tree-sitter's
-// greedy quantifier semantics -- accumulating captures from every
-// repetition (fixing the D5 parity bug where such captures were silently
-// dropped), then continues matching the rest of the parent pattern's
-// childSteps from wherever the chosen repetition count left off.
-func (q *Query) matchGroupStep(
-	parent *Node,
-	children []*Node,
-	namedPosByIndex []int,
-	parentLastNamedPos int,
-	steps []QueryStep,
-	childSteps []queryChildStepInfo,
-	childPos int,
-	nextChildIdx int,
-	prevHasNamed bool,
-	prevLastNamedPos int,
-	lang *Language,
-	source []byte,
-	predicates []QueryPredicate,
-	captures []QueryCapture,
-	emit func([]QueryCapture),
-) {
-	cs := childSteps[childPos]
-	groupStep := &steps[cs.stepIdx]
-	minReps, maxReps, ok := quantifierBounds(groupStep.quantifier)
-	if !ok {
-		return
-	}
-
-	memberSteps := collectDirectMemberSteps(steps, cs.stepIdx+1, groupStep.depth)
-	if len(memberSteps) == 0 {
-		// Nothing to repeat; treat like a zero-length group (matches once,
-		// vacuously, same as zero repetitions).
-		minReps = 0
-	}
-
-	type groupCheckpoint struct {
-		idx          int
-		hasNamed     bool
-		lastNamedPos int
-		captures     []QueryCapture
-	}
-	checkpoints := []groupCheckpoint{{idx: nextChildIdx, hasNamed: false, lastNamedPos: -1, captures: captures}}
-
-	for len(memberSteps) > 0 && (maxReps < 0 || len(checkpoints)-1 < maxReps) {
-		last := checkpoints[len(checkpoints)-1]
-		advanced := false
-		q.matchGroupInnerSequence(
-			parent, children, namedPosByIndex, parentLastNamedPos,
-			steps, memberSteps, 0, last.idx, last.hasNamed, last.lastNamedPos,
-			lang, source, predicates, last.captures,
-			func(next []QueryCapture, endIdx int, hn bool, lnp int) {
-				// Only the first (greediest) successful repetition is kept;
-				// guard against zero-width repetitions looping forever.
-				if advanced || endIdx <= last.idx {
-					return
-				}
-				advanced = true
-				checkpoints = append(checkpoints, groupCheckpoint{idx: endIdx, hasNamed: hn, lastNamedPos: lnp, captures: next})
-			},
-		)
-		if !advanced {
-			break
-		}
-	}
-
-	for i := len(checkpoints) - 1; i >= minReps; i-- {
-		cp := checkpoints[i]
-		nextPrevHasNamed := prevHasNamed || cp.hasNamed
-		nextPrevLastNamedPos := prevLastNamedPos
-		if cp.hasNamed {
-			nextPrevLastNamedPos = cp.lastNamedPos
-		}
-		matched := false
-		q.matchChildStepsRecursiveAll(
-			parent, children, namedPosByIndex, parentLastNamedPos,
-			steps, childSteps, childPos+1, cp.idx, nextPrevHasNamed, nextPrevLastNamedPos,
-			lang, source, predicates, cp.captures,
-			func(next []QueryCapture) {
-				matched = true
-				emit(next)
-			},
-		)
-		if matched {
 			return
 		}
 	}
@@ -1553,79 +1293,12 @@ func queryStackEntryTypeName(entry stackEntry, lang *Language) string {
 
 func alternativeMatchesStackEntry(alt alternativeSymbol, entry stackEntry, lang *Language, nodeSymbol Symbol, nodeNamed bool) bool {
 	if alt.symbol == 0 && alt.textMatch == "" {
-		if !alt.isNamed || nodeNamed {
-			return alternativeSupertypeMatchesStackEntry(alt, entry, lang)
-		}
-		return false
+		return !alt.isNamed || nodeNamed
 	}
 	if alt.textMatch != "" {
 		return !nodeNamed && queryStackEntryTypeName(entry, lang) == alt.textMatch
 	}
 	return nodeNamed == alt.isNamed && nodeSymbol == lang.PublicSymbolForNamedness(alt.symbol, alt.isNamed)
-}
-
-func alternativeSupertypeMatchesStackEntry(alt alternativeSymbol, entry stackEntry, lang *Language) bool {
-	if alt.supertypeSymbol == 0 {
-		return true
-	}
-	nodeInternal := stackEntryNodeSymbol(entry)
-	nodePublic := lang.PublicSymbol(nodeInternal)
-	return languageSymbolIsSubtypeOf(lang, alt.supertypeSymbol, nodeInternal, nodePublic)
-}
-
-// languageSymbolIsSubtypeOf reports whether a candidate node (identified by
-// its internal and public symbol) is a member of supertype's subtype set,
-// per Language.SupertypeChildren. Nested supertypes are followed
-// recursively (e.g. python's "expression" containing "primary_expression"
-// containing "call"), approximating upstream tree-sitter's per-node
-// supertype-ancestor-chain check (ts_tree_cursor_current_status) closely
-// enough for query matching purposes. A depth cap guards against
-// malformed/cyclic supertype tables; symbol 0 entries (never a legitimate
-// concrete node type) are skipped defensively.
-func languageSymbolIsSubtypeOf(lang *Language, supertype Symbol, nodeInternal Symbol, nodePublic Symbol) bool {
-	return languageSubtypeSearch(lang, supertype, nodeInternal, nodePublic, 0)
-}
-
-const querySupertypeSearchDepthLimit = 8
-
-func languageSubtypeSearch(lang *Language, supertype Symbol, nodeInternal Symbol, nodePublic Symbol, depth int) bool {
-	if lang == nil || depth > querySupertypeSearchDepthLimit {
-		return false
-	}
-	for _, child := range lang.SupertypeChildren(supertype) {
-		if child == 0 {
-			continue
-		}
-		if child == nodeInternal || lang.PublicSymbol(child) == nodePublic {
-			return true
-		}
-		if child != supertype && lang.IsSupertype(child) &&
-			languageSubtypeSearch(lang, child, nodeInternal, nodePublic, depth+1) {
-			return true
-		}
-	}
-	return false
-}
-
-// nodeMatchesSupertypeStep reports whether node satisfies step's
-// supertypeSymbol constraint (a no-op, returning true, when the step
-// doesn't carry one).
-func nodeMatchesSupertypeStep(step *QueryStep, node *Node, lang *Language) bool {
-	if step.supertypeSymbol == 0 {
-		return true
-	}
-	nodeInternal := node.Symbol()
-	nodePublic := lang.PublicSymbol(nodeInternal)
-	return languageSymbolIsSubtypeOf(lang, step.supertypeSymbol, nodeInternal, nodePublic)
-}
-
-func stackEntryMatchesSupertypeStep(step *QueryStep, entry stackEntry, lang *Language) bool {
-	if step.supertypeSymbol == 0 {
-		return true
-	}
-	nodeInternal := stackEntryNodeSymbol(entry)
-	nodePublic := lang.PublicSymbol(nodeInternal)
-	return languageSymbolIsSubtypeOf(lang, step.supertypeSymbol, nodeInternal, nodePublic)
 }
 
 // nodeMatchesStep checks if a single node matches a single step's type/symbol constraint.
@@ -1638,7 +1311,7 @@ func (q *Query) nodeMatchesStep(step *QueryStep, node *Node, lang *Language) boo
 
 func stackEntryMatchesAlternatives(step *QueryStep, entry stackEntry, lang *Language, nodeSymbol Symbol, nodeNamed bool) bool {
 	if idx := step.altIndex; idx != nil {
-		return indexedAlternativesMatchStackEntry(idx, step.alternatives, entry, lang, nodeSymbol, nodeNamed)
+		return indexedAlternativesMatchStackEntry(idx, entry, lang, nodeSymbol, nodeNamed)
 	}
 	for _, alt := range step.alternatives {
 		if alternativeMatchesStackEntry(alt, entry, lang, nodeSymbol, nodeNamed) {
@@ -1648,7 +1321,7 @@ func stackEntryMatchesAlternatives(step *QueryStep, entry stackEntry, lang *Lang
 	return false
 }
 
-func indexedAlternativesMatchStackEntry(idx *queryAlternationIndex, alternatives []alternativeSymbol, entry stackEntry, lang *Language, nodeSymbol Symbol, nodeNamed bool) bool {
+func indexedAlternativesMatchStackEntry(idx *queryAlternationIndex, entry stackEntry, lang *Language, nodeSymbol Symbol, nodeNamed bool) bool {
 	if len(idx.wildcard) > 0 {
 		return true
 	}
@@ -1657,15 +1330,6 @@ func indexedAlternativesMatchStackEntry(idx *queryAlternationIndex, alternatives
 	}
 	if !nodeNamed && len(idx.byText) > 0 {
 		return len(idx.byText[queryStackEntryTypeName(entry, lang)]) > 0
-	}
-	if nodeNamed && len(idx.supertype) > 0 {
-		nodeInternal := stackEntryNodeSymbol(entry)
-		nodePublic := lang.PublicSymbol(nodeInternal)
-		for _, ai := range idx.supertype {
-			if languageSymbolIsSubtypeOf(lang, alternatives[ai].supertypeSymbol, nodeInternal, nodePublic) {
-				return true
-			}
-		}
 	}
 	return false
 }
@@ -1679,14 +1343,9 @@ func stackEntryMatchesScalarStep(step *QueryStep, entry stackEntry, lang *Langua
 	}
 	if step.symbol == 0 {
 		if step.isMissing {
-			// Bare (MISSING) matches any missing node, ignoring namedness
-			// (mirrors upstream: node_does_match = is_missing).
 			return stackEntryNodeIsMissing(entry)
 		}
-		if !step.isNamed || nodeNamed {
-			return stackEntryMatchesSupertypeStep(step, entry, lang)
-		}
-		return false
+		return !step.isNamed || nodeNamed
 	}
 	if nodeNamed != step.isNamed || nodeSymbol != lang.PublicSymbolForNamedness(step.symbol, step.isNamed) {
 		return false
@@ -1698,7 +1357,7 @@ func nodeMatchesAlternatives(step *QueryStep, node *Node, lang *Language) bool {
 	nodeNamed := node.IsNamed()
 	nodeSymbol := lang.PublicSymbolForNamedness(node.Symbol(), nodeNamed)
 	if idx := step.altIndex; idx != nil {
-		return indexedAlternativesMatchNode(idx, step.alternatives, node, lang, nodeSymbol, nodeNamed)
+		return indexedAlternativesMatchNode(idx, node, lang, nodeSymbol, nodeNamed)
 	}
 
 	var nodeType string
@@ -1711,7 +1370,7 @@ func nodeMatchesAlternatives(step *QueryStep, node *Node, lang *Language) bool {
 	return false
 }
 
-func indexedAlternativesMatchNode(idx *queryAlternationIndex, alternatives []alternativeSymbol, node *Node, lang *Language, nodeSymbol Symbol, nodeNamed bool) bool {
+func indexedAlternativesMatchNode(idx *queryAlternationIndex, node *Node, lang *Language, nodeSymbol Symbol, nodeNamed bool) bool {
 	if len(idx.wildcard) > 0 {
 		return true
 	}
@@ -1720,15 +1379,6 @@ func indexedAlternativesMatchNode(idx *queryAlternationIndex, alternatives []alt
 	}
 	if !nodeNamed && len(idx.byText) > 0 {
 		return len(idx.byText[node.Type(lang)]) > 0
-	}
-	if nodeNamed && len(idx.supertype) > 0 {
-		nodeInternal := node.Symbol()
-		nodePublic := lang.PublicSymbol(nodeInternal)
-		for _, ai := range idx.supertype {
-			if languageSymbolIsSubtypeOf(lang, alternatives[ai].supertypeSymbol, nodeInternal, nodePublic) {
-				return true
-			}
-		}
 	}
 	return false
 }
@@ -1743,14 +1393,9 @@ func nodeMatchesScalarStep(step *QueryStep, node *Node, lang *Language) bool {
 
 	if step.symbol == 0 {
 		if step.isMissing {
-			// Bare (MISSING) matches any missing node, ignoring namedness
-			// (mirrors upstream: node_does_match = is_missing).
 			return node.IsMissing()
 		}
-		if !step.isNamed || node.IsNamed() {
-			return nodeMatchesSupertypeStep(step, node, lang)
-		}
-		return false
+		return !step.isNamed || node.IsNamed()
 	}
 
 	nodeNamed := node.IsNamed()
@@ -1761,7 +1406,6 @@ func nodeMatchesScalarStep(step *QueryStep, node *Node, lang *Language) bool {
 	if lang.PublicSymbolForNamedness(node.Symbol(), nodeNamed) != lang.PublicSymbolForNamedness(step.symbol, step.isNamed) {
 		return false
 	}
-
 	if step.isMissing && !node.IsMissing() {
 		return false
 	}
@@ -1795,13 +1439,9 @@ func alternativeMatchesNodeCached(
 	nodeType *string,
 	nodeTypeLoaded *bool,
 ) bool {
-	// Wildcard in alternation `( _ )` should match any node, subject to an
-	// optional supertype-membership constraint (`[(expression) ...]`).
+	// Wildcard in alternation `( _ )` should match any node.
 	if alt.symbol == 0 && alt.textMatch == "" {
-		if !alt.isNamed || nodeNamed {
-			return alternativeSupertypeMatchesNode(alt, node, lang)
-		}
-		return false
+		return !alt.isNamed || nodeNamed
 	}
 
 	if alt.textMatch != "" {
@@ -1817,13 +1457,4 @@ func alternativeMatchesNodeCached(
 	}
 
 	return nodeNamed == alt.isNamed && nodeSymbol == lang.PublicSymbolForNamedness(alt.symbol, alt.isNamed)
-}
-
-func alternativeSupertypeMatchesNode(alt alternativeSymbol, node *Node, lang *Language) bool {
-	if alt.supertypeSymbol == 0 {
-		return true
-	}
-	nodeInternal := node.Symbol()
-	nodePublic := lang.PublicSymbol(nodeInternal)
-	return languageSymbolIsSubtypeOf(lang, alt.supertypeSymbol, nodeInternal, nodePublic)
 }

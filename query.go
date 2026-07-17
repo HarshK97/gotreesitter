@@ -65,18 +65,8 @@ type QueryStep struct {
 	// isMissing marks a step compiled from the special "MISSING" node
 	// pattern ((MISSING), (MISSING kind), or (MISSING "token")). Such a
 	// step only matches nodes for which Node.IsMissing() is true, in
-	// addition to any symbol/textMatch constraint carried above. This
-	// mirrors upstream tree-sitter 0.24+ query semantics.
+	// addition to any symbol/textMatch constraint carried above.
 	isMissing bool
-	// supertypeSymbol is set when this step's node-type name resolved to a
-	// supertype (e.g. "expression", "_statement"). Supertype symbols never
-	// appear as a concrete node's own symbol in the tree (the concrete
-	// subtype node takes their place), so -- mirroring upstream
-	// tree-sitter's compiler (step->supertype_symbol / WILDCARD_SYMBOL) --
-	// `symbol` is reset to 0 (wildcard) and matching instead requires the
-	// candidate node's symbol to be a (possibly transitive) member of
-	// supertypeSymbol's subtype set (see nodeMatchesSupertypeStep).
-	supertypeSymbol Symbol
 }
 
 type queryQuantifier uint8
@@ -156,6 +146,29 @@ type QueryPredicate struct {
 	allowMissing bool // true when scoped under a child pattern that may match zero times
 }
 
+// QueryPropertyPredicate is host-consumable metadata for an inert #is? or
+// #is-not? predicate. Property is the queried property name, Capture is the
+// optional capture name without its leading '@', and Positive distinguishes
+// #is? from #is-not?. Property predicates do not filter query matches.
+type QueryPropertyPredicate struct {
+	Property string
+	Capture  string
+	Positive bool
+}
+
+// PropertyPredicate exposes p when it represents #is? or #is-not? metadata.
+// Other predicate kinds return ok=false.
+func (p QueryPredicate) PropertyPredicate() (property QueryPropertyPredicate, ok bool) {
+	switch p.kind {
+	case predicateIs:
+		return QueryPropertyPredicate{Property: p.property, Capture: p.leftCapture, Positive: true}, true
+	case predicateIsNot:
+		return QueryPropertyPredicate{Property: p.property, Capture: p.leftCapture, Positive: false}, true
+	default:
+		return QueryPropertyPredicate{}, false
+	}
+}
+
 // alternativeSymbol is one branch of an alternation like [(true) (false)].
 type alternativeSymbol struct {
 	symbol  Symbol
@@ -170,11 +183,6 @@ type alternativeSymbol struct {
 	// [(function_declaration name: (identifier) @name) ...].
 	steps      []QueryStep
 	predicates []QueryPredicate
-	// supertypeSymbol mirrors QueryStep.supertypeSymbol for alternation
-	// branches whose node-type name resolved to a supertype (e.g.
-	// `[(expression) (statement)] @x`): symbol is reset to 0 (wildcard)
-	// and this field carries the supertype to check against instead.
-	supertypeSymbol Symbol
 }
 
 // QueryMatch represents a successful pattern match with its captures.
@@ -1183,6 +1191,23 @@ func (q *Query) PredicatesForPattern(patternIndex uint32) ([]QueryPredicate, boo
 	out := make([]QueryPredicate, len(preds))
 	copy(out, preds)
 	return out, true
+}
+
+// PropertyPredicatesForPattern returns the #is? and #is-not? metadata attached
+// to patternIndex in source order. A valid pattern with no property predicates
+// returns an empty slice and ok=true.
+func (q *Query) PropertyPredicatesForPattern(patternIndex uint32) ([]QueryPropertyPredicate, bool) {
+	predicates, ok := q.PredicatesForPattern(patternIndex)
+	if !ok {
+		return nil, false
+	}
+	var properties []QueryPropertyPredicate
+	for _, predicate := range predicates {
+		if property, isProperty := predicate.PropertyPredicate(); isProperty {
+			properties = append(properties, property)
+		}
+	}
+	return properties, true
 }
 
 // IsPatternRooted reports whether the pattern has exactly one root step at

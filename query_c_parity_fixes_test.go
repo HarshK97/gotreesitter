@@ -1,18 +1,12 @@
 package gotreesitter_test
 
-// Focused C-parity regression tests for the four tree-sitter query-engine
+// Focused C-parity regression tests for the tree-sitter query-engine
 // parity fixes landed on this branch:
 //
 //   - D8: #is?/#is-not? are inert property predicates and must not filter
 //     matches.
 //   - D4: (MISSING) / (MISSING kind) query patterns test Node.IsMissing(),
 //     instead of matching every node like an unqualified wildcard.
-//   - D3: supertype node-type patterns (e.g. (expression)) expand to their
-//     subtype symbols at match time instead of matching nothing.
-//   - D5: captures inside quantified multi-step groups (e.g.
-//     ((a) (b)?)*) are collected across every repetition instead of being
-//     dropped.
-//
 // Each test's expected result was cross-checked against the real C
 // tree-sitter runtime (github.com/tree-sitter/go-tree-sitter) via the
 // parity-audit probe harness; the numbers baked in here are the C behavior,
@@ -74,6 +68,34 @@ func TestParityD8IsPredicateDoesNotFilterMatches(t *testing.T) {
 	}
 }
 
+func TestParityD8PropertyPredicateMetadataIsPublic(t *testing.T) {
+	lang := grammars.GoLanguage()
+	query, err := gotreesitter.NewQuery(`
+		((identifier) @id (#is? @id local) (#is-not? local.definition @id))
+	`, lang)
+	if err != nil {
+		t.Fatalf("NewQuery: %v", err)
+	}
+
+	predicates, ok := query.PredicatesForPattern(0)
+	if !ok || len(predicates) != 2 {
+		t.Fatalf("PredicatesForPattern = %d, %v; want 2, true", len(predicates), ok)
+	}
+	first, ok := predicates[0].PropertyPredicate()
+	if !ok || first.Property != "local" || first.Capture != "id" || !first.Positive {
+		t.Fatalf("first property predicate = %#v, %v", first, ok)
+	}
+	second, ok := predicates[1].PropertyPredicate()
+	if !ok || second.Property != "local.definition" || second.Capture != "id" || second.Positive {
+		t.Fatalf("second property predicate = %#v, %v", second, ok)
+	}
+
+	properties, ok := query.PropertyPredicatesForPattern(0)
+	if !ok || len(properties) != 2 || properties[0] != first || properties[1] != second {
+		t.Fatalf("PropertyPredicatesForPattern = %#v, %v", properties, ok)
+	}
+}
+
 // --- D4: (MISSING) / (MISSING kind) -----------------------------------------
 
 func TestParityD4MissingPatternMatchesOnlyMissingNode(t *testing.T) {
@@ -129,115 +151,5 @@ func TestParityD4MissingPatternMatchesOnlyMissingNode(t *testing.T) {
 	// string-literal token qualifier -- never a nested child pattern.
 	if _, err := gotreesitter.NewQuery(`(MISSING (identifier))`, lang); err == nil {
 		t.Fatal("(MISSING (identifier)): expected a compile error, got nil")
-	}
-}
-
-// --- D3: supertype patterns expand to subtype symbols -----------------------
-
-func TestParityD3SupertypePatternMatchesSubtypes(t *testing.T) {
-	lang := grammars.GoLanguage()
-	src := []byte("package main\nfunc f() { x := 1 + 2 }\n")
-	tree := parseWithLanguage(t, lang, src)
-	defer tree.Release()
-
-	// Nested/field-constrained supertype position: the go blob's _expression
-	// supertype table is intact, so this achieves exact parity with C (unlike
-	// the bare/unconstrained form, which is a known approximation -- see the
-	// worklog notes in the branch report).
-	query, err := gotreesitter.NewQuery(`(binary_expression left: (_expression) @l)`, lang)
-	if err != nil {
-		t.Fatalf("NewQuery: %v", err)
-	}
-	matches := query.Execute(tree)
-	if len(matches) != 1 {
-		t.Fatalf("(binary_expression left: (_expression) @l): got %d matches, want 1", len(matches))
-	}
-	if got := len(matches[0].Captures); got != 1 {
-		t.Fatalf("expected exactly 1 capture, got %d", got)
-	}
-	capture := matches[0].Captures[0]
-	if capture.Node.Type(lang) != "int_literal" {
-		t.Fatalf("captured node type = %q, want %q (the literal \"1\", a subtype of _expression)", capture.Node.Type(lang), "int_literal")
-	}
-	if capture.Text(src) != "1" {
-		t.Fatalf("captured text = %q, want %q", capture.Text(src), "1")
-	}
-
-	// Bare/unconstrained supertype pattern must, at minimum, stop matching
-	// nothing (the pre-fix bug) and must include known subtype instances.
-	stmtQuery, err := gotreesitter.NewQuery(`(_statement) @st`, lang)
-	if err != nil {
-		t.Fatalf("NewQuery((_statement)): %v", err)
-	}
-	stmtMatches := stmtQuery.Execute(tree)
-	if len(stmtMatches) == 0 {
-		t.Fatal("(_statement) @st: got 0 matches, want at least 1 (supertype patterns must match concrete subtype nodes)")
-	}
-	var sawShortVarDecl bool
-	for _, m := range stmtMatches {
-		for _, c := range m.Captures {
-			if c.Node.Type(lang) == "short_var_declaration" {
-				sawShortVarDecl = true
-			}
-		}
-	}
-	if !sawShortVarDecl {
-		t.Fatal("(_statement) @st: expected a short_var_declaration match (x := 1 + 2), a direct _statement subtype")
-	}
-}
-
-// --- D5: captures inside quantified multi-step groups ----------------------
-
-func TestParityD5QuantifiedGroupCapturesAllRepetitions(t *testing.T) {
-	lang := grammars.JavascriptLanguage()
-	src := []byte("function add(x, y) { return x; }\n")
-	tree := parseWithLanguage(t, lang, src)
-	defer tree.Release()
-
-	cases := []struct {
-		name      string
-		query     string
-		wantTexts []string // in order; nil means "expect zero matches"
-	}{
-		{
-			name:      "star",
-			query:     `(formal_parameters ((identifier) @p (",")?)*)`,
-			wantTexts: []string{"x", "y"},
-		},
-		{
-			name:      "plus",
-			query:     `(formal_parameters ((identifier) @p (",")?)+)`,
-			wantTexts: []string{"x", "y"},
-		},
-		{
-			name:      "optional",
-			query:     `(formal_parameters ((identifier) @p ",")?)`,
-			wantTexts: []string{"x"},
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			query, err := gotreesitter.NewQuery(tc.query, lang)
-			if err != nil {
-				t.Fatalf("NewQuery(%q): %v", tc.query, err)
-			}
-			matches := query.Execute(tree)
-			if len(matches) != 1 {
-				t.Fatalf("%s: got %d matches, want 1", tc.query, len(matches))
-			}
-			var got []string
-			for _, c := range matches[0].Captures {
-				got = append(got, c.Text(src))
-			}
-			if len(got) != len(tc.wantTexts) {
-				t.Fatalf("%s: got %d captures %v, want %v", tc.query, len(got), got, tc.wantTexts)
-			}
-			for i, want := range tc.wantTexts {
-				if got[i] != want {
-					t.Fatalf("%s: capture[%d] = %q, want %q (full: %v)", tc.query, i, got[i], want, got)
-				}
-			}
-		})
 	}
 }

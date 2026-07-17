@@ -26,6 +26,10 @@ for tags and release notes while still in `0.x`.
   validates complete ABI-15 supertype metadata before emission. Lowercase
   keyword leaves are classified from parser-reachable ownership like
   tree-sitter.
+- Query `MISSING` patterns now test missing nodes, and inert `#is?`/`#is-not?`
+  properties are available through public metadata accessors. Descendant range
+  walks now match upstream behavior for reversed ranges and zero-width missing
+  children.
 - Highlight queries now resolve supported built-in inheritance chains across
   registration order and same-name replacements without duplicating cyclic
   queries. Incompatible locked grammar/query pairs remain fail-closed.

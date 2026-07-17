@@ -600,11 +600,10 @@ func (p *queryParser) parseAlternationBranch(depth int, parentSymbolHint Symbol)
 
 	root := branchPat.steps[0]
 	alt := alternativeSymbol{
-		symbol:          root.symbol,
-		isNamed:         root.isNamed,
-		field:           altField,
-		textMatch:       root.textMatch,
-		supertypeSymbol: root.supertypeSymbol,
+		symbol:    root.symbol,
+		isNamed:   root.isNamed,
+		field:     altField,
+		textMatch: root.textMatch,
 	}
 	if root.field != 0 {
 		alt.field = root.field
@@ -711,29 +710,11 @@ func (p *queryParser) stepFromIdentifierName(depth int, name string) (QueryStep,
 		return QueryStep{}, err
 	}
 
-	step := QueryStep{
+	return QueryStep{
 		symbol:  sym,
 		isNamed: isNamed,
 		depth:   depth,
-	}
-	p.applySupertypeConversion(&step, sym)
-	return step, nil
-}
-
-// applySupertypeConversion mirrors upstream tree-sitter's query compiler:
-// when a node-type name resolves to a supertype symbol (e.g. "expression"),
-// no concrete tree node ever carries that symbol directly (the matching
-// subtype node takes its place), so the step is rewritten into a
-// named-wildcard step carrying supertypeSymbol, which nodeMatchesStep /
-// stackEntryCanMatchStep use to test subtype membership at match time
-// (fixes D3: supertype patterns matching nothing).
-func (p *queryParser) applySupertypeConversion(step *QueryStep, sym Symbol) {
-	if sym == 0 || p.lang == nil || !p.lang.IsSupertype(sym) {
-		return
-	}
-	step.supertypeSymbol = sym
-	step.symbol = 0
-	step.isNamed = true
+	}, nil
 }
 
 // stepFromMissingKeyword parses the special "MISSING" node pattern

@@ -55,8 +55,8 @@ func (q *Query) matchesPredicate(pred QueryPredicate, captures []QueryCapture, l
 		// #is? / #is-not? are property predicates: in upstream tree-sitter
 		// they are inert metadata consumed by the host application (e.g.
 		// locals.scm tracking via "local"/"local.definition" properties)
-		// and never filter the match set. See PredicatesForPattern for the
-		// exposed-metadata path hosts should use instead.
+		// and never filter the match set. See PropertyPredicate and
+		// PropertyPredicatesForPattern for the host-consumable metadata path.
 		return true
 	case predicateCount:
 		return countPredicateMatches(pred, captures)
