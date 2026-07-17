@@ -28,10 +28,66 @@ type IncomingEdgeKey struct {
 	Serial uint64
 }
 
-// RawOccurrenceKey identifies a selected raw occurrence within an event.
-type RawOccurrenceKey struct {
+// ConstructionOccurrenceKey identifies one occurrence within an event.
+type ConstructionOccurrenceKey struct {
 	Event ConstructionEventKey
 	Slot  uint32
+}
+
+type Phase0ARollbackCause uint8
+
+const (
+	Phase0ARollbackUnknown Phase0ARollbackCause = iota
+	Phase0ARollbackReturnedError
+	Phase0ARollbackPanic
+	Phase0ARollbackSchedulerPoison
+)
+
+type Phase0APoisonKind uint8
+
+const (
+	Phase0APoisonReturnedError Phase0APoisonKind = iota + 1
+	Phase0APoisonPanic
+	Phase0APoisonWrongCore
+	Phase0APoisonStaleToken
+	Phase0APoisonNonTopToken
+	Phase0APoisonNestedScheduler
+)
+
+type Phase0AMutationKind uint8
+
+const (
+	Phase0AMutationEvent Phase0AMutationKind = iota + 1
+	Phase0AMutationEdge
+)
+
+type Phase0AMutationRecord struct {
+	Kind                Phase0AMutationKind
+	TransactionID       uint64
+	Event               ConstructionEventKey
+	Edge                IncomingEdgeKey
+	RolledBack          bool
+	RollbackTransaction uint64
+	RollbackCause       Phase0ARollbackCause
+}
+
+type Phase0ATransactionFrame struct {
+	TransactionID uint64
+	ParentID      uint64
+	MutationStart uint64
+}
+
+type Phase0APoisonRecord struct {
+	TransactionID uint64
+	Kind          Phase0APoisonKind
+}
+
+type Phase0AProofSnapshot struct {
+	Namespace   CoreRunNamespace
+	Mutations   []Phase0AMutationRecord
+	Frames      []Phase0ATransactionFrame
+	FirstPoison *Phase0APoisonRecord
+	Failure     *Phase0AError
 }
 
 type Phase0AErrorKind string
@@ -48,6 +104,9 @@ const (
 	Phase0AErrorCoreCap          Phase0AErrorKind = "core_cap"
 	Phase0AErrorRecordCap        Phase0AErrorKind = "record_cap"
 	Phase0AErrorByteCap          Phase0AErrorKind = "byte_cap"
+	Phase0AErrorFrameCap         Phase0AErrorKind = "frame_cap"
+	Phase0AErrorMutationCap      Phase0AErrorKind = "mutation_cap"
+	Phase0AErrorTransactionProof Phase0AErrorKind = "transaction_proof"
 	Phase0AErrorAttemptUnproven  Phase0AErrorKind = "attempt_unproven"
 )
 
@@ -82,24 +141,34 @@ func (e *Phase0AError) Error() string {
 
 // Phase0AObserverLimits are fixed for one explicit observer session.
 type Phase0AObserverLimits struct {
-	MaxCores   uint64
-	MaxRecords uint64
-	MaxBytes   uint64
+	MaxCores     uint64
+	MaxRecords   uint64
+	MaxBytes     uint64
+	MaxFrames    uint64
+	MaxMutations uint64
 }
 
 const (
 	phase0AEventRecordBytes uint64 = 40
 	phase0AEdgeRecordBytes  uint64 = 48
+	phase0AFrameRecordBytes uint64 = 24
 )
 
 type phase0AObserver struct {
-	coreInstance  uint64
-	runGeneration uint64
-	run           CoreRunNamespace
-	nextEvent     uint64
-	nextEdge      uint64
-	attempt       uint32
-	active        bool
+	coreInstance    uint64
+	runGeneration   uint64
+	run             CoreRunNamespace
+	nextEvent       uint64
+	nextEdge        uint64
+	attempt         uint32
+	active          bool
+	frames          []Phase0ATransactionFrame
+	mutations       []Phase0AMutationRecord
+	eventIndex      map[ConstructionEventKey]uint64
+	edgeIndex       map[IncomingEdgeKey]uint64
+	firstPoison     *Phase0APoisonRecord
+	failure         *Phase0AError
+	pendingRollback Phase0ARollbackCause
 }
 
 var phase0AObservers = struct {
@@ -109,6 +178,7 @@ var phase0AObservers = struct {
 	limits           Phase0AObserverLimits
 	records          uint64
 	bytes            uint64
+	failure          *Phase0AError
 	byCore           map[*Core]*phase0AObserver
 }{
 	byCore: make(map[*Core]*phase0AObserver),
@@ -125,6 +195,7 @@ func BeginPhase0AObserverSession(limits Phase0AObserverLimits) error {
 	phase0AObservers.limits = limits
 	phase0AObservers.records = 0
 	phase0AObservers.bytes = 0
+	phase0AObservers.failure = nil
 	phase0AObservers.byCore = make(map[*Core]*phase0AObserver)
 	return nil
 }
@@ -145,6 +216,7 @@ func EndPhase0AObserverSession() error {
 	phase0AObservers.limits = Phase0AObserverLimits{}
 	phase0AObservers.records = 0
 	phase0AObservers.bytes = 0
+	phase0AObservers.failure = nil
 	phase0AObservers.byCore = nil
 	return nil
 }
@@ -154,6 +226,13 @@ func phase0AInvalidateCore(core *Core) {
 	defer phase0AObservers.Unlock()
 	if observer := phase0AObservers.byCore[core]; observer != nil {
 		observer.active = false
+		observer.frames = nil
+		observer.mutations = nil
+		observer.eventIndex = nil
+		observer.edgeIndex = nil
+		observer.firstPoison = nil
+		observer.failure = nil
+		observer.pendingRollback = Phase0ARollbackUnknown
 	}
 }
 
@@ -162,6 +241,10 @@ func (c *Core) BeginRun() (CoreRunNamespace, error) {
 	defer phase0AObservers.Unlock()
 	if !phase0AObservers.active {
 		return CoreRunNamespace{}, &Phase0AError{Kind: Phase0AErrorSessionInactive}
+	}
+	if phase0AObservers.failure != nil {
+		copy := *phase0AObservers.failure
+		return CoreRunNamespace{}, &copy
 	}
 	if c == nil {
 		return CoreRunNamespace{}, &Phase0AError{Kind: Phase0AErrorUnregisteredCore, Detail: "nil core"}
@@ -172,7 +255,10 @@ func (c *Core) BeginRun() (CoreRunNamespace, error) {
 			return CoreRunNamespace{}, &Phase0AError{Kind: Phase0AErrorCoreCap}
 		}
 		if phase0AObservers.nextCoreInstance == math.MaxUint64 {
-			return CoreRunNamespace{}, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterCoreInstance}
+			err := &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterCoreInstance}
+			copy := *err
+			phase0AObservers.failure = &copy
+			return CoreRunNamespace{}, err
 		}
 		phase0AObservers.nextCoreInstance++
 		observer = &phase0AObserver{coreInstance: phase0AObservers.nextCoreInstance}
@@ -181,23 +267,51 @@ func (c *Core) BeginRun() (CoreRunNamespace, error) {
 	if observer.active {
 		return CoreRunNamespace{}, &Phase0AError{Kind: Phase0AErrorRunActive, Namespace: observer.run}
 	}
+	if observer.failure != nil {
+		return CoreRunNamespace{}, phase0AExistingFailureLocked(observer)
+	}
 	if observer.runGeneration == math.MaxUint64 {
-		return CoreRunNamespace{}, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterRunGeneration, Namespace: observer.run}
+		return CoreRunNamespace{}, phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterRunGeneration, Namespace: observer.run})
 	}
 	observer.runGeneration++
 	observer.run = CoreRunNamespace{CoreInstance: observer.coreInstance, RunGeneration: observer.runGeneration}
 	observer.nextEvent, observer.nextEdge, observer.attempt, observer.active = 0, 0, 1, true
+	observer.frames = nil
+	observer.mutations = nil
+	observer.eventIndex = make(map[ConstructionEventKey]uint64)
+	observer.edgeIndex = make(map[IncomingEdgeKey]uint64)
+	observer.firstPoison = nil
+	observer.failure = nil
+	observer.pendingRollback = Phase0ARollbackUnknown
 	return observer.run, nil
 }
 
 func (c *Core) EndRun(namespace CoreRunNamespace) error {
 	phase0AObservers.Lock()
 	defer phase0AObservers.Unlock()
-	observer, err := phase0AObserverForNamespaceLocked(c, namespace)
+	observer, err := phase0AObserverForRunLocked(c, namespace)
 	if err != nil {
 		return err
 	}
+	if !observer.active {
+		if observer.failure != nil {
+			return phase0AExistingFailureLocked(observer)
+		}
+		return &Phase0AError{Kind: Phase0AErrorStaleNamespace, Namespace: namespace}
+	}
+	if len(c.transactions) != 0 || c.schedulerFrame.active {
+		if observer.failure != nil {
+			return phase0AExistingFailureLocked(observer)
+		}
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: namespace, Detail: "end run with active parser transaction"})
+	}
+	if len(observer.frames) != 0 {
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: namespace, Detail: "end run with active transaction"})
+	}
 	observer.active = false
+	if observer.failure != nil {
+		return phase0AExistingFailureLocked(observer)
+	}
 	return nil
 }
 
@@ -210,7 +324,7 @@ func phase0AAttempt(c *Core, namespace CoreRunNamespace, epoch uint32) (AttemptK
 		return AttemptKey{}, err
 	}
 	if epoch != observer.attempt || epoch != 1 {
-		return AttemptKey{}, &Phase0AError{Kind: Phase0AErrorAttemptUnproven, Namespace: namespace}
+		return AttemptKey{}, phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorAttemptUnproven, Namespace: namespace})
 	}
 	return AttemptKey{Run: namespace, AttemptEpoch: 1}, nil
 }
@@ -223,16 +337,20 @@ func phase0ANextConstructionEvent(c *Core, namespace CoreRunNamespace) (Construc
 		return ConstructionEventKey{}, err
 	}
 	if observer.attempt != 1 {
-		return ConstructionEventKey{}, &Phase0AError{Kind: Phase0AErrorAttemptUnproven, Namespace: namespace}
+		return ConstructionEventKey{}, phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorAttemptUnproven, Namespace: namespace})
 	}
 	if observer.nextEvent == math.MaxUint64 {
-		return ConstructionEventKey{}, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterEventSerial, Namespace: namespace}
+		return ConstructionEventKey{}, phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterEventSerial, Namespace: namespace})
 	}
-	if err := phase0AChargeLocked(phase0AEventRecordBytes); err != nil {
+	if err := phase0AReserveMutationLocked(observer, phase0AEventRecordBytes); err != nil {
 		return ConstructionEventKey{}, err
 	}
 	observer.nextEvent++
-	return ConstructionEventKey{Attempt: AttemptKey{Run: namespace, AttemptEpoch: 1}, Serial: observer.nextEvent}, nil
+	event := ConstructionEventKey{Attempt: AttemptKey{Run: namespace, AttemptEpoch: 1}, Serial: observer.nextEvent}
+	record := Phase0AMutationRecord{Kind: Phase0AMutationEvent, Event: event, TransactionID: phase0ACurrentTransaction(observer)}
+	observer.eventIndex[event] = uint64(len(observer.mutations))
+	observer.mutations = append(observer.mutations, record)
+	return event, nil
 }
 
 func phase0ANextIncomingEdge(c *Core, event ConstructionEventKey) (IncomingEdgeKey, error) {
@@ -243,19 +361,45 @@ func phase0ANextIncomingEdge(c *Core, event ConstructionEventKey) (IncomingEdgeK
 		return IncomingEdgeKey{}, err
 	}
 	if event.Attempt.AttemptEpoch != 1 {
-		return IncomingEdgeKey{}, &Phase0AError{Kind: Phase0AErrorAttemptUnproven, Namespace: observer.run}
+		return IncomingEdgeKey{}, phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorAttemptUnproven, Namespace: observer.run})
 	}
-	if event.Serial == 0 || event.Serial > observer.nextEvent {
-		return IncomingEdgeKey{}, &Phase0AError{Kind: Phase0AErrorInvalidEvent, Namespace: observer.run}
+	index, ok := observer.eventIndex[event]
+	if !ok || index >= uint64(len(observer.mutations)) {
+		return IncomingEdgeKey{}, phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidEvent, Namespace: observer.run, Detail: "event is not indexed"})
+	}
+	eventRecord := observer.mutations[index]
+	if eventRecord.Kind != Phase0AMutationEvent || eventRecord.Event != event {
+		return IncomingEdgeKey{}, phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidEvent, Namespace: observer.run, Detail: "event index mismatch"})
+	}
+	if eventRecord.RolledBack {
+		return IncomingEdgeKey{}, phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidEvent, Namespace: observer.run, Detail: "event was rolled back"})
 	}
 	if observer.nextEdge == math.MaxUint64 {
-		return IncomingEdgeKey{}, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterEdgeSerial, Namespace: observer.run}
+		return IncomingEdgeKey{}, phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterEdgeSerial, Namespace: observer.run})
 	}
-	if err := phase0AChargeLocked(phase0AEdgeRecordBytes); err != nil {
+	if err := phase0AReserveMutationLocked(observer, phase0AEdgeRecordBytes); err != nil {
 		return IncomingEdgeKey{}, err
 	}
 	observer.nextEdge++
-	return IncomingEdgeKey{Event: event, Serial: observer.nextEdge}, nil
+	edge := IncomingEdgeKey{Event: event, Serial: observer.nextEdge}
+	record := Phase0AMutationRecord{Kind: Phase0AMutationEdge, Event: event, Edge: edge, TransactionID: phase0ACurrentTransaction(observer)}
+	observer.edgeIndex[edge] = uint64(len(observer.mutations))
+	observer.mutations = append(observer.mutations, record)
+	return edge, nil
+}
+
+func phase0AReserveMutationLocked(observer *phase0AObserver, bytes uint64) error {
+	limit := phase0AObservers.limits.MaxMutations
+	if limit == 0 {
+		limit = math.MaxUint64
+	}
+	if uint64(len(observer.mutations)) >= limit {
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorMutationCap, Namespace: observer.run})
+	}
+	if err := phase0AChargeLocked(bytes); err != nil {
+		return phase0AStickyLocked(observer, err.(*Phase0AError))
+	}
+	return nil
 }
 
 func phase0AChargeLocked(bytes uint64) error {
@@ -271,13 +415,198 @@ func phase0AChargeLocked(bytes uint64) error {
 	return nil
 }
 
-func phase0AObserverForNamespaceLocked(core *Core, namespace CoreRunNamespace) (*phase0AObserver, error) {
+func phase0AObserverForRunLocked(core *Core, namespace CoreRunNamespace) (*phase0AObserver, error) {
 	if !phase0AObservers.active {
 		return nil, &Phase0AError{Kind: Phase0AErrorSessionInactive, Namespace: namespace}
 	}
 	observer := phase0AObservers.byCore[core]
-	if observer == nil || !observer.active || observer.run != namespace {
+	if observer == nil || observer.run != namespace {
 		return nil, &Phase0AError{Kind: Phase0AErrorStaleNamespace, Namespace: namespace}
 	}
 	return observer, nil
+}
+
+func phase0AObserverForNamespaceLocked(core *Core, namespace CoreRunNamespace) (*phase0AObserver, error) {
+	observer, err := phase0AObserverForRunLocked(core, namespace)
+	if err != nil {
+		return nil, err
+	}
+	if observer.failure != nil {
+		return nil, phase0AExistingFailureLocked(observer)
+	}
+	if !observer.active {
+		return nil, &Phase0AError{Kind: Phase0AErrorStaleNamespace, Namespace: namespace}
+	}
+	return observer, nil
+}
+
+func phase0ACurrentTransaction(observer *phase0AObserver) uint64 {
+	if len(observer.frames) == 0 {
+		return 0
+	}
+	return observer.frames[len(observer.frames)-1].TransactionID
+}
+
+func phase0AStickyLocked(observer *phase0AObserver, err *Phase0AError) error {
+	if observer.failure == nil {
+		copy := *err
+		observer.failure = &copy
+	}
+	copy := *observer.failure
+	return &copy
+}
+
+func phase0AExistingFailureLocked(observer *phase0AObserver) error {
+	copy := *observer.failure
+	return &copy
+}
+
+func Phase0AObserverProof(core *Core, namespace CoreRunNamespace) (Phase0AProofSnapshot, error) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer, err := phase0AObserverForRunLocked(core, namespace)
+	if err != nil {
+		return Phase0AProofSnapshot{}, err
+	}
+	if !observer.active && observer.failure == nil {
+		return Phase0AProofSnapshot{}, &Phase0AError{Kind: Phase0AErrorStaleNamespace, Namespace: namespace}
+	}
+	snapshot := Phase0AProofSnapshot{Namespace: namespace}
+	snapshot.Mutations = append(snapshot.Mutations, observer.mutations...)
+	snapshot.Frames = append(snapshot.Frames, observer.frames...)
+	if observer.firstPoison != nil {
+		copy := *observer.firstPoison
+		snapshot.FirstPoison = &copy
+	}
+	if observer.failure != nil {
+		copy := *observer.failure
+		snapshot.Failure = &copy
+		return snapshot, snapshot.Failure
+	}
+	return snapshot, nil
+}
+
+func phase0AObserveMark(core *Core, transaction, parent uint64) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer := phase0AObservers.byCore[core]
+	if observer == nil || !observer.active || observer.failure != nil {
+		return
+	}
+	if transaction == 0 || (len(observer.frames) == 0 && parent != 0) || (len(observer.frames) != 0 && observer.frames[len(observer.frames)-1].TransactionID != parent) {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: observer.run, Detail: "mark parent mismatch"})
+		return
+	}
+	limit := phase0AObservers.limits.MaxFrames
+	if limit == 0 {
+		limit = math.MaxUint64
+	}
+	if uint64(len(observer.frames)) >= limit {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorFrameCap, Namespace: observer.run})
+		return
+	}
+	if err := phase0AChargeLocked(phase0AFrameRecordBytes); err != nil {
+		phase0AStickyLocked(observer, err.(*Phase0AError))
+		return
+	}
+	observer.frames = append(observer.frames, Phase0ATransactionFrame{TransactionID: transaction, ParentID: parent, MutationStart: uint64(len(observer.mutations))})
+}
+
+func phase0AObserveRollback(core *Core, transaction uint64, cause Phase0ARollbackCause) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer := phase0AObservers.byCore[core]
+	if observer == nil || !observer.active {
+		return
+	}
+	if observer.failure != nil {
+		if len(observer.frames) != 0 && observer.frames[len(observer.frames)-1].TransactionID == transaction {
+			frame := observer.frames[len(observer.frames)-1]
+			for index := frame.MutationStart; index < uint64(len(observer.mutations)); index++ {
+				observer.mutations[index].RolledBack = true
+				observer.mutations[index].RollbackTransaction = transaction
+				observer.mutations[index].RollbackCause = cause
+			}
+			observer.frames = observer.frames[:len(observer.frames)-1]
+		}
+		return
+	}
+	if len(observer.frames) == 0 || observer.frames[len(observer.frames)-1].TransactionID != transaction {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: observer.run, Detail: "rollback transaction mismatch"})
+		return
+	}
+	frame := observer.frames[len(observer.frames)-1]
+	for index := frame.MutationStart; index < uint64(len(observer.mutations)); index++ {
+		observer.mutations[index].RolledBack = true
+		observer.mutations[index].RollbackTransaction = transaction
+		observer.mutations[index].RollbackCause = cause
+	}
+	observer.frames = observer.frames[:len(observer.frames)-1]
+}
+
+func phase0AObserveCommit(core *Core, transaction uint64) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer := phase0AObservers.byCore[core]
+	if observer == nil || !observer.active {
+		return
+	}
+	if observer.failure != nil {
+		if len(observer.frames) != 0 && observer.frames[len(observer.frames)-1].TransactionID == transaction {
+			observer.frames = observer.frames[:len(observer.frames)-1]
+		}
+		return
+	}
+	if len(observer.frames) == 0 || observer.frames[len(observer.frames)-1].TransactionID != transaction {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: observer.run, Detail: "commit transaction mismatch"})
+		return
+	}
+	observer.frames = observer.frames[:len(observer.frames)-1]
+}
+
+func phase0AObserveFirstPoison(core *Core, transaction uint64, kind Phase0APoisonKind) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer := phase0AObservers.byCore[core]
+	if observer == nil || !observer.active || observer.firstPoison != nil {
+		return
+	}
+	observer.firstPoison = &Phase0APoisonRecord{TransactionID: transaction, Kind: kind}
+}
+
+func phase0ASetRollbackCause(core *Core, cause Phase0ARollbackCause) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	if observer := phase0AObservers.byCore[core]; observer != nil && observer.active {
+		observer.pendingRollback = cause
+	}
+}
+
+func phase0ATakeRollbackCause(core *Core) Phase0ARollbackCause {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer := phase0AObservers.byCore[core]
+	if observer == nil || !observer.active {
+		return Phase0ARollbackUnknown
+	}
+	cause := observer.pendingRollback
+	observer.pendingRollback = Phase0ARollbackUnknown
+	return cause
+}
+
+func phase0AObserveSchedulerPoison(core *Core, token SchedulerTransactionToken, kind Phase0APoisonKind) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer := phase0AObservers.byCore[core]
+	if observer == nil || !observer.active || observer.firstPoison != nil || !core.schedulerFrame.active || core.schedulerFrame.poisoned == nil {
+		return
+	}
+	if token.owner != core {
+		kind = Phase0APoisonWrongCore
+	} else if token.epoch == 0 || token.epoch != core.schedulerFrame.epoch || token.transaction != core.schedulerFrame.mark.transaction {
+		kind = Phase0APoisonStaleToken
+	} else if len(core.transactions) == 0 || core.transactions[len(core.transactions)-1] != token.transaction {
+		kind = Phase0APoisonNonTopToken
+	}
+	observer.firstPoison = &Phase0APoisonRecord{TransactionID: core.schedulerFrame.mark.transaction, Kind: kind}
 }

@@ -528,6 +528,11 @@ func (c *Core) markInto(mark *checkpoint) {
 		work: c.work,
 	}
 	c.transactions = append(c.transactions, mark.transaction)
+	parent := uint64(0)
+	if len(c.transactions) > 1 {
+		parent = c.transactions[len(c.transactions)-2]
+	}
+	phase0AObserveMark(c, mark.transaction, parent)
 }
 
 func (c *Core) mark() checkpoint {
@@ -562,6 +567,7 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 	c.boundaries.restore(mark.boundaryIndex)
 	clear(c.boundaryJournal[mark.journal:])
 	c.boundaryJournal = c.boundaryJournal[:mark.journal]
+	phase0AObserveRollback(c, mark.transaction, phase0ATakeRollbackCause(c))
 	c.finishTransaction()
 }
 
@@ -571,6 +577,7 @@ func (c *Core) restore(mark checkpoint) {
 
 func (c *Core) commit(mark checkpoint) {
 	c.assertTopTransactionCheckpoint(&mark)
+	phase0AObserveCommit(c, mark.transaction)
 	c.finishTransaction()
 }
 
@@ -594,10 +601,12 @@ func (c *Core) finishTransaction() {
 
 func (c *Core) completeTransaction(mark checkpoint, err *error) {
 	if recovered := recover(); recovered != nil {
+		phase0ASetRollbackCause(c, Phase0ARollbackPanic)
 		c.restore(mark)
 		panic(recovered)
 	}
 	if *err != nil {
+		phase0ASetRollbackCause(c, Phase0ARollbackReturnedError)
 		c.restore(mark)
 	} else {
 		c.commit(mark)
@@ -639,19 +648,26 @@ func (c *Core) poisonSchedulerTransaction(token SchedulerTransactionToken, cause
 // error. Ignoring the returned error therefore cannot commit partial state.
 func (c *Core) RunSchedulerOwned(token SchedulerTransactionToken, fn func() error) (err error) {
 	if fn == nil {
-		return c.poisonSchedulerTransaction(token, errors.New("parser-core phase zero: nil scheduler-owned operation"))
+		err := c.poisonSchedulerTransaction(token, errors.New("parser-core phase zero: nil scheduler-owned operation"))
+		phase0AObserveSchedulerPoison(c, token, Phase0APoisonReturnedError)
+		return err
 	}
 	if err := c.validateSchedulerTransaction(token); err != nil {
-		return c.poisonSchedulerTransaction(token, err)
+		err = c.poisonSchedulerTransaction(token, err)
+		phase0AObserveSchedulerPoison(c, token, Phase0APoisonReturnedError)
+		return err
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			c.poisonSchedulerTransaction(token, fmt.Errorf("parser-core phase zero: scheduler-owned operation panicked: %v", recovered))
+			phase0AObserveSchedulerPoison(c, token, Phase0APoisonPanic)
 			panic(recovered)
 		}
 	}()
 	if err = fn(); err != nil {
-		return c.poisonSchedulerTransaction(token, err)
+		err = c.poisonSchedulerTransaction(token, err)
+		phase0AObserveSchedulerPoison(c, token, Phase0APoisonReturnedError)
+		return err
 	}
 	return nil
 }
@@ -665,6 +681,7 @@ func (c *Core) ApplySchedulerAtomic(fn func(SchedulerTransactionToken) error) (e
 		err := errors.New("parser-core phase zero: nil scheduler atomic operation")
 		if c.schedulerFrame.active && c.schedulerFrame.poisoned == nil {
 			c.schedulerFrame.poisoned = err
+			phase0AObserveFirstPoison(c, c.schedulerFrame.mark.transaction, Phase0APoisonReturnedError)
 		}
 		return err
 	}
@@ -673,6 +690,7 @@ func (c *Core) ApplySchedulerAtomic(fn func(SchedulerTransactionToken) error) (e
 		err := errors.New("parser-core phase zero: nested scheduler-owned transaction")
 		if frame.poisoned == nil {
 			frame.poisoned = err
+			phase0AObserveFirstPoison(c, frame.mark.transaction, Phase0APoisonNestedScheduler)
 		}
 		return err
 	}
@@ -687,6 +705,7 @@ func (c *Core) ApplySchedulerAtomic(fn func(SchedulerTransactionToken) error) (e
 	defer func() {
 		recovered := recover()
 		if recovered != nil {
+			phase0ASetRollbackCause(c, Phase0ARollbackPanic)
 			c.restoreCheckpoint(&frame.mark)
 			frame.clearInactive()
 			panic(recovered)
@@ -695,10 +714,14 @@ func (c *Core) ApplySchedulerAtomic(fn func(SchedulerTransactionToken) error) (e
 			err = fmt.Errorf("parser-core phase zero: poisoned scheduler transaction: %w", frame.poisoned)
 		}
 		if err != nil {
+			cause := Phase0ARollbackReturnedError
+			if frame.poisoned != nil {
+				cause = Phase0ARollbackSchedulerPoison
+			}
+			phase0ASetRollbackCause(c, cause)
 			c.restoreCheckpoint(&frame.mark)
 		} else {
-			c.assertTopTransactionCheckpoint(&frame.mark)
-			c.finishTransaction()
+			c.commit(frame.mark)
 		}
 		frame.clearInactive()
 	}()

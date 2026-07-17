@@ -5,6 +5,7 @@ package parsercorephase0
 import (
 	"errors"
 	"math"
+	"reflect"
 	"sync"
 	"testing"
 )
@@ -56,9 +57,6 @@ func TestPhase0ACompositeIdentityAndAttemptStatus(t *testing.T) {
 	if err != nil || attempt.AttemptEpoch != 1 {
 		t.Fatalf("attempt = %+v, %v", attempt, err)
 	}
-	if _, err := phase0AAttempt(a, ar, 2); !isPhase0AError(err, Phase0AErrorAttemptUnproven, "") {
-		t.Fatalf("retry error = %v", err)
-	}
 	event, err := phase0ANextConstructionEvent(a, ar)
 	if err != nil {
 		t.Fatal(err)
@@ -67,9 +65,12 @@ func TestPhase0ACompositeIdentityAndAttemptStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := RawOccurrenceKey{Event: event, Slot: 7}
+	raw := ConstructionOccurrenceKey{Event: event, Slot: 7}
 	if edge.Event != raw.Event || raw.Slot != 7 {
 		t.Fatalf("composite keys lost: edge=%+v raw=%+v", edge, raw)
+	}
+	if _, err := phase0AAttempt(a, ar, 2); !isPhase0AError(err, Phase0AErrorAttemptUnproven, "") {
+		t.Fatalf("retry error = %v", err)
 	}
 	if err := a.EndRun(br); !isPhase0AError(err, Phase0AErrorStaleNamespace, "") {
 		t.Fatalf("wrong namespace end = %v", err)
@@ -152,8 +153,8 @@ func TestPhase0AByteAndCoreSerialOverflow(t *testing.T) {
 	if _, err := phase0ANextConstructionEvent(c, run); !isPhase0AError(err, Phase0AErrorByteCap, "") {
 		t.Fatalf("byte cap = %v", err)
 	}
-	if err := c.EndRun(run); err != nil {
-		t.Fatal(err)
+	if err := c.EndRun(run); !isPhase0AError(err, Phase0AErrorByteCap, "") {
+		t.Fatalf("end run failure = %v", err)
 	}
 	phase0AObservers.Lock()
 	delete(phase0AObservers.byCore, c)
@@ -204,12 +205,19 @@ func TestPhase0AResetSerialsAndOverflow(t *testing.T) {
 	phase0AObservers.Lock()
 	observer.nextEdge = math.MaxUint64
 	phase0AObservers.Unlock()
-	if _, err := phase0ANextIncomingEdge(c, firstEvent); !isPhase0AError(err, Phase0AErrorCounterOverflow, Phase0ACounterEdgeSerial) {
-		t.Fatalf("edge overflow = %v", err)
+	if _, err := phase0ANextIncomingEdge(c, firstEvent); !isPhase0AError(err, Phase0AErrorCounterOverflow, Phase0ACounterEventSerial) {
+		t.Fatalf("sticky event overflow = %v", err)
 	}
 	if err := c.Reset(); err != nil {
 		t.Fatal(err)
 	}
+	phase0AObservers.Lock()
+	resetObserver := phase0AObservers.byCore[c]
+	if resetObserver.active || resetObserver.frames != nil || resetObserver.mutations != nil || resetObserver.eventIndex != nil || resetObserver.edgeIndex != nil || resetObserver.firstPoison != nil || resetObserver.failure != nil {
+		phase0AObservers.Unlock()
+		t.Fatalf("reset retained observer capacity or mappings: %+v", resetObserver)
+	}
+	phase0AObservers.Unlock()
 	if _, err := phase0ANextConstructionEvent(c, firstRun); !isPhase0AError(err, Phase0AErrorStaleNamespace, "") {
 		t.Fatalf("reset namespace = %v", err)
 	}
@@ -342,7 +350,11 @@ func TestPhase0ARunGenerationOverflowDoesNotMutate(t *testing.T) {
 	phase0AObservers.Lock()
 	after := *phase0AObservers.byCore[core]
 	phase0AObservers.Unlock()
-	if after != before {
+	if after.failure == nil || after.failure.Kind != Phase0AErrorCounterOverflow || after.failure.Counter != Phase0ACounterRunGeneration {
+		t.Fatalf("overflow failure = %+v", after.failure)
+	}
+	after.failure = nil
+	if !reflect.DeepEqual(after, before) {
 		t.Fatalf("overflow mutated observer: before=%+v after=%+v", before, after)
 	}
 }
