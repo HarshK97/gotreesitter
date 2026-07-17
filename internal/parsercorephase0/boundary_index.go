@@ -1,7 +1,6 @@
 package parsercorephase0
 
 import (
-	"encoding/binary"
 	"errors"
 	"math"
 	"math/bits"
@@ -188,12 +187,11 @@ func (i *boundaryIndex) logicalMap() map[boundaryKey]NodeID {
 }
 
 func boundaryKeyHash(key boundaryKey) uint64 {
-	// Scanner checkpoints are SHA-256 digests. Two separated words provide
-	// strong distribution; exact full-key equality resolves every collision.
-	h := binary.LittleEndian.Uint64(key.checkpoint[:8])
-	h ^= bits.RotateLeft64(binary.LittleEndian.Uint64(key.checkpoint[24:]), 23)
-	h ^= key.frontier * 0x9e3779b97f4a7c15
+	// CheckpointID already names exact serialized scanner bytes. Complete key
+	// equality still resolves every table-hash collision.
+	h := key.frontier * 0x9e3779b97f4a7c15
 	h ^= (uint64(key.state) << 32) | uint64(key.byteOffset)
+	h ^= uint64(key.checkpoint) * 0x94d049bb133111eb
 	if key.shifted {
 		h ^= 0xd6e8feb86659fd93
 	}

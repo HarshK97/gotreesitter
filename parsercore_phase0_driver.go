@@ -470,6 +470,18 @@ func parserCoreCheckpoint(bytes []byte) DiagnosticParserCoreScannerCheckpoint {
 	return DiagnosticParserCoreScannerCheckpoint{Length: len(bytes), SHA256: sha256.Sum256(bytes)}
 }
 
+func diagnosticParserCoreInternCheckpoint(compact *core.Core, bytes []byte) (core.CheckpointID, DiagnosticParserCoreScannerCheckpoint, error) {
+	id, err := compact.InternCheckpoint(bytes)
+	if err != nil {
+		return 0, DiagnosticParserCoreScannerCheckpoint{}, err
+	}
+	length, digest, ok := compact.CheckpointReceipt(id)
+	if !ok {
+		return 0, DiagnosticParserCoreScannerCheckpoint{}, errors.New("parser-core phase zero: interned checkpoint identity is unavailable")
+	}
+	return id, DiagnosticParserCoreScannerCheckpoint{Length: int(length), SHA256: digest}, nil
+}
+
 // DiagnosticParseParserCorePrefix independently schedules one compact seed
 // against the complete production DFA/scanner election stream. Unsupported
 // boundaries remain fail-closed. It never calls the production parser.
@@ -641,13 +653,21 @@ func diagnosticParserCoreSelectedNodeCensus(root *Node) diagnosticParserCoreSele
 }
 
 type diagnosticParserCoreHeader struct {
-	head        core.Head
 	creationSeq uint64
+	head        core.Head
+	checkpoint  core.CheckpointID
+	freshness   core.ReductionFreshness
 	shifted     bool
 	accepted    bool
 	paused      bool
-	freshness   core.ReductionFreshness
-	checkpoint  [32]byte
+}
+
+func diagnosticParserCoreCheckpointDigest(compact *core.Core, id core.CheckpointID) ([32]byte, error) {
+	_, digest, ok := compact.CheckpointReceipt(id)
+	if !ok {
+		return [32]byte{}, errors.New("parser-core phase zero: header references unknown checkpoint identity")
+	}
+	return digest, nil
 }
 
 func diagnosticParserCoreHeaderReceipt(compact *core.Core, header diagnosticParserCoreHeader) (DiagnosticParserCoreHeaderReceipt, error) {
@@ -659,20 +679,7 @@ func diagnosticParserCoreHeaderReceipt(compact *core.Core, header diagnosticPars
 	if err != nil {
 		return DiagnosticParserCoreHeaderReceipt{}, err
 	}
-	return DiagnosticParserCoreHeaderReceipt{
-		CreationSeq: header.creationSeq,
-		State:       StateID(state),
-		ByteOffset:  byteOffset,
-		Shifted:     header.shifted,
-		Accepted:    header.accepted,
-		Paused:      header.paused,
-		ExactPaths:  stats.CurrentExactPaths,
-		Checkpoint:  header.checkpoint,
-	}, nil
-}
-
-func diagnosticParserCoreHeaderSummary(compact *core.Core, header diagnosticParserCoreHeader) (DiagnosticParserCoreHeaderReceipt, error) {
-	state, byteOffset, err := compact.Boundary(header.head)
+	checkpoint, err := diagnosticParserCoreCheckpointDigest(compact, header.checkpoint)
 	if err != nil {
 		return DiagnosticParserCoreHeaderReceipt{}, err
 	}
@@ -683,7 +690,28 @@ func diagnosticParserCoreHeaderSummary(compact *core.Core, header diagnosticPars
 		Shifted:     header.shifted,
 		Accepted:    header.accepted,
 		Paused:      header.paused,
-		Checkpoint:  header.checkpoint,
+		ExactPaths:  stats.CurrentExactPaths,
+		Checkpoint:  checkpoint,
+	}, nil
+}
+
+func diagnosticParserCoreHeaderSummary(compact *core.Core, header diagnosticParserCoreHeader) (DiagnosticParserCoreHeaderReceipt, error) {
+	state, byteOffset, err := compact.Boundary(header.head)
+	if err != nil {
+		return DiagnosticParserCoreHeaderReceipt{}, err
+	}
+	checkpoint, err := diagnosticParserCoreCheckpointDigest(compact, header.checkpoint)
+	if err != nil {
+		return DiagnosticParserCoreHeaderReceipt{}, err
+	}
+	return DiagnosticParserCoreHeaderReceipt{
+		CreationSeq: header.creationSeq,
+		State:       StateID(state),
+		ByteOffset:  byteOffset,
+		Shifted:     header.shifted,
+		Accepted:    header.accepted,
+		Paused:      header.paused,
+		Checkpoint:  checkpoint,
 	}, nil
 }
 
@@ -914,9 +942,9 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 
 type diagnosticParserCorePhaseHead struct {
 	head       core.Head
+	checkpoint core.CheckpointID
 	shifted    bool
 	accepted   bool
-	checkpoint [32]byte
 }
 
 type diagnosticParserCoreCanonicalScratch struct {
@@ -1141,6 +1169,7 @@ type diagnosticParserCoreGenericScheduler struct {
 	headers                    []diagnosticParserCoreHeader
 	token                      Token
 	checkpoint                 DiagnosticParserCoreScannerCheckpoint
+	checkpointID               core.CheckpointID
 	currentElection            DiagnosticParserCoreElection
 	electionIndex              int
 	tokens                     uint64
@@ -1211,6 +1240,7 @@ func newDiagnosticParserCoreGenericScheduler(
 	tokenSource *dfaTokenSource,
 	scannerScratch *[]byte,
 	head core.Head,
+	checkpointID core.CheckpointID,
 	checkpoint DiagnosticParserCoreScannerCheckpoint,
 	observer diagnosticParserCoreSeedObserver,
 	options DiagnosticParserCorePrefixOptions,
@@ -1218,17 +1248,24 @@ func newDiagnosticParserCoreGenericScheduler(
 	if compact == nil || tokenSource == nil || scannerScratch == nil || head.Node == 0 {
 		return nil, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreRoute, detail: "generic scheduler requires a compact core, token source, scanner scratch, and seed head"}
 	}
-	_, byteOffset, err := compact.Boundary(head)
+	state, byteOffset, err := compact.Boundary(head)
 	if err != nil {
 		return nil, err
 	}
 	if byteOffset != 0 {
 		return nil, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreIdentity, detail: "generic seed scheduler head is not at byte zero"}
 	}
-	header := diagnosticParserCoreHeader{head: head, checkpoint: checkpoint.SHA256}
+	length, digest, ok := compact.CheckpointReceipt(checkpointID)
+	if !ok || int(length) != checkpoint.Length || digest != checkpoint.SHA256 {
+		return nil, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreIdentity, detail: "generic seed scanner checkpoint receipt does not match its exact identity"}
+	}
+	if canonical, ok := compact.CanonicalBoundary(state, byteOffset, false, checkpointID); !ok || canonical != head {
+		return nil, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreIdentity, detail: "generic seed head was not created under its scanner checkpoint identity"}
+	}
+	header := diagnosticParserCoreHeader{head: head, checkpoint: checkpointID}
 	scheduler := &diagnosticParserCoreGenericScheduler{
 		compact: compact, tokenSource: tokenSource, scannerScratch: scannerScratch,
-		headers: []diagnosticParserCoreHeader{header}, checkpoint: checkpoint,
+		headers: []diagnosticParserCoreHeader{header}, checkpoint: checkpoint, checkpointID: checkpointID,
 		electionIndex: -1, nextSeq: 1,
 		options: options, observer: observer,
 		receipt: &DiagnosticParserCoreGenericScheduler{
@@ -1350,15 +1387,22 @@ func executeDiagnosticParserCoreGenericSchedulerFromSeed(
 	if compact == nil || tokenSource == nil || scannerScratch == nil {
 		return nil, errors.New("parser-core phase zero: seed scheduler requires compact core and production token source")
 	}
+	tokenSource.SetParserState(initialState)
+	tokenSource.SetGLRStates(nil)
+	initialCheckpoint := tokenSource.captureExternalScannerStateInto(scannerScratch)
+	initialCheckpointID, initialCheckpointReceipt, err := diagnosticParserCoreInternCheckpoint(compact, initialCheckpoint)
+	if err != nil {
+		return nil, err
+	}
+	if err := compact.SetPhaseCheckpoint(initialCheckpointID); err != nil {
+		return nil, err
+	}
 	head, err := compact.Seed(core.StateID(initialState), 0)
 	if err != nil {
 		return nil, err
 	}
-	tokenSource.SetParserState(initialState)
-	tokenSource.SetGLRStates(nil)
-	initialCheckpoint := parserCoreCheckpoint(append([]byte(nil), tokenSource.captureExternalScannerStateInto(scannerScratch)...))
 	scheduler, err := newDiagnosticParserCoreGenericScheduler(
-		compact, tokenSource, scannerScratch, head, initialCheckpoint, observer, options,
+		compact, tokenSource, scannerScratch, head, initialCheckpointID, initialCheckpointReceipt, observer, options,
 	)
 	if err != nil {
 		return nil, err
@@ -2581,7 +2625,7 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 			return err
 		}
 		shiftIdentity := receipt.Shifted || first && !receipt.Shifted
-		if !shiftIdentity || receipt.Accepted || receipt.Checkpoint != s.checkpoint.SHA256 {
+		if !shiftIdentity || receipt.Accepted || header.checkpoint != s.checkpointID {
 			return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreIdentity, detail: "generic scheduler election frontier is not closed and checkpoint-continuous"}
 		}
 		states[index] = receipt.State
@@ -2597,29 +2641,38 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 	} else {
 		s.tokenSource.SetGLRStates(append([]StateID(nil), states...))
 	}
-	before := parserCoreCheckpoint(append([]byte(nil), s.tokenSource.captureExternalScannerStateInto(s.scannerScratch)...))
-	if before != s.checkpoint {
+	beforeBytes := s.tokenSource.captureExternalScannerStateInto(s.scannerScratch)
+	beforeID, before, err := diagnosticParserCoreInternCheckpoint(s.compact, beforeBytes)
+	if err != nil {
+		return err
+	}
+	if beforeID != s.checkpointID {
 		return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreIdentity, detail: "generic scheduler scanner checkpoint continuity failed"}
 	}
 	token := s.tokenSource.Next()
-	after := parserCoreCheckpoint(append([]byte(nil), s.tokenSource.captureExternalScannerStateInto(s.scannerScratch)...))
+	afterBytes := s.tokenSource.captureExternalScannerStateInto(s.scannerScratch)
+	afterID, after, err := diagnosticParserCoreInternCheckpoint(s.compact, afterBytes)
+	if err != nil {
+		return err
+	}
 	current, currentStart, currentEnd, currentValid := currentExternalScannerCheckpoint(s.tokenSource)
 	if err := s.compact.BeginFrontier(); err != nil {
 		return err
 	}
-	if err := s.compact.SetPhaseCheckpoint(after.SHA256); err != nil {
+	if err := s.compact.SetPhaseCheckpoint(afterID); err != nil {
 		return err
 	}
 	for index := range s.headers {
 		s.headers[index].shifted = false
 		s.headers[index].paused = false
-		s.headers[index].checkpoint = after.SHA256
+		s.headers[index].checkpoint = afterID
 	}
 	s.electionIndex++
 	s.tokens++
 	s.work.Elections++
 	s.token = token
 	s.checkpoint = after
+	s.checkpointID = afterID
 	s.epochProgress = false
 	election := DiagnosticParserCoreElection{
 		States: states, Token: token, ScannerBefore: before, ScannerAfter: after,
@@ -2648,8 +2701,8 @@ func (s *diagnosticParserCoreGenericScheduler) completeAtClosedByte(target uint3
 		return false, err
 	}
 	allBelow := true
-	for _, header := range receipts {
-		if !header.Shifted || header.Accepted || header.Checkpoint != s.checkpoint.SHA256 {
+	for index, header := range receipts {
+		if !header.Shifted || header.Accepted || s.headers[index].checkpoint != s.checkpointID {
 			return false, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreIdentity, detail: "generic completion frontier is not shifted, nonaccepted, and checkpoint-continuous"}
 		}
 		if header.ByteOffset >= target {

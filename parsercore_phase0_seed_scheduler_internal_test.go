@@ -23,6 +23,36 @@ func TestParserCoreCheckpointPreservesExactEmptyAndNonEmptyIdentity(t *testing.T
 	}
 }
 
+func TestParserCoreCheckpointIDsOwnStatefulScannerScratch(t *testing.T) {
+	lang := &Language{Name: "checkpoint-id-test", ExternalScanner: byteStateExternalScanner{}}
+	tokenSource := acquireDFATokenSource(NewLexer(nil, nil), lang, nil, nil, nil, nil)
+	defer tokenSource.Close()
+	compact, err := core.New(&genericConflictTable{}, core.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var scratch []byte
+	state := tokenSource.externalPayload.(*byte)
+	*state = 7
+	firstBytes := tokenSource.captureExternalScannerStateInto(&scratch)
+	firstID := mustDiagnosticCheckpointID(t, compact, firstBytes)
+	firstReceipt := parserCoreCheckpoint(firstBytes)
+	*state = 9
+	secondBytes := tokenSource.captureExternalScannerStateInto(&scratch)
+	secondID := mustDiagnosticCheckpointID(t, compact, secondBytes)
+	if firstID == secondID || firstID == 0 || secondID == 0 {
+		t.Fatalf("stateful scanner IDs collapsed: first=%d second=%d", firstID, secondID)
+	}
+	length, digest, ok := compact.CheckpointReceipt(firstID)
+	if !ok || length != uint32(firstReceipt.Length) || digest != firstReceipt.SHA256 {
+		t.Fatalf("first scanner receipt after scratch reuse=(%d,%x,%t), want %+v", length, digest, ok, firstReceipt)
+	}
+	*state = 7
+	if repeated := mustDiagnosticCheckpointID(t, compact, tokenSource.captureExternalScannerStateInto(&scratch)); repeated != firstID {
+		t.Fatalf("restored scanner state ID=%d, want %d", repeated, firstID)
+	}
+}
+
 func TestDiagnosticParserCoreSeedPublicationRejectsMaterializationTransactionally(t *testing.T) {
 	base := DiagnosticParserCorePrefixResult{
 		Grammar: "go", ExactRootDFA: true,
@@ -71,20 +101,27 @@ func TestDiagnosticParserCoreGenericSeedConstructorFailsClosed(t *testing.T) {
 	}
 	checkpoint := parserCoreCheckpoint(nil)
 	var scratch []byte
-	if _, err := newDiagnosticParserCoreGenericScheduler(compact, &dfaTokenSource{}, &scratch, seed, checkpoint, diagnosticParserCoreSeedObserver{}, DiagnosticParserCorePrefixOptions{}); err != nil {
+	if _, err := newDiagnosticParserCoreGenericScheduler(compact, &dfaTokenSource{}, &scratch, seed, 0, checkpoint, diagnosticParserCoreSeedObserver{}, DiagnosticParserCorePrefixOptions{}); err != nil {
 		t.Fatalf("valid seed start declined: %v", err)
 	}
-	if _, err := newDiagnosticParserCoreGenericScheduler(nil, &dfaTokenSource{}, &scratch, seed, checkpoint, diagnosticParserCoreSeedObserver{}, DiagnosticParserCorePrefixOptions{}); err == nil {
+	if _, err := newDiagnosticParserCoreGenericScheduler(nil, &dfaTokenSource{}, &scratch, seed, 0, checkpoint, diagnosticParserCoreSeedObserver{}, DiagnosticParserCorePrefixOptions{}); err == nil {
 		t.Fatal("nil compact core was admitted")
 	}
-	if _, err := newDiagnosticParserCoreGenericScheduler(compact, nil, &scratch, seed, checkpoint, diagnosticParserCoreSeedObserver{}, DiagnosticParserCorePrefixOptions{}); err == nil {
+	if _, err := newDiagnosticParserCoreGenericScheduler(compact, nil, &scratch, seed, 0, checkpoint, diagnosticParserCoreSeedObserver{}, DiagnosticParserCorePrefixOptions{}); err == nil {
 		t.Fatal("nil token source was admitted")
 	}
-	if _, err := newDiagnosticParserCoreGenericScheduler(compact, &dfaTokenSource{}, nil, seed, checkpoint, diagnosticParserCoreSeedObserver{}, DiagnosticParserCorePrefixOptions{}); err == nil {
+	if _, err := newDiagnosticParserCoreGenericScheduler(compact, &dfaTokenSource{}, nil, seed, 0, checkpoint, diagnosticParserCoreSeedObserver{}, DiagnosticParserCorePrefixOptions{}); err == nil {
 		t.Fatal("nil scratch was admitted")
 	}
-	if _, err := newDiagnosticParserCoreGenericScheduler(compact, &dfaTokenSource{}, &scratch, core.Head{}, checkpoint, diagnosticParserCoreSeedObserver{}, DiagnosticParserCorePrefixOptions{}); err == nil {
+	if _, err := newDiagnosticParserCoreGenericScheduler(compact, &dfaTokenSource{}, &scratch, core.Head{}, 0, checkpoint, diagnosticParserCoreSeedObserver{}, DiagnosticParserCorePrefixOptions{}); err == nil {
 		t.Fatal("empty seed head was admitted")
+	}
+	nonemptyID := mustDiagnosticCheckpointID(t, compact, []byte{1})
+	if _, err := newDiagnosticParserCoreGenericScheduler(compact, &dfaTokenSource{}, &scratch, seed, nonemptyID, parserCoreCheckpoint([]byte{1}), diagnosticParserCoreSeedObserver{}, DiagnosticParserCorePrefixOptions{}); err == nil {
+		t.Fatal("seed created under a different checkpoint identity was admitted")
+	}
+	if _, err := newDiagnosticParserCoreGenericScheduler(compact, &dfaTokenSource{}, &scratch, seed, 0, parserCoreCheckpoint([]byte{1}), diagnosticParserCoreSeedObserver{}, DiagnosticParserCorePrefixOptions{}); err == nil {
+		t.Fatal("checkpoint receipt/identity mismatch was admitted")
 	}
 }
 

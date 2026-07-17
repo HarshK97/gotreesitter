@@ -206,6 +206,8 @@ type Limits struct {
 	MaxLinksPerBoundary uint32
 	MaxPopPaths         uint64
 	MaxDerivations      uint64
+	MaxCheckpoints      uint32
+	MaxCheckpointBytes  uint64
 }
 
 func (l Limits) withDefaults() Limits {
@@ -233,6 +235,12 @@ func (l Limits) withDefaults() Limits {
 	if l.MaxDerivations == 0 {
 		l.MaxDerivations = 64
 	}
+	if l.MaxCheckpoints == 0 {
+		l.MaxCheckpoints = 100000
+	}
+	if l.MaxCheckpointBytes == 0 {
+		l.MaxCheckpointBytes = 16 << 20
+	}
 	return l
 }
 
@@ -245,8 +253,8 @@ type boundaryKey struct {
 	frontier   uint64
 	state      StateID
 	byteOffset uint32
+	checkpoint CheckpointID
 	shifted    bool
-	checkpoint [32]byte
 }
 
 // BoundaryIndexStats reports the diagnostic canonical-boundary index shape.
@@ -427,7 +435,8 @@ type Core struct {
 	fields              []FieldMapEntry
 	aliases             []Symbol
 	frontier            uint64
-	checkpoint          [32]byte
+	checkpoint          CheckpointID
+	checkpoints         checkpointInterner
 	boundaries          boundaryIndex
 	boundaryJournal     []boundaryMutation
 	transactions        []uint64
@@ -450,7 +459,7 @@ type diagnosticOptions struct {
 type checkpoint struct {
 	nodes, links, subtrees, children, fields, aliases int
 	frontier                                          uint64
-	checkpoint                                        [32]byte
+	checkpoint                                        CheckpointID
 	boundaryIndex                                     boundaryIndexSnapshot
 	journal                                           int
 	transaction                                       uint64
@@ -549,6 +558,7 @@ func New(tables TableView, limits Limits) (*Core, error) {
 	}
 	core := &Core{
 		tables: tables, limits: limits, frontier: 1, boundaries: boundaries,
+		checkpoints:         newCheckpointInterner(limits.MaxCheckpoints, limits.MaxCheckpointBytes),
 		classificationPhase: 1,
 		diagnostics:         diagnosticOptions{foldSamePredecessorShallowPayloads: true},
 	}
@@ -581,7 +591,8 @@ func (c *Core) Reset() error {
 	c.fields = c.fields[:0]
 	c.aliases = c.aliases[:0]
 	c.frontier = 1
-	c.checkpoint = [32]byte{}
+	c.checkpoint = 0
+	c.checkpoints.reset()
 	c.boundaries.reset()
 	clear(c.boundaryJournal)
 	c.boundaryJournal = c.boundaryJournal[:0]
@@ -609,14 +620,22 @@ func (c *Core) BeginFrontier() error {
 	c.boundaries.advanceGeneration()
 	c.frontier++
 	c.classificationPhase++
-	c.checkpoint = [32]byte{}
+	c.checkpoint = 0
 	return nil
 }
 
 // SetPhaseCheckpoint binds subsequent condensation to the exact scanner
 // checkpoint for the current lookahead epoch. A changed checkpoint advances
 // classified-boundary authentication without advancing the frontier epoch.
-func (c *Core) SetPhaseCheckpoint(checkpoint [32]byte) error {
+func (c *Core) SetPhaseCheckpoint(checkpoint CheckpointID) error {
+	if len(c.transactions) != 0 {
+		return errors.New("parser-core phase zero: set checkpoint during active transaction")
+	}
+	if checkpoint != 0 {
+		if _, ok := c.checkpoints.record(checkpoint); !ok {
+			return errors.New("parser-core phase zero: unknown checkpoint identity")
+		}
+	}
 	if checkpoint == c.checkpoint {
 		return nil
 	}
@@ -676,12 +695,43 @@ func (c *Core) Boundary(head Head) (StateID, uint32, error) {
 // CanonicalBoundary returns the latest condensed head for one complete
 // same-lookahead scheduler phase identity. Headers use it at pass barriers to
 // replace stale immutable NodeIDs without changing their first-slot order.
-func (c *Core) CanonicalBoundary(state StateID, byteOffset uint32, consumed bool, checkpoint [32]byte) (Head, bool) {
+func (c *Core) CanonicalBoundary(state StateID, byteOffset uint32, consumed bool, checkpoint CheckpointID) (Head, bool) {
 	id, ok := c.boundaries.get(boundaryKey{
 		frontier: c.frontier, state: state, byteOffset: byteOffset,
 		shifted: consumed, checkpoint: checkpoint,
 	})
 	return Head{Node: id}, ok
+}
+
+// InternCheckpoint returns the core-local identity of an exact serialized
+// scanner state. Digest bucketing is only an index; equality confirms all
+// bytes. Interner mutation is rejected during compact transactions; existing
+// immutable identities survive rollback, while Reset clears logical contents.
+func (c *Core) InternCheckpoint(serialized []byte) (CheckpointID, error) {
+	if c == nil {
+		return 0, errors.New("parser-core phase zero: intern checkpoint on nil core")
+	}
+	if len(c.transactions) != 0 {
+		return 0, errors.New("parser-core phase zero: intern checkpoint during active transaction")
+	}
+	return c.checkpoints.intern(serialized)
+}
+
+// CheckpointReceipt resolves receipt metadata without exposing retained
+// serialized storage.
+func (c *Core) CheckpointReceipt(id CheckpointID) (uint32, [32]byte, bool) {
+	if c == nil {
+		return 0, [32]byte{}, false
+	}
+	return c.checkpoints.receipt(id)
+}
+
+// CheckpointInternerStats reports bounded logical scanner-state retention.
+func (c *Core) CheckpointInternerStats() CheckpointInternerStats {
+	if c == nil {
+		return CheckpointInternerStats{}
+	}
+	return c.checkpoints.stats()
 }
 
 // ApplyAtomic rolls back every compact arena and boundary mutation if fn

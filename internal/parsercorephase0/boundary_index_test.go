@@ -22,8 +22,7 @@ func TestBoundaryIndexMatchesMapModelAcrossFrontiers(t *testing.T) {
 			clear(model)
 			frontier++
 		}
-		var checkpoint [32]byte
-		random.Read(checkpoint[:])
+		checkpoint := CheckpointID(random.Uint32())
 		key := boundaryKey{
 			frontier: frontier, state: StateID(random.Intn(97)), byteOffset: uint32(random.Intn(211)),
 			shifted: random.Intn(2) != 0, checkpoint: checkpoint,
@@ -50,11 +49,11 @@ func TestBoundaryIndexFullKeyEqualitySurvivesHashCollision(t *testing.T) {
 	if err := index.grow(boundaryIndexInitialCapacity); err != nil {
 		t.Fatal(err)
 	}
-	first := boundaryKey{frontier: 1, state: 1, checkpoint: [32]byte{1}}
+	first := boundaryKey{frontier: 1, state: 1, checkpoint: 1}
 	var second boundaryKey
 	wantBucket := boundaryKeyHash(first) & uint64(len(index.slots)-1)
 	for state := StateID(2); ; state++ {
-		candidate := boundaryKey{frontier: 1, state: state, checkpoint: [32]byte{2, byte(state)}}
+		candidate := boundaryKey{frontier: 1, state: state, checkpoint: CheckpointID(state + 1)}
 		if boundaryKeyHash(candidate)&uint64(len(index.slots)-1) == wantBucket {
 			second = candidate
 			break

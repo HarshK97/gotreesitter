@@ -4,7 +4,9 @@ package gotreesitter
 
 import (
 	"reflect"
+	"runtime"
 	"testing"
+	"unsafe"
 
 	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
 )
@@ -163,7 +165,7 @@ func TestDiagnosticParserCoreCanonicalScratchMappedSpillPreservesSemantics(t *te
 			t.Fatal(err)
 		}
 	}
-	checkpoint := [32]byte{7}
+	checkpoint := mustDiagnosticCheckpointID(t, compact, []byte{7})
 	headers := make([]diagnosticParserCoreHeader, 0, 10)
 	headers = append(headers, diagnosticParserCoreHeader{
 		head: heads[0], checkpoint: checkpoint, creationSeq: 1, paused: true, freshness: core.ReductionNew,
@@ -192,5 +194,26 @@ func TestDiagnosticParserCoreCanonicalScratchMappedSpillPreservesSemantics(t *te
 	last := out[len(out)-1]
 	if last.head != heads[0] || last.creationSeq != 99 || last.paused || last.freshness != 0 || last.checkpoint != checkpoint {
 		t.Fatalf("mapped spill duplicate winner=%+v", last)
+	}
+}
+
+func mustDiagnosticCheckpointID(t testing.TB, compact *core.Core, serialized []byte) core.CheckpointID {
+	t.Helper()
+	id, err := compact.InternCheckpoint(serialized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestDiagnosticParserCoreCheckpointCompactLayoutsAMD64(t *testing.T) {
+	if runtime.GOARCH != "amd64" {
+		t.Skip("amd64 layout receipt")
+	}
+	if got := unsafe.Sizeof(diagnosticParserCoreHeader{}); got != 24 {
+		t.Fatalf("scheduler header size=%d, want 24", got)
+	}
+	if got := unsafe.Sizeof(diagnosticParserCorePhaseHead{}); got != 12 {
+		t.Fatalf("canonical phase key size=%d, want 12", got)
 	}
 }

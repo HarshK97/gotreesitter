@@ -389,7 +389,7 @@ func TestDiagnosticShallowFoldCapFailureRollsBack(t *testing.T) {
 			if after != before {
 				t.Fatalf("cap failure mutated storage: before=%+v after=%+v", before, after)
 			}
-			canonical, ok := core.CanonicalBoundary(2, 17, false, [32]byte{})
+			canonical, ok := core.CanonicalBoundary(2, 17, false, 0)
 			if !ok || canonical != oldHead {
 				t.Fatalf("cap failure changed canonical head: got=%+v ok=%t want=%+v", canonical, ok, oldHead)
 			}

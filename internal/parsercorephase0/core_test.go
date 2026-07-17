@@ -362,7 +362,7 @@ func TestDefaultLiveLinkCapRejectsNinthDistinctLink(t *testing.T) {
 	if err != nil || after != before {
 		t.Fatalf("ninth-link failure mutated core: before=%+v after=%+v err=%v", before, after, err)
 	}
-	canonical, ok := core.CanonicalBoundary(2, 1, false, [32]byte{})
+	canonical, ok := core.CanonicalBoundary(2, 1, false, 0)
 	if !ok || canonical != head {
 		t.Fatalf("ninth-link failure changed canonical boundary: head=%+v canonical=%+v ok=%t", head, canonical, ok)
 	}
@@ -421,10 +421,10 @@ func TestConsumedPhasePreventsZeroWidthShiftReductionCondensation(t *testing.T) 
 	if shifted.Node == runnable.Node {
 		t.Fatalf("consumed and runnable zero-width heads condensed to %d", shifted.Node)
 	}
-	if canonical, ok := core.CanonicalBoundary(2, 0, true, [32]byte{}); !ok || canonical != shifted {
+	if canonical, ok := core.CanonicalBoundary(2, 0, true, 0); !ok || canonical != shifted {
 		t.Fatalf("consumed canonical head=%+v ok=%t, want %+v", canonical, ok, shifted)
 	}
-	if canonical, ok := core.CanonicalBoundary(2, 0, false, [32]byte{}); !ok || canonical != runnable {
+	if canonical, ok := core.CanonicalBoundary(2, 0, false, 0); !ok || canonical != runnable {
 		t.Fatalf("runnable canonical head=%+v ok=%t, want %+v", canonical, ok, runnable)
 	}
 }
@@ -433,8 +433,8 @@ func TestScannerCheckpointPreventsSameBoundaryCondensation(t *testing.T) {
 	core := newTinyCore(t, 4)
 	seed, _ := core.Seed(1, 0)
 	payload, _ := core.appendSubtree(subtreeRecord{symbol: 1, terminal: true, endByte: 1}, nil, nil, nil)
-	firstCheckpoint := [32]byte{1}
-	secondCheckpoint := [32]byte{2}
+	firstCheckpoint := mustInternCheckpoint(t, core, []byte{1})
+	secondCheckpoint := mustInternCheckpoint(t, core, []byte{2})
 	if err := core.SetPhaseCheckpoint(firstCheckpoint); err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +594,7 @@ func TestMutationJournalRestoresScalarsAndArenas(t *testing.T) {
 	beforeStats, _ := compact.Stats(head)
 	beforeBoundaries := cloneBoundaryMap(compact.boundaries)
 	beforeFrontier, beforeCheckpoint := compact.frontier, compact.checkpoint
-	wantCheckpoint := [32]byte{1, 2, 3}
+	wantCheckpoint := mustInternCheckpoint(t, compact, []byte{1, 2, 3})
 	if err := compact.SetPhaseCheckpoint(wantCheckpoint); err != nil {
 		t.Fatal(err)
 	}
@@ -1107,7 +1107,7 @@ func TestShiftOrdinaryCohortRollsBackCaps(t *testing.T) {
 		if after != before || !reflect.DeepEqual(gotFirst, firstPaths) || !reflect.DeepEqual(gotSecond, secondPaths) {
 			t.Fatalf("cap failure mutated core: before=%+v after=%+v first=%+v second=%+v", before, after, gotFirst, gotSecond)
 		}
-		if _, ok := compact.CanonicalBoundary(3, 5, true, [32]byte{}); ok {
+		if _, ok := compact.CanonicalBoundary(3, 5, true, 0); ok {
 			t.Fatal("rolled-back cohort boundary remains published")
 		}
 	}
@@ -1289,7 +1289,7 @@ func TestShiftExtraCohortRollsBackCaps(t *testing.T) {
 				states = []StateID{3}
 			}
 			for _, state := range states {
-				if _, ok := compact.CanonicalBoundary(state, 5, true, [32]byte{}); ok {
+				if _, ok := compact.CanonicalBoundary(state, 5, true, 0); ok {
 					t.Fatalf("rolled-back extra cohort boundary remains published for state %d", state)
 				}
 			}
@@ -1625,7 +1625,7 @@ func TestReduceOutputsAggregatesFreshnessPerFinalBoundary(t *testing.T) {
 				t.Fatalf("A/B/C/C output %d=%+v state=%d err=%v, want state=%d freshness=%d", index, outputs[index], state, err, wantStates[index], wantFreshness[index])
 			}
 		}
-		canonicalC, ok := compact.CanonicalBoundary(7, 1, false, [32]byte{})
+		canonicalC, ok := compact.CanonicalBoundary(7, 1, false, 0)
 		if !ok || outputs[2].Head != canonicalC {
 			t.Fatalf("C output head=%+v canonical=%+v ok=%t", outputs[2].Head, canonicalC, ok)
 		}
@@ -2223,7 +2223,7 @@ func TestClassifiedBoundaryAuthenticatesOwnerAndMonotonicPhase(t *testing.T) {
 	if _, err := other.ShiftClassified(classified, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); err == nil {
 		t.Fatal("foreign core accepted classified boundary")
 	}
-	if err := compact.SetPhaseCheckpoint([32]byte{1}); err != nil {
+	if err := compact.SetPhaseCheckpoint(mustInternCheckpoint(t, compact, []byte{1})); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := compact.ShiftClassified(classified, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); err == nil {
@@ -2477,6 +2477,15 @@ func TestCycleAndOverflowDeclineFailClosed(t *testing.T) {
 func newTinyCore(t *testing.T, pathCap uint64) *Core {
 	t.Helper()
 	return newTinyCoreWithLimits(t, Limits{MaxDerivations: pathCap, MaxPopPaths: pathCap})
+}
+
+func mustInternCheckpoint(t *testing.T, compact *Core, serialized []byte) CheckpointID {
+	t.Helper()
+	id, err := compact.InternCheckpoint(serialized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func newTinyCoreWithLimits(t *testing.T, limits Limits) *Core {

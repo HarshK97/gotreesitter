@@ -30,15 +30,20 @@ func TestDiagnosticParserCoreGenericSingleExtraPreservesPayloadAndState(t *testi
 		Symbol: 9, StartByte: 10, EndByte: 20,
 		ExternalScannerToken: true, ExternalScannerStartByte: 10,
 	}
+	afterBytes := []byte{2, 2}
+	afterID := mustDiagnosticCheckpointID(t, compact, afterBytes)
+	if err := compact.SetPhaseCheckpoint(afterID); err != nil {
+		t.Fatal(err)
+	}
 	election := DiagnosticParserCoreElection{
 		Token:         token,
 		ScannerBefore: DiagnosticParserCoreScannerCheckpoint{Length: 1, SHA256: [32]byte{1}},
-		ScannerAfter:  DiagnosticParserCoreScannerCheckpoint{Length: 2, SHA256: [32]byte{2}},
+		ScannerAfter:  parserCoreCheckpoint(afterBytes),
 	}
 	scheduler := &diagnosticParserCoreGenericScheduler{
 		compact: compact,
-		headers: []diagnosticParserCoreHeader{{head: seed, creationSeq: 4, checkpoint: election.ScannerAfter.SHA256}},
-		token:   token, checkpoint: election.ScannerAfter, currentElection: election, electionIndex: 12,
+		headers: []diagnosticParserCoreHeader{{head: seed, creationSeq: 4, checkpoint: afterID}},
+		token:   token, checkpoint: election.ScannerAfter, checkpointID: afterID, currentElection: election, electionIndex: 12,
 		options: DiagnosticParserCorePrefixOptions{MaxDispatches: 10},
 		receipt: &DiagnosticParserCoreGenericScheduler{},
 	}
@@ -112,18 +117,23 @@ func TestDiagnosticParserCoreGenericMultiHeadExtraSharesPayload(t *testing.T) {
 	second, _ := compact.Seed(6, 10)
 	before, _ := compact.Stats(first)
 	token := Token{Symbol: 9, StartByte: 10, EndByte: 20, ExternalScannerToken: true}
+	afterBytes := []byte{2, 2}
+	afterID := mustDiagnosticCheckpointID(t, compact, afterBytes)
+	if err := compact.SetPhaseCheckpoint(afterID); err != nil {
+		t.Fatal(err)
+	}
 	election := DiagnosticParserCoreElection{
 		Token:         token,
 		ScannerBefore: DiagnosticParserCoreScannerCheckpoint{Length: 1, SHA256: [32]byte{1}},
-		ScannerAfter:  DiagnosticParserCoreScannerCheckpoint{Length: 2, SHA256: [32]byte{2}},
+		ScannerAfter:  parserCoreCheckpoint(afterBytes),
 	}
 	scheduler := &diagnosticParserCoreGenericScheduler{
 		compact: compact,
 		headers: []diagnosticParserCoreHeader{
-			{head: first, creationSeq: 4, checkpoint: election.ScannerAfter.SHA256},
-			{head: second, creationSeq: 7, checkpoint: election.ScannerAfter.SHA256},
+			{head: first, creationSeq: 4, checkpoint: afterID},
+			{head: second, creationSeq: 7, checkpoint: afterID},
 		},
-		token: token, checkpoint: election.ScannerAfter, currentElection: election, electionIndex: 12,
+		token: token, checkpoint: election.ScannerAfter, checkpointID: afterID, currentElection: election, electionIndex: 12,
 		options: DiagnosticParserCorePrefixOptions{MaxDispatches: 10}, receipt: &DiagnosticParserCoreGenericScheduler{},
 	}
 	stop, err := scheduler.dispatchPass()
@@ -241,7 +251,7 @@ func TestDiagnosticParserCoreGenericExtraPostExecutionFailureRollsBack(t *testin
 		t.Fatalf("extra post-execution rollback leaked before=%+v after=%+v scheduler=%+v", beforeStats, afterStats, scheduler)
 	}
 	for _, state := range []core.StateID{5, 6} {
-		if _, ok := compact.CanonicalBoundary(state, 20, true, [32]byte{}); ok {
+		if _, ok := compact.CanonicalBoundary(state, 20, true, 0); ok {
 			t.Fatalf("extra post-execution rollback left state %d", state)
 		}
 	}

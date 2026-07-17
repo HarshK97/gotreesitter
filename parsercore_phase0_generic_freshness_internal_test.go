@@ -132,7 +132,7 @@ func TestDiagnosticParserCoreGenericReductionSequenceOverflowRollsBack(t *testin
 		t.Fatalf("overflow rollback leaked: before=%+v after=%+v scheduler=%+v", beforeStats, afterStats, scheduler)
 	}
 	for _, state := range []core.StateID{5, 6} {
-		if _, ok := compact.CanonicalBoundary(state, 1, false, [32]byte{}); ok {
+		if _, ok := compact.CanonicalBoundary(state, 1, false, 0); ok {
 			t.Fatalf("overflow left canonical state %d", state)
 		}
 	}
@@ -188,7 +188,7 @@ func TestDiagnosticParserCoreUpdatedReductionAdoptsActiveSibling(t *testing.T) {
 	if len(scheduler.headers) != 2 || !scheduler.headers[0].paused || scheduler.headers[1].paused || scheduler.headers[1].creationSeq != 11 || scheduler.nextSeq != math.MaxUint64 {
 		t.Fatalf("updated sibling adoption headers=%+v nextSeq=%d", scheduler.headers, scheduler.nextSeq)
 	}
-	canonical, ok := compact.CanonicalBoundary(4, 1, false, [32]byte{})
+	canonical, ok := compact.CanonicalBoundary(4, 1, false, 0)
 	if !ok || scheduler.headers[1].head != canonical {
 		t.Fatalf("active sibling head=%+v canonical=%+v ok=%t", scheduler.headers[1].head, canonical, ok)
 	}
@@ -377,7 +377,7 @@ func TestDiagnosticParserCoreConflictPostExecutionFailureRollsBack(t *testing.T)
 		t.Fatalf("post-execution rollback leaked: before=%+v after=%+v scheduler=%+v", beforeStats, afterStats, scheduler)
 	}
 	for _, state := range []core.StateID{2, 3} {
-		if _, ok := compact.CanonicalBoundary(state, 1, true, [32]byte{}); ok {
+		if _, ok := compact.CanonicalBoundary(state, 1, true, 0); ok {
 			t.Fatalf("post-execution rollback left shifted state %d", state)
 		}
 	}
@@ -424,7 +424,7 @@ func TestDiagnosticParserCoreSummaryConflictFailureRollsBack(t *testing.T) {
 		t.Fatalf("summary rollback leaked: before=%+v after=%+v scheduler=%+v", beforeStats, afterStats, scheduler)
 	}
 	for _, state := range []core.StateID{2, 3} {
-		if _, ok := compact.CanonicalBoundary(state, 1, true, [32]byte{}); ok {
+		if _, ok := compact.CanonicalBoundary(state, 1, true, 0); ok {
 			t.Fatalf("summary rollback left shifted state %d", state)
 		}
 	}

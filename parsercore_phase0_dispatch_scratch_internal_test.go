@@ -216,8 +216,8 @@ func TestDiagnosticParserCoreDispatchScratchSteadyStateDoesNotAllocate(t *testin
 
 func TestDiagnosticParserCoreHeaderRollbackScratchRestoresAndReuses(t *testing.T) {
 	before := []diagnosticParserCoreHeader{
-		{head: core.Head{Node: 1}, creationSeq: 3, checkpoint: [32]byte{1}},
-		{head: core.Head{Node: 2}, creationSeq: 5, shifted: true, checkpoint: [32]byte{2}},
+		{head: core.Head{Node: 1}, creationSeq: 3, checkpoint: 1},
+		{head: core.Head{Node: 2}, creationSeq: 5, shifted: true, checkpoint: 2},
 	}
 	current := append([]diagnosticParserCoreHeader(nil), before...)
 	var scratch diagnosticParserCoreHeaderRollbackScratch

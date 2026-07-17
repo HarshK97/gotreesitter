@@ -14,6 +14,7 @@ type recursiveInsertFixture struct {
 	oldTop                     Head
 	topPayload                 SubtreeID
 	classAFirst, classBFirst   SubtreeID
+	checkpoint                 CheckpointID
 }
 
 func newRecursiveInsertFixture(t *testing.T) recursiveInsertFixture {
@@ -61,7 +62,8 @@ func newRecursiveInsertFixtureWithCheckpoint(t *testing.T, checkpoint [32]byte) 
 		t.Fatal(err)
 	}
 	top := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 30, startByte: 10, endByte: 11})
-	if err := core.SetPhaseCheckpoint(checkpoint); err != nil {
+	checkpointID := mustInternCheckpoint(t, core, checkpoint[:])
+	if err := core.SetPhaseCheckpoint(checkpointID); err != nil {
 		t.Fatal(err)
 	}
 	oldTop, err := core.condense(core.boundaryKey(8, 11), linkInput{prev: leftID, payload: top})
@@ -71,7 +73,7 @@ func newRecursiveInsertFixtureWithCheckpoint(t *testing.T, checkpoint [32]byte) 
 	return recursiveInsertFixture{
 		core: core, rootA: rootA, rootB: rootB,
 		leftPredecessor: Head{Node: leftID}, rightPrev: Head{Node: rightID}, oldTop: oldTop,
-		topPayload: top, classAFirst: payloads[0], classBFirst: payloads[2],
+		topPayload: top, classAFirst: payloads[0], classBFirst: payloads[2], checkpoint: checkpointID,
 	}
 }
 
@@ -88,7 +90,7 @@ func TestRecursiveInsertAcceptsAuthenticatedNonzeroCheckpoint(t *testing.T) {
 	if err != nil || top.pathCount != 2 {
 		t.Fatalf("nonzero-checkpoint top=%+v err=%v", top, err)
 	}
-	canonical, ok := fixture.core.CanonicalBoundary(8, 11, false, checkpoint)
+	canonical, ok := fixture.core.CanonicalBoundary(8, 11, false, fixture.checkpoint)
 	if !ok || canonical != merged {
 		t.Fatalf("nonzero-checkpoint canonical=%+v ok=%t want=%+v", canonical, ok, merged)
 	}
@@ -221,7 +223,7 @@ func TestRecursiveInsertLowerFoldRunsBeforeLocalCap(t *testing.T) {
 			t.Fatalf("lower distinct-class cap=%+v err=%v", capacity, err)
 		}
 		after, _ := core.Stats(oldTop)
-		canonical, ok := core.CanonicalBoundary(8, 11, false, [32]byte{})
+		canonical, ok := core.CanonicalBoundary(8, 11, false, 0)
 		if after != before || core.Work() != beforeWork || !ok || canonical != oldTop {
 			t.Fatalf("lower cap rollback drift: stats=%+v/%+v work=%+v/%+v canonical=%+v ok=%t", after, before, core.Work(), beforeWork, canonical, ok)
 		}
@@ -384,7 +386,7 @@ func TestRecursiveInsertDirectAndNestedRollback(t *testing.T) {
 			t.Fatalf("direct cap error=%v", err)
 		}
 		after, _ := core.Stats(fixture.oldTop)
-		canonical, ok := core.CanonicalBoundary(8, 11, false, [32]byte{})
+		canonical, ok := core.CanonicalBoundary(8, 11, false, fixture.checkpoint)
 		if after != before || core.Work() != beforeWork || !ok || canonical != fixture.oldTop {
 			t.Fatalf("direct rollback drift: stats=%+v/%+v work=%+v/%+v canonical=%+v ok=%t", after, before, core.Work(), beforeWork, canonical, ok)
 		}
@@ -406,7 +408,7 @@ func TestRecursiveInsertDirectAndNestedRollback(t *testing.T) {
 			t.Fatalf("outer rollback error=%v", err)
 		}
 		after, _ := core.Stats(fixture.oldTop)
-		canonical, ok := core.CanonicalBoundary(8, 11, false, [32]byte{})
+		canonical, ok := core.CanonicalBoundary(8, 11, false, fixture.checkpoint)
 		if after != before || core.Work() != beforeWork || !ok || canonical != fixture.oldTop {
 			t.Fatalf("nested rollback drift: stats=%+v/%+v work=%+v/%+v canonical=%+v ok=%t", after, before, core.Work(), beforeWork, canonical, ok)
 		}

@@ -39,7 +39,7 @@ func TestResetRetainsConfigurationAndArenaCapacity(t *testing.T) {
 	if err := compact.BeginFrontier(); err != nil {
 		t.Fatal(err)
 	}
-	if err := compact.SetPhaseCheckpoint([32]byte{1, 2, 3}); err != nil {
+	if err := compact.SetPhaseCheckpoint(mustInternCheckpoint(t, compact, []byte{1, 2, 3})); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := compact.Seed(4, 2); err != nil {
@@ -77,7 +77,7 @@ func TestResetRetainsConfigurationAndArenaCapacity(t *testing.T) {
 	if len(compact.nodes) != 0 || len(compact.links) != 0 || len(compact.subtrees) != 0 || len(compact.children) != 0 || len(compact.fields) != 0 || len(compact.aliases) != 0 || compact.boundaries.count != 0 || len(compact.boundaryJournal) != 0 || len(compact.transactions) != 0 {
 		t.Fatalf("reset retained logical state: nodes=%d links=%d subtrees=%d children=%d fields=%d aliases=%d boundaries=%d journal=%d transactions=%d", len(compact.nodes), len(compact.links), len(compact.subtrees), len(compact.children), len(compact.fields), len(compact.aliases), compact.boundaries.count, len(compact.boundaryJournal), len(compact.transactions))
 	}
-	if compact.frontier != 1 || compact.checkpoint != ([32]byte{}) || compact.nextTransaction != 0 || compact.Work() != (Work{}) {
+	if compact.frontier != 1 || compact.checkpoint != 0 || compact.nextTransaction != 0 || compact.Work() != (Work{}) {
 		t.Fatalf("reset scalar drift: frontier=%d checkpoint=%x next_transaction=%d work=%+v", compact.frontier, compact.checkpoint, compact.nextTransaction, compact.Work())
 	}
 	if compact.reductionScratch.spilled || len(compact.reductionScratch.boundaries) != 0 || len(compact.reductionScratch.boundaryByKey) != 0 || len(compact.reductionScratch.batchParents) != 0 {
