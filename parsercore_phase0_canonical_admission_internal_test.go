@@ -293,6 +293,43 @@ func BenchmarkDiagnosticParserCoreCanonicalSchedulerCold(b *testing.B) {
 	}
 }
 
+func BenchmarkDiagnosticParserCoreCanonicalTotal(b *testing.B) {
+	for _, row := range diagnosticParserCoreCanonicalAdmissions {
+		row := row
+		b.Run(row.id, func(b *testing.B) {
+			fixture := loadDiagnosticParserCoreCanonicalFixture(b, row.id)
+			requireDiagnosticParserCoreCanonicalFixtureIdentity(b, fixture, row)
+			runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, DiagnosticParserCorePrefixOptions{
+				ReceiptMode: DiagnosticParserCoreReceiptSummary,
+				MaxTokens:   300000, MaxDispatches: 600000,
+				Limits: diagnosticParserCoreCanonicalLimits(),
+			})
+			if err != nil {
+				b.Fatal(err)
+			}
+			tree, err := runner.parse(fixture.Source)
+			if err != nil {
+				b.Fatal(err)
+			}
+			requireDiagnosticParserCoreCanonicalEOF(b, tree, len(fixture.Source))
+			if got := diagnosticParserCoreSelectedNodeCensus(tree.root); got.total != row.selectedNodes || got.parents != row.selectedParents || got.leaves != row.selectedLeaves {
+				b.Fatalf("canonical total selected census=%+v want=%d/%d/%d", got, row.selectedNodes, row.selectedParents, row.selectedLeaves)
+			}
+			tree.Release()
+			b.ReportAllocs()
+			b.SetBytes(int64(len(fixture.Source)))
+			b.ResetTimer()
+			for range b.N {
+				tree, err := runner.parse(fixture.Source)
+				if err != nil {
+					b.Fatal(err)
+				}
+				tree.Release()
+			}
+		})
+	}
+}
+
 func diagnosticParserCoreCanonicalLimits() core.Limits {
 	return core.Limits{
 		MaxNodes: 1 << 20, MaxLinks: 1 << 20, MaxSubtrees: 1 << 20,

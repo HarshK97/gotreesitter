@@ -70,6 +70,10 @@ for tags and release notes while still in `0.x`.
   4.061655x worst fixture and zero fallback in every timed sample. These
   candidate numbers apply only to its authenticated clean fresh-full surface;
   they do not replace the public parser claim.
+- Fuse nested transaction checkpoints across the build-tagged compact
+  scheduler while preserving standalone rollback and capability semantics.
+  The authenticated four-fixture Total geomean improves by 8.25%, every
+  fixture improves by 7.21-8.96%, and allocation counts remain unchanged.
 - Add a versioned, locked incremental admission matrix that separates identity,
   leaf-validation, real-code GLR, recovery, and stateful-scanner behavior using
   runtime evidence. It rejects full-parse fallback, authenticates both edit

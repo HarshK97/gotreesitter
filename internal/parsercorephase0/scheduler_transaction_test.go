@@ -1,0 +1,446 @@
+package parsercorephase0
+
+import (
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+type schedulerTransactionState struct {
+	nodes, links, subtrees, children, fields, aliases int
+	boundaries                                        map[boundaryIdentity]NodeID
+	work                                              Work
+}
+
+func captureSchedulerTransactionState(c *Core) schedulerTransactionState {
+	return schedulerTransactionState{
+		nodes: len(c.nodes), links: len(c.links), subtrees: len(c.subtrees),
+		children: len(c.children), fields: len(c.fields), aliases: len(c.aliases),
+		boundaries: cloneBoundaryMap(c.boundaries), work: c.Work(),
+	}
+}
+
+func requireClearedSchedulerFrame(t *testing.T, c *Core, epoch uint64) {
+	t.Helper()
+	if c.schedulerFrame.active || c.schedulerFrame.poisoned != nil || c.schedulerFrame.epoch != epoch ||
+		!reflect.DeepEqual(c.schedulerFrame.mark, checkpoint{}) {
+		t.Fatalf("scheduler frame retained completed state: %+v", c.schedulerFrame)
+	}
+}
+
+func newSchedulerTransactionShiftFixture(t *testing.T) (*Core, Head, ClassifiedBoundary) {
+	t.Helper()
+	tables := &fakeTable{actions: map[tableCell][]Action{
+		{state: 1, symbol: 9}: {{Type: ActionShift, State: 2}},
+	}}
+	compact, err := New(tables, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary, err := compact.ClassifyBoundary(seed, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compact, seed, boundary
+}
+
+func newSchedulerTransactionExtraShiftFixture(t *testing.T) (*Core, Head, ClassifiedBoundary) {
+	t.Helper()
+	tables := &fakeTable{actions: map[tableCell][]Action{
+		{state: 1, symbol: 9}: {{Type: ActionShift, Extra: true}},
+	}}
+	compact, err := New(tables, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary, err := compact.ClassifyBoundary(seed, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compact, seed, boundary
+}
+
+func TestStandaloneCohortValidationPreservesClassifiedBoundary(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		setup func(*testing.T) (*Core, Head, ClassifiedBoundary)
+		token Token
+		shift func(*Core, []ClassifiedBoundary, Token) ([]Head, error)
+	}{
+		{
+			name: "ordinary", setup: newSchedulerTransactionShiftFixture,
+			token: Token{Symbol: 9, EndByte: 1},
+			shift: (*Core).ShiftOrdinaryClassifiedCohort,
+		},
+		{
+			name: "extra", setup: newSchedulerTransactionExtraShiftFixture,
+			token: Token{Symbol: 9, EndByte: 1, Extra: true},
+			shift: (*Core).ShiftExtraClassifiedCohort,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			compact, _, boundary := test.setup(t)
+			before := captureSchedulerTransactionState(compact)
+			phase := compact.classificationPhase
+			if _, err := test.shift(compact, []ClassifiedBoundary{boundary, boundary}, test.token); err == nil || !strings.Contains(err.Error(), "duplicate") {
+				t.Fatalf("invalid standalone cohort error=%v", err)
+			}
+			if compact.classificationPhase != phase || !reflect.DeepEqual(captureSchedulerTransactionState(compact), before) || len(compact.transactions) != 0 {
+				t.Fatalf("invalid standalone cohort changed state: phase=%d want=%d", compact.classificationPhase, phase)
+			}
+			if _, err := compact.ShiftClassified(boundary, 0, test.token, ForkOrder{}); err != nil {
+				t.Fatalf("previously valid classification became stale: %v", err)
+			}
+		})
+	}
+}
+
+func TestOwnedCohortValidationPoisonsOwner(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		setup func(*testing.T) (*Core, Head, ClassifiedBoundary)
+		token Token
+		shift func(*Core, SchedulerTransactionToken, []ClassifiedBoundary, Token) ([]Head, error)
+	}{
+		{
+			name: "ordinary", setup: newSchedulerTransactionShiftFixture,
+			token: Token{Symbol: 9, EndByte: 1},
+			shift: (*Core).ShiftOrdinaryClassifiedCohortOwned,
+		},
+		{
+			name: "extra", setup: newSchedulerTransactionExtraShiftFixture,
+			token: Token{Symbol: 9, EndByte: 1, Extra: true},
+			shift: (*Core).ShiftExtraClassifiedCohortOwned,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			compact, _, boundary := test.setup(t)
+			before := captureSchedulerTransactionState(compact)
+			err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+				if _, innerErr := test.shift(compact, owner, []ClassifiedBoundary{boundary, boundary}, test.token); innerErr == nil || !strings.Contains(innerErr.Error(), "duplicate") {
+					t.Fatalf("invalid owned cohort error=%v", innerErr)
+				}
+				return nil // Deliberately ignore the validation failure.
+			})
+			if err == nil || !strings.Contains(err.Error(), "poisoned scheduler transaction") || !reflect.DeepEqual(captureSchedulerTransactionState(compact), before) {
+				t.Fatalf("owned validation did not poison and roll back: %v", err)
+			}
+		})
+	}
+}
+
+func TestSchedulerTransactionCommitAndRollback(t *testing.T) {
+	t.Run("commit", func(t *testing.T) {
+		compact, _, boundary := newSchedulerTransactionShiftFixture(t)
+		err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+			_, err := compact.ShiftClassifiedOwned(owner, boundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{})
+			return err
+		})
+		if err != nil || compact.Work().Shifts != 1 || len(compact.transactions) != 0 {
+			t.Fatalf("scheduler commit err=%v work=%+v frame=%+v transactions=%v", err, compact.Work(), compact.schedulerFrame, compact.transactions)
+		}
+		requireClearedSchedulerFrame(t, compact, 1)
+	})
+
+	t.Run("returned-error", func(t *testing.T) {
+		compact, _, boundary := newSchedulerTransactionShiftFixture(t)
+		before := captureSchedulerTransactionState(compact)
+		sentinel := errors.New("scheduler rollback")
+		err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+			if _, err := compact.ShiftClassifiedOwned(owner, boundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); err != nil {
+				return err
+			}
+			return sentinel
+		})
+		after := captureSchedulerTransactionState(compact)
+		if !errors.Is(err, sentinel) || !reflect.DeepEqual(after, before) || len(compact.transactions) != 0 {
+			t.Fatalf("scheduler rollback err=%v before=%+v after=%+v frame=%+v transactions=%v", err, before, after, compact.schedulerFrame, compact.transactions)
+		}
+		requireClearedSchedulerFrame(t, compact, 1)
+	})
+}
+
+func TestSchedulerTransactionInsideStandaloneOwner(t *testing.T) {
+	t.Run("outer-rollback", func(t *testing.T) {
+		compact, _, boundary := newSchedulerTransactionShiftFixture(t)
+		before := captureSchedulerTransactionState(compact)
+		sentinel := errors.New("outer rollback")
+		err := compact.ApplyAtomic(func() error {
+			if err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+				_, err := compact.ShiftClassifiedOwned(owner, boundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{})
+				return err
+			}); err != nil {
+				return err
+			}
+			return sentinel
+		})
+		if !errors.Is(err, sentinel) || !reflect.DeepEqual(captureSchedulerTransactionState(compact), before) || len(compact.transactions) != 0 {
+			t.Fatalf("standalone outer rollback err=%v", err)
+		}
+		requireClearedSchedulerFrame(t, compact, 1)
+	})
+
+	t.Run("outer-panic", func(t *testing.T) {
+		compact, _, boundary := newSchedulerTransactionShiftFixture(t)
+		before := captureSchedulerTransactionState(compact)
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != "outer panic" {
+					t.Fatalf("recovered=%v", recovered)
+				}
+			}()
+			_ = compact.ApplyAtomic(func() error {
+				if err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+					_, err := compact.ShiftClassifiedOwned(owner, boundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{})
+					return err
+				}); err != nil {
+					return err
+				}
+				panic("outer panic")
+			})
+		}()
+		if !reflect.DeepEqual(captureSchedulerTransactionState(compact), before) || len(compact.transactions) != 0 {
+			t.Fatal("standalone outer panic did not restore pre-owner state")
+		}
+		requireClearedSchedulerFrame(t, compact, 1)
+	})
+}
+
+func TestSchedulerTransactionResetPreservesEpochAndRejectsRetainedToken(t *testing.T) {
+	compact, _, _ := newSchedulerTransactionShiftFixture(t)
+	var stale SchedulerTransactionToken
+	if err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		stale = owner
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requireClearedSchedulerFrame(t, compact, stale.epoch)
+	if err := compact.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	requireClearedSchedulerFrame(t, compact, stale.epoch)
+	seed, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary, err := compact.ClassifyBoundary(seed, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := captureSchedulerTransactionState(compact)
+	err = compact.ApplySchedulerAtomic(func(current SchedulerTransactionToken) error {
+		if current.epoch == stale.epoch {
+			t.Fatalf("Reset reused scheduler epoch %d", current.epoch)
+		}
+		if _, innerErr := compact.ShiftClassifiedOwned(stale, boundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); innerErr == nil || !strings.Contains(innerErr.Error(), "stale") {
+			t.Fatalf("retained token error=%v", innerErr)
+		}
+		return nil // The stale-token error must poison the current owner.
+	})
+	if err == nil || !strings.Contains(err.Error(), "poisoned scheduler transaction") || !reflect.DeepEqual(captureSchedulerTransactionState(compact), before) {
+		t.Fatalf("retained token after Reset err=%v", err)
+	}
+	requireClearedSchedulerFrame(t, compact, stale.epoch+1)
+}
+
+func TestSchedulerTransactionBoundaryIndexRehash(t *testing.T) {
+	fill := func(t *testing.T, compact *Core, start, end int) {
+		t.Helper()
+		for index := start; index < end; index++ {
+			if _, err := compact.Seed(StateID(index+1), uint32(index)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, test := range []struct {
+		name     string
+		rollback bool
+	}{
+		{name: "commit"},
+		{name: "rollback", rollback: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			compact, err := New(&fakeTable{}, Limits{MaxNodes: 64})
+			if err != nil {
+				t.Fatal(err)
+			}
+			fill(t, compact, 0, 11)
+			if len(compact.boundaries.slots) != 16 {
+				t.Fatalf("pre-owner slots=%d want=16", len(compact.boundaries.slots))
+			}
+			oldSlots := compact.boundaries.slots
+			before := captureSchedulerTransactionState(compact)
+			sentinel := errors.New("rehash rollback")
+			err = compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+				if innerErr := compact.RunSchedulerOwned(owner, func() error {
+					_, appendErr := compact.Seed(12, 11)
+					return appendErr
+				}); innerErr != nil {
+					return innerErr
+				}
+				if len(compact.boundaries.slots) != 32 || &compact.boundaries.slots[0] == &oldSlots[0] {
+					t.Fatalf("scheduler rehash slots=%d", len(compact.boundaries.slots))
+				}
+				if test.rollback {
+					return sentinel
+				}
+				return nil
+			})
+			if test.rollback {
+				if !errors.Is(err, sentinel) || !reflect.DeepEqual(captureSchedulerTransactionState(compact), before) ||
+					len(compact.boundaries.slots) != 16 || &compact.boundaries.slots[0] != &oldSlots[0] {
+					t.Fatalf("rehash rollback err=%v slots=%d", err, len(compact.boundaries.slots))
+				}
+			} else if err != nil || len(compact.boundaries.slots) != 32 || compact.boundaries.count != 12 {
+				t.Fatalf("rehash commit err=%v slots=%d count=%d", err, len(compact.boundaries.slots), compact.boundaries.count)
+			}
+			requireClearedSchedulerFrame(t, compact, 1)
+			if compact.schedulerFrame.mark.boundaryIndex.slots != nil {
+				t.Fatal("completed scheduler frame retained old boundary-index snapshot")
+			}
+		})
+	}
+}
+
+func TestSchedulerTransactionIgnoredInnerErrorPoisonsOwner(t *testing.T) {
+	compact, _, boundary := newSchedulerTransactionShiftFixture(t)
+	before := captureSchedulerTransactionState(compact)
+	err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		if _, innerErr := compact.ShiftClassifiedOwned(owner, boundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); innerErr != nil {
+			return innerErr
+		}
+		_, innerErr := compact.ShiftClassifiedOwned(owner, boundary, 7, Token{Symbol: 9, EndByte: 2}, ForkOrder{})
+		if innerErr == nil {
+			t.Fatal("invalid owned shift did not fail")
+		}
+		return nil // Deliberately ignore the inner failure.
+	})
+	after := captureSchedulerTransactionState(compact)
+	if err == nil || !strings.Contains(err.Error(), "poisoned scheduler transaction") || !reflect.DeepEqual(after, before) {
+		t.Fatalf("ignored error err=%v before=%+v after=%+v", err, before, after)
+	}
+}
+
+func TestSchedulerTransactionIgnoredNestedOwnerErrorPoisonsOwner(t *testing.T) {
+	compact, _, boundary := newSchedulerTransactionShiftFixture(t)
+	before := captureSchedulerTransactionState(compact)
+	err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		if _, innerErr := compact.ShiftClassifiedOwned(owner, boundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); innerErr != nil {
+			return innerErr
+		}
+		if nestedErr := compact.ApplySchedulerAtomic(func(SchedulerTransactionToken) error { return nil }); nestedErr == nil {
+			t.Fatal("nested scheduler owner did not fail")
+		}
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "poisoned scheduler transaction") || !reflect.DeepEqual(captureSchedulerTransactionState(compact), before) {
+		t.Fatalf("ignored nested owner error err=%v", err)
+	}
+}
+
+func TestSchedulerTransactionRecoveredOwnedPanicStillPoisonsOwner(t *testing.T) {
+	compact, _, boundary := newSchedulerTransactionShiftFixture(t)
+	before := captureSchedulerTransactionState(compact)
+	err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("owned panic did not repanic")
+				}
+			}()
+			_ = compact.RunSchedulerOwned(owner, func() error {
+				if _, innerErr := compact.ShiftClassifiedOwned(owner, boundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); innerErr != nil {
+					return innerErr
+				}
+				panic("recovered owned panic")
+			})
+		}()
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "poisoned scheduler transaction") || !reflect.DeepEqual(captureSchedulerTransactionState(compact), before) {
+		t.Fatalf("recovered owned panic err=%v", err)
+	}
+}
+
+func TestSchedulerTransactionTokenValidationPoisonsOwner(t *testing.T) {
+	t.Run("wrong-core", func(t *testing.T) {
+		compact, _, boundary := newSchedulerTransactionShiftFixture(t)
+		other, _, otherBoundary := newSchedulerTransactionShiftFixture(t)
+		before := captureSchedulerTransactionState(compact)
+		err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+			if _, innerErr := compact.ShiftClassifiedOwned(owner, boundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); innerErr != nil {
+				return innerErr
+			}
+			_, innerErr := other.ShiftClassifiedOwned(owner, otherBoundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{})
+			if innerErr == nil || !strings.Contains(innerErr.Error(), "different core") {
+				t.Fatalf("wrong-core validation error=%v", innerErr)
+			}
+			return nil
+		})
+		if err == nil || !strings.Contains(err.Error(), "poisoned scheduler transaction") || !reflect.DeepEqual(captureSchedulerTransactionState(compact), before) {
+			t.Fatalf("wrong-core owner was not poisoned: err=%v", err)
+		}
+	})
+
+	t.Run("not-top-of-stack", func(t *testing.T) {
+		compact, _, boundary := newSchedulerTransactionShiftFixture(t)
+		before := captureSchedulerTransactionState(compact)
+		err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+			return compact.ApplyAtomic(func() error {
+				_, innerErr := compact.ShiftClassifiedOwned(owner, boundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{})
+				if innerErr == nil || !strings.Contains(innerErr.Error(), "top-of-stack") {
+					t.Fatalf("top-of-stack validation error=%v", innerErr)
+				}
+				return nil
+			})
+		})
+		if err == nil || !strings.Contains(err.Error(), "poisoned scheduler transaction") || !reflect.DeepEqual(captureSchedulerTransactionState(compact), before) {
+			t.Fatalf("non-top owner was not poisoned: err=%v", err)
+		}
+	})
+
+	t.Run("stale", func(t *testing.T) {
+		compact, _, boundary := newSchedulerTransactionShiftFixture(t)
+		var stale SchedulerTransactionToken
+		if err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+			stale = owner
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := compact.ShiftClassifiedOwned(stale, boundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); err == nil || !strings.Contains(err.Error(), "stale") {
+			t.Fatalf("stale token error=%v", err)
+		}
+	})
+}
+
+func TestSchedulerTransactionPanicRollsBackAndRepanics(t *testing.T) {
+	compact, _, boundary := newSchedulerTransactionShiftFixture(t)
+	before := captureSchedulerTransactionState(compact)
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != "scheduler panic" {
+				t.Fatalf("recovered=%v", recovered)
+			}
+		}()
+		_ = compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+			if _, err := compact.ShiftClassifiedOwned(owner, boundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); err != nil {
+				return err
+			}
+			panic("scheduler panic")
+		})
+	}()
+	if after := captureSchedulerTransactionState(compact); !reflect.DeepEqual(after, before) || compact.schedulerFrame.active || len(compact.transactions) != 0 {
+		t.Fatalf("panic rollback before=%+v after=%+v frame=%+v transactions=%v", before, after, compact.schedulerFrame, compact.transactions)
+	}
+}

@@ -464,6 +464,7 @@ type Core struct {
 	work                Work
 	popScratch          popEnumerationScratch
 	reductionScratch    reductionOutputScratch
+	schedulerFrame      schedulerTransactionFrame
 }
 
 // inlineAdjacencyCapacity covers the production default without forcing a
@@ -485,12 +486,40 @@ type checkpoint struct {
 	work                                              Work
 }
 
-func (c *Core) mark() checkpoint {
+// SchedulerTransactionToken is an opaque capability for one active
+// scheduler-owned transaction. Callers may pass it only to the authenticated
+// Owned methods below; core identity, epoch, transaction identity, and
+// top-of-stack ownership are validated on every use.
+type SchedulerTransactionToken struct {
+	owner       *Core
+	epoch       uint64
+	transaction uint64
+}
+
+type schedulerTransactionFrame struct {
+	mark     checkpoint
+	epoch    uint64
+	poisoned error
+	active   bool
+}
+
+// clearInactive releases every completed checkpoint reference, including the
+// boundary-index snapshot backing array, while preserving the monotonic epoch
+// that prevents Reset from making an escaped token current again.
+func (f *schedulerTransactionFrame) clearInactive() {
+	epoch := f.epoch
+	*f = schedulerTransactionFrame{epoch: epoch}
+}
+
+func (c *Core) markInto(mark *checkpoint) {
+	if mark == nil {
+		panic("parser-core phase zero: nil transaction checkpoint")
+	}
 	if c.nextTransaction == math.MaxUint64 {
 		panic("parser-core phase zero: transaction identity overflow")
 	}
 	c.nextTransaction++
-	mark := checkpoint{
+	*mark = checkpoint{
 		nodes: len(c.nodes), links: len(c.links), subtrees: len(c.subtrees),
 		children: len(c.children), fields: len(c.fields), aliases: len(c.aliases),
 		frontier: c.frontier, checkpoint: c.checkpoint,
@@ -499,11 +528,16 @@ func (c *Core) mark() checkpoint {
 		work: c.work,
 	}
 	c.transactions = append(c.transactions, mark.transaction)
+}
+
+func (c *Core) mark() checkpoint {
+	var mark checkpoint
+	c.markInto(&mark)
 	return mark
 }
 
-func (c *Core) restore(mark checkpoint) {
-	c.assertTopTransaction(mark)
+func (c *Core) restoreCheckpoint(mark *checkpoint) {
+	c.assertTopTransactionCheckpoint(mark)
 	// A classification may have escaped from any nested operation that
 	// published arena records after this mark. Rollback makes those NodeIDs
 	// reusable, so invalidate every outstanding capability before truncating
@@ -531,13 +565,21 @@ func (c *Core) restore(mark checkpoint) {
 	c.finishTransaction()
 }
 
+func (c *Core) restore(mark checkpoint) {
+	c.restoreCheckpoint(&mark)
+}
+
 func (c *Core) commit(mark checkpoint) {
-	c.assertTopTransaction(mark)
+	c.assertTopTransactionCheckpoint(&mark)
 	c.finishTransaction()
 }
 
 func (c *Core) assertTopTransaction(mark checkpoint) {
-	if len(c.transactions) == 0 || c.transactions[len(c.transactions)-1] != mark.transaction {
+	c.assertTopTransactionCheckpoint(&mark)
+}
+
+func (c *Core) assertTopTransactionCheckpoint(mark *checkpoint) {
+	if mark == nil || len(c.transactions) == 0 || c.transactions[len(c.transactions)-1] != mark.transaction {
 		panic("parser-core phase zero: transaction checkpoint used out of LIFO order")
 	}
 }
@@ -560,6 +602,113 @@ func (c *Core) completeTransaction(mark checkpoint, err *error) {
 	} else {
 		c.commit(mark)
 	}
+}
+
+func (c *Core) validateSchedulerTransaction(token SchedulerTransactionToken) error {
+	frame := &c.schedulerFrame
+	if token.owner != c {
+		return errors.New("parser-core phase zero: scheduler transaction token belongs to a different core")
+	}
+	if !frame.active || token.epoch == 0 || token.epoch != frame.epoch || token.transaction != frame.mark.transaction {
+		return errors.New("parser-core phase zero: stale scheduler transaction token")
+	}
+	if len(c.transactions) == 0 || c.transactions[len(c.transactions)-1] != token.transaction {
+		return errors.New("parser-core phase zero: scheduler transaction token is not top-of-stack owner")
+	}
+	return nil
+}
+
+func (c *Core) poisonSchedulerTransaction(token SchedulerTransactionToken, cause error) error {
+	if cause == nil {
+		return nil
+	}
+	if err := c.validateSchedulerTransaction(token); err != nil {
+		if owner := token.owner; owner != nil && owner.schedulerFrame.active &&
+			owner.schedulerFrame.epoch == token.epoch && owner.schedulerFrame.mark.transaction == token.transaction &&
+			owner.schedulerFrame.poisoned == nil {
+			owner.schedulerFrame.poisoned = err
+		}
+		if c.schedulerFrame.active && c.schedulerFrame.poisoned == nil {
+			c.schedulerFrame.poisoned = err
+		}
+		return err
+	}
+	if c.schedulerFrame.poisoned == nil {
+		c.schedulerFrame.poisoned = cause
+	}
+	return cause
+}
+
+// RunSchedulerOwned validates token ownership, executes one uncheckpointed
+// inner scheduler mutation, and poisons the outer owner on every returned
+// error. Ignoring the returned error therefore cannot commit partial state.
+func (c *Core) RunSchedulerOwned(token SchedulerTransactionToken, fn func() error) (err error) {
+	if fn == nil {
+		return c.poisonSchedulerTransaction(token, errors.New("parser-core phase zero: nil scheduler-owned operation"))
+	}
+	if err := c.validateSchedulerTransaction(token); err != nil {
+		return c.poisonSchedulerTransaction(token, err)
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			c.poisonSchedulerTransaction(token, fmt.Errorf("parser-core phase zero: scheduler-owned operation panicked: %v", recovered))
+			panic(recovered)
+		}
+	}()
+	if err = fn(); err != nil {
+		return c.poisonSchedulerTransaction(token, err)
+	}
+	return nil
+}
+
+// ApplySchedulerAtomic owns one retained checkpoint for an authenticated
+// scheduler operation. Standalone public wrappers continue to own their
+// ordinary checkpoints; only methods explicitly passed the returned opaque
+// token may execute without another frame.
+func (c *Core) ApplySchedulerAtomic(fn func(SchedulerTransactionToken) error) (err error) {
+	if fn == nil {
+		err := errors.New("parser-core phase zero: nil scheduler atomic operation")
+		if c.schedulerFrame.active && c.schedulerFrame.poisoned == nil {
+			c.schedulerFrame.poisoned = err
+		}
+		return err
+	}
+	frame := &c.schedulerFrame
+	if frame.active {
+		err := errors.New("parser-core phase zero: nested scheduler-owned transaction")
+		if frame.poisoned == nil {
+			frame.poisoned = err
+		}
+		return err
+	}
+	if frame.epoch == math.MaxUint64 {
+		return errors.New("parser-core phase zero: scheduler transaction epoch overflow")
+	}
+	frame.clearInactive()
+	frame.epoch++
+	c.markInto(&frame.mark)
+	frame.active = true
+	token := SchedulerTransactionToken{owner: c, epoch: frame.epoch, transaction: frame.mark.transaction}
+	defer func() {
+		recovered := recover()
+		if recovered != nil {
+			c.restoreCheckpoint(&frame.mark)
+			frame.clearInactive()
+			panic(recovered)
+		}
+		if err == nil && frame.poisoned != nil {
+			err = fmt.Errorf("parser-core phase zero: poisoned scheduler transaction: %w", frame.poisoned)
+		}
+		if err != nil {
+			c.restoreCheckpoint(&frame.mark)
+		} else {
+			c.assertTopTransactionCheckpoint(&frame.mark)
+			c.finishTransaction()
+		}
+		frame.clearInactive()
+	}()
+	err = fn(token)
+	return err
 }
 
 func (c *Core) writeBoundary(key boundaryKey, id NodeID) error {
@@ -604,7 +753,7 @@ func (c *Core) Reset() error {
 	if c == nil {
 		return errors.New("parser-core phase zero: reset nil core")
 	}
-	if len(c.transactions) != 0 {
+	if len(c.transactions) != 0 || c.schedulerFrame.active {
 		return errors.New("parser-core phase zero: reset during active transaction")
 	}
 	if c.classificationPhase == math.MaxUint64 {
@@ -625,6 +774,7 @@ func (c *Core) Reset() error {
 	c.boundaryJournal = c.boundaryJournal[:0]
 	c.transactions = c.transactions[:0]
 	c.nextTransaction = 0
+	c.schedulerFrame.clearInactive()
 	c.work = Work{}
 	c.popScratch.resetLogical()
 	c.reductionScratch.finish()
@@ -833,40 +983,7 @@ func (c *Core) Shift(head Head, lookahead Symbol, actionOrdinal int, token Token
 func (c *Core) ShiftClassified(boundary ClassifiedBoundary, actionOrdinal int, token Token, fork ForkOrder) (out Head, err error) {
 	mark := c.mark()
 	defer c.completeTransaction(mark, &err)
-	act, err := c.classifiedAction(boundary, actionOrdinal)
-	if err != nil {
-		return Head{}, err
-	}
-	if act.Type != ActionShift {
-		return Head{}, fmt.Errorf("parser-core phase zero: action %d is %v, not shift", actionOrdinal, act.Type)
-	}
-	if token.Symbol != boundary.lookahead {
-		return Head{}, fmt.Errorf("parser-core phase zero: token symbol %d != lookahead %d", token.Symbol, boundary.lookahead)
-	}
-	if token.Extra != act.Extra {
-		return Head{}, fmt.Errorf("parser-core phase zero: token extra=%t disagrees with decoded action extra=%t", token.Extra, act.Extra)
-	}
-	targetState := act.State
-	if act.Extra && targetState == 0 {
-		// Match production extraShiftTargetState: an extra shift with target
-		// zero leaves the LR state unchanged.
-		targetState = boundary.state
-	}
-	payload, err := c.appendSubtree(subtreeRecord{
-		symbol: token.Symbol, startByte: token.StartByte, endByte: token.EndByte,
-		extra: act.Extra, external: token.External, terminal: true,
-	}, nil, nil, nil)
-	if err != nil {
-		return Head{}, err
-	}
-	out, err = c.condense(c.shiftedBoundaryKey(targetState, token.EndByte), linkInput{
-		prev: boundary.head.Node, payload: payload, order: fork,
-	})
-	if err != nil {
-		return Head{}, err
-	}
-	c.addWork(&c.work.Shifts, 1)
-	return out, nil
+	return c.shiftClassifiedUncheckpointed(boundary, actionOrdinal, token, fork)
 }
 
 // ShiftOrdinaryCohort applies one ordinary terminal election to distinct
@@ -897,50 +1014,20 @@ func (c *Core) ShiftOrdinaryCohort(inputs []OrdinaryCohortShiftInput, lookahead 
 // ShiftOrdinaryClassifiedCohort is the classified scheduler form of
 // ShiftOrdinaryCohort. Every boundary must select one ordinary shift.
 func (c *Core) ShiftOrdinaryClassifiedCohort(boundaries []ClassifiedBoundary, token Token) (out []Head, err error) {
-	if len(boundaries) == 0 {
-		return nil, errors.New("parser-core phase zero: empty ordinary classified shift cohort")
+	var inlineTargets [inlineSchedulerCohortTargets]StateID
+	targets := inlineTargets[:]
+	if len(boundaries) > len(targets) {
+		targets = make([]StateID, len(boundaries))
+	} else {
+		targets = targets[:len(boundaries)]
 	}
-	if token.Extra || token.EndByte <= token.StartByte {
-		return nil, errors.New("parser-core phase zero: cohort token is not an ordinary positive-width terminal")
-	}
-	targets := make([]StateID, len(boundaries))
-	seen := make(map[NodeID]struct{}, len(boundaries))
-	for index, boundary := range boundaries {
-		if token.Symbol != boundary.lookahead {
-			return nil, fmt.Errorf("parser-core phase zero: token symbol %d != lookahead %d", token.Symbol, boundary.lookahead)
-		}
-		if _, duplicate := seen[boundary.head.Node]; duplicate {
-			return nil, fmt.Errorf("parser-core phase zero: duplicate ordinary cohort head %d", boundary.head.Node)
-		}
-		seen[boundary.head.Node] = struct{}{}
-		action, err := c.classifiedAction(boundary, 0)
-		if err != nil {
-			return nil, err
-		}
-		if boundary.actions.Len() != 1 || action.State == 0 || action != (Action{Type: ActionShift, State: action.State}) {
-			return nil, fmt.Errorf("parser-core phase zero: head %d does not select one ordinary shift", boundary.head.Node)
-		}
-		targets[index] = action.State
+	if err := c.prepareOrdinaryClassifiedCohortInto(boundaries, token, targets); err != nil {
+		return nil, err
 	}
 	err = c.ApplyAtomic(func() error {
-		payload, err := c.appendSubtree(subtreeRecord{
-			symbol: token.Symbol, startByte: token.StartByte, endByte: token.EndByte,
-			external: token.External, terminal: true,
-		}, nil, nil, nil)
-		if err != nil {
-			return err
-		}
-		out = make([]Head, len(boundaries))
-		for index, boundary := range boundaries {
-			out[index], err = c.condense(c.shiftedBoundaryKey(targets[index], token.EndByte), linkInput{
-				prev: boundary.head.Node, payload: payload,
-			})
-			if err != nil {
-				return err
-			}
-		}
-		c.addWork(&c.work.Shifts, uint64(len(boundaries)))
-		return nil
+		var innerErr error
+		out, innerErr = c.shiftOrdinaryClassifiedCohortUncheckpointed(boundaries, targets, token)
+		return innerErr
 	})
 	return out, err
 }
@@ -971,53 +1058,20 @@ func (c *Core) ShiftExtraCohort(inputs []ExtraCohortShiftInput, lookahead Symbol
 // ShiftExtraClassifiedCohort is the classified scheduler form of
 // ShiftExtraCohort. Every boundary must select one extra shift.
 func (c *Core) ShiftExtraClassifiedCohort(boundaries []ClassifiedBoundary, token Token) (out []Head, err error) {
-	if len(boundaries) == 0 {
-		return nil, errors.New("parser-core phase zero: empty extra classified shift cohort")
+	var inlineTargets [inlineSchedulerCohortTargets]StateID
+	targets := inlineTargets[:]
+	if len(boundaries) > len(targets) {
+		targets = make([]StateID, len(boundaries))
+	} else {
+		targets = targets[:len(boundaries)]
 	}
-	if !token.Extra || token.EndByte <= token.StartByte {
-		return nil, errors.New("parser-core phase zero: cohort token is not a positive-width extra terminal")
-	}
-	targets := make([]StateID, len(boundaries))
-	seen := make(map[NodeID]struct{}, len(boundaries))
-	for index, boundary := range boundaries {
-		if token.Symbol != boundary.lookahead {
-			return nil, fmt.Errorf("parser-core phase zero: token symbol %d != lookahead %d", token.Symbol, boundary.lookahead)
-		}
-		if _, duplicate := seen[boundary.head.Node]; duplicate {
-			return nil, fmt.Errorf("parser-core phase zero: duplicate extra cohort head %d", boundary.head.Node)
-		}
-		seen[boundary.head.Node] = struct{}{}
-		action, err := c.classifiedAction(boundary, 0)
-		if err != nil {
-			return nil, err
-		}
-		if boundary.actions.Len() != 1 || action != (Action{Type: ActionShift, State: action.State, Extra: true}) {
-			return nil, fmt.Errorf("parser-core phase zero: head %d does not select one extra shift", boundary.head.Node)
-		}
-		targets[index] = action.State
-		if targets[index] == 0 {
-			targets[index] = boundary.state
-		}
+	if err := c.prepareExtraClassifiedCohortInto(boundaries, token, targets); err != nil {
+		return nil, err
 	}
 	err = c.ApplyAtomic(func() error {
-		payload, err := c.appendSubtree(subtreeRecord{
-			symbol: token.Symbol, startByte: token.StartByte, endByte: token.EndByte,
-			extra: true, external: token.External, terminal: true,
-		}, nil, nil, nil)
-		if err != nil {
-			return err
-		}
-		out = make([]Head, len(boundaries))
-		for index, boundary := range boundaries {
-			out[index], err = c.condense(c.shiftedBoundaryKey(targets[index], token.EndByte), linkInput{
-				prev: boundary.head.Node, payload: payload,
-			})
-			if err != nil {
-				return err
-			}
-		}
-		c.addWork(&c.work.Shifts, uint64(len(boundaries)))
-		return nil
+		var innerErr error
+		out, innerErr = c.shiftExtraClassifiedCohortUncheckpointed(boundaries, targets, token)
+		return innerErr
 	})
 	return out, err
 }
@@ -1187,114 +1241,9 @@ func (c *Core) ReduceOutputsInto(dst []ReductionOutput, head Head, lookahead Sym
 // ReduceOutputsClassifiedInto applies one reduction using a current
 // owner-authenticated classification and caller-owned destination storage.
 func (c *Core) ReduceOutputsClassifiedInto(dst []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) (frontier []ReductionOutput, err error) {
-	frontier = dst[:0]
 	mark := c.mark()
 	defer c.completeTransaction(mark, &err)
-	if c.popScratch.busy {
-		return nil, errors.New("parser-core phase zero: reentrant reduction while pop scratch is active")
-	}
-	c.popScratch.busy = true
-	defer c.popScratch.resetLogical()
-	c.reductionScratch.begin()
-	defer c.reductionScratch.finish()
-	act, err := c.classifiedAction(boundary, actionOrdinal)
-	if err != nil {
-		return nil, err
-	}
-	if act.Type != ActionReduce {
-		return nil, fmt.Errorf("parser-core phase zero: action %d is %v, not reduce", actionOrdinal, act.Type)
-	}
-	plan, err := c.reductionPlan(act)
-	if err != nil {
-		return nil, err
-	}
-	paths, err := c.popPaths(boundary.head.Node, int(act.ChildCount))
-	if err != nil {
-		return nil, err
-	}
-	if len(paths) == 0 {
-		return nil, errors.New("parser-core phase zero: reduction has no exact pop path")
-	}
-	c.addWork(&c.work.Reductions, 1)
-	c.addWork(&c.work.ReductionPopRequests, 1)
-	c.addWork(&c.work.EmittedPopPaths, uint64(len(paths)))
-	for _, path := range paths {
-		c.addWork(&c.work.EmittedPopPayloads, uint64(len(path.children)+len(path.trailing)))
-	}
-	scratch := &c.reductionScratch
-	for _, path := range paths {
-		prev, err := c.node(path.prev)
-		if err != nil {
-			return nil, err
-		}
-		gotoState, err := c.tables.Goto(prev.state, act.Symbol)
-		if err != nil {
-			return nil, err
-		}
-		if gotoState == 0 {
-			return nil, fmt.Errorf("parser-core phase zero: no goto from state %d for reduced symbol %d", prev.state, act.Symbol)
-		}
-		key := c.boundaryKey(gotoState, path.structuralEnd)
-		payload, scoreDelta, order, err := c.reductionParentForPath(act, &plan, path, key, fork, scratch)
-		if err != nil {
-			return nil, err
-		}
-		parentLink := linkInput{
-			prev: path.prev, payload: payload,
-			scoreDelta: scoreDelta, order: order,
-		}
-		var out Head
-		var outcome condenseOutcome
-		if len(path.trailing) == 0 {
-			outcome, err = c.condenseWithOutcome(key, parentLink)
-			out = outcome.head
-		} else {
-			out, err = c.appendPrivate(gotoState, path.structuralEnd, parentLink)
-		}
-		if err != nil {
-			return nil, err
-		}
-		for index, trailing := range path.trailing {
-			extra, err := c.subtree(trailing.payload)
-			if err != nil {
-				return nil, err
-			}
-			key = c.boundaryKey(gotoState, extra.endByte)
-			extraLink := linkInput{prev: out.Node, payload: trailing.payload, scoreDelta: trailing.scoreDelta}
-			if index == len(path.trailing)-1 {
-				outcome, err = c.condenseWithOutcome(key, extraLink)
-				out = outcome.head
-			} else {
-				out, err = c.appendPrivate(gotoState, extra.endByte, extraLink)
-			}
-			if err != nil {
-				return nil, err
-			}
-		}
-		boundaryIndex, seen := scratch.boundary(key)
-		var previous reductionBoundaryOutput
-		if seen {
-			previous = scratch.boundaries[boundaryIndex]
-		}
-		freshness := previous.freshness
-		switch outcome.change {
-		case condenseUnchanged:
-			if !seen {
-				freshness = ReductionUnchanged
-			}
-		case condenseNew:
-			freshness = ReductionNew
-		case condenseUpdated:
-			if freshness != ReductionNew {
-				freshness = ReductionUpdated
-			}
-		}
-		scratch.store(boundaryIndex, seen, reductionBoundaryOutput{key: key, head: out, freshness: freshness})
-	}
-	for _, output := range scratch.boundaries {
-		frontier = append(frontier, ReductionOutput{Head: output.head, Freshness: output.freshness})
-	}
-	return frontier, nil
+	return c.reduceOutputsClassifiedIntoUncheckpointed(dst, boundary, actionOrdinal, fork)
 }
 
 func (c *Core) reductionParentForPath(
