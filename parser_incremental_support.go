@@ -235,7 +235,7 @@ func (t *incrementalParseTiming) selectResult(tree *Tree) {
 	if t == nil || tree == nil {
 		return
 	}
-	rt := tree.ParseRuntime()
+	rt := *tree.rawParseRuntime()
 	t.stopReason = rt.StopReason
 	t.lastTokenEndByte = rt.LastTokenEndByte
 	t.expectedEOFByte = rt.ExpectedEOFByte

@@ -2,6 +2,54 @@ package gotreesitter
 
 import "testing"
 
+func TestDFATokenSourceSkipToByteClampsBeforeNarrowing(t *testing.T) {
+	source := []byte("a\nβ")
+	wantByte := uint32(len(source))
+	wantPoint := Point{Row: 1, Column: 2}
+
+	for _, tc := range []struct {
+		name string
+		skip func(*dfaTokenSource) Token
+	}{
+		{name: "byte", skip: func(d *dfaTokenSource) Token { return d.SkipToByte(^uint32(0)) }},
+		{name: "byte_with_point", skip: func(d *dfaTokenSource) Token {
+			return d.SkipToByteWithPoint(^uint32(0), Point{Row: 99, Column: 99})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lang := &Language{LexModes: []LexMode{{}}, LexStates: []LexState{{}}}
+			d := &dfaTokenSource{lexer: NewLexer(lang.LexStates, source), language: lang}
+			tok := tc.skip(d)
+			if tok.StartByte != wantByte || tok.EndByte != wantByte {
+				t.Fatalf("EOF bytes = [%d,%d), want [%d,%d)", tok.StartByte, tok.EndByte, wantByte, wantByte)
+			}
+			if tok.StartPoint != wantPoint || tok.EndPoint != wantPoint {
+				t.Fatalf("EOF points = %v-%v, want %v", tok.StartPoint, tok.EndPoint, wantPoint)
+			}
+			if got := d.lexer.pos; got != len(source) {
+				t.Fatalf("lexer position = %d, want %d", got, len(source))
+			}
+		})
+	}
+}
+
+func TestDFATokenSourceSkipToByteNilSafety(t *testing.T) {
+	var nilSource *dfaTokenSource
+	if tok := nilSource.SkipToByte(^uint32(0)); tok != (Token{}) {
+		t.Fatalf("nil SkipToByte = %+v, want zero token", tok)
+	}
+	if tok := nilSource.SkipToByteWithPoint(^uint32(0), Point{}); tok != (Token{}) {
+		t.Fatalf("nil SkipToByteWithPoint = %+v, want zero token", tok)
+	}
+	withoutLexer := &dfaTokenSource{}
+	if tok := withoutLexer.SkipToByte(1); tok != (Token{}) {
+		t.Fatalf("lexerless SkipToByte = %+v, want zero token", tok)
+	}
+	if tok := withoutLexer.SkipToByteWithPoint(1, Point{}); tok != (Token{}) {
+		t.Fatalf("lexerless SkipToByteWithPoint = %+v, want zero token", tok)
+	}
+}
+
 type dualChoiceExternalScanner struct{}
 
 func (dualChoiceExternalScanner) Create() any                           { return nil }

@@ -285,8 +285,8 @@ func TestTransientChildReturnedTreeMaterializationUsesRawRoot(t *testing.T) {
 	if got := parser.materializeTransientChildrenForReturnedTree(tree, arena, scratch); got != ParseStopNone {
 		t.Fatalf("materializeTransientChildrenForReturnedTree stop reason = %q, want %q", got, ParseStopNone)
 	}
-	if !tree.resultCompatibilityPending.Load() {
-		t.Fatal("resultCompatibilityPending = false after transient child materialization, want deferred")
+	if !tree.hasDeferredResultCompatibility() {
+		t.Fatal("deferred compatibility finalizer missing after transient child materialization")
 	}
 	if got := resultChildCount(stmt); got != 0 {
 		t.Fatalf("import child count after transient child materialization = %d, want deferred", got)

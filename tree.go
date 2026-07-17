@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 )
 
 // Range is a span of source text.
@@ -2169,17 +2168,32 @@ func (t *Tree) deferResultCompatibility() {
 	if t == nil || t.root == nil || t.language == nil {
 		return
 	}
-	t.resultCompatibilityPending.Store(true)
+	if t.resultCompatibilityFinalizer == nil {
+		t.resultCompatibilityFinalizer = &treeResultCompatibilityFinalizer{}
+	}
+}
+
+// treeResultCompatibilityFinalizer is installed while a tree is still parser-
+// owned, before it can be observed by callers. Keeping the synchronization
+// object behind a pointer avoids copying a used sync.Once when pooled Tree
+// values are reset or when Tree.Copy constructs a finalized clone.
+type treeResultCompatibilityFinalizer struct {
+	once sync.Once
+}
+
+func (t *Tree) hasDeferredResultCompatibility() bool {
+	return t != nil && t.resultCompatibilityFinalizer != nil
 }
 
 func (t *Tree) ensureResultCompatibility() {
-	if t == nil || !t.resultCompatibilityPending.Load() {
+	if t == nil {
 		return
 	}
-	t.resultCompatibilityOnce.Do(func() {
-		defer func() {
-			t.resultCompatibilityPending.Store(false)
-		}()
+	finalizer := t.resultCompatibilityFinalizer
+	if finalizer == nil {
+		return
+	}
+	finalizer.once.Do(func() {
 		if t.root == nil || t.language == nil {
 			return
 		}
@@ -2559,11 +2573,10 @@ type Tree struct {
 	incrementalReuseDisabled           bool
 	// Finalization state avoids repeated retry scans and compatibility passes.
 	// The error summary is not a persistent invariant of a caller-edited tree.
-	resultErrorSummary         resultErrorSummary
-	resultCompatibilityApplied bool
-	resultCompatibilityPending atomic.Bool
-	resultCompatibilityOnce    sync.Once
-	released                   bool
+	resultErrorSummary           resultErrorSummary
+	resultCompatibilityApplied   bool
+	resultCompatibilityFinalizer *treeResultCompatibilityFinalizer
+	released                     bool
 }
 
 const maxRetainedTreeEditCap = 8
@@ -2590,6 +2603,20 @@ func newTreeWithArenas(root *Node, source []byte, lang *Language, arena *nodeAre
 
 func newTreeWithUniqueArenas(root *Node, source []byte, lang *Language, arena *nodeArena, borrowed []*nodeArena) *Tree {
 	tree := treePool.Get().(*Tree)
+	resetTreeForReuse(tree, root, source, lang, arena, borrowed)
+	if !tree.externalScannerCheckpointsDeferred {
+		rebuildExternalScannerCheckpoints(root, lang)
+	}
+	return tree
+}
+
+// resetTreeForReuse is the deterministic scrub boundary for pooled Tree
+// values. It is kept separate from sync.Pool acquisition so lifecycle tests can
+// force the reset path without assuming that sync.Pool returns a given pointer.
+func resetTreeForReuse(tree *Tree, root *Node, source []byte, lang *Language, arena *nodeArena, borrowed []*nodeArena) {
+	if tree == nil {
+		return
+	}
 	edits := reusableTreeEditScratch(tree.edits)
 	deferExternalCheckpoints := root != nil && languageUsesExternalScannerCheckpoints(lang)
 	*tree = Tree{
@@ -2602,10 +2629,6 @@ func newTreeWithUniqueArenas(root *Node, source []byte, lang *Language, arena *n
 		borrowedArena:                      borrowed,
 		externalScannerCheckpointsDeferred: deferExternalCheckpoints,
 	}
-	if !deferExternalCheckpoints {
-		rebuildExternalScannerCheckpoints(root, lang)
-	}
-	return tree
 }
 
 func uniqueArenas(arenas []*nodeArena, exclude *nodeArena) []*nodeArena {
@@ -2675,6 +2698,9 @@ func (t *Tree) Release() {
 	t.parseRuntime = ParseRuntime{}
 	t.arenaBreakdown = nil
 	t.includedRanges = nil
+	t.resultErrorSummary = resultErrorSummaryUnknown
+	t.resultCompatibilityApplied = false
+	t.resultCompatibilityFinalizer = nil
 	treePool.Put(t)
 }
 
@@ -2690,10 +2716,13 @@ func (t *Tree) RootNode() *Node {
 // This mirrors tree-sitter C's root-node-with-offset behavior for callers that
 // need to embed a parsed tree at a larger document offset.
 func (t *Tree) RootNodeWithOffset(offsetBytes uint32, offsetExtent Point) *Node {
-	if t == nil || t.root == nil {
+	if t == nil {
 		return nil
 	}
 	t.ensureResultCompatibility()
+	if t.root == nil {
+		return nil
+	}
 	if offsetBytes == 0 && offsetExtent == (Point{}) {
 		return t.root
 	}
@@ -2774,10 +2803,13 @@ func (t *Tree) UTF16RangeForRange(r Range) (UTF16Range, bool) {
 }
 
 func (t *Tree) descendantForUTF16Range(startCodeUnit, endCodeUnit uint32, namedOnly bool) *Node {
-	if t == nil || t.utf16Map == nil || t.root == nil || endCodeUnit < startCodeUnit {
+	if t == nil {
 		return nil
 	}
 	t.ensureResultCompatibility()
+	if t.utf16Map == nil || t.root == nil || endCodeUnit < startCodeUnit {
+		return nil
+	}
 	startByte, ok := t.utf16Map.utf16UnitToByte(startCodeUnit)
 	if !ok {
 		return nil
@@ -2825,11 +2857,15 @@ func (t *Tree) WriteDOT(w io.Writer, lang *Language) error {
 	if w == nil {
 		return fmt.Errorf("tree: nil writer")
 	}
-	if t == nil || t.root == nil {
+	if t == nil {
 		_, err := io.WriteString(w, "digraph gotreesitter {\n}\n")
 		return err
 	}
 	t.ensureResultCompatibility()
+	if t.root == nil {
+		_, err := io.WriteString(w, "digraph gotreesitter {\n}\n")
+		return err
+	}
 
 	type dotItem struct {
 		node *Node
@@ -3371,10 +3407,8 @@ func (t *Tree) ParseStopReason() ParseStopReason {
 	if t == nil {
 		return ParseStopNone
 	}
-	if t.parseRuntime.StopReason == "" {
-		return ParseStopNone
-	}
-	return t.parseRuntime.StopReason
+	t.ensureResultCompatibility()
+	return t.rawParseStopReason()
 }
 
 // NodeAtByte returns the smallest root descendant that contains byteOffset.
@@ -3396,7 +3430,28 @@ func (t *Tree) NamedNodeAtByte(byteOffset uint32) *Node {
 
 // ParseStoppedEarly reports whether parsing hit an early-stop condition.
 func (t *Tree) ParseStoppedEarly() bool {
-	switch t.ParseStopReason() {
+	if t == nil {
+		return false
+	}
+	t.ensureResultCompatibility()
+	return t.rawParseStoppedEarly()
+}
+
+// rawParseStopReason reports the parser-captured stop reason without running
+// deferred result compatibility. Parser-owned retry, selection, and
+// normalization code must use this accessor until the tree is returned; public
+// observers use ParseStopReason and join the synchronized finalization boundary.
+func (t *Tree) rawParseStopReason() ParseStopReason {
+	if t == nil || t.parseRuntime.StopReason == "" {
+		return ParseStopNone
+	}
+	return t.parseRuntime.StopReason
+}
+
+// rawParseStoppedEarly is the parser-owned counterpart to ParseStoppedEarly.
+// It intentionally does not initiate deferred result compatibility.
+func (t *Tree) rawParseStoppedEarly() bool {
+	switch t.rawParseStopReason() {
 	case ParseStopIterationLimit, ParseStopStackDepthLimit, ParseStopNodeLimit, ParseStopMemoryBudget, ParseStopTokenSourceEOF, ParseStopTimeout, ParseStopCancelled:
 		return true
 	default:
@@ -3409,7 +3464,8 @@ func (t *Tree) ParseRuntime() ParseRuntime {
 	if t == nil {
 		return ParseRuntime{StopReason: ParseStopNone}
 	}
-	out := t.parseRuntime
+	t.ensureResultCompatibility()
+	out := *t.rawParseRuntime()
 	if arena := t.arena; arena != nil {
 		out.FinalChildRefParents = arena.finalChildRefParents
 		out.FinalChildRefs = arena.finalChildRefsCreated
@@ -3424,10 +3480,11 @@ func (t *Tree) ParseRuntime() ParseRuntime {
 	return out
 }
 
-// parseRuntimeReadOnly returns the runtime record stored on the tree without
-// the public accessor's live arena-counter overlay. Internal decision helpers
-// may use it only while the tree is alive and must not mutate the result.
-func (t *Tree) parseRuntimeReadOnly() *ParseRuntime {
+// rawParseRuntime returns the parser-captured runtime record without running
+// deferred result compatibility and without the public accessor's live arena
+// counter overlay. Parser-owned decision helpers may use it only while the tree
+// is alive and must not mutate the result.
+func (t *Tree) rawParseRuntime() *ParseRuntime {
 	if t == nil {
 		return nil
 	}
@@ -3468,7 +3525,7 @@ func (t *Tree) setParseStopReason(reason ParseStopReason) {
 	if t == nil || reason == "" {
 		return
 	}
-	rt := t.ParseRuntime()
+	rt := *t.rawParseRuntime()
 	rt.StopReason = reason
 	t.setParseRuntime(rt)
 }

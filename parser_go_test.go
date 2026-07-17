@@ -4,10 +4,35 @@ import (
 	"bytes"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
+
+func TestGoParserIncludedRangePastEOFDoesNotHang(t *testing.T) {
+	src := []byte("package main\n")
+	p := gotreesitter.NewParser(grammars.GoLanguage())
+	p.SetIncludedRanges([]gotreesitter.Range{{
+		StartByte:  100,
+		EndByte:    200,
+		StartPoint: gotreesitter.Point{Row: 9},
+		EndPoint:   gotreesitter.Point{Row: 18},
+	}})
+	done := make(chan struct{})
+	go func() {
+		tree, _ := p.Parse(src)
+		if tree != nil {
+			tree.Release()
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("parse hung while clamping an included range past EOF")
+	}
+}
 
 // collectNamedTypes does a depth-first traversal collecting the Type() of all
 // named nodes. This is the standard way to inspect a tree-sitter parse tree

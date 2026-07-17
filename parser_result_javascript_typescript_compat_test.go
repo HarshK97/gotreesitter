@@ -1,6 +1,11 @@
 package gotreesitter
 
-import "testing"
+import (
+	"bytes"
+	"os"
+	"sync"
+	"testing"
+)
 
 func TestNormalizeJavaScriptTopLevelObjectLiteralsRewritesObjectLiteral(t *testing.T) {
 	lang := &Language{
@@ -176,9 +181,6 @@ func TestTreeRootNodeRecordsDeferredTypeScriptCompatibilityTiming(t *testing.T) 
 	tree.deferResultCompatibility()
 
 	_ = tree.RootNode()
-	if tree.resultCompatibilityPending.Load() {
-		t.Fatal("resultCompatibilityPending = true after deferred compatibility ran")
-	}
 	if tree.resultErrorSummary != resultErrorSummaryClean {
 		t.Fatalf("resultErrorSummary = %d, want clean", tree.resultErrorSummary)
 	}
@@ -203,6 +205,145 @@ func TestTreeRootNodeRecordsDeferredTypeScriptCompatibilityTiming(t *testing.T) 
 	if clone.resultErrorSummary != tree.resultErrorSummary || clone.resultCompatibilityApplied != tree.resultCompatibilityApplied {
 		t.Fatal("Tree.Copy did not preserve finalized compatibility state")
 	}
+}
+
+func TestDeferredResultCompatibilitySynchronizesConcurrentTreeReaders(t *testing.T) {
+	t.Setenv("GOT_PARSE_PHASE_TIMING", "1")
+	ResetParseEnvConfigCacheForTests()
+	t.Cleanup(ResetParseEnvConfigCacheForTests)
+
+	lang, root, _ := newDeferredCompatDynamicImportFixture()
+	tree := newTreeWithArenas(root, []byte("import"), lang, root.ownerArena, nil)
+	tree.deferResultCompatibility()
+	defer tree.Release()
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	readers := []func(){
+		func() { _ = tree.RootNode() },
+		func() { _ = tree.ParseRuntime() },
+		func() { _ = tree.ParseStopReason() },
+		func() {
+			clone := tree.Copy()
+			if clone != nil {
+				clone.Release()
+			}
+		},
+		func() { _ = tree.WriteDOT(&bytes.Buffer{}, lang) },
+		func() { _ = tree.RootNodeWithOffset(1, Point{Column: 1}) },
+		func() { _ = tree.NodeAtByte(0) },
+	}
+	for _, read := range readers {
+		read := read
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			read()
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if !tree.resultCompatibilityApplied {
+		t.Fatal("deferred compatibility was not applied")
+	}
+	rt := tree.ParseRuntime()
+	if rt.NormalizationPassesRun == 0 {
+		t.Fatal("deferred compatibility did not record a normalization pass")
+	}
+}
+
+func TestParserKeepsTypeScriptCompatibilityLazyUntilFirstPublicTreeRead(t *testing.T) {
+	t.Setenv("GOT_PARSE_PHASE_TIMING", "1")
+	t.Setenv("GOT_TS_LAZY_COMPAT", "1")
+	ResetParseEnvConfigCacheForTests()
+	t.Cleanup(ResetParseEnvConfigCacheForTests)
+
+	blob, err := os.ReadFile("grammars/grammar_blobs/typescript.bin")
+	if err != nil {
+		t.Fatalf("read TypeScript grammar blob: %v", err)
+	}
+	lang, err := LoadLanguage(blob)
+	if err != nil {
+		t.Fatalf("load TypeScript grammar: %v", err)
+	}
+	tree, err := NewParser(lang).Parse([]byte("import"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+
+	if !tree.hasDeferredResultCompatibility() {
+		t.Fatal("real Parser result has no deferred TypeScript compatibility finalizer")
+	}
+	if tree.resultCompatibilityApplied {
+		t.Fatal("TypeScript compatibility was applied before the Parser returned")
+	}
+	if got := tree.rawParseRuntime().NormalizationPassesRun; got != 0 {
+		t.Fatalf("normalization passes before public read = %d, want 0", got)
+	}
+
+	first := tree.ParseRuntime()
+	if first.NormalizationPassesRun == 0 {
+		t.Fatal("first public runtime read did not run deferred TypeScript compatibility")
+	}
+	if !tree.resultCompatibilityApplied {
+		t.Fatal("compatibility remains unapplied after first public read")
+	}
+	_ = tree.RootNode()
+	if got := tree.ParseRuntime().NormalizationPassesRun; got != first.NormalizationPassesRun {
+		t.Fatalf("deferred compatibility ran more than once: first=%d after=%d", first.NormalizationPassesRun, got)
+	}
+}
+
+func TestDeferredResultCompatibilityStateScrubbedAcrossTreePoolLifecycle(t *testing.T) {
+	newDeferredTree := func() *Tree {
+		lang, root, _ := newDeferredCompatDynamicImportFixture()
+		tree := newTreeWithArenas(root, []byte("import"), lang, root.ownerArena, nil)
+		tree.deferResultCompatibility()
+		return tree
+	}
+	newPlainTree := func() *Tree {
+		arena := acquireNodeArena(arenaClassFull)
+		lang := &Language{Name: "pool-reuse", SymbolNames: []string{"EOF", "root"}}
+		root := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+		return newTreeWithArenas(root, []byte("x"), lang, arena, nil)
+	}
+
+	for _, finalizeFirst := range []bool{false, true} {
+		stale := newDeferredTree()
+		if finalizeFirst {
+			_ = stale.RootNode()
+		}
+		// Force the exact pooled-value reset seam on this pointer. This avoids
+		// assuming sync.Pool will hand a released pointer back to this goroutine.
+		plain := newPlainTree()
+		root, source, lang, arena := plain.root, plain.source, plain.language, plain.arena
+		plain.arena = nil
+		plain.Release()
+		if stale.arena != nil {
+			stale.arena.Release()
+		}
+		resetTreeForReuse(stale, root, source, lang, arena, nil)
+		reused := stale
+		if reused.hasDeferredResultCompatibility() {
+			t.Fatalf("pool acquisition inherited a deferred finalizer (finalized=%t)", finalizeFirst)
+		}
+		if reused.released {
+			t.Fatalf("released state survived pool reset (finalized=%t)", finalizeFirst)
+		}
+		reused.Release()
+	}
+
+	tree := newDeferredTree()
+	_ = tree.RootNode()
+	before := tree.ParseRuntime().NormalizationPassesRun
+	_ = tree.RootNode()
+	if got := tree.ParseRuntime().NormalizationPassesRun; got != before {
+		t.Fatalf("compatibility ran more than once: before=%d after=%d", before, got)
+	}
+	tree.Release()
 }
 
 func TestReturnedTreeNormalizationUsesRawRootForDeferredTypeScriptCompatibility(t *testing.T) {

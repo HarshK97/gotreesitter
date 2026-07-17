@@ -101,7 +101,7 @@ func shouldNormalizeIncrementalReturnedTree(tree, oldTree *Tree) bool {
 	if tree == nil {
 		return false
 	}
-	if tree.ParseStoppedEarly() {
+	if tree.rawParseStoppedEarly() {
 		return false
 	}
 	if oldTree == nil {
@@ -114,7 +114,7 @@ func (p *Parser) normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []
 	if !shouldNormalizeIncrementalReturnedTree(tree, oldTree) {
 		return
 	}
-	if tree.resultCompatibilityPending.Load() {
+	if tree.hasDeferredResultCompatibility() {
 		finalizeDeferredReturnedTreeTruncation(tree, source)
 		return
 	}
@@ -133,14 +133,14 @@ func (p *Parser) normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []
 }
 
 func shouldNormalizeReturnedTree(tree *Tree) bool {
-	return tree != nil && !tree.ParseStoppedEarly()
+	return tree != nil && !tree.rawParseStoppedEarly()
 }
 
 func (p *Parser) normalizeReturnedTreeForParse(tree *Tree, source []byte) {
 	if !shouldNormalizeReturnedTree(tree) {
 		return
 	}
-	if tree.resultCompatibilityPending.Load() {
+	if tree.hasDeferredResultCompatibility() {
 		finalizeDeferredReturnedTreeTruncation(tree, source)
 		return
 	}
@@ -174,8 +174,8 @@ func finalizeDeferredReturnedTreeTruncation(tree *Tree, _ []byte) {
 	}
 	// Flush the deferred compat normalization first (only for the rare truncated
 	// case) so the HasError mark lands on the final normalized root and cannot be
-	// dropped if a normalizer rebuilds the root. ensureResultCompatibility clears
-	// resultCompatibilityPending.
+	// dropped if a normalizer rebuilds the root. ensureResultCompatibility joins
+	// the tree's one-shot deferred-finalization boundary.
 	tree.ensureResultCompatibility()
 	markTruncatedTreeHasError(tree.parseRuntime, rawRootOrNil(tree))
 }
@@ -316,7 +316,7 @@ func profileFreshParseFallback(start time.Time, tree *Tree, reason string) Incre
 		return profile
 	}
 	timing := &incrementalParseTiming{totalNanos: profile.ReparseNanos}
-	copyParseRuntimeToTiming(timing, tree.ParseRuntime())
+	copyParseRuntimeToTiming(timing, *tree.rawParseRuntime())
 	profile = timing.toProfile()
 	profile.ReparseNanos = time.Since(start).Nanoseconds()
 	profile.ReuseUnsupported = true
@@ -485,14 +485,14 @@ func (p *Parser) parseForRecovery(source []byte) (*Tree, error) {
 			return nil, err
 		}
 		tree, err := parser.ParseWithTokenSource(source, ts)
-		if tree != nil && parseStopReasonIsActive(tree.ParseStopReason()) {
-			p.markActiveParseStopped(tree.ParseStopReason())
+		if tree != nil && parseStopReasonIsActive(tree.rawParseStopReason()) {
+			p.markActiveParseStopped(tree.rawParseStopReason())
 		}
 		return tree, err
 	}
 	tree, err := parser.Parse(source)
-	if tree != nil && parseStopReasonIsActive(tree.ParseStopReason()) {
-		p.markActiveParseStopped(tree.ParseStopReason())
+	if tree != nil && parseStopReasonIsActive(tree.rawParseStopReason()) {
+		p.markActiveParseStopped(tree.rawParseStopReason())
 	}
 	return tree, err
 }
@@ -574,8 +574,8 @@ func parseWithSnippetParserInheriting(lang *Language, source []byte, parent *Par
 		parser.timeoutMicros = timeoutMicros[0]
 	}
 	tree, err := parser.Parse(source)
-	if parent != nil && tree != nil && parseStopReasonIsActive(tree.ParseStopReason()) {
-		parent.markActiveParseStopped(tree.ParseStopReason())
+	if parent != nil && tree != nil && parseStopReasonIsActive(tree.rawParseStopReason()) {
+		parent.markActiveParseStopped(tree.rawParseStopReason())
 	}
 	return tree, err
 }
@@ -616,9 +616,9 @@ func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFact
 	initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth)
 	workCountSetNextParseAttempt("initial_full", "fresh_token_source_full_parse")
 	tree := p.parseInternal(source, p.wrapIncludedRanges(ts), nil, nil, arenaClassFull, nil, initialMaxStacks, 0, 0, deterministicExternalConflicts)
-	if tree != nil && !tree.ParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) {
+	if tree != nil && !tree.rawParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) {
 		tree = p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
-		if tree != nil && !tree.ParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) && shouldRepeatExternalScannerFullParse(p.language, tree) {
+		if tree != nil && !tree.rawParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) && shouldRepeatExternalScannerFullParse(p.language, tree) {
 			tree = p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
 		}
 	}
@@ -978,9 +978,9 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 		if progress.enabled {
 			progress.emit(time.Now(), "retry_begin", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "")
 		}
-		if tree != nil && !tree.ParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) {
+		if tree != nil && !tree.rawParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) {
 			tree = p.retryFullParseWithDFA(source, initialMaxStacks, deterministicExternalConflicts, tree)
-			if tree != nil && !tree.ParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) && shouldRepeatExternalScannerFullParse(p.language, tree) {
+			if tree != nil && !tree.rawParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) && shouldRepeatExternalScannerFullParse(p.language, tree) {
 				tree = p.retryFullParseWithDFA(source, initialMaxStacks, deterministicExternalConflicts, tree)
 			}
 		}
@@ -1052,7 +1052,7 @@ func (p *Parser) resolveCRecoverySwallowedError(source []byte, tree *Tree) *Tree
 	if p.crecoverySwallowedErrorCheckActive {
 		return tree
 	}
-	if tree.ParseStoppedEarly() {
+	if tree.rawParseStoppedEarly() {
 		return tree
 	}
 	// Read the signal from the tree's OWN captured ParseRuntime, not the live
@@ -1061,7 +1061,7 @@ func (p *Parser) resolveCRecoverySwallowedError(source []byte, tree *Tree) *Tree
 	// retries — see retryFullParseWithDFA), and a discarded retry attempt
 	// would otherwise leak its recovery history into this check even though
 	// it has nothing to do with the tree actually being returned.
-	rt := tree.ParseRuntime()
+	rt := *tree.rawParseRuntime()
 	if !rt.CRecoveryEnteredErrorState || !rt.CRecoveryDroppedErrorForClean {
 		// Either this tree never itself hit ts_parser__handle_error, or
 		// recovery resolved cleanly without the selected lineage ever
@@ -1069,7 +1069,7 @@ func (p *Parser) resolveCRecoverySwallowedError(source []byte, tree *Tree) *Tree
 		// Nothing to double-check.
 		return tree
 	}
-	root := tree.RootNode()
+	root := rawRootOrNil(tree)
 	if root == nil || root.HasError() {
 		return tree
 	}
@@ -1094,11 +1094,11 @@ func (p *Parser) resolveCRecoverySwallowedError(source []byte, tree *Tree) *Tree
 	// resync fallback is running. Adopting a truncated fallback tree with
 	// err == nil would be worse than the swallowed-error bug this safety net
 	// exists to fix, so reject it outright and keep the original result.
-	if fallback.ParseStoppedEarly() || parseStopReasonIsActive(p.activeParseStopReason()) {
+	if fallback.rawParseStoppedEarly() || parseStopReasonIsActive(p.activeParseStopReason()) {
 		fallback.Release()
 		return tree
 	}
-	fallbackRoot := fallback.RootNode()
+	fallbackRoot := rawRootOrNil(fallback)
 	if fallbackRoot == nil || !fallbackRoot.HasError() {
 		// The resync-based path agrees the input is clean (or itself
 		// couldn't build a root); keep the original C-recovery result.
@@ -1137,7 +1137,7 @@ func markCRecoverySwallowedErrorFallbackAttempted(t *Tree) {
 	if t == nil {
 		return
 	}
-	rt := t.ParseRuntime()
+	rt := *t.rawParseRuntime()
 	rt.CRecoverySwallowedErrorFallbackAttempted = true
 	t.setParseRuntime(rt)
 }

@@ -1,6 +1,8 @@
 package gotreesitter
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestNormalizeMakeConditionalConsequenceFieldsExtendsAcrossLeadingTabs(t *testing.T) {
 	lang := &Language{
@@ -374,18 +376,18 @@ func TestParserReturnedTreeNormalizationPreservesDeferredIniCompatibility(t *tes
 
 	parser := &Parser{language: lang}
 	parser.normalizeReturnedTreeForParse(tree, source)
-	if !tree.resultCompatibilityPending.Load() {
-		t.Fatal("resultCompatibilityPending = false after parser-return normalization, want deferred")
+	if !tree.hasDeferredResultCompatibility() {
+		t.Fatal("deferred compatibility finalizer missing after parser-return normalization")
 	}
-	if got := tree.ParseStopReason(); got != ParseStopNoStacksAlive {
-		t.Fatalf("stop reason before RootNode = %q, want %q", got, ParseStopNoStacksAlive)
+	// ParseStopReason is a public read of state that deferred INI compatibility
+	// may mutate, so it must join the same one-shot finalization boundary as
+	// RootNode instead of racing a concurrent first tree read.
+	if got := tree.ParseStopReason(); got != ParseStopAccepted {
+		t.Fatalf("stop reason after deferred accessor finalization = %q, want %q", got, ParseStopAccepted)
 	}
 
 	if root := tree.RootNode(); root == nil {
 		t.Fatal("RootNode() = nil")
-	}
-	if tree.resultCompatibilityPending.Load() {
-		t.Fatal("resultCompatibilityPending = true after RootNode")
 	}
 	if got := tree.ParseStopReason(); got != ParseStopAccepted {
 		t.Fatalf("stop reason after deferred compatibility = %q, want %q", got, ParseStopAccepted)

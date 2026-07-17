@@ -100,7 +100,7 @@ func shouldRetryFullParse(tree *Tree, sourceLen int) bool {
 	if tree == nil {
 		return false
 	}
-	if tree.ParseStopReason() != ParseStopNoStacksAlive {
+	if tree.rawParseStopReason() != ParseStopNoStacksAlive {
 		return false
 	}
 	if sourceLen <= 0 {
@@ -119,7 +119,7 @@ func shouldRetryAcceptedErrorParse(tree *Tree, sourceLen int, initialMaxStacks i
 	if !retryTreeHasError(tree) {
 		return false
 	}
-	rt := tree.parseRuntimeReadOnly()
+	rt := tree.rawParseRuntime()
 	if rt.StopReason != ParseStopAccepted || rt.Truncated || rt.TokenSourceEOFEarly {
 		return false
 	}
@@ -143,7 +143,7 @@ func shouldRetryStackPressureCleanFullParse(tree *Tree, sourceLen int, _ int) bo
 	if root == nil || root.HasError() {
 		return false
 	}
-	rt := tree.parseRuntimeReadOnly()
+	rt := tree.rawParseRuntime()
 	if rt.TokenSourceEOFEarly {
 		return false
 	}
@@ -173,7 +173,7 @@ func shouldRetryNodeLimitParse(tree *Tree, sourceLen int) bool {
 	if sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes {
 		return false
 	}
-	return tree.ParseStopReason() == ParseStopNodeLimit
+	return tree.rawParseStopReason() == ParseStopNodeLimit
 }
 
 func shouldRetryIncrementalParseAsFull(tree *Tree, sourceLen int, initialMaxStacks int) bool {
@@ -208,7 +208,7 @@ func shouldRetryIncrementalAcceptedErrorAtBaseMergeCap(tree *Tree, sourceLen int
 	if tree == nil || sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes {
 		return false
 	}
-	rt := tree.parseRuntimeReadOnly()
+	rt := tree.rawParseRuntime()
 	if rt.StopReason != ParseStopAccepted || rt.Truncated || rt.TokenSourceEOFEarly ||
 		!rt.IncrementalOldTreeReuseRoute || !retryTreeCoversExpectedEOF(tree) {
 		return false
@@ -269,7 +269,7 @@ func treeParseClean(tree *Tree) bool {
 	if retryTreeHasError(tree) {
 		return false
 	}
-	rt := tree.parseRuntimeReadOnly()
+	rt := tree.rawParseRuntime()
 	return rt.StopReason == ParseStopAccepted && !rt.TokenSourceEOFEarly && retryTreeCoversExpectedEOF(tree)
 }
 
@@ -287,7 +287,7 @@ func retryTreeEndByte(tree *Tree) uint32 {
 	if root := rawRootOrNil(tree); root != nil {
 		return root.EndByte()
 	}
-	return tree.parseRuntimeReadOnly().RootEndByte
+	return tree.rawParseRuntime().RootEndByte
 }
 
 func retryTreeChildCount(tree *Tree) int {
@@ -342,7 +342,7 @@ func retryTreeCoversExpectedEOF(tree *Tree) bool {
 	if tree == nil {
 		return false
 	}
-	rt := tree.parseRuntimeReadOnly()
+	rt := tree.rawParseRuntime()
 	if rt.ExpectedEOFByte == 0 {
 		return true
 	}
@@ -381,8 +381,8 @@ func preferRetryTree(p *Parser, candidate, incumbent *Tree) bool {
 	if treeParseClean(incumbent) {
 		return false
 	}
-	incRT := incumbent.parseRuntimeReadOnly()
-	if incRT.StopReason == ParseStopAccepted && candidate.ParseStoppedEarly() {
+	incRT := incumbent.rawParseRuntime()
+	if incRT.StopReason == ParseStopAccepted && candidate.rawParseStoppedEarly() {
 		// A retry that stopped before acceptance is not a complete C-style
 		// selection candidate. Keep the accepted incumbent even when the
 		// provisional retry reached farther or reports a lower error cost.
@@ -393,7 +393,7 @@ func preferRetryTree(p *Parser, candidate, incumbent *Tree) bool {
 	if candEnd != incEnd {
 		return candEnd > incEnd
 	}
-	candRT := candidate.parseRuntimeReadOnly()
+	candRT := candidate.rawParseRuntime()
 	if candRT.Truncated != incRT.Truncated {
 		return !candRT.Truncated
 	}
@@ -454,7 +454,7 @@ func preferRetryTreeOverFirstPass(p *Parser, candidate, firstPass *Tree) bool {
 	// axis was the NodesAllocated bookkeeping tie-break, i.e. the reverse
 	// comparison with NodesAllocated ignored would also say yes.
 	saved := candidate.parseRuntime.NodesAllocated
-	candidate.parseRuntime.NodesAllocated = firstPass.parseRuntimeReadOnly().NodesAllocated
+	candidate.parseRuntime.NodesAllocated = firstPass.rawParseRuntime().NodesAllocated
 	strict := preferRetryTree(p, candidate, firstPass)
 	candidate.parseRuntime.NodesAllocated = saved
 	return strict
@@ -464,7 +464,7 @@ func shouldTakeCleanWideRetry(incumbent, candidate *Tree, sourceLen int, initial
 	if candidate == nil || retryTreeHasError(candidate) {
 		return false
 	}
-	candRT := candidate.parseRuntimeReadOnly()
+	candRT := candidate.rawParseRuntime()
 	if candRT.TokenSourceEOFEarly {
 		return false
 	}
@@ -1295,7 +1295,7 @@ func certifiedAcceptedErrorRetryUsesInitialStackCeiling(tree *Tree, sourceLen in
 		parseMaxGLRStacksEnvConfigured() || parseMaxMergePerKeyEnvConfigured() {
 		return false
 	}
-	rt := tree.parseRuntimeReadOnly()
+	rt := tree.rawParseRuntime()
 	return rt.StopReason == ParseStopAccepted &&
 		!rt.Truncated &&
 		!rt.TokenSourceEOFEarly &&
@@ -1313,7 +1313,7 @@ func certifiedAcceptedErrorRetrySkipsComplete(tree *Tree, sourceLen int) bool {
 		uint64(sourceLen) < uint64(profile.SkipCompleteMinSourceBytes) {
 		return false
 	}
-	rt := tree.parseRuntimeReadOnly()
+	rt := tree.rawParseRuntime()
 	if profile.SkipCompleteMaxEntryScratchPeak > 0 &&
 		rt.EntryScratchPeak > uint64(profile.SkipCompleteMaxEntryScratchPeak) {
 		return false
@@ -1331,7 +1331,7 @@ func certifiedFreshErrorNoStacksRetryPassLimit(tree *Tree, sourceLen int, origin
 		return 0
 	}
 	limit := tree.language.FullParseAcceptedErrorRetryProfile.FreshErrorNoStacksMaxPasses
-	if limit == 0 || tree.ParseStopReason() != ParseStopNoStacksAlive || !retryTreeHasError(tree) {
+	if limit == 0 || tree.rawParseStopReason() != ParseStopNoStacksAlive || !retryTreeHasError(tree) {
 		return 0
 	}
 	return int(limit)
@@ -1340,7 +1340,7 @@ func certifiedFreshErrorNoStacksRetryPassLimit(tree *Tree, sourceLen int, origin
 func certifiedFreshErrorNoStacksRetryMaxStacks(tree *Tree, sourceLen int, origin fullParseRetryOrigin) int {
 	if tree == nil || tree.language == nil || origin != fullParseRetryOriginFresh ||
 		sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes ||
-		tree.ParseStopReason() != ParseStopNoStacksAlive || !retryTreeHasError(tree) {
+		tree.rawParseStopReason() != ParseStopNoStacksAlive || !retryTreeHasError(tree) {
 		return 0
 	}
 	return int(tree.language.FullParseAcceptedErrorRetryProfile.FreshErrorNoStacksRetryMaxStacks)
@@ -1350,7 +1350,7 @@ func fullParseRetryNodeLimitOverride(tree *Tree, sourceLen int) int {
 	if !shouldRetryNodeLimitParse(tree, sourceLen) {
 		return 0
 	}
-	limit := tree.parseRuntimeReadOnly().NodeLimit
+	limit := tree.rawParseRuntime().NodeLimit
 	if limit <= 0 {
 		limit = parseNodeLimit(sourceLen)
 	}
@@ -1361,7 +1361,7 @@ func fullParseRetrySecondaryNodeLimitOverride(tree *Tree, sourceLen int) int {
 	if tree == nil || sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes {
 		return 0
 	}
-	rt := tree.parseRuntimeReadOnly()
+	rt := tree.rawParseRuntime()
 	if rt.StopReason != ParseStopNodeLimit {
 		return 0
 	}
@@ -1379,7 +1379,7 @@ func fullParseRetryMergePerKeyOverride(tree *Tree, sourceLen int, initialMaxStac
 	if treeParseClean(tree) {
 		return 0
 	}
-	rt := tree.parseRuntimeReadOnly()
+	rt := tree.rawParseRuntime()
 	if rt.TokenSourceEOFEarly {
 		return 0
 	}
@@ -1458,7 +1458,7 @@ func shouldRunInitialFullParseMergeRetry(tree *Tree, sourceLen int, origin fullP
 	// node cap plus a larger merge bucket. Keep merge-per-key retries available
 	// after a widened node-budget pass if the parser still proves ambiguity-
 	// bound, but skip the dead intermediate pass up front.
-	rt := tree.parseRuntimeReadOnly()
+	rt := tree.rawParseRuntime()
 	if rt.StopReason == ParseStopNodeLimit {
 		return false
 	}
@@ -1474,7 +1474,7 @@ func certifiedAcceptedErrorRetrySkipsInitialMerge(tree *Tree, sourceLen int, ori
 		parseMaxGLRStacksEnvConfigured() || parseMaxMergePerKeyEnvConfigured() {
 		return false
 	}
-	rt := tree.parseRuntimeReadOnly()
+	rt := tree.rawParseRuntime()
 	return rt.StopReason == ParseStopAccepted &&
 		!rt.Truncated &&
 		!rt.TokenSourceEOFEarly &&
@@ -1493,7 +1493,7 @@ func certifiedAcceptedErrorRetryReusesCleanWide(p *Parser, tree *Tree, sourceLen
 		uint64(sourceLen) < uint64(profile.ReuseCleanWideMinSourceBytes) {
 		return false
 	}
-	rt := tree.parseRuntimeReadOnly()
+	rt := tree.rawParseRuntime()
 	return rt.StopReason == ParseStopAccepted &&
 		!rt.Truncated &&
 		!rt.TokenSourceEOFEarly &&
@@ -1615,7 +1615,7 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 	structuralResyncRetry := shouldRetryFullParse(tree, len(source))
 	retryDebug := os.Getenv("GOT_RETRY_DEBUG") == "1"
 	if retryDebug {
-		rt := tree.ParseRuntime()
+		rt := *tree.rawParseRuntime()
 		fmt.Fprintf(os.Stderr, "RETRYDBG entry stop=%v truncated=%v hasErr=%v maxStacksSeen=%d stacksOverride=%d nodesOverride=%d structResync=%v\n",
 			rt.StopReason, rt.Truncated, retryTreeHasError(tree), rt.MaxStacksSeen, maxStacksOverride, maxNodesOverride, structuralResyncRetry)
 	}
@@ -1654,7 +1654,7 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 			stop := ParseStopNone
 			hasErr := true
 			if result != nil {
-				stop = result.ParseRuntime().StopReason
+				stop = result.rawParseStopReason()
 				hasErr = retryTreeHasError(result)
 			}
 			fmt.Fprintf(os.Stderr, "RETRYDBG pass maxStacks=%d mergePerKey=%d maxNodes=%d took=%v stop=%v hasErr=%v forceClean=%v\n",
@@ -1910,7 +1910,7 @@ func (p *Parser) retryIncrementalParseAsFullWithTokenSource(source []byte, ts To
 		timing.totalNanos += time.Since(retryStart).Nanoseconds()
 		timing.reuseUnsupported = true
 		timing.reuseUnsupportedReason = "incremental_parse_full_retry"
-		copyParseRuntimeToTiming(timing, result.ParseRuntime())
+		copyParseRuntimeToTiming(timing, *result.rawParseRuntime())
 	}
 	return result
 }

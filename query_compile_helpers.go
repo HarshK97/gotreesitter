@@ -88,6 +88,9 @@ func (p *queryParser) readString() (string, error) {
 			p.pos++
 			continue
 		}
+		if ch == '\n' {
+			return "", fmt.Errorf("query: unescaped newline in string at position %d", p.pos)
+		}
 		if ch == '"' {
 			p.pos++ // consume closing '"'
 			out := sb.String()

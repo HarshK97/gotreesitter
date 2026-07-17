@@ -3260,7 +3260,7 @@ func rescueMaterializationStopReason(loopReason ParseStopReason, tree *Tree) Par
 	if loopReason != ParseStopAccepted || tree == nil {
 		return loopReason
 	}
-	already := tree.parseRuntimeReadOnly().StopReason
+	already := tree.rawParseRuntime().StopReason
 	if already == "" || already == ParseStopNone || already == ParseStopAccepted {
 		return loopReason
 	}
@@ -4547,7 +4547,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			materializationTimingRef,
 		)
 		if tree != nil && !parseStopReasonIsTerminal(stopReason) {
-			if reason := tree.ParseStopReason(); parseStopReasonIsTerminal(reason) {
+			if reason := tree.rawParseStopReason(); parseStopReasonIsTerminal(reason) {
 				stopReason = reason
 			}
 		}

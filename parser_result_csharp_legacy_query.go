@@ -60,7 +60,7 @@ func csharpRecoverQueryAssignmentsRoot(source []byte, p *Parser, arena *nodeAren
 		return nil, false
 	}
 	defer tree.Release()
-	rt := tree.ParseRuntime()
+	rt := *tree.rawParseRuntime()
 	recoveredRoot := tree.RootNode()
 	if rt.StopReason != ParseStopAccepted || rt.Truncated || rt.TokenSourceEOFEarly || recoveredRoot.HasError() {
 		return nil, false
@@ -182,7 +182,7 @@ func csharpRecoverQuerySkeletonRoot(source []byte, p *Parser, arena *nodeArena, 
 		return nil, false
 	}
 	defer tree.Release()
-	rt := tree.ParseRuntime()
+	rt := *tree.rawParseRuntime()
 	recoveredRoot := tree.RootNode()
 	if rt.StopReason != ParseStopAccepted || rt.Truncated || rt.TokenSourceEOFEarly || recoveredRoot.HasError() {
 		return nil, false

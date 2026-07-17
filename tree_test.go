@@ -42,9 +42,9 @@ func TestNodeLayoutSizeBudget(t *testing.T) {
 	}
 }
 
-func TestParseRuntimeReadOnlyUsesStoredRecordWithoutArenaOverlay(t *testing.T) {
+func TestRawParseRuntimeUsesStoredRecordWithoutArenaOverlay(t *testing.T) {
 	var nilTree *Tree
-	if got := nilTree.parseRuntimeReadOnly(); got != nil {
+	if got := nilTree.rawParseRuntime(); got != nil {
 		t.Fatalf("nil tree runtime = %p, want nil", got)
 	}
 	if got := nilTree.ParseRuntime().StopReason; got != ParseStopNone {
@@ -61,7 +61,7 @@ func TestParseRuntimeReadOnlyUsesStoredRecordWithoutArenaOverlay(t *testing.T) {
 			NodeLimit:      41,
 		},
 	}
-	stored := tree.parseRuntimeReadOnly()
+	stored := tree.rawParseRuntime()
 	if stored != &tree.parseRuntime {
 		t.Fatal("internal runtime accessor returned a copy")
 	}
