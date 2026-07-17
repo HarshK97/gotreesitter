@@ -621,6 +621,17 @@ func (p *Parser) reuseTargetState(state StateID, n *Node, lookahead Token) (Stat
 		if n.Symbol() != lookahead.Symbol {
 			return 0, false
 		}
+		// The caller always lexes the fresh lookahead at the candidate's start
+		// byte before consulting reuse (tryReuseSubtree selects candidates by
+		// n.startByte == lookahead.StartByte). If a fresh lex of the same
+		// symbol at that position ends at a different byte than the stored
+		// leaf, the leaf's token boundary is stale (a maximal-munch decision
+		// that depended on bytes at or beyond the leaf's old right edge no
+		// longer holds under the new source) and reusing it would truncate or
+		// extend the real token. Reject rather than reuse.
+		if n.EndByte() != lookahead.EndByte {
+			return 0, false
+		}
 
 		action := p.lookupAction(state, n.Symbol())
 		if action == nil || len(action.Actions) == 0 {
