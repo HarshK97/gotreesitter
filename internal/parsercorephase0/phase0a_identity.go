@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"unsafe"
 )
 
 type CoreRunNamespace struct {
@@ -39,7 +40,18 @@ type Phase0AConstructionKind uint8
 const (
 	Phase0AConstructionOrdinaryTerminal Phase0AConstructionKind = iota + 1
 	Phase0AConstructionExtraTerminal
+	Phase0AConstructionReductionParent
 )
+
+// Phase0ABoundaryInput records the complete canonical-boundary input carried
+// by one candidate graph edge. It is an observer value, not a graph locator.
+type Phase0ABoundaryInput struct {
+	Frontier   uint64
+	State      StateID
+	ByteOffset uint32
+	Checkpoint CheckpointID
+	Shifted    bool
+}
 
 type Phase0ARollbackCause uint8
 
@@ -88,6 +100,18 @@ type Phase0AMutationRecord struct {
 	RollbackCause       Phase0ARollbackCause
 }
 
+// Phase0AReductionOccurrenceRecord carries reduction-only boundary evidence
+// without enlarging every common mutation row.
+type Phase0AReductionOccurrenceRecord struct {
+	TransactionID       uint64
+	Occurrence          ConstructionOccurrenceKey
+	Edge                IncomingEdgeKey
+	Boundary            Phase0ABoundaryInput
+	RolledBack          bool
+	RollbackTransaction uint64
+	RollbackCause       Phase0ARollbackCause
+}
+
 type Phase0ATransactionFrame struct {
 	TransactionID uint64
 	ParentID      uint64
@@ -103,12 +127,13 @@ type Phase0AProofSnapshot struct {
 	Namespace CoreRunNamespace
 	// Mutations includes explicit scaffold rows. Semantic construction proof
 	// must exclude Phase0AMutationScaffoldEdge.
-	Mutations       []Phase0AMutationRecord
-	Frames          []Phase0ATransactionFrame
-	OccurrenceCount uint64
-	OccurrenceBytes uint64
-	FirstPoison     *Phase0APoisonRecord
-	Failure         *Phase0AError
+	Mutations            []Phase0AMutationRecord
+	ReductionOccurrences []Phase0AReductionOccurrenceRecord
+	Frames               []Phase0ATransactionFrame
+	OccurrenceCount      uint64
+	OccurrenceBytes      uint64
+	FirstPoison          *Phase0APoisonRecord
+	Failure              *Phase0AError
 }
 
 type Phase0AErrorKind string
@@ -132,6 +157,7 @@ const (
 	Phase0AErrorOccurrenceByteCap Phase0AErrorKind = "occurrence_byte_cap"
 	Phase0AErrorTransactionProof  Phase0AErrorKind = "transaction_proof"
 	Phase0AErrorAttemptUnproven   Phase0AErrorKind = "attempt_unproven"
+	Phase0AErrorUnsupportedProof  Phase0AErrorKind = "unsupported_proof"
 )
 
 type Phase0ACounter string
@@ -179,27 +205,47 @@ const (
 	phase0AEventRecordBytes      uint64 = 40
 	phase0AEdgeRecordBytes       uint64 = 48
 	phase0AOccurrenceRecordBytes uint64 = 88
-	phase0AFrameRecordBytes      uint64 = 24
+	// Reduction-only rows are stored in slice backing arrays. Derive their
+	// exact compiled element sizes so MaxBytes cannot undercharge layout drift.
+	phase0AReductionRecordBytes uint64 = uint64(unsafe.Sizeof(Phase0AReductionOccurrenceRecord{}))
+	phase0AReductionEventBytes  uint64 = uint64(unsafe.Sizeof(phase0AReductionEvent{}))
+	phase0AFrameRecordBytes     uint64 = 24
 )
 
 type phase0AObserver struct {
-	coreInstance    uint64
-	runGeneration   uint64
-	run             CoreRunNamespace
-	nextEvent       uint64
-	nextEdge        uint64
-	attempt         uint32
-	active          bool
-	frames          []Phase0ATransactionFrame
-	mutations       []Phase0AMutationRecord
-	eventIndex      map[ConstructionEventKey]uint64
-	edgeIndex       map[IncomingEdgeKey]uint64
-	occurrenceIndex map[ConstructionOccurrenceKey]uint64
-	occurrenceCount uint64
-	occurrenceBytes uint64
-	firstPoison     *Phase0APoisonRecord
-	failure         *Phase0AError
-	pendingRollback Phase0ARollbackCause
+	coreInstance         uint64
+	runGeneration        uint64
+	run                  CoreRunNamespace
+	nextEvent            uint64
+	nextEdge             uint64
+	attempt              uint32
+	active               bool
+	frames               []Phase0ATransactionFrame
+	mutations            []Phase0AMutationRecord
+	eventIndex           map[ConstructionEventKey]uint64
+	edgeIndex            map[IncomingEdgeKey]uint64
+	occurrenceIndex      map[ConstructionOccurrenceKey]uint64
+	occurrenceCount      uint64
+	occurrenceBytes      uint64
+	firstPoison          *Phase0APoisonRecord
+	failure              *Phase0AError
+	pendingRollback      Phase0ARollbackCause
+	reduction            phase0AReductionConstruction
+	reductionOccurrences []Phase0AReductionOccurrenceRecord
+}
+
+type phase0AReductionConstruction struct {
+	active      bool
+	transaction uint64
+	expected    uint32
+	observed    uint32
+	events      []phase0AReductionEvent
+}
+
+type phase0AReductionEvent struct {
+	payload  SubtreeID
+	key      ConstructionEventKey
+	nextSlot uint32
 }
 
 var phase0AObservers = struct {
@@ -267,6 +313,8 @@ func phase0AInvalidateCore(core *Core) {
 		observer.firstPoison = nil
 		observer.failure = nil
 		observer.pendingRollback = Phase0ARollbackUnknown
+		observer.reduction = phase0AReductionConstruction{}
+		observer.reductionOccurrences = nil
 	}
 }
 
@@ -320,6 +368,8 @@ func (c *Core) BeginRun() (CoreRunNamespace, error) {
 	observer.firstPoison = nil
 	observer.failure = nil
 	observer.pendingRollback = Phase0ARollbackUnknown
+	observer.reduction = phase0AReductionConstruction{}
+	observer.reductionOccurrences = nil
 	return observer.run, nil
 }
 
@@ -344,6 +394,9 @@ func (c *Core) EndRun(namespace CoreRunNamespace) error {
 	}
 	if len(observer.frames) != 0 {
 		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: namespace, Detail: "end run with active transaction"})
+	}
+	if observer.reduction.active {
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: namespace, Detail: "end run with active reduction construction"})
 	}
 	observer.active = false
 	if observer.failure != nil {
@@ -548,6 +601,210 @@ func phase0AObserveTerminalConstructionLocked(core *Core, observer *phase0AObser
 	}
 }
 
+func phase0ABoundaryInput(key boundaryKey) Phase0ABoundaryInput {
+	return Phase0ABoundaryInput{
+		Frontier: key.frontier, State: key.state, ByteOffset: key.byteOffset,
+		Checkpoint: key.checkpoint, Shifted: key.shifted,
+	}
+}
+
+// phase0ABeginReductionConstruction starts one exact reduction-call grouping.
+// Records are still allocated by the per-path hook before graph mutation.
+func phase0ABeginReductionConstruction(core *Core, count uint64) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer := phase0AObservers.byCore[core]
+	if observer == nil || !observer.active || observer.failure != nil {
+		return
+	}
+	if observer.reduction.active {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: observer.run, Detail: "nested reduction construction"})
+		return
+	}
+	if count == 0 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "reduction has no pop-path occurrence"})
+		return
+	}
+	if count > math.MaxUint32 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterOccurrenceSlot, Namespace: observer.run})
+		return
+	}
+	if observer.attempt != 1 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorAttemptUnproven, Namespace: observer.run})
+		return
+	}
+	transaction := phase0ACurrentTransaction(observer)
+	if transaction == 0 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: observer.run, Detail: "reduction construction is outside a transaction"})
+		return
+	}
+	observer.reduction = phase0AReductionConstruction{
+		active: true, transaction: transaction, expected: uint32(count),
+	}
+}
+
+// phase0AObserveReductionOccurrence allocates a fresh occurrence and incoming
+// candidate edge before the corresponding graph mutation. Batch-parent reuse
+// shares only the construction event for the same payload in this call.
+func phase0AObserveReductionOccurrence(core *Core, payload SubtreeID, predecessor NodeID, boundary boundaryKey, hasTrailingExtras bool) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer := phase0AObservers.byCore[core]
+	if observer == nil || !observer.active || observer.failure != nil {
+		return
+	}
+	pending := &observer.reduction
+	if !pending.active || pending.observed >= pending.expected {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "reduction occurrence exceeds declared pop paths"})
+		return
+	}
+	if phase0ACurrentTransaction(observer) != pending.transaction {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: observer.run, Detail: "reduction occurrence crossed transaction"})
+		return
+	}
+	if hasTrailingExtras {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorUnsupportedProof, Namespace: observer.run, Detail: "reduction trailing-extra migration requires route provenance"})
+		return
+	}
+	subtree, err := core.subtree(payload)
+	if err != nil || subtree.terminal || subtree.extra {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "reduction occurrence payload is not an existing parent"})
+		return
+	}
+	if _, err := core.node(predecessor); err != nil {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "reduction occurrence predecessor does not exist"})
+		return
+	}
+	if boundary.frontier != core.frontier || boundary.checkpoint != core.checkpoint || boundary.shifted || boundary.state == 0 || boundary.byteOffset != subtree.endByte {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "reduction occurrence boundary input mismatch"})
+		return
+	}
+	eventIndex := -1
+	for index := range pending.events {
+		if pending.events[index].payload == payload {
+			eventIndex = index
+			break
+		}
+	}
+	seen := eventIndex >= 0
+	eventState := phase0AReductionEvent{payload: payload}
+	if seen {
+		eventState = pending.events[eventIndex]
+	}
+	if !seen && observer.nextEvent == math.MaxUint64 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterEventSerial, Namespace: observer.run})
+		return
+	}
+	if observer.nextEdge == math.MaxUint64 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterEdgeSerial, Namespace: observer.run})
+		return
+	}
+	if seen && eventState.nextSlot == math.MaxUint32 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterOccurrenceSlot, Namespace: observer.run})
+		return
+	}
+	mutationCount := uint64(2)
+	mutationBytes := phase0AOccurrenceRecordBytes + phase0AEdgeRecordBytes
+	if !seen {
+		mutationCount++
+		mutationBytes += phase0AEventRecordBytes
+	}
+	if err := phase0AReserveReductionConstructionLocked(observer, mutationCount, mutationBytes, !seen); err != nil {
+		return
+	}
+	if !seen {
+		observer.nextEvent++
+		eventState.key = ConstructionEventKey{Attempt: AttemptKey{Run: observer.run, AttemptEpoch: 1}, Serial: observer.nextEvent}
+		eventRecord := Phase0AMutationRecord{
+			Kind: Phase0AMutationEvent, TransactionID: pending.transaction,
+			Event: eventState.key, Payload: payload, ConstructionKind: Phase0AConstructionReductionParent,
+		}
+		observer.eventIndex[eventState.key] = uint64(len(observer.mutations))
+		observer.mutations = append(observer.mutations, eventRecord)
+	}
+	eventState.nextSlot++
+	observer.nextEdge++
+	occurrence := ConstructionOccurrenceKey{Event: eventState.key, Slot: eventState.nextSlot}
+	edge := IncomingEdgeKey{Event: eventState.key, Serial: observer.nextEdge}
+	record := Phase0AMutationRecord{
+		TransactionID: pending.transaction, Event: eventState.key, Edge: edge, Occurrence: occurrence,
+		Payload: payload, Predecessor: predecessor, ConstructionKind: Phase0AConstructionReductionParent,
+	}
+	record.Kind = Phase0AMutationOccurrence
+	observer.occurrenceIndex[occurrence] = uint64(len(observer.mutations))
+	observer.mutations = append(observer.mutations, record)
+	record.Kind = Phase0AMutationEdge
+	observer.edgeIndex[edge] = uint64(len(observer.mutations))
+	observer.mutations = append(observer.mutations, record)
+	observer.reductionOccurrences = append(observer.reductionOccurrences, Phase0AReductionOccurrenceRecord{
+		TransactionID: pending.transaction, Occurrence: occurrence, Edge: edge, Boundary: phase0ABoundaryInput(boundary),
+	})
+	if seen {
+		pending.events[eventIndex] = eventState
+	} else {
+		pending.events = append(pending.events, eventState)
+	}
+	pending.observed++
+}
+
+func phase0AFinishReductionConstruction(core *Core) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer := phase0AObservers.byCore[core]
+	if observer == nil || !observer.active {
+		return
+	}
+	pending := observer.reduction
+	observer.reduction = phase0AReductionConstruction{}
+	if observer.failure != nil {
+		return
+	}
+	if !pending.active || phase0ACurrentTransaction(observer) != pending.transaction {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: observer.run, Detail: "reduction construction finish transaction mismatch"})
+		return
+	}
+	if pending.observed != pending.expected {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "successful reduction did not observe every pop path"})
+	}
+}
+
+func phase0AReserveReductionConstructionLocked(observer *phase0AObserver, mutationCount, mutationBytes uint64, newEvent bool) error {
+	mutationLimit := phase0AObservers.limits.MaxMutations
+	if mutationLimit == 0 {
+		mutationLimit = math.MaxUint64
+	}
+	if uint64(len(observer.mutations)) > mutationLimit || mutationCount > mutationLimit-uint64(len(observer.mutations)) {
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorMutationCap, Namespace: observer.run})
+	}
+	occurrenceLimit := phase0AObservers.limits.MaxOccurrences
+	if occurrenceLimit == 0 {
+		occurrenceLimit = math.MaxUint64
+	}
+	if observer.occurrenceCount >= occurrenceLimit {
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorOccurrenceCap, Namespace: observer.run})
+	}
+	occurrenceBytes := phase0AOccurrenceRecordBytes + phase0AEdgeRecordBytes
+	occurrenceByteLimit := phase0AObservers.limits.MaxOccurrenceBytes
+	if occurrenceByteLimit == 0 {
+		occurrenceByteLimit = math.MaxUint64
+	}
+	if observer.occurrenceBytes > occurrenceByteLimit || occurrenceBytes > occurrenceByteLimit-observer.occurrenceBytes {
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorOccurrenceByteCap, Namespace: observer.run})
+	}
+	recordCount := mutationCount + 1
+	totalBytes := mutationBytes + phase0AReductionRecordBytes
+	if newEvent {
+		recordCount++
+		totalBytes += phase0AReductionEventBytes
+	}
+	if err := phase0AChargeManyLocked(recordCount, totalBytes); err != nil {
+		return phase0AStickyLocked(observer, err.(*Phase0AError))
+	}
+	observer.occurrenceCount++
+	observer.occurrenceBytes += occurrenceBytes
+	return nil
+}
+
 func phase0AReserveConstructionLocked(observer *phase0AObserver, mutationCount, occurrenceCount, totalBytes, occurrenceBytes uint64) error {
 	mutationLimit := phase0AObservers.limits.MaxMutations
 	if mutationLimit == 0 {
@@ -693,6 +950,7 @@ func Phase0AObserverProof(core *Core, namespace CoreRunNamespace) (Phase0AProofS
 		OccurrenceBytes: observer.occurrenceBytes,
 	}
 	snapshot.Mutations = append(snapshot.Mutations, observer.mutations...)
+	snapshot.ReductionOccurrences = append(snapshot.ReductionOccurrences, observer.reductionOccurrences...)
 	snapshot.Frames = append(snapshot.Frames, observer.frames...)
 	if observer.firstPoison != nil {
 		copy := *observer.firstPoison
@@ -747,6 +1005,10 @@ func phase0AObserveRollback(core *Core, transaction uint64, cause Phase0ARollbac
 				observer.mutations[index].RollbackTransaction = transaction
 				observer.mutations[index].RollbackCause = cause
 			}
+			phase0ATombstoneReductionOccurrencesLocked(observer, transaction, cause)
+			if observer.reduction.active && observer.reduction.transaction == transaction {
+				observer.reduction = phase0AReductionConstruction{}
+			}
 			observer.frames = observer.frames[:len(observer.frames)-1]
 		}
 		return
@@ -761,7 +1023,24 @@ func phase0AObserveRollback(core *Core, transaction uint64, cause Phase0ARollbac
 		observer.mutations[index].RollbackTransaction = transaction
 		observer.mutations[index].RollbackCause = cause
 	}
+	phase0ATombstoneReductionOccurrencesLocked(observer, transaction, cause)
+	if observer.reduction.active && observer.reduction.transaction == transaction {
+		observer.reduction = phase0AReductionConstruction{}
+	}
 	observer.frames = observer.frames[:len(observer.frames)-1]
+}
+
+func phase0ATombstoneReductionOccurrencesLocked(observer *phase0AObserver, transaction uint64, cause Phase0ARollbackCause) {
+	for index := range observer.reductionOccurrences {
+		record := &observer.reductionOccurrences[index]
+		mutationIndex, ok := observer.occurrenceIndex[record.Occurrence]
+		if record.RolledBack || !ok || mutationIndex >= uint64(len(observer.mutations)) || !observer.mutations[mutationIndex].RolledBack {
+			continue
+		}
+		record.RolledBack = true
+		record.RollbackTransaction = transaction
+		record.RollbackCause = cause
+	}
 }
 
 func phase0AObserveCommit(core *Core, transaction uint64) {
@@ -773,6 +1052,9 @@ func phase0AObserveCommit(core *Core, transaction uint64) {
 	}
 	if observer.failure != nil {
 		if len(observer.frames) != 0 && observer.frames[len(observer.frames)-1].TransactionID == transaction {
+			if observer.reduction.active && observer.reduction.transaction == transaction {
+				observer.reduction = phase0AReductionConstruction{}
+			}
 			observer.frames = observer.frames[:len(observer.frames)-1]
 		}
 		return
@@ -780,6 +1062,10 @@ func phase0AObserveCommit(core *Core, transaction uint64) {
 	if len(observer.frames) == 0 || observer.frames[len(observer.frames)-1].TransactionID != transaction {
 		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: observer.run, Detail: "commit transaction mismatch"})
 		return
+	}
+	if observer.reduction.active && observer.reduction.transaction == transaction {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: observer.run, Detail: "commit with active reduction construction"})
+		observer.reduction = phase0AReductionConstruction{}
 	}
 	observer.frames = observer.frames[:len(observer.frames)-1]
 }
@@ -818,15 +1104,21 @@ func phase0AObserveSchedulerPoison(core *Core, token SchedulerTransactionToken, 
 	phase0AObservers.Lock()
 	defer phase0AObservers.Unlock()
 	observer := phase0AObservers.byCore[core]
-	if observer == nil || !observer.active || observer.firstPoison != nil || !core.schedulerFrame.active || core.schedulerFrame.poisoned == nil {
+	if observer == nil || !observer.active || !core.schedulerFrame.active || core.schedulerFrame.poisoned == nil {
 		return
 	}
-	if token.owner != core {
-		kind = Phase0APoisonWrongCore
-	} else if token.epoch == 0 || token.epoch != core.schedulerFrame.epoch || token.transaction != core.schedulerFrame.mark.transaction {
-		kind = Phase0APoisonStaleToken
-	} else if len(core.transactions) == 0 || core.transactions[len(core.transactions)-1] != token.transaction {
-		kind = Phase0APoisonNonTopToken
+	transaction := core.schedulerFrame.mark.transaction
+	if observer.reduction.active && observer.reduction.transaction == transaction {
+		observer.reduction = phase0AReductionConstruction{}
 	}
-	observer.firstPoison = &Phase0APoisonRecord{TransactionID: core.schedulerFrame.mark.transaction, Kind: kind}
+	if observer.firstPoison == nil {
+		if token.owner != core {
+			kind = Phase0APoisonWrongCore
+		} else if token.epoch == 0 || token.epoch != core.schedulerFrame.epoch || token.transaction != transaction {
+			kind = Phase0APoisonStaleToken
+		} else if len(core.transactions) == 0 || core.transactions[len(core.transactions)-1] != token.transaction {
+			kind = Phase0APoisonNonTopToken
+		}
+		observer.firstPoison = &Phase0APoisonRecord{TransactionID: transaction, Kind: kind}
+	}
 }

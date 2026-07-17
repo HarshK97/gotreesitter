@@ -245,6 +245,7 @@ func (c *Core) reduceOutputsClassifiedIntoUncheckpointed(dst []ReductionOutput, 
 	if len(paths) == 0 {
 		return nil, errors.New("parser-core phase zero: reduction has no exact pop path")
 	}
+	phase0ABeginReductionConstruction(c, uint64(len(paths)))
 	c.addWork(&c.work.Reductions, 1)
 	c.addWork(&c.work.ReductionPopRequests, 1)
 	c.addWork(&c.work.EmittedPopPaths, uint64(len(paths)))
@@ -269,6 +270,7 @@ func (c *Core) reduceOutputsClassifiedIntoUncheckpointed(dst []ReductionOutput, 
 		if err != nil {
 			return nil, err
 		}
+		phase0AObserveReductionOccurrence(c, payload, path.prev, key, len(path.trailing) != 0)
 		parentLink := linkInput{prev: path.prev, payload: payload, scoreDelta: scoreDelta, order: order}
 		var out Head
 		var outcome condenseOutcome
@@ -321,5 +323,6 @@ func (c *Core) reduceOutputsClassifiedIntoUncheckpointed(dst []ReductionOutput, 
 	for _, output := range scratch.boundaries {
 		frontier = append(frontier, ReductionOutput{Head: output.head, Freshness: output.freshness})
 	}
+	phase0AFinishReductionConstruction(c)
 	return frontier, nil
 }

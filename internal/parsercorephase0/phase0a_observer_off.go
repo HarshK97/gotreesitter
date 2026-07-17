@@ -33,3 +33,6 @@ func phase0ATakeRollbackCause(*Core) Phase0ARollbackCause                       
 func phase0AObserveSchedulerPoison(*Core, SchedulerTransactionToken, Phase0APoisonKind) {}
 func phase0AObserveTerminalShift(*Core, SubtreeID, NodeID, bool)                        {}
 func phase0AObserveTerminalCohortShift(*Core, SubtreeID, []ClassifiedBoundary, bool)    {}
+func phase0ABeginReductionConstruction(*Core, uint64)                                   {}
+func phase0AObserveReductionOccurrence(*Core, SubtreeID, NodeID, boundaryKey, bool)     {}
+func phase0AFinishReductionConstruction(*Core)                                          {}
