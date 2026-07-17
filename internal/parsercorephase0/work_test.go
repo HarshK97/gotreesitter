@@ -83,7 +83,10 @@ func TestWorkCountsCommittedShiftCohortAndReduction(t *testing.T) {
 		if err != nil || len(heads) != 2 {
 			t.Fatalf("cohort heads=%+v err=%v", heads, err)
 		}
-		want := Work{Shifts: 2, GraphLinkAdditionsProxy: 2, LeafConstructionsProxy: 1}
+		want := Work{
+			Shifts: 2, GraphLinkAdditionsProxy: 2, LeafConstructionsProxy: 1,
+			PredecessorLinkUnionAttempts: 1, PredecessorLinkUnionAlternateAppended: 1,
+		}
 		if got := compact.Work(); got != want {
 			t.Fatalf("cohort work=%+v, want %+v", got, want)
 		}
@@ -158,4 +161,96 @@ func TestWorkRollbackAndOverflowAreTransactional(t *testing.T) {
 			t.Fatalf("overflow work=%+v", got)
 		}
 	})
+}
+
+func TestLinkUnionWorkPartitionsSemanticOutcomes(t *testing.T) {
+	compact, seed := newDiagnosticShallowFoldCore(t, Limits{MaxDerivations: 8})
+	incumbent := appendShallowPayload(t, compact, shallowPayloadSpec{
+		symbol: 20, productionID: 1, startByte: 12, endByte: 17, childSymbols: []Symbol{30},
+	})
+	key := compact.boundaryKey(2, 17)
+	if _, err := compact.condense(key, linkInput{prev: seed.Node, payload: incumbent, scoreDelta: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if got := compact.Work(); got.PredecessorLinkUnionAttempts != 0 || got.PredecessorLinkUnionAlternateAppended != 0 {
+		t.Fatalf("primary publication entered union counters: %+v", got)
+	}
+	if _, err := compact.condense(key, linkInput{prev: seed.Node, payload: incumbent, scoreDelta: 2}); err != nil {
+		t.Fatal(err)
+	}
+	higher := appendShallowPayload(t, compact, shallowPayloadSpec{
+		symbol: 20, productionID: 2, startByte: 12, endByte: 17, childSymbols: []Symbol{31},
+	})
+	if _, err := compact.condense(key, linkInput{prev: seed.Node, payload: higher, scoreDelta: 3}); err != nil {
+		t.Fatal(err)
+	}
+	distinct := appendShallowPayload(t, compact, shallowPayloadSpec{symbol: 21, startByte: 12, endByte: 17})
+	if _, err := compact.condense(key, linkInput{prev: seed.Node, payload: distinct}); err != nil {
+		t.Fatal(err)
+	}
+	work := compact.Work()
+	if work.PredecessorLinkUnionAttempts != 3 ||
+		work.PredecessorLinkUnionDuplicateNoop != 1 ||
+		work.PredecessorLinkUnionPrecedenceReplaced != 1 ||
+		work.PredecessorLinkUnionAlternateAppended != 1 ||
+		work.PredecessorLinkUnionRecursiveChanged != 0 ||
+		work.PredecessorLinkUnionRejected != 0 {
+		t.Fatalf("link-union partition=%+v", work)
+	}
+	outcomes := work.PredecessorLinkUnionDuplicateNoop +
+		work.PredecessorLinkUnionPrecedenceReplaced +
+		work.PredecessorLinkUnionRecursiveChanged +
+		work.PredecessorLinkUnionAlternateAppended +
+		work.PredecessorLinkUnionRejected
+	if outcomes != work.PredecessorLinkUnionAttempts {
+		t.Fatalf("link-union outcomes=%d attempts=%d", outcomes, work.PredecessorLinkUnionAttempts)
+	}
+}
+
+func TestRawSelectedSubtreeCensusCountsOccurrencesBeforeMaterialization(t *testing.T) {
+	compact := newTinyCoreWithLimits(t, Limits{})
+	leaf, err := compact.appendSubtree(subtreeRecord{symbol: 9, endByte: 1, terminal: true}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := compact.appendSubtree(subtreeRecord{symbol: 10, endByte: 1}, []SubtreeID{leaf, leaf}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	census, err := compact.RawSelectedSubtreeCensus([]SubtreeID{parent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if census != (RawSelectedCensus{Nodes: 3, Parents: 1, Leaves: 2}) {
+		t.Fatalf("raw selected census=%+v", census)
+	}
+}
+
+func TestRawSelectedCensusFreezesSpeculativeConstructionSurplus(t *testing.T) {
+	compact := newTinyCoreWithLimits(t, Limits{})
+	selectedLeaf, err := compact.appendSubtree(subtreeRecord{symbol: 9, endByte: 1, terminal: true}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	losingLeaf, err := compact.appendSubtree(subtreeRecord{symbol: 10, endByte: 1, terminal: true}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectedParent, err := compact.appendSubtree(subtreeRecord{symbol: 11, endByte: 1}, []SubtreeID{selectedLeaf}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := compact.appendSubtree(subtreeRecord{symbol: 12, endByte: 1}, []SubtreeID{losingLeaf}, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	census, err := compact.RawSelectedSubtreeCensus([]SubtreeID{selectedParent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := compact.Work()
+	if census != (RawSelectedCensus{Nodes: 2, Parents: 1, Leaves: 1}) ||
+		work.ParentConstructionsProxy-census.Parents != 1 ||
+		work.LeafConstructionsProxy-census.Leaves != 1 {
+		t.Fatalf("construction surplus work=%+v census=%+v", work, census)
+	}
 }

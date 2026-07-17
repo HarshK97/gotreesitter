@@ -46,6 +46,9 @@ type diagnosticParserCoreCanonicalAdmission struct {
 	selectedNodes   uint64
 	selectedParents uint64
 	selectedLeaves  uint64
+	conflictArms    uint64
+	causalForks     uint64
+	rawSelected     core.RawSelectedCensus
 	work            core.Work
 }
 
@@ -55,9 +58,13 @@ var diagnosticParserCoreCanonicalAdmissions = []diagnosticParserCoreCanonicalAdm
 		sourceSHA256:   "74c0705f8729670559492fb5460a01b2a1a2a109928e1aeb52736e485e8ff097",
 		deepTreeSHA256: "b3f9814b65763642d4eac58b9065018048ea13e6f10d56afb28a0479bf5a68a1",
 		selectedNodes:  1524, selectedParents: 572, selectedLeaves: 952,
+		conflictArms: 328, causalForks: 168,
+		rawSelected: core.RawSelectedCensus{Nodes: 2237, Parents: 1202, Leaves: 1035},
 		work: core.Work{
 			Shifts: 1348, Reductions: 1501, ReductionPopRequests: 1501,
 			EmittedPopPaths: 1646, EmittedPopPayloads: 2995,
+			PredecessorLinkUnionAttempts: 211, PredecessorLinkUnionDuplicateNoop: 6,
+			PredecessorLinkUnionPrecedenceReplaced: 57, PredecessorLinkUnionAlternateAppended: 148,
 			GraphLinkAdditionsProxy: 3004, LeafConstructionsProxy: 1109,
 			ParentConstructionsProxy: 1515,
 		},
@@ -67,9 +74,13 @@ var diagnosticParserCoreCanonicalAdmissions = []diagnosticParserCoreCanonicalAdm
 		sourceSHA256:   "b788ee19b0075f0b9b567a9f93ea657e715bc8a6a40a99d3ca5c761404e71894",
 		deepTreeSHA256: "ecc090a83a4343a1c7c2afbad63277f5b4d60c42d8d94a2af2a9b16e46f2ccb5",
 		selectedNodes:  7524, selectedParents: 2853, selectedLeaves: 4671,
+		conflictArms: 1365, causalForks: 685,
+		rawSelected: core.RawSelectedCensus{Nodes: 11331, Parents: 6206, Leaves: 5125},
 		work: core.Work{
 			Shifts: 6685, Reductions: 7440, ReductionPopRequests: 7440,
 			EmittedPopPaths: 8103, EmittedPopPayloads: 14703,
+			PredecessorLinkUnionAttempts: 954, PredecessorLinkUnionDuplicateNoop: 81,
+			PredecessorLinkUnionPrecedenceReplaced: 199, PredecessorLinkUnionAlternateAppended: 674,
 			GraphLinkAdditionsProxy: 14749, LeafConstructionsProxy: 5546,
 			ParentConstructionsProxy: 7537,
 		},
@@ -79,10 +90,15 @@ var diagnosticParserCoreCanonicalAdmissions = []diagnosticParserCoreCanonicalAdm
 		sourceSHA256:   "009aa9fd5352c712f3839670c7df8a9b00ae878ee20dc88131a438b2d5edfd9a",
 		deepTreeSHA256: "583df223904fe414c33bba3b474c6557ecdb20e7f47e304b9a09bfcc2da44539",
 		selectedNodes:  7082, selectedParents: 2631, selectedLeaves: 4451,
+		conflictArms: 1216, causalForks: 618,
+		rawSelected: core.RawSelectedCensus{Nodes: 10761, Parents: 5704, Leaves: 5057},
 		work: core.Work{
 			Shifts: 6512, Reductions: 7561, ReductionPopRequests: 7561,
 			EmittedPopPaths: 8408, EmittedPopPayloads: 15864,
-			GraphLinkAdditionsProxy: 15145, LeafConstructionsProxy: 5375,
+			PredecessorLinkUnionAttempts: 1676, PredecessorLinkUnionDuplicateNoop: 55,
+			PredecessorLinkUnionPrecedenceReplaced: 771, PredecessorLinkUnionRecursiveChanged: 10,
+			PredecessorLinkUnionAlternateAppended: 840,
+			GraphLinkAdditionsProxy:               15145, LeafConstructionsProxy: 5375,
 			ParentConstructionsProxy: 7707,
 		},
 	},
@@ -91,10 +107,15 @@ var diagnosticParserCoreCanonicalAdmissions = []diagnosticParserCoreCanonicalAdm
 		sourceSHA256:   "a7e4a1a64b25a60aea36183b9d6d53dcd9240942cdb10e67a3cf9e6ce30f95b2",
 		deepTreeSHA256: "1472cfd9a014d4034dbc1456afd12c282630ef787c3543cf0cecb73619883ad2",
 		selectedNodes:  71768, selectedParents: 26371, selectedLeaves: 45397,
+		conflictArms: 16045, causalForks: 8156,
+		rawSelected: core.RawSelectedCensus{Nodes: 109614, Parents: 59703, Leaves: 49911},
 		work: core.Work{
 			Shifts: 66119, Reductions: 75988, ReductionPopRequests: 75988,
 			EmittedPopPaths: 84924, EmittedPopPayloads: 153451,
-			GraphLinkAdditionsProxy: 150271, LeafConstructionsProxy: 53897,
+			PredecessorLinkUnionAttempts: 13748, PredecessorLinkUnionDuplicateNoop: 1638,
+			PredecessorLinkUnionPrecedenceReplaced: 3577, PredecessorLinkUnionRecursiveChanged: 7,
+			PredecessorLinkUnionAlternateAppended: 8526,
+			GraphLinkAdditionsProxy:               150271, LeafConstructionsProxy: 53897,
 			ParentConstructionsProxy: 78426,
 		},
 	},
@@ -130,6 +151,9 @@ func TestDiagnosticParserCoreCanonicalAdmissions(t *testing.T) {
 			}
 			if acceptance.CoreWork != row.work || acceptance.CoreWork.Overflow {
 				t.Fatalf("canonical compact work drifted: got=%+v want=%+v", acceptance.CoreWork, row.work)
+			}
+			if acceptance.Work.Overflow || acceptance.Work.ConflictActionArmsAdmitted != row.conflictArms || acceptance.Work.CausalConflictForks != row.causalForks {
+				t.Fatalf("canonical compact causal fanout drifted: got=%+v want=%d/%d", acceptance.Work, row.conflictArms, row.causalForks)
 			}
 			if acceptance.SelectedNodes != row.selectedNodes || acceptance.SelectedParents != row.selectedParents || acceptance.SelectedLeaves != row.selectedLeaves || acceptance.SelectedParents+acceptance.SelectedLeaves != acceptance.SelectedNodes {
 				t.Fatalf("canonical selected census drifted: got=%d/%d/%d want=%d/%d/%d", acceptance.SelectedNodes, acceptance.SelectedParents, acceptance.SelectedLeaves, row.selectedNodes, row.selectedParents, row.selectedLeaves)

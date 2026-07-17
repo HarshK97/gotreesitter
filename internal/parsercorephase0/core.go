@@ -410,15 +410,34 @@ type Stats struct {
 // transactional: failed operations contribute nothing. Counters saturate at
 // math.MaxUint64 and set Overflow instead of wrapping.
 type Work struct {
-	Shifts                   uint64
-	Reductions               uint64
-	ReductionPopRequests     uint64
-	EmittedPopPaths          uint64
-	EmittedPopPayloads       uint64
-	GraphLinkAdditionsProxy  uint64
-	LeafConstructionsProxy   uint64
-	ParentConstructionsProxy uint64
-	Overflow                 bool
+	Shifts                                 uint64
+	Reductions                             uint64
+	ReductionPopRequests                   uint64
+	EmittedPopPaths                        uint64
+	EmittedPopPayloads                     uint64
+	PredecessorLinkUnionAttempts           uint64
+	PredecessorLinkUnionDuplicateNoop      uint64
+	PredecessorLinkUnionPrecedenceReplaced uint64
+	PredecessorLinkUnionRecursiveChanged   uint64
+	PredecessorLinkUnionAlternateAppended  uint64
+	PredecessorLinkUnionRejected           uint64
+	GraphLinkAdditionsProxy                uint64
+	LeafConstructionsProxy                 uint64
+	ParentConstructionsProxy               uint64
+	Overflow                               bool
+}
+
+// RawSelectedCensus reports occurrences in the accepted compact syntax graph
+// before public-node visibility/collapse rules are applied. Accepted compact
+// payload roots do not contain the terminal EOF transport sentinel, matching
+// the paired contract's explicit EOF exclusion. It counts occurrences rather
+// than unique SubtreeIDs because one immutable compact record may be referenced
+// from more than one selected position.
+type RawSelectedCensus struct {
+	Nodes    uint64
+	Parents  uint64
+	Leaves   uint64
+	Overflow bool
 }
 
 // Core is the compact, persistent diagnostic graph. All records are indexes
@@ -1566,6 +1585,16 @@ func (c *Core) condense(key boundaryKey, in linkInput) (Head, error) {
 // by that canonical boundary. The reduction worklist uses this monotone
 // freshness signal; shifts only need the resulting head.
 func (c *Core) condenseWithOutcome(key boundaryKey, in linkInput) (condenseOutcome, error) {
+	var out condenseOutcome
+	err := c.ApplyAtomic(func() error {
+		var err error
+		out, err = c.condenseWithOutcomeAtomic(key, in)
+		return err
+	})
+	return out, err
+}
+
+func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condenseOutcome, error) {
 	if key.frontier != c.frontier {
 		return condenseOutcome{}, errors.New("parser-core phase zero: boundary frontier mismatch")
 	}
@@ -1590,12 +1619,14 @@ func (c *Core) condenseWithOutcome(key boundaryKey, in linkInput) (condenseOutco
 		if err != nil {
 			return condenseOutcome{}, err
 		}
+		c.recordLinkUnionAttempt()
 		for _, link := range oldLinks {
 			equal, err := c.linkEqualInput(link, in)
 			if err != nil {
 				return condenseOutcome{}, err
 			}
 			if equal {
+				c.recordLinkUnionDuplicateNoop()
 				return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, nil
 			}
 		}
@@ -1624,13 +1655,28 @@ func (c *Core) condenseWithOutcome(key boundaryKey, in linkInput) (condenseOutco
 					return condenseOutcome{}, err
 				}
 				if incomingPrecedence <= incumbentPrecedence {
+					c.recordLinkUnionDuplicateNoop()
 					return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, nil
 				}
 				head, err := c.replaceBoundaryLink(key, probe, old, oldLinks, candidate, in)
+				if err != nil {
+					c.recordLinkUnionRejected()
+				} else {
+					c.recordLinkUnionPrecedenceReplaced()
+				}
 				return condenseOutcome{head: head, change: condenseUpdated}, err
 			}
 			outcome, handled, err := c.factorExactPredecessor(key, probe, oldID, oldLinks, in)
 			if err != nil || handled {
+				if handled {
+					if err != nil {
+						c.recordLinkUnionRejected()
+					} else if outcome.change == condenseUpdated {
+						c.recordLinkUnionRecursiveChanged()
+					} else {
+						c.recordLinkUnionDuplicateNoop()
+					}
+				}
 				return outcome, err
 			}
 		}
@@ -1640,9 +1686,15 @@ func (c *Core) condenseWithOutcome(key boundaryKey, in linkInput) (condenseOutco
 		newPathCount = saturatingAddPaths(newPathCount, old.pathCount)
 	}
 	if uint64(len(c.links))+1 > uint64(c.limits.MaxLinks) || len(c.links) >= math.MaxUint32 {
+		if oldID != 0 {
+			c.recordLinkUnionRejected()
+		}
 		return condenseOutcome{}, errors.New("parser-core phase zero: link arena cap")
 	}
 	if uint64(len(c.nodes))+1 > uint64(c.limits.MaxNodes) || len(c.nodes) >= math.MaxUint32 {
+		if oldID != 0 {
+			c.recordLinkUnionRejected()
+		}
 		return condenseOutcome{}, errors.New("parser-core phase zero: node arena cap")
 	}
 	linkCount := uint32(1)
@@ -1651,6 +1703,7 @@ func (c *Core) condenseWithOutcome(key boundaryKey, in linkInput) (condenseOutco
 			return condenseOutcome{}, errors.New("parser-core phase zero: boundary link count overflow")
 		}
 		if old.linkCount >= c.limits.MaxLinksPerBoundary {
+			c.recordLinkUnionRejected()
 			return condenseOutcome{}, &LiveLinkCapacityError{
 				State: key.state, ByteOffset: key.byteOffset,
 				ObservedLinks: uint64(old.linkCount) + 1, Limit: c.limits.MaxLinksPerBoundary,
@@ -1676,11 +1729,15 @@ func (c *Core) condenseWithOutcome(key boundaryKey, in linkInput) (condenseOutco
 		return condenseOutcome{}, err
 	}
 	if err := c.publishBoundary(probe, id); err != nil {
+		if oldID != 0 {
+			c.recordLinkUnionRejected()
+		}
 		return condenseOutcome{}, err
 	}
 	change := condenseNew
 	if oldID != 0 {
 		change = condenseUpdated
+		c.recordLinkUnionAlternateAppended()
 	}
 	return condenseOutcome{head: Head{Node: id}, change: change}, nil
 }
@@ -1850,26 +1907,36 @@ func (c *Core) mergePredecessorsOneLayer(leftID, rightID NodeID) (NodeID, bool, 
 // other clean class remains in stable incumbent-first order. A second
 // different-predecessor merge is outside this tranche and declines.
 func (c *Core) insertLinkOneLayer(state StateID, byteOffset uint32, links []linkRecord, incoming linkRecord) ([]linkRecord, bool, error) {
+	if len(links) == 0 {
+		return append(slices.Clone(links), incoming), true, nil
+	}
+	c.recordLinkUnionAttempt()
 	clean, err := c.subtreeHasNoExternalDescendant(incoming.payload)
 	if err != nil {
+		c.recordLinkUnionRejected()
 		return nil, false, err
 	}
 	if !clean {
+		c.recordLinkUnionRejected()
 		return nil, false, errors.New("parser-core phase zero: recursive insertion declined external payload")
 	}
 	for index, incumbent := range links {
 		clean, err := c.subtreeHasNoExternalDescendant(incumbent.payload)
 		if err != nil {
+			c.recordLinkUnionRejected()
 			return nil, false, err
 		}
 		if !clean {
+			c.recordLinkUnionRejected()
 			return nil, false, errors.New("parser-core phase zero: recursive insertion declined external payload")
 		}
 		if c.linkRecordsEqual(incumbent, incoming) {
+			c.recordLinkUnionDuplicateNoop()
 			return links, false, nil
 		}
 		shallow, err := c.shallowPayloadsEqual(incumbent.prev, incumbent.payload, incoming.prev, incoming.payload)
 		if err != nil {
+			c.recordLinkUnionRejected()
 			return nil, false, err
 		}
 		if !shallow {
@@ -1878,31 +1945,39 @@ func (c *Core) insertLinkOneLayer(state StateID, byteOffset uint32, links []link
 		if incumbent.prev == incoming.prev {
 			incumbentPrecedence, err := c.effectivePayloadPrecedence(incumbent.payload, incumbent.scoreDelta)
 			if err != nil {
+				c.recordLinkUnionRejected()
 				return nil, false, err
 			}
 			incomingPrecedence, err := c.effectivePayloadPrecedence(incoming.payload, incoming.scoreDelta)
 			if err != nil {
+				c.recordLinkUnionRejected()
 				return nil, false, err
 			}
 			if incomingPrecedence <= incumbentPrecedence {
+				c.recordLinkUnionDuplicateNoop()
 				return links, false, nil
 			}
 			updated := slices.Clone(links)
 			updated[index] = incoming
+			c.recordLinkUnionPrecedenceReplaced()
 			return updated, true, nil
 		}
 		mergeable, err := c.predecessorBoundariesMatch(incumbent.prev, incoming.prev)
 		if err != nil {
+			c.recordLinkUnionRejected()
 			return nil, false, err
 		}
 		if !mergeable {
 			continue
 		}
+		c.recordLinkUnionRejected()
 		return nil, false, errors.New("parser-core phase zero: recursive insertion declined beyond one predecessor layer")
 	}
 	if uint32(len(links)) >= c.limits.MaxLinksPerBoundary {
+		c.recordLinkUnionRejected()
 		return nil, false, &LiveLinkCapacityError{State: state, ByteOffset: byteOffset, ObservedLinks: uint64(len(links)) + 1, Limit: c.limits.MaxLinksPerBoundary}
 	}
+	c.recordLinkUnionAlternateAppended()
 	return append(slices.Clone(links), incoming), true, nil
 }
 
@@ -2652,6 +2727,67 @@ func (c *Core) Work() Work {
 	return c.work
 }
 
+// RawSelectedSubtreeCensus walks accepted compact payload roots before any
+// public visibility or unary-collapse rule. The traversal is occurrence based
+// and fail-closed on invalid IDs, cycles, or counter overflow.
+func (c *Core) RawSelectedSubtreeCensus(roots []SubtreeID) (RawSelectedCensus, error) {
+	if c == nil || len(roots) == 0 {
+		return RawSelectedCensus{}, errors.New("parser-core phase zero: raw selected census requires roots")
+	}
+	type frame struct {
+		id   SubtreeID
+		exit bool
+	}
+	stack := make([]frame, 0, len(roots))
+	for index := len(roots) - 1; index >= 0; index-- {
+		stack = append(stack, frame{id: roots[index]})
+	}
+	active := make([]bool, len(c.subtrees)+1)
+	var census RawSelectedCensus
+	add := func(slot *uint64) error {
+		if *slot == math.MaxUint64 {
+			census.Overflow = true
+			return errors.New("parser-core phase zero: raw selected census overflow")
+		}
+		*slot++
+		return nil
+	}
+	for len(stack) != 0 {
+		item := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if item.id == 0 || uint64(item.id) > uint64(len(c.subtrees)) {
+			return RawSelectedCensus{}, fmt.Errorf("parser-core phase zero: raw selected census invalid subtree %d", item.id)
+		}
+		if item.exit {
+			active[item.id] = false
+			continue
+		}
+		if active[item.id] {
+			return RawSelectedCensus{}, errors.New("parser-core phase zero: raw selected census cycle")
+		}
+		active[item.id] = true
+		stack = append(stack, frame{id: item.id, exit: true})
+		record := c.subtrees[item.id-1]
+		if err := add(&census.Nodes); err != nil {
+			return census, err
+		}
+		if record.childCount == 0 {
+			if err := add(&census.Leaves); err != nil {
+				return census, err
+			}
+		} else {
+			if err := add(&census.Parents); err != nil {
+				return census, err
+			}
+		}
+		children := c.children[record.firstChild : record.firstChild+record.childCount]
+		for index := len(children) - 1; index >= 0; index-- {
+			stack = append(stack, frame{id: children[index]})
+		}
+	}
+	return census, nil
+}
+
 func (c *Core) appendNode(r nodeRecord) (NodeID, error) {
 	if uint64(len(c.nodes))+1 > uint64(c.limits.MaxNodes) || len(c.nodes) >= math.MaxUint32 {
 		return 0, errors.New("parser-core phase zero: node arena cap")
@@ -2735,6 +2871,30 @@ func (c *Core) addWork(counter *uint64, delta uint64) {
 		return
 	}
 	*counter += delta
+}
+
+func (c *Core) recordLinkUnionAttempt() {
+	c.addWork(&c.work.PredecessorLinkUnionAttempts, 1)
+}
+
+func (c *Core) recordLinkUnionDuplicateNoop() {
+	c.addWork(&c.work.PredecessorLinkUnionDuplicateNoop, 1)
+}
+
+func (c *Core) recordLinkUnionPrecedenceReplaced() {
+	c.addWork(&c.work.PredecessorLinkUnionPrecedenceReplaced, 1)
+}
+
+func (c *Core) recordLinkUnionRecursiveChanged() {
+	c.addWork(&c.work.PredecessorLinkUnionRecursiveChanged, 1)
+}
+
+func (c *Core) recordLinkUnionAlternateAppended() {
+	c.addWork(&c.work.PredecessorLinkUnionAlternateAppended, 1)
+}
+
+func (c *Core) recordLinkUnionRejected() {
+	c.addWork(&c.work.PredecessorLinkUnionRejected, 1)
 }
 
 func (c *Core) node(id NodeID) (*nodeRecord, error) {

@@ -112,6 +112,7 @@ func TestRecursiveInsertTwoShallowClassesPreservesABCAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	workBeforeMerge := core.Work()
 	merged, err := core.condense(core.boundaryKey(8, 11), linkInput{
 		prev: fixture.rightPrev.Node, payload: fixture.topPayload,
 	})
@@ -120,6 +121,15 @@ func TestRecursiveInsertTwoShallowClassesPreservesABCAndReplay(t *testing.T) {
 	}
 	if merged == fixture.oldTop {
 		t.Fatal("recursive insertion did not publish a fresh top snapshot")
+	}
+	workAfterMerge := core.Work()
+	if workAfterMerge.PredecessorLinkUnionAttempts-workBeforeMerge.PredecessorLinkUnionAttempts != 9 ||
+		workAfterMerge.PredecessorLinkUnionDuplicateNoop-workBeforeMerge.PredecessorLinkUnionDuplicateNoop != 7 ||
+		workAfterMerge.PredecessorLinkUnionRecursiveChanged-workBeforeMerge.PredecessorLinkUnionRecursiveChanged != 1 ||
+		workAfterMerge.PredecessorLinkUnionAlternateAppended-workBeforeMerge.PredecessorLinkUnionAlternateAppended != 1 ||
+		workAfterMerge.PredecessorLinkUnionPrecedenceReplaced != workBeforeMerge.PredecessorLinkUnionPrecedenceReplaced ||
+		workAfterMerge.PredecessorLinkUnionRejected != workBeforeMerge.PredecessorLinkUnionRejected {
+		t.Fatalf("recursive insertion outcome vector before=%+v after=%+v", workBeforeMerge, workAfterMerge)
 	}
 	top, err := core.node(merged.Node)
 	if err != nil || top.linkCount != 1 || top.pathCount != 2 {
@@ -174,7 +184,10 @@ func TestRecursiveInsertTwoShallowClassesPreservesABCAndReplay(t *testing.T) {
 		t.Fatalf("replay=%+v want unchanged head=%+v err=%v", replayed, merged, err)
 	}
 	afterReplay, err := core.Stats(replayed.head)
-	if err != nil || afterReplay != beforeReplay || core.Work() != workBeforeReplay {
+	workAfterReplay := core.Work()
+	if err != nil || afterReplay != beforeReplay ||
+		workAfterReplay.PredecessorLinkUnionAttempts-workBeforeReplay.PredecessorLinkUnionAttempts != 9 ||
+		workAfterReplay.PredecessorLinkUnionDuplicateNoop-workBeforeReplay.PredecessorLinkUnionDuplicateNoop != 9 {
 		t.Fatalf("replay changed storage/work: before=%+v after=%+v work=%+v/%+v err=%v", beforeReplay, afterReplay, core.Work(), workBeforeReplay, err)
 	}
 }
@@ -208,7 +221,10 @@ func TestRecursiveInsertLowerFoldRunsBeforeLocalCap(t *testing.T) {
 			t.Fatalf("equivalent at cap outcome=%+v err=%v", outcome, err)
 		}
 		after, _ := core.Stats(oldTop)
-		if after != before || core.Work() != beforeWork {
+		afterWork := core.Work()
+		if after != before ||
+			afterWork.PredecessorLinkUnionAttempts-beforeWork.PredecessorLinkUnionAttempts != 2 ||
+			afterWork.PredecessorLinkUnionDuplicateNoop-beforeWork.PredecessorLinkUnionDuplicateNoop != 2 {
 			t.Fatalf("equivalent fold changed storage/work: stats=%+v/%+v work=%+v/%+v", after, before, core.Work(), beforeWork)
 		}
 	})

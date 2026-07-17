@@ -6,10 +6,48 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"strings"
 	"testing"
 
 	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
 )
+
+func TestDiagnosticParserCoreGenericWorkSaturatesCausalCounters(t *testing.T) {
+	work := DiagnosticParserCoreGenericWork{
+		ConflictActionArmsAdmitted: math.MaxUint64 - 1,
+		CausalConflictForks:        math.MaxUint64 - 2,
+	}
+	work.add(&work.ConflictActionArmsAdmitted, 2)
+	work.add(&work.CausalConflictForks, 3)
+	if work.ConflictActionArmsAdmitted != math.MaxUint64 || work.CausalConflictForks != math.MaxUint64 || !work.Overflow {
+		t.Fatalf("scheduler causal saturation=%+v", work)
+	}
+}
+
+func TestDiagnosticParserCoreGenericConflictIgnoresNoArmsWhenRepetitionDeclinesCell(t *testing.T) {
+	actions := []core.Action{
+		{Type: core.ActionShift, State: 2},
+		{Type: core.ActionShift, State: 3, Repetition: true},
+	}
+	compact, err := core.New(&genericConflictTable{actions: actions}, core.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := diagnosticParserCoreHeader{head: head}
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, header, 9)
+	unsupported := diagnosticParserCoreGenericUnsupportedCell(0, Token{Symbol: 9, EndByte: 1}, cell.actions())
+	if unsupported == nil || unsupported.boundary != DiagnosticParserCoreRoute || !strings.Contains(unsupported.detail, "repetition") {
+		t.Fatalf("repetition conflict gate=%+v", unsupported)
+	}
+	scheduler := diagnosticParserCoreGenericScheduler{compact: compact, headers: []diagnosticParserCoreHeader{header}}
+	if scheduler.work != (DiagnosticParserCoreGenericWork{}) || compact.Work() != (core.Work{}) {
+		t.Fatalf("declined repetition cell published work: scheduler=%+v core=%+v", scheduler.work, compact.Work())
+	}
+}
 
 func TestDiagnosticParserCorePointIndexPollsBeforeScanning(t *testing.T) {
 	want := errors.New("stop")
@@ -118,6 +156,7 @@ func TestDiagnosticParserCoreGenericConflictArbitraryNOrdering(t *testing.T) {
 	}
 	if scheduler.branchOrder != 9 || scheduler.nextSeq != 12 || scheduler.dispatches != 1 || scheduler.work != (DiagnosticParserCoreGenericWork{
 		Dispatches: 1, Conflicts: 1, ConflictActions: 3, Forks: 2, ConflictHeads: 3,
+		ConflictActionArmsAdmitted: 3, CausalConflictForks: 2,
 		Canonicalizations: 1, PeakHeaders: 5,
 	}) {
 		t.Fatalf("scheduler allocation/work drift: order=%d seq=%d dispatches=%d work=%+v", scheduler.branchOrder, scheduler.nextSeq, scheduler.dispatches, scheduler.work)

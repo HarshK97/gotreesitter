@@ -127,24 +127,36 @@ type DiagnosticParserCoreHeaderPathReceipt struct {
 // DiagnosticParserCoreGenericWork records semantic scheduler work separately
 // from the compact core's physical arena storage.
 type DiagnosticParserCoreGenericWork struct {
-	Passes            uint64
-	ActionLookups     uint64
-	Dispatches        uint64
-	Conflicts         uint64
-	ConflictActions   uint64
-	Forks             uint64
-	ConflictHeads     uint64
-	Reductions        uint64
-	OrdinaryShifts    uint64
-	OrdinaryCohorts   uint64
-	ExtraShifts       uint64
-	ExtraCohorts      uint64
-	Accepts           uint64
-	ReductionPauses   uint64
-	NoActionDrops     uint64
-	Elections         uint64
-	Canonicalizations uint64
-	PeakHeaders       uint64
+	Passes                     uint64
+	ActionLookups              uint64
+	Dispatches                 uint64
+	Conflicts                  uint64
+	ConflictActions            uint64
+	Forks                      uint64
+	ConflictActionArmsAdmitted uint64
+	CausalConflictForks        uint64
+	ConflictHeads              uint64
+	Reductions                 uint64
+	OrdinaryShifts             uint64
+	OrdinaryCohorts            uint64
+	ExtraShifts                uint64
+	ExtraCohorts               uint64
+	Accepts                    uint64
+	ReductionPauses            uint64
+	NoActionDrops              uint64
+	Elections                  uint64
+	Canonicalizations          uint64
+	PeakHeaders                uint64
+	Overflow                   bool
+}
+
+func (w *DiagnosticParserCoreGenericWork) add(counter *uint64, delta uint64) {
+	if math.MaxUint64-*counter < delta {
+		*counter = math.MaxUint64
+		w.Overflow = true
+		return
+	}
+	*counter += delta
 }
 
 // DiagnosticParserCoreGenericAcceptance records an authenticated EOF accept
@@ -2271,6 +2283,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictAtomic(before
 	s.work.Conflicts++
 	s.work.ConflictActions += uint64(actions.Len())
 	s.work.Forks += uint64(actions.Len() - 1)
+	s.work.add(&s.work.ConflictActionArmsAdmitted, uint64(actions.Len()))
+	s.work.add(&s.work.CausalConflictForks, uint64(actions.Len()-1))
 	s.work.ConflictHeads += uint64(outputCount)
 	s.work.Dispatches++
 	if err := s.canonicalize(); err != nil {

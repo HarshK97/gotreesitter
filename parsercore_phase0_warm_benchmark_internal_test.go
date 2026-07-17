@@ -41,6 +41,8 @@ func SetDiagnosticParserCoreWarmGoScannerForTest(scanner ExternalScanner) {
 var parserCoreWarmQueryCompileWork = core.Work{
 	Shifts: 6685, Reductions: 7440, ReductionPopRequests: 7440,
 	EmittedPopPaths: 8103, EmittedPopPayloads: 14703,
+	PredecessorLinkUnionAttempts: 954, PredecessorLinkUnionDuplicateNoop: 81,
+	PredecessorLinkUnionPrecedenceReplaced: 199, PredecessorLinkUnionAlternateAppended: 674,
 	GraphLinkAdditionsProxy: 14749, LeafConstructionsProxy: 5546,
 	ParentConstructionsProxy: 7537,
 }

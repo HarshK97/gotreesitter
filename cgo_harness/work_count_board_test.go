@@ -5,6 +5,7 @@ package cgoharness
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -20,11 +21,11 @@ const (
 	workCountBoardGoBackendEnv            = "GTS_WORK_COUNT_GO_BACKEND"
 	workCountBoardGoProduction            = "production"
 	workCountBoardGoParserCore            = "parsercore_phase0"
-	workCountBoardParserCoreChildSchema   = "gts-work-count-parsercore-child/v1"
+	workCountBoardParserCoreChildSchema   = "gts-work-count-parsercore-child/v2"
 	workCountBoardParserCoreEngine        = "go-compact-parsercore-phase0-tagged-diagnostic"
-	workCountBoardSchema                  = "gts-work-count-board/v3"
-	workCountBoardContractSchema          = "gts-work-count-board-contract/v1"
-	workCountBoardContractSHA256          = "60574ae7773661bcededf789ae1eac4ce7d029918d71c7a5f02446c6bb14e627"
+	workCountBoardSchema                  = "gts-work-count-board/v4"
+	workCountBoardContractSchema          = "gts-work-count-board-contract/v2"
+	workCountBoardContractSHA256          = "10b545be1252350dd28132e70f5d8c29cd4976d59f78af70644ac32436fb08f9"
 	workCountBoardInstrumentationRule     = "blocked unless every mandatory event has one identical semantic definition, a present direct counter in both engines, and a comparable relationship"
 	workCountBoardWorkAuditRule           = "a mandatory comparable event with present nonzero-denominator counts outside the inclusive Go/C interval [0.8,1.2] produces a work-audit finding but does not change instrumentation completeness"
 	workCountBoardWorkAuditMinimum        = 0.8
@@ -121,32 +122,117 @@ type workCountBoardRow struct {
 }
 
 type workCountBoardParserCoreWork struct {
-	Shifts                   uint64 `json:"shifts"`
-	Reductions               uint64 `json:"reductions"`
-	ReductionPopRequests     uint64 `json:"reduction_pop_requests"`
-	EmittedPopPaths          uint64 `json:"emitted_pop_paths"`
-	EmittedPopPayloads       uint64 `json:"emitted_pop_payloads"`
-	GraphLinkAdditionsProxy  uint64 `json:"graph_link_additions_proxy"`
-	LeafConstructionsProxy   uint64 `json:"leaf_constructions_proxy"`
-	ParentConstructionsProxy uint64 `json:"parent_constructions_proxy"`
-	Overflow                 bool   `json:"overflow"`
+	Shifts                                 uint64 `json:"shifts"`
+	Reductions                             uint64 `json:"reductions"`
+	ReductionPopRequests                   uint64 `json:"reduction_pop_requests"`
+	EmittedPopPaths                        uint64 `json:"emitted_pop_paths"`
+	EmittedPopPayloads                     uint64 `json:"emitted_pop_payloads"`
+	GraphLinkAdditionsProxy                uint64 `json:"graph_link_additions_proxy"`
+	LeafConstructionsProxy                 uint64 `json:"leaf_constructions_proxy"`
+	ParentConstructionsProxy               uint64 `json:"parent_constructions_proxy"`
+	PredecessorLinkUnionAttempts           uint64 `json:"predecessor_link_union_attempts"`
+	PredecessorLinkUnionDuplicateNoop      uint64 `json:"predecessor_link_union_duplicate_noop"`
+	PredecessorLinkUnionPrecedenceReplaced uint64 `json:"predecessor_link_union_precedence_replaced"`
+	PredecessorLinkUnionRecursiveChanged   uint64 `json:"predecessor_link_union_recursive_changed"`
+	PredecessorLinkUnionAlternateAppended  uint64 `json:"predecessor_link_union_alternate_appended"`
+	PredecessorLinkUnionRejected           uint64 `json:"predecessor_link_union_rejected"`
+	Overflow                               bool   `json:"overflow"`
 }
 
 type workCountBoardParserCoreScheduler struct {
-	ActionLookups     uint64 `json:"action_lookups"`
-	Accepts           uint64 `json:"accepts"`
-	Elections         uint64 `json:"elections"`
-	Forks             uint64 `json:"forks"`
-	Conflicts         uint64 `json:"conflicts"`
-	ConflictActions   uint64 `json:"conflict_actions"`
-	Canonicalizations uint64 `json:"canonicalizations"`
-	PeakHeaders       uint64 `json:"peak_headers"`
+	ActionLookups              uint64 `json:"action_lookups"`
+	Accepts                    uint64 `json:"accepts"`
+	Elections                  uint64 `json:"elections"`
+	Forks                      uint64 `json:"forks"`
+	Conflicts                  uint64 `json:"conflicts"`
+	ConflictActions            uint64 `json:"conflict_actions"`
+	ConflictActionArmsAdmitted uint64 `json:"conflict_action_arms_admitted"`
+	CausalConflictForks        uint64 `json:"causal_conflict_forks"`
+	Canonicalizations          uint64 `json:"canonicalizations"`
+	PeakHeaders                uint64 `json:"peak_headers"`
+	Overflow                   bool   `json:"overflow"`
 }
 
 type workCountBoardSelectedCensus struct {
 	Nodes   uint64 `json:"nodes"`
 	Parents uint64 `json:"parents"`
 	Leaves  uint64 `json:"leaves"`
+}
+
+type workCountBoardRawSelectedCensus struct {
+	Nodes    uint64 `json:"nodes"`
+	Parents  uint64 `json:"parents"`
+	Leaves   uint64 `json:"leaves"`
+	Overflow bool   `json:"overflow"`
+}
+
+type workCountFrozenCausalVector struct {
+	ConflictActionArmsAdmitted             uint64
+	CausalConflictForks                    uint64
+	PredecessorLinkUnionAttempts           uint64
+	PredecessorLinkUnionDuplicateNoop      uint64
+	PredecessorLinkUnionPrecedenceReplaced uint64
+	PredecessorLinkUnionRecursiveChanged   uint64
+	PredecessorLinkUnionAlternateAppended  uint64
+	PredecessorLinkUnionRejected           uint64
+	RawSelectedInternalNodes               uint64
+	RawSelectedInternalParentOccurrences   uint64
+	RawSelectedInternalLeafOccurrences     uint64
+}
+
+var workCountFrozenStaticCCausalVectors = map[string]workCountFrozenCausalVector{
+	"rewrite": {
+		ConflictActionArmsAdmitted: 264, CausalConflictForks: 109,
+		PredecessorLinkUnionAttempts: 177, PredecessorLinkUnionDuplicateNoop: 46,
+		PredecessorLinkUnionPrecedenceReplaced: 1, PredecessorLinkUnionRecursiveChanged: 10,
+		PredecessorLinkUnionAlternateAppended: 120,
+		RawSelectedInternalNodes:              2345, RawSelectedInternalParentOccurrences: 1310, RawSelectedInternalLeafOccurrences: 1035,
+	},
+	"query_compile": {
+		ConflictActionArmsAdmitted: 1287, CausalConflictForks: 521,
+		PredecessorLinkUnionAttempts: 819, PredecessorLinkUnionDuplicateNoop: 172,
+		PredecessorLinkUnionPrecedenceReplaced: 25, PredecessorLinkUnionRecursiveChanged: 48,
+		PredecessorLinkUnionAlternateAppended: 574,
+		RawSelectedInternalNodes:              11724, RawSelectedInternalParentOccurrences: 6599, RawSelectedInternalLeafOccurrences: 5125,
+	},
+	"language": {
+		ConflictActionArmsAdmitted: 1358, CausalConflictForks: 486,
+		PredecessorLinkUnionAttempts: 1143, PredecessorLinkUnionDuplicateNoop: 392,
+		PredecessorLinkUnionPrecedenceReplaced: 17, PredecessorLinkUnionRecursiveChanged: 52,
+		PredecessorLinkUnionAlternateAppended: 682,
+		RawSelectedInternalNodes:              11184, RawSelectedInternalParentOccurrences: 6127, RawSelectedInternalLeafOccurrences: 5057,
+	},
+	"grammargen_lr": {
+		ConflictActionArmsAdmitted: 13249, CausalConflictForks: 5421,
+		PredecessorLinkUnionAttempts: 10300, PredecessorLinkUnionDuplicateNoop: 2914,
+		PredecessorLinkUnionPrecedenceReplaced: 98, PredecessorLinkUnionRecursiveChanged: 694,
+		PredecessorLinkUnionAlternateAppended: 6594,
+		RawSelectedInternalNodes:              113511, RawSelectedInternalParentOccurrences: 63600, RawSelectedInternalLeafOccurrences: 49911,
+	},
+}
+
+func workCountRequireFrozenStaticCCausalVector(t *testing.T, fixture string, direct workCountBoardDirectCounts) {
+	t.Helper()
+	want, ok := workCountFrozenStaticCCausalVectors[fixture]
+	if !ok {
+		t.Fatalf("static C causal vector fixture %q is not frozen", fixture)
+	}
+	got := workCountFrozenCausalVector{
+		ConflictActionArmsAdmitted:             direct.ConflictActionArmsAdmitted,
+		CausalConflictForks:                    direct.CausalConflictForks,
+		PredecessorLinkUnionAttempts:           direct.PredecessorLinkUnionAttempts,
+		PredecessorLinkUnionDuplicateNoop:      direct.PredecessorLinkUnionDuplicateNoop,
+		PredecessorLinkUnionPrecedenceReplaced: direct.PredecessorLinkUnionPrecedenceReplaced,
+		PredecessorLinkUnionRecursiveChanged:   direct.PredecessorLinkUnionRecursiveChanged,
+		PredecessorLinkUnionAlternateAppended:  direct.PredecessorLinkUnionAlternateAppended,
+		PredecessorLinkUnionRejected:           direct.PredecessorLinkUnionRejected,
+		RawSelectedInternalNodes:               direct.RawSelectedInternalNodes,
+		RawSelectedInternalParentOccurrences:   direct.RawSelectedInternalParents,
+		RawSelectedInternalLeafOccurrences:     direct.RawSelectedInternalLeaves,
+	}
+	if got != want {
+		t.Fatalf("static C causal vector drifted for %s: got=%+v want=%+v", fixture, got, want)
+	}
 }
 
 type workCountBoardParserCoreChildResult struct {
@@ -166,6 +252,7 @@ type workCountBoardParserCoreChildResult struct {
 	CoreWork           workCountBoardParserCoreWork      `json:"core_work"`
 	SchedulerWork      workCountBoardParserCoreScheduler `json:"scheduler_work"`
 	Selected           workCountBoardSelectedCensus      `json:"selected_census"`
+	RawSelected        workCountBoardRawSelectedCensus   `json:"raw_selected_internal_census"`
 }
 
 type workCountBoard struct {
@@ -210,7 +297,7 @@ func TestAuthenticatedFourFixtureWorkCountBoard(t *testing.T) {
 		t.Fatalf("work-count shared manifest identity=%s want=%s", sharedManifestSHA, workCountSharedManifestSHA256)
 	}
 	workCountValidateManifest(t, sharedManifestPath)
-	boardContractPath := filepath.Join(sourceSnapshot.Root, "cgo_harness", "work_count", "board_contract_v1.json")
+	boardContractPath := filepath.Join(sourceSnapshot.Root, "cgo_harness", "work_count", "board_contract_v2.json")
 	boardContractSHA := workCountFileSHA(t, boardContractPath)
 	if boardContractSHA != workCountBoardContractSHA256 {
 		t.Fatalf("work-count board contract identity=%s want=%s", boardContractSHA, workCountBoardContractSHA256)
@@ -299,6 +386,7 @@ func TestAuthenticatedFourFixtureWorkCountBoard(t *testing.T) {
 
 			cResult := workCountRunC(t, cBuild.Artifact, sourcePath, fixtureTemp)
 			workCountValidateCChild(t, "static C", "static-c-instrumented-glr", cResult, fixture, fixture.Fixture.DeepTreeSHA256)
+			workCountRequireFrozenStaticCCausalVector(t, fixture.Fixture.ID, cResult.BoardDirect)
 			untaggedScheduling := workCountScheduling(uninstGo)
 			switch goBackend {
 			case workCountBoardGoProduction:
@@ -504,7 +592,7 @@ func workCountRunParserCoreGo(t *testing.T, artifact, fixtureID, sourcePath, tem
 	workCountRequireKeys(t, "parser-core child", raw, []string{
 		"schema", "engine", "counter_contract", "digest_format", "fixture", "source_sha256", "source_bytes",
 		"grammar_commit", "grammar_blob_sha256", "deep_tree_sha256", "root_end_byte", "root_has_error",
-		"candidate_fallbacks", "core_work", "scheduler_work", "selected_census",
+		"candidate_fallbacks", "core_work", "scheduler_work", "selected_census", "raw_selected_internal_census",
 	})
 	var result workCountBoardParserCoreChildResult
 	workCountDecodeExact(t, data, &result)
@@ -522,15 +610,42 @@ func workCountValidateParserCoreChild(t *testing.T, result workCountBoardParserC
 	if result.GrammarCommit != benchfixtures.GoGrammarCommit || result.GrammarBlobSHA256 != benchfixtures.GoGrammarBlobSHA256 || result.DeepTreeSHA256 != fixture.Fixture.DeepTreeSHA256 {
 		t.Fatalf("parser-core child grammar/tree identity drift: grammar=%s/%s tree=%s", result.GrammarCommit, result.GrammarBlobSHA256, result.DeepTreeSHA256)
 	}
-	if result.CandidateFallbacks != 0 || result.CoreWork.Overflow || result.CoreWork.Reductions != result.CoreWork.ReductionPopRequests {
+	if result.CandidateFallbacks != 0 || result.CoreWork.Reductions != result.CoreWork.ReductionPopRequests {
 		t.Fatalf("parser-core child fallback/overflow/reduce contract: %+v", result)
+	}
+	if err := workCountValidateParserCoreCounterEnvelope(result); err != nil {
+		t.Fatalf("parser-core child counter envelope: %v", err)
 	}
 	if result.Selected.Nodes == 0 || result.Selected.Nodes != result.Selected.Parents+result.Selected.Leaves {
 		t.Fatalf("parser-core child selected census invalid: %+v", result.Selected)
 	}
+	if result.RawSelected.Overflow || result.RawSelected.Nodes == 0 || result.RawSelected.Nodes != result.RawSelected.Parents+result.RawSelected.Leaves {
+		t.Fatalf("parser-core child raw selected census invalid: %+v", result.RawSelected)
+	}
+	unionOutcomes := result.CoreWork.PredecessorLinkUnionDuplicateNoop +
+		result.CoreWork.PredecessorLinkUnionPrecedenceReplaced +
+		result.CoreWork.PredecessorLinkUnionRecursiveChanged +
+		result.CoreWork.PredecessorLinkUnionAlternateAppended +
+		result.CoreWork.PredecessorLinkUnionRejected
+	if unionOutcomes != result.CoreWork.PredecessorLinkUnionAttempts {
+		t.Fatalf("parser-core child union partition=%d attempts=%d", unionOutcomes, result.CoreWork.PredecessorLinkUnionAttempts)
+	}
+	if result.CoreWork.LeafConstructionsProxy < result.RawSelected.Leaves || result.CoreWork.ParentConstructionsProxy < result.RawSelected.Parents {
+		t.Fatalf("parser-core raw construction surplus underflow: core=%+v raw=%+v", result.CoreWork, result.RawSelected)
+	}
 	if result.SchedulerWork.ActionLookups == 0 || result.SchedulerWork.Accepts != 1 || result.SchedulerWork.Elections == 0 || result.SchedulerWork.PeakHeaders < 2 || result.SchedulerWork.Conflicts == 0 || result.SchedulerWork.Forks == 0 {
 		t.Fatalf("parser-core child scheduler work invalid: %+v", result.SchedulerWork)
 	}
+}
+
+func workCountValidateParserCoreCounterEnvelope(result workCountBoardParserCoreChildResult) error {
+	if result.CoreWork.Overflow || result.SchedulerWork.Overflow || result.RawSelected.Overflow {
+		return fmt.Errorf("counter overflow: core=%t scheduler=%t raw=%t", result.CoreWork.Overflow, result.SchedulerWork.Overflow, result.RawSelected.Overflow)
+	}
+	if result.CoreWork.LeafConstructionsProxy < result.RawSelected.Leaves || result.CoreWork.ParentConstructionsProxy < result.RawSelected.Parents {
+		return fmt.Errorf("construction surplus underflow: core=%+v raw=%+v", result.CoreWork, result.RawSelected)
+	}
+	return nil
 }
 
 func workCountPresent(unit string, value uint64) workCountBoardEngineValue {
@@ -565,11 +680,9 @@ func workCountBuildBoardMetrics(t *testing.T, contract workCountBoardContract, g
 	t.Helper()
 	workCountValidateCounters(t, "Go", goCounts)
 	workCountValidateCounters(t, "static C", cCounts)
-	if goDirect.Schema != "gts-work-count-board-direct/v1" || cDirect.Schema != goDirect.Schema || goDirect.Overflow || cDirect.Overflow {
+	if goDirect.Schema != "gts-work-count-board-direct/v2" || cDirect.Schema != goDirect.Schema || goDirect.Overflow || cDirect.Overflow {
 		t.Fatalf("invalid paired board-direct counters: go=%+v C=%+v", goDirect, cDirect)
 	}
-	goSurplus := workCountConstructionSurplus(t, "Go", goCounts)
-	cSurplus := workCountConstructionSurplus(t, "static C", cCounts)
 	metrics := make([]workCountBoardMetric, 0, len(contract.Metrics))
 	for _, definition := range contract.Metrics {
 		present := func(goValue, cValue uint64, comparison, reason string) {
@@ -597,8 +710,8 @@ func workCountBuildBoardMetrics(t *testing.T, contract workCountBoardContract, g
 			present(goCounts.ExplicitRecoverActions, cCounts.ExplicitRecoverActions, workCountBoardComparable, "")
 		case "accept_actions":
 			present(goCounts.AcceptActions, cCounts.AcceptActions, workCountBoardComparable, "")
-		case "true_forks":
-			missing(workCountUnavailable(definition.GoUnit, "glrStack.cloneWithScratch at glr.go and the conflict loop at parser.go:conflict-fork lack a causal direct counter excluding initialization and non-conflict clones"), workCountUnavailable(definition.StaticCUnit, "ts_stack_copy_version in lib/src/stack.c is counted only as generic version creation; add a counter at the multiple-action copy call site"), workCountBoardComparable, "paired causal fork hook absent")
+		case "conflict_action_arms_admitted", "causal_conflict_forks":
+			missing(workCountUnavailable(definition.GoUnit, "production-Go causal admission seam is not yet complete across all guarded conflict routes"), workCountPresent(definition.StaticCUnit, map[string]uint64{"conflict_action_arms_admitted": cDirect.ConflictActionArmsAdmitted, "causal_conflict_forks": cDirect.CausalConflictForks}[definition.ID]), workCountBoardComparable, "production-Go causal conflict hook incomplete")
 		case "raw_action_entries_beyond_first":
 			present(goDirect.RawActionEntriesBeyondFirst, cDirect.RawActionEntriesBeyondFirst, workCountBoardComparable, "")
 		case "stack_version_creations_proxy":
@@ -609,40 +722,28 @@ func workCountBuildBoardMetrics(t *testing.T, contract workCountBoardContract, g
 			present(goCounts.EmittedPopPaths, cCounts.EmittedPopPaths, workCountBoardComparable, "")
 		case "emitted_pop_payloads":
 			present(goCounts.EmittedPopPayloads, cCounts.EmittedPopPayloads, workCountBoardComparable, "")
-		case "graph_links":
-			missing(workCountUnavailable(definition.GoUnit, "glr_gss.go hooks count physical primary/extra mutations without a shared reachability contract"), workCountUnavailable(definition.StaticCUnit, "lib/src/stack.c hooks count StackNode links under C ownership semantics"), workCountBoardComparable, "paired semantic graph-link hook absent")
 		case "graph_link_additions_proxy":
 			present(goCounts.GraphLinkAdditionsProxy, cCounts.GraphLinkAdditionsProxy, workCountBoardIncomparable, "representation-specific physical graph links")
-		case "subtree_leaf_constructions":
-			missing(workCountUnavailable(definition.GoUnit, "tree.go/no_tree_node.go leaf hooks mix full, compact, and no-tree payload representations"), workCountUnavailable(definition.StaticCUnit, "lib/src/subtree.c hook counts inline and heap subtree construction under C representation semantics"), workCountBoardComparable, "paired representation-class leaf hook absent")
-		case "subtree_parent_constructions":
-			missing(workCountUnavailable(definition.GoUnit, "tree.go parent hooks include pending/no-tree representation classes"), workCountUnavailable(definition.StaticCUnit, "lib/src/subtree.c hook counts C MutableSubtree node construction"), workCountBoardComparable, "paired representation-class parent hook absent")
 		case "subtree_leaf_constructions_proxy":
 			present(goCounts.LeafConstructionsProxy, cCounts.LeafConstructionsProxy, workCountBoardIncomparable, "representation-specific transient payloads")
 		case "subtree_parent_constructions_proxy":
 			present(goCounts.ParentConstructionsProxy, cCounts.ParentConstructionsProxy, workCountBoardIncomparable, "representation-specific transient payloads")
-		case "subtree_go_pending_parent_constructions":
-			missing(workCountPresent(definition.GoUnit, goCounts.PendingParentConstructionsProxy), workCountUnavailable(definition.StaticCUnit, "locked C has no pending-parent representation class"), workCountBoardIncomparable, "Go-only representation class")
-		case "subtree_go_no_tree_parent_constructions":
-			missing(workCountPresent(definition.GoUnit, goCounts.NoTreeParentConstructionsProxy), workCountUnavailable(definition.StaticCUnit, "locked C has no no-tree parent representation class"), workCountBoardIncomparable, "Go-only representation class")
-		case "merge_attempts", "merge_successes":
-			missing(workCountUnavailable(definition.GoUnit, "glr.go merge hooks use Go-specific candidate and frontier rules"), workCountUnavailable(definition.StaticCUnit, "lib/src/stack.c ts_stack_merge uses C version-pair eligibility"), workCountBoardComparable, "paired canonical-boundary merge hook absent")
 		case "merge_attempts_proxy":
 			present(goCounts.MergeAttemptsProxy, cCounts.MergeAttemptsProxy, workCountBoardIncomparable, "implementation-specific merge front doors")
 		case "merge_successes_proxy":
 			present(goCounts.MergeSuccessesProxy, cCounts.MergeSuccessesProxy, workCountBoardIncomparable, "implementation-specific merge success boundaries")
+		case "predecessor_link_union_attempts", "predecessor_link_union_duplicate_noop", "predecessor_link_union_precedence_replaced", "predecessor_link_union_recursive_changed", "predecessor_link_union_alternate_appended", "predecessor_link_union_rejected", "predecessor_link_union_material_changes":
+			missing(workCountUnavailable(definition.GoUnit, "production-Go logical union outcome seam is not complete across every GSS representation"), workCountUnavailable(definition.StaticCUnit, "direct C value exists but no paired production-Go contract"), workCountBoardComparable, "production-Go logical union hook incomplete")
 		case "alternate_predecessor_links_appended":
 			present(goDirect.AlternatePredecessorLinksAppended, cDirect.AlternatePredecessorLinksAppended, workCountBoardComparable, "")
-		case "discarded_leaf_records", "discarded_parent_records", "discarded_graph_link_records":
-			missing(workCountUnavailable(definition.GoUnit, "Go arenas and GSS do not publish classed reachability losses at convergence/cull/final selection"), workCountUnavailable(definition.StaticCUnit, "locked C reference counting/destruction hooks do not attribute last-release cause to convergence/cull/final selection"), workCountBoardComparable, "paired causal discard hook absent")
-		case "construction_surplus_proxy":
-			present(goSurplus, cSurplus, workCountBoardIncomparable, "representation-specific arithmetic proxy; never discarded-record evidence")
-		case "selected_nodes":
-			present(goCounts.SelectedNodes, cCounts.SelectedNodes, workCountBoardComparable, "")
-		case "selected_parent_nodes":
-			present(goCounts.SelectedParentNodes, cCounts.SelectedParentNodes, workCountBoardComparable, "")
-		case "selected_leaf_nodes":
-			present(goCounts.SelectedLeafNodes, cCounts.SelectedLeafNodes, workCountBoardComparable, "")
+		case "raw_selected_internal_nodes", "raw_selected_internal_parent_occurrences", "raw_selected_internal_leaf_occurrences", "construction_surplus_parent", "construction_surplus_leaf":
+			missing(workCountUnavailable(definition.GoUnit, "production-Go accepted raw internal graph census is not available before normalization"), workCountUnavailable(definition.StaticCUnit, "direct C value exists but no paired production-Go raw census"), workCountBoardComparable, "production-Go raw internal census absent")
+		case "physical_versions_created_proxy":
+			present(goCounts.StackVersionCreationsProxy, cCounts.StackVersionCreationsProxy, workCountBoardIncomparable, "physical version lifecycle proxy; no ratio")
+		case "physical_records_discarded_proxy":
+			missing(workCountUnavailable(definition.GoUnit, "physical discard cause not attributed"), workCountUnavailable(definition.StaticCUnit, "physical discard cause not attributed"), workCountBoardIncomparable, "physical lifecycle proxy unavailable")
+		case "public_selected_nodes":
+			present(goCounts.SelectedNodes, cCounts.SelectedNodes, workCountBoardComparable, "public deep-parity census")
 		default:
 			t.Fatalf("board contract metric %q has no mapping", definition.ID)
 		}
@@ -653,15 +754,15 @@ func workCountBuildBoardMetrics(t *testing.T, contract workCountBoardContract, g
 func workCountBuildParserCoreBoardMetrics(t *testing.T, contract workCountBoardContract, candidate workCountBoardParserCoreChildResult, cCounts workCountCounters, cDirect workCountBoardDirectCounts) []workCountBoardMetric {
 	t.Helper()
 	workCountValidateCounters(t, "static C", cCounts)
-	if candidate.CoreWork.Overflow || cDirect.Schema != "gts-work-count-board-direct/v1" || cDirect.Overflow {
+	if err := workCountValidateParserCoreCounterEnvelope(candidate); err != nil {
+		t.Fatalf("invalid parser-core counter envelope: %v", err)
+	}
+	if cDirect.Schema != "gts-work-count-board-direct/v2" || cDirect.Overflow {
 		t.Fatalf("invalid parser-core/static-C board counters: candidate=%+v C=%+v", candidate.CoreWork, cDirect)
 	}
-	constructed := candidate.CoreWork.LeafConstructionsProxy + candidate.CoreWork.ParentConstructionsProxy
-	if constructed < candidate.Selected.Nodes {
-		t.Fatalf("parser-core construction surplus underflow: constructed=%d selected=%d", constructed, candidate.Selected.Nodes)
+	if cCounts.LeafConstructionsProxy < cDirect.RawSelectedInternalLeaves || cCounts.ParentConstructionsProxy < cDirect.RawSelectedInternalParents {
+		t.Fatalf("static C raw construction surplus underflow: counters=%+v raw=%+v", cCounts, cDirect)
 	}
-	goSurplus := constructed - candidate.Selected.Nodes
-	cSurplus := workCountConstructionSurplus(t, "static C", cCounts)
 	metrics := make([]workCountBoardMetric, 0, len(contract.Metrics))
 	for _, definition := range contract.Metrics {
 		present := func(goValue, cValue uint64, comparison, reason string) {
@@ -692,8 +793,10 @@ func workCountBuildParserCoreBoardMetrics(t *testing.T, contract workCountBoardC
 			present(0, cCounts.ExplicitRecoverActions, workCountBoardComparable, "authenticated compact route declines recovery")
 		case "accept_actions":
 			present(candidate.SchedulerWork.Accepts, cCounts.AcceptActions, workCountBoardComparable, "")
-		case "true_forks":
-			missing(workCountPresent(definition.GoUnit, candidate.SchedulerWork.Forks), workCountUnavailable(definition.StaticCUnit, "locked C generic version creation counter does not isolate multiple-action forks"), workCountBoardComparable, "C causal fork hook absent")
+		case "conflict_action_arms_admitted":
+			present(candidate.SchedulerWork.ConflictActionArmsAdmitted, cDirect.ConflictActionArmsAdmitted, workCountBoardComparable, "")
+		case "causal_conflict_forks":
+			present(candidate.SchedulerWork.CausalConflictForks, cDirect.CausalConflictForks, workCountBoardComparable, "")
 		case "raw_action_entries_beyond_first":
 			missing(candidateUnavailable("scheduler Forks records generic conflict-arm fanout, not an independently authenticated raw-cell hook"), workCountPresent(definition.StaticCUnit, cDirect.RawActionEntriesBeyondFirst), workCountBoardComparable, "candidate raw action-entry hook absent")
 		case "stack_version_creations_proxy":
@@ -704,34 +807,48 @@ func workCountBuildParserCoreBoardMetrics(t *testing.T, contract workCountBoardC
 			present(candidate.CoreWork.EmittedPopPaths, cCounts.EmittedPopPaths, workCountBoardComparable, "")
 		case "emitted_pop_payloads":
 			present(candidate.CoreWork.EmittedPopPayloads, cCounts.EmittedPopPayloads, workCountBoardComparable, "")
-		case "graph_links":
-			missing(candidateUnavailable("core counter is a physical append proxy without a shared reachability contract"), workCountUnavailable(definition.StaticCUnit, "C StackNode links use C ownership semantics"), workCountBoardComparable, "paired semantic graph-link hook absent")
 		case "graph_link_additions_proxy":
 			present(candidate.CoreWork.GraphLinkAdditionsProxy, cCounts.GraphLinkAdditionsProxy, workCountBoardIncomparable, "representation-specific physical graph links")
-		case "subtree_leaf_constructions", "subtree_parent_constructions":
-			missing(candidateUnavailable("compact arena records are representation-specific"), workCountUnavailable(definition.StaticCUnit, "C inline/heap subtree records use a different representation contract"), workCountBoardComparable, "paired representation-class construction hook absent")
 		case "subtree_leaf_constructions_proxy":
 			present(candidate.CoreWork.LeafConstructionsProxy, cCounts.LeafConstructionsProxy, workCountBoardIncomparable, "compact records versus C transient subtrees")
 		case "subtree_parent_constructions_proxy":
 			present(candidate.CoreWork.ParentConstructionsProxy, cCounts.ParentConstructionsProxy, workCountBoardIncomparable, "compact records versus C transient subtrees")
-		case "subtree_go_pending_parent_constructions", "subtree_go_no_tree_parent_constructions":
-			missing(workCountPresent(definition.GoUnit, 0), workCountUnavailable(definition.StaticCUnit, "locked C has no corresponding Go representation class"), workCountBoardIncomparable, "compact route does not construct this production-Go representation class")
-		case "merge_attempts", "merge_successes":
-			missing(candidateUnavailable("canonical boundary insertion/folding is not yet counted under the shared candidate-pair definition"), workCountUnavailable(definition.StaticCUnit, "C ts_stack_merge uses C version-pair eligibility"), workCountBoardComparable, "paired canonical-boundary merge hook absent")
+		case "predecessor_link_union_attempts":
+			present(candidate.CoreWork.PredecessorLinkUnionAttempts, cDirect.PredecessorLinkUnionAttempts, workCountBoardComparable, "")
+		case "predecessor_link_union_duplicate_noop":
+			present(candidate.CoreWork.PredecessorLinkUnionDuplicateNoop, cDirect.PredecessorLinkUnionDuplicateNoop, workCountBoardComparable, "")
+		case "predecessor_link_union_precedence_replaced":
+			present(candidate.CoreWork.PredecessorLinkUnionPrecedenceReplaced, cDirect.PredecessorLinkUnionPrecedenceReplaced, workCountBoardComparable, "")
+		case "predecessor_link_union_recursive_changed":
+			present(candidate.CoreWork.PredecessorLinkUnionRecursiveChanged, cDirect.PredecessorLinkUnionRecursiveChanged, workCountBoardComparable, "")
+		case "predecessor_link_union_alternate_appended":
+			present(candidate.CoreWork.PredecessorLinkUnionAlternateAppended, cDirect.PredecessorLinkUnionAlternateAppended, workCountBoardComparable, "")
+		case "predecessor_link_union_rejected":
+			present(candidate.CoreWork.PredecessorLinkUnionRejected, cDirect.PredecessorLinkUnionRejected, workCountBoardComparable, "")
+		case "predecessor_link_union_material_changes":
+			goChanges := candidate.CoreWork.PredecessorLinkUnionPrecedenceReplaced + candidate.CoreWork.PredecessorLinkUnionRecursiveChanged + candidate.CoreWork.PredecessorLinkUnionAlternateAppended
+			cChanges := cDirect.PredecessorLinkUnionPrecedenceReplaced + cDirect.PredecessorLinkUnionRecursiveChanged + cDirect.PredecessorLinkUnionAlternateAppended
+			present(goChanges, cChanges, workCountBoardComparable, "derived exact outcome partition")
 		case "merge_attempts_proxy", "merge_successes_proxy":
 			missing(candidateUnavailable("compact boundary canonicalization has no production-Go merge-front-door proxy"), workCountPresent(definition.StaticCUnit, map[string]uint64{"merge_attempts_proxy": cCounts.MergeAttemptsProxy, "merge_successes_proxy": cCounts.MergeSuccessesProxy}[definition.ID]), workCountBoardIncomparable, "candidate merge proxy unavailable")
 		case "alternate_predecessor_links_appended":
-			missing(candidateUnavailable("GraphLinkAdditionsProxy does not distinguish primary from alternate predecessor links"), workCountPresent(definition.StaticCUnit, cDirect.AlternatePredecessorLinksAppended), workCountBoardComparable, "candidate alternate-link hook absent")
-		case "discarded_leaf_records", "discarded_parent_records", "discarded_graph_link_records":
-			missing(candidateUnavailable("append-only arenas do not publish classed reachability losses at selection"), workCountUnavailable(definition.StaticCUnit, "C release hooks do not attribute last-release cause"), workCountBoardComparable, "paired causal discard hook absent")
-		case "construction_surplus_proxy":
-			present(goSurplus, cSurplus, workCountBoardIncomparable, "representation-specific constructed-minus-selected arithmetic proxy")
-		case "selected_nodes":
-			present(candidate.Selected.Nodes, cCounts.SelectedNodes, workCountBoardComparable, "materialized deep-parity tree census")
-		case "selected_parent_nodes":
-			present(candidate.Selected.Parents, cCounts.SelectedParentNodes, workCountBoardComparable, "materialized deep-parity tree census")
-		case "selected_leaf_nodes":
-			present(candidate.Selected.Leaves, cCounts.SelectedLeafNodes, workCountBoardComparable, "materialized deep-parity tree census")
+			present(candidate.CoreWork.PredecessorLinkUnionAlternateAppended, cDirect.AlternatePredecessorLinksAppended, workCountBoardComparable, "")
+		case "raw_selected_internal_nodes":
+			present(candidate.RawSelected.Nodes, cDirect.RawSelectedInternalNodes, workCountBoardComparable, "pre-public accepted internal graph")
+		case "raw_selected_internal_parent_occurrences":
+			present(candidate.RawSelected.Parents, cDirect.RawSelectedInternalParents, workCountBoardComparable, "pre-public accepted internal graph")
+		case "raw_selected_internal_leaf_occurrences":
+			present(candidate.RawSelected.Leaves, cDirect.RawSelectedInternalLeaves, workCountBoardComparable, "pre-public accepted internal graph")
+		case "construction_surplus_parent":
+			present(candidate.CoreWork.ParentConstructionsProxy-candidate.RawSelected.Parents, cCounts.ParentConstructionsProxy-cDirect.RawSelectedInternalParents, workCountBoardComparable, "constructor calls minus raw selected occurrences; not discard")
+		case "construction_surplus_leaf":
+			present(candidate.CoreWork.LeafConstructionsProxy-candidate.RawSelected.Leaves, cCounts.LeafConstructionsProxy-cDirect.RawSelectedInternalLeaves, workCountBoardComparable, "constructor calls minus raw selected occurrences; not discard")
+		case "physical_versions_created_proxy":
+			missing(candidateUnavailable("compact headers have no C StackHead lifecycle identity"), workCountPresent(definition.StaticCUnit, cCounts.StackVersionCreationsProxy), workCountBoardIncomparable, "physical lifecycle proxy; no ratio")
+		case "physical_records_discarded_proxy":
+			missing(candidateUnavailable("append-only arena does not expose C refcount last-release identity"), workCountUnavailable(definition.StaticCUnit, "C last releases are not causally attributed"), workCountBoardIncomparable, "physical lifecycle proxy; no ratio")
+		case "public_selected_nodes":
+			present(candidate.Selected.Nodes, cCounts.SelectedNodes, workCountBoardComparable, "public deep-parity census")
 		default:
 			t.Fatalf("board contract metric %q has no parser-core mapping", definition.ID)
 		}
@@ -878,7 +995,7 @@ func workCountRunUntaggedAssemblyProof(t *testing.T, sourceRoot, artifact string
 }
 
 func TestWorkCountBoardMetricStatusAndRatios(t *testing.T) {
-	contract := workCountLoadBoardContract(t, filepath.Join("work_count", "board_contract_v1.json"))
+	contract := workCountLoadBoardContract(t, filepath.Join("work_count", "board_contract_v2.json"))
 	counts := workCountCounters{Contract: workCountContract, workCountCounterValues: workCountCounterValues{
 		Shifts: 8, Reductions: 5, AcceptActions: 1, ReductionPopRequests: 5,
 		EmittedPopPaths: 6, EmittedPopPayloads: 9, SelectedNodes: 3, SelectedParentNodes: 1, SelectedLeafNodes: 2,
@@ -887,10 +1004,11 @@ func TestWorkCountBoardMetricStatusAndRatios(t *testing.T) {
 		GraphLinkAdditionsProxy: 11, LeafConstructionsProxy: 6, ParentConstructionsProxy: 4,
 	}}
 	direct := workCountBoardDirectCounts{
-		Schema:                            "gts-work-count-board-direct/v1",
-		ResolvedActionCellsExamined:       12,
-		RawActionEntriesBeyondFirst:       4,
-		AlternatePredecessorLinksAppended: 3,
+		Schema: "gts-work-count-board-direct/v2", ResolvedActionCellsExamined: 12,
+		RawActionEntriesBeyondFirst: 4, ConflictActionArmsAdmitted: 4, CausalConflictForks: 1,
+		PredecessorLinkUnionAttempts: 3, PredecessorLinkUnionDuplicateNoop: 1,
+		PredecessorLinkUnionAlternateAppended: 2, AlternatePredecessorLinksAppended: 2,
+		RawSelectedInternalNodes: 3, RawSelectedInternalParents: 1, RawSelectedInternalLeaves: 2,
 	}
 	metrics := workCountBuildBoardMetrics(t, contract, counts, counts, direct, direct)
 	byID := make(map[string]workCountBoardMetric, len(metrics))
@@ -903,28 +1021,33 @@ func TestWorkCountBoardMetricStatusAndRatios(t *testing.T) {
 	if metric := byID["action_table_lookups_proxy"]; metric.RatioStatus != workCountBoardRatioIncomparable || metric.GoOverC != nil {
 		t.Fatalf("incomparable ratio drifted: %+v", metric)
 	}
-	if metric := byID["true_forks"]; metric.Go.State != workCountBoardStateUnavailable || metric.StaticC.State != workCountBoardStateUnavailable || metric.RatioStatus != workCountBoardRatioUnavailable {
+	if metric := byID["causal_conflict_forks"]; metric.Go.State != workCountBoardStateUnavailable || metric.RatioStatus != workCountBoardRatioUnavailable {
 		t.Fatalf("unavailable fork encoding drifted: %+v", metric)
 	}
-	if metric := byID["selected_nodes"]; metric.RatioStatus != workCountBoardRatioComputed || metric.GoOverC == nil || *metric.GoOverC != 1 {
+	if metric := byID["public_selected_nodes"]; metric.RatioStatus != workCountBoardRatioComputed || metric.GoOverC == nil || *metric.GoOverC != 1 {
 		t.Fatalf("computed ratio drifted: %+v", metric)
 	}
 	if metric := byID["raw_action_entries_beyond_first"]; metric.RatioStatus != workCountBoardRatioComputed || metric.GoOverC == nil || *metric.GoOverC != 1 {
 		t.Fatalf("conflict-alternative ratio drifted: %+v", metric)
-	}
-	for _, id := range []string{"subtree_go_pending_parent_constructions", "subtree_go_no_tree_parent_constructions"} {
-		if metric := byID[id]; metric.Comparison != workCountBoardIncomparable || metric.RatioStatus != workCountBoardRatioUnavailable {
-			t.Fatalf("Go-only representation metric %q status drifted: %+v", id, metric)
-		}
 	}
 	candidate := workCountBoardParserCoreChildResult{
 		CoreWork: workCountBoardParserCoreWork{
 			Shifts: 8, Reductions: 5, ReductionPopRequests: 5,
 			EmittedPopPaths: 6, EmittedPopPayloads: 9,
 			GraphLinkAdditionsProxy: 11, LeafConstructionsProxy: 6, ParentConstructionsProxy: 4,
+			PredecessorLinkUnionAttempts: 3, PredecessorLinkUnionDuplicateNoop: 1,
+			PredecessorLinkUnionAlternateAppended: 2,
 		},
-		SchedulerWork: workCountBoardParserCoreScheduler{ActionLookups: 12, Accepts: 1, Elections: 7, Forks: 4, Conflicts: 3},
+		SchedulerWork: workCountBoardParserCoreScheduler{ActionLookups: 12, Accepts: 1, Elections: 7, Forks: 4, Conflicts: 3, ConflictActionArmsAdmitted: 4, CausalConflictForks: 1},
 		Selected:      workCountBoardSelectedCensus{Nodes: 3, Parents: 1, Leaves: 2},
+		RawSelected:   workCountBoardRawSelectedCensus{Nodes: 3, Parents: 1, Leaves: 2},
+	}
+	overflowCandidate := candidate
+	overflowCandidate.SchedulerWork.ConflictActionArmsAdmitted = math.MaxUint64
+	overflowCandidate.SchedulerWork.CausalConflictForks = math.MaxUint64
+	overflowCandidate.SchedulerWork.Overflow = true
+	if err := workCountValidateParserCoreCounterEnvelope(overflowCandidate); err == nil || !strings.Contains(err.Error(), "scheduler=true") {
+		t.Fatalf("scheduler saturation did not fail closed: %v", err)
 	}
 	candidateMetrics := workCountBuildParserCoreBoardMetrics(t, contract, candidate, counts, direct)
 	candidateByID := make(map[string]workCountBoardMetric, len(candidateMetrics))
@@ -941,6 +1064,9 @@ func TestWorkCountBoardMetricStatusAndRatios(t *testing.T) {
 	}
 	if metric := candidateByID["shifts"]; metric.Go.Value == nil || *metric.Go.Value != candidate.CoreWork.Shifts || metric.Comparison != workCountBoardComparable {
 		t.Fatalf("parser-core direct shift mapping drifted: %+v", metric)
+	}
+	if metric := candidateByID["predecessor_link_union_attempts"]; metric.Go.Value == nil || *metric.Go.Value != 3 || metric.RatioStatus != workCountBoardRatioComputed {
+		t.Fatalf("parser-core direct union mapping drifted: %+v", metric)
 	}
 	scheduling := workCountBoardScheduling{MaxStacksSeen: 2}
 	row := workCountBoardRow{GoBackend: workCountBoardGoProduction, UntaggedGoScheduling: scheduling, TaggedGoScheduling: &scheduling, Metrics: metrics}
@@ -984,5 +1110,28 @@ func TestWorkCountBoardMetricStatusAndRatios(t *testing.T) {
 	_, _, highWorkAuditStatus, highWorkAuditFindings := workCountBoardStatuses(contract, []workCountBoardRow{row})
 	if highWorkAuditStatus != workCountBoardWorkAuditFindings || !strings.Contains(strings.Join(highWorkAuditFindings, "\n"), "resolved_action_cells_examined: Go/C ratio 1.250000 outside [0.8,1.2]") {
 		t.Fatalf("high-ratio work-audit finding missing: status=%q findings=%v", highWorkAuditStatus, highWorkAuditFindings)
+	}
+}
+
+func TestWorkCountParserCoreChildSchedulerOverflowProtocol(t *testing.T) {
+	want := workCountBoardParserCoreChildResult{
+		Schema: workCountBoardParserCoreChildSchema,
+		SchedulerWork: workCountBoardParserCoreScheduler{
+			ConflictActionArmsAdmitted: math.MaxUint64,
+			CausalConflictForks:        math.MaxUint64,
+			Overflow:                   true,
+		},
+	}
+	data, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got workCountBoardParserCoreChildResult
+	workCountDecodeExact(t, data, &got)
+	if !got.SchedulerWork.Overflow || got.SchedulerWork.ConflictActionArmsAdmitted != math.MaxUint64 || got.SchedulerWork.CausalConflictForks != math.MaxUint64 {
+		t.Fatalf("scheduler overflow protocol drifted: %+v", got.SchedulerWork)
+	}
+	if err := workCountValidateParserCoreCounterEnvelope(got); err == nil || !strings.Contains(err.Error(), "scheduler=true") {
+		t.Fatalf("scheduler overflow protocol did not fail closed: %v", err)
 	}
 }

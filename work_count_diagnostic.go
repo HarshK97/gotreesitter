@@ -23,11 +23,22 @@ type DiagnosticWorkCount struct {
 // are shared with the locked C diagnostic oracle. It is emitted beside, not
 // inside, the immutable gts-work-count/v2 counter object.
 type DiagnosticWorkCountBoardDirect struct {
-	Schema                            string `json:"schema"`
-	ResolvedActionCellsExamined       uint64 `json:"resolved_action_cells_examined"`
-	RawActionEntriesBeyondFirst       uint64 `json:"raw_action_entries_beyond_first"`
-	AlternatePredecessorLinksAppended uint64 `json:"alternate_predecessor_links_appended"`
-	Overflow                          bool   `json:"overflow"`
+	Schema                                 string `json:"schema"`
+	ResolvedActionCellsExamined            uint64 `json:"resolved_action_cells_examined"`
+	RawActionEntriesBeyondFirst            uint64 `json:"raw_action_entries_beyond_first"`
+	ConflictActionArmsAdmitted             uint64 `json:"conflict_action_arms_admitted"`
+	CausalConflictForks                    uint64 `json:"causal_conflict_forks"`
+	PredecessorLinkUnionAttempts           uint64 `json:"predecessor_link_union_attempts"`
+	PredecessorLinkUnionDuplicateNoop      uint64 `json:"predecessor_link_union_duplicate_noop"`
+	PredecessorLinkUnionPrecedenceReplaced uint64 `json:"predecessor_link_union_precedence_replaced"`
+	PredecessorLinkUnionRecursiveChanged   uint64 `json:"predecessor_link_union_recursive_changed"`
+	PredecessorLinkUnionAlternateAppended  uint64 `json:"predecessor_link_union_alternate_appended"`
+	PredecessorLinkUnionRejected           uint64 `json:"predecessor_link_union_rejected"`
+	AlternatePredecessorLinksAppended      uint64 `json:"alternate_predecessor_links_appended"`
+	RawSelectedInternalNodes               uint64 `json:"raw_selected_internal_nodes"`
+	RawSelectedInternalParents             uint64 `json:"raw_selected_internal_parent_occurrences"`
+	RawSelectedInternalLeaves              uint64 `json:"raw_selected_internal_leaf_occurrences"`
+	Overflow                               bool   `json:"overflow"`
 }
 
 // DiagnosticWorkCountValues is one additive counter vector. The aggregate
@@ -110,7 +121,7 @@ func BeginDiagnosticWorkCount() {
 	if activeDiagnosticWorkCount != nil {
 		panic("gotreesitter: diagnostic work-count parse already active")
 	}
-	activeDiagnosticWorkCount = &DiagnosticWorkCount{Contract: DiagnosticWorkCountContract, boardDirect: DiagnosticWorkCountBoardDirect{Schema: "gts-work-count-board-direct/v1"}}
+	activeDiagnosticWorkCount = &DiagnosticWorkCount{Contract: DiagnosticWorkCountContract, boardDirect: DiagnosticWorkCountBoardDirect{Schema: "gts-work-count-board-direct/v2"}}
 	workCountBeginConvergence(activeDiagnosticWorkCount)
 	pendingDiagnosticWorkCountAttempt = struct {
 		logicalRung    string

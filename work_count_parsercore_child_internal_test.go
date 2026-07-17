@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	parserCoreWorkCountChildSchema = "gts-work-count-parsercore-child/v1"
+	parserCoreWorkCountChildSchema = "gts-work-count-parsercore-child/v2"
 	parserCoreWorkCountEngine      = "go-compact-parsercore-phase0-tagged-diagnostic"
 	parserCoreWorkCountContract    = "gts-work-count/v2"
 	parserCoreWorkCountDigest      = "gts-deep-tree-v1"
@@ -22,26 +22,35 @@ const (
 )
 
 type parserCoreWorkCountCoreWork struct {
-	Shifts                   uint64 `json:"shifts"`
-	Reductions               uint64 `json:"reductions"`
-	ReductionPopRequests     uint64 `json:"reduction_pop_requests"`
-	EmittedPopPaths          uint64 `json:"emitted_pop_paths"`
-	EmittedPopPayloads       uint64 `json:"emitted_pop_payloads"`
-	GraphLinkAdditionsProxy  uint64 `json:"graph_link_additions_proxy"`
-	LeafConstructionsProxy   uint64 `json:"leaf_constructions_proxy"`
-	ParentConstructionsProxy uint64 `json:"parent_constructions_proxy"`
-	Overflow                 bool   `json:"overflow"`
+	Shifts                                 uint64 `json:"shifts"`
+	Reductions                             uint64 `json:"reductions"`
+	ReductionPopRequests                   uint64 `json:"reduction_pop_requests"`
+	EmittedPopPaths                        uint64 `json:"emitted_pop_paths"`
+	EmittedPopPayloads                     uint64 `json:"emitted_pop_payloads"`
+	GraphLinkAdditionsProxy                uint64 `json:"graph_link_additions_proxy"`
+	LeafConstructionsProxy                 uint64 `json:"leaf_constructions_proxy"`
+	ParentConstructionsProxy               uint64 `json:"parent_constructions_proxy"`
+	PredecessorLinkUnionAttempts           uint64 `json:"predecessor_link_union_attempts"`
+	PredecessorLinkUnionDuplicateNoop      uint64 `json:"predecessor_link_union_duplicate_noop"`
+	PredecessorLinkUnionPrecedenceReplaced uint64 `json:"predecessor_link_union_precedence_replaced"`
+	PredecessorLinkUnionRecursiveChanged   uint64 `json:"predecessor_link_union_recursive_changed"`
+	PredecessorLinkUnionAlternateAppended  uint64 `json:"predecessor_link_union_alternate_appended"`
+	PredecessorLinkUnionRejected           uint64 `json:"predecessor_link_union_rejected"`
+	Overflow                               bool   `json:"overflow"`
 }
 
 type parserCoreWorkCountSchedulerWork struct {
-	ActionLookups     uint64 `json:"action_lookups"`
-	Accepts           uint64 `json:"accepts"`
-	Elections         uint64 `json:"elections"`
-	Forks             uint64 `json:"forks"`
-	Conflicts         uint64 `json:"conflicts"`
-	ConflictActions   uint64 `json:"conflict_actions"`
-	Canonicalizations uint64 `json:"canonicalizations"`
-	PeakHeaders       uint64 `json:"peak_headers"`
+	ActionLookups              uint64 `json:"action_lookups"`
+	Accepts                    uint64 `json:"accepts"`
+	Elections                  uint64 `json:"elections"`
+	Forks                      uint64 `json:"forks"`
+	Conflicts                  uint64 `json:"conflicts"`
+	ConflictActions            uint64 `json:"conflict_actions"`
+	ConflictActionArmsAdmitted uint64 `json:"conflict_action_arms_admitted"`
+	CausalConflictForks        uint64 `json:"causal_conflict_forks"`
+	Canonicalizations          uint64 `json:"canonicalizations"`
+	PeakHeaders                uint64 `json:"peak_headers"`
+	Overflow                   bool   `json:"overflow"`
 }
 
 type parserCoreWorkCountSelectedCensus struct {
@@ -50,23 +59,31 @@ type parserCoreWorkCountSelectedCensus struct {
 	Leaves  uint64 `json:"leaves"`
 }
 
+type parserCoreWorkCountRawSelectedCensus struct {
+	Nodes    uint64 `json:"nodes"`
+	Parents  uint64 `json:"parents"`
+	Leaves   uint64 `json:"leaves"`
+	Overflow bool   `json:"overflow"`
+}
+
 type parserCoreWorkCountChildResult struct {
-	Schema             string                            `json:"schema"`
-	Engine             string                            `json:"engine"`
-	CounterContract    string                            `json:"counter_contract"`
-	DigestFormat       string                            `json:"digest_format"`
-	Fixture            string                            `json:"fixture"`
-	SourceSHA256       string                            `json:"source_sha256"`
-	SourceBytes        uint32                            `json:"source_bytes"`
-	GrammarCommit      string                            `json:"grammar_commit"`
-	GrammarBlobSHA256  string                            `json:"grammar_blob_sha256"`
-	DeepTreeSHA256     string                            `json:"deep_tree_sha256"`
-	RootEndByte        uint32                            `json:"root_end_byte"`
-	RootHasError       bool                              `json:"root_has_error"`
-	CandidateFallbacks uint64                            `json:"candidate_fallbacks"`
-	CoreWork           parserCoreWorkCountCoreWork       `json:"core_work"`
-	SchedulerWork      parserCoreWorkCountSchedulerWork  `json:"scheduler_work"`
-	Selected           parserCoreWorkCountSelectedCensus `json:"selected_census"`
+	Schema             string                               `json:"schema"`
+	Engine             string                               `json:"engine"`
+	CounterContract    string                               `json:"counter_contract"`
+	DigestFormat       string                               `json:"digest_format"`
+	Fixture            string                               `json:"fixture"`
+	SourceSHA256       string                               `json:"source_sha256"`
+	SourceBytes        uint32                               `json:"source_bytes"`
+	GrammarCommit      string                               `json:"grammar_commit"`
+	GrammarBlobSHA256  string                               `json:"grammar_blob_sha256"`
+	DeepTreeSHA256     string                               `json:"deep_tree_sha256"`
+	RootEndByte        uint32                               `json:"root_end_byte"`
+	RootHasError       bool                                 `json:"root_has_error"`
+	CandidateFallbacks uint64                               `json:"candidate_fallbacks"`
+	CoreWork           parserCoreWorkCountCoreWork          `json:"core_work"`
+	SchedulerWork      parserCoreWorkCountSchedulerWork     `json:"scheduler_work"`
+	Selected           parserCoreWorkCountSelectedCensus    `json:"selected_census"`
+	RawSelected        parserCoreWorkCountRawSelectedCensus `json:"raw_selected_internal_census"`
 }
 
 // TestParserCoreWorkCountChild is the fresh-process protocol endpoint used by
@@ -113,6 +130,17 @@ func TestParserCoreWorkCountChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tokenSource.Close()
+	derivations, err := runner.compact.Derivations(scheduler.acceptedHead)
+	if err != nil || len(derivations) != 1 {
+		t.Fatalf("accepted compact derivations=%d err=%v", len(derivations), err)
+	}
+	rawSelected, err := runner.compact.RawSelectedSubtreeCensus(derivations[0].Payloads)
+	if err != nil || rawSelected.Overflow {
+		t.Fatalf("raw selected internal census=%+v err=%v", rawSelected, err)
+	}
+	if rawSelected != admission.rawSelected {
+		t.Fatalf("raw selected internal census=%+v want=%+v", rawSelected, admission.rawSelected)
+	}
 	tree, err := runner.materialize(source, runner.compact, scheduler.acceptedHead)
 	if err != nil {
 		t.Fatal(err)
@@ -136,8 +164,19 @@ func TestParserCoreWorkCountChild(t *testing.T) {
 	if coreWork != admission.work || coreWork.Overflow {
 		t.Fatalf("compact work=%+v want=%+v", coreWork, admission.work)
 	}
+	unionOutcomes := coreWork.PredecessorLinkUnionDuplicateNoop +
+		coreWork.PredecessorLinkUnionPrecedenceReplaced +
+		coreWork.PredecessorLinkUnionRecursiveChanged +
+		coreWork.PredecessorLinkUnionAlternateAppended +
+		coreWork.PredecessorLinkUnionRejected
+	if unionOutcomes != coreWork.PredecessorLinkUnionAttempts {
+		t.Fatalf("link-union outcome partition=%d attempts=%d", unionOutcomes, coreWork.PredecessorLinkUnionAttempts)
+	}
+	if coreWork.LeafConstructionsProxy < rawSelected.Leaves || coreWork.ParentConstructionsProxy < rawSelected.Parents {
+		t.Fatalf("raw construction surplus underflow: work=%+v raw=%+v", coreWork, rawSelected)
+	}
 	schedulerWork := scheduler.work
-	if schedulerWork.Accepts != 1 || schedulerWork.ActionLookups == 0 || schedulerWork.Elections == 0 || schedulerWork.PeakHeaders < 2 {
+	if schedulerWork.Overflow || schedulerWork.ConflictActionArmsAdmitted != admission.conflictArms || schedulerWork.CausalConflictForks != admission.causalForks || schedulerWork.Accepts != 1 || schedulerWork.ActionLookups == 0 || schedulerWork.Elections == 0 || schedulerWork.PeakHeaders < 2 {
 		t.Fatalf("invalid scheduler work: %+v", schedulerWork)
 	}
 
@@ -152,18 +191,28 @@ func TestParserCoreWorkCountChild(t *testing.T) {
 			Shifts: coreWork.Shifts, Reductions: coreWork.Reductions,
 			ReductionPopRequests: coreWork.ReductionPopRequests,
 			EmittedPopPaths:      coreWork.EmittedPopPaths, EmittedPopPayloads: coreWork.EmittedPopPayloads,
-			GraphLinkAdditionsProxy:  coreWork.GraphLinkAdditionsProxy,
-			LeafConstructionsProxy:   coreWork.LeafConstructionsProxy,
-			ParentConstructionsProxy: coreWork.ParentConstructionsProxy,
-			Overflow:                 coreWork.Overflow,
+			GraphLinkAdditionsProxy:                coreWork.GraphLinkAdditionsProxy,
+			LeafConstructionsProxy:                 coreWork.LeafConstructionsProxy,
+			ParentConstructionsProxy:               coreWork.ParentConstructionsProxy,
+			PredecessorLinkUnionAttempts:           coreWork.PredecessorLinkUnionAttempts,
+			PredecessorLinkUnionDuplicateNoop:      coreWork.PredecessorLinkUnionDuplicateNoop,
+			PredecessorLinkUnionPrecedenceReplaced: coreWork.PredecessorLinkUnionPrecedenceReplaced,
+			PredecessorLinkUnionRecursiveChanged:   coreWork.PredecessorLinkUnionRecursiveChanged,
+			PredecessorLinkUnionAlternateAppended:  coreWork.PredecessorLinkUnionAlternateAppended,
+			PredecessorLinkUnionRejected:           coreWork.PredecessorLinkUnionRejected,
+			Overflow:                               coreWork.Overflow,
 		},
 		SchedulerWork: parserCoreWorkCountSchedulerWork{
 			ActionLookups: schedulerWork.ActionLookups, Accepts: schedulerWork.Accepts,
 			Elections: schedulerWork.Elections, Forks: schedulerWork.Forks,
 			Conflicts: schedulerWork.Conflicts, ConflictActions: schedulerWork.ConflictActions,
-			Canonicalizations: schedulerWork.Canonicalizations, PeakHeaders: schedulerWork.PeakHeaders,
+			ConflictActionArmsAdmitted: schedulerWork.ConflictActionArmsAdmitted,
+			CausalConflictForks:        schedulerWork.CausalConflictForks,
+			Canonicalizations:          schedulerWork.Canonicalizations, PeakHeaders: schedulerWork.PeakHeaders,
+			Overflow: schedulerWork.Overflow,
 		},
-		Selected: selected,
+		Selected:    selected,
+		RawSelected: parserCoreWorkCountRawSelectedCensus{Nodes: rawSelected.Nodes, Parents: rawSelected.Parents, Leaves: rawSelected.Leaves, Overflow: rawSelected.Overflow},
 	}
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {

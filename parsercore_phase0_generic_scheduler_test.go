@@ -56,6 +56,7 @@ func TestDiagnosticParserCoreGenericSchedulerClosesAtRequestedByte(t *testing.T)
 		if completion.Work != (gotreesitter.DiagnosticParserCoreGenericWork{
 			Passes: 277, ActionLookups: 314, Dispatches: 279,
 			Conflicts: 8, ConflictActions: 16, Forks: 8, ConflictHeads: 17,
+			ConflictActionArmsAdmitted: 16, CausalConflictForks: 8,
 			Reductions: 131, OrdinaryShifts: 133, OrdinaryCohorts: 10, ExtraShifts: 7, NoActionDrops: 8,
 			Elections: 132, Canonicalizations: 269, PeakHeaders: 3,
 		}) {
@@ -228,6 +229,7 @@ func TestDiagnosticParserCoreGenericSchedulerContinuesToNextRequestedClosedByte(
 		completion.Work != (gotreesitter.DiagnosticParserCoreGenericWork{
 			Passes: 279, ActionLookups: 316, Dispatches: 281,
 			Conflicts: 8, ConflictActions: 16, Forks: 8, ConflictHeads: 17,
+			ConflictActionArmsAdmitted: 16, CausalConflictForks: 8,
 			Reductions: 132, OrdinaryShifts: 134, OrdinaryCohorts: 10, ExtraShifts: 7, NoActionDrops: 8,
 			Elections: 133, Canonicalizations: 271, PeakHeaders: 3,
 		}) {
@@ -278,6 +280,7 @@ func TestDiagnosticParserCoreGenericSchedulerCrossesReductionFreshnessCycle(t *t
 		completion.Work != (gotreesitter.DiagnosticParserCoreGenericWork{
 			Passes: 1441, ActionLookups: 1981, Dispatches: 1494,
 			Conflicts: 84, ConflictActions: 176, Forks: 92, ConflictHeads: 188,
+			ConflictActionArmsAdmitted: 176, CausalConflictForks: 92,
 			Reductions: 681, OrdinaryShifts: 711, OrdinaryCohorts: 122, ExtraShifts: 18,
 			ReductionPauses: 20, NoActionDrops: 92, Elections: 598, Canonicalizations: 1357, PeakHeaders: 4,
 		}) || len(result.GenericScheduler.Rounds) != 1357 || len(result.GenericScheduler.NoActionDrops) != 92 {
@@ -343,6 +346,7 @@ func TestDiagnosticParserCoreGenericSchedulerCrossesMultiHeadExtraCohort(t *test
 		completion.Work != (gotreesitter.DiagnosticParserCoreGenericWork{
 			Passes: 1642, ActionLookups: 2246, Dispatches: 1701,
 			Conflicts: 95, ConflictActions: 198, Forks: 103, ConflictHeads: 211,
+			ConflictActionArmsAdmitted: 198, CausalConflictForks: 103,
 			Reductions: 785, OrdinaryShifts: 800, OrdinaryCohorts: 138, ExtraShifts: 21, ExtraCohorts: 1,
 			ReductionPauses: 22, NoActionDrops: 103, Elections: 674, Canonicalizations: 1547, PeakHeaders: 4,
 		}) || len(result.GenericScheduler.Rounds) != 1547 || len(result.GenericScheduler.NoActionDrops) != 103 || len(result.GenericScheduler.ExternalShifts) != 46 {
@@ -380,12 +384,15 @@ func TestDiagnosticParserCoreGenericSchedulerAcceptsAndMaterializesExactRewrite(
 		acceptance.CoreWork != (core.Work{
 			Shifts: 1348, Reductions: 1501, ReductionPopRequests: 1501,
 			EmittedPopPaths: 1646, EmittedPopPayloads: 2995,
+			PredecessorLinkUnionAttempts: 211, PredecessorLinkUnionDuplicateNoop: 6,
+			PredecessorLinkUnionPrecedenceReplaced: 57, PredecessorLinkUnionAlternateAppended: 148,
 			GraphLinkAdditionsProxy: 3004, LeafConstructionsProxy: 1109,
 			ParentConstructionsProxy: 1515,
 		}) ||
 		acceptance.Work != (gotreesitter.DiagnosticParserCoreGenericWork{
 			Passes: 2597, ActionLookups: 3545, Dispatches: 2682,
 			Conflicts: 160, ConflictActions: 328, Forks: 168, ConflictHeads: 357,
+			ConflictActionArmsAdmitted: 328, CausalConflictForks: 168,
 			Reductions: 1256, OrdinaryShifts: 1238, OrdinaryCohorts: 215,
 			ExtraShifts: 27, ExtraCohorts: 1, Accepts: 1,
 			ReductionPauses: 31, NoActionDrops: 167, Elections: 1036,
@@ -476,12 +483,15 @@ func TestDiagnosticParserCoreSummaryReceiptPreservesExactRewrite(t *testing.T) {
 			acceptance.CoreWork != (core.Work{
 				Shifts: 1348, Reductions: 1501, ReductionPopRequests: 1501,
 				EmittedPopPaths: 1646, EmittedPopPayloads: 2995,
+				PredecessorLinkUnionAttempts: 211, PredecessorLinkUnionDuplicateNoop: 6,
+				PredecessorLinkUnionPrecedenceReplaced: 57, PredecessorLinkUnionAlternateAppended: 148,
 				GraphLinkAdditionsProxy: 3004, LeafConstructionsProxy: 1109,
 				ParentConstructionsProxy: 1515,
 			}) ||
 			acceptance.Work != (gotreesitter.DiagnosticParserCoreGenericWork{
 				Passes: 2597, ActionLookups: 3545, Dispatches: 2682,
 				Conflicts: 160, ConflictActions: 328, Forks: 168, ConflictHeads: 357,
+				ConflictActionArmsAdmitted: 328, CausalConflictForks: 168,
 				Reductions: 1256, OrdinaryShifts: 1238, OrdinaryCohorts: 215,
 				ExtraShifts: 27, ExtraCohorts: 1, Accepts: 1,
 				ReductionPauses: 31, NoActionDrops: 167, Elections: 1036,
