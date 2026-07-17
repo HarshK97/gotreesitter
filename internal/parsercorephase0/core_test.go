@@ -1782,7 +1782,7 @@ func TestReduceBatchParentSharingRollsBackCaps(t *testing.T) {
 	}
 }
 
-func cloneBoundaryMap(source boundaryIndex) map[boundaryKey]NodeID {
+func cloneBoundaryMap(source boundaryIndex) map[boundaryIdentity]NodeID {
 	return source.logicalMap()
 }
 

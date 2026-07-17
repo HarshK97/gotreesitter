@@ -16,7 +16,8 @@ var errBoundaryIndexCapacity = errors.New("parser-core phase zero: canonical bou
 
 // boundaryIndex is an exact, retained, frontier-local hash table. Slots from
 // earlier frontiers remain allocated but become empty in O(1) by advancing the
-// generation. Lookup always confirms the complete boundaryKey after hashing.
+// generation. The caller authenticates the full boundaryKey frontier before
+// deriving the generation-local identity stored here.
 type boundaryIndex struct {
 	slots      []boundarySlot
 	generation uint32
@@ -24,10 +25,29 @@ type boundaryIndex struct {
 	maxSlots   uint32
 }
 
+const boundaryIdentityShifted uint32 = 1
+
+type boundaryIdentity struct {
+	state      StateID
+	byteOffset uint32
+	checkpoint CheckpointID
+	flags      uint32
+}
+
 type boundarySlot struct {
-	key        boundaryKey
+	key        boundaryIdentity
 	id         NodeID
 	generation uint32
+}
+
+// boundaryProbe is an ephemeral lookup result. It remains valid only until
+// the next boundary-index mutation and is consumed synchronously by Seed or a
+// single condensation operation.
+type boundaryProbe struct {
+	key   boundaryIdentity
+	hash  uint64
+	slot  uint32
+	found bool
 }
 
 type boundaryIndexSnapshot struct {
@@ -73,25 +93,50 @@ func (i *boundaryIndex) restore(snapshot boundaryIndexSnapshot) {
 	i.count = snapshot.count
 }
 
-func (i *boundaryIndex) get(key boundaryKey) (NodeID, bool) {
-	if len(i.slots) == 0 {
-		return 0, false
+func boundaryIdentityFromKey(key boundaryKey) boundaryIdentity {
+	flags := uint32(0)
+	if key.shifted {
+		flags |= boundaryIdentityShifted
 	}
-	mask := uint64(len(i.slots) - 1)
-	start := boundaryKeyHash(key) & mask
-	for probe := uint64(0); probe < uint64(len(i.slots)); probe++ {
-		slot := &i.slots[(start+probe)&mask]
-		if slot.generation != i.generation {
-			return 0, false
-		}
-		if slot.key == key {
-			return slot.id, true
-		}
+	return boundaryIdentity{
+		state: key.state, byteOffset: key.byteOffset,
+		checkpoint: key.checkpoint, flags: flags,
 	}
-	return 0, false
 }
 
-func (i *boundaryIndex) set(key boundaryKey, id NodeID, journal *[]boundaryMutation, transactional bool) error {
+func (i *boundaryIndex) probe(key boundaryIdentity) (boundaryProbe, NodeID) {
+	return i.probeWithHash(key, boundaryIdentityHash(key))
+}
+
+func (i *boundaryIndex) probeWithHash(key boundaryIdentity, hash uint64) (boundaryProbe, NodeID) {
+	result := boundaryProbe{key: key, hash: hash}
+	if len(i.slots) == 0 {
+		return result, 0
+	}
+	mask := uint64(len(i.slots) - 1)
+	start := result.hash & mask
+	for offset := uint64(0); offset < uint64(len(i.slots)); offset++ {
+		index := uint32((start + offset) & mask)
+		slot := &i.slots[index]
+		if slot.generation != i.generation {
+			result.slot = index
+			return result, 0
+		}
+		if slot.key == key {
+			result.slot = index
+			result.found = true
+			return result, slot.id
+		}
+	}
+	return result, 0
+}
+
+func (i *boundaryIndex) get(key boundaryKey) (NodeID, bool) {
+	probe, id := i.probe(boundaryIdentityFromKey(key))
+	return id, probe.found
+}
+
+func (i *boundaryIndex) publish(probe boundaryProbe, id NodeID, journal *[]boundaryMutation, transactional bool) error {
 	if id == 0 {
 		return errors.New("parser-core phase zero: zero canonical boundary node")
 	}
@@ -99,43 +144,32 @@ func (i *boundaryIndex) set(key boundaryKey, id NodeID, journal *[]boundaryMutat
 		if err := i.grow(boundaryIndexInitialCapacity); err != nil {
 			return err
 		}
+		probe, _ = i.probeWithHash(probe.key, probe.hash)
 	}
-	index, found := i.find(key)
-	if !found && uint64(i.count+1)*boundaryIndexLoadDenominator > uint64(len(i.slots))*boundaryIndexLoadNumerator {
+	if !probe.found && uint64(i.count+1)*boundaryIndexLoadDenominator > uint64(len(i.slots))*boundaryIndexLoadNumerator {
 		if len(i.slots) >= int(i.maxSlots) {
 			return errBoundaryIndexCapacity
 		}
 		if err := i.grow(len(i.slots) * 2); err != nil {
 			return err
 		}
-		index, found = i.find(key)
+		probe, _ = i.probeWithHash(probe.key, probe.hash)
 	}
 	if transactional {
 		*journal = append(*journal, boundaryMutation{
-			slots: i.slots, index: index, previous: i.slots[index],
+			slots: i.slots, index: probe.slot, previous: i.slots[probe.slot],
 		})
 	}
-	i.slots[index] = boundarySlot{key: key, id: id, generation: i.generation}
-	if !found {
+	i.slots[probe.slot] = boundarySlot{key: probe.key, id: id, generation: i.generation}
+	if !probe.found {
 		i.count++
 	}
 	return nil
 }
 
-func (i *boundaryIndex) find(key boundaryKey) (uint32, bool) {
-	mask := uint64(len(i.slots) - 1)
-	start := boundaryKeyHash(key) & mask
-	for probe := uint64(0); probe < uint64(len(i.slots)); probe++ {
-		index := uint32((start + probe) & mask)
-		slot := &i.slots[index]
-		if slot.generation != i.generation {
-			return index, false
-		}
-		if slot.key == key {
-			return index, true
-		}
-	}
-	return 0, false
+func (i *boundaryIndex) set(key boundaryKey, id NodeID, journal *[]boundaryMutation, transactional bool) error {
+	probe, _ := i.probe(boundaryIdentityFromKey(key))
+	return i.publish(probe, id, journal, transactional)
 }
 
 func (i *boundaryIndex) grow(capacity int) error {
@@ -152,11 +186,11 @@ func (i *boundaryIndex) grow(capacity int) error {
 		if slot.generation != i.generation {
 			continue
 		}
-		destination, found := i.find(slot.key)
-		if found {
+		probe, _ := i.probe(slot.key)
+		if probe.found {
 			return errors.New("parser-core phase zero: duplicate canonical boundary during rehash")
 		}
-		i.slots[destination] = slot
+		i.slots[probe.slot] = slot
 	}
 	return nil
 }
@@ -175,8 +209,8 @@ func (i *boundaryIndex) reset() {
 	i.advanceGeneration()
 }
 
-func (i *boundaryIndex) logicalMap() map[boundaryKey]NodeID {
-	result := make(map[boundaryKey]NodeID, i.count)
+func (i *boundaryIndex) logicalMap() map[boundaryIdentity]NodeID {
+	result := make(map[boundaryIdentity]NodeID, i.count)
 	for index := range i.slots {
 		slot := i.slots[index]
 		if slot.generation == i.generation {
@@ -186,18 +220,15 @@ func (i *boundaryIndex) logicalMap() map[boundaryKey]NodeID {
 	return result
 }
 
-func boundaryKeyHash(key boundaryKey) uint64 {
+func boundaryIdentityHash(key boundaryIdentity) uint64 {
 	// CheckpointID already names exact serialized scanner bytes. Complete key
 	// equality still resolves every table-hash collision.
-	h := key.frontier * 0x9e3779b97f4a7c15
-	h ^= (uint64(key.state) << 32) | uint64(key.byteOffset)
-	h ^= uint64(key.checkpoint) * 0x94d049bb133111eb
-	if key.shifted {
+	h := (uint64(key.state) << 32) | uint64(key.byteOffset)
+	h ^= bits.RotateLeft64(uint64(key.checkpoint), 17)
+	if key.flags&boundaryIdentityShifted != 0 {
 		h ^= 0xd6e8feb86659fd93
 	}
 	h ^= h >> 30
 	h *= 0xbf58476d1ce4e5b9
-	h ^= h >> 27
-	h *= 0x94d049bb133111eb
-	return h ^ (h >> 31)
+	return h ^ (h >> 27)
 }

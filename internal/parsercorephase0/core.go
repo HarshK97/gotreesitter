@@ -544,7 +544,15 @@ func (c *Core) completeTransaction(mark checkpoint, err *error) {
 }
 
 func (c *Core) writeBoundary(key boundaryKey, id NodeID) error {
-	return c.boundaries.set(key, id, &c.boundaryJournal, len(c.transactions) != 0)
+	if key.frontier != c.frontier {
+		return errors.New("parser-core phase zero: boundary frontier mismatch")
+	}
+	probe, _ := c.boundaries.probe(boundaryIdentityFromKey(key))
+	return c.publishBoundary(probe, id)
+}
+
+func (c *Core) publishBoundary(probe boundaryProbe, id NodeID) error {
+	return c.boundaries.publish(probe, id, &c.boundaryJournal, len(c.transactions) != 0)
 }
 
 func New(tables TableView, limits Limits) (*Core, error) {
@@ -667,14 +675,15 @@ func (c *Core) BoundaryIndexStats() BoundaryIndexStats {
 // Seed creates one empty derivation at a parser boundary.
 func (c *Core) Seed(state StateID, byteOffset uint32) (Head, error) {
 	key := c.boundaryKey(state, byteOffset)
-	if id, ok := c.boundaries.get(key); ok {
+	probe, id := c.boundaries.probe(boundaryIdentityFromKey(key))
+	if probe.found {
 		return Head{Node: id}, nil
 	}
 	id, err := c.appendNode(nodeRecord{state: state, byteOffset: byteOffset, pathCount: 1})
 	if err != nil {
 		return Head{}, err
 	}
-	if err := c.writeBoundary(key, id); err != nil {
+	if err := c.publishBoundary(probe, id); err != nil {
 		c.nodes = c.nodes[:len(c.nodes)-1]
 		return Head{}, err
 	}
@@ -696,11 +705,11 @@ func (c *Core) Boundary(head Head) (StateID, uint32, error) {
 // same-lookahead scheduler phase identity. Headers use it at pass barriers to
 // replace stale immutable NodeIDs without changing their first-slot order.
 func (c *Core) CanonicalBoundary(state StateID, byteOffset uint32, consumed bool, checkpoint CheckpointID) (Head, bool) {
-	id, ok := c.boundaries.get(boundaryKey{
+	probe, id := c.boundaries.probe(boundaryIdentityFromKey(boundaryKey{
 		frontier: c.frontier, state: state, byteOffset: byteOffset,
 		shifted: consumed, checkpoint: checkpoint,
-	})
-	return Head{Node: id}, ok
+	}))
+	return Head{Node: id}, probe.found
 }
 
 // InternCheckpoint returns the core-local identity of an exact serialized
@@ -1401,8 +1410,11 @@ func (c *Core) remapReductionPlan(children []SubtreeID, plan *ReductionPlan, scr
 }
 
 func (c *Core) condenseInputExists(key boundaryKey, in linkInput) (bool, error) {
-	id, ok := c.boundaries.get(key)
-	if !ok {
+	if key.frontier != c.frontier {
+		return false, errors.New("parser-core phase zero: boundary frontier mismatch")
+	}
+	probe, id := c.boundaries.probe(boundaryIdentityFromKey(key))
+	if !probe.found {
 		return false, nil
 	}
 	node, err := c.node(id)
@@ -1564,11 +1576,10 @@ func (c *Core) condenseWithOutcome(key boundaryKey, in linkInput) (condenseOutco
 	if _, err := c.subtree(in.payload); err != nil {
 		return condenseOutcome{}, err
 	}
-	var oldID NodeID
+	probe, oldID := c.boundaries.probe(boundaryIdentityFromKey(key))
 	var old nodeRecord
 	var oldLinks []linkRecord
-	oldID, _ = c.boundaries.get(key)
-	if oldID != 0 {
+	if probe.found {
 		oldRecord, err := c.node(oldID)
 		if err != nil {
 			return condenseOutcome{}, err
@@ -1615,10 +1626,10 @@ func (c *Core) condenseWithOutcome(key boundaryKey, in linkInput) (condenseOutco
 				if incomingPrecedence <= incumbentPrecedence {
 					return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, nil
 				}
-				head, err := c.replaceBoundaryLink(key, old, oldLinks, candidate, in)
+				head, err := c.replaceBoundaryLink(key, probe, old, oldLinks, candidate, in)
 				return condenseOutcome{head: head, change: condenseUpdated}, err
 			}
-			outcome, handled, err := c.factorExactPredecessor(key, oldID, oldLinks, in)
+			outcome, handled, err := c.factorExactPredecessor(key, probe, oldID, oldLinks, in)
 			if err != nil || handled {
 				return outcome, err
 			}
@@ -1664,7 +1675,7 @@ func (c *Core) condenseWithOutcome(key boundaryKey, in linkInput) (condenseOutco
 	if err != nil {
 		return condenseOutcome{}, err
 	}
-	if err := c.writeBoundary(key, id); err != nil {
+	if err := c.publishBoundary(probe, id); err != nil {
 		return condenseOutcome{}, err
 	}
 	change := condenseNew
@@ -1719,7 +1730,7 @@ func (c *Core) effectivePayloadPrecedence(payloadID SubtreeID, aggregate int64) 
 // shallow-equivalent outer edge is deliberately declined: tree-sitter also
 // updates a node-level maximum precedence in that case, and nodeRecord has no
 // authenticated equivalent yet.
-func (c *Core) factorExactPredecessor(key boundaryKey, oldID NodeID, oldLinks []linkRecord, in linkInput) (out condenseOutcome, handled bool, err error) {
+func (c *Core) factorExactPredecessor(key boundaryKey, probe boundaryProbe, oldID NodeID, oldLinks []linkRecord, in linkInput) (out condenseOutcome, handled bool, err error) {
 	for index, incumbent := range oldLinks {
 		if incumbent.prev == in.prev {
 			continue
@@ -1773,7 +1784,7 @@ func (c *Core) factorExactPredecessor(key boundaryKey, oldID NodeID, oldLinks []
 		if appendErr != nil {
 			return condenseOutcome{}, true, appendErr
 		}
-		if err := c.writeBoundary(key, id); err != nil {
+		if err := c.publishBoundary(probe, id); err != nil {
 			return condenseOutcome{}, true, err
 		}
 		return condenseOutcome{head: Head{Node: id}, change: condenseUpdated}, true, nil
@@ -2083,7 +2094,7 @@ func (c *Core) shallowPayloadClass(prevID NodeID, payloadID SubtreeID) (shallowP
 // historical head and every link reachable from it immutable. oldLinks are in
 // stable insertion order, so rebuilding them through prepends preserves the
 // order observed by nodeLinks.
-func (c *Core) replaceBoundaryLink(key boundaryKey, old nodeRecord, oldLinks []linkRecord, candidate int, in linkInput) (Head, error) {
+func (c *Core) replaceBoundaryLink(key boundaryKey, probe boundaryProbe, old nodeRecord, oldLinks []linkRecord, candidate int, in linkInput) (Head, error) {
 	if candidate < 0 || candidate >= len(oldLinks) || uint32(len(oldLinks)) != old.linkCount {
 		return Head{}, errors.New("parser-core phase zero: invalid shallow-fold candidate")
 	}
@@ -2121,7 +2132,7 @@ func (c *Core) replaceBoundaryLink(key boundaryKey, old nodeRecord, oldLinks []l
 		c.links = c.links[:linkMark]
 		return Head{}, err
 	}
-	if err := c.writeBoundary(key, id); err != nil {
+	if err := c.publishBoundary(probe, id); err != nil {
 		return Head{}, err
 	}
 	return Head{Node: id}, nil

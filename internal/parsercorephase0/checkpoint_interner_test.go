@@ -150,7 +150,8 @@ func TestCheckpointCompactLayoutsAMD64(t *testing.T) {
 	}{
 		{"CheckpointID", unsafe.Sizeof(CheckpointID(0)), 4},
 		{"boundaryKey", unsafe.Sizeof(boundaryKey{}), 24},
-		{"boundarySlot", unsafe.Sizeof(boundarySlot{}), 32},
+		{"boundaryIdentity", unsafe.Sizeof(boundaryIdentity{}), 16},
+		{"boundarySlot", unsafe.Sizeof(boundarySlot{}), 24},
 	}
 	for _, check := range checks {
 		if check.got != check.want {

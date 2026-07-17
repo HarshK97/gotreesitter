@@ -13,7 +13,7 @@ func TestBoundaryIndexMatchesMapModelAcrossFrontiers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	model := make(map[boundaryKey]NodeID)
+	model := make(map[boundaryIdentity]NodeID)
 	random := rand.New(rand.NewSource(0x69b0_0da7))
 	frontier := uint64(1)
 	for step := 0; step < 5000; step++ {
@@ -31,7 +31,7 @@ func TestBoundaryIndexMatchesMapModelAcrossFrontiers(t *testing.T) {
 		if err := index.set(key, id, nil, false); err != nil {
 			t.Fatalf("step %d set: %v", step, err)
 		}
-		model[key] = id
+		model[boundaryIdentityFromKey(key)] = id
 		if got, ok := index.get(key); !ok || got != id {
 			t.Fatalf("step %d immediate lookup=(%d,%t), want (%d,true)", step, got, ok, id)
 		}
@@ -51,10 +51,10 @@ func TestBoundaryIndexFullKeyEqualitySurvivesHashCollision(t *testing.T) {
 	}
 	first := boundaryKey{frontier: 1, state: 1, checkpoint: 1}
 	var second boundaryKey
-	wantBucket := boundaryKeyHash(first) & uint64(len(index.slots)-1)
+	wantBucket := boundaryIdentityHash(boundaryIdentityFromKey(first)) & uint64(len(index.slots)-1)
 	for state := StateID(2); ; state++ {
 		candidate := boundaryKey{frontier: 1, state: state, checkpoint: CheckpointID(state + 1)}
-		if boundaryKeyHash(candidate)&uint64(len(index.slots)-1) == wantBucket {
+		if boundaryIdentityHash(boundaryIdentityFromKey(candidate))&uint64(len(index.slots)-1) == wantBucket {
 			second = candidate
 			break
 		}
@@ -70,6 +70,82 @@ func TestBoundaryIndexFullKeyEqualitySurvivesHashCollision(t *testing.T) {
 	}
 	if got, ok := index.get(second); !ok || got != 22 {
 		t.Fatalf("second collision lookup=(%d,%t)", got, ok)
+	}
+}
+
+func TestBoundaryProbePublishesAndReplacesWithoutRecounting(t *testing.T) {
+	index, err := newBoundaryIndex(64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := boundaryIdentity{state: 7, byteOffset: 11, checkpoint: 13, flags: boundaryIdentityShifted}
+	probe, id := index.probe(key)
+	if probe.found || id != 0 {
+		t.Fatalf("empty probe=(%+v,%d)", probe, id)
+	}
+	if err := index.publish(probe, 17, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	found, id := index.probe(key)
+	if !found.found || id != 17 || index.count != 1 {
+		t.Fatalf("published probe=(%+v,%d) count=%d", found, id, index.count)
+	}
+	if err := index.publish(found, 19, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	replaced, id := index.probe(key)
+	if !replaced.found || id != 19 || replaced.slot != found.slot || index.count != 1 {
+		t.Fatalf("replacement probe=(%+v,%d) first=%+v count=%d", replaced, id, found, index.count)
+	}
+}
+
+func TestBoundaryProbeReprobesAfterGrowth(t *testing.T) {
+	index, err := newBoundaryIndex(64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for entry := 0; entry < 11; entry++ {
+		key := boundaryKey{frontier: 1, state: StateID(entry + 1), byteOffset: uint32(entry * 3)}
+		if err := index.set(key, NodeID(entry+1), nil, false); err != nil {
+			t.Fatalf("entry %d: %v", entry, err)
+		}
+	}
+	if len(index.slots) != boundaryIndexInitialCapacity {
+		t.Fatalf("initial capacity=%d", len(index.slots))
+	}
+	key := boundaryIdentity{state: 99, byteOffset: 101, checkpoint: 3}
+	probe, _ := index.probe(key)
+	oldSlot := probe.slot
+	if err := index.publish(probe, 99, nil, false); err != nil {
+		t.Fatal(err)
+	}
+	if len(index.slots) != boundaryIndexInitialCapacity*2 || index.count != 12 {
+		t.Fatalf("grown capacity=%d count=%d", len(index.slots), index.count)
+	}
+	found, id := index.probe(key)
+	if !found.found || id != 99 {
+		t.Fatalf("grown lookup=(%+v,%d), old slot=%d", found, id, oldSlot)
+	}
+}
+
+func TestWriteBoundaryRejectsStaleFrontierWithoutMutation(t *testing.T) {
+	compact, err := New(&fakeTable{}, Limits{MaxNodes: 16})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := compact.Seed(1, 0); err != nil {
+		t.Fatal(err)
+	}
+	stale := compact.boundaryKey(2, 1)
+	if err := compact.BeginFrontier(); err != nil {
+		t.Fatal(err)
+	}
+	before := compact.boundaries.logicalMap()
+	if err := compact.writeBoundary(stale, 2); err == nil {
+		t.Fatal("stale boundary write succeeded")
+	}
+	if got := compact.boundaries.logicalMap(); !reflect.DeepEqual(got, before) {
+		t.Fatalf("stale boundary write mutated index: got=%v want=%v", got, before)
 	}
 }
 
