@@ -374,7 +374,7 @@ func TestParserReturnedTreeNormalizationPreservesDeferredIniCompatibility(t *tes
 
 	parser := &Parser{language: lang}
 	parser.normalizeReturnedTreeForParse(tree, source)
-	if !tree.resultCompatibilityPending {
+	if !tree.resultCompatibilityPending.Load() {
 		t.Fatal("resultCompatibilityPending = false after parser-return normalization, want deferred")
 	}
 	if got := tree.ParseStopReason(); got != ParseStopNoStacksAlive {
@@ -384,7 +384,7 @@ func TestParserReturnedTreeNormalizationPreservesDeferredIniCompatibility(t *tes
 	if root := tree.RootNode(); root == nil {
 		t.Fatal("RootNode() = nil")
 	}
-	if tree.resultCompatibilityPending {
+	if tree.resultCompatibilityPending.Load() {
 		t.Fatal("resultCompatibilityPending = true after RootNode")
 	}
 	if got := tree.ParseStopReason(); got != ParseStopAccepted {

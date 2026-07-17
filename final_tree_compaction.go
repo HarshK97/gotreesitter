@@ -81,7 +81,7 @@ func eligibleForFinalTreeCompaction(p *Parser, tree *Tree, source []byte) bool {
 	if tree.ParseStopReason() != ParseStopAccepted || tree.parseRuntime.Truncated || tree.forestFastPath || tree.incrementalReuseDisabled {
 		return false
 	}
-	if tree.resultCompatibilityPending || tree.externalScannerCheckpointsDeferred || len(tree.includedRanges) != 0 || len(tree.edits) != 0 {
+	if tree.resultCompatibilityPending.Load() || tree.externalScannerCheckpointsDeferred || len(tree.includedRanges) != 0 || len(tree.edits) != 0 {
 		return false
 	}
 	if len(tree.borrowedArena) != 0 || tree.arena.class != arenaClassFull || tree.arena.refs.Load() != 1 {

@@ -68,7 +68,23 @@ func (p *queryParser) readString() (string, error) {
 		ch := p.input[p.pos]
 		if ch == '\\' && p.pos+1 < len(p.input) {
 			p.pos++
-			sb.WriteByte(p.input[p.pos])
+			// Decode control-character escapes the way tree-sitter's query
+			// string parser does; any other escaped byte is the literal byte
+			// (e.g. \\ -> \, \" -> "). Previously every escape dropped the
+			// backslash verbatim, so "\n" compiled to the letter 'n' and never
+			// matched an anonymous newline token.
+			switch p.input[p.pos] {
+			case 'n':
+				sb.WriteByte('\n')
+			case 'r':
+				sb.WriteByte('\r')
+			case 't':
+				sb.WriteByte('\t')
+			case '0':
+				sb.WriteByte(0)
+			default:
+				sb.WriteByte(p.input[p.pos])
+			}
 			p.pos++
 			continue
 		}

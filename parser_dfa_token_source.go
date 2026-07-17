@@ -2620,6 +2620,12 @@ func (d *dfaTokenSource) eofTokenAtLexerPos() Token {
 
 func (d *dfaTokenSource) SkipToByte(offset uint32) Token {
 	target := int(offset)
+	// Clamp past-EOF targets (e.g. an out-of-range included range): skipOneRune
+	// is a no-op at EOF, so an unclamped target > len(source) would spin the
+	// loop below forever. SkipToByteWithPoint already clamps identically.
+	if target > len(d.lexer.source) {
+		target = len(d.lexer.source)
+	}
 	if target < d.lexer.pos {
 		// Rewind isn't supported for DFA token sources during parse.
 		return d.Next()

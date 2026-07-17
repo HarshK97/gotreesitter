@@ -176,7 +176,7 @@ func TestTreeRootNodeRecordsDeferredTypeScriptCompatibilityTiming(t *testing.T) 
 	tree.deferResultCompatibility()
 
 	_ = tree.RootNode()
-	if tree.resultCompatibilityPending {
+	if tree.resultCompatibilityPending.Load() {
 		t.Fatal("resultCompatibilityPending = true after deferred compatibility ran")
 	}
 	if tree.resultErrorSummary != resultErrorSummaryClean {

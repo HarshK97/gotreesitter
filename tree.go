@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Range is a span of source text.
@@ -2168,16 +2169,16 @@ func (t *Tree) deferResultCompatibility() {
 	if t == nil || t.root == nil || t.language == nil {
 		return
 	}
-	t.resultCompatibilityPending = true
+	t.resultCompatibilityPending.Store(true)
 }
 
 func (t *Tree) ensureResultCompatibility() {
-	if t == nil || !t.resultCompatibilityPending {
+	if t == nil || !t.resultCompatibilityPending.Load() {
 		return
 	}
 	t.resultCompatibilityOnce.Do(func() {
 		defer func() {
-			t.resultCompatibilityPending = false
+			t.resultCompatibilityPending.Store(false)
 		}()
 		if t.root == nil || t.language == nil {
 			return
@@ -2560,7 +2561,7 @@ type Tree struct {
 	// The error summary is not a persistent invariant of a caller-edited tree.
 	resultErrorSummary         resultErrorSummary
 	resultCompatibilityApplied bool
-	resultCompatibilityPending bool
+	resultCompatibilityPending atomic.Bool
 	resultCompatibilityOnce    sync.Once
 	released                   bool
 }

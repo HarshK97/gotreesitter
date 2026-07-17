@@ -114,7 +114,7 @@ func (p *Parser) normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []
 	if !shouldNormalizeIncrementalReturnedTree(tree, oldTree) {
 		return
 	}
-	if tree.resultCompatibilityPending {
+	if tree.resultCompatibilityPending.Load() {
 		finalizeDeferredReturnedTreeTruncation(tree, source)
 		return
 	}
@@ -140,7 +140,7 @@ func (p *Parser) normalizeReturnedTreeForParse(tree *Tree, source []byte) {
 	if !shouldNormalizeReturnedTree(tree) {
 		return
 	}
-	if tree.resultCompatibilityPending {
+	if tree.resultCompatibilityPending.Load() {
 		finalizeDeferredReturnedTreeTruncation(tree, source)
 		return
 	}

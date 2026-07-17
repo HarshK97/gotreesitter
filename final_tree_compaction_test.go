@@ -146,11 +146,11 @@ func TestFinalTreeCompactionEligibilityIsNarrow(t *testing.T) {
 	if !eligibleForFinalTreeCompaction(parser, tree, source) {
 		t.Fatal("fresh accepted full parse should be eligible")
 	}
-	tree.resultCompatibilityPending = true
+	tree.resultCompatibilityPending.Store(true)
 	if eligibleForFinalTreeCompaction(parser, tree, source) {
 		t.Fatal("deferred compatibility tree should be excluded")
 	}
-	tree.resultCompatibilityPending = false
+	tree.resultCompatibilityPending.Store(false)
 	tree.externalScannerCheckpointsDeferred = true
 	if eligibleForFinalTreeCompaction(parser, tree, source) {
 		t.Fatal("deferred external checkpoints should be excluded")

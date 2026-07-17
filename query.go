@@ -8,7 +8,11 @@ import (
 // Query holds compiled patterns parsed from a tree-sitter .scm query file.
 // It can be executed against a syntax tree to find matching nodes and
 // return captured names.
-// Query is safe for concurrent use after construction.
+//
+// Query is safe for concurrent Execute calls after construction. The mutating
+// methods DisableCapture and DisablePattern are NOT safe to call concurrently
+// with Execute (or with each other); call them before sharing the Query across
+// goroutines.
 type Query struct {
 	patterns []Pattern
 	captures []string // capture name by index
@@ -404,13 +408,14 @@ func (c *QueryCursor) nodeIntersectsRanges(n *Node) bool {
 		}
 	}
 	if c.hasPointRange {
-		if !pointLessThan(c.startPoint, c.endPoint) && c.startPoint != c.endPoint {
+		// Half-open, mirroring the byte-range rule above: a node that only
+		// touches the range at a single boundary point has zero overlap and is
+		// out of range. (The previous inclusive rule disagreed with
+		// SetByteRange for the same logical span.)
+		if pointLessOrEqual(c.endPoint, c.startPoint) {
 			return false
 		}
-		if !pointLessThan(n.startPoint, c.endPoint) && n.startPoint != c.endPoint {
-			return false
-		}
-		if !pointLessThan(c.startPoint, n.endPoint) && c.startPoint != n.endPoint {
+		if pointLessOrEqual(n.endPoint, c.startPoint) || pointLessOrEqual(c.endPoint, n.startPoint) {
 			return false
 		}
 	}
