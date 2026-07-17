@@ -271,6 +271,19 @@ type nodeArena struct {
 	// is already threaded through every result-rank caller. It is dropped in
 	// reset() because pending-parent slabs reuse their pointers across parses.
 	pendingParentErrorRankMemo map[*pendingParent]int8
+
+	// forestResultLinkCompareScratch backs the two single-entry glrStack
+	// wrappers built by forestResultLinkCompareWithRawShape to reuse the
+	// stack-compare machinery for a bare gssLink pair. It is per-arena
+	// (nodeArena is already threaded through every forest result-link
+	// comparison call, same rationale as pendingParentErrorRankMemo above)
+	// so repeated compares during forest coalescing/promotion don't each
+	// heap-allocate a fresh one-element []stackEntry. Values are overwritten
+	// before every read and the comparison never recurses back into
+	// forestResultLinkCompare*, so no cross-call aliasing is possible; no
+	// reset() clearing is needed for correctness, only to avoid pinning a
+	// stale subtree pointer while the arena sits in the pool.
+	forestResultLinkCompareScratch [2]stackEntry
 }
 
 type nodeSlab struct {
@@ -560,6 +573,9 @@ func (a *nodeArena) reset() {
 	// stale entry could otherwise alias a structurally different parent at the
 	// same address. Drop the lazily allocated map rather than clear it in place.
 	a.pendingParentErrorRankMemo = nil
+	// Drop any subtree pointer left in the compare scratch so a pooled arena
+	// sitting idle between parses doesn't pin the previous parse's tree.
+	a.forestResultLinkCompareScratch = [2]stackEntry{}
 }
 
 func (a *nodeArena) resetPrimaryNodes() {
