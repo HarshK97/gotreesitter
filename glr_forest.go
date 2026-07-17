@@ -2862,7 +2862,8 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 	start := &gssForestNode{state: 1, byteOffset: 0}
 	frontier := []*gssForestNode{start}
 	glrStates := make([]StateID, 0, 16)
-	reducer := &forestReducer{}
+	reducer := acquireForestReducer()
+	defer releaseForestReducer(reducer)
 	slab := acquireGSSForestNodeSlab()
 	defer releaseGSSForestNodeSlab(slab)
 	linkCap := forestLinkCapForLanguage(lang.Name)
@@ -3730,6 +3731,92 @@ type forestReduceEmit struct {
 	childScore int
 	popTo      *gssForestNode
 	noExtras   bool
+}
+
+// forestReducerPool pools forestReducer instances (and their path/rev/
+// emitChildren/emits backing arrays) across parseForest calls, the same way
+// forestAlternativeIndexPool pools forestAlternativeIndex above. The reducer
+// was allocated fresh per parse and its emitChildren slice — the buffer every
+// reduce() visit appends its children into (see (*forestReducer).visit) —
+// regrew from nil every parse, making forestReducer csharp's largest
+// remaining forest allocator after forestAlternativeIndex was pooled.
+//
+// Pooling is safe here because emitChildren (and path/rev/emits) never
+// escape parseForest: every reduce() call resets emitChildren/emits/steps to
+// empty/zero up front (line below), the visit callback wired in at the
+// parseForest reduce call site reads `children` (a sub-slice of
+// emitChildren) synchronously and copies out everything it needs — Node
+// pointers into arena-allocated child slices (buildReduceChildrenWithPath),
+// stackEntry field VALUES into arena-allocated rawShape children
+// (captureRawShape) — before returning, per the "must consume or copy
+// it before returning, never retain it" contract documented on
+// reduceOverForest/forestReducer above. No field of forestReducer is ever
+// stored on the returned *Node/*gssForestNode or on the *Parser, so reusing
+// the same *forestReducer for the next parse cannot alias the previous
+// parse's tree.
+var forestReducerPool = sync.Pool{
+	New: func() any {
+		return &forestReducer{}
+	},
+}
+
+// forestReducerMaxRetainedElements bounds how large forestReducer's scratch
+// slices (path/rev/emitChildren/emits) releaseForestReducer will keep
+// (truncated, not reallocated) for reuse by a later pooled acquire. It
+// mirrors forestAlternativeIndexMaxRetainedEntries: a slice grown for one
+// exceptionally large/ambiguous parse should not stay pinned in the pool for
+// every subsequent, normally-sized parse that happens to draw the same
+// pooled instance.
+const forestReducerMaxRetainedElements = 1 << 20
+
+func acquireForestReducer() *forestReducer {
+	fr := forestReducerPool.Get().(*forestReducer)
+	// capped is sticky for the whole parse by design (see reduce's doc
+	// comment) — parseForest never clears it once set, since tripping it is
+	// meant to force that parse to decline for good. A pooled instance can
+	// carry capped=true from whatever parse last released it, so acquire
+	// must clear it (and capReason) or the next parse would spuriously
+	// decline before looking at its first token. steps/visitCount/visitCap
+	// are already reset by parseForest/reduce before they are read, but are
+	// zeroed here too for hygiene.
+	fr.capped = false
+	fr.capReason = ""
+	fr.steps = 0
+	fr.visitCount = 0
+	fr.visitCap = 0
+	return fr
+}
+
+func releaseForestReducer(fr *forestReducer) {
+	if fr == nil {
+		return
+	}
+	if cap(fr.path) > forestReducerMaxRetainedElements {
+		fr.path = nil
+	} else {
+		fr.path = fr.path[:0]
+	}
+	if cap(fr.rev) > forestReducerMaxRetainedElements {
+		fr.rev = nil
+	} else {
+		fr.rev = fr.rev[:0]
+	}
+	if cap(fr.emitChildren) > forestReducerMaxRetainedElements {
+		fr.emitChildren = nil
+	} else {
+		fr.emitChildren = fr.emitChildren[:0]
+	}
+	if cap(fr.emits) > forestReducerMaxRetainedElements {
+		fr.emits = nil
+	} else {
+		fr.emits = fr.emits[:0]
+	}
+	fr.capped = false
+	fr.capReason = ""
+	fr.steps = 0
+	fr.visitCount = 0
+	fr.visitCap = 0
+	forestReducerPool.Put(fr)
 }
 
 // reduce walks back to childCount non-extra subtrees ending at node, including
