@@ -2576,38 +2576,184 @@ func parseIndexedStringArray(body string, count int, enums map[string]int) ([]st
 	return result, nil
 }
 
-// unescapeCString handles basic C string escape sequences.
+// unescapeCString decodes a C string literal's body (as emitted into
+// ts_symbol_names[] by tree-sitter's C code generator) into the exact text
+// the C runtime displays for that symbol. This is the single source of
+// truth for at-rest symbol-name fidelity: blobs must store decoded glyphs
+// (e.g. "?", "∀", "?.") rather than escaped C source spelling (e.g. "\?",
+// "∀"), so SymbolByName lookups, Node.Type(), and query compilation
+// all see the same text the C oracle reports.
+//
+// It handles the full set of C escapes tree-sitter's generator can emit:
+// \\ \" \? \n \t \r \a \b \f \v, \xNN (hex byte, greedy per the C
+// standard), octal \NNN (1-3 octal digits), \uXXXX / \UXXXXXXXX (universal
+// character names — the form C actually emits for non-ASCII symbol
+// spellings like agda's "∀"), and, defensively, the \u{...} brace form used
+// by some non-C generators/toolchains even though the local parser.c corpus
+// never emits it.
+//
+// A single forward scan (rather than a chain of global replacements) is
+// required for correctness here: variable-length escapes (\xNN.., octal,
+// \u{...}) cannot be expressed as fixed string replacements, and the scan
+// naturally protects doubled backslashes — many grammars have tokens whose
+// *literal* text contains a backslash (pkl/swift "\(", cue "\#(", tlaplus
+// "\forall"), which C always escapes as "\\(" etc. in the generated source.
+// Any backslash sequence that isn't a recognized escape (including one
+// half of a doubled backslash, once the first backslash of the pair has
+// been consumed) is left exactly as-is: the backslash is copied verbatim
+// and the following byte is handled as an ordinary character on the next
+// iteration, reproducing the same "copy literally" behavior for both
+// doubled-backslash literal content and malformed/truncated escapes (e.g.
+// a lone trailing "\u12" with too few hex digits).
 func unescapeCString(s string) string {
-	s = strings.ReplaceAll(s, `\\`, "\x00BACKSLASH\x00")
-	s = strings.ReplaceAll(s, `\"`, `"`)
-	s = strings.ReplaceAll(s, `\n`, "\n")
-	s = strings.ReplaceAll(s, `\t`, "\t")
-	s = strings.ReplaceAll(s, `\r`, "\r")
-	s = strings.ReplaceAll(s, "\x00BACKSLASH\x00", `\`)
-	// Tree-sitter emits universal-character escapes in generated C symbol
-	// names (for example, "\\u03bb" for λ). Decode them so a language loaded
-	// from parser.c exposes the same symbol names as the C runtime.
 	var b strings.Builder
+	b.Grow(len(s))
 	for i := 0; i < len(s); {
-		if i+6 <= len(s) && s[i] == '\\' && s[i+1] == 'u' {
-			if v, err := strconv.ParseUint(s[i+2:i+6], 16, 32); err == nil {
-				b.WriteRune(rune(v))
-				i += 6
+		if s[i] != '\\' {
+			r, n := utf8.DecodeRuneInString(s[i:])
+			b.WriteRune(r)
+			i += n
+			continue
+		}
+		if i+1 >= len(s) {
+			// Trailing lone backslash: nothing follows to form an escape.
+			b.WriteByte('\\')
+			i++
+			continue
+		}
+		switch next := s[i+1]; next {
+		case '\\':
+			b.WriteByte('\\')
+			i += 2
+		case '"':
+			b.WriteByte('"')
+			i += 2
+		case '\'':
+			b.WriteByte('\'')
+			i += 2
+		case '?':
+			b.WriteByte('?')
+			i += 2
+		case 'n':
+			b.WriteByte('\n')
+			i += 2
+		case 't':
+			b.WriteByte('\t')
+			i += 2
+		case 'r':
+			b.WriteByte('\r')
+			i += 2
+		case 'a':
+			b.WriteByte('\a')
+			i += 2
+		case 'b':
+			b.WriteByte('\b')
+			i += 2
+		case 'f':
+			b.WriteByte('\f')
+			i += 2
+		case 'v':
+			b.WriteByte('\v')
+			i += 2
+		case 'u':
+			if n, ok := decodeUniversalCharEscape(s, i); ok {
+				b.WriteRune(n.r)
+				i = n.next
 				continue
 			}
-		}
-		if i+10 <= len(s) && s[i] == '\\' && s[i+1] == 'U' {
-			if v, err := strconv.ParseUint(s[i+2:i+10], 16, 32); err == nil {
-				b.WriteRune(rune(v))
-				i += 10
-				continue
+			// Unrecognized/malformed \u escape: copy the backslash verbatim
+			// and let normal scanning pick up "u..." on the next iteration.
+			b.WriteByte('\\')
+			i++
+		case 'U':
+			if i+10 <= len(s) {
+				if v, err := strconv.ParseUint(s[i+2:i+10], 16, 32); err == nil && utf8.ValidRune(rune(v)) {
+					b.WriteRune(rune(v))
+					i += 10
+					continue
+				}
 			}
+			b.WriteByte('\\')
+			i++
+		case 'x':
+			j := i + 2
+			for j < len(s) && isHexDigitByte(s[j]) {
+				j++
+			}
+			if j > i+2 {
+				if v, err := strconv.ParseUint(s[i+2:j], 16, 32); err == nil {
+					b.WriteByte(byte(v))
+					i = j
+					continue
+				}
+			}
+			b.WriteByte('\\')
+			i++
+		default:
+			if next >= '0' && next <= '7' {
+				end := i + 1
+				for end < len(s) && end < i+4 && s[end] >= '0' && s[end] <= '7' {
+					end++
+				}
+				if v, err := strconv.ParseUint(s[i+1:end], 8, 32); err == nil {
+					b.WriteByte(byte(v))
+					i = end
+					continue
+				}
+			}
+			// Not a recognized escape: this is literal token text (e.g. pkl
+			// "\(", cue "\#(", circom "\=") that C reports verbatim. Copy the
+			// backslash and let the following byte be handled as an ordinary
+			// character on the next iteration.
+			b.WriteByte('\\')
+			i++
 		}
-		r, n := utf8.DecodeRuneInString(s[i:])
-		b.WriteRune(r)
-		i += n
 	}
 	return b.String()
+}
+
+// isHexDigitByte reports whether b is an ASCII hex digit.
+func isHexDigitByte(b byte) bool {
+	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
+}
+
+type decodedUniversalChar struct {
+	r    rune
+	next int
+}
+
+// decodeUniversalCharEscape decodes a C11 universal-character-name escape
+// \uXXXX (exactly 4 hex digits) starting at s[i] == '\\', s[i+1] == 'u'.
+// It also accepts the non-C \u{...} brace form defensively: no grammar in
+// the local corpus emits it, but some non-parser.c toolchains use it for
+// the same purpose.
+func decodeUniversalCharEscape(s string, i int) (decodedUniversalChar, bool) {
+	if i+2 < len(s) && s[i+2] == '{' {
+		end := strings.IndexByte(s[i+3:], '}')
+		if end < 0 {
+			return decodedUniversalChar{}, false
+		}
+		hex := s[i+3 : i+3+end]
+		if hex == "" {
+			return decodedUniversalChar{}, false
+		}
+		v, err := strconv.ParseUint(hex, 16, 32)
+		if err != nil || !utf8.ValidRune(rune(v)) {
+			return decodedUniversalChar{}, false
+		}
+		return decodedUniversalChar{r: rune(v), next: i + 3 + end + 1}, true
+	}
+	if i+6 > len(s) {
+		return decodedUniversalChar{}, false
+	}
+	v, err := strconv.ParseUint(s[i+2:i+6], 16, 32)
+	if err != nil {
+		return decodedUniversalChar{}, false
+	}
+	if !utf8.ValidRune(rune(v)) {
+		return decodedUniversalChar{}, false
+	}
+	return decodedUniversalChar{r: rune(v), next: i + 6}, true
 }
 
 // parseUint16List parses a comma-separated list of uint16 values from

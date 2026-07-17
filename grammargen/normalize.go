@@ -1122,7 +1122,7 @@ func plainVisibleStringTokenRules(g *Grammar) map[string]bool {
 	}
 	for _, name := range g.RuleOrder {
 		rule := g.Rules[name]
-		if name == startRule || strings.HasPrefix(name, "_") || rule == nil || rule.Kind != RuleString || !isPlainVisibleNamedLeafStringLiteral(g, rule.Value) {
+		if name == startRule || strings.HasPrefix(name, "_") || rule == nil || rule.Kind != RuleString || !isPlainVisibleNamedLeafStringLiteral(g, name, rule.Value) {
 			continue
 		}
 		candidatesByValue[rule.Value] = append(candidatesByValue[rule.Value], name)
@@ -1840,6 +1840,16 @@ func extractTokenStringValue(r *Rule) string {
 
 // escapeAnonymousName normalizes anonymous terminal display names to match
 // tree-sitter C behavior.
+//
+// Stage-1 investigation note: an attempt to also decode "?" here (dropping
+// the "\?" escape, to match cmd/ts2go/extract.go's newly-decoded-at-rest
+// unescapeCString) regressed TestTypeScriptConditionalTypeParity — the
+// generated TypeScript grammar's conditional-type "?" started producing an
+// ERROR node instead of parsing, for a root cause not yet isolated within
+// Stage-1's SAFE-NOW budget (something beyond display text depends on the
+// "\?" vs "?" spelling distinguishing two otherwise-identical-looking
+// terminal registrations). Left escaping in place; see the Stage-1 commit
+// report for the deferred follow-up.
 func escapeAnonymousName(s string) string {
 	s = decodeAnonymousNameUnicodeEscapes(s)
 	return strings.ReplaceAll(s, "?", `\?`)
@@ -3356,7 +3366,7 @@ func isLowercaseIdentifierLikeKeywordLiteral(s string) bool {
 	return true
 }
 
-func isPlainVisibleNamedLeafStringLiteral(g *Grammar, s string) bool {
+func isPlainVisibleNamedLeafStringLiteral(g *Grammar, ruleName, s string) bool {
 	// Whether a visible bare-string rule collapses into a plain named
 	// terminal (vs. wrapping the anonymous string token in a nonterminal
 	// production) is actually decided by ownership, not shape: it collapses
@@ -3389,13 +3399,85 @@ func isPlainVisibleNamedLeafStringLiteral(g *Grammar, s string) bool {
 		return true
 	}
 	// A pure lowercase identifier literal participates in word-token keyword
-	// handling, so preserve its nonterminal wrapper when a word symbol exists.
-	// Punctuation-prefixed literals cannot be word tokens and must be
-	// classified before this guard.
+	// handling, so preserve its nonterminal wrapper when a word symbol exists
+	// AND the rule is never referenced by name elsewhere in the grammar
+	// (e.g. a keyword rule that only exists to seed the keyword table, like
+	// "match" in TestPlainVisibleIdentifierStringRuleWithWordRemainsNonterminal
+	// — it has no reachable production either way, so the wrapper is kept as
+	// the existing, pinned default for that shape).
+	//
+	// But when the rule IS referenced by name elsewhere (Sym(ruleName) used
+	// in another production, e.g. JS's primary_expression choosing
+	// Sym("this")/Sym("super")/Sym("true")/Sym("false")/Sym("null")/
+	// Sym("undefined")), tree-sitter C's real ownership rule applies exactly
+	// as it does for the punctuation/backslash buckets above: the keyword
+	// collapses into a single Visible+Named terminal, and the keyword-
+	// extraction DFA lexes directly to that terminal — confirmed against the
+	// C oracle, where JS's `this: _ => 'this'` (etc.) produces a single
+	// `.visible = true, .named = true` symbol with no separate anonymous
+	// shift-then-reduce wrapper, even though JS declares `word: $ =>
+	// $.identifier`.
 	if g != nil && g.Word != "" {
-		return false
+		if ruleName == "" || !symbolNameReferencedElsewhere(g, ruleName) {
+			return false
+		}
 	}
 	return isLowercaseIdentifierLikeKeywordLiteral(s)
+}
+
+// symbolNameReferencedElsewhere reports whether Sym(ruleName) appears
+// anywhere in the grammar's rule bodies, extras, externals, or reserved-word
+// sets — i.e. whether ruleName is reachable as an ordinary nonterminal
+// reference, not merely present as a dangling rule that only participates
+// in keyword-table construction.
+func symbolNameReferencedElsewhere(g *Grammar, ruleName string) bool {
+	if g == nil || ruleName == "" {
+		return false
+	}
+	found := false
+	var walk func(r *Rule)
+	walk = func(r *Rule) {
+		if r == nil || found {
+			return
+		}
+		if r.Kind == RuleSymbol && r.Value == ruleName {
+			found = true
+			return
+		}
+		for _, c := range r.Children {
+			walk(c)
+			if found {
+				return
+			}
+		}
+	}
+	for _, name := range g.RuleOrder {
+		walk(g.Rules[name])
+		if found {
+			return true
+		}
+	}
+	for _, e := range g.Extras {
+		walk(e)
+		if found {
+			return true
+		}
+	}
+	for _, ext := range g.Externals {
+		walk(ext)
+		if found {
+			return true
+		}
+	}
+	for _, set := range g.ReservedWordSets {
+		for _, r := range set.Rules {
+			walk(r)
+			if found {
+				return true
+			}
+		}
+	}
+	return found
 }
 
 // isPunctuationPrefixedLowercaseIdentifierLiteral reports whether s is a
