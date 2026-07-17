@@ -754,6 +754,7 @@ func (c *Core) Reset() error {
 	if c.classificationPhase == math.MaxUint64 {
 		return errors.New("parser-core phase zero: classification phase overflow")
 	}
+	phase0AInvalidateCore(c)
 	c.classificationPhase++
 	c.nodes = c.nodes[:0]
 	c.links = c.links[:0]
