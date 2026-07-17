@@ -213,3 +213,48 @@ func TestDiagnosticParserCoreDispatchScratchSteadyStateDoesNotAllocate(t *testin
 		}
 	}
 }
+
+func TestDiagnosticParserCoreHeaderRollbackScratchRestoresAndReuses(t *testing.T) {
+	before := []diagnosticParserCoreHeader{
+		{head: core.Head{Node: 1}, creationSeq: 3, checkpoint: [32]byte{1}},
+		{head: core.Head{Node: 2}, creationSeq: 5, shifted: true, checkpoint: [32]byte{2}},
+	}
+	current := append([]diagnosticParserCoreHeader(nil), before...)
+	var scratch diagnosticParserCoreHeaderRollbackScratch
+	if err := scratch.begin(current); err != nil {
+		t.Fatal(err)
+	}
+	current[0] = diagnosticParserCoreHeader{head: core.Head{Node: 9}, accepted: true}
+	current = current[:1]
+	scratch.finish(&current, true)
+	if !reflect.DeepEqual(current, before) {
+		t.Fatalf("rollback headers=%+v want=%+v", current, before)
+	}
+	if scratch.busy || len(scratch.headers) != 0 || cap(scratch.headers) < len(before) {
+		t.Fatalf("rollback scratch logical state=%+v", scratch)
+	}
+
+	retainedCapacity := cap(scratch.headers)
+	var runErr error
+	if allocs := testing.AllocsPerRun(1000, func() {
+		runErr = scratch.begin(current)
+		scratch.finish(&current, false)
+	}); allocs != 0 || runErr != nil {
+		t.Fatalf("steady rollback scratch allocs=%v err=%v", allocs, runErr)
+	}
+	if cap(scratch.headers) != retainedCapacity {
+		t.Fatalf("rollback scratch capacity=%d want retained %d", cap(scratch.headers), retainedCapacity)
+	}
+
+	if err := scratch.begin(current); err != nil {
+		t.Fatal(err)
+	}
+	if err := scratch.begin(current); err == nil || !strings.Contains(err.Error(), "reentrant header rollback snapshot") {
+		t.Fatalf("reentrant rollback snapshot error=%v", err)
+	}
+	scratch.finish(&current, false)
+	scratch.reset()
+	if scratch.busy || scratch.headers != nil {
+		t.Fatalf("reset rollback scratch=%+v", scratch)
+	}
+}

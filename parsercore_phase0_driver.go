@@ -1150,6 +1150,7 @@ type diagnosticParserCoreGenericScheduler struct {
 	options                    DiagnosticParserCorePrefixOptions
 	receipt                    *DiagnosticParserCoreGenericScheduler
 	summaryHeaderScratch       []DiagnosticParserCoreHeaderReceipt
+	headerRollbackScratch      diagnosticParserCoreHeaderRollbackScratch
 	canonicalScratch           diagnosticParserCoreCanonicalScratch
 	dispatchScratch            diagnosticParserCoreDispatchScratch
 	conflictScratch            diagnosticParserCoreConflictScratch
@@ -1258,6 +1259,64 @@ type diagnosticParserCoreDispatchScratch struct {
 	noActionIndices []int
 }
 
+// diagnosticParserCoreHeaderRollbackScratch retains the pre-operation header
+// frontier while one scheduler mutation is in flight. Scheduler operations are
+// deliberately non-reentrant, so one bounded buffer can serve every accept,
+// reduction, conflict, ordinary-shift, and extra-shift transaction in a parse.
+//
+// diagnosticParserCoreHeader is pointer-free today. reset nevertheless clears
+// the retained capacity at the end of the scheduler lifecycle so adding a
+// pointer-bearing field later cannot make this scratch retain parse state.
+type diagnosticParserCoreHeaderRollbackScratch struct {
+	busy    bool
+	headers []diagnosticParserCoreHeader
+}
+
+func (scratch *diagnosticParserCoreHeaderRollbackScratch) begin(headers []diagnosticParserCoreHeader) error {
+	if scratch == nil {
+		return errors.New("parser-core phase zero: nil header rollback scratch")
+	}
+	if scratch.busy {
+		return errors.New("parser-core phase zero: reentrant header rollback snapshot")
+	}
+	scratch.busy = true
+	if cap(scratch.headers) < len(headers) {
+		capacity := max(len(headers), cap(scratch.headers)*2)
+		scratch.headers = make([]diagnosticParserCoreHeader, len(headers), capacity)
+	} else {
+		scratch.headers = scratch.headers[:len(headers)]
+	}
+	copy(scratch.headers, headers)
+	return nil
+}
+
+func (scratch *diagnosticParserCoreHeaderRollbackScratch) finish(headers *[]diagnosticParserCoreHeader, rollback bool) {
+	if scratch == nil || !scratch.busy {
+		return
+	}
+	if rollback && headers != nil {
+		restored := *headers
+		if cap(restored) < len(scratch.headers) {
+			restored = make([]diagnosticParserCoreHeader, len(scratch.headers))
+		} else {
+			restored = restored[:len(scratch.headers)]
+		}
+		copy(restored, scratch.headers)
+		*headers = restored
+	}
+	scratch.headers = scratch.headers[:0]
+	scratch.busy = false
+}
+
+func (scratch *diagnosticParserCoreHeaderRollbackScratch) reset() {
+	if scratch == nil {
+		return
+	}
+	clear(scratch.headers[:cap(scratch.headers)])
+	scratch.headers = nil
+	scratch.busy = false
+}
+
 func (scratch *diagnosticParserCoreDispatchScratch) begin() error {
 	if scratch.busy {
 		return errors.New("parser-core phase zero: reentrant generic scheduler dispatch")
@@ -1304,6 +1363,7 @@ func executeDiagnosticParserCoreGenericSchedulerFromSeed(
 	if err != nil {
 		return nil, err
 	}
+	defer scheduler.headerRollbackScratch.reset()
 	if err := scheduler.run(); err != nil {
 		return scheduler, err
 	}
@@ -1727,14 +1787,16 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPass() (*diagnosticParser
 }
 
 func (s *diagnosticParserCoreGenericScheduler) applyGenericAccept(before []DiagnosticParserCoreHeaderReceipt, cell diagnosticParserCoreGenericCell) (err error) {
-	headersBefore := append([]diagnosticParserCoreHeader(nil), s.headers...)
+	if err := s.headerRollbackScratch.begin(s.headers); err != nil {
+		return err
+	}
 	dispatchesBefore, workBefore, epochProgressBefore := s.dispatches, s.work, s.epochProgress
 	roundsBefore := len(s.receipt.Rounds)
 	defer func() {
+		s.headerRollbackScratch.finish(&s.headers, err != nil)
 		if err == nil {
 			return
 		}
-		s.headers = headersBefore
 		s.dispatches, s.work, s.epochProgress = dispatchesBefore, workBefore, epochProgressBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 	}()
@@ -1894,15 +1956,17 @@ func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices 
 }
 
 func (s *diagnosticParserCoreGenericScheduler) applyGenericReduction(before []DiagnosticParserCoreHeaderReceipt, cell diagnosticParserCoreGenericCell) (err error) {
-	headersBefore := append([]diagnosticParserCoreHeader(nil), s.headers...)
+	if err := s.headerRollbackScratch.begin(s.headers); err != nil {
+		return err
+	}
 	dispatchesBefore, nextSeqBefore := s.dispatches, s.nextSeq
 	workBefore, epochProgressBefore := s.work, s.epochProgress
 	roundsBefore := len(s.receipt.Rounds)
 	defer func() {
+		s.headerRollbackScratch.finish(&s.headers, err != nil)
 		if err == nil {
 			return
 		}
-		s.headers = headersBefore
 		s.dispatches, s.nextSeq = dispatchesBefore, nextSeqBefore
 		s.work, s.epochProgress = workBefore, epochProgressBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
@@ -2035,16 +2099,18 @@ func (s *diagnosticParserCoreGenericScheduler) reconcileGenericConflictOutputs(s
 }
 
 func (s *diagnosticParserCoreGenericScheduler) applyGenericConflict(before []DiagnosticParserCoreHeaderReceipt, cell diagnosticParserCoreGenericCell) (err error) {
-	headersBefore := append([]diagnosticParserCoreHeader(nil), s.headers...)
+	if err := s.headerRollbackScratch.begin(s.headers); err != nil {
+		return err
+	}
 	dispatchesBefore, branchOrderBefore, nextSeqBefore := s.dispatches, s.branchOrder, s.nextSeq
 	workBefore, epochProgressBefore := s.work, s.epochProgress
 	roundsBefore, conflictsBefore := len(s.receipt.Rounds), len(s.receipt.Conflicts)
 	externalShiftsBefore := len(s.receipt.ExternalShifts)
 	defer func() {
+		s.headerRollbackScratch.finish(&s.headers, err != nil)
 		if err == nil {
 			return
 		}
-		s.headers = headersBefore
 		s.dispatches, s.branchOrder, s.nextSeq = dispatchesBefore, branchOrderBefore, nextSeqBefore
 		s.work, s.epochProgress = workBefore, epochProgressBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
@@ -2222,14 +2288,16 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictAtomic(before
 }
 
 func (s *diagnosticParserCoreGenericScheduler) applyGenericShifts(before []DiagnosticParserCoreHeaderReceipt, cells []diagnosticParserCoreGenericCell) (err error) {
-	headersBefore := append([]diagnosticParserCoreHeader(nil), s.headers...)
+	if err := s.headerRollbackScratch.begin(s.headers); err != nil {
+		return err
+	}
 	dispatchesBefore, workBefore, epochProgressBefore := s.dispatches, s.work, s.epochProgress
 	roundsBefore, externalBefore := len(s.receipt.Rounds), len(s.receipt.ExternalShifts)
 	defer func() {
+		s.headerRollbackScratch.finish(&s.headers, err != nil)
 		if err == nil {
 			return
 		}
-		s.headers = headersBefore
 		s.dispatches, s.work, s.epochProgress = dispatchesBefore, workBefore, epochProgressBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 		s.receipt.ExternalShifts = s.receipt.ExternalShifts[:externalBefore]
@@ -2297,14 +2365,16 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShifts(before []Diagn
 }
 
 func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []DiagnosticParserCoreHeaderReceipt, cells []diagnosticParserCoreGenericCell) (err error) {
-	headersBefore := append([]diagnosticParserCoreHeader(nil), s.headers...)
+	if err := s.headerRollbackScratch.begin(s.headers); err != nil {
+		return err
+	}
 	dispatchesBefore, workBefore, epochProgressBefore := s.dispatches, s.work, s.epochProgress
 	roundsBefore, externalShiftsBefore := len(s.receipt.Rounds), len(s.receipt.ExternalShifts)
 	defer func() {
+		s.headerRollbackScratch.finish(&s.headers, err != nil)
 		if err == nil {
 			return
 		}
-		s.headers = headersBefore
 		s.dispatches, s.work, s.epochProgress = dispatchesBefore, workBefore, epochProgressBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 		s.receipt.ExternalShifts = s.receipt.ExternalShifts[:externalShiftsBefore]
