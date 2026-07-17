@@ -7,6 +7,41 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.40.0] - 2026-07-17
+
+### Performance
+
+- Build-time PGO. Ships a default profile (`pgo/default.pgo`) and a repdriver
+  tool; the `parity_report` build compiles with it. About 7% wall-clock
+  reduction, byte-identical across all 206 grammars.
+- Forest-index allocation overhaul. The forest alternative index is now pooled
+  across parses and the per-compare throwaway comparison slices are eliminated.
+  On the forest-path grammars (C#, Bash, CMake) allocation bytes drop 86–96% and
+  GC-cycle CPU 48–90%, with byte-identical trees.
+- GLR result-comparator copy elimination. The forest disambiguation comparator
+  chain now takes stack pointers instead of copying a 104-byte stack value per
+  call, removing about twelve `runtime.duffcopy` calls per compare. About 14%
+  wall-clock reduction on the forest-path grammars, byte-identical.
+- Forest reducer pooling. The per-parse forest reducer is now pooled, cutting C#
+  parse allocation a further ~51% by bytes, byte-identical.
+
+### Security
+
+- Query matcher work budget. The `-All` quantifier matchers now charge a
+  per-execution work budget, bounding worst-case combinatorial blow-up on
+  adversarial query/source pairs. Exposed via `Cursor.DidExceedMatchLimit` and
+  configurable with `SetMatchWorkBudget` (default 1,000,000).
+
+### Fixed
+
+- Incremental parsing no longer reuses a stale subtree when an edit shifts a
+  token boundary that abuts a reused node's right edge. Both the leaf and the
+  non-leaf (wrapped-token) reuse paths now reject reuse when the freshly lexed
+  token's end byte disagrees with the stored boundary, preventing spurious
+  `ERROR` nodes on common edits such as deleting the whitespace between two
+  identifiers (e.g. Clojure `(a b)` → `(ab)`). Verified byte-identical to a
+  fresh parse across the C-oracle incremental parity harness.
+
 ### Documentation
 
 - Label the authenticated `2c702656` parser receipt as the v0.39.0
@@ -2725,7 +2760,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.39.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.40.0...HEAD
+[0.40.0]: https://github.com/odvcencio/gotreesitter/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/odvcencio/gotreesitter/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/odvcencio/gotreesitter/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/odvcencio/gotreesitter/compare/v0.36.0...v0.37.0

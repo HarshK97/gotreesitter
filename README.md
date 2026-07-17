@@ -700,7 +700,13 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.39.0**. The 206-grammar curated parity milestone is
+The current release is **v0.40.0**, which lands a batch of byte-identical
+performance work — build-time PGO, forest-index allocation pooling, GLR
+comparator copy-elimination, and forest-reducer pooling (a cumulative ~30%
+wall-clock reduction on forest-path grammars) — plus a query-matcher work-budget
+DoS guard and an incremental-reuse token-boundary fix. The authenticated
+cross-suite receipt below is the v0.39.0 baseline and will be refreshed for
+v0.40.0. The 206-grammar curated parity milestone is
 banked. v0.39.0 tightens query, tree, DFA, grammar-import, generated-C, and
 highlight correctness; adds locked incremental and work-count evidence; and
 makes real-corpus roots, split-grammar layouts, and sample floors more
