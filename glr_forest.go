@@ -966,26 +966,89 @@ func newForestAlternativeIndex(targetCapacity int) *forestAlternativeIndex {
 	return &forestAlternativeIndex{targetCapacity: targetCapacity}
 }
 
+// forestAlternativeIndexPool pools forestAlternativeIndex instances (and, via
+// promote(), the backing maps they grow into) across parseForest calls. The
+// index was allocated fresh per parse and its promote() unconditionally
+// make()'d three maps at up to ~1M capacity for ambiguity-heavy grammars
+// (C# designer-style blocks) — that dominated forest allocations (~69% of
+// bytes / 7.68% of allocs on csharp). acquireForestAlternativeIndex /
+// releaseForestAlternativeIndex follow the same acquire-reset/release-clear
+// shape as acquireGSSForestNodeSlab/releaseGSSForestNodeSlab just above.
+var forestAlternativeIndexPool = sync.Pool{
+	New: func() any {
+		return &forestAlternativeIndex{}
+	},
+}
+
+// forestAlternativeIndexMaxRetainedEntries bounds how large a map
+// releaseForestAlternativeIndex will keep (cleared, not reallocated) for
+// reuse by a later pooled acquire. It mirrors forestAlternativeIndexCapacity-
+// ForSource's maxCapacity: a map grown for one exceptionally large parse
+// should not stay pinned in the pool for every subsequent, normally-sized
+// parse that happens to draw the same pooled instance.
+const forestAlternativeIndexMaxRetainedEntries = 1 << 20
+
+func acquireForestAlternativeIndex(targetCapacity int) *forestAlternativeIndex {
+	alternatives := forestAlternativeIndexPool.Get().(*forestAlternativeIndex)
+	alternatives.targetCapacity = targetCapacity
+	return alternatives
+}
+
+func releaseForestAlternativeIndex(alternatives *forestAlternativeIndex) {
+	if alternatives == nil {
+		return
+	}
+	if len(alternatives.nodes) > forestAlternativeIndexMaxRetainedEntries {
+		alternatives.nodes = nil
+	} else if alternatives.nodes != nil {
+		clear(alternatives.nodes)
+	}
+	if len(alternatives.byStart) > forestAlternativeIndexMaxRetainedEntries {
+		alternatives.byStart = nil
+	} else if alternatives.byStart != nil {
+		clear(alternatives.byStart)
+	}
+	if len(alternatives.slots) > forestAlternativeIndexMaxRetainedEntries {
+		alternatives.slots = nil
+	} else if alternatives.slots != nil {
+		clear(alternatives.slots)
+	}
+	clear(alternatives.inlineNodes[:])
+	clear(alternatives.inlineSlots[:])
+	clear(alternatives.inlineCandidates[:])
+	alternatives.inlineNodeCount = 0
+	alternatives.inlineSlotCount = 0
+	alternatives.promoted = false
+	alternatives.targetCapacity = 0
+	forestAlternativeIndexPool.Put(alternatives)
+}
+
 func (alternatives *forestAlternativeIndex) promote() bool {
 	if alternatives == nil || alternatives.promoted {
 		return false
 	}
 	targetCapacity := max(forestAlternativeIndexInlineCapacity, alternatives.targetCapacity)
-	nodes := make(map[*Node]*gssForestNode, targetCapacity)
-	byStart := make(map[uint32][]*Node, max(16, targetCapacity/4))
+	// A pooled instance may already carry cleared-but-allocated maps from a
+	// prior release (see releaseForestAlternativeIndex): reuse their bucket
+	// storage instead of paying a fresh make()+grow every parse.
+	if alternatives.nodes == nil {
+		alternatives.nodes = make(map[*Node]*gssForestNode, targetCapacity)
+	}
+	if alternatives.byStart == nil {
+		alternatives.byStart = make(map[uint32][]*Node, max(16, targetCapacity/4))
+	}
+	if alternatives.slots == nil {
+		alternatives.slots = make(map[forestAlternativeSlotKey]forestAlternativeSlot, targetCapacity)
+	}
 	for i := 0; i < int(alternatives.inlineNodeCount); i++ {
 		entry := alternatives.inlineNodes[i]
-		nodes[entry.key] = entry.value
-		byStart[entry.key.startByte] = append(byStart[entry.key.startByte], entry.key)
+		alternatives.nodes[entry.key] = entry.value
+		alternatives.byStart[entry.key.startByte] = append(alternatives.byStart[entry.key.startByte], entry.key)
 	}
-	slots := make(map[forestAlternativeSlotKey]forestAlternativeSlot, targetCapacity)
 	for i := 0; i < int(alternatives.inlineSlotCount); i++ {
 		entry := alternatives.inlineSlots[i]
-		slots[entry.key] = entry.value
+		alternatives.slots[entry.key] = entry.value
 	}
-	alternatives.nodes = nodes
-	alternatives.byStart = byStart
-	alternatives.slots = slots
 	clear(alternatives.inlineNodes[:])
 	clear(alternatives.inlineSlots[:])
 	clear(alternatives.inlineCandidates[:])
@@ -2457,15 +2520,20 @@ func forestResultLinkCompareWithRawShape(p *Parser, arena *nodeArena, node *gssF
 		return -1
 	}
 	if p != nil && arena != nil {
+		// Reuse the arena's two-slot compare scratch instead of allocating a
+		// fresh one-element []stackEntry per side on every call (see
+		// forestResultLinkCompareScratch's doc comment on nodeArena).
+		arena.forestResultLinkCompareScratch[0] = a.subtree
+		arena.forestResultLinkCompareScratch[1] = b.subtree
 		aStack := glrStack{
-			entries:     []stackEntry{a.subtree},
+			entries:     arena.forestResultLinkCompareScratch[0:1:1],
 			accepted:    true,
 			score:       a.score,
 			byteOffset:  node.byteOffset,
 			branchOrder: uint64(aOrder),
 		}
 		bStack := glrStack{
-			entries:     []stackEntry{b.subtree},
+			entries:     arena.forestResultLinkCompareScratch[1:2:2],
 			accepted:    true,
 			score:       b.score,
 			byteOffset:  node.byteOffset,
@@ -2842,7 +2910,8 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 	curIndex.init(16)
 	nextIndex.init(16)
 	var work, nextFrontier, relex []*gssForestNode
-	alternatives := newForestAlternativeIndex(forestAlternativeIndexCapacityForSource(len(source)))
+	alternatives := acquireForestAlternativeIndex(forestAlternativeIndexCapacityForSource(len(source)))
+	defer releaseForestAlternativeIndex(alternatives)
 	processEpoch := int32(0)
 	noLookaheadSteps := 0
 	recoverCount := 0
