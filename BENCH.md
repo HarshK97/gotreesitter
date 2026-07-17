@@ -162,7 +162,7 @@ The canonical equal-fixture geomean is **5.481673x C**. The fixed-suite sum of
 medians is **6.313799x C**; it is reported separately because the largest file
 dominates aggregate wall time. This is the first locked-oracle historical
 baseline, not a retrospective adjustment to the withdrawn straight-LR ratio;
-the current production receipt is the current-main result below.
+the v0.39.0 production-code baseline is recorded below.
 
 Receipt identities:
 
@@ -175,10 +175,10 @@ Receipt identities:
 - static C artifact SHA-256:
   `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
 
-### Current-main production receipt
+### v0.39.0 production-code baseline
 
 An authenticated production receipt was collected on 2026-07-17 from the same
-quiet host, core 6, and Go 1.22.2. The worktree was clean current main at
+quiet host, core 6, and Go 1.22.2. The worktree was clean production code at
 `2c7026563f3827da87e637bcb246d4a8f287c022`; its `PUBLICATION` receipt measures
 the public `Parser.Parse` lifecycle, completeness check, and `Tree.Release`.
 
@@ -189,9 +189,10 @@ the public `Parser.Parse` lifecycle, completeness check, and `Tree.Release`.
 | `language.go` | 28.383 ms | 5.980 ms | **4.746044x** | 163,060 | 32 | 67,620 KiB | 2,816 KiB |
 | `grammargen/lr.go` | 345.658 ms | 61.198 ms | **5.648204x** | 13,165,973 | 561.5 | 205,716 KiB | 9,216 KiB |
 
-The current-main public-parser equal-fixture geomean is **4.886056x C**. Its
-fixed-suite sum of medians is **5.517602x C** (408.464 ms Go versus 74.029 ms
-static C), and its worst fixture is `grammargen/lr.go` at **5.648204x C**.
+The v0.39.0 public-parser baseline is **4.886056x C** by equal-fixture
+geomean. Its fixed-suite sum of medians is **5.517602x C** (408.464 ms Go
+versus 74.029 ms static C), and its worst fixture is `grammargen/lr.go` at
+**5.648204x C**.
 
 Receipt identities:
 
