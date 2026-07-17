@@ -372,23 +372,36 @@ func TestSchedulerTransactionRecoveredOwnedPanicStillPoisonsOwner(t *testing.T) 
 	}
 }
 
-func TestSchedulerTransactionTokenValidationPoisonsOwner(t *testing.T) {
+func TestSchedulerTransactionTokenValidationPoisonsCurrentCore(t *testing.T) {
 	t.Run("wrong-core", func(t *testing.T) {
-		compact, _, boundary := newSchedulerTransactionShiftFixture(t)
+		compact, _, _ := newSchedulerTransactionShiftFixture(t)
 		other, _, otherBoundary := newSchedulerTransactionShiftFixture(t)
 		before := captureSchedulerTransactionState(compact)
+		otherBefore := captureSchedulerTransactionState(other)
 		err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
-			if _, innerErr := compact.ShiftClassifiedOwned(owner, boundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); innerErr != nil {
-				return innerErr
-			}
-			_, innerErr := other.ShiftClassifiedOwned(owner, otherBoundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{})
-			if innerErr == nil || !strings.Contains(innerErr.Error(), "different core") {
-				t.Fatalf("wrong-core validation error=%v", innerErr)
+			otherErr := other.ApplySchedulerAtomic(func(current SchedulerTransactionToken) error {
+				if _, innerErr := other.ShiftClassifiedOwned(current, otherBoundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{}); innerErr != nil {
+					return innerErr
+				}
+				_, innerErr := other.ShiftClassifiedOwned(owner, otherBoundary, 0, Token{Symbol: 9, EndByte: 1}, ForkOrder{})
+				if innerErr == nil || !strings.Contains(innerErr.Error(), "different core") {
+					t.Fatalf("wrong-core validation error=%v", innerErr)
+				}
+				if compact.schedulerFrame.poisoned != nil {
+					t.Fatalf("wrong-core call mutated token owner: %v", compact.schedulerFrame.poisoned)
+				}
+				return nil
+			})
+			if otherErr == nil || !strings.Contains(otherErr.Error(), "poisoned scheduler transaction") {
+				t.Fatalf("called core was not poisoned: %v", otherErr)
 			}
 			return nil
 		})
-		if err == nil || !strings.Contains(err.Error(), "poisoned scheduler transaction") || !reflect.DeepEqual(captureSchedulerTransactionState(compact), before) {
-			t.Fatalf("wrong-core owner was not poisoned: err=%v", err)
+		if err != nil || !reflect.DeepEqual(captureSchedulerTransactionState(compact), before) {
+			t.Fatalf("token owner changed: err=%v before=%+v after=%+v", err, before, captureSchedulerTransactionState(compact))
+		}
+		if !reflect.DeepEqual(captureSchedulerTransactionState(other), otherBefore) {
+			t.Fatalf("called core did not roll back: before=%+v after=%+v", otherBefore, captureSchedulerTransactionState(other))
 		}
 	})
 
@@ -422,6 +435,47 @@ func TestSchedulerTransactionTokenValidationPoisonsOwner(t *testing.T) {
 			t.Fatalf("stale token error=%v", err)
 		}
 	})
+}
+
+func TestSchedulerTransactionWrongCoreConcurrentIsolation(t *testing.T) {
+	first, _, _ := newSchedulerTransactionShiftFixture(t)
+	second, _, _ := newSchedulerTransactionShiftFixture(t)
+	firstBefore := captureSchedulerTransactionState(first)
+	secondBefore := captureSchedulerTransactionState(second)
+	firstToken := make(chan SchedulerTransactionToken, 1)
+	secondToken := make(chan SchedulerTransactionToken, 1)
+	results := make(chan error, 2)
+
+	go func() {
+		results <- first.ApplySchedulerAtomic(func(current SchedulerTransactionToken) error {
+			firstToken <- current
+			foreign := <-secondToken
+			if _, err := first.ShiftClassifiedOwned(foreign, ClassifiedBoundary{}, 0, Token{}, ForkOrder{}); err == nil || !strings.Contains(err.Error(), "different core") {
+				return errors.New("first core accepted foreign scheduler token")
+			}
+			return nil
+		})
+	}()
+	go func() {
+		results <- second.ApplySchedulerAtomic(func(current SchedulerTransactionToken) error {
+			secondToken <- current
+			foreign := <-firstToken
+			if _, err := second.ShiftClassifiedOwned(foreign, ClassifiedBoundary{}, 0, Token{}, ForkOrder{}); err == nil || !strings.Contains(err.Error(), "different core") {
+				return errors.New("second core accepted foreign scheduler token")
+			}
+			return nil
+		})
+	}()
+
+	for range 2 {
+		if err := <-results; err == nil || !strings.Contains(err.Error(), "poisoned scheduler transaction") {
+			t.Fatalf("called current core was not poisoned: %v", err)
+		}
+	}
+	if !reflect.DeepEqual(captureSchedulerTransactionState(first), firstBefore) ||
+		!reflect.DeepEqual(captureSchedulerTransactionState(second), secondBefore) {
+		t.Fatalf("concurrent wrong-core misuse did not isolate rollback")
+	}
 }
 
 func TestSchedulerTransactionPanicRollsBackAndRepanics(t *testing.T) {

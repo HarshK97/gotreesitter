@@ -162,7 +162,7 @@ The canonical equal-fixture geomean is **5.481673x C**. The fixed-suite sum of
 medians is **6.313799x C**; it is reported separately because the largest file
 dominates aggregate wall time. This is the first locked-oracle historical
 baseline, not a retrospective adjustment to the withdrawn straight-LR ratio;
-the current production receipt is the current-main result below.
+the exact-revision production and candidate receipt is recorded below.
 
 Receipt identities:
 
@@ -175,36 +175,36 @@ Receipt identities:
 - static C artifact SHA-256:
   `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
 
-### Current-main production and compact-candidate receipt
+### Exact-revision production and post-fusion compact-candidate receipt
 
-A paired strict receipt was collected on 2026-07-17 from the same quiet host,
-core 6, and Go 1.22.2. The production worktree was clean current main at
-`2c7026563f3827da87e637bcb246d4a8f287c022`; its `PUBLICATION` receipt measures
-the public `Parser.Parse` lifecycle, completeness check, and `Tree.Release`.
+A paired strict receipt was collected on 2026-07-17 from quiet host
+`ns1007492` and Go 1.22.2. Both worktrees were clean at exact post-fusion
+revision `708c665f762f85ea07a72e3ffb31581f8d622a93`. The `PUBLICATION` control
+measures the public `Parser.Parse` lifecycle, completeness check, and
+`Tree.Release`.
 
 | Fixture | Go median | static C median | Go / C | B/op | allocs/op | Go max RSS | C max RSS |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `query_compile.go` | 29.313 ms | 5.591 ms | **5.242927x** | 157,657 | 13 | 68,528 KiB | 2,816 KiB |
-| `rewrite.go` | 5.110 ms | 1.260 ms | **4.055251x** | 2,040 | 14 | 54,052 KiB | 2,304 KiB |
-| `language.go` | 28.383 ms | 5.980 ms | **4.746044x** | 163,060 | 32 | 67,620 KiB | 2,816 KiB |
-| `grammargen/lr.go` | 345.658 ms | 61.198 ms | **5.648204x** | 13,165,973 | 561.5 | 205,716 KiB | 9,216 KiB |
+| `query_compile.go` | 27.890 ms | 5.402 ms | **5.163424x** | 152,098 | 13 | 65,728 KiB | 2,816 KiB |
+| `rewrite.go` | 4.887 ms | 1.202 ms | **4.065670x** | 2,040 | 14 | 54,084 KiB | 2,304 KiB |
+| `language.go` | 26.745 ms | 5.804 ms | **4.607774x** | 149,581 | 32 | 71,396 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 331.145 ms | 59.675 ms | **5.549179x** | 13,166,466 | 564.5 | 205,724 KiB | 9,216 KiB |
 
-The current-main public-parser equal-fixture geomean is **4.886056x C**. Its
-fixed-suite sum of medians is **5.517602x C** (408.464 ms Go versus 74.029 ms
-static C), and its worst fixture is `grammargen/lr.go` at **5.648204x C**.
+The same-revision public-parser control is **4.813350x C** by equal-fixture
+geomean. Its fixed-suite sum of medians is **5.419730x C** (390.667 ms Go
+versus 72.082 ms static C), and its worst fixture is `grammargen/lr.go` at
+**5.549179x C**.
 
 Production receipt identities:
 
 - manifest SHA-256:
-  `8933650e446b14db263e165bbfed0bd68cebeb15898b7b818c57040e10b31b46`;
+  `575f1eab1ed29eeae680baab33686c5a43bb7636a873c6ee23d32d41cc0a6363`;
 - report SHA-256:
-  `19a68af15fe1f413e628d3f5a7aed0b7fb975652028aee685d5b30769151d2f3`;
-- complete receipt bundle SHA-256:
-  `3c529e002cee1ab28e7ec11edc826d3b31b298dec616e14aa0fd405e11c84a09`.
+  `f44a77007142c24ad5b1ec6d386fb19b417f2d1ba4f1b32c9058e39bfd87b80d`;
+- complete receipt archive SHA-256:
+  `937a83b9551ec7c2a1e65c36fcc8c5e13cada8f412434b2db87a3a7eca3d862f`.
 
-The paired branch at
-`cb16038798d02554be0c465a4880534df15ed75b` adds a separate build-tagged
-compact backend:
+The same revision adds a separate build-tagged compact backend:
 
 ```sh
 bash cgo_harness/pure_c/run_canonical_go_full_parse.sh \
@@ -219,28 +219,28 @@ fallback and repeat-identical per-fixture work counts.
 
 | Fixture | Candidate median | static C median | Candidate / C | B/op | allocs/op | Candidate max RSS | C max RSS |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| `query_compile.go` | 22.359 ms | 5.548 ms | **4.030070x** | 240,583 | 10,143 | 47,976 KiB | 2,816 KiB |
-| `rewrite.go` | 4.533 ms | 1.241 ms | **3.654062x** | 58,097 | 2,176 | 50,448 KiB | 2,304 KiB |
-| `language.go` | 23.049 ms | 5.999 ms | **3.842068x** | 284,622 | 10,601 | 53,056 KiB | 2,816 KiB |
-| `grammargen/lr.go` | 247.276 ms | 60.881 ms | **4.061655x** | 2,514,510 | 102,549 | 94,932 KiB | 9,216 KiB |
+| `query_compile.go` | 21.495 ms | 5.436 ms | **3.954119x** | 231,446 | 9,032 | 50,972 KiB | 2,816 KiB |
+| `rewrite.go` | 4.359 ms | 1.200 ms | **3.633407x** | 56,193 | 1,935 | 52,972 KiB | 2,304 KiB |
+| `language.go` | 22.016 ms | 5.801 ms | **3.794892x** | 275,011 | 9,279 | 56,108 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 236.025 ms | 58.739 ms | **4.018193x** | 2,415,402 | 91,202 | 94,400 KiB | 9,216 KiB |
 
-The candidate equal-fixture geomean is **3.893491x C**. Its fixed-suite sum of
-medians is **4.034531x C** (297.216 ms candidate versus 73.668 ms static C), and
-its worst fixture is `grammargen/lr.go` at **4.061655x C**. Comparing Go medians
-directly across the paired receipts, the candidate improves the equal-fixture
-geomean by **20.82%** and the fixed-suite sum by **27.24%**. The per-fixture
-changes are -23.72%, -11.29%, -18.79%, and -28.46% in table order. Candidate
-allocation count is not a win; its lower elapsed time and lower large-fixture
-RSS arise despite many small allocations.
+The candidate equal-fixture geomean is **3.847233x C**. Its fixed-suite sum of
+medians is **3.988613x C** (283.895 ms candidate versus 71.176 ms static C), and
+its worst fixture is `grammargen/lr.go` at **4.018193x C**. Comparing the paired
+ratios, the candidate improves the equal-fixture geomean by **20.07%** and the
+fixed-suite sum by **26.41%**. The per-fixture ratio reductions are 23.42%,
+10.63%, 17.64%, and 27.59% in table order. Candidate allocation count is not a
+win; its lower elapsed time and lower large-fixture RSS arise despite many
+small allocations.
 
 Candidate receipt identities:
 
 - manifest SHA-256:
-  `1cfce0ed9adbcb5c5c09cfb369908cc30451fb714409080a1523cfecbcfc1aa9`;
+  `513a1e0dcec8c0214c0abcc57e3563ec4ed43a5ab369aa5092867746f0aec50a`;
 - report SHA-256:
-  `bc4968123fe6b4b982fa18de63dbd712f2e601d0058024c9c8ad3ddd9c4d1114`;
-- complete receipt bundle SHA-256:
-  `0f4dc1b92a8d86d2de27c8368db91fe6d011de1ce45c5f153e9b177cc760449e`;
+  `4ff459035520685c6d01a38df738105aae1121edbe33248d66a7b7603e4e3813`;
+- complete receipt archive SHA-256:
+  `b8e543de18769059faf7be0f2adc84009898e48e5e44d8063c8bc3c2fb10940e`;
 - static C artifact SHA-256:
   `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
 
@@ -256,9 +256,9 @@ shifts, extra chains, and any EOF frontier other than one accepted head with
 one exact derivation. Other unsupported semantics also fail closed. The digest
 does not cover `ParseState` or `PreGotoState`, and the compact materializer
 currently writes zero for both. The candidate has not admitted query/cursor
-behavior or multiple grammars. Therefore **3.893491x C is a diagnostic
-compact-candidate result, not a replacement public `Parser.Parse` claim**; the
-production number remains **4.886056x C**.
+behavior or multiple grammars. Therefore **3.847233x C is a branch-only
+diagnostic compact-candidate result, not a replacement public `Parser.Parse`
+claim**; the same-revision production control is **4.813350x C**.
 
 ### Diagnostic workload-regime receipt
 
