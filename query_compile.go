@@ -602,6 +602,7 @@ func (p *queryParser) parseAlternationBranch(depth int, parentSymbolHint Symbol)
 	alt := alternativeSymbol{
 		symbol:    root.symbol,
 		isNamed:   root.isNamed,
+		isMissing: root.isMissing,
 		field:     altField,
 		textMatch: root.textMatch,
 	}

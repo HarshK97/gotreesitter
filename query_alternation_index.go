@@ -28,10 +28,14 @@ func buildAlternationIndicesForSteps(steps []QueryStep) {
 		}
 
 		idx := &queryAlternationIndex{}
+		hasMissing := false
 		for ai := range step.alternatives {
 			alt := &step.alternatives[ai]
 			if len(alt.steps) > 0 {
 				buildAlternationIndicesForSteps(alt.steps)
+			}
+			if alt.isMissing {
+				hasMissing = true
 			}
 			switch {
 			case alt.symbol == 0 && alt.textMatch == "":
@@ -50,6 +54,11 @@ func buildAlternationIndicesForSteps(steps []QueryStep) {
 			}
 		}
 
-		step.altIndex = idx
+		// MISSING is a semantic qualifier, not a symbol class. Keep these rare
+		// alternations on the exact linear matcher rather than admitting ordinary
+		// nodes from a symbol-only index bucket.
+		if !hasMissing {
+			step.altIndex = idx
+		}
 	}
 }

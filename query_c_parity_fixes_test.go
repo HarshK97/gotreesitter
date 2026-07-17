@@ -153,3 +153,85 @@ func TestParityD4MissingPatternMatchesOnlyMissingNode(t *testing.T) {
 		t.Fatal("(MISSING (identifier)): expected a compile error, got nil")
 	}
 }
+
+func TestParityD4MissingAlternationPreservesIdentity(t *testing.T) {
+	lang := grammars.CLanguage()
+	src := []byte("int a;\nint b\n")
+	tree := parseWithLanguage(t, lang, src)
+	defer tree.Release()
+
+	for _, querySource := range []string{
+		`[(MISSING) (identifier)] @match`,
+		`[(MISSING ";") (identifier)] @match`,
+	} {
+		t.Run(querySource, func(t *testing.T) {
+			query, err := gotreesitter.NewQuery(querySource, lang)
+			if err != nil {
+				t.Fatalf("NewQuery(%q): %v", querySource, err)
+			}
+			matches := query.Execute(tree)
+			if len(matches) != 3 {
+				t.Fatalf("%s: got %d matches, want the two identifiers and one missing semicolon", querySource, len(matches))
+			}
+
+			var missing int
+			identifiers := map[string]int{}
+			for _, match := range matches {
+				if len(match.Captures) != 1 {
+					t.Fatalf("%s: got %d captures in match, want 1", querySource, len(match.Captures))
+				}
+				capture := match.Captures[0]
+				if capture.Node.IsMissing() {
+					missing++
+					if capture.Node.Type(lang) != ";" {
+						t.Fatalf("%s: missing capture type = %q, want semicolon", querySource, capture.Node.Type(lang))
+					}
+					continue
+				}
+				if capture.Node.Type(lang) != "identifier" {
+					t.Fatalf("%s: non-missing capture type = %q, want identifier", querySource, capture.Node.Type(lang))
+				}
+				identifiers[capture.Text(src)]++
+			}
+			if missing != 1 || identifiers["a"] != 1 || identifiers["b"] != 1 || len(identifiers) != 2 {
+				t.Fatalf("%s: missing=%d identifiers=%v, want missing=1 identifiers={a:1 b:1}", querySource, missing, identifiers)
+			}
+		})
+	}
+}
+
+func TestParityD4QualifiedMissingNamedAlternationPreservesIdentity(t *testing.T) {
+	lang := grammars.TypescriptLanguage()
+	src := []byte("const { value: [dirPath, { dirName, options, fileNames }] } = result;\nswitch (x) { case: }\n")
+	tree := parseWithLanguage(t, lang, src)
+	defer tree.Release()
+
+	querySource := `[(MISSING identifier) (switch_case)] @match`
+	query, err := gotreesitter.NewQuery(querySource, lang)
+	if err != nil {
+		t.Fatalf("NewQuery(%q): %v", querySource, err)
+	}
+	matches := query.Execute(tree)
+	if len(matches) != 2 {
+		t.Fatalf("%s: got %d matches, want one missing identifier and one switch_case", querySource, len(matches))
+	}
+
+	var missingIdentifier, switchCase int
+	for _, match := range matches {
+		if len(match.Captures) != 1 {
+			t.Fatalf("%s: got %d captures in match, want 1", querySource, len(match.Captures))
+		}
+		capture := match.Captures[0]
+		switch {
+		case capture.Node.IsMissing() && capture.Node.Type(lang) == "identifier":
+			missingIdentifier++
+		case !capture.Node.IsMissing() && capture.Node.Type(lang) == "switch_case":
+			switchCase++
+		default:
+			t.Fatalf("%s: unexpected capture type=%q missing=%v", querySource, capture.Node.Type(lang), capture.Node.IsMissing())
+		}
+	}
+	if missingIdentifier != 1 || switchCase != 1 {
+		t.Fatalf("%s: missing identifiers=%d switch cases=%d, want 1 each", querySource, missingIdentifier, switchCase)
+	}
+}

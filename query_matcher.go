@@ -1094,6 +1094,9 @@ func (c *alternationMatchContext) matchLinearAlternation() bool {
 }
 
 func (c *alternationMatchContext) alternativeMatches(alt *alternativeSymbol) bool {
+	if alt.isMissing && !alternativeMatchesNodeCached(*alt, c.node, c.lang, c.nodeSymbol, c.nodeNamed, &c.nodeType, &c.nodeTypeLoaded) {
+		return false
+	}
 	if !c.q.alternativeFieldMatches(alt, c.node, c.parent, c.childIdx, c.lang) {
 		return false
 	}
@@ -1293,12 +1296,18 @@ func queryStackEntryTypeName(entry stackEntry, lang *Language) string {
 
 func alternativeMatchesStackEntry(alt alternativeSymbol, entry stackEntry, lang *Language, nodeSymbol Symbol, nodeNamed bool) bool {
 	if alt.symbol == 0 && alt.textMatch == "" {
+		if alt.isMissing {
+			return stackEntryNodeIsMissing(entry)
+		}
 		return !alt.isNamed || nodeNamed
 	}
 	if alt.textMatch != "" {
-		return !nodeNamed && queryStackEntryTypeName(entry, lang) == alt.textMatch
+		return !nodeNamed && queryStackEntryTypeName(entry, lang) == alt.textMatch &&
+			(!alt.isMissing || stackEntryNodeIsMissing(entry))
 	}
-	return nodeNamed == alt.isNamed && nodeSymbol == lang.PublicSymbolForNamedness(alt.symbol, alt.isNamed)
+	return nodeNamed == alt.isNamed &&
+		nodeSymbol == lang.PublicSymbolForNamedness(alt.symbol, alt.isNamed) &&
+		(!alt.isMissing || stackEntryNodeIsMissing(entry))
 }
 
 // nodeMatchesStep checks if a single node matches a single step's type/symbol constraint.
@@ -1441,6 +1450,9 @@ func alternativeMatchesNodeCached(
 ) bool {
 	// Wildcard in alternation `( _ )` should match any node.
 	if alt.symbol == 0 && alt.textMatch == "" {
+		if alt.isMissing {
+			return node.IsMissing()
+		}
 		return !alt.isNamed || nodeNamed
 	}
 
@@ -1453,8 +1465,10 @@ func alternativeMatchesNodeCached(
 			*nodeType = node.Type(lang)
 			*nodeTypeLoaded = true
 		}
-		return *nodeType == alt.textMatch
+		return *nodeType == alt.textMatch && (!alt.isMissing || node.IsMissing())
 	}
 
-	return nodeNamed == alt.isNamed && nodeSymbol == lang.PublicSymbolForNamedness(alt.symbol, alt.isNamed)
+	return nodeNamed == alt.isNamed &&
+		nodeSymbol == lang.PublicSymbolForNamedness(alt.symbol, alt.isNamed) &&
+		(!alt.isMissing || node.IsMissing())
 }

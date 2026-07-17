@@ -171,8 +171,9 @@ func (p QueryPredicate) PropertyPredicate() (property QueryPropertyPredicate, ok
 
 // alternativeSymbol is one branch of an alternation like [(true) (false)].
 type alternativeSymbol struct {
-	symbol  Symbol
-	isNamed bool
+	symbol    Symbol
+	isNamed   bool
+	isMissing bool
 	// field constrains this branch to a child with the given parent field ID.
 	// It is only evaluated when the alternation step is matched as a child.
 	field FieldID

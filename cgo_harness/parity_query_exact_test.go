@@ -360,6 +360,24 @@ func TestParityQueryExactMissing(t *testing.T) {
 			source: "int a\n",
 			query:  `(MISSING ";") @missing`,
 		},
+		{
+			name:   "missing_or_identifier_alternation",
+			lang:   "c",
+			source: "int a;\nint b\n",
+			query:  `[(MISSING) (identifier)] @match`,
+		},
+		{
+			name:   "qualified_missing_or_identifier_alternation",
+			lang:   "c",
+			source: "int a;\nint b\n",
+			query:  `[(MISSING ";") (identifier)] @match`,
+		},
+		{
+			name:   "qualified_missing_named_alternation",
+			lang:   "typescript",
+			source: "const { value: [dirPath, { dirName, options, fileNames }] } = result;\nswitch (x) { case: }\n",
+			query:  `[(MISSING identifier) (switch_case)] @match`,
+		},
 	}
 
 	for _, tc := range cases {
