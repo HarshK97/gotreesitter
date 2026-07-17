@@ -623,11 +623,6 @@ func (c *Core) poisonSchedulerTransaction(token SchedulerTransactionToken, cause
 		return nil
 	}
 	if err := c.validateSchedulerTransaction(token); err != nil {
-		if owner := token.owner; owner != nil && owner.schedulerFrame.active &&
-			owner.schedulerFrame.epoch == token.epoch && owner.schedulerFrame.mark.transaction == token.transaction &&
-			owner.schedulerFrame.poisoned == nil {
-			owner.schedulerFrame.poisoned = err
-		}
 		if c.schedulerFrame.active && c.schedulerFrame.poisoned == nil {
 			c.schedulerFrame.poisoned = err
 		}

@@ -9,6 +9,8 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Scheduler transaction token misuse on a different diagnostic core now
+  poisons and rolls back only the called core, without mutating the token owner.
 - Deferred result-compatibility finalization stays lazy while trees are owned by
   parser retry/selection code, then synchronizes every public read that can
   observe normalized nodes or diagnostics, including pooled tree values.
@@ -64,12 +66,12 @@ for tags and release notes while still in `0.x`.
   admission is not a production-routing, incremental, recovery, or exact public
   node-API compatibility claim.
 - Bank a paired quiet-host receipt against the locked static `-O2` C oracle.
-  Current-main public `Parser.Parse` measures 4.886056x C by equal-fixture
-  geomean and 5.517602x C by fixed-suite sum of medians. The build-tagged
-  compact candidate measures 3.893491x C and 4.034531x C, respectively, with a
-  4.061655x worst fixture and zero fallback in every timed sample. These
-  candidate numbers apply only to its authenticated clean fresh-full surface;
-  they do not replace the public parser claim.
+  At the exact post-fusion revision, public `Parser.Parse` measures 4.813350x C
+  by equal-fixture geomean and 5.419730x C by fixed-suite sum of medians. The
+  build-tagged compact candidate measures 3.847233x C and 3.988613x C,
+  respectively, with a 4.018193x worst fixture and zero fallback in every timed
+  sample. These branch-only candidate numbers apply only to its authenticated
+  clean fresh-full surface; they do not replace the public parser claim.
 - Fuse nested transaction checkpoints across the build-tagged compact
   scheduler while preserving standalone rollback and capability semantics.
   The authenticated four-fixture Total geomean improves by 8.25%, every
