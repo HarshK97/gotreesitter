@@ -104,7 +104,7 @@ func cloneQueryCaptures(captures []QueryCapture) []QueryCapture {
 	return out
 }
 
-func (q *Query) matchPatternAll(pat *Pattern, node *Node, lang *Language, source []byte) [][]QueryCapture {
+func (q *Query) matchPatternAll(pat *Pattern, node *Node, lang *Language, source []byte, budget *queryMatchBudget) [][]QueryCapture {
 	if len(pat.steps) == 0 {
 		return nil
 	}
@@ -116,7 +116,7 @@ func (q *Query) matchPatternAll(pat *Pattern, node *Node, lang *Language, source
 	}
 
 	var matches [][]QueryCapture
-	q.matchStepsAllWithParentPredicates(pat.steps, 0, node, nil, -1, lang, source, pat.predicates, nil, func(captures []QueryCapture) {
+	q.matchStepsAllWithParentPredicates(pat.steps, 0, node, nil, -1, lang, source, pat.predicates, nil, budget, func(captures []QueryCapture) {
 		if !q.matchesPredicates(pat.predicates, captures, lang, source) {
 			return
 		}
@@ -137,7 +137,7 @@ func (q *Query) matchRootZeroOrMorePatternAll(pat *Pattern, node *Node, lang *La
 	return nil
 }
 
-func (q *Query) matchPatternPostorderAll(pat *Pattern, node *Node, parent *Node, childIdx int, lang *Language, source []byte) [][]QueryCapture {
+func (q *Query) matchPatternPostorderAll(pat *Pattern, node *Node, parent *Node, childIdx int, lang *Language, source []byte, budget *queryMatchBudget) [][]QueryCapture {
 	if len(pat.steps) == 0 {
 		return nil
 	}
@@ -147,11 +147,11 @@ func (q *Query) matchPatternPostorderAll(pat *Pattern, node *Node, parent *Node,
 		return nil
 	}
 	parent, childIdx = queryPatternSiblingContext(node, parent, childIdx)
-	if len(q.matchPatternOnceAll(pat, node, parent, childIdx, lang, source, nil)) == 0 {
+	if len(q.matchPatternOnceAll(pat, node, parent, childIdx, lang, source, nil, budget)) == 0 {
 		return nil
 	}
 	if next, nextParent, nextChildIdx := queryAdjacentSibling(node, parent, childIdx, 1); next != nil {
-		if len(q.matchPatternOnceAll(pat, next, nextParent, nextChildIdx, lang, source, nil)) > 0 {
+		if len(q.matchPatternOnceAll(pat, next, nextParent, nextChildIdx, lang, source, nil, budget)) > 0 {
 			return nil
 		}
 	}
@@ -164,7 +164,7 @@ func (q *Query) matchPatternPostorderAll(pat *Pattern, node *Node, parent *Node,
 		if prev == nil {
 			break
 		}
-		if len(q.matchPatternOnceAll(pat, prev, prevParent, prevChildIdx, lang, source, nil)) == 0 {
+		if len(q.matchPatternOnceAll(pat, prev, prevParent, prevChildIdx, lang, source, nil, budget)) == 0 {
 			break
 		}
 		runStart = prev
@@ -176,7 +176,7 @@ func (q *Query) matchPatternPostorderAll(pat *Pattern, node *Node, parent *Node,
 	for current, currentParent, currentChildIdx := runStart, runStartParent, runStartChildIdx; current != nil; {
 		var nextPartials [][]QueryCapture
 		for _, captures := range partials {
-			nextPartials = append(nextPartials, q.matchPatternOnceAll(pat, current, currentParent, currentChildIdx, lang, source, captures)...)
+			nextPartials = append(nextPartials, q.matchPatternOnceAll(pat, current, currentParent, currentChildIdx, lang, source, captures, budget)...)
 		}
 		if len(nextPartials) == 0 {
 			break
@@ -242,9 +242,10 @@ func (q *Query) matchPatternOnceAll(
 	lang *Language,
 	source []byte,
 	captures []QueryCapture,
+	budget *queryMatchBudget,
 ) [][]QueryCapture {
 	var matches [][]QueryCapture
-	q.matchStepsAllWithParentPredicates(pat.steps, 0, node, parent, childIdx, lang, source, pat.predicates, captures, func(next []QueryCapture) {
+	q.matchStepsAllWithParentPredicates(pat.steps, 0, node, parent, childIdx, lang, source, pat.predicates, captures, budget, func(next []QueryCapture) {
 		matches = append(matches, cloneQueryCaptures(next))
 	})
 	return matches
@@ -275,6 +276,7 @@ func (q *Query) matchStepsAllWithParentPredicates(
 	source []byte,
 	predicates []QueryPredicate,
 	captures []QueryCapture,
+	budget *queryMatchBudget,
 	emit func([]QueryCapture),
 ) {
 	if stepIdx >= len(steps) || node == nil {
@@ -284,7 +286,7 @@ func (q *Query) matchStepsAllWithParentPredicates(
 	step := &steps[stepIdx]
 	if len(step.alternatives) > 0 {
 		q.matchAlternationStepAll(step, node, parent, childIdx, lang, source, predicates, captures, func(next []QueryCapture) {
-			q.matchStepChildrenAll(steps, stepIdx, node, lang, source, predicates, next, emit)
+			q.matchStepChildrenAll(steps, stepIdx, node, lang, source, predicates, next, budget, emit)
 		})
 		return
 	}
@@ -297,7 +299,7 @@ func (q *Query) matchStepsAllWithParentPredicates(
 	if !q.predicatesStillViable(predicates, next, source) {
 		return
 	}
-	q.matchStepChildrenAll(steps, stepIdx, node, lang, source, predicates, next, emit)
+	q.matchStepChildrenAll(steps, stepIdx, node, lang, source, predicates, next, budget, emit)
 }
 
 func (q *Query) matchStepChildrenAll(
@@ -308,6 +310,7 @@ func (q *Query) matchStepChildrenAll(
 	source []byte,
 	predicates []QueryPredicate,
 	captures []QueryCapture,
+	budget *queryMatchBudget,
 	emit func([]QueryCapture),
 ) {
 	step := &steps[stepIdx]
@@ -332,7 +335,7 @@ func (q *Query) matchStepChildrenAll(
 			})
 		}
 	}
-	q.matchChildStepsAll(node, steps, childSteps, lang, source, predicates, captures, emit)
+	q.matchChildStepsAll(node, steps, childSteps, lang, source, predicates, captures, budget, emit)
 }
 
 func (q *Query) matchAlternationStepAll(
@@ -376,6 +379,7 @@ func (q *Query) matchChildStepsAll(
 	source []byte,
 	predicates []QueryPredicate,
 	captures []QueryCapture,
+	budget *queryMatchBudget,
 	emit func([]QueryCapture),
 ) {
 	childCount := nodeChildCountNoMaterialize(parent)
@@ -407,7 +411,7 @@ func (q *Query) matchChildStepsAll(
 	q.matchChildStepsRecursiveAll(
 		parent, children, namedPosByIndex, namedPos-1,
 		steps, childSteps, 0, 0, false, -1,
-		lang, source, predicates, captures, emit,
+		lang, source, predicates, captures, budget, emit,
 	)
 }
 
@@ -426,6 +430,7 @@ func (q *Query) matchChildStepsRecursiveAll(
 	source []byte,
 	predicates []QueryPredicate,
 	captures []QueryCapture,
+	budget *queryMatchBudget,
 	emit func([]QueryCapture),
 ) {
 	if childPos >= len(childSteps) {
@@ -484,6 +489,9 @@ func (q *Query) matchChildStepsRecursiveAll(
 			lastNamedPos int,
 			current []QueryCapture,
 		) {
+			if !budget.charge() {
+				return
+			}
 			if chosen == count {
 				if count > 0 && !q.stepAnchorsSatisfied(
 					step, childPos, hasNamed, firstNamedPos, lastNamedPos,
@@ -499,7 +507,7 @@ func (q *Query) matchChildStepsRecursiveAll(
 				q.matchChildStepsRecursiveAll(
 					parent, children, namedPosByIndex, parentLastNamedPos,
 					steps, childSteps, childPos+1, nextIdx, nextPrevHasNamed, nextPrevLastNamedPos,
-					lang, source, predicates, current, emitForCount,
+					lang, source, predicates, current, budget, emitForCount,
 				)
 				return
 			}
@@ -530,7 +538,7 @@ func (q *Query) matchChildStepsRecursiveAll(
 				}
 
 				q.matchStepsAllWithParentPredicates(
-					steps, cs.stepIdx, child, parent, childIdx, lang, source, predicates, current,
+					steps, cs.stepIdx, child, parent, childIdx, lang, source, predicates, current, budget,
 					func(next []QueryCapture) {
 						tryCombinations(
 							i+1, chosen+1, nextIdxForChoice,
@@ -543,6 +551,9 @@ func (q *Query) matchChildStepsRecursiveAll(
 		}
 
 		tryCombinations(0, 0, nextChildIdx, false, -1, -1, captures)
+		if budget.tripped() {
+			return
+		}
 		if step.quantifier != queryQuantifierOne && emittedForCount {
 			return
 		}
@@ -744,10 +755,11 @@ func (q *Query) matchChildSteps(
 	}
 	parentLastNamedPos := namedPos - 1
 
+	budget := newQueryMatchBudget(defaultQueryMatchWorkBudget)
 	return q.matchChildStepsRecursive(
 		parent, children, namedPosByIndex, parentLastNamedPos,
 		steps, childSteps, 0, 0, false, -1,
-		lang, source, predicates, captures,
+		lang, source, predicates, captures, budget,
 	)
 }
 
@@ -766,6 +778,7 @@ func (q *Query) matchChildStepsRecursive(
 	source []byte,
 	predicates []QueryPredicate,
 	captures *[]QueryCapture,
+	budget *queryMatchBudget,
 ) bool {
 	if childPos >= len(childSteps) {
 		return true
@@ -789,6 +802,7 @@ func (q *Query) matchChildStepsRecursive(
 		predicates:         predicates,
 		captures:           captures,
 		candidateIndices:   candidateIndicesBuf[:0],
+		budget:             budget,
 	}
 	if !matcher.prepare() {
 		return false
@@ -812,6 +826,7 @@ type childStepMatcher struct {
 	source             []byte
 	predicates         []QueryPredicate
 	captures           *[]QueryCapture
+	budget             *queryMatchBudget
 
 	cs               queryChildStepInfo
 	step             *QueryStep
@@ -916,11 +931,17 @@ func (m *childStepMatcher) matchQuantifierChoices() bool {
 		}
 
 		*m.captures = (*m.captures)[:checkpoint]
+		if m.budget.tripped() {
+			return false
+		}
 	}
 	return false
 }
 
 func (m *childStepMatcher) matchChoiceCombinations(count int, candidatePos int, chosen int, nextIdx int, span childStepNamedSpan) bool {
+	if !m.budget.charge() {
+		return false
+	}
 	if chosen == count {
 		if !m.anchorsSatisfied(span) {
 			return false
@@ -933,7 +954,7 @@ func (m *childStepMatcher) matchChoiceCombinations(count int, candidatePos int, 
 		return m.q.matchChildStepsRecursive(
 			m.parent, m.children, m.namedPosByIndex, m.parentLastNamedPos,
 			m.steps, m.childSteps, m.childPos+1, nextIdx, nextPrevHasNamed, nextPrevLastNamedPos,
-			m.lang, m.source, m.predicates, m.captures,
+			m.lang, m.source, m.predicates, m.captures, m.budget,
 		)
 	}
 
