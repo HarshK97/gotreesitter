@@ -34,6 +34,13 @@ type ConstructionOccurrenceKey struct {
 	Slot  uint32
 }
 
+type Phase0AConstructionKind uint8
+
+const (
+	Phase0AConstructionOrdinaryTerminal Phase0AConstructionKind = iota + 1
+	Phase0AConstructionExtraTerminal
+)
+
 type Phase0ARollbackCause uint8
 
 const (
@@ -58,7 +65,13 @@ type Phase0AMutationKind uint8
 
 const (
 	Phase0AMutationEvent Phase0AMutationKind = iota + 1
+	// Phase0AMutationEdge is reserved for a terminal occurrence-bound candidate
+	// edge. Publication, duplicate, replacement, and selection remain unproven.
 	Phase0AMutationEdge
+	Phase0AMutationOccurrence
+	// Phase0AMutationScaffoldEdge is an identity/lifetime test scaffold. It is
+	// excluded from semantic construction and incoming-edge proof.
+	Phase0AMutationScaffoldEdge
 )
 
 type Phase0AMutationRecord struct {
@@ -66,6 +79,10 @@ type Phase0AMutationRecord struct {
 	TransactionID       uint64
 	Event               ConstructionEventKey
 	Edge                IncomingEdgeKey
+	Occurrence          ConstructionOccurrenceKey
+	Payload             SubtreeID
+	Predecessor         NodeID
+	ConstructionKind    Phase0AConstructionKind
 	RolledBack          bool
 	RollbackTransaction uint64
 	RollbackCause       Phase0ARollbackCause
@@ -83,40 +100,48 @@ type Phase0APoisonRecord struct {
 }
 
 type Phase0AProofSnapshot struct {
-	Namespace   CoreRunNamespace
-	Mutations   []Phase0AMutationRecord
-	Frames      []Phase0ATransactionFrame
-	FirstPoison *Phase0APoisonRecord
-	Failure     *Phase0AError
+	Namespace CoreRunNamespace
+	// Mutations includes explicit scaffold rows. Semantic construction proof
+	// must exclude Phase0AMutationScaffoldEdge.
+	Mutations       []Phase0AMutationRecord
+	Frames          []Phase0ATransactionFrame
+	OccurrenceCount uint64
+	OccurrenceBytes uint64
+	FirstPoison     *Phase0APoisonRecord
+	Failure         *Phase0AError
 }
 
 type Phase0AErrorKind string
 
 const (
-	Phase0AErrorCounterOverflow  Phase0AErrorKind = "counter_overflow"
-	Phase0AErrorUnregisteredCore Phase0AErrorKind = "unregistered_core"
-	Phase0AErrorRunActive        Phase0AErrorKind = "run_active"
-	Phase0AErrorStaleNamespace   Phase0AErrorKind = "stale_namespace"
-	Phase0AErrorInvalidEvent     Phase0AErrorKind = "invalid_event"
-	Phase0AErrorSessionInactive  Phase0AErrorKind = "session_inactive"
-	Phase0AErrorSessionActive    Phase0AErrorKind = "session_active"
-	Phase0AErrorSessionHasRuns   Phase0AErrorKind = "session_has_active_runs"
-	Phase0AErrorCoreCap          Phase0AErrorKind = "core_cap"
-	Phase0AErrorRecordCap        Phase0AErrorKind = "record_cap"
-	Phase0AErrorByteCap          Phase0AErrorKind = "byte_cap"
-	Phase0AErrorFrameCap         Phase0AErrorKind = "frame_cap"
-	Phase0AErrorMutationCap      Phase0AErrorKind = "mutation_cap"
-	Phase0AErrorTransactionProof Phase0AErrorKind = "transaction_proof"
-	Phase0AErrorAttemptUnproven  Phase0AErrorKind = "attempt_unproven"
+	Phase0AErrorCounterOverflow   Phase0AErrorKind = "counter_overflow"
+	Phase0AErrorUnregisteredCore  Phase0AErrorKind = "unregistered_core"
+	Phase0AErrorRunActive         Phase0AErrorKind = "run_active"
+	Phase0AErrorStaleNamespace    Phase0AErrorKind = "stale_namespace"
+	Phase0AErrorInvalidEvent      Phase0AErrorKind = "invalid_event"
+	Phase0AErrorInvalidOccurrence Phase0AErrorKind = "invalid_occurrence"
+	Phase0AErrorSessionInactive   Phase0AErrorKind = "session_inactive"
+	Phase0AErrorSessionActive     Phase0AErrorKind = "session_active"
+	Phase0AErrorSessionHasRuns    Phase0AErrorKind = "session_has_active_runs"
+	Phase0AErrorCoreCap           Phase0AErrorKind = "core_cap"
+	Phase0AErrorRecordCap         Phase0AErrorKind = "record_cap"
+	Phase0AErrorByteCap           Phase0AErrorKind = "byte_cap"
+	Phase0AErrorFrameCap          Phase0AErrorKind = "frame_cap"
+	Phase0AErrorMutationCap       Phase0AErrorKind = "mutation_cap"
+	Phase0AErrorOccurrenceCap     Phase0AErrorKind = "occurrence_cap"
+	Phase0AErrorOccurrenceByteCap Phase0AErrorKind = "occurrence_byte_cap"
+	Phase0AErrorTransactionProof  Phase0AErrorKind = "transaction_proof"
+	Phase0AErrorAttemptUnproven   Phase0AErrorKind = "attempt_unproven"
 )
 
 type Phase0ACounter string
 
 const (
-	Phase0ACounterCoreInstance  Phase0ACounter = "core_instance"
-	Phase0ACounterRunGeneration Phase0ACounter = "run_generation"
-	Phase0ACounterEventSerial   Phase0ACounter = "event_serial"
-	Phase0ACounterEdgeSerial    Phase0ACounter = "edge_serial"
+	Phase0ACounterCoreInstance   Phase0ACounter = "core_instance"
+	Phase0ACounterRunGeneration  Phase0ACounter = "run_generation"
+	Phase0ACounterEventSerial    Phase0ACounter = "event_serial"
+	Phase0ACounterEdgeSerial     Phase0ACounter = "edge_serial"
+	Phase0ACounterOccurrenceSlot Phase0ACounter = "occurrence_slot"
 )
 
 type Phase0AError struct {
@@ -141,17 +166,20 @@ func (e *Phase0AError) Error() string {
 
 // Phase0AObserverLimits are fixed for one explicit observer session.
 type Phase0AObserverLimits struct {
-	MaxCores     uint64
-	MaxRecords   uint64
-	MaxBytes     uint64
-	MaxFrames    uint64
-	MaxMutations uint64
+	MaxCores           uint64
+	MaxRecords         uint64
+	MaxBytes           uint64
+	MaxFrames          uint64
+	MaxMutations       uint64
+	MaxOccurrences     uint64
+	MaxOccurrenceBytes uint64
 }
 
 const (
-	phase0AEventRecordBytes uint64 = 40
-	phase0AEdgeRecordBytes  uint64 = 48
-	phase0AFrameRecordBytes uint64 = 24
+	phase0AEventRecordBytes      uint64 = 40
+	phase0AEdgeRecordBytes       uint64 = 48
+	phase0AOccurrenceRecordBytes uint64 = 88
+	phase0AFrameRecordBytes      uint64 = 24
 )
 
 type phase0AObserver struct {
@@ -166,6 +194,9 @@ type phase0AObserver struct {
 	mutations       []Phase0AMutationRecord
 	eventIndex      map[ConstructionEventKey]uint64
 	edgeIndex       map[IncomingEdgeKey]uint64
+	occurrenceIndex map[ConstructionOccurrenceKey]uint64
+	occurrenceCount uint64
+	occurrenceBytes uint64
 	firstPoison     *Phase0APoisonRecord
 	failure         *Phase0AError
 	pendingRollback Phase0ARollbackCause
@@ -230,6 +261,9 @@ func phase0AInvalidateCore(core *Core) {
 		observer.mutations = nil
 		observer.eventIndex = nil
 		observer.edgeIndex = nil
+		observer.occurrenceIndex = nil
+		observer.occurrenceCount = 0
+		observer.occurrenceBytes = 0
 		observer.firstPoison = nil
 		observer.failure = nil
 		observer.pendingRollback = Phase0ARollbackUnknown
@@ -280,6 +314,9 @@ func (c *Core) BeginRun() (CoreRunNamespace, error) {
 	observer.mutations = nil
 	observer.eventIndex = make(map[ConstructionEventKey]uint64)
 	observer.edgeIndex = make(map[IncomingEdgeKey]uint64)
+	observer.occurrenceIndex = make(map[ConstructionOccurrenceKey]uint64)
+	observer.occurrenceCount = 0
+	observer.occurrenceBytes = 0
 	observer.firstPoison = nil
 	observer.failure = nil
 	observer.pendingRollback = Phase0ARollbackUnknown
@@ -353,7 +390,9 @@ func phase0ANextConstructionEvent(c *Core, namespace CoreRunNamespace) (Construc
 	return event, nil
 }
 
-func phase0ANextIncomingEdge(c *Core, event ConstructionEventKey) (IncomingEdgeKey, error) {
+// phase0ANextScaffoldEdge exercises edge serial and transaction lifetime only.
+// It never authenticates a semantic construction occurrence or candidate edge.
+func phase0ANextScaffoldEdge(c *Core, event ConstructionEventKey) (IncomingEdgeKey, error) {
 	phase0AObservers.Lock()
 	defer phase0AObservers.Unlock()
 	observer, err := phase0AObserverForNamespaceLocked(c, event.Attempt.Run)
@@ -382,10 +421,182 @@ func phase0ANextIncomingEdge(c *Core, event ConstructionEventKey) (IncomingEdgeK
 	}
 	observer.nextEdge++
 	edge := IncomingEdgeKey{Event: event, Serial: observer.nextEdge}
-	record := Phase0AMutationRecord{Kind: Phase0AMutationEdge, Event: event, Edge: edge, TransactionID: phase0ACurrentTransaction(observer)}
+	record := Phase0AMutationRecord{Kind: Phase0AMutationScaffoldEdge, Event: event, Edge: edge, TransactionID: phase0ACurrentTransaction(observer)}
 	observer.edgeIndex[edge] = uint64(len(observer.mutations))
 	observer.mutations = append(observer.mutations, record)
 	return edge, nil
+}
+
+func phase0AObserveTerminalShift(core *Core, payload SubtreeID, predecessor NodeID, extra bool) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer := phase0AObservers.byCore[core]
+	if observer == nil || !observer.active || observer.failure != nil {
+		return
+	}
+	kind := Phase0AConstructionOrdinaryTerminal
+	if extra {
+		kind = Phase0AConstructionExtraTerminal
+	}
+	phase0AObserveTerminalConstructionLocked(core, observer, payload, kind, 1, func(uint64) NodeID {
+		return predecessor
+	})
+}
+
+func phase0AObserveTerminalCohortShift(core *Core, payload SubtreeID, boundaries []ClassifiedBoundary, extra bool) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer := phase0AObservers.byCore[core]
+	if observer == nil || !observer.active || observer.failure != nil {
+		return
+	}
+	count := uint64(len(boundaries))
+	if count == 0 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "terminal cohort has no occurrence"})
+		return
+	}
+	if count > math.MaxUint32 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterOccurrenceSlot, Namespace: observer.run})
+		return
+	}
+	for _, boundary := range boundaries {
+		if boundary.owner != core {
+			phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "terminal cohort boundary belongs to another core"})
+			return
+		}
+	}
+	kind := Phase0AConstructionOrdinaryTerminal
+	if extra {
+		kind = Phase0AConstructionExtraTerminal
+	}
+	phase0AObserveTerminalConstructionLocked(core, observer, payload, kind, count, func(index uint64) NodeID {
+		return boundaries[index].head.Node
+	})
+}
+
+func phase0AObserveTerminalConstructionLocked(core *Core, observer *phase0AObserver, payload SubtreeID, kind Phase0AConstructionKind, count uint64, predecessor func(uint64) NodeID) {
+	if count > math.MaxUint32 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterOccurrenceSlot, Namespace: observer.run})
+		return
+	}
+	if payload == 0 || predecessor == nil || count == 0 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "invalid terminal construction input"})
+		return
+	}
+	subtree, err := core.subtree(payload)
+	if err != nil || !subtree.terminal {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "terminal construction payload is not an existing terminal"})
+		return
+	}
+	wantExtra := kind == Phase0AConstructionExtraTerminal
+	if (kind != Phase0AConstructionOrdinaryTerminal && kind != Phase0AConstructionExtraTerminal) || subtree.extra != wantExtra {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "terminal construction payload kind mismatch"})
+		return
+	}
+	for index := uint64(0); index < count; index++ {
+		if _, err := core.node(predecessor(index)); err != nil {
+			phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "terminal construction predecessor does not exist"})
+			return
+		}
+	}
+	if observer.attempt != 1 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorAttemptUnproven, Namespace: observer.run})
+		return
+	}
+	if observer.nextEvent == math.MaxUint64 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterEventSerial, Namespace: observer.run})
+		return
+	}
+	if observer.nextEdge > math.MaxUint64-count {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterEdgeSerial, Namespace: observer.run})
+		return
+	}
+	mutationCount := 1 + 2*count
+	occurrenceBytes := count * (phase0AOccurrenceRecordBytes + phase0AEdgeRecordBytes)
+	totalBytes := phase0AEventRecordBytes + occurrenceBytes
+	if err := phase0AReserveConstructionLocked(observer, mutationCount, count, totalBytes, occurrenceBytes); err != nil {
+		return
+	}
+
+	observer.nextEvent++
+	event := ConstructionEventKey{
+		Attempt: AttemptKey{Run: observer.run, AttemptEpoch: 1},
+		Serial:  observer.nextEvent,
+	}
+	transaction := phase0ACurrentTransaction(observer)
+	eventRecord := Phase0AMutationRecord{
+		Kind: Phase0AMutationEvent, TransactionID: transaction,
+		Event: event, Payload: payload, ConstructionKind: kind,
+	}
+	observer.eventIndex[event] = uint64(len(observer.mutations))
+	observer.mutations = append(observer.mutations, eventRecord)
+
+	for index := uint64(0); index < count; index++ {
+		observer.nextEdge++
+		occurrence := ConstructionOccurrenceKey{Event: event, Slot: uint32(index + 1)}
+		edge := IncomingEdgeKey{Event: event, Serial: observer.nextEdge}
+		record := Phase0AMutationRecord{
+			TransactionID: transaction, Event: event, Edge: edge, Occurrence: occurrence,
+			Payload: payload, Predecessor: predecessor(index), ConstructionKind: kind,
+		}
+		record.Kind = Phase0AMutationOccurrence
+		observer.occurrenceIndex[occurrence] = uint64(len(observer.mutations))
+		observer.mutations = append(observer.mutations, record)
+		record.Kind = Phase0AMutationEdge
+		observer.edgeIndex[edge] = uint64(len(observer.mutations))
+		observer.mutations = append(observer.mutations, record)
+	}
+}
+
+func phase0AReserveConstructionLocked(observer *phase0AObserver, mutationCount, occurrenceCount, totalBytes, occurrenceBytes uint64) error {
+	mutationLimit := phase0AObservers.limits.MaxMutations
+	if mutationLimit == 0 {
+		mutationLimit = math.MaxUint64
+	}
+	if uint64(len(observer.mutations)) > mutationLimit || mutationCount > mutationLimit-uint64(len(observer.mutations)) {
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorMutationCap, Namespace: observer.run})
+	}
+	occurrenceLimit := phase0AObservers.limits.MaxOccurrences
+	if occurrenceLimit == 0 {
+		occurrenceLimit = math.MaxUint64
+	}
+	if observer.occurrenceCount > occurrenceLimit || occurrenceCount > occurrenceLimit-observer.occurrenceCount {
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorOccurrenceCap, Namespace: observer.run})
+	}
+	occurrenceByteLimit := phase0AObservers.limits.MaxOccurrenceBytes
+	if occurrenceByteLimit == 0 {
+		occurrenceByteLimit = math.MaxUint64
+	}
+	if observer.occurrenceBytes > occurrenceByteLimit || occurrenceBytes > occurrenceByteLimit-observer.occurrenceBytes {
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorOccurrenceByteCap, Namespace: observer.run})
+	}
+	if err := phase0AChargeManyLocked(mutationCount, totalBytes); err != nil {
+		return phase0AStickyLocked(observer, err.(*Phase0AError))
+	}
+	observer.occurrenceCount += occurrenceCount
+	observer.occurrenceBytes += occurrenceBytes
+	return nil
+}
+
+// Phase0AResolveCommittedConstructionOccurrence returns only a construction
+// attempt that survived transaction rollback. It does not prove that condense
+// published, retained, or selected the attempt's candidate graph edge.
+func Phase0AResolveCommittedConstructionOccurrence(core *Core, namespace CoreRunNamespace, key ConstructionOccurrenceKey) (Phase0AMutationRecord, error) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer, err := phase0AObserverForNamespaceLocked(core, namespace)
+	if err != nil {
+		return Phase0AMutationRecord{}, err
+	}
+	index, ok := observer.occurrenceIndex[key]
+	if !ok || index >= uint64(len(observer.mutations)) {
+		return Phase0AMutationRecord{}, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: namespace, Detail: "occurrence is not indexed"}
+	}
+	record := observer.mutations[index]
+	if record.Kind != Phase0AMutationOccurrence || record.Occurrence != key || record.RolledBack {
+		return Phase0AMutationRecord{}, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: namespace, Detail: "occurrence did not survive transaction rollback"}
+	}
+	return record, nil
 }
 
 func phase0AReserveMutationLocked(observer *phase0AObserver, bytes uint64) error {
@@ -403,14 +614,19 @@ func phase0AReserveMutationLocked(observer *phase0AObserver, bytes uint64) error
 }
 
 func phase0AChargeLocked(bytes uint64) error {
-	if phase0AObservers.records >= phase0AObservers.limits.MaxRecords {
+	return phase0AChargeManyLocked(1, bytes)
+}
+
+func phase0AChargeManyLocked(records, bytes uint64) error {
+	if phase0AObservers.records > phase0AObservers.limits.MaxRecords ||
+		records > phase0AObservers.limits.MaxRecords-phase0AObservers.records {
 		return &Phase0AError{Kind: Phase0AErrorRecordCap}
 	}
 	if phase0AObservers.bytes > phase0AObservers.limits.MaxBytes ||
 		bytes > phase0AObservers.limits.MaxBytes-phase0AObservers.bytes {
 		return &Phase0AError{Kind: Phase0AErrorByteCap}
 	}
-	phase0AObservers.records++
+	phase0AObservers.records += records
 	phase0AObservers.bytes += bytes
 	return nil
 }
@@ -471,7 +687,11 @@ func Phase0AObserverProof(core *Core, namespace CoreRunNamespace) (Phase0AProofS
 	if !observer.active && observer.failure == nil {
 		return Phase0AProofSnapshot{}, &Phase0AError{Kind: Phase0AErrorStaleNamespace, Namespace: namespace}
 	}
-	snapshot := Phase0AProofSnapshot{Namespace: namespace}
+	snapshot := Phase0AProofSnapshot{
+		Namespace:       namespace,
+		OccurrenceCount: observer.occurrenceCount,
+		OccurrenceBytes: observer.occurrenceBytes,
+	}
 	snapshot.Mutations = append(snapshot.Mutations, observer.mutations...)
 	snapshot.Frames = append(snapshot.Frames, observer.frames...)
 	if observer.firstPoison != nil {

@@ -77,7 +77,7 @@ func TestPhase0ATransactionInnerRollbackOuterCommit(t *testing.T) {
 		}); !errors.Is(err, innerFailure) {
 			return err
 		}
-		_, err = phase0ANextIncomingEdge(core, outer)
+		_, err = phase0ANextScaffoldEdge(core, outer)
 		return err
 	})
 	if err != nil {
@@ -356,7 +356,7 @@ func TestPhase0ARolledBackEventCannotBeReusedAndFailureIsAuthoritative(t *testin
 	beforeEvent := phase0AObservers.byCore[core].nextEvent
 	beforeEdge := phase0AObservers.byCore[core].nextEdge
 	phase0AObservers.Unlock()
-	if _, err := phase0ANextIncomingEdge(core, rolledBack); !isPhase0AError(err, Phase0AErrorInvalidEvent, "") {
+	if _, err := phase0ANextScaffoldEdge(core, rolledBack); !isPhase0AError(err, Phase0AErrorInvalidEvent, "") {
 		t.Fatalf("rolled-back event reuse = %v", err)
 	}
 	if _, err := phase0ANextConstructionEvent(core, run); !isPhase0AError(err, Phase0AErrorInvalidEvent, "") {

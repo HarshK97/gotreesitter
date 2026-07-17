@@ -43,6 +43,7 @@ func (c *Core) shiftClassifiedUncheckpointed(boundary ClassifiedBoundary, action
 	if err != nil {
 		return Head{}, err
 	}
+	phase0AObserveTerminalShift(c, payload, boundary.head.Node, act.Extra)
 	outcome, err := c.condenseWithOutcomeAtomic(c.shiftedBoundaryKey(targetState, shifted.EndByte), linkInput{
 		prev: boundary.head.Node, payload: payload, order: fork,
 	})
@@ -113,6 +114,7 @@ func (c *Core) shiftOrdinaryClassifiedCohortUncheckpointed(boundaries []Classifi
 	if err != nil {
 		return nil, err
 	}
+	phase0AObserveTerminalCohortShift(c, payload, boundaries, false)
 	out := make([]Head, len(boundaries))
 	for index, boundary := range boundaries {
 		outcome, err := c.condenseWithOutcomeAtomic(c.shiftedBoundaryKey(targets[index], shifted.EndByte), linkInput{
@@ -190,6 +192,7 @@ func (c *Core) shiftExtraClassifiedCohortUncheckpointed(boundaries []ClassifiedB
 	if err != nil {
 		return nil, err
 	}
+	phase0AObserveTerminalCohortShift(c, payload, boundaries, true)
 	out := make([]Head, len(boundaries))
 	for index, boundary := range boundaries {
 		outcome, err := c.condenseWithOutcomeAtomic(c.shiftedBoundaryKey(targets[index], shifted.EndByte), linkInput{

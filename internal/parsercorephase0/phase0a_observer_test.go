@@ -61,13 +61,17 @@ func TestPhase0ACompositeIdentityAndAttemptStatus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	edge, err := phase0ANextIncomingEdge(a, event)
+	edge, err := phase0ANextScaffoldEdge(a, event)
 	if err != nil {
 		t.Fatal(err)
 	}
 	raw := ConstructionOccurrenceKey{Event: event, Slot: 7}
 	if edge.Event != raw.Event || raw.Slot != 7 {
 		t.Fatalf("composite keys lost: edge=%+v raw=%+v", edge, raw)
+	}
+	proof, err := Phase0AObserverProof(a, ar)
+	if err != nil || len(proof.Mutations) != 2 || proof.Mutations[1].Kind != Phase0AMutationScaffoldEdge || proof.Mutations[1].Occurrence != (ConstructionOccurrenceKey{}) {
+		t.Fatalf("scaffold edge leaked semantic occurrence proof: %+v err=%v", proof.Mutations, err)
 	}
 	if _, err := phase0AAttempt(a, ar, 2); !isPhase0AError(err, Phase0AErrorAttemptUnproven, "") {
 		t.Fatalf("retry error = %v", err)
@@ -131,7 +135,7 @@ func TestPhase0ACapsChargeAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := phase0ANextIncomingEdge(c, event); !isPhase0AError(err, Phase0AErrorRecordCap, "") {
+	if _, err := phase0ANextScaffoldEdge(c, event); !isPhase0AError(err, Phase0AErrorRecordCap, "") {
 		t.Fatalf("record cap = %v", err)
 	}
 	phase0AObservers.Lock()
@@ -184,11 +188,11 @@ func TestPhase0AResetSerialsAndOverflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstEdge, err := phase0ANextIncomingEdge(c, firstEvent)
+	firstEdge, err := phase0ANextScaffoldEdge(c, firstEvent)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondEdge, err := phase0ANextIncomingEdge(c, secondEvent)
+	secondEdge, err := phase0ANextScaffoldEdge(c, secondEvent)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +209,7 @@ func TestPhase0AResetSerialsAndOverflow(t *testing.T) {
 	phase0AObservers.Lock()
 	observer.nextEdge = math.MaxUint64
 	phase0AObservers.Unlock()
-	if _, err := phase0ANextIncomingEdge(c, firstEvent); !isPhase0AError(err, Phase0AErrorCounterOverflow, Phase0ACounterEventSerial) {
+	if _, err := phase0ANextScaffoldEdge(c, firstEvent); !isPhase0AError(err, Phase0AErrorCounterOverflow, Phase0ACounterEventSerial) {
 		t.Fatalf("sticky event overflow = %v", err)
 	}
 	if err := c.Reset(); err != nil {
@@ -213,7 +217,7 @@ func TestPhase0AResetSerialsAndOverflow(t *testing.T) {
 	}
 	phase0AObservers.Lock()
 	resetObserver := phase0AObservers.byCore[c]
-	if resetObserver.active || resetObserver.frames != nil || resetObserver.mutations != nil || resetObserver.eventIndex != nil || resetObserver.edgeIndex != nil || resetObserver.firstPoison != nil || resetObserver.failure != nil {
+	if resetObserver.active || resetObserver.frames != nil || resetObserver.mutations != nil || resetObserver.eventIndex != nil || resetObserver.edgeIndex != nil || resetObserver.occurrenceIndex != nil || resetObserver.occurrenceCount != 0 || resetObserver.occurrenceBytes != 0 || resetObserver.firstPoison != nil || resetObserver.failure != nil {
 		phase0AObservers.Unlock()
 		t.Fatalf("reset retained observer capacity or mappings: %+v", resetObserver)
 	}
@@ -282,7 +286,7 @@ func TestPhase0AConcurrentAllocationUniqueAndSessionClean(t *testing.T) {
 						errs <- err
 						return
 					}
-					edge, err := phase0ANextIncomingEdge(core, event)
+					edge, err := phase0ANextScaffoldEdge(core, event)
 					if err != nil {
 						errs <- err
 						return

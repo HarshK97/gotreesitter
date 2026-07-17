@@ -31,3 +31,5 @@ func phase0AObserveFirstPoison(*Core, uint64, Phase0APoisonKind)                
 func phase0ASetRollbackCause(*Core, Phase0ARollbackCause)                               {}
 func phase0ATakeRollbackCause(*Core) Phase0ARollbackCause                               { return Phase0ARollbackUnknown }
 func phase0AObserveSchedulerPoison(*Core, SchedulerTransactionToken, Phase0APoisonKind) {}
+func phase0AObserveTerminalShift(*Core, SubtreeID, NodeID, bool)                        {}
+func phase0AObserveTerminalCohortShift(*Core, SubtreeID, []ClassifiedBoundary, bool)    {}
