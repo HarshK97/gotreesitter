@@ -1838,18 +1838,12 @@ func extractTokenStringValue(r *Rule) string {
 	return ""
 }
 
-// escapeAnonymousName normalizes anonymous terminal display names to match
-// tree-sitter C behavior.
-//
-// Stage-1 investigation note: an attempt to also decode "?" here (dropping
-// the "\?" escape, to match cmd/ts2go/extract.go's newly-decoded-at-rest
-// unescapeCString) regressed TestTypeScriptConditionalTypeParity — the
-// generated TypeScript grammar's conditional-type "?" started producing an
-// ERROR node instead of parsing, for a root cause not yet isolated within
-// Stage-1's SAFE-NOW budget (something beyond display text depends on the
-// "\?" vs "?" spelling distinguishing two otherwise-identical-looking
-// terminal registrations). Left escaping in place; see the Stage-1 commit
-// report for the deferred follow-up.
+// escapeAnonymousName stores anonymous terminal names in the reversible
+// internal spelling shared by grammargen and ts2go. A literal question mark
+// is represented as "\?", while a literal backslash followed by a question
+// mark becomes "\\?". Public node/query APIs decode this one internal escape
+// through unescapePunctuationSymbolName, matching tree-sitter C while still
+// preserving the distinction between the two token texts at rest.
 func escapeAnonymousName(s string) string {
 	s = decodeAnonymousNameUnicodeEscapes(s)
 	return strings.ReplaceAll(s, "?", `\?`)
@@ -3425,16 +3419,18 @@ func isPlainVisibleNamedLeafStringLiteral(g *Grammar, ruleName, s string) bool {
 	return isLowercaseIdentifierLikeKeywordLiteral(s)
 }
 
-// symbolNameReferencedElsewhere reports whether Sym(ruleName) appears
-// anywhere in the grammar's rule bodies, extras, externals, or reserved-word
-// sets — i.e. whether ruleName is reachable as an ordinary nonterminal
-// reference, not merely present as a dangling rule that only participates
-// in keyword-table construction.
+// symbolNameReferencedElsewhere reports whether Sym(ruleName) is reachable
+// from the start rule or the parser's global extras/external roots. Tree-sitter
+// prunes rule bodies reachable only from an otherwise-unreachable rule, so a
+// raw scan over every declaration incorrectly promotes dangling keywords.
+// Reserved-word membership is not a reachability root: it only changes how an
+// already-reachable word token is classified in states that expect the symbol.
 func symbolNameReferencedElsewhere(g *Grammar, ruleName string) bool {
 	if g == nil || ruleName == "" {
 		return false
 	}
 	found := false
+	visitedRules := make(map[string]bool, len(g.RuleOrder))
 	var walk func(r *Rule)
 	walk = func(r *Rule) {
 		if r == nil || found {
@@ -3444,6 +3440,13 @@ func symbolNameReferencedElsewhere(g *Grammar, ruleName string) bool {
 			found = true
 			return
 		}
+		if r.Kind == RuleSymbol && !visitedRules[r.Value] {
+			visitedRules[r.Value] = true
+			walk(g.Rules[r.Value])
+			if found {
+				return
+			}
+		}
 		for _, c := range r.Children {
 			walk(c)
 			if found {
@@ -3451,8 +3454,10 @@ func symbolNameReferencedElsewhere(g *Grammar, ruleName string) bool {
 			}
 		}
 	}
-	for _, name := range g.RuleOrder {
-		walk(g.Rules[name])
+	if len(g.RuleOrder) > 0 {
+		start := g.RuleOrder[0]
+		visitedRules[start] = true
+		walk(g.Rules[start])
 		if found {
 			return true
 		}
@@ -3467,14 +3472,6 @@ func symbolNameReferencedElsewhere(g *Grammar, ruleName string) bool {
 		walk(ext)
 		if found {
 			return true
-		}
-	}
-	for _, set := range g.ReservedWordSets {
-		for _, r := range set.Rules {
-			walk(r)
-			if found {
-				return true
-			}
 		}
 	}
 	return found

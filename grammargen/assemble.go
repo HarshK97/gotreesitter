@@ -245,9 +245,9 @@ func assemble(
 // assembled Language actually carries an ABI-15-only surface: the reserved-
 // word table (buildReservedWordTables), the supertype map
 // (buildSupertypeMap's SupertypeMapSlices/SupertypeMapEntries — distinct
-// from the ABI-14-compatible flat SupertypeSymbols list), or grammar
-// semantic-version metadata. A grammar with none of these stays at the
-// baseline LanguageVersion assemble() set (14): declaring ABI 15 without an
+// from the ABI-14-compatible flat SupertypeSymbols list). A grammar with
+// neither surface stays at the baseline LanguageVersion assemble() set (14):
+// declaring ABI 15 without an
 // ABI-15 feature present would just make older tree-sitter-compatible
 // consumers reject the language for no reason.
 //
@@ -258,9 +258,7 @@ func stampABI15LanguageVersionIfNeeded(lang *gotreesitter.Language) {
 	if lang == nil || lang.LanguageVersion >= 15 {
 		return
 	}
-	hasABI15Surface := len(lang.ReservedWords) > 0 ||
-		len(lang.SupertypeMapEntries) > 0 ||
-		lang.Metadata != (gotreesitter.LanguageMetadata{})
+	hasABI15Surface := len(lang.ReservedWords) > 0 || len(lang.SupertypeMapEntries) > 0
 	if hasABI15Surface {
 		lang.LanguageVersion = 15
 	}

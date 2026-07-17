@@ -10,8 +10,9 @@ func TestEscapeAnonymousNameDecodesUnicodeEscapes(t *testing.T) {
 	}{
 		{name: "fixed arrow", in: `\u2192`, want: "→"},
 		{name: "braced lambda", in: `\u{03BB}`, want: "λ"},
-		{name: "decoded question still escaped", in: `\u003F`, want: `\?`},
-		{name: "literal question still escaped", in: "?", want: `\?`},
+		{name: "decoded question uses internal escape", in: `\u003F`, want: `\?`},
+		{name: "literal question uses internal escape", in: "?", want: `\?`},
+		{name: "literal backslash question stays distinct", in: `\?`, want: `\\?`},
 		{name: "surrogate pair", in: `\uD83D\uDE00`, want: "😀"},
 		{name: "invalid fixed escape", in: `\uZZZZ`, want: `\uZZZZ`},
 		{name: "incomplete fixed escape", in: `\u219`, want: `\u219`},

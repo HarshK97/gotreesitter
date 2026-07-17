@@ -1312,18 +1312,18 @@ func TestUnescapeCStringFullEscapeSet(t *testing.T) {
 		name, input, want string
 	}{
 		// Trigraph-avoidance escape: C writes anonymous "?" tokens as "\?".
-		{"question mark escape", `\?`, `?`},
-		{"keyword token with escaped ?", `defined\?`, `defined?`},
-		{"nullish coalescing assign", `\?\?=`, `??=`},
+		{"question mark uses internal escape", `\?`, `\?`},
+		{"keyword token keeps internal escape", `defined\?`, `defined\?`},
+		{"nullish coalescing assign keeps internal escapes", `\?\?=`, `\?\?=`},
 		// \uXXXX universal-character-name — the actual form tree-sitter's C
 		// generator emits for non-ASCII symbol spellings (agda's "∀").
 		{"already-decoded unicode passes through", "∀", "∀"},
-		{"unicode escape decodes to forall", `∀`, "∀"},
+		{"unicode escape decodes to forall", `\u2200`, "∀"},
 		// Doubled backslash: C's escaping of a *literal* backslash in token
 		// text. Must decode to exactly one backslash, and the following
 		// character must NOT be reinterpreted as part of another escape.
 		{"doubled backslash then paren stays literal", `\\(`, `\(`},
-		{"doubled backslash then question mark", `\\?`, `\?`},
+		{"literal backslash question keeps two internal layers", `\\\?`, `\\?`},
 		{"doubled backslash then hash-paren (cue/pkl)", `\\#(`, `\#(`},
 		// New escape kinds added alongside \?.
 		{"alert", `bell\a`, "bell\a"},

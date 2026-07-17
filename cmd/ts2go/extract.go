@@ -2577,12 +2577,13 @@ func parseIndexedStringArray(body string, count int, enums map[string]int) ([]st
 }
 
 // unescapeCString decodes a C string literal's body (as emitted into
-// ts_symbol_names[] by tree-sitter's C code generator) into the exact text
-// the C runtime displays for that symbol. This is the single source of
-// truth for at-rest symbol-name fidelity: blobs must store decoded glyphs
-// (e.g. "?", "∀", "?.") rather than escaped C source spelling (e.g. "\?",
-// "∀"), so SymbolByName lookups, Node.Type(), and query compilation
-// all see the same text the C oracle reports.
+// ts_symbol_names[] by tree-sitter's C code generator) into gotreesitter's
+// reversible at-rest symbol spelling. Unicode and ordinary C escapes become
+// their decoded text. The one deliberate exception is C's `\?` spelling: it
+// remains `\?` internally so it stays distinct from literal token text `\?`,
+// whose generated C spelling decodes to `\\?`. Grammargen uses the same
+// convention, and public node/query APIs remove exactly one `\?` layer to
+// expose the text reported by the C runtime.
 //
 // It handles the full set of C escapes tree-sitter's generator can emit:
 // \\ \" \? \n \t \r \a \b \f \v, \xNN (hex byte, greedy per the C
@@ -2632,7 +2633,9 @@ func unescapeCString(s string) string {
 			b.WriteByte('\'')
 			i += 2
 		case '?':
-			b.WriteByte('?')
+			// Preserve the reversible at-rest discriminator shared with
+			// grammargen. Public APIs decode this one layer.
+			b.WriteString(`\?`)
 			i += 2
 		case 'n':
 			b.WriteByte('\n')
