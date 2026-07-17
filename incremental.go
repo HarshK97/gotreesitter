@@ -38,6 +38,7 @@ type reuseCursor struct {
 	rejectOutOfBounds             uint64
 	rejectRootNonLeafChanged      uint64
 	rejectLargeNonLeaf            uint64
+	rejectStaleNonLeafBoundary    uint64
 	forestFastPath                bool
 	languageName                  string // cached for language-specific reuse safety policies
 }
@@ -81,6 +82,7 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 	c.rejectOutOfBounds = 0
 	c.rejectRootNonLeafChanged = 0
 	c.rejectLargeNonLeaf = 0
+	c.rejectStaleNonLeafBoundary = 0
 	c.forestFastPath = oldTree.forestFastPath
 	c.languageName = ""
 	if oldTree.language != nil {
@@ -458,6 +460,25 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 			}
 			continue
 		}
+		// A node's span always starts where its leftmost descendant leaf
+		// starts, so n's leftmost leaf is the OLD-tree token that was lexed
+		// at this position before the edit. reuseNonLeafTargetStateOnStack
+		// below only checks goto-table/stack-depth compatibility for n's
+		// *symbol* - it never consults the lookahead token at all - so a
+		// stale tokenization boundary inside n (e.g. a thin single-token
+		// wrapper non-terminal whose child token's maximal-munch decision no
+		// longer holds after the edit) would otherwise be silently reused.
+		// Compare the leftmost leaf's stored (stale) EndByte against the
+		// freshly lexed lookahead's EndByte: if they differ, the subtree
+		// under n was built from a token boundary that doesn't exist in the
+		// new source, so reject reuse. Note we deliberately do NOT compare
+		// symbols here - the leaf's symbol can differ from the fresh
+		// lookahead's symbol even when reuse is unsafe, so a symbol check
+		// would miss the bug this guards against.
+		if leaf := leftmostLeaf(n); leaf == nil || leaf.EndByte() != lookahead.EndByte {
+			idx.rejectStaleNonLeafBoundary++
+			continue
+		}
 		nextState, truncateDepth, ok := p.reuseNonLeafTargetStateOnStack(s, n, lookahead.StartByte, entryScratch)
 		if !ok {
 			continue
@@ -621,6 +642,17 @@ func (p *Parser) reuseTargetState(state StateID, n *Node, lookahead Token) (Stat
 		if n.Symbol() != lookahead.Symbol {
 			return 0, false
 		}
+		// The caller always lexes the fresh lookahead at the candidate's start
+		// byte before consulting reuse (tryReuseSubtree selects candidates by
+		// n.startByte == lookahead.StartByte). If a fresh lex of the same
+		// symbol at that position ends at a different byte than the stored
+		// leaf, the leaf's token boundary is stale (a maximal-munch decision
+		// that depended on bytes at or beyond the leaf's old right edge no
+		// longer holds under the new source) and reusing it would truncate or
+		// extend the real token. Reject rather than reuse.
+		if n.EndByte() != lookahead.EndByte {
+			return 0, false
+		}
 
 		action := p.lookupAction(state, n.Symbol())
 		if action == nil || len(action.Actions) == 0 {
@@ -672,6 +704,24 @@ func (p *Parser) reuseTargetState(state StateID, n *Node, lookahead Token) (Stat
 		}
 	}
 	return gotoState, true
+}
+
+// leftmostLeaf returns the leftmost leaf (childless) descendant of n. A
+// node's span always starts where its first child's span starts, so this
+// walks child index 0 down through the tree; the result shares n's
+// StartByte. Returns nil if n is nil or a leftmost leaf cannot be reached
+// (e.g. materialization fails).
+func leftmostLeaf(n *Node) *Node {
+	for n != nil && n.ChildCount() > 0 {
+		child := nodeChildAtForReason(n, 0, materializeForEdit)
+		if child == n {
+			// Defensive: avoid an infinite loop on a malformed self-referential
+			// child link.
+			return nil
+		}
+		n = child
+	}
+	return n
 }
 
 func reuseStackDepthForPreGoto(entries []stackEntry, startByte uint32, preGoto StateID) int {
