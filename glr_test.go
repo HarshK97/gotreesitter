@@ -2363,10 +2363,10 @@ func TestCompareAcceptedStackAliasPreferenceIncludesCompactRefs(t *testing.T) {
 	aliasLeaf := newCompactFullLeafInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
 	normalStack := glrStack{entries: []stackEntry{newStackEntryNode(1, normalLeaf)}}
 	aliasStack := glrStack{entries: []stackEntry{newStackEntryCompactFullLeaf(1, aliasLeaf)}}
-	if got := compareAcceptedStackAliasPreference(parser, arena, aliasStack, normalStack); got != 1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, &aliasStack, &normalStack); got != 1 {
 		t.Fatalf("compact alias preference = %d, want 1", got)
 	}
-	if got := compareAcceptedStackAliasPreference(parser, arena, normalStack, aliasStack); got != -1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, &normalStack, &aliasStack); got != -1 {
 		t.Fatalf("reverse compact alias preference = %d, want -1", got)
 	}
 
@@ -2374,7 +2374,7 @@ func TestCompareAcceptedStackAliasPreferenceIncludesCompactRefs(t *testing.T) {
 	aliasParent := newPendingParentInArena(arena, 3, true, 0, []stackEntry{newStackEntryCompactFullLeaf(1, aliasLeaf)}, 0, 1, Point{}, Point{Column: 1}, false)
 	parentNormalStack := glrStack{entries: []stackEntry{newStackEntryNode(2, normalParent)}}
 	parentAliasStack := glrStack{entries: []stackEntry{newStackEntryPendingParent(2, aliasParent)}}
-	if got := compareAcceptedStackAliasPreference(parser, arena, parentAliasStack, parentNormalStack); got != 1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, &parentAliasStack, &parentNormalStack); got != 1 {
 		t.Fatalf("pending alias preference = %d, want 1", got)
 	}
 }
@@ -2400,10 +2400,10 @@ func TestCompareAcceptedStackAliasPreferenceIncludesGSSCompactRefs(t *testing.T)
 	aliasGSSStack := glrStack{
 		gss: buildGSSStack([]stackEntry{{state: 0}, newStackEntryCompactFullLeaf(1, aliasLeaf)}, &scratch),
 	}
-	if got := compareAcceptedStackAliasPreference(parser, arena, aliasGSSStack, normalStack); got != 1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, &aliasGSSStack, &normalStack); got != 1 {
 		t.Fatalf("gss compact alias preference = %d, want 1", got)
 	}
-	if got := compareAcceptedStackAliasPreference(parser, arena, normalStack, aliasGSSStack); got != -1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, &normalStack, &aliasGSSStack); got != -1 {
 		t.Fatalf("reverse gss compact alias preference = %d, want -1", got)
 	}
 
@@ -2415,7 +2415,7 @@ func TestCompareAcceptedStackAliasPreferenceIncludesGSSCompactRefs(t *testing.T)
 	parentAliasGSS := glrStack{
 		gss: buildGSSStack([]stackEntry{{state: 0}, newStackEntryPendingParent(2, aliasParent)}, &scratch),
 	}
-	if got := compareAcceptedStackAliasPreference(parser, arena, parentAliasGSS, parentNormalGSS); got != 1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, &parentAliasGSS, &parentNormalGSS); got != 1 {
 		t.Fatalf("gss pending alias preference = %d, want 1", got)
 	}
 	if got := arena.compactFullLeafMaterialized; got != 0 {
@@ -2460,7 +2460,7 @@ func TestCompareAcceptedStackAliasPreferencePreservesGSSResultOrder(t *testing.T
 			newStackEntryCompactFullLeaf(2, topAlias),
 		}, &scratch),
 	}
-	if got := compareAcceptedStackAliasPreference(parser, arena, preferBottomStack, preferTopStack); got != 1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, &preferBottomStack, &preferTopStack); got != 1 {
 		t.Fatalf("gss alias preference order = %d, want 1", got)
 	}
 }
@@ -2493,7 +2493,7 @@ func TestCompareAcceptedStackAliasPreferenceKeepsWideNodeFallback(t *testing.T) 
 	}
 	aStack := glrStack{gss: buildGSSStack(aEntries, &scratch)}
 	bStack := glrStack{gss: buildGSSStack(bEntries, &scratch)}
-	if got := compareAcceptedStackAliasPreference(parser, arena, aStack, bStack); got != 1 {
+	if got := compareAcceptedStackAliasPreference(parser, arena, &aStack, &bStack); got != 1 {
 		t.Fatalf("wide node alias preference = %d, want 1", got)
 	}
 }

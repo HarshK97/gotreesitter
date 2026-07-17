@@ -51,7 +51,7 @@ func (p *Parser) emitRawShapeDiag(phase string, stacks []glrStack, arena *nodeAr
 		if !s.accepted {
 			continue
 		}
-		entries, total := rawShapeDiagResultEntries(*s, childLimit)
+		entries, total := rawShapeDiagResultEntries(s, childLimit)
 		fmt.Fprintf(os.Stderr, "GLR-RAW-SHAPE stack=%d accepted=%t dead=%t state=%d byte=%d depth=%d score=%d dyn=%d err_rank=%d roots=%d roots_emitted=%d\n",
 			i,
 			s.accepted,
@@ -81,7 +81,7 @@ func rawShapeDiagStackState(s *glrStack) StateID {
 	return s.top().state
 }
 
-func rawShapeDiagResultEntries(s glrStack, limit int) ([]stackEntry, int) {
+func rawShapeDiagResultEntries(s *glrStack, limit int) ([]stackEntry, int) {
 	if limit <= 0 {
 		limit = defaultRawShapeDiagChildLimit
 	}
