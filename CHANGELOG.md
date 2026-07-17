@@ -7,6 +7,18 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.39.0] - 2026-07-17
+
+Correctness-and-evidence release. Query ranges, literals, missing-node patterns,
+property metadata, highlight inheritance, lazy tree finalization, DFA EOF
+seeking, grammar imports, and generated C metadata now match their locked
+contracts more closely. Locked incremental and work-count receipts authenticate
+the exercised behavior, while durable corpus roots, split-grammar layouts, and
+bounded floors make real-corpus checks reproducible. The authenticated
+production receipt at `2c702656` measures public `Parser.Parse` at 4.886056x C
+by equal-fixture geomean, 5.517602x C by fixed-suite sum, and 5.648204x C on the
+worst fixture against the locked static `-O2` C oracle.
+
 ### Fixed
 
 - Deferred result-compatibility finalization stays lazy while trees are owned by
@@ -2707,7 +2719,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.38.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.39.0...HEAD
+[0.39.0]: https://github.com/odvcencio/gotreesitter/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/odvcencio/gotreesitter/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/odvcencio/gotreesitter/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/odvcencio/gotreesitter/compare/v0.34.0...v0.36.0
