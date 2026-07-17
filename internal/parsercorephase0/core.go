@@ -1505,6 +1505,9 @@ func (c *Core) appendPrivate(state StateID, byteOffset uint32, in linkInput) (He
 	if err != nil {
 		return Head{}, err
 	}
+	if phase0AEnabled {
+		phase0AObservePrivatePublication(c, state, byteOffset, in, linkID, id)
+	}
 	return Head{Node: id}, nil
 }
 
@@ -1588,13 +1591,16 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 			return condenseOutcome{}, err
 		}
 		c.recordLinkUnionAttempt()
-		for _, link := range oldLinks {
+		for index, link := range oldLinks {
 			equal, err := c.linkEqualInput(link, in)
 			if err != nil {
 				return condenseOutcome{}, err
 			}
 			if equal {
 				c.recordLinkUnionDuplicateNoop()
+				if phase0AEnabled {
+					phase0AObserveCandidateDrop(c, key, in, oldID, index, phase0ATransitionDuplicateDrop)
+				}
 				return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, nil
 			}
 		}
@@ -1624,7 +1630,13 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 				}
 				if incomingPrecedence <= incumbentPrecedence {
 					c.recordLinkUnionDuplicateNoop()
+					if phase0AEnabled {
+						phase0AObserveCandidateDrop(c, key, in, oldID, candidate, phase0ATransitionPrecedenceDrop)
+					}
 					return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, nil
+				}
+				if phase0AEnabled {
+					phase0ABeginReplacement(c, key, in, oldID, candidate)
 				}
 				head, err := c.replaceBoundaryLink(key, probe, old, oldLinks, candidate, in)
 				if err != nil {
@@ -1701,6 +1713,9 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 			c.recordLinkUnionRejected()
 		}
 		return condenseOutcome{}, err
+	}
+	if phase0AEnabled {
+		phase0AObserveDirectPublication(c, key, in, linkID, id, oldID)
 	}
 	change := condenseNew
 	if oldID != 0 {
@@ -1796,21 +1811,43 @@ func (c *Core) factorExactPredecessor(key boundaryKey, probe boundaryProbe, oldI
 		handled = true
 		mark := c.mark()
 		defer c.completeTransaction(mark, &err)
+		if phase0AEnabled {
+			phase0ABeginPredecessorMerge(c, incumbent.prev, in.prev)
+		}
 		merged, changed, mergeErr := c.mergePredecessorsOneLayer(incumbent.prev, in.prev)
 		if mergeErr != nil {
+			if phase0AEnabled {
+				phase0AAbortPredecessorMerge(c)
+			}
 			return condenseOutcome{}, true, mergeErr
 		}
 		if !changed {
+			if phase0AEnabled {
+				phase0AAbortPredecessorMerge(c)
+				phase0AObserveFactorNoChange(c, key, in, oldID, index)
+			}
 			return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, true, nil
+		}
+		if phase0AEnabled {
+			phase0AObserveAdjacencyPublished(c, merged)
 		}
 		rebuilt := slices.Clone(oldLinks)
 		rebuilt[index].prev = merged
+		if phase0AEnabled {
+			phase0APrepareFactorOuter(c, key, in, oldID, index, merged)
+		}
 		id, appendErr := c.appendAdjacencyNode(key.state, key.byteOffset, rebuilt)
 		if appendErr != nil {
 			return condenseOutcome{}, true, appendErr
 		}
+		if phase0AEnabled {
+			phase0AObserveAdjacencyPublished(c, id)
+		}
 		if err := c.publishBoundary(probe, id); err != nil {
 			return condenseOutcome{}, true, err
+		}
+		if phase0AEnabled {
+			phase0AObserveFactorPublished(c, oldID, id)
 		}
 		return condenseOutcome{head: Head{Node: id}, change: condenseUpdated}, true, nil
 	}
@@ -1900,6 +1937,9 @@ func (c *Core) insertLinkOneLayer(state StateID, byteOffset uint32, links []link
 		}
 		if c.linkRecordsEqual(incumbent, incoming) {
 			c.recordLinkUnionDuplicateNoop()
+			if phase0AEnabled {
+				phase0AMergeDecision(c, index, phase0ATransitionDuplicateDrop)
+			}
 			return links, false, nil
 		}
 		shallow, err := c.shallowPayloadsEqual(incumbent.prev, incumbent.payload, incoming.prev, incoming.payload)
@@ -1923,11 +1963,17 @@ func (c *Core) insertLinkOneLayer(state StateID, byteOffset uint32, links []link
 			}
 			if incomingPrecedence <= incumbentPrecedence {
 				c.recordLinkUnionDuplicateNoop()
+				if phase0AEnabled {
+					phase0AMergeDecision(c, index, phase0ATransitionPrecedenceDrop)
+				}
 				return links, false, nil
 			}
 			updated := slices.Clone(links)
 			updated[index] = incoming
 			c.recordLinkUnionPrecedenceReplaced()
+			if phase0AEnabled {
+				phase0AMergeDecision(c, index, phase0ATransitionPrecedenceReplacement)
+			}
 			return updated, true, nil
 		}
 		mergeable, err := c.predecessorBoundariesMatch(incumbent.prev, incoming.prev)
@@ -1946,6 +1992,9 @@ func (c *Core) insertLinkOneLayer(state StateID, byteOffset uint32, links []link
 		return nil, false, &LiveLinkCapacityError{State: state, ByteOffset: byteOffset, ObservedLinks: uint64(len(links)) + 1, Limit: c.limits.MaxLinksPerBoundary}
 	}
 	c.recordLinkUnionAlternateAppended()
+	if phase0AEnabled {
+		phase0AMergeDecision(c, -1, phase0ATransitionAlternateAppend)
+	}
 	return append(slices.Clone(links), incoming), true, nil
 }
 
@@ -2177,6 +2226,9 @@ func (c *Core) replaceBoundaryLink(key boundaryKey, probe boundaryProbe, old nod
 	}
 	if err := c.publishBoundary(probe, id); err != nil {
 		return Head{}, err
+	}
+	if phase0AEnabled {
+		phase0AObserveReplacementPublished(c, key, in, id, LinkID(linkMark+1), len(oldLinks), candidate)
 	}
 	return Head{Node: id}, nil
 }

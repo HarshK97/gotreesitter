@@ -307,7 +307,7 @@ func TestPhase0AShiftOccurrenceResetStaleAndSlotOverflow(t *testing.T) {
 		run := phase0ABeginShiftProvenanceRun(t, core, phase0AShiftProvenanceLimits())
 		phase0AObservers.Lock()
 		observer := phase0AObservers.byCore[core]
-		phase0AObserveTerminalConstructionLocked(core, observer, 1, Phase0AConstructionOrdinaryTerminal, uint64(math.MaxUint32)+1, func(uint64) NodeID { return 1 })
+		phase0AObserveTerminalConstructionLocked(core, observer, 1, Phase0AConstructionOrdinaryTerminal, uint64(math.MaxUint32)+1, func(uint64) NodeID { return 1 }, func(uint64) boundaryKey { return boundaryKey{} })
 		phase0AObservers.Unlock()
 		proof, err := Phase0AObserverProof(core, run)
 		if !isPhase0AError(err, Phase0AErrorCounterOverflow, Phase0ACounterOccurrenceSlot) || len(proof.Mutations) != 0 || proof.OccurrenceCount != 0 {
@@ -373,19 +373,19 @@ func TestPhase0ATerminalHookAuthenticationFailuresAreStickyAndNonSemantic(t *tes
 	t.Run("payload-does-not-exist", func(t *testing.T) {
 		core, run, seed, _ := newFixture(t, subtreeRecord{symbol: 9, endByte: 1, terminal: true})
 		before := captureSchedulerTransactionState(core)
-		phase0AObserveTerminalShift(core, SubtreeID(len(core.subtrees)+1), seed.Node, false)
+		phase0AObserveTerminalShift(core, SubtreeID(len(core.subtrees)+1), seed.Node, 2, 1, false, false)
 		requireFailure(t, core, run, before)
 	})
 	t.Run("payload-is-not-terminal", func(t *testing.T) {
 		core, run, seed, payload := newFixture(t, subtreeRecord{symbol: 9, endByte: 1})
 		before := captureSchedulerTransactionState(core)
-		phase0AObserveTerminalShift(core, payload, seed.Node, false)
+		phase0AObserveTerminalShift(core, payload, seed.Node, 2, 1, false, false)
 		requireFailure(t, core, run, before)
 	})
 	t.Run("payload-extra-kind-mismatch", func(t *testing.T) {
 		core, run, seed, payload := newFixture(t, subtreeRecord{symbol: 9, endByte: 1, terminal: true})
 		before := captureSchedulerTransactionState(core)
-		phase0AObserveTerminalShift(core, payload, seed.Node, true)
+		phase0AObserveTerminalShift(core, payload, seed.Node, 2, 1, false, true)
 		requireFailure(t, core, run, before)
 	})
 	for _, test := range []struct {
@@ -398,7 +398,7 @@ func TestPhase0ATerminalHookAuthenticationFailuresAreStickyAndNonSemantic(t *tes
 		t.Run(test.name, func(t *testing.T) {
 			core, run, _, payload := newFixture(t, subtreeRecord{symbol: 9, endByte: 1, terminal: true})
 			before := captureSchedulerTransactionState(core)
-			phase0AObserveTerminalShift(core, payload, test.predecessor(core), false)
+			phase0AObserveTerminalShift(core, payload, test.predecessor(core), 2, 1, false, false)
 			requireFailure(t, core, run, before)
 		})
 	}
@@ -406,7 +406,7 @@ func TestPhase0ATerminalHookAuthenticationFailuresAreStickyAndNonSemantic(t *tes
 		core, run, _, payload := newFixture(t, subtreeRecord{symbol: 9, endByte: 1, terminal: true})
 		foreign, _, boundary := newSchedulerTransactionShiftFixture(t)
 		before := captureSchedulerTransactionState(core)
-		phase0AObserveTerminalCohortShift(core, payload, []ClassifiedBoundary{boundary}, false)
+		phase0AObserveTerminalCohortShift(core, payload, []ClassifiedBoundary{boundary}, []StateID{2}, 1, false)
 		requireFailure(t, core, run, before)
 		if foreign == core {
 			t.Fatal("foreign fixture unexpectedly reused core")

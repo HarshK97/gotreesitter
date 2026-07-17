@@ -202,7 +202,7 @@ func TestPhase0AReductionEventScratchCapFailsBeforeRecords(t *testing.T) {
 	}
 	phase0AObservers.Lock()
 	observer := phase0AObservers.byCore[core]
-	if observer.nextEvent != 0 || observer.nextEdge != 0 || phase0AObservers.records != 1 || phase0AObservers.bytes != phase0AFrameRecordBytes {
+	if observer.nextEvent != 0 || observer.nextEdge != 0 || phase0AObservers.records != 2 || phase0AObservers.bytes != phase0AFrameRecordBytes+phase0ASidecarFrameBytes {
 		t.Errorf("cap advanced observer counters event=%d edge=%d records=%d bytes=%d", observer.nextEvent, observer.nextEdge, phase0AObservers.records, phase0AObservers.bytes)
 	}
 	phase0AObservers.Unlock()

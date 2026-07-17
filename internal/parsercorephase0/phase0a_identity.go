@@ -9,6 +9,8 @@ import (
 	"unsafe"
 )
 
+const phase0AEnabled = true
+
 type CoreRunNamespace struct {
 	CoreInstance  uint64
 	RunGeneration uint64
@@ -129,6 +131,12 @@ type Phase0AProofSnapshot struct {
 	// must exclude Phase0AMutationScaffoldEdge.
 	Mutations            []Phase0AMutationRecord
 	ReductionOccurrences []Phase0AReductionOccurrenceRecord
+	Candidates           []Phase0ACandidateRecord
+	Expressions          []Phase0AExpressionRecord
+	Bindings             []Phase0ALinkBindingRecord
+	Transitions          []Phase0ATransitionRecord
+	Selectors            []Phase0ASelectorRecord
+	SelectorRoutes       []Phase0ASelectorRouteRecord
 	Frames               []Phase0ATransactionFrame
 	OccurrenceCount      uint64
 	OccurrenceBytes      uint64
@@ -199,6 +207,12 @@ type Phase0AObserverLimits struct {
 	MaxMutations       uint64
 	MaxOccurrences     uint64
 	MaxOccurrenceBytes uint64
+	MaxCandidates      uint64
+	MaxExpressions     uint64
+	MaxBindings        uint64
+	MaxTransitions     uint64
+	MaxSelectors       uint64
+	MaxSelectorRoutes  uint64
 }
 
 const (
@@ -232,6 +246,7 @@ type phase0AObserver struct {
 	pendingRollback      Phase0ARollbackCause
 	reduction            phase0AReductionConstruction
 	reductionOccurrences []Phase0AReductionOccurrenceRecord
+	factor               phase0AFactorObserver
 }
 
 type phase0AReductionConstruction struct {
@@ -315,6 +330,7 @@ func phase0AInvalidateCore(core *Core) {
 		observer.pendingRollback = Phase0ARollbackUnknown
 		observer.reduction = phase0AReductionConstruction{}
 		observer.reductionOccurrences = nil
+		observer.factor = phase0AFactorObserver{}
 	}
 }
 
@@ -370,6 +386,7 @@ func (c *Core) BeginRun() (CoreRunNamespace, error) {
 	observer.pendingRollback = Phase0ARollbackUnknown
 	observer.reduction = phase0AReductionConstruction{}
 	observer.reductionOccurrences = nil
+	observer.factor = phase0AFactorObserver{}
 	return observer.run, nil
 }
 
@@ -397,6 +414,14 @@ func (c *Core) EndRun(namespace CoreRunNamespace) error {
 	}
 	if observer.reduction.active {
 		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: namespace, Detail: "end run with active reduction construction"})
+	}
+	if len(observer.factor.mergePlans) != 0 || len(observer.factor.replacements) != 0 || len(observer.factor.sidecarFrames) != 0 || len(observer.factor.candidateUndos) != 0 {
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: namespace, Detail: "end run with active factor provenance scope"})
+	}
+	for _, candidate := range observer.factor.candidates {
+		if !candidate.RolledBack && !candidate.Resolved {
+			return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorUnsupportedProof, Namespace: namespace, Detail: "end run with unresolved construction candidate"})
+		}
 	}
 	observer.active = false
 	if observer.failure != nil {
@@ -480,7 +505,7 @@ func phase0ANextScaffoldEdge(c *Core, event ConstructionEventKey) (IncomingEdgeK
 	return edge, nil
 }
 
-func phase0AObserveTerminalShift(core *Core, payload SubtreeID, predecessor NodeID, extra bool) {
+func phase0AObserveTerminalShift(core *Core, payload SubtreeID, predecessor NodeID, target StateID, endByte uint32, shifted, extra bool) {
 	phase0AObservers.Lock()
 	defer phase0AObservers.Unlock()
 	observer := phase0AObservers.byCore[core]
@@ -493,10 +518,14 @@ func phase0AObserveTerminalShift(core *Core, payload SubtreeID, predecessor Node
 	}
 	phase0AObserveTerminalConstructionLocked(core, observer, payload, kind, 1, func(uint64) NodeID {
 		return predecessor
+	}, func(uint64) boundaryKey {
+		key := core.boundaryKey(target, endByte)
+		key.shifted = shifted
+		return key
 	})
 }
 
-func phase0AObserveTerminalCohortShift(core *Core, payload SubtreeID, boundaries []ClassifiedBoundary, extra bool) {
+func phase0AObserveTerminalCohortShift(core *Core, payload SubtreeID, boundaries []ClassifiedBoundary, targets []StateID, endByte uint32, extra bool) {
 	phase0AObservers.Lock()
 	defer phase0AObservers.Unlock()
 	observer := phase0AObservers.byCore[core]
@@ -504,7 +533,7 @@ func phase0AObserveTerminalCohortShift(core *Core, payload SubtreeID, boundaries
 		return
 	}
 	count := uint64(len(boundaries))
-	if count == 0 {
+	if count == 0 || len(targets) != len(boundaries) {
 		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "terminal cohort has no occurrence"})
 		return
 	}
@@ -524,15 +553,17 @@ func phase0AObserveTerminalCohortShift(core *Core, payload SubtreeID, boundaries
 	}
 	phase0AObserveTerminalConstructionLocked(core, observer, payload, kind, count, func(index uint64) NodeID {
 		return boundaries[index].head.Node
+	}, func(index uint64) boundaryKey {
+		return core.shiftedBoundaryKey(targets[index], endByte)
 	})
 }
 
-func phase0AObserveTerminalConstructionLocked(core *Core, observer *phase0AObserver, payload SubtreeID, kind Phase0AConstructionKind, count uint64, predecessor func(uint64) NodeID) {
+func phase0AObserveTerminalConstructionLocked(core *Core, observer *phase0AObserver, payload SubtreeID, kind Phase0AConstructionKind, count uint64, predecessor func(uint64) NodeID, boundary func(uint64) boundaryKey) {
 	if count > math.MaxUint32 {
 		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterOccurrenceSlot, Namespace: observer.run})
 		return
 	}
-	if payload == 0 || predecessor == nil || count == 0 {
+	if payload == 0 || predecessor == nil || boundary == nil || count == 0 {
 		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "invalid terminal construction input"})
 		return
 	}
@@ -567,7 +598,7 @@ func phase0AObserveTerminalConstructionLocked(core *Core, observer *phase0AObser
 	mutationCount := 1 + 2*count
 	occurrenceBytes := count * (phase0AOccurrenceRecordBytes + phase0AEdgeRecordBytes)
 	totalBytes := phase0AEventRecordBytes + occurrenceBytes
-	if err := phase0AReserveConstructionLocked(observer, mutationCount, count, totalBytes, occurrenceBytes); err != nil {
+	if err := phase0AReserveConstructionLocked(observer, mutationCount, count, totalBytes, occurrenceBytes, count); err != nil {
 		return
 	}
 
@@ -598,6 +629,7 @@ func phase0AObserveTerminalConstructionLocked(core *Core, observer *phase0AObser
 		record.Kind = Phase0AMutationEdge
 		observer.edgeIndex[edge] = uint64(len(observer.mutations))
 		observer.mutations = append(observer.mutations, record)
+		phase0AAppendCandidatePrechargedLocked(observer, occurrence, edge, boundary(index), payload, predecessor(index))
 	}
 }
 
@@ -709,7 +741,7 @@ func phase0AObserveReductionOccurrence(core *Core, payload SubtreeID, predecesso
 		mutationCount++
 		mutationBytes += phase0AEventRecordBytes
 	}
-	if err := phase0AReserveReductionConstructionLocked(observer, mutationCount, mutationBytes, !seen); err != nil {
+	if err := phase0AReserveReductionConstructionLocked(observer, mutationCount, mutationBytes, !seen, 1); err != nil {
 		return
 	}
 	if !seen {
@@ -739,6 +771,7 @@ func phase0AObserveReductionOccurrence(core *Core, payload SubtreeID, predecesso
 	observer.reductionOccurrences = append(observer.reductionOccurrences, Phase0AReductionOccurrenceRecord{
 		TransactionID: pending.transaction, Occurrence: occurrence, Edge: edge, Boundary: phase0ABoundaryInput(boundary),
 	})
+	phase0AAppendCandidatePrechargedLocked(observer, occurrence, edge, boundary, payload, predecessor)
 	if seen {
 		pending.events[eventIndex] = eventState
 	} else {
@@ -768,7 +801,7 @@ func phase0AFinishReductionConstruction(core *Core) {
 	}
 }
 
-func phase0AReserveReductionConstructionLocked(observer *phase0AObserver, mutationCount, mutationBytes uint64, newEvent bool) error {
+func phase0AReserveReductionConstructionLocked(observer *phase0AObserver, mutationCount, mutationBytes uint64, newEvent bool, candidateCount uint64) error {
 	mutationLimit := phase0AObservers.limits.MaxMutations
 	if mutationLimit == 0 {
 		mutationLimit = math.MaxUint64
@@ -791,8 +824,11 @@ func phase0AReserveReductionConstructionLocked(observer *phase0AObserver, mutati
 	if observer.occurrenceBytes > occurrenceByteLimit || occurrenceBytes > occurrenceByteLimit-observer.occurrenceBytes {
 		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorOccurrenceByteCap, Namespace: observer.run})
 	}
-	recordCount := mutationCount + 1
-	totalBytes := mutationBytes + phase0AReductionRecordBytes
+	if err := phase0ACheckFactorRowsLocked(observer, candidateCount, 0, 0, 0, 0, 0); err != nil {
+		return err
+	}
+	recordCount := mutationCount + 1 + candidateCount
+	totalBytes := mutationBytes + phase0AReductionRecordBytes + candidateCount*phase0ACandidateBytes
 	if newEvent {
 		recordCount++
 		totalBytes += phase0AReductionEventBytes
@@ -805,7 +841,7 @@ func phase0AReserveReductionConstructionLocked(observer *phase0AObserver, mutati
 	return nil
 }
 
-func phase0AReserveConstructionLocked(observer *phase0AObserver, mutationCount, occurrenceCount, totalBytes, occurrenceBytes uint64) error {
+func phase0AReserveConstructionLocked(observer *phase0AObserver, mutationCount, occurrenceCount, totalBytes, occurrenceBytes, candidateCount uint64) error {
 	mutationLimit := phase0AObservers.limits.MaxMutations
 	if mutationLimit == 0 {
 		mutationLimit = math.MaxUint64
@@ -827,7 +863,10 @@ func phase0AReserveConstructionLocked(observer *phase0AObserver, mutationCount, 
 	if observer.occurrenceBytes > occurrenceByteLimit || occurrenceBytes > occurrenceByteLimit-observer.occurrenceBytes {
 		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorOccurrenceByteCap, Namespace: observer.run})
 	}
-	if err := phase0AChargeManyLocked(mutationCount, totalBytes); err != nil {
+	if err := phase0ACheckFactorRowsLocked(observer, candidateCount, 0, 0, 0, 0, 0); err != nil {
+		return err
+	}
+	if err := phase0AChargeManyLocked(mutationCount+candidateCount, totalBytes+candidateCount*phase0ACandidateBytes); err != nil {
 		return phase0AStickyLocked(observer, err.(*Phase0AError))
 	}
 	observer.occurrenceCount += occurrenceCount
@@ -951,6 +990,12 @@ func Phase0AObserverProof(core *Core, namespace CoreRunNamespace) (Phase0AProofS
 	}
 	snapshot.Mutations = append(snapshot.Mutations, observer.mutations...)
 	snapshot.ReductionOccurrences = append(snapshot.ReductionOccurrences, observer.reductionOccurrences...)
+	snapshot.Candidates = append(snapshot.Candidates, observer.factor.candidates...)
+	snapshot.Expressions = append(snapshot.Expressions, observer.factor.expressions...)
+	snapshot.Bindings = append(snapshot.Bindings, observer.factor.bindings...)
+	snapshot.Transitions = append(snapshot.Transitions, observer.factor.transitions...)
+	snapshot.Selectors = append(snapshot.Selectors, observer.factor.selectors...)
+	snapshot.SelectorRoutes = append(snapshot.SelectorRoutes, observer.factor.selectorRoutes...)
 	snapshot.Frames = append(snapshot.Frames, observer.frames...)
 	if observer.firstPoison != nil {
 		copy := *observer.firstPoison
@@ -983,11 +1028,12 @@ func phase0AObserveMark(core *Core, transaction, parent uint64) {
 		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorFrameCap, Namespace: observer.run})
 		return
 	}
-	if err := phase0AChargeLocked(phase0AFrameRecordBytes); err != nil {
+	if err := phase0AChargeManyLocked(2, phase0AFrameRecordBytes+phase0ASidecarFrameBytes); err != nil {
 		phase0AStickyLocked(observer, err.(*Phase0AError))
 		return
 	}
 	observer.frames = append(observer.frames, Phase0ATransactionFrame{TransactionID: transaction, ParentID: parent, MutationStart: uint64(len(observer.mutations))})
+	phase0AFactorMarkLocked(observer)
 }
 
 func phase0AObserveRollback(core *Core, transaction uint64, cause Phase0ARollbackCause) {
@@ -1006,6 +1052,7 @@ func phase0AObserveRollback(core *Core, transaction uint64, cause Phase0ARollbac
 				observer.mutations[index].RollbackCause = cause
 			}
 			phase0ATombstoneReductionOccurrencesLocked(observer, transaction, cause)
+			phase0AFactorRollbackLocked(observer, transaction, cause)
 			if observer.reduction.active && observer.reduction.transaction == transaction {
 				observer.reduction = phase0AReductionConstruction{}
 			}
@@ -1024,6 +1071,7 @@ func phase0AObserveRollback(core *Core, transaction uint64, cause Phase0ARollbac
 		observer.mutations[index].RollbackCause = cause
 	}
 	phase0ATombstoneReductionOccurrencesLocked(observer, transaction, cause)
+	phase0AFactorRollbackLocked(observer, transaction, cause)
 	if observer.reduction.active && observer.reduction.transaction == transaction {
 		observer.reduction = phase0AReductionConstruction{}
 	}
@@ -1055,6 +1103,7 @@ func phase0AObserveCommit(core *Core, transaction uint64) {
 			if observer.reduction.active && observer.reduction.transaction == transaction {
 				observer.reduction = phase0AReductionConstruction{}
 			}
+			phase0AFactorCommitLocked(observer)
 			observer.frames = observer.frames[:len(observer.frames)-1]
 		}
 		return
@@ -1067,6 +1116,13 @@ func phase0AObserveCommit(core *Core, transaction uint64) {
 		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: observer.run, Detail: "commit with active reduction construction"})
 		observer.reduction = phase0AReductionConstruction{}
 	}
+	for _, candidate := range observer.factor.candidates {
+		if candidate.TransactionID == transaction && !candidate.RolledBack && !candidate.Resolved {
+			phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorUnsupportedProof, Namespace: observer.run, Detail: "commit with unresolved construction candidate"})
+			break
+		}
+	}
+	phase0AFactorCommitLocked(observer)
 	observer.frames = observer.frames[:len(observer.frames)-1]
 }
 
