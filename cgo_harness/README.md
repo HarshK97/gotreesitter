@@ -478,6 +478,27 @@ pass `--unsafe-fortran-defaults`: `--memory 3g`, `--cpus 1`, `--pids 512`,
 `GOMAXPROCS=1`, `GOFLAGS=-p=1`, `GOT_LALR_LR0_CORE_BUDGET=160000000`, and
 `GTS_GRAMMARGEN_REAL_CORPUS_GENERATE_TIMEOUT=15m`.
 
+The underlying real-corpus test accepts a durable checkout root through
+`GTS_GRAMMARGEN_REAL_CORPUS_ROOT`; use
+`GTS_GRAMMARGEN_REAL_CORPUS_ONLY=<grammar>` to keep a direct run scoped to one
+grammar:
+
+```sh
+GTS_GRAMMARGEN_REAL_CORPUS_ENABLE=1 \
+GTS_GRAMMARGEN_REAL_CORPUS_ROOT=/path/to/grammar-checkouts \
+GTS_GRAMMARGEN_REAL_CORPUS_ONLY=markdown_inline \
+go test ./grammargen \
+  -run '^TestMultiGrammarImportRealCorpusParity$' -count=1 -v
+```
+
+For the Docker runners, pass `--seed-dir <path>` to either
+`run_grammargen_real_corpus_in_docker.sh` or
+`run_grammargen_focus_targets.sh`; the seed directory must be under the
+repository root and is copied into the container's configured corpus root.
+Split-grammar repositories such as Markdown and XML need no additional flag:
+the test probes the grammar package root above `src/grammar.json` for its corpus
+before falling back to the repository root.
+
 ## Run C Baseline Benchmarks
 
 ```sh

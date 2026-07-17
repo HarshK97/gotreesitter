@@ -42,6 +42,10 @@ for tags and release notes while still in `0.x`.
 
 ### Tooling
 
+- Bank an authenticated quiet-host production receipt against the locked
+  static `-O2` C oracle. At current main `2c702656`, public `Parser.Parse`
+  measures 4.886056x C by equal-fixture geomean and 5.517602x C by fixed-suite
+  sum of medians, with a 5.648204x worst fixture.
 - Add a bounded, build-tagged parser trace that separates lookup cells from
   execution-time cell reconstruction and retains whole-parse aggregates after
   its chronological event prefix fills. Scanner checkpoints bind their cached

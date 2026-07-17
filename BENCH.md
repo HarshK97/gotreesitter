@@ -160,8 +160,9 @@ timing. Medians from ten process-isolated samples per backend and fixture:
 
 The canonical equal-fixture geomean is **5.481673x C**. The fixed-suite sum of
 medians is **6.313799x C**; it is reported separately because the largest file
-dominates aggregate wall time. This is the baseline for future full-parse
-claims, not a retrospective adjustment to the withdrawn straight-LR ratio.
+dominates aggregate wall time. This is the first locked-oracle historical
+baseline, not a retrospective adjustment to the withdrawn straight-LR ratio;
+the current production receipt is the current-main result below.
 
 Receipt identities:
 
@@ -173,6 +174,41 @@ Receipt identities:
   `aecb7f76e3df4832877f4526280849257826f3d84f2f104379a57748f4f6f310`;
 - static C artifact SHA-256:
   `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
+
+### Current-main production receipt
+
+An authenticated production receipt was collected on 2026-07-17 from the same
+quiet host, core 6, and Go 1.22.2. The worktree was clean current main at
+`2c7026563f3827da87e637bcb246d4a8f287c022`; its `PUBLICATION` receipt measures
+the public `Parser.Parse` lifecycle, completeness check, and `Tree.Release`.
+
+| Fixture | Go median | static C median | Go / C | B/op | allocs/op | Go max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 29.313 ms | 5.591 ms | **5.242927x** | 157,657 | 13 | 68,528 KiB | 2,816 KiB |
+| `rewrite.go` | 5.110 ms | 1.260 ms | **4.055251x** | 2,040 | 14 | 54,052 KiB | 2,304 KiB |
+| `language.go` | 28.383 ms | 5.980 ms | **4.746044x** | 163,060 | 32 | 67,620 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 345.658 ms | 61.198 ms | **5.648204x** | 13,165,973 | 561.5 | 205,716 KiB | 9,216 KiB |
+
+The current-main public-parser equal-fixture geomean is **4.886056x C**. Its
+fixed-suite sum of medians is **5.517602x C** (408.464 ms Go versus 74.029 ms
+static C), and its worst fixture is `grammargen/lr.go` at **5.648204x C**.
+
+Receipt identities:
+
+- manifest SHA-256:
+  `8933650e446b14db263e165bbfed0bd68cebeb15898b7b818c57040e10b31b46`;
+- report SHA-256:
+  `19a68af15fe1f413e628d3f5a7aed0b7fb975652028aee685d5b30769151d2f3`;
+- complete receipt bundle SHA-256:
+  `3c529e002cee1ab28e7ec11edc826d3b31b298dec616e14aa0fd405e11c84a09`;
+- static C artifact SHA-256:
+  `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
+
+For incremental parsing, the versioned, hash-locked admission matrix documented
+in [`cgo_harness/README.md`](cgo_harness/README.md#run-locked-canonical-incremental-benchmarks)
+validates exact correctness and classifies identity, leaf validation, real-code
+GLR, recovery, and scanner-state work. It publishes no general comparative
+incremental speed headline.
 
 ### Diagnostic workload-regime receipt
 
