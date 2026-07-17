@@ -12,6 +12,7 @@ func TestParserCorePhaseZeroDriverCompilesOutOfOrdinaryBuild(t *testing.T) {
 	symbols := runGoTool(t, "nm", binary)
 	for _, forbidden := range [][]byte{
 		[]byte("DiagnosticParseParserCorePrefix"),
+		[]byte("newParserCoreFreshFullRunner"),
 		[]byte("internal/parsercorephase0.(*Core)"),
 	} {
 		if bytes.Contains(symbols, forbidden) {

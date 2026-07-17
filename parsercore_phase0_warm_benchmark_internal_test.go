@@ -58,13 +58,10 @@ var parserCoreWarmOptions = DiagnosticParserCorePrefixOptions{
 }
 
 type parserCoreWarmPrepared struct {
-	source         []byte
-	lang           *Language
-	parser         *Parser
-	compact        *core.Core
-	scannerScratch []byte
-	acceptedCore   *core.Core
-	acceptedHead   core.Head
+	*parserCoreFreshFullRunner
+	source       []byte
+	acceptedCore *core.Core
+	acceptedHead core.Head
 }
 
 func parserCoreWarmPrepare() (*parserCoreWarmPrepared, error) {
@@ -93,30 +90,20 @@ func parserCoreWarmPrepare() (*parserCoreWarmPrepared, error) {
 			parserCoreWarmPrepareErr = errors.New("parser-core warm benchmark: authenticated Go scanner unavailable")
 			return
 		}
-		lang, err := authenticatedParserCoreGoLanguage(parserCoreWarmGoScanner)
+		runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, parserCoreWarmOptions)
 		if err != nil {
 			parserCoreWarmPrepareErr = err
 			return
 		}
-		parser := NewParser(lang)
-		tables, err := newParserCoreRootTables(parser)
-		if err != nil {
-			parserCoreWarmPrepareErr = err
-			return
-		}
-		compact, err := core.New(tables, parserCoreWarmLimits)
-		if err != nil {
-			parserCoreWarmPrepareErr = err
-			return
-		}
-		acceptedCore, err := core.New(tables, parserCoreWarmLimits)
+		acceptedCore, err := core.New(runner.tables, parserCoreWarmLimits)
 		if err != nil {
 			parserCoreWarmPrepareErr = err
 			return
 		}
 		prepared := &parserCoreWarmPrepared{
-			source: source, lang: lang, parser: parser,
-			compact: compact, acceptedCore: acceptedCore,
+			parserCoreFreshFullRunner: runner,
+			source:                    source,
+			acceptedCore:              acceptedCore,
 		}
 		scheduler, err := prepared.executeScheduler(acceptedCore, false)
 		if err != nil {
@@ -130,29 +117,12 @@ func parserCoreWarmPrepare() (*parserCoreWarmPrepared, error) {
 }
 
 func (p *parserCoreWarmPrepared) executeSchedulerOpen(compact *core.Core, reset bool) (*diagnosticParserCoreGenericScheduler, *dfaTokenSource, error) {
-	if p == nil || compact == nil || p.parser == nil || p.lang == nil {
+	if p == nil || p.parserCoreFreshFullRunner == nil {
 		return nil, nil, errors.New("parser-core warm benchmark: incomplete prepared scheduler")
 	}
-	if reset {
-		if err := compact.Reset(); err != nil {
-			return nil, nil, err
-		}
-	}
-	tokenSource := p.parser.acquireParserDFATokenSource(p.source)
-	if tokenSource == nil {
-		return nil, nil, errors.New("parser-core warm benchmark: production DFA unavailable")
-	}
-	scheduler, err := executeDiagnosticParserCoreGenericSchedulerFromSeed(
-		compact, tokenSource, &p.scannerScratch, p.lang.InitialState,
-		parserCoreWarmOptions, diagnosticParserCoreSeedObserver{},
-	)
+	scheduler, tokenSource, err := p.parserCoreFreshFullRunner.executeSchedulerOpen(p.source, compact, reset)
 	if err != nil {
-		tokenSource.Close()
-		return scheduler, nil, err
-	}
-	if scheduler == nil || scheduler.receipt == nil || scheduler.receipt.Acceptance == nil || scheduler.acceptedHead.Node == 0 {
-		tokenSource.Close()
-		return scheduler, nil, errors.New("parser-core warm benchmark: scheduler did not accept EOF")
+		return scheduler, tokenSource, err
 	}
 	if work := compact.Work(); work != parserCoreWarmQueryCompileWork || work.Overflow {
 		tokenSource.Close()
@@ -170,17 +140,11 @@ func (p *parserCoreWarmPrepared) executeScheduler(compact *core.Core, reset bool
 }
 
 func (p *parserCoreWarmPrepared) materialize(compact *core.Core, head core.Head) (*Tree, error) {
-	return materializeDiagnosticParserCoreAcceptedTree(compact, head, p.parser, p.source)
+	return p.parserCoreFreshFullRunner.materialize(p.source, compact, head)
 }
 
 func (p *parserCoreWarmPrepared) executeTotal() (*Tree, error) {
-	scheduler, tokenSource, err := p.executeSchedulerOpen(p.compact, true)
-	if err != nil {
-		return nil, err
-	}
-	tree, materializeErr := p.materialize(p.compact, scheduler.acceptedHead)
-	tokenSource.Close()
-	return tree, materializeErr
+	return p.parserCoreFreshFullRunner.parse(p.source)
 }
 
 func parserCoreWarmRequireExactTree(t testing.TB, tree *Tree, sourceLen int) {
