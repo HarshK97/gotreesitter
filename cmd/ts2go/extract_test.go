@@ -1300,6 +1300,54 @@ func TestUnescapeCString(t *testing.T) {
 	}
 }
 
+// TestUnescapeCStringFullEscapeSet covers the escape kinds unescapeCString
+// gained beyond \\ \" \n \t \r \uXXXX \UXXXXXXXX: \? (the trigraph-avoidance
+// escape C uses for anonymous "?" tokens like ruby's "defined\?" and js's
+// ternary "?"), \a \b \f \v, \xNN, octal \NNN, and \u{...}. It also pins the
+// doubled-backslash cases that must stay exactly as literal token text (C
+// escapes a *literal* backslash in token spelling by doubling it), since
+// those are easy to break while extending the escape set.
+func TestUnescapeCStringFullEscapeSet(t *testing.T) {
+	tests := []struct {
+		name, input, want string
+	}{
+		// Trigraph-avoidance escape: C writes anonymous "?" tokens as "\?".
+		{"question mark uses internal escape", `\?`, `\?`},
+		{"keyword token keeps internal escape", `defined\?`, `defined\?`},
+		{"nullish coalescing assign keeps internal escapes", `\?\?=`, `\?\?=`},
+		// \uXXXX universal-character-name — the actual form tree-sitter's C
+		// generator emits for non-ASCII symbol spellings (agda's "∀").
+		{"already-decoded unicode passes through", "∀", "∀"},
+		{"unicode escape decodes to forall", `\u2200`, "∀"},
+		// Doubled backslash: C's escaping of a *literal* backslash in token
+		// text. Must decode to exactly one backslash, and the following
+		// character must NOT be reinterpreted as part of another escape.
+		{"doubled backslash then paren stays literal", `\\(`, `\(`},
+		{"literal backslash question keeps two internal layers", `\\\?`, `\\?`},
+		{"doubled backslash then hash-paren (cue/pkl)", `\\#(`, `\#(`},
+		// New escape kinds added alongside \?.
+		{"alert", `bell\a`, "bell\a"},
+		{"backspace", `back\bspace`, "back\bspace"},
+		{"form feed", `page\fbreak`, "page\fbreak"},
+		{"vertical tab", `v\vtab`, "v\vtab"},
+		{"hex byte", `\x41`, "A"},
+		{"octal byte", `\101`, "A"},
+		{"short octal", `\7`, "\a"},
+		{"brace unicode escape", `\u{2200}`, "∀"},
+		// Malformed/unrecognized escapes are left exactly as-is.
+		{"malformed brace escape has no closing brace", `\u{2200`, `\u{2200`},
+		{"unrecognized letter escape stays literal", `\(`, `\(`},
+		{"trailing lone backslash", `foo\`, `foo\`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := unescapeCString(tt.input); got != tt.want {
+				t.Errorf("unescapeCString(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestParseUint16List(t *testing.T) {
 	vals := parseUint16List("1, 2, 3, 100, 65535")
 	want := []uint16{1, 2, 3, 100, 65535}

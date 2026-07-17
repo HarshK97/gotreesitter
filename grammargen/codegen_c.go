@@ -2,6 +2,7 @@ package grammargen
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/odvcencio/gotreesitter"
@@ -20,6 +21,13 @@ func GenerateC(g *Grammar) (string, error) {
 
 // EmitC emits a parser.c string from a compiled Language struct.
 func EmitC(name string, lang *gotreesitter.Language) (string, error) {
+	if err := validateCSupertypeSurface(lang); err != nil {
+		return "", err
+	}
+	parseActionOffsets, err := cParseActionOffsets(lang)
+	if err != nil {
+		return "", err
+	}
 	var b strings.Builder
 
 	emitHeader(&b, name, lang)
@@ -31,10 +39,11 @@ func EmitC(name string, lang *gotreesitter.Language) (string, error) {
 	emitFieldMaps(&b, lang)
 	emitAliasSequences(&b, lang)
 	emitParseActions(&b, lang)
-	emitParseTable(&b, lang)
-	emitSmallParseTable(&b, lang)
+	emitParseTable(&b, lang, parseActionOffsets)
+	emitSmallParseTable(&b, lang, parseActionOffsets)
 	emitLexModes(&b, lang)
 	emitReservedWords(&b, lang)
+	emitSupertypes(&b, lang)
 	emitLexFunction(&b, "ts_lex", lang.LexStates, lang)
 	if len(lang.KeywordLexStates) > 0 {
 		emitLexFunction(&b, "ts_lex_keywords", lang.KeywordLexStates, lang)
@@ -45,6 +54,69 @@ func EmitC(name string, lang *gotreesitter.Language) (string, error) {
 	emitLanguageExport(&b, name, lang)
 
 	return b.String(), nil
+}
+
+func cParseActionOffsets(lang *gotreesitter.Language) ([]uint16, error) {
+	offsets := make([]uint16, len(lang.ParseActions))
+	offset := 0
+	for i, entry := range lang.ParseActions {
+		if offset > int(^uint16(0)) {
+			return nil, fmt.Errorf("emit C: flattened parse actions exceed uint16 at group %d", i)
+		}
+		offsets[i] = uint16(offset)
+		offset += 1 + len(entry.Actions)
+	}
+	return offsets, nil
+}
+
+func cParseTableValue(lang *gotreesitter.Language, actionOffsets []uint16, symbol int, value uint16) uint16 {
+	if symbol >= int(lang.TokenCount) || value == 0 {
+		return value
+	}
+	if int(value) >= len(actionOffsets) {
+		return value
+	}
+	return actionOffsets[value]
+}
+
+func validateCSupertypeSurface(lang *gotreesitter.Language) error {
+	if lang == nil {
+		return fmt.Errorf("emit C: nil language")
+	}
+	hasSymbols := len(lang.SupertypeSymbols) > 0
+	hasSlices := len(lang.SupertypeMapSlices) > 0
+	hasEntries := len(lang.SupertypeMapEntries) > 0
+	if !hasSymbols && !hasSlices && !hasEntries {
+		return nil
+	}
+	if lang.LanguageVersion < 15 {
+		return fmt.Errorf("emit C: supertype map requires ABI 15, got %d", lang.LanguageVersion)
+	}
+	if !hasSymbols || !hasSlices || !hasEntries {
+		return fmt.Errorf("emit C: incomplete ABI-15 supertype surface")
+	}
+	if len(lang.SupertypeMapSlices) < int(lang.SymbolCount) {
+		return fmt.Errorf("emit C: supertype map has %d slices for %d symbols", len(lang.SupertypeMapSlices), lang.SymbolCount)
+	}
+	for _, supertype := range lang.SupertypeSymbols {
+		if int(supertype) >= len(lang.SymbolNames) || int(supertype) >= len(lang.SymbolMetadata) {
+			return fmt.Errorf("emit C: supertype symbol %d outside symbol tables", supertype)
+		}
+		if !lang.SymbolMetadata[supertype].Supertype {
+			return fmt.Errorf("emit C: symbol %d is in the supertype table without supertype metadata", supertype)
+		}
+		slice := lang.SupertypeMapSlices[supertype]
+		end := int(slice[0]) + int(slice[1])
+		if slice[1] == 0 || end > len(lang.SupertypeMapEntries) {
+			return fmt.Errorf("emit C: invalid supertype slice for symbol %d: index=%d length=%d entries=%d", supertype, slice[0], slice[1], len(lang.SupertypeMapEntries))
+		}
+	}
+	for _, subtype := range lang.SupertypeMapEntries {
+		if int(subtype) >= len(lang.SymbolNames) {
+			return fmt.Errorf("emit C: subtype symbol %d outside symbol names", subtype)
+		}
+	}
+	return nil
 }
 
 func emitHeader(b *strings.Builder, name string, lang *gotreesitter.Language) {
@@ -69,6 +141,9 @@ func emitHeader(b *strings.Builder, name string, lang *gotreesitter.Language) {
 	fmt.Fprintf(b, "#define TOKEN_COUNT %d\n", lang.TokenCount)
 	fmt.Fprintf(b, "#define EXTERNAL_TOKEN_COUNT %d\n", lang.ExternalTokenCount)
 	fmt.Fprintf(b, "#define FIELD_COUNT %d\n", lang.FieldCount)
+	if len(lang.SupertypeSymbols) > 0 {
+		fmt.Fprintf(b, "#define SUPERTYPE_COUNT %d\n", len(lang.SupertypeSymbols))
+	}
 	if lang.MaxReservedWordSetSize > 0 {
 		fmt.Fprintf(b, "#define MAX_RESERVED_WORD_SET_SIZE %d\n", lang.MaxReservedWordSetSize)
 	}
@@ -238,7 +313,7 @@ func emitParseActions(b *strings.Builder, lang *gotreesitter.Language) {
 	fmt.Fprintf(b, "};\n\n")
 }
 
-func emitParseTable(b *strings.Builder, lang *gotreesitter.Language) {
+func emitParseTable(b *strings.Builder, lang *gotreesitter.Language, actionOffsets []uint16) {
 	if lang.LargeStateCount == 0 || len(lang.ParseTable) == 0 {
 		return
 	}
@@ -253,38 +328,86 @@ func emitParseTable(b *strings.Builder, lang *gotreesitter.Language) {
 				continue
 			}
 			cname := symbolToCName(lang.SymbolNames[j], j, lang)
-			fmt.Fprintf(b, "    [%s] = %d,\n", cname, val)
+			fmt.Fprintf(b, "    [%s] = %d,\n", cname, cParseTableValue(lang, actionOffsets, j, val))
 		}
 		fmt.Fprintf(b, "  },\n")
 	}
 	fmt.Fprintf(b, "};\n\n")
 }
 
-func emitSmallParseTable(b *strings.Builder, lang *gotreesitter.Language) {
+func emitSmallParseTable(b *strings.Builder, lang *gotreesitter.Language, actionOffsets []uint16) {
 	if len(lang.SmallParseTable) == 0 {
 		return
 	}
+	type smallState struct {
+		offset uint32
+		data   []uint16
+	}
+	states := make([]smallState, len(lang.SmallParseTableMap))
+	for state, sourceOffset := range lang.SmallParseTableMap {
+		pos := int(sourceOffset)
+		if pos >= len(lang.SmallParseTable) {
+			continue
+		}
+		groupCount := int(lang.SmallParseTable[pos])
+		pos++
+		groups := make(map[uint16][]uint16)
+		for group := 0; group < groupCount && pos+1 < len(lang.SmallParseTable); group++ {
+			value := lang.SmallParseTable[pos]
+			count := int(lang.SmallParseTable[pos+1])
+			pos += 2
+			for i := 0; i < count && pos < len(lang.SmallParseTable); i++ {
+				symbol := lang.SmallParseTable[pos]
+				pos++
+				mapped := cParseTableValue(lang, actionOffsets, int(symbol), value)
+				groups[mapped] = append(groups[mapped], symbol)
+			}
+		}
+		values := make([]int, 0, len(groups))
+		for value := range groups {
+			values = append(values, int(value))
+		}
+		sort.Ints(values)
+		data := []uint16{uint16(len(values))}
+		for _, rawValue := range values {
+			value := uint16(rawValue)
+			syms := groups[value]
+			sort.Slice(syms, func(i, j int) bool { return syms[i] < syms[j] })
+			data = append(data, value, uint16(len(syms)))
+			data = append(data, syms...)
+		}
+		states[state].data = data
+	}
 	fmt.Fprintf(b, "static const uint16_t ts_small_parse_table[] = {\n")
-	for i, val := range lang.SmallParseTable {
-		fmt.Fprintf(b, "  /* %d */ %d,\n", i, val)
+	offset := uint32(0)
+	for i := range states {
+		states[i].offset = offset
+		for _, val := range states[i].data {
+			fmt.Fprintf(b, "  /* %d */ %d,\n", offset, val)
+			offset++
+		}
 	}
 	fmt.Fprintf(b, "};\n\n")
 
 	fmt.Fprintf(b, "static const uint32_t ts_small_parse_table_map[] = {\n")
-	for i, val := range lang.SmallParseTableMap {
-		fmt.Fprintf(b, "  [SMALL_STATE(%d)] = %d,\n", int(lang.LargeStateCount)+i, val)
+	for i, state := range states {
+		fmt.Fprintf(b, "  [SMALL_STATE(%d)] = %d,\n", int(lang.LargeStateCount)+i, state.offset)
 	}
 	fmt.Fprintf(b, "};\n\n")
 }
 
 func emitLexModes(b *strings.Builder, lang *gotreesitter.Language) {
-	fmt.Fprintf(b, "static const TSLexMode ts_lex_modes[STATE_COUNT] = {\n")
+	modeType := "TSLexMode"
+	if lang.LanguageVersion >= 15 {
+		modeType = "TSLexerMode"
+	}
+	fmt.Fprintf(b, "static const %s ts_lex_modes[STATE_COUNT] = {\n", modeType)
 	for i, mode := range lang.LexModes {
 		parts := []string{fmt.Sprintf(".lex_state = %d", mode.LexState)}
 		if mode.ExternalLexState > 0 {
 			parts = append(parts, fmt.Sprintf(".external_lex_state = %d", mode.ExternalLexState))
 		}
-		if mode.ReservedWordSetID > 0 {
+		if lang.LanguageVersion >= 15 && mode.ReservedWordSetID > 0 {
 			parts = append(parts, fmt.Sprintf(".reserved_word_set_id = %d", mode.ReservedWordSetID))
 		}
 		fmt.Fprintf(b, "  [%d] = {%s},\n", i, strings.Join(parts, ", "))
@@ -315,6 +438,40 @@ func emitReservedWords(b *strings.Builder, lang *gotreesitter.Language) {
 			fmt.Fprintf(b, "    %s,\n", cname)
 		}
 		fmt.Fprintf(b, "  },\n")
+	}
+	fmt.Fprintf(b, "};\n\n")
+}
+
+func emitSupertypes(b *strings.Builder, lang *gotreesitter.Language) {
+	if len(lang.SupertypeSymbols) == 0 || len(lang.SupertypeMapEntries) == 0 {
+		return
+	}
+
+	fmt.Fprintf(b, "static const TSSymbol ts_supertype_symbols[SUPERTYPE_COUNT] = {\n")
+	for i, sym := range lang.SupertypeSymbols {
+		if int(sym) >= len(lang.SymbolNames) {
+			continue
+		}
+		fmt.Fprintf(b, "  [%d] = %s,\n", i, symbolToCName(lang.SymbolNames[sym], int(sym), lang))
+	}
+	fmt.Fprintf(b, "};\n\n")
+
+	fmt.Fprintf(b, "static const TSMapSlice ts_supertype_map_slices[SYMBOL_COUNT] = {\n")
+	for sym, slice := range lang.SupertypeMapSlices {
+		if slice == [2]uint16{} || sym >= len(lang.SymbolNames) {
+			continue
+		}
+		fmt.Fprintf(b, "  [%s] = {.index = %d, .length = %d},\n",
+			symbolToCName(lang.SymbolNames[sym], sym, lang), slice[0], slice[1])
+	}
+	fmt.Fprintf(b, "};\n\n")
+
+	fmt.Fprintf(b, "static const TSSymbol ts_supertype_map_entries[] = {\n")
+	for _, sym := range lang.SupertypeMapEntries {
+		if int(sym) >= len(lang.SymbolNames) {
+			continue
+		}
+		fmt.Fprintf(b, "  %s,\n", symbolToCName(lang.SymbolNames[sym], int(sym), lang))
 	}
 	fmt.Fprintf(b, "};\n\n")
 }
@@ -398,7 +555,7 @@ func emitLanguageExport(b *strings.Builder, name string, lang *gotreesitter.Lang
 
 	fmt.Fprintf(b, "const TSLanguage *%s(void) {\n", funcName)
 	fmt.Fprintf(b, "  static const TSLanguage language = {\n")
-	fmt.Fprintf(b, "    .version = LANGUAGE_VERSION,\n")
+	fmt.Fprintf(b, "    .abi_version = LANGUAGE_VERSION,\n")
 	fmt.Fprintf(b, "    .symbol_count = SYMBOL_COUNT,\n")
 	fmt.Fprintf(b, "    .alias_count = ALIAS_COUNT,\n")
 	fmt.Fprintf(b, "    .token_count = TOKEN_COUNT,\n")
@@ -452,6 +609,20 @@ func emitLanguageExport(b *strings.Builder, name string, lang *gotreesitter.Lang
 	if len(lang.ReservedWords) > 0 && lang.MaxReservedWordSetSize > 0 {
 		fmt.Fprintf(b, "    .reserved_words = &ts_reserved_words[0][0],\n")
 		fmt.Fprintf(b, "    .max_reserved_word_set_size = %d,\n", lang.MaxReservedWordSetSize)
+	}
+	if lang.LanguageVersion >= 15 {
+		fmt.Fprintf(b, "    .name = %q,\n", name)
+		if len(lang.SupertypeSymbols) > 0 && len(lang.SupertypeMapEntries) > 0 {
+			fmt.Fprintf(b, "    .supertype_count = SUPERTYPE_COUNT,\n")
+			fmt.Fprintf(b, "    .supertype_symbols = ts_supertype_symbols,\n")
+			fmt.Fprintf(b, "    .supertype_map_slices = ts_supertype_map_slices,\n")
+			fmt.Fprintf(b, "    .supertype_map_entries = ts_supertype_map_entries,\n")
+		}
+		fmt.Fprintf(b, "    .metadata = {\n")
+		fmt.Fprintf(b, "      .major_version = %d,\n", lang.Metadata.MajorVersion)
+		fmt.Fprintf(b, "      .minor_version = %d,\n", lang.Metadata.MinorVersion)
+		fmt.Fprintf(b, "      .patch_version = %d,\n", lang.Metadata.PatchVersion)
+		fmt.Fprintf(b, "    },\n")
 	}
 
 	fmt.Fprintf(b, "  };\n")

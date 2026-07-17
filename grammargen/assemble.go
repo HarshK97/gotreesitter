@@ -234,9 +234,34 @@ func assemble(
 		return nil, err
 	}
 
+	stampABI15LanguageVersionIfNeeded(lang)
+
 	certifyGeneratedCRecoveryCostCompetition(lang)
 
 	return lang, nil
+}
+
+// stampABI15LanguageVersionIfNeeded bumps lang.LanguageVersion to 15 when the
+// assembled Language actually carries an ABI-15-only surface: the reserved-
+// word table (buildReservedWordTables), the supertype map
+// (buildSupertypeMap's SupertypeMapSlices/SupertypeMapEntries — distinct
+// from the ABI-14-compatible flat SupertypeSymbols list). A grammar with
+// neither surface stays at the baseline LanguageVersion assemble() set (14):
+// declaring ABI 15 without an
+// ABI-15 feature present would just make older tree-sitter-compatible
+// consumers reject the language for no reason.
+//
+// This must run after every step that can populate one of those fields
+// (buildReservedWordTables and buildSupertypeMap both run earlier in
+// assemble()), and must not lower an already-higher version a caller set.
+func stampABI15LanguageVersionIfNeeded(lang *gotreesitter.Language) {
+	if lang == nil || lang.LanguageVersion >= 15 {
+		return
+	}
+	hasABI15Surface := len(lang.ReservedWords) > 0 || len(lang.SupertypeMapEntries) > 0
+	if hasABI15Surface {
+		lang.LanguageVersion = 15
+	}
 }
 
 func certifyGeneratedCRecoveryCostCompetition(lang *gotreesitter.Language) {
@@ -396,9 +421,9 @@ func buildReservedWordTables(lang *gotreesitter.Language, ng *NormalizedGrammar)
 		offset := i * maxSetSize
 		copy(lang.ReservedWords[offset:offset+len(set)], set)
 	}
-	if lang.LanguageVersion < 15 {
-		lang.LanguageVersion = 15
-	}
+	// LanguageVersion is stamped once, centrally, in assemble() after every
+	// ABI-15 surface (reserved words, supertype map, grammar metadata) has
+	// had a chance to populate — see stampABI15LanguageVersionIfNeeded.
 	return nil
 }
 

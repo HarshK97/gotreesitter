@@ -1,6 +1,11 @@
 package grammargen
 
 import (
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter"
@@ -262,6 +267,369 @@ func TestPlainVisibleIdentifierStringRuleWithWordRemainsNonterminal(t *testing.T
 	if got, want := root.SExpr(lang), "(source_file (call (identifier)))"; got != want {
 		t.Fatalf("SExpr = %s, want %s", got, want)
 	}
+}
+
+func TestReferencedPlainVisibleIdentifierStringRuleWithWordBecomesNamedLeaf(t *testing.T) {
+	g := NewGrammar("referenced_plain_visible_identifier_string_rule_with_word")
+	g.Define("source_file", Choice(Sym("identifier"), Sym("match")))
+	g.Define("identifier", Pat(`[a-z]+`))
+	g.Define("match", Str("match"))
+	g.SetWord("identifier")
+
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if got := symbolKind(t, ng, "match"); got != SymbolNamedToken {
+		t.Fatalf("match kind = %v, want SymbolNamedToken", got)
+	}
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("match"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root.HasError() {
+		t.Fatalf("parse has error: %s", root.SExpr(lang))
+	}
+	if got, want := root.SExpr(lang), "(source_file (match))"; got != want {
+		t.Fatalf("SExpr = %s, want %s", got, want)
+	}
+}
+
+func TestPlainVisibleIdentifierReferenceReachabilityBoundaries(t *testing.T) {
+	newBase := func() *Grammar {
+		g := NewGrammar("plain_visible_identifier_reference_boundary")
+		g.Define("source_file", Sym("identifier"))
+		g.Define("identifier", Pat(`[a-z]+`))
+		g.Define("match", Str("match"))
+		g.SetWord("identifier")
+		return g
+	}
+	tests := []struct {
+		name string
+		edit func(*Grammar)
+		want bool
+	}{
+		{
+			name: "reachable ordinary rule",
+			edit: func(g *Grammar) { g.Rules["source_file"] = Choice(Sym("identifier"), Sym("match")) },
+			want: true,
+		},
+		{
+			name: "unreachable rule is pruned",
+			edit: func(g *Grammar) { g.Define("unused", Sym("match")) },
+			want: false,
+		},
+		{
+			name: "global extra is a parser root",
+			edit: func(g *Grammar) { g.SetExtras(Sym("match")) },
+			want: true,
+		},
+		{
+			name: "external declaration is a parser root",
+			edit: func(g *Grammar) { g.SetExternals(Sym("match")) },
+			want: true,
+		},
+		{
+			name: "reserved-only membership is not reachability",
+			edit: func(g *Grammar) {
+				g.ReservedWordSets = []ReservedWordSet{{Name: "global", Rules: []*Rule{Sym("match")}}}
+			},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := newBase()
+			tt.edit(g)
+			if got := symbolNameReferencedElsewhere(g, "match"); got != tt.want {
+				t.Fatalf("symbolNameReferencedElsewhere(match) = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPlainVisibleIdentifierOwnershipAgainstLockedCOracle(t *testing.T) {
+	cli := lockedTreeSitterCLI(t)
+	tests := []struct {
+		name        string
+		grammarJS   string
+		build       func() *Grammar
+		source      string
+		wantTree    string
+		wantCLISym  bool
+		wantGoToken bool
+	}{
+		{
+			name: "reachable",
+			grammarJS: `module.exports = grammar({
+  name: 'keyword_owner_reachable',
+  word: $ => $.identifier,
+  rules: {
+    source_file: $ => choice($.identifier, $.match),
+    identifier: $ => /[a-z]+/,
+    match: $ => 'match',
+  },
+});`,
+			build: func() *Grammar {
+				g := keywordOwnershipBase("keyword_owner_reachable")
+				g.Rules["source_file"] = Choice(Sym("identifier"), Sym("match"))
+				return g
+			},
+			source: "match", wantTree: "(source_file (match))", wantCLISym: true, wantGoToken: true,
+		},
+		{
+			name: "unreachable",
+			grammarJS: `module.exports = grammar({
+  name: 'keyword_owner_unreachable',
+  word: $ => $.identifier,
+  rules: {
+    source_file: $ => $.identifier,
+    identifier: $ => /[a-z]+/,
+    match: $ => 'match',
+    unused: $ => $.match,
+  },
+});`,
+			build: func() *Grammar {
+				g := keywordOwnershipBase("keyword_owner_unreachable")
+				g.Define("unused", Sym("match"))
+				return g
+			},
+			source: "word", wantTree: "(source_file (identifier))", wantCLISym: false, wantGoToken: false,
+		},
+		{
+			name: "extra",
+			grammarJS: `module.exports = grammar({
+  name: 'keyword_owner_extra',
+  word: $ => $.identifier,
+  extras: $ => [/\s/, $.match],
+  rules: {
+    source_file: $ => $.identifier,
+    identifier: $ => /[a-z]+/,
+    match: $ => 'match',
+  },
+});`,
+			build: func() *Grammar {
+				g := keywordOwnershipBase("keyword_owner_extra")
+				g.SetExtras(Pat(`\s`), Sym("match"))
+				return g
+			},
+			source: "match word", wantTree: "(source_file (match) (identifier))", wantCLISym: true, wantGoToken: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := tt.build()
+			ng, err := Normalize(g)
+			if err != nil {
+				t.Fatalf("Normalize: %v", err)
+			}
+			if got := symbolKind(t, ng, "match") == SymbolNamedToken; got != tt.wantGoToken {
+				t.Fatalf("Go match named-token ownership = %v, want %v", got, tt.wantGoToken)
+			}
+			lang, err := GenerateLanguage(g)
+			if err != nil {
+				t.Fatalf("GenerateLanguage: %v", err)
+			}
+			tree, err := gotreesitter.NewParser(lang).Parse([]byte(tt.source))
+			if err != nil {
+				t.Fatalf("Go parse: %v", err)
+			}
+			defer tree.Release()
+			if got := tree.RootNode().SExpr(lang); got != tt.wantTree {
+				t.Fatalf("Go tree = %s, want %s", got, tt.wantTree)
+			}
+
+			parserC := runLockedCLIParserOracle(t, cli, g.Name, tt.grammarJS, tt.source, tt.wantTree)
+			if got := cSymbolIsVisibleNamed(parserC, "sym_match"); got != tt.wantCLISym {
+				t.Fatalf("locked CLI/C match ownership = %v, want %v", got, tt.wantCLISym)
+			}
+		})
+	}
+}
+
+func TestReservedOnlyIdentifierOwnershipAgainstTreeSitterCLI(t *testing.T) {
+	cli := lockedTreeSitterCLI(t)
+	g := keywordOwnershipBase("keyword_owner_reserved_only")
+	g.ReservedWordSets = []ReservedWordSet{{Name: "global", Rules: []*Rule{Sym("match")}}}
+	if symbolNameReferencedElsewhere(g, "match") {
+		t.Fatal("reserved-only membership unexpectedly made match reachable")
+	}
+	ng, err := Normalize(g)
+	if err != nil {
+		t.Fatalf("Normalize: %v", err)
+	}
+	if got := symbolKind(t, ng, "match"); got == SymbolNamedToken {
+		t.Fatalf("reserved-only match kind = %v, must not own a keyword token", got)
+	}
+
+	tmp := t.TempDir()
+	grammarJS := `module.exports = grammar({
+  name: 'keyword_owner_reserved_only',
+  word: $ => $.identifier,
+  reserved: { global: $ => [$.match] },
+  rules: {
+    source_file: $ => reserved('global', $.identifier),
+    identifier: $ => /[a-z]+/,
+    match: $ => 'match',
+  },
+});`
+	if err := os.WriteFile(filepath.Join(tmp, "grammar.js"), []byte(grammarJS), 0o644); err != nil {
+		t.Fatalf("write grammar.js: %v", err)
+	}
+	cmd := exec.Command(cli, "generate", "--abi", "14", "--js-runtime", "native")
+	cmd.Dir = tmp
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "Undefined symbol `match`") {
+		t.Fatalf("tree-sitter CLI reserved-only result = %v\n%s; want fail-closed unreachable match", err, out)
+	}
+}
+
+func TestExternalIdentifierOwnershipAgainstTreeSitterCLI(t *testing.T) {
+	cli := lockedTreeSitterCLI(t)
+	g := keywordOwnershipBase("keyword_owner_external")
+	g.SetExternals(Sym("match"))
+	if !symbolNameReferencedElsewhere(g, "match") {
+		t.Fatal("external declaration was not treated as a parser root")
+	}
+
+	tmp := t.TempDir()
+	grammarJS := `module.exports = grammar({
+  name: 'keyword_owner_external',
+  word: $ => $.identifier,
+  externals: $ => [$.match],
+  rules: {
+    source_file: $ => choice($.identifier, $.match),
+    identifier: $ => /[a-z]+/,
+  },
+});`
+	if err := os.WriteFile(filepath.Join(tmp, "grammar.js"), []byte(grammarJS), 0o644); err != nil {
+		t.Fatalf("write grammar.js: %v", err)
+	}
+	cmd := exec.Command(cli, "generate", "--abi", "14", "--js-runtime", "native")
+	cmd.Dir = tmp
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("tree-sitter generate external oracle: %v\n%s", err, out)
+	}
+	parserC, err := os.ReadFile(filepath.Join(tmp, "src", "parser.c"))
+	if err != nil {
+		t.Fatalf("read external oracle parser.c: %v", err)
+	}
+	if !cSymbolIsVisibleNamed(string(parserC), "sym_match") {
+		t.Fatal("tree-sitter CLI did not give the external match symbol visible/named ownership")
+	}
+}
+
+func keywordOwnershipBase(name string) *Grammar {
+	g := NewGrammar(name)
+	g.Define("source_file", Sym("identifier"))
+	g.Define("identifier", Pat(`[a-z]+`))
+	g.Define("match", Str("match"))
+	g.SetWord("identifier")
+	return g
+}
+
+func lockedTreeSitterCLI(t *testing.T) string {
+	t.Helper()
+	cli, err := exec.LookPath("tree-sitter")
+	if err != nil {
+		t.Skip("tree-sitter CLI is unavailable")
+	}
+	out, err := exec.Command(cli, "--version").CombinedOutput()
+	if err != nil {
+		t.Skipf("tree-sitter CLI version probe failed: %v", err)
+	}
+	const locked = "tree-sitter 0.26.6"
+	if strings.TrimSpace(string(out)) != locked {
+		t.Skipf("keyword ownership oracle requires %s, got %s", locked, strings.TrimSpace(string(out)))
+	}
+	return cli
+}
+
+func runLockedCLIParserOracle(t *testing.T, cli, name, grammarJS, source, wantTree string) string {
+	t.Helper()
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "grammar.js"), []byte(grammarJS), 0o644); err != nil {
+		t.Fatalf("write grammar.js: %v", err)
+	}
+	cmd := exec.Command(cli, "generate", "--abi", "14", "--js-runtime", "native")
+	cmd.Dir = tmp
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("tree-sitter generate: %v\n%s", err, out)
+	}
+	parserPath := filepath.Join(tmp, "src", "parser.c")
+	parserC, err := os.ReadFile(parserPath)
+	if err != nil {
+		t.Fatalf("read CLI parser.c: %v", err)
+	}
+	runtimeDir := lockedTreeSitterRuntimeDir(t)
+	lockedHeader, err := os.ReadFile(filepath.Join(runtimeDir, "src", "parser.h"))
+	if err != nil {
+		t.Fatalf("read locked parser.h: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "src", "tree_sitter", "parser.h"), lockedHeader, 0o644); err != nil {
+		t.Fatalf("replace parser.h with locked runtime header: %v", err)
+	}
+	mainSource := fmt.Sprintf(`#include <stdlib.h>
+#include <string.h>
+#include <tree_sitter/api.h>
+const TSLanguage *tree_sitter_%s(void);
+int main(void) {
+  TSParser *parser = ts_parser_new();
+  if (!parser || !ts_parser_set_language(parser, tree_sitter_%s())) return 10;
+  TSTree *tree = ts_parser_parse_string(parser, NULL, %q, %d);
+  if (!tree) return 11;
+  char *sexp = ts_node_string(ts_tree_root_node(tree));
+  int ok = sexp && strcmp(sexp, %q) == 0;
+  free(sexp);
+  ts_tree_delete(tree);
+  ts_parser_delete(parser);
+  return ok ? 0 : 12;
+}
+`, name, name, source, len(source), wantTree)
+	mainPath := filepath.Join(tmp, "main.c")
+	if err := os.WriteFile(mainPath, []byte(mainSource), 0o644); err != nil {
+		t.Fatalf("write oracle main.c: %v", err)
+	}
+	artifact := filepath.Join(tmp, "oracle")
+	cc, err := exec.LookPath("cc")
+	if err != nil {
+		t.Skip("C compiler is unavailable")
+	}
+	args := []string{"-std=c11", "-O0", "-D_DEFAULT_SOURCE", "-I" + filepath.Join(tmp, "src"), "-I" + filepath.Join(runtimeDir, "include"), "-I" + filepath.Join(runtimeDir, "src"), parserPath, filepath.Join(runtimeDir, "src", "lib.c"), mainPath, "-pthread", "-o", artifact}
+	if out, err := exec.Command(cc, args...).CombinedOutput(); err != nil {
+		t.Fatalf("compile locked C oracle: %v\n%s", err, out)
+	}
+	if out, err := exec.Command(artifact).CombinedOutput(); err != nil {
+		t.Fatalf("run locked C oracle: %v\n%s", err, out)
+	}
+	return string(parserC)
+}
+
+func cSymbolIsVisibleNamed(parserC, cSymbol string) bool {
+	start := strings.Index(parserC, "static const TSSymbolMetadata ts_symbol_metadata[]")
+	if start < 0 {
+		return false
+	}
+	body := parserC[start:]
+	marker := "[" + cSymbol + "] = {"
+	start = strings.Index(body, marker)
+	if start < 0 {
+		return false
+	}
+	body = body[start+len(marker):]
+	end := strings.Index(body, "},")
+	if end < 0 {
+		return false
+	}
+	block := body[:end]
+	return strings.Contains(block, ".visible = true") && strings.Contains(block, ".named = true")
 }
 
 func TestPlainVisiblePunctuationPrefixedStringRuleWithWordBecomesNamedLeafToken(t *testing.T) {

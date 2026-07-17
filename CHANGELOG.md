@@ -19,6 +19,13 @@ for tags and release notes while still in `0.x`.
   preserve exact EOF coordinates across both skip APIs, including 32-bit builds.
 - Query string literals now decode control, quote, and backslash escapes through
   execution and reject unescaped newlines like the locked C query parser.
+- Grammar imports now decode C string and Unicode escapes without losing the
+  reversible question-mark spelling shared with grammargen; refreshed Agda and
+  Dhall blobs expose their Unicode symbols correctly. Generated C now uses the
+  ABI-appropriate lexer-mode layout, emits flattened parse-action offsets, and
+  validates complete ABI-15 supertype metadata before emission. Lowercase
+  keyword leaves are classified from parser-reachable ownership like
+  tree-sitter.
 - Highlight queries now resolve supported built-in inheritance chains across
   registration order and same-name replacements without duplicating cyclic
   queries. Incompatible locked grammar/query pairs remain fail-closed.
