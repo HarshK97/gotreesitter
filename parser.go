@@ -5086,7 +5086,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				actions = parseActions[actionIdx].Actions
 			}
 			semanticPhaseTraceRecordActionCell(p, s, currentState, tok, actions) // semantic-phase-assembly: action-cell seam
-			workCountRecordResolvedActionCell(len(actions))
+			workCountRecordResolvedActionCell(len(actions)) // work-count-assembly: resolved action-cell seam
 			workCountAddActionEntries(len(actions))
 			if phaseTiming {
 				actionLookupNanos += time.Since(actionStart).Nanoseconds()

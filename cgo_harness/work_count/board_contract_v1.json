@@ -1,6 +1,6 @@
 {
   "schema": "gts-work-count-board-contract/v1",
-  "board_schema": "gts-work-count-board/v2",
+  "board_schema": "gts-work-count-board/v3",
   "counter_contract": "gts-work-count/v2",
   "scope": "one authenticated fresh materialized full parse of each locked real-Go fixture; diagnostic artifacts are timing-ineligible",
   "engine_states": ["present", "unavailable"],

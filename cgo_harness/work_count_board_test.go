@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -16,9 +17,14 @@ import (
 const (
 	workCountBoardEnableEnv               = "GTS_WORK_COUNT_BOARD"
 	workCountBoardReceiptEnv              = "GTS_WORK_COUNT_BOARD_RECEIPT"
-	workCountBoardSchema                  = "gts-work-count-board/v2"
+	workCountBoardGoBackendEnv            = "GTS_WORK_COUNT_GO_BACKEND"
+	workCountBoardGoProduction            = "production"
+	workCountBoardGoParserCore            = "parsercore_phase0"
+	workCountBoardParserCoreChildSchema   = "gts-work-count-parsercore-child/v1"
+	workCountBoardParserCoreEngine        = "go-compact-parsercore-phase0-tagged-diagnostic"
+	workCountBoardSchema                  = "gts-work-count-board/v3"
 	workCountBoardContractSchema          = "gts-work-count-board-contract/v1"
-	workCountBoardContractSHA256          = "be47dbc87423d4e7a3abfc8865ac7f186fa08076b3b996bc5913c118d1537e03"
+	workCountBoardContractSHA256          = "60574ae7773661bcededf789ae1eac4ce7d029918d71c7a5f02446c6bb14e627"
 	workCountBoardInstrumentationRule     = "blocked unless every mandatory event has one identical semantic definition, a present direct counter in both engines, and a comparable relationship"
 	workCountBoardWorkAuditRule           = "a mandatory comparable event with present nonzero-denominator counts outside the inclusive Go/C interval [0.8,1.2] produces a work-audit finding but does not change instrumentation completeness"
 	workCountBoardWorkAuditMinimum        = 0.8
@@ -93,21 +99,73 @@ type workCountBoardScheduling struct {
 type workCountBoardProof struct {
 	DiagnosticArtifactsTimingEligible bool     `json:"diagnostic_artifacts_timing_eligible"`
 	PublicationTimingArtifact         string   `json:"publication_timing_artifact"`
+	GoBackend                         string   `json:"go_backend"`
 	UntaggedAssemblyTest              string   `json:"untagged_assembly_test"`
 	UntaggedAssemblyPassed            bool     `json:"untagged_assembly_passed"`
 	SchedulingFields                  []string `json:"scheduling_fields"`
 }
 
 type workCountBoardRow struct {
-	Fixture              string                   `json:"fixture"`
-	SourceSHA256         string                   `json:"source_sha256"`
-	SourceBytes          uint32                   `json:"source_bytes"`
-	DeepTreeSHA256       string                   `json:"deep_tree_sha256"`
-	GrammarCommit        string                   `json:"grammar_commit"`
-	GrammarBlobSHA256    string                   `json:"grammar_blob_sha256"`
-	UntaggedGoScheduling workCountBoardScheduling `json:"untagged_go_scheduling"`
-	TaggedGoScheduling   workCountBoardScheduling `json:"tagged_go_scheduling"`
-	Metrics              []workCountBoardMetric   `json:"metrics"`
+	Fixture               string                             `json:"fixture"`
+	SourceSHA256          string                             `json:"source_sha256"`
+	SourceBytes           uint32                             `json:"source_bytes"`
+	DeepTreeSHA256        string                             `json:"deep_tree_sha256"`
+	GrammarCommit         string                             `json:"grammar_commit"`
+	GrammarBlobSHA256     string                             `json:"grammar_blob_sha256"`
+	GoBackend             string                             `json:"go_backend"`
+	UntaggedGoScheduling  workCountBoardScheduling           `json:"untagged_go_scheduling"`
+	TaggedGoScheduling    *workCountBoardScheduling          `json:"tagged_go_scheduling,omitempty"`
+	ParserCoreScheduler   *workCountBoardParserCoreScheduler `json:"parsercore_scheduler,omitempty"`
+	RepeatIdenticalCounts bool                               `json:"repeat_identical_counts"`
+	Metrics               []workCountBoardMetric             `json:"metrics"`
+}
+
+type workCountBoardParserCoreWork struct {
+	Shifts                   uint64 `json:"shifts"`
+	Reductions               uint64 `json:"reductions"`
+	ReductionPopRequests     uint64 `json:"reduction_pop_requests"`
+	EmittedPopPaths          uint64 `json:"emitted_pop_paths"`
+	EmittedPopPayloads       uint64 `json:"emitted_pop_payloads"`
+	GraphLinkAdditionsProxy  uint64 `json:"graph_link_additions_proxy"`
+	LeafConstructionsProxy   uint64 `json:"leaf_constructions_proxy"`
+	ParentConstructionsProxy uint64 `json:"parent_constructions_proxy"`
+	Overflow                 bool   `json:"overflow"`
+}
+
+type workCountBoardParserCoreScheduler struct {
+	ActionLookups     uint64 `json:"action_lookups"`
+	Accepts           uint64 `json:"accepts"`
+	Elections         uint64 `json:"elections"`
+	Forks             uint64 `json:"forks"`
+	Conflicts         uint64 `json:"conflicts"`
+	ConflictActions   uint64 `json:"conflict_actions"`
+	Canonicalizations uint64 `json:"canonicalizations"`
+	PeakHeaders       uint64 `json:"peak_headers"`
+}
+
+type workCountBoardSelectedCensus struct {
+	Nodes   uint64 `json:"nodes"`
+	Parents uint64 `json:"parents"`
+	Leaves  uint64 `json:"leaves"`
+}
+
+type workCountBoardParserCoreChildResult struct {
+	Schema             string                            `json:"schema"`
+	Engine             string                            `json:"engine"`
+	CounterContract    string                            `json:"counter_contract"`
+	DigestFormat       string                            `json:"digest_format"`
+	Fixture            string                            `json:"fixture"`
+	SourceSHA256       string                            `json:"source_sha256"`
+	SourceBytes        uint32                            `json:"source_bytes"`
+	GrammarCommit      string                            `json:"grammar_commit"`
+	GrammarBlobSHA256  string                            `json:"grammar_blob_sha256"`
+	DeepTreeSHA256     string                            `json:"deep_tree_sha256"`
+	RootEndByte        uint32                            `json:"root_end_byte"`
+	RootHasError       bool                              `json:"root_has_error"`
+	CandidateFallbacks uint64                            `json:"candidate_fallbacks"`
+	CoreWork           workCountBoardParserCoreWork      `json:"core_work"`
+	SchedulerWork      workCountBoardParserCoreScheduler `json:"scheduler_work"`
+	Selected           workCountBoardSelectedCensus      `json:"selected_census"`
 }
 
 type workCountBoard struct {
@@ -131,14 +189,15 @@ type workCountBoard struct {
 }
 
 // TestAuthenticatedFourFixtureWorkCountBoard builds each diagnostic artifact
-// once, then runs the complete frozen real-Go suite through both production Go
-// GLR and the locked static -O2 C oracle. It is separate from the publication
-// receipt: this diagnostic board compares work counts and never times either
-// implementation.
+// once, then runs the complete frozen real-Go suite through the selected Go
+// backend and the locked static -O2 C oracle. It is separate from the
+// publication receipt: this diagnostic board compares work counts and never
+// times either implementation.
 func TestAuthenticatedFourFixtureWorkCountBoard(t *testing.T) {
 	if os.Getenv(workCountBoardEnableEnv) != "1" {
 		t.Skip(workCountBoardEnableEnv + "=1 is required")
 	}
+	goBackend := workCountBoardBackend(t)
 	repoRoot := workCountRepoRoot(t)
 	receiptPath := workCountPrepareBoardReceiptPath(t)
 	tempRoot := t.TempDir()
@@ -182,8 +241,19 @@ func TestAuthenticatedFourFixtureWorkCountBoard(t *testing.T) {
 	goEnvironment := workCountChosenEnvironment()
 	t.Log("build: ordinary untagged Go admission child")
 	goAdmissionArtifact, goAdmissionIdentity, goAdmissionRecheck := workCountBuildGo(t, sourceSnapshot, tempRoot, goEnvironment, false)
-	t.Log("build: tagged diagnostic Go child")
-	goArtifact, goIdentity, goRecheck := workCountBuildGo(t, sourceSnapshot, tempRoot, goEnvironment, true)
+	var goArtifact string
+	var goIdentity workCountArtifactIdentity
+	var goRecheck func() error
+	switch goBackend {
+	case workCountBoardGoProduction:
+		t.Log("build: tagged production diagnostic Go child")
+		goArtifact, goIdentity, goRecheck = workCountBuildGo(t, sourceSnapshot, tempRoot, goEnvironment, true)
+	case workCountBoardGoParserCore:
+		t.Log("build: tagged compact parser-core diagnostic Go child")
+		goArtifact, goIdentity, goRecheck = workCountBuildParserCoreGo(t, sourceSnapshot, tempRoot, goEnvironment)
+	default:
+		t.Fatalf("unsupported Go work-count backend %q", goBackend)
+	}
 	t.Log("build: instrumented locked static C child")
 	cBuild := workCountBuildC(t, repoRoot, sourceSnapshot.Root, patchPath, driverPath)
 	defer cBuild.Cleanup()
@@ -199,8 +269,9 @@ func TestAuthenticatedFourFixtureWorkCountBoard(t *testing.T) {
 		Proof: workCountBoardProof{
 			DiagnosticArtifactsTimingEligible: false,
 			PublicationTimingArtifact:         "ordinary untagged Go plus locked uninstrumented static C only",
+			GoBackend:                         goBackend,
 			UntaggedAssemblyTest:              "TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding",
-			SchedulingFields:                  []string{"max_stacks_seen", "multi_stack_iterations", "multi_stack_tokens"},
+			SchedulingFields:                  []string{"production: max_stacks_seen/multi_stack_iterations/multi_stack_tokens", "parsercore_phase0: action_lookups/accepts/elections/forks/conflicts/conflict_actions/canonicalizations/peak_headers"},
 		},
 		Rows: make([]workCountBoardRow, 0, len(fixtures)),
 	}
@@ -227,30 +298,52 @@ func TestAuthenticatedFourFixtureWorkCountBoard(t *testing.T) {
 			}
 
 			cResult := workCountRunC(t, cBuild.Artifact, sourcePath, fixtureTemp)
-			goResult := workCountRunGo(t, goArtifact, fixture.Fixture.ID, sourcePath, fixtureTemp, goEnvironment)
 			workCountValidateCChild(t, "static C", "static-c-instrumented-glr", cResult, fixture, fixture.Fixture.DeepTreeSHA256)
-			workCountValidateGoChild(t, "tagged Go", workCountTaggedGoChildSchema, "go-production-glr-tagged-diagnostic", goResult.workCountGoChildResult, fixture)
-			workCountValidateGoBoardCounters(t, goResult.Counters, uint32(len(fixture.Source)))
-			if cResult.DeepTreeSHA256 != goResult.DeepTreeSHA256 {
-				t.Fatalf("instrumented deep digest mismatch: go=%s static_c=%s", goResult.DeepTreeSHA256, cResult.DeepTreeSHA256)
-			}
 			untaggedScheduling := workCountScheduling(uninstGo)
-			taggedScheduling := workCountScheduling(goResult.workCountGoChildResult)
-			if untaggedScheduling != taggedScheduling {
-				t.Fatalf("diagnostic scheduling changed: untagged=%+v tagged=%+v", untaggedScheduling, taggedScheduling)
+			switch goBackend {
+			case workCountBoardGoProduction:
+				goResult := workCountRunGo(t, goArtifact, fixture.Fixture.ID, sourcePath, fixtureTemp, goEnvironment)
+				workCountValidateGoChild(t, "tagged Go", workCountTaggedGoChildSchema, "go-production-glr-tagged-diagnostic", goResult.workCountGoChildResult, fixture)
+				workCountValidateGoBoardCounters(t, goResult.Counters, uint32(len(fixture.Source)))
+				if cResult.DeepTreeSHA256 != goResult.DeepTreeSHA256 {
+					t.Fatalf("instrumented deep digest mismatch: go=%s static_c=%s", goResult.DeepTreeSHA256, cResult.DeepTreeSHA256)
+				}
+				taggedScheduling := workCountScheduling(goResult.workCountGoChildResult)
+				if untaggedScheduling != taggedScheduling {
+					t.Fatalf("diagnostic scheduling changed: untagged=%+v tagged=%+v", untaggedScheduling, taggedScheduling)
+				}
+				metrics := workCountBuildBoardMetrics(t, boardContract, goResult.Counters.workCountCounters, cResult.Counters, goResult.BoardDirect, cResult.BoardDirect)
+				board.Rows = append(board.Rows, workCountBoardRow{
+					Fixture: fixture.Fixture.ID, SourceSHA256: fixture.Fixture.SHA256,
+					SourceBytes: uint32(len(fixture.Source)), DeepTreeSHA256: fixture.Fixture.DeepTreeSHA256,
+					GrammarCommit: goResult.GrammarCommit, GrammarBlobSHA256: goResult.GrammarBlobSHA256,
+					GoBackend: goBackend, UntaggedGoScheduling: untaggedScheduling, TaggedGoScheduling: &taggedScheduling,
+					Metrics: metrics,
+				})
+			case workCountBoardGoParserCore:
+				first := workCountRunParserCoreGo(t, goArtifact, fixture.Fixture.ID, sourcePath, fixtureTemp, "first", goEnvironment)
+				second := workCountRunParserCoreGo(t, goArtifact, fixture.Fixture.ID, sourcePath, fixtureTemp, "repeat", goEnvironment)
+				workCountValidateParserCoreChild(t, first, fixture)
+				workCountValidateParserCoreChild(t, second, fixture)
+				if !reflect.DeepEqual(first, second) {
+					t.Fatalf("parser-core work counts are not repeat-identical: first=%+v repeat=%+v", first, second)
+				}
+				if cResult.DeepTreeSHA256 != first.DeepTreeSHA256 {
+					t.Fatalf("instrumented deep digest mismatch: parsercore=%s static_c=%s", first.DeepTreeSHA256, cResult.DeepTreeSHA256)
+				}
+				metrics := workCountBuildParserCoreBoardMetrics(t, boardContract, first, cResult.Counters, cResult.BoardDirect)
+				scheduler := first.SchedulerWork
+				board.Rows = append(board.Rows, workCountBoardRow{
+					Fixture: fixture.Fixture.ID, SourceSHA256: fixture.Fixture.SHA256,
+					SourceBytes: uint32(len(fixture.Source)), DeepTreeSHA256: fixture.Fixture.DeepTreeSHA256,
+					GrammarCommit: first.GrammarCommit, GrammarBlobSHA256: first.GrammarBlobSHA256,
+					GoBackend: goBackend, UntaggedGoScheduling: untaggedScheduling,
+					ParserCoreScheduler: &scheduler, RepeatIdenticalCounts: true, Metrics: metrics,
+				})
 			}
 			if got := workCountFileSHA(t, sourcePath); got != fixture.Fixture.SHA256 {
 				t.Fatalf("source snapshot drift after diagnostic runs: sha=%s want=%s", got, fixture.Fixture.SHA256)
 			}
-
-			metrics := workCountBuildBoardMetrics(t, boardContract, goResult.Counters.workCountCounters, cResult.Counters, goResult.BoardDirect, cResult.BoardDirect)
-			board.Rows = append(board.Rows, workCountBoardRow{
-				Fixture: fixture.Fixture.ID, SourceSHA256: fixture.Fixture.SHA256,
-				SourceBytes: uint32(len(fixture.Source)), DeepTreeSHA256: fixture.Fixture.DeepTreeSHA256,
-				GrammarCommit: goResult.GrammarCommit, GrammarBlobSHA256: goResult.GrammarBlobSHA256,
-				UntaggedGoScheduling: untaggedScheduling, TaggedGoScheduling: taggedScheduling,
-				Metrics: metrics,
-			})
 		})
 	}
 	if len(board.Rows) != len(fixtures) {
@@ -354,6 +447,90 @@ func workCountLoadBoardContract(t *testing.T, path string) workCountBoardContrac
 		seen[metric.ID] = true
 	}
 	return contract
+}
+
+func workCountBoardBackend(t *testing.T) string {
+	t.Helper()
+	backend := strings.TrimSpace(os.Getenv(workCountBoardGoBackendEnv))
+	if backend == "" {
+		return workCountBoardGoProduction
+	}
+	if backend != workCountBoardGoProduction && backend != workCountBoardGoParserCore {
+		t.Fatalf("%s=%q, want %q or %q", workCountBoardGoBackendEnv, backend, workCountBoardGoProduction, workCountBoardGoParserCore)
+	}
+	return backend
+}
+
+func workCountBuildParserCoreGo(t *testing.T, source workCountSourceSnapshot, tempRoot string, environment workCountEnvironment) (string, workCountArtifactIdentity, func() error) {
+	t.Helper()
+	tool := workCountTool(t, "go")
+	artifact := filepath.Join(tempRoot, "go_parsercore_work_count.test")
+	flags := []string{"test", "-c", "-tags", "gts_parsercorephase0", "."}
+	args := []string{"test", "-c", "-tags", "gts_parsercorephase0", "-o", artifact, "."}
+	buildEnv := workCountSanitizedEnv(os.Environ(), environment.Build, nil)
+	if _, err := workCountRunBounded(source.Root, buildEnv, workCountBuildTimeout, tool.Path, args...); err != nil {
+		t.Fatal(err)
+	}
+	sha := workCountFileSHA(t, artifact)
+	identity := workCountArtifactIdentity{
+		ArtifactSHA256: sha, SourceSnapshotSHA: source.Provenance.SnapshotSHA256,
+		Tool: tool, Flags: flags,
+	}
+	return artifact, identity, func() error {
+		gotSHA, err := fileSHA256(artifact)
+		if err != nil || gotSHA != sha {
+			return fmt.Errorf("parser-core artifact sha=%s want=%s err=%v", gotSHA, sha, err)
+		}
+		gotTool, err := workCountToolAt(tool.Path)
+		if err != nil || gotTool != tool {
+			return fmt.Errorf("Go tool identity=%+v want=%+v err=%v", gotTool, tool, err)
+		}
+		return source.Recheck()
+	}
+}
+
+func workCountRunParserCoreGo(t *testing.T, artifact, fixtureID, sourcePath, tempRoot, pass string, environment workCountEnvironment) workCountBoardParserCoreChildResult {
+	t.Helper()
+	resultPath := filepath.Join(tempRoot, "go-parsercore-work-count-"+pass+".json")
+	workCountRunGoChild(t, artifact, "^TestParserCoreWorkCountChild$", fixtureID, sourcePath, resultPath, environment)
+	data, err := os.ReadFile(resultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("decode parser-core child object: %v: %s", err, data)
+	}
+	workCountRequireKeys(t, "parser-core child", raw, []string{
+		"schema", "engine", "counter_contract", "digest_format", "fixture", "source_sha256", "source_bytes",
+		"grammar_commit", "grammar_blob_sha256", "deep_tree_sha256", "root_end_byte", "root_has_error",
+		"candidate_fallbacks", "core_work", "scheduler_work", "selected_census",
+	})
+	var result workCountBoardParserCoreChildResult
+	workCountDecodeExact(t, data, &result)
+	return result
+}
+
+func workCountValidateParserCoreChild(t *testing.T, result workCountBoardParserCoreChildResult, fixture benchfixtures.LoadedFixture) {
+	t.Helper()
+	if result.Schema != workCountBoardParserCoreChildSchema || result.Engine != workCountBoardParserCoreEngine || result.CounterContract != workCountContract || result.DigestFormat != benchfixtures.DeepTreeDigestVersion {
+		t.Fatalf("parser-core child identity=%q/%q/%q/%q", result.Schema, result.Engine, result.CounterContract, result.DigestFormat)
+	}
+	if result.Fixture != fixture.Fixture.ID || result.SourceSHA256 != fixture.Fixture.SHA256 || result.SourceBytes != uint32(len(fixture.Source)) || result.RootEndByte != uint32(len(fixture.Source)) || result.RootHasError {
+		t.Fatalf("parser-core child fixture/span drift: %+v", result)
+	}
+	if result.GrammarCommit != benchfixtures.GoGrammarCommit || result.GrammarBlobSHA256 != benchfixtures.GoGrammarBlobSHA256 || result.DeepTreeSHA256 != fixture.Fixture.DeepTreeSHA256 {
+		t.Fatalf("parser-core child grammar/tree identity drift: grammar=%s/%s tree=%s", result.GrammarCommit, result.GrammarBlobSHA256, result.DeepTreeSHA256)
+	}
+	if result.CandidateFallbacks != 0 || result.CoreWork.Overflow || result.CoreWork.Reductions != result.CoreWork.ReductionPopRequests {
+		t.Fatalf("parser-core child fallback/overflow/reduce contract: %+v", result)
+	}
+	if result.Selected.Nodes == 0 || result.Selected.Nodes != result.Selected.Parents+result.Selected.Leaves {
+		t.Fatalf("parser-core child selected census invalid: %+v", result.Selected)
+	}
+	if result.SchedulerWork.ActionLookups == 0 || result.SchedulerWork.Accepts != 1 || result.SchedulerWork.Elections == 0 || result.SchedulerWork.PeakHeaders < 2 || result.SchedulerWork.Conflicts == 0 || result.SchedulerWork.Forks == 0 {
+		t.Fatalf("parser-core child scheduler work invalid: %+v", result.SchedulerWork)
+	}
 }
 
 func workCountPresent(unit string, value uint64) workCountBoardEngineValue {
@@ -473,6 +650,95 @@ func workCountBuildBoardMetrics(t *testing.T, contract workCountBoardContract, g
 	return metrics
 }
 
+func workCountBuildParserCoreBoardMetrics(t *testing.T, contract workCountBoardContract, candidate workCountBoardParserCoreChildResult, cCounts workCountCounters, cDirect workCountBoardDirectCounts) []workCountBoardMetric {
+	t.Helper()
+	workCountValidateCounters(t, "static C", cCounts)
+	if candidate.CoreWork.Overflow || cDirect.Schema != "gts-work-count-board-direct/v1" || cDirect.Overflow {
+		t.Fatalf("invalid parser-core/static-C board counters: candidate=%+v C=%+v", candidate.CoreWork, cDirect)
+	}
+	constructed := candidate.CoreWork.LeafConstructionsProxy + candidate.CoreWork.ParentConstructionsProxy
+	if constructed < candidate.Selected.Nodes {
+		t.Fatalf("parser-core construction surplus underflow: constructed=%d selected=%d", constructed, candidate.Selected.Nodes)
+	}
+	goSurplus := constructed - candidate.Selected.Nodes
+	cSurplus := workCountConstructionSurplus(t, "static C", cCounts)
+	metrics := make([]workCountBoardMetric, 0, len(contract.Metrics))
+	for _, definition := range contract.Metrics {
+		present := func(goValue, cValue uint64, comparison, reason string) {
+			metrics = append(metrics, workCountBoardMetricValue(definition, workCountPresent(definition.GoUnit, goValue), workCountPresent(definition.StaticCUnit, cValue), comparison, reason))
+		}
+		missing := func(goValue, cValue workCountBoardEngineValue, comparison, reason string) {
+			metrics = append(metrics, workCountBoardMetricValue(definition, goValue, cValue, comparison, reason))
+		}
+		candidateUnavailable := func(reason string) workCountBoardEngineValue {
+			return workCountUnavailable(definition.GoUnit, "compact parser-core: "+reason)
+		}
+		switch definition.ID {
+		case "lexer_elections":
+			missing(workCountPresent(definition.GoUnit, candidate.SchedulerWork.Elections), workCountUnavailable(definition.StaticCUnit, "locked C exposes per-version lexer calls, not one runnable-frontier election"), workCountBoardComparable, "C frontier election hook absent")
+		case "lexer_calls":
+			missing(candidateUnavailable("the authenticated runner records elections but not individual DFA/scanner invocations"), workCountPresent(definition.StaticCUnit, cCounts.LexerFrontDoorCallsProxy), workCountBoardComparable, "parser-core per-invocation lexer hook absent")
+		case "resolved_action_cells_examined":
+			missing(candidateUnavailable("scheduler ActionLookups is a ClassifyBoundary proxy and has not been proven to share C's per-version ts_parser__advance cell boundary"), workCountPresent(definition.StaticCUnit, cDirect.ResolvedActionCellsExamined), workCountBoardComparable, "candidate direct resolved-cell hook absent")
+		case "action_table_lookups_proxy":
+			present(candidate.SchedulerWork.ActionLookups, cCounts.TableLookupsProxy, workCountBoardIncomparable, "implementation-specific compact ClassifyBoundary versus C table lookup front doors")
+		case "action_entries_examined_proxy":
+			missing(candidateUnavailable("scheduler records conflict action cardinality but not total action entries exposed by single-action cells"), workCountPresent(definition.StaticCUnit, cCounts.ActionEntriesExaminedProxy), workCountBoardIncomparable, "candidate total action-entry proxy unavailable")
+		case "shifts":
+			present(candidate.CoreWork.Shifts, cCounts.Shifts, workCountBoardComparable, "")
+		case "reductions":
+			present(candidate.CoreWork.Reductions, cCounts.Reductions, workCountBoardComparable, "")
+		case "explicit_recover_actions":
+			present(0, cCounts.ExplicitRecoverActions, workCountBoardComparable, "authenticated compact route declines recovery")
+		case "accept_actions":
+			present(candidate.SchedulerWork.Accepts, cCounts.AcceptActions, workCountBoardComparable, "")
+		case "true_forks":
+			missing(workCountPresent(definition.GoUnit, candidate.SchedulerWork.Forks), workCountUnavailable(definition.StaticCUnit, "locked C generic version creation counter does not isolate multiple-action forks"), workCountBoardComparable, "C causal fork hook absent")
+		case "raw_action_entries_beyond_first":
+			missing(candidateUnavailable("scheduler Forks records generic conflict-arm fanout, not an independently authenticated raw-cell hook"), workCountPresent(definition.StaticCUnit, cDirect.RawActionEntriesBeyondFirst), workCountBoardComparable, "candidate raw action-entry hook absent")
+		case "stack_version_creations_proxy":
+			missing(candidateUnavailable("persistent compact graph has no C-style stack-version creation class"), workCountPresent(definition.StaticCUnit, cCounts.StackVersionCreationsProxy), workCountBoardIncomparable, "representation-specific version proxy absent")
+		case "reduction_pop_requests":
+			present(candidate.CoreWork.ReductionPopRequests, cCounts.ReductionPopRequests, workCountBoardComparable, "")
+		case "emitted_pop_paths":
+			present(candidate.CoreWork.EmittedPopPaths, cCounts.EmittedPopPaths, workCountBoardComparable, "")
+		case "emitted_pop_payloads":
+			present(candidate.CoreWork.EmittedPopPayloads, cCounts.EmittedPopPayloads, workCountBoardComparable, "")
+		case "graph_links":
+			missing(candidateUnavailable("core counter is a physical append proxy without a shared reachability contract"), workCountUnavailable(definition.StaticCUnit, "C StackNode links use C ownership semantics"), workCountBoardComparable, "paired semantic graph-link hook absent")
+		case "graph_link_additions_proxy":
+			present(candidate.CoreWork.GraphLinkAdditionsProxy, cCounts.GraphLinkAdditionsProxy, workCountBoardIncomparable, "representation-specific physical graph links")
+		case "subtree_leaf_constructions", "subtree_parent_constructions":
+			missing(candidateUnavailable("compact arena records are representation-specific"), workCountUnavailable(definition.StaticCUnit, "C inline/heap subtree records use a different representation contract"), workCountBoardComparable, "paired representation-class construction hook absent")
+		case "subtree_leaf_constructions_proxy":
+			present(candidate.CoreWork.LeafConstructionsProxy, cCounts.LeafConstructionsProxy, workCountBoardIncomparable, "compact records versus C transient subtrees")
+		case "subtree_parent_constructions_proxy":
+			present(candidate.CoreWork.ParentConstructionsProxy, cCounts.ParentConstructionsProxy, workCountBoardIncomparable, "compact records versus C transient subtrees")
+		case "subtree_go_pending_parent_constructions", "subtree_go_no_tree_parent_constructions":
+			missing(workCountPresent(definition.GoUnit, 0), workCountUnavailable(definition.StaticCUnit, "locked C has no corresponding Go representation class"), workCountBoardIncomparable, "compact route does not construct this production-Go representation class")
+		case "merge_attempts", "merge_successes":
+			missing(candidateUnavailable("canonical boundary insertion/folding is not yet counted under the shared candidate-pair definition"), workCountUnavailable(definition.StaticCUnit, "C ts_stack_merge uses C version-pair eligibility"), workCountBoardComparable, "paired canonical-boundary merge hook absent")
+		case "merge_attempts_proxy", "merge_successes_proxy":
+			missing(candidateUnavailable("compact boundary canonicalization has no production-Go merge-front-door proxy"), workCountPresent(definition.StaticCUnit, map[string]uint64{"merge_attempts_proxy": cCounts.MergeAttemptsProxy, "merge_successes_proxy": cCounts.MergeSuccessesProxy}[definition.ID]), workCountBoardIncomparable, "candidate merge proxy unavailable")
+		case "alternate_predecessor_links_appended":
+			missing(candidateUnavailable("GraphLinkAdditionsProxy does not distinguish primary from alternate predecessor links"), workCountPresent(definition.StaticCUnit, cDirect.AlternatePredecessorLinksAppended), workCountBoardComparable, "candidate alternate-link hook absent")
+		case "discarded_leaf_records", "discarded_parent_records", "discarded_graph_link_records":
+			missing(candidateUnavailable("append-only arenas do not publish classed reachability losses at selection"), workCountUnavailable(definition.StaticCUnit, "C release hooks do not attribute last-release cause"), workCountBoardComparable, "paired causal discard hook absent")
+		case "construction_surplus_proxy":
+			present(goSurplus, cSurplus, workCountBoardIncomparable, "representation-specific constructed-minus-selected arithmetic proxy")
+		case "selected_nodes":
+			present(candidate.Selected.Nodes, cCounts.SelectedNodes, workCountBoardComparable, "materialized deep-parity tree census")
+		case "selected_parent_nodes":
+			present(candidate.Selected.Parents, cCounts.SelectedParentNodes, workCountBoardComparable, "materialized deep-parity tree census")
+		case "selected_leaf_nodes":
+			present(candidate.Selected.Leaves, cCounts.SelectedLeafNodes, workCountBoardComparable, "materialized deep-parity tree census")
+		default:
+			t.Fatalf("board contract metric %q has no parser-core mapping", definition.ID)
+		}
+	}
+	return metrics
+}
+
 func workCountScheduling(result workCountGoChildResult) workCountBoardScheduling {
 	return workCountBoardScheduling{MaxStacksSeen: result.MaxStacksSeen, MultiStackIters: result.MultiStackIters, MultiStackTokens: result.MultiStackTokens}
 }
@@ -530,12 +796,25 @@ func workCountValidateBoard(t *testing.T, contract workCountBoardContract, board
 	if board.Schema != workCountBoardSchema || board.BoardContract != contract.Schema || board.BoardContractSHA256 != workCountBoardContractSHA256 {
 		t.Fatalf("board identity drifted: %+v", board)
 	}
-	if board.Proof.DiagnosticArtifactsTimingEligible || !board.Proof.UntaggedAssemblyPassed {
+	if board.Proof.DiagnosticArtifactsTimingEligible || !board.Proof.UntaggedAssemblyPassed ||
+		board.Proof.GoBackend != workCountBoardGoProduction && board.Proof.GoBackend != workCountBoardGoParserCore {
 		t.Fatalf("board instrumentation proof invalid: %+v", board.Proof)
 	}
 	for _, row := range board.Rows {
-		if row.UntaggedGoScheduling != row.TaggedGoScheduling || len(row.Metrics) != len(contract.Metrics) {
+		if row.GoBackend != board.Proof.GoBackend || len(row.Metrics) != len(contract.Metrics) {
 			t.Fatalf("row scheduling/metric contract drift: %+v", row)
+		}
+		switch row.GoBackend {
+		case workCountBoardGoProduction:
+			if row.TaggedGoScheduling == nil || *row.TaggedGoScheduling != row.UntaggedGoScheduling || row.ParserCoreScheduler != nil || row.RepeatIdenticalCounts {
+				t.Fatalf("production row scheduling proof invalid: %+v", row)
+			}
+		case workCountBoardGoParserCore:
+			if row.TaggedGoScheduling != nil || row.ParserCoreScheduler == nil || !row.RepeatIdenticalCounts || row.ParserCoreScheduler.Accepts != 1 || row.ParserCoreScheduler.ActionLookups == 0 {
+				t.Fatalf("parser-core row scheduling proof invalid: %+v", row)
+			}
+		default:
+			t.Fatalf("unknown row backend: %+v", row)
 		}
 		for index, metric := range row.Metrics {
 			if metric.ID != contract.Metrics[index].ID || metric.Category != contract.Metrics[index].Category || metric.Mandatory != contract.Metrics[index].Mandatory {
@@ -638,7 +917,33 @@ func TestWorkCountBoardMetricStatusAndRatios(t *testing.T) {
 			t.Fatalf("Go-only representation metric %q status drifted: %+v", id, metric)
 		}
 	}
-	row := workCountBoardRow{UntaggedGoScheduling: workCountBoardScheduling{MaxStacksSeen: 2}, TaggedGoScheduling: workCountBoardScheduling{MaxStacksSeen: 2}, Metrics: metrics}
+	candidate := workCountBoardParserCoreChildResult{
+		CoreWork: workCountBoardParserCoreWork{
+			Shifts: 8, Reductions: 5, ReductionPopRequests: 5,
+			EmittedPopPaths: 6, EmittedPopPayloads: 9,
+			GraphLinkAdditionsProxy: 11, LeafConstructionsProxy: 6, ParentConstructionsProxy: 4,
+		},
+		SchedulerWork: workCountBoardParserCoreScheduler{ActionLookups: 12, Accepts: 1, Elections: 7, Forks: 4, Conflicts: 3},
+		Selected:      workCountBoardSelectedCensus{Nodes: 3, Parents: 1, Leaves: 2},
+	}
+	candidateMetrics := workCountBuildParserCoreBoardMetrics(t, contract, candidate, counts, direct)
+	candidateByID := make(map[string]workCountBoardMetric, len(candidateMetrics))
+	for _, metric := range candidateMetrics {
+		candidateByID[metric.ID] = metric
+	}
+	for _, id := range []string{"resolved_action_cells_examined", "raw_action_entries_beyond_first"} {
+		if metric := candidateByID[id]; metric.Go.State != workCountBoardStateUnavailable || metric.RatioStatus != workCountBoardRatioUnavailable {
+			t.Fatalf("parser-core scheduler proxy must not masquerade as direct %q: %+v", id, metric)
+		}
+	}
+	if metric := candidateByID["action_table_lookups_proxy"]; metric.Go.Value == nil || *metric.Go.Value != candidate.SchedulerWork.ActionLookups || metric.Comparison != workCountBoardIncomparable || metric.RatioStatus != workCountBoardRatioIncomparable {
+		t.Fatalf("parser-core action lookup proxy classification drifted: %+v", metric)
+	}
+	if metric := candidateByID["shifts"]; metric.Go.Value == nil || *metric.Go.Value != candidate.CoreWork.Shifts || metric.Comparison != workCountBoardComparable {
+		t.Fatalf("parser-core direct shift mapping drifted: %+v", metric)
+	}
+	scheduling := workCountBoardScheduling{MaxStacksSeen: 2}
+	row := workCountBoardRow{GoBackend: workCountBoardGoProduction, UntaggedGoScheduling: scheduling, TaggedGoScheduling: &scheduling, Metrics: metrics}
 	instrumentationStatus, instrumentationBlockers, workAuditStatus, workAuditFindings := workCountBoardStatuses(contract, []workCountBoardRow{row})
 	if instrumentationStatus != workCountBoardInstrumentationBlocked || len(instrumentationBlockers) == 0 {
 		t.Fatalf("mandatory unavailable metrics must block instrumentation: status=%q blockers=%v", instrumentationStatus, instrumentationBlockers)

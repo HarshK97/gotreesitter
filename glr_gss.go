@@ -92,7 +92,7 @@ func (n *gssNode) appendExtraLink(link gssMainLink) {
 		unsafe.Slice(n.extraLinks, capacity)[count] = link
 		n.extraLinkCount++
 		workCountRecordGraphLinkAddition()
-		workCountRecordAlternatePredecessorLinkAppended()
+		workCountRecordAlternatePredecessorLinkAppended() // work-count-assembly: alternate predecessor append-reuse seam
 		workCountRecordGSSMutation() // work-count-assembly: GSS mutation append-reuse seam
 		return
 	}
@@ -112,7 +112,7 @@ func (n *gssNode) appendExtraLink(link gssMainLink) {
 	n.extraLinkCount++
 	n.extraLinkCap = uint8(newCapacity)
 	workCountRecordGraphLinkAddition()
-	workCountRecordAlternatePredecessorLinkAppended()
+	workCountRecordAlternatePredecessorLinkAppended() // work-count-assembly: alternate predecessor append-grow seam
 	workCountRecordGSSMutation() // work-count-assembly: GSS mutation append-grow seam
 }
 
