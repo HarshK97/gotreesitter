@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 MODE="publication"
+GO_BACKEND="production"
 OUT_DIR=""
 CORE=""
 CYCLES=5
@@ -31,6 +32,9 @@ benchmark worktree.
 
 Options:
   --out <dir>                 New private receipt directory.
+  --go-backend <backend>      Go backend: production (default) or candidate.
+                              Candidate is the authenticated tagged compact
+                              fresh-full route; it never falls back.
   --core <cpu>                Pin all calibration and samples to this CPU.
                               Default: least-busy allowed CPU from a 1s probe.
   --quiet-max-attempts <n>    Bounded quiet checks (default: 12).
@@ -68,6 +72,11 @@ while (($# > 0)); do
     --core)
       (($# >= 2)) || die "--core requires a value"
       CORE="$2"
+      shift 2
+      ;;
+    --go-backend)
+      (($# >= 2)) || die "--go-backend requires a value"
+      GO_BACKEND="$2"
       shift 2
       ;;
     --cycles)
@@ -119,6 +128,11 @@ while (($# > 0)); do
       ;;
   esac
 done
+
+case "$GO_BACKEND" in
+  production|candidate) ;;
+  *) die "go backend must be production or candidate, got $GO_BACKEND" ;;
+esac
 
 require_uint "cycles" "$CYCLES"
 require_uint "quiet max attempts" "$QUIET_MAX_ATTEMPTS"
@@ -203,10 +217,12 @@ on_exit() {
 }
 trap on_exit EXIT
 
-if [[ "$MODE" == "publication" ]]; then
-  RECEIPT_CLASS="PUBLICATION"
-else
+if [[ "$MODE" == "diagnostic" ]]; then
   RECEIPT_CLASS="NONPUBLICATION_DIAGNOSTIC"
+elif [[ "$GO_BACKEND" == "candidate" ]]; then
+  RECEIPT_CLASS="AUTHENTICATED_CANDIDATE"
+else
+  RECEIPT_CLASS="PUBLICATION"
 fi
 echo "receipt_class=$RECEIPT_CLASS"
 echo "output_dir=$OUT_DIR"
@@ -220,6 +236,12 @@ readonly FIXTURE_SPECS=(
   "language|language.go.gz|41387|009aa9fd5352c712f3839670c7df8a9b00ae878ee20dc88131a438b2d5edfd9a|a064d45748fd555209971728d9740510c2ca7449870b54acb861909afea2c8c9|583df223904fe414c33bba3b474c6557ecdb20e7f47e304b9a09bfcc2da44539|8|500|400"
   "grammargen_lr|grammargen_lr.go.gz|235626|a7e4a1a64b25a60aea36183b9d6d53dcd9240942cdb10e67a3cf9e6ce30f95b2|7d64368d4dbffca1b3cc472ff3397871c23e082efb1a2bdba5f9670564cc7b22|1472cfd9a014d4034dbc1456afd12c282630ef787c3543cf0cecb73619883ad2|8|500|400"
 )
+readonly CANDIDATE_WORK_SPECS=(
+  "query_compile|6685|7440|7440|8103|14703|14749|5546|7537"
+  "rewrite|1348|1501|1501|1646|2995|3004|1109|1515"
+  "language|6512|7561|7561|8408|15864|15145|5375|7707"
+  "grammargen_lr|66119|75988|75988|84924|153451|150271|53897|78426"
+)
 
 declare -a FIXTURE_IDS=()
 declare -A FIXTURE_SOURCE_SHA=()
@@ -227,6 +249,14 @@ declare -A FIXTURE_DEEP_SHA=()
 declare -A FIXTURE_MIN_MAX_STACKS=()
 declare -A FIXTURE_MIN_MULTI_ITERS=()
 declare -A FIXTURE_MIN_MULTI_TOKENS=()
+declare -A CANDIDATE_EXPECTED_SHIFTS=()
+declare -A CANDIDATE_EXPECTED_REDUCTIONS=()
+declare -A CANDIDATE_EXPECTED_POP_REQUESTS=()
+declare -A CANDIDATE_EXPECTED_POP_PATHS=()
+declare -A CANDIDATE_EXPECTED_POP_PAYLOADS=()
+declare -A CANDIDATE_EXPECTED_LINK_ADDITIONS=()
+declare -A CANDIDATE_EXPECTED_LEAF_CONSTRUCTIONS=()
+declare -A CANDIDATE_EXPECTED_PARENT_CONSTRUCTIONS=()
 printf 'fixture\tsource_path\tbytes\tsource_sha256\tcompressed_sha256\tdeep_sha256\tmin_max_stacks\tmin_multi_iters\tmin_multi_tokens\trequired_node_kinds\tsuite_required_node_kinds\tsuite_required_any_node_kinds\n' > "$OUT_DIR/fixture_manifest.tsv"
 for spec in "${FIXTURE_SPECS[@]}"; do
   IFS='|' read -r fixture asset_name expected_bytes source_sha compressed_sha deep_sha min_max_stacks min_multi_iters min_multi_tokens <<< "$spec"
@@ -257,25 +287,65 @@ for spec in "${FIXTURE_SPECS[@]}"; do
     "$min_max_stacks" "$min_multi_iters" "$min_multi_tokens" "$FIXTURE_REQUIRED_NODE_KINDS" \
     "$SUITE_REQUIRED_NODE_KINDS" "$SUITE_REQUIRED_ANY_NODE_KINDS" >> "$OUT_DIR/fixture_manifest.tsv"
 done
+for spec in "${CANDIDATE_WORK_SPECS[@]}"; do
+  IFS='|' read -r fixture shifts reductions pop_requests pop_paths pop_payloads link_additions leaf_constructions parent_constructions <<< "$spec"
+  CANDIDATE_EXPECTED_SHIFTS["$fixture"]="$shifts"
+  CANDIDATE_EXPECTED_REDUCTIONS["$fixture"]="$reductions"
+  CANDIDATE_EXPECTED_POP_REQUESTS["$fixture"]="$pop_requests"
+  CANDIDATE_EXPECTED_POP_PATHS["$fixture"]="$pop_paths"
+  CANDIDATE_EXPECTED_POP_PAYLOADS["$fixture"]="$pop_payloads"
+  CANDIDATE_EXPECTED_LINK_ADDITIONS["$fixture"]="$link_additions"
+  CANDIDATE_EXPECTED_LEAF_CONSTRUCTIONS["$fixture"]="$leaf_constructions"
+  CANDIDATE_EXPECTED_PARENT_CONSTRUCTIONS["$fixture"]="$parent_constructions"
+done
+
+if [[ "$GO_BACKEND" == "candidate" ]]; then
+  GO_BUILD_TAGS="gts_parsercorephase0"
+  GO_BENCHMARK="BenchmarkParserCoreFreshFullCanonical"
+  GO_PREFLIGHT="TestParserCoreFreshFullRunnerRepeatedCanonicalLifecycle"
+  GO_LIFECYCLE="parserCoreFreshFullRunner.parse+shallow_completeness+Tree.Release"
+  GO_FALLBACK="none_fail_closed"
+else
+  GO_BUILD_TAGS=""
+  GO_BENCHMARK="BenchmarkGoParseWarmRealDFA"
+  GO_PREFLIGHT="TestGoFullParseBenchmarkFixturesParseClean"
+  GO_LIFECYCLE="Parser.Parse+shallow_completeness+Tree.Release"
+  GO_FALLBACK="production_parser_policy"
+fi
 
 GO_BIN="$OUT_DIR/bin/gotreesitter.test"
-(
-  cd "$REPO_ROOT"
-  env GOMAXPROCS=1 go test -c -o "$GO_BIN" .
-) > "$OUT_DIR/preflight/go_build.txt" 2>&1
-"$GO_BIN" -test.list '^BenchmarkGoParseWarmRealDFA$' > "$OUT_DIR/preflight/go_benchmark_list.txt"
-grep -qx 'BenchmarkGoParseWarmRealDFA' "$OUT_DIR/preflight/go_benchmark_list.txt" || die "prebuilt Go test binary does not contain BenchmarkGoParseWarmRealDFA"
-"$GO_BIN" -test.run '^TestGoFullParseBenchmarkFixturesParseClean$' -test.count=1 -test.v \
+if [[ "$GO_BACKEND" == "candidate" ]]; then
+  (
+    cd "$REPO_ROOT"
+    env GOMAXPROCS=1 go test -tags "$GO_BUILD_TAGS" -c -o "$GO_BIN" .
+  ) > "$OUT_DIR/preflight/go_build.txt" 2>&1
+else
+  (
+    cd "$REPO_ROOT"
+    env GOMAXPROCS=1 go test -c -o "$GO_BIN" .
+  ) > "$OUT_DIR/preflight/go_build.txt" 2>&1
+fi
+"$GO_BIN" -test.list "^${GO_BENCHMARK}$" > "$OUT_DIR/preflight/go_benchmark_list.txt"
+grep -qx "$GO_BENCHMARK" "$OUT_DIR/preflight/go_benchmark_list.txt" || die "prebuilt Go test binary does not contain $GO_BENCHMARK"
+"$GO_BIN" -test.run "^${GO_PREFLIGHT}$" -test.count=1 -test.v \
   > "$OUT_DIR/preflight/go_workload_identity.txt" 2>&1 || die "Go workload-identity preflight failed"
 GO_BIN_SHA="$(sha256sum "$GO_BIN" | awk '{print $1}')"
 go version -m "$GO_BIN" > "$OUT_DIR/preflight/go_binary_modules.txt"
 
 if ((SKIP_CGO_ADMISSION == 0)); then
-  (
-    cd "$REPO_ROOT"
-    bash cgo_harness/docker/run_parity_in_docker.sh -- \
-      "cd /workspace/cgo_harness && go test . -tags treesitter_c_parity -run '^(TestCanonicalGoBenchmarkPreflight|TestCOracleStaticDeepParity)$' -count=1 -v"
-  ) > "$OUT_DIR/preflight/cgo_static_deep_admission.txt" 2>&1
+  if [[ "$GO_BACKEND" == "candidate" ]]; then
+    (
+      cd "$REPO_ROOT"
+      bash cgo_harness/docker/run_parity_in_docker.sh -- \
+        "cd /workspace && go test -tags gts_parsercorephase0 . -run '^TestParserCoreFreshFullRunnerRepeatedCanonicalLifecycle$' -count=1 -v && cd /workspace/cgo_harness && go test . -tags treesitter_c_parity -run '^(TestCanonicalGoBenchmarkPreflight|TestCOracleStaticDeepParity)$' -count=1 -v"
+    ) > "$OUT_DIR/preflight/cgo_static_deep_admission.txt" 2>&1
+  else
+    (
+      cd "$REPO_ROOT"
+      bash cgo_harness/docker/run_parity_in_docker.sh -- \
+        "cd /workspace/cgo_harness && go test . -tags treesitter_c_parity -run '^(TestCanonicalGoBenchmarkPreflight|TestCOracleStaticDeepParity)$' -count=1 -v"
+    ) > "$OUT_DIR/preflight/cgo_static_deep_admission.txt" 2>&1
+  fi
   CGO_ADMISSION="PASS"
 else
   CGO_ADMISSION="SKIPPED_NONPUBLICATION_DIAGNOSTIC"
@@ -477,11 +547,11 @@ run_go_sample() {
   /usr/bin/time -v -o "$time_file" \
     taskset -c "$CORE" env GOMAXPROCS=1 "$GO_BIN" \
       -test.run '^$' \
-      -test.bench "^BenchmarkGoParseWarmRealDFA/${fixture}$" \
+      -test.bench "^${GO_BENCHMARK}/${fixture}$" \
       -test.benchmem -test.count=1 -test.benchtime="$BENCHTIME" \
       > "$raw" 2>&1
   record_telemetry after "$fixture" go "$sample"
-  grep -q "^BenchmarkGoParseWarmRealDFA/${fixture}" "$raw" || die "$fixture Go sample $sample did not emit the benchmark"
+  grep -q "^${GO_BENCHMARK}/${fixture}" "$raw" || die "$fixture Go sample $sample did not emit the benchmark"
 }
 
 run_c_sample() {
@@ -525,7 +595,29 @@ extract_rss_kb() {
 
 extract_go_metrics() {
   local fixture="$1" raw="$2"
-  awk -v name="BenchmarkGoParseWarmRealDFA/${fixture}" '
+  if [[ "$GO_BACKEND" == "candidate" ]]; then
+    awk -v name="${GO_BENCHMARK}/${fixture}" '
+      $1 == name || index($1, name "-") == 1 {
+        for (i = 2; i < NF; i++) metric[$(i + 1)] = $i
+        names[1] = "ns/op"; names[2] = "B/op"; names[3] = "allocs/op"; names[4] = "MB/s"
+        names[5] = "compact_shifts/op"; names[6] = "compact_reductions/op"
+        names[7] = "compact_pop_requests/op"; names[8] = "compact_pop_paths/op"
+        names[9] = "compact_pop_payloads/op"; names[10] = "compact_link_additions/op"
+        names[11] = "compact_leaf_constructions/op"; names[12] = "compact_parent_constructions/op"
+        names[13] = "candidate_fallback/op"
+        for (n = 1; n <= 13; n++) {
+          value = metric[names[n]]
+          if (value == "") value = "NA"
+          printf "%s%s", value, (n == 13 ? ORS : OFS)
+        }
+        found = 1
+        exit
+      }
+      END { if (!found) exit 2 }
+    ' OFS='\t' "$raw"
+    return
+  fi
+  awk -v name="${GO_BENCHMARK}/${fixture}" '
     $1 == name || index($1, name "-") == 1 {
       for (i = 2; i < NF; i++) metric[$(i + 1)] = $i
       names[1] = "ns/op"; names[2] = "B/op"; names[3] = "allocs/op"; names[4] = "MB/s"
@@ -545,7 +637,13 @@ extract_go_metrics() {
   ' OFS='\t' "$raw"
 }
 
-printf 'sequence\tfixture\tcycle\tposition\tbackend\tsample\tns_op\tB_op\tallocs_op\tMB_s\tmax_stacks\tpeak_depth\ttokens_op\tmulti_iters_op\tmulti_tokens_op\tnodes_op\tarena_B_op\tnormalization_runs_op\tforest_fast_path\tconstructed_final\tmax_rss_kb\n' > "$OUT_DIR/samples.tsv"
+if [[ "$GO_BACKEND" == "candidate" ]]; then
+  printf 'sequence\tfixture\tcycle\tposition\tbackend\tsample\tns_op\tB_op\tallocs_op\tMB_s\tcompact_shifts_op\tcompact_reductions_op\tcompact_pop_requests_op\tcompact_pop_paths_op\tcompact_pop_payloads_op\tcompact_link_additions_op\tcompact_leaf_constructions_op\tcompact_parent_constructions_op\tcandidate_fallback_op\tmax_rss_kb\n' > "$OUT_DIR/samples.tsv"
+  GO_METRIC_NA_COLUMNS=12
+else
+  printf 'sequence\tfixture\tcycle\tposition\tbackend\tsample\tns_op\tB_op\tallocs_op\tMB_s\tmax_stacks\tpeak_depth\ttokens_op\tmulti_iters_op\tmulti_tokens_op\tnodes_op\tarena_B_op\tnormalization_runs_op\tforest_fast_path\tconstructed_final\tmax_rss_kb\n' > "$OUT_DIR/samples.tsv"
+  GO_METRIC_NA_COLUMNS=13
+fi
 while IFS=$'\t' read -r seq fixture cycle position backend sample raw time_file; do
   [[ "$seq" == "sequence" ]] && continue
   rss_kb="$(extract_rss_kb "$time_file")"
@@ -556,7 +654,7 @@ while IFS=$'\t' read -r seq fixture cycle position backend sample raw time_file;
     ns_op="$(awk -F= '$1 == "pure_c_full_ns_op" { print $2; exit }' "$raw")"
     [[ "$ns_op" =~ ^[0-9]+([.][0-9]+)?$ ]] || die "cannot parse C ns/op from $raw"
     metrics="$ns_op"
-    for _ in {1..13}; do metrics+=$'\tNA'; done
+    for ((column = 1; column <= GO_METRIC_NA_COLUMNS; column++)); do metrics+=$'\tNA'; done
   fi
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$seq" "$fixture" "$cycle" "$position" "$backend" "$sample" "$metrics" "$rss_kb" >> "$OUT_DIR/samples.tsv"
 done < "$OUT_DIR/order.tsv"
@@ -588,8 +686,43 @@ verify_go_workload_floor() {
     ' "$OUT_DIR/samples.tsv"
 }
 
+verify_candidate_work() {
+  local fixture="$1"
+  awk -F'\t' \
+    -v fixture="$fixture" \
+    -v shifts="${CANDIDATE_EXPECTED_SHIFTS[$fixture]}" \
+    -v reductions="${CANDIDATE_EXPECTED_REDUCTIONS[$fixture]}" \
+    -v pop_requests="${CANDIDATE_EXPECTED_POP_REQUESTS[$fixture]}" \
+    -v pop_paths="${CANDIDATE_EXPECTED_POP_PATHS[$fixture]}" \
+    -v pop_payloads="${CANDIDATE_EXPECTED_POP_PAYLOADS[$fixture]}" \
+    -v link_additions="${CANDIDATE_EXPECTED_LINK_ADDITIONS[$fixture]}" \
+    -v leaf_constructions="${CANDIDATE_EXPECTED_LEAF_CONSTRUCTIONS[$fixture]}" \
+    -v parent_constructions="${CANDIDATE_EXPECTED_PARENT_CONSTRUCTIONS[$fixture]}" '
+      $2 == fixture && $5 == "go" {
+        seen++
+        if ($11 == "NA" || $11 + 0 != shifts ||
+            $12 == "NA" || $12 + 0 != reductions ||
+            $13 == "NA" || $13 + 0 != pop_requests ||
+            $14 == "NA" || $14 + 0 != pop_paths ||
+            $15 == "NA" || $15 + 0 != pop_payloads ||
+            $16 == "NA" || $16 + 0 != link_additions ||
+            $17 == "NA" || $17 + 0 != leaf_constructions ||
+            $18 == "NA" || $18 + 0 != parent_constructions ||
+            $19 == "NA" || $19 + 0 != 0) {
+          printf "fixture %s sample %s compact work=%s/%s/%s/%s/%s/%s/%s/%s fallback=%s want=%s/%s/%s/%s/%s/%s/%s/%s fallback=0\n", fixture, $6, $11, $12, $13, $14, $15, $16, $17, $18, $19, shifts, reductions, pop_requests, pop_paths, pop_payloads, link_additions, leaf_constructions, parent_constructions > "/dev/stderr"
+          failed = 1
+        }
+      }
+      END { exit !(seen > 0 && !failed) }
+    ' "$OUT_DIR/samples.tsv"
+}
+
 for fixture in "${FIXTURE_IDS[@]}"; do
-  verify_go_workload_floor "$fixture" || die "$fixture sampled workload identity failed"
+  if [[ "$GO_BACKEND" == "candidate" ]]; then
+    verify_candidate_work "$fixture" || die "$fixture sampled compact work identity failed"
+  else
+    verify_go_workload_floor "$fixture" || die "$fixture sampled workload identity failed"
+  fi
 done
 
 median_column() {
@@ -607,11 +740,17 @@ max_column() {
     "$OUT_DIR/samples.tsv"
 }
 
-printf 'fixture\tgo_median_ns_op\tc_median_ns_op\tgo_c_ratio\tgo_median_B_op\tgo_median_allocs_op\tgo_median_MB_s\tgo_median_max_stacks\tgo_median_peak_depth\tgo_median_tokens_op\tgo_median_multi_iters_op\tgo_median_multi_tokens_op\tgo_median_nodes_op\tgo_median_arena_B_op\tgo_median_normalization_runs_op\tgo_median_forest_fast_path\tgo_median_constructed_final\tc_fixed_iters\tgo_max_rss_kb\tc_max_rss_kb\n' > "$OUT_DIR/report.tsv"
+if [[ "$GO_BACKEND" == "candidate" ]]; then
+  printf 'fixture\tgo_median_ns_op\tc_median_ns_op\tgo_c_ratio\tgo_median_B_op\tgo_median_allocs_op\tgo_median_MB_s\tgo_median_compact_shifts_op\tgo_median_compact_reductions_op\tgo_median_compact_pop_requests_op\tgo_median_compact_pop_paths_op\tgo_median_compact_pop_payloads_op\tgo_median_compact_link_additions_op\tgo_median_compact_leaf_constructions_op\tgo_median_compact_parent_constructions_op\tgo_median_candidate_fallback_op\tc_fixed_iters\tgo_max_rss_kb\tc_max_rss_kb\n' > "$OUT_DIR/report.tsv"
+else
+  printf 'fixture\tgo_median_ns_op\tc_median_ns_op\tgo_c_ratio\tgo_median_B_op\tgo_median_allocs_op\tgo_median_MB_s\tgo_median_max_stacks\tgo_median_peak_depth\tgo_median_tokens_op\tgo_median_multi_iters_op\tgo_median_multi_tokens_op\tgo_median_nodes_op\tgo_median_arena_B_op\tgo_median_normalization_runs_op\tgo_median_forest_fast_path\tgo_median_constructed_final\tc_fixed_iters\tgo_max_rss_kb\tc_max_rss_kb\n' > "$OUT_DIR/report.tsv"
+fi
 ratio_file="$OUT_DIR/calibration/fixture_ratios.txt"
 : > "$ratio_file"
 go_sum=0
 c_sum=0
+MAX_FIXTURE_GO_C_RATIO=""
+MAX_RATIO_FIXTURE=""
 for fixture in "${FIXTURE_IDS[@]}"; do
   go_ns="$(median_column "$fixture" go 7)"
   c_ns="$(median_column "$fixture" c 7)"
@@ -620,22 +759,42 @@ for fixture in "${FIXTURE_IDS[@]}"; do
   go_sum="$(awk -v sum="$go_sum" -v value="$go_ns" 'BEGIN { printf "%.6f\n", sum + value }')"
   c_sum="$(awk -v sum="$c_sum" -v value="$c_ns" 'BEGIN { printf "%.6f\n", sum + value }')"
   printf '%s\t%s\t%s\t%s' "$fixture" "$go_ns" "$c_ns" "$ratio" >> "$OUT_DIR/report.tsv"
-  for column in 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-    printf '\t%s' "$(median_column "$fixture" go "$column")" >> "$OUT_DIR/report.tsv"
-  done
-  printf '\t%s\t%s\t%s\n' "${C_ITERS[$fixture]}" "$(max_column "$fixture" go 21)" "$(max_column "$fixture" c 21)" >> "$OUT_DIR/report.tsv"
+  if [[ "$GO_BACKEND" == "candidate" ]]; then
+    for column in 8 9 10 11 12 13 14 15 16 17 18 19; do
+      printf '\t%s' "$(median_column "$fixture" go "$column")" >> "$OUT_DIR/report.tsv"
+    done
+    printf '\t%s\t%s\t%s\n' "${C_ITERS[$fixture]}" "$(max_column "$fixture" go 20)" "$(max_column "$fixture" c 20)" >> "$OUT_DIR/report.tsv"
+    if [[ -z "$MAX_FIXTURE_GO_C_RATIO" ]] || awk -v candidate="$ratio" -v current="$MAX_FIXTURE_GO_C_RATIO" 'BEGIN { exit !(candidate > current) }'; then
+      MAX_FIXTURE_GO_C_RATIO="$ratio"
+      MAX_RATIO_FIXTURE="$fixture"
+    fi
+  else
+    for column in 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+      printf '\t%s' "$(median_column "$fixture" go "$column")" >> "$OUT_DIR/report.tsv"
+    done
+    printf '\t%s\t%s\t%s\n' "${C_ITERS[$fixture]}" "$(max_column "$fixture" go 21)" "$(max_column "$fixture" c 21)" >> "$OUT_DIR/report.tsv"
+  fi
 done
 EQUAL_FIXTURE_GEOMEAN_RATIO="$(awk '{ sum += log($1); n++ } END { if (!n) exit 2; printf "%.6f\n", exp(sum / n) }' "$ratio_file")"
 SUITE_SUM_RATIO="$(awk -v go="$go_sum" -v c="$c_sum" 'BEGIN { printf "%.6f\n", go / c }')"
 LARGEST_FIXTURE="grammargen_lr"
-LARGEST_GO_MAX_RSS_KB="$(max_column "$LARGEST_FIXTURE" go 21)"
-LARGEST_C_MAX_RSS_KB="$(max_column "$LARGEST_FIXTURE" c 21)"
+if [[ "$GO_BACKEND" == "candidate" ]]; then
+  LARGEST_GO_MAX_RSS_KB="$(max_column "$LARGEST_FIXTURE" go 20)"
+  LARGEST_C_MAX_RSS_KB="$(max_column "$LARGEST_FIXTURE" c 20)"
+else
+  LARGEST_GO_MAX_RSS_KB="$(max_column "$LARGEST_FIXTURE" go 21)"
+  LARGEST_C_MAX_RSS_KB="$(max_column "$LARGEST_FIXTURE" c 21)"
+fi
 
 printf 'metric\tvalue\n' > "$OUT_DIR/summary.tsv"
 printf 'equal_fixture_geomean_go_c_ratio\t%s\n' "$EQUAL_FIXTURE_GEOMEAN_RATIO" >> "$OUT_DIR/summary.tsv"
 printf 'fixed_suite_go_sum_of_medians_ns\t%s\n' "$go_sum" >> "$OUT_DIR/summary.tsv"
 printf 'fixed_suite_c_sum_of_medians_ns\t%s\n' "$c_sum" >> "$OUT_DIR/summary.tsv"
 printf 'fixed_suite_sum_of_medians_go_c_ratio\t%s\n' "$SUITE_SUM_RATIO" >> "$OUT_DIR/summary.tsv"
+if [[ "$GO_BACKEND" == "candidate" ]]; then
+  printf 'max_fixture_go_c_ratio\t%s\n' "$MAX_FIXTURE_GO_C_RATIO" >> "$OUT_DIR/summary.tsv"
+  printf 'max_ratio_fixture\t%s\n' "$MAX_RATIO_FIXTURE" >> "$OUT_DIR/summary.tsv"
+fi
 printf 'largest_fixture\t%s\n' "$LARGEST_FIXTURE" >> "$OUT_DIR/summary.tsv"
 printf 'largest_fixture_go_max_rss_kb\t%s\n' "$LARGEST_GO_MAX_RSS_KB" >> "$OUT_DIR/summary.tsv"
 printf 'largest_fixture_c_max_rss_kb\t%s\n' "$LARGEST_C_MAX_RSS_KB" >> "$OUT_DIR/summary.tsv"
@@ -651,9 +810,29 @@ REPORT_SHA="$(sha256sum "$OUT_DIR/report.tsv" | awk '{print $1}')"
 SUMMARY_SHA="$(sha256sum "$OUT_DIR/summary.tsv" | awk '{print $1}')"
 FIXTURE_MANIFEST_SHA="$(sha256sum "$OUT_DIR/fixture_manifest.tsv" | awk '{print $1}')"
 SAMPLES_SHA="$(sha256sum "$OUT_DIR/samples.tsv" | awk '{print $1}')"
+if [[ "$GO_BACKEND" == "candidate" ]]; then
+  RUNNER_SOURCE_SHA="$(sha256sum "$REPO_ROOT/parsercore_phase0_fresh_full_runner.go" | awk '{print $1}')"
+  BENCHMARK_SOURCE_SHA="$(sha256sum "$REPO_ROOT/parsercore_phase0_fresh_full_runner_internal_test.go" | awk '{print $1}')"
+fi
 {
-  printf 'receipt_version=canonical-go-full-parse-v1\n'
+  if [[ "$GO_BACKEND" == "candidate" ]]; then
+    printf 'receipt_version=canonical-go-full-parse-v2\n'
+  else
+    printf 'receipt_version=canonical-go-full-parse-v1\n'
+  fi
   printf 'receipt_class=%s\n' "$RECEIPT_CLASS"
+  if [[ "$GO_BACKEND" == "candidate" ]]; then
+    printf 'go_backend=%s\n' "$GO_BACKEND"
+    printf 'go_build_tags=%s\n' "$GO_BUILD_TAGS"
+    printf 'go_benchmark=%s\n' "$GO_BENCHMARK"
+    printf 'go_preflight=%s\n' "$GO_PREFLIGHT"
+    printf 'go_measured_lifecycle=%s\n' "$GO_LIFECYCLE"
+    printf 'go_fallback_policy=%s\n' "$GO_FALLBACK"
+    printf 'candidate_runner_source_sha256=%s\n' "$RUNNER_SOURCE_SHA"
+    printf 'candidate_benchmark_source_sha256=%s\n' "$BENCHMARK_SOURCE_SHA"
+    printf 'max_fixture_go_c_ratio=%s\n' "$MAX_FIXTURE_GO_C_RATIO"
+    printf 'max_ratio_fixture=%s\n' "$MAX_RATIO_FIXTURE"
+  fi
   printf 'timestamp_utc=%s\n' "$(date -u +%FT%TZ)"
   printf 'git_head=%s\n' "$GIT_HEAD"
   printf 'git_initial_clean=%s\n' "$([[ -z "$GIT_STATUS" ]] && echo true || echo false)"
@@ -673,7 +852,12 @@ SAMPLES_SHA="$(sha256sum "$OUT_DIR/samples.tsv" | awk '{print $1}')"
   printf 'benchtime=%s\n' "$BENCHTIME"
   printf 'c_calibration_min_ns=%s\n' "$BENCHTIME_NS"
   printf 'cgo_static_deep_admission=%s\n' "$CGO_ADMISSION"
-  printf 'workload_identity=runtime_and_node_kind_admission_v1\n'
+  if [[ "$GO_BACKEND" == "candidate" ]]; then
+    printf 'workload_identity=compact_deep_tree_and_exact_work_admission_v1\n'
+    printf 'candidate_cgo_admission_contract=root_tagged_fresh_runner+treesitter_c_parity_canonical_static_deep\n'
+  else
+    printf 'workload_identity=runtime_and_node_kind_admission_v1\n'
+  fi
   printf 'fixture_required_node_kinds=%s\n' "$FIXTURE_REQUIRED_NODE_KINDS"
   printf 'suite_required_node_kinds=%s\n' "$SUITE_REQUIRED_NODE_KINDS"
   printf 'suite_required_any_node_kinds=%s\n' "$SUITE_REQUIRED_ANY_NODE_KINDS"
