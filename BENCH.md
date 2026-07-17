@@ -160,8 +160,9 @@ timing. Medians from ten process-isolated samples per backend and fixture:
 
 The canonical equal-fixture geomean is **5.481673x C**. The fixed-suite sum of
 medians is **6.313799x C**; it is reported separately because the largest file
-dominates aggregate wall time. This is the baseline for future full-parse
-claims, not a retrospective adjustment to the withdrawn straight-LR ratio.
+dominates aggregate wall time. This is the first locked-oracle historical
+baseline, not a retrospective adjustment to the withdrawn straight-LR ratio;
+the current production receipt is the current-main result below.
 
 Receipt identities:
 
@@ -173,6 +174,91 @@ Receipt identities:
   `aecb7f76e3df4832877f4526280849257826f3d84f2f104379a57748f4f6f310`;
 - static C artifact SHA-256:
   `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
+
+### Current-main production and compact-candidate receipt
+
+A paired strict receipt was collected on 2026-07-17 from the same quiet host,
+core 6, and Go 1.22.2. The production worktree was clean current main at
+`2c7026563f3827da87e637bcb246d4a8f287c022`; its `PUBLICATION` receipt measures
+the public `Parser.Parse` lifecycle, completeness check, and `Tree.Release`.
+
+| Fixture | Go median | static C median | Go / C | B/op | allocs/op | Go max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 29.313 ms | 5.591 ms | **5.242927x** | 157,657 | 13 | 68,528 KiB | 2,816 KiB |
+| `rewrite.go` | 5.110 ms | 1.260 ms | **4.055251x** | 2,040 | 14 | 54,052 KiB | 2,304 KiB |
+| `language.go` | 28.383 ms | 5.980 ms | **4.746044x** | 163,060 | 32 | 67,620 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 345.658 ms | 61.198 ms | **5.648204x** | 13,165,973 | 561.5 | 205,716 KiB | 9,216 KiB |
+
+The current-main public-parser equal-fixture geomean is **4.886056x C**. Its
+fixed-suite sum of medians is **5.517602x C** (408.464 ms Go versus 74.029 ms
+static C), and its worst fixture is `grammargen/lr.go` at **5.648204x C**.
+
+Production receipt identities:
+
+- manifest SHA-256:
+  `8933650e446b14db263e165bbfed0bd68cebeb15898b7b818c57040e10b31b46`;
+- report SHA-256:
+  `19a68af15fe1f413e628d3f5a7aed0b7fb975652028aee685d5b30769151d2f3`;
+- complete receipt bundle SHA-256:
+  `3c529e002cee1ab28e7ec11edc826d3b31b298dec616e14aa0fd405e11c84a09`.
+
+The paired branch at
+`cb16038798d02554be0c465a4880534df15ed75b` adds a separate build-tagged
+compact backend:
+
+```sh
+bash cgo_harness/pure_c/run_canonical_go_full_parse.sh \
+  --go-backend candidate --core <idle-cpu>
+```
+
+Its receipt class is `AUTHENTICATED_CANDIDATE`, its build tag is
+`gts_parsercorephase0`, and its measured lifecycle is
+`parserCoreFreshFullRunner.parse + shallow completeness + Tree.Release`.
+Fallback policy is `none_fail_closed`; all 40 timed Go samples reported zero
+fallback and repeat-identical per-fixture work counts.
+
+| Fixture | Candidate median | static C median | Candidate / C | B/op | allocs/op | Candidate max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 22.359 ms | 5.548 ms | **4.030070x** | 240,583 | 10,143 | 47,976 KiB | 2,816 KiB |
+| `rewrite.go` | 4.533 ms | 1.241 ms | **3.654062x** | 58,097 | 2,176 | 50,448 KiB | 2,304 KiB |
+| `language.go` | 23.049 ms | 5.999 ms | **3.842068x** | 284,622 | 10,601 | 53,056 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 247.276 ms | 60.881 ms | **4.061655x** | 2,514,510 | 102,549 | 94,932 KiB | 9,216 KiB |
+
+The candidate equal-fixture geomean is **3.893491x C**. Its fixed-suite sum of
+medians is **4.034531x C** (297.216 ms candidate versus 73.668 ms static C), and
+its worst fixture is `grammargen/lr.go` at **4.061655x C**. Comparing Go medians
+directly across the paired receipts, the candidate improves the equal-fixture
+geomean by **20.82%** and the fixed-suite sum by **27.24%**. The per-fixture
+changes are -23.72%, -11.29%, -18.79%, and -28.46% in table order. Candidate
+allocation count is not a win; its lower elapsed time and lower large-fixture
+RSS arise despite many small allocations.
+
+Candidate receipt identities:
+
+- manifest SHA-256:
+  `1cfce0ed9adbcb5c5c09cfb369908cc30451fb714409080a1523cfecbcfc1aa9`;
+- report SHA-256:
+  `bc4968123fe6b4b982fa18de63dbd712f2e601d0058024c9c8ad3ddd9c4d1114`;
+- complete receipt bundle SHA-256:
+  `0f4dc1b92a8d86d2de27c8368db91fe6d011de1ce45c5f153e9b177cc760449e`;
+- static C artifact SHA-256:
+  `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
+
+“Exact” for this candidate means `gts-deep-tree-v1` visible structural equality:
+selected syntax, spans, points, fields, aliases/extras, EOF, and selected-node
+census match the locked oracle on the four clean fresh-UTF-8 fixtures. The only
+admitted grammar/scanner identity is the embedded Go blob with SHA-256
+`9cf914d26d962d1a62e7954f8b20b302337a44cb7d4a07218eec482c45a57a08`
+and the exact `github.com/odvcencio/gotreesitter/grammars.GoExternalScanner`
+type. The route declines recovery or retry, incremental parsing, included
+ranges, closed-prefix operation, missing or no-lookahead tokens, repetition
+shifts, extra chains, and any EOF frontier other than one accepted head with
+one exact derivation. Other unsupported semantics also fail closed. The digest
+does not cover `ParseState` or `PreGotoState`, and the compact materializer
+currently writes zero for both. The candidate has not admitted query/cursor
+behavior or multiple grammars. Therefore **3.893491x C is a diagnostic
+compact-candidate result, not a replacement public `Parser.Parse` claim**; the
+production number remains **4.886056x C**.
 
 ### Diagnostic workload-regime receipt
 
@@ -290,6 +376,30 @@ The independently validated Go-only frontier vocabulary is
 `construction_surplus` means representation-specific leaf plus parent
 constructions minus selected nodes; it must never be relabeled as a count of
 discarded nodes.
+
+### Four-fixture work-count board backends
+
+The authenticated four-fixture board emits `gts-work-count-board/v3` and keeps
+timing eligibility false. Production remains the default Go backend. Select the
+build-tagged compact backend explicitly:
+
+```sh
+cd cgo_harness
+GTS_WORK_COUNT_BOARD=1 \
+GTS_WORK_COUNT_GO_BACKEND=parsercore_phase0 \
+GTS_WORK_COUNT_BOARD_RECEIPT="$PWD/../harness_out/work_count_parsercore_board.json" \
+go test -tags 'treesitter_c_parity treesitter_c_perfscan' . \
+  -run '^TestAuthenticatedFourFixtureWorkCountBoard$' -count=1 -v
+```
+
+The compact backend builds a separate tagged artifact, authenticates the
+ordinary untagged Go tree and locked static-C tree first, then runs the compact
+child twice and requires repeat-identical counts. Directly comparable rows use
+the shared `gts-work-count/v2` counter contract. Candidate-only scheduling
+fields and mandatory events without paired semantic hooks are marked
+incomparable or instrumentation-blocked; they are never filled with production
+proxies or zeros. The checked-in board contract is
+[`cgo_harness/work_count/board_contract_v1.json`](cgo_harness/work_count/board_contract_v1.json).
 
 ## Go-vs-C fleet scoreboard (full parse, real corpora)
 

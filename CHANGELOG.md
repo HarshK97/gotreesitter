@@ -63,6 +63,13 @@ for tags and release notes while still in `0.x`.
   materializer does not preserve `ParseState` or `PreGotoState`, so this
   admission is not a production-routing, incremental, recovery, or exact public
   node-API compatibility claim.
+- Bank a paired quiet-host receipt against the locked static `-O2` C oracle.
+  Current-main public `Parser.Parse` measures 4.886056x C by equal-fixture
+  geomean and 5.517602x C by fixed-suite sum of medians. The build-tagged
+  compact candidate measures 3.893491x C and 4.034531x C, respectively, with a
+  4.061655x worst fixture and zero fallback in every timed sample. These
+  candidate numbers apply only to its authenticated clean fresh-full surface;
+  they do not replace the public parser claim.
 - Add a versioned, locked incremental admission matrix that separates identity,
   leaf-validation, real-code GLR, recovery, and stateful-scanner behavior using
   runtime evidence. It rejects full-parse fallback, authenticates both edit
