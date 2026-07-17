@@ -56,9 +56,9 @@ func TestD12bReproSchemeAbutDelete(t *testing.T) {
 	t.Logf("INCREMENTAL:\n%s", incStr)
 	t.Logf("FRESH:\n%s", freshStr)
 
-	if incStr != freshStr {
-		t.Errorf("DIVERGENCE:\nincremental: %s\nfresh:       %s", incStr, freshStr)
-	}
+	// Full per-node span check across the whole tree (not just the leaf
+	// symbol checked below), catching divergences anywhere.
+	assertIncrementalMatchesFreshFullSpan(t, lang, incTree, freshTree)
 
 	incSym := incTree.RootNode().NamedChild(0).NamedChild(0)
 	freshSym := freshTree.RootNode().NamedChild(0).NamedChild(0)
@@ -100,9 +100,8 @@ func TestD12bReproSchemeAbutInsertReverse(t *testing.T) {
 		t.Fatalf("fresh parse failed: %v", err)
 	}
 
-	incStr := incTree.RootNode().SExpr(lang)
-	freshStr := freshTree.RootNode().SExpr(lang)
-	if incStr != freshStr {
-		t.Errorf("DIVERGENCE (reverse):\nincremental: %s\nfresh:       %s", incStr, freshStr)
-	}
+	// Full per-node span check, not just SExpr structural equality: SExpr
+	// string equality alone can miss a stale reused subtree that keeps its
+	// pre-edit byte boundaries while rendering the same text.
+	assertIncrementalMatchesFreshFullSpan(t, lang, incTree, freshTree)
 }

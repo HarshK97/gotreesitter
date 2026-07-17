@@ -1145,6 +1145,7 @@ type IncrementalParseProfile struct {
 	ReuseRejectOutOfBounds              uint64
 	ReuseRejectRootNonLeafChanged       uint64
 	ReuseRejectLargeNonLeaf             uint64
+	ReuseRejectStaleNonLeafBoundary     uint64
 	RecoverSearches                     uint64
 	RecoverStateChecks                  uint64
 	RecoverStateSkips                   uint64
@@ -1241,6 +1242,7 @@ type incrementalParseTiming struct {
 	reuseRejectOutOfBounds              uint64
 	reuseRejectRootNonLeafChanged       uint64
 	reuseRejectLargeNonLeaf             uint64
+	reuseRejectStaleNonLeafBoundary     uint64
 	recoverSearches                     uint64
 	recoverStateChecks                  uint64
 	recoverStateSkips                   uint64
@@ -2889,6 +2891,7 @@ func (p *Parser) parseIncrementalInternalWithMergePerKeyOverride(source []byte, 
 			timing.reuseRejectOutOfBounds += reuse.rejectOutOfBounds
 			timing.reuseRejectRootNonLeafChanged += reuse.rejectRootNonLeafChanged
 			timing.reuseRejectLargeNonLeaf += reuse.rejectLargeNonLeaf
+			timing.reuseRejectStaleNonLeafBoundary += reuse.rejectStaleNonLeafBoundary
 		}
 		if timing != nil {
 			reuseStart := time.Now()
