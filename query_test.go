@@ -1647,6 +1647,9 @@ func TestMatchPredicateNotHasParent(t *testing.T) {
 }
 
 func TestMatchPredicateIsAndIsNot(t *testing.T) {
+	// #is?/#is-not? are property predicates: upstream tree-sitter treats
+	// them as inert metadata for the host application (e.g. locals.scm
+	// tracking) and they never filter the match set. See D8 parity fix.
 	lang := queryTestLanguage()
 	tree := buildSimpleTree(lang)
 
@@ -1662,8 +1665,8 @@ func TestMatchPredicateIsAndIsNot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	if got := len(q2.Execute(tree)); got != 0 {
-		t.Fatalf("matches (#is-not?): got %d, want 0", got)
+	if got := len(q2.Execute(tree)); got != 1 {
+		t.Fatalf("matches (#is-not?): got %d, want 1 (is-not? must not filter matches)", got)
 	}
 }
 

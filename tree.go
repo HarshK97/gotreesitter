@@ -1672,7 +1672,67 @@ func stackEntryContainsPointRange(entry stackEntry, startPoint, endPoint Point) 
 	return pointLessOrEqual(stackEntryNodeStartPoint(entry), startPoint) && pointLessOrEqual(endPoint, stackEntryNodeEndPoint(entry))
 }
 
+// descendantForByteRange walks to the smallest descendant covering [startByte,
+// endByte], matching upstream tree-sitter's ts_node__descendant_for_byte_range
+// (lib/src/node.c): descend into the first child whose end reaches range_end
+// and whose start is at or before range_start; stop scanning once a child
+// starts past range_start. Non-empty children must extend past range_start,
+// while zero-width children at range_start remain eligible. It returns the
+// last relevant node visited, i.e. the node itself for a valid unsatisfiable
+// or out-of-bounds range. A nil receiver or reversed range returns nil.
 func (n *Node) descendantForByteRange(startByte, endByte uint32, namedOnly bool) *Node {
+	if n == nil || endByte < startByte {
+		return nil
+	}
+	node := n
+	lastRelevant := n
+	for {
+		descended := false
+		childCount := nodeChildCountNoMaterialize(node)
+		for i := 0; i < childCount; i++ {
+			entry, ok := nodeChildEntryAtNoMaterialize(node, i)
+			if !ok {
+				continue
+			}
+			childStart := stackEntryNodeStartByte(entry)
+			childEnd := stackEntryNodeEndByte(entry)
+			if childEnd < endByte {
+				continue
+			}
+			if childStart == childEnd {
+				if childEnd < startByte {
+					continue
+				}
+			} else if childEnd <= startByte {
+				continue
+			}
+			if childStart > startByte {
+				break
+			}
+			child := nodeChildAtForReason(node, i, materializeForParentAPI)
+			if child == nil {
+				continue
+			}
+			node = child
+			if !namedOnly || child.isNamed() {
+				lastRelevant = child
+			}
+			descended = true
+			break
+		}
+		if !descended {
+			break
+		}
+	}
+	return lastRelevant
+}
+
+// descendantForByteRangeContained is the pre-C-parity walk: it returns the
+// smallest descendant that *fully contains* [startByte, endByte], or nil when
+// the range is not contained. It is retained for internal callers (incremental
+// reuse fast paths) that depend on the nil-on-miss / boundary-inclusive
+// behavior; the public Descendant*ForByteRange API uses the C-faithful walk.
+func (n *Node) descendantForByteRangeContained(startByte, endByte uint32, namedOnly bool) *Node {
 	if n == nil || endByte < startByte || !n.containsByteRange(startByte, endByte) {
 		return nil
 	}
@@ -1694,44 +1754,65 @@ func (n *Node) descendantForByteRange(startByte, endByte uint32, namedOnly bool)
 		if !child.containsByteRange(startByte, endByte) {
 			continue
 		}
-		if d := child.descendantForByteRange(startByte, endByte, namedOnly); d != nil {
+		if d := child.descendantForByteRangeContained(startByte, endByte, namedOnly); d != nil {
 			deepest = d
 		}
 	}
 	return deepest
 }
 
+// descendantForPointRange is the point-coordinate C-faithful walk; see
+// descendantForByteRange for the boundary/out-of-range rule it mirrors.
 func (n *Node) descendantForPointRange(startPoint, endPoint Point, namedOnly bool) *Node {
-	if n == nil || pointLessThan(endPoint, startPoint) || !n.containsPointRange(startPoint, endPoint) {
+	if n == nil || pointLessThan(endPoint, startPoint) {
 		return nil
 	}
-
-	var deepest *Node
-	if !namedOnly || n.isNamed() {
-		deepest = n
+	node := n
+	lastRelevant := n
+	for {
+		descended := false
+		childCount := nodeChildCountNoMaterialize(node)
+		for i := 0; i < childCount; i++ {
+			entry, ok := nodeChildEntryAtNoMaterialize(node, i)
+			if !ok {
+				continue
+			}
+			childStart := stackEntryNodeStartPoint(entry)
+			childEnd := stackEntryNodeEndPoint(entry)
+			if pointLessThan(childEnd, endPoint) {
+				continue
+			}
+			if childStart == childEnd {
+				if pointLessThan(childEnd, startPoint) {
+					continue
+				}
+			} else if pointLessOrEqual(childEnd, startPoint) {
+				continue
+			}
+			if pointGreaterThan(childStart, startPoint) {
+				break
+			}
+			child := nodeChildAtForReason(node, i, materializeForParentAPI)
+			if child == nil {
+				continue
+			}
+			node = child
+			if !namedOnly || child.isNamed() {
+				lastRelevant = child
+			}
+			descended = true
+			break
+		}
+		if !descended {
+			break
+		}
 	}
-	childCount := nodeChildCountNoMaterialize(n)
-	for i := 0; i < childCount; i++ {
-		entry, ok := nodeChildEntryAtNoMaterialize(n, i)
-		if !ok || !stackEntryContainsPointRange(entry, startPoint, endPoint) {
-			continue
-		}
-		child := nodeChildAtForReason(n, i, materializeForParentAPI)
-		if child == nil {
-			continue
-		}
-		if !child.containsPointRange(startPoint, endPoint) {
-			continue
-		}
-		if d := child.descendantForPointRange(startPoint, endPoint, namedOnly); d != nil {
-			deepest = d
-		}
-	}
-	return deepest
+	return lastRelevant
 }
 
-// DescendantForByteRange returns the smallest descendant that fully contains
-// the given byte range, or nil when no such descendant exists.
+// DescendantForByteRange returns the smallest descendant selected by upstream
+// tree-sitter's byte-range walk. For a valid unsatisfiable or out-of-bounds
+// range it returns the receiver; a nil receiver or reversed range returns nil.
 func (n *Node) DescendantForByteRange(startByte, endByte uint32) *Node {
 	return n.descendantForByteRange(startByte, endByte, false)
 }
@@ -1747,11 +1828,13 @@ func (n *Node) NodeAtByte(byteOffset uint32) *Node {
 	if byteOffset < n.endByte {
 		endByte = byteOffset + 1
 	}
-	return n.DescendantForByteRange(byteOffset, endByte)
+	return n.descendantForByteRangeContained(byteOffset, endByte, false)
 }
 
-// NamedDescendantForByteRange returns the smallest named descendant that fully
-// contains the given byte range, or nil when no such descendant exists.
+// NamedDescendantForByteRange returns the smallest named descendant selected
+// by upstream tree-sitter's byte-range walk. For a valid unsatisfiable or
+// out-of-bounds range it returns the receiver; a nil receiver or reversed
+// range returns nil.
 func (n *Node) NamedDescendantForByteRange(startByte, endByte uint32) *Node {
 	return n.descendantForByteRange(startByte, endByte, true)
 }
@@ -1766,17 +1849,20 @@ func (n *Node) NamedNodeAtByte(byteOffset uint32) *Node {
 	if byteOffset < n.endByte {
 		endByte = byteOffset + 1
 	}
-	return n.NamedDescendantForByteRange(byteOffset, endByte)
+	return n.descendantForByteRangeContained(byteOffset, endByte, true)
 }
 
-// DescendantForPointRange returns the smallest descendant that fully contains
-// the given point range, or nil when no such descendant exists.
+// DescendantForPointRange returns the smallest descendant selected by upstream
+// tree-sitter's point-range walk. For a valid unsatisfiable or out-of-bounds
+// range it returns the receiver; a nil receiver or reversed range returns nil.
 func (n *Node) DescendantForPointRange(startPoint, endPoint Point) *Node {
 	return n.descendantForPointRange(startPoint, endPoint, false)
 }
 
-// NamedDescendantForPointRange returns the smallest named descendant that
-// fully contains the given point range, or nil when no such descendant exists.
+// NamedDescendantForPointRange returns the smallest named descendant selected
+// by upstream tree-sitter's point-range walk. For a valid unsatisfiable or
+// out-of-bounds range it returns the receiver; a nil receiver or reversed
+// range returns nil.
 func (n *Node) NamedDescendantForPointRange(startPoint, endPoint Point) *Node {
 	return n.descendantForPointRange(startPoint, endPoint, true)
 }

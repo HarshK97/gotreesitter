@@ -352,6 +352,88 @@ func collectCByteRangeCaptureNames(q *sitter.Query, tree *sitter.Tree, source []
 	}
 }
 
+func TestParityQueryExactMissing(t *testing.T) {
+	cases := []exactQueryCase{
+		{
+			name:   "missing_semicolon",
+			lang:   "c",
+			source: "int a\n",
+			query:  `(MISSING ";") @missing`,
+		},
+		{
+			name:   "missing_or_identifier_alternation",
+			lang:   "c",
+			source: "int a;\nint b\n",
+			query:  `[(MISSING) (identifier)] @match`,
+		},
+		{
+			name:   "qualified_missing_or_identifier_alternation",
+			lang:   "c",
+			source: "int a;\nint b\n",
+			query:  `[(MISSING ";") (identifier)] @match`,
+		},
+		{
+			name:   "qualified_missing_named_alternation",
+			lang:   "typescript",
+			source: "const { value: [dirPath, { dirName, options, fileNames }] } = result;\nswitch (x) { case: }\n",
+			query:  `[(MISSING identifier) (switch_case)] @match`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertExactQueryParity(t, tc)
+		})
+	}
+}
+
+func TestParityDescendantByteRangeBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		lang       string
+		source     string
+		start, end uint32
+	}{
+		{name: "token_end", lang: "go", source: "package main\n\nimport \"fmt\"\n", start: 7, end: 7},
+		{name: "line_end", lang: "go", source: "package main\n\nimport \"fmt\"\n", start: 12, end: 12},
+		{name: "out_of_bounds", lang: "go", source: "package main\n\nimport \"fmt\"\n", start: 1000, end: 1005},
+		{name: "reversed", lang: "go", source: "package main\n\nimport \"fmt\"\n", start: 5, end: 4},
+		{name: "zero_width_missing", lang: "c", source: "int a\n", start: 5, end: 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.source)
+			goTree, goLang, err := parseWithGo(parityCase{name: tc.lang, source: tc.source}, src, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer releaseGoTree(goTree)
+			cLang, err := ParityCLanguage(tc.lang)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cParser := sitter.NewParser()
+			defer cParser.Close()
+			if err := cParser.SetLanguage(cLang); err != nil {
+				t.Fatal(err)
+			}
+			cTree := cParser.Parse(src, nil)
+			defer cTree.Close()
+
+			goNode := goTree.RootNode().DescendantForByteRange(tc.start, tc.end)
+			cNode := cTree.RootNode().DescendantForByteRange(uint(tc.start), uint(tc.end))
+			if (goNode == nil) != (cNode == nil) {
+				t.Fatalf("nil mismatch: Go=%v C=%v", goNode == nil, cNode == nil)
+			}
+			if goNode == nil {
+				return
+			}
+			if goNode.Type(goLang) != cNode.Kind() || goNode.StartByte() != uint32(cNode.StartByte()) || goNode.EndByte() != uint32(cNode.EndByte()) || goNode.IsMissing() != cNode.IsMissing() {
+				t.Fatalf("descendant mismatch: Go=%s[%d,%d] missing=%v C=%s[%d,%d] missing=%v", goNode.Type(goLang), goNode.StartByte(), goNode.EndByte(), goNode.IsMissing(), cNode.Kind(), cNode.StartByte(), cNode.EndByte(), cNode.IsMissing())
+			}
+		})
+	}
+}
+
 func assertExactQueryParity(t *testing.T, tc exactQueryCase) {
 	t.Helper()
 

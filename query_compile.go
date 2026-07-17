@@ -602,6 +602,7 @@ func (p *queryParser) parseAlternationBranch(depth int, parentSymbolHint Symbol)
 	alt := alternativeSymbol{
 		symbol:    root.symbol,
 		isNamed:   root.isNamed,
+		isMissing: root.isMissing,
 		field:     altField,
 		textMatch: root.textMatch,
 	}
@@ -701,6 +702,10 @@ func (p *queryParser) parsePatternElement(depth int, parentSymbolHint Symbol) (*
 }
 
 func (p *queryParser) stepFromIdentifierName(depth int, name string) (QueryStep, error) {
+	if name == "MISSING" {
+		return p.stepFromMissingKeyword(depth)
+	}
+
 	sym, isNamed, err := p.resolveSymbol(name)
 	if err != nil {
 		return QueryStep{}, err
@@ -711,6 +716,50 @@ func (p *queryParser) stepFromIdentifierName(depth int, name string) (QueryStep,
 		isNamed: isNamed,
 		depth:   depth,
 	}, nil
+}
+
+// stepFromMissingKeyword parses the special "MISSING" node pattern
+// (upstream tree-sitter 0.24+ semantics): (MISSING), (MISSING <kind>), or
+// (MISSING "<token>"). It is called immediately after the "MISSING"
+// identifier itself has been consumed, mirroring the corresponding branch
+// of ts_query__parse_pattern in the C runtime. A "MISSING" step tests
+// Node.IsMissing() at match time (see nodeMatchesScalarStep /
+// stackEntryMatchesScalarStep); when a kind or token qualifier is given,
+// the node's symbol must also match it.
+//
+// Anything other than an immediate kind identifier, a string-literal
+// token, or a closing ')' is rejected as a syntax error -- in particular
+// "(MISSING (child))" is invalid, matching upstream's TSQueryErrorSyntax.
+func (p *queryParser) stepFromMissingKeyword(depth int) (QueryStep, error) {
+	p.skipWhitespaceAndComments()
+	step := QueryStep{depth: depth, isMissing: true}
+
+	switch {
+	case p.pos < len(p.input) && isIdentStart(p.input[p.pos]):
+		name, err := p.readIdentifier()
+		if err != nil {
+			return QueryStep{}, err
+		}
+		sym, isNamed, err := p.resolveSymbol(name)
+		if err != nil {
+			return QueryStep{}, err
+		}
+		step.symbol = sym
+		step.isNamed = isNamed
+	case p.pos < len(p.input) && p.input[p.pos] == '"':
+		text, err := p.readString()
+		if err != nil {
+			return QueryStep{}, err
+		}
+		step.textMatch = text
+	case p.pos < len(p.input) && p.input[p.pos] == ')':
+		// Bare (MISSING): matches any missing node, named or anonymous.
+		step.isNamed = true
+	default:
+		return QueryStep{}, fmt.Errorf("query: expected node type, string literal, or ')' after 'MISSING' at position %d", p.pos)
+	}
+
+	return step, nil
 }
 
 func (p *queryParser) parseIdentifierPatternFromName(depth int, name string) (*Pattern, error) {
