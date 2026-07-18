@@ -553,6 +553,10 @@ type Core struct {
 	popScratch          popEnumerationScratch
 	reductionScratch    reductionOutputScratch
 	schedulerFrame      schedulerTransactionFrame
+	// metadataConstructionAuthenticated remains true only while every compact
+	// subtree was published through the authenticated shift/reduction seams.
+	// Diagnostic generic publication clears it monotonically until Reset.
+	metadataConstructionAuthenticated bool
 }
 
 // inlineAdjacencyCapacity covers the production default without forcing a
@@ -840,9 +844,10 @@ func New(tables TableView, limits Limits) (*Core, error) {
 	}
 	core := &Core{
 		tables: tables, limits: limits, frontier: 1, boundaries: boundaries,
-		checkpoints:         newCheckpointInterner(limits.MaxCheckpoints, limits.MaxCheckpointBytes),
-		classificationPhase: 1,
-		diagnostics:         diagnosticOptions{foldSamePredecessorShallowPayloads: true},
+		checkpoints:                       newCheckpointInterner(limits.MaxCheckpoints, limits.MaxCheckpointBytes),
+		classificationPhase:               1,
+		diagnostics:                       diagnosticOptions{foldSamePredecessorShallowPayloads: true},
+		metadataConstructionAuthenticated: true,
 	}
 	core.plans, _ = tables.(ReductionPlanProvider)
 	return core, nil
@@ -887,6 +892,7 @@ func (c *Core) Reset() error {
 	c.work = Work{}
 	c.popScratch.resetLogical()
 	c.reductionScratch.finish()
+	c.metadataConstructionAuthenticated = true
 	return nil
 }
 
@@ -1194,10 +1200,10 @@ func (c *Core) appendDiagnosticPayload(head Head, state StateID, token Token, me
 	if _, err := c.node(head.Node); err != nil {
 		return Head{}, err
 	}
-	payload, err := c.appendSubtree(subtreeRecord{
+	payload, err := c.appendAuthenticatedTerminal(subtreeRecord{
 		symbol: token.Symbol, startByte: token.StartByte, endByte: token.EndByte,
 		extra: token.Extra, external: token.External, terminal: true,
-	}, nil, nil, nil)
+	})
 	if err != nil {
 		return Head{}, err
 	}
@@ -1398,7 +1404,10 @@ func (c *Core) reductionParentForPath(
 		}
 	}
 	if !found {
-		payload, err = c.appendSubtree(parent, path.children, fields, aliases)
+		// The remap above authenticated the exact production, child sequence, and
+		// ordered sidecars published here. Keep raw publication in this lexical
+		// seam so no reusable authority reaches another caller.
+		payload, err = c.appendSubtreeRecord(parent, path.children, fields, aliases)
 		if err != nil {
 			return 0, 0, ForkOrder{}, err
 		}
@@ -2785,6 +2794,17 @@ func (c *Core) VisitMaterializationPostorder(
 }
 
 func (c *Core) validateMaterializationMetadata(id SubtreeID, record subtreeRecord) error {
+	// Production construction authenticates every terminal and reduction before
+	// publication. Compact arenas are immutable, so repeating the table remap at
+	// materialization adds no evidence. The flag is Core-scoped so subtreeRecord
+	// remains byte-for-byte unchanged on the scheduler's hot equality/copy path.
+	if c.metadataConstructionAuthenticated {
+		return nil
+	}
+	return c.validateGenericMaterializationMetadata(id, record)
+}
+
+func (c *Core) validateGenericMaterializationMetadata(id SubtreeID, record subtreeRecord) error {
 	children := c.children[record.firstChild : record.firstChild+record.childCount]
 	storedFields := c.fields[record.firstField : record.firstField+record.fieldCount]
 	storedAliases := c.aliases[record.firstAlias : record.firstAlias+record.aliasCount]
@@ -2950,6 +2970,21 @@ func (c *Core) validatePublishedNodeDAG(r nodeRecord, next NodeID) error {
 }
 
 func (c *Core) appendSubtree(r subtreeRecord, children []SubtreeID, fields []FieldMapEntry, aliases []Symbol) (SubtreeID, error) {
+	// Generic diagnostic/test publication is deliberately unauthenticated.
+	// Clearing this Core-scoped invariant is monotonic until Reset, including
+	// failed or rolled-back diagnostic publication, which is conservative.
+	c.metadataConstructionAuthenticated = false
+	return c.appendSubtreeRecord(r, children, fields, aliases)
+}
+
+func (c *Core) appendAuthenticatedTerminal(r subtreeRecord) (SubtreeID, error) {
+	// The AST provenance ratchet requires every caller to pass a subtreeRecord
+	// literal with terminal:true. Keep this seam as pure forwarding so terminal
+	// construction does not add a partial store before the hot record copy.
+	return c.appendSubtreeRecord(r, nil, nil, nil)
+}
+
+func (c *Core) appendSubtreeRecord(r subtreeRecord, children []SubtreeID, fields []FieldMapEntry, aliases []Symbol) (SubtreeID, error) {
 	if uint64(len(c.subtrees))+1 > uint64(c.limits.MaxSubtrees) || len(c.subtrees) >= math.MaxUint32 {
 		return 0, errors.New("parser-core phase zero: subtree arena cap")
 	}

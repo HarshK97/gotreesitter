@@ -9,6 +9,13 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Skip redundant production-metadata remapping while materializing a compact
+  tree whose terminals and reductions were already authenticated at
+  construction. Generic diagnostic publication retains the full validation
+  path. A balanced two-order quiet-host board improves the authenticated
+  four-fixture fresh-full geomean by 3.44%, with every fixture improving by
+  2.36-4.50%, materialization improving by 13.20%, unchanged compact work, and
+  zero fallback. The compact route remains build-tagged and diagnostic-only.
 - Preclassify immutable compact-parser action rows and route singleton shift,
   reduce, and extra actions without repeatedly interpreting or copying the row.
   Two reverse-order quiet-host runs improve the authenticated four-fixture

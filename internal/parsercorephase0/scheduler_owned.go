@@ -36,10 +36,10 @@ func (c *Core) shiftClassifiedUncheckpointed(boundary ClassifiedBoundary, action
 	if act.Extra && targetState == 0 {
 		targetState = boundary.state
 	}
-	payload, err := c.appendSubtree(subtreeRecord{
+	payload, err := c.appendAuthenticatedTerminal(subtreeRecord{
 		symbol: shifted.Symbol, startByte: shifted.StartByte, endByte: shifted.EndByte,
 		extra: act.Extra, external: shifted.External, terminal: true,
-	}, nil, nil, nil)
+	})
 	if err != nil {
 		return Head{}, err
 	}
@@ -107,10 +107,10 @@ func (c *Core) prepareOrdinaryClassifiedCohortInto(boundaries []ClassifiedBounda
 }
 
 func (c *Core) shiftOrdinaryClassifiedCohortUncheckpointed(boundaries []ClassifiedBoundary, targets []StateID, shifted Token) ([]Head, error) {
-	payload, err := c.appendSubtree(subtreeRecord{
+	payload, err := c.appendAuthenticatedTerminal(subtreeRecord{
 		symbol: shifted.Symbol, startByte: shifted.StartByte, endByte: shifted.EndByte,
 		external: shifted.External, terminal: true,
-	}, nil, nil, nil)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -185,10 +185,10 @@ func (c *Core) prepareExtraClassifiedCohortInto(boundaries []ClassifiedBoundary,
 }
 
 func (c *Core) shiftExtraClassifiedCohortUncheckpointed(boundaries []ClassifiedBoundary, targets []StateID, shifted Token) ([]Head, error) {
-	payload, err := c.appendSubtree(subtreeRecord{
+	payload, err := c.appendAuthenticatedTerminal(subtreeRecord{
 		symbol: shifted.Symbol, startByte: shifted.StartByte, endByte: shifted.EndByte,
 		extra: true, external: shifted.External, terminal: true,
-	}, nil, nil, nil)
+	})
 	if err != nil {
 		return nil, err
 	}

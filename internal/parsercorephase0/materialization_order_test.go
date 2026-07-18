@@ -138,6 +138,125 @@ func TestMaterializationOrderValidatesRemappedMetadata(t *testing.T) {
 	}
 }
 
+func TestMaterializationMetadataAuthenticationIsConstructionScoped(t *testing.T) {
+	tables := &fakeTable{
+		fields: map[uint16][]FieldMapEntry{7: {{FieldID: 3, ChildIndex: 0}}},
+		aliases: map[productionKey][]Symbol{
+			{productionID: 7, childCount: 1}: {9},
+		},
+	}
+	compact, err := New(tables, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Generic publication invalidates the Core-wide construction invariant.
+	leaf, err := compact.appendSubtree(subtreeRecord{symbol: 2, endByte: 1, terminal: true}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compact.metadataConstructionAuthenticated {
+		t.Fatal("generic terminal append retained construction authentication")
+	}
+	parent, err := compact.appendSubtree(
+		subtreeRecord{symbol: 3, productionID: 7, endByte: 1},
+		[]SubtreeID{leaf},
+		[]FieldMapEntry{{FieldID: 3, ChildIndex: 1}},
+		[]Symbol{8},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compact.VisitMaterializationPostorder([]SubtreeID{parent}, nil, func(SubtreeID, MaterializationSubtreeView) error { return nil }); err == nil || !strings.Contains(err.Error(), "metadata does not match") {
+		t.Fatalf("generic metadata error = %v", err)
+	}
+
+	if err := compact.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if !compact.metadataConstructionAuthenticated {
+		t.Fatal("Reset did not restore empty-Core construction authentication")
+	}
+
+	// The authenticated terminal seam preserves the Core invariant and accepts
+	// only statically ratcheted metadata-trivial terminal literals in production.
+	trustedLeaf, err := compact.appendAuthenticatedTerminal(subtreeRecord{symbol: 4, endByte: 1, terminal: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	trustedLeafRecord, _ := compact.subtree(trustedLeaf)
+	if !compact.metadataConstructionAuthenticated || !trustedLeafRecord.terminal || trustedLeafRecord.childCount != 0 || trustedLeafRecord.fieldCount != 0 || trustedLeafRecord.aliasCount != 0 {
+		t.Fatalf("authenticated terminal = %+v core-authenticated=%t, want terminal with no metadata", trustedLeafRecord, compact.metadataConstructionAuthenticated)
+	}
+}
+
+func TestReductionMetadataAuthenticationRequiresSuccessfulCanonicalRemap(t *testing.T) {
+	tables := &fakeTable{
+		actions: map[tableCell][]Action{
+			{state: 2, symbol: 9}: {{Type: ActionReduce, Symbol: 3, ChildCount: 1, ProductionID: 7}},
+		},
+		gotos: map[tableCell]StateID{{state: 1, symbol: 3}: 4},
+		fields: map[uint16][]FieldMapEntry{
+			7: {{FieldID: 3, ChildIndex: 0}},
+		},
+		aliases: map[productionKey][]Symbol{{productionID: 7, childCount: 1}: {9}},
+	}
+	compact, err := New(tables, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err = compact.appendDiagnosticPayload(head, 2, Token{Symbol: 2, EndByte: 1}, pathMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frontier, err := compact.ReduceOutputs(head, 9, 0, ForkOrder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := compact.Derivations(frontier[0].Head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := compact.subtree(paths[0].Payloads[0]); err != nil {
+		t.Fatal(err)
+	}
+	if !compact.metadataConstructionAuthenticated {
+		t.Fatal("canonical reduction invalidated construction authentication")
+	}
+	if err := compact.VisitMaterializationPostorder(paths[0].Payloads, nil, func(SubtreeID, MaterializationSubtreeView) error { return nil }); err != nil {
+		t.Fatalf("authenticated canonical reduction failed materialization: %v", err)
+	}
+
+	badTables := &fakeTable{
+		actions: tables.actions,
+		gotos:   tables.gotos,
+		fields:  map[uint16][]FieldMapEntry{7: {{FieldID: 3, ChildIndex: 1}}},
+	}
+	bad, err := New(badTables, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	badHead, _ := bad.Seed(1, 0)
+	badHead, err = bad.appendDiagnosticPayload(badHead, 2, Token{Symbol: 2, EndByte: 1}, pathMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := len(bad.subtrees)
+	if _, err := bad.ReduceOutputs(badHead, 9, 0, ForkOrder{}); err == nil || !strings.Contains(err.Error(), "field child index") {
+		t.Fatalf("invalid remap error = %v", err)
+	}
+	if len(bad.subtrees) != before {
+		t.Fatalf("failed remap published %d subtrees, want %d", len(bad.subtrees), before)
+	}
+	if !bad.metadataConstructionAuthenticated {
+		t.Fatal("failed authenticated remap invalidated construction authentication")
+	}
+}
+
 func TestMaterializationOrderPollsAndPublishesNothingOnStop(t *testing.T) {
 	compact, err := New(&fakeTable{}, Limits{})
 	if err != nil {

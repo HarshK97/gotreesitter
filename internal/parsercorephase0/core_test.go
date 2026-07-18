@@ -1388,6 +1388,7 @@ func TestReductionRepushesConsecutiveTrailingExtrasInOrder(t *testing.T) {
 func TestReduceSharesCompleteIdentityParentWithinBatch(t *testing.T) {
 	compact, head := newSharedReductionFixture(t, true)
 	before, _ := compact.Stats(head)
+	beforeWork := compact.Work()
 	frontier, err := compact.Reduce(head, 9, 0, ForkOrder{})
 	if err != nil {
 		t.Fatal(err)
@@ -1398,6 +1399,10 @@ func TestReduceSharesCompleteIdentityParentWithinBatch(t *testing.T) {
 	after, _ := compact.Stats(frontier[0])
 	if after.Nodes-before.Nodes != 2 || after.Links-before.Links != 2 || after.Subtrees-before.Subtrees != 1 || after.Children-before.Children != 1 {
 		t.Fatalf("shared reduction delta=%+v -> %+v, want N+2/L+2/S+1/children+1", before, after)
+	}
+	afterWork := compact.Work()
+	if afterWork.ParentConstructionsProxy-beforeWork.ParentConstructionsProxy != 1 {
+		t.Fatalf("shared reduction parent constructions=%d, want 1", afterWork.ParentConstructionsProxy-beforeWork.ParentConstructionsProxy)
 	}
 	var parent SubtreeID
 	for index, wantState := range []StateID{4, 5} {
@@ -1411,6 +1416,9 @@ func TestReduceSharesCompleteIdentityParentWithinBatch(t *testing.T) {
 		}
 		if parent == 0 {
 			parent = paths[0].Payloads[0]
+			if _, err := compact.subtree(parent); err != nil {
+				t.Fatalf("shared parent lookup err=%v", err)
+			}
 		} else if paths[0].Payloads[0] != parent {
 			t.Fatalf("frontier %d parent=%d, want shared %d", index, paths[0].Payloads[0], parent)
 		}
@@ -2195,8 +2203,8 @@ func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
 	if got := unsafe.Sizeof(linkRecord{}); got > 32 {
 		t.Fatalf("linkRecord size = %d, want <= 32", got)
 	}
-	if got := unsafe.Sizeof(subtreeRecord{}); got > 64 {
-		t.Fatalf("subtreeRecord size = %d, want <= 64", got)
+	if got := unsafe.Sizeof(subtreeRecord{}); got != 44 {
+		t.Fatalf("subtreeRecord size = %d, want 44", got)
 	}
 }
 
