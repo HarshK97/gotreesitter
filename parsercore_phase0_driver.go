@@ -536,9 +536,22 @@ func DiagnosticParseParserCorePrefix(scanner ExternalScanner, source []byte, opt
 	}
 	defer tokenSource.Close()
 	var scannerScratch []byte
-	return diagnosticParseParserCoreGenericFromSeed(
+	var observedRun core.Phase0ADiagnosticRun
+	if core.Phase0AEnabled {
+		observedRun, err = core.BeginPhase0ADiagnosticRun(compact)
+		if err != nil {
+			return result, err
+		}
+	}
+	parsed, parseErr := diagnosticParseParserCoreGenericFromSeed(
 		result, compact, tokenSource, &scannerScratch, parser, lang.InitialState, source, options,
 	)
+	if core.Phase0AEnabled {
+		if endErr := core.EndPhase0ADiagnosticRun(observedRun); parseErr == nil && endErr != nil {
+			return parsed, endErr
+		}
+	}
+	return parsed, parseErr
 }
 
 func diagnosticParseParserCoreGenericFromSeed(
@@ -1906,11 +1919,15 @@ func (s *diagnosticParserCoreGenericScheduler) completeAcceptance() error {
 		return s.finish(DiagnosticParserCoreAccept, "generic scheduler requires one exact accepted derivation", 0)
 	}
 	if core.Phase0AEnabled {
-		capability, err := core.CapturePhase0ASelectionCapability(s.compact, s.headers[0].head)
-		if err != nil {
+		if err := core.RecordPhase0ADiagnosticAcceptedRoots(s.compact, paths[0].Payloads); err != nil {
 			return err
 		}
-		if err := core.ObservePhase0AAcceptedSelection(s.compact, capability); err != nil {
+		capability, err := core.CapturePhase0ASelectionCapability(s.compact, s.headers[0].head)
+		if err != nil {
+			if !core.Phase0ADiagnosticRunManaged(s.compact) {
+				return err
+			}
+		} else if err := core.ObservePhase0AAcceptedSelection(s.compact, capability); err != nil && !core.Phase0ADiagnosticRunManaged(s.compact) {
 			return err
 		}
 	}

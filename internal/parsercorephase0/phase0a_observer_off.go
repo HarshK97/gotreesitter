@@ -20,6 +20,20 @@ func CapturePhase0ASelectionCapability(_ *Core, head Head) (Phase0AAcceptedSelec
 
 func ObservePhase0AAcceptedSelection(*Core, Phase0AAcceptedSelectionCapability) error { return nil }
 
+type Phase0ADiagnosticRun struct{}
+type Phase0ADiagnosticRunReceipt struct{}
+
+func BeginPhase0ADiagnosticRun(*Core) (Phase0ADiagnosticRun, error) {
+	return Phase0ADiagnosticRun{}, nil
+}
+func Phase0ADiagnosticRunManaged(*Core) bool                        { return false }
+func RecordPhase0ADiagnosticAcceptedRoots(*Core, []SubtreeID) error { return nil }
+func EndPhase0ADiagnosticRun(Phase0ADiagnosticRun) error            { return nil }
+func TakePhase0ADiagnosticRunReceipt() (Phase0ADiagnosticRunReceipt, bool) {
+	return Phase0ADiagnosticRunReceipt{}, false
+}
+func ResetPhase0ADiagnosticRunReceipts() error { return nil }
+
 type Phase0ARollbackCause uint8
 
 const (
