@@ -228,6 +228,14 @@ func TestPhase0ATrailingExtraRepeatedMigrationKeepsOneEventAndFreshSlots(t *test
 	if !parentCandidate || !migrationCandidate {
 		t.Fatalf("exact score/order candidates parent=%t migration=%t rows=%+v", parentCandidate, migrationCandidate, proof.Candidates)
 	}
+	capability := phase0ACaptureSelection(t, core, second[0])
+	if err := core.ObservePhase0AAcceptedSelection(capability); err != nil {
+		t.Fatal(err)
+	}
+	proof, proofErr = Phase0AObserverProof(core, run)
+	if proofErr != nil || len(proof.SelectedOccurrenceTrees) != 1 || proof.SelectedOccurrenceTrees[0].OccurrenceCount != 4 || proof.SelectedOccurrenceTrees[0].MigratedCount != 1 {
+		t.Fatalf("nested migrated selected occurrence proof=%+v err=%v", proof.SelectedOccurrenceTrees, proofErr)
+	}
 }
 
 func TestPhase0ATrailingExtraDuplicatePayloadUsesDistinctPhysicalSources(t *testing.T) {

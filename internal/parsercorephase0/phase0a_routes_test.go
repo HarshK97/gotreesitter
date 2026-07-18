@@ -15,6 +15,10 @@ func phase0ARouteLimits() Phase0AObserverLimits {
 	limits.MaxSelectionCapabilities = 32
 	limits.MaxAcceptedSelections = 16
 	limits.MaxAcceptedLinks = 1024
+	limits.MaxSelectedOccurrences = 128
+	limits.MaxSelectedDepth = 4096
+	limits.MaxSelectedIndexEntries = 16_384
+	limits.MaxSelectedIndexBytes = 4 << 20
 	return limits
 }
 
@@ -190,6 +194,14 @@ func TestPhase0APopRouteProofPreservesMixedAndTrailingPayloadIdentity(t *testing
 		if row.Route != route.ID || row.Ordinal != uint32(index) || row.Segment != wantSegment || row.SegmentOrdinal != wantSegmentOrdinal || row.Link != wantLinks[index] || row.Payload != wantPayloads[index] || row.ScoreDelta != inputs[index].score || !row.HasOrder || row.Order != uint64(index+1) || row.RolledBack {
 			t.Fatalf("mixed route link %d=%+v want link=%d payload=%d", index, row, wantLinks[index], wantPayloads[index])
 		}
+	}
+	capability := phase0ACaptureSelection(t, core, frontier[0])
+	if err := core.ObservePhase0AAcceptedSelection(capability); err != nil {
+		t.Fatal(err)
+	}
+	proof, proofErr = Phase0AObserverProof(core, run)
+	if proofErr != nil || len(proof.SelectedOccurrenceTrees) != 1 || proof.SelectedOccurrenceTrees[0].OccurrenceCount != 6 || proof.SelectedOccurrenceTrees[0].RootCount != 3 || proof.SelectedOccurrenceTrees[0].MigratedCount != 2 || proof.SelectedOccurrences[0].ChildCount != 3 {
+		t.Fatalf("mixed selected occurrence proof=%+v rows=%+v err=%v", proof.SelectedOccurrenceTrees, proof.SelectedOccurrences, proofErr)
 	}
 }
 
@@ -681,10 +693,24 @@ func TestPhase0AAcceptedSpineFailsClosedOnMissingAndCyclicReferences(t *testing.
 			Phase0ASelectorRouteRecord{Selector: 2, SelectedLowerLink: 20, SourceLowerLink: 10, Branch: Phase0ASelectorLeft},
 			Phase0ASelectorRouteRecord{Selector: 1, SelectedLowerLink: 10, SourceLowerLink: 5, Branch: Phase0ASelectorLeft},
 		)
-		resolved, err := phase0AResolveAcceptedExpressionLocked(observer, 3, 20)
+		resolved, resolvedLower, err := phase0AResolveAcceptedExpressionAndLowerLocked(observer, 3, 20)
 		phase0AObservers.Unlock()
-		if err != nil || resolved.ID != 1 || resolved.Kind != Phase0AExpressionDirect {
-			t.Fatalf("nested factor resolved=%+v err=%v", resolved, err)
+		if err != nil || resolved.ID != 1 || resolved.Kind != Phase0AExpressionDirect || resolvedLower != 5 {
+			t.Fatalf("nested factor resolved=%+v lower=%d err=%v", resolved, resolvedLower, err)
+		}
+	})
+
+	t.Run("direct expression preserves lower link", func(t *testing.T) {
+		core := newTinyCoreWithLimits(t, Limits{})
+		_ = phase0ABeginShiftProvenanceRun(t, core, phase0ARouteLimits())
+		phase0AObservers.Lock()
+		observer := phase0AObservers.byCore[core]
+		event := ConstructionEventKey{Attempt: AttemptKey{Run: observer.run, AttemptEpoch: 1}}
+		observer.factor.expressions = append(observer.factor.expressions, Phase0AExpressionRecord{ID: 1, Kind: Phase0AExpressionDirect, Occurrence: ConstructionOccurrenceKey{Event: event}, Edge: IncomingEdgeKey{Event: event}})
+		resolved, resolvedLower, err := phase0AResolveAcceptedExpressionAndLowerLocked(observer, 1, 77)
+		phase0AObservers.Unlock()
+		if err != nil || resolved.ID != 1 || resolvedLower != 77 {
+			t.Fatalf("direct factor resolved=%+v lower=%d err=%v", resolved, resolvedLower, err)
 		}
 	})
 }

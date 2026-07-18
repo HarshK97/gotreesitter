@@ -18,19 +18,23 @@ type Phase0ADiagnosticRun struct {
 // Phase0ADiagnosticRunReceipt is captured before EndRun releases the observed
 // run. Proof owns independent snapshots and remains valid after later runs.
 type Phase0ADiagnosticRunReceipt struct {
-	Namespace        CoreRunNamespace
-	Proof            Phase0AProofSnapshot
-	RawSelected      RawSelectedCensus
-	RawSelectedError string
+	Namespace              CoreRunNamespace
+	Proof                  Phase0AProofSnapshot
+	RawSelected            RawSelectedCensus
+	RawSelectedError       string
+	RawSelectedDigest      [32]byte
+	RawSelectedDigestError string
 }
 
 type phase0ADiagnosticActiveRun struct {
-	namespace        CoreRunNamespace
-	rawSelected      RawSelectedCensus
-	rawSelectedError string
-	recording        bool
-	recordDone       chan struct{}
-	ending           bool
+	namespace              CoreRunNamespace
+	rawSelected            RawSelectedCensus
+	rawSelectedError       string
+	rawSelectedDigest      [32]byte
+	rawSelectedDigestError string
+	recording              bool
+	recordDone             chan struct{}
+	ending                 bool
 }
 
 var phase0ADiagnosticRuns = struct {
@@ -95,7 +99,12 @@ func recordPhase0ADiagnosticAcceptedRoots(core *Core, roots []SubtreeID, afterCl
 	if afterClaim != nil {
 		afterClaim()
 	}
-	census, err := core.RawSelectedSubtreeCensus(roots)
+	var census RawSelectedCensus
+	var err error
+	if len(roots) != 0 {
+		census, err = core.RawSelectedSubtreeCensus(roots)
+	}
+	digest, digestErr := phase0ARawSelectedCompactDigest(core, roots)
 	phase0ADiagnosticRuns.Lock()
 	current, currentOK := phase0ADiagnosticRuns.active[core]
 	if !currentOK || current.namespace != run.namespace || !current.recording || current.recordDone == nil {
@@ -107,6 +116,11 @@ func recordPhase0ADiagnosticAcceptedRoots(core *Core, roots []SubtreeID, afterCl
 		current.rawSelectedError = err.Error()
 	} else {
 		current.rawSelected = census
+	}
+	if digestErr != nil {
+		current.rawSelectedDigestError = digestErr.Error()
+	} else {
+		current.rawSelectedDigest = digest
 	}
 	current.recording = false
 	close(current.recordDone)
@@ -183,6 +197,7 @@ func endPhase0ADiagnosticRun(run Phase0ADiagnosticRun, afterClaim func()) error 
 	delete(phase0ADiagnosticRuns.active, run.core)
 	phase0ADiagnosticRuns.completed = append(phase0ADiagnosticRuns.completed, Phase0ADiagnosticRunReceipt{
 		Namespace: run.namespace, Proof: proof, RawSelected: current.rawSelected, RawSelectedError: current.rawSelectedError,
+		RawSelectedDigest: current.rawSelectedDigest, RawSelectedDigestError: current.rawSelectedDigestError,
 	})
 	phase0ADiagnosticRuns.Unlock()
 	if proofErr != nil {

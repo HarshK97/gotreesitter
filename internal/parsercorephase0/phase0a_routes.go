@@ -81,6 +81,8 @@ type Phase0ASelectionCapabilityRecord struct {
 // Phase0AAcceptedLinkRecord is one selected physical link in root-to-head
 // order. BoundExpression is the link binding; ResolvedExpression is the exact
 // Direct leaf selected through any nested FactorChoice expressions.
+// ResolvedLowerLink is the final source-adjacency lower link after applying
+// every selector-route translation; it is zero only at the graph seed.
 type Phase0AAcceptedLinkRecord struct {
 	Namespace          CoreRunNamespace
 	Generation         uint64
@@ -89,21 +91,24 @@ type Phase0AAcceptedLinkRecord struct {
 	Payload            SubtreeID
 	BoundExpression    Phase0AExpressionID
 	ResolvedExpression Phase0AExpressionID
+	ResolvedLowerLink  LinkID
 	Occurrence         ConstructionOccurrenceKey
 	Edge               IncomingEdgeKey
 }
 
 type phase0ARouteObserver struct {
-	popRoutes          []Phase0APopRouteRecord
-	popLinks           []Phase0APopRouteLinkRecord
-	migrations         []Phase0ATrailingExtraMigrationRecord
-	capabilities       []Phase0ASelectionCapabilityRecord
-	acceptedSelections []Phase0AAcceptedSelectionRecord
-	acceptedLinks      []Phase0AAcceptedLinkRecord
-	frames             []phase0ARouteFrame
-	nextPopRoute       uint64
-	nextCapability     uint64
-	nextSelection      uint64
+	popRoutes           []Phase0APopRouteRecord
+	popLinks            []Phase0APopRouteLinkRecord
+	migrations          []Phase0ATrailingExtraMigrationRecord
+	capabilities        []Phase0ASelectionCapabilityRecord
+	acceptedSelections  []Phase0AAcceptedSelectionRecord
+	acceptedLinks       []Phase0AAcceptedLinkRecord
+	selectedTrees       []Phase0ASelectedOccurrenceSnapshot
+	selectedOccurrences []Phase0ASelectedOccurrenceRecord
+	frames              []phase0ARouteFrame
+	nextPopRoute        uint64
+	nextCapability      uint64
+	nextSelection       uint64
 }
 
 type phase0ARouteFrame struct {
@@ -251,7 +256,7 @@ func phase0AStablePhysicalLinks(core *Core, id NodeID) ([]phase0APhysicalLink, e
 	if err != nil {
 		return nil, err
 	}
-	if uint64(node.linkCount) > uint64(core.limits.MaxLinks) || uint64(node.linkCount) > uint64(len(core.links)) {
+	if node.linkCount > core.limits.MaxLinksPerBoundary || uint64(node.linkCount) > uint64(core.limits.MaxLinks) || uint64(node.linkCount) > uint64(len(core.links)) {
 		return nil, errors.New("parser-core phase zero A: physical adjacency exceeds cap")
 	}
 	out := make([]phase0APhysicalLink, node.linkCount)
@@ -965,32 +970,32 @@ func phase0ASelectorBranchLocked(observer *phase0AObserver, selector Phase0ASele
 	return branch, sourceLower, nil
 }
 
-func phase0AResolveAcceptedExpressionLocked(observer *phase0AObserver, initial Phase0AExpressionID, selectedLower LinkID) (Phase0AExpressionRecord, error) {
+func phase0AResolveAcceptedExpressionAndLowerLocked(observer *phase0AObserver, initial Phase0AExpressionID, selectedLower LinkID) (Phase0AExpressionRecord, LinkID, error) {
 	current := initial
 	visited := make(map[Phase0AExpressionID]struct{})
 	stepCap := len(observer.factor.expressions) + 1
 	for steps := 0; steps < stepCap; steps++ {
 		if _, duplicate := visited[current]; duplicate {
-			return Phase0AExpressionRecord{}, &Phase0AError{Kind: Phase0AErrorCyclicReference, Namespace: observer.run, Detail: "factor expression cycle"}
+			return Phase0AExpressionRecord{}, 0, &Phase0AError{Kind: Phase0AErrorCyclicReference, Namespace: observer.run, Detail: "factor expression cycle"}
 		}
 		visited[current] = struct{}{}
 		expression, err := phase0AExactExpressionLocked(observer, current)
 		if err != nil {
-			return Phase0AExpressionRecord{}, err
+			return Phase0AExpressionRecord{}, 0, err
 		}
 		switch expression.Kind {
 		case Phase0AExpressionDirect:
 			if expression.Occurrence.Event.Attempt.Run != observer.run || expression.Edge.Event.Attempt.Run != observer.run || expression.Occurrence.Event.Attempt.AttemptEpoch != 1 || expression.Edge.Event.Attempt.AttemptEpoch != 1 {
-				return Phase0AExpressionRecord{}, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "direct expression belongs to another run"}
+				return Phase0AExpressionRecord{}, 0, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "direct expression belongs to another run"}
 			}
-			return expression, nil
+			return expression, selectedLower, nil
 		case Phase0AExpressionFactorChoice:
 			if selectedLower == 0 {
-				return Phase0AExpressionRecord{}, &Phase0AError{Kind: Phase0AErrorMissingReference, Namespace: observer.run, Detail: "factor expression has no selected lower link"}
+				return Phase0AExpressionRecord{}, 0, &Phase0AError{Kind: Phase0AErrorMissingReference, Namespace: observer.run, Detail: "factor expression has no selected lower link"}
 			}
 			branch, sourceLower, err := phase0ASelectorBranchLocked(observer, expression.Selector, selectedLower)
 			if err != nil {
-				return Phase0AExpressionRecord{}, err
+				return Phase0AExpressionRecord{}, 0, err
 			}
 			if branch == Phase0ASelectorLeft {
 				current = expression.Left
@@ -1003,10 +1008,15 @@ func phase0AResolveAcceptedExpressionLocked(observer *phase0AObserver, initial P
 			// physical identity inward rather than reusing the copied link.
 			selectedLower = sourceLower
 		default:
-			return Phase0AExpressionRecord{}, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "unknown expression kind"}
+			return Phase0AExpressionRecord{}, 0, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "unknown expression kind"}
 		}
 	}
-	return Phase0AExpressionRecord{}, &Phase0AError{Kind: Phase0AErrorCyclicReference, Namespace: observer.run, Detail: "factor expression step cap"}
+	return Phase0AExpressionRecord{}, 0, &Phase0AError{Kind: Phase0AErrorCyclicReference, Namespace: observer.run, Detail: "factor expression step cap"}
+}
+
+func phase0AResolveAcceptedExpressionLocked(observer *phase0AObserver, initial Phase0AExpressionID, selectedLower LinkID) (Phase0AExpressionRecord, error) {
+	direct, _, err := phase0AResolveAcceptedExpressionAndLowerLocked(observer, initial, selectedLower)
+	return direct, err
 }
 
 func phase0AValidateDirectOccurrenceLocked(observer *phase0AObserver, expression Phase0AExpressionRecord) error {
@@ -1084,9 +1094,12 @@ func phase0AValidateSelectionCapabilityLocked(observer *phase0AObserver, capabil
 	return capability.head, nil
 }
 
-// ObservePhase0AAcceptedSelection freezes one exact accepted physical spine.
+// ObservePhase0AAcceptedSelection freezes one exact accepted physical spine
+// and reconstructs its raw compact occurrence tree from construction identity.
 // It is called only after the production diagnostic scheduler has proved one
-// accepted head and one derivation. No selected-visible chain is claimed here.
+// accepted head and one derivation. Public visibility/folding remains out of
+// scope: the raw proof is validated against compact records only after it is
+// built from occurrence, edge, route, link, and migration identities.
 func (core *Core) ObservePhase0AAcceptedSelection(capability Phase0AAcceptedSelectionCapability) error {
 	phase0AObservers.Lock()
 	defer phase0AObservers.Unlock()
@@ -1131,9 +1144,22 @@ func (core *Core) ObservePhase0AAcceptedSelection(capability Phase0AAcceptedSele
 	if uint64(len(got.links)) > math.MaxUint32 {
 		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Namespace: observer.run, Detail: "accepted physical spine width"})
 	}
+	selectedCount, selectedDepth, err := phase0ACountSelectedCompactOccurrencesLocked(core, observer, got.payloads)
+	if err != nil {
+		return phase0AStickyLocked(observer, err.(*Phase0AError))
+	}
+	transientBytes, err := phase0APreflightSelectedIndexLocked(core, observer, uint64(len(got.links)), selectedCount, selectedDepth)
+	if err != nil {
+		return phase0AStickyLocked(observer, err.(*Phase0AError))
+	}
+	phase0AObservers.bytes += transientBytes
+	defer func() {
+		phase0AObservers.bytes -= transientBytes
+	}()
+	selectedIndex := phase0ABuildSelectedIndex(observer)
 	resolved := make([]Phase0AAcceptedLinkRecord, len(got.links))
 	for index, link := range got.links {
-		bound, err := phase0AExactBindingLocked(observer, link)
+		bound, err := phase0ASelectedLookupError(observer, selectedIndex.bindings[link], "accepted root binding is unavailable or non-unique")
 		if err != nil {
 			return phase0AStickyLocked(observer, err.(*Phase0AError))
 		}
@@ -1141,24 +1167,35 @@ func (core *Core) ObservePhase0AAcceptedSelection(capability Phase0AAcceptedSele
 		if index > 0 {
 			selectedLower = got.links[index-1]
 		}
-		direct, err := phase0AResolveAcceptedExpressionLocked(observer, bound, selectedLower)
+		direct, resolvedLower, err := phase0AResolveSelectedExpressionLocked(core, observer, selectedIndex, bound, selectedLower)
 		if err != nil {
 			return phase0AStickyLocked(observer, err.(*Phase0AError))
 		}
 		if err := phase0AValidateDirectOccurrenceLocked(observer, direct); err != nil {
 			return phase0AStickyLocked(observer, err.(*Phase0AError))
 		}
+		if err := phase0AValidateResolvedLowerLocked(core, observer, direct, resolvedLower); err != nil {
+			return phase0AStickyLocked(observer, err.(*Phase0AError))
+		}
 		resolved[index] = Phase0AAcceptedLinkRecord{
 			Ordinal: uint32(index), Link: link, Payload: got.payloads[index], BoundExpression: bound,
-			ResolvedExpression: direct.ID, Occurrence: direct.Occurrence, Edge: direct.Edge,
+			ResolvedExpression: direct.ID, ResolvedLowerLink: resolvedLower, Occurrence: direct.Occurrence, Edge: direct.Edge,
 		}
 	}
-	if err := phase0AReserveRouteRowsLocked(observer, 0, 0, 0, 1, uint64(len(resolved))); err != nil {
+	generation := observer.route.nextSelection + 1
+	selectedTree, selectedOccurrences, err := phase0ABuildSelectedOccurrenceSnapshotLocked(core, observer, selectedIndex, generation, resolved)
+	if err != nil {
+		return phase0AStickyLocked(observer, err.(*Phase0AError))
+	}
+	if uint64(len(selectedOccurrences)) != selectedCount || uint64(selectedTree.MaxDepth) != selectedDepth {
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCrossBoundary, Namespace: observer.run, Detail: "selected identity tree disagrees with compact preflight census"})
+	}
+	if err := phase0AReserveAcceptedSelectionLocked(observer, uint64(len(resolved)), uint64(len(selectedOccurrences))); err != nil {
 		return err
 	}
-	observer.route.nextSelection++
-	generation := observer.route.nextSelection
+	observer.route.nextSelection = generation
 	first := uint64(len(observer.route.acceptedLinks))
+	selectedTree.FirstOccurrence = uint64(len(observer.route.selectedOccurrences))
 	observer.route.acceptedSelections = append(observer.route.acceptedSelections, Phase0AAcceptedSelectionRecord{
 		Namespace: observer.run, Generation: generation, Capability: capability.serial,
 		Head: head.Node, FirstLink: first, LinkCount: uint32(len(resolved)),
@@ -1167,5 +1204,7 @@ func (core *Core) ObservePhase0AAcceptedSelection(capability Phase0AAcceptedSele
 		resolved[index].Namespace, resolved[index].Generation = observer.run, generation
 		observer.route.acceptedLinks = append(observer.route.acceptedLinks, resolved[index])
 	}
+	observer.route.selectedTrees = append(observer.route.selectedTrees, selectedTree)
+	observer.route.selectedOccurrences = append(observer.route.selectedOccurrences, selectedOccurrences...)
 	return nil
 }

@@ -192,6 +192,8 @@ type Phase0AProofSnapshot struct {
 	SelectionCapabilities   []Phase0ASelectionCapabilityRecord
 	AcceptedSelections      []Phase0AAcceptedSelectionRecord
 	AcceptedLinks           []Phase0AAcceptedLinkRecord
+	SelectedOccurrences     []Phase0ASelectedOccurrenceRecord
+	SelectedOccurrenceTrees []Phase0ASelectedOccurrenceSnapshot
 	Frames                  []Phase0ATransactionFrame
 	OccurrenceCount         uint64
 	OccurrenceBytes         uint64
@@ -226,6 +228,7 @@ const (
 	Phase0AErrorStaleReference      Phase0AErrorKind = "stale_reference"
 	Phase0AErrorRolledBackReference Phase0AErrorKind = "rolled_back_reference"
 	Phase0AErrorCyclicReference     Phase0AErrorKind = "cyclic_reference"
+	Phase0AErrorCrossBoundary       Phase0AErrorKind = "cross_boundary_identity"
 )
 
 type Phase0ACounter string
@@ -281,6 +284,10 @@ type Phase0AObserverLimits struct {
 	MaxSelectionCapabilities   uint64
 	MaxAcceptedSelections      uint64
 	MaxAcceptedLinks           uint64
+	MaxSelectedOccurrences     uint64
+	MaxSelectedDepth           uint64
+	MaxSelectedIndexEntries    uint64
+	MaxSelectedIndexBytes      uint64
 }
 
 const (
@@ -1087,6 +1094,8 @@ func Phase0AObserverProof(core *Core, namespace CoreRunNamespace) (Phase0AProofS
 	snapshot.SelectionCapabilities = append(snapshot.SelectionCapabilities, observer.route.capabilities...)
 	snapshot.AcceptedSelections = append(snapshot.AcceptedSelections, observer.route.acceptedSelections...)
 	snapshot.AcceptedLinks = append(snapshot.AcceptedLinks, observer.route.acceptedLinks...)
+	snapshot.SelectedOccurrences = append(snapshot.SelectedOccurrences, observer.route.selectedOccurrences...)
+	snapshot.SelectedOccurrenceTrees = append(snapshot.SelectedOccurrenceTrees, observer.route.selectedTrees...)
 	snapshot.Frames = append(snapshot.Frames, observer.frames...)
 	if observer.firstPoison != nil {
 		copy := *observer.firstPoison
