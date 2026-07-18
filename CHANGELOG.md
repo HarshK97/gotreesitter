@@ -9,6 +9,12 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Bypass general graph enumeration when a compact-parser reduction follows a
+  single-link stack path, while retaining the existing enumerator for branched
+  paths and preserving its resource-limit checks. On the pinned quiet host,
+  the authenticated `query_compile` candidate improves total time by 2.51%
+  with unchanged parser work, bytes, and allocations. The compact route
+  remains build-tagged and diagnostic-only.
 - Skip redundant production-metadata remapping while materializing a compact
   tree whose terminals and reductions were already authenticated at
   construction. Generic diagnostic publication retains the full validation

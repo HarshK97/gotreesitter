@@ -2424,6 +2424,15 @@ func (c *Core) popPaths(head NodeID, childCount int) (out []popPath, err error) 
 		path.structuralEnd = n.byteOffset
 		return scratch.paths, nil
 	}
+	if complete, err := c.popSingleLinkPath(head, childCount, scratch); err != nil {
+		return nil, err
+	} else if complete {
+		return scratch.paths, nil
+	}
+	// The fast probe may have accumulated a partial reverse path before it met
+	// an ambiguous node. Restart the authenticated generic traversal from the
+	// original head so enumeration order and every cap remain unchanged.
+	scratch.begin()
 	var walk func(NodeID, int, bool, uint32, int) error
 	walk = func(id NodeID, remaining int, peelingTrailing bool, structuralEnd uint32, depth int) error {
 		n, err := c.node(id)
@@ -2515,6 +2524,98 @@ func (c *Core) popPaths(head NodeID, childCount int) (out []popPath, err error) 
 		return nil, err
 	}
 	return scratch.paths, nil
+}
+
+// popSingleLinkPath handles the common clean GSS shape without recursive
+// dispatch, adjacency copies, or depth-indexed link-frame traffic. It returns
+// complete=false without publishing a path when any visited node branches;
+// the caller then restarts the existing generic enumerator from the original
+// head. Scratch may contain a partial reverse path on that decline.
+func (c *Core) popSingleLinkPath(head NodeID, childCount int, scratch *popEnumerationScratch) (complete bool, err error) {
+	id := head
+	remaining := childCount
+	peelingTrailing := true
+	structuralEnd := uint32(0)
+	for {
+		n, err := c.node(id)
+		if err != nil {
+			return false, err
+		}
+		count := uint64(n.linkCount)
+		if count > uint64(c.limits.MaxLinks) || count > uint64(c.limits.MaxLinksPerBoundary) {
+			return false, errors.New("parser-core phase zero: recorded link count exceeds configured limit")
+		}
+		if count > uint64(len(c.links)) {
+			return false, errors.New("parser-core phase zero: recorded link count exceeds link arena")
+		}
+		if n.linkCount != 1 {
+			return false, nil
+		}
+		linkID := LinkID(n.firstLink)
+		if linkID == 0 {
+			return false, errors.New("parser-core phase zero: adjacency shorter than recorded link count")
+		}
+		if uint64(linkID) > uint64(len(c.links)) {
+			return false, errors.New("parser-core phase zero: link adjacency out of range")
+		}
+		link := c.links[linkID-1]
+		if link.next != 0 {
+			return false, errors.New("parser-core phase zero: adjacency exceeds recorded link count or cycles")
+		}
+		if link.prev == 0 || link.prev >= id {
+			return false, errors.New("parser-core phase zero: graph predecessor does not decrease")
+		}
+		payload, err := c.subtree(link.payload)
+		if err != nil {
+			return false, err
+		}
+		linkOrder := ForkOrder{Value: link.order, Present: link.hasOrder()}
+		if payload.extra && peelingTrailing {
+			scratch.trailing = append(scratch.trailing, pathPayload{payload: link.payload, scoreDelta: link.scoreDelta, order: linkOrder})
+			id = link.prev
+			continue
+		}
+		scratch.rev = append(scratch.rev, link.payload)
+		scratch.revScores = append(scratch.revScores, link.scoreDelta)
+		scratch.revOrders = append(scratch.revOrders, linkOrder)
+		if payload.extra {
+			id = link.prev
+			continue
+		}
+		if peelingTrailing {
+			structuralEnd = payload.endByte
+			peelingTrailing = false
+		}
+		remaining--
+		if remaining != 0 {
+			id = link.prev
+			continue
+		}
+		if uint64(len(scratch.paths)) >= c.limits.MaxPopPaths {
+			return false, errors.New("parser-core phase zero: pop enumeration cap")
+		}
+		path := scratch.nextPath()
+		path.prev = link.prev
+		path.startByte = payload.startByte
+		path.structuralEnd = structuralEnd
+		for index := len(scratch.rev) - 1; index >= 0; index-- {
+			path.children = append(path.children, scratch.rev[index])
+			path.score, err = checkedAddScore(path.score, scratch.revScores[index])
+			if err != nil {
+				return false, err
+			}
+			if scratch.revOrders[index].Present {
+				path.order = scratch.revOrders[index]
+			}
+		}
+		for index := len(scratch.trailing) - 1; index >= 0; index-- {
+			path.trailing = append(path.trailing, scratch.trailing[index])
+			if scratch.trailing[index].order.Present {
+				path.order = scratch.trailing[index].order
+			}
+		}
+		return true, nil
+	}
 }
 
 // Derivations enumerates the exact alternatives represented by head.

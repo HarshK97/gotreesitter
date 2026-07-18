@@ -80,6 +80,86 @@ func newPopScratchBranchFixture(t *testing.T) (*Core, Head) {
 	return compact, head
 }
 
+func TestPopSingleLinkPathPreservesExtrasScoresOrderAndExtents(t *testing.T) {
+	compact, err := New(&fakeTable{}, Limits{MaxPopPaths: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := seed
+	steps := []struct {
+		state StateID
+		token Token
+		meta  pathMeta
+	}{
+		{state: 2, token: Token{Symbol: 10, StartByte: 0, EndByte: 1}, meta: pathMeta{ScoreDelta: 1, BranchOrder: ForkOrder{Value: 10, Present: true}}},
+		{state: 2, token: Token{Symbol: 11, StartByte: 1, EndByte: 2, Extra: true}, meta: pathMeta{ScoreDelta: 2, BranchOrder: ForkOrder{Value: 20, Present: true}}},
+		{state: 3, token: Token{Symbol: 12, StartByte: 2, EndByte: 3}, meta: pathMeta{ScoreDelta: 3, BranchOrder: ForkOrder{Value: 30, Present: true}}},
+		{state: 3, token: Token{Symbol: 13, StartByte: 3, EndByte: 4, Extra: true}, meta: pathMeta{ScoreDelta: 4, BranchOrder: ForkOrder{Value: 40, Present: true}}},
+	}
+	for _, step := range steps {
+		head, err = compact.appendDiagnosticPayload(head, step.state, step.token, step.meta)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	paths, err := compact.popPaths(head.Node, 2)
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("single-link paths=%+v err=%v", paths, err)
+	}
+	path := paths[0]
+	if path.prev != seed.Node || !slices.Equal(path.children, []SubtreeID{1, 2, 3}) || len(path.trailing) != 1 || path.trailing[0].payload != 4 || path.trailing[0].scoreDelta != 4 || path.startByte != 0 || path.structuralEnd != 3 || path.score != 6 || !path.order.Present || path.order.Value != 40 {
+		t.Fatalf("single-link path drifted: %+v", path)
+	}
+	if len(compact.popScratch.linkFrames) != 0 {
+		t.Fatalf("single-link fast path touched generic adjacency frames: %+v", compact.popScratch.linkFrames)
+	}
+}
+
+func TestPopSingleLinkPathPreservesAdjacencyPreflightFailures(t *testing.T) {
+	compact, err := New(&fakeTable{}, Limits{MaxLinks: 8, MaxLinksPerBoundary: 8, MaxPopPaths: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := compact.appendDiagnosticPayload(seed, 2, Token{Symbol: 10, StartByte: 0, EndByte: 1}, pathMeta{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := compact.node(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := *node
+
+	t.Run("lowered per-boundary cap", func(t *testing.T) {
+		compact.limits.MaxLinksPerBoundary = 0
+		defer func() { compact.limits.MaxLinksPerBoundary = 8 }()
+		if _, err := compact.popPaths(head.Node, 1); err == nil || !strings.Contains(err.Error(), "recorded link count exceeds configured limit") {
+			t.Fatalf("lowered-cap error=%v", err)
+		}
+	})
+	t.Run("corrupt recorded count beyond arena", func(t *testing.T) {
+		node.linkCount = uint32(len(compact.links) + 1)
+		compact.limits.MaxLinks = node.linkCount
+		compact.limits.MaxLinksPerBoundary = node.linkCount
+		defer func() {
+			*node = original
+			compact.limits.MaxLinks = 8
+			compact.limits.MaxLinksPerBoundary = 8
+		}()
+		if _, err := compact.popPaths(head.Node, 1); err == nil || !strings.Contains(err.Error(), "recorded link count exceeds link arena") {
+			t.Fatalf("arena-count error=%v", err)
+		}
+	})
+}
+
 func TestPopScratchPathsAreIndependentWithinOneEnumeration(t *testing.T) {
 	compact, head := newPopScratchBranchFixture(t)
 	paths, err := compact.popPaths(head.Node, 2)
