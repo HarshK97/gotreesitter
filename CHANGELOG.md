@@ -7,15 +7,17 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.41.0] - 2026-07-18
+
 ### Performance
 
 - Run the authenticated fresh compact scheduler as one fail-closed session,
   resetting the entire compact core after any error or panic instead of taking
-  a rollback checkpoint for every successful operation. On the pinned quiet
-  host, the paired four-fixture candidate improves from 3.362496x to 3.118130x
-  static C by equal-fixture geomean (7.27%), with every fixture faster by
-  6.69-8.46%, exact static-C admission, and zero fallback. The compact route
-  remains build-tagged and diagnostic-only.
+  a rollback checkpoint for every successful operation. Its clean pinned-host
+  publication measures 3.118130x static C by equal-fixture geomean, 3.169740x
+  by fixed-suite sum, and 3.185522x on the worst fixture, with exact static-C
+  admission and zero fallback. The compact route remains build-tagged and
+  diagnostic-only.
 - Bypass general graph enumeration when a compact-parser reduction follows a
   single-link stack path, while retaining the existing enumerator for branched
   paths and preserving its resource-limit checks. On the pinned quiet host,
@@ -2890,7 +2892,10 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.38.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.41.0...HEAD
+[0.41.0]: https://github.com/odvcencio/gotreesitter/compare/v0.40.0...v0.41.0
+[0.40.0]: https://github.com/odvcencio/gotreesitter/compare/v0.39.0...v0.40.0
+[0.39.0]: https://github.com/odvcencio/gotreesitter/compare/v0.38.0...v0.39.0
 [0.38.0]: https://github.com/odvcencio/gotreesitter/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/odvcencio/gotreesitter/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/odvcencio/gotreesitter/compare/v0.34.0...v0.36.0
