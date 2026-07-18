@@ -246,6 +246,9 @@ func (c *Core) reduceOutputsClassifiedIntoUncheckpointed(dst []ReductionOutput, 
 		return nil, errors.New("parser-core phase zero: reduction has no exact pop path")
 	}
 	phase0ABeginReductionConstruction(c, uint64(len(paths)))
+	if phase0AEnabled {
+		phase0AObservePopRoutes(c, boundary.head.Node, int(act.ChildCount), paths)
+	}
 	c.addWork(&c.work.Reductions, 1)
 	c.addWork(&c.work.ReductionPopRequests, 1)
 	c.addWork(&c.work.EmittedPopPaths, uint64(len(paths)))

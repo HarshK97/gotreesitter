@@ -189,7 +189,7 @@ func TestPhase0AReductionEventScratchCapFailsBeforeRecords(t *testing.T) {
 	core, head := newSharedReductionFixture(t, true)
 	limits := phase0AReductionLimits()
 	firstPathBytes := phase0AEventRecordBytes + phase0AOccurrenceRecordBytes + phase0AEdgeRecordBytes + phase0AReductionRecordBytes + phase0AReductionEventBytes
-	limits.MaxBytes = phase0AFrameRecordBytes + firstPathBytes - 1
+	limits.MaxBytes = phase0AFrameRecordBytes + phase0ASidecarFrameBytes + phase0ARouteFrameBytes + firstPathBytes - 1
 	run := phase0ABeginShiftProvenanceRun(t, core, limits)
 	frontier, parseErr := core.Reduce(head, 9, 0, ForkOrder{})
 	if parseErr != nil || len(frontier) != 2 {
@@ -202,7 +202,7 @@ func TestPhase0AReductionEventScratchCapFailsBeforeRecords(t *testing.T) {
 	}
 	phase0AObservers.Lock()
 	observer := phase0AObservers.byCore[core]
-	if observer.nextEvent != 0 || observer.nextEdge != 0 || phase0AObservers.records != 2 || phase0AObservers.bytes != phase0AFrameRecordBytes+phase0ASidecarFrameBytes {
+	if observer.nextEvent != 0 || observer.nextEdge != 0 || phase0AObservers.records != 3 || phase0AObservers.bytes != phase0AFrameRecordBytes+phase0ASidecarFrameBytes+phase0ARouteFrameBytes {
 		t.Errorf("cap advanced observer counters event=%d edge=%d records=%d bytes=%d", observer.nextEvent, observer.nextEdge, phase0AObservers.records, phase0AObservers.bytes)
 	}
 	phase0AObservers.Unlock()

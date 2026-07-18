@@ -1905,6 +1905,15 @@ func (s *diagnosticParserCoreGenericScheduler) completeAcceptance() error {
 	if len(paths) != 1 {
 		return s.finish(DiagnosticParserCoreAccept, "generic scheduler requires one exact accepted derivation", 0)
 	}
+	if core.Phase0AEnabled {
+		capability, err := core.CapturePhase0ASelectionCapability(s.compact, s.headers[0].head)
+		if err != nil {
+			return err
+		}
+		if err := core.ObservePhase0AAcceptedSelection(s.compact, capability); err != nil {
+			return err
+		}
+	}
 	stats, err := s.compact.Stats(s.headers[0].head)
 	if err != nil {
 		return err

@@ -332,6 +332,24 @@ func TestPhase0AFactorChoiceBindsExactLowerRoutes(t *testing.T) {
 	if !bound {
 		t.Fatalf("factor expression not bound to merged outer link: factor=%+v bindings=%+v", factor, proof.Bindings)
 	}
+	phase0AObservers.Lock()
+	observer := phase0AObservers.byCore[core]
+	for _, route := range proof.SelectorRoutes {
+		resolved, resolveErr := phase0AResolveAcceptedExpressionLocked(observer, factor.ID, route.SelectedLowerLink)
+		if resolveErr != nil {
+			phase0AObservers.Unlock()
+			t.Fatalf("resolve factor route %+v: %v", route, resolveErr)
+		}
+		want := factor.Left
+		if route.Branch == Phase0ASelectorRight {
+			want = factor.Right
+		}
+		if resolved.ID != want || resolved.Kind != Phase0AExpressionDirect {
+			phase0AObservers.Unlock()
+			t.Fatalf("factor route %+v resolved=%+v want=%d", route, resolved, want)
+		}
+	}
+	phase0AObservers.Unlock()
 }
 
 func TestPhase0APhysicalLinkReuseKeepsRollbackTombstone(t *testing.T) {

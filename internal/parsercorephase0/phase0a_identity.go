@@ -9,7 +9,27 @@ import (
 	"unsafe"
 )
 
-const phase0AEnabled = true
+const (
+	phase0AEnabled = true
+	Phase0AEnabled = true
+)
+
+// Phase0AAcceptedSelectionCapability is an opaque, run-scoped authentication
+// token for one captured current compact head.
+type Phase0AAcceptedSelectionCapability struct {
+	coreInstance  uint64
+	runGeneration uint64
+	serial        uint64
+	head          Head
+}
+
+func CapturePhase0ASelectionCapability(core *Core, head Head) (Phase0AAcceptedSelectionCapability, error) {
+	return core.CapturePhase0ASelectionCapability(head)
+}
+
+func ObservePhase0AAcceptedSelection(core *Core, capability Phase0AAcceptedSelectionCapability) error {
+	return core.ObservePhase0AAcceptedSelection(capability)
+}
 
 type CoreRunNamespace struct {
 	CoreInstance  uint64
@@ -129,53 +149,65 @@ type Phase0AProofSnapshot struct {
 	Namespace CoreRunNamespace
 	// Mutations includes explicit scaffold rows. Semantic construction proof
 	// must exclude Phase0AMutationScaffoldEdge.
-	Mutations            []Phase0AMutationRecord
-	ReductionOccurrences []Phase0AReductionOccurrenceRecord
-	Candidates           []Phase0ACandidateRecord
-	Expressions          []Phase0AExpressionRecord
-	Bindings             []Phase0ALinkBindingRecord
-	Transitions          []Phase0ATransitionRecord
-	Selectors            []Phase0ASelectorRecord
-	SelectorRoutes       []Phase0ASelectorRouteRecord
-	Frames               []Phase0ATransactionFrame
-	OccurrenceCount      uint64
-	OccurrenceBytes      uint64
-	FirstPoison          *Phase0APoisonRecord
-	Failure              *Phase0AError
+	Mutations             []Phase0AMutationRecord
+	ReductionOccurrences  []Phase0AReductionOccurrenceRecord
+	Candidates            []Phase0ACandidateRecord
+	Expressions           []Phase0AExpressionRecord
+	Bindings              []Phase0ALinkBindingRecord
+	Transitions           []Phase0ATransitionRecord
+	Selectors             []Phase0ASelectorRecord
+	SelectorRoutes        []Phase0ASelectorRouteRecord
+	PopRoutes             []Phase0APopRouteRecord
+	PopRouteLinks         []Phase0APopRouteLinkRecord
+	SelectionCapabilities []Phase0ASelectionCapabilityRecord
+	AcceptedSelections    []Phase0AAcceptedSelectionRecord
+	AcceptedLinks         []Phase0AAcceptedLinkRecord
+	Frames                []Phase0ATransactionFrame
+	OccurrenceCount       uint64
+	OccurrenceBytes       uint64
+	FirstPoison           *Phase0APoisonRecord
+	Failure               *Phase0AError
 }
 
 type Phase0AErrorKind string
 
 const (
-	Phase0AErrorCounterOverflow   Phase0AErrorKind = "counter_overflow"
-	Phase0AErrorUnregisteredCore  Phase0AErrorKind = "unregistered_core"
-	Phase0AErrorRunActive         Phase0AErrorKind = "run_active"
-	Phase0AErrorStaleNamespace    Phase0AErrorKind = "stale_namespace"
-	Phase0AErrorInvalidEvent      Phase0AErrorKind = "invalid_event"
-	Phase0AErrorInvalidOccurrence Phase0AErrorKind = "invalid_occurrence"
-	Phase0AErrorSessionInactive   Phase0AErrorKind = "session_inactive"
-	Phase0AErrorSessionActive     Phase0AErrorKind = "session_active"
-	Phase0AErrorSessionHasRuns    Phase0AErrorKind = "session_has_active_runs"
-	Phase0AErrorCoreCap           Phase0AErrorKind = "core_cap"
-	Phase0AErrorRecordCap         Phase0AErrorKind = "record_cap"
-	Phase0AErrorByteCap           Phase0AErrorKind = "byte_cap"
-	Phase0AErrorFrameCap          Phase0AErrorKind = "frame_cap"
-	Phase0AErrorMutationCap       Phase0AErrorKind = "mutation_cap"
-	Phase0AErrorOccurrenceCap     Phase0AErrorKind = "occurrence_cap"
-	Phase0AErrorOccurrenceByteCap Phase0AErrorKind = "occurrence_byte_cap"
-	Phase0AErrorTransactionProof  Phase0AErrorKind = "transaction_proof"
-	Phase0AErrorAttemptUnproven   Phase0AErrorKind = "attempt_unproven"
-	Phase0AErrorUnsupportedProof  Phase0AErrorKind = "unsupported_proof"
+	Phase0AErrorCounterOverflow     Phase0AErrorKind = "counter_overflow"
+	Phase0AErrorUnregisteredCore    Phase0AErrorKind = "unregistered_core"
+	Phase0AErrorRunActive           Phase0AErrorKind = "run_active"
+	Phase0AErrorStaleNamespace      Phase0AErrorKind = "stale_namespace"
+	Phase0AErrorInvalidEvent        Phase0AErrorKind = "invalid_event"
+	Phase0AErrorInvalidOccurrence   Phase0AErrorKind = "invalid_occurrence"
+	Phase0AErrorSessionInactive     Phase0AErrorKind = "session_inactive"
+	Phase0AErrorSessionActive       Phase0AErrorKind = "session_active"
+	Phase0AErrorSessionHasRuns      Phase0AErrorKind = "session_has_active_runs"
+	Phase0AErrorCoreCap             Phase0AErrorKind = "core_cap"
+	Phase0AErrorRecordCap           Phase0AErrorKind = "record_cap"
+	Phase0AErrorByteCap             Phase0AErrorKind = "byte_cap"
+	Phase0AErrorFrameCap            Phase0AErrorKind = "frame_cap"
+	Phase0AErrorMutationCap         Phase0AErrorKind = "mutation_cap"
+	Phase0AErrorOccurrenceCap       Phase0AErrorKind = "occurrence_cap"
+	Phase0AErrorOccurrenceByteCap   Phase0AErrorKind = "occurrence_byte_cap"
+	Phase0AErrorTransactionProof    Phase0AErrorKind = "transaction_proof"
+	Phase0AErrorAttemptUnproven     Phase0AErrorKind = "attempt_unproven"
+	Phase0AErrorUnsupportedProof    Phase0AErrorKind = "unsupported_proof"
+	Phase0AErrorMissingReference    Phase0AErrorKind = "missing_reference"
+	Phase0AErrorAmbiguousReference  Phase0AErrorKind = "ambiguous_reference"
+	Phase0AErrorStaleReference      Phase0AErrorKind = "stale_reference"
+	Phase0AErrorRolledBackReference Phase0AErrorKind = "rolled_back_reference"
+	Phase0AErrorCyclicReference     Phase0AErrorKind = "cyclic_reference"
 )
 
 type Phase0ACounter string
 
 const (
-	Phase0ACounterCoreInstance   Phase0ACounter = "core_instance"
-	Phase0ACounterRunGeneration  Phase0ACounter = "run_generation"
-	Phase0ACounterEventSerial    Phase0ACounter = "event_serial"
-	Phase0ACounterEdgeSerial     Phase0ACounter = "edge_serial"
-	Phase0ACounterOccurrenceSlot Phase0ACounter = "occurrence_slot"
+	Phase0ACounterCoreInstance                Phase0ACounter = "core_instance"
+	Phase0ACounterRunGeneration               Phase0ACounter = "run_generation"
+	Phase0ACounterEventSerial                 Phase0ACounter = "event_serial"
+	Phase0ACounterEdgeSerial                  Phase0ACounter = "edge_serial"
+	Phase0ACounterOccurrenceSlot              Phase0ACounter = "occurrence_slot"
+	Phase0ACounterSelectionCapability         Phase0ACounter = "selection_capability"
+	Phase0ACounterAcceptedSelectionGeneration Phase0ACounter = "accepted_selection_generation"
 )
 
 type Phase0AError struct {
@@ -200,19 +232,24 @@ func (e *Phase0AError) Error() string {
 
 // Phase0AObserverLimits are fixed for one explicit observer session.
 type Phase0AObserverLimits struct {
-	MaxCores           uint64
-	MaxRecords         uint64
-	MaxBytes           uint64
-	MaxFrames          uint64
-	MaxMutations       uint64
-	MaxOccurrences     uint64
-	MaxOccurrenceBytes uint64
-	MaxCandidates      uint64
-	MaxExpressions     uint64
-	MaxBindings        uint64
-	MaxTransitions     uint64
-	MaxSelectors       uint64
-	MaxSelectorRoutes  uint64
+	MaxCores                 uint64
+	MaxRecords               uint64
+	MaxBytes                 uint64
+	MaxFrames                uint64
+	MaxMutations             uint64
+	MaxOccurrences           uint64
+	MaxOccurrenceBytes       uint64
+	MaxCandidates            uint64
+	MaxExpressions           uint64
+	MaxBindings              uint64
+	MaxTransitions           uint64
+	MaxSelectors             uint64
+	MaxSelectorRoutes        uint64
+	MaxPopRoutes             uint64
+	MaxPopRouteLinks         uint64
+	MaxSelectionCapabilities uint64
+	MaxAcceptedSelections    uint64
+	MaxAcceptedLinks         uint64
 }
 
 const (
@@ -247,6 +284,7 @@ type phase0AObserver struct {
 	reduction            phase0AReductionConstruction
 	reductionOccurrences []Phase0AReductionOccurrenceRecord
 	factor               phase0AFactorObserver
+	route                phase0ARouteObserver
 }
 
 type phase0AReductionConstruction struct {
@@ -255,6 +293,9 @@ type phase0AReductionConstruction struct {
 	expected    uint32
 	observed    uint32
 	events      []phase0AReductionEvent
+	routeStart  uint64
+	routeCount  uint32
+	routeProof  bool
 }
 
 type phase0AReductionEvent struct {
@@ -331,6 +372,7 @@ func phase0AInvalidateCore(core *Core) {
 		observer.reduction = phase0AReductionConstruction{}
 		observer.reductionOccurrences = nil
 		observer.factor = phase0AFactorObserver{}
+		observer.route = phase0ARouteObserver{}
 	}
 }
 
@@ -387,6 +429,7 @@ func (c *Core) BeginRun() (CoreRunNamespace, error) {
 	observer.reduction = phase0AReductionConstruction{}
 	observer.reductionOccurrences = nil
 	observer.factor = phase0AFactorObserver{}
+	observer.route = phase0ARouteObserver{}
 	return observer.run, nil
 }
 
@@ -417,6 +460,9 @@ func (c *Core) EndRun(namespace CoreRunNamespace) error {
 	}
 	if len(observer.factor.mergePlans) != 0 || len(observer.factor.replacements) != 0 || len(observer.factor.sidecarFrames) != 0 || len(observer.factor.candidateUndos) != 0 {
 		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: namespace, Detail: "end run with active factor provenance scope"})
+	}
+	if len(observer.route.frames) != 0 {
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: namespace, Detail: "end run with active route provenance scope"})
 	}
 	for _, candidate := range observer.factor.candidates {
 		if !candidate.RolledBack && !candidate.Resolved {
@@ -772,6 +818,9 @@ func phase0AObserveReductionOccurrence(core *Core, payload SubtreeID, predecesso
 		TransactionID: pending.transaction, Occurrence: occurrence, Edge: edge, Boundary: phase0ABoundaryInput(boundary),
 	})
 	phase0AAppendCandidatePrechargedLocked(observer, occurrence, edge, boundary, payload, predecessor)
+	if pending.routeProof && !phase0ABindReductionRouteLocked(observer, pending, occurrence, edge, predecessor) {
+		return
+	}
 	if seen {
 		pending.events[eventIndex] = eventState
 	} else {
@@ -798,6 +847,10 @@ func phase0AFinishReductionConstruction(core *Core) {
 	}
 	if pending.observed != pending.expected {
 		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "successful reduction did not observe every pop path"})
+		return
+	}
+	if pending.routeProof && pending.routeCount != pending.expected {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorMissingReference, Namespace: observer.run, Detail: "successful reduction did not prove every physical pop route"})
 	}
 }
 
@@ -996,6 +1049,11 @@ func Phase0AObserverProof(core *Core, namespace CoreRunNamespace) (Phase0AProofS
 	snapshot.Transitions = append(snapshot.Transitions, observer.factor.transitions...)
 	snapshot.Selectors = append(snapshot.Selectors, observer.factor.selectors...)
 	snapshot.SelectorRoutes = append(snapshot.SelectorRoutes, observer.factor.selectorRoutes...)
+	snapshot.PopRoutes = append(snapshot.PopRoutes, observer.route.popRoutes...)
+	snapshot.PopRouteLinks = append(snapshot.PopRouteLinks, observer.route.popLinks...)
+	snapshot.SelectionCapabilities = append(snapshot.SelectionCapabilities, observer.route.capabilities...)
+	snapshot.AcceptedSelections = append(snapshot.AcceptedSelections, observer.route.acceptedSelections...)
+	snapshot.AcceptedLinks = append(snapshot.AcceptedLinks, observer.route.acceptedLinks...)
 	snapshot.Frames = append(snapshot.Frames, observer.frames...)
 	if observer.firstPoison != nil {
 		copy := *observer.firstPoison
@@ -1028,12 +1086,13 @@ func phase0AObserveMark(core *Core, transaction, parent uint64) {
 		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorFrameCap, Namespace: observer.run})
 		return
 	}
-	if err := phase0AChargeManyLocked(2, phase0AFrameRecordBytes+phase0ASidecarFrameBytes); err != nil {
+	if err := phase0AChargeManyLocked(3, phase0AFrameRecordBytes+phase0ASidecarFrameBytes+phase0ARouteFrameBytes); err != nil {
 		phase0AStickyLocked(observer, err.(*Phase0AError))
 		return
 	}
 	observer.frames = append(observer.frames, Phase0ATransactionFrame{TransactionID: transaction, ParentID: parent, MutationStart: uint64(len(observer.mutations))})
 	phase0AFactorMarkLocked(observer)
+	phase0ARouteMarkLocked(observer)
 }
 
 func phase0AObserveRollback(core *Core, transaction uint64, cause Phase0ARollbackCause) {
@@ -1053,6 +1112,7 @@ func phase0AObserveRollback(core *Core, transaction uint64, cause Phase0ARollbac
 			}
 			phase0ATombstoneReductionOccurrencesLocked(observer, transaction, cause)
 			phase0AFactorRollbackLocked(observer, transaction, cause)
+			phase0ARouteRollbackLocked(observer, transaction, cause)
 			if observer.reduction.active && observer.reduction.transaction == transaction {
 				observer.reduction = phase0AReductionConstruction{}
 			}
@@ -1072,6 +1132,7 @@ func phase0AObserveRollback(core *Core, transaction uint64, cause Phase0ARollbac
 	}
 	phase0ATombstoneReductionOccurrencesLocked(observer, transaction, cause)
 	phase0AFactorRollbackLocked(observer, transaction, cause)
+	phase0ARouteRollbackLocked(observer, transaction, cause)
 	if observer.reduction.active && observer.reduction.transaction == transaction {
 		observer.reduction = phase0AReductionConstruction{}
 	}
@@ -1104,6 +1165,7 @@ func phase0AObserveCommit(core *Core, transaction uint64) {
 				observer.reduction = phase0AReductionConstruction{}
 			}
 			phase0AFactorCommitLocked(observer)
+			phase0ARouteCommitLocked(observer)
 			observer.frames = observer.frames[:len(observer.frames)-1]
 		}
 		return
@@ -1123,6 +1185,7 @@ func phase0AObserveCommit(core *Core, transaction uint64) {
 		}
 	}
 	phase0AFactorCommitLocked(observer)
+	phase0ARouteCommitLocked(observer)
 	observer.frames = observer.frames[:len(observer.frames)-1]
 }
 

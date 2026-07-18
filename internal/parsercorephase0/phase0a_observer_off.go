@@ -2,7 +2,23 @@
 
 package parsercorephase0
 
-const phase0AEnabled = false
+const (
+	phase0AEnabled = false
+	Phase0AEnabled = false
+)
+
+type Phase0AAcceptedSelectionCapability struct {
+	coreInstance  uint64
+	runGeneration uint64
+	serial        uint64
+	head          Head
+}
+
+func CapturePhase0ASelectionCapability(_ *Core, head Head) (Phase0AAcceptedSelectionCapability, error) {
+	return Phase0AAcceptedSelectionCapability{head: head}, nil
+}
+
+func ObservePhase0AAcceptedSelection(*Core, Phase0AAcceptedSelectionCapability) error { return nil }
 
 type Phase0ARollbackCause uint8
 
@@ -46,6 +62,7 @@ func phase0AObserveTerminalShift(*Core, SubtreeID, NodeID, StateID, uint32, bool
 func phase0AObserveTerminalCohortShift(*Core, SubtreeID, []ClassifiedBoundary, []StateID, uint32, bool) {
 }
 func phase0ABeginReductionConstruction(*Core, uint64)                                               {}
+func phase0AObservePopRoutes(*Core, NodeID, int, []popPath)                                         {}
 func phase0AObserveReductionOccurrence(*Core, SubtreeID, NodeID, boundaryKey, bool)                 {}
 func phase0AFinishReductionConstruction(*Core)                                                      {}
 func phase0AObserveCandidateDrop(*Core, boundaryKey, linkInput, NodeID, int, phase0ATransitionKind) {}
