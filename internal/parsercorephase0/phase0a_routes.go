@@ -105,6 +105,7 @@ type phase0ARouteObserver struct {
 	acceptedLinks       []Phase0AAcceptedLinkRecord
 	selectedTrees       []Phase0ASelectedOccurrenceSnapshot
 	selectedOccurrences []Phase0ASelectedOccurrenceRecord
+	selectedStates      []phase0ASelectedOccurrenceState
 	frames              []phase0ARouteFrame
 	nextPopRoute        uint64
 	nextCapability      uint64
@@ -1190,6 +1191,10 @@ func (core *Core) ObservePhase0AAcceptedSelection(capability Phase0AAcceptedSele
 	if uint64(len(selectedOccurrences)) != selectedCount || uint64(selectedTree.MaxDepth) != selectedDepth {
 		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCrossBoundary, Namespace: observer.run, Detail: "selected identity tree disagrees with compact preflight census"})
 	}
+	selectedStates, err := phase0ASelectedOccurrenceStatesLocked(core, observer, selectedIndex, selectedOccurrences)
+	if err != nil {
+		return phase0AStickyLocked(observer, err.(*Phase0AError))
+	}
 	if err := phase0AReserveAcceptedSelectionLocked(observer, uint64(len(resolved)), uint64(len(selectedOccurrences))); err != nil {
 		return err
 	}
@@ -1206,5 +1211,6 @@ func (core *Core) ObservePhase0AAcceptedSelection(capability Phase0AAcceptedSele
 	}
 	observer.route.selectedTrees = append(observer.route.selectedTrees, selectedTree)
 	observer.route.selectedOccurrences = append(observer.route.selectedOccurrences, selectedOccurrences...)
+	observer.route.selectedStates = append(observer.route.selectedStates, selectedStates...)
 	return nil
 }

@@ -47,6 +47,51 @@ type Phase0ASelectedOccurrenceSnapshot struct {
 	Digest          [sha256.Size]byte
 }
 
+// Phase0ASelectedOccurrenceCapability is an opaque, run-scoped borrowed-view
+// token for one authenticated accepted occurrence tree. Its span is retained
+// privately so callers cannot redirect it onto unrelated observer storage.
+type Phase0ASelectedOccurrenceCapability struct {
+	coreInstance  uint64
+	runGeneration uint64
+	generation    uint64
+	first         uint64
+	count         uint64
+}
+
+// Count reports the authenticated number of selected occurrences without
+// exposing the observer-local backing-window offset.
+func (capability Phase0ASelectedOccurrenceCapability) Count() uint64 { return capability.count }
+
+// Phase0ASelectedOccurrenceView is valid only for the duration of its visitor
+// callback. Payload identifies the compact record at this occurrence; Parent
+// and ChildOrdinal preserve occurrence identity when compact payload IDs are
+// repeated. ParseState is the published target boundary and PreGotoState is
+// the predecessor/top state authenticated at construction. These states prove
+// compact construction provenance only; they do not independently certify
+// C-oracle or folded public-tree state metadata. SubtreeCount is the checked
+// size of this occurrence's contiguous preorder span, allowing a bounded
+// consumer to skip or reverse one occurrence subtree without copying the
+// observer proof.
+type Phase0ASelectedOccurrenceView struct {
+	Ordinal          uint64
+	Parent           uint64
+	ChildOrdinal     uint32
+	Depth            uint32
+	Payload          SubtreeID
+	ConstructionKind Phase0AConstructionKind
+	ChildCount       uint32
+	ParseState       StateID
+	PreGotoState     StateID
+	SubtreeCount     uint64
+	Migrated         bool
+}
+
+type phase0ASelectedOccurrenceState struct {
+	parseState   StateID
+	preGotoState StateID
+	subtreeCount uint64
+}
+
 type phase0ASelectedCountFrame struct {
 	id    SubtreeID
 	next  uint32
@@ -55,11 +100,147 @@ type phase0ASelectedCountFrame struct {
 
 const (
 	phase0ASelectedOccurrenceBytes   = uint64(unsafe.Sizeof(Phase0ASelectedOccurrenceRecord{}))
+	phase0ASelectedStateBytes        = uint64(unsafe.Sizeof(phase0ASelectedOccurrenceState{}))
 	phase0ASelectedTreeBytes         = uint64(unsafe.Sizeof(Phase0ASelectedOccurrenceSnapshot{}))
 	phase0ASelectedHardMaxDepth      = uint64(4096)
 	phase0ASelectedMapEntryBytes     = uint64(192)
 	phase0ASelectedCountScratchBytes = (phase0ASelectedHardMaxDepth + 1) * uint64(unsafe.Sizeof(phase0ASelectedCountFrame{}))
 )
+
+// CapturePhase0ASelectedOccurrenceCapability captures the most recent exact
+// accepted selection in namespace. It exposes no observer rows and remains
+// usable only while that same run generation is active.
+func CapturePhase0ASelectedOccurrenceCapability(core *Core, namespace CoreRunNamespace) (Phase0ASelectedOccurrenceCapability, error) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer, err := phase0AObserverForNamespaceLocked(core, namespace)
+	if err != nil {
+		return Phase0ASelectedOccurrenceCapability{}, err
+	}
+	return capturePhase0ASelectedOccurrenceCapabilityLocked(observer)
+}
+
+// CaptureCurrentPhase0ASelectedOccurrenceCapability captures the current
+// driver-owned run without exposing its namespace. The returned capability
+// still embeds and authenticates the exact run generation.
+func CaptureCurrentPhase0ASelectedOccurrenceCapability(core *Core) (Phase0ASelectedOccurrenceCapability, error) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	if !phase0AObservers.active {
+		return Phase0ASelectedOccurrenceCapability{}, &Phase0AError{Kind: Phase0AErrorSessionInactive}
+	}
+	observer := phase0AObservers.byCore[core]
+	if observer == nil || !observer.active {
+		return Phase0ASelectedOccurrenceCapability{}, &Phase0AError{Kind: Phase0AErrorStaleNamespace, Detail: "selected occurrence run is not active"}
+	}
+	return capturePhase0ASelectedOccurrenceCapabilityLocked(observer)
+}
+
+func capturePhase0ASelectedOccurrenceCapabilityLocked(observer *phase0AObserver) (Phase0ASelectedOccurrenceCapability, error) {
+	namespace := observer.run
+	if observer.failure != nil {
+		return Phase0ASelectedOccurrenceCapability{}, phase0AExistingFailureLocked(observer)
+	}
+	if len(observer.route.selectedTrees) == 0 {
+		return Phase0ASelectedOccurrenceCapability{}, &Phase0AError{Kind: Phase0AErrorMissingReference, Namespace: namespace, Detail: "accepted selection has no selected occurrence tree"}
+	}
+	tree := observer.route.selectedTrees[len(observer.route.selectedTrees)-1]
+	if tree.Namespace != namespace || tree.Generation == 0 || tree.Generation != observer.route.nextSelection {
+		return Phase0ASelectedOccurrenceCapability{}, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: namespace, Detail: "selected occurrence tree generation is stale"}
+	}
+	end, carry := bits.Add64(tree.FirstOccurrence, tree.OccurrenceCount, 0)
+	if carry != 0 || end > uint64(len(observer.route.selectedOccurrences)) || end > uint64(len(observer.route.selectedStates)) {
+		return Phase0ASelectedOccurrenceCapability{}, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: namespace, Detail: "selected occurrence span is unavailable"}
+	}
+	return Phase0ASelectedOccurrenceCapability{
+		coreInstance: namespace.CoreInstance, runGeneration: namespace.RunGeneration,
+		generation: tree.Generation, first: tree.FirstOccurrence, count: tree.OccurrenceCount,
+	}, nil
+}
+
+// VisitPhase0ASelectedOccurrences visits one authenticated occurrence preorder
+// without copying Phase0AObserverProof or exposing observer-owned slices. A
+// bounded run-scoped borrow pins the immutable row/state windows while callbacks
+// run without the global observer lock. Lifecycle mutation rejects the active
+// borrow; read-only Phase0A APIs may be called from callbacks. Polling occurs
+// before the first row, every 256 rows, and before success.
+func VisitPhase0ASelectedOccurrences(
+	core *Core,
+	capability Phase0ASelectedOccurrenceCapability,
+	poll func() error,
+	visit func(Phase0ASelectedOccurrenceView) error,
+) error {
+	if visit == nil {
+		return &Phase0AError{Kind: Phase0AErrorUnsupportedProof, Detail: "selected occurrence visit requires a callback"}
+	}
+	if poll == nil {
+		poll = func() error { return nil }
+	}
+	phase0AObservers.Lock()
+	namespace := CoreRunNamespace{CoreInstance: capability.coreInstance, RunGeneration: capability.runGeneration}
+	observer, err := phase0AObserverForNamespaceLocked(core, namespace)
+	if err != nil {
+		phase0AObservers.Unlock()
+		return err
+	}
+	if capability.generation == 0 || capability.generation > uint64(len(observer.route.selectedTrees)) {
+		phase0AObservers.Unlock()
+		return &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: namespace, Detail: "selected occurrence capability generation is unavailable"}
+	}
+	tree := observer.route.selectedTrees[capability.generation-1]
+	if tree.Namespace != namespace || tree.Generation != capability.generation || tree.FirstOccurrence != capability.first || tree.OccurrenceCount != capability.count {
+		phase0AObservers.Unlock()
+		return &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: namespace, Detail: "selected occurrence capability span is stale"}
+	}
+	limit := phase0ASelectedOccurrenceLimit()
+	if limit == 0 || capability.count > limit {
+		phase0AObservers.Unlock()
+		return &Phase0AError{Kind: Phase0AErrorRecordCap, Namespace: namespace, Detail: "selected occurrence capability exceeds row cap"}
+	}
+	end, carry := bits.Add64(capability.first, capability.count, 0)
+	if carry != 0 || end > uint64(len(observer.route.selectedOccurrences)) || end > uint64(len(observer.route.selectedStates)) {
+		phase0AObservers.Unlock()
+		return &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: namespace, Detail: "selected occurrence capability span is unavailable"}
+	}
+	if observer.activeBorrows == math.MaxUint64 {
+		phase0AObservers.Unlock()
+		return &Phase0AError{Kind: Phase0AErrorCounterOverflow, Namespace: namespace, Detail: "selected occurrence borrow count"}
+	}
+	rows := observer.route.selectedOccurrences[capability.first:end:end]
+	states := observer.route.selectedStates[capability.first:end:end]
+	observer.activeBorrows++
+	phase0AObservers.Unlock()
+	defer func() {
+		phase0AObservers.Lock()
+		if observer.activeBorrows != 0 {
+			observer.activeBorrows--
+		}
+		phase0AObservers.Unlock()
+	}()
+	if err := poll(); err != nil {
+		return err
+	}
+	for offset := uint64(0); offset < capability.count; offset++ {
+		if offset != 0 && offset&255 == 0 {
+			if err := poll(); err != nil {
+				return err
+			}
+		}
+		row := rows[offset]
+		state := states[offset]
+		if row.Ordinal != offset+1 {
+			return &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: namespace, Detail: "selected occurrence preorder ordinal is stale"}
+		}
+		if err := visit(Phase0ASelectedOccurrenceView{
+			Ordinal: row.Ordinal, Parent: row.Parent, ChildOrdinal: row.ChildOrdinal, Depth: row.Depth,
+			Payload: row.Payload, ConstructionKind: row.ConstructionKind, ChildCount: row.ChildCount,
+			ParseState: state.parseState, PreGotoState: state.preGotoState, SubtreeCount: state.subtreeCount, Migrated: row.Migrated,
+		}); err != nil {
+			return err
+		}
+	}
+	return poll()
+}
 
 type phase0AOccurrenceJoin struct {
 	occurrence ConstructionOccurrenceKey
@@ -202,15 +383,17 @@ func phase0APreflightSelectedIndexLocked(core *Core, observer *phase0AObserver, 
 	}
 	mapHi, mapBytes := bits.Mul64(entries, phase0ASelectedMapEntryBytes)
 	recordHi, recordBytes := bits.Mul64(selectedOccurrences, phase0ASelectedOccurrenceBytes)
+	stateHi, stateBytes := bits.Mul64(selectedOccurrences, phase0ASelectedStateBytes)
 	acceptedHi, acceptedBytes := bits.Mul64(acceptedLinks, phase0AAcceptedLinkBytes)
 	stackHi, stackBytes := bits.Mul64(selectedDepth+1, 256)
 	physicalHi, physicalBytes := bits.Mul64(uint64(core.limits.MaxLinksPerBoundary), uint64(unsafe.Sizeof(phase0APhysicalLink{})))
 	transientBytes, byteCarry := bits.Add64(mapBytes, recordBytes, 0)
-	transientBytes, byteCarry2 := bits.Add64(transientBytes, acceptedBytes, 0)
-	transientBytes, byteCarry3 := bits.Add64(transientBytes, stackBytes, 0)
-	transientBytes, byteCarry4 := bits.Add64(transientBytes, physicalBytes, 0)
-	transientBytes, byteCarry5 := bits.Add64(transientBytes, phase0ASelectedCountScratchBytes, 0)
-	if mapHi != 0 || recordHi != 0 || acceptedHi != 0 || stackHi != 0 || physicalHi != 0 || byteCarry != 0 || byteCarry2 != 0 || byteCarry3 != 0 || byteCarry4 != 0 || byteCarry5 != 0 {
+	transientBytes, byteCarry2 := bits.Add64(transientBytes, stateBytes, 0)
+	transientBytes, byteCarry3 := bits.Add64(transientBytes, acceptedBytes, 0)
+	transientBytes, byteCarry4 := bits.Add64(transientBytes, stackBytes, 0)
+	transientBytes, byteCarry5 := bits.Add64(transientBytes, physicalBytes, 0)
+	transientBytes, byteCarry6 := bits.Add64(transientBytes, phase0ASelectedCountScratchBytes, 0)
+	if mapHi != 0 || recordHi != 0 || stateHi != 0 || acceptedHi != 0 || stackHi != 0 || physicalHi != 0 || byteCarry != 0 || byteCarry2 != 0 || byteCarry3 != 0 || byteCarry4 != 0 || byteCarry5 != 0 || byteCarry6 != 0 {
 		return 0, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Namespace: observer.run, Detail: "selected transient index bytes"}
 	}
 	byteLimit := phase0AObservers.limits.MaxSelectedIndexBytes
@@ -919,6 +1102,42 @@ func phase0AValidateAndDigestSelectedOccurrences(core *Core, namespace CoreRunNa
 	return digest, nil
 }
 
+func phase0ASelectedOccurrenceStatesLocked(core *Core, observer *phase0AObserver, index phase0ASelectedIndex, records []Phase0ASelectedOccurrenceRecord) ([]phase0ASelectedOccurrenceState, error) {
+	states := make([]phase0ASelectedOccurrenceState, len(records))
+	for recordIndex, row := range records {
+		join := phase0AOccurrenceJoin{occurrence: row.Occurrence, edge: row.Edge}
+		candidate, err := phase0ASelectedLookupError(observer, index.candidates[join], "selected occurrence candidate is unavailable or non-unique")
+		if err != nil {
+			return nil, err
+		}
+		if candidate.Occurrence != row.Occurrence || candidate.Edge != row.Edge || candidate.Payload != row.Payload || candidate.Predecessor == 0 || !candidate.Claimed || !candidate.Resolved || candidate.RolledBack {
+			return nil, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "selected occurrence candidate state source is stale"}
+		}
+		predecessor, err := core.node(candidate.Predecessor)
+		if err != nil {
+			return nil, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "selected occurrence predecessor state is unavailable"}
+		}
+		states[recordIndex] = phase0ASelectedOccurrenceState{
+			parseState: candidate.Boundary.State, preGotoState: predecessor.state, subtreeCount: 1,
+		}
+	}
+	for recordIndex := len(records) - 1; recordIndex >= 0; recordIndex-- {
+		parent := records[recordIndex].Parent
+		if parent == 0 {
+			continue
+		}
+		if parent > uint64(recordIndex) {
+			return nil, &Phase0AError{Kind: Phase0AErrorCrossBoundary, Namespace: observer.run, Detail: "selected occurrence parent is outside preorder prefix"}
+		}
+		parentIndex := parent - 1
+		if states[parentIndex].subtreeCount > math.MaxUint64-states[recordIndex].subtreeCount {
+			return nil, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Namespace: observer.run, Detail: "selected occurrence subtree count"}
+		}
+		states[parentIndex].subtreeCount += states[recordIndex].subtreeCount
+	}
+	return states, nil
+}
+
 func phase0ASelectedCompactWindows(core *Core, namespace CoreRunNamespace, id SubtreeID) (subtreeRecord, []SubtreeID, []FieldMapEntry, []Symbol, error) {
 	if core == nil || id == 0 || uint64(id) > uint64(len(core.subtrees)) {
 		return subtreeRecord{}, nil, nil, nil, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: namespace, Detail: "selected compact record is unavailable"}
@@ -1061,16 +1280,19 @@ func phase0AReserveAcceptedSelectionLocked(observer *phase0AObserver, acceptedLi
 		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorRecordCap, Namespace: observer.run, Detail: "selected occurrence row cap"})
 	}
 	records, carry := bits.Add64(acceptedLinks, selectedOccurrences, 0)
-	records, carry2 := bits.Add64(records, 2, 0)
-	if carry != 0 || carry2 != 0 {
+	records, carry2 := bits.Add64(records, selectedOccurrences, 0)
+	records, carry3 := bits.Add64(records, 2, 0)
+	if carry != 0 || carry2 != 0 || carry3 != 0 {
 		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Namespace: observer.run, Detail: "selected occurrence accounting rows"})
 	}
 	acceptedHi, acceptedBytes := bits.Mul64(acceptedLinks, phase0AAcceptedLinkBytes)
 	selectedHi, selectedBytes := bits.Mul64(selectedOccurrences, phase0ASelectedOccurrenceBytes)
+	stateHi, stateBytes := bits.Mul64(selectedOccurrences, phase0ASelectedStateBytes)
 	bytes, byteCarry := bits.Add64(phase0AAcceptedSelectionBytes, phase0ASelectedTreeBytes, 0)
 	bytes, byteCarry2 := bits.Add64(bytes, acceptedBytes, 0)
 	bytes, byteCarry3 := bits.Add64(bytes, selectedBytes, 0)
-	if acceptedHi != 0 || selectedHi != 0 || byteCarry != 0 || byteCarry2 != 0 || byteCarry3 != 0 {
+	bytes, byteCarry4 := bits.Add64(bytes, stateBytes, 0)
+	if acceptedHi != 0 || selectedHi != 0 || stateHi != 0 || byteCarry != 0 || byteCarry2 != 0 || byteCarry3 != 0 || byteCarry4 != 0 {
 		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Namespace: observer.run, Detail: "selected occurrence accounting bytes"})
 	}
 	if err := phase0AChargeManyLocked(records, bytes); err != nil {

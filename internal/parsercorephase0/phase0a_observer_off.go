@@ -63,7 +63,7 @@ const (
 	Phase0APoisonNestedScheduler
 )
 
-func phase0AInvalidateCore(*Core) {}
+func phase0AInvalidateCore(*Core) error { return nil }
 
 func phase0AObserveMark(*Core, uint64, uint64)                                          {}
 func phase0AObserveRollback(*Core, uint64, Phase0ARollbackCause)                        {}

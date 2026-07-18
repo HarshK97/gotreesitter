@@ -309,6 +309,7 @@ type phase0AObserver struct {
 	nextEdge             uint64
 	attempt              uint32
 	active               bool
+	activeBorrows        uint64
 	frames               []Phase0ATransactionFrame
 	mutations            []Phase0AMutationRecord
 	eventIndex           map[ConstructionEventKey]uint64
@@ -393,10 +394,13 @@ func EndPhase0AObserverSession() error {
 	return nil
 }
 
-func phase0AInvalidateCore(core *Core) {
+func phase0AInvalidateCore(core *Core) error {
 	phase0AObservers.Lock()
 	defer phase0AObservers.Unlock()
 	if observer := phase0AObservers.byCore[core]; observer != nil {
+		if observer.activeBorrows != 0 {
+			return &Phase0AError{Kind: Phase0AErrorRunActive, Namespace: observer.run, Detail: "reset while selected occurrence views are borrowed"}
+		}
 		observer.active = false
 		observer.frames = nil
 		observer.mutations = nil
@@ -414,6 +418,7 @@ func phase0AInvalidateCore(core *Core) {
 		observer.factor = phase0AFactorObserver{}
 		observer.route = phase0ARouteObserver{}
 	}
+	return nil
 }
 
 func (c *Core) BeginRun() (CoreRunNamespace, error) {
@@ -444,6 +449,9 @@ func (c *Core) BeginRun() (CoreRunNamespace, error) {
 		observer = &phase0AObserver{coreInstance: phase0AObservers.nextCoreInstance}
 		phase0AObservers.byCore[c] = observer
 	}
+	if observer.activeBorrows != 0 {
+		return CoreRunNamespace{}, &Phase0AError{Kind: Phase0AErrorRunActive, Namespace: observer.run, Detail: "begin run while selected occurrence views are borrowed"}
+	}
 	if observer.active {
 		return CoreRunNamespace{}, &Phase0AError{Kind: Phase0AErrorRunActive, Namespace: observer.run}
 	}
@@ -456,6 +464,7 @@ func (c *Core) BeginRun() (CoreRunNamespace, error) {
 	observer.runGeneration++
 	observer.run = CoreRunNamespace{CoreInstance: observer.coreInstance, RunGeneration: observer.runGeneration}
 	observer.nextEvent, observer.nextEdge, observer.attempt, observer.active = 0, 0, 1, true
+	observer.activeBorrows = 0
 	observer.frames = nil
 	observer.mutations = nil
 	observer.eventIndex = make(map[ConstructionEventKey]uint64)
@@ -486,6 +495,9 @@ func (c *Core) EndRun(namespace CoreRunNamespace) error {
 			return phase0AExistingFailureLocked(observer)
 		}
 		return &Phase0AError{Kind: Phase0AErrorStaleNamespace, Namespace: namespace}
+	}
+	if observer.activeBorrows != 0 {
+		return &Phase0AError{Kind: Phase0AErrorRunActive, Namespace: namespace, Detail: "end run while selected occurrence views are borrowed"}
 	}
 	if len(c.transactions) != 0 || c.schedulerFrame.active {
 		if observer.failure != nil {

@@ -81,6 +81,12 @@ for tags and release notes while still in `0.x`.
   materializer does not preserve `ParseState` or `PreGotoState`, so this
   admission is not a production-routing, incremental, recovery, or exact public
   node-API compatibility claim.
+- Add a bounded, build-tagged selected-occurrence capability for the compact
+  parser candidate. It preserves repeated physical occurrences, construction
+  states, and checked subtree spans without copying the observer proof; its
+  borrowed immutable windows allow read-only re-entry and block lifecycle
+  mutation until released. Exact admissions and isolated race coverage remain
+  green, with no measured performance-regression claim.
 - Bank a paired quiet-host receipt against the locked static `-O2` C oracle.
   At the exact post-fusion revision, public `Parser.Parse` measures 4.813350x C
   by equal-fixture geomean and 5.419730x C by fixed-suite sum of medians. The
