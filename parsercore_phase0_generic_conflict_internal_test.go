@@ -49,6 +49,76 @@ func TestDiagnosticParserCoreGenericConflictIgnoresNoArmsWhenRepetitionDeclinesC
 	}
 }
 
+func TestDiagnosticParserCoreDescriptorPreservesUnsupportedOrdinalOrdering(t *testing.T) {
+	tests := []struct {
+		name    string
+		actions []core.Action
+		detail  string
+	}{
+		{
+			name: "dynamic shift precedes static repetition",
+			actions: []core.Action{
+				{Type: core.ActionShift, State: 2},
+				{Type: core.ActionReduce, Repetition: true},
+			},
+			detail: "positive-width",
+		},
+		{
+			name: "static repetition precedes dynamic shift",
+			actions: []core.Action{
+				{Type: core.ActionReduce, Repetition: true},
+				{Type: core.ActionShift, State: 2},
+			},
+			detail: "repetition",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			row := core.NewActionRow(test.actions)
+			if got := row.Descriptor().Kind(); got != core.ActionRowUnsupported {
+				t.Fatalf("descriptor=%v, want unsupported", got)
+			}
+			unsupported := diagnosticParserCoreGenericUnsupportedCell(3, Token{Symbol: 9}, row)
+			if unsupported == nil || unsupported.headerIndex != 3 || !strings.Contains(unsupported.detail, test.detail) {
+				t.Fatalf("unsupported=%+v, want first ordinal detail %q", unsupported, test.detail)
+			}
+		})
+	}
+}
+
+func TestDiagnosticParserCoreDescriptorValidatesCompleteFrontierBeforeDispatch(t *testing.T) {
+	table := &genericConflictTable{cells: map[genericConflictCell][]core.Action{
+		{state: 1, symbol: 9}: {{Type: core.ActionShift, State: 3}},
+		{state: 2, symbol: 9}: {{Type: core.ActionShift, State: 4, Repetition: true}},
+	}}
+	compact, err := core.New(table, core.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := compact.Seed(2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler := &diagnosticParserCoreGenericScheduler{
+		compact: compact,
+		headers: []diagnosticParserCoreHeader{{head: first}, {head: second}},
+		token:   Token{Symbol: 9, EndByte: 1},
+		options: DiagnosticParserCorePrefixOptions{MaxDispatches: 8},
+		receipt: &DiagnosticParserCoreGenericScheduler{},
+	}
+	stop, err := scheduler.dispatchPass()
+	if err != nil || stop == nil || !strings.Contains(stop.detail, "repetition") {
+		t.Fatalf("dispatch stop=%+v err=%v", stop, err)
+	}
+	if scheduler.dispatches != 0 || scheduler.work.OrdinaryShifts != 0 || scheduler.work.ExtraShifts != 0 || scheduler.work.Reductions != 0 || compact.Work() != (core.Work{}) {
+		t.Fatalf("unsupported later cell allowed mutation: dispatches=%d scheduler=%+v core=%+v", scheduler.dispatches, scheduler.work, compact.Work())
+	}
+}
+
 func TestDiagnosticParserCorePointIndexPollsBeforeScanning(t *testing.T) {
 	want := errors.New("stop")
 	polls := 0

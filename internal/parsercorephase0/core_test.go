@@ -2200,6 +2200,47 @@ func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
 	}
 }
 
+func TestActionRowDescriptorClassifiesImmutableRows(t *testing.T) {
+	tests := []struct {
+		name      string
+		actions   []Action
+		kind      ActionRowKind
+		hasShift  bool
+		hasReduce bool
+	}{
+		{name: "empty", kind: ActionRowEmpty},
+		{name: "shift", actions: []Action{{Type: ActionShift, State: 2}}, kind: ActionRowShift, hasShift: true},
+		{name: "extra", actions: []Action{{Type: ActionShift, Extra: true}}, kind: ActionRowExtraShift, hasShift: true},
+		{name: "reduce", actions: []Action{{Type: ActionReduce, Symbol: 7}}, kind: ActionRowReduce, hasReduce: true},
+		{name: "accept", actions: []Action{{Type: ActionAccept}}, kind: ActionRowAccept},
+		{name: "shift-conflict", actions: []Action{{Type: ActionShift, State: 2}, {Type: ActionShift, State: 3}}, kind: ActionRowConflict, hasShift: true},
+		{name: "mixed-conflict", actions: []Action{{Type: ActionReduce, Symbol: 7}, {Type: ActionShift, State: 2}}, kind: ActionRowConflict, hasShift: true, hasReduce: true},
+		{name: "repetition", actions: []Action{{Type: ActionShift, Repetition: true}}, kind: ActionRowUnsupported},
+		{name: "extra-chain", actions: []Action{{Type: ActionShift, ExtraChain: true}}, kind: ActionRowUnsupported},
+		{name: "recover", actions: []Action{{Type: ActionRecover}}, kind: ActionRowUnsupported},
+		{name: "multi-accept", actions: []Action{{Type: ActionAccept}, {Type: ActionReduce}}, kind: ActionRowUnsupported},
+		{name: "extra-conflict", actions: []Action{{Type: ActionShift, Extra: true}, {Type: ActionReduce}}, kind: ActionRowUnsupported},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			row := NewActionRow(test.actions)
+			descriptor := row.Descriptor()
+			if descriptor.Kind() != test.kind || descriptor.HasShift() != test.hasShift || descriptor.HasReduce() != test.hasReduce {
+				t.Fatalf("descriptor=(kind=%v shift=%t reduce=%t), want (%v %t %t)", descriptor.Kind(), descriptor.HasShift(), descriptor.HasReduce(), test.kind, test.hasShift, test.hasReduce)
+			}
+			if len(test.actions) != 0 {
+				want := test.actions[0]
+				test.actions[0] = Action{Type: ActionRecover}
+				got := row.At(0)
+				got.Type = ActionRecover
+				if row.At(0) != want || row.Descriptor().Kind() != test.kind {
+					t.Fatalf("source/result mutation changed immutable row: action=%+v descriptor=%v", row.At(0), row.Descriptor().Kind())
+				}
+			}
+		})
+	}
+}
+
 func TestClassifiedBoundaryAuthenticatesOwnerAndMonotonicPhase(t *testing.T) {
 	tables := &fakeTable{actions: map[tableCell][]Action{
 		{state: 1, symbol: 9}: {{Type: ActionShift, State: 2}},
@@ -2215,6 +2256,9 @@ func TestClassifiedBoundaryAuthenticatesOwnerAndMonotonicPhase(t *testing.T) {
 	classified, err := compact.ClassifyBoundary(head, 9)
 	if err != nil || classified.Head() != head || classified.State() != 1 || classified.ByteOffset() != 0 || classified.Actions().Len() != 1 {
 		t.Fatalf("classification=%+v err=%v", classified, err)
+	}
+	if got := classified.Actions().Descriptor().Kind(); got != ActionRowShift {
+		t.Fatalf("classification descriptor=%v, want shift", got)
 	}
 	other, err := New(tables, Limits{})
 	if err != nil {

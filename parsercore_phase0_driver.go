@@ -1315,6 +1315,9 @@ type diagnosticParserCoreGenericCell struct {
 }
 
 func (cell diagnosticParserCoreGenericCell) actions() core.ActionRow { return cell.boundary.Actions() }
+func (cell diagnosticParserCoreGenericCell) descriptor() core.ActionRowDescriptor {
+	return cell.boundary.Actions().Descriptor()
+}
 
 type diagnosticParserCoreDispatchScratch struct {
 	busy            bool
@@ -1784,9 +1787,35 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPass() (*diagnosticParser
 	}
 	cells := s.dispatchScratch.cells
 	noActionIndices := s.dispatchScratch.noActionIndices
-	for _, cell := range cells {
-		if unsupported := diagnosticParserCoreGenericUnsupportedCell(cell.headerIndex, s.token, cell.actions()); unsupported != nil {
+	acceptCell := -1
+	extraCells := 0
+	reductionCell := -1
+	reductionConflict := false
+	conflictCell := -1
+	for index, cell := range cells {
+		descriptor := cell.descriptor()
+		if unsupported := diagnosticParserCoreGenericUnsupportedCellDescriptor(cell.headerIndex, s.token, cell.actions(), descriptor); unsupported != nil {
 			return unsupported, nil
+		}
+		switch descriptor.Kind() {
+		case core.ActionRowAccept:
+			if acceptCell < 0 {
+				acceptCell = index
+			}
+		case core.ActionRowExtraShift:
+			extraCells++
+		case core.ActionRowReduce:
+			if reductionCell < 0 {
+				reductionCell = index
+			}
+		case core.ActionRowConflict:
+			if descriptor.HasReduce() && reductionCell < 0 {
+				reductionCell = index
+				reductionConflict = true
+			}
+			if conflictCell < 0 {
+				conflictCell = index
+			}
 		}
 	}
 	if len(cells) == 0 {
@@ -1804,27 +1833,14 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPass() (*diagnosticParser
 			boundary: DiagnosticParserCoreRoute, detail: "generic scheduler has no runnable head", headerIndex: 0,
 		}, nil
 	}
-	acceptCell := -1
-	for index, cell := range cells {
-		if diagnosticParserCoreActionsContain(cell.actions(), core.ActionAccept) {
-			acceptCell = index
-			break
-		}
-	}
 	if acceptCell >= 0 {
 		cell := cells[acceptCell]
-		if len(s.headers) != 1 || len(cells) != 1 || len(noActionIndices) != 0 || cell.headerIndex != 0 || cell.actions().Len() != 1 || cell.actions().At(0).Type != core.ActionAccept {
+		if len(s.headers) != 1 || len(cells) != 1 || len(noActionIndices) != 0 || cell.headerIndex != 0 {
 			return &diagnosticParserCoreGenericUnsupported{
 				boundary: DiagnosticParserCoreAccept, detail: "generic scheduler requires a sole homogeneous accept frontier", headerIndex: cell.headerIndex,
 			}, nil
 		}
 		return nil, s.applyGenericAccept(before, cell)
-	}
-	extraCells := 0
-	for _, cell := range cells {
-		if cell.actions().At(0).Extra {
-			extraCells++
-		}
 	}
 	if extraCells != 0 {
 		if extraCells != len(cells) || len(cells) != len(s.headers) || len(noActionIndices) != 0 {
@@ -1837,21 +1853,15 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPass() (*diagnosticParser
 
 	// One reduction-bearing cell is applied per pass. This deliberately
 	// reclassifies the complete frontier before any shift is allowed.
-	for _, cell := range cells {
-		if !diagnosticParserCoreActionsContain(cell.actions(), core.ActionReduce) {
-			continue
-		}
-		if cell.actions().Len() > 1 {
+	if reductionCell >= 0 {
+		cell := cells[reductionCell]
+		if reductionConflict {
 			return nil, s.applyGenericConflict(before, cell)
 		}
-		if cell.actions().At(0).Type == core.ActionReduce {
-			return nil, s.applyGenericReduction(before, cell)
-		}
+		return nil, s.applyGenericReduction(before, cell)
 	}
-	for _, cell := range cells {
-		if cell.actions().Len() > 1 {
-			return nil, s.applyGenericConflict(before, cell)
-		}
+	if conflictCell >= 0 {
+		return nil, s.applyGenericConflict(before, cells[conflictCell])
 	}
 	return nil, s.applyGenericShifts(before, cells)
 }
@@ -1972,15 +1982,6 @@ func compactDerivationsForAcceptance(compact *core.Core, head core.Head) ([]core
 		return nil, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreAccept, detail: "accepted derivation enumeration cap"}
 	}
 	return paths, err
-}
-
-func diagnosticParserCoreActionsContain(actions core.ActionRow, actionType core.ActionType) bool {
-	for ordinal := 0; ordinal < actions.Len(); ordinal++ {
-		if actions.At(ordinal).Type == actionType {
-			return true
-		}
-	}
-	return false
 }
 
 func diagnosticParserCoreGenericNoActionDropEligible(headers []diagnosticParserCoreHeader, noActionIndices []int, epochProgress bool) bool {
@@ -2581,12 +2582,37 @@ func (s *diagnosticParserCoreGenericScheduler) recordGenericExternalShift(before
 }
 
 func diagnosticParserCoreGenericUnsupportedCell(headerIndex int, token Token, actions core.ActionRow) *diagnosticParserCoreGenericUnsupported {
+	return diagnosticParserCoreGenericUnsupportedCellDescriptor(headerIndex, token, actions, actions.Descriptor())
+}
+
+func diagnosticParserCoreGenericUnsupportedCellDescriptor(headerIndex int, token Token, actions core.ActionRow, descriptor core.ActionRowDescriptor) *diagnosticParserCoreGenericUnsupported {
 	unsupported := func(boundary DiagnosticParserCoreBoundaryKind, detail string) *diagnosticParserCoreGenericUnsupported {
 		return &diagnosticParserCoreGenericUnsupported{boundary: boundary, detail: detail, headerIndex: headerIndex}
 	}
-	if actions.Len() == 0 {
+	switch descriptor.Kind() {
+	case core.ActionRowEmpty:
 		return unsupported(DiagnosticParserCoreNoAction, "generic scheduler reached an empty action cell")
+	case core.ActionRowShift, core.ActionRowExtraShift:
+		if token.EndByte <= token.StartByte {
+			return unsupported(DiagnosticParserCoreRoute, "generic scheduler ordinary shift is not positive-width")
+		}
+		return nil
+	case core.ActionRowReduce:
+		return nil
+	case core.ActionRowAccept:
+		if token.Symbol != 0 || token.StartByte != token.EndByte || token.Missing || token.NoLookahead || token.ExternalScannerToken {
+			return unsupported(DiagnosticParserCoreAccept, "generic scheduler accept requires one authenticated EOF action")
+		}
+		return nil
+	case core.ActionRowConflict:
+		if descriptor.HasShift() && token.EndByte <= token.StartByte {
+			return unsupported(DiagnosticParserCoreRoute, "generic scheduler ordinary shift is not positive-width")
+		}
+		return nil
 	}
+
+	// Unsupported rows retain the ordinal scan so the first failure and its
+	// diagnostic remain byte-for-byte ordered as before descriptor compilation.
 	for ordinal := 0; ordinal < actions.Len(); ordinal++ {
 		action := actions.At(ordinal)
 		if action.Repetition {

@@ -7,6 +7,15 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Performance
+
+- Preclassify immutable compact-parser action rows and route singleton shift,
+  reduce, and extra actions without repeatedly interpreting or copying the row.
+  Two reverse-order quiet-host runs improve the authenticated four-fixture
+  candidate Total geomean by 4.13-4.26%, with every fixture improving by
+  3.42-5.00%, unchanged parser work and fallback counts, and a worst
+  candidate/static-C ratio below 3.90x.
+
 ### Fixed
 
 - Scheduler transaction token misuse on a different diagnostic core now

@@ -19,7 +19,7 @@ func (c *Core) ShiftClassifiedOwned(owner SchedulerTransactionToken, boundary Cl
 }
 
 func (c *Core) shiftClassifiedUncheckpointed(boundary ClassifiedBoundary, actionOrdinal int, shifted Token, fork ForkOrder) (Head, error) {
-	act, err := c.classifiedAction(boundary, actionOrdinal)
+	act, err := c.classifiedActionRef(boundary, actionOrdinal)
 	if err != nil {
 		return Head{}, err
 	}
@@ -94,11 +94,11 @@ func (c *Core) prepareOrdinaryClassifiedCohortInto(boundaries []ClassifiedBounda
 			return fmt.Errorf("parser-core phase zero: duplicate ordinary cohort head %d", boundary.head.Node)
 		}
 		seen[boundary.head.Node] = struct{}{}
-		action, err := c.classifiedAction(boundary, 0)
+		action, err := c.classifiedActionRef(boundary, 0)
 		if err != nil {
 			return err
 		}
-		if boundary.actions.Len() != 1 || action.State == 0 || action != (Action{Type: ActionShift, State: action.State}) {
+		if boundary.actions.Len() != 1 || action.State == 0 || *action != (Action{Type: ActionShift, State: action.State}) {
 			return fmt.Errorf("parser-core phase zero: head %d does not select one ordinary shift", boundary.head.Node)
 		}
 		targets[index] = action.State
@@ -169,11 +169,11 @@ func (c *Core) prepareExtraClassifiedCohortInto(boundaries []ClassifiedBoundary,
 			return fmt.Errorf("parser-core phase zero: duplicate extra cohort head %d", boundary.head.Node)
 		}
 		seen[boundary.head.Node] = struct{}{}
-		action, err := c.classifiedAction(boundary, 0)
+		action, err := c.classifiedActionRef(boundary, 0)
 		if err != nil {
 			return err
 		}
-		if boundary.actions.Len() != 1 || action != (Action{Type: ActionShift, State: action.State, Extra: true}) {
+		if boundary.actions.Len() != 1 || *action != (Action{Type: ActionShift, State: action.State, Extra: true}) {
 			return fmt.Errorf("parser-core phase zero: head %d does not select one extra shift", boundary.head.Node)
 		}
 		targets[index] = action.State
@@ -227,14 +227,14 @@ func (c *Core) reduceOutputsClassifiedIntoUncheckpointed(dst []ReductionOutput, 
 	defer c.popScratch.resetLogical()
 	c.reductionScratch.begin()
 	defer c.reductionScratch.finish()
-	act, err := c.classifiedAction(boundary, actionOrdinal)
+	act, err := c.classifiedActionRef(boundary, actionOrdinal)
 	if err != nil {
 		return nil, err
 	}
 	if act.Type != ActionReduce {
 		return nil, fmt.Errorf("parser-core phase zero: action %d is %v, not reduce", actionOrdinal, act.Type)
 	}
-	plan, err := c.reductionPlan(act)
+	plan, err := c.reductionPlan(*act)
 	if err != nil {
 		return nil, err
 	}
@@ -269,7 +269,7 @@ func (c *Core) reduceOutputsClassifiedIntoUncheckpointed(dst []ReductionOutput, 
 			return nil, fmt.Errorf("parser-core phase zero: no goto from state %d for reduced symbol %d", prev.state, act.Symbol)
 		}
 		key := c.boundaryKey(gotoState, path.structuralEnd)
-		payload, scoreDelta, order, err := c.reductionParentForPath(act, &plan, path, key, fork, scratch)
+		payload, scoreDelta, order, err := c.reductionParentForPath(*act, &plan, path, key, fork, scratch)
 		if err != nil {
 			return nil, err
 		}

@@ -50,11 +50,45 @@ type Action struct {
 	Repetition        bool
 }
 
+// ActionRowKind is the immutable dispatch shape of one decoded parse-table
+// cell. It classifies only row-intrinsic properties; token-width and EOF
+// authentication remain scheduler responsibilities.
+type ActionRowKind uint8
+
+const (
+	ActionRowEmpty ActionRowKind = iota
+	ActionRowShift
+	ActionRowExtraShift
+	ActionRowReduce
+	ActionRowAccept
+	ActionRowConflict
+	ActionRowUnsupported
+)
+
+// ActionRowDescriptor is the precompiled dispatch shape of an ActionRow.
+// Keeping it separate from token-dependent validation lets the scheduler avoid
+// repeatedly interpreting immutable action records without weakening the
+// existing ordering and authentication gates.
+type ActionRowDescriptor struct {
+	kind      ActionRowKind
+	hasShift  bool
+	hasReduce bool
+}
+
+func (d ActionRowDescriptor) Kind() ActionRowKind { return d.kind }
+func (d ActionRowDescriptor) HasShift() bool      { return d.hasShift }
+func (d ActionRowDescriptor) HasReduce() bool     { return d.hasReduce }
+
+type actionRowData struct {
+	actions    []Action
+	descriptor ActionRowDescriptor
+}
+
 // ActionRow is an immutable decoded parse-table cell. Its backing storage is
 // deliberately hidden so a cached row can be shared across parser-core
 // lookups without allowing callers to corrupt later dispatches.
 type ActionRow struct {
-	actions []Action
+	data *actionRowData
 }
 
 // ClassifiedBoundary is one authenticated action-table classification for a
@@ -89,15 +123,69 @@ func NewActionRow(actions []Action) ActionRow {
 	if len(actions) == 0 {
 		return ActionRow{}
 	}
-	return ActionRow{actions: append([]Action(nil), actions...)}
+	snapshot := append([]Action(nil), actions...)
+	return ActionRow{data: &actionRowData{
+		actions: snapshot, descriptor: describeActionRow(snapshot),
+	}}
 }
 
 // Len reports the number of actions in the row.
-func (r ActionRow) Len() int { return len(r.actions) }
+func (r ActionRow) Len() int {
+	if r.data == nil {
+		return 0
+	}
+	return len(r.data.actions)
+}
 
 // At returns one action by value, keeping the cached row immutable. Like a
 // slice index, it panics when index is outside [0, Len()).
-func (r ActionRow) At(index int) Action { return r.actions[index] }
+func (r ActionRow) At(index int) Action { return r.data.actions[index] }
+
+// Descriptor returns the immutable row-intrinsic dispatch classification.
+func (r ActionRow) Descriptor() ActionRowDescriptor {
+	if r.data == nil {
+		return ActionRowDescriptor{kind: ActionRowEmpty}
+	}
+	return r.data.descriptor
+}
+
+func (r ActionRow) actionRef(index int) *Action { return &r.data.actions[index] }
+
+func describeActionRow(actions []Action) ActionRowDescriptor {
+	descriptor := ActionRowDescriptor{kind: ActionRowUnsupported}
+	if len(actions) == 0 {
+		descriptor.kind = ActionRowEmpty
+		return descriptor
+	}
+	for _, action := range actions {
+		if action.Repetition || action.ExtraChain || action.Type > ActionRecover ||
+			action.Type == ActionRecover || action.Extra && (len(actions) != 1 || action.Type != ActionShift) ||
+			action.Type == ActionAccept && len(actions) != 1 {
+			return descriptor
+		}
+		descriptor.hasShift = descriptor.hasShift || action.Type == ActionShift
+		descriptor.hasReduce = descriptor.hasReduce || action.Type == ActionReduce
+	}
+	if len(actions) > 1 {
+		descriptor.kind = ActionRowConflict
+		return descriptor
+	}
+	switch actions[0].Type {
+	case ActionShift:
+		if actions[0].Extra {
+			descriptor.kind = ActionRowExtraShift
+		} else {
+			descriptor.kind = ActionRowShift
+		}
+	case ActionReduce:
+		descriptor.kind = ActionRowReduce
+	case ActionAccept:
+		descriptor.kind = ActionRowAccept
+	default:
+		descriptor.kind = ActionRowUnsupported
+	}
+	return descriptor
+}
 
 // FieldMapEntry is the production metadata required while materializing a
 // compact reduction payload.
@@ -977,14 +1065,14 @@ func (c *Core) validateClassification(boundary ClassifiedBoundary) error {
 	return nil
 }
 
-func (c *Core) classifiedAction(boundary ClassifiedBoundary, ordinal int) (Action, error) {
+func (c *Core) classifiedActionRef(boundary ClassifiedBoundary, ordinal int) (*Action, error) {
 	if err := c.validateClassification(boundary); err != nil {
-		return Action{}, err
+		return nil, err
 	}
 	if ordinal < 0 || ordinal >= boundary.actions.Len() {
-		return Action{}, fmt.Errorf("parser-core phase zero: action ordinal %d out of range", ordinal)
+		return nil, fmt.Errorf("parser-core phase zero: action ordinal %d out of range", ordinal)
 	}
-	return boundary.actions.At(ordinal), nil
+	return boundary.actions.actionRef(ordinal), nil
 }
 
 // Shift applies one authentic decoded shift action and condenses the resulting
