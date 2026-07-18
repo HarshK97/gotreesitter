@@ -459,6 +459,50 @@ four clean fresh-full Go fixtures and visible deep-tree structure, not public
 `Parser.Parse`, recovery, incremental reuse, included ranges, parser-state
 metadata, query/cursor behavior, or multiple grammars.
 
+### Single-link compact reduction publication
+
+A clean candidate publication was collected on 2026-07-18 from quiet host
+`ns1007492`, pinned to CPU 3 with Go 1.22.2, at exact revision
+`0062fe35880f18879a801cda58cbff249f9f8f32`. It uses the same locked static
+`-O2` oracle as the preceding board and passed cgo/static deep admission,
+bounded quiet-host admission, and clean initial/final worktree checks.
+
+The build-tagged `AUTHENTICATED_CANDIDATE` reports:
+
+| Fixture | Candidate median | static C median | Candidate / C | B/op | allocs/op | Candidate max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 19.001 ms | 5.426 ms | **3.501799x** | 231,221.5 | 9,032 | 52,896 KiB | 2,816 KiB |
+| `rewrite.go` | 3.904 ms | 1.195 ms | **3.266439x** | 55,969 | 1,935 | 49,708 KiB | 2,304 KiB |
+| `language.go` | 19.402 ms | 5.770 ms | **3.362799x** | 274,798 | 9,279 | 53,056 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 200.186 ms | 59.091 ms | **3.387751x** | 2,415,085 | 91,202.5 | 93,812 KiB | 9,216 KiB |
+
+The equal-fixture geomean is **3.378660x C**. The fixed-suite sum of medians
+is **3.392365x C**, and every fixture is below 3.51x C. All 40 timed candidate
+samples reported zero fallback and retained repeat-identical compact work
+signatures. Relative to the preceding `34c567bb` candidate receipt, the
+geomean improves by **2.24%**, the suite sum by **4.03%**, and the worst ratio
+by **1.25%**.
+
+Before publication, a fixed quiet B/C/C/B comparison on the same host measured
+the `query_compile` scheduler at 15.25 ms versus 14.95 ms (-1.97%) and warm
+total at 18.89 ms versus 18.42 ms (-2.51%), with unchanged bytes and
+allocations. A 10-second CPU profile reduced cumulative `popPaths` time from
+6.79% to 3.72%; exact compact work, deep trees, and fallback counts were
+unchanged.
+
+Receipt identities:
+
+- manifest/report/archive SHA-256:
+  `59b887314c0b02847201dac3e541e6794abf113ae3e4394ca9594349239839b1`,
+  `e45961d4dcb88b9e3904e62ed467b699df62b75dd34e2e7d911088fad0f2f5b3`,
+  `c2ffa0c720911bb08b6015c05e53a2aaa4f06782c31af9140abd4338f26b8d01`;
+- locked static C artifact SHA-256:
+  `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
+
+The support boundary remains unchanged: this is a diagnostic clean fresh-full
+Go candidate, not a public `Parser.Parse`, recovery, incremental,
+included-range, query/cursor, or multi-grammar claim.
+
 ### Diagnostic workload-regime receipt
 
 Before the static publication artifact was built, a strict-admitted quiet run

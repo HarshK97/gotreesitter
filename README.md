@@ -386,11 +386,12 @@ than the withdrawn 1.895x straight-LR comparison, established the full-parse
 baseline; [BENCH.md](BENCH.md) records every per-fixture median, RSS value, and
 receipt hash.
 
-A strict current-main rerun at `34c567bb` now measures public `Parser.Parse` at
+A strict production control at `34c567bb` measures public `Parser.Parse` at
 **4.824113x C** by equal-fixture geomean and **5.466192x C** by fixed-suite sum
-of medians. The separately build-tagged, fail-closed compact candidate at the
-same revision measures **3.456037x C** and **3.534987x C**, respectively, with
-every fixture below **3.55x C** and zero timed fallbacks. That candidate result is
+of medians. The latest clean publication of the separately build-tagged,
+fail-closed compact candidate, at `0062fe35`, measures **3.378660x C** and
+**3.392365x C**, respectively, with every fixture below **3.51x C** and zero
+timed fallbacks. That candidate result is
 diagnostic: it authenticates visible `gts-deep-tree-v1` structure for the four
 clean fresh-full fixtures, not parser-state metadata, recovery, incremental
 reuse, included ranges, or public `Parser.Parse`. See [BENCH.md](BENCH.md) for
@@ -719,7 +720,7 @@ strict materialized real-Go publication receipt, shipped with v0.37.0, measured
 5.481673x C by equal-fixture geomean and 6.313799x C for the fixed-suite sum of
 medians. A post-release current-main receipt now measures public `Parser.Parse`
 at 4.824113x C and 5.466192x C, respectively. The build-tagged compact candidate
-measures 3.456037x C on its narrower authenticated surface but remains outside
+measures 3.378660x C on its narrower authenticated surface but remains outside
 the public parser. Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ### Now — performance and extreme hygiene
