@@ -386,11 +386,11 @@ than the withdrawn 1.895x straight-LR comparison, established the full-parse
 baseline; [BENCH.md](BENCH.md) records every per-fixture median, RSS value, and
 receipt hash.
 
-A strict current-main rerun at `2c702656` now measures public `Parser.Parse` at
-**4.886056x C** by equal-fixture geomean and **5.517602x C** by fixed-suite sum
-of medians. The separately build-tagged, fail-closed compact candidate at
-`15a04d7b` measures **3.616769x C** and **3.744659x C**, respectively, with a
-**3.771715x** worst fixture and zero timed fallbacks. That candidate result is
+A strict current-main rerun at `34c567bb` now measures public `Parser.Parse` at
+**4.824113x C** by equal-fixture geomean and **5.466192x C** by fixed-suite sum
+of medians. The separately build-tagged, fail-closed compact candidate at the
+same revision measures **3.456037x C** and **3.534987x C**, respectively, with
+every fixture below **3.55x C** and zero timed fallbacks. That candidate result is
 diagnostic: it authenticates visible `gts-deep-tree-v1` structure for the four
 clean fresh-full fixtures, not parser-state metadata, recovery, incremental
 reuse, included ranges, or public `Parser.Parse`. See [BENCH.md](BENCH.md) for
@@ -503,7 +503,7 @@ witness, and shrinks as certified engine mechanisms subsume shims. See
 
 ## Known limitations
 
-- **Full-parse throughput**: the strict current-main materialized real-Go publication receipt measures public `Parser.Parse` at **4.886056x C** by equal-fixture geomean and **5.517602x C** by fixed-suite sum of medians against the exact static `-O2` oracle (see [BENCH.md](BENCH.md)). The compact candidate's lower diagnostic ratio is not a public-parser claim. The former ~2.1x row used a straight-LR synthetic and a different Go grammar, so it is historical only. Incremental lanes remain dramatically faster than the cgo binding on their workload-specific controls. Full-parse throughput varies by grammar and corpus shape; GLR-heavy code, highly ambiguous languages, and very large generated files are the main performance frontier.
+- **Full-parse throughput**: the strict current-main materialized real-Go publication receipt measures public `Parser.Parse` at **4.824113x C** by equal-fixture geomean and **5.466192x C** by fixed-suite sum of medians against the exact static `-O2` oracle (see [BENCH.md](BENCH.md)). The compact candidate's lower diagnostic ratio is not a public-parser claim. The former ~2.1x row used a straight-LR synthetic and a different Go grammar, so it is historical only. Incremental lanes remain dramatically faster than the cgo binding on their workload-specific controls. Full-parse throughput varies by grammar and corpus shape; GLR-heavy code, highly ambiguous languages, and very large generated files are the main performance frontier.
 - **GLR safety caps**: The parser enforces iteration, stack depth, and node count limits proportional to input size. These prevent pathological blowup on grammars with high ambiguity but impose a ceiling on the maximum input complexity that parses without error. The caps are tunable but not removable without risking unbounded resource consumption.
 
 ## Adding a language
@@ -718,8 +718,8 @@ gaps. The invalid historical 1.895x headline remains withdrawn. The first
 strict materialized real-Go publication receipt, shipped with v0.37.0, measured
 5.481673x C by equal-fixture geomean and 6.313799x C for the fixed-suite sum of
 medians. A post-release current-main receipt now measures public `Parser.Parse`
-at 4.886056x C and 5.517602x C, respectively. The build-tagged compact candidate
-measures 3.616769x C on its narrower authenticated surface but remains outside
+at 4.824113x C and 5.466192x C, respectively. The build-tagged compact candidate
+measures 3.456037x C on its narrower authenticated surface but remains outside
 the public parser. Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ### Now — performance and extreme hygiene

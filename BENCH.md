@@ -394,6 +394,71 @@ The support boundary remains unchanged: this is a diagnostic clean fresh-full
 Go candidate, not a public `Parser.Parse`, recovery, incremental, included-range,
 or multi-grammar claim.
 
+### Current exact-revision production and construction-authenticated compact receipt
+
+A paired clean publication was collected on 2026-07-18 from quiet host
+`ns1007492`, pinned to CPU 3 with Go 1.22.2, at exact revision
+`34c567bbacab367d01e03b16bad0a4914cbc5a24`. Both lanes use the same locked
+static `-O2` oracle. They passed cgo/static deep admission, bounded quiet-host
+admission, and clean initial/final worktree checks.
+
+The public `Parser.Parse` control reports:
+
+| Fixture | Go median | static C median | Go / C | B/op | allocs/op | Go max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 28.006 ms | 5.447 ms | **5.141956x** | 152,098 | 13 | 68,428 KiB | 2,816 KiB |
+| `rewrite.go` | 4.901 ms | 1.203 ms | **4.073988x** | 2,040 | 14 | 54,232 KiB | 2,304 KiB |
+| `language.go` | 26.883 ms | 5.833 ms | **4.609063x** | 153,678 | 32 | 68,672 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 330.813 ms | 58.976 ms | **5.609304x** | 13,166,901 | 567.5 | 205,516 KiB | 9,216 KiB |
+
+The production equal-fixture geomean is **4.824113x C**. Its fixed-suite sum
+of medians is **5.466192x C**, and its worst fixture is `grammargen/lr.go` at
+**5.609304x C**.
+
+The separately build-tagged `AUTHENTICATED_CANDIDATE` reports:
+
+| Fixture | Candidate median | static C median | Candidate / C | B/op | allocs/op | Candidate max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 19.488 ms | 5.554 ms | **3.508968x** | 231,222 | 9,032 | 49,672 KiB | 2,816 KiB |
+| `rewrite.go` | 3.951 ms | 1.204 ms | **3.280552x** | 55,969 | 1,935 | 53,292 KiB | 2,304 KiB |
+| `language.go` | 20.164 ms | 5.770 ms | **3.494748x** | 274,801 | 9,279.5 | 58,052 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 214.731 ms | 60.551 ms | **3.546268x** | 2,415,065 | 91,202.5 | 96,272 KiB | 9,216 KiB |
+
+The candidate equal-fixture geomean is **3.456037x C**. Its fixed-suite sum
+of medians is **3.534987x C**, and every fixture is below 3.55x C. All 40
+timed candidate samples reported zero fallback, and each fixture retained one
+repeat-identical compact work signature across its ten samples. Relative to
+the preceding `15a04d7b` receipt, the geomean improves by **4.44%**, the suite
+sum by **5.60%**, and the worst ratio by **5.98%**. Relative to the same-revision
+production control, the candidate improves the geomean by **28.36%** and the
+suite sum by **35.33%**.
+
+Before banking construction-authenticated materialization, a balanced
+two-order quiet-host A/B compared exact base `e24d56ee` with the final change.
+The pooled fresh-full geomean improved by **3.44%**, every fixture improved by
+2.36-4.50%, materialization-only improved by **13.20%**, warm total improved
+by **3.90%**, and compact work plus fallback counts were unchanged. Both A/B
+artifacts used only `gts_parsercorephase0`; an earlier mismatched-tag diagnostic
+was rejected and is not part of this receipt.
+
+Receipt identities:
+
+- production manifest/report/archive SHA-256:
+  `23cc2354b86b8fc31ad6f4fad98205cebc87a5bd8de34bcbd4ff1e111b2a0c3c`,
+  `bf23ed1a4c87ed6bdd8828890d6a41cf8746646a115076b8920d166d46516d93`,
+  `cdb0d89d5d42ed0240d263b1a6d60144caa66abff3d8db6e33164abed3a5d6c6`;
+- candidate manifest/report/archive SHA-256:
+  `02d0b998de5c8a4d202dc95f3a9a7c93afc5545d46df3fb297977ec3f1688800`,
+  `fee39e64fb6efbf5fbc92f9f962f06f160873ff7c31678d4d0ef83db8ea41e58`,
+  `9e94bb1c539bb6da2cf51b945ea77acc5f6ac961239cf4532e35ea97cad2bfe7`;
+- locked static C artifact SHA-256:
+  `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
+
+The support boundary remains unchanged: the compact result authenticates the
+four clean fresh-full Go fixtures and visible deep-tree structure, not public
+`Parser.Parse`, recovery, incremental reuse, included ranges, parser-state
+metadata, query/cursor behavior, or multiple grammars.
+
 ### Diagnostic workload-regime receipt
 
 Before the static publication artifact was built, a strict-admitted quiet run
