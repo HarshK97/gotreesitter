@@ -389,8 +389,8 @@ receipt hash.
 A strict current-main rerun at `2c702656` now measures public `Parser.Parse` at
 **4.886056x C** by equal-fixture geomean and **5.517602x C** by fixed-suite sum
 of medians. The separately build-tagged, fail-closed compact candidate at
-`24f96df2` measures **3.707677x C** and **3.845796x C**, respectively, with a
-**3.874884x** worst fixture and zero timed fallbacks. That candidate result is
+`15a04d7b` measures **3.616769x C** and **3.744659x C**, respectively, with a
+**3.771715x** worst fixture and zero timed fallbacks. That candidate result is
 diagnostic: it authenticates visible `gts-deep-tree-v1` structure for the four
 clean fresh-full fixtures, not parser-state metadata, recovery, incremental
 reuse, included ranges, or public `Parser.Parse`. See [BENCH.md](BENCH.md) for
@@ -719,7 +719,7 @@ strict materialized real-Go publication receipt, shipped with v0.37.0, measured
 5.481673x C by equal-fixture geomean and 6.313799x C for the fixed-suite sum of
 medians. A post-release current-main receipt now measures public `Parser.Parse`
 at 4.886056x C and 5.517602x C, respectively. The build-tagged compact candidate
-measures 3.707677x C on its narrower authenticated surface but remains outside
+measures 3.616769x C on its narrower authenticated surface but remains outside
 the public parser. Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
 
 ### Now — performance and extreme hygiene
