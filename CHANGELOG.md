@@ -36,6 +36,14 @@ for tags and release notes while still in `0.x`.
   faster, unchanged parser work, and unchanged fallback counts. This route
   remains diagnostic-only.
 
+### Documentation
+
+- Publish the authenticated v0.40.0 fresh, materialized real-Go receipt:
+  4.851050x static C by equal-fixture geomean, 5.472406x by fixed-suite sum,
+  and 5.608320x on the worst fixture. The 0.716% geomean improvement over
+  v0.39.0 is below the reproducible 2% win threshold, so this is a baseline
+  refresh rather than a banked performance win.
+
 ### Fixed
 
 - Scheduler transaction token misuse on a different diagnostic core now
@@ -117,6 +125,123 @@ for tags and release notes while still in `0.x`.
   directions against fresh Go and C trees, and atomically publishes a
   machine-readable closure receipt only after every row passes.
 
+- Real-corpus grammar parity can use a durable configurable corpus root and
+  split-grammar corpus layouts without silently losing colliding basenames.
+  Eligible-sample caps now apply on every generated-result path, committed
+  floors reject over-cap rows, and the aggressive runner and floor share the
+  same 30-sample limit.
+
+## [0.40.0] - 2026-07-17
+
+### Performance
+
+- Build-time PGO. Ships a default profile (`pgo/default.pgo`) and a repdriver
+  tool; the `parity_report` build compiles with it. About 7% wall-clock
+  reduction, byte-identical across all 206 grammars.
+- Forest-index allocation overhaul. The forest alternative index is now pooled
+  across parses and the per-compare throwaway comparison slices are eliminated.
+  On the forest-path grammars (C#, Bash, CMake) allocation bytes drop 86–96% and
+  GC-cycle CPU 48–90%, with byte-identical trees.
+- GLR result-comparator copy elimination. The forest disambiguation comparator
+  chain now takes stack pointers instead of copying a 104-byte stack value per
+  call, removing about twelve `runtime.duffcopy` calls per compare. About 14%
+  wall-clock reduction on the forest-path grammars, byte-identical.
+- Forest reducer pooling. The per-parse forest reducer is now pooled, cutting C#
+  parse allocation a further ~51% by bytes, byte-identical.
+
+### Security
+
+- Query matcher work budget. The `-All` quantifier matchers now charge a
+  per-execution work budget, bounding worst-case combinatorial blow-up on
+  adversarial query/source pairs. Exposed via `Cursor.DidExceedMatchLimit` and
+  configurable with `SetMatchWorkBudget` (default 1,000,000).
+
+### Fixed
+
+- Incremental parsing no longer reuses a stale subtree when an edit shifts a
+  token boundary that abuts a reused node's right edge. Both the leaf and the
+  non-leaf (wrapped-token) reuse paths now reject reuse when the freshly lexed
+  token's end byte disagrees with the stored boundary, preventing spurious
+  `ERROR` nodes on common edits such as deleting the whitespace between two
+  identifiers (e.g. Clojure `(a b)` → `(ab)`). Verified byte-identical to a
+  fresh parse across the C-oracle incremental parity harness.
+
+### Documentation
+
+- Label the authenticated `2c702656` parser receipt as the v0.39.0
+  production-code baseline rather than implying that its revision is current
+  main after the documentation-only release commits.
+
+## [0.39.0] - 2026-07-17
+
+Correctness-and-evidence release. Query ranges, literals, missing-node patterns,
+property metadata, highlight inheritance, lazy tree finalization, DFA EOF
+seeking, grammar imports, and generated C metadata now match their locked
+contracts more closely. Locked incremental and work-count receipts authenticate
+the exercised behavior, while durable corpus roots, split-grammar layouts, and
+bounded floors make real-corpus checks reproducible. The authenticated
+production receipt at `2c702656` measures public `Parser.Parse` at 4.886056x C
+by equal-fixture geomean, 5.517602x C by fixed-suite sum, and 5.648204x C on the
+worst fixture against the locked static `-O2` C oracle.
+
+### Fixed
+
+- Deferred result-compatibility finalization stays lazy while trees are owned by
+  parser retry/selection code, then synchronizes every public read that can
+  observe normalized nodes or diagnostics, including pooled tree values.
+- Query byte and point ranges now match the locked C runtime for half-open
+  boundaries, zero-width nodes at the range start, reversed range updates, and
+  zero-valued unbounded-end sentinels.
+- DFA token-source seeks clamp past-EOF offsets before integer narrowing and
+  preserve exact EOF coordinates across both skip APIs, including 32-bit builds.
+- Query string literals now decode control, quote, and backslash escapes through
+  execution and reject unescaped newlines like the locked C query parser.
+- Grammar imports now decode C string and Unicode escapes without losing the
+  reversible question-mark spelling shared with grammargen; refreshed Agda and
+  Dhall blobs expose their Unicode symbols correctly. Generated C now uses the
+  ABI-appropriate lexer-mode layout, emits flattened parse-action offsets, and
+  validates complete ABI-15 supertype metadata before emission. Lowercase
+  keyword leaves are classified from parser-reachable ownership like
+  tree-sitter.
+- Query `MISSING` patterns now test missing nodes, and inert `#is?`/`#is-not?`
+  properties are available through public metadata accessors. Descendant range
+  walks now match upstream behavior for reversed ranges and zero-width missing
+  children.
+- Highlight queries now resolve supported built-in inheritance chains across
+  registration order and same-name replacements without duplicating cyclic
+  queries. Incompatible locked grammar/query pairs remain fail-closed.
+- Incremental parses that accept a full-span ERROR tree under a wider merge
+  policy may retry once with the corresponding fresh-parse policy and adopt
+  only a strictly better result. Runtime and profile diagnostics report the
+  retry attempt, selection, cap, cause, and whether old-tree reuse was active.
+- Token-invariant single-leaf edits stay outside accepted-error retry routing,
+  avoiding a whole-tree error scan on the one-token validation path.
+
+### Tooling
+
+- Bank an authenticated quiet-host production receipt against the locked
+  static `-O2` C oracle. At the v0.39.0 production-code baseline `2c702656`,
+  public `Parser.Parse` measures 4.886056x C by equal-fixture geomean and
+  5.517602x C by fixed-suite sum of medians, with a 5.648204x worst fixture.
+- Add a bounded, build-tagged parser trace that separates lookup cells from
+  execution-time cell reconstruction and retains whole-parse aggregates after
+  its chronological event prefix fills. Scanner checkpoints bind their cached
+  state to the current event token span and remain distinct from unavailable
+  state after relexing. Collision keys have explicit memory caps; reaching a
+  cap exposes unaudited counts, marks the audit incomplete, and blocks claims
+  that require complete collision evidence. A base-pinned content manifest and
+  fail-closed paired receipt identify which production, compact, and locked-C
+  observations can actually be compared. Observer equality and untagged
+  assembly tests keep the trace diagnostic-only.
+- Add the four-fixture authenticated Go/static-C work-count board with direct
+  counters at their exact hook boundaries, Go-only representation rows marked
+  incomparable, and missing mandatory instrumentation reported separately from
+  out-of-band work-ratio audit findings.
+- Add a versioned, locked incremental admission matrix that separates identity,
+  leaf-validation, real-code GLR, recovery, and stateful-scanner behavior using
+  runtime evidence. It rejects full-parse fallback, authenticates both edit
+  directions against fresh Go and C trees, and atomically publishes a
+  machine-readable closure receipt only after every row passes.
 - Real-corpus grammar parity can use a durable configurable corpus root and
   split-grammar corpus layouts without silently losing colliding basenames.
   Eligible-sample caps now apply on every generated-result path, committed

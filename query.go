@@ -270,6 +270,8 @@ type QueryCursor struct {
 	limitProbePending bool
 	didExceedMatchLim bool
 
+	workBudget int
+
 	hasMaxStartDepth bool
 	maxStartDepth    uint32
 
@@ -345,9 +347,10 @@ func (q *Query) ExecuteNode(node *Node, lang *Language, source []byte) []QueryMa
 // Exec creates a streaming cursor over matches rooted at node.
 func (q *Query) Exec(node *Node, lang *Language, source []byte) *QueryCursor {
 	c := &QueryCursor{
-		query:  q,
-		lang:   lang,
-		source: source,
+		query:      q,
+		lang:       lang,
+		source:     source,
+		workBudget: defaultQueryMatchWorkBudget,
 	}
 	if node != nil {
 		// Pre-size the worklist for typical tree depth (avoids early growths).
@@ -437,6 +440,18 @@ func (c *QueryCursor) DidExceedMatchLimit() bool {
 		return false
 	}
 	return c.didExceedMatchLim
+}
+
+// SetMatchWorkBudget bounds the number of enumeration steps the matcher may
+// take per (pattern,node) attempt, guarding against pathological O(2^n)
+// queries. A limit of 0 means unlimited. The default is defaultQueryMatchWorkBudget.
+// On exhaustion the cursor returns bounded partial results and DidExceedMatchLimit
+// reports true, mirroring C tree-sitter's over-limit behavior.
+func (c *QueryCursor) SetMatchWorkBudget(limit int) {
+	if c == nil {
+		return
+	}
+	c.workBudget = limit
 }
 
 // SetMaxStartDepth limits the depth at which new matches can begin.
@@ -585,11 +600,12 @@ func (q *Query) executeNodeIntoBuffer(root *Node, lang *Language, source []byte,
 					continue
 				}
 				pat := q.patterns[pi]
+				budget := newQueryMatchBudget(defaultQueryMatchWorkBudget)
 				var captureSets [][]QueryCapture
 				if pat.steps[0].quantifier == queryQuantifierZeroOrMore || pat.steps[0].quantifier == queryQuantifierOneOrMore {
-					captureSets = q.matchPatternPostorderAll(&pat, n, item.parent, item.childIdx, lang, source)
+					captureSets = q.matchPatternPostorderAll(&pat, n, item.parent, item.childIdx, lang, source, budget)
 				} else {
-					captureSets = q.matchPatternAll(&pat, n, lang, source)
+					captureSets = q.matchPatternAll(&pat, n, lang, source, budget)
 				}
 				for _, captures := range captureSets {
 					buf.matches = append(buf.matches, QueryMatch{
@@ -630,7 +646,8 @@ func (q *Query) executeNodeIntoBuffer(root *Node, lang *Language, source []byte,
 				continue
 			}
 			pat := q.patterns[pi]
-			captureSets := q.matchPatternAll(&pat, n, lang, source)
+			budget := newQueryMatchBudget(defaultQueryMatchWorkBudget)
+			captureSets := q.matchPatternAll(&pat, n, lang, source, budget)
 			if len(captureSets) == 0 {
 				continue
 			}
@@ -951,15 +968,19 @@ func (c *QueryCursor) nextMatchRaw() (QueryMatch, bool) {
 					return match, true
 				}
 			}
+			budget := newQueryMatchBudget(c.workBudget)
 			var captureSets [][]QueryCapture
 			if c.currentNodePost {
 				if pat.steps[0].quantifier == queryQuantifierZeroOrMore || pat.steps[0].quantifier == queryQuantifierOneOrMore {
-					captureSets = q.matchPatternPostorderAll(&pat, c.currentNode, c.currentParent, c.currentChildIdx, c.lang, c.source)
+					captureSets = q.matchPatternPostorderAll(&pat, c.currentNode, c.currentParent, c.currentChildIdx, c.lang, c.source, budget)
 				} else {
-					captureSets = q.matchPatternAll(&pat, c.currentNode, c.lang, c.source)
+					captureSets = q.matchPatternAll(&pat, c.currentNode, c.lang, c.source, budget)
 				}
 			} else {
-				captureSets = q.matchPatternAll(&pat, c.currentNode, c.lang, c.source)
+				captureSets = q.matchPatternAll(&pat, c.currentNode, c.lang, c.source, budget)
+			}
+			if budget.tripped() {
+				c.didExceedMatchLim = true
 			}
 			if len(captureSets) == 0 {
 				continue

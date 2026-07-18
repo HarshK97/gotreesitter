@@ -386,21 +386,23 @@ than the withdrawn 1.895x straight-LR comparison, established the full-parse
 baseline; [BENCH.md](BENCH.md) records every per-fixture median, RSS value, and
 receipt hash.
 
-A strict production control at `34c567bb` measures public `Parser.Parse` at
-**4.824113x C** by equal-fixture geomean and **5.466192x C** by fixed-suite sum
-of medians. The latest clean publication of the separately build-tagged,
-fail-closed compact candidate, at `0062fe35`, measures **3.378660x C** and
-**3.392365x C**, respectively, with every fixture below **3.51x C** and zero
-timed fallbacks. That candidate result is
-diagnostic: it authenticates visible `gts-deep-tree-v1` structure for the four
-clean fresh-full fixtures, not parser-state metadata, recovery, incremental
-reuse, included ranges, or public `Parser.Parse`. See [BENCH.md](BENCH.md) for
-the paired tables, exact identities, hashes, and support boundary.
+A strict v0.40.0 production receipt at `1935a42c` measures public
+`Parser.Parse` at **4.851050x C** by equal-fixture geomean and **5.472406x C**
+by fixed-suite sum of medians, with a **5.608320x C** worst fixture. The latest
+clean publication of the separately build-tagged, fail-closed compact
+candidate, at `0062fe35`, measures **3.378660x C** and **3.392365x C**,
+respectively, with every fixture below **3.51x C** and zero timed fallbacks.
+That candidate result is diagnostic: it authenticates visible
+`gts-deep-tree-v1` structure for the four clean fresh-full fixtures, not
+parser-state metadata, recovery, incremental reuse, included ranges, or public
+`Parser.Parse`. See [BENCH.md](BENCH.md) for the paired tables, exact
+identities, hashes, and support boundary.
 
 The historical incremental measurements on the same generated 500-function Go
 workload were `649 ns` for a one-byte edit and `2.43 ns` for a no-edit reparse.
-They remain workload-specific; use the real-corpus perf scoreboard for
-per-language Go-vs-C claims.
+They remain narrow workload-specific controls. The locked incremental matrix
+validates correctness and classifies work, but does not establish a general
+comparative Go/C speed headline.
 
 ```sh
 # Authenticated real-code Go full-parse lanes:
@@ -504,7 +506,7 @@ witness, and shrinks as certified engine mechanisms subsume shims. See
 
 ## Known limitations
 
-- **Full-parse throughput**: the strict current-main materialized real-Go publication receipt measures public `Parser.Parse` at **4.824113x C** by equal-fixture geomean and **5.466192x C** by fixed-suite sum of medians against the exact static `-O2` oracle (see [BENCH.md](BENCH.md)). The compact candidate's lower diagnostic ratio is not a public-parser claim. The former ~2.1x row used a straight-LR synthetic and a different Go grammar, so it is historical only. Incremental lanes remain dramatically faster than the cgo binding on their workload-specific controls. Full-parse throughput varies by grammar and corpus shape; GLR-heavy code, highly ambiguous languages, and very large generated files are the main performance frontier.
+- **Full-parse throughput**: the strict materialized real-Go production receipt at the v0.40.0 tag target `1935a42c` measures public `Parser.Parse` at **4.851050x C** by equal-fixture geomean and **5.472406x C** by fixed-suite sum of medians against the exact static `-O2` oracle (see [BENCH.md](BENCH.md)); its worst fixture is **5.608320x C**. The compact candidate's lower diagnostic ratio is not a public-parser claim. The former ~2.1x row used a straight-LR synthetic and a different Go grammar, so it is historical only. The locked incremental matrix validates correctness and classifies work, but general incremental Go/C performance has no current publication-grade headline. Full-parse throughput varies by grammar and corpus shape; GLR-heavy code, highly ambiguous languages, and very large generated files are the main performance frontier.
 - **GLR safety caps**: The parser enforces iteration, stack depth, and node count limits proportional to input size. These prevent pathological blowup on grammars with high ambiguity but impose a ceiling on the maximum input complexity that parses without error. The caps are tunable but not removable without risking unbounded resource consumption.
 
 ## Adding a language
@@ -709,19 +711,21 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.38.0**. The 206-grammar curated parity milestone is
-banked. v0.38.0 strengthens incremental tree parity across GLR reuse, scoring,
-culling, and retry selection; reports terminal materialization stops and edit
-ranges accurately; and banks evidence-gated full-parse savings from early
-cumulative-score rejection and exact-profile Odin arena sizing. Its static-C
-fleet, work-count, and forest-confirmation tooling also closes measurement
-gaps. The invalid historical 1.895x headline remains withdrawn. The first
-strict materialized real-Go publication receipt, shipped with v0.37.0, measured
-5.481673x C by equal-fixture geomean and 6.313799x C for the fixed-suite sum of
-medians. A post-release current-main receipt now measures public `Parser.Parse`
-at 4.824113x C and 5.466192x C, respectively. The build-tagged compact candidate
-measures 3.378660x C on its narrower authenticated surface but remains outside
-the public parser. Detailed history lives in [CHANGELOG.md](CHANGELOG.md).
+The current release is **v0.40.0**, which lands build-time PGO, forest-index
+allocation pooling, GLR comparator copy elimination, forest-reducer pooling, a
+query-matcher work-budget guard, and an incremental-reuse token-boundary fix.
+The authenticated production receipt at tag target `1935a42c` measures public
+`Parser.Parse` at **4.851050x C** by equal-fixture geomean, **5.472406x C** by
+fixed-suite sum, and **5.608320x C** on the worst fixture against the locked
+static `-O2` C oracle. Its 0.716% geomean improvement over v0.39.0 is below the
+reproducible 2% win threshold. The build-tagged compact candidate at
+`0062fe35` measures **3.378660x C** on its narrower authenticated fresh-full
+surface with zero timed fallback, but remains outside public `Parser.Parse`.
+The 206-grammar curated parity milestone is banked, the invalid historical
+1.895x headline remains withdrawn, and the incremental matrix is a
+correctness/work-classification receipt rather than a representative
+comparative speed headline. Detailed history lives in
+[CHANGELOG.md](CHANGELOG.md).
 
 ### Now — performance and extreme hygiene
 

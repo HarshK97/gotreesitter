@@ -460,7 +460,7 @@ func setStackEntryRawShapeRef(entry *stackEntry, ref rawShapeRef) {
 	}
 }
 
-func compareAcceptedStackRawShapePreference(p *Parser, arena *nodeArena, a, b glrStack) int {
+func compareAcceptedStackRawShapePreference(p *Parser, arena *nodeArena, a, b *glrStack) int {
 	if !a.accepted || !b.accepted || arena == nil {
 		return 0
 	}
