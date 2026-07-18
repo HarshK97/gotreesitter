@@ -162,7 +162,7 @@ The canonical equal-fixture geomean is **5.481673x C**. The fixed-suite sum of
 medians is **6.313799x C**; it is reported separately because the largest file
 dominates aggregate wall time. This is the first locked-oracle historical
 baseline, not a retrospective adjustment to the withdrawn straight-LR ratio;
-the v0.39.0 production-code baseline is recorded below.
+the later production-code baselines are recorded below.
 
 Receipt identities:
 
@@ -175,7 +175,7 @@ Receipt identities:
 - static C artifact SHA-256:
   `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
 
-### v0.39.0 production-code baseline
+### v0.39.0 production-code baseline (historical)
 
 An authenticated production receipt was collected on 2026-07-17 from the same
 quiet host, core 6, and Go 1.22.2. The worktree was clean production code at
@@ -202,6 +202,41 @@ Receipt identities:
   `19a68af15fe1f413e628d3f5a7aed0b7fb975652028aee685d5b30769151d2f3`;
 - complete receipt bundle SHA-256:
   `3c529e002cee1ab28e7ec11edc826d3b31b298dec616e14aa0fd405e11c84a09`;
+- static C artifact SHA-256:
+  `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
+
+### v0.40.0 production-code baseline (current)
+
+The current authenticated production receipt was collected on 2026-07-18 from
+the clean v0.40.0 tag target
+`1935a42c1ecc68a40147f0e13dc90bcd4b23f1b7` on `ns1007492`, CPU 14, with Go
+1.22.2 and `GOMAXPROCS=1`. The strict quiet-host and cgo/static-C deep-tree
+admission gates passed before five Go-C-C-Go cycles produced ten samples per
+backend and fixture. It uses the same locked static `-O2` C artifact and
+measures the public fresh, materialized parser lifecycle.
+
+| Fixture | Go median | static C median | Go / C | B/op | allocs/op | Go max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 27.9760085 ms | 5.439447625 ms | **5.143171x** | 154,878.5 | 13 | 68,900 KiB | 2,816 KiB |
+| `rewrite.go` | 4.9456765 ms | 1.206203075 ms | **4.100202x** | 2,040 | 14 | 54,196 KiB | 2,304 KiB |
+| `language.go` | 27.1806765 ms | 5.80478855 ms | **4.682458x** | 153,665 | 32 | 68,432 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 331.409954 ms | 59.0925574 ms | **5.608320x** | 13,165,874.5 | 560.5 | 206,868 KiB | 9,216 KiB |
+
+The v0.40.0 public-parser baseline is **4.851050x C** by equal-fixture
+geomean. Its fixed-suite sum of medians is **5.472406x C** (391.5123155 ms Go
+versus 71.54299665 ms static C), and its worst fixture is `grammargen/lr.go` at
+**5.608320x C**. The geomean is only **0.716%** better than v0.39.0's
+4.886056x result, so this receipt does not satisfy the project's reproducible
+2% performance-win threshold and is a baseline refresh, not a banked win.
+
+Receipt identities:
+
+- manifest SHA-256:
+  `c5eaf477072d9a89a592b1f983b58ac6d733ea3a48c50622fb2a3201c892b600`;
+- report SHA-256:
+  `4b92a5fc576f9253984c4ecbceb4ca9c280c994cab8d1d0716931ad07788e915`;
+- complete receipt bundle SHA-256:
+  `7dfc311ad9f3e2f098d02752f5b515d41fc6988e40e54b1ab365f88640d3e5cf`;
 - static C artifact SHA-256:
   `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
 
