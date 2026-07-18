@@ -1,5 +1,5 @@
 diff --git a/lib/src/language.c b/lib/src/language.c
-index b341a670..07ac8155 100644
+index b341a67..07ac815 100644
 --- a/lib/src/language.c
 +++ b/lib/src/language.c
 @@ -1,6 +1,7 @@
@@ -8,7 +8,7 @@ index b341a670..07ac8155 100644
  #include "tree_sitter/api.h"
 +#include "./work_count.h"
  #include <string.h>
- 
+
  const TSLanguage *ts_language_copy(const TSLanguage *self) {
 @@ -75,6 +76,7 @@ void ts_language_table_entry(
    TSSymbol symbol,
@@ -27,17 +27,18 @@ index b341a670..07ac8155 100644
 +    result->action_count
 +  );
  }
- 
+
  TSLexerMode ts_language_lex_mode_for_state(
 diff --git a/lib/src/parser.c b/lib/src/parser.c
-index 7aac259e..49ffbcfa 100644
+index 7aac259..ef6fee6 100644
 --- a/lib/src/parser.c
 +++ b/lib/src/parser.c
-@@ -20,6 +20,17 @@
+@@ -20,6 +20,76 @@
  #include "./tree.h"
  #include "./ts_assert.h"
  #include "./wasm_store.h"
 +#include "./work_count.h"
++#include <stddef.h>
 +
 +_Thread_local GTSWorkCount gts_work_count_current;
 +
@@ -48,10 +49,68 @@ index 7aac259e..49ffbcfa 100644
 +GTSWorkCount gts_work_count_snapshot(void) {
 +  return gts_work_count_current;
 +}
- 
++
++static void gts_work_count_raw_selected_subtree(Subtree subtree) {
++  // The parser's finished tree retains a terminal EOF sentinel, while the
++  // compact accepted derivation does not. The paired raw-census contract
++  // excludes that transport sentinel on both sides.
++  if (ts_subtree_is_eof(subtree)) return;
++  gts_work_count_add(&gts_work_count_current.raw_selected_internal_nodes, 1);
++  uint32_t child_count = ts_subtree_child_count(subtree);
++  if (child_count == 0) {
++    gts_work_count_add(&gts_work_count_current.raw_selected_internal_leaf_occurrences, 1);
++    return;
++  }
++  gts_work_count_add(&gts_work_count_current.raw_selected_internal_parent_occurrences, 1);
++  const Subtree *children = ts_subtree_children(subtree);
++  for (uint32_t i = 0; i < child_count; i++) {
++    gts_work_count_raw_selected_subtree(children[i]);
++  }
++}
++
++static inline void gts_work_count_admit_action_arm(uint32_t *admitted, uint32_t action_count) {
++  if (action_count <= 1) return;
++  gts_work_count_add(&gts_work_count_current.conflict_action_arms_admitted, 1);
++  if ((*admitted)++ > 0) {
++    gts_work_count_add(&gts_work_count_current.causal_conflict_forks, 1);
++  }
++}
++
++bool gts_work_count_validate_action_model(void) {
++  gts_work_count_reset();
++  uint32_t admitted = 0;
++  gts_work_count_admit_action_arm(&admitted, 3);
++  // A repetition shift is ignored at the real action loop before this seam.
++  gts_work_count_admit_action_arm(&admitted, 3);
++  GTSWorkCount count = gts_work_count_snapshot();
++  return admitted == 2 &&
++    count.conflict_action_arms_admitted == 2 &&
++    count.causal_conflict_forks == 1 &&
++    !count.overflow;
++}
++
++bool gts_work_count_validate_raw_census_model(void) {
++  typedef struct {
++    Subtree children[2];
++    SubtreeHeapData data;
++  } GTSRawCensusModel;
++  GTSRawCensusModel model = {0};
++  if (offsetof(GTSRawCensusModel, data) != sizeof(model.children)) return false;
++  model.children[0] = (Subtree) {.data = {.is_inline = true, .symbol = 1}};
++  model.children[1] = (Subtree) {.data = {.is_inline = true, .symbol = ts_builtin_sym_end}};
++  model.data = (SubtreeHeapData) {.ref_count = 1, .child_count = 2, .symbol = 1};
++  gts_work_count_reset();
++  gts_work_count_raw_selected_subtree((Subtree) {.ptr = &model.data});
++  GTSWorkCount count = gts_work_count_snapshot();
++  return count.raw_selected_internal_nodes == 2 &&
++    count.raw_selected_internal_parent_occurrences == 1 &&
++    count.raw_selected_internal_leaf_occurrences == 1 &&
++    !count.overflow;
++}
+
  #define LOG(...)                                                                            \
    if (self->lexer.logger.log || self->dot_graph_file) {                                     \
-@@ -509,6 +520,7 @@ static Subtree ts_parser__lex(
+@@ -509,6 +579,7 @@ static Subtree ts_parser__lex(
    StackVersion version,
    TSStateId parse_state
  ) {
@@ -59,7 +118,7 @@ index 7aac259e..49ffbcfa 100644
    TSLexerMode lex_mode = ts_language_lex_mode_for_state(self->language, parse_state);
    if (lex_mode.lex_state == (uint16_t)-1) {
      LOG("no_lookahead_after_non_terminal_extra");
-@@ -912,6 +924,7 @@ static void ts_parser__shift(
+@@ -912,6 +983,7 @@ static void ts_parser__shift(
    Subtree lookahead,
    bool extra
  ) {
@@ -67,23 +126,24 @@ index 7aac259e..49ffbcfa 100644
    bool is_leaf = ts_subtree_child_count(lookahead) == 0;
    Subtree subtree_to_push = lookahead;
    if (extra != ts_subtree_extra(lookahead) && is_leaf) {
-@@ -938,6 +951,7 @@ static StackVersion ts_parser__reduce(
+@@ -938,6 +1010,7 @@ static StackVersion ts_parser__reduce(
    bool is_fragile,
    bool end_of_non_terminal_extra
  ) {
 +  gts_work_count_add(&gts_work_count_current.reductions, 1);
    uint32_t initial_version_count = ts_stack_version_count(self->stack);
- 
+
    // Pop the given number of nodes from the given version of the parse stack.
-@@ -1048,6 +1062,7 @@ static void ts_parser__accept(
+@@ -1048,6 +1121,7 @@ static void ts_parser__accept(
    StackVersion version,
    Subtree lookahead
  ) {
 +  gts_work_count_add(&gts_work_count_current.accept_actions, 1);
    ts_assert(ts_subtree_is_eof(lookahead));
    ts_stack_push(self->stack, version, lookahead, false, 1);
- 
-@@ -1617,5 +1632,9 @@ static bool ts_parser__advance(
+
+@@ -1616,13 +1690,19 @@ static bool ts_parser__advance(
+     // an ambiguous state. REDUCE actions always create a new stack
      // version, whereas SHIFT actions update the existing stack version
      // and terminate this loop.
 +    gts_work_count_add(&gts_work_count_current.resolved_action_cells_examined, 1);
@@ -91,18 +151,51 @@ index 7aac259e..49ffbcfa 100644
 +      gts_work_count_add(&gts_work_count_current.raw_action_entries_beyond_first, table_entry.action_count - 1);
 +    }
      StackVersion last_reduction_version = STACK_VERSION_NONE;
++    uint32_t admitted_action_arms = 0;
      for (uint32_t i = 0; i < table_entry.action_count; i++) {
        TSParseAction action = table_entry.actions[i];
-@@ -1664,6 +1683,7 @@ static bool ts_parser__advance(
+
+       switch (action.type) {
+         case TSParseActionTypeShift: {
+           if (action.shift.repetition) break;
++          gts_work_count_admit_action_arm(&admitted_action_arms, table_entry.action_count);
+           TSStateId next_state;
+           if (action.shift.extra) {
+             next_state = state;
+@@ -1643,6 +1723,7 @@ static bool ts_parser__advance(
          }
- 
+
+         case TSParseActionTypeReduce: {
++          gts_work_count_admit_action_arm(&admitted_action_arms, table_entry.action_count);
+           bool is_fragile = table_entry.action_count > 1;
+           bool end_of_non_terminal_extra = lookahead.ptr == NULL;
+           LOG("reduce sym:%s, child_count:%u", SYM_NAME(action.reduce.symbol), action.reduce.child_count);
+@@ -1658,12 +1739,15 @@ static bool ts_parser__advance(
+         }
+
+         case TSParseActionTypeAccept: {
++          gts_work_count_admit_action_arm(&admitted_action_arms, table_entry.action_count);
+           LOG("accept");
+           ts_parser__accept(self, version, lookahead);
+           return true;
+         }
+
          case TSParseActionTypeRecover: {
++          gts_work_count_admit_action_arm(&admitted_action_arms, table_entry.action_count);
 +          gts_work_count_add(&gts_work_count_current.explicit_recover_actions, 1);
            if (ts_subtree_child_count(lookahead) > 0) {
              ts_parser__breakdown_lookahead(self, &lookahead, ERROR_STATE, &self->reusable_node);
            }
+@@ -2203,6 +2287,7 @@ balance:
+   self->canceled_balancing = false;
+   LOG("done");
+   LOG_TREE(self->finished_tree);
++  gts_work_count_raw_selected_subtree(self->finished_tree);
+
+   result = ts_tree_new(
+     self->finished_tree,
 diff --git a/lib/src/stack.c b/lib/src/stack.c
-index f0d57108..3fd2a602 100644
+index f0d5710..ddf0425 100644
 --- a/lib/src/stack.c
 +++ b/lib/src/stack.c
 @@ -4,6 +4,7 @@
@@ -118,19 +211,252 @@ index f0d57108..3fd2a602 100644
        .is_pending = is_pending,
      };
 +    gts_work_count_add(&gts_work_count_current.graph_link_additions_proxy, 1);
- 
+
      node->position = previous_node->position;
      node->error_cost = previous_node->error_cost;
-@@ -252,6 +254,8 @@ static void stack_node_add_link(
+@@ -197,12 +199,29 @@ static bool stack__subtree_is_equivalent(Subtree left, Subtree right) {
+   );
+ }
+
+-static void stack_node_add_link(
++typedef enum {
++  GTSLinkUnionInvalid,
++  GTSLinkUnionDuplicate,
++  GTSLinkUnionPrecedenceReplaced,
++  GTSLinkUnionRecursiveChanged,
++  GTSLinkUnionAlternateAppended,
++  GTSLinkUnionRejected,
++} GTSLinkUnionOutcome;
++
++static GTSLinkUnionOutcome stack_node_add_link(
+   StackNode *self,
+   StackLink link,
+   SubtreePool *subtree_pool
+ ) {
+-  if (link.node == self) return;
++  // Validity is decided before the logical-attempt seam. A direct self edge
++  // is the only cycle the upstream mutation can be presented: stack_node_new
++  // always points a new node at an already-existing predecessor, and recursive
++  // union only copies those older predecessor links into a mergeable peer.
++  if (link.node == self) return GTSLinkUnionInvalid;
++  bool union_attempt = self->link_count > 0;
++  if (union_attempt) {
++    gts_work_count_add(&gts_work_count_current.predecessor_link_union_attempts, 1);
++  }
+
+   for (int i = 0; i < self->link_count; i++) {
+     StackLink *existing_link = &self->links[i];
+@@ -221,8 +240,15 @@ static void stack_node_add_link(
+           existing_link->subtree = link.subtree;
+           self->dynamic_precedence =
+             link.node->dynamic_precedence + ts_subtree_dynamic_precedence(link.subtree);
++          if (union_attempt) {
++            gts_work_count_add(&gts_work_count_current.predecessor_link_union_precedence_replaced, 1);
++          }
++          return GTSLinkUnionPrecedenceReplaced;
++        }
++        if (union_attempt) {
++          gts_work_count_add(&gts_work_count_current.predecessor_link_union_duplicate_noop, 1);
+         }
+-        return;
++        return GTSLinkUnionDuplicate;
+       }
+
+       // If the previous nodes are mergeable, merge them recursively.
+@@ -231,8 +257,17 @@ static void stack_node_add_link(
+         existing_link->node->position.bytes == link.node->position.bytes &&
+         existing_link->node->error_cost == link.node->error_cost
+       ) {
++        bool recursive_changed = false;
++        bool recursive_rejected = false;
+         for (int j = 0; j < link.node->link_count; j++) {
+-          stack_node_add_link(existing_link->node, link.node->links[j], subtree_pool);
++          GTSLinkUnionOutcome nested = stack_node_add_link(existing_link->node, link.node->links[j], subtree_pool);
++          if (nested == GTSLinkUnionPrecedenceReplaced ||
++              nested == GTSLinkUnionRecursiveChanged ||
++              nested == GTSLinkUnionAlternateAppended) {
++            recursive_changed = true;
++          } else if (nested == GTSLinkUnionRejected || nested == GTSLinkUnionInvalid) {
++            recursive_rejected = true;
++          }
+         }
+         int32_t dynamic_precedence = link.node->dynamic_precedence;
+         if (link.subtree.ptr) {
+@@ -241,17 +276,38 @@ static void stack_node_add_link(
+         if (dynamic_precedence > self->dynamic_precedence) {
+           self->dynamic_precedence = dynamic_precedence;
+         }
+-        return;
++        if (union_attempt) {
++          gts_work_count_add(
++            recursive_rejected
++              ? &gts_work_count_current.predecessor_link_union_rejected
++              : recursive_changed
++                ? &gts_work_count_current.predecessor_link_union_recursive_changed
++                : &gts_work_count_current.predecessor_link_union_duplicate_noop,
++            1
++          );
++        }
++        if (recursive_rejected) return GTSLinkUnionRejected;
++        return recursive_changed ? GTSLinkUnionRecursiveChanged : GTSLinkUnionDuplicate;
+       }
+     }
+   }
+
+-  if (self->link_count == MAX_LINK_COUNT) return;
++  if (self->link_count == MAX_LINK_COUNT) {
++    if (union_attempt) {
++      gts_work_count_add(&gts_work_count_current.predecessor_link_union_rejected, 1);
++    }
++    return GTSLinkUnionRejected;
++  }
+
+   stack_node_retain(link.node);
    unsigned node_count = link.node->node_count;
    int dynamic_precedence = link.node->dynamic_precedence;
    self->links[self->link_count++] = link;
 +  gts_work_count_add(&gts_work_count_current.graph_link_additions_proxy, 1);
-+  gts_work_count_add(&gts_work_count_current.alternate_predecessor_links_appended, 1);
- 
++  if (union_attempt) {
++    gts_work_count_add(&gts_work_count_current.predecessor_link_union_alternate_appended, 1);
++    gts_work_count_add(&gts_work_count_current.alternate_predecessor_links_appended, 1);
++  }
+
    if (link.subtree.ptr) {
      ts_subtree_retain(link.subtree);
-@@ -296,6 +300,7 @@ static StackVersion ts_stack__add_version(
+@@ -261,6 +317,132 @@ static void stack_node_add_link(
+
+   if (node_count > self->node_count) self->node_count = node_count;
+   if (dynamic_precedence > self->dynamic_precedence) self->dynamic_precedence = dynamic_precedence;
++  return union_attempt ? GTSLinkUnionAlternateAppended : GTSLinkUnionInvalid;
++}
++
++static StackNode gts_work_count_model_node(TSStateId state) {
++  return (StackNode) {
++    .state = state,
++    .position = length_zero(),
++    .ref_count = 100,
++  };
++}
++
++static Subtree gts_work_count_model_subtree(SubtreeHeapData *data, TSSymbol symbol, int32_t precedence) {
++  *data = (SubtreeHeapData) {
++    .ref_count = 100,
++    .child_count = 1,
++    .symbol = symbol,
++  };
++  data->dynamic_precedence = precedence;
++  return (Subtree) {.ptr = data};
++}
++
++static bool gts_work_count_model_union(
++  uint64_t attempts,
++  uint64_t duplicate,
++  uint64_t precedence,
++  uint64_t recursive,
++  uint64_t alternate,
++  uint64_t rejected
++) {
++  GTSWorkCount count = gts_work_count_snapshot();
++  return count.predecessor_link_union_attempts == attempts &&
++    count.predecessor_link_union_duplicate_noop == duplicate &&
++    count.predecessor_link_union_precedence_replaced == precedence &&
++    count.predecessor_link_union_recursive_changed == recursive &&
++    count.predecessor_link_union_alternate_appended == alternate &&
++    count.predecessor_link_union_rejected == rejected &&
++    attempts == duplicate + precedence + recursive + alternate + rejected &&
++    !count.overflow;
++}
++
++bool gts_work_count_validate_link_union_model(void) {
++  SubtreePool pool = ts_subtree_pool_new(0);
++  SubtreeHeapData trees[32];
++  Subtree payloads[32];
++  for (unsigned i = 0; i < 32; i++) {
++    payloads[i] = gts_work_count_model_subtree(&trees[i], (TSSymbol)(10 + i), 0);
++  }
++  StackNode predecessors[16];
++  for (unsigned i = 0; i < 16; i++) predecessors[i] = gts_work_count_model_node((TSStateId)(1 + i));
++
++  // Primary publication is not a union; the second distinct edge is one
++  // alternate append.
++  StackNode primary = gts_work_count_model_node(20);
++  gts_work_count_reset();
++  if (stack_node_add_link(&primary, (StackLink) {.node = &predecessors[0], .subtree = payloads[0]}, &pool) != GTSLinkUnionInvalid ||
++      !gts_work_count_model_union(0, 0, 0, 0, 0, 0)) return false;
++  if (stack_node_add_link(&primary, (StackLink) {.node = &predecessors[1], .subtree = payloads[1]}, &pool) != GTSLinkUnionAlternateAppended ||
++      !gts_work_count_model_union(1, 0, 0, 0, 1, 0)) return false;
++
++  StackNode duplicate = gts_work_count_model_node(21);
++  duplicate.link_count = 1;
++  duplicate.links[0] = (StackLink) {.node = &predecessors[0], .subtree = payloads[0]};
++  gts_work_count_reset();
++  if (stack_node_add_link(&duplicate, duplicate.links[0], &pool) != GTSLinkUnionDuplicate ||
++      !gts_work_count_model_union(1, 1, 0, 0, 0, 0)) return false;
++
++  Subtree incumbent = gts_work_count_model_subtree(&trees[30], 40, 1);
++  Subtree higher = gts_work_count_model_subtree(&trees[31], 40, 2);
++  StackNode precedence = gts_work_count_model_node(22);
++  precedence.link_count = 1;
++  precedence.links[0] = (StackLink) {.node = &predecessors[0], .subtree = incumbent};
++  gts_work_count_reset();
++  if (stack_node_add_link(&precedence, (StackLink) {.node = &predecessors[0], .subtree = higher}, &pool) != GTSLinkUnionPrecedenceReplaced ||
++      !gts_work_count_model_union(1, 0, 1, 0, 0, 0)) return false;
++
++  StackNode lower_a = gts_work_count_model_node(7);
++  lower_a.link_count = 1;
++  lower_a.links[0] = (StackLink) {.node = &predecessors[0], .subtree = payloads[0]};
++  StackNode lower_b = gts_work_count_model_node(7);
++  lower_b.link_count = 1;
++  lower_b.links[0] = (StackLink) {.node = &predecessors[1], .subtree = payloads[1]};
++  StackNode recursive = gts_work_count_model_node(23);
++  recursive.link_count = 1;
++  recursive.links[0] = (StackLink) {.node = &lower_a, .subtree = payloads[2]};
++  gts_work_count_reset();
++  if (stack_node_add_link(&recursive, (StackLink) {.node = &lower_b, .subtree = payloads[2]}, &pool) != GTSLinkUnionRecursiveChanged ||
++      !gts_work_count_model_union(2, 0, 0, 1, 1, 0)) return false;
++
++  StackNode capped = gts_work_count_model_node(24);
++  capped.link_count = MAX_LINK_COUNT;
++  for (unsigned i = 0; i < MAX_LINK_COUNT; i++) {
++    capped.links[i] = (StackLink) {.node = &predecessors[i], .subtree = payloads[i]};
++  }
++  gts_work_count_reset();
++  if (stack_node_add_link(&capped, (StackLink) {.node = &predecessors[8], .subtree = payloads[8]}, &pool) != GTSLinkUnionRejected ||
++      !gts_work_count_model_union(1, 0, 0, 0, 0, 1)) return false;
++
++  StackNode rejected_lower = capped;
++  StackNode rejected_peer = gts_work_count_model_node(24);
++  rejected_peer.link_count = 1;
++  rejected_peer.links[0] = (StackLink) {.node = &predecessors[8], .subtree = payloads[8]};
++  StackNode recursive_reject = gts_work_count_model_node(25);
++  recursive_reject.link_count = 1;
++  recursive_reject.links[0] = (StackLink) {.node = &rejected_lower, .subtree = payloads[9]};
++  gts_work_count_reset();
++  if (stack_node_add_link(&recursive_reject, (StackLink) {.node = &rejected_peer, .subtree = payloads[9]}, &pool) != GTSLinkUnionRejected ||
++      !gts_work_count_model_union(2, 0, 0, 0, 0, 2)) return false;
++
++  StackNode invalid_peer = gts_work_count_model_node(7);
++  invalid_peer.link_count = 1;
++  invalid_peer.links[0] = (StackLink) {.node = &lower_a, .subtree = payloads[3]};
++  StackNode recursive_invalid = gts_work_count_model_node(26);
++  recursive_invalid.link_count = 1;
++  recursive_invalid.links[0] = (StackLink) {.node = &lower_a, .subtree = payloads[4]};
++  gts_work_count_reset();
++  if (stack_node_add_link(&recursive_invalid, (StackLink) {.node = &invalid_peer, .subtree = payloads[4]}, &pool) != GTSLinkUnionRejected ||
++      !gts_work_count_model_union(1, 0, 0, 0, 0, 1)) return false;
++
++  StackNode self = gts_work_count_model_node(27);
++  self.link_count = 1;
++  self.links[0] = (StackLink) {.node = &predecessors[0], .subtree = payloads[0]};
++  gts_work_count_reset();
++  if (stack_node_add_link(&self, (StackLink) {.node = &self, .subtree = payloads[0]}, &pool) != GTSLinkUnionInvalid ||
++      !gts_work_count_model_union(0, 0, 0, 0, 0, 0)) return false;
++
++  return true;
+ }
+
+ static void stack_head_delete(
+@@ -296,6 +478,7 @@ static StackVersion ts_stack__add_version(
      .lookahead_when_paused = NULL_SUBTREE,
    };
    array_push(&self->heads, head);
@@ -138,9 +464,9 @@ index f0d57108..3fd2a602 100644
    stack_node_retain(node);
    if (head.last_external_token.ptr) ts_subtree_retain(head.last_external_token);
    return (StackVersion)(self->heads.size - 1);
-@@ -521,7 +526,16 @@ forceinline StackAction pop_count_callback(void *payload, const StackIterator *i
+@@ -521,7 +704,16 @@ forceinline StackAction pop_count_callback(void *payload, const StackIterator *i
  }
- 
+
  StackSliceArray ts_stack_pop_count(Stack *self, StackVersion version, uint32_t count) {
 -  return stack__iter(self, version, pop_count_callback, &count, (int)count);
 +  gts_work_count_add(&gts_work_count_current.reduction_pop_requests, 1);
@@ -154,9 +480,9 @@ index f0d57108..3fd2a602 100644
 +  }
 +  return result;
  }
- 
+
  forceinline StackAction pop_pending_callback(void *payload, const StackIterator *iterator) {
-@@ -685,6 +699,7 @@ void ts_stack_swap_versions(Stack *self, StackVersion v1, StackVersion v2) {
+@@ -685,6 +877,7 @@ void ts_stack_swap_versions(Stack *self, StackVersion v1, StackVersion v2) {
  StackVersion ts_stack_copy_version(Stack *self, StackVersion version) {
    ts_assert(version < self->heads.size);
    array_push(&self->heads, self->heads.contents[version]);
@@ -164,32 +490,32 @@ index f0d57108..3fd2a602 100644
    StackHead *head = array_back(&self->heads);
    stack_node_retain(head->node);
    if (head->last_external_token.ptr) ts_subtree_retain(head->last_external_token);
-@@ -693,6 +708,7 @@ StackVersion ts_stack_copy_version(Stack *self, StackVersion version) {
+@@ -693,6 +886,7 @@ StackVersion ts_stack_copy_version(Stack *self, StackVersion version) {
  }
- 
+
  bool ts_stack_merge(Stack *self, StackVersion version1, StackVersion version2) {
 +  gts_work_count_add(&gts_work_count_current.merge_attempts_proxy, 1);
    if (!ts_stack_can_merge(self, version1, version2)) return false;
    StackHead *head1 = &self->heads.contents[version1];
    StackHead *head2 = &self->heads.contents[version2];
-@@ -703,6 +719,7 @@ bool ts_stack_merge(Stack *self, StackVersion version1, StackVersion version2) {
+@@ -703,6 +897,7 @@ bool ts_stack_merge(Stack *self, StackVersion version1, StackVersion version2) {
      head1->node_count_at_last_error = head1->node->node_count;
    }
    ts_stack_remove_version(self, version2);
 +  gts_work_count_add(&gts_work_count_current.merge_successes_proxy, 1);
    return true;
  }
- 
-@@ -762,6 +779,7 @@ void ts_stack_clear(Stack *self) {
+
+@@ -762,6 +957,7 @@ void ts_stack_clear(Stack *self) {
      .last_external_token = NULL_SUBTREE,
      .lookahead_when_paused = NULL_SUBTREE,
    }));
 +  gts_work_count_add(&gts_work_count_current.stack_version_creations_proxy, 1);
  }
- 
+
  bool ts_stack_print_dot_graph(Stack *self, const TSLanguage *language, FILE *f) {
 diff --git a/lib/src/subtree.c b/lib/src/subtree.c
-index 42794de7..c814693e 100644
+index 42794de..c814693 100644
 --- a/lib/src/subtree.c
 +++ b/lib/src/subtree.c
 @@ -10,6 +10,7 @@
@@ -199,7 +525,7 @@ index 42794de7..c814693e 100644
 +#include "./work_count.h"
  #include "./ts_assert.h"
  #include <stddef.h>
- 
+
 @@ -169,6 +170,7 @@ Subtree ts_subtree_new_leaf(
    bool has_external_tokens, bool depends_on_column,
    bool is_keyword, const TSLanguage *language
@@ -207,7 +533,7 @@ index 42794de7..c814693e 100644
 +  gts_work_count_add(&gts_work_count_current.leaf_constructions_proxy, 1);
    TSSymbolMetadata metadata = ts_language_symbol_metadata(language, symbol);
    bool extra = symbol == ts_builtin_sym_end;
- 
+
 @@ -478,6 +480,7 @@ MutableSubtree ts_subtree_new_node(
    unsigned production_id,
    const TSLanguage *language
@@ -215,13 +541,13 @@ index 42794de7..c814693e 100644
 +  gts_work_count_add(&gts_work_count_current.parent_constructions_proxy, 1);
    TSSymbolMetadata metadata = ts_language_symbol_metadata(language, symbol);
    bool fragile = symbol == ts_builtin_sym_error || symbol == ts_builtin_sym_error_repeat;
- 
+
 diff --git a/lib/src/work_count.h b/lib/src/work_count.h
 new file mode 100644
-index 00000000..963fac8a
+index 0000000..52b4aa0
 --- /dev/null
 +++ b/lib/src/work_count.h
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,66 @@
 +#ifndef TREE_SITTER_WORK_COUNT_H_
 +#define TREE_SITTER_WORK_COUNT_H_
 +
@@ -255,13 +581,27 @@ index 00000000..963fac8a
 +  uint64_t no_tree_parent_constructions_proxy;
 +  uint64_t resolved_action_cells_examined;
 +  uint64_t raw_action_entries_beyond_first;
++  uint64_t conflict_action_arms_admitted;
++  uint64_t causal_conflict_forks;
++  uint64_t predecessor_link_union_attempts;
++  uint64_t predecessor_link_union_duplicate_noop;
++  uint64_t predecessor_link_union_precedence_replaced;
++  uint64_t predecessor_link_union_recursive_changed;
++  uint64_t predecessor_link_union_alternate_appended;
++  uint64_t predecessor_link_union_rejected;
 +  uint64_t alternate_predecessor_links_appended;
++  uint64_t raw_selected_internal_nodes;
++  uint64_t raw_selected_internal_parent_occurrences;
++  uint64_t raw_selected_internal_leaf_occurrences;
 +} GTSWorkCount;
 +
 +extern _Thread_local GTSWorkCount gts_work_count_current;
 +
 +void gts_work_count_reset(void);
 +GTSWorkCount gts_work_count_snapshot(void);
++bool gts_work_count_validate_action_model(void);
++bool gts_work_count_validate_link_union_model(void);
++bool gts_work_count_validate_raw_census_model(void);
 +
 +static inline void gts_work_count_add(uint64_t *slot, uint64_t delta) {
 +  if (!slot || delta == 0) return;

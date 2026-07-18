@@ -44,7 +44,7 @@ func TestDiagnosticWorkCountBoardDirectEvents(t *testing.T) {
 	workCountRecordResolvedActionCell(1)
 	workCountRecordAlternatePredecessorLinkAppended()
 	counts := EndDiagnosticWorkCount().BoardDirect()
-	if counts.Schema != "gts-work-count-board-direct/v1" || counts.Overflow || counts.ResolvedActionCellsExamined != 2 || counts.RawActionEntriesBeyondFirst != 3 || counts.AlternatePredecessorLinksAppended != 1 {
+	if counts.Schema != "gts-work-count-board-direct/v2" || counts.Overflow || counts.ResolvedActionCellsExamined != 2 || counts.RawActionEntriesBeyondFirst != 3 || counts.AlternatePredecessorLinksAppended != 1 {
 		t.Fatalf("board direct counts=%+v", counts)
 	}
 }

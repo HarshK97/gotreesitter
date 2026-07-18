@@ -162,7 +162,7 @@ The canonical equal-fixture geomean is **5.481673x C**. The fixed-suite sum of
 medians is **6.313799x C**; it is reported separately because the largest file
 dominates aggregate wall time. This is the first locked-oracle historical
 baseline, not a retrospective adjustment to the withdrawn straight-LR ratio;
-the later production-code baselines are recorded below.
+the exact-revision production and candidate receipt is recorded below.
 
 Receipt identities:
 
@@ -245,6 +245,334 @@ in [`cgo_harness/README.md`](cgo_harness/README.md#run-locked-canonical-incremen
 validates exact correctness and classifies identity, leaf validation, real-code
 GLR, recovery, and scanner-state work. It publishes no general comparative
 incremental speed headline.
+
+### Exact-revision production and post-fusion compact-candidate receipt
+
+A paired strict receipt was collected on 2026-07-17 from quiet host
+`ns1007492` and Go 1.22.2. Both worktrees were clean at exact post-fusion
+revision `708c665f762f85ea07a72e3ffb31581f8d622a93`. The `PUBLICATION` control
+measures the public `Parser.Parse` lifecycle, completeness check, and
+`Tree.Release`.
+
+| Fixture | Go median | static C median | Go / C | B/op | allocs/op | Go max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 27.890 ms | 5.402 ms | **5.163424x** | 152,098 | 13 | 65,728 KiB | 2,816 KiB |
+| `rewrite.go` | 4.887 ms | 1.202 ms | **4.065670x** | 2,040 | 14 | 54,084 KiB | 2,304 KiB |
+| `language.go` | 26.745 ms | 5.804 ms | **4.607774x** | 149,581 | 32 | 71,396 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 331.145 ms | 59.675 ms | **5.549179x** | 13,166,466 | 564.5 | 205,724 KiB | 9,216 KiB |
+
+The same-revision public-parser control is **4.813350x C** by equal-fixture
+geomean. Its fixed-suite sum of medians is **5.419730x C** (390.667 ms Go
+versus 72.082 ms static C), and its worst fixture is `grammargen/lr.go` at
+**5.549179x C**.
+
+Production receipt identities:
+
+- manifest SHA-256:
+  `575f1eab1ed29eeae680baab33686c5a43bb7636a873c6ee23d32d41cc0a6363`;
+- report SHA-256:
+  `f44a77007142c24ad5b1ec6d386fb19b417f2d1ba4f1b32c9058e39bfd87b80d`;
+- complete receipt archive SHA-256:
+  `937a83b9551ec7c2a1e65c36fcc8c5e13cada8f412434b2db87a3a7eca3d862f`.
+
+The same revision adds a separate build-tagged compact backend:
+
+```sh
+bash cgo_harness/pure_c/run_canonical_go_full_parse.sh \
+  --go-backend candidate --core <idle-cpu>
+```
+
+Its receipt class is `AUTHENTICATED_CANDIDATE`, its build tag is
+`gts_parsercorephase0`, and its measured lifecycle is
+`parserCoreFreshFullRunner.parse + shallow completeness + Tree.Release`.
+Fallback policy is `none_fail_closed`; all 40 timed Go samples reported zero
+fallback and repeat-identical per-fixture work counts.
+
+| Fixture | Candidate median | static C median | Candidate / C | B/op | allocs/op | Candidate max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 21.495 ms | 5.436 ms | **3.954119x** | 231,446 | 9,032 | 50,972 KiB | 2,816 KiB |
+| `rewrite.go` | 4.359 ms | 1.200 ms | **3.633407x** | 56,193 | 1,935 | 52,972 KiB | 2,304 KiB |
+| `language.go` | 22.016 ms | 5.801 ms | **3.794892x** | 275,011 | 9,279 | 56,108 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 236.025 ms | 58.739 ms | **4.018193x** | 2,415,402 | 91,202 | 94,400 KiB | 9,216 KiB |
+
+The candidate equal-fixture geomean is **3.847233x C**. Its fixed-suite sum of
+medians is **3.988613x C** (283.895 ms candidate versus 71.176 ms static C), and
+its worst fixture is `grammargen/lr.go` at **4.018193x C**. Comparing the paired
+ratios, the candidate improves the equal-fixture geomean by **20.07%** and the
+fixed-suite sum by **26.41%**. The per-fixture ratio reductions are 23.42%,
+10.63%, 17.64%, and 27.59% in table order. Candidate allocation count is not a
+win; its lower elapsed time and lower large-fixture RSS arise despite many
+small allocations.
+
+Candidate receipt identities:
+
+- manifest SHA-256:
+  `513a1e0dcec8c0214c0abcc57e3563ec4ed43a5ab369aa5092867746f0aec50a`;
+- report SHA-256:
+  `4ff459035520685c6d01a38df738105aae1121edbe33248d66a7b7603e4e3813`;
+- complete receipt archive SHA-256:
+  `b8e543de18769059faf7be0f2adc84009898e48e5e44d8063c8bc3c2fb10940e`;
+- static C artifact SHA-256:
+  `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
+
+“Exact” for this candidate means `gts-deep-tree-v1` visible structural equality:
+selected syntax, spans, points, fields, aliases/extras, EOF, and selected-node
+census match the locked oracle on the four clean fresh-UTF-8 fixtures. The only
+admitted grammar/scanner identity is the embedded Go blob with SHA-256
+`9cf914d26d962d1a62e7954f8b20b302337a44cb7d4a07218eec482c45a57a08`
+and the exact `github.com/odvcencio/gotreesitter/grammars.GoExternalScanner`
+type. The route declines recovery or retry, incremental parsing, included
+ranges, closed-prefix operation, missing or no-lookahead tokens, repetition
+shifts, extra chains, and any EOF frontier other than one accepted head with
+one exact derivation. Other unsupported semantics also fail closed. The digest
+does not cover `ParseState` or `PreGotoState`, and the compact materializer
+currently writes zero for both. The candidate has not admitted query/cursor
+behavior or multiple grammars. Therefore **3.847233x C is a branch-only
+diagnostic compact-candidate result, not a replacement public `Parser.Parse`
+claim**; the same-revision production control is **4.813350x C**.
+
+### Compact candidate action-row dispatch receipt
+
+A clean authenticated candidate receipt was collected on 2026-07-18 from
+quiet host `ns1007492`, pinned to CPU 12 with Go 1.22.2, at exact revision
+`24f96df21155a77625a5031fa02ff64a58d4a128`. It uses the same static `-O2`
+oracle contract and artifact described above, passed cgo/static deep admission,
+and reported zero fallback with repeat-identical parser work on every timed
+sample.
+
+| Fixture | Candidate median | static C median | Candidate / C | B/op | allocs/op | Candidate max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 20.734 ms | 5.492 ms | **3.775635x** | 231,222 | 9,032 | 48,888 KiB | 2,816 KiB |
+| `rewrite.go` | 4.261 ms | 1.218 ms | **3.499159x** | 55,969 | 1,935 | 53,232 KiB | 2,304 KiB |
+| `language.go` | 21.433 ms | 5.806 ms | **3.691434x** | 274,803 | 9,279.5 | 56,800 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 226.958 ms | 58.572 ms | **3.874884x** | 2,415,107 | 91,204 | 92,948 KiB | 9,216 KiB |
+
+The candidate equal-fixture geomean is **3.707677x C**. Its fixed-suite sum of
+medians is **3.845796x C** (273.387 ms candidate versus 71.087 ms static C),
+and every fixture is below 3.90x C.
+
+Before banking the change, two serialized reverse-order quiet-host A/B boards
+compared the exact pre-change revision `6354d0e357481de1cb13e69ebd76373fc336b325`
+with the action-row descriptor change. Each board used ten 750 ms samples per
+fixture on CPU 12. The rows below compare Go medians directly, so static-C
+sample jitter cannot create the reported improvement.
+
+| Fixture | Board 1 base | Board 1 candidate | Improvement | Board 2 base | Board 2 candidate | Improvement |
+|---|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 21.538 ms | 20.759 ms | **3.62%** | 21.440 ms | 20.600 ms | **3.92%** |
+| `rewrite.go` | 4.389 ms | 4.182 ms | **4.71%** | 4.363 ms | 4.214 ms | **3.42%** |
+| `language.go` | 22.156 ms | 21.047 ms | **5.00%** | 22.196 ms | 21.105 ms | **4.91%** |
+| `grammargen/lr.go` | 235.346 ms | 226.635 ms | **3.70%** | 236.572 ms | 226.548 ms | **4.24%** |
+
+The equal-fixture Go-time improvements are **4.2603%** and **4.1258%**. Exact
+tree, parser-work, and fallback receipts are unchanged. The A/B runs are
+labeled diagnostic because the candidate side was
+an uncommitted worktree; the clean authenticated receipt above independently
+binds the final code and oracle identities.
+
+Receipt identities:
+
+- clean revision manifest SHA-256:
+  `670d415e4fd17ac11de1ab0438701b0ba1f0337312d104877ff9d2da99091085`;
+- clean revision report SHA-256:
+  `eba3e7e5926c7d7c6d61b37066f45036892593cfcc4ba8bf9b16ab2a6b3d6d26`;
+- clean revision archive SHA-256:
+  `a050e7f12a8842a9dcb30729e6f69c23c8078bae44b989c1318b20276d4b91f2`;
+- Board 1 base manifest/report/archive SHA-256:
+  `d101f941ff880e4d42ee1d287c93f93b3e792eea78588b393079c53c880502e5`,
+  `949e2b09530289f2b82bde91a924ea721d7f62020e5e6dd471de794c065ea123`,
+  `c07237ae59d22637bd52015c19c07c9abb9bb427a99f3e95645b06d307388944`;
+- Board 1 candidate manifest/report/archive SHA-256:
+  `f727877c0e193e49e23afe96a67790b089e750dbb9820b4dcd70b7fc3d169b9c`,
+  `4b6d99d6fbd98ce81b8bb8ee8833d8810acc55a9380762483e03e990e22dd412`,
+  `d633fe5d3f995c43a351d5a74c143eceda0b4c9af0686c8630cdfcacaa92b821`;
+- Board 2 candidate manifest/report/archive SHA-256:
+  `ebf4cc932a076fef5a4a25a05cc4bb64c0d3540ee1b679033b0dcad2830e72bd`,
+  `f6dfd42ca59425458c4b8bad4f3f5b6cc3462475bf4dab9b026ba505bc36fd2b`,
+  `ce4192edfc80e4db912f5c305b7dbc9efed45b3050ec8bf2a797be3cdfba9614`;
+- Board 2 base manifest/report/archive SHA-256:
+  `61b499f24838ea0ce55a29b3f4b44f6dc375c5bf66d9b6427c82ff97ceffc87a`,
+  `6360db575c24459b1f41bef3826b87ea9ddc166bde6773eb511041671dc3873e`,
+  `77edb152f746bed600b4c1c779409efad3c8dd1f1036ae443cc93aba2283c4b9`.
+
+The support boundary remains unchanged: this is a diagnostic clean fresh-full
+Go candidate, not a public `Parser.Parse`, recovery, incremental, included-range,
+or multi-grammar claim.
+
+### Compact candidate point-cache receipt
+
+A clean authenticated candidate receipt was collected on 2026-07-18 from
+quiet host `ns1007492`, pinned to CPU 12 with Go 1.22.2, at exact revision
+`15a04d7bfac7f75dbbfd4a5c199c7fb731c0031c`. It uses the same locked static
+`-O2` oracle contract, passed cgo/static deep admission, remained clean, and
+reported zero fallback with repeat-identical parser work on every timed sample.
+
+| Fixture | Candidate median | static C median | Candidate / C | B/op | allocs/op | Candidate max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 20.249 ms | 5.460 ms | **3.708633x** | 231,222 | 9,032 | 55,376 KiB | 2,816 KiB |
+| `rewrite.go` | 4.102 ms | 1.197 ms | **3.425931x** | 55,969 | 1,935 | 53,084 KiB | 2,304 KiB |
+| `language.go` | 20.609 ms | 5.772 ms | **3.570688x** | 274,796 | 9,279.5 | 52,820 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 220.607 ms | 58.490 ms | **3.771715x** | 2,415,065 | 91,202.5 | 92,868 KiB | 9,216 KiB |
+
+The candidate equal-fixture geomean is **3.616769x C**. Its fixed-suite sum of
+medians is **3.744659x C** (265.567 ms candidate versus 70.919 ms static C),
+and every fixture is below 3.78x C.
+
+The change adds a 16-entry, materialization-local exact-offset cache. Its
+authenticated selected-tree census reuses **59.02-62.17%** of point lookups
+across the four fixtures. Before banking it, two serialized reverse-order
+quiet-host A/B boards compared the exact pre-change revision `24f96df2` with
+the point cache. Each board used ten 750 ms samples per fixture on CPU 12. The
+table compares Go medians directly.
+
+| Fixture | Board 1 base | Board 1 candidate | Improvement | Board 2 base | Board 2 candidate | Improvement |
+|---|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 20.658 ms | 20.087 ms | **2.76%** | 20.641 ms | 20.271 ms | **1.79%** |
+| `rewrite.go` | 4.220 ms | 4.098 ms | **2.87%** | 4.165 ms | 4.126 ms | **0.92%** |
+| `language.go` | 21.153 ms | 20.725 ms | **2.03%** | 21.226 ms | 20.616 ms | **2.87%** |
+| `grammargen/lr.go` | 225.862 ms | 221.912 ms | **1.75%** | 225.623 ms | 218.970 ms | **2.95%** |
+
+The equal-fixture Go-time improvements are **2.3539%** and **2.1380%**. Every
+fixture improves in both orders; parser work and fallback counts are unchanged.
+The A/B runs are diagnostic because the candidate side was an uncommitted
+worktree. The clean authenticated receipt above independently binds the final
+code and oracle identities.
+
+Receipt identities:
+
+- clean revision manifest/report/archive SHA-256:
+  `88f2bdd29295708a800d260c5dd7f719a0bf2c865ed37ccbf22e436d2e021deb`,
+  `bc4c2d77bbbffc0e1bbb11f27949ba3ee44c366be3ab687d12f1fdb7ad0ce605`,
+  `d1dbb349ae77c6bf57d950c679fca0e11c35a8289007366aef8219015f0aa663`;
+- Board 1 candidate manifest/report/archive SHA-256:
+  `c7ad2f554c8253f7d3c5617be1151847472653bfc00737ddde05de980105f111`,
+  `61aa489261bc0f8bfdd138cd8c49675fd70e9ad86e6e5691bf5721d5557e30c2`,
+  `49b722898d181d5c0cdc4e2224a8ffebf3cb100d02f27fa4192da242329d7e6b`;
+- Board 1 base manifest/report/archive SHA-256:
+  `263186ff0e8cfd725f8a4ebe32be250c9f45921d2fb439dbe4661353d94c21d7`,
+  `4051bff7928928ca6a51d3dcb24ac5896a3e861432e550160fe8ba7e5414e4dc`,
+  `556d0f822398c29f06c545be37bdfa08d086cf9668f86b072aef8d8f38346d4e`;
+- Board 2 base manifest/report/archive SHA-256:
+  `bc30841887f5baf310eb31a25dceef28f7ae48efefba97404b161bf0e41aede4`,
+  `6e06ab725a81ce1fea55cb9907b705e561e20a9a821fad210575b5dc9d13dc89`,
+  `ba3107380af25c80d985469ae4d9003ecea80bb9cd917f4ca36c789d4fba6c5f`;
+- Board 2 candidate manifest/report/archive SHA-256:
+  `50cf482dede0e48c995097e24d3013e0365af2e5286dae95b0e543bff62b1ec3`,
+  `7af49e386ae656d3651cdb5c85079a36445cb37480a295ac07941f2c680128f6`,
+  `a70d6e92441c599578d1c5d85ff30ff64ad763cb027c37d42f05323a58505f8f`.
+
+The support boundary remains unchanged: this is a diagnostic clean fresh-full
+Go candidate, not a public `Parser.Parse`, recovery, incremental, included-range,
+or multi-grammar claim.
+
+### Current exact-revision production and construction-authenticated compact receipt
+
+A paired clean publication was collected on 2026-07-18 from quiet host
+`ns1007492`, pinned to CPU 3 with Go 1.22.2, at exact revision
+`34c567bbacab367d01e03b16bad0a4914cbc5a24`. Both lanes use the same locked
+static `-O2` oracle. They passed cgo/static deep admission, bounded quiet-host
+admission, and clean initial/final worktree checks.
+
+The public `Parser.Parse` control reports:
+
+| Fixture | Go median | static C median | Go / C | B/op | allocs/op | Go max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 28.006 ms | 5.447 ms | **5.141956x** | 152,098 | 13 | 68,428 KiB | 2,816 KiB |
+| `rewrite.go` | 4.901 ms | 1.203 ms | **4.073988x** | 2,040 | 14 | 54,232 KiB | 2,304 KiB |
+| `language.go` | 26.883 ms | 5.833 ms | **4.609063x** | 153,678 | 32 | 68,672 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 330.813 ms | 58.976 ms | **5.609304x** | 13,166,901 | 567.5 | 205,516 KiB | 9,216 KiB |
+
+The production equal-fixture geomean is **4.824113x C**. Its fixed-suite sum
+of medians is **5.466192x C**, and its worst fixture is `grammargen/lr.go` at
+**5.609304x C**.
+
+The separately build-tagged `AUTHENTICATED_CANDIDATE` reports:
+
+| Fixture | Candidate median | static C median | Candidate / C | B/op | allocs/op | Candidate max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 19.488 ms | 5.554 ms | **3.508968x** | 231,222 | 9,032 | 49,672 KiB | 2,816 KiB |
+| `rewrite.go` | 3.951 ms | 1.204 ms | **3.280552x** | 55,969 | 1,935 | 53,292 KiB | 2,304 KiB |
+| `language.go` | 20.164 ms | 5.770 ms | **3.494748x** | 274,801 | 9,279.5 | 58,052 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 214.731 ms | 60.551 ms | **3.546268x** | 2,415,065 | 91,202.5 | 96,272 KiB | 9,216 KiB |
+
+The candidate equal-fixture geomean is **3.456037x C**. Its fixed-suite sum
+of medians is **3.534987x C**, and every fixture is below 3.55x C. All 40
+timed candidate samples reported zero fallback, and each fixture retained one
+repeat-identical compact work signature across its ten samples. Relative to
+the preceding `15a04d7b` receipt, the geomean improves by **4.44%**, the suite
+sum by **5.60%**, and the worst ratio by **5.98%**. Relative to the same-revision
+production control, the candidate improves the geomean by **28.36%** and the
+suite sum by **35.33%**.
+
+Before banking construction-authenticated materialization, a balanced
+two-order quiet-host A/B compared exact base `e24d56ee` with the final change.
+The pooled fresh-full geomean improved by **3.44%**, every fixture improved by
+2.36-4.50%, materialization-only improved by **13.20%**, warm total improved
+by **3.90%**, and compact work plus fallback counts were unchanged. Both A/B
+artifacts used only `gts_parsercorephase0`; an earlier mismatched-tag diagnostic
+was rejected and is not part of this receipt.
+
+Receipt identities:
+
+- production manifest/report/archive SHA-256:
+  `23cc2354b86b8fc31ad6f4fad98205cebc87a5bd8de34bcbd4ff1e111b2a0c3c`,
+  `bf23ed1a4c87ed6bdd8828890d6a41cf8746646a115076b8920d166d46516d93`,
+  `cdb0d89d5d42ed0240d263b1a6d60144caa66abff3d8db6e33164abed3a5d6c6`;
+- candidate manifest/report/archive SHA-256:
+  `02d0b998de5c8a4d202dc95f3a9a7c93afc5545d46df3fb297977ec3f1688800`,
+  `fee39e64fb6efbf5fbc92f9f962f06f160873ff7c31678d4d0ef83db8ea41e58`,
+  `9e94bb1c539bb6da2cf51b945ea77acc5f6ac961239cf4532e35ea97cad2bfe7`;
+- locked static C artifact SHA-256:
+  `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
+
+The support boundary remains unchanged: the compact result authenticates the
+four clean fresh-full Go fixtures and visible deep-tree structure, not public
+`Parser.Parse`, recovery, incremental reuse, included ranges, parser-state
+metadata, query/cursor behavior, or multiple grammars.
+
+### Single-link compact reduction publication
+
+A clean candidate publication was collected on 2026-07-18 from quiet host
+`ns1007492`, pinned to CPU 3 with Go 1.22.2, at exact revision
+`0062fe35880f18879a801cda58cbff249f9f8f32`. It uses the same locked static
+`-O2` oracle as the preceding board and passed cgo/static deep admission,
+bounded quiet-host admission, and clean initial/final worktree checks.
+
+The build-tagged `AUTHENTICATED_CANDIDATE` reports:
+
+| Fixture | Candidate median | static C median | Candidate / C | B/op | allocs/op | Candidate max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 19.001 ms | 5.426 ms | **3.501799x** | 231,221.5 | 9,032 | 52,896 KiB | 2,816 KiB |
+| `rewrite.go` | 3.904 ms | 1.195 ms | **3.266439x** | 55,969 | 1,935 | 49,708 KiB | 2,304 KiB |
+| `language.go` | 19.402 ms | 5.770 ms | **3.362799x** | 274,798 | 9,279 | 53,056 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 200.186 ms | 59.091 ms | **3.387751x** | 2,415,085 | 91,202.5 | 93,812 KiB | 9,216 KiB |
+
+The equal-fixture geomean is **3.378660x C**. The fixed-suite sum of medians
+is **3.392365x C**, and every fixture is below 3.51x C. All 40 timed candidate
+samples reported zero fallback and retained repeat-identical compact work
+signatures. Relative to the preceding `34c567bb` candidate receipt, the
+geomean improves by **2.24%**, the suite sum by **4.03%**, and the worst ratio
+by **1.25%**.
+
+Before publication, a fixed quiet B/C/C/B comparison on the same host measured
+the `query_compile` scheduler at 15.25 ms versus 14.95 ms (-1.97%) and warm
+total at 18.89 ms versus 18.42 ms (-2.51%), with unchanged bytes and
+allocations. A 10-second CPU profile reduced cumulative `popPaths` time from
+6.79% to 3.72%; exact compact work, deep trees, and fallback counts were
+unchanged.
+
+Receipt identities:
+
+- manifest/report/archive SHA-256:
+  `59b887314c0b02847201dac3e541e6794abf113ae3e4394ca9594349239839b1`,
+  `e45961d4dcb88b9e3904e62ed467b699df62b75dd34e2e7d911088fad0f2f5b3`,
+  `c2ffa0c720911bb08b6015c05e53a2aaa4f06782c31af9140abd4338f26b8d01`;
+- locked static C artifact SHA-256:
+  `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
+
+The support boundary remains unchanged: this is a diagnostic clean fresh-full
+Go candidate, not a public `Parser.Parse`, recovery, incremental,
+included-range, query/cursor, or multi-grammar claim.
 
 ### Diagnostic workload-regime receipt
 
@@ -362,6 +690,30 @@ The independently validated Go-only frontier vocabulary is
 `construction_surplus` means representation-specific leaf plus parent
 constructions minus selected nodes; it must never be relabeled as a count of
 discarded nodes.
+
+### Four-fixture work-count board backends
+
+The authenticated four-fixture board emits `gts-work-count-board/v3` and keeps
+timing eligibility false. Production remains the default Go backend. Select the
+build-tagged compact backend explicitly:
+
+```sh
+cd cgo_harness
+GTS_WORK_COUNT_BOARD=1 \
+GTS_WORK_COUNT_GO_BACKEND=parsercore_phase0 \
+GTS_WORK_COUNT_BOARD_RECEIPT="$PWD/../harness_out/work_count_parsercore_board.json" \
+go test -tags 'treesitter_c_parity treesitter_c_perfscan' . \
+  -run '^TestAuthenticatedFourFixtureWorkCountBoard$' -count=1 -v
+```
+
+The compact backend builds a separate tagged artifact, authenticates the
+ordinary untagged Go tree and locked static-C tree first, then runs the compact
+child twice and requires repeat-identical counts. Directly comparable rows use
+the shared `gts-work-count/v2` counter contract. Candidate-only scheduling
+fields and mandatory events without paired semantic hooks are marked
+incomparable or instrumentation-blocked; they are never filled with production
+proxies or zeros. The checked-in board contract is
+[`cgo_harness/work_count/board_contract_v1.json`](cgo_harness/work_count/board_contract_v1.json).
 
 ## Go-vs-C fleet scoreboard (full parse, real corpora)
 

@@ -7,6 +7,35 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Performance
+
+- Bypass general graph enumeration when a compact-parser reduction follows a
+  single-link stack path, while retaining the existing enumerator for branched
+  paths and preserving its resource-limit checks. On the pinned quiet host,
+  the authenticated `query_compile` candidate improves total time by 2.51%
+  with unchanged parser work, bytes, and allocations. The compact route
+  remains build-tagged and diagnostic-only.
+- Skip redundant production-metadata remapping while materializing a compact
+  tree whose terminals and reductions were already authenticated at
+  construction. Generic diagnostic publication retains the full validation
+  path. A balanced two-order quiet-host board improves the authenticated
+  four-fixture fresh-full geomean by 3.44%, with every fixture improving by
+  2.36-4.50%, materialization improving by 13.20%, unchanged compact work, and
+  zero fallback. The compact route remains build-tagged and diagnostic-only.
+- Preclassify immutable compact-parser action rows and route singleton shift,
+  reduce, and extra actions without repeatedly interpreting or copying the row.
+  Two reverse-order quiet-host runs improve the authenticated four-fixture
+  candidate Total geomean by 4.13-4.26%, with every fixture improving by
+  3.42-5.00%, unchanged parser work and fallback counts, and a worst
+  candidate/static-C ratio below 3.90x. The candidate remains build-tagged and
+  diagnostic-only.
+- Cache exact source points in a bounded, allocation-free materialization-local
+  table for the build-tagged compact parser. The four authenticated fixtures
+  reuse 59.02-62.17% of point lookups; two reverse-order quiet-host boards
+  improve equal-fixture candidate time by 2.14-2.35%, with every fixture
+  faster, unchanged parser work, and unchanged fallback counts. This route
+  remains diagnostic-only.
+
 ### Documentation
 
 - Publish the authenticated v0.40.0 fresh, materialized real-Go receipt:
@@ -14,6 +43,93 @@ for tags and release notes while still in `0.x`.
   and 5.608320x on the worst fixture. The 0.716% geomean improvement over
   v0.39.0 is below the reproducible 2% win threshold, so this is a baseline
   refresh rather than a banked performance win.
+
+### Fixed
+
+- Scheduler transaction token misuse on a different diagnostic core now
+  poisons and rolls back only the called core, without mutating the token owner.
+- Deferred result-compatibility finalization stays lazy while trees are owned by
+  parser retry/selection code, then synchronizes every public read that can
+  observe normalized nodes or diagnostics, including pooled tree values.
+- Query byte and point ranges now match the locked C runtime for half-open
+  boundaries, zero-width nodes at the range start, reversed range updates, and
+  zero-valued unbounded-end sentinels.
+- DFA token-source seeks clamp past-EOF offsets before integer narrowing and
+  preserve exact EOF coordinates across both skip APIs, including 32-bit builds.
+- Query string literals now decode control, quote, and backslash escapes through
+  execution and reject unescaped newlines like the locked C query parser.
+- Grammar imports now decode C string and Unicode escapes without losing the
+  reversible question-mark spelling shared with grammargen; refreshed Agda and
+  Dhall blobs expose their Unicode symbols correctly. Generated C now uses the
+  ABI-appropriate lexer-mode layout, emits flattened parse-action offsets, and
+  validates complete ABI-15 supertype metadata before emission. Lowercase
+  keyword leaves are classified from parser-reachable ownership like
+  tree-sitter.
+- Query `MISSING` patterns now test missing nodes, and inert `#is?`/`#is-not?`
+  properties are available through public metadata accessors. Descendant range
+  walks now match upstream behavior for reversed ranges and zero-width missing
+  children.
+- Highlight queries now resolve supported built-in inheritance chains across
+  registration order and same-name replacements without duplicating cyclic
+  queries. Incompatible locked grammar/query pairs remain fail-closed.
+- Incremental parses that accept a full-span ERROR tree under a wider merge
+  policy may retry once with the corresponding fresh-parse policy and adopt
+  only a strictly better result. Runtime and profile diagnostics report the
+  retry attempt, selection, cap, cause, and whether old-tree reuse was active.
+- Token-invariant single-leaf edits stay outside accepted-error retry routing,
+  avoiding a whole-tree error scan on the one-token validation path.
+
+### Tooling
+
+- Add a bounded, build-tagged parser trace that separates lookup cells from
+  execution-time cell reconstruction and retains whole-parse aggregates after
+  its chronological event prefix fills. Scanner checkpoints bind their cached
+  state to the current event token span and remain distinct from unavailable
+  state after relexing. Collision keys have explicit memory caps; reaching a
+  cap exposes unaudited counts, marks the audit incomplete, and blocks claims
+  that require complete collision evidence. A base-pinned content manifest and
+  fail-closed paired receipt identify which production, compact, and locked-C
+  observations can actually be compared. Observer equality and untagged
+  assembly tests keep the trace diagnostic-only.
+- Add the four-fixture authenticated Go/static-C work-count board with direct
+  counters at their exact hook boundaries, Go-only representation rows marked
+  incomparable, and missing mandatory instrumentation reported separately from
+  out-of-band work-ratio audit findings.
+- Add the build-tagged compact parser-core candidate and a work-board backend
+  that authenticates its exact EOF acceptance, selected tree digest, ranges,
+  fields, selected-node census, and repeat-identical work counts on four locked
+  real-Go fixtures. The candidate remains diagnostic-only and fail-closed: its
+  materializer does not preserve `ParseState` or `PreGotoState`, so this
+  admission is not a production-routing, incremental, recovery, or exact public
+  node-API compatibility claim.
+- Add a bounded, build-tagged selected-occurrence capability for the compact
+  parser candidate. It preserves repeated physical occurrences, construction
+  states, and checked subtree spans without copying the observer proof; its
+  borrowed immutable windows allow read-only re-entry and block lifecycle
+  mutation until released. Exact admissions and isolated race coverage remain
+  green, with no measured performance-regression claim.
+- Bank a paired quiet-host receipt against the locked static `-O2` C oracle.
+  At the exact post-fusion revision, public `Parser.Parse` measures 4.813350x C
+  by equal-fixture geomean and 5.419730x C by fixed-suite sum of medians. The
+  build-tagged compact candidate measures 3.847233x C and 3.988613x C,
+  respectively, with a 4.018193x worst fixture and zero fallback in every timed
+  sample. These branch-only candidate numbers apply only to its authenticated
+  clean fresh-full surface; they do not replace the public parser claim.
+- Fuse nested transaction checkpoints across the build-tagged compact
+  scheduler while preserving standalone rollback and capability semantics.
+  The authenticated four-fixture Total geomean improves by 8.25%, every
+  fixture improves by 7.21-8.96%, and allocation counts remain unchanged.
+- Add a versioned, locked incremental admission matrix that separates identity,
+  leaf-validation, real-code GLR, recovery, and stateful-scanner behavior using
+  runtime evidence. It rejects full-parse fallback, authenticates both edit
+  directions against fresh Go and C trees, and atomically publishes a
+  machine-readable closure receipt only after every row passes.
+
+- Real-corpus grammar parity can use a durable configurable corpus root and
+  split-grammar corpus layouts without silently losing colliding basenames.
+  Eligible-sample caps now apply on every generated-result path, committed
+  floors reject over-cap rows, and the aggressive runner and floor share the
+  same 30-sample limit.
 
 ## [0.40.0] - 2026-07-17
 
@@ -126,7 +242,6 @@ worst fixture against the locked static `-O2` C oracle.
   runtime evidence. It rejects full-parse fallback, authenticates both edit
   directions against fresh Go and C trees, and atomically publishes a
   machine-readable closure receipt only after every row passes.
-
 - Real-corpus grammar parity can use a durable configurable corpus root and
   split-grammar corpus layouts without silently losing colliding basenames.
   Eligible-sample caps now apply on every generated-result path, committed
@@ -2768,9 +2883,7 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.40.0...HEAD
-[0.40.0]: https://github.com/odvcencio/gotreesitter/compare/v0.39.0...v0.40.0
-[0.39.0]: https://github.com/odvcencio/gotreesitter/compare/v0.38.0...v0.39.0
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.38.0...HEAD
 [0.38.0]: https://github.com/odvcencio/gotreesitter/compare/v0.37.0...v0.38.0
 [0.37.0]: https://github.com/odvcencio/gotreesitter/compare/v0.36.0...v0.37.0
 [0.36.0]: https://github.com/odvcencio/gotreesitter/compare/v0.34.0...v0.36.0

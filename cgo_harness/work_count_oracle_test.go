@@ -30,7 +30,7 @@ const (
 	workCountFixtureID                 = "query_compile"
 	workCountGoAdmissionChildSchema    = "gts-work-count-go-child/v3"
 	workCountTaggedGoChildSchema       = "gts-work-count-go-child/v5"
-	workCountCChildSchema              = "gts-work-count-c-child/v4"
+	workCountCChildSchema              = "gts-work-count-c-child/v5"
 	workCountContract                  = "gts-work-count/v2"
 	workCountReceiptSchema             = "gts-work-count-receipt/v4"
 	workCountTimeout                   = 2 * time.Minute
@@ -48,7 +48,59 @@ const (
 	workCountRepoDestinationEnv    = "GTS_WORK_COUNT_REPO_DESTINATION"
 	workCountRepoLanguageEnv       = "GTS_WORK_COUNT_REPO_LANGUAGE"
 	workCountFixtureEnv            = "GTS_WORK_COUNT_FIXTURE"
+	workCountCExactModelEnv        = "GTS_WORK_COUNT_C_EXACT_MODEL"
 )
+
+type workCountCExactModelResult struct {
+	Schema string `json:"schema"`
+	Passed bool   `json:"passed"`
+}
+
+func TestWorkCountPinnedCExactModel(t *testing.T) {
+	if os.Getenv(workCountCExactModelEnv) != "1" {
+		t.Skip(workCountCExactModelEnv + "=1 is required")
+	}
+	repoRoot := workCountRepoRoot(t)
+	tempRoot := t.TempDir()
+	sourceSnapshot := workCountPrepareSourceSnapshot(t, repoRoot, tempRoot)
+	workCountClearAmbientGitRouting(t)
+	patchPath := filepath.Join(sourceSnapshot.Root, "cgo_harness", "work_count", "tree_sitter_v0_25_1.patch")
+	driverPath := filepath.Join(sourceSnapshot.Root, "cgo_harness", "pure_c", "work_count_oracle.c")
+	build := workCountBuildC(t, repoRoot, sourceSnapshot.Root, patchPath, driverPath)
+	defer build.Cleanup()
+	stdout, stderr, err := workCountRunCaptured("", workCountSanitizedEnv(os.Environ(), workCountCBuildEnvironment(), nil), workCountBuildTimeout, build.Artifact, "--exact-model")
+	if err != nil || len(stderr) != 0 {
+		t.Fatalf("pinned C exact model: err=%v stdout=%s stderr=%s", err, bytes.TrimSpace(stdout), bytes.TrimSpace(stderr))
+	}
+	var result workCountCExactModelResult
+	workCountDecodeExact(t, stdout, &result)
+	if result.Schema != "gts-work-count-c-exact-model/v1" || !result.Passed {
+		t.Fatalf("pinned C exact model result=%+v", result)
+	}
+	fixtures, err := benchfixtures.LoadGoFullParseFixtures()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range fixtures {
+		fixture := fixture
+		t.Run(fixture.Fixture.ID, func(t *testing.T) {
+			fixtureRoot := filepath.Join(tempRoot, fixture.Fixture.ID)
+			if err := os.MkdirAll(fixtureRoot, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			sourcePath := filepath.Join(fixtureRoot, fixture.Fixture.ID+".go")
+			if err := os.WriteFile(sourcePath, fixture.Source, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cResult := workCountRunC(t, build.Artifact, sourcePath, fixtureRoot)
+			workCountValidateCChild(t, "static C exact-vector model", "static-c-instrumented-glr", cResult, fixture, fixture.Fixture.DeepTreeSHA256)
+			workCountRequireFrozenStaticCCausalVector(t, fixture.Fixture.ID, cResult.BoardDirect)
+		})
+	}
+	if err := build.Recheck(); err != nil {
+		t.Fatalf("pinned C exact model identity drift: %v", err)
+	}
+}
 
 var workCountDirectFields = []string{
 	"shifts", "reductions", "explicit_recover_actions",
@@ -311,11 +363,22 @@ type workCountTaggedChildResult struct {
 }
 
 type workCountBoardDirectCounts struct {
-	Schema                            string `json:"schema"`
-	ResolvedActionCellsExamined       uint64 `json:"resolved_action_cells_examined"`
-	RawActionEntriesBeyondFirst       uint64 `json:"raw_action_entries_beyond_first"`
-	AlternatePredecessorLinksAppended uint64 `json:"alternate_predecessor_links_appended"`
-	Overflow                          bool   `json:"overflow"`
+	Schema                                 string `json:"schema"`
+	ResolvedActionCellsExamined            uint64 `json:"resolved_action_cells_examined"`
+	RawActionEntriesBeyondFirst            uint64 `json:"raw_action_entries_beyond_first"`
+	ConflictActionArmsAdmitted             uint64 `json:"conflict_action_arms_admitted"`
+	CausalConflictForks                    uint64 `json:"causal_conflict_forks"`
+	PredecessorLinkUnionAttempts           uint64 `json:"predecessor_link_union_attempts"`
+	PredecessorLinkUnionDuplicateNoop      uint64 `json:"predecessor_link_union_duplicate_noop"`
+	PredecessorLinkUnionPrecedenceReplaced uint64 `json:"predecessor_link_union_precedence_replaced"`
+	PredecessorLinkUnionRecursiveChanged   uint64 `json:"predecessor_link_union_recursive_changed"`
+	PredecessorLinkUnionAlternateAppended  uint64 `json:"predecessor_link_union_alternate_appended"`
+	PredecessorLinkUnionRejected           uint64 `json:"predecessor_link_union_rejected"`
+	AlternatePredecessorLinksAppended      uint64 `json:"alternate_predecessor_links_appended"`
+	RawSelectedInternalNodes               uint64 `json:"raw_selected_internal_nodes"`
+	RawSelectedInternalParents             uint64 `json:"raw_selected_internal_parent_occurrences"`
+	RawSelectedInternalLeaves              uint64 `json:"raw_selected_internal_leaf_occurrences"`
+	Overflow                               bool   `json:"overflow"`
 }
 
 type workCountCChildResult struct {
@@ -1242,11 +1305,30 @@ func workCountValidateBoardDirectObject(t *testing.T, data json.RawMessage) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		t.Fatal(err)
 	}
-	workCountRequireKeys(t, "board direct", raw, []string{"schema", "resolved_action_cells_examined", "raw_action_entries_beyond_first", "alternate_predecessor_links_appended", "overflow"})
+	workCountRequireKeys(t, "board direct", raw, []string{
+		"schema", "resolved_action_cells_examined", "raw_action_entries_beyond_first",
+		"conflict_action_arms_admitted", "causal_conflict_forks",
+		"predecessor_link_union_attempts", "predecessor_link_union_duplicate_noop",
+		"predecessor_link_union_precedence_replaced", "predecessor_link_union_recursive_changed",
+		"predecessor_link_union_alternate_appended", "predecessor_link_union_rejected",
+		"alternate_predecessor_links_appended", "raw_selected_internal_nodes",
+		"raw_selected_internal_parent_occurrences", "raw_selected_internal_leaf_occurrences", "overflow",
+	})
 	var direct workCountBoardDirectCounts
 	workCountDecodeExact(t, data, &direct)
-	if direct.Schema != "gts-work-count-board-direct/v1" || direct.Overflow {
+	if direct.Schema != "gts-work-count-board-direct/v2" || direct.Overflow {
 		t.Fatalf("invalid board direct counts: %+v", direct)
+	}
+	unionOutcomes := direct.PredecessorLinkUnionDuplicateNoop +
+		direct.PredecessorLinkUnionPrecedenceReplaced +
+		direct.PredecessorLinkUnionRecursiveChanged +
+		direct.PredecessorLinkUnionAlternateAppended +
+		direct.PredecessorLinkUnionRejected
+	if unionOutcomes != direct.PredecessorLinkUnionAttempts {
+		t.Fatalf("board direct union partition=%d attempts=%d", unionOutcomes, direct.PredecessorLinkUnionAttempts)
+	}
+	if direct.RawSelectedInternalNodes != direct.RawSelectedInternalParents+direct.RawSelectedInternalLeaves {
+		t.Fatalf("board direct raw selected census invalid: %+v", direct)
 	}
 }
 

@@ -1,0 +1,240 @@
+//go:build gts_parsercorephase0
+
+package gotreesitter
+
+import (
+	"errors"
+	"fmt"
+	"runtime"
+	"strings"
+	"testing"
+
+	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+)
+
+func parserCoreFreshFullCanonicalOptions() DiagnosticParserCorePrefixOptions {
+	return DiagnosticParserCorePrefixOptions{
+		ReceiptMode:   DiagnosticParserCoreReceiptSummary,
+		MaxTokens:     300000,
+		MaxDispatches: 600000,
+		Limits:        diagnosticParserCoreCanonicalLimits(),
+	}
+}
+
+func TestParserCoreFreshFullRunnerRepeatedCanonicalLifecycle(t *testing.T) {
+	runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, parserCoreFreshFullCanonicalOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for pass := 0; pass < 2; pass++ {
+		for _, row := range diagnosticParserCoreCanonicalAdmissions {
+			fixture := loadDiagnosticParserCoreCanonicalFixture(t, row.id)
+			requireDiagnosticParserCoreCanonicalFixtureIdentity(t, fixture, row)
+			tree, err := runner.parse(fixture.Source)
+			if err != nil {
+				t.Fatalf("pass %d fixture %s: %v", pass, row.id, err)
+			}
+			requireDiagnosticParserCoreCanonicalEOF(t, tree, len(fixture.Source))
+			if got := requireDiagnosticParserCoreCanonicalTreeDigest(t, tree, runner.lang); got != row.deepTreeSHA256 {
+				tree.Release()
+				t.Fatalf("pass %d fixture %s deep-tree digest=%s want=%s", pass, row.id, got, row.deepTreeSHA256)
+			}
+			if work := runner.compact.Work(); work != row.work || work.Overflow {
+				tree.Release()
+				t.Fatalf("pass %d fixture %s compact work=%+v want=%+v", pass, row.id, work, row.work)
+			}
+			tree.Release()
+		}
+	}
+}
+
+func TestParserCoreFreshFullRunnerResetsAfterCap(t *testing.T) {
+	options := parserCoreFreshFullCanonicalOptions()
+	runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := loadDiagnosticParserCoreCanonicalFixture(t, "rewrite")
+
+	runner.options.MaxDispatches = 1
+	if tree, err := runner.parse(fixture.Source); err == nil || tree != nil || !strings.Contains(err.Error(), "dispatch cap") {
+		if tree != nil {
+			tree.Release()
+		}
+		t.Fatalf("capped parse tree=%v err=%v, want fail-closed dispatch cap", tree != nil, err)
+	}
+
+	runner.options = options
+	tree, err := runner.parse(fixture.Source)
+	if err != nil {
+		t.Fatalf("parse after cap did not reset reusable state: %v", err)
+	}
+	defer tree.Release()
+	requireDiagnosticParserCoreCanonicalEOF(t, tree, len(fixture.Source))
+	if work := runner.compact.Work(); work != diagnosticParserCoreCanonicalAdmissions[0].work || work.Overflow {
+		t.Fatalf("parse after cap work=%+v want=%+v", work, diagnosticParserCoreCanonicalAdmissions[0].work)
+	}
+}
+
+func TestParserCoreFreshFullRunnerFailsClosedAtConstruction(t *testing.T) {
+	base := parserCoreFreshFullCanonicalOptions()
+	if _, err := newParserCoreFreshFullRunner(nil, base); err == nil || !strings.Contains(err.Error(), "external scanner identity mismatch") {
+		t.Fatalf("unauthenticated scanner error=%v", err)
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*DiagnosticParserCorePrefixOptions)
+	}{
+		{name: "recovery", mutate: func(o *DiagnosticParserCorePrefixOptions) { o.Recovery = true }},
+		{name: "retry", mutate: func(o *DiagnosticParserCorePrefixOptions) { o.Retry = true }},
+		{name: "incremental", mutate: func(o *DiagnosticParserCorePrefixOptions) { o.Incremental = true }},
+		{name: "included-ranges", mutate: func(o *DiagnosticParserCorePrefixOptions) { o.IncludedRanges = true }},
+		{name: "full-receipts", mutate: func(o *DiagnosticParserCorePrefixOptions) { o.ReceiptMode = DiagnosticParserCoreReceiptFull }},
+		{name: "closed-prefix", mutate: func(o *DiagnosticParserCorePrefixOptions) {
+			closed := uint32(1)
+			o.GenericStopAtClosedByte = &closed
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			options := base
+			test.mutate(&options)
+			if runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, options); err == nil || runner != nil {
+				t.Fatalf("unsupported route runner=%v err=%v", runner != nil, err)
+			}
+		})
+	}
+}
+
+// BenchmarkParserCoreFreshFullCanonical measures the authenticated compact
+// candidate's complete fresh materialized lifecycle. Fixture identity, deep
+// tree equality, exact compact work, arena draining, runner construction, and
+// one warm parse all remain outside the timed region. The timed region is only
+// runner.parse, shallow completeness validation, and Tree.Release.
+func BenchmarkParserCoreFreshFullCanonical(b *testing.B) {
+	for _, row := range diagnosticParserCoreCanonicalAdmissions {
+		row := row
+		b.Run(row.id, func(b *testing.B) {
+			fixture := loadDiagnosticParserCoreCanonicalFixture(b, row.id)
+			requireDiagnosticParserCoreCanonicalFixtureIdentity(b, fixture, row)
+			preflightParserCoreFreshFullCanonical(b, fixture, row)
+
+			// Collect the now-unreachable compact preflight arenas before
+			// constructing the measured runner so max RSS has no overlap.
+			runtime.GC()
+			DrainArenaPools()
+			b.Cleanup(DrainArenaPools)
+			runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, parserCoreFreshFullCanonicalOptions())
+			if err != nil {
+				b.Fatal(err)
+			}
+			warmTree, err := runner.parse(fixture.Source)
+			if err != nil {
+				if warmTree != nil {
+					warmTree.Release()
+				}
+				b.Fatalf("%s candidate warm parse: %v", row.id, err)
+			}
+			if err := validateParserCoreFreshFullCanonicalTree(warmTree, len(fixture.Source)); err != nil {
+				if warmTree != nil {
+					warmTree.Release()
+				}
+				b.Fatalf("%s candidate warm parse: %v", row.id, err)
+			}
+			if work := runner.compact.Work(); work != row.work || work.Overflow {
+				warmTree.Release()
+				b.Fatalf("%s candidate warm work=%+v want=%+v", row.id, work, row.work)
+			}
+			warmTree.Release()
+
+			b.ReportAllocs()
+			b.SetBytes(int64(len(fixture.Source)))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				tree, err := runner.parse(fixture.Source)
+				if err != nil {
+					if tree != nil {
+						tree.Release()
+					}
+					b.Fatalf("%s candidate timed parse: %v", row.id, err)
+				}
+				if err := validateParserCoreFreshFullCanonicalTree(tree, len(fixture.Source)); err != nil {
+					if tree != nil {
+						tree.Release()
+					}
+					b.Fatalf("%s candidate timed parse: %v", row.id, err)
+				}
+				tree.Release()
+			}
+			b.StopTimer()
+
+			work := runner.compact.Work()
+			if work != row.work || work.Overflow {
+				b.Fatalf("%s candidate timed work=%+v want=%+v", row.id, work, row.work)
+			}
+			reportParserCoreFreshFullWork(b, work)
+		})
+	}
+}
+
+// Keep the deep admission in a separate frame. Returning drops the only
+// reference to its compact arenas before the measured runner is constructed,
+// so DrainArenaPools cannot overlap the preflight and measured lifecycles.
+func preflightParserCoreFreshFullCanonical(
+	b *testing.B,
+	fixture DiagnosticParserCoreCanonicalFixtureForTest,
+	row diagnosticParserCoreCanonicalAdmission,
+) {
+	b.Helper()
+	runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, parserCoreFreshFullCanonicalOptions())
+	if err != nil {
+		b.Fatal(err)
+	}
+	tree, err := runner.parse(fixture.Source)
+	if err != nil {
+		if tree != nil {
+			tree.Release()
+		}
+		b.Fatalf("%s candidate preflight: %v", row.id, err)
+	}
+	if err := validateParserCoreFreshFullCanonicalTree(tree, len(fixture.Source)); err != nil {
+		b.Fatalf("%s candidate preflight: %v", row.id, err)
+	}
+	defer tree.Release()
+	if got := requireDiagnosticParserCoreCanonicalTreeDigest(b, tree, runner.lang); got != row.deepTreeSHA256 {
+		b.Fatalf("%s candidate preflight digest=%s want=%s", row.id, got, row.deepTreeSHA256)
+	}
+	if work := runner.compact.Work(); work != row.work || work.Overflow {
+		b.Fatalf("%s candidate preflight work=%+v want=%+v", row.id, work, row.work)
+	}
+}
+
+func validateParserCoreFreshFullCanonicalTree(tree *Tree, sourceLen int) error {
+	if tree == nil || tree.root == nil {
+		return errors.New("candidate parse returned no tree or root")
+	}
+	root := tree.root
+	runtime := tree.ParseRuntime()
+	if root.startByte != 0 || root.endByte != uint32(sourceLen) || root.IsError() || root.HasError() ||
+		runtime.StopReason != ParseStopAccepted || runtime.Truncated || runtime.TokenSourceEOFEarly ||
+		runtime.SourceLen != uint32(sourceLen) || runtime.ExpectedEOFByte != uint32(sourceLen) ||
+		runtime.RootEndByte != uint32(sourceLen) || !runtime.LastTokenWasEOF {
+		return fmt.Errorf("candidate tree is incomplete: root=%d..%d error=%t runtime=%s",
+			root.startByte, root.endByte, root.HasError(), runtime.Summary())
+	}
+	return nil
+}
+
+func reportParserCoreFreshFullWork(b *testing.B, work core.Work) {
+	b.Helper()
+	b.ReportMetric(float64(work.Shifts), "compact_shifts/op")
+	b.ReportMetric(float64(work.Reductions), "compact_reductions/op")
+	b.ReportMetric(float64(work.ReductionPopRequests), "compact_pop_requests/op")
+	b.ReportMetric(float64(work.EmittedPopPaths), "compact_pop_paths/op")
+	b.ReportMetric(float64(work.EmittedPopPayloads), "compact_pop_payloads/op")
+	b.ReportMetric(float64(work.GraphLinkAdditionsProxy), "compact_link_additions/op")
+	b.ReportMetric(float64(work.LeafConstructionsProxy), "compact_leaf_constructions/op")
+	b.ReportMetric(float64(work.ParentConstructionsProxy), "compact_parent_constructions/op")
+	b.ReportMetric(0, "candidate_fallback/op")
+}

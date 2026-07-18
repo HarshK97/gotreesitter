@@ -19,10 +19,13 @@ const (
 	finalizeDeferGuardMarker               = "work-count-assembly: finalize-defer guard"
 	popPayloadCensusMarker                 = "work-count-assembly: payload-census seam"
 	convergenceIterationMarker             = "work-count-assembly: convergence iteration seam"
+	resolvedActionCellMarker               = "work-count-assembly: resolved action-cell seam"
 	convergenceFinalExpandMarker           = "work-count-assembly: convergence final-expand seam"
 	convergenceGSSMarker                   = "work-count-assembly: convergence GSS seam"
 	gssMutationSetPrimaryMarker            = "work-count-assembly: GSS mutation set-primary seam"
 	gssMutationSetExtraMarker              = "work-count-assembly: GSS mutation set-extra seam"
+	gssAlternateAppendReuseMarker          = "work-count-assembly: alternate predecessor append-reuse seam"
+	gssAlternateAppendGrowMarker           = "work-count-assembly: alternate predecessor append-grow seam"
 	gssMutationAppendReuseMarker           = "work-count-assembly: GSS mutation append-reuse seam"
 	gssMutationAppendGrowMarker            = "work-count-assembly: GSS mutation append-grow seam"
 	semanticPhaseActionCellMarker          = "semantic-phase-assembly: action-cell seam"
@@ -70,6 +73,9 @@ func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
 	assertNoDiagnosticAssembly(t, reduceAssembly)
 
 	assertNoAssemblyAtMarker(t, closures, "parser.go", convergenceIterationMarker)
+	parseInternalAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.parseInternal$`, testBinary)
+	assertNoAssemblyAtMarker(t, parseInternalAssembly, "parser.go", resolvedActionCellMarker)
+	assertNoDiagnosticAssembly(t, parseInternalAssembly)
 	assertNoAssemblyAtMarker(t, closures, "parser.go", semanticPhaseActionCellMarker)
 	assertNoAssemblyAtMarker(t, closures, "parser.go", semanticPhaseExtraShiftExecutionMarker)
 	eofAdvanceAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.tryAdvanceEOFOnSingleStack`, testBinary)
@@ -88,6 +94,8 @@ func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
 	gssMutationAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.(?:setGSSMainLink|gssMainAddLinkSeenMutate|gssMainReplaceWorstEquivalentLinkIfBetterMutate|gssMainMergeNodesSeenMutate|gssMainMergeWithScratch|tryGSSMainMergeResult|\(\*gssNode\)\.appendExtraLink)`, testBinary)
 	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr.go", gssMutationSetPrimaryMarker)
 	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr.go", gssMutationSetExtraMarker)
+	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr_gss.go", gssAlternateAppendReuseMarker)
+	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr_gss.go", gssAlternateAppendGrowMarker)
 	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr_gss.go", gssMutationAppendReuseMarker)
 	assertNoAssemblyAtMarker(t, gssMutationAssembly, "glr_gss.go", gssMutationAppendGrowMarker)
 	assertNoDiagnosticAssembly(t, gssMutationAssembly)

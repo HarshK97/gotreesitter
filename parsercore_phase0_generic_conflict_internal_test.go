@@ -1,0 +1,681 @@
+//go:build gts_parsercorephase0
+
+package gotreesitter
+
+import (
+	"errors"
+	"math"
+	"reflect"
+	"strings"
+	"testing"
+
+	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+)
+
+func TestDiagnosticParserCoreGenericWorkSaturatesCausalCounters(t *testing.T) {
+	work := DiagnosticParserCoreGenericWork{
+		ConflictActionArmsAdmitted: math.MaxUint64 - 1,
+		CausalConflictForks:        math.MaxUint64 - 2,
+	}
+	work.add(&work.ConflictActionArmsAdmitted, 2)
+	work.add(&work.CausalConflictForks, 3)
+	if work.ConflictActionArmsAdmitted != math.MaxUint64 || work.CausalConflictForks != math.MaxUint64 || !work.Overflow {
+		t.Fatalf("scheduler causal saturation=%+v", work)
+	}
+}
+
+func TestDiagnosticParserCoreGenericConflictIgnoresNoArmsWhenRepetitionDeclinesCell(t *testing.T) {
+	actions := []core.Action{
+		{Type: core.ActionShift, State: 2},
+		{Type: core.ActionShift, State: 3, Repetition: true},
+	}
+	compact, err := core.New(&genericConflictTable{actions: actions}, core.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header := diagnosticParserCoreHeader{head: head}
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, header, 9)
+	unsupported := diagnosticParserCoreGenericUnsupportedCell(0, Token{Symbol: 9, EndByte: 1}, cell.actions())
+	if unsupported == nil || unsupported.boundary != DiagnosticParserCoreRoute || !strings.Contains(unsupported.detail, "repetition") {
+		t.Fatalf("repetition conflict gate=%+v", unsupported)
+	}
+	scheduler := diagnosticParserCoreGenericScheduler{compact: compact, headers: []diagnosticParserCoreHeader{header}}
+	if scheduler.work != (DiagnosticParserCoreGenericWork{}) || compact.Work() != (core.Work{}) {
+		t.Fatalf("declined repetition cell published work: scheduler=%+v core=%+v", scheduler.work, compact.Work())
+	}
+}
+
+func TestDiagnosticParserCoreDescriptorPreservesUnsupportedOrdinalOrdering(t *testing.T) {
+	tests := []struct {
+		name    string
+		actions []core.Action
+		detail  string
+	}{
+		{
+			name: "dynamic shift precedes static repetition",
+			actions: []core.Action{
+				{Type: core.ActionShift, State: 2},
+				{Type: core.ActionReduce, Repetition: true},
+			},
+			detail: "positive-width",
+		},
+		{
+			name: "static repetition precedes dynamic shift",
+			actions: []core.Action{
+				{Type: core.ActionReduce, Repetition: true},
+				{Type: core.ActionShift, State: 2},
+			},
+			detail: "repetition",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			row := core.NewActionRow(test.actions)
+			if got := row.Descriptor().Kind(); got != core.ActionRowUnsupported {
+				t.Fatalf("descriptor=%v, want unsupported", got)
+			}
+			unsupported := diagnosticParserCoreGenericUnsupportedCell(3, Token{Symbol: 9}, row)
+			if unsupported == nil || unsupported.headerIndex != 3 || !strings.Contains(unsupported.detail, test.detail) {
+				t.Fatalf("unsupported=%+v, want first ordinal detail %q", unsupported, test.detail)
+			}
+		})
+	}
+}
+
+func TestDiagnosticParserCoreDescriptorValidatesCompleteFrontierBeforeDispatch(t *testing.T) {
+	table := &genericConflictTable{cells: map[genericConflictCell][]core.Action{
+		{state: 1, symbol: 9}: {{Type: core.ActionShift, State: 3}},
+		{state: 2, symbol: 9}: {{Type: core.ActionShift, State: 4, Repetition: true}},
+	}}
+	compact, err := core.New(table, core.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := compact.Seed(2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler := &diagnosticParserCoreGenericScheduler{
+		compact: compact,
+		headers: []diagnosticParserCoreHeader{{head: first}, {head: second}},
+		token:   Token{Symbol: 9, EndByte: 1},
+		options: DiagnosticParserCorePrefixOptions{MaxDispatches: 8},
+		receipt: &DiagnosticParserCoreGenericScheduler{},
+	}
+	stop, err := scheduler.dispatchPass()
+	if err != nil || stop == nil || !strings.Contains(stop.detail, "repetition") {
+		t.Fatalf("dispatch stop=%+v err=%v", stop, err)
+	}
+	if scheduler.dispatches != 0 || scheduler.work.OrdinaryShifts != 0 || scheduler.work.ExtraShifts != 0 || scheduler.work.Reductions != 0 || compact.Work() != (core.Work{}) {
+		t.Fatalf("unsupported later cell allowed mutation: dispatches=%d scheduler=%+v core=%+v", scheduler.dispatches, scheduler.work, compact.Work())
+	}
+}
+
+func TestDiagnosticParserCorePointIndexPollsBeforeScanning(t *testing.T) {
+	want := errors.New("stop")
+	polls := 0
+	index, err := newDiagnosticParserCorePointIndex([]byte("first\nsecond\n"), func() error {
+		polls++
+		return want
+	})
+	if !errors.Is(err, want) || polls != 1 || index.lineStarts != nil {
+		t.Fatalf("stopped point index=%+v err=%v polls=%d", index, err, polls)
+	}
+}
+
+func TestDiagnosticParserCorePointIndexCachesExactArbitraryOffsets(t *testing.T) {
+	index, err := newDiagnosticParserCorePointIndex([]byte("a\nbc\n\nxyz"), func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		offset uint32
+		want   Point
+	}{
+		{offset: 0, want: Point{Row: 0, Column: 0}},
+		{offset: 1, want: Point{Row: 0, Column: 1}},
+		{offset: 2, want: Point{Row: 1, Column: 0}},
+		{offset: 4, want: Point{Row: 1, Column: 2}},
+		{offset: 5, want: Point{Row: 2, Column: 0}},
+		{offset: 6, want: Point{Row: 3, Column: 0}},
+		{offset: 9, want: Point{Row: 3, Column: 3}},
+		{offset: 12, want: Point{Row: 3, Column: 6}},
+	}
+	for _, test := range tests {
+		got, hit := index.pointCached(test.offset)
+		if hit || got != test.want {
+			t.Fatalf("first point(%d)=%+v hit=%t, want %+v miss", test.offset, got, hit, test.want)
+		}
+		got, hit = index.pointCached(test.offset)
+		if !hit || got != test.want {
+			t.Fatalf("cached point(%d)=%+v hit=%t, want %+v hit", test.offset, got, hit, test.want)
+		}
+	}
+	other, err := newDiagnosticParserCorePointIndex([]byte("x\ny"), func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, hit := other.pointCached(2); hit {
+		t.Fatal("point cache leaked across materializations")
+	}
+}
+
+func TestDiagnosticParserCorePointIndexRejectsCollidingOffset(t *testing.T) {
+	index, err := newDiagnosticParserCorePointIndex([]byte("abcdefghijklmn"), func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if point, hit := index.pointCached(0); hit || point != (Point{}) {
+		t.Fatalf("first point(0)=%+v hit=%t, want origin miss", point, hit)
+	}
+	if point, hit := index.pointCached(13); hit || point != (Point{Column: 13}) {
+		t.Fatalf("colliding point(13)=%+v hit=%t, want column 13 miss", point, hit)
+	}
+	if point, hit := index.pointCached(0); hit || point != (Point{}) {
+		t.Fatalf("evicted point(0)=%+v hit=%t, want origin miss", point, hit)
+	}
+}
+
+type genericConflictTable struct {
+	actions []core.Action
+	cells   map[genericConflictCell][]core.Action
+	gotos   map[genericConflictCell]core.StateID
+}
+
+func (t *genericConflictTable) Actions(state core.StateID, symbol core.Symbol) (core.ActionRow, error) {
+	if actions := t.cells[genericConflictCell{state: state, symbol: symbol}]; actions != nil {
+		return core.NewActionRow(actions), nil
+	}
+	if state == 1 && symbol == 9 {
+		return core.NewActionRow(t.actions), nil
+	}
+	return core.ActionRow{}, nil
+}
+
+type genericConflictCell struct {
+	state  core.StateID
+	symbol core.Symbol
+}
+
+func (t *genericConflictTable) Goto(state core.StateID, symbol core.Symbol) (core.StateID, error) {
+	return t.gotos[genericConflictCell{state: state, symbol: symbol}], nil
+}
+
+func (*genericConflictTable) ProductionFields(uint16, int) ([]core.FieldMapEntry, error) {
+	return nil, nil
+}
+
+func (*genericConflictTable) ProductionAliases(uint16, int) ([]core.Symbol, error) {
+	return nil, nil
+}
+
+func TestDiagnosticParserCoreGenericConflictArbitraryNOrdering(t *testing.T) {
+	actions := []core.Action{
+		{Type: core.ActionShift, State: 2},
+		{Type: core.ActionShift, State: 3},
+		{Type: core.ActionShift, State: 4},
+	}
+	compact, err := core.New(&genericConflictTable{actions: actions}, core.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix, err := compact.Seed(9, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	incoming, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	suffix, err := compact.Seed(8, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers := []diagnosticParserCoreHeader{
+		{head: prefix, creationSeq: 2},
+		{head: prefix, creationSeq: 3},
+		{head: incoming, creationSeq: 4},
+		{head: suffix, creationSeq: 6},
+	}
+	before, err := diagnosticParserCoreHeaderReceipts(compact, headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler := &diagnosticParserCoreGenericScheduler{
+		compact: compact, headers: headers, token: Token{Symbol: 9, StartByte: 0, EndByte: 1, ExternalScannerToken: true, ExternalScannerStartByte: 0},
+		branchOrder: 7, nextSeq: 10, options: DiagnosticParserCorePrefixOptions{MaxDispatches: 100},
+		electionIndex: 44,
+		currentElection: DiagnosticParserCoreElection{
+			Token:         Token{Symbol: 9, StartByte: 0, EndByte: 1, ExternalScannerToken: true, ExternalScannerStartByte: 0},
+			ScannerBefore: DiagnosticParserCoreScannerCheckpoint{Length: 1, SHA256: [32]byte{1}},
+			ScannerAfter:  DiagnosticParserCoreScannerCheckpoint{Length: 2, SHA256: [32]byte{2}},
+		},
+		receipt: &DiagnosticParserCoreGenericScheduler{},
+	}
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 2, headers[2], 9)
+	if err := scheduler.applyGenericConflict(before, cell); err != nil {
+		t.Fatal(err)
+	}
+	receipts, err := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var states []StateID
+	var sequences []uint64
+	for _, receipt := range receipts {
+		states = append(states, receipt.State)
+		sequences = append(sequences, receipt.CreationSeq)
+	}
+	if !reflect.DeepEqual(states, []StateID{9, 2, 8, 3, 4}) || !reflect.DeepEqual(sequences, []uint64{2, 4, 6, 10, 11}) {
+		t.Fatalf("physical conflict order states=%v sequences=%v", states, sequences)
+	}
+	if scheduler.branchOrder != 9 || scheduler.nextSeq != 12 || scheduler.dispatches != 1 || scheduler.work != (DiagnosticParserCoreGenericWork{
+		Dispatches: 1, Conflicts: 1, ConflictActions: 3, Forks: 2, ConflictHeads: 3,
+		ConflictActionArmsAdmitted: 3, CausalConflictForks: 2,
+		Canonicalizations: 1, PeakHeaders: 5,
+	}) {
+		t.Fatalf("scheduler allocation/work drift: order=%d seq=%d dispatches=%d work=%+v", scheduler.branchOrder, scheduler.nextSeq, scheduler.dispatches, scheduler.work)
+	}
+	conflict := scheduler.receipt.Conflicts[0]
+	if len(conflict.Round.Actions) != 3 || conflict.Round.Actions[0].Ordinal != 1 || conflict.Round.Actions[0].BranchOrder != 8 ||
+		conflict.Round.Actions[1].Ordinal != 2 || conflict.Round.Actions[1].BranchOrder != 9 || conflict.Round.Actions[2].Ordinal != 0 ||
+		len(conflict.Prefix) != 2 || conflict.PrimaryOutput.State != 2 || len(conflict.OriginalSuffix) != 1 ||
+		len(conflict.SecondaryArms) != 2 || len(conflict.SecondaryArms[0].Outputs) != 1 || len(conflict.SecondaryArms[1].Outputs) != 1 ||
+		len(conflict.AdditionalPrimaryOutputs) != 0 || len(conflict.After) != 5 {
+		t.Fatalf("three-action conflict receipt drifted: %+v", conflict)
+	}
+	if len(scheduler.receipt.ExternalShifts) != 1 {
+		t.Fatalf("external conflict receipts=%+v, want one round", scheduler.receipt.ExternalShifts)
+	}
+	external := scheduler.receipt.ExternalShifts[0]
+	if external.ElectionIndex != 44 || external.RoundIndex != 0 || !reflect.DeepEqual(external.Token, scheduler.currentElection.Token) ||
+		external.ScannerBefore != scheduler.currentElection.ScannerBefore || external.ScannerAfter != scheduler.currentElection.ScannerAfter || len(external.Payloads) != 3 {
+		t.Fatalf("external conflict receipt drifted: %+v", external)
+	}
+	for index, payload := range external.Payloads {
+		if payload.ID != uint32(index+1) || payload.Symbol != 9 || payload.StartByte != 0 || payload.EndByte != 1 ||
+			payload.ProductionID != 0 || payload.DynamicPrecedence != 0 || len(payload.Children) != 0 || len(payload.Fields) != 0 || len(payload.Aliases) != 0 ||
+			!payload.Terminal || !payload.External || payload.Extra {
+			t.Fatalf("external conflict payload %d=%+v", index, payload)
+		}
+	}
+}
+
+func TestDiagnosticParserCoreGenericConflictMultiOutputSequencing(t *testing.T) {
+	actions := []core.Action{
+		{Type: core.ActionReduce, Symbol: 7, ChildCount: 1},
+		{Type: core.ActionShift, State: 11},
+		{Type: core.ActionReduce, Symbol: 8, ChildCount: 1},
+	}
+	table := &genericConflictTable{
+		cells: map[genericConflictCell][]core.Action{
+			{state: 1, symbol: 9}:  {{Type: core.ActionShift, State: 3}},
+			{state: 2, symbol: 9}:  {{Type: core.ActionShift, State: 3}},
+			{state: 3, symbol: 10}: actions,
+		},
+		gotos: map[genericConflictCell]core.StateID{
+			{state: 1, symbol: 7}: 4,
+			{state: 2, symbol: 7}: 5,
+			{state: 1, symbol: 8}: 6,
+			{state: 2, symbol: 8}: 7,
+		},
+	}
+	compact, err := core.New(table, core.Limits{MaxDerivations: 8, MaxPopPaths: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := compact.Seed(2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstShifted, err := compact.Shift(first, 9, 0, core.Token{Symbol: 9, EndByte: 1}, core.ForkOrder{Present: true, Value: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondShifted, err := compact.Shift(second, 9, 0, core.Token{Symbol: 9, EndByte: 1}, core.ForkOrder{Present: true, Value: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shiftedStats, err := compact.Stats(secondShifted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstShifted == secondShifted || shiftedStats.CurrentExactPaths != 2 {
+		t.Fatalf("second immutable head did not retain both converged paths: first=%v second=%v stats=%+v", firstShifted, secondShifted, shiftedStats)
+	}
+	if err := compact.BeginFrontier(); err != nil {
+		t.Fatal(err)
+	}
+	prefix, err := compact.Seed(9, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	suffix, err := compact.Seed(8, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers := []diagnosticParserCoreHeader{
+		{head: prefix, creationSeq: 2},
+		{head: secondShifted, creationSeq: 4},
+		{head: suffix, creationSeq: 6},
+	}
+	before, err := diagnosticParserCoreHeaderReceipts(compact, headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeStats, err := compact.Stats(secondShifted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name        string
+		branchOrder uint64
+		nextSeq     uint64
+	}{
+		{name: "branch-order-overflow", branchOrder: math.MaxUint64 - 1, nextSeq: 10},
+		{name: "creation-sequence-overflow", branchOrder: 7, nextSeq: math.MaxUint64 - 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			receipt := &DiagnosticParserCoreGenericScheduler{}
+			scheduler := &diagnosticParserCoreGenericScheduler{
+				compact: compact, headers: append([]diagnosticParserCoreHeader(nil), headers...),
+				token:       Token{Symbol: 10, StartByte: 1, EndByte: 2},
+				branchOrder: test.branchOrder, nextSeq: test.nextSeq,
+				options: DiagnosticParserCorePrefixOptions{MaxDispatches: 100}, receipt: receipt,
+			}
+			cell := mustDiagnosticParserCoreGenericCell(t, compact, 1, headers[1], 10)
+			err := scheduler.applyGenericConflict(before, cell)
+			if err == nil {
+				t.Fatal("overflowing conflict unexpectedly succeeded")
+			}
+			afterStats, statsErr := compact.Stats(secondShifted)
+			if statsErr != nil {
+				t.Fatal(statsErr)
+			}
+			if beforeStats != afterStats || !reflect.DeepEqual(scheduler.headers, headers) ||
+				scheduler.branchOrder != test.branchOrder || scheduler.nextSeq != test.nextSeq ||
+				scheduler.dispatches != 0 || scheduler.work != (DiagnosticParserCoreGenericWork{}) ||
+				!reflect.DeepEqual(receipt, &DiagnosticParserCoreGenericScheduler{}) {
+				t.Fatalf("overflow rollback leaked: before=%+v after=%+v scheduler=%+v receipt=%+v", beforeStats, afterStats, scheduler, receipt)
+			}
+		})
+	}
+	scheduler := &diagnosticParserCoreGenericScheduler{
+		compact: compact, headers: headers, token: Token{Symbol: 10, StartByte: 1, EndByte: 2},
+		branchOrder: 7, nextSeq: 10, options: DiagnosticParserCorePrefixOptions{MaxDispatches: 100},
+		receipt: &DiagnosticParserCoreGenericScheduler{},
+	}
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 1, headers[1], 10)
+	if err := scheduler.applyGenericConflict(before, cell); err != nil {
+		t.Fatal(err)
+	}
+	receipts, err := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var states []StateID
+	var sequences []uint64
+	for _, receipt := range receipts {
+		states = append(states, receipt.State)
+		sequences = append(sequences, receipt.CreationSeq)
+	}
+	if !reflect.DeepEqual(states, []StateID{9, 4, 8, 11, 6, 7, 5}) ||
+		!reflect.DeepEqual(sequences, []uint64{2, 4, 6, 10, 11, 12, 13}) {
+		t.Fatalf("multi-output order states=%v sequences=%v", states, sequences)
+	}
+	conflict := scheduler.receipt.Conflicts[0]
+	if scheduler.branchOrder != 9 || scheduler.nextSeq != 14 || conflict.PrimaryOutput.State != 4 || len(conflict.AdditionalPrimaryOutputs) != 1 || conflict.AdditionalPrimaryOutputs[0].State != 5 ||
+		len(conflict.SecondaryArms) != 2 || len(conflict.SecondaryArms[0].Outputs) != 1 || len(conflict.SecondaryArms[1].Outputs) != 2 ||
+		len(conflict.Round.Actions) != 3 || conflict.Round.Actions[0].Ordinal != 1 || conflict.Round.Actions[1].Ordinal != 2 || conflict.Round.Actions[2].Ordinal != 0 {
+		t.Fatalf("multi-output conflict allocation drifted: order=%d seq=%d receipt=%+v", scheduler.branchOrder, scheduler.nextSeq, conflict)
+	}
+}
+
+func TestDiagnosticParserCoreHeaderPathsMarksBoundedObservation(t *testing.T) {
+	table := &genericConflictTable{cells: make(map[genericConflictCell][]core.Action)}
+	for state := core.StateID(1); state <= 64; state++ {
+		target := core.StateID(100 + (state-1)/8)
+		table.cells[genericConflictCell{state: state, symbol: 1}] = []core.Action{{Type: core.ActionShift, State: target}}
+		table.cells[genericConflictCell{target, 2}] = []core.Action{{Type: core.ActionShift, State: 200}}
+	}
+	table.cells[genericConflictCell{state: 200, symbol: 3}] = []core.Action{{Type: core.ActionShift, State: 300}}
+	table.cells[genericConflictCell{state: 1000, symbol: 3}] = []core.Action{{Type: core.ActionShift, State: 300}}
+
+	compact, err := core.New(table, core.Limits{MaxDerivations: 64})
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := make([]core.Head, 8)
+	for state := core.StateID(1); state <= 64; state++ {
+		seed, seedErr := compact.Seed(state, 0)
+		if seedErr != nil {
+			t.Fatal(seedErr)
+		}
+		group, shiftErr := compact.Shift(seed, 1, 0, core.Token{Symbol: 1, EndByte: 1}, core.ForkOrder{})
+		if shiftErr != nil {
+			t.Fatal(shiftErr)
+		}
+		groups[(state-1)/8] = group
+	}
+	spare, err := compact.Seed(1000, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compact.BeginFrontier(); err != nil {
+		t.Fatal(err)
+	}
+	var sixtyFour core.Head
+	for _, group := range groups {
+		sixtyFour, err = compact.Shift(group, 2, 0, core.Token{Symbol: 2, StartByte: 1, EndByte: 2}, core.ForkOrder{})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := compact.BeginFrontier(); err != nil {
+		t.Fatal(err)
+	}
+	head, err := compact.Shift(sixtyFour, 3, 0, core.Token{Symbol: 3, StartByte: 2, EndByte: 3}, core.ForkOrder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err = compact.Shift(spare, 3, 0, core.Token{Symbol: 3, StartByte: 2, EndByte: 3}, core.ForkOrder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := diagnosticParserCoreHeaderPaths(compact, diagnosticParserCoreHeader{head: head})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Header.ExactPaths != 65 || !receipt.DerivationsTruncated || len(receipt.Derivations) != 0 {
+		t.Fatalf("bounded path receipt=%+v, want 65 paths with explicitly truncated derivations", receipt)
+	}
+}
+
+func TestDiagnosticParserCoreGenericConflictArenaCapsRollback(t *testing.T) {
+	actions := []core.Action{
+		{Type: core.ActionShift, State: 2},
+		{Type: core.ActionShift, State: 3},
+		{Type: core.ActionShift, State: 4},
+	}
+	for _, test := range []struct {
+		name        string
+		maxSubtrees uint32
+	}{
+		{name: "partial-secondary", maxSubtrees: 1},
+		{name: "partial-primary", maxSubtrees: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			compact, err := core.New(&genericConflictTable{actions: actions}, core.Limits{MaxSubtrees: test.maxSubtrees})
+			if err != nil {
+				t.Fatal(err)
+			}
+			incoming, err := compact.Seed(1, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := compact.Stats(incoming)
+			if err != nil {
+				t.Fatal(err)
+			}
+			header := diagnosticParserCoreHeader{head: incoming, creationSeq: 4}
+			receipt, err := diagnosticParserCoreHeaderReceipt(compact, header)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scheduler := &diagnosticParserCoreGenericScheduler{
+				compact: compact, headers: []diagnosticParserCoreHeader{header},
+				token: Token{Symbol: 9, StartByte: 0, EndByte: 1}, branchOrder: 7, nextSeq: 10,
+				options: DiagnosticParserCorePrefixOptions{MaxDispatches: 100}, receipt: &DiagnosticParserCoreGenericScheduler{},
+			}
+			cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, header, 9)
+			if err := compact.ApplyAtomic(func() error {
+				return scheduler.applyGenericConflict([]DiagnosticParserCoreHeaderReceipt{receipt}, cell)
+			}); err == nil {
+				t.Fatal("capped conflict unexpectedly succeeded")
+			}
+			after, err := compact.Stats(incoming)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after != before {
+				t.Fatalf("capped conflict leaked graph mutation: before=%+v after=%+v", before, after)
+			}
+			if scheduler.dispatches != 0 || scheduler.branchOrder != 7 || scheduler.nextSeq != 10 || scheduler.work != (DiagnosticParserCoreGenericWork{}) ||
+				len(scheduler.headers) != 1 || scheduler.headers[0] != header || !reflect.DeepEqual(scheduler.receipt, &DiagnosticParserCoreGenericScheduler{}) {
+				t.Fatalf("capped conflict leaked scheduler allocation/receipt state: %+v receipt=%+v", scheduler, scheduler.receipt)
+			}
+		})
+	}
+}
+
+func TestDiagnosticParserCoreGenericConflictRejectsUnsupportedArmBeforeMutation(t *testing.T) {
+	actions := []core.Action{
+		{Type: core.ActionShift, State: 2},
+		{Type: core.ActionShift, State: 3, Extra: true},
+	}
+	compact, err := core.New(&genericConflictTable{actions: actions}, core.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	incoming, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, _ := compact.Stats(incoming)
+	scheduler := &diagnosticParserCoreGenericScheduler{
+		compact: compact, headers: []diagnosticParserCoreHeader{{head: incoming}},
+		token: Token{Symbol: 9, StartByte: 0, EndByte: 1}, options: DiagnosticParserCorePrefixOptions{MaxDispatches: 100},
+		receipt: &DiagnosticParserCoreGenericScheduler{},
+	}
+	stop, err := scheduler.dispatchPass()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stop == nil || stop.boundary != DiagnosticParserCoreExtra || scheduler.dispatches != 0 || scheduler.work.ActionLookups != 1 {
+		t.Fatalf("unsupported-arm preflight stop=%+v dispatches=%d work=%+v", stop, scheduler.dispatches, scheduler.work)
+	}
+	after, _ := compact.Stats(incoming)
+	if after != before {
+		t.Fatalf("unsupported-arm preflight mutated graph: before=%+v after=%+v", before, after)
+	}
+}
+
+func TestDiagnosticParserCoreGenericAcceptRequiresSoleFrontierBeforeMutation(t *testing.T) {
+	accept := []core.Action{{Type: core.ActionAccept}}
+	for _, test := range []struct {
+		name          string
+		cells         map[genericConflictCell][]core.Action
+		headerStates  []core.StateID
+		configureHead func(*diagnosticParserCoreHeader)
+	}{
+		{
+			name:         "accept-and-no-action",
+			cells:        map[genericConflictCell][]core.Action{{state: 1, symbol: 0}: accept},
+			headerStates: []core.StateID{1, 2},
+		},
+		{
+			name:          "accept-and-shifted-sibling",
+			cells:         map[genericConflictCell][]core.Action{{state: 1, symbol: 0}: accept},
+			headerStates:  []core.StateID{1, 2},
+			configureHead: func(header *diagnosticParserCoreHeader) { header.shifted = true },
+		},
+		{
+			name: "accept-and-reduction-sibling",
+			cells: map[genericConflictCell][]core.Action{
+				{state: 1, symbol: 0}: accept,
+				{state: 2, symbol: 0}: {{Type: core.ActionReduce, Symbol: 3}},
+			},
+			headerStates: []core.StateID{1, 2},
+		},
+		{
+			name: "multiple-accepts",
+			cells: map[genericConflictCell][]core.Action{
+				{state: 1, symbol: 0}: accept,
+				{state: 2, symbol: 0}: accept,
+			},
+			headerStates: []core.StateID{1, 2},
+		},
+		{
+			name: "accept-in-fork",
+			cells: map[genericConflictCell][]core.Action{
+				{state: 1, symbol: 0}: {{Type: core.ActionAccept}, {Type: core.ActionReduce, Symbol: 3}},
+			},
+			headerStates: []core.StateID{1},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			compact, err := core.New(&genericConflictTable{cells: test.cells}, core.Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			headers := make([]diagnosticParserCoreHeader, len(test.headerStates))
+			for index, state := range test.headerStates {
+				head, seedErr := compact.Seed(state, 0)
+				if seedErr != nil {
+					t.Fatal(seedErr)
+				}
+				headers[index] = diagnosticParserCoreHeader{head: head, creationSeq: uint64(index)}
+			}
+			if test.configureHead != nil {
+				test.configureHead(&headers[len(headers)-1])
+			}
+			beforeHeaders := append([]diagnosticParserCoreHeader(nil), headers...)
+			beforeStats, err := compact.Stats(headers[0].head)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scheduler := &diagnosticParserCoreGenericScheduler{
+				compact: compact, headers: headers,
+				token:   Token{Symbol: 0, StartByte: 0, EndByte: 0},
+				options: DiagnosticParserCorePrefixOptions{MaxDispatches: 100},
+				receipt: &DiagnosticParserCoreGenericScheduler{},
+			}
+			stop, err := scheduler.dispatchPass()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stop == nil {
+				t.Fatal("mixed accept frontier unexpectedly dispatched")
+			}
+			afterStats, err := compact.Stats(headers[0].head)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if afterStats != beforeStats || !reflect.DeepEqual(scheduler.headers, beforeHeaders) || scheduler.dispatches != 0 || scheduler.work.Accepts != 0 || len(scheduler.receipt.Rounds) != 0 || scheduler.acceptedHead.Node != 0 {
+				t.Fatalf("mixed accept mutated state: stop=%+v beforeStats=%+v afterStats=%+v scheduler=%+v", stop, beforeStats, afterStats, scheduler)
+			}
+		})
+	}
+}

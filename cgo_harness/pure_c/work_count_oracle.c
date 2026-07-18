@@ -131,17 +131,28 @@ static unsigned long long parse_timeout(const char *raw) {
 static void print_counts(GTSWorkCount c, uint32_t source_len,
                          uint32_t root_end_byte, bool root_has_error) {
   printf("{\n");
-  printf("  \"schema\": \"gts-work-count-c-child/v4\",\n");
+  printf("  \"schema\": \"gts-work-count-c-child/v5\",\n");
   printf("  \"engine\": \"static-c-instrumented-glr\",\n");
   printf("  \"digest_format\": \"gts-deep-tree-v1\",\n");
   printf("  \"source_bytes\": %u,\n", source_len);
   printf("  \"root_end_byte\": %u,\n", root_end_byte);
   printf("  \"root_has_error\": %s,\n", root_has_error ? "true" : "false");
   printf("  \"board_direct\": {\n");
-  printf("    \"schema\": \"gts-work-count-board-direct/v1\",\n");
+  printf("    \"schema\": \"gts-work-count-board-direct/v2\",\n");
   printf("    \"resolved_action_cells_examined\": %llu,\n", (unsigned long long)c.resolved_action_cells_examined);
   printf("    \"raw_action_entries_beyond_first\": %llu,\n", (unsigned long long)c.raw_action_entries_beyond_first);
+  printf("    \"conflict_action_arms_admitted\": %llu,\n", (unsigned long long)c.conflict_action_arms_admitted);
+  printf("    \"causal_conflict_forks\": %llu,\n", (unsigned long long)c.causal_conflict_forks);
+  printf("    \"predecessor_link_union_attempts\": %llu,\n", (unsigned long long)c.predecessor_link_union_attempts);
+  printf("    \"predecessor_link_union_duplicate_noop\": %llu,\n", (unsigned long long)c.predecessor_link_union_duplicate_noop);
+  printf("    \"predecessor_link_union_precedence_replaced\": %llu,\n", (unsigned long long)c.predecessor_link_union_precedence_replaced);
+  printf("    \"predecessor_link_union_recursive_changed\": %llu,\n", (unsigned long long)c.predecessor_link_union_recursive_changed);
+  printf("    \"predecessor_link_union_alternate_appended\": %llu,\n", (unsigned long long)c.predecessor_link_union_alternate_appended);
+  printf("    \"predecessor_link_union_rejected\": %llu,\n", (unsigned long long)c.predecessor_link_union_rejected);
   printf("    \"alternate_predecessor_links_appended\": %llu,\n", (unsigned long long)c.alternate_predecessor_links_appended);
+  printf("    \"raw_selected_internal_nodes\": %llu,\n", (unsigned long long)c.raw_selected_internal_nodes);
+  printf("    \"raw_selected_internal_parent_occurrences\": %llu,\n", (unsigned long long)c.raw_selected_internal_parent_occurrences);
+  printf("    \"raw_selected_internal_leaf_occurrences\": %llu,\n", (unsigned long long)c.raw_selected_internal_leaf_occurrences);
   printf("    \"overflow\": %s\n", c.overflow ? "true" : "false");
   printf("  },\n");
   printf("  \"counters\": {\n");
@@ -177,6 +188,14 @@ static void print_counts(GTSWorkCount c, uint32_t source_len,
 }
 
 int main(int argc, char **argv) {
+  if (argc == 2 && strcmp(argv[1], "--exact-model") == 0) {
+    bool passed = gts_work_count_validate_action_model() &&
+                  gts_work_count_validate_link_union_model() &&
+                  gts_work_count_validate_raw_census_model();
+    printf("{\"schema\":\"gts-work-count-c-exact-model/v1\",\"passed\":%s}\n",
+           passed ? "true" : "false");
+    return passed ? 0 : 12;
+  }
   if (argc != 4) {
     fputs("status=c_protocol_error\n", stderr);
     fprintf(stderr, "usage: %s <source> <digest-dump> <timeout-us>\n", argv[0]);
