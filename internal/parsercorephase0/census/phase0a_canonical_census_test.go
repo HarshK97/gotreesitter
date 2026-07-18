@@ -18,6 +18,10 @@ type canonicalCensus struct {
 	SourceBytes                 int               `json:"source_bytes"`
 	PopRoutes                   int               `json:"pop_routes"`
 	PopRouteLinks               int               `json:"pop_route_links"`
+	TrailingExtraMigrations     int               `json:"trailing_extra_migrations"`
+	TrailingExtraRolledBack     int               `json:"trailing_extra_rolled_back"`
+	TrailingExtraUnresolved     int               `json:"trailing_extra_unresolved"`
+	UnresolvedCandidates        int               `json:"unresolved_candidates"`
 	PopRoutesBound              int               `json:"pop_routes_bound"`
 	PopRoutesUnbound            int               `json:"pop_routes_unbound"`
 	AcceptedSelections          int               `json:"accepted_selections"`
@@ -45,17 +49,19 @@ type acceptedJoin struct {
 }
 
 type currentCensusContract struct {
-	raw    uint64
-	public uint64
+	routes     int
+	links      int
+	migrations int
+	spine      int
+	raw        uint64
+	public     uint64
 }
 
-const currentCensusBlockerDetail = "reduction trailing-extra migration requires route provenance"
-
 var currentCanonicalCensus = map[string]currentCensusContract{
-	"query_compile": {raw: 11331, public: 7524},
-	"rewrite":       {raw: 2237, public: 1524},
-	"language":      {raw: 10761, public: 7082},
-	"grammargen_lr": {raw: 109614, public: 71768},
+	"query_compile": {routes: 8103, links: 14703, migrations: 32, spine: 1, raw: 11331, public: 7524},
+	"rewrite":       {routes: 1646, links: 2995, migrations: 16, spine: 1, raw: 2237, public: 1524},
+	"language":      {routes: 8408, links: 15864, migrations: 256, spine: 6, raw: 10761, public: 7082},
+	"grammargen_lr": {routes: 84924, links: 153451, migrations: 316, spine: 1, raw: 109614, public: 71768},
 }
 
 func TestCanonicalAcceptedRouteSpineCensus(t *testing.T) {
@@ -101,36 +107,44 @@ func TestCanonicalAcceptedRouteSpineCensus(t *testing.T) {
 			sessionActive = false
 
 			requireUnperturbed(t, fixture, lang, baseline, observed)
-			requireCurrentCensusContract(t, fixture.Fixture.ID, observed, receipt)
 			row := summarizeCanonicalCensus(fixture, observed, receipt)
 			encoded, err := json.Marshal(row)
 			if err != nil {
 				t.Fatal(err)
 			}
 			t.Logf("PHASE0A_CENSUS %s", encoded)
+			requireCurrentCensusContract(t, row, receipt)
 		})
 	}
 }
 
-func requireCurrentCensusContract(t *testing.T, fixtureID string, result gotreesitter.DiagnosticParserCorePrefixResult, receipt core.Phase0ADiagnosticRunReceipt) {
+func requireCurrentCensusContract(t *testing.T, row canonicalCensus, receipt core.Phase0ADiagnosticRunReceipt) {
 	t.Helper()
-	want, ok := currentCanonicalCensus[fixtureID]
+	want, ok := currentCanonicalCensus[row.Fixture]
 	if !ok {
-		t.Fatalf("fixture %q has no explicit Phase0A census contract", fixtureID)
+		t.Fatalf("fixture %q has no explicit Phase0A census contract", row.Fixture)
 	}
 	proof := receipt.Proof
-	if proof.Failure == nil || proof.Failure.Kind != core.Phase0AErrorUnsupportedProof || proof.Failure.Detail != currentCensusBlockerDetail {
-		t.Fatalf("fixture %s changed the intended Phase0A blocker: failure=%+v; update the census contract intentionally when trailing-extra route provenance lands", fixtureID, proof.Failure)
+	if proof.Failure != nil || row.ProofFailure != "" || len(row.Blockers) != 0 {
+		t.Fatalf("fixture %s introduced a Phase0A blocker: failure=%+v blockers=%v", row.Fixture, proof.Failure, row.Blockers)
 	}
-	if len(proof.AcceptedSelections) != 0 || len(proof.AcceptedLinks) != 0 {
-		t.Fatalf("fixture %s crossed the accepted-spine boundary without an intentional census contract update: selections=%d links=%d", fixtureID, len(proof.AcceptedSelections), len(proof.AcceptedLinks))
+	if row.PopRoutes != want.routes || row.PopRouteLinks != want.links || row.TrailingExtraMigrations != want.migrations || row.PopRoutesBound != want.routes || row.PopRoutesUnbound != 0 {
+		t.Fatalf("fixture %s route census drifted: routes/links/migrations/bound/unbound=%d/%d/%d/%d/%d want=%d/%d/%d/%d/0", row.Fixture, row.PopRoutes, row.PopRouteLinks, row.TrailingExtraMigrations, row.PopRoutesBound, row.PopRoutesUnbound, want.routes, want.links, want.migrations, want.routes)
+	}
+	if row.TrailingExtraRolledBack != 0 || row.TrailingExtraUnresolved != 0 || row.UnresolvedCandidates != 0 {
+		t.Fatalf("fixture %s migration proof retained rolled-back or unresolved rows: rolled_back=%d unresolved=%d candidates=%d", row.Fixture, row.TrailingExtraRolledBack, row.TrailingExtraUnresolved, row.UnresolvedCandidates)
+	}
+	if row.AcceptedSelections != 1 || row.AcceptedSpineLinks != want.spine || row.AcceptedBoundDirect != want.spine || row.AcceptedBoundFactorChoice != 0 || row.AcceptedResolvedDirect != want.spine || row.AcceptedResolvedOther != 0 || row.AcceptedUniqueJoins != want.spine || row.AcceptedUnjoined != 0 || !row.EveryAcceptedEdgeJoined {
+		t.Fatalf("fixture %s accepted-spine census drifted: %+v want one selection and %d direct uniquely joined links", row.Fixture, row, want.spine)
 	}
 	if receipt.RawSelectedError != "" {
-		t.Fatalf("fixture %s raw selected census failed: %s", fixtureID, receipt.RawSelectedError)
+		t.Fatalf("fixture %s raw selected census failed: %s", row.Fixture, receipt.RawSelectedError)
 	}
-	gotPublic := result.GenericScheduler.Acceptance.SelectedNodes
-	if receipt.RawSelected.Nodes != want.raw || gotPublic != want.public {
-		t.Fatalf("fixture %s selected census drifted: raw/public=%d/%d want=%d/%d", fixtureID, receipt.RawSelected.Nodes, gotPublic, want.raw, want.public)
+	if receipt.RawSelected.Nodes != want.raw || row.PublicSelectedNodes != want.public {
+		t.Fatalf("fixture %s selected census drifted: raw/public=%d/%d want=%d/%d", row.Fixture, receipt.RawSelected.Nodes, row.PublicSelectedNodes, want.raw, want.public)
+	}
+	if row.EveryPublicOccurrenceJoined {
+		t.Fatalf("fixture %s unexpectedly claimed recursive public-occurrence joins; Phase0A currently proves only the accepted physical spine", row.Fixture)
 	}
 }
 
@@ -187,7 +201,7 @@ func summarizeCanonicalCensus(fixture benchfixtures.LoadedFixture, result gotree
 	}
 	row := canonicalCensus{
 		Fixture: fixture.Fixture.ID, SourceBytes: len(fixture.Source),
-		PopRoutes: len(proof.PopRoutes), PopRouteLinks: len(proof.PopRouteLinks),
+		PopRoutes: len(proof.PopRoutes), PopRouteLinks: len(proof.PopRouteLinks), TrailingExtraMigrations: len(proof.TrailingExtraMigrations),
 		AcceptedSelections: len(proof.AcceptedSelections), AcceptedSpineLinks: len(proof.AcceptedLinks),
 		RawCompactOccurrences: receipt.RawSelected.Nodes,
 		PublicSelectedNodes:   result.GenericScheduler.Acceptance.SelectedNodes,
@@ -199,6 +213,20 @@ func summarizeCanonicalCensus(fixture benchfixtures.LoadedFixture, result gotree
 			row.PopRoutesUnbound++
 		} else {
 			row.PopRoutesBound++
+		}
+	}
+	for _, migration := range proof.TrailingExtraMigrations {
+		if migration.RolledBack {
+			row.TrailingExtraRolledBack++
+			continue
+		}
+		if migration.SourceLink == 0 || migration.SourceLowerLink == 0 || migration.SourceExpression == 0 || migration.SourceOccurrence == (core.ConstructionOccurrenceKey{}) || migration.SourceEdge == (core.IncomingEdgeKey{}) || migration.TargetLink == 0 || migration.TargetOccurrence == (core.ConstructionOccurrenceKey{}) || migration.TargetEdge == (core.IncomingEdgeKey{}) || migration.Occurrence == (core.ConstructionOccurrenceKey{}) || migration.Edge == (core.IncomingEdgeKey{}) || migration.Payload == 0 || migration.Predecessor == 0 {
+			row.TrailingExtraUnresolved++
+		}
+	}
+	for _, candidate := range proof.Candidates {
+		if !candidate.RolledBack && !candidate.Resolved {
+			row.UnresolvedCandidates++
 		}
 	}
 	joins := make(map[acceptedJoin]struct{}, len(proof.AcceptedLinks))
@@ -246,7 +274,7 @@ func summarizeCanonicalCensus(fixture benchfixtures.LoadedFixture, result gotree
 
 func canonicalObserverLimits() core.Phase0AObserverLimits {
 	return core.Phase0AObserverLimits{
-		MaxCores: 1, MaxRecords: 2_000_000, MaxBytes: 256 << 20,
+		MaxCores: 1, MaxRecords: 8_000_000, MaxBytes: 1 << 30,
 		MaxFrames: 1_000_000, MaxMutations: 1_000_000,
 		MaxOccurrences: 1_000_000, MaxOccurrenceBytes: 128 << 20,
 		MaxCandidates: 500_000, MaxExpressions: 500_000, MaxBindings: 500_000,
