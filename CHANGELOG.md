@@ -14,7 +14,8 @@ for tags and release notes while still in `0.x`.
   Two reverse-order quiet-host runs improve the authenticated four-fixture
   candidate Total geomean by 4.13-4.26%, with every fixture improving by
   3.42-5.00%, unchanged parser work and fallback counts, and a worst
-  candidate/static-C ratio below 3.90x.
+  candidate/static-C ratio below 3.90x. The candidate remains build-tagged and
+  diagnostic-only.
 
 ### Fixed
 

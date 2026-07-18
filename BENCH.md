@@ -260,6 +260,74 @@ behavior or multiple grammars. Therefore **3.847233x C is a branch-only
 diagnostic compact-candidate result, not a replacement public `Parser.Parse`
 claim**; the same-revision production control is **4.813350x C**.
 
+### Compact candidate action-row dispatch receipt
+
+A clean authenticated candidate receipt was collected on 2026-07-18 from
+quiet host `ns1007492`, pinned to CPU 12 with Go 1.22.2, at exact revision
+`24f96df21155a77625a5031fa02ff64a58d4a128`. It uses the same static `-O2`
+oracle contract and artifact described above, passed cgo/static deep admission,
+and reported zero fallback with repeat-identical parser work on every timed
+sample.
+
+| Fixture | Candidate median | static C median | Candidate / C | B/op | allocs/op | Candidate max RSS | C max RSS |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 20.734 ms | 5.492 ms | **3.775635x** | 231,222 | 9,032 | 48,888 KiB | 2,816 KiB |
+| `rewrite.go` | 4.261 ms | 1.218 ms | **3.499159x** | 55,969 | 1,935 | 53,232 KiB | 2,304 KiB |
+| `language.go` | 21.433 ms | 5.806 ms | **3.691434x** | 274,803 | 9,279.5 | 56,800 KiB | 2,816 KiB |
+| `grammargen/lr.go` | 226.958 ms | 58.572 ms | **3.874884x** | 2,415,107 | 91,204 | 92,948 KiB | 9,216 KiB |
+
+The candidate equal-fixture geomean is **3.707677x C**. Its fixed-suite sum of
+medians is **3.845796x C** (273.387 ms candidate versus 71.087 ms static C),
+and every fixture is below 3.90x C.
+
+Before banking the change, two serialized reverse-order quiet-host A/B boards
+compared the exact pre-change revision `6354d0e357481de1cb13e69ebd76373fc336b325`
+with the action-row descriptor change. Each board used ten 750 ms samples per
+fixture on CPU 12. The rows below compare Go medians directly, so static-C
+sample jitter cannot create the reported improvement.
+
+| Fixture | Board 1 base | Board 1 candidate | Improvement | Board 2 base | Board 2 candidate | Improvement |
+|---|---:|---:|---:|---:|---:|---:|
+| `query_compile.go` | 21.538 ms | 20.759 ms | **3.62%** | 21.440 ms | 20.600 ms | **3.92%** |
+| `rewrite.go` | 4.389 ms | 4.182 ms | **4.71%** | 4.363 ms | 4.214 ms | **3.42%** |
+| `language.go` | 22.156 ms | 21.047 ms | **5.00%** | 22.196 ms | 21.105 ms | **4.91%** |
+| `grammargen/lr.go` | 235.346 ms | 226.635 ms | **3.70%** | 236.572 ms | 226.548 ms | **4.24%** |
+
+The equal-fixture Go-time improvements are **4.2603%** and **4.1258%**. Exact
+tree, parser-work, and fallback receipts are unchanged. The A/B runs are
+labeled diagnostic because the candidate side was
+an uncommitted worktree; the clean authenticated receipt above independently
+binds the final code and oracle identities.
+
+Receipt identities:
+
+- clean revision manifest SHA-256:
+  `670d415e4fd17ac11de1ab0438701b0ba1f0337312d104877ff9d2da99091085`;
+- clean revision report SHA-256:
+  `eba3e7e5926c7d7c6d61b37066f45036892593cfcc4ba8bf9b16ab2a6b3d6d26`;
+- clean revision archive SHA-256:
+  `a050e7f12a8842a9dcb30729e6f69c23c8078bae44b989c1318b20276d4b91f2`;
+- Board 1 base manifest/report/archive SHA-256:
+  `d101f941ff880e4d42ee1d287c93f93b3e792eea78588b393079c53c880502e5`,
+  `949e2b09530289f2b82bde91a924ea721d7f62020e5e6dd471de794c065ea123`,
+  `c07237ae59d22637bd52015c19c07c9abb9bb427a99f3e95645b06d307388944`;
+- Board 1 candidate manifest/report/archive SHA-256:
+  `f727877c0e193e49e23afe96a67790b089e750dbb9820b4dcd70b7fc3d169b9c`,
+  `4b6d99d6fbd98ce81b8bb8ee8833d8810acc55a9380762483e03e990e22dd412`,
+  `d633fe5d3f995c43a351d5a74c143eceda0b4c9af0686c8630cdfcacaa92b821`;
+- Board 2 candidate manifest/report/archive SHA-256:
+  `ebf4cc932a076fef5a4a25a05cc4bb64c0d3540ee1b679033b0dcad2830e72bd`,
+  `f6dfd42ca59425458c4b8bad4f3f5b6cc3462475bf4dab9b026ba505bc36fd2b`,
+  `ce4192edfc80e4db912f5c305b7dbc9efed45b3050ec8bf2a797be3cdfba9614`;
+- Board 2 base manifest/report/archive SHA-256:
+  `61b499f24838ea0ce55a29b3f4b44f6dc375c5bf66d9b6427c82ff97ceffc87a`,
+  `6360db575c24459b1f41bef3826b87ea9ddc166bde6773eb511041671dc3873e`,
+  `77edb152f746bed600b4c1c779409efad3c8dd1f1036ae443cc93aba2283c4b9`.
+
+The support boundary remains unchanged: this is a diagnostic clean fresh-full
+Go candidate, not a public `Parser.Parse`, recovery, incremental, included-range,
+or multi-grammar claim.
+
 ### Diagnostic workload-regime receipt
 
 Before the static publication artifact was built, a strict-admitted quiet run
