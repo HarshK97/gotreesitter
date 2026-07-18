@@ -16,6 +16,12 @@ for tags and release notes while still in `0.x`.
   3.42-5.00%, unchanged parser work and fallback counts, and a worst
   candidate/static-C ratio below 3.90x. The candidate remains build-tagged and
   diagnostic-only.
+- Cache exact source points in a bounded, allocation-free materialization-local
+  table for the build-tagged compact parser. The four authenticated fixtures
+  reuse 59.02-62.17% of point lookups; two reverse-order quiet-host boards
+  improve equal-fixture candidate time by 2.07-2.34%, with every fixture
+  faster, unchanged parser work, and unchanged fallback counts. This route
+  remains diagnostic-only.
 
 ### Fixed
 

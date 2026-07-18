@@ -181,6 +181,41 @@ func TestDiagnosticParserCoreCanonicalAdmissions(t *testing.T) {
 	}
 }
 
+func diagnosticParserCorePointCacheCensus(t testing.TB, compact *core.Core, head core.Head, source []byte) (views, hits, misses int) {
+	t.Helper()
+	derivations, err := compactDerivationsForAcceptance(compact, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(derivations) != 1 {
+		t.Fatalf("compact derivations=%d, want one", len(derivations))
+	}
+	index, err := newDiagnosticParserCorePointIndex(source, func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := func(offset uint32) {
+		if _, hit := index.pointCached(offset); hit {
+			hits++
+		} else {
+			misses++
+		}
+	}
+	err = compact.VisitMaterializationPostorder(derivations[0].Payloads, func() error { return nil }, func(_ core.SubtreeID, view core.MaterializationSubtreeView) error {
+		views++
+		record(view.StartByte)
+		record(view.EndByte)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hits+misses != 2*views {
+		t.Fatalf("point-cache census views=%d hits=%d misses=%d", views, hits, misses)
+	}
+	return views, hits, misses
+}
+
 func TestDiagnosticParserCoreBoundaryIndexCensus(t *testing.T) {
 	for _, row := range diagnosticParserCoreCanonicalAdmissions {
 		row := row
@@ -237,9 +272,13 @@ func TestDiagnosticParserCoreBoundaryIndexCensus(t *testing.T) {
 			if scheduler == nil || scheduler.acceptedHead.Node == 0 || compact.Work() != row.work {
 				t.Fatalf("canonical boundary census did not preserve acceptance: scheduler=%v work=%+v", scheduler != nil, compact.Work())
 			}
+			views, pointHits, pointMisses := diagnosticParserCorePointCacheCensus(t, compact, scheduler.acceptedHead, fixture.Source)
+			if views != int(row.rawSelected.Nodes) || pointHits <= pointMisses {
+				t.Fatalf("canonical point-cache census views=%d hits=%d misses=%d", views, pointHits, pointMisses)
+			}
 			final := compact.BoundaryIndexStats()
-			t.Logf("boundary-index fixture=%s elections=%d peak_current=%d peak_retained=%d final_current=%d final_retained=%d max_checkpoint_bytes=%d",
-				row.id, elections, peakCurrent, peakRetained, final.CurrentEntries, final.RetainedEntries, maxCheckpointBytes)
+			t.Logf("boundary-index fixture=%s elections=%d peak_current=%d peak_retained=%d final_current=%d final_retained=%d max_checkpoint_bytes=%d point_hits=%d point_misses=%d point_hit_rate=%.2f%%",
+				row.id, elections, peakCurrent, peakRetained, final.CurrentEntries, final.RetainedEntries, maxCheckpointBytes, pointHits, pointMisses, 100*float64(pointHits)/float64(pointHits+pointMisses))
 		})
 	}
 }

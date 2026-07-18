@@ -1443,8 +1443,17 @@ func executeDiagnosticParserCoreGenericSchedulerFromSeed(
 	return scheduler, nil
 }
 
+const diagnosticParserCorePointCacheSize = 16
+
+type diagnosticParserCorePointCacheEntry struct {
+	offset uint32
+	point  Point
+}
+
 type diagnosticParserCorePointIndex struct {
 	lineStarts []uint32
+	cache      [diagnosticParserCorePointCacheSize]diagnosticParserCorePointCacheEntry
+	valid      uint16
 }
 
 // diagnosticParserCoreMaterializationScratch retains parent-build storage for
@@ -1514,7 +1523,29 @@ func newDiagnosticParserCorePointIndex(source []byte, poll func() error) (diagno
 	return diagnosticParserCorePointIndex{lineStarts: starts}, nil
 }
 
-func (index diagnosticParserCorePointIndex) point(offset uint32) Point {
+func (index *diagnosticParserCorePointIndex) point(offset uint32) Point {
+	point, _ := index.pointCached(offset)
+	return point
+}
+
+// pointCached returns exact source coordinates and whether the exact offset
+// was already present in the materialization-local direct-mapped cache. The
+// multiplicative slot keeps nearby byte boundaries from systematically
+// colliding without adding a map, source-sized table, or shared state.
+func (index *diagnosticParserCorePointIndex) pointCached(offset uint32) (Point, bool) {
+	slot := uint32(offset*0x9e3779b1) >> 28
+	mask := uint16(1) << slot
+	entry := index.cache[slot]
+	if index.valid&mask != 0 && entry.offset == offset {
+		return entry.point, true
+	}
+	point := index.pointUncached(offset)
+	index.cache[slot] = diagnosticParserCorePointCacheEntry{offset: offset, point: point}
+	index.valid |= mask
+	return point, false
+}
+
+func (index *diagnosticParserCorePointIndex) pointUncached(offset uint32) Point {
 	line := sort.Search(len(index.lineStarts), func(i int) bool { return index.lineStarts[i] > offset }) - 1
 	if line < 0 {
 		return Point{Column: offset}

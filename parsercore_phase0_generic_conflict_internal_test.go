@@ -131,6 +131,59 @@ func TestDiagnosticParserCorePointIndexPollsBeforeScanning(t *testing.T) {
 	}
 }
 
+func TestDiagnosticParserCorePointIndexCachesExactArbitraryOffsets(t *testing.T) {
+	index, err := newDiagnosticParserCorePointIndex([]byte("a\nbc\n\nxyz"), func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		offset uint32
+		want   Point
+	}{
+		{offset: 0, want: Point{Row: 0, Column: 0}},
+		{offset: 1, want: Point{Row: 0, Column: 1}},
+		{offset: 2, want: Point{Row: 1, Column: 0}},
+		{offset: 4, want: Point{Row: 1, Column: 2}},
+		{offset: 5, want: Point{Row: 2, Column: 0}},
+		{offset: 6, want: Point{Row: 3, Column: 0}},
+		{offset: 9, want: Point{Row: 3, Column: 3}},
+		{offset: 12, want: Point{Row: 3, Column: 6}},
+	}
+	for _, test := range tests {
+		got, hit := index.pointCached(test.offset)
+		if hit || got != test.want {
+			t.Fatalf("first point(%d)=%+v hit=%t, want %+v miss", test.offset, got, hit, test.want)
+		}
+		got, hit = index.pointCached(test.offset)
+		if !hit || got != test.want {
+			t.Fatalf("cached point(%d)=%+v hit=%t, want %+v hit", test.offset, got, hit, test.want)
+		}
+	}
+	other, err := newDiagnosticParserCorePointIndex([]byte("x\ny"), func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, hit := other.pointCached(2); hit {
+		t.Fatal("point cache leaked across materializations")
+	}
+}
+
+func TestDiagnosticParserCorePointIndexRejectsCollidingOffset(t *testing.T) {
+	index, err := newDiagnosticParserCorePointIndex([]byte("abcdefghijklmn"), func() error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if point, hit := index.pointCached(0); hit || point != (Point{}) {
+		t.Fatalf("first point(0)=%+v hit=%t, want origin miss", point, hit)
+	}
+	if point, hit := index.pointCached(13); hit || point != (Point{Column: 13}) {
+		t.Fatalf("colliding point(13)=%+v hit=%t, want column 13 miss", point, hit)
+	}
+	if point, hit := index.pointCached(0); hit || point != (Point{}) {
+		t.Fatalf("evicted point(0)=%+v hit=%t, want origin miss", point, hit)
+	}
+}
+
 type genericConflictTable struct {
 	actions []core.Action
 	cells   map[genericConflictCell][]core.Action
