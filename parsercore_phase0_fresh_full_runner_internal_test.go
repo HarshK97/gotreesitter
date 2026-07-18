@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
@@ -73,6 +74,45 @@ func TestParserCoreFreshFullRunnerResetsAfterCap(t *testing.T) {
 	requireDiagnosticParserCoreCanonicalEOF(t, tree, len(fixture.Source))
 	if work := runner.compact.Work(); work != diagnosticParserCoreCanonicalAdmissions[0].work || work.Overflow {
 		t.Fatalf("parse after cap work=%+v want=%+v", work, diagnosticParserCoreCanonicalAdmissions[0].work)
+	}
+}
+
+func TestParserCoreFreshFullPublicRouteIsSelectedStoreFree(t *testing.T) {
+	options := parserCoreFreshFullCanonicalOptions()
+	options.Limits.MaxSelectedOccurrences = 1
+	options.Limits.MaxSelectedBytes = 1
+	runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := loadDiagnosticParserCoreCanonicalFixture(t, "rewrite")
+	tree, err := runner.parse(fixture.Source)
+	if err != nil {
+		t.Fatalf("public compatibility route paid selected-store cap: %v", err)
+	}
+	tree.Release()
+	if store, err := runner.parseSelectedStore(fixture.Source); err == nil || store != nil || !strings.Contains(err.Error(), "occurrence cap") {
+		t.Fatalf("direct selected-store cap store=%v err=%v", store, err)
+	}
+}
+
+func TestParserCoreFreshFullSelectedStorePollsCancellation(t *testing.T) {
+	runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, parserCoreFreshFullCanonicalOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cancelled uint32
+	runner.parser.SetCancellationFlag(&cancelled)
+	fixture := loadDiagnosticParserCoreCanonicalFixture(t, "rewrite")
+	atomic.StoreUint32(&cancelled, 1)
+	store, err := runner.parseSelectedStore(fixture.Source)
+	if err == nil || store != nil || !strings.Contains(err.Error(), "selected-store sealing stopped: cancelled") {
+		t.Fatalf("cancelled direct store=%v err=%v", store, err)
+	}
+	atomic.StoreUint32(&cancelled, 0)
+	store, err = runner.parseSelectedStore(fixture.Source)
+	if err != nil || store == nil {
+		t.Fatalf("selected store after cancellation reset=%v err=%v", store, err)
 	}
 }
 
@@ -175,6 +215,90 @@ func BenchmarkParserCoreFreshFullCanonical(b *testing.B) {
 			}
 			reportParserCoreFreshFullWork(b, work)
 		})
+	}
+}
+
+// BenchmarkParserCoreFreshFullSelectedStoreCanonical measures the same
+// authenticated scheduler lifecycle but consumes the sealed store directly.
+// The compatibility benchmark above remains the public-Node fallback/control.
+func BenchmarkParserCoreFreshFullSelectedStoreCanonical(b *testing.B) {
+	for _, row := range diagnosticParserCoreCanonicalAdmissions {
+		row := row
+		b.Run(row.id, func(b *testing.B) {
+			fixture := loadDiagnosticParserCoreCanonicalFixture(b, row.id)
+			runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, parserCoreFreshFullCanonicalOptions())
+			if err != nil {
+				b.Fatal(err)
+			}
+			store, err := runner.parseSelectedStore(fixture.Source)
+			if err != nil {
+				b.Fatal(err)
+			}
+			if got := store.NodeCount(); got != row.selectedNodes {
+				b.Fatalf("selected nodes=%d want=%d", got, row.selectedNodes)
+			}
+			if got := diagnosticParserCoreSelectedStoreDeepDigest(b, store, runner.lang, fixture.Source); got != row.deepTreeSHA256 {
+				b.Fatalf("selected digest=%s want=%s", got, row.deepTreeSHA256)
+			}
+			if checksum := diagnosticParserCoreTraverseSelectedStore(store); checksum == 0 {
+				b.Fatal("selected traversal preflight failed")
+			}
+			retainedBytes := store.RetainedBytes()
+			store.Release()
+			runtime.GC()
+			b.ReportAllocs()
+			b.SetBytes(int64(len(fixture.Source)))
+			b.ResetTimer()
+			var checksum uint64
+			for index := 0; index < b.N; index++ {
+				store, err = runner.parseSelectedStore(fixture.Source)
+				if err != nil {
+					b.Fatal(err)
+				}
+				checksum ^= diagnosticParserCoreTraverseSelectedStore(store)
+				store.Release()
+			}
+			b.StopTimer()
+			if checksum == ^uint64(0) {
+				b.Fatal("unreachable selected traversal checksum")
+			}
+			if work := runner.compact.Work(); work != row.work || work.Overflow {
+				b.Fatalf("selected work=%+v want=%+v", work, row.work)
+			} else {
+				reportParserCoreFreshFullWork(b, work)
+			}
+			b.ReportMetric(float64(retainedBytes), "selected_retained_B/op")
+		})
+	}
+}
+
+func diagnosticParserCoreTraverseSelectedStore(store *core.SelectedStore) uint64 {
+	if store == nil || store.Root() == 0 {
+		return 0
+	}
+	cursor := store.Cursor()
+	var checksum uint64
+	for {
+		record, ok := cursor.Record()
+		if !ok {
+			return 0
+		}
+		checksum += uint64(cursor.ID()) + uint64(record.Symbol) + uint64(record.StartByte) + uint64(record.EndByte) + uint64(record.Field)
+		if child, ok := cursor.Child(0); ok {
+			cursor = child
+			continue
+		}
+		for {
+			if sibling, ok := cursor.NextSibling(); ok {
+				cursor = sibling
+				break
+			}
+			parent, ok := cursor.Parent()
+			if !ok {
+				return checksum
+			}
+			cursor = parent
+		}
 	}
 }
 

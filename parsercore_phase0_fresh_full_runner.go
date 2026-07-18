@@ -133,6 +133,13 @@ func (r *parserCoreFreshFullRunner) materialize(source []byte, compact *core.Cor
 	return materializeDiagnosticParserCoreAcceptedTree(compact, head, r.parser, source)
 }
 
+func (r *parserCoreFreshFullRunner) materializeSelection(source []byte, compact *core.Core, scheduler *diagnosticParserCoreGenericScheduler) (*Tree, error) {
+	if r == nil || scheduler == nil {
+		return nil, errors.New("parser-core fresh-full selected materialization is incomplete")
+	}
+	return materializeDiagnosticParserCoreAcceptedSelection(compact, scheduler.acceptedHead, scheduler.acceptedPayloads, r.parser, source)
+}
+
 func (r *parserCoreFreshFullRunner) parse(source []byte) (*Tree, error) {
 	if r == nil || r.compact == nil {
 		return nil, errors.New("parser-core fresh-full runner is incomplete")
@@ -142,9 +149,55 @@ func (r *parserCoreFreshFullRunner) parse(source []byte) (*Tree, error) {
 		return nil, err
 	}
 	defer tokenSource.Close()
-	tree, err := r.materialize(source, r.compact, scheduler.acceptedHead)
+	tree, err := r.materializeSelection(source, r.compact, scheduler)
 	if err != nil {
 		return nil, err
 	}
 	return tree, nil
+}
+
+func (r *parserCoreFreshFullRunner) parseSelectedStore(source []byte) (*core.SelectedStore, error) {
+	if r == nil || r.compact == nil {
+		return nil, errors.New("parser-core fresh-full selected-store runner is incomplete")
+	}
+	scheduler, tokenSource, err := r.executeSchedulerOpen(source, r.compact, true)
+	if err != nil {
+		return nil, err
+	}
+	defer tokenSource.Close()
+	leaveBudget := r.parser.enterParseBudget()
+	defer leaveBudget()
+	poller := parseStopPoller{check: r.parser.activeParseStopCheck(), memoryBudgetParser: r.parser}
+	poll := func() error {
+		reason := poller.pollNow()
+		if reason == ParseStopNone || reason == "" {
+			return nil
+		}
+		return &diagnosticParserCoreDecline{
+			boundary: DiagnosticParserCoreCap,
+			detail:   "selected-store sealing stopped: " + string(reason),
+		}
+	}
+	store, err := r.compact.BuildAuthenticatedSelectedStore(scheduler.acceptedPayloads, source, poll)
+	if err != nil {
+		return nil, err
+	}
+	return requireParserCoreSelectedStoreCompleteness(store, len(source))
+}
+
+// requireParserCoreSelectedStoreCompleteness adopts store on success and
+// releases it on every failure. Callers must not retain another owner.
+func requireParserCoreSelectedStoreCompleteness(store *core.SelectedStore, sourceBytes int) (*core.SelectedStore, error) {
+	if store == nil || sourceBytes < 0 || uint64(sourceBytes) > uint64(^uint32(0)) {
+		if store != nil {
+			store.Release()
+		}
+		return nil, errors.New("parser-core fresh-full selected-store completeness input is invalid")
+	}
+	root, ok := store.Record(store.Root())
+	if !ok || root.StartByte != 0 || root.EndByte != uint32(sourceBytes) {
+		store.Release()
+		return nil, fmt.Errorf("parser-core fresh-full selected-store root is incomplete: %d..%d source=%d", root.StartByte, root.EndByte, sourceBytes)
+	}
+	return store, nil
 }

@@ -7,6 +7,34 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Performance
+
+- Add an opt-in, build-tagged selected-tree backing store at the compact
+  parser/consumer boundary. Accepted payloads are sealed only for the direct
+  consumer; the public-node control remains store-free. The store preserves
+  occurrence identity and authenticated visible metadata across compact-core
+  resets, polls cancellation and resource limits, enforces occurrence and
+  retained-byte caps before growth, builds its quadratic unary policy only on
+  demand, and returns each atomic record/child backing pair through an explicit
+  synchronized release lifecycle. On the exact reviewed revision, the direct
+  consumer improves the same-revision public-node boundary by 13.27% across
+  the four locked fixtures, with every fixture 11.18-15.58% faster, B/op down
+  56.42%, lower RSS, exact work, and zero fallback. Its strict locked-static-C
+  publication measures 2.685181x C by equal-fixture geomean, 2.676794x by
+  fixed-suite sum, and 2.791974x on the worst fixture. The route remains
+  diagnostic-only and intentionally omits parser-state metadata.
+
+### Tooling
+
+- Extend the locked static-C publication driver with an authenticated
+  selected-store backend and retain selected-store bytes alongside total
+  allocation, work, fallback, and RSS metrics.
+
+### Fixed
+
+- Keep compact-parser arena and selected-root cap arithmetic portable on
+  32-bit targets by widening lengths before uint32-bound checks and additions.
+
 ## [0.41.0] - 2026-07-18
 
 ### Performance
