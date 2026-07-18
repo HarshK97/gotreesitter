@@ -392,6 +392,12 @@ geomean and **5.517602x C** by fixed-suite sum of medians, with a **5.648204x**
 worst fixture. See [BENCH.md](BENCH.md) for the per-fixture table, exact
 identities, and receipt hashes.
 
+The current v0.40.0 tag target `1935a42c` measures **4.851050x C** by
+equal-fixture geomean and **5.472406x C** by fixed-suite sum, with a
+**5.608320x** worst fixture. That is only a **0.716%** geomean improvement over
+v0.39.0, below the project's reproducible 2% win threshold; it refreshes the
+baseline without banking a performance win.
+
 The historical incremental measurements on the same generated 500-function Go
 workload were `649 ns` for a one-byte edit and `2.43 ns` for a no-edit reparse.
 They remain workload-specific; use the real-corpus perf scoreboard for
@@ -495,7 +501,7 @@ witness, and shrinks as certified engine mechanisms subsume shims. See
 
 ## Known limitations
 
-- **Full-parse throughput**: the strict materialized real-Go production receipt collected at `2c702656` measures public `Parser.Parse` at **4.886056x C** by equal-fixture geomean and **5.517602x C** by fixed-suite sum of medians against the exact static `-O2` oracle (see [BENCH.md](BENCH.md)); its worst fixture is **5.648204x C**. The former ~2.1x row used a straight-LR synthetic and a different Go grammar, so it is historical only. The locked incremental matrix validates correctness and classifies work, but general incremental Go/C performance has no current publication-grade headline. Full-parse throughput varies by grammar and corpus shape; GLR-heavy code, highly ambiguous languages, and very large generated files are the main performance frontier.
+- **Full-parse throughput**: the strict materialized real-Go production receipt at the v0.40.0 tag target `1935a42c` measures public `Parser.Parse` at **4.851050x C** by equal-fixture geomean and **5.472406x C** by fixed-suite sum of medians against the exact static `-O2` oracle (see [BENCH.md](BENCH.md)); its worst fixture is **5.608320x C**. The 0.716% geomean movement from v0.39.0 is below the reproducible 2% win threshold. The former ~2.1x row used a straight-LR synthetic and a different Go grammar, so it is historical only. The locked incremental matrix validates correctness and classifies work, but general incremental Go/C performance has no current publication-grade headline. Full-parse throughput varies by grammar and corpus shape; GLR-heavy code, highly ambiguous languages, and very large generated files are the main performance frontier.
 - **GLR safety caps**: The parser enforces iteration, stack depth, and node count limits proportional to input size. These prevent pathological blowup on grammars with high ambiguity but impose a ceiling on the maximum input complexity that parses without error. The caps are tunable but not removable without risking unbounded resource consumption.
 
 ## Adding a language
@@ -705,15 +711,15 @@ performance work — build-time PGO, forest-index allocation pooling, GLR
 comparator copy-elimination, and forest-reducer pooling (a cumulative ~30%
 wall-clock reduction on forest-path grammars) — plus a query-matcher work-budget
 DoS guard and an incremental-reuse token-boundary fix. The authenticated
-cross-suite receipt below is the v0.39.0 baseline and will be refreshed for
-v0.40.0. The 206-grammar curated parity milestone is
+v0.40.0 production receipt at tag target `1935a42c` measures public
+`Parser.Parse` at 4.851050x C by equal-fixture geomean, 5.472406x C by
+fixed-suite sum, and 5.608320x C on the worst fixture against the locked static
+`-O2` C oracle. Its 0.716% geomean improvement over v0.39.0 is below the
+reproducible 2% win threshold. The 206-grammar curated parity milestone is
 banked. v0.39.0 tightens query, tree, DFA, grammar-import, generated-C, and
 highlight correctness; adds locked incremental and work-count evidence; and
 makes real-corpus roots, split-grammar layouts, and sample floors more
-reproducible. Its authenticated production receipt, collected at `2c702656`,
-measures public `Parser.Parse` at 4.886056x C by equal-fixture geomean, 5.517602x
-C by fixed-suite sum, and 5.648204x C on the worst fixture against the locked
-static `-O2` C oracle. The invalid historical 1.895x headline remains withdrawn,
+reproducible. The invalid historical 1.895x headline remains withdrawn,
 and the incremental matrix is a correctness/work-classification receipt rather
 than a representative comparative speed headline. Detailed history lives in
 [CHANGELOG.md](CHANGELOG.md).

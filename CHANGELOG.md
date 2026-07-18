@@ -7,6 +7,14 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Documentation
+
+- Publish the authenticated v0.40.0 fresh, materialized real-Go receipt:
+  4.851050x static C by equal-fixture geomean, 5.472406x by fixed-suite sum,
+  and 5.608320x on the worst fixture. The 0.716% geomean improvement over
+  v0.39.0 is below the reproducible 2% win threshold, so this is a baseline
+  refresh rather than a banked performance win.
+
 ## [0.40.0] - 2026-07-17
 
 ### Performance
