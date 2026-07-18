@@ -20,6 +20,8 @@ type Phase0APopRouteRecord struct {
 	Predecessor         NodeID
 	FirstLink           uint64
 	LinkCount           uint32
+	RetainedLinkCount   uint32
+	TrailingLinkCount   uint32
 	Occurrence          ConstructionOccurrenceKey
 	Edge                IncomingEdgeKey
 	RolledBack          bool
@@ -27,12 +29,26 @@ type Phase0APopRouteRecord struct {
 	RollbackCause       Phase0ARollbackCause
 }
 
+type Phase0APopRouteSegment uint8
+
+const (
+	Phase0APopRouteRetained Phase0APopRouteSegment = iota + 1
+	Phase0APopRouteTrailing
+)
+
 type Phase0APopRouteLinkRecord struct {
 	Route               uint64
 	TransactionID       uint64
 	Ordinal             uint32
+	Segment             Phase0APopRouteSegment
+	SegmentOrdinal      uint32
 	Link                LinkID
+	Node                NodeID
+	Predecessor         NodeID
 	Payload             SubtreeID
+	ScoreDelta          int64
+	Order               uint64
+	HasOrder            bool
 	RolledBack          bool
 	RollbackTransaction uint64
 	RollbackCause       Phase0ARollbackCause
@@ -80,6 +96,7 @@ type Phase0AAcceptedLinkRecord struct {
 type phase0ARouteObserver struct {
 	popRoutes          []Phase0APopRouteRecord
 	popLinks           []Phase0APopRouteLinkRecord
+	migrations         []Phase0ATrailingExtraMigrationRecord
 	capabilities       []Phase0ASelectionCapabilityRecord
 	acceptedSelections []Phase0AAcceptedSelectionRecord
 	acceptedLinks      []Phase0AAcceptedLinkRecord
@@ -92,6 +109,7 @@ type phase0ARouteObserver struct {
 type phase0ARouteFrame struct {
 	popRouteStart   uint64
 	popLinkStart    uint64
+	migrationStart  uint64
 	capabilityStart uint64
 }
 
@@ -100,6 +118,11 @@ type phase0APhysicalPopPath struct {
 	children      []SubtreeID
 	trailing      []SubtreeID
 	links         []LinkID
+	linkNodes     []NodeID
+	linkPrevs     []NodeID
+	linkScores    []int64
+	linkOrders    []ForkOrder
+	retainedCount uint32
 	score         int64
 	order         ForkOrder
 	startByte     uint32
@@ -116,22 +139,25 @@ type phase0APhysicalDerivation struct {
 
 type phase0APhysicalLink struct {
 	id     LinkID
+	node   NodeID
 	record linkRecord
 }
 
 const (
-	phase0APopRouteBytes            = uint64(unsafe.Sizeof(Phase0APopRouteRecord{}))
-	phase0APopRouteLinkBytes        = uint64(unsafe.Sizeof(Phase0APopRouteLinkRecord{}))
-	phase0ASelectionCapabilityBytes = uint64(unsafe.Sizeof(Phase0ASelectionCapabilityRecord{}))
-	phase0AAcceptedSelectionBytes   = uint64(unsafe.Sizeof(Phase0AAcceptedSelectionRecord{}))
-	phase0AAcceptedLinkBytes        = uint64(unsafe.Sizeof(Phase0AAcceptedLinkRecord{}))
-	phase0ARouteFrameBytes          = uint64(unsafe.Sizeof(phase0ARouteFrame{}))
+	phase0APopRouteBytes               = uint64(unsafe.Sizeof(Phase0APopRouteRecord{}))
+	phase0APopRouteLinkBytes           = uint64(unsafe.Sizeof(Phase0APopRouteLinkRecord{}))
+	phase0ATrailingExtraMigrationBytes = uint64(unsafe.Sizeof(Phase0ATrailingExtraMigrationRecord{}))
+	phase0ASelectionCapabilityBytes    = uint64(unsafe.Sizeof(Phase0ASelectionCapabilityRecord{}))
+	phase0AAcceptedSelectionBytes      = uint64(unsafe.Sizeof(Phase0AAcceptedSelectionRecord{}))
+	phase0AAcceptedLinkBytes           = uint64(unsafe.Sizeof(Phase0AAcceptedLinkRecord{}))
+	phase0ARouteFrameBytes             = uint64(unsafe.Sizeof(phase0ARouteFrame{}))
 )
 
 func phase0ARouteMarkLocked(observer *phase0AObserver) {
 	observer.route.frames = append(observer.route.frames, phase0ARouteFrame{
 		popRouteStart:   uint64(len(observer.route.popRoutes)),
 		popLinkStart:    uint64(len(observer.route.popLinks)),
+		migrationStart:  uint64(len(observer.route.migrations)),
 		capabilityStart: uint64(len(observer.route.capabilities)),
 	})
 }
@@ -150,6 +176,10 @@ func phase0ARouteRollbackLocked(observer *phase0AObserver, transaction uint64, c
 		row := &observer.route.popLinks[index]
 		row.RolledBack, row.RollbackTransaction, row.RollbackCause = true, transaction, cause
 	}
+	for index := frame.migrationStart; index < uint64(len(observer.route.migrations)); index++ {
+		row := &observer.route.migrations[index]
+		row.RolledBack, row.RollbackTransaction, row.RollbackCause = true, transaction, cause
+	}
 	for index := frame.capabilityStart; index < uint64(len(observer.route.capabilities)); index++ {
 		row := &observer.route.capabilities[index]
 		row.RolledBack, row.RollbackTransaction, row.RollbackCause = true, transaction, cause
@@ -165,7 +195,7 @@ func phase0ARouteCommitLocked(observer *phase0AObserver) {
 	observer.route.frames = observer.route.frames[:len(observer.route.frames)-1]
 }
 
-func phase0ACheckRouteRowsLocked(observer *phase0AObserver, popRoutes, popLinks, selections, acceptedLinks uint64) error {
+func phase0ACheckRouteRowsLocked(observer *phase0AObserver, popRoutes, popLinks, migrations, selections, acceptedLinks uint64) error {
 	checks := []struct {
 		current uint64
 		add     uint64
@@ -174,6 +204,7 @@ func phase0ACheckRouteRowsLocked(observer *phase0AObserver, popRoutes, popLinks,
 	}{
 		{uint64(len(observer.route.popRoutes)), popRoutes, phase0AObservers.limits.MaxPopRoutes, "pop-route row cap"},
 		{uint64(len(observer.route.popLinks)), popLinks, phase0AObservers.limits.MaxPopRouteLinks, "pop-route link cap"},
+		{uint64(len(observer.route.migrations)), migrations, phase0AObservers.limits.MaxTrailingExtraMigrations, "trailing-extra migration row cap"},
 		{uint64(len(observer.route.acceptedSelections)), selections, phase0AObservers.limits.MaxAcceptedSelections, "accepted-selection row cap"},
 		{uint64(len(observer.route.acceptedLinks)), acceptedLinks, phase0AObservers.limits.MaxAcceptedLinks, "accepted-link row cap"},
 	}
@@ -189,12 +220,12 @@ func phase0ACheckRouteRowsLocked(observer *phase0AObserver, popRoutes, popLinks,
 	return nil
 }
 
-func phase0AReserveRouteRowsLocked(observer *phase0AObserver, popRoutes, popLinks, selections, acceptedLinks uint64) error {
-	if err := phase0ACheckRouteRowsLocked(observer, popRoutes, popLinks, selections, acceptedLinks); err != nil {
+func phase0AReserveRouteRowsLocked(observer *phase0AObserver, popRoutes, popLinks, migrations, selections, acceptedLinks uint64) error {
+	if err := phase0ACheckRouteRowsLocked(observer, popRoutes, popLinks, migrations, selections, acceptedLinks); err != nil {
 		return phase0AStickyLocked(observer, err.(*Phase0AError))
 	}
-	records := popRoutes + popLinks + selections + acceptedLinks
-	bytes := popRoutes*phase0APopRouteBytes + popLinks*phase0APopRouteLinkBytes + selections*phase0AAcceptedSelectionBytes + acceptedLinks*phase0AAcceptedLinkBytes
+	records := popRoutes + popLinks + migrations + selections + acceptedLinks
+	bytes := popRoutes*phase0APopRouteBytes + popLinks*phase0APopRouteLinkBytes + migrations*phase0ATrailingExtraMigrationBytes + selections*phase0AAcceptedSelectionBytes + acceptedLinks*phase0AAcceptedLinkBytes
 	if err := phase0AChargeManyLocked(records, bytes); err != nil {
 		return phase0AStickyLocked(observer, err.(*Phase0AError))
 	}
@@ -230,7 +261,7 @@ func phase0AStablePhysicalLinks(core *Core, id NodeID) ([]phase0APhysicalLink, e
 			return nil, errors.New("parser-core phase zero A: physical adjacency is unavailable")
 		}
 		link := core.links[next-1]
-		out[index] = phase0APhysicalLink{id: next, record: link}
+		out[index] = phase0APhysicalLink{id: next, node: id, record: link}
 		next = link.next
 	}
 	if next != 0 {
@@ -252,11 +283,16 @@ func phase0AEnumeratePopRoutes(core *Core, head NodeID, childCount int) ([]phase
 	}
 	var out []phase0APhysicalPopPath
 	var revLinks []LinkID
+	var revNodes []NodeID
+	var revPrevs []NodeID
 	var revPayloads []SubtreeID
 	var revScores []int64
 	var revOrders []ForkOrder
 	var trailingLinks []LinkID
+	var trailingNodes []NodeID
+	var trailingPrevs []NodeID
 	var trailingPayloads []SubtreeID
+	var trailingScores []int64
 	var trailingOrders []ForkOrder
 	var walk func(NodeID, int, bool, uint32) error
 	walk = func(id NodeID, remaining int, peelingTrailing bool, structuralEnd uint32) error {
@@ -276,13 +312,19 @@ func phase0AEnumeratePopRoutes(core *Core, head NodeID, childCount int) ([]phase
 			order := ForkOrder{Value: link.order, Present: link.hasOrder()}
 			if payload.extra && peelingTrailing {
 				trailingLinks = append(trailingLinks, physical.id)
+				trailingNodes = append(trailingNodes, physical.node)
+				trailingPrevs = append(trailingPrevs, link.prev)
 				trailingPayloads = append(trailingPayloads, link.payload)
+				trailingScores = append(trailingScores, link.scoreDelta)
 				trailingOrders = append(trailingOrders, order)
 				if err := walk(link.prev, remaining, true, structuralEnd); err != nil {
 					return err
 				}
 				trailingLinks = trailingLinks[:len(trailingLinks)-1]
+				trailingNodes = trailingNodes[:len(trailingNodes)-1]
+				trailingPrevs = trailingPrevs[:len(trailingPrevs)-1]
 				trailingPayloads = trailingPayloads[:len(trailingPayloads)-1]
+				trailingScores = trailingScores[:len(trailingScores)-1]
 				trailingOrders = trailingOrders[:len(trailingOrders)-1]
 				continue
 			}
@@ -291,6 +333,8 @@ func phase0AEnumeratePopRoutes(core *Core, head NodeID, childCount int) ([]phase
 				nextStructuralEnd = payload.endByte
 			}
 			revLinks = append(revLinks, physical.id)
+			revNodes = append(revNodes, physical.node)
+			revPrevs = append(revPrevs, link.prev)
 			revPayloads = append(revPayloads, link.payload)
 			revScores = append(revScores, link.scoreDelta)
 			revOrders = append(revOrders, order)
@@ -305,6 +349,10 @@ func phase0AEnumeratePopRoutes(core *Core, head NodeID, childCount int) ([]phase
 				path := phase0APhysicalPopPath{prev: link.prev, startByte: payload.startByte, structuralEnd: nextStructuralEnd}
 				for index := len(revLinks) - 1; index >= 0; index-- {
 					path.links = append(path.links, revLinks[index])
+					path.linkNodes = append(path.linkNodes, revNodes[index])
+					path.linkPrevs = append(path.linkPrevs, revPrevs[index])
+					path.linkScores = append(path.linkScores, revScores[index])
+					path.linkOrders = append(path.linkOrders, revOrders[index])
 					path.children = append(path.children, revPayloads[index])
 					path.score, err = checkedAddScore(path.score, revScores[index])
 					if err != nil {
@@ -314,8 +362,13 @@ func phase0AEnumeratePopRoutes(core *Core, head NodeID, childCount int) ([]phase
 						path.order = revOrders[index]
 					}
 				}
+				path.retainedCount = uint32(len(path.links))
 				for index := len(trailingLinks) - 1; index >= 0; index-- {
 					path.links = append(path.links, trailingLinks[index])
+					path.linkNodes = append(path.linkNodes, trailingNodes[index])
+					path.linkPrevs = append(path.linkPrevs, trailingPrevs[index])
+					path.linkScores = append(path.linkScores, trailingScores[index])
+					path.linkOrders = append(path.linkOrders, trailingOrders[index])
 					path.trailing = append(path.trailing, trailingPayloads[index])
 					if trailingOrders[index].Present {
 						path.order = trailingOrders[index]
@@ -326,6 +379,8 @@ func phase0AEnumeratePopRoutes(core *Core, head NodeID, childCount int) ([]phase
 				return err
 			}
 			revLinks = revLinks[:len(revLinks)-1]
+			revNodes = revNodes[:len(revNodes)-1]
+			revPrevs = revPrevs[:len(revPrevs)-1]
 			revPayloads = revPayloads[:len(revPayloads)-1]
 			revScores = revScores[:len(revScores)-1]
 			revOrders = revOrders[:len(revOrders)-1]
@@ -378,7 +433,9 @@ func phase0AObservePopRoutes(core *Core, head NodeID, childCount int, production
 		for trailingIndex := range want.trailing {
 			wantTrailing[trailingIndex] = want.trailing[trailingIndex].payload
 		}
-		if got.prev != want.prev || got.score != want.score || got.order != want.order || got.startByte != want.startByte || got.structuralEnd != want.structuralEnd || !phase0ASameSubtrees(got.children, want.children) || !phase0ASameSubtrees(got.trailing, wantTrailing) {
+		if len(got.links) != len(got.linkNodes) || len(got.links) != len(got.linkPrevs) || len(got.links) != len(got.linkScores) || len(got.links) != len(got.linkOrders) || uint64(got.retainedCount) > uint64(len(got.links)) ||
+			uint64(got.retainedCount) != uint64(len(want.children)) || uint64(len(got.links))-uint64(got.retainedCount) != uint64(len(want.trailing)) ||
+			got.prev != want.prev || got.score != want.score || got.order != want.order || got.startByte != want.startByte || got.structuralEnd != want.structuralEnd || !phase0ASameSubtrees(got.children, want.children) || !phase0ASameSubtrees(got.trailing, wantTrailing) {
 			phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorAmbiguousReference, Namespace: observer.run, Detail: "physical pop path does not exactly match production ordinal"})
 			return
 		}
@@ -396,7 +453,7 @@ func phase0AObservePopRoutes(core *Core, head NodeID, childCount int, production
 		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Namespace: observer.run, Detail: "physical pop route serial"})
 		return
 	}
-	if err := phase0AReserveRouteRowsLocked(observer, uint64(len(routes)), linkCount, 0, 0); err != nil {
+	if err := phase0AReserveRouteRowsLocked(observer, uint64(len(routes)), linkCount, 0, 0, 0); err != nil {
 		return
 	}
 	pending.routeStart = uint64(len(observer.route.popRoutes))
@@ -409,11 +466,18 @@ func phase0AObservePopRoutes(core *Core, head NodeID, childCount int, production
 		observer.route.popRoutes = append(observer.route.popRoutes, Phase0APopRouteRecord{
 			ID: id, TransactionID: pending.transaction, PopOrdinal: uint32(index), Head: head,
 			Predecessor: route.prev, FirstLink: first, LinkCount: uint32(len(route.links)),
+			RetainedLinkCount: route.retainedCount, TrailingLinkCount: uint32(len(route.links)) - route.retainedCount,
 		})
 		for ordinal, linkID := range route.links {
 			link := core.links[linkID-1]
+			segment, segmentOrdinal := Phase0APopRouteRetained, uint32(ordinal)
+			if uint32(ordinal) >= route.retainedCount {
+				segment, segmentOrdinal = Phase0APopRouteTrailing, uint32(ordinal)-route.retainedCount
+			}
 			observer.route.popLinks = append(observer.route.popLinks, Phase0APopRouteLinkRecord{
-				Route: id, TransactionID: pending.transaction, Ordinal: uint32(ordinal), Link: linkID, Payload: link.payload,
+				Route: id, TransactionID: pending.transaction, Ordinal: uint32(ordinal), Segment: segment, SegmentOrdinal: segmentOrdinal,
+				Link: linkID, Node: route.linkNodes[ordinal], Predecessor: route.linkPrevs[ordinal], Payload: link.payload,
+				ScoreDelta: route.linkScores[ordinal], Order: route.linkOrders[ordinal].Value, HasOrder: route.linkOrders[ordinal].Present,
 			})
 		}
 	}
@@ -436,6 +500,306 @@ func phase0ABindReductionRouteLocked(observer *phase0AObserver, pending *phase0A
 	}
 	route.Occurrence, route.Edge = occurrence, edge
 	return true
+}
+
+func phase0AReserveTrailingExtraMigrationLocked(observer *phase0AObserver) error {
+	mutationLimit := phase0AObservers.limits.MaxMutations
+	if mutationLimit == 0 {
+		mutationLimit = math.MaxUint64
+	}
+	if uint64(len(observer.mutations)) > mutationLimit || 2 > mutationLimit-uint64(len(observer.mutations)) {
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorMutationCap, Namespace: observer.run})
+	}
+	occurrenceLimit := phase0AObservers.limits.MaxOccurrences
+	if occurrenceLimit == 0 {
+		occurrenceLimit = math.MaxUint64
+	}
+	if observer.occurrenceCount >= occurrenceLimit {
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorOccurrenceCap, Namespace: observer.run})
+	}
+	occurrenceBytes := phase0AOccurrenceRecordBytes + phase0AEdgeRecordBytes
+	occurrenceByteLimit := phase0AObservers.limits.MaxOccurrenceBytes
+	if occurrenceByteLimit == 0 {
+		occurrenceByteLimit = math.MaxUint64
+	}
+	if observer.occurrenceBytes > occurrenceByteLimit || occurrenceBytes > occurrenceByteLimit-observer.occurrenceBytes {
+		return phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorOccurrenceByteCap, Namespace: observer.run})
+	}
+	if err := phase0ACheckFactorRowsLocked(observer, 1, 0, 0, 0, 0, 0); err != nil {
+		return err
+	}
+	if err := phase0ACheckRouteRowsLocked(observer, 0, 0, 1, 0, 0); err != nil {
+		return phase0AStickyLocked(observer, err.(*Phase0AError))
+	}
+	if err := phase0AChargeManyLocked(4, occurrenceBytes+phase0ACandidateBytes+phase0ATrailingExtraMigrationBytes); err != nil {
+		return phase0AStickyLocked(observer, err.(*Phase0AError))
+	}
+	observer.occurrenceCount++
+	observer.occurrenceBytes += occurrenceBytes
+	return nil
+}
+
+func phase0AExactRouteLinkLocked(observer *phase0AObserver, route Phase0APopRouteRecord, ordinal uint32) (Phase0APopRouteLinkRecord, error) {
+	if ordinal >= route.LinkCount || route.FirstLink > uint64(len(observer.route.popLinks)) || uint64(ordinal) >= uint64(len(observer.route.popLinks))-route.FirstLink {
+		return Phase0APopRouteLinkRecord{}, &Phase0AError{Kind: Phase0AErrorMissingReference, Namespace: observer.run, Detail: "physical pop route link is unavailable"}
+	}
+	row := observer.route.popLinks[route.FirstLink+uint64(ordinal)]
+	if row.RolledBack || row.Route != route.ID || row.TransactionID != route.TransactionID || row.Ordinal != ordinal {
+		return Phase0APopRouteLinkRecord{}, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "physical pop route link is stale"}
+	}
+	return row, nil
+}
+
+func phase0AValidateCurrentRouteLink(core *Core, observer *phase0AObserver, row Phase0APopRouteLinkRecord) error {
+	physical, err := phase0AStablePhysicalLinks(core, row.Node)
+	if err != nil {
+		return &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "source trailing physical adjacency is unavailable"}
+	}
+	matches := 0
+	for _, candidate := range physical {
+		if candidate.id != row.Link {
+			continue
+		}
+		matches++
+		link := candidate.record
+		if link.prev != row.Predecessor || link.payload != row.Payload || link.scoreDelta != row.ScoreDelta || link.hasOrder() != row.HasOrder || (row.HasOrder && link.order != row.Order) {
+			return &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "source trailing physical link changed identity"}
+		}
+	}
+	if matches != 1 {
+		kind := Phase0AErrorMissingReference
+		if matches > 1 {
+			kind = Phase0AErrorAmbiguousReference
+		}
+		return &Phase0AError{Kind: kind, Namespace: observer.run, Detail: "source trailing physical link is not unique"}
+	}
+	return nil
+}
+
+func phase0AExactPublishedCandidateLocked(observer *phase0AObserver, occurrence ConstructionOccurrenceKey, edge IncomingEdgeKey) (Phase0ACandidateRecord, error) {
+	var found Phase0ACandidateRecord
+	live, rolled := 0, 0
+	for _, candidate := range observer.factor.candidates {
+		if candidate.Occurrence != occurrence || candidate.Edge != edge {
+			continue
+		}
+		if candidate.RolledBack {
+			rolled++
+			continue
+		}
+		live++
+		found = candidate
+	}
+	if live > 1 {
+		return Phase0ACandidateRecord{}, &Phase0AError{Kind: Phase0AErrorAmbiguousReference, Namespace: observer.run, Detail: "target publication has multiple live candidates"}
+	}
+	if live == 0 && rolled != 0 {
+		return Phase0ACandidateRecord{}, &Phase0AError{Kind: Phase0AErrorRolledBackReference, Namespace: observer.run, Detail: "target publication candidate is rolled back"}
+	}
+	if live == 0 {
+		return Phase0ACandidateRecord{}, &Phase0AError{Kind: Phase0AErrorMissingReference, Namespace: observer.run, Detail: "target publication candidate is unavailable"}
+	}
+	if !found.Claimed || !found.Resolved || !phase0ATransactionActiveLocked(observer, found.TransactionID) {
+		return Phase0ACandidateRecord{}, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "target publication candidate is not live and resolved"}
+	}
+	return found, nil
+}
+
+func phase0AExpectedMigrationTargetLocked(observer *phase0AObserver, route Phase0APopRouteRecord, trailingOrdinal uint32) (ConstructionOccurrenceKey, IncomingEdgeKey, Phase0AConstructionKind, error) {
+	if trailingOrdinal == 0 {
+		return route.Occurrence, route.Edge, Phase0AConstructionReductionParent, nil
+	}
+	var found Phase0ATrailingExtraMigrationRecord
+	live, rolled := 0, 0
+	for _, migration := range observer.route.migrations {
+		if migration.Route != route.ID || migration.TransactionID != route.TransactionID || migration.TrailingOrdinal != trailingOrdinal-1 {
+			continue
+		}
+		if migration.RolledBack {
+			rolled++
+			continue
+		}
+		live++
+		found = migration
+	}
+	if live > 1 {
+		return ConstructionOccurrenceKey{}, IncomingEdgeKey{}, 0, &Phase0AError{Kind: Phase0AErrorAmbiguousReference, Namespace: observer.run, Detail: "prior trailing-extra migration has multiple live rows"}
+	}
+	if live == 0 && rolled != 0 {
+		return ConstructionOccurrenceKey{}, IncomingEdgeKey{}, 0, &Phase0AError{Kind: Phase0AErrorRolledBackReference, Namespace: observer.run, Detail: "prior trailing-extra migration is rolled back"}
+	}
+	if live == 0 {
+		return ConstructionOccurrenceKey{}, IncomingEdgeKey{}, 0, &Phase0AError{Kind: Phase0AErrorMissingReference, Namespace: observer.run, Detail: "prior trailing-extra migration is unavailable"}
+	}
+	return found.Occurrence, found.Edge, Phase0AConstructionExtraTerminal, nil
+}
+
+func phase0AValidateMigrationTargetLocked(core *Core, observer *phase0AObserver, route Phase0APopRouteRecord, trailingOrdinal uint32, predecessor NodeID) (LinkID, ConstructionOccurrenceKey, IncomingEdgeKey, error) {
+	node, err := core.node(predecessor)
+	if err != nil || node.linkCount != 1 {
+		return 0, ConstructionOccurrenceKey{}, IncomingEdgeKey{}, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "trailing-extra target predecessor is not a live width-one publication"}
+	}
+	physical, err := phase0AStablePhysicalLinks(core, predecessor)
+	if err != nil || len(physical) != 1 {
+		return 0, ConstructionOccurrenceKey{}, IncomingEdgeKey{}, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "trailing-extra target predecessor adjacency is unavailable"}
+	}
+	expectedOccurrence, expectedEdge, expectedKind, err := phase0AExpectedMigrationTargetLocked(observer, route, trailingOrdinal)
+	if err != nil {
+		return 0, ConstructionOccurrenceKey{}, IncomingEdgeKey{}, err
+	}
+	candidate, err := phase0AExactPublishedCandidateLocked(observer, expectedOccurrence, expectedEdge)
+	if err != nil {
+		return 0, ConstructionOccurrenceKey{}, IncomingEdgeKey{}, err
+	}
+	link := physical[0]
+	if link.node != predecessor || link.record.prev != candidate.Predecessor || link.record.payload != candidate.Payload || link.record.scoreDelta != candidate.ScoreDelta || link.record.hasOrder() != candidate.HasOrder || (candidate.HasOrder && link.record.order != candidate.Order) ||
+		node.state != candidate.Boundary.State || node.byteOffset != candidate.Boundary.ByteOffset || candidate.Boundary.Frontier != core.frontier || candidate.Boundary.Checkpoint != core.checkpoint || candidate.Boundary.Shifted {
+		return 0, ConstructionOccurrenceKey{}, IncomingEdgeKey{}, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "trailing-extra target predecessor is not the exact expected publication"}
+	}
+	expressionID, err := phase0AExactBindingLocked(observer, link.id)
+	if err != nil {
+		return 0, ConstructionOccurrenceKey{}, IncomingEdgeKey{}, err
+	}
+	expression, err := phase0AExactExpressionLocked(observer, expressionID)
+	if err != nil {
+		return 0, ConstructionOccurrenceKey{}, IncomingEdgeKey{}, err
+	}
+	if expression.Kind != Phase0AExpressionDirect || expression.Occurrence != expectedOccurrence || expression.Edge != expectedEdge {
+		return 0, ConstructionOccurrenceKey{}, IncomingEdgeKey{}, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "trailing-extra target link is not bound to the expected publication"}
+	}
+	if err := phase0AValidateDirectOccurrenceLocked(observer, expression); err != nil {
+		return 0, ConstructionOccurrenceKey{}, IncomingEdgeKey{}, err
+	}
+	occurrence := observer.mutations[observer.occurrenceIndex[expectedOccurrence]]
+	if occurrence.Payload != candidate.Payload || occurrence.Predecessor != candidate.Predecessor || occurrence.ConstructionKind != expectedKind {
+		return 0, ConstructionOccurrenceKey{}, IncomingEdgeKey{}, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "trailing-extra target occurrence identity mismatch"}
+	}
+	return link.id, expectedOccurrence, expectedEdge, nil
+}
+
+// phase0AObserveTrailingExtraMigration authenticates an existing selected
+// trailing-extra physical edge and allocates a fresh occurrence/edge under its
+// original extra-terminal event before production re-links that suffix.
+func phase0AObserveTrailingExtraMigration(core *Core, trailingOrdinal uint32, boundary boundaryKey, in linkInput) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer := phase0AObservers.byCore[core]
+	if observer == nil || !observer.active || observer.failure != nil {
+		return
+	}
+	pending := &observer.reduction
+	if !pending.active || !pending.routeProof || pending.observed == 0 || pending.observed > pending.routeCount || phase0ACurrentTransaction(observer) != pending.transaction {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: observer.run, Detail: "trailing-extra migration is outside its proved reduction route"})
+		return
+	}
+	routeIndex := pending.routeStart + uint64(pending.observed-1)
+	if routeIndex >= uint64(len(observer.route.popRoutes)) {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorMissingReference, Namespace: observer.run, Detail: "trailing-extra migration route is unavailable"})
+		return
+	}
+	route := observer.route.popRoutes[routeIndex]
+	if route.RolledBack || route.TransactionID != pending.transaction || route.PopOrdinal != pending.observed-1 || route.Occurrence == (ConstructionOccurrenceKey{}) || route.Edge == (IncomingEdgeKey{}) || trailingOrdinal >= route.TrailingLinkCount || route.RetainedLinkCount == 0 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "trailing-extra migration route is not exactly bound"})
+		return
+	}
+	sourceOrdinal := route.RetainedLinkCount + trailingOrdinal
+	source, err := phase0AExactRouteLinkLocked(observer, route, sourceOrdinal)
+	if err != nil {
+		phase0AStickyLocked(observer, err.(*Phase0AError))
+		return
+	}
+	lower, err := phase0AExactRouteLinkLocked(observer, route, sourceOrdinal-1)
+	if err != nil {
+		phase0AStickyLocked(observer, err.(*Phase0AError))
+		return
+	}
+	if source.Segment != Phase0APopRouteTrailing || source.SegmentOrdinal != trailingOrdinal || lower.Node != source.Predecessor || lower.Ordinal+1 != source.Ordinal {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "trailing-extra source/lower physical chain mismatch"})
+		return
+	}
+	if err := phase0AValidateCurrentRouteLink(core, observer, source); err != nil {
+		phase0AStickyLocked(observer, err.(*Phase0AError))
+		return
+	}
+	// The lower identity participates in factor selection. Re-authenticate it
+	// independently against the current physical adjacency rather than trusting
+	// the frozen route row that supplied SourceLowerLink.
+	if err := phase0AValidateCurrentRouteLink(core, observer, lower); err != nil {
+		phase0AStickyLocked(observer, err.(*Phase0AError))
+		return
+	}
+	bound, err := phase0AExactBindingLocked(observer, source.Link)
+	if err != nil {
+		phase0AStickyLocked(observer, err.(*Phase0AError))
+		return
+	}
+	direct, err := phase0AResolveAcceptedExpressionLocked(observer, bound, lower.Link)
+	if err != nil {
+		phase0AStickyLocked(observer, err.(*Phase0AError))
+		return
+	}
+	if err := phase0AValidateDirectOccurrenceLocked(observer, direct); err != nil {
+		phase0AStickyLocked(observer, err.(*Phase0AError))
+		return
+	}
+	occurrenceMutation := observer.mutations[observer.occurrenceIndex[direct.Occurrence]]
+	eventIndex, ok := observer.eventIndex[direct.Occurrence.Event]
+	if !ok || eventIndex >= uint64(len(observer.mutations)) {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorMissingReference, Namespace: observer.run, Detail: "trailing-extra source event is unavailable"})
+		return
+	}
+	eventMutation := observer.mutations[eventIndex]
+	if eventMutation.RolledBack || eventMutation.Kind != Phase0AMutationEvent || eventMutation.Event != direct.Occurrence.Event || eventMutation.Payload != source.Payload || eventMutation.ConstructionKind != Phase0AConstructionExtraTerminal || occurrenceMutation.Payload != source.Payload || occurrenceMutation.ConstructionKind != Phase0AConstructionExtraTerminal {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "trailing-extra source is not one live extra-terminal event"})
+		return
+	}
+	subtree, subtreeErr := core.subtree(in.payload)
+	if subtreeErr != nil || !subtree.terminal || !subtree.extra || source.Payload != in.payload || source.ScoreDelta != in.scoreDelta || boundary.frontier != core.frontier || boundary.checkpoint != core.checkpoint || boundary.shifted || boundary.state == 0 || boundary.byteOffset != subtree.endByte {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "trailing-extra migration input or private predecessor mismatch"})
+		return
+	}
+	targetLink, targetOccurrence, targetEdge, err := phase0AValidateMigrationTargetLocked(core, observer, route, trailingOrdinal, in.prev)
+	if err != nil {
+		phase0AStickyLocked(observer, err.(*Phase0AError))
+		return
+	}
+	nextSlot, ok := observer.nextOccurrenceSlot[direct.Occurrence.Event]
+	if !ok || nextSlot < direct.Occurrence.Slot {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorStaleReference, Namespace: observer.run, Detail: "trailing-extra event occurrence slot is unavailable"})
+		return
+	}
+	if nextSlot == math.MaxUint32 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterOccurrenceSlot, Namespace: observer.run})
+		return
+	}
+	if observer.nextEdge == math.MaxUint64 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterEdgeSerial, Namespace: observer.run})
+		return
+	}
+	if err := phase0AReserveTrailingExtraMigrationLocked(observer); err != nil {
+		return
+	}
+	nextSlot++
+	observer.nextEdge++
+	occurrence := ConstructionOccurrenceKey{Event: direct.Occurrence.Event, Slot: nextSlot}
+	edge := IncomingEdgeKey{Event: direct.Occurrence.Event, Serial: observer.nextEdge}
+	record := Phase0AMutationRecord{TransactionID: pending.transaction, Event: direct.Occurrence.Event, Edge: edge, Occurrence: occurrence, Payload: in.payload, Predecessor: in.prev, ConstructionKind: Phase0AConstructionExtraTerminal}
+	record.Kind = Phase0AMutationOccurrence
+	observer.occurrenceIndex[occurrence] = uint64(len(observer.mutations))
+	observer.mutations = append(observer.mutations, record)
+	record.Kind = Phase0AMutationEdge
+	observer.edgeIndex[edge] = uint64(len(observer.mutations))
+	observer.mutations = append(observer.mutations, record)
+	phase0AAppendCandidatePrechargedLocked(observer, occurrence, edge, boundary, in)
+	observer.route.migrations = append(observer.route.migrations, Phase0ATrailingExtraMigrationRecord{
+		TransactionID: pending.transaction, Route: route.ID, TrailingOrdinal: trailingOrdinal,
+		SourceLink: source.Link, SourceLowerLink: lower.Link, SourceExpression: direct.ID,
+		SourceOccurrence: direct.Occurrence, SourceEdge: direct.Edge, Occurrence: occurrence, Edge: edge,
+		TargetLink: targetLink, TargetOccurrence: targetOccurrence, TargetEdge: targetEdge,
+		Boundary: phase0ABoundaryInput(boundary), Payload: in.payload, Predecessor: in.prev,
+		ScoreDelta: in.scoreDelta, Order: in.order.Value, HasOrder: in.order.Present,
+	})
+	observer.nextOccurrenceSlot[direct.Occurrence.Event] = nextSlot
 }
 
 func phase0AEnumeratePhysicalDerivations(core *Core, head Head) ([]phase0APhysicalDerivation, error) {
@@ -789,7 +1153,7 @@ func (core *Core) ObservePhase0AAcceptedSelection(capability Phase0AAcceptedSele
 			ResolvedExpression: direct.ID, Occurrence: direct.Occurrence, Edge: direct.Edge,
 		}
 	}
-	if err := phase0AReserveRouteRowsLocked(observer, 0, 0, 1, uint64(len(resolved))); err != nil {
+	if err := phase0AReserveRouteRowsLocked(observer, 0, 0, 0, 1, uint64(len(resolved))); err != nil {
 		return err
 	}
 	observer.route.nextSelection++

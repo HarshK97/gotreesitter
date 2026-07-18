@@ -8,13 +8,17 @@ import (
 )
 
 func phase0AObservedPrivate(t *testing.T, core *Core, payload SubtreeID, prev NodeID, state StateID, end uint32) Head {
+	return phase0AObservedTerminalPrivate(t, core, payload, prev, state, end, false, 0, ForkOrder{})
+}
+
+func phase0AObservedTerminalPrivate(t *testing.T, core *Core, payload SubtreeID, prev NodeID, state StateID, end uint32, extra bool, score int64, order ForkOrder) Head {
 	t.Helper()
 	var out Head
 	err := core.ApplyAtomic(func() error {
 		key := core.boundaryKey(state, end)
-		phase0AObserveTerminalShift(core, payload, prev, key.state, key.byteOffset, key.shifted, false)
+		phase0AObserveTerminalShift(core, payload, prev, key.state, key.byteOffset, key.shifted, extra, score, order)
 		var err error
-		out, err = core.appendPrivate(state, end, linkInput{prev: prev, payload: payload})
+		out, err = core.appendPrivate(state, end, linkInput{prev: prev, payload: payload, scoreDelta: score, order: order})
 		return err
 	})
 	if err != nil {
@@ -28,7 +32,7 @@ func phase0AObservedCondense(t *testing.T, core *Core, payload SubtreeID, prev N
 	var out condenseOutcome
 	err := core.ApplyAtomic(func() error {
 		key := core.boundaryKey(state, end)
-		phase0AObserveTerminalShift(core, payload, prev, key.state, key.byteOffset, key.shifted, false)
+		phase0AObserveTerminalShift(core, payload, prev, key.state, key.byteOffset, key.shifted, false, 0, ForkOrder{})
 		var err error
 		out, err = core.condenseWithOutcomeAtomic(key, linkInput{prev: prev, payload: payload})
 		return err
@@ -45,7 +49,7 @@ func phase0AObservedReductionCondense(t *testing.T, core *Core, payload SubtreeI
 	err := core.ApplyAtomic(func() error {
 		key := core.boundaryKey(state, end)
 		phase0ABeginReductionConstruction(core, 1)
-		phase0AObserveReductionOccurrence(core, payload, prev, key, false)
+		phase0AObserveReductionOccurrence(core, linkInput{prev: prev, payload: payload, scoreDelta: score}, key)
 		var err error
 		out, err = core.condenseWithOutcomeAtomic(key, linkInput{prev: prev, payload: payload, scoreDelta: score})
 		if err == nil {
@@ -125,7 +129,7 @@ func TestPhase0ACompoundCapsAndLeakedMergeScopeFailClosed(t *testing.T) {
 		payload, _ := core.appendSubtree(subtreeRecord{symbol: 20, endByte: 1, terminal: true}, nil, nil, nil)
 		if err := core.ApplyAtomic(func() error {
 			key := core.boundaryKey(2, 1)
-			phase0AObserveTerminalShift(core, payload, root.Node, key.state, key.byteOffset, key.shifted, false)
+			phase0AObserveTerminalShift(core, payload, root.Node, key.state, key.byteOffset, key.shifted, false, 0, ForkOrder{})
 			phase0AObservers.Lock()
 			observer := phase0AObservers.byCore[core]
 			beforeRecords, beforeBytes := phase0AObservers.records, phase0AObservers.bytes
@@ -157,7 +161,7 @@ func TestPhase0ACompoundCapsAndLeakedMergeScopeFailClosed(t *testing.T) {
 		if err := core.ApplyAtomic(func() error {
 			key := core.boundaryKey(2, 1)
 			in := linkInput{prev: root.Node, payload: payload}
-			phase0AObserveTerminalShift(core, payload, root.Node, key.state, key.byteOffset, key.shifted, false)
+			phase0AObserveTerminalShift(core, payload, root.Node, key.state, key.byteOffset, key.shifted, false, 0, ForkOrder{})
 			phase0AObservers.Lock()
 			observer := phase0AObservers.byCore[core]
 			beforeRecords, beforeBytes := phase0AObservers.records, phase0AObservers.bytes
@@ -396,7 +400,7 @@ func TestPhase0AAncestorCandidateUndoAcrossNestedTransactions(t *testing.T) {
 		var retried Head
 		err := core.ApplyAtomic(func() error {
 			key := core.boundaryKey(2, 1)
-			phase0AObserveTerminalShift(core, payload, root.Node, key.state, key.byteOffset, key.shifted, false)
+			phase0AObserveTerminalShift(core, payload, root.Node, key.state, key.byteOffset, key.shifted, false, 0, ForkOrder{})
 			innerErr := core.ApplyAtomic(func() error {
 				if _, err := core.appendPrivate(2, 1, linkInput{prev: root.Node, payload: payload}); err != nil {
 					return err
@@ -448,7 +452,7 @@ func TestPhase0AAncestorCandidateUndoAcrossNestedTransactions(t *testing.T) {
 		var retried Head
 		err := core.ApplyAtomic(func() error {
 			key := core.boundaryKey(2, 1)
-			phase0AObserveTerminalShift(core, payload, root.Node, key.state, key.byteOffset, key.shifted, false)
+			phase0AObserveTerminalShift(core, payload, root.Node, key.state, key.byteOffset, key.shifted, false, 0, ForkOrder{})
 			middleErr := core.ApplyAtomic(func() error {
 				if err := core.ApplyAtomic(func() error {
 					_, err := core.appendPrivate(2, 1, linkInput{prev: root.Node, payload: payload})

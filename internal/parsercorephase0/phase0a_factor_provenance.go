@@ -52,6 +52,9 @@ type Phase0ACandidateRecord struct {
 	Boundary            Phase0ABoundaryInput
 	Payload             SubtreeID
 	Predecessor         NodeID
+	ScoreDelta          int64
+	Order               uint64
+	HasOrder            bool
 	Claimed             bool
 	Resolved            bool
 	RolledBack          bool
@@ -317,10 +320,11 @@ func phase0ACheckFactorRowsLocked(observer *phase0AObserver, candidates, express
 	return nil
 }
 
-func phase0AAppendCandidatePrechargedLocked(observer *phase0AObserver, occurrence ConstructionOccurrenceKey, edge IncomingEdgeKey, boundary boundaryKey, payload SubtreeID, predecessor NodeID) {
+func phase0AAppendCandidatePrechargedLocked(observer *phase0AObserver, occurrence ConstructionOccurrenceKey, edge IncomingEdgeKey, boundary boundaryKey, in linkInput) {
 	observer.factor.candidates = append(observer.factor.candidates, Phase0ACandidateRecord{
 		TransactionID: phase0ACurrentTransaction(observer), Occurrence: occurrence, Edge: edge,
-		Boundary: phase0ABoundaryInput(boundary), Payload: payload, Predecessor: predecessor,
+		Boundary: phase0ABoundaryInput(boundary), Payload: in.payload, Predecessor: in.prev,
+		ScoreDelta: in.scoreDelta, Order: in.order.Value, HasOrder: in.order.Present,
 	})
 }
 
@@ -328,7 +332,7 @@ func phase0AFindCandidateLocked(observer *phase0AObserver, key boundaryKey, in l
 	boundary := phase0ABoundaryInput(key)
 	for index := range observer.factor.candidates {
 		candidate := &observer.factor.candidates[index]
-		if candidate.Claimed || candidate.RolledBack || !phase0ATransactionActiveLocked(observer, candidate.TransactionID) || candidate.Boundary != boundary || candidate.Payload != in.payload || candidate.Predecessor != in.prev {
+		if candidate.Claimed || candidate.RolledBack || !phase0ATransactionActiveLocked(observer, candidate.TransactionID) || candidate.Boundary != boundary || candidate.Payload != in.payload || candidate.Predecessor != in.prev || candidate.ScoreDelta != in.scoreDelta || candidate.HasOrder != in.order.Present || (candidate.HasOrder && candidate.Order != in.order.Value) {
 			continue
 		}
 		return index, *candidate, true

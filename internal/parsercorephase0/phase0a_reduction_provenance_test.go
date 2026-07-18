@@ -134,29 +134,28 @@ func TestPhase0AReductionOuterPanicTombstonesCommittedInnerAttempt(t *testing.T)
 	}
 }
 
-func TestPhase0AReductionTrailingExtrasDeclineProof(t *testing.T) {
+func TestPhase0AReductionTrailingExtraMigrationProvesExactSource(t *testing.T) {
 	core, err := New(diagnosticReduceTable(1, 3), Limits{MaxDerivations: 4, MaxPopPaths: 4})
 	if err != nil {
 		t.Fatal(err)
 	}
-	head, _ := core.Seed(1, 0)
-	head, err = core.appendDiagnosticPayload(head, 3, Token{Symbol: 10, EndByte: 1}, pathMeta{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	head, err = core.appendDiagnosticPayload(head, 3, Token{Symbol: 11, StartByte: 1, EndByte: 2, Extra: true}, pathMeta{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	run := phase0ABeginShiftProvenanceRun(t, core, phase0AReductionLimits())
+	seed, _ := core.Seed(1, 0)
+	ordinary, _ := core.appendSubtree(subtreeRecord{symbol: 10, endByte: 1, terminal: true}, nil, nil, nil)
+	extra, _ := core.appendSubtree(subtreeRecord{symbol: 11, startByte: 1, endByte: 2, extra: true, terminal: true}, nil, nil, nil)
+	head := phase0AObservedTerminalPrivate(t, core, ordinary, seed.Node, 3, 1, false, 0, ForkOrder{})
+	head = phase0AObservedTerminalPrivate(t, core, extra, head.Node, 3, 2, true, 0, ForkOrder{})
 	frontier, parseErr := core.Reduce(head, 1, 0, ForkOrder{})
 	if parseErr != nil || len(frontier) != 1 {
 		t.Fatalf("diagnostic observer changed trailing-extra parse frontier=%v err=%v", frontier, parseErr)
 	}
 	proof, proofErr := Phase0AObserverProof(core, run)
-	var typed *Phase0AError
-	if !errors.As(proofErr, &typed) || typed.Kind != Phase0AErrorUnsupportedProof || proof.Failure == nil || len(proof.Mutations) != 0 || len(proof.ReductionOccurrences) != 0 {
+	if proofErr != nil || proof.Failure != nil || len(proof.TrailingExtraMigrations) != 1 {
 		t.Fatalf("trailing-extra proof err=%v proof=%+v", proofErr, proof)
+	}
+	migration := proof.TrailingExtraMigrations[0]
+	if migration.SourceLink == 0 || migration.SourceLowerLink == 0 || migration.SourceExpression == 0 || migration.SourceOccurrence.Event != migration.Occurrence.Event || migration.Occurrence.Slot != migration.SourceOccurrence.Slot+1 || migration.SourceEdge == migration.Edge || migration.Payload != extra || migration.Predecessor == 0 || migration.RolledBack {
+		t.Fatalf("trailing-extra migration=%+v", migration)
 	}
 }
 

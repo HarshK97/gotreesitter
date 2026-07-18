@@ -72,12 +72,14 @@ func phase0AObserveFirstPoison(*Core, uint64, Phase0APoisonKind)                
 func phase0ASetRollbackCause(*Core, Phase0ARollbackCause)                               {}
 func phase0ATakeRollbackCause(*Core) Phase0ARollbackCause                               { return Phase0ARollbackUnknown }
 func phase0AObserveSchedulerPoison(*Core, SchedulerTransactionToken, Phase0APoisonKind) {}
-func phase0AObserveTerminalShift(*Core, SubtreeID, NodeID, StateID, uint32, bool, bool) {}
+func phase0AObserveTerminalShift(*Core, SubtreeID, NodeID, StateID, uint32, bool, bool, int64, ForkOrder) {
+}
 func phase0AObserveTerminalCohortShift(*Core, SubtreeID, []ClassifiedBoundary, []StateID, uint32, bool) {
 }
 func phase0ABeginReductionConstruction(*Core, uint64)                                               {}
 func phase0AObservePopRoutes(*Core, NodeID, int, []popPath)                                         {}
-func phase0AObserveReductionOccurrence(*Core, SubtreeID, NodeID, boundaryKey, bool)                 {}
+func phase0AObserveReductionOccurrence(*Core, linkInput, boundaryKey)                               {}
+func phase0AObserveTrailingExtraMigration(*Core, uint32, boundaryKey, linkInput)                    {}
 func phase0AFinishReductionConstruction(*Core)                                                      {}
 func phase0AObserveCandidateDrop(*Core, boundaryKey, linkInput, NodeID, int, phase0ATransitionKind) {}
 func phase0AObserveDirectPublication(*Core, boundaryKey, linkInput, LinkID, NodeID, NodeID)         {}

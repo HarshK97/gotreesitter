@@ -43,7 +43,7 @@ func (c *Core) shiftClassifiedUncheckpointed(boundary ClassifiedBoundary, action
 	if err != nil {
 		return Head{}, err
 	}
-	phase0AObserveTerminalShift(c, payload, boundary.head.Node, targetState, shifted.EndByte, true, act.Extra)
+	phase0AObserveTerminalShift(c, payload, boundary.head.Node, targetState, shifted.EndByte, true, act.Extra, 0, fork)
 	outcome, err := c.condenseWithOutcomeAtomic(c.shiftedBoundaryKey(targetState, shifted.EndByte), linkInput{
 		prev: boundary.head.Node, payload: payload, order: fork,
 	})
@@ -273,8 +273,8 @@ func (c *Core) reduceOutputsClassifiedIntoUncheckpointed(dst []ReductionOutput, 
 		if err != nil {
 			return nil, err
 		}
-		phase0AObserveReductionOccurrence(c, payload, path.prev, key, len(path.trailing) != 0)
 		parentLink := linkInput{prev: path.prev, payload: payload, scoreDelta: scoreDelta, order: order}
+		phase0AObserveReductionOccurrence(c, parentLink, key)
 		var out Head
 		var outcome condenseOutcome
 		if len(path.trailing) == 0 {
@@ -293,6 +293,9 @@ func (c *Core) reduceOutputsClassifiedIntoUncheckpointed(dst []ReductionOutput, 
 			}
 			key = c.boundaryKey(gotoState, extra.endByte)
 			extraLink := linkInput{prev: out.Node, payload: trailing.payload, scoreDelta: trailing.scoreDelta}
+			if phase0AEnabled {
+				phase0AObserveTrailingExtraMigration(c, uint32(index), key, extraLink)
+			}
 			if index == len(path.trailing)-1 {
 				outcome, err = c.condenseWithOutcomeAtomic(key, extraLink)
 				out = outcome.head

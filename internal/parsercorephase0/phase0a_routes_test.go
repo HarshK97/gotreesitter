@@ -109,6 +109,7 @@ func TestPhase0APopRouteProofPreservesMixedAndTrailingPayloadIdentity(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	run := phase0ABeginShiftProvenanceRun(t, core, phase0ARouteLimits())
 	seed, _ := core.Seed(1, 0)
 	head := seed
 	inputs := []struct {
@@ -122,19 +123,25 @@ func TestPhase0APopRouteProofPreservesMixedAndTrailingPayloadIdentity(t *testing
 		{state: 3, token: Token{Symbol: 33, StartByte: 3, EndByte: 4, Extra: true}, score: 8},
 		{state: 3, token: Token{Symbol: 34, StartByte: 4, EndByte: 5, Extra: true}, score: 16},
 	}
+	wantPayloads := make([]SubtreeID, 0, len(inputs))
 	for index, input := range inputs {
-		head, err = core.appendDiagnosticPayload(head, input.state, input.token, pathMeta{
-			ScoreDelta: input.score, BranchOrder: ForkOrder{Present: true, Value: uint64(index + 1)},
-		})
-		if err != nil {
-			t.Fatal(err)
+		payload, appendErr := core.appendSubtree(subtreeRecord{
+			symbol: input.token.Symbol, startByte: input.token.StartByte, endByte: input.token.EndByte,
+			extra: input.token.Extra, terminal: true,
+		}, nil, nil, nil)
+		if appendErr != nil {
+			t.Fatal(appendErr)
 		}
+		wantPayloads = append(wantPayloads, payload)
+		head = phase0AObservedTerminalPrivate(t, core, payload, head.Node, input.state, input.token.EndByte, input.token.Extra, input.score, ForkOrder{Present: true, Value: uint64(index + 1)})
 	}
 	derivations, err := core.Derivations(head)
 	if err != nil || len(derivations) != 1 || len(derivations[0].Payloads) != len(inputs) {
 		t.Fatalf("mixed fixture derivations=%+v err=%v", derivations, err)
 	}
-	wantPayloads := append([]SubtreeID(nil), derivations[0].Payloads...)
+	if !phase0ASameSubtrees(wantPayloads, derivations[0].Payloads) {
+		t.Fatalf("mixed construction payloads=%v derivation=%v", wantPayloads, derivations[0].Payloads)
+	}
 	production, err := core.popPaths(head.Node, 2)
 	if err != nil || len(production) != 1 || len(production[0].children) != 3 || len(production[0].trailing) != 2 || production[0].prev != seed.Node || production[0].score != 7 || production[0].order != (ForkOrder{Present: true, Value: 5}) || production[0].startByte != 0 || production[0].structuralEnd != 3 {
 		t.Fatalf("mixed production pop paths=%+v err=%v", production, err)
@@ -163,21 +170,24 @@ func TestPhase0APopRouteProofPreservesMixedAndTrailingPayloadIdentity(t *testing
 		wantLinks[left], wantLinks[right] = wantLinks[right], wantLinks[left]
 	}
 
-	run := phase0ABeginShiftProvenanceRun(t, core, phase0ARouteLimits())
 	frontier, parseErr := core.Reduce(head, 1, 0, ForkOrder{})
 	if parseErr != nil || len(frontier) != 1 {
 		t.Fatalf("mixed reduction frontier=%v err=%v", frontier, parseErr)
 	}
 	proof, proofErr := Phase0AObserverProof(core, run)
-	if !isPhase0AError(proofErr, Phase0AErrorUnsupportedProof, "") || len(proof.PopRoutes) != 1 || len(proof.PopRouteLinks) != len(inputs) {
+	if proofErr != nil || len(proof.PopRoutes) != 1 || len(proof.PopRouteLinks) != len(inputs) || len(proof.TrailingExtraMigrations) != 2 {
 		t.Fatalf("mixed route proof=%+v err=%v", proof, proofErr)
 	}
 	route := proof.PopRoutes[0]
-	if route.Head != head.Node || route.Predecessor != seed.Node || route.FirstLink != 0 || route.LinkCount != uint32(len(inputs)) || route.Occurrence != (ConstructionOccurrenceKey{}) || route.Edge != (IncomingEdgeKey{}) || route.RolledBack {
+	if route.Head != head.Node || route.Predecessor != seed.Node || route.FirstLink != 0 || route.LinkCount != uint32(len(inputs)) || route.RetainedLinkCount != 3 || route.TrailingLinkCount != 2 || route.Occurrence == (ConstructionOccurrenceKey{}) || route.Edge == (IncomingEdgeKey{}) || route.RolledBack {
 		t.Fatalf("mixed route=%+v", route)
 	}
 	for index, row := range proof.PopRouteLinks {
-		if row.Route != route.ID || row.Ordinal != uint32(index) || row.Link != wantLinks[index] || row.Payload != wantPayloads[index] || row.RolledBack {
+		wantSegment, wantSegmentOrdinal := Phase0APopRouteRetained, uint32(index)
+		if index >= 3 {
+			wantSegment, wantSegmentOrdinal = Phase0APopRouteTrailing, uint32(index-3)
+		}
+		if row.Route != route.ID || row.Ordinal != uint32(index) || row.Segment != wantSegment || row.SegmentOrdinal != wantSegmentOrdinal || row.Link != wantLinks[index] || row.Payload != wantPayloads[index] || row.ScoreDelta != inputs[index].score || !row.HasOrder || row.Order != uint64(index+1) || row.RolledBack {
 			t.Fatalf("mixed route link %d=%+v want link=%d payload=%d", index, row, wantLinks[index], wantPayloads[index])
 		}
 	}

@@ -134,6 +134,35 @@ type Phase0AReductionOccurrenceRecord struct {
 	RollbackCause       Phase0ARollbackCause
 }
 
+// Phase0ATrailingExtraMigrationRecord authenticates one re-push of an
+// existing extra-terminal construction occurrence. SourceLink and
+// SourceLowerLink are physical links from the independently proved pop route;
+// Occurrence and Edge are fresh identities under SourceOccurrence.Event.
+type Phase0ATrailingExtraMigrationRecord struct {
+	TransactionID       uint64
+	Route               uint64
+	TrailingOrdinal     uint32
+	SourceLink          LinkID
+	SourceLowerLink     LinkID
+	SourceExpression    Phase0AExpressionID
+	SourceOccurrence    ConstructionOccurrenceKey
+	SourceEdge          IncomingEdgeKey
+	TargetLink          LinkID
+	TargetOccurrence    ConstructionOccurrenceKey
+	TargetEdge          IncomingEdgeKey
+	Occurrence          ConstructionOccurrenceKey
+	Edge                IncomingEdgeKey
+	Boundary            Phase0ABoundaryInput
+	Payload             SubtreeID
+	Predecessor         NodeID
+	ScoreDelta          int64
+	Order               uint64
+	HasOrder            bool
+	RolledBack          bool
+	RollbackTransaction uint64
+	RollbackCause       Phase0ARollbackCause
+}
+
 type Phase0ATransactionFrame struct {
 	TransactionID uint64
 	ParentID      uint64
@@ -149,24 +178,25 @@ type Phase0AProofSnapshot struct {
 	Namespace CoreRunNamespace
 	// Mutations includes explicit scaffold rows. Semantic construction proof
 	// must exclude Phase0AMutationScaffoldEdge.
-	Mutations             []Phase0AMutationRecord
-	ReductionOccurrences  []Phase0AReductionOccurrenceRecord
-	Candidates            []Phase0ACandidateRecord
-	Expressions           []Phase0AExpressionRecord
-	Bindings              []Phase0ALinkBindingRecord
-	Transitions           []Phase0ATransitionRecord
-	Selectors             []Phase0ASelectorRecord
-	SelectorRoutes        []Phase0ASelectorRouteRecord
-	PopRoutes             []Phase0APopRouteRecord
-	PopRouteLinks         []Phase0APopRouteLinkRecord
-	SelectionCapabilities []Phase0ASelectionCapabilityRecord
-	AcceptedSelections    []Phase0AAcceptedSelectionRecord
-	AcceptedLinks         []Phase0AAcceptedLinkRecord
-	Frames                []Phase0ATransactionFrame
-	OccurrenceCount       uint64
-	OccurrenceBytes       uint64
-	FirstPoison           *Phase0APoisonRecord
-	Failure               *Phase0AError
+	Mutations               []Phase0AMutationRecord
+	ReductionOccurrences    []Phase0AReductionOccurrenceRecord
+	TrailingExtraMigrations []Phase0ATrailingExtraMigrationRecord
+	Candidates              []Phase0ACandidateRecord
+	Expressions             []Phase0AExpressionRecord
+	Bindings                []Phase0ALinkBindingRecord
+	Transitions             []Phase0ATransitionRecord
+	Selectors               []Phase0ASelectorRecord
+	SelectorRoutes          []Phase0ASelectorRouteRecord
+	PopRoutes               []Phase0APopRouteRecord
+	PopRouteLinks           []Phase0APopRouteLinkRecord
+	SelectionCapabilities   []Phase0ASelectionCapabilityRecord
+	AcceptedSelections      []Phase0AAcceptedSelectionRecord
+	AcceptedLinks           []Phase0AAcceptedLinkRecord
+	Frames                  []Phase0ATransactionFrame
+	OccurrenceCount         uint64
+	OccurrenceBytes         uint64
+	FirstPoison             *Phase0APoisonRecord
+	Failure                 *Phase0AError
 }
 
 type Phase0AErrorKind string
@@ -232,24 +262,25 @@ func (e *Phase0AError) Error() string {
 
 // Phase0AObserverLimits are fixed for one explicit observer session.
 type Phase0AObserverLimits struct {
-	MaxCores                 uint64
-	MaxRecords               uint64
-	MaxBytes                 uint64
-	MaxFrames                uint64
-	MaxMutations             uint64
-	MaxOccurrences           uint64
-	MaxOccurrenceBytes       uint64
-	MaxCandidates            uint64
-	MaxExpressions           uint64
-	MaxBindings              uint64
-	MaxTransitions           uint64
-	MaxSelectors             uint64
-	MaxSelectorRoutes        uint64
-	MaxPopRoutes             uint64
-	MaxPopRouteLinks         uint64
-	MaxSelectionCapabilities uint64
-	MaxAcceptedSelections    uint64
-	MaxAcceptedLinks         uint64
+	MaxCores                   uint64
+	MaxRecords                 uint64
+	MaxBytes                   uint64
+	MaxFrames                  uint64
+	MaxMutations               uint64
+	MaxOccurrences             uint64
+	MaxOccurrenceBytes         uint64
+	MaxCandidates              uint64
+	MaxExpressions             uint64
+	MaxBindings                uint64
+	MaxTransitions             uint64
+	MaxSelectors               uint64
+	MaxSelectorRoutes          uint64
+	MaxPopRoutes               uint64
+	MaxPopRouteLinks           uint64
+	MaxTrailingExtraMigrations uint64
+	MaxSelectionCapabilities   uint64
+	MaxAcceptedSelections      uint64
+	MaxAcceptedLinks           uint64
 }
 
 const (
@@ -274,6 +305,7 @@ type phase0AObserver struct {
 	frames               []Phase0ATransactionFrame
 	mutations            []Phase0AMutationRecord
 	eventIndex           map[ConstructionEventKey]uint64
+	nextOccurrenceSlot   map[ConstructionEventKey]uint32
 	edgeIndex            map[IncomingEdgeKey]uint64
 	occurrenceIndex      map[ConstructionOccurrenceKey]uint64
 	occurrenceCount      uint64
@@ -362,6 +394,7 @@ func phase0AInvalidateCore(core *Core) {
 		observer.frames = nil
 		observer.mutations = nil
 		observer.eventIndex = nil
+		observer.nextOccurrenceSlot = nil
 		observer.edgeIndex = nil
 		observer.occurrenceIndex = nil
 		observer.occurrenceCount = 0
@@ -419,6 +452,7 @@ func (c *Core) BeginRun() (CoreRunNamespace, error) {
 	observer.frames = nil
 	observer.mutations = nil
 	observer.eventIndex = make(map[ConstructionEventKey]uint64)
+	observer.nextOccurrenceSlot = make(map[ConstructionEventKey]uint32)
 	observer.edgeIndex = make(map[IncomingEdgeKey]uint64)
 	observer.occurrenceIndex = make(map[ConstructionOccurrenceKey]uint64)
 	observer.occurrenceCount = 0
@@ -551,7 +585,7 @@ func phase0ANextScaffoldEdge(c *Core, event ConstructionEventKey) (IncomingEdgeK
 	return edge, nil
 }
 
-func phase0AObserveTerminalShift(core *Core, payload SubtreeID, predecessor NodeID, target StateID, endByte uint32, shifted, extra bool) {
+func phase0AObserveTerminalShift(core *Core, payload SubtreeID, predecessor NodeID, target StateID, endByte uint32, shifted, extra bool, scoreDelta int64, order ForkOrder) {
 	phase0AObservers.Lock()
 	defer phase0AObservers.Unlock()
 	observer := phase0AObservers.byCore[core]
@@ -568,7 +602,7 @@ func phase0AObserveTerminalShift(core *Core, payload SubtreeID, predecessor Node
 		key := core.boundaryKey(target, endByte)
 		key.shifted = shifted
 		return key
-	})
+	}, func(uint64) int64 { return scoreDelta }, func(uint64) ForkOrder { return order })
 }
 
 func phase0AObserveTerminalCohortShift(core *Core, payload SubtreeID, boundaries []ClassifiedBoundary, targets []StateID, endByte uint32, extra bool) {
@@ -601,15 +635,15 @@ func phase0AObserveTerminalCohortShift(core *Core, payload SubtreeID, boundaries
 		return boundaries[index].head.Node
 	}, func(index uint64) boundaryKey {
 		return core.shiftedBoundaryKey(targets[index], endByte)
-	})
+	}, func(uint64) int64 { return 0 }, func(uint64) ForkOrder { return ForkOrder{} })
 }
 
-func phase0AObserveTerminalConstructionLocked(core *Core, observer *phase0AObserver, payload SubtreeID, kind Phase0AConstructionKind, count uint64, predecessor func(uint64) NodeID, boundary func(uint64) boundaryKey) {
+func phase0AObserveTerminalConstructionLocked(core *Core, observer *phase0AObserver, payload SubtreeID, kind Phase0AConstructionKind, count uint64, predecessor func(uint64) NodeID, boundary func(uint64) boundaryKey, scoreDelta func(uint64) int64, order func(uint64) ForkOrder) {
 	if count > math.MaxUint32 {
 		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Counter: Phase0ACounterOccurrenceSlot, Namespace: observer.run})
 		return
 	}
-	if payload == 0 || predecessor == nil || boundary == nil || count == 0 {
+	if payload == 0 || predecessor == nil || boundary == nil || scoreDelta == nil || order == nil || count == 0 {
 		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "invalid terminal construction input"})
 		return
 	}
@@ -660,6 +694,7 @@ func phase0AObserveTerminalConstructionLocked(core *Core, observer *phase0AObser
 	}
 	observer.eventIndex[event] = uint64(len(observer.mutations))
 	observer.mutations = append(observer.mutations, eventRecord)
+	observer.nextOccurrenceSlot[event] = uint32(count)
 
 	for index := uint64(0); index < count; index++ {
 		observer.nextEdge++
@@ -675,7 +710,7 @@ func phase0AObserveTerminalConstructionLocked(core *Core, observer *phase0AObser
 		record.Kind = Phase0AMutationEdge
 		observer.edgeIndex[edge] = uint64(len(observer.mutations))
 		observer.mutations = append(observer.mutations, record)
-		phase0AAppendCandidatePrechargedLocked(observer, occurrence, edge, boundary(index), payload, predecessor(index))
+		phase0AAppendCandidatePrechargedLocked(observer, occurrence, edge, boundary(index), linkInput{prev: predecessor(index), payload: payload, scoreDelta: scoreDelta(index), order: order(index)})
 	}
 }
 
@@ -724,7 +759,7 @@ func phase0ABeginReductionConstruction(core *Core, count uint64) {
 // phase0AObserveReductionOccurrence allocates a fresh occurrence and incoming
 // candidate edge before the corresponding graph mutation. Batch-parent reuse
 // shares only the construction event for the same payload in this call.
-func phase0AObserveReductionOccurrence(core *Core, payload SubtreeID, predecessor NodeID, boundary boundaryKey, hasTrailingExtras bool) {
+func phase0AObserveReductionOccurrence(core *Core, in linkInput, boundary boundaryKey) {
 	phase0AObservers.Lock()
 	defer phase0AObservers.Unlock()
 	observer := phase0AObservers.byCore[core]
@@ -740,16 +775,12 @@ func phase0AObserveReductionOccurrence(core *Core, payload SubtreeID, predecesso
 		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorTransactionProof, Namespace: observer.run, Detail: "reduction occurrence crossed transaction"})
 		return
 	}
-	if hasTrailingExtras {
-		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorUnsupportedProof, Namespace: observer.run, Detail: "reduction trailing-extra migration requires route provenance"})
-		return
-	}
-	subtree, err := core.subtree(payload)
+	subtree, err := core.subtree(in.payload)
 	if err != nil || subtree.terminal || subtree.extra {
 		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "reduction occurrence payload is not an existing parent"})
 		return
 	}
-	if _, err := core.node(predecessor); err != nil {
+	if _, err := core.node(in.prev); err != nil {
 		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorInvalidOccurrence, Namespace: observer.run, Detail: "reduction occurrence predecessor does not exist"})
 		return
 	}
@@ -759,13 +790,13 @@ func phase0AObserveReductionOccurrence(core *Core, payload SubtreeID, predecesso
 	}
 	eventIndex := -1
 	for index := range pending.events {
-		if pending.events[index].payload == payload {
+		if pending.events[index].payload == in.payload {
 			eventIndex = index
 			break
 		}
 	}
 	seen := eventIndex >= 0
-	eventState := phase0AReductionEvent{payload: payload}
+	eventState := phase0AReductionEvent{payload: in.payload}
 	if seen {
 		eventState = pending.events[eventIndex]
 	}
@@ -795,7 +826,7 @@ func phase0AObserveReductionOccurrence(core *Core, payload SubtreeID, predecesso
 		eventState.key = ConstructionEventKey{Attempt: AttemptKey{Run: observer.run, AttemptEpoch: 1}, Serial: observer.nextEvent}
 		eventRecord := Phase0AMutationRecord{
 			Kind: Phase0AMutationEvent, TransactionID: pending.transaction,
-			Event: eventState.key, Payload: payload, ConstructionKind: Phase0AConstructionReductionParent,
+			Event: eventState.key, Payload: in.payload, ConstructionKind: Phase0AConstructionReductionParent,
 		}
 		observer.eventIndex[eventState.key] = uint64(len(observer.mutations))
 		observer.mutations = append(observer.mutations, eventRecord)
@@ -806,7 +837,7 @@ func phase0AObserveReductionOccurrence(core *Core, payload SubtreeID, predecesso
 	edge := IncomingEdgeKey{Event: eventState.key, Serial: observer.nextEdge}
 	record := Phase0AMutationRecord{
 		TransactionID: pending.transaction, Event: eventState.key, Edge: edge, Occurrence: occurrence,
-		Payload: payload, Predecessor: predecessor, ConstructionKind: Phase0AConstructionReductionParent,
+		Payload: in.payload, Predecessor: in.prev, ConstructionKind: Phase0AConstructionReductionParent,
 	}
 	record.Kind = Phase0AMutationOccurrence
 	observer.occurrenceIndex[occurrence] = uint64(len(observer.mutations))
@@ -817,8 +848,9 @@ func phase0AObserveReductionOccurrence(core *Core, payload SubtreeID, predecesso
 	observer.reductionOccurrences = append(observer.reductionOccurrences, Phase0AReductionOccurrenceRecord{
 		TransactionID: pending.transaction, Occurrence: occurrence, Edge: edge, Boundary: phase0ABoundaryInput(boundary),
 	})
-	phase0AAppendCandidatePrechargedLocked(observer, occurrence, edge, boundary, payload, predecessor)
-	if pending.routeProof && !phase0ABindReductionRouteLocked(observer, pending, occurrence, edge, predecessor) {
+	observer.nextOccurrenceSlot[eventState.key] = eventState.nextSlot
+	phase0AAppendCandidatePrechargedLocked(observer, occurrence, edge, boundary, in)
+	if pending.routeProof && !phase0ABindReductionRouteLocked(observer, pending, occurrence, edge, in.prev) {
 		return
 	}
 	if seen {
@@ -1043,6 +1075,7 @@ func Phase0AObserverProof(core *Core, namespace CoreRunNamespace) (Phase0AProofS
 	}
 	snapshot.Mutations = append(snapshot.Mutations, observer.mutations...)
 	snapshot.ReductionOccurrences = append(snapshot.ReductionOccurrences, observer.reductionOccurrences...)
+	snapshot.TrailingExtraMigrations = append(snapshot.TrailingExtraMigrations, observer.route.migrations...)
 	snapshot.Candidates = append(snapshot.Candidates, observer.factor.candidates...)
 	snapshot.Expressions = append(snapshot.Expressions, observer.factor.expressions...)
 	snapshot.Bindings = append(snapshot.Bindings, observer.factor.bindings...)
