@@ -36,6 +36,14 @@ check_hash "$production" "$production_sha"
 check_hash "$selected" "$selected_sha"
 
 mkdir -p "$(dirname -- "$output")"
+output_dir=$(CDPATH= cd -- "$(dirname -- "$output")" && pwd)
+output_abs="$output_dir/$(basename -- "$output")"
+case "$output_abs" in
+	"$production"|"$selected")
+		echo "compose_default: refusing to overwrite immutable input $output_abs" >&2
+		exit 1
+		;;
+esac
 tmp=$(mktemp "${output}.tmp.XXXXXX")
 trap 'rm -f "$tmp"' EXIT HUP INT TERM
 
@@ -45,6 +53,7 @@ trap 'rm -f "$tmp"' EXIT HUP INT TERM
 "$go_cmd" tool pprof -proto -output="$tmp" \
 	"$production" "$selected" "$selected" >/dev/null
 check_hash "$tmp" "$output_sha"
+chmod 0644 "$tmp"
 mv "$tmp" "$output"
 trap - EXIT HUP INT TERM
 

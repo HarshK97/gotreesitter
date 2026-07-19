@@ -27,9 +27,12 @@ off/current/candidate/candidate/current/off sequence, and quiet-host admission.
   the equal-fixture geomean by **4.01% versus the previous profile** and 3.84%
   versus PGO-off. Every fixture improved versus the previous profile by
   3.30-5.03%, and exact selected-store admission stayed green.
-- On the existing five-grammar `pgo_repdriver` workload, it was 0.14% faster
-  than the previous profile and **5.37% faster than PGO-off**. Off, previous,
-  and composite builds produced the same 14-file digest
+- On the existing five-grammar `pgo_repdriver` workload, it was statistically
+  indistinguishable from the previous profile (`p=0.971`, with a -0.14% median
+  point estimate) and **5.37% faster than PGO-off**. The candidate's production
+  allocation medians were slightly higher than the previous profile: +0.43%
+  B/op and +0.07% allocs/op. Off, previous, and composite builds produced the
+  same 14-file digest
   (`e7b82899069a6cbb6e667266d214036e64beb114c2d8449de613bafa0ddb7286`).
 - Median maximum RSS did not regress: 39,552 KiB versus 39,700 KiB on the
   selected-store board and 103,202 KiB versus 104,768 KiB on the production
