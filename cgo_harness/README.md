@@ -224,6 +224,41 @@ go run ./cmd/real_corpus_bench_report \
   -out-md ../harness_out/real_corpus_bench_matrix/<run>/REAL_CORPUS_BENCH_REPORT.md
 ```
 
+### Certify external-scanner retry suppression
+
+Before adding an exact-blob runtime profile that suppresses the duplicated
+external-scanner retry ladder, run the opt-in corpus certifier. It parses every
+selected file twice: once with the repeat enabled and once with the candidate
+profile, while preserving the complete accepted-error widening and final-merge
+ladder in both paths. Stop reason, full span, error state, and the deep tree
+digest must match file by file, while the candidate must eliminate retry
+attempts and improve aggregate wall time by at least 2%. Every file is also
+parsed by the locked C oracle; the baseline and candidate must preserve the
+same oracle relation, including named pre-existing mismatch, crash, and timeout
+rows. The JSON receipt is written on success or on the first counterexample.
+
+```sh
+cd cgo_harness
+GOWORK=off GOMAXPROCS=1 \
+GTS_PARITY_ALLOW_HOST=1 \
+GTS_RETRY_PROFILE_CERT=1 \
+GTS_RETRY_PROFILE_CERT_LANG=crystal \
+GTS_RETRY_PROFILE_CERT_OUT=../harness_out/retry-profile-crystal.json \
+GTS_REAL_CORPUS_BENCH_ROOT=/path/to/corpus_sources \
+GTS_REAL_CORPUS_BENCH_LOCK=/path/to/corpus_sources.lock \
+go test -tags 'treesitter_c_parity treesitter_c_perfscan gts_workcount' . \
+  -run '^TestRetryProfileCorpusCertification$' -v -count=1 -timeout 2h
+```
+
+Use `GTS_REAL_CORPUS_BENCH_ORDER`, `GTS_REAL_CORPUS_BENCH_MAX_FILES`, and
+`GTS_REAL_CORPUS_BENCH_MAX_FILE_BYTES` for bounded pilots. A passing pilot is
+not a certification; the profile should be banked only after the locked full
+corpus passes. Each completed file is also appended to
+`$GTS_RETRY_PROFILE_CERT_OUT.files.jsonl`. Set
+`GTS_RETRY_PROFILE_CERT_RESUME=1` to reuse only rows whose revision, blob,
+corpus lock, path, and source hash still match; C-oracle crashes and watchdog
+stops remain explicit row statuses.
+
 ## Run Parity Tests In Docker Sandbox
 
 This keeps heavy parity runs isolated from your host/WSL memory space and

@@ -15,8 +15,10 @@ func TestBuiltinExternalScannerRetryProfilesAttach(t *testing.T) {
 		load func() *gotreesitter.Language
 	}{
 		{name: "c_sharp", load: CSharpLanguage},
+		{name: "crystal", load: CrystalLanguage},
 		{name: "dart", load: DartLanguage},
 		{name: "kotlin", load: KotlinLanguage},
+		{name: "matlab", load: MatlabLanguage},
 		{name: "python", load: PythonLanguage},
 		{name: "swift", load: SwiftLanguage},
 	}
@@ -33,8 +35,26 @@ func TestBuiltinExternalScannerRetryProfilesAttach(t *testing.T) {
 	}
 }
 
+func TestCrystalAndMatlabKeepAcceptedErrorRetryLadder(t *testing.T) {
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+	for _, tt := range []struct {
+		name string
+		load func() *gotreesitter.Language
+	}{
+		{name: "crystal", load: CrystalLanguage},
+		{name: "matlab", load: MatlabLanguage},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			lang := tt.load()
+			if got := lang.FullParseAcceptedErrorRetryProfile; got != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) {
+				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want complete ladder", got)
+			}
+		})
+	}
+}
+
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	// 26 = the prior 19 plus D and Groovy, whose retry ceilings moved out of
+	// 28 = the prior 19 plus D and Groovy, whose retry ceilings moved out of
 	// parser-core name switches and onto exact-blob profiles. The prior gomod
 	// and C additions moved hardcoded compat-tier behavior to profiles. Meson
 	// and Enforce add two exact-blob retry policies. JavaScript adds one
@@ -43,8 +63,10 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	// ConflictPolicies rows here. AWK and Uxntal add exact-blob automatic forest
 	// routing; KDL reuses its existing retry profile. dot's helper was
 	// retired outright, not migrated (see the "NOTE on dot" comment above
-	// the gomod entry), so it does not add a map entry.
-	if got, want := len(builtinLanguageRuntimeProfiles), 26; got != want {
+	// the gomod entry), so it does not add a map entry. Crystal and Matlab add
+	// exact-blob external-scanner repeat suppression while retaining the full
+	// accepted-error retry ladder.
+	if got, want := len(builtinLanguageRuntimeProfiles), 28; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -460,23 +482,35 @@ func TestBuiltinBoundedAcceptedErrorRetryProfilesAttach(t *testing.T) {
 }
 
 func TestBuiltinExternalScannerRetryProfilesRequireCertifiedBlob(t *testing.T) {
-	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
-	if attachBuiltinLanguageRuntimeProfile("kotlin", sha256.Sum256([]byte("uncertified")), lang) {
-		t.Fatal("uncertified Kotlin blob reported a runtime-profile attachment")
+	tests := []struct {
+		name    string
+		scanner gotreesitter.ExternalScanner
+	}{
+		{name: "crystal", scanner: CrystalExternalScanner{}},
+		{name: "kotlin", scanner: KotlinExternalScanner{}},
+		{name: "matlab", scanner: MatlabExternalScanner{}},
 	}
-	if got := lang.ExternalScannerFullParseRetryPolicy; got != gotreesitter.ExternalScannerFullParseRetryDefault {
-		t.Fatalf("uncertified Kotlin blob changed policy to %d", got)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lang := &gotreesitter.Language{Name: tt.name, ExternalScanner: tt.scanner}
+			if attachBuiltinLanguageRuntimeProfile(tt.name, sha256.Sum256([]byte("uncertified")), lang) {
+				t.Fatal("uncertified blob reported a runtime-profile attachment")
+			}
+			if got := lang.ExternalScannerFullParseRetryPolicy; got != gotreesitter.ExternalScannerFullParseRetryDefault {
+				t.Fatalf("uncertified blob changed policy to %d", got)
+			}
 
-	blob := BlobByName("kotlin")
-	if len(blob) == 0 {
-		t.Fatal("BlobByName(kotlin) returned no data")
-	}
-	if !attachBuiltinLanguageRuntimeProfile("kotlin", sha256.Sum256(blob), lang) {
-		t.Fatal("certified Kotlin blob did not attach its runtime profile")
-	}
-	if got := lang.ExternalScannerFullParseRetryPolicy; got != gotreesitter.ExternalScannerFullParseRetrySkipRepeat {
-		t.Fatalf("certified Kotlin blob policy = %d, want skip-repeat", got)
+			blob := BlobByName(tt.name)
+			if len(blob) == 0 {
+				t.Fatalf("BlobByName(%s) returned no data", tt.name)
+			}
+			if !attachBuiltinLanguageRuntimeProfile(tt.name, sha256.Sum256(blob), lang) {
+				t.Fatal("certified blob did not attach its runtime profile")
+			}
+			if got := lang.ExternalScannerFullParseRetryPolicy; got != gotreesitter.ExternalScannerFullParseRetrySkipRepeat {
+				t.Fatalf("certified blob policy = %d, want skip-repeat", got)
+			}
+		})
 	}
 }
 
