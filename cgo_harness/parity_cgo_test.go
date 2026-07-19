@@ -30,6 +30,10 @@ type parityMeta struct {
 	skipReason string // non-empty = skip with this message
 }
 
+type parityPythonTestIncrementalReuseScanner struct{ gotreesitter.ExternalScanner }
+
+func (parityPythonTestIncrementalReuseScanner) SupportsIncrementalReuse() bool { return true }
+
 var paritySkips = map[string]parityMeta{
 	// Keep this map for explicitly known structural mismatches.
 	// Parse-support-specific skips (e.g. missing scanners) should not live here.
@@ -1005,8 +1009,12 @@ func TestParityPythonIncrementalRepetitionFoldDelete(t *testing.T) {
 	edited = append(edited, source[:offset]...)
 	edited = append(edited, source[offset+1:]...)
 
-	tc := parityCase{name: "python", source: string(source)}
-	oldTree, _, err := parseWithGo(tc, source, nil)
+	base := grammars.PythonLanguage()
+	goLangValue := *base
+	goLangValue.ExternalScanner = parityPythonTestIncrementalReuseScanner{ExternalScanner: base.ExternalScanner}
+	goLang := &goLangValue
+	goParser := gotreesitter.NewParser(goLang)
+	oldTree, err := goParser.Parse(source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1015,6 +1023,58 @@ func TestParityPythonIncrementalRepetitionFoldDelete(t *testing.T) {
 		StartByte:   uint32(offset),
 		OldEndByte:  uint32(offset + 1),
 		NewEndByte:  uint32(offset),
+		StartPoint:  pointAtOffset(source, offset),
+		OldEndPoint: pointAtOffset(source, offset+1),
+		NewEndPoint: pointAtOffset(edited, offset),
+	})
+	goTree, err := goParser.ParseIncremental(edited, oldTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseGoTree(goTree)
+
+	cLang, err := ParityCLanguage("python")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cParser := sitter.NewParser()
+	defer cParser.Close()
+	if err := cParser.SetLanguage(cLang); err != nil {
+		t.Fatal(err)
+	}
+	cTree := cParser.Parse(edited, nil)
+	if cTree == nil || cTree.RootNode() == nil {
+		t.Fatal("C reference parser returned nil tree")
+	}
+	defer cTree.Close()
+
+	var errs []string
+	compareNodes(goTree.RootNode(), goLang, cTree.RootNode(), "root", &errs)
+	if len(errs) > 0 {
+		t.Fatalf("Python incremental tree differs from locked C oracle: %s", errs[0])
+	}
+}
+
+func TestParityPythonIncrementalDedentCheckpointFallback(t *testing.T) {
+	source, err := os.ReadFile("corpus_structural/python_sample.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const offset = 500
+	if source[offset] != 'n' {
+		t.Fatalf("locked Python DEDENT witness changed at byte %d: got %q, want n", offset, source[offset])
+	}
+	edited := append(append([]byte(nil), source[:offset]...), source[offset+1:]...)
+	tc := parityCase{name: "python", source: string(source)}
+	oldTree, _, err := parseWithGo(tc, source, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseGoTree(oldTree)
+	oldTree.Edit(gotreesitter.InputEdit{
+		StartByte:   offset,
+		OldEndByte:  offset + 1,
+		NewEndByte:  offset,
 		StartPoint:  pointAtOffset(source, offset),
 		OldEndPoint: pointAtOffset(source, offset+1),
 		NewEndPoint: pointAtOffset(edited, offset),
@@ -1043,7 +1103,7 @@ func TestParityPythonIncrementalRepetitionFoldDelete(t *testing.T) {
 	var errs []string
 	compareNodes(goTree.RootNode(), goLang, cTree.RootNode(), "root", &errs)
 	if len(errs) > 0 {
-		t.Fatalf("Python incremental tree differs from locked C oracle: %s", errs[0])
+		t.Fatalf("Python incremental DEDENT fallback differs from locked C oracle: %s", errs[0])
 	}
 }
 

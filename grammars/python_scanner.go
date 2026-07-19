@@ -219,7 +219,11 @@ func (PythonExternalScanner) Deserialize(payload any, buf []byte) {
 	}
 }
 
-func (PythonExternalScanner) SupportsIncrementalReuse() bool { return true }
+// SupportsIncrementalReuse remains disabled until checkpoint restoration can
+// prove that indentation stacks preserve every class-closing DEDENT. The
+// token-invariant leaf fast path is validated before this capability check and
+// remains available for edits that do not depend on scanner state.
+func (PythonExternalScanner) SupportsIncrementalReuse() bool { return false }
 
 func (PythonExternalScanner) PreservesStateOnScanFailure() bool { return true }
 
