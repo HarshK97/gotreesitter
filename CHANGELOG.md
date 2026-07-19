@@ -7,6 +7,11 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Restore F# external-scanner checkpoints to the locked grammar's byte layout,
+  keeping incremental scanner state compatible with the reference runtime.
+
 ## [0.42.0] - 2026-07-18
 
 ### Performance
