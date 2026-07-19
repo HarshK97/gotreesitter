@@ -9,6 +9,16 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Return BibTeX, CSS, Yuck, Bash, SCSS, C#, Agda, Ledger, Authzed, Make, and
+  TLA+ automatic forest routing to explicit-only experiments after an
+  authenticated full-manifest audit. The exact BibTeX, CSS, SCSS, and Yuck
+  routes were 32.7%, 32.3%, 4.8%, and 46.2% slower than production. Ledger and
+  Make dispatched 0/1 and 0/19 files. Bash routed 1.3% slower and differed from
+  direct C on 61/1,263 dispatches; C# routed 9.3% faster but differed on
+  212/1,427; Agda routed 7.5% slower and differed on 1,444/2,070; Authzed routed
+  3.9x slower and differed on 27/35; TLA+ routed 3.2x slower and differed on
+  105/267. Explicit `Language.WantsForest`, recovery, incremental, and direct
+  forest experiments remain available.
 - Execute Go highlight queries directly over the build-tagged compact selected
   store through value node handles, without constructing public-node proxies.
   All four locked real-Go fixtures preserve exact ordered query captures,

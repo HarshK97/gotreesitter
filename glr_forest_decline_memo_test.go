@@ -214,6 +214,7 @@ func TestForestDeclineMemoWarmSemanticDeclineMatchesProduction(t *testing.T) {
 	}()
 	glrForestRecover = false
 	lang := loadBlobForDecode(t, "make")
+	lang.WantsForest = true
 	source := []byte("all:\n\t@echo hi\n")
 
 	glrForestEnabled = false

@@ -9,6 +9,14 @@ import (
 	grm "github.com/odvcencio/gotreesitter/grammars"
 )
 
+func explicitForestLanguage(t *testing.T, lang *gts.Language) *gts.Language {
+	t.Helper()
+	previous := lang.WantsForest
+	lang.WantsForest = true
+	t.Cleanup(func() { lang.WantsForest = previous })
+	return lang
+}
+
 func TestCertifiedAutomaticForestRoutingRequiresExactArtifact(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)
@@ -157,15 +165,15 @@ func requireForestFallbackNodeIdentity(t *testing.T, path string, got, want *gts
 	}
 }
 
-// TestForestDispatchParity verifies the (default-on) forest fast path is
-// invisible: for a dispatched language (css ∈ builtinForestDefaults) the forest
-// tree must be byte-identical to production — same s-expr AND same root byte
+// TestForestDispatchParity verifies the forest fast path is invisible: for an
+// explicitly dispatched language, the forest tree must be byte-identical to
+// production — same s-expr AND same root byte
 // span — and anything the forest declines (malformed input, non-dispatched
 // languages) must match production because we fall back to it.
-// SetGLRForestEnabled(false) yields the production baseline; (true) is the
-// default-on dispatch.
+// SetGLRForestEnabled(false) yields the production baseline; true enables the
+// dispatch gate.
 func TestForestDispatchParity(t *testing.T) {
-	css := grm.CssLanguage()
+	css := explicitForestLanguage(t, grm.CssLanguage())
 
 	var big strings.Builder
 	for i := 0; i < 60; i++ {
@@ -217,8 +225,9 @@ func TestForestDispatchParity(t *testing.T) {
 	for _, s := range malformed {
 		check("css-malformed-fallback", css, s)
 	}
-	// Bash is dispatched only after root compatibility normalization.
-	check("bash-dispatched", grm.BashLanguage(), "f() { echo a; }\n")
+	// Bash compatibility remains testable through explicit forest dispatch.
+	bash := explicitForestLanguage(t, grm.BashLanguage())
+	check("bash-dispatched", bash, "f() { echo a; }\n")
 	// Non-dispatched languages must be untouched even with the switch on.
 	check("go-untouched", grm.GoLanguage(), "package p\nfunc f() { return }\n")
 	goTree, err := gts.NewParser(grm.GoLanguage()).Parse([]byte("package p\nfunc f() { return }\n"))
@@ -363,7 +372,8 @@ func TestForestDispatchReportsAcceptedRuntime(t *testing.T) {
 	defer gts.SetGLRForestEnabled(true)
 
 	src := []byte("f() { echo a; }\n")
-	tree, err := gts.NewParser(grm.BashLanguage()).Parse(src)
+	lang := explicitForestLanguage(t, grm.BashLanguage())
+	tree, err := gts.NewParser(lang).Parse(src)
 	if err != nil {
 		t.Fatalf("forest dispatch parse: %v", err)
 	}
@@ -385,7 +395,7 @@ func TestForestDispatchDeclinesIncludedRanges(t *testing.T) {
 	defer gts.SetGLRForestEnabled(true)
 
 	src := []byte("a { color: red; }\n")
-	parser := gts.NewParser(grm.CssLanguage())
+	parser := gts.NewParser(explicitForestLanguage(t, grm.CssLanguage()))
 	parser.SetIncludedRanges([]gts.Range{{StartByte: 0, EndByte: uint32(len(src))}})
 	tree, err := parser.Parse(src)
 	if err != nil {
@@ -440,7 +450,7 @@ class C {
   }
 }
 `)
-	lang := grm.CSharpLanguage()
+	lang := explicitForestLanguage(t, grm.CSharpLanguage())
 	gts.SetGLRForestEnabled(false)
 	prod, err := gts.NewParser(lang).Parse(src)
 	if err != nil {
@@ -476,7 +486,7 @@ func TestForestTreeIncrementalEditCSharpNumericLiteralFastRescue(t *testing.T) {
 	edited := append([]byte(nil), src...)
 	toggleDigitAt(edited, site.offset)
 
-	lang := grm.CSharpLanguage()
+	lang := explicitForestLanguage(t, grm.CSharpLanguage())
 	parser := gts.NewParser(lang)
 	oldTree, err := parser.Parse(src)
 	if err != nil {
@@ -600,7 +610,7 @@ record F<T1, T2> where T1 : I1, I2, new() where T2 : I2 { }
 		NewEndPoint: pointForOffset(edited, offset+1),
 	}
 
-	lang := grm.CSharpLanguage()
+	lang := explicitForestLanguage(t, grm.CSharpLanguage())
 	parser := gts.NewParser(lang)
 	oldTree, err := parser.Parse(src)
 	if err != nil {
@@ -682,7 +692,7 @@ func TestForestTreeIncrementalEditCSharpContextualIdentifierStillFallsBack(t *te
 		NewEndPoint: pointForOffset(edited, offset+1),
 	}
 
-	lang := grm.CSharpLanguage()
+	lang := explicitForestLanguage(t, grm.CSharpLanguage())
 	parser := gts.NewParser(lang)
 	oldTree, err := parser.Parse(src)
 	if err != nil {
@@ -737,7 +747,7 @@ func TestForestTreeIncrementalEditCSharpStringLiteralStillFallsBack(t *testing.T
 		NewEndPoint: pointForOffset(edited, offset+1),
 	}
 
-	lang := grm.CSharpLanguage()
+	lang := explicitForestLanguage(t, grm.CSharpLanguage())
 	parser := gts.NewParser(lang)
 	oldTree, err := parser.Parse(src)
 	if err != nil {
@@ -794,7 +804,8 @@ func TestForestTreeIncrementalEditCSSTokenInvariantLeafReuseIsCorrect(t *testing
 		NewEndPoint: pointForOffset(edited, offset+1),
 	}
 
-	parser := gts.NewParser(grm.CssLanguage())
+	lang := explicitForestLanguage(t, grm.CssLanguage())
+	parser := gts.NewParser(lang)
 	oldTree, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("initial parse: %v", err)
@@ -816,7 +827,7 @@ func TestForestTreeIncrementalEditCSSTokenInvariantLeafReuseIsCorrect(t *testing
 		leafText := ""
 		leafChildren := 0
 		if leaf != nil {
-			leafType = leaf.Type(grm.CssLanguage())
+			leafType = leaf.Type(lang)
 			leafText = leaf.Text(src)
 			leafChildren = leaf.ChildCount()
 		}
@@ -830,7 +841,7 @@ func TestForestTreeIncrementalEditCSSTokenInvariantLeafReuseIsCorrect(t *testing
 		t.Fatalf("fresh parse: %v", err)
 	}
 	defer freshTree.Release()
-	if got, want := newTree.RootNode().SExpr(grm.CssLanguage()), freshTree.RootNode().SExpr(grm.CssLanguage()); got != want {
+	if got, want := newTree.RootNode().SExpr(lang), freshTree.RootNode().SExpr(lang); got != want {
 		t.Fatalf("incremental CSS tree diverged from fresh parse\n got: %s\nwant: %s", got, want)
 	}
 }
@@ -857,7 +868,8 @@ func TestForestTreeIncrementalEditSCSSTokenInvariantLeafReuseIsCorrect(t *testin
 		NewEndPoint: pointForOffset(edited, offset+1),
 	}
 
-	parser := gts.NewParser(grm.ScssLanguage())
+	lang := explicitForestLanguage(t, grm.ScssLanguage())
+	parser := gts.NewParser(lang)
 	oldTree, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("initial parse: %v", err)
@@ -879,7 +891,7 @@ func TestForestTreeIncrementalEditSCSSTokenInvariantLeafReuseIsCorrect(t *testin
 		leafText := ""
 		leafChildren := 0
 		if leaf != nil {
-			leafType = leaf.Type(grm.ScssLanguage())
+			leafType = leaf.Type(lang)
 			leafText = leaf.Text(src)
 			leafChildren = leaf.ChildCount()
 		}
@@ -893,7 +905,7 @@ func TestForestTreeIncrementalEditSCSSTokenInvariantLeafReuseIsCorrect(t *testin
 		t.Fatalf("fresh parse: %v", err)
 	}
 	defer freshTree.Release()
-	if got, want := newTree.RootNode().SExpr(grm.ScssLanguage()), freshTree.RootNode().SExpr(grm.ScssLanguage()); got != want {
+	if got, want := newTree.RootNode().SExpr(lang), freshTree.RootNode().SExpr(lang); got != want {
 		t.Fatalf("incremental SCSS tree diverged from fresh parse\n got: %s\nwant: %s", got, want)
 	}
 }
