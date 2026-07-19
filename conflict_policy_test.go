@@ -461,8 +461,25 @@ func TestRecoveredRepetitionReducePolicyAppliesOnlyToIdleRecoveredLineage(t *tes
 	if chosen.Type != ParseActionReduce || chosen.Symbol != 68 {
 		t.Fatalf("recovered policy picked %+v, want reduce symbol 68", chosen)
 	}
-	if chosen, ok := parser.deterministicConflictChoiceForDispatch(nil, recovered, tok, 86, actions, 2, &reuseCursor{}); ok {
-		t.Fatalf("incremental-reuse dispatch picked %+v, want ordinary reuse path", chosen)
+	chosen, ok = parser.deterministicConflictChoiceForDispatch(nil, recovered, tok, 86, actions, 2, &reuseCursor{})
+	if !ok || chosen.Type != ParseActionReduce || chosen.Symbol != 68 {
+		t.Fatalf("incremental-reuse dispatch picked %+v, want global C repetition reduce", chosen)
+	}
+
+	// Keep the two mechanisms distinct: c_sharp opts out of the global C fold,
+	// so this otherwise identical recovery policy must still be gated off while
+	// dispatching around reused syntax.
+	optOutLang := &Language{
+		Name:             "c_sharp",
+		ConflictPolicies: lang.ConflictPolicies,
+	}
+	optOutParser := NewParser(optOutLang)
+	chosen, ok = optOutParser.deterministicConflictChoiceForDispatch(nil, recovered, tok, 86, actions, 2, nil)
+	if !ok || chosen.Type != ParseActionReduce || chosen.Symbol != 68 {
+		t.Fatalf("opt-out fresh dispatch picked %+v, want recovery-scoped reduce", chosen)
+	}
+	if chosen, ok := optOutParser.deterministicConflictChoiceForDispatch(nil, recovered, tok, 86, actions, 2, &reuseCursor{}); ok {
+		t.Fatalf("opt-out incremental-reuse dispatch picked recovery-scoped policy %+v", chosen)
 	}
 
 	activeRecovery := []*glrStack{
