@@ -53,12 +53,11 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Selected-store lifecycle (staged and one-pass)
+      - name: Selected-store internal package (staged and one-pass)
         run: |
           set -euo pipefail
-          lifecycle='^TestSelectedStore(AuthenticatedPolicyCapability|DeepTraversalIsIterativeAndCancellable|RootMergePreflightsCapAndLaterBuildRemainsBounded|SiblingReleasesAreSynchronized|RealSnapshotsSurviveResetAndReleaseOrders|RootGrowthCopyPollsCancellation|OnePassFinalLogicalSizeGovernsRetainedCap|OnePassCancellationAfterGrowthReusesCleanBacking|OnePassRightSizeCopyPollsCancellation)$'
-          GOMAXPROCS=1 go test -race ./internal/parsercorephase0 -run "$lifecycle" -count=1
-          GOMAXPROCS=1 go test -race -tags gts_parsercorephase0_selectedstore_onepass ./internal/parsercorephase0 -run "$lifecycle" -count=1
+          GOMAXPROCS=1 go test -race ./internal/parsercorephase0 -count=1
+          GOMAXPROCS=1 go test -race -tags gts_parsercorephase0_selectedstore_onepass ./internal/parsercorephase0 -count=1
 
       - name: Selected-store exact admission (staged and one-pass)
         run: |
