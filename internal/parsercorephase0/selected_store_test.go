@@ -416,6 +416,113 @@ func TestSelectedStoreSiblingReleasesAreSynchronized(t *testing.T) {
 	}
 }
 
+func TestSelectedStoreRealSnapshotsSurviveResetAndReleaseOrders(t *testing.T) {
+	for _, mode := range []string{"first-then-second", "second-then-first", "concurrent"} {
+		t.Run(mode, func(t *testing.T) {
+			compact, err := New(&fakeTable{}, Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			policy := selectedStoreTestPolicy(t, 2, 1)
+			build := func(start, end uint32) *SelectedStore {
+				leaf, appendErr := compact.appendSubtree(subtreeRecord{symbol: 1, startByte: start, endByte: end, terminal: true}, nil, nil, nil)
+				if appendErr != nil {
+					t.Fatal(appendErr)
+				}
+				root, appendErr := compact.appendSubtree(subtreeRecord{symbol: 2, endByte: end}, []SubtreeID{leaf}, nil, nil)
+				if appendErr != nil {
+					t.Fatal(appendErr)
+				}
+				store, buildErr := compact.BuildSelectedStore([]SubtreeID{root}, policy, []byte("xx"), nil)
+				if buildErr != nil {
+					t.Fatal(buildErr)
+				}
+				return store
+			}
+			first := build(0, 1)
+			if err := compact.Reset(); err != nil {
+				t.Fatal(err)
+			}
+			second := build(1, 2)
+			validate := func(name string, store *SelectedStore, start, end uint32) {
+				t.Helper()
+				root, ok := store.Record(store.Root())
+				if !ok || root.Symbol != 2 || root.ChildCount != 1 {
+					t.Fatalf("%s root=%+v ok=%t", name, root, ok)
+				}
+				childID, ok := store.Child(root, 0)
+				child, childOK := store.Record(childID)
+				if !ok || !childOK || child.Symbol != 1 || child.StartByte != start || child.EndByte != end || child.Parent != store.Root() {
+					t.Fatalf("%s child=%+v id=%d ok=%t/%t", name, child, childID, ok, childOK)
+				}
+			}
+			validate("first", first, 0, 1)
+			validate("second", second, 1, 2)
+			switch mode {
+			case "first-then-second":
+				first.Release()
+				second.Release()
+			case "second-then-first":
+				second.Release()
+				first.Release()
+			case "concurrent":
+				var wait sync.WaitGroup
+				wait.Add(2)
+				go func() { defer wait.Done(); first.Release() }()
+				go func() { defer wait.Done(); second.Release() }()
+				wait.Wait()
+			}
+			if first.Root() != 0 || second.Root() != 0 || first.RetainedBytes() != 0 || second.RetainedBytes() != 0 {
+				t.Fatalf("released snapshots remained readable: first=%d/%d second=%d/%d", first.Root(), first.RetainedBytes(), second.Root(), second.RetainedBytes())
+			}
+			compact.selectedPoolMu.Lock()
+			retained := selectedStoreRetainedBytes(cap(compact.selectedPool.records), cap(compact.selectedPool.children))
+			compact.selectedPoolMu.Unlock()
+			if retained > compact.limits.MaxSelectedBytes {
+				t.Fatalf("pooled real snapshot backing=%d cap=%d", retained, compact.limits.MaxSelectedBytes)
+			}
+		})
+	}
+}
+
+func TestSelectedStoreRootGrowthCopyPollsCancellation(t *testing.T) {
+	const childCount = 2048
+	compact, err := New(&fakeTable{}, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := make([]SelectedNodeRecord, childCount*2+1)
+	children := make([]SelectedNodeID, childCount)
+	for index := 0; index < childCount; index++ {
+		children[index] = SelectedNodeID(index + 1)
+		records[childCount+index] = SelectedNodeRecord{Symbol: 3, flags: selectedNodeFlagExtra}
+	}
+	realID := SelectedNodeID(len(records))
+	records[realID-1] = SelectedNodeRecord{Symbol: 2, ChildCount: childCount}
+	store := &SelectedStore{owner: compact, records: records, children: children}
+	defer store.Release()
+	roots := make([]SelectedNodeID, 0, childCount+1)
+	for index := 0; index < childCount; index++ {
+		roots = append(roots, SelectedNodeID(childCount+index+1))
+	}
+	roots = append(roots, realID)
+	stop := errors.New("stop during selected root growth")
+	polls := 0
+	err = store.finishRoots(roots, selectedStoreTestPolicy(t, 2, 3), math.MaxUint64, func() error {
+		polls++
+		if polls == 2 {
+			return stop
+		}
+		return nil
+	})
+	if !errors.Is(err, stop) || polls != 2 {
+		t.Fatalf("root growth err=%v polls=%d", err, polls)
+	}
+	if store.Root() != 0 || len(store.children) != childCount || cap(store.children) != childCount {
+		t.Fatalf("cancelled root growth published state: root=%d len=%d cap=%d", store.Root(), len(store.children), cap(store.children))
+	}
+}
+
 func TestSelectedRootMergeCountsPreflightArithmetic(t *testing.T) {
 	tests := []struct {
 		name                          string

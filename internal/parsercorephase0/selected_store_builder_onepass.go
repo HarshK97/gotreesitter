@@ -10,7 +10,9 @@ import (
 
 // BuildSelectedStore seals accepted roots with the diagnostic one-pass
 // occurrence folder. The tag keeps this candidate out of ordinary builds until
-// its exactness and end-to-end economics are proven.
+// its exactness and end-to-end economics are proven. It borrows Core-owned
+// scratch and therefore must not run concurrently with any other operation on
+// the same Core.
 func (c *Core) BuildSelectedStore(roots []SubtreeID, policy SelectedStorePolicy, source []byte, poll func() error) (*SelectedStore, error) {
 	return c.buildSelectedStoreOnePass(roots, policy, source, poll)
 }
@@ -181,7 +183,7 @@ func (c *Core) buildSelectedStoreOnePass(roots []SubtreeID, policy SelectedStore
 				if childCount > math.MaxUint16 || uint64(len(store.children))+uint64(childCount) > math.MaxUint32 || uint64(len(store.records)) >= math.MaxUint32 {
 					return nil, errors.New("parser-core phase zero: selected store exceeded uint32 arena")
 				}
-				if err := ensureSelectedOnePassCapacity(store, len(store.records)+1, len(store.children)+childCount, c.limits.MaxSelectedBytes); err != nil {
+				if err := ensureSelectedOnePassCapacity(store, len(store.records)+1, len(store.children)+childCount, c.limits.MaxSelectedBytes, poll); err != nil {
 					return nil, err
 				}
 				id := SelectedNodeID(uint64(len(store.records)) + 1)
@@ -225,14 +227,14 @@ func (c *Core) buildSelectedStoreOnePass(roots []SubtreeID, policy SelectedStore
 		logical = logical[:rootStart]
 	}
 
-	maxInt := uint64(^uint(0) >> 1)
-	if occurrences > maxInt || rawChildSlots > maxInt {
-		return nil, errors.New("parser-core phase zero: selected store exceeds platform capacity")
-	}
-	if err := rightSizeSelectedOnePassStore(store, int(occurrences), int(rawChildSlots), c.limits.MaxSelectedBytes); err != nil {
+	// Drop record reserve before root merging so its retained-cap preflight is
+	// charged to logical nodes, not hidden/collapsed raw occurrences. Keep the
+	// already-admitted child reserve until the final seal to avoid copying the
+	// edge arena twice when compatibility normalization removes children.
+	if err := rightSizeSelectedOnePassStore(store, len(store.records), cap(store.children), c.limits.MaxSelectedBytes, poll); err != nil {
 		return nil, err
 	}
-	if err := store.finishRoots(rootIDs, policy, c.limits.MaxSelectedBytes); err != nil {
+	if err := store.finishRoots(rootIDs, policy, c.limits.MaxSelectedBytes, poll); err != nil {
 		return nil, err
 	}
 	if err := store.normalizeGoCompatibility(policy, source, poll); err != nil {
@@ -241,8 +243,8 @@ func (c *Core) buildSelectedStoreOnePass(roots []SubtreeID, policy SelectedStore
 	if err := store.recomputePrecedence(precedenceDeltas); err != nil {
 		return nil, err
 	}
-	if store.RetainedBytes() > c.limits.MaxSelectedBytes {
-		return nil, errors.New("parser-core phase zero: selected store retained-byte cap")
+	if err := rightSizeSelectedOnePassStore(store, len(store.records), len(store.children), c.limits.MaxSelectedBytes, poll); err != nil {
+		return nil, err
 	}
 	if err := poll(); err != nil {
 		return nil, err
@@ -257,7 +259,7 @@ func (c *Core) buildSelectedStoreOnePass(roots []SubtreeID, policy SelectedStore
 	return store, nil
 }
 
-func ensureSelectedOnePassCapacity(store *SelectedStore, recordNeed, childNeed int, retainedCap uint64) error {
+func ensureSelectedOnePassCapacity(store *SelectedStore, recordNeed, childNeed int, retainedCap uint64, poll func() error) error {
 	recordCapacity := selectedOnePassGrowth(cap(store.records), recordNeed)
 	childCapacity := selectedOnePassGrowth(cap(store.children), childNeed)
 	if selectedStoreRetainedBytes(recordCapacity, childCapacity) > retainedCap {
@@ -270,12 +272,16 @@ func ensureSelectedOnePassCapacity(store *SelectedStore, recordNeed, childNeed i
 	}
 	if recordCapacity != cap(store.records) {
 		records := make([]SelectedNodeRecord, len(store.records), recordCapacity)
-		copy(records, store.records)
+		if err := copySelectedStoreChunks(records, store.records, poll); err != nil {
+			return err
+		}
 		store.records = records
 	}
 	if childCapacity != cap(store.children) {
 		children := make([]SelectedNodeID, len(store.children), childCapacity)
-		copy(children, store.children)
+		if err := copySelectedStoreChunks(children, store.children, poll); err != nil {
+			return err
+		}
 		store.children = children
 	}
 	return nil
@@ -295,19 +301,23 @@ func selectedOnePassGrowth(capacity, need int) int {
 	return next
 }
 
-func rightSizeSelectedOnePassStore(store *SelectedStore, recordCapacity, childCapacity int, retainedCap uint64) error {
+func rightSizeSelectedOnePassStore(store *SelectedStore, recordCapacity, childCapacity int, retainedCap uint64, poll func() error) error {
 	if recordCapacity < len(store.records) || childCapacity < len(store.children) ||
 		selectedStoreRetainedBytes(recordCapacity, childCapacity) > retainedCap {
 		return errors.New("parser-core phase zero: selected store retained-byte cap")
 	}
 	if cap(store.records) != recordCapacity {
 		records := make([]SelectedNodeRecord, len(store.records), recordCapacity)
-		copy(records, store.records)
+		if err := copySelectedStoreChunks(records, store.records, poll); err != nil {
+			return err
+		}
 		store.records = records
 	}
 	if cap(store.children) != childCapacity {
 		children := make([]SelectedNodeID, len(store.children), childCapacity)
-		copy(children, store.children)
+		if err := copySelectedStoreChunks(children, store.children, poll); err != nil {
+			return err
+		}
 		store.children = children
 	}
 	return nil
