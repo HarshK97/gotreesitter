@@ -17,6 +17,15 @@ func explicitForestLanguage(t *testing.T, lang *gts.Language) *gts.Language {
 	return lang
 }
 
+func requireAcceptedForestRuntime(t *testing.T, label string, tree *gts.Tree) {
+	t.Helper()
+	runtime := tree.ParseRuntime()
+	if runtime.StopReason != gts.ParseStopAccepted || !runtime.ForestFastPath ||
+		!runtime.LastTokenWasEOF || runtime.TokensConsumed != 0 {
+		t.Fatalf("%s did not use accepted forest runtime: %s", label, runtime.Summary())
+	}
+}
+
 func TestCertifiedAutomaticForestRoutingRequiresExactArtifact(t *testing.T) {
 	gts.SetGLRForestEnabled(true)
 	defer gts.SetGLRForestEnabled(true)
@@ -811,6 +820,7 @@ func TestForestTreeIncrementalEditCSSTokenInvariantLeafReuseIsCorrect(t *testing
 		t.Fatalf("initial parse: %v", err)
 	}
 	defer oldTree.Release()
+	requireAcceptedForestRuntime(t, "initial CSS parse", oldTree)
 	oldTree.Edit(edit)
 
 	newTree, profile, err := parser.ParseIncrementalProfiled(edited, oldTree)
@@ -841,6 +851,7 @@ func TestForestTreeIncrementalEditCSSTokenInvariantLeafReuseIsCorrect(t *testing
 		t.Fatalf("fresh parse: %v", err)
 	}
 	defer freshTree.Release()
+	requireAcceptedForestRuntime(t, "fresh CSS parse", freshTree)
 	if got, want := newTree.RootNode().SExpr(lang), freshTree.RootNode().SExpr(lang); got != want {
 		t.Fatalf("incremental CSS tree diverged from fresh parse\n got: %s\nwant: %s", got, want)
 	}
@@ -875,6 +886,7 @@ func TestForestTreeIncrementalEditSCSSTokenInvariantLeafReuseIsCorrect(t *testin
 		t.Fatalf("initial parse: %v", err)
 	}
 	defer oldTree.Release()
+	requireAcceptedForestRuntime(t, "initial SCSS parse", oldTree)
 	oldTree.Edit(edit)
 
 	newTree, profile, err := parser.ParseIncrementalProfiled(edited, oldTree)
@@ -905,6 +917,7 @@ func TestForestTreeIncrementalEditSCSSTokenInvariantLeafReuseIsCorrect(t *testin
 		t.Fatalf("fresh parse: %v", err)
 	}
 	defer freshTree.Release()
+	requireAcceptedForestRuntime(t, "fresh SCSS parse", freshTree)
 	if got, want := newTree.RootNode().SExpr(lang), freshTree.RootNode().SExpr(lang); got != want {
 		t.Fatalf("incremental SCSS tree diverged from fresh parse\n got: %s\nwant: %s", got, want)
 	}

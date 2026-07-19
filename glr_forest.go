@@ -499,13 +499,12 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 var builtinForestDefaults = map[string]bool{
 	"javascript": true,
 
-	// Promoted 2026-06-08 after a full-corpus byte-range gate (forest vs
-	// production, lock-filtered real corpus): ZERO divergence on every
-	// dispatched file (gitignore 33/44, nix 635/703, squirrel 18/18,
-	// prisma 78/78; the rest decline safely to production), AND a net-wall
-	// WIN on the corpus (byte-identical trees). All carry the glr_merge
-	// deep-stack blowup and their blowup files dispatch cleanly; squirrel and
-	// prisma are parity-clean vs C (production ~5.9x), a clean forest speedup.
+	// Gitignore, Squirrel, and Prisma retain their exact production/C parity and
+	// net-wall receipts. Nix is the deliberate correctness-lift exception: its
+	// authenticated 703-file audit dispatched 673 files, differed from
+	// production on 76, and routed in 1006.6 ms versus 944.3 ms (+6.6%), but the
+	// forest result had zero direct-C divergences. Keep Nix while a narrower
+	// positive gate is developed; its admission is correctness, not wall time.
 	"gitignore": true,
 	"nix":       true,
 	"squirrel":  true,
@@ -526,9 +525,10 @@ var builtinForestDefaults = map[string]bool{
 	// lift (parity-blocked -> parity-clean) AND a speed lift. Production is the
 	// wrong promotion baseline for parity-blocked glr-merge grammars.
 	//
-	// ron/yuck/dtd are ALSO forest=C-clean but held: ron is net-wall NEGATIVE
-	// (0.7x on its 3-file corpus), yuck/dtd corpora are too thin (2 and 1
-	// dispatched) for a confident promotion. Promote when their corpora grow.
+	// Ron, Yuck, and DTD are also forest=C-clean but explicit-only. Ron is
+	// net-wall negative (0.7x on three files); Yuck's authenticated two-file
+	// audit routed 46.2% slower than production; DTD has only one dispatched
+	// witness. Reconsider only with broader, winning corpus evidence.
 	"gitattributes": true,
 }
 
