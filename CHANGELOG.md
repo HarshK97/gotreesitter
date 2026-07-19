@@ -11,6 +11,10 @@ for tags and release notes while still in `0.x`.
 
 - Restore F# external-scanner checkpoints to the locked grammar's byte layout,
   keeping incremental scanner state compatible with the reference runtime.
+- Apply the upstream-C repetition-skip conflict fold while dispatching around
+  incrementally reusable syntax. Python deletion edits that previously returned
+  a complete but structurally divergent tree now match fresh parsing and the
+  locked C oracle across a systematic minimal-witness sweep.
 
 ## [0.42.0] - 2026-07-18
 

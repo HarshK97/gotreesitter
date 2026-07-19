@@ -235,11 +235,10 @@ func (p *Parser) deterministicConflictChoiceForDispatch(source []byte, s *glrSta
 			return next, true
 		}
 	}
-	if reuse != nil {
-		return ParseAction{}, false
-	}
-	if chosen, ok := conflictPolicyChoiceForDispatch(p.language, s, tok, currentState, actions); ok {
-		return chosen, true
+	if reuse == nil {
+		if chosen, ok := conflictPolicyChoiceForDispatch(p.language, s, tok, currentState, actions); ok {
+			return chosen, true
+		}
 	}
 	// C's global repetition-skip fold. Runs after explicit generated
 	// ConflictPolicies (per-state directives outrank the default) but before
@@ -247,9 +246,13 @@ func (p *Parser) deterministicConflictChoiceForDispatch(source []byte, s *glrSta
 	// exists to keep hand-written SHIFT-preferring shortcuts away from
 	// grammars they were never tuned for, whereas this fold is C's own
 	// dispatch semantics and applies to every grammar whose tables carry
-	// repetition-marked shifts.
+	// repetition-marked shifts. Unlike language-scoped compatibility choices,
+	// the C fold is also valid while dispatching around reused subtrees.
 	if next, ok := p.cRepetitionSkipConflictChoice(s, actions); ok {
 		return next, true
+	}
+	if reuse != nil {
+		return ParseAction{}, false
 	}
 	if generatedRepeatBoundaryConflict(p.language, actions) {
 		return ParseAction{}, false

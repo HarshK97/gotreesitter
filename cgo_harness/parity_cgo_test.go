@@ -991,6 +991,62 @@ func TestParityIncrementalParse(t *testing.T) {
 	}
 }
 
+func TestParityPythonIncrementalRepetitionFoldDelete(t *testing.T) {
+	source := []byte("from contextlib import suppress\n" +
+		"from copy import deepcopy\n" +
+		"from enum import Enum\n" +
+		"from errno import EACCES\n" +
+		"from functools import partial\n")
+	offset := strings.LastIndex(string(source), "import partial") + len("impor")
+	if offset < len("impor") || source[offset] != 't' {
+		t.Fatal("locked Python incremental witness missing final import byte")
+	}
+	edited := make([]byte, 0, len(source)-1)
+	edited = append(edited, source[:offset]...)
+	edited = append(edited, source[offset+1:]...)
+
+	tc := parityCase{name: "python", source: string(source)}
+	oldTree, _, err := parseWithGo(tc, source, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseGoTree(oldTree)
+	oldTree.Edit(gotreesitter.InputEdit{
+		StartByte:   uint32(offset),
+		OldEndByte:  uint32(offset + 1),
+		NewEndByte:  uint32(offset),
+		StartPoint:  pointAtOffset(source, offset),
+		OldEndPoint: pointAtOffset(source, offset+1),
+		NewEndPoint: pointAtOffset(edited, offset),
+	})
+	goTree, goLang, err := parseWithGo(tc, edited, oldTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseGoTree(goTree)
+
+	cLang, err := ParityCLanguage("python")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cParser := sitter.NewParser()
+	defer cParser.Close()
+	if err := cParser.SetLanguage(cLang); err != nil {
+		t.Fatal(err)
+	}
+	cTree := cParser.Parse(edited, nil)
+	if cTree == nil || cTree.RootNode() == nil {
+		t.Fatal("C reference parser returned nil tree")
+	}
+	defer cTree.Close()
+
+	var errs []string
+	compareNodes(goTree.RootNode(), goLang, cTree.RootNode(), "root", &errs)
+	if len(errs) > 0 {
+		t.Fatalf("Python incremental tree differs from locked C oracle: %s", errs[0])
+	}
+}
+
 // TestParityHasNoErrors checks that well-formed inputs for CI-gated languages
 // do not produce error nodes.
 func TestParityHasNoErrors(t *testing.T) {

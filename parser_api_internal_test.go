@@ -212,6 +212,10 @@ func TestDeterministicConflictChoiceUsesCRepetitionFoldOnRecoveryLineages(t *tes
 	if chosen.Type != ParseActionReduce || chosen.Symbol != 6 {
 		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v, want program_repeat1 reduce (C repetition-skip fold)", chosen)
 	}
+	chosen, ok = parser.deterministicConflictChoiceForDispatch(nil, cleanStack, Token{Symbol: 1}, 2, actions, 2, &reuseCursor{})
+	if !ok || chosen.Type != ParseActionReduce || chosen.Symbol != 6 {
+		t.Fatalf("deterministicConflictChoiceForDispatch picked %+v during incremental reuse, want C repetition reduce", chosen)
+	}
 	erroredStack := &glrStack{cEverErrored: true}
 	chosen, ok = parser.deterministicConflictChoiceForDispatch(nil, erroredStack, Token{Symbol: 1}, 2, actions, 2, nil)
 	if !ok || chosen.Type != ParseActionReduce || chosen.Symbol != 6 {
