@@ -143,10 +143,21 @@ func TestIncrementalInvariantGate(t *testing.T) {
 
 	matched := make(map[incrGateAllowlistKey]bool)
 	var matchedMu sync.Mutex
+	// swept records which languages actually ran, so the ratchet below only
+	// enforces entries for languages this invocation swept. Without it, a
+	// per-language subset run (e.g. `go test -run TestIncrementalInvariantGate/python`,
+	// the natural way to debug one language) would ratchet-fail on entries for
+	// languages it never ran -- a spurious "STALE ALLOWLIST ENTRY" that would
+	// mislead a maintainer into deleting a live known-bug record.
+	swept := make(map[string]bool)
+	var sweptMu sync.Mutex
 
 	for _, entry := range incrGateCorpus {
 		entry := entry
 		t.Run(entry.language+"/"+entry.path, func(t *testing.T) {
+			sweptMu.Lock()
+			swept[entry.language] = true
+			sweptMu.Unlock()
 			stats := runIncrGateSweep(t, entry, index, matched, &matchedMu)
 			t.Logf("sites=%d fullSpan=%d freshClean=%d divergent(freshClean-scoped)=%d newUnlisted=%d",
 				stats.totalSites, stats.fullSpanSites, stats.cleanSites, stats.divergentSites, len(stats.unlisted))
@@ -162,6 +173,15 @@ func TestIncrementalInvariantGate(t *testing.T) {
 	// allowlist silently grows and stops meaning "currently reproducing known
 	// bug".
 	for _, e := range allowlist.Entries {
+		sweptMu.Lock()
+		ranLang := swept[e.Language]
+		sweptMu.Unlock()
+		if !ranLang {
+			// This language was not swept in this invocation (e.g. a filtered
+			// subset run), so we have no evidence about its entries -- skip,
+			// don't ratchet-fail.
+			continue
+		}
 		key := incrGateAllowlistKey{e.Language, e.EditClass, e.Signature}
 		matchedMu.Lock()
 		ok := matched[key]
@@ -382,7 +402,16 @@ type incrGateDivergence struct {
 func incrGateFirstDivergence(lang *gts.Language, fresh, incr *gts.Node, ancestorPath []string) *incrGateDivergence {
 	if fresh == nil || incr == nil {
 		if fresh != incr {
-			return &incrGateDivergence{kind: "nil", nodeType: "<nil>", path: strings.Join(ancestorPath, ">")}
+			// Preserve the non-nil side's type so the signature is specific
+			// (e.g. "block:nilmismatch", not the content-free "<nil>:nilmismatch")
+			// -- keeps the allowlist key narrow and triage informative.
+			nodeType := "<nil>"
+			if fresh != nil {
+				nodeType = fresh.Type(lang)
+			} else if incr != nil {
+				nodeType = incr.Type(lang)
+			}
+			return &incrGateDivergence{kind: "nil", nodeType: nodeType, path: strings.Join(ancestorPath, ">")}
 		}
 		return nil
 	}
