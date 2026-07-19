@@ -74,13 +74,6 @@ func (FsharpExternalScanner) Create() any {
 }
 func (FsharpExternalScanner) Destroy(payload any) {}
 
-// Serialize encodes the scanner checkpoint. Indentation levels are F#
-// column counts and are stored as uint16 (matching the indents/
-// preprocessorIndents field width), so each level is written as two
-// little-endian bytes. A single trailing byte for an entry that doesn't
-// fit is never emitted — an entry is only written if both of its bytes
-// fit in buf, preventing a truncated high byte from corrupting the
-// deserialized value on the next checkpoint restore.
 func (FsharpExternalScanner) Serialize(payload any, buf []byte) int {
 	s := payload.(*fsState)
 	size := 0
@@ -95,18 +88,14 @@ func (FsharpExternalScanner) Serialize(payload any, buf []byte) int {
 	buf[size] = byte(ppCount)
 	size++
 
-	for i := 0; i < ppCount && size+2 <= len(buf); i++ {
-		v := s.preprocessorIndents[i]
-		buf[size] = byte(v)
-		buf[size+1] = byte(v >> 8)
-		size += 2
+	for i := 0; i < ppCount && size < len(buf); i++ {
+		buf[size] = byte(s.preprocessorIndents[i])
+		size++
 	}
 
-	for i := 1; i < len(s.indents) && size+2 <= len(buf); i++ {
-		v := s.indents[i]
-		buf[size] = byte(v)
-		buf[size+1] = byte(v >> 8)
-		size += 2
+	for i := 1; i < len(s.indents) && size < len(buf); i++ {
+		buf[size] = byte(s.indents[i])
+		size++
 	}
 
 	return size
@@ -124,14 +113,11 @@ func (FsharpExternalScanner) Deserialize(payload any, buf []byte) {
 	size := 0
 	ppCount := int(buf[size])
 	size++
-	for i := 0; i < ppCount && size+2 <= len(buf); i++ {
-		v := uint16(buf[size]) | uint16(buf[size+1])<<8
-		s.preprocessorIndents = append(s.preprocessorIndents, v)
-		size += 2
+	for ; size <= ppCount && size < len(buf); size++ {
+		s.preprocessorIndents = append(s.preprocessorIndents, uint16(buf[size]))
 	}
-	for ; size+2 <= len(buf); size += 2 {
-		v := uint16(buf[size]) | uint16(buf[size+1])<<8
-		s.indents = append(s.indents, v)
+	for ; size < len(buf); size++ {
+		s.indents = append(s.indents, uint16(buf[size]))
 	}
 }
 
