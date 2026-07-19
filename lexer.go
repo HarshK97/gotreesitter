@@ -218,6 +218,8 @@ func (l *Lexer) errorRunToken() Token {
 // a token and true if an accepting state was reached, or false if not.
 // On a skip (whitespace) match, it returns a zero-Symbol token and true.
 func (l *Lexer) scan(startState uint32, startPos int, startRow, startCol uint32) (Token, bool) {
+	// work-count-assembly: raw main-lexer invocation seam
+	workCountRecordRawMainLexerInvocation()
 	curState := int32(startState)
 	if curState < 0 || int(curState) >= len(l.states) {
 		return Token{}, false

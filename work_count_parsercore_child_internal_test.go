@@ -1,4 +1,4 @@
-//go:build gts_parsercorephase0
+//go:build gts_parsercorephase0 && gts_workcount
 
 package gotreesitter
 
@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	parserCoreWorkCountChildSchema = "gts-work-count-parsercore-child/v2"
+	parserCoreWorkCountChildSchema = "gts-work-count-parsercore-child/v3"
 	parserCoreWorkCountEngine      = "go-compact-parsercore-phase0-tagged-diagnostic"
 	parserCoreWorkCountContract    = "gts-work-count/v2"
 	parserCoreWorkCountDigest      = "gts-deep-tree-v1"
@@ -84,6 +84,7 @@ type parserCoreWorkCountChildResult struct {
 	SchedulerWork      parserCoreWorkCountSchedulerWork     `json:"scheduler_work"`
 	Selected           parserCoreWorkCountSelectedCensus    `json:"selected_census"`
 	RawSelected        parserCoreWorkCountRawSelectedCensus `json:"raw_selected_internal_census"`
+	BoardDirect        DiagnosticWorkCountBoardDirect       `json:"board_direct"`
 }
 
 // TestParserCoreWorkCountChild is the fresh-process protocol endpoint used by
@@ -122,6 +123,7 @@ func TestParserCoreWorkCountChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	BeginDiagnosticWorkCount()
 	scheduler, tokenSource, err := runner.executeSchedulerOpen(source, runner.compact, true)
 	if err != nil {
 		if tokenSource != nil {
@@ -179,6 +181,10 @@ func TestParserCoreWorkCountChild(t *testing.T) {
 	if schedulerWork.Overflow || schedulerWork.ConflictActionArmsAdmitted != admission.conflictArms || schedulerWork.CausalConflictForks != admission.causalForks || schedulerWork.Accepts != 1 || schedulerWork.ActionLookups == 0 || schedulerWork.Elections == 0 || schedulerWork.PeakHeaders < 2 {
 		t.Fatalf("invalid scheduler work: %+v", schedulerWork)
 	}
+	boardDirect := EndDiagnosticWorkCount().BoardDirect()
+	if !boardDirect.FrontierLexerElectionsAvailable || boardDirect.PerVersionLexRequestsAvailable || boardDirect.FrontierLexerElections != schedulerWork.Elections || boardDirect.ResolvedActionCellsExamined != schedulerWork.ActionLookups || boardDirect.RawMainLexerInvocations == 0 {
+		t.Fatalf("direct parser-core hooks diverged from scheduler work: direct=%+v scheduler=%+v", boardDirect, schedulerWork)
+	}
 
 	result := parserCoreWorkCountChildResult{
 		Schema: parserCoreWorkCountChildSchema, Engine: parserCoreWorkCountEngine,
@@ -213,6 +219,7 @@ func TestParserCoreWorkCountChild(t *testing.T) {
 		},
 		Selected:    selected,
 		RawSelected: parserCoreWorkCountRawSelectedCensus{Nodes: rawSelected.Nodes, Parents: rawSelected.Parents, Leaves: rawSelected.Leaves, Overflow: rawSelected.Overflow},
+		BoardDirect: boardDirect,
 	}
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {

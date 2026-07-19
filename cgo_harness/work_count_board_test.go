@@ -21,11 +21,11 @@ const (
 	workCountBoardGoBackendEnv            = "GTS_WORK_COUNT_GO_BACKEND"
 	workCountBoardGoProduction            = "production"
 	workCountBoardGoParserCore            = "parsercore_phase0"
-	workCountBoardParserCoreChildSchema   = "gts-work-count-parsercore-child/v2"
+	workCountBoardParserCoreChildSchema   = "gts-work-count-parsercore-child/v3"
 	workCountBoardParserCoreEngine        = "go-compact-parsercore-phase0-tagged-diagnostic"
-	workCountBoardSchema                  = "gts-work-count-board/v4"
-	workCountBoardContractSchema          = "gts-work-count-board-contract/v2"
-	workCountBoardContractSHA256          = "10b545be1252350dd28132e70f5d8c29cd4976d59f78af70644ac32436fb08f9"
+	workCountBoardSchema                  = "gts-work-count-board/v5"
+	workCountBoardContractSchema          = "gts-work-count-board-contract/v3"
+	workCountBoardContractSHA256          = "a06d4fd18a0c675bc2662a20d4cef98aa314cbf4485b6b5d14d671502c071cb4"
 	workCountBoardInstrumentationRule     = "blocked unless every mandatory event has one identical semantic definition, a present direct counter in both engines, and a comparable relationship"
 	workCountBoardWorkAuditRule           = "a mandatory comparable event with present nonzero-denominator counts outside the inclusive Go/C interval [0.8,1.2] produces a work-audit finding but does not change instrumentation completeness"
 	workCountBoardWorkAuditMinimum        = 0.8
@@ -249,6 +249,7 @@ type workCountBoardParserCoreChildResult struct {
 	RootEndByte        uint32                            `json:"root_end_byte"`
 	RootHasError       bool                              `json:"root_has_error"`
 	CandidateFallbacks uint64                            `json:"candidate_fallbacks"`
+	BoardDirect        workCountBoardDirectCounts        `json:"board_direct"`
 	CoreWork           workCountBoardParserCoreWork      `json:"core_work"`
 	SchedulerWork      workCountBoardParserCoreScheduler `json:"scheduler_work"`
 	Selected           workCountBoardSelectedCensus      `json:"selected_census"`
@@ -297,7 +298,7 @@ func TestAuthenticatedFourFixtureWorkCountBoard(t *testing.T) {
 		t.Fatalf("work-count shared manifest identity=%s want=%s", sharedManifestSHA, workCountSharedManifestSHA256)
 	}
 	workCountValidateManifest(t, sharedManifestPath)
-	boardContractPath := filepath.Join(sourceSnapshot.Root, "cgo_harness", "work_count", "board_contract_v2.json")
+	boardContractPath := filepath.Join(sourceSnapshot.Root, "cgo_harness", "work_count", "board_contract_v3.json")
 	boardContractSHA := workCountFileSHA(t, boardContractPath)
 	if boardContractSHA != workCountBoardContractSHA256 {
 		t.Fatalf("work-count board contract identity=%s want=%s", boardContractSHA, workCountBoardContractSHA256)
@@ -553,8 +554,8 @@ func workCountBuildParserCoreGo(t *testing.T, source workCountSourceSnapshot, te
 	t.Helper()
 	tool := workCountTool(t, "go")
 	artifact := filepath.Join(tempRoot, "go_parsercore_work_count.test")
-	flags := []string{"test", "-c", "-tags", "gts_parsercorephase0", "."}
-	args := []string{"test", "-c", "-tags", "gts_parsercorephase0", "-o", artifact, "."}
+	flags := []string{"test", "-c", "-tags", "gts_parsercorephase0,gts_workcount", "."}
+	args := []string{"test", "-c", "-tags", "gts_parsercorephase0,gts_workcount", "-o", artifact, "."}
 	buildEnv := workCountSanitizedEnv(os.Environ(), environment.Build, nil)
 	if _, err := workCountRunBounded(source.Root, buildEnv, workCountBuildTimeout, tool.Path, args...); err != nil {
 		t.Fatal(err)
@@ -592,8 +593,9 @@ func workCountRunParserCoreGo(t *testing.T, artifact, fixtureID, sourcePath, tem
 	workCountRequireKeys(t, "parser-core child", raw, []string{
 		"schema", "engine", "counter_contract", "digest_format", "fixture", "source_sha256", "source_bytes",
 		"grammar_commit", "grammar_blob_sha256", "deep_tree_sha256", "root_end_byte", "root_has_error",
-		"candidate_fallbacks", "core_work", "scheduler_work", "selected_census", "raw_selected_internal_census",
+		"candidate_fallbacks", "board_direct", "core_work", "scheduler_work", "selected_census", "raw_selected_internal_census",
 	})
+	workCountValidateBoardDirectObject(t, raw["board_direct"])
 	var result workCountBoardParserCoreChildResult
 	workCountDecodeExact(t, data, &result)
 	return result
@@ -635,6 +637,9 @@ func workCountValidateParserCoreChild(t *testing.T, result workCountBoardParserC
 	}
 	if result.SchedulerWork.ActionLookups == 0 || result.SchedulerWork.Accepts != 1 || result.SchedulerWork.Elections == 0 || result.SchedulerWork.PeakHeaders < 2 || result.SchedulerWork.Conflicts == 0 || result.SchedulerWork.Forks == 0 {
 		t.Fatalf("parser-core child scheduler work invalid: %+v", result.SchedulerWork)
+	}
+	if !result.BoardDirect.FrontierLexerElectionsAvailable || result.BoardDirect.PerVersionLexRequestsAvailable || result.BoardDirect.FrontierLexerElections != result.SchedulerWork.Elections || result.BoardDirect.ResolvedActionCellsExamined != result.SchedulerWork.ActionLookups || result.BoardDirect.RawMainLexerInvocations == 0 {
+		t.Fatalf("parser-core child direct hooks drifted from scheduler work: direct=%+v scheduler=%+v", result.BoardDirect, result.SchedulerWork)
 	}
 }
 
@@ -680,7 +685,7 @@ func workCountBuildBoardMetrics(t *testing.T, contract workCountBoardContract, g
 	t.Helper()
 	workCountValidateCounters(t, "Go", goCounts)
 	workCountValidateCounters(t, "static C", cCounts)
-	if goDirect.Schema != "gts-work-count-board-direct/v2" || cDirect.Schema != goDirect.Schema || goDirect.Overflow || cDirect.Overflow {
+	if goDirect.Schema != "gts-work-count-board-direct/v3" || cDirect.Schema != goDirect.Schema || goDirect.Overflow || cDirect.Overflow || !goDirect.FrontierLexerElectionsAvailable || goDirect.PerVersionLexRequestsAvailable || cDirect.FrontierLexerElectionsAvailable || !cDirect.PerVersionLexRequestsAvailable {
 		t.Fatalf("invalid paired board-direct counters: go=%+v C=%+v", goDirect, cDirect)
 	}
 	metrics := make([]workCountBoardMetric, 0, len(contract.Metrics))
@@ -693,11 +698,11 @@ func workCountBuildBoardMetrics(t *testing.T, contract workCountBoardContract, g
 		}
 		switch definition.ID {
 		case "lexer_elections":
-			missing(workCountPresent(definition.GoUnit, goCounts.LexerFrontDoorCallsProxy), workCountUnavailable(definition.StaticCUnit, "locked C has only per-version ts_parser__lex calls at lib/src/parser.c:ts_parser__lex; add one direct counter at a precisely specified runnable-frontier election boundary"), workCountBoardComparable, "C frontier election hook absent")
+			missing(workCountPresent(definition.GoUnit, goDirect.FrontierLexerElections), workCountUnavailable(definition.StaticCUnit, "locked C exposes per-version ts_parser__lex cache misses, not a runnable union-frontier election"), workCountBoardIncomparable, "C per-version lex request cannot satisfy the Go union-frontier contract")
 		case "lexer_calls":
-			missing(workCountUnavailable(definition.GoUnit, "Go has only frontier-election hook workCountRecordLexerFrontDoor at parser_recover_c.go; add a direct counter at every production lexer invocation"), workCountPresent(definition.StaticCUnit, cCounts.LexerFrontDoorCallsProxy), workCountBoardComparable, "Go per-invocation lexer hook absent")
+			present(goDirect.RawMainLexerInvocations, cDirect.RawMainLexerInvocations, workCountBoardComparable, "direct main-DFA callable-entry seam; comparability is scoped to the clean locked quartet")
 		case "resolved_action_cells_examined":
-			present(goDirect.ResolvedActionCellsExamined, cDirect.ResolvedActionCellsExamined, workCountBoardComparable, "")
+			present(goDirect.ResolvedActionCellsExamined, cDirect.ResolvedActionCellsExamined, workCountBoardComparable, "direct dispatch seam; comparability is scoped to the clean locked quartet")
 		case "action_table_lookups_proxy":
 			present(goCounts.TableLookupsProxy, cCounts.TableLookupsProxy, workCountBoardIncomparable, "implementation-specific lookup front doors")
 		case "action_entries_examined_proxy":
@@ -757,7 +762,7 @@ func workCountBuildParserCoreBoardMetrics(t *testing.T, contract workCountBoardC
 	if err := workCountValidateParserCoreCounterEnvelope(candidate); err != nil {
 		t.Fatalf("invalid parser-core counter envelope: %v", err)
 	}
-	if cDirect.Schema != "gts-work-count-board-direct/v2" || cDirect.Overflow {
+	if candidate.BoardDirect.Schema != "gts-work-count-board-direct/v3" || cDirect.Schema != candidate.BoardDirect.Schema || candidate.BoardDirect.Overflow || cDirect.Overflow || !candidate.BoardDirect.FrontierLexerElectionsAvailable || candidate.BoardDirect.PerVersionLexRequestsAvailable || cDirect.FrontierLexerElectionsAvailable || !cDirect.PerVersionLexRequestsAvailable {
 		t.Fatalf("invalid parser-core/static-C board counters: candidate=%+v C=%+v", candidate.CoreWork, cDirect)
 	}
 	if cCounts.LeafConstructionsProxy < cDirect.RawSelectedInternalLeaves || cCounts.ParentConstructionsProxy < cDirect.RawSelectedInternalParents {
@@ -776,11 +781,11 @@ func workCountBuildParserCoreBoardMetrics(t *testing.T, contract workCountBoardC
 		}
 		switch definition.ID {
 		case "lexer_elections":
-			missing(workCountPresent(definition.GoUnit, candidate.SchedulerWork.Elections), workCountUnavailable(definition.StaticCUnit, "locked C exposes per-version lexer calls, not one runnable-frontier election"), workCountBoardComparable, "C frontier election hook absent")
+			missing(workCountPresent(definition.GoUnit, candidate.BoardDirect.FrontierLexerElections), workCountUnavailable(definition.StaticCUnit, "locked C exposes per-version ts_parser__lex cache misses, not a runnable union-frontier election"), workCountBoardIncomparable, "C per-version lex request cannot satisfy the Go union-frontier contract")
 		case "lexer_calls":
-			missing(candidateUnavailable("the authenticated runner records elections but not individual DFA/scanner invocations"), workCountPresent(definition.StaticCUnit, cCounts.LexerFrontDoorCallsProxy), workCountBoardComparable, "parser-core per-invocation lexer hook absent")
+			present(candidate.BoardDirect.RawMainLexerInvocations, cDirect.RawMainLexerInvocations, workCountBoardComparable, "direct main-DFA callable-entry seam; comparability is scoped to the clean locked quartet")
 		case "resolved_action_cells_examined":
-			missing(candidateUnavailable("scheduler ActionLookups is a ClassifyBoundary proxy and has not been proven to share C's per-version ts_parser__advance cell boundary"), workCountPresent(definition.StaticCUnit, cDirect.ResolvedActionCellsExamined), workCountBoardComparable, "candidate direct resolved-cell hook absent")
+			present(candidate.BoardDirect.ResolvedActionCellsExamined, cDirect.ResolvedActionCellsExamined, workCountBoardComparable, "direct dispatch seam; comparability is scoped to the clean locked quartet")
 		case "action_table_lookups_proxy":
 			present(candidate.SchedulerWork.ActionLookups, cCounts.TableLookupsProxy, workCountBoardIncomparable, "implementation-specific compact ClassifyBoundary versus C table lookup front doors")
 		case "action_entries_examined_proxy":
@@ -995,7 +1000,7 @@ func workCountRunUntaggedAssemblyProof(t *testing.T, sourceRoot, artifact string
 }
 
 func TestWorkCountBoardMetricStatusAndRatios(t *testing.T) {
-	contract := workCountLoadBoardContract(t, filepath.Join("work_count", "board_contract_v2.json"))
+	contract := workCountLoadBoardContract(t, filepath.Join("work_count", "board_contract_v3.json"))
 	counts := workCountCounters{Contract: workCountContract, workCountCounterValues: workCountCounterValues{
 		Shifts: 8, Reductions: 5, AcceptActions: 1, ReductionPopRequests: 5,
 		EmittedPopPaths: 6, EmittedPopPayloads: 9, SelectedNodes: 3, SelectedParentNodes: 1, SelectedLeafNodes: 2,
@@ -1004,13 +1009,19 @@ func TestWorkCountBoardMetricStatusAndRatios(t *testing.T) {
 		GraphLinkAdditionsProxy: 11, LeafConstructionsProxy: 6, ParentConstructionsProxy: 4,
 	}}
 	direct := workCountBoardDirectCounts{
-		Schema: "gts-work-count-board-direct/v2", ResolvedActionCellsExamined: 12,
+		Schema: "gts-work-count-board-direct/v3", FrontierLexerElectionsAvailable: true,
+		FrontierLexerElections: 7, RawMainLexerInvocations: 7, ResolvedActionCellsExamined: 12,
 		RawActionEntriesBeyondFirst: 4, ConflictActionArmsAdmitted: 4, CausalConflictForks: 1,
 		PredecessorLinkUnionAttempts: 3, PredecessorLinkUnionDuplicateNoop: 1,
 		PredecessorLinkUnionAlternateAppended: 2, AlternatePredecessorLinksAppended: 2,
 		RawSelectedInternalNodes: 3, RawSelectedInternalParents: 1, RawSelectedInternalLeaves: 2,
 	}
-	metrics := workCountBuildBoardMetrics(t, contract, counts, counts, direct, direct)
+	cDirect := direct
+	cDirect.FrontierLexerElectionsAvailable = false
+	cDirect.FrontierLexerElections = 0
+	cDirect.PerVersionLexRequestsAvailable = true
+	cDirect.PerVersionLexRequests = 9
+	metrics := workCountBuildBoardMetrics(t, contract, counts, counts, direct, cDirect)
 	byID := make(map[string]workCountBoardMetric, len(metrics))
 	for _, metric := range metrics {
 		byID[metric.ID] = metric
@@ -1030,7 +1041,19 @@ func TestWorkCountBoardMetricStatusAndRatios(t *testing.T) {
 	if metric := byID["raw_action_entries_beyond_first"]; metric.RatioStatus != workCountBoardRatioComputed || metric.GoOverC == nil || *metric.GoOverC != 1 {
 		t.Fatalf("conflict-alternative ratio drifted: %+v", metric)
 	}
+	for _, id := range []string{"lexer_calls", "resolved_action_cells_examined"} {
+		if metric := byID[id]; metric.Go.State != workCountBoardStatePresent || metric.StaticC.State != workCountBoardStatePresent || metric.Comparison != workCountBoardComparable || metric.RatioStatus != workCountBoardRatioComputed || metric.GoOverC == nil || *metric.GoOverC != 1 {
+			t.Fatalf("paired direct metric %q drifted: %+v", id, metric)
+		}
+	}
+	if metric := byID["lexer_elections"]; metric.Go.State != workCountBoardStatePresent || metric.StaticC.State != workCountBoardStateUnavailable || metric.Comparison != workCountBoardIncomparable || metric.RatioStatus != workCountBoardRatioUnavailable || metric.GoOverC != nil {
+		t.Fatalf("C per-version lex requests masqueraded as union-frontier elections: %+v", metric)
+	}
 	candidate := workCountBoardParserCoreChildResult{
+		BoardDirect: workCountBoardDirectCounts{
+			Schema: "gts-work-count-board-direct/v3", FrontierLexerElectionsAvailable: true, FrontierLexerElections: 7,
+			RawMainLexerInvocations: 7, ResolvedActionCellsExamined: 12,
+		},
 		CoreWork: workCountBoardParserCoreWork{
 			Shifts: 8, Reductions: 5, ReductionPopRequests: 5,
 			EmittedPopPaths: 6, EmittedPopPayloads: 9,
@@ -1049,15 +1072,23 @@ func TestWorkCountBoardMetricStatusAndRatios(t *testing.T) {
 	if err := workCountValidateParserCoreCounterEnvelope(overflowCandidate); err == nil || !strings.Contains(err.Error(), "scheduler=true") {
 		t.Fatalf("scheduler saturation did not fail closed: %v", err)
 	}
-	candidateMetrics := workCountBuildParserCoreBoardMetrics(t, contract, candidate, counts, direct)
+	candidateMetrics := workCountBuildParserCoreBoardMetrics(t, contract, candidate, counts, cDirect)
 	candidateByID := make(map[string]workCountBoardMetric, len(candidateMetrics))
 	for _, metric := range candidateMetrics {
 		candidateByID[metric.ID] = metric
 	}
-	for _, id := range []string{"resolved_action_cells_examined", "raw_action_entries_beyond_first"} {
+	for _, id := range []string{"raw_action_entries_beyond_first"} {
 		if metric := candidateByID[id]; metric.Go.State != workCountBoardStateUnavailable || metric.RatioStatus != workCountBoardRatioUnavailable {
 			t.Fatalf("parser-core scheduler proxy must not masquerade as direct %q: %+v", id, metric)
 		}
+	}
+	for _, id := range []string{"lexer_calls", "resolved_action_cells_examined"} {
+		if metric := candidateByID[id]; metric.Go.State != workCountBoardStatePresent || metric.StaticC.State != workCountBoardStatePresent || metric.Comparison != workCountBoardComparable || metric.RatioStatus != workCountBoardRatioComputed || metric.GoOverC == nil || *metric.GoOverC != 1 {
+			t.Fatalf("parser-core paired direct metric %q drifted: %+v", id, metric)
+		}
+	}
+	if metric := candidateByID["lexer_elections"]; metric.Go.State != workCountBoardStatePresent || metric.StaticC.State != workCountBoardStateUnavailable || metric.Comparison != workCountBoardIncomparable || metric.RatioStatus != workCountBoardRatioUnavailable || metric.GoOverC != nil {
+		t.Fatalf("parser-core C per-version lex requests masqueraded as union-frontier elections: %+v", metric)
 	}
 	if metric := candidateByID["action_table_lookups_proxy"]; metric.Go.Value == nil || *metric.Go.Value != candidate.SchedulerWork.ActionLookups || metric.Comparison != workCountBoardIncomparable || metric.RatioStatus != workCountBoardRatioIncomparable {
 		t.Fatalf("parser-core action lookup proxy classification drifted: %+v", metric)
@@ -1111,6 +1142,37 @@ func TestWorkCountBoardMetricStatusAndRatios(t *testing.T) {
 	if highWorkAuditStatus != workCountBoardWorkAuditFindings || !strings.Contains(strings.Join(highWorkAuditFindings, "\n"), "resolved_action_cells_examined: Go/C ratio 1.250000 outside [0.8,1.2]") {
 		t.Fatalf("high-ratio work-audit finding missing: status=%q findings=%v", highWorkAuditStatus, highWorkAuditFindings)
 	}
+}
+
+func TestWorkCountPerVersionCLexRequestCannotSatisfyUnionFrontierContract(t *testing.T) {
+	contract := workCountLoadBoardContract(t, filepath.Join("work_count", "board_contract_v3.json"))
+	counts := workCountCounters{Contract: workCountContract, workCountCounterValues: workCountCounterValues{
+		SelectedNodes: 1, SelectedLeafNodes: 1,
+	}}
+	goDirect := workCountBoardDirectCounts{
+		Schema: "gts-work-count-board-direct/v3", FrontierLexerElectionsAvailable: true,
+		FrontierLexerElections: 1, RawMainLexerInvocations: 1, ResolvedActionCellsExamined: 1,
+	}
+	cDirect := workCountBoardDirectCounts{
+		Schema: "gts-work-count-board-direct/v3", PerVersionLexRequestsAvailable: true,
+		PerVersionLexRequests: 2, RawMainLexerInvocations: 1, ResolvedActionCellsExamined: 1,
+	}
+	assertUnavailable := func(label string, metrics []workCountBoardMetric) {
+		t.Helper()
+		for _, metric := range metrics {
+			if metric.ID != "lexer_elections" {
+				continue
+			}
+			if metric.Go.Value == nil || *metric.Go.Value != 1 || metric.StaticC.State != workCountBoardStateUnavailable || metric.Comparison != workCountBoardIncomparable || metric.RatioStatus != workCountBoardRatioUnavailable || metric.GoOverC != nil {
+				t.Fatalf("%s mapped two per-version C lex requests onto one union-frontier election: %+v", label, metric)
+			}
+			return
+		}
+		t.Fatalf("%s lacks lexer_elections metric", label)
+	}
+	assertUnavailable("production", workCountBuildBoardMetrics(t, contract, counts, counts, goDirect, cDirect))
+	candidate := workCountBoardParserCoreChildResult{BoardDirect: goDirect}
+	assertUnavailable("parsercore", workCountBuildParserCoreBoardMetrics(t, contract, candidate, counts, cDirect))
 }
 
 func TestWorkCountParserCoreChildSchedulerOverflowProtocol(t *testing.T) {

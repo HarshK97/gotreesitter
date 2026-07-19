@@ -29,8 +29,8 @@ const (
 	workCountReceiptEnv                = "GTS_WORK_COUNT_RECEIPT"
 	workCountFixtureID                 = "query_compile"
 	workCountGoAdmissionChildSchema    = "gts-work-count-go-child/v3"
-	workCountTaggedGoChildSchema       = "gts-work-count-go-child/v5"
-	workCountCChildSchema              = "gts-work-count-c-child/v5"
+	workCountTaggedGoChildSchema       = "gts-work-count-go-child/v6"
+	workCountCChildSchema              = "gts-work-count-c-child/v6"
 	workCountContract                  = "gts-work-count/v2"
 	workCountReceiptSchema             = "gts-work-count-receipt/v4"
 	workCountTimeout                   = 2 * time.Minute
@@ -364,6 +364,11 @@ type workCountTaggedChildResult struct {
 
 type workCountBoardDirectCounts struct {
 	Schema                                 string `json:"schema"`
+	FrontierLexerElectionsAvailable        bool   `json:"frontier_lexer_elections_available"`
+	FrontierLexerElections                 uint64 `json:"frontier_lexer_elections"`
+	PerVersionLexRequestsAvailable         bool   `json:"per_version_lex_requests_available"`
+	PerVersionLexRequests                  uint64 `json:"per_version_lex_requests"`
+	RawMainLexerInvocations                uint64 `json:"raw_main_lexer_invocations"`
 	ResolvedActionCellsExamined            uint64 `json:"resolved_action_cells_examined"`
 	RawActionEntriesBeyondFirst            uint64 `json:"raw_action_entries_beyond_first"`
 	ConflictActionArmsAdmitted             uint64 `json:"conflict_action_arms_admitted"`
@@ -1306,7 +1311,9 @@ func workCountValidateBoardDirectObject(t *testing.T, data json.RawMessage) {
 		t.Fatal(err)
 	}
 	workCountRequireKeys(t, "board direct", raw, []string{
-		"schema", "resolved_action_cells_examined", "raw_action_entries_beyond_first",
+		"schema", "frontier_lexer_elections_available", "frontier_lexer_elections",
+		"per_version_lex_requests_available", "per_version_lex_requests", "raw_main_lexer_invocations",
+		"resolved_action_cells_examined", "raw_action_entries_beyond_first",
 		"conflict_action_arms_admitted", "causal_conflict_forks",
 		"predecessor_link_union_attempts", "predecessor_link_union_duplicate_noop",
 		"predecessor_link_union_precedence_replaced", "predecessor_link_union_recursive_changed",
@@ -1316,8 +1323,11 @@ func workCountValidateBoardDirectObject(t *testing.T, data json.RawMessage) {
 	})
 	var direct workCountBoardDirectCounts
 	workCountDecodeExact(t, data, &direct)
-	if direct.Schema != "gts-work-count-board-direct/v2" || direct.Overflow {
+	if direct.Schema != "gts-work-count-board-direct/v3" || direct.Overflow {
 		t.Fatalf("invalid board direct counts: %+v", direct)
+	}
+	if direct.FrontierLexerElectionsAvailable == direct.PerVersionLexRequestsAvailable || (!direct.FrontierLexerElectionsAvailable && direct.FrontierLexerElections != 0) || (!direct.PerVersionLexRequestsAvailable && direct.PerVersionLexRequests != 0) {
+		t.Fatalf("invalid engine-specific lexer request availability: %+v", direct)
 	}
 	unionOutcomes := direct.PredecessorLinkUnionDuplicateNoop +
 		direct.PredecessorLinkUnionPrecedenceReplaced +

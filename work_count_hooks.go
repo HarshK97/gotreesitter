@@ -15,6 +15,8 @@ func workCountResolveParseAttempt(workCountAttemptToken, int, bool, int, int, in
 func workCountBeginFinalizeParseAttempt(workCountAttemptToken)                          {}
 func workCountEndFinalizeParseAttempt(workCountAttemptToken, ParseStopReason, *Tree)    {}
 func workCountRecordLexerFrontDoor()                                                    {}
+func workCountRecordFrontierLexerElection()                                             {}
+func workCountRecordRawMainLexerInvocation()                                            {}
 func workCountRecordTableLookup()                                                       {}
 func workCountRecordResolvedActionCell(int)                                             {}
 func workCountRecordAlternatePredecessorLinkAppended()                                  {}

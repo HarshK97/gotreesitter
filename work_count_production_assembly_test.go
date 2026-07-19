@@ -20,6 +20,8 @@ const (
 	popPayloadCensusMarker                 = "work-count-assembly: payload-census seam"
 	convergenceIterationMarker             = "work-count-assembly: convergence iteration seam"
 	resolvedActionCellMarker               = "work-count-assembly: resolved action-cell seam"
+	unionFrontierElectionMarker            = "work-count-assembly: union-frontier election seam"
+	rawMainLexerInvocationMarker           = "work-count-assembly: raw main-lexer invocation seam"
 	convergenceFinalExpandMarker           = "work-count-assembly: convergence final-expand seam"
 	convergenceGSSMarker                   = "work-count-assembly: convergence GSS seam"
 	gssMutationSetPrimaryMarker            = "work-count-assembly: GSS mutation set-primary seam"
@@ -76,6 +78,12 @@ func TestWorkCountProductionAssemblyHasNoDiagnosticScaffolding(t *testing.T) {
 	parseInternalAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.parseInternal$`, testBinary)
 	assertNoAssemblyAtMarker(t, parseInternalAssembly, "parser.go", resolvedActionCellMarker)
 	assertNoDiagnosticAssembly(t, parseInternalAssembly)
+	lexerScanAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Lexer\)\.scan$`, testBinary)
+	assertNoAssemblyAtMarker(t, lexerScanAssembly, "lexer.go", rawMainLexerInvocationMarker)
+	assertNoDiagnosticAssembly(t, lexerScanAssembly)
+	recoverAcquireAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.cRecoverAcquireToken$`, testBinary)
+	assertNoAssemblyAtMarker(t, recoverAcquireAssembly, "parser_recover_c.go", unionFrontierElectionMarker)
+	assertNoDiagnosticAssembly(t, recoverAcquireAssembly)
 	assertNoAssemblyAtMarker(t, closures, "parser.go", semanticPhaseActionCellMarker)
 	assertNoAssemblyAtMarker(t, closures, "parser.go", semanticPhaseExtraShiftExecutionMarker)
 	eofAdvanceAssembly := runGoTool(t, "objdump", "-s", `github.com/odvcencio/gotreesitter\.\(\*Parser\)\.tryAdvanceEOFOnSingleStack`, testBinary)

@@ -638,6 +638,8 @@ func (p *Parser) errorCostCompetitionEnabled() bool {
 // source afterwards (SkipToByte) once normal parsing resumes.
 func (p *Parser) cRecoverAcquireToken(ts TokenSource, stacks []glrStack, source []byte) Token {
 	workCountRecordLexerFrontDoor()
+	// work-count-assembly: union-frontier election seam
+	workCountRecordFrontierLexerElection()
 	if !p.errorCostCompetitionEnabled() {
 		return ts.Next()
 	}

@@ -24,6 +24,11 @@ type DiagnosticWorkCount struct {
 // inside, the immutable gts-work-count/v2 counter object.
 type DiagnosticWorkCountBoardDirect struct {
 	Schema                                 string `json:"schema"`
+	FrontierLexerElectionsAvailable        bool   `json:"frontier_lexer_elections_available"`
+	FrontierLexerElections                 uint64 `json:"frontier_lexer_elections"`
+	PerVersionLexRequestsAvailable         bool   `json:"per_version_lex_requests_available"`
+	PerVersionLexRequests                  uint64 `json:"per_version_lex_requests"`
+	RawMainLexerInvocations                uint64 `json:"raw_main_lexer_invocations"`
 	ResolvedActionCellsExamined            uint64 `json:"resolved_action_cells_examined"`
 	RawActionEntriesBeyondFirst            uint64 `json:"raw_action_entries_beyond_first"`
 	ConflictActionArmsAdmitted             uint64 `json:"conflict_action_arms_admitted"`
@@ -121,7 +126,9 @@ func BeginDiagnosticWorkCount() {
 	if activeDiagnosticWorkCount != nil {
 		panic("gotreesitter: diagnostic work-count parse already active")
 	}
-	activeDiagnosticWorkCount = &DiagnosticWorkCount{Contract: DiagnosticWorkCountContract, boardDirect: DiagnosticWorkCountBoardDirect{Schema: "gts-work-count-board-direct/v2"}}
+	activeDiagnosticWorkCount = &DiagnosticWorkCount{Contract: DiagnosticWorkCountContract, boardDirect: DiagnosticWorkCountBoardDirect{
+		Schema: "gts-work-count-board-direct/v3", FrontierLexerElectionsAvailable: true,
+	}}
 	workCountBeginConvergence(activeDiagnosticWorkCount)
 	pendingDiagnosticWorkCountAttempt = struct {
 		logicalRung    string
@@ -343,6 +350,26 @@ func (c *DiagnosticWorkCount) AddDiagnosticSelectedNode(parent bool) {
 func workCountRecordLexerFrontDoor() {
 	if c := activeDiagnosticWorkCount; c != nil {
 		workCountSaturatingAdd(&c.LexerFrontDoorCallsProxy, 1)
+	}
+}
+
+// workCountRecordFrontierLexerElection records one production parser request
+// for a fresh lookahead after its current runnable frontier is established.
+// Reusing or re-dispatching an already-held lookahead is not an election.
+func workCountRecordFrontierLexerElection() {
+	if c := activeDiagnosticWorkCount; c != nil {
+		diagnosticWorkCountSaturatingAdd(c, &c.boardDirect.FrontierLexerElections, 1)
+		c.boardDirect.Overflow = c.Overflow
+	}
+}
+
+// workCountRecordRawMainLexerInvocation records one raw scan of the grammar's
+// main DFA with one lex state. External-scanner and keyword-only calls are
+// deliberately outside this counter.
+func workCountRecordRawMainLexerInvocation() {
+	if c := activeDiagnosticWorkCount; c != nil {
+		diagnosticWorkCountSaturatingAdd(c, &c.boardDirect.RawMainLexerInvocations, 1)
+		c.boardDirect.Overflow = c.Overflow
 	}
 }
 
