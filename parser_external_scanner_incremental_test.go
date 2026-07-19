@@ -6,6 +6,7 @@ import (
 
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
 )
 
 func TestExternalScannerIncrementalReusePolicy(t *testing.T) {
@@ -108,67 +109,170 @@ func TestExternalScannerIncrementalReusePolicy(t *testing.T) {
 	}
 }
 
-func TestPythonSameLengthTokenChangeDeclinesScannerReuse(t *testing.T) {
-	source := []byte("value = 1\n")
-	next := []byte("value = x\n")
-	offset := bytes.IndexByte(source, '1')
-	if offset < 0 || next[offset] != 'x' {
-		t.Fatal("locked Python token-change witness is malformed")
+type pythonDerivedIncrementalCase struct {
+	name   string
+	lang   func() *gotreesitter.Language
+	source []byte
+	marker byte
+}
+
+func pythonDerivedIncrementalCases() []pythonDerivedIncrementalCase {
+	return []pythonDerivedIncrementalCase{
+		{name: "python", lang: grammars.PythonLanguage, source: []byte("value = 1\n"), marker: '1'},
+		{name: "mojo", lang: grammars.MojoLanguage, source: []byte("fn main():\n    print(1)\n"), marker: '1'},
+		{name: "starlark", lang: grammars.StarlarkLanguage, source: []byte("value = 1\n"), marker: '1'},
 	}
+}
 
-	for _, tc := range []struct {
-		name           string
-		includedRanges bool
-	}{
-		{name: "direct"},
-		{name: "included_range", includedRanges: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			lang := grammars.PythonLanguage()
-			parser := gotreesitter.NewParser(lang)
-			if tc.includedRanges {
-				parser.SetIncludedRanges([]gotreesitter.Range{{
-					StartByte: 0,
-					EndByte:   uint32(len(source)),
-					EndPoint:  pointForOffset(source, len(source)),
-				}})
-			}
-			oldTree, err := parser.Parse(source)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer oldTree.Release()
-			oldTree.Edit(gotreesitter.InputEdit{
-				StartByte:   uint32(offset),
-				OldEndByte:  uint32(offset + 1),
-				NewEndByte:  uint32(offset + 1),
-				StartPoint:  pointForOffset(source, offset),
-				OldEndPoint: pointForOffset(source, offset+1),
-				NewEndPoint: pointForOffset(next, offset+1),
-			})
+func requireIncrementalDeepTreeMatchesFresh(t *testing.T, incremental, fresh *gotreesitter.Tree, lang *gotreesitter.Language) {
+	t.Helper()
+	incrementalInspection, err := benchfixtures.InspectGoTree(incremental.RootNode(), lang)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshInspection, err := benchfixtures.InspectGoTree(fresh.RootNode(), lang)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if incrementalInspection.SHA256 != freshInspection.SHA256 {
+		t.Fatalf("incremental/fresh deep tree mismatch: incremental=%s fresh=%s", incrementalInspection.SHA256, freshInspection.SHA256)
+	}
+}
 
-			incremental, profile, err := parser.ParseIncrementalProfiled(next, oldTree)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer incremental.Release()
-			if !profile.ReuseUnsupported || profile.ReuseUnsupportedReason != "external_scanner_unsupported" {
-				t.Fatalf("same-length token change did not preserve Python scanner refusal: %+v", profile)
-			}
-			if profile.OldTreeReuseRoute || profile.ReusedSubtrees != 0 || profile.ReusedBytes != 0 {
-				t.Fatalf("same-length token change reused old Python syntax: %+v", profile)
-			}
-			if profile.TokensConsumed == 0 || profile.NewNodesAllocated == 0 {
-				t.Fatalf("same-length token change did not execute a full parse: %+v", profile)
-			}
+func TestPythonDerivedSameLengthTokenChangeDeclinesScannerReuse(t *testing.T) {
+	for _, languageCase := range pythonDerivedIncrementalCases() {
+		languageCase := languageCase
+		t.Run(languageCase.name, func(t *testing.T) {
+			for _, route := range []struct {
+				name           string
+				includedRanges bool
+			}{
+				{name: "direct"},
+				{name: "included_range", includedRanges: true},
+			} {
+				route := route
+				t.Run(route.name, func(t *testing.T) {
+					source := languageCase.source
+					next := append([]byte(nil), source...)
+					offset := bytes.IndexByte(source, languageCase.marker)
+					if offset < 0 {
+						t.Fatalf("locked %s token-change witness is malformed", languageCase.name)
+					}
+					next[offset] = 'x'
 
-			fresh, err := parser.Parse(next)
-			if err != nil {
-				t.Fatal(err)
+					lang := languageCase.lang()
+					parser := gotreesitter.NewParser(lang)
+					if route.includedRanges {
+						parser.SetIncludedRanges([]gotreesitter.Range{{
+							StartByte: 0,
+							EndByte:   uint32(len(source)),
+							EndPoint:  pointForOffset(source, len(source)),
+						}})
+					}
+					oldTree, err := parser.Parse(source)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer oldTree.Release()
+					oldTree.Edit(gotreesitter.InputEdit{
+						StartByte:   uint32(offset),
+						OldEndByte:  uint32(offset + 1),
+						NewEndByte:  uint32(offset + 1),
+						StartPoint:  pointForOffset(source, offset),
+						OldEndPoint: pointForOffset(source, offset+1),
+						NewEndPoint: pointForOffset(next, offset+1),
+					})
+
+					incremental, profile, err := parser.ParseIncrementalProfiled(next, oldTree)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer incremental.Release()
+					if !profile.ReuseUnsupported || profile.ReuseUnsupportedReason != "external_scanner_unsupported" {
+						t.Fatalf("same-length token change did not preserve %s scanner refusal: %+v", languageCase.name, profile)
+					}
+					if profile.OldTreeReuseRoute || profile.ReusedSubtrees != 0 || profile.ReusedBytes != 0 {
+						t.Fatalf("same-length token change reused old %s syntax: %+v", languageCase.name, profile)
+					}
+					if profile.TokensConsumed == 0 || profile.NewNodesAllocated == 0 {
+						t.Fatalf("same-length token change did not execute a full parse: %+v", profile)
+					}
+
+					fresh, err := parser.Parse(next)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer fresh.Release()
+					requireIncrementalDeepTreeMatchesFresh(t, incremental, fresh, lang)
+				})
 			}
-			defer fresh.Release()
-			if got, want := incremental.RootNode().SExpr(lang), fresh.RootNode().SExpr(lang); got != want {
-				t.Fatalf("Python scanner fallback differs from fresh parse\n got: %s\nwant: %s", got, want)
+		})
+	}
+}
+
+func TestPythonDerivedTokenInvariantLeafReusePrecedesScannerFallback(t *testing.T) {
+	for _, languageCase := range pythonDerivedIncrementalCases() {
+		languageCase := languageCase
+		t.Run(languageCase.name, func(t *testing.T) {
+			for _, route := range []struct {
+				name           string
+				includedRanges bool
+			}{
+				{name: "direct"},
+				{name: "included_range", includedRanges: true},
+			} {
+				route := route
+				t.Run(route.name, func(t *testing.T) {
+					source := languageCase.source
+					next := append([]byte(nil), source...)
+					offset := bytes.IndexByte(source, languageCase.marker)
+					if offset < 0 {
+						t.Fatalf("locked %s token-invariant witness is malformed", languageCase.name)
+					}
+					next[offset] = '2'
+
+					lang := languageCase.lang()
+					parser := gotreesitter.NewParser(lang)
+					if route.includedRanges {
+						parser.SetIncludedRanges([]gotreesitter.Range{{
+							StartByte: 0,
+							EndByte:   uint32(len(source)),
+							EndPoint:  pointForOffset(source, len(source)),
+						}})
+					}
+					oldTree, err := parser.Parse(source)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer oldTree.Release()
+					oldTree.Edit(gotreesitter.InputEdit{
+						StartByte:   uint32(offset),
+						OldEndByte:  uint32(offset + 1),
+						NewEndByte:  uint32(offset + 1),
+						StartPoint:  pointForOffset(source, offset),
+						OldEndPoint: pointForOffset(source, offset+1),
+						NewEndPoint: pointForOffset(next, offset+1),
+					})
+
+					incremental, profile, err := parser.ParseIncrementalProfiled(next, oldTree)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer incremental.Release()
+					if profile.ReuseUnsupported {
+						t.Fatalf("token-invariant edit fell through to %s scanner fallback: %+v", languageCase.name, profile)
+					}
+					if profile.ReparseNanos != 0 || profile.ReusedSubtrees == 0 {
+						t.Fatalf("token-invariant edit did not reuse the old %s tree: %+v", languageCase.name, profile)
+					}
+
+					fresh, err := parser.Parse(next)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer fresh.Release()
+					requireIncrementalDeepTreeMatchesFresh(t, incremental, fresh, lang)
+				})
 			}
 		})
 	}

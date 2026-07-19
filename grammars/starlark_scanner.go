@@ -51,7 +51,11 @@ func (StarlarkExternalScanner) Deserialize(payload any, buf []byte) {
 	PythonExternalScanner{}.Deserialize(payload, buf)
 }
 
-func (StarlarkExternalScanner) SupportsIncrementalReuse() bool { return true }
+// SupportsIncrementalReuse remains disabled with Python's scanner: Starlark
+// shares the same serialized indentation state and checkpoint restoration
+// semantics. Re-enable only after Starlark's DEDENT behavior is independently
+// certified.
+func (StarlarkExternalScanner) SupportsIncrementalReuse() bool { return false }
 
 func (StarlarkExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	s := payload.(*pythonScannerState)
