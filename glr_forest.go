@@ -397,10 +397,13 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 // TestForestCorpusParity (which compares all nodes, byte ranges, points,
 // named/extra/missing bits, child counts, and fields — named-only gates hid
 // systematic span bugs).
-// Historical small-corpus speedups are not sufficient for admission. Current
-// locked full-corpus evidence must show both exact direct-C parity and a net
-// routed wall-time win. GraphQL is clean against production here too, but stays
-// out until the production tree is C-oracle-clean on the ring matrix. The forest
+// Historical small-corpus speedups are not sufficient for normal admission.
+// Current locked full-corpus evidence must show both exact direct-C parity and a
+// net routed wall-time win. The explicitly documented exceptions below are
+// retained C-correctness lifts where production is oracle-wrong (Nix and
+// gitattributes) and a provisional narrow row pending a broader corpus (JSON5).
+// GraphQL is clean against production here too, but stays out until the
+// production tree is C-oracle-clean on the ring matrix. The forest
 // has no error recovery, so tryForestFastPath falls back to production on any
 // decline (failure / error / truncation); that fallback means a language can
 // never regress the cases it declines, but does NOT catch a clean-but-different
