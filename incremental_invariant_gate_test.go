@@ -167,8 +167,12 @@ func TestIncrementalInvariantGate(t *testing.T) {
 		ok := matched[key]
 		matchedMu.Unlock()
 		if !ok {
-			t.Errorf("STALE ALLOWLIST ENTRY (ratchet failure): %s | %s | %s did not reproduce anywhere in this sweep -- "+
-				"remove it from testdata/incremental_allowlist.json (recorded note: %q)",
+			t.Errorf("STALE ALLOWLIST ENTRY (ratchet failure): %s | %s | %s did not reproduce anywhere in this sweep. "+
+				"Before removing it from testdata/incremental_allowlist.json, confirm WHY it stopped reproducing: "+
+				"(a) the incremental bug was genuinely FIXED (remove it), or (b) the fresh-clean observation window "+
+				"CLOSED -- a grammar/parser change made the fresh parse at those sites contain ERROR/MISSING so they "+
+				"fell out of this gate's scope while the bug may persist (do NOT remove; investigate). "+
+				"The gate cannot distinguish these; a blind removal can silently retire a still-live bug. (recorded note: %q)",
 				e.Language, e.EditClass, e.Signature, e.Note)
 		}
 	}
@@ -409,34 +413,17 @@ func incrGateFirstDivergence(lang *gts.Language, fresh, incr *gts.Node, ancestor
 	return nil
 }
 
-// incrGateChildCountBucket collapses a raw childCount delta into the
-// allowlist-key component. Small deltas (|delta| <= 5) are kept exact,
-// matching how localized bugs manifest (e.g. one extra/missing statement).
-// Larger deltas were observed on files where a single edit cascades into
-// whole-subtree re-derivation (a much more severe class of bug); there the
-// *exact* magnitude is incidental to the edit position and source shape
-// downstream of it, not a distinct bug signature per magnitude, so it
-// collapses to a signed bucket instead of exploding the allowlist into one
-// entry per observed delta.
-func incrGateChildCountBucket(detail string) string {
-	var delta int
-	fmt.Sscanf(detail, "%d", &delta)
-	if delta < 0 {
-		delta = -delta
-	}
-	if delta <= 5 {
-		return detail
-	}
-	if strings.HasPrefix(detail, "-") {
-		return "(large-)"
-	}
-	return "(large+)"
-}
-
 func (d *incrGateDivergence) signature() string {
 	switch d.kind {
 	case "childCount":
-		return fmt.Sprintf("%s:childCount%s", d.nodeType, incrGateChildCountBucket(d.detail))
+		// EXACT signed delta, never bucketed. Bucketing large deltas into
+		// "(large-)"/"(large+)" was removed deliberately: a coarse bucket lets
+		// a live allowlist entry blanket every |delta|>5 divergence in its
+		// (language, editClass) cell, so a brand-new catastrophic corruption
+		// (e.g. delta -500) would be silently absorbed by an entry recorded
+		// for a delta -16 bug. With exact deltas, a worse magnitude is a NEW,
+		// unlisted signature and the gate hard-fails on it.
+		return fmt.Sprintf("%s:childCount%s", d.nodeType, d.detail)
 	case "type":
 		return fmt.Sprintf("%s:type(%s)", d.nodeType, d.detail)
 	case "span":
