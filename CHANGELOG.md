@@ -9,6 +9,14 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Keep compact-scheduler dispatch and reduction scratch cleanup panic-safe in
+  small wrappers so their large action bodies no longer register three runtime
+  defers per reduction-bearing pass. On the pinned quiet host, the authenticated
+  four-fixture `BenchmarkDiagnosticParserCoreCanonicalTotal` lane—compact
+  canonical parsing plus public-node materialization—improves by 4.19% by
+  equal-fixture geomean, with every fixture 3.73-5.28% faster, unchanged
+  allocations, exact work and deep-tree digests, and zero fallback. The route
+  remains build-tagged and diagnostic-only.
 - Return BibTeX, CSS, Yuck, Bash, SCSS, C#, Agda, Ledger, Authzed, Make, and
   TLA+ automatic forest routing to explicit-only experiments after an
   authenticated full-manifest audit. The exact BibTeX, CSS, SCSS, and Yuck
