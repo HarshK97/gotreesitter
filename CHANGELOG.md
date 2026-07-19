@@ -91,7 +91,10 @@ for tags and release notes while still in `0.x`.
   admission relation without treating pre-existing corpus gaps as candidate
   regressions. Its success and counterexample receipts include deep-tree
   digests, stop/full-span state, attempt rungs, allocation totals, clean/error
-  splits, and locked-corpus source identities.
+  splits, and locked-corpus source identities. Schema-v2 journals fail closed
+  on unknown or dirty candidate revisions, mixed schemas, oracle or parser
+  configuration drift, duplicate or unselected paths, and any resumed row that
+  no longer revalidates exactly; fresh rows are validated before publication.
 
 ### Fixed
 

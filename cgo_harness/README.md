@@ -243,6 +243,7 @@ GOWORK=off GOMAXPROCS=1 \
 GTS_PARITY_ALLOW_HOST=1 \
 GTS_RETRY_PROFILE_CERT=1 \
 GTS_RETRY_PROFILE_CERT_LANG=crystal \
+GTS_RETRY_PROFILE_CERT_CANDIDATE_REVISION="$(git rev-parse HEAD)" \
 GTS_RETRY_PROFILE_CERT_OUT=../harness_out/retry-profile-crystal.json \
 GTS_REAL_CORPUS_BENCH_ROOT=/path/to/corpus_sources \
 GTS_REAL_CORPUS_BENCH_LOCK=/path/to/corpus_sources.lock \
@@ -255,9 +256,15 @@ Use `GTS_REAL_CORPUS_BENCH_ORDER`, `GTS_REAL_CORPUS_BENCH_MAX_FILES`, and
 not a certification; the profile should be banked only after the locked full
 corpus passes. Each completed file is also appended to
 `$GTS_RETRY_PROFILE_CERT_OUT.files.jsonl`. Set
-`GTS_RETRY_PROFILE_CERT_RESUME=1` to reuse only rows whose revision, blob,
-corpus lock, path, and source hash still match; C-oracle crashes and watchdog
-stops remain explicit row statuses.
+`GTS_RETRY_PROFILE_CERT_RESUME=1` to reuse only schema-v2 rows whose exact
+candidate revision, clean Git worktree, blob, corpus selection and lock,
+parser-affecting environment, and complete static-C oracle identity still
+match. The certifier revalidates each resumed path, source hash, parse result,
+class, deep digest, and oracle relation before accumulation, rejects rows no
+longer selected by the corpus, and never resumes a counterexample. The
+explicit candidate revision is required when Go build metadata does not expose
+one and must resolve to the clean checkout's exact `HEAD`. C-oracle crashes and
+watchdog stops remain explicit row statuses.
 
 ## Run Parity Tests In Docker Sandbox
 

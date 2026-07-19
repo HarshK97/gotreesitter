@@ -9,9 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +23,7 @@ import (
 	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
 )
 
-const retryProfileCertSchema = "gts-retry-profile-cert/v1"
+const retryProfileCertSchema = "gts-retry-profile-cert/v2"
 
 type retryProfileCertAttempt struct {
 	LogicalRung        string                       `json:"logical_rung"`
@@ -39,6 +41,7 @@ type retryProfileCertParse struct {
 	TotalAlloc uint64                       `json:"total_alloc_bytes"`
 	Attempts   []retryProfileCertAttempt    `json:"attempts"`
 	StopReason gotreesitter.ParseStopReason `json:"stop_reason"`
+	RootStart  uint32                       `json:"root_start_byte"`
 	RootEnd    uint32                       `json:"root_end_byte"`
 	HasError   bool                         `json:"root_has_error"`
 	DeepSHA256 string                       `json:"deep_tree_sha256"`
@@ -50,7 +53,6 @@ type retryProfileCertFile struct {
 	SourceSHA256          string                `json:"source_sha256"`
 	Class                 string                `json:"class"`
 	OracleDeepSHA256      string                `json:"oracle_deep_tree_sha256"`
-	OracleParity          bool                  `json:"oracle_parity,omitempty"`
 	BaselineOracleParity  bool                  `json:"baseline_oracle_parity"`
 	CandidateOracleParity bool                  `json:"candidate_oracle_parity"`
 	OracleStatus          string                `json:"oracle_status"`
@@ -86,12 +88,15 @@ type retryProfileCertManifest struct {
 	GeneratedAt          string                 `json:"generated_at"`
 	Language             string                 `json:"language"`
 	BlobSHA256           string                 `json:"blob_sha256"`
-	GitRevision          string                 `json:"git_revision"`
+	CandidateRevision    string                 `json:"candidate_revision"`
 	CorpusRoot           string                 `json:"corpus_root"`
 	CorpusLock           string                 `json:"corpus_lock"`
 	CorpusLockSHA256     string                 `json:"corpus_lock_sha256"`
 	CorpusManifestSHA256 string                 `json:"corpus_manifest_sha256"`
 	Oracle               perfScanOracleIdentity `json:"oracle"`
+	OracleIdentitySHA256 string                 `json:"oracle_identity_sha256"`
+	ParserConfig         []string               `json:"parser_config"`
+	SelectionConfig      []string               `json:"selection_config"`
 	CandidateProfile     struct {
 		SkipExternalScannerRepeat bool `json:"skip_external_scanner_repeat"`
 	} `json:"candidate_profile"`
@@ -103,6 +108,7 @@ type retryProfileCertManifest struct {
 }
 
 type retryProfileCertJournalRecord struct {
+	Schema    string               `json:"schema"`
 	ResumeKey string               `json:"resume_key"`
 	File      retryProfileCertFile `json:"file"`
 }
@@ -156,17 +162,29 @@ func TestRetryProfileCorpusCertification(t *testing.T) {
 	}
 	blobSum := sha256.Sum256(blob)
 	lockSum := sha256.Sum256(lockData)
+	candidateRevision, err := retryProfileCertCandidateRevision()
+	if err != nil {
+		t.Fatalf("authenticate candidate revision: %v", err)
+	}
+	oracleIdentityData, err := json.Marshal(staticOracle.identity)
+	if err != nil {
+		t.Fatalf("encode locked static C oracle identity: %v", err)
+	}
+	oracleIdentitySum := sha256.Sum256(oracleIdentityData)
 	manifest := retryProfileCertManifest{
-		Schema:           retryProfileCertSchema,
-		GeneratedAt:      time.Now().UTC().Format(time.RFC3339),
-		Language:         name,
-		BlobSHA256:       hex.EncodeToString(blobSum[:]),
-		GitRevision:      retryProfileCertGitRevision(),
-		CorpusRoot:       langRoot,
-		CorpusLock:       lockPath,
-		CorpusLockSHA256: hex.EncodeToString(lockSum[:]),
-		Oracle:           staticOracle.identity,
-		Files:            make([]retryProfileCertFile, 0, len(files)),
+		Schema:               retryProfileCertSchema,
+		GeneratedAt:          time.Now().UTC().Format(time.RFC3339),
+		Language:             name,
+		BlobSHA256:           hex.EncodeToString(blobSum[:]),
+		CandidateRevision:    candidateRevision,
+		CorpusRoot:           langRoot,
+		CorpusLock:           lockPath,
+		CorpusLockSHA256:     hex.EncodeToString(lockSum[:]),
+		Oracle:               staticOracle.identity,
+		OracleIdentitySHA256: hex.EncodeToString(oracleIdentitySum[:]),
+		ParserConfig:         retryProfileCertParserConfig(),
+		SelectionConfig:      retryProfileCertSelectionConfig(),
+		Files:                make([]retryProfileCertFile, 0, len(files)),
 	}
 	manifest.ResumeKey = retryProfileCertResumeKey(manifest)
 	manifest.CandidateProfile.SkipExternalScannerRepeat = true
@@ -193,15 +211,10 @@ func TestRetryProfileCorpusCertification(t *testing.T) {
 		_, _ = fmt.Fprintf(corpusHash, "%s\x00%d\x00%x\n", filepath.ToSlash(rel), len(file.source), sourceSum)
 		manifest.CorpusManifestSHA256 = hex.EncodeToString(corpusHash.Sum(nil))
 		if journal != nil {
-			if prior, ok := journal.prior[filepath.ToSlash(rel)]; ok {
-				if prior.SourceSHA256 != hex.EncodeToString(sourceSum[:]) {
-					t.Fatalf("resume source drift for %s", rel)
-				}
-				if prior.OracleStatus == "matched" {
-					prior.OracleParity = true
-					prior.BaselineOracleParity = true
-					prior.CandidateOracleParity = true
-				}
+			if prior, ok, err := retryProfileCertResumeRow(journal, filepath.ToSlash(rel), file.source); err != nil {
+				manifest.Failure = &retryProfileCertFailure{Path: filepath.ToSlash(rel), Reason: "invalid resumed row: " + err.Error()}
+				t.Fatalf("resume %s: %v", rel, err)
+			} else if ok {
 				retryProfileCertAccumulate(&manifest, prior)
 				continue
 			}
@@ -220,7 +233,6 @@ func TestRetryProfileCorpusCertification(t *testing.T) {
 			SourceSHA256:          hex.EncodeToString(sourceSum[:]),
 			Class:                 class,
 			OracleDeepSHA256:      oracleDigest,
-			OracleParity:          oracleDigest != "" && candidateResult.DeepSHA256 == oracleDigest,
 			BaselineOracleParity:  oracleDigest != "" && baselineResult.DeepSHA256 == oracleDigest,
 			CandidateOracleParity: oracleDigest != "" && candidateResult.DeepSHA256 == oracleDigest,
 			OracleStatus:          oracleStatus,
@@ -235,7 +247,12 @@ func TestRetryProfileCorpusCertification(t *testing.T) {
 				row.OracleStatus = "mismatch"
 			}
 		}
-		retryProfileCertAccumulate(&manifest, row)
+		if err := validateRetryProfileCertRow(row, filepath.ToSlash(rel), file.source); err != nil {
+			baselineTree.Release()
+			candidateTree.Release()
+			manifest.Failure = &retryProfileCertFailure{Path: row.Path, Reason: err.Error()}
+			t.Fatalf("%s: %v", rel, err)
+		}
 		if journal != nil {
 			if err := journal.Append(row); err != nil {
 				baselineTree.Release()
@@ -243,13 +260,18 @@ func TestRetryProfileCorpusCertification(t *testing.T) {
 				t.Fatalf("append retry-profile journal: %v", err)
 			}
 		}
+		retryProfileCertAccumulate(&manifest, row)
 		baselineTree.Release()
 		candidateTree.Release()
-		if !retryProfileCertEquivalent(baselineResult, candidateResult) ||
-			row.BaselineOracleParity != row.CandidateOracleParity {
-			manifest.Failure = &retryProfileCertFailure{Path: row.Path, Reason: "baseline and candidate parse results differ"}
-			t.Fatalf("%s mismatch baseline=%+v candidate=%+v", rel, baselineResult, candidateResult)
+	}
+	if journal != nil && len(journal.prior) != 0 {
+		paths := make([]string, 0, len(journal.prior))
+		for path := range journal.prior {
+			paths = append(paths, path)
 		}
+		sort.Strings(paths)
+		manifest.Failure = &retryProfileCertFailure{Reason: fmt.Sprintf("journal contains %d unselected rows", len(paths))}
+		t.Fatalf("journal contains unselected rows: %s", strings.Join(paths, ", "))
 	}
 	if manifest.Totals.BaselineAttempts <= manifest.Totals.CandidateAttempts {
 		manifest.Failure = &retryProfileCertFailure{Reason: "candidate did not eliminate retry attempts"}
@@ -273,8 +295,138 @@ func TestRetryProfileCorpusCertification(t *testing.T) {
 func retryProfileCertEquivalent(baseline, candidate retryProfileCertParse) bool {
 	return baseline.DeepSHA256 == candidate.DeepSHA256 &&
 		baseline.StopReason == candidate.StopReason &&
+		baseline.RootStart == candidate.RootStart &&
 		baseline.RootEnd == candidate.RootEnd &&
 		baseline.HasError == candidate.HasError
+}
+
+func validateRetryProfileCertRow(row retryProfileCertFile, wantPath string, source []byte) error {
+	cleanPath := filepath.ToSlash(filepath.Clean(row.Path))
+	if row.Path == "" || filepath.IsAbs(row.Path) || cleanPath != row.Path || row.Path == ".." || strings.HasPrefix(row.Path, "../") {
+		return fmt.Errorf("invalid normalized path %q", row.Path)
+	}
+	if row.Path != wantPath {
+		return fmt.Errorf("path=%q want=%q", row.Path, wantPath)
+	}
+	if row.Bytes != len(source) {
+		return fmt.Errorf("bytes=%d want=%d", row.Bytes, len(source))
+	}
+	sourceSum := sha256.Sum256(source)
+	if row.SourceSHA256 != hex.EncodeToString(sourceSum[:]) {
+		return fmt.Errorf("source sha256=%q want=%x", row.SourceSHA256, sourceSum)
+	}
+	if err := validateRetryProfileCertParse("baseline", row.Baseline, len(source)); err != nil {
+		return err
+	}
+	if err := validateRetryProfileCertParse("candidate", row.Candidate, len(source)); err != nil {
+		return err
+	}
+	if !retryProfileCertEquivalent(row.Baseline, row.Candidate) {
+		return fmt.Errorf("baseline and candidate parse results differ")
+	}
+	wantClass := "clean"
+	if row.Candidate.HasError {
+		wantClass = "error"
+	}
+	if row.Class != wantClass {
+		return fmt.Errorf("class=%q want=%q", row.Class, wantClass)
+	}
+	if row.BaselineOracleParity != row.CandidateOracleParity {
+		return fmt.Errorf("baseline/candidate oracle relation differs")
+	}
+	switch row.OracleStatus {
+	case "matched":
+		if !validRetryProfileCertSHA256(row.OracleDeepSHA256) || !row.BaselineOracleParity || !row.CandidateOracleParity || row.OracleDetail != "" {
+			return fmt.Errorf("invalid matched oracle result")
+		}
+	case "mismatch":
+		if !validRetryProfileCertSHA256(row.OracleDeepSHA256) || row.BaselineOracleParity || row.CandidateOracleParity || row.OracleDetail != "" {
+			return fmt.Errorf("invalid mismatched oracle result")
+		}
+	case "oracle_crash",
+		staticCStatusAdmissionError,
+		staticCStatusParserError, staticCStatusParserTimeout,
+		staticCStatusTransportError, staticCStatusTransportTimeout,
+		staticCStatusDigestError, staticCStatusDigestTimeout,
+		staticCStatusProtocolError, staticCStatusIncomplete:
+		if row.OracleDeepSHA256 != "" || row.BaselineOracleParity || row.CandidateOracleParity || strings.TrimSpace(row.OracleDetail) == "" {
+			return fmt.Errorf("invalid unavailable oracle result status=%q", row.OracleStatus)
+		}
+	default:
+		return fmt.Errorf("invalid oracle status %q", row.OracleStatus)
+	}
+	return nil
+}
+
+func retryProfileCertResumeRow(journal *retryProfileCertJournal, path string, source []byte) (retryProfileCertFile, bool, error) {
+	if journal == nil {
+		return retryProfileCertFile{}, false, nil
+	}
+	row, ok := journal.prior[path]
+	if !ok {
+		return retryProfileCertFile{}, false, nil
+	}
+	if err := validateRetryProfileCertRow(row, path, source); err != nil {
+		return retryProfileCertFile{}, false, err
+	}
+	delete(journal.prior, path)
+	return row, true, nil
+}
+
+func validateRetryProfileCertParse(label string, parse retryProfileCertParse, sourceBytes int) error {
+	if parse.WallNanos <= 0 {
+		return fmt.Errorf("%s wall_nanos=%d", label, parse.WallNanos)
+	}
+	if !validRetryProfileCertSHA256(parse.DeepSHA256) {
+		return fmt.Errorf("%s has invalid deep digest %q", label, parse.DeepSHA256)
+	}
+	if parse.StopReason != gotreesitter.ParseStopAccepted {
+		return fmt.Errorf("%s stop_reason=%q want=%q", label, parse.StopReason, gotreesitter.ParseStopAccepted)
+	}
+	if parse.RootStart != 0 || parse.RootEnd != uint32(sourceBytes) {
+		return fmt.Errorf("%s root=%d..%d want=0..%d", label, parse.RootStart, parse.RootEnd, sourceBytes)
+	}
+	if len(parse.Attempts) == 0 {
+		return fmt.Errorf("%s has no parse attempts", label)
+	}
+	for i, attempt := range parse.Attempts {
+		if strings.TrimSpace(attempt.LogicalRung) == "" || strings.TrimSpace(attempt.OperationCause) == "" {
+			return fmt.Errorf("%s attempt %d lacks rung/cause", label, i)
+		}
+		if !validRetryProfileCertStopReason(attempt.StopReason) {
+			return fmt.Errorf("%s attempt %d has invalid stop reason %q", label, i, attempt.StopReason)
+		}
+		if attempt.RootEndByte > uint32(sourceBytes) || attempt.ResolvedMaxStacks <= 0 || attempt.ResolvedMergeLimit <= 0 {
+			return fmt.Errorf("%s attempt %d has invalid bounds", label, i)
+		}
+	}
+	return nil
+}
+
+func validRetryProfileCertSHA256(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func validRetryProfileCertStopReason(reason gotreesitter.ParseStopReason) bool {
+	switch reason {
+	case gotreesitter.ParseStopNone,
+		gotreesitter.ParseStopAccepted,
+		gotreesitter.ParseStopNoStacksAlive,
+		gotreesitter.ParseStopTokenSourceEOF,
+		gotreesitter.ParseStopTimeout,
+		gotreesitter.ParseStopCancelled,
+		gotreesitter.ParseStopIterationLimit,
+		gotreesitter.ParseStopStackDepthLimit,
+		gotreesitter.ParseStopNodeLimit,
+		gotreesitter.ParseStopMemoryBudget:
+		return true
+	default:
+		return false
+	}
 }
 
 func retryProfileCertAccumulate(manifest *retryProfileCertManifest, row retryProfileCertFile) {
@@ -288,13 +440,22 @@ func retryProfileCertAccumulate(manifest *retryProfileCertManifest, row retryPro
 }
 
 func retryProfileCertResumeKey(manifest retryProfileCertManifest) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{
+	parts := []string{
 		manifest.Schema,
 		manifest.Language,
 		manifest.BlobSHA256,
-		manifest.GitRevision,
+		manifest.CandidateRevision,
+		manifest.CorpusRoot,
+		manifest.CorpusLock,
 		manifest.CorpusLockSHA256,
-	}, "\x00")))
+		manifest.OracleIdentitySHA256,
+		"skip_external_scanner_repeat=true",
+		"parser_config",
+	}
+	parts = append(parts, manifest.ParserConfig...)
+	parts = append(parts, "selection_config")
+	parts = append(parts, manifest.SelectionConfig...)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -319,9 +480,17 @@ func openRetryProfileCertJournal(manifest retryProfileCertManifest) (*retryProfi
 					_ = input.Close()
 					return nil, fmt.Errorf("decode %s: %w", path, err)
 				}
+				if record.Schema != retryProfileCertSchema {
+					_ = input.Close()
+					return nil, fmt.Errorf("%s contains schema %q, want %q", path, record.Schema, retryProfileCertSchema)
+				}
 				if record.ResumeKey != manifest.ResumeKey {
 					_ = input.Close()
 					return nil, fmt.Errorf("%s belongs to resume key %s, want %s", path, record.ResumeKey, manifest.ResumeKey)
+				}
+				if _, exists := journal.prior[record.File.Path]; exists {
+					_ = input.Close()
+					return nil, fmt.Errorf("%s contains duplicate path %q", path, record.File.Path)
 				}
 				journal.prior[record.File.Path] = record.File
 			}
@@ -348,7 +517,7 @@ func openRetryProfileCertJournal(manifest retryProfileCertManifest) (*retryProfi
 }
 
 func (journal *retryProfileCertJournal) Append(row retryProfileCertFile) error {
-	data, err := json.Marshal(retryProfileCertJournalRecord{ResumeKey: journal.key, File: row})
+	data, err := json.Marshal(retryProfileCertJournalRecord{Schema: retryProfileCertSchema, ResumeKey: journal.key, File: row})
 	if err != nil {
 		return err
 	}
@@ -430,6 +599,7 @@ func retryProfileCertParseOne(t testing.TB, lang *gotreesitter.Language, source 
 		WallNanos:  wall.Nanoseconds(),
 		TotalAlloc: after.TotalAlloc - before.TotalAlloc,
 		StopReason: rt.StopReason,
+		RootStart:  tree.RootNode().StartByte(),
 		RootEnd:    tree.RootNode().EndByte(),
 		HasError:   tree.RootNode().HasError(),
 		DeepSHA256: inspection.SHA256,
@@ -471,15 +641,201 @@ func retryProfileCertAddTotals(totals *retryProfileCertTotals, row retryProfileC
 	}
 }
 
-func retryProfileCertGitRevision() string {
+func retryProfileCertCandidateRevision() (string, error) {
+	explicit := strings.TrimSpace(os.Getenv("GTS_RETRY_PROFILE_CERT_CANDIDATE_REVISION"))
+	buildRevision, buildModified := retryProfileCertBuildRevision()
+	if explicit == "" {
+		if buildRevision == "" {
+			return "", fmt.Errorf("build revision unavailable; set GTS_RETRY_PROFILE_CERT_CANDIDATE_REVISION to the exact clean HEAD")
+		}
+		explicit = buildRevision
+	}
+	if !validRetryProfileCertRevision(explicit) {
+		return "", fmt.Errorf("candidate revision %q is not a canonical 40- or 64-digit lowercase hex revision", explicit)
+	}
+	if buildModified {
+		return "", fmt.Errorf("candidate build reports vcs.modified=true")
+	}
+	if buildRevision != "" && buildRevision != explicit {
+		return "", fmt.Errorf("candidate revision %s differs from build revision %s", explicit, buildRevision)
+	}
+	head, err := retryProfileCertGitOutput("rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("authenticate git HEAD: %w", err)
+	}
+	if head != explicit {
+		return "", fmt.Errorf("candidate revision %s differs from git HEAD %s", explicit, head)
+	}
+	resolved, err := retryProfileCertGitOutput("rev-parse", "--verify", explicit+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("resolve candidate revision: %w", err)
+	}
+	if resolved != explicit {
+		return "", fmt.Errorf("candidate revision %s resolves to %s", explicit, resolved)
+	}
+	status, err := retryProfileCertGitOutput("status", "--porcelain", "--untracked-files=normal")
+	if err != nil {
+		return "", fmt.Errorf("authenticate clean candidate worktree: %w", err)
+	}
+	if status != "" {
+		return "", fmt.Errorf("candidate worktree is dirty")
+	}
+	return explicit, nil
+}
+
+func retryProfileCertBuildRevision() (string, bool) {
 	info, ok := debug.ReadBuildInfo()
 	if !ok {
-		return "unknown"
+		return "", false
 	}
+	var revision string
+	var modified bool
 	for _, setting := range info.Settings {
-		if setting.Key == "vcs.revision" {
-			return setting.Value
+		switch setting.Key {
+		case "vcs.revision":
+			if validRetryProfileCertRevision(setting.Value) {
+				revision = setting.Value
+			}
+		case "vcs.modified":
+			modified = setting.Value == "true"
 		}
 	}
-	return "unknown"
+	return revision, modified
+}
+
+func validRetryProfileCertRevision(value string) bool {
+	if (len(value) != 40 && len(value) != 64) || strings.ToLower(value) != value {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func retryProfileCertGitOutput(args ...string) (string, error) {
+	command := exec.Command("git", args...)
+	data, err := command.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+func retryProfileCertParserConfig() []string {
+	return retryProfileCertEnvSnapshot(func(key string) bool {
+		return strings.HasPrefix(key, "GOT_") ||
+			strings.HasPrefix(key, "GOTREESITTER_GRAMMAR_") ||
+			key == "GOMAXPROCS" || key == "GOMEMLIMIT" || key == "GODEBUG"
+	})
+}
+
+func retryProfileCertSelectionConfig() []string {
+	return retryProfileCertEnvSnapshot(func(key string) bool {
+		return strings.HasPrefix(key, "GTS_REAL_CORPUS_BENCH_") ||
+			key == "GTS_RETRY_PROFILE_CERT_LANG" || key == "GTS_C_ORACLE_CACHE"
+	})
+}
+
+func retryProfileCertEnvSnapshot(include func(string) bool) []string {
+	config := make([]string, 0)
+	for _, entry := range os.Environ() {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok && include(key) {
+			config = append(config, entry)
+		}
+	}
+	sort.Strings(config)
+	return config
+}
+
+func TestRetryProfileCertResumeRejectsCounterexample(t *testing.T) {
+	source := []byte("x")
+	row := retryProfileCertValidTestRow(source)
+	otherDigest := sha256.Sum256([]byte("counterexample"))
+	row.Candidate.DeepSHA256 = hex.EncodeToString(otherDigest[:])
+
+	out := filepath.Join(t.TempDir(), "receipt.json")
+	t.Setenv("GTS_RETRY_PROFILE_CERT_OUT", out)
+	t.Setenv("GTS_RETRY_PROFILE_CERT_RESUME", "1")
+	manifest := retryProfileCertManifest{ResumeKey: strings.Repeat("a", sha256.Size*2)}
+	record, err := json.Marshal(retryProfileCertJournalRecord{
+		Schema:    retryProfileCertSchema,
+		ResumeKey: manifest.ResumeKey,
+		File:      row,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out+".files.jsonl", append(record, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	journal, err := openRetryProfileCertJournal(manifest)
+	if err != nil {
+		t.Fatalf("open journal: %v", err)
+	}
+	defer journal.Close()
+	if _, ok, err := retryProfileCertResumeRow(journal, row.Path, source); err == nil || ok {
+		t.Fatalf("counterexample resumed: ok=%v err=%v", ok, err)
+	}
+	if _, exists := journal.prior[row.Path]; !exists {
+		t.Fatal("invalid resumed row was consumed")
+	}
+}
+
+func TestRetryProfileCertJournalRejectsMixedSchema(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "receipt.json")
+	t.Setenv("GTS_RETRY_PROFILE_CERT_OUT", out)
+	t.Setenv("GTS_RETRY_PROFILE_CERT_RESUME", "1")
+	manifest := retryProfileCertManifest{ResumeKey: strings.Repeat("b", sha256.Size*2)}
+	record, err := json.Marshal(retryProfileCertJournalRecord{
+		Schema:    "gts-retry-profile-cert/v1",
+		ResumeKey: manifest.ResumeKey,
+		File:      retryProfileCertValidTestRow([]byte("x")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out+".files.jsonl", append(record, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if journal, err := openRetryProfileCertJournal(manifest); err == nil {
+		if journal != nil {
+			_ = journal.Close()
+		}
+		t.Fatal("mixed-schema journal was accepted")
+	}
+}
+
+func retryProfileCertValidTestRow(source []byte) retryProfileCertFile {
+	sourceDigest := sha256.Sum256(source)
+	treeDigest := sha256.Sum256([]byte("tree"))
+	parse := retryProfileCertParse{
+		WallNanos:  1,
+		TotalAlloc: 1,
+		Attempts: []retryProfileCertAttempt{{
+			LogicalRung:        "initial",
+			OperationCause:     "full_parse",
+			StopReason:         gotreesitter.ParseStopAccepted,
+			RootEndByte:        uint32(len(source)),
+			ResolvedMaxStacks:  1,
+			ResolvedMergeLimit: 1,
+		}},
+		StopReason: gotreesitter.ParseStopAccepted,
+		RootEnd:    uint32(len(source)),
+		DeepSHA256: hex.EncodeToString(treeDigest[:]),
+	}
+	return retryProfileCertFile{
+		Path:                  "x.cr",
+		Bytes:                 len(source),
+		SourceSHA256:          hex.EncodeToString(sourceDigest[:]),
+		Class:                 "clean",
+		OracleDeepSHA256:      parse.DeepSHA256,
+		BaselineOracleParity:  true,
+		CandidateOracleParity: true,
+		OracleStatus:          "matched",
+		Baseline:              parse,
+		Candidate:             parse,
+	}
 }
