@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "description": "Known-tail registry for TestIncrementalInvariantGate (incremental_invariant_gate_test.go). Each entry documents a currently-reproducing case where ParseIncremental diverges structurally from Parse on the same edited text, even though the fresh parse is genuinely clean (full-span, zero IsError()/IsMissing() nodes). This is the 'silent incremental corruption' class: HasError() reports false and there is no signal to a consumer that the incremental tree is wrong. Entries are keyed by (language, editClass, signature); signature = <divergingNodeType>:<kind>[detail], where a childCount delta is kept exact for |delta|<=5 and bucketed to '(large-)'/'(large+)' above that (see incrGateChildCountBucket). RATCHET: the gate fails if any entry here stops reproducing -- remove it once the underlying bug is fixed, don't leave it stale. Cross-ref: the codex/incremental-correctness-diagnosis root-cause investigation (validate/INCREMENTAL-CURRENT.md in the investigation scratchpad) first documented this class of bug ('gts-fresh is correct; gts-incremental silently returns a structurally wrong tree, HasError()==false') on python3.8_grammar.py and setup.py at an older commit. The exact signatures below are freshly re-derived against current origin/main by this gate's own sweep (they do not match the investigation's example strings verbatim -- the codebase has moved ~160 commits and several incremental-parser fixes have landed since; these are the entries that actually reproduce today).",
+  "entries": [
+    {
+      "language": "python",
+      "editClass": "delete",
+      "signature": "block:childCount+1",
+      "freshGenuinelyClean": true,
+      "note": "testdata/incremental_gate/python_setup.py pos=485 (delete a ',' inside a nested function body). Fresh parses a clean module>class_definition>block>function_definition>block with N statements; incremental attaches one extra child to that inner block. Root cause not diagnosed here (that's the codex incremental-correctness-diagnosis lane); this entry only tracks that it currently reproduces."
+    },
+    {
+      "language": "python",
+      "editClass": "delete",
+      "signature": "module:childCount-1",
+      "freshGenuinelyClean": true,
+      "note": "testdata/incremental_gate/python_setup.py, e.g. pos=601 (delete inside a top-level call argument). Fresh's module has one more top-level child than incremental's -- incremental drops/merges a top-level statement that fresh keeps distinct."
+    },
+    {
+      "language": "python",
+      "editClass": "delete",
+      "signature": "module:childCount-2",
+      "freshGenuinelyClean": true,
+      "note": "testdata/incremental_gate/python_large_indent.py (CPython Lib/test/test_grammar.py-style corpus, heavy nested control flow). Dominant signature on this file: ~80-90% of freshClean delete sites reproduce this exact -2 module childCount delta. Same shape as the codex root-cause investigation's originally-reported Class B (module childCount shrinkage near a class/def body) but re-derived fresh against current main; the exact delta and node differ slightly from the investigation's stale example string."
+    },
+    {
+      "language": "python",
+      "editClass": "delete",
+      "signature": "module:childCount(large-)",
+      "freshGenuinelyClean": true,
+      "note": "testdata/incremental_gate/python_large_indent.py. A minority of delete sites on this file cascade into a much larger module-level childCount shrinkage (observed exact deltas at various positions: -9, -16, -26, ... -- magnitude depends on how far the cascading re-derivation reaches, not a distinct bug per magnitude, hence the bucketed signature). Same underlying mechanism as the -2 dominant case, more severe manifestation."
+    },
+    {
+      "language": "python",
+      "editClass": "insert",
+      "signature": "module:childCount-1",
+      "freshGenuinelyClean": true,
+      "note": "testdata/incremental_gate/python_setup.py, e.g. pos=601 (duplicate-byte insert). Same shape as the delete-class module:childCount-1 entry above, mirrored for single-byte insertion."
+    },
+    {
+      "language": "python",
+      "editClass": "insert",
+      "signature": "module:childCount-2",
+      "freshGenuinelyClean": true,
+      "note": "testdata/incremental_gate/python_large_indent.py. Same dominant -2 module-level shape as the delete-class entry, reproduced under single-byte insertion edits."
+    },
+    {
+      "language": "python",
+      "editClass": "replace",
+      "signature": "block:childCount+1",
+      "freshGenuinelyClean": true,
+      "note": "testdata/incremental_gate/python_setup.py pos=485, same site/shape as the delete-class block:childCount+1 entry, reproduced under a same-length replace edit."
+    },
+    {
+      "language": "python",
+      "editClass": "replace",
+      "signature": "module:childCount-1",
+      "freshGenuinelyClean": true,
+      "note": "testdata/incremental_gate/python_setup.py, e.g. pos=600. Replace-class mirror of the delete/insert module:childCount-1 entries."
+    },
+    {
+      "language": "python",
+      "editClass": "replace",
+      "signature": "module:childCount-2",
+      "freshGenuinelyClean": true,
+      "note": "Reproduces on BOTH testdata/incremental_gate/python_setup.py (pos=379) and testdata/incremental_gate/python_large_indent.py (dominant shape, e.g. pos=1801) under replace edits. Same signature covers both files by design (the allowlist key is language+editClass+signature, not file-scoped)."
+    },
+    {
+      "language": "python",
+      "editClass": "replace",
+      "signature": "module:childCount(large-)",
+      "freshGenuinelyClean": true,
+      "note": "testdata/incremental_gate/python_large_indent.py. Replace-class mirror of the delete-class module:childCount(large-) bucket -- cascading whole-module re-derivation, varying exact magnitude (observed deltas include -11, -16, -31, -38, -47, -48, -52, -58 at different positions)."
+    },
+    {
+      "language": "javascript",
+      "editClass": "insert",
+      "signature": "program:childCount(large+)",
+      "freshGenuinelyClean": true,
+      "note": "testdata/incremental_gate/javascript_grammar.js (tree-sitter's own go grammar.js, a real large declarative JS file), e.g. pos=901/1801 under single-byte insert. Rare (2 hits out of ~690 sampled sites at stride=100): fresh's program root is clean with N children; incremental attaches substantially more. Only signature found on the JS corpus file; delete/replace classes and the rest of the JS sweep were clean at the swept strides."
+    }
+  ]
+}
