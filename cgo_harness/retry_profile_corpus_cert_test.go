@@ -331,6 +331,14 @@ func validateRetryProfileCertRow(row retryProfileCertFile, wantPath string, sour
 	if row.Class != wantClass {
 		return fmt.Errorf("class=%q want=%q", row.Class, wantClass)
 	}
+	baselineOracleParity := row.OracleDeepSHA256 != "" && row.Baseline.DeepSHA256 == row.OracleDeepSHA256
+	candidateOracleParity := row.OracleDeepSHA256 != "" && row.Candidate.DeepSHA256 == row.OracleDeepSHA256
+	if row.BaselineOracleParity != baselineOracleParity {
+		return fmt.Errorf("baseline_oracle_parity=%t want=%t from authenticated digests", row.BaselineOracleParity, baselineOracleParity)
+	}
+	if row.CandidateOracleParity != candidateOracleParity {
+		return fmt.Errorf("candidate_oracle_parity=%t want=%t from authenticated digests", row.CandidateOracleParity, candidateOracleParity)
+	}
 	if row.BaselineOracleParity != row.CandidateOracleParity {
 		return fmt.Errorf("baseline/candidate oracle relation differs")
 	}
@@ -778,6 +786,46 @@ func TestRetryProfileCertResumeRejectsCounterexample(t *testing.T) {
 	defer journal.Close()
 	if _, ok, err := retryProfileCertResumeRow(journal, row.Path, source); err == nil || ok {
 		t.Fatalf("counterexample resumed: ok=%v err=%v", ok, err)
+	}
+	if _, exists := journal.prior[row.Path]; !exists {
+		t.Fatal("invalid resumed row was consumed")
+	}
+}
+
+func TestRetryProfileCertResumeRejectsForgedOracleRelation(t *testing.T) {
+	source := []byte("x")
+	row := retryProfileCertValidTestRow(source)
+	otherDigest := sha256.Sum256([]byte("different oracle tree"))
+	row.OracleDeepSHA256 = hex.EncodeToString(otherDigest[:])
+	// These persisted claims are internally consistent with the status, but not
+	// with either authenticated parse digest. Resume must derive the relation
+	// again instead of trusting the journal's booleans.
+	row.BaselineOracleParity = true
+	row.CandidateOracleParity = true
+	row.OracleStatus = "matched"
+
+	out := filepath.Join(t.TempDir(), "receipt.json")
+	t.Setenv("GTS_RETRY_PROFILE_CERT_OUT", out)
+	t.Setenv("GTS_RETRY_PROFILE_CERT_RESUME", "1")
+	manifest := retryProfileCertManifest{ResumeKey: strings.Repeat("c", sha256.Size*2)}
+	record, err := json.Marshal(retryProfileCertJournalRecord{
+		Schema:    retryProfileCertSchema,
+		ResumeKey: manifest.ResumeKey,
+		File:      row,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out+".files.jsonl", append(record, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	journal, err := openRetryProfileCertJournal(manifest)
+	if err != nil {
+		t.Fatalf("open journal: %v", err)
+	}
+	defer journal.Close()
+	if _, ok, err := retryProfileCertResumeRow(journal, row.Path, source); err == nil || ok {
+		t.Fatalf("forged oracle relation resumed: ok=%v err=%v", ok, err)
 	}
 	if _, exists := journal.prior[row.Path]; !exists {
 		t.Fatal("invalid resumed row was consumed")

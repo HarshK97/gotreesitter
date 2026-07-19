@@ -32,9 +32,9 @@ for tags and release notes while still in `0.x`.
   entire accepted-error widening and final-merge ladder once. On the locked
   2,380-file Crystal corpus, the candidate preserves every deep tree and C
   admission relation, reduces attempts from 13,445 to 8,120, lowers aggregate
-  parse wall time by 24.36%, and lowers allocated bytes by 10.03%. On the
+  parse wall time by 24.88%, and lowers allocated bytes by 10.19%. On the
   locked 1,434-file Matlab corpus, attempts fall from 7,866 to 4,650, wall time
-  by 40.64%, and allocated bytes by 32.67%, again with exact output and oracle
+  by 41.75%, and allocated bytes by 32.67%, again with exact output and oracle
   relation preservation on every file.
 - Execute Go highlight queries directly over the build-tagged compact selected
   store through value node handles, without constructing public-node proxies.
