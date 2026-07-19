@@ -7,6 +7,8 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.42.0] - 2026-07-18
+
 ### Performance
 
 - Refresh the opt-in Go build-time PGO artifact with a hash-verified composite
@@ -2997,7 +2999,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.41.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.42.0...HEAD
+[0.42.0]: https://github.com/odvcencio/gotreesitter/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/odvcencio/gotreesitter/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/odvcencio/gotreesitter/compare/v0.39.0...v0.40.0
 [0.39.0]: https://github.com/odvcencio/gotreesitter/compare/v0.38.0...v0.39.0
