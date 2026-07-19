@@ -12,6 +12,7 @@ package cgoharness
 // test suite zero-CGo.
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"runtime"
@@ -29,6 +30,10 @@ import (
 type parityMeta struct {
 	skipReason string // non-empty = skip with this message
 }
+
+type parityPythonTestIncrementalReuseScanner struct{ gotreesitter.ExternalScanner }
+
+func (parityPythonTestIncrementalReuseScanner) SupportsIncrementalReuse() bool { return true }
 
 var paritySkips = map[string]parityMeta{
 	// Keep this map for explicitly known structural mismatches.
@@ -989,6 +994,330 @@ func TestParityIncrementalParse(t *testing.T) {
 			t.Errorf("[%s/incremental] %d node divergence(s):\n  %s", tc.name, len(errs), msg)
 		})
 	}
+}
+
+func TestParityPythonIncrementalRepetitionFoldDelete(t *testing.T) {
+	source := []byte("from contextlib import suppress\n" +
+		"from copy import deepcopy\n" +
+		"from enum import Enum\n" +
+		"from errno import EACCES\n" +
+		"from functools import partial\n")
+	offset := strings.LastIndex(string(source), "import partial") + len("impor")
+	if offset < len("impor") || source[offset] != 't' {
+		t.Fatal("locked Python incremental witness missing final import byte")
+	}
+	edited := make([]byte, 0, len(source)-1)
+	edited = append(edited, source[:offset]...)
+	edited = append(edited, source[offset+1:]...)
+
+	base := grammars.PythonLanguage()
+	goLangValue := *base
+	goLangValue.ExternalScanner = parityPythonTestIncrementalReuseScanner{ExternalScanner: base.ExternalScanner}
+	goLang := &goLangValue
+	goParser := gotreesitter.NewParser(goLang)
+	oldTree, err := goParser.Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseGoTree(oldTree)
+	oldTree.Edit(gotreesitter.InputEdit{
+		StartByte:   uint32(offset),
+		OldEndByte:  uint32(offset + 1),
+		NewEndByte:  uint32(offset),
+		StartPoint:  pointAtOffset(source, offset),
+		OldEndPoint: pointAtOffset(source, offset+1),
+		NewEndPoint: pointAtOffset(edited, offset),
+	})
+	goTree, err := goParser.ParseIncremental(edited, oldTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseGoTree(goTree)
+
+	cLang, err := ParityCLanguage("python")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cParser := sitter.NewParser()
+	defer cParser.Close()
+	if err := cParser.SetLanguage(cLang); err != nil {
+		t.Fatal(err)
+	}
+	cTree := cParser.Parse(edited, nil)
+	if cTree == nil || cTree.RootNode() == nil {
+		t.Fatal("C reference parser returned nil tree")
+	}
+	defer cTree.Close()
+
+	var errs []string
+	compareNodes(goTree.RootNode(), goLang, cTree.RootNode(), "root", &errs)
+	if len(errs) > 0 {
+		t.Fatalf("Python incremental tree differs from locked C oracle: %s", errs[0])
+	}
+}
+
+func TestParityPythonIncrementalDedentCheckpointFallback(t *testing.T) {
+	source, err := os.ReadFile("corpus_structural/python_sample.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const offset = 500
+	if source[offset] != 'n' {
+		t.Fatalf("locked Python DEDENT witness changed at byte %d: got %q, want n", offset, source[offset])
+	}
+	edited := append(append([]byte(nil), source[:offset]...), source[offset+1:]...)
+	tc := parityCase{name: "python", source: string(source)}
+	oldTree, _, err := parseWithGo(tc, source, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseGoTree(oldTree)
+	oldTree.Edit(gotreesitter.InputEdit{
+		StartByte:   offset,
+		OldEndByte:  offset + 1,
+		NewEndByte:  offset,
+		StartPoint:  pointAtOffset(source, offset),
+		OldEndPoint: pointAtOffset(source, offset+1),
+		NewEndPoint: pointAtOffset(edited, offset),
+	})
+	goTree, goLang, err := parseWithGo(tc, edited, oldTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseGoTree(goTree)
+
+	cLang, err := ParityCLanguage("python")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cParser := sitter.NewParser()
+	defer cParser.Close()
+	if err := cParser.SetLanguage(cLang); err != nil {
+		t.Fatal(err)
+	}
+	cTree := cParser.Parse(edited, nil)
+	if cTree == nil || cTree.RootNode() == nil {
+		t.Fatal("C reference parser returned nil tree")
+	}
+	defer cTree.Close()
+
+	var errs []string
+	compareNodes(goTree.RootNode(), goLang, cTree.RootNode(), "root", &errs)
+	if len(errs) > 0 {
+		t.Fatalf("Python incremental DEDENT fallback differs from locked C oracle: %s", errs[0])
+	}
+}
+
+func TestParityPythonDerivedScannerFallback(t *testing.T) {
+	cases := []struct {
+		name   string
+		lang   func() *gotreesitter.Language
+		source []byte
+	}{
+		{name: "python", lang: grammars.PythonLanguage, source: []byte("value = 1\n")},
+		{name: "mojo", lang: grammars.MojoLanguage, source: []byte("fn main():\n    print(1)\n")},
+		{name: "starlark", lang: grammars.StarlarkLanguage, source: []byte("value = 1\n")},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			offset := bytes.IndexByte(tc.source, '1')
+			if offset < 0 {
+				t.Fatalf("locked %s scanner-fallback witness is malformed", tc.name)
+			}
+			edited := append([]byte(nil), tc.source...)
+			edited[offset] = 'x'
+			edit := gotreesitter.InputEdit{
+				StartByte:   uint32(offset),
+				OldEndByte:  uint32(offset + 1),
+				NewEndByte:  uint32(offset + 1),
+				StartPoint:  pointAtOffset(tc.source, offset),
+				OldEndPoint: pointAtOffset(tc.source, offset+1),
+				NewEndPoint: pointAtOffset(edited, offset+1),
+			}
+
+			goLang := tc.lang()
+			goParser := gotreesitter.NewParser(goLang)
+			oldTree, err := goParser.Parse(tc.source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer releaseGoTree(oldTree)
+			oldTree.Edit(edit)
+			goTree, profile, err := goParser.ParseIncrementalProfiled(edited, oldTree)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer releaseGoTree(goTree)
+			if !profile.ReuseUnsupported || profile.ReuseUnsupportedReason != "external_scanner_unsupported" ||
+				profile.OldTreeReuseRoute || profile.ReusedSubtrees != 0 || profile.ReusedBytes != 0 {
+				t.Fatalf("%s scanner fallback profile is not fail-closed: %+v", tc.name, profile)
+			}
+
+			cLang, err := ParityCLanguage(tc.name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cParser := sitter.NewParser()
+			defer cParser.Close()
+			if err := cParser.SetLanguage(cLang); err != nil {
+				t.Fatal(err)
+			}
+			cTree := cParser.Parse(edited, nil)
+			if cTree == nil || cTree.RootNode() == nil {
+				t.Fatal("C reference parser returned nil tree")
+			}
+			defer cTree.Close()
+
+			var errs []string
+			compareNodes(goTree.RootNode(), goLang, cTree.RootNode(), "root", &errs)
+			if len(errs) > 0 {
+				t.Fatalf("%s scanner fallback differs from locked C oracle: %s", tc.name, errs[0])
+			}
+		})
+	}
+}
+
+func TestParityJavaScriptIncrementalRepetitionFoldControl(t *testing.T) {
+	// JavaScript is automatically forest-routed for fresh parses. This isolated
+	// parity process disables that route so the test exercises the production
+	// incremental dispatcher whose reuse behavior changed.
+	restoreForest := os.Getenv("GOT_GLR_FOREST") != "0"
+	gotreesitter.SetGLRForestEnabled(false)
+	t.Cleanup(func() { gotreesitter.SetGLRForestEnabled(restoreForest) })
+	t.Setenv("GOT_PARSE_ACTION_TIMING", "1")
+	gotreesitter.ResetParseEnvConfigCacheForTests()
+	t.Cleanup(gotreesitter.ResetParseEnvConfigCacheForTests)
+
+	source := []byte("function alpha() { return 1; }\n" +
+		"function beta() { return 2; }\n" +
+		"function gamma() { return 3; }\n" +
+		"function delta() { return 4; }\n" +
+		"function epsilon() { return 5; }\n")
+	offset := strings.Index(string(source), "return 1") + len("return ")
+	if offset < len("return ") || source[offset] != '1' {
+		t.Fatal("locked JavaScript incremental control witness is malformed")
+	}
+	edited := append([]byte(nil), source...)
+	edited[offset] = 'z'
+	edit := gotreesitter.InputEdit{
+		StartByte:   uint32(offset),
+		OldEndByte:  uint32(offset + 1),
+		NewEndByte:  uint32(offset + 1),
+		StartPoint:  pointAtOffset(source, offset),
+		OldEndPoint: pointAtOffset(source, offset+1),
+		NewEndPoint: pointAtOffset(edited, offset+1),
+	}
+
+	goLang := grammars.JavascriptLanguage()
+	goParser := gotreesitter.NewParser(goLang)
+	oldTree, err := goParser.Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseGoTree(oldTree)
+	oldTree.Edit(edit)
+	ambiguity := gotreesitter.NewAmbiguityProfile()
+	goParser.SetAmbiguityProfile(ambiguity)
+	goTree, incrementalProfile, err := goParser.ParseIncrementalProfiled(edited, oldTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseGoTree(goTree)
+	if incrementalProfile.ReuseUnsupported || !incrementalProfile.OldTreeReuseRoute || incrementalProfile.ReusedSubtrees == 0 {
+		t.Fatalf("JavaScript control did not exercise old-tree reuse: %+v", incrementalProfile)
+	}
+	if !ambiguityProfileHasUnprofiledRepetitionReduceChoice(ambiguity, goLang) {
+		for _, stat := range ambiguity.SnapshotTop(-1) {
+			t.Logf("ambiguity state=%d lookahead=%d actions=%+v hits=%d forks=%d choice_ns=%d fork_ns=%d", stat.State, stat.Lookahead, stat.Actions, stat.Hits, stat.Forks, stat.ConflictChoiceNanos, stat.ConflictForkNanos)
+		}
+		t.Fatal("JavaScript incremental control did not exercise the global C repetition-skip fold")
+	}
+
+	goFresh, err := goParser.Parse(edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseGoTree(goFresh)
+	var goErrs []string
+	compareGoNodes(goTree.RootNode(), goLang, goFresh.RootNode(), "root", &goErrs)
+	if len(goErrs) > 0 {
+		t.Fatalf("JavaScript incremental tree differs from fresh Go: %s", goErrs[0])
+	}
+
+	cLang, err := ParityCLanguage("javascript")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cParser := sitter.NewParser()
+	defer cParser.Close()
+	if err := cParser.SetLanguage(cLang); err != nil {
+		t.Fatal(err)
+	}
+	cOld := cParser.Parse(source, nil)
+	if cOld == nil || cOld.RootNode() == nil {
+		t.Fatal("C reference parser returned nil old tree")
+	}
+	cEdit := realCorpusCInputEdit(edit)
+	cOld.Edit(&cEdit)
+	cIncremental := cParser.Parse(edited, cOld)
+	cOld.Close()
+	if cIncremental == nil || cIncremental.RootNode() == nil {
+		t.Fatal("C reference parser returned nil incremental tree")
+	}
+	defer cIncremental.Close()
+	cFresh := cParser.Parse(edited, nil)
+	if cFresh == nil || cFresh.RootNode() == nil {
+		t.Fatal("C reference parser returned nil fresh tree")
+	}
+	defer cFresh.Close()
+	if got, want := canonicalCTreeDigest(t, cIncremental, "JavaScript incremental C"), canonicalCTreeDigest(t, cFresh, "JavaScript fresh C"); got != want {
+		t.Fatalf("JavaScript incremental C differs from fresh C: got=%s want=%s", got, want)
+	}
+
+	var errs []string
+	compareNodes(goTree.RootNode(), goLang, cIncremental.RootNode(), "root", &errs)
+	if len(errs) > 0 {
+		t.Fatalf("JavaScript incremental tree differs from locked incremental C oracle: %s", errs[0])
+	}
+}
+
+func ambiguityProfileHasUnprofiledRepetitionReduceChoice(profile *gotreesitter.AmbiguityProfile, lang *gotreesitter.Language) bool {
+	if profile == nil || lang == nil {
+		return false
+	}
+	for _, stat := range profile.SnapshotTop(-1) {
+		if stat.ConflictChoiceNanos == 0 || len(stat.Actions) != 2 {
+			continue
+		}
+		var repetitionShifts, reductions int
+		for _, action := range stat.Actions {
+			switch action.Type {
+			case gotreesitter.ParseActionShift:
+				if action.Repetition {
+					repetitionShifts++
+				}
+			case gotreesitter.ParseActionReduce:
+				reductions++
+			}
+		}
+		if repetitionShifts != 1 || reductions != 1 {
+			continue
+		}
+		profiled := false
+		for _, policy := range lang.ConflictPolicies {
+			stateMatch := policy.State == stat.State || policy.State == gotreesitter.ConflictPolicyAnyState
+			lookaheadMatch := policy.Lookahead == stat.Lookahead || policy.Lookahead == gotreesitter.ConflictPolicyAnyLookahead
+			if stateMatch && lookaheadMatch {
+				profiled = true
+				break
+			}
+		}
+		if !profiled {
+			return true
+		}
+	}
+	return false
 }
 
 // TestParityHasNoErrors checks that well-formed inputs for CI-gated languages

@@ -877,6 +877,14 @@ type IncrementalReuseTokenSource interface {
 	SupportsIncrementalReuse() bool
 }
 
+// incrementalReuseUnsupportedReasoner is an optional token-source extension
+// used by wrappers to preserve the concrete reason an underlying source
+// declined incremental reuse. Wrappers should delegate the reason instead of
+// replacing it with a generic wrapper-level refusal.
+type incrementalReuseUnsupportedReasoner interface {
+	IncrementalReuseUnsupportedReason() string
+}
+
 type parserStateTokenSource interface {
 	SetParserState(state StateID)
 	// SetGLRStates provides all active GLR stack states so the token source

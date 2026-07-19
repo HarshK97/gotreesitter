@@ -59,7 +59,10 @@ func (MojoExternalScanner) Deserialize(payload any, buf []byte) {
 	PythonExternalScanner{}.Deserialize(payload, buf)
 }
 
-func (MojoExternalScanner) SupportsIncrementalReuse() bool { return true }
+// SupportsIncrementalReuse remains disabled with Python's scanner: Mojo shares
+// the same serialized indentation state and checkpoint restoration semantics.
+// Re-enable only after Mojo's DEDENT behavior is independently certified.
+func (MojoExternalScanner) SupportsIncrementalReuse() bool { return false }
 
 func (MojoExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	s := payload.(*pythonScannerState)

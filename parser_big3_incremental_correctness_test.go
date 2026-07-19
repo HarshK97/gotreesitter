@@ -2,12 +2,157 @@ package gotreesitter_test
 
 import (
 	"bytes"
+	"fmt"
+	"os"
+	"reflect"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
 )
+
+type pythonTestIncrementalReuseScanner struct{ gotreesitter.ExternalScanner }
+
+func (pythonTestIncrementalReuseScanner) SupportsIncrementalReuse() bool { return true }
+
+func pythonLanguageWithTestIncrementalScannerReuse() *gotreesitter.Language {
+	base := grammars.PythonLanguage()
+	src := reflect.ValueOf(base).Elem()
+	dst := reflect.New(src.Type()).Elem()
+	for i := 0; i < src.NumField(); i++ {
+		if src.Type().Field(i).IsExported() {
+			dst.Field(i).Set(src.Field(i))
+		}
+	}
+	clone := dst.Addr().Interface().(*gotreesitter.Language)
+	clone.ExternalScanner = pythonTestIncrementalReuseScanner{ExternalScanner: base.ExternalScanner}
+	return clone
+}
+
+func TestPythonIncrementalSingleByteDeleteSweepMatchesFresh(t *testing.T) {
+	// Five consecutive from-imports are the smallest stable shape found from
+	// the cloud-init schema.py witness. Before the incremental conflict-fold
+	// fix, deleting the final byte of "import" in the fifth line silently
+	// produced six root children incrementally and five from a fresh parse.
+	source := []byte("from contextlib import suppress\n" +
+		"from copy import deepcopy\n" +
+		"from enum import Enum\n" +
+		"from errno import EACCES\n" +
+		"from functools import partial\n")
+	// This witness carries no indentation state, so enable scanner reuse in the
+	// test to exercise the conflict-fold path even while production Python
+	// scanner checkpoint reuse remains conservatively disabled.
+	lang := pythonLanguageWithTestIncrementalScannerReuse()
+
+	for offset := range source {
+		t.Run(fmt.Sprintf("delete_%03d", offset), func(t *testing.T) {
+			edited := make([]byte, 0, len(source)-1)
+			edited = append(edited, source[:offset]...)
+			edited = append(edited, source[offset+1:]...)
+
+			oldTree, err := gotreesitter.NewParser(lang).Parse(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldTree.Edit(gotreesitter.InputEdit{
+				StartByte:   uint32(offset),
+				OldEndByte:  uint32(offset + 1),
+				NewEndByte:  uint32(offset),
+				StartPoint:  pointForOffset(source, offset),
+				OldEndPoint: pointForOffset(source, offset+1),
+				NewEndPoint: pointForOffset(edited, offset),
+			})
+
+			incremental, _, err := gotreesitter.NewParser(lang).ParseIncrementalProfiled(edited, oldTree)
+			if err != nil {
+				oldTree.Release()
+				t.Fatal(err)
+			}
+			fresh, err := gotreesitter.NewParser(lang).Parse(edited)
+			if err != nil {
+				incremental.Release()
+				oldTree.Release()
+				t.Fatal(err)
+			}
+
+			requireCompleteParse(t, incremental, edited, lang, "incremental")
+			requireCompleteParse(t, fresh, edited, lang, "fresh")
+			incrementalInspection, err := benchfixtures.InspectGoTree(incremental.RootNode(), lang)
+			if err != nil {
+				t.Fatal(err)
+			}
+			freshInspection, err := benchfixtures.InspectGoTree(fresh.RootNode(), lang)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if incrementalInspection.SHA256 != freshInspection.SHA256 {
+				t.Fatalf("incremental/fresh deep tree mismatch after deleting byte %d (%q): incremental=%s fresh=%s", offset, source[offset], incrementalInspection.SHA256, freshInspection.SHA256)
+			}
+
+			fresh.Release()
+			incremental.Release()
+			oldTree.Release()
+		})
+	}
+}
+
+func TestPythonLengthChangingEditFallsBackUntilDedentCheckpointsAreCertified(t *testing.T) {
+	source, err := os.ReadFile("cgo_harness/corpus_structural/python_sample.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const offset = 500
+	if source[offset] != 'n' {
+		t.Fatalf("locked Python DEDENT witness changed at byte %d: got %q, want n", offset, source[offset])
+	}
+	edited := append(append([]byte(nil), source[:offset]...), source[offset+1:]...)
+	lang := grammars.PythonLanguage()
+	oldTree, err := gotreesitter.NewParser(lang).Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer oldTree.Release()
+	oldTree.Edit(gotreesitter.InputEdit{
+		StartByte:   offset,
+		OldEndByte:  offset + 1,
+		NewEndByte:  offset,
+		StartPoint:  pointForOffset(source, offset),
+		OldEndPoint: pointForOffset(source, offset+1),
+		NewEndPoint: pointForOffset(edited, offset),
+	})
+
+	incremental, profile, err := gotreesitter.NewParser(lang).ParseIncrementalProfiled(edited, oldTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer incremental.Release()
+	if !profile.ReuseUnsupported || profile.ReuseUnsupportedReason != "external_scanner_unsupported" {
+		t.Fatalf("Python length-changing edit did not use the conservative scanner fallback: %+v", profile)
+	}
+	if profile.OldTreeReuseRoute || profile.ReusedSubtrees != 0 || profile.ReusedBytes != 0 {
+		t.Fatalf("Python scanner fallback reported old-tree reuse: %+v", profile)
+	}
+
+	fresh, err := gotreesitter.NewParser(lang).Parse(edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fresh.Release()
+	requireCompleteParse(t, incremental, edited, lang, "incremental fallback")
+	requireCompleteParse(t, fresh, edited, lang, "fresh")
+	incrementalInspection, err := benchfixtures.InspectGoTree(incremental.RootNode(), lang)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshInspection, err := benchfixtures.InspectGoTree(fresh.RootNode(), lang)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if incrementalInspection.SHA256 != freshInspection.SHA256 {
+		t.Fatalf("Python conservative fallback differs from fresh parse: incremental=%s fresh=%s", incrementalInspection.SHA256, freshInspection.SHA256)
+	}
+}
 
 func TestGoLanguageFixtureLengthChangeIncrementalMatchesFresh(t *testing.T) {
 	fixtures, err := benchfixtures.LoadGoFullParseFixtures()
