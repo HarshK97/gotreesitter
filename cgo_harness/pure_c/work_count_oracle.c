@@ -131,14 +131,19 @@ static unsigned long long parse_timeout(const char *raw) {
 static void print_counts(GTSWorkCount c, uint32_t source_len,
                          uint32_t root_end_byte, bool root_has_error) {
   printf("{\n");
-  printf("  \"schema\": \"gts-work-count-c-child/v5\",\n");
+  printf("  \"schema\": \"gts-work-count-c-child/v6\",\n");
   printf("  \"engine\": \"static-c-instrumented-glr\",\n");
   printf("  \"digest_format\": \"gts-deep-tree-v1\",\n");
   printf("  \"source_bytes\": %u,\n", source_len);
   printf("  \"root_end_byte\": %u,\n", root_end_byte);
   printf("  \"root_has_error\": %s,\n", root_has_error ? "true" : "false");
   printf("  \"board_direct\": {\n");
-  printf("    \"schema\": \"gts-work-count-board-direct/v2\",\n");
+  printf("    \"schema\": \"gts-work-count-board-direct/v3\",\n");
+  printf("    \"frontier_lexer_elections_available\": false,\n");
+  printf("    \"frontier_lexer_elections\": 0,\n");
+  printf("    \"per_version_lex_requests_available\": true,\n");
+  printf("    \"per_version_lex_requests\": %llu,\n", (unsigned long long)c.per_version_lex_requests);
+  printf("    \"raw_main_lexer_invocations\": %llu,\n", (unsigned long long)c.raw_main_lexer_invocations);
   printf("    \"resolved_action_cells_examined\": %llu,\n", (unsigned long long)c.resolved_action_cells_examined);
   printf("    \"raw_action_entries_beyond_first\": %llu,\n", (unsigned long long)c.raw_action_entries_beyond_first);
   printf("    \"conflict_action_arms_admitted\": %llu,\n", (unsigned long long)c.conflict_action_arms_admitted);

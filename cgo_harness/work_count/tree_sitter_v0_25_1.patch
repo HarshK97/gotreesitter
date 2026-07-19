@@ -1,5 +1,5 @@
 diff --git a/lib/src/language.c b/lib/src/language.c
-index b341a67..07ac815 100644
+index b341a670..07ac8155 100644
 --- a/lib/src/language.c
 +++ b/lib/src/language.c
 @@ -1,6 +1,7 @@
@@ -30,10 +30,10 @@ index b341a67..07ac815 100644
 
  TSLexerMode ts_language_lex_mode_for_state(
 diff --git a/lib/src/parser.c b/lib/src/parser.c
-index 7aac259..ef6fee6 100644
+index 7aac259e..9032e98a 100644
 --- a/lib/src/parser.c
 +++ b/lib/src/parser.c
-@@ -20,6 +20,76 @@
+@@ -20,6 +20,83 @@
  #include "./tree.h"
  #include "./ts_assert.h"
  #include "./wasm_store.h"
@@ -78,12 +78,19 @@ index 7aac259..ef6fee6 100644
 +
 +bool gts_work_count_validate_action_model(void) {
 +  gts_work_count_reset();
++  gts_work_count_add(&gts_work_count_current.per_version_lex_requests, 1);
++  gts_work_count_add(&gts_work_count_current.raw_main_lexer_invocations, 1);
++  gts_work_count_add(&gts_work_count_current.raw_main_lexer_invocations, 1);
++  gts_work_count_add(&gts_work_count_current.resolved_action_cells_examined, 1);
 +  uint32_t admitted = 0;
 +  gts_work_count_admit_action_arm(&admitted, 3);
 +  // A repetition shift is ignored at the real action loop before this seam.
 +  gts_work_count_admit_action_arm(&admitted, 3);
 +  GTSWorkCount count = gts_work_count_snapshot();
 +  return admitted == 2 &&
++    count.per_version_lex_requests == 1 &&
++    count.raw_main_lexer_invocations == 2 &&
++    count.resolved_action_cells_examined == 1 &&
 +    count.conflict_action_arms_admitted == 2 &&
 +    count.causal_conflict_forks == 1 &&
 +    !count.overflow;
@@ -110,15 +117,24 @@ index 7aac259..ef6fee6 100644
 
  #define LOG(...)                                                                            \
    if (self->lexer.logger.log || self->dot_graph_file) {                                     \
-@@ -509,6 +579,7 @@ static Subtree ts_parser__lex(
+@@ -345,6 +422,7 @@ static bool ts_parser__better_version_exists(
+ }
+
+ static bool ts_parser__call_main_lex_fn(TSParser *self, TSLexerMode lex_mode) {
++  gts_work_count_add(&gts_work_count_current.raw_main_lexer_invocations, 1);
+   if (ts_language_is_wasm(self->language)) {
+     return ts_wasm_store_call_lex_main(self->wasm_store, lex_mode.lex_state);
+   } else {
+@@ -509,6 +587,8 @@ static Subtree ts_parser__lex(
    StackVersion version,
    TSStateId parse_state
  ) {
 +  gts_work_count_add(&gts_work_count_current.lexer_front_door_calls_proxy, 1);
++  gts_work_count_add(&gts_work_count_current.per_version_lex_requests, 1);
    TSLexerMode lex_mode = ts_language_lex_mode_for_state(self->language, parse_state);
    if (lex_mode.lex_state == (uint16_t)-1) {
      LOG("no_lookahead_after_non_terminal_extra");
-@@ -912,6 +983,7 @@ static void ts_parser__shift(
+@@ -912,6 +992,7 @@ static void ts_parser__shift(
    Subtree lookahead,
    bool extra
  ) {
@@ -126,7 +142,7 @@ index 7aac259..ef6fee6 100644
    bool is_leaf = ts_subtree_child_count(lookahead) == 0;
    Subtree subtree_to_push = lookahead;
    if (extra != ts_subtree_extra(lookahead) && is_leaf) {
-@@ -938,6 +1010,7 @@ static StackVersion ts_parser__reduce(
+@@ -938,6 +1019,7 @@ static StackVersion ts_parser__reduce(
    bool is_fragile,
    bool end_of_non_terminal_extra
  ) {
@@ -134,7 +150,7 @@ index 7aac259..ef6fee6 100644
    uint32_t initial_version_count = ts_stack_version_count(self->stack);
 
    // Pop the given number of nodes from the given version of the parse stack.
-@@ -1048,6 +1121,7 @@ static void ts_parser__accept(
+@@ -1048,6 +1130,7 @@ static void ts_parser__accept(
    StackVersion version,
    Subtree lookahead
  ) {
@@ -142,7 +158,7 @@ index 7aac259..ef6fee6 100644
    ts_assert(ts_subtree_is_eof(lookahead));
    ts_stack_push(self->stack, version, lookahead, false, 1);
 
-@@ -1616,13 +1690,19 @@ static bool ts_parser__advance(
+@@ -1616,13 +1699,19 @@ static bool ts_parser__advance(
      // an ambiguous state. REDUCE actions always create a new stack
      // version, whereas SHIFT actions update the existing stack version
      // and terminate this loop.
@@ -162,7 +178,7 @@ index 7aac259..ef6fee6 100644
            TSStateId next_state;
            if (action.shift.extra) {
              next_state = state;
-@@ -1643,6 +1723,7 @@ static bool ts_parser__advance(
+@@ -1643,6 +1732,7 @@ static bool ts_parser__advance(
          }
 
          case TSParseActionTypeReduce: {
@@ -170,7 +186,7 @@ index 7aac259..ef6fee6 100644
            bool is_fragile = table_entry.action_count > 1;
            bool end_of_non_terminal_extra = lookahead.ptr == NULL;
            LOG("reduce sym:%s, child_count:%u", SYM_NAME(action.reduce.symbol), action.reduce.child_count);
-@@ -1658,12 +1739,15 @@ static bool ts_parser__advance(
+@@ -1658,12 +1748,15 @@ static bool ts_parser__advance(
          }
 
          case TSParseActionTypeAccept: {
@@ -186,7 +202,7 @@ index 7aac259..ef6fee6 100644
            if (ts_subtree_child_count(lookahead) > 0) {
              ts_parser__breakdown_lookahead(self, &lookahead, ERROR_STATE, &self->reusable_node);
            }
-@@ -2203,6 +2287,7 @@ balance:
+@@ -2203,6 +2296,7 @@ balance:
    self->canceled_balancing = false;
    LOG("done");
    LOG_TREE(self->finished_tree);
@@ -195,7 +211,7 @@ index 7aac259..ef6fee6 100644
    result = ts_tree_new(
      self->finished_tree,
 diff --git a/lib/src/stack.c b/lib/src/stack.c
-index f0d5710..ddf0425 100644
+index f0d57108..ddf0425d 100644
 --- a/lib/src/stack.c
 +++ b/lib/src/stack.c
 @@ -4,6 +4,7 @@
@@ -515,7 +531,7 @@ index f0d5710..ddf0425 100644
 
  bool ts_stack_print_dot_graph(Stack *self, const TSLanguage *language, FILE *f) {
 diff --git a/lib/src/subtree.c b/lib/src/subtree.c
-index 42794de..c814693 100644
+index 42794de7..c814693e 100644
 --- a/lib/src/subtree.c
 +++ b/lib/src/subtree.c
 @@ -10,6 +10,7 @@
@@ -544,10 +560,10 @@ index 42794de..c814693 100644
 
 diff --git a/lib/src/work_count.h b/lib/src/work_count.h
 new file mode 100644
-index 0000000..52b4aa0
+index 00000000..5e09ba6c
 --- /dev/null
 +++ b/lib/src/work_count.h
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,68 @@
 +#ifndef TREE_SITTER_WORK_COUNT_H_
 +#define TREE_SITTER_WORK_COUNT_H_
 +
@@ -579,6 +595,8 @@ index 0000000..52b4aa0
 +  uint64_t parent_constructions_proxy;
 +  uint64_t pending_parent_constructions_proxy;
 +  uint64_t no_tree_parent_constructions_proxy;
++  uint64_t per_version_lex_requests;
++  uint64_t raw_main_lexer_invocations;
 +  uint64_t resolved_action_cells_examined;
 +  uint64_t raw_action_entries_beyond_first;
 +  uint64_t conflict_action_arms_admitted;

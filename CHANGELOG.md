@@ -22,6 +22,13 @@ for tags and release notes while still in `0.x`.
   reparsing. Included-range token-source wrappers preserve the underlying
   scanner's fallback reason in incremental profiles.
 
+### Tooling
+
+- Extend the authenticated work-count board with direct main-DFA callable-entry
+  and resolved action-cell diagnostics for Go and locked static C, while keeping
+  Go union-frontier elections and C per-version lex requests explicitly
+  unavailable for cross-engine comparison.
+
 ## [0.42.0] - 2026-07-18
 
 ### Performance

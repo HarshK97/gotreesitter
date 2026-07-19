@@ -1910,6 +1910,7 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 		}
 		s.work.ActionLookups++
 		actions := boundary.Actions()
+		workCountRecordResolvedActionCell(actions.Len())
 		if actions.Len() == 0 {
 			s.dispatchScratch.noActionIndices = append(s.dispatchScratch.noActionIndices, index)
 			continue
@@ -2863,6 +2864,7 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 	if beforeID != s.checkpointID {
 		return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreIdentity, detail: "generic scheduler scanner checkpoint continuity failed"}
 	}
+	workCountRecordFrontierLexerElection()
 	token := s.tokenSource.Next()
 	afterBytes := s.tokenSource.captureExternalScannerStateInto(s.scannerScratch)
 	afterID, after, err := diagnosticParserCoreInternCheckpoint(s.compact, afterBytes)
