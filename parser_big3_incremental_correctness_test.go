@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"reflect"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter"
@@ -17,9 +18,16 @@ func (pythonTestIncrementalReuseScanner) SupportsIncrementalReuse() bool { retur
 
 func pythonLanguageWithTestIncrementalScannerReuse() *gotreesitter.Language {
 	base := grammars.PythonLanguage()
-	clone := *base
+	src := reflect.ValueOf(base).Elem()
+	dst := reflect.New(src.Type()).Elem()
+	for i := 0; i < src.NumField(); i++ {
+		if src.Type().Field(i).IsExported() {
+			dst.Field(i).Set(src.Field(i))
+		}
+	}
+	clone := dst.Addr().Interface().(*gotreesitter.Language)
 	clone.ExternalScanner = pythonTestIncrementalReuseScanner{ExternalScanner: base.ExternalScanner}
-	return &clone
+	return clone
 }
 
 func TestPythonIncrementalSingleByteDeleteSweepMatchesFresh(t *testing.T) {
