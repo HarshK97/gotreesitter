@@ -203,8 +203,8 @@ jobs:
         # -pgo=pgo/default.pgo: parity_report parses every registered
         # grammar's smoke sample on every PR, the closest thing this repo
         # has to a representative production parsing binary run in its own
-        # CI. See pgo/README.md for the profile's provenance/regeneration
-        # recipe and the measured ~7% wall-clock win. PGO is a codegen-only
+        # CI. See pgo/README.md for the profile's provenance, regeneration
+        # recipe, and scoped current receipts. PGO is a codegen-only
         # optimization; it does not change parity_report's output.
         run: |
           GOTREESITTER_GRAMMAR_BLOB_DIR=grammars/grammar_blobs \

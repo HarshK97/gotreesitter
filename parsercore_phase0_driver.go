@@ -1869,8 +1869,14 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPass() (*diagnosticParser
 	if err := s.dispatchScratch.begin(); err != nil {
 		return nil, err
 	}
+	// Keep panic-safe scratch release in this small wrapper. The action body is
+	// intentionally separate so its large frame does not require a runtime
+	// defer registration on every scheduler pass.
 	defer s.dispatchScratch.finish()
+	return s.dispatchPassActive()
+}
 
+func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnosticParserCoreGenericUnsupported, error) {
 	s.work.Passes++
 	if unsupported := diagnosticParserCoreGenericUnsupportedToken(s.token); unsupported != nil {
 		return unsupported, nil

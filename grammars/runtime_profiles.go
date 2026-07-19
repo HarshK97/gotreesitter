@@ -73,6 +73,13 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 			SkipInitialCompleteAcceptedErrorMergeRetry: true,
 		},
 	},
+	// Crystal's external-scanner repeat selects the same tree after the complete
+	// accepted-error retry ladder. Keep the full ladder, but do not run it twice
+	// for this exact built-in grammar/scanner artifact.
+	"crystal": {
+		blobSHA256:                    mustRuntimeProfileSHA256("e906c8fec1d2ef49d7dbb349a9ed39fb894f7d8ae0024b2ee45a9956f050bd69"),
+		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
+	},
 	// Haxe's accepted-error retry ladder selects the same tree on every pass.
 	// Keep the first accepted result instead of running either retry ladder.
 	"haxe": {
@@ -83,6 +90,13 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	},
 	"kotlin": {
 		blobSHA256:                    mustRuntimeProfileSHA256("643a3e6b60d07846dd972849b612159ff9bf09734b09fb00013229c8593a8c78"),
+		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
+	},
+	// Matlab's external-scanner repeat selects the same tree after the complete
+	// accepted-error retry ladder. Keep the full ladder, but do not run it twice
+	// for this exact built-in grammar/scanner artifact.
+	"matlab": {
+		blobSHA256:                    mustRuntimeProfileSHA256("ff3220ac992d281de156b9bd90e0a04e7f8d7015feaf6c356fdb973f15bb434e"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
 	},
 	// Odin's accepted-error retry ladder selects the same tree on every pass,

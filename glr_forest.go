@@ -397,10 +397,13 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 // TestForestCorpusParity (which compares all nodes, byte ranges, points,
 // named/extra/missing bits, child counts, and fields — named-only gates hid
 // systematic span bugs).
-// Historical small-corpus speedups are not sufficient for admission. Current
-// locked full-corpus evidence must show both exact direct-C parity and a net
-// routed wall-time win. GraphQL is clean against production here too, but stays
-// out until the production tree is C-oracle-clean on the ring matrix. The forest
+// Historical small-corpus speedups are not sufficient for normal admission.
+// Current locked full-corpus evidence must show both exact direct-C parity and a
+// net routed wall-time win. The explicitly documented exceptions below are
+// retained C-correctness lifts where production is oracle-wrong (Nix and
+// gitattributes) and a provisional narrow row pending a broader corpus (JSON5).
+// GraphQL is clean against production here too, but stays out until the
+// production tree is C-oracle-clean on the ring matrix. The forest
 // has no error recovery, so tryForestFastPath falls back to production on any
 // decline (failure / error / truncation); that fallback means a language can
 // never regress the cases it declines, but does NOT catch a clean-but-different
@@ -480,6 +483,14 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 // differed from the direct C oracle. Keep all three available to explicit
 // callers while the route overhead and Erlang result-selection gaps are worked.
 //
+// A subsequent authenticated full-manifest audit at 04a2cf92 also moved Bash,
+// CSS, SCSS, C#, Agda, Ledger, Yuck, BibTeX, Authzed, Make, and TLA+ back to
+// explicit-only routing. None satisfied both admission gates: BibTeX, CSS,
+// SCSS, and Yuck were exact but routed slower; Ledger and Make dispatched no
+// files; Bash, C#, Agda, Authzed, and TLA+ had direct-C divergences, and all but
+// C# also lost routed wall time. Explicit WantsForest and recovery experiments
+// remain available for every language.
+//
 // Non-built-in languages opt in per-Language via Language.WantsForest (see
 // parserWantsForest) instead of joining this map — e.g. a grammargen consumer
 // generating its own grammar (a Pawn grammar, say) sets WantsForest directly
@@ -489,51 +500,26 @@ func (p *Parser) recordForestDecline(reason string, tok Token, states []StateID)
 // hard failures, but a clean-but-different tree is the consumer's
 // responsibility.
 var builtinForestDefaults = map[string]bool{
-	"bash":       true,
-	"css":        true,
-	"scss":       true,
 	"javascript": true,
-	"c_sharp":    true,
 
-	// Promoted 2026-06-08 after a full-corpus byte-range gate (forest vs
-	// production, lock-filtered real corpus): ZERO divergence on every
-	// dispatched file (gitignore 33/44, nix 635/703, squirrel 18/18,
-	// prisma 78/78; the rest decline safely to production), AND a net-wall
-	// WIN on the corpus (byte-identical trees). All carry the glr_merge
-	// deep-stack blowup and their blowup files dispatch cleanly; squirrel and
-	// prisma are parity-clean vs C (production ~5.9x), a clean forest speedup.
-	//
-	// NOT make: it is byte-range clean (19/20, 0 divergence) but net-wall
-	// NEUTRAL (1.0x) — its expensive blowup files are precisely the ones that
-	// decline (no-shift-death) and fall back to slow production, so the forest
-	// only dispatches make's already-cheap files. make promotes once forest
-	// error recovery lands (Gate 2 in forest-solution-design.md, moved to
-	// gotreesitter-specs (external)).
+	// Gitignore, Squirrel, and Prisma retain their exact production/C parity and
+	// net-wall receipts. Nix is the deliberate correctness-lift exception: its
+	// authenticated 703-file audit dispatched 673 files, differed from
+	// production on 76, and routed in 1006.6 ms versus 944.3 ms (+6.6%), but the
+	// forest result had zero direct-C divergences. Keep Nix while a narrower
+	// positive gate is developed; its admission is correctness, not wall time.
 	"gitignore": true,
 	"nix":       true,
 	"squirrel":  true,
 	"prisma":    true,
 
-	// Phase 2 promotions 2026-06-08: forest+recovery, introduced=0 vs C and a
-	// large net-wall win. Org, Vimdoc, and Common Lisp later moved back to
-	// explicit-only routing after current corpus evidence showed only discarded
-	// attempts; their recovery profiles remain in languageWantsForestRecover.
-	"agda":   true,
-	"ledger": true,
-	"yuck":   true,
-	"json5":  true,
+	// JSON5 remains provisionally enabled after an exact one-file audit showed
+	// a net routed win. Keep the claim narrow until its corpus expands.
+	"json5": true,
 
-	// Promoted 2026-06-08 via the forest-vs-C sweep (TestForestVsCSources):
-	// the forest introduces ZERO C-divergences (every divergence is inherited
-	// from production) and is a net-wall WIN — bibtex 109.8x and arduino 1.3x.
-	// Arduino also fixes production on 10/19 production-mismatched files. The
-	// earlier Faust promotion was superseded by the full-corpus receipt above.
-	// Held: make (forest=C-clean but net-wall NEUTRAL 1.0x — no lift).
-	"bibtex":  true,
+	// Arduino remains enabled on its existing direct-C correctness and wall
+	// receipt; the full-manifest audit did not supersede that evidence.
 	"arduino": true,
-	"authzed": true,
-	"make":    true,
-	"tlaplus": true,
 
 	// Promoted 2026-06-08 against the C ORACLE, not production. gitattributes
 	// is parity-blocked (production diverges from C), but the forest matches
@@ -542,9 +528,10 @@ var builtinForestDefaults = map[string]bool{
 	// lift (parity-blocked -> parity-clean) AND a speed lift. Production is the
 	// wrong promotion baseline for parity-blocked glr-merge grammars.
 	//
-	// ron/yuck/dtd are ALSO forest=C-clean but held: ron is net-wall NEGATIVE
-	// (0.7x on its 3-file corpus), yuck/dtd corpora are too thin (2 and 1
-	// dispatched) for a confident promotion. Promote when their corpora grow.
+	// Ron, Yuck, and DTD are also forest=C-clean but explicit-only. Ron is
+	// net-wall negative (0.7x on three files); Yuck's authenticated two-file
+	// audit routed 46.2% slower than production; DTD has only one dispatched
+	// witness. Reconsider only with broader, winning corpus evidence.
 	"gitattributes": true,
 }
 

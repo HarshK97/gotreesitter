@@ -110,11 +110,12 @@ func TestExternalScannerIncrementalReusePolicy(t *testing.T) {
 
 func TestExternalScannerTokenInvariantLeafReuse(t *testing.T) {
 	cases := []struct {
-		name        string
-		lang        func() *gotreesitter.Language
-		source      []byte
-		marker      []byte
-		replacement byte
+		name           string
+		lang           func() *gotreesitter.Language
+		explicitForest bool
+		source         []byte
+		marker         []byte
+		replacement    byte
 	}{
 		{
 			name:        "elixir identifier",
@@ -124,18 +125,20 @@ func TestExternalScannerTokenInvariantLeafReuse(t *testing.T) {
 			replacement: 'w',
 		},
 		{
-			name:        "bash comment",
-			lang:        grammars.BashLanguage,
-			source:      []byte("# look for old 0.x cruft\n"),
-			marker:      []byte("0"),
-			replacement: '1',
+			name:           "bash comment",
+			lang:           grammars.BashLanguage,
+			explicitForest: true,
+			source:         []byte("# look for old 0.x cruft\n"),
+			marker:         []byte("0"),
+			replacement:    '1',
 		},
 		{
-			name:        "bash number",
-			lang:        grammars.BashLanguage,
-			source:      []byte("echo -9\n"),
-			marker:      []byte("9"),
-			replacement: '0',
+			name:           "bash number",
+			lang:           grammars.BashLanguage,
+			explicitForest: true,
+			source:         []byte("echo -9\n"),
+			marker:         []byte("9"),
+			replacement:    '0',
 		},
 		{
 			name:        "julia line comment",
@@ -163,6 +166,9 @@ func TestExternalScannerTokenInvariantLeafReuse(t *testing.T) {
 			next[offset] = tc.replacement
 
 			lang := tc.lang()
+			if tc.explicitForest {
+				lang = explicitForestLanguage(t, lang)
+			}
 			parser := gotreesitter.NewParser(lang)
 			fresh, err := parser.Parse(next)
 			if err != nil {
@@ -170,6 +176,9 @@ func TestExternalScannerTokenInvariantLeafReuse(t *testing.T) {
 			}
 			defer fresh.Release()
 			requireCompleteParse(t, fresh, next, lang, "fresh")
+			if tc.explicitForest {
+				requireAcceptedForestRuntime(t, "fresh "+tc.name+" parse", fresh)
+			}
 			if fresh.RootNode().HasError() {
 				t.Fatalf("fresh parse has error: %s", fresh.RootNode().SExpr(lang))
 			}
@@ -180,6 +189,9 @@ func TestExternalScannerTokenInvariantLeafReuse(t *testing.T) {
 			}
 			defer oldTree.Release()
 			requireCompleteParse(t, oldTree, tc.source, lang, "old")
+			if tc.explicitForest {
+				requireAcceptedForestRuntime(t, "old "+tc.name+" parse", oldTree)
+			}
 			oldTree.Edit(gotreesitter.InputEdit{
 				StartByte:   uint32(offset),
 				OldEndByte:  uint32(offset + 1),

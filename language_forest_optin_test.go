@@ -30,9 +30,9 @@ func TestParserWantsForestFieldDrivesDispatch(t *testing.T) {
 		}
 	}
 
-	builtinNoField := &Parser{language: &Language{Name: "bash", WantsForest: false}}
+	builtinNoField := &Parser{language: &Language{Name: "javascript", WantsForest: false}}
 	if !parserWantsForest(builtinNoField) {
-		t.Errorf("built-in language %q should dispatch to forest via builtinForestDefaults even with WantsForest=false", "bash")
+		t.Errorf("built-in language %q should dispatch to forest via builtinForestDefaults even with WantsForest=false", "javascript")
 	}
 
 	if parserWantsForest(nil) {
@@ -53,10 +53,9 @@ func TestParserWantsForestFieldDrivesDispatch(t *testing.T) {
 // ordinary path does not need; see the builtinForestDefaults doc comment.
 func TestBuiltinForestDefaultsCuratedSet(t *testing.T) {
 	want := []string{
-		"bash", "css", "scss", "javascript", "c_sharp",
+		"javascript",
 		"gitignore", "nix", "squirrel", "prisma",
-		"agda", "ledger", "yuck", "json5",
-		"bibtex", "arduino", "authzed", "make", "tlaplus",
+		"json5", "arduino",
 		"gitattributes",
 	}
 	if len(builtinForestDefaults) != len(want) {
@@ -70,7 +69,12 @@ func TestBuiltinForestDefaultsCuratedSet(t *testing.T) {
 	// A handful of explicitly-NOT-forest-amenable languages (see the doc
 	// comment) must stay out of the curated set. "go" is intentionally held
 	// out of default dispatch (commit 6894fc9f) even though it is forest-clean.
-	notWanted := []string{"python", "rust", "dart", "ruby", "haskell", "php", "go", "csv", "beancount", "org", "vimdoc", "fish", "racket", "commonlisp", "faust", "cmake", "erlang"}
+	notWanted := []string{
+		"python", "rust", "dart", "ruby", "haskell", "php", "go", "csv",
+		"beancount", "org", "vimdoc", "fish", "racket", "commonlisp",
+		"faust", "cmake", "erlang", "bibtex", "css", "yuck", "bash",
+		"scss", "c_sharp", "agda", "ledger", "authzed", "make", "tlaplus",
+	}
 	for _, name := range notWanted {
 		if builtinForestDefaults[name] {
 			t.Errorf("builtinForestDefaults unexpectedly contains %q", name)
@@ -127,6 +131,21 @@ func TestBuiltinForestDefaultsCuratedSet(t *testing.T) {
 	// Full-corpus recertification moved these legacy promotions to the same
 	// explicit-only policy without removing their experimental entry point.
 	for _, name := range []string{"faust", "cmake", "erlang"} {
+		parser := &Parser{language: &Language{Name: name, WantsForest: true}}
+		if !parserWantsForest(parser) {
+			t.Errorf("explicit Language.WantsForest should still dispatch %s to forest", name)
+		}
+	}
+
+	// Full-manifest recertification also moved these legacy defaults to
+	// explicit-only routing without removing their experimental entry point.
+	for _, name := range []string{
+		"bibtex", "css", "yuck", "bash", "scss", "c_sharp", "agda",
+		"ledger", "authzed", "make", "tlaplus",
+	} {
+		if parserWantsForest(&Parser{language: &Language{Name: name}}) {
+			t.Errorf("%s should not dispatch to forest automatically", name)
+		}
 		parser := &Parser{language: &Language{Name: name, WantsForest: true}}
 		if !parserWantsForest(parser) {
 			t.Errorf("explicit Language.WantsForest should still dispatch %s to forest", name)

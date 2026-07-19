@@ -9,6 +9,44 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Refresh the opt-in Go build-time PGO artifact with a hash-verified composite
+  of the established production profile and authenticated selected, clean, and
+  accepted-error parsing profiles. On the pinned quiet host, the composite is
+  4.01% faster than the previous profile by equal-fixture geomean across the
+  four selected-store fixtures, with every fixture faster, while preserving
+  the existing five-grammar production workload (statistically
+  indistinguishable, with a -0.14% median point estimate) and improving it by
+  5.37% versus PGO-off. Production allocation medians move by +0.43% B/op and
+  +0.07% allocs/op. Exact selected-store admission and the production corpus
+  digest remain unchanged; checked-in inputs and a deterministic composition
+  script make the artifact reproducible.
+- Keep compact-scheduler dispatch and reduction scratch cleanup panic-safe in
+  small wrappers so their large action bodies no longer register three runtime
+  defers per reduction-bearing pass. On the pinned quiet host, the authenticated
+  four-fixture `BenchmarkDiagnosticParserCoreCanonicalTotal` lane—compact
+  canonical parsing plus public-node materialization—improves by 4.19% by
+  equal-fixture geomean, with every fixture 3.73-5.28% faster, unchanged
+  allocations, exact work and deep-tree digests, and zero fallback. The route
+  remains build-tagged and diagnostic-only.
+- Return BibTeX, CSS, Yuck, Bash, SCSS, C#, Agda, Ledger, Authzed, Make, and
+  TLA+ automatic forest routing to explicit-only experiments after an
+  authenticated full-manifest audit. The exact BibTeX, CSS, SCSS, and Yuck
+  routes were 32.7%, 32.3%, 4.8%, and 46.2% slower than production. Ledger and
+  Make dispatched 0/1 and 0/19 files. Bash routed 1.3% slower and differed from
+  direct C on 61/1,263 dispatches; C# routed 9.3% faster but differed on
+  212/1,427; Agda routed 7.5% slower and differed on 1,444/2,070; Authzed routed
+  3.9x slower and differed on 27/35; TLA+ routed 3.2x slower and differed on
+  105/267. Explicit `Language.WantsForest`, recovery, incremental, and direct
+  forest experiments remain available.
+- Avoid repeating the complete external-scanner full-parse retry ladder for the
+  exact built-in Crystal and Matlab grammar artifacts, while retaining the
+  entire accepted-error widening and final-merge ladder once. In the exact-head
+  certification at `c6de0991`, the locked 2,380-file Crystal corpus preserves
+  every deep tree and C admission relation, reduces attempts from 13,445 to
+  8,120, lowers aggregate parse wall time by 24.62%, and lowers allocated bytes
+  by 10.19%. On the locked 1,434-file Matlab corpus, attempts fall from 7,866 to
+  4,650, wall time by 40.99%, and allocated bytes by 32.67%, again with exact
+  output and oracle relation preservation on every file.
 - Execute Go highlight queries directly over the build-tagged compact selected
   store through value node handles, without constructing public-node proxies.
   All four locked real-Go fixtures preserve exact ordered query captures,
@@ -58,6 +96,16 @@ for tags and release notes while still in `0.x`.
 - Extend the locked static-C publication driver with an authenticated
   selected-store backend and retain selected-store bytes alongside total
   allocation, work, fallback, and RSS metrics.
+- Add an opt-in retry-profile corpus certifier that compares the duplicated
+  external-scanner retry ladder with an exact-blob candidate file by file while
+  preserving accepted-error widening and recording the locked C-oracle
+  admission relation without treating pre-existing corpus gaps as candidate
+  regressions. Its success and counterexample receipts include deep-tree
+  digests, stop/full-span state, attempt rungs, allocation totals, clean/error
+  splits, and locked-corpus source identities. Schema-v2 journals fail closed
+  on unknown or dirty candidate revisions, mixed schemas, oracle or parser
+  configuration drift, duplicate or unselected paths, and any resumed row that
+  no longer revalidates exactly; fresh rows are validated before publication.
 
 ### Fixed
 

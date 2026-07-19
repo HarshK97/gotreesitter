@@ -224,9 +224,16 @@ func (c *Core) reduceOutputsClassifiedIntoUncheckpointed(dst []ReductionOutput, 
 		return nil, errors.New("parser-core phase zero: reentrant reduction while pop scratch is active")
 	}
 	c.popScratch.busy = true
+	// Keep both panic-safe releases in this small wrapper. The reduction body is
+	// intentionally separate so its large frame does not register two runtime
+	// defers for every reduction.
 	defer c.popScratch.resetLogical()
 	c.reductionScratch.begin()
 	defer c.reductionScratch.finish()
+	return c.reduceOutputsClassifiedIntoActive(frontier, boundary, actionOrdinal, fork)
+}
+
+func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) ([]ReductionOutput, error) {
 	act, err := c.classifiedActionRef(boundary, actionOrdinal)
 	if err != nil {
 		return nil, err
