@@ -383,8 +383,8 @@ func validateRetryProfileCertParse(label string, parse retryProfileCertParse, so
 	if parse.StopReason != gotreesitter.ParseStopAccepted {
 		return fmt.Errorf("%s stop_reason=%q want=%q", label, parse.StopReason, gotreesitter.ParseStopAccepted)
 	}
-	if parse.RootStart != 0 || parse.RootEnd != uint32(sourceBytes) {
-		return fmt.Errorf("%s root=%d..%d want=0..%d", label, parse.RootStart, parse.RootEnd, sourceBytes)
+	if parse.RootStart > parse.RootEnd || parse.RootEnd != uint32(sourceBytes) {
+		return fmt.Errorf("%s root=%d..%d does not cover EOF=%d", label, parse.RootStart, parse.RootEnd, sourceBytes)
 	}
 	if len(parse.Attempts) == 0 {
 		return fmt.Errorf("%s has no parse attempts", label)
@@ -805,6 +805,17 @@ func TestRetryProfileCertJournalRejectsMixedSchema(t *testing.T) {
 			_ = journal.Close()
 		}
 		t.Fatal("mixed-schema journal was accepted")
+	}
+}
+
+func TestRetryProfileCertAllowsMatchingRootAfterLeadingTrivia(t *testing.T) {
+	source := []byte("\nx")
+	row := retryProfileCertValidTestRow(source)
+	row.Path = "x.m"
+	row.Baseline.RootStart = 1
+	row.Candidate.RootStart = 1
+	if err := validateRetryProfileCertRow(row, row.Path, source); err != nil {
+		t.Fatalf("validate matching nonzero root start: %v", err)
 	}
 }
 
