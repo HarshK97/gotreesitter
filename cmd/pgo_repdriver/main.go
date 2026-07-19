@@ -6,12 +6,12 @@
 // so the resulting profile reflects real parsing hot paths rather than one
 // grammar's quirks.
 //
-// The committed, canonical profile lives at pgo/default.pgo (repo root) —
-// see pgo/README.md for the full regeneration recipe and where it's wired
-// into the build. In short, from the repo root:
+// The profile collected by this command is the production-corpus input to the
+// checked-in pgo/default.pgo composite. See pgo/README.md for the composition
+// recipe and where the result is wired into the build. From the repo root:
 //
 //	cd cgo_harness && go run ./cmd/build_real_corpus -out corpus_real -langs go,c_sharp,bash,python,cmake && cd ..
-//	go run ./cmd/pgo_repdriver -mode=profile -cpuprofile=pgo/default.pgo -iterations=1500
+//	go run ./cmd/pgo_repdriver -mode=profile -cpuprofile=pgo/inputs/production-v1.pgo -iterations=1500
 //
 // cgo_harness/corpus_real is gitignored and rebuilt from
 // grammars/languages.lock via cgo_harness/cmd/build_real_corpus (see
@@ -197,7 +197,7 @@ func runDigest(corpusRoot string) error {
 func main() {
 	mode := flag.String("mode", "profile", "profile | digest")
 	corpusRoot := flag.String("corpus", "", "path to cgo_harness/corpus_real (auto-detected if empty)")
-	cpuProfile := flag.String("cpuprofile", "default.pgo", "output path for the CPU profile (profile mode); canonical repo location is pgo/default.pgo from the repo root")
+	cpuProfile := flag.String("cpuprofile", "default.pgo", "output path for the CPU profile (profile mode); this driver supplies the production input to pgo/default.pgo")
 	iterations := flag.Int("iterations", 400, "number of full-corpus passes to profile (profile mode)")
 	flag.Parse()
 

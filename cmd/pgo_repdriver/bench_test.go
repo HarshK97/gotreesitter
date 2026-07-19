@@ -4,8 +4,8 @@ import "testing"
 
 // BenchmarkParseCorpus parses the same fixed multi-grammar corpus
 // (go, c_sharp, bash, python, cmake under cgo_harness/corpus_real) used to
-// collect the PGO profile. It is built once without PGO and once with
-// -pgo=default.pgo to measure the wall-clock delta from build-time PGO on a
+// collect the production component of the PGO profile. It is built without
+// PGO and with candidate profiles to measure build-time PGO on an established
 // representative parsing workload.
 func BenchmarkParseCorpus(b *testing.B) {
 	root, err := findCorpusRoot()

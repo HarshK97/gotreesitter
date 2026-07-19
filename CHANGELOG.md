@@ -9,6 +9,15 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Refresh the opt-in Go build-time PGO artifact with a hash-verified composite
+  of the established production profile and authenticated selected, clean, and
+  accepted-error parsing profiles. On the pinned quiet host, the composite is
+  4.01% faster than the previous profile by equal-fixture geomean across the
+  four selected-store fixtures, with every fixture faster, while preserving
+  the existing five-grammar production workload (0.14% faster) and improving it
+  by 5.37% versus PGO-off. Exact selected-store admission and the production
+  corpus digest remain unchanged; checked-in inputs and a deterministic
+  composition script make the artifact reproducible.
 - Keep compact-scheduler dispatch and reduction scratch cleanup panic-safe in
   small wrappers so their large action bodies no longer register three runtime
   defers per reduction-bearing pass. On the pinned quiet host, the authenticated
