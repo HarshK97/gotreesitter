@@ -92,13 +92,14 @@ func (s *includedRangeTokenSource) SupportsIncrementalReuse() bool {
 	if s == nil || s.base == nil {
 		return false
 	}
-	if dts, ok := s.base.(*dfaTokenSource); ok {
-		return languageSupportsIncrementalReuse(dts.language)
+	return tokenSourceSupportsIncrementalReuse(s.base)
+}
+
+func (s *includedRangeTokenSource) IncrementalReuseUnsupportedReason() string {
+	if s == nil || s.base == nil {
+		return "token_source_nil"
 	}
-	if reusable, ok := s.base.(IncrementalReuseTokenSource); ok {
-		return reusable.SupportsIncrementalReuse()
-	}
-	return false
+	return incrementalReuseUnavailableReason(s.base)
 }
 
 func (s *includedRangeTokenSource) Reset(source []byte) {

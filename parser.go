@@ -2953,6 +2953,11 @@ func incrementalReuseUnavailableReason(ts TokenSource) string {
 	if ts == nil {
 		return "token_source_nil"
 	}
+	if reasoner, ok := ts.(incrementalReuseUnsupportedReasoner); ok {
+		if reason := reasoner.IncrementalReuseUnsupportedReason(); reason != "" {
+			return reason
+		}
+	}
 	if dts, ok := ts.(*dfaTokenSource); ok {
 		if dts.language == nil {
 			return "dfa_token_source_no_language"

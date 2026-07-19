@@ -108,6 +108,72 @@ func TestExternalScannerIncrementalReusePolicy(t *testing.T) {
 	}
 }
 
+func TestPythonSameLengthTokenChangeDeclinesScannerReuse(t *testing.T) {
+	source := []byte("value = 1\n")
+	next := []byte("value = x\n")
+	offset := bytes.IndexByte(source, '1')
+	if offset < 0 || next[offset] != 'x' {
+		t.Fatal("locked Python token-change witness is malformed")
+	}
+
+	for _, tc := range []struct {
+		name           string
+		includedRanges bool
+	}{
+		{name: "direct"},
+		{name: "included_range", includedRanges: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lang := grammars.PythonLanguage()
+			parser := gotreesitter.NewParser(lang)
+			if tc.includedRanges {
+				parser.SetIncludedRanges([]gotreesitter.Range{{
+					StartByte: 0,
+					EndByte:   uint32(len(source)),
+					EndPoint:  pointForOffset(source, len(source)),
+				}})
+			}
+			oldTree, err := parser.Parse(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer oldTree.Release()
+			oldTree.Edit(gotreesitter.InputEdit{
+				StartByte:   uint32(offset),
+				OldEndByte:  uint32(offset + 1),
+				NewEndByte:  uint32(offset + 1),
+				StartPoint:  pointForOffset(source, offset),
+				OldEndPoint: pointForOffset(source, offset+1),
+				NewEndPoint: pointForOffset(next, offset+1),
+			})
+
+			incremental, profile, err := parser.ParseIncrementalProfiled(next, oldTree)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer incremental.Release()
+			if !profile.ReuseUnsupported || profile.ReuseUnsupportedReason != "external_scanner_unsupported" {
+				t.Fatalf("same-length token change did not preserve Python scanner refusal: %+v", profile)
+			}
+			if profile.OldTreeReuseRoute || profile.ReusedSubtrees != 0 || profile.ReusedBytes != 0 {
+				t.Fatalf("same-length token change reused old Python syntax: %+v", profile)
+			}
+			if profile.TokensConsumed == 0 || profile.NewNodesAllocated == 0 {
+				t.Fatalf("same-length token change did not execute a full parse: %+v", profile)
+			}
+
+			fresh, err := parser.Parse(next)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer fresh.Release()
+			if got, want := incremental.RootNode().SExpr(lang), fresh.RootNode().SExpr(lang); got != want {
+				t.Fatalf("Python scanner fallback differs from fresh parse\n got: %s\nwant: %s", got, want)
+			}
+		})
+	}
+}
+
 func TestExternalScannerTokenInvariantLeafReuse(t *testing.T) {
 	cases := []struct {
 		name           string

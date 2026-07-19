@@ -18,7 +18,8 @@ for tags and release notes while still in `0.x`.
 - Fail closed to a fresh parse for Python edits that require external-scanner
   checkpoint reuse until indentation-state restoration is certified exact.
   Same-length token-invariant leaf validation still reuses the complete old
-  tree without reparsing.
+  tree without reparsing. Included-range token-source wrappers now preserve the
+  underlying scanner's fallback reason in incremental profiles.
 
 ## [0.42.0] - 2026-07-18
 
