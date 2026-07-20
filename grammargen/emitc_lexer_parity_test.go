@@ -9,7 +9,7 @@ package grammargen
 // parse of the SAME generated tables. The pure-Go parser is the oracle: any
 // divergence here is a bug in EmitC, not in the grammar or tables.
 //
-// They target five EmitC defects the goala C-parity harness isolated:
+// They target six EmitC defects the goala C-parity harness isolated:
 //
 //  1a. ts_lex failed to tokenize an anonymous keyword string that overlaps the
 //      identifier character class: `let x` parsed as (ERROR) under C because
@@ -34,6 +34,13 @@ package grammargen
 //      C enumerator even after defect 2's fix, because the old dedup only
 //      checked occurrence count per base, not the full set of names already
 //      claimed by every other symbol.
+//  5.  emitAliasSequences (the ts_alias_sequences array definition) and
+//      emitLanguageExport (the .alias_sequences reference) were gated on two
+//      DIFFERENT predicates: the definition required a non-empty ROW, the
+//      reference only required a non-empty outer table. A table that is
+//      non-empty at the outer level but has only empty/zero rows emitted the
+//      reference without ever declaring the array it points at — "use of
+//      undeclared identifier ts_alias_sequences".
 //
 // The harness skips gracefully when a C compiler or the runtime module is
 // unavailable, so `go test ./grammargen/...` stays green in minimal
@@ -495,6 +502,85 @@ func TestEmitCAliasSequenceStride(t *testing.T) {
 
 	parseC := cWalker(t, "emitc_stride", lang)
 	for _, in := range []string{"k a b c d e ;", "`x`", "k a b c d e ; `y` k p q r s t ;"} {
+		in := in
+		t.Run(strings.ReplaceAll(in, " ", "_"), func(t *testing.T) {
+			want := goSExpr(t, lang, in)
+			got := parseC(t, in)
+			if got != want {
+				t.Fatalf("C/Go divergence for %q\n C: %s\nGo: %s", in, got, want)
+			}
+		})
+	}
+}
+
+// TestEmitCAliasSequencesGateMismatch is the regression for defect 5: the
+// ts_alias_sequences array definition and the .alias_sequences reference in
+// the exported TSLanguage must be gated on the SAME predicate.
+//
+// The base grammar here (a production with a field map, zero aliases
+// anywhere) is the shape the defect was found against, but grammargen's own
+// buildAliasSequences already leaves Language.AliasSequences completely nil
+// for a zero-alias grammar (it bails out before ever touching the field), so
+// this shape alone does not exercise the bug through GenerateLanguage's
+// current pipeline — both old and new predicates agree it's empty. To pin
+// the actual GATE MISMATCH the review found (rather than one specific
+// codepath that happens not to reach it today), this test forces the exact
+// shape onto the generated Language directly: an AliasSequences table that
+// is non-empty at the outer (per-production) level with every row empty,
+// which is what emitAliasSequences's old private per-row length scan (0)
+// disagreed with emitLanguageExport's outer len()>0 check on. EmitC is a
+// public function over *gotreesitter.Language and must stay correct for any
+// value satisfying its contract, not just ones grammargen's own assemble.go
+// happens to produce today — the same reasoning as
+// TestEmitCRejectsMalformedSupertypeSurfaces.
+//
+// Forcing all rows to nil is safe for the pure-Go comparison:
+// languageProductionHasAliasSequence (parser_result.go) clamps childCount to
+// len(seq) before indexing, so a nil/empty row behaves identically to no
+// AliasSequences at all — the S-expression is unaffected.
+func TestEmitCAliasSequencesGateMismatch(t *testing.T) {
+	g := NewGrammar("emitc_aliasgate")
+	g.Define("source_file", Repeat(Sym("item")))
+	g.Define("item", Seq(
+		Field("a", Sym("identifier")),
+		Field("b", Sym("identifier")),
+	))
+	g.Define("identifier", Pat(`[a-z]+`))
+	g.SetExtras(Pat(`\s`))
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	if len(lang.FieldMapEntries) == 0 {
+		t.Fatal("test grammar must produce a non-empty field map")
+	}
+	if len(lang.AliasSequences) != 0 {
+		t.Fatalf("test grammar must naturally have zero AliasSequences, got %d rows", len(lang.AliasSequences))
+	}
+
+	// Force the exact gate-mismatch shape: a non-empty outer table (matching
+	// production_id_count) whose every row is empty.
+	n := int(lang.ProductionIDCount)
+	if n == 0 {
+		n = 1
+	}
+	lang.AliasSequences = make([][]gotreesitter.Symbol, n)
+
+	code, err := EmitC("emitc_aliasgate", lang)
+	if err != nil {
+		t.Fatalf("EmitC: %v", err)
+	}
+	hasDef := strings.Contains(code, "ts_alias_sequences[PRODUCTION_ID_COUNT][MAX_ALIAS_SEQUENCE_LENGTH]")
+	hasRef := strings.Contains(code, ".alias_sequences = &ts_alias_sequences[0][0],")
+	if hasRef != hasDef {
+		t.Fatalf("alias_sequences definition/reference gates disagree: hasDef=%v hasRef=%v", hasDef, hasRef)
+	}
+
+	// The decisive test: the C compiles (no "undeclared identifier
+	// ts_alias_sequences") and byte-matches pure-Go.
+	parseC := cWalker(t, "emitc_aliasgate", lang)
+	for _, in := range []string{"a b", "a b a b"} {
 		in := in
 		t.Run(strings.ReplaceAll(in, " ", "_"), func(t *testing.T) {
 			want := goSExpr(t, lang, in)

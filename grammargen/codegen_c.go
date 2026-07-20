@@ -350,18 +350,31 @@ func emitFieldMaps(b *strings.Builder, lang *gotreesitter.Language) {
 	fmt.Fprintf(b, "};\n\n")
 }
 
-func emitAliasSequences(b *strings.Builder, lang *gotreesitter.Language, cNames []string) {
-	if len(lang.AliasSequences) == 0 {
-		return
-	}
+// emitAliasSequencesEnabled reports whether the grammar's alias-sequence
+// surface should be emitted at all. emitAliasSequences (the array
+// definition) and emitLanguageExport (the .alias_sequences reference) MUST
+// share this exact predicate: upstream tree-sitter omits both the
+// ts_alias_sequences array and the .alias_sequences field together when a
+// grammar has no aliases anywhere (ts2go's extractor treats a missing array
+// as "grammars without aliases omit this table"), and the runtime tolerates
+// the resulting NULL .alias_sequences. Gating the two emissions on different
+// predicates — as a prior version of this file did, checking only
+// len(lang.AliasSequences) > 0 for the reference but requiring a non-empty
+// ROW for the definition — let a table that is non-empty at the outer level
+// but has only empty/zero rows (a grammar with productions but literally no
+// alias content) emit the reference without ever declaring the array,
+// producing a C "use of undeclared identifier ts_alias_sequences" error.
+// maxAliasSequenceLength(lang), not a private per-row scan, is the correct
+// second half of the predicate: it already accounts for production child
+// counts (see its doc comment), and the array's declared stride
+// (MAX_ALIAS_SEQUENCE_LENGTH) is that same value, so an all-empty-row table
+// still emits correctly as a zero-initialized array under this gate.
+func emitAliasSequencesEnabled(lang *gotreesitter.Language) bool {
+	return len(lang.AliasSequences) > 0 && maxAliasSequenceLength(lang) > 0
+}
 
-	maxLen := 0
-	for _, row := range lang.AliasSequences {
-		if len(row) > maxLen {
-			maxLen = len(row)
-		}
-	}
-	if maxLen == 0 {
+func emitAliasSequences(b *strings.Builder, lang *gotreesitter.Language, cNames []string) {
+	if !emitAliasSequencesEnabled(lang) {
 		return
 	}
 
@@ -749,7 +762,7 @@ func emitLanguageExport(b *strings.Builder, name string, lang *gotreesitter.Lang
 		fmt.Fprintf(b, "    .field_map_entries = ts_field_map_entries,\n")
 	}
 
-	if len(lang.AliasSequences) > 0 {
+	if emitAliasSequencesEnabled(lang) {
 		fmt.Fprintf(b, "    .alias_sequences = &ts_alias_sequences[0][0],\n")
 	}
 
