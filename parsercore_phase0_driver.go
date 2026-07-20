@@ -1298,6 +1298,8 @@ type diagnosticParserCoreGenericScheduler struct {
 	reductionOutputs           []core.ReductionOutput
 	reductionReplacements      []diagnosticParserCoreHeader
 	classifiedBoundaries       []core.ClassifiedBoundary
+	electStates                []StateID
+	electGLRStates             []StateID
 	work                       DiagnosticParserCoreGenericWork
 	epochProgress              bool
 	acceptedHead               core.Head
@@ -2191,57 +2193,74 @@ func compactDerivationsForAcceptance(compact *core.Core, head core.Head) ([]core
 	return paths, err
 }
 
+// diagnosticParserCoreGenericNoActionDropEligible reports whether at least one
+// non-paused sibling head is still live (shifted or accepted). noActionIndices
+// is ascending and unique (dispatch-pass order), so the paused set is matched
+// with a two-pointer walk rather than an allocated map.
 func diagnosticParserCoreGenericNoActionDropEligible(headers []diagnosticParserCoreHeader, noActionIndices []int, epochProgress bool) bool {
 	if !epochProgress || len(noActionIndices) == 0 || len(noActionIndices) >= len(headers) {
 		return false
 	}
-	noAction := make(map[int]struct{}, len(noActionIndices))
+	prev := -1
 	for _, index := range noActionIndices {
-		if index < 0 || index >= len(headers) {
+		if index <= prev || index >= len(headers) {
 			return false
 		}
-		noAction[index] = struct{}{}
+		prev = index
 	}
-	for index, header := range headers {
-		if _, paused := noAction[index]; paused {
+	next := 0
+	for index := range headers {
+		if next < len(noActionIndices) && noActionIndices[next] == index {
+			next++
 			continue
 		}
-		if header.shifted || header.accepted {
+		if headers[index].shifted || headers[index].accepted {
 			return true
 		}
 	}
 	return false
 }
 
+// dropGenericNoActionHeads removes the paused/no-action heads named by indices.
+// indices is produced in ascending, unique header order by the dispatch pass,
+// so the surviving frontier is compacted in place with no allocation. The drop
+// runs outside any rollback transaction, so mutating the s.headers backing is
+// safe.
 func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices []int) error {
-	paused := make(map[int]struct{}, len(indices))
-	for _, index := range indices {
-		paused[index] = struct{}{}
+	if len(indices) == 0 || len(indices) >= len(s.headers) {
+		return errors.New("parser-core phase zero: sibling-backed no-action drop removed the complete frontier")
 	}
-	var pathReceipts []DiagnosticParserCoreHeaderPathReceipt
 	if s.fullReceipts() {
-		var err error
-		pathReceipts, err = diagnosticParserCoreHeaderPathReceipts(s.compact, s.headers)
+		pathReceipts, err := diagnosticParserCoreHeaderPathReceipts(s.compact, s.headers)
 		if err != nil {
 			return err
 		}
-	}
-	kept := make([]diagnosticParserCoreHeader, 0, len(s.headers)-len(indices))
-	for index, header := range s.headers {
-		if _, drop := paused[index]; !drop {
-			kept = append(kept, header)
-			continue
-		}
-		if s.fullReceipts() {
+		for _, index := range indices {
+			if index < 0 || index >= len(pathReceipts) {
+				return errors.New("parser-core phase zero: no-action drop index is out of range")
+			}
 			s.receipt.NoActionDrops = append(s.receipt.NoActionDrops, DiagnosticParserCoreGenericNoActionDrop{
 				ElectionIndex: s.electionIndex, Token: s.token, Header: pathReceipts[index],
 			})
 		}
 	}
-	if len(kept) == 0 {
+	write := 0
+	next := 0
+	for read := range s.headers {
+		if next < len(indices) && indices[next] == read {
+			next++
+			continue
+		}
+		if write != read {
+			s.headers[write] = s.headers[read]
+		}
+		write++
+	}
+	if write == 0 {
 		return errors.New("parser-core phase zero: sibling-backed no-action drop removed the complete frontier")
 	}
-	s.headers = kept
+	clear(s.headers[write:])
+	s.headers = s.headers[:write]
 	s.work.NoActionDrops += uint64(len(indices))
 	return nil
 }
@@ -2874,11 +2893,27 @@ func diagnosticParserCoreGenericUnsupportedToken(token Token) *diagnosticParserC
 	}
 }
 
+// replaceDiagnosticParserCoreHeader replaces headers[index] with replacements.
+// It reuses the headers backing array when its capacity allows, so multi-output
+// reductions no longer allocate a fresh frontier slice on every reduction. The
+// replacements slice is a distinct scheduler buffer, so it never aliases
+// headers. Reusing the headers backing is safe: canonicalization always copies
+// its input before use, and the rollback scratch snapshots a separate copy, so
+// no other frontier owner observes the reused storage. Go's copy is memmove-
+// safe, so the overlapping tail shift is correct for both growth and shrink.
 func replaceDiagnosticParserCoreHeader(headers []diagnosticParserCoreHeader, index int, replacements []diagnosticParserCoreHeader) []diagnosticParserCoreHeader {
-	out := make([]diagnosticParserCoreHeader, 0, len(headers)-1+len(replacements))
-	out = append(out, headers[:index]...)
-	out = append(out, replacements...)
-	out = append(out, headers[index+1:]...)
+	oldLen := len(headers)
+	newLen := oldLen - 1 + len(replacements)
+	if newLen <= cap(headers) {
+		headers = headers[:newLen]
+		copy(headers[index+len(replacements):], headers[index+1:oldLen])
+		copy(headers[index:index+len(replacements)], replacements)
+		return headers
+	}
+	out := make([]diagnosticParserCoreHeader, newLen, max(newLen, 2*cap(headers)))
+	copy(out, headers[:index])
+	copy(out[index:index+len(replacements)], replacements)
+	copy(out[index+len(replacements):], headers[index+1:oldLen])
 	return out
 }
 
@@ -2907,8 +2942,16 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 	if s.tokens >= s.options.MaxTokens {
 		return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreCap, detail: "generic scheduler token cap"}
 	}
-	states := make([]StateID, len(s.headers))
-	for index, header := range s.headers {
+	// states is scheduler-owned scratch, rebuilt every election. It feeds
+	// SetParserState, a separate reused GLR buffer, and currentElection.States
+	// (read only within this round for summary receipts; cloned below when full
+	// receipts retain the election). This collapses one slice allocation per
+	// election without changing the frontier order or work graph.
+	states := s.electStates[:0]
+	if cap(states) < len(s.headers) {
+		states = make([]StateID, 0, max(len(s.headers), 2*cap(states)))
+	}
+	for _, header := range s.headers {
 		receipt, err := s.headerReceipt(header)
 		if err != nil {
 			return err
@@ -2917,8 +2960,9 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 		if !shiftIdentity || receipt.Accepted || header.checkpoint != s.checkpointID {
 			return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreIdentity, detail: "generic scheduler election frontier is not closed and checkpoint-continuous"}
 		}
-		states[index] = receipt.State
+		states = append(states, receipt.State)
 	}
+	s.electStates = states
 	if s.observer.beforeElection != nil {
 		if err := s.observer.beforeElection(s); err != nil {
 			return err
@@ -2928,7 +2972,12 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 	if len(states) == 1 {
 		s.tokenSource.SetGLRStates(nil)
 	} else {
-		s.tokenSource.SetGLRStates(append([]StateID(nil), states...))
+		// The token source retains the passed slice only until the next
+		// election reassigns it, so a second reused buffer keeps the copy
+		// semantics without allocating.
+		glr := append(s.electGLRStates[:0], states...)
+		s.electGLRStates = glr
+		s.tokenSource.SetGLRStates(glr)
 	}
 	beforeBytes := s.tokenSource.captureExternalScannerStateInto(s.scannerScratch)
 	beforeID, before, err := diagnosticParserCoreInternCheckpoint(s.compact, beforeBytes)
@@ -2964,8 +3013,15 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 	s.checkpoint = after
 	s.checkpointID = afterID
 	s.epochProgress = false
+	// Summary receipts read currentElection.States only within this round, so
+	// the reused scratch is safe. Full receipts retain the election, so clone
+	// the states into an owned slice before appending it.
+	electionStates := states
+	if s.fullReceipts() {
+		electionStates = append([]StateID(nil), states...)
+	}
 	election := DiagnosticParserCoreElection{
-		States: states, Token: token, ScannerBefore: before, ScannerAfter: after,
+		States: electionStates, Token: token, ScannerBefore: before, ScannerAfter: after,
 		CurrentCheckpointValid: currentValid,
 		CurrentCheckpointStart: parserCoreCheckpoint(current.start),
 		CurrentCheckpointEnd:   parserCoreCheckpoint(current.end),

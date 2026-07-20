@@ -85,15 +85,13 @@ func (c *Core) prepareOrdinaryClassifiedCohortInto(boundaries []ClassifiedBounda
 	if shifted.Extra || shifted.EndByte <= shifted.StartByte {
 		return errors.New("parser-core phase zero: cohort token is not an ordinary positive-width terminal")
 	}
-	seen := make(map[NodeID]struct{}, len(boundaries))
 	for index, boundary := range boundaries {
 		if shifted.Symbol != boundary.lookahead {
 			return fmt.Errorf("parser-core phase zero: token symbol %d != lookahead %d", shifted.Symbol, boundary.lookahead)
 		}
-		if _, duplicate := seen[boundary.head.Node]; duplicate {
+		if cohortHasDuplicateHead(boundaries, index) {
 			return fmt.Errorf("parser-core phase zero: duplicate ordinary cohort head %d", boundary.head.Node)
 		}
-		seen[boundary.head.Node] = struct{}{}
 		action, err := c.classifiedActionRef(boundary, 0)
 		if err != nil {
 			return err
@@ -106,6 +104,19 @@ func (c *Core) prepareOrdinaryClassifiedCohortInto(boundaries []ClassifiedBounda
 	return nil
 }
 
+// cohortHasDuplicateHead reports whether boundaries[index] repeats a head node
+// already present earlier in the cohort. Cohort widths are bounded by the live
+// frontier, so this linear back-scan replaces a per-shift map allocation.
+func cohortHasDuplicateHead(boundaries []ClassifiedBoundary, index int) bool {
+	head := boundaries[index].head.Node
+	for prior := 0; prior < index; prior++ {
+		if boundaries[prior].head.Node == head {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Core) shiftOrdinaryClassifiedCohortUncheckpointed(boundaries []ClassifiedBoundary, targets []StateID, shifted Token) ([]Head, error) {
 	payload, err := c.appendAuthenticatedTerminal(subtreeRecord{
 		symbol: shifted.Symbol, startByte: shifted.StartByte, endByte: shifted.EndByte,
@@ -115,7 +126,7 @@ func (c *Core) shiftOrdinaryClassifiedCohortUncheckpointed(boundaries []Classifi
 		return nil, err
 	}
 	phase0AObserveTerminalCohortShift(c, payload, boundaries, targets, shifted.EndByte, false)
-	out := make([]Head, len(boundaries))
+	out := c.cohortHeads(len(boundaries))
 	for index, boundary := range boundaries {
 		outcome, err := c.condenseWithOutcomeAtomic(c.shiftedBoundaryKey(targets[index], shifted.EndByte), linkInput{
 			prev: boundary.head.Node, payload: payload,
@@ -127,6 +138,21 @@ func (c *Core) shiftOrdinaryClassifiedCohortUncheckpointed(boundaries []Classifi
 	}
 	c.addWork(&c.work.Shifts, uint64(len(boundaries)))
 	return out, nil
+}
+
+// cohortHeads returns a reused scratch slice of exactly width heads. The
+// caller consumes the result before the next cohort shift, so one scheduler-
+// owned buffer serves both the ordinary and extra cohort paths without
+// allocating one head slice per shift.
+func (c *Core) cohortHeads(width int) []Head {
+	out := c.cohortHeadScratch
+	if cap(out) < width {
+		out = make([]Head, width, max(width, 2*cap(out)))
+	} else {
+		out = out[:width]
+	}
+	c.cohortHeadScratch = out
+	return out
 }
 
 // ShiftExtraClassifiedCohortOwned authenticates the scheduler owner, then
@@ -160,15 +186,13 @@ func (c *Core) prepareExtraClassifiedCohortInto(boundaries []ClassifiedBoundary,
 	if !shifted.Extra || shifted.EndByte <= shifted.StartByte {
 		return errors.New("parser-core phase zero: cohort token is not a positive-width extra terminal")
 	}
-	seen := make(map[NodeID]struct{}, len(boundaries))
 	for index, boundary := range boundaries {
 		if shifted.Symbol != boundary.lookahead {
 			return fmt.Errorf("parser-core phase zero: token symbol %d != lookahead %d", shifted.Symbol, boundary.lookahead)
 		}
-		if _, duplicate := seen[boundary.head.Node]; duplicate {
+		if cohortHasDuplicateHead(boundaries, index) {
 			return fmt.Errorf("parser-core phase zero: duplicate extra cohort head %d", boundary.head.Node)
 		}
-		seen[boundary.head.Node] = struct{}{}
 		action, err := c.classifiedActionRef(boundary, 0)
 		if err != nil {
 			return err
@@ -193,7 +217,7 @@ func (c *Core) shiftExtraClassifiedCohortUncheckpointed(boundaries []ClassifiedB
 		return nil, err
 	}
 	phase0AObserveTerminalCohortShift(c, payload, boundaries, targets, shifted.EndByte, true)
-	out := make([]Head, len(boundaries))
+	out := c.cohortHeads(len(boundaries))
 	for index, boundary := range boundaries {
 		outcome, err := c.condenseWithOutcomeAtomic(c.shiftedBoundaryKey(targets[index], shifted.EndByte), linkInput{
 			prev: boundary.head.Node, payload: payload,
