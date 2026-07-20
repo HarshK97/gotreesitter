@@ -7,6 +7,39 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.43.1] - 2026-07-20
+
+### Fixed
+
+- **TypeScript/TSX bare default parameters** (`function f(a = 1) {}`) no
+  longer collapse to `ERROR`. The fix widens the GLR merge budget when a
+  default-parameter shape is present. It covers plain, array-element
+  (`[a = 1]`), renamed-property (`{a: b = 1}`), unicode-identifier, and
+  comment-adjacent forms, in both TypeScript and TSX (PR #389). The root
+  cause: the cap-one merge budget discarded the correct derivation by score
+  before any structural comparison.
+- Destructuring declarations with defaults (`const [a = 1] = arr`) now parse
+  correctly. This fix is incidental coverage from the same change.
+
+### Improved
+
+- Grammar blob decoding pre-sizes its buffer from the gzip size hint. This
+  change cuts total allocation churn about 32 percent and peak memory about
+  11 percent across all 206 grammars.
+
+### Added
+
+- A CI memory-ceiling test sweeps all 206 grammars. It fails any
+  `Language()` load above 256 MB. Swift is a documented exception.
+- Environment-gated diagnostic tests characterize the incremental
+  insert-retry timing nondeterminism from issue #380 (PR #388).
+
+### Known Issues
+
+- Swift's `Language()` call still retains about 491 MB. The root cause is
+  upstream in grammargen: the lexer DFA rebuilds once per lex mode. A full
+  fix is tracked.
+
 ## [0.43.0] - 2026-07-20
 
 ### Fixed
