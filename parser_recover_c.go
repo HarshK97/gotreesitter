@@ -1436,12 +1436,15 @@ func cNodeMemoCacheIndex(p uintptr, setCount int) int {
 //
 // A no-op once already grown. p.cNodeMemoThrash is reset to 0 by both the
 // per-parse cache (re)initialization (parseInternal) and by a successful grow
-// here, so the trigger is scoped to THIS parse's own observed load.
+// here (including when called from the cHandleError site, which is harmless:
+// the size guard above already makes any second grow this parse a no-op), so
+// the trigger is scoped to THIS parse's own observed load.
 func (p *Parser) growCNodeMemoCache() {
 	if p == nil || len(p.cNodeMemoCache) >= cNodeMemoCacheSize {
 		return
 	}
 	p.cNodeMemoCache = make([]cNodeMemoCacheEntry, cNodeMemoCacheSize)
+	p.cNodeMemoThrash = 0
 }
 
 // DebugCNodeMemoCacheStats reports the current size of the parser's
@@ -1519,8 +1522,7 @@ func (p *Parser) cNodeMemoSlot(n *Node) *cNodeMemoCacheEntry {
 		*victim = *primary
 		p.cNodeMemoThrash++
 		if p.cNodeMemoThrash >= cNodeMemoThrashGrowThreshold && len(p.cNodeMemoCache) < cNodeMemoCacheSize {
-			p.growCNodeMemoCache()
-			p.cNodeMemoThrash = 0
+			p.growCNodeMemoCache() // resets p.cNodeMemoThrash to 0 on success
 			// Re-resolve idx/primary against the freshly-grown cache: the
 			// setCount above is now stale, and growCNodeMemoCache reset every
 			// slot to unwritten (epoch 0), so this is guaranteed to be a
