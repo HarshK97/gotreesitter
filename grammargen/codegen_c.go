@@ -3,6 +3,7 @@ package grammargen
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/odvcencio/gotreesitter"
@@ -28,32 +29,78 @@ func EmitC(name string, lang *gotreesitter.Language) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Deduplicated C identifiers per symbol id (defect: two distinct
+	// same-text anonymous tokens must not collide into one enumerator).
+	cNames := buildCSymbolNames(lang)
 	var b strings.Builder
 
 	emitHeader(&b, name, lang)
-	emitSymbolEnum(&b, lang)
+	emitSymbolEnum(&b, lang, cNames)
 	emitFieldEnum(&b, lang)
-	emitSymbolNames(&b, lang)
-	emitSymbolMetadata(&b, lang)
+	emitSymbolNames(&b, lang, cNames)
+	emitSymbolMetadata(&b, lang, cNames)
 	emitFieldNames(&b, lang)
 	emitFieldMaps(&b, lang)
-	emitAliasSequences(&b, lang)
-	emitParseActions(&b, lang)
-	emitParseTable(&b, lang, parseActionOffsets)
+	emitAliasSequences(&b, lang, cNames)
+	emitParseActions(&b, lang, cNames)
+	emitParseTable(&b, lang, parseActionOffsets, cNames)
 	emitSmallParseTable(&b, lang, parseActionOffsets)
 	emitLexModes(&b, lang)
-	emitReservedWords(&b, lang)
-	emitSupertypes(&b, lang)
-	emitLexFunction(&b, "ts_lex", lang.LexStates, lang)
+	emitReservedWords(&b, lang, cNames)
+	emitSupertypes(&b, lang, cNames)
+	emitLexFunction(&b, "ts_lex", lang.LexStates, lang, cNames, mainLexStartStates(lang))
 	if len(lang.KeywordLexStates) > 0 {
-		emitLexFunction(&b, "ts_lex_keywords", lang.KeywordLexStates, lang)
+		// The keyword lexer is always invoked with state 0 (see
+		// ts_parser__call_keyword_lex_fn), so state 0 is its only start.
+		emitLexFunction(&b, "ts_lex_keywords", lang.KeywordLexStates, lang, cNames, map[int]bool{0: true})
 	}
 	if len(lang.ExternalSymbols) > 0 {
-		emitExternalScanner(&b, lang)
+		emitExternalScanner(&b, lang, cNames)
 	}
 	emitLanguageExport(&b, name, lang)
 
 	return b.String(), nil
+}
+
+// buildCSymbolNames returns a C identifier for every symbol id, disambiguating
+// collisions the way upstream tree-sitter does: the first symbol to claim a
+// given identifier keeps it, and each subsequent symbol that would sanitize to
+// the same identifier gets a numeric suffix (name, name2, name3, ...). Without
+// this, two distinct anonymous tokens that share the same text — e.g. a plain
+// `"` token and a token.immediate('"'), both of which sanitize to
+// anon_sym_DQUOTE — would emit as the same C enumerator and the generated
+// parser.c would fail to compile with "redeclaration of enumerator".
+func buildCSymbolNames(lang *gotreesitter.Language) []string {
+	names := make([]string, len(lang.SymbolNames))
+	counts := make(map[string]int, len(lang.SymbolNames))
+	for i := range lang.SymbolNames {
+		base := symbolToCName(lang.SymbolNames[i], i, lang)
+		counts[base]++
+		if i == 0 || counts[base] == 1 {
+			names[i] = base
+			continue
+		}
+		names[i] = base + strconv.Itoa(counts[base])
+	}
+	return names
+}
+
+// mainLexStartStates returns the set of lex-DFA states that a parser state can
+// begin lexing from (the lex_state of every TSLexerMode). Only these "start"
+// states synthesize the ts_builtin_sym_end token at end-of-input; a state that
+// is only ever reached mid-token must instead report "no token" at EOF so a
+// partial match becomes an error rather than a spurious end.
+func mainLexStartStates(lang *gotreesitter.Language) map[int]bool {
+	starts := make(map[int]bool, len(lang.LexModes))
+	for _, mode := range lang.LexModes {
+		starts[int(mode.LexState)] = true
+		if mode.AfterWhitespaceLexState != 0 {
+			starts[int(mode.AfterWhitespaceLexState)] = true
+		}
+	}
+	// State 0 is always a valid lexer entry point.
+	starts[0] = true
+	return starts
 }
 
 func cParseActionOffsets(lang *gotreesitter.Language) ([]uint16, error) {
@@ -67,6 +114,39 @@ func cParseActionOffsets(lang *gotreesitter.Language) ([]uint16, error) {
 		offset += 1 + len(entry.Actions)
 	}
 	return offsets, nil
+}
+
+// maxAliasSequenceLength returns the value MAX_ALIAS_SEQUENCE_LENGTH must take:
+// the length of the longest production (its child count), NOT merely the length
+// of the longest alias-sequence row.
+//
+// The tree-sitter runtime reads ts_alias_sequences as a flat
+// [PRODUCTION_ID_COUNT][MAX_ALIAS_SEQUENCE_LENGTH] array and indexes it as
+// alias_sequences[production_id * max_alias_sequence_length + structural_child_index]
+// for EVERY production whose production_id is non-zero — including productions
+// that carry a field map but no alias, whose alias-sequence rows are all zeros.
+// structural_child_index runs up to child_count-1, so if the stride is only as
+// wide as the longest ALIAS row, a longer production reads past its own row into
+// the next productions' rows and picks up their aliases as spurious ones (this
+// is why a plain binder in `Rect(w, h)` was rendered as raw_string_literal_content:
+// production 61 with 6 children read alias_sequences[61*3 + 4], which is
+// production 62's aliased child). Sizing the stride to the longest production
+// keeps every row self-contained and zero-padded.
+func maxAliasSequenceLength(lang *gotreesitter.Language) int {
+	maxLen := 0
+	for _, row := range lang.AliasSequences {
+		if len(row) > maxLen {
+			maxLen = len(row)
+		}
+	}
+	for _, entry := range lang.ParseActions {
+		for _, action := range entry.Actions {
+			if action.Type == gotreesitter.ParseActionReduce && int(action.ChildCount) > maxLen {
+				maxLen = int(action.ChildCount)
+			}
+		}
+	}
+	return maxLen
 }
 
 func cParseTableValue(lang *gotreesitter.Language, actionOffsets []uint16, symbol int, value uint16) uint16 {
@@ -126,12 +206,7 @@ func emitHeader(b *strings.Builder, name string, lang *gotreesitter.Language) {
 	fmt.Fprintf(b, "#pragma GCC diagnostic ignored \"-Wmissing-field-initializers\"\n")
 	fmt.Fprintf(b, "#endif\n\n")
 
-	maxAliasLen := 0
-	for _, row := range lang.AliasSequences {
-		if len(row) > maxAliasLen {
-			maxAliasLen = len(row)
-		}
-	}
+	maxAliasLen := maxAliasSequenceLength(lang)
 
 	fmt.Fprintf(b, "#define LANGUAGE_VERSION %d\n", lang.LanguageVersion)
 	fmt.Fprintf(b, "#define STATE_COUNT %d\n", lang.StateCount)
@@ -151,14 +226,13 @@ func emitHeader(b *strings.Builder, name string, lang *gotreesitter.Language) {
 	fmt.Fprintf(b, "#define PRODUCTION_ID_COUNT %d\n\n", lang.ProductionIDCount)
 }
 
-func emitSymbolEnum(b *strings.Builder, lang *gotreesitter.Language) {
+func emitSymbolEnum(b *strings.Builder, lang *gotreesitter.Language, cNames []string) {
 	fmt.Fprintf(b, "enum ts_symbol_identifiers {\n")
-	for i, name := range lang.SymbolNames {
+	for i := range lang.SymbolNames {
 		if i == 0 {
 			continue // ts_builtin_sym_end is implicit
 		}
-		cname := symbolToCName(name, i, lang)
-		fmt.Fprintf(b, "  %s = %d,\n", cname, i)
+		fmt.Fprintf(b, "  %s = %d,\n", cNames[i], i)
 	}
 	fmt.Fprintf(b, "};\n\n")
 }
@@ -177,20 +251,18 @@ func emitFieldEnum(b *strings.Builder, lang *gotreesitter.Language) {
 	fmt.Fprintf(b, "};\n\n")
 }
 
-func emitSymbolNames(b *strings.Builder, lang *gotreesitter.Language) {
+func emitSymbolNames(b *strings.Builder, lang *gotreesitter.Language, cNames []string) {
 	fmt.Fprintf(b, "static const char * const ts_symbol_names[] = {\n")
 	for i, name := range lang.SymbolNames {
-		cname := symbolToCName(name, i, lang)
-		fmt.Fprintf(b, "  [%s] = %q,\n", cname, name)
+		fmt.Fprintf(b, "  [%s] = %q,\n", cNames[i], name)
 	}
 	fmt.Fprintf(b, "};\n\n")
 }
 
-func emitSymbolMetadata(b *strings.Builder, lang *gotreesitter.Language) {
+func emitSymbolMetadata(b *strings.Builder, lang *gotreesitter.Language, cNames []string) {
 	fmt.Fprintf(b, "static const TSSymbolMetadata ts_symbol_metadata[] = {\n")
 	for i, meta := range lang.SymbolMetadata {
-		cname := symbolToCName(lang.SymbolNames[i], i, lang)
-		fmt.Fprintf(b, "  [%s] = {\n", cname)
+		fmt.Fprintf(b, "  [%s] = {\n", cNames[i])
 		fmt.Fprintf(b, "    .visible = %s,\n", boolStr(meta.Visible))
 		fmt.Fprintf(b, "    .named = %s,\n", boolStr(meta.Named))
 		if meta.Supertype {
@@ -221,7 +293,7 @@ func emitFieldMaps(b *strings.Builder, lang *gotreesitter.Language) {
 		return
 	}
 
-	fmt.Fprintf(b, "static const TSFieldMapSlice ts_field_map_slices[PRODUCTION_ID_COUNT] = {\n")
+	fmt.Fprintf(b, "static const TSMapSlice ts_field_map_slices[PRODUCTION_ID_COUNT] = {\n")
 	for i, slice := range lang.FieldMapSlices {
 		if slice[0] != 0 || slice[1] != 0 {
 			fmt.Fprintf(b, "  [%d] = {.index = %d, .length = %d},\n", i, slice[0], slice[1])
@@ -238,7 +310,7 @@ func emitFieldMaps(b *strings.Builder, lang *gotreesitter.Language) {
 	fmt.Fprintf(b, "};\n\n")
 }
 
-func emitAliasSequences(b *strings.Builder, lang *gotreesitter.Language) {
+func emitAliasSequences(b *strings.Builder, lang *gotreesitter.Language, cNames []string) {
 	if len(lang.AliasSequences) == 0 {
 		return
 	}
@@ -271,8 +343,7 @@ func emitAliasSequences(b *strings.Builder, lang *gotreesitter.Language) {
 		fmt.Fprintf(b, "  [%d] = {\n", i)
 		for j, sym := range row {
 			if sym != 0 {
-				cname := symbolToCName(lang.SymbolNames[sym], int(sym), lang)
-				fmt.Fprintf(b, "    [%d] = %s,\n", j, cname)
+				fmt.Fprintf(b, "    [%d] = %s,\n", j, cNames[sym])
 			}
 		}
 		fmt.Fprintf(b, "  },\n")
@@ -280,7 +351,7 @@ func emitAliasSequences(b *strings.Builder, lang *gotreesitter.Language) {
 	fmt.Fprintf(b, "};\n\n")
 }
 
-func emitParseActions(b *strings.Builder, lang *gotreesitter.Language) {
+func emitParseActions(b *strings.Builder, lang *gotreesitter.Language, cNames []string) {
 	fmt.Fprintf(b, "static const TSParseActionEntry ts_parse_actions[] = {\n")
 	idx := 0
 	for _, entry := range lang.ParseActions {
@@ -298,9 +369,8 @@ func emitParseActions(b *strings.Builder, lang *gotreesitter.Language) {
 					fmt.Fprintf(b, " SHIFT(%d),", action.State)
 				}
 			case gotreesitter.ParseActionReduce:
-				cname := symbolToCName(lang.SymbolNames[action.Symbol], int(action.Symbol), lang)
 				fmt.Fprintf(b, " REDUCE(%s, %d, %d, %d),",
-					cname, action.ChildCount, action.DynamicPrecedence, action.ProductionID)
+					cNames[action.Symbol], action.ChildCount, action.DynamicPrecedence, action.ProductionID)
 			case gotreesitter.ParseActionAccept:
 				fmt.Fprintf(b, " ACCEPT_INPUT(),")
 			case gotreesitter.ParseActionRecover:
@@ -313,7 +383,7 @@ func emitParseActions(b *strings.Builder, lang *gotreesitter.Language) {
 	fmt.Fprintf(b, "};\n\n")
 }
 
-func emitParseTable(b *strings.Builder, lang *gotreesitter.Language, actionOffsets []uint16) {
+func emitParseTable(b *strings.Builder, lang *gotreesitter.Language, actionOffsets []uint16, cNames []string) {
 	if lang.LargeStateCount == 0 || len(lang.ParseTable) == 0 {
 		return
 	}
@@ -327,8 +397,7 @@ func emitParseTable(b *strings.Builder, lang *gotreesitter.Language, actionOffse
 			if val == 0 {
 				continue
 			}
-			cname := symbolToCName(lang.SymbolNames[j], j, lang)
-			fmt.Fprintf(b, "    [%s] = %d,\n", cname, cParseTableValue(lang, actionOffsets, j, val))
+			fmt.Fprintf(b, "    [%s] = %d,\n", cNames[j], cParseTableValue(lang, actionOffsets, j, val))
 		}
 		fmt.Fprintf(b, "  },\n")
 	}
@@ -415,7 +484,7 @@ func emitLexModes(b *strings.Builder, lang *gotreesitter.Language) {
 	fmt.Fprintf(b, "};\n\n")
 }
 
-func emitReservedWords(b *strings.Builder, lang *gotreesitter.Language) {
+func emitReservedWords(b *strings.Builder, lang *gotreesitter.Language, cNames []string) {
 	if lang.MaxReservedWordSetSize == 0 || len(lang.ReservedWords) == 0 {
 		return
 	}
@@ -434,15 +503,14 @@ func emitReservedWords(b *strings.Builder, lang *gotreesitter.Language) {
 			if sym == 0 {
 				break
 			}
-			cname := symbolToCName(lang.SymbolNames[sym], int(sym), lang)
-			fmt.Fprintf(b, "    %s,\n", cname)
+			fmt.Fprintf(b, "    %s,\n", cNames[sym])
 		}
 		fmt.Fprintf(b, "  },\n")
 	}
 	fmt.Fprintf(b, "};\n\n")
 }
 
-func emitSupertypes(b *strings.Builder, lang *gotreesitter.Language) {
+func emitSupertypes(b *strings.Builder, lang *gotreesitter.Language, cNames []string) {
 	if len(lang.SupertypeSymbols) == 0 || len(lang.SupertypeMapEntries) == 0 {
 		return
 	}
@@ -452,7 +520,7 @@ func emitSupertypes(b *strings.Builder, lang *gotreesitter.Language) {
 		if int(sym) >= len(lang.SymbolNames) {
 			continue
 		}
-		fmt.Fprintf(b, "  [%d] = %s,\n", i, symbolToCName(lang.SymbolNames[sym], int(sym), lang))
+		fmt.Fprintf(b, "  [%d] = %s,\n", i, cNames[sym])
 	}
 	fmt.Fprintf(b, "};\n\n")
 
@@ -462,7 +530,7 @@ func emitSupertypes(b *strings.Builder, lang *gotreesitter.Language) {
 			continue
 		}
 		fmt.Fprintf(b, "  [%s] = {.index = %d, .length = %d},\n",
-			symbolToCName(lang.SymbolNames[sym], sym, lang), slice[0], slice[1])
+			cNames[sym], slice[0], slice[1])
 	}
 	fmt.Fprintf(b, "};\n\n")
 
@@ -471,12 +539,12 @@ func emitSupertypes(b *strings.Builder, lang *gotreesitter.Language) {
 		if int(sym) >= len(lang.SymbolNames) {
 			continue
 		}
-		fmt.Fprintf(b, "  %s,\n", symbolToCName(lang.SymbolNames[sym], int(sym), lang))
+		fmt.Fprintf(b, "  %s,\n", cNames[sym])
 	}
 	fmt.Fprintf(b, "};\n\n")
 }
 
-func emitLexFunction(b *strings.Builder, funcName string, states []gotreesitter.LexState, lang *gotreesitter.Language) {
+func emitLexFunction(b *strings.Builder, funcName string, states []gotreesitter.LexState, lang *gotreesitter.Language, cNames []string, startStates map[int]bool) {
 	fmt.Fprintf(b, "static bool %s(TSLexer *lexer, TSStateId state) {\n", funcName)
 	fmt.Fprintf(b, "  START_LEXER();\n")
 	fmt.Fprintf(b, "  eof = lexer->eof(lexer);\n")
@@ -485,33 +553,70 @@ func emitLexFunction(b *strings.Builder, funcName string, states []gotreesitter.
 	for i, st := range states {
 		fmt.Fprintf(b, "    case %d:\n", i)
 
-		// Accept token.
+		// Accept the real token this state matches, if any. ACCEPT_TOKEN sets
+		// result_symbol and marks the token end at the current position, so it
+		// must run before the EOF/transition logic below (a state that both
+		// accepts and can continue reports the accepted token when lookahead
+		// stops matching).
 		if st.AcceptToken > 0 {
-			cname := symbolToCName(lang.SymbolNames[st.AcceptToken], int(st.AcceptToken), lang)
-			fmt.Fprintf(b, "      ACCEPT_TOKEN(%s);\n", cname)
-		}
-		if st.Skip {
-			fmt.Fprintf(b, "      ACCEPT_TOKEN(ts_builtin_sym_end); /* skip */\n")
+			fmt.Fprintf(b, "      ACCEPT_TOKEN(%s);\n", cNames[st.AcceptToken])
 		}
 
-		// EOF transition.
+		// End-of-input handling.
+		//
+		// grammargen's lexer DFA never populates LexState.EOF (the pure-Go
+		// lexer treats EOF specially: it follows an EOF transition if present,
+		// otherwise it stops without evaluating any character transition). The
+		// emitted C must mirror that: at true EOF we must NOT fall through to
+		// the character transitions below, because a transition range that
+		// includes codepoint 0 (common for negated classes like [^"] and for
+		// `.`-style tokens) would match lookahead==0 at EOF and ADVANCE in
+		// place forever. So we branch on `eof` up front.
+		//
+		// A start state (one a parser state can begin lexing from) that has not
+		// itself accepted a token synthesizes ts_builtin_sym_end at EOF, which
+		// is the end-of-file token tree-sitter's runtime requires; grammargen's
+		// pure-Go runtime synthesizes it in the parser instead, so the emitted
+		// lexer has to produce it here. A non-start (mid-token) state instead
+		// returns whatever it accepted — nothing, for a partial match, which
+		// correctly becomes a lex error rather than a spurious end token.
 		if st.EOF >= 0 {
 			fmt.Fprintf(b, "      if (eof) ADVANCE(%d);\n", st.EOF)
+		} else if startStates[i] && st.AcceptToken == 0 && !st.Skip {
+			fmt.Fprintf(b, "      if (eof) ACCEPT_TOKEN(ts_builtin_sym_end);\n")
+			fmt.Fprintf(b, "      if (eof) END_STATE();\n")
+		} else {
+			fmt.Fprintf(b, "      if (eof) END_STATE();\n")
 		}
 
-		// Character transitions.
+		// Character transitions. A transition that consumes a skippable extra
+		// (whitespace) must use SKIP so the runtime advances past the character
+		// as trivia and re-lexes for a real token, rather than accepting it.
+		// grammargen models a silent extra two ways: an explicit skip edge
+		// (tr.Skip, already looping back to this mode's start state) or an edge
+		// into a terminal skip-accept state. In the latter case the previous
+		// emission accepted ts_builtin_sym_end there, which told the runtime
+		// EOF had been reached the moment any whitespace appeared; SKIP(i)
+		// consumes the whitespace and re-lexes from this (mode-start) state.
 		for _, tr := range st.Transitions {
 			cond := charCondition(tr.Lo, tr.Hi)
-			action := "ADVANCE"
-			if tr.Skip {
-				action = "SKIP"
+			switch {
+			case tr.Skip:
+				fmt.Fprintf(b, "      if (%s) SKIP(%d);\n", cond, tr.NextState)
+			case tr.NextState >= 0 && tr.NextState < len(states) && states[tr.NextState].Skip:
+				fmt.Fprintf(b, "      if (%s) SKIP(%d);\n", cond, i)
+			default:
+				fmt.Fprintf(b, "      if (%s) ADVANCE(%d);\n", cond, tr.NextState)
 			}
-			fmt.Fprintf(b, "      if (%s) %s(%d);\n", cond, action, tr.NextState)
 		}
 
 		// Default transition.
 		if st.Default >= 0 {
-			fmt.Fprintf(b, "      ADVANCE(%d);\n", st.Default)
+			if st.Default < len(states) && states[st.Default].Skip {
+				fmt.Fprintf(b, "      SKIP(%d);\n", i)
+			} else {
+				fmt.Fprintf(b, "      ADVANCE(%d);\n", st.Default)
+			}
 		}
 
 		fmt.Fprintf(b, "      END_STATE();\n")
@@ -523,12 +628,11 @@ func emitLexFunction(b *strings.Builder, funcName string, states []gotreesitter.
 	fmt.Fprintf(b, "}\n\n")
 }
 
-func emitExternalScanner(b *strings.Builder, lang *gotreesitter.Language) {
+func emitExternalScanner(b *strings.Builder, lang *gotreesitter.Language, cNames []string) {
 	// External scanner symbol map.
 	fmt.Fprintf(b, "static const uint16_t ts_external_scanner_symbol_map[EXTERNAL_TOKEN_COUNT] = {\n")
 	for i, sym := range lang.ExternalSymbols {
-		cname := symbolToCName(lang.SymbolNames[sym], int(sym), lang)
-		fmt.Fprintf(b, "  [%d] = %s,\n", i, cname)
+		fmt.Fprintf(b, "  [%d] = %s,\n", i, cNames[sym])
 	}
 	fmt.Fprintf(b, "};\n\n")
 
