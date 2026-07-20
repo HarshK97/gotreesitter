@@ -479,6 +479,240 @@ func TestParseTypeScriptTypedArrowParameters(t *testing.T) {
 	}
 }
 
+// TestParseTypeScriptBareDefaultParameter guards against a v0.43.0 regression
+// where "function f(a = 1) {}" collapsed to a top-level ERROR. The locked C
+// tree-sitter-typescript oracle parses this as
+// "(required_parameter pattern: (identifier) value: (number))"; our GLR
+// engine's steady-state cap-one merge budget was discarding the
+// pattern-reduction derivation in favor of a same-state, lower-precedence
+// assignment_expression derivation before the parse could complete (see
+// typeScriptSourceHasBareDefaultParameter in parser_retry.go).
+func TestParseTypeScriptBareDefaultParameter(t *testing.T) {
+	src := "function f(a = 1) {}\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typescript bare default parameter root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), root.SExpr(lang))
+	}
+	sexpr := root.SExpr(lang)
+	if !strings.Contains(sexpr, "function_declaration") || !strings.Contains(sexpr, "required_parameter") {
+		t.Fatalf("typescript bare default parameter did not preserve required_parameter: %s", sexpr)
+	}
+	if strings.Contains(sexpr, "ERROR") {
+		t.Fatalf("typescript bare default parameter retained an ERROR node: %s", sexpr)
+	}
+}
+
+func TestParseTSXBareDefaultParameter(t *testing.T) {
+	src := "function f(a = 1) {}\n"
+	tree, lang := parseLanguageSample(t, "tsx", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("tsx bare default parameter root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), root.SExpr(lang))
+	}
+	sexpr := root.SExpr(lang)
+	if !strings.Contains(sexpr, "function_declaration") || !strings.Contains(sexpr, "required_parameter") {
+		t.Fatalf("tsx bare default parameter did not preserve required_parameter: %s", sexpr)
+	}
+	if strings.Contains(sexpr, "ERROR") {
+		t.Fatalf("tsx bare default parameter retained an ERROR node: %s", sexpr)
+	}
+}
+
+// TestParseTypeScriptMultipleBareDefaultParameters guards the multi-parameter
+// shape of the same regression: each default-valued parameter forks and must
+// independently reconverge without losing its required_parameter reduction.
+func TestParseTypeScriptMultipleBareDefaultParameters(t *testing.T) {
+	src := "function f(a = 1, b = 2) {}\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typescript multiple default parameters root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), root.SExpr(lang))
+	}
+	sexpr := root.SExpr(lang)
+	if got, want := strings.Count(sexpr, "required_parameter"), 2; got != want {
+		t.Fatalf("typescript multiple default parameters required_parameter count = %d, want %d: %s", got, want, sexpr)
+	}
+}
+
+// TestParseTypeScriptArrowAndMethodBareDefaultParameter covers the two other
+// formal_parameters call sites (arrow functions and class methods) that share
+// the same required_parameter production and were equally affected.
+func TestParseTypeScriptArrowAndMethodBareDefaultParameter(t *testing.T) {
+	cases := []string{
+		"const g = (a = 1) => a;\n",
+		"class C { m(a = 1) {} }\n",
+	}
+	for _, src := range cases {
+		tree, lang := parseLanguageSample(t, "typescript", src)
+		root := tree.RootNode()
+		if root.Type(lang) != "program" || root.HasError() {
+			tree.Release()
+			t.Fatalf("typescript %q root = %s hasError=%v; tree=%s", src, root.Type(lang), root.HasError(), root.SExpr(lang))
+		}
+		if sexpr := root.SExpr(lang); !strings.Contains(sexpr, "required_parameter") {
+			tree.Release()
+			t.Fatalf("typescript %q did not preserve required_parameter: %s", src, sexpr)
+		}
+		tree.Release()
+	}
+}
+
+// TestParseTypeScriptArrayElementDefaultParameter guards the array-element
+// default parameter shape ("[a = 1]") that the bare-default-parameter
+// detector was widened to cover: unlike a whole-pattern default
+// ("{a} = {}"), the identifier here sits directly before '=', so it hits the
+// same required_parameter/assignment_expression fork as "function f(a = 1)".
+// This is the React-hook tuple pattern ("const [state, setState] = ...")
+// with an initial-value default on the first slot.
+func TestParseTypeScriptArrayElementDefaultParameter(t *testing.T) {
+	src := "function f([a = 1]) {}\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	sexpr := root.SExpr(lang)
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typescript array-element default parameter root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), sexpr)
+	}
+	for _, want := range []string{"required_parameter", "array_pattern", "assignment_pattern"} {
+		if !strings.Contains(sexpr, want) {
+			t.Fatalf("typescript array-element default parameter missing %s: %s", want, sexpr)
+		}
+	}
+}
+
+func TestParseTSXArrayElementDefaultParameter(t *testing.T) {
+	src := "function f([a = 1]) {}\n"
+	tree, lang := parseLanguageSample(t, "tsx", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	sexpr := root.SExpr(lang)
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("tsx array-element default parameter root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), sexpr)
+	}
+	for _, want := range []string{"required_parameter", "array_pattern", "assignment_pattern"} {
+		if !strings.Contains(sexpr, want) {
+			t.Fatalf("tsx array-element default parameter missing %s: %s", want, sexpr)
+		}
+	}
+}
+
+// TestParseTypeScriptReactHookTupleDefaultParameter is the flagship
+// real-world shape motivating the array-element widening: a destructured
+// tuple parameter with a default on the state slot, as commonly authored in
+// custom React hook wrappers, e.g. "function useToggle([state = false,
+// setState]) {}".
+func TestParseTypeScriptReactHookTupleDefaultParameter(t *testing.T) {
+	src := "function h([state = 0, setState]) {}\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	sexpr := root.SExpr(lang)
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typescript react-hook tuple default parameter root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), sexpr)
+	}
+	if !strings.Contains(sexpr, "(array_pattern (assignment_pattern (identifier) (number)) (identifier))") {
+		t.Fatalf("typescript react-hook tuple default parameter did not preserve the [state = 0, setState] shape: %s", sexpr)
+	}
+}
+
+// TestParseTypeScriptRenamedPropertyDefaultParameter guards the renamed
+// destructured-property default shape ("{a: b = 1}"): the preceding-context
+// gate widened to accept ':' immediately before the bound identifier for
+// this case.
+func TestParseTypeScriptRenamedPropertyDefaultParameter(t *testing.T) {
+	src := "function f({a: b = 1}) {}\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	sexpr := root.SExpr(lang)
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typescript renamed-property default parameter root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), sexpr)
+	}
+	for _, want := range []string{"required_parameter", "object_pattern", "pair_pattern", "assignment_pattern"} {
+		if !strings.Contains(sexpr, want) {
+			t.Fatalf("typescript renamed-property default parameter missing %s: %s", want, sexpr)
+		}
+	}
+}
+
+// TestParseTypeScriptUnicodeIdentifierDefaultParameter guards the unicode
+// identifier byte widening in typeScriptDefaultParamIdentByte: multi-byte
+// UTF-8 identifier bytes (>= 0x80) must still be recognized as part of the
+// identifier directly before '=' so the detector fires.
+func TestParseTypeScriptUnicodeIdentifierDefaultParameter(t *testing.T) {
+	src := "function f(café = 1) {}\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	sexpr := root.SExpr(lang)
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typescript unicode default parameter root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), sexpr)
+	}
+	if !strings.Contains(sexpr, "required_parameter") {
+		t.Fatalf("typescript unicode default parameter did not preserve required_parameter: %s", sexpr)
+	}
+}
+
+// TestParseTypeScriptCommentAdjacentDefaultParameter guards a block comment
+// sitting between the opening '(' and the defaulted identifier: the gate's
+// backward scan must skip over a complete "/* ... */" comment (in addition
+// to whitespace) to still see the '(' context character.
+func TestParseTypeScriptCommentAdjacentDefaultParameter(t *testing.T) {
+	src := "function f(/* c */ a = 1) {}\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	sexpr := root.SExpr(lang)
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typescript comment-adjacent default parameter root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), sexpr)
+	}
+	for _, want := range []string{"comment", "required_parameter"} {
+		if !strings.Contains(sexpr, want) {
+			t.Fatalf("typescript comment-adjacent default parameter missing %s: %s", want, sexpr)
+		}
+	}
+}
+
+// TestParseTypeScriptArrayDestructuringDeclarationDefaultValue documents
+// current behavior for a destructuring DECLARATION (not a parameter list)
+// with an array-element default: "const [a = 1] = arr;". This shares the
+// same required_parameter-shaped fork as the parameter-list case -- '[' is
+// now an accepted preceding-context gate character -- so the widened
+// detector incidentally also fixes this declaration shape even though this
+// pass only targeted parameter lists. This test asserts the actual observed
+// behavior (no error) rather than assuming it is unfixed; if a future change
+// to the detector's gate narrows it back to parameter-list-only contexts,
+// this test will fail and should be revisited rather than silently loosened.
+func TestParseTypeScriptArrayDestructuringDeclarationDefaultValue(t *testing.T) {
+	src := "const [a = 1] = arr;\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	sexpr := root.SExpr(lang)
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typescript array destructuring declaration default root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), sexpr)
+	}
+	for _, want := range []string{"array_pattern", "assignment_pattern"} {
+		if !strings.Contains(sexpr, want) {
+			t.Fatalf("typescript array destructuring declaration default missing %s: %s", want, sexpr)
+		}
+	}
+}
+
 func TestParseTypeScriptNestedDestructuringArrayPattern(t *testing.T) {
 	src := "const { value: [dirPath, { dirName, options, fileNames }] } = result;\n"
 	tree, lang := parseLanguageSample(t, "typescript", src)

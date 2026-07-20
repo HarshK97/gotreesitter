@@ -25,35 +25,9 @@ func LoadLanguage(data []byte) (*Language, error) {
 	}
 	defer gzr.Close()
 
-	// Pre-size the decompression buffer using the ISIZE field in the last 4
-	// bytes of the gzip trailer. This avoids io.ReadAll's repeated doublings.
-	// ISIZE is uncompressed size mod 2^32; for grammar blobs (well under 4 GB)
-	// it is exact. Fall back to io.ReadAll if the hint is implausible.
-	var raw []byte
-	if len(compressed) >= 4 {
-		isize := binary.LittleEndian.Uint32(compressed[len(compressed)-4:])
-		if isize > 0 && isize < 256*1024*1024 { // sanity cap at 256 MB
-			raw = make([]byte, 0, isize)
-			var buf [32 * 1024]byte
-			for {
-				n, readErr := gzr.Read(buf[:])
-				if n > 0 {
-					raw = append(raw, buf[:n]...)
-				}
-				if readErr == io.EOF {
-					break
-				}
-				if readErr != nil {
-					return nil, fmt.Errorf("read gzip: %w", readErr)
-				}
-			}
-		}
-	}
-	if raw == nil {
-		raw, err = io.ReadAll(gzr)
-		if err != nil {
-			return nil, fmt.Errorf("read gzip: %w", err)
-		}
+	raw, err := ReadAllGzipWithSizeHint(gzr, compressed)
+	if err != nil {
+		return nil, fmt.Errorf("read gzip: %w", err)
 	}
 
 	var lang Language
@@ -83,4 +57,55 @@ func LoadLanguage(data []byte) (*Language, error) {
 	InferGeneratedRepeatAuxMetadata(&lang)
 
 	return &lang, nil
+}
+
+// gzipSizeHintCap bounds the ISIZE-derived pre-allocation in
+// ReadAllGzipWithSizeHint. It guards against a corrupted or adversarial
+// trailer requesting an unbounded allocation. The bound is set comfortably
+// above the largest known compiled grammar table (Swift's ~308 MB
+// decompressed gob stream, the largest of the 206 shipped grammars as of
+// v0.43.1 — its lexer DFA is compiled per lex-mode with no cross-mode
+// automaton sharing, and Swift's grammar has ~331 distinct lex modes versus
+// single digits to low tens for most languages, so its LexStates table is
+// disproportionately large; see grammars/language_memory_ceiling_test.go)
+// with headroom for grammar growth, while still catching a bogus ISIZE field
+// long before it could request a multi-gigabyte buffer.
+const gzipSizeHintCap = 512 * 1024 * 1024 // 512 MB
+
+// ReadAllGzipWithSizeHint reads all of r — an open gzip.Reader positioned at
+// the start of the member whose raw (still-compressed) bytes are compressed
+// — into memory, pre-sizing the destination buffer from the gzip ISIZE
+// trailer (the last 4 bytes of compressed) instead of letting io.ReadAll grow
+// the buffer by repeated doubling. ISIZE is the uncompressed size mod 2^32,
+// which is exact for every blob under 4 GB; grammar blobs are always far
+// smaller. Falls back to io.ReadAll when the hint is missing, zero, or
+// exceeds gzipSizeHintCap.
+//
+// This matters at grammar-load time: io.ReadAll's doubling growth roughly
+// doubles peak transient allocation versus the final size, and for the
+// largest shipped grammar blobs that transient churn is measured in hundreds
+// of MB to low GB (observed via alloc-space pprof on Language() calls),
+// which is what actually trips container memory limits even though the
+// final retained Language is smaller.
+func ReadAllGzipWithSizeHint(r io.Reader, compressed []byte) ([]byte, error) {
+	if len(compressed) >= 4 {
+		isize := binary.LittleEndian.Uint32(compressed[len(compressed)-4:])
+		if isize > 0 && isize < gzipSizeHintCap {
+			raw := make([]byte, 0, isize)
+			var buf [32 * 1024]byte
+			for {
+				n, readErr := r.Read(buf[:])
+				if n > 0 {
+					raw = append(raw, buf[:n]...)
+				}
+				if readErr == io.EOF {
+					return raw, nil
+				}
+				if readErr != nil {
+					return nil, readErr
+				}
+			}
+		}
+	}
+	return io.ReadAll(r)
 }
