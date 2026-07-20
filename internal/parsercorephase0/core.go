@@ -581,6 +581,8 @@ type Core struct {
 	work                Work
 	popScratch          popEnumerationScratch
 	reductionScratch    reductionOutputScratch
+	cohortHeadScratch   []Head
+	factorLinkScratch   []linkRecord
 	selectedBuild       selectedStoreBuildScratch
 	selectedPoolMu      sync.Mutex
 	selectedPool        selectedStoreBacking
@@ -2057,50 +2059,65 @@ func (c *Core) factorExactPredecessor(key boundaryKey, probe boundaryProbe, oldI
 			return condenseOutcome{}, true, errors.New("parser-core phase zero: exact recursive edge is not a clean shallow payload")
 		}
 
-		handled = true
-		mark := c.mark()
-		defer c.completeTransaction(mark, &err)
-		if phase0AEnabled {
-			phase0ABeginPredecessorMerge(c, incumbent.prev, in.prev)
-		}
-		merged, changed, mergeErr := c.mergePredecessorsOneLayer(incumbent.prev, in.prev)
-		if mergeErr != nil {
-			if phase0AEnabled {
-				phase0AAbortPredecessorMerge(c)
-			}
-			return condenseOutcome{}, true, mergeErr
-		}
-		if !changed {
-			if phase0AEnabled {
-				phase0AAbortPredecessorMerge(c)
-				phase0AObserveFactorNoChange(c, key, in, oldID, index)
-			}
-			return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, true, nil
-		}
-		if phase0AEnabled {
-			phase0AObserveAdjacencyPublished(c, merged)
-		}
-		rebuilt := slices.Clone(oldLinks)
-		rebuilt[index].prev = merged
-		if phase0AEnabled {
-			phase0APrepareFactorOuter(c, key, in, oldID, index, merged)
-		}
-		id, appendErr := c.appendAdjacencyNode(key.state, key.byteOffset, rebuilt)
-		if appendErr != nil {
-			return condenseOutcome{}, true, appendErr
-		}
-		if phase0AEnabled {
-			phase0AObserveAdjacencyPublished(c, id)
-		}
-		if err := c.publishBoundary(probe, id); err != nil {
-			return condenseOutcome{}, true, err
-		}
-		if phase0AEnabled {
-			phase0AObserveFactorPublished(c, oldID, id)
-		}
-		return condenseOutcome{head: Head{Node: id}, change: condenseUpdated}, true, nil
+		// The merge-and-republish body owns a bounded transaction. It lives in a
+		// dedicated method so its completion defer is open-coded, not heap-
+		// allocated once per exact-predecessor factor by a loop-scoped defer.
+		return c.factorExactPredecessorMerge(key, probe, oldID, oldLinks, index, incumbent, in)
 	}
 	return condenseOutcome{}, false, nil
+}
+
+// factorExactPredecessorMerge merges one incumbent predecessor with the
+// incoming edge and republishes the boundary. Callers pass the matched
+// incumbent link and its index. The transaction completion runs through a
+// single function-scoped defer, so it is open-coded and does not allocate.
+func (c *Core) factorExactPredecessorMerge(key boundaryKey, probe boundaryProbe, oldID NodeID, oldLinks []linkRecord, index int, incumbent linkRecord, in linkInput) (out condenseOutcome, handled bool, err error) {
+	handled = true
+	mark := c.mark()
+	defer c.completeTransaction(mark, &err)
+	if phase0AEnabled {
+		phase0ABeginPredecessorMerge(c, incumbent.prev, in.prev)
+	}
+	merged, changed, mergeErr := c.mergePredecessorsOneLayer(incumbent.prev, in.prev)
+	if mergeErr != nil {
+		if phase0AEnabled {
+			phase0AAbortPredecessorMerge(c)
+		}
+		return condenseOutcome{}, true, mergeErr
+	}
+	if !changed {
+		if phase0AEnabled {
+			phase0AAbortPredecessorMerge(c)
+			phase0AObserveFactorNoChange(c, key, in, oldID, index)
+		}
+		return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, true, nil
+	}
+	if phase0AEnabled {
+		phase0AObserveAdjacencyPublished(c, merged)
+	}
+	// appendAdjacencyNode copies every link into the arena, so the rebuilt set
+	// is transient and reuses a scheduler-owned scratch buffer instead of
+	// cloning oldLinks on every exact-predecessor factor.
+	rebuilt := append(c.factorLinkScratch[:0], oldLinks...)
+	c.factorLinkScratch = rebuilt
+	rebuilt[index].prev = merged
+	if phase0AEnabled {
+		phase0APrepareFactorOuter(c, key, in, oldID, index, merged)
+	}
+	id, appendErr := c.appendAdjacencyNode(key.state, key.byteOffset, rebuilt)
+	if appendErr != nil {
+		return condenseOutcome{}, true, appendErr
+	}
+	if phase0AEnabled {
+		phase0AObserveAdjacencyPublished(c, id)
+	}
+	if err := c.publishBoundary(probe, id); err != nil {
+		return condenseOutcome{}, true, err
+	}
+	if phase0AEnabled {
+		phase0AObserveFactorPublished(c, oldID, id)
+	}
+	return condenseOutcome{head: Head{Node: id}, change: condenseUpdated}, true, nil
 }
 
 func (c *Core) mergePredecessorsOneLayer(leftID, rightID NodeID) (NodeID, bool, error) {
