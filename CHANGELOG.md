@@ -38,8 +38,8 @@ for tags and release notes while still in `0.x`.
 - **Incremental memo-cache growth is now input-deterministic.** Growth used
   to depend on prior parser history, not only the current parse. Identical
   (source, edit) pairs could take different growth paths depending on
-  earlier use. A new adaptive threshold, `cNodeMemoThrash`, now triggers
-  growth from the collision count of the current parse alone (PR #392,
+  earlier use. A new adaptive trigger, driven by the `cNodeMemoThrash`
+  collision count of the current parse alone, now controls growth (PR #392,
   issue #380 follow-up). Clean, non-pathological parses still stay at the
   small 128-entry default.
 - **Incremental reuse is now barred for trees built by the phase-zero
@@ -51,7 +51,7 @@ for tags and release notes while still in `0.x`.
   `ParseIncremental` now forces a full fresh parse when the old tree is
   compact-materialized (PR #393). A new top-down ParseState table-replay
   mechanism reconstructs parser states over the full compact derivation. It
-  runs before hidden-node elision and grammar aliasing. It abstains to a
+  runs before hidden-node elision and grammar aliasing. It falls back to a
   sentinel state when a state cannot be reliably reconstructed, for example
   for extra or comment leaves.
 
@@ -61,7 +61,7 @@ for tags and release notes while still in `0.x`.
   tree.** A fragility-gated top-level sibling block-splice replaces the old
   cmake/css name allowlist (PR #395, campaign O(edit) workstream W1).
   Admission is now per node: a fragility bit plus byte equality, not a
-  language name. On a CSS editor-edit benchmark, `rootNonLeafChanged`
+  language name. On a CSS editor-edit measurement, `rootNonLeafChanged`
   rejections near the top of the tree drop from 1,379 to 14. Node reuse
   rises from 63.8% to 99.5%. Go incremental node reuse does not improve in
   this release. A deeper, pre-existing engine gap blocks it: the reuse check
@@ -79,8 +79,8 @@ for tags and release notes while still in `0.x`.
 - Refresh documentation prose to the ASD-STE100 style guide across
   README.md, BENCH.md, AGENTS.md, and the authoring-languages and
   external-scanners guides (PR #385).
-- Correct a stale release-status paragraph and clarify the GLR stack cap
-  default in AGENTS.md (PR #394).
+- Clarify the GLR stack cap default in AGENTS.md (PR #394). This release
+  also corrects the stale release-status paragraph in README.md.
 
 ### Known Issues
 
