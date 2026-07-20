@@ -102,9 +102,9 @@ go run ./cmd/grammargen emit go -bin grammars/grammar_blobs/go.bin
 `-lr-split` is a no-op for the current `go` grammar shape (byte-identical
 output with or without the flag) up until it has an external symbol. As soon
 as `GoGrammar()` declares one (`_automatic_semicolon`, see
-grammars/go_scanner.go), `-lr-split` stops being a no-op and produces a
+grammars/go_scanner.go), `-lr-split` stops being a no-op. It then produces a
 markedly different, larger LR(1) table via `usePreciseExternalBuilder` in
-lr.go — one that hangs (unbounded C-recovery-cost-competition full-parse
+lr.go. That table hangs (unbounded C-recovery-cost-competition full-parse
 retries) on ordinary inputs as small as `if err != nil { foo() }`. Keep Go on
 the plain LALR path (no `-lr-split`) unless that interaction is specifically
 investigated and fixed.
