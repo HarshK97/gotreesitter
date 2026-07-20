@@ -45,6 +45,18 @@ type ReplayDiffReport struct {
 	Samples             []ReplayMismatchSample
 }
 
+// SetTypeScriptMergeWidthDetectorsDisabledForTests toggles every TypeScript
+// source-text merge-width detector (typed-arrow, bare-default-parameter, and
+// destructured-arrow-return) at once and returns a restore function. The
+// external test package uses it to prove that the structure-aware cap-two
+// steady state subsumes those per-shape detectors: with the detectors off, the
+// detector-era regression families must still parse cleanly.
+func SetTypeScriptMergeWidthDetectorsDisabledForTests(disabled bool) func() {
+	prev := typeScriptMergeWidthDetectorsDisabled
+	typeScriptMergeWidthDetectorsDisabled = disabled
+	return func() { typeScriptMergeWidthDetectorsDisabled = prev }
+}
+
 // ReplayDiffTree replays the LR tables over the tree rooted at root and
 // compares the reconstructed states against the recorded ones on every node.
 // It mutates nothing. maxSamples bounds the retained mismatch examples.

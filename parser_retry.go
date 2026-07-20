@@ -1048,11 +1048,30 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 	case "typescript", "tsx":
 		// TypeScript-family sources in repository indexing workloads are
 		// import/query heavy and frequently fork around expression/import
-		// ambiguity. Small Aspect-shaped files stay stable with one same-key
-		// survivor, while large parser.ts-class sources need the wider default
-		// to avoid expensive recovery/result paths.
-		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > 1 && typescriptFullParseCanUseTightMergeCap(sourceLen...) {
-			return 1
+		// ambiguity. The steady-state full-parse cap is two, not one: cap-one
+		// routes every merge key through the score-first single-survivor path
+		// (stackCompareMergeSmallCapOne), which keeps exactly one survivor per
+		// key ranked by cumulative dynamic-precedence score BEFORE structural
+		// equivalence. A structurally-distinct correct derivation that scores
+		// one point lower than its rival (for example the required_parameter
+		// pattern reduction in "function f(a = 1)", or the call_signature
+		// return-type reduction in "(a: A): B =>") is discarded before the
+		// return-type or arrow tokens confirm it, collapsing the declaration to
+		// ERROR. That defect is the root cause of the TypeScript
+		// default-parameter, typed-arrow, and destructured-return-type bug
+		// families that three source-text detectors previously patched per
+		// shape. cap-two routes TypeScript through the general merge path
+		// (mergeStacksWithScratch), which counts STRUCTURALLY-DISTINCT
+		// survivors: structurally-equivalent forks dedup through the
+		// stackHashForMerge prefilter plus stackEquivalentForMergeState deep
+		// walk WITHOUT consuming the second slot, so the second slot is spent
+		// only on a genuinely different derivation. Width therefore stays
+		// bounded and the union-type-list .d.ts population explosion does not
+		// return: measured dom.generated.d.ts (2.3 MB) and checker.ts (3.1 MB)
+		// parse in the same time and heap envelope at cap-two as cap-one, and
+		// #389 established cap-two as .d.ts-safe while cap-six is not.
+		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > typeScriptSteadyStateMergeCap && typescriptFullParseCanUseTightMergeCap(sourceLen...) {
+			return typeScriptSteadyStateMergeCap
 		}
 	case "java":
 		// Giant generated string/switch-heavy Java sources can retain millions
@@ -1094,8 +1113,26 @@ func dartIncrementalFallbackCanUseTightMergeCap(sourceLen ...int) bool {
 	return len(sourceLen) > 0 && sourceLen[0] > dartIncrementalReuseMaxSourceBytes
 }
 
+// typeScriptSteadyStateMergeCap is the full-parse per-key survivor cap for the
+// TypeScript grammar family. It is two, not one: cap-one routes merges through
+// the score-first single-survivor path that discards a structurally-distinct
+// correct derivation before later tokens confirm it (see the "typescript",
+// "tsx" case in effectiveParseMergePerKeyCap). cap-two counts
+// structurally-distinct survivors, which subsumes the per-shape source-text
+// merge-width detectors below while staying .d.ts-safe.
+const typeScriptSteadyStateMergeCap = 2
+
+// typeScriptMergeWidthDetectorsDisabled turns off every TypeScript source-text
+// merge-width detector (typed-arrow, bare-default-parameter, and
+// destructured-arrow-return) at once. It exists ONLY to prove that the
+// structure-aware cap-two steady state subsumes those detectors: a test sets it
+// true, disabling the per-shape widening, and the detector-era regression
+// families must still pass on cap-two alone. It is never set in production.
+var typeScriptMergeWidthDetectorsDisabled = false
+
 func typeScriptFullParseNeedsTypedArrowMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
-	return lang != nil &&
+	return !typeScriptMergeWidthDetectorsDisabled &&
+		lang != nil &&
 		reuse == nil &&
 		!parseMaxMergePerKeyEnvConfigured() &&
 		(lang.Name == "typescript" || lang.Name == "tsx") &&
@@ -1103,7 +1140,8 @@ func typeScriptFullParseNeedsTypedArrowMergeWidth(lang *Language, source []byte,
 }
 
 func typeScriptFullParseNeedsDestructuredArrowReturnMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
-	return lang != nil &&
+	return !typeScriptMergeWidthDetectorsDisabled &&
+		lang != nil &&
 		reuse == nil &&
 		!parseMaxMergePerKeyEnvConfigured() &&
 		(lang.Name == "typescript" || lang.Name == "tsx") &&
@@ -1214,7 +1252,8 @@ func typeScriptSourceHasDestructuredArrowReturnType(source []byte) bool {
 }
 
 func typeScriptFullParseNeedsDefaultParameterMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
-	return lang != nil &&
+	return !typeScriptMergeWidthDetectorsDisabled &&
+		lang != nil &&
 		reuse == nil &&
 		!parseMaxMergePerKeyEnvConfigured() &&
 		(lang.Name == "typescript" || lang.Name == "tsx") &&
