@@ -1081,9 +1081,10 @@ func typescriptFullParseCanUseTightMergeCap(sourceLen ...int) bool {
 	// allocation over the file). Union-type-list-shaped .d.ts sources crossed
 	// from "parses in milliseconds" at 64KB-epsilon to "memory_budget with
 	// 1548 transient stacks" at 64KB+epsilon. The tight cap is what prevents
-	// those survivors from being retained in the first place; typed-arrow and
-	// destructured-arrow sources still widen through the dedicated gates in
-	// configureParseCaps, and accepted-error retries still widen through
+	// those survivors from being retained in the first place; typed-arrow,
+	// destructured-arrow, and bare-default-parameter sources still widen
+	// through the dedicated gates in (*Parser).resolveParseMergePerKeyCap,
+	// and accepted-error retries still widen through
 	// fullParseRetryMergePerKeyOverride.
 	_ = sourceLen
 	return true
@@ -1221,21 +1222,26 @@ func typeScriptFullParseNeedsDefaultParameterMergeWidth(lang *Language, source [
 }
 
 // typeScriptSourceHasBareDefaultParameter reports whether source contains a
-// parameter-list slot shaped like "(name = value" or ", name = value" with no
-// type annotation and no destructuring pattern before the '='. The locked C
-// grammar's required_parameter production reduces the parameter name through
-// `pattern` before it can accept a default `value`; that reduction competes,
-// at the identical post-shift LR state, with treating the bare name as the
-// start of a plain assignment_expression. Both derivations reach the same
-// state once the default value is shifted, so under the steady-state cap-one
-// merge budget (see typescriptFullParseCanUseTightMergeCap) the
-// pattern-reduction branch -- carrying a lower cumulative dynamic precedence
-// from its extra reduce step -- gets discarded before the parse completes,
-// collapsing the whole declaration to ERROR. Typed ("a: T = v") and
-// destructured ("{a} = {}") defaults are unaffected: the extra grammar
-// content between the parameter name and '=' avoids the fork entirely, so
-// this detector intentionally excludes them and only widens the budget for
-// sources that actually need it.
+// parameter-list slot shaped like "(name = value", ", name = value",
+// "[name = value" (array-element default), or ": name = value"
+// (renamed-property default) with no type annotation before the '='. The
+// locked C grammar's required_parameter production reduces the parameter
+// name through `pattern` before it can accept a default `value`; that
+// reduction competes, at the identical post-shift LR state, with treating
+// the bare name as the start of a plain assignment_expression. Both
+// derivations reach the same state once the default value is shifted, so
+// under the steady-state cap-one merge budget (see
+// typescriptFullParseCanUseTightMergeCap) the pattern-reduction branch --
+// carrying a lower cumulative dynamic precedence from its extra reduce step
+// -- gets discarded before the parse completes, collapsing the whole
+// declaration to ERROR. Only whole-pattern ("{a} = {}") assignment defaults
+// and object-shorthand ("{a = 1}") defaults are unaffected: in both cases
+// the '=' is not directly preceded by an identifier byte (it follows '}' or
+// whitespace after '}'), so neither shape reaches the ambiguous state. Bare
+// identifier defaults nested inside an array element ("[a = 1]") or a
+// renamed destructured property ("{a: b = 1}") still place an identifier
+// directly before '=' and hit the same fork, so the preceding-context gate
+// below also accepts '[' and ':' as valid contexts.
 func typeScriptSourceHasBareDefaultParameter(source []byte) bool {
 	if len(source) == 0 {
 		return false
@@ -1270,7 +1276,16 @@ func typeScriptSourceHasBareDefaultParameter(source []byte) bool {
 			break
 		}
 		idEnd := j
-		for j >= 0 && typeScriptDefaultParamIdentByte(source[j]) {
+		// Bound the backward identifier scan to a 2048-byte window, matching
+		// the sibling typed-arrow detector's matchingOpenParenBefore
+		// convention: this keeps a pathologically long run of identifier
+		// bytes before '=' from making the scan cost proportional to file
+		// size for every '=' occurrence.
+		identMin := idEnd - 2048
+		if identMin < 0 {
+			identMin = 0
+		}
+		for j >= identMin && typeScriptDefaultParamIdentByte(source[j]) {
 			j--
 		}
 		if j == idEnd {
@@ -1279,23 +1294,50 @@ func typeScriptSourceHasBareDefaultParameter(source []byte) bool {
 			// defaults, which already parse cleanly without widening.
 			continue
 		}
-		for j >= 0 {
+		// Skip whitespace and any complete "/* ... */" block comment(s)
+		// directly before the identifier (e.g. "(/* c */ a = 1)"): a
+		// comment is transparent to the grammar fork this detector guards
+		// against, so it must not hide the '(' / ',' / '[' / ':' gate
+		// character behind it. Bounded to the same 2048-byte window as the
+		// identifier scan above.
+		gateMin := j - 2048
+		if gateMin < 0 {
+			gateMin = 0
+		}
+		for j >= gateMin {
 			switch source[j] {
 			case ' ', '\t', '\n', '\r':
 				j--
 				continue
 			}
+			if source[j] == '/' && j-1 >= gateMin && source[j-1] == '*' {
+				opened := -1
+				for k := j - 2; k >= gateMin; k-- {
+					if source[k] == '/' && k+1 <= j && source[k+1] == '*' {
+						opened = k
+						break
+					}
+				}
+				if opened < 0 {
+					break
+				}
+				j = opened - 1
+				continue
+			}
 			break
 		}
-		if j >= 0 && (source[j] == '(' || source[j] == ',') {
-			return true
+		if j >= 0 {
+			switch source[j] {
+			case '(', ',', '[', ':':
+				return true
+			}
 		}
 	}
 	return false
 }
 
 func typeScriptDefaultParamIdentByte(b byte) bool {
-	return b == '_' || b == '$' ||
+	return b == '_' || b == '$' || b >= 0x80 ||
 		(b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
 }
 
