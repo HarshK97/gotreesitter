@@ -50,7 +50,7 @@ type reuseCursor struct {
 	// and the Parser.ReuseRejectFragileNonLeaf profile field (parser.go).
 	rejectFragileNonLeaf uint64
 	forestFastPath       bool
-	languageName                  string // cached for language-specific reuse safety policies
+	languageName         string // cached for language-specific reuse safety policies
 }
 
 // reuseScratch holds reusable buffers for incremental reuse traversal.
@@ -511,7 +511,7 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 			if !(n.startByte == 0 &&
 				n.endByte == idx.sourceLen &&
 				idx.nodeBytesUnchanged(n.startByte, n.endByte)) &&
-				!idx.directForestTopLevelNonLeafReuse(n) {
+				!idx.topLevelSiblingBlockSpliceEligible(n) {
 				idx.rejectRootNonLeafChanged++
 				continue
 			}
@@ -618,17 +618,58 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 	return lookahead, 0, false
 }
 
-func (c *reuseCursor) directForestTopLevelNonLeafReuse(n *Node) bool {
+// topLevelSiblingBlockSpliceEligible reports whether n -- a candidate sitting
+// directly under the old tree's top-level parent, at or after the first
+// unaffected sibling's start byte -- may be spliced back as a whole block via
+// the primary (cheap, current-state) reuseTargetState check instead of
+// falling through to the conservative per-node fallback loop below. This is
+// campaign O(edit) workstream W1 (spec.campaign.oedit): after reparsing the
+// edited item, the run of following untouched top-level siblings is offered
+// to reuseTargetState directly, driving ReuseRejectRootNonLeafChanged toward
+// zero on every language, not just a curated forest-fast-path allowlist.
+//
+// Admission is per-node, not per-language (decision-0008's rider and the
+// campaign's "no name-allowlists" invariant): the caller already proved n
+// starts at a top-level boundary with byte-identical old/new text
+// (collectTopLevelCandidates -> reusableIndexedEntry's nodeBytesUnchanged
+// gate), so the only remaining soundness question is whether n's own shape
+// depended on an ambiguous parse decision that surrounding context (which
+// this edit may have changed) could invalidate -- exactly what isFragile()
+// answers (see markReduceFragility, parser_reduce.go, and the doc comment on
+// nodeFlagFragileLeft/Right, tree.go). A fragile candidate is barred here and
+// must fall through to the conservative fallback (or a fresh reparse of that
+// item), same as any other fragile non-leaf candidate.
+//
+// External-scanner quiescence is not re-checked here: canReuseNodeWithExternal
+// ScannerCheckpoint (called by the caller immediately after this returns true)
+// already verifies scanner-state compatibility generically for every language
+// that records checkpoints, and languageSupportsIncrementalReuse already
+// barred this whole reuse route for any external scanner that has not
+// declared itself safe (IncrementalReuseExternalScanner.SupportsIncrementalReuse)
+// -- see parser.go's tokenSourceSupportsIncrementalReuse gate, which runs
+// before tryReuseSubtree is ever reached.
+func (c *reuseCursor) topLevelSiblingBlockSpliceEligible(n *Node) bool {
 	return c != nil &&
-		c.forestFastPath &&
-		languageAllowsForestTopLevelSiblingReuse(c.languageName) &&
 		c.topLevelParent != nil &&
 		n != nil &&
 		n.parent == c.topLevelParent &&
-		n.startByte >= c.topLevelResumeByte
+		n.startByte >= c.topLevelResumeByte &&
+		!n.isFragile()
 }
 
-func languageAllowsForestTopLevelSiblingReuse(name string) bool {
+// forestFastPathDirtyPrefixScannerSensitive names the curated set of
+// forest-fast-path languages (cmake, css) whose grammar-level scanner context
+// around the first edited top-level item is sensitive enough that reusing
+// leaves inside it can feed stale context (selector-vs-declaration state,
+// etc.) and produce a fresh-tree mismatch. This is a REJECTION-only defensive
+// guard scoped to trees built by the GSS-forest fast path
+// (reuseCursor.forestFastPath, glr_forest.go) -- unrelated to and NOT
+// admitted by topLevelSiblingBlockSpliceEligible's fragility gate above, so
+// it does not fall under the campaign's "no name-allowlists" admission rule
+// (that rule targets what reuse eligibility grants, not what it forbids).
+// Extend only for another forest-fast-path language with the same proven
+// scanner-context hazard, not as a general admission list.
+func forestFastPathDirtyPrefixScannerSensitive(name string) bool {
 	switch name {
 	case "cmake", "css":
 		return true
@@ -643,7 +684,7 @@ func languageAllowsForestTopLevelSiblingReuse(name string) bool {
 func (c *reuseCursor) rejectDirtyTopLevelPrefix(start uint32) bool {
 	return c != nil &&
 		c.forestFastPath &&
-		languageAllowsForestTopLevelSiblingReuse(c.languageName) &&
+		forestFastPathDirtyPrefixScannerSensitive(c.languageName) &&
 		c.topLevelParent != nil &&
 		c.topLevelResumeByte > 0 &&
 		start < c.topLevelResumeByte

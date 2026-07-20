@@ -29,12 +29,20 @@ package gotreesitter_test
 //     accounting for the further nondeterminism explained in
 //     issue380_incremental_insert_cache_warmup_nondeterminism_repro_test.go.
 //   - reuseRejectRootNonLeafChanged is high (87) and reusedSubtrees is tiny
-//     (60) relative to the file: Go is NOT in
-//     languageAllowsForestTopLevelSiblingReuse (incremental.go), so
-//     non-leaf/structural subtree reuse across an edit is effectively
-//     unavailable for Go (only leaf reuse and small <=2048-byte non-leaf
-//     spans qualify -- see tryReuseSubtree's "conservative fallback" in
-//     incremental.go). An edit anywhere near the top of a large Go file
+//     (60) relative to the file. Campaign O(edit) workstream W1
+//     (spec.campaign.oedit) replaced the CSS/cmake-only
+//     languageAllowsForestTopLevelSiblingReuse admission gate with a
+//     fragility-gated one (reuseCursor.topLevelSiblingBlockSpliceEligible,
+//     incremental.go) available to every language, but on this exact
+//     repro the practical blocker turned out to be a separate, deeper
+//     gap: tryReuseSubtree runs before the pending reduce chain that
+//     would settle s.top().state to the same state the old tree recorded
+//     as the candidate's PreGotoState() -- see the W1 PR description for
+//     the full root-cause trace. Non-leaf/structural subtree reuse across
+//     an edit remains effectively unavailable for Go's top-level
+//     declaration list until that settling gap is closed (tracked as a
+//     W1 follow-up, not attempted here per decision-0008's rider against
+//     unproven reuse-bar lifts). An edit anywhere near the top of a large Go file
 //     therefore forces near-total GLR re-derivation of everything after it
 //     (tokensConsumed ~= the file's full token count), which is inherently
 //     far more expensive than the cheap subtree-swap incremental parsing is

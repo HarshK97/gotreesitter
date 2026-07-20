@@ -36,9 +36,11 @@ import (
 // repo's own tree.go, single-char insert at issue380 offset 200, a fresh
 // Parser + fresh Tree) and returns the resulting cNodeMemoCache stats. The
 // insert forces near-total GLR re-derivation for Go (ReuseRejectRootNonLeaf
-// Changed is high: Go is not in languageAllowsForestTopLevelSiblingReuse),
-// which is what drives real memo-set contention -- see the sibling repro
-// files' doc comments for the full mechanism.
+// Changed stays high even after campaign O(edit) W1's fragility-gated
+// top-level sibling admission, since this repro's blocker is the deeper
+// reduce-chain-settling gap W1 documented, not the language allowlist W1
+// removed), which is what drives real memo-set contention -- see the
+// sibling repro files' doc comments for the full mechanism.
 func issue380CNodeMemoGrowthScenario(t *testing.T) (cacheLen int, thrash uint32) {
 	t.Helper()
 	src, err := os.ReadFile("tree.go")
