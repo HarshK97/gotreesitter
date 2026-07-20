@@ -221,14 +221,27 @@ type Parser struct {
 	// parse start and transient-scratch checkpoints, empty (len 0) while the
 	// gate is off.
 	cNodeMemoCache []cNodeMemoCacheEntry
-	// cNodeMemoThrash counts genuine 2-way-set collision evictions in
-	// cNodeMemoSlot since the cache was last (re)sized -- reset to 0 whenever
-	// the cache is (re)initialized for a parse (see the len==0 branch in
-	// parseInternal) and whenever it grows. This is THIS PARSE's own observed
-	// contention on its own memo cache, so crossing cNodeMemoThrashGrowThreshold
-	// is a function of the input/edit being parsed, not of any other parse this
-	// Parser instance has ever run -- see growCNodeMemoCache's doc comment for
-	// why that determinism property matters (issue #380/#388).
+	// cNodeMemoThrash counts genuine 2-way-set collisions in cNodeMemoSlot
+	// (the primary way already holding a live current-epoch entry for
+	// another node) since the cache was last (re)sized -- reset to 0
+	// whenever the cache is (re)initialized for a parse (see the len==0
+	// branch in parseInternal) and whenever it grows. This is THIS PARSE's
+	// own observed contention on its own memo cache, so crossing
+	// cNodeMemoThrashGrowThreshold is a function of the input/edit being
+	// parsed, not of any other parse this Parser instance has ever run.
+	//
+	// The raw counter value itself is NOT reproducible across processes/
+	// hosts (cNodeMemoCacheIndex hashes node pointers, which move under
+	// ASLR/allocator layout), so do not assume two runs of the same input
+	// hit identical thrash counts. What IS reproducible -- and what
+	// growCNodeMemoCache's determinism property (issue #380/#388) actually
+	// rests on -- is the GROWTH DECISION: real workloads sit either at 0
+	// contention (typical clean parses, see
+	// TestCNodeMemoCacheStaysSmallForCleanFullParse) or several orders of
+	// magnitude above cNodeMemoThrashGrowThreshold (the pathological #388
+	// repro, ~235K-245K), so which side of the threshold a given (source,
+	// edit) lands on is stable by a wide margin even though the exact count
+	// is not.
 	cNodeMemoThrash uint32
 	// cPrefixPath is the reusable descent scratch for GSS prefix-aggregate
 	// fills (cStackPrefixAgg, parser_recover_c.go). The aggregates themselves

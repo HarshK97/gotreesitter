@@ -137,11 +137,24 @@ func TestCNodeMemoCacheStaysSmallForCleanFullParse(t *testing.T) {
 			}
 			defer tree.Release()
 			cacheLen, thrash := parser.DebugCNodeMemoCacheStats()
+			// The robust gate is cacheLen, not thrash: cacheLen<=128
+			// (cNodeMemoCacheInitialSize) is exactly the "did adaptive growth
+			// fire" decision this test exists to guard, and it is what
+			// growCNodeMemoCache/cNodeMemoSlot actually promise to keep
+			// input-stable. The raw thrash count is heap-address-dependent
+			// (cNodeMemoCacheIndex hashes node pointers, which move under
+			// ASLR/allocator layout across hosts/processes), so this is only
+			// a sanity bound: real clean parses measure exactly 0 on this box
+			// (see cNodeMemoThrashGrowThreshold's provenance comment,
+			// parser_recover_c.go), but a different layout could in
+			// principle incur a benign second-way fill without changing the
+			// decision -- so assert well under the 512 growth threshold
+			// (cNodeMemoThrashGrowThreshold), not exact equality to 0.
 			if cacheLen > 128 {
 				t.Fatalf("%s: cacheLen=%d after a plain clean full parse, want <=128 (cNodeMemoCacheInitialSize) -- adaptive growth fired on a typical file", f, cacheLen)
 			}
-			if thrash != 0 {
-				t.Fatalf("%s: thrash=%d after a plain clean full parse, want 0", f, thrash)
+			if thrash >= 512 {
+				t.Fatalf("%s: thrash=%d after a plain clean full parse, want <512 (cNodeMemoThrashGrowThreshold)", f, thrash)
 			}
 		})
 	}

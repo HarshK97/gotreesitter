@@ -1372,10 +1372,12 @@ const (
 	// a wrong answer.
 	cNodeMemoCacheSize = 16384
 	// cNodeMemoThrashGrowThreshold is the number of genuine 2-way-set
-	// collision evictions (see cNodeMemoSlot's eviction branch) THIS parse
-	// must observe against the small (128-entry / 64-set) cache before
-	// cNodeMemoSlot grows it to cNodeMemoCacheSize on its own, independent of
-	// whether cHandleError has ever run.
+	// collisions -- the primary way already holding a live current-epoch
+	// entry for another node, see cNodeMemoSlot's contention branch; the
+	// victim way may be relocated into rather than evicted, but it still
+	// counts -- THIS parse must observe against the small (128-entry /
+	// 64-set) cache before cNodeMemoSlot grows it to cNodeMemoCacheSize on
+	// its own, independent of whether cHandleError has ever run.
 	//
 	// Provenance (issue #380/#388, measured on this box, linux/amd64, via
 	// (*Parser).DebugCNodeMemoCacheStats instrumenting this exact counter):
@@ -1499,14 +1501,16 @@ func (p *Parser) cNodeMemoSlot(n *Node) *cNodeMemoCacheEntry {
 		return primary
 	}
 	if primary.epoch == p.cNodeMemoEpoch {
-		// Both halves of this 2-way set are occupied by entries for OTHER
-		// live nodes than n: writing n here evicts primary's occupant down
-		// into victim, discarding victim's own occupant outright. This is
-		// THIS PARSE's own genuine capacity contention (as opposed to "n
-		// simply has never been looked up before"), and it is exactly what
-		// degrades cNodeErrorCost/cNodeVisibleSubtreeCount from O(1) amortized
-		// to a cascading O(depth)-or-worse recompute on a large/wide parse
-		// (see cNodeMemoThrashGrowThreshold's doc comment, issue #380/#388).
+		// The primary way already holds a live current-epoch entry for
+		// another node: writing n here relocates primary's occupant down
+		// into victim (the victim way may have been empty -- a relocation,
+		// not a loss -- or itself occupied, in which case its own occupant
+		// is discarded outright). Either way this is THIS PARSE's own
+		// genuine capacity contention on the set (as opposed to "n simply
+		// has never been looked up before"), and it is exactly what degrades
+		// cNodeErrorCost/cNodeVisibleSubtreeCount from O(1) amortized to a
+		// cascading O(depth)-or-worse recompute on a large/wide parse (see
+		// cNodeMemoThrashGrowThreshold's doc comment, issue #380/#388).
 		// Track it and adaptively grow this parser's cache once THIS parse's
 		// own contention crosses the measured threshold -- independent of
 		// whether cHandleError has ever run on this Parser instance, so the
