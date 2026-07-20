@@ -106,6 +106,9 @@ func normalizeGoNewMakeTypeArgument(root *Node, source []byte, lang *Language) {
 		return
 	}
 	typeIdentifierNamed := symbolIsNamed(lang, typeIdentifierSym)
+	// Optional symbols used only for filtering; a missing one degrades gracefully.
+	commentSym, hasComment := symbolByName(lang, "comment")
+	typeArgsSym, hasTypeArgs := symbolByName(lang, "type_arguments")
 
 	walkResultTree(root, func(n *Node) {
 		if n == nil || n.symbol != callSym {
@@ -119,11 +122,36 @@ func normalizeGoNewMakeTypeArgument(root *Node, source []byte, lang *Language) {
 		if name != "new" && name != "make" {
 			return
 		}
+		// A generic instantiation (`new[T](x)`, `Foo[T](x)`) parses with a
+		// `type_arguments` child and takes C's ordinary call branch, where the
+		// argument stays `identifier`. Only the plain new/make special branch
+		// (no type_arguments) retags the type position.
+		if hasTypeArgs {
+			for i := 0; i < n.NamedChildCount(); i++ {
+				if c := n.NamedChild(i); c != nil && c.symbol == typeArgsSym {
+					return
+				}
+			}
+		}
 		args := n.ChildByFieldName("arguments", lang)
 		if args == nil || args.symbol != argListSym {
 			return
 		}
-		first := args.NamedChild(0)
+		// The first NON-EXTRA named argument: Go attaches comments as named
+		// extras, so a leading comment (`new(/* c */ T)`) must be skipped —
+		// otherwise the comment is mistaken for the argument and no retag fires.
+		var first *Node
+		for i := 0; i < args.NamedChildCount(); i++ {
+			c := args.NamedChild(i)
+			if c == nil {
+				continue
+			}
+			if hasComment && c.symbol == commentSym {
+				continue
+			}
+			first = c
+			break
+		}
 		if first == nil || first.symbol != identifierSym {
 			return
 		}
