@@ -261,6 +261,33 @@ jobs:
           GOWORK=off go run ./cmd/perf_scan_budget \
             -budget perf_scan/perf_ratio_budgets.json
 
+  # oedit_latency_gate_full runs the full editor-latency gate sweep
+  # (campaign O(edit) workstream W5, spec.campaign.oedit): all four gate
+  # languages at the ~20KB, ~137KB, and ~1MB size tiers, crossed with every
+  # edit class and position. TestW5EditorLatencyGate itself always runs at
+  # the fast ~20KB tier as part of the normal `go test .` run in race_root
+  # above; GTS_W5_FULL_SWEEP and GTS_W5_SLOW_TIER add the slower tiers this
+  # job exists to cover. It is manual (workflow_dispatch only) and not part
+  # of the required `build` gate: the full sweep takes about a minute, which
+  # is cheap enough to keep available on demand without adding wall time to
+  # every PR.
+  oedit_latency_gate_full:
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Full editor-latency gate sweep (20KB/137KB/1MB)
+        run: |
+          GTS_W5_FULL_SWEEP=1 GTS_W5_SLOW_TIER=1 \
+          go test . -run '^TestW5EditorLatencyGate$' -count=1 -v -timeout 8m
+
   exhaustive_parity_scope:
     runs-on: ubuntu-latest
     timeout-minutes: 5
