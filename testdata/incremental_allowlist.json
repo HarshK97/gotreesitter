@@ -8,6 +8,13 @@
       "signature": "program:childCount+20",
       "freshGenuinelyClean": true,
       "note": "testdata/incremental_gate/javascript_grammar.js pos=1801 (single-byte insert, committed stride 200 -- pos is on the stride grid). Fresh parses a clean program; incremental attaches 20 extra children to the program node. This is the residual JavaScript real-reuse silent-corruption site: PR bc960713's C-repetition-skip fold on reused subtrees eliminated the bulk of the old ~84% JS delete/insert divergence but did not fully close it. Root cause is the parser-core incremental-reuse lane, not this gate; this entry only tracks that it currently reproduces. NOTE: the sole surviving witness -- a single site -- so a one-byte behavior drift here flips the gate red; add a second JS witness if the corpus grows. Distinct from the former Python class, which #379 made fail-closed (Python no longer reuses), so its old entries were pruned in this v2 regeneration."
+    },
+    {
+      "language": "css",
+      "editClass": "delete",
+      "signature": "block:childCount+1",
+      "freshGenuinelyClean": true,
+      "note": "testdata/incremental_gate/css_stylesheet.css pos=3301 and pos=9001 (single-byte delete, stride 300 -- both positions are on the stride grid). Fresh parses a clean rule_set block; incremental attaches one extra child to the block node. Confirmed pre-existing: reproduces identically on origin/main before campaign O(edit) workstream W1 (spec.campaign.oedit) touched incremental.go -- this is the first time CSS was swept through this gate, not a W1 regression. Root cause not yet investigated; likely the same class of real-reuse structural divergence as the JavaScript entry above, surfaced here because W1 added CSS to incrGateCorpus. Tracked as a W1 follow-up, out of scope for the fragility-gated sibling-splice change itself."
     }
   ]
 }

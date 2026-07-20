@@ -76,6 +76,14 @@ var incrGateCorpus = []incrGateCorpusEntry{
 	{language: "json", path: "json_contract.json", stride: 15},
 	{language: "go", path: "go_print.go", stride: 600},
 	{language: "rust", path: "rust_ast.rs", stride: 600},
+	// css_stylesheet.css: added for campaign O(edit) workstream W1
+	// (spec.campaign.oedit) -- the differential oracle gate the W1 PR
+	// description cites, run against the language the mechanism's
+	// pre-existing top-level sibling behavior was validated on (see
+	// forestFastPathDirtyPrefixScannerSensitive, incremental.go) and the
+	// one the campaign's evidence base describes as already having
+	// working top-level sibling reuse.
+	{language: "css", path: "css_stylesheet.css", stride: 300},
 }
 
 type incrGateCorpusEntry struct {

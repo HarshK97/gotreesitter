@@ -39,8 +39,11 @@ package gotreesitter_test
 //     reparsed now.
 //   - For a 137KB Go file where an edit near the top forces near-total GLR
 //     re-derivation of the rest of the file (see the sibling repro file:
-//     Go is excluded from languageAllowsForestTopLevelSiblingReuse, so
-//     non-leaf subtree reuse is unavailable), the cost-comparison machinery
+//     non-leaf subtree reuse remains unavailable for Go's top-level
+//     declaration list even after campaign O(edit) W1's fragility-gated
+//     admission replaced the old languageAllowsForestTopLevelSiblingReuse
+//     CSS/cmake allowlist -- W1 found a deeper reduce-chain-settling gap
+//     blocks it), the cost-comparison machinery
 //     runs many times against large reused/live subtrees. With the small
 //     128-entry cache this thrashes constantly, degrading nearly every
 //     comparison to an O(depth) or worse uncached recursive walk
