@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "gts-locked-static-c-timing-artifact/v3",
+  "title": "Locked static C timing artifact manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "artifact_schema_sha256", "recipe_sha256", "epoch", "inputs", "commands", "environment_sha256",
+    "toolchain", "artifact", "elf", "retained_evidence", "fixture_manifest_sha256"
+  ],
+  "properties": {
+    "schema": {"const": "gts-locked-static-c-timing-artifact/v3"},
+    "artifact_schema_sha256": {"$ref": "#/$defs/sha256"},
+    "recipe_sha256": {"$ref": "#/$defs/sha256"},
+    "environment_sha256": {"$ref": "#/$defs/sha256"},
+    "fixture_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "epoch": {
+      "type": "object", "additionalProperties": false,
+      "required": ["oci_archive_sha256", "manifest_digest", "config_sha256", "recipe_sha256", "toolchain_manifest_sha256", "sysroot_manifest_sha256"],
+      "properties": {
+        "oci_archive_sha256": {"$ref": "#/$defs/sha256"},
+        "manifest_digest": {"$ref": "#/$defs/sha256"},
+        "config_sha256": {"$ref": "#/$defs/sha256"},
+        "recipe_sha256": {"$ref": "#/$defs/sha256"},
+        "toolchain_manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "sysroot_manifest_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "inputs": {
+      "type": "object", "additionalProperties": false,
+      "required": ["normalized_snapshot_sha256", "driver_sha256", "runtime_tree_oid", "runtime_sha256", "grammar_tree_oid", "grammar_sha256"],
+      "properties": {
+        "normalized_snapshot_sha256": {"$ref": "#/$defs/sha256"},
+        "driver_sha256": {"$ref": "#/$defs/sha256"},
+        "runtime_tree_oid": {"$ref": "#/$defs/git_oid"},
+        "runtime_sha256": {"$ref": "#/$defs/sha256"},
+        "grammar_tree_oid": {"$ref": "#/$defs/git_oid"},
+        "grammar_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "commands": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}}},
+    "toolchain": {
+      "type": "object", "additionalProperties": false,
+      "required": ["cc_path", "gcc_version", "cc_sha256", "cc1_sha256", "collect2_sha256", "as_sha256", "ld_sha256", "nm_sha256", "readelf_sha256", "libc_a_sha256", "libgcc_a_sha256", "libgcc_eh_a_sha256"],
+      "properties": {
+        "cc_path": {"type": "string", "minLength": 1},
+        "gcc_version": {"type": "string", "minLength": 1},
+        "cc_sha256": {"$ref": "#/$defs/sha256"}, "cc1_sha256": {"$ref": "#/$defs/sha256"},
+        "collect2_sha256": {"$ref": "#/$defs/sha256"}, "as_sha256": {"$ref": "#/$defs/sha256"},
+        "ld_sha256": {"$ref": "#/$defs/sha256"}, "nm_sha256": {"$ref": "#/$defs/sha256"},
+        "readelf_sha256": {"$ref": "#/$defs/sha256"}, "libc_a_sha256": {"$ref": "#/$defs/sha256"},
+        "libgcc_a_sha256": {"$ref": "#/$defs/sha256"}, "libgcc_eh_a_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["sha256", "size", "build_id"],
+      "properties": {
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "size": {"type": "integer", "minimum": 1},
+        "build_id": {"type": "string", "pattern": "^[0-9a-f]+$"}
+      }
+    },
+    "elf": {
+      "type": "object", "additionalProperties": false,
+      "required": ["class", "data", "osabi", "machine", "type", "linkage"],
+      "properties": {
+        "class": {"const": "ELFCLASS64"},
+        "data": {"const": "ELFDATA2LSB"},
+        "osabi": {"const": "ELFOSABI_SYSV:0"},
+        "machine": {"const": "EM_X86_64"},
+        "type": {"const": "ET_EXEC:2"},
+        "linkage": {"const": "elf:no_interp,no_dynamic,no_needed"}
+      }
+    },
+    "retained_evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["compiler_stdout", "compiler_stderr", "gcc_trace", "link_map", "readelf", "nm", "objdump"],
+      "properties": {
+        "compiler_stdout": {"$ref": "#/$defs/file_binding"},
+        "compiler_stderr": {"$ref": "#/$defs/file_binding"},
+        "gcc_trace": {"$ref": "#/$defs/file_binding"},
+        "link_map": {"$ref": "#/$defs/file_binding"},
+        "readelf": {"$ref": "#/$defs/file_binding"},
+        "nm": {"$ref": "#/$defs/file_binding"},
+        "objdump": {"$ref": "#/$defs/file_binding"}
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^(?!0{64}$)[0-9a-f]{64}$"},
+    "git_oid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "file_binding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {"path": {"type": "string", "minLength": 1}, "sha256": {"$ref": "#/$defs/sha256"}}
+    }
+  }
+}
