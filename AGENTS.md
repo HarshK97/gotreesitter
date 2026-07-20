@@ -15,7 +15,7 @@ Run before and after performance changes:
 - Focused package/unit tests inside Docker, scoped with `-run` whenever possible.
 - Parity-focused Docker suites under `cgo_harness`, one language at a time.
 
-When changing GLR/incremental logic, require parity validation first, then perf validation.
+When you change GLR/incremental logic, validate parity first, then validate performance.
 
 ### 3) Standard Perf Loop
 Use this loop for optimization work:
@@ -83,3 +83,24 @@ Perf preset (stable settings):
 Full-parse non-truncation probe:
 - `GOT_PARSE_NODE_LIMIT_SCALE=3` may be used for diagnostic full-parse runs when default node budget truncates benchmark/parity cases.
 - `GOT_GLR_MAX_STACKS=...` overrides the default GLR stack cap (default 6).
+
+### 8) Prose Standard: ASD-STE100
+All agent-written prose in this repo follows the ASD-STE100 rules
+profile (decision 0011, hypha://m31labs/hyphae).
+
+- Use the active voice and the imperative mood for instructions.
+- Keep procedural sentences at or below 20 words. Keep descriptive
+  sentences at or below 25 words.
+- Give each word one meaning. Use it the same way through the
+  document.
+- Do not write noun clusters of more than three nouns. Do not drop
+  articles.
+- Do not use idioms, slang, or Latin abbreviations. Write "for
+  example", not "e.g.".
+- Define an abbreviation at first use.
+- Use a vertical list for more than two items or steps.
+- Use concrete verbs. Avoid "handle", "leverage", "deal with".
+
+Scope: commit messages, PR titles and bodies, review output, and all
+documentation prose that agents write. Code identifiers and quoted
+tool output are out of scope.
