@@ -101,8 +101,8 @@ as both oracle-mismatched and mislabeled.
 The campaign O(edit) workstream targets deterministic, per-keystroke
 reparse cost. Its continuous instrument is workstream W5, a continuous
 integration (CI) gate. W5 has not yet published a sealed receipt for the
-numbers below. Cite them as v0.44.1 CHANGELOG measurements, not as sealed
-claims.
+numbers below. Cite them as v0.44.0/v0.44.1 CHANGELOG measurements, not as
+sealed claims.
 
 - CSS editor-style incremental edits: node reuse rises from 63.8% to 99.5%
   (PR #395, workstream W1).
@@ -182,9 +182,9 @@ run calls the public `Parser.Parse` API, then checks root completeness:
 byte 0 to end of source, with no parse error. The C oracle runs the
 matching `public_validated` lane: parse, root completeness, and a check for
 `ts_node_has_error`. Neither side walks the full tree. Each fixture-backend
-pair runs with `GOMAXPROCS=1` for at least 10 seconds of elapsed time,
-calibrated by the Go testing framework on the Go side and an internal
-iteration loop on the C side. An anti-cheat checksum over the parsed source
+pair runs with `GOMAXPROCS=1`. Each pair runs for at least 10 seconds of
+elapsed time. The Go testing framework calibrates the Go side; an internal
+iteration loop calibrates the C side. An anti-cheat checksum over the parsed source
 blocks dead-code elimination. An A/A null test reruns the same binary
 against itself 3 times and reports the median absolute delta per fixture,
 to bound measurement noise.
@@ -233,7 +233,18 @@ Citation:
 - gotreesitter git HEAD for run6: `eacda579b2ec177b1c72271eda207bb4f9668dc1`
   (short form `eacda579`).
 - Verification record:
-  `hypha://m31labs/gotreesitter/object/spore.2026-07-20.session-rowan.enclave-receipt-verification`.
+  `spore.2026-07-20.session-rowan.enclave-receipt-verification` in the
+  hypha://m31labs/gotreesitter space (grafted canonical 2026-07-20;
+  content SHA-256
+  `ce1a885d332cc8c33088245b758381516fcedb82d96c4e0cf4020822674f0be7`;
+  hyphae receipt `hypha-receipt:2026-07-20:enclave-receipt-verification`).
+  The content hash pins the record independent of index state.
+
+The run6 ratios are not comparable to the historical bare-metal receipts
+below. The enclave method (single-run `ns/op` at `GOMAXPROCS=1` with 10s
+benchtime) and the bare-metal method (median of ten process-isolated
+samples) measure differently. A higher enclave ratio does not indicate a
+Go regression against those receipts.
 
 The enclave image itself is not reproducible outside Confidential Space.
 Treat its output as an attested measurement, not a locally rerunnable
