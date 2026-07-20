@@ -1233,6 +1233,8 @@ func (c *Core) ShiftClassified(boundary ClassifiedBoundary, actionOrdinal int, t
 // Missing, no-lookahead, reused, and scanner-checkpoint identity remain
 // caller-visible concerns. External provenance is one compact identity bit;
 // scanner state remains outside this layer.
+// The returned slice is transient scheduler-owned scratch. It stays valid
+// only until the next cohort shift on this Core; clone it to retain it.
 func (c *Core) ShiftOrdinaryCohort(inputs []OrdinaryCohortShiftInput, lookahead Symbol, token Token) (out []Head, err error) {
 	if len(inputs) == 0 {
 		return nil, errors.New("parser-core phase zero: empty ordinary shift cohort")
@@ -1253,6 +1255,8 @@ func (c *Core) ShiftOrdinaryCohort(inputs []OrdinaryCohortShiftInput, lookahead 
 
 // ShiftOrdinaryClassifiedCohort is the classified scheduler form of
 // ShiftOrdinaryCohort. Every boundary must select one ordinary shift.
+// The returned slice is transient scheduler-owned scratch. It stays valid
+// only until the next cohort shift on this Core; clone it to retain it.
 func (c *Core) ShiftOrdinaryClassifiedCohort(boundaries []ClassifiedBoundary, token Token) (out []Head, err error) {
 	var inlineTargets [inlineSchedulerCohortTargets]StateID
 	targets := inlineTargets[:]
@@ -1277,6 +1281,8 @@ func (c *Core) ShiftOrdinaryClassifiedCohort(boundaries []ClassifiedBoundary, to
 // payload. Every selected cell must contain one undecorated extra shift. A
 // target state of zero retains that head's current state, matching production
 // extraShiftTargetState semantics.
+// The returned slice is transient scheduler-owned scratch. It stays valid
+// only until the next cohort shift on this Core; clone it to retain it.
 func (c *Core) ShiftExtraCohort(inputs []ExtraCohortShiftInput, lookahead Symbol, token Token) (out []Head, err error) {
 	if len(inputs) == 0 {
 		return nil, errors.New("parser-core phase zero: empty extra shift cohort")
@@ -1297,6 +1303,8 @@ func (c *Core) ShiftExtraCohort(inputs []ExtraCohortShiftInput, lookahead Symbol
 
 // ShiftExtraClassifiedCohort is the classified scheduler form of
 // ShiftExtraCohort. Every boundary must select one extra shift.
+// The returned slice is transient scheduler-owned scratch. It stays valid
+// only until the next cohort shift on this Core; clone it to retain it.
 func (c *Core) ShiftExtraClassifiedCohort(boundaries []ClassifiedBoundary, token Token) (out []Head, err error) {
 	var inlineTargets [inlineSchedulerCohortTargets]StateID
 	targets := inlineTargets[:]
