@@ -73,7 +73,7 @@ func TestGeneratedCABI14LexModesRuntime(t *testing.T) {
 
 	g := NewGrammar("abi14_lex_modes_runtime")
 	g.Define("source_file", Str("x"))
-	lang, err := GenerateLanguage(g)
+	lang, err := GenerateLanguageForC(g)
 	if err != nil {
 		t.Fatalf("GenerateLanguage: %v", err)
 	}
@@ -168,12 +168,12 @@ func TestEmitCRejectsMalformedSupertypeSurfaces(t *testing.T) {
 	g.Define("number_literal", Str("1"))
 	g.Define("string_literal", Str("x"))
 	g.SetSupertypes("expression")
-	base, err := GenerateLanguage(g)
+	base, err := GenerateLanguageForC(g)
 	if err != nil {
 		t.Fatalf("GenerateLanguage: %v", err)
 	}
 	clone := func() *gotreesitter.Language {
-		fresh, err := GenerateLanguage(g)
+		fresh, err := GenerateLanguageForC(g)
 		if err != nil {
 			t.Fatalf("GenerateLanguage clone: %v", err)
 		}
@@ -223,7 +223,7 @@ func TestGeneratedCABI15SupertypeRuntime(t *testing.T) {
 	g.Define("string_literal", Str("x"))
 	g.SetSupertypes("expression")
 
-	lang, err := GenerateLanguage(g)
+	lang, err := GenerateLanguageForC(g)
 	if err != nil {
 		t.Fatalf("GenerateLanguage: %v", err)
 	}

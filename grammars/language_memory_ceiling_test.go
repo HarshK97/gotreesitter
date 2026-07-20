@@ -25,37 +25,18 @@ const languageMemoryCeilingBytes = 256 * 1024 * 1024
 // not swept under the rug: do not add entries here casually, and do not grow
 // an entry's budget without also recording why. Each entry left here is a
 // real, un-gated regression risk for that one language.
-var languageMemoryCeilingKnownExceptions = map[string]string{
-	// Swift's Language() allocates ~490 MB HeapAlloc (~1.5-2 GB peak Sys
-	// during decode) versus ~10 MB for a comparably-sized grammar like
-	// Kotlin. Root cause: grammargen's buildLexDFA (grammargen/dfa.go) runs
-	// an independent NFA->DFA subset construction per lex mode with no
-	// cross-mode automaton sharing. Swift's grammar.js has ~331 distinct
-	// lex-mode symbol-set combinations (Kotlin has 17), so nearly the same
-	// ~190-state identifier/operator/comment automaton gets rebuilt from
-	// scratch 331 times, yielding 63,150 total LexStates and 21.16M
-	// LexTransition entries -- a ~308 MB decompressed gob stream that must
-	// be fully materialized on every decode.
-	//
-	// ReadAllGzipWithSizeHint (see ../load_language.go) already removes the
-	// io.ReadAll doubling-growth tax from every grammar's decode path,
-	// cutting Swift's per-call allocation churn by roughly a third; that
-	// mitigation is safe and applies fleet-wide. It does not reduce the
-	// retained ~490 MB, because the LexStates table itself -- not decode
-	// buffering -- is what is oversized.
-	//
-	// A real fix requires memoizing buildLexDFA by a canonical hash of each
-	// mode's (validSymbols, preferredSymbols, skipWhitespace) so structurally
-	// identical modes share one compiled automaton, then regenerating and
-	// re-certifying swift.bin against the full Swift corpus -- deferred as
-	// its own follow-up rather than risked in this pass.
-	"swift": "grammargen builds Swift's lexer DFA independently per lex mode " +
-		"(no cross-mode automaton sharing); ~331 distinct lex modes produce " +
-		"63k+ LexStates / 21M+ LexTransition entries and a ~308 MB " +
-		"decompressed blob. Fix requires per-mode DFA memoization in " +
-		"grammargen/dfa.go (buildLexDFA) plus swift.bin regeneration and " +
-		"recertification; deferred as a follow-up.",
-}
+//
+// Swift was the only entry (~490 MB HeapAlloc, ~331 lex modes rebuilding a
+// shared ~190-state automaton from scratch with no cross-mode sharing). The
+// fix: grammargen's buildLexDFA (grammargen/dfa.go) now runs
+// minimizeLexStates (grammargen/dfa_minimize.go) after construction, a
+// Myhill-Nerode partition refinement that merges observationally-equivalent
+// LexStates across lex-mode boundaries. Swift's LexStates table dropped from
+// 63,150 to 2,067 and its Language() call now retains about 25 MB, well
+// under the ceiling; swift.bin was regenerated and recertified against the
+// Swift regression suite and corpus. The map is empty until the next
+// exception is found.
+var languageMemoryCeilingKnownExceptions = map[string]string{}
 
 // evaluateLanguageMemoryCeiling applies the gate's pass/known-exception/fail
 // decision to a single (name, delta) measurement. Split out from the sweep
@@ -146,10 +127,16 @@ func TestEvaluateLanguageMemoryCeilingDecisionLogic(t *testing.T) {
 	})
 
 	t.Run("over ceiling with a known exception logs, does not fail", func(t *testing.T) {
-		if _, known := languageMemoryCeilingKnownExceptions["swift"]; !known {
-			t.Fatal("test fixture assumes \"swift\" is a known exception")
-		}
-		fail, msg := evaluateLanguageMemoryCeiling("swift", languageMemoryCeilingBytes+1)
+		// Inject a throwaway fixture key instead of depending on a real
+		// grammar's exception entry: languageMemoryCeilingKnownExceptions is
+		// meant to shrink to empty over time (Swift's entry was removed once
+		// grammargen's lex-state minimization brought it under the ceiling),
+		// so this branch must stay exercisable even when the map is empty.
+		const fixtureName = "__test_fixture_known_exception__"
+		languageMemoryCeilingKnownExceptions[fixtureName] = "synthetic fixture reason"
+		t.Cleanup(func() { delete(languageMemoryCeilingKnownExceptions, fixtureName) })
+
+		fail, msg := evaluateLanguageMemoryCeiling(fixtureName, languageMemoryCeilingBytes+1)
 		if fail || msg == "" {
 			t.Fatalf("fail=%v msg=%q, want fail=false with a non-empty (logged) message", fail, msg)
 		}

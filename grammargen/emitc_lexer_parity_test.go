@@ -203,7 +203,7 @@ func TestEmitCKeywordOverIdentifier(t *testing.T) {
 	g.Define("identifier", Pat(`[a-z]+`))
 	g.SetExtras(Pat(`\s`))
 
-	lang, err := GenerateLanguage(g)
+	lang, err := GenerateLanguageForC(g)
 	if err != nil {
 		t.Fatalf("GenerateLanguage: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestEmitCNegatedClassEOFLoop(t *testing.T) {
 	g.Define("string", Seq(Str(`"`), Repeat(Pat(`[^"]`)), Str(`"`)))
 	g.SetExtras(Pat(`\s`))
 
-	lang, err := GenerateLanguage(g)
+	lang, err := GenerateLanguageForC(g)
 	if err != nil {
 		t.Fatalf("GenerateLanguage: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestEmitCDuplicateAnonToken(t *testing.T) {
 	g.Define("word", Pat(`[a-z]+`))
 	g.SetExtras(Pat(`\s`))
 
-	lang, err := GenerateLanguage(g)
+	lang, err := GenerateLanguageForC(g)
 	if err != nil {
 		t.Fatalf("GenerateLanguage: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestEmitCAnonTokenCollisionChain(t *testing.T) {
 	g.Define("word", Pat(`[a-z]+`))
 	g.SetExtras(Pat(`\s`))
 
-	lang, err := GenerateLanguage(g)
+	lang, err := GenerateLanguageForC(g)
 	if err != nil {
 		t.Fatalf("GenerateLanguage: %v", err)
 	}
@@ -384,7 +384,7 @@ func TestEmitCMultiCharSkipCRLF(t *testing.T) {
 	g.Define("word", Pat(`[a-z]+`))
 	g.SetExtras(Pat("\r\n"))
 
-	lang, err := GenerateLanguage(g)
+	lang, err := GenerateLanguageForC(g)
 	if err != nil {
 		t.Fatalf("GenerateLanguage: %v", err)
 	}
@@ -426,7 +426,7 @@ func TestEmitCMultiCharSkipBackslashNewline(t *testing.T) {
 	// a literal newline — the two-character AWK continuation sequence.
 	g.SetExtras(Pat("\\\\\n"), Pat(`\s`))
 
-	lang, err := GenerateLanguage(g)
+	lang, err := GenerateLanguageForC(g)
 	if err != nil {
 		t.Fatalf("GenerateLanguage: %v", err)
 	}
@@ -483,7 +483,7 @@ func TestEmitCAliasSequenceStride(t *testing.T) {
 	g.Define("identifier", Pat(`[a-z]+`))
 	g.SetExtras(Pat(`\s`))
 
-	lang, err := GenerateLanguage(g)
+	lang, err := GenerateLanguageForC(g)
 	if err != nil {
 		t.Fatalf("GenerateLanguage: %v", err)
 	}
@@ -548,7 +548,7 @@ func TestEmitCAliasSequencesGateMismatch(t *testing.T) {
 	g.Define("identifier", Pat(`[a-z]+`))
 	g.SetExtras(Pat(`\s`))
 
-	lang, err := GenerateLanguage(g)
+	lang, err := GenerateLanguageForC(g)
 	if err != nil {
 		t.Fatalf("GenerateLanguage: %v", err)
 	}

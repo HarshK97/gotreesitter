@@ -7,6 +7,20 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Swift's `Language()` call no longer exceeds the 256 MB CI memory
+  ceiling.** grammargen's `buildLexDFA` rebuilt an independent lexer DFA per
+  lex mode with no sharing across modes; Swift's ~331 lex modes rebuilt the
+  same ~190-state identifier/operator/comment automaton from scratch each
+  time. A new post-construction minimization pass
+  (`grammargen/dfa_minimize.go`) merges observationally-equivalent DFA
+  states across lex-mode boundaries. Swift's LexStates table drops from
+  63,150 to 2,067 entries; its `Language()` call now retains about 25 MB,
+  down from about 490 MB. `swift.bin` is regenerated and recertified against
+  the Swift regression suite and corpus. The known-exception entry for
+  Swift is removed from the CI memory-ceiling gate.
+
 ## [0.43.1] - 2026-07-20
 
 ### Fixed
