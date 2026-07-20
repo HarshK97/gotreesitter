@@ -968,6 +968,13 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 	if actions.Len() < 2 {
 		return diagnosticParserCoreConflictExecution{}, errors.New("parser-core phase zero: conflict executor requires multiple actions")
 	}
+	// See Core.reduceConflictContext (core.go): every arm applied below --
+	// both the fork.Present secondaries and the fork.Present==false primary
+	// -- runs while this dispatch point had more than one viable action, so
+	// every subtreeRecord any of them reduce is fragile. Reset unconditionally
+	// on every exit path, including error returns from RunSchedulerOwned.
+	compact.SetReduceConflictContext(true)
+	defer compact.SetReduceConflictContext(false)
 	secondaryCount := uint64(actions.Len() - 1)
 	if secondaryCount > math.MaxUint64-branchOrder {
 		return diagnosticParserCoreConflictExecution{}, errors.New("parser-core phase zero: conflict branch order overflow")

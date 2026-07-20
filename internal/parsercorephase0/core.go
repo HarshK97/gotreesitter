@@ -401,6 +401,19 @@ type subtreeRecord struct {
 	extra             bool
 	external          bool
 	terminal          bool
+	// fragile mirrors gotreesitter.Node's fragileLeft/fragileRight bits
+	// (tree.go), collapsed to one conservative flag here: set whenever the
+	// record was produced by a reduce/conflict-arm decision that ran under
+	// ambiguity (see the conflict executor, parsercore_phase0_driver.go,
+	// and Core.Reduce/ReduceOutputs, core.go). It is monotone set-only (only
+	// ever flipped false->true), which is safe on shared/deduped records:
+	// a record reachable via both a clean and an ambiguous derivation must
+	// be treated as fragile, since the ambiguous derivation proves its
+	// shape was not uniquely determined. Not yet consumed by any reuse gate
+	// in this package -- laid down for a later lane, mirroring
+	// gotreesitter's own production fragility metadata (see PHASE-3 LANE 1,
+	// tree.go/parser_reduce.go).
+	fragile bool
 }
 
 // pathMeta is stored on a graph link. ScoreDelta includes the contributions
@@ -571,6 +584,30 @@ type Core struct {
 	// subtree was published through the authenticated shift/reduction seams.
 	// Diagnostic generic publication clears it monotonically until Reset.
 	metadataConstructionAuthenticated bool
+	// reduceConflictContext is a transient, non-sticky fragility signal: the
+	// conflict executor (executeDiagnosticParserCoreGenericConflictDetailed,
+	// parsercore_phase0_driver.go) sets it for the duration of applying every
+	// arm of a >=2-action conflict (both the fork.Present secondaries and the
+	// fork.Present==false primary), mirroring how markReduceFragility's
+	// action-conflict trigger works in the production Go parser
+	// (parser_reduce.go). Combined with the local len(paths) > 1 (multi-pop)
+	// signal in reduceOutputsClassifiedIntoActive, this feeds subtreeRecord's
+	// fragile bit. Core is used through a single-owner
+	// (SchedulerTransactionToken) access-control model, not concurrently,
+	// so a plain field is safe here -- see Parser.reduceActionConflict
+	// (parser.go) for the identical pattern and its safety argument.
+	reduceConflictContext bool
+}
+
+// SetReduceConflictContext sets/clears the transient conflict-context
+// fragility signal; see the reduceConflictContext field doc comment. Callers
+// outside this package (the conflict executor) must always pair a true set
+// with a deferred false reset, even on early-return error paths.
+func (c *Core) SetReduceConflictContext(v bool) {
+	if c == nil {
+		return
+	}
+	c.reduceConflictContext = v
 }
 
 // inlineAdjacencyCapacity covers the production default without forcing a
@@ -1448,16 +1485,27 @@ func (c *Core) reductionParentForPath(
 	path popPath,
 	key boundaryKey,
 	fork ForkOrder,
+	multiPop bool,
 	scratch *reductionOutputScratch,
 ) (SubtreeID, int64, ForkOrder, error) {
 	fields, aliases, err := c.remapReductionPlan(path.children, plan, scratch)
 	if err != nil {
 		return 0, 0, ForkOrder{}, err
 	}
+	// fragile mirrors markReduceFragility's non-propagation trigger in the
+	// production Go parser (parser_reduce.go): this reduce is fragile when
+	// more than one pop path was retained for it (multiPop, the pop.size > 1
+	// condition -- see reduceOutputsClassifiedIntoActive) or it is one arm of
+	// an authenticated >=2-action conflict (c.reduceConflictContext, set by
+	// the conflict executor for every arm including the primary). See the
+	// subtreeRecord.fragile field doc comment (above) for the monotone
+	// set-only contract on dedup below.
+	fragile := multiPop || c.reduceConflictContext
 	parent := subtreeRecord{
 		symbol: act.Symbol, productionID: act.ProductionID,
 		dynamicPrecedence: act.DynamicPrecedence,
 		startByte:         path.startByte, endByte: path.structuralEnd,
+		fragile: fragile,
 	}
 	order := path.order
 	if fork.Present {
@@ -1494,6 +1542,16 @@ func (c *Core) reductionParentForPath(
 		}
 		if len(path.trailing) == 0 {
 			scratch.batchParents = append(scratch.batchParents, payload)
+		}
+	} else if fragile {
+		// found reused an existing (deduped) record instead of publishing
+		// parent above; its fragile bit must still be OR'd in -- a record
+		// reachable via both a clean and an ambiguous/multi-pop derivation
+		// is fragile, since the ambiguous derivation proves the shape was
+		// not uniquely determined. Monotone set-only, safe on a shared
+		// record (see the field doc comment).
+		if rec, err := c.subtree(payload); err == nil && rec != nil && !rec.fragile {
+			rec.fragile = true
 		}
 	}
 	return payload, scoreDelta, order, nil
@@ -1648,6 +1706,12 @@ func reductionParentIdentityEqual(
 	right.firstChild, right.childCount = 0, uint32(len(rightChildren))
 	right.firstField, right.fieldCount = 0, uint32(len(rightFields))
 	right.firstAlias, right.aliasCount = 0, uint32(len(rightAliases))
+	// fragile is derivation history, not structural identity: two
+	// structurally-identical records must still dedup to one record even if
+	// one arrived via an ambiguous/multi-pop derivation and the other did
+	// not. The caller (reductionParentForPath) is responsible for OR-ing the
+	// bit into whichever record survives the dedup -- see its doc comment.
+	left.fragile, right.fragile = false, false
 	return left == right && slices.Equal(leftChildren, rightChildren) && slices.Equal(leftFields, rightFields) && slices.Equal(leftAliases, rightAliases)
 }
 

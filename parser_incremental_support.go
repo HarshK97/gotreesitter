@@ -54,6 +54,7 @@ func (t *incrementalParseTiming) toProfile() IncrementalParseProfile {
 		ReuseRejectRootNonLeafChanged:       t.reuseRejectRootNonLeafChanged,
 		ReuseRejectLargeNonLeaf:             t.reuseRejectLargeNonLeaf,
 		ReuseRejectStaleNonLeafBoundary:     t.reuseRejectStaleNonLeafBoundary,
+		ReuseRejectFragileNonLeaf:           t.reuseRejectFragileNonLeaf,
 		RecoverSearches:                     t.recoverSearches,
 		RecoverStateChecks:                  t.recoverStateChecks,
 		RecoverStateSkips:                   t.recoverStateSkips,
@@ -156,6 +157,7 @@ func (t *incrementalParseTiming) addAttempt(other *incrementalParseTiming) {
 	t.reuseRejectRootNonLeafChanged += other.reuseRejectRootNonLeafChanged
 	t.reuseRejectLargeNonLeaf += other.reuseRejectLargeNonLeaf
 	t.reuseRejectStaleNonLeafBoundary += other.reuseRejectStaleNonLeafBoundary
+	t.reuseRejectFragileNonLeaf += other.reuseRejectFragileNonLeaf
 	t.recoverSearches += other.recoverSearches
 	t.recoverStateChecks += other.recoverStateChecks
 	t.recoverStateSkips += other.recoverStateSkips

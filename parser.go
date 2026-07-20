@@ -46,6 +46,29 @@ type Parser struct {
 	rootSymbol                    Symbol
 	hasRootSymbol                 bool
 
+	// reduceMultiVersion/reduceActionConflict are transient, non-sticky
+	// fragility signals for the reduce(s) about to run. Parser is documented
+	// single-goroutine (see the doc comment above), so plain mutable fields
+	// are safe here; unlike gssScratch.everForked (which latches permanently
+	// once a parse ever forks), these are recomputed every dispatch pass /
+	// conflict decision so fragility marking (tree.go markReduceFragility)
+	// stays scoped to the reduces that actually happened under ambiguity,
+	// mirroring C tree-sitter's live action_count/version_count checks
+	// rather than a whole-parse latch.
+	//
+	// reduceMultiVersion mirrors C's "ts_stack_version_count > 1": set once
+	// per token-dispatch pass, before the per-stack loop, to numStacks > 1
+	// (see parseInternal). It stays constant for every stack dispatched
+	// against the current token.
+	reduceMultiVersion bool
+	// reduceActionConflict mirrors C's "action_count > 1": true only while
+	// the "if len(actions) > 1" conflict-dispatch block (parseInternal) is
+	// applying one of the conflicting actions (deterministic choice,
+	// depth-cap fallback, or an explicit fork) and its immediate
+	// conflict-reduce-frontier / pending-fork follow-through. Reset to false
+	// at the top of every per-stack dispatch iteration.
+	reduceActionConflict bool
+
 	// Forest-decline diagnostics: the experimental forest fast path records
 	// WHERE and WHY it last declined (fell back to production) so the language
 	// burndown can triage dead-ends without re-instrumenting. Set on the parser
@@ -1146,7 +1169,16 @@ type IncrementalParseProfile struct {
 	ReuseRejectRootNonLeafChanged       uint64
 	ReuseRejectLargeNonLeaf             uint64
 	ReuseRejectStaleNonLeafBoundary     uint64
-	RecoverSearches                     uint64
+	// ReuseRejectFragileNonLeaf counts interior (non-leaf) reuse candidates
+	// rejected because Node.isFragile() reported the candidate was built
+	// under an ambiguous parse decision (LR-table conflict, GSS multi-pop, or
+	// concurrent GLR stack versions) or is itself an ERROR/MISSING node -- see
+	// markReduceFragility (parser_reduce.go) and reuseNonLeafTargetStateOnStack
+	// (incremental.go). A nonzero count on a conflict-heavy grammar (e.g. js)
+	// is expected and correct: it is exactly the unsound reuse this gate is
+	// designed to prevent.
+	ReuseRejectFragileNonLeaf uint64
+	RecoverSearches           uint64
 	RecoverStateChecks                  uint64
 	RecoverStateSkips                   uint64
 	RecoverSymbolSkips                  uint64
@@ -1243,6 +1275,7 @@ type incrementalParseTiming struct {
 	reuseRejectRootNonLeafChanged       uint64
 	reuseRejectLargeNonLeaf             uint64
 	reuseRejectStaleNonLeafBoundary     uint64
+	reuseRejectFragileNonLeaf           uint64
 	recoverSearches                     uint64
 	recoverStateChecks                  uint64
 	recoverStateSkips                   uint64
@@ -2892,6 +2925,7 @@ func (p *Parser) parseIncrementalInternalWithMergePerKeyOverride(source []byte, 
 			timing.reuseRejectRootNonLeafChanged += reuse.rejectRootNonLeafChanged
 			timing.reuseRejectLargeNonLeaf += reuse.rejectLargeNonLeaf
 			timing.reuseRejectStaleNonLeafBoundary += reuse.rejectStaleNonLeafBoundary
+			timing.reuseRejectFragileNonLeaf += reuse.rejectFragileNonLeaf
 		}
 		if timing != nil {
 			reuseStart := time.Now()
@@ -4787,6 +4821,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		}
 
 		numStacks := len(stacks)
+		// See the Parser.reduceMultiVersion doc comment: live, non-sticky
+		// "ts_stack_version_count > 1" signal for every reduce that can run
+		// against the current token, including the external-default-reduce
+		// pre-dispatch step below (which runs before the per-stack loop).
+		// Re-synced at every numStacks reassignment in that pre-dispatch step.
+		p.reduceMultiVersion = numStacks > 1
 		if progress.enabled {
 			dispatchTrace = make([]dispatchStackSurvivorTrace, len(stacks))
 			for i := range dispatchTrace {
@@ -4992,12 +5032,14 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					anyReduced = true
 					drainPendingForkStacks()
 					numStacks = len(stacks)
+					p.reduceMultiVersion = numStacks > 1
 					if !p.canApplyExternalNoActionDefaultReduce(tok, stacks) {
 						break
 					}
 				}
 				if preDispatchDefaultReduced {
 					numStacks = len(stacks)
+					p.reduceMultiVersion = numStacks > 1
 					if !p.externalNoActionDefaultReducesStable(tok, stacks) {
 						if parseEagerDefaultReduceDebugEnabled() {
 							fmt.Printf("  EXTERNAL-DEFAULT-RELEX-DEFER old=%d[%d-%d]\n",
@@ -5043,6 +5085,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		}
 		for si := 0; si < numStacks; si++ {
 			s := &stacks[si]
+			// reduceActionConflict is scoped to a single stack's dispatch; a
+			// fresh iteration must not inherit the previous stack's conflict
+			// context (see the "if len(actions) > 1" block below, which is
+			// the only place this is set true).
+			p.reduceActionConflict = false
 			if s.dead || s.shifted {
 				continue
 			}
@@ -5462,6 +5509,13 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				// including the actions[0] continuation applied to the
 				// original stack later in this same iteration.
 				scratch.gss.everForked = true
+				// C's action_count > 1: this dispatch point had more than one
+				// viable parse-table action, so every node any of the paths
+				// below build (deterministic choice, depth-cap fallback, or
+				// an explicit fork, plus their conflict-reduce-frontier /
+				// pending-fork follow-through) is born fragile. Reset to
+				// false at the top of every per-stack iteration above.
+				p.reduceActionConflict = true
 				conflictStart := time.Time{}
 				if actionTiming != nil {
 					conflictStart = time.Now()
