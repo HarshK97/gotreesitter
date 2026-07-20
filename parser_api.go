@@ -119,7 +119,8 @@ func (p *Parser) normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []
 		return
 	}
 	if !tree.resultCompatibilityApplied {
-		if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
+		ranges := p.incrementalResultCompatibilityRanges(tree)
+		if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source, ranges); parseStopReasonIsTerminal(reason) {
 			tree.setParseStopReason(reason)
 			return
 		}
@@ -130,6 +131,18 @@ func (p *Parser) normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []
 		return
 	}
 	finalizeReturnedTreeRootSpan(tree, source)
+}
+
+// incrementalResultCompatibilityRanges returns the reparsed byte spans that
+// range-limit result normalization for an incremental reparse, or nil when the
+// tree's language is not proven eligible for range-limiting. It is called ONLY
+// from the incremental normalization path, so a fresh parse never computes a
+// range and its full-tree normalization is byte-identical to before.
+func (p *Parser) incrementalResultCompatibilityRanges(tree *Tree) []Range {
+	if p == nil || p.language == nil || tree == nil || p.forceFullResultNormalizationWalk || !languageUsesRangeLimitedResultCompatibility(p.language) {
+		return nil
+	}
+	return incrementalReparsedTopLevelRanges(rawRootOrNil(tree), tree.arena, len(tree.borrowedArena) > 0)
 }
 
 func shouldNormalizeReturnedTree(tree *Tree) bool {
@@ -145,7 +158,7 @@ func (p *Parser) normalizeReturnedTreeForParse(tree *Tree, source []byte) {
 		return
 	}
 	if !tree.resultCompatibilityApplied {
-		if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
+		if reason := p.normalizeReturnedTree(rawRootOrNil(tree), source, nil); parseStopReasonIsTerminal(reason) {
 			tree.setParseStopReason(reason)
 			return
 		}
@@ -334,14 +347,14 @@ func profileFreshParseFallback(start time.Time, tree *Tree, reason string) Incre
 	return profile
 }
 
-func (p *Parser) normalizeReturnedTree(root *Node, source []byte) ParseStopReason {
+func (p *Parser) normalizeReturnedTree(root *Node, source []byte, incrementalRanges []Range) ParseStopReason {
 	if p == nil || p.language == nil || root == nil || p.noResultCompatibilityBenchmarkOnly {
 		return ParseStopNone
 	}
 	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
 		return reason
 	}
-	normalizeResultCompatibility(root, source, p)
+	normalizeResultCompatibility(root, source, p, incrementalRanges)
 	return p.parseStopReasonNow()
 }
 
@@ -1254,6 +1267,19 @@ func (p *Parser) ParseNoResultCompatibilityBenchmarkOnly(source []byte) (*Tree, 
 		p.noResultCompatibilityBenchmarkOnly = prevNoResult
 	}()
 	return p.Parse(source)
+}
+
+// SetForceFullResultNormalizationWalk forces the full-tree result-normalization
+// walk, disabling the incremental range-limited walk (campaign O(edit),
+// spec.campaign.oedit). It exists so a differential test can compare the
+// range-limited walk against the full walk on the SAME Parser and prove they
+// produce identical trees. Production never calls it (the default is false, the
+// range-limited walk).
+func (p *Parser) SetForceFullResultNormalizationWalk(v bool) {
+	if p == nil {
+		return
+	}
+	p.forceFullResultNormalizationWalk = v
 }
 
 // ParseUTF16 parses UTF-16 source represented as Go UTF-16 code units.

@@ -105,7 +105,7 @@ func TestNormalizeResultCompatibilityDispatchesCrystal(t *testing.T) {
 	hash.endPoint = Point{Column: 6}
 	root := newParentNodeInArena(arena, 1, true, []*Node{hash}, nil, 0)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := hash.StartByte(), uint32(5); got != want {
 		t.Fatalf("hash.StartByte = %d, want %d", got, want)
@@ -139,7 +139,7 @@ func TestParserNormalizeReturnedTreeDispatchesCrystalCompatibility(t *testing.T)
 	root := newParentNodeInArena(arena, 1, true, []*Node{hash}, nil, 0)
 	parser := &Parser{language: lang}
 
-	if reason := parser.normalizeReturnedTree(root, source); reason != ParseStopNone {
+	if reason := parser.normalizeReturnedTree(root, source, nil); reason != ParseStopNone {
 		t.Fatalf("normalizeReturnedTree stop reason = %q, want %q", reason, ParseStopNone)
 	}
 	if got, want := hash.StartByte(), uint32(5); got != want {

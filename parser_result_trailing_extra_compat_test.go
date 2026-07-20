@@ -12,7 +12,7 @@ func TestNormalizeResultCompatibilityTrimsCleanRootTrailingExtraTrivia(t *testin
 	trivia.setExtra(true)
 	root := newParentNodeInArena(arena, 1, true, []*Node{body, trivia}, nil, 0)
 
-	parser.finalizeResultRoot(root, source, nil, false, true)
+	parser.finalizeResultRoot(root, source, nil, false, true, nil)
 
 	if got, want := root.ChildCount(), 1; got != want {
 		t.Fatalf("root child count = %d, want %d", got, want)
@@ -38,7 +38,7 @@ func TestNormalizeResultCompatibilityKeepsErrorRootTrailingExtraTrivia(t *testin
 	root := newParentNodeInArena(arena, 1, true, []*Node{body, trivia}, nil, 0)
 	root.setHasError(true)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := root.ChildCount(), 2; got != want {
 		t.Fatalf("root child count = %d, want %d", got, want)
