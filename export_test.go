@@ -252,3 +252,17 @@ func (r ReplayResyncReport) SortedClassStats() []ReplayClassStat {
 	})
 	return out
 }
+
+// ResetAdmissionCandidateCountersForTest zeroes the Phase-3 admission switch
+// counters so the external gotreesitter_test package can assert routing and
+// fallback movements in isolation.
+func ResetAdmissionCandidateCountersForTest() {
+	resetAdmissionCandidateCounters()
+}
+
+// AdmissionCandidateEnvEnabledForTest exposes the GTS_ADMISSION_CANDIDATE
+// parsing that init uses to seed the process-wide default, so the external test
+// package can assert the environment contract deterministically.
+func AdmissionCandidateEnvEnabledForTest() bool {
+	return admissionCandidateEnvEnabled()
+}

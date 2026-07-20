@@ -609,6 +609,15 @@ func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFact
 	if ts == nil {
 		return nil, ErrNoTokenSource
 	}
+	// Phase-3 dual-route admission switch (admission_switch.go). This entry
+	// point honors the switch, but a caller-supplied token source is never
+	// eligible: the compact candidate route reproduces the production DFA token
+	// stream and cannot honor arbitrary tokens, so this always declines and
+	// runs production. The seam stays here so the policy is enforced in one
+	// place for every fresh full-parse entry point.
+	if tree, ok := p.attemptAdmissionCandidateFullParse(source, nil, false); ok {
+		return tree, nil
+	}
 	endBudget := p.beginParseOperationBudget()
 	defer endBudget()
 	p.fullParseRetryPassesTaken = 0
@@ -933,6 +942,14 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	if err := p.checkDFALexer(); err != nil {
 		return nil, err
 	}
+	// Phase-3 dual-route admission switch (admission_switch.go). A fresh full
+	// parse on the production DFA lexer is the one shape the compact candidate
+	// route can reproduce. When the switch is on and the candidate route
+	// accepts this input, return its tree; otherwise fall through to production
+	// (the fallback counter records the decline).
+	if tree, ok := p.attemptAdmissionCandidateFullParse(source, nil, true); ok {
+		return tree, nil
+	}
 	endBudget := p.beginParseOperationBudget()
 	defer endBudget()
 	p.fullParseRetryPassesTaken = 0
@@ -1103,6 +1120,9 @@ func (p *Parser) resolveCRecoverySwallowedError(source []byte, tree *Tree) *Tree
 	}()
 	p.errorCostCompetition = false
 	p.crecoverySwallowedErrorCheckActive = true
+	// This reparse is a production-only correctness oracle (the resync engine
+	// with C-recovery disabled): keep it off the compact candidate route.
+	defer p.suppressAdmissionCandidateRoute()()
 	fallback, err := p.Parse(source)
 	if err != nil || fallback == nil {
 		return tree
@@ -1358,6 +1378,9 @@ func (p *Parser) ParseIncremental(source []byte, oldTree *Tree) (*Tree, error) {
 func (p *Parser) parseIncrementalChanged(source []byte, oldTree *Tree) (*Tree, error) {
 	endParseBudget := p.enterParseBudget()
 	defer endParseBudget()
+	// ParseIncremental is a reuse-consuming path: keep the whole call, including
+	// the reuse-disabled fresh-parse fallback to Parse below, on production.
+	defer p.suppressAdmissionCandidateRoute()()
 	p.fullParseRetryPassesTaken = 0
 	if oldTreeDisablesIncrementalReuse(oldTree) {
 		if tree, ok := p.tryTokenInvariantReuseForDisabledOldTree(source, oldTree, nil); ok {
@@ -1512,6 +1535,9 @@ func (p *Parser) ParseIncrementalProfiled(source []byte, oldTree *Tree) (*Tree, 
 func (p *Parser) parseIncrementalChangedProfiled(source []byte, oldTree *Tree) (*Tree, IncrementalParseProfile, error) {
 	endParseBudget := p.enterParseBudget()
 	defer endParseBudget()
+	// Reuse-consuming path: keep the reuse-disabled fresh-parse fallback below on
+	// production so ParseIncremental never publishes a compact tree.
+	defer p.suppressAdmissionCandidateRoute()()
 	p.fullParseRetryPassesTaken = 0
 	if oldTreeDisablesIncrementalReuse(oldTree) {
 		timing := &incrementalParseTiming{}

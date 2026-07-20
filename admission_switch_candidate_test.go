@@ -1,0 +1,192 @@
+//go:build gts_parsercorephase0
+
+package gotreesitter
+
+import "testing"
+
+// These tests run under the gts_parsercorephase0 tag, where the compact
+// candidate route is compiled in. They prove the switch actually routes a fresh
+// full parse through the compact route, that the routed tree is byte-exact with
+// production on the four canonical fixtures, and that every reuse-consuming path
+// stays on production.
+
+func newAdmissionCandidateGoParser(t testing.TB) *Parser {
+	t.Helper()
+	lang, err := authenticatedParserCoreGoLanguage(parserCoreWarmGoScanner)
+	if err != nil {
+		t.Fatalf("authenticate certified Go language: %v", err)
+	}
+	return NewParser(lang)
+}
+
+// TestAdmissionSwitchParseRoutesCandidateWhenOn proves Parse serves the compact
+// candidate route for every canonical fixture when the switch is on.
+func TestAdmissionSwitchParseRoutesCandidateWhenOn(t *testing.T) {
+	resetAdmissionCandidateCounters()
+	p := newAdmissionCandidateGoParser(t)
+	p.SetAdmissionCandidateRoute(true)
+	for _, row := range diagnosticParserCoreCanonicalAdmissions {
+		fixture := loadDiagnosticParserCoreCanonicalFixture(t, row.id)
+		routed0, fb0 := AdmissionCandidateCounters()
+		tree, err := p.Parse(fixture.Source)
+		if err != nil {
+			t.Fatalf("%s: parse: %v", row.id, err)
+		}
+		routed1, fb1 := AdmissionCandidateCounters()
+		if routed1 != routed0+1 || fb1 != fb0 {
+			t.Fatalf("%s: expected one candidate route, got routed %d->%d fallback %d->%d (last=%q)",
+				row.id, routed0, routed1, fb0, fb1, AdmissionCandidateLastFallbackReason())
+		}
+		if !tree.compactMaterialized {
+			t.Fatalf("%s: routed tree is not compact-materialized", row.id)
+		}
+		if !tree.incrementalReuseDisabled {
+			t.Fatalf("%s: routed tree must carry the reuse bar", row.id)
+		}
+		tree.Release()
+	}
+}
+
+// TestAdmissionSwitchParseProductionWhenOff proves a forced-off Parser stays on
+// production and never touches the counters, independent of the process default
+// (this test forces off so it is robust to GTS_ADMISSION_CANDIDATE).
+func TestAdmissionSwitchParseProductionWhenOff(t *testing.T) {
+	resetAdmissionCandidateCounters()
+	p := newAdmissionCandidateGoParser(t)
+	p.SetAdmissionCandidateRoute(false) // forced off wins over any default/env
+	fixture := loadDiagnosticParserCoreCanonicalFixture(t, "rewrite")
+	routed0, fb0 := AdmissionCandidateCounters()
+	tree, err := p.Parse(fixture.Source)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Release()
+	routed1, fb1 := AdmissionCandidateCounters()
+	if routed1 != routed0 || fb1 != fb0 {
+		t.Fatalf("switch off must not move counters: routed %d->%d fallback %d->%d", routed0, routed1, fb0, fb1)
+	}
+	if tree.compactMaterialized {
+		t.Fatal("switch off produced a compact-materialized tree")
+	}
+}
+
+// TestAdmissionSwitchCandidateDigestMatchesProduction is the byte-exact fidelity
+// proof: the compact candidate route and production produce the same frozen
+// deep-tree digest on all four canonical fixtures, through the public Parse API.
+func TestAdmissionSwitchCandidateDigestMatchesProduction(t *testing.T) {
+	lang, err := authenticatedParserCoreGoLanguage(parserCoreWarmGoScanner)
+	if err != nil {
+		t.Fatalf("authenticate certified Go language: %v", err)
+	}
+	candidate := NewParser(lang)
+	candidate.SetAdmissionCandidateRoute(true)
+	production := NewParser(lang)
+	production.SetAdmissionCandidateRoute(false)
+	for _, row := range diagnosticParserCoreCanonicalAdmissions {
+		fixture := loadDiagnosticParserCoreCanonicalFixture(t, row.id)
+		candidateTree, err := candidate.Parse(fixture.Source)
+		if err != nil {
+			t.Fatalf("%s: candidate parse: %v", row.id, err)
+		}
+		productionTree, err := production.Parse(fixture.Source)
+		if err != nil {
+			t.Fatalf("%s: production parse: %v", row.id, err)
+		}
+		candidateDigest := requireDiagnosticParserCoreCanonicalTreeDigest(t, candidateTree, lang)
+		productionDigest := requireDiagnosticParserCoreCanonicalTreeDigest(t, productionTree, lang)
+		if candidateDigest != row.deepTreeSHA256 {
+			t.Fatalf("%s: candidate digest=%s want=%s", row.id, candidateDigest, row.deepTreeSHA256)
+		}
+		if productionDigest != candidateDigest {
+			t.Fatalf("%s: production digest=%s != candidate digest=%s", row.id, productionDigest, candidateDigest)
+		}
+		if !candidateTree.compactMaterialized {
+			t.Fatalf("%s: candidate tree is not compact-materialized", row.id)
+		}
+		candidateTree.Release()
+		productionTree.Release()
+	}
+}
+
+// TestAdmissionSwitchEligibilityFailsClosedForReuse proves the centralized
+// routing policy the three fresh-full-parse entry points share: only a fresh
+// DFA parse is eligible; every reuse-consuming path and every non-DFA lexer is
+// barred, even when the switch is forced on.
+func TestAdmissionSwitchEligibilityFailsClosedForReuse(t *testing.T) {
+	p := newAdmissionCandidateGoParser(t)
+	p.SetAdmissionCandidateRoute(true)
+	if !p.admissionCandidateFullParseEligible(nil, true) {
+		t.Fatal("a fresh DFA parse must be eligible when the switch is on")
+	}
+	reuse := &Tree{}
+	if p.admissionCandidateFullParseEligible(reuse, true) {
+		t.Fatal("a reuse-consuming path (oldTree != nil) must never be eligible")
+	}
+	if p.admissionCandidateFullParseEligible(nil, false) {
+		t.Fatal("a caller-supplied token source must never be eligible")
+	}
+	p.SetAdmissionCandidateRoute(false)
+	if p.admissionCandidateFullParseEligible(nil, true) {
+		t.Fatal("a forced-off Parser must not be eligible")
+	}
+}
+
+// TestAdmissionSwitchParseIncrementalNeverRoutes proves that even with the
+// switch forced on, ParseIncremental stays on production: the candidate route's
+// routed counter never moves across an incremental reparse.
+func TestAdmissionSwitchParseIncrementalNeverRoutes(t *testing.T) {
+	resetAdmissionCandidateCounters()
+	p := newAdmissionCandidateGoParser(t)
+	p.SetAdmissionCandidateRoute(true)
+	fixture := loadDiagnosticParserCoreCanonicalFixture(t, "rewrite")
+	oldTree, err := p.Parse(fixture.Source)
+	if err != nil {
+		t.Fatalf("fresh parse: %v", err)
+	}
+	defer oldTree.Release()
+	routedAfterFresh, _ := AdmissionCandidateCounters()
+
+	// Append a single space at EOF: a clean, minimal edit.
+	edited := append(append([]byte(nil), fixture.Source...), ' ')
+	eofPoint := admissionTestPointAtByte(fixture.Source, len(fixture.Source))
+	edit := InputEdit{
+		StartByte:   uint32(len(fixture.Source)),
+		OldEndByte:  uint32(len(fixture.Source)),
+		NewEndByte:  uint32(len(fixture.Source) + 1),
+		StartPoint:  eofPoint,
+		OldEndPoint: eofPoint,
+		NewEndPoint: Point{Row: eofPoint.Row, Column: eofPoint.Column + 1},
+	}
+	oldTree.Edit(edit)
+	newTree, err := p.ParseIncremental(edited, oldTree)
+	if err != nil {
+		t.Fatalf("incremental parse: %v", err)
+	}
+	if newTree != nil && newTree != oldTree {
+		defer newTree.Release()
+	}
+	routedAfterIncremental, _ := AdmissionCandidateCounters()
+	if routedAfterIncremental != routedAfterFresh {
+		t.Fatalf("ParseIncremental routed to the candidate: routed %d -> %d", routedAfterFresh, routedAfterIncremental)
+	}
+	if newTree != nil && newTree.compactMaterialized {
+		t.Fatal("ParseIncremental produced a compact-materialized tree")
+	}
+}
+
+// admissionTestPointAtByte returns the row/column point for a byte offset.
+func admissionTestPointAtByte(source []byte, offset int) Point {
+	var row, col uint32
+	if offset > len(source) {
+		offset = len(source)
+	}
+	for i := 0; i < offset; i++ {
+		if source[i] == '\n' {
+			row++
+			col = 0
+			continue
+		}
+		col++
+	}
+	return Point{Row: row, Column: col}
+}
