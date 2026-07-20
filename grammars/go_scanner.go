@@ -60,6 +60,28 @@ func (GoExternalScanner) Deserialize(payload any, buf []byte)   {}
 // returns nil), so incremental subtree reuse is always safe.
 func (GoExternalScanner) SupportsIncrementalReuse() bool { return true }
 
+// ExternalScannerIsStateless discharges the campaign O(edit) W4 scanner-
+// quiescence proof for Go (spec.campaign.oedit). It reports that the scanner
+// holds no cross-token state, so its state at any boundary equals the state a
+// fresh parse holds there and every reuse boundary is quiescent. The five
+// proof obligations, each verified against this file, live in the package doc
+// of external_scanner_quiescence.go:
+//
+//  1. No persisted state: Create returns nil, Serialize returns 0, Deserialize
+//     is a no-op (above).
+//  2. Scan is a pure function of the local lookahead and the valid-symbol set
+//     (Scan below reads only lexer.Lookahead() and validSymbols).
+//  3. Terminator legality is grammar-gated, not history-gated (the scanner
+//     runs only where the grammar makes _automatic_semicolon valid).
+//  4. Raw strings never induce scanner state (the DFA lexes raw_string_literal
+//     as one token; the terminator symbol is never valid inside it).
+//  5. Comments before a declaration never induce scanner state (Scan declines,
+//     the DFA matches the comment as an extra, and extras keep the LR state).
+//
+// The classifier reads this marker as a proof, so an incorrect true is silent
+// incremental corruption. Keep the marker in lockstep with the scanner.
+func (GoExternalScanner) ExternalScannerIsStateless() bool { return true }
+
 // PreservesStateOnScanFailure: Scan never mutates any persisted payload
 // before returning false (there is no payload), so the token source can
 // skip the snapshot/restore it would otherwise do around a failed scan.

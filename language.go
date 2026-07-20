@@ -194,6 +194,23 @@ type IncrementalReuseExternalScanner interface {
 	SupportsIncrementalReuse() bool
 }
 
+// StatelessExternalScanner is implemented by external scanners that carry no
+// serialized state across tokens. Their Scan decision is a pure function of the
+// byte stream at the lexer position and the valid-symbol set, and the
+// valid-symbol set is itself a pure function of the LR parser state. For such a
+// scanner the state at any boundary equals the state a fresh parse holds there,
+// so the scanner-quiescence proof obligation (campaign O(edit) workstream W4)
+// is discharged at every boundary. Go's automatic-semicolon scanner is the
+// reference example; see external_scanner_quiescence.go for the proof.
+//
+// A scanner implements this only when it can meet every quiescence obligation.
+// The classifier reads the marker as a proof, so an incorrect true is silent
+// incremental corruption.
+type StatelessExternalScanner interface {
+	ExternalScanner
+	ExternalScannerIsStateless() bool
+}
+
 // FailurePreservingExternalScanner is implemented by external scanners whose
 // Scan method does not mutate serialized scanner payload state before returning
 // false. The token source can defer snapshotting until retry is actually needed.

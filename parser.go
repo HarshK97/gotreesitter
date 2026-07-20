@@ -1199,7 +1199,16 @@ type IncrementalParseProfile struct {
 	// (incremental.go). A nonzero count on a conflict-heavy grammar (e.g. js)
 	// is expected and correct: it is exactly the unsound reuse this gate is
 	// designed to prevent.
-	ReuseRejectFragileNonLeaf           uint64
+	ReuseRejectFragileNonLeaf uint64
+	// ReuseRejectScannerUnquiescent counts reuse candidates the external
+	// scanner checkpoint/quiescence gate rejected -- a checkpoint state
+	// mismatch on a checkpoint language, or a refuted quiescence proof on an
+	// opt-out scanner (campaign O(edit) workstream W4, spec.campaign.oedit).
+	// It is 0 for stateless-scanner languages such as Go, whose ASI scanner
+	// carries no cross-token state and is proven quiescent at every boundary
+	// (external_scanner_quiescence.go). A nonzero count marks boundaries where
+	// scanner state, not fragility or byte drift, is the binding constraint.
+	ReuseRejectScannerUnquiescent       uint64
 	RecoverSearches                     uint64
 	RecoverStateChecks                  uint64
 	RecoverStateSkips                   uint64
@@ -1298,6 +1307,7 @@ type incrementalParseTiming struct {
 	reuseRejectLargeNonLeaf             uint64
 	reuseRejectStaleNonLeafBoundary     uint64
 	reuseRejectFragileNonLeaf           uint64
+	reuseRejectScannerUnquiescent       uint64
 	recoverSearches                     uint64
 	recoverStateChecks                  uint64
 	recoverStateSkips                   uint64
@@ -2973,6 +2983,7 @@ func (p *Parser) parseIncrementalInternalWithMergePerKeyOverride(source []byte, 
 			timing.reuseRejectLargeNonLeaf += reuse.rejectLargeNonLeaf
 			timing.reuseRejectStaleNonLeafBoundary += reuse.rejectStaleNonLeafBoundary
 			timing.reuseRejectFragileNonLeaf += reuse.rejectFragileNonLeaf
+			timing.reuseRejectScannerUnquiescent += reuse.rejectScannerUnquiescent
 		}
 		if timing != nil {
 			reuseStart := time.Now()

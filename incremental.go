@@ -49,8 +49,15 @@ type reuseCursor struct {
 	// Node.isFragile() -- see tryReuseSubtree's non-leaf fallback lane below
 	// and the Parser.ReuseRejectFragileNonLeaf profile field (parser.go).
 	rejectFragileNonLeaf uint64
-	forestFastPath       bool
-	languageName         string // cached for language-specific reuse safety policies
+	// rejectScannerUnquiescent counts reuse candidates rejected by the external
+	// scanner checkpoint/quiescence gate (canReuseNodeWithExternalScannerCheck
+	// point) -- either a checkpoint state mismatch or a refuted quiescence
+	// proof (campaign O(edit) W4, external_scanner_quiescence.go). It stays 0
+	// for stateless-scanner languages such as Go, whose every boundary is
+	// proven quiescent. See the Parser.ReuseRejectScannerUnquiescent field.
+	rejectScannerUnquiescent uint64
+	forestFastPath           bool
+	languageName             string // cached for language-specific reuse safety policies
 }
 
 // reuseScratch holds reusable buffers for incremental reuse traversal.
@@ -95,6 +102,7 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 	c.rejectLargeNonLeaf = 0
 	c.rejectStaleNonLeafBoundary = 0
 	c.rejectFragileNonLeaf = 0
+	c.rejectScannerUnquiescent = 0
 	c.forestFastPath = oldTree.forestFastPath
 	c.languageName = ""
 	if oldTree.language != nil {
@@ -547,6 +555,7 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 		}
 		cp, ok := canReuseNodeWithExternalScannerCheckpoint(ts, state, n)
 		if !ok {
+			idx.rejectScannerUnquiescent++
 			continue
 		}
 		return reuseNode(p, s, n, nextState, state, lookahead, ts, idx, entryScratch, gssScratch, cp)
@@ -632,6 +641,7 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 		startState := s.top().state
 		cp, ok := canReuseNodeWithExternalScannerCheckpoint(ts, startState, n)
 		if !ok {
+			idx.rejectScannerUnquiescent++
 			continue
 		}
 		return reuseNode(p, s, n, nextState, startState, lookahead, ts, idx, entryScratch, gssScratch, cp)
