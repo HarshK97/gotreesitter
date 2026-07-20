@@ -8,28 +8,29 @@ is not a claim.
 
 ## The one-paragraph story
 
-gotreesitter trades some raw full-parse speed for portability: pure Go, no
-cgo, cross-compiles anywhere Go does (including `wasip1`), fully visible to
-`go test -race`. Editor-style incremental workloads are where it is fast
-outright — a no-edit reparse is nanoseconds and a one-byte edit is
-microsecond-scale on the historical control, both zero-allocation. Full parses
-are ratcheted against the C runtime language-by-language with explicit
-caveats instead of averaged marketing numbers.
+gotreesitter trades some raw full-parse speed for portability. It is pure
+Go, has no cgo, cross-compiles anywhere Go does (including `wasip1`), and
+stays fully visible to `go test -race`. Editor-style incremental workloads
+are where it is fast outright — a no-edit reparse takes nanoseconds and a
+one-byte edit runs at microsecond scale on the historical control, both
+zero-allocation. Full parses are ratcheted against the C runtime
+language-by-language, with explicit caveats instead of averaged marketing
+numbers.
 
 ## Canonical benchmark status
 
 The generated 500-function Go source is a historical straight-LR control. It
-contains no imports, selectors, methods, types, comments, strings, or control
-flow and never forks under the current parser. It remains useful for tracking
-the incremental fast paths and single-stack regressions, but it is not a
-representative full-parse headline.
+contains no imports, selectors, methods, types, comments, strings, or
+control flow, and it never forks under the current parser. It remains
+useful for tracking the incremental fast paths and single-stack
+regressions, but it is not a representative full-parse headline.
 
-The former **1.895x C** full-parse headline and its **29% materialization**
-decomposition are withdrawn in favor of the locked real-code replacement
-below. The old comparison also used different Go grammar artifacts:
-gotreesitter used the project-locked 1,425-state/214-symbol grammar while the C
-benchmark used a 1,404-state/212-symbol grammar bundled by the old smacker
-binding.
+The project has withdrawn the former **1.895x C** full-parse headline and
+its **29% materialization** decomposition in favor of the locked real-code
+replacement below. The old comparison also used different Go grammar
+artifacts: gotreesitter used the project-locked 1,425-state/214-symbol
+grammar, while the C benchmark used a 1,404-state/212-symbol grammar
+bundled by the old smacker binding.
 
 Historical control results, retained as workload-specific receipts:
 
@@ -48,8 +49,8 @@ GOMAXPROCS=1 go test . -run '^$' \
 ```
 
 `BenchmarkGoParseCoreDFA` is a parser-loop diagnostic (no tree
-materialization); its numbers are never quoted as full-parse numbers. See
-the benchmark-integrity note below.
+materialization). The project never quotes its numbers as full-parse
+numbers. See the benchmark-integrity note below.
 
 ### Historical quiet-host receipt
 
@@ -65,22 +66,24 @@ quiet-host rerun of the corrected public benchmark. First such receipt,
 | `BenchmarkGoParseIncrementalNoEditDFA` | 9.85 | 0 | **0** |
 | `BenchmarkGoParseCoreDFA` (diagnostic) | 8,737,000 | 996 | 6 |
 
-Wall-clock numbers are host-specific (this is a low-clock server part; do not
-compare against dev-box history). The allocation counts remain valid for this
-fixture. The full-minus-core decomposition is not generalized beyond this
-straight-LR control.
+Wall-clock numbers are host-specific — this is a low-clock server part, so
+do not compare it against dev-box history. The allocation counts remain
+valid for this fixture. The full-minus-core decomposition does not
+generalize beyond this straight-LR control.
 
 ### v0.27.0 combined receipt
 
-Same host and pinned core, the historical full parse measured 10.907 ms and
-the mismatched-grammar C baseline measured 5.756 ms. Their former 1.895x ratio
-is recorded only to explain earlier releases; it is not a current claim.
+On the same host and pinned core, the historical full parse measured
+10.907 ms and the mismatched-grammar C baseline measured 5.756 ms. This
+page records their former 1.895x ratio only to explain earlier releases; it
+is not a current claim.
 
 ### Withdrawn same-host C calibration
 
-The old C baselines were run on the same host and workload, but through the
-smacker binding and its different Go grammar. Same-host scheduling does not
-repair an oracle-identity mismatch. These rows are historical only:
+The project ran the old C baselines on the same host and workload, but
+through the smacker binding and its different Go grammar. Same-host
+scheduling does not repair an oracle-identity mismatch. These rows are
+historical only:
 
 | Lane | pure Go | cgo binding (C) | Go / C |
 |---|---|---|---|
@@ -88,10 +91,10 @@ repair an oracle-identity mismatch. These rows are historical only:
 | One-byte incremental edit | 1.98 µs | 331 µs | **0.006x — 167x faster** |
 | No-edit reparse | 9.9 ns | 330 µs | **~33,000x faster** |
 
-`BenchmarkGoParseFull` is also not the registry production route: built-in Go
-uses the generated DFA path, while the hand-written Go token source remains an
-explicit alternate. Its old 1.70x row is therefore withdrawn as both
-oracle-mismatched and mislabeled.
+`BenchmarkGoParseFull` is also not the registry production route: built-in
+Go uses the generated DFA path, while the hand-written Go token source
+remains an explicit alternate. The project has withdrawn its old 1.70x row
+as both oracle-mismatched and mislabeled.
 
 ## The one C oracle
 
@@ -126,9 +129,9 @@ that exercise genuine GLR forking:
 
 These reach 12-18 live stacks, thousands to tens of thousands of multi-stack
 iterations, and constructed-to-selected-node ratios of 3.65-4.47 on the
-admitting revision. Generated code is reported separately and never blended
-into the human-code headline. A pinned external-project fixture will be added
-to check repository self-reference.
+admitting revision. This page reports generated code separately and never
+blends it into the human-code headline. A pinned external-project fixture
+will be added to check repository self-reference.
 
 Produce the complete publication receipt from a clean worktree on a quiet
 Docker-capable host:
@@ -137,12 +140,13 @@ Docker-capable host:
 bash cgo_harness/pure_c/run_canonical_go_full_parse.sh --core <idle-cpu>
 ```
 
-The driver authenticates and materializes the four snapshots, admits exact Go,
-cgo, and static-C trees, builds the locked `-O2` oracle, and collects ten
-process-isolated samples per backend and fixture in five Go-C-C-Go cycles. It
-fails closed on dirty source, parser or Go runtime overrides, noisy-host
-admission, identity drift, and incomplete receipts. Shortened or skipped gates
-require `--diagnostic` and are labeled `NONPUBLICATION_DIAGNOSTIC`.
+The driver authenticates and materializes the four snapshots, admits exact
+Go, cgo, and static-C trees, and builds the locked `-O2` oracle. It then
+collects ten process-isolated samples per backend and fixture in five
+Go-C-C-Go cycles. It fails closed on dirty source, parser or Go runtime
+overrides, noisy-host admission, identity drift, and incomplete receipts.
+Shortened or skipped gates require `--diagnostic` and carry the
+`NONPUBLICATION_DIAGNOSTIC` label.
 
 ### First locked-oracle publication receipt
 
@@ -699,35 +703,37 @@ multiple grammars.
 
 ### Diagnostic workload-regime receipt
 
-Before the static publication artifact was built, a strict-admitted quiet run
-used the exact locked Go grammar through the existing dynamic parity loader.
-On `a5df0aa5`, ten 750 ms samples measured the synthetic at 1.0437x locked C
-and the nearly size-matched `query_compile.go` at 2.8890x. The synthetic had one
-stack and no forks or merges; the real file reached 12 stacks, 1,765 forks,
-5,216 merges, and constructed 31,847 nodes for 7,524 selected. This proves the
-workload-regime defect, not the final C ratio. Report SHA-256:
+Before the project built the static publication artifact, a strict-admitted
+quiet run used the exact locked Go grammar through the existing dynamic
+parity loader. On `a5df0aa5`, ten 750 ms samples measured the synthetic at
+1.0437x locked C and the nearly size-matched `query_compile.go` at 2.8890x.
+The synthetic had one stack and no forks or merges; the real file reached
+12 stacks, 1,765 forks, 5,216 merges, and constructed 31,847 nodes for
+7,524 selected. This proves the workload-regime defect, not the final C
+ratio. Report SHA-256:
 `c6de42e12724f72393162a0a50ecb8247f97312eaaff6cb5b093746b1206b4ab`.
 
 ### Authenticated work-count diagnostic harness
 
-Wall time alone cannot distinguish excess GLR work from higher cost per event.
-The diagnostic-only `gts-work-count/v2` contract therefore runs one fresh
-public `query_compile.go` parse invocation through a tagged diagnostic Go test
-binary and a fully static C binary built from the same locked runtime and
-grammar as the publication oracle. The tagged parse is diagnostic, not a
-production-path claim. It is not a timing lane, does not modify the production
-static timing artifact, and emits no elapsed time. Every internal Go retry or
-recovery reparse triggered by that single public invocation remains inside the
-counter window.
+Wall time alone cannot distinguish excess GLR work from higher cost per
+event. The diagnostic-only `gts-work-count/v2` contract therefore runs one
+fresh public `query_compile.go` parse invocation through a tagged
+diagnostic Go test binary and a fully static C binary built from the same
+locked runtime and grammar as the publication oracle. The tagged parse is
+diagnostic, not a production-path claim. It is not a timing lane, does not
+modify the production static timing artifact, and emits no elapsed time.
+Every internal Go retry or recovery reparse triggered by that single public
+invocation stays inside the counter window.
 
 Admission happens before instrumentation: a separate ordinary untagged Go
 binary and the unmodified static C oracle must both reproduce the frozen
-`gts-deep-tree-v1` digest. The tagged Go child independently authenticates the
-fixture hash, grammar commit/blob, GLR workload regime, full clean span, and
-deep tree before reporting counters. The C child must reproduce the same tree.
-The complete unmodified-C cold build and admission runs in a dedicated,
-wall-bounded process group, so repository acquisition, compiler/linker,
-identity, `nm`, and `readelf` descendants are killed together on timeout.
+`gts-deep-tree-v1` digest. The tagged Go child independently authenticates
+the fixture hash, grammar commit/blob, GLR workload regime, full clean
+span, and deep tree before it reports counters. The C child must reproduce
+the same tree. The complete unmodified-C cold build and admission run in a
+dedicated, wall-bounded process group, so the harness kills repository
+acquisition, compiler/linker, identity, `nm`, and `readelf` descendants
+together on timeout.
 
 The Go schema attributes counter deltas to every `parseInternal` attempt at
 entry, after cap resolution, and during finalization. A logical retry rung is
@@ -855,11 +861,12 @@ basis, as of the 2026-07-11 ledger):
 | 2–3x | 29 |
 | > 3x | 101 |
 
-Median observed ratio: **~3x**. The long tail (up to ~650x on `uxntal`) is
-dominated by small-file DSL grammars where C finishes in microseconds and
-the ratio is mostly fixed per-parse overhead, plus a small set of named
+Median observed ratio: **~3x**. Small-file DSL grammars dominate the long
+tail (up to ~650x on `uxntal`) — C finishes in microseconds there, so the
+ratio is mostly fixed per-parse overhead, plus a small set of named
 GLR-ambiguity cliffs. Ratios are budgets with caveats, not endorsements:
-`green_with_caveat` rows record exactly what was measured and what was not.
+`green_with_caveat` rows record exactly what the project measured and what
+it did not.
 
 Named large-file witnesses (tracked, not hidden): JavaScript
 `poppler.js` (3.4 MB — exact parity inside a hard 2 GiB container at
@@ -868,23 +875,23 @@ Named large-file witnesses (tracked, not hidden): JavaScript
 generated-table class (Go `opGen.go` / `rewriteAMD64.go` and in-repo
 witnesses).
 
-Fleet report reduction can preserve a terminal shard only when it carries the
-closed status `no_static_c_oracle`, `no_corpus`, or `no_corpus_files` and no
-measurement or oracle payload. These rows remain fatal closure findings and
-are omitted from the combined oracle-language manifest. Certification still
-rejects them; both modes reject missing, generic, contradictory, or mixed
-identity evidence.
+Fleet report reduction can preserve a terminal shard only when it carries
+the closed status `no_static_c_oracle`, `no_corpus`, or `no_corpus_files`
+and carries no measurement or oracle payload. These rows remain fatal
+closure findings, and the combined oracle-language manifest omits them.
+Certification still rejects them; both modes reject missing, generic,
+contradictory, or mixed identity evidence.
 
 ### Forest-routing screen and confirmation
 
 The authenticated forest audit separates discovery from promotion. A
-`forest-audit-result-v2` production shard is a directional screen: it can show
-that the routed parser was faster on that run, but it cannot by itself promote
-a language. Promotion requires fresh, isolated confirmation trials with the
-same hashed host fingerprint, image, and resource configuration. Confirmation
-uses `--cpus 1` and one numeric `--cpuset-cpus`; `--host-label` is an operator
-label and is recorded separately from the automatically hashed host
-fingerprint:
+`forest-audit-result-v2` production shard is a directional screen: it can
+show that the routed parser was faster on that run, but it cannot by
+itself promote a language. Promotion requires fresh, isolated confirmation
+trials with the same hashed host fingerprint, image, and resource
+configuration. Confirmation uses `--cpus 1` and one numeric
+`--cpuset-cpus`. `--host-label` is an operator label; the harness records
+it separately from the automatically hashed host fingerprint:
 
 1. run one complete production-first trial (`pair-a`);
 2. run one complete routed-first trial (`pair-b`);
@@ -895,24 +902,26 @@ fingerprint:
    A-B-B-A sequence, increasing complete-corpus repetitions up to 20 for the
    duration floor.
 
-The runner writes into an attempt directory, mounts the source tree read-only,
-and publishes only after a successful container exit and a same-HEAD clean
-worktree postcheck. Trial, run-config, and cohort receipts are immutable and
-content-addressed. The reducer admits a cohort only through an explicitly
-selected, content-addressed confirmation index; an unindexed or failed attempt
-cannot complete a trial. `plan-confirmations` output is a planning artifact,
-not evidence, and should live outside the results bundle (the reducer also
-ignores its schema if it is copied there).
+The runner writes into an attempt directory, mounts the source tree
+read-only, and publishes only after a successful container exit and a
+same-HEAD clean worktree postcheck. Trial, run-config, and cohort receipts
+stay immutable and content-addressed. The reducer admits a cohort only
+through an explicitly selected, content-addressed confirmation index; an
+unindexed or failed attempt cannot complete a trial. `plan-confirmations`
+output is a planning artifact, not evidence, and it should live outside the
+results bundle (the reducer also ignores its schema if someone copies it
+there).
 
-The reducer emits a win-only confirmation plan, keeps a screen win `incomplete`,
-and records screening eligibility separately from promotion eligibility. Trees
-are released after every repetition, including error, decline, nil-tree, and
-divergence paths, and authoritative shards run exactly one language per
-container. Every routed path must have accepted coverage in the locked C
-shard. The locked C oracle remains the correctness authority: if forest and
-routed results appear to correct a production-parser divergence, the reducer
-records `oracle_correction_review_required` for direct three-way review instead
-of auto-promoting or forcing a second four-runtime benchmark lane.
+The reducer emits a win-only confirmation plan, keeps a screen win
+`incomplete`, and records screening eligibility separately from promotion
+eligibility. It releases trees after every repetition, including error,
+decline, nil-tree, and divergence paths, and authoritative shards run
+exactly one language per container. Every routed path must have accepted
+coverage in the locked C shard. The locked C oracle remains the correctness
+authority: if forest and routed results appear to correct a
+production-parser divergence, the reducer records
+`oracle_correction_review_required` for direct three-way review, instead of
+auto-promoting or forcing a second four-runtime benchmark lane.
 
 ## Memory receipts (the v0.24 → v0.26.1 campaign)
 
@@ -930,28 +939,31 @@ witness; memory wins that break the selected tree do not merge.
 ## Methodology (why these numbers can be trusted)
 
 1. **Correctness and performance are separate gates.** Before timing, every
-   fixture must be clean and full-span and must preserve exact symbol, byte and
-   point ranges, named/extra/missing flags, field ownership, and child order
-   against the locked C oracle. See `cgo_harness/`.
+   fixture must be clean and full-span. It must preserve exact symbol, byte
+   and point ranges, named/extra/missing flags, field ownership, and child
+   order against the locked C oracle. See `cgo_harness/`.
 2. **Ratchets, not snapshots.** Perf budgets only tighten
    (`cmd/benchgate`, `perf_scan` hard zero-cliff gate); parity exemptions
    only shrink (currently zero).
-3. **Benchmark identity fails closed.** Fixture bytes, runtime commit, grammar
-   commit, compiler, flags, and C artifact hash are recorded. A mismatch aborts
-   admission instead of silently producing another ratio.
+3. **Benchmark identity fails closed.** The harness records fixture bytes,
+   runtime commit, grammar commit, compiler, flags, and the C artifact
+   hash. A mismatch aborts admission instead of silently producing another
+   ratio.
 4. **Lifecycle and warm state are symmetric.** Each backend receives an
-   untimed warm parse; the timed lane includes parse, first root validation,
-   and tree release/close. Cold construction/loading is measured separately.
-5. **Benchmark integrity is audited.** A 2026-07-11 audit found the then-
-   canonical full-parse benchmark silently ran a no-tree diagnostic path;
-   the affected headline numbers (1.54 ms / 7 allocs and successors) were
-   withdrawn. A 2026-07-14 audit then found that the replacement workload never
-   forked and that its C lane used a different grammar. Those claims are also
-   withdrawn rather than patched around.
+   untimed warm parse; the timed lane includes parse, first root
+   validation, and tree release/close. The harness measures cold
+   construction/loading separately.
+5. **Benchmark integrity is audited.** A 2026-07-11 audit found that the
+   then-canonical full-parse benchmark silently ran a no-tree diagnostic
+   path; the project withdrew the affected headline numbers (1.54 ms /
+   7 allocs and successors). A 2026-07-14 audit then found that the
+   replacement workload never forked and that its C lane used a different
+   grammar. The project withdrew those claims too, rather than patch around
+   them.
 6. **Quiet-host discipline.** Publication runs use `GOMAXPROCS=1`, a pinned
-   core, ten process-isolated samples per backend and fixture in five paired
-   Go-C-C-Go cycles, at least 750 ms of internal timing, and Go `benchmem`.
-   Contended-box measurements are smoke evidence only.
+   core, ten process-isolated samples per backend and fixture in five
+   paired Go-C-C-Go cycles, at least 750 ms of internal timing, and Go
+   `benchmem`. Contended-box measurements are smoke evidence only.
 
 ## Multi-workload tracking
 

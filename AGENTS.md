@@ -15,7 +15,7 @@ Run before and after performance changes:
 - Focused package/unit tests inside Docker, scoped with `-run` whenever possible.
 - Parity-focused Docker suites under `cgo_harness`, one language at a time.
 
-When changing GLR/incremental logic, require parity validation first, then perf validation.
+When you change GLR/incremental logic, validate parity first, then validate performance.
 
 ### 3) Standard Perf Loop
 Use this loop for optimization work:
