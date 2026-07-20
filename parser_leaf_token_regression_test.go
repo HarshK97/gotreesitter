@@ -479,6 +479,91 @@ func TestParseTypeScriptTypedArrowParameters(t *testing.T) {
 	}
 }
 
+// TestParseTypeScriptBareDefaultParameter guards against a v0.43.0 regression
+// where "function f(a = 1) {}" collapsed to a top-level ERROR. The locked C
+// tree-sitter-typescript oracle parses this as
+// "(required_parameter pattern: (identifier) value: (number))"; our GLR
+// engine's steady-state cap-one merge budget was discarding the
+// pattern-reduction derivation in favor of a same-state, lower-precedence
+// assignment_expression derivation before the parse could complete (see
+// typeScriptSourceHasBareDefaultParameter in parser_retry.go).
+func TestParseTypeScriptBareDefaultParameter(t *testing.T) {
+	src := "function f(a = 1) {}\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typescript bare default parameter root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), root.SExpr(lang))
+	}
+	sexpr := root.SExpr(lang)
+	if !strings.Contains(sexpr, "function_declaration") || !strings.Contains(sexpr, "required_parameter") {
+		t.Fatalf("typescript bare default parameter did not preserve required_parameter: %s", sexpr)
+	}
+	if strings.Contains(sexpr, "ERROR") {
+		t.Fatalf("typescript bare default parameter retained an ERROR node: %s", sexpr)
+	}
+}
+
+func TestParseTSXBareDefaultParameter(t *testing.T) {
+	src := "function f(a = 1) {}\n"
+	tree, lang := parseLanguageSample(t, "tsx", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("tsx bare default parameter root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), root.SExpr(lang))
+	}
+	sexpr := root.SExpr(lang)
+	if !strings.Contains(sexpr, "function_declaration") || !strings.Contains(sexpr, "required_parameter") {
+		t.Fatalf("tsx bare default parameter did not preserve required_parameter: %s", sexpr)
+	}
+	if strings.Contains(sexpr, "ERROR") {
+		t.Fatalf("tsx bare default parameter retained an ERROR node: %s", sexpr)
+	}
+}
+
+// TestParseTypeScriptMultipleBareDefaultParameters guards the multi-parameter
+// shape of the same regression: each default-valued parameter forks and must
+// independently reconverge without losing its required_parameter reduction.
+func TestParseTypeScriptMultipleBareDefaultParameters(t *testing.T) {
+	src := "function f(a = 1, b = 2) {}\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typescript multiple default parameters root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), root.SExpr(lang))
+	}
+	sexpr := root.SExpr(lang)
+	if got, want := strings.Count(sexpr, "required_parameter"), 2; got != want {
+		t.Fatalf("typescript multiple default parameters required_parameter count = %d, want %d: %s", got, want, sexpr)
+	}
+}
+
+// TestParseTypeScriptArrowAndMethodBareDefaultParameter covers the two other
+// formal_parameters call sites (arrow functions and class methods) that share
+// the same required_parameter production and were equally affected.
+func TestParseTypeScriptArrowAndMethodBareDefaultParameter(t *testing.T) {
+	cases := []string{
+		"const g = (a = 1) => a;\n",
+		"class C { m(a = 1) {} }\n",
+	}
+	for _, src := range cases {
+		tree, lang := parseLanguageSample(t, "typescript", src)
+		root := tree.RootNode()
+		if root.Type(lang) != "program" || root.HasError() {
+			tree.Release()
+			t.Fatalf("typescript %q root = %s hasError=%v; tree=%s", src, root.Type(lang), root.HasError(), root.SExpr(lang))
+		}
+		if sexpr := root.SExpr(lang); !strings.Contains(sexpr, "required_parameter") {
+			tree.Release()
+			t.Fatalf("typescript %q did not preserve required_parameter: %s", src, sexpr)
+		}
+		tree.Release()
+	}
+}
+
 func TestParseTypeScriptNestedDestructuringArrayPattern(t *testing.T) {
 	src := "const { value: [dirPath, { dirName, options, fileNames }] } = result;\n"
 	tree, lang := parseLanguageSample(t, "typescript", src)

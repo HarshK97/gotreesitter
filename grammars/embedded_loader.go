@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/gob"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -542,7 +541,15 @@ func decodeLanguageBlobData(blobName string, data []byte) (*gotreesitter.Languag
 	// reader, which would silently swallow the optional LargeStateGotos
 	// trailer (see gotreesitter.DecodeLargeStateGotosTrailer) before we get a
 	// chance to read it.
-	raw, err := io.ReadAll(gzr)
+	//
+	// Pre-size that buffer from the gzip ISIZE trailer instead of a plain
+	// io.ReadAll: for the largest shipped grammars (Swift's ~308 MB
+	// decompressed table is the extreme case) io.ReadAll's repeated buffer
+	// doublings roughly double peak transient allocation on every
+	// Language() call, which is what actually trips container memory
+	// limits. See ReadAllGzipWithSizeHint's doc comment for the full
+	// rationale; this is the same helper gotreesitter.LoadLanguage uses.
+	raw, err := gotreesitter.ReadAllGzipWithSizeHint(gzr, compressed)
 	if err != nil {
 		return nil, fmt.Errorf("read gzip grammar blob %q: %w", blobName, err)
 	}

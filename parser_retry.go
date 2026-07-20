@@ -1212,6 +1212,93 @@ func typeScriptSourceHasDestructuredArrowReturnType(source []byte) bool {
 	}
 }
 
+func typeScriptFullParseNeedsDefaultParameterMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
+	return lang != nil &&
+		reuse == nil &&
+		!parseMaxMergePerKeyEnvConfigured() &&
+		(lang.Name == "typescript" || lang.Name == "tsx") &&
+		typeScriptSourceHasBareDefaultParameter(source)
+}
+
+// typeScriptSourceHasBareDefaultParameter reports whether source contains a
+// parameter-list slot shaped like "(name = value" or ", name = value" with no
+// type annotation and no destructuring pattern before the '='. The locked C
+// grammar's required_parameter production reduces the parameter name through
+// `pattern` before it can accept a default `value`; that reduction competes,
+// at the identical post-shift LR state, with treating the bare name as the
+// start of a plain assignment_expression. Both derivations reach the same
+// state once the default value is shifted, so under the steady-state cap-one
+// merge budget (see typescriptFullParseCanUseTightMergeCap) the
+// pattern-reduction branch -- carrying a lower cumulative dynamic precedence
+// from its extra reduce step -- gets discarded before the parse completes,
+// collapsing the whole declaration to ERROR. Typed ("a: T = v") and
+// destructured ("{a} = {}") defaults are unaffected: the extra grammar
+// content between the parameter name and '=' avoids the fork entirely, so
+// this detector intentionally excludes them and only widens the budget for
+// sources that actually need it.
+func typeScriptSourceHasBareDefaultParameter(source []byte) bool {
+	if len(source) == 0 {
+		return false
+	}
+	for i := 0; i < len(source); i++ {
+		if source[i] != '=' {
+			continue
+		}
+		// Exclude '==' and '=>': neither spelling starts a default-value
+		// expression.
+		if i+1 < len(source) {
+			switch source[i+1] {
+			case '=', '>':
+				continue
+			}
+		}
+		// Exclude compound assignment/comparison operators that also end in
+		// a bare '=' (!=, <=, >=, +=, -=, *=, /=, %=, &=, |=, ^=, **=).
+		if i > 0 {
+			switch source[i-1] {
+			case '=', '!', '<', '>', '+', '-', '*', '/', '%', '&', '|', '^', '~':
+				continue
+			}
+		}
+		j := i - 1
+		for j >= 0 {
+			switch source[j] {
+			case ' ', '\t', '\n', '\r':
+				j--
+				continue
+			}
+			break
+		}
+		idEnd := j
+		for j >= 0 && typeScriptDefaultParamIdentByte(source[j]) {
+			j--
+		}
+		if j == idEnd {
+			// No identifier byte directly before '=' (past whitespace): not
+			// a bare "name = value" slot. Covers destructured "} =" / "] ="
+			// defaults, which already parse cleanly without widening.
+			continue
+		}
+		for j >= 0 {
+			switch source[j] {
+			case ' ', '\t', '\n', '\r':
+				j--
+				continue
+			}
+			break
+		}
+		if j >= 0 && (source[j] == '(' || source[j] == ',') {
+			return true
+		}
+	}
+	return false
+}
+
+func typeScriptDefaultParamIdentByte(b byte) bool {
+	return b == '_' || b == '$' ||
+		(b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+}
+
 func fullParseUsesDeterministicExternalConflicts(lang *Language) bool {
 	return lang != nil &&
 		lang.ExternalScanner != nil &&
