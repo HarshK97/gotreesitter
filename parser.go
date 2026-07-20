@@ -46,6 +46,22 @@ type Parser struct {
 	rootSymbol                    Symbol
 	hasRootSymbol                 bool
 
+	// admissionCandidateRoute is the per-Parser override for the Phase-3
+	// dual-route admission switch (see admission_switch.go). The zero value
+	// follows the process-wide default.
+	admissionCandidateRoute admissionRouteMode
+	// admissionCandidateRunner caches the compact candidate route's reusable
+	// state across full parses on this Parser. It is typed as any because the
+	// concrete runner type only exists under the gts_parsercorephase0 build
+	// tag; the default build never reads or writes it.
+	admissionCandidateRunner any
+	// admissionRouteSuppressed, when greater than zero, forces the production
+	// route regardless of the switch. It is raised while a reuse-consuming call
+	// or a production-only correctness reparse delegates to Parse, so a delegated
+	// fresh parse can never publish a compact tree from a path that must stay on
+	// production.
+	admissionRouteSuppressed int
+
 	// reduceMultiVersion/reduceActionConflict are transient, non-sticky
 	// fragility signals for the reduce(s) about to run. Parser is documented
 	// single-goroutine (see the doc comment above), so plain mutable fields
@@ -1568,6 +1584,9 @@ func resetSnippetParser(parser *Parser) {
 	parser.parseMemoryBudgetDiag = parseMemoryBudgetDiagnostic{}
 	parser.parseMemoryBudgetDiagActive = false
 	parser.compatMemoryBudgetTripped = false
+	// Recovery and snippet sub-parsers must never route through the compact
+	// candidate: they parse fragments spliced into recovery and reuse.
+	parser.pinToProductionRoute()
 	// Release *Node refs so the arenas from the last incremental parse can be
 	// collected by the GC. Without this, a Parser sitting in a sync.Pool keeps
 	// its reuseCursor.topLevel/*Node alive, preventing arena reclamation.

@@ -1,0 +1,114 @@
+//go:build gts_parsercorephase0
+
+package gotreesitter
+
+import (
+	"errors"
+
+	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
+)
+
+// This file is the compact candidate route for the Phase-3 admission switch.
+// It is built only under the gts_parsercorephase0 tag, where the compact engine
+// exists. The default build uses the stub in admission_switch_stub.go.
+//
+// The route reuses the fresh-full runner (parsercore_phase0_fresh_full_runner.go)
+// but binds it to the caller's own Parser and Language rather than the certified
+// Go blob, so it can attempt every DFA-lexable grammar. The runner's strict
+// acceptance gate (one accepted head, one exact EOF derivation, a clean full-
+// span root) declines everything it cannot reproduce, so an unsupported grammar
+// or a recovering input fails closed and the caller falls back to production.
+
+// admissionCandidateLimits are generous compact-arena bounds for production-
+// scale full parses. They mirror the canonical admission limits.
+func admissionCandidateLimits() core.Limits {
+	return core.Limits{
+		MaxNodes: 1 << 20, MaxLinks: 1 << 20, MaxSubtrees: 1 << 20,
+		MaxChildren: 4 << 20, MaxMetadata: 2 << 20,
+		MaxLinksPerBoundary: 8, MaxPopPaths: 1 << 16, MaxDerivations: 1 << 16,
+	}
+}
+
+// newAdmissionCandidateRunner builds a fresh-full runner bound to p's own
+// language, external scanner, and DFA tables.
+func newAdmissionCandidateRunner(p *Parser) (*parserCoreFreshFullRunner, error) {
+	if p == nil || p.language == nil {
+		return nil, errors.New("admission candidate route: parser has no language")
+	}
+	options := DiagnosticParserCorePrefixOptions{
+		ReceiptMode:           DiagnosticParserCoreReceiptSummary,
+		MaxTokens:             1 << 24,
+		MaxDispatches:         1 << 24,
+		Limits:                admissionCandidateLimits(),
+		freshSchedulerSession: true,
+	}
+	tables, err := newParserCoreRootTables(p)
+	if err != nil {
+		return nil, err
+	}
+	compact, err := core.New(tables, options.Limits)
+	if err != nil {
+		return nil, err
+	}
+	return &parserCoreFreshFullRunner{
+		lang: p.language, parser: p, tables: tables, compact: compact, options: options,
+	}, nil
+}
+
+// acquireAdmissionCandidateRunner returns p's cached candidate runner, building
+// and caching one on first use or whenever the parser's language changed.
+func (p *Parser) acquireAdmissionCandidateRunner() (*parserCoreFreshFullRunner, error) {
+	if p == nil || p.language == nil {
+		return nil, errors.New("admission candidate route: parser has no language")
+	}
+	if cached, ok := p.admissionCandidateRunner.(*parserCoreFreshFullRunner); ok &&
+		cached != nil && cached.lang == p.language && cached.parser == p {
+		return cached, nil
+	}
+	runner, err := newAdmissionCandidateRunner(p)
+	if err != nil {
+		return nil, err
+	}
+	p.admissionCandidateRunner = runner
+	return runner, nil
+}
+
+// tryCompactFullParseRoute attempts the compact candidate route for a fresh
+// full parse. It returns (tree, true, "") on success and (nil, false, reason)
+// on any decline, so the caller falls back to production.
+func (p *Parser) tryCompactFullParseRoute(source []byte) (*Tree, bool, string) {
+	runner, err := p.acquireAdmissionCandidateRunner()
+	if err != nil {
+		return nil, false, "runner unavailable: " + err.Error()
+	}
+	endOp := p.beginParseOperationBudget()
+	defer endOp()
+	endParse := p.enterParseBudget()
+	defer endParse()
+	tree, err := runner.parse(source)
+	if err != nil {
+		return nil, false, admissionCandidateDeclineReason(err)
+	}
+	if tree == nil {
+		return nil, false, "compact route produced no tree"
+	}
+	// Apply the exact production Parse tail so every returned-tree API surface
+	// matches production. The compact tree is already deep-equal to a fully
+	// normalized production tree (the canonical admission test proves it), so
+	// this deterministic tail is structure-preserving here; it runs for fidelity
+	// on the shared runtime-flag and root-span finalization steps.
+	p.normalizeReturnedTreeForParse(tree, source)
+	tree = p.resolveCRecoverySwallowedError(source, tree)
+	tree = p.maybeCompactReturnedFullTree(tree, source)
+	return tree, true, ""
+}
+
+// admissionCandidateDeclineReason renders a runner error as a compact,
+// operator-readable fallback reason, surfacing the decline boundary when known.
+func admissionCandidateDeclineReason(err error) string {
+	var decline *diagnosticParserCoreDecline
+	if errors.As(err, &decline) {
+		return "compact route declined at " + string(decline.boundary) + ": " + decline.detail
+	}
+	return "compact route error: " + err.Error()
+}
