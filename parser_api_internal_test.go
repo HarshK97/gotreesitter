@@ -2514,6 +2514,35 @@ func TestConfigureParseCapsTypedArrowKeepsTypedArrowWidthOnLargeTypeScript(t *te
 	}
 }
 
+// TestConfigureParseCapsTypedParameterArrowReturnTypeKeepsCapTwoOnLargeTypeScript
+// is the .d.ts-blowup guard for issue #402's fix: a large filler source that
+// also carries the typed-parameter-plus-return-type arrow shape
+// ("(a: A): B => ...") must widen to exactly cap two, the same floor as the
+// existing typed-arrow and default-parameter detectors, never the wide
+// six-survivor destructured-return-type floor. PR #389 established that the
+// six-survivor floor causes an intra-token population explosion on large
+// union-list .d.ts-shaped sources; this guards the new detector against
+// regressing that ceiling.
+func TestConfigureParseCapsTypedParameterArrowReturnTypeKeepsCapTwoOnLargeTypeScript(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	source := []byte(strings.Repeat("const filler = 1;\n", 8192) + "const f = (a: A): B => { return a; };\n")
+	parser := &Parser{language: &Language{Name: "typescript"}}
+	var scratch parserScratch
+
+	caps := parser.configureParseCaps(source, nil, arenaClassFull, &scratch, 0, 0, 0)
+	if caps.mergePerKeyCap != 2 {
+		t.Fatalf("configureParseCaps(large TypeScript typed-parameter arrow return type) merge cap = %d, want 2", caps.mergePerKeyCap)
+	}
+
+	caps = parser.configureParseCaps(source, nil, arenaClassFull, &scratch, 0, 0, -4)
+	if caps.mergePerKeyCap != 4 {
+		t.Fatalf("configureParseCaps(large TypeScript typed-parameter arrow return type, exact retry cap) merge cap = %d, want 4", caps.mergePerKeyCap)
+	}
+}
+
 func TestEffectiveParseMergePerKeyCapJavaExplicitOverride(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "4")
 	t.Setenv("GOT_FAITHFUL_CONDENSE", "1")
