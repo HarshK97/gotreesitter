@@ -1695,6 +1695,38 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 	if err := poll(); err != nil {
 		return nil, err
 	}
+
+	// Phase-3 Lane 2: reconstruct parser states by top-down table replay over
+	// the full derivation (real symbols + hidden nodes), before the postorder
+	// pass elides hidden nodes and applies aliases. Gated so it can be A/B'd
+	// against the states-free compact route.
+	var replayStates *compactReplayStates
+	if parserCoreReplayParseStatesEnabled() {
+		replayStates, err = parser.replayCompactDerivation(compact, payloads)
+		if err != nil {
+			return nil, err
+		}
+		defer replayStates.release()
+	}
+	stamp := func(id core.SubtreeID, node *Node) {
+		// Stamp the reconstructed state for THIS derivation id onto the node
+		// that materializes it. For a unary collapse chain the driver visits
+		// the ids inner-to-outer (postorder) and reuses one node object, so
+		// the last (outermost) stamp wins -- mirroring production's collapse,
+		// which overwrites parseState = goto(topState, outerSymbol) as each
+		// wrapper reduce fires. The residual gap is the small class of chains
+		// where production declines the collapse under a zero-width lookahead
+		// (keeping the inner visible state) but the derivation-time compact
+		// route cannot see that lookahead; see the differential harness.
+		if replayStates != nil && node != nil {
+			pre, ps, ok := replayStates.get(id)
+			if ok {
+				node.preGotoState = pre
+				node.parseState = ps
+			}
+		}
+		nodesByID[id] = node
+	}
 	err = withDiagnosticParserCoreMaterializationScratch(parser, func(materializationScratch *diagnosticParserCoreMaterializationScratch) error {
 		return compact.VisitMaterializationPostorder(payloads, poll, func(id core.SubtreeID, view core.MaterializationSubtreeView) error {
 			if view.EndByte < view.StartByte || view.EndByte > uint32(len(source)) {
@@ -1708,7 +1740,7 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 				)
 				node.setExtra(view.Extra)
 				node.setExternalScannerToken(view.External)
-				nodesByID[id] = node
+				stamp(id, node)
 				return nil
 			}
 
@@ -1731,7 +1763,7 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 			if child := parser.collapsibleRawUnarySelfReduction(action, Token{}, arena, entries, 0, len(entries)); child != nil {
 				child.productionID = view.ProductionID
 				child.dynamicPrecedence += int32(view.DynamicPrecedence)
-				nodesByID[id] = child
+				stamp(id, child)
 				return nil
 			}
 			children, fieldIDs, fieldSources, _ := parser.buildReduceChildrenWithPath(
@@ -1741,7 +1773,7 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 			if child := parser.collapsibleUnarySelfReduction(action, Token{}, arena, entries, 0, len(entries), children, fieldIDs); child != nil {
 				child.productionID = view.ProductionID
 				child.dynamicPrecedence += int32(view.DynamicPrecedence)
-				nodesByID[id] = child
+				stamp(id, child)
 				return nil
 			}
 			parent := newParentNodeInArenaWithFieldSources(
@@ -1753,7 +1785,7 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 			parent.startPoint = points.point(view.StartByte)
 			parent.endPoint = points.point(view.EndByte)
 			parent.setExtra(view.Extra)
-			nodesByID[id] = parent
+			stamp(id, parent)
 			return nil
 		})
 	})

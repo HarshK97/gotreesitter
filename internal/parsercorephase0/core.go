@@ -3039,6 +3039,40 @@ func (c *Core) VisitMaterializationPostorder(
 	return poll()
 }
 
+// MaterializationView returns the borrowed materialization view for one
+// subtree id. It is the random-access companion to VisitMaterializationPostorder
+// used by ParseState-by-table-replay (Phase-3 Lane 2): the driver walks the
+// derivation top-down to reconstruct per-node parser states before the
+// postorder pass materializes public nodes. The returned Children slice
+// aliases compact arena storage and must not be retained or mutated.
+func (c *Core) MaterializationView(id SubtreeID) (MaterializationSubtreeView, error) {
+	record, err := c.subtree(id)
+	if err != nil {
+		return MaterializationSubtreeView{}, err
+	}
+	return MaterializationSubtreeView{
+		Symbol:            record.symbol,
+		ProductionID:      record.productionID,
+		DynamicPrecedence: record.dynamicPrecedence,
+		StartByte:         record.startByte,
+		EndByte:           record.endByte,
+		Children:          c.children[record.firstChild : record.firstChild+record.childCount],
+		Extra:             record.extra,
+		External:          record.external,
+		Terminal:          record.terminal,
+	}, nil
+}
+
+// SubtreeArenaLen returns the number of subtree records currently allocated,
+// used to size a per-id replay-state array (ids are 1-based, so callers size
+// SubtreeArenaLen()+1).
+func (c *Core) SubtreeArenaLen() int {
+	if c == nil {
+		return 0
+	}
+	return len(c.subtrees)
+}
+
 func (c *Core) validateMaterializationMetadata(id SubtreeID, record subtreeRecord) error {
 	// Production construction authenticates every terminal and reduction before
 	// publication. Compact arenas are immutable, so repeating the table remap at
