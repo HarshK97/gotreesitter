@@ -45,7 +45,11 @@ type reuseCursor struct {
 	rejectRootNonLeafChanged      uint64
 	rejectLargeNonLeaf            uint64
 	rejectStaleNonLeafBoundary    uint64
-	forestFastPath                bool
+	// rejectFragileNonLeaf counts interior-reuse candidates rejected by
+	// Node.isFragile() -- see tryReuseSubtree's non-leaf fallback lane below
+	// and the Parser.ReuseRejectFragileNonLeaf profile field (parser.go).
+	rejectFragileNonLeaf uint64
+	forestFastPath       bool
 	languageName                  string // cached for language-specific reuse safety policies
 }
 
@@ -90,6 +94,7 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 	c.rejectRootNonLeafChanged = 0
 	c.rejectLargeNonLeaf = 0
 	c.rejectStaleNonLeafBoundary = 0
+	c.rejectFragileNonLeaf = 0
 	c.forestFastPath = oldTree.forestFastPath
 	c.languageName = ""
 	if oldTree.language != nil {
@@ -525,10 +530,23 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 		return reuseNode(p, s, n, nextState, state, lookahead, ts, idx, entryScratch, gssScratch, cp)
 	}
 
-	// Conservative fallback: try small non-root non-leaf nodes. This increases
-	// reuse surface without jumping to large ancestor nodes that can trigger
-	// expensive recovery behavior.
-	const maxNonLeafReuseSpan = 2048
+	// Conservative fallback: try non-root non-leaf nodes. This increases reuse
+	// surface without jumping to reuse candidates that can trigger expensive
+	// recovery behavior.
+	//
+	// maxNonLeafReuseSpan was originally a small (2048-byte) safety cap
+	// standing in for a real soundness proof: C tree-sitter's
+	// ts_parser__reuse_node never reuses a subtree whose reduce happened
+	// under an LR-table conflict, a GSS multi-pop, or concurrent GLR stack
+	// versions (its is_fragile check -- see markReduceFragility,
+	// parser_reduce.go, and Node.isFragile, tree.go). This codebase had no
+	// equivalent metadata, so span was the only cheap proxy for "probably
+	// simple enough to be safe" available, and interior reuse for large
+	// subtrees stayed off (see issue #380). Now that every reduce marks
+	// fragility precisely, the isFragile() check below is the actual
+	// soundness gate and span is just a sanity backstop against pathological
+	// candidates, so it can be raised far past the old byte-count heuristic.
+	const maxNonLeafReuseSpan = 1 << 20
 	for _, n := range candidates {
 		if n == nil || n.ChildCount() == 0 || n.parent == nil {
 			continue
@@ -538,6 +556,16 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 			if span > maxNonLeafReuseSpan {
 				idx.rejectLargeNonLeaf++
 			}
+			continue
+		}
+		// C-equivalent soundness gate (see the maxNonLeafReuseSpan comment
+		// above): never splice a fragile subtree into a fresh parse. A
+		// fragile n may look byte-identical to what a clean reparse would
+		// produce, but its shape depended on which ambiguous derivation won
+		// at parse time -- surrounding context this edit may have changed --
+		// so reusing it here would silently corrode structural correctness.
+		if n.isFragile() {
+			idx.rejectFragileNonLeaf++
 			continue
 		}
 		// A node's span always starts where its leftmost descendant leaf

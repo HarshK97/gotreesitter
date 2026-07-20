@@ -41,7 +41,15 @@ type Node struct {
 	subtreeHeight     uint8 // forest dedup tie-break cache (0 = uncomputed); see nodeCachedHeight
 }
 
-type nodeFlags uint8
+// nodeFlags is uint16, not uint8: Node has exactly one byte of trailing
+// padding under the 104-byte layout budget (TestNodeLayoutSizeBudget), and
+// the original 8 flag bits below were already fully packed. Widening by one
+// byte spends that padding on the fragileLeft/fragileRight bits without
+// changing Node's size. nodeFlags is never serialized/blob-encoded (grep for
+// "nodeFlags" before adding more bits, or before touching any blob-encode
+// path) -- fragility in particular is runtime-only and must never be
+// persisted, since it is recomputed fresh every parse.
+type nodeFlags uint16
 
 const (
 	nodeFlagNamed nodeFlags = 1 << iota
@@ -59,6 +67,27 @@ const (
 	nodeFlagFieldIDCacheComputed
 	nodeFlagFieldIDCacheHasFieldIDs
 	nodeFlagExternalScannerToken
+	// nodeFlagFragileLeft / nodeFlagFragileRight mirror C tree-sitter's
+	// Subtree.fragile_left / fragile_right (subtree.h): a subtree is fragile
+	// on a given edge when the reduce that produced it happened under an
+	// ambiguous parse decision (LR-table conflict, GSS multi-pop, or
+	// concurrent GLR stack versions -- see markReduceFragility,
+	// parser_reduce.go), or when that edge's boundary child is itself
+	// fragile on the same side (propagation). Query via isFragileLeft /
+	// isFragileRight / isFragile, which also fold in isMissing()/IsError()
+	// (error/missing nodes are always fragile, regardless of these bits).
+	// Fragile subtrees must never be spliced into a fresh parse by
+	// incremental non-leaf reuse (reuseNonLeafTargetStateOnStack,
+	// incremental.go) -- see ts_parser__reuse_node's is_fragile rejection in
+	// C. These two bits are pending-parent-domain-safe: pendingParent reuses
+	// bits 5/6 (pendingParentFlagFieldEntries/DirectFieldEntry) as
+	// pending-only scratch that publicPendingParentNodeFlags masks away
+	// before a pendingParent's flags are copied onto a materialized Node;
+	// fragileLeft/fragileRight live above that reused range and must be
+	// added to publicPendingParentNodeFlags (pending_parent.go) so they
+	// survive materialization.
+	nodeFlagFragileLeft
+	nodeFlagFragileRight
 )
 
 func (n *Node) hasFlag(flag nodeFlags) bool {
@@ -87,6 +116,57 @@ func (n *Node) isExternalScannerToken() bool {
 func (n *Node) setExternalScannerToken(v bool) { n.setFlag(nodeFlagExternalScannerToken, v) }
 func (n *Node) dirty() bool {
 	return n != nil && n.hasFlag(nodeFlagDirty)
+}
+
+// setFragileLeft/setFragileRight set the raw fragility bits. Reduce-time
+// callers should use markReduceFragility (parser_reduce.go) instead of
+// calling these directly, so left/right propagation from boundary children
+// stays consistent everywhere a parent node is built.
+func (n *Node) setFragileLeft(v bool) {
+	if n == nil {
+		return
+	}
+	n.setFlag(nodeFlagFragileLeft, v)
+}
+
+func (n *Node) setFragileRight(v bool) {
+	if n == nil {
+		return
+	}
+	n.setFlag(nodeFlagFragileRight, v)
+}
+
+// isFragileLeft/isFragileRight/isFragile report whether n's subtree is
+// unsafe to splice into a fresh parse via incremental non-leaf reuse, on the
+// given edge. Besides the raw fragileLeft/fragileRight bits (set by
+// markReduceFragility for reduces that ran under ambiguity, and propagated
+// from boundary children), any node that is itself missing or an ERROR node
+// is unconditionally fragile on both edges -- mirroring C tree-sitter, which
+// never reuses an is_missing/is_error subtree regardless of its fragile
+// bits. This is computed from isMissing()/IsError() rather than set at
+// construction time so every existing and future construction site (there
+// are dozens across the per-grammar parser_result_*.go shaping helpers)
+// is covered automatically, with no risk of a missed setFragileLeft/Right
+// call silently under-marking a repair/recovery node.
+func (n *Node) isFragileLeft() bool {
+	if n == nil {
+		return false
+	}
+	return n.hasFlag(nodeFlagFragileLeft) || n.isMissing() || n.symbol == errorSymbol
+}
+
+func (n *Node) isFragileRight() bool {
+	if n == nil {
+		return false
+	}
+	return n.hasFlag(nodeFlagFragileRight) || n.isMissing() || n.symbol == errorSymbol
+}
+
+// isFragile is the coarse (edge-agnostic) query used by the interior
+// non-leaf incremental-reuse gate: reject the whole candidate if either edge
+// is fragile. See reuseNonLeafTargetStateOnStack (incremental.go).
+func (n *Node) isFragile() bool {
+	return n.isFragileLeft() || n.isFragileRight()
 }
 
 func (n *Node) setDirty(v bool) {

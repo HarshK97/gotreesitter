@@ -3654,6 +3654,7 @@ func (p *Parser) tryFastVisibleReduceActionFromGSS(s *glrStack, act ParseAction,
 	}
 	parent.preGotoState = topState
 	parent.parseState = targetState
+	markReduceFragility(parent, children, p.reduceUnderConflictContext())
 	if !s.truncateBeforePush(targetDepth) {
 		s.dead = true
 		if tmpEntries != nil {
@@ -3765,6 +3766,81 @@ func (p *Parser) applyNoTreeReduceActionFromGSS(s *glrStack, act ParseAction, to
 	}
 	markReduceApplied(s, act, anyReduced)
 	releaseReduceWindowEntries(tmpEntries, windowEntries)
+}
+
+// reduceUnderConflictContext reports whether any reduce dispatched right now
+// should have its produced parent(s) marked fragile per C tree-sitter's
+// fragility rule (mirrors the non-pop.size conditions of ts_subtree's fragile
+// marking): an LR-table conflict was live at this dispatch
+// (reduceActionConflict, i.e. C's action_count > 1) or more than one GLR
+// stack was concurrently live (reduceMultiVersion, i.e. C's
+// version_count > 1). Both fields are transient, single-goroutine Parser
+// state set by parseInternal (parser.go) -- see their doc comments there.
+//
+// The third C condition, pop.size > 1 (a GSS multi-pop / diamond merge), can
+// only occur inside applyReduceActionForked (the only caller that pops a
+// non-linear GSS span) and is evaluated locally there via len(forks) > 1;
+// it is intentionally not folded into this helper.
+func (p *Parser) reduceUnderConflictContext() bool {
+	return p != nil && (p.reduceMultiVersion || p.reduceActionConflict)
+}
+
+// markReduceFragility sets parent's fragileLeft/fragileRight after a reduce,
+// mirroring C tree-sitter's ts_subtree fragility: reduceItselfFragile marks
+// both edges when the reduce that produced parent happened under ambiguity
+// (see reduceUnderConflictContext and applyReduceActionForked's
+// len(forks) > 1 pop check); independently, each edge also inherits
+// fragility from the corresponding boundary child (fragileLeft from the
+// first child, fragileRight from the last), matching C's propagation so a
+// fragile descendant poisons every ancestor up to the nearest edge that
+// truly does not touch it. Every "parent.parseState = targetState" reduce
+// set-point in this file that constructs a *Node parent must call this
+// (see markPendingParentReduceFragility for the pendingParent lanes, and
+// collapse/extra reduce set-points, which reuse an existing node and need no
+// call here since that node's own fragility is already correct).
+func markReduceFragility(parent *Node, children []*Node, reduceItselfFragile bool) {
+	if parent == nil {
+		return
+	}
+	left := reduceItselfFragile
+	right := reduceItselfFragile
+	if n := len(children); n > 0 {
+		if c := children[0]; c != nil && c.isFragileLeft() {
+			left = true
+		}
+		if c := children[n-1]; c != nil && c.isFragileRight() {
+			right = true
+		}
+	}
+	parent.setFragileLeft(left)
+	parent.setFragileRight(right)
+}
+
+// markPendingParentReduceFragility is markReduceFragility for the
+// pendingParent reduce lanes (tryPushPendingNoFieldParent /
+// tryPushPendingDirectFieldParent), which hold a raw stackEntry window
+// instead of a materialized []*Node children slice. See
+// stackEntryNodeIsFragileLeft/Right (no_tree_node.go) for why checking the
+// boundary raw entries is equivalent to checking the flattened boundary
+// leaf. publicPendingParentNodeFlags (pending_parent.go) must keep
+// nodeFlagFragileLeft/Right so these bits survive materialization into the
+// final Node.
+func markPendingParentReduceFragility(parent *pendingParent, entries []stackEntry, start, end int, reduceItselfFragile bool) {
+	if parent == nil {
+		return
+	}
+	left := reduceItselfFragile
+	right := reduceItselfFragile
+	if end > start {
+		if stackEntryNodeIsFragileLeft(entries[start]) {
+			left = true
+		}
+		if stackEntryNodeIsFragileRight(entries[end-1]) {
+			right = true
+		}
+	}
+	parent.setFragileLeft(left)
+	parent.setFragileRight(right)
 }
 
 func (p *Parser) applyReduceActionFromGSS(source []byte, s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, tmp []stackEntry, deferParentLinks bool, trackChildErrors bool) {
@@ -3918,6 +3994,7 @@ func (p *Parser) applyReduceActionFromGSS(source []byte, s *glrStack, act ParseA
 	}
 	parent.preGotoState = window.topState
 	parent.parseState = targetState
+	markReduceFragility(parent, children, p.reduceUnderConflictContext())
 	p.pushStackNode(s, targetState, parent, entryScratch, gssScratch)
 	for i := window.reducedEnd; i < window.actualEnd; i++ {
 		extra := stackEntryNode(windowEntries[i])
@@ -3948,6 +4025,15 @@ func (p *Parser) applyReduceActionForked(source []byte, s *glrStack, act ParseAc
 	}
 
 	named := p.isNamedSymbol(act.Symbol)
+	// C's pop.size > 1: this function only runs when the GSS span being
+	// reduced is non-linear (see the gssSpanIsLinear callers), and
+	// selectedReduceWindowsFromGSS returning more than one fork is exactly
+	// the ambiguous-pop case -- multiple distinct ways to pop childCount
+	// entries off the GSS were found, one per fork below. Every parent this
+	// closure builds is therefore fragile in that case, in addition to
+	// whatever reduceUnderConflictContext (action_count/version_count)
+	// already contributes.
+	multiPop := len(forks) > 1
 	applyForkToStack := func(target *glrStack, fork reduceFork) {
 		window := fork.window
 		reducedEnd := reducedEndBeforeTrailingExtras(window)
@@ -4005,6 +4091,7 @@ func (p *Parser) applyReduceActionForked(source []byte, s *glrStack, act ParseAc
 		}
 		parent.preGotoState = fork.topState
 		parent.parseState = targetState
+		markReduceFragility(parent, children, multiPop || p.reduceUnderConflictContext())
 		p.pushStackNode(target, targetState, parent, entryScratch, gssScratch)
 		for i := reducedEnd; i < actualEnd; i++ {
 			extra := stackEntryNode(window[i])
@@ -4182,6 +4269,7 @@ func (p *Parser) tryFastVisibleReduceActionFromGSSTransientParents(s *glrStack, 
 	}
 	parent.preGotoState = topState
 	parent.parseState = targetState
+	markReduceFragility(parent, children, p.reduceUnderConflictContext())
 	if !s.truncateBeforePush(targetDepth) {
 		s.dead = true
 		if tmpEntries != nil {
@@ -4377,6 +4465,7 @@ func (p *Parser) applyReduceActionFromGSSTransientParents(source []byte, s *glrS
 	}
 	parent.preGotoState = topState
 	parent.parseState = targetState
+	markReduceFragility(parent, children, p.reduceUnderConflictContext())
 	p.pushStackNode(s, targetState, parent, entryScratch, gssScratch)
 	for i := reducedEnd; i < actualEnd; i++ {
 		extra := stackEntryNode(windowEntries[i])
@@ -4728,6 +4817,7 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 	}
 	parent.preGotoState = topState
 	parent.parseState = targetState
+	markPendingParentReduceFragility(parent, entries, start, reducedEnd, p.reduceUnderConflictContext())
 	if !s.truncateBeforePush(truncateDepth) {
 		s.dead = true
 		return true
@@ -4844,6 +4934,7 @@ func (p *Parser) tryPushPendingDirectFieldParent(s *glrStack, act ParseAction, t
 	}
 	parent.preGotoState = topState
 	parent.parseState = targetState
+	markPendingParentReduceFragility(parent, entries, start, reducedEnd, p.reduceUnderConflictContext())
 	if !s.truncateBeforePush(truncateDepth) {
 		s.dead = true
 		return true
@@ -7098,6 +7189,7 @@ func (p *Parser) applyReduceAction(source []byte, s *glrStack, act ParseAction, 
 	}
 	parent.preGotoState = window.topState
 	parent.parseState = targetState
+	markReduceFragility(parent, children, p.reduceUnderConflictContext())
 	p.pushStackNode(s, targetState, parent, entryScratch, gssScratch)
 	for i := trailingStart; i < trailingEnd; i++ {
 		extra := stackEntryNode(entries[i])
@@ -7277,6 +7369,7 @@ func (p *Parser) applyReduceActionTransientParents(source []byte, s *glrStack, a
 	}
 	parent.preGotoState = window.topState
 	parent.parseState = targetState
+	markReduceFragility(parent, children, p.reduceUnderConflictContext())
 	p.pushStackNode(s, targetState, parent, entryScratch, gssScratch)
 	for i := trailingStart; i < trailingEnd; i++ {
 		extra := stackEntryNode(entries[i])

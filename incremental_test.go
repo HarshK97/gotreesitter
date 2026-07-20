@@ -504,10 +504,16 @@ func TestReuseNodePreservesFreshDynamicPrecedenceSelection(t *testing.T) {
 	}
 }
 
-func TestTryReuseSubtreeSkipsLargeNonLeafCandidate(t *testing.T) {
+// nonLeafReuseSpanFixture builds the shared oldTree/newSource/parser fixture
+// used by TestTryReuseSubtreeSkipsLargeNonLeafCandidate and
+// TestTryReuseSubtreeSkipsFragileNonLeafCandidate: a two-level tree
+// (root -> large -> leaf) spanning sourceLen bytes, with a single edit at
+// byte 0 so the reuse cursor has something to walk past.
+func nonLeafReuseSpanFixture(t *testing.T, sourceLen int, markFragile bool) (*Parser, *reuseCursor, []byte) {
+	t.Helper()
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)
-	oldSource := make([]byte, 3000)
+	oldSource := make([]byte, sourceLen)
 	newSource := make([]byte, len(oldSource))
 	copy(newSource, oldSource)
 	newSource[0] = 1
@@ -518,6 +524,10 @@ func TestTryReuseSubtreeSkipsLargeNonLeafCandidate(t *testing.T) {
 	large.parseState = 2
 	large.endByte = uint32(len(oldSource))
 	large.endPoint = Point{Row: 0, Column: uint32(len(oldSource))}
+	if markFragile {
+		large.setFragileLeft(true)
+		large.setFragileRight(true)
+	}
 	root := NewParentNode(3, true, []*Node{large}, nil, 0)
 	root.parseState = 2
 	root.endByte = uint32(len(oldSource))
@@ -529,9 +539,24 @@ func TestTryReuseSubtreeSkipsLargeNonLeafCandidate(t *testing.T) {
 	if reuse == nil {
 		t.Fatal("reuse cursor reset returned nil")
 	}
+	return parser, reuse, newSource
+}
+
+// TestTryReuseSubtreeSkipsLargeNonLeafCandidate proves the non-leaf reuse
+// lane (reuseNonLeafTargetStateOnStack, incremental.go) still rejects
+// candidates whose span exceeds maxNonLeafReuseSpan. maxNonLeafReuseSpan was
+// raised from 2048 to 1<<20 once fragility marking (markReduceFragility,
+// parser_reduce.go) became the real soundness gate for interior reuse -- see
+// TestTryReuseSubtreeSkipsFragileNonLeafCandidate for that gate -- so this
+// candidate must be sized just over the new bound to still exercise the span
+// cutoff specifically, independent of fragility.
+func TestTryReuseSubtreeSkipsLargeNonLeafCandidate(t *testing.T) {
+	const overCap = (1 << 20) + 4096
+	parser, reuse, newSource := nonLeafReuseSpanFixture(t, overCap, false)
+
 	var entryScratch glrEntryScratch
 	var gssScratch gssScratch
-	stack := newGLRStackWithScratch(lang.InitialState, &entryScratch)
+	stack := newGLRStackWithScratch(parser.language.InitialState, &entryScratch)
 
 	lookahead := Token{
 		Symbol:     2,
@@ -547,6 +572,54 @@ func TestTryReuseSubtreeSkipsLargeNonLeafCandidate(t *testing.T) {
 	}
 	if stackEntryNode(stack.top()) != nil {
 		t.Fatal("stack should remain unchanged when reuse fails")
+	}
+	if reuse.rejectLargeNonLeaf == 0 {
+		t.Fatal("expected rejectLargeNonLeaf to record the span-cutoff rejection")
+	}
+}
+
+// TestTryReuseSubtreeSkipsFragileNonLeafCandidate proves the non-leaf reuse
+// lane rejects a candidate marked fragile (Node.isFragile(), tree.go) even
+// though it is well within maxNonLeafReuseSpan -- the actual soundness gate
+// issue #380 required before the span cap could be safely raised. See
+// markReduceFragility (parser_reduce.go) for how a real parse sets these
+// bits, and the maxNonLeafReuseSpan comment (incremental.go) for why span
+// alone is no longer the gate.
+func TestTryReuseSubtreeSkipsFragileNonLeafCandidate(t *testing.T) {
+	const smallSpan = 64
+	parser, reuse, newSource := nonLeafReuseSpanFixture(t, smallSpan, true)
+
+	var entryScratch glrEntryScratch
+	var gssScratch gssScratch
+	stack := newGLRStackWithScratch(parser.language.InitialState, &entryScratch)
+
+	lookahead := Token{
+		Symbol:     2,
+		StartByte:  0,
+		EndByte:    1,
+		StartPoint: Point{Row: 0, Column: 0},
+		EndPoint:   Point{Row: 0, Column: 1},
+	}
+	ts := &stubTokenSource{tokens: []Token{{Symbol: 0, StartByte: uint32(len(newSource)), EndByte: uint32(len(newSource))}}}
+	nextTok, reusedBytes, ok := parser.tryReuseSubtree(&stack, lookahead, ts, reuse, &entryScratch, &gssScratch)
+	if ok {
+		t.Fatalf("expected fragile non-leaf candidate to be rejected, reusedBytes=%d nextTok=%+v", reusedBytes, nextTok)
+	}
+	if stackEntryNode(stack.top()) != nil {
+		t.Fatal("stack should remain unchanged when reuse fails")
+	}
+	if reuse.rejectFragileNonLeaf == 0 {
+		t.Fatal("expected rejectFragileNonLeaf to record the fragility rejection")
+	}
+
+	// Control: the same fixture with the fragile bits unset must actually be
+	// reused, so the rejection above is proven to come from fragility and not
+	// some other property of the fixture.
+	parser2, reuse2, newSource2 := nonLeafReuseSpanFixture(t, smallSpan, false)
+	stack2 := newGLRStackWithScratch(parser2.language.InitialState, &entryScratch)
+	ts2 := &stubTokenSource{tokens: []Token{{Symbol: 0, StartByte: uint32(len(newSource2)), EndByte: uint32(len(newSource2))}}}
+	if _, _, ok := parser2.tryReuseSubtree(&stack2, lookahead, ts2, reuse2, &entryScratch, &gssScratch); !ok {
+		t.Fatal("expected non-fragile control candidate to be reused")
 	}
 }
 

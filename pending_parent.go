@@ -48,7 +48,20 @@ const (
 	pendingParentFlagFieldEntries         nodeFlags = 1 << 5
 	pendingParentFlagDirectFieldEntry     nodeFlags = 1 << 6
 
-	publicPendingParentNodeFlags nodeFlags = nodeFlagNamed | nodeFlagExtra | nodeFlagMissing | nodeFlagHasError | nodeFlagDirty
+	// publicPendingParentNodeFlags is the mask applied when a pendingParent's
+	// flags are copied onto the Node produced at materialization (see
+	// materializeStackEntryPendingParentEntryWithParser, below): it strips
+	// the pending-only scratch bits (pendingParentFlagFieldEntries /
+	// pendingParentFlagDirectFieldEntry, which alias
+	// nodeFlagFieldIDCacheComputed / nodeFlagFieldIDCacheHasFieldIDs -- see
+	// tree.go) that only have meaning before materialization.
+	// nodeFlagFragileLeft/Right MUST stay in this mask: they are set on the
+	// pendingParent by markReduceFragility (parser_reduce.go) at the same
+	// "parent.parseState = targetState" reduce set-point as every other
+	// reduce lane, and silently dropping them here would let a fragile
+	// subtree survive materialization looking safe to incremental non-leaf
+	// reuse (reuseNonLeafTargetStateOnStack, incremental.go).
+	publicPendingParentNodeFlags nodeFlags = nodeFlagNamed | nodeFlagExtra | nodeFlagMissing | nodeFlagHasError | nodeFlagDirty | nodeFlagFragileLeft | nodeFlagFragileRight
 )
 
 type pendingParentMaterializeReason = materializeReason

@@ -163,6 +163,21 @@ func (n *noTreeNode) setExternalScannerToken(v bool) { n.setFlag(nodeFlagExterna
 func (n *noTreeNode) dirty() bool                    { return n.hasFlag(nodeFlagDirty) }
 func (n *noTreeNode) setDirty(v bool)                { n.setFlag(nodeFlagDirty, v) }
 
+// setFragileLeft/setFragileRight/isFragileLeft/isFragileRight mirror the
+// Node methods of the same name (tree.go); see markReduceFragility
+// (parser_reduce.go). Promoted onto compactCheckpointLeaf, compactFullLeaf,
+// and pendingParent (all embed noTreeNode), so a single definition here
+// covers every non-Node reduce-time payload representation.
+func (n *noTreeNode) setFragileLeft(v bool)  { n.setFlag(nodeFlagFragileLeft, v) }
+func (n *noTreeNode) setFragileRight(v bool) { n.setFlag(nodeFlagFragileRight, v) }
+func (n *noTreeNode) isFragileLeft() bool {
+	return n != nil && (n.hasFlag(nodeFlagFragileLeft) || n.isMissing() || n.symbol == errorSymbol)
+}
+func (n *noTreeNode) isFragileRight() bool {
+	return n != nil && (n.hasFlag(nodeFlagFragileRight) || n.isMissing() || n.symbol == errorSymbol)
+}
+func (n *noTreeNode) isFragile() bool { return n.isFragileLeft() || n.isFragileRight() }
+
 func noTreeNodeBytesForCap(n int) int64 {
 	if n <= 0 {
 		return 0
@@ -467,6 +482,45 @@ func stackEntryNodeDirty(e stackEntry) bool {
 	}
 	if n := stackEntryPendingParent(e); n != nil {
 		return n.dirty()
+	}
+	return false
+}
+
+// stackEntryNodeIsFragileLeft/Right dispatch over every stack-entry payload
+// kind (see markReduceFragility, parser_reduce.go), for reduce call sites
+// that hold a raw entries window rather than a materialized []*Node children
+// slice (the pending-parent lanes). Flattening a nested pendingParent's
+// children into its own child range does not change which entry is
+// syntactically leftmost/rightmost, so checking the boundary raw entry's own
+// isFragileLeft/Right is equivalent to checking the flattened boundary leaf.
+func stackEntryNodeIsFragileLeft(e stackEntry) bool {
+	if n := stackEntryNode(e); n != nil {
+		return n.isFragileLeft()
+	}
+	if n := stackEntryNoTreeNode(e); n != nil {
+		return n.isFragileLeft()
+	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.isFragileLeft()
+	}
+	if n := stackEntryPendingParent(e); n != nil {
+		return n.isFragileLeft()
+	}
+	return false
+}
+
+func stackEntryNodeIsFragileRight(e stackEntry) bool {
+	if n := stackEntryNode(e); n != nil {
+		return n.isFragileRight()
+	}
+	if n := stackEntryNoTreeNode(e); n != nil {
+		return n.isFragileRight()
+	}
+	if n := stackEntryCompactFullLeaf(e); n != nil {
+		return n.isFragileRight()
+	}
+	if n := stackEntryPendingParent(e); n != nil {
+		return n.isFragileRight()
 	}
 	return false
 }

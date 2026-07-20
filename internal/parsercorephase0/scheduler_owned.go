@@ -263,6 +263,13 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 		c.addWork(&c.work.EmittedPopPayloads, uint64(len(path.children)+len(path.trailing)))
 	}
 	scratch := &c.reductionScratch
+	// len(paths) > 1 is this reduce's pop.size > 1 (a GSS multi-pop / diamond
+	// merge): more than one distinct way to pop act.ChildCount entries was
+	// found, one per path below -- mirrors the production Go parser's
+	// applyReduceActionForked len(forks) > 1 check (parser_reduce.go). Every
+	// parent reductionParentForPath builds in this loop is fragile in that
+	// case; see its doc comment.
+	multiPop := len(paths) > 1
 	for _, path := range paths {
 		prev, err := c.node(path.prev)
 		if err != nil {
@@ -276,7 +283,7 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 			return nil, fmt.Errorf("parser-core phase zero: no goto from state %d for reduced symbol %d", prev.state, act.Symbol)
 		}
 		key := c.boundaryKey(gotoState, path.structuralEnd)
-		payload, scoreDelta, order, err := c.reductionParentForPath(*act, &plan, path, key, fork, scratch)
+		payload, scoreDelta, order, err := c.reductionParentForPath(*act, &plan, path, key, fork, multiPop, scratch)
 		if err != nil {
 			return nil, err
 		}
