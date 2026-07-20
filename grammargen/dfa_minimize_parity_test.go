@@ -31,7 +31,9 @@ func TestLexMinimizeParityAcrossGrammars(t *testing.T) {
 	}
 	corporaRoot := os.Getenv("GOT_CORPUS_SOURCES_ROOT")
 	if corporaRoot == "" {
-		corporaRoot = "/home/draco/work/gotreesitter-corpora/corpus_sources"
+		if home, err := os.UserHomeDir(); err == nil {
+			corporaRoot = home + "/work/gotreesitter-corpora/corpus_sources"
+		}
 	}
 	corpusCases := []corpusCase{
 		{"swift", corporaRoot + "/swift/Sources/SwiftSyntaxMacros/MacroExpansionContext.swift"},
