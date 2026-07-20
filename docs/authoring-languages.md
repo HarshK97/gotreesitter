@@ -385,9 +385,10 @@ scanner attachment — **nothing**. Things that genuinely still need a PR:
   registry (`registerTokenSourceFactory` in
   `grammars/token_source_factory_registry.go`) is unexported. Out of tree,
   set `LangEntry.TokenSourceFactory` on your own `grammars.Register` entry
-  and call `Parser.ParseWithTokenSource(src,
-  entry.TokenSourceFactory(src, lang))` — that is the same mechanism the
-  repo's own tools use (for example `grep/compile.go`).
+  and call
+  `Parser.ParseWithTokenSource(src, entry.TokenSourceFactory(src, lang))`
+  — that is the same mechanism the repo's own tools use (for example
+  `grep/compile.go`).
 - **Import shape hints**: `applyImportGrammarShapeHints` in
   `grammargen/import_grammarjson.go` switches on the grammar *name* to
   apply per-language generation hints (`BinaryRepeatMode`,

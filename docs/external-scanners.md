@@ -19,7 +19,7 @@ grammar → blob → runtime pipeline itself.
 
 ### You do NOT need a scanner for
 
-- **Keyword vs. identifier.** Declare a `word` token (`"word": "identifier"`
+- **Keyword versus identifier.** Declare a `word` token (`"word": "identifier"`
   in grammar.json, `g.SetWord("identifier")` in the DSL) and write keywords
   as plain strings. Keyword extraction handles the overlap.
 - **Precedence and associativity.** `prec`, `prec.left`, `prec.right`,

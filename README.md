@@ -318,7 +318,7 @@ for ok := c.GotoFirstNamedChild(); ok; ok = c.GotoNextNamedSibling() {
 idx := c.GotoFirstChildForByte(128)
 ```
 
-Movement methods: `GotoFirstChild`, `GotoLastChild`, `GotoNextSibling`, `GotoPrevSibling`, `GotoParent`, named-only variants (`GotoFirstNamedChild`, etc.), field-based (`GotoChildByFieldName`, `GotoChildByFieldID`), and position-based (`GotoFirstChildForByte`, `GotoFirstChildForPoint`).
+Movement methods: `GotoFirstChild`, `GotoLastChild`, `GotoNextSibling`, `GotoPrevSibling`, `GotoParent`, named-only variants (for example, `GotoFirstNamedChild`), field-based (`GotoChildByFieldName`, `GotoChildByFieldID`), and position-based (`GotoFirstChildForByte`, `GotoFirstChildForPoint`).
 
 Cursors hold direct pointers into tree nodes. Recreate the cursor after `Tree.Release()`, `Tree.Edit(...)`, or an incremental reparse.
 
@@ -519,8 +519,25 @@ witness, and it shrinks as certified engine mechanisms subsume shims. See
 
 ## Known limitations
 
-- **Full-parse throughput**: the strict materialized real-Go production receipt at the v0.40.0 tag target `1935a42c` measures public `Parser.Parse` at **4.851050x C** by equal-fixture geomean and **5.472406x C** by fixed-suite sum of medians against the exact static `-O2` oracle (see [BENCH.md](BENCH.md)); its worst fixture is **5.608320x C**. The compact candidate's lower diagnostic ratio is not a public-parser claim. The former ~2.1x row used a straight-LR synthetic and a different Go grammar, so it stays historical only. The locked incremental matrix validates correctness and classifies work, but general incremental Go/C performance has no current publication-grade headline. Full-parse throughput varies by grammar and corpus shape; GLR-heavy code, highly ambiguous languages, and very large generated files remain the main performance frontier.
-- **GLR safety caps**: the parser enforces iteration, stack depth, and node count limits proportional to input size. These prevent pathological blowup on grammars with high ambiguity, but they impose a ceiling on the maximum input complexity that parses without error. The caps are tunable but not removable without risking unbounded resource consumption.
+- **Full-parse throughput**: the strict materialized real-Go production
+  receipt at the v0.40.0 tag target `1935a42c` measures public
+  `Parser.Parse` at **4.851050x C** by equal-fixture geomean and
+  **5.472406x C** by fixed-suite sum of medians against the exact static
+  `-O2` oracle (see [BENCH.md](BENCH.md)); its worst fixture is
+  **5.608320x C**. The compact candidate's lower diagnostic ratio is not
+  a public-parser claim. The former ~2.1x row used a straight-LR
+  synthetic and a different Go grammar, so it stays historical only. The
+  locked incremental matrix validates correctness and classifies work,
+  but general incremental Go/C performance has no current
+  publication-grade headline. Full-parse throughput varies by grammar
+  and corpus shape; GLR-heavy code, highly ambiguous languages, and very
+  large generated files remain the main performance frontier.
+- **GLR safety caps**: the parser enforces iteration, stack depth, and
+  node count limits proportional to input size. These prevent
+  pathological blowup on grammars with high ambiguity, but they impose
+  a ceiling on the maximum input complexity that parses without error.
+  The caps are tunable but not removable without risking unbounded
+  resource consumption.
 
 ## Adding a language
 
@@ -727,16 +744,16 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.42.0**. It banks the authenticated, build-tagged
-selected-store candidate at **2.685181x C** by equal-fixture geomean,
-**2.676794x C** by fixed-suite sum, and **2.791974x C** on its worst
-fixture, with zero timed fallback. Its measured lifecycle seals, traverses,
-and releases the selected store; it is not public `Parser.Parse`. The
-release also banks full-manifest forest-route corrections, exact-blob
-Crystal and Matlab retry economy, compact-scheduler defer-frame cleanup,
-and a reproducible representative refresh of the opt-in build-time PGO
-artifact. These changes do not replace the public-parser receipt or turn
-diagnostic compact routes into public `Parser.Parse`.
+The current release is **v0.43.1**. It fixes TypeScript and TSX bare
+default parameters that previously collapsed to `ERROR`. It also reduces
+allocation churn during grammar-blob decoding by about 32% and peak
+memory by about 11%, across all 206 grammars. A CI test now enforces a
+memory ceiling and fails any `Language()` load above 256 MB. Swift is
+the sole documented exception, at about 491 MB. The prior release,
+v0.43.0, lets incremental length-changing edits reuse the unchanged
+suffix instead of re-lexing the whole tail. It also adds a default-on
+incremental-invariant correctness gate that checks `ParseIncremental`
+against a fresh `Parse`.
 The authenticated production receipt at tag target `1935a42c` measures
 public `Parser.Parse` at **4.851050x C** by equal-fixture geomean,
 **5.472406x C** by fixed-suite sum, and **5.608320x C** on the worst
