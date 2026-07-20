@@ -65,22 +65,37 @@ func EmitC(name string, lang *gotreesitter.Language) (string, error) {
 // buildCSymbolNames returns a C identifier for every symbol id, disambiguating
 // collisions the way upstream tree-sitter does: the first symbol to claim a
 // given identifier keeps it, and each subsequent symbol that would sanitize to
-// the same identifier gets a numeric suffix (name, name2, name3, ...). Without
-// this, two distinct anonymous tokens that share the same text — e.g. a plain
-// `"` token and a token.immediate('"'), both of which sanitize to
-// anon_sym_DQUOTE — would emit as the same C enumerator and the generated
-// parser.c would fail to compile with "redeclaration of enumerator".
+// the same identifier gets a numeric suffix (name2, name3, ...), bumped past
+// any suffix already claimed by a DIFFERENT base. That second half matters:
+// with a naive "base + occurrence count" suffix, three same-text-derived
+// tokens — a plain `"` (base anon_sym_DQUOTE), a naturally-suffixed `"2`
+// token (base anon_sym_DQUOTE2, unrelated text, coincidental collision), and
+// token.immediate('"') (also base anon_sym_DQUOTE, occurrence 2 so its naive
+// suffix is also anon_sym_DQUOTE2) — would have two symbols both landing on
+// anon_sym_DQUOTE2, and the generated parser.c would fail to compile with
+// "redeclaration of enumerator". buildCSymbolNames instead tracks every name
+// already claimed by any symbol and keeps incrementing the suffix counter
+// until the candidate is unclaimed, in the same index order the symbols are
+// walked (so output stays deterministic).
 func buildCSymbolNames(lang *gotreesitter.Language) []string {
 	names := make([]string, len(lang.SymbolNames))
 	counts := make(map[string]int, len(lang.SymbolNames))
+	used := make(map[string]bool, len(lang.SymbolNames))
 	for i := range lang.SymbolNames {
 		base := symbolToCName(lang.SymbolNames[i], i, lang)
 		counts[base]++
-		if i == 0 || counts[base] == 1 {
-			names[i] = base
-			continue
+		n := counts[base]
+		candidate := base
+		if n > 1 {
+			candidate = base + strconv.Itoa(n)
 		}
-		names[i] = base + strconv.Itoa(counts[base])
+		for used[candidate] {
+			n++
+			candidate = base + strconv.Itoa(n)
+		}
+		counts[base] = n
+		names[i] = candidate
+		used[candidate] = true
 	}
 	return names
 }
@@ -101,6 +116,31 @@ func mainLexStartStates(lang *gotreesitter.Language) map[int]bool {
 	// State 0 is always a valid lexer entry point.
 	starts[0] = true
 	return starts
+}
+
+// sortedIntKeys returns the keys of m in ascending order.
+func sortedIntKeys(m map[int]bool) []int {
+	out := make([]int, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Ints(out)
+	return out
+}
+
+// modeStartOf returns the mode-start state that owns DFA state i. Each lex
+// mode's states occupy a contiguous, increasing block of indices (buildLexDFA
+// appends every mode's states after the previous mode's), and modeStarts is
+// the sorted list of every such block's starting index (see the call site's
+// use of mainLexStartStates). The owning mode-start is therefore the greatest
+// boundary that is <= i — this holds whether i is itself a mode-start state
+// or an intermediate, mid-token state reached only from within its mode.
+func modeStartOf(modeStarts []int, i int) int {
+	idx := sort.SearchInts(modeStarts, i+1) - 1
+	if idx < 0 {
+		return 0
+	}
+	return modeStarts[idx]
 }
 
 func cParseActionOffsets(lang *gotreesitter.Language) ([]uint16, error) {
@@ -550,6 +590,17 @@ func emitLexFunction(b *strings.Builder, funcName string, states []gotreesitter.
 	fmt.Fprintf(b, "  eof = lexer->eof(lexer);\n")
 	fmt.Fprintf(b, "  switch (state) {\n")
 
+	// Lex modes occupy contiguous, increasing blocks of DFA state indices
+	// (buildLexDFA appends each mode's states after the previous mode's), and
+	// startStates is exactly the set of state indices any parser state can
+	// begin lexing from — i.e. every mode-start offset (see
+	// mainLexStartStates). Sorting that set therefore recovers the ordered
+	// mode-start boundary list without any extra plumbing: for any DFA state
+	// i, the mode that owns it is the one whose boundary is the greatest
+	// entry <= i. modeStartOf uses this to answer "which mode-start state
+	// should SKIP re-lex from" for a state reached mid-token (see below).
+	modeStarts := sortedIntKeys(startStates)
+
 	for i, st := range states {
 		fmt.Fprintf(b, "    case %d:\n", i)
 
@@ -590,30 +641,42 @@ func emitLexFunction(b *strings.Builder, funcName string, states []gotreesitter.
 		}
 
 		// Character transitions. A transition that consumes a skippable extra
-		// (whitespace) must use SKIP so the runtime advances past the character
-		// as trivia and re-lexes for a real token, rather than accepting it.
-		// grammargen models a silent extra two ways: an explicit skip edge
-		// (tr.Skip, already looping back to this mode's start state) or an edge
-		// into a terminal skip-accept state. In the latter case the previous
-		// emission accepted ts_builtin_sym_end there, which told the runtime
-		// EOF had been reached the moment any whitespace appeared; SKIP(i)
-		// consumes the whitespace and re-lexes from this (mode-start) state.
+		// (whitespace, or any other silently-dropped extra) must use SKIP so
+		// the runtime advances past the character as trivia and re-lexes for
+		// a real token, rather than accepting it. grammargen models a silent
+		// extra two ways:
+		//
+		//   - An explicit skip edge (tr.Skip): addWhitespaceSkip only ever
+		//     adds these on a mode's own start state and always targets that
+		//     same start state (tr.NextState), so SKIP(tr.NextState) is
+		//     already correct as written.
+		//   - An edge into a terminal skip-accept state: this fires on
+		//     whichever state currently owns the transition, which for a
+		//     multi-character extra (CRLF, backslash-newline continuations)
+		//     is an intermediate mid-token state, not the mode's start state.
+		//     SKIP's target must still be the mode-start state — re-lexing
+		//     from the intermediate state would resume from a DFA state that
+		//     only recognizes the extra's continuation, not a fresh token —
+		//     so this uses modeStartOf(modeStarts, i), the start state of the
+		//     mode that contains state i, rather than i itself.
 		for _, tr := range st.Transitions {
 			cond := charCondition(tr.Lo, tr.Hi)
 			switch {
 			case tr.Skip:
 				fmt.Fprintf(b, "      if (%s) SKIP(%d);\n", cond, tr.NextState)
 			case tr.NextState >= 0 && tr.NextState < len(states) && states[tr.NextState].Skip:
-				fmt.Fprintf(b, "      if (%s) SKIP(%d);\n", cond, i)
+				fmt.Fprintf(b, "      if (%s) SKIP(%d);\n", cond, modeStartOf(modeStarts, i))
 			default:
 				fmt.Fprintf(b, "      if (%s) ADVANCE(%d);\n", cond, tr.NextState)
 			}
 		}
 
-		// Default transition.
+		// Default transition. Same reasoning as the transition loop above:
+		// a default edge into a skip-accept state must re-lex from that
+		// state's owning mode-start, not from state i itself.
 		if st.Default >= 0 {
 			if st.Default < len(states) && states[st.Default].Skip {
-				fmt.Fprintf(b, "      SKIP(%d);\n", i)
+				fmt.Fprintf(b, "      SKIP(%d);\n", modeStartOf(modeStarts, i))
 			} else {
 				fmt.Fprintf(b, "      ADVANCE(%d);\n", st.Default)
 			}

@@ -9,7 +9,7 @@ package grammargen
 // parse of the SAME generated tables. The pure-Go parser is the oracle: any
 // divergence here is a bug in EmitC, not in the grammar or tables.
 //
-// They target three EmitC defects the goala C-parity harness isolated:
+// They target five EmitC defects the goala C-parity harness isolated:
 //
 //  1a. ts_lex failed to tokenize an anonymous keyword string that overlaps the
 //      identifier character class: `let x` parsed as (ERROR) under C because
@@ -21,6 +21,19 @@ package grammargen
 //  2.  Two distinct same-text anonymous tokens (plain `"` and
 //      token.immediate('"')) both emitted as anon_sym_DQUOTE — a C
 //      "redeclaration of enumerator".
+//  3.  A multi-character silent extra (CRLF, backslash-newline continuation)
+//      emits SKIP(i) where i is the transition's SOURCE state — correct only
+//      for single-character extras. For a multi-character extra the skip
+//      edge fires from an intermediate DFA state that only recognizes the
+//      extra's continuation, not a fresh token, so the next real token after
+//      the extra errors under C while pure-Go parses it fine.
+//  4.  Three anonymous tokens whose sanitized names collide in a chain (a
+//      base name, a token that naturally sanitizes to that base's first
+//      numeric suffix, and a same-text duplicate of the base that would
+//      naively suffix to the SAME already-claimed name) produced a duplicate
+//      C enumerator even after defect 2's fix, because the old dedup only
+//      checked occurrence count per base, not the full set of names already
+//      claimed by every other symbol.
 //
 // The harness skips gracefully when a C compiler or the runtime module is
 // unavailable, so `go test ./grammargen/...` stays green in minimal
@@ -279,6 +292,159 @@ func TestEmitCDuplicateAnonToken(t *testing.T) {
 	// The decisive test: the C compiles without a
 	// "redeclaration of enumerator" error.
 	_ = cWalker(t, "emitc_dupquote", lang)
+}
+
+// TestEmitCAnonTokenCollisionChain is the regression for defect 4: a chain of
+// three anonymous tokens whose sanitized C names collide must all end up
+// distinct, even when the natural (unsuffixed) name for one of them equals
+// the suffix another collision would naively produce. `"` sanitizes to
+// anon_sym_DQUOTE; `"2` naturally sanitizes to anon_sym_DQUOTE2 (unrelated
+// text, coincidental collision with the suffix numbering); and
+// token.immediate('"') is a same-text duplicate of `"`, so its naive
+// occurrence-count suffix is ALSO anon_sym_DQUOTE2 — already claimed by `"2`.
+// A dedup pass that only tracks "how many times has this base been seen"
+// (rather than the full set of already-claimed names) emits two
+// anon_sym_DQUOTE2 enumerators and the parser.c fails to compile.
+func TestEmitCAnonTokenCollisionChain(t *testing.T) {
+	g := NewGrammar("emitc_dquote_chain")
+	g.Define("source_file", Repeat(Sym("item")))
+	g.Define("item", Choice(
+		Seq(Str(`"`), Optional(Sym("inner"))),
+		Str(`"2`),
+	))
+	g.Define("inner", Seq(ImmToken(Str(`"`)), Sym("word")))
+	g.Define("word", Pat(`[a-z]+`))
+	g.SetExtras(Pat(`\s`))
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+
+	code, err := EmitC("emitc_dquote_chain", lang)
+	if err != nil {
+		t.Fatalf("EmitC: %v", err)
+	}
+	assertNoDuplicateCIdentifiers(t, code)
+
+	// The decisive test: the C compiles without a
+	// "redeclaration of enumerator" error.
+	_ = cWalker(t, "emitc_dquote_chain", lang)
+}
+
+// assertNoDuplicateCIdentifiers parses the emitted ts_symbol_identifiers enum
+// and fails if any C identifier is declared more than once — the shape of a
+// "redeclaration of enumerator" compile error.
+func assertNoDuplicateCIdentifiers(t *testing.T, code string) {
+	t.Helper()
+	start := strings.Index(code, "enum ts_symbol_identifiers")
+	if start < 0 {
+		t.Fatalf("missing enum ts_symbol_identifiers in emitted code")
+	}
+	block := code[start:]
+	end := strings.Index(block, "};")
+	if end < 0 {
+		t.Fatalf("unterminated enum ts_symbol_identifiers")
+	}
+	block = block[:end]
+
+	seen := make(map[string]bool)
+	for _, line := range strings.Split(block, "\n") {
+		line = strings.TrimSpace(line)
+		eq := strings.Index(line, " = ")
+		if eq < 0 {
+			continue
+		}
+		name := strings.TrimSpace(line[:eq])
+		if name == "" {
+			continue
+		}
+		if seen[name] {
+			t.Fatalf("duplicate C identifier %q in emitted enum:\n%s", name, block)
+		}
+		seen[name] = true
+	}
+}
+
+// TestEmitCMultiCharSkipCRLF is the regression for defect 3 (multi-character
+// extra): a CRLF extra (`\r\n`) is recognized by a two-transition DFA path —
+// state on '\r' to an intermediate state, then '\n' to the skip-accept state.
+// The intermediate state is not a mode-start state, so SKIP must still
+// re-lex from the mode's start, not from the intermediate state itself.
+func TestEmitCMultiCharSkipCRLF(t *testing.T) {
+	g := NewGrammar("emitc_crlf")
+	g.Define("source_file", Repeat(Sym("word")))
+	g.Define("word", Pat(`[a-z]+`))
+	g.SetExtras(Pat("\r\n"))
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	parseC := cWalker(t, "emitc_crlf", lang)
+
+	inputs := []string{
+		"hello\r\nworld",
+		"hello\r\nworld\r\n",
+		"a\r\nb\r\nc",
+		"solo",
+	}
+	for _, in := range inputs {
+		in := in
+		name := strings.NewReplacer("\r", "CR", "\n", "LF").Replace(in)
+		t.Run(name, func(t *testing.T) {
+			want := goSExpr(t, lang, in)
+			got := parseC(t, in)
+			if got != want {
+				t.Fatalf("C/Go divergence for %q\n C: %s\nGo: %s", in, got, want)
+			}
+			if strings.Contains(got, "ERROR") {
+				t.Fatalf("unexpected ERROR for %q: %s", in, got)
+			}
+		})
+	}
+}
+
+// TestEmitCMultiCharSkipBackslashNewline is a second regression for defect 3,
+// covering an AWK-style backslash-newline line continuation extra alongside a
+// separate single-character whitespace extra — two invisible extras of
+// different lengths sharing the same lex mode. The backslash-newline extra's
+// intermediate (post-backslash) state must SKIP back to the mode start, the
+// same as the CRLF case, not to itself.
+func TestEmitCMultiCharSkipBackslashNewline(t *testing.T) {
+	g := NewGrammar("emitc_bslashnl")
+	g.Define("source_file", Repeat(Sym("word")))
+	g.Define("word", Pat(`[a-z]+`))
+	// Pattern text `\\` + newline: an escaped (literal) backslash followed by
+	// a literal newline — the two-character AWK continuation sequence.
+	g.SetExtras(Pat("\\\\\n"), Pat(`\s`))
+
+	lang, err := GenerateLanguage(g)
+	if err != nil {
+		t.Fatalf("GenerateLanguage: %v", err)
+	}
+	parseC := cWalker(t, "emitc_bslashnl", lang)
+
+	inputs := []string{
+		"a\\\nb",
+		"a\\\nb\\\nc",
+		"a b",
+		"solo",
+	}
+	for _, in := range inputs {
+		in := in
+		name := strings.NewReplacer("\\", "BS", "\n", "LF", " ", "SP").Replace(in)
+		t.Run(name, func(t *testing.T) {
+			want := goSExpr(t, lang, in)
+			got := parseC(t, in)
+			if got != want {
+				t.Fatalf("C/Go divergence for %q\n C: %s\nGo: %s", in, got, want)
+			}
+			if strings.Contains(got, "ERROR") {
+				t.Fatalf("unexpected ERROR for %q: %s", in, got)
+			}
+		})
+	}
 }
 
 // TestEmitCAliasSequenceStride guards the alias-sequence stride defect: the
