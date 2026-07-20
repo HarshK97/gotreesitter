@@ -501,6 +501,11 @@ type MaterializationSubtreeView struct {
 	Extra             bool
 	External          bool
 	Terminal          bool
+	// Fragile mirrors subtreeRecord.fragile: the record was produced by a
+	// reduce/conflict-arm decision that ran under ambiguity (multiPop or an
+	// authenticated >=2-action conflict). Threaded to the public materializer so
+	// Lane-1 fragility metadata reaches compact-materialized public nodes.
+	Fragile bool
 }
 
 // Stats reports physical storage separately from semantic path counts. It is
@@ -3024,6 +3029,7 @@ func (c *Core) VisitMaterializationPostorder(
 				StartByte:         record.startByte, EndByte: record.endByte,
 				Children: c.children[record.firstChild : record.firstChild+record.childCount],
 				Extra:    record.extra, External: record.external, Terminal: record.terminal,
+				Fragile: record.fragile,
 			}
 			if err := visit(top.id, view); err != nil {
 				return err
@@ -3037,6 +3043,41 @@ func (c *Core) VisitMaterializationPostorder(
 		return errors.New("parser-core phase zero: materialization exceeded compact subtree arena")
 	}
 	return poll()
+}
+
+// MaterializationView returns the borrowed materialization view for one
+// subtree id. It is the random-access companion to VisitMaterializationPostorder
+// used by ParseState-by-table-replay (Phase-3 Lane 2): the driver walks the
+// derivation top-down to reconstruct per-node parser states before the
+// postorder pass materializes public nodes. The returned Children slice
+// aliases compact arena storage and must not be retained or mutated.
+func (c *Core) MaterializationView(id SubtreeID) (MaterializationSubtreeView, error) {
+	record, err := c.subtree(id)
+	if err != nil {
+		return MaterializationSubtreeView{}, err
+	}
+	return MaterializationSubtreeView{
+		Symbol:            record.symbol,
+		ProductionID:      record.productionID,
+		DynamicPrecedence: record.dynamicPrecedence,
+		StartByte:         record.startByte,
+		EndByte:           record.endByte,
+		Children:          c.children[record.firstChild : record.firstChild+record.childCount],
+		Extra:             record.extra,
+		External:          record.external,
+		Terminal:          record.terminal,
+		Fragile:           record.fragile,
+	}, nil
+}
+
+// SubtreeArenaLen returns the number of subtree records currently allocated,
+// used to size a per-id replay-state array (ids are 1-based, so callers size
+// SubtreeArenaLen()+1).
+func (c *Core) SubtreeArenaLen() int {
+	if c == nil {
+		return 0
+	}
+	return len(c.subtrees)
 }
 
 func (c *Core) validateMaterializationMetadata(id SubtreeID, record subtreeRecord) error {

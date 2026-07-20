@@ -6,6 +6,14 @@ func (p *Parser) tryTokenInvariantLeafEdit(source []byte, oldTree *Tree, ts Toke
 	if p == nil || oldTree == nil || oldTree.RootNode() == nil || oldTree.language != p.language {
 		return nil, false
 	}
+	// A compact-materialized tree carries table-replayed / abstained per-node
+	// parser states and no scanner checkpoints, so it is barred from every reuse
+	// path -- including this token-invariant leaf reuse -- on ALL entry points
+	// (DFA and custom token source). Force the caller to a full fresh parse
+	// (Phase-3 Lane 3 review).
+	if oldTree.compactMaterialized {
+		return nil, false
+	}
 	if len(oldTree.edits) != 1 {
 		return nil, false
 	}
@@ -1142,6 +1150,7 @@ func reuseTreeWithNewSource(oldTree *Tree, source []byte, dirtyNode *Node, clear
 	tree := newTreeWithUniqueArenas(oldTree.root, source, oldTree.language, arena, borrowed)
 	tree.forestFastPath = oldTree.forestFastPath
 	tree.incrementalReuseDisabled = oldTree.incrementalReuseDisabled
+	tree.compactMaterialized = oldTree.compactMaterialized
 	return tree
 }
 

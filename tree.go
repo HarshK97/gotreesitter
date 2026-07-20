@@ -2737,6 +2737,18 @@ type Tree struct {
 	externalScannerCheckpointsDeferred bool
 	forestFastPath                     bool
 	incrementalReuseDisabled           bool
+	// compactMaterialized marks a tree built by the phase-zero compact route
+	// (parsercore_phase0_driver.go). Such a tree carries table-REPLAYED per-node
+	// parser states (not the production parser's live-recorded ones): most are
+	// exact, extras/unrecoverable nodes deliberately abstain to the 0
+	// "unknown -> recompute" sentinel, and a bounded internal collapse class
+	// carries the principled outer state rather than production's forest-selected
+	// inner one. It also lacks scanner checkpoints. It is therefore HARD-barred
+	// from every incremental reuse path -- including the token-invariant leaf
+	// fast path that forestFastPath trees still take -- so ParseIncremental over
+	// it always falls back to a full fresh parse (Phase-3 Lane 3 review
+	// amendment 2).
+	compactMaterialized bool
 	// Finalization state avoids repeated retry scans and compatibility passes.
 	// The error summary is not a persistent invariant of a caller-edited tree.
 	resultErrorSummary           resultErrorSummary
@@ -3104,6 +3116,14 @@ func (t *Tree) Copy() *Tree {
 		parseRuntime:               t.parseRuntime,
 		resultErrorSummary:         t.resultErrorSummary,
 		resultCompatibilityApplied: t.resultCompatibilityApplied,
+		// Reuse-provenance flags must survive Copy: cloneNodeHeaderInto keeps the
+		// per-node stamped/replayed states, so a copy that dropped these would
+		// become reuse-eligible on the standard DFA path and splice replayed or
+		// abstained states into a live parse (Phase-3 Lane 3 review). Carry all
+		// three: forestFastPath, incrementalReuseDisabled, and compactMaterialized.
+		forestFastPath:           t.forestFastPath,
+		incrementalReuseDisabled: t.incrementalReuseDisabled,
+		compactMaterialized:      t.compactMaterialized,
 	}
 	if len(t.edits) > 0 {
 		out.edits = make([]InputEdit, len(t.edits))

@@ -2879,6 +2879,24 @@ func (p *Parser) parseIncrementalInternal(source []byte, oldTree *Tree, ts Token
 	return p.parseIncrementalInternalWithMergePerKeyOverride(source, oldTree, ts, timing, 0)
 }
 
+// incrementalTokenSourceFreshFullParse performs a full fresh parse over the
+// provided token source with the incremental origin's retry widening. It is the
+// shared fallback for an incremental reparse that must not reuse the old tree:
+// either the token source does not support subtree reuse, or the old tree
+// disables reuse (forestFastPath / compact-materialized). It never touches
+// oldTree, so no replayed/abstained state can leak into the result.
+func (p *Parser) incrementalTokenSourceFreshFullParse(source []byte, ts TokenSource, timing *incrementalParseTiming) *Tree {
+	deterministicExternalConflicts := fullParseUsesDeterministicExternalConflicts(p.language)
+	initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth)
+	workCountSetNextParseAttempt("initial_full", "incremental_token_source_fallback_full_parse")
+	tree := p.parseInternal(source, ts, nil, nil, arenaClassFull, timing, initialMaxStacks, 0, 0, deterministicExternalConflicts)
+	tree = p.retryFullParseWithTokenSourceForOrigin(source, ts, initialMaxStacks, deterministicExternalConflicts, tree, fullParseRetryOriginIncremental)
+	if shouldRepeatExternalScannerFullParse(p.language, tree) {
+		tree = p.retryFullParseWithTokenSourceForOrigin(source, ts, initialMaxStacks, deterministicExternalConflicts, tree, fullParseRetryOriginIncremental)
+	}
+	return tree
+}
+
 func (p *Parser) parseIncrementalInternalWithMergePerKeyOverride(source []byte, oldTree *Tree, ts TokenSource, timing *incrementalParseTiming, maxMergePerKeyOverride int) *Tree {
 	// Fast path: unchanged source and no recorded edits.
 	if canReuseUnchangedTree(source, oldTree, p.language) {
@@ -2886,6 +2904,21 @@ func (p *Parser) parseIncrementalInternalWithMergePerKeyOverride(source []byte, 
 	}
 	if tree, ok := p.tryTokenInvariantLeafEdit(source, oldTree, ts, timing); ok {
 		return tree
+	}
+
+	// One reuse bar for EVERY incremental entry (Phase-3 Lane 3 review). The DFA
+	// entry (parseIncrementalChanged) already routes a reuse-disabled old tree to
+	// a full fresh parse before reaching here, but the token-source entries
+	// (parseIncrementalWithTokenSourceChanged and its Profiled twin) call in
+	// directly. A reuse-disabled old tree -- forestFastPath, or a
+	// compact-materialized tree whose per-node states are table-replayed /
+	// abstained -- must never feed the reuseCursor subtree splice below, which
+	// trusts old-tree parser states. The only reuse it may take is the
+	// token-invariant leaf edit attempted just above (compact trees are barred
+	// from even that inside tryTokenInvariantLeafEdit); once that declines, force
+	// a full fresh parse over the provided token source.
+	if oldTreeDisablesIncrementalReuse(oldTree) {
+		return p.incrementalTokenSourceFreshFullParse(source, ts, timing)
 	}
 
 	// Subtree reuse is safe for DFA token sources without external scanners
@@ -2899,15 +2932,7 @@ func (p *Parser) parseIncrementalInternalWithMergePerKeyOverride(source []byte, 
 		// like ordinary full parses, including retry widening. This keeps
 		// conservative fallback paths for external-scanner languages on the same
 		// correctness footing as Parse.
-		deterministicExternalConflicts := fullParseUsesDeterministicExternalConflicts(p.language)
-		initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth)
-		workCountSetNextParseAttempt("initial_full", "incremental_token_source_fallback_full_parse")
-		tree := p.parseInternal(source, ts, nil, nil, arenaClassFull, timing, initialMaxStacks, 0, 0, deterministicExternalConflicts)
-		tree = p.retryFullParseWithTokenSourceForOrigin(source, ts, initialMaxStacks, deterministicExternalConflicts, tree, fullParseRetryOriginIncremental)
-		if shouldRepeatExternalScannerFullParse(p.language, tree) {
-			tree = p.retryFullParseWithTokenSourceForOrigin(source, ts, initialMaxStacks, deterministicExternalConflicts, tree, fullParseRetryOriginIncremental)
-		}
-		return tree
+		return p.incrementalTokenSourceFreshFullParse(source, ts, timing)
 	}
 	if oldTree != nil {
 		oldTree.ensureParentLinks()
