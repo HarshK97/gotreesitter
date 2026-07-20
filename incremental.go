@@ -712,6 +712,36 @@ func (c *reuseCursor) rejectDirtyTopLevelPrefix(start uint32) bool {
 		start < c.topLevelResumeByte
 }
 
+// blockSpliceScannerSkipEligible reports whether the reused subtree n may be
+// spliced with an O(1) byte skip (SkipToByte, no token-by-token re-lex) on a
+// non-checkpoint external-scanner language. Campaign O(edit) W1 block-splice
+// (spec.campaign.oedit) needs this so a whole run of unchanged top-level
+// siblings costs O(siblings), not O(bytes reused): without it every reused
+// sibling re-lexes its own body (advanceTokenSourceTo) purely to keep the live
+// external-scanner state exact for the token AFTER the span, re-lexing the file
+// the reuse was meant to skip.
+//
+// Soundness. The gate is external-scanner QUIESCENCE at the span start: the
+// scanner's Serialize captures zero bytes. By the tree-sitter scanner contract
+// (Serialize must persist all state that changes any later scan()), an empty
+// serialization proves the scanner holds no forward-affecting state, so the
+// live scanner is indistinguishable from a fresh empty scanner for every future
+// scan(). Skipping the span's bytes without lexing them therefore leaves the
+// next real token byte-identical to what re-lexing would produce. For a
+// stateless scanner -- one whose Serialize is unconditionally zero, e.g. Go's
+// (grammars/go_scanner.go) -- this holds at the span start AND end
+// unconditionally, so the skip is byte-exact by construction, never a
+// heuristic. For a stateful scanner the residual obligation is that a complete,
+// error-free subtree returns the scanner to an empty serialized state at its
+// end; that is exactly the per-language external-scanner quiescence proof
+// campaign workstream W4 formalizes, and it is enforced meanwhile by the
+// full-serialization incremental invariant gate across every corpus language
+// (python is excluded here: it takes the recorded-checkpoint path, not this
+// one). Checkpoint languages never reach this helper.
+func blockSpliceScannerSkipEligible(dts *dfaTokenSource, n *Node) bool {
+	return dts != nil && n != nil && dts.externalScannerQuiescent()
+}
+
 func reuseNode(p *Parser, s *glrStack, n *Node, nextState StateID, startState StateID, lookahead Token, ts TokenSource, idx *reuseCursor, entryScratch *glrEntryScratch, gssScratch *gssScratch, checkpoint externalScannerCheckpointRef) (Token, uint32, bool) {
 	if perfCountersEnabled {
 		perfRecordReuseSuccess()
@@ -772,6 +802,28 @@ func reuseNode(p *Parser, s *glrStack, n *Node, nextState StateID, startState St
 		if stateful, ok := ts.(parserStateTokenSource); ok {
 			stateful.SetParserState(nextState)
 			stateful.SetGLRStates(nil)
+		}
+		// Campaign O(edit) W1 block-splice (spec.campaign.oedit): a
+		// non-checkpoint external-scanner language normally re-lexes every
+		// token inside the reused span (advanceTokenSourceTo) so the live
+		// scanner state stays exact for the token AFTER the span. That makes a
+		// whole-run sibling splice cost O(bytes reused), re-lexing the file the
+		// reuse was meant to avoid. When the scanner is provably QUIESCENT --
+		// its Serialize captures zero bytes right here -- it carries no state
+		// that can affect any later scan() (the tree-sitter scanner contract:
+		// Serialize must persist every bit of state that changes future
+		// lexing). Skipping the intervening bytes without lexing therefore
+		// leaves the next real token identical to what re-lexing would produce,
+		// so the O(1) byte skip is byte-exact, not a heuristic. It is scoped by
+		// blockSpliceScannerSkipEligible below to hold at BOTH the span start
+		// (checked here) and the span end.
+		if blockSpliceScannerSkipEligible(dts, n) {
+			if skipper, ok := ts.(PointSkippableTokenSource); ok {
+				return skipper.SkipToByteWithPoint(n.EndByte(), n.EndPoint()), reusedBytes, true
+			}
+			if skipper, ok := ts.(ByteSkippableTokenSource); ok {
+				return skipper.SkipToByte(n.EndByte()), reusedBytes, true
+			}
 		}
 		return advanceTokenSourceTo(ts, lookahead, n.EndByte()), reusedBytes, true
 	}
