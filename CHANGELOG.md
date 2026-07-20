@@ -24,11 +24,12 @@ for tags and release notes while still in `0.x`.
   second survivor alive. The detector also covers parenthesized return
   types: `(a: A): (B) => a`, `(a: A): (string | number) => a`, and
   `(a: A): (() => B) => a`. Its backward colon scan now balances
-  parens, so a colon nested inside the return type is not mistaken for
-  the top-level boundary. This is the **third** source-heuristic
+  parentheses, so a colon nested inside the return type is not mistaken
+  for the top-level boundary. This is the **third** source-heuristic
   merge-width detector guarding the same root cause as the PR #389
-  default-parameter fix: the GLR engine's steady-state merge budget
-  discards a live fork by score before any structural comparison runs.
+  default-parameter fix. That root cause: the GLR engine's steady-state
+  merge budget discards a live fork by score before any structural
+  comparison runs.
   The structural cure — comparing candidate forks structurally before
   falling back to score at the merge site — remains tracked, in active
   development on `codex/glr-structure-before-score`. Like its
@@ -3336,7 +3337,12 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/odvcencio/gotreesitter/compare/v0.44.1...v0.45.0
+[0.44.1]: https://github.com/odvcencio/gotreesitter/compare/v0.44.0...v0.44.1
+[0.44.0]: https://github.com/odvcencio/gotreesitter/compare/v0.43.1...v0.44.0
+[0.43.1]: https://github.com/odvcencio/gotreesitter/compare/v0.43.0...v0.43.1
+[0.43.0]: https://github.com/odvcencio/gotreesitter/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/odvcencio/gotreesitter/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/odvcencio/gotreesitter/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/odvcencio/gotreesitter/compare/v0.39.0...v0.40.0
