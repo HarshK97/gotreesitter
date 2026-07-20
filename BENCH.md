@@ -96,6 +96,24 @@ Go uses the generated DFA path, while the hand-written Go token source
 remains an explicit alternate. The project has withdrawn its old 1.70x row
 as both oracle-mismatched and mislabeled.
 
+### Editor-latency (O(edit)) status
+
+The campaign O(edit) workstream targets deterministic, per-keystroke
+reparse cost. Its continuous instrument is workstream W5, a continuous
+integration (CI) gate. W5 has not yet published a sealed receipt for the
+numbers below. Cite them as v0.44.0/v0.44.1 CHANGELOG measurements, not as
+sealed claims.
+
+- CSS editor-style incremental edits: node reuse rises from 63.8% to 99.5%
+  (PR #395, workstream W1).
+- Go clean-file incremental edits: `ReuseRejectRootNonLeafChanged` holds at
+  a constant 9, regardless of file size (PR #398, workstream W1b).
+- A 137KB near-top insert: about 22ms, down from about 47ms on the same
+  fixture (PR #398, workstream W1b).
+
+See [CHANGELOG.md](CHANGELOG.md) v0.44.0 and v0.44.1 for full context,
+including known issues.
+
 ## The one C oracle
 
 Every new "versus C" claim names and fingerprints the same oracle inputs:
@@ -147,6 +165,91 @@ Go-C-C-Go cycles. It fails closed on dirty source, parser or Go runtime
 overrides, noisy-host admission, identity drift, and incomplete receipts.
 Shortened or skipped gates require `--diagnostic` and carry the
 `NONPUBLICATION_DIAGNOSTIC` label.
+
+### Sealed epoch — run6 (hardware-attested, authoritative)
+
+This receipt is the project's current Go-vs-C authority. The project sealed
+it inside a hardened confidential-computing enclave, then independently
+verified every cryptographic layer. The enclave ran on AMD Secure Encrypted
+Virtualization (SEV) Confidential Space, with debug mode disabled since
+boot. An independent audit verified the attestation token's RS256 signature
+(RSA with SHA-256) against Google's live JSON Web Key Set (JWKS). The audit
+also verified the Ed25519 receipt signature and confirmed that the payload
+nonce binds to the signed receipt bytes.
+
+The sealed epoch times one full, non-incremental parse per fixture. Each Go
+run calls the public `Parser.Parse` API, then checks root completeness:
+byte 0 to end of source, with no parse error. The C oracle runs the
+matching `public_validated` lane: parse, root completeness, and a check for
+`ts_node_has_error`. Neither side walks the full tree. Each fixture-backend
+pair runs with `GOMAXPROCS=1`. Each pair runs for at least 10 seconds of
+elapsed time. The Go testing framework calibrates the Go side; an internal
+iteration loop calibrates the C side. An anti-cheat checksum over the parsed source
+blocks dead-code elimination. An A/A null test reruns the same binary
+against itself 3 times and reports the median absolute delta per fixture,
+to bound measurement noise.
+
+| Fixture | Production Go / C | Compact Go / C |
+|---|---:|---:|
+| `rewrite.go` | 5.044x | 3.355x |
+| `query_compile.go` | 6.212x | 3.439x |
+| `language.go` | 5.444x | 3.257x |
+| `grammargen/lr.go` | 5.866x | 3.096x |
+| **Geomean** | **5.62x** | **3.28x** |
+
+The production equal-fixture geomean is **5.62x C**. The compact
+equal-fixture geomean is **3.28x C**. The A/A null test reports a
+production self-ratio geomean of **1.0058**, with maximum absolute delta
+**1.83%**. It reports a C-oracle self-ratio geomean of **0.9987**, with
+maximum absolute delta **0.97%**.
+
+Mandatory caveats:
+
+- The ratio is benchtime-sensitive. It falls as benchtime grows: 6.07x at
+  750ms, 5.72x at 5s, 5.62x at 10s. Run6 is the most-converged point the
+  project has measured, not a fixed constant.
+- The C oracle for run5 and run6 is attested-only. Their build artifacts
+  exist only as sealed hashes inside the receipt. Run4's oracle source is
+  committed and locally reproducible, at git `183a2b69` on branch
+  `codex/c-timing-oracle-v3-source`.
+- The A/A null figures are reported values, not sealed pass/fail gates. The
+  receipts embed no numeric A/A threshold.
+- `run5-diag` ran with debug mode enabled (`dbgstat: enabled`, not
+  `disabled-since-boot`). Do not cite `run5-diag` for any claim.
+
+Citation:
+
+- Run ID: `strictboundary-20260720T081758Z-run6`.
+- Image digest lineage: run4 at digest
+  `sha256:2c9e4f9502a114034e62c3eae63b354763c0e4dcc49bec68e3bdf6f077c0ed7e`
+  (750ms benchtime); run5 and run5-diag at `strict-boundary:v4`, digest
+  `sha256:c748d32a6c794dcd9846d6b2c4a7b9e9dbf8cb6d5fd40966a3fa24be0fede468`
+  (5s benchtime; run5-diag is the debug build of that same image); run6 at
+  `strict-boundary:v5`, digest
+  `sha256:c531b2d14848a150da192a31fa97fe88a9d6ee34de02c30bfaf6089de42ddccf`
+  (10s benchtime, hardened, authoritative).
+- SHA-256 of the run6 C oracle binary:
+  `a2aaf98ec7b869d5e1a311fe209fe2bdc31335a60d2840a1ffc3d72877cd3274`.
+- gotreesitter git HEAD for run6: `eacda579b2ec177b1c72271eda207bb4f9668dc1`
+  (short form `eacda579`).
+- Verification record:
+  `spore.2026-07-20.session-rowan.enclave-receipt-verification` in the
+  hypha://m31labs/gotreesitter space (grafted canonical 2026-07-20;
+  content SHA-256
+  `ce1a885d332cc8c33088245b758381516fcedb82d96c4e0cf4020822674f0be7`;
+  hyphae receipt `hypha-receipt:2026-07-20:enclave-receipt-verification`).
+  The content hash pins the record independent of index state.
+
+The run6 ratios are not comparable to the historical bare-metal receipts
+below. The enclave method (single-run `ns/op` at `GOMAXPROCS=1` with 10s
+benchtime) and the bare-metal method (median of ten process-isolated
+samples) measure differently. A higher enclave ratio does not indicate a
+Go regression against those receipts.
+
+The enclave image itself is not reproducible outside Confidential Space.
+Treat its output as an attested measurement, not a locally rerunnable
+script. Reproduce the driver and oracle sources from git `183a2b69` on
+branch `codex/c-timing-oracle-v3-source`.
 
 ### First locked-oracle publication receipt
 
@@ -209,9 +312,12 @@ Receipt identities:
 - static C artifact SHA-256:
   `dfbed45811491be8d81e32b293ed5577222445dae47b67d876cedae09679a871`.
 
-### v0.40.0 production-code baseline (current)
+### v0.40.0 production-code baseline (historical, superseded)
 
-The current authenticated production receipt was collected on 2026-07-18 from
+**Status: superseded.** The sealed epoch above is the current Go-vs-C
+authority. This receipt stays as bare-metal history.
+
+This authenticated production receipt was collected on 2026-07-18 from
 the clean v0.40.0 tag target
 `1935a42c1ecc68a40147f0e13dc90bcd4b23f1b7` on `ns1007492`, CPU 14, with Go
 1.22.2 and `GOMAXPROCS=1`. The strict quiet-host and cgo/static-C deep-tree
@@ -469,7 +575,10 @@ The support boundary remains unchanged: this is a diagnostic clean fresh-full
 Go candidate, not a public `Parser.Parse`, recovery, incremental, included-range,
 or multi-grammar claim.
 
-### Current exact-revision production and construction-authenticated compact receipt
+### Exact-revision production and construction-authenticated compact receipt (historical, superseded)
+
+**Status: superseded.** The sealed epoch above is the current Go-vs-C
+authority. This receipt stays as bare-metal history.
 
 A paired clean publication was collected on 2026-07-18 from quiet host
 `ns1007492`, pinned to CPU 3 with Go 1.22.2, at exact revision
