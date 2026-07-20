@@ -7,6 +7,17 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Swift's certified runtime profile now attaches again.** PR #396
+  regenerated `swift.bin` for the DFA-minimization fix but did not update
+  the profile's pinned blob digest in `grammars/runtime_profiles.go`. The
+  stale digest silently dropped Swift's external-scanner skip-repeat policy
+  and its accepted-error retry skip. Swift parses still produced correct
+  trees; they ran extra retry passes. This release updates the pinned
+  digest to match the regenerated blob. No other grammar's profile carries
+  a stale digest.
+
 ## [0.44.0] - 2026-07-20
 
 ### Fixed
