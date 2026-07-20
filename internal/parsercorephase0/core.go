@@ -501,6 +501,11 @@ type MaterializationSubtreeView struct {
 	Extra             bool
 	External          bool
 	Terminal          bool
+	// Fragile mirrors subtreeRecord.fragile: the record was produced by a
+	// reduce/conflict-arm decision that ran under ambiguity (multiPop or an
+	// authenticated >=2-action conflict). Threaded to the public materializer so
+	// Lane-1 fragility metadata reaches compact-materialized public nodes.
+	Fragile bool
 }
 
 // Stats reports physical storage separately from semantic path counts. It is
@@ -3024,6 +3029,7 @@ func (c *Core) VisitMaterializationPostorder(
 				StartByte:         record.startByte, EndByte: record.endByte,
 				Children: c.children[record.firstChild : record.firstChild+record.childCount],
 				Extra:    record.extra, External: record.external, Terminal: record.terminal,
+				Fragile: record.fragile,
 			}
 			if err := visit(top.id, view); err != nil {
 				return err
@@ -3060,6 +3066,7 @@ func (c *Core) MaterializationView(id SubtreeID) (MaterializationSubtreeView, er
 		Extra:             record.extra,
 		External:          record.external,
 		Terminal:          record.terminal,
+		Fragile:           record.fragile,
 	}, nil
 }
 

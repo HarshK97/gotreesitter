@@ -1142,6 +1142,7 @@ func reuseTreeWithNewSource(oldTree *Tree, source []byte, dirtyNode *Node, clear
 	tree := newTreeWithUniqueArenas(oldTree.root, source, oldTree.language, arena, borrowed)
 	tree.forestFastPath = oldTree.forestFastPath
 	tree.incrementalReuseDisabled = oldTree.incrementalReuseDisabled
+	tree.compactMaterialized = oldTree.compactMaterialized
 	return tree
 }
 

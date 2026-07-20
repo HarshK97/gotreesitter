@@ -12,9 +12,14 @@ package gotreesitter
 // (preGotoState, parseState) pair can be reconstructed top-down by replaying
 // the LR goto/shift tables from the parent's exposed state over the children's
 // symbols. This file implements that reconstruction as a single push-shaped
-// top-down pass over the final tree (no pull-per-edge), and the differential
-// harness (export_test.go + parsestate_replay_diff_test.go) proves it equals
-// the production-recorded values byte-for-byte on the corpus.
+// top-down pass (no pull-per-edge). Replaying over the VISIBLE, materialized
+// tree reconstructs only ~0.30% of nodes (parsestate_replay_diff_test.go): the
+// visible tree has already erased the two things replay needs -- hidden-node
+// goto transitions and pre-alias grammar symbols. Admission-mode reconstruction
+// therefore runs over the FULL compact derivation instead
+// (parsestate_replay_compact.go, before hidden elision and aliasing), where the
+// same push-shaped traversal is exact except for the documented extra-preGoto
+// and internal collapse-class residuals; see the NOTE at the end of this file.
 //
 // The model, derived from the production assignments in parser_reduce.go:
 //

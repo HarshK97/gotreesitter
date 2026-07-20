@@ -190,6 +190,13 @@ func (p *Parser) tryTokenInvariantReuseForDisabledOldTree(source []byte, oldTree
 	if !oldTreeDisablesIncrementalReuse(oldTree) {
 		return nil, false
 	}
+	// A compact-materialized tree carries replayed (not live-recorded) parser
+	// states and no scanner checkpoints, so it is barred from even the
+	// token-invariant leaf fast path: force the full fresh parse (Lane 3
+	// review amendment 2).
+	if oldTree != nil && oldTree.compactMaterialized {
+		return nil, false
+	}
 	if p == nil || p.language == nil {
 		return nil, false
 	}

@@ -300,10 +300,14 @@ type DiagnosticParserCorePrefixResult struct {
 	Materialized      bool
 	// MaterializedTree is a structural diagnostic owned by the caller and must
 	// be released. It is set only after authenticated EOF acceptance and
-	// one-shot compact-tree materialization succeed. Compact phase zero does not
-	// retain the production parser's per-node reuse state or scanner checkpoints,
-	// so the returned tree is explicitly barred from incremental reuse; passing
-	// it to ParseIncremental takes the production parser's fresh-parse fallback.
+	// one-shot compact-tree materialization succeed. Compact phase zero carries
+	// only table-REPLAYED per-node parser states (exact where reconstructable,
+	// abstained to the 0 "unknown -> recompute" sentinel otherwise) and no
+	// scanner checkpoints, so the tree is HARD-barred from incremental reuse by
+	// its compactMaterialized provenance flag (checked in
+	// tryTokenInvariantReuseForDisabledOldTree): passing it to ParseIncremental
+	// always takes the production parser's full fresh-parse fallback, never even
+	// the token-invariant leaf fast path.
 	MaterializedTree *Tree
 }
 
@@ -1710,22 +1714,45 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 	}
 	stamp := func(id core.SubtreeID, node *Node) {
 		// Stamp the reconstructed state for THIS derivation id onto the node
-		// that materializes it. For a unary collapse chain the driver visits
-		// the ids inner-to-outer (postorder) and reuses one node object, so
-		// the last (outermost) stamp wins -- mirroring production's collapse,
-		// which overwrites parseState = goto(topState, outerSymbol) as each
-		// wrapper reduce fires. The residual gap is the small class of chains
-		// where production declines the collapse under a zero-width lookahead
-		// (keeping the inner visible state) but the derivation-time compact
-		// route cannot see that lookahead; see the differential harness.
+		// that materializes it. For a unary collapse chain the driver visits the
+		// ids inner-to-outer (postorder) and reuses one node object, so the last
+		// (outermost) stamp wins -- mirroring production's collapse, which
+		// overwrites parseState = goto(topState, outerSymbol) as each wrapper
+		// reduce fires.
+		//
+		// replayStates.get returns ok=false when the top-down replay could not
+		// find a table transition for this id (an extra/comment leaf whose
+		// floated stack position does not match a live shift, or any node whose
+		// production shape is not a plain shift/goto of its visible symbol). In
+		// that case the reconstructed state is NOT authoritative, so we ABSTAIN:
+		// leave parseState/preGotoState at their zero value. Downstream, a zero
+		// parseState is the "unknown -> recompute" sentinel (incremental
+		// self-healing), which is strictly safer than stamping a known-wrong but
+		// trusted non-zero state (Phase-3 Lane 3 review amendment 1).
 		if replayStates != nil && node != nil {
-			pre, ps, ok := replayStates.get(id)
-			if ok {
-				node.preGotoState = pre
+			pre, ps, preOk, psOk := replayStates.get(id)
+			if psOk {
 				node.parseState = ps
+			}
+			if preOk {
+				node.preGotoState = pre
 			}
 		}
 		nodesByID[id] = node
+	}
+	// markFragile threads the compact record's ambiguity bit (subtreeRecord
+	// .fragile, exposed on MaterializationSubtreeView.Fragile) onto the public
+	// node so Lane-1's isFragile() reuse gate sees compact-materialized trees
+	// the same as production-built ones (Phase-3 Lane 3 review amendment 7). The
+	// compact record collapses production's fragileLeft/fragileRight into one
+	// conservative flag, so both edges are set. Set-only (never clears), matching
+	// the record's monotone contract on shared/deduped records.
+	markFragile := func(node *Node, fragile bool) {
+		if node == nil || !fragile {
+			return
+		}
+		node.setFragileLeft(true)
+		node.setFragileRight(true)
 	}
 	err = withDiagnosticParserCoreMaterializationScratch(parser, func(materializationScratch *diagnosticParserCoreMaterializationScratch) error {
 		return compact.VisitMaterializationPostorder(payloads, poll, func(id core.SubtreeID, view core.MaterializationSubtreeView) error {
@@ -1763,6 +1790,7 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 			if child := parser.collapsibleRawUnarySelfReduction(action, Token{}, arena, entries, 0, len(entries)); child != nil {
 				child.productionID = view.ProductionID
 				child.dynamicPrecedence += int32(view.DynamicPrecedence)
+				markFragile(child, view.Fragile)
 				stamp(id, child)
 				return nil
 			}
@@ -1773,6 +1801,7 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 			if child := parser.collapsibleUnarySelfReduction(action, Token{}, arena, entries, 0, len(entries), children, fieldIDs); child != nil {
 				child.productionID = view.ProductionID
 				child.dynamicPrecedence += int32(view.DynamicPrecedence)
+				markFragile(child, view.Fragile)
 				stamp(id, child)
 				return nil
 			}
@@ -1785,6 +1814,7 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 			parent.startPoint = points.point(view.StartByte)
 			parent.endPoint = points.point(view.EndByte)
 			parent.setExtra(view.Extra)
+			markFragile(parent, view.Fragile)
 			stamp(id, parent)
 			return nil
 		})
@@ -1829,6 +1859,7 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 		return rejectTree(fmt.Errorf("parser-core phase zero: accepted compact root is incomplete or erroneous: span=%d..%d source=%d error=%t", root.startByte, root.endByte, sourceLen, root.HasError()))
 	}
 	tree.incrementalReuseDisabled = true
+	tree.compactMaterialized = true
 	tree.setParseRuntime(ParseRuntime{
 		StopReason: ParseStopAccepted, SourceLen: sourceLen, ExpectedEOFByte: sourceLen,
 		RootEndByte: root.endByte, LastTokenEndByte: sourceLen, LastTokenSymbol: 0, LastTokenWasEOF: true,

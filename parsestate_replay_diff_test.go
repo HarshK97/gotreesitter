@@ -18,9 +18,12 @@ import (
 // class whose state is not a plain table transition of its visible symbol.
 //
 // This test is diagnostic-first: it never fails on mismatch, it PRINTS the
-// full breakdown so the exactness of the replay model is measured on real
-// trees. A separate gate test (TestParseStateReplayExactClasses) asserts the
-// classes that must be exact.
+// full breakdown so the exactness of the visible-tree replay model is measured
+// on real trees (it is only ~0.30% exact -- the visible tree has lost the
+// hidden-node gotos and pre-alias symbols replay needs). The authoritative
+// go/no-go gate runs over the FULL compact derivation instead and asserts the
+// classes that must be exact: TestParseStateReplayCompactDifferential
+// (parsestate_replay_compact_diff_test.go).
 func TestParseStateReplayDifferential(t *testing.T) {
 	for _, c := range replayCorpus(t) {
 		c := c
