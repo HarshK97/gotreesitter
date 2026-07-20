@@ -27,16 +27,16 @@ off/current/candidate/candidate/current/off sequence, and quiet-host admission.
   the equal-fixture geomean by **4.01% versus the previous profile** and 3.84%
   versus PGO-off. Every fixture improved versus the previous profile by
   3.30-5.03%, and exact selected-store admission stayed green.
-- On the existing five-grammar `pgo_repdriver` workload, it was statistically
-  indistinguishable from the previous profile (`p=0.971`, with a -0.14% median
-  point estimate) and **5.37% faster than PGO-off**. The candidate's production
-  allocation medians were slightly higher than the previous profile: +0.43%
-  B/op and +0.07% allocs/op. Off, previous, and composite builds produced the
-  same 14-file digest
+- On the existing five-grammar `pgo_repdriver` workload, the composite was
+  statistically indistinguishable from the previous profile (`p=0.971`, with a
+  -0.14% median point estimate). It was **5.37% faster than PGO-off**. The
+  candidate's production allocation medians were slightly higher than the
+  previous profile: +0.43% B/op and +0.07% allocs/op. Off, previous, and
+  composite builds produced the same 14-file digest
   (`e7b82899069a6cbb6e667266d214036e64beb114c2d8449de613bafa0ddb7286`).
-- Median maximum RSS did not regress: 39,552 KiB versus 39,700 KiB on the
-  selected-store board and 103,202 KiB versus 104,768 KiB on the production
-  board.
+- Median maximum RSS did not regress. It was 39,552 KiB versus 39,700 KiB on
+  the selected-store board and 103,202 KiB versus 104,768 KiB on the
+  production board.
 
 These are scoped results for the two named workloads, not a fleet-wide or
 universal Go performance claim. PGO changes generated machine code, not parse
@@ -52,9 +52,13 @@ root:
 GO=/path/to/go1.22.2/bin/go ./pgo/compose_default.sh
 ```
 
-The script verifies both immutable input hashes, merges the production input
-once and the selected/clean/error input twice with `go tool pprof -proto`, and
-refuses to publish an output whose hash differs from the admitted artifact.
+The script:
+
+- verifies both immutable input hashes;
+- merges the production input once and the selected/clean/error input twice
+  with `go tool pprof -proto`; and
+- refuses to publish an output whose hash differs from the admitted artifact.
+
 It may also write to a scratch destination:
 
 ```sh

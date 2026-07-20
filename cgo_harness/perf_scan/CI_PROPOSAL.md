@@ -1,17 +1,20 @@
 # Hard zero-cliff gate operations
 
 The authoritative real-corpus run is a manually dispatchable hard gate on a
-dedicated `[self-hosted, perf]` runner. The job itself is blocking:
-there is no `continue-on-error`, and a single full-parse ratio above `10.0x`,
-Go parser/resource stop, incomplete locked-corpus row, or unauthenticated
-corpus selection makes the run red.
+dedicated `[self-hosted, perf]` runner. The job itself is blocking: there is
+no `continue-on-error`. Any of the following makes the run red:
+
+- a single full-parse ratio above `10.0x`;
+- a Go parser/resource stop;
+- an incomplete locked-corpus row; or
+- unauthenticated corpus selection.
 
 This is intentionally not a required check on every pull request. A 206-
 language largest-file fleet sweep needs the external corpus, C-reference build
 cache, multiple GiB of isolated memory, and hours of quiet-box time. The normal
 PR lane instead runs the fast budget/status unit tests and validates the
 checked-in contract. Performance-sensitive changes should use a focused local
-Docker run before merge; a full local run closes fleet-wide coverage until the
+Docker run before merge. A full local run closes fleet-wide coverage until the
 dedicated runner is authorized for manual dispatch and a future cadence.
 
 The executable workflow is `.github/workflows/perf-scan-gate.yml`. It is
@@ -34,19 +37,26 @@ The runner must provide:
 
 The lock file is authenticated before the container starts. Its SHA-256 must
 match both `perf_scan/corpus_sources.lock.sha256` and the structured budget
-metadata. Before timing, the workflow walks all 206 lock rows and requires a
-corresponding Git checkout, the exact locked `HEAD`, a resolvable commit
-object, the locked origin URL, no external Git object alternate, no tracked
-worktree or index changes, and the locked corpus subpath.
+metadata. Before timing, the workflow walks all 206 lock rows. For each row,
+it requires:
+
+- a corresponding Git checkout;
+- the exact locked `HEAD`;
+- a resolvable commit object;
+- the locked origin URL;
+- no external Git object alternate;
+- no tracked worktree or index changes; and
+- the locked corpus subpath.
+
 The harness then selects every locked language and checks that all locked
 languages exist in the grammar registry. Corpus or lock drift is a gate
 failure, not an implicit baseline update.
 
 The checkout check intentionally does not reject every untracked path. The
 current corpus builder uses untracked nested dependency checkouts for several
-languages and deterministic `.gts-extracted/<language>` trees for languages
-whose fixtures are embedded inside another syntax. Some lock rows explicitly
-select those extracted directories, so `git status --porcelain` cleanliness
+languages. It also uses deterministic `.gts-extracted/<language>` trees for
+languages whose fixtures are embedded inside another syntax. Some lock rows
+explicitly select those extracted directories, so `git status --porcelain` cleanliness
 would reject the corpus by construction. The scheduled job mounts the whole
 corpus read-only and does require the parent tracked tree and index to be clean.
 Longer term, the supplemental trees should gain their own content manifest so
@@ -78,7 +88,7 @@ scoreboard when one exists.
 The practical cadence today is local Docker execution plus explicit manual
 dispatch after runner provisioning. The intended steady state is nightly plus
 manual dispatch. If the dedicated runner is temporarily unavailable, a
-requested run should remain queued or fail visibly; it must not silently fall
+requested run should remain queued or fail visibly. It must not silently fall
 back to a shared hosted runner whose corpus, memory, and timing characteristics
 differ. A future artifact-backed corpus can add more runners without changing
 the authenticated lock or gate semantics.

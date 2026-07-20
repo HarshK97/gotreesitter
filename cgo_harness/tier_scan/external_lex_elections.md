@@ -1,10 +1,12 @@
 # Wave 4 External Lex-State Election Ledger
 
 This ledger covers every grammar in `cgo_harness/tier_scan/exts.tsv`.
-It tracks whether each grammar's external-scanner recovery path is
-default-elected, staged, blocked on a missing precise ExternalLexStates
-table, or not applicable because the grammar has no registered Go external
-scanner.
+For each grammar, it tracks whether the external-scanner recovery path is:
+
+- default-elected;
+- staged;
+- blocked on a missing precise ExternalLexStates table; or
+- not applicable, because the grammar has no registered Go external scanner.
 
 ## Summary
 
