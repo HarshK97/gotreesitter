@@ -138,6 +138,25 @@ func buildLexDFA(ctx context.Context, patterns []TerminalPattern, extraSymbols [
 		allStates = append(allStates, lexStates...)
 	}
 
+	// Collapse observationally-equivalent states across lex-mode boundaries.
+	// See minimizeLexStates for why this is required in addition to (not
+	// instead of) the mode-spec dedup computeLexModesWithContext already
+	// performs: that upstream dedup only removes byte-identical
+	// (validSymbols, preferredSymbols, skipWhitespace) mode specs, which for
+	// grammars like Swift is close to a no-op (nearly every mode differs
+	// from its neighbors by at least one contextual-keyword terminal). Most
+	// of the resulting per-mode automata nonetheless share large
+	// behaviorally-identical sub-regions; minimizeLexStates finds and merges
+	// those at the state level instead, with no observable behavior change
+	// for any consumer that treats LexState indices as opaque.
+	//
+	// Skipped when the ctx carries withLexMinimizeDisabled (see
+	// dfa_minimize.go) -- used by GenerateLanguageForC, whose C emitter
+	// requires the un-minimized, per-mode-contiguous state layout.
+	if !lexMinimizeDisabledInCtx(ctx) {
+		allStates, modeOffsets = minimizeLexStates(allStates, modeOffsets)
+	}
+
 	return allStates, modeOffsets, nil
 }
 

@@ -12,8 +12,13 @@ import (
 // GenerateC compiles a Grammar to a standard tree-sitter parser.c string.
 // The output is compatible with tree-sitter's C runtime ABI 14/15 features
 // that grammargen currently emits.
+//
+// Uses GenerateLanguageForC rather than GenerateLanguage: EmitC's lexer
+// codegen (modeStartOf, see codegen_c.go) requires each lex mode's DFA
+// states to occupy a contiguous, increasing index block, which
+// GenerateLanguage's cross-mode LexState minimization does not preserve.
 func GenerateC(g *Grammar) (string, error) {
-	lang, err := GenerateLanguage(g)
+	lang, err := GenerateLanguageForC(g)
 	if err != nil {
 		return "", fmt.Errorf("generate language: %w", err)
 	}

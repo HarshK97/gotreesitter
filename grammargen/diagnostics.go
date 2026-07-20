@@ -1075,6 +1075,13 @@ type reportBuildOptions struct {
 	includeDiagnostics bool
 	includeLanguage    bool
 	includeBlob        bool
+	// disableLexStateMinimize skips buildLexDFA's cross-mode LexState
+	// minimization (see dfa_minimize.go). Only GenerateLanguageForC sets
+	// this: the C emitter needs the un-minimized, per-mode-contiguous
+	// LexStates layout. Every other caller (GenerateLanguage, Generate --
+	// i.e. the blob/runtime path where the memory win actually matters)
+	// leaves this false and gets the minimized, memory-reduced tables.
+	disableLexStateMinimize bool
 }
 
 func generateWithReport(g *Grammar, opts reportBuildOptions) (*GenerateReport, error) {
@@ -1094,6 +1101,9 @@ func GenerateWithReport(g *Grammar) (*GenerateReport, error) {
 // through LR table construction for cancellation support. When the context
 // is cancelled, the LR builder aborts promptly and returns an error.
 func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOptions) (*GenerateReport, error) {
+	if opts.disableLexStateMinimize {
+		bgCtx = withLexMinimizeDisabled(bgCtx)
+	}
 	report := &GenerateReport{}
 	trace := newPhaseTrace(g)
 

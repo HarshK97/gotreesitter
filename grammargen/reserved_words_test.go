@@ -143,7 +143,7 @@ func TestGenerateLanguageReservedWordSets(t *testing.T) {
 }
 
 func TestEmitCReservedWords(t *testing.T) {
-	lang, err := GenerateLanguage(reservedWordGrammar())
+	lang, err := GenerateLanguageForC(reservedWordGrammar())
 	if err != nil {
 		t.Fatalf("GenerateLanguage failed: %v", err)
 	}

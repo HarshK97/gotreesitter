@@ -48,6 +48,25 @@ func GenerateLanguageWithContext(ctx context.Context, g *Grammar) (*gotreesitter
 	return report.Language, nil
 }
 
+// GenerateLanguageForC compiles a Grammar into a Language struct suitable
+// for C emission (EmitC / GenerateC). It disables buildLexDFA's cross-mode
+// LexState minimization (see dfa_minimize.go): the C emitter's modeStartOf
+// requires each lex mode's states to occupy a contiguous, increasing index
+// block, an invariant minimization does not preserve. Every other Language
+// consumer (the pure-Go runtime, the encoded blob) does not have that
+// constraint and should keep using GenerateLanguage / Generate, which
+// return the smaller, minimized tables.
+func GenerateLanguageForC(g *Grammar) (*gotreesitter.Language, error) {
+	report, err := generateWithReportCtx(context.Background(), g, reportBuildOptions{
+		includeLanguage:         true,
+		disableLexStateMinimize: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return report.Language, nil
+}
+
 // GenerateLanguageAndBlobWithContext is like GenerateLanguageAndBlob but
 // accepts a context for cancellation.
 func GenerateLanguageAndBlobWithContext(ctx context.Context, g *Grammar) (*gotreesitter.Language, []byte, error) {
