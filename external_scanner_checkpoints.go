@@ -277,8 +277,20 @@ func currentExternalScannerCheckpoint(ts TokenSource) (externalScannerCheckpoint
 
 func canReuseNodeWithExternalScannerCheckpoint(ts TokenSource, startState StateID, node *Node) (externalScannerCheckpointRef, bool) {
 	dts := underlyingDFATokenSource(ts)
-	if dts == nil || !languageUsesExternalScannerCheckpoints(dts.language) {
+	if dts == nil {
 		return externalScannerCheckpointRef{}, true
+	}
+	if !languageUsesExternalScannerCheckpoints(dts.language) {
+		// Non-checkpoint external-scanner path. The W4 scanner-quiescence
+		// classifier is the per-boundary authority here (campaign O(edit),
+		// spec.campaign.oedit). A stateless scanner (Go's automatic-semicolon
+		// scanner, proven in external_scanner_quiescence.go) is quiescent at
+		// every boundary, so reuse is sound and returns a zero checkpoint the
+		// non-checkpoint reuse path never reads. A scanner that opts out of
+		// incremental reuse is refuted, and the caller fails closed. Every
+		// other language keeps the legacy blanket admission, so this stays
+		// neutral for production languages today.
+		return externalScannerCheckpointRef{}, externalScannerBoundaryQuiescentWithoutCheckpoint(dts.language)
 	}
 	if node == nil || startState != node.PreGotoState() {
 		return externalScannerCheckpointRef{}, false

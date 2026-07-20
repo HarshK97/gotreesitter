@@ -49,8 +49,15 @@ type reuseCursor struct {
 	// Node.isFragile() -- see tryReuseSubtree's non-leaf fallback lane below
 	// and the Parser.ReuseRejectFragileNonLeaf profile field (parser.go).
 	rejectFragileNonLeaf uint64
-	forestFastPath       bool
-	languageName         string // cached for language-specific reuse safety policies
+	// rejectScannerUnquiescent counts reuse candidates rejected by the external
+	// scanner checkpoint/quiescence gate (canReuseNodeWithExternalScannerCheck
+	// point) -- either a checkpoint state mismatch or a refuted quiescence
+	// proof (campaign O(edit) W4, external_scanner_quiescence.go). It stays 0
+	// for stateless-scanner languages such as Go, whose every boundary is
+	// proven quiescent. See the Parser.ReuseRejectScannerUnquiescent field.
+	rejectScannerUnquiescent uint64
+	forestFastPath           bool
+	languageName             string // cached for language-specific reuse safety policies
 }
 
 // reuseScratch holds reusable buffers for incremental reuse traversal.
@@ -95,6 +102,7 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 	c.rejectLargeNonLeaf = 0
 	c.rejectStaleNonLeafBoundary = 0
 	c.rejectFragileNonLeaf = 0
+	c.rejectScannerUnquiescent = 0
 	c.forestFastPath = oldTree.forestFastPath
 	c.languageName = ""
 	if oldTree.language != nil {
@@ -547,6 +555,7 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 		}
 		cp, ok := canReuseNodeWithExternalScannerCheckpoint(ts, state, n)
 		if !ok {
+			idx.rejectScannerUnquiescent++
 			continue
 		}
 		return reuseNode(p, s, n, nextState, state, lookahead, ts, idx, entryScratch, gssScratch, cp)
@@ -632,6 +641,7 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 		startState := s.top().state
 		cp, ok := canReuseNodeWithExternalScannerCheckpoint(ts, startState, n)
 		if !ok {
+			idx.rejectScannerUnquiescent++
 			continue
 		}
 		return reuseNode(p, s, n, nextState, startState, lookahead, ts, idx, entryScratch, gssScratch, cp)
@@ -712,7 +722,7 @@ func (c *reuseCursor) rejectDirtyTopLevelPrefix(start uint32) bool {
 		start < c.topLevelResumeByte
 }
 
-// blockSpliceScannerSkipEligible reports whether the reused subtree n may be
+// blockSpliceScannerSkipEligible reports whether a reused subtree may be
 // spliced with an O(1) byte skip (SkipToByte, no token-by-token re-lex) on a
 // non-checkpoint external-scanner language. Campaign O(edit) W1 block-splice
 // (spec.campaign.oedit) needs this so a whole run of unchanged top-level
@@ -738,8 +748,8 @@ func (c *reuseCursor) rejectDirtyTopLevelPrefix(start uint32) bool {
 // full-serialization incremental invariant gate across every corpus language
 // (python is excluded here: it takes the recorded-checkpoint path, not this
 // one). Checkpoint languages never reach this helper.
-func blockSpliceScannerSkipEligible(dts *dfaTokenSource, n *Node) bool {
-	return dts != nil && n != nil && dts.externalScannerQuiescent()
+func blockSpliceScannerSkipEligible(dts *dfaTokenSource) bool {
+	return dts != nil && dts.externalScannerQuiescent()
 }
 
 func reuseNode(p *Parser, s *glrStack, n *Node, nextState StateID, startState StateID, lookahead Token, ts TokenSource, idx *reuseCursor, entryScratch *glrEntryScratch, gssScratch *gssScratch, checkpoint externalScannerCheckpointRef) (Token, uint32, bool) {
@@ -817,7 +827,7 @@ func reuseNode(p *Parser, s *glrStack, n *Node, nextState StateID, startState St
 		// so the O(1) byte skip is byte-exact, not a heuristic. It is scoped by
 		// blockSpliceScannerSkipEligible below to hold at BOTH the span start
 		// (checked here) and the span end.
-		if blockSpliceScannerSkipEligible(dts, n) {
+		if blockSpliceScannerSkipEligible(dts) {
 			if skipper, ok := ts.(PointSkippableTokenSource); ok {
 				return skipper.SkipToByteWithPoint(n.EndByte(), n.EndPoint()), reusedBytes, true
 			}

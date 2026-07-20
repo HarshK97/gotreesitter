@@ -242,7 +242,7 @@ tree.Edit(gotreesitter.InputEdit{
 tree2, _ := parser.ParseIncremental(src, tree)
 ```
 
-`ParseIncremental` walks the old tree's spine, identifies the edit region, and reuses unchanged subtrees by reference. It re-lexes and re-parses only the invalidated span. Both leaf and non-leaf subtrees are eligible for reuse; pre-goto state tracking on interior nodes drives non-leaf reuse, so the parser can skip entire subtrees without re-deriving their contents.
+`ParseIncremental` walks the old tree's spine, identifies the edit region, and reuses unchanged content by reference. It re-lexes and re-parses only the invalidated span. Reuse covers leaf nodes, the unchanged suffix, the untouched root, and — on a clean old tree — unchanged top-level siblings after the edit. Admission for top-level sibling reuse is per node: a fragility bit plus byte-range equality, not a language allowlist. This keeps clean edits near the top of the file, and the trailing sibling run after any edit, at O(edit) cost. Edits deeper in the file still pay a cost that grows with the number of preceding top-level items. Interior, non-top-level subtree reuse does not ship yet; it stays on the roadmap.
 
 When no edit has occurred, `ParseIncremental` detects the nil-edit on a pointer check and returns in single-digit nanoseconds with zero allocations.
 
@@ -538,6 +538,11 @@ witness, and it shrinks as certified engine mechanisms subsume shims. See
   a ceiling on the maximum input complexity that parses without error.
   The caps are tunable but not removable without risking unbounded
   resource consumption.
+- **TypeScript arrow-function return type**: an arrow function with a
+  return-type annotation as a `const`/`let` initializer parses as
+  `ERROR` (TSX is unaffected). See
+  [issue #402](https://github.com/odvcencio/gotreesitter/issues/402).
+  A fix is in progress.
 
 ## Adding a language
 
@@ -585,7 +590,7 @@ gotreesitter is a ground-up reimplementation of the tree-sitter runtime in Go. N
 
 **Parser** — Table-driven LR(1) with GLR fallback. When a `(state, symbol)` pair maps to multiple actions in the parse table, the parser forks the stack and explores all alternatives in parallel. Stack merging collapses equivalent paths. Safety limits (iteration count, stack depth, node count) scale with input size and prevent runaway exploration on ambiguous grammars.
 
-**Incremental engine** — Walks the edit region of the previous tree and reuses unchanged subtrees by reference. Storing a pre-goto parser state on each interior node enables non-leaf subtree reuse, so the parser can skip an entire subtree and resume in the correct state without re-deriving its contents. External scanner state is serialized on each node boundary, so scanner-dependent subtrees can be reused without replaying the scanner from the start.
+**Incremental engine** — Walks the edit region of the previous tree and reuses unchanged content by reference. Reuse covers leaf nodes, the unchanged suffix, the untouched root, and — on a clean old tree — unchanged top-level siblings after the edited node. Admission for top-level sibling reuse is per node: a fragility bit plus byte-range equality, not a language allowlist. This splice keeps clean edits near the top of the file, and the trailing sibling run after any edit, at O(edit) cost, Go and CSS alike. Edits deeper in the file still pay a cost that grows with the number of preceding top-level items. Interior, non-top-level subtree reuse does not ship yet; it stays on the roadmap. For languages whose external scanner is reuse-safe, or records a boundary checkpoint, scanner-dependent content can be reused without a scanner replay from the start of the file.
 
 **Lexer** — Two paths. `ts2go` generates a DFA lexer from the grammar's lex tables, and it handles most languages. For grammars where the DFA is not enough (for example, Go's automatic semicolons, or YAML's indentation-sensitive structure), hand-written Go token sources implement the `TokenSource` interface directly.
 

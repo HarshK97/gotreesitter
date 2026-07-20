@@ -7,6 +7,36 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **TypeScript arrow functions with a return-type annotation** (`const f =
+  (a: A): B => { ... }`) no longer collapse to `ERROR` when they appear as
+  the value of a `const`/`let` declaration (issue #402). The typed-arrow
+  and destructured-arrow-return-type merge-width detectors added in PR #389
+  did not cover this shape: neither requires the arrow to be immediately
+  preceded by `)` (the destructured-return-type case scans past a
+  return-type annotation, but only accepts a destructured `[`/`{`
+  parameter list). A typed, non-destructured parameter list combined with
+  an explicit return-type annotation fell through both. This fix adds a
+  dedicated detector for that shape and widens the merge budget to two
+  survivors, matching the existing typed-arrow and default-parameter
+  cases. TSX was unaffected; its wider JSX conflict set kept a second
+  survivor alive through the same fork. The detector's first pass also
+  missed sibling shapes with a parenthesized return type (`(a: A): (B) =>
+  a`, `(a: A): (string | number) => a`, `(a: A): (() => B) => a`); its
+  backward colon scan now balances parens so a colon nested inside the
+  return type is not mistaken for the top-level boundary.
+- This is the **third** source-heuristic merge-width detector guarding the
+  same root cause as the PR #389 default-parameter fix: the GLR engine's
+  steady-state merge budget discards a live fork by score before any
+  structural comparison runs. Each detector treats one shape's symptom.
+  The structural cure -- comparing candidate forks structurally before
+  falling back to score at the merge site -- remains tracked and is in
+  active development on `codex/glr-structure-before-score`. As with its
+  siblings, this detector's backward scans are bounded to 512/2048-byte
+  windows; a return-type expression whose own top-level colon sits past
+  that window silently misses the widening.
+
 ## [0.44.1] - 2026-07-20
 
 ### Fixed
