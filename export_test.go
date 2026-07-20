@@ -57,6 +57,17 @@ func SetTypeScriptMergeWidthDetectorsDisabledForTests(disabled bool) func() {
 	return func() { typeScriptMergeWidthDetectorsDisabled = prev }
 }
 
+// SetTypeScriptCapOneStructurePreferenceForTests selects variant B for
+// head-to-head evaluation against the shipping cap-two policy: it keeps the
+// TypeScript full-parse cap at one and prefers the structurally-richer fork
+// before score at the cap-one discard site. It returns a restore function and
+// is never set in production.
+func SetTypeScriptCapOneStructurePreferenceForTests(enabled bool) func() {
+	prev := typeScriptCapOneStructurePreference
+	typeScriptCapOneStructurePreference = enabled
+	return func() { typeScriptCapOneStructurePreference = prev }
+}
+
 // ReplayDiffTree replays the LR tables over the tree rooted at root and
 // compares the reconstructed states against the recorded ones on every node.
 // It mutates nothing. maxSamples bounds the retained mismatch examples.

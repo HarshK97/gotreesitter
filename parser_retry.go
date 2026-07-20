@@ -1070,8 +1070,17 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 		// return: measured dom.generated.d.ts (2.3 MB) and checker.ts (3.1 MB)
 		// parse in the same time and heap envelope at cap-two as cap-one, and
 		// #389 established cap-two as .d.ts-safe while cap-six is not.
-		if !parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap > typeScriptSteadyStateMergeCap && typescriptFullParseCanUseTightMergeCap(sourceLen...) {
-			return typeScriptSteadyStateMergeCap
+		if !parseMaxMergePerKeyEnvConfigured() && typescriptFullParseCanUseTightMergeCap(sourceLen...) {
+			// Variant B (test seam only): keep the tight cap-one width and fix
+			// the defect at the discard site instead of widening. See
+			// typeScriptCapOneStructurePreference.
+			if typeScriptCapOneStructurePreference {
+				if mergePerKeyCap > 1 {
+					return 1
+				}
+			} else if mergePerKeyCap > typeScriptSteadyStateMergeCap {
+				return typeScriptSteadyStateMergeCap
+			}
 		}
 	case "java":
 		// Giant generated string/switch-heavy Java sources can retain millions
@@ -1129,6 +1138,18 @@ const typeScriptSteadyStateMergeCap = 2
 // true, disabling the per-shape widening, and the detector-era regression
 // families must still pass on cap-two alone. It is never set in production.
 var typeScriptMergeWidthDetectorsDisabled = false
+
+// typeScriptCapOneStructurePreference selects variant B for evaluation: keep
+// the TypeScript full-parse cap at one and, at the cap-one discard site
+// (stackCompareMergeSmallCapOne), prefer the structurally-richer fork before
+// score instead of after it. The detector-family correct derivation carries an
+// extra structural reduction (required_parameter, call_signature) that lowers
+// its cumulative dynamic-precedence score, so cap-one score-first discards it;
+// preferring the lower-score fork keeps it. This is a single-survivor heuristic,
+// not the faithful GLR keep-both semantics, so it is a test seam ONLY, default
+// off. It is compared head-to-head against the shipping cap-two policy; the flag
+// forces cap-one so the discard-site change is actually exercised.
+var typeScriptCapOneStructurePreference = false
 
 func typeScriptFullParseNeedsTypedArrowMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
 	return !typeScriptMergeWidthDetectorsDisabled &&
