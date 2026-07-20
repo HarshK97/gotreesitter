@@ -51,12 +51,22 @@ reason in a trace.
 
 GopherCon freeze-checklist item 15 (owner decision, `plan.gophercon-freeze-checklist-2026-08`)
 already schedules a sealed-enclave re-run at the frozen tag, using the
-committed collector/verifier (`cgo_harness/cmd/go_c_timing_collect`,
-`cgo_harness/cmd/go_c_timing_verify`, commit `183a2b69`). That image
+collector/verifier at `cgo_harness/cmd/go_c_timing_collect` and
+`cgo_harness/cmd/go_c_timing_verify` (commit `183a2b69`). That image
 rebuild is already budgeted (about $0.40) and already carries
 Ed25519 receipt signatures plus RS256 JWKS attestation, so a Phase-3
 production-vs-candidate pair rides for free alongside the run6-successor
 receipt.
+
+**Dependency, check first:** commit `183a2b69` lives on branch
+`codex/c-timing-oracle-v3-source`, not on `main`. It has not merged.
+Option A only works if that branch lands before the re-seal session, or
+if the re-seal explicitly builds from that branch instead of `main`.
+Confirm the merge status (or get an explicit citation decision from the
+owner, per freeze-checklist item 15's "decide whether the verify tools
+... merge to main") before committing to this path — do not assume the
+collector/verifier is available on whatever ref the re-seal job checks
+out by default.
 
 Reasons to prefer this path:
 
@@ -148,13 +158,26 @@ Do not run the production and candidate passes on different revisions.
    ```
 
 5. Each invocation fails closed on: dirty worktree, inherited `GOT_*`
-   overrides, non-quiet host (load1 > 1.25 or io_avg10 > 0.05 for three
-   consecutive 10s checks across up to twelve attempts), and a static-C
-   or Go/candidate deep-tree digest mismatch against the locked hashes
-   above. Do not pass `--allow-dirty`, `--allow-got-env`,
-   `--skip-cgo-admission`, or `--skip-quiet-admission` for a publication
-   receipt — those flags force the `NONPUBLICATION_DIAGNOSTIC` label and
-   the receipt cannot back an admission decision.
+   overrides, non-quiet host, and a static-C or Go/candidate deep-tree
+   digest mismatch against the locked hashes above. The quiet-host
+   check requires three consecutive 10s-spaced PASS readings (up to
+   twelve attempts) against all three of:
+
+   - `load1 < 1.25` (a reading of `load1 >= 1.25` fails the attempt);
+   - `io_avg10 <= 0.05`;
+   - `MemAvailable >= max(MemTotal / 4, 8 GiB)`.
+
+   The memory floor means an 8 GB host can never pass — `MemTotal / 4`
+   never exceeds the 8 GiB floor on an 8 GB box, so `MemAvailable`
+   would need to equal the entire machine's RAM with nothing else
+   resident. Provision at least 16 GB RAM for either host option below
+   (an `n2d-standard-2` at 8 GB is disqualified; use `n2d-standard-4`
+   or larger). Do not pass `--allow-dirty`, `--allow-got-env`,
+   `--skip-cgo-admission`, or `--skip-quiet-admission` on a publication
+   run — publication mode rejects those flags outright (the script
+   exits 2 before any sample is collected); they are recognized only
+   under `--diagnostic`, where the receipt is labeled
+   `NONPUBLICATION_DIAGNOSTIC` and cannot back an admission decision.
 
 ## GOMAXPROCS and pinning
 
@@ -196,7 +219,7 @@ resolve a 2% geomean claim.
 
 ## Statistical thresholds
 
-Apply these checks in order. All four must pass for the timing half to
+Apply these checks in order. All five must pass for the timing half to
 be a GO.
 
 1. **Exact trees, first.** Before comparing any timing number, confirm
@@ -227,20 +250,25 @@ be a GO.
    the publication numbers, the local Go-benchmark form is the fast
    pre-flight sanity check.)
 
-3. **Canonical equal-fixture geomean (>= 2% improvement).** Compute the
-   geometric mean of the four `production_median / candidate_median`
-   ns/op ratios (note the direction — this is production-over-candidate,
-   so a ratio above `1.0` is an improvement):
+3. **Canonical equal-fixture geomean (at least 2% improvement).**
+   Compute the geometric mean of the four
+   `production_median / candidate_median` ns/op ratios (note the
+   direction — this is production-over-candidate, so a ratio above
+   `1.0` is an improvement):
 
    ```
    geomean = (r_rewrite * r_query_compile * r_language * r_grammargen_lr) ** 0.25
    ```
 
-   Require `geomean >= 1.02`. This mirrors exactly how every existing
-   BENCH.md receipt reports its equal-fixture geomean (see "candidate
-   improves the equal-fixture geomean by 20.07%" in the post-fusion
-   receipt) — reuse that same arithmetic, do not invent a new geomean
-   convention for this gate.
+   Require `geomean >= 1.0204`. A literal "at least 2% faster" means
+   `candidate_time <= 0.98 * production_time`, so the equivalent
+   production-over-candidate ratio floor is `1 / 0.98 = 1.020408...`,
+   not `1.02` — `1.02` alone is only a ~1.96% floor and undershoots the
+   spec's "at least 2%" wording. This mirrors exactly how every
+   existing BENCH.md receipt reports its equal-fixture geomean (see
+   "candidate improves the equal-fixture geomean by 20.07%" in the
+   post-fusion receipt) — reuse that same arithmetic, do not invent a
+   new geomean convention for this gate.
 
 4. **Zero-tolerance alloc/RSS regression.** For each fixture, require:
 
@@ -272,6 +300,19 @@ be a GO.
    allocs/op pairs from raw `-bench -benchmem` output before trusting
    an automated gate here.)
 
+   `-max-bytes-regression 0.0` and `-max-allocs-regression 0.0` do not
+   mean zero-tolerance in absolute terms: `cmd/benchgate/main.go` adds
+   a floor on top of the ratio (`minBytesOpFloor = 256`,
+   `minAllocsOpFloor = 1`), so a fixture only fails if it regresses by
+   more than +256 B/op or +1 alloc/op even at a `0.0` ratio. That floor
+   exists to absorb CI noise on tiny benches; it is not the literal
+   "no regression" the spec text asks for. Treat `benchgate` as a
+   coarse smoke check only, and treat the hand-checked raw B/op and
+   allocs/op pairs (production vs candidate, per fixture, from the raw
+   `-bench -benchmem` output or the driver's `report.tsv`) as the
+   authoritative strict gate: any increase at all, even one byte or one
+   allocation, is a fail under the spec's literal wording.
+
    As of the correctness-half evaluation on `94a5439a` (2026-07-20, on
    a loaded box, so wall time is not cited — only the allocation
    counts, which are deterministic and load-independent), this check
@@ -281,6 +322,43 @@ be a GO.
    `grammargen_lr`. Do not spend quiet-host time on step 2/3 above
    until this is fixed — it is a deterministic, revision-level fact,
    not a timing artifact a quiet host will change.
+
+5. **Retained-heap check (operationalizing the Scope promise).** The
+   driver already emits a retained-heap proxy per backend, under
+   different column names because the two backends retain memory
+   differently: the candidate/`selected-store` samples report
+   `selected_retained_B_op` (the compact `SelectedStore`'s retained
+   backing bytes per parse), and the production samples report
+   `arena_B_op` (the production GLR arena's retained bytes per parse,
+   which includes dead-alternative branches the forest never
+   selects). Compare these two columns directly, per fixture, from
+   `report.tsv`'s `go_median_selected_retained_B_op` (candidate run)
+   against `go_median_arena_B_op` (production run). The two backends'
+   `report.tsv` schemas differ in column count and order — the field
+   is `go_median_arena_B_op` at column 14 in the production header and
+   `go_median_selected_retained_B_op` at column 17 in the candidate
+   header, so a single shared `cut` offset does not work:
+
+   ```sh
+   paste <(cut -f1,14 <receipt-dir>/production/report.tsv) \
+         <(cut -f1,17 <receipt-dir>/candidate/report.tsv)
+   ```
+
+   Confirm both column indices against each file's own header row
+   before trusting the `cut` offsets above — do not assume they stay
+   aligned across driver versions; recompute the index from the header
+   line every time you run this.
+
+   Require `candidate_retained <= production_retained` per fixture.
+   These two metrics are not measuring identical things (compact
+   retained-store bytes versus production's full GLR arena, which
+   over-counts relative to what survives selection), so treat a
+   candidate win here as directional evidence for the "no retained
+   heap regression" bullet in Scope, not as byte-for-byte proof the way
+   the B/op/allocs/op check in step 4 is. If this check cannot be made
+   apples-to-apples before a publication receipt is due, remove
+   "retained-heap" from Scope's bullet list rather than publish a
+   receipt that silently skips it.
 
 ## Recommendation
 
@@ -306,7 +384,7 @@ Every timing receipt this runbook produces must record, per
   by path or manifest hash;
 - the geomean, per-fixture ratios, and alloc/RSS comparison computed
   per the thresholds above;
-- a PASS/FAIL verdict against all four checks, not just the geomean.
+- a PASS/FAIL verdict against all five checks, not just the geomean.
 
 Submit the receipt as a Hyphae spore against `spec.campaign.v6.7` and
 update the roadmap's Phase-3 campaign entry with the gate's GO/NO-GO
