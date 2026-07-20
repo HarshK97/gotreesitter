@@ -4022,6 +4022,44 @@ func (p *Parser) guardRealShiftGap(source []byte, s *glrStack, tok Token) bool {
 	return p.guardRealTokenAttachmentGap(source, s, tok, "shift")
 }
 
+// incrementalOldTreeMayCarryErrorCost decides the starting value of
+// crecoveryCostCompetitionRelevant for a parse that may reuse subtrees from
+// oldTree. Neither reuse nor oldTree set means an ordinary fresh full parse,
+// which always starts clean (false), matching pre-existing behavior.
+//
+// When reuse is possible, the question is whether ANY subtree it could
+// splice in already carries error/missing content. oldTree.root.hasError()
+// answers that in O(1): it is the same cached, bottom-up-propagated bit
+// (tree.go populateParentNode/populateParentNodeNoLinks, plus every
+// ERROR/MISSING construction site across the parser_result_*.go /
+// parser_reduce.go / parser_recover_c.go builders) that backs the public
+// Node.HasError() API, and it is exact for every node that ever entered
+// oldTree — a subtree spliced into this parse's stacks by reuse is, by
+// construction, a subtree of oldTree, so it cannot carry error content
+// oldTree's own root bit does not already reflect. Byte-offset edits applied
+// to oldTree shift positions only, never symbols, so the bit stays valid
+// across ApplyEdit calls made before this reparse.
+//
+// A false result is not "assume clean" -- it is "provably clean, so let this
+// pass's own explicit set-true sites (missing-token insertion, error-run
+// leaves, resync recovery, cHandleError, ...) do exactly what they already
+// do for a fresh full parse": the moment this parse constructs its own
+// error/missing content, crecoveryCostCompetitionRelevant flips true from
+// that call site, same as today. A true old tree (or a defensively unknown
+// one) keeps the prior conservative behavior unchanged.
+func incrementalOldTreeMayCarryErrorCost(reuse *reuseCursor, oldTree *Tree) bool {
+	if reuse == nil && oldTree == nil {
+		return false
+	}
+	if oldTree == nil || oldTree.root == nil {
+		// Defensive: reuse should never be non-nil without a rooted oldTree
+		// (reuseCursor.reset returns nil otherwise), but an unknown old tree
+		// keeps the previously-conservative "assume relevant" answer.
+		return true
+	}
+	return oldTree.root.hasError()
+}
+
 // parseInternal is the core GLR parsing loop shared by Parse and
 // ParseWithTokenSource.
 //
@@ -4099,9 +4137,17 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		p.crecoveryEnteredErrorState = false
 		p.crecoveryDroppedErrorForClean = false
 		// Cost walks stay gated off until this pass proves costs can be
-		// nonzero; parses that may reuse old-tree subtrees start relevant
-		// because reused subtrees can already carry error nodes.
-		p.crecoveryCostCompetitionRelevant = reuse != nil || oldTree != nil
+		// nonzero. A fresh full parse starts clean (false). An incremental
+		// parse over an old tree that is itself clean (root.hasError()
+		// false) starts clean too: every subtree reuse can splice in was
+		// already part of that clean tree, so it cannot carry hidden error
+		// content, and any error this pass constructs on its own goes
+		// through the same explicit set-true sites a fresh parse uses (see
+		// incrementalOldTreeMayCarryErrorCost). Only an old tree that is
+		// itself known to have error/missing content anywhere starts the
+		// conservative true (reused subtrees may carry it in without a new
+		// pause this pass).
+		p.crecoveryCostCompetitionRelevant = incrementalOldTreeMayCarryErrorCost(reuse, oldTree)
 		p.cRecoverSharedTokenErrorModeLexed = false
 		p.cRecoverCustomResyncActive = false
 		p.cRecoverCustomResyncByte = 0
