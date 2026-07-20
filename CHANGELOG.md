@@ -7,8 +7,20 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.43.0] - 2026-07-20
+
 ### Fixed
 
+- **Incremental length-changing edits now reuse the unchanged suffix** instead
+  of re-lexing the whole tail to EOF (issue #380, step 1). The reuse byte-guard
+  previously sliced the pre-edit source at post-edit (shifted) coordinates, so
+  any insert/delete rejected every suffix subtree as ancestor-dirty and
+  reparsed the entire suffix; it now reverse-maps coordinates through the
+  recorded edits. A follow-up guard prevents a clamped, edit-overlapping node
+  from being reused when its text actually changed (previously a
+  silent-corruption path on length-changing replace/insert edits).
+  Interior/non-leaf subtree reuse across such edits remains limited — a tracked
+  follow-up.
 - Restore F# external-scanner checkpoints to the locked grammar's byte layout,
   keeping incremental scanner state compatible with the reference runtime.
 - Apply the upstream-C repetition-skip conflict fold while dispatching around
@@ -21,6 +33,25 @@ for tags and release notes while still in `0.x`.
   token-invariant leaf validation still reuses the complete old tree without
   reparsing. Included-range token-source wrappers preserve the underlying
   scanner's fallback reason in incremental profiles.
+- **Go `new(T)`/`make(T)`** now retags a sole bare-identifier argument to
+  `type_identifier`, matching the locked C oracle for that shape. This is a
+  targeted **partial** fix: qualified (`new(pkg.Type)`), pointer (`new(*T)`),
+  and parenthesized type arguments still differ from C and require a
+  parser-table-level fix (tracked).
+
+### Added
+
+- **Incremental-invariant correctness gate** (default-on). It sweeps a curated
+  real-world corpus applying single-byte delete/insert/replace edits and
+  asserts `ParseIncremental` is structurally identical to a fresh `Parse`
+  wherever the fresh parse is genuinely clean — turning previously-silent
+  incremental corruption into explicit CI failures. Cleanliness is checked by a
+  recursive `IsError()`/`IsMissing()` walk (not `HasError()`), governed by a
+  tracked allowlist with a staleness ratchet.
+- **Gated one-pass selected-store builder** (build-tagged, off by default) — a
+  diagnostic parser-core materialization candidate that does not touch the
+  production parse path and is admitted only when it produces byte-identical
+  deep trees to the staged builder across the canonical fixtures.
 
 ### Tooling
 
