@@ -7,6 +7,22 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- **TypeScript arrow functions with a return-type annotation** (`const f =
+  (a: A): B => { ... }`) no longer collapse to `ERROR` when they appear as
+  the value of a `const`/`let` declaration (issue #402). The typed-arrow
+  and destructured-arrow-return-type merge-width detectors added in PR #389
+  did not cover this shape: neither requires the arrow to be immediately
+  preceded by `)` (the destructured-return-type case scans past a
+  return-type annotation, but only accepts a destructured `[`/`{`
+  parameter list). A typed, non-destructured parameter list combined with
+  an explicit return-type annotation fell through both. This fix adds a
+  dedicated detector for that shape and widens the merge budget to two
+  survivors, matching the existing typed-arrow and default-parameter
+  cases. TSX was unaffected; its wider JSX conflict set kept a second
+  survivor alive through the same fork.
+
 ## [0.44.1] - 2026-07-20
 
 ### Fixed

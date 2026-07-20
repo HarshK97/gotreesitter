@@ -1110,6 +1110,21 @@ func typeScriptFullParseNeedsDestructuredArrowReturnMergeWidth(lang *Language, s
 		typeScriptSourceHasDestructuredArrowReturnType(source)
 }
 
+// typeScriptFullParseNeedsTypedParameterArrowReturnMergeWidth reports whether
+// source needs the cap-two merge width for an arrow function whose formal
+// parameter list carries a parameter type annotation (e.g. "(a: A)") and is
+// itself followed by an explicit return-type annotation before the arrow
+// (e.g. "(a: A): B =>"). See
+// typeScriptSourceHasTypedParameterArrowReturnType for the grammar-fork
+// rationale (issue #402).
+func typeScriptFullParseNeedsTypedParameterArrowReturnMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
+	return lang != nil &&
+		reuse == nil &&
+		!parseMaxMergePerKeyEnvConfigured() &&
+		(lang.Name == "typescript" || lang.Name == "tsx") &&
+		typeScriptSourceHasTypedParameterArrowReturnType(source)
+}
+
 func typeScriptSourceHasTypedArrowParameters(source []byte) bool {
 	if len(source) == 0 || !bytes.Contains(source, []byte(":")) {
 		return false
@@ -1206,6 +1221,76 @@ func typeScriptSourceHasDestructuredArrowReturnType(source []byte) bool {
 				break
 			}
 			if open := matchingOpenParenBefore(source, close, 2048); open >= 0 && bytes.ContainsAny(source[open:close], "[{") {
+				return true
+			}
+		}
+		offset = arrow + len("=>")
+	}
+}
+
+// typeScriptSourceHasTypedParameterArrowReturnType reports whether source
+// contains an arrow function whose parenthesized formal-parameter list
+// carries at least one parameter type annotation (a bare "(a: A)" slot, not
+// a destructured "[" / "{" pattern -- that shape is covered separately by
+// typeScriptSourceHasDestructuredArrowReturnType) and is itself followed by
+// an explicit return-type annotation before the arrow, e.g.
+// "(a: A): B => ...". The locked C grammar's _call_signature production
+// (formal_parameters return_type?) competes, at the identical post-')'
+// state, with reducing the parenthesized parameter list as a plain
+// parenthesized_expression once a top-level ':' follows the ')'. Both
+// derivations are live through the parameter list's own required_parameter
+// reduction (itself only reachable when the parameter carries a
+// type_annotation), so under the steady-state cap-one merge budget (see
+// typescriptFullParseCanUseTightMergeCap) one of the two forks is discarded
+// before the return-type/arrow tokens are seen, collapsing the whole
+// declaration to ERROR (issue #402). An untyped parameter list followed by a
+// return type ("(a): B =>") does not hit this fork: with no type_annotation
+// inside the parameter list, the required_parameter reduction is not itself
+// ambiguous, so the existing steady-state cap is sufficient. The scan reuses
+// the same bounded backward-colon-then-matching-paren technique as
+// typeScriptSourceHasDestructuredArrowReturnType, capped at the same 512 and
+// 2048 byte windows.
+func typeScriptSourceHasTypedParameterArrowReturnType(source []byte) bool {
+	if len(source) == 0 || !bytes.Contains(source, []byte("=>")) {
+		return false
+	}
+	offset := 0
+	for {
+		rel := bytes.Index(source[offset:], []byte("=>"))
+		if rel < 0 {
+			return false
+		}
+		arrow := offset + rel
+		i := arrow - 1
+		for i >= 0 {
+			switch source[i] {
+			case ' ', '\t', '\n', '\r':
+				i--
+				continue
+			}
+			break
+		}
+		colon := -1
+		for j := i; j >= 0 && arrow-j <= 512; j-- {
+			if source[j] == ':' {
+				colon = j
+				break
+			}
+			if source[j] == ')' {
+				break
+			}
+		}
+		if colon >= 0 {
+			close := colon - 1
+			for close >= 0 {
+				switch source[close] {
+				case ' ', '\t', '\n', '\r':
+					close--
+					continue
+				}
+				break
+			}
+			if open := matchingOpenParenBefore(source, close, 2048); open >= 0 && bytes.Contains(source[open:close], []byte(":")) {
 				return true
 			}
 		}
