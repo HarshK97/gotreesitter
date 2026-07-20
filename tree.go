@@ -3116,6 +3116,14 @@ func (t *Tree) Copy() *Tree {
 		parseRuntime:               t.parseRuntime,
 		resultErrorSummary:         t.resultErrorSummary,
 		resultCompatibilityApplied: t.resultCompatibilityApplied,
+		// Reuse-provenance flags must survive Copy: cloneNodeHeaderInto keeps the
+		// per-node stamped/replayed states, so a copy that dropped these would
+		// become reuse-eligible on the standard DFA path and splice replayed or
+		// abstained states into a live parse (Phase-3 Lane 3 review). Carry all
+		// three: forestFastPath, incrementalReuseDisabled, and compactMaterialized.
+		forestFastPath:           t.forestFastPath,
+		incrementalReuseDisabled: t.incrementalReuseDisabled,
+		compactMaterialized:      t.compactMaterialized,
 	}
 	if len(t.edits) > 0 {
 		out.edits = make([]InputEdit, len(t.edits))

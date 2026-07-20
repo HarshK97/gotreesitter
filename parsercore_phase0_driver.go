@@ -1767,6 +1767,10 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 				)
 				node.setExtra(view.Extra)
 				node.setExternalScannerToken(view.External)
+				// No markFragile here: fragile is a reduce/conflict-arm property
+				// (subtreeRecord.fragile is only ever set on reductions), so a
+				// terminal record is never fragile. The reduce branches below
+				// carry the bit.
 				stamp(id, node)
 				return nil
 			}

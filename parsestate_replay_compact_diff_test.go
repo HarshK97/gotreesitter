@@ -229,8 +229,10 @@ func TestParseStateReplayCompactDifferential(t *testing.T) {
 	if corpusPs > compactReplayCollapseClassCap {
 		t.Fatalf("compact-replay parseState collapse-class misses grew beyond cap %d: got %d", compactReplayCollapseClassCap, corpusPs)
 	}
-	if pct < 99.0 {
-		t.Fatalf("compact-replay corpus exactness regressed below 99%%: %.4f%% (mismatched=%d)", pct, corpusMismatch)
+	// The class caps above carry the go/no-go; this floor is a coarse backstop
+	// kept just under the measured 99.714% so it cannot silently trail reality.
+	if pct < 99.7 {
+		t.Fatalf("compact-replay corpus exactness regressed below 99.7%%: %.4f%% (mismatched=%d)", pct, corpusMismatch)
 	}
 }
 
