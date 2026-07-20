@@ -1361,14 +1361,56 @@ const (
 	// comment above cVersionStatus), so this path is warm on every capable
 	// parse, clean or not, and must stay cheap for the common case.
 	cNodeMemoCacheInitialSize = 128
-	// cNodeMemoCacheSize is what the cache grows to the first time a lineage
-	// actually enters C error handling (cHandleError / cRecoverDispatchInError
-	// setting crecoveryEnteredErrorState), matching the sizing of the
-	// merge-scratch pointer-keyed caches (glrShapePrefixCacheSize et al.):
-	// 8192 sets, 2-way each. Growing loses whatever was cached at the smaller
-	// size, which only costs a recompute (see cNodeMemoSlot) -- never a wrong
-	// answer.
+	// cNodeMemoCacheSize is what the cache grows to either (a) the first time
+	// a lineage actually enters C error handling (cHandleError /
+	// cRecoverDispatchInError setting crecoveryEnteredErrorState), or (b) the
+	// first time THIS parse's own memo-set contention crosses
+	// cNodeMemoThrashGrowThreshold (see cNodeMemoSlot) -- matching the sizing
+	// of the merge-scratch pointer-keyed caches (glrShapePrefixCacheSize et
+	// al.): 8192 sets, 2-way each. Growing loses whatever was cached at the
+	// smaller size, which only costs a recompute (see cNodeMemoSlot) -- never
+	// a wrong answer.
 	cNodeMemoCacheSize = 16384
+	// cNodeMemoThrashGrowThreshold is the number of genuine 2-way-set
+	// collisions -- the primary way already holding a live current-epoch
+	// entry for another node, see cNodeMemoSlot's contention branch; the
+	// victim way may be relocated into rather than evicted, but it still
+	// counts -- THIS parse must observe against the small (128-entry /
+	// 64-set) cache before cNodeMemoSlot grows it to cNodeMemoCacheSize on
+	// its own, independent of whether cHandleError has ever run.
+	//
+	// Provenance (issue #380/#388, measured on this box, linux/amd64, via
+	// (*Parser).DebugCNodeMemoCacheStats instrumenting this exact counter):
+	//   - The #388 repro (issue380_incremental_insert_slowdown_repro_test.go /
+	//     issue380_incremental_insert_cache_warmup_nondeterminism_repro_test.go
+	//     TestReproOrganicWarmVsCold's COLD arm: this repo's own tree.go,
+	//     ~137KB, single-char insert at offset 200, fresh Parser, 128-entry/
+	//     64-set cache never grown by cHandleError) accumulates ~235,000-
+	//     245,000 evictions over the full cold parse (cNodeErrorCost /
+	//     cNodeVisibleSubtreeCount's recursive fallback on a small, thrashing
+	//     cache is what made the cold parse ~4x the warm one on this box --
+	//     see the repro files' doc comments). With adaptive growth wired at
+	//     threshold 512, the SAME scenario's wall time drops from ~427-514ms
+	//     to ~97-136ms across repeated fresh-Parser runs, matching the
+	//     already-warm baseline (~96-117ms) to within ~1.0-1.15x -- i.e. the
+	//     threshold-512 grow fires early enough in the parse (a threshold
+	//     four orders of magnitude below the cold parse's ~240K-eviction
+	//     total) to capture essentially all of the available speedup. 512 (8x
+	//     the 64-set capacity, i.e. each set forced to evict roughly 8 times
+	//     on average) was chosen as a round number comfortably inside that
+	//     margin, not tuned to the last eviction.
+	//   - Clean, non-pathological parses observe EXACTLY 0 evictions end to
+	//     end, not just "below the threshold": a single fresh-Parser full
+	//     Parse() of this repo's own tree.go/parser.go (312KB)/
+	//     parser_recover_c.go/glr.go/incremental.go/lexer.go/query.go, and of
+	//     the benchmark_family_test.go corpus (go/js/ts/tsx/python/css/rust/
+	//     java/kotlin/swift/c/json/html/fortran/bash/ruby/csharp at their
+	//     default generated sizes), never enters cNodeMemoSlot's eviction
+	//     branch at all -- see TestCNodeMemoCacheStaysSmallForCleanFullParse
+	//     (issue380_cnode_memo_cache_growth_determinism_test.go). Property (b)
+	//     (typical files must not grow to 16K) therefore holds with several
+	//     orders of magnitude of margin, not merely "below 512".
+	cNodeMemoThrashGrowThreshold = 512
 )
 
 func cNodeMemoCacheIndex(p uintptr, setCount int) int {
@@ -1383,14 +1425,41 @@ func cNodeMemoCacheIndex(p uintptr, setCount int) int {
 
 // growCNodeMemoCache upgrades the parser's per-subtree cost/vis memo from its
 // small per-parse default (cNodeMemoCacheInitialSize) to the full working-set
-// size (cNodeMemoCacheSize) the first time a lineage actually enters C error
-// handling. Called once per parse from cHandleError's crecoveryEnteredErrorState
-// transition; a no-op once already grown.
+// size (cNodeMemoCacheSize). Called from two sites, both input-driven, never
+// from "this Parser instance's unrelated history":
+//  1. cHandleError's crecoveryEnteredErrorState transition, the first time a
+//     lineage actually enters C error handling this parse.
+//  2. cNodeMemoSlot, the first time THIS parse's own memo-set contention
+//     crosses cNodeMemoThrashGrowThreshold (see its doc comment) -- a clean
+//     parse that is simply large/wide enough to thrash the small cache grows
+//     it too, without needing a genuine syntax error anywhere.
+//
+// A no-op once already grown. p.cNodeMemoThrash is reset to 0 by both the
+// per-parse cache (re)initialization (parseInternal) and by a successful grow
+// here (including when called from the cHandleError site, which is harmless:
+// the size guard above already makes any second grow this parse a no-op), so
+// the trigger is scoped to THIS parse's own observed load.
 func (p *Parser) growCNodeMemoCache() {
 	if p == nil || len(p.cNodeMemoCache) >= cNodeMemoCacheSize {
 		return
 	}
 	p.cNodeMemoCache = make([]cNodeMemoCacheEntry, cNodeMemoCacheSize)
+	p.cNodeMemoThrash = 0
+}
+
+// DebugCNodeMemoCacheStats reports the current size of the parser's
+// C-recovery per-subtree memo cache (0 while unprovisioned/gate off,
+// cNodeMemoCacheInitialSize while small, cNodeMemoCacheSize once grown by
+// either growCNodeMemoCache trigger) and the live cNodeMemoThrash contention
+// counter. It exists so callers (tests, latency tooling) can observe the
+// adaptive-growth decision directly -- deterministically, from a collision
+// count -- instead of inferring it from wall-clock timing. Safe on a nil
+// receiver.
+func (p *Parser) DebugCNodeMemoCacheStats() (cacheLen int, thrash uint32) {
+	if p == nil {
+		return 0, 0
+	}
+	return len(p.cNodeMemoCache), p.cNodeMemoThrash
 }
 
 // beginCNodeMemoEpoch invalidates every recovery memo entry in O(1). Epoch
@@ -1435,7 +1504,33 @@ func (p *Parser) cNodeMemoSlot(n *Node) *cNodeMemoCacheEntry {
 		return primary
 	}
 	if primary.epoch == p.cNodeMemoEpoch {
+		// The primary way already holds a live current-epoch entry for
+		// another node: writing n here relocates primary's occupant down
+		// into victim (the victim way may have been empty -- a relocation,
+		// not a loss -- or itself occupied, in which case its own occupant
+		// is discarded outright). Either way this is THIS PARSE's own
+		// genuine capacity contention on the set (as opposed to "n simply
+		// has never been looked up before"), and it is exactly what degrades
+		// cNodeErrorCost/cNodeVisibleSubtreeCount from O(1) amortized to a
+		// cascading O(depth)-or-worse recompute on a large/wide parse (see
+		// cNodeMemoThrashGrowThreshold's doc comment, issue #380/#388).
+		// Track it and adaptively grow this parser's cache once THIS parse's
+		// own contention crosses the measured threshold -- independent of
+		// whether cHandleError has ever run on this Parser instance, so the
+		// same (source, edit) always takes the same growth path regardless of
+		// the instance's unrelated history.
 		*victim = *primary
+		p.cNodeMemoThrash++
+		if p.cNodeMemoThrash >= cNodeMemoThrashGrowThreshold && len(p.cNodeMemoCache) < cNodeMemoCacheSize {
+			p.growCNodeMemoCache() // resets p.cNodeMemoThrash to 0 on success
+			// Re-resolve idx/primary against the freshly-grown cache: the
+			// setCount above is now stale, and growCNodeMemoCache reset every
+			// slot to unwritten (epoch 0), so this is guaranteed to be a
+			// (safe -- see growCNodeMemoCache's doc) miss.
+			setCount = len(p.cNodeMemoCache) >> 1
+			idx = cNodeMemoCacheIndex(ptr, setCount)
+			primary = &p.cNodeMemoCache[idx]
+		}
 	}
 	*primary = cNodeMemoCacheEntry{node: ptr, epoch: p.cNodeMemoEpoch}
 	return primary
