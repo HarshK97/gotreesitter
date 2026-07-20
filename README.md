@@ -744,16 +744,15 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.43.1**. It fixes TypeScript and TSX bare
-default parameters that previously collapsed to `ERROR`. It also reduces
-allocation churn during grammar-blob decoding by about 32% and peak
-memory by about 11%, across all 206 grammars. A CI test now enforces a
-memory ceiling and fails any `Language()` load above 256 MB. Swift is
-the sole documented exception, at about 491 MB. The prior release,
-v0.43.0, lets incremental length-changing edits reuse the unchanged
-suffix instead of re-lexing the whole tail. It also adds a default-on
-incremental-invariant correctness gate that checks `ParseIncremental`
-against a fresh `Parse`.
+The current release is **v0.44.0**. It fixes Swift's `Language()` memory
+ceiling breach. A cross-mode DFA minimization pass cuts Swift's retained
+memory from about 490 MB to about 25 MB, closing the sole documented CI
+memory-ceiling exception. It also replaces the cmake/css reuse allowlist
+with a fragility-gated top-level sibling block-splice; CSS editor-edit
+node reuse rises from 63.8% to 99.5%. Go node reuse is unchanged, pending
+a deeper engine fix. The prior release, v0.43.1, fixes TypeScript and TSX
+bare default parameters that previously collapsed to `ERROR` and reduces
+grammar-blob decoding allocation churn by about 32%.
 The authenticated production receipt at tag target `1935a42c` measures
 public `Parser.Parse` at **4.851050x C** by equal-fixture geomean,
 **5.472406x C** by fixed-suite sum, and **5.608320x C** on the worst

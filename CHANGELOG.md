@@ -7,19 +7,86 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.44.0] - 2026-07-20
+
 ### Fixed
 
 - **Swift's `Language()` call no longer exceeds the 256 MB CI memory
-  ceiling.** grammargen's `buildLexDFA` rebuilt an independent lexer DFA per
-  lex mode with no sharing across modes; Swift's ~331 lex modes rebuilt the
-  same ~190-state identifier/operator/comment automaton from scratch each
-  time. A new post-construction minimization pass
-  (`grammargen/dfa_minimize.go`) merges observationally-equivalent DFA
-  states across lex-mode boundaries. Swift's LexStates table drops from
-  63,150 to 2,067 entries; its `Language()` call now retains about 25 MB,
-  down from about 490 MB. `swift.bin` is regenerated and recertified against
-  the Swift regression suite and corpus. The known-exception entry for
-  Swift is removed from the CI memory-ceiling gate.
+  ceiling.** This closes the known issue noted in v0.43.1. grammargen's
+  `buildLexDFA` rebuilt an independent lexer DFA per lex mode, with no
+  sharing across modes. Swift's about 331 lex modes each rebuilt the same
+  about 190-state identifier, operator, and comment automaton from scratch.
+  A new post-construction minimization pass, `grammargen/dfa_minimize.go`,
+  merges observationally-equivalent DFA states across lex-mode boundaries
+  (PR #396). Swift's LexStates table drops from 63,150 to 2,067 entries.
+  Its `Language()` call now retains about 25 MB, down from about 490 MB.
+  `swift.bin` is regenerated and recertified against the Swift regression
+  suite and corpus, shrinking from 7,474,360 to 373,401 bytes. Byte-identical
+  lexing is proven across a 10-grammar parity corpus. The blob format is
+  unchanged. The known-exception entry for Swift is removed from the CI
+  memory-ceiling gate.
+- **grammargen's C code emitter** had several defects. This release fixes:
+  - duplicate C identifiers for anonymous tokens, a compile error;
+  - infinite lexer loops at EOF on negated character classes;
+  - wrong re-lex targets for multi-character skips (CRLF, backslash-newline);
+  - an alias-stride bound sized from the wrong table, causing out-of-bounds
+    reads.
+
+  A new C-runtime parity harness compiles the emitted `parser.c` against the
+  tree-sitter v0.25.0 runtime (PR #391). It byte-compares the resulting AST
+  against the pure-Go oracle.
+- **Incremental memo-cache growth is now input-deterministic.** Growth used
+  to depend on prior parser history, not only the current parse. Identical
+  (source, edit) pairs could take different growth paths depending on
+  earlier use. A new adaptive threshold, `cNodeMemoThrash`, now triggers
+  growth from the collision count of the current parse alone (PR #392,
+  issue #380 follow-up). Clean, non-pathological parses still stay at the
+  small 128-entry default.
+- **Incremental reuse is now barred for trees built by the phase-zero
+  compact parser.** This closes reuse holes on three entry points:
+  - the DFA entry point;
+  - the custom-token-source entry point;
+  - the token-invariant-leaf-fastpath entry point.
+
+  `ParseIncremental` now forces a full fresh parse when the old tree is
+  compact-materialized (PR #393). A new top-down ParseState table-replay
+  mechanism reconstructs parser states over the full compact derivation. It
+  runs before hidden-node elision and grammar aliasing. It abstains to a
+  sentinel state when a state cannot be reliably reconstructed, for example
+  for extra or comment leaves.
+
+### Improved
+
+- **CSS editor-style incremental edits now reuse far more of the unchanged
+  tree.** A fragility-gated top-level sibling block-splice replaces the old
+  cmake/css name allowlist (PR #395, campaign O(edit) workstream W1).
+  Admission is now per node: a fragility bit plus byte equality, not a
+  language name. On a CSS editor-edit benchmark, `rootNonLeafChanged`
+  rejections near the top of the tree drop from 1,379 to 14. Node reuse
+  rises from 63.8% to 99.5%. Go incremental node reuse does not improve in
+  this release. A deeper, pre-existing engine gap blocks it: the reuse check
+  runs before the eager reduce chain settles state. Work on that gap
+  continues.
+
+### Added
+
+- A rollback safety valve: the `GTS_GRAMMARGEN_DISABLE_LEX_MINIMIZE`
+  environment flag falls back to the raw, per-mode lexer tables. Use it only
+  if a correctness question comes up (PR #396).
+
+### Docs
+
+- Refresh documentation prose to the ASD-STE100 style guide across
+  README.md, BENCH.md, AGENTS.md, and the authoring-languages and
+  external-scanners guides (PR #385).
+- Correct a stale release-status paragraph and clarify the GLR stack cap
+  default in AGENTS.md (PR #394).
+
+### Known Issues
+
+- Go incremental node reuse is unchanged by the W1 fragility-gated splice
+  (PR #395). The reuse check runs before the eager reduce chain settles
+  state, blocking admission. A fix is tracked.
 
 ## [0.43.1] - 2026-07-20
 
