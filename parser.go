@@ -221,6 +221,15 @@ type Parser struct {
 	// parse start and transient-scratch checkpoints, empty (len 0) while the
 	// gate is off.
 	cNodeMemoCache []cNodeMemoCacheEntry
+	// cNodeMemoThrash counts genuine 2-way-set collision evictions in
+	// cNodeMemoSlot since the cache was last (re)sized -- reset to 0 whenever
+	// the cache is (re)initialized for a parse (see the len==0 branch in
+	// parseInternal) and whenever it grows. This is THIS PARSE's own observed
+	// contention on its own memo cache, so crossing cNodeMemoThrashGrowThreshold
+	// is a function of the input/edit being parsed, not of any other parse this
+	// Parser instance has ever run -- see growCNodeMemoCache's doc comment for
+	// why that determinism property matters (issue #380/#388).
+	cNodeMemoThrash uint32
 	// cPrefixPath is the reusable descent scratch for GSS prefix-aggregate
 	// fills (cStackPrefixAgg, parser_recover_c.go). The aggregates themselves
 	// live on gssNode (aggGen/aggCost/aggVis), the engine analogue of C
@@ -1149,26 +1158,26 @@ const (
 // ReuseCursorNanos includes reuse-cursor setup and subtree-candidate checks.
 // ReparseNanos includes the remainder of incremental parsing/rebuild work.
 type IncrementalParseProfile struct {
-	ReuseCursorNanos                    int64
-	ReparseNanos                        int64
-	ReusedSubtrees                      uint64
-	ReusedBytes                         uint64
-	NewNodesAllocated                   uint64
-	ReuseUnsupported                    bool
-	ReuseUnsupportedReason              string
-	AcceptedErrorRetryAttempts          uint8
-	AcceptedErrorRetryAdopted           bool
-	AcceptedErrorRetryMergePerKey       int
-	AcceptedErrorRetryCause             IncrementalRetryCause
-	OldTreeReuseRoute                   bool
-	ReuseRejectDirty                    uint64
-	ReuseRejectAncestorDirtyBeforeEdit  uint64
-	ReuseRejectHasError                 uint64
-	ReuseRejectInvalidSpan              uint64
-	ReuseRejectOutOfBounds              uint64
-	ReuseRejectRootNonLeafChanged       uint64
-	ReuseRejectLargeNonLeaf             uint64
-	ReuseRejectStaleNonLeafBoundary     uint64
+	ReuseCursorNanos                   int64
+	ReparseNanos                       int64
+	ReusedSubtrees                     uint64
+	ReusedBytes                        uint64
+	NewNodesAllocated                  uint64
+	ReuseUnsupported                   bool
+	ReuseUnsupportedReason             string
+	AcceptedErrorRetryAttempts         uint8
+	AcceptedErrorRetryAdopted          bool
+	AcceptedErrorRetryMergePerKey      int
+	AcceptedErrorRetryCause            IncrementalRetryCause
+	OldTreeReuseRoute                  bool
+	ReuseRejectDirty                   uint64
+	ReuseRejectAncestorDirtyBeforeEdit uint64
+	ReuseRejectHasError                uint64
+	ReuseRejectInvalidSpan             uint64
+	ReuseRejectOutOfBounds             uint64
+	ReuseRejectRootNonLeafChanged      uint64
+	ReuseRejectLargeNonLeaf            uint64
+	ReuseRejectStaleNonLeafBoundary    uint64
 	// ReuseRejectFragileNonLeaf counts interior (non-leaf) reuse candidates
 	// rejected because Node.isFragile() reported the candidate was built
 	// under an ambiguous parse decision (LR-table conflict, GSS multi-pop, or
@@ -1177,8 +1186,8 @@ type IncrementalParseProfile struct {
 	// (incremental.go). A nonzero count on a conflict-heavy grammar (e.g. js)
 	// is expected and correct: it is exactly the unsound reuse this gate is
 	// designed to prevent.
-	ReuseRejectFragileNonLeaf uint64
-	RecoverSearches           uint64
+	ReuseRejectFragileNonLeaf           uint64
+	RecoverSearches                     uint64
 	RecoverStateChecks                  uint64
 	RecoverStateSkips                   uint64
 	RecoverSymbolSkips                  uint64
@@ -4038,10 +4047,16 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		// cost competition participates in ordinary GLR disambiguation on
 		// well-formed input too, so this path is warm even on clean parses;
 		// growCNodeMemoCache upgrades it to the full working-set size the
-		// first time this parse actually enters C error handling.
+		// first time this parse actually enters C error handling, or the
+		// first time this parse's own memo-set contention crosses
+		// cNodeMemoThrashGrowThreshold (cNodeMemoSlot) -- either way, reset
+		// the contention counter here so a parse's grow decision depends only
+		// on ITS OWN observed load, never on carryover from an earlier,
+		// unrelated parse on this same Parser instance (determinism, #380/#388).
 		if len(p.cNodeMemoCache) == 0 {
 			p.cNodeMemoCache = make([]cNodeMemoCacheEntry, cNodeMemoCacheInitialSize)
 		}
+		p.cNodeMemoThrash = 0
 		p.beginCNodeMemoEpoch()
 		p.crecoveryEnteredErrorState = false
 		p.crecoveryDroppedErrorForClean = false
@@ -5141,7 +5156,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				actions = parseActions[actionIdx].Actions
 			}
 			semanticPhaseTraceRecordActionCell(p, s, currentState, tok, actions) // semantic-phase-assembly: action-cell seam
-			workCountRecordResolvedActionCell(len(actions)) // work-count-assembly: resolved action-cell seam
+			workCountRecordResolvedActionCell(len(actions))                      // work-count-assembly: resolved action-cell seam
 			workCountAddActionEntries(len(actions))
 			if phaseTiming {
 				actionLookupNanos += time.Since(actionStart).Nanoseconds()

@@ -88,6 +88,20 @@ func issue380EnvInt(name string, def int) int {
 	return n
 }
 
+// issue380ValidOffset bounds-checks an env-supplied GTS_REPRO_OFFSET against
+// src before any test does src[:offset] / src[offset:] slicing, so a
+// misconfigured or stale offset (e.g. GTS_REPRO_FILE swapped for a smaller
+// fixture without updating GTS_REPRO_OFFSET) fails the test cleanly via
+// t.Fatalf instead of panicking with a raw "slice bounds out of range".
+// need is how many bytes must remain at/after offset: 0 for an insert point,
+// 1 for a single-byte delete.
+func issue380ValidOffset(t *testing.T, src []byte, offset, need int) {
+	t.Helper()
+	if offset < 0 || offset+need > len(src) {
+		t.Fatalf("GTS_REPRO_OFFSET=%d out of range for %d-byte source (want offset in [0, %d])", offset, len(src), len(src)-need)
+	}
+}
+
 // TestReproInsertRetryInstability runs ParseIncrementalProfiled in a loop
 // with a fresh Parser + fresh Tree per iteration for a single-char INSERT
 // near the top of a real ~137KB Go file, printing wall time and the
@@ -103,6 +117,7 @@ func TestReproInsertRetryInstability(t *testing.T) {
 	lang := grammars.GoLanguage()
 	iterations := issue380EnvInt("GTS_REPRO_ITERS", 20)
 	insertOffset := issue380EnvInt("GTS_REPRO_OFFSET", 200)
+	issue380ValidOffset(t, src, insertOffset, 0)
 
 	fmt.Printf("file=%d bytes insertOffset=%d iterations=%d\n", len(src), insertOffset, iterations)
 
@@ -162,6 +177,7 @@ func TestReproDeleteAsymmetry(t *testing.T) {
 	lang := grammars.GoLanguage()
 	iterations := issue380EnvInt("GTS_REPRO_ITERS", 20)
 	deleteOffset := issue380EnvInt("GTS_REPRO_OFFSET", 200)
+	issue380ValidOffset(t, src, deleteOffset, 1)
 
 	for i := 0; i < iterations; i++ {
 		parser := gotreesitter.NewParser(lang)
@@ -244,6 +260,7 @@ func TestReproCPUProfile(t *testing.T) {
 	}
 	lang := grammars.GoLanguage()
 	insertOffset := issue380EnvInt("GTS_REPRO_OFFSET", 200)
+	issue380ValidOffset(t, src, insertOffset, 0)
 
 	newSrc := make([]byte, 0, len(src)+1)
 	newSrc = append(newSrc, src[:insertOffset]...)

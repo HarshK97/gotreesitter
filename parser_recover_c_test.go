@@ -1495,6 +1495,79 @@ func TestCNodeMemoCacheEntrySize(t *testing.T) {
 	}
 }
 
+// TestCNodeMemoSlotAdaptiveGrowFiresExactlyAtThrashThreshold is a mechanism-
+// level (no real parse, no wall clock) proof of the W2 adaptive growth
+// trigger (issue #380/#388): cNodeMemoSlot must grow the cache from
+// cNodeMemoCacheInitialSize to cNodeMemoCacheSize on the Nth genuine 2-way-set
+// eviction, where N == cNodeMemoThrashGrowThreshold, and nowhere earlier --
+// this is what makes the growth decision a deterministic function of THIS
+// parse's own observed collision count rather than of wall-clock timing or
+// unrelated prior history.
+func TestCNodeMemoSlotAdaptiveGrowFiresExactlyAtThrashThreshold(t *testing.T) {
+	p := &Parser{cNodeMemoCache: make([]cNodeMemoCacheEntry, cNodeMemoCacheInitialSize)}
+	p.beginCNodeMemoEpoch()
+	a, b, c := collidingCNodeMemoNodes(t, len(p.cNodeMemoCache)>>1)
+
+	// a: fresh slot, no eviction. b: collides with a -> exactly one eviction.
+	p.cNodeMemoSlot(a)
+	p.cNodeMemoSlot(b)
+	if got := p.cNodeMemoThrash; got != 1 {
+		t.Fatalf("thrash after one collision = %d, want 1", got)
+	}
+	if got := len(p.cNodeMemoCache); got != cNodeMemoCacheInitialSize {
+		t.Fatalf("cache grew after only 1/%d evictions: len=%d", cNodeMemoThrashGrowThreshold, got)
+	}
+
+	// Fast-forward to one eviction short of the threshold: the mechanism
+	// under test is "does the Nth eviction trigger growth", not "how many
+	// calls does it take to manufacture N collisions" (already covered,
+	// cheaply, by the one real collision above).
+	p.cNodeMemoThrash = cNodeMemoThrashGrowThreshold - 1
+
+	// c collides with the same set again: this is the threshold-crossing
+	// eviction. It must grow the cache AND reset the counter.
+	slot := p.cNodeMemoSlot(c)
+	if got := len(p.cNodeMemoCache); got != cNodeMemoCacheSize {
+		t.Fatalf("cache len at threshold crossing = %d, want cNodeMemoCacheSize (%d)", got, cNodeMemoCacheSize)
+	}
+	if got := p.cNodeMemoThrash; got != 0 {
+		t.Fatalf("thrash counter after grow = %d, want reset to 0", got)
+	}
+	// The returned slot must belong to the freshly-grown cache (not a
+	// dangling pointer into the discarded small array) and must be correctly
+	// addressed for c under the new cache's larger set count.
+	newSetCount := len(p.cNodeMemoCache) >> 1
+	wantIdx := cNodeMemoCacheIndex(uintptr(unsafe.Pointer(c)), newSetCount)
+	if got := slot; got != &p.cNodeMemoCache[wantIdx] {
+		t.Fatalf("slot after grow = %p, want &cache[%d] (%p)", got, wantIdx, &p.cNodeMemoCache[wantIdx])
+	}
+	if slot.node != uintptr(unsafe.Pointer(c)) || slot.epoch != p.cNodeMemoEpoch {
+		t.Fatalf("slot after grow = %#v, want a fresh entry for c at the current epoch", *slot)
+	}
+}
+
+// TestCNodeMemoSlotAdaptiveGrowIsNoopOnceAtFullSize confirms growth-crossing
+// bookkeeping stays a no-op once the cache is already at cNodeMemoCacheSize
+// (e.g. because cHandleError's unconditional trigger already grew it this
+// parse): no further reallocation, no infinite-loop risk from repeatedly
+// "crossing" the threshold every eviction once len>=cNodeMemoCacheSize.
+func TestCNodeMemoSlotAdaptiveGrowIsNoopOnceAtFullSize(t *testing.T) {
+	p := &Parser{cNodeMemoCache: make([]cNodeMemoCacheEntry, cNodeMemoCacheSize)}
+	p.beginCNodeMemoEpoch()
+	a, b, c := collidingCNodeMemoNodes(t, len(p.cNodeMemoCache)>>1)
+	p.cNodeMemoSlot(a)
+	p.cNodeMemoSlot(b)
+	p.cNodeMemoThrash = cNodeMemoThrashGrowThreshold
+	before := &p.cNodeMemoCache[0]
+	p.cNodeMemoSlot(c)
+	if got := len(p.cNodeMemoCache); got != cNodeMemoCacheSize {
+		t.Fatalf("cache len changed at full size = %d, want unchanged %d", got, cNodeMemoCacheSize)
+	}
+	if after := &p.cNodeMemoCache[0]; after != before {
+		t.Fatal("cache backing array was reallocated at full size")
+	}
+}
+
 // electionTraceEntry is the frozen strategy-1 attempt surface. It records
 // first ownership before any position, merge, cost, action, or recovery guard
 // runs, so a future cursor can be checked without duplicating those guards.

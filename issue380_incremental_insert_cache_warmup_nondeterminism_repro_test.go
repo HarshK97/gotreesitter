@@ -131,6 +131,7 @@ func TestReproOrganicWarmVsCold(t *testing.T) {
 	lang := grammars.GoLanguage()
 	insertOffset := issue380EnvInt("GTS_REPRO_OFFSET", 200)
 	iters := issue380EnvInt("GTS_REPRO_ITERS", 8)
+	issue380ValidOffset(t, src, insertOffset, 0)
 
 	runOnce := func(label string, prime bool, i int) {
 		parser := gotreesitter.NewParser(lang)
@@ -191,6 +192,7 @@ func TestReproOrganicDeleteWarmVsCold(t *testing.T) {
 	lang := grammars.GoLanguage()
 	deleteOffset := issue380EnvInt("GTS_REPRO_OFFSET", 200)
 	iters := issue380EnvInt("GTS_REPRO_ITERS", 4)
+	issue380ValidOffset(t, src, deleteOffset, 1)
 
 	runOnce := func(label string, prime bool, i int) {
 		parser := gotreesitter.NewParser(lang)
@@ -250,6 +252,7 @@ func TestReproOrganicWarmCPUProfile(t *testing.T) {
 	}
 	lang := grammars.GoLanguage()
 	insertOffset := issue380EnvInt("GTS_REPRO_OFFSET", 200)
+	issue380ValidOffset(t, src, insertOffset, 0)
 
 	parser := gotreesitter.NewParser(lang)
 	primeTree, _ := parser.Parse([]byte(primingBadGoSource))
