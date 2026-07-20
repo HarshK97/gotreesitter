@@ -15,6 +15,12 @@ type reuseCursor struct {
 	newSource []byte
 	minEditAt uint32
 	hasEdits  bool
+	// edits is the old tree's recorded edit list (post-parse Tree.Edit calls),
+	// in application order. It is needed to reverse-map a node's post-edit
+	// (shifted) byte coordinates back to its pre-edit coordinates in oldSource
+	// so the reuse byte-equality guard reads the correct old-source bytes. See
+	// oldByteForNew / nodeBytesUnchanged.
+	edits []InputEdit
 
 	stack []reuseFrame
 	next  *Node
@@ -62,6 +68,7 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 	c.newSource = source
 	c.minEditAt = 0
 	c.hasEdits = len(oldTree.edits) > 0
+	c.edits = oldTree.edits
 	if c.hasEdits {
 		c.minEditAt = oldTree.edits[0].StartByte
 		for i := 1; i < len(oldTree.edits); i++ {
@@ -137,6 +144,7 @@ func (c *reuseCursor) releaseNodeRefs() {
 	c.topLevelParent = nil
 	c.oldSource = nil
 	c.newSource = nil
+	c.edits = nil
 	c.forestFastPath = false
 	c.languageName = ""
 	if cap(c.stack) > 0 {
@@ -256,12 +264,15 @@ func (c *reuseCursor) reusableIndexedEntry(entry stackEntry) bool {
 		c.rejectDirty++
 		return false
 	}
-	if c.hasEdits && !nodeBytesEqual(start, end, c.oldSource, c.newSource) {
+	if c.hasEdits && !c.nodeBytesUnchanged(start, end) {
 		c.rejectDirty++
 		return false
 	}
 	dirtyHere := stackEntryNodeDirty(entry)
-	if dirtyHere && nodeBytesEqual(start, end, c.oldSource, c.newSource) {
+	// A dirty entry was marked dirty by TRUE OVERLAP with an edit (its start was
+	// clamped). Only same-coordinate byte equality can safely clear that dirty
+	// bit -- reverse-mapping a clamped coordinate is unsound here (#382 review).
+	if dirtyHere && c.nodeBytesEqualSameCoord(start, end) {
 		setStackEntryDirty(entry, false)
 		dirtyHere = false
 	}
@@ -316,8 +327,12 @@ func (c *reuseCursor) advance() *Node {
 
 		dirtyHere := cur.dirty()
 		if dirtyHere {
-			if nodeBytesEqual(cur.startByte, cur.endByte, c.oldSource, c.newSource) {
-				// Undo edit path: unchanged bytes can be reused safely.
+			// Same-coordinate comparison only: a dirty node overlapped the edit
+			// (its start was clamped), so reverse-mapping it would read a
+			// coincidentally-equal suffix tail and unsoundly clear the dirty bit
+			// (#382 review). Same-coord clears it only on a genuine net-zero
+			// shift (edit + inverse), which is exactly the undo case this serves.
+			if c.nodeBytesEqualSameCoord(cur.startByte, cur.endByte) {
 				cur.setDirty(false)
 				dirtyHere = false
 			}
@@ -346,7 +361,7 @@ func (c *reuseCursor) advance() *Node {
 		}
 
 		if frame.underDirty && c.hasEdits &&
-			!nodeBytesEqual(cur.startByte, cur.endByte, c.oldSource, c.newSource) {
+			!c.nodeBytesUnchanged(cur.startByte, cur.endByte) {
 			c.rejectAncestorDirtyBeforeEdit++
 			continue
 		}
@@ -375,14 +390,79 @@ func (c *reuseCursor) advance() *Node {
 	return nil
 }
 
-func nodeBytesEqual(start, end uint32, oldSource, newSource []byte) bool {
+// oldByteForNew reverse-maps a post-edit (shifted) byte position in the new
+// source back to its position in the old (pre-edit) source, undoing the
+// coordinate shifts Tree.Edit applied for each recorded edit. Edits are undone
+// in reverse application order. It returns ok=false if p falls inside an edited
+// region (its old position is not well-defined) — callers treat that as "cannot
+// verify, do not reuse".
+//
+// For a single edit e (byteDelta = NewEndByte - OldEndByte):
+//   - p <= e.StartByte : unchanged (position precedes the edit)
+//   - p >= e.NewEndByte : in the shifted suffix; old = p - byteDelta
+//   - otherwise         : inside the new edited region; not mappable
+func (c *reuseCursor) oldByteForNew(p uint32) (uint32, bool) {
+	cur := int64(p)
+	for i := len(c.edits) - 1; i >= 0; i-- {
+		e := c.edits[i]
+		if cur <= int64(e.StartByte) {
+			continue
+		}
+		if cur >= int64(e.NewEndByte) {
+			cur -= int64(e.NewEndByte) - int64(e.OldEndByte)
+			continue
+		}
+		return 0, false
+	}
+	if cur < 0 || cur > int64(len(c.oldSource)) {
+		return 0, false
+	}
+	return uint32(cur), true
+}
+
+// nodeBytesUnchanged reports whether the node spanning [start,end) in the NEW
+// source has byte-identical text to the same node in the OLD source. The node's
+// coordinates are post-edit (Tree.Edit already shifted them), so the old-source
+// slice must be taken at the reverse-mapped coordinates — comparing oldSource at
+// the post-shift coordinates (the historical bug, issue #380) makes every
+// length-changed suffix node spuriously "differ" and blocks all suffix reuse.
+// A node that straddles or is contained in an edited region reverse-maps to a
+// different-length old span (or fails to map), so bytes.Equal correctly reports
+// it changed — the guard stays sound, it just now reads the right old bytes.
+func (c *reuseCursor) nodeBytesUnchanged(start, end uint32) bool {
 	if end < start {
 		return false
 	}
-	if end > uint32(len(oldSource)) || end > uint32(len(newSource)) {
+	if end > uint32(len(c.newSource)) {
 		return false
 	}
-	return bytes.Equal(oldSource[start:end], newSource[start:end])
+	oldStart, ok1 := c.oldByteForNew(start)
+	oldEnd, ok2 := c.oldByteForNew(end)
+	if !ok1 || !ok2 || oldEnd < oldStart {
+		return false
+	}
+	return bytes.Equal(c.oldSource[oldStart:oldEnd], c.newSource[start:end])
+}
+
+// nodeBytesEqualSameCoord compares a node's bytes at the SAME (post-edit)
+// coordinates in both oldSource and newSource, WITHOUT reverse-mapping. It is
+// the correct "is this text unchanged" test for a node that Tree.Edit marked
+// dirty by TRUE OVERLAP with an edit (editNodeWithDelta clamps such a node's
+// start to the edit's NewEndByte). Reverse-mapping a clamped start
+// (nodeBytesUnchanged) resolves it to OldEndByte and then compares only the
+// node's surviving suffix tail, which is byte-identical to the shifted new text
+// by construction -- so it would wrongly declare a genuinely-changed node
+// unchanged and reuse a stale subtree (silent corruption; the #382 review found
+// this on CSS length-changing replace edits). Same-coordinate comparison
+// instead reports "unchanged" only when the bytes at the identical offsets
+// match: true exactly for the net-zero-shift case the un-dirty optimization
+// exists for (an edit and its inverse), and correctly false for any node whose
+// text actually shifted or changed under a length-changing edit.
+func (c *reuseCursor) nodeBytesEqualSameCoord(start, end uint32) bool {
+	if end < start || end > uint32(len(c.oldSource)) || end > uint32(len(c.newSource)) {
+		return false
+	}
+	return bytes.Equal(c.oldSource[start:end], c.newSource[start:end])
 }
 
 func reuseSubtreeGapIsParserPadding(source []byte, stackByteOffset, nodeStart uint32) bool {
@@ -425,7 +505,7 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 			// Preserve full-root reuse on undo when bytes are identical.
 			if !(n.startByte == 0 &&
 				n.endByte == idx.sourceLen &&
-				nodeBytesEqual(n.startByte, n.endByte, idx.oldSource, idx.newSource)) &&
+				idx.nodeBytesUnchanged(n.startByte, n.endByte)) &&
 				!idx.directForestTopLevelNonLeafReuse(n) {
 				idx.rejectRootNonLeafChanged++
 				continue
