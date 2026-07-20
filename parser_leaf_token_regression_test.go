@@ -929,6 +929,106 @@ export const make = (id: ID): User => {
 	}
 }
 
+// TestParseTypeScriptArrowParenthesizedReturnType guards a sibling shape of
+// issue #402 found in PR review: a typed-parameter arrow whose return-type
+// annotation is itself parenthesized ("(a: A): (B) => a"). The original
+// fix's backward colon-scan stopped at the first ')' it met, so it never
+// walked past the return type's own closing paren to find the true
+// return-type colon. The scan now balances parens while walking backward so
+// it only accepts a colon seen at paren depth zero.
+func TestParseTypeScriptArrowParenthesizedReturnType(t *testing.T) {
+	src := "const f = (a: A): (B) => a;\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	sexpr := root.SExpr(lang)
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typescript arrow parenthesized return type root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), sexpr)
+	}
+	for _, want := range []string{"arrow_function", "formal_parameters", "required_parameter", "parenthesized_type"} {
+		if !strings.Contains(sexpr, want) {
+			t.Fatalf("typescript arrow parenthesized return type missing %s: %s", want, sexpr)
+		}
+	}
+}
+
+// TestParseTypeScriptArrowUnionInParensReturnType covers a union type inside
+// a parenthesized return-type annotation ("(a: A): (string | number) =>
+// a"), the shape that motivated the balanced-paren backward scan: the union
+// members and the "|" separator sit between the return type's own
+// parentheses, well within the scan's 512-byte window, and must not be
+// mistaken for a top-level colon boundary.
+func TestParseTypeScriptArrowUnionInParensReturnType(t *testing.T) {
+	src := "const f = (a: A): (string | number) => a;\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	sexpr := root.SExpr(lang)
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typescript arrow union-in-parens return type root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), sexpr)
+	}
+	for _, want := range []string{"arrow_function", "parenthesized_type", "union_type"} {
+		if !strings.Contains(sexpr, want) {
+			t.Fatalf("typescript arrow union-in-parens return type missing %s: %s", want, sexpr)
+		}
+	}
+}
+
+// TestParseTypeScriptArrowFunctionTypeReturnType covers a nested
+// function-type return annotation ("(a: A): (() => B) => a"): the return
+// type itself contains an inner "=>" and its own parenthesized empty
+// parameter list. The detector's outer loop tries every "=>" occurrence in
+// source order, so a non-matching inner "=>" (its own backward scan lands
+// on the outer arrow's parameter-list colon, which is not immediately
+// preceded by ')') falls through cleanly to the real, outer arrow.
+func TestParseTypeScriptArrowFunctionTypeReturnType(t *testing.T) {
+	src := "const f = (a: A): (() => B) => a;\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	sexpr := root.SExpr(lang)
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typescript arrow function-type return type root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), sexpr)
+	}
+	for _, want := range []string{"arrow_function", "parenthesized_type", "function_type"} {
+		if !strings.Contains(sexpr, want) {
+			t.Fatalf("typescript arrow function-type return type missing %s: %s", want, sexpr)
+		}
+	}
+}
+
+// TestParseTypeScriptTypeAnnotationArrowValueControl is the negative
+// control for the balanced-paren scan: "const x: (a: A) => B = foo" is a
+// variable's own type annotation (a function_type in type position), not an
+// arrow_function value expression. The scan's backward walk from the
+// declarator's arrow can land on the *declarator's* type-annotation colon
+// (also at paren depth zero) instead of a return-type colon, but that
+// colon is preceded by an identifier byte, not ')', so the subsequent
+// matchingOpenParenBefore check rejects it. This shape must not trigger the
+// merge-width widening: it was never affected by issue #402 (no
+// required_parameter/parenthesized_expression fork here), and it exercises
+// the exact false-positive risk the balanced-paren scan must avoid.
+func TestParseTypeScriptTypeAnnotationArrowValueControl(t *testing.T) {
+	src := "const x: (a: A) => B = foo;\n"
+	tree, lang := parseLanguageSample(t, "typescript", src)
+	t.Cleanup(tree.Release)
+
+	root := tree.RootNode()
+	sexpr := root.SExpr(lang)
+	if root.Type(lang) != "program" || root.HasError() {
+		t.Fatalf("typescript type-annotation arrow-value control root = %s hasError=%v; tree=%s", root.Type(lang), root.HasError(), sexpr)
+	}
+	if strings.Contains(sexpr, "arrow_function") {
+		t.Fatalf("typescript type-annotation arrow-value control unexpectedly parsed a value arrow_function: %s", sexpr)
+	}
+	if !strings.Contains(sexpr, "function_type") {
+		t.Fatalf("typescript type-annotation arrow-value control missing function_type: %s", sexpr)
+	}
+}
+
 func TestParseJavaScriptJSXMultipleAttributesAfterExpression(t *testing.T) {
 	src := "const el = <Foo bar=\"string\" baz={2} data-i8n=\"dialogs.welcome.heading\" bam />\n"
 	tree, lang := parseLanguageSample(t, "javascript", src)
