@@ -144,7 +144,7 @@ func (s *compactReplayStates) get(id core.SubtreeID) (pre, ps StateID, preOk, ps
 // exposed below the final reduce). The traversal uses an explicit worklist over
 // SubtreeIDs to avoid deep recursion.
 func (p *Parser) replayCompactDerivation(compact *core.Core, roots []core.SubtreeID) (*compactReplayStates, error) {
-	if p == nil || compact == nil {
+	if p == nil || p.language == nil || compact == nil {
 		return nil, errors.New("parser-core phase zero: replay requires parser and core")
 	}
 	n := compact.SubtreeArenaLen() + 1
@@ -160,6 +160,10 @@ func (p *Parser) replayCompactDerivation(compact *core.Core, roots []core.Subtre
 		stack = stack[:len(stack)-1]
 		view, err := compact.MaterializationView(top.id)
 		if err != nil {
+			// Return the pooled state object before bailing so the pool contract
+			// is honoured (otherwise it is dropped and silently reallocated).
+			states.frames = stack[:0]
+			states.release()
 			return nil, err
 		}
 		ps, ok := p.replayTransition(top.preGoto, Symbol(view.Symbol), view.Terminal)
@@ -195,6 +199,9 @@ func (p *Parser) replayCompactDerivation(compact *core.Core, roots []core.Subtre
 		for _, child := range kids {
 			cview, err := compact.MaterializationView(child)
 			if err != nil {
+				// Return the pooled state object before bailing (see above).
+				states.frames = stack[:0]
+				states.release()
 				return nil, err
 			}
 			stack = append(stack, compactReplayFrame{id: child, preGoto: cursor})
