@@ -218,6 +218,28 @@ func (c *reuseCursor) candidates(start uint32) []*Node {
 	}
 }
 
+// hasNonLeafCandidateAt reports whether any reuse candidate beginning exactly
+// at start is a non-leaf subtree (ChildCount > 0). Campaign O(edit) W1b uses
+// this to scope the pending-reduce settling (settleEagerDefaultReduceChainFor
+// Reuse) to the ONLY situation it can help: a non-leaf sibling waiting to be
+// spliced whose recorded PreGotoState is reachable only after the pending
+// unconditional reduces settle. When no non-leaf candidate starts here,
+// settling could only perturb the parse trajectory (for example, changing
+// where a trailing extra/comment attaches) with no reuse to gain, so it is
+// skipped. Leaf candidates never need settling -- a leaf shifts, it does not
+// consult a goto state -- so they do not qualify.
+func (c *reuseCursor) hasNonLeafCandidateAt(start uint32) bool {
+	if c == nil {
+		return false
+	}
+	for _, n := range c.candidates(start) {
+		if n != nil && n.ChildCount() > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *reuseCursor) collectTopLevelCandidates(start uint32) bool {
 	if c == nil || c.topLevelParent == nil || c.topLevelIndex >= c.topLevelEnd {
 		return false

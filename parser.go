@@ -4917,7 +4917,37 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		}
 
 		if reuse != nil && len(stacks) == 1 && !stacks[0].dead && tok.Symbol != 0 {
-			if nextTok, ok := p.tryReuseCurrentParseSubtree(&stacks[0], tok, ts, reuse, scratch, arena, &reuseState, timing); ok {
+			nextTok, ok := p.tryReuseCurrentParseSubtree(&stacks[0], tok, ts, reuse, scratch, arena, &reuseState, timing)
+			if !ok && reuse.hasNonLeafCandidateAt(tok.StartByte) {
+				// Campaign O(edit) W1b (spec.campaign.oedit): reuse failed at
+				// the live top-of-stack state, but a non-leaf sibling candidate
+				// begins right here. Settle the pending eager-default
+				// (unconditional) reduce chain and retry, so a candidate whose
+				// recorded PreGotoState is only reachable after those reduces
+				// can still splice. Settling is a FALLBACK, never a pre-empt:
+				// any reuse the current state already admits is taken first and
+				// unchanged (the #393 bar and the correct interleaving of
+				// reuse with trailing-extra shifts stay intact). It is scoped
+				// to positions with a real non-leaf candidate so it can only
+				// advance toward a splice, never perturb an intra-item trajectory
+				// (for example a trailing comment's attachment). The settled
+				// reduces are exactly what the dispatch loop performs next
+				// regardless of lookahead, so falling through to it below is
+				// sound when reuse still does not apply.
+				forkedDuringSettle := false
+				settled := p.settleEagerDefaultReduceChainForReuse(source, &stacks[0], tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, trackChildErrors, &forkedDuringSettle)
+				if forkedDuringSettle {
+					// A settled reduce forked the stack through a GSS
+					// multi-link. Drain the pending forks into the live
+					// frontier (exactly as the dispatch loop does after its own
+					// reduces) and skip the retry; the multi-stack dispatch
+					// below handles it.
+					drainPendingForkStacks()
+				} else if settled && len(stacks) == 1 && !stacks[0].dead && !stacks[0].accepted && !stacks[0].shifted && tok.Symbol != 0 {
+					nextTok, ok = p.tryReuseCurrentParseSubtree(&stacks[0], tok, ts, reuse, scratch, arena, &reuseState, timing)
+				}
+			}
+			if ok {
 				tok = nextTok
 				workCountRefreshConvergenceLookahead(tok)
 				needToken = false
