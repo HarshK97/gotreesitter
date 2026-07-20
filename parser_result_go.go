@@ -76,12 +76,42 @@ func normalizeGoReturnedTreeCompatibility(root *Node, source []byte, p *Parser, 
 // change to grammargen/lr.go's resolveReduceReduceLegacy family (used by
 // every language with declared conflicts) with real blast-radius risk.
 //
-// This function is the narrow, local, byte-identity-preserving patch: it
-// only retags the node's symbol/named-ness (never bytes, never structure) and
-// only for the one syntactic shape the owner-confirmed divergence covers —
-// the sole/leading argument of a literal `new`/`make` call. It mirrors the
-// existing precedent for this class of fix (see
-// normalizeArduinoBuiltinPrimitiveTypes in parser_result_c.go).
+// This function is the narrow, local, byte-identity-preserving patch: it only
+// retags node symbols/named-ness and child field labels (never bytes, never
+// node count, never parent/child structure) and only for the one syntactic
+// position the owner-confirmed divergence covers — the sole/leading argument
+// of a literal `new`/`make` call. It mirrors the existing precedent for this
+// class of fix (see normalizeArduinoBuiltinPrimitiveTypes in
+// parser_result_c.go).
+//
+// The base case retags a bare identifier (`new(dirInfo)`) to type_identifier.
+// goNewMakeTypeRetagCtx.relabel extends the same retag to the three other
+// expression shapes that the C oracle parses as a type in this slot:
+//
+//   - `new(pkg.Type)` — a selector_expression whose operand is a bare
+//     identifier becomes a qualified_type (operand identifier -> field
+//     "package" package_identifier, field identifier -> field "name"
+//     type_identifier). A nested selector (`new(a.b.C)`) stays a
+//     selector_expression, because the C grammar's qualified_type requires a
+//     single-identifier package part, so C keeps that shape an expression.
+//   - `new(*T)` — a unary_expression with the "*" operator becomes a
+//     pointer_type wrapping the operand retagged as a type (recursively:
+//     `new(**T)` nests pointer_type, `new(*pkg.Type)` wraps a qualified_type).
+//     A non-"*" operator (`new(&T)`) or an operand that is not itself a valid
+//     type (`new(*a.b.C)`) stays a unary_expression, matching C.
+//   - `new((T))` — a parenthesized_expression becomes a parenthesized_type and
+//     its inner expression is retagged as a type, but only when the inner is
+//     itself a valid type.
+//
+// canBeType gates every case all-or-nothing: the WHOLE leading argument must
+// spell a valid type, mirroring C's decision to parse this slot as _type or
+// _expression as a unit. Every relabel preserves byte spans, child count, and
+// parent/child links; it only relabels symbols, named-ness, and the field ids
+// stored for the node's own children. Composite/unambiguous type arguments
+// (slice_type, map_type, channel_type, struct_type, array_type, generic_type,
+// ...) already carry the correct type shape from the parse and are never
+// visited, because relabel is gated on the argument node's symbol being
+// identifier/selector/unary/parenthesized.
 func normalizeGoNewMakeTypeArgument(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || len(source) == 0 {
 		return
@@ -105,7 +135,17 @@ func normalizeGoNewMakeTypeArgument(root *Node, source []byte, lang *Language) {
 	if !ok {
 		return
 	}
-	typeIdentifierNamed := symbolIsNamed(lang, typeIdentifierSym)
+	ctx := &goNewMakeTypeRetagCtx{
+		lang:                lang,
+		source:              source,
+		identifierSym:       identifierSym,
+		typeIdentifierSym:   typeIdentifierSym,
+		typeIdentifierNamed: symbolIsNamed(lang, typeIdentifierSym),
+	}
+	// Resolve the optional structured-type symbols/fields. When any is absent
+	// (a grammar variant without these node types) the context degrades to the
+	// original bare-identifier-only retag, preserving prior behavior exactly.
+	ctx.resolveStructured(lang)
 	// Optional symbols used only for filtering; a missing one degrades gracefully.
 	commentSym, hasComment := symbolByName(lang, "comment")
 	typeArgsSym, hasTypeArgs := symbolByName(lang, "type_arguments")
@@ -152,12 +192,233 @@ func normalizeGoNewMakeTypeArgument(root *Node, source []byte, lang *Language) {
 			first = c
 			break
 		}
-		if first == nil || first.symbol != identifierSym {
+		if first == nil {
 			return
 		}
-		first.symbol = typeIdentifierSym
-		first.setNamed(typeIdentifierNamed)
+		// All-or-nothing: only relabel when the WHOLE leading argument spells a
+		// valid type. C parses this slot as _type or _expression as a unit, so a
+		// partially-convertible expression (`*a.b.C`) must stay an expression.
+		if !ctx.canBeType(first) {
+			return
+		}
+		ctx.relabel(first)
 	})
+}
+
+// goNewMakeTypeRetagCtx caches the symbols and field ids used to relabel a
+// new()/make() leading-argument expression as its C-oracle type node. It is
+// built once per normalize pass. When structured is false (a required symbol
+// or field is missing from the active Go grammar) only the bare-identifier
+// base case is available, matching the pre-extension behavior.
+type goNewMakeTypeRetagCtx struct {
+	lang   *Language
+	source []byte
+
+	identifierSym       Symbol
+	typeIdentifierSym   Symbol
+	typeIdentifierNamed bool
+
+	structured             bool
+	selectorSym            Symbol
+	unarySym               Symbol
+	qualifiedTypeSym       Symbol
+	qualifiedTypeNamed     bool
+	pointerTypeSym         Symbol
+	pointerTypeNamed       bool
+	packageIdentifierSym   Symbol
+	packageIdentifierNamed bool
+
+	operandFieldID FieldID
+	fieldFieldID   FieldID
+	packageFieldID FieldID
+	nameFieldID    FieldID
+
+	// hasParen gates the parenthesized_expression->parenthesized_type relabel
+	// (`new((T))`). It resolves independently of the core structured symbols so
+	// a grammar without parenthesized_type still relabels qualified/pointer.
+	hasParen       bool
+	commentSym     Symbol
+	hasComment     bool
+	parenExprSym   Symbol
+	parenTypeSym   Symbol
+	parenTypeNamed bool
+}
+
+// resolveStructured looks up every symbol and field id needed for the
+// selector_expression->qualified_type and unary_expression->pointer_type
+// relabels. If any is missing, structured stays false and only the
+// bare-identifier retag runs.
+func (c *goNewMakeTypeRetagCtx) resolveStructured(lang *Language) {
+	selectorSym, ok1 := symbolByName(lang, "selector_expression")
+	unarySym, ok2 := symbolByName(lang, "unary_expression")
+	qualifiedTypeSym, ok3 := symbolByName(lang, "qualified_type")
+	pointerTypeSym, ok4 := symbolByName(lang, "pointer_type")
+	packageIdentifierSym, ok5 := lang.symbolByNamePreferNamed("package_identifier")
+	operandFieldID, ok6 := lang.FieldByName("operand")
+	fieldFieldID, ok7 := lang.FieldByName("field")
+	packageFieldID, ok8 := lang.FieldByName("package")
+	nameFieldID, ok9 := lang.FieldByName("name")
+	if !(ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7 && ok8 && ok9) {
+		return
+	}
+	if operandFieldID == 0 || fieldFieldID == 0 || packageFieldID == 0 || nameFieldID == 0 {
+		return
+	}
+	c.selectorSym = selectorSym
+	c.unarySym = unarySym
+	c.qualifiedTypeSym = qualifiedTypeSym
+	c.qualifiedTypeNamed = symbolIsNamed(lang, qualifiedTypeSym)
+	c.pointerTypeSym = pointerTypeSym
+	c.pointerTypeNamed = symbolIsNamed(lang, pointerTypeSym)
+	c.packageIdentifierSym = packageIdentifierSym
+	c.packageIdentifierNamed = symbolIsNamed(lang, packageIdentifierSym)
+	c.operandFieldID = operandFieldID
+	c.fieldFieldID = fieldFieldID
+	c.packageFieldID = packageFieldID
+	c.nameFieldID = nameFieldID
+	c.structured = true
+
+	c.commentSym, c.hasComment = symbolByName(lang, "comment")
+	parenExprSym, okp1 := symbolByName(lang, "parenthesized_expression")
+	parenTypeSym, okp2 := symbolByName(lang, "parenthesized_type")
+	if okp1 && okp2 {
+		c.parenExprSym = parenExprSym
+		c.parenTypeSym = parenTypeSym
+		c.parenTypeNamed = symbolIsNamed(lang, parenTypeSym)
+		c.hasParen = true
+	}
+}
+
+// parenInner returns the single inner expression of a parenthesized_expression
+// (the first non-comment named child), or nil.
+func (c *goNewMakeTypeRetagCtx) parenInner(n *Node) *Node {
+	for i := 0; i < n.NamedChildCount(); i++ {
+		child := n.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		if c.hasComment && child.symbol == c.commentSym {
+			continue
+		}
+		return child
+	}
+	return nil
+}
+
+// canBeType reports whether n (an expression node in a new()/make() leading
+// slot) spells a type the C oracle would parse as a type node. It never
+// mutates. The recursion mirrors the C grammar's _simple_type shape.
+func (c *goNewMakeTypeRetagCtx) canBeType(n *Node) bool {
+	if n == nil {
+		return false
+	}
+	if n.symbol == c.identifierSym {
+		return true
+	}
+	if !c.structured {
+		return false
+	}
+	switch n.symbol {
+	case c.selectorSym:
+		// qualified_type's package part is a single identifier; a nested
+		// selector (`a.b.C`) can never be a qualified_type, so C keeps it an
+		// expression.
+		operand := n.ChildByFieldName("operand", c.lang)
+		return operand != nil && operand.symbol == c.identifierSym
+	case c.unarySym:
+		// Only the "*" operator forms a pointer_type; "&", "-", "!", ... stay
+		// expressions. The operand must itself be a valid type.
+		op := n.ChildByFieldName("operator", c.lang)
+		if op == nil || op.Text(c.source) != "*" {
+			return false
+		}
+		return c.canBeType(n.ChildByFieldName("operand", c.lang))
+	case c.parenExprSym:
+		if !c.hasParen {
+			return false
+		}
+		return c.canBeType(c.parenInner(n))
+	}
+	return false
+}
+
+// relabel converts n in place to its C-oracle type node. The caller MUST have
+// confirmed canBeType(n) first. Only symbols, named-ness, and the node's own
+// child field ids change; byte spans, child count, and links are untouched.
+func (c *goNewMakeTypeRetagCtx) relabel(n *Node) {
+	if n == nil {
+		return
+	}
+	if n.symbol == c.identifierSym {
+		n.symbol = c.typeIdentifierSym
+		n.setNamed(c.typeIdentifierNamed)
+		return
+	}
+	if !c.structured {
+		return
+	}
+	switch n.symbol {
+	case c.selectorSym:
+		c.relabelQualified(n)
+	case c.unarySym:
+		c.relabelPointer(n)
+	case c.parenExprSym:
+		if c.hasParen {
+			c.relabelParen(n)
+		}
+	}
+}
+
+// relabelQualified turns a selector_expression into a qualified_type: the
+// operand identifier becomes the "package" package_identifier and the field
+// identifier becomes the "name" type_identifier. The "." token keeps field 0.
+func (c *goNewMakeTypeRetagCtx) relabelQualified(n *Node) {
+	childCount := nodeChildCountNoMaterialize(n)
+	newIDs := make([]FieldID, childCount)
+	for i := 0; i < childCount; i++ {
+		child := n.Child(i)
+		if child == nil {
+			continue
+		}
+		switch nodeFieldIDAt(n, i) {
+		case c.operandFieldID:
+			child.symbol = c.packageIdentifierSym
+			child.setNamed(c.packageIdentifierNamed)
+			newIDs[i] = c.packageFieldID
+		case c.fieldFieldID:
+			child.symbol = c.typeIdentifierSym
+			child.setNamed(c.typeIdentifierNamed)
+			newIDs[i] = c.nameFieldID
+		}
+	}
+	n.symbol = c.qualifiedTypeSym
+	n.setNamed(c.qualifiedTypeNamed)
+	n.setFieldMetadata(newIDs, nil)
+}
+
+// relabelPointer turns a unary_expression ("*" operand) into a pointer_type
+// wrapping the operand retagged as a type. pointer_type carries no child
+// fields, so the "operator"/"operand" field ids are cleared.
+func (c *goNewMakeTypeRetagCtx) relabelPointer(n *Node) {
+	operand := n.ChildByFieldName("operand", c.lang)
+	n.symbol = c.pointerTypeSym
+	n.setNamed(c.pointerTypeNamed)
+	n.clearFieldMetadata()
+	if operand != nil {
+		c.relabel(operand)
+	}
+}
+
+// relabelParen turns a parenthesized_expression into a parenthesized_type and
+// retags its inner expression as a type. Both nodes carry no child fields, so
+// only symbols and named-ness change.
+func (c *goNewMakeTypeRetagCtx) relabelParen(n *Node) {
+	inner := c.parenInner(n)
+	n.symbol = c.parenTypeSym
+	n.setNamed(c.parenTypeNamed)
+	if inner != nil {
+		c.relabel(inner)
+	}
 }
 
 // goCompatMemoryBudgetStopReason forces a real (unmasked) memory-budget check
