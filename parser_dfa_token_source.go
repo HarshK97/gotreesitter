@@ -4532,3 +4532,19 @@ func (d *dfaTokenSource) priorGLRState(limit int, state StateID) bool {
 // For typical source (~5 bytes/token, ~10 reduce depth), that's sourceLen*2.
 // We use sourceLen*20 as a generous upper bound that still prevents runaway
 // parsing from OOMing the machine.
+
+// externalScannerQuiescent reports whether the external scanner currently holds
+// no serialized state. By the tree-sitter external-scanner contract, Serialize
+// must persist every bit of scanner state that can change a later scan(); a
+// zero-byte serialization therefore means the scanner carries no state forward.
+// The block-splice O(1) byte skip (reuseNode, incremental.go) relies on this:
+// with an empty serialized state the live scanner behaves for every future
+// scan() exactly like a fresh empty scanner, so repositioning the byte cursor
+// without re-lexing the reused span cannot change the next real token. A
+// language with no external scanner is trivially quiescent.
+func (d *dfaTokenSource) externalScannerQuiescent() bool {
+	if d == nil || !d.hasExternalScanner {
+		return true
+	}
+	return len(d.captureExternalScannerStateInto(&d.externalCompare)) == 0
+}
