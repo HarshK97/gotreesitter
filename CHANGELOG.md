@@ -7,16 +7,49 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.44.1] - 2026-07-20
+
 ### Fixed
 
-- **Swift's certified runtime profile now attaches again.** PR #396
-  regenerated `swift.bin` for the DFA-minimization fix but did not update
-  the profile's pinned blob digest in `grammars/runtime_profiles.go`. The
-  stale digest silently dropped Swift's external-scanner skip-repeat policy
-  and its accepted-error retry skip. Swift parses still produced correct
-  trees; they ran extra retry passes. This release updates the pinned
-  digest to match the regenerated blob. No other grammar's profile carries
-  a stale digest.
+- **Swift's certified runtime profile now attaches again.** PR #396's
+  `swift.bin` regeneration (the DFA-minimization fix, v0.44.0) did not
+  update the profile's pinned blob digest in
+  `grammars/runtime_profiles.go`. The stale digest silently dropped
+  Swift's external-scanner skip-repeat policy and its accepted-error
+  retry-skip policy (PR #400). The impact was performance-only.
+  Error-bearing Swift parses ran redundant retry ladders. Clean Swift
+  parses, and the v0.44.0 memory win, were unaffected. This release
+  updates the pinned digest to match the regenerated blob. No other
+  grammar's profile carries a stale digest.
+
+### Improved
+
+- **Go clean-file incremental edits are now O(edit), not O(file).** This
+  closes, for clean top-level edits, the Go reuse gap that v0.44.0 listed
+  as a known issue. Before dispatch reaches the reuse check, the parser
+  now applies any pending eager-default reduce chain to the live stack.
+  This is campaign O(edit) workstream W1b (PR #398), and it closes the
+  settling gap that blocked the W1 splice (PR #395) for Go.
+  `ReuseRejectRootNonLeafChanged` now holds at a small constant, 9,
+  regardless of file size. Node allocations drop 11 to 16 times. A 137KB
+  near-top insert now takes about 22ms, down from about 47ms. A 1MB file
+  takes about 162ms, down from about 356ms.
+- **Incremental parses over a provably clean old tree start the C-parity
+  cost-competition flag false**, matching fresh-parse behavior (PR #399,
+  campaign O(edit) workstream W3). Previously every incremental parse
+  started this flag conservatively true, even when the old tree carried
+  no errors. Outputs are proven unchanged: a differential over 8,361
+  edits is byte-identical to the prior behavior. The effect on wall time
+  is small today. It grows as reuse rates rise, particularly once W1b's
+  Go localization compounds with it.
+
+### Known Issues
+
+- The 1MB near-top edit still misses the campaign's 60ms target, at
+  about 162ms (PR #398). Composing the W1b settling fix with the W1
+  block-splice is the tracked follow-up.
+- GLR-heavy files with genuine ambiguity see little wall-time change
+  from W1b (PR #398), because settling runs on a single stack only.
 
 ## [0.44.0] - 2026-07-20
 
