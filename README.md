@@ -744,15 +744,18 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.44.0**. It fixes Swift's `Language()` memory
-ceiling breach. A cross-mode DFA minimization pass cuts Swift's retained
-memory from about 490 MB to about 25 MB, closing the sole documented CI
-memory-ceiling exception. It also replaces the cmake/css reuse allowlist
-with a fragility-gated top-level sibling block-splice; CSS editor-edit
-node reuse rises from 63.8% to 99.5%. Go node reuse is unchanged, pending
-a deeper engine fix. The prior release, v0.43.1, fixes TypeScript and TSX
-bare default parameters that previously collapsed to `ERROR` and reduces
-grammar-blob decoding allocation churn by about 32%.
+The current release is **v0.44.1**. It closes a fast-follow gap:
+v0.44.0's Swift DFA-minimization fix regenerated `swift.bin` but left a
+stale profile digest, so Swift's retry-ladder optimizations silently
+did not attach. The digest is now correct, and the effect was
+performance-only. It also lands the O(edit) `W1b` settling fix: Go
+clean-file incremental edits now cost O(edit), not O(file).
+`ReuseRejectRootNonLeafChanged` holds at 9 regardless of file size, and
+a 137KB near-top insert drops from about 47ms to about 22ms. GLR-heavy
+files with genuine ambiguity see little change, since settling runs on
+a single stack only. The prior release, v0.44.0, fixed Swift's
+`Language()` memory ceiling breach, from about 490 MB to about 25 MB,
+and raised CSS editor-edit node reuse from 63.8% to 99.5%.
 The authenticated production receipt at tag target `1935a42c` measures
 public `Parser.Parse` at **4.851050x C** by equal-fixture geomean,
 **5.472406x C** by fixed-suite sum, and **5.608320x C** on the worst
