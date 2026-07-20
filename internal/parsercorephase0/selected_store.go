@@ -409,11 +409,7 @@ type selectedRawOccurrence struct {
 	field      FieldID
 }
 
-// BuildSelectedStore seals accepted roots directly from compact immutable
-// payload arenas. It does not enumerate a head, construct public Nodes, or
-// invoke a per-occurrence callback. It borrows Core-owned scratch and therefore
-// must not run concurrently with any other operation on the same Core.
-func (c *Core) BuildSelectedStore(roots []SubtreeID, policy SelectedStorePolicy, source []byte, poll func() error) (*SelectedStore, error) {
+func (c *Core) buildSelectedStoreStaged(roots []SubtreeID, policy SelectedStorePolicy, source []byte, poll func() error) (*SelectedStore, error) {
 	if c == nil || len(roots) == 0 {
 		return nil, errors.New("parser-core phase zero: selected store requires accepted roots")
 	}
@@ -582,7 +578,7 @@ func (c *Core) BuildSelectedStore(roots []SubtreeID, policy SelectedStorePolicy,
 			}
 		}
 	}
-	if err := store.finishRoots(rootIDs, policy, c.limits.MaxSelectedBytes); err != nil {
+	if err := store.finishRoots(rootIDs, policy, c.limits.MaxSelectedBytes, poll); err != nil {
 		return nil, err
 	}
 	if err := store.normalizeGoCompatibility(policy, source, poll); err != nil {
@@ -908,7 +904,57 @@ func selectedRootMergeCounts(childCount, rootCount int, realChildCount uint16) (
 	return int(mergedCount), int(finalChildren), nil
 }
 
-func (s *SelectedStore) finishRoots(roots []SelectedNodeID, policy SelectedStorePolicy, retainedCap uint64) error {
+const selectedStoreCopyPollElements = 1024
+
+func copySelectedStoreChunks[T any](destination, source []T, poll func() error) error {
+	if len(destination) < len(source) {
+		return errors.New("parser-core phase zero: selected store copy destination is short")
+	}
+	for start := 0; start < len(source); start += selectedStoreCopyPollElements {
+		if poll != nil {
+			if err := poll(); err != nil {
+				return err
+			}
+		}
+		end := min(start+selectedStoreCopyPollElements, len(source))
+		copy(destination[start:end], source[start:end])
+	}
+	return nil
+}
+
+func moveSelectedStoreChildren(children []SelectedNodeID, destination, source, count int, poll func() error) error {
+	if count < 0 || destination < 0 || source < 0 || destination+count > len(children) || source+count > len(children) {
+		return errors.New("parser-core phase zero: selected child move is outside arena")
+	}
+	if count == 0 || destination == source {
+		return nil
+	}
+	if destination < source {
+		for offset := 0; offset < count; offset += selectedStoreCopyPollElements {
+			if poll != nil {
+				if err := poll(); err != nil {
+					return err
+				}
+			}
+			width := min(selectedStoreCopyPollElements, count-offset)
+			copy(children[destination+offset:destination+offset+width], children[source+offset:source+offset+width])
+		}
+		return nil
+	}
+	for remaining := count; remaining > 0; {
+		if poll != nil {
+			if err := poll(); err != nil {
+				return err
+			}
+		}
+		width := min(selectedStoreCopyPollElements, remaining)
+		remaining -= width
+		copy(children[destination+remaining:destination+remaining+width], children[source+remaining:source+remaining+width])
+	}
+	return nil
+}
+
+func (s *SelectedStore) finishRoots(roots []SelectedNodeID, policy SelectedStorePolicy, retainedCap uint64, poll func() error) error {
 	if len(roots) == 0 {
 		return errors.New("parser-core phase zero: selected store sealed no logical roots")
 	}
@@ -956,15 +1002,25 @@ func (s *SelectedStore) finishRoots(roots []SelectedNodeID, policy SelectedStore
 	oldLength := len(s.children)
 	if cap(s.children) < finalChildren {
 		children := make([]SelectedNodeID, oldLength, finalChildren)
-		copy(children, s.children)
+		if err := copySelectedStoreChunks(children, s.children, poll); err != nil {
+			return err
+		}
 		s.children = children
 	}
 	s.children = s.children[:finalChildren]
-	copy(s.children[oldEnd+uint32(extraCount):], s.children[oldEnd:uint32(oldLength)])
+	if err := moveSelectedStoreChildren(s.children, int(oldEnd)+extraCount, int(oldEnd), oldLength-int(oldEnd), poll); err != nil {
+		return err
+	}
 	before := uint32(realIndex)
-	copy(s.children[oldStart+before:oldEnd+before], s.children[oldStart:oldEnd])
-	copy(s.children[oldStart:oldStart+before], roots[:realIndex])
-	copy(s.children[oldEnd+before:oldEnd+uint32(extraCount)], roots[realIndex+1:])
+	if err := moveSelectedStoreChildren(s.children, int(oldStart+before), int(oldStart), int(real.ChildCount), poll); err != nil {
+		return err
+	}
+	if err := copySelectedStoreChunks(s.children[oldStart:oldStart+before], roots[:realIndex], poll); err != nil {
+		return err
+	}
+	if err := copySelectedStoreChunks(s.children[oldEnd+before:oldEnd+uint32(extraCount)], roots[realIndex+1:], poll); err != nil {
+		return err
+	}
 	for index := range s.records {
 		record := &s.records[index]
 		if SelectedNodeID(index+1) != realID && record.ChildCount != 0 && record.FirstChild >= oldEnd {

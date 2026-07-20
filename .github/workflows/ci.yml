@@ -41,6 +41,31 @@ jobs:
       - name: Test Compile
         run: go test ./... -run '^$' -count=1
 
+  selected_store_admission:
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Selected-store internal package (staged and one-pass)
+        run: |
+          set -euo pipefail
+          GOMAXPROCS=1 go test -race ./internal/parsercorephase0 -count=1
+          GOMAXPROCS=1 go test -race -tags gts_parsercorephase0_selectedstore_onepass ./internal/parsercorephase0 -count=1
+
+      - name: Selected-store exact admission (staged and one-pass)
+        run: |
+          set -euo pipefail
+          admission='^TestDiagnosticParserCoreSelectedStore(CanonicalAdmissions|CompletenessFailureReleasesBacking|GoHighlightParity|QueryDirectiveParity)$'
+          GOMAXPROCS=1 go test -tags gts_parsercorephase0 . -run "$admission" -count=1
+          GOMAXPROCS=1 go test -tags 'gts_parsercorephase0 gts_parsercorephase0_selectedstore_onepass' . -run "$admission" -count=1
+
   race_root:
     needs: exhaustive_parity_scope
     if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
@@ -318,6 +343,7 @@ jobs:
   build:
     needs:
       - compile
+      - selected_store_admission
       - race_root
       - race_packages
       - draft_focused_tests
@@ -334,6 +360,7 @@ jobs:
           IS_DRAFT: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == true }}
           RUN_CODE_CI: ${{ needs.exhaustive_parity_scope.outputs.run_code_ci }}
           COMPILE_RESULT: ${{ needs.compile.result }}
+          SELECTED_STORE_ADMISSION_RESULT: ${{ needs.selected_store_admission.result }}
           RACE_ROOT_RESULT: ${{ needs.race_root.result }}
           RACE_PACKAGES_RESULT: ${{ needs.race_packages.result }}
           DRAFT_FOCUSED_RESULT: ${{ needs.draft_focused_tests.result }}
@@ -371,6 +398,7 @@ jobs:
           fi
 
           require_success "compile" "$COMPILE_RESULT"
+          require_success "selected_store_admission" "$SELECTED_STORE_ADMISSION_RESULT"
           require_success "parity_report" "$PARITY_REPORT_RESULT"
           require_success "perf_scan_budget" "$PERF_SCAN_BUDGET_RESULT"
 
