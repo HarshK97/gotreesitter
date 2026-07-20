@@ -266,3 +266,36 @@ func ResetAdmissionCandidateCountersForTest() {
 func AdmissionCandidateEnvEnabledForTest() bool {
 	return admissionCandidateEnvEnabled()
 }
+
+// AdmissionSubParserProbe bundles internal sub-parser construction so the
+// external test package can prove recovery, snippet, and injection sub-parsers
+// are born pinned to the production route.
+func AcquireSnippetParserForTest(lang *Language) *Parser { return acquireSnippetParser(lang) }
+
+// ReleaseSnippetParserForTest returns a snippet parser to its pool.
+func ReleaseSnippetParserForTest(p *Parser) { releaseSnippetParser(p) }
+
+// InjectionChildParserForTest returns a freshly constructed injection child
+// parser via the same getParser path the injection engine uses.
+func InjectionChildParserForTest(lang *Language) *Parser {
+	ip := NewInjectionParser()
+	return ip.getParser("test", lang)
+}
+
+// ParserPinnedToProductionForTest reports whether p carries the production-only
+// override that pinToProductionRoute installs.
+func ParserPinnedToProductionForTest(p *Parser) bool {
+	return p != nil && p.admissionCandidateRoute == admissionRouteProductionForced
+}
+
+// ParserAdmissionEligibleForTest reports whether p would route a fresh DFA full
+// parse through the compact candidate right now.
+func ParserAdmissionEligibleForTest(p *Parser) bool {
+	return p.admissionCandidateFullParseEligible(nil, true)
+}
+
+// ParserPoolCheckoutForTest checks a parser out of the pool (applying defaults).
+func ParserPoolCheckoutForTest(pp *ParserPool) *Parser { return pp.checkout() }
+
+// ParserPoolReleaseForTest returns a parser to the pool (applying defaults).
+func ParserPoolReleaseForTest(pp *ParserPool, p *Parser) { pp.release(p) }

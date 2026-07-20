@@ -20,6 +20,12 @@ import (
 // fell back, or diverged. The compact route had only ever been validated on the
 // four canonical Go fixtures; this run reports how far it reaches.
 //
+// Scope: the per-language fixtures are trivial smoke snippets, so this is
+// reachability reconnaissance -- which grammars the compact route accepts at
+// all -- not a fidelity proof. The byte-exact fidelity evidence is the
+// four-fixture digest test (TestAdmissionSwitchCandidateDigestMatchesProduction).
+// Corpus-scale per-language fixtures are the tracked follow-up.
+//
 // It is a scorecard, not a gate: it never fails on a fallback (a fallback is the
 // fail-closed, correct behavior for an unsupported grammar). It fails only on a
 // DIVERGE — the compact route accepted a clean tree that disagrees with

@@ -1572,6 +1572,9 @@ func resetSnippetParser(parser *Parser) {
 	parser.parseMemoryBudgetDiag = parseMemoryBudgetDiagnostic{}
 	parser.parseMemoryBudgetDiagActive = false
 	parser.compatMemoryBudgetTripped = false
+	// Recovery and snippet sub-parsers must never route through the compact
+	// candidate: they parse fragments spliced into recovery and reuse.
+	parser.pinToProductionRoute()
 	// Release *Node refs so the arenas from the last incremental parse can be
 	// collected by the GC. Without this, a Parser sitting in a sync.Pool keeps
 	// its reuseCursor.topLevel/*Node alive, preventing arena reclamation.

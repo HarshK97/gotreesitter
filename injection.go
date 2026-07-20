@@ -672,6 +672,9 @@ func (ip *InjectionParser) getParser(name string, lang *Language) *Parser {
 		return p
 	}
 	p := NewParser(lang)
+	// Injection child parsers build injection subtrees the admission scorecard
+	// never validated: keep them on production regardless of the global default.
+	p.pinToProductionRoute()
 	ip.parsers[name] = p
 	return p
 }

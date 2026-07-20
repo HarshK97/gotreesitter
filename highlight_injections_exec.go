@@ -191,6 +191,9 @@ func appendOffsetHighlightRanges(dst []HighlightRange, ranges []HighlightRange, 
 
 func (h *Highlighter) parseInjectedTree(lang *Language, tokenSourceFactory func(source []byte) TokenSource, source []byte) (*Tree, error) {
 	childParser := NewParser(lang)
+	// Injected highlight subtrees are outside the admission scorecard's validated
+	// surface: keep the child parser on production regardless of the default.
+	childParser.pinToProductionRoute()
 	if tokenSourceFactory != nil {
 		return childParser.ParseWithTokenSource(source, tokenSourceFactory(source))
 	}

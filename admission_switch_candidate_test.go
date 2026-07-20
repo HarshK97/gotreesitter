@@ -174,6 +174,32 @@ func TestAdmissionSwitchParseIncrementalNeverRoutes(t *testing.T) {
 	}
 }
 
+// TestAdmissionSwitchRecoveryDoesNotLeakCompactTree drives malformed input
+// through the real compact route with the switch forced on. The compact route
+// declines the malformed parse and production recovery runs, so the returned
+// tree must be a production (non-compact) tree, and the pinned recovery
+// sub-parser must never publish a compact fragment.
+func TestAdmissionSwitchRecoveryDoesNotLeakCompactTree(t *testing.T) {
+	lang, err := authenticatedParserCoreGoLanguage(parserCoreWarmGoScanner)
+	if err != nil {
+		t.Fatalf("authenticate certified Go language: %v", err)
+	}
+	p := NewParser(lang)
+	p.SetAdmissionCandidateRoute(true)
+	malformed := []byte("package main\n\nfunc () {\n\tvar x = \n}\n")
+	tree, err := p.Parse(malformed)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Release()
+	if tree.compactMaterialized {
+		t.Fatal("malformed/recovery parse leaked a compact-materialized tree")
+	}
+	if root := tree.RootNode(); root == nil || !root.HasError() {
+		t.Fatal("malformed input should recover into an error-bearing production tree")
+	}
+}
+
 // admissionTestPointAtByte returns the row/column point for a byte offset.
 func admissionTestPointAtByte(source []byte, offset int) Point {
 	var row, col uint32

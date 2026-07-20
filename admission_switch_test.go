@@ -249,6 +249,109 @@ func TestAdmissionSwitchDeclinesWhenIncludedRangesSet(t *testing.T) {
 	}
 }
 
+// TestAdmissionSwitchDeclinesWhenTimeoutSet proves the candidate route declines
+// when a caller set a timeout: the compact scheduler does not poll deadlines, so
+// the parse stays on production which honors it.
+func TestAdmissionSwitchDeclinesWhenTimeoutSet(t *testing.T) {
+	restore := gts.AdmissionCandidateRouteDefault()
+	defer gts.SetAdmissionCandidateRouteDefault(restore)
+	gts.SetAdmissionCandidateRouteDefault(true)
+	gts.ResetAdmissionCandidateCountersForTest()
+
+	parser, source := newAdmissionDFAParser(t)
+	parser.SetTimeoutMicros(1_000_000)
+	before := admissionRoutingEvents(t)
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Release()
+	if got := admissionRoutingEvents(t); got != before {
+		t.Fatalf("a timeout must keep the parse on production: %d -> %d", before, got)
+	}
+}
+
+// TestAdmissionSwitchDeclinesWhenCancellationFlagSet proves the candidate route
+// declines when a caller set a cancellation flag.
+func TestAdmissionSwitchDeclinesWhenCancellationFlagSet(t *testing.T) {
+	restore := gts.AdmissionCandidateRouteDefault()
+	defer gts.SetAdmissionCandidateRouteDefault(restore)
+	gts.SetAdmissionCandidateRouteDefault(true)
+	gts.ResetAdmissionCandidateCountersForTest()
+
+	parser, source := newAdmissionDFAParser(t)
+	var flag uint32
+	parser.SetCancellationFlag(&flag)
+	before := admissionRoutingEvents(t)
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Release()
+	if got := admissionRoutingEvents(t); got != before {
+		t.Fatalf("a cancellation flag must keep the parse on production: %d -> %d", before, got)
+	}
+}
+
+// TestAdmissionSwitchInternalSubParsersPinnedToProduction proves that recovery,
+// snippet, and injection sub-parsers are born pinned to the production route:
+// even with the global default forced on, they are ineligible to route a
+// compact fragment into recovery splicing or an injection subtree.
+func TestAdmissionSwitchInternalSubParsersPinnedToProduction(t *testing.T) {
+	restore := gts.AdmissionCandidateRouteDefault()
+	defer gts.SetAdmissionCandidateRouteDefault(restore)
+	gts.SetAdmissionCandidateRouteDefault(true) // global ON, the future-flip state
+
+	entry := grammars.DetectLanguageByName("go")
+	if entry == nil {
+		t.Skip("go grammar not registered")
+	}
+	lang := entry.Language()
+
+	snippet := gts.AcquireSnippetParserForTest(lang)
+	defer gts.ReleaseSnippetParserForTest(snippet)
+	if !gts.ParserPinnedToProductionForTest(snippet) {
+		t.Fatal("recovery/snippet parser is not pinned to production")
+	}
+	if gts.ParserAdmissionEligibleForTest(snippet) {
+		t.Fatal("recovery/snippet parser is eligible to route under global ON")
+	}
+
+	child := gts.InjectionChildParserForTest(lang)
+	if !gts.ParserPinnedToProductionForTest(child) {
+		t.Fatal("injection child parser is not pinned to production")
+	}
+	if gts.ParserAdmissionEligibleForTest(child) {
+		t.Fatal("injection child parser is eligible to route under global ON")
+	}
+}
+
+// TestAdmissionSwitchPooledParserScrubsRouteState proves ParserPool.applyDefaults
+// clears the per-Parser override so a pooled parser follows the default again.
+func TestAdmissionSwitchPooledParserScrubsRouteState(t *testing.T) {
+	restore := gts.AdmissionCandidateRouteDefault()
+	defer gts.SetAdmissionCandidateRouteDefault(restore)
+	gts.SetAdmissionCandidateRouteDefault(false)
+
+	entry := grammars.DetectLanguageByName("go")
+	if entry == nil {
+		t.Skip("go grammar not registered")
+	}
+	pool := gts.NewParserPool(entry.Language())
+	// A checked-out parser forced off, then returned, must not leak that override.
+	p1 := gts.ParserPoolCheckoutForTest(pool)
+	p1.SetAdmissionCandidateRoute(false)
+	gts.ParserPoolReleaseForTest(pool, p1)
+
+	gts.SetAdmissionCandidateRouteDefault(true)
+	gts.ResetAdmissionCandidateCountersForTest()
+	p2 := gts.ParserPoolCheckoutForTest(pool)
+	defer gts.ParserPoolReleaseForTest(pool, p2)
+	if !gts.ParserAdmissionEligibleForTest(p2) {
+		t.Fatal("pooled parser did not scrub its route override; a forced-off override leaked across checkouts")
+	}
+}
+
 // TestAdmissionSwitchEnvVarContract proves GTS_ADMISSION_CANDIDATE seeds the
 // process-wide default: init calls this same parser at package load.
 func TestAdmissionSwitchEnvVarContract(t *testing.T) {

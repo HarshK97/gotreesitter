@@ -1237,6 +1237,9 @@ func (p *Parser) ParseNoTreeBenchmarkOnly(source []byte) (*Tree, error) {
 		p.noTreeBenchmarkOnly = prev
 		p.noTreeCheckpointBenchmarkOnly = prevCheckpoints
 	}()
+	// These are production-loop measurement modes: keep them off the compact
+	// candidate route so a switched-on default cannot skew the attribution.
+	defer p.suppressAdmissionCandidateRoute()()
 	return p.Parse(source)
 }
 
@@ -1256,6 +1259,8 @@ func (p *Parser) ParseNoTreeWithExternalCheckpointsBenchmarkOnly(source []byte) 
 		p.noTreeBenchmarkOnly = prevNoTree
 		p.noTreeCheckpointBenchmarkOnly = prevCheckpoints
 	}()
+	// Production-loop measurement mode: keep it off the compact candidate route.
+	defer p.suppressAdmissionCandidateRoute()()
 	return p.Parse(source)
 }
 
@@ -1273,6 +1278,8 @@ func (p *Parser) ParseNoResultCompatibilityBenchmarkOnly(source []byte) (*Tree, 
 	defer func() {
 		p.noResultCompatibilityBenchmarkOnly = prevNoResult
 	}()
+	// Production-loop measurement mode: keep it off the compact candidate route.
+	defer p.suppressAdmissionCandidateRoute()()
 	return p.Parse(source)
 }
 

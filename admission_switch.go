@@ -84,6 +84,13 @@ func admissionCandidateEnvEnabled() bool {
 // SetAdmissionCandidateRouteDefault sets the process-wide default the Phase-3
 // admission switch applies to Parsers with no explicit override. A per-Parser
 // override still wins.
+//
+// Caveat: the candidate route does not enforce the automatic large-input memory
+// budget at scheduler granularity, so a pathological input that the production
+// route truncates with ParseStopMemoryBudget can instead parse to completion on
+// the candidate route (a byte-correct, non-truncated tree). Explicit timeouts,
+// cancellation flags, included ranges, and observability hooks all keep a parse
+// on production.
 func SetAdmissionCandidateRouteDefault(enabled bool) {
 	admissionCandidateRouteDefault.Store(enabled)
 }
@@ -96,6 +103,13 @@ func AdmissionCandidateRouteDefault() bool {
 // SetAdmissionCandidateRoute sets a per-Parser override that takes precedence
 // over the process-wide default. enabled=true forces the candidate route on for
 // eligible full parses; enabled=false forces the production route.
+//
+// Caveat: the candidate route does not enforce the automatic large-input memory
+// budget at scheduler granularity, so a pathological input that the production
+// route truncates with ParseStopMemoryBudget can instead parse to completion on
+// the candidate route (a byte-correct, non-truncated tree). Explicit timeouts,
+// cancellation flags, included ranges, and observability hooks all keep a parse
+// on production.
 func (p *Parser) SetAdmissionCandidateRoute(enabled bool) {
 	if p == nil {
 		return
@@ -169,17 +183,16 @@ func (p *Parser) admissionCandidateFullParseEligible(oldTree *Tree, usingProduct
 	if !usingProductionDFA {
 		return false
 	}
+	// Resolve the switch first. This keeps the shipped OFF hot path cheap: none
+	// of the fidelity probes below (including the os.Getenv in the observability
+	// check) run unless the switch is actually on for this parser.
+	if !p.admissionCandidateRouteEnabled() {
+		return false
+	}
 	// The compact runner lexes the whole source with its own DFA token source and
 	// does not apply included ranges, so decline when a caller set any. Production
 	// then honors the ranges exactly.
 	if len(p.included) > 0 {
-		return false
-	}
-	// Preserve callback fidelity: the compact route does not emit the parser's
-	// logger, GLR-trace, ambiguity-profile, or parse-progress events, so decline
-	// (fall back to production) whenever a consumer has attached one. Production
-	// then fires every hook exactly as it does today.
-	if p.hasActiveParseObservability() {
 		return false
 	}
 	// Preserve liveness fidelity: the compact scheduler does not poll an explicit
@@ -189,7 +202,14 @@ func (p *Parser) admissionCandidateFullParseEligible(oldTree *Tree, usingProduct
 	if p.timeoutMicros != 0 || p.cancellationFlag != nil {
 		return false
 	}
-	return p.admissionCandidateRouteEnabled()
+	// Preserve callback fidelity: the compact route does not emit the parser's
+	// logger, GLR-trace, ambiguity-profile, or parse-progress events, so decline
+	// (fall back to production) whenever a consumer has attached one. Production
+	// then fires every hook exactly as it does today.
+	if p.hasActiveParseObservability() {
+		return false
+	}
+	return true
 }
 
 // hasActiveParseObservability reports whether a consumer attached any parse-time
@@ -214,6 +234,20 @@ func (p *Parser) suppressAdmissionCandidateRoute() func() {
 	}
 	p.admissionRouteSuppressed++
 	return func() { p.admissionRouteSuppressed-- }
+}
+
+// pinToProductionRoute permanently forces an internally-created sub-parser onto
+// the production route, independent of the process-wide default. Recovery,
+// snippet, and injection sub-parsers parse fragments that feed recovery splicing
+// or injection subtrees -- contexts the admission scorecard never validated --
+// so they must never route a compact tree even if the global default flips on.
+func (p *Parser) pinToProductionRoute() {
+	if p == nil {
+		return
+	}
+	p.admissionCandidateRoute = admissionRouteProductionForced
+	p.admissionRouteSuppressed = 0
+	p.admissionCandidateRunner = nil
 }
 
 // attemptAdmissionCandidateFullParse routes a fresh full parse through the
