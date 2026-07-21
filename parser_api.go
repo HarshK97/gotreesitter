@@ -1269,19 +1269,6 @@ func (p *Parser) ParseNoResultCompatibilityBenchmarkOnly(source []byte) (*Tree, 
 	return p.Parse(source)
 }
 
-// SetForceFullResultNormalizationWalk forces the full-tree result-normalization
-// walk, disabling the incremental range-limited walk (campaign O(edit),
-// spec.campaign.oedit). It exists so a differential test can compare the
-// range-limited walk against the full walk on the SAME Parser and prove they
-// produce identical trees. Production never calls it (the default is false, the
-// range-limited walk).
-func (p *Parser) SetForceFullResultNormalizationWalk(v bool) {
-	if p == nil {
-		return
-	}
-	p.forceFullResultNormalizationWalk = v
-}
-
 // ParseUTF16 parses UTF-16 source represented as Go UTF-16 code units.
 //
 // The parser core uses a canonical UTF-8 view internally so existing byte-based

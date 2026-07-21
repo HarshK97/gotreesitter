@@ -59,14 +59,18 @@ func oeditBestOf(t *testing.T, lang *gts.Language, src []byte, off int, iters in
 		incr, err := parser.ParseIncremental(edited, base)
 		el := time.Since(start)
 		if err != nil {
+			base.Release()
 			t.Fatal(err)
 		}
 		if incr.RootNode().HasError() {
+			base.Release()
+			incr.Release()
 			t.Fatal("incremental tree has error")
 		}
 		if el < best {
 			best = el
 		}
+		base.Release()
 		incr.Release()
 	}
 	return best
