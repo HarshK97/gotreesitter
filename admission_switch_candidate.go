@@ -4,6 +4,7 @@ package gotreesitter
 
 import (
 	"errors"
+	"fmt"
 
 	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
 )
@@ -105,9 +106,21 @@ func (p *Parser) tryCompactFullParseRoute(source []byte) (*Tree, bool, string) {
 
 // admissionCandidateDeclineReason renders a runner error as a compact,
 // operator-readable fallback reason, surfacing the decline boundary when known.
+//
+// With GTS_ADMISSION_CENSUS=1 it additionally tags every decline that carries
+// a *diagnosticParserCoreDecline (whether it came from a hard scheduler error
+// such as a cap hit, or from the census-classified soft declines in
+// admission_census.go) with its fine-grained mechanism class, so a caller
+// scraping this string can rank declines by mechanism rather than by the two
+// coarse acceptance messages alone. Unset (the default), this is
+// byte-identical to before that instrumentation existed.
 func admissionCandidateDeclineReason(err error) string {
 	var decline *diagnosticParserCoreDecline
 	if errors.As(err, &decline) {
+		if admissionCensusEnabled() {
+			mechanism := admissionCensusClassify(decline.boundary, decline.detail)
+			return fmt.Sprintf("compact route declined at %s [mechanism=%s]: %s", decline.boundary, mechanism, decline.detail)
+		}
 		return "compact route declined at " + string(decline.boundary) + ": " + decline.detail
 	}
 	return "compact route error: " + err.Error()
