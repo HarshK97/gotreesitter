@@ -267,6 +267,14 @@ func AdmissionCandidateEnvEnabledForTest() bool {
 	return admissionCandidateEnvEnabled()
 }
 
+// ParseRuntimeMemoryMinSourceBytesForTest exposes the source-length floor where
+// the production route arms the automatic memory budget, so the external test
+// package can pin the admission size gate to the single source of truth
+// (parseRuntimeMemoryMinSourceBytes) instead of copying the 64 KiB literal.
+func ParseRuntimeMemoryMinSourceBytesForTest() int {
+	return parseRuntimeMemoryMinSourceBytes
+}
+
 // AdmissionSubParserProbe bundles internal sub-parser construction so the
 // external test package can prove recovery, snippet, and injection sub-parsers
 // are born pinned to the production route.

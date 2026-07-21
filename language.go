@@ -548,6 +548,22 @@ type Language struct {
 	// invalidate it. See cRecoveryGateCacheKeyFor.
 	cRecoveryGateCache atomic.Pointer[cRecoveryGateCacheEntry]
 
+	// compactTables memoizes the converted compact-parser (parsercorephase0)
+	// action and reduction tables for the Phase-3 admission candidate route. The
+	// conversion reads only immutable language data, so one build serves every
+	// Parser of this Language. compactTables is typed as any because the concrete
+	// type (*parserCoreLanguageTables) only exists under the default build; the
+	// emergency opt-out tag gts_no_parsercorephase0 never touches it.
+	//
+	// The cache lives on the Language rather than in a process-wide map, so it
+	// never outlives the Language it describes. A global identity-keyed map would
+	// pin every Language (and its multi-megabyte decoded grammar and lex tables)
+	// for the process lifetime, which leaks memory for callers that build many
+	// transient languages. See acquireParserCoreLanguageTables.
+	compactTablesOnce sync.Once
+	compactTables     any   // *parserCoreLanguageTables under the default build
+	compactTablesErr  error // the build error, memoized alongside compactTables
+
 	// NonTerminalAliasMap mirrors tree-sitter C's ts_non_terminal_alias_map.
 	// Rows are indexed by nonterminal symbol and contain aliases that require
 	// preserving the wrapper during alias-bearing reductions. This is cold
