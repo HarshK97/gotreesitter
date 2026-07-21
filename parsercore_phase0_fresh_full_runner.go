@@ -30,6 +30,11 @@ type parserCoreFreshFullRunner struct {
 	compact        *core.Core
 	options        DiagnosticParserCorePrefixOptions
 	scannerScratch []byte
+	// scratch retains the reusable per-parse materialization buffers. The runner
+	// is per-Parser and single-goroutine, so reusing these buffers across parses
+	// mirrors production's parser-held arena reuse and keeps the warm steady
+	// state from re-allocating the public-tree scratch on every parse.
+	scratch parserCoreRunnerScratch
 }
 
 func newParserCoreFreshFullRunner(scanner ExternalScanner, options DiagnosticParserCorePrefixOptions) (*parserCoreFreshFullRunner, error) {
@@ -148,7 +153,7 @@ func (r *parserCoreFreshFullRunner) materializeSelection(source []byte, compact 
 	if r == nil || scheduler == nil {
 		return nil, errors.New("parser-core fresh-full selected materialization is incomplete")
 	}
-	return materializeDiagnosticParserCoreAcceptedSelection(compact, scheduler.acceptedHead, scheduler.acceptedPayloads, r.parser, source)
+	return materializeDiagnosticParserCoreAcceptedSelection(compact, scheduler.acceptedHead, scheduler.acceptedPayloads, r.parser, source, &r.scratch)
 }
 
 func (r *parserCoreFreshFullRunner) parse(source []byte) (*Tree, error) {

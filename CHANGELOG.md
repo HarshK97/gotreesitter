@@ -28,10 +28,13 @@ for tags and release notes while still in `0.x`.
 - **The compact parser core is now the default full-parse route for eligible
   languages** (Phase-3 admission flip). `Parser.Parse` routes a fresh, full,
   production-DFA parse of an eligible grammar through the compact
-  `internal/parsercorephase0` engine, then materializes a public tree that is
-  byte-exact with the production engine. The compact engine promotes from the
-  `gts_parsercorephase0` opt-in tag into the default build; the emergency
-  opt-out tag `gts_no_parsercorephase0` compiles it back out.
+  `internal/parsercorephase0` engine, then materializes a public tree. The tree
+  is byte-exact with the production engine on the routed, verified surface: the
+  48 byte-exact scorecard routes and the canonical fixtures. The runner's strict
+  acceptance gate fails closed to production on any input it cannot reproduce
+  byte-for-byte. The compact engine promotes from the `gts_parsercorephase0`
+  opt-in tag into the default build; the emergency opt-out tag
+  `gts_no_parsercorephase0` compiles it back out.
 
   Evidence for the admission:
 
@@ -39,12 +42,42 @@ for tags and release notes while still in `0.x`.
     digest is 100 percent exact on the canonical fixtures. The 206-language
     scorecard through the switch reports 48 byte-exact routes, 0 divergences,
     153 fail-closed fallbacks, and 5 token-source skips.
+  - **Fail-closed generic-call conflict class.** On the ambiguous Go construct
+    `Foo[int](a)`, production and the tree-sitter-go C oracle select
+    `type_conversion_expression(generic_type)`. The compact scheduler cannot
+    yet rank that conflict by dynamic precedence, so it declines the
+    unauthorized tie fold and falls back to production. The returned tree stays
+    byte-exact while `TestAdmissionCandidateGoTypeConversionFailsClosed` keeps
+    the route/fallback behavior explicit.
   - **Timing.** The quiet-host publication run (lane
     strictboundary-20260720T231334Z-v6 phase3, n2d-standard-4, 5 ABBA cycles)
     measured a production-over-candidate geomean speedup of 1.8321 (gate is at
-    or above 1.0204). The worst fixture ran 1.526 times faster. Peak resident
-    set size fell on all four fixtures (grammargen_lr 94 MB against 206 MB). The
-    deep C-oracle parity preflight passed in the same run.
+    or above 1.0204) on the warm direct-runner path
+    (`BenchmarkParserCoreFreshFullCanonical`). The worst fixture ran 1.526 times
+    faster. Peak resident set size fell on all four fixtures (grammargen_lr
+    94 MB against 206 MB). The deep C-oracle parity preflight passed in the same
+    run.
+  - **Adapter Parse-path reconciliation.** The 1.8321 geomean was measured on
+    the direct-runner path, not on `Parser.Parse`. The initial adapter regressed
+    time and allocations, because it rebuilt the compact action tables on every
+    fresh `Parser` and did not pool the materialization scratch. Two adapter
+    fixes removed that tax:
+    - a per-`*Language` table cache builds the converted action and reduction
+      tables once per language (about 95 KiB retained) instead of once per parse;
+      and
+    - a per-`Parser` runner reuses the materialization scratch, the public-tree
+      node buffers, and the Go-compatibility walk stack across parses.
+
+    After the fixes, warm route-ON allocations on `BenchmarkGoParseFullDFA` fall
+    from about 71 to about 24 per operation, and bytes per operation from about
+    99 KiB to about 17 KiB. On the human-authored Go fixtures
+    (`BenchmarkGoParseWarmRealDFA`) the routed parses now run about 1.45 to 1.66
+    times faster than production through `Parser.Parse` (geomean of the routed
+    fixtures about 1.57 times). The remaining gap to the 1.8321 direct-runner
+    number is the production Parse tail the adapter still runs. On the synthetic,
+    highly repetitive `BenchmarkGoParseFullDFA` source the routed parse stays
+    slower than production, because the compact scheduler dominates that input;
+    the speedup holds on the human-authored fixtures the sealed number measured.
   - **Sealed epoch (v0.45.0).** The compact route measured 2.9975 times the C
     reference against the production route at 5.526 times, hardware-attested and
     verified. Allocation levels sit at 92 to 316 allocations per operation

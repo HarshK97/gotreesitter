@@ -79,8 +79,8 @@ func init() {
 // ("0", "false", "off", "no", any case) resolves OFF -- the documented escape
 // hatch that forces every eligible full parse back to the production route.
 func admissionCandidateEnvEnabled() bool {
-	switch strings.TrimSpace(os.Getenv("GTS_ADMISSION_CANDIDATE")) {
-	case "0", "false", "FALSE", "False", "off", "OFF", "no", "NO":
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GTS_ADMISSION_CANDIDATE"))) {
+	case "0", "false", "off", "no":
 		return false
 	default:
 		return true
