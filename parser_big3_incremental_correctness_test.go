@@ -216,8 +216,16 @@ func TestGoLanguageFixtureLengthChangeIncrementalMatchesFresh(t *testing.T) {
 			rt.IncrementalAcceptedErrorRetryMergePerKey != 3 {
 			t.Fatalf("forward retry runtime = %+v", rt)
 		}
-		if profile.MaxStacksSeen != 24 || rt.MaxStacksSeen != 18 {
-			t.Fatalf("forward stack attribution profile=%d selected_runtime=%d, want aggregate=24 selected=18", profile.MaxStacksSeen, rt.MaxStacksSeen)
+		// Stack attribution: profile.MaxStacksSeen aggregates across every retry
+		// attempt; rt.MaxStacksSeen reflects only the selected (final) parse. The
+		// property under test is that the aggregate exceeds the selected value.
+		// The selected value dropped 18 -> 15 with campaign post-admission-frontier
+		// T2a: this edit is mid-file (byte 32063), so the leading run before it is
+		// now block-spliced instead of GLR-parsed, and the selected parse reaches a
+		// lower peak stack count. The aggregate (24) is unchanged and the tree is
+		// still byte-identical to fresh (the locked-hash assertion above).
+		if profile.MaxStacksSeen != 24 || rt.MaxStacksSeen != 15 {
+			t.Fatalf("forward stack attribution profile=%d selected_runtime=%d, want aggregate=24 selected=15", profile.MaxStacksSeen, rt.MaxStacksSeen)
 		}
 		if profile.TokensConsumed <= rt.TokensConsumed {
 			t.Fatalf("forward token attribution profile=%d selected_runtime=%d, want aggregate profile", profile.TokensConsumed, rt.TokensConsumed)
