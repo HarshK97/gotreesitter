@@ -129,6 +129,10 @@ Do not run the production and candidate passes on different revisions.
      --out <receipt-dir>/production
    ```
 
+   The driver compiles this lane with `gts_no_parsercorephase0`, so the
+   compact route is absent even when it is enabled in a normal build. The
+   receipt records that tag as part of the workload identity.
+
 3. Candidate backend, same revision, same pinned core:
 
    ```sh
@@ -137,6 +141,10 @@ Do not run the production and candidate passes on different revisions.
      --core <pinned-cpu> \
      --out <receipt-dir>/candidate
    ```
+
+   The driver compiles this lane with `gts_parsercorephase0`. Keep both
+   explicit tags intact: an untagged build is not an admissible production
+   control now that the compact route is enabled by default.
 
    The script already interleaves Go and C samples in five ABBA cycles
    per backend run (order-balanced within a backend). Running
