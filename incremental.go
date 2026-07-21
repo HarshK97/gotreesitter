@@ -32,6 +32,23 @@ type reuseCursor struct {
 	// before considering sibling reuse because selector/declaration scanner
 	// context is too sensitive for leaf reuse inside the edited rule.
 	topLevelResumeByte uint32
+	// topLevelSpliceLeading enables the LEADING-run block-splice (campaign
+	// post-admission-frontier T2a): top-level items whose end byte is at or
+	// before minEditAt are byte-identical prefixes of the old tree, so they may
+	// be spliced back as a block from the initial parser state before per-token
+	// parsing reaches the edit -- the mirror of the trailing block-splice. When
+	// true, topLevelIndex starts at 0 (the scan covers the leading run, the
+	// edited item, then the trailing run in one monotonic forward walk); when
+	// false, topLevelIndex starts after the edited item (trailing run only), the
+	// pre-existing behavior. Kept false for the scanner-sensitive forest
+	// languages (css, cmake), whose leading items keep their general-walk leaf
+	// reuse -- see reset() and topLevelSiblingBlockSpliceEligible.
+	topLevelSpliceLeading bool
+	// disableLeadingSplice, when set by the parser before reset(), forces the
+	// leading-run splice off regardless of language (topLevelSpliceLeading stays
+	// false). It backs the test-only differential toggle (Parser.disableLeadingRun
+	// Splice) and is NOT cleared by reset -- the parser sets it every parse.
+	disableLeadingSplice bool
 
 	cachedStart      uint32
 	cachedStartValid bool
@@ -115,6 +132,7 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 	c.topLevelIndex = 0
 	c.topLevelEnd = 0
 	c.topLevelResumeByte = 0
+	c.topLevelSpliceLeading = false
 	childCount := nodeChildCountNoMaterialize(root)
 	if c.hasEdits && root != nil && childCount > 0 {
 		firstAffected := -1
@@ -128,12 +146,43 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 				break
 			}
 		}
-		if firstAffected >= 0 && firstAffected+1 < childCount {
-			c.topLevelParent = root
-			c.topLevelIndex = firstAffected + 1
-			c.topLevelEnd = childCount
-			if entry, ok := nodeChildEntryAtNoMaterialize(root, firstAffected); ok {
-				c.topLevelResumeByte = stackEntryNodeEndByte(entry)
+		if firstAffected >= 0 {
+			hasTrailing := firstAffected+1 < childCount
+			hasLeading := firstAffected > 0
+			// The leading-run splice (campaign post-admission-frontier T2a) is
+			// barred for scanner-sensitive forest languages (css, cmake): their
+			// leading top-level items keep the general-walk leaf reuse whose
+			// selector/declaration scanner context rejectDirtyTopLevelPrefix
+			// already protects. Extending the top-level scan over their leading
+			// run would supersede that leaf reuse with a top-level scan that the
+			// same guard rejects, forcing a full reparse of the clean prefix, so
+			// leading splice stays off for them. See the CSS disposition note on
+			// topLevelSiblingBlockSpliceEligible.
+			leadingEligible := hasLeading &&
+				!c.disableLeadingSplice &&
+				!(c.forestFastPath && forestFastPathDirtyPrefixScannerSensitive(c.languageName)) &&
+				!leadingSpliceLanguageBarred(c.languageName)
+			if hasTrailing || leadingEligible {
+				c.topLevelParent = root
+				c.topLevelEnd = childCount
+				if entry, ok := nodeChildEntryAtNoMaterialize(root, firstAffected); ok {
+					c.topLevelResumeByte = stackEntryNodeEndByte(entry)
+				}
+				if leadingEligible {
+					// Cover the leading run: the monotonic top-level scan starts
+					// at item 0, splices the byte-identical leading items, skips
+					// the edited item (its bytes changed, so reusableIndexedEntry
+					// rejects it), then resumes on the trailing run. The block-
+					// splice loop (parser.go) consumes the leading items from the
+					// initial parser state exactly as it consumes the trailing
+					// run from the post-edit state.
+					c.topLevelIndex = 0
+					c.topLevelSpliceLeading = true
+				} else {
+					// Trailing run only (pre-existing behavior): the scan starts
+					// at the first item after the edited one.
+					c.topLevelIndex = firstAffected + 1
+				}
 			}
 		}
 	}
@@ -276,6 +325,15 @@ func (c *reuseCursor) collectTopLevelCandidates(start uint32) bool {
 				return true
 			}
 			c.topLevelIndex++
+			if !c.topLevelBlockCandidateBytes(stackEntryNodeStartByte(entry), stackEntryNodeEndByte(entry)) {
+				// An edited-region item (the edited item, or a leading item whose
+				// end byte touches the edit so its last token can shift): do not
+				// offer it as a whole-item block candidate. Skipping it here leaves
+				// its start position with no top-level candidate, so the parser
+				// reparses it and the general walk supplies leaf-level reuse for
+				// its unchanged interior -- the pre-existing per-item behavior.
+				continue
+			}
 			if !c.reusableIndexedEntry(entry) {
 				continue
 			}
@@ -680,13 +738,54 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 // declared itself safe (IncrementalReuseExternalScanner.SupportsIncrementalReuse)
 // -- see parser.go's tokenSourceSupportsIncrementalReuse gate, which runs
 // before tryReuseSubtree is ever reached.
+// The leading run (campaign post-admission-frontier T2a). A top-level item
+// whose end byte is at or before minEditAt lies entirely before the first
+// edit, so its bytes are unchanged by construction (every recorded edit starts
+// at minEditAt or later). Such an item is a byte-identical prefix, admissible on
+// the same terms as a trailing sibling: the caller still verifies byte equality
+// (collectTopLevelCandidates -> reusableIndexedEntry's nodeBytesUnchanged gate),
+// external-scanner quiescence (canReuseNodeWithExternalScannerCheckpoint), the
+// zero-width / has-error / span gates, and the #393 reuse bar, and the fragility
+// bit below still bars any item whose shape depended on an ambiguous decision.
+// The block-splice loop replays the leading run from the parser's initial state,
+// the mirror of replaying the trailing run from the post-edit state.
+//
+// CSS disposition: the scanner-sensitive forest languages (css, cmake) never set
+// topLevelSpliceLeading (reset()), so their leading items are not admitted here
+// and keep their general-walk leaf reuse. Their rejectDirtyTopLevelPrefix guard
+// exists precisely because a whole-item splice of scanner-sensitive prefix
+// content can feed stale selector/declaration context; leaving leading splice
+// off for them respects that guard rather than relying on W4 quiescence to cover
+// it.
 func (c *reuseCursor) topLevelSiblingBlockSpliceEligible(n *Node) bool {
-	return c != nil &&
-		c.topLevelParent != nil &&
-		n != nil &&
-		n.parent == c.topLevelParent &&
-		n.startByte >= c.topLevelResumeByte &&
-		!n.isFragile()
+	if c == nil || c.topLevelParent == nil || n == nil || n.parent != c.topLevelParent || n.isFragile() {
+		return false
+	}
+	return c.topLevelBlockCandidateBytes(n.startByte, n.endByte)
+}
+
+// topLevelBlockCandidateBytes reports whether a top-level item spanning
+// [start,end) may be spliced back as a whole block by byte range alone (the
+// fragility and scanner gates are applied separately by the caller). Two disjoint
+// runs qualify:
+//
+//   - Trailing run: start >= topLevelResumeByte (the edited item's end byte).
+//     These sit entirely after the edit; their byte-range equality is verified by
+//     the caller. This is the pre-existing (trailing) admission, unchanged.
+//   - Leading run: end < minEditAt, and only when the leading splice is enabled
+//     for this tree (topLevelSpliceLeading). The STRICT `<` is load-bearing: it
+//     requires the byte at index `end` -- the byte that terminated the item's
+//     last token -- to lie before the first edit, so it is unedited and that
+//     token boundary is preserved. An item ending exactly at minEditAt
+//     (end == minEditAt) is excluded: an edit there can extend its last token by
+//     maximal munch (for example replacing the newline after "package p" makes
+//     "package pz"), which a whole-item splice would miss. Such a boundary item
+//     is left to the general walk / reparse, exactly as before this change.
+func (c *reuseCursor) topLevelBlockCandidateBytes(start, end uint32) bool {
+	if start >= c.topLevelResumeByte {
+		return true
+	}
+	return c.topLevelSpliceLeading && end < c.minEditAt
 }
 
 // forestFastPathDirtyPrefixScannerSensitive names the curated set of
@@ -704,6 +803,49 @@ func (c *reuseCursor) topLevelSiblingBlockSpliceEligible(n *Node) bool {
 func forestFastPathDirtyPrefixScannerSensitive(name string) bool {
 	switch name {
 	case "cmake", "css":
+		return true
+	default:
+		return false
+	}
+}
+
+// leadingSpliceLanguageBarred names languages held off from the LEADING-run
+// block-splice (campaign post-admission-frontier T2a) because their incremental
+// real-reuse carries a DOCUMENTED, still-open silent-corruption residual (an
+// entry in testdata/incremental_allowlist.json) that the pre-existing reuse path
+// already tickles. The leading splice reaches those items on a different path, so
+// enabling it would perturb the tracked divergence into a different signature --
+// even a benign-looking change flips the invariant gate's exact-signature
+// ratchet. Holding the leading splice off keeps such a language byte-identical to
+// its pre-change behavior, so the tracked divergence is neither widened nor
+// silently altered while its parser-core root cause is fixed separately.
+//
+// This is a REJECTION guard (it only ever forbids a reuse), so it is outside the
+// campaign's "no name-allowlists" ADMISSION rule -- the same footing as
+// forestFastPathDirtyPrefixScannerSensitive (css/cmake scanner) and the dart
+// large-source reuse block (dfaTokenSourceIncrementalReuseBlockedBySource).
+//
+// The JS/TS/TSX expression family is barred: their per-node reduce-fragility
+// marking is known-incomplete on the ASI / ambiguous-expression conflicts, so
+// the permissive top-level goto splice (the same admission the trailing splice
+// uses) occasionally lifts a byte-identical item whose recorded shape depended
+// on an ambiguous decision the fragility bit did not flag. On main the trailing
+// splice already tickles this (documented for javascript at javascript_grammar.js
+// pos=1801, program:childCount+20; measured as a residual real-reuse divergence
+// on typescript/tsx too), so extending it to the leading run would perturb those
+// tracked divergences. Their reuse proof is the still-open campaign T2c
+// (TS/JS stateless-marker proofs); the leading splice opens for them once that
+// lands. Go, whose fragility marking is complete, is not listed and takes the
+// win. Production-route css also takes the win, but on an EMPIRICAL warrant,
+// not completeness: css still carries one open allowlist entry (delete
+// block:childCount+1, likely the same real-reuse class as the JavaScript
+// entry). Css stays unlisted because the invariant gate holds newUnlisted=0
+// with its two tracked divergences byte-unchanged, and the leading-splice
+// on/off differential byte-sweep is a no-op at every edit site. If either
+// signal moves, bar css here alongside the JS family.
+func leadingSpliceLanguageBarred(name string) bool {
+	switch name {
+	case "javascript", "typescript", "tsx":
 		return true
 	default:
 		return false

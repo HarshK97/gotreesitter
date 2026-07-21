@@ -7,6 +7,22 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Added
+
+- **Phase-3 admission switch** (PR #417). A per-parser option, a global
+  option, and the `GTS_ADMISSION_CANDIDATE` environment variable route
+  eligible full parses through the compact parser core. Internal
+  sub-parsers stay suppressed. A 206-language scorecard guards the
+  route: 48 languages parse byte-exact, 153 fall back fail-closed, 5
+  skip, 0 diverge. It initially landed off by default; the Changed entry
+  below records its promotion after the admission evidence was sealed.
+- **Compact-route coverage census** (PR #419).
+  `docs/compact-route-coverage-census.md` classifies the 153 fallback
+  languages into five scheduler-capability classes. The census found no
+  multi-derivation blockers.
+- **Oracle v3 parity tools** in `cgo_harness` (PR #413). The root
+  library module is unchanged by that PR.
+
 ### Changed
 
 - **The compact parser core is now the default full-parse route for eligible
@@ -26,17 +42,13 @@ for tags and release notes while still in `0.x`.
     digest is 100 percent exact on the canonical fixtures. The 206-language
     scorecard through the switch reports 48 byte-exact routes, 0 divergences,
     153 fail-closed fallbacks, and 5 token-source skips.
-  - **Known divergence class (generic call versus type conversion).** The
-    scorecard fixtures do not cover every Go conflict. One divergence remains
-    outside them: on the ambiguous construct `Foo[int](a)` the compact scheduler
-    resolves the conflict to `call_expression(index_expression)`, while the
-    production engine and the tree-sitter-go C oracle resolve it to
-    `type_conversion_expression(generic_type)`
-    (`TestAdmissionCandidateGoTypeConversionKnownDivergence`). This is the
-    generic-call conflict class. A companion lane makes the compact scheduler
-    decline this conflict class and fail closed to production, so the routed
-    surface stays byte-exact until the scheduler reproduces the production
-    resolution.
+  - **Fail-closed generic-call conflict class.** On the ambiguous Go construct
+    `Foo[int](a)`, production and the tree-sitter-go C oracle select
+    `type_conversion_expression(generic_type)`. The compact scheduler cannot
+    yet rank that conflict by dynamic precedence, so it declines the
+    unauthorized tie fold and falls back to production. The returned tree stays
+    byte-exact while `TestAdmissionCandidateGoTypeConversionFailsClosed` keeps
+    the route/fallback behavior explicit.
   - **Timing.** The quiet-host publication run (lane
     strictboundary-20260720T231334Z-v6 phase3, n2d-standard-4, 5 ABBA cycles)
     measured a production-over-candidate geomean speedup of 1.8321 (gate is at
@@ -90,6 +102,36 @@ for tags and release notes while still in `0.x`.
   source-length floor where the production route arms that budget (64 KiB), so
   such inputs stay on production and honor `ParseStopMemoryBudget`. Adding
   scheduler-level budget polling to the compact route is the follow-on campaign.
+
+- **The GLR steady-state merge now compares structure before score**
+  (PR #416). The TypeScript and TSX steady-state merge budget widens
+  from one survivor to two. The wider budget activates the structural
+  comparison at the merge site. This is the structural cure for the
+  detector class behind issue #389 and issue #402.
+- **Incremental reparse cost is now position-independent for large
+  files** (PR #418, PR #421, campaign O(edit)). PR #418 bounds arena
+  normalization to the edited range. A 1MB clean-Go near-top keystroke
+  drops from about 356ms to about 53ms. PR #421 splices the leading run
+  of unchanged top-level items, the mirror of the trailing
+  block-splice. A 1MB mid-file keystroke drops from about 269ms to
+  about 67ms for Go, and from about 168ms to about 45ms for CSS. At
+  137KB, mid-file reuse rejects fall from 16,450 to 10. JavaScript,
+  TypeScript, and TSX keep their previous behavior until the T2c
+  scanner proofs land. The W5 latency gate now locks these counters per
+  edit position.
+
+### Removed
+
+- **The four TypeScript merge-width source-text detectors** (PR #422).
+  The structure-before-score cap-two steady state from PR #416
+  subsumes all four detector shapes, so the detector functions, their
+  wrapper gates, their helpers, and the test seam are deleted. A
+  byte-match test proves cap-two produces trees identical to the old
+  cap-six widening on the destructured shape, at 300KB scale. One
+  behavioral change: an accepted-error incremental retry for the
+  destructured-arrow shape now runs one base-cap retry pass. The
+  strict retry-preference gate keeps the selected tree the same or
+  strictly better.
 
 ## [0.45.0] - 2026-07-20
 

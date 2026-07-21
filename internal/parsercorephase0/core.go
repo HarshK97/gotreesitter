@@ -1864,7 +1864,14 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 			}
 		}
 		if c.diagnostics.foldSamePredecessorShallowPayloads {
-			candidate := -1
+			// A shallow-class-equal incumbent shares the incoming payload's symbol,
+			// span, and child count. Under ordinary reductions a boundary holds at
+			// most one such incumbent, but a declined precedence tie (below) can
+			// leave two structurally distinct alternates coexisting, so this search
+			// tolerates several and also finds the structurally identical one.
+			shallowCount := 0
+			firstShallow := -1
+			structuralMatch := -1
 			for index, link := range oldLinks {
 				equal, err := c.shallowPayloadClassEqual(link, in)
 				if err != nil {
@@ -1873,13 +1880,40 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 				if !equal {
 					continue
 				}
-				if candidate >= 0 {
-					return condenseOutcome{}, errors.New("parser-core phase zero: multiple shallow-fold incumbents")
+				shallowCount++
+				if firstShallow < 0 {
+					firstShallow = index
 				}
-				candidate = index
+				structural, err := c.subtreesStructurallyEqual(link.payload, in.payload)
+				if err != nil {
+					return condenseOutcome{}, err
+				}
+				if structural {
+					if structuralMatch >= 0 {
+						return condenseOutcome{}, errors.New("parser-core phase zero: multiple structural-fold incumbents")
+					}
+					structuralMatch = index
+				}
 			}
-			if candidate >= 0 {
-				incumbentPrecedence, err := c.effectivePayloadPrecedence(oldLinks[candidate].payload, oldLinks[candidate].scoreDelta)
+			foldDeclined := false
+			switch {
+			case structuralMatch >= 0:
+				// The incoming payload reproduces an existing alternate exactly, so
+				// it is a redundant GLR path. Structural equality implies equal
+				// dynamic precedence, so this is the duplicate drop that keeps one
+				// subtree per (symbol, span), matching production.
+				c.recordLinkUnionDuplicateNoop()
+				if phase0AEnabled {
+					phase0AObserveCandidateDrop(c, key, in, oldID, structuralMatch, phase0ATransitionPrecedenceDrop)
+				}
+				return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, nil
+			case shallowCount == 1:
+				// Exactly one shallow-class incumbent, structurally different. Rank
+				// the two by dynamic precedence, production's primary disambiguation
+				// for the clean parses this route admits (error cost is zero here, so
+				// it never outranks precedence).
+				incumbent := firstShallow
+				incumbentPrecedence, err := c.effectivePayloadPrecedence(oldLinks[incumbent].payload, oldLinks[incumbent].scoreDelta)
 				if err != nil {
 					return condenseOutcome{}, err
 				}
@@ -1887,36 +1921,67 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 				if err != nil {
 					return condenseOutcome{}, err
 				}
-				if incomingPrecedence <= incumbentPrecedence {
+				switch {
+				case incomingPrecedence < incumbentPrecedence:
+					// The incumbent strictly dominates; drop the dominated incoming
+					// payload, as production keeps the higher-precedence subtree.
 					c.recordLinkUnionDuplicateNoop()
 					if phase0AEnabled {
-						phase0AObserveCandidateDrop(c, key, in, oldID, candidate, phase0ATransitionPrecedenceDrop)
+						phase0AObserveCandidateDrop(c, key, in, oldID, incumbent, phase0ATransitionPrecedenceDrop)
 					}
 					return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, nil
-				}
-				if phase0AEnabled {
-					phase0ABeginReplacement(c, key, in, oldID, candidate)
-				}
-				head, err := c.replaceBoundaryLink(key, probe, old, oldLinks, candidate, in)
-				if err != nil {
-					c.recordLinkUnionRejected()
-				} else {
-					c.recordLinkUnionPrecedenceReplaced()
-				}
-				return condenseOutcome{head: head, change: condenseUpdated}, err
-			}
-			outcome, handled, err := c.factorExactPredecessor(key, probe, oldID, oldLinks, in)
-			if err != nil || handled {
-				if handled {
+				case incomingPrecedence > incumbentPrecedence:
+					// The incoming payload strictly dominates; replace the incumbent.
+					if phase0AEnabled {
+						phase0ABeginReplacement(c, key, in, oldID, incumbent)
+					}
+					head, err := c.replaceBoundaryLink(key, probe, old, oldLinks, incumbent, in)
 					if err != nil {
 						c.recordLinkUnionRejected()
-					} else if outcome.change == condenseUpdated {
-						c.recordLinkUnionRecursiveChanged()
 					} else {
-						c.recordLinkUnionDuplicateNoop()
+						c.recordLinkUnionPrecedenceReplaced()
 					}
+					return condenseOutcome{head: head, change: condenseUpdated}, err
+				default:
+					// A precedence tie between two structurally different same-span
+					// payloads. Dynamic precedence cannot rank them, and the compact
+					// route does not own production's error-cost and structural
+					// tie-breaks. Choosing one here by insertion order is the silent
+					// wrong-tree divergence the admission flip surfaced (Go's
+					// call_expression(index_expression) versus
+					// type_conversion_expression(generic_type) for `Foo[int](a)`).
+					// Decline the fold: keep both links as coexisting alternates and
+					// let them race to EOF. A local ambiguity collapses when one arm
+					// dies; a genuine whole-parse ambiguity keeps more than one
+					// accepted derivation, and the sole-exact acceptance gate then
+					// fails closed to production.
+					foldDeclined = true
 				}
-				return outcome, err
+			case shallowCount >= 2:
+				// The boundary already carries coexisting structural alternates from
+				// an earlier declined tie. Do not precedence-collapse across an
+				// already ambiguous boundary; append the incoming payload as a
+				// further distinct alternate for the sole-exact gate to resolve.
+				foldDeclined = true
+			}
+			// A declined fold skips the exact-predecessor factor (which merges
+			// same-boundary predecessors) and appends the incoming link as a
+			// surviving alternate below. With no shallow-class incumbent the factor
+			// still runs, preserving the recursive-insertion path unchanged.
+			if !foldDeclined && shallowCount == 0 {
+				outcome, handled, err := c.factorExactPredecessor(key, probe, oldID, oldLinks, in)
+				if err != nil || handled {
+					if handled {
+						if err != nil {
+							c.recordLinkUnionRejected()
+						} else if outcome.change == condenseUpdated {
+							c.recordLinkUnionRecursiveChanged()
+						} else {
+							c.recordLinkUnionDuplicateNoop()
+						}
+					}
+					return outcome, err
+				}
 			}
 		}
 	}
@@ -2428,6 +2493,71 @@ func (c *Core) appendAdjacencyNode(state StateID, byteOffset uint32, links []lin
 		state: state, byteOffset: byteOffset, firstLink: uint32(first),
 		linkCount: uint32(len(links)), pathCount: pathCount,
 	})
+}
+
+// subtreesStructurallyEqual reports whether two compact payload subtrees are the
+// same parse: identical symbol, span, production, precedence, extra/external
+// flags, field and alias vectors, and recursively identical children. It is the
+// authorization test for a same-predecessor shallow-payload fold. Two links that
+// reach one boundary with structurally-equal payloads are a redundant GLR path
+// (the compact route and production both collapse them). Two links whose
+// payloads are only shallow-class-equal but structurally DIFFERENT are a genuine
+// structural ambiguity (for example Go's call_expression(index_expression) versus
+// type_conversion_expression(generic_type) for `Foo[int](a)`); the compact route
+// must not silently pick one by a local precedence comparison, so the fold is
+// declined and both links survive as alternates. The surviving alternates raise
+// the accepted-head derivation count above one, and the sole-exact acceptance
+// gate then fails closed to production instead of routing a wrong tree.
+//
+// Payloads are only compared after a shallow-class match (same symbol, span, and
+// child count), so the walk short-circuits on the first structural difference and
+// stays bounded by the matched subtree's size. Compact payloads are acyclic by
+// construction: appendSubtreeRecord appends every child before its parent, so a
+// child SubtreeID is strictly less than its parent's. The walk enforces that
+// order and returns a fail-closed error on a violation, so the recursion also
+// terminates on a corrupted arena instead of overflowing the stack.
+func (c *Core) subtreesStructurallyEqual(left, right SubtreeID) (bool, error) {
+	if left == right {
+		return true, nil
+	}
+	l, err := c.subtree(left)
+	if err != nil {
+		return false, err
+	}
+	r, err := c.subtree(right)
+	if err != nil {
+		return false, err
+	}
+	if l.symbol != r.symbol || l.productionID != r.productionID || l.dynamicPrecedence != r.dynamicPrecedence ||
+		l.startByte != r.startByte || l.endByte != r.endByte || l.childCount != r.childCount ||
+		l.fieldCount != r.fieldCount || l.aliasCount != r.aliasCount ||
+		l.extra != r.extra || l.external != r.external || l.terminal != r.terminal {
+		return false, nil
+	}
+	if !slices.Equal(
+		c.fields[l.firstField:l.firstField+l.fieldCount],
+		c.fields[r.firstField:r.firstField+r.fieldCount],
+	) {
+		return false, nil
+	}
+	if !slices.Equal(
+		c.aliases[l.firstAlias:l.firstAlias+l.aliasCount],
+		c.aliases[r.firstAlias:r.firstAlias+r.aliasCount],
+	) {
+		return false, nil
+	}
+	leftChildren := c.children[l.firstChild : l.firstChild+l.childCount]
+	rightChildren := c.children[r.firstChild : r.firstChild+r.childCount]
+	for index := range leftChildren {
+		if leftChildren[index] >= left || rightChildren[index] >= right {
+			return false, errors.New("parser-core phase zero: compact subtree child identifier out of order during structural comparison")
+		}
+		equal, err := c.subtreesStructurallyEqual(leftChildren[index], rightChildren[index])
+		if err != nil || !equal {
+			return equal, err
+		}
+	}
+	return true, nil
 }
 
 func (c *Core) shallowPayloadClass(prevID NodeID, payloadID SubtreeID) (shallowPayloadClass, bool, error) {

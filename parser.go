@@ -339,19 +339,33 @@ type Parser struct {
 	mergeScratch *glrMergeScratch
 	// goCompatFrames points at the active parser scratch's reusable result-tree
 	// traversal stack. It is nil outside parseInternal.
-	goCompatFrames                      *[]goCompatSubtreeFrame
-	noTreeBenchmarkOnly                 bool
-	noTreeCheckpointBenchmarkOnly       bool
-	compactNoTreeShiftLeaves            bool
-	compactFullShiftLeaves              bool
-	eagerDefaultReduces                 []eagerDefaultReduceAction
-	pendingFullParents                  bool
-	finalChildRefs                      bool
-	skipInvisibleFullLeafCheckpoints    bool
-	transientReduceChildren             bool
-	transientReduceScratchNoAlias       bool
-	transientChildren                   *transientChildScratch
-	noResultCompatibilityBenchmarkOnly  bool
+	goCompatFrames                     *[]goCompatSubtreeFrame
+	noTreeBenchmarkOnly                bool
+	noTreeCheckpointBenchmarkOnly      bool
+	compactNoTreeShiftLeaves           bool
+	compactFullShiftLeaves             bool
+	eagerDefaultReduces                []eagerDefaultReduceAction
+	pendingFullParents                 bool
+	finalChildRefs                     bool
+	skipInvisibleFullLeafCheckpoints   bool
+	transientReduceChildren            bool
+	transientReduceScratchNoAlias      bool
+	transientChildren                  *transientChildScratch
+	noResultCompatibilityBenchmarkOnly bool
+	// forceFullResultNormalizationWalk disables incremental range-limited result
+	// normalization for this Parser, forcing the full-tree walk. It exists only
+	// so the campaign O(edit) byte-sweep differential can compare the
+	// range-limited walk against the full walk on one Parser (see
+	// SetForceFullResultNormalizationWalk). Production leaves it false.
+	forceFullResultNormalizationWalk    bool
+	// disableLeadingRunSplice turns off the campaign post-admission-frontier T2a
+	// leading-run block-splice for this Parser (the trailing splice and every
+	// other reuse path stay on). It exists ONLY so the byte-sweep differential
+	// can compare leading-splice-on against leading-splice-off on the SAME Parser
+	// and prove the leading splice is a no-op on trees where it should be (it
+	// never changes a fresh-correct result). Production leaves it false; the
+	// setter lives in export_test.go.
+	disableLeadingRunSplice             bool
 	currentExternalTokenCheckpoint      externalScannerCheckpoint
 	currentExternalTokenCheckpointStart uint32
 	currentExternalTokenCheckpointEnd   uint32
@@ -2988,6 +3002,7 @@ func (p *Parser) parseIncrementalInternalWithMergePerKeyOverride(source []byte, 
 	defer p.reuseMu.Unlock()
 
 	var reuse *reuseCursor
+	p.reuseCursor.disableLeadingSplice = p.disableLeadingRunSplice
 	if timing != nil {
 		reuseStart := time.Now()
 		reuse = p.reuseCursor.reset(oldTree, source, &p.reuseScratch)
@@ -6704,16 +6719,6 @@ func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClas
 // required policy.
 func (p *Parser) resolveParseMergePerKeyCap(source []byte, reuse *reuseCursor, maxMergePerKeyOverride int) int {
 	mergePerKeyCap := effectiveParseMergePerKeyCap(p.language, parseMaxMergePerKeyValue(), reuse != nil, len(source))
-	tsNeedsTypedArrow := typeScriptFullParseNeedsTypedArrowMergeWidth(p.language, source, reuse)
-	tsNeedsDefaultParameter := typeScriptFullParseNeedsDefaultParameterMergeWidth(p.language, source, reuse)
-	tsNeedsTypedParameterArrowReturn := typeScriptFullParseNeedsTypedParameterArrowReturnMergeWidth(p.language, source, reuse)
-	if typeScriptFullParseNeedsDestructuredArrowReturnMergeWidth(p.language, source, reuse) {
-		if mergePerKeyCap < maxStacksPerMergeKey {
-			mergePerKeyCap = maxStacksPerMergeKey
-		}
-	} else if (tsNeedsTypedArrow || tsNeedsDefaultParameter || tsNeedsTypedParameterArrowReturn) && mergePerKeyCap < 2 {
-		mergePerKeyCap = 2
-	}
 	if javaFullParseNeedsAnnotationDeclarationMergeWidth(p.language, source, reuse) && mergePerKeyCap < javaFullParseRetryMaxMergePerKey {
 		mergePerKeyCap = javaFullParseRetryMaxMergePerKey
 	}

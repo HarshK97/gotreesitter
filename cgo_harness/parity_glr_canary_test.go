@@ -11,13 +11,17 @@ import (
 
 func makeGoGLRCanarySource(callCount int) []byte {
 	var b strings.Builder
-	b.Grow(callCount * 16)
+	b.Grow(callCount * 24)
 	b.WriteString("package main\n\n")
-	b.WriteString("type glrCanaryNode struct{}\n")
-	b.WriteString("func (glrCanaryNode) method() {}\n")
-	b.WriteString("func glrCanaryBenchmark() {\n\tvar n glrCanaryNode\n")
+	b.WriteString("func glrCanaryBenchmark() {\n")
 	for i := 0; i < callCount; i++ {
-		b.WriteString("\tn.method()\n")
+		// Each line is the generic-instantiation / type-conversion conflict
+		// Foo[int](a). Production forks the generic_type/type_conversion arm
+		// against the index_expression/call arm, so the runtime records GLR
+		// branching. Post-flip the compact route declines this conflict and falls
+		// back to production, so the assertion measures production's fork count,
+		// not the compact route's single stack.
+		b.WriteString("\t_ = Foo[int](a)\n")
 	}
 	b.WriteString("}\n")
 	return []byte(b.String())

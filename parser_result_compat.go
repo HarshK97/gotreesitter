@@ -6,6 +6,13 @@ type resultCompatibilityContext struct {
 	parser    *Parser
 	lang      *Language
 	stopCheck parseStopCheck
+	// incrementalRanges confines range-capable result normalizers to the
+	// reparsed spans of an incremental parse (campaign O(edit),
+	// spec.campaign.oedit). It is nil on every fresh parse and on any
+	// incremental parse without reuse, which restores the full-tree walk. Only
+	// languages proven node-local for range-limiting consume it; every other
+	// language ignores it and keeps its full walk (fail-closed).
+	incrementalRanges []Range
 }
 
 type resultCompatibilityResult struct {
@@ -19,7 +26,7 @@ type resultCompatibilityResult struct {
 // normalizeResultCompatibility applies narrow post-build tree rewrites that
 // keep gotreesitter output aligned with C tree-sitter and existing recovery
 // expectations for grammars with known normalization gaps.
-func normalizeResultCompatibility(root *Node, source []byte, p *Parser) resultCompatibilityResult {
+func normalizeResultCompatibility(root *Node, source []byte, p *Parser, incrementalRanges []Range) resultCompatibilityResult {
 	var lang *Language
 	if p != nil {
 		lang = p.language
@@ -28,11 +35,12 @@ func normalizeResultCompatibility(root *Node, source []byte, p *Parser) resultCo
 		return resultCompatibilityResult{}
 	}
 	ctx := resultCompatibilityContext{
-		root:      root,
-		source:    source,
-		parser:    p,
-		lang:      lang,
-		stopCheck: p.activeParseStopCheck(),
+		root:              root,
+		source:            source,
+		parser:            p,
+		lang:              lang,
+		stopCheck:         p.activeParseStopCheck(),
+		incrementalRanges: incrementalRanges,
 	}
 	if reason := ctx.stopReason(); parseStopReasonIsActive(reason) {
 		return resultCompatibilityResult{stopReason: reason}
@@ -154,7 +162,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 	case "fidl":
 		normalizeFIDLCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "go":
-		return resultCompatibilityResult{stopReason: normalizeGoReturnedTreeCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)}
+		return resultCompatibilityResult{stopReason: normalizeGoReturnedTreeCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang, ctx.incrementalRanges)}
 	case "gitcommit":
 		normalizeGitcommitCompatibility(ctx.root, ctx.source, ctx.lang)
 	case "haskell":

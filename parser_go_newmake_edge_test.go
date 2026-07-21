@@ -31,6 +31,29 @@ func findAllNodesOfType(lang *gotreesitter.Language, node *gotreesitter.Node, ty
 	return out
 }
 
+// assertGoCandidateMatchesProduction routes src through the compact candidate
+// engine and requires the result to equal the production tree byte for byte.
+// The Phase-3 compact route fails closed on the generic-instantiation conflict,
+// so this holds whether the candidate routes or declines to production; the
+// helper only proves the route never diverges from production for this fixture.
+func assertGoCandidateMatchesProduction(t *testing.T, lang *gotreesitter.Language, src string, prodTree *gotreesitter.Tree) {
+	t.Helper()
+	prodSExpr := prodTree.RootNode().SExpr(lang)
+	gotreesitter.ResetAdmissionCandidateCountersForTest()
+	parser := gotreesitter.NewParser(lang)
+	parser.SetAdmissionCandidateRoute(true)
+	candTree, err := parser.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("candidate parse failed: %v", err)
+	}
+	defer candTree.Release()
+	if got := candTree.RootNode().SExpr(lang); got != prodSExpr {
+		routed, fallback := gotreesitter.AdmissionCandidateCounters()
+		t.Fatalf("candidate route diverged from production (routed=%d fallback=%d):\n  production: %s\n  candidate:  %s",
+			routed, fallback, prodSExpr, got)
+	}
+}
+
 // assertNoErrorOrMissing walks the whole tree and fails the test if any
 // ERROR or MISSING node is found anywhere, printing the S-expression for
 // diagnosis. Modeled on the existing GoInterpretedStringFalseErrors /
@@ -330,14 +353,18 @@ func TestParseGoNewMakeGenericInstantiationUntouched(t *testing.T) {
 		"\t_ = a\n" +
 		"\t_ = b\n" +
 		"}\n"
-	// Pin to production: this asserts the production-engine Go tree shape against
-	// the tree-sitter-go C oracle. The Phase-3 admission flip surfaced a compact
-	// candidate-route divergence on `Foo[int](a)` (call_expression vs the correct
-	// type_conversion_expression); that known divergence is tracked separately by
-	// TestAdmissionCandidateGoTypeConversionKnownDivergence.
+	// Assert the production-engine Go tree shape against the tree-sitter-go C
+	// oracle. The Phase-3 admission flip surfaced a compact candidate-route
+	// divergence on `Foo[int](a)` (call_expression versus the correct
+	// type_conversion_expression); the compact route now fails closed on that
+	// conflict class (TestAdmissionCandidateGoTypeConversionFailsClosed). Because
+	// the fix is fail-closed, this fixture is re-routed through the candidate:
+	// the route must reproduce the production tree byte for byte, whether it
+	// routes or declines to production.
 	tree, lang := parseGoProduction(t, src)
 	root := tree.RootNode()
 	assertNoErrorOrMissing(t, lang, root, "generic-instantiation-untouched")
+	assertGoCandidateMatchesProduction(t, lang, src, tree)
 
 	if calls := findAllNodesOfType(lang, root, "call_expression"); len(calls) != 0 {
 		t.Fatalf("expected zero call_expression nodes for generic instantiation syntax, got %d; root=%s", len(calls), root.SExpr(lang))
