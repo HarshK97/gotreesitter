@@ -12,6 +12,19 @@ import (
 	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
 )
 
+// newProductionBig3Parser returns a parser pinned to the production route.
+// These incremental-correctness tests compare production incremental reparse
+// against production fresh parse and observe production-engine reuse profiles.
+// A compact-materialized base tree is hard-barred from incremental reuse
+// (decision 0008), so the base and fresh parses must stay on production; the
+// compact route's fresh-parse correctness is covered by the tagged scorecard
+// suite. Reuse-bar lift is the follow-on campaign.
+func newProductionBig3Parser(lang *gotreesitter.Language) *gotreesitter.Parser {
+	p := gotreesitter.NewParser(lang)
+	p.SetAdmissionCandidateRoute(false)
+	return p
+}
+
 type pythonTestIncrementalReuseScanner struct{ gotreesitter.ExternalScanner }
 
 func (pythonTestIncrementalReuseScanner) SupportsIncrementalReuse() bool { return true }
@@ -51,7 +64,7 @@ func TestPythonIncrementalSingleByteDeleteSweepMatchesFresh(t *testing.T) {
 			edited = append(edited, source[:offset]...)
 			edited = append(edited, source[offset+1:]...)
 
-			oldTree, err := gotreesitter.NewParser(lang).Parse(source)
+			oldTree, err := newProductionBig3Parser(lang).Parse(source)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -69,7 +82,7 @@ func TestPythonIncrementalSingleByteDeleteSweepMatchesFresh(t *testing.T) {
 				oldTree.Release()
 				t.Fatal(err)
 			}
-			fresh, err := gotreesitter.NewParser(lang).Parse(edited)
+			fresh, err := newProductionBig3Parser(lang).Parse(edited)
 			if err != nil {
 				incremental.Release()
 				oldTree.Release()
@@ -108,7 +121,7 @@ func TestPythonLengthChangingEditFallsBackUntilDedentCheckpointsAreCertified(t *
 	}
 	edited := append(append([]byte(nil), source[:offset]...), source[offset+1:]...)
 	lang := grammars.PythonLanguage()
-	oldTree, err := gotreesitter.NewParser(lang).Parse(source)
+	oldTree, err := newProductionBig3Parser(lang).Parse(source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +147,7 @@ func TestPythonLengthChangingEditFallsBackUntilDedentCheckpointsAreCertified(t *
 		t.Fatalf("Python scanner fallback reported old-tree reuse: %+v", profile)
 	}
 
-	fresh, err := gotreesitter.NewParser(lang).Parse(edited)
+	fresh, err := newProductionBig3Parser(lang).Parse(edited)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +196,7 @@ func TestGoLanguageFixtureLengthChangeIncrementalMatchesFresh(t *testing.T) {
 
 	lang := grammars.GoLanguage()
 	t.Run("forward", func(t *testing.T) {
-		oldTree, err := gotreesitter.NewParser(lang).Parse(source)
+		oldTree, err := newProductionBig3Parser(lang).Parse(source)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -201,7 +214,7 @@ func TestGoLanguageFixtureLengthChangeIncrementalMatchesFresh(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer incremental.Release()
-		fresh, err := gotreesitter.NewParser(lang).Parse(edited)
+		fresh, err := newProductionBig3Parser(lang).Parse(edited)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -225,7 +238,7 @@ func TestGoLanguageFixtureLengthChangeIncrementalMatchesFresh(t *testing.T) {
 	})
 
 	t.Run("reverse", func(t *testing.T) {
-		oldTree, err := gotreesitter.NewParser(lang).Parse(edited)
+		oldTree, err := newProductionBig3Parser(lang).Parse(edited)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -243,7 +256,7 @@ func TestGoLanguageFixtureLengthChangeIncrementalMatchesFresh(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer incremental.Release()
-		fresh, err := gotreesitter.NewParser(lang).Parse(source)
+		fresh, err := newProductionBig3Parser(lang).Parse(source)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -259,7 +272,7 @@ func TestCleanGoIncrementalDoesNotRunAcceptedErrorRetry(t *testing.T) {
 	lang := grammars.GoLanguage()
 	original := []byte("package p\n\nfunc f() {\n\tx := 1\n\t_ = x\n}\n")
 	edited := []byte("package p\n\nfunc f() {\n\tvalue := 1\n\t_ = x\n}\n")
-	oldTree, err := gotreesitter.NewParser(lang).Parse(original)
+	oldTree, err := newProductionBig3Parser(lang).Parse(original)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +294,7 @@ func TestCleanGoIncrementalDoesNotRunAcceptedErrorRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer incremental.Release()
-	fresh, err := gotreesitter.NewParser(lang).Parse(edited)
+	fresh, err := newProductionBig3Parser(lang).Parse(edited)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +318,7 @@ func TestTokenInvariantGoLeafDoesNotEnterAcceptedErrorRetryRoute(t *testing.T) {
 	}
 	edited[offset] = '1'
 
-	oldTree, err := gotreesitter.NewParser(lang).Parse(original)
+	oldTree, err := newProductionBig3Parser(lang).Parse(original)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +359,7 @@ func TestMalformedTokenInvariantGoLeafDoesNotRunBaseMergeRetry(t *testing.T) {
 	}
 	edited[offset] = '1'
 
-	oldTree, err := gotreesitter.NewParser(lang).Parse(original)
+	oldTree, err := newProductionBig3Parser(lang).Parse(original)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +380,7 @@ func TestMalformedTokenInvariantGoLeafDoesNotRunBaseMergeRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer incremental.Release()
-	fresh, err := gotreesitter.NewParser(lang).Parse(edited)
+	fresh, err := newProductionBig3Parser(lang).Parse(edited)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,7 +407,7 @@ func TestMalformedGoIncrementalRunsOneBaseMergeRetryAndKeepsFirstResult(t *testi
 	}
 	edited := append([]byte(nil), original[:offset]...)
 	edited = append(edited, original[offset+1:]...)
-	oldTree, err := gotreesitter.NewParser(lang).Parse(original)
+	oldTree, err := newProductionBig3Parser(lang).Parse(original)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,7 +425,7 @@ func TestMalformedGoIncrementalRunsOneBaseMergeRetryAndKeepsFirstResult(t *testi
 		t.Fatal(err)
 	}
 	defer incremental.Release()
-	fresh, err := gotreesitter.NewParser(lang).Parse(edited)
+	fresh, err := newProductionBig3Parser(lang).Parse(edited)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +466,7 @@ func TestMalformedRustUnsupportedReuseDoesNotRunBaseMergeRetry(t *testing.T) {
 	}
 	edited := append([]byte(nil), original[:offset]...)
 	edited = append(edited, original[offset+1:]...)
-	oldTree, err := gotreesitter.NewParser(lang).Parse(original)
+	oldTree, err := newProductionBig3Parser(lang).Parse(original)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +484,7 @@ func TestMalformedRustUnsupportedReuseDoesNotRunBaseMergeRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer incremental.Release()
-	fresh, err := gotreesitter.NewParser(lang).Parse(edited)
+	fresh, err := newProductionBig3Parser(lang).Parse(edited)
 	if err != nil {
 		t.Fatal(err)
 	}

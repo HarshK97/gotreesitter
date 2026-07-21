@@ -134,7 +134,11 @@ func TestGoScannerQuiescenceOracleSweep(t *testing.T) {
 
 	for name, src := range w4GoAdversarialFixtures() {
 		// A clean base parse is a fixture invariant.
+		// Pin to production: this sweep asserts incremental Go reuse across edits;
+		// a compact-materialized base tree is hard-barred from reuse (decision
+		// 0008), so the base parse must stay on the production engine.
 		baseParser := gts.NewParser(lang)
+		baseParser.SetAdmissionCandidateRoute(false)
 		baseTree, err := baseParser.Parse(src)
 		if err != nil {
 			t.Fatalf("%s: base parse: %v", name, err)
@@ -152,7 +156,10 @@ func TestGoScannerQuiescenceOracleSweep(t *testing.T) {
 				edited, edit := incrGateBuildEdit(src, off, class)
 
 				// Fresh parse of the edited text.
+				// Pin to production: this sweep compares production incremental
+				// reuse against a production fresh parse; keep both on production.
 				freshParser := gts.NewParser(lang)
+				freshParser.SetAdmissionCandidateRoute(false)
 				freshTree, err := freshParser.Parse(edited)
 				if err != nil {
 					t.Fatalf("%s/%s@%d: fresh parse: %v", name, class, off, err)
@@ -160,7 +167,10 @@ func TestGoScannerQuiescenceOracleSweep(t *testing.T) {
 				freshClean := w4TreeIsGenuinelyClean(freshTree.RootNode(), len(edited))
 
 				// Incremental parse from the edited old tree.
+				// Pin to production: a compact-materialized base tree is hard-barred
+				// from reuse (decision 0008), so the base parse must stay on production.
 				incrParser := gts.NewParser(lang)
+				incrParser.SetAdmissionCandidateRoute(false)
 				oldTree, err := incrParser.Parse(src)
 				if err != nil {
 					t.Fatalf("%s/%s@%d: old parse: %v", name, class, off, err)

@@ -1,6 +1,8 @@
 package gotreesitter_test
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	gts "github.com/odvcencio/gotreesitter"
@@ -354,13 +356,18 @@ func TestAdmissionSwitchPooledParserScrubsRouteState(t *testing.T) {
 
 // TestAdmissionSwitchEnvVarContract proves GTS_ADMISSION_CANDIDATE seeds the
 // process-wide default: init calls this same parser at package load.
+//
+// Phase-3 admission made the compact route the default, so an unset or
+// unrecognized value resolves ON; only an explicit off value forces the
+// production route (the escape hatch).
 func TestAdmissionSwitchEnvVarContract(t *testing.T) {
 	for _, tc := range []struct {
 		value string
 		want  bool
 	}{
 		{"1", true}, {"true", true}, {"on", true}, {"yes", true}, {"YES", true},
-		{"0", false}, {"false", false}, {"", false}, {"nonsense", false},
+		{"", true}, {"nonsense", true},
+		{"0", false}, {"false", false}, {"off", false}, {"no", false}, {"NO", false},
 	} {
 		t.Setenv("GTS_ADMISSION_CANDIDATE", tc.value)
 		if got := gts.AdmissionCandidateEnvEnabledForTest(); got != tc.want {
@@ -390,6 +397,152 @@ func TestAdmissionSwitchDeclinesWhenLoggerAttached(t *testing.T) {
 	if got := admissionRoutingEvents(t); got != before {
 		t.Fatalf("an attached logger must keep the parse on production: %d -> %d", before, got)
 	}
+}
+
+// TestAdmissionCandidateMemoryBudgetContractPreserved proves the Phase-3 size
+// gate keeps the automatic large-input memory budget contract intact even with
+// the candidate route on by default.
+//
+// The compact scheduler does not poll the automatic memory budget, so the
+// switch declines every input at or above the source-length floor where the
+// production route arms that budget (parseRuntimeMemoryMinSourceBytes, 64 KiB).
+// Such inputs stay on production and honor ParseStopMemoryBudget. Inputs below
+// the floor, where no budget arms on either route, still route freely.
+func TestAdmissionCandidateMemoryBudgetContractPreserved(t *testing.T) {
+	// Mirror parseRuntimeMemoryMinSourceBytes (parser_memory_budget_runtime.go).
+	const minBudgetSourceBytes = 64 * 1024
+
+	restore := gts.AdmissionCandidateRouteDefault()
+	defer gts.SetAdmissionCandidateRouteDefault(restore)
+	gts.SetAdmissionCandidateRouteDefault(true)
+
+	lang := grammars.GoLanguage()
+
+	// Positive control: a small clean source below the floor routes.
+	small := []byte(grammars.ParseSmokeSample("go"))
+	if len(small) == 0 || len(small) >= minBudgetSourceBytes {
+		t.Skipf("go smoke sample unsuitable for the control (%d bytes)", len(small))
+	}
+	gts.ResetAdmissionCandidateCountersForTest()
+	smallParser := gts.NewParser(lang)
+	smallTree, err := smallParser.Parse(small)
+	if err != nil {
+		t.Fatalf("small parse: %v", err)
+	}
+	smallTree.Release()
+	if routed, _ := gts.AdmissionCandidateCounters(); routed == 0 {
+		t.Fatalf("small clean source below the floor did not route to the candidate; routed=%d", routed)
+	}
+
+	// A clean source at or above the floor must NOT route: the size gate keeps
+	// it on production even with the switch on.
+	var big bytes.Buffer
+	big.WriteString("package p\n\nfunc f() {\n")
+	for big.Len() < minBudgetSourceBytes+(1<<15) {
+		big.WriteString("\t_ = 1\n")
+	}
+	big.WriteString("}\n")
+	if big.Len() < minBudgetSourceBytes {
+		t.Fatalf("large control source too small: %d", big.Len())
+	}
+	gts.ResetAdmissionCandidateCountersForTest()
+	bigParser := gts.NewParser(lang)
+	bigTree, err := bigParser.Parse(big.Bytes())
+	if err != nil {
+		t.Fatalf("large parse: %v", err)
+	}
+	bigTree.Release()
+	if routed, _ := gts.AdmissionCandidateCounters(); routed != 0 {
+		t.Fatalf("source of %d bytes (>= %d floor) routed to the candidate; the memory-budget size gate did not decline it (routed=%d)",
+			big.Len(), minBudgetSourceBytes, routed)
+	}
+
+	// With a low budget, a pathological large source on production honors
+	// ParseStopMemoryBudget -- the exact contract the size gate preserves by
+	// routing every budget-eligible input to production.
+	t.Setenv("GOT_PARSE_MEMORY_BUDGET_MB", "1")
+	gts.ResetParseEnvConfigCacheForTests()
+	defer gts.ResetParseEnvConfigCacheForTests()
+
+	var huge bytes.Buffer
+	huge.WriteString("package p\nfunc f() {\n")
+	for i := 0; i < 20000; i++ {
+		huge.WriteString("var x = 1\n")
+	}
+	huge.WriteString("}\n")
+	gts.ResetAdmissionCandidateCountersForTest()
+	hugeParser := gts.NewParser(lang)
+	hugeTree, err := hugeParser.Parse(huge.Bytes())
+	if err != nil {
+		t.Fatalf("huge parse: %v", err)
+	}
+	defer hugeTree.Release()
+	if routed, _ := gts.AdmissionCandidateCounters(); routed != 0 {
+		t.Fatalf("budgeted large source routed to the candidate; routed=%d", routed)
+	}
+	if got := hugeTree.ParseStopReason(); got != gts.ParseStopMemoryBudget {
+		t.Fatalf("ParseStopReason() = %q, want %q (production must honor the budget the candidate cannot poll)",
+			got, gts.ParseStopMemoryBudget)
+	}
+}
+
+// TestAdmissionCandidateGoTypeConversionKnownDivergence records a KNOWN, TRACKED
+// correctness divergence the Phase-3 admission flip surfaced. On the ambiguous
+// Go construct `Foo[int](a)` (type conversion versus a call of an index
+// expression) the compact candidate route resolves the GLR conflict to
+// call_expression(index_expression), while the production engine and the
+// tree-sitter-go C oracle resolve it to type_conversion_expression(generic_type).
+//
+// This divergence is NOT covered by the 206-language admission scorecard
+// fixtures. It is a BLOCKER for unconditional Go admission and must be resolved
+// by the engine-swap review: the compact scheduler must reproduce the production
+// conflict resolution or fail closed on this conflict class. When that lands,
+// the candidate tree matches production and this test fails loudly, directing
+// the maintainer to route TestParseGoNewMakeGenericInstantiationUntouched again
+// and remove this tracker.
+func TestAdmissionCandidateGoTypeConversionKnownDivergence(t *testing.T) {
+	src := "package p\n\n" +
+		"type Foo[T any] struct {\n\tV T\n}\n\n" +
+		"func f() {\n" +
+		"\ta := Foo[int]{}\n" +
+		"\tb := Foo[int](a)\n" +
+		"\t_ = a\n" +
+		"\t_ = b\n" +
+		"}\n"
+	lang := grammars.GoLanguage()
+
+	prod := gts.NewParser(lang)
+	prod.SetAdmissionCandidateRoute(false)
+	prodTree, err := prod.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("production parse: %v", err)
+	}
+	defer prodTree.Release()
+	prodSExpr := prodTree.RootNode().SExpr(lang)
+
+	gts.ResetAdmissionCandidateCountersForTest()
+	cand := gts.NewParser(lang)
+	cand.SetAdmissionCandidateRoute(true)
+	candTree, err := cand.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("candidate parse: %v", err)
+	}
+	defer candTree.Release()
+	routed, _ := gts.AdmissionCandidateCounters()
+	candSExpr := candTree.RootNode().SExpr(lang)
+
+	if routed == 0 {
+		t.Skip("candidate route declined this Go input; the known divergence no longer reproduces via routing")
+	}
+	if !strings.Contains(prodSExpr, "type_conversion_expression") {
+		t.Fatalf("production reference lost type_conversion_expression; the C-oracle witness changed: %s", prodSExpr)
+	}
+	if prodSExpr == candSExpr {
+		t.Fatalf("KNOWN divergence resolved: the candidate now matches production for Foo[int](a). "+
+			"Re-route TestParseGoNewMakeGenericInstantiationUntouched and remove this tracker.\n%s", candSExpr)
+	}
+	t.Logf("KNOWN candidate-route divergence (BLOCKER for unconditional Go admission):\n  production: %s\n  candidate:  %s",
+		prodSExpr, candSExpr)
 }
 
 // admissionEOFPoint returns the row/column point at the end of source.

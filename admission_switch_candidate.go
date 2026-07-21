@@ -1,4 +1,4 @@
-//go:build gts_parsercorephase0
+//go:build !gts_no_parsercorephase0
 
 package gotreesitter
 
@@ -9,8 +9,11 @@ import (
 )
 
 // This file is the compact candidate route for the Phase-3 admission switch.
-// It is built only under the gts_parsercorephase0 tag, where the compact engine
-// exists. The default build uses the stub in admission_switch_stub.go.
+// Phase-3 admission promoted the compact route into the default build, so it
+// compiles unless the opt-out emergency tag gts_no_parsercorephase0 is set. In
+// an emergency build (-tags gts_no_parsercorephase0) the stub in
+// admission_switch_stub.go replaces this file and every eligible full parse
+// fails closed to production.
 //
 // The route reuses the fresh-full runner (parsercore_phase0_fresh_full_runner.go)
 // but binds it to the caller's own Parser and Language rather than the certified

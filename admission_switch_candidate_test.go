@@ -33,6 +33,21 @@ func TestAdmissionSwitchParseRoutesCandidateWhenOn(t *testing.T) {
 			t.Fatalf("%s: parse: %v", row.id, err)
 		}
 		routed1, fb1 := AdmissionCandidateCounters()
+		if len(fixture.Source) >= parseRuntimeMemoryMinSourceBytes {
+			// The memory-budget size gate declines any input at or above the floor
+			// where the production route arms the automatic memory budget (the
+			// compact scheduler cannot poll it). A large fixture (grammargen_lr)
+			// stays on production: no route, no fallback, no compact tree.
+			if routed1 != routed0 || fb1 != fb0 {
+				t.Fatalf("%s: large fixture (%d bytes >= %d floor) must be size-declined, not routed: routed %d->%d fallback %d->%d",
+					row.id, len(fixture.Source), parseRuntimeMemoryMinSourceBytes, routed0, routed1, fb0, fb1)
+			}
+			if tree.compactMaterialized {
+				t.Fatalf("%s: size-declined fixture produced a compact-materialized tree", row.id)
+			}
+			tree.Release()
+			continue
+		}
 		if routed1 != routed0+1 || fb1 != fb0 {
 			t.Fatalf("%s: expected one candidate route, got routed %d->%d fallback %d->%d (last=%q)",
 				row.id, routed0, routed1, fb0, fb1, AdmissionCandidateLastFallbackReason())
@@ -71,8 +86,15 @@ func TestAdmissionSwitchParseProductionWhenOff(t *testing.T) {
 }
 
 // TestAdmissionSwitchCandidateDigestMatchesProduction is the byte-exact fidelity
-// proof: the compact candidate route and production produce the same frozen
-// deep-tree digest on all four canonical fixtures, through the public Parse API.
+// proof: the compact candidate ENGINE and production produce the same frozen
+// deep-tree digest on all four canonical fixtures.
+//
+// It drives the candidate tree through the engine seam (tryCompactFullParseRoute)
+// rather than the public Parse route, so it proves engine fidelity on every
+// fixture independent of the admission routing size gate. That gate declines
+// fixtures at or above parseRuntimeMemoryMinSourceBytes (grammargen_lr) from the
+// public Parse route to preserve the memory-budget contract; their engine
+// byte-exactness is still proven here.
 func TestAdmissionSwitchCandidateDigestMatchesProduction(t *testing.T) {
 	lang, err := authenticatedParserCoreGoLanguage(parserCoreWarmGoScanner)
 	if err != nil {
@@ -84,9 +106,9 @@ func TestAdmissionSwitchCandidateDigestMatchesProduction(t *testing.T) {
 	production.SetAdmissionCandidateRoute(false)
 	for _, row := range diagnosticParserCoreCanonicalAdmissions {
 		fixture := loadDiagnosticParserCoreCanonicalFixture(t, row.id)
-		candidateTree, err := candidate.Parse(fixture.Source)
-		if err != nil {
-			t.Fatalf("%s: candidate parse: %v", row.id, err)
+		candidateTree, ok, reason := candidate.tryCompactFullParseRoute(fixture.Source)
+		if !ok || candidateTree == nil {
+			t.Fatalf("%s: candidate engine declined: %s", row.id, reason)
 		}
 		productionTree, err := production.Parse(fixture.Source)
 		if err != nil {

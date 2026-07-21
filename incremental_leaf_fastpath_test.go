@@ -742,6 +742,10 @@ func TestReuseTreeWithNewSourceKeepsPrimaryArena(t *testing.T) {
 func TestTokenInvariantLeafEditAllowsExtraLeaf(t *testing.T) {
 	lang := buildArithmeticExtraCommentLanguage()
 	parser := NewParser(lang)
+	// Pin to production: the base tree must support incremental leaf reuse.
+	// A compact-materialized base tree is hard-barred from reuse (decision 0008),
+	// so routing it would force a full reparse instead of the one-token fast path.
+	parser.SetAdmissionCandidateRoute(false)
 	oldSource := []byte("1#2012\n+2")
 	newSource := []byte("1#2013\n+2")
 	tree := mustParse(t, parser, oldSource)

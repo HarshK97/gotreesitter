@@ -382,7 +382,11 @@ func TestForestDispatchReportsAcceptedRuntime(t *testing.T) {
 
 	src := []byte("f() { echo a; }\n")
 	lang := explicitForestLanguage(t, grm.BashLanguage())
-	tree, err := gts.NewParser(lang).Parse(src)
+	// Pin to production: this test asserts a production-engine internal (the
+	// forest fast-path dispatch runtime) the compact candidate route bypasses.
+	parser := gts.NewParser(lang)
+	parser.SetAdmissionCandidateRoute(false)
+	tree, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("forest dispatch parse: %v", err)
 	}

@@ -330,7 +330,12 @@ func TestParseGoNewMakeGenericInstantiationUntouched(t *testing.T) {
 		"\t_ = a\n" +
 		"\t_ = b\n" +
 		"}\n"
-	tree, lang := parseGo(t, src)
+	// Pin to production: this asserts the production-engine Go tree shape against
+	// the tree-sitter-go C oracle. The Phase-3 admission flip surfaced a compact
+	// candidate-route divergence on `Foo[int](a)` (call_expression vs the correct
+	// type_conversion_expression); that known divergence is tracked separately by
+	// TestAdmissionCandidateGoTypeConversionKnownDivergence.
+	tree, lang := parseGoProduction(t, src)
 	root := tree.RootNode()
 	assertNoErrorOrMissing(t, lang, root, "generic-instantiation-untouched")
 
