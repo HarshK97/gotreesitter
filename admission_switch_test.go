@@ -486,21 +486,23 @@ func TestAdmissionCandidateMemoryBudgetContractPreserved(t *testing.T) {
 	}
 }
 
-// TestAdmissionCandidateGoTypeConversionKnownDivergence records a KNOWN, TRACKED
-// correctness divergence the Phase-3 admission flip surfaced. On the ambiguous
-// Go construct `Foo[int](a)` (type conversion versus a call of an index
-// expression) the compact candidate route resolves the GLR conflict to
-// call_expression(index_expression), while the production engine and the
-// tree-sitter-go C oracle resolve it to type_conversion_expression(generic_type).
+// TestAdmissionCandidateGoTypeConversionFailsClosed proves the compact candidate
+// route FAILS CLOSED on the Go generic-instantiation / type-conversion GLR
+// conflict the Phase-3 admission flip surfaced. On the ambiguous construct
+// `Foo[int](a)` (a type conversion of a generic type versus a call of an index
+// expression) production and the tree-sitter-go C oracle resolve
+// type_conversion_expression(generic_type). The compact scheduler forks the same
+// conflict but cannot rank the two arms by dynamic precedence, so it declines the
+// unauthorized tie fold (see Core.condenseLinkUnion) instead of silently keeping
+// one arm by insertion order. The parse then falls back to production.
 //
-// This divergence is NOT covered by the 206-language admission scorecard
-// fixtures. It is a BLOCKER for unconditional Go admission and must be resolved
-// by the engine-swap review: the compact scheduler must reproduce the production
-// conflict resolution or fail closed on this conflict class. When that lands,
-// the candidate tree matches production and this test fails loudly, directing
-// the maintainer to route TestParseGoNewMakeGenericInstantiationUntouched again
-// and remove this tracker.
-func TestAdmissionCandidateGoTypeConversionKnownDivergence(t *testing.T) {
+// This was a tracked correctness divergence (call_expression(index_expression)
+// routed with no fallback). The fix is loud and explicit here: the candidate must
+// decline (route counter stays 0, fallback counter moves) and the returned tree
+// must equal production byte for byte. If a future change routes this input, the
+// route/fallback assertion fails and directs the maintainer to re-verify the
+// whole conflict family in TestAdmissionGenericConflictFamilyNoDivergence.
+func TestAdmissionCandidateGoTypeConversionFailsClosed(t *testing.T) {
 	src := "package p\n\n" +
 		"type Foo[T any] struct {\n\tV T\n}\n\n" +
 		"func f() {\n" +
@@ -519,6 +521,9 @@ func TestAdmissionCandidateGoTypeConversionKnownDivergence(t *testing.T) {
 	}
 	defer prodTree.Release()
 	prodSExpr := prodTree.RootNode().SExpr(lang)
+	if !strings.Contains(prodSExpr, "type_conversion_expression") {
+		t.Fatalf("production reference lost type_conversion_expression; the C-oracle witness changed: %s", prodSExpr)
+	}
 
 	gts.ResetAdmissionCandidateCountersForTest()
 	cand := gts.NewParser(lang)
@@ -528,21 +533,26 @@ func TestAdmissionCandidateGoTypeConversionKnownDivergence(t *testing.T) {
 		t.Fatalf("candidate parse: %v", err)
 	}
 	defer candTree.Release()
-	routed, _ := gts.AdmissionCandidateCounters()
+	routed, fallback := gts.AdmissionCandidateCounters()
 	candSExpr := candTree.RootNode().SExpr(lang)
 
-	if routed == 0 {
-		t.Skip("candidate route declined this Go input; the known divergence no longer reproduces via routing")
+	// Fail-closed proof 1: the candidate declined this conflict input.
+	if routed != 0 {
+		t.Fatalf("conflict input routed (routed=%d fallback=%d); the compact route must fail closed on the "+
+			"generic-instantiation / type-conversion conflict. Re-verify TestAdmissionGenericConflictFamilyNoDivergence.\n"+
+			"  candidate: %s", routed, fallback, candSExpr)
 	}
-	if !strings.Contains(prodSExpr, "type_conversion_expression") {
-		t.Fatalf("production reference lost type_conversion_expression; the C-oracle witness changed: %s", prodSExpr)
+	// Fail-closed proof 2: the decline moved the fallback counter (the parse ran
+	// production, it did not merely skip).
+	if fallback == 0 {
+		t.Fatalf("candidate declined but the fallback counter did not move (routed=%d fallback=%d); "+
+			"the fail-closed path is not exercised", routed, fallback)
 	}
-	if prodSExpr == candSExpr {
-		t.Fatalf("KNOWN divergence resolved: the candidate now matches production for Foo[int](a). "+
-			"Re-route TestParseGoNewMakeGenericInstantiationUntouched and remove this tracker.\n%s", candSExpr)
+	// Fail-closed proof 3: the returned tree is exactly production's tree.
+	if candSExpr != prodSExpr {
+		t.Fatalf("declined candidate tree diverges from production:\n  production: %s\n  candidate:  %s",
+			prodSExpr, candSExpr)
 	}
-	t.Logf("KNOWN candidate-route divergence (BLOCKER for unconditional Go admission):\n  production: %s\n  candidate:  %s",
-		prodSExpr, candSExpr)
 }
 
 // admissionEOFPoint returns the row/column point at the end of source.
