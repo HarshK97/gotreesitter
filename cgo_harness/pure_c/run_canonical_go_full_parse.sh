@@ -313,25 +313,18 @@ elif [[ "$GO_BACKEND" == "selected-store" ]]; then
 	GO_LIFECYCLE="parserCoreFreshFullRunner.parseSelectedStore+SelectedCursor traversal+SelectedStore.Release"
 	GO_FALLBACK="none_fail_closed"
 else
-  GO_BUILD_TAGS=""
+  GO_BUILD_TAGS="gts_no_parsercorephase0"
   GO_BENCHMARK="BenchmarkGoParseWarmRealDFA"
   GO_PREFLIGHT="TestGoFullParseBenchmarkFixturesParseClean"
   GO_LIFECYCLE="Parser.Parse+shallow_completeness+Tree.Release"
-  GO_FALLBACK="production_parser_policy"
+  GO_FALLBACK="compact_route_compiled_out"
 fi
 
 GO_BIN="$OUT_DIR/bin/gotreesitter.test"
-if [[ "$GO_BACKEND" != "production" ]]; then
-  (
-    cd "$REPO_ROOT"
-    env GOMAXPROCS=1 go test -tags "$GO_BUILD_TAGS" -c -o "$GO_BIN" .
-  ) > "$OUT_DIR/preflight/go_build.txt" 2>&1
-else
-  (
-    cd "$REPO_ROOT"
-    env GOMAXPROCS=1 go test -c -o "$GO_BIN" .
-  ) > "$OUT_DIR/preflight/go_build.txt" 2>&1
-fi
+(
+  cd "$REPO_ROOT"
+  env GOMAXPROCS=1 go test -tags "$GO_BUILD_TAGS" -c -o "$GO_BIN" .
+) > "$OUT_DIR/preflight/go_build.txt" 2>&1
 "$GO_BIN" -test.list "^${GO_BENCHMARK}$" > "$OUT_DIR/preflight/go_benchmark_list.txt"
 grep -qx "$GO_BENCHMARK" "$OUT_DIR/preflight/go_benchmark_list.txt" || die "prebuilt Go test binary does not contain $GO_BENCHMARK"
 "$GO_BIN" -test.run "^${GO_PREFLIGHT}$" -test.count=1 -test.v \
@@ -340,19 +333,11 @@ GO_BIN_SHA="$(sha256sum "$GO_BIN" | awk '{print $1}')"
 go version -m "$GO_BIN" > "$OUT_DIR/preflight/go_binary_modules.txt"
 
 if ((SKIP_CGO_ADMISSION == 0)); then
-  if [[ "$GO_BACKEND" != "production" ]]; then
-    (
-      cd "$REPO_ROOT"
-      bash cgo_harness/docker/run_parity_in_docker.sh -- \
-        "cd /workspace && go test -tags gts_parsercorephase0 . -run '^${GO_PREFLIGHT}$' -count=1 -v && cd /workspace/cgo_harness && go test . -tags treesitter_c_parity -run '^(TestCanonicalGoBenchmarkPreflight|TestCOracleStaticDeepParity)$' -count=1 -v"
-    ) > "$OUT_DIR/preflight/cgo_static_deep_admission.txt" 2>&1
-  else
-    (
-      cd "$REPO_ROOT"
-      bash cgo_harness/docker/run_parity_in_docker.sh -- \
-        "cd /workspace/cgo_harness && go test . -tags treesitter_c_parity -run '^(TestCanonicalGoBenchmarkPreflight|TestCOracleStaticDeepParity)$' -count=1 -v"
-    ) > "$OUT_DIR/preflight/cgo_static_deep_admission.txt" 2>&1
-  fi
+  (
+    cd "$REPO_ROOT"
+    bash cgo_harness/docker/run_parity_in_docker.sh -- \
+      "cd /workspace && go test -tags '$GO_BUILD_TAGS' . -run '^${GO_PREFLIGHT}$' -count=1 -v && cd /workspace/cgo_harness && go test . -tags treesitter_c_parity -run '^(TestCanonicalGoBenchmarkPreflight|TestCOracleStaticDeepParity)$' -count=1 -v"
+  ) > "$OUT_DIR/preflight/cgo_static_deep_admission.txt" 2>&1
   CGO_ADMISSION="PASS"
 else
   CGO_ADMISSION="SKIPPED_NONPUBLICATION_DIAGNOSTIC"
