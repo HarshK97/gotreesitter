@@ -9,15 +9,14 @@ import (
 )
 
 // TestTypeScriptMergeCapSeamRaceProbe parses TypeScript on several goroutines
-// while other goroutines toggle both merge-policy test seams. It exists to prove
-// the seam globals are race-free: with plain bool globals the parse path read
-// races the toggle write, and `go test -race` fails; with atomic.Bool it is
-// clean. The assertion is only that no goroutine panics or is flagged by the
-// race detector, not any specific tree.
+// while another goroutine toggles the variant-B merge-policy test seam. It
+// exists to prove the seam global is race-free: with a plain bool global the
+// parse path read races the toggle write, and `go test -race` fails; with
+// atomic.Bool it is clean. The assertion is only that no goroutine panics or
+// is flagged by the race detector, not any specific tree.
 func TestTypeScriptMergeCapSeamRaceProbe(t *testing.T) {
-	// Restore both seams to their defaults after the probe, regardless of the
-	// last concurrent toggle, so later tests observe production defaults.
-	defer gotreesitter.SetTypeScriptMergeWidthDetectorsDisabledForTests(false)()
+	// Restore the seam to its default after the probe, regardless of the last
+	// concurrent toggle, so later tests observe the production default.
 	defer gotreesitter.SetTypeScriptCapOneStructurePreferenceForTests(false)()
 
 	lang := grammars.TypescriptLanguage()
@@ -30,13 +29,12 @@ func TestTypeScriptMergeCapSeamRaceProbe(t *testing.T) {
 	const rounds = 200
 	var wg sync.WaitGroup
 
-	// Togglers: flip both atomic seams repeatedly.
+	// Togglers: flip the atomic seam repeatedly.
 	for tg := 0; tg < 2; tg++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for i := 0; i < rounds; i++ {
-				gotreesitter.SetTypeScriptMergeWidthDetectorsDisabledForTests(i%2 == 0)
 				gotreesitter.SetTypeScriptCapOneStructurePreferenceForTests(i%3 == 0)
 			}
 		}()

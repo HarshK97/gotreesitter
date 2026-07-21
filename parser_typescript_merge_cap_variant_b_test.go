@@ -30,13 +30,11 @@ import (
 // regresses 5. Variant B is therefore eliminated; the seam remains only to make
 // that measurement reproducible. It is never enabled in production.
 
-// TestTypeScriptMergeCapVariantBSubsumesDetectors documents that variant B does
-// subsume the per-shape detectors at the unit level (with detectors disabled).
-// It is the unit-level half of the evaluation whose full-corpus half eliminated
-// the variant; see the file comment above.
+// TestTypeScriptMergeCapVariantBSubsumesDetectors documents that variant B
+// still parses every detector-era bug-family shape cleanly at the unit level.
+// It is the unit-level half of the evaluation whose full-corpus half
+// eliminated the variant; see the file comment above.
 func TestTypeScriptMergeCapVariantBSubsumesDetectors(t *testing.T) {
-	restoreDet := gotreesitter.SetTypeScriptMergeWidthDetectorsDisabledForTests(true)
-	defer restoreDet()
 	restoreVar := gotreesitter.SetTypeScriptCapOneStructurePreferenceForTests(true)
 	defer restoreVar()
 	for _, s := range typeScriptMergeCapSubsumptionShapes {
