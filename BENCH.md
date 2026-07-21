@@ -166,16 +166,113 @@ overrides, noisy-host admission, identity drift, and incomplete receipts.
 Shortened or skipped gates require `--diagnostic` and carry the
 `NONPUBLICATION_DIAGNOSTIC` label.
 
-### Sealed epoch — run6 (hardware-attested, authoritative)
+### Sealed epoch — v0.45.0 (hardware-attested, authoritative)
 
-This receipt is the project's current Go-vs-C authority. The project sealed
-it inside a hardened confidential-computing enclave, then independently
-verified every cryptographic layer. The enclave ran on AMD Secure Encrypted
-Virtualization (SEV) Confidential Space, with debug mode disabled since
-boot. An independent audit verified the attestation token's RS256 signature
-(RSA with SHA-256) against Google's live JSON Web Key Set (JWKS). The audit
-also verified the Ed25519 receipt signature and confirmed that the payload
-nonce binds to the signed receipt bytes.
+This epoch supersedes run6 below. It is the project's current Go-vs-C
+authority. The project sealed it inside a hardened confidential-computing
+enclave, then independently verified every cryptographic layer. The enclave
+ran on AMD Secure Encrypted Virtualization (SEV) Confidential Space, with
+debug mode disabled since boot. An independent audit verified the
+attestation token's RS256 signature (RSA with SHA-256) against Google's
+live JSON Web Key Set (JWKS). The audit also verified the Ed25519 receipt
+signature and confirmed that the payload nonce binds to the signed receipt
+bytes.
+
+The sealed epoch times one full, non-incremental parse per fixture, using
+the same method as run6. Each Go run calls the public `Parser.Parse` API,
+then checks root completeness: byte 0 to end of source, with no parse
+error. The C oracle runs the matching `public_validated` lane: parse, root
+completeness, and a check for `ts_node_has_error`. Neither side walks the
+full tree. Each fixture-backend pair runs with `GOMAXPROCS=1`. Each pair
+runs for at least 10 seconds of elapsed time. Go binaries are built with
+`GOAMD64=v3` (the Go compiler's x86-64 microarchitecture-level flag) and
+profile-guided optimization (PGO), pinned to profile SHA-256
+`1e5e9aea594f4fcbc3c0fb5d4064d2fb856b13b2faf0994f747520615eaa2ae2`. An
+anti-cheat checksum over the parsed source blocks dead-code elimination.
+An A/A null test reruns the same binary against itself 3 times and reports
+the median absolute delta per fixture, to bound measurement noise.
+
+| Fixture | Production Go / C | Compact Go / C |
+|---|---:|---:|
+| `rewrite.go` | 5.042x | 3.077x |
+| `query_compile.go` | 6.283x | 3.161x |
+| `language.go` | 5.354x | 3.080x |
+| `grammargen/lr.go` | 5.498x | 2.695x |
+| **Geomean** | **5.526x** | **2.9975x** |
+
+The production equal-fixture geomean is **5.526x C**. The compact
+equal-fixture geomean is **2.9975x C**. The A/A null test reports a
+production self-ratio geomean of **0.9975**, with maximum absolute delta
+**1.31%**. It reports a C-oracle self-ratio geomean of **0.9988**, with
+maximum absolute delta **1.55%**.
+
+Mandatory caveats:
+
+- This epoch ran only at the 10-second benchtime floor; it did not resample
+  at 750ms or 5s. See run6's caveats below for the historical
+  benchtime-convergence curve. Treat that curve as context, not a guarantee
+  that this epoch would converge the same way.
+- Unlike run5 and run6, this epoch's C oracle driver source is
+  git-committed and locally reproducible, at
+  `cgo_harness/pure_c/go_timing_oracle_10s.c` (SHA-256
+  `4512710e99d36d161145113ce980d740bf1668470219140be0c15df5ce9ce58c`), as of
+  commit `980d568a`. It is no longer attested-only.
+- The A/A null figures are reported values, not sealed pass/fail gates. The
+  receipt embeds no numeric A/A threshold.
+- The C oracle binary is byte-identical to run6's: both cite SHA-256
+  `a2aaf98ec7b869d5e1a311fe209fe2bdc31335a60d2840a1ffc3d72877cd3274`. The C
+  side did not change from run6; the Go binaries and the driver's git
+  provenance changed.
+
+Citation:
+
+- Run ID: `strictboundary-20260720T231334Z-v6`.
+- Image: `strict-boundary:v6`, digest
+  `sha256:443ffcef6818fbfe21a2f2854de10279e2cc6575450c8bb68334c0b3b2e8d344`
+  (10s benchtime, hardened, authoritative), reference
+  `us-central1-docker.pkg.dev/bookt-cc/gts-cs-bench/strict-boundary:v6`.
+- SHA-256 of the C oracle binary:
+  `a2aaf98ec7b869d5e1a311fe209fe2bdc31335a60d2840a1ffc3d72877cd3274`.
+- gotreesitter git HEAD, dual reference: the enclave image was built from
+  main commit `980d568a2b4769dbd6917de4fcfe40fb0a718853` (short form
+  `980d568a`). Its root module — the Go parser and grammar sources the
+  benchmark measures — is byte-identical to the `v0.45.0` tag, commit
+  `74463081f746f188e91f62f25f14c55b9774af70` (short form `74463081`). The
+  tag predates one harness-only merge (PR #413) that adds
+  `cgo_harness/cmd/go_c_timing_collect`, `cgo_harness/cmd/go_c_timing_verify`,
+  and the 10-second oracle driver. That merge touches no file outside
+  `cgo_harness/`.
+- Verification: the sealed run metadata records `attestation_status: ok`.
+  An independent re-check confirmed the RS256 signature against Google's
+  live JWKS at fetch time. The payload nonce
+  (`6fc1ff376ef9e595b1c8d0b432e8874479c399d7b9c5435dd057e05cdabdfc85`)
+  matches the attestation token's `eat_nonce` claim, binding the token to
+  this exact receipt payload.
+
+This epoch's ratios are not comparable to the historical bare-metal
+receipts further below. The enclave method (single-run `ns/op` at
+`GOMAXPROCS=1` with 10s benchtime) and the bare-metal method (median of ten
+process-isolated samples) measure differently. A higher enclave ratio does
+not indicate a Go regression against those receipts.
+
+The enclave image itself is not reproducible outside Confidential Space.
+Treat its output as an attested measurement, not a locally rerunnable
+script. Reproduce the driver and oracle sources from git `980d568a` on
+`main`.
+
+### Sealed epoch — run6 (hardware-attested, historical, superseded)
+
+The v0.45.0 epoch above supersedes this receipt. This section remains for
+historical reference only; do not cite it as the current authority.
+
+This receipt was the project's Go-vs-C authority until superseded. The
+project sealed it inside a hardened confidential-computing enclave, then
+independently verified every cryptographic layer. The enclave ran on AMD
+Secure Encrypted Virtualization (SEV) Confidential Space, with debug mode
+disabled since boot. An independent audit verified the attestation token's
+RS256 signature (RSA with SHA-256) against Google's live JSON Web Key Set
+(JWKS). The audit also verified the Ed25519 receipt signature and confirmed
+that the payload nonce binds to the signed receipt bytes.
 
 The sealed epoch times one full, non-incremental parse per fixture. Each Go
 run calls the public `Parser.Parse` API, then checks root completeness:
