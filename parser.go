@@ -358,6 +358,14 @@ type Parser struct {
 	// range-limited walk against the full walk on one Parser (see
 	// SetForceFullResultNormalizationWalk). Production leaves it false.
 	forceFullResultNormalizationWalk    bool
+	// disableLeadingRunSplice turns off the campaign post-admission-frontier T2a
+	// leading-run block-splice for this Parser (the trailing splice and every
+	// other reuse path stay on). It exists ONLY so the byte-sweep differential
+	// can compare leading-splice-on against leading-splice-off on the SAME Parser
+	// and prove the leading splice is a no-op on trees where it should be (it
+	// never changes a fresh-correct result). Production leaves it false; the
+	// setter lives in export_test.go.
+	disableLeadingRunSplice             bool
 	currentExternalTokenCheckpoint      externalScannerCheckpoint
 	currentExternalTokenCheckpointStart uint32
 	currentExternalTokenCheckpointEnd   uint32
@@ -2994,6 +3002,7 @@ func (p *Parser) parseIncrementalInternalWithMergePerKeyOverride(source []byte, 
 	defer p.reuseMu.Unlock()
 
 	var reuse *reuseCursor
+	p.reuseCursor.disableLeadingSplice = p.disableLeadingRunSplice
 	if timing != nil {
 		reuseStart := time.Now()
 		reuse = p.reuseCursor.reset(oldTree, source, &p.reuseScratch)

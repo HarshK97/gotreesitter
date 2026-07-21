@@ -7,6 +7,40 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Added
+
+- **Phase-3 admission switch** (PR #417). A per-parser option, a global
+  option, and the `GTS_ADMISSION_CANDIDATE` environment variable route
+  eligible full parses through the compact parser core. Internal
+  sub-parsers stay suppressed. A 206-language scorecard guards the
+  route: 48 languages parse byte-exact, 153 fall back fail-closed, 5
+  skip, 0 diverge. The route stays off by default in this release.
+- **Compact-route coverage census** (PR #419).
+  `docs/compact-route-coverage-census.md` classifies the 153 fallback
+  languages into five scheduler-capability classes. The census found no
+  multi-derivation blockers.
+- **Oracle v3 parity tools** in `cgo_harness` (PR #413). The root
+  library module is unchanged by that PR.
+
+### Changed
+
+- **The GLR steady-state merge now compares structure before score**
+  (PR #416). The TypeScript and TSX steady-state merge budget widens
+  from one survivor to two. The wider budget activates the structural
+  comparison at the merge site. This is the structural cure for the
+  detector class behind issue #389 and issue #402.
+- **Incremental reparse cost is now position-independent for large
+  files** (PR #418, PR #421, campaign O(edit)). PR #418 bounds arena
+  normalization to the edited range. A 1MB clean-Go near-top keystroke
+  drops from about 356ms to about 53ms. PR #421 splices the leading run
+  of unchanged top-level items, the mirror of the trailing
+  block-splice. A 1MB mid-file keystroke drops from about 269ms to
+  about 67ms for Go, and from about 168ms to about 45ms for CSS. At
+  137KB, mid-file reuse rejects fall from 16,450 to 10. JavaScript,
+  TypeScript, and TSX keep their previous behavior until the T2c
+  scanner proofs land. The W5 latency gate now locks these counters per
+  edit position.
+
 ## [0.45.0] - 2026-07-20
 
 ### Fixed
