@@ -23,24 +23,34 @@ package gotreesitter_test
 // classes, two size tiers) surfaced two things a single near-top fixture
 // cannot:
 //
-//  1. ReuseRejectRootNonLeafChanged is NOT flat "regardless of position in
-//     file" -- only "regardless of file size AT A FIXED near-the-very-start
-//     position" (exactly what TestW1BSettleReuseIsBoundedNotFileSized in
-//     w1b_reduce_settle_test.go tests: it holds the edit at the FIRST
-//     top-level item and varies trailing-sibling count). Today's mechanism
-//     (topLevelSiblingBlockSpliceEligible) only fast-paths the TRAILING run
-//     after the edit; content BEFORE the edit is still walked one top-level
-//     item at a time, and each leading item currently costs a small but
-//     nonzero, consistent number of rejected candidates (empirically ~10-17
-//     per language, constant per item, independent of file size) before
-//     falling through to a slower reuse path. For a "middle" or "bottom"
-//     position edit that consistent per-item cost multiplies by the leading
-//     item count, which IS proportional to file size. This is a real,
-//     currently open scope limit -- not a regression this gate enforces on
-//     -- and it matches the campaign's own success-metric wording exactly:
-//     "Go 137KB NEAR-TOP single-char insert" (W1's Workstreams section).
-//     Consequently MaxRootNonLeafChangedAtTop below is only asserted at the
-//     "top" position.
+//  1. ReuseRejectRootNonLeafChanged used to be flat only "regardless of file
+//     size AT A FIXED near-the-very-start position", NOT "regardless of
+//     position in file". The original mechanism
+//     (topLevelSiblingBlockSpliceEligible) fast-pathed only the TRAILING run
+//     after the edit; content BEFORE the edit was walked one top-level item at
+//     a time (~10-17 rejected candidates per leading item), so a "middle" or
+//     "bottom" edit multiplied that per-item cost by the leading-item count,
+//     which is proportional to file size.
+//
+//     Campaign post-admission-frontier T2a (the leading-run block-splice, this
+//     change) closed that gap for the languages whose per-node fragility
+//     marking is complete: go and the production (non-forest) css route now
+//     splice the whole run of byte-identical leading top-level items as a block
+//     from the initial parser state, the mirror of the trailing splice. Their
+//     mid-file reject counter dropped to the near-top constant -- go 16450 ->
+//     10 (middle) and 32854 -> 10 (bottom) at 137KB; css 15598 -> 3 and 31163
+//     -> 3 -- and byte reuse rose to ~96% at every position. So go and css now
+//     carry a per-position MaxRootNonLeafChanged bound (w5PositionCeiling),
+//     not only the top-position one, and their middle/bottom byte-reuse floors
+//     ratchet up accordingly.
+//
+//     typescript, tsx, and javascript are NOT flattened: they share the
+//     ambiguous-expression / ASI grammar whose reduce-fragility marking is
+//     known-incomplete, so the leading splice is held off for them
+//     (leadingSpliceLanguageBarred, incremental.go) until the campaign T2c
+//     reuse proof lands, and their mid-file counters still scale with size --
+//     they keep the top-only ceiling. python still declines reuse entirely
+//     (W4 indent-stack proof open).
 //  2. ReusedBytes / len(editedSource), unlike the rejection counter, IS
 //     input-deterministic AND size-independent when position is expressed
 //     as a FRACTION of the file (not an absolute byte offset): a "middle"
@@ -80,11 +90,17 @@ package gotreesitter_test
 // linux/amd64, GOMAXPROCS default, measured via this harness) minus modest
 // slack for cross-hardware noise, not an aspirational target.
 //
-//	language    | topRootNonLeafChanged ceiling | MinByteReusePercent (top / middle / bottom)
-//	go          | 16  (measured 10-11)          | 88 / 60 / 35  (measured ~96 / ~70 / ~44)
-//	typescript  | 20  (measured 13-14)          | 90 / 70 / 55  (measured ~97 / ~81 / ~65)
-//	css         | 12  (measured 3-6)            | 88 / 75 / 65  (measured ~96 / ~85 / ~75)
-//	python      | 8   (measured 0)               | 0  / 0  / 0   (measured 0 -- see below)
+// After campaign post-admission-frontier T2a (the leading-run block-splice):
+//
+//	language    | RootNonLeafChanged ceiling (top / mid / bot) | MinByteReusePercent (top / mid / bot)
+//	go          | 16 / 16 / 16  (measured 9-10 flat)           | 90 / 90 / 90  (measured ~96 flat)
+//	typescript  | 20 / -  / -   (mid/bot scale, barred T2c)    | 90 / 70 / 55  (measured ~97 / ~81 / ~65)
+//	css         | 12 / 12 / 12  (measured 3-7 flat)            | 90 / 90 / 90  (measured ~96 flat)
+//	python      | 8  / -  / -   (declines reuse, W4 open)      | 0  / 0  / 0   (measured 0 -- see below)
+//
+// A "-" mid/bot ceiling means the cell's reject counter still scales with file
+// size (that language is not flattened), so no fixed bound is asserted there --
+// exactly the pre-T2a behavior, retained for the barred / non-reusing languages.
 //
 //   - go: topRootNonLeafChanged=16. The campaign Status section
 //     (hypha://m31labs/gotreesitter spec.campaign.oedit) records W1b's
@@ -456,6 +472,16 @@ func w5ByteReusePercent(p gts.IncrementalParseProfile, editedLen int) float64 {
 // cell, applied to insert/delete classes.
 type w5PositionCeiling struct {
 	MinByteReusePercent float64
+	// MaxRootNonLeafChanged bounds ReuseRejectRootNonLeafChanged at THIS
+	// position. Zero means "not asserted here" (the pre-T2a default for every
+	// non-top cell: a position whose reject counter still scales with file size
+	// cannot carry a fixed, size-independent ceiling). It is set nonzero only
+	// for a (language, position) the block-splice has FLATTENED -- made
+	// size-independent -- so a fixed bound is meaningful and locks the win.
+	// Campaign post-admission-frontier T2a (the leading-run splice) flattened
+	// go and production-route css at middle and bottom, so those cells now carry
+	// this bound; see w5Ceilings.
+	MaxRootNonLeafChanged uint64
 }
 
 // w5Ceiling is the ratchet floor for one language. See the file doc comment
@@ -481,23 +507,45 @@ const w5ReplaceMinByteReusePercent = 95
 // (language, position), minus modest slack. See the file doc comment for
 // full provenance of every value here.
 var w5Ceilings = map[string]w5Ceiling{
+	// go: campaign post-admission-frontier T2a (the leading-run block-splice)
+	// flattened the mid-file reject counter and byte reuse to the near-top
+	// constant. Measured on this box (137KB and 20KB agree, the counter is
+	// size-independent): ReuseRejectRootNonLeafChanged 9-10 and byte reuse
+	// ~95.8-96.1% at EVERY position (was middle 16450 / 70.7% and bottom 32854 /
+	// 45.4% at 137KB before T2a). MaxRootNonLeafChanged=16 at every position
+	// keeps that as a small constant with box slack; the byte-reuse floors ratchet
+	// from the old 88/60/35 to 90/90/90 to lock the flattening.
 	"go": {
 		MaxRootNonLeafChangedAtTop: 16,
-		Top:                        w5PositionCeiling{MinByteReusePercent: 88},
-		Middle:                     w5PositionCeiling{MinByteReusePercent: 60},
-		Bottom:                     w5PositionCeiling{MinByteReusePercent: 35},
+		Top:                        w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 16},
+		Middle:                     w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 16},
+		Bottom:                     w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 16},
 	},
+	// typescript: NOT flattened by T2a. typescript (with tsx and javascript)
+	// shares the ambiguous-expression / ASI grammar whose per-node reduce-
+	// fragility marking is known-incomplete, so the leading-run splice is held
+	// off for it (leadingSpliceLanguageBarred, incremental.go) until the campaign
+	// T2c reuse proof lands. Its mid-file cells therefore still scale with size,
+	// exactly as before this change, so they keep the top-only counter ceiling
+	// and the pre-T2a byte-reuse floors -- no MaxRootNonLeafChanged at
+	// middle/bottom (a scaling counter cannot carry a fixed bound).
 	"typescript": {
 		MaxRootNonLeafChangedAtTop: 20,
-		Top:                        w5PositionCeiling{MinByteReusePercent: 90},
+		Top:                        w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 20},
 		Middle:                     w5PositionCeiling{MinByteReusePercent: 70},
 		Bottom:                     w5PositionCeiling{MinByteReusePercent: 55},
 	},
+	// css: flattened by T2a on the production (non-forest) route, the same as go.
+	// Measured ~95.8-95.9% byte reuse and ReuseRejectRootNonLeafChanged 3-7 at
+	// every position (was middle 15598 / 85.8% and bottom 31163 / 75.7% at 137KB).
+	// MaxRootNonLeafChanged=12 at every position; byte-reuse floors ratchet from
+	// 88/75/65 to 90/90/90. (Forest-route css keeps its leading-prefix scanner
+	// guard and is unaffected -- see forestFastPathDirtyPrefixScannerSensitive.)
 	"css": {
 		MaxRootNonLeafChangedAtTop: 12,
-		Top:                        w5PositionCeiling{MinByteReusePercent: 88},
-		Middle:                     w5PositionCeiling{MinByteReusePercent: 75},
-		Bottom:                     w5PositionCeiling{MinByteReusePercent: 65},
+		Top:                        w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 12},
+		Middle:                     w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 12},
+		Bottom:                     w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 12},
 	},
 	// python: an honest negative, not a placeholder -- see the file doc
 	// comment's python bullet. Insert/delete measure 0% byte reuse today
@@ -550,6 +598,16 @@ func w5Check(t *testing.T, s w5Sample) {
 	if s.Position == w5Top && s.Profile.ReuseRejectRootNonLeafChanged > ceiling.MaxRootNonLeafChangedAtTop {
 		t.Fatalf("%s/%s/%s/%s: ReuseRejectRootNonLeafChanged=%d exceeds top-position ceiling %d -- O(edit) near-top reuse regressed toward O(file)",
 			s.Lang, s.Size, s.Class, s.Position, s.Profile.ReuseRejectRootNonLeafChanged, ceiling.MaxRootNonLeafChangedAtTop)
+	}
+	// Per-position flat ceiling (campaign post-admission-frontier T2a): where the
+	// leading-run splice flattened the reject counter (go, css at every
+	// position), assert it stays a small size-independent constant so a future
+	// change cannot silently reopen O(preceding-items) mid-file reparse cost. A
+	// zero bound means the cell is not flattened (still scales with size) and is
+	// left unasserted, exactly as before T2a.
+	if posMax := ceiling.forPosition(s.Position).MaxRootNonLeafChanged; posMax > 0 && s.Profile.ReuseRejectRootNonLeafChanged > posMax {
+		t.Fatalf("%s/%s/%s/%s: ReuseRejectRootNonLeafChanged=%d exceeds flattened position ceiling %d -- the T2a leading-run block-splice regressed toward O(file) mid-file",
+			s.Lang, s.Size, s.Class, s.Position, s.Profile.ReuseRejectRootNonLeafChanged, posMax)
 	}
 
 	minReuse := w5ReplaceMinByteReusePercent

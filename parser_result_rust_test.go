@@ -161,7 +161,7 @@ func TestNormalizeRustDotRangePreservesAssignmentExpression(t *testing.T) {
 			root := newParentNodeInArena(arena, 1, true, []*Node{assignment}, nil, 0)
 			parser := &Parser{language: lang}
 
-			normalizeResultCompatibility(root, source, parser)
+			normalizeResultCompatibility(root, source, parser, nil)
 
 			got := root.Child(0)
 			if got == nil {
@@ -203,7 +203,7 @@ func TestNormalizeRustDotRangeSkipsStructuredRangeExpression(t *testing.T) {
 	root := newParentNodeInArena(arena, 1, true, []*Node{rangeExpr}, nil, 0)
 	parser := &Parser{language: lang}
 
-	normalizeResultCompatibility(root, source, parser)
+	normalizeResultCompatibility(root, source, parser, nil)
 
 	got := root.Child(0)
 	if got == nil || got.Type(lang) != "range_expression" {
@@ -362,7 +362,7 @@ func TestNormalizeRustRecoveredFunctionItems(t *testing.T) {
 	root.endPoint = advancePointByBytes(Point{}, source[:35])
 	populateParentNode(root, root.children)
 
-	normalizeResultCompatibility(root, source, parser)
+	normalizeResultCompatibility(root, source, parser, nil)
 
 	if got, want := root.Type(lang), "source_file"; got != want {
 		t.Fatalf("root type = %q, want %q", got, want)

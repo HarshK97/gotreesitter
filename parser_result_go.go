@@ -11,7 +11,15 @@ import "bytes"
 // normalizing a partial tree that carries no C-faithful normalization
 // guarantee. This mirrors the existing timeout/cancellation semantics at the
 // same call sites (see the 2026-07-12 gocompat-walk-containment-gap finding).
-func normalizeGoReturnedTreeCompatibility(root *Node, source []byte, p *Parser, lang *Language) ParseStopReason {
+// incrementalRanges, when non-nil, confines the O(nodes) Go compat walk to the
+// reparsed spans of an incremental parse (campaign O(edit), spec.campaign.oedit).
+// Reused (byte-identical) top-level siblings outside the ranges keep the
+// normalization they were built with, so the walk skips their subtrees and
+// becomes O(edit) instead of O(file). Nil (every fresh parse, and any
+// incremental parse without reuse) keeps the full walk. Only the range-capable
+// walk stage consumes it; the surrounding root/EOF/new-make stages are already
+// bounded or guarded and stay full-tree.
+func normalizeGoReturnedTreeCompatibility(root *Node, source []byte, p *Parser, lang *Language, incrementalRanges []Range) ParseStopReason {
 	var arena *nodeArena
 	if root != nil {
 		arena = root.ownerArena
@@ -29,7 +37,7 @@ func normalizeGoReturnedTreeCompatibility(root *Node, source []byte, p *Parser, 
 	if reason := p.goCompatMemoryBudgetStopReason(arena); reason == ParseStopMemoryBudget {
 		return reason
 	}
-	if reason := normalizeGoCompatibilityWithParser(root, source, lang, p); resultMaterializationShouldStop(reason) {
+	if reason := normalizeGoCompatibilityInRangesWithParser(root, source, lang, incrementalRanges, p); resultMaterializationShouldStop(reason) {
 		return reason
 	}
 	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {

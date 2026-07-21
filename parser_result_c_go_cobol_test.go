@@ -120,7 +120,7 @@ func TestNormalizeResultCompatibilityDispatchesUppercaseCobol(t *testing.T) {
 	root.startByte = 0
 	root.endByte = uint32(len(source))
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := root.StartByte(), uint32(7); got != want {
 		t.Fatalf("root.StartByte = %d, want %d", got, want)
@@ -162,7 +162,7 @@ func TestNormalizeCobolLeadingCommentBannerKeepsProgramStartAtFirstCode(t *testi
 	root.endByte = uint32(len(source))
 	root.endPoint = advancePointByBytes(Point{}, source)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := root.StartByte(), uint32(6); got != want {
 		t.Fatalf("root.StartByte = %d, want %d", got, want)
@@ -264,7 +264,7 @@ func TestNormalizeCobolRecoveredRootProgramDefinitionSplitsTailError(t *testing.
 	root.endByte = uint32(len(source))
 	root.endPoint = advancePointByBytes(Point{}, source)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := root.ChildCount(), 4; got != want {
 		t.Fatalf("root.ChildCount = %d, want %d; root=%s", got, want, root.SExpr(lang))
@@ -393,7 +393,7 @@ func TestNormalizeCobolAcceptedRootProgramDefinitionSplitsTailError(t *testing.T
 	root.endByte = uint32(len(source))
 	root.endPoint = advancePointByBytes(Point{}, source)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := root.ChildCount(), 4; got != want {
 		t.Fatalf("root.ChildCount = %d, want %d; root=%s", got, want, root.SExpr(lang))
@@ -499,7 +499,7 @@ func TestNormalizeCobolProcedureRootRecoveryHoistsComments(t *testing.T) {
 	// Real recovered COBOL roots can be under-marked even when an adjacent
 	// ERROR child is present; the recovery must key off the child shape.
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := root.ChildCount(), 5; got != want {
 		t.Fatalf("root.ChildCount = %d, want %d; root=%s", got, want, root.SExpr(lang))
@@ -592,7 +592,7 @@ func TestNormalizeCobolProcedureRootRecoveryMovesStatements(t *testing.T) {
 	root.endPoint = err.endPoint
 	root.setHasError(true)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := root.ChildCount(), 5; got != want {
 		t.Fatalf("root.ChildCount = %d, want %d; root=%s", got, want, root.SExpr(lang))
@@ -668,7 +668,7 @@ func TestNormalizeCobolRootErrorLeadingComments(t *testing.T) {
 	root.endPoint = err.endPoint
 	root.setHasError(true)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := root.ChildCount(), 5; got != want {
 		t.Fatalf("root.ChildCount = %d, want %d; root=%s", got, want, root.SExpr(lang))
@@ -782,7 +782,7 @@ func TestNormalizeCobolZLiteralDataRootRecovery(t *testing.T) {
 	root.endPoint = err.endPoint
 	root.setHasError(true)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := program.EndByte(), end("01  OK PIC X."); got != want {
 		t.Fatalf("program.EndByte = %d, want %d", got, want)
@@ -882,7 +882,7 @@ func TestNormalizeCobolRootProgramDefinitionStopsBeforeCopySibling(t *testing.T)
 	root.endPoint = advancePointByBytes(Point{}, source)
 	root.setHasError(true)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	clampedEnd := end("01  WS-COMMAREA PIC X.")
 	if got, want := program.EndByte(), clampedEnd; got != want {
@@ -1031,7 +1031,7 @@ func TestNormalizeCobolRootProcedurePrefixErrorMovesCleanPrefix(t *testing.T) {
 	root.endPoint = advancePointByBytes(Point{}, source)
 	root.setHasError(true)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := root.ChildCount(), 2; got != want {
 		t.Fatalf("root.ChildCount = %d, want %d; tree=%s", got, want, root.SExpr(lang))
@@ -1152,7 +1152,7 @@ func TestNormalizeCobolRootProcedurePrefixErrorSkipsMoveLedPrefix(t *testing.T) 
 	root.endPoint = advancePointByBytes(Point{}, source)
 	root.setHasError(true)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := root.ChildCount(), 3; got != want {
 		t.Fatalf("root.ChildCount = %d, want %d; tree=%s", got, want, root.SExpr(lang))
@@ -1255,7 +1255,7 @@ func TestNormalizeCobolRootProcedureEvaluateErrorMovesCleanBody(t *testing.T) {
 	root.endPoint = advancePointByBytes(Point{}, source)
 	root.setHasError(true)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := root.ChildCount(), 1; got != want {
 		t.Fatalf("root.ChildCount = %d, want %d; tree=%s", got, want, root.SExpr(lang))
@@ -1347,7 +1347,7 @@ func TestNormalizeCobolProcedureLooseIfHeader(t *testing.T) {
 	root.endPoint = advancePointByBytes(Point{}, source)
 	root.setHasError(true)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	procedure := root.Child(0).Child(0)
 	if got, want := procedure.ChildCount(), 2; got != want {
@@ -1522,7 +1522,7 @@ func TestNormalizeCobolRecoveredErrorAddsMissingCommentEntryGap(t *testing.T) {
 	root.endPoint = err.endPoint
 	root.setHasError(true)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := err.ChildCount(), 6; got != want {
 		t.Fatalf("ERROR ChildCount = %d, want %d; err=%s", got, want, err.SExpr(lang))
@@ -1649,7 +1649,7 @@ func TestNormalizeCobolFixedFormatProgramIDStopsBeforeTrailingJunk(t *testing.T)
 	root.endByte = uint32(len(source))
 	root.endPoint = advancePointByBytes(Point{}, source)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := root.StartByte(), uint32(6); got != want {
 		t.Fatalf("root.StartByte = %d, want %d", got, want)
@@ -1718,7 +1718,7 @@ func TestNormalizeCobolTrimsStatementTrailingTriviaSpans(t *testing.T) {
 	root.endByte = uint32(len(source))
 	root.endPoint = advancePointByBytes(Point{}, source)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := perform.EndByte(), performEnd; got != want {
 		t.Fatalf("perform_statement_loop.EndByte = %d, want %d", got, want)
@@ -1780,7 +1780,7 @@ func TestNormalizeCobolTrimsGotoTrailingTriviaSpan(t *testing.T) {
 	root.endByte = uint32(len(source))
 	root.endPoint = advancePointByBytes(Point{}, source)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := gotoStmt.EndByte(), gotoEnd; got != want {
 		t.Fatalf("goto_statement.EndByte = %d, want %d", got, want)
@@ -1838,7 +1838,7 @@ func TestNormalizeCobolSectionSiblingEndsBeforeCopySibling(t *testing.T) {
 	root.endByte = uint32(len(source))
 	root.endPoint = advancePointByBytes(Point{}, source)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if got, want := working.EndByte(), workingEnd; got != want {
 		t.Fatalf("working_storage_section.EndByte = %d, want %d", got, want)
@@ -2009,7 +2009,7 @@ func TestNormalizeCobolRecoveredParagraphHeader(t *testing.T) {
 	root.endByte = uint32(len(source))
 	root.endPoint = advancePointByBytes(Point{}, source)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if root.HasError() {
 		t.Fatalf("root.HasError = true, want false")
@@ -2107,7 +2107,7 @@ func TestNormalizeCobolRecoveredParagraphHeaderPreservesOtherErrors(t *testing.T
 	root.endByte = uint32(len(source))
 	root.endPoint = advancePointByBytes(Point{}, source)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang})
+	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
 
 	if !root.HasError() {
 		t.Fatalf("root.HasError = false, want true for retained non-header error")

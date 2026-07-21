@@ -59,7 +59,7 @@ func TestNormalizeResultCompatibilityRestoresOCamlBooleanChild(t *testing.T) {
 	orOperator := newLeafNodeInArena(arena, 5, true, 5, 7, Point{Column: 5}, Point{Column: 7})
 	root := newParentNodeInArena(arena, 1, true, []*Node{boolean, orOperator}, nil, 0)
 
-	normalizeResultCompatibility(root, []byte("true ||"), &Parser{language: lang})
+	normalizeResultCompatibility(root, []byte("true ||"), &Parser{language: lang}, nil)
 
 	child := boolean.Child(0)
 	if child == nil {
