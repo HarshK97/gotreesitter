@@ -2364,7 +2364,7 @@ func (t *Tree) ensureResultCompatibility() {
 			return
 		}
 		if !parsePhaseTimingEnabled() {
-			result := normalizeResultCompatibility(t.root, t.source, &Parser{language: t.language})
+			result := normalizeResultCompatibility(t.root, t.source, &Parser{language: t.language}, nil)
 			t.resultErrorSummary = result.errorSummary
 			t.resultCompatibilityApplied = !parseStopReasonIsActive(result.stopReason)
 			t.finishDeferredResultCompatibility(result)
@@ -2376,7 +2376,7 @@ func (t *Tree) ensureResultCompatibility() {
 			materializationTiming: timing,
 		}
 		start := materializationTimingStart(timing)
-		result := normalizeResultCompatibility(t.root, t.source, parser)
+		result := normalizeResultCompatibility(t.root, t.source, parser, nil)
 		t.resultErrorSummary = result.errorSummary
 		t.resultCompatibilityApplied = !parseStopReasonIsActive(result.stopReason)
 		timing.addResultCompatibility(start)

@@ -45,6 +45,19 @@ type ReplayDiffReport struct {
 	Samples             []ReplayMismatchSample
 }
 
+// SetForceFullResultNormalizationWalk forces the full-tree result-normalization
+// walk, disabling the incremental range-limited walk (campaign O(edit),
+// spec.campaign.oedit). It exists ONLY so the byte-sweep differential can
+// compare the range-limited walk against the full walk on the SAME Parser and
+// prove they produce identical trees. It lives in export_test.go, so it is
+// compiled only in test builds and is never part of the public API.
+func (p *Parser) SetForceFullResultNormalizationWalk(v bool) {
+	if p == nil {
+		return
+	}
+	p.forceFullResultNormalizationWalk = v
+}
+
 // ReplayDiffTree replays the LR tables over the tree rooted at root and
 // compares the reconstructed states against the recorded ones on every node.
 // It mutates nothing. maxSamples bounds the retained mismatch examples.

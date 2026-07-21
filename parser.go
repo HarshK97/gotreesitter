@@ -339,19 +339,25 @@ type Parser struct {
 	mergeScratch *glrMergeScratch
 	// goCompatFrames points at the active parser scratch's reusable result-tree
 	// traversal stack. It is nil outside parseInternal.
-	goCompatFrames                      *[]goCompatSubtreeFrame
-	noTreeBenchmarkOnly                 bool
-	noTreeCheckpointBenchmarkOnly       bool
-	compactNoTreeShiftLeaves            bool
-	compactFullShiftLeaves              bool
-	eagerDefaultReduces                 []eagerDefaultReduceAction
-	pendingFullParents                  bool
-	finalChildRefs                      bool
-	skipInvisibleFullLeafCheckpoints    bool
-	transientReduceChildren             bool
-	transientReduceScratchNoAlias       bool
-	transientChildren                   *transientChildScratch
-	noResultCompatibilityBenchmarkOnly  bool
+	goCompatFrames                     *[]goCompatSubtreeFrame
+	noTreeBenchmarkOnly                bool
+	noTreeCheckpointBenchmarkOnly      bool
+	compactNoTreeShiftLeaves           bool
+	compactFullShiftLeaves             bool
+	eagerDefaultReduces                []eagerDefaultReduceAction
+	pendingFullParents                 bool
+	finalChildRefs                     bool
+	skipInvisibleFullLeafCheckpoints   bool
+	transientReduceChildren            bool
+	transientReduceScratchNoAlias      bool
+	transientChildren                  *transientChildScratch
+	noResultCompatibilityBenchmarkOnly bool
+	// forceFullResultNormalizationWalk disables incremental range-limited result
+	// normalization for this Parser, forcing the full-tree walk. It exists only
+	// so the campaign O(edit) byte-sweep differential can compare the
+	// range-limited walk against the full walk on one Parser (see
+	// SetForceFullResultNormalizationWalk). Production leaves it false.
+	forceFullResultNormalizationWalk    bool
 	currentExternalTokenCheckpoint      externalScannerCheckpoint
 	currentExternalTokenCheckpointStart uint32
 	currentExternalTokenCheckpointEnd   uint32

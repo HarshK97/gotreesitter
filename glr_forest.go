@@ -673,7 +673,9 @@ func forestRootMustDecline(root *Node) bool {
 }
 
 func (p *Parser) finalizeForestRoot(root *Node, source []byte) {
-	p.finalizeResultRoot(root, source, nil, false, false)
+	// The forest fast path builds every node fresh (no subtree reuse), so
+	// range-limited normalization does not apply; pass nil to keep the full walk.
+	p.finalizeResultRoot(root, source, nil, false, false, nil)
 	extendRootToAcceptedCleanTail(root, source, uint32(len(source)), nil)
 }
 

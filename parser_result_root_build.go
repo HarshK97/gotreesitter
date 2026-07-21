@@ -763,7 +763,19 @@ func (b *resultRootBuild) finishTree(root *Node, wireParentLinks, extendTrailing
 }
 
 func (b *resultRootBuild) finalizeRoot(root *Node, wireParentLinks, extendTrailing bool) (resultErrorSummary, bool) {
-	return b.parser.finalizeResultRoot(root, b.source, b.linkScratch, wireParentLinks, extendTrailing)
+	return b.parser.finalizeResultRoot(root, b.source, b.linkScratch, wireParentLinks, extendTrailing, b.incrementalResultCompatibilityRanges(root))
+}
+
+// incrementalResultCompatibilityRanges returns the reparsed byte spans that
+// range-limit result normalization for THIS parse, or nil when the language is
+// not range-limit-eligible or no subtree was reused. A fresh parse reuses
+// nothing, so it always gets nil and keeps its unchanged full-tree walk.
+func (b *resultRootBuild) incrementalResultCompatibilityRanges(root *Node) []Range {
+	if b.parser == nil || b.lang == nil || b.parser.forceFullResultNormalizationWalk || !languageUsesRangeLimitedResultCompatibility(b.lang) {
+		return nil
+	}
+	hasReuse := b.reuseState != nil && b.reuseState.reusedAny
+	return incrementalReparsedTopLevelRanges(root, b.arena, hasReuse)
 }
 
 // finalizeWrappedSubtree applies subtree compatibility normalization to a node
@@ -778,7 +790,7 @@ func (b *resultRootBuild) finalizeWrappedSubtree(root *Node) {
 		return
 	}
 	if p == nil || (!p.noResultCompatibilityBenchmarkOnly && !p.shouldDeferResultCompatibility(root)) {
-		if compat := normalizeResultCompatibility(root, b.source, p); parseStopReasonIsActive(compat.stopReason) && p != nil {
+		if compat := normalizeResultCompatibility(root, b.source, p, nil); parseStopReasonIsActive(compat.stopReason) && p != nil {
 			p.markActiveParseStopped(compat.stopReason)
 		}
 	}
@@ -938,7 +950,7 @@ func extendResultRootRangeToExtras(root *Node, extras []*Node) {
 	}
 }
 
-func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*Node, wireParentLinks, extendTrailing bool) (resultErrorSummary, bool) {
+func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*Node, wireParentLinks, extendTrailing bool, incrementalRanges []Range) (resultErrorSummary, bool) {
 	errorSummary := resultErrorSummaryUnknown
 	compatibilityApplied := false
 	if root == nil {
@@ -973,7 +985,7 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 	}
 	if p == nil || (!p.noResultCompatibilityBenchmarkOnly && !p.shouldDeferResultCompatibility(root)) {
 		start = materializationTimingStart(timing)
-		compat := normalizeResultCompatibility(root, source, p)
+		compat := normalizeResultCompatibility(root, source, p, incrementalRanges)
 		errorSummary = compat.errorSummary
 		// resultMaterializationShouldStop (not parseStopReasonIsActive): Go's
 		// normalizer can now report ParseStopMemoryBudget (see
