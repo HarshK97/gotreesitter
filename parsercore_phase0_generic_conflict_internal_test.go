@@ -56,12 +56,12 @@ func TestDiagnosticParserCoreDescriptorPreservesUnsupportedOrdinalOrdering(t *te
 		detail  string
 	}{
 		{
-			name: "dynamic shift precedes static repetition",
+			name: "ordinary shift precedes static repetition",
 			actions: []core.Action{
 				{Type: core.ActionShift, State: 2},
 				{Type: core.ActionReduce, Repetition: true},
 			},
-			detail: "positive-width",
+			detail: "repetition",
 		},
 		{
 			name: "static repetition precedes dynamic shift",
@@ -81,6 +81,25 @@ func TestDiagnosticParserCoreDescriptorPreservesUnsupportedOrdinalOrdering(t *te
 			unsupported := diagnosticParserCoreGenericUnsupportedCell(3, Token{Symbol: 9}, row)
 			if unsupported == nil || unsupported.headerIndex != 3 || !strings.Contains(unsupported.detail, test.detail) {
 				t.Fatalf("unsupported=%+v, want first ordinal detail %q", unsupported, test.detail)
+			}
+		})
+	}
+}
+
+func TestDiagnosticParserCoreDescriptorAdmitsZeroWidthOrdinaryShift(t *testing.T) {
+	token := Token{Symbol: 9, StartByte: 4, EndByte: 4}
+	tests := []struct {
+		name    string
+		actions []core.Action
+	}{
+		{name: "single shift", actions: []core.Action{{Type: core.ActionShift, State: 2}}},
+		{name: "conflict shift", actions: []core.Action{{Type: core.ActionShift, State: 2}, {Type: core.ActionReduce, Symbol: 4}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			row := core.NewActionRow(test.actions)
+			if unsupported := diagnosticParserCoreGenericUnsupportedCell(0, token, row); unsupported != nil {
+				t.Fatalf("zero-width ordinary shift declined: %+v", unsupported)
 			}
 		})
 	}

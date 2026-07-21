@@ -902,6 +902,53 @@ func TestShiftOrdinaryCohortSharesOneTerminalPayload(t *testing.T) {
 	}
 }
 
+func TestShiftOrdinaryCohortSupportsZeroWidthTerminal(t *testing.T) {
+	tables := &fakeTable{actions: map[tableCell][]Action{
+		{state: 1, symbol: 9}: {{Type: ActionShift, State: 3}},
+		{state: 2, symbol: 9}: {{Type: ActionShift, State: 4}},
+	}}
+	compact, err := New(tables, Limits{MaxDerivations: 4, MaxPopPaths: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, _ := compact.Seed(1, 4)
+	second, _ := compact.Seed(2, 4)
+
+	shifted, err := compact.ShiftOrdinaryCohort([]OrdinaryCohortShiftInput{
+		{Head: first, ActionOrdinal: 0},
+		{Head: second, ActionOrdinal: 0},
+	}, 9, Token{Symbol: 9, StartByte: 4, EndByte: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(shifted) != 2 {
+		t.Fatalf("shifted cohort length=%d, want 2", len(shifted))
+	}
+	for index, wantState := range []StateID{3, 4} {
+		state, byteOffset, err := compact.Boundary(shifted[index])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if state != wantState || byteOffset != 4 {
+			t.Fatalf("shifted boundary %d=(state %d, byte %d), want (state %d, byte 4)", index, state, byteOffset, wantState)
+		}
+		paths, err := compact.Derivations(shifted[index])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(paths) != 1 || len(paths[0].Payloads) != 1 {
+			t.Fatalf("shifted boundary %d paths=%+v, want one terminal derivation", index, paths)
+		}
+		view, err := compact.Subtree(paths[0].Payloads[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if view.Symbol != 9 || view.StartByte != 4 || view.EndByte != 4 || view.Extra || !view.Terminal {
+			t.Fatalf("shifted boundary %d terminal=%+v", index, view)
+		}
+	}
+}
+
 func TestExternalTerminalProvenanceIsPartOfSubtreeIdentity(t *testing.T) {
 	tables := &fakeTable{actions: map[tableCell][]Action{
 		{state: 1, symbol: 9}: {{Type: ActionShift, State: 3}},
@@ -1051,7 +1098,6 @@ func TestShiftOrdinaryCohortValidatesBeforeMutation(t *testing.T) {
 		{name: "extra-chain-action", inputs: []OrdinaryCohortShiftInput{{Head: first}, {Head: extraChain}}, token: Token{Symbol: 9, StartByte: 4, EndByte: 5}},
 		{name: "decorated-shift-action", inputs: []OrdinaryCohortShiftInput{{Head: first}, {Head: decoratedShift}}, token: Token{Symbol: 9, StartByte: 4, EndByte: 5}},
 		{name: "extra-token", inputs: []OrdinaryCohortShiftInput{{Head: first}}, token: Token{Symbol: 9, StartByte: 4, EndByte: 5, Extra: true}},
-		{name: "zero-width-token", inputs: []OrdinaryCohortShiftInput{{Head: first}}, token: Token{Symbol: 9, StartByte: 4, EndByte: 4}},
 		{name: "symbol-mismatch", inputs: []OrdinaryCohortShiftInput{{Head: first}}, token: Token{Symbol: 8, StartByte: 4, EndByte: 5}},
 		{name: "invalid-head", inputs: []OrdinaryCohortShiftInput{{Head: first}, {Head: Head{Node: 999}}}, token: Token{Symbol: 9, StartByte: 4, EndByte: 5}},
 		{name: "nonzero-ordinal", inputs: []OrdinaryCohortShiftInput{{Head: first, ActionOrdinal: 1}}, token: Token{Symbol: 9, StartByte: 4, EndByte: 5}},

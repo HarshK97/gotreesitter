@@ -1229,7 +1229,9 @@ func (c *Core) ShiftClassified(boundary ClassifiedBoundary, actionOrdinal int, t
 // ShiftOrdinaryCohort applies one ordinary terminal election to distinct
 // scheduler heads while allocating exactly one immutable terminal payload.
 // It is intentionally narrower than Shift: every cell must contain exactly
-// one undecorated non-extra shift and the token must have positive width.
+// one undecorated non-extra shift. The token may have zero width: parser-state
+// movement and scanner-checkpoint identity provide scheduler progress even
+// when the byte offset is unchanged.
 // Missing, no-lookahead, reused, and scanner-checkpoint identity remain
 // caller-visible concerns. External provenance is one compact identity bit;
 // scanner state remains outside this layer.

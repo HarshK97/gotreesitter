@@ -3053,9 +3053,11 @@ func diagnosticParserCoreGenericUnsupportedCellDescriptor(headerIndex int, token
 	switch descriptor.Kind() {
 	case core.ActionRowEmpty:
 		return unsupported(DiagnosticParserCoreNoAction, "generic scheduler reached an empty action cell")
-	case core.ActionRowShift, core.ActionRowExtraShift:
+	case core.ActionRowShift:
+		return nil
+	case core.ActionRowExtraShift:
 		if token.EndByte <= token.StartByte {
-			return unsupported(DiagnosticParserCoreRoute, "generic scheduler ordinary shift is not positive-width")
+			return unsupported(DiagnosticParserCoreRoute, "generic scheduler extra shift is not positive-width")
 		}
 		return nil
 	case core.ActionRowReduce:
@@ -3066,9 +3068,6 @@ func diagnosticParserCoreGenericUnsupportedCellDescriptor(headerIndex int, token
 		}
 		return nil
 	case core.ActionRowConflict:
-		if descriptor.HasShift() && token.EndByte <= token.StartByte {
-			return unsupported(DiagnosticParserCoreRoute, "generic scheduler ordinary shift is not positive-width")
-		}
 		return nil
 	}
 
@@ -3088,9 +3087,6 @@ func diagnosticParserCoreGenericUnsupportedCellDescriptor(headerIndex int, token
 		switch action.Type {
 		case core.ActionReduce:
 		case core.ActionShift:
-			if token.EndByte <= token.StartByte {
-				return unsupported(DiagnosticParserCoreRoute, "generic scheduler ordinary shift is not positive-width")
-			}
 		case core.ActionRecover:
 			return unsupported(DiagnosticParserCoreRecovery, "generic scheduler reached recovery")
 		case core.ActionAccept:

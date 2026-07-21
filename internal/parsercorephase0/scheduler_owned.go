@@ -82,8 +82,8 @@ func (c *Core) prepareOrdinaryClassifiedCohortInto(boundaries []ClassifiedBounda
 	if len(targets) != len(boundaries) {
 		return errors.New("parser-core phase zero: ordinary cohort target storage length mismatch")
 	}
-	if shifted.Extra || shifted.EndByte <= shifted.StartByte {
-		return errors.New("parser-core phase zero: cohort token is not an ordinary positive-width terminal")
+	if shifted.Extra {
+		return errors.New("parser-core phase zero: cohort token is not an ordinary terminal")
 	}
 	for index, boundary := range boundaries {
 		if shifted.Symbol != boundary.lookahead {
