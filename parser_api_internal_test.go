@@ -2265,21 +2265,26 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "elixir"}, maxStacksPerMergeKey, false); got != 2 {
 		t.Fatalf("effectiveParseMergePerKeyCap(elixir, default, full) = %d, want 2", got)
 	}
-	if got := effectiveParseMergePerKeyCap(&Language{Name: "typescript"}, maxStacksPerMergeKey, false); got != 1 {
-		t.Fatalf("effectiveParseMergePerKeyCap(typescript, default, full) = %d, want 1", got)
+	// The TypeScript steady-state full-parse cap is two (typeScriptSteadyStateMergeCap),
+	// not one: cap-one routes merges through the score-first single-survivor
+	// path that discards a structurally-distinct correct derivation, which is
+	// the root cause the per-shape merge-width detectors patched. cap-two counts
+	// structurally-distinct survivors and subsumes those detectors while staying
+	// .d.ts-safe. It applies uniformly regardless of source size: the former
+	// >64KB disengagement retained redundant unreduced-spine survivors whose
+	// frontier walks exploded transient stack population on large union-list
+	// .d.ts sources, and cap-two (unlike cap-six) does not reintroduce that.
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "typescript"}, maxStacksPerMergeKey, false); got != 2 {
+		t.Fatalf("effectiveParseMergePerKeyCap(typescript, default, full) = %d, want 2", got)
 	}
-	// The tight TypeScript cap applies uniformly regardless of source size:
-	// the former >64KB disengagement retained redundant unreduced-spine
-	// survivors whose frontier walks exploded transient stack population on
-	// large union-list .d.ts sources (intra-token population explosion).
-	if got := effectiveParseMergePerKeyCap(&Language{Name: "typescript"}, maxStacksPerMergeKey, false, 128*1024); got != 1 {
-		t.Fatalf("effectiveParseMergePerKeyCap(typescript, large default, full) = %d, want 1", got)
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "typescript"}, maxStacksPerMergeKey, false, 128*1024); got != 2 {
+		t.Fatalf("effectiveParseMergePerKeyCap(typescript, large default, full) = %d, want 2", got)
 	}
-	if got := effectiveParseMergePerKeyCap(&Language{Name: "tsx"}, maxStacksPerMergeKey, false); got != 1 {
-		t.Fatalf("effectiveParseMergePerKeyCap(tsx, default, full) = %d, want 1", got)
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "tsx"}, maxStacksPerMergeKey, false); got != 2 {
+		t.Fatalf("effectiveParseMergePerKeyCap(tsx, default, full) = %d, want 2", got)
 	}
-	if got := effectiveParseMergePerKeyCap(&Language{Name: "tsx"}, maxStacksPerMergeKey, false, 128*1024); got != 1 {
-		t.Fatalf("effectiveParseMergePerKeyCap(tsx, large default, full) = %d, want 1", got)
+	if got := effectiveParseMergePerKeyCap(&Language{Name: "tsx"}, maxStacksPerMergeKey, false, 128*1024); got != 2 {
+		t.Fatalf("effectiveParseMergePerKeyCap(tsx, large default, full) = %d, want 2", got)
 	}
 	if got := effectiveParseMergePerKeyCap(&Language{Name: "java"}, maxStacksPerMergeKey, false); got != 1 {
 		t.Fatalf("effectiveParseMergePerKeyCap(java, default, full) = %d, want 1", got)

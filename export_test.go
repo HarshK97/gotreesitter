@@ -45,6 +45,28 @@ type ReplayDiffReport struct {
 	Samples             []ReplayMismatchSample
 }
 
+// SetTypeScriptMergeWidthDetectorsDisabledForTests toggles every TypeScript
+// source-text merge-width detector (typed-arrow, bare-default-parameter,
+// destructured-arrow-return, and typed-parameter-arrow-return) at once and
+// returns a restore function. The external test package uses it to prove that
+// the structure-aware cap-two steady state subsumes those per-shape detectors:
+// with the detectors off, the detector-era regression families must still parse
+// cleanly.
+func SetTypeScriptMergeWidthDetectorsDisabledForTests(disabled bool) func() {
+	prev := typeScriptMergeWidthDetectorsDisabled.Swap(disabled)
+	return func() { typeScriptMergeWidthDetectorsDisabled.Store(prev) }
+}
+
+// SetTypeScriptCapOneStructurePreferenceForTests selects variant B for
+// head-to-head evaluation against the shipping cap-two policy: it keeps the
+// TypeScript full-parse cap at one and prefers the structurally-richer fork
+// before score at the cap-one discard site. It returns a restore function and
+// is never set in production.
+func SetTypeScriptCapOneStructurePreferenceForTests(enabled bool) func() {
+	prev := typeScriptCapOneStructurePreference.Swap(enabled)
+	return func() { typeScriptCapOneStructurePreference.Store(prev) }
+}
+
 // SetForceFullResultNormalizationWalk forces the full-tree result-normalization
 // walk, disabling the incremental range-limited walk (campaign O(edit),
 // spec.campaign.oedit). It exists ONLY so the byte-sweep differential can
