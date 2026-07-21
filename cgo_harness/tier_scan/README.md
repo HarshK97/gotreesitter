@@ -56,7 +56,7 @@ Every tier-IV grammar carries a named, assessed sub-cause:
 | `IV-unknown` | diagnosed but does not fit a single bucket | deeper single-file diagnosis |
 | `IV-unassessed` | **the state we keep empty** — an incorrect or unmeasured parse nobody has triaged | run the diagnosis workflow / `TestFirstDiffDiag` |
 
-A `?` suffix (e.g. `IV-recovery?`) marks a *preliminary* classification
+A `?` suffix (for example `IV-recovery?`) marks a *preliminary* classification
 inferred from the measure signature (parity%, errTree, trunc) rather than a
 per-file diagnosis — these get confirmed when the full diagnosis workflow
 re-runs. The scan fails (exit 1) if any current non-clean grammar in

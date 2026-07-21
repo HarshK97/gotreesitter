@@ -46,6 +46,22 @@ type Parser struct {
 	rootSymbol                    Symbol
 	hasRootSymbol                 bool
 
+	// admissionCandidateRoute is the per-Parser override for the Phase-3
+	// dual-route admission switch (see admission_switch.go). The zero value
+	// follows the process-wide default.
+	admissionCandidateRoute admissionRouteMode
+	// admissionCandidateRunner caches the compact candidate route's reusable
+	// state across full parses on this Parser. It is typed as any because the
+	// concrete runner type only exists under the gts_parsercorephase0 build
+	// tag; the default build never reads or writes it.
+	admissionCandidateRunner any
+	// admissionRouteSuppressed, when greater than zero, forces the production
+	// route regardless of the switch. It is raised while a reuse-consuming call
+	// or a production-only correctness reparse delegates to Parse, so a delegated
+	// fresh parse can never publish a compact tree from a path that must stay on
+	// production.
+	admissionRouteSuppressed int
+
 	// reduceMultiVersion/reduceActionConflict are transient, non-sticky
 	// fragility signals for the reduce(s) about to run. Parser is documented
 	// single-goroutine (see the doc comment above), so plain mutable fields
@@ -323,19 +339,25 @@ type Parser struct {
 	mergeScratch *glrMergeScratch
 	// goCompatFrames points at the active parser scratch's reusable result-tree
 	// traversal stack. It is nil outside parseInternal.
-	goCompatFrames                      *[]goCompatSubtreeFrame
-	noTreeBenchmarkOnly                 bool
-	noTreeCheckpointBenchmarkOnly       bool
-	compactNoTreeShiftLeaves            bool
-	compactFullShiftLeaves              bool
-	eagerDefaultReduces                 []eagerDefaultReduceAction
-	pendingFullParents                  bool
-	finalChildRefs                      bool
-	skipInvisibleFullLeafCheckpoints    bool
-	transientReduceChildren             bool
-	transientReduceScratchNoAlias       bool
-	transientChildren                   *transientChildScratch
-	noResultCompatibilityBenchmarkOnly  bool
+	goCompatFrames                     *[]goCompatSubtreeFrame
+	noTreeBenchmarkOnly                bool
+	noTreeCheckpointBenchmarkOnly      bool
+	compactNoTreeShiftLeaves           bool
+	compactFullShiftLeaves             bool
+	eagerDefaultReduces                []eagerDefaultReduceAction
+	pendingFullParents                 bool
+	finalChildRefs                     bool
+	skipInvisibleFullLeafCheckpoints   bool
+	transientReduceChildren            bool
+	transientReduceScratchNoAlias      bool
+	transientChildren                  *transientChildScratch
+	noResultCompatibilityBenchmarkOnly bool
+	// forceFullResultNormalizationWalk disables incremental range-limited result
+	// normalization for this Parser, forcing the full-tree walk. It exists only
+	// so the campaign O(edit) byte-sweep differential can compare the
+	// range-limited walk against the full walk on one Parser (see
+	// SetForceFullResultNormalizationWalk). Production leaves it false.
+	forceFullResultNormalizationWalk    bool
 	currentExternalTokenCheckpoint      externalScannerCheckpoint
 	currentExternalTokenCheckpointStart uint32
 	currentExternalTokenCheckpointEnd   uint32
@@ -1199,7 +1221,21 @@ type IncrementalParseProfile struct {
 	// (incremental.go). A nonzero count on a conflict-heavy grammar (e.g. js)
 	// is expected and correct: it is exactly the unsound reuse this gate is
 	// designed to prevent.
-	ReuseRejectFragileNonLeaf           uint64
+	ReuseRejectFragileNonLeaf uint64
+	// BlockSpliceSteps is the number of top-level sibling reuses taken inside
+	// the W1 block-splice composition loop (spec.campaign.oedit): one per
+	// sibling spliced without a full main-loop round trip. It is O(edit) and
+	// deterministic for a fixed (source, edit, language).
+	BlockSpliceSteps uint64
+	// ReuseRejectScannerUnquiescent counts reuse candidates the external
+	// scanner checkpoint/quiescence gate rejected -- a checkpoint state
+	// mismatch on a checkpoint language, or a refuted quiescence proof on an
+	// opt-out scanner (campaign O(edit) workstream W4, spec.campaign.oedit).
+	// It is 0 for stateless-scanner languages such as Go, whose ASI scanner
+	// carries no cross-token state and is proven quiescent at every boundary
+	// (external_scanner_quiescence.go). A nonzero count marks boundaries where
+	// scanner state, not fragility or byte drift, is the binding constraint.
+	ReuseRejectScannerUnquiescent       uint64
 	RecoverSearches                     uint64
 	RecoverStateChecks                  uint64
 	RecoverStateSkips                   uint64
@@ -1277,27 +1313,35 @@ type IncrementalParseProfile struct {
 }
 
 type incrementalParseTiming struct {
-	totalNanos                          int64
-	reuseNanos                          int64
-	reusedSubtrees                      uint64
-	reusedBytes                         uint64
-	newNodes                            uint64
-	reuseUnsupported                    bool
-	reuseUnsupportedReason              string
-	acceptedErrorRetryAttempts          uint8
-	acceptedErrorRetryAdopted           bool
-	acceptedErrorRetryMergePerKey       int
-	acceptedErrorRetryCause             IncrementalRetryCause
-	oldTreeReuseRoute                   bool
-	reuseRejectDirty                    uint64
-	reuseRejectAncestorDirtyBeforeEdit  uint64
-	reuseRejectHasError                 uint64
-	reuseRejectInvalidSpan              uint64
-	reuseRejectOutOfBounds              uint64
-	reuseRejectRootNonLeafChanged       uint64
-	reuseRejectLargeNonLeaf             uint64
-	reuseRejectStaleNonLeafBoundary     uint64
-	reuseRejectFragileNonLeaf           uint64
+	totalNanos                         int64
+	reuseNanos                         int64
+	reusedSubtrees                     uint64
+	reusedBytes                        uint64
+	newNodes                           uint64
+	reuseUnsupported                   bool
+	reuseUnsupportedReason             string
+	acceptedErrorRetryAttempts         uint8
+	acceptedErrorRetryAdopted          bool
+	acceptedErrorRetryMergePerKey      int
+	acceptedErrorRetryCause            IncrementalRetryCause
+	oldTreeReuseRoute                  bool
+	reuseRejectDirty                   uint64
+	reuseRejectAncestorDirtyBeforeEdit uint64
+	reuseRejectHasError                uint64
+	reuseRejectInvalidSpan             uint64
+	reuseRejectOutOfBounds             uint64
+	reuseRejectRootNonLeafChanged      uint64
+	reuseRejectLargeNonLeaf            uint64
+	reuseRejectStaleNonLeafBoundary    uint64
+	reuseRejectFragileNonLeaf          uint64
+	reuseRejectScannerUnquiescent      uint64
+	// blockSpliceSteps counts top-level sibling reuses taken inside the W1
+	// block-splice composition loop (spec.campaign.oedit) -- one per sibling
+	// spliced without returning to the main parse-loop iteration. It is O(edit)
+	// diagnostic evidence that the block path fired, and it is deterministic
+	// for a fixed (source, edit, language): the loop reads only the live
+	// single-stack frontier and the old tree, never per-instance history.
+	blockSpliceSteps                    uint64
 	recoverSearches                     uint64
 	recoverStateChecks                  uint64
 	recoverStateSkips                   uint64
@@ -1546,6 +1590,9 @@ func resetSnippetParser(parser *Parser) {
 	parser.parseMemoryBudgetDiag = parseMemoryBudgetDiagnostic{}
 	parser.parseMemoryBudgetDiagActive = false
 	parser.compatMemoryBudgetTripped = false
+	// Recovery and snippet sub-parsers must never route through the compact
+	// candidate: they parse fragments spliced into recovery and reuse.
+	parser.pinToProductionRoute()
 	// Release *Node refs so the arenas from the last incremental parse can be
 	// collected by the GC. Without this, a Parser sitting in a sync.Pool keeps
 	// its reuseCursor.topLevel/*Node alive, preventing arena reclamation.
@@ -2973,6 +3020,7 @@ func (p *Parser) parseIncrementalInternalWithMergePerKeyOverride(source []byte, 
 			timing.reuseRejectLargeNonLeaf += reuse.rejectLargeNonLeaf
 			timing.reuseRejectStaleNonLeafBoundary += reuse.rejectStaleNonLeafBoundary
 			timing.reuseRejectFragileNonLeaf += reuse.rejectFragileNonLeaf
+			timing.reuseRejectScannerUnquiescent += reuse.rejectScannerUnquiescent
 		}
 		if timing != nil {
 			reuseStart := time.Now()
@@ -4917,38 +4965,140 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		}
 
 		if reuse != nil && len(stacks) == 1 && !stacks[0].dead && tok.Symbol != 0 {
-			nextTok, ok := p.tryReuseCurrentParseSubtree(&stacks[0], tok, ts, reuse, scratch, arena, &reuseState, timing)
-			if !ok && reuse.hasNonLeafCandidateAt(tok.StartByte) {
-				// Campaign O(edit) W1b (spec.campaign.oedit): reuse failed at
-				// the live top-of-stack state, but a non-leaf sibling candidate
-				// begins right here. Settle the pending eager-default
-				// (unconditional) reduce chain and retry, so a candidate whose
-				// recorded PreGotoState is only reachable after those reduces
-				// can still splice. Settling is a FALLBACK, never a pre-empt:
-				// any reuse the current state already admits is taken first and
-				// unchanged (the #393 bar and the correct interleaving of
-				// reuse with trailing-extra shifts stay intact). It is scoped
-				// to positions with a real non-leaf candidate so it can only
-				// advance toward a splice, never perturb an intra-item trajectory
-				// (for example a trailing comment's attachment). The settled
-				// reduces are exactly what the dispatch loop performs next
-				// regardless of lookahead, so falling through to it below is
-				// sound when reuse still does not apply.
-				forkedDuringSettle := false
-				settled := p.settleEagerDefaultReduceChainForReuse(source, &stacks[0], tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, trackChildErrors, &forkedDuringSettle)
-				if forkedDuringSettle {
-					// A settled reduce forked the stack through a GSS
-					// multi-link. Drain the pending forks into the live
-					// frontier (exactly as the dispatch loop does after its own
-					// reduces) and skip the retry; the multi-stack dispatch
-					// below handles it.
-					drainPendingForkStacks()
-				} else if settled && len(stacks) == 1 && !stacks[0].dead && !stacks[0].accepted && !stacks[0].shifted && tok.Symbol != 0 {
-					nextTok, ok = p.tryReuseCurrentParseSubtree(&stacks[0], tok, ts, reuse, scratch, arena, &reuseState, timing)
+			// Campaign O(edit) W1 block-splice composition (spec.campaign.oedit).
+			// Once the edited item finishes reparsing, a whole run of following
+			// top-level siblings is byte-identical to the old tree. W1b lifted
+			// them one at a time, but each sibling re-entered the full main-loop
+			// iteration (merge/cull branch, single-stack GSS preamble, token-
+			// source state push, progress/audit, timeout poll) purely to reach
+			// the same settle+reuse it took last time. This loop keeps the
+			// splice inside one iteration: after a sibling reuses, it advances
+			// directly to the next one while the frontier stays single-stack and
+			// the next position is another non-leaf top-level candidate, running
+			// only the cheap, internally-throttled safety checks between steps.
+			//
+			// Admission is UNCHANGED and per-sibling: every member still goes
+			// through tryReuseCurrentParseSubtree (fragility bit, byte-range
+			// equality, zero-width exclusion, external-scanner quiescence, the
+			// #393 reuse bar) and the same W1b settle. The first member that
+			// fails any gate ends the block at that member -- the loop breaks and
+			// the main loop reparses it -- so the block never lifts content past
+			// a would-be extra-shift boundary or any other gate. The block runs
+			// ONLY in single-stack mode; a settle that forks drains and exits.
+			reusedAnySibling := false
+			blockForked := false
+			blockStopReason := ParseStopNone
+			blockStopped := false
+			for {
+				nextTok, ok := p.tryReuseCurrentParseSubtree(&stacks[0], tok, ts, reuse, scratch, arena, &reuseState, timing)
+				if !ok && reuse.hasNonLeafCandidateAt(tok.StartByte) {
+					// W1b settle (unchanged): reuse failed at the live top-of-
+					// stack state, but a non-leaf sibling candidate begins right
+					// here. Settle the pending eager-default (unconditional)
+					// reduce chain and retry, so a candidate whose recorded
+					// PreGotoState is only reachable after those reduces can
+					// still splice. Settling is a FALLBACK, never a pre-empt: any
+					// reuse the current state already admits is taken first and
+					// unchanged. It is scoped to positions with a real non-leaf
+					// candidate so it can only advance toward a splice, never
+					// perturb an intra-item trajectory (for example a trailing
+					// comment's attachment). The settled reduces are exactly what
+					// the dispatch loop performs next regardless of lookahead, so
+					// falling through to it below is sound when reuse still does
+					// not apply.
+					forkedDuringSettle := false
+					settled := p.settleEagerDefaultReduceChainForReuse(source, &stacks[0], tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, trackChildErrors, &forkedDuringSettle)
+					if forkedDuringSettle {
+						// A settled reduce forked the stack through a GSS
+						// multi-link. Drain the pending forks into the live
+						// frontier (exactly as the dispatch loop does after its
+						// own reduces) and end the block; the multi-stack
+						// dispatch below handles it -- the block never continues
+						// on a forked frontier (single-stack only).
+						drainPendingForkStacks()
+						blockForked = true
+						break
+					}
+					if settled && len(stacks) == 1 && !stacks[0].dead && !stacks[0].accepted && !stacks[0].shifted && tok.Symbol != 0 {
+						nextTok, ok = p.tryReuseCurrentParseSubtree(&stacks[0], tok, ts, reuse, scratch, arena, &reuseState, timing)
+					}
+				}
+				if !ok {
+					// This member did not pass the gates; the block splits here.
+					break
+				}
+				tok = nextTok
+				reusedAnySibling = true
+				if timing != nil {
+					timing.blockSpliceSteps++
+				}
+				// The block continues only while the frontier stays a single
+				// live, non-accepted stack and the next position begins another
+				// non-leaf top-level splice candidate -- the exact case this
+				// fast loop is proven for. EOF (Symbol 0) ends it. Any other
+				// position falls back to the main loop so ordinary dispatch or
+				// leaf reuse handles it with the full per-iteration machinery.
+				if tok.Symbol == 0 || len(stacks) != 1 || stacks[0].dead || stacks[0].accepted || stacks[0].shifted {
+					break
+				}
+				if !reuse.hasNonLeafCandidateAt(tok.StartByte) {
+					break
+				}
+				// Per-step maintenance mirroring the main loop's single-stack
+				// preamble, minus the multi-stack / merge-cull / progress / audit
+				// machinery a pure single-stack reuse frontier never exercises.
+				// updateParserStateTokenSource is intentionally skipped: reuseNode
+				// already set the token source's parser state to each reused
+				// node's goto and lexed the next lookahead with it, so the main
+				// loop's SetParserState would only re-set the identical value.
+				// Each callee below is internally throttled, so running it per
+				// step stays cheap while preserving every depth/node/memory cap
+				// and the timeout poll.
+				if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+					blockStopReason, blockStopped = reason, true
+					break
+				}
+				p.tryDemoteSingleLinearGSS(stacks, scratch)
+				scratch.gss.setSingleStackMode(true)
+				clearParseStackEntryCaches(stacks)
+				if reason := p.checkpointTransientScratch(stacks, scratch, arena); resultMaterializationShouldStop(reason) {
+					blockStopReason, blockStopped = reason, true
+					break
+				}
+				if d := stacks[0].depth(); d > maxDepth {
+					blockStopReason, blockStopped = ParseStopStackDepthLimit, true
+					break
+				}
+				if nodeCount > maxNodes {
+					blockStopReason, blockStopped = ParseStopNodeLimit, true
+					break
+				}
+				if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+					blockStopReason, blockStopped = reason, true
+					break
+				}
+				if scratch.budgetExhausted() {
+					blockStopReason, blockStopped = p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch), true
+					break
 				}
 			}
-			if ok {
-				tok = nextTok
+			if blockStopped {
+				return finalize(stacks, blockStopReason)
+			}
+			if blockForked {
+				// The block ended on a settle that forked. Fall through to the
+				// multi-stack dispatch below on the drained frontier, exactly as
+				// the pre-block W1b code did. When earlier siblings in this block
+				// already spliced, tok is their advanced (already-lexed)
+				// lookahead, so mark it consumed and reset the no-progress
+				// counters the reuse continue would have.
+				if reusedAnySibling {
+					needToken = false
+					consecutiveReduces = 0
+					consecutiveNoTokenDispatches = 0
+					noTokenProgressHaveLast = false
+				}
+			} else if reusedAnySibling {
 				workCountRefreshConvergenceLookahead(tok)
 				needToken = false
 				consecutiveReduces = 0
@@ -6562,11 +6712,12 @@ func (p *Parser) resolveParseMergePerKeyCap(source []byte, reuse *reuseCursor, m
 	mergePerKeyCap := effectiveParseMergePerKeyCap(p.language, parseMaxMergePerKeyValue(), reuse != nil, len(source))
 	tsNeedsTypedArrow := typeScriptFullParseNeedsTypedArrowMergeWidth(p.language, source, reuse)
 	tsNeedsDefaultParameter := typeScriptFullParseNeedsDefaultParameterMergeWidth(p.language, source, reuse)
+	tsNeedsTypedParameterArrowReturn := typeScriptFullParseNeedsTypedParameterArrowReturnMergeWidth(p.language, source, reuse)
 	if typeScriptFullParseNeedsDestructuredArrowReturnMergeWidth(p.language, source, reuse) {
 		if mergePerKeyCap < maxStacksPerMergeKey {
 			mergePerKeyCap = maxStacksPerMergeKey
 		}
-	} else if (tsNeedsTypedArrow || tsNeedsDefaultParameter) && mergePerKeyCap < 2 {
+	} else if (tsNeedsTypedArrow || tsNeedsDefaultParameter || tsNeedsTypedParameterArrowReturn) && mergePerKeyCap < 2 {
 		mergePerKeyCap = 2
 	}
 	if javaFullParseNeedsAnnotationDeclarationMergeWidth(p.language, source, reuse) && mergePerKeyCap < javaFullParseRetryMaxMergePerKey {

@@ -24,10 +24,12 @@ cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" dist/wasm_exec.js
 cp wasm/loader.js dist/loader.js
 ```
 
-For a deployable single-language bundle, use the asset command instead. It
-selects only the requested language's tables, registry, and scanner support,
-emits the browser-loaded grammar blob as a separate asset, and writes a digest
-manifest alongside the compiler's matching bootstrap:
+For a deployable single-language bundle, use the asset command instead. It:
+
+- selects only the requested language's tables, registry, and scanner
+  support;
+- emits the browser-loaded grammar blob as a separate asset; and
+- writes a digest manifest alongside the compiler's matching bootstrap.
 
 ```sh
 go run ./cmd/wasmassets -language go -output dist/go -compiler go
@@ -52,8 +54,8 @@ repository's built-in blobs live under `grammars/grammar_blobs`; applications
 can serve only the languages they need. The `grammar_blobs_external` build tag
 shown above keeps the complete built-in blob set out of the WASM module. If the
 supported language set is known at build time, combine it with
-`grammar_subset` and the matching `grammar_subset_<language>` tags to retain
-only that language's scanner and registry support.
+`grammar_subset` and the matching `grammar_subset_<language>` tags. This
+retains only that language's scanner and registry support.
 
 When `name` resolves to a registered language with a custom token-source
 factory, the runtime uses that factory consistently for parsing, queries, and
@@ -92,7 +94,7 @@ offsets.
 
 Structured trees retain at most 20,000 nodes. The root has `truncated: true`
 only when additional nodes were omitted. Queries retain at most 500 matches
-and set `truncated: true` when another match exists; execution is bounded by
+and set `truncated: true` when another match exists. Execution is bounded by
 the streaming cursor rather than materializing every match first.
 
 ### Browser example

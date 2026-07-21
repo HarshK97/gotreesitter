@@ -7,6 +7,133 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.45.0] - 2026-07-20
+
+### Fixed
+
+- **TypeScript arrow functions with a return-type annotation** no longer
+  collapse to `ERROR` as a `const`/`let` initializer (issue #402, PR
+  #409). Example: `const f = (a: A): B => { ... }`. The typed-arrow and
+  destructured-arrow-return-type detectors added in PR #389 did not
+  cover this shape. Neither required the arrow to be immediately
+  preceded by `)`. A typed, non-destructured parameter list combined
+  with an explicit return-type annotation fell through both. This fix
+  adds a dedicated detector for that shape. It widens the merge budget
+  to two survivors, matching the typed-arrow and default-parameter
+  cases. TSX was unaffected; its wider JSX conflict set already kept a
+  second survivor alive. The detector also covers parenthesized return
+  types: `(a: A): (B) => a`, `(a: A): (string | number) => a`, and
+  `(a: A): (() => B) => a`. Its backward colon scan now balances
+  parentheses, so a colon nested inside the return type is not mistaken
+  for the top-level boundary. This is the **third** source-heuristic
+  merge-width detector guarding the same root cause as the PR #389
+  default-parameter fix. That root cause: the GLR engine's steady-state
+  merge budget discards a live fork by score before any structural
+  comparison runs.
+  The structural cure — comparing candidate forks structurally before
+  falling back to score at the merge site — remains tracked, in active
+  development on `codex/glr-structure-before-score`. Like its
+  siblings, this detector's backward scan is bounded to a
+  512/2048-byte window; a return-type expression whose own top-level
+  colon sits past that window silently misses the widening.
+- **Go `new(pkg.Type)`, `new(*T)`, `new(**T)`, and parenthesized type
+  arguments** now byte-match the C oracle (issue #375 class, valid
+  forms; PR #408). The parser previously parsed these structured type
+  arguments as expressions, breaking node-for-node parity.
+  `new`/`make` selector, unary, and parenthesized arguments now
+  relabel to the C grammar's type shapes. Byte spans and tree
+  structure are preserved. A composite-literal guard suite locks the
+  boundary: this fix does not touch composite-literal type positions,
+  which already matched.
+
+### Added
+
+- **A per-boundary scanner-quiescence classifier replaces the
+  external-scanner reuse allowlist.** It proves reuse soundness for
+  stateless scanners, refutes stateful opt-out scanners, and defers to
+  the checkpoint match for checkpoint-based scanners (PR #407,
+  campaign O(edit) workstream W4). A new exported
+  `StatelessExternalScanner` interface, in `language.go`, lets a
+  scanner declare itself stateless. `GoExternalScanner` now implements
+  it, under five documented proof obligations that block cross-token
+  state from leaking into reuse boundaries. A new
+  `ReuseRejectScannerUnquiescent` counter, on `IncrementalParseProfile`,
+  tracks boundaries the classifier rejects. An adversarial oracle
+  sweep proves byte-identical incremental and fresh Go parses across
+  newlines, raw strings, and comments; the classifier never blocks Go
+  reuse on that sweep. This change is behavior-neutral groundwork: it
+  does not itself change any parse output.
+- **A new editor-latency CI gate enforces deterministic incremental
+  counters.** It sweeps insert, delete, and replace edits at three
+  file positions, across roughly 20KB, 137KB, and 1MB fixtures in four
+  languages (PR #405, campaign O(edit) workstream W5). The gate checks
+  counter ceilings, byte-reuse floors, and structural parity against a
+  fresh parse, on every default `go test` run. A determinism check
+  runs fresh parsers on identical inputs and asserts the counters
+  match exactly. A manual-dispatch CI job covers the slower 137KB and
+  1MB tiers.
+- **A query silent-wrong witness suite locks four query tranches
+  against the C oracle** (PR #410). D1 range queries, D4 `MISSING`
+  alternation patterns, and D8 `#is?` predicates now match the oracle
+  under committed tests. D3 supertype patterns and D5 quantified
+  captures are tracked, not fixed: their tests are skip-guarded, with
+  the query-engine-scope limitation documented inline.
+
+### Improved
+
+- **Unchanged top-level siblings now splice back as a single block**,
+  inside one parse-loop iteration, instead of one sibling at a time
+  (PR #411, campaign O(edit) workstream W1 block-splice composition).
+  A new scanner-quiescence check lets a quiescent, non-checkpoint
+  external scanner skip re-lexing an unchanged span in O(1), instead
+  of token by token. A new `BlockSpliceSteps` profiling counter tracks
+  block-splice activations. On a clean-Go, near-top, single-byte
+  insert, a 1MB file measures about 148ms on the prior release and
+  about 82-88ms on this one. CSS near-top edits re-lex only 2 tokens.
+  Honest note: the campaign's 60ms target for the 1MB fixture is not
+  met. The residual cost is dominated by O(nodes) result
+  materialization outside the splice path — the Go-compatibility
+  normalization walk, EOF result-selection, and incremental arena
+  zeroing. Threading the edited range through that walk is the
+  tracked next lever.
+- **The diagnostic compact-route materializer allocates far less per
+  operation** (PR #412). Cohort processing, frontier dropping, and
+  election-state tracking now reuse scratch buffers and compact
+  in-place, instead of allocating maps and slices per operation.
+  Measured allocations drop from 1,931-91,341 to 92-316 allocs/op
+  across the fixture set, a 98.5% geomean reduction. The work graph is
+  provably unchanged. This is a diagnostic/candidate-route
+  improvement, not a change to the shipping default parse path.
+
+### Docs
+
+- Publish the sealed run6 benchmark epoch as authoritative in
+  BENCH.md, superseding the v0.40.0 baseline receipt (PR #403).
+- Correct README claims about `ParseIncremental`'s reuse scope, and
+  document the grammargen real-corpus parity floor (PR #404).
+- Add a Phase-3 admission timing runbook, with locked fixtures, host
+  selection paths, and statistical thresholds (PR #406).
+- Sweep remaining documentation prose to the ASD-STE100 style guide
+  (PR #414).
+
+### Known Issues
+
+- The 1MB near-top edit still misses the campaign's 60ms target, at
+  about 82-88ms (PR #411). Threading the edited range through Go's
+  compatibility-normalization walk is the tracked next lever.
+- GLR-heavy files with genuine ambiguity still see little wall-time
+  change from the O(edit) work, because settling and block-splice run
+  on a single stack only (PR #398, PR #411).
+- Query-engine tranches D3 (supertype patterns) and D5 (quantified
+  captures) remain silently wrong against the C oracle. Both are
+  tracked outside query-engine scope, with skip-guarded witness tests
+  (PR #410).
+- The structural merge-policy fix for TypeScript/TSX GLR fork discard
+  is still tracked, in development on
+  `codex/glr-structure-before-score`. This release's arrow-return-type
+  fix (PR #409) is a third source-heuristic detector, not the
+  structural cure.
+
 ## [0.44.1] - 2026-07-20
 
 ### Fixed
@@ -3210,7 +3337,12 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.42.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.45.0...HEAD
+[0.45.0]: https://github.com/odvcencio/gotreesitter/compare/v0.44.1...v0.45.0
+[0.44.1]: https://github.com/odvcencio/gotreesitter/compare/v0.44.0...v0.44.1
+[0.44.0]: https://github.com/odvcencio/gotreesitter/compare/v0.43.1...v0.44.0
+[0.43.1]: https://github.com/odvcencio/gotreesitter/compare/v0.43.0...v0.43.1
+[0.43.0]: https://github.com/odvcencio/gotreesitter/compare/v0.42.0...v0.43.0
 [0.42.0]: https://github.com/odvcencio/gotreesitter/compare/v0.41.0...v0.42.0
 [0.41.0]: https://github.com/odvcencio/gotreesitter/compare/v0.40.0...v0.41.0
 [0.40.0]: https://github.com/odvcencio/gotreesitter/compare/v0.39.0...v0.40.0

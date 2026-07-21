@@ -3114,7 +3114,7 @@ func stackCompareMergeSmallCapOne(a, b *glrStack) int {
 		return -1
 	}
 	if a.score != b.score {
-		if typeScriptCapOneStructurePreference {
+		if typeScriptCapOneStructurePreference.Load() {
 			// Variant B: prefer the structurally-richer fork. The correct
 			// detector-family derivation carries an extra reduction that lowers
 			// its cumulative dynamic-precedence score, so the lower-score fork

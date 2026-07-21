@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"time"
 )
 
@@ -1074,7 +1075,7 @@ func effectiveParseMergePerKeyCap(lang *Language, mergePerKeyCap int, incrementa
 			// Variant B (test seam only): keep the tight cap-one width and fix
 			// the defect at the discard site instead of widening. See
 			// typeScriptCapOneStructurePreference.
-			if typeScriptCapOneStructurePreference {
+			if typeScriptCapOneStructurePreference.Load() {
 				if mergePerKeyCap > 1 {
 					return 1
 				}
@@ -1132,12 +1133,16 @@ func dartIncrementalFallbackCanUseTightMergeCap(sourceLen ...int) bool {
 const typeScriptSteadyStateMergeCap = 2
 
 // typeScriptMergeWidthDetectorsDisabled turns off every TypeScript source-text
-// merge-width detector (typed-arrow, bare-default-parameter, and
-// destructured-arrow-return) at once. It exists ONLY to prove that the
-// structure-aware cap-two steady state subsumes those detectors: a test sets it
-// true, disabling the per-shape widening, and the detector-era regression
-// families must still pass on cap-two alone. It is never set in production.
-var typeScriptMergeWidthDetectorsDisabled = false
+// merge-width detector (typed-arrow, bare-default-parameter,
+// destructured-arrow-return, and typed-parameter-arrow-return) at once. It
+// exists ONLY to prove that the structure-aware cap-two steady state subsumes
+// those detectors: a test sets it true, disabling the per-shape widening, and
+// the detector-era regression families must still pass on cap-two alone. It is
+// never set in production.
+//
+// It is an atomic.Bool, not a plain bool: the parse path reads it while a test
+// toggles it, so a plain global is a data race under -race.
+var typeScriptMergeWidthDetectorsDisabled atomic.Bool
 
 // typeScriptCapOneStructurePreference selects variant B for evaluation: keep
 // the TypeScript full-parse cap at one and, at the cap-one discard site
@@ -1149,10 +1154,13 @@ var typeScriptMergeWidthDetectorsDisabled = false
 // not the faithful GLR keep-both semantics, so it is a test seam ONLY, default
 // off. It is compared head-to-head against the shipping cap-two policy; the flag
 // forces cap-one so the discard-site change is actually exercised.
-var typeScriptCapOneStructurePreference = false
+//
+// It is an atomic.Bool for the same reason: stackCompareMergeSmallCapOne (a
+// parse hot path) reads it while a test toggles it.
+var typeScriptCapOneStructurePreference atomic.Bool
 
 func typeScriptFullParseNeedsTypedArrowMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
-	return !typeScriptMergeWidthDetectorsDisabled &&
+	return !typeScriptMergeWidthDetectorsDisabled.Load() &&
 		lang != nil &&
 		reuse == nil &&
 		!parseMaxMergePerKeyEnvConfigured() &&
@@ -1161,12 +1169,28 @@ func typeScriptFullParseNeedsTypedArrowMergeWidth(lang *Language, source []byte,
 }
 
 func typeScriptFullParseNeedsDestructuredArrowReturnMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
-	return !typeScriptMergeWidthDetectorsDisabled &&
+	return !typeScriptMergeWidthDetectorsDisabled.Load() &&
 		lang != nil &&
 		reuse == nil &&
 		!parseMaxMergePerKeyEnvConfigured() &&
 		(lang.Name == "typescript" || lang.Name == "tsx") &&
 		typeScriptSourceHasDestructuredArrowReturnType(source)
+}
+
+// typeScriptFullParseNeedsTypedParameterArrowReturnMergeWidth reports whether
+// source needs the cap-two merge width for an arrow function whose formal
+// parameter list carries a parameter type annotation (e.g. "(a: A)") and is
+// itself followed by an explicit return-type annotation before the arrow
+// (e.g. "(a: A): B =>"). See
+// typeScriptSourceHasTypedParameterArrowReturnType for the grammar-fork
+// rationale (issue #402).
+func typeScriptFullParseNeedsTypedParameterArrowReturnMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
+	return !typeScriptMergeWidthDetectorsDisabled.Load() &&
+		lang != nil &&
+		reuse == nil &&
+		!parseMaxMergePerKeyEnvConfigured() &&
+		(lang.Name == "typescript" || lang.Name == "tsx") &&
+		typeScriptSourceHasTypedParameterArrowReturnType(source)
 }
 
 func typeScriptSourceHasTypedArrowParameters(source []byte) bool {
@@ -1272,8 +1296,105 @@ func typeScriptSourceHasDestructuredArrowReturnType(source []byte) bool {
 	}
 }
 
+// typeScriptSourceHasTypedParameterArrowReturnType reports whether source
+// contains an arrow function whose parenthesized formal-parameter list
+// carries at least one parameter type annotation (a bare "(a: A)" slot, not
+// a destructured "[" / "{" pattern -- that shape is covered separately by
+// typeScriptSourceHasDestructuredArrowReturnType) and is itself followed by
+// an explicit return-type annotation before the arrow, e.g.
+// "(a: A): B => ...". The locked C grammar's _call_signature production
+// (formal_parameters return_type?) competes, at the identical post-')'
+// state, with reducing the parenthesized parameter list as a plain
+// parenthesized_expression once a top-level ':' follows the ')'. Both
+// derivations are live through the parameter list's own required_parameter
+// reduction (itself only reachable when the parameter carries a
+// type_annotation), so under the steady-state cap-one merge budget (see
+// typescriptFullParseCanUseTightMergeCap) one of the two forks is discarded
+// before the return-type/arrow tokens are seen, collapsing the whole
+// declaration to ERROR (issue #402). An untyped parameter list followed by a
+// return type ("(a): B =>") does not hit this fork: with no type_annotation
+// inside the parameter list, the required_parameter reduction is not itself
+// ambiguous, so the existing steady-state cap is sufficient.
+//
+// This is the third source-heuristic detector guarding the same underlying
+// root cause as typeScriptSourceHasTypedArrowParameters and
+// typeScriptSourceHasBareDefaultParameter: the GLR engine's steady-state
+// merge budget discards a live fork by score before any structural
+// comparison ever runs (stackCompareMergeSmallCapOne). Widening the cap
+// per detected shape treats a symptom, not the defect; the structural cure
+// -- comparing candidate forks structurally before falling back to score at
+// the merge site -- is tracked and in active development on
+// codex/glr-structure-before-score. Detectors like this one should be
+// retired once that lands.
+//
+// The scan walks backward from the arrow, balancing parens so a colon
+// nested inside a parenthesized return type (e.g. "(a: A): (string |
+// number) => a" or "(a: A): (() => B) => a") is not mistaken for the
+// top-level return-type colon; only a colon seen at paren depth zero is a
+// candidate. The walk is bounded to the same 512-byte window as
+// typeScriptSourceHasDestructuredArrowReturnType, and the parameter-list
+// match is bounded to the same 2048-byte window as
+// matchingOpenParenBefore's other callers. A return-type expression whose
+// own top-level colon sits more than 512 bytes before the arrow -- a
+// pathological width no known real-world return-type annotation reaches --
+// silently misses, the same bounded-window trade-off the sibling detectors
+// already accept.
+func typeScriptSourceHasTypedParameterArrowReturnType(source []byte) bool {
+	if len(source) == 0 || !bytes.Contains(source, []byte("=>")) {
+		return false
+	}
+	offset := 0
+	for {
+		rel := bytes.Index(source[offset:], []byte("=>"))
+		if rel < 0 {
+			return false
+		}
+		arrow := offset + rel
+		i := arrow - 1
+		for i >= 0 {
+			switch source[i] {
+			case ' ', '\t', '\n', '\r':
+				i--
+				continue
+			}
+			break
+		}
+		colon := -1
+		parenDepth := 0
+	colonLoop:
+		for j := i; j >= 0 && arrow-j <= 512; j-- {
+			switch source[j] {
+			case ')':
+				parenDepth++
+			case '(':
+				parenDepth--
+			case ':':
+				if parenDepth == 0 {
+					colon = j
+					break colonLoop
+				}
+			}
+		}
+		if colon >= 0 {
+			close := colon - 1
+			for close >= 0 {
+				switch source[close] {
+				case ' ', '\t', '\n', '\r':
+					close--
+					continue
+				}
+				break
+			}
+			if open := matchingOpenParenBefore(source, close, 2048); open >= 0 && bytes.Contains(source[open:close], []byte(":")) {
+				return true
+			}
+		}
+		offset = arrow + len("=>")
+	}
+}
+
 func typeScriptFullParseNeedsDefaultParameterMergeWidth(lang *Language, source []byte, reuse *reuseCursor) bool {
-	return !typeScriptMergeWidthDetectorsDisabled &&
+	return !typeScriptMergeWidthDetectorsDisabled.Load() &&
 		lang != nil &&
 		reuse == nil &&
 		!parseMaxMergePerKeyEnvConfigured() &&

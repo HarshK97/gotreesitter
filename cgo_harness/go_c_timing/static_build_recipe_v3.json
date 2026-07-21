@@ -1,0 +1,56 @@
+{
+  "schema": "gts-locked-static-c-timing-build-recipe/v3",
+  "status": "source_only_unbuilt",
+  "target": "linux/amd64",
+  "driver": {
+    "path": "cgo_harness/pure_c/go_timing_oracle.c",
+    "sha256": "113ebece639f2294f4931822f6faa22b001c48c43b168f25767e73c08509875f"
+  },
+  "runtime": {
+    "commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+    "source_tree_oid": "25d8fa670db2b6393f4aeea845ea718653383714",
+    "lib_c_sha256": "6bca070a6a70740c8e8af244af8a7311dbea09fbb60372376f5260facaf785f0"
+  },
+  "grammar": {
+    "commit": "2346a3ab1bb3857b48b29d779a1ef9799a248cd7",
+    "source_tree_oid": "a653e9338d557a2c7a5b0016f6ddc7e97cc27fff",
+    "parser_c_sha256": "3dbf6ed1238b5dfcf2be4d2f2d4cb27a14d34f34d7784eccccbfd532fd4a6d85"
+  },
+  "toolchain": {
+    "cc_path": "/usr/bin/cc",
+    "gcc_version": "13.3.0-6ubuntu2~24.04.1",
+    "cc_sha256": "1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26",
+    "cc1_sha256": "5d1679131184e2de4435b426eb264bf13472fe026db8e5c6bc97445814e8e2f4",
+    "collect2_sha256": "4d1f341ae5b763b513258ee2812422a45e063c30a2f1924a0cf63d3699f3a158",
+    "as_sha256": "7a2ef948033b05ad0c5dcb0d5be059bc68562b5d45713d91aee21df2b4bf4e92",
+    "ld_sha256": "e46a122cc3a29feba3b1d0fc2a274b6e46538be016ebe381370c0801bb98b0b8",
+    "nm_sha256": "910ad8a63896f722374fdf22951d2a436c74e3ac9677511cc56378296bdf86cc",
+    "readelf_sha256": "871be389739ecf9924b052c2fde4d2a2068a54e882201b9c34897337a5a0a130",
+    "libc_a_sha256": "b6b741da9caadc1a3b58ad990ba3d4bca0ea80e361f90ccd4c01e7f37dbabb20",
+    "libgcc_a_sha256": "d9376c55f97863a4e5fbb6c6beca2591b319bf786f3a7ca56da8964c5662171f",
+    "libgcc_eh_a_sha256": "f853cbbf842ff8714cc8dd986e2fd5bb309d34d490b0707203223ee4d52c76bc"
+  },
+  "environment_policy": {
+    "inherit": "none",
+    "set": {
+      "LANG": "C",
+      "LC_ALL": "C",
+      "TZ": "UTC",
+      "SOURCE_DATE_EPOCH": "0",
+      "GIT_CONFIG_GLOBAL": "/dev/null",
+      "GIT_CONFIG_NOSYSTEM": "1",
+      "PATH": "/usr/bin:/bin",
+      "HOME": "/nonexistent"
+    }
+  },
+  "network": "none",
+  "input_mount": "read_only_normalized_snapshot",
+  "commands": [
+    ["/usr/bin/cc", "-O2", "-DNDEBUG", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-D_DEFAULT_SOURCE", "-fno-pie", "-I<runtime>/lib/include", "-I<runtime>/lib/src", "-c", "<runtime>/lib/src/lib.c", "-o", "runtime.o"],
+    ["/usr/bin/cc", "-O2", "-DNDEBUG", "-std=c11", "-fno-pie", "-I<runtime>/lib/include", "-c", "<grammar>/src/parser.c", "-o", "grammar.o"],
+    ["/usr/bin/cc", "-O2", "-DNDEBUG", "-std=c11", "-D_POSIX_C_SOURCE=200809L", "-fno-pie", "-I<runtime>/lib/include", "-c", "cgo_harness/pure_c/go_timing_oracle.c", "-o", "driver.o"],
+    ["/usr/bin/cc", "-static", "-no-pie", "-O2", "-Wl,-Map=go_timing_oracle.map", "driver.o", "grammar.o", "runtime.o", "-o", "go_timing_oracle"]
+  ],
+  "forbidden": ["-fPIC", "-fPIE", "-pie", "LTO", "PGO", "cgo", "dlopen", "coverage", "sanitizer", "profiler", "runtime_patch", "work_counter", "observer"],
+  "artifact_freeze": "forbidden_until_independent_source_review_and_literal_epoch_input_artifact_hashes"
+}

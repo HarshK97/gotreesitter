@@ -46,15 +46,15 @@ type ReplayDiffReport struct {
 }
 
 // SetTypeScriptMergeWidthDetectorsDisabledForTests toggles every TypeScript
-// source-text merge-width detector (typed-arrow, bare-default-parameter, and
-// destructured-arrow-return) at once and returns a restore function. The
-// external test package uses it to prove that the structure-aware cap-two
-// steady state subsumes those per-shape detectors: with the detectors off, the
-// detector-era regression families must still parse cleanly.
+// source-text merge-width detector (typed-arrow, bare-default-parameter,
+// destructured-arrow-return, and typed-parameter-arrow-return) at once and
+// returns a restore function. The external test package uses it to prove that
+// the structure-aware cap-two steady state subsumes those per-shape detectors:
+// with the detectors off, the detector-era regression families must still parse
+// cleanly.
 func SetTypeScriptMergeWidthDetectorsDisabledForTests(disabled bool) func() {
-	prev := typeScriptMergeWidthDetectorsDisabled
-	typeScriptMergeWidthDetectorsDisabled = disabled
-	return func() { typeScriptMergeWidthDetectorsDisabled = prev }
+	prev := typeScriptMergeWidthDetectorsDisabled.Swap(disabled)
+	return func() { typeScriptMergeWidthDetectorsDisabled.Store(prev) }
 }
 
 // SetTypeScriptCapOneStructurePreferenceForTests selects variant B for
@@ -63,9 +63,21 @@ func SetTypeScriptMergeWidthDetectorsDisabledForTests(disabled bool) func() {
 // before score at the cap-one discard site. It returns a restore function and
 // is never set in production.
 func SetTypeScriptCapOneStructurePreferenceForTests(enabled bool) func() {
-	prev := typeScriptCapOneStructurePreference
-	typeScriptCapOneStructurePreference = enabled
-	return func() { typeScriptCapOneStructurePreference = prev }
+	prev := typeScriptCapOneStructurePreference.Swap(enabled)
+	return func() { typeScriptCapOneStructurePreference.Store(prev) }
+}
+
+// SetForceFullResultNormalizationWalk forces the full-tree result-normalization
+// walk, disabling the incremental range-limited walk (campaign O(edit),
+// spec.campaign.oedit). It exists ONLY so the byte-sweep differential can
+// compare the range-limited walk against the full walk on the SAME Parser and
+// prove they produce identical trees. It lives in export_test.go, so it is
+// compiled only in test builds and is never part of the public API.
+func (p *Parser) SetForceFullResultNormalizationWalk(v bool) {
+	if p == nil {
+		return
+	}
+	p.forceFullResultNormalizationWalk = v
 }
 
 // ReplayDiffTree replays the LR tables over the tree rooted at root and
@@ -275,3 +287,50 @@ func (r ReplayResyncReport) SortedClassStats() []ReplayClassStat {
 	})
 	return out
 }
+
+// ResetAdmissionCandidateCountersForTest zeroes the Phase-3 admission switch
+// counters so the external gotreesitter_test package can assert routing and
+// fallback movements in isolation.
+func ResetAdmissionCandidateCountersForTest() {
+	resetAdmissionCandidateCounters()
+}
+
+// AdmissionCandidateEnvEnabledForTest exposes the GTS_ADMISSION_CANDIDATE
+// parsing that init uses to seed the process-wide default, so the external test
+// package can assert the environment contract deterministically.
+func AdmissionCandidateEnvEnabledForTest() bool {
+	return admissionCandidateEnvEnabled()
+}
+
+// AdmissionSubParserProbe bundles internal sub-parser construction so the
+// external test package can prove recovery, snippet, and injection sub-parsers
+// are born pinned to the production route.
+func AcquireSnippetParserForTest(lang *Language) *Parser { return acquireSnippetParser(lang) }
+
+// ReleaseSnippetParserForTest returns a snippet parser to its pool.
+func ReleaseSnippetParserForTest(p *Parser) { releaseSnippetParser(p) }
+
+// InjectionChildParserForTest returns a freshly constructed injection child
+// parser via the same getParser path the injection engine uses.
+func InjectionChildParserForTest(lang *Language) *Parser {
+	ip := NewInjectionParser()
+	return ip.getParser("test", lang)
+}
+
+// ParserPinnedToProductionForTest reports whether p carries the production-only
+// override that pinToProductionRoute installs.
+func ParserPinnedToProductionForTest(p *Parser) bool {
+	return p != nil && p.admissionCandidateRoute == admissionRouteProductionForced
+}
+
+// ParserAdmissionEligibleForTest reports whether p would route a fresh DFA full
+// parse through the compact candidate right now.
+func ParserAdmissionEligibleForTest(p *Parser) bool {
+	return p.admissionCandidateFullParseEligible(nil, true)
+}
+
+// ParserPoolCheckoutForTest checks a parser out of the pool (applying defaults).
+func ParserPoolCheckoutForTest(pp *ParserPool) *Parser { return pp.checkout() }
+
+// ParserPoolReleaseForTest returns a parser to the pool (applying defaults).
+func ParserPoolReleaseForTest(pp *ParserPool, p *Parser) { pp.release(p) }

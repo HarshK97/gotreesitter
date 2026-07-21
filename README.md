@@ -538,11 +538,6 @@ witness, and it shrinks as certified engine mechanisms subsume shims. See
   a ceiling on the maximum input complexity that parses without error.
   The caps are tunable but not removable without risking unbounded
   resource consumption.
-- **TypeScript arrow-function return type**: an arrow function with a
-  return-type annotation as a `const`/`let` initializer parses as
-  `ERROR` (TSX is unaffected). See
-  [issue #402](https://github.com/odvcencio/gotreesitter/issues/402).
-  A fix is in progress.
 
 ## Adding a language
 
@@ -749,18 +744,19 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.44.1**. It closes a fast-follow gap:
-v0.44.0's Swift DFA-minimization fix regenerated `swift.bin` but left a
-stale profile digest, so Swift's retry-ladder optimizations silently
-did not attach. The digest is now correct, and the effect was
-performance-only. It also lands the O(edit) `W1b` settling fix: Go
-clean-file incremental edits now cost O(edit), not O(file).
-`ReuseRejectRootNonLeafChanged` holds at 9 regardless of file size, and
-a 137KB near-top insert drops from about 47ms to about 22ms. GLR-heavy
-files with genuine ambiguity see little change, since settling runs on
-a single stack only. The prior release, v0.44.0, fixed Swift's
-`Language()` memory ceiling breach, from about 490 MB to about 25 MB,
-and raised CSS editor-edit node reuse from 63.8% to 99.5%.
+The current release is **v0.45.0**. It fixes TypeScript arrow functions
+with a return-type annotation, which previously collapsed to `ERROR` as
+a `const`/`let` initializer (issue #402). It also fixes Go
+`new(pkg.Type)`, `new(*T)`, and parenthesized type arguments to
+byte-match the C oracle (issue #375 class). Unchanged top-level
+siblings now splice back as a single block. A clean-Go, near-top, 1MB
+edit measures about 82-88ms, down from about 148ms. The campaign's
+60ms target is not yet met; residual cost sits in result
+materialization outside the splice path. GLR-heavy files with genuine
+ambiguity still see little change, since settling and block-splice run
+on a single stack only. The prior release, v0.44.1, restored Swift's
+retry-ladder optimizations and made Go clean-file incremental edits
+O(edit).
 The authenticated production receipt at tag target `1935a42c` measures
 public `Parser.Parse` at **4.851050x C** by equal-fixture geomean,
 **5.472406x C** by fixed-suite sum, and **5.608320x C** on the worst

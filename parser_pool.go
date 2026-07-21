@@ -118,6 +118,12 @@ func (pp *ParserPool) applyDefaults(p *Parser) {
 	p.pendingFullParents = false
 	p.skipInvisibleFullLeafCheckpoints = false
 	p.noResultCompatibilityBenchmarkOnly = false
+	// Scrub the Phase-3 admission switch state so a pooled parser follows the
+	// process-wide default again and never carries a stale override, suppression
+	// depth, or cached compact runner across checkouts.
+	p.admissionCandidateRoute = admissionRouteFollowDefault
+	p.admissionRouteSuppressed = 0
+	p.admissionCandidateRunner = nil
 }
 
 func (pp *ParserPool) checkout() *Parser {

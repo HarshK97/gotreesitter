@@ -101,6 +101,13 @@ func (r *parserCoreFreshFullRunner) executeSchedulerOpen(source []byte, compact 
 
 func requireParserCoreFreshFullAcceptance(scheduler *diagnosticParserCoreGenericScheduler, sourceBytes int) error {
 	if scheduler == nil || scheduler.receipt == nil || scheduler.receipt.Acceptance == nil || scheduler.acceptedHead.Node == 0 {
+		// GTS_ADMISSION_CENSUS=1 (admission_census.go) re-surfaces the boundary
+		// and detail the scheduler already recorded in scheduler.receipt.Stop
+		// when it declined mid-run. Unset (the default), this branch is
+		// byte-identical to before that instrumentation existed.
+		if admissionCensusEnabled() {
+			return admissionCensusStopDecline(scheduler)
+		}
 		return errors.New("parser-core fresh-full runner did not accept EOF")
 	}
 	if sourceBytes < 0 || uint64(sourceBytes) > uint64(^uint32(0)) {
@@ -112,6 +119,10 @@ func requireParserCoreFreshFullAcceptance(scheduler *diagnosticParserCoreGeneric
 		acceptance.Token.Missing || acceptance.Token.NoLookahead || acceptance.Token.ExternalScannerToken ||
 		!acceptance.Header.Header.Accepted || acceptance.Header.Header.Paused || acceptance.Header.Header.ExactPaths != 1 ||
 		acceptance.Header.Header.ByteOffset != wantEOF || acceptance.Accepts != 1 || acceptance.Work.Accepts != 1 {
+		// See the comment above: census classification is opt-in and additive.
+		if admissionCensusEnabled() {
+			return admissionCensusAcceptanceDecline(acceptance, wantEOF)
+		}
 		return fmt.Errorf("parser-core fresh-full runner acceptance is not sole exact EOF: token=%+v header=%+v accepts=%d/%d",
 			acceptance.Token, acceptance.Header.Header, acceptance.Accepts, acceptance.Work.Accepts)
 	}

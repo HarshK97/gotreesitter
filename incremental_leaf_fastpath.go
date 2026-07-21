@@ -1151,6 +1151,12 @@ func reuseTreeWithNewSource(oldTree *Tree, source []byte, dirtyNode *Node, clear
 	tree.forestFastPath = oldTree.forestFastPath
 	tree.incrementalReuseDisabled = oldTree.incrementalReuseDisabled
 	tree.compactMaterialized = oldTree.compactMaterialized
+	// This tree shares the old root, so shouldNormalizeIncrementalReturnedTree
+	// skips result normalization for it (same root). Even if a range-limited
+	// pass ever ran here, incrementalReparsedTopLevelRanges would read this
+	// shared tree's arenas rather than any freshly reparsed span, but the walk
+	// stays sound: the shared tree is already normalized and the range-limited Go
+	// normalizers are idempotent, so re-running them changes nothing.
 	return tree
 }
 

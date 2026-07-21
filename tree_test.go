@@ -370,7 +370,7 @@ func TestFinalizeResultRootDefersSelectedLanguageParentLinks(t *testing.T) {
 			root := newParentNodeInArenaNoLinksWithFieldSources(arena, Symbol(2), true, children, nil, nil, 0, false)
 			parser := NewParser(&Language{Name: name})
 
-			parser.finalizeResultRoot(root, []byte("x"), nil, true, false)
+			parser.finalizeResultRoot(root, []byte("x"), nil, true, false, nil)
 
 			if !arena.parentLinksDeferred.Load() {
 				t.Fatalf("expected %s finalization to defer parent links", name)
