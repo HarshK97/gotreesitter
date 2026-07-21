@@ -41,6 +41,19 @@ for tags and release notes while still in `0.x`.
   scanner proofs land. The W5 latency gate now locks these counters per
   edit position.
 
+### Removed
+
+- **The four TypeScript merge-width source-text detectors** (PR #422).
+  The structure-before-score cap-two steady state from PR #416
+  subsumes all four detector shapes, so the detector functions, their
+  wrapper gates, their helpers, and the test seam are deleted. A
+  byte-match test proves cap-two produces trees identical to the old
+  cap-six widening on the destructured shape, at 300KB scale. One
+  behavioral change: an accepted-error incremental retry for the
+  destructured-arrow shape now runs one base-cap retry pass. The
+  strict retry-preference gate keeps the selected tree the same or
+  strictly better.
+
 ## [0.45.0] - 2026-07-20
 
 ### Fixed

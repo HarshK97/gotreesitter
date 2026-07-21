@@ -41,13 +41,15 @@ func ironwoodParseNoFatal(t *testing.T, name, src string) (*gotreesitter.Tree, *
 	return tree, lang
 }
 
-// typeScriptMergeCapSubsumptionShapes are the source shapes that three
+// typeScriptMergeCapSubsumptionShapes are the source shapes that four
 // now-retired per-shape TypeScript merge-width detectors were added to fix:
 //   - bare default parameter ("function f(a = 1)") and its array-element,
 //     renamed-property, arrow, and method variants (PR #389 detector 1)
 //   - destructured arrow return type (PR #389 detector 2)
 //   - typed-parameter arrow return type ("(a: A): B =>", PR #409 / issue #402
 //     detector 3)
+//   - typed arrow parameters with no return type ("(a: A) => body",
+//     PR #389 detector 4)
 //
 // The detectors were retired in favor of the structure-aware cap-two steady
 // state (typeScriptSteadyStateMergeCap), which the tests below prove subsumes
@@ -70,6 +72,8 @@ var typeScriptMergeCapSubsumptionShapes = []struct {
 	{"typedParameterArrowReturnTSX", "tsx", "const f = (a: A): B => { return a; };\n", []string{"arrow_function"}},
 	{"typedParameterArrowReturnExport", "typescript", "export const f = (a: A): B => { return a; };\n", []string{"arrow_function"}},
 	{"destructuredArrowReturn", "typescript", "const remainingPaths = arrayFrom(allFileNames.entries(), ([fileName, { isRedirect, isInNodeModules }]): ModulePath => ({ path: fileName, isRedirect, isInNodeModules }));\n", []string{"arrow_function", "array_pattern", "type_annotation"}},
+	{"typedArrowNoReturn", "typescript", "const f = (a: A) => a;\n", []string{"arrow_function", "required_parameter"}},
+	{"typedArrowNoReturnTSX", "tsx", "const f = (a: A) => a;\n", []string{"arrow_function", "required_parameter"}},
 }
 
 // TestTypeScriptMergeCapSubsumesDetectors is the subsumption proof for the
