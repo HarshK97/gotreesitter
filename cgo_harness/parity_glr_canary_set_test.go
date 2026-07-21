@@ -13,9 +13,14 @@ type glrCanaryCase struct {
 
 var glrCanaryCases = []glrCanaryCase{
 	{
-		lang:      "go",
-		name:      "ambiguous-call",
-		source:    "package main\nfunc main(){ println(\"hello\") }\n",
+		lang: "go",
+		name: "ambiguous-call",
+		// The generic-instantiation / type-conversion conflict: production forks
+		// Foo[int](a) into the generic_type/type_conversion arm and the
+		// index_expression/call arm. This is a real GLR fork (post-flip the
+		// compact route declines it and falls back to production, which reports
+		// the branching), unlike the previous single-stack println smoke input.
+		source:    "package main\nfunc f() { _ = Foo[int](a) }\n",
 		minStacks: 2,
 	},
 	{

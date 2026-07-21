@@ -1872,6 +1872,9 @@ func TestParseWithSnippetParserInheritsParentCancellation(t *testing.T) {
 
 func TestParserParseClearsRecoveryParserAcrossTopLevelParses(t *testing.T) {
 	parser := NewParser(buildArithmeticLanguage())
+	// Pin to production: this test asserts a production-engine internal (the
+	// recovery-parser lifecycle), which the compact candidate route never touches.
+	parser.SetAdmissionCandidateRoute(false)
 	parser.recoveryParser = NewParser(buildArithmeticLanguage())
 
 	if _, err := parser.Parse([]byte("1+2")); err != nil {

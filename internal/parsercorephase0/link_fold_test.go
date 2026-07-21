@@ -49,14 +49,24 @@ func appendShallowPayload(t *testing.T, core *Core, spec shallowPayloadSpec) Sub
 	return payload
 }
 
+// TestDiagnosticShallowFoldChildBearingParentSelectsHigherAggregateScore proves
+// the shallow-payload fold ranks two structurally different same-span payloads by
+// aggregate dynamic precedence: the strictly higher score wins, the strictly
+// lower score is dropped, and a precedence TIE is NOT resolved by insertion order.
+// A tie between structurally different payloads is a genuine ambiguity the compact
+// route cannot rank, so both links must coexist as alternates (see
+// Core.condenseWithOutcomeAtomic); the sole-exact acceptance gate then fails closed rather
+// than routing one arm silently. This is the fix for the Go generic-instantiation
+// / type-conversion divergence the Phase-3 admission flip surfaced.
 func TestDiagnosticShallowFoldChildBearingParentSelectsHigherAggregateScore(t *testing.T) {
 	for _, test := range []struct {
 		name          string
 		incomingScore int64
 		wantIncoming  bool
+		wantCoexist   bool
 	}{
 		{name: "lower", incomingScore: 9},
-		{name: "equal", incomingScore: 10},
+		{name: "equal", incomingScore: 10, wantCoexist: true},
 		{name: "higher", incomingScore: 11, wantIncoming: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -81,6 +91,39 @@ func TestDiagnosticShallowFoldChildBearingParentSelectsHigherAggregateScore(t *t
 			})
 			if err != nil {
 				t.Fatal(err)
+			}
+
+			if test.wantCoexist {
+				// A precedence tie between structurally different payloads keeps both
+				// links as alternates on a fresh head.
+				if newHead == oldHead {
+					t.Fatalf("precedence tie retained historical head %+v instead of coexisting", oldHead)
+				}
+				paths, err := core.Derivations(newHead)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := map[SubtreeID]int64{incumbent: 10, incoming: test.incomingScore}
+				if len(paths) != len(want) {
+					t.Fatalf("tie coexistence derivations = %#v, want both payloads %v", paths, want)
+				}
+				for _, path := range paths {
+					if len(path.Payloads) != 1 {
+						t.Fatalf("unexpected derivation shape %#v", path)
+					}
+					wantScore, ok := want[path.Payloads[0]]
+					if !ok {
+						t.Fatalf("unexpected coexisting payload %#v", path)
+					}
+					if path.Score != wantScore {
+						t.Fatalf("coexisting payload %d score=%d want=%d", path.Payloads[0], path.Score, wantScore)
+					}
+					delete(want, path.Payloads[0])
+				}
+				if len(want) != 0 {
+					t.Fatalf("tie coexistence dropped payloads %v", want)
+				}
+				return
 			}
 
 			wantPayload, wantScore, wantOrder := incumbent, int64(10), uint64(7)
@@ -133,14 +176,28 @@ func TestCondenseOutcomeClassifiesBoundaryFreshness(t *testing.T) {
 		t.Fatalf("exact outcome=%+v err=%v, want unchanged head %+v", exact, err, created.head)
 	}
 
+	// A strictly lower aggregate score is dominated and dropped (the boundary is
+	// unchanged). A precedence TIE between structurally different payloads is a
+	// genuine ambiguity that must coexist as an alternate, so it publishes a fresh
+	// head instead of silently dropping. The extra alternate is what lets the
+	// sole-exact acceptance gate fail closed on real ambiguous inputs.
 	lower := appendShallowPayload(t, core, shallowPayloadSpec{
 		symbol: 20, productionID: 2, startByte: 12, endByte: 17, childSymbols: []Symbol{31},
 	})
-	for _, score := range []int64{9, 10} {
-		outcome, err := core.condenseWithOutcome(key, linkInput{prev: seed.Node, payload: lower, scoreDelta: score})
-		if err != nil || outcome.change != condenseUnchanged || outcome.head != created.head {
-			t.Fatalf("non-winning score %d outcome=%+v err=%v", score, outcome, err)
-		}
+	dropped, err := core.condenseWithOutcome(key, linkInput{prev: seed.Node, payload: lower, scoreDelta: 9})
+	if err != nil || dropped.change != condenseUnchanged || dropped.head != created.head {
+		t.Fatalf("dominated score outcome=%+v err=%v, want unchanged head %+v", dropped, err, created.head)
+	}
+	tie, err := core.condenseWithOutcome(key, linkInput{prev: seed.Node, payload: lower, scoreDelta: 10})
+	if err != nil || tie.change != condenseUpdated || tie.head == created.head {
+		t.Fatalf("structural tie outcome=%+v err=%v, want a fresh coexisting head", tie, err)
+	}
+	tiePaths, err := core.Derivations(tie.head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tiePaths) != 2 {
+		t.Fatalf("structural tie head folded to %#v, want two coexisting alternates", tiePaths)
 	}
 
 	higher := appendShallowPayload(t, core, shallowPayloadSpec{
@@ -189,10 +246,22 @@ func TestDiagnosticShallowFoldZeroChildParentHasZeroEffectivePrecedence(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if head != oldHead {
-		t.Fatalf("effective-zero incoming parent replaced incumbent: old=%+v new=%+v", oldHead, head)
+	// Both zero-child payloads have zero effective precedence (childCount == 0),
+	// so the aggregate scores cannot rank them: this is a precedence tie. The two
+	// payloads are structurally different (different production), so the compact
+	// route must not keep one by insertion order. It coexists them as alternates,
+	// so the sole-exact acceptance gate can fail closed on real ambiguous inputs.
+	if head == oldHead {
+		t.Fatalf("zero-precedence tie collapsed to a single head %+v instead of coexisting", oldHead)
 	}
 	paths, err := core.Derivations(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("zero-precedence tie folded to %#v, want two coexisting alternates", paths)
+	}
+	oldPaths, err := core.Derivations(oldHead)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,8 +269,8 @@ func TestDiagnosticShallowFoldZeroChildParentHasZeroEffectivePrecedence(t *testi
 		Payloads: []SubtreeID{incumbent}, Score: 7,
 		BranchOrder: 3, HasBranchOrder: true,
 	}}
-	if !reflect.DeepEqual(paths, want) {
-		t.Fatalf("zero-child parent paths=%#v, want stored incumbent score/order %#v", paths, want)
+	if !reflect.DeepEqual(oldPaths, want) {
+		t.Fatalf("historical zero-child head mutated: paths=%#v, want stored incumbent score/order %#v", oldPaths, want)
 	}
 }
 

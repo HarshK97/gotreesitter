@@ -1,4 +1,4 @@
-//go:build !gts_parsercorephase0
+//go:build gts_no_parsercorephase0
 
 package gotreesitter_test
 
@@ -10,10 +10,10 @@ import (
 )
 
 // TestAdmissionSwitchDefaultBuildFallsBackLoudly proves the fail-closed
-// contract in the shipped default build: with the switch on, an eligible fresh
-// full parse attempts the candidate route, is declined (the compact engine is
-// not compiled in), bumps the fallback counter, records a loud reason, and
-// returns the correct production tree.
+// contract in the emergency opt-out build (-tags gts_no_parsercorephase0):
+// with the switch on, an eligible fresh full parse attempts the candidate
+// route, is declined (the compact engine is compiled out), bumps the fallback
+// counter, records a loud reason, and returns the correct production tree.
 func TestAdmissionSwitchDefaultBuildFallsBackLoudly(t *testing.T) {
 	restore := gts.AdmissionCandidateRouteDefault()
 	defer gts.SetAdmissionCandidateRouteDefault(restore)
@@ -37,7 +37,7 @@ func TestAdmissionSwitchDefaultBuildFallsBackLoudly(t *testing.T) {
 	if fallbackAfter != fallbackBefore+1 {
 		t.Fatalf("default build must fall back loudly: fallback %d -> %d", fallbackBefore, fallbackAfter)
 	}
-	if reason := gts.AdmissionCandidateLastFallbackReason(); !strings.Contains(reason, "not compiled in") {
+	if reason := gts.AdmissionCandidateLastFallbackReason(); !strings.Contains(reason, "compiled out") {
 		t.Fatalf("fallback reason must name the missing engine, got %q", reason)
 	}
 }

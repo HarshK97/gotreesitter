@@ -252,6 +252,7 @@ func TestRawShapeElisionDifferentialPrefixThenFork(t *testing.T) {
 //     exactly the pre/post-flatten mismatch compareRawStackEntriesRec's
 //     one-sided-shape fallback (parser_reduce.go's aHasShape != bHasShape
 //     branch) has to resolve without inventing an answer.
+//
 //   - the two fork alternatives (A, B) are wrapped by two separate unary
 //     productions into the SAME shared root symbol "Top", so the two
 //     accepted stacks being compared for final result selection literally
@@ -259,11 +260,11 @@ func TestRawShapeElisionDifferentialPrefixThenFork(t *testing.T) {
 //     compareAcceptedStackRawShapePreference to descend at least one level
 //     instead of returning at depth 0.
 //
-//	_hidden -> x x        (production 0, 2 children, invisible)
-//	pre     -> _hidden     (production 1, 1 child)   -- single-stack, elided
-//	A       -> pre x        (production 2, 2 children)
-//	B       -> pre x        (production 3, 2 children)
-//	Top     -> A y  |  Top -> B y   (production 4, 2 children each, same symbol)
+//     _hidden -> x x        (production 0, 2 children, invisible)
+//     pre     -> _hidden     (production 1, 1 child)   -- single-stack, elided
+//     A       -> pre x        (production 2, 2 children)
+//     B       -> pre x        (production 3, 2 children)
+//     Top     -> A y  |  Top -> B y   (production 4, 2 children each, same symbol)
 //
 // Feeding "x x x y" builds "pre" deterministically while singleStackMode is
 // true (two x's fold into _hidden, then pre wraps _hidden), consumes a third
@@ -303,24 +304,24 @@ func buildPrefixForkHiddenChildLanguage() *Language {
 		FieldNames: []string{""},
 
 		ParseActions: []ParseActionEntry{
-			{Actions: nil},                                                                                  // 0: error
-			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},                                    // 1: S0 col x
-			{Actions: []ParseAction{{Type: ParseActionShift, State: 3}}},                                    // 2: S0 col _hidden (goto)
-			{Actions: []ParseAction{{Type: ParseActionShift, State: 4}}},                                    // 3: S0 col pre (goto)
-			{Actions: []ParseAction{{Type: ParseActionShift, State: 6}}},                                    // 4: S0 col A (goto)
-			{Actions: []ParseAction{{Type: ParseActionShift, State: 7}}},                                    // 5: S0 col B (goto)
-			{Actions: []ParseAction{{Type: ParseActionShift, State: 9}}},                                    // 6: S0 col Top (goto)
-			{Actions: []ParseAction{{Type: ParseActionShift, State: 2}}},                                    // 7: S1 col x (second x)
+			{Actions: nil}, // 0: error
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},                                   // 1: S0 col x
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 3}}},                                   // 2: S0 col _hidden (goto)
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 4}}},                                   // 3: S0 col pre (goto)
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 6}}},                                   // 4: S0 col A (goto)
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 7}}},                                   // 5: S0 col B (goto)
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 9}}},                                   // 6: S0 col Top (goto)
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 2}}},                                   // 7: S1 col x (second x)
 			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 3, ChildCount: 2, ProductionID: 0}}}, // 8: S2 reduce _hidden -> x x
 			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 4, ChildCount: 1, ProductionID: 1}}}, // 9: S3 reduce pre -> _hidden
-			{Actions: []ParseAction{{Type: ParseActionShift, State: 5}}},                                    // 10: S4 col x (third x)
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 5}}},                                   // 10: S4 col x (third x)
 			{Actions: []ParseAction{ // 11: S5 col y -- GLR reduce/reduce fork
 				{Type: ParseActionReduce, Symbol: 5, ChildCount: 2, ProductionID: 2, DynamicPrecedence: 0},
 				{Type: ParseActionReduce, Symbol: 6, ChildCount: 2, ProductionID: 3, DynamicPrecedence: 0},
 			}},
-			{Actions: []ParseAction{{Type: ParseActionShift, State: 8}}},                                    // 12: S6/S7 col y
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 8}}},                                   // 12: S6/S7 col y
 			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 7, ChildCount: 2, ProductionID: 4}}}, // 13: S8 reduce Top -> (A|B) y
-			{Actions: []ParseAction{{Type: ParseActionAccept}}},                                             // 14: S9 accept
+			{Actions: []ParseAction{{Type: ParseActionAccept}}},                                            // 14: S9 accept
 		},
 
 		// Columns: EOF(0), x(1), y(2), _hidden(3), pre(4), A(5), B(6), Top(7)
@@ -365,7 +366,11 @@ func buildPrefixForkHiddenChildLanguage() *Language {
 // effect (2 materialized children under "pre", not 1).
 func TestPrefixForkHiddenChildLanguageActuallyForks(t *testing.T) {
 	lang := buildPrefixForkHiddenChildLanguage()
-	tree := mustParse(t, NewParser(lang), []byte("x x x y"))
+	// Pin to production: this test asserts a production-engine GSS internal
+	// (MaxStacksSeen fork count) the compact candidate route does not populate.
+	parser := NewParser(lang)
+	parser.SetAdmissionCandidateRoute(false)
+	tree := mustParse(t, parser, []byte("x x x y"))
 	defer tree.Release()
 
 	rt := tree.ParseRuntime()
@@ -416,14 +421,20 @@ func TestRawShapeElisionDifferentialPrefixThenForkSharedRootSymbol(t *testing.T)
 	lang := buildPrefixForkHiddenChildLanguage()
 	source := []byte("x x x y")
 
+	// Pin to production: this test asserts production-engine GSS internals
+	// (MaxStacksSeen fork count) the compact candidate route does not populate.
 	SetRawShapeElisionDisabledForDiagnostics(false)
-	gateOn := mustParse(t, NewParser(lang), source)
+	gateOnParser := NewParser(lang)
+	gateOnParser.SetAdmissionCandidateRoute(false)
+	gateOn := mustParse(t, gateOnParser, source)
 	defer gateOn.Release()
 	gateOnRuntime := gateOn.ParseRuntime()
 
 	SetRawShapeElisionDisabledForDiagnostics(true)
 	defer SetRawShapeElisionDisabledForDiagnostics(false)
-	gateOff := mustParse(t, NewParser(lang), source)
+	gateOffParser := NewParser(lang)
+	gateOffParser.SetAdmissionCandidateRoute(false)
+	gateOff := mustParse(t, gateOffParser, source)
 	defer gateOff.Release()
 	gateOffRuntime := gateOff.ParseRuntime()
 

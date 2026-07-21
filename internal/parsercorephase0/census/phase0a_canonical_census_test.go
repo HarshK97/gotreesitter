@@ -77,7 +77,7 @@ var currentCanonicalCensus = map[string]currentCensusContract{
 	"query_compile": {routes: 8103, links: 14703, migrations: 32, spine: 1, raw: 11331, public: 7524, terminals: 5125, reductions: 6206, migrated: 17, maxDepth: 78, digest: "c6ab3989e0492de265c74ce19526d85d30223801b984156b4fa4d265f1a65a85"},
 	"rewrite":       {routes: 1646, links: 2995, migrations: 16, spine: 1, raw: 2237, public: 1524, terminals: 1035, reductions: 1202, migrated: 16, maxDepth: 40, digest: "728ea27e31b3972b019db8b1e817d53caec9d905930df29ae475fe94846caad8"},
 	"language":      {routes: 8408, links: 15864, migrations: 256, spine: 6, raw: 10761, public: 7082, terminals: 5057, reductions: 5704, migrated: 150, maxDepth: 125, digest: "481aba4139174c63b03fa6856b427fa09268539e240f951ac8fe40cf1e0fe006"},
-	"grammargen_lr": {routes: 84924, links: 153451, migrations: 316, spine: 1, raw: 109614, public: 71768, terminals: 49911, reductions: 59703, migrated: 218, maxDepth: 348, digest: "e7a5faa302b6b27539694c0a08830cf026a288f6813607a3687a96340eaaab44"},
+	"grammargen_lr": {routes: 84928, links: 153463, migrations: 316, spine: 1, raw: 109614, public: 71768, terminals: 49911, reductions: 59703, migrated: 218, maxDepth: 348, digest: "e7a5faa302b6b27539694c0a08830cf026a288f6813607a3687a96340eaaab44"},
 }
 
 func TestCanonicalAcceptedRouteSpineCensus(t *testing.T) {

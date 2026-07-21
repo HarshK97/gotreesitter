@@ -98,6 +98,35 @@ func parseGo(t *testing.T, src string) (*gotreesitter.Tree, *gotreesitter.Langua
 	return tree, lang
 }
 
+// parseGoProduction is parseGo pinned to the production route. Use it for tests
+// that assert a production-engine Go behavior (for example the go-newmake
+// normalization or a production-vs-C-oracle tree shape) whose reference tree
+// the compact candidate route does not reproduce identically.
+func parseGoProduction(t *testing.T, src string) (*gotreesitter.Tree, *gotreesitter.Language) {
+	t.Helper()
+	lang := grammars.GoLanguage()
+	parser := gotreesitter.NewParser(lang)
+	parser.SetAdmissionCandidateRoute(false)
+	srcBytes := []byte(src)
+	var (
+		tree *gotreesitter.Tree
+		err  error
+	)
+	if _, ok := lang.SymbolByName("source_file_token1"); ok {
+		ts := mustGoTokenSource(t, srcBytes, lang)
+		tree, err = parser.ParseWithTokenSource(srcBytes, ts)
+	} else {
+		tree, err = parser.Parse(srcBytes)
+	}
+	if err != nil {
+		t.Fatalf("parse failed: %v", err)
+	}
+	if tree.RootNode() == nil {
+		t.Fatal("parse returned nil root")
+	}
+	return tree, lang
+}
+
 func TestParseGoPackageOnly(t *testing.T) {
 	tree, lang := parseGo(t, "package main\n")
 	root := tree.RootNode()

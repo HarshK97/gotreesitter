@@ -129,7 +129,11 @@ func TestParseReclaimsRawShapeStorageAccountsForZeroOnSingleStackParse(t *testin
 	defer EnableArenaBreakdown(false)
 
 	lang := buildArithmeticLanguage()
-	tree := mustParse(t, NewParser(lang), []byte("1+2+3+4"))
+	// Pin to production: this test asserts a production-engine internal (arena
+	// raw-shape reclaim breakdown) the compact candidate route does not report.
+	parser := NewParser(lang)
+	parser.SetAdmissionCandidateRoute(false)
+	tree := mustParse(t, parser, []byte("1+2+3+4"))
 	defer tree.Release()
 
 	rt := tree.ParseRuntime()

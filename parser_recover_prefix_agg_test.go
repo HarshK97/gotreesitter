@@ -280,6 +280,9 @@ func TestResetGSSPrefixPathClearsAndBoundsRetention(t *testing.T) {
 
 func TestParseFinalizationClearsPrefixPathPointers(t *testing.T) {
 	parser := NewParser(buildArithmeticLanguage())
+	// Pin to production: this test asserts a production-engine internal (the C
+	// recovery prefix-path pointer pool), which the compact route never uses.
+	parser.SetAdmissionCandidateRoute(false)
 	nodes := []*gssNode{{}, {}, {}}
 	parser.cPrefixPath = nodes[:1]
 

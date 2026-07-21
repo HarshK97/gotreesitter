@@ -13,6 +13,10 @@ func TestParseRuntimeReportsAcceptedOnCompleteParse(t *testing.T) {
 
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)
+	// Pin to production: this test asserts production-engine runtime internals
+	// (iteration limits, arena accounting) the compact candidate route does not
+	// populate.
+	parser.SetAdmissionCandidateRoute(false)
 
 	tree := mustParse(t, parser, []byte("1+2"))
 	rt := tree.ParseRuntime()
@@ -1132,6 +1136,9 @@ func TestParseNoTreeBenchmarkDropsRetainedExternalCheckpointCapacity(t *testing.
 	lang.ExternalScanner = byteStateExternalScanner{}
 
 	fullParser := NewParser(lang)
+	// Pin to production: this test asserts a production-engine runtime internal
+	// (external scanner checkpoint allocation) the compact route does not report.
+	fullParser.SetAdmissionCandidateRoute(false)
 	fullTree, err := fullParser.Parse([]byte("1+2"))
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
