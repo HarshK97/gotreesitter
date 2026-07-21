@@ -55,7 +55,7 @@ func appendShallowPayload(t *testing.T, core *Core, spec shallowPayloadSpec) Sub
 // lower score is dropped, and a precedence TIE is NOT resolved by insertion order.
 // A tie between structurally different payloads is a genuine ambiguity the compact
 // route cannot rank, so both links must coexist as alternates (see
-// Core.condenseLinkUnion); the sole-exact acceptance gate then fails closed rather
+// Core.condenseWithOutcomeAtomic); the sole-exact acceptance gate then fails closed rather
 // than routing one arm silently. This is the fix for the Go generic-instantiation
 // / type-conversion divergence the Phase-3 admission flip surfaced.
 func TestDiagnosticShallowFoldChildBearingParentSelectsHigherAggregateScore(t *testing.T) {

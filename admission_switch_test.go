@@ -493,7 +493,7 @@ func TestAdmissionCandidateMemoryBudgetContractPreserved(t *testing.T) {
 // expression) production and the tree-sitter-go C oracle resolve
 // type_conversion_expression(generic_type). The compact scheduler forks the same
 // conflict but cannot rank the two arms by dynamic precedence, so it declines the
-// unauthorized tie fold (see Core.condenseLinkUnion) instead of silently keeping
+// unauthorized tie fold (see Core.condenseWithOutcomeAtomic) instead of silently keeping
 // one arm by insertion order. The parse then falls back to production.
 //
 // This was a tracked correctness divergence (call_expression(index_expression)

@@ -2512,7 +2512,10 @@ func (c *Core) appendAdjacencyNode(state StateID, byteOffset uint32, links []lin
 // Payloads are only compared after a shallow-class match (same symbol, span, and
 // child count), so the walk short-circuits on the first structural difference and
 // stays bounded by the matched subtree's size. Compact payloads are acyclic by
-// construction, so the recursion terminates.
+// construction: appendSubtreeRecord appends every child before its parent, so a
+// child SubtreeID is strictly less than its parent's. The walk enforces that
+// order and returns a fail-closed error on a violation, so the recursion also
+// terminates on a corrupted arena instead of overflowing the stack.
 func (c *Core) subtreesStructurallyEqual(left, right SubtreeID) (bool, error) {
 	if left == right {
 		return true, nil
@@ -2546,6 +2549,9 @@ func (c *Core) subtreesStructurallyEqual(left, right SubtreeID) (bool, error) {
 	leftChildren := c.children[l.firstChild : l.firstChild+l.childCount]
 	rightChildren := c.children[r.firstChild : r.firstChild+r.childCount]
 	for index := range leftChildren {
+		if leftChildren[index] >= left || rightChildren[index] >= right {
+			return false, errors.New("parser-core phase zero: compact subtree child identifier out of order during structural comparison")
+		}
 		equal, err := c.subtreesStructurallyEqual(leftChildren[index], rightChildren[index])
 		if err != nil || !equal {
 			return equal, err
