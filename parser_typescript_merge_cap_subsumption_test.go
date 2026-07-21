@@ -41,15 +41,20 @@ func ironwoodParseNoFatal(t *testing.T, name, src string) (*gotreesitter.Tree, *
 	return tree, lang
 }
 
-// typeScriptMergeCapSubsumptionShapes are the source shapes that the three
-// per-shape TypeScript merge-width detectors were added to fix:
+// typeScriptMergeCapSubsumptionShapes are the source shapes that four
+// now-retired per-shape TypeScript merge-width detectors were added to fix:
 //   - bare default parameter ("function f(a = 1)") and its array-element,
 //     renamed-property, arrow, and method variants (PR #389 detector 1)
 //   - destructured arrow return type (PR #389 detector 2)
 //   - typed-parameter arrow return type ("(a: A): B =>", PR #409 / issue #402
 //     detector 3)
+//   - typed arrow parameters with no return type ("(a: A) => body",
+//     PR #389 detector 4)
 //
-// Each entry lists node types that a correct parse must retain.
+// The detectors were retired in favor of the structure-aware cap-two steady
+// state (typeScriptSteadyStateMergeCap), which the tests below prove subsumes
+// every shape on its own; see PR #416. Each entry lists node types that a
+// correct parse must retain.
 var typeScriptMergeCapSubsumptionShapes = []struct {
 	name        string
 	lang        string
@@ -67,17 +72,18 @@ var typeScriptMergeCapSubsumptionShapes = []struct {
 	{"typedParameterArrowReturnTSX", "tsx", "const f = (a: A): B => { return a; };\n", []string{"arrow_function"}},
 	{"typedParameterArrowReturnExport", "typescript", "export const f = (a: A): B => { return a; };\n", []string{"arrow_function"}},
 	{"destructuredArrowReturn", "typescript", "const remainingPaths = arrayFrom(allFileNames.entries(), ([fileName, { isRedirect, isInNodeModules }]): ModulePath => ({ path: fileName, isRedirect, isInNodeModules }));\n", []string{"arrow_function", "array_pattern", "type_annotation"}},
+	{"typedArrowNoReturn", "typescript", "const f = (a: A) => a;\n", []string{"arrow_function", "required_parameter"}},
+	{"typedArrowNoReturnTSX", "tsx", "const f = (a: A) => a;\n", []string{"arrow_function", "required_parameter"}},
 }
 
 // TestTypeScriptMergeCapSubsumesDetectors is the subsumption proof for the
-// structure-aware cap-two steady state. It disables every TypeScript
-// source-text merge-width detector and asserts that the cap-two steady state
-// alone parses every detector-era bug-family shape cleanly. A pass proves that
-// the detectors are redundant per-shape band-aids that the cap-two merge policy
-// subsumes, rather than the sole thing keeping those shapes correct.
+// structure-aware cap-two steady state: it asserts that cap-two alone parses
+// every detector-era bug-family shape cleanly, with no source-text detector
+// in the loop at all (the detectors this test used to disable are deleted;
+// cap-two is the only configuration now). A pass confirms the detectors were
+// redundant per-shape band-aids that the cap-two merge policy subsumes,
+// rather than the sole thing that ever kept those shapes correct.
 func TestTypeScriptMergeCapSubsumesDetectors(t *testing.T) {
-	restore := gotreesitter.SetTypeScriptMergeWidthDetectorsDisabledForTests(true)
-	defer restore()
 	for _, s := range typeScriptMergeCapSubsumptionShapes {
 		s := s
 		t.Run(s.name, func(t *testing.T) {
@@ -86,30 +92,12 @@ func TestTypeScriptMergeCapSubsumesDetectors(t *testing.T) {
 			root := tree.RootNode()
 			sexpr := root.SExpr(lang)
 			if root.HasError() || strings.Contains(sexpr, "ERROR") {
-				t.Fatalf("%s (%s) has error with detectors disabled: %s", s.name, s.lang, sexpr)
+				t.Fatalf("%s (%s) has error at cap-two: %s", s.name, s.lang, sexpr)
 			}
 			for _, m := range s.mustContain {
 				if !strings.Contains(sexpr, m) {
-					t.Fatalf("%s (%s) missing %q with detectors disabled: %s", s.name, s.lang, m, sexpr)
+					t.Fatalf("%s (%s) missing %q at cap-two: %s", s.name, s.lang, m, sexpr)
 				}
-			}
-		})
-	}
-}
-
-// TestTypeScriptMergeCapDetectorsComposeWithSteadyState is the compose check:
-// with the detectors left ON (the shipping configuration), every subsumption
-// shape must still parse cleanly. The fix and the detectors must coexist.
-func TestTypeScriptMergeCapDetectorsComposeWithSteadyState(t *testing.T) {
-	for _, s := range typeScriptMergeCapSubsumptionShapes {
-		s := s
-		t.Run(s.name, func(t *testing.T) {
-			tree, lang := ironwoodParseNoFatal(t, s.lang, s.src)
-			defer tree.Release()
-			root := tree.RootNode()
-			sexpr := root.SExpr(lang)
-			if root.HasError() || strings.Contains(sexpr, "ERROR") {
-				t.Fatalf("%s (%s) has error with detectors enabled: %s", s.name, s.lang, sexpr)
 			}
 		})
 	}

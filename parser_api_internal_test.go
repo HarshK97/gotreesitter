@@ -895,9 +895,18 @@ func TestIncrementalAcceptedErrorBaseMergeRetryUsesFinalFreshPolicy(t *testing.T
 		want     int
 	}{
 		{name: "typescript typed arrow", language: "typescript", source: []byte("const f = (str: string) => str;"), want: 2},
-		{name: "typescript destructured arrow", language: "typescript", source: []byte("const f = ([x]): T => x;"), want: 0},
+		// The destructured-arrow-return-type shape used to widen the base
+		// (fresh, reuse=nil) full-parse floor to maxStacksPerMergeKey (6) via
+		// its now-retired source-text detector, matching the incremental
+		// floor's own default width (6) and making the "no narrower base to
+		// retry at" case (want 0) fire. With the detector retired, the base
+		// floor is the plain TypeScript steady-state cap (2, see
+		// typeScriptSteadyStateMergeCap), which is narrower than the
+		// incremental floor (6), so the retry now fires at cap 2 like every
+		// other TypeScript shape.
+		{name: "typescript destructured arrow", language: "typescript", source: []byte("const f = ([x]): T => x;"), want: 2},
 		{name: "tsx typed arrow", language: "tsx", source: []byte("const f = (str: string) => str;"), want: 2},
-		{name: "tsx destructured arrow", language: "tsx", source: []byte("const f = ([x]): T => x;"), want: 0},
+		{name: "tsx destructured arrow", language: "tsx", source: []byte("const f = ([x]): T => x;"), want: 2},
 		{name: "java annotation declaration", language: "java", source: []byte("@interface Demo {}"), want: 0},
 		{name: "csharp certified fresh floor", language: "c_sharp", source: []byte("class Demo {}"), want: 0},
 	}
@@ -2498,12 +2507,14 @@ func TestConfigureParseCapsTypedArrowKeepsTypedArrowWidthOnLargeTypeScript(t *te
 	ResetParseEnvConfigCacheForTests()
 	defer ResetParseEnvConfigCacheForTests()
 
-	// TypeScript's tight full-parse merge cap now applies uniformly regardless
-	// of source size (the former >64KB disengagement caused the intra-token
-	// population explosion on large union-list sources). A large typed-arrow
-	// source therefore gets the same typed-arrow minimum width (2) that small
-	// typed-arrow sources have always used, rather than the former wide
-	// default of maxStacksPerMergeKey.
+	// TypeScript's cap-two full-parse merge floor (typeScriptSteadyStateMergeCap)
+	// applies uniformly regardless of source size or shape (the former >64KB
+	// disengagement caused the intra-token population explosion on large
+	// union-list sources; the per-shape source-text detectors that used to
+	// widen small typed-arrow sources to this same floor are retired, PR #416
+	// subsumption). A large typed-arrow source therefore gets the plain
+	// steady-state floor (2), the same width small typed-arrow sources have
+	// always used, rather than the former wide default of maxStacksPerMergeKey.
 	source := []byte(strings.Repeat("const filler = 1;\n", 8192) + "const f = (str: string) => str;\n")
 	parser := &Parser{language: &Language{Name: "typescript"}}
 	var scratch parserScratch
@@ -2522,12 +2533,13 @@ func TestConfigureParseCapsTypedArrowKeepsTypedArrowWidthOnLargeTypeScript(t *te
 // TestConfigureParseCapsTypedParameterArrowReturnTypeKeepsCapTwoOnLargeTypeScript
 // is the .d.ts-blowup guard for issue #402's fix: a large filler source that
 // also carries the typed-parameter-plus-return-type arrow shape
-// ("(a: A): B => ...") must widen to exactly cap two, the same floor as the
-// existing typed-arrow and default-parameter detectors, never the wide
-// six-survivor destructured-return-type floor. PR #389 established that the
-// six-survivor floor causes an intra-token population explosion on large
-// union-list .d.ts-shaped sources; this guards the new detector against
-// regressing that ceiling.
+// ("(a: A): B => ...") must land at exactly cap two, the same floor every
+// TypeScript shape gets under typeScriptSteadyStateMergeCap, never the wide
+// six-survivor destructured-return-type floor that PR #389's now-retired
+// detector used to apply. PR #389 established that the six-survivor floor
+// causes an intra-token population explosion on large union-list .d.ts-shaped
+// sources; this guards the plain cap-two floor against regressing that
+// ceiling.
 func TestConfigureParseCapsTypedParameterArrowReturnTypeKeepsCapTwoOnLargeTypeScript(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
 	ResetParseEnvConfigCacheForTests()
@@ -2545,6 +2557,38 @@ func TestConfigureParseCapsTypedParameterArrowReturnTypeKeepsCapTwoOnLargeTypeSc
 	caps = parser.configureParseCaps(source, nil, arenaClassFull, &scratch, 0, 0, -4)
 	if caps.mergePerKeyCap != 4 {
 		t.Fatalf("configureParseCaps(large TypeScript typed-parameter arrow return type, exact retry cap) merge cap = %d, want 4", caps.mergePerKeyCap)
+	}
+}
+
+// TestConfigureParseCapsDestructuredArrowReturnTypeStaysCapTwoOnLargeTypeScript
+// is the destructured-arrow-return-type sibling of the two large-TypeScript
+// cap tests above: a large filler source that carries the destructured-arrow
+// return-type shape ("([a, b]): T => ...") must land at exactly cap two, the
+// plain typeScriptSteadyStateMergeCap floor, and never the wide six-survivor
+// floor that PR #389's now-retired detector used to force for this specific
+// shape (unlike the typed-arrow and typed-parameter-arrow-return shapes,
+// which the retired detectors only ever widened to cap two). PR #389
+// established that the six-survivor floor causes an intra-token population
+// explosion on large union-list .d.ts-shaped sources; this guards the plain
+// cap-two floor against regressing that ceiling now that nothing widens this
+// shape at all.
+func TestConfigureParseCapsDestructuredArrowReturnTypeStaysCapTwoOnLargeTypeScript(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	defer ResetParseEnvConfigCacheForTests()
+
+	source := []byte(strings.Repeat("const filler = 1;\n", 8192) + "const f = ([a, b]): T => a;\n")
+	parser := &Parser{language: &Language{Name: "typescript"}}
+	var scratch parserScratch
+
+	caps := parser.configureParseCaps(source, nil, arenaClassFull, &scratch, 0, 0, 0)
+	if caps.mergePerKeyCap != 2 {
+		t.Fatalf("configureParseCaps(large TypeScript destructured arrow return type) merge cap = %d, want 2", caps.mergePerKeyCap)
+	}
+
+	caps = parser.configureParseCaps(source, nil, arenaClassFull, &scratch, 0, 0, -4)
+	if caps.mergePerKeyCap != 4 {
+		t.Fatalf("configureParseCaps(large TypeScript destructured arrow return type, exact retry cap) merge cap = %d, want 4", caps.mergePerKeyCap)
 	}
 }
 

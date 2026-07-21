@@ -485,8 +485,10 @@ func TestParseTypeScriptTypedArrowParameters(t *testing.T) {
 // "(required_parameter pattern: (identifier) value: (number))"; our GLR
 // engine's steady-state cap-one merge budget was discarding the
 // pattern-reduction derivation in favor of a same-state, lower-precedence
-// assignment_expression derivation before the parse could complete (see
-// typeScriptSourceHasBareDefaultParameter in parser_retry.go).
+// assignment_expression derivation before the parse could complete. Fixed by
+// the structure-aware cap-two steady state (typeScriptSteadyStateMergeCap in
+// parser_retry.go), which subsumed the source-text detector originally added
+// for this shape.
 func TestParseTypeScriptBareDefaultParameter(t *testing.T) {
 	src := "function f(a = 1) {}\n"
 	tree, lang := parseLanguageSample(t, "typescript", src)
@@ -646,10 +648,11 @@ func TestParseTypeScriptRenamedPropertyDefaultParameter(t *testing.T) {
 	}
 }
 
-// TestParseTypeScriptUnicodeIdentifierDefaultParameter guards the unicode
-// identifier byte widening in typeScriptDefaultParamIdentByte: multi-byte
-// UTF-8 identifier bytes (>= 0x80) must still be recognized as part of the
-// identifier directly before '=' so the detector fires.
+// TestParseTypeScriptUnicodeIdentifierDefaultParameter guards the bare
+// default parameter shape when the parameter name is a multi-byte UTF-8
+// identifier (a case the retired source-text detector's unicode-aware byte
+// scan used to require; the structure-aware cap-two steady state has no such
+// requirement, but the shape stays pinned here).
 func TestParseTypeScriptUnicodeIdentifierDefaultParameter(t *testing.T) {
 	src := "function f(café = 1) {}\n"
 	tree, lang := parseLanguageSample(t, "typescript", src)
@@ -798,9 +801,11 @@ func TestParseTypeScriptDestructuredArrowReturnTypeCallArgument(t *testing.T) {
 // list as a plain parenthesized_expression once a top-level ':' follows the
 // ')'; the pattern-reduction derivation was being discarded before the
 // return-type/arrow tokens confirmed it, under the steady-state cap-one
-// merge budget (see typeScriptSourceHasTypedParameterArrowReturnType in
-// parser_retry.go). TSX already parsed this correctly because its wider JSX
-// conflict set keeps a second survivor alive through the fork.
+// merge budget. Fixed by the structure-aware cap-two steady state
+// (typeScriptSteadyStateMergeCap in parser_retry.go), which subsumed the
+// source-text detector originally added for this shape. TSX already parsed
+// this correctly because its wider JSX conflict set keeps a second survivor
+// alive through the fork.
 func TestParseTypeScriptArrowReturnTypeAnnotation(t *testing.T) {
 	src := "const f = (a: A): B => { return a; };\n"
 	tree, lang := parseLanguageSample(t, "typescript", src)
@@ -1000,17 +1005,15 @@ func TestParseTypeScriptArrowFunctionTypeReturnType(t *testing.T) {
 	}
 }
 
-// TestParseTypeScriptTypeAnnotationArrowValueControl is the negative
-// control for the balanced-paren scan: "const x: (a: A) => B = foo" is a
-// variable's own type annotation (a function_type in type position), not an
-// arrow_function value expression. The scan's backward walk from the
-// declarator's arrow can land on the *declarator's* type-annotation colon
-// (also at paren depth zero) instead of a return-type colon, but that
-// colon is preceded by an identifier byte, not ')', so the subsequent
-// matchingOpenParenBefore check rejects it. This shape must not trigger the
-// merge-width widening: it was never affected by issue #402 (no
-// required_parameter/parenthesized_expression fork here), and it exercises
-// the exact false-positive risk the balanced-paren scan must avoid.
+// TestParseTypeScriptTypeAnnotationArrowValueControl is a negative-control
+// pin: "const x: (a: A) => B = foo" is a variable's own type annotation (a
+// function_type in type position), not an arrow_function value expression.
+// This shape was never affected by issue #402 (no
+// required_parameter/parenthesized_expression fork here); it exercises the
+// exact false-positive risk the retired source-text detector's balanced-paren
+// scan had to avoid, and the structure-aware cap-two steady state
+// (typeScriptSteadyStateMergeCap in parser_retry.go) that subsumed it must
+// still parse it correctly.
 func TestParseTypeScriptTypeAnnotationArrowValueControl(t *testing.T) {
 	src := "const x: (a: A) => B = foo;\n"
 	tree, lang := parseLanguageSample(t, "typescript", src)
