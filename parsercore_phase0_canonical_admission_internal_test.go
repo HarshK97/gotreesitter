@@ -111,12 +111,12 @@ var diagnosticParserCoreCanonicalAdmissions = []diagnosticParserCoreCanonicalAdm
 		rawSelected: core.RawSelectedCensus{Nodes: 109614, Parents: 59703, Leaves: 49911},
 		work: core.Work{
 			Shifts: 66119, Reductions: 75988, ReductionPopRequests: 75988,
-			EmittedPopPaths: 84924, EmittedPopPayloads: 153451,
-			PredecessorLinkUnionAttempts: 13748, PredecessorLinkUnionDuplicateNoop: 1638,
+			EmittedPopPaths: 84928, EmittedPopPayloads: 153463,
+			PredecessorLinkUnionAttempts: 13752, PredecessorLinkUnionDuplicateNoop: 1638,
 			PredecessorLinkUnionPrecedenceReplaced: 3577, PredecessorLinkUnionRecursiveChanged: 7,
-			PredecessorLinkUnionAlternateAppended: 8526,
-			GraphLinkAdditionsProxy:               150271, LeafConstructionsProxy: 53897,
-			ParentConstructionsProxy: 78426,
+			PredecessorLinkUnionAlternateAppended: 8530,
+			GraphLinkAdditionsProxy:               150275, LeafConstructionsProxy: 53897,
+			ParentConstructionsProxy: 78430,
 		},
 	},
 }
