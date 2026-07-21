@@ -835,8 +835,14 @@ func forestFastPathDirtyPrefixScannerSensitive(name string) bool {
 // on typescript/tsx too), so extending it to the leading run would perturb those
 // tracked divergences. Their reuse proof is the still-open campaign T2c
 // (TS/JS stateless-marker proofs); the leading splice opens for them once that
-// lands. Go and production-route css, whose fragility marking is complete, are
-// not listed and take the win.
+// lands. Go, whose fragility marking is complete, is not listed and takes the
+// win. Production-route css also takes the win, but on an EMPIRICAL warrant,
+// not completeness: css still carries one open allowlist entry (delete
+// block:childCount+1, likely the same real-reuse class as the JavaScript
+// entry). Css stays unlisted because the invariant gate holds newUnlisted=0
+// with its two tracked divergences byte-unchanged, and the leading-splice
+// on/off differential byte-sweep is a no-op at every edit site. If either
+// signal moves, bar css here alongside the JS family.
 func leadingSpliceLanguageBarred(name string) bool {
 	switch name {
 	case "javascript", "typescript", "tsx":
