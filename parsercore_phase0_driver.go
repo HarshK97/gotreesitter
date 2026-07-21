@@ -1,4 +1,4 @@
-//go:build gts_parsercorephase0
+//go:build !gts_no_parsercorephase0
 
 package gotreesitter
 
@@ -321,20 +321,78 @@ var parserCoreCertifiedGoBlob []byte
 
 func (e *diagnosticParserCoreDecline) Error() string { return string(e.boundary) + ": " + e.detail }
 
-type parserCoreRootTables struct {
-	parser              *Parser
+// parserCoreLanguageTables holds the immutable, language-derived compact-parser
+// action and reduction tables. Its content depends only on the language's
+// ParseActions plus its field and alias metadata, so every Parser of the same
+// *Language shares one instance through the per-language cache below. Sharing
+// the converted tables removes a full action-table rebuild (about 2.5 MB and
+// 3.1k allocations for the Go grammar) from every fresh-Parser candidate parse.
+type parserCoreLanguageTables struct {
 	actionRows          []core.ActionRow
 	reductionPlans      []core.ReductionPlan
 	reductionPlanIndex  []uint16
 	reductionPlanStride int
 }
 
-func newParserCoreRootTables(parser *Parser) (*parserCoreRootTables, error) {
+// parserCoreRootTables binds one Parser to the shared, immutable language
+// tables. The Parser back-reference resolves only language-derived lookups
+// (action index, goto, and root symbol), which every Parser of the same
+// *Language resolves identically, so the wrapper stays per-Parser while the
+// heavy converted tables stay shared.
+type parserCoreRootTables struct {
+	parser *Parser
+	*parserCoreLanguageTables
+}
+
+// acquireParserCoreLanguageTables returns the converted tables for the parser's
+// language, building them once and caching them on the Language itself.
+//
+// Retention decision -- the cache lives on the Language, so it lives and dies
+// with the Language and pins nothing extra. Each cached table set retains only
+// the converted action rows, reduction plans, and the reduction pair index:
+// about 95 KiB for the Go grammar (measured by
+// TestParserCoreLanguageTablesFootprint). A process-wide identity-keyed map was
+// rejected: its strong key would pin every routed Language, and each Language
+// holds a multi-megabyte decoded grammar and lex tables, so a caller that
+// builds many transient languages would leak hundreds of megabytes. The
+// sync.Once builds the tables exactly once per Language, even under concurrent
+// first use, without holding a process-wide lock across the build.
+func acquireParserCoreLanguageTables(parser *Parser) (*parserCoreLanguageTables, error) {
 	if parser == nil || parser.language == nil {
 		return nil, errors.New("parser-core phase zero: cannot cache actions without a parser language")
 	}
-	rows := make([]core.ActionRow, len(parser.language.ParseActions))
-	for index, entry := range parser.language.ParseActions {
+	lang := parser.language
+	lang.compactTablesOnce.Do(func() {
+		lang.compactTables, lang.compactTablesErr = buildParserCoreLanguageTables(parser)
+	})
+	if lang.compactTablesErr != nil {
+		return nil, lang.compactTablesErr
+	}
+	tables, _ := lang.compactTables.(*parserCoreLanguageTables)
+	return tables, nil
+}
+
+// newParserCoreRootTables binds parser to the shared language tables. It builds
+// the converted tables once per *Language and reuses them for every later
+// Parser of the same language.
+func newParserCoreRootTables(parser *Parser) (*parserCoreRootTables, error) {
+	langTables, err := acquireParserCoreLanguageTables(parser)
+	if err != nil {
+		return nil, err
+	}
+	return &parserCoreRootTables{parser: parser, parserCoreLanguageTables: langTables}, nil
+}
+
+// buildParserCoreLanguageTables converts the immutable language action table
+// into the compact-parser representation. It reads only language data, so the
+// tables it returns are correct for every Parser of that language.
+func buildParserCoreLanguageTables(parser *Parser) (*parserCoreLanguageTables, error) {
+	if parser == nil || parser.language == nil {
+		return nil, errors.New("parser-core phase zero: cannot cache actions without a parser language")
+	}
+	lang := parser.language
+	rows := make([]core.ActionRow, len(lang.ParseActions))
+	for index, entry := range lang.ParseActions {
 		converted := make([]core.Action, len(entry.Actions))
 		for ordinal, action := range entry.Actions {
 			var err error
@@ -345,7 +403,7 @@ func newParserCoreRootTables(parser *Parser) (*parserCoreRootTables, error) {
 		}
 		rows[index] = core.NewActionRow(converted)
 	}
-	tables := &parserCoreRootTables{parser: parser, actionRows: rows}
+	tables := &parserCoreLanguageTables{actionRows: rows}
 	maxProductionID, maxChildCount := 0, 0
 	for _, row := range rows {
 		for ordinal := 0; ordinal < row.Len(); ordinal++ {
@@ -374,11 +432,11 @@ func newParserCoreRootTables(parser *Parser) (*parserCoreRootTables, error) {
 			if tables.reductionPlanIndex[pairIndex] != 0 {
 				continue
 			}
-			fields, err := tables.ProductionFields(action.ProductionID, int(action.ChildCount))
+			fields, err := parserCoreProductionFields(lang, action.ProductionID, int(action.ChildCount))
 			if err != nil {
 				return nil, err
 			}
-			aliases, err := tables.ProductionAliases(action.ProductionID, int(action.ChildCount))
+			aliases, err := parserCoreProductionAliases(lang, action.ProductionID, int(action.ChildCount))
 			if err != nil {
 				return nil, err
 			}
@@ -488,8 +546,14 @@ func (a *parserCoreRootTables) Goto(state core.StateID, symbol core.Symbol) (cor
 }
 
 func (a *parserCoreRootTables) ProductionFields(productionID uint16, childCount int) ([]core.FieldMapEntry, error) {
-	p := a.parser
-	fieldIDs, inherited := buildFieldPlanForProduction(p.language, childCount, productionID)
+	return parserCoreProductionFields(a.parser.language, productionID, childCount)
+}
+
+// parserCoreProductionFields converts one production's field plan into compact
+// field-map entries. It reads only language data, so it serves both the shared
+// table build and the per-Parser TableView fallback.
+func parserCoreProductionFields(lang *Language, productionID uint16, childCount int) ([]core.FieldMapEntry, error) {
+	fieldIDs, inherited := buildFieldPlanForProduction(lang, childCount, productionID)
 	var out []core.FieldMapEntry
 	for index, fieldID := range fieldIDs {
 		if fieldID == 0 {
@@ -501,7 +565,13 @@ func (a *parserCoreRootTables) ProductionFields(productionID uint16, childCount 
 }
 
 func (a *parserCoreRootTables) ProductionAliases(productionID uint16, childCount int) ([]core.Symbol, error) {
-	lang := a.parser.language
+	return parserCoreProductionAliases(a.parser.language, productionID, childCount)
+}
+
+// parserCoreProductionAliases converts one production's alias sequence into
+// compact symbols. It reads only language data, so it serves both the shared
+// table build and the per-Parser TableView fallback.
+func parserCoreProductionAliases(lang *Language, productionID uint16, childCount int) ([]core.Symbol, error) {
 	if int(productionID) >= len(lang.AliasSequences) || childCount <= 0 || !languageProductionHasAliasSequence(lang, productionID, childCount) {
 		return nil, nil
 	}
@@ -662,7 +732,7 @@ func diagnosticParseParserCoreGenericFromSeed(
 		return result, &diagnosticParserCoreDecline{boundary: result.Boundary, detail: result.Detail}
 	}
 	return publishDiagnosticParserCoreGenericResult(result, scheduler, func(head core.Head) (*Tree, error) {
-		return materializeDiagnosticParserCoreAcceptedSelection(compact, head, scheduler.acceptedPayloads, parser, source)
+		return materializeDiagnosticParserCoreAcceptedSelection(compact, head, scheduler.acceptedPayloads, parser, source, nil)
 	})
 }
 
@@ -1585,28 +1655,138 @@ func (scratch *diagnosticParserCoreMaterializationScratch) reset() {
 	}
 	clear(scratch.entries[:cap(scratch.entries)])
 	scratch.entries = scratch.entries[:0]
+	// Clear the reduce node backing to its full capacity before the shared reset.
+	// This scratch is retained on the runner across parses, so a stale *Node
+	// beyond len (which reduceBuildScratch.reset leaves in place for the pooled
+	// production path) would pin a released arena slab and defeat GC. Production
+	// discards its per-parse scratch instead, so it never retains these pointers.
+	if cap(scratch.reduce.nodes) > 0 {
+		clear(scratch.reduce.nodes[:cap(scratch.reduce.nodes)])
+	}
 	scratch.reduce.reset()
 }
 
 func withDiagnosticParserCoreMaterializationScratch(parser *Parser, visit func(*diagnosticParserCoreMaterializationScratch) error) (err error) {
-	if parser == nil || visit == nil {
-		return errors.New("parser-core phase zero: materialization scratch requires a parser and visitor")
-	}
 	var scratch diagnosticParserCoreMaterializationScratch
+	return withProvidedMaterializationScratch(parser, &scratch, visit)
+}
+
+// withProvidedMaterializationScratch runs visit with a caller-owned
+// materialization scratch installed as the parser's reduce scratch. It resets
+// the scratch on return so a runner-held scratch is safe to reuse for the next
+// parse. Passing a reused scratch keeps the warm steady state from allocating a
+// fresh reduce-build buffer on every parse.
+func withProvidedMaterializationScratch(parser *Parser, scratch *diagnosticParserCoreMaterializationScratch, visit func(*diagnosticParserCoreMaterializationScratch) error) (err error) {
+	if parser == nil || visit == nil || scratch == nil {
+		return errors.New("parser-core phase zero: materialization scratch requires a parser, scratch, and visitor")
+	}
 	previousReduceScratch := parser.reduceScratch
 	parser.reduceScratch = &scratch.reduce
 	defer func() {
 		parser.reduceScratch = previousReduceScratch
 		scratch.reset()
 	}()
-	return visit(&scratch)
+	return visit(scratch)
+}
+
+// parserCoreMaxRetainedNodeScratch caps the *Node scratch buffers the runner
+// retains between parses so an unusually wide tree cannot pin a multi-megabyte
+// backing array for the parser's whole lifetime. It mirrors production's
+// maxRetainedNodeLinkStack bound in releaseParserScratch.
+const parserCoreMaxRetainedNodeScratch = 256 * 1024
+
+// parserCoreMaxRetainedLineStarts caps the retained line-start buffer.
+const parserCoreMaxRetainedLineStarts = 256 * 1024
+
+// parserCoreRunnerScratch retains the reusable per-Parser materialization
+// buffers for the compact candidate route. The fresh-full runner is per-Parser
+// and single-goroutine (see parserCoreFreshFullRunner), so retaining these
+// buffers on it and resetting them per parse mirrors production's parser-held
+// arena reuse: the warm steady state stops re-allocating the public-tree
+// scratch on every parse.
+type parserCoreRunnerScratch struct {
+	materialization diagnosticParserCoreMaterializationScratch
+	nodesByID       []*Node
+	nodes           []*Node
+	linkScratch     []*Node
+	lineStarts      []uint32
+	goCompatFrames  []goCompatSubtreeFrame
+}
+
+// nodeSlice returns a zeroed length-n *Node slice, reusing buf's capacity when
+// it fits. Clearing every entry prevents a stale node pointer from an earlier
+// parse leaking into this one.
+func parserCoreNodeSlice(buf []*Node, n int) []*Node {
+	if n <= 0 {
+		return buf[:0]
+	}
+	if cap(buf) < n {
+		return make([]*Node, n)
+	}
+	buf = buf[:n]
+	clear(buf)
+	return buf
+}
+
+// clearNodeScratch clears a *Node scratch buffer to its full capacity and
+// resets its length, dropping it when it grew past the retention cap. Clearing
+// the full capacity (not [:len]) matters because tree-wiring leaves live node
+// pointers in the backing array beyond len.
+func clearNodeScratch(buf []*Node) []*Node {
+	if cap(buf) > parserCoreMaxRetainedNodeScratch {
+		return nil
+	}
+	if cap(buf) > 0 {
+		clear(buf[:cap(buf)])
+		return buf[:0]
+	}
+	return buf
+}
+
+// resetTreeBuffers clears the tree-materialization buffers after a parse so the
+// runner never pins arena node pointers between parses. The line-start buffer
+// holds no pointers, so it only resets its length (or drops past the cap). The
+// Go-compatibility frame buffer holds node pointers, so it clears the full
+// capacity before resetting the length, dropping it past its retention cap.
+func (s *parserCoreRunnerScratch) resetTreeBuffers() {
+	if s == nil {
+		return
+	}
+	s.nodesByID = clearNodeScratch(s.nodesByID)
+	s.nodes = clearNodeScratch(s.nodes)
+	s.linkScratch = clearNodeScratch(s.linkScratch)
+	if cap(s.lineStarts) > parserCoreMaxRetainedLineStarts {
+		s.lineStarts = nil
+	} else {
+		s.lineStarts = s.lineStarts[:0]
+	}
+	if cap(s.goCompatFrames) > maxRetainedGoCompatFrames {
+		s.goCompatFrames = nil
+	} else if cap(s.goCompatFrames) > 0 {
+		clear(s.goCompatFrames[:cap(s.goCompatFrames)])
+		s.goCompatFrames = s.goCompatFrames[:0]
+	}
 }
 
 func newDiagnosticParserCorePointIndex(source []byte, poll func() error) (diagnosticParserCorePointIndex, error) {
+	return newDiagnosticParserCorePointIndexInto(source, poll, nil)
+}
+
+// newDiagnosticParserCorePointIndexInto builds the source point index, reusing
+// buf as the line-start backing storage when it has capacity. Reusing the
+// buffer keeps the warm steady state from allocating a fresh line-start slice
+// on every parse.
+func newDiagnosticParserCorePointIndexInto(source []byte, poll func() error, buf []uint32) (diagnosticParserCorePointIndex, error) {
 	if uint64(len(source)) > math.MaxUint32 {
 		return diagnosticParserCorePointIndex{}, errors.New("parser-core phase zero: materialization source exceeds uint32 offsets")
 	}
-	starts := make([]uint32, 1, min(1024, 1+len(source)/32))
+	var starts []uint32
+	if cap(buf) >= 1 {
+		starts = buf[:1]
+		starts[0] = 0
+	} else {
+		starts = make([]uint32, 1, min(1024, 1+len(source)/32))
+	}
 	for index, b := range source {
 		if index&1023 == 0 {
 			if err := poll(); err != nil {
@@ -1664,12 +1844,20 @@ func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.H
 	if len(derivations) != 1 {
 		return nil, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreAccept, detail: "materialization requires one exact accepted derivation"}
 	}
-	return materializeDiagnosticParserCoreAcceptedSelection(compact, head, derivations[0].Payloads, parser, source)
+	return materializeDiagnosticParserCoreAcceptedSelection(compact, head, derivations[0].Payloads, parser, source, nil)
 }
 
-func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head core.Head, payloads []core.SubtreeID, parser *Parser, source []byte) (*Tree, error) {
+// materializeDiagnosticParserCoreAcceptedSelection materializes the accepted
+// compact derivation into a public tree. When scratch is non-nil the runner's
+// reusable buffers back the transient materialization storage, so the warm
+// steady state does not re-allocate the public-tree scratch on every parse.
+// scratch is reset on return, so it is safe to reuse for the next parse.
+func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head core.Head, payloads []core.SubtreeID, parser *Parser, source []byte, scratch *parserCoreRunnerScratch) (*Tree, error) {
 	if compact == nil || parser == nil || parser.language == nil || head.Node == 0 || len(payloads) == 0 {
 		return nil, errors.New("parser-core phase zero: incomplete accepted-tree selection input")
+	}
+	if scratch != nil {
+		defer scratch.resetTreeBuffers()
 	}
 	stats, err := compact.Stats(head)
 	if err != nil {
@@ -1690,14 +1878,28 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 		}
 		return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreCap, detail: "accepted-tree materialization stopped: " + string(reason)}
 	}
-	points, err := newDiagnosticParserCorePointIndex(source, poll)
+	var lineStartsBuf []uint32
+	if scratch != nil {
+		lineStartsBuf = scratch.lineStarts
+	}
+	points, err := newDiagnosticParserCorePointIndexInto(source, poll, lineStartsBuf)
 	if err != nil {
 		return nil, err
+	}
+	if scratch != nil {
+		scratch.lineStarts = points.lineStarts
 	}
 	// The visitor proves unique ownership, so this is a transient child-build
 	// table rather than a memoization or sharing mechanism: every populated
 	// compact ID owns exactly one public node in this tree.
-	nodesByID := make([]*Node, uint64(stats.Subtrees)+1)
+	nodesByIDLen := uint64(stats.Subtrees) + 1
+	var nodesByID []*Node
+	if scratch != nil && nodesByIDLen <= uint64(math.MaxInt) {
+		scratch.nodesByID = parserCoreNodeSlice(scratch.nodesByID, int(nodesByIDLen))
+		nodesByID = scratch.nodesByID
+	} else {
+		nodesByID = make([]*Node, nodesByIDLen)
+	}
 	if err := poll(); err != nil {
 		return nil, err
 	}
@@ -1756,7 +1958,7 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 		node.setFragileLeft(true)
 		node.setFragileRight(true)
 	}
-	err = withDiagnosticParserCoreMaterializationScratch(parser, func(materializationScratch *diagnosticParserCoreMaterializationScratch) error {
+	materializeVisit := func(materializationScratch *diagnosticParserCoreMaterializationScratch) error {
 		return compact.VisitMaterializationPostorder(payloads, poll, func(id core.SubtreeID, view core.MaterializationSubtreeView) error {
 			if view.EndByte < view.StartByte || view.EndByte > uint32(len(source)) {
 				return errors.New("parser-core phase zero: compact subtree extent is outside source")
@@ -1824,12 +2026,23 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 			stamp(id, parent)
 			return nil
 		})
-	})
+	}
+	if scratch != nil {
+		err = withProvidedMaterializationScratch(parser, &scratch.materialization, materializeVisit)
+	} else {
+		err = withDiagnosticParserCoreMaterializationScratch(parser, materializeVisit)
+	}
 	if err != nil {
 		return nil, err
 	}
 
-	nodes := make([]*Node, len(payloads))
+	var nodes []*Node
+	if scratch != nil {
+		scratch.nodes = parserCoreNodeSlice(scratch.nodes, len(payloads))
+		nodes = scratch.nodes
+	} else {
+		nodes = make([]*Node, len(payloads))
+	}
 	for index, payload := range payloads {
 		if uint64(payload) >= uint64(len(nodesByID)) || nodesByID[payload] == nil {
 			return nil, errors.New("parser-core phase zero: compact materialization order omitted an accepted payload")
@@ -1839,8 +2052,21 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 	if err := poll(); err != nil {
 		return nil, err
 	}
-	var linkScratch []*Node
-	tree := parser.buildResultFromNodes(nodes, source, arena, nil, nil, &linkScratch)
+	linkScratch := new([]*Node)
+	if scratch != nil {
+		linkScratch = &scratch.linkScratch
+	}
+	// buildResultFromNodes runs the returned-tree compatibility normalization
+	// (including the Go-compatibility walk). Install the runner's reusable frame
+	// buffer for that walk so the warm steady state reuses the walk stack instead
+	// of re-growing it every parse, mirroring production's parser-held scratch.
+	// resetTreeBuffers restores and clears it on return.
+	previousGoCompatFrames := parser.goCompatFrames
+	if scratch != nil {
+		parser.goCompatFrames = &scratch.goCompatFrames
+		defer func() { parser.goCompatFrames = previousGoCompatFrames }()
+	}
+	tree := parser.buildResultFromNodes(nodes, source, arena, nil, nil, linkScratch)
 	if tree != nil {
 		owned = false // buildResultFromNodes transfers arena ownership to tree.
 	}

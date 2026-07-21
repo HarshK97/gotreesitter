@@ -218,7 +218,11 @@ func TestForestDeclineMemoWarmSemanticDeclineMatchesProduction(t *testing.T) {
 	source := []byte("all:\n\t@echo hi\n")
 
 	glrForestEnabled = false
-	production, err := NewParser(lang).Parse(source)
+	// Pin to production: this test compares the production forest decline path
+	// against production, and observes production-internal decline-memo state.
+	productionParser := NewParser(lang)
+	productionParser.SetAdmissionCandidateRoute(false)
+	production, err := productionParser.Parse(source)
 	if err != nil || production == nil || production.RootNode() == nil {
 		t.Fatalf("production parse: tree_nil=%t err=%v", production == nil, err)
 	}
@@ -228,6 +232,9 @@ func TestForestDeclineMemoWarmSemanticDeclineMatchesProduction(t *testing.T) {
 
 	glrForestEnabled = true
 	parser := NewParser(lang)
+	// Pin to production: this test observes production-internal forest decline
+	// reason and memo state, which the compact candidate route does not produce.
+	parser.SetAdmissionCandidateRoute(false)
 	first, err := parser.Parse(source)
 	if err != nil || first == nil || first.RootNode() == nil {
 		t.Fatalf("first automatic parse: tree_nil=%t err=%v", first == nil, err)

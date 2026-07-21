@@ -14,7 +14,8 @@ for tags and release notes while still in `0.x`.
   eligible full parses through the compact parser core. Internal
   sub-parsers stay suppressed. A 206-language scorecard guards the
   route: 48 languages parse byte-exact, 153 fall back fail-closed, 5
-  skip, 0 diverge. The route stays off by default in this release.
+  skip, 0 diverge. It initially landed off by default; the Changed entry
+  below records its promotion after the admission evidence was sealed.
 - **Compact-route coverage census** (PR #419).
   `docs/compact-route-coverage-census.md` classifies the 153 fallback
   languages into five scheduler-capability classes. The census found no
@@ -23,6 +24,84 @@ for tags and release notes while still in `0.x`.
   library module is unchanged by that PR.
 
 ### Changed
+
+- **The compact parser core is now the default full-parse route for eligible
+  languages** (Phase-3 admission flip). `Parser.Parse` routes a fresh, full,
+  production-DFA parse of an eligible grammar through the compact
+  `internal/parsercorephase0` engine, then materializes a public tree. The tree
+  is byte-exact with the production engine on the routed, verified surface: the
+  48 byte-exact scorecard routes and the canonical fixtures. The runner's strict
+  acceptance gate fails closed to production on any input it cannot reproduce
+  byte-for-byte. The compact engine promotes from the `gts_parsercorephase0`
+  opt-in tag into the default build; the emergency opt-out tag
+  `gts_no_parsercorephase0` compiles it back out.
+
+  Evidence for the admission:
+
+  - **Correctness.** 206 of 206 curated parity fixtures pass. The deep-tree
+    digest is 100 percent exact on the canonical fixtures. The 206-language
+    scorecard through the switch reports 48 byte-exact routes, 0 divergences,
+    153 fail-closed fallbacks, and 5 token-source skips.
+  - **Fail-closed generic-call conflict class.** On the ambiguous Go construct
+    `Foo[int](a)`, production and the tree-sitter-go C oracle select
+    `type_conversion_expression(generic_type)`. The compact scheduler cannot
+    yet rank that conflict by dynamic precedence, so it declines the
+    unauthorized tie fold and falls back to production. The returned tree stays
+    byte-exact while `TestAdmissionCandidateGoTypeConversionFailsClosed` keeps
+    the route/fallback behavior explicit.
+  - **Timing.** The quiet-host publication run (lane
+    strictboundary-20260720T231334Z-v6 phase3, n2d-standard-4, 5 ABBA cycles)
+    measured a production-over-candidate geomean speedup of 1.8321 (gate is at
+    or above 1.0204) on the warm direct-runner path
+    (`BenchmarkParserCoreFreshFullCanonical`). The worst fixture ran 1.526 times
+    faster. Peak resident set size fell on all four fixtures (grammargen_lr
+    94 MB against 206 MB). The deep C-oracle parity preflight passed in the same
+    run.
+  - **Adapter Parse-path reconciliation.** The 1.8321 geomean was measured on
+    the direct-runner path, not on `Parser.Parse`. The initial adapter regressed
+    time and allocations, because it rebuilt the compact action tables on every
+    fresh `Parser` and did not pool the materialization scratch. Two adapter
+    fixes removed that tax:
+    - a per-`*Language` table cache builds the converted action and reduction
+      tables once per language (about 95 KiB retained) instead of once per parse;
+      and
+    - a per-`Parser` runner reuses the materialization scratch, the public-tree
+      node buffers, and the Go-compatibility walk stack across parses.
+
+    After the fixes, warm route-ON allocations on `BenchmarkGoParseFullDFA` fall
+    from about 71 to about 24 per operation, and bytes per operation from about
+    99 KiB to about 17 KiB. On the human-authored Go fixtures
+    (`BenchmarkGoParseWarmRealDFA`) the routed parses now run about 1.45 to 1.66
+    times faster than production through `Parser.Parse` (geomean of the routed
+    fixtures about 1.57 times). The remaining gap to the 1.8321 direct-runner
+    number is the production Parse tail the adapter still runs. On the synthetic,
+    highly repetitive `BenchmarkGoParseFullDFA` source the routed parse stays
+    slower than production, because the compact scheduler dominates that input;
+    the speedup holds on the human-authored fixtures the sealed number measured.
+  - **Sealed epoch (v0.45.0).** The compact route measured 2.9975 times the C
+    reference against the production route at 5.526 times, hardware-attested and
+    verified. Allocation levels sit at 92 to 316 allocations per operation
+    against 14 to 200 for production, admission-compatible per the 2026-07-20
+    owner ruling.
+  - **Known gap.** The candidate retained-heap column reported NA in the phase3
+    environment; resident set size is the resource evidence.
+
+  Escape hatch: set `GTS_ADMISSION_CANDIDATE=0` (or `false`, `off`, `no`) to
+  force every parse back onto the production route. Any other value, or an unset
+  variable, keeps the compact route on. `(*Parser).SetAdmissionCandidateRoute`
+  overrides the process default per parser.
+
+  Dual-route statement: `ParseIncremental` and every reuse-consuming path stay
+  on the production engine unconditionally. The compact tree carries a hard
+  incremental-reuse bar (decision 0008), so routing it under `ParseIncremental`
+  would destroy the O(edit) wins. Lifting the reuse bar is the follow-on
+  campaign.
+
+  Memory-budget contract: the compact scheduler does not poll the automatic
+  large-input memory budget. The switch declines every input at or above the
+  source-length floor where the production route arms that budget (64 KiB), so
+  such inputs stay on production and honor `ParseStopMemoryBudget`. Adding
+  scheduler-level budget polling to the compact route is the follow-on campaign.
 
 - **The GLR steady-state merge now compares structure before score**
   (PR #416). The TypeScript and TSX steady-state merge budget widens

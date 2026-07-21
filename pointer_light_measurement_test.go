@@ -122,6 +122,9 @@ func TestPointerLightBytesPerNode(t *testing.T) {
 
 	for _, wl := range pointerLightWorkloads(t) {
 		parser := gotreesitter.NewParser(lang)
+		// Pin to production: this measurement asserts production-engine arena
+		// breakdown internals the compact candidate route does not report.
+		parser.SetAdmissionCandidateRoute(false)
 		tree, err := parser.Parse(wl.src)
 		if err != nil {
 			t.Fatalf("[%s] parse error: %v", wl.name, err)

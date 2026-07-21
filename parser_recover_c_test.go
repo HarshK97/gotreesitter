@@ -1394,6 +1394,9 @@ func collidingCNodeMemoNodes(t *testing.T, setCount int) (*Node, *Node, *Node) {
 
 func TestCNodeMemoEpochAdvancesAcrossParserParses(t *testing.T) {
 	p := NewParser(buildArithmeticLanguage())
+	// Pin to production: this test asserts a production-engine internal (the C
+	// recovery memo epoch), which the compact candidate route never advances.
+	p.SetAdmissionCandidateRoute(false)
 	p.errorCostCompetition = true
 
 	first, err := p.Parse([]byte("1"))

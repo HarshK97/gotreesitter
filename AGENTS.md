@@ -42,10 +42,19 @@ Track at minimum:
 - `allocs/op`
 - Max RSS on large-file runs (`/usr/bin/time -v`)
 
-Current readiness targets for PR merge:
+Release-blocking performance safety requirements:
+- Do not permit a crash, an out-of-memory failure, or runaway memory retention.
+- Preserve the parser memory-budget contracts.
+- Complete the benchmark suite and publish reproducible evidence.
+
+Directional performance goals:
 - Full parse: within `2x` of C/cgo baseline on agreed macro workload.
 - Incremental single-byte edits: at or better than C/cgo baseline.
-- No memory strangulation or crash behavior under large corpus runs.
+- Improve `ns/op`, `B/op`, allocation count, and maximum resident set size.
+
+The directional goals do not block a merge or a release. Record each
+regression and explain its tradeoff. Continue the optimization work after the
+release when correctness, portability, and depth justify the change.
 
 ### 5) Attribution for Incremental Hot Path
 When profiling incremental edits, split attribution into:

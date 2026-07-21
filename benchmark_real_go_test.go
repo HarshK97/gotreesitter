@@ -56,6 +56,11 @@ func BenchmarkGoParseWarmRealDFA(b *testing.B) {
 func admitRealGoBenchmarkFixture(tb testing.TB, fixture benchfixtures.LoadedFixture, lang *gotreesitter.Language) benchfixtures.NodeKindCoverage {
 	tb.Helper()
 	parser := gotreesitter.NewParser(lang)
+	// Pin to production: this admission fixture asserts production-engine GLR
+	// internals (MaxStacksSeen forking) alongside the deep-tree digest. The
+	// compact candidate route does not report those internals; its digest
+	// exactness is proven by the tagged scorecard suite.
+	parser.SetAdmissionCandidateRoute(false)
 	tree, err := parser.Parse(fixture.Source)
 	if err != nil {
 		releaseBenchmarkTree(tree)

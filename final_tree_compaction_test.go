@@ -167,6 +167,9 @@ func TestFinalTreeCompactionEligibilityIsNarrow(t *testing.T) {
 func TestIncrementalParseAfterFinalTreeCompactionMatchesFresh(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)
+	// Pin to production: this test asserts a production-engine internal (final
+	// tree compaction), which the compact candidate route does not perform.
+	parser.SetAdmissionCandidateRoute(false)
 	source := []byte("1+2+3")
 	oldTree := mustParse(t, parser, source)
 	oldArena := oldTree.arena
@@ -200,6 +203,9 @@ func TestConcurrentReadsAfterFinalTreeCompaction(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	source := []byte("1+2+3+4")
 	parser := NewParser(lang)
+	// Pin to production: this test asserts a production-engine internal (final
+	// tree compaction), which the compact candidate route does not perform.
+	parser.SetAdmissionCandidateRoute(false)
 	tree := mustParse(t, parser, source)
 	oldArena := tree.arena
 	oldArena.allocatedBytes = 800 << 20

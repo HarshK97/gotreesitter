@@ -122,6 +122,10 @@ func TestHighlightIncremental(t *testing.T) {
 func TestParseIncrementalReusesUnchangedLeaf(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)
+	// Pin to production: a compact-materialized base tree is hard-barred from
+	// incremental reuse (decision 0008), so the reuse assertion needs a
+	// production base tree. Reuse-bar lift is the follow-on campaign.
+	parser.SetAdmissionCandidateRoute(false)
 
 	oldSource := []byte("1+2+3")
 	tree := mustParse(t, parser, oldSource)
@@ -219,6 +223,10 @@ func TestParseIncrementalReusesRootWhenUnchanged(t *testing.T) {
 func TestParseIncrementalReusesRootAfterUndo(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)
+	// Pin to production: a compact-materialized base tree is hard-barred from
+	// incremental reuse (decision 0008), so the reuse assertion needs a
+	// production base tree. Reuse-bar lift is the follow-on campaign.
+	parser.SetAdmissionCandidateRoute(false)
 
 	source := []byte("1+2+3")
 	tree := mustParse(t, parser, source)
@@ -283,6 +291,10 @@ func TestTreeEditNodesAfterEdit(t *testing.T) {
 func TestParseIncrementalReleaseKeepsBorrowedNodesAlive(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)
+	// Pin to production: a compact-materialized base tree is hard-barred from
+	// incremental reuse (decision 0008), so the reuse assertion needs a
+	// production base tree. Reuse-bar lift is the follow-on campaign.
+	parser.SetAdmissionCandidateRoute(false)
 
 	oldSrc := []byte("1+2+3")
 	oldTree := mustParse(t, parser, oldSrc)

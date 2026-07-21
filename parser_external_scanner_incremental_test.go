@@ -340,6 +340,11 @@ func TestExternalScannerTokenInvariantLeafReuse(t *testing.T) {
 				lang = explicitForestLanguage(t, lang)
 			}
 			parser := gotreesitter.NewParser(lang)
+			// Pin to production: this test asserts token-invariant incremental
+			// leaf reuse and the accepted forest runtime. A compact-materialized
+			// base tree is hard-barred from reuse (decision 0008), so the base and
+			// fresh parses must stay on the production engine.
+			parser.SetAdmissionCandidateRoute(false)
 			fresh, err := parser.Parse(next)
 			if err != nil {
 				t.Fatalf("fresh parse: %v", err)

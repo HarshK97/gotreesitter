@@ -38,6 +38,10 @@ func TestParseWithProfilingFullParseSignalsUnavailable(t *testing.T) {
 func TestParseWithProfilingIncrementalSignalsAvailable(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)
+	// Pin to production: the base tree must be reuse-eligible for the
+	// incremental profile signals. A compact-materialized base tree is
+	// hard-barred from reuse (decision 0008), zeroing those signals.
+	parser.SetAdmissionCandidateRoute(false)
 	oldSource := []byte("1+2")
 	newSource := []byte("1+3")
 
