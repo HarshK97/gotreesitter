@@ -491,6 +491,11 @@ func buildParserCoreSelectedStorePolicy(parser *Parser) (core.SelectedStorePolic
 	if err != nil {
 		return core.SelectedStorePolicy{}, err
 	}
+	retainedAliases := make([]core.SelectedAliasChildPair, 0, len(parser.collapsedChildOccurrencePairs))
+	for _, pair := range parser.collapsedChildOccurrencePairs {
+		retainedAliases = append(retainedAliases, core.SelectedAliasChildPair{Alias: core.Symbol(pair.parent), Child: core.Symbol(pair.child)})
+	}
+	policy.SetRetainedAliasChildren(retainedAliases)
 	syms, _ := goCompatibilitySymbolsForLanguage(lang)
 	containers := make([]bool, width)
 	for _, symbol := range syms.semiContainers[:syms.semiContainerLen] {

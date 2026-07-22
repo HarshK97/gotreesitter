@@ -26,17 +26,34 @@ const (
 	SelectedUnaryRenameLeaf
 )
 
+// SelectedAliasChildPair is one compiled occurrence fact requiring an alias to
+// retain its raw child instead of relabeling that child.
+type SelectedAliasChildPair struct {
+	Alias Symbol
+	Child Symbol
+}
+
 // SelectedStorePolicy is the fail-closed compact-to-consumer contract. Unary
 // is a dense parent-major matrix with stride len(Symbols).
 type SelectedStorePolicy struct {
-	Symbols             []SelectedSymbolPolicy
-	Unary               []SelectedUnaryRule
-	ExpectedRoot        Symbol
-	Semicolon           Symbol
-	SemicolonNUL        Symbol
-	SemicolonContainers []bool
-	Cases               []bool
-	StatementLists      []bool
+	Symbols               []SelectedSymbolPolicy
+	Unary                 []SelectedUnaryRule
+	RetainedAliasChildren []SelectedAliasChildPair
+	ExpectedRoot          Symbol
+	Semicolon             Symbol
+	SemicolonNUL          Symbol
+	SemicolonContainers   []bool
+	Cases                 []bool
+	StatementLists        []bool
+}
+
+// SetRetainedAliasChildren installs parser-compiled symbol facts. The compact
+// core deliberately receives no language names or source-text policy.
+func (p *SelectedStorePolicy) SetRetainedAliasChildren(edges []SelectedAliasChildPair) {
+	if p == nil {
+		return
+	}
+	p.RetainedAliasChildren = append(p.RetainedAliasChildren[:0], edges...)
 }
 
 // SelectedStorePolicyProvider lets an authenticated table adapter build the
@@ -90,6 +107,18 @@ func (p SelectedStorePolicy) unary(parent, child Symbol) SelectedUnaryRule {
 	return p.Unary[slot]
 }
 
+func (p SelectedStorePolicy) retainsAliasChild(alias, child Symbol) bool {
+	if alias == 0 {
+		return false
+	}
+	for _, edge := range p.RetainedAliasChildren {
+		if edge.Alias == alias && edge.Child == child {
+			return true
+		}
+	}
+	return false
+}
+
 func (p SelectedStorePolicy) validate() error {
 	if len(p.Symbols) == 0 || int(p.ExpectedRoot) >= len(p.Symbols) {
 		return errors.New("parser-core phase zero: selected-store policy has no authenticated root")
@@ -97,6 +126,11 @@ func (p SelectedStorePolicy) validate() error {
 	width := len(p.Symbols)
 	if width > math.MaxInt/width || len(p.Unary) != width*width {
 		return errors.New("parser-core phase zero: selected-store unary policy width drifted")
+	}
+	for _, pair := range p.RetainedAliasChildren {
+		if pair.Alias == 0 || int(pair.Alias) >= width || int(pair.Child) >= width || !p.Symbols[pair.Alias].Visible {
+			return errors.New("parser-core phase zero: selected-store retained-alias policy is invalid")
+		}
 	}
 	compatWidth := len(p.SemicolonContainers)
 	if compatWidth == 0 {
@@ -428,14 +462,24 @@ func (c *Core) buildSelectedStoreStaged(roots []SubtreeID, policy SelectedStoreP
 		return nil, err
 	}
 	defer c.finishSelectedBuildScratch()
+	retainedAliasCount := 0
+	for _, occurrence := range raw {
+		record, recordErr := c.subtree(occurrence.payload)
+		if recordErr != nil {
+			return nil, recordErr
+		}
+		if !record.extra && policy.retainsAliasChild(occurrence.alias, record.symbol) {
+			retainedAliasCount++
+		}
+	}
 	results := resizeSelectedScratch(c.selectedBuild.results, len(raw))
 	c.selectedBuild.results = results
-	wantRetained := uint64(len(raw))*uint64(unsafe.Sizeof(SelectedNodeRecord{})) +
-		uint64(len(raw)-len(roots))*uint64(unsafe.Sizeof(SelectedNodeID(0)))
+	wantRetained := uint64(len(raw)+retainedAliasCount)*uint64(unsafe.Sizeof(SelectedNodeRecord{})) +
+		uint64(len(raw)-len(roots)+retainedAliasCount)*uint64(unsafe.Sizeof(SelectedNodeID(0)))
 	if wantRetained > c.limits.MaxSelectedBytes {
 		return nil, errors.New("parser-core phase zero: selected store retained-byte cap")
 	}
-	store := c.acquireSelectedStore(len(raw), len(raw)-len(roots))
+	store := c.acquireSelectedStore(len(raw)+retainedAliasCount, len(raw)-len(roots)+retainedAliasCount)
 	sealed := false
 	defer func() {
 		if !sealed {
@@ -464,8 +508,9 @@ func (c *Core) buildSelectedStoreStaged(roots []SubtreeID, policy SelectedStoreP
 		if err != nil {
 			return nil, err
 		}
+		retainAliasChild := !record.extra && policy.retainsAliasChild(occ.alias, record.symbol)
 		symbol := record.symbol
-		if occ.alias != 0 {
+		if occ.alias != 0 && !retainAliasChild {
 			symbol = occ.alias
 		}
 		meta, ok := policy.symbol(symbol)
@@ -504,7 +549,7 @@ func (c *Core) buildSelectedStoreStaged(roots []SubtreeID, policy SelectedStoreP
 					child.Symbol = record.symbol
 					child.flags = selectedFlags(policy.Symbols[record.symbol], child.Extra(), child.External(), child.Terminal())
 				}
-				if occ.alias != 0 {
+				if occ.alias != 0 && !retainAliasChild {
 					child.Symbol = occ.alias
 					child.flags = selectedFlags(meta, child.Extra(), child.External(), child.Terminal())
 				}
@@ -514,8 +559,14 @@ func (c *Core) buildSelectedStoreStaged(roots []SubtreeID, policy SelectedStoreP
 					return nil, err
 				}
 				precedenceDeltas[childID-1] = delta
-				if occ.field != 0 {
+				if occ.field != 0 && !retainAliasChild {
 					child.Field = occ.field
+				}
+				if retainAliasChild {
+					childID, precedenceDeltas, err = appendSelectedRetainedAliasWrapper(store, policy, childID, occ.alias, occ.field, record.productionID, precedenceDeltas)
+					if err != nil {
+						return nil, err
+					}
 				}
 				results[index] = childID
 				continue
@@ -543,9 +594,13 @@ func (c *Core) buildSelectedStoreStaged(roots []SubtreeID, policy SelectedStoreP
 				endByte = lastChild.EndByte
 			}
 		}
+		incomingField := occ.field
+		if retainAliasChild {
+			incomingField = 0
+		}
 		store.records = append(store.records, SelectedNodeRecord{
 			FirstChild: first, StartByte: startByte, EndByte: endByte,
-			Symbol: symbol, Field: occ.field,
+			Symbol: symbol, Field: incomingField,
 			ProductionID: record.productionID, DynamicPrecedence: int32(record.dynamicPrecedence),
 			ChildCount: uint16(len(logical)), flags: flags,
 		})
@@ -553,6 +608,12 @@ func (c *Core) buildSelectedStoreStaged(roots []SubtreeID, policy SelectedStoreP
 		for childIndex, childID := range logical {
 			store.records[childID-1].Parent = id
 			store.records[childID-1].ChildIndex = uint16(childIndex)
+		}
+		if retainAliasChild {
+			id, precedenceDeltas, err = appendSelectedRetainedAliasWrapper(store, policy, id, occ.alias, occ.field, record.productionID, precedenceDeltas)
+			if err != nil {
+				return nil, err
+			}
 		}
 		results[index] = id
 	}
@@ -863,6 +924,41 @@ func selectedFlags(meta SelectedSymbolPolicy, extra, external, terminal bool) ui
 		flags |= selectedNodeFlagTerminal
 	}
 	return flags
+}
+
+func appendSelectedRetainedAliasWrapper(
+	store *SelectedStore,
+	policy SelectedStorePolicy,
+	childID SelectedNodeID,
+	alias Symbol,
+	field FieldID,
+	productionID uint16,
+	precedenceDeltas []int32,
+) (SelectedNodeID, []int32, error) {
+	if store == nil || childID == 0 || int(childID) > len(store.records) {
+		return 0, precedenceDeltas, errors.New("parser-core phase zero: retained alias child is invalid")
+	}
+	meta, ok := policy.symbol(alias)
+	if !ok || !meta.Visible {
+		return 0, precedenceDeltas, errors.New("parser-core phase zero: retained alias wrapper is not visible")
+	}
+	if uint64(len(store.records)) >= math.MaxUint32 || uint64(len(store.children)) >= math.MaxUint32 {
+		return 0, precedenceDeltas, errors.New("parser-core phase zero: retained alias wrapper exceeded arena")
+	}
+	child := &store.records[childID-1]
+	id := SelectedNodeID(uint64(len(store.records)) + 1)
+	first := uint32(len(store.children))
+	store.children = append(store.children, childID)
+	store.records = append(store.records, SelectedNodeRecord{
+		FirstChild: first, StartByte: child.StartByte, EndByte: child.EndByte,
+		Symbol: alias, Field: field, ProductionID: productionID, ChildCount: 1,
+		flags: selectedFlags(meta, false, false, false),
+	})
+	precedenceDeltas = append(precedenceDeltas, 0)
+	child = &store.records[childID-1]
+	child.Parent = id
+	child.ChildIndex = 0
+	return id, precedenceDeltas, nil
 }
 
 func (s *SelectedStore) applyDirectField(ids []SelectedNodeID, field FieldID) {

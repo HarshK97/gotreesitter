@@ -54,10 +54,11 @@ func TestCrystalAndMatlabKeepAcceptedErrorRetryLadder(t *testing.T) {
 }
 
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	// 28 = the prior 19 plus D and Groovy, whose retry ceilings moved out of
-	// parser-core name switches and onto exact-blob profiles. The prior gomod
-	// and C additions moved hardcoded compat-tier behavior to profiles. Meson
-	// and Enforce add two exact-blob retry policies. JavaScript adds one
+	// 32 = the prior 28 plus Apex, Elixir, Hack, and Ruby, whose collapsed-child
+	// capability is bound to exact blob identity. D and Groovy's retry ceilings
+	// moved out of parser-core name switches and onto exact-blob profiles. The
+	// prior gomod and C additions moved hardcoded compat-tier behavior to profiles.
+	// Meson and Enforce add two exact-blob retry policies. JavaScript adds one
 	// exact-blob automatic-forest memory allowance. The
 	// repetition-conflict helpers were retired in favor of certified
 	// ConflictPolicies rows here. AWK and Uxntal add exact-blob automatic forest
@@ -66,7 +67,7 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	// the gomod entry), so it does not add a map entry. Crystal and Matlab add
 	// exact-blob external-scanner repeat suppression while retaining the full
 	// accepted-error retry ladder.
-	if got, want := len(builtinLanguageRuntimeProfiles), 28; got != want {
+	if got, want := len(builtinLanguageRuntimeProfiles), 32; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -684,6 +685,45 @@ func TestCSharpNativeResultCompatibilityRequiresExactBlobIdentity(t *testing.T) 
 	}
 	if got := CSharpLanguage().NativeResultCompatibility; got != want {
 		t.Fatalf("embedded CSharpLanguage NativeResultCompatibility = %#x, want %#x", got, want)
+	}
+}
+
+func TestCollapsedChildNativeCapabilityRequiresExactBlobIdentity(t *testing.T) {
+	want := gotreesitter.ResultCompatibilityNativeCollapsedChildren
+	tests := []struct {
+		name string
+		load func() *gotreesitter.Language
+	}{
+		{name: "apex", load: ApexLanguage},
+		{name: "dart", load: DartLanguage},
+		{name: "elixir", load: ElixirLanguage},
+		{name: "hack", load: HackLanguage},
+		{name: "kotlin", load: KotlinLanguage},
+		{name: "ruby", load: RubyLanguage},
+	}
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wrongSHA := &gotreesitter.Language{Name: tt.name}
+			if attachBuiltinLanguageRuntimeProfile(tt.name, sha256.Sum256([]byte("uncertified")), wrongSHA) {
+				t.Fatal("wrong blob SHA reported a runtime-profile attachment")
+			}
+			if wrongSHA.NativeResultCompatibility&want != 0 {
+				t.Fatal("wrong blob SHA attached collapsed-child capability")
+			}
+
+			adapted := &gotreesitter.Language{Name: tt.name}
+			AttachLanguageSupport(tt.name, adapted)
+			if adapted.NativeResultCompatibility&want != 0 {
+				t.Fatal("same-name adapted language attached collapsed-child capability")
+			}
+
+			exact := tt.load()
+			if exact.NativeResultCompatibility&want == 0 {
+				t.Fatal("exact built-in artifact omitted collapsed-child capability")
+			}
+		})
 	}
 }
 

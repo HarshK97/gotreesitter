@@ -338,6 +338,24 @@ func ParserAdmissionEligibleForTest(p *Parser) bool {
 	return p.admissionCandidateFullParseEligible(nil, true)
 }
 
+// ParserRetainsCollapsedChildOccurrenceForTest exposes the exact native
+// occurrence predicate to external-package artifact tests.
+func ParserRetainsCollapsedChildOccurrenceForTest(p *Parser, parent, child Symbol) bool {
+	return p != nil && p.retainsCollapsedChildOccurrence(parent, child)
+}
+
+// NormalizeCollapsedNamedLeafForTest exercises the legacy safety-net matcher
+// and returns its exact traversal/rewrite counters.
+func NormalizeCollapsedNamedLeafForTest(root *Node, source []byte, lang *Language, parentName, childName string, bySource bool) (visited, rewritten uint64) {
+	var counters normalizationPassCounters
+	if bySource {
+		counters = normalizeCollapsedNamedLeafChildrenBySourceWithStats(root, source, lang, parentName, childName)
+	} else {
+		counters = normalizeCollapsedNamedLeafChildrenWithStats(root, lang, parentName, childName)
+	}
+	return counters.nodesVisited, counters.nodesRewritten
+}
+
 // ParserPoolCheckoutForTest checks a parser out of the pool (applying defaults).
 func ParserPoolCheckoutForTest(pp *ParserPool) *Parser { return pp.checkout() }
 

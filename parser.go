@@ -45,6 +45,8 @@ type Parser struct {
 	incrementalGSSHint            uint32
 	rootSymbol                    Symbol
 	hasRootSymbol                 bool
+	collapsedChildOccurrencePairs []collapsedChildSymbolPair
+	collapsedChildOccurrenceSet   map[uint32]struct{}
 
 	// admissionCandidateRoute is the per-Parser override for the Phase-3
 	// dual-route admission switch (see admission_switch.go). The zero value
@@ -1494,6 +1496,7 @@ func NewParser(lang *Language) *Parser {
 		p.hasKeywordState = buildKeywordStates(lang)
 		p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols = buildInvisibleSpanSymbolTables(lang.SymbolNames)
 		p.aliasPreservedWrapperSymbols = buildAliasPreservedWrapperSymbols(lang)
+		p.collapsedChildOccurrencePairs, p.collapsedChildOccurrenceSet = compileCollapsedChildOccurrencePolicy(lang)
 		p.initTypeScriptContextualKeywordSymbols(lang)
 		p.initSchemeErrorRecoverySymbols(lang)
 		p.errorCostCompetition = errorCostCompetitionLanguage(lang)

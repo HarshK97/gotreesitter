@@ -8,13 +8,14 @@ import (
 )
 
 func TestResultCompatibilityCapabilityLanguageBlobRoundTrip(t *testing.T) {
-	wantValues := []ResultCompatibilityCapability{1 << 0, 1 << 1, 1 << 2, 1 << 3, 1 << 4}
+	wantValues := []ResultCompatibilityCapability{1 << 0, 1 << 1, 1 << 2, 1 << 3, 1 << 4, 1 << 5}
 	gotValues := []ResultCompatibilityCapability{
 		ResultCompatibilityCSharpNativeNotNull,
 		ResultCompatibilityCSharpNativeUnicodeIdentifiers,
 		ResultCompatibilityCSharpNativeScopedLambdaStatements,
 		ResultCompatibilityCSharpNativeScopedLambdaBlocks,
 		ResultCompatibilityCSharpNativeQueryExpressions,
+		ResultCompatibilityNativeCollapsedChildren,
 	}
 	for i := range wantValues {
 		if gotValues[i] != wantValues[i] {
@@ -26,7 +27,8 @@ func TestResultCompatibilityCapabilityLanguageBlobRoundTrip(t *testing.T) {
 		ResultCompatibilityCSharpNativeUnicodeIdentifiers |
 		ResultCompatibilityCSharpNativeScopedLambdaStatements |
 		ResultCompatibilityCSharpNativeScopedLambdaBlocks |
-		ResultCompatibilityCSharpNativeQueryExpressions
+		ResultCompatibilityCSharpNativeQueryExpressions |
+		ResultCompatibilityNativeCollapsedChildren
 	lang := &Language{
 		Name:                      "result_compatibility_round_trip",
 		NativeResultCompatibility: want,
