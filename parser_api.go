@@ -246,11 +246,13 @@ func (p *Parser) disabledOldTreeTokenInvariantLeafAllowed(source []byte, oldTree
 		return false
 	}
 	if oldTree.compactMaterialized {
-		// A compact tree with an unknown/stateful scanner remains barred from
-		// subtree reuse, but a single edited leaf can still be re-authenticated
-		// independently when replay supplied its exact lexer entry state. The
-		// scan below must reproduce the same symbol and byte extent or decline.
-		return node.preGotoState != 0
+		// Replayed parser state alone is not an external-scanner proof. A fresh
+		// DFA source starts with a fresh scanner payload, so a stateful scanner
+		// may only enter the one-leaf re-authentication path when that leaf owns
+		// a checkpoint the scanner-aware rescan will restore and verify. A
+		// stateless scanner is proven quiescent at every boundary. Everything
+		// else fails closed rather than treating preGotoState as scanner state.
+		return node.preGotoState != 0 && compactLeafScannerReauthenticationProven(p.language, node)
 	}
 	switch p.language.Name {
 	case "go":
@@ -262,6 +264,40 @@ func (p *Parser) disabledOldTreeTokenInvariantLeafAllowed(source []byte, oldTree
 	default:
 		return false
 	}
+}
+
+// compactLeafScannerReauthenticationProven reports whether a compact,
+// reuse-disabled tree may re-authenticate one edited leaf without reviving
+// general subtree reuse. The decision is based on scanner proof class, never a
+// language-name allowlist:
+//
+//   - a proven-stateless scanner has no payload to restore;
+//   - an undecided scanner must carry the leaf's serialized checkpoint, which
+//     scanDFALeafTokenWithExternalCheckpoint restores and verifies; and
+//   - a refuted scanner (for example Python's indentation/delimiter scanner)
+//     cannot make this route safe until it has a stronger proof, so it declines.
+//
+// The checkpoint test deliberately happens before creating a fresh DFA source:
+// without it, that source would begin with Create() state and could scan a leaf
+// under a parser state that looks authenticated but a scanner state that is not.
+func compactLeafScannerReauthenticationProven(lang *Language, leaf *Node) bool {
+	switch classifyExternalScannerQuiescence(lang) {
+	case scannerQuiescenceProven:
+		return true
+	case scannerQuiescenceUnknown:
+		_, ok := externalScannerCheckpointForNode(leaf)
+		return ok
+	default:
+		return false
+	}
+}
+
+// compactLeafScannerCheckpointRequired identifies the proof class whose leaf
+// scan must authenticate a recorded external-scanner checkpoint. Proven
+// stateless scanners use the ordinary scanner-free path; refuted scanners are
+// rejected by compactLeafScannerReauthenticationProven before this is queried.
+func compactLeafScannerCheckpointRequired(lang *Language) bool {
+	return classifyExternalScannerQuiescence(lang) == scannerQuiescenceUnknown
 }
 
 func cssDisabledTreeTokenInvariantLeafAllowed(oldTree *Tree, leaf *Node) bool {

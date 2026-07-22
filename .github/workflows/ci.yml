@@ -78,14 +78,14 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Validate compact admission breadth, depth, and incremental bridge
+      - name: Validate compact admission breadth, route precedence, depth, and incremental bridge
         run: |
           set -euo pipefail
           GTS_ADMISSION_SCORECARD=1 \
           GTS_ADMISSION_SCORECARD_RATCHET=1 \
           GOMAXPROCS=1 \
           go test -tags gts_parsercorephase0 . \
-            -run '^(TestAdmissionCandidateScorecard206|TestAdmissionCandidateYAMLZeroWidthDepth|TestAdmissionCandidateRepresentativeDepthRatchet|TestAdmissionCompactTreeCarriesIncrementalReuseProof)$' \
+            -run '^(TestAdmissionCandidateScorecard206|TestAdmissionSwitchRoutePrecedenceRatchet|TestAdmissionCandidateYAMLZeroWidthDepth|TestAdmissionCandidateRepresentativeDepthRatchet|TestAdmissionCompactTreeCarriesIncrementalReuseProof)$' \
             -count=1 -timeout 10m
 
   race_root:

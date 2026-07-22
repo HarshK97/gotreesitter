@@ -30,7 +30,17 @@ func makeGoGLRCanarySource(callCount int) []byte {
 func assertGLRCanaryRuntime(t *testing.T, tc parityCase, src []byte, minStacks int) {
 	t.Helper()
 
-	goTree, goLang, err := parseWithGo(tc, src, nil)
+	entry, ok := parityEntriesByName[tc.name]
+	if !ok {
+		t.Fatalf("[%s/%s] missing gotreesitter registry entry", tc.name, "glr-canary")
+	}
+	goLang := entry.Language()
+	parser := gotreesitter.NewParser(goLang)
+	// This assertion verifies the live production GLR engine's branching
+	// telemetry. Compact admission establishes structural parity in runParityCase
+	// above but intentionally does not reconstruct live stack counters.
+	parser.SetAdmissionCandidateRoute(false)
+	goTree, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("[%s/%s] gotreesitter parse error: %v", tc.name, "glr-canary", err)
 	}

@@ -233,6 +233,11 @@ func TestPythonDerivedTokenInvariantLeafReusePrecedesScannerFallback(t *testing.
 
 					lang := languageCase.lang()
 					parser := gotreesitter.NewParser(lang)
+					// This test locks the legacy production-tree contract: a
+					// token-invariant leaf edit is reauthenticated before the scanner
+					// opt-out fallback. Reuse-disabled compact stateful scanners are
+					// covered by TestStatefulScannerCompactLeafReauthenticationFailsClosed.
+					parser.SetAdmissionCandidateRoute(false)
 					if route.includedRanges {
 						parser.SetIncludedRanges([]gotreesitter.Range{{
 							StartByte: 0,
