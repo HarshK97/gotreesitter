@@ -234,3 +234,33 @@ func TestCollapsedChildOccurrencePolicyNegativeControls(t *testing.T) {
 		}
 	})
 }
+
+func TestCollapsedNamedLeafCompatibilityTraversalIsDisabled(t *testing.T) {
+	lang := &Language{
+		Name:       "apex",
+		TokenCount: 4,
+		SymbolNames: []string{
+			"EOF", "root", "super", "super",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "root", Visible: true, Named: true},
+			{Name: "super", Visible: true, Named: true},
+			{Name: "super", Visible: true},
+		},
+	}
+	parser := NewParser(lang)
+	parser.materializationTiming = &parseMaterializationTiming{}
+	arena := newNodeArena(arenaClassFull)
+	root := newLeafNodeInArena(arena, 2, true, 0, 5, Point{}, Point{Column: 5})
+
+	normalizeResultCompatibility(root, []byte("super"), parser, nil)
+
+	if root.ChildCount() != 0 {
+		t.Fatalf("disabled compatibility traversal synthesized %d children", root.ChildCount())
+	}
+	pass := parser.normalizationStats.namedPass("collapsed_named_leaf_children")
+	if pass.checked != 1 || pass.run != 0 || pass.nodesVisited != 0 || pass.nodesRewritten != 0 {
+		t.Fatalf("collapsed-child pass checked/run/visited/rewritten=%d/%d/%d/%d", pass.checked, pass.run, pass.nodesVisited, pass.nodesRewritten)
+	}
+}

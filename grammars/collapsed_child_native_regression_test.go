@@ -249,14 +249,11 @@ func assertCollapsedChildRouteTree(t *testing.T, route string, tree *gotreesitte
 			t.Fatalf("%s normalization checked/run/visited/rewritten=%d/%d/%d/%d", route, runtime.NormalizationPassesChecked, runtime.NormalizationPassesRun, runtime.NormalizationNodesVisited, runtime.NormalizationNodesRewritten)
 		}
 	} else {
-		if runtime.NormalizationPassesChecked == 0 || runtime.NormalizationPassesRun == 0 ||
-			runtime.NormalizationNodesVisited == 0 || runtime.NormalizationNodesRewritten != 0 {
+		if runtime.NormalizationPassesChecked != 1 || runtime.NormalizationPassesRun != 0 ||
+			runtime.NormalizationNodesVisited != 0 || runtime.NormalizationNodesRewritten != 0 {
 			t.Fatalf("%s normalization checked/run/visited/rewritten=%d/%d/%d/%d", route,
 				runtime.NormalizationPassesChecked, runtime.NormalizationPassesRun,
 				runtime.NormalizationNodesVisited, runtime.NormalizationNodesRewritten)
-		}
-		if pass, ok := collapsedChildNormalizationPass(runtime); ok && pass.NodesRewritten != 0 {
-			t.Fatalf("%s collapsed-child pass rewrote nodes: %+v", route, pass)
 		}
 	}
 	for parentType, want := range wants {

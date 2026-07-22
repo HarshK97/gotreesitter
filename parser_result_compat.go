@@ -67,7 +67,7 @@ func normalizeResultCompatibility(root *Node, source []byte, p *Parser, incremen
 		result.stopReason = terminalReason
 		return result
 	}
-	p.runNamedNormalizationPass("collapsed_named_leaf_children", func() bool { return true }, func() normalizationPassCounters {
+	p.runNamedNormalizationPass("collapsed_named_leaf_children", func() bool { return false }, func() normalizationPassCounters {
 		return normalizeResultCollapsedNamedLeafChildren(root, source, lang)
 	})
 	result.stopReason = ctx.stopReason()
