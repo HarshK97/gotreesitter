@@ -346,12 +346,12 @@ func ParserRetainsCollapsedChildOccurrenceForTest(p *Parser, parent, child Symbo
 
 // NormalizeCollapsedNamedLeafForTest exercises the legacy safety-net matcher
 // and returns its exact traversal/rewrite counters.
-func NormalizeCollapsedNamedLeafForTest(root *Node, source []byte, lang *Language, parentName, childName string, bySource bool) (visited, rewritten uint64) {
+func NormalizeCollapsedNamedLeafForTest(root *Node, source []byte, lang *Language, parentName, childName string, childNamed, bySource bool) (visited, rewritten uint64) {
 	var counters normalizationPassCounters
 	if bySource {
-		counters = normalizeCollapsedNamedLeafChildrenBySourceWithStats(root, source, lang, parentName, childName)
+		counters = normalizeCollapsedNamedLeafChildrenBySourceAndNamednessWithStats(root, source, lang, parentName, childNamed, childName)
 	} else {
-		counters = normalizeCollapsedNamedLeafChildrenWithStats(root, lang, parentName, childName)
+		counters = normalizeCollapsedNamedLeafChildrenAndNamednessWithStats(root, lang, parentName, childName, childNamed)
 	}
 	return counters.nodesVisited, counters.nodesRewritten
 }

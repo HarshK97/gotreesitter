@@ -387,10 +387,12 @@ const (
 	ResultCompatibilityCSharpNativeScopedLambdaStatements ResultCompatibilityCapability = 1 << 2
 	ResultCompatibilityCSharpNativeScopedLambdaBlocks     ResultCompatibilityCapability = 1 << 3
 	ResultCompatibilityCSharpNativeQueryExpressions       ResultCompatibilityCapability = 1 << 4
-	// ResultCompatibilityNativeCollapsedChildren certifies that the exact
-	// SHA-pinned built-in artifact may use the compiled native retention policy
-	// for collapsed-child compatibility rows. Same-name caller-built and adapted
-	// languages retain the zero value and stay on the legacy post-pass path.
+	// ResultCompatibilityNativeCollapsedChildren records the v0.46 exact-profile
+	// certification receipt for collapsed-child rows. It admits exact built-ins
+	// and true adapted clones; native retention then keys off exact registered
+	// parent/raw-child metadata identities. A matching display name or pair-level
+	// metadata alone is insufficient. Keep the bit append-only because Language
+	// blobs encode capability values.
 	ResultCompatibilityNativeCollapsedChildren ResultCompatibilityCapability = 1 << 5
 )
 

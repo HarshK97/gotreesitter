@@ -7,7 +7,7 @@ import (
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
-type collapsedChildStrictSubsetRow struct {
+type collapsedChildOccurrenceRow struct {
 	language   string
 	load       func() *gotreesitter.Language
 	parent     string
@@ -16,8 +16,8 @@ type collapsedChildStrictSubsetRow struct {
 	bySource   bool
 }
 
-func TestCollapsedChildNativePolicyIsStrictSubsetOfLegacyRepair(t *testing.T) {
-	rows := []collapsedChildStrictSubsetRow{
+func TestCollapsedChildOccurrencePolicyCoversExactAndAdaptedArtifacts(t *testing.T) {
+	rows := []collapsedChildOccurrenceRow{
 		{language: "ruby", load: grammars.RubyLanguage, parent: "bare_string", child: "string_content", childNamed: true},
 		{language: "ruby", load: grammars.RubyLanguage, parent: "bare_symbol", child: "string_content", childNamed: true},
 		{language: "apex", load: grammars.ApexLanguage, parent: "after_delete", child: "after_delete"},
@@ -43,8 +43,9 @@ func TestCollapsedChildNativePolicyIsStrictSubsetOfLegacyRepair(t *testing.T) {
 		{language: "elixir", load: grammars.ElixirLanguage, parent: "nil", child: "nil", bySource: true},
 	}
 	if len(rows) != 23 {
-		t.Fatalf("strict-subset rows=%d, want 23", len(rows))
+		t.Fatalf("collapsed-child occurrence rows=%d, want 23", len(rows))
 	}
+	var residualRewrites uint64
 	for _, row := range rows {
 		row := row
 		t.Run(row.language+"/"+row.parent, func(t *testing.T) {
@@ -57,13 +58,30 @@ func TestCollapsedChildNativePolicyIsStrictSubsetOfLegacyRepair(t *testing.T) {
 			if !parentOK || !childOK {
 				t.Fatalf("could not resolve exact pair %s/%s", row.parent, row.child)
 			}
-			parser := gotreesitter.NewParser(lang)
-			if !gotreesitter.ParserRetainsCollapsedChildOccurrenceForTest(parser, parent, child) {
-				t.Fatal("native predicate rejected exact authenticated pair")
+			// A true adapted clone retains the exact built-in profile receipt and
+			// symbol table; display-name-compatible caller artifacts are not covered.
+			adapted := &gotreesitter.Language{
+				Name:                      lang.Name,
+				TokenCount:                lang.TokenCount,
+				NativeResultCompatibility: lang.NativeResultCompatibility,
+				SymbolNames:               lang.SymbolNames,
+				SymbolMetadata:            lang.SymbolMetadata,
 			}
-			if gotreesitter.ParserRetainsCollapsedChildOccurrenceForTest(parser, parent, 0) ||
-				gotreesitter.ParserRetainsCollapsedChildOccurrenceForTest(parser, 0, child) {
-				t.Fatal("native predicate accepted a parent/raw-child mismatch")
+			for _, artifact := range []struct {
+				name string
+				lang *gotreesitter.Language
+			}{
+				{name: "exact", lang: lang},
+				{name: "adapted", lang: adapted},
+			} {
+				parser := gotreesitter.NewParser(artifact.lang)
+				if !gotreesitter.ParserRetainsCollapsedChildOccurrenceForTest(parser, parent, child) {
+					t.Fatalf("%s occurrence policy rejected registered pair", artifact.name)
+				}
+				if gotreesitter.ParserRetainsCollapsedChildOccurrenceForTest(parser, parent, 0) ||
+					gotreesitter.ParserRetainsCollapsedChildOccurrenceForTest(parser, 0, child) {
+					t.Fatalf("%s occurrence policy accepted a parent/raw-child mismatch", artifact.name)
+				}
 			}
 
 			if row.bySource {
@@ -75,23 +93,31 @@ func TestCollapsedChildNativePolicyIsStrictSubsetOfLegacyRepair(t *testing.T) {
 
 			end := uint32(len(row.child))
 			collapsed := gotreesitter.NewLeafNode(parent, true, 0, end, gotreesitter.Point{}, gotreesitter.Point{Column: end})
+			// A caller can still hand the compatibility matcher a childless result
+			// after raw occurrence identity has already been lost. This quantifies
+			// the residual but does not establish whether recovery, election, or
+			// another live construction route produced it; provenance stays unknown.
 			visited, rewritten := gotreesitter.NormalizeCollapsedNamedLeafForTest(
-				collapsed, []byte(row.child), lang, row.parent, row.child, row.bySource,
+				collapsed, []byte(row.child), lang, row.parent, row.child, row.childNamed, row.bySource,
 			)
 			if visited == 0 || rewritten != 1 || collapsed.ChildCount() != 1 ||
 				collapsed.Child(0).Symbol() != child || collapsed.Child(0).IsNamed() != row.childNamed {
 				t.Fatalf("legacy repair visited=%d rewritten=%d shape=%s", visited, rewritten, collapsed.SExpr(lang))
 			}
+			residualRewrites += rewritten
 			if row.bySource {
 				wrongSource := gotreesitter.NewLeafNode(parent, true, 0, end, gotreesitter.Point{}, gotreesitter.Point{Column: end})
 				_, rewritten = gotreesitter.NormalizeCollapsedNamedLeafForTest(
-					wrongSource, []byte("xxxxxx")[:len(row.child)], lang, row.parent, row.child, true,
+					wrongSource, []byte("xxxxxx")[:len(row.child)], lang, row.parent, row.child, row.childNamed, true,
 				)
 				if rewritten != 0 || wrongSource.ChildCount() != 0 {
 					t.Fatal("source-verified legacy repair accepted a different literal")
 				}
 			}
 		})
+	}
+	if residualRewrites != uint64(len(rows)) {
+		t.Fatalf("synthetic lost-identity residual rewrites=%d, want %d", residualRewrites, len(rows))
 	}
 }
 

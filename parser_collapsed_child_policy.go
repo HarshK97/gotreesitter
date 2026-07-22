@@ -2,7 +2,9 @@ package gotreesitter
 
 // collapsedChildSymbolPair is one exact public-wrapper/raw-child identity that
 // C tree-sitter retains as a unary node. The policy is compiled once per Parser
-// only after the exact SHA-pinned built-in runtime profile authenticates it.
+// from the registered occurrence ledger after an exact runtime profile admits
+// the artifact. Within that profile, exact named parent and raw-child metadata
+// identities select the occurrence; display-name fallback is never sufficient.
 type collapsedChildSymbolPair struct {
 	parent Symbol
 	child  Symbol
@@ -24,15 +26,9 @@ func compileCollapsedChildOccurrencePolicy(lang *Language) ([]collapsedChildSymb
 		}
 		parent, ok := lang.symbolByNameAndNamed(rule.parentName, true)
 		if !ok {
-			parent, ok = symbolByName(lang, rule.parentName)
-		}
-		if !ok {
 			continue
 		}
-		child, ok := lang.symbolByNameAndNamed(rule.childName, false)
-		if !ok {
-			child, ok = symbolByName(lang, rule.childName)
-		}
+		child, ok := lang.symbolByNameAndNamed(rule.childName, rule.childNamed)
 		if !ok {
 			continue
 		}
@@ -50,7 +46,7 @@ func compileCollapsedChildOccurrencePolicy(lang *Language) ([]collapsedChildSymb
 }
 
 // retainsCollapsedChildOccurrence is the single native keep/wrap decision.
-// Its authenticated (parent, raw-child) domain is strictly narrower than the
+// Its registered (parent, raw-child) domain is strictly narrower than the
 // legacy safety net, which may repair a collapsed parent leaf (and, for some
 // rows, verify source text) after the raw child identity has been lost.
 func (p *Parser) retainsCollapsedChildOccurrence(parent, rawChild Symbol) bool {

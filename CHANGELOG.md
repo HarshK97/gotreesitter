@@ -25,6 +25,18 @@ for tags and release notes while still in `0.x`.
   not an O(edit) claim: the 1 MiB lane is catastrophe-bounded and its measured
   allocation/RSS scaling remains an explicit performance residual.
 
+- **Collapsed named-leaf ownership now covers exact adapted artifacts.**
+  The 23 registered parent/raw-child pairs compile into the native reduction,
+  alias, forest, and compact-materialization policy for exact built-ins as well
+  as true adapted clones retaining the exact-profile receipt and exact named
+  parent/raw-child metadata identities; display-name or pair-level metadata
+  matches do not admit arbitrary custom grammars. Focused adapted
+  incremental/fresh witnesses require exact
+  deep-tree equality and zero safety-net rewrites. The generic pass remains
+  fail-closed for a quantified synthetic lost-identity residual whose live
+  construction provenance is still unknown; no language-specific normalizer
+  was added.
+
 ## [0.46.0] - 2026-07-21
 
 ### Added

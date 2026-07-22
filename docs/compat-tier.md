@@ -76,12 +76,22 @@ make the exported API surface worse without changing its ownership.
 ## Current progress: collapsed named leaves
 
 All 23 registered collapsed named-leaf rows for the six affected built-in
-languages now produce their child shape natively when an exact SHA-pinned
-runtime profile grants the capability. The generic walk remains live: it is a
-zero-rewrite safety receipt for those certified artifacts and the repair path
-for caller-built, adapted, and other custom languages that do not carry the
-capability. Retirement still requires exact route receipts with zero rewrites
-and a documented decision for custom-language compatibility.
+languages now produce their child shape natively. The occurrence policy is
+admitted by the exact-profile receipt and compiled from exact named parent and
+raw-child metadata identities, so true adapted clones retaining both take the
+same upstream construction path. A display-name or pair-level metadata match
+alone does not admit a caller-built or custom artifact. Focused production,
+compact, forest, and incremental witnesses keep the generic pass at zero
+rewrites on those routes.
+
+The generic walk remains live as fail-closed coverage for childless results
+whose raw child identity has already been lost. Its synthetic residual witness
+is intentionally one rewrite for each of the 23 registered rows, but does not
+identify a live recovery, election, or other construction route. Retirement
+first requires finding and retaining the occurrence at every live provenance,
+followed by exact route receipts (including a nonzero per-pair C-oracle
+occurrence census) and an actual retirement commit recorded in the ownership
+registry.
 
 ## The retained second pass
 
