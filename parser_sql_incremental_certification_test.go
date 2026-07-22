@@ -12,46 +12,78 @@ import (
 )
 
 // TestSQLIncrementalScannerCertification is the committed witness for issues
-// #430 and #432. It crosses three length-changing edit routes at the start,
-// middle, and end of clean and recovered SQL corpora. This certifies sound
-// checkpoint admission and catastrophe bounds, not O(edit) performance. The
-// 20 KiB and 137 KiB tiers run in ordinary CI;
-// GTS_SQL_SCANNER_SLOW_TIER=1 adds the 1 MiB catastrophe lane.
+// #430 and #432. Ordinary CI crosses three length-changing edit routes at the
+// start, middle, and end of small clean and recovered SQL corpora, then keeps
+// one representative 137 KiB clean-corpus bound. This certifies checkpoint
+// admission without making every race shard pay the malformed recovery cost at
+// macro sizes. GTS_SQL_SCANNER_SLOW_TIER=1 adds the exhaustive 20 KiB matrix,
+// a 137 KiB malformed witness, and the 1 MiB catastrophe lane.
 func TestSQLIncrementalScannerCertification(t *testing.T) {
-	tiers := []struct {
-		name string
-		size int
-	}{
-		{name: "20KiB", size: 20 << 10},
-		{name: "137KiB", size: 137 << 10},
+	plans := []sqlCertificationPlan{
+		{
+			name:      "4KiB",
+			size:      4 << 10,
+			malformed: []bool{false, true},
+			positions: []string{"start", "middle", "end"},
+			classes:   []sqlCertificationEditClass{sqlCertificationInsert, sqlCertificationDelete, sqlCertificationReplace},
+		},
+		{
+			name:      "137KiB",
+			size:      137 << 10,
+			malformed: []bool{false},
+			positions: []string{"middle"},
+			classes:   []sqlCertificationEditClass{sqlCertificationReplace},
+		},
 	}
 	if strings.TrimSpace(os.Getenv("GTS_SQL_SCANNER_SLOW_TIER")) != "" {
-		tiers = append(tiers, struct {
-			name string
-			size int
-		}{name: "1MiB", size: 1 << 20})
+		plans = append(plans,
+			sqlCertificationPlan{
+				name:      "20KiB-slow",
+				size:      20 << 10,
+				malformed: []bool{false, true},
+				positions: []string{"start", "middle", "end"},
+				classes:   []sqlCertificationEditClass{sqlCertificationInsert, sqlCertificationDelete, sqlCertificationReplace},
+			},
+			sqlCertificationPlan{
+				name:      "137KiB-malformed-slow",
+				size:      137 << 10,
+				malformed: []bool{true},
+				positions: []string{"middle"},
+				classes:   []sqlCertificationEditClass{sqlCertificationReplace},
+			},
+			sqlCertificationPlan{
+				name:      "1MiB-slow",
+				size:      1 << 20,
+				malformed: []bool{false},
+				positions: []string{"middle"},
+				classes:   []sqlCertificationEditClass{sqlCertificationReplace},
+			},
+		)
 	}
 
-	for _, tier := range tiers {
-		for _, malformed := range []bool{false, true} {
-			source, sites := makeSQLScannerCertificationSource(tier.size, malformed)
-			positions := []struct {
-				name string
-				site int
-			}{
-				{name: "start", site: sites[1]},
-				{name: "middle", site: sites[len(sites)/2]},
-				{name: "end", site: sites[len(sites)-2]},
-			}
+	for _, plan := range plans {
+		for _, malformed := range plan.malformed {
+			source, sites := makeSQLScannerCertificationSource(plan.size, malformed)
 			shape := "clean"
 			if malformed {
 				shape = "malformed"
 			}
-			for _, position := range positions {
-				for _, class := range []sqlCertificationEditClass{sqlCertificationInsert, sqlCertificationDelete, sqlCertificationReplace} {
-					name := fmt.Sprintf("%s/%s/%s/%s", tier.name, shape, class, position.name)
+			for _, position := range plan.positions {
+				var site int
+				switch position {
+				case "start":
+					site = sites[1]
+				case "middle":
+					site = sites[len(sites)/2]
+				case "end":
+					site = sites[len(sites)-2]
+				default:
+					t.Fatalf("unknown SQL certification position %q", position)
+				}
+				for _, class := range plan.classes {
+					name := fmt.Sprintf("%s/%s/%s/%s", plan.name, shape, class, position)
 					t.Run(name, func(t *testing.T) {
-						edited, edit := applySQLCertificationEdit(source, position.site, class)
+						edited, edit := applySQLCertificationEdit(source, site, class)
 						first := runSQLCertificationSample(t, source, edited, edit, malformed)
 						second := runSQLCertificationSample(t, source, edited, edit, malformed)
 						checkSQLCertificationBounds(t, len(edited), first)
@@ -75,6 +107,14 @@ func TestSQLIncrementalScannerCertification(t *testing.T) {
 			}
 		}
 	}
+}
+
+type sqlCertificationPlan struct {
+	name      string
+	size      int
+	malformed []bool
+	positions []string
+	classes   []sqlCertificationEditClass
 }
 
 type sqlCertificationEditClass uint8
