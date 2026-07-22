@@ -52,6 +52,7 @@ func (t *incrementalParseTiming) toProfile() IncrementalParseProfile {
 		ReuseRejectInvalidSpan:              t.reuseRejectInvalidSpan,
 		ReuseRejectOutOfBounds:              t.reuseRejectOutOfBounds,
 		ReuseRejectRootNonLeafChanged:       t.reuseRejectRootNonLeafChanged,
+		ReuseObservedPreGotoStateMismatch:   t.reuseObservedPreGotoStateMismatch,
 		ReuseRejectLargeNonLeaf:             t.reuseRejectLargeNonLeaf,
 		ReuseRejectStaleNonLeafBoundary:     t.reuseRejectStaleNonLeafBoundary,
 		ReuseRejectFragileNonLeaf:           t.reuseRejectFragileNonLeaf,
@@ -157,6 +158,7 @@ func (t *incrementalParseTiming) addAttempt(other *incrementalParseTiming) {
 	t.reuseRejectInvalidSpan += other.reuseRejectInvalidSpan
 	t.reuseRejectOutOfBounds += other.reuseRejectOutOfBounds
 	t.reuseRejectRootNonLeafChanged += other.reuseRejectRootNonLeafChanged
+	t.reuseObservedPreGotoStateMismatch += other.reuseObservedPreGotoStateMismatch
 	t.reuseRejectLargeNonLeaf += other.reuseRejectLargeNonLeaf
 	t.reuseRejectStaleNonLeafBoundary += other.reuseRejectStaleNonLeafBoundary
 	t.reuseRejectFragileNonLeaf += other.reuseRejectFragileNonLeaf

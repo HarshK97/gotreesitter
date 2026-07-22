@@ -281,4 +281,12 @@ func TestLeadingSpliceCSSProductionRoute(t *testing.T) {
 	if prof.ReuseRejectRootNonLeafChanged > 32 {
 		t.Fatalf("css leading reuse is not O(edit): rootNonLeafChanged=%d", prof.ReuseRejectRootNonLeafChanged)
 	}
+	// This is a real parser-produced ownership mismatch, not a fabricated Node:
+	// CSS still reaches a top-level candidate from a live state different from
+	// the candidate's recorded PreGotoState. The existing fragility+goto proof
+	// remains the admission contract, so the parse must stay fresh-identical and
+	// performant while the mismatch is observable for #432's ownership work.
+	if prof.ReuseObservedPreGotoStateMismatch == 0 {
+		t.Fatal("expected a real PreGotoState mismatch to be recorded")
+	}
 }

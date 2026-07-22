@@ -225,7 +225,7 @@ func runLeadingSweep(t *testing.T, tc leadingSweepCase) {
 }
 
 // TestLeadingSpliceBarredLanguagesDoNotSplice proves the JS/TS/TSX bar
-// (leadingSpliceLanguageBarred): a middle edit that WOULD present a large leading
+// (leadingSpliceFrontierUnproven): a middle edit that WOULD present a large leading
 // run splices ZERO leading top-level items for the barred family, so their
 // incremental behavior is byte-identical to before this change. The counter it
 // checks is the leading run's block-splice steps at a middle edit; for a barred
