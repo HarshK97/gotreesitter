@@ -7,6 +7,8 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-07-21
+
 ### Added
 
 - **Phase-3 admission switch** (PR #417). A per-parser option, a global
@@ -22,6 +24,18 @@ for tags and release notes while still in `0.x`.
   multi-derivation blockers.
 - **Oracle v3 parity tools** in `cgo_harness` (PR #413). The root
   library module is unchanged by that PR.
+- **The W5 editor-latency matrix now covers five languages.** Go,
+  JavaScript, TypeScript, Python, and CSS run insert, delete, and replace
+  edits at the start, middle, and end of roughly 20 KiB and 137 KiB inputs;
+  the manual full sweep adds 1 MiB. JavaScript and TypeScript also carry a
+  transient-error delete lane with deterministic ceilings for parser work,
+  retries, stack width, and allocator memory, while retaining fresh-parse
+  structural equality as the correctness oracle.
+- **External-scanner incremental-reuse contracts are now published per
+  language.** The 119-language matrix distinguishes certified, bounded,
+  explicit-opt-out, and uncertified scanners. SQL, HTML, and Markdown now
+  document their fail-closed production full-parse fallback for changed edits
+  after the narrow token-invariant leaf exception declines.
 
 ### Changed
 
@@ -35,7 +49,10 @@ for tags and release notes while still in `0.x`.
   puts repository maintenance, explainability, documentation, ownership
   receipts, and upstream retirement of normalization shims before the next
   major performance milestone; performance gates remain advisory during this
-  cleanup.
+  cleanup. All 23 collapsed named-leaf rows for six exact-profile built-in
+  languages now materialize natively across their admitted routes; the generic
+  compatibility walk remains as a zero-rewrite receipt and as the safety path
+  for caller-built, adapted, and other custom languages.
 
 - **Compact admission now ratchets breadth, depth, and edit reuse.** The shared
   production clean-tail proof admits compact roots that stop immediately before
@@ -134,17 +151,18 @@ for tags and release notes while still in `0.x`.
   from one survivor to two. The wider budget activates the structural
   comparison at the merge site. This is the structural cure for the
   detector class behind issue #389 and issue #402.
-- **Incremental reparse cost is now position-independent for large
-  files** (PR #418, PR #421, campaign O(edit)). PR #418 bounds arena
-  normalization to the edited range. A 1MB clean-Go near-top keystroke
-  drops from about 356ms to about 53ms. PR #421 splices the leading run
-  of unchanged top-level items, the mirror of the trailing
-  block-splice. A 1MB mid-file keystroke drops from about 269ms to
-  about 67ms for Go, and from about 168ms to about 45ms for CSS. At
-  137KB, mid-file reuse rejects fall from 16,450 to 10. JavaScript,
-  TypeScript, and TSX keep their previous behavior until the T2c
-  scanner proofs land. The W5 latency gate now locks these counters per
-  edit position.
+- **Admitted clean top-level edits now reuse both leading and trailing
+  sibling runs** (PR #418, PR #421, campaign O(edit)). PR #418 bounds arena
+  normalization to the edited range. A 1MB clean-Go near-top keystroke drops
+  from about 356ms to about 53ms. PR #421 splices the leading run of unchanged
+  top-level items, the mirror of the trailing block-splice. A 1MB mid-file
+  keystroke drops from about 269ms to about 67ms for Go, and from about 168ms
+  to about 45ms for CSS. At 137KB, mid-file reuse rejects fall from 16,450 to
+  10. Length- or point-changing `Tree.Edit` calls still maintain coordinates
+  through affected trailing sibling subtrees, so this is not an absolute
+  whole-call `O(edit)` claim. JavaScript, TypeScript, and TSX keep their
+  previous leading-run behavior until the T2c scanner proofs land. The W5
+  latency gate locks these counters per edit position.
 
 ### Removed
 
@@ -303,10 +321,13 @@ for tags and release notes while still in `0.x`.
 
 ### Improved
 
-- **Go clean-file incremental edits are now O(edit), not O(file).** This
-  closes, for clean top-level edits, the Go reuse gap that v0.44.0 listed
-  as a known issue. Before dispatch reaches the reuse check, the parser
-  now applies any pending eager-default reduce chain to the live stack.
+- **Go clean-file incremental parses now reuse the top-level suffix instead
+  of reparsing it.** This closes, for clean top-level edits, the Go reuse
+  gap that v0.44.0 listed as a known issue. It is not an absolute
+  whole-call `O(edit)` claim: length- or point-changing `Tree.Edit` calls
+  still maintain coordinates through affected trailing sibling subtrees.
+  Before dispatch reaches the reuse check, the parser now applies any
+  pending eager-default reduce chain to the live stack.
   This is campaign O(edit) workstream W1b (PR #398), and it closes the
   settling gap that blocked the W1 splice (PR #395) for Go.
   `ReuseRejectRootNonLeafChanged` now holds at a small constant, 9,
@@ -3489,7 +3510,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.45.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.46.0...HEAD
+[0.46.0]: https://github.com/odvcencio/gotreesitter/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/odvcencio/gotreesitter/compare/v0.44.1...v0.45.0
 [0.44.1]: https://github.com/odvcencio/gotreesitter/compare/v0.44.0...v0.44.1
 [0.44.0]: https://github.com/odvcencio/gotreesitter/compare/v0.43.1...v0.44.0

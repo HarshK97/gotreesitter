@@ -73,6 +73,16 @@ The tier stays internal because it operates on arena and node internals before
 the tree is returned. Moving it into a package with exported plumbing would
 make the exported API surface worse without changing its ownership.
 
+## Current progress: collapsed named leaves
+
+All 23 registered collapsed named-leaf rows for the six affected built-in
+languages now produce their child shape natively when an exact SHA-pinned
+runtime profile grants the capability. The generic walk remains live: it is a
+zero-rewrite safety receipt for those certified artifacts and the repair path
+for caller-built, adapted, and other custom languages that do not carry the
+capability. Retirement still requires exact route receipts with zero rewrites
+and a documented decision for custom-language compatibility.
+
 ## The retained second pass
 
 `normalizePostFinalizationReturnedTree` deliberately runs a bounded second
