@@ -35,6 +35,10 @@ type parityPythonTestIncrementalReuseScanner struct{ gotreesitter.ExternalScanne
 
 func (parityPythonTestIncrementalReuseScanner) SupportsIncrementalReuse() bool { return true }
 
+func (parityPythonTestIncrementalReuseScanner) UsesExternalScannerCheckpoints() bool { return true }
+
+func (parityPythonTestIncrementalReuseScanner) PreservesStateOnScanFailure() bool { return true }
+
 var paritySkips = map[string]parityMeta{
 	// Keep this map for explicitly known structural mismatches.
 	// Parse-support-specific skips (e.g. missing scanners) should not live here.
