@@ -1221,8 +1221,14 @@ type IncrementalParseProfile struct {
 	ReuseRejectInvalidSpan             uint64
 	ReuseRejectOutOfBounds             uint64
 	ReuseRejectRootNonLeafChanged      uint64
-	ReuseRejectLargeNonLeaf            uint64
-	ReuseRejectStaleNonLeafBoundary    uint64
+	// ReuseObservedPreGotoStateMismatch counts top-level block-splice candidates
+	// observed at a live parser state different from the node's recorded
+	// PreGotoState. This is diagnostic only: the established admission contract
+	// remains goto-target compatibility plus fragility until #432 replaces it
+	// with a complete ownership proof.
+	ReuseObservedPreGotoStateMismatch uint64
+	ReuseRejectLargeNonLeaf           uint64
+	ReuseRejectStaleNonLeafBoundary   uint64
 	// ReuseRejectFragileNonLeaf counts interior (non-leaf) reuse candidates
 	// rejected because Node.isFragile() reported the candidate was built
 	// under an ambiguous parse decision (LR-table conflict, GSS multi-pop, or
@@ -1341,6 +1347,7 @@ type incrementalParseTiming struct {
 	reuseRejectInvalidSpan             uint64
 	reuseRejectOutOfBounds             uint64
 	reuseRejectRootNonLeafChanged      uint64
+	reuseObservedPreGotoStateMismatch  uint64
 	reuseRejectLargeNonLeaf            uint64
 	reuseRejectStaleNonLeafBoundary    uint64
 	reuseRejectFragileNonLeaf          uint64
@@ -3036,6 +3043,7 @@ func (p *Parser) parseIncrementalInternalWithMergePerKeyOverride(source []byte, 
 			timing.reuseRejectInvalidSpan += reuse.rejectInvalidSpan
 			timing.reuseRejectOutOfBounds += reuse.rejectOutOfBounds
 			timing.reuseRejectRootNonLeafChanged += reuse.rejectRootNonLeafChanged
+			timing.reuseObservedPreGotoStateMismatch += reuse.observedPreGotoStateMismatch
 			timing.reuseRejectLargeNonLeaf += reuse.rejectLargeNonLeaf
 			timing.reuseRejectStaleNonLeafBoundary += reuse.rejectStaleNonLeafBoundary
 			timing.reuseRejectFragileNonLeaf += reuse.rejectFragileNonLeaf
