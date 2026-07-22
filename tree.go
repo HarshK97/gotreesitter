@@ -1741,16 +1741,8 @@ func (n *Node) containsByteRange(startByte, endByte uint32) bool {
 	return startByte >= n.startByte && endByte <= n.endByte
 }
 
-func (n *Node) containsPointRange(startPoint, endPoint Point) bool {
-	return pointLessOrEqual(n.startPoint, startPoint) && pointLessOrEqual(endPoint, n.endPoint)
-}
-
 func stackEntryContainsByteRange(entry stackEntry, startByte, endByte uint32) bool {
 	return startByte >= stackEntryNodeStartByte(entry) && endByte <= stackEntryNodeEndByte(entry)
-}
-
-func stackEntryContainsPointRange(entry stackEntry, startPoint, endPoint Point) bool {
-	return pointLessOrEqual(stackEntryNodeStartPoint(entry), startPoint) && pointLessOrEqual(endPoint, stackEntryNodeEndPoint(entry))
 }
 
 // descendantForByteRange walks to the smallest descendant covering [startByte,

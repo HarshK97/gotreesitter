@@ -147,14 +147,6 @@ func parserCoreFreshFullAcceptedTailIsClean(source []byte, headByte uint32) bool
 	return parserTailAllowsCleanAcceptance(source, headByte, uint32(len(source)), nil)
 }
 
-func (r *parserCoreFreshFullRunner) executeScheduler(source []byte, compact *core.Core, reset bool) (*diagnosticParserCoreGenericScheduler, error) {
-	scheduler, tokenSource, err := r.executeSchedulerOpen(source, compact, reset)
-	if tokenSource != nil {
-		tokenSource.Close()
-	}
-	return scheduler, err
-}
-
 func (r *parserCoreFreshFullRunner) materialize(source []byte, compact *core.Core, head core.Head) (*Tree, error) {
 	if r == nil {
 		return nil, errors.New("parser-core fresh-full runner is nil")
