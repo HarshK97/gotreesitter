@@ -47,7 +47,7 @@ package gotreesitter_test
 //     typescript, tsx, and javascript are NOT flattened: they share the
 //     ambiguous-expression / ASI grammar whose reduce-fragility marking is
 //     known-incomplete, so the leading splice is held off for them
-//     (leadingSpliceLanguageBarred, incremental.go) until the campaign T2c
+//     (leadingSpliceFrontierUnproven, incremental.go) until the campaign T2c
 //     reuse proof lands, and their mid-file counters still scale with size --
 //     they keep the top-only ceiling. python still declines reuse entirely
 //     (W4 indent-stack proof open).
@@ -599,7 +599,7 @@ var w5Ceilings = map[string]w5Ceiling{
 	// typescript: NOT flattened by T2a. typescript (with tsx and javascript)
 	// shares the ambiguous-expression / ASI grammar whose per-node reduce-
 	// fragility marking is known-incomplete, so the leading-run splice is held
-	// off for it (leadingSpliceLanguageBarred, incremental.go) until the campaign
+	// off for it (leadingSpliceFrontierUnproven, incremental.go) until the campaign
 	// T2c reuse proof lands. Its mid-file cells therefore still scale with size,
 	// exactly as before this change, so they keep the top-only counter ceiling
 	// and the pre-T2a byte-reuse floors -- no MaxRootNonLeafChanged at
