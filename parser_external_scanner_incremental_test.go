@@ -39,12 +39,12 @@ func TestExternalScannerIncrementalReusePolicy(t *testing.T) {
 			wantNoReparse:  true,
 		},
 		{
-			name:           "svelte",
-			lang:           grammars.SvelteLanguage,
-			source:         makeSvelteBenchmarkSource,
-			marker:         "let v0 = ",
-			wantReuse:      true,
-			wantSubtreeMin: 1,
+			name:       "svelte",
+			lang:       grammars.SvelteLanguage,
+			source:     makeSvelteBenchmarkSource,
+			marker:     "let v0 = ",
+			wantReuse:  false,
+			wantReason: "external_scanner_unsupported",
 		},
 	}
 
