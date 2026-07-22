@@ -242,7 +242,9 @@ tree.Edit(gotreesitter.InputEdit{
 tree2, _ := parser.ParseIncremental(src, tree)
 ```
 
-`ParseIncremental` walks the old tree's spine, identifies the edit region, and reuses unchanged content by reference. It re-lexes and re-parses only the invalidated span. Reuse covers leaf nodes, the unchanged suffix, the untouched root, and — on a clean old tree — unchanged top-level siblings after the edit. Admission for top-level sibling reuse is per node: a fragility bit plus byte-range equality, not a language allowlist. This keeps clean edits near the top of the file, and the trailing sibling run after any edit, at O(edit) cost. Edits deeper in the file still pay a cost that grows with the number of preceding top-level items. Interior, non-top-level subtree reuse does not ship yet; it stays on the roadmap.
+`ParseIncremental` walks the old tree's spine, identifies the edit region, and reuses unchanged content by reference. For an admitted clean edit, re-lex/reparse work can stay close to the invalidated region: reuse covers leaf nodes, the unchanged suffix, the untouched root, and unchanged top-level siblings after the edit. Admission for top-level sibling reuse is per node: a fragility bit plus byte-range equality, not a language allowlist.
+
+That parse reuse is not an absolute `O(edit)` guarantee. For a length- or point-changing edit, `Tree.Edit` must also update byte and point coordinates through affected trailing sibling subtrees. The measured cost model is therefore cheap edited-region parse work plus sibling-offset maintenance that grows linearly with the number of trailing nodes or compact entries whose coordinates move. Same-length edits whose points do not move avoid that tail shift. Interior, non-top-level subtree reuse does not ship yet; it stays on the roadmap. A production tree first gets one narrow, independently reauthenticated same-length token-invariant leaf fast path. If that path declines, a language with an external scanner enters general old-tree reuse only when the scanner is certified; otherwise it uses the production full-parse fallback. See the [per-language incremental scanner matrix](docs/external-scanners.md#incremental-reuse-certification-matrix).
 
 When no edit has occurred, `ParseIncremental` detects the nil-edit on a pointer check and returns in single-digit nanoseconds with zero allocations.
 
@@ -456,7 +458,7 @@ you can compare parser throughput across generated source sizes. Use
 
 206 grammars ship in the registry. All 206 produce error-free parse trees on smoke samples. Run `go run ./cmd/parity_report` for current status.
 
-- 116 external scanners (hand-written Go implementations of upstream C scanners)
+- 119 external scanners (hand-written Go implementations of upstream C scanners)
 - 7 hand-written Go token sources (authzed, c, cpp, go, java, json, lua)
 - Remaining languages use the DFA lexer generated from grammar tables
 
@@ -585,11 +587,11 @@ gotreesitter is a ground-up reimplementation of the tree-sitter runtime in Go. N
 
 **Parser** — Table-driven LR(1) with GLR fallback. When a `(state, symbol)` pair maps to multiple actions in the parse table, the parser forks the stack and explores all alternatives in parallel. Stack merging collapses equivalent paths. Safety limits (iteration count, stack depth, node count) scale with input size and prevent runaway exploration on ambiguous grammars.
 
-**Incremental engine** — Walks the edit region of the previous tree and reuses unchanged content by reference. Reuse covers leaf nodes, the unchanged suffix, the untouched root, and — on a clean old tree — unchanged top-level siblings after the edited node. Admission for top-level sibling reuse is per node: a fragility bit plus byte-range equality, not a language allowlist. This splice keeps clean edits near the top of the file, and the trailing sibling run after any edit, at O(edit) cost, Go and CSS alike. Edits deeper in the file still pay a cost that grows with the number of preceding top-level items. Interior, non-top-level subtree reuse does not ship yet; it stays on the roadmap. For languages whose external scanner is reuse-safe, or records a boundary checkpoint, scanner-dependent content can be reused without a scanner replay from the start of the file.
+**Incremental engine** — Walks the edit region of the previous tree and reuses unchanged content by reference. Reuse covers leaf nodes, the unchanged suffix, the untouched root, and — on a clean old tree — unchanged top-level siblings after the edited node. Admission for top-level sibling reuse is per node: a fragility bit plus byte-range equality, not a language allowlist. On admitted clean edits, parse work can stay close to the invalidated region, but a length- or point-changing `Tree.Edit` still performs sibling-offset maintenance proportional to the trailing nodes or compact entries whose coordinates move. This measured model is not an absolute `O(edit)` guarantee. Interior, non-top-level subtree reuse does not ship yet; it stays on the roadmap. A production tree may first take the narrow independently reauthenticated same-length token-invariant leaf fast path. Once that path declines, external-scanner languages use general old-tree reuse only when their scanner explicitly certifies it, with boundary checkpoints where configured; uncertified scanners use the production full-parse fallback documented in the [scanner matrix](docs/external-scanners.md#incremental-reuse-certification-matrix).
 
 **Lexer** — Two paths. `ts2go` generates a DFA lexer from the grammar's lex tables, and it handles most languages. For grammars where the DFA is not enough (for example, Go's automatic semicolons, or YAML's indentation-sensitive structure), hand-written Go token sources implement the `TokenSource` interface directly.
 
-**External scanners** — 116 grammars require external scanners for context-sensitive tokens (Python indentation, HTML implicit close tags, Rust raw string delimiters, Swift operator disambiguation, and similar cases). Each scanner is a hand-written Go implementation of the grammar's `ExternalScanner` interface: `Create`, `Serialize`, `Deserialize`, `Scan`. The runtime snapshots scanner state after every token and stores it on tree nodes, so incremental reuse can restore scanner state on skip.
+**External scanners** — 119 registered grammars require external scanners for context-sensitive tokens (Python indentation, HTML implicit close tags, Rust raw string delimiters, Swift operator disambiguation, and similar cases). Each scanner is a hand-written Go implementation of the grammar's `ExternalScanner` interface: `Create`, `Serialize`, `Deserialize`, `Scan`. Certified checkpoint-enabled scanners snapshot state at external-token boundaries so incremental reuse can restore compatible state. After the narrow independently reauthenticated same-length token-invariant leaf path declines, an uncertified scanner fails closed to a fresh production parse; certification and fallback behavior are explicit in the [per-language matrix](docs/external-scanners.md#incremental-reuse-certification-matrix).
 
 **Arena allocator** — Nodes are allocated from slab-based arenas to reduce GC pressure. Arenas are released in bulk when a tree is freed.
 
@@ -755,8 +757,9 @@ edit measures about 82-88ms, down from about 148ms. The campaign's
 materialization outside the splice path. GLR-heavy files with genuine
 ambiguity still see little change, since settling and block-splice run
 on a single stack only. The prior release, v0.44.1, restored Swift's
-retry-ladder optimizations and made Go clean-file incremental edits
-O(edit).
+retry-ladder optimizations and introduced clean-file Go suffix and
+top-level-sibling reuse. Length-changing edits still include linear
+trailing-coordinate maintenance in `Tree.Edit`.
 The authenticated production receipt at tag target `1935a42c` measures
 public `Parser.Parse` at **4.851050x C** by equal-fixture geomean,
 **5.472406x C** by fixed-suite sum, and **5.608320x C** on the worst
@@ -771,31 +774,25 @@ correctness/work-classification receipt rather than a representative
 comparative speed headline. Detailed history lives in
 [CHANGELOG.md](CHANGELOG.md).
 
-### Now — performance and extreme hygiene
+### Now — cleanup, ownership, and explainability
 
-- Keep correctness, C-oracle parity, and performance gates separate. Every
-  optimization must preserve the selected full-span tree before its timing
-  or memory result counts.
-- Hold the corrected materialized canonical full parse against the locked,
-  authenticated real-code publication benchmark. The historical 1.895x
-  result is not a target. No-tree, parser-core, and straight-LR lanes stay
-  attribution tools, not substitutes for the public benchmark.
-- Keep the exact-revision fleet sweep current with clean/error splits and
-  C-oracle fingerprints. Eliminate valid rows above 3x and all timeout,
-  hard-RSS, truncation, or unreported-stop cliffs, and prioritize absolute
-  user cost over ratio noise on tiny files.
-- Reduce recurring fixed work, discarded forest attempts, recovery and GLR
-  construction debris, retained scratch, and compatibility walks, but only
-  through mechanisms that generalize across measured witnesses.
-- Track wall time, allocations, retained arena/scratch bytes, and hard-cgroup
-  maximum RSS. Keep the public full-parse, incremental-edit, and
-  incremental no-edit benchmark lanes alongside the forking real-code
-  full-parse matrix; no-tree and synthetic straight-LR measurements stay
-  diagnostic.
-- Remove temporary telemetry and failed experimental paths when each lane
-  closes. Add no public parse variant or parser-core language-name switch
-  when an internal diagnostic or generated runtime profile can express the
-  need.
+- Correctness, portability, and supported parser depth are banked. Preserve
+  their receipts and keep correctness gates distinct from the currently
+  advisory performance gates.
+- Prioritize repository maintenance: remove obsolete experiments and
+  telemetry, reduce duplication, clarify subsystem ownership, improve
+  documentation, and keep ownership receipts current.
+- Retire result-normalization shims only after the authoritative parser,
+  scanner, materializer, or incremental mechanism owns the behavior and the
+  required route receipts prove the shim inert. Follow the
+  [compat-tier retirement guide](docs/compat-tier.md) for the mechanical
+  retirement contract.
+- Keep the authenticated public benchmarks as regression signals and preserve
+  their historical claims. Parser-core, no-tree, compact-candidate, and
+  synthetic lanes remain diagnostic rather than public performance claims.
+- After cleanup, the next major performance milestone is public
+  `Parser.Parse` at no more than **1.5x C** on the locked canonical real-code
+  benchmark. It is a future target, not a current gate or achieved result.
 
 ### Measured memory boundary
 

@@ -1,9 +1,6 @@
 package gotreesitter
 
-import (
-	"sync/atomic"
-	"testing"
-)
+import "testing"
 
 // These tests pin the mechanism behind the C-recovery cyclic-transient-tree
 // defect (go zerrors_windows.go truncations; the trailing-EOF shape of issue
@@ -166,36 +163,43 @@ func TestTrailingEOFRecoveryPreservesTransientSentinel(t *testing.T) {
 	}
 }
 
-// TestTrailingEOFEagerWiringSelfLoopWasMaskedByStrip documents the pre-fix
-// corruption shape on the trailing-EOF path and its interaction with the #110
-// band-aid: the old eager-wiring construction of the ERROR wrapper over a
-// transient child self-loops after materialization, and stripResultTreeSelfCycles
-// removed that edge silently. After the band-aid conversion the strip still
-// happens (defense in depth) but now bumps the observable counter, so the masked
-// construction bug can no longer hide.
-func TestTrailingEOFEagerWiringSelfLoopWasMaskedByStrip(t *testing.T) {
+// TestTrailingEOFEagerWiringSelfLoopFailsClosedAsInvariantViolation preserves
+// the historical issue #110 construction path. The old eager-linking wrapper
+// corrupts the transient sentinel and materializes as a self-loop; the result
+// validator must leave that evidence untouched and return a standalone error
+// tree that publicly reports an invariant stop.
+func TestTrailingEOFEagerWiringSelfLoopFailsClosedAsInvariantViolation(t *testing.T) {
 	arena, scratch, transient := newTransientSentinelFixture(t)
 
-	// Pre-fix appendTrailingEOFRecoveryNodes body: wrap the dropped trailing stack
-	// payload with the eager-link constructor, corrupting transient.parent.
 	trailing := stackEntryNode(newStackEntryNode(transient.parseState, transient))
 	wrapper := newParentNodeInArena(arena, errorSymbol, true, []*Node{trailing}, nil, 0)
 	if transient.parent != wrapper {
-		t.Fatal("pre-fix simulation expects eager wiring to set the transient child's parent")
+		t.Fatal("pre-fix simulation expects eager wiring to corrupt the transient sentinel")
 	}
 
 	nodes := []*Node{wrapper}
-	scratch.materializeNodeSliceUntil(nodes, arena, nil, nil)
+	if reason := scratch.materializeNodeSliceUntil(nodes, arena, nil, nil); reason != ParseStopNone {
+		t.Fatalf("materialize stop reason = %v, want none", reason)
+	}
 	if len(wrapper.children) != 1 || wrapper.children[0] != wrapper {
-		t.Fatalf("expected the corrupted sentinel to self-loop the ERROR wrapper; children=%v", wrapper.children)
+		t.Fatalf("expected historical self-loop; children=%v", wrapper.children)
 	}
 
-	before := atomic.LoadUint64(&debugResultTreeSelfCyclesStripped)
-	stripResultTreeSelfCycles(wrapper)
-	if len(wrapper.children) != 0 {
-		t.Fatalf("band-aid did not strip the self-edge; children=%v", wrapper.children)
+	tree := recoveredResultInvariantErrorTree(nodes, []byte("x"), &Language{Name: "test"}, arena)
+	if tree == nil {
+		t.Fatal("cyclic recovered result was not contained")
 	}
-	if got := atomic.LoadUint64(&debugResultTreeSelfCyclesStripped); got != before+1 {
-		t.Fatalf("self-cycle strip counter = %d, want %d — the #110 mask is still silent", got, before+1)
+	defer tree.Release()
+	if got := tree.ParseStopReason(); got != ParseStopInvariantViolation {
+		t.Fatalf("stop reason = %q, want %q", got, ParseStopInvariantViolation)
+	}
+	if !tree.ParseStoppedEarly() {
+		t.Fatal("invariant error tree did not report stopped-early")
+	}
+	if root := rawRootOrNil(tree); root == nil || !root.IsError() || root == wrapper {
+		t.Fatalf("fail-closed root = %p, want standalone ERROR distinct from corrupt wrapper %p", root, wrapper)
+	}
+	if len(wrapper.children) != 1 || wrapper.children[0] != wrapper {
+		t.Fatal("validator repaired or mutated the historical self-loop")
 	}
 }

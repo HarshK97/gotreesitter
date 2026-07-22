@@ -147,6 +147,28 @@ func TestParserCoreFreshFullRunnerFailsClosedAtConstruction(t *testing.T) {
 	}
 }
 
+func TestParserCoreFreshFullAcceptedTailRequiresParserPadding(t *testing.T) {
+	tests := []struct {
+		name     string
+		source   string
+		headByte uint32
+		want     bool
+	}{
+		{name: "exact EOF", source: "value", headByte: 5, want: true},
+		{name: "newline", source: "value\n", headByte: 5, want: true},
+		{name: "mixed padding", source: "value \t\r\n", headByte: 5, want: true},
+		{name: "real tail", source: "value x", headByte: 5},
+		{name: "past EOF", source: "value", headByte: 6},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := parserCoreFreshFullAcceptedTailIsClean([]byte(test.source), test.headByte); got != test.want {
+				t.Fatalf("clean accepted tail=%t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 // BenchmarkParserCoreFreshFullCanonical measures the authenticated compact
 // candidate's complete fresh materialized lifecycle. Fixture identity, deep
 // tree equality, exact compact work, arena draining, runner construction, and

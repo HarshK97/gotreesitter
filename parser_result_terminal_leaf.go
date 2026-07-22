@@ -1,15 +1,11 @@
 package gotreesitter
 
-// normalizeResultTerminalLeafNodesWithStopAndErrorSummary removes redundant
-// terminal payload children that can be introduced by generalized
-// reduction/materialization paths. C tree-sitter exposes terminal and
-// terminal-alias symbols as leaves, so a visible leaf-like parent with one
-// visible anonymous terminal child and no semantic decorations should keep
-// the parent's symbol/flags and adopt the child's token span.
-func normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root *Node, lang *Language, stopCheck parseStopCheck) (normalizationPassCounters, ParseStopReason, resultErrorSummary) {
-	return normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root, lang, buildVisibleAliasTargetSymbols(lang), stopCheck)
-}
-
+// normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary
+// removes redundant terminal payload children that can be introduced by
+// generalized reduction/materialization paths. C tree-sitter exposes terminal
+// and terminal-alias symbols as leaves, so a visible leaf-like parent with one
+// visible anonymous terminal child and no semantic decorations should keep the
+// parent's symbol/flags and adopt the child's token span.
 func normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root *Node, lang *Language, aliasTargets []bool, stopCheck parseStopCheck) (normalizationPassCounters, ParseStopReason, resultErrorSummary) {
 	var counters normalizationPassCounters
 	if root == nil || lang == nil {

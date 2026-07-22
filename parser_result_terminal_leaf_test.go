@@ -27,7 +27,7 @@ func TestNormalizeResultTerminalLeafNodesCollapsesRedundantAnonymousTokenChild(t
 	token.endPoint = Point{Row: 0, Column: 12}
 	root := newParentNodeInArena(arena, 3, true, []*Node{token}, nil, 0)
 
-	counters, _, _ := normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root, lang, nil)
+	counters, _, _ := normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root, lang, buildVisibleAliasTargetSymbols(lang), nil)
 
 	if got, want := counters.nodesRewritten, uint64(1); got != want {
 		t.Fatalf("nodesRewritten = %d, want %d", got, want)
@@ -83,7 +83,7 @@ func TestNormalizeResultTerminalLeafNodesStopsOnActiveParseBudget(t *testing.T) 
 		return ParseStopNone
 	}
 
-	counters, reason, errorSummary := normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root, lang, stopCheck)
+	counters, reason, errorSummary := normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root, lang, buildVisibleAliasTargetSymbols(lang), stopCheck)
 
 	if reason != ParseStopTimeout {
 		t.Fatalf("stop reason = %q, want %q", reason, ParseStopTimeout)
@@ -120,7 +120,7 @@ func TestNormalizeResultTerminalLeafNodesSummarizesCleanTree(t *testing.T) {
 	leaf := newLeafNodeInArena(arena, 1, false, 0, 1, Point{}, Point{Column: 1})
 	root := newParentNodeInArena(arena, 2, true, []*Node{leaf}, nil, 0)
 
-	_, reason, errorSummary := normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root, lang, nil)
+	_, reason, errorSummary := normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root, lang, buildVisibleAliasTargetSymbols(lang), nil)
 
 	if reason != ParseStopNone {
 		t.Fatalf("stop reason = %q, want none", reason)
@@ -148,7 +148,7 @@ func TestNormalizeResultTerminalLeafNodesFindsUnderFlaggedErrorDescendant(t *tes
 	root := newParentNodeInArena(arena, 1, true, []*Node{errNode}, nil, 0)
 	root.setHasError(false)
 
-	_, reason, errorSummary := normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root, lang, nil)
+	_, reason, errorSummary := normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root, lang, buildVisibleAliasTargetSymbols(lang), nil)
 
 	if reason != ParseStopNone {
 		t.Fatalf("stop reason = %q, want none", reason)
@@ -181,7 +181,7 @@ func TestNormalizeResultTerminalLeafNodesWalksUnderFlaggedErrorRoot(t *testing.T
 	root := newParentNodeInArena(arena, errorSymbol, true, []*Node{token}, nil, 0)
 	root.setHasError(false)
 
-	counters, reason, errorSummary := normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root, lang, nil)
+	counters, reason, errorSummary := normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root, lang, buildVisibleAliasTargetSymbols(lang), nil)
 
 	if reason != ParseStopNone {
 		t.Fatalf("stop reason = %q, want none", reason)
@@ -218,7 +218,7 @@ func TestNormalizeResultTerminalLeafNodesPreservesNonterminalWrapper(t *testing.
 	wrapper := newParentNodeInArena(arena, 2, true, []*Node{child}, nil, 0)
 	root := newParentNodeInArena(arena, 3, true, []*Node{wrapper}, nil, 0)
 
-	counters, _, _ := normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root, lang, nil)
+	counters, _, _ := normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root, lang, buildVisibleAliasTargetSymbols(lang), nil)
 
 	if got, want := counters.nodesRewritten, uint64(0); got != want {
 		t.Fatalf("nodesRewritten = %d, want %d", got, want)
@@ -259,7 +259,7 @@ func TestNormalizeResultTerminalLeafNodesCollapsesTerminalAliasTarget(t *testing
 	alias.endPoint = Point{Row: 12, Column: 1}
 	root := newParentNodeInArena(arena, 2, true, []*Node{alias}, nil, 0)
 
-	counters, _, _ := normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root, lang, nil)
+	counters, _, _ := normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root, lang, buildVisibleAliasTargetSymbols(lang), nil)
 
 	if got, want := counters.nodesRewritten, uint64(1); got != want {
 		t.Fatalf("nodesRewritten = %d, want %d", got, want)
@@ -348,7 +348,7 @@ func TestNormalizeResultTerminalLeafNodesPreservesDistinctChildUnderReusedAliasT
 	parent.endPoint = Point{Row: 0, Column: 25}
 	root := newParentNodeInArena(arena, 3, true, []*Node{parent}, nil, 0)
 
-	counters, _, _ := normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root, lang, nil)
+	counters, _, _ := normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root, lang, buildVisibleAliasTargetSymbols(lang), nil)
 
 	if got, want := counters.nodesRewritten, uint64(0); got != want {
 		t.Fatalf("nodesRewritten = %d, want %d", got, want)
@@ -382,7 +382,7 @@ func TestNormalizeResultTerminalLeafNodesPreservesFieldedTerminal(t *testing.T) 
 	token := newParentNodeInArena(arena, 2, true, []*Node{child}, []FieldID{1}, 0)
 	root := newParentNodeInArena(arena, 3, true, []*Node{token}, nil, 0)
 
-	counters, _, _ := normalizeResultTerminalLeafNodesWithStopAndErrorSummary(root, lang, nil)
+	counters, _, _ := normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root, lang, buildVisibleAliasTargetSymbols(lang), nil)
 
 	if got, want := counters.nodesRewritten, uint64(0); got != want {
 		t.Fatalf("nodesRewritten = %d, want %d", got, want)

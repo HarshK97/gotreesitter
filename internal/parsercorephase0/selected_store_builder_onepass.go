@@ -140,8 +140,9 @@ func (c *Core) buildSelectedStoreOnePass(roots []SubtreeID, policy SelectedStore
 			packedEdge := edges[frameIndex]
 			alias := Symbol(packedEdge)
 			field := FieldID(packedEdge >> 16)
+			retainAliasChild := !record.extra && policy.retainsAliasChild(alias, record.symbol)
 			symbol := record.symbol
-			if alias != 0 {
+			if alias != 0 && !retainAliasChild {
 				symbol = alias
 			}
 			meta, ok := policy.symbol(symbol)
@@ -159,7 +160,7 @@ func (c *Core) buildSelectedStoreOnePass(roots []SubtreeID, policy SelectedStore
 						child.Symbol = record.symbol
 						child.flags = selectedFlags(policy.Symbols[record.symbol], child.Extra(), child.External(), child.Terminal())
 					}
-					if alias != 0 {
+					if alias != 0 && !retainAliasChild {
 						child.Symbol = alias
 						child.flags = selectedFlags(meta, child.Extra(), child.External(), child.Terminal())
 					}
@@ -169,13 +170,25 @@ func (c *Core) buildSelectedStoreOnePass(roots []SubtreeID, policy SelectedStore
 						return nil, err
 					}
 					precedenceDeltas[childID-1] = delta
-					if field != 0 {
+					if field != 0 && !retainAliasChild {
 						child.Field = field
 					}
 					logical = logical[:logicalStart+1]
 					logical[logicalStart] = childID
 					folded = true
 				}
+			}
+			if folded && retainAliasChild {
+				if err := ensureSelectedOnePassCapacity(store, len(store.records)+1, len(store.children)+1, c.limits.MaxSelectedBytes, poll); err != nil {
+					return nil, err
+				}
+				childID := logical[logicalStart]
+				var err error
+				childID, precedenceDeltas, err = appendSelectedRetainedAliasWrapper(store, policy, childID, alias, field, record.productionID, precedenceDeltas)
+				if err != nil {
+					return nil, err
+				}
+				logical[logicalStart] = childID
 			}
 
 			if !folded && (meta.Visible || record.extra) {
@@ -202,9 +215,13 @@ func (c *Core) buildSelectedStoreOnePass(roots []SubtreeID, policy SelectedStore
 						endByte = lastChild.EndByte
 					}
 				}
+				incomingField := field
+				if retainAliasChild {
+					incomingField = 0
+				}
 				store.records = append(store.records, SelectedNodeRecord{
 					FirstChild: first, StartByte: startByte, EndByte: endByte,
-					Symbol: symbol, Field: field,
+					Symbol: symbol, Field: incomingField,
 					ProductionID: record.productionID, DynamicPrecedence: int32(record.dynamicPrecedence),
 					ChildCount: uint16(len(children)), flags: flags,
 				})
@@ -215,8 +232,19 @@ func (c *Core) buildSelectedStoreOnePass(roots []SubtreeID, policy SelectedStore
 				}
 				logical = logical[:logicalStart]
 				logical = append(logical, id)
+				if retainAliasChild {
+					if err := ensureSelectedOnePassCapacity(store, len(store.records)+1, len(store.children)+1, c.limits.MaxSelectedBytes, poll); err != nil {
+						return nil, err
+					}
+					var err error
+					id, precedenceDeltas, err = appendSelectedRetainedAliasWrapper(store, policy, id, alias, field, record.productionID, precedenceDeltas)
+					if err != nil {
+						return nil, err
+					}
+					logical[logicalStart] = id
+				}
 			}
-			if field != 0 {
+			if field != 0 && !retainAliasChild {
 				store.applyDirectField(logical[logicalStart:], field)
 			}
 			stack = stack[:frameIndex]

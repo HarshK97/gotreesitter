@@ -1,69 +1,127 @@
-# The C-faithful compat tier (`parser_result_*.go`)
+# The C-faithful result-compatibility tier
 
-If you clone this repository and list the root package, the first thing you
-see is a wall of `parser_result_<language>*.go` files — currently about 177
-files and about 72K lines. This page explains what that tier is, why it
-lives where it lives, and why it shrinks over time.
+The root package contains a visible `parser_result_<language>*.go` tier.
+It is post-parse compatibility scaffolding: where the parser does not yet
+reproduce a C tree-selection or materialization behavior through a general
+engine mechanism, a bounded pass reconciles the returned tree with the C
+oracle.
 
-## What it is
+This page is a readable guide. The mechanically checked source of truth is
+[`testdata/result_compat_ownership_v1.json`](../testdata/result_compat_ownership_v1.json).
+Do not update dispatcher coverage, ownership, or retirement state here
+without updating that registry.
 
-Post-parse, C-faithful **result normalization**. Two GLR parsers can both be
-"correct" and still select different trees under ambiguity, error recovery,
-or extra/trivia attachment. gotreesitter's parity program demands more than
-correctness: it demands byte-exact agreement with the tree the C runtime
-*selects*, including error-node shapes and recovered spans, verified
-against the cgo-backed oracle in `cgo_harness/`.
+## Current denominator
 
-Where the core engine does not yet reproduce a C selection behavior through
-a general mechanism, a bounded normalization pass reshapes the raw parse
-result after the fact. Examples: JavaScript ASI and trailing-comment
-attachment, statement-keyword shapes shared by JS/TS, Python repair shapes,
-recovered-tree normalizations for Doxygen/JSDoc, and COBOL `EXEC CICS` span
-trimming.
+The v1 registry freezes the current surface:
 
-Each pass is:
+- 78 explicit `runLanguageResultCompatibility` switch arms covering 85
+  language names;
+- one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
+- three generic passes that run after language dispatch;
+- one retained post-finalization second-pass fixpoint with three switch arms
+  covering Scala, HTML, and JavaScript.
 
-- **language-scoped** — `parser_result_<language>*.go`, greppable as a tier;
-- **oracle-gated** — every pass exists because a named witness diverged
-  from C, and parity fixtures pin it, failing the build if it drifts;
-- **internal** — passes run on unexported arena/node internals before the
-  tree is returned. They are plumbing, not API. This is also why the tier
-  lives in the root package: it needs `nodeArena`, `stackEntry`, and
-  friends, and exporting those to move the files into a subpackage would
-  trade cosmetic layout for a worse public surface.
+That is 83 live registry entries. The registry covers only this documented
+internal result-compatibility tier; scheduler experiments and other engine
+research belong in their owning subsystem's durable traces.
 
-## Why it shrinks
+Each registry entry has a stable ID, functions and files, languages, purpose,
+authoritative owner, witnesses, a retirement condition, coverage fields for
+production/compact/forest/incremental/C-oracle routes, status, and optional
+receipt references. A retired entry remains in the registry with its commit
+and receipt references; deleting the historical record is not retirement.
 
-The tier is scaffolding for the parity ratchet, not a destination. The
-stated engine rule (see the README roadmap) is: **add no public parse
-variant and no parser-core language-name switch when a general mechanism
-can express the need.** As general mechanisms land — certified
-conflict-resolution policies, blob-pinned runtime profiles, non-terminal
-alias maps, the global repetition fold — the tier deletes the shims those
-mechanisms subsume:
+## Ownership
 
-- v0.24.1 removed fourteen retired language-specific repetition/conflict
-  dispatch helpers and their dead JavaScript/TypeScript/Java closure.
-- v0.25.0 removed the retired `no_alias` reduction-attribution lane end to
-  end.
-- The Python normalization cluster is queued for the same closure (its
-  remaining helpers are referenced only by their own tests).
+Compatibility functions describe symptoms. Their `authoritative_owner`
+records the earliest subsystem that must eventually produce the C-faithful
+result:
 
-The honest trajectory is: shim count rises while a language's parity
-closes, then falls as the behavior moves into certified engine mechanisms.
-The 206/206 exhaustive-parity milestone (v0.23.0) is what makes the
-deletions safe — every removal must keep the zero-exemption parity gate
-green.
-
-## Reading the tier
-
-| Convention | Meaning |
+| Owner | Responsibility |
 |---|---|
-| `parser_result_<lang>.go` | primary normalization passes for a language |
-| `parser_result_<lang>_*_test.go` | witness fixtures pinning each pass |
-| `normalize<Lang>Compatibility(...)` | per-language entry point |
-| `parser_result.go` | shared dispatch into per-language entry points |
+| `scheduler_action_semantics` | action ordering, recovery, and work execution |
+| `derivation_election_selection` | ambiguity and winning-derivation choice |
+| `materialization` | node, field, alias, trivia, and span construction |
+| `scanner_checkpoint_state` | external-scanner state and restoration |
+| `incremental_edit_reuse` | edit invalidation and subtree reuse |
+| `public_compatibility` | compatibility intentionally retained at an exported API boundary |
 
-Largest groups today (file count): C# (14), Rust (6), Go (5), Python (4),
-JavaScript/TypeScript (4+), Swift (3), Scala (3), PowerShell (3),
-Kotlin (3), Haskell (3).
+The route fields use a closed vocabulary enforced by the registry test:
+
+- live dispatcher, predicate, and generic entries use
+  `shared_result_compatibility_tail` for production/compact/forest/incremental
+  and `curated_single_grammar_parity` for the C oracle;
+- the live fixpoint uses `post_finalization_fixpoint` for those four parser
+  routes and `language_witnesses_required` for the C oracle; and
+- retired entries use `retired_exact_receipt` for all five fields and must
+  include a retirement commit and receipt reference.
+
+These are evidence labels, not claims that all five engines have independent
+implementations. The shared-tail value means that route reaches the same
+post-parse normalization tail.
+
+## Why it exists
+
+Two GLR parsers can accept the same input and still return different trees
+under ambiguity, error recovery, aliasing, or extra/trivia attachment.
+gotreesitter's parity target is byte-exact agreement with the selected C tree,
+including error shapes and recovered spans. The cgo-backed suites under
+`cgo_harness/` provide that oracle.
+
+The tier stays internal because it operates on arena and node internals before
+the tree is returned. Moving it into a package with exported plumbing would
+make the exported API surface worse without changing its ownership.
+
+## Current progress: collapsed named leaves
+
+All 23 registered collapsed named-leaf rows for the six affected built-in
+languages now produce their child shape natively when an exact SHA-pinned
+runtime profile grants the capability. The generic walk remains live: it is a
+zero-rewrite safety receipt for those certified artifacts and the repair path
+for caller-built, adapted, and other custom languages that do not carry the
+capability. Retirement still requires exact route receipts with zero rewrites
+and a documented decision for custom-language compatibility.
+
+## The retained second pass
+
+`normalizePostFinalizationReturnedTree` deliberately runs a bounded second
+pass for Scala, HTML, and JavaScript. It remains live because the first pass
+can expose information needed by later normalization. In particular, it may
+not be retired until the HTML producer/materializer emits final nested custom
+tag ranges without `normalizeHTMLRecoveredNestedCustomTagRanges`. Scala and
+JavaScript producers must likewise emit their final annotations and spans in
+one pass, and all registered route receipts must show the second pass is inert.
+
+Removing the second pass because it looks repetitive would reopen known
+fixpoint behavior; its registry retirement condition is the deletion gate.
+
+## Editing and validation
+
+When adding, moving, or retiring compatibility code:
+
+1. Update the JSON registry in the same change.
+2. Keep dispatcher languages, called functions, ownership, witnesses, routes,
+   and retirement evidence explicit.
+3. For retirement, keep the entry and set `status` to `retired`, with
+   `retired_commit` and at least one `receipt_refs` item.
+4. Run the focused registry gate:
+
+```sh
+go test . -run '^TestResultCompatibilityOwnershipRegistry$' -count=1
+```
+
+The test parses `parser_result_compat.go`, `parser_result_helpers.go`, and
+`parser_api.go` with the Go AST. It fails when a dispatcher arm or predicate
+is unregistered, the exact COBOL predicate language set drifts, a generic pass
+changes without a registry update, a post-finalization language arm or call
+changes, or a live registered function disappears from its declared files.
+The COBOL check requires the canonical nil-guard AND parenthesized two-equality
+OR AST. The fixpoint check counts clause-local call occurrences and rejects
+normalization in default clauses or outside registered cases. The gate also
+enforces kind/status combinations, route vocabulary and semantics, required
+metadata, and referenced witness paths.
+
+This document is hand-maintained explanatory text, not generated output. The
+JSON registry and the focused Go test are the regeneration/validation
+contract.

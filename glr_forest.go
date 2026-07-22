@@ -2429,6 +2429,9 @@ func (p *Parser) forestCollapsibleNamedKeywordLeaf(act ParseAction, tok Token, a
 	if p.shouldPreserveVisibleUnaryTokenWrapper(act.Symbol) {
 		return nil
 	}
+	if p.shouldKeepVisibleAnonymousTokenChild(act.Symbol, child.symbol) {
+		return nil
+	}
 	if !p.sameSymbolName(act.Symbol, child.symbol) && !forestGapCollapse(p.language, act.Symbol) {
 		return nil
 	}

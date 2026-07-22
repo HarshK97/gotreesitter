@@ -300,14 +300,11 @@ type DiagnosticParserCorePrefixResult struct {
 	Materialized      bool
 	// MaterializedTree is a structural diagnostic owned by the caller and must
 	// be released. It is set only after authenticated EOF acceptance and
-	// one-shot compact-tree materialization succeed. Compact phase zero carries
-	// only table-REPLAYED per-node parser states (exact where reconstructable,
-	// abstained to the 0 "unknown -> recompute" sentinel otherwise) and no
-	// scanner checkpoints, so the tree is HARD-barred from incremental reuse by
-	// its compactMaterialized provenance flag (checked in
-	// tryTokenInvariantReuseForDisabledOldTree): passing it to ParseIncremental
-	// always takes the production parser's full fresh-parse fallback, never even
-	// the token-invariant leaf fast path.
+	// one-shot compact-tree materialization succeed. The diagnostic runner does
+	// not force parser-state replay, so its default tree retains the hard
+	// incremental-reuse bar. The production admission runner separately forces
+	// replay and may clear that bar only when materialization proves the required
+	// states and scanner quiescence per tree.
 	MaterializedTree *Tree
 }
 
@@ -494,6 +491,11 @@ func buildParserCoreSelectedStorePolicy(parser *Parser) (core.SelectedStorePolic
 	if err != nil {
 		return core.SelectedStorePolicy{}, err
 	}
+	retainedAliases := make([]core.SelectedAliasChildPair, 0, len(parser.collapsedChildOccurrencePairs))
+	for _, pair := range parser.collapsedChildOccurrencePairs {
+		retainedAliases = append(retainedAliases, core.SelectedAliasChildPair{Alias: core.Symbol(pair.parent), Child: core.Symbol(pair.child)})
+	}
+	policy.SetRetainedAliasChildren(retainedAliases)
 	syms, _ := goCompatibilitySymbolsForLanguage(lang)
 	containers := make([]bool, width)
 	for _, symbol := range syms.semiContainers[:syms.semiContainerLen] {
@@ -732,7 +734,7 @@ func diagnosticParseParserCoreGenericFromSeed(
 		return result, &diagnosticParserCoreDecline{boundary: result.Boundary, detail: result.Detail}
 	}
 	return publishDiagnosticParserCoreGenericResult(result, scheduler, func(head core.Head) (*Tree, error) {
-		return materializeDiagnosticParserCoreAcceptedSelection(compact, head, scheduler.acceptedPayloads, parser, source, nil)
+		return materializeDiagnosticParserCoreAcceptedSelection(compact, head, scheduler.acceptedPayloads, parser, source, nil, false)
 	})
 }
 
@@ -1833,7 +1835,7 @@ func (index *diagnosticParserCorePointIndex) pointUncached(offset uint32) Point 
 	return Point{Row: uint32(line), Column: offset - index.lineStarts[line]}
 }
 
-func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.Head, parser *Parser, source []byte) (*Tree, error) {
+func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.Head, parser *Parser, source []byte, forceReplayParseStates bool) (*Tree, error) {
 	if compact == nil || parser == nil || parser.language == nil || head.Node == 0 {
 		return nil, errors.New("parser-core phase zero: incomplete accepted-tree materialization input")
 	}
@@ -1844,7 +1846,7 @@ func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.H
 	if len(derivations) != 1 {
 		return nil, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreAccept, detail: "materialization requires one exact accepted derivation"}
 	}
-	return materializeDiagnosticParserCoreAcceptedSelection(compact, head, derivations[0].Payloads, parser, source, nil)
+	return materializeDiagnosticParserCoreAcceptedSelection(compact, head, derivations[0].Payloads, parser, source, nil, forceReplayParseStates)
 }
 
 // materializeDiagnosticParserCoreAcceptedSelection materializes the accepted
@@ -1852,7 +1854,7 @@ func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.H
 // reusable buffers back the transient materialization storage, so the warm
 // steady state does not re-allocate the public-tree scratch on every parse.
 // scratch is reset on return, so it is safe to reuse for the next parse.
-func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head core.Head, payloads []core.SubtreeID, parser *Parser, source []byte, scratch *parserCoreRunnerScratch) (*Tree, error) {
+func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head core.Head, payloads []core.SubtreeID, parser *Parser, source []byte, scratch *parserCoreRunnerScratch, forceReplayParseStates bool) (*Tree, error) {
 	if compact == nil || parser == nil || parser.language == nil || head.Node == 0 || len(payloads) == 0 {
 		return nil, errors.New("parser-core phase zero: incomplete accepted-tree selection input")
 	}
@@ -1909,14 +1911,15 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 	// pass elides hidden nodes and applies aliases. Gated so it can be A/B'd
 	// against the states-free compact route.
 	var replayStates *compactReplayStates
-	if parserCoreReplayParseStatesEnabled() {
+	if forceReplayParseStates || parserCoreReplayParseStatesEnabled() {
 		replayStates, err = parser.replayCompactDerivation(compact, payloads)
 		if err != nil {
 			return nil, err
 		}
 		defer replayStates.release()
 	}
-	stamp := func(id core.SubtreeID, node *Node) {
+	incrementalReuseProven := replayStates != nil && classifyExternalScannerQuiescence(parser.language) == scannerQuiescenceProven
+	stamp := func(id core.SubtreeID, node *Node, terminal bool) {
 		// Stamp the reconstructed state for THIS derivation id onto the node
 		// that materializes it. For a unary collapse chain the driver visits the
 		// ids inner-to-outer (postorder) and reuses one node object, so the last
@@ -1935,12 +1938,19 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 		// trusted non-zero state (Phase-3 Lane 3 review amendment 1).
 		if replayStates != nil && node != nil {
 			pre, ps, preOk, psOk := replayStates.get(id)
+			if terminal {
+				incrementalReuseProven = incrementalReuseProven && psOk
+			} else {
+				incrementalReuseProven = incrementalReuseProven && preOk
+			}
 			if psOk {
 				node.parseState = ps
 			}
 			if preOk {
 				node.preGotoState = pre
 			}
+		} else {
+			incrementalReuseProven = false
 		}
 		nodesByID[id] = node
 	}
@@ -1975,7 +1985,7 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 				// (subtreeRecord.fragile is only ever set on reductions), so a
 				// terminal record is never fragile. The reduce branches below
 				// carry the bit.
-				stamp(id, node)
+				stamp(id, node, true)
 				return nil
 			}
 
@@ -1999,7 +2009,7 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 				child.productionID = view.ProductionID
 				child.dynamicPrecedence += int32(view.DynamicPrecedence)
 				markFragile(child, view.Fragile)
-				stamp(id, child)
+				stamp(id, child, false)
 				return nil
 			}
 			children, fieldIDs, fieldSources, _ := parser.buildReduceChildrenWithPath(
@@ -2010,7 +2020,7 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 				child.productionID = view.ProductionID
 				child.dynamicPrecedence += int32(view.DynamicPrecedence)
 				markFragile(child, view.Fragile)
-				stamp(id, child)
+				stamp(id, child, false)
 				return nil
 			}
 			parent := newParentNodeInArenaWithFieldSources(
@@ -2023,7 +2033,7 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 			parent.endPoint = points.point(view.EndByte)
 			parent.setExtra(view.Extra)
 			markFragile(parent, view.Fragile)
-			stamp(id, parent)
+			stamp(id, parent, false)
 			return nil
 		})
 	}
@@ -2087,10 +2097,13 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 	}
 	sourceLen := uint32(len(source))
 	root := tree.root
+	if root.startByte == 0 && root.endByte < sourceLen && !root.IsError() && !root.HasError() {
+		extendRootToAcceptedCleanTail(root, source, sourceLen, nil)
+	}
 	if root.startByte != 0 || root.endByte != sourceLen || root.IsError() || root.HasError() {
 		return rejectTree(fmt.Errorf("parser-core phase zero: accepted compact root is incomplete or erroneous: span=%d..%d source=%d error=%t", root.startByte, root.endByte, sourceLen, root.HasError()))
 	}
-	tree.incrementalReuseDisabled = true
+	tree.incrementalReuseDisabled = !incrementalReuseProven
 	tree.compactMaterialized = true
 	tree.setParseRuntime(ParseRuntime{
 		StopReason: ParseStopAccepted, SourceLen: sourceLen, ExpectedEOFByte: sourceLen,
@@ -3053,9 +3066,11 @@ func diagnosticParserCoreGenericUnsupportedCellDescriptor(headerIndex int, token
 	switch descriptor.Kind() {
 	case core.ActionRowEmpty:
 		return unsupported(DiagnosticParserCoreNoAction, "generic scheduler reached an empty action cell")
-	case core.ActionRowShift, core.ActionRowExtraShift:
+	case core.ActionRowShift:
+		return nil
+	case core.ActionRowExtraShift:
 		if token.EndByte <= token.StartByte {
-			return unsupported(DiagnosticParserCoreRoute, "generic scheduler ordinary shift is not positive-width")
+			return unsupported(DiagnosticParserCoreRoute, "generic scheduler extra shift is not positive-width")
 		}
 		return nil
 	case core.ActionRowReduce:
@@ -3066,9 +3081,6 @@ func diagnosticParserCoreGenericUnsupportedCellDescriptor(headerIndex int, token
 		}
 		return nil
 	case core.ActionRowConflict:
-		if descriptor.HasShift() && token.EndByte <= token.StartByte {
-			return unsupported(DiagnosticParserCoreRoute, "generic scheduler ordinary shift is not positive-width")
-		}
 		return nil
 	}
 
@@ -3088,9 +3100,6 @@ func diagnosticParserCoreGenericUnsupportedCellDescriptor(headerIndex int, token
 		switch action.Type {
 		case core.ActionReduce:
 		case core.ActionShift:
-			if token.EndByte <= token.StartByte {
-				return unsupported(DiagnosticParserCoreRoute, "generic scheduler ordinary shift is not positive-width")
-			}
 		case core.ActionRecover:
 			return unsupported(DiagnosticParserCoreRecovery, "generic scheduler reached recovery")
 		case core.ActionAccept:

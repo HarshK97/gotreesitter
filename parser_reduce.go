@@ -6147,7 +6147,7 @@ func (p *Parser) buildReduceChildrenAllVisible(entries []stackEntry, start, end,
 			}
 			if structuralChildIndex < len(aliasSeq) {
 				if alias := aliasSeq[structuralChildIndex]; alias != 0 {
-					n = aliasedNodeInArena(arena, p.language, n, alias)
+					n = p.aliasedNodeInArena(arena, n, alias)
 				}
 			}
 			structuralChildIndex++
@@ -6343,7 +6343,7 @@ type reduceChildBuildItem struct {
 	nextStructuralIndex int
 }
 
-func reduceChildBuildItemForEntry(entry stackEntry, structuralChildIndex int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, arena *nodeArena, lang *Language) (reduceChildBuildItem, bool) {
+func (p *Parser) reduceChildBuildItemForEntry(entry stackEntry, structuralChildIndex int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, arena *nodeArena) (reduceChildBuildItem, bool) {
 	n := stackEntryNode(entry)
 	if n == nil {
 		return reduceChildBuildItem{}, false
@@ -6360,7 +6360,7 @@ func reduceChildBuildItemForEntry(entry stackEntry, structuralChildIndex int, al
 	}
 	if structuralChildIndex < len(aliasSeq) {
 		if alias := aliasSeq[structuralChildIndex]; alias != 0 {
-			item.node = aliasedNodeInArena(arena, lang, n, alias)
+			item.node = p.aliasedNodeInArena(arena, n, alias)
 		}
 	}
 	item.nextStructuralIndex = structuralChildIndex + 1
@@ -6374,7 +6374,7 @@ func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entr
 	var pendingPaddingSource *Node
 	havePendingPadding := false
 	for i := start; i < end; i++ {
-		item, ok := reduceChildBuildItemForEntry(entries[i], structuralChildIndex, aliasSeq, rawFieldIDs, rawInherited, arena, lang)
+		item, ok := p.reduceChildBuildItemForEntry(entries[i], structuralChildIndex, aliasSeq, rawFieldIDs, rawInherited, arena)
 		if !ok {
 			continue
 		}
@@ -8039,6 +8039,9 @@ func (p *Parser) shouldKeepVisibleAnonymousTokenChild(parentSym, childSym Symbol
 	if p == nil || p.language == nil {
 		return true
 	}
+	if p.retainsCollapsedChildOccurrence(parentSym, childSym) {
+		return true
+	}
 	meta := p.language.SymbolMetadata
 	if int(parentSym) < 0 || int(parentSym) >= len(meta) ||
 		int(childSym) < 0 || int(childSym) >= len(meta) {
@@ -8392,6 +8395,37 @@ func aliasedNodeInArena(arena *nodeArena, lang *Language, n *Node, alias Symbol)
 	}
 	cloned.ownerArena = arena
 	return cloned
+}
+
+func (p *Parser) aliasedNodeInArena(arena *nodeArena, n *Node, alias Symbol) *Node {
+	if p != nil && n != nil && alias != 0 && nodeChildCountNoMaterialize(n) == 0 &&
+		!n.isExtra() && !n.isMissing() && !n.hasError() &&
+		p.retainsCollapsedChildOccurrence(alias, n.symbol) {
+		return retainedAliasChildWrapperInArena(arena, p.language, n, alias)
+	}
+	var lang *Language
+	if p != nil {
+		lang = p.language
+	}
+	return aliasedNodeInArena(arena, lang, n, alias)
+}
+
+// retainedAliasChildWrapperInArena preserves the raw child under its visible
+// alias instead of relabeling the borrowed node. Both wrapper and child are
+// arena-owned clones, matching aliasedNodeInArena's nonmutation contract.
+func retainedAliasChildWrapperInArena(arena *nodeArena, lang *Language, n *Node, alias Symbol) *Node {
+	child := cloneNodeInArena(arena, n)
+	named := false
+	if lang != nil && int(alias) < len(lang.SymbolMetadata) {
+		named = lang.SymbolMetadata[alias].Named
+	}
+	wrapper := newParentNodeInArena(arena, alias, named, []*Node{child}, nil, n.productionID)
+	wrapper.startByte, wrapper.endByte = n.startByte, n.endByte
+	wrapper.startPoint, wrapper.endPoint = n.startPoint, n.endPoint
+	wrapper.parseState, wrapper.preGotoState = n.parseState, n.preGotoState
+	wrapper.rawShape = n.rawShape
+	wrapper.dynamicPrecedence = n.dynamicPrecedence
+	return wrapper
 }
 
 func shouldAliasMaterializeInvisibleLeafToAnonymousAlias(n *Node, alias Symbol, lang *Language) bool {

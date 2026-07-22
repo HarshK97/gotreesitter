@@ -17,11 +17,11 @@ import (
 //     BenchmarkParserCoreFreshFullCanonical, which streams a compact derivation
 //     into a materialized public tree.
 //
-// The switch only ever changes which engine serves a FRESH FULL parse. It never
-// touches a reuse-consuming path: the compact tree carries a hard incremental-
-// reuse bar (decision 0008), so routing it under ParseIncremental would destroy
-// the O(edit) wins. See admissionCandidateFullParseEligible for the fail-closed
-// guard.
+// The switch only ever changes which engine serves a FRESH FULL parse. A
+// compact result may later feed incremental reuse only when materialization
+// attached a complete table-replay proof and scanner quiescence is proven;
+// every other compact tree retains the hard fail-closed reuse bar. See
+// admissionCandidateFullParseEligible and the materialization proof gate.
 //
 // Precedence, highest to lowest:
 //
@@ -176,9 +176,9 @@ func (p *Parser) admissionCandidateRouteEnabled() bool {
 // admissionCandidateFullParseEligible reports whether a fresh full parse may be
 // routed through the compact candidate. It fails closed for:
 //
-//   - every reuse-consuming path (oldTree != nil), because the compact tree
-//     carries a hard incremental-reuse bar (decision 0008) and routing it under
-//     ParseIncremental or the leaf fast path would destroy the O(edit) wins; and
+//   - every reuse-consuming call (oldTree != nil), because admission selects a
+//     fresh-full engine only; incremental reuse is decided later from the old
+//     tree's replay/scanner proof; and
 //   - any lexer other than the production DFA, because the compact route
 //     reproduces the production DFA token stream and cannot honor a caller-
 //     supplied token source.
@@ -187,6 +187,13 @@ func (p *Parser) admissionCandidateFullParseEligible(oldTree *Tree, usingProduct
 		return false
 	}
 	if !usingProductionDFA {
+		return false
+	}
+	// A language with an enabled, certified/explicit forest route already has a
+	// more specific full-parse policy. Preserve that route's correctness and
+	// incremental contracts instead of letting the generic compact candidate
+	// preempt it merely because both are capable of accepting the same input.
+	if p.admissionCandidateRoute == admissionRouteFollowDefault && glrForestEnabled && parserWantsForest(p) {
 		return false
 	}
 	// Resolve the switch first. This keeps the shipped OFF hot path cheap: none

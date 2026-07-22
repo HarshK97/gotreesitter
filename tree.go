@@ -657,16 +657,17 @@ func nodeFieldIDAt(n *Node, i int) FieldID {
 type ParseStopReason string
 
 const (
-	ParseStopNone            ParseStopReason = "none"
-	ParseStopAccepted        ParseStopReason = "accepted"
-	ParseStopNoStacksAlive   ParseStopReason = "no_stacks_alive"
-	ParseStopTokenSourceEOF  ParseStopReason = "token_source_eof"
-	ParseStopTimeout         ParseStopReason = "timeout"
-	ParseStopCancelled       ParseStopReason = "cancelled"
-	ParseStopIterationLimit  ParseStopReason = "iteration_limit"
-	ParseStopStackDepthLimit ParseStopReason = "stack_depth_limit"
-	ParseStopNodeLimit       ParseStopReason = "node_limit"
-	ParseStopMemoryBudget    ParseStopReason = "memory_budget"
+	ParseStopNone               ParseStopReason = "none"
+	ParseStopAccepted           ParseStopReason = "accepted"
+	ParseStopNoStacksAlive      ParseStopReason = "no_stacks_alive"
+	ParseStopTokenSourceEOF     ParseStopReason = "token_source_eof"
+	ParseStopTimeout            ParseStopReason = "timeout"
+	ParseStopCancelled          ParseStopReason = "cancelled"
+	ParseStopIterationLimit     ParseStopReason = "iteration_limit"
+	ParseStopStackDepthLimit    ParseStopReason = "stack_depth_limit"
+	ParseStopNodeLimit          ParseStopReason = "node_limit"
+	ParseStopMemoryBudget       ParseStopReason = "memory_budget"
+	ParseStopInvariantViolation ParseStopReason = "invariant_violation"
 )
 
 type PendingParentRejectStats struct {
@@ -1740,16 +1741,8 @@ func (n *Node) containsByteRange(startByte, endByte uint32) bool {
 	return startByte >= n.startByte && endByte <= n.endByte
 }
 
-func (n *Node) containsPointRange(startPoint, endPoint Point) bool {
-	return pointLessOrEqual(n.startPoint, startPoint) && pointLessOrEqual(endPoint, n.endPoint)
-}
-
 func stackEntryContainsByteRange(entry stackEntry, startByte, endByte uint32) bool {
 	return startByte >= stackEntryNodeStartByte(entry) && endByte <= stackEntryNodeEndByte(entry)
-}
-
-func stackEntryContainsPointRange(entry stackEntry, startPoint, endPoint Point) bool {
-	return pointLessOrEqual(stackEntryNodeStartPoint(entry), startPoint) && pointLessOrEqual(endPoint, stackEntryNodeEndPoint(entry))
 }
 
 // descendantForByteRange walks to the smallest descendant covering [startByte,
@@ -2743,11 +2736,10 @@ type Tree struct {
 	// exact, extras/unrecoverable nodes deliberately abstain to the 0
 	// "unknown -> recompute" sentinel, and a bounded internal collapse class
 	// carries the principled outer state rather than production's forest-selected
-	// inner one. It also lacks scanner checkpoints. It is therefore HARD-barred
-	// from every incremental reuse path -- including the token-invariant leaf
-	// fast path that forestFastPath trees still take -- so ParseIncremental over
-	// it always falls back to a full fresh parse (Phase-3 Lane 3 review
-	// amendment 2).
+	// inner one. incrementalReuseDisabled remains set unless materialization
+	// proves every required replay state and scanner quiescence for this exact
+	// tree. Barred compact trees may still take an independently re-authenticated
+	// single-leaf edit; all subtree reuse remains fail-closed.
 	compactMaterialized bool
 	// Finalization state avoids repeated retry scans and compatibility passes.
 	// The error summary is not a persistent invariant of a caller-edited tree.
@@ -3638,7 +3630,7 @@ func (t *Tree) rawParseStopReason() ParseStopReason {
 // It intentionally does not initiate deferred result compatibility.
 func (t *Tree) rawParseStoppedEarly() bool {
 	switch t.rawParseStopReason() {
-	case ParseStopIterationLimit, ParseStopStackDepthLimit, ParseStopNodeLimit, ParseStopMemoryBudget, ParseStopTokenSourceEOF, ParseStopTimeout, ParseStopCancelled:
+	case ParseStopIterationLimit, ParseStopStackDepthLimit, ParseStopNodeLimit, ParseStopMemoryBudget, ParseStopTokenSourceEOF, ParseStopTimeout, ParseStopCancelled, ParseStopInvariantViolation:
 		return true
 	default:
 		return false

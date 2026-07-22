@@ -359,6 +359,11 @@ const (
 	ResultCompatibilityCSharpNativeScopedLambdaStatements ResultCompatibilityCapability = 1 << 2
 	ResultCompatibilityCSharpNativeScopedLambdaBlocks     ResultCompatibilityCapability = 1 << 3
 	ResultCompatibilityCSharpNativeQueryExpressions       ResultCompatibilityCapability = 1 << 4
+	// ResultCompatibilityNativeCollapsedChildren certifies that the exact
+	// SHA-pinned built-in artifact may use the compiled native retention policy
+	// for collapsed-child compatibility rows. Same-name caller-built and adapted
+	// languages retain the zero value and stay on the legacy post-pass path.
+	ResultCompatibilityNativeCollapsedChildren ResultCompatibilityCapability = 1 << 5
 )
 
 // Language holds all data needed to parse a specific language.

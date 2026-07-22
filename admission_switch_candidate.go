@@ -56,6 +56,11 @@ func newAdmissionCandidateRunner(p *Parser) (*parserCoreFreshFullRunner, error) 
 	}
 	return &parserCoreFreshFullRunner{
 		lang: p.language, parser: p, tables: tables, compact: compact, options: options,
+		// Incremental reuse is admitted only when materialization can attach the
+		// table-replayed state proof. Diagnostic runners retain their explicit
+		// GTS_REPLAY_PARSESTATE A/B switch; the production candidate always asks
+		// for the proof and still fails closed per tree when it is incomplete.
+		replayParseStates: true,
 	}, nil
 }
 

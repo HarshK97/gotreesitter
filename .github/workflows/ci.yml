@@ -66,6 +66,28 @@ jobs:
           GOMAXPROCS=1 go test -tags gts_parsercorephase0 . -run "$admission" -count=1
           GOMAXPROCS=1 go test -tags 'gts_parsercorephase0 gts_parsercorephase0_selectedstore_onepass' . -run "$admission" -count=1
 
+  compact_admission_ratchet:
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Validate compact admission breadth, route precedence, depth, and incremental bridge
+        run: |
+          set -euo pipefail
+          GTS_ADMISSION_SCORECARD=1 \
+          GTS_ADMISSION_SCORECARD_RATCHET=1 \
+          GOMAXPROCS=1 \
+          go test -tags gts_parsercorephase0 . \
+            -run '^(TestAdmissionCandidateScorecard206|TestAdmissionSwitchRoutePrecedenceRatchet|TestAdmissionCandidateYAMLZeroWidthDepth|TestAdmissionCandidateRepresentativeDepthRatchet|TestAdmissionCompactTreeCarriesIncrementalReuseProof)$' \
+            -count=1 -timeout 10m
+
   race_root:
     needs: exhaustive_parity_scope
     if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
@@ -262,15 +284,14 @@ jobs:
             -budget perf_scan/perf_ratio_budgets.json
 
   # oedit_latency_gate_full runs the full editor-latency gate sweep
-  # (campaign O(edit) workstream W5, spec.campaign.oedit): all four gate
+  # (campaign O(edit) workstream W5, spec.campaign.oedit): all five gate
   # languages at the ~20KB, ~137KB, and ~1MB size tiers, crossed with every
-  # edit class and position. TestW5EditorLatencyGate itself always runs at
-  # the fast ~20KB tier as part of the normal `go test .` run in race_root
-  # above; GTS_W5_FULL_SWEEP and GTS_W5_SLOW_TIER add the slower tiers this
-  # job exists to cover. It is manual (workflow_dispatch only) and not part
-  # of the required `build` gate: the full sweep takes about a minute, which
-  # is cheap enough to keep available on demand without adding wall time to
-  # every PR.
+  # edit class and position. The normal `go test .` run in race_root covers
+  # the ~20KB and ~137KB tiers; GTS_W5_SLOW_TIER adds the ~1MB tier here.
+  # This job also runs the JavaScript/TypeScript transient-error delete gate
+  # at all three sizes. It is manual (workflow_dispatch only) and not part of
+  # the required `build` gate so the slow tier remains available on demand
+  # without adding its wall time to every PR.
   oedit_latency_gate_full:
     needs: exhaustive_parity_scope
     if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && github.event_name == 'workflow_dispatch'
@@ -285,8 +306,10 @@ jobs:
 
       - name: Full editor-latency gate sweep (20KB/137KB/1MB)
         run: |
-          GTS_W5_FULL_SWEEP=1 GTS_W5_SLOW_TIER=1 \
-          go test . -run '^TestW5EditorLatencyGate$' -count=1 -v -timeout 8m
+          GTS_W5_SLOW_TIER=1 \
+          go test . \
+            -run '^(TestW5EditorLatencyGate|TestW5JavaScriptTypeScriptTransientErrorDeleteGate)$' \
+            -count=1 -v -timeout 8m
 
   exhaustive_parity_scope:
     runs-on: ubuntu-latest
@@ -371,6 +394,7 @@ jobs:
     needs:
       - compile
       - selected_store_admission
+      - compact_admission_ratchet
       - race_root
       - race_packages
       - draft_focused_tests
@@ -388,6 +412,7 @@ jobs:
           RUN_CODE_CI: ${{ needs.exhaustive_parity_scope.outputs.run_code_ci }}
           COMPILE_RESULT: ${{ needs.compile.result }}
           SELECTED_STORE_ADMISSION_RESULT: ${{ needs.selected_store_admission.result }}
+          COMPACT_ADMISSION_RATCHET_RESULT: ${{ needs.compact_admission_ratchet.result }}
           RACE_ROOT_RESULT: ${{ needs.race_root.result }}
           RACE_PACKAGES_RESULT: ${{ needs.race_packages.result }}
           DRAFT_FOCUSED_RESULT: ${{ needs.draft_focused_tests.result }}
@@ -426,6 +451,7 @@ jobs:
 
           require_success "compile" "$COMPILE_RESULT"
           require_success "selected_store_admission" "$SELECTED_STORE_ADMISSION_RESULT"
+          require_success "compact_admission_ratchet" "$COMPACT_ADMISSION_RATCHET_RESULT"
           require_success "parity_report" "$PARITY_REPORT_RESULT"
           require_success "perf_scan_budget" "$PERF_SCAN_BUDGET_RESULT"
 

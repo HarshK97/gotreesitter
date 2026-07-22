@@ -1,0 +1,2430 @@
+{
+  "schema": "gotreesitter/result-compat-ownership/v1",
+  "source_of_truth": true,
+  "denominator": {
+    "dispatcher_arms": 78,
+    "dispatcher_languages": 85,
+    "dispatcher_predicates": 1,
+    "generic_passes": 3,
+    "post_finalization_arms": 3,
+    "post_finalization_languages": 3
+  },
+  "owner_categories": [
+    "scheduler_action_semantics",
+    "derivation_election_selection",
+    "materialization",
+    "scanner_checkpoint_state",
+    "incremental_edit_reuse",
+    "public_compatibility"
+  ],
+  "entries": [
+    {
+      "id": "dispatch.ada",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeAdaCompatibility"
+      ],
+      "files": [
+        "parser_result_ada.go"
+      ],
+      "languages": [
+        "ada"
+      ],
+      "purpose": "Reconcile Ada returned-tree fields, aliases, and spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.angular",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeAngularCompatibility"
+      ],
+      "files": [
+        "parser_result_angular.go"
+      ],
+      "languages": [
+        "angular"
+      ],
+      "purpose": "Reconcile Angular recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.apex",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeApexCompatibility"
+      ],
+      "files": [
+        "parser_result_apex.go"
+      ],
+      "languages": [
+        "apex"
+      ],
+      "purpose": "Reconcile Apex returned-tree aliases, fields, and spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.authzed",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeAuthzedCompatibility"
+      ],
+      "files": [
+        "parser_result_authzed.go"
+      ],
+      "languages": [
+        "authzed"
+      ],
+      "purpose": "Reconcile Authzed recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.awk",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeAwkCompatibility"
+      ],
+      "files": [
+        "parser_result_awk.go"
+      ],
+      "languages": [
+        "awk"
+      ],
+      "purpose": "Reconcile AWK recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.bibtex",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeBibtexCompatibility"
+      ],
+      "files": [
+        "parser_result_bibtex.go"
+      ],
+      "languages": [
+        "bibtex"
+      ],
+      "purpose": "Reconcile BibTeX returned-tree shape and spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.bash",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeBashProgramVariableAssignments",
+        "normalizeBashGeneratedCommandAssignments",
+        "normalizeBashCommandNameArguments"
+      ],
+      "files": [
+        "parser_result_bash.go"
+      ],
+      "languages": [
+        "bash"
+      ],
+      "purpose": "Reconcile Bash assignment and command-argument materialization.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.bitbake",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeBitbakeCompatibility"
+      ],
+      "files": [
+        "parser_result_bitbake.go"
+      ],
+      "languages": [
+        "bitbake"
+      ],
+      "purpose": "Reconcile BitBake recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.chatito",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeChatitoCompatibility"
+      ],
+      "files": [
+        "parser_result_chatito.go"
+      ],
+      "languages": [
+        "chatito"
+      ],
+      "purpose": "Reconcile Chatito recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.arduino",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeArduinoBuiltinPrimitiveTypes"
+      ],
+      "files": [
+        "parser_result_c.go"
+      ],
+      "languages": [
+        "arduino"
+      ],
+      "purpose": "Reconcile Arduino builtin primitive type materialization.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.c_cpp",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeCCompatibilityWithParser"
+      ],
+      "files": [
+        "parser_result_c.go"
+      ],
+      "languages": [
+        "c",
+        "cpp"
+      ],
+      "purpose": "Reconcile C and C++ derivation selection and returned-tree shape.",
+      "authoritative_owner": "derivation_election_selection",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after derivation_election_selection emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.c_sharp",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeCSharpCompatibility"
+      ],
+      "files": [
+        "parser_result_csharp.go"
+      ],
+      "languages": [
+        "c_sharp"
+      ],
+      "purpose": "Reconcile C# recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.shared_trailing_span",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeResultTrailingSpanCompatibility"
+      ],
+      "files": [
+        "parser_result_trailing_span_rules.go"
+      ],
+      "languages": [
+        "caddy",
+        "comment",
+        "fortran",
+        "nim",
+        "pug",
+        "rst"
+      ],
+      "purpose": "Reconcile grammar-specific trailing root and trivia spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.cooklang",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeCooklangCompatibility"
+      ],
+      "files": [
+        "parser_result_cooklang.go"
+      ],
+      "languages": [
+        "cooklang"
+      ],
+      "purpose": "Reconcile Cooklang returned-tree shape and spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.corn",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeCornCompatibility"
+      ],
+      "files": [
+        "parser_result_corn.go"
+      ],
+      "languages": [
+        "corn"
+      ],
+      "purpose": "Reconcile Corn recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.crystal",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeCrystalCompatibility"
+      ],
+      "files": [
+        "parser_result_crystal.go"
+      ],
+      "languages": [
+        "crystal"
+      ],
+      "purpose": "Reconcile Crystal recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.cpon",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeCPONCompatibility"
+      ],
+      "files": [
+        "parser_result_cpon.go"
+      ],
+      "languages": [
+        "cpon"
+      ],
+      "purpose": "Reconcile CPON returned-tree shape and spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.cue",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeCueCompatibility"
+      ],
+      "files": [
+        "parser_result_cue.go"
+      ],
+      "languages": [
+        "cue"
+      ],
+      "purpose": "Reconcile CUE returned-tree fields and spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.d",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeDCompatibility"
+      ],
+      "files": [
+        "parser_result_d.go"
+      ],
+      "languages": [
+        "d"
+      ],
+      "purpose": "Reconcile D returned-tree fields, aliases, and spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.dart",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeDartCompatibility"
+      ],
+      "files": [
+        "parser_result_dart.go"
+      ],
+      "languages": [
+        "dart"
+      ],
+      "purpose": "Reconcile Dart derivation choice and returned-tree shape.",
+      "authoritative_owner": "derivation_election_selection",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after derivation_election_selection emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.doxygen",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeDoxygenCompatibility"
+      ],
+      "files": [
+        "parser_result_doxygen.go"
+      ],
+      "languages": [
+        "doxygen"
+      ],
+      "purpose": "Reconcile Doxygen recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.jsdoc",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeJsdocCompatibility"
+      ],
+      "files": [
+        "parser_result_jsdoc.go"
+      ],
+      "languages": [
+        "jsdoc"
+      ],
+      "purpose": "Reconcile JSDoc recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.dtd",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeDTDCompatibility"
+      ],
+      "files": [
+        "parser_result_dtd.go"
+      ],
+      "languages": [
+        "dtd"
+      ],
+      "purpose": "Reconcile DTD recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.elixir",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeElixirCompatibility"
+      ],
+      "files": [
+        "parser_result_elixir.go"
+      ],
+      "languages": [
+        "elixir"
+      ],
+      "purpose": "Reconcile Elixir recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.enforce",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeEnforceCompatibility"
+      ],
+      "files": [
+        "parser_result_enforce.go"
+      ],
+      "languages": [
+        "enforce"
+      ],
+      "purpose": "Reconcile Enforce recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.ebnf",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeEBNFCompatibility"
+      ],
+      "files": [
+        "parser_result_ebnf.go"
+      ],
+      "languages": [
+        "ebnf"
+      ],
+      "purpose": "Reconcile EBNF recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.eds",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeEDSCompatibility"
+      ],
+      "files": [
+        "parser_result_eds.go"
+      ],
+      "languages": [
+        "eds"
+      ],
+      "purpose": "Reconcile EDS recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.erlang",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeErlangSourceFileForms"
+      ],
+      "files": [
+        "parser_result_erlang.go"
+      ],
+      "languages": [
+        "erlang"
+      ],
+      "purpose": "Reconcile Erlang source-file form materialization.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.fsharp",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeFSharpCompatibility"
+      ],
+      "files": [
+        "parser_result_fsharp.go"
+      ],
+      "languages": [
+        "fsharp"
+      ],
+      "purpose": "Reconcile F# returned-tree fields and spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.forth",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeForthCompatibility"
+      ],
+      "files": [
+        "parser_result_forth.go"
+      ],
+      "languages": [
+        "forth"
+      ],
+      "purpose": "Reconcile Forth recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.fidl",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeFIDLCompatibility"
+      ],
+      "files": [
+        "parser_result_fidl.go"
+      ],
+      "languages": [
+        "fidl"
+      ],
+      "purpose": "Reconcile FIDL recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.go",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeGoReturnedTreeCompatibility"
+      ],
+      "files": [
+        "parser_result_go.go"
+      ],
+      "languages": [
+        "go"
+      ],
+      "purpose": "Reconcile Go derivation selection, recovery, and returned-tree shape.",
+      "authoritative_owner": "derivation_election_selection",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after derivation_election_selection emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.gitcommit",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeGitcommitCompatibility"
+      ],
+      "files": [
+        "parser_result_gitcommit.go"
+      ],
+      "languages": [
+        "gitcommit"
+      ],
+      "purpose": "Reconcile Git commit returned-tree shape and spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.haskell",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeHaskellCompatibility"
+      ],
+      "files": [
+        "parser_result_haskell.go"
+      ],
+      "languages": [
+        "haskell"
+      ],
+      "purpose": "Reconcile Haskell returned-tree fields and spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.hcl",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeHCLConfigFileRoot"
+      ],
+      "files": [
+        "parser_result_hcl.go"
+      ],
+      "languages": [
+        "hcl"
+      ],
+      "purpose": "Reconcile HCL config-file root materialization.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.html",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeHTMLCompatibility"
+      ],
+      "files": [
+        "parser_result_html.go"
+      ],
+      "languages": [
+        "html"
+      ],
+      "purpose": "Reconcile HTML recovery and nested-tag returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.http",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeHTTPCompatibility"
+      ],
+      "files": [
+        "parser_result_http.go"
+      ],
+      "languages": [
+        "http"
+      ],
+      "purpose": "Reconcile HTTP returned-tree shape and spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.hurl",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeHurlCompatibility"
+      ],
+      "files": [
+        "parser_result_hurl.go"
+      ],
+      "languages": [
+        "hurl"
+      ],
+      "purpose": "Reconcile Hurl recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.hlsl",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeHLSLCompatibility"
+      ],
+      "files": [
+        "parser_result_hlsl.go"
+      ],
+      "languages": [
+        "hlsl"
+      ],
+      "purpose": "Reconcile HLSL recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.hyprlang",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeHyprlangCompatibility"
+      ],
+      "files": [
+        "parser_result_hyprlang.go"
+      ],
+      "languages": [
+        "hyprlang"
+      ],
+      "purpose": "Reconcile Hyprlang recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.ini",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeIniCompatibility"
+      ],
+      "files": [
+        "parser_result_ini.go"
+      ],
+      "languages": [
+        "ini"
+      ],
+      "purpose": "Reconcile INI recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.javascript",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeJavaScriptCompatibility"
+      ],
+      "files": [
+        "parser_result_javascript_typescript.go"
+      ],
+      "languages": [
+        "javascript"
+      ],
+      "purpose": "Reconcile JavaScript derivation selection, recovery, and returned-tree shape.",
+      "authoritative_owner": "derivation_election_selection",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after derivation_election_selection emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.julia",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeJuliaCompatibility"
+      ],
+      "files": [
+        "parser_result_julia.go"
+      ],
+      "languages": [
+        "julia"
+      ],
+      "purpose": "Reconcile Julia recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.just",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeJustTopLevelTrailingLineBreakSpans"
+      ],
+      "files": [
+        "parser_result_misc_spans.go"
+      ],
+      "languages": [
+        "just"
+      ],
+      "purpose": "Reconcile Just top-level trailing line-break spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.ledger",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeLedgerCompatibility"
+      ],
+      "files": [
+        "parser_result_ledger.go"
+      ],
+      "languages": [
+        "ledger"
+      ],
+      "purpose": "Reconcile Ledger recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.linkerscript",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeLinkerscriptCompatibility"
+      ],
+      "files": [
+        "parser_result_linkerscript.go"
+      ],
+      "languages": [
+        "linkerscript"
+      ],
+      "purpose": "Reconcile linker-script recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.kotlin",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeKotlinCompatibility"
+      ],
+      "files": [
+        "parser_result_kotlin.go"
+      ],
+      "languages": [
+        "kotlin"
+      ],
+      "purpose": "Reconcile Kotlin derivation selection and returned-tree shape.",
+      "authoritative_owner": "derivation_election_selection",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after derivation_election_selection emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.lua",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeLuaChunkLocalDeclarationFields"
+      ],
+      "files": [
+        "parser_result_lua.go"
+      ],
+      "languages": [
+        "lua"
+      ],
+      "purpose": "Reconcile Lua local-declaration field materialization.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.luau",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeLuauCompatibility"
+      ],
+      "files": [
+        "parser_result_luau.go"
+      ],
+      "languages": [
+        "luau"
+      ],
+      "purpose": "Reconcile Luau recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.make",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeMakeConditionalConsequenceFields"
+      ],
+      "files": [
+        "parser_result_make.go"
+      ],
+      "languages": [
+        "make"
+      ],
+      "purpose": "Reconcile Make conditional consequence fields.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.objc",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeObjcCompatibility"
+      ],
+      "files": [
+        "parser_result_objc.go"
+      ],
+      "languages": [
+        "objc"
+      ],
+      "purpose": "Reconcile Objective-C aliases, fields, and spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.nginx",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeNginxAttributeLineBreaks"
+      ],
+      "files": [
+        "parser_result_misc_spans.go"
+      ],
+      "languages": [
+        "nginx"
+      ],
+      "purpose": "Reconcile Nginx attribute line-break spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.ninja",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeNinjaCompatibility"
+      ],
+      "files": [
+        "parser_result_ninja.go"
+      ],
+      "languages": [
+        "ninja"
+      ],
+      "purpose": "Reconcile Ninja recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.ocaml",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeOCamlCompatibility"
+      ],
+      "files": [
+        "parser_result_ocaml.go"
+      ],
+      "languages": [
+        "ocaml"
+      ],
+      "purpose": "Reconcile OCaml returned-tree fields and spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.pascal",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizePascalTopLevelProgramEnd",
+        "normalizePascalTrailingExtraTrivia"
+      ],
+      "files": [
+        "parser_result_misc_spans.go"
+      ],
+      "languages": [
+        "pascal"
+      ],
+      "purpose": "Reconcile Pascal program end and trailing trivia spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.perl",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizePerlCompatibility"
+      ],
+      "files": [
+        "parser_result_perl.go"
+      ],
+      "languages": [
+        "perl"
+      ],
+      "purpose": "Reconcile Perl recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.php",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizePHPCompatibility"
+      ],
+      "files": [
+        "parser_result_php.go"
+      ],
+      "languages": [
+        "php"
+      ],
+      "purpose": "Reconcile PHP recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.powershell",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizePowerShellProgramShape",
+        "normalizePowerShellErrorProgramRoot",
+        "normalizePowerShellAssignmentOperatorTokens",
+        "normalizePowerShellPathCommandNameVariables",
+        "normalizePowerShellEnumStatementKeywordSpans"
+      ],
+      "files": [
+        "parser_result_powershell.go"
+      ],
+      "languages": [
+        "powershell"
+      ],
+      "purpose": "Reconcile PowerShell recovery, tokens, variables, and spans.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.ql",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeQLCompatibility"
+      ],
+      "files": [
+        "parser_result_ql.go"
+      ],
+      "languages": [
+        "ql"
+      ],
+      "purpose": "Reconcile QL derivation selection and returned-tree shape.",
+      "authoritative_owner": "derivation_election_selection",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after derivation_election_selection emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.r",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeRCompatibility"
+      ],
+      "files": [
+        "parser_result_r.go"
+      ],
+      "languages": [
+        "r"
+      ],
+      "purpose": "Reconcile R returned-tree fields and spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.python",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizePythonCompatibilityWithParser"
+      ],
+      "files": [
+        "parser_result_python.go"
+      ],
+      "languages": [
+        "python"
+      ],
+      "purpose": "Reconcile Python recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.rescript",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeRescriptCompatibility"
+      ],
+      "files": [
+        "parser_result_rescript.go"
+      ],
+      "languages": [
+        "rescript"
+      ],
+      "purpose": "Reconcile ReScript aliases and returned-tree shape.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.robot",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeRobotCompatibility"
+      ],
+      "files": [
+        "parser_result_robot.go"
+      ],
+      "languages": [
+        "robot"
+      ],
+      "purpose": "Reconcile Robot recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.rust",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeRustCompatibility"
+      ],
+      "files": [
+        "parser_result_rust_recovery.go"
+      ],
+      "languages": [
+        "rust"
+      ],
+      "purpose": "Reconcile Rust derivation selection, recovery, and returned-tree shape.",
+      "authoritative_owner": "derivation_election_selection",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after derivation_election_selection emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.ruby",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeRubyTopLevelModuleBounds"
+      ],
+      "files": [
+        "parser_result_ruby.go"
+      ],
+      "languages": [
+        "ruby"
+      ],
+      "purpose": "Reconcile Ruby top-level module bounds.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.scala",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeScalaCompatibility"
+      ],
+      "files": [
+        "parser_result_scala_compilation.go"
+      ],
+      "languages": [
+        "scala"
+      ],
+      "purpose": "Reconcile Scala derivation selection, recovery, and returned-tree shape.",
+      "authoritative_owner": "derivation_election_selection",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after derivation_election_selection emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.scheme",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeSchemeCompatibility"
+      ],
+      "files": [
+        "parser_result_scheme.go"
+      ],
+      "languages": [
+        "scheme"
+      ],
+      "purpose": "Reconcile Scheme recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.solidity",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeSolidityMemberObjectWrappers",
+        "normalizeSolidityCallExpressionAliases"
+      ],
+      "files": [
+        "parser_result_solidity.go"
+      ],
+      "languages": [
+        "solidity"
+      ],
+      "purpose": "Reconcile Solidity member wrappers and call-expression aliases.",
+      "authoritative_owner": "derivation_election_selection",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after derivation_election_selection emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.sql",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeSQLRecoveredSelectRoot",
+        "normalizeSQLTrailingSelectListError",
+        "normalizeSQLRecoveredTopLevelSelectStatements",
+        "normalizeSQLSelectClauseBodyIntoFields"
+      ],
+      "files": [
+        "parser_result_sql.go"
+      ],
+      "languages": [
+        "sql"
+      ],
+      "purpose": "Reconcile SQL recovery roots, errors, statements, and fields.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.squirrel",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeSquirrelCompatibility"
+      ],
+      "files": [
+        "parser_result_squirrel.go"
+      ],
+      "languages": [
+        "squirrel"
+      ],
+      "purpose": "Reconcile Squirrel recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.swift",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeSwiftCompatibility"
+      ],
+      "files": [
+        "parser_result_swift.go"
+      ],
+      "languages": [
+        "swift"
+      ],
+      "purpose": "Reconcile Swift recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.templ",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeTemplCompatibility"
+      ],
+      "files": [
+        "parser_result_templ.go"
+      ],
+      "languages": [
+        "templ"
+      ],
+      "purpose": "Reconcile Templ recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.wgsl",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeWGSLCompatibility"
+      ],
+      "files": [
+        "parser_result_wgsl.go"
+      ],
+      "languages": [
+        "wgsl"
+      ],
+      "purpose": "Reconcile WGSL recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.wolfram",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeWolframCompatibility"
+      ],
+      "files": [
+        "parser_result_wolfram.go"
+      ],
+      "languages": [
+        "wolfram"
+      ],
+      "purpose": "Reconcile Wolfram derivation selection and returned-tree shape.",
+      "authoritative_owner": "derivation_election_selection",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after derivation_election_selection emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.typescript",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeTypeScriptTreeCompatibilityWithParser"
+      ],
+      "files": [
+        "parser_result_javascript_typescript.go"
+      ],
+      "languages": [
+        "tsx",
+        "typescript"
+      ],
+      "purpose": "Reconcile TypeScript and TSX derivation selection, recovery, and returned-tree shape.",
+      "authoritative_owner": "derivation_election_selection",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after derivation_election_selection emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.typst",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeTypstCompatibility"
+      ],
+      "files": [
+        "parser_result_typst.go"
+      ],
+      "languages": [
+        "typst"
+      ],
+      "purpose": "Reconcile Typst returned-tree fields and spans.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.yaml",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeYAMLRecoveredRoot"
+      ],
+      "files": [
+        "parser_result_yaml.go"
+      ],
+      "languages": [
+        "yaml"
+      ],
+      "purpose": "Reconcile YAML recovered-root selection and shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "dispatch.zig",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeZigEmptyInitListFields"
+      ],
+      "files": [
+        "parser_result_zig.go"
+      ],
+      "languages": [
+        "zig"
+      ],
+      "purpose": "Reconcile Zig empty initializer-list fields.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "predicate.cobol-exact",
+      "kind": "dispatcher_predicate",
+      "functions": [
+        "normalizeCobolCompatibility"
+      ],
+      "files": [
+        "parser_result_cobol.go",
+        "parser_result_helpers.go"
+      ],
+      "languages": [
+        "cobol",
+        "COBOL"
+      ],
+      "match_predicate": "isCobolLanguage",
+      "purpose": "Reconcile recovery, aliases, fields, and returned-tree spans for the exact COBOL name variants accepted by isCobolLanguage.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "cgo_harness/parity_cgo_test.go"
+      ],
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "generic.trailing-extra-trivia",
+      "kind": "generic_pass",
+      "functions": [
+        "normalizeRootTrailingExtraTriviaCompatibility"
+      ],
+      "files": [
+        "parser_result_compat.go"
+      ],
+      "languages": [
+        "*"
+      ],
+      "purpose": "Apply the generic root trailing-extra-trivia compatibility rule.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "parser_result_trailing_extra_compat_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "generic.terminal-leaf",
+      "kind": "generic_pass",
+      "functions": [
+        "normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary"
+      ],
+      "files": [
+        "parser_result_terminal_leaf.go"
+      ],
+      "languages": [
+        "*"
+      ],
+      "purpose": "Apply generic terminal-leaf, alias-target, stop-reason, and error-summary compatibility.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "parser_result_terminal_leaf_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": []
+    },
+    {
+      "id": "generic.collapsed-named-leaf",
+      "kind": "generic_pass",
+      "functions": [
+        "normalizeResultCollapsedNamedLeafChildren"
+      ],
+      "files": [
+        "parser_result_collapsed_helpers.go"
+      ],
+      "languages": [
+        "*"
+      ],
+      "purpose": "Retain generic collapsed named-leaf child compatibility as a safety net for uncertified and custom languages and as a zero-rewrite receipt for exact-profile built-ins that now produce the shape natively.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "parser_result_collapsed_helpers_test.go",
+        "parser_collapsed_child_policy_test.go",
+        "parser_collapsed_child_policy_external_test.go",
+        "grammars/collapsed_child_native_regression_test.go",
+        "internal/parsercorephase0/selected_store_test.go"
+      ],
+      "retirement_condition": "Delete only after materialization emits the same tree natively with zero rewrites for every registered witness, production, compact, forest, incremental, and C-oracle route receipts are exact, and the compatibility policy for caller-built, adapted, and other custom languages is explicitly documented.",
+      "route_coverage": {
+        "production": "shared_result_compatibility_tail",
+        "compact": "shared_result_compatibility_tail",
+        "forest": "shared_result_compatibility_tail",
+        "incremental": "shared_result_compatibility_tail",
+        "c_oracle": "curated_single_grammar_parity"
+      },
+      "status": "live",
+      "receipt_refs": [
+        "parser_collapsed_child_policy_test.go",
+        "parser_collapsed_child_policy_external_test.go",
+        "grammars/collapsed_child_native_regression_test.go",
+        "internal/parsercorephase0/selected_store_test.go"
+      ]
+    },
+    {
+      "id": "fixpoint.returned-tree-second-pass",
+      "kind": "second_pass_fixpoint",
+      "functions": [
+        "normalizeReturnedTree",
+        "normalizePostFinalizationReturnedTree",
+        "normalizeScalaTemplateBodyObjectFragments",
+        "normalizeScalaRecoveredObjectTemplateBodies",
+        "normalizeScalaDefinitionFields",
+        "normalizeScalaTemplateBodyFunctionAnnotations",
+        "normalizeScalaTemplateBodyFunctionEnds",
+        "normalizeScalaCaseClauseEnds",
+        "normalizeRootEOFNewlineSpan",
+        "normalizeHTMLRecoveredNestedCustomTagRanges",
+        "normalizeJavaScriptProgramEnd"
+      ],
+      "files": [
+        "parser_api.go",
+        "parser_result_scala_template.go",
+        "parser_result_scala_compilation.go",
+        "parser_result_misc_spans.go",
+        "parser_result_html.go",
+        "parser_result_javascript_typescript.go"
+      ],
+      "languages": [
+        "html",
+        "javascript",
+        "scala"
+      ],
+      "entrypoint_calls": [
+        "normalizeReturnedTree"
+      ],
+      "switch_arms": [
+        {
+          "languages": [
+            "scala"
+          ],
+          "functions": [
+            "normalizeScalaTemplateBodyObjectFragments",
+            "normalizeScalaRecoveredObjectTemplateBodies",
+            "normalizeScalaDefinitionFields",
+            "normalizeScalaTemplateBodyFunctionAnnotations",
+            "normalizeScalaTemplateBodyFunctionEnds",
+            "normalizeScalaCaseClauseEnds",
+            "normalizeRootEOFNewlineSpan"
+          ]
+        },
+        {
+          "languages": [
+            "html"
+          ],
+          "functions": [
+            "normalizeHTMLRecoveredNestedCustomTagRanges"
+          ]
+        },
+        {
+          "languages": [
+            "javascript"
+          ],
+          "functions": [
+            "normalizeJavaScriptProgramEnd"
+          ]
+        }
+      ],
+      "purpose": "Retain the bounded second pass that reaches a returned-tree fixpoint after finalization for Scala annotations and bounds, HTML recovered nested custom-tag ranges, and JavaScript program ends.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "parser_result_html_test.go",
+        "parser_result_javascript_typescript_compat_test.go",
+        "parser_result_test/parser_result_scala_comment_attachment_test.go"
+      ],
+      "retirement_condition": "Delete only after the HTML producer/materializer emits final nested custom-tag ranges without normalizeHTMLRecoveredNestedCustomTagRanges, the Scala and JavaScript producers emit their final spans in one pass, and exact production, compact, forest, incremental, and C-oracle receipts prove the second pass is inert.",
+      "route_coverage": {
+        "production": "post_finalization_fixpoint",
+        "compact": "post_finalization_fixpoint",
+        "forest": "post_finalization_fixpoint",
+        "incremental": "post_finalization_fixpoint",
+        "c_oracle": "language_witnesses_required"
+      },
+      "status": "live",
+      "receipt_refs": []
+    }
+  ]
+}

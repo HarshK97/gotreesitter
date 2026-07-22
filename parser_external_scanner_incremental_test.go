@@ -139,6 +139,112 @@ func requireIncrementalDeepTreeMatchesFresh(t *testing.T, incremental, fresh *go
 	}
 }
 
+func TestUncertifiedExternalScannerLengthChangingEditFallsBack(t *testing.T) {
+	cases := []struct {
+		name        string
+		lang        func() *gotreesitter.Language
+		source      []byte
+		oldText     []byte
+		replacement []byte
+	}{
+		{
+			name:        "sql",
+			lang:        grammars.SqlLanguage,
+			source:      []byte("select id from users;\n"),
+			oldText:     []byte("id"),
+			replacement: []byte("account_id"),
+		},
+		{
+			name:        "html",
+			lang:        grammars.HtmlLanguage,
+			source:      []byte("<main><p>hello</p></main>\n"),
+			oldText:     []byte("hello"),
+			replacement: []byte("hello world"),
+		},
+		{
+			name:        "markdown",
+			lang:        grammars.MarkdownLanguage,
+			source:      []byte("# Title\n\nParagraph text.\n"),
+			oldText:     []byte("Title"),
+			replacement: []byte("Longer Title"),
+		},
+		{
+			name:        "markdown_inline",
+			lang:        grammars.MarkdownInlineLanguage,
+			source:      []byte("Hello *world*.\n"),
+			oldText:     []byte("world"),
+			replacement: []byte("wide world"),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			lang := tc.lang()
+			parser := gotreesitter.NewParser(lang)
+			parser.SetAdmissionCandidateRoute(false)
+
+			oldTree, err := parser.Parse(tc.source)
+			if err != nil {
+				t.Fatalf("old parse: %v", err)
+			}
+			defer oldTree.Release()
+			requireCompleteParse(t, oldTree, tc.source, lang, "old")
+
+			next, edit := replaceExternalScannerWitness(t, tc.source, tc.oldText, tc.replacement)
+			oldTree.Edit(edit)
+			incremental, profile, err := parser.ParseIncrementalProfiled(next, oldTree)
+			if err != nil {
+				t.Fatalf("incremental parse: %v", err)
+			}
+			defer incremental.Release()
+			if !profile.ReuseUnsupported || profile.ReuseUnsupportedReason != "external_scanner_unsupported" {
+				t.Fatalf("uncertified scanner did not fail closed: %+v", profile)
+			}
+			if profile.OldTreeReuseRoute || profile.ReusedSubtrees != 0 || profile.ReusedBytes != 0 {
+				t.Fatalf("uncertified scanner fallback reported old-tree reuse: %+v", profile)
+			}
+			if profile.TokensConsumed == 0 || profile.NewNodesAllocated == 0 {
+				t.Fatalf("uncertified scanner fallback did not execute a full parse: %+v", profile)
+			}
+			requireCompleteParse(t, incremental, next, lang, "incremental fallback")
+
+			freshParser := gotreesitter.NewParser(lang)
+			freshParser.SetAdmissionCandidateRoute(false)
+			fresh, err := freshParser.Parse(next)
+			if err != nil {
+				t.Fatalf("fresh parse: %v", err)
+			}
+			defer fresh.Release()
+			requireCompleteParse(t, fresh, next, lang, "fresh")
+			requireIncrementalDeepTreeMatchesFresh(t, incremental, fresh, lang)
+		})
+	}
+}
+
+func replaceExternalScannerWitness(t *testing.T, source, oldText, replacement []byte) ([]byte, gotreesitter.InputEdit) {
+	t.Helper()
+	if len(oldText) == len(replacement) {
+		t.Fatalf("fallback witness must change length: old=%q replacement=%q", oldText, replacement)
+	}
+	offset := bytes.Index(source, oldText)
+	if offset < 0 {
+		t.Fatalf("fixture missing edit text %q", oldText)
+	}
+	oldEnd := offset + len(oldText)
+	next := make([]byte, 0, len(source)-len(oldText)+len(replacement))
+	next = append(next, source[:offset]...)
+	next = append(next, replacement...)
+	next = append(next, source[oldEnd:]...)
+	return next, gotreesitter.InputEdit{
+		StartByte:   uint32(offset),
+		OldEndByte:  uint32(oldEnd),
+		NewEndByte:  uint32(offset + len(replacement)),
+		StartPoint:  pointForOffset(source, offset),
+		OldEndPoint: pointForOffset(source, oldEnd),
+		NewEndPoint: pointForOffset(next, offset+len(replacement)),
+	}
+}
+
 func TestPythonDerivedSameLengthTokenChangeDeclinesScannerReuse(t *testing.T) {
 	for _, languageCase := range pythonDerivedIncrementalCases() {
 		languageCase := languageCase
@@ -233,6 +339,11 @@ func TestPythonDerivedTokenInvariantLeafReusePrecedesScannerFallback(t *testing.
 
 					lang := languageCase.lang()
 					parser := gotreesitter.NewParser(lang)
+					// This test locks the legacy production-tree contract: a
+					// token-invariant leaf edit is reauthenticated before the scanner
+					// opt-out fallback. Reuse-disabled compact stateful scanners are
+					// covered by TestStatefulScannerCompactLeafReauthenticationFailsClosed.
+					parser.SetAdmissionCandidateRoute(false)
 					if route.includedRanges {
 						parser.SetIncludedRanges([]gotreesitter.Range{{
 							StartByte: 0,

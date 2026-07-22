@@ -963,6 +963,11 @@ func TestYAMLIncrementalEditScalarTokenInvariantLeafReuseIsCorrect(t *testing.T)
 			}
 
 			parser := gts.NewParser(lang)
+			// This test isolates production incremental leaf reuse. Compact full-
+			// parse trees deliberately carry the decision-0008 reuse bar; as compact
+			// coverage expands, relying on an incidental admission fallback would
+			// silently change what this test exercises.
+			parser.SetAdmissionCandidateRoute(false)
 			oldTree, err := parser.Parse(src)
 			if err != nil {
 				t.Fatalf("initial parse: %v", err)

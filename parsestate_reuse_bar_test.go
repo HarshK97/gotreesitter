@@ -7,13 +7,10 @@ import (
 	"testing"
 )
 
-// TestCompactMaterializedTreeBarsIncrementalReuse seals Phase-3 Lane 3 review
-// amendment 2 (and the follow-up review's reuse-bar holes): a tree built by the
-// compact route carries table-REPLAYED (not live-recorded) parser states and no
-// scanner checkpoints, so ParseIncremental over it -- on EVERY entry (DFA,
-// custom token source) and even after Tree.Copy -- must fall all the way back to
-// a fresh full parse. It must reuse NO node: not the token-invariant leaf fast
-// path, not the reuseCursor subtree splice.
+// TestCompactMaterializedTreeBarsIncrementalReuse seals the fail-closed half of
+// the compact reuse contract. A diagnostic runner that did not request replay
+// carries no state proof, so every entry (DFA, custom token source, and Copy)
+// must fall back without sharing nodes.
 func TestCompactMaterializedTreeBarsIncrementalReuse(t *testing.T) {
 	runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, parserCoreFreshFullCanonicalOptions())
 	if err != nil {
@@ -143,6 +140,94 @@ func TestCompactMaterializedTreeBarsIncrementalReuse(t *testing.T) {
 		defer got.Release()
 		requireFreshFallback(t, got, treeA)
 	})
+}
+
+// TestAdmissionCompactTreeCarriesIncrementalReuseProof seals the complementary
+// side of the compact provenance contract: the production admission runner
+// requests table replay, and a tree whose replay is complete enough for reuse
+// and whose scanner is provably quiescent must preserve the O(edit) path.
+func TestAdmissionCompactTreeCarriesIncrementalReuseProof(t *testing.T) {
+	lang, err := authenticatedParserCoreGoLanguage(parserCoreWarmGoScanner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := []byte("package p\n\n// c\nvar x = 1\n")
+	edited := []byte("package p\n\n// c\nvar x = 2\n")
+	pos := bytes.IndexByte(src, '1')
+	if pos < 0 {
+		t.Fatal("fixture invariant: expected digit")
+	}
+
+	parser := NewParser(lang)
+	parser.SetAdmissionCandidateRoute(true)
+	resetAdmissionCandidateCounters()
+	oldTree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("candidate Parse: %v", err)
+	}
+	defer oldTree.Release()
+	routed, fallback := AdmissionCandidateCounters()
+	if routed != 1 || fallback != 0 {
+		t.Fatalf("candidate route counters=%d/%d, want 1/0 (reason=%q)", routed, fallback, AdmissionCandidateLastFallbackReason())
+	}
+	if !oldTree.compactMaterialized {
+		t.Fatal("admission tree is missing compact provenance")
+	}
+	if oldTree.incrementalReuseDisabled {
+		t.Fatal("proof-carrying admission tree remained barred from incremental reuse")
+	}
+	requireCompactIncrementalStateProof(t, oldTree)
+
+	oldTree.Edit(InputEdit{
+		StartByte: uint32(pos), OldEndByte: uint32(pos + 1), NewEndByte: uint32(pos + 1),
+		StartPoint: Point{Row: 3, Column: 8}, OldEndPoint: Point{Row: 3, Column: 9}, NewEndPoint: Point{Row: 3, Column: 9},
+	})
+	got, profile, err := parser.ParseIncrementalProfiled(edited, oldTree)
+	if err != nil {
+		t.Fatalf("ParseIncrementalProfiled: %v", err)
+	}
+	defer got.Release()
+	if profile.ReuseUnsupported {
+		t.Fatalf("proof-carrying compact tree fell back: %s", profile.ReuseUnsupportedReason)
+	}
+	if profile.ReusedSubtrees == 0 || profile.ReusedBytes == 0 {
+		t.Fatalf("proof-carrying compact tree reused nothing: %+v", profile)
+	}
+
+	wantParser := NewParser(lang)
+	wantParser.SetAdmissionCandidateRoute(false)
+	want, err := wantParser.Parse(edited)
+	if err != nil {
+		t.Fatalf("production Parse: %v", err)
+	}
+	defer want.Release()
+	parserCoreWarmRequireDeepEqual(t, got, want, lang)
+}
+
+func requireCompactIncrementalStateProof(t *testing.T, tree *Tree) {
+	t.Helper()
+	if tree == nil || tree.root == nil {
+		t.Fatal("compact state proof has no root")
+	}
+	stack := []*Node{tree.root}
+	for len(stack) > 0 {
+		last := len(stack) - 1
+		node := stack[last]
+		stack = stack[:last]
+		children := node.ChildCount()
+		if children == 0 {
+			if node.parseState == 0 {
+				t.Fatalf("proof-carrying leaf %s %d..%d abstained from parseState", node.Type(tree.language), node.startByte, node.endByte)
+			}
+			continue
+		}
+		if node != tree.root && node.preGotoState == 0 {
+			t.Fatalf("proof-carrying node %s %d..%d abstained from preGotoState", node.Type(tree.language), node.startByte, node.endByte)
+		}
+		for i := children - 1; i >= 0; i-- {
+			stack = append(stack, node.Child(i))
+		}
+	}
 }
 
 // countSharedNodes returns how many *Node objects are pointer-identical between

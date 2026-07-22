@@ -302,11 +302,170 @@ numbering, use the public remapper:
 
 - `IncrementalReuseExternalScanner` (`SupportsIncrementalReuse() bool`):
   declare true only if reusing subtrees across edits is safe for your
-  state. Stateless scanners: yes. Python-style indent stacks deliberately
-  leave this unimplemented, so edits force a conservative reparse.
+  state. Stateless scanners: yes. Returning false is an explicit opt-out;
+  not implementing the interface is also treated as uncertified and fails
+  closed. Python, Mojo, and Starlark currently return false.
 - `FailurePreservingExternalScanner` (`PreservesStateOnScanFailure() bool`):
   declare true if `Scan` returning false never mutated the payload — this
   lets the runtime skip defensive state snapshots on the hot path.
+
+### Incremental-reuse certification matrix
+
+This matrix records the production contract for every external scanner in
+the built-in registry. It is derived from the registration files under
+`grammars/z_subset_scanner_register_*.go` and the runtime gate in
+`languageSupportsIncrementalReuse`:
+
+- **certified reuse** means the registered scanner implements
+  `IncrementalReuseExternalScanner` and returns true. A changed edit may
+  enter old-tree subtree reuse, subject to the normal dirty-span,
+  fragility, byte-equality, and scanner-boundary gates.
+- **bounded reuse** is Dart's certified route for sources up to 256 KiB.
+  Larger Dart sources use the fresh production parse with reason
+  `dart_large_external_scanner_unsupported`.
+- **fallback (explicit opt-out)** means the scanner implements the
+  interface and returns false.
+- **fallback (uncertified)** means the scanner does not implement the
+  interface. For either fallback status, once the preliminary
+  token-invariant leaf fast path declines, `ParseIncremental` ignores the
+  old tree and runs the same production full-parse and retry path as
+  `Parse`. `ParseIncrementalProfiled` reports `ReuseUnsupported=true`,
+  `ReuseUnsupportedReason="external_scanner_unsupported"`, no old-tree
+  reuse route, and no reused bytes or subtrees.
+
+The token-invariant leaf exception is intentionally narrow: on a production
+tree, a same-length edit that independently reauthenticates the same leaf
+token may return before the scanner gate. That is not certification for
+general scanner-dependent subtree reuse. Likewise, scanner checkpoints do
+not certify a scanner by themselves: CMake and Svelte both opt in and use
+checkpoints, while Python, Mojo, and Starlark use checkpoints but explicitly
+opt out. Custom `TokenSource` implementations have their own
+`IncrementalReuseTokenSource` contract and are outside this registry matrix.
+In particular, the registered SQL, HTML, Markdown, and Markdown Inline
+scanners are currently uncertified, so changed-token or shape-changing edits
+take the production full-parse fallback rather than scanner-dependent reuse.
+
+| Language | Changed-edit contract |
+|---|---|
+| `agda` | fallback (uncertified) |
+| `angular` | fallback (uncertified) |
+| `arduino` | fallback (uncertified) |
+| `astro` | fallback (uncertified) |
+| `awk` | fallback (uncertified) |
+| `bash` | fallback (uncertified) |
+| `beancount` | fallback (uncertified) |
+| `bicep` | fallback (uncertified) |
+| `bitbake` | fallback (uncertified) |
+| `blade` | fallback (uncertified) |
+| `c_sharp` | fallback (uncertified) |
+| `caddy` | fallback (uncertified) |
+| `cairo` | fallback (uncertified) |
+| `cmake` | certified reuse |
+| `cobol` | fallback (uncertified) |
+| `comment` | fallback (uncertified) |
+| `cooklang` | fallback (uncertified) |
+| `cpp` | fallback (uncertified) |
+| `crystal` | fallback (uncertified) |
+| `css` | certified reuse |
+| `cuda` | fallback (uncertified) |
+| `cue` | fallback (uncertified) |
+| `d` | fallback (uncertified) |
+| `dart` | bounded reuse (up to 256 KiB) |
+| `dhall` | fallback (uncertified) |
+| `disassembly` | fallback (uncertified) |
+| `djot` | fallback (uncertified) |
+| `dockerfile` | fallback (uncertified) |
+| `doxygen` | fallback (uncertified) |
+| `dtd` | fallback (uncertified) |
+| `earthfile` | fallback (uncertified) |
+| `editorconfig` | fallback (uncertified) |
+| `elixir` | fallback (uncertified) |
+| `elm` | fallback (uncertified) |
+| `erlang` | fallback (uncertified) |
+| `fennel` | fallback (uncertified) |
+| `firrtl` | fallback (uncertified) |
+| `fish` | fallback (uncertified) |
+| `foam` | fallback (uncertified) |
+| `fortran` | fallback (uncertified) |
+| `fsharp` | fallback (uncertified) |
+| `gdscript` | fallback (uncertified) |
+| `gitcommit` | fallback (uncertified) |
+| `gleam` | fallback (uncertified) |
+| `gn` | fallback (uncertified) |
+| `go` | certified reuse |
+| `godot_resource` | fallback (uncertified) |
+| `hack` | fallback (uncertified) |
+| `haskell` | fallback (uncertified) |
+| `haxe` | fallback (uncertified) |
+| `hcl` | fallback (uncertified) |
+| `hlsl` | fallback (uncertified) |
+| `html` | fallback (uncertified) |
+| `janet` | fallback (uncertified) |
+| `javascript` | certified reuse |
+| `jsdoc` | fallback (uncertified) |
+| `jsonnet` | fallback (uncertified) |
+| `julia` | fallback (uncertified) |
+| `just` | fallback (uncertified) |
+| `kconfig` | fallback (uncertified) |
+| `kdl` | fallback (uncertified) |
+| `kotlin` | fallback (uncertified) |
+| `less` | fallback (uncertified) |
+| `liquid` | fallback (uncertified) |
+| `lua` | fallback (uncertified) |
+| `luau` | fallback (uncertified) |
+| `markdown` | fallback (uncertified) |
+| `markdown_inline` | fallback (uncertified) |
+| `matlab` | fallback (uncertified) |
+| `mojo` | fallback (explicit opt-out) |
+| `move` | fallback (uncertified) |
+| `nginx` | fallback (uncertified) |
+| `nickel` | fallback (uncertified) |
+| `nim` | fallback (uncertified) |
+| `nix` | fallback (uncertified) |
+| `norg` | fallback (uncertified) |
+| `nushell` | fallback (uncertified) |
+| `ocaml` | fallback (uncertified) |
+| `odin` | fallback (uncertified) |
+| `org` | fallback (uncertified) |
+| `perl` | fallback (uncertified) |
+| `php` | fallback (uncertified) |
+| `pkl` | fallback (uncertified) |
+| `powershell` | fallback (uncertified) |
+| `properties` | fallback (uncertified) |
+| `pug` | fallback (uncertified) |
+| `purescript` | fallback (uncertified) |
+| `python` | fallback (explicit opt-out) |
+| `r` | fallback (uncertified) |
+| `racket` | fallback (uncertified) |
+| `rescript` | fallback (uncertified) |
+| `ron` | fallback (uncertified) |
+| `rst` | fallback (uncertified) |
+| `ruby` | fallback (uncertified) |
+| `rust` | fallback (uncertified) |
+| `scala` | fallback (uncertified) |
+| `scss` | certified reuse |
+| `sql` | fallback (uncertified) |
+| `squirrel` | fallback (uncertified) |
+| `starlark` | fallback (explicit opt-out) |
+| `svelte` | certified reuse |
+| `swift` | fallback (uncertified) |
+| `tablegen` | fallback (uncertified) |
+| `tcl` | fallback (uncertified) |
+| `teal` | fallback (uncertified) |
+| `templ` | fallback (uncertified) |
+| `tlaplus` | fallback (uncertified) |
+| `toml` | certified reuse |
+| `tsx` | certified reuse |
+| `typescript` | certified reuse |
+| `typst` | fallback (uncertified) |
+| `uxntal` | fallback (uncertified) |
+| `vhdl` | fallback (uncertified) |
+| `vue` | fallback (uncertified) |
+| `wgsl` | fallback (uncertified) |
+| `wolfram` | fallback (uncertified) |
+| `xml` | fallback (uncertified) |
+| `yaml` | fallback (uncertified) |
+| `yuck` | fallback (uncertified) |
 
 ## Hard-learned behavioral contracts
 

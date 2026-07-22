@@ -6,14 +6,6 @@ func (p *Parser) tryTokenInvariantLeafEdit(source []byte, oldTree *Tree, ts Toke
 	if p == nil || oldTree == nil || oldTree.RootNode() == nil || oldTree.language != p.language {
 		return nil, false
 	}
-	// A compact-materialized tree carries table-replayed / abstained per-node
-	// parser states and no scanner checkpoints, so it is barred from every reuse
-	// path -- including this token-invariant leaf reuse -- on ALL entry points
-	// (DFA and custom token source). Force the caller to a full fresh parse
-	// (Phase-3 Lane 3 review).
-	if oldTree.compactMaterialized {
-		return nil, false
-	}
 	if len(oldTree.edits) != 1 {
 		return nil, false
 	}
@@ -69,7 +61,27 @@ func (p *Parser) tryTokenInvariantLeafEdit(source []byte, oldTree *Tree, ts Toke
 	if leaf == nil || leaf.ChildCount() != 0 || leaf.hasError() || leaf.isMissing() {
 		return nil, false
 	}
-	tok, ok := p.scanTokenInvariantEditedLeaf(source, ts, leaf)
+	requireScannerCheckpoint := false
+	if oldTree.compactMaterialized && oldTree.incrementalReuseDisabled {
+		// Keep the scanner-proof closure local to the primitive as well as at
+		// admission. Direct callers must not bypass the compact-tree gate and
+		// reauthenticate a leaf with a newly-created stateful scanner payload.
+		if leaf.preGotoState == 0 || !compactLeafScannerReauthenticationProven(p.language, leaf) {
+			return nil, false
+		}
+		requireScannerCheckpoint = compactLeafScannerCheckpointRequired(p.language)
+	}
+	var tok Token
+	var ok bool
+	if requireScannerCheckpoint {
+		// This is intentionally a terminal path: a compact tree whose scanner
+		// proof depends on a checkpoint must authenticate that checkpoint during
+		// the scan. Failure may not fall through to a fresh scanner payload or a
+		// generic token-source skip.
+		tok, ok = scanCompactLeafWithRequiredScannerCheckpoint(ts, leaf)
+	} else {
+		tok, ok = p.scanTokenInvariantEditedLeaf(source, ts, leaf)
+	}
 	if !ok || tok.Symbol != leaf.symbol || tok.StartByte != leaf.startByte || tok.EndByte != leaf.endByte {
 		return nil, false
 	}
@@ -831,6 +843,20 @@ func (p *Parser) scanTokenInvariantEditedLeaf(source []byte, ts TokenSource, lea
 	stateful.SetParserState(leaf.preGotoState)
 	stateful.SetGLRStates(nil)
 	return skipTokenSourceToLeaf(ts, leaf)
+}
+
+// scanCompactLeafWithRequiredScannerCheckpoint performs the only permitted
+// scan for a compact leaf whose scanner proof depends on a recorded checkpoint.
+// It calls scanDFALeafTokenWithExternalCheckpoint directly; that routine
+// restores the start snapshot and verifies both the token identity/span and end
+// snapshot. Any unsupported token source or failed authentication returns
+// false; callers must not retry through a fresh scanner or generic skip path.
+func scanCompactLeafWithRequiredScannerCheckpoint(ts TokenSource, leaf *Node) (Token, bool) {
+	dts, ok := ts.(*dfaTokenSource)
+	if !ok || dts == nil || !languageUsesExternalScannerCheckpoints(dts.language) {
+		return Token{}, false
+	}
+	return scanDFALeafTokenWithExternalCheckpoint(dts, leaf)
 }
 
 func (p *Parser) scanLeafTokenWithFreshSource(source []byte, leaf *Node, allowDFA bool) (Token, bool) {

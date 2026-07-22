@@ -7,6 +7,8 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.46.0] - 2026-07-21
+
 ### Added
 
 - **Phase-3 admission switch** (PR #417). A per-parser option, a global
@@ -22,15 +24,55 @@ for tags and release notes while still in `0.x`.
   multi-derivation blockers.
 - **Oracle v3 parity tools** in `cgo_harness` (PR #413). The root
   library module is unchanged by that PR.
+- **The W5 editor-latency matrix now covers five languages.** Go,
+  JavaScript, TypeScript, Python, and CSS run insert, delete, and replace
+  edits at the start, middle, and end of roughly 20 KiB and 137 KiB inputs;
+  the manual full sweep adds 1 MiB. JavaScript and TypeScript also carry a
+  transient-error delete lane with deterministic ceilings for parser work,
+  retries, stack width, and allocator memory, while retaining fresh-parse
+  structural equality as the correctness oracle.
+- **External-scanner incremental-reuse contracts are now published per
+  language.** The 119-language matrix distinguishes certified, bounded,
+  explicit-opt-out, and uncertified scanners. SQL, HTML, and Markdown now
+  document their fail-closed production full-parse fallback for changed edits
+  after the narrow token-invariant leaf exception declines.
 
 ### Changed
+
+- **Result compatibility cleanup.** A source-of-truth ownership registry,
+  supporting documentation, and a CI guard now track compatibility passes and
+  their retirement criteria. The dead terminal-normalization wrapper was
+  removed, along with the unreferenced `walkResultTreePostorderUntil` and
+  `rewriteResultTreeChildrenPostorderWithStats` traversal helpers. Recovered-tree
+  cycle repair was replaced by an always-on, non-mutating validator that fails
+  closed with the public `ParseStopInvariantViolation` reason. The roadmap now
+  puts repository maintenance, explainability, documentation, ownership
+  receipts, and upstream retirement of normalization shims before the next
+  major performance milestone; performance gates remain advisory during this
+  cleanup. All 23 collapsed named-leaf rows for six exact-profile built-in
+  languages now materialize natively across their admitted routes; the generic
+  compatibility walk remains as a zero-rewrite receipt and as the safety path
+  for caller-built, adapted, and other custom languages.
+
+- **Compact admission now ratchets breadth, depth, and edit reuse.** The shared
+  production clean-tail proof admits compact roots that stop immediately before
+  trailing parser padding, raising the 206-language smoke scorecard from 48 to
+  166 byte-exact routes (35 fail-closed fallbacks, 5 token-source skips, 0
+  divergences). Representative multi-line fixtures freeze production and
+  candidate digests, while CI enforces both the breadth floor and routed depth.
+  Admission materialization now carries a per-tree parser-state replay proof:
+  grammars with complete required states and proven scanner quiescence retain
+  incremental subtree reuse; unproven/stateful scanners remain barred, apart
+  from independently re-lexed token-invariant single-leaf edits. Certified or
+  explicitly requested forest routes retain precedence unless the caller
+  explicitly forces the compact candidate.
 
 - **The compact parser core is now the default full-parse route for eligible
   languages** (Phase-3 admission flip). `Parser.Parse` routes a fresh, full,
   production-DFA parse of an eligible grammar through the compact
   `internal/parsercorephase0` engine, then materializes a public tree. The tree
   is byte-exact with the production engine on the routed, verified surface: the
-  48 byte-exact scorecard routes and the canonical fixtures. The runner's strict
+  166 byte-exact scorecard routes and the canonical fixtures. The runner's strict
   acceptance gate fails closed to production on any input it cannot reproduce
   byte-for-byte. The compact engine promotes from the `gts_parsercorephase0`
   opt-in tag into the default build; the emergency opt-out tag
@@ -40,8 +82,8 @@ for tags and release notes while still in `0.x`.
 
   - **Correctness.** 206 of 206 curated parity fixtures pass. The deep-tree
     digest is 100 percent exact on the canonical fixtures. The 206-language
-    scorecard through the switch reports 48 byte-exact routes, 0 divergences,
-    153 fail-closed fallbacks, and 5 token-source skips.
+    scorecard through the switch reports 166 byte-exact routes, 0 divergences,
+    35 fail-closed fallbacks, and 5 token-source skips.
   - **Fail-closed generic-call conflict class.** On the ambiguous Go construct
     `Foo[int](a)`, production and the tree-sitter-go C oracle select
     `type_conversion_expression(generic_type)`. The compact scheduler cannot
@@ -91,11 +133,12 @@ for tags and release notes while still in `0.x`.
   variable, keeps the compact route on. `(*Parser).SetAdmissionCandidateRoute`
   overrides the process default per parser.
 
-  Dual-route statement: `ParseIncremental` and every reuse-consuming path stay
-  on the production engine unconditionally. The compact tree carries a hard
-  incremental-reuse bar (decision 0008), so routing it under `ParseIncremental`
-  would destroy the O(edit) wins. Lifting the reuse bar is the follow-on
-  campaign.
+  Dual-route statement: `ParseIncremental` and every reuse-consuming parser
+  operation stay on the production engine. A compact old tree may now supply
+  reusable subtrees only when its materialization attached the required replay
+  states and its scanner is provably quiescent; otherwise reuse fails closed to
+  a full production parse. Token-invariant single-leaf edits are separately
+  re-lexed and admitted only on exact symbol/span identity.
 
   Memory-budget contract: the compact scheduler does not poll the automatic
   large-input memory budget. The switch declines every input at or above the
@@ -108,17 +151,18 @@ for tags and release notes while still in `0.x`.
   from one survivor to two. The wider budget activates the structural
   comparison at the merge site. This is the structural cure for the
   detector class behind issue #389 and issue #402.
-- **Incremental reparse cost is now position-independent for large
-  files** (PR #418, PR #421, campaign O(edit)). PR #418 bounds arena
-  normalization to the edited range. A 1MB clean-Go near-top keystroke
-  drops from about 356ms to about 53ms. PR #421 splices the leading run
-  of unchanged top-level items, the mirror of the trailing
-  block-splice. A 1MB mid-file keystroke drops from about 269ms to
-  about 67ms for Go, and from about 168ms to about 45ms for CSS. At
-  137KB, mid-file reuse rejects fall from 16,450 to 10. JavaScript,
-  TypeScript, and TSX keep their previous behavior until the T2c
-  scanner proofs land. The W5 latency gate now locks these counters per
-  edit position.
+- **Admitted clean top-level edits now reuse both leading and trailing
+  sibling runs** (PR #418, PR #421, campaign O(edit)). PR #418 bounds arena
+  normalization to the edited range. A 1MB clean-Go near-top keystroke drops
+  from about 356ms to about 53ms. PR #421 splices the leading run of unchanged
+  top-level items, the mirror of the trailing block-splice. A 1MB mid-file
+  keystroke drops from about 269ms to about 67ms for Go, and from about 168ms
+  to about 45ms for CSS. At 137KB, mid-file reuse rejects fall from 16,450 to
+  10. Length- or point-changing `Tree.Edit` calls still maintain coordinates
+  through affected trailing sibling subtrees, so this is not an absolute
+  whole-call `O(edit)` claim. JavaScript, TypeScript, and TSX keep their
+  previous leading-run behavior until the T2c scanner proofs land. The W5
+  latency gate locks these counters per edit position.
 
 ### Removed
 
@@ -277,10 +321,13 @@ for tags and release notes while still in `0.x`.
 
 ### Improved
 
-- **Go clean-file incremental edits are now O(edit), not O(file).** This
-  closes, for clean top-level edits, the Go reuse gap that v0.44.0 listed
-  as a known issue. Before dispatch reaches the reuse check, the parser
-  now applies any pending eager-default reduce chain to the live stack.
+- **Go clean-file incremental parses now reuse the top-level suffix instead
+  of reparsing it.** This closes, for clean top-level edits, the Go reuse
+  gap that v0.44.0 listed as a known issue. It is not an absolute
+  whole-call `O(edit)` claim: length- or point-changing `Tree.Edit` calls
+  still maintain coordinates through affected trailing sibling subtrees.
+  Before dispatch reaches the reuse check, the parser now applies any
+  pending eager-default reduce chain to the live stack.
   This is campaign O(edit) workstream W1b (PR #398), and it closes the
   settling gap that blocked the W1 splice (PR #395) for Go.
   `ReuseRejectRootNonLeafChanged` now holds at a small constant, 9,
@@ -3463,7 +3510,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.45.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.46.0...HEAD
+[0.46.0]: https://github.com/odvcencio/gotreesitter/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/odvcencio/gotreesitter/compare/v0.44.1...v0.45.0
 [0.44.1]: https://github.com/odvcencio/gotreesitter/compare/v0.44.0...v0.44.1
 [0.44.0]: https://github.com/odvcencio/gotreesitter/compare/v0.43.1...v0.44.0

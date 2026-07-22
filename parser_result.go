@@ -186,7 +186,7 @@ func arenaAllocatedVolume(arena *nodeArena) uint64 {
 }
 
 func resultMaterializationShouldStop(reason ParseStopReason) bool {
-	return parseStopReasonIsActive(reason) || reason == ParseStopMemoryBudget
+	return parseStopReasonIsActive(reason) || reason == ParseStopMemoryBudget || reason == ParseStopInvariantViolation
 }
 
 // hasCleanSiblingAtSamePosition reports whether some other live (non-dead)

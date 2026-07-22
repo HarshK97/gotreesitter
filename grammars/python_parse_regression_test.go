@@ -181,6 +181,10 @@ func TestPythonNoTreeBenchmarkSkipsExternalScannerCheckpoints(t *testing.T) {
 	lang := PythonLanguage()
 
 	parser := gotreesitter.NewParser(lang)
+	// The checkpoint counters are production-parser allocation telemetry. Compact
+	// admission validates the same full-tree structure but does not retain live
+	// external-scanner checkpoint records, so measure this contract on production.
+	parser.SetAdmissionCandidateRoute(false)
 	fullTree, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)

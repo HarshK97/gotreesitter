@@ -69,20 +69,26 @@ var resultCollapsedNamedLeafRules = []collapsedNamedLeafRule{
 	{languageName: "elixir", parentName: "nil", childName: "nil", bySource: true},
 }
 
-func normalizeResultCollapsedNamedLeafChildren(root *Node, source []byte, lang *Language) {
+func normalizeResultCollapsedNamedLeafChildren(root *Node, source []byte, lang *Language) normalizationPassCounters {
+	var total normalizationPassCounters
 	if root == nil || lang == nil {
-		return
+		return total
 	}
 	for _, rule := range resultCollapsedNamedLeafRules {
 		if rule.languageName != lang.Name {
 			continue
 		}
 		if rule.bySource {
-			normalizeCollapsedNamedLeafChildrenBySource(root, source, lang, rule.parentName, rule.childName)
+			stats := normalizeCollapsedNamedLeafChildrenBySourceWithStats(root, source, lang, rule.parentName, rule.childName)
+			total.nodesVisited += stats.nodesVisited
+			total.nodesRewritten += stats.nodesRewritten
 			continue
 		}
-		normalizeCollapsedNamedLeafChildren(root, lang, rule.parentName, rule.childName)
+		stats := normalizeCollapsedNamedLeafChildrenWithStats(root, lang, rule.parentName, rule.childName)
+		total.nodesVisited += stats.nodesVisited
+		total.nodesRewritten += stats.nodesRewritten
 	}
+	return total
 }
 
 func normalizeCollapsedNamedLeafChildrenWithStats(root *Node, lang *Language, parentName, childName string) normalizationPassCounters {

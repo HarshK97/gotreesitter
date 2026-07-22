@@ -69,6 +69,97 @@ func TestSelectedStoreElidesHiddenParentsBeforeSeal(t *testing.T) {
 	}
 }
 
+func TestSelectedStoreRetainsCompiledAliasChildOccurrence(t *testing.T) {
+	for _, folded := range []bool{false, true} {
+		name := "nonfolded"
+		if folded {
+			name = "folded"
+		}
+		t.Run(name, func(t *testing.T) {
+			build := func(limit uint64) (*SelectedStore, error) {
+				compact, err := New(&fakeTable{}, Limits{MaxSelectedBytes: limit})
+				if err != nil {
+					return nil, err
+				}
+				leaf, err := compact.appendSubtree(subtreeRecord{
+					symbol: 1, productionID: 8, dynamicPrecedence: 2, endByte: 1, terminal: true,
+				}, nil, nil, nil)
+				if err != nil {
+					return nil, err
+				}
+				rawChild, childSymbol := leaf, Symbol(1)
+				rootSymbol := Symbol(3)
+				if folded {
+					rawChild, err = compact.appendSubtree(subtreeRecord{
+						symbol: 3, productionID: 9, dynamicPrecedence: 3, endByte: 1,
+					}, []SubtreeID{leaf}, nil, nil)
+					if err != nil {
+						return nil, err
+					}
+					childSymbol = 3
+					rootSymbol = 4
+				}
+				root, err := compact.appendSubtree(
+					subtreeRecord{symbol: rootSymbol, productionID: 7, endByte: 1},
+					[]SubtreeID{rawChild},
+					[]FieldMapEntry{{FieldID: 4, ChildIndex: 0}},
+					[]Symbol{2},
+				)
+				if err != nil {
+					return nil, err
+				}
+				policy := selectedStoreTestPolicy(t, 2, 1)
+				if folded {
+					policy = selectedStoreTestPolicy(t, 2, 1, 3)
+					policy.Unary[int(Symbol(3))*len(policy.Symbols)+int(Symbol(1))] = SelectedUnaryRenameLeaf
+				}
+				policy.SetRetainedAliasChildren([]SelectedAliasChildPair{{Alias: 2, Child: childSymbol}})
+				return compact.BuildSelectedStore([]SubtreeID{root}, policy, []byte("x"), nil)
+			}
+
+			store, err := build(0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			required := store.RetainedBytes()
+			assertSelectedRetainedAliasShape(t, store, folded)
+			store.Release()
+
+			exact, err := build(required)
+			if err != nil {
+				t.Fatalf("exact retained cap %d: %v", required, err)
+			}
+			assertSelectedRetainedAliasShape(t, exact, folded)
+			exact.Release()
+			if required == 0 {
+				t.Fatal("retained alias store reported zero retained bytes")
+			}
+			if below, err := build(required - 1); err == nil || below != nil || !strings.Contains(err.Error(), "retained-byte cap") {
+				t.Fatalf("below-cap store=%v err=%v required=%d", below, err, required)
+			}
+		})
+	}
+}
+
+func assertSelectedRetainedAliasShape(t *testing.T, store *SelectedStore, folded bool) {
+	t.Helper()
+	wrapper, ok := store.Record(store.Root())
+	childID, childOK := store.Child(wrapper, 0)
+	child, recordOK := store.Record(childID)
+	wantChildSymbol := Symbol(1)
+	wantPrecedence := int32(2)
+	if folded {
+		wantChildSymbol = 3
+		wantPrecedence = 5
+	}
+	if !ok || !childOK || !recordOK || store.NodeCount() != 2 || store.ChildCount() != 1 ||
+		wrapper.Symbol != 2 || wrapper.Field != 4 || wrapper.ChildCount != 1 || wrapper.Parent != 0 || wrapper.ChildIndex != 0 ||
+		wrapper.DynamicPrecedence != wantPrecedence || child.Symbol != wantChildSymbol || child.Field != 0 ||
+		child.Parent != store.Root() || child.ChildIndex != 0 || child.DynamicPrecedence != wantPrecedence {
+		t.Fatalf("folded=%t wrapper=%+v child=%+v nodes=%d children=%d", folded, wrapper, child, store.NodeCount(), store.ChildCount())
+	}
+}
+
 func TestSelectedStoreDoesNotCollapseExtraUnaryChild(t *testing.T) {
 	compact, err := New(&fakeTable{}, Limits{})
 	if err != nil {
