@@ -114,8 +114,8 @@ func TestGenerateLanguageReservedWordSets(t *testing.T) {
 	var reservedState gotreesitter.StateID
 	var keywordState gotreesitter.StateID
 	for state := gotreesitter.StateID(1); int(state) < len(lang.LexModes); state++ {
-		wordAction := lookupActionIndexForTest(lang, state, wordSym)
-		ifAction := lookupActionIndexForTest(lang, state, kwIfSym)
+		wordAction := lookupActionIndexForLanguage(lang, state, wordSym)
+		ifAction := lookupActionIndexForLanguage(lang, state, kwIfSym)
 		if reservedState == 0 && wordAction != 0 && ifAction == 0 {
 			reservedState = state
 		}
