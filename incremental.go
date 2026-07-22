@@ -13,8 +13,11 @@ type reuseCursor struct {
 	sourceLen uint32
 	oldSource []byte
 	newSource []byte
-	minEditAt uint32
-	hasEdits  bool
+	// wholeSourceIdentical is computed once at reset. Dirty-candidate checks can
+	// be numerous, so they must not rescan the complete buffer per candidate.
+	wholeSourceIdentical bool
+	minEditAt            uint32
+	hasEdits             bool
 	// edits is the old tree's recorded edit list (post-parse Tree.Edit calls),
 	// in application order. It is needed to reverse-map a node's post-edit
 	// (shifted) byte coordinates back to its pre-edit coordinates in oldSource
@@ -60,8 +63,13 @@ type reuseCursor struct {
 	rejectInvalidSpan             uint64
 	rejectOutOfBounds             uint64
 	rejectRootNonLeafChanged      uint64
-	rejectLargeNonLeaf            uint64
-	rejectStaleNonLeafBoundary    uint64
+	// observedPreGotoStateMismatch counts top-level block-splice candidates whose
+	// recorded ownership frontier differs from the live parser state. It is
+	// diagnostic only; #432 owns replacing the existing fragility+goto admission
+	// contract with a complete ownership proof.
+	observedPreGotoStateMismatch uint64
+	rejectLargeNonLeaf           uint64
+	rejectStaleNonLeafBoundary   uint64
 	// rejectFragileNonLeaf counts interior-reuse candidates rejected by
 	// Node.isFragile() -- see tryReuseSubtree's non-leaf fallback lane below
 	// and the Parser.ReuseRejectFragileNonLeaf profile field (parser.go).
@@ -94,6 +102,7 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 	c.sourceLen = uint32(len(source))
 	c.oldSource = oldTree.source
 	c.newSource = source
+	c.wholeSourceIdentical = bytes.Equal(c.oldSource, c.newSource)
 	c.minEditAt = 0
 	c.hasEdits = len(oldTree.edits) > 0
 	c.edits = oldTree.edits
@@ -116,6 +125,7 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 	c.rejectInvalidSpan = 0
 	c.rejectOutOfBounds = 0
 	c.rejectRootNonLeafChanged = 0
+	c.observedPreGotoStateMismatch = 0
 	c.rejectLargeNonLeaf = 0
 	c.rejectStaleNonLeafBoundary = 0
 	c.rejectFragileNonLeaf = 0
@@ -161,7 +171,7 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 			leadingEligible := hasLeading &&
 				!c.disableLeadingSplice &&
 				!(c.forestFastPath && forestFastPathDirtyPrefixScannerSensitive(c.languageName)) &&
-				!leadingSpliceLanguageBarred(c.languageName)
+				!leadingSpliceFrontierUnproven(c.languageName)
 			if hasTrailing || leadingEligible {
 				c.topLevelParent = root
 				c.topLevelEnd = childCount
@@ -187,6 +197,22 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 		}
 	}
 	return c
+}
+
+// leadingSpliceFrontierUnproven is a rejection-only holdback for grammars
+// whose real leading candidates reach an unresolved ownership frontier.
+// Attempting the leading scan perturbs their ambiguous recovery/repetition
+// shape (the JS differential sweep catches this), so observation alone is not
+// sufficient to open admission.
+// Keep the proven Go path generic; retire these names only with a normal
+// dispatch-path proof and a fresh-oracle sweep. #432 owns that work.
+func leadingSpliceFrontierUnproven(name string) bool {
+	switch name {
+	case "javascript", "typescript", "tsx":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *reuseCursor) commitScratch(scratch *reuseScratch) {
@@ -362,10 +388,10 @@ func (c *reuseCursor) reusableIndexedEntry(entry stackEntry) bool {
 		return false
 	}
 	dirtyHere := stackEntryNodeDirty(entry)
-	// A dirty entry was marked dirty by TRUE OVERLAP with an edit (its start was
-	// clamped). Only same-coordinate byte equality can safely clear that dirty
-	// bit -- reverse-mapping a clamped coordinate is unsound here (#382 review).
-	if dirtyHere && c.nodeBytesEqualSameCoord(start, end) {
+	// A dirty entry was marked dirty by TRUE OVERLAP with an edit. Its post-edit
+	// span may have been clamped to a surviving prefix/suffix, so only whole-
+	// source equality can safely clear the bit (the edit+inverse undo case).
+	if dirtyHere && c.sourceBytesIdentical() {
 		setStackEntryDirty(entry, false)
 		dirtyHere = false
 	}
@@ -420,12 +446,10 @@ func (c *reuseCursor) advance() *Node {
 
 		dirtyHere := cur.dirty()
 		if dirtyHere {
-			// Same-coordinate comparison only: a dirty node overlapped the edit
-			// (its start was clamped), so reverse-mapping it would read a
-			// coincidentally-equal suffix tail and unsoundly clear the dirty bit
-			// (#382 review). Same-coord clears it only on a genuine net-zero
-			// shift (edit + inverse), which is exactly the undo case this serves.
-			if c.nodeBytesEqualSameCoord(cur.startByte, cur.endByte) {
+			// A clamped dirty span can compare equal while omitting the edited
+			// boundary byte. Whole-source equality is the proof that this is an
+			// actual edit+inverse undo rather than a surviving slice.
+			if c.sourceBytesIdentical() {
 				cur.setDirty(false)
 				dirtyHere = false
 			}
@@ -513,6 +537,30 @@ func (c *reuseCursor) oldByteForNew(p uint32) (uint32, bool) {
 	return uint32(cur), true
 }
 
+// rightBoundaryTouchedByEdit reports whether a post-edit byte boundary maps to
+// the start of, or lies inside, any recorded edit. It walks edits backward so
+// each comparison uses that edit's coordinate space. A subtree ending at such
+// a boundary cannot prove that its final token still terminates there.
+func (c *reuseCursor) rightBoundaryTouchedByEdit(end uint32) bool {
+	cur := int64(end)
+	for i := len(c.edits) - 1; i >= 0; i-- {
+		e := c.edits[i]
+		start := int64(e.StartByte)
+		newEnd := int64(e.NewEndByte)
+		if cur == start {
+			return true
+		}
+		if cur < start {
+			continue
+		}
+		if cur < newEnd {
+			return true
+		}
+		cur -= newEnd - int64(e.OldEndByte)
+	}
+	return false
+}
+
 // nodeBytesUnchanged reports whether the node spanning [start,end) in the NEW
 // source has byte-identical text to the same node in the OLD source. The node's
 // coordinates are post-edit (Tree.Edit already shifted them), so the old-source
@@ -537,25 +585,14 @@ func (c *reuseCursor) nodeBytesUnchanged(start, end uint32) bool {
 	return bytes.Equal(c.oldSource[oldStart:oldEnd], c.newSource[start:end])
 }
 
-// nodeBytesEqualSameCoord compares a node's bytes at the SAME (post-edit)
-// coordinates in both oldSource and newSource, WITHOUT reverse-mapping. It is
-// the correct "is this text unchanged" test for a node that Tree.Edit marked
-// dirty by TRUE OVERLAP with an edit (editNodeWithDelta clamps such a node's
-// start to the edit's NewEndByte). Reverse-mapping a clamped start
-// (nodeBytesUnchanged) resolves it to OldEndByte and then compares only the
-// node's surviving suffix tail, which is byte-identical to the shifted new text
-// by construction -- so it would wrongly declare a genuinely-changed node
-// unchanged and reuse a stale subtree (silent corruption; the #382 review found
-// this on CSS length-changing replace edits). Same-coordinate comparison
-// instead reports "unchanged" only when the bytes at the identical offsets
-// match: true exactly for the net-zero-shift case the un-dirty optimization
-// exists for (an edit and its inverse), and correctly false for any node whose
-// text actually shifted or changed under a length-changing edit.
-func (c *reuseCursor) nodeBytesEqualSameCoord(start, end uint32) bool {
-	if end < start || end > uint32(len(c.oldSource)) || end > uint32(len(c.newSource)) {
-		return false
-	}
-	return bytes.Equal(c.oldSource[start:end], c.newSource[start:end])
+// sourceBytesIdentical is the only sound basis for clearing a dirty bit after
+// Tree.Edit. A dirty node's post-edit span may have been clamped to the edit
+// boundary, so comparing that span alone can compare only a surviving prefix or
+// suffix and falsely declare a truncated token unchanged. Whole-buffer equality
+// retains the edit+inverse undo optimization without transferring ownership of
+// a genuine edit back to incremental reuse.
+func (c *reuseCursor) sourceBytesIdentical() bool {
+	return c != nil && c.wholeSourceIdentical
 }
 
 func reuseSubtreeGapIsParserPadding(source []byte, stackByteOffset, nodeStart uint32) bool {
@@ -596,12 +633,21 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 	for _, n := range candidates {
 		if n.ChildCount() > 0 {
 			// Preserve full-root reuse on undo when bytes are identical.
-			if !(n.startByte == 0 &&
+			fullRootUndo := n.startByte == 0 &&
 				n.endByte == idx.sourceLen &&
-				idx.nodeBytesUnchanged(n.startByte, n.endByte)) &&
-				!idx.topLevelSiblingBlockSpliceEligible(n) {
+				idx.nodeBytesUnchanged(n.startByte, n.endByte)
+			if !fullRootUndo && !idx.topLevelSiblingBlockSpliceEligible(n) {
 				idx.rejectRootNonLeafChanged++
 				continue
+			}
+			// Record ownership-frontier mismatches without changing the established
+			// admission decision. The current block path historically admits by
+			// goto target + fragility; #432 owns replacing that empirical contract
+			// with a complete normal-dispatch ownership proof. This diagnostic tells
+			// us exactly where that proof is still required while preserving the
+			// existing Go/CSS performance ratchets.
+			if !fullRootUndo && !topLevelCandidateOwnsCurrentFrontier(n, state) {
+				idx.observedPreGotoStateMismatch++
 			}
 		}
 		nextState, ok := p.reuseTargetState(state, n, lookahead)
@@ -657,6 +703,12 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 			idx.rejectFragileNonLeaf++
 			continue
 		}
+		// A non-leaf ending exactly at an edit start cannot prove that its
+		// final token still terminates there; keep that boundary in reparse.
+		if idx.rightBoundaryTouchedByEdit(n.EndByte()) {
+			idx.rejectStaleNonLeafBoundary++
+			continue
+		}
 		// A node's span always starts where its leftmost descendant leaf
 		// starts, so n's leftmost leaf is the OLD-tree token that was lexed
 		// at this position before the edit. reuseNonLeafTargetStateOnStack
@@ -706,6 +758,15 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 	}
 
 	return lookahead, 0, false
+}
+
+// topLevelCandidateOwnsCurrentFrontier is deliberately stricter than
+// reuseTargetState: the latter answers whether a node can be shifted/goto'd
+// from a state, while this answers whether a whole top-level item's original
+// reduce ownership can be transferred there. In conflict-sensitive grammars
+// those are different propositions.
+func topLevelCandidateOwnsCurrentFrontier(n *Node, state StateID) bool {
+	return n != nil && state == n.PreGotoState()
 }
 
 // topLevelSiblingBlockSpliceEligible reports whether n -- a candidate sitting
@@ -803,49 +864,6 @@ func (c *reuseCursor) topLevelBlockCandidateBytes(start, end uint32) bool {
 func forestFastPathDirtyPrefixScannerSensitive(name string) bool {
 	switch name {
 	case "cmake", "css":
-		return true
-	default:
-		return false
-	}
-}
-
-// leadingSpliceLanguageBarred names languages held off from the LEADING-run
-// block-splice (campaign post-admission-frontier T2a) because their incremental
-// real-reuse carries a DOCUMENTED, still-open silent-corruption residual (an
-// entry in testdata/incremental_allowlist.json) that the pre-existing reuse path
-// already tickles. The leading splice reaches those items on a different path, so
-// enabling it would perturb the tracked divergence into a different signature --
-// even a benign-looking change flips the invariant gate's exact-signature
-// ratchet. Holding the leading splice off keeps such a language byte-identical to
-// its pre-change behavior, so the tracked divergence is neither widened nor
-// silently altered while its parser-core root cause is fixed separately.
-//
-// This is a REJECTION guard (it only ever forbids a reuse), so it is outside the
-// campaign's "no name-allowlists" ADMISSION rule -- the same footing as
-// forestFastPathDirtyPrefixScannerSensitive (css/cmake scanner) and the dart
-// large-source reuse block (dfaTokenSourceIncrementalReuseBlockedBySource).
-//
-// The JS/TS/TSX expression family is barred: their per-node reduce-fragility
-// marking is known-incomplete on the ASI / ambiguous-expression conflicts, so
-// the permissive top-level goto splice (the same admission the trailing splice
-// uses) occasionally lifts a byte-identical item whose recorded shape depended
-// on an ambiguous decision the fragility bit did not flag. On main the trailing
-// splice already tickles this (documented for javascript at javascript_grammar.js
-// pos=1801, program:childCount+20; measured as a residual real-reuse divergence
-// on typescript/tsx too), so extending it to the leading run would perturb those
-// tracked divergences. Their reuse proof is the still-open campaign T2c
-// (TS/JS stateless-marker proofs); the leading splice opens for them once that
-// lands. Go, whose fragility marking is complete, is not listed and takes the
-// win. Production-route css also takes the win, but on an EMPIRICAL warrant,
-// not completeness: css still carries one open allowlist entry (delete
-// block:childCount+1, likely the same real-reuse class as the JavaScript
-// entry). Css stays unlisted because the invariant gate holds newUnlisted=0
-// with its two tracked divergences byte-unchanged, and the leading-splice
-// on/off differential byte-sweep is a no-op at every edit site. If either
-// signal moves, bar css here alongside the JS family.
-func leadingSpliceLanguageBarred(name string) bool {
-	switch name {
-	case "javascript", "typescript", "tsx":
 		return true
 	default:
 		return false
