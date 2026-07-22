@@ -2,6 +2,26 @@ package gotreesitter
 
 import "testing"
 
+func setGLRFaithfulCapOneMergeForTest(t *testing.T, enabled bool) {
+	t.Helper()
+	previous := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = enabled
+	t.Cleanup(func() {
+		glrFaithfulCapOneMerge = previous
+	})
+}
+
+func TestResetParseEnvConfigCacheDoesNotOwnFaithfulCondenseMode(t *testing.T) {
+	setGLRFaithfulCapOneMergeForTest(t, true)
+	t.Setenv("GOT_FAITHFUL_CONDENSE", "")
+
+	ResetParseEnvConfigCacheForTests()
+
+	if !glrFaithfulCapOneMerge {
+		t.Fatal("ResetParseEnvConfigCacheForTests changed the process-start faithful-condense mode")
+	}
+}
+
 func TestTransientReduceLanguageDefaultsToDisabled(t *testing.T) {
 	t.Setenv("GOT_TRANSIENT_REDUCE_CHILDREN", "")
 	t.Setenv("GOT_TRANSIENT_REDUCE_PARENTS", "")

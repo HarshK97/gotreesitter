@@ -305,6 +305,21 @@ numbering, use the public remapper:
   state. Stateless scanners: yes. Returning false is an explicit opt-out;
   not implementing the interface is also treated as uncertified and fails
   closed. Python, Mojo, and Starlark currently return false.
+- `CheckpointedExternalScanner` (`UsesExternalScannerCheckpoints() bool`):
+  declare true only when every non-empty `Serialize` result is a complete,
+  collision-free encoding of the payload values that can affect a later scan.
+  A reachable state may return zero when it cannot be represented exactly;
+  zero means "checkpoint absent" and reuse fails closed at that boundary. The
+  empty payload itself must have a non-empty encoding so it is distinguishable
+  from absence. Reuse compares the live start state and restores the recorded
+  end state. SQL and CMake use this route; Python, Mojo, and Starlark record
+  checkpoints but still opt out of reuse. Svelte also opts out because its
+  bounded HTML-tag encoding can truncate depth and custom names.
+- `CheckpointlessExternalScannerReuse`
+  (`AllowsIncrementalReuseWithoutCheckpoint() bool`): an exceptional second
+  proof that a checkpoint-enabled scanner can safely reuse a node whose
+  checkpoint is absent. Most stateful scanners must not implement it; absence
+  then fails closed. CMake is the current built-in consumer.
 - `FailurePreservingExternalScanner` (`PreservesStateOnScanFailure() bool`):
   declare true if `Scan` returning false never mutated the payload — this
   lets the runtime skip defensive state snapshots on the hot path.
@@ -337,13 +352,27 @@ The token-invariant leaf exception is intentionally narrow: on a production
 tree, a same-length edit that independently reauthenticates the same leaf
 token may return before the scanner gate. That is not certification for
 general scanner-dependent subtree reuse. Likewise, scanner checkpoints do
-not certify a scanner by themselves: CMake and Svelte both opt in and use
-checkpoints, while Python, Mojo, and Starlark use checkpoints but explicitly
-opt out. Custom `TokenSource` implementations have their own
+not certify a scanner by themselves: CMake and SQL opt in, while Python,
+Mojo, Starlark, and Svelte explicitly opt out. Custom
+`TokenSource` implementations have their own
 `IncrementalReuseTokenSource` contract and are outside this registry matrix.
-In particular, the registered SQL, HTML, Markdown, and Markdown Inline
-scanners are currently uncertified, so changed-token or shape-changing edits
-take the production full-parse fallback rather than scanner-dependent reuse.
+The registered HTML, Markdown, and Markdown Inline scanners remain
+uncertified, so changed-token or shape-changing edits take the production
+full-parse fallback rather than scanner-dependent reuse.
+
+SQL's state proof is explicit: the payload is either empty or exactly one
+active PostgreSQL dollar-quote tag. The empty state has a one-byte marker;
+representable non-empty states serialize as the tag plus a trailing NUL. A tag
+larger than the runtime's 4096-byte checkpoint buffer remains valid SQL and is
+accepted during full parsing, but serializes to zero so any affected reuse
+boundary fails closed. Failed scans do not mutate the tag. The certification
+matrix is exercised at roughly 20 KiB and 137 KiB across clean/recovered
+inputs, three changed-length edit classes, and three positions, with an opt-in
+1 MiB catastrophe lane. That lane proves fresh equality, accepted EOF, and
+source-linear resource ceilings; it does not claim O(edit). The latest 1 MiB
+run reached about 1.07 GiB maximum RSS (an earlier run reached about 1.39 GiB),
+so allocation/RSS scaling remains an open performance residual rather than
+part of #430's sound-admission closure.
 
 | Language | Changed-edit contract |
 |---|---|
@@ -444,10 +473,10 @@ take the production full-parse fallback rather than scanner-dependent reuse.
 | `rust` | fallback (uncertified) |
 | `scala` | fallback (uncertified) |
 | `scss` | certified reuse |
-| `sql` | fallback (uncertified) |
+| `sql` | certified reuse |
 | `squirrel` | fallback (uncertified) |
 | `starlark` | fallback (explicit opt-out) |
-| `svelte` | certified reuse |
+| `svelte` | fallback (explicit opt-out) |
 | `swift` | fallback (uncertified) |
 | `tablegen` | fallback (uncertified) |
 | `tcl` | fallback (uncertified) |

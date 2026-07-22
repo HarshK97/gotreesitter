@@ -225,6 +225,8 @@ func (PythonExternalScanner) Deserialize(payload any, buf []byte) {
 // remains available for edits that do not depend on scanner state.
 func (PythonExternalScanner) SupportsIncrementalReuse() bool { return false }
 
+func (PythonExternalScanner) UsesExternalScannerCheckpoints() bool { return true }
+
 func (PythonExternalScanner) PreservesStateOnScanFailure() bool { return true }
 
 func (p PythonExternalScanner) symbolTable() *[pyTokenCount]gotreesitter.Symbol {

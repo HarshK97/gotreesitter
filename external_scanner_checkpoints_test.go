@@ -5,6 +5,29 @@ import (
 	"testing"
 )
 
+type checkpointTestScanner struct{ parserTestSafeExternalScanner }
+
+func (checkpointTestScanner) UsesExternalScannerCheckpoints() bool { return true }
+
+type checkpointlessTestScanner struct{ checkpointTestScanner }
+
+func (checkpointlessTestScanner) AllowsIncrementalReuseWithoutCheckpoint() bool { return true }
+
+func TestExternalScannerCheckpointCapabilitiesAreBehaviorBased(t *testing.T) {
+	if languageUsesExternalScannerCheckpoints(&Language{Name: "python", ExternalScanner: parserTestSafeExternalScanner{}}) {
+		t.Fatal("language name enabled checkpoints without a capability")
+	}
+	if !languageUsesExternalScannerCheckpoints(&Language{Name: "not-an-allowlisted-name", ExternalScanner: checkpointTestScanner{}}) {
+		t.Fatal("checkpoint capability was ignored for an arbitrary language name")
+	}
+	if languageAllowsCheckpointlessExternalReuse(&Language{Name: "cmake", ExternalScanner: checkpointTestScanner{}}) {
+		t.Fatal("language name enabled checkpointless reuse without a capability")
+	}
+	if !languageAllowsCheckpointlessExternalReuse(&Language{Name: "not-an-allowlisted-name", ExternalScanner: checkpointlessTestScanner{}}) {
+		t.Fatal("checkpointless capability was ignored for an arbitrary language name")
+	}
+}
+
 func TestExternalScannerCheckpointPrimaryLookup(t *testing.T) {
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()
@@ -217,7 +240,7 @@ func TestRebuildExternalScannerCheckpointsUsesLazyFinalChildRefs(t *testing.T) {
 	if root == nil {
 		t.Fatal("root = nil")
 	}
-	rebuildExternalScannerCheckpoints(root, &Language{Name: "python", ExternalScanner: parserTestSafeExternalScanner{}})
+	rebuildExternalScannerCheckpoints(root, &Language{Name: "arbitrary", ExternalScanner: checkpointTestScanner{}})
 
 	got, ok := externalScannerCheckpointForNode(root)
 	if !ok {

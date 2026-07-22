@@ -57,6 +57,8 @@ func (StarlarkExternalScanner) Deserialize(payload any, buf []byte) {
 // certified.
 func (StarlarkExternalScanner) SupportsIncrementalReuse() bool { return false }
 
+func (StarlarkExternalScanner) UsesExternalScannerCheckpoints() bool { return true }
+
 func (StarlarkExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	s := payload.(*pythonScannerState)
 	if len(s.indents) == 0 {

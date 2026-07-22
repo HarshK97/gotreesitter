@@ -40,6 +40,12 @@ var (
 //
 // Tests in this repo mutate env vars between cases; this helper ensures
 // subsequent parses observe the new values in the same process.
+//
+// glrFaithfulCapOneMerge is intentionally excluded: unlike the values below,
+// it is a process-start mode rather than a memoized config value. Tests that
+// override it must restore the variable directly. Mixing that mode into this
+// cache reset made cleanup order observable when t.Setenv restored the
+// environment after ResetParseEnvConfigCacheForTests ran.
 func ResetParseEnvConfigCacheForTests() {
 	parseNodeLimitScaleOnce = sync.Once{}
 	parseNodeLimitScale = 0
@@ -67,7 +73,6 @@ func ResetParseEnvConfigCacheForTests() {
 	parseEagerDefault = false
 	parseEagerDefaultDebugOnce = sync.Once{}
 	parseEagerDefaultDebug = false
-	glrFaithfulCapOneMerge = os.Getenv("GOT_FAITHFUL_CONDENSE") == "1"
 }
 
 func parseNodeLimitScaleFactor() int {

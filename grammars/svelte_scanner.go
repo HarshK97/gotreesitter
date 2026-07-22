@@ -70,7 +70,10 @@ func (SvelteExternalScanner) Deserialize(payload any, buf []byte) {
 	s.tags = htmlDeserializeTagsInto(s.tags, buf)
 }
 
-func (SvelteExternalScanner) SupportsIncrementalReuse() bool { return true }
+// htmlSerializeTags bounds both tag depth and custom-name length. Until Svelte
+// has a collision-free checkpoint encoding for its full tag stack, incremental
+// edits must take the conservative full-parse fallback.
+func (SvelteExternalScanner) SupportsIncrementalReuse() bool { return false }
 
 func (SvelteExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	s := payload.(*svelteState)

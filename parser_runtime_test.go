@@ -1130,10 +1130,13 @@ func TestParseRuntimeReportsNoTreeCheckpointLeavesRemainNodes(t *testing.T) {
 	}
 }
 
+type checkpointedByteStateExternalScanner struct{ byteStateExternalScanner }
+
+func (checkpointedByteStateExternalScanner) UsesExternalScannerCheckpoints() bool { return true }
+
 func TestParseNoTreeBenchmarkDropsRetainedExternalCheckpointCapacity(t *testing.T) {
 	lang := buildArithmeticLanguage()
-	lang.Name = "python"
-	lang.ExternalScanner = byteStateExternalScanner{}
+	lang.ExternalScanner = checkpointedByteStateExternalScanner{}
 
 	fullParser := NewParser(lang)
 	// Pin to production: this test asserts a production-engine runtime internal

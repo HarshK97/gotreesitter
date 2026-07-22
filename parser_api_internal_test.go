@@ -2261,7 +2261,7 @@ func TestParsePreMaterializationDiagEnabled(t *testing.T) {
 
 func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
-	t.Setenv("GOT_FAITHFUL_CONDENSE", "")
+	setGLRFaithfulCapOneMergeForTest(t, false)
 	ResetParseEnvConfigCacheForTests()
 	defer ResetParseEnvConfigCacheForTests()
 
@@ -2479,7 +2479,7 @@ func TestEffectiveParseMergePerKeyCap(t *testing.T) {
 
 func TestEffectiveParseMergePerKeyCapElixirFaithfulCondense(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
-	t.Setenv("GOT_FAITHFUL_CONDENSE", "1")
+	setGLRFaithfulCapOneMergeForTest(t, true)
 	ResetParseEnvConfigCacheForTests()
 	defer ResetParseEnvConfigCacheForTests()
 
@@ -2493,7 +2493,7 @@ func TestEffectiveParseMergePerKeyCapElixirFaithfulCondense(t *testing.T) {
 
 func TestEffectiveParseMergePerKeyCapGoFaithfulCondense(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
-	t.Setenv("GOT_FAITHFUL_CONDENSE", "1")
+	setGLRFaithfulCapOneMergeForTest(t, true)
 	ResetParseEnvConfigCacheForTests()
 	defer ResetParseEnvConfigCacheForTests()
 
@@ -2597,7 +2597,7 @@ func TestConfigureParseCapsDestructuredArrowReturnTypeStaysCapTwoOnLargeTypeScri
 
 func TestEffectiveParseMergePerKeyCapJavaExplicitOverride(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "4")
-	t.Setenv("GOT_FAITHFUL_CONDENSE", "1")
+	setGLRFaithfulCapOneMergeForTest(t, true)
 	ResetParseEnvConfigCacheForTests()
 	defer ResetParseEnvConfigCacheForTests()
 

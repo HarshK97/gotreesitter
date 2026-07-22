@@ -41,6 +41,12 @@ type CmakeExternalScanner struct{}
 func (CmakeExternalScanner) Create() any                    { return &cmakeState{} }
 func (CmakeExternalScanner) Destroy(payload any)            {}
 func (CmakeExternalScanner) SupportsIncrementalReuse() bool { return true }
+func (CmakeExternalScanner) UsesExternalScannerCheckpoints() bool {
+	return true
+}
+func (CmakeExternalScanner) AllowsIncrementalReuseWithoutCheckpoint() bool {
+	return true
+}
 func (CmakeExternalScanner) PreservesStateOnScanFailure() bool {
 	return true
 }

@@ -29,6 +29,10 @@ type pythonTestIncrementalReuseScanner struct{ gotreesitter.ExternalScanner }
 
 func (pythonTestIncrementalReuseScanner) SupportsIncrementalReuse() bool { return true }
 
+func (pythonTestIncrementalReuseScanner) UsesExternalScannerCheckpoints() bool { return true }
+
+func (pythonTestIncrementalReuseScanner) PreservesStateOnScanFailure() bool { return true }
+
 func pythonLanguageWithTestIncrementalScannerReuse() *gotreesitter.Language {
 	base := grammars.PythonLanguage()
 	src := reflect.ValueOf(base).Elem()

@@ -31,21 +31,16 @@ func languageUsesExternalScannerCheckpoints(lang *Language) bool {
 	if lang == nil || lang.ExternalScanner == nil {
 		return false
 	}
-	switch lang.Name {
-	case "cmake", "python", "mojo", "starlark", "svelte":
-		return true
-	default:
-		return false
-	}
+	checkpointed, ok := lang.ExternalScanner.(CheckpointedExternalScanner)
+	return ok && checkpointed.UsesExternalScannerCheckpoints()
 }
 
-func languageAllowsCheckpointlessExternalReuse(name string) bool {
-	switch name {
-	case "cmake":
-		return true
-	default:
+func languageAllowsCheckpointlessExternalReuse(lang *Language) bool {
+	if lang == nil || lang.ExternalScanner == nil {
 		return false
 	}
+	checkpointless, ok := lang.ExternalScanner.(CheckpointlessExternalScannerReuse)
+	return ok && checkpointless.AllowsIncrementalReuseWithoutCheckpoint()
 }
 
 func underlyingDFATokenSource(ts TokenSource) *dfaTokenSource {
@@ -297,7 +292,7 @@ func canReuseNodeWithExternalScannerCheckpoint(ts TokenSource, startState StateI
 	}
 	cp, ok := externalScannerCheckpointRefForNode(node)
 	if !ok {
-		return externalScannerCheckpointRef{}, languageAllowsCheckpointlessExternalReuse(dts.language.Name)
+		return externalScannerCheckpointRef{}, languageAllowsCheckpointlessExternalReuse(dts.language)
 	}
 	if !dts.externalScannerStateMatches(node.ownerArena.externalScannerSnapshotBytes(cp.start)) {
 		return externalScannerCheckpointRef{}, false
