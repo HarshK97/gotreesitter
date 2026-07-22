@@ -9,6 +9,8 @@ diagnosis.
 work. It forces serial subset builds, wires in external blob loading, and can
 point built-in grammar loaders at local grammargen `.bin` overrides.
 
-`prune_harness_artifacts.sh` reports generated harness artifact directories by
-size and removes them only when run with `--delete`. It intentionally excludes
-private notes and defaults to a dry run.
+`prune_harness_artifacts.sh` reports root build products, reproducible caches,
+and run receipts separately. It defaults to a dry run. `--delete` removes only
+root build products and reproducible caches; durable harness and benchmark
+receipts require the separate `--delete-receipts` opt-in. It never includes
+private `.gts/`, `.tiller/`, or other agent notes.

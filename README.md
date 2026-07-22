@@ -513,11 +513,15 @@ All shipped highlight and tags queries compile (`156/156` highlight, `69/69` tag
 
 ## Repository layout note: the compat tier
 
-The root package carries about 177 `parser_result_<language>*.go` files — the
+The root package carries roughly 180 `parser_result_<language>*.go` files — the
 C-faithful result-normalization tier that reshapes raw GLR output into the
 exact tree the C runtime selects. It is internal plumbing, oracle-gated per
 witness, and it shrinks as certified engine mechanisms subsume shims. See
 [docs/compat-tier.md](docs/compat-tier.md).
+
+For a maintainer-oriented map of the full root package, ownership seams,
+review-sensitive hotspots, and local artifact policy, see
+[docs/repository-map.md](docs/repository-map.md).
 
 ## Known limitations
 
