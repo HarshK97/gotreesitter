@@ -16,6 +16,11 @@ type collapsedNamedLeafRule struct {
 	languageName string
 	parentName   string
 	childName    string
+	// childNamed is part of the raw occurrence identity. Ruby and Kotlin keep
+	// named grammar children; the keyword-wrapper rows keep anonymous tokens.
+	// Ownership admission must not fall back across this boundary because a
+	// generated alias may expose the same display name with different metadata.
+	childNamed bool
 	// bySource selects the source-verified matcher
 	// (normalizeCollapsedNamedLeafChildrenBySource) instead of the plain
 	// structural matcher (normalizeCollapsedNamedLeafChildren). Use this when
@@ -31,8 +36,8 @@ var resultCollapsedNamedLeafRules = []collapsedNamedLeafRule{
 	// into a leaf; C keeps the single named string_content child over the same
 	// span. Only fires when Go's node has zero children (i.e. no escapes /
 	// interpolation, which would already materialize children in both trees).
-	{languageName: "ruby", parentName: "bare_string", childName: "string_content"},
-	{languageName: "ruby", parentName: "bare_symbol", childName: "string_content"},
+	{languageName: "ruby", parentName: "bare_string", childName: "string_content", childNamed: true},
+	{languageName: "ruby", parentName: "bare_symbol", childName: "string_content", childNamed: true},
 	// Apex wraps its contextual / DML / trigger-event keywords as a named node
 	// over the anonymous keyword token (`keyword -> 'keyword'`). Go collapses
 	// these single-token wrappers to a leaf; C keeps the anonymous token child.
@@ -55,7 +60,7 @@ var resultCollapsedNamedLeafRules = []collapsedNamedLeafRule{
 	// Kotlin's `identifier` is sep1 of `simple_identifier` by "."; a
 	// single-element identifier (e.g. `import benchmarks.*`) collapses to a
 	// leaf in Go but C always materializes the simple_identifier child.
-	{languageName: "kotlin", parentName: "identifier", childName: "simple_identifier"},
+	{languageName: "kotlin", parentName: "identifier", childName: "simple_identifier", childNamed: true},
 	// Hack's true/false/null literals wrap the identically-named anonymous
 	// keyword token (`true -> 'true'`, etc.); Go collapses the lone child.
 	{languageName: "hack", parentName: "true", childName: "true", bySource: true},
@@ -79,12 +84,12 @@ func normalizeResultCollapsedNamedLeafChildren(root *Node, source []byte, lang *
 			continue
 		}
 		if rule.bySource {
-			stats := normalizeCollapsedNamedLeafChildrenBySourceWithStats(root, source, lang, rule.parentName, rule.childName)
+			stats := normalizeCollapsedNamedLeafChildrenBySourceAndNamednessWithStats(root, source, lang, rule.parentName, rule.childNamed, rule.childName)
 			total.nodesVisited += stats.nodesVisited
 			total.nodesRewritten += stats.nodesRewritten
 			continue
 		}
-		stats := normalizeCollapsedNamedLeafChildrenWithStats(root, lang, rule.parentName, rule.childName)
+		stats := normalizeCollapsedNamedLeafChildrenAndNamednessWithStats(root, lang, rule.parentName, rule.childName, rule.childNamed)
 		total.nodesVisited += stats.nodesVisited
 		total.nodesRewritten += stats.nodesRewritten
 	}
@@ -92,25 +97,22 @@ func normalizeResultCollapsedNamedLeafChildren(root *Node, source []byte, lang *
 }
 
 func normalizeCollapsedNamedLeafChildrenWithStats(root *Node, lang *Language, parentName, childName string) normalizationPassCounters {
+	return normalizeCollapsedNamedLeafChildrenAndNamednessWithStats(root, lang, parentName, childName, false)
+}
+
+func normalizeCollapsedNamedLeafChildrenAndNamednessWithStats(root *Node, lang *Language, parentName, childName string, childNamed bool) normalizationPassCounters {
 	var counters normalizationPassCounters
 	if root == nil || lang == nil {
 		return counters
 	}
 	parentSym, ok := lang.symbolByNameAndNamed(parentName, true)
 	if !ok {
-		parentSym, ok = symbolByName(lang, parentName)
-	}
-	if !ok {
 		return counters
 	}
-	childSym, childOk := lang.symbolByNameAndNamed(childName, false)
+	childSym, childOk := lang.symbolByNameAndNamed(childName, childNamed)
 	if !childOk {
-		childSym, childOk = symbolByName(lang, childName)
-		if !childOk {
-			return counters
-		}
+		return counters
 	}
-	childNamed := symbolIsNamed(lang, childSym)
 	if lang.Name == "rust" {
 		walkResultTreeSidecarFirst(root, func(n *Node) {
 			counters.nodesVisited++
@@ -140,26 +142,24 @@ func normalizeCollapsedNamedLeafChildrenWithStats(root *Node, lang *Language, pa
 }
 
 func normalizeCollapsedNamedLeafChildrenBySourceWithStats(root *Node, source []byte, lang *Language, parentName string, childNames ...string) normalizationPassCounters {
+	return normalizeCollapsedNamedLeafChildrenBySourceAndNamednessWithStats(root, source, lang, parentName, false, childNames...)
+}
+
+func normalizeCollapsedNamedLeafChildrenBySourceAndNamednessWithStats(root *Node, source []byte, lang *Language, parentName string, expectedChildNamed bool, childNames ...string) normalizationPassCounters {
 	var counters normalizationPassCounters
 	if root == nil || lang == nil || len(source) == 0 || len(childNames) == 0 {
 		return counters
 	}
 	parentSym, ok := lang.symbolByNameAndNamed(parentName, true)
 	if !ok {
-		parentSym, ok = symbolByName(lang, parentName)
-	}
-	if !ok {
 		return counters
 	}
 	childSyms := make(map[string]Symbol, len(childNames))
 	childNamed := make(map[Symbol]bool, len(childNames))
 	for _, childName := range childNames {
-		childSym, ok := lang.symbolByNameAndNamed(childName, false)
+		childSym, ok := lang.symbolByNameAndNamed(childName, expectedChildNamed)
 		if !ok {
-			childSym, ok = symbolByName(lang, childName)
-			if !ok {
-				continue
-			}
+			continue
 		}
 		childSyms[childName] = childSym
 		childNamed[childSym] = symbolIsNamed(lang, childSym)
