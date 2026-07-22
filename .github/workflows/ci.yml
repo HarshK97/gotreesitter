@@ -110,12 +110,49 @@ jobs:
           pattern="$(bash .github/scripts/root_race_shard.sh regex "${{ matrix.shard }}" 4)"
           go test . -race -count=1 -timeout 15m -run "$pattern"
 
+  root_race_plan:
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    outputs:
+      isolated: ${{ steps.plan.outputs.isolated }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: plan
+        name: Plan isolated root race gates
+        run: echo "isolated=$(bash .github/scripts/root_race_shard.sh isolated-json)" >> "$GITHUB_OUTPUT"
+
+  race_root_isolated:
+    needs:
+      - exhaustive_parity_scope
+      - root_race_plan
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.root_race_plan.outputs.isolated) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Root Package Isolated Race Gate (${{ matrix.target }})
+        run: |
+          set -euo pipefail
+          go test . -race -count=1 -timeout 15m -run '^${{ matrix.target }}$'
+
   # Preserve the existing aggregate job ID consumed by the required `build`
   # context. The matrix result is successful only when every race shard passes.
   race_root:
     needs:
       - exhaustive_parity_scope
       - race_root_shards
+      - race_root_isolated
     if: always() && needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -123,12 +160,17 @@ jobs:
       - name: Check root race shards
         env:
           SHARDS_RESULT: ${{ needs.race_root_shards.result }}
+          ISOLATED_RESULT: ${{ needs.race_root_isolated.result }}
         run: |
           if [ "$SHARDS_RESULT" != "success" ]; then
             echo "::error::race_root_shards finished with result=${SHARDS_RESULT}"
             exit 1
           fi
-          echo "All root race shards passed"
+          if [ "$ISOLATED_RESULT" != "success" ]; then
+            echo "::error::race_root_isolated finished with result=${ISOLATED_RESULT}"
+            exit 1
+          fi
+          echo "All root race shards and isolated gates passed"
 
   race_packages:
     needs: exhaustive_parity_scope

@@ -2,13 +2,39 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 validate <shard-count> | names <shard-index> <shard-count> | regex <shard-index> <shard-count>" >&2
+  echo "usage: $0 validate <shard-count> | names <shard-index> <shard-count> | regex <shard-index> <shard-count> | isolated-names | isolated-json" >&2
   exit 2
 }
 
 require_uint() {
   local value="$1"
   [[ "$value" =~ ^[0-9]+$ ]] || usage
+}
+
+load_isolated_targets() {
+  local isolated_file="${ROOT_RACE_ISOLATED_TARGETS_FILE:-.github/scripts/root_race_isolated_targets.txt}"
+  mapfile -t isolated_targets < <(
+    awk 'NF && $1 !~ /^#/ { print $1 }' "$isolated_file" |
+      LC_ALL=C sort
+  )
+  if [ "${#isolated_targets[@]}" -eq 0 ]; then
+    echo "root race isolated target manifest is empty: $isolated_file" >&2
+    exit 1
+  fi
+
+  isolated_lookup=()
+  local name
+  for name in "${isolated_targets[@]}"; do
+    if [[ ! "$name" =~ ^(Test|Example|Fuzz)[A-Za-z0-9_]+$ ]]; then
+      echo "root race isolated target is not a valid Go target name: $name" >&2
+      exit 1
+    fi
+    if [[ -n "${isolated_lookup[$name]:-}" ]]; then
+      echo "root race isolated target is duplicated: $name" >&2
+      exit 1
+    fi
+    isolated_lookup["$name"]=1
+  done
 }
 
 load_targets() {
@@ -21,22 +47,35 @@ load_targets() {
     echo "root race shard selector found no top-level tests, examples, or fuzz targets" >&2
     exit 1
   fi
+  load_isolated_targets
 }
 
 validate_partition() {
   local shard_count="$1"
   local -a counts=()
   local -A seen=()
-  local position shard name
+  local position regular_position=0 shard name
 
   for ((shard = 0; shard < shard_count; shard++)); do
     counts[shard]=0
   done
   for position in "${!root_targets[@]}"; do
-    shard=$((position % shard_count))
     name="${root_targets[position]}"
+    if [[ -n "${isolated_lookup[$name]:-}" ]]; then
+      seen["$name"]=$(( ${seen["$name"]:-0} + 1 ))
+      continue
+    fi
+    shard=$((regular_position % shard_count))
     counts[shard]=$((counts[shard] + 1))
     seen["$name"]=$(( ${seen["$name"]:-0} + 1 ))
+    regular_position=$((regular_position + 1))
+  done
+
+  for name in "${isolated_targets[@]}"; do
+    if [[ -z "${seen[$name]:-}" ]]; then
+      echo "root race isolated target is not a top-level test, example, or fuzz target: $name" >&2
+      exit 1
+    fi
   done
 
   for name in "${root_targets[@]}"; do
@@ -56,19 +95,43 @@ validate_partition() {
     echo "root race partition is not count-balanced: ${counts[*]}" >&2
     exit 1
   fi
-  echo "root race partition valid: ${#root_targets[@]} tests/examples/fuzz targets across ${shard_count} shards (${counts[*]})" >&2
+  echo "root race partition valid: ${#root_targets[@]} tests/examples/fuzz targets across ${shard_count} regular shards (${counts[*]}) and ${#isolated_targets[@]} isolated lanes" >&2
 }
 
 selected_names() {
   local shard_index="$1"
   local shard_count="$2"
-  local position
+  local position regular_position=0
   for position in "${!root_targets[@]}"; do
-    if (( position % shard_count == shard_index )); then
+    if [[ -n "${isolated_lookup[${root_targets[position]}]:-}" ]]; then
+      continue
+    fi
+    if (( regular_position % shard_count == shard_index )); then
       printf '%s\n' "${root_targets[position]}"
     fi
+    regular_position=$((regular_position + 1))
   done
 }
+
+print_regex() {
+  local -a names=("$@")
+  local pattern
+  pattern="$(IFS='|'; echo "${names[*]}")"
+  printf '^(%s)$\n' "$pattern"
+}
+
+print_json() {
+  local separator="" name
+  printf '['
+  for name in "$@"; do
+    printf '%s"%s"' "$separator" "$name"
+    separator=','
+  done
+  printf ']\n'
+}
+
+declare -a root_targets isolated_targets
+declare -A isolated_lookup
 
 mode="${1:-}"
 case "$mode" in
@@ -95,8 +158,18 @@ case "$mode" in
       printf '%s\n' "${selected[@]}"
       exit 0
     fi
-    pattern="$(IFS='|'; echo "${selected[*]}")"
-    printf '^(%s)$\n' "$pattern"
+    print_regex "${selected[@]}"
+    ;;
+  isolated-names)
+    [ "$#" -eq 1 ] || usage
+    load_targets
+    validate_partition 1
+    printf '%s\n' "${isolated_targets[@]}"
+    ;;
+  isolated-json)
+    [ "$#" -eq 1 ] || usage
+    load_isolated_targets
+    print_json "${isolated_targets[@]}"
     ;;
   *)
     usage
