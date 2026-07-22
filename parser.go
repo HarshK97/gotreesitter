@@ -2992,6 +2992,14 @@ func (p *Parser) parseIncrementalInternalWithMergePerKeyOverride(source []byte, 
 		}
 		return p.incrementalTokenSourceFreshFullParse(source, ts, timing)
 	}
+	if tokenSourceUsesLanguageExternalScanner(ts) && oldTree != nil && oldTree.RootNode() != nil && oldTree.RootNode().HasError() &&
+		!languageSupportsIncrementalReuseFromErrorTree(p.language) {
+		if timing != nil {
+			timing.reuseUnsupported = true
+			timing.reuseUnsupportedReason = "external_scanner_error_tree_unsupported"
+		}
+		return p.incrementalTokenSourceFreshFullParse(source, ts, timing)
+	}
 
 	// Subtree reuse is safe for DFA token sources without external scanners
 	// and for custom token sources that explicitly opt in.
@@ -3103,6 +3111,27 @@ func languageSupportsIncrementalReuse(lang *Language) bool {
 		return reusable.SupportsIncrementalReuse()
 	}
 	return false
+}
+
+func tokenSourceUsesLanguageExternalScanner(ts TokenSource) bool {
+	switch source := ts.(type) {
+	case *dfaTokenSource:
+		return source != nil && source.hasExternalScanner
+	case *includedRangeTokenSource:
+		return source != nil && tokenSourceUsesLanguageExternalScanner(source.base)
+	default:
+		return false
+	}
+}
+
+func languageSupportsIncrementalReuseFromErrorTree(lang *Language) bool {
+	if lang == nil || lang.ExternalScanner == nil {
+		return true
+	}
+	if reusable, ok := lang.ExternalScanner.(ErrorTreeIncrementalReuseExternalScanner); ok {
+		return reusable.SupportsIncrementalReuseFromErrorTree()
+	}
+	return true
 }
 
 func incrementalReuseUnavailableReason(ts TokenSource) string {

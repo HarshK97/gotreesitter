@@ -312,9 +312,16 @@ numbering, use the public remapper:
   zero means "checkpoint absent" and reuse fails closed at that boundary. The
   empty payload itself must have a non-empty encoding so it is distinguishable
   from absence. Reuse compares the live start state and restores the recorded
-  end state. SQL and CMake use this route; Python, Mojo, and Starlark record
-  checkpoints but still opt out of reuse. Svelte also opts out because its
-  bounded HTML-tag encoding can truncate depth and custom names.
+  end state. SQL, CMake, and HTML use this route; Python, Mojo, and Starlark
+  record checkpoints but still opt out of reuse. The shared HTML-family tag
+  encoding is exact and fails closed when depth, custom-name length, or buffer
+  capacity cannot represent the complete state; Svelte still opts out pending
+  certification of its additional raw-text and expression-block behavior.
+- `ErrorTreeIncrementalReuseExternalScanner`
+  (`SupportsIncrementalReuseFromErrorTree() bool`): an optional narrower gate
+  for a scanner whose clean-tree checkpoints are certified but whose recovery
+  ownership is not. HTML currently returns false, so changed edits over an
+  error-bearing old HTML tree take a fresh-parse fallback.
 - `CheckpointlessExternalScannerReuse`
   (`AllowsIncrementalReuseWithoutCheckpoint() bool`): an exceptional second
   proof that a checkpoint-enabled scanner can safely reuse a node whose
@@ -335,9 +342,11 @@ the built-in registry. It is derived from the registration files under
   `IncrementalReuseExternalScanner` and returns true. A changed edit may
   enter old-tree subtree reuse, subject to the normal dirty-span,
   fragility, byte-equality, and scanner-boundary gates.
-- **bounded reuse** is Dart's certified route for sources up to 256 KiB.
-  Larger Dart sources use the fresh production parse with reason
-  `dart_large_external_scanner_unsupported`.
+- **bounded reuse** records a narrower certified route. Dart is source-bounded
+  to 256 KiB; larger sources fall back with
+  `dart_large_external_scanner_unsupported`. HTML is clean-old-tree bounded;
+  error-bearing old trees fall back with
+  `external_scanner_error_tree_unsupported`.
 - **fallback (explicit opt-out)** means the scanner implements the
   interface and returns false.
 - **fallback (uncertified)** means the scanner does not implement the
@@ -352,13 +361,13 @@ The token-invariant leaf exception is intentionally narrow: on a production
 tree, a same-length edit that independently reauthenticates the same leaf
 token may return before the scanner gate. That is not certification for
 general scanner-dependent subtree reuse. Likewise, scanner checkpoints do
-not certify a scanner by themselves: CMake and SQL opt in, while Python,
+not certify a scanner by themselves: CMake, SQL, and HTML opt in, while Python,
 Mojo, Starlark, and Svelte explicitly opt out. Custom
 `TokenSource` implementations have their own
 `IncrementalReuseTokenSource` contract and are outside this registry matrix.
-The registered HTML, Markdown, and Markdown Inline scanners remain
-uncertified, so changed-token or shape-changing edits take the production
-full-parse fallback rather than scanner-dependent reuse.
+The registered Markdown and Markdown Inline scanners remain uncertified, so
+changed-token or shape-changing edits take the production full-parse fallback
+rather than scanner-dependent reuse.
 
 PowerShell's scanner is stateless: it recognizes one zero-width statement
 terminator from the current lookahead and valid-symbol set, carries no payload,
@@ -384,6 +393,19 @@ source-linear resource ceilings; it does not claim O(edit). The latest 1 MiB
 run reached about 1.07 GiB maximum RSS (an earlier run reached about 1.39 GiB),
 so allocation/RSS scaling remains an open performance residual rather than
 part of #430's sound-admission closure.
+
+HTML's state proof is the complete open-tag stack. The inherited wire format
+retains its two-count header, but serialization now preflights the entire state
+and returns zero instead of truncating excessive depth, custom names longer
+than 255 bytes, or a stack that exceeds the 4096-byte checkpoint buffer.
+Deserialization rejects unequal counts, invalid tag types, truncated entries,
+and trailing bytes. Failed scans preserve the tag stack. Clean-tree
+certification crosses insert/delete/changed-length replace edits at the start,
+middle, and end of a roughly 4 KiB stateful document plus a representative
+137 KiB edit, requiring actual old-tree reuse and deep equality with a fresh
+parse. A recovery witness exposed unresolved error-tree ownership, so that
+route explicitly fails closed pending its own certification rather than
+silently widening HTML admission.
 
 | Language | Changed-edit contract |
 |---|---|
@@ -439,7 +461,7 @@ part of #430's sound-admission closure.
 | `haxe` | fallback (uncertified) |
 | `hcl` | fallback (uncertified) |
 | `hlsl` | fallback (uncertified) |
-| `html` | fallback (uncertified) |
+| `html` | bounded reuse (clean old trees) |
 | `janet` | fallback (uncertified) |
 | `javascript` | certified reuse |
 | `jsdoc` | fallback (uncertified) |
