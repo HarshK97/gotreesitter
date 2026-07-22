@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
 )
 
 func TestCollapsedChildLedgerRealLanguagesNeedNoSafetyNetRewrite(t *testing.T) {
@@ -151,7 +152,76 @@ public class C { public C(){ super(); } void f(Account a, User u) { insert a; de
 				}
 				tree.Release()
 			}
+
+			// A true adapted clone retains the exact built-in profile receipt and
+			// parent/raw-child metadata identities, including after an incremental edit.
+			adapted := *test.lang()
+			adaptedParser := gotreesitter.NewParser(&adapted)
+			adaptedParser.SetAdmissionCandidateRoute(false)
+			oldSource := []byte(test.src)
+			oldTree, err := adaptedParser.Parse(oldSource)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertCollapsedChildRouteTree(t, "adapted-production", oldTree, &adapted, test.want)
+
+			nextSource := append(append([]byte(nil), oldSource...), '\n')
+			endPoint := collapsedChildEndPoint(oldSource)
+			oldTree.Edit(gotreesitter.InputEdit{
+				StartByte:   uint32(len(oldSource)),
+				OldEndByte:  uint32(len(oldSource)),
+				NewEndByte:  uint32(len(nextSource)),
+				StartPoint:  endPoint,
+				OldEndPoint: endPoint,
+				NewEndPoint: gotreesitter.Point{Row: endPoint.Row + 1},
+			})
+			incremental, _, err := adaptedParser.ParseIncrementalProfiled(nextSource, oldTree)
+			if err != nil {
+				oldTree.Release()
+				t.Fatal(err)
+			}
+			assertCollapsedChildRouteTree(t, "adapted-incremental", incremental, &adapted, test.want)
+			freshParser := gotreesitter.NewParser(&adapted)
+			freshParser.SetAdmissionCandidateRoute(false)
+			fresh, err := freshParser.Parse(nextSource)
+			if err != nil {
+				incremental.Release()
+				oldTree.Release()
+				t.Fatal(err)
+			}
+			assertCollapsedChildDeepTreeEqual(t, incremental, fresh, &adapted)
+			fresh.Release()
+			incremental.Release()
+			oldTree.Release()
 		})
+	}
+}
+
+func collapsedChildEndPoint(source []byte) gotreesitter.Point {
+	var point gotreesitter.Point
+	for _, b := range source {
+		if b == '\n' {
+			point.Row++
+			point.Column = 0
+			continue
+		}
+		point.Column++
+	}
+	return point
+}
+
+func assertCollapsedChildDeepTreeEqual(t *testing.T, incremental, fresh *gotreesitter.Tree, lang *gotreesitter.Language) {
+	t.Helper()
+	incrementalInspection, err := benchfixtures.InspectGoTree(incremental.RootNode(), lang)
+	if err != nil {
+		t.Fatal(err)
+	}
+	freshInspection, err := benchfixtures.InspectGoTree(fresh.RootNode(), lang)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if incrementalInspection.SHA256 != freshInspection.SHA256 {
+		t.Fatalf("adapted incremental/fresh deep tree mismatch: incremental=%s fresh=%s", incrementalInspection.SHA256, freshInspection.SHA256)
 	}
 }
 
@@ -178,8 +248,16 @@ func assertCollapsedChildRouteTree(t *testing.T, route string, tree *gotreesitte
 		if runtime.NormalizationPassesChecked != 0 || runtime.NormalizationPassesRun != 0 || runtime.NormalizationNodesVisited != 0 || runtime.NormalizationNodesRewritten != 0 {
 			t.Fatalf("%s normalization checked/run/visited/rewritten=%d/%d/%d/%d", route, runtime.NormalizationPassesChecked, runtime.NormalizationPassesRun, runtime.NormalizationNodesVisited, runtime.NormalizationNodesRewritten)
 		}
-	} else if runtime.NormalizationPassesChecked == 0 || runtime.NormalizationPassesRun == 0 || runtime.NormalizationNodesVisited == 0 || runtime.NormalizationNodesRewritten != 0 {
-		t.Fatalf("%s normalization checked/run/visited/rewritten=%d/%d/%d/%d", route, runtime.NormalizationPassesChecked, runtime.NormalizationPassesRun, runtime.NormalizationNodesVisited, runtime.NormalizationNodesRewritten)
+	} else {
+		if runtime.NormalizationPassesChecked == 0 || runtime.NormalizationPassesRun == 0 ||
+			runtime.NormalizationNodesVisited == 0 || runtime.NormalizationNodesRewritten != 0 {
+			t.Fatalf("%s normalization checked/run/visited/rewritten=%d/%d/%d/%d", route,
+				runtime.NormalizationPassesChecked, runtime.NormalizationPassesRun,
+				runtime.NormalizationNodesVisited, runtime.NormalizationNodesRewritten)
+		}
+		if pass, ok := collapsedChildNormalizationPass(runtime); ok && pass.NodesRewritten != 0 {
+			t.Fatalf("%s collapsed-child pass rewrote nodes: %+v", route, pass)
+		}
 	}
 	for parentType, want := range wants {
 		parents := collapsedChildRegressionNodes(root, lang, parentType)
@@ -196,6 +274,18 @@ func assertCollapsedChildRouteTree(t *testing.T, route string, tree *gotreesitte
 			}
 		}
 	}
+}
+
+func collapsedChildNormalizationPass(runtime gotreesitter.ParseRuntime) (gotreesitter.NormalizationPassRuntime, bool) {
+	if runtime.NormalizationPasses == nil {
+		return gotreesitter.NormalizationPassRuntime{}, false
+	}
+	for _, pass := range *runtime.NormalizationPasses {
+		if pass.Name == "collapsed_named_leaf_children" {
+			return pass, true
+		}
+	}
+	return gotreesitter.NormalizationPassRuntime{}, false
 }
 
 func collapsedChildRegressionNodes(root *gotreesitter.Node, lang *gotreesitter.Language, typ string) []*gotreesitter.Node {
