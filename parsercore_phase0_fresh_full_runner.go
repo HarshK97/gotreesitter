@@ -24,12 +24,13 @@ import (
 // acquiring a production DFA token source, so a declined or capped parse
 // cannot publish state into the next call.
 type parserCoreFreshFullRunner struct {
-	lang           *Language
-	parser         *Parser
-	tables         *parserCoreRootTables
-	compact        *core.Core
-	options        DiagnosticParserCorePrefixOptions
-	scannerScratch []byte
+	lang              *Language
+	parser            *Parser
+	tables            *parserCoreRootTables
+	compact           *core.Core
+	options           DiagnosticParserCorePrefixOptions
+	replayParseStates bool
+	scannerScratch    []byte
 	// scratch retains the reusable per-parse materialization buffers. The runner
 	// is per-Parser and single-goroutine, so reusing these buffers across parses
 	// mirrors production's parser-held arena reuse and keeps the warm steady
@@ -97,14 +98,14 @@ func (r *parserCoreFreshFullRunner) executeSchedulerOpen(source []byte, compact 
 		tokenSource.Close()
 		return nil, nil, err
 	}
-	if err := requireParserCoreFreshFullAcceptance(scheduler, len(source)); err != nil {
+	if err := requireParserCoreFreshFullAcceptance(scheduler, source); err != nil {
 		tokenSource.Close()
 		return nil, nil, err
 	}
 	return scheduler, tokenSource, nil
 }
 
-func requireParserCoreFreshFullAcceptance(scheduler *diagnosticParserCoreGenericScheduler, sourceBytes int) error {
+func requireParserCoreFreshFullAcceptance(scheduler *diagnosticParserCoreGenericScheduler, source []byte) error {
 	if scheduler == nil || scheduler.receipt == nil || scheduler.receipt.Acceptance == nil || scheduler.acceptedHead.Node == 0 {
 		// GTS_ADMISSION_CENSUS=1 (admission_census.go) re-surfaces the boundary
 		// and detail the scheduler already recorded in scheduler.receipt.Stop
@@ -115,15 +116,16 @@ func requireParserCoreFreshFullAcceptance(scheduler *diagnosticParserCoreGeneric
 		}
 		return errors.New("parser-core fresh-full runner did not accept EOF")
 	}
-	if sourceBytes < 0 || uint64(sourceBytes) > uint64(^uint32(0)) {
+	if uint64(len(source)) > uint64(^uint32(0)) {
 		return errors.New("parser-core fresh-full runner source exceeds uint32 offsets")
 	}
 	acceptance := scheduler.receipt.Acceptance
-	wantEOF := uint32(sourceBytes)
+	wantEOF := uint32(len(source))
+	header := acceptance.Header.Header
 	if acceptance.Token.Symbol != 0 || acceptance.Token.StartByte != wantEOF || acceptance.Token.EndByte != wantEOF ||
 		acceptance.Token.Missing || acceptance.Token.NoLookahead || acceptance.Token.ExternalScannerToken ||
-		!acceptance.Header.Header.Accepted || acceptance.Header.Header.Paused || acceptance.Header.Header.ExactPaths != 1 ||
-		acceptance.Header.Header.ByteOffset != wantEOF || acceptance.Accepts != 1 || acceptance.Work.Accepts != 1 {
+		!header.Accepted || header.Paused || header.ExactPaths != 1 ||
+		!parserCoreFreshFullAcceptedTailIsClean(source, header.ByteOffset) || acceptance.Accepts != 1 || acceptance.Work.Accepts != 1 {
 		// See the comment above: census classification is opt-in and additive.
 		if admissionCensusEnabled() {
 			return admissionCensusAcceptanceDecline(acceptance, wantEOF)
@@ -132,6 +134,17 @@ func requireParserCoreFreshFullAcceptance(scheduler *diagnosticParserCoreGeneric
 			acceptance.Token, acceptance.Header.Header, acceptance.Accepts, acceptance.Work.Accepts)
 	}
 	return nil
+}
+
+// parserCoreFreshFullAcceptedTailIsClean applies the production parser's
+// existing accepted-tail proof to compact acceptance. The compact head may
+// end before authenticated EOF only when every remaining byte is parser
+// padding; a real source byte keeps the route fail-closed.
+func parserCoreFreshFullAcceptedTailIsClean(source []byte, headByte uint32) bool {
+	if uint64(len(source)) > uint64(^uint32(0)) || headByte > uint32(len(source)) {
+		return false
+	}
+	return parserTailAllowsCleanAcceptance(source, headByte, uint32(len(source)), nil)
 }
 
 func (r *parserCoreFreshFullRunner) executeScheduler(source []byte, compact *core.Core, reset bool) (*diagnosticParserCoreGenericScheduler, error) {
@@ -146,14 +159,14 @@ func (r *parserCoreFreshFullRunner) materialize(source []byte, compact *core.Cor
 	if r == nil {
 		return nil, errors.New("parser-core fresh-full runner is nil")
 	}
-	return materializeDiagnosticParserCoreAcceptedTree(compact, head, r.parser, source)
+	return materializeDiagnosticParserCoreAcceptedTree(compact, head, r.parser, source, r.replayParseStates)
 }
 
 func (r *parserCoreFreshFullRunner) materializeSelection(source []byte, compact *core.Core, scheduler *diagnosticParserCoreGenericScheduler) (*Tree, error) {
 	if r == nil || scheduler == nil {
 		return nil, errors.New("parser-core fresh-full selected materialization is incomplete")
 	}
-	return materializeDiagnosticParserCoreAcceptedSelection(compact, scheduler.acceptedHead, scheduler.acceptedPayloads, r.parser, source, &r.scratch)
+	return materializeDiagnosticParserCoreAcceptedSelection(compact, scheduler.acceptedHead, scheduler.acceptedPayloads, r.parser, source, &r.scratch, r.replayParseStates)
 }
 
 func (r *parserCoreFreshFullRunner) parse(source []byte) (*Tree, error) {

@@ -25,12 +25,25 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
+- **Compact admission now ratchets breadth, depth, and edit reuse.** The shared
+  production clean-tail proof admits compact roots that stop immediately before
+  trailing parser padding, raising the 206-language smoke scorecard from 48 to
+  166 byte-exact routes (35 fail-closed fallbacks, 5 token-source skips, 0
+  divergences). Representative multi-line fixtures freeze production and
+  candidate digests, while CI enforces both the breadth floor and routed depth.
+  Admission materialization now carries a per-tree parser-state replay proof:
+  grammars with complete required states and proven scanner quiescence retain
+  incremental subtree reuse; unproven/stateful scanners remain barred, apart
+  from independently re-lexed token-invariant single-leaf edits. Certified or
+  explicitly requested forest routes retain precedence unless the caller
+  explicitly forces the compact candidate.
+
 - **The compact parser core is now the default full-parse route for eligible
   languages** (Phase-3 admission flip). `Parser.Parse` routes a fresh, full,
   production-DFA parse of an eligible grammar through the compact
   `internal/parsercorephase0` engine, then materializes a public tree. The tree
   is byte-exact with the production engine on the routed, verified surface: the
-  48 byte-exact scorecard routes and the canonical fixtures. The runner's strict
+  166 byte-exact scorecard routes and the canonical fixtures. The runner's strict
   acceptance gate fails closed to production on any input it cannot reproduce
   byte-for-byte. The compact engine promotes from the `gts_parsercorephase0`
   opt-in tag into the default build; the emergency opt-out tag
@@ -40,8 +53,8 @@ for tags and release notes while still in `0.x`.
 
   - **Correctness.** 206 of 206 curated parity fixtures pass. The deep-tree
     digest is 100 percent exact on the canonical fixtures. The 206-language
-    scorecard through the switch reports 48 byte-exact routes, 0 divergences,
-    153 fail-closed fallbacks, and 5 token-source skips.
+    scorecard through the switch reports 166 byte-exact routes, 0 divergences,
+    35 fail-closed fallbacks, and 5 token-source skips.
   - **Fail-closed generic-call conflict class.** On the ambiguous Go construct
     `Foo[int](a)`, production and the tree-sitter-go C oracle select
     `type_conversion_expression(generic_type)`. The compact scheduler cannot
@@ -91,11 +104,12 @@ for tags and release notes while still in `0.x`.
   variable, keeps the compact route on. `(*Parser).SetAdmissionCandidateRoute`
   overrides the process default per parser.
 
-  Dual-route statement: `ParseIncremental` and every reuse-consuming path stay
-  on the production engine unconditionally. The compact tree carries a hard
-  incremental-reuse bar (decision 0008), so routing it under `ParseIncremental`
-  would destroy the O(edit) wins. Lifting the reuse bar is the follow-on
-  campaign.
+  Dual-route statement: `ParseIncremental` and every reuse-consuming parser
+  operation stay on the production engine. A compact old tree may now supply
+  reusable subtrees only when its materialization attached the required replay
+  states and its scanner is provably quiescent; otherwise reuse fails closed to
+  a full production parse. Token-invariant single-leaf edits are separately
+  re-lexed and admitted only on exact symbol/span identity.
 
   Memory-budget contract: the compact scheduler does not poll the automatic
   large-input memory budget. The switch declines every input at or above the

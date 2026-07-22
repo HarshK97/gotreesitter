@@ -7,8 +7,8 @@ import "testing"
 // These tests run under the gts_parsercorephase0 tag, where the compact
 // candidate route is compiled in. They prove the switch actually routes a fresh
 // full parse through the compact route, that the routed tree is byte-exact with
-// production on the four canonical fixtures, and that every reuse-consuming path
-// stays on production.
+// production on the four canonical fixtures, and that incremental reuse is
+// available only when a routed tree carries the replay/scanner proof.
 
 func newAdmissionCandidateGoParser(t testing.TB) *Parser {
 	t.Helper()
@@ -56,7 +56,7 @@ func TestAdmissionSwitchParseRoutesCandidateWhenOn(t *testing.T) {
 			t.Fatalf("%s: routed tree is not compact-materialized", row.id)
 		}
 		if !tree.incrementalReuseDisabled {
-			t.Fatalf("%s: routed tree must carry the reuse bar", row.id)
+			requireCompactIncrementalStateProof(t, tree)
 		}
 		tree.Release()
 	}

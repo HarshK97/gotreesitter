@@ -357,7 +357,7 @@ type Parser struct {
 	// so the campaign O(edit) byte-sweep differential can compare the
 	// range-limited walk against the full walk on one Parser (see
 	// SetForceFullResultNormalizationWalk). Production leaves it false.
-	forceFullResultNormalizationWalk    bool
+	forceFullResultNormalizationWalk bool
 	// disableLeadingRunSplice turns off the campaign post-admission-frontier T2a
 	// leading-run block-splice for this Parser (the trailing splice and every
 	// other reuse path stay on). It exists ONLY so the byte-sweep differential
@@ -2965,14 +2965,22 @@ func (p *Parser) parseIncrementalInternalWithMergePerKeyOverride(source []byte, 
 	// entry (parseIncrementalChanged) already routes a reuse-disabled old tree to
 	// a full fresh parse before reaching here, but the token-source entries
 	// (parseIncrementalWithTokenSourceChanged and its Profiled twin) call in
-	// directly. A reuse-disabled old tree -- forestFastPath, or a
-	// compact-materialized tree whose per-node states are table-replayed /
-	// abstained -- must never feed the reuseCursor subtree splice below, which
-	// trusts old-tree parser states. The only reuse it may take is the
-	// token-invariant leaf edit attempted just above (compact trees are barred
-	// from even that inside tryTokenInvariantLeafEdit); once that declines, force
-	// a full fresh parse over the provided token source.
+	// directly. A reuse-disabled old tree -- forestFastPath, or a compact tree
+	// whose replay/scanner proof is incomplete -- must never feed the reuseCursor
+	// subtree splice below, which trusts old-tree parser states. The only reuse
+	// it may take is the independently re-authenticated token-invariant leaf edit
+	// attempted just above; once that declines, force a full fresh parse over the
+	// provided token source.
 	if oldTreeDisablesIncrementalReuse(oldTree) {
+		if timing != nil {
+			timing.reuseUnsupported = true
+			timing.reuseUnsupportedReason = forestIncrementalReuseUnsupportedReason
+			if oldTree != nil && oldTree.compactMaterialized {
+				if reason := incrementalReuseUnavailableReason(ts); reason != "" {
+					timing.reuseUnsupportedReason = reason
+				}
+			}
+		}
 		return p.incrementalTokenSourceFreshFullParse(source, ts, timing)
 	}
 

@@ -6,14 +6,6 @@ func (p *Parser) tryTokenInvariantLeafEdit(source []byte, oldTree *Tree, ts Toke
 	if p == nil || oldTree == nil || oldTree.RootNode() == nil || oldTree.language != p.language {
 		return nil, false
 	}
-	// A compact-materialized tree carries table-replayed / abstained per-node
-	// parser states and no scanner checkpoints, so it is barred from every reuse
-	// path -- including this token-invariant leaf reuse -- on ALL entry points
-	// (DFA and custom token source). Force the caller to a full fresh parse
-	// (Phase-3 Lane 3 review).
-	if oldTree.compactMaterialized {
-		return nil, false
-	}
 	if len(oldTree.edits) != 1 {
 		return nil, false
 	}
@@ -64,6 +56,12 @@ func (p *Parser) tryTokenInvariantLeafEdit(source []byte, oldTree *Tree, ts Toke
 			timing.singleStackTokens = 0
 		}
 		return tree, true
+	}
+	if oldTree.compactMaterialized && oldTree.incrementalReuseDisabled && node.preGotoState == 0 {
+		// Diagnostic/states-free compact trees retain the original hard bar.
+		// A replayed leaf has an authenticated lexer entry state and may proceed
+		// to the exact symbol/span rescan below even when subtree reuse is barred.
+		return nil, false
 	}
 	leaf := node
 	if leaf == nil || leaf.ChildCount() != 0 || leaf.hasError() || leaf.isMissing() {

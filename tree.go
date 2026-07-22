@@ -2743,11 +2743,10 @@ type Tree struct {
 	// exact, extras/unrecoverable nodes deliberately abstain to the 0
 	// "unknown -> recompute" sentinel, and a bounded internal collapse class
 	// carries the principled outer state rather than production's forest-selected
-	// inner one. It also lacks scanner checkpoints. It is therefore HARD-barred
-	// from every incremental reuse path -- including the token-invariant leaf
-	// fast path that forestFastPath trees still take -- so ParseIncremental over
-	// it always falls back to a full fresh parse (Phase-3 Lane 3 review
-	// amendment 2).
+	// inner one. incrementalReuseDisabled remains set unless materialization
+	// proves every required replay state and scanner quiescence for this exact
+	// tree. Barred compact trees may still take an independently re-authenticated
+	// single-leaf edit; all subtree reuse remains fail-closed.
 	compactMaterialized bool
 	// Finalization state avoids repeated retry scans and compatibility passes.
 	// The error summary is not a persistent invariant of a caller-edited tree.

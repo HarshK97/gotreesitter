@@ -203,13 +203,6 @@ func (p *Parser) tryTokenInvariantReuseForDisabledOldTree(source []byte, oldTree
 	if !oldTreeDisablesIncrementalReuse(oldTree) {
 		return nil, false
 	}
-	// A compact-materialized tree carries replayed (not live-recorded) parser
-	// states and no scanner checkpoints, so it is barred from even the
-	// token-invariant leaf fast path: force the full fresh parse (Lane 3
-	// review amendment 2).
-	if oldTree != nil && oldTree.compactMaterialized {
-		return nil, false
-	}
 	if p == nil || p.language == nil {
 		return nil, false
 	}
@@ -251,6 +244,13 @@ func (p *Parser) disabledOldTreeTokenInvariantLeafAllowed(source []byte, oldTree
 	}
 	if !tokenInvariantLeafReusable(node) {
 		return false
+	}
+	if oldTree.compactMaterialized {
+		// A compact tree with an unknown/stateful scanner remains barred from
+		// subtree reuse, but a single edited leaf can still be re-authenticated
+		// independently when replay supplied its exact lexer entry state. The
+		// scan below must reproduce the same symbol and byte extent or decline.
+		return node.preGotoState != 0
 	}
 	switch p.language.Name {
 	case "go":
@@ -1406,7 +1406,11 @@ func (p *Parser) parseIncrementalChanged(source []byte, oldTree *Tree) (*Tree, e
 		if tree, ok := p.tryTokenInvariantReuseForDisabledOldTree(source, oldTree, nil); ok {
 			return tree, nil
 		}
-		return p.Parse(source)
+		if oldTree == nil || !oldTree.compactMaterialized {
+			return p.Parse(source)
+		}
+		// A compact tree needs the incremental token-source fallback below so
+		// scanner refusal and full-reparse work retain normal attribution.
 	}
 	if err := p.checkDFALexer(); err != nil {
 		return nil, err
@@ -1564,9 +1568,13 @@ func (p *Parser) parseIncrementalChangedProfiled(source []byte, oldTree *Tree) (
 		if tree, ok := p.tryTokenInvariantReuseForDisabledOldTree(source, oldTree, timing); ok {
 			return tree, timing.toProfile(), nil
 		}
-		start := time.Now()
-		tree, err := p.Parse(source)
-		return tree, profileFreshParseFallback(start, tree, forestIncrementalReuseUnsupportedReason), err
+		if oldTree == nil || !oldTree.compactMaterialized {
+			start := time.Now()
+			tree, err := p.Parse(source)
+			return tree, profileFreshParseFallback(start, tree, forestIncrementalReuseUnsupportedReason), err
+		}
+		// Continue through the token-source path so a compact-tree decline keeps
+		// the same scanner reason and work attribution as an ordinary fallback.
 	}
 	if err := p.checkDFALexer(); err != nil {
 		return nil, IncrementalParseProfile{}, err

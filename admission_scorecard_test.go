@@ -20,11 +20,10 @@ import (
 // fell back, or diverged. The compact route had only ever been validated on the
 // four canonical Go fixtures; this run reports how far it reaches.
 //
-// Scope: the per-language fixtures are trivial smoke snippets, so this is
-// reachability reconnaissance -- which grammars the compact route accepts at
-// all -- not a fidelity proof. The byte-exact fidelity evidence is the
-// four-fixture digest test (TestAdmissionSwitchCandidateDigestMatchesProduction).
-// Corpus-scale per-language fixtures are the tracked follow-up.
+// Scope: the per-language fixtures are trivial smoke snippets, so this is the
+// breadth ratchet -- which grammars the compact route accepts at all -- rather
+// than corpus-scale fidelity proof. Frozen canonical and representative-depth
+// digests provide the deeper companion gate.
 //
 // It is a scorecard, not a gate: it never fails on a fallback (a fallback is the
 // fail-closed, correct behavior for an unsupported grammar). It fails only on a
@@ -98,6 +97,26 @@ func TestAdmissionCandidateScorecard206(t *testing.T) {
 		}
 		if os.Getenv("GTS_ADMISSION_SCORECARD_STRICT") == "1" {
 			t.Fatalf("%d language(s) diverged through the compact route", len(divergences))
+		}
+	}
+
+	if os.Getenv("GTS_ADMISSION_SCORECARD_RATCHET") == "1" {
+		// Frozen at the generalized clean-tail admission epoch. Improvements are
+		// welcome (more PASS, fewer FALLBACK); silent correctness failures,
+		// registry drift, or surrendered route coverage require an explicit
+		// review and ratchet update.
+		const (
+			wantTotal   = 206
+			minPass     = 166
+			maxFallback = 35
+			wantSkip    = 5
+		)
+		if len(rows) != wantTotal || counts[scorecardPass] < minPass ||
+			counts[scorecardFallback] > maxFallback || counts[scorecardSkip] != wantSkip ||
+			counts[scorecardDiverge] != 0 || counts[scorecardError] != 0 {
+			t.Fatalf("admission breadth ratchet failed: PASS=%d (min %d) DIVERGE=%d FALLBACK=%d (max %d) SKIP=%d (want %d) ERROR=%d total=%d (want %d)",
+				counts[scorecardPass], minPass, counts[scorecardDiverge], counts[scorecardFallback], maxFallback,
+				counts[scorecardSkip], wantSkip, counts[scorecardError], len(rows), wantTotal)
 		}
 	}
 }
