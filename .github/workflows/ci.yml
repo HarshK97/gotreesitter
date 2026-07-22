@@ -88,11 +88,15 @@ jobs:
             -run '^(TestAdmissionCandidateScorecard206|TestAdmissionSwitchRoutePrecedenceRatchet|TestAdmissionCandidateYAMLZeroWidthDepth|TestAdmissionCandidateRepresentativeDepthRatchet|TestAdmissionCompactTreeCarriesIncrementalReuseProof)$' \
             -count=1 -timeout 10m
 
-  race_root:
+  race_root_shards:
     needs: exhaustive_parity_scope
     if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
@@ -100,12 +104,93 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Root Package Race Tests
-        # -timeout 35m: the root package alone needs ~11m under -race on a
-        # fast box and more on 2-core runners; Go's default 10m per-package
-        # timeout panics the test binary mid-run (dumping in-flight tests as
-        # spurious FAILs).
-        run: go test . -race -count=1 -timeout 35m
+      - name: Root Package Race Tests, Examples, and Fuzz Targets (shard ${{ matrix.shard }} of 4)
+        run: |
+          set -euo pipefail
+          mkdir -p harness_out/root-race
+          pattern="$(bash .github/scripts/root_race_shard.sh regex "${{ matrix.shard }}" 4)"
+          go test . -race -count=1 -timeout 15m -run "$pattern" -json |
+            tee "harness_out/root-race/shard-${{ matrix.shard }}.json"
+
+      - name: Preserve completed root-race results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: root-race-shard-${{ matrix.shard }}
+          path: harness_out/root-race/*.json
+          if-no-files-found: warn
+
+  root_race_plan:
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    outputs:
+      isolated: ${{ steps.plan.outputs.isolated }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: plan
+        name: Plan isolated root race gates
+        run: echo "isolated=$(bash .github/scripts/root_race_shard.sh isolated-json)" >> "$GITHUB_OUTPUT"
+
+  race_root_isolated:
+    needs:
+      - exhaustive_parity_scope
+      - root_race_plan
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.root_race_plan.outputs.isolated) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Root Package Isolated Race Gate (${{ matrix.target }})
+        run: |
+          set -euo pipefail
+          mkdir -p harness_out/root-race
+          go test . -race -count=1 -timeout 15m -run '^${{ matrix.target }}$' -json |
+            tee "harness_out/root-race/isolated-${{ matrix.target }}.json"
+
+      - name: Preserve completed isolated root-race result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: root-race-isolated-${{ matrix.target }}
+          path: harness_out/root-race/*.json
+          if-no-files-found: warn
+
+  # Preserve the existing aggregate job ID consumed by the required `build`
+  # context. The matrix result is successful only when every race shard passes.
+  race_root:
+    needs:
+      - exhaustive_parity_scope
+      - race_root_shards
+      - race_root_isolated
+    if: always() && needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check root race shards
+        env:
+          SHARDS_RESULT: ${{ needs.race_root_shards.result }}
+          ISOLATED_RESULT: ${{ needs.race_root_isolated.result }}
+        run: |
+          if [ "$SHARDS_RESULT" != "success" ]; then
+            echo "::error::race_root_shards finished with result=${SHARDS_RESULT}"
+            exit 1
+          fi
+          if [ "$ISOLATED_RESULT" != "success" ]; then
+            echo "::error::race_root_isolated finished with result=${ISOLATED_RESULT}"
+            exit 1
+          fi
+          echo "All root race shards and isolated gates passed"
 
   race_packages:
     needs: exhaustive_parity_scope
@@ -286,7 +371,7 @@ jobs:
   # oedit_latency_gate_full runs the full editor-latency gate sweep
   # (campaign O(edit) workstream W5, spec.campaign.oedit): all five gate
   # languages at the ~20KB, ~137KB, and ~1MB size tiers, crossed with every
-  # edit class and position. The normal `go test .` run in race_root covers
+  # edit class and position. The normal root suite in race_root_shards covers
   # the ~20KB and ~137KB tiers; GTS_W5_SLOW_TIER adds the ~1MB tier here.
   # This job also runs the JavaScript/TypeScript transient-error delete gate
   # at all three sizes. It is manual (workflow_dispatch only) and not part of

@@ -144,8 +144,36 @@ func (al *incrGateAllowlist) index() map[incrGateAllowlistKey]*incrGateAllowlist
 	return m
 }
 
-// TestIncrementalInvariantGate is the gate. See file doc comment.
-func TestIncrementalInvariantGate(t *testing.T) {
+// Keep each language in a separate top-level test. The gate is deliberately
+// exhaustive, and a single serial meta-test exceeds the race-test timeout on
+// hosted runners even though every language case is independently bounded.
+// Language-level ownership also preserves the allowlist ratchet: all corpus
+// files that can reproduce an entry for a language run in the same lane.
+func TestIncrementalInvariantGatePython(t *testing.T) {
+	testIncrementalInvariantGateLanguage(t, "python")
+}
+
+func TestIncrementalInvariantGateJavaScript(t *testing.T) {
+	testIncrementalInvariantGateLanguage(t, "javascript")
+}
+
+func TestIncrementalInvariantGateJSON(t *testing.T) {
+	testIncrementalInvariantGateLanguage(t, "json")
+}
+
+func TestIncrementalInvariantGateGo(t *testing.T) {
+	testIncrementalInvariantGateLanguage(t, "go")
+}
+
+func TestIncrementalInvariantGateRust(t *testing.T) {
+	testIncrementalInvariantGateLanguage(t, "rust")
+}
+
+func TestIncrementalInvariantGateCSS(t *testing.T) {
+	testIncrementalInvariantGateLanguage(t, "css")
+}
+
+func testIncrementalInvariantGateLanguage(t *testing.T, language string) {
 	allowlist := loadIncrGateAllowlist(t)
 	index := allowlist.index()
 
@@ -161,8 +189,11 @@ func TestIncrementalInvariantGate(t *testing.T) {
 	var sweptMu sync.Mutex
 
 	for _, entry := range incrGateCorpus {
+		if entry.language != language {
+			continue
+		}
 		entry := entry
-		t.Run(entry.language+"/"+entry.path, func(t *testing.T) {
+		t.Run(entry.path, func(t *testing.T) {
 			sweptMu.Lock()
 			swept[entry.language] = true
 			sweptMu.Unlock()
@@ -173,6 +204,9 @@ func TestIncrementalInvariantGate(t *testing.T) {
 				t.Errorf("%s", u)
 			}
 		})
+	}
+	if !swept[language] {
+		t.Fatalf("incremental invariant gate has no corpus entries for language %q", language)
 	}
 
 	// Ratchet: every allowlist entry must have reproduced at least once in
