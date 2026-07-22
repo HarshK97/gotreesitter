@@ -344,18 +344,6 @@ func ParserRetainsCollapsedChildOccurrenceForTest(p *Parser, parent, child Symbo
 	return p != nil && p.retainsCollapsedChildOccurrence(parent, child)
 }
 
-// NormalizeCollapsedNamedLeafForTest exercises the legacy safety-net matcher
-// and returns its exact traversal/rewrite counters.
-func NormalizeCollapsedNamedLeafForTest(root *Node, source []byte, lang *Language, parentName, childName string, childNamed, bySource bool) (visited, rewritten uint64) {
-	var counters normalizationPassCounters
-	if bySource {
-		counters = normalizeCollapsedNamedLeafChildrenBySourceAndNamednessWithStats(root, source, lang, parentName, childNamed, childName)
-	} else {
-		counters = normalizeCollapsedNamedLeafChildrenAndNamednessWithStats(root, lang, parentName, childName, childNamed)
-	}
-	return counters.nodesVisited, counters.nodesRewritten
-}
-
 // ParserPoolCheckoutForTest checks a parser out of the pool (applying defaults).
 func ParserPoolCheckoutForTest(pp *ParserPool) *Parser { return pp.checkout() }
 
