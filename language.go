@@ -194,6 +194,34 @@ type IncrementalReuseExternalScanner interface {
 	SupportsIncrementalReuse() bool
 }
 
+// CheckpointedExternalScanner is implemented by stateful external scanners
+// whose non-empty serialized payload is a complete checkpoint of every value
+// that can affect a later Scan call. The runtime records that checkpoint at
+// token boundaries and restores it when fast-forwarding across a reused
+// subtree. A scanner may return a zero-length serialization for a reachable
+// state that cannot be represented exactly; that boundary is recorded as
+// checkpoint-absent and fails closed for incremental reuse.
+//
+// Implementations must encode the empty payload as a non-empty byte sequence:
+// a zero-length serialization is reserved by the checkpoint store to mean
+// "checkpoint absent". A non-empty serialization must never truncate, alias,
+// or otherwise collide with a different scanner state. Returning true is a
+// soundness claim; an incomplete non-empty checkpoint can cause silent
+// incremental corruption.
+type CheckpointedExternalScanner interface {
+	ExternalScanner
+	UsesExternalScannerCheckpoints() bool
+}
+
+// CheckpointlessExternalScannerReuse is implemented by checkpointed scanners
+// that can additionally prove subtree reuse safe when a candidate node has no
+// scanner checkpoint. Most stateful scanners must not implement this: absence
+// of a checkpoint then fails closed.
+type CheckpointlessExternalScannerReuse interface {
+	ExternalScanner
+	AllowsIncrementalReuseWithoutCheckpoint() bool
+}
+
 // StatelessExternalScanner is implemented by external scanners that carry no
 // serialized state across tokens. Their Scan decision is a pure function of the
 // byte stream at the lexer position and the valid-symbol set, and the

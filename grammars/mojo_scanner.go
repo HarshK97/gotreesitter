@@ -64,6 +64,8 @@ func (MojoExternalScanner) Deserialize(payload any, buf []byte) {
 // Re-enable only after Mojo's DEDENT behavior is independently certified.
 func (MojoExternalScanner) SupportsIncrementalReuse() bool { return false }
 
+func (MojoExternalScanner) UsesExternalScannerCheckpoints() bool { return true }
+
 func (MojoExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	s := payload.(*pythonScannerState)
 	if len(s.indents) == 0 {

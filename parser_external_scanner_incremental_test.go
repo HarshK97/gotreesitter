@@ -148,11 +148,11 @@ func TestUncertifiedExternalScannerLengthChangingEditFallsBack(t *testing.T) {
 		replacement []byte
 	}{
 		{
-			name:        "sql",
-			lang:        grammars.SqlLanguage,
-			source:      []byte("select id from users;\n"),
-			oldText:     []byte("id"),
-			replacement: []byte("account_id"),
+			name:        "svelte",
+			lang:        grammars.SvelteLanguage,
+			source:      []byte("<main><p>hello</p></main>\n"),
+			oldText:     []byte("hello"),
+			replacement: []byte("hello world"),
 		},
 		{
 			name:        "html",

@@ -11,6 +11,13 @@ const (
 	sqlTokDollarTagEnd   = 2 // "_dollar_quoted_string_end_tag" — closing $tag$
 )
 
+// The runtime currently snapshots scanners into a 4096-byte buffer. One byte
+// is reserved for the trailing NUL, so tags longer than this cannot participate
+// in checkpoint-authenticated incremental reuse. They remain valid SQL and are
+// still accepted by Scan; Serialize returns zero for those states so reuse fails
+// closed at the affected boundary without changing full-parse semantics.
+const sqlMaxDollarTagBytes = 4095
+
 // sqlScannerState stores the dollar-quote tag for matching the closing delimiter.
 type sqlScannerState struct {
 	tag string // empty when not inside a dollar-quoted string
@@ -32,7 +39,13 @@ func (SqlExternalScanner) Destroy(payload any) {}
 func (SqlExternalScanner) Serialize(payload any, buf []byte) int {
 	s := payload.(*sqlScannerState)
 	if s.tag == "" {
-		return 0
+		if len(buf) == 0 {
+			return 0
+		}
+		// A one-byte empty-state marker keeps "empty checkpoint" distinct from
+		// the checkpoint store's zero-byte "checkpoint absent" sentinel.
+		buf[0] = 0
+		return 1
 	}
 	// Store tag + null terminator.
 	tagLen := len(s.tag) + 1
@@ -59,6 +72,18 @@ func (SqlExternalScanner) Deserialize(payload any, buf []byte) {
 		s.tag = string(buf)
 	}
 }
+
+// SupportsIncrementalReuse certifies the SQL scanner for subtree reuse. Its
+// only state is the active dollar-quote tag. Serialize/Deserialize encode every
+// representable state bijectively (including an explicit empty marker); an
+// oversized tag returns no checkpoint and therefore fails closed for reuse
+// while remaining valid during full parsing. Failed scans preserve state, and
+// the runtime restores recorded start/end checkpoints around reused nodes.
+func (SqlExternalScanner) SupportsIncrementalReuse() bool { return true }
+
+func (SqlExternalScanner) UsesExternalScannerCheckpoints() bool { return true }
+
+func (SqlExternalScanner) PreservesStateOnScanFailure() bool { return true }
 
 func (SqlExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	s := payload.(*sqlScannerState)

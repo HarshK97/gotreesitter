@@ -7,6 +7,24 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Changed
+
+- **SQL external-scanner reuse is now checkpoint-certified.** The runtime's
+  checkpoint and checkpointless-reuse gates are capability based rather than
+  language-name allowlists. SQL records a complete dollar-quote-tag state
+  whenever it fits the checkpoint buffer (including an explicit empty-state
+  checkpoint), preserves that state on failed scans, and fails closed only for
+  incremental reuse when a valid tag is too large to restore exactly; full
+  parsing continues to accept the tag, matching C semantics. Svelte now opts
+  out of changed-edit reuse because its bounded HTML-tag encoding is not yet a
+  collision-free checkpoint proof.
+  Clean and recovered insert/delete/replace witnesses at the start, middle,
+  and end of roughly 20 KiB and 137 KiB files enforce fresh-tree equality,
+  full-span coverage, deterministic work, and bounded memory; an opt-in tier
+  repeats the matrix at 1 MiB. This is a correctness/admission certification,
+  not an O(edit) claim: the 1 MiB lane is catastrophe-bounded and its measured
+  allocation/RSS scaling remains an explicit performance residual.
+
 ## [0.46.0] - 2026-07-21
 
 ### Added

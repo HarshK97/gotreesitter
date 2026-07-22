@@ -33,6 +33,52 @@ type staleResultExternalScanner struct {
 	result Symbol
 }
 
+type capabilityExternalScanner struct{ recordingExternalScanner }
+
+func (*capabilityExternalScanner) SupportsIncrementalReuse() bool { return true }
+func (*capabilityExternalScanner) UsesExternalScannerCheckpoints() bool {
+	return true
+}
+func (*capabilityExternalScanner) AllowsIncrementalReuseWithoutCheckpoint() bool {
+	return true
+}
+func (*capabilityExternalScanner) ExternalScannerIsStateless() bool { return true }
+func (*capabilityExternalScanner) PreservesStateOnScanFailure() bool {
+	return true
+}
+
+func TestExternalScannerOrderAdapterPreservesOptionalCapabilities(t *testing.T) {
+	scanner := &capabilityExternalScanner{}
+	sourceLang := &Language{
+		SymbolNames:     []string{"", "a"},
+		ExternalSymbols: []Symbol{1},
+		ExternalScanner: scanner,
+	}
+	targetLang := &Language{
+		SymbolNames:     []string{"", "", "a"},
+		ExternalSymbols: []Symbol{2},
+	}
+	adapted, ok := AdaptExternalScannerByExternalOrder(sourceLang, targetLang)
+	if !ok {
+		t.Fatal("adapter not created")
+	}
+	if reusable, ok := adapted.(IncrementalReuseExternalScanner); !ok || !reusable.SupportsIncrementalReuse() {
+		t.Fatal("incremental-reuse capability was not preserved")
+	}
+	if checkpointed, ok := adapted.(CheckpointedExternalScanner); !ok || !checkpointed.UsesExternalScannerCheckpoints() {
+		t.Fatal("checkpoint capability was not preserved")
+	}
+	if checkpointless, ok := adapted.(CheckpointlessExternalScannerReuse); !ok || !checkpointless.AllowsIncrementalReuseWithoutCheckpoint() {
+		t.Fatal("checkpointless capability was not preserved")
+	}
+	if stateless, ok := adapted.(StatelessExternalScanner); !ok || !stateless.ExternalScannerIsStateless() {
+		t.Fatal("stateless capability was not preserved")
+	}
+	if preserving, ok := adapted.(FailurePreservingExternalScanner); !ok || !preserving.PreservesStateOnScanFailure() {
+		t.Fatal("failure-preserving capability was not preserved")
+	}
+}
+
 func (s staleResultExternalScanner) Create() any { return nil }
 func (s staleResultExternalScanner) Destroy(any) {}
 func (s staleResultExternalScanner) Serialize(any, []byte) int {

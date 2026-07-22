@@ -59,6 +59,42 @@ func (a *externalScannerOrderAdapter) Deserialize(payload any, buf []byte) {
 	a.inner.Deserialize(a.innerPayload(payload), buf)
 }
 
+// Optional scanner capabilities describe the inner scanner's state model, not
+// its external-symbol numbering. Preserve them across order adaptation so a
+// generated language does not lose a valid reuse/checkpoint proof merely
+// because its external token order differs from the embedded reference.
+func (a *externalScannerOrderAdapter) SupportsIncrementalReuse() bool {
+	reusable, ok := a.optionalInner().(IncrementalReuseExternalScanner)
+	return ok && reusable.SupportsIncrementalReuse()
+}
+
+func (a *externalScannerOrderAdapter) UsesExternalScannerCheckpoints() bool {
+	checkpointed, ok := a.optionalInner().(CheckpointedExternalScanner)
+	return ok && checkpointed.UsesExternalScannerCheckpoints()
+}
+
+func (a *externalScannerOrderAdapter) AllowsIncrementalReuseWithoutCheckpoint() bool {
+	checkpointless, ok := a.optionalInner().(CheckpointlessExternalScannerReuse)
+	return ok && checkpointless.AllowsIncrementalReuseWithoutCheckpoint()
+}
+
+func (a *externalScannerOrderAdapter) ExternalScannerIsStateless() bool {
+	stateless, ok := a.optionalInner().(StatelessExternalScanner)
+	return ok && stateless.ExternalScannerIsStateless()
+}
+
+func (a *externalScannerOrderAdapter) PreservesStateOnScanFailure() bool {
+	preserving, ok := a.optionalInner().(FailurePreservingExternalScanner)
+	return ok && preserving.PreservesStateOnScanFailure()
+}
+
+func (a *externalScannerOrderAdapter) optionalInner() ExternalScanner {
+	if a == nil {
+		return nil
+	}
+	return a.inner
+}
+
 func (a *externalScannerOrderAdapter) Scan(payload any, lexer *ExternalLexer, validSymbols []bool) bool {
 	if a == nil || a.inner == nil {
 		return false
