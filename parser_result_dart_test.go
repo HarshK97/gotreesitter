@@ -2,7 +2,7 @@ package gotreesitter
 
 import "testing"
 
-func TestNormalizeDartCollapsedLeafChildrenRestoresDartWrappers(t *testing.T) {
+func TestNormalizeDartCompatibilityDoesNotSynthesizeCollapsedChildren(t *testing.T) {
 	lang := &Language{
 		Name: "dart",
 		SymbolNames: []string{
@@ -77,16 +77,14 @@ func TestNormalizeDartCollapsedLeafChildrenRestoresDartWrappers(t *testing.T) {
 	// so finalNode/negationNode/relOpNode/gtNode/nullableNode/nullNode above
 	// stay untouched by this call.
 	//
-	// "super"/"this" are also NOT asserted via normalizeDartCompatibility
-	// anymore: the former normalizeDartCollapsedLeafChildren adapter was
-	// removed and its two rules moved into resultCollapsedNamedLeafRules
-	// (parser_result_collapsed_helpers.go), applied by
-	// normalizeResultCollapsedNamedLeafChildren for every language rather than
-	// from inside normalizeDartCompatibility. Exercise that shared entry point
-	// directly here to keep the coverage.
-	normalizeResultCollapsedNamedLeafChildren(root, source, lang)
-	assertCollapsedKeywordChild(t, superNode, lang, "super")
-	assertCollapsedKeywordChild(t, thisNode, lang, "this")
+	// "super"/"this" are likewise native materialization ownership now. A
+	// caller-built childless result is intentionally left alone rather than
+	// reconstructed from display names after raw child identity is gone.
+	for _, node := range []*Node{finalNode, superNode, baseNode, thisNode, negationNode, relOpNode, gtNode, nullableNode, nullNode} {
+		if node.ChildCount() != 0 {
+			t.Fatalf("compatibility synthesized %d children for %s", node.ChildCount(), node.Type(lang))
+		}
+	}
 }
 
 func TestNormalizeDartComplexTypeArgumentFreeCallRestoresSelector(t *testing.T) {

@@ -29,35 +29,6 @@ func TestNormalizeElixirDropsNewlineBeforeCommentExtras(t *testing.T) {
 	}
 }
 
-func TestNormalizeElixirCollapsedLiteralChildren(t *testing.T) {
-	lang := testElixirCompatibilityLanguage()
-	source := []byte("false true nil")
-	arena := newNodeArena(arenaClassFull)
-	falseNode := newLeafNodeInArena(arena, 8, true, 0, 5, Point{}, Point{Column: 5})
-	trueNode := newLeafNodeInArena(arena, 8, true, 6, 10, Point{Column: 6}, Point{Column: 10})
-	nilNode := newLeafNodeInArena(arena, 15, true, 11, 14, Point{Column: 11}, Point{Column: 14})
-	root := newParentNodeInArena(arena, 1, true, []*Node{falseNode, trueNode, nilNode}, nil, 0)
-
-	normalizeElixirCompatibility(root, source, lang)
-
-	// Note: "boolean" ("false"/"true") is intentionally NOT asserted here
-	// anymore. The post-hoc patch that used to reconstruct its anonymous token
-	// child in normalizeElixirCollapsedLiteralChildren has been removed: the
-	// reduce engine's shouldKeepVisibleAnonymousTokenChild now keeps it
-	// unconditionally on real parses (see
-	// TestElixirBooleanKeepsTrueTokenChildViaEngine in grammars/), so
-	// falseNode/trueNode above stay untouched by this call.
-	//
-	// "nil" is also NOT restored by normalizeElixirCompatibility anymore: the
-	// normalizeElixirCollapsedLiteralChildren adapter was removed and its rule
-	// moved into resultCollapsedNamedLeafRules
-	// (parser_result_collapsed_helpers.go), applied by
-	// normalizeResultCollapsedNamedLeafChildren for every language. Exercise
-	// that shared entry point directly to keep the coverage.
-	normalizeResultCollapsedNamedLeafChildren(root, source, lang)
-	assertCollapsedKeywordChild(t, nilNode, lang, "nil")
-}
-
 func TestNormalizeElixirMapContentKeywordPairs(t *testing.T) {
 	lang := testElixirCompatibilityLanguage()
 	arena := newNodeArena(arenaClassFull)

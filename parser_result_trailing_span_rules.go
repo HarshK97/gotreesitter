@@ -3,7 +3,7 @@ package gotreesitter
 // trailingSpanRuleKind selects which shared primitive a trailingSpanRule row
 // applies. Every kind is generic (parameterized by the row's fields); no
 // per-language logic lives outside this table -- the same spirit as
-// resultCollapsedNamedLeafRules (parser_result_collapsed_helpers.go) for the
+// collapsedChildOccurrenceRules (parser_collapsed_child_policy.go) for the
 // collapsed-named-leaf-child compat class.
 type trailingSpanRuleKind int
 

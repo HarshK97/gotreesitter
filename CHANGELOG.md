@@ -64,9 +64,10 @@ for tags and release notes while still in `0.x`.
   receipts, and upstream retirement of normalization shims before the next
   major performance milestone; performance gates remain advisory during this
   cleanup. All 23 collapsed named-leaf rows for six exact-profile built-in
-  languages now materialize natively across their admitted routes; the generic
-  compatibility walk remains as a zero-rewrite receipt and as the safety path
-  for caller-built, adapted, and other custom languages.
+  languages now materialize natively across their admitted routes. The generic
+  compatibility walk and its synthetic reconstruction helpers are retired;
+  exact-profile adapted artifacts retain the native route, while unregistered
+  custom artifacts fail closed instead of inferring children from display names.
 
 - **Compact admission now ratchets breadth, depth, and edit reuse.** The shared
   production clean-tail proof admits compact roots that stop immediately before
