@@ -5,7 +5,7 @@
     "dispatcher_arms": 78,
     "dispatcher_languages": 85,
     "dispatcher_predicates": 1,
-    "generic_passes": 3,
+    "generic_passes": 2,
     "post_finalization_arms": 3,
     "post_finalization_languages": 3
   },
@@ -2319,7 +2319,7 @@
       "languages": [
         "*"
       ],
-      "purpose": "Retain fail-closed collapsed named-leaf repair for childless results after raw child identity is lost; exact-profile built-ins and true adapted clones retaining the exact-profile receipt plus exact parent/raw-child metadata identities now retain registered occurrences natively. The synthetic residual's live construction provenance is unknown.",
+      "purpose": "Historical generic collapsed named-leaf repair, retired after exact-profile built-ins and true adapted clones began retaining every registered parent/raw-child occurrence natively. Caller-built artifacts now fail closed unless they carry the explicit capability and exact metadata receipt.",
       "authoritative_owner": "materialization",
       "witnesses": [
         "parser_result_collapsed_helpers_test.go",
@@ -2329,15 +2329,16 @@
         "grammars/collapsed_child_native_regression_test.go",
         "internal/parsercorephase0/selected_store_test.go"
       ],
-      "retirement_condition": "Delete only after every live provenance for the 23 quantified synthetic residual rows is identified and preserves raw child identity upstream, every registered exact built-in and exact-profile adapted witness reports zero rewrites, production, compact, forest, and incremental route receipts are exact, the C oracle reports a nonzero equal occurrence census for every pair, and the retirement commit is recorded.",
+      "retirement_condition": "Satisfied: all 23 registered rows retain raw child identity during materialization, exact and adapted artifacts compile the same occurrence policy, production, compact, forest, and incremental witnesses are native, and the C oracle reports a nonzero equal occurrence census for every pair.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
+      "status": "retired",
+      "retired_commit": "7fe7aac5c32c1d63d50b50022fd6bc5afaeb9b90",
       "receipt_refs": [
         "parser_collapsed_child_policy_test.go",
         "parser_collapsed_child_policy_external_test.go",

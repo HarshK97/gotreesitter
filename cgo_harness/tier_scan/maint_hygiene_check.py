@@ -22,7 +22,6 @@ ROOT = Path(__file__).resolve().parents[2]
 APPROVED_RESULT_HELPERS = {
     "parser_result.go",
     "parser_result_compat.go",
-    "parser_result_collapsed_helpers.go",
     "parser_result_helpers.go",
     "parser_result_node_helpers.go",
     "parser_result_root_build.go",

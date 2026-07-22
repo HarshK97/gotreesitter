@@ -18,11 +18,11 @@ The v1 registry freezes the current surface:
 - 78 explicit `runLanguageResultCompatibility` switch arms covering 85
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
-- three generic passes that run after language dispatch;
+- two generic passes that run after language dispatch;
 - one retained post-finalization second-pass fixpoint with three switch arms
   covering Scala, HTML, and JavaScript.
 
-That is 83 live registry entries. The registry covers only this documented
+That is 82 live registry entries. The registry covers only this documented
 internal result-compatibility tier; scheduler experiments and other engine
 research belong in their owning subsystem's durable traces.
 
@@ -81,17 +81,12 @@ admitted by the exact-profile receipt and compiled from exact named parent and
 raw-child metadata identities, so true adapted clones retaining both take the
 same upstream construction path. A display-name or pair-level metadata match
 alone does not admit a caller-built or custom artifact. Focused production,
-compact, forest, and incremental witnesses keep the generic pass at zero
-rewrites on those routes.
-
-The generic walk remains live as fail-closed coverage for childless results
-whose raw child identity has already been lost. Its synthetic residual witness
-is intentionally one rewrite for each of the 23 registered rows, but does not
-identify a live recovery, election, or other construction route. Retirement
-first requires finding and retaining the occurrence at every live provenance,
-followed by exact route receipts (including a nonzero per-pair C-oracle
-occurrence census) and an actual retirement commit recorded in the ownership
-registry.
+compact, forest, and incremental witnesses prove the shape without a
+compatibility traversal, and the per-pair C-oracle census is nonzero and equal.
+The generic reconstruction walk is therefore retired and deleted. Once raw
+child identity has been lost, a display-name-compatible caller artifact is no
+longer guessed into shape; custom artifacts must carry the explicit native
+capability and exact metadata receipt to opt in.
 
 ## The retained second pass
 

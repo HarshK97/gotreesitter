@@ -13,7 +13,6 @@ type collapsedChildOccurrenceRow struct {
 	parent     string
 	child      string
 	childNamed bool
-	bySource   bool
 }
 
 func TestCollapsedChildOccurrencePolicyCoversExactAndAdaptedArtifacts(t *testing.T) {
@@ -35,17 +34,16 @@ func TestCollapsedChildOccurrencePolicyCoversExactAndAdaptedArtifacts(t *testing
 		{language: "apex", load: grammars.ApexLanguage, parent: "upsert", child: "upsert"},
 		{language: "apex", load: grammars.ApexLanguage, parent: "user", child: "user"},
 		{language: "kotlin", load: grammars.KotlinLanguage, parent: "identifier", child: "simple_identifier", childNamed: true},
-		{language: "hack", load: grammars.HackLanguage, parent: "true", child: "true", bySource: true},
-		{language: "hack", load: grammars.HackLanguage, parent: "false", child: "false", bySource: true},
-		{language: "hack", load: grammars.HackLanguage, parent: "null", child: "null", bySource: true},
-		{language: "dart", load: grammars.DartLanguage, parent: "super", child: "super", bySource: true},
-		{language: "dart", load: grammars.DartLanguage, parent: "this", child: "this", bySource: true},
-		{language: "elixir", load: grammars.ElixirLanguage, parent: "nil", child: "nil", bySource: true},
+		{language: "hack", load: grammars.HackLanguage, parent: "true", child: "true"},
+		{language: "hack", load: grammars.HackLanguage, parent: "false", child: "false"},
+		{language: "hack", load: grammars.HackLanguage, parent: "null", child: "null"},
+		{language: "dart", load: grammars.DartLanguage, parent: "super", child: "super"},
+		{language: "dart", load: grammars.DartLanguage, parent: "this", child: "this"},
+		{language: "elixir", load: grammars.ElixirLanguage, parent: "nil", child: "nil"},
 	}
 	if len(rows) != 23 {
 		t.Fatalf("collapsed-child occurrence rows=%d, want 23", len(rows))
 	}
-	var residualRewrites uint64
 	for _, row := range rows {
 		row := row
 		t.Run(row.language+"/"+row.parent, func(t *testing.T) {
@@ -84,40 +82,7 @@ func TestCollapsedChildOccurrencePolicyCoversExactAndAdaptedArtifacts(t *testing
 				}
 			}
 
-			if row.bySource {
-				meta := lang.SymbolMetadata[child]
-				if int(child) >= int(lang.TokenCount) || !meta.Visible || meta.Named || lang.SymbolNames[child] != row.child {
-					t.Fatalf("source row child=%d token_count=%d meta=%+v canonical=%q", child, lang.TokenCount, meta, lang.SymbolNames[child])
-				}
-			}
-
-			end := uint32(len(row.child))
-			collapsed := gotreesitter.NewLeafNode(parent, true, 0, end, gotreesitter.Point{}, gotreesitter.Point{Column: end})
-			// A caller can still hand the compatibility matcher a childless result
-			// after raw occurrence identity has already been lost. This quantifies
-			// the residual but does not establish whether recovery, election, or
-			// another live construction route produced it; provenance stays unknown.
-			visited, rewritten := gotreesitter.NormalizeCollapsedNamedLeafForTest(
-				collapsed, []byte(row.child), lang, row.parent, row.child, row.childNamed, row.bySource,
-			)
-			if visited == 0 || rewritten != 1 || collapsed.ChildCount() != 1 ||
-				collapsed.Child(0).Symbol() != child || collapsed.Child(0).IsNamed() != row.childNamed {
-				t.Fatalf("legacy repair visited=%d rewritten=%d shape=%s", visited, rewritten, collapsed.SExpr(lang))
-			}
-			residualRewrites += rewritten
-			if row.bySource {
-				wrongSource := gotreesitter.NewLeafNode(parent, true, 0, end, gotreesitter.Point{}, gotreesitter.Point{Column: end})
-				_, rewritten = gotreesitter.NormalizeCollapsedNamedLeafForTest(
-					wrongSource, []byte("xxxxxx")[:len(row.child)], lang, row.parent, row.child, row.childNamed, true,
-				)
-				if rewritten != 0 || wrongSource.ChildCount() != 0 {
-					t.Fatal("source-verified legacy repair accepted a different literal")
-				}
-			}
 		})
-	}
-	if residualRewrites != uint64(len(rows)) {
-		t.Fatalf("synthetic lost-identity residual rewrites=%d, want %d", residualRewrites, len(rows))
 	}
 }
 

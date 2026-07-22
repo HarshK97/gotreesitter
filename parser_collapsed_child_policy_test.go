@@ -2,7 +2,7 @@ package gotreesitter
 
 import "testing"
 
-func collapsedChildPolicyTestLanguage(rule collapsedNamedLeafRule) (*Language, Symbol, Symbol) {
+func collapsedChildPolicyTestLanguage(rule collapsedChildOccurrenceRule) (*Language, Symbol, Symbol) {
 	lang := &Language{
 		Name:                      rule.languageName,
 		TokenCount:                4,
@@ -19,10 +19,10 @@ func collapsedChildPolicyTestLanguage(rule collapsedNamedLeafRule) (*Language, S
 }
 
 func TestCollapsedChildOccurrencePolicyNativelyRetainsAllLedgerRows(t *testing.T) {
-	if got, want := len(resultCollapsedNamedLeafRules), 23; got != want {
+	if got, want := len(collapsedChildOccurrenceRules), 23; got != want {
 		t.Fatalf("collapsed-child ledger rows = %d, want %d", got, want)
 	}
-	for _, rule := range resultCollapsedNamedLeafRules {
+	for _, rule := range collapsedChildOccurrenceRules {
 		rule := rule
 		t.Run(rule.languageName+"/"+rule.parentName, func(t *testing.T) {
 			lang, parentSymbol, childSymbol := collapsedChildPolicyTestLanguage(rule)
@@ -96,7 +96,7 @@ func TestCollapsedChildOccurrencePolicyNegativeControls(t *testing.T) {
 	})
 
 	t.Run("fielded-unary-remains-fielded", func(t *testing.T) {
-		rule := collapsedNamedLeafRule{languageName: "apex", parentName: "super", childName: "super"}
+		rule := collapsedChildOccurrenceRule{languageName: "apex", parentName: "super", childName: "super"}
 		lang, parentSymbol, childSymbol := collapsedChildPolicyTestLanguage(rule)
 		lang.FieldMapSlices = [][2]uint16{{0, 1}}
 		lang.FieldMapEntries = []FieldMapEntry{{FieldID: 1, ChildIndex: 0}}
@@ -114,7 +114,7 @@ func TestCollapsedChildOccurrencePolicyNegativeControls(t *testing.T) {
 	})
 
 	t.Run("inherited-field-is-not-promoted-to-direct", func(t *testing.T) {
-		rule := collapsedNamedLeafRule{languageName: "ruby", parentName: "bare_string", childName: "string_content", childNamed: true}
+		rule := collapsedChildOccurrenceRule{languageName: "ruby", parentName: "bare_string", childName: "string_content", childNamed: true}
 		lang, parentSymbol, childSymbol := collapsedChildPolicyTestLanguage(rule)
 		lang.FieldMapSlices = [][2]uint16{{0, 1}}
 		lang.FieldMapEntries = []FieldMapEntry{{FieldID: 1, ChildIndex: 0, Inherited: true}}
@@ -145,7 +145,7 @@ func TestCollapsedChildOccurrencePolicyNegativeControls(t *testing.T) {
 		{name: "error", mark: func(n *Node) { n.setHasError(true) }, check: func(n *Node) bool { return n.hasError() }},
 	} {
 		t.Run("flagged-alias-fails-closed-"+test.name, func(t *testing.T) {
-			rule := collapsedNamedLeafRule{languageName: "ruby", parentName: "bare_string", childName: "string_content", childNamed: true}
+			rule := collapsedChildOccurrenceRule{languageName: "ruby", parentName: "bare_string", childName: "string_content", childNamed: true}
 			lang, parentSymbol, childSymbol := collapsedChildPolicyTestLanguage(rule)
 			lang.AliasSequences = [][]Symbol{{parentSymbol}}
 			parser := NewParser(lang)
@@ -165,7 +165,7 @@ func TestCollapsedChildOccurrencePolicyNegativeControls(t *testing.T) {
 	}
 
 	t.Run("extra-skips-aliasing-on-live-child-build-path", func(t *testing.T) {
-		rule := collapsedNamedLeafRule{languageName: "ruby", parentName: "bare_string", childName: "string_content", childNamed: true}
+		rule := collapsedChildOccurrenceRule{languageName: "ruby", parentName: "bare_string", childName: "string_content", childNamed: true}
 		lang, parentSymbol, childSymbol := collapsedChildPolicyTestLanguage(rule)
 		lang.AliasSequences = [][]Symbol{{parentSymbol}}
 		parser := NewParser(lang)
@@ -181,7 +181,7 @@ func TestCollapsedChildOccurrencePolicyNegativeControls(t *testing.T) {
 	})
 
 	t.Run("uncertified-exact-metadata-identities-do-not-opt-in", func(t *testing.T) {
-		for _, rule := range []collapsedNamedLeafRule{
+		for _, rule := range []collapsedChildOccurrenceRule{
 			{languageName: "apex", parentName: "super", childName: "super"},
 			{languageName: "ruby", parentName: "bare_string", childName: "string_content", childNamed: true},
 		} {
@@ -210,12 +210,6 @@ func TestCollapsedChildOccurrencePolicyNegativeControls(t *testing.T) {
 		if parser.retainsCollapsedChildOccurrence(2, 3) || parser.retainsCollapsedChildOccurrence(2, 2) {
 			t.Fatal("named alias collision compiled anonymous-child ownership")
 		}
-		arena := newNodeArena(arenaClassFull)
-		collapsed := newLeafNodeInArena(arena, 2, true, 0, 5, Point{}, Point{Column: 5})
-		stats := normalizeResultCollapsedNamedLeafChildren(collapsed, []byte("super"), lang)
-		if stats.nodesRewritten != 0 || collapsed.ChildCount() != 0 {
-			t.Fatalf("named alias collision entered anonymous safety net: stats=%+v shape=%s", stats, collapsed.SExpr(lang))
-		}
 	})
 
 	t.Run("unregistered-custom-artifact-does-not-opt-in", func(t *testing.T) {
@@ -235,7 +229,7 @@ func TestCollapsedChildOccurrencePolicyNegativeControls(t *testing.T) {
 	})
 }
 
-func TestCollapsedNamedLeafCompatibilityTraversalIsDisabled(t *testing.T) {
+func TestCollapsedNamedLeafCompatibilityTraversalIsRetired(t *testing.T) {
 	lang := &Language{
 		Name:       "apex",
 		TokenCount: 4,
@@ -257,10 +251,10 @@ func TestCollapsedNamedLeafCompatibilityTraversalIsDisabled(t *testing.T) {
 	normalizeResultCompatibility(root, []byte("super"), parser, nil)
 
 	if root.ChildCount() != 0 {
-		t.Fatalf("disabled compatibility traversal synthesized %d children", root.ChildCount())
+		t.Fatalf("retired compatibility traversal synthesized %d children", root.ChildCount())
 	}
-	pass := parser.normalizationStats.namedPass("collapsed_named_leaf_children")
-	if pass.checked != 1 || pass.run != 0 || pass.nodesVisited != 0 || pass.nodesRewritten != 0 {
-		t.Fatalf("collapsed-child pass checked/run/visited/rewritten=%d/%d/%d/%d", pass.checked, pass.run, pass.nodesVisited, pass.nodesRewritten)
+	stats := parser.normalizationStats
+	if stats.passesChecked != 0 || stats.passesRun != 0 || stats.nodesVisited != 0 || stats.nodesRewritten != 0 {
+		t.Fatalf("retired compatibility traversal reported runtime counters: %+v", stats)
 	}
 }

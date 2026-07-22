@@ -244,17 +244,8 @@ func assertCollapsedChildRouteTree(t *testing.T, route string, tree *gotreesitte
 	if root == nil || root.HasError() {
 		t.Fatalf("%s unclean fixture: %v", route, root)
 	}
-	if runtime := tree.ParseRuntime(); route == "compact-routed" || route == "forest" {
-		if runtime.NormalizationPassesChecked != 0 || runtime.NormalizationPassesRun != 0 || runtime.NormalizationNodesVisited != 0 || runtime.NormalizationNodesRewritten != 0 {
-			t.Fatalf("%s normalization checked/run/visited/rewritten=%d/%d/%d/%d", route, runtime.NormalizationPassesChecked, runtime.NormalizationPassesRun, runtime.NormalizationNodesVisited, runtime.NormalizationNodesRewritten)
-		}
-	} else {
-		if runtime.NormalizationPassesChecked != 1 || runtime.NormalizationPassesRun != 0 ||
-			runtime.NormalizationNodesVisited != 0 || runtime.NormalizationNodesRewritten != 0 {
-			t.Fatalf("%s normalization checked/run/visited/rewritten=%d/%d/%d/%d", route,
-				runtime.NormalizationPassesChecked, runtime.NormalizationPassesRun,
-				runtime.NormalizationNodesVisited, runtime.NormalizationNodesRewritten)
-		}
+	if runtime := tree.ParseRuntime(); runtime.NormalizationPassesChecked != 0 || runtime.NormalizationPassesRun != 0 || runtime.NormalizationNodesVisited != 0 || runtime.NormalizationNodesRewritten != 0 {
+		t.Fatalf("%s normalization checked/run/visited/rewritten=%d/%d/%d/%d", route, runtime.NormalizationPassesChecked, runtime.NormalizationPassesRun, runtime.NormalizationNodesVisited, runtime.NormalizationNodesRewritten)
 	}
 	for parentType, want := range wants {
 		parents := collapsedChildRegressionNodes(root, lang, parentType)
@@ -271,18 +262,6 @@ func assertCollapsedChildRouteTree(t *testing.T, route string, tree *gotreesitte
 			}
 		}
 	}
-}
-
-func collapsedChildNormalizationPass(runtime gotreesitter.ParseRuntime) (gotreesitter.NormalizationPassRuntime, bool) {
-	if runtime.NormalizationPasses == nil {
-		return gotreesitter.NormalizationPassRuntime{}, false
-	}
-	for _, pass := range *runtime.NormalizationPasses {
-		if pass.Name == "collapsed_named_leaf_children" {
-			return pass, true
-		}
-	}
-	return gotreesitter.NormalizationPassRuntime{}, false
 }
 
 func collapsedChildRegressionNodes(root *gotreesitter.Node, lang *gotreesitter.Language, typ string) []*gotreesitter.Node {
