@@ -2319,16 +2319,17 @@
       "languages": [
         "*"
       ],
-      "purpose": "Retain generic collapsed named-leaf child compatibility as a safety net for uncertified and custom languages and as a zero-rewrite receipt for exact-profile built-ins that now produce the shape natively.",
+      "purpose": "Retain fail-closed collapsed named-leaf repair for childless results after raw child identity is lost; exact-profile built-ins and true adapted clones retaining the exact-profile receipt plus exact parent/raw-child metadata identities now retain registered occurrences natively. The synthetic residual's live construction provenance is unknown.",
       "authoritative_owner": "materialization",
       "witnesses": [
         "parser_result_collapsed_helpers_test.go",
         "parser_collapsed_child_policy_test.go",
         "parser_collapsed_child_policy_external_test.go",
+        "cgo_harness/collapsed_child_occurrence_parity_test.go",
         "grammars/collapsed_child_native_regression_test.go",
         "internal/parsercorephase0/selected_store_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively with zero rewrites for every registered witness, production, compact, forest, incremental, and C-oracle route receipts are exact, and the compatibility policy for caller-built, adapted, and other custom languages is explicitly documented.",
+      "retirement_condition": "Delete only after every live provenance for the 23 quantified synthetic residual rows is identified and preserves raw child identity upstream, every registered exact built-in and exact-profile adapted witness reports zero rewrites, production, compact, forest, and incremental route receipts are exact, the C oracle reports a nonzero equal occurrence census for every pair, and the retirement commit is recorded.",
       "route_coverage": {
         "production": "shared_result_compatibility_tail",
         "compact": "shared_result_compatibility_tail",
