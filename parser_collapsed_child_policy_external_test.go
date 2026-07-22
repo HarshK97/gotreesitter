@@ -60,13 +60,19 @@ func TestCollapsedChildOccurrencePolicyCoversExactAndAdaptedArtifacts(t *testing
 			}
 			// A true adapted clone retains the exact built-in profile receipt and
 			// symbol table; display-name-compatible caller artifacts are not covered.
-			adapted := *lang
+			adapted := &gotreesitter.Language{
+				Name:                      lang.Name,
+				TokenCount:                lang.TokenCount,
+				NativeResultCompatibility: lang.NativeResultCompatibility,
+				SymbolNames:               lang.SymbolNames,
+				SymbolMetadata:            lang.SymbolMetadata,
+			}
 			for _, artifact := range []struct {
 				name string
 				lang *gotreesitter.Language
 			}{
 				{name: "exact", lang: lang},
-				{name: "adapted", lang: &adapted},
+				{name: "adapted", lang: adapted},
 			} {
 				parser := gotreesitter.NewParser(artifact.lang)
 				if !gotreesitter.ParserRetainsCollapsedChildOccurrenceForTest(parser, parent, child) {
