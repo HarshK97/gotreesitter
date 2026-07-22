@@ -771,31 +771,25 @@ correctness/work-classification receipt rather than a representative
 comparative speed headline. Detailed history lives in
 [CHANGELOG.md](CHANGELOG.md).
 
-### Now — performance and extreme hygiene
+### Now — cleanup, ownership, and explainability
 
-- Keep correctness, C-oracle parity, and performance gates separate. Every
-  optimization must preserve the selected full-span tree before its timing
-  or memory result counts.
-- Hold the corrected materialized canonical full parse against the locked,
-  authenticated real-code publication benchmark. The historical 1.895x
-  result is not a target. No-tree, parser-core, and straight-LR lanes stay
-  attribution tools, not substitutes for the public benchmark.
-- Keep the exact-revision fleet sweep current with clean/error splits and
-  C-oracle fingerprints. Eliminate valid rows above 3x and all timeout,
-  hard-RSS, truncation, or unreported-stop cliffs, and prioritize absolute
-  user cost over ratio noise on tiny files.
-- Reduce recurring fixed work, discarded forest attempts, recovery and GLR
-  construction debris, retained scratch, and compatibility walks, but only
-  through mechanisms that generalize across measured witnesses.
-- Track wall time, allocations, retained arena/scratch bytes, and hard-cgroup
-  maximum RSS. Keep the public full-parse, incremental-edit, and
-  incremental no-edit benchmark lanes alongside the forking real-code
-  full-parse matrix; no-tree and synthetic straight-LR measurements stay
-  diagnostic.
-- Remove temporary telemetry and failed experimental paths when each lane
-  closes. Add no public parse variant or parser-core language-name switch
-  when an internal diagnostic or generated runtime profile can express the
-  need.
+- Correctness, portability, and supported parser depth are banked. Preserve
+  their receipts and keep correctness gates distinct from the currently
+  advisory performance gates.
+- Prioritize repository maintenance: remove obsolete experiments and
+  telemetry, reduce duplication, clarify subsystem ownership, improve
+  documentation, and keep ownership receipts current.
+- Retire result-normalization shims only after the authoritative parser,
+  scanner, materializer, or incremental mechanism owns the behavior and the
+  required route receipts prove the shim inert. Follow the
+  [compat-tier retirement guide](docs/compat-tier.md) for the mechanical
+  retirement contract.
+- Keep the authenticated public benchmarks as regression signals and preserve
+  their historical claims. Parser-core, no-tree, compact-candidate, and
+  synthetic lanes remain diagnostic rather than public performance claims.
+- After cleanup, the next major performance milestone is public
+  `Parser.Parse` at no more than **1.5x C** on the locked canonical real-code
+  benchmark. It is a future target, not a current gate or achieved result.
 
 ### Measured memory boundary
 

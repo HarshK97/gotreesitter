@@ -28,9 +28,14 @@ for tags and release notes while still in `0.x`.
 - **Result compatibility cleanup.** A source-of-truth ownership registry,
   supporting documentation, and a CI guard now track compatibility passes and
   their retirement criteria. The dead terminal-normalization wrapper was
-  removed, and recovered-tree cycle repair was replaced by an always-on,
-  non-mutating validator that fails closed with the public
-  `ParseStopInvariantViolation` reason.
+  removed, along with the unreferenced `walkResultTreePostorderUntil` and
+  `rewriteResultTreeChildrenPostorderWithStats` traversal helpers. Recovered-tree
+  cycle repair was replaced by an always-on, non-mutating validator that fails
+  closed with the public `ParseStopInvariantViolation` reason. The roadmap now
+  puts repository maintenance, explainability, documentation, ownership
+  receipts, and upstream retirement of normalization shims before the next
+  major performance milestone; performance gates remain advisory during this
+  cleanup.
 
 - **Compact admission now ratchets breadth, depth, and edit reuse.** The shared
   production clean-tail proof admits compact roots that stop immediately before
