@@ -9,5 +9,5 @@ func (p *Parser) parseStopReasonNow() ParseStopReason {
 }
 
 func parseStopReasonIsTerminal(reason ParseStopReason) bool {
-	return parseStopReasonIsActive(reason)
+	return parseStopReasonIsActive(reason) || reason == ParseStopInvariantViolation
 }

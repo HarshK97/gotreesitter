@@ -2898,11 +2898,10 @@ func (p *Parser) trailingEOFNodesFromPrefix(prefix glrStack) []*Node {
 // in-progress, other: arena clone} sentinel. The old eager-link-wiring
 // constructor (newParentNodeInArena → populateParentNode → setNodeParentLink)
 // corrupted that sentinel, so materializeTransientParentNodes then linked this
-// ERROR wrapper under itself — the cyclic-transient-tree defect that
-// stripResultTreeSelfCycles was left to mask. Route through
-// newRecoveryParentNodeInArena, which skips eager wiring while transient parents
-// are active (finalizeResultRoot wires links from the root anyway) and keeps the
-// eager-wiring constructor for incremental parses. See parser_recover_c.go and
+// ERROR wrapper under itself. Route through newRecoveryParentNodeInArena, which
+// skips eager wiring while transient parents are active (finalizeResultRoot wires
+// links from the root anyway) and keeps the eager-wiring constructor for
+// incremental parses. See parser_recover_c.go and
 // parser_recover_cycle_internal_test.go for the mechanism and pins.
 func (p *Parser) appendTrailingEOFRecoveryNodes(nodes []*Node, entries []stackEntry, cut int, tok Token, arena *nodeArena, nodeCount *int) ([]*Node, bool) {
 	recovered := false
@@ -4787,8 +4786,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 			return finalizeTree(errorTreeWithOwnedArena(reason), reason)
 		}
-		for _, n := range nodes {
-			stripResultTreeSelfCycles(n)
+		if invariantTree := recoveredResultInvariantErrorTree(nodes, source, p.language, arena); invariantTree != nil {
+			return finalizeTree(invariantTree, ParseStopInvariantViolation)
 		}
 		tree := p.buildResultFromNodes(nodes, source, arena, oldTree, &reuseState, &scratch.nodeLinks)
 		if root := rawRootOrNil(tree); root != nil {

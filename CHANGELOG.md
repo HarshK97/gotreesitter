@@ -25,6 +25,13 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
+- **Result compatibility cleanup.** A source-of-truth ownership registry,
+  supporting documentation, and a CI guard now track compatibility passes and
+  their retirement criteria. The dead terminal-normalization wrapper was
+  removed, and recovered-tree cycle repair was replaced by an always-on,
+  non-mutating validator that fails closed with the public
+  `ParseStopInvariantViolation` reason.
+
 - **Compact admission now ratchets breadth, depth, and edit reuse.** The shared
   production clean-tail proof admits compact roots that stop immediately before
   trailing parser padding, raising the 206-language smoke scorecard from 48 to

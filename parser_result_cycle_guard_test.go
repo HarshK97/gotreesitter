@@ -1,91 +1,37 @@
 package gotreesitter
 
-import (
-	"sync/atomic"
-	"testing"
-)
+import "testing"
 
-func TestStripResultTreeSelfCycles(t *testing.T) {
-	x := &Node{}
-	x.children = []*Node{x}
-	stripResultTreeSelfCycles(x)
-	for _, c := range x.children {
-		if c == x {
-			t.Fatal("self-reference not removed")
-		}
-	}
-
-	a := &Node{}
-	b := &Node{}
-	a.children = []*Node{b}
-	b.children = []*Node{a}
-	stripResultTreeSelfCycles(a)
-	for _, c := range b.children {
-		if c == a {
-			t.Fatal("ancestor back-edge not removed")
-		}
-	}
-
+func TestRecoveredResultNodesAcyclicIsNonMutating(t *testing.T) {
 	leaf := &Node{}
-	mid := &Node{children: []*Node{leaf}}
-	root := &Node{children: []*Node{mid}}
-	stripResultTreeSelfCycles(root)
-	if len(root.children) != 1 || root.children[0] != mid || len(mid.children) != 1 || mid.children[0] != leaf {
-		t.Fatal("clean tree was mutated")
+	left := &Node{children: []*Node{leaf}}
+	right := &Node{children: []*Node{leaf}}
+	root := &Node{children: []*Node{left, right}}
+	if !recoveredResultNodesAcyclic([]*Node{root}) {
+		t.Fatal("shared acyclic result graph rejected")
 	}
-
-	y := &Node{}
-	kept := &Node{}
-	y.children = []*Node{y, kept}
-	y.setFieldMetadata(
-		[]FieldID{1, 2},
-		[]uint8{fieldSourceDirect, fieldSourceInherited},
-	)
-	stripResultTreeSelfCycles(y)
-	if len(y.children) != 1 || y.children[0] != kept {
-		t.Fatalf("children after cycle strip = %v, want only kept child", y.children)
-	}
-	if len(y.fieldIDs()) != 1 || y.fieldIDs()[0] != 2 {
-		t.Fatalf("fieldIDs after cycle strip = %v, want [2]", y.fieldIDs())
-	}
-	if len(y.fieldSources()) != 1 || y.fieldSources()[0] != fieldSourceInherited {
-		t.Fatalf("fieldSources after cycle strip = %v, want inherited source", y.fieldSources())
-	}
-}
-
-// TestStripResultTreeSelfCyclesIsObservable pins the #110 band-aid conversion:
-// the strip is no longer silent. A clean tree leaves the counter untouched;
-// every dropped self/ancestor back-edge bumps debugResultTreeSelfCyclesStripped
-// so a future sentinel-corruption regression surfaces instead of being masked.
-func TestStripResultTreeSelfCyclesIsObservable(t *testing.T) {
-	leaf := &Node{}
-	mid := &Node{children: []*Node{leaf}}
-	root := &Node{children: []*Node{mid}}
-	before := atomic.LoadUint64(&debugResultTreeSelfCyclesStripped)
-	stripResultTreeSelfCycles(root)
-	if atomic.LoadUint64(&debugResultTreeSelfCyclesStripped) != before {
-		t.Fatalf("clean tree bumped the strip counter: %d -> %d", before, atomic.LoadUint64(&debugResultTreeSelfCyclesStripped))
+	if len(root.children) != 2 || root.children[0] != left || root.children[1] != right || left.children[0] != leaf || right.children[0] != leaf {
+		t.Fatal("validator mutated a clean result graph")
 	}
 
 	self := &Node{}
 	self.children = []*Node{self}
-	before = atomic.LoadUint64(&debugResultTreeSelfCyclesStripped)
-	stripResultTreeSelfCycles(self)
-	if len(self.children) != 0 {
-		t.Fatalf("self-edge not stripped; children=%v", self.children)
+	if recoveredResultNodesAcyclic([]*Node{self}) {
+		t.Fatal("validator accepted self-cycle")
 	}
-	if atomic.LoadUint64(&debugResultTreeSelfCyclesStripped) != before+1 {
-		t.Fatalf("self-cycle strip counter = %d, want %d", atomic.LoadUint64(&debugResultTreeSelfCyclesStripped), before+1)
+	if len(self.children) != 1 || self.children[0] != self {
+		t.Fatal("validator repaired the self-cycle instead of reporting it")
 	}
 
 	a := &Node{}
 	b := &Node{}
 	a.children = []*Node{b}
 	b.children = []*Node{a}
-	before = atomic.LoadUint64(&debugResultTreeSelfCyclesStripped)
-	stripResultTreeSelfCycles(a)
-	if atomic.LoadUint64(&debugResultTreeSelfCyclesStripped) != before+1 {
-		t.Fatalf("ancestor back-edge strip counter = %d, want %d", atomic.LoadUint64(&debugResultTreeSelfCyclesStripped), before+1)
+	if recoveredResultNodesAcyclic([]*Node{a}) {
+		t.Fatal("validator accepted ancestor back-edge")
+	}
+	if len(b.children) != 1 || b.children[0] != a {
+		t.Fatal("validator repaired the ancestor back-edge instead of reporting it")
 	}
 }
 
