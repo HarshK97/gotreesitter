@@ -19,7 +19,7 @@ package gotreesitter_test
 //
 // # What this gate actually measured (read before changing ceilings)
 //
-// Building the sweep below (four languages, three positions, three edit
+// Building the sweep below (five languages, three positions, three edit
 // classes, two size tiers) surfaced two things a single near-top fixture
 // cannot:
 //
@@ -60,14 +60,16 @@ package gotreesitter_test
 //     every position, not just at the top, and it is what this gate uses
 //     for MinByteReusePercent below.
 //
-// Coverage: four languages (Go, TypeScript, Python, CSS) at two committed
-// size tiers (~20KB, ~137KB) crossed with three edit classes (insert,
+// Coverage: five languages (Go, JavaScript, TypeScript, Python, CSS) at two
+// committed size tiers (~20KB, ~137KB) crossed with three edit classes (insert,
 // delete, replace) at three file positions (top ~0%, middle ~50%, bottom
-// ~99% through the file) -- 72 samples. A third size tier (~1MB) exists but
-// is gated behind GTS_W5_FULL_SWEEP=1 + GTS_W5_SLOW_TIER=1 (see w5Tiers)
+// ~99% through the file) -- 90 samples. A third size tier (~1MB) exists but
+// is gated behind GTS_W5_SLOW_TIER=1 (see w5Tiers)
 // because it pushes single-run wall time well past a fast local/CI budget;
 // it still asserts the same oracle and counter ceilings, it is just not run
-// on every `go test .`.
+// on every `go test .`. JavaScript and TypeScript additionally carry an
+// explicit delete-that-creates-ERROR lane at all three positions and both
+// committed sizes, matching the remaining issue #380 editor workload.
 //
 // Every sample enforces, unconditionally (the non-negotiable campaign
 // invariant, not a soft check):
@@ -83,6 +85,10 @@ package gotreesitter_test
 //     edited buffer.
 //  3. Per-language, per-position counter ceilings (w5Ceilings), which
 //     regress the build if a change reopens O(file) reparse cost.
+//  4. Source-scaled node-allocation and arena+scratch memory ceilings for
+//     both the incremental result and its independent fresh-parse oracle.
+//  5. For JS/TS transient-error deletes, explicit causal/work ceilings on
+//     tokens, parser iterations, recovery checks, retries, and stack fanout.
 //
 // # Ceiling table and provenance
 //
@@ -94,6 +100,7 @@ package gotreesitter_test
 //
 //	language    | RootNonLeafChanged ceiling (top / mid / bot) | MinByteReusePercent (top / mid / bot)
 //	go          | 16 / 16 / 16  (measured 9-10 flat)           | 90 / 90 / 90  (measured ~96 flat)
+//	javascript  | 20 / -  / -   (mid/bot scale, barred T2c)    | 90 / 70 / 55  (measured ~97 / ~80 / ~64)
 //	typescript  | 20 / -  / -   (mid/bot scale, barred T2c)    | 90 / 70 / 55  (measured ~97 / ~81 / ~65)
 //	css         | 12 / 12 / 12  (measured 3-7 flat)            | 90 / 90 / 90  (measured ~96 flat)
 //	python      | 8  / -  / -   (declines reuse, W4 open)      | 0  / 0  / 0   (measured 0 -- see below)
@@ -111,7 +118,7 @@ package gotreesitter_test
 //     constant with slack for box variance, satisfying the literal
 //     campaign instruction "clean-Go top-level edits rootNonLeafChanged <=
 //     16 regardless of size".
-//   - css top MinByteReusePercent=88 for the SWEEP's synthetic fixture
+//   - css top MinByteReusePercent=90 for the SWEEP's synthetic fixture
 //     (measured ~96 on this box). The campaign's literal instruction ("CSS
 //     near-top reuse >= 95%, today 99.5%") is enforced precisely, not with
 //     this generic sweep's slacker floor, but by a dedicated test using the
@@ -123,9 +130,10 @@ package gotreesitter_test
 //     the same fixture -- both are comfortably >= 95). This is the tracked
 //     "add a committed W1 measurement assertion" follow-up from that
 //     review, now enforced in CI instead of only recorded in a comment.
-//   - typescript, python: measured on this box via this harness (no
-//     campaign-recorded prior figure exists for these languages yet -- W4,
-//     the per-language scanner-quiescence proof, is still open for them).
+//   - javascript, typescript, python: measured on this box via this harness;
+//     no campaign-recorded prior figure exists for these fixture cells.
+//     JavaScript/TypeScript leading reuse awaits the T2c fragility proof,
+//     while Python's W4 indent-stack scanner-quiescence proof remains open.
 //   - python: MinByteReusePercent=0 at every position for insert/delete is
 //     an intentional "honest negative", not a placeholder. Measurement
 //     shows Python's insert/delete incremental parses currently take the
@@ -175,17 +183,9 @@ import (
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
-// w5FullSweep reports whether the ~137KB tier should be added to the
-// default ~20KB-only sweep. Unset, only the fast tier runs as part of
-// `go test .`.
-func w5FullSweep() bool {
-	return strings.TrimSpace(os.Getenv("GTS_W5_FULL_SWEEP")) != ""
-}
-
 // w5SlowTier reports whether the ~1MB size tier should be included. Only
-// meaningful when w5FullSweep is also set; the 1MB tier is opt-in even for
-// the full sweep, matching the campaign spec's "1MB env-gated as the slow
-// tier" instruction.
+// the 1MB tier is opt-in, matching the campaign spec's "1MB env-gated as
+// the slow tier" instruction. The 20KB and 137KB tiers are always committed.
 func w5SlowTier() bool {
 	return strings.TrimSpace(os.Getenv("GTS_W5_SLOW_TIER")) != ""
 }
@@ -226,11 +226,11 @@ const (
 func (p w5Position) String() string {
 	switch p {
 	case w5Top:
-		return "top"
+		return "start"
 	case w5Middle:
 		return "middle"
 	case w5Bottom:
-		return "bottom"
+		return "end"
 	default:
 		return "unknown"
 	}
@@ -262,10 +262,11 @@ var (
 // (verified empirically, not just asserted -- see the harness's own probe
 // history).
 type w5LangSpec struct {
-	name   string
-	lang   func() *gts.Language
-	build  func(targetBytes int) (src []byte, itemCount int)
-	marker func(itemIndex int) string // substring ending right after the item's index digits
+	name        string
+	lang        func() *gts.Language
+	build       func(targetBytes int) (src []byte, itemCount int)
+	marker      func(itemIndex int) string // substring ending right after the item's index digits
+	errorMarker func(itemIndex int) string // optional substring whose last byte is required syntax
 }
 
 const w5MinItems = 40
@@ -287,7 +288,18 @@ func w5BuildTypeScript(targetBytes int) ([]byte, int) {
 	b.Grow(targetBytes + 256)
 	n := 0
 	for b.Len() < targetBytes || n < w5MinItems {
-		fmt.Fprintf(&b, "export function f%d(a: number): number {\n  const v = a + %d;\n  return v;\n}\n\n", n, n)
+		fmt.Fprintf(&b, "export function f%d(a: number): number {\n  const v%d = a + %d;\n  return v%d;\n}\n\n", n, n, n, n)
+		n++
+	}
+	return []byte(b.String()), n
+}
+
+func w5BuildJavaScript(targetBytes int) ([]byte, int) {
+	var b strings.Builder
+	b.Grow(targetBytes + 256)
+	n := 0
+	for b.Len() < targetBytes || n < w5MinItems {
+		fmt.Fprintf(&b, "export function j%d(a) {\n  const v%d = a + %d;\n  return v%d;\n}\n\n", n, n, n, n)
 		n++
 	}
 	return []byte(b.String()), n
@@ -317,7 +329,8 @@ func w5BuildCSS(targetBytes int) ([]byte, int) {
 
 var w5Langs = []w5LangSpec{
 	{name: "go", lang: grammars.GoLanguage, build: w5BuildGo, marker: func(i int) string { return fmt.Sprintf("G%d(", i) }},
-	{name: "typescript", lang: grammars.TypescriptLanguage, build: w5BuildTypeScript, marker: func(i int) string { return fmt.Sprintf("f%d(", i) }},
+	{name: "javascript", lang: grammars.JavascriptLanguage, build: w5BuildJavaScript, marker: func(i int) string { return fmt.Sprintf("j%d(", i) }, errorMarker: func(i int) string { return fmt.Sprintf("const v%d =", i) }},
+	{name: "typescript", lang: grammars.TypescriptLanguage, build: w5BuildTypeScript, marker: func(i int) string { return fmt.Sprintf("f%d(", i) }, errorMarker: func(i int) string { return fmt.Sprintf("const v%d =", i) }},
 	{name: "python", lang: grammars.PythonLanguage, build: w5BuildPython, marker: func(i int) string { return fmt.Sprintf("f%d(", i) }},
 	{name: "css", lang: grammars.CssLanguage, build: w5BuildCSS, marker: func(i int) string { return fmt.Sprintf("item-%d ", i) }},
 }
@@ -354,12 +367,23 @@ func w5LastDigitOffset(t *testing.T, src []byte, marker string) int {
 	return idx + len(marker) - 2
 }
 
+// w5LastByteOffset finds the last byte in marker. The JS/TS transient-error
+// lane uses it to delete a required assignment operator from a declaration,
+// guaranteeing the edited fresh parse contains ERROR/MISSING without making
+// recovery consume neighboring top-level declarations.
+func w5LastByteOffset(t *testing.T, src []byte, marker string) int {
+	t.Helper()
+	idx := bytes.Index(src, []byte(marker))
+	if idx < 0 {
+		t.Fatalf("w5 fixture invariant: marker %q not found in generated corpus", marker)
+	}
+	return idx + len(marker) - 1
+}
+
 // w5ApplyEdit builds the edited buffer and the corresponding InputEdit for a
-// single-byte insert/delete/replace at offset, which must be a decimal
-// digit (w5LastDigitOffset's contract): duplicate it (insert), drop it
-// (delete), or replace it with a different decimal digit (replace). All
-// three keep the surrounding token a valid identifier/number suffix in
-// every gate language.
+// single-byte insert/delete/replace at offset. Insert/replace require a decimal
+// digit (w5LastDigitOffset's contract); delete also supports the punctuation
+// offset used by the explicit JS/TS transient-error lane.
 func w5ApplyEdit(src []byte, offset int, class w5EditClass) ([]byte, gts.InputEdit) {
 	startPoint := w1bPointAt(src, offset)
 	switch class {
@@ -396,24 +420,32 @@ func w5ApplyEdit(src []byte, offset int, class w5EditClass) ([]byte, gts.InputEd
 // result, profiled incremental parse of the result, plus the oracle diff
 // and wall time.
 type w5Sample struct {
-	Lang        string
-	Size        string
-	Class       w5EditClass
-	Position    w5Position
-	Profile     gts.IncrementalParseProfile
-	EditedLen   int
-	OracleDiff  string
-	FullSpanOK  bool
-	IncrWallNs  int64
-	FreshWallNs int64
+	Lang         string
+	Size         string
+	Class        w5EditClass
+	Position     w5Position
+	Profile      gts.IncrementalParseProfile
+	FreshRuntime gts.ParseRuntime
+	EditedLen    int
+	OracleDiff   string
+	FullSpanOK   bool
+	FreshError   bool
+	IncrError    bool
+	IncrWallNs   int64
+	FreshWallNs  int64
 }
 
 func w5RunSample(t *testing.T, spec w5LangSpec, tier w5SizeTier, class w5EditClass, pos w5Position) w5Sample {
 	t.Helper()
-	lang := spec.lang()
 	src, itemCount := spec.build(tier.targetSize)
 	sites := w5EditSiteIndices(itemCount)
 	offset := w5LastDigitOffset(t, src, spec.marker(sites[pos]))
+	return w5RunSampleAtOffset(t, spec, tier, class, pos, src, offset)
+}
+
+func w5RunSampleAtOffset(t *testing.T, spec w5LangSpec, tier w5SizeTier, class w5EditClass, pos w5Position, src []byte, offset int) w5Sample {
+	t.Helper()
+	lang := spec.lang()
 
 	parser := gts.NewParser(lang)
 	oldTree, err := parser.Parse(src)
@@ -435,6 +467,7 @@ func w5RunSample(t *testing.T, spec w5LangSpec, tier w5SizeTier, class w5EditCla
 		t.Fatalf("%s/%s fresh parse of edited: %v", spec.name, tier.name, err)
 	}
 	defer freshTree.Release()
+	freshRuntime := freshTree.ParseRuntime()
 
 	oldTree.Edit(edit)
 	incrStart := time.Now()
@@ -450,8 +483,50 @@ func w5RunSample(t *testing.T, spec w5LangSpec, tier w5SizeTier, class w5EditCla
 
 	return w5Sample{
 		Lang: spec.name, Size: tier.name, Class: class, Position: pos,
-		Profile: prof, EditedLen: len(edited), OracleDiff: diff, FullSpanOK: fullSpan,
+		Profile: prof, FreshRuntime: freshRuntime, EditedLen: len(edited), OracleDiff: diff, FullSpanOK: fullSpan,
+		FreshError: freshTree.RootNode().HasError(), IncrError: incrTree.RootNode().HasError(),
 		IncrWallNs: incrWall.Nanoseconds(), FreshWallNs: freshWall.Nanoseconds(),
+	}
+}
+
+const (
+	// Every W5 lane, including its independent fresh oracle, stays within a
+	// deterministic linear allocation envelope. The fixed term covers parser
+	// scratch slabs retained from an earlier 1MiB lane in this same process;
+	// the per-KiB term covers grammar/tree density variation.
+	//
+	// Provenance (combined slow-tier run, all languages sequential): maximum
+	// incremental-or-fresh arena+scratch was <42.0MB at 20KB, <49.5MB at
+	// 137KB, and <162.5MB at 1MiB. The affine ceiling below is approximately
+	// 53.8MB, 72.9MB, and 218.3MB at those generated-source sizes: enough
+	// cross-platform/capacity-rounding slack while still bounding linear growth.
+	w5MaxNodesPerKiB          = 1400
+	w5MemoryFixedBytes  int64 = 48 << 20
+	w5MemoryPerKiBBytes int64 = 160 << 10
+)
+
+func w5CheckMemoryAllocation(t *testing.T, s w5Sample) {
+	t.Helper()
+	kib := int64((s.EditedLen + 1023) / 1024)
+	maxMemory := w5MemoryFixedBytes + kib*w5MemoryPerKiBBytes
+	maxNodes := w5PerKiBCeiling(s.EditedLen, w5MaxNodesPerKiB)
+
+	incrMemory := s.Profile.ArenaBytesAllocated + s.Profile.ScratchBytesAllocated
+	if incrMemory > maxMemory || s.Profile.NewNodesAllocated > maxNodes {
+		t.Fatalf("%s/%s/%s/%s: incremental allocation ceiling exceeded: memory=%d/%d newNodes=%d/%d",
+			s.Lang, s.Size, s.Class, s.Position, incrMemory, maxMemory, s.Profile.NewNodesAllocated, maxNodes)
+	}
+	fresh := s.FreshRuntime
+	if fresh.ArenaBytesAllocated < 0 || fresh.ScratchBytesAllocated < 0 ||
+		fresh.EntryScratchBytesAllocated < 0 || fresh.GSSBytesAllocated < 0 || fresh.NodesAllocated < 0 {
+		t.Fatalf("%s/%s/%s/%s: negative fresh-parse allocation counter: arena=%d scratch=%d entry=%d gss=%d nodes=%d",
+			s.Lang, s.Size, s.Class, s.Position, fresh.ArenaBytesAllocated, fresh.ScratchBytesAllocated,
+			fresh.EntryScratchBytesAllocated, fresh.GSSBytesAllocated, fresh.NodesAllocated)
+	}
+	freshMemory := fresh.ArenaBytesAllocated + fresh.ScratchBytesAllocated
+	if freshMemory > maxMemory || uint64(fresh.NodesAllocated) > maxNodes {
+		t.Fatalf("%s/%s/%s/%s: fresh-oracle allocation ceiling exceeded: memory=%d/%d nodes=%d/%d",
+			s.Lang, s.Size, s.Class, s.Position, freshMemory, maxMemory, fresh.NodesAllocated, maxNodes)
 	}
 }
 
@@ -535,6 +610,15 @@ var w5Ceilings = map[string]w5Ceiling{
 		Middle:                     w5PositionCeiling{MinByteReusePercent: 70},
 		Bottom:                     w5PositionCeiling{MinByteReusePercent: 55},
 	},
+	// javascript shares TypeScript's ASI/ambiguous-expression constraints and
+	// the same measured reuse shape. The dedicated transient-error delete gate
+	// below carries the stricter recovery-work contract for malformed edits.
+	"javascript": {
+		MaxRootNonLeafChangedAtTop: 20,
+		Top:                        w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 20},
+		Middle:                     w5PositionCeiling{MinByteReusePercent: 70},
+		Bottom:                     w5PositionCeiling{MinByteReusePercent: 55},
+	},
 	// css: flattened by T2a on the production (non-forest) route, the same as go.
 	// Measured ~95.8-95.9% byte reuse and ReuseRejectRootNonLeafChanged 3-7 at
 	// every position (was middle 15598 / 85.8% and bottom 31163 / 75.7% at 137KB).
@@ -571,8 +655,9 @@ func (c w5Ceiling) forPosition(pos w5Position) w5PositionCeiling {
 	}
 }
 
-// w5Check applies the oracle and counter assertions for one sample.
-func w5Check(t *testing.T, s w5Sample) {
+// w5CheckCommon applies the correctness and resource-observability contract
+// shared by clean and transient-error lanes.
+func w5CheckCommon(t *testing.T, s w5Sample) {
 	t.Helper()
 	if s.OracleDiff != "" {
 		t.Fatalf("%s/%s/%s/%s: oracle divergence (incremental != fresh parse): %s",
@@ -581,15 +666,43 @@ func w5Check(t *testing.T, s w5Sample) {
 	if !s.FullSpanOK {
 		t.Fatalf("%s/%s/%s/%s: incremental root does not cover the full edited buffer", s.Lang, s.Size, s.Class, s.Position)
 	}
+	if s.Profile.ArenaBytesAllocated < 0 || s.Profile.ScratchBytesAllocated < 0 ||
+		s.Profile.EntryScratchBytesAllocated < 0 || s.Profile.GSSBytesAllocated < 0 {
+		t.Fatalf("%s/%s/%s/%s: negative memory counter: arena=%d scratch=%d entry=%d gss=%d",
+			s.Lang, s.Size, s.Class, s.Position, s.Profile.ArenaBytesAllocated,
+			s.Profile.ScratchBytesAllocated, s.Profile.EntryScratchBytesAllocated, s.Profile.GSSBytesAllocated)
+	}
+	if s.Profile.SingleStackIterations < 0 || s.Profile.MultiStackIterations < 0 || s.Profile.MaxStacksSeen < 0 {
+		t.Fatalf("%s/%s/%s/%s: negative causal-work counter: single=%d multi=%d maxStacks=%d",
+			s.Lang, s.Size, s.Class, s.Position, s.Profile.SingleStackIterations,
+			s.Profile.MultiStackIterations, s.Profile.MaxStacksSeen)
+	}
+	if (s.Profile.AcceptedErrorRetryAttempts == 0) != (s.Profile.AcceptedErrorRetryCause == gts.IncrementalRetryCauseNone) ||
+		(s.Profile.AcceptedErrorRetryAdopted && s.Profile.AcceptedErrorRetryAttempts == 0) {
+		t.Fatalf("%s/%s/%s/%s: inconsistent retry causality: attempts=%d adopted=%v cause=%v",
+			s.Lang, s.Size, s.Class, s.Position, s.Profile.AcceptedErrorRetryAttempts,
+			s.Profile.AcceptedErrorRetryAdopted, s.Profile.AcceptedErrorRetryCause)
+	}
+	if s.Profile.ExpectedEOFByte != uint32(s.EditedLen) {
+		t.Fatalf("%s/%s/%s/%s: profile expectedEOF=%d, want editedLen=%d",
+			s.Lang, s.Size, s.Class, s.Position, s.Profile.ExpectedEOFByte, s.EditedLen)
+	}
+	if s.FreshRuntime.ExpectedEOFByte != uint32(s.EditedLen) || s.FreshRuntime.RootEndByte != uint32(s.EditedLen) {
+		t.Fatalf("%s/%s/%s/%s: fresh runtime span mismatch: expectedEOF=%d rootEnd=%d editedLen=%d",
+			s.Lang, s.Size, s.Class, s.Position, s.FreshRuntime.ExpectedEOFByte,
+			s.FreshRuntime.RootEndByte, s.EditedLen)
+	}
 	if s.Profile.ReuseRejectFragileNonLeaf > 0 {
-		// Rejections here are a correctness feature (see
-		// IncrementalParseProfile.ReuseRejectFragileNonLeaf's doc comment),
-		// never a hard failure -- this gate's fixtures are all deliberately
-		// unambiguous, so a nonzero count here is still logged for
-		// visibility rather than silently ignored.
-		t.Logf("%s/%s/%s/%s: ReuseRejectFragileNonLeaf=%d on a fixture expected to be unambiguous (not a failure, but worth investigating)",
+		t.Logf("%s/%s/%s/%s: ReuseRejectFragileNonLeaf=%d (correctness rejection; observable, not a failure)",
 			s.Lang, s.Size, s.Class, s.Position, s.Profile.ReuseRejectFragileNonLeaf)
 	}
+}
+
+// w5Check applies the clean-edit reuse ratchets after the common contract.
+func w5Check(t *testing.T, s w5Sample) {
+	t.Helper()
+	w5CheckCommon(t, s)
+	w5CheckMemoryAllocation(t, s)
 
 	ceiling, ok := w5Ceilings[s.Lang]
 	if !ok {
@@ -620,20 +733,79 @@ func w5Check(t *testing.T, s w5Sample) {
 			s.Lang, s.Size, s.Class, s.Position, rate, minReuse, s.Profile.ReusedBytes, s.EditedLen)
 	}
 
-	t.Logf("%s/%s/%s/%s: rootNonLeafChanged=%d reusedBytes=%d byteReuse=%.1f%% newNodes=%d tokensConsumed=%d incrWall=%s freshWall=%s",
+	t.Logf("%s/%s/%s/%s: rootNonLeafChanged=%d reusedBytes=%d byteReuse=%.1f%% newNodes=%d tokensConsumed=%d singleIters=%d multiIters=%d recoverChecks=%d retries=%d maxStacks=%d arenaBytes=%d scratchBytes=%d freshNodes=%d freshArenaBytes=%d freshScratchBytes=%d incrWall=%s freshWall=%s",
 		s.Lang, s.Size, s.Class, s.Position,
 		s.Profile.ReuseRejectRootNonLeafChanged, s.Profile.ReusedBytes, rate, s.Profile.NewNodesAllocated,
-		s.Profile.TokensConsumed, time.Duration(s.IncrWallNs), time.Duration(s.FreshWallNs))
+		s.Profile.TokensConsumed, s.Profile.SingleStackIterations, s.Profile.MultiStackIterations,
+		s.Profile.RecoverStateChecks, s.Profile.AcceptedErrorRetryAttempts, s.Profile.MaxStacksSeen,
+		s.Profile.ArenaBytesAllocated, s.Profile.ScratchBytesAllocated,
+		s.FreshRuntime.NodesAllocated, s.FreshRuntime.ArenaBytesAllocated, s.FreshRuntime.ScratchBytesAllocated,
+		time.Duration(s.IncrWallNs), time.Duration(s.FreshWallNs))
+}
+
+const (
+	// These are deterministic, source-size-scaled work ceilings, deliberately
+	// not wall-clock thresholds. They are the measured 20KB/137KB maxima rounded
+	// upward: about 1.1K nodes, 220 tokens, and 450 parser iterations per KiB.
+	w5TransientMaxNewNodesPerKiB      = 1200
+	w5TransientMaxTokensPerKiB        = 256
+	w5TransientMaxIterationsPerKiB    = 512
+	w5TransientMaxRecoverChecksPerKiB = 64
+	w5TransientMaxRetryAttempts       = 1
+	w5TransientMaxStacks              = 6
+	// The transient lane remains tighter than the general envelope. Warm-process
+	// maxima were <32.7MB, <40.6MB, and <135.4MB at 20KB/137KB/1MiB; these
+	// constants yield approximately 37.0MB, 56.2MB, and 201.5MB respectively.
+	w5TransientMemoryFixedBytes  int64 = 32 << 20
+	w5TransientMemoryPerKiBBytes int64 = 160 << 10
+)
+
+func w5PerKiBCeiling(editedLen int, perKiB uint64) uint64 {
+	kib := uint64((editedLen + 1023) / 1024)
+	return kib * perKiB
+}
+
+// w5CheckTransientErrorWork turns the issue #380 JS/TS error-delete residual
+// into a reproducible linear-work contract. Wall time remains evidence only.
+func w5CheckTransientErrorWork(t *testing.T, s w5Sample) {
+	t.Helper()
+	p := s.Profile
+	iterations := uint64(p.SingleStackIterations + p.MultiStackIterations)
+	checks := []struct {
+		name string
+		got  uint64
+		max  uint64
+	}{
+		{name: "newNodes", got: p.NewNodesAllocated, max: w5PerKiBCeiling(s.EditedLen, w5TransientMaxNewNodesPerKiB)},
+		{name: "tokensConsumed", got: p.TokensConsumed, max: w5PerKiBCeiling(s.EditedLen, w5TransientMaxTokensPerKiB)},
+		{name: "parserIterations", got: iterations, max: w5PerKiBCeiling(s.EditedLen, w5TransientMaxIterationsPerKiB)},
+		{name: "recoverStateChecks", got: p.RecoverStateChecks, max: w5PerKiBCeiling(s.EditedLen, w5TransientMaxRecoverChecksPerKiB)},
+	}
+	for _, check := range checks {
+		if check.got > check.max {
+			t.Fatalf("%s/%s/delete-transient-error/%s: %s=%d exceeds deterministic linear-work ceiling %d",
+				s.Lang, s.Size, s.Position, check.name, check.got, check.max)
+		}
+	}
+	if p.AcceptedErrorRetryAttempts > w5TransientMaxRetryAttempts || p.MaxStacksSeen > w5TransientMaxStacks {
+		t.Fatalf("%s/%s/delete-transient-error/%s: causal bound exceeded: retries=%d/%d maxStacks=%d/%d",
+			s.Lang, s.Size, s.Position, p.AcceptedErrorRetryAttempts, w5TransientMaxRetryAttempts,
+			p.MaxStacksSeen, w5TransientMaxStacks)
+	}
+	kib := int64((s.EditedLen + 1023) / 1024)
+	memory := p.ArenaBytesAllocated + p.ScratchBytesAllocated
+	maxMemory := w5TransientMemoryFixedBytes + kib*w5TransientMemoryPerKiBBytes
+	if memory > maxMemory {
+		t.Fatalf("%s/%s/delete-transient-error/%s: arena+scratch memory=%d exceeds affine ceiling %d",
+			s.Lang, s.Size, s.Position, memory, maxMemory)
+	}
 }
 
 // w5Tiers returns the size tiers this invocation should sweep.
 func w5Tiers() []w5SizeTier {
-	tiers := []w5SizeTier{w5Tier20KB}
-	if w5FullSweep() {
-		tiers = append(tiers, w5Tier137KB)
-		if w5SlowTier() {
-			tiers = append(tiers, w5Tier1MB)
-		}
+	tiers := []w5SizeTier{w5Tier20KB, w5Tier137KB}
+	if w5SlowTier() {
+		tiers = append(tiers, w5Tier1MB)
 	}
 	return tiers
 }
@@ -643,10 +815,9 @@ func w5Tiers() []w5SizeTier {
 // enforces the oracle + counter ceilings on each one. See the file doc
 // comment for design, coverage, and ceiling provenance.
 //
-// The fast (default, ~20KB-only) subset is a single language x class x
-// position sweep -- 4 x 3 x 3 = 36 samples -- and is well under the
-// campaign's ~60s runtime budget for the normal `go test .` run (each
-// sample is a handful of small parses; see the reported PASS time).
+// The default sweep commits both issue #380 reporter sizes: 5 languages x
+// 2 sizes x 3 classes x 3 positions = 90 samples. The 1MB lane remains
+// explicitly opt-in because it is diagnostic rather than presubmit-sized.
 func TestW5EditorLatencyGate(t *testing.T) {
 	classes := []w5EditClass{w5Insert, w5Delete, w5Replace}
 	positions := []w5Position{w5Top, w5Middle, w5Bottom}
@@ -667,6 +838,50 @@ func TestW5EditorLatencyGate(t *testing.T) {
 									w5Check(t, s)
 								})
 							}
+						})
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestW5JavaScriptTypeScriptTransientErrorDeleteGate covers the reporter's
+// remaining Tier-B blocker directly: deleting required syntax while typing
+// creates a temporary ERROR tree. This is separate from the valid delete
+// cells above so the normal reuse floors remain meaningful.
+func TestW5JavaScriptTypeScriptTransientErrorDeleteGate(t *testing.T) {
+	positions := []w5Position{w5Top, w5Middle, w5Bottom}
+	for _, spec := range w5Langs {
+		spec := spec
+		if spec.errorMarker == nil {
+			continue
+		}
+		t.Run(spec.name, func(t *testing.T) {
+			for _, tier := range w5Tiers() {
+				tier := tier
+				t.Run(tier.name, func(t *testing.T) {
+					src, itemCount := spec.build(tier.targetSize)
+					sites := w5EditSiteIndices(itemCount)
+					for _, pos := range positions {
+						pos := pos
+						t.Run(pos.String(), func(t *testing.T) {
+							offset := w5LastByteOffset(t, src, spec.errorMarker(sites[pos]))
+							s := w5RunSampleAtOffset(t, spec, tier, w5Delete, pos, src, offset)
+							w5CheckCommon(t, s)
+							w5CheckMemoryAllocation(t, s)
+							if !s.FreshError || !s.IncrError {
+								t.Fatalf("%s/%s/delete-transient-error/%s: fixture did not produce matching ERROR trees (fresh=%v incremental=%v)",
+									s.Lang, s.Size, s.Position, s.FreshError, s.IncrError)
+							}
+							w5CheckTransientErrorWork(t, s)
+							t.Logf("%s/%s/delete-transient-error/%s: newNodes=%d tokensConsumed=%d singleIters=%d multiIters=%d recoverChecks=%d retries=%d maxStacks=%d arenaBytes=%d scratchBytes=%d freshNodes=%d freshArenaBytes=%d freshScratchBytes=%d incrWall=%s freshWall=%s",
+								s.Lang, s.Size, s.Position, s.Profile.NewNodesAllocated, s.Profile.TokensConsumed,
+								s.Profile.SingleStackIterations, s.Profile.MultiStackIterations, s.Profile.RecoverStateChecks,
+								s.Profile.AcceptedErrorRetryAttempts, s.Profile.MaxStacksSeen,
+								s.Profile.ArenaBytesAllocated, s.Profile.ScratchBytesAllocated,
+								s.FreshRuntime.NodesAllocated, s.FreshRuntime.ArenaBytesAllocated, s.FreshRuntime.ScratchBytesAllocated,
+								time.Duration(s.IncrWallNs), time.Duration(s.FreshWallNs))
 						})
 					}
 				})
