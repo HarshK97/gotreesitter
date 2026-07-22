@@ -360,6 +360,17 @@ The registered HTML, Markdown, and Markdown Inline scanners remain
 uncertified, so changed-token or shape-changing edits take the production
 full-parse fallback rather than scanner-dependent reuse.
 
+PowerShell's scanner is stateless: it recognizes one zero-width statement
+terminator from the current lookahead and valid-symbol set, carries no payload,
+and has no stateful here-string handling. It therefore uses the same stateless
+quiescence proof as Go rather than the checkpoint route. Focused certification
+crosses changed-length edits at multiple positions and requires incremental
+trees to match fresh production parses. The representative 137 KiB near-top
+insert currently ratchets a conservative 5% reused-byte floor: scanner
+admission is solved, but source-wide non-leaf ownership and stale-boundary
+rejections remain a separate performance frontier rather than an O(edit)
+claim.
+
 SQL's state proof is explicit: the payload is either empty or exactly one
 active PostgreSQL dollar-quote tag. The empty state has a one-byte marker;
 representable non-empty states serialize as the tag plus a trailing NUL. A tag
@@ -459,7 +470,7 @@ part of #430's sound-admission closure.
 | `perl` | fallback (uncertified) |
 | `php` | fallback (uncertified) |
 | `pkl` | fallback (uncertified) |
-| `powershell` | fallback (uncertified) |
+| `powershell` | certified reuse |
 | `properties` | fallback (uncertified) |
 | `pug` | fallback (uncertified) |
 | `purescript` | fallback (uncertified) |
