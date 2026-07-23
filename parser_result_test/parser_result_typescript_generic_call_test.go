@@ -101,6 +101,80 @@ func TestTypeScriptCustomGenericCallStillParsesAsCallExpression(t *testing.T) {
 	}
 }
 
+func TestTypeScriptImportTypeGenericCallsParseAsCallExpressions(t *testing.T) {
+	tests := []struct {
+		name string
+		lang string
+		src  string
+	}{
+		{
+			name: "typescript_typeof_import_query",
+			lang: "typescript",
+			src:  "const x = foo<typeof import(\"some-module\")>();\n",
+		},
+		{
+			name: "typescript_import_type_member",
+			lang: "typescript",
+			src:  "const x = foo<import(\"some-module\").Bar>();\n",
+		},
+		{
+			name: "tsx_typeof_import_query",
+			lang: "tsx",
+			src:  "const x = foo<typeof import(\"some-module\")>();\n",
+		},
+		{
+			name: "tsx_import_type_member",
+			lang: "tsx",
+			src:  "const x = foo<import(\"some-module\").Bar>();\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tree, lang := parseByLanguageName(t, tt.lang, tt.src)
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("unexpected %s parse error: %s", tt.lang, root.SExpr(lang))
+			}
+			call := firstNode(root, func(n *gotreesitter.Node) bool {
+				return n.Type(lang) == "call_expression" && n.Text([]byte(tt.src)) == tt.src[10:len(tt.src)-2]
+			})
+			if call == nil {
+				t.Fatalf("%s import-type generic call missing call_expression: %s", tt.lang, root.SExpr(lang))
+			}
+			if typeArgs := firstNode(call, func(n *gotreesitter.Node) bool {
+				return n.Type(lang) == "type_arguments"
+			}); typeArgs == nil {
+				t.Fatalf("%s import-type generic call missing type_arguments: %s", tt.lang, call.SExpr(lang))
+			}
+		})
+	}
+}
+
+func TestTypeScriptDynamicImportExpressionRemainsCallExpression(t *testing.T) {
+	const src = "const mod = import(\"some-module\");\n"
+	for _, languageName := range []string{"typescript", "tsx"} {
+		t.Run(languageName, func(t *testing.T) {
+			tree, lang := parseByLanguageName(t, languageName, src)
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("unexpected %s parse error: %s", languageName, root.SExpr(lang))
+			}
+			call := firstNode(root, func(n *gotreesitter.Node) bool {
+				return n.Type(lang) == "call_expression" && n.Text([]byte(src)) == "import(\"some-module\")"
+			})
+			if call == nil {
+				t.Fatalf("%s dynamic import missing call_expression: %s", languageName, root.SExpr(lang))
+			}
+			if importType := firstNode(call, func(n *gotreesitter.Node) bool {
+				return n.Type(lang) == "import_type"
+			}); importType != nil {
+				t.Fatalf("%s dynamic import unexpectedly parsed as import_type: %s", languageName, call.SExpr(lang))
+			}
+		})
+	}
+}
+
 func TestTSXNestedGenericCallStillParsesAsCallExpression(t *testing.T) {
 	const src = "const [inputRef, setInputRef] = useState<React.RefObject<HTMLInputElement>>()\n"
 	tree, lang := parseByLanguageName(t, "tsx", src)

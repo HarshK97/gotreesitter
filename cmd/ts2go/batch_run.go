@@ -72,6 +72,9 @@ func RunBatchManifest(manifestPath, outDir, pkg string, compact bool) error {
 			if err := cloneRepo(entry.RepoURL, entry.Commit, repoDir); err != nil {
 				return fmt.Errorf("%s: clone: %w", entry.Name, err)
 			}
+			if err := applyUpstreamGrammarPatch(entry, repoDir, filepath.Dir(manifestPath)); err != nil {
+				return fmt.Errorf("%s: apply upstream grammar patch: %w", entry.Name, err)
+			}
 
 			parserPath := filepath.Join(repoDir, entry.Subdir, "parser.c")
 			if _, err := os.Stat(parserPath); err != nil {
@@ -147,6 +150,62 @@ func RunBatchManifest(manifestPath, outDir, pkg string, compact bool) error {
 	fmt.Printf("generated %s (%d languages)\n", outFile, len(loaderSpecs))
 
 	return nil
+}
+
+// applyUpstreamGrammarPatch applies a checked-in, pinned source patch before
+// extracting a generated parser table. Patches are intentionally narrow: they
+// are only used while an upstream grammar fix has not been released, and a
+// changed upstream context fails loudly instead of silently changing grammar
+// semantics during regeneration.
+func applyUpstreamGrammarPatch(entry ManifestEntry, repoDir, manifestDir string) error {
+	patchPath := upstreamGrammarPatchPath(entry.Name, manifestDir)
+	if patchPath == "" {
+		return nil
+	}
+	if _, err := os.Stat(patchPath); err != nil {
+		return fmt.Errorf("read patch %s: %w", patchPath, err)
+	}
+	for _, args := range [][]string{{"apply", "--check", patchPath}, {"apply", patchPath}} {
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		}
+	}
+	if entry.Name == "typescript" || entry.Name == "tsx" {
+		if err := regeneratePatchedTypeScriptParser(repoDir, entry.Subdir); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func regeneratePatchedTypeScriptParser(repoDir, subdir string) error {
+	// tree-sitter-cli's executable is installed by its package lifecycle
+	// scripts, so this must remain a normal lockfile-pinned install.
+	install := exec.Command("npm", "ci")
+	install.Dir = repoDir
+	if out, err := install.CombinedOutput(); err != nil {
+		return fmt.Errorf("npm ci: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	generator := filepath.Join(repoDir, "node_modules", ".bin", "tree-sitter")
+	generate := exec.Command(generator, "generate")
+	// The manifest points to generated parser.c under <grammar>/src, while
+	// tree-sitter generate reads grammar.js from the parent grammar directory.
+	generate.Dir = filepath.Join(repoDir, filepath.Dir(subdir))
+	if out, err := generate.CombinedOutput(); err != nil {
+		return fmt.Errorf("tree-sitter generate: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func upstreamGrammarPatchPath(name, manifestDir string) string {
+	switch name {
+	case "typescript", "tsx":
+		return filepath.Join(manifestDir, "patches", "tree-sitter-typescript-import-type.patch")
+	default:
+		return ""
+	}
 }
 
 type embeddedLoaderSpec struct {
@@ -346,7 +405,11 @@ func externalLexStatesSourceComment(entry ManifestEntry) string {
 	} else {
 		parts = append(parts, "parser.c")
 	}
-	return strings.Join(parts, " ")
+	comment := strings.Join(parts, " ")
+	if entry.Name == "typescript" || entry.Name == "tsx" {
+		comment += " + grammars/patches/tree-sitter-typescript-import-type.patch"
+	}
+	return comment
 }
 
 func writeExternalLexStatesSidecar(outDir, pkg, name, sourceComment string, states [][]bool) error {

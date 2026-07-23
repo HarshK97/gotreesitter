@@ -1,0 +1,37 @@
+diff --git a/common/define-grammar.js b/common/define-grammar.js
+index efb0b76..aa717c6 100644
+--- a/common/define-grammar.js
++++ b/common/define-grammar.js
+@@ -771,6 +771,7 @@ module.exports = function defineGrammar(dialect) {
+         $.array_type,
+         $.tuple_type,
+         $.flow_maybe_type,
++        $.import_type,
+         $.type_query,
+         $.index_type_query,
+         alias($.this, $.this_type),
+@@ -876,6 +877,16 @@ module.exports = function defineGrammar(dialect) {
+         )),
+         field('arguments', $.arguments),
+       ),
++      import_type: $ => prec.right(1, seq(
++        'import',
++        '(',
++        field('argument', $.string),
++        ')',
++        optional(seq(
++          '.',
++          field('qualifier', choice($._type_identifier, $.nested_type_identifier)),
++        )),
++      )),
+       _type_query_instantiation_expression: $ => seq(
+         field('function', choice(
+           $.import,
+@@ -892,6 +903,7 @@ module.exports = function defineGrammar(dialect) {
+           alias($._type_query_member_expression, $.member_expression),
+           alias($._type_query_call_expression, $.call_expression),
+           alias($._type_query_instantiation_expression, $.instantiation_expression),
++          $.import_type,
+           $.identifier,
+           $.this,
+         ),

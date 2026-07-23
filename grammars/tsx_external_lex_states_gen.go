@@ -1,7 +1,7 @@
 //go:build !grammar_subset || grammar_subset_tsx
 
 // Code generated from tree-sitter parser.c; DO NOT EDIT.
-// Source: https://github.com/tree-sitter/tree-sitter-typescript 75b3874edb2dc714fb1fd77a32013d0f8699989f tsx/src/parser.c
+// Source: https://github.com/tree-sitter/tree-sitter-typescript 75b3874edb2dc714fb1fd77a32013d0f8699989f tsx/src/parser.c + grammars/patches/tree-sitter-typescript-import-type.patch
 
 package grammars
 
