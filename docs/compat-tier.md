@@ -18,11 +18,11 @@ The v1 registry freezes the current surface:
 - 78 explicit `runLanguageResultCompatibility` switch arms covering 85
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
-- two generic passes that run after language dispatch;
+- one generic pass that runs after language dispatch;
 - one retained post-finalization second-pass fixpoint with three switch arms
   covering Scala, HTML, and JavaScript.
 
-That is 82 live registry entries. The registry covers only this documented
+That is 81 live registry entries. The registry covers only this documented
 internal result-compatibility tier; scheduler experiments and other engine
 research belong in their owning subsystem's durable traces.
 
@@ -87,6 +87,16 @@ The generic reconstruction walk is therefore retired and deleted. Once raw
 child identity has been lost, a display-name-compatible caller artifact is no
 longer guessed into shape; custom artifacts must carry the explicit native
 capability and exact metadata receipt to opt in.
+
+## Current progress: trailing root trivia
+
+Clean hidden whitespace-only root tails are now finalized as root span coverage
+instead of reconstructed in the shared compatibility tail. The rule applies
+before result compatibility, including compatibility-free production and
+compact parses; forest and incremental routes share the same root finalizer.
+Error roots retain their recovery extra, and lazy final-child references are
+filtered without draining the compact range. Real RST and Comment fixtures are
+exact against their C oracles. The generic trailing-extra pass is retired.
 
 ## The retained second pass
 

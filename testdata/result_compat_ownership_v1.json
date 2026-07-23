@@ -5,7 +5,7 @@
     "dispatcher_arms": 78,
     "dispatcher_languages": 85,
     "dispatcher_predicates": 1,
-    "generic_passes": 2,
+    "generic_passes": 1,
     "post_finalization_arms": 3,
     "post_finalization_languages": 3
   },
@@ -2263,21 +2263,27 @@
       "languages": [
         "*"
       ],
-      "purpose": "Apply the generic root trailing-extra-trivia compatibility rule.",
+      "purpose": "Historical generic clean-root trailing-extra-trivia rule, retired after root finalization took ownership of hidden whitespace-only tail children across all materialization routes.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "parser_result_trailing_extra_compat_test.go"
+        "parser_result_trailing_extra_native_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: root finalization owns the clean hidden whitespace-only tail shape; error roots retain recovery extras; production, compact, forest, incremental, lazy-final-ref, and C-oracle receipts are exact.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "242453ea94d36fc2ee36b87076bcaae9a2ac234e",
+      "receipt_refs": [
+        "parser_result_trailing_extra_native_test.go",
+        "grammars/trailing_extra_native_regression_test.go",
+        "cgo_harness/trailing_extra_root_parity_test.go",
+        "glr_test.go"
+      ]
     },
     {
       "id": "generic.terminal-leaf",

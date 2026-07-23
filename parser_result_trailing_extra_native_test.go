@@ -3,7 +3,7 @@ package gotreesitter
 import "testing"
 
 func TestFinalizeResultRootNativelyTrimsCleanTrailingExtraTrivia(t *testing.T) {
-	lang := trailingExtraCompatTestLanguage()
+	lang := trailingExtraNativeTestLanguage()
 	source := []byte("body\n")
 	parser := NewParser(lang)
 	parser.noResultCompatibilityBenchmarkOnly = true
@@ -30,7 +30,7 @@ func TestFinalizeResultRootNativelyTrimsCleanTrailingExtraTrivia(t *testing.T) {
 }
 
 func TestFinalizeResultRootKeepsErrorTrailingExtraTrivia(t *testing.T) {
-	lang := trailingExtraCompatTestLanguage()
+	lang := trailingExtraNativeTestLanguage()
 	source := []byte("body\n")
 	parser := NewParser(lang)
 	parser.noResultCompatibilityBenchmarkOnly = true
@@ -51,15 +51,15 @@ func TestFinalizeResultRootKeepsErrorTrailingExtraTrivia(t *testing.T) {
 	}
 }
 
-func trailingExtraCompatTestLanguage() *Language {
+func trailingExtraNativeTestLanguage() *Language {
 	return &Language{
 		Name:        "generic_trivia",
 		SymbolNames: []string{"EOF", "root", "body", "_trailing_trivia"},
 		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
+			{Name: "EOF"},
 			{Name: "root", Visible: true, Named: true},
 			{Name: "body", Visible: true, Named: true},
-			{Name: "_trailing_trivia", Visible: false, Named: false},
+			{Name: "_trailing_trivia"},
 		},
 	}
 }
