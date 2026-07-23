@@ -527,7 +527,7 @@ silently widening HTML admission.
 | `liquid` | certified reuse |
 | `lua` | fallback (uncertified) |
 | `luau` | fallback (uncertified) |
-| `markdown` | fallback (uncertified) |
+| `markdown` | certified reuse |
 | `markdown_inline` | fallback (uncertified) |
 | `matlab` | fallback (uncertified) |
 | `mojo` | fallback (explicit opt-out) |
