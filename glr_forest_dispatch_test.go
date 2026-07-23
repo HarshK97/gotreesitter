@@ -443,6 +443,12 @@ func TestForestDispatchPromotesJavaScript(t *testing.T) {
 	if got, want := tree.RootNode().SExpr(lang), prod.RootNode().SExpr(lang); got != want {
 		t.Fatalf("JavaScript forest dispatch diverged\n got: %s\nwant: %s", got, want)
 	}
+	if got, want := prod.RootNode().EndByte(), uint32(len(src)); got != want {
+		t.Fatalf("JavaScript production root end byte = %d, want %d", got, want)
+	}
+	if got, want := tree.RootNode().EndByte(), uint32(len(src)); got != want {
+		t.Fatalf("JavaScript forest root end byte = %d, want %d", got, want)
+	}
 	rt := tree.ParseRuntime()
 	if rt.StopReason != gts.ParseStopAccepted || !rt.ForestFastPath || !rt.LastTokenWasEOF || rt.TokensConsumed != 0 {
 		t.Fatalf("JavaScript did not use forest accepted runtime: %s", rt.Summary())
