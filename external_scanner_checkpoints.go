@@ -271,6 +271,10 @@ func currentExternalScannerCheckpoint(ts TokenSource) (externalScannerCheckpoint
 }
 
 func canReuseNodeWithExternalScannerCheckpoint(ts TokenSource, startState StateID, node *Node) (externalScannerCheckpointRef, bool) {
+	return canReuseNodeWithExternalScannerCheckpointAtLookahead(ts, startState, node, ^uint32(0))
+}
+
+func canReuseNodeWithExternalScannerCheckpointAtLookahead(ts TokenSource, startState StateID, node *Node, lookaheadStart uint32) (externalScannerCheckpointRef, bool) {
 	dts := underlyingDFATokenSource(ts)
 	if dts == nil {
 		return externalScannerCheckpointRef{}, true
@@ -278,10 +282,10 @@ func canReuseNodeWithExternalScannerCheckpoint(ts TokenSource, startState StateI
 	if !languageUsesExternalScannerCheckpoints(dts.language) {
 		// Non-checkpoint external-scanner path. The W4 scanner-quiescence
 		// classifier is the per-boundary authority here (campaign O(edit),
-		// spec.campaign.oedit). A stateless scanner (Go's automatic-semicolon
-		// scanner, proven in external_scanner_quiescence.go) is quiescent at
-		// every boundary, so reuse is sound and returns a zero checkpoint the
-		// non-checkpoint reuse path never reads. A scanner that opts out of
+		// spec.campaign.oedit). A scanner satisfying the stateless proof in
+		// external_scanner_quiescence.go is quiescent at every boundary, so
+		// reuse is sound and returns a zero checkpoint the non-checkpoint reuse
+		// path never reads. A scanner that opts out of
 		// incremental reuse is refuted, and the caller fails closed. Every
 		// other language keeps the legacy blanket admission, so this stays
 		// neutral for production languages today.
@@ -294,7 +298,8 @@ func canReuseNodeWithExternalScannerCheckpoint(ts TokenSource, startState StateI
 	if !ok {
 		return externalScannerCheckpointRef{}, languageAllowsCheckpointlessExternalReuse(dts.language)
 	}
-	if !dts.externalScannerStateMatches(node.ownerArena.externalScannerSnapshotBytes(cp.start)) {
+	want := node.ownerArena.externalScannerSnapshotBytes(cp.start)
+	if !dts.externalScannerStateAtLookaheadStartMatches(want, lookaheadStart) {
 		return externalScannerCheckpointRef{}, false
 	}
 	return cp, true

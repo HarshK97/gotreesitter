@@ -78,11 +78,12 @@ type reuseCursor struct {
 	// scanner checkpoint/quiescence gate (canReuseNodeWithExternalScannerCheck
 	// point) -- either a checkpoint state mismatch or a refuted quiescence
 	// proof (campaign O(edit) W4, external_scanner_quiescence.go). It stays 0
-	// for stateless-scanner languages such as Go, whose every boundary is
+	// for certified stateless-scanner languages, whose every boundary is
 	// proven quiescent. See the Parser.ReuseRejectScannerUnquiescent field.
 	rejectScannerUnquiescent uint64
 	forestFastPath           bool
 	languageName             string // cached for language-specific reuse safety policies
+	strictTopLevelOwnership  bool   // newly certified stateless scanners require the recorded normal-dispatch frontier
 }
 
 // reuseScratch holds reusable buffers for incremental reuse traversal.
@@ -132,8 +133,12 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 	c.rejectScannerUnquiescent = 0
 	c.forestFastPath = oldTree.forestFastPath
 	c.languageName = ""
+	c.strictTopLevelOwnership = false
 	if oldTree.language != nil {
 		c.languageName = oldTree.language.Name
+		if stateless, ok := oldTree.language.ExternalScanner.(StatelessExternalScanner); ok {
+			c.strictTopLevelOwnership = stateless.ExternalScannerIsStateless()
+		}
 	}
 
 	root := oldTree.RootNode()
@@ -640,14 +645,18 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 				idx.rejectRootNonLeafChanged++
 				continue
 			}
-			// Record ownership-frontier mismatches without changing the established
-			// admission decision. The current block path historically admits by
-			// goto target + fragility; #432 owns replacing that empirical contract
-			// with a complete normal-dispatch ownership proof. This diagnostic tells
-			// us exactly where that proof is still required while preserving the
-			// existing Go/CSS performance ratchets.
+			// A compatible goto target does not prove that this old reduction was
+			// owned by the live normal-dispatch frontier. Newly admitted stateless
+			// scanners require their recorded pre-goto state before transfer;
+			// otherwise repeated top-level constructs can retain stale ownership
+			// and diverge from a fresh tree even when bytes and scanner state match.
+			// Legacy lanes retain their measured contract until #432 replaces it
+			// without regressing the established editor-latency ratchets.
 			if !fullRootUndo && !topLevelCandidateOwnsCurrentFrontier(n, state) {
 				idx.observedPreGotoStateMismatch++
+				if idx.strictTopLevelOwnership {
+					continue
+				}
 			}
 		}
 		nextState, ok := p.reuseTargetState(state, n, lookahead)
@@ -657,7 +666,7 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 		if !reuseSubtreeGapIsParserPadding(idx.newSource, s.byteOffset, n.StartByte()) {
 			continue
 		}
-		cp, ok := canReuseNodeWithExternalScannerCheckpoint(ts, state, n)
+		cp, ok := canReuseNodeWithExternalScannerCheckpointAtLookahead(ts, state, n, lookahead.StartByte)
 		if !ok {
 			idx.rejectScannerUnquiescent++
 			continue
@@ -749,7 +758,7 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 			}
 		}
 		startState := s.top().state
-		cp, ok := canReuseNodeWithExternalScannerCheckpoint(ts, startState, n)
+		cp, ok := canReuseNodeWithExternalScannerCheckpointAtLookahead(ts, startState, n, lookahead.StartByte)
 		if !ok {
 			idx.rejectScannerUnquiescent++
 			continue

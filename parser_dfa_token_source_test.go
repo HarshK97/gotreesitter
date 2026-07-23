@@ -139,6 +139,28 @@ func TestCanRelexCheckpointScannerRequiresRepresentableStartAndLiveState(t *test
 	}
 }
 
+func TestExternalScannerReuseAuthenticatesLookaheadStartState(t *testing.T) {
+	scanner := checkpointByteExternalScanner{}
+	state := scanner.Create()
+	*state.(*byte) = 9 // live payload is already at the lookahead token's end
+	ts := &dfaTokenSource{
+		language:                   &Language{ExternalScanner: scanner},
+		externalPayload:            state,
+		lastExternalTokenValid:     true,
+		lastExternalTokenStartByte: 12,
+		externalTokenStart:         []byte{3},
+	}
+	if !ts.externalScannerStateAtLookaheadStartMatches([]byte{3}, 12) {
+		t.Fatal("reuse boundary compared against live lookahead-end state instead of recorded start state")
+	}
+	if ts.externalScannerStateAtLookaheadStartMatches([]byte{4}, 12) {
+		t.Fatal("reuse boundary accepted a different recorded lookahead-start state")
+	}
+	if ts.externalScannerStateAtLookaheadStartMatches([]byte{3}, 13) {
+		t.Fatal("reuse boundary used a start snapshot from a different token")
+	}
+}
+
 type skipPrefixExternalScanner struct{}
 
 func (skipPrefixExternalScanner) Create() any                           { return nil }

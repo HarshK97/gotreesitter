@@ -97,9 +97,12 @@ func buildTopLevelListLanguage() *Language {
 // trailing unaffected sibling run (topLevelResumeByte == stmt0.EndByte()).
 // fragile marks stmt1's fragility bits, mirroring markReduceFragility's
 // output for a reduce that ran under GLR ambiguity.
-func topLevelSpliceFixture(t *testing.T, fragile bool) (*Parser, *reuseCursor, []byte) {
+func topLevelSpliceFixture(t *testing.T, fragile, stateless bool) (*Parser, *reuseCursor, []byte) {
 	t.Helper()
 	lang := buildTopLevelListLanguage()
+	if stateless {
+		lang.ExternalScanner = quiescenceStatelessScanner{}
+	}
 	parser := NewParser(lang)
 
 	// 6 bytes: "aa" (stmt0) + "bb" (stmt1) + "cc" (stmt2).
@@ -154,7 +157,7 @@ func topLevelSpliceFixture(t *testing.T, fragile bool) (*Parser, *reuseCursor, [
 // lane (or fail entirely, as the retired allowlist gate would have refused
 // it before ever trying).
 func TestTopLevelSiblingBlockSpliceAdmitsNonForestNonCSSLanguage(t *testing.T) {
-	parser, reuse, newSource := topLevelSpliceFixture(t, false)
+	parser, reuse, newSource := topLevelSpliceFixture(t, false, false)
 	if reuse.forestFastPath {
 		t.Fatal("fixture invariant: forestFastPath must be false to prove the allowlist gate is gone")
 	}
@@ -189,6 +192,33 @@ func TestTopLevelSiblingBlockSpliceAdmitsNonForestNonCSSLanguage(t *testing.T) {
 	}
 }
 
+// TestTopLevelSiblingBlockSpliceRequiresOwnershipForStatelessAdmission locks
+// down the ownership half of the stateless-scanner proof. Scanner quiescence
+// alone is insufficient: a whole old reduction may have a compatible goto
+// from the live state without having been reduced from that state. Newly
+// certified stateless scanners therefore reject this fabricated mismatch,
+// while the preceding legacy-lane test preserves the measured W1 contract.
+func TestTopLevelSiblingBlockSpliceRequiresOwnershipForStatelessAdmission(t *testing.T) {
+	parser, reuse, newSource := topLevelSpliceFixture(t, false, true)
+	if !reuse.strictTopLevelOwnership {
+		t.Fatal("stateless scanner did not enable strict top-level ownership")
+	}
+
+	var entryScratch glrEntryScratch
+	var gssScratch gssScratch
+	stack := newGLRStackWithScratch(1, &entryScratch)
+	stack.byteOffset = 2
+	lookahead := Token{Symbol: 2, StartByte: 2, EndByte: 2}
+	ts := &stubTokenSource{tokens: []Token{{Symbol: 0, StartByte: uint32(len(newSource)), EndByte: uint32(len(newSource))}}}
+
+	if _, _, ok := parser.tryReuseSubtree(&stack, lookahead, ts, reuse, &entryScratch, &gssScratch); ok {
+		t.Fatal("stateless admission reused a top-level node owned by a different pre-goto state")
+	}
+	if reuse.observedPreGotoStateMismatch == 0 {
+		t.Fatal("expected the ownership mismatch to be observed")
+	}
+}
+
 // TestTopLevelSiblingBlockSpliceRejectsFragileCandidate is the fixture-level
 // control: the identical position, but stmt1 carries the fragility bits a
 // real reduce-under-ambiguity would set. The fragility gate must bar it from
@@ -199,7 +229,7 @@ func TestTopLevelSiblingBlockSpliceAdmitsNonForestNonCSSLanguage(t *testing.T) {
 // splicing a fragile subtree just because it sits at a top-level boundary
 // with byte-identical text.
 func TestTopLevelSiblingBlockSpliceRejectsFragileCandidate(t *testing.T) {
-	parser, reuse, newSource := topLevelSpliceFixture(t, true)
+	parser, reuse, newSource := topLevelSpliceFixture(t, true, false)
 
 	var entryScratch glrEntryScratch
 	var gssScratch gssScratch

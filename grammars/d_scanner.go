@@ -29,6 +29,13 @@ func (DExternalScanner) Destroy(payload any)                   {}
 func (DExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (DExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// The scanner carries no payload and derives every result from local
+// lookahead plus validSymbols, so every incremental boundary is quiescent and
+// failed scans cannot mutate persistent state.
+func (DExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (DExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (DExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (DExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	lang := DLanguage()
 	c := lexer.Lookahead()
