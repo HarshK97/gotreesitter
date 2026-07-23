@@ -259,15 +259,19 @@ func TestForestDeclineMemoWarmSemanticDeclineMatchesProduction(t *testing.T) {
 	if got := warm.RootNode().SExpr(lang); got != wantSExpr {
 		t.Fatalf("warm tree differs from production\n got: %s\nwant: %s", got, wantSExpr)
 	}
-	// ArenaBytesAllocated includes capacity retained by the process-global arena
-	// pool before this parser existed, so it can vary with test order despite
-	// identical parse work. ArenaBaselineBytes reports the same pooled capacity
-	// at entry. Compare every other runtime field exactly.
+	// Arena and checkpoint slot capacities can be retained by the process-global
+	// arena pool before this parser exists, so they can vary with test order
+	// despite identical parse work. Compare the causal checkpoint record and
+	// snapshot counters, plus every other runtime field, exactly.
 	wantRuntime.ArenaBytesAllocated = 0
 	wantRuntime.ArenaBaselineBytes = 0
+	wantRuntime.ExternalScannerCheckpointSlotsAllocated = 0
+	wantRuntime.ExternalScannerCheckpointBytesAllocated = 0
 	gotRuntime := warm.ParseRuntime()
 	gotRuntime.ArenaBytesAllocated = 0
 	gotRuntime.ArenaBaselineBytes = 0
+	gotRuntime.ExternalScannerCheckpointSlotsAllocated = 0
+	gotRuntime.ExternalScannerCheckpointBytesAllocated = 0
 	if !reflect.DeepEqual(gotRuntime, wantRuntime) {
 		gotValue, wantValue := reflect.ValueOf(gotRuntime), reflect.ValueOf(wantRuntime)
 		for i := 0; i < gotValue.NumField(); i++ {

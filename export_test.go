@@ -68,12 +68,9 @@ func (p *Parser) SetForceFullResultNormalizationWalk(v bool) {
 	p.forceFullResultNormalizationWalk = v
 }
 
-// SetDisableLeadingRunSplice turns the campaign post-admission-frontier T2a
-// leading-run block-splice off (v=true) or on (v=false, the production default)
-// for this Parser. It exists ONLY so the byte-sweep differential can compare
-// leading-splice-on against leading-splice-off on the SAME Parser and prove the
-// leading splice never changes a fresh-correct tree. It lives in export_test.go,
-// so it is compiled only in test builds and is never part of the public API.
+// SetDisableLeadingRunSplice controls the test-only leading-splice
+// differential seam. Production has no exported switch and always enables the
+// generic path when its safety gates admit it.
 func (p *Parser) SetDisableLeadingRunSplice(v bool) {
 	if p == nil {
 		return

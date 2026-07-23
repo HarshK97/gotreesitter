@@ -360,13 +360,8 @@ type Parser struct {
 	// range-limited walk against the full walk on one Parser (see
 	// SetForceFullResultNormalizationWalk). Production leaves it false.
 	forceFullResultNormalizationWalk bool
-	// disableLeadingRunSplice turns off the campaign post-admission-frontier T2a
-	// leading-run block-splice for this Parser (the trailing splice and every
-	// other reuse path stay on). It exists ONLY so the byte-sweep differential
-	// can compare leading-splice-on against leading-splice-off on the SAME Parser
-	// and prove the leading splice is a no-op on trees where it should be (it
-	// never changes a fresh-correct result). Production leaves it false; the
-	// setter lives in export_test.go.
+	// disableLeadingRunSplice is a test-only differential seam for fixtures with
+	// known incremental-vs-fresh residuals. Production always leaves it false.
 	disableLeadingRunSplice             bool
 	currentExternalTokenCheckpoint      externalScannerCheckpoint
 	currentExternalTokenCheckpointStart uint32
@@ -5046,6 +5041,20 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			blockStopReason := ParseStopNone
 			blockStopped := false
 			for {
+				if target, required := reuse.requiredTopLevelOwnershipFrontier(tok.StartByte); required && stacks[0].top().state != target {
+					forkedDuringOwnershipSettle := false
+					_, reached := p.settleDeterministicReduceChainForReuse(source, &stacks[0], tok, target, maxStacksSeen, reuse, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, deferParentLinks, trackChildErrors, &forkedDuringOwnershipSettle)
+					if forkedDuringOwnershipSettle {
+						drainPendingForkStacks()
+						blockForked = true
+						break
+					}
+					if reached {
+						// Count the mismatch even though scheduler replay repaired
+						// it before tryReuseSubtree observed the aligned state.
+						reuse.observedPreGotoStateMismatch++
+					}
+				}
 				nextTok, ok := p.tryReuseCurrentParseSubtree(&stacks[0], tok, ts, reuse, scratch, arena, &reuseState, timing)
 				if !ok && reuse.hasNonLeafCandidateAt(tok.StartByte) {
 					// W1b settle (unchanged): reuse failed at the live top-of-

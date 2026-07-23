@@ -366,6 +366,84 @@ func (p *Parser) settleEagerDefaultReduceChainForReuse(source []byte, s *glrStac
 	return anyReduced
 }
 
+// settleDeterministicReduceChainForReuse advances a single live stack to a
+// candidate's recorded pre-goto state using either the unique REDUCE action
+// selected by the real current lookahead or the same certified conflict choice
+// used by normal dispatch. Unlike the eager-default settle above, these
+// reductions may depend on the lookahead; they are still exact scheduler replay
+// because no new choice is made here. This is the ownership bridge for hidden
+// repetition nodes erased from the visible tree: block reuse may push one
+// visible sibling, then the ordinary parser must reduce its hidden list wrapper
+// before the next visible sibling owns the same frontier as it did in the
+// original parse.
+//
+// The function fails closed on unresolved conflicts, shifts,
+// recovery/no-action cells, forks, cycles, or a target it cannot reach through
+// reductions alone.
+func (p *Parser) settleDeterministicReduceChainForReuse(source []byte, s *glrStack, tok Token, target StateID, maxStacksSeen int, reuse *reuseCursor, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, deferParentLinks bool, trackChildErrors *bool, forked *bool) (bool, bool) {
+	if p == nil || s == nil || tok.NoLookahead || s.dead || s.accepted || s.shifted || s.cPaused || s.depth() == 0 {
+		return false, false
+	}
+	if s.top().state == target {
+		return false, true
+	}
+	anyReduced := false
+	var lastSig reduceChainSignature
+	repeatedSigCount := 0
+	for step := 0; step < maxConsecutivePrimaryReduces; step++ {
+		state := s.top().state
+		entry := p.lookupAction(state, tok.Symbol)
+		if entry == nil || len(entry.Actions) == 0 {
+			return anyReduced, false
+		}
+		var act ParseAction
+		reduceFromConflict := false
+		switch len(entry.Actions) {
+		case 1:
+			act = entry.Actions[0]
+		default:
+			chosen, ok := p.deterministicConflictChoiceForDispatch(source, s, tok, state, entry.Actions, maxStacksSeen, reuse)
+			if !ok || chosen.Type != ParseActionReduce {
+				return anyReduced, false
+			}
+			act = chosen
+			reduceFromConflict = true
+		}
+		if act.Type != ParseActionReduce {
+			return anyReduced, false
+		}
+		var repeated bool
+		repeatedSigCount, repeated = noteRepeatedReduceChainAction(&lastSig, repeatedSigCount, state, s.depth(), act)
+		if repeated {
+			return anyReduced, false
+		}
+		stepReduced := false
+		previousReduceActionConflict := p.reduceActionConflict
+		// Normal dispatch scopes this flag to one action. Preserve the
+		// conflict-selected reduction's fragility without leaking it into
+		// subsequent unique reductions or the following reuse step.
+		p.reduceActionConflict = reduceFromConflict
+		p.applyReduceActionDispatch(source, s, act, tok, &stepReduced, nodeCount, arena, entryScratch, gssScratch, tmpEntries, deferParentLinks, trackChildErrors)
+		p.reduceActionConflict = previousReduceActionConflict
+		if stepReduced {
+			anyReduced = true
+		}
+		if len(p.pendingForkStacks) > 0 {
+			if forked != nil {
+				*forked = true
+			}
+			return anyReduced, false
+		}
+		if s.dead || s.accepted || s.shifted || !stepReduced {
+			return anyReduced, false
+		}
+		if s.top().state == target {
+			return anyReduced, true
+		}
+	}
+	return anyReduced, false
+}
+
 func (p *Parser) anyLiveStackShifted(stacks []glrStack) bool {
 	for i := range stacks {
 		if !stacks[i].dead && stacks[i].shifted {

@@ -20,6 +20,86 @@ func TestParseEagerDefaultReduceExplicitOptIn(t *testing.T) {
 	}
 }
 
+func TestSettleDeterministicReduceChainForReuseUsesCertifiedRepetitionChoice(t *testing.T) {
+	lang := &Language{
+		Name:         "ownership_settle",
+		InitialState: 1,
+		StateCount:   5,
+		SymbolCount:  4,
+		TokenCount:   2,
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end"},
+			{Name: "item", Visible: true, Named: true},
+			{Name: "statement", Visible: true, Named: true},
+			{Name: "program_repeat1"},
+		},
+		ParseActions: []ParseActionEntry{
+			{},
+			{Actions: []ParseAction{
+				{Type: ParseActionReduce, Symbol: 3, ChildCount: 2, ProductionID: 1},
+				{Type: ParseActionShift, State: 3, Repetition: true},
+			}},
+		},
+		ParseTable: make([][]uint16, 5),
+	}
+	for state := range lang.ParseTable {
+		lang.ParseTable[state] = make([]uint16, lang.SymbolCount)
+	}
+	lang.ParseTable[3][1] = 1
+	lang.ParseTable[1][3] = 4
+
+	parser := NewParser(lang)
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	var entryScratch glrEntryScratch
+	var gssScratch gssScratch
+	var tmpEntries []stackEntry
+	stack := newGLRStackWithScratch(1, &entryScratch)
+	left := NewLeafNode(2, true, 0, 1, Point{}, Point{Column: 1})
+	right := NewLeafNode(2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	stack.entries = append(stack.entries,
+		newStackEntryNode(2, left),
+		newStackEntryNode(3, right),
+	)
+	stack.byteOffset = 2
+	nodeCount := 2
+	trackChildErrors := false
+	forked := false
+
+	reduced, reached := parser.settleDeterministicReduceChainForReuse(
+		nil,
+		&stack,
+		Token{Symbol: 1, StartByte: 2, EndByte: 3},
+		4,
+		1,
+		&reuseCursor{},
+		&nodeCount,
+		arena,
+		&entryScratch,
+		&gssScratch,
+		&tmpEntries,
+		false,
+		&trackChildErrors,
+		&forked,
+	)
+	if !reduced || !reached {
+		t.Fatalf("settle result = reduced %v reached %v state %d, want true/true at state 4", reduced, reached, stack.top().state)
+	}
+	if forked {
+		t.Fatal("certified repetition choice unexpectedly forked")
+	}
+	if got := stack.top().state; got != 4 {
+		t.Fatalf("settled state = %d, want recorded ownership frontier 4", got)
+	}
+	parent := stackEntryNode(stack.top())
+	if parent == nil || parent.Symbol() != 3 {
+		t.Fatalf("settled parent = %#v, want program_repeat1", parent)
+	}
+	if !parent.isFragile() {
+		t.Fatal("conflict-selected ownership reduction did not preserve fragility metadata")
+	}
+}
+
 func TestExternalNoActionDefaultReduceDrainsForksBetweenRounds(t *testing.T) {
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = true

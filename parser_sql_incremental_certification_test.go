@@ -304,7 +304,10 @@ func requireSQLAcceptedEOF(t *testing.T, tree *gts.Tree, source []byte, phase st
 // an incremental-admission concern, not a SQL language restriction. The valid
 // delimiter exceeds the runtime checkpoint buffer, still parses to accepted
 // EOF, and causes affected incremental candidates to fail closed while the
-// returned tree remains fresh-equal.
+// returned tree remains fresh-equal. This is also the canonical full-pipeline
+// liveness receipt for ReuseRejectScannerUnquiescent: unlike ordinary
+// checkpoint languages whose candidates may become fully aligned as scheduler
+// ownership improves, this fixture necessarily exceeds checkpoint capacity.
 func TestSQLLongDollarTagPreservesFullParseSemantics(t *testing.T) {
 	tag := "$" + strings.Repeat("long_tag_", 520) + "$"
 	source := []byte("SELECT " + tag + "payload" + tag + " AS body;\nSELECT 1;\n")
