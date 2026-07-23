@@ -402,8 +402,19 @@ list: clean forest trees must have a quiescence-proven scanner class, and every
 top-level transfer must match the exact `PreGotoState` that owned the original
 reduction. The focused matrix crosses three changed-length edit classes at the
 start, middle, and end of 4 KiB fixtures plus a 137 KiB witness, comparing full
-incremental tree serialization with a fresh parse. Stateful checkpoint-backed
-forest trees remain fail-closed pending a separate boundary-state receipt.
+incremental tree serialization with a fresh parse.
+
+Stateful forest admission uses the same capability rule rather than a second
+language list: the scanner must opt into both incremental reuse and complete
+checkpoints. Forest tokenization requires a non-empty start and end snapshot at
+every reachable non-EOF token boundary. If either serialization is absent, the
+forest declines with `scanner_checkpoint_unavailable`; automatic routing falls
+back to production and the diagnostic forest entry point returns the decline.
+The checkpoint store independently rejects one-sided records, so two
+unrepresentable states can never authenticate by comparing equal empty byte
+slices. A length-changing HTML witness proves useful old-tree reuse and deep
+fresh-tree equality, while a synthetic checkpoint scanner that always returns
+an absent snapshot proves the generalized route fails closed.
 
 The same proof and matrix also admit EditorConfig, Fennel, Fish, GN, Janet,
 Julia, Less, Liquid, Pkl, Racket, TableGen, and Yuck. Their macro witnesses

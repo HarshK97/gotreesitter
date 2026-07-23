@@ -22,6 +22,10 @@ type externalScannerCheckpointRef struct {
 	end   externalScannerSnapshotRef
 }
 
+func externalScannerCheckpointRefComplete(cp externalScannerCheckpointRef) bool {
+	return cp.start.len != 0 && cp.end.len != 0
+}
+
 type externalScannerCheckpointSet struct {
 	indexes []uint32
 	refs    []externalScannerCheckpointRef
@@ -55,7 +59,7 @@ func underlyingDFATokenSource(ts TokenSource) *dfaTokenSource {
 }
 
 func (a *nodeArena) recordExternalScannerLeafCheckpoint(node *Node, start, end []byte) bool {
-	if a == nil || node == nil {
+	if a == nil || node == nil || len(start) == 0 || len(end) == 0 {
 		return false
 	}
 	startRef := a.copyExternalScannerSnapshotRef(start)
@@ -74,7 +78,7 @@ func (a *nodeArena) recordExternalScannerLeafCheckpoint(node *Node, start, end [
 }
 
 func (a *nodeArena) recordExternalScannerCompactCheckpoint(start, end []byte) externalScannerCheckpointRef {
-	if a == nil {
+	if a == nil || len(start) == 0 || len(end) == 0 {
 		return externalScannerCheckpointRef{}
 	}
 	startRef := a.copyExternalScannerSnapshotRef(start)
@@ -133,7 +137,7 @@ func externalScannerCheckpointRefForNode(node *Node) (externalScannerCheckpointR
 		return externalScannerCheckpointRef{}, false
 	}
 	cp, ok := set.lookup(idx)
-	if !ok || (cp.start.len == 0 && cp.end.len == 0) {
+	if !ok || !externalScannerCheckpointRefComplete(cp) {
 		return externalScannerCheckpointRef{}, false
 	}
 	return cp, true
@@ -174,7 +178,7 @@ func rebuildExternalScannerCheckpointForNode(n *Node) (externalScannerCheckpoint
 			break
 		}
 	}
-	if !startOK && !endOK {
+	if !startOK || !endOK {
 		return externalScannerCheckpointRef{}, false
 	}
 	cp := externalScannerCheckpointRef{start: startRef, end: endRef}
@@ -241,7 +245,7 @@ func externalScannerCheckpointRefForPendingParent(arena *nodeArena, parent *pend
 			break
 		}
 	}
-	if !startOK && !endOK {
+	if !startOK || !endOK {
 		return externalScannerCheckpointRef{}, false
 	}
 	return externalScannerCheckpointRef{start: startRef, end: endRef}, true
@@ -310,7 +314,7 @@ func fastForwardWithExternalScannerCheckpoint(ts TokenSource, node *Node, cp ext
 	if dts == nil || !languageUsesExternalScannerCheckpoints(dts.language) {
 		return Token{}, false
 	}
-	if node == nil {
+	if node == nil || !externalScannerCheckpointRefComplete(cp) {
 		return Token{}, false
 	}
 	dts.restoreExternalScannerState(node.ownerArena.externalScannerSnapshotBytes(cp.end))

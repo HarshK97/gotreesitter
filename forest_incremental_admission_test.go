@@ -1,13 +1,25 @@
 package gotreesitter_test
 
 import (
+	"bytes"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	gts "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
+
+type unavailableForestCheckpointScanner struct {
+	gts.ExternalScanner
+}
+
+func (unavailableForestCheckpointScanner) Serialize(any, []byte) int { return 0 }
+
+func (unavailableForestCheckpointScanner) SupportsIncrementalReuse() bool { return true }
+
+func (unavailableForestCheckpointScanner) UsesExternalScannerCheckpoints() bool { return true }
 
 func TestForestIncrementalStatelessAdmission(t *testing.T) {
 	cases := []struct {
@@ -102,6 +114,69 @@ func runForestIncrementalStatelessSample(t *testing.T, lang *gts.Language, sourc
 	defer fresh.Release()
 	requireCompleteParse(t, fresh, edited, lang, "fresh forest admission")
 	requireIncrementalDeepTreeMatchesFresh(t, incremental, fresh, lang)
+}
+
+func TestForestIncrementalCheckpointAdmission(t *testing.T) {
+	source := []byte(strings.Repeat("<section><custom-element>value</custom-element></section>\n", 96))
+	middle := len(source) / 2
+	valueOffset := bytes.Index(source[middle:], []byte("value"))
+	if valueOffset < 0 {
+		t.Fatal("checkpoint fixture has no middle edit site")
+	}
+	edit := insertEdit(source, middle+valueOffset)
+	lang := grammars.HtmlLanguage()
+
+	oldParser := gts.NewParser(lang)
+	oldParser.SetAdmissionCandidateRoute(false)
+	oldTree, ok := oldParser.ParseForestExperimental(source)
+	if !ok {
+		_, _, reason, states := oldParser.ForestDeclineInfo()
+		t.Fatalf("checkpoint forest parse declined: reason=%s states=%v", reason, states)
+	}
+	defer oldTree.Release()
+	requireCompleteParse(t, oldTree, source, lang, "initial checkpoint forest admission")
+	oldTree.Edit(edit.inEdit)
+
+	incrementalParser := gts.NewParser(lang)
+	incrementalParser.SetAdmissionCandidateRoute(false)
+	incremental, profile, err := incrementalParser.ParseIncrementalProfiled(edit.edited, oldTree)
+	if err != nil {
+		t.Fatalf("checkpoint incremental parse: %v", err)
+	}
+	defer incremental.Release()
+	requireCompleteParse(t, incremental, edit.edited, lang, "incremental checkpoint forest admission")
+	if profile.ReuseUnsupported || !profile.OldTreeReuseRoute || profile.ReusedSubtrees == 0 || profile.ReusedBytes == 0 {
+		t.Fatalf("checkpoint forest tree did not enter useful reuse: %+v", profile)
+	}
+
+	freshParser := gts.NewParser(lang)
+	freshParser.SetAdmissionCandidateRoute(false)
+	fresh, err := freshParser.Parse(edit.edited)
+	if err != nil {
+		t.Fatalf("checkpoint fresh parse: %v", err)
+	}
+	defer fresh.Release()
+	requireCompleteParse(t, fresh, edit.edited, lang, "fresh checkpoint forest admission")
+	requireIncrementalDeepTreeMatchesFresh(t, incremental, fresh, lang)
+}
+
+func TestForestCheckpointAdmissionFailsClosedWithoutExactSnapshot(t *testing.T) {
+	lang := *grammars.HtmlLanguage()
+	lang.Name = "synthetic-unavailable-checkpoint"
+	lang.ExternalScanner = unavailableForestCheckpointScanner{ExternalScanner: lang.ExternalScanner}
+
+	parser := gts.NewParser(&lang)
+	tree, ok := parser.ParseForestExperimental([]byte("<div>value</div>"))
+	if tree != nil {
+		tree.Release()
+	}
+	if ok {
+		t.Fatal("forest admitted a scanner boundary without an exact checkpoint")
+	}
+	_, _, reason, _ := parser.ForestDeclineInfo()
+	if reason != "scanner_checkpoint_unavailable" {
+		t.Fatalf("forest decline reason = %q, want scanner_checkpoint_unavailable", reason)
+	}
 }
 
 func TestForestIncrementalOwnershipRegressionGo(t *testing.T) {

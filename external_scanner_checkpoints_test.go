@@ -54,6 +54,34 @@ func TestExternalScannerCheckpointPrimaryLookup(t *testing.T) {
 	}
 }
 
+func TestExternalScannerCheckpointRejectsAbsentEndpoint(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	for name, snapshots := range map[string]struct {
+		start []byte
+		end   []byte
+	}{
+		"missing start": {end: []byte{1}},
+		"missing end":   {start: []byte{1}},
+		"both missing":  {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			node := arena.allocNode()
+			node.ownerArena = arena
+			if arena.recordExternalScannerLeafCheckpoint(node, snapshots.start, snapshots.end) {
+				t.Fatal("recordExternalScannerLeafCheckpoint accepted an incomplete boundary")
+			}
+			if _, ok := externalScannerCheckpointForNode(node); ok {
+				t.Fatal("incomplete boundary remained visible through checkpoint lookup")
+			}
+			if cp := arena.recordExternalScannerCompactCheckpoint(snapshots.start, snapshots.end); externalScannerCheckpointRefComplete(cp) {
+				t.Fatal("compact checkpoint accepted an incomplete boundary")
+			}
+		})
+	}
+}
+
 func TestExternalScannerCheckpointOverflowLookup(t *testing.T) {
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()

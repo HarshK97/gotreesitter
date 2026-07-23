@@ -3244,6 +3244,9 @@ func (p *Parser) currentExternalNoTreeLeafCheckpointRef(arena *nodeArena, tok To
 		p.currentExternalTokenCheckpoint.start,
 		p.currentExternalTokenCheckpoint.end,
 	)
+	if !externalScannerCheckpointRefComplete(cp) {
+		return externalScannerCheckpointRef{}, false
+	}
 	arena.compactFullLeafCreated++
 	arena.checkpointLeafFullNodesAvoided++
 	return cp, true
@@ -3266,6 +3269,9 @@ func (p *Parser) currentExternalCompactFullLeafCheckpointRef(arena *nodeArena, t
 		p.currentExternalTokenCheckpoint.start,
 		p.currentExternalTokenCheckpoint.end,
 	)
+	if !externalScannerCheckpointRefComplete(cp) {
+		return externalScannerCheckpointRef{}, false
+	}
 	arena.checkpointLeafFullNodesAvoided++
 	return cp, true
 }
