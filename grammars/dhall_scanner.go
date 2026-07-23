@@ -22,6 +22,8 @@ func (DhallExternalScanner) Create() any                           { return nil 
 func (DhallExternalScanner) Destroy(payload any)                   {}
 func (DhallExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (DhallExternalScanner) Deserialize(payload any, buf []byte)   {}
+func (DhallExternalScanner) SupportsIncrementalReuse() bool        { return true }
+func (DhallExternalScanner) ExternalScannerIsStateless() bool      { return true }
 
 func (DhallExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	if !dhallValid(validSymbols, dhallTokBlockCommentContent) {

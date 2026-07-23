@@ -31,6 +31,8 @@ func (RonExternalScanner) Create() any                           { return nil }
 func (RonExternalScanner) Destroy(payload any)                   {}
 func (RonExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (RonExternalScanner) Deserialize(payload any, buf []byte)   {}
+func (RonExternalScanner) SupportsIncrementalReuse() bool        { return true }
+func (RonExternalScanner) ExternalScannerIsStateless() bool      { return true }
 
 func (RonExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	// String content (inside a "..." string)

@@ -31,6 +31,8 @@ func (FoamExternalScanner) Create() any                           { return nil }
 func (FoamExternalScanner) Destroy(payload any)                   {}
 func (FoamExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (FoamExternalScanner) Deserialize(payload any, buf []byte)   {}
+func (FoamExternalScanner) SupportsIncrementalReuse() bool        { return true }
+func (FoamExternalScanner) ExternalScannerIsStateless() bool      { return true }
 
 func (FoamExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	// Skip whitespace (matching original C scanner behavior).
