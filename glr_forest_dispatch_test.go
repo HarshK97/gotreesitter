@@ -1176,7 +1176,7 @@ func TestHCLIncrementalEditDigitLeafReuseIsCorrect(t *testing.T) {
 }
 
 // TestForestTreeIncrementalEditCMakeTextInvariantLeafReuseIsCorrect: cmake
-// remains demoted from languageAllowsForestIncrementalPath, but same-length
+// remains outside forestIncrementalReuseProven, but same-length
 // alphanumeric edits inside unquoted_argument leaves can use the token-invariant
 // rescue path safely.
 func TestForestTreeIncrementalEditCMakeTextInvariantLeafReuseIsCorrect(t *testing.T) {

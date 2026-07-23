@@ -64,17 +64,17 @@ func deleteEdit(src []byte, p int) forestEdit {
 	}}
 }
 
-// TestForestIncrementalCorrectness is the edited-corpus matrix gate that
-// languageAllowsForestIncrementalPath always required but never had. For each
+// TestForestIncrementalCorrectness is the edited-corpus matrix gate that the
+// retired forest language allowlist always required but never had. For each
 // forest language it applies many varied edits (replace/insert/delete) across a
 // real corpus file and asserts the incremental re-parse of the forest-built old
 // tree is byte-for-byte identical (s-expr) to a fresh parse of the same edited
 // source — only over edits that keep the source valid (an edit that breaks
 // syntax routes fresh through production error recovery, a different-but-valid
 // path). Erlang + JavaScript pass via real forest-incremental reuse; SCSS/CSS/
-// CMake are demoted from languageAllowsForestIncrementalPath (they FAILED this
+// CMake remain outside the scanner-proof admission class (they FAILED this
 // gate — wrong/truncated trees) and reach the same assertion via fresh-parse
-// fallback. Re-adding a language to that list without it passing here regresses
+// fallback. Admitting another scanner class without it passing here regresses
 // incremental correctness. Each case opts in explicitly so this experimental
 // gate remains independent of automatic-routing policy.
 func TestForestIncrementalCorrectness(t *testing.T) {

@@ -26,6 +26,12 @@ func (KdlExternalScanner) Destroy(payload any)                   {}
 func (KdlExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (KdlExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// Nesting depth and raw-string delimiters are local to one Scan call. The
+// scanner retains no state between tokens or after a failed scan.
+func (KdlExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (KdlExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (KdlExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (KdlExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	// EOF detection
 	if kdlValid(validSymbols, kdlTokEof) && lexer.Lookahead() == 0 {

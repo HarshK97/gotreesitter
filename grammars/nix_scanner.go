@@ -32,6 +32,12 @@ func (NixExternalScanner) Destroy(payload any)                   {}
 func (NixExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (NixExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// String and path modes come exclusively from validSymbols; no mode or
+// delimiter survives a Scan call. Failed scans therefore preserve empty state.
+func (NixExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (NixExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (NixExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (NixExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	// Error recovery: all valid
 	if nixValid(validSymbols, nixTokStringFragment) &&
