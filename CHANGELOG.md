@@ -9,6 +9,12 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
+- **TypeScript and TSX now parse import-type queries in generic call type
+  arguments.** Forms such as `foo<typeof import("module")>()` and
+  `foo<import("module").Name>()` use a pinned upstream grammar overlay that is
+  applied identically during ts2go generation and C-oracle parity builds.
+  Ordinary dynamic `import()` expressions remain call expressions.
+
 - **Twelve more stateless scanners are certified for changed-edit reuse:**
   EditorConfig, Fennel, Fish, GN, Janet, Julia, Less, Liquid, Pkl, Racket,
   TableGen, and Yuck. The shared fresh-tree matrix enforces real reuse across
