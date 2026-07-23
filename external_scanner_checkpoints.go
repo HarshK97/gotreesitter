@@ -143,6 +143,82 @@ func externalScannerCheckpointRefForNode(node *Node) (externalScannerCheckpointR
 	return cp, true
 }
 
+// copyExternalScannerCheckpointToNode preserves checkpoint ownership when
+// parser shaping clones or relabels a node. Checkpoints are arena sidecars, so
+// copying a Node header alone cannot carry them to the new arena slot.
+func copyExternalScannerCheckpointToNode(dst, src *Node) bool {
+	if dst == nil || src == nil || dst.ownerArena == nil || src.ownerArena == nil {
+		return false
+	}
+	cp, ok := externalScannerCheckpointRefForNode(src)
+	if !ok {
+		return false
+	}
+	if dst.ownerArena != src.ownerArena {
+		cp, ok = cloneExternalScannerCheckpointRef(src.ownerArena, dst.ownerArena, cp)
+		if !ok {
+			return false
+		}
+	}
+	if !dst.ownerArena.setExternalScannerCheckpoint(dst, cp) {
+		return false
+	}
+	dst.ownerArena.externalScannerCheckpointRecords++
+	return true
+}
+
+// recordExternalScannerCheckpointForParent derives a reduction receipt from
+// checkpoints already owned by its shaped children. It deliberately performs
+// direct sidecar lookups rather than recursively rebuilding descendants: parse
+// construction is bottom-up, so recursion here would make deep reductions
+// quadratic.
+func recordExternalScannerCheckpointForParent(parent *Node, children []*Node) bool {
+	if parent == nil || parent.ownerArena == nil || len(children) == 0 {
+		return false
+	}
+	var start externalScannerSnapshotRef
+	var end externalScannerSnapshotRef
+	startOK := false
+	endOK := false
+	for _, child := range children {
+		cp, ok := externalScannerCheckpointRefForNode(child)
+		if !ok {
+			continue
+		}
+		start = copyExternalScannerSnapshotRefBetweenArenas(child.ownerArena, parent.ownerArena, cp.start)
+		startOK = start.len != 0
+		break
+	}
+	for i := len(children) - 1; i >= 0; i-- {
+		child := children[i]
+		cp, ok := externalScannerCheckpointRefForNode(child)
+		if !ok {
+			continue
+		}
+		end = copyExternalScannerSnapshotRefBetweenArenas(child.ownerArena, parent.ownerArena, cp.end)
+		endOK = end.len != 0
+		break
+	}
+	if !startOK || !endOK {
+		return false
+	}
+	if !parent.ownerArena.setExternalScannerCheckpoint(parent, externalScannerCheckpointRef{start: start, end: end}) {
+		return false
+	}
+	parent.ownerArena.externalScannerCheckpointRecords++
+	return true
+}
+
+func copyExternalScannerSnapshotRefBetweenArenas(src, dst *nodeArena, ref externalScannerSnapshotRef) externalScannerSnapshotRef {
+	if src == nil || dst == nil || ref.len == 0 {
+		return externalScannerSnapshotRef{}
+	}
+	if src == dst {
+		return ref
+	}
+	return dst.copyExternalScannerSnapshotRef(src.externalScannerSnapshotBytes(ref))
+}
+
 func rebuildExternalScannerCheckpoints(root *Node, lang *Language) {
 	if root == nil || !languageUsesExternalScannerCheckpoints(lang) {
 		return

@@ -699,24 +699,6 @@ func TestConfigureIncrementalParseCapsPreservesConfiguredWidth(t *testing.T) {
 	}
 }
 
-func TestReuseStackDepthForPreGoto(t *testing.T) {
-	entries := []stackEntry{
-		{state: 1},
-		newStackEntryNode(10, &Node{endByte: 4}),
-		newStackEntryNode(20, &Node{endByte: 8}),
-		newStackEntryNode(10, &Node{endByte: 12}),
-	}
-	if got := reuseStackDepthForPreGoto(entries, 8, 10); got != 2 {
-		t.Fatalf("depth at start=8/pre=10 = %d, want 2", got)
-	}
-	if got := reuseStackDepthForPreGoto(entries, 12, 10); got != 4 {
-		t.Fatalf("depth at start=12/pre=10 = %d, want 4", got)
-	}
-	if got := reuseStackDepthForPreGoto(entries, 8, 99); got != 0 {
-		t.Fatalf("depth at missing state = %d, want 0", got)
-	}
-}
-
 func TestReuseNonLeafTargetStateOnStackUsesPreGoto(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	parser := NewParser(lang)
@@ -750,16 +732,16 @@ func TestReuseNonLeafTargetStateOnStackUsesPreGoto(t *testing.T) {
 	stackWithPre := glrStack{
 		entries: []stackEntry{
 			{state: lang.InitialState},
-			newStackEntryNode(pre, &Node{endByte: start}),
 			newStackEntryNode(pre+1, &Node{endByte: start}),
+			newStackEntryNode(pre, &Node{endByte: start}),
 		},
 	}
-	nextState, depth, ok := parser.reuseNonLeafTargetStateOnStack(&stackWithPre, target, start, nil)
+	nextState, depth, ok := parser.reuseNonLeafTargetStateOnStack(&stackWithPre, target)
 	if !ok {
 		t.Fatal("expected non-leaf stack-context match success")
 	}
-	if depth != 2 {
-		t.Fatalf("truncate depth = %d, want 2", depth)
+	if depth != stackWithPre.depth() {
+		t.Fatalf("reuse depth = %d, want live depth %d", depth, stackWithPre.depth())
 	}
 	if nextState == 0 {
 		t.Fatal("expected non-zero goto state for matched pre-goto state")
@@ -771,7 +753,18 @@ func TestReuseNonLeafTargetStateOnStackUsesPreGoto(t *testing.T) {
 			newStackEntryNode(pre+2, &Node{endByte: start}),
 		},
 	}
-	if _, _, ok := parser.reuseNonLeafTargetStateOnStack(&stackMissingPre, target, start, nil); ok {
-		t.Fatal("expected failure when stack does not contain candidate pre-goto state")
+	if _, _, ok := parser.reuseNonLeafTargetStateOnStack(&stackMissingPre, target); ok {
+		t.Fatal("expected failure when live stack does not own candidate pre-goto state")
+	}
+
+	stackWithOlderPre := glrStack{
+		entries: []stackEntry{
+			{state: lang.InitialState},
+			newStackEntryNode(pre, &Node{endByte: start}),
+			newStackEntryNode(pre+1, &Node{endByte: start}),
+		},
+	}
+	if _, _, ok := parser.reuseNonLeafTargetStateOnStack(&stackWithOlderPre, target); ok {
+		t.Fatal("expected failure when only an older stack entry owns candidate pre-goto state")
 	}
 }

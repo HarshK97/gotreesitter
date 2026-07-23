@@ -8394,6 +8394,7 @@ func aliasedNodeInArena(arena *nodeArena, lang *Language, n *Node, alias Symbol)
 		cloned.setNamed(lang.SymbolMetadata[alias].Named)
 	}
 	cloned.ownerArena = arena
+	copyExternalScannerCheckpointToNode(cloned, n)
 	return cloned
 }
 
@@ -8425,6 +8426,7 @@ func retainedAliasChildWrapperInArena(arena *nodeArena, lang *Language, n *Node,
 	wrapper.parseState, wrapper.preGotoState = n.parseState, n.preGotoState
 	wrapper.rawShape = n.rawShape
 	wrapper.dynamicPrecedence = n.dynamicPrecedence
+	copyExternalScannerCheckpointToNode(wrapper, n)
 	return wrapper
 }
 
@@ -8464,6 +8466,7 @@ func materializeAnonymousLeafAliasWrapper(arena *nodeArena, lang *Language, n *N
 	wrapper.preGotoState = n.preGotoState
 	wrapper.rawShape = n.rawShape
 	wrapper.dynamicPrecedence = n.dynamicPrecedence
+	copyExternalScannerCheckpointToNode(wrapper, n)
 	return wrapper
 }
 
@@ -8571,6 +8574,7 @@ func cloneNodeInArena(arena *nodeArena, n *Node) *Node {
 	cloned.errorRankCache = 0
 	cloned.ownerArena = arena
 	cloneNodeFieldMetadataHeaderInto(cloned, n, arena)
+	copyExternalScannerCheckpointToNode(cloned, n)
 	if nodeHasFinalChildRefs(n) {
 		childCount := nodeChildCountNoMaterialize(n)
 		if childCount > 0 {

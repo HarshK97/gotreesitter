@@ -700,26 +700,18 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 			idx.rejectStaleNonLeafBoundary++
 			continue
 		}
-		// A node's span always starts where its leftmost descendant leaf
-		// starts, so n's leftmost leaf is the OLD-tree token that was lexed
-		// at this position before the edit. reuseNonLeafTargetStateOnStack
-		// below only checks goto-table/stack-depth compatibility for n's
-		// *symbol* - it never consults the lookahead token at all - so a
-		// stale tokenization boundary inside n (e.g. a thin single-token
-		// wrapper non-terminal whose child token's maximal-munch decision no
-		// longer holds after the edit) would otherwise be silently reused.
-		// Compare the leftmost leaf's stored (stale) EndByte against the
-		// freshly lexed lookahead's EndByte: if they differ, the subtree
-		// under n was built from a token boundary that doesn't exist in the
-		// new source, so reject reuse. Note we deliberately do NOT compare
-		// symbols here - the leaf's symbol can differ from the fresh
-		// lookahead's symbol even when reuse is unsafe, so a symbol check
-		// would miss the bug this guards against.
-		if leaf := leftmostLeaf(n); leaf == nil || leaf.EndByte() != lookahead.EndByte {
-			idx.rejectStaleNonLeafBoundary++
-			continue
+		// Without an exact scanner checkpoint, retain the conservative token
+		// boundary proof: a fresh lookahead ending elsewhere means the old
+		// subtree's maximal-munch boundary is stale. Checkpointed scanners use
+		// the stronger proof below instead: exact live pre-goto ownership plus
+		// an exact serialized scanner state at the candidate boundary.
+		if !languageUsesExternalScannerCheckpoints(p.language) {
+			if leaf := leftmostLeaf(n); leaf == nil || leaf.EndByte() != lookahead.EndByte {
+				idx.rejectStaleNonLeafBoundary++
+				continue
+			}
 		}
-		nextState, truncateDepth, ok := p.reuseNonLeafTargetStateOnStack(s, n, lookahead.StartByte, entryScratch)
+		nextState, truncateDepth, ok := p.reuseNonLeafTargetStateOnStack(s, n)
 		if !ok {
 			continue
 		}
@@ -1120,26 +1112,7 @@ func leftmostLeaf(n *Node) *Node {
 	return n
 }
 
-func reuseStackDepthForPreGoto(entries []stackEntry, startByte uint32, preGoto StateID) int {
-	if len(entries) == 0 {
-		return 0
-	}
-	for i := len(entries) - 1; i >= 0; i-- {
-		if entries[i].state != preGoto {
-			continue
-		}
-		frontier := uint32(0)
-		if n := stackEntryNode(entries[i]); n != nil {
-			frontier = n.endByte
-		}
-		if frontier <= startByte {
-			return i + 1
-		}
-	}
-	return 0
-}
-
-func (p *Parser) reuseNonLeafTargetStateOnStack(s *glrStack, n *Node, startByte uint32, entryScratch *glrEntryScratch) (StateID, int, bool) {
+func (p *Parser) reuseNonLeafTargetStateOnStack(s *glrStack, n *Node) (StateID, int, bool) {
 	if s == nil || n == nil || n.ChildCount() == 0 {
 		return 0, 0, false
 	}
@@ -1148,6 +1121,16 @@ func (p *Parser) reuseNonLeafTargetStateOnStack(s *glrStack, n *Node, startByte 
 	}
 
 	preGoto := n.PreGotoState()
+	// The recorded pre-goto state identifies the parser frontier that owned
+	// this reduction. Finding the same state deeper in the stack is not
+	// sufficient: truncating back to it can discard newly reparsed syntax and
+	// transfer ownership across a recovery or scanner boundary.
+	if s.top().state != preGoto {
+		if perfCountersEnabled {
+			perfRecordReuseNonLeafStateMiss()
+		}
+		return 0, 0, false
+	}
 
 	gotoState := p.lookupGoto(preGoto, n.Symbol())
 	if gotoState == 0 {
@@ -1168,14 +1151,5 @@ func (p *Parser) reuseNonLeafTargetStateOnStack(s *glrStack, n *Node, startByte 
 		return 0, 0, false
 	}
 
-	entries := s.ensureEntries(entryScratch)
-	depth := reuseStackDepthForPreGoto(entries, startByte, preGoto)
-	if depth == 0 {
-		if perfCountersEnabled {
-			perfRecordReuseNonLeafStateMiss()
-		}
-		return 0, 0, false
-	}
-
-	return gotoState, depth, true
+	return gotoState, s.depth(), true
 }

@@ -183,6 +183,12 @@ func mdListItemIndentation(b mdBlock) uint8 {
 // MarkdownExternalScanner handles block-level markdown parsing.
 type MarkdownExternalScanner struct{}
 
+func (MarkdownExternalScanner) SupportsIncrementalReuse() bool { return true }
+
+func (MarkdownExternalScanner) SupportsIncrementalReuseFromErrorTree() bool { return false }
+
+func (MarkdownExternalScanner) UsesExternalScannerCheckpoints() bool { return true }
+
 func (MarkdownExternalScanner) Create() any {
 	return &mdState{}
 }
