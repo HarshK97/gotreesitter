@@ -522,6 +522,8 @@ witness, and it shrinks as certified engine mechanisms subsume shims. See
 For a maintainer-oriented map of the full root package, ownership seams,
 review-sensitive hotspots, and local artifact policy, see
 [docs/repository-map.md](docs/repository-map.md).
+The ordered, receipt-driven cleanup program is documented in
+[docs/root-normalization-retirement.md](docs/root-normalization-retirement.md).
 
 ## Known limitations
 

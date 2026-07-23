@@ -23,9 +23,11 @@ subsystem names rather than directory depth.
 | Allocation and storage | `arena*.go`, `raw_shape*.go`, `no_tree_node.go`, `node_field_metadata.go` | Arena lifetime, compact/raw node storage, and memory accounting |
 
 The result-compatibility tier has its own retirement rules in
-[compat-tier.md](compat-tier.md). External scanner certification and fallback
-policy live in [external-scanners.md](external-scanners.md). Compact admission
-breadth is tracked in [compact-route-coverage-census.md](compact-route-coverage-census.md).
+[compat-tier.md](compat-tier.md), with the ordered root-cleanup program in
+[root-normalization-retirement.md](root-normalization-retirement.md). External
+scanner certification and fallback policy live in
+[external-scanners.md](external-scanners.md). Compact admission breadth is
+tracked in [compact-route-coverage-census.md](compact-route-coverage-census.md).
 
 ## Package and tool directories
 
