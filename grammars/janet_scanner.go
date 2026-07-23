@@ -27,6 +27,13 @@ func (JanetExternalScanner) Destroy(payload any)                   {}
 func (JanetExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (JanetExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// The scanner carries no payload and derives every result from local
+// lookahead plus validSymbols, so every incremental boundary is quiescent and
+// failed scans cannot mutate persistent state.
+func (JanetExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (JanetExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (JanetExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (JanetExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	bufValid := janetValid(validSymbols, janetTokLongBufLit)
 	strValid := janetValid(validSymbols, janetTokLongStrLit)

@@ -32,6 +32,13 @@ func (FishExternalScanner) Destroy(payload any)                   {}
 func (FishExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (FishExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// The scanner carries no payload and derives every result from local
+// lookahead plus validSymbols, so every incremental boundary is quiescent and
+// failed scans cannot mutate persistent state.
+func (FishExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (FishExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (FishExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (FishExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	// BEGIN_BRACE: { followed by whitespace or ;
 	if fishValid(validSymbols, fishTokBeginBrace) {

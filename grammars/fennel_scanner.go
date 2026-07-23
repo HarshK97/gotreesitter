@@ -43,6 +43,13 @@ func (FennelExternalScanner) Destroy(payload any)                   {}
 func (FennelExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (FennelExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// The scanner carries no payload and derives every result from local
+// lookahead plus validSymbols, so every incremental boundary is quiescent and
+// failed scans cannot mutate persistent state.
+func (FennelExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (FennelExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (FennelExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (FennelExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	// Error recovery guard: if the error sentinel is valid, bail out.
 	if fennelValid(validSymbols, fennelTokCount) {

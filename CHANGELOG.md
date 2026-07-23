@@ -9,6 +9,12 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
+- **Twelve more stateless scanners are certified for changed-edit reuse:**
+  EditorConfig, Fennel, Fish, GN, Janet, Julia, Less, Liquid, Pkl, Racket,
+  TableGen, and Yuck. The shared fresh-tree matrix enforces real reuse across
+  edit classes and positions, with measured 137 KiB floors that preserve low
+  ownership-reuse cases as visible performance residuals.
+
 - **The stateless-scanner admission matrix now also covers Gleam, Move, Tcl,
   and WGSL.** Each scanner passes the shared 4 KiB multi-position edit matrix
   and 137 KiB fresh-tree differential with a measured reuse floor. AWK and

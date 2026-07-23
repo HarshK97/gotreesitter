@@ -67,6 +67,13 @@ func (PklExternalScanner) Destroy(payload any)                   {}
 func (PklExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (PklExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// The scanner carries no payload and derives every result from local
+// lookahead plus validSymbols, so every incremental boundary is quiescent and
+// failed scans cannot mutate persistent state.
+func (PklExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (PklExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (PklExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (PklExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	// Error recovery: if all string tokens valid, bail out.
 	if pklValid(validSymbols, pklTokSlStringChars) && pklValid(validSymbols, pklTokSl1StringChars) &&

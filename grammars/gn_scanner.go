@@ -23,6 +23,13 @@ func (GnExternalScanner) Destroy(payload any)                   {}
 func (GnExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (GnExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// The scanner carries no payload and derives every result from local
+// lookahead plus validSymbols, so every incremental boundary is quiescent and
+// failed scans cannot mutate persistent state.
+func (GnExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (GnExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (GnExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 // Scan is a line-faithful port of the pinned upstream src/scanner.c
 // (tree-sitter-grammars/tree-sitter-gn @ bc06955b).
 func (GnExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {

@@ -35,6 +35,13 @@ func (LiquidExternalScanner) Destroy(payload any)                   {}
 func (LiquidExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (LiquidExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// The scanner carries no payload and derives every result from local
+// lookahead plus validSymbols, so every incremental boundary is quiescent and
+// failed scans cannot mutate persistent state.
+func (LiquidExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (LiquidExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (LiquidExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (LiquidExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	// Error recovery
 	if liquidValid(validSymbols, liquidTokErrorSentinel) {
