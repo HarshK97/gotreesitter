@@ -28,6 +28,8 @@ func (DtdExternalScanner) Create() any                           { return nil }
 func (DtdExternalScanner) Destroy(payload any)                   {}
 func (DtdExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (DtdExternalScanner) Deserialize(payload any, buf []byte)   {}
+func (DtdExternalScanner) SupportsIncrementalReuse() bool        { return true }
+func (DtdExternalScanner) ExternalScannerIsStateless() bool      { return true }
 
 func (DtdExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	// Error recovery

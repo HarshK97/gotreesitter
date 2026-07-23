@@ -35,6 +35,8 @@ func (OdinExternalScanner) Create() any                           { return nil }
 func (OdinExternalScanner) Destroy(payload any)                   {}
 func (OdinExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (OdinExternalScanner) Deserialize(payload any, buf []byte)   {}
+func (OdinExternalScanner) SupportsIncrementalReuse() bool        { return true }
+func (OdinExternalScanner) ExternalScannerIsStateless() bool      { return true }
 
 func (OdinExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	// FLOAT parsing

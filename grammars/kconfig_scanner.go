@@ -25,6 +25,8 @@ func (KconfigExternalScanner) Create() any                           { return ni
 func (KconfigExternalScanner) Destroy(payload any)                   {}
 func (KconfigExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (KconfigExternalScanner) Deserialize(payload any, buf []byte)   {}
+func (KconfigExternalScanner) SupportsIncrementalReuse() bool        { return true }
+func (KconfigExternalScanner) ExternalScannerIsStateless() bool      { return true }
 
 func (KconfigExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	if !kconfigValid(validSymbols, kconfigTokText) {

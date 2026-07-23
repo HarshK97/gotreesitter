@@ -406,6 +406,15 @@ Fish retains a 32-byte floor because its scanner is certified but top-level
 ownership rejection still dominates. The low floor is recorded as a parser
 performance residual, not inflated into a scanner-safety blocker.
 
+Comment, Dhall, DTD, Foam, Godot Resource, Kconfig, Odin, and RON complete the
+next stateless certification wave. Their scanners carry nil payloads, emit
+empty checkpoints, and base every scan solely on local lookahead and the
+parser-provided valid-symbol set. The shared fresh-tree matrix covers
+insert/delete/changed-length replacement at three positions in clean 4 KiB
+fixtures plus a representative 137 KiB edit. Macro reuse floors are 3%, 60%,
+90%, 10%, 15%, 16 bytes, 10%, and 70%, respectively. Kconfig's low floor is a
+parser ownership/performance residual; it is not a scanner-safety exception.
+
 SQL's state proof is explicit: the payload is either empty or exactly one
 active PostgreSQL dollar-quote tag. The empty state has a one-byte marker;
 representable non-empty states serialize as the tag plus a trailing NUL. A tag
@@ -450,7 +459,7 @@ silently widening HTML admission.
 | `cairo` | fallback (uncertified) |
 | `cmake` | certified reuse |
 | `cobol` | fallback (uncertified) |
-| `comment` | fallback (uncertified) |
+| `comment` | certified reuse |
 | `cooklang` | fallback (uncertified) |
 | `cpp` | fallback (uncertified) |
 | `crystal` | fallback (uncertified) |
@@ -459,12 +468,12 @@ silently widening HTML admission.
 | `cue` | certified reuse |
 | `d` | certified reuse |
 | `dart` | bounded reuse (up to 256 KiB) |
-| `dhall` | fallback (uncertified) |
+| `dhall` | certified reuse |
 | `disassembly` | fallback (uncertified) |
 | `djot` | fallback (uncertified) |
 | `dockerfile` | fallback (uncertified) |
 | `doxygen` | fallback (uncertified) |
-| `dtd` | fallback (uncertified) |
+| `dtd` | certified reuse |
 | `earthfile` | fallback (uncertified) |
 | `editorconfig` | certified reuse |
 | `elixir` | certified reuse |
@@ -473,7 +482,7 @@ silently widening HTML admission.
 | `fennel` | certified reuse |
 | `firrtl` | fallback (uncertified) |
 | `fish` | certified reuse |
-| `foam` | fallback (uncertified) |
+| `foam` | certified reuse |
 | `fortran` | fallback (uncertified) |
 | `fsharp` | fallback (uncertified) |
 | `gdscript` | fallback (uncertified) |
@@ -481,7 +490,7 @@ silently widening HTML admission.
 | `gleam` | certified reuse |
 | `gn` | certified reuse |
 | `go` | certified reuse |
-| `godot_resource` | fallback (uncertified) |
+| `godot_resource` | certified reuse |
 | `hack` | fallback (uncertified) |
 | `haskell` | fallback (uncertified) |
 | `haxe` | fallback (uncertified) |
@@ -494,7 +503,7 @@ silently widening HTML admission.
 | `jsonnet` | fallback (uncertified) |
 | `julia` | certified reuse |
 | `just` | fallback (uncertified) |
-| `kconfig` | fallback (uncertified) |
+| `kconfig` | certified reuse |
 | `kdl` | fallback (uncertified) |
 | `kotlin` | fallback (uncertified) |
 | `less` | certified reuse |
@@ -513,7 +522,7 @@ silently widening HTML admission.
 | `norg` | fallback (uncertified) |
 | `nushell` | fallback (uncertified) |
 | `ocaml` | fallback (uncertified) |
-| `odin` | fallback (uncertified) |
+| `odin` | certified reuse |
 | `org` | fallback (uncertified) |
 | `perl` | fallback (uncertified) |
 | `php` | fallback (uncertified) |
@@ -526,7 +535,7 @@ silently widening HTML admission.
 | `r` | fallback (uncertified) |
 | `racket` | certified reuse |
 | `rescript` | fallback (uncertified) |
-| `ron` | fallback (uncertified) |
+| `ron` | certified reuse |
 | `rst` | fallback (uncertified) |
 | `ruby` | fallback (uncertified) |
 | `rust` | fallback (uncertified) |

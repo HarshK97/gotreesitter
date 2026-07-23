@@ -15,6 +15,13 @@ for tags and release notes while still in `0.x`.
   applied identically during ts2go generation and C-oracle parity builds.
   Ordinary dynamic `import()` expressions remain call expressions.
 
+- **Eight additional stateless scanners are certified for changed-edit reuse:**
+  Comment, Dhall, DTD, Foam, Godot Resource, Kconfig, Odin, and RON. Each
+  passes the shared multi-position 4 KiB edit matrix and a 137 KiB
+  changed-length fresh-tree differential with actual subtree reuse. Kconfig's
+  deliberately small 16-byte macro floor keeps its parser-level ownership
+  residual visible without treating performance as a correctness gate.
+
 - **Twelve more stateless scanners are certified for changed-edit reuse:**
   EditorConfig, Fennel, Fish, GN, Janet, Julia, Less, Liquid, Pkl, Racket,
   TableGen, and Yuck. The shared fresh-tree matrix enforces real reuse across
