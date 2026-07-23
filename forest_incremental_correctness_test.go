@@ -154,6 +154,12 @@ func TestForestIncrementalCorrectness(t *testing.T) {
 					continue
 				}
 				tested++
+				if got, want := incTree.RootNode().EndByte(), uint32(len(e.edited)); got != want {
+					t.Errorf("edit %d (%s): incremental root end=%d, want %d", i, e.desc, got, want)
+				}
+				if got, want := freshTree.RootNode().EndByte(), uint32(len(e.edited)); got != want {
+					t.Errorf("edit %d (%s): fresh root end=%d, want %d", i, e.desc, got, want)
+				}
 				got := incTree.RootNode().SExpr(lang)
 				want := freshTree.RootNode().SExpr(lang)
 				if got != want {
