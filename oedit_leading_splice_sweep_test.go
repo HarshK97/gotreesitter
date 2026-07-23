@@ -19,21 +19,16 @@ package gotreesitter_test
 // sitting in the spliced leading run, and (for css) the production route the
 // splice runs on.
 //
-// The primary check is a DIFFERENTIAL, the same shape as the #418 range-limited
-// sweep: for the same Parser, the leading-splice-ON tree must be byte-identical
-// (oeditSerialize) to the leading-splice-OFF tree (SetDisableLeadingRunSplice).
-// Because both sides share every OTHER reuse path, a pre-existing incremental
-// divergence appears on BOTH and cancels; only a divergence the leading splice
-// ITSELF causes survives. This is what lets adversarial fixtures with their own
-// pre-existing reuse quirks (css, the untyped-parameter construct) be swept
-// without an allowlist. A secondary check adds oracle strength: where the
-// leading-OFF tree already equals fresh, the leading-ON tree must too.
+// The JavaScript family is always compared directly with a fresh parse of the
+// edited source. Comparing it only to the old non-splicing incremental path is
+// not a sound admission gate: that old path can itself differ from fresh, and
+// the splice can repair the divergence. Legacy fixtures with separately tracked
+// incremental residuals keep the narrower splice-on/splice-off differential so
+// this test does not absorb unrelated correctness work.
 //
 // Coverage spans the leading-enabled languages (go, production-route css), the
-// reuse-declining one (python), AND the barred family (typescript, tsx,
-// javascript) -- for the barred family the differential must be a strict no-op
-// (leading OFF == leading ON, since the splice never engages), which the sweep
-// confirms directly.
+// reuse-declining one (python), and the ambiguous-expression / ASI family
+// (typescript, tsx, javascript).
 
 import (
 	"fmt"
@@ -45,9 +40,10 @@ import (
 )
 
 type leadingSweepCase struct {
-	name string
-	lang *gts.Language
-	src  []byte
+	name         string
+	lang         *gts.Language
+	src          []byte
+	requireFresh bool
 }
 
 func leadingSweepCases() []leadingSweepCase {
@@ -98,8 +94,8 @@ func leadingSweepCases() []leadingSweepCase {
 		"def f1(a):\n    v = a + 1\n    return v\n\n" +
 		"def f2(a):\n    return a * 2\n")
 
-	// TypeScript / TSX: comments between items. The family is barred from the
-	// leading splice, so the differential must be a strict no-op here.
+	// TypeScript / TSX: comments between items exercise the ambiguous-expression
+	// / ASI family admitted by #429.
 	tsComments := []byte("// module header\n" +
 		"export function f0(a: number): number {\n  return a;\n}\n\n" +
 		"// between f0 and f1\n" +
@@ -113,14 +109,14 @@ func leadingSweepCases() []leadingSweepCase {
 		"const g = (x) => x * 2;\n")
 
 	return []leadingSweepCase{
-		{"go-comments", goLang, goComments},
-		{"go-untyped-leading", goLang, goUntyped},
-		{"go-decls", goLang, goDecls},
-		{"css-comments", grammars.CssLanguage(), cssComments},
-		{"python-comments", grammars.PythonLanguage(), pyComments},
-		{"typescript-comments", grammars.TypescriptLanguage(), tsComments},
-		{"tsx-comments", grammars.TsxLanguage(), tsComments},
-		{"javascript-comments", grammars.JavascriptLanguage(), jsComments},
+		{"go-comments", goLang, goComments, false},
+		{"go-untyped-leading", goLang, goUntyped, false},
+		{"go-decls", goLang, goDecls, false},
+		{"css-comments", grammars.CssLanguage(), cssComments, false},
+		{"python-comments", grammars.PythonLanguage(), pyComments, false},
+		{"typescript-comments", grammars.TypescriptLanguage(), tsComments, true},
+		{"tsx-comments", grammars.TsxLanguage(), tsComments, true},
+		{"javascript-comments", grammars.JavascriptLanguage(), jsComments, true},
 	}
 }
 
@@ -147,7 +143,7 @@ func runLeadingSweep(t *testing.T, tc leadingSweepCase) {
 
 	freshP := gts.NewParser(tc.lang)
 	incrP := gts.NewParser(tc.lang)
-	clean, checked, oracle := 0, 0, 0
+	clean, checked := 0, 0
 	for i := 1; i < len(tc.src)-1; i++ {
 		for _, cls := range []string{"insert", "delete", "replace"} {
 			edited, edit := incrGateBuildEdit(tc.src, i, cls)
@@ -169,70 +165,53 @@ func runLeadingSweep(t *testing.T, tc leadingSweepCase) {
 			}
 			clean++
 
-			// Leading-splice ON (the change under test).
-			incrP.SetDisableLeadingRunSplice(false)
-			oldOn := baseline.Copy()
-			oldOn.Edit(edit)
-			on, err := incrP.ParseIncremental(edited, oldOn)
-			if err != nil || on == nil || on.RootNode() == nil {
-				t.Fatalf("%s pos=%d class=%s: leading-ON incremental parse failed while fresh was clean", tc.name, i, cls)
+			old := baseline.Copy()
+			old.Edit(edit)
+			incr, err := incrP.ParseIncremental(edited, old)
+			if err != nil || incr == nil || incr.RootNode() == nil {
+				t.Fatalf("%s pos=%d class=%s: incremental parse failed while fresh was clean", tc.name, i, cls)
 			}
-			onS := oeditSerialize(on.RootNode(), tc.lang)
-
-			// Leading-splice OFF (the pre-change behavior).
-			incrP.SetDisableLeadingRunSplice(true)
-			oldOff := baseline.Copy()
-			oldOff.Edit(edit)
-			off, err := incrP.ParseIncremental(edited, oldOff)
-			if err != nil || off == nil || off.RootNode() == nil {
-				t.Fatalf("%s pos=%d class=%s: leading-OFF incremental parse failed", tc.name, i, cls)
-			}
-			offS := oeditSerialize(off.RootNode(), tc.lang)
-			incrP.SetDisableLeadingRunSplice(false)
+			incrS := oeditSerialize(incr.RootNode(), tc.lang)
 			checked++
 
-			// Primary isolation invariant: the leading splice must be a no-op vs
-			// leaving it off. Any difference here is a divergence THIS change
-			// caused (a pre-existing reuse quirk appears on both sides and
-			// cancels).
-			if onS != offS {
-				t.Fatalf("%s pos=%d class=%s: leading-ON != leading-OFF (the leading splice changed the tree)\n  off=%s\n  on =%s",
-					tc.name, i, cls, oeditTrunc(offS), oeditTrunc(onS))
-			}
-
-			// Secondary oracle: where leading-OFF already equals fresh, leading-ON
-			// must too (pre-existing off-vs-fresh divergences are out of scope --
-			// tracked by TestIncrementalInvariantGate).
 			freshS := oeditSerialize(fresh.RootNode(), tc.lang)
-			if offS == freshS {
-				oracle++
-				if onS != freshS {
-					t.Fatalf("%s pos=%d class=%s: leading-ON != fresh while leading-OFF == fresh\n  fresh=%s\n  on   =%s",
-						tc.name, i, cls, oeditTrunc(freshS), oeditTrunc(onS))
+			if tc.requireFresh {
+				if incrS != freshS {
+					t.Fatalf("%s pos=%d class=%s: incremental != fresh\n  fresh=%s\n  incr =%s",
+						tc.name, i, cls, oeditTrunc(freshS), oeditTrunc(incrS))
 				}
+			} else {
+				incrP.SetDisableLeadingRunSplice(true)
+				oldOff := baseline.Copy()
+				oldOff.Edit(edit)
+				off, offErr := incrP.ParseIncremental(edited, oldOff)
+				incrP.SetDisableLeadingRunSplice(false)
+				if offErr != nil || off == nil || off.RootNode() == nil {
+					t.Fatalf("%s pos=%d class=%s: leading-splice-off parse failed: %v", tc.name, i, cls, offErr)
+				}
+				offS := oeditSerialize(off.RootNode(), tc.lang)
+				if incrS != offS {
+					t.Fatalf("%s pos=%d class=%s: leading splice changed a legacy fixture\n  off =%s\n  incr=%s",
+						tc.name, i, cls, oeditTrunc(offS), oeditTrunc(incrS))
+				}
+				oldOff.Release()
+				off.Release()
 			}
-			oldOn.Release()
-			oldOff.Release()
+			old.Release()
 			fresh.Release()
-			on.Release()
-			off.Release()
+			incr.Release()
 		}
 	}
-	t.Logf("%s: freshCleanSites=%d checked=%d oracleMatched=%d", tc.name, clean, checked, oracle)
+	t.Logf("%s: freshCleanSites=%d checked=%d", tc.name, clean, checked)
 	if checked == 0 {
 		t.Fatalf("%s: no freshly-clean sites checked -- sweep did not exercise the invariant", tc.name)
 	}
 }
 
-// TestLeadingSpliceBarredLanguagesDoNotSplice proves the JS/TS/TSX bar
-// (leadingSpliceFrontierUnproven): a middle edit that WOULD present a large leading
-// run splices ZERO leading top-level items for the barred family, so their
-// incremental behavior is byte-identical to before this change. The counter it
-// checks is the leading run's block-splice steps at a middle edit; for a barred
-// language the trailing run may still splice, so this asserts the reject counter
-// still SCALES (stays large / O(file)) at a middle edit -- the signature of "the
-// leading run was NOT block-spliced".
-func TestLeadingSpliceBarredLanguagesDoNotSplice(t *testing.T) {
+// TestLeadingSpliceJavaScriptFamilyIsBoundedNotFileSized proves admission is
+// active for JavaScript, TypeScript, and TSX and that leading work stays flat
+// when a middle edit's unchanged prefix grows by an order of magnitude.
+func TestLeadingSpliceJavaScriptFamilyIsBoundedNotFileSized(t *testing.T) {
 	build := func(fmtStr string, n int) []byte {
 		var b strings.Builder
 		for i := 0; i < n; i++ {
@@ -241,37 +220,48 @@ func TestLeadingSpliceBarredLanguagesDoNotSplice(t *testing.T) {
 		return []byte(b.String())
 	}
 	cases := []struct {
-		name string
-		lang *gts.Language
-		src  []byte
-		mark string
+		name   string
+		lang   *gts.Language
+		format string
 	}{
-		{"typescript", grammars.TypescriptLanguage(),
-			build("export function f%d(a: number): number {\n  const v = a + %d;\n  return v;\n}\n\n", 200), "f100("},
-		{"tsx", grammars.TsxLanguage(),
-			build("export function f%d(a: number): number {\n  const v = a + %d;\n  return v;\n}\n\n", 200), "f100("},
-		{"javascript", grammars.JavascriptLanguage(),
-			build("function f%d(a) {\n  const v = a + %d;\n  return v;\n}\n\n", 200), "f100("},
+		{"typescript", grammars.TypescriptLanguage(), "export function f%d(a: number): number {\n  const v = a + %d;\n  return v;\n}\n\n"},
+		{"tsx", grammars.TsxLanguage(), "export function f%d(a: number): number {\n  const v = a + %d;\n  return v;\n}\n\n"},
+		{"javascript", grammars.JavascriptLanguage(), "function f%d(a) {\n  const v = a + %d;\n  return v;\n}\n\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			mi := strings.Index(string(tc.src), tc.mark)
-			if mi < 0 {
-				t.Fatalf("marker %q not found", tc.mark)
+			run := func(n int) gts.IncrementalParseProfile {
+				src := build(tc.format, n)
+				mark := fmt.Sprintf("f%d(", n/2)
+				mi := strings.Index(string(src), mark)
+				if mi < 0 {
+					t.Fatalf("marker %q not found", mark)
+				}
+				off := mi + len(mark) - 2 // a digit inside the function index
+				fresh, incr, prof, edited := leadingParseAt(t, tc.lang, src, off, "insert")
+				if int(incr.EndByte()) != len(edited) {
+					t.Fatalf("incremental root span %d does not cover edited buffer %d", incr.EndByte(), len(edited))
+				}
+				freshS := oeditSerialize(fresh, tc.lang)
+				incrS := oeditSerialize(incr, tc.lang)
+				if incrS != freshS {
+					t.Fatalf("incremental != fresh\n  fresh=%s\n  incr =%s", oeditTrunc(freshS), oeditTrunc(incrS))
+				}
+				if prof.BlockSpliceSteps == 0 {
+					t.Fatal("leading splice did not fire")
+				}
+				return prof
 			}
-			off := mi + len(tc.mark) - 2 // a digit inside the index literal
-			fresh, incr, prof, edited := leadingParseAt(t, tc.lang, tc.src, off, "insert")
-			_ = fresh
-			if int(incr.EndByte()) != len(edited) {
-				t.Fatalf("incremental root span %d does not cover edited buffer %d", incr.EndByte(), len(edited))
+			small := run(200)
+			large := run(2000)
+			const bound = 64
+			if small.ReuseRejectRootNonLeafChanged > bound || large.ReuseRejectRootNonLeafChanged > bound {
+				t.Fatalf("leading reuse is O(prefix), not O(edit): rejects small=%d large=%d (bound %d)",
+					small.ReuseRejectRootNonLeafChanged, large.ReuseRejectRootNonLeafChanged, bound)
 			}
-			// The barred family did NOT block-splice the leading run: with a
-			// middle edit and thousands of leading items, the reject counter must
-			// still be large (O(leading items)), the pre-T2a signature. A leading
-			// splice would have collapsed it to a small constant.
-			if prof.ReuseRejectRootNonLeafChanged < 1000 {
-				t.Fatalf("%s: reject counter %d is small -- the leading run was block-spliced, but this language is barred",
-					tc.name, prof.ReuseRejectRootNonLeafChanged)
+			if large.ReuseRejectRootNonLeafChanged > small.ReuseRejectRootNonLeafChanged+16 {
+				t.Fatalf("leading reuse grew with the unchanged prefix: rejects small=%d large=%d",
+					small.ReuseRejectRootNonLeafChanged, large.ReuseRejectRootNonLeafChanged)
 			}
 		})
 	}

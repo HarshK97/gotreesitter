@@ -9,6 +9,14 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
+- **JavaScript, TypeScript, and TSX leading incremental reuse is admitted.**
+  The generic byte-identity, fragility, and scanner gates now govern unchanged
+  leading siblings without a language-name holdback. Exhaustive clean byte-edit
+  sweeps compare the complete incremental tree directly with a fresh parse, and
+  the 20 KiB/137 KiB latency gate plus its opt-in 1 MiB tier lock middle and
+  end edits to small, size-independent work counters. Transient-error
+  insert/delete/replace edits retain separate recovery and memory bounds.
+
 - **TypeScript and TSX now parse import-type queries in generic call type
   arguments.** Forms such as `foo<typeof import("module")>()` and
   `foo<import("module").Name>()` use a pinned upstream grammar overlay that is

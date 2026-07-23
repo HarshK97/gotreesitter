@@ -19,7 +19,7 @@ package gotreesitter_test
 //
 // # What this gate actually measured (read before changing ceilings)
 //
-// Building the sweep below (five languages, three positions, three edit
+// Building the sweep below (six languages, three positions, three edit
 // classes, two size tiers) surfaced two things a single near-top fixture
 // cannot:
 //
@@ -44,13 +44,12 @@ package gotreesitter_test
 //     not only the top-position one, and their middle/bottom byte-reuse floors
 //     ratchet up accordingly.
 //
-//     typescript, tsx, and javascript are NOT flattened: they share the
-//     ambiguous-expression / ASI grammar whose reduce-fragility marking is
-//     known-incomplete, so the leading splice is held off for them
-//     (leadingSpliceFrontierUnproven, incremental.go) until the campaign T2c
-//     reuse proof lands, and their mid-file counters still scale with size --
-//     they keep the top-only ceiling. python still declines reuse entirely
-//     (W4 indent-stack proof open).
+//     JavaScript, TypeScript, and TSX are also flattened after #429 retired their
+//     language holdback: direct fresh-oracle byte sweeps prove the generic
+//     fragility, byte-identity, and scanner gates are sufficient for this
+//     family. Their mid-file counters are now the same small constants at
+//     20KB and 137KB. python still declines reuse entirely (W4 indent-stack
+//     proof open).
 //  2. ReusedBytes / len(editedSource), unlike the rejection counter, IS
 //     input-deterministic AND size-independent when position is expressed
 //     as a FRACTION of the file (not an absolute byte offset): a "middle"
@@ -60,16 +59,16 @@ package gotreesitter_test
 //     every position, not just at the top, and it is what this gate uses
 //     for MinByteReusePercent below.
 //
-// Coverage: five languages (Go, JavaScript, TypeScript, Python, CSS) at two
+// Coverage: six languages (Go, JavaScript, TypeScript, TSX, Python, CSS) at two
 // committed size tiers (~20KB, ~137KB) crossed with three edit classes (insert,
 // delete, replace) at three file positions (top ~0%, middle ~50%, bottom
-// ~99% through the file) -- 90 samples. A third size tier (~1MB) exists but
+// ~99% through the file) -- 108 samples. A third size tier (~1MB) exists but
 // is gated behind GTS_W5_SLOW_TIER=1 (see w5Tiers)
 // because it pushes single-run wall time well past a fast local/CI budget;
 // it still asserts the same oracle and counter ceilings, it is just not run
-// on every `go test .`. JavaScript and TypeScript additionally carry an
-// explicit delete-that-creates-ERROR lane at all three positions and both
-// committed sizes, matching the remaining issue #380 editor workload.
+// on every `go test .`. JavaScript, TypeScript, and TSX additionally carry an
+// explicit insert/delete/replace lane that creates an ERROR at all three
+// positions and both committed sizes.
 //
 // Every sample enforces, unconditionally (the non-negotiable campaign
 // invariant, not a soft check):
@@ -87,7 +86,7 @@ package gotreesitter_test
 //     regress the build if a change reopens O(file) reparse cost.
 //  4. Source-scaled node-allocation and arena+scratch memory ceilings for
 //     both the incremental result and its independent fresh-parse oracle.
-//  5. For JS/TS transient-error deletes, explicit causal/work ceilings on
+//  5. For JS/TS/TSX transient-error edits, explicit causal/work ceilings on
 //     tokens, parser iterations, recovery checks, retries, and stack fanout.
 //
 // # Ceiling table and provenance
@@ -100,14 +99,14 @@ package gotreesitter_test
 //
 //	language    | RootNonLeafChanged ceiling (top / mid / bot) | MinByteReusePercent (top / mid / bot)
 //	go          | 16 / 16 / 16  (measured 9-10 flat)           | 90 / 90 / 90  (measured ~96 flat)
-//	javascript  | 20 / -  / -   (mid/bot scale, barred T2c)    | 90 / 70 / 55  (measured ~97 / ~80 / ~64)
-//	typescript  | 20 / -  / -   (mid/bot scale, barred T2c)    | 90 / 70 / 55  (measured ~97 / ~81 / ~65)
+//	javascript  | 20 / 20 / 20  (measured 7-8 flat)            | 90 / 90 / 90  (measured ~97 flat)
+//	typescript  | 24 / 24 / 24  (measured 15-16 flat)          | 90 / 90 / 90  (measured ~97 flat)
+//	tsx         | 24 / 24 / 24  (measured 15-16 flat)          | 90 / 90 / 90  (measured ~97 flat)
 //	css         | 12 / 12 / 12  (measured 3-7 flat)            | 90 / 90 / 90  (measured ~96 flat)
 //	python      | 8  / -  / -   (declines reuse, W4 open)      | 0  / 0  / 0   (measured 0 -- see below)
 //
 // A "-" mid/bot ceiling means the cell's reject counter still scales with file
-// size (that language is not flattened), so no fixed bound is asserted there --
-// exactly the pre-T2a behavior, retained for the barred / non-reusing languages.
+// size (that language is not flattened), so no fixed bound is asserted there.
 //
 //   - go: topRootNonLeafChanged=16. The campaign Status section
 //     (hypha://m31labs/gotreesitter spec.campaign.oedit) records W1b's
@@ -132,7 +131,7 @@ package gotreesitter_test
 //     review, now enforced in CI instead of only recorded in a comment.
 //   - javascript, typescript, python: measured on this box via this harness;
 //     no campaign-recorded prior figure exists for these fixture cells.
-//     JavaScript/TypeScript leading reuse awaits the T2c fragility proof,
+//     JavaScript/TypeScript leading reuse is fresh-oracle certified by #429,
 //     while Python's W4 indent-stack scanner-quiescence proof remains open.
 //   - python: MinByteReusePercent=0 at every position for insert/delete is
 //     an intentional "honest negative", not a placeholder. Measurement
@@ -331,6 +330,7 @@ var w5Langs = []w5LangSpec{
 	{name: "go", lang: grammars.GoLanguage, build: w5BuildGo, marker: func(i int) string { return fmt.Sprintf("G%d(", i) }},
 	{name: "javascript", lang: grammars.JavascriptLanguage, build: w5BuildJavaScript, marker: func(i int) string { return fmt.Sprintf("j%d(", i) }, errorMarker: func(i int) string { return fmt.Sprintf("const v%d =", i) }},
 	{name: "typescript", lang: grammars.TypescriptLanguage, build: w5BuildTypeScript, marker: func(i int) string { return fmt.Sprintf("f%d(", i) }, errorMarker: func(i int) string { return fmt.Sprintf("const v%d =", i) }},
+	{name: "tsx", lang: grammars.TsxLanguage, build: w5BuildTypeScript, marker: func(i int) string { return fmt.Sprintf("f%d(", i) }, errorMarker: func(i int) string { return fmt.Sprintf("const v%d =", i) }},
 	{name: "python", lang: grammars.PythonLanguage, build: w5BuildPython, marker: func(i int) string { return fmt.Sprintf("f%d(", i) }},
 	{name: "css", lang: grammars.CssLanguage, build: w5BuildCSS, marker: func(i int) string { return fmt.Sprintf("item-%d ", i) }},
 }
@@ -367,8 +367,8 @@ func w5LastDigitOffset(t *testing.T, src []byte, marker string) int {
 	return idx + len(marker) - 2
 }
 
-// w5LastByteOffset finds the last byte in marker. The JS/TS transient-error
-// lane uses it to delete a required assignment operator from a declaration,
+// w5LastByteOffset finds the last byte in marker. The JavaScript-family
+// transient-error lane edits a required assignment operator in a declaration,
 // guaranteeing the edited fresh parse contains ERROR/MISSING without making
 // recovery consume neighboring top-level declarations.
 func w5LastByteOffset(t *testing.T, src []byte, marker string) int {
@@ -381,9 +381,8 @@ func w5LastByteOffset(t *testing.T, src []byte, marker string) int {
 }
 
 // w5ApplyEdit builds the edited buffer and the corresponding InputEdit for a
-// single-byte insert/delete/replace at offset. Insert/replace require a decimal
-// digit (w5LastDigitOffset's contract); delete also supports the punctuation
-// offset used by the explicit JS/TS transient-error lane.
+// single-byte insert/delete/replace at offset. The clean lane edits decimal
+// digits; the transient lane edits required punctuation.
 func w5ApplyEdit(src []byte, offset int, class w5EditClass) ([]byte, gts.InputEdit) {
 	startPoint := w1bPointAt(src, offset)
 	switch class {
@@ -406,7 +405,13 @@ func w5ApplyEdit(src []byte, offset int, class w5EditClass) ([]byte, gts.InputEd
 		}
 	case w5Replace:
 		edited := append([]byte(nil), src...)
-		edited[offset] = (src[offset]-'0'+1)%10 + '0'
+		if src[offset] >= '0' && src[offset] <= '9' {
+			edited[offset] = (src[offset]-'0'+1)%10 + '0'
+		} else if src[offset] == 'z' {
+			edited[offset] = 'y'
+		} else {
+			edited[offset] = 'z'
+		}
 		return edited, gts.InputEdit{
 			StartByte: uint32(offset), OldEndByte: uint32(offset + 1), NewEndByte: uint32(offset + 1),
 			StartPoint: startPoint, OldEndPoint: w1bPointAt(src, offset+1), NewEndPoint: w1bPointAt(edited, offset+1),
@@ -596,28 +601,32 @@ var w5Ceilings = map[string]w5Ceiling{
 		Middle:                     w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 16},
 		Bottom:                     w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 16},
 	},
-	// typescript: NOT flattened by T2a. typescript (with tsx and javascript)
-	// shares the ambiguous-expression / ASI grammar whose per-node reduce-
-	// fragility marking is known-incomplete, so the leading-run splice is held
-	// off for it (leadingSpliceFrontierUnproven, incremental.go) until the campaign
-	// T2c reuse proof lands. Its mid-file cells therefore still scale with size,
-	// exactly as before this change, so they keep the top-only counter ceiling
-	// and the pre-T2a byte-reuse floors -- no MaxRootNonLeafChanged at
-	// middle/bottom (a scaling counter cannot carry a fixed bound).
+	// typescript: #429 admits the ambiguous-expression / ASI family to the
+	// generic leading-run splice. The counter measures 15-16 at every position
+	// and both committed sizes, with about 97% byte reuse.
 	"typescript": {
-		MaxRootNonLeafChangedAtTop: 20,
-		Top:                        w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 20},
-		Middle:                     w5PositionCeiling{MinByteReusePercent: 70},
-		Bottom:                     w5PositionCeiling{MinByteReusePercent: 55},
+		MaxRootNonLeafChangedAtTop: 24,
+		Top:                        w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 24},
+		Middle:                     w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 24},
+		Bottom:                     w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 24},
+	},
+	// tsx shares TypeScript's generated corpus shape here and carries the same
+	// independent language/parser oracle and counter ratchets.
+	"tsx": {
+		MaxRootNonLeafChangedAtTop: 24,
+		Top:                        w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 24},
+		Middle:                     w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 24},
+		Bottom:                     w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 24},
 	},
 	// javascript shares TypeScript's ASI/ambiguous-expression constraints and
-	// the same measured reuse shape. The dedicated transient-error delete gate
-	// below carries the stricter recovery-work contract for malformed edits.
+	// is likewise flattened: 7-8 rejects and about 97% byte reuse at every
+	// position and size. The dedicated transient-error gate below carries
+	// the stricter recovery-work contract for malformed edits.
 	"javascript": {
 		MaxRootNonLeafChangedAtTop: 20,
 		Top:                        w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 20},
-		Middle:                     w5PositionCeiling{MinByteReusePercent: 70},
-		Bottom:                     w5PositionCeiling{MinByteReusePercent: 55},
+		Middle:                     w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 20},
+		Bottom:                     w5PositionCeiling{MinByteReusePercent: 90, MaxRootNonLeafChanged: 20},
 	},
 	// css: flattened by T2a on the production (non-forest) route, the same as go.
 	// Measured ~95.8-95.9% byte reuse and ReuseRejectRootNonLeafChanged 3-7 at
@@ -765,8 +774,8 @@ func w5PerKiBCeiling(editedLen int, perKiB uint64) uint64 {
 	return kib * perKiB
 }
 
-// w5CheckTransientErrorWork turns the issue #380 JS/TS error-delete residual
-// into a reproducible linear-work contract. Wall time remains evidence only.
+// w5CheckTransientErrorWork turns JavaScript-family error-edit work into a
+// reproducible linear-work contract. Wall time remains evidence only.
 func w5CheckTransientErrorWork(t *testing.T, s w5Sample) {
 	t.Helper()
 	p := s.Profile
@@ -783,21 +792,21 @@ func w5CheckTransientErrorWork(t *testing.T, s w5Sample) {
 	}
 	for _, check := range checks {
 		if check.got > check.max {
-			t.Fatalf("%s/%s/delete-transient-error/%s: %s=%d exceeds deterministic linear-work ceiling %d",
-				s.Lang, s.Size, s.Position, check.name, check.got, check.max)
+			t.Fatalf("%s/%s/%s-transient-error/%s: %s=%d exceeds deterministic linear-work ceiling %d",
+				s.Lang, s.Size, s.Class, s.Position, check.name, check.got, check.max)
 		}
 	}
 	if p.AcceptedErrorRetryAttempts > w5TransientMaxRetryAttempts || p.MaxStacksSeen > w5TransientMaxStacks {
-		t.Fatalf("%s/%s/delete-transient-error/%s: causal bound exceeded: retries=%d/%d maxStacks=%d/%d",
-			s.Lang, s.Size, s.Position, p.AcceptedErrorRetryAttempts, w5TransientMaxRetryAttempts,
+		t.Fatalf("%s/%s/%s-transient-error/%s: causal bound exceeded: retries=%d/%d maxStacks=%d/%d",
+			s.Lang, s.Size, s.Class, s.Position, p.AcceptedErrorRetryAttempts, w5TransientMaxRetryAttempts,
 			p.MaxStacksSeen, w5TransientMaxStacks)
 	}
 	kib := int64((s.EditedLen + 1023) / 1024)
 	memory := p.ArenaBytesAllocated + p.ScratchBytesAllocated
 	maxMemory := w5TransientMemoryFixedBytes + kib*w5TransientMemoryPerKiBBytes
 	if memory > maxMemory {
-		t.Fatalf("%s/%s/delete-transient-error/%s: arena+scratch memory=%d exceeds affine ceiling %d",
-			s.Lang, s.Size, s.Position, memory, maxMemory)
+		t.Fatalf("%s/%s/%s-transient-error/%s: arena+scratch memory=%d exceeds affine ceiling %d",
+			s.Lang, s.Size, s.Class, s.Position, memory, maxMemory)
 	}
 }
 
@@ -815,8 +824,8 @@ func w5Tiers() []w5SizeTier {
 // enforces the oracle + counter ceilings on each one. See the file doc
 // comment for design, coverage, and ceiling provenance.
 //
-// The default sweep commits both issue #380 reporter sizes: 5 languages x
-// 2 sizes x 3 classes x 3 positions = 90 samples. The 1MB lane remains
+// The default sweep commits both issue #380 reporter sizes: 6 languages x
+// 2 sizes x 3 classes x 3 positions = 108 samples. The 1MB lane remains
 // explicitly opt-in because it is diagnostic rather than presubmit-sized.
 func TestW5EditorLatencyGate(t *testing.T) {
 	classes := []w5EditClass{w5Insert, w5Delete, w5Replace}
@@ -846,11 +855,12 @@ func TestW5EditorLatencyGate(t *testing.T) {
 	}
 }
 
-// TestW5JavaScriptTypeScriptTransientErrorDeleteGate covers the reporter's
-// remaining Tier-B blocker directly: deleting required syntax while typing
-// creates a temporary ERROR tree. This is separate from the valid delete
-// cells above so the normal reuse floors remain meaningful.
-func TestW5JavaScriptTypeScriptTransientErrorDeleteGate(t *testing.T) {
+// TestW5JavaScriptFamilyTransientErrorGate covers malformed edits directly.
+// Editing required syntax while typing creates a temporary ERROR tree. This is
+// separate from the valid cells above so the normal reuse floors remain
+// meaningful.
+func TestW5JavaScriptFamilyTransientErrorGate(t *testing.T) {
+	classes := []w5EditClass{w5Insert, w5Delete, w5Replace}
 	positions := []w5Position{w5Top, w5Middle, w5Bottom}
 	for _, spec := range w5Langs {
 		spec := spec
@@ -863,25 +873,30 @@ func TestW5JavaScriptTypeScriptTransientErrorDeleteGate(t *testing.T) {
 				t.Run(tier.name, func(t *testing.T) {
 					src, itemCount := spec.build(tier.targetSize)
 					sites := w5EditSiteIndices(itemCount)
-					for _, pos := range positions {
-						pos := pos
-						t.Run(pos.String(), func(t *testing.T) {
-							offset := w5LastByteOffset(t, src, spec.errorMarker(sites[pos]))
-							s := w5RunSampleAtOffset(t, spec, tier, w5Delete, pos, src, offset)
-							w5CheckCommon(t, s)
-							w5CheckMemoryAllocation(t, s)
-							if !s.FreshError || !s.IncrError {
-								t.Fatalf("%s/%s/delete-transient-error/%s: fixture did not produce matching ERROR trees (fresh=%v incremental=%v)",
-									s.Lang, s.Size, s.Position, s.FreshError, s.IncrError)
+					for _, class := range classes {
+						class := class
+						t.Run(class.String(), func(t *testing.T) {
+							for _, pos := range positions {
+								pos := pos
+								t.Run(pos.String(), func(t *testing.T) {
+									offset := w5LastByteOffset(t, src, spec.errorMarker(sites[pos]))
+									s := w5RunSampleAtOffset(t, spec, tier, class, pos, src, offset)
+									w5CheckCommon(t, s)
+									w5CheckMemoryAllocation(t, s)
+									if !s.FreshError || !s.IncrError {
+										t.Fatalf("%s/%s/%s-transient-error/%s: fixture did not produce matching ERROR trees (fresh=%v incremental=%v)",
+											s.Lang, s.Size, s.Class, s.Position, s.FreshError, s.IncrError)
+									}
+									w5CheckTransientErrorWork(t, s)
+									t.Logf("%s/%s/%s-transient-error/%s: newNodes=%d tokensConsumed=%d singleIters=%d multiIters=%d recoverChecks=%d retries=%d maxStacks=%d arenaBytes=%d scratchBytes=%d freshNodes=%d freshArenaBytes=%d freshScratchBytes=%d incrWall=%s freshWall=%s",
+										s.Lang, s.Size, s.Class, s.Position, s.Profile.NewNodesAllocated, s.Profile.TokensConsumed,
+										s.Profile.SingleStackIterations, s.Profile.MultiStackIterations, s.Profile.RecoverStateChecks,
+										s.Profile.AcceptedErrorRetryAttempts, s.Profile.MaxStacksSeen,
+										s.Profile.ArenaBytesAllocated, s.Profile.ScratchBytesAllocated,
+										s.FreshRuntime.NodesAllocated, s.FreshRuntime.ArenaBytesAllocated, s.FreshRuntime.ScratchBytesAllocated,
+										time.Duration(s.IncrWallNs), time.Duration(s.FreshWallNs))
+								})
 							}
-							w5CheckTransientErrorWork(t, s)
-							t.Logf("%s/%s/delete-transient-error/%s: newNodes=%d tokensConsumed=%d singleIters=%d multiIters=%d recoverChecks=%d retries=%d maxStacks=%d arenaBytes=%d scratchBytes=%d freshNodes=%d freshArenaBytes=%d freshScratchBytes=%d incrWall=%s freshWall=%s",
-								s.Lang, s.Size, s.Position, s.Profile.NewNodesAllocated, s.Profile.TokensConsumed,
-								s.Profile.SingleStackIterations, s.Profile.MultiStackIterations, s.Profile.RecoverStateChecks,
-								s.Profile.AcceptedErrorRetryAttempts, s.Profile.MaxStacksSeen,
-								s.Profile.ArenaBytesAllocated, s.Profile.ScratchBytesAllocated,
-								s.FreshRuntime.NodesAllocated, s.FreshRuntime.ArenaBytesAllocated, s.FreshRuntime.ScratchBytesAllocated,
-								time.Duration(s.IncrWallNs), time.Duration(s.FreshWallNs))
 						})
 					}
 				})
@@ -955,51 +970,64 @@ func TestW5CSSNearTopReuseAssertion(t *testing.T) {
 }
 
 // TestW5DeterminismAcrossFreshParsers is the gate's self-check: the same
-// (source, edit, language) run on two independent, freshly constructed
-// Parser instances must produce identical profile counters. This is the
-// same determinism invariant TestW1BSettleIsDeterministicAcrossFreshParsers
-// proves for one fixture; this test proves it for the specific counters
-// this gate ratchets on, so a future change that made those counters depend
-// on a Parser instance's unrelated history (the class of bug #380's
-// cNodeMemoCache warm/cold lottery was) would fail here, not just show up as
-// gate flakiness.
+// (source, edit, language) run on two independent, freshly constructed Parser
+// instances must produce identical profile counters. The JavaScript family is
+// checked at every enabled tier; the remaining gate languages retain a 20KB
+// witness. A future parser-history dependency (the class of bug #380's
+// cNodeMemoCache warm/cold lottery was) therefore fails here instead of only
+// appearing as gate flakiness.
 func TestW5DeterminismAcrossFreshParsers(t *testing.T) {
-	spec := w5Langs[0] // go
-	tier := w5Tier20KB
-	src, itemCount := spec.build(tier.targetSize)
-	sites := w5EditSiteIndices(itemCount)
-	offset := w5LastDigitOffset(t, src, spec.marker(sites[w5Top]))
-
-	run := func() gts.IncrementalParseProfile {
-		lang := spec.lang()
-		parser := gts.NewParser(lang)
-		oldTree, err := parser.Parse(src)
-		if err != nil {
-			t.Fatalf("base parse: %v", err)
+	for _, spec := range w5Langs {
+		spec := spec
+		tiers := []w5SizeTier{w5Tier20KB}
+		if spec.errorMarker != nil {
+			tiers = w5Tiers()
 		}
-		defer oldTree.Release()
-		edited, edit := w5ApplyEdit(src, offset, w5Insert)
-		oldTree.Edit(edit)
-		incrTree, prof, err := parser.ParseIncrementalProfiled(edited, oldTree)
-		if err != nil {
-			t.Fatalf("incremental parse: %v", err)
-		}
-		defer incrTree.Release()
-		return prof
-	}
+		t.Run(spec.name, func(t *testing.T) {
+			for _, tier := range tiers {
+				tier := tier
+				t.Run(tier.name, func(t *testing.T) {
+					src, itemCount := spec.build(tier.targetSize)
+					sites := w5EditSiteIndices(itemCount)
+					offset := w5LastDigitOffset(t, src, spec.marker(sites[w5Middle]))
 
-	a := run()
-	b := run()
+					run := func() gts.IncrementalParseProfile {
+						parser := gts.NewParser(spec.lang())
+						oldTree, err := parser.Parse(src)
+						if err != nil {
+							t.Fatalf("base parse: %v", err)
+						}
+						defer oldTree.Release()
+						edited, edit := w5ApplyEdit(src, offset, w5Insert)
+						oldTree.Edit(edit)
+						incrTree, prof, err := parser.ParseIncrementalProfiled(edited, oldTree)
+						if err != nil {
+							t.Fatalf("incremental parse: %v", err)
+						}
+						defer incrTree.Release()
+						return prof
+					}
 
-	// Compare exactly the counters this gate ratchets on plus the ones its
-	// doc comment claims are input-deterministic; a full IncrementalParseProfile
-	// struct-equal would also compare wall-time nanosecond fields, which are
-	// never expected to be identical across two independent runs.
-	if a.ReuseRejectRootNonLeafChanged != b.ReuseRejectRootNonLeafChanged ||
-		a.ReusedBytes != b.ReusedBytes ||
-		a.NewNodesAllocated != b.NewNodesAllocated ||
-		a.TokensConsumed != b.TokensConsumed ||
-		a.ReuseRejectFragileNonLeaf != b.ReuseRejectFragileNonLeaf {
-		t.Fatalf("W5 non-determinism: two fresh Parsers produced different gate counters for the same (source, edit, language):\n a=%+v\n b=%+v", a, b)
+					a := run()
+					b := run()
+					// Allocation bytes have independent affine ceilings above, but
+					// are intentionally not exact-equal: shared pool capacity can
+					// differ between otherwise equivalent fresh parser runs.
+					if a.ReuseRejectRootNonLeafChanged != b.ReuseRejectRootNonLeafChanged ||
+						a.ReusedBytes != b.ReusedBytes ||
+						a.NewNodesAllocated != b.NewNodesAllocated ||
+						a.TokensConsumed != b.TokensConsumed ||
+						a.ReuseRejectFragileNonLeaf != b.ReuseRejectFragileNonLeaf ||
+						a.BlockSpliceSteps != b.BlockSpliceSteps ||
+						a.SingleStackIterations != b.SingleStackIterations ||
+						a.MultiStackIterations != b.MultiStackIterations ||
+						a.RecoverStateChecks != b.RecoverStateChecks ||
+						a.AcceptedErrorRetryAttempts != b.AcceptedErrorRetryAttempts ||
+						a.MaxStacksSeen != b.MaxStacksSeen {
+						t.Fatalf("W5 non-determinism: two fresh Parsers produced different gate counters for the same (source, edit, language):\n a=%+v\n b=%+v", a, b)
+					}
+				})
+			}
+		})
 	}
 }
