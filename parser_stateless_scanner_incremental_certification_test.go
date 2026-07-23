@@ -18,6 +18,8 @@ func TestStatelessScannerIncrementalCertification(t *testing.T) {
 	cases := []struct {
 		name                 string
 		lang                 func() *gts.Language
+		prefix               string
+		suffix               string
 		line                 func(int) string
 		minMacroReusePercent uint64
 		minMacroReuseBytes   uint64
@@ -48,6 +50,20 @@ func TestStatelessScannerIncrementalCertification(t *testing.T) {
 		}, minMacroReusePercent: 90},
 		{name: "tablegen", lang: grammars.TablegenLanguage, line: func(i int) string { return fmt.Sprintf("class Value_%06d;\n", i) }, minMacroReusePercent: 60},
 		{name: "yuck", lang: grammars.YuckLanguage, line: func(i int) string { return fmt.Sprintf("(defvar value_%06d %d)\n", i, i) }, minMacroReusePercent: 35},
+		{name: "comment", lang: grammars.CommentLanguage, line: func(i int) string { return fmt.Sprintf("TODO_%06d: value %d\n", i, i) }, minMacroReusePercent: 3},
+		{name: "dhall", lang: grammars.DhallLanguage, prefix: "{ ", suffix: "final = 0 }\n", line: func(i int) string { return fmt.Sprintf("value_%06d = %d,\n", i, i) }, minMacroReusePercent: 60},
+		{name: "dtd", lang: grammars.DtdLanguage, line: func(i int) string { return fmt.Sprintf("<!ELEMENT value_%06d (#PCDATA)>\n", i) }, minMacroReusePercent: 90},
+		{name: "foam", lang: grammars.FoamLanguage, line: func(i int) string { return fmt.Sprintf("value_%06d %d;\n", i, i) }, minMacroReusePercent: 10},
+		{name: "godot_resource", lang: grammars.GodotResourceLanguage, line: func(i int) string { return fmt.Sprintf("value_%06d = %d\n", i, i) }, minMacroReusePercent: 15},
+		{name: "kconfig", lang: grammars.KconfigLanguage, line: func(i int) string { return fmt.Sprintf("config VALUE_%06d\n\tint\n\tdefault %d\n", i, i) }, minMacroReuseBytes: 16},
+		{name: "odin", lang: grammars.OdinLanguage, line: func(i int) string {
+			prefix := ""
+			if i == 0 {
+				prefix = "package main\n"
+			}
+			return fmt.Sprintf("%svalue_%06d :: %d\n", prefix, i, i)
+		}, minMacroReusePercent: 10},
+		{name: "ron", lang: grammars.RonLanguage, prefix: "(\n", suffix: ")\n", line: func(i int) string { return fmt.Sprintf("value_%06d: %d,\n", i, i) }, minMacroReusePercent: 70},
 	}
 
 	for _, tc := range cases {
@@ -62,7 +78,7 @@ func TestStatelessScannerIncrementalCertification(t *testing.T) {
 				{name: "137KiB", size: 137 << 10, positions: []string{"middle"}, classes: []statelessScannerEditClass{statelessScannerReplace}},
 			}
 			for _, plan := range plans {
-				source, sites := makeStatelessScannerCertificationSource(plan.size, tc.line)
+				source, sites := makeStatelessScannerCertificationSource(plan.size, tc.prefix, tc.suffix, tc.line)
 				for _, position := range plan.positions {
 					var site int
 					switch position {
@@ -112,9 +128,10 @@ func (c statelessScannerEditClass) String() string {
 	}
 }
 
-func makeStatelessScannerCertificationSource(target int, line func(int) string) ([]byte, []int) {
+func makeStatelessScannerCertificationSource(target int, prefix, suffix string, line func(int) string) ([]byte, []int) {
 	var source strings.Builder
 	source.Grow(target + 128)
+	source.WriteString(prefix)
 	sites := make([]int, 0, target/24)
 	for i := 0; source.Len() < target || len(sites) < 4; i++ {
 		entry := line(i)
@@ -126,6 +143,7 @@ func makeStatelessScannerCertificationSource(target int, line func(int) string) 
 		sites = append(sites, source.Len()+marker)
 		source.WriteString(entry)
 	}
+	source.WriteString(suffix)
 	return []byte(source.String()), sites
 }
 

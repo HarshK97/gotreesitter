@@ -25,6 +25,8 @@ func (GodotResourceExternalScanner) Create() any                           { ret
 func (GodotResourceExternalScanner) Destroy(payload any)                   {}
 func (GodotResourceExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (GodotResourceExternalScanner) Deserialize(payload any, buf []byte)   {}
+func (GodotResourceExternalScanner) SupportsIncrementalReuse() bool        { return true }
+func (GodotResourceExternalScanner) ExternalScannerIsStateless() bool      { return true }
 
 // Scan is a line-faithful port of the pinned upstream src/scanner.c
 // (PrestonKnopp/tree-sitter-godot-resource @ 302c1895).

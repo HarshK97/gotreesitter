@@ -33,6 +33,8 @@ func (CommentExternalScanner) Create() any                           { return ni
 func (CommentExternalScanner) Destroy(payload any)                   {}
 func (CommentExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (CommentExternalScanner) Deserialize(payload any, buf []byte)   {}
+func (CommentExternalScanner) SupportsIncrementalReuse() bool        { return true }
+func (CommentExternalScanner) ExternalScannerIsStateless() bool      { return true }
 
 func (CommentExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	// Upstream treats invalid_token as correction mode. The Go-generated
