@@ -360,7 +360,11 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 	endBudget := p.enterParseBudget()
 	defer endBudget()
 	arena := acquireNodeArena(arenaClassFull)
-	captureExternalCheckpoints := languageUsesExternalScannerCheckpoints(p.language)
+	incrementalReuseProven := forestIncrementalReuseProven(p.language)
+	// A forest tree whose scanner class is not admitted can never consume
+	// these checkpoints incrementally. Avoid allocating checkpoint storage for
+	// a diagnostic success or decline that is guaranteed to disable reuse.
+	captureExternalCheckpoints := incrementalReuseProven && languageUsesExternalScannerCheckpoints(p.language)
 	root, ok := p.parseForest(arena, source, captureExternalCheckpoints, parseMemoryBudgetForParser(p, len(source)))
 	if !ok || root == nil {
 		arena.Release()
@@ -370,7 +374,7 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 	tree := newTreeWithArenas(root, source, p.language, arena, nil)
 	tree.setParseRuntime(forestAcceptedRuntime(root, source))
 	tree.forestFastPath = true
-	if !forestIncrementalReuseProven(p.language) {
+	if !incrementalReuseProven {
 		tree.incrementalReuseDisabled = true
 	}
 	arena.reclaimRawShapeStorage()
@@ -590,7 +594,7 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 	}
 	arena := acquireNodeArena(arenaClassFull)
 	incrementalReuseProven := forestIncrementalReuseProven(p.language)
-	captureExternalCheckpoints := languageUsesExternalScannerCheckpoints(p.language)
+	captureExternalCheckpoints := incrementalReuseProven && languageUsesExternalScannerCheckpoints(p.language)
 	if progress.enabled {
 		progress.endDetail(time.Now(), "forest_arena_acquire_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
 		progress.beginDetail(time.Now(), "forest_parse_call_begin", "forest_parse_call_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
