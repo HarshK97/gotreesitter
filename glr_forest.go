@@ -360,7 +360,12 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 	endBudget := p.enterParseBudget()
 	defer endBudget()
 	arena := acquireNodeArena(arenaClassFull)
-	root, ok := p.parseForest(arena, source, true, parseMemoryBudgetForParser(p, len(source)))
+	incrementalReuseProven := forestIncrementalReuseProven(p.language)
+	// A forest tree whose scanner class is not admitted can never consume
+	// these checkpoints incrementally. Avoid allocating checkpoint storage for
+	// a diagnostic success or decline that is guaranteed to disable reuse.
+	captureExternalCheckpoints := incrementalReuseProven && languageUsesExternalScannerCheckpoints(p.language)
+	root, ok := p.parseForest(arena, source, captureExternalCheckpoints, parseMemoryBudgetForParser(p, len(source)))
 	if !ok || root == nil {
 		arena.Release()
 		return nil, false
@@ -369,6 +374,9 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 	tree := newTreeWithArenas(root, source, p.language, arena, nil)
 	tree.setParseRuntime(forestAcceptedRuntime(root, source))
 	tree.forestFastPath = true
+	if !incrementalReuseProven {
+		tree.incrementalReuseDisabled = true
+	}
 	arena.reclaimRawShapeStorage()
 	return tree, true
 }
@@ -585,14 +593,15 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		progress.beginDetail(time.Now(), "forest_arena_acquire_begin", "forest_arena_acquire_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
 	}
 	arena := acquireNodeArena(arenaClassFull)
-	allowIncremental := languageAllowsForestIncrementalPath(p.language.Name)
+	incrementalReuseProven := forestIncrementalReuseProven(p.language)
+	captureExternalCheckpoints := incrementalReuseProven && languageUsesExternalScannerCheckpoints(p.language)
 	if progress.enabled {
 		progress.endDetail(time.Now(), "forest_arena_acquire_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
 		progress.beginDetail(time.Now(), "forest_parse_call_begin", "forest_parse_call_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
 	}
 	operationBudget := parseMemoryBudgetForParser(p, len(source))
 	forestBudget := automaticForestMemoryBudget(p, operationBudget)
-	root, ok := p.parseForest(arena, source, allowIncremental, forestBudget)
+	root, ok := p.parseForest(arena, source, captureExternalCheckpoints, forestBudget)
 	if progress.enabled {
 		progress.endDetail(time.Now(), "forest_parse_call_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, fmt.Sprintf("ok=%t root_present=%t decline_reason=%s", ok, root != nil, p.forestDeclineReason))
 	}
@@ -653,7 +662,7 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 	tree := newTreeWithArenas(root, source, p.language, arena, nil)
 	tree.setParseRuntime(forestAcceptedRuntime(root, source))
 	tree.forestFastPath = true
-	if !allowIncremental {
+	if !incrementalReuseProven {
 		tree.incrementalReuseDisabled = true
 	}
 	if progress.enabled {
@@ -696,30 +705,21 @@ func forestAcceptedRuntime(root *Node, source []byte) ParseRuntime {
 	}
 }
 
-// languageAllowsForestIncrementalPath reports forest-default languages whose
-// forest-built trees are safe to feed into the normal incremental parser path.
-// Some languages still report subtree reuse as unsupported there, but entering
-// that path can be much faster than forcing a fresh forest full parse. Languages
-// stay disabled until the edited real-corpus matrix proves the path is correct
-// and faster than fresh-parse fallback.
+// forestIncrementalReuseProven reports whether a clean forest-built tree may
+// enter the normal incremental parser. Forest construction stamps every shift
+// and reduce with its exact pre-goto and resulting parse states. Incremental
+// transfer then requires that recorded owner for forest top-level candidates
+// (reuseCursor.strictTopLevelOwnership), while the ordinary fragility and
+// stack/goto checks protect interior candidates.
 //
-// 2026-06-03: restricted to {erlang, javascript}. The edited-corpus matrix gate
-// the comment above always required was finally written
-// (TestForestIncrementalCorrectness) and it found that cmake, css and scss had
-// been added here WITHOUT it — their forest-incremental reuse produces
-// structurally-wrong, often truncated trees on valid edits (e.g. one scss edit
-// yields a 413-byte s-expr vs the correct 377KB). erlang (49/66 valid edits) and
-// javascript (13/66) are byte-for-byte incremental==fresh; the rest are demoted
-// to fresh-forest-parse fallback on edits (correct) until the reuse bug is fixed.
-// A 2026-06-04 Go probe failed the same gate (21/28 valid edits diverged).
-// Do NOT re-add a language here without it passing TestForestIncrementalCorrectness.
-func languageAllowsForestIncrementalPath(name string) bool {
-	switch name {
-	case "erlang", "javascript":
-		return true
-	default:
-		return false
-	}
+// The remaining independent obligation is scanner state. This first generic
+// admission class accepts only languages with no external scanner or an
+// explicitly certified stateless scanner. Stateful checkpoint-backed scanners
+// remain disabled until their forest-built boundary snapshots have their own
+// differential receipt. The predicate is intentionally capability-based: a
+// grammar name is neither necessary nor sufficient evidence.
+func forestIncrementalReuseProven(lang *Language) bool {
+	return lang != nil && classifyExternalScannerQuiescence(lang) == scannerQuiescenceProven
 }
 
 // gssLink is one alternative predecessor in the forest DAG: the subtree consumed

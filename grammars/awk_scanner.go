@@ -27,6 +27,12 @@ func (AwkExternalScanner) Destroy(payload any)                   {}
 func (AwkExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (AwkExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// The scanner carries no payload and derives every result from local
+// lookahead plus validSymbols. Failed scans cannot mutate persistent state.
+func (AwkExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (AwkExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (AwkExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (AwkExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	stmtTermFound := false
 

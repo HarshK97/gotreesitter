@@ -81,7 +81,7 @@ type reuseCursor struct {
 	rejectScannerUnquiescent uint64
 	forestFastPath           bool
 	languageName             string // cached for language-specific reuse safety policies
-	strictTopLevelOwnership  bool   // certified stateless scanners require the recorded normal-dispatch frontier
+	strictTopLevelOwnership  bool   // forest trees and certified stateless scanners require the recorded normal-dispatch frontier
 }
 
 // reuseScratch holds reusable buffers for incremental reuse traversal.
@@ -131,11 +131,14 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 	c.rejectScannerUnquiescent = 0
 	c.forestFastPath = oldTree.forestFastPath
 	c.languageName = ""
-	c.strictTopLevelOwnership = false
+	// Every forest node records the GSS state that owned its original reduce.
+	// A compatible goto alone cannot transfer that ownership after an edit, so
+	// forest-built top-level candidates always require an exact pre-goto match.
+	c.strictTopLevelOwnership = c.forestFastPath
 	if oldTree.language != nil {
 		c.languageName = oldTree.language.Name
 		if stateless, ok := oldTree.language.ExternalScanner.(StatelessExternalScanner); ok {
-			c.strictTopLevelOwnership = stateless.ExternalScannerIsStateless()
+			c.strictTopLevelOwnership = c.strictTopLevelOwnership || stateless.ExternalScannerIsStateless()
 		}
 	}
 

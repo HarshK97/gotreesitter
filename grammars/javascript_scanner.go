@@ -44,7 +44,12 @@ func (JavaScriptExternalScanner) Create() any                           { return
 func (JavaScriptExternalScanner) Destroy(payload any)                   {}
 func (JavaScriptExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (JavaScriptExternalScanner) Deserialize(payload any, buf []byte)   {}
-func (JavaScriptExternalScanner) SupportsIncrementalReuse() bool        { return true }
+
+// Template, JSX, regex, comment, and ASI decisions are fully determined by
+// local lookahead plus validSymbols. The scanner retains no cross-token state.
+func (JavaScriptExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (JavaScriptExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (JavaScriptExternalScanner) PreservesStateOnScanFailure() bool { return true }
 
 func (JavaScriptExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	if jsValid(validSymbols, jsTokTemplateChars) {

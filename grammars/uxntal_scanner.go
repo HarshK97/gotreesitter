@@ -20,6 +20,12 @@ func (UxntalExternalScanner) Destroy(payload any)                   {}
 func (UxntalExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (UxntalExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// Comment depth is local to one Scan call. No state survives a token or a
+// failed unterminated-comment scan.
+func (UxntalExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (UxntalExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (UxntalExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (UxntalExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, _ []bool) bool {
 	for unicode.IsSpace(lexer.Lookahead()) {
 		lexer.Advance(false)

@@ -41,6 +41,27 @@ func TestClassifyExternalScannerQuiescence(t *testing.T) {
 	}
 }
 
+func TestForestIncrementalReuseRequiresScannerProof(t *testing.T) {
+	cases := []struct {
+		name string
+		lang *Language
+		want bool
+	}{
+		{"nil language", nil, false},
+		{"no scanner", &Language{}, true},
+		{"stateless scanner", &Language{ExternalScanner: quiescenceStatelessScanner{}}, true},
+		{"opt-out scanner", &Language{ExternalScanner: quiescenceOptOutScanner{}}, false},
+		{"undecided scanner", &Language{ExternalScanner: parserTestUnsafeExternalScanner{}}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := forestIncrementalReuseProven(tc.lang); got != tc.want {
+				t.Fatalf("forestIncrementalReuseProven = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestExternalScannerBoundaryQuiescentFailsClosed proves the predicate rejects
 // a boundary it cannot prove quiescent. A stateful opt-out scanner is the
 // "deliberately unprovable boundary" the W4 hard gate requires (an edit inside

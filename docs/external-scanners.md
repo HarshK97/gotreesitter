@@ -394,10 +394,16 @@ The next stateless wave admits Gleam, Move, Tcl, and WGSL through the same
 matrix and ownership gate. Their 137 KiB witnesses ratchet conservative reuse
 floors of 3%, 5%, 32 bytes, and 45%, respectively; these are correctness and
 admission floors, not claims that the remaining ownership rejection frontier
-is performant. AWK and Squirrel remain uncertified even though their scanners
-are stateless because their clean witness trees are produced by the GSS forest
-fast path, whose old-tree reuse route is still intentionally disabled. KDL and
-Nix share that parser-level blocker.
+is performant.
+
+AWK, KDL, Nix, Squirrel, and Uxntal now exercise the same scanner proof through
+the GSS forest route. Forest reuse no longer has a language-name admission
+list: clean forest trees must have a quiescence-proven scanner class, and every
+top-level transfer must match the exact `PreGotoState` that owned the original
+reduction. The focused matrix crosses three changed-length edit classes at the
+start, middle, and end of 4 KiB fixtures plus a 137 KiB witness, comparing full
+incremental tree serialization with a fresh parse. Stateful checkpoint-backed
+forest trees remain fail-closed pending a separate boundary-state receipt.
 
 The same proof and matrix also admit EditorConfig, Fennel, Fish, GN, Janet,
 Julia, Less, Liquid, Pkl, Racket, TableGen, and Yuck. Their macro witnesses
@@ -448,7 +454,7 @@ silently widening HTML admission.
 | `angular` | fallback (uncertified) |
 | `arduino` | fallback (uncertified) |
 | `astro` | fallback (uncertified) |
-| `awk` | fallback (uncertified) |
+| `awk` | certified reuse |
 | `bash` | fallback (uncertified) |
 | `beancount` | fallback (uncertified) |
 | `bicep` | fallback (uncertified) |
@@ -504,7 +510,7 @@ silently widening HTML admission.
 | `julia` | certified reuse |
 | `just` | fallback (uncertified) |
 | `kconfig` | certified reuse |
-| `kdl` | fallback (uncertified) |
+| `kdl` | certified reuse |
 | `kotlin` | fallback (uncertified) |
 | `less` | certified reuse |
 | `liquid` | certified reuse |
@@ -518,7 +524,7 @@ silently widening HTML admission.
 | `nginx` | fallback (uncertified) |
 | `nickel` | fallback (uncertified) |
 | `nim` | fallback (uncertified) |
-| `nix` | fallback (uncertified) |
+| `nix` | certified reuse |
 | `norg` | fallback (uncertified) |
 | `nushell` | fallback (uncertified) |
 | `ocaml` | fallback (uncertified) |
@@ -542,7 +548,7 @@ silently widening HTML admission.
 | `scala` | fallback (uncertified) |
 | `scss` | certified reuse |
 | `sql` | certified reuse |
-| `squirrel` | fallback (uncertified) |
+| `squirrel` | certified reuse |
 | `starlark` | fallback (explicit opt-out) |
 | `svelte` | fallback (explicit opt-out) |
 | `swift` | fallback (uncertified) |
@@ -555,7 +561,7 @@ silently widening HTML admission.
 | `tsx` | certified reuse |
 | `typescript` | certified reuse |
 | `typst` | fallback (uncertified) |
-| `uxntal` | fallback (uncertified) |
+| `uxntal` | certified reuse |
 | `vhdl` | fallback (uncertified) |
 | `vue` | fallback (uncertified) |
 | `wgsl` | certified reuse |

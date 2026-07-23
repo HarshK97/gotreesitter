@@ -9,6 +9,15 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
+- **GSS forest trees now use capability-based incremental admission.** Forest
+  construction records exact pre-goto ownership for every reusable subtree,
+  and the reuse cursor requires that ownership before transferring top-level
+  nodes. Languages without an external scanner, plus scanners with an explicit
+  stateless/failure-preserving proof, can therefore reuse forest-built trees
+  without a language-name allowlist. AWK, KDL, Nix, Squirrel, and Uxntal are
+  newly admitted through a shared multi-position and 137 KiB fresh-tree
+  differential; stateful scanners remain fail-closed pending checkpoint proof.
+
 - **JavaScript, TypeScript, and TSX leading incremental reuse is admitted.**
   The generic byte-identity, fragility, and scanner gates now govern unchanged
   leading siblings without a language-name holdback. Exhaustive clean byte-edit

@@ -22,6 +22,12 @@ func (SquirrelExternalScanner) Destroy(payload any)                   {}
 func (SquirrelExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (SquirrelExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// Verbatim-string scanning is self-contained in one token and retains no
+// payload, including when the closing quote is absent.
+func (SquirrelExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (SquirrelExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (SquirrelExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (SquirrelExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	if !squirrelValid(validSymbols, squirrelTokVerbatimString) {
 		return false
