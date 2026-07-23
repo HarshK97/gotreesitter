@@ -390,6 +390,15 @@ admitted stateless scanners additionally require an exact recorded pre-goto
 frontier before whole-sibling transfer; legacy scanner lanes retain their
 existing measured contract until the broader ownership proof is complete.
 
+The next stateless wave admits Gleam, Move, Tcl, and WGSL through the same
+matrix and ownership gate. Their 137 KiB witnesses ratchet conservative reuse
+floors of 3%, 5%, 32 bytes, and 45%, respectively; these are correctness and
+admission floors, not claims that the remaining ownership rejection frontier
+is performant. AWK and Squirrel remain uncertified even though their scanners
+are stateless because their clean witness trees are produced by the GSS forest
+fast path, whose old-tree reuse route is still intentionally disabled. KDL and
+Nix share that parser-level blocker.
+
 SQL's state proof is explicit: the payload is either empty or exactly one
 active PostgreSQL dollar-quote tag. The empty state has a one-byte marker;
 representable non-empty states serialize as the tag plus a trailing NUL. A tag
@@ -462,7 +471,7 @@ silently widening HTML admission.
 | `fsharp` | fallback (uncertified) |
 | `gdscript` | fallback (uncertified) |
 | `gitcommit` | fallback (uncertified) |
-| `gleam` | fallback (uncertified) |
+| `gleam` | certified reuse |
 | `gn` | fallback (uncertified) |
 | `go` | certified reuse |
 | `godot_resource` | fallback (uncertified) |
@@ -489,7 +498,7 @@ silently widening HTML admission.
 | `markdown_inline` | fallback (uncertified) |
 | `matlab` | fallback (uncertified) |
 | `mojo` | fallback (explicit opt-out) |
-| `move` | fallback (uncertified) |
+| `move` | certified reuse |
 | `nginx` | fallback (uncertified) |
 | `nickel` | fallback (uncertified) |
 | `nim` | fallback (uncertified) |
@@ -522,7 +531,7 @@ silently widening HTML admission.
 | `svelte` | fallback (explicit opt-out) |
 | `swift` | fallback (uncertified) |
 | `tablegen` | fallback (uncertified) |
-| `tcl` | fallback (uncertified) |
+| `tcl` | certified reuse |
 | `teal` | fallback (uncertified) |
 | `templ` | fallback (uncertified) |
 | `tlaplus` | fallback (uncertified) |
@@ -533,7 +542,7 @@ silently widening HTML admission.
 | `uxntal` | fallback (uncertified) |
 | `vhdl` | fallback (uncertified) |
 | `vue` | fallback (uncertified) |
-| `wgsl` | fallback (uncertified) |
+| `wgsl` | certified reuse |
 | `wolfram` | fallback (uncertified) |
 | `xml` | fallback (uncertified) |
 | `yaml` | fallback (uncertified) |
