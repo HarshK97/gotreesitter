@@ -23,6 +23,13 @@ func (EditorconfigExternalScanner) Destroy(payload any)                   {}
 func (EditorconfigExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (EditorconfigExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// The scanner carries no payload and derives every result from local
+// lookahead plus validSymbols, so every incremental boundary is quiescent and
+// failed scans cannot mutate persistent state.
+func (EditorconfigExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (EditorconfigExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (EditorconfigExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (EditorconfigExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	eofValid := editorconfigValid(validSymbols, editorconfigTokEndOfFile)
 	intValid := editorconfigValid(validSymbols, editorconfigTokIntegerRangeStart)

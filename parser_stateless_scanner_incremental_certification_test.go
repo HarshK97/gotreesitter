@@ -30,6 +30,24 @@ func TestStatelessScannerIncrementalCertification(t *testing.T) {
 		{name: "move", lang: grammars.MoveLanguage, line: func(i int) string { return fmt.Sprintf("module 0x1::value_%06d { const VALUE: u64 = %d; }\n", i, i) }, minMacroReusePercent: 5},
 		{name: "tcl", lang: grammars.TclLanguage, line: func(i int) string { return fmt.Sprintf("set value_%06d %d\n", i, i) }, minMacroReuseBytes: 32},
 		{name: "wgsl", lang: grammars.WgslLanguage, line: func(i int) string { return fmt.Sprintf("/* value */ fn value_%06d() { let x: i32 = %d; }\n", i, i) }, minMacroReusePercent: 45},
+		{name: "editorconfig", lang: grammars.EditorconfigLanguage, line: func(i int) string { return fmt.Sprintf("[value_%06d]\nkey = %d\n", i, i) }, minMacroReusePercent: 30},
+		{name: "fennel", lang: grammars.FennelLanguage, line: func(i int) string { return fmt.Sprintf("(local value_%06d %d)\n", i, i) }, minMacroReusePercent: 85},
+		{name: "fish", lang: grammars.FishLanguage, line: func(i int) string { return fmt.Sprintf("set value_%06d %d\n", i, i) }, minMacroReuseBytes: 32},
+		{name: "gn", lang: grammars.GnLanguage, line: func(i int) string { return fmt.Sprintf("value_%06d = %d\n", i, i) }, minMacroReusePercent: 20},
+		{name: "janet", lang: grammars.JanetLanguage, line: func(i int) string { return fmt.Sprintf("(def value_%06d %d)\n", i, i) }, minMacroReusePercent: 60},
+		{name: "julia", lang: grammars.JuliaLanguage, line: func(i int) string { return fmt.Sprintf("value_%06d = %d\n", i, i) }, minMacroReusePercent: 90},
+		{name: "less", lang: grammars.LessLanguage, line: func(i int) string { return fmt.Sprintf(".value_%06d { width: %dpx; }\n", i, i) }, minMacroReusePercent: 40},
+		{name: "liquid", lang: grammars.LiquidLanguage, line: func(i int) string { return fmt.Sprintf("{%% assign value_%06d = %d %%}\n", i, i) }, minMacroReusePercent: 90},
+		{name: "pkl", lang: grammars.PklLanguage, line: func(i int) string { return fmt.Sprintf("value_%06d = %d\n", i, i) }, minMacroReusePercent: 20},
+		{name: "racket", lang: grammars.RacketLanguage, line: func(i int) string {
+			prefix := ""
+			if i == 0 {
+				prefix = "#lang racket\n"
+			}
+			return fmt.Sprintf("%s(define value_%06d %d)\n", prefix, i, i)
+		}, minMacroReusePercent: 90},
+		{name: "tablegen", lang: grammars.TablegenLanguage, line: func(i int) string { return fmt.Sprintf("class Value_%06d;\n", i) }, minMacroReusePercent: 60},
+		{name: "yuck", lang: grammars.YuckLanguage, line: func(i int) string { return fmt.Sprintf("(defvar value_%06d %d)\n", i, i) }, minMacroReusePercent: 35},
 	}
 
 	for _, tc := range cases {

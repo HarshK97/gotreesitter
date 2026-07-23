@@ -27,6 +27,13 @@ func (YuckExternalScanner) Destroy(payload any)                   {}
 func (YuckExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (YuckExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// The scanner carries no payload and derives every result from local
+// lookahead plus validSymbols, so every incremental boundary is quiescent and
+// failed scans cannot mutate persistent state.
+func (YuckExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (YuckExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (YuckExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (YuckExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	if yuckValid(validSymbols, yuckTokUnescapedDoubleQuote) {
 		if yuckScanStringFragment(lexer, '"') {

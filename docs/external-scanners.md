@@ -399,6 +399,13 @@ are stateless because their clean witness trees are produced by the GSS forest
 fast path, whose old-tree reuse route is still intentionally disabled. KDL and
 Nix share that parser-level blocker.
 
+The same proof and matrix also admit EditorConfig, Fennel, Fish, GN, Janet,
+Julia, Less, Liquid, Pkl, Racket, TableGen, and Yuck. Their macro witnesses
+carry measured floors from 20% to 90% where ownership reuse is broad;
+Fish retains a 32-byte floor because its scanner is certified but top-level
+ownership rejection still dominates. The low floor is recorded as a parser
+performance residual, not inflated into a scanner-safety blocker.
+
 SQL's state proof is explicit: the payload is either empty or exactly one
 active PostgreSQL dollar-quote tag. The empty state has a one-byte marker;
 representable non-empty states serialize as the tag plus a trailing NUL. A tag
@@ -459,20 +466,20 @@ silently widening HTML admission.
 | `doxygen` | fallback (uncertified) |
 | `dtd` | fallback (uncertified) |
 | `earthfile` | fallback (uncertified) |
-| `editorconfig` | fallback (uncertified) |
+| `editorconfig` | certified reuse |
 | `elixir` | certified reuse |
 | `elm` | fallback (uncertified) |
 | `erlang` | certified reuse |
-| `fennel` | fallback (uncertified) |
+| `fennel` | certified reuse |
 | `firrtl` | fallback (uncertified) |
-| `fish` | fallback (uncertified) |
+| `fish` | certified reuse |
 | `foam` | fallback (uncertified) |
 | `fortran` | fallback (uncertified) |
 | `fsharp` | fallback (uncertified) |
 | `gdscript` | fallback (uncertified) |
 | `gitcommit` | fallback (uncertified) |
 | `gleam` | certified reuse |
-| `gn` | fallback (uncertified) |
+| `gn` | certified reuse |
 | `go` | certified reuse |
 | `godot_resource` | fallback (uncertified) |
 | `hack` | fallback (uncertified) |
@@ -481,17 +488,17 @@ silently widening HTML admission.
 | `hcl` | fallback (uncertified) |
 | `hlsl` | fallback (uncertified) |
 | `html` | bounded reuse (clean old trees) |
-| `janet` | fallback (uncertified) |
+| `janet` | certified reuse |
 | `javascript` | certified reuse |
 | `jsdoc` | fallback (uncertified) |
 | `jsonnet` | fallback (uncertified) |
-| `julia` | fallback (uncertified) |
+| `julia` | certified reuse |
 | `just` | fallback (uncertified) |
 | `kconfig` | fallback (uncertified) |
 | `kdl` | fallback (uncertified) |
 | `kotlin` | fallback (uncertified) |
-| `less` | fallback (uncertified) |
-| `liquid` | fallback (uncertified) |
+| `less` | certified reuse |
+| `liquid` | certified reuse |
 | `lua` | fallback (uncertified) |
 | `luau` | fallback (uncertified) |
 | `markdown` | fallback (uncertified) |
@@ -510,14 +517,14 @@ silently widening HTML admission.
 | `org` | fallback (uncertified) |
 | `perl` | fallback (uncertified) |
 | `php` | fallback (uncertified) |
-| `pkl` | fallback (uncertified) |
+| `pkl` | certified reuse |
 | `powershell` | certified reuse |
 | `properties` | fallback (uncertified) |
 | `pug` | fallback (uncertified) |
 | `purescript` | fallback (uncertified) |
 | `python` | fallback (explicit opt-out) |
 | `r` | fallback (uncertified) |
-| `racket` | fallback (uncertified) |
+| `racket` | certified reuse |
 | `rescript` | fallback (uncertified) |
 | `ron` | fallback (uncertified) |
 | `rst` | fallback (uncertified) |
@@ -530,7 +537,7 @@ silently widening HTML admission.
 | `starlark` | fallback (explicit opt-out) |
 | `svelte` | fallback (explicit opt-out) |
 | `swift` | fallback (uncertified) |
-| `tablegen` | fallback (uncertified) |
+| `tablegen` | certified reuse |
 | `tcl` | certified reuse |
 | `teal` | fallback (uncertified) |
 | `templ` | fallback (uncertified) |
@@ -546,7 +553,7 @@ silently widening HTML admission.
 | `wolfram` | fallback (uncertified) |
 | `xml` | fallback (uncertified) |
 | `yaml` | fallback (uncertified) |
-| `yuck` | fallback (uncertified) |
+| `yuck` | certified reuse |
 
 ## Hard-learned behavioral contracts
 
