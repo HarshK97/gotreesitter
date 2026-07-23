@@ -17,7 +17,15 @@ package gotreesitter
 // argument, not from a curated language list.
 //
 // -----------------------------------------------------------------------
-// Go proof obligations (backed by grammars/go_scanner.go).
+// Stateless-scanner proof obligations.
+//
+// Go is the reference proof below (backed by grammars/go_scanner.go). Other
+// scanners may implement StatelessExternalScanner only when the same core
+// obligations hold: no persisted payload, Scan depends only on local
+// lookahead plus the parser-provided valid-symbol set, and a failed Scan
+// preserves the empty state. The production admission matrix and fresh-tree
+// differential tests live in docs/external-scanners.md and
+// parser_stateless_scanner_incremental_certification_test.go.
 //
 // Go's only external token is `_automatic_semicolon` (ASI). The scanner that
 // resolves it is GoExternalScanner. The proof that every Go reuse boundary is
@@ -107,8 +115,9 @@ func classifyExternalScannerQuiescence(lang *Language) externalScannerQuiescence
 		return scannerQuiescenceProven
 	}
 	if stateless, ok := lang.ExternalScanner.(StatelessExternalScanner); ok && stateless.ExternalScannerIsStateless() {
-		// A stateless scanner (Go's ASI scanner) is quiescent at every
-		// boundary. See the proof obligations at the top of this file.
+		// A scanner satisfying the stateless proof is quiescent at every
+		// boundary. See the proof obligations at the top of this file and the
+		// per-scanner certification matrix.
 		return scannerQuiescenceProven
 	}
 	if reusable, ok := lang.ExternalScanner.(IncrementalReuseExternalScanner); ok && !reusable.SupportsIncrementalReuse() {

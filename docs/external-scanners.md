@@ -372,13 +372,23 @@ rather than scanner-dependent reuse.
 PowerShell's scanner is stateless: it recognizes one zero-width statement
 terminator from the current lookahead and valid-symbol set, carries no payload,
 and has no stateful here-string handling. It therefore uses the same stateless
-quiescence proof as Go rather than the checkpoint route. Focused certification
-crosses changed-length edits at multiple positions and requires incremental
-trees to match fresh production parses. The representative 137 KiB near-top
-insert currently ratchets a conservative 5% reused-byte floor: scanner
+quiescence proof as Go rather than the checkpoint route. Its focused
+certification crosses changed-length edits at multiple positions and requires
+incremental trees to match fresh production parses. The representative 137 KiB
+near-top insert currently ratchets a conservative 5% reused-byte floor: scanner
 admission is solved, but source-wide non-leaf ownership and stale-boundary
 rejections remain a separate performance frontier rather than an O(edit)
 claim.
+
+The same capability proof now applies to Cue, D, Elixir, and Erlang. Each
+scanner has a nil payload, empty serialization, and reads only local lookahead
+plus parser-provided valid symbols. Their shared fresh-oracle matrix covers
+changed-length insert/delete/replace edits at the start, middle, and end of a
+4 KiB clean corpus, plus a 137 KiB macro witness with measured reuse floors.
+Because that wave exposed stale top-level reduction ownership in Cue, newly
+admitted stateless scanners additionally require an exact recorded pre-goto
+frontier before whole-sibling transfer; legacy scanner lanes retain their
+existing measured contract until the broader ownership proof is complete.
 
 SQL's state proof is explicit: the payload is either empty or exactly one
 active PostgreSQL dollar-quote tag. The empty state has a one-byte marker;
@@ -430,8 +440,8 @@ silently widening HTML admission.
 | `crystal` | fallback (uncertified) |
 | `css` | certified reuse |
 | `cuda` | fallback (uncertified) |
-| `cue` | fallback (uncertified) |
-| `d` | fallback (uncertified) |
+| `cue` | certified reuse |
+| `d` | certified reuse |
 | `dart` | bounded reuse (up to 256 KiB) |
 | `dhall` | fallback (uncertified) |
 | `disassembly` | fallback (uncertified) |
@@ -441,9 +451,9 @@ silently widening HTML admission.
 | `dtd` | fallback (uncertified) |
 | `earthfile` | fallback (uncertified) |
 | `editorconfig` | fallback (uncertified) |
-| `elixir` | fallback (uncertified) |
+| `elixir` | certified reuse |
 | `elm` | fallback (uncertified) |
-| `erlang` | fallback (uncertified) |
+| `erlang` | certified reuse |
 | `fennel` | fallback (uncertified) |
 | `firrtl` | fallback (uncertified) |
 | `fish` | fallback (uncertified) |

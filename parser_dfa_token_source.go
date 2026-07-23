@@ -3595,6 +3595,22 @@ func (d *dfaTokenSource) externalScannerStateMatches(snapshot []byte) bool {
 	return bytes.Equal(current, snapshot)
 }
 
+// externalScannerStateAtLookaheadStartMatches authenticates a reuse boundary
+// against the scanner state before the current lookahead was lexed. Parser
+// reuse runs after fetching that lookahead, so comparing with the live payload
+// would instead compare the candidate's start against the token's end state.
+// Scanners such as YAML update position state on nearly every token and make
+// that distinction observable.
+func (d *dfaTokenSource) externalScannerStateAtLookaheadStartMatches(snapshot []byte, lookaheadStart uint32) bool {
+	if d == nil {
+		return len(snapshot) == 0
+	}
+	if d.lastExternalTokenValid && d.lastExternalTokenStartByte == lookaheadStart {
+		return bytes.Equal(d.externalTokenStart, snapshot)
+	}
+	return d.externalScannerStateMatches(snapshot)
+}
+
 func (d *dfaTokenSource) externalSymbolIndex(sym Symbol) int {
 	if d == nil || d.language == nil {
 		return -1

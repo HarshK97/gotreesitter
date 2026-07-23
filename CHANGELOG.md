@@ -9,6 +9,16 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
+- **Stateless external-scanner reuse now covers Cue, D, Elixir, and Erlang.**
+  Capability markers replace language-name admission, while a strict recorded
+  pre-goto ownership check prevents stale whole-sibling transfer for the
+  certified stateless class. A shared differential matrix covers
+  insert/delete/replace edits across 4 KiB fixtures and a 137 KiB macro lane,
+  requiring real reuse and exact fresh-tree identity. Checkpointed reuse also
+  authenticates scanner state at the current lookahead's start rather than its
+  post-lex live state. Stateful scanners without a complete proof remain
+  fail-closed.
+
 - **HTML external-scanner reuse is checkpoint-certified for clean old trees.**
   The complete open-tag stack now serializes exactly or returns an absent
   checkpoint; oversized depth, custom names, and buffer exhaustion can no

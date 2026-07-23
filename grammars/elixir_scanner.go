@@ -79,6 +79,13 @@ func (ElixirExternalScanner) Destroy(payload any)                   {}
 func (ElixirExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (ElixirExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// The scanner carries no payload and derives every result from local
+// lookahead plus validSymbols, so every incremental boundary is quiescent and
+// failed scans cannot mutate persistent state.
+func (ElixirExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (ElixirExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (ElixirExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (ElixirExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	return scanElixir(lexer, validSymbols)
 }
