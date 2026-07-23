@@ -417,6 +417,9 @@ func buildParityCRef(rootDir, cacheDir string, entry parityLockEntry) (*parityCR
 	if err := verifyPinnedRepo(repoDir, entry.Commit); err != nil {
 		return nil, fmt.Errorf("%s: %s %s rejected: %w", entry.Name, repoKind, repoDir, err)
 	}
+	if err := applyParityGrammarPatch(entry, repoDir); err != nil {
+		return nil, fmt.Errorf("%s: apply grammar patch: %w", entry.Name, err)
+	}
 
 	buildDir := filepath.Join(rootDir, "build", paritySafeName(entry.Name))
 	if err := os.MkdirAll(buildDir, 0o755); err != nil {
@@ -481,6 +484,7 @@ func parityCachedSOPath(cacheDir string, entry parityLockEntry) string {
 		entry.RepoURL,
 		entry.Commit,
 		entry.Subdir,
+		parityGrammarPatchIdentity(entry),
 		COracleGrammarCFlags,
 		compilerPath,
 		compilerVersion,
@@ -492,6 +496,78 @@ func parityCachedSOPath(cacheDir string, entry parityLockEntry) string {
 	}, "\x00")
 	sum := sha256.Sum256([]byte(keyInput))
 	return filepath.Join(cacheDir, paritySafeName(entry.Name)+"-"+hex.EncodeToString(sum[:])[:16]+".so")
+}
+
+func parityGrammarPatchPath(entry parityLockEntry) string {
+	if entry.Name != "typescript" && entry.Name != "tsx" {
+		return ""
+	}
+	for _, path := range []string{
+		filepath.Join("grammars", "patches", "tree-sitter-typescript-import-type.patch"),
+		filepath.Join("..", "grammars", "patches", "tree-sitter-typescript-import-type.patch"),
+	} {
+		if _, err := os.Stat(path); err == nil {
+			abs, err := filepath.Abs(path)
+			if err == nil {
+				return abs
+			}
+			return path
+		}
+	}
+	return ""
+}
+
+func parityGrammarPatchIdentity(entry parityLockEntry) string {
+	patchPath := parityGrammarPatchPath(entry)
+	if patchPath == "" {
+		if entry.Name == "typescript" || entry.Name == "tsx" {
+			return "missing-typescript-import-type-patch"
+		}
+		return "none"
+	}
+	sum, err := fileSHA256(patchPath)
+	if err != nil {
+		return "unreadable:" + patchPath
+	}
+	return sum
+}
+
+func applyParityGrammarPatch(entry parityLockEntry, repoDir string) error {
+	patchPath := parityGrammarPatchPath(entry)
+	if patchPath == "" {
+		if entry.Name == "typescript" || entry.Name == "tsx" {
+			return errors.New("missing tree-sitter-typescript import_type patch")
+		}
+		return nil
+	}
+	for _, args := range [][]string{{"apply", "--check", patchPath}, {"apply", patchPath}} {
+		if err := runCommand(repoDir, "git", args...); err != nil {
+			return fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+		}
+	}
+	if err := regeneratePatchedTypeScriptCParser(repoDir, entry.Subdir); err != nil {
+		return err
+	}
+	return nil
+}
+
+func regeneratePatchedTypeScriptCParser(repoDir, subdir string) error {
+	// tree-sitter-cli's executable is installed by its package lifecycle
+	// scripts, so this must remain a normal lockfile-pinned install.
+	install := exec.Command("npm", "ci")
+	install.Dir = repoDir
+	if out, err := install.CombinedOutput(); err != nil {
+		return fmt.Errorf("npm ci: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	generator := filepath.Join(repoDir, "node_modules", ".bin", "tree-sitter")
+	generate := exec.Command(generator, "generate")
+	// The lock points to generated parser.c under <grammar>/src, while
+	// tree-sitter generate reads grammar.js from the parent grammar directory.
+	generate.Dir = filepath.Join(repoDir, filepath.Dir(subdir))
+	if out, err := generate.CombinedOutput(); err != nil {
+		return fmt.Errorf("tree-sitter generate: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func loadCachedParityCRef(cacheDir string, entry parityLockEntry) (*parityCRef, bool) {
