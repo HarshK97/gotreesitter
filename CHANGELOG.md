@@ -9,15 +9,25 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
+- **HTML external-scanner reuse is checkpoint-certified for clean old trees.**
+  The complete open-tag stack now serializes exactly or returns an absent
+  checkpoint; oversized depth, custom names, and buffer exhaustion can no
+  longer truncate or alias state. Malformed checkpoint bytes are rejected,
+  failed scans preserve state, and token relexing rejects absent start or live
+  checkpoints. Changed-length edit witnesses at three positions plus a 137 KiB
+  lane require real reuse and fresh-tree equality. Error-bearing old HTML trees
+  remain an explicit fresh-parse fallback while recovery ownership is still
+  uncertified.
+
 - **SQL external-scanner reuse is now checkpoint-certified.** The runtime's
   checkpoint and checkpointless-reuse gates are capability based rather than
   language-name allowlists. SQL records a complete dollar-quote-tag state
   whenever it fits the checkpoint buffer (including an explicit empty-state
   checkpoint), preserves that state on failed scans, and fails closed only for
   incremental reuse when a valid tag is too large to restore exactly; full
-  parsing continues to accept the tag, matching C semantics. Svelte now opts
-  out of changed-edit reuse because its bounded HTML-tag encoding is not yet a
-  collision-free checkpoint proof.
+  parsing continues to accept the tag, matching C semantics. Svelte remains
+  opted out of changed-edit reuse pending certification of its scanner-wide
+  raw-text and expression-block behavior.
   Clean and recovered insert/delete/replace witnesses at the start, middle,
   and end of roughly 20 KiB and 137 KiB files enforce fresh-tree equality,
   full-span coverage, deterministic work, and bounded memory; an opt-in tier

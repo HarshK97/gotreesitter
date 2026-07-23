@@ -44,6 +44,21 @@ func (HTMLExternalScanner) Deserialize(payload any, buf []byte) {
 	s.tags = htmlDeserializeTagsInto(s.tags, buf)
 }
 
+// SupportsIncrementalReuse certifies HTML's scanner state for changed edits.
+func (HTMLExternalScanner) SupportsIncrementalReuse() bool { return true }
+
+// SupportsIncrementalReuseFromErrorTree remains closed until HTML recovery
+// ownership is certified independently of the scanner's exact state proof.
+func (HTMLExternalScanner) SupportsIncrementalReuseFromErrorTree() bool { return false }
+
+// UsesExternalScannerCheckpoints selects exact tag-stack checkpoints. States
+// that do not fit the runtime buffer serialize to zero and fail closed.
+func (HTMLExternalScanner) UsesExternalScannerCheckpoints() bool { return true }
+
+// PreservesStateOnScanFailure holds because tag-stack mutations occur only on
+// the successful implicit-end, self-closing, start-tag, and end-tag routes.
+func (HTMLExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (HTMLExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	s := payload.(*htmlScannerState)
 	lx := &goLexerAdapter{lexer}

@@ -86,6 +86,59 @@ func (rawTextExternalScanner) Scan(payload any, lexer *ExternalLexer, valid []bo
 	return true
 }
 
+type checkpointByteExternalScanner struct{}
+
+func (checkpointByteExternalScanner) Create() any         { state := byte(0); return &state }
+func (checkpointByteExternalScanner) Destroy(payload any) {}
+func (checkpointByteExternalScanner) Serialize(payload any, buf []byte) int {
+	state := *payload.(*byte)
+	if state == 0xff || len(buf) == 0 {
+		return 0
+	}
+	buf[0] = state
+	return 1
+}
+func (checkpointByteExternalScanner) Deserialize(payload any, buf []byte) {
+	state := payload.(*byte)
+	*state = 0
+	if len(buf) > 0 {
+		*state = buf[0]
+	}
+}
+func (checkpointByteExternalScanner) Scan(payload any, lexer *ExternalLexer, valid []bool) bool {
+	return false
+}
+func (checkpointByteExternalScanner) UsesExternalScannerCheckpoints() bool { return true }
+
+func TestCanRelexCheckpointScannerRequiresRepresentableStartAndLiveState(t *testing.T) {
+	scanner := checkpointByteExternalScanner{}
+	lang := &Language{ExternalScanner: scanner}
+	state := scanner.Create()
+	ts := &dfaTokenSource{
+		lexer:                      NewLexer(nil, []byte("x")),
+		language:                   lang,
+		hasExternalScanner:         true,
+		usesExternalCheckpoints:    true,
+		externalPayload:            state,
+		lastExternalTokenValid:     true,
+		lastExternalTokenStartByte: 0,
+		lastExternalTokenEndByte:   1,
+	}
+	tok := Token{StartByte: 0, EndByte: 1}
+
+	if ts.CanRelexFromTokenStart(tok) {
+		t.Fatal("relex accepted an absent start checkpoint")
+	}
+	ts.externalTokenStart = []byte{0}
+	if !ts.CanRelexFromTokenStart(tok) {
+		t.Fatal("relex rejected representable start and live states")
+	}
+	*state.(*byte) = 0xff
+	if ts.CanRelexFromTokenStart(tok) {
+		t.Fatal("relex accepted an unrepresentable live state")
+	}
+}
+
 type skipPrefixExternalScanner struct{}
 
 func (skipPrefixExternalScanner) Create() any                           { return nil }

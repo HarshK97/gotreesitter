@@ -2693,7 +2693,9 @@ func (d *dfaTokenSource) CanRelexFromTokenStart(tok Token) bool {
 		if d.usesExternalCheckpoints {
 			if !d.lastExternalTokenValid ||
 				d.lastExternalTokenStartByte != tok.StartByte ||
-				d.lastExternalTokenEndByte != tok.EndByte {
+				d.lastExternalTokenEndByte != tok.EndByte ||
+				len(d.externalTokenStart) == 0 ||
+				len(d.captureExternalScannerStateInto(&d.externalCompare)) == 0 {
 				return false
 			}
 		} else if len(d.captureExternalScannerStateInto(&d.externalCompare)) != 0 {

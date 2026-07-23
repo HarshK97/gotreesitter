@@ -1,130 +1,8 @@
-//go:build !grammar_subset || grammar_subset_blade
+//go:build !grammar_subset || grammar_subset_angular || grammar_subset_astro || grammar_subset_blade || grammar_subset_html || grammar_subset_svelte || grammar_subset_vue
 
 package grammars
 
-import (
-	"sync"
-	"unicode"
-
-	gotreesitter "github.com/odvcencio/gotreesitter"
-)
-
-// External token indexes for the Blade grammar.
-const (
-	bladeTokStartTagName        = 0
-	bladeTokScriptStartTagName  = 1
-	bladeTokStyleStartTagName   = 2
-	bladeTokEndTagName          = 3
-	bladeTokErroneousEndTagName = 4
-	bladeTokSelfClosingTagDelim = 5
-	bladeTokImplicitEndTag      = 6
-	bladeTokRawText             = 7
-	bladeTokComment             = 8
-)
-
-// bladeSyms caches resolved external symbol IDs for the blade grammar.
-var bladeSyms struct {
-	once                sync.Once
-	startTagName        gotreesitter.Symbol
-	scriptStartTagName  gotreesitter.Symbol
-	styleStartTagName   gotreesitter.Symbol
-	endTagName          gotreesitter.Symbol
-	erroneousEndTagName gotreesitter.Symbol
-	selfClosingTagDelim gotreesitter.Symbol
-	implicitEndTag      gotreesitter.Symbol
-	rawText             gotreesitter.Symbol
-	comment             gotreesitter.Symbol
-}
-
-func resolveBladeSyms() {
-	bladeSyms.once.Do(func() {
-		lang := BladeLanguage()
-		bladeSyms.startTagName = lang.ExternalSymbols[bladeTokStartTagName]
-		bladeSyms.scriptStartTagName = lang.ExternalSymbols[bladeTokScriptStartTagName]
-		bladeSyms.styleStartTagName = lang.ExternalSymbols[bladeTokStyleStartTagName]
-		bladeSyms.endTagName = lang.ExternalSymbols[bladeTokEndTagName]
-		bladeSyms.erroneousEndTagName = lang.ExternalSymbols[bladeTokErroneousEndTagName]
-		bladeSyms.selfClosingTagDelim = lang.ExternalSymbols[bladeTokSelfClosingTagDelim]
-		bladeSyms.implicitEndTag = lang.ExternalSymbols[bladeTokImplicitEndTag]
-		bladeSyms.rawText = lang.ExternalSymbols[bladeTokRawText]
-		bladeSyms.comment = lang.ExternalSymbols[bladeTokComment]
-	})
-}
-
-type bladeState struct {
-	tags []htmlTag
-}
-
-// BladeExternalScanner handles HTML tag tracking for Blade templates.
-type BladeExternalScanner struct{}
-
-func (BladeExternalScanner) Create() any         { return &bladeState{} }
-func (BladeExternalScanner) Destroy(payload any) {}
-
-func (BladeExternalScanner) Serialize(payload any, buf []byte) int {
-	s := payload.(*bladeState)
-	return htmlSerializeTags(s.tags, buf)
-}
-
-func (BladeExternalScanner) Deserialize(payload any, buf []byte) {
-	s := payload.(*bladeState)
-	s.tags = htmlDeserializeTagsInto(s.tags, buf)
-}
-
-func (BladeExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
-	s := payload.(*bladeState)
-	lx := &goLexerAdapter{lexer}
-	resolveBladeSyms()
-
-	// Raw text in script/style tags
-	if bladeValid(validSymbols, bladeTokRawText) && !bladeValid(validSymbols, bladeTokStartTagName) &&
-		!bladeValid(validSymbols, bladeTokEndTagName) {
-		return htmlScanRawText(lx, s.tags, bladeSyms.rawText, lexer)
-	}
-
-	// Skip whitespace
-	for unicode.IsSpace(lexer.Lookahead()) {
-		lexer.Advance(true)
-	}
-
-	switch lexer.Lookahead() {
-	case '<':
-		lexer.MarkEnd()
-		lexer.Advance(false)
-
-		if lexer.Lookahead() == '!' {
-			lexer.Advance(false)
-			return htmlScanComment(lx, bladeSyms.comment, lexer)
-		}
-
-		if bladeValid(validSymbols, bladeTokImplicitEndTag) {
-			return htmlScanImplicitEndTag(lx, &s.tags, bladeSyms.implicitEndTag, lexer)
-		}
-
-	case 0:
-		if bladeValid(validSymbols, bladeTokImplicitEndTag) {
-			return htmlScanImplicitEndTag(lx, &s.tags, bladeSyms.implicitEndTag, lexer)
-		}
-
-	case '/':
-		if bladeValid(validSymbols, bladeTokSelfClosingTagDelim) {
-			return htmlScanSelfClosingDelim(lx, &s.tags, bladeSyms.selfClosingTagDelim, lexer)
-		}
-
-	default:
-		if (bladeValid(validSymbols, bladeTokStartTagName) || bladeValid(validSymbols, bladeTokEndTagName)) &&
-			!bladeValid(validSymbols, bladeTokRawText) {
-			if bladeValid(validSymbols, bladeTokStartTagName) {
-				return htmlScanStartTagName(lx, &s.tags, bladeSyms.startTagName, bladeSyms.scriptStartTagName, bladeSyms.styleStartTagName, 0, lexer)
-			}
-			return htmlScanEndTagName(lx, &s.tags, bladeSyms.endTagName, bladeSyms.erroneousEndTagName, lexer)
-		}
-	}
-
-	return false
-}
-
-func bladeValid(vs []bool, i int) bool { return i < len(vs) && vs[i] }
+import gotreesitter "github.com/odvcencio/gotreesitter"
 
 // --- Shared HTML scanning helpers ---
 
@@ -138,48 +16,47 @@ func (a *goLexerAdapter) markEnd()          { a.l.MarkEnd() }
 func (a *goLexerAdapter) eof() bool         { return a.l.Lookahead() == 0 }
 
 func htmlSerializeTags(tags []htmlTag, buf []byte) int {
-	if len(buf) < 4 {
+	if len(buf) < 4 || len(tags) > 0xFFFF {
 		return 0
 	}
-	tagCount := len(tags)
-	if tagCount > 0xFFFF {
-		tagCount = 0xFFFF
+	size := 4
+	for i := range tags {
+		tag := &tags[i]
+		if tag.tagType > htmlTagInterpolation {
+			return 0
+		}
+		size++
+		if tag.tagType == htmlTagCustom {
+			if len(tag.customName) > 255 {
+				return 0
+			}
+			size += 1 + len(tag.customName)
+		}
+		if size > len(buf) {
+			return 0
+		}
 	}
-	// Write tag count twice (serialized_count then total_count)
+
+	tagCount := len(tags)
+	// A non-empty result is always the complete state. Keeping both counts in
+	// the inherited wire format lets the decoder reject old partial snapshots.
 	buf[0] = byte(tagCount)
 	buf[1] = byte(tagCount >> 8)
 	buf[2] = byte(tagCount)
 	buf[3] = byte(tagCount >> 8)
-	size := 4
-	serialized := 0
+	offset := 4
 	for i := 0; i < tagCount; i++ {
 		tag := tags[i]
+		buf[offset] = byte(tag.tagType)
+		offset++
 		if tag.tagType == htmlTagCustom {
 			nameLen := len(tag.customName)
-			if nameLen > 255 {
-				nameLen = 255
-			}
-			if size+2+nameLen >= len(buf) {
-				break
-			}
-			buf[size] = byte(tag.tagType)
-			size++
-			buf[size] = byte(nameLen)
-			size++
-			copy(buf[size:], tag.customName[:nameLen])
-			size += nameLen
-		} else {
-			if size+1 >= len(buf) {
-				break
-			}
-			buf[size] = byte(tag.tagType)
-			size++
+			buf[offset] = byte(nameLen)
+			offset++
+			copy(buf[offset:], tag.customName)
+			offset += nameLen
 		}
-		serialized++
 	}
-	// Update serialized count
-	buf[0] = byte(serialized)
-	buf[1] = byte(serialized >> 8)
 	return size
 }
 
@@ -188,23 +65,47 @@ func htmlDeserializeTagsInto(dst []htmlTag, buf []byte) []htmlTag {
 		return nil
 	}
 	serializedCount := int(buf[0]) | int(buf[1])<<8
-	size := 4
+	totalCount := int(buf[2]) | int(buf[3])<<8
+	if serializedCount != totalCount {
+		return nil
+	}
+	offset := 4
+	for i := 0; i < serializedCount; i++ {
+		if offset >= len(buf) {
+			return nil
+		}
+		tagType := htmlTagType(buf[offset])
+		offset++
+		if tagType > htmlTagInterpolation {
+			return nil
+		}
+		if tagType == htmlTagCustom {
+			if offset >= len(buf) {
+				return nil
+			}
+			nameLen := int(buf[offset])
+			offset++
+			if offset+nameLen > len(buf) {
+				return nil
+			}
+			offset += nameLen
+		}
+	}
+	if offset != len(buf) {
+		return nil
+	}
+
 	clear(dst)
 	tags := dst[:0]
-	for i := 0; i < serializedCount && size < len(buf); i++ {
-		tagType := htmlTagType(buf[size])
-		size++
+	offset = 4
+	for i := 0; i < serializedCount; i++ {
+		tagType := htmlTagType(buf[offset])
+		offset++
 		if tagType == htmlTagCustom {
-			if size >= len(buf) {
-				break
-			}
-			nameLen := int(buf[size])
-			size++
-			if size+nameLen > len(buf) {
-				break
-			}
-			name := string(buf[size : size+nameLen])
-			size += nameLen
+			nameLen := int(buf[offset])
+			offset++
+			name := string(buf[offset : offset+nameLen])
+			offset += nameLen
 			tags = append(tags, htmlTag{tagType: htmlTagCustom, customName: name})
 		} else {
 			tags = append(tags, htmlTag{tagType: tagType})

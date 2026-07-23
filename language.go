@@ -194,6 +194,17 @@ type IncrementalReuseExternalScanner interface {
 	SupportsIncrementalReuse() bool
 }
 
+// ErrorTreeIncrementalReuseExternalScanner is an optional refinement for a
+// scanner whose checkpoints are certified on clean old trees but whose parser
+// recovery ownership has not yet been certified. Returning false makes a
+// changed edit over an error-bearing old tree take the fresh-parse fallback.
+// Independently reauthenticated token-invariant leaf edits may still return
+// before this gate.
+type ErrorTreeIncrementalReuseExternalScanner interface {
+	ExternalScanner
+	SupportsIncrementalReuseFromErrorTree() bool
+}
+
 // CheckpointedExternalScanner is implemented by stateful external scanners
 // whose non-empty serialized payload is a complete checkpoint of every value
 // that can affect a later Scan call. The runtime records that checkpoint at
