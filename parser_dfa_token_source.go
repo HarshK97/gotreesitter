@@ -3581,6 +3581,13 @@ func (d *dfaTokenSource) lastExternalScannerCheckpoint() (externalScannerCheckpo
 	if d.externalTokenEndSameAsStart {
 		end = d.externalTokenStart
 	}
+	// CheckpointedExternalScanner reserves an empty serialization for an
+	// unavailable state. Both boundary snapshots must be exact: accepting one
+	// missing endpoint would make distinct unrepresentable states compare as
+	// the same empty byte slice during incremental authentication.
+	if len(d.externalTokenStart) == 0 || len(end) == 0 {
+		return externalScannerCheckpoint{}, 0, 0, false
+	}
 	return externalScannerCheckpoint{
 		start: d.externalTokenStart,
 		end:   end,

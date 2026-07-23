@@ -20,6 +20,24 @@ type quiescenceStatelessScanner struct {
 
 func (quiescenceStatelessScanner) ExternalScannerIsStateless() bool { return true }
 
+type quiescenceCheckpointScanner struct {
+	parserTestSafeExternalScanner
+}
+
+func (quiescenceCheckpointScanner) UsesExternalScannerCheckpoints() bool { return true }
+
+type quiescenceCheckpointOptOutScanner struct {
+	parserTestUnsafeExternalScanner
+}
+
+func (quiescenceCheckpointOptOutScanner) SupportsIncrementalReuse() bool {
+	return false
+}
+
+func (quiescenceCheckpointOptOutScanner) UsesExternalScannerCheckpoints() bool {
+	return true
+}
+
 func TestClassifyExternalScannerQuiescence(t *testing.T) {
 	cases := []struct {
 		name string
@@ -50,6 +68,8 @@ func TestForestIncrementalReuseRequiresScannerProof(t *testing.T) {
 		{"nil language", nil, false},
 		{"no scanner", &Language{}, true},
 		{"stateless scanner", &Language{ExternalScanner: quiescenceStatelessScanner{}}, true},
+		{"checkpoint scanner", &Language{ExternalScanner: quiescenceCheckpointScanner{}}, true},
+		{"checkpoint opt-out scanner", &Language{ExternalScanner: quiescenceCheckpointOptOutScanner{}}, false},
 		{"opt-out scanner", &Language{ExternalScanner: quiescenceOptOutScanner{}}, false},
 		{"undecided scanner", &Language{ExternalScanner: parserTestUnsafeExternalScanner{}}, false},
 	}

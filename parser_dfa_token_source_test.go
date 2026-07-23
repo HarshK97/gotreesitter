@@ -772,6 +772,29 @@ func TestLastExternalScannerCheckpointCanUseStartAsEndWithoutAliasingScratch(t *
 	}
 }
 
+func TestLastExternalScannerCheckpointRequiresBothEndpoints(t *testing.T) {
+	for name, ts := range map[string]*dfaTokenSource{
+		"missing start": {
+			externalTokenEnd:       []byte{1},
+			lastExternalTokenValid: true,
+		},
+		"missing end": {
+			externalTokenStart:     []byte{1},
+			lastExternalTokenValid: true,
+		},
+		"missing shared start": {
+			lastExternalTokenValid:      true,
+			externalTokenEndSameAsStart: true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, _, ok := ts.lastExternalScannerCheckpoint(); ok {
+				t.Fatal("lastExternalScannerCheckpoint accepted an incomplete boundary")
+			}
+		})
+	}
+}
+
 func TestResetPooledDFATokenSourcePreservesScannerScratch(t *testing.T) {
 	lookup := func(StateID, Symbol) uint16 { return 0 }
 	ts := &dfaTokenSource{

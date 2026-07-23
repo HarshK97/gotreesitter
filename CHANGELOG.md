@@ -9,6 +9,15 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
+- **Stateful GSS forest trees now enter incremental reuse through exact
+  checkpoint receipts.** Admission requires the scanner's generic checkpoint
+  and incremental-reuse capabilities, then authenticates non-empty start and
+  end snapshots at every reachable token boundary. A missing endpoint declines
+  the forest as `scanner_checkpoint_unavailable` instead of letting distinct
+  unrepresentable states collide as empty snapshots. A length-changing
+  stateful witness requires actual subtree reuse and deep fresh-tree equality;
+  a synthetic absent-checkpoint scanner locks the fail-closed path.
+
 - **GSS forest trees now use capability-based incremental admission.** Forest
   construction records exact pre-goto ownership for every reusable subtree,
   and the reuse cursor requires that ownership before transferring top-level
@@ -16,7 +25,7 @@ for tags and release notes while still in `0.x`.
   stateless/failure-preserving proof, can therefore reuse forest-built trees
   without a language-name allowlist. AWK, KDL, Nix, Squirrel, and Uxntal are
   newly admitted through a shared multi-position and 137 KiB fresh-tree
-  differential; stateful scanners remain fail-closed pending checkpoint proof.
+  differential.
 
 - **JavaScript, TypeScript, and TSX leading incremental reuse is admitted.**
   The generic byte-identity, fragility, and scanner gates now govern unchanged

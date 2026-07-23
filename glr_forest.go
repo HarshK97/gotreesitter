@@ -712,14 +712,21 @@ func forestAcceptedRuntime(root *Node, source []byte) ParseRuntime {
 // (reuseCursor.strictTopLevelOwnership), while the ordinary fragility and
 // stack/goto checks protect interior candidates.
 //
-// The remaining independent obligation is scanner state. This first generic
-// admission class accepts only languages with no external scanner or an
-// explicitly certified stateless scanner. Stateful checkpoint-backed scanners
-// remain disabled until their forest-built boundary snapshots have their own
-// differential receipt. The predicate is intentionally capability-based: a
+// The remaining independent obligation is scanner state. A scanner either
+// proves every boundary quiescent (no scanner or a certified stateless
+// scanner), or supplies complete start/end checkpoints and independently opts
+// into incremental reuse. parseForest verifies the latter receipt at every
+// reachable token boundary and declines before returning a tree if either
+// endpoint is unavailable. The predicate is intentionally capability-based: a
 // grammar name is neither necessary nor sufficient evidence.
 func forestIncrementalReuseProven(lang *Language) bool {
-	return lang != nil && classifyExternalScannerQuiescence(lang) == scannerQuiescenceProven
+	if lang == nil {
+		return false
+	}
+	if classifyExternalScannerQuiescence(lang) == scannerQuiescenceProven {
+		return true
+	}
+	return languageUsesExternalScannerCheckpoints(lang) && languageSupportsIncrementalReuse(lang)
 }
 
 // gssLink is one alternative predecessor in the forest DAG: the subtree consumed
@@ -2830,6 +2837,11 @@ func (s *gssForestNodeSlab) retainedBytes() int {
 // external scanners, full GLR-lexing) is layered on this core.
 func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalCheckpoints bool, memoryBudget int64) (*Node, bool) {
 	lang := p.language
+	// Treat capture as a request, not a capability assertion. Internal
+	// diagnostic callers may request capture for any grammar; only a scanner
+	// that implements the checkpoint contract can produce receipts that the
+	// forest is allowed to authenticate.
+	captureExternalCheckpoints = captureExternalCheckpoints && languageUsesExternalScannerCheckpoints(lang)
 	meta := lang.SymbolMetadata
 	named := func(sym Symbol) bool { return int(sym) < len(meta) && meta[sym].Named }
 	p.forestDeclineReason = ""
@@ -2984,6 +2996,23 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 		tok := ts.Next()
 		tokens++
 		p.updateCurrentExternalTokenCheckpoint(ts, tok)
+		if captureExternalCheckpoints && tok.Symbol != 0 && !tok.NoLookahead {
+			if _, _, _, ok := ts.lastExternalScannerCheckpoint(); !ok {
+				// A zero-length serialization means this reachable scanner
+				// state has no exact representation. Do not return a forest
+				// tree built after an unauthenticated GLR scanner restore, and
+				// do not silently widen incremental admission. The automatic
+				// route falls back to the production parser; the diagnostic
+				// route reports the decline directly.
+				p.recordForestDecline("scanner_checkpoint_unavailable", tok, glrStates)
+				if progress.enabled {
+					progress.emit(time.Now(), "forest_decline", iter, tokens, tok, false, nil, 0, 0, 0, false, 0, 0,
+						forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, nil,
+							"decline_reason=scanner_checkpoint_unavailable"))
+				}
+				return nil, false
+			}
+		}
 		// A NoLookahead token is a SYNTHETIC EOF the token source emits to force
 		// the no-lookahead-state reduction (e.g. completing a multi-token comment
 		// extra) — it is NOT real end-of-input. Only Symbol==0 && !NoLookahead is
