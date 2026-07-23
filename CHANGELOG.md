@@ -9,6 +9,12 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
+- Nothing yet.
+
+## [0.47.0] - 2026-07-22
+
+### Changed
+
 - **Stateful GSS forest trees now enter incremental reuse through exact
   checkpoint receipts.** Admission requires the scanner's generic checkpoint
   and incremental-reuse capabilities, then authenticates non-empty start and
@@ -3612,7 +3618,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.46.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.47.0...HEAD
+[0.47.0]: https://github.com/odvcencio/gotreesitter/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/odvcencio/gotreesitter/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/odvcencio/gotreesitter/compare/v0.44.1...v0.45.0
 [0.44.1]: https://github.com/odvcencio/gotreesitter/compare/v0.44.0...v0.44.1
