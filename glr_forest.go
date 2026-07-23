@@ -2837,6 +2837,11 @@ func (s *gssForestNodeSlab) retainedBytes() int {
 // external scanners, full GLR-lexing) is layered on this core.
 func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalCheckpoints bool, memoryBudget int64) (*Node, bool) {
 	lang := p.language
+	// Treat capture as a request, not a capability assertion. Internal
+	// diagnostic callers may request capture for any grammar; only a scanner
+	// that implements the checkpoint contract can produce receipts that the
+	// forest is allowed to authenticate.
+	captureExternalCheckpoints = captureExternalCheckpoints && languageUsesExternalScannerCheckpoints(lang)
 	meta := lang.SymbolMetadata
 	named := func(sym Symbol) bool { return int(sym) < len(meta) && meta[sym].Named }
 	p.forestDeclineReason = ""
