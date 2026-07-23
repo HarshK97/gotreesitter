@@ -26,6 +26,10 @@ func TestStatelessScannerIncrementalCertification(t *testing.T) {
 		{name: "d", lang: grammars.DLanguage, line: func(i int) string { return fmt.Sprintf("int value_%06d = %d;\n", i, i) }, minMacroReusePercent: 15},
 		{name: "elixir", lang: grammars.ElixirLanguage, line: func(i int) string { return fmt.Sprintf("value_%06d = %d\n", i, i) }, minMacroReuseBytes: 16},
 		{name: "erlang", lang: grammars.ErlangLanguage, line: func(i int) string { return fmt.Sprintf("value_%06d() -> %d.\n", i, i) }, minMacroReusePercent: 25},
+		{name: "gleam", lang: grammars.GleamLanguage, line: func(i int) string { return fmt.Sprintf("const value_%06d = \"%d\"\n", i, i) }, minMacroReusePercent: 3},
+		{name: "move", lang: grammars.MoveLanguage, line: func(i int) string { return fmt.Sprintf("module 0x1::value_%06d { const VALUE: u64 = %d; }\n", i, i) }, minMacroReusePercent: 5},
+		{name: "tcl", lang: grammars.TclLanguage, line: func(i int) string { return fmt.Sprintf("set value_%06d %d\n", i, i) }, minMacroReuseBytes: 32},
+		{name: "wgsl", lang: grammars.WgslLanguage, line: func(i int) string { return fmt.Sprintf("/* value */ fn value_%06d() { let x: i32 = %d; }\n", i, i) }, minMacroReusePercent: 45},
 	}
 
 	for _, tc := range cases {

@@ -30,6 +30,13 @@ func (MoveExternalScanner) Destroy(payload any)                   {}
 func (MoveExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (MoveExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// The scanner carries no payload and derives every result from local
+// lookahead plus validSymbols, so every incremental boundary is quiescent and
+// failed scans cannot mutate persistent state.
+func (MoveExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (MoveExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (MoveExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (MoveExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	// Error recovery state: bail out, exactly like the C scanner.
 	if moveValid(validSymbols, moveTokErrorSentinel) {

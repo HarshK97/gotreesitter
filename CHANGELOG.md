@@ -9,6 +9,12 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
+- **The stateless-scanner admission matrix now also covers Gleam, Move, Tcl,
+  and WGSL.** Each scanner passes the shared 4 KiB multi-position edit matrix
+  and 137 KiB fresh-tree differential with a measured reuse floor. AWK and
+  Squirrel remain fail-closed because their old trees use the GSS forest fast
+  path; scanner statelessness alone does not bypass that parser-level gate.
+
 - **Stateless external-scanner reuse now covers Cue, D, Elixir, and Erlang.**
   Capability markers replace language-name admission, while a strict recorded
   pre-goto ownership check prevents stale whole-sibling transfer for the

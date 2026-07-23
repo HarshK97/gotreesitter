@@ -21,6 +21,13 @@ func (WgslExternalScanner) Destroy(payload any)                   {}
 func (WgslExternalScanner) Serialize(payload any, buf []byte) int { return 0 }
 func (WgslExternalScanner) Deserialize(payload any, buf []byte)   {}
 
+// The scanner carries no payload and derives every result from local
+// lookahead plus validSymbols, so every incremental boundary is quiescent and
+// failed scans cannot mutate persistent state.
+func (WgslExternalScanner) SupportsIncrementalReuse() bool    { return true }
+func (WgslExternalScanner) ExternalScannerIsStateless() bool  { return true }
+func (WgslExternalScanner) PreservesStateOnScanFailure() bool { return true }
+
 func (WgslExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
 	if !wgslValid(validSymbols, wgslTokBlockComment) {
 		return false
