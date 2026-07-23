@@ -5102,6 +5102,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					break
 				}
 				tok = nextTok
+				// Reuse advances the token source without returning through
+				// ordinary acquisition. Publish that lookahead immediately so
+				// EOF, fork, timeout, and block-stop exits all report the
+				// frontier that actually governs the parse.
+				recordCurrentLookahead(tok)
 				reusedAnySibling = true
 				if timing != nil {
 					timing.blockSpliceSteps++
@@ -5174,11 +5179,6 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 			} else if reusedAnySibling {
 				workCountRefreshConvergenceLookahead(tok)
-				// Reuse can advance the token source across an entire block and
-				// synthesize EOF without returning through token acquisition.
-				// Keep public runtime completion evidence aligned with the
-				// lookahead that actually governs the accepted frontier.
-				recordCurrentLookahead(tok)
 				needToken = false
 				consecutiveReduces = 0
 				consecutiveNoTokenDispatches = 0
