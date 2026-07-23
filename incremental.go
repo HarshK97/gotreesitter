@@ -36,7 +36,7 @@ type reuseCursor struct {
 	// context is too sensitive for leaf reuse inside the edited rule.
 	topLevelResumeByte uint32
 	// topLevelSpliceLeading enables the LEADING-run block-splice (campaign
-	// post-admission-frontier T2a): top-level items whose end byte is at or
+	// post-admission-frontier T2a): top-level items whose end byte is strictly
 	// before minEditAt are byte-identical prefixes of the old tree, so they may
 	// be spliced back as a block from the initial parser state before per-token
 	// parsing reaches the edit -- the mirror of the trailing block-splice. When
@@ -47,10 +47,8 @@ type reuseCursor struct {
 	// languages (css, cmake), whose leading items keep their general-walk leaf
 	// reuse -- see reset() and topLevelSiblingBlockSpliceEligible.
 	topLevelSpliceLeading bool
-	// disableLeadingSplice, when set by the parser before reset(), forces the
-	// leading-run splice off regardless of language (topLevelSpliceLeading stays
-	// false). It backs the test-only differential toggle (Parser.disableLeadingRun
-	// Splice) and is NOT cleared by reset -- the parser sets it every parse.
+	// disableLeadingSplice backs a test-only differential seam. It is set by the
+	// parser before reset and is never enabled by production code.
 	disableLeadingSplice bool
 
 	cachedStart      uint32
@@ -64,9 +62,9 @@ type reuseCursor struct {
 	rejectOutOfBounds             uint64
 	rejectRootNonLeafChanged      uint64
 	// observedPreGotoStateMismatch counts top-level block-splice candidates whose
-	// recorded ownership frontier differs from the live parser state. It is
-	// diagnostic only; #432 owns replacing the existing fragility+goto admission
-	// contract with a complete ownership proof.
+	// recorded ownership frontier differs from the live parser state. Leading
+	// transfers and explicitly strict lanes reject the mismatch; established
+	// trailing lanes retain their compatible-goto contract.
 	observedPreGotoStateMismatch uint64
 	rejectLargeNonLeaf           uint64
 	rejectStaleNonLeafBoundary   uint64
@@ -83,7 +81,7 @@ type reuseCursor struct {
 	rejectScannerUnquiescent uint64
 	forestFastPath           bool
 	languageName             string // cached for language-specific reuse safety policies
-	strictTopLevelOwnership  bool   // forest trees and newly certified stateless scanners require the recorded owner
+	strictTopLevelOwnership  bool   // forest trees and certified stateless scanners require the recorded normal-dispatch frontier
 }
 
 // reuseScratch holds reusable buffers for incremental reuse traversal.
@@ -178,8 +176,7 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 			// topLevelSiblingBlockSpliceEligible.
 			leadingEligible := hasLeading &&
 				!c.disableLeadingSplice &&
-				!(c.forestFastPath && forestFastPathDirtyPrefixScannerSensitive(c.languageName)) &&
-				!leadingSpliceFrontierUnproven(c.languageName)
+				!(c.forestFastPath && forestFastPathDirtyPrefixScannerSensitive(c.languageName))
 			if hasTrailing || leadingEligible {
 				c.topLevelParent = root
 				c.topLevelEnd = childCount
@@ -205,22 +202,6 @@ func (c *reuseCursor) reset(oldTree *Tree, source []byte, scratch *reuseScratch)
 		}
 	}
 	return c
-}
-
-// leadingSpliceFrontierUnproven is a rejection-only holdback for grammars
-// whose real leading candidates reach an unresolved ownership frontier.
-// Attempting the leading scan perturbs their ambiguous recovery/repetition
-// shape (the JS differential sweep catches this), so observation alone is not
-// sufficient to open admission.
-// Keep the proven Go path generic; retire these names only with a normal
-// dispatch-path proof and a fresh-oracle sweep. #432 owns that work.
-func leadingSpliceFrontierUnproven(name string) bool {
-	switch name {
-	case "javascript", "typescript", "tsx":
-		return true
-	default:
-		return false
-	}
 }
 
 func (c *reuseCursor) commitScratch(scratch *reuseScratch) {
@@ -649,15 +630,13 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 				continue
 			}
 			// A compatible goto target does not prove that this old reduction was
-			// owned by the live normal-dispatch frontier. Newly admitted stateless
-			// scanners require their recorded pre-goto state before transfer;
-			// otherwise repeated top-level constructs can retain stale ownership
-			// and diverge from a fresh tree even when bytes and scanner state match.
-			// Legacy lanes retain their measured contract until #432 replaces it
-			// without regressing the established editor-latency ratchets.
+			// owned by the live normal-dispatch frontier. Explicitly strict lanes
+			// and newly admitted leading blocks require the recorded pre-goto
+			// state; established trailing-only lanes retain their measured
+			// compatible-goto contract.
 			if !fullRootUndo && !topLevelCandidateOwnsCurrentFrontier(n, state) {
 				idx.observedPreGotoStateMismatch++
-				if idx.strictTopLevelOwnership {
+				if idx.strictTopLevelOwnership || idx.topLevelSpliceLeading {
 					continue
 				}
 			}
@@ -770,6 +749,18 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 	}
 
 	return lookahead, 0, false
+}
+
+func (c *reuseCursor) requiredTopLevelOwnershipFrontier(start uint32) (StateID, bool) {
+	if c == nil || (!c.strictTopLevelOwnership && !c.topLevelSpliceLeading) {
+		return 0, false
+	}
+	for _, n := range c.candidates(start) {
+		if n != nil && n.ChildCount() > 0 && c.topLevelSiblingBlockSpliceEligible(n) {
+			return n.PreGotoState(), true
+		}
+	}
+	return 0, false
 }
 
 // topLevelCandidateOwnsCurrentFrontier is deliberately stricter than
