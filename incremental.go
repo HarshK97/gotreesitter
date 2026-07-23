@@ -62,9 +62,9 @@ type reuseCursor struct {
 	rejectOutOfBounds             uint64
 	rejectRootNonLeafChanged      uint64
 	// observedPreGotoStateMismatch counts top-level block-splice candidates whose
-	// recorded ownership frontier differs from the live parser state. It is
-	// diagnostic only; #432 owns replacing the existing fragility+goto admission
-	// contract with a complete ownership proof.
+	// recorded ownership frontier differs from the live parser state. Leading
+	// transfers and explicitly strict lanes reject the mismatch; established
+	// trailing lanes retain their compatible-goto contract.
 	observedPreGotoStateMismatch uint64
 	rejectLargeNonLeaf           uint64
 	rejectStaleNonLeafBoundary   uint64
@@ -81,7 +81,7 @@ type reuseCursor struct {
 	rejectScannerUnquiescent uint64
 	forestFastPath           bool
 	languageName             string // cached for language-specific reuse safety policies
-	strictTopLevelOwnership  bool   // newly certified stateless scanners require the recorded normal-dispatch frontier
+	strictTopLevelOwnership  bool   // certified stateless scanners require the recorded normal-dispatch frontier
 }
 
 // reuseScratch holds reusable buffers for incremental reuse traversal.
@@ -627,15 +627,13 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 				continue
 			}
 			// A compatible goto target does not prove that this old reduction was
-			// owned by the live normal-dispatch frontier. Newly admitted stateless
-			// scanners require their recorded pre-goto state before transfer;
-			// otherwise repeated top-level constructs can retain stale ownership
-			// and diverge from a fresh tree even when bytes and scanner state match.
-			// Legacy lanes retain their measured contract until #432 replaces it
-			// without regressing the established editor-latency ratchets.
+			// owned by the live normal-dispatch frontier. Explicitly strict lanes
+			// and newly admitted leading blocks require the recorded pre-goto
+			// state; established trailing-only lanes retain their measured
+			// compatible-goto contract.
 			if !fullRootUndo && !topLevelCandidateOwnsCurrentFrontier(n, state) {
 				idx.observedPreGotoStateMismatch++
-				if idx.strictTopLevelOwnership {
+				if idx.strictTopLevelOwnership || idx.topLevelSpliceLeading {
 					continue
 				}
 			}
@@ -748,6 +746,18 @@ func (p *Parser) tryReuseSubtree(s *glrStack, lookahead Token, ts TokenSource, i
 	}
 
 	return lookahead, 0, false
+}
+
+func (c *reuseCursor) requiredTopLevelOwnershipFrontier(start uint32) (StateID, bool) {
+	if c == nil || (!c.strictTopLevelOwnership && !c.topLevelSpliceLeading) {
+		return 0, false
+	}
+	for _, n := range c.candidates(start) {
+		if n != nil && n.ChildCount() > 0 && c.topLevelSiblingBlockSpliceEligible(n) {
+			return n.PreGotoState(), true
+		}
+	}
+	return 0, false
 }
 
 // topLevelCandidateOwnsCurrentFrontier is deliberately stricter than
