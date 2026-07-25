@@ -145,9 +145,13 @@ func TestParseForestMemoryBudgetDeclines(t *testing.T) {
 }
 
 func TestForestMemoryBudgetFinalCheckSamplesRuntimeUnmasked(t *testing.T) {
+	// Only the hard ceiling may stop a parse from a runtime.MemStats reading
+	// (issue #454 determinism contract), so arm it to prove the final check
+	// reaches a real, unmasked sample.
 	parser := &Parser{
-		parseRuntimeMemoryBudgetBytes:   1,
-		parseRuntimeMemoryBaselineBytes: 0,
+		parseRuntimeMemoryBudgetBytes:      1,
+		parseRuntimeMemoryHardCeilingBytes: 1,
+		parseRuntimeMemoryBaselineBytes:    0,
 	}
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()

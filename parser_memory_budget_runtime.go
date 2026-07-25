@@ -157,12 +157,38 @@ func runtimeMemoryPollMask(budgetBytes int64) uint64 {
 // used both by the masked poll above once it decides to fire, and directly by
 // the GLR merge survivor loop's coarse-stride poll (mergeStacksWithScratchLargeCap),
 // which has no other route back to a materialization-boundary poll site
-// during its O(survivors^2) grind. The hard ceiling is checked first and is
-// intentionally decoupled from the soft per-parse budget's overshoot
-// tolerance: it fires at a fixed absolute heap-growth regardless of how loose
-// the soft budget's poll cadence is for this parse.
+// during its O(survivors^2) grind.
+//
+// DETERMINISM CONTRACT (issue #454): only the absolute hard ceiling may stop a
+// parse from a runtime.MemStats reading. The soft per-parse budget must not,
+// because HeapAlloc and Sys are process-global quantities:
+//
+//   - HeapAlloc is live heap. A GC cycle mid-parse makes growth appear to
+//     recede, so the same input crosses the budget at a different token on
+//     every run.
+//   - Sys is total memory the runtime has obtained from the OS. It moves in
+//     large steps driven by GC pacing and by allocation from other goroutines
+//     in the host process, which a parse does not control at all.
+//
+// Letting either decide where a parse stops makes the returned tree a function
+// of GC timing rather than of the input. A downstream editor measured the
+// consequence directly: five parses of identical 137 KiB C# bytes returned five
+// different trees (1, 11048, 19178, 22928 and 31928 nodes), each reporting
+// stopReason=memory_budget with HasError()==false over a partial byte range.
+// This repo's own parser_memory_budget_runtime_test.go had already recorded the
+// same instability, accepting either runtime_heap or runtime_sys as the stop
+// source because "pinning runtime_heap alone made this test race-mode-flaky".
+//
+// Footprint is still bounded, and bounded deterministically, by the layers that
+// measure what the parse itself allocated: the arena budget
+// (nodeArena.budgetExhausted), the scratch budget
+// (parserScratch.budgetExhausted), and the node and stack-depth limits. Those
+// stop the same input at the same place every time. The hard ceiling below
+// stays on real memory on purpose: it is an out-of-memory backstop of last
+// resort, not a shaping decision, and a parse that reaches it is already
+// pathological.
 func (p *Parser) runtimeMemoryBudgetStopReasonNow() ParseStopReason {
-	if p == nil || (p.parseRuntimeMemoryBudgetBytes <= 0 && p.parseRuntimeMemoryHardCeilingBytes <= 0) {
+	if p == nil || p.parseRuntimeMemoryHardCeilingBytes <= 0 {
 		return ParseStopNone
 	}
 	var stats runtime.MemStats
@@ -171,15 +197,6 @@ func (p *Parser) runtimeMemoryBudgetStopReasonNow() ParseStopReason {
 	sysGrowth := runtimeMemoryGrowth(stats.Sys, p.parseRuntimeMemoryBaselineSys)
 	if ceiling := p.parseRuntimeMemoryHardCeilingBytes; ceiling > 0 && heapGrowth >= uint64(ceiling) {
 		return p.noteRuntimeMemoryBudgetStop(parseMemoryBudgetStopSourceHardCeiling, heapGrowth, sysGrowth)
-	}
-	if p.parseRuntimeMemoryBudgetBytes > 0 {
-		budget := uint64(p.parseRuntimeMemoryBudgetBytes)
-		if heapGrowth >= budget {
-			return p.noteRuntimeMemoryBudgetStop(parseMemoryBudgetStopSourceRuntimeHeap, heapGrowth, sysGrowth)
-		}
-		if sysGrowth >= budget {
-			return p.noteRuntimeMemoryBudgetStop(parseMemoryBudgetStopSourceRuntimeSys, heapGrowth, sysGrowth)
-		}
 	}
 	return ParseStopNone
 }

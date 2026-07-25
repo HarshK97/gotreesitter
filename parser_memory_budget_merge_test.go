@@ -40,7 +40,11 @@ func TestMergeStacksWithScratchLargeCapPollsMemoryBudgetMidGrind(t *testing.T) {
 	// allocator can reuse spans from earlier package tests. Separate runtime
 	// budget tests cover HeapAlloc/Sys delta accounting; this test's contract is
 	// that the O(n^2) merge reaches its coarse poll and stops mid-grind.
+	// Only the hard ceiling may stop a parse from a runtime.MemStats reading
+	// (issue #454 determinism contract), so this arms the ceiling rather than
+	// the soft budget.
 	parser.parseRuntimeMemoryBudgetBytes = 1
+	parser.parseRuntimeMemoryHardCeilingBytes = 1
 	parser.parseRuntimeMemoryBaselineBytes = 0
 	parser.parseRuntimeMemoryBaselineSys = 0
 	parser.parseMemoryBudgetDiagActive = true

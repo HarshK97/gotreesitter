@@ -7,6 +7,24 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Parse results no longer depend on garbage-collection timing. The soft
+  per-parse memory budget stopped a parse when `runtime.MemStats.HeapAlloc` or
+  `runtime.MemStats.Sys` grew past the budget. Both values cover the whole
+  process, and the garbage collector paces both, so the stopping point was not
+  a function of the input. The same bytes returned a different tree on each
+  run. Five parses of one 137 KiB C# file returned five different trees, of
+  1, 11048, 19178, 22928 and 31928 nodes. Each tree reported
+  `HasError() == false` over only part of the input. The budget arms at 64 KiB,
+  so every language was exposed above that size. Only the absolute hard ceiling
+  (`GOT_PARSE_MEMORY_HARD_CEILING_MB`) now stops a parse from a runtime memory
+  reading, because that ceiling guards against running out of memory and is not
+  a shaping decision. The arena budget, the scratch budget, and the node and
+  stack limits continue to bound memory. Those layers measure what the parse
+  itself allocated, so they stop the same input at the same place every time.
+  A downstream user reported this behavior in issue #454.
+
 ### Changed
 
 - JavaScript program-end finalization now has one authoritative compatibility

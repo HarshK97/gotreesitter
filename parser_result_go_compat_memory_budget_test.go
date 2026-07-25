@@ -92,15 +92,21 @@ func containerStillHasSemicolon(root *Node, c int) bool {
 // newGoCompatBudgetTestParser returns a *Parser configured with a runtime
 // memory budget baselined at the current live heap, mirroring how
 // (*Parser).enterRuntimeMemoryBudget configures a real parse.
+//
+// The hard ceiling is armed at the same size as the soft budget. Since the
+// issue #454 determinism contract, only the hard ceiling may stop a parse from
+// a runtime.MemStats reading, so these compat-walk propagation tests need it
+// armed to have any runtime-sourced stop to propagate at all.
 func newGoCompatBudgetTestParser(budgetBytes int64) *Parser {
 	debug.FreeOSMemory()
 	var stats runtime.MemStats
 	runtime.ReadMemStats(&stats)
 	return &Parser{
-		parseRuntimeMemoryBudgetBytes:   budgetBytes,
-		parseRuntimeMemoryBaselineBytes: stats.HeapAlloc,
-		parseRuntimeMemoryBaselineSys:   stats.Sys,
-		parseMemoryBudgetDiagActive:     true,
+		parseRuntimeMemoryBudgetBytes:      budgetBytes,
+		parseRuntimeMemoryHardCeilingBytes: budgetBytes,
+		parseRuntimeMemoryBaselineBytes:    stats.HeapAlloc,
+		parseRuntimeMemoryBaselineSys:      stats.Sys,
+		parseMemoryBudgetDiagActive:        true,
 	}
 }
 
