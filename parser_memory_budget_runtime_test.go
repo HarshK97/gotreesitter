@@ -6,22 +6,50 @@ import (
 	"testing"
 )
 
-func TestRuntimeMemoryBudgetStopReasonSamplesHeapGrowth(t *testing.T) {
+// TestRuntimeMemoryBudgetSoftBudgetNeverStopsParse pins the issue #454
+// determinism contract: the soft per-parse budget must never stop a parse from
+// a runtime.MemStats reading, however far past the budget the process heap has
+// grown. HeapAlloc and Sys are process-global and GC-paced, so a stop derived
+// from them makes the returned tree a function of collector timing instead of
+// the input. Footprint stays bounded by the arena, scratch, node and stack
+// limits, which measure what the parse itself allocated.
+func TestRuntimeMemoryBudgetSoftBudgetNeverStopsParse(t *testing.T) {
+	// A 1-byte soft budget against a zero baseline: every byte the process has
+	// ever put on the heap counts as growth past it. The old soft arms would
+	// trip here immediately.
 	parser := &Parser{
 		parseRuntimeMemoryBudgetBytes:   1,
 		parseRuntimeMemoryBaselineBytes: 0,
+		parseRuntimeMemoryBaselineSys:   0,
 		parseRuntimeMemoryPoll:          parseRuntimeMemoryTightPollMask,
 		parseMemoryBudgetDiagActive:     true,
 	}
-	if got := parser.runtimeMemoryBudgetStopReason(0); got != ParseStopMemoryBudget {
-		t.Fatalf("runtimeMemoryBudgetStopReason(0) = %q, want %q", got, ParseStopMemoryBudget)
+	if got := parser.runtimeMemoryBudgetStopReason(0); got != ParseStopNone {
+		t.Fatalf("runtimeMemoryBudgetStopReason(0) = %q, want %q (soft budget must not stop a parse)", got, ParseStopNone)
 	}
-	// Either runtime source proves the volume trigger reached a real
-	// ReadMemStats check. Under -race the detector's shadow memory inflates
-	// MemStats.Sys, so the sys guard can legitimately fire before the heap
-	// guard; pinning "runtime_heap" alone made this test race-mode-flaky.
-	if got := parser.parseMemoryBudgetDiag.source; got != parseMemoryBudgetStopSourceRuntimeHeap && got != parseMemoryBudgetStopSourceRuntimeSys {
-		t.Fatalf("memory budget stop source = %q, want %q or %q", got, parseMemoryBudgetStopSourceRuntimeHeap, parseMemoryBudgetStopSourceRuntimeSys)
+	if got := parser.runtimeMemoryBudgetStopReasonNow(); got != ParseStopNone {
+		t.Fatalf("runtimeMemoryBudgetStopReasonNow() = %q, want %q (soft budget must not stop a parse)", got, ParseStopNone)
+	}
+	if got := parser.parseMemoryBudgetDiag.source; got != "" {
+		t.Fatalf("memory budget stop source = %q, want empty (no stop recorded)", got)
+	}
+}
+
+// TestRuntimeMemoryHardCeilingStillStopsParse proves the out-of-memory backstop
+// survives the determinism contract above. The hard ceiling stays on real
+// memory on purpose: it is a last-resort guard, not a shaping decision.
+func TestRuntimeMemoryHardCeilingStillStopsParse(t *testing.T) {
+	parser := &Parser{
+		parseRuntimeMemoryHardCeilingBytes: 1,
+		parseRuntimeMemoryBaselineBytes:    0,
+		parseRuntimeMemoryPoll:             parseRuntimeMemoryTightPollMask,
+		parseMemoryBudgetDiagActive:        true,
+	}
+	if got := parser.runtimeMemoryBudgetStopReasonNow(); got != ParseStopMemoryBudget {
+		t.Fatalf("runtimeMemoryBudgetStopReasonNow() = %q, want %q", got, ParseStopMemoryBudget)
+	}
+	if got, want := parser.parseMemoryBudgetDiag.source, parseMemoryBudgetStopSourceHardCeiling; got != want {
+		t.Fatalf("memory budget stop source = %q, want %q", got, want)
 	}
 	if parser.parseMemoryBudgetDiag.runtimeHeapGrowthBytes < 1 {
 		t.Fatalf("runtime heap growth = %d, want >= 1", parser.parseMemoryBudgetDiag.runtimeHeapGrowthBytes)
@@ -49,21 +77,24 @@ func TestRuntimeMemoryPollMaskKeepsTightBudgetsResponsive(t *testing.T) {
 	}
 }
 
-func TestRuntimeMemoryBudgetStopReasonSamplesSysGrowth(t *testing.T) {
+// TestRuntimeMemoryBudgetIgnoresSysGrowth pins the specific arm that issue #454
+// tripped in the field. MemStats.Sys is the total memory the runtime has taken
+// from the operating system. It moves in large steps driven by GC pacing and by
+// allocation from other goroutines in the host process, none of which a parse
+// controls, so it must never stop one. A 137 KiB C# corpus stopped on this arm
+// at sysGrowth=512MB and returned a different tree on every run.
+func TestRuntimeMemoryBudgetIgnoresSysGrowth(t *testing.T) {
 	parser := &Parser{
 		parseRuntimeMemoryBudgetBytes:   1,
 		parseRuntimeMemoryBaselineBytes: ^uint64(0),
 		parseRuntimeMemoryBaselineSys:   0,
 		parseMemoryBudgetDiagActive:     true,
 	}
-	if got := parser.runtimeMemoryBudgetStopReasonNow(); got != ParseStopMemoryBudget {
-		t.Fatalf("runtimeMemoryBudgetStopReasonNow() = %q, want %q", got, ParseStopMemoryBudget)
+	if got := parser.runtimeMemoryBudgetStopReasonNow(); got != ParseStopNone {
+		t.Fatalf("runtimeMemoryBudgetStopReasonNow() = %q, want %q (sys growth must not stop a parse)", got, ParseStopNone)
 	}
-	if got, want := parser.parseMemoryBudgetDiag.source, parseMemoryBudgetStopSourceRuntimeSys; got != want {
-		t.Fatalf("memory budget stop source = %q, want %q", got, want)
-	}
-	if parser.parseMemoryBudgetDiag.runtimeSysGrowthBytes < 1 {
-		t.Fatalf("runtime sys growth = %d, want >= 1", parser.parseMemoryBudgetDiag.runtimeSysGrowthBytes)
+	if got := parser.parseMemoryBudgetDiag.source; got != "" {
+		t.Fatalf("memory budget stop source = %q, want empty (no stop recorded)", got)
 	}
 }
 
@@ -142,12 +173,17 @@ func TestRuntimeMemoryVolumeTriggerBypassesPollMask(t *testing.T) {
 	}
 	t.Cleanup(func() { runtime.KeepAlive(ballast) })
 
+	// The soft budget still selects the poll mask, but only the hard ceiling can
+	// stop a parse (see the issue #454 determinism contract), so arm the ceiling
+	// at the same size to prove the forced poll reached a real ReadMemStats
+	// comparison rather than being skipped by the mask.
 	parser := &Parser{
-		parseRuntimeMemoryBudgetBytes:   budget,
-		parseRuntimeMemoryBaselineBytes: before.HeapAlloc,
-		parseRuntimeMemoryPoll:          skippedPollCount - 1,
-		parseRuntimeMemoryVolumeAtPoll:  0,
-		parseMemoryBudgetDiagActive:     true,
+		parseRuntimeMemoryBudgetBytes:      budget,
+		parseRuntimeMemoryHardCeilingBytes: budget,
+		parseRuntimeMemoryBaselineBytes:    before.HeapAlloc,
+		parseRuntimeMemoryPoll:             skippedPollCount - 1,
+		parseRuntimeMemoryVolumeAtPoll:     0,
+		parseMemoryBudgetDiagActive:        true,
 	}
 
 	// Below the volume threshold: the mask governs and the poll is skipped.
@@ -160,12 +196,12 @@ func TestRuntimeMemoryVolumeTriggerBypassesPollMask(t *testing.T) {
 	if got := parser.runtimeMemoryBudgetStopReason(parseRuntimeMemoryVolumePollThresholdBytes); got != ParseStopMemoryBudget {
 		t.Fatalf("runtimeMemoryBudgetStopReason(volume >= threshold) = %q, want %q (volume trigger should bypass the mask)", got, ParseStopMemoryBudget)
 	}
-	// Either runtime source proves the volume trigger reached a real
-	// ReadMemStats check. Under -race the detector's shadow memory inflates
-	// MemStats.Sys, so the sys guard can legitimately fire before the heap
-	// guard; pinning "runtime_heap" alone made this test race-mode-flaky.
-	if got := parser.parseMemoryBudgetDiag.source; got != parseMemoryBudgetStopSourceRuntimeHeap && got != parseMemoryBudgetStopSourceRuntimeSys {
-		t.Fatalf("memory budget stop source = %q, want %q or %q", got, parseMemoryBudgetStopSourceRuntimeHeap, parseMemoryBudgetStopSourceRuntimeSys)
+	// The hard ceiling is now the only source that can stop a parse, so it is a
+	// single exact expectation. The old two-source allowance existed because the
+	// heap and sys arms raced each other under -race, which is precisely the
+	// nondeterminism this contract removes.
+	if got, want := parser.parseMemoryBudgetDiag.source, parseMemoryBudgetStopSourceHardCeiling; got != want {
+		t.Fatalf("memory budget stop source = %q, want %q", got, want)
 	}
 	runtime.KeepAlive(ballast)
 }
