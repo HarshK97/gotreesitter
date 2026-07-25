@@ -240,6 +240,29 @@ func TestExternalScannerCheckpointSparseLookupHandlesOutOfOrderWrites(t *testing
 	}
 }
 
+func TestExternalScannerCheckpointSurvivesShapingCloneAndParent(t *testing.T) {
+	sourceArena := acquireNodeArena(arenaClassFull)
+	defer sourceArena.Release()
+	targetArena := acquireNodeArena(arenaClassIncremental)
+	defer targetArena.Release()
+
+	left := newLeafNodeInArena(sourceArena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	sourceArena.recordExternalScannerLeafCheckpoint(left, []byte{1}, []byte{2})
+	cloned := cloneNodeInArena(targetArena, left)
+	gotClone, ok := externalScannerCheckpointForNode(cloned)
+	if !ok || !bytes.Equal(gotClone.start, []byte{1}) || !bytes.Equal(gotClone.end, []byte{2}) {
+		t.Fatalf("cloned checkpoint = (%v, %v, %v), want ([1], [2], true)", gotClone.start, gotClone.end, ok)
+	}
+
+	right := newLeafNodeInArena(targetArena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	targetArena.recordExternalScannerLeafCheckpoint(right, []byte{3}, []byte{4})
+	parent := newParentNodeInArena(targetArena, 2, true, []*Node{cloned, right}, nil, 0)
+	gotParent, ok := externalScannerCheckpointForNode(parent)
+	if !ok || !bytes.Equal(gotParent.start, []byte{1}) || !bytes.Equal(gotParent.end, []byte{4}) {
+		t.Fatalf("parent checkpoint = (%v, %v, %v), want ([1], [4], true)", gotParent.start, gotParent.end, ok)
+	}
+}
+
 func TestRebuildExternalScannerCheckpointsUsesLazyFinalChildRefs(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 	arena.finalChildRefs = true

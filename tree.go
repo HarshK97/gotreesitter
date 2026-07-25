@@ -2499,6 +2499,9 @@ func newParentNodeInArenaWithFieldSources(arena *nodeArena, sym Symbol, named bo
 	}
 	populateParentNode(n, children)
 	nodeInitEquivVersion(n)
+	if arena.externalScannerCheckpointRecords > 0 {
+		recordExternalScannerCheckpointForParent(n, children)
+	}
 	if arena.audit != nil {
 		arena.audit.recordNodeAlloc(n, runtimeAuditNodeKindParent)
 	}
@@ -2532,6 +2535,9 @@ func newParentNodeInArenaNoLinksWithFieldSources(arena *nodeArena, sym Symbol, n
 	}
 	populateParentNodeNoLinks(n, children, trackChildErrors)
 	nodeInitEquivVersion(n)
+	if arena.externalScannerCheckpointRecords > 0 {
+		recordExternalScannerCheckpointForParent(n, children)
+	}
 	if arena.audit != nil {
 		arena.audit.recordNodeAlloc(n, runtimeAuditNodeKindParent)
 	}

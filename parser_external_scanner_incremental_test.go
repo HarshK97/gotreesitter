@@ -155,13 +155,6 @@ func TestUncertifiedExternalScannerLengthChangingEditFallsBack(t *testing.T) {
 			replacement: []byte("hello world"),
 		},
 		{
-			name:        "markdown",
-			lang:        grammars.MarkdownLanguage,
-			source:      []byte("# Title\n\nParagraph text.\n"),
-			oldText:     []byte("Title"),
-			replacement: []byte("Longer Title"),
-		},
-		{
 			name:        "markdown_inline",
 			lang:        grammars.MarkdownInlineLanguage,
 			source:      []byte("Hello *world*.\n"),

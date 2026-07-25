@@ -4511,6 +4511,15 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		stopDiagHaveToken = true
 		stopDiagToken = t
 	}
+	recordCurrentLookahead := func(t Token) {
+		noteStopDiagnosticToken(t)
+		lastTokenEndByte = t.EndByte
+		lastTokenSymbol = t.Symbol
+		lastTokenWasEOF = t.Symbol == 0 && t.StartByte == t.EndByte && !t.NoLookahead
+		if lastTokenWasEOF && t.EndByte < expectedEOFByte {
+			tokenSourceEOFEarly = true
+		}
+	}
 	computeStopDiagnosticRecoverAction := func() bool {
 		if stopDiagRecoverActionAvailable || !stopDiagHaveToken {
 			return stopDiagRecoverActionAvailable
@@ -5008,13 +5017,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				p.logf(ParserLogLex, "token sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
 			}
 			perfTokensConsumed++
-			noteStopDiagnosticToken(tok)
-			lastTokenEndByte = tok.EndByte
-			lastTokenSymbol = tok.Symbol
-			lastTokenWasEOF = tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead
-			if lastTokenWasEOF && tok.EndByte < expectedEOFByte {
-				tokenSourceEOFEarly = true
-			}
+			recordCurrentLookahead(tok)
 			for si := range stacks {
 				stacks[si].shifted = false
 			}
@@ -5099,6 +5102,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					break
 				}
 				tok = nextTok
+				// Reuse advances the token source without returning through
+				// ordinary acquisition. Publish that lookahead immediately so
+				// EOF, fork, timeout, and block-stop exits all report the
+				// frontier that actually governs the parse.
+				recordCurrentLookahead(tok)
 				reusedAnySibling = true
 				if timing != nil {
 					timing.blockSpliceSteps++
@@ -5427,14 +5435,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						}
 						tok = nextTok
 						workCountRefreshConvergenceLookahead(tok)
-						noteStopDiagnosticToken(tok)
+						recordCurrentLookahead(tok)
 						p.updateCurrentExternalTokenCheckpoint(ts, tok)
-						lastTokenEndByte = tok.EndByte
-						lastTokenSymbol = tok.Symbol
-						lastTokenWasEOF = tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead
-						if lastTokenWasEOF && tok.EndByte < expectedEOFByte {
-							tokenSourceEOFEarly = true
-						}
 						if p.logger != nil {
 							p.logf(ParserLogLex, "relex token sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
 						}
@@ -6281,14 +6283,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 							}
 							tok = nextTok
 							workCountRefreshConvergenceLookahead(tok)
-							noteStopDiagnosticToken(tok)
+							recordCurrentLookahead(tok)
 							p.updateCurrentExternalTokenCheckpoint(ts, tok)
-							lastTokenEndByte = tok.EndByte
-							lastTokenSymbol = tok.Symbol
-							lastTokenWasEOF = tok.Symbol == 0 && tok.StartByte == tok.EndByte && !tok.NoLookahead
-							if lastTokenWasEOF && tok.EndByte < expectedEOFByte {
-								tokenSourceEOFEarly = true
-							}
 							if p.logger != nil {
 								p.logf(ParserLogLex, "relex token sym=%d start=%d end=%d", tok.Symbol, tok.StartByte, tok.EndByte)
 							}
