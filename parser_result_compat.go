@@ -52,7 +52,7 @@ func normalizeResultCompatibility(root *Node, source []byte, p *Parser, incremen
 	// which parseStopReasonIsActive deliberately excludes (many callers rely on
 	// its narrower Timeout/Cancelled-only semantics). Without this, a
 	// budget-stopped Go result would still fall through into the generic
-	// trailing-trivia/terminal-leaf passes below.
+	// terminal-leaf pass below.
 	if resultMaterializationShouldStop(result.stopReason) {
 		return result
 	}
@@ -60,7 +60,6 @@ func normalizeResultCompatibility(root *Node, source []byte, p *Parser, incremen
 		result.stopReason = reason
 		return result
 	}
-	normalizeRootTrailingExtraTriviaCompatibility(root, source, lang)
 	var terminalReason ParseStopReason
 	_, terminalReason, result.errorSummary = normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root, lang, p.visibleAliasTargetSymbol, ctx.stopCheck)
 	if parseStopReasonIsActive(terminalReason) {
@@ -80,13 +79,6 @@ func (ctx resultCompatibilityContext) stopReason() ParseStopReason {
 		return ParseStopNone
 	}
 	return reason
-}
-
-func normalizeRootTrailingExtraTriviaCompatibility(root *Node, source []byte, lang *Language) {
-	if root == nil || root.hasError() {
-		return
-	}
-	trimTrailingExtraTriviaRoot(root, source, lang)
 }
 
 func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompatibilityResult {

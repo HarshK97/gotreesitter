@@ -2,10 +2,11 @@ package gotreesitter
 
 import "testing"
 
-func TestNormalizeResultCompatibilityTrimsCleanRootTrailingExtraTrivia(t *testing.T) {
-	lang := trailingExtraCompatTestLanguage()
+func TestFinalizeResultRootNativelyTrimsCleanTrailingExtraTrivia(t *testing.T) {
+	lang := trailingExtraNativeTestLanguage()
 	source := []byte("body\n")
 	parser := NewParser(lang)
+	parser.noResultCompatibilityBenchmarkOnly = true
 	arena := newNodeArena(arenaClassFull)
 	body := newLeafNodeInArena(arena, 2, true, 0, 4, Point{}, Point{Column: 4})
 	trivia := newLeafNodeInArena(arena, 3, false, 4, 5, Point{Column: 4}, Point{Row: 1})
@@ -28,9 +29,11 @@ func TestNormalizeResultCompatibilityTrimsCleanRootTrailingExtraTrivia(t *testin
 	}
 }
 
-func TestNormalizeResultCompatibilityKeepsErrorRootTrailingExtraTrivia(t *testing.T) {
-	lang := trailingExtraCompatTestLanguage()
+func TestFinalizeResultRootKeepsErrorTrailingExtraTrivia(t *testing.T) {
+	lang := trailingExtraNativeTestLanguage()
 	source := []byte("body\n")
+	parser := NewParser(lang)
+	parser.noResultCompatibilityBenchmarkOnly = true
 	arena := newNodeArena(arenaClassFull)
 	body := newLeafNodeInArena(arena, 2, true, 0, 4, Point{}, Point{Column: 4})
 	trivia := newLeafNodeInArena(arena, 3, false, 4, 5, Point{Column: 4}, Point{Row: 1})
@@ -38,7 +41,7 @@ func TestNormalizeResultCompatibilityKeepsErrorRootTrailingExtraTrivia(t *testin
 	root := newParentNodeInArena(arena, 1, true, []*Node{body, trivia}, nil, 0)
 	root.setHasError(true)
 
-	normalizeResultCompatibility(root, source, &Parser{language: lang}, nil)
+	parser.finalizeResultRoot(root, source, nil, false, true, nil)
 
 	if got, want := root.ChildCount(), 2; got != want {
 		t.Fatalf("root child count = %d, want %d", got, want)
@@ -48,15 +51,15 @@ func TestNormalizeResultCompatibilityKeepsErrorRootTrailingExtraTrivia(t *testin
 	}
 }
 
-func trailingExtraCompatTestLanguage() *Language {
+func trailingExtraNativeTestLanguage() *Language {
 	return &Language{
 		Name:        "generic_trivia",
 		SymbolNames: []string{"EOF", "root", "body", "_trailing_trivia"},
 		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
+			{Name: "EOF"},
 			{Name: "root", Visible: true, Named: true},
 			{Name: "body", Visible: true, Named: true},
-			{Name: "_trailing_trivia", Visible: false, Named: false},
+			{Name: "_trailing_trivia"},
 		},
 	}
 }

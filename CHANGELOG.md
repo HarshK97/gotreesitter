@@ -9,7 +9,14 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
-- Nothing yet.
+- JavaScript program-end finalization now has one authoritative compatibility
+  owner. The redundant returned-tree second pass is retired; production,
+  compact final-child-ref, forest, and incremental publication continue to use
+  the canonical JavaScript compatibility pipeline before the tree is exposed.
+
+- Clean hidden whitespace-only root tails are now owned by root finalization,
+  retiring a generic compatibility pass while preserving error-root recovery
+  extras and lazy compact child references.
 
 ## [0.47.0] - 2026-07-22
 
