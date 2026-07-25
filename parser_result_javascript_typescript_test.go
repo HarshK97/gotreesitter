@@ -176,6 +176,72 @@ func TestNormalizeJavaScriptProgramEndExtendsErrorRootTerminatorTail(t *testing.
 	}
 }
 
+func TestFinalizeResultRootOwnsJavaScriptProgramEndBeforeReturnedTreePass(t *testing.T) {
+	lang := &Language{
+		Name:        "javascript",
+		SymbolNames: []string{"EOF", "program", "call_expression"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "program", Visible: true, Named: true},
+			{Name: "call_expression", Visible: true, Named: true},
+		},
+	}
+	source := []byte("call;\n")
+	parser := NewParser(lang)
+
+	for _, tc := range []struct {
+		name string
+		root func(*nodeArena) *Node
+	}{
+		{
+			name: "program",
+			root: func(arena *nodeArena) *Node {
+				call := newLeafNodeInArena(arena, 2, true, 0, 4, Point{}, Point{Column: 4})
+				return newParentNodeInArena(arena, 1, true, []*Node{call}, nil, 0)
+			},
+		},
+		{
+			name: "error",
+			root: func(arena *nodeArena) *Node {
+				return newLeafNodeInArena(arena, errorSymbol, true, 0, 4, Point{}, Point{Column: 4})
+			},
+		},
+		{
+			name: "compact-final-child-refs",
+			root: func(arena *nodeArena) *Node {
+				arena.finalChildRefs = true
+				call := newCompactFullLeafInArena(arena, 2, true, 0, 4, Point{}, Point{Column: 4})
+				parent := newPendingParentInArena(arena, 1, true, 0, []stackEntry{
+					newStackEntryCompactFullLeaf(call.parseState, call),
+				}, 0, 4, Point{}, Point{Column: 4}, false)
+				entry := newStackEntryPendingParent(parent.parseState, parent)
+				return materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			arena := newNodeArena(arenaClassFull)
+			root := tc.root(arena)
+			parser.finalizeResultRoot(root, source, nil, false, true, nil)
+
+			if got, want := root.EndByte(), uint32(len(source)); got != want {
+				t.Fatalf("root end byte after canonical finalization = %d, want %d", got, want)
+			}
+			before := root.EndPoint()
+			normalizeReturnedTree(root, source, lang)
+			if got := root.EndByte(); got != uint32(len(source)) {
+				t.Fatalf("root end byte after returned-tree pass = %d, want %d", got, len(source))
+			}
+			if got := root.EndPoint(); got != before {
+				t.Fatalf("root end point changed after returned-tree pass: got %+v want %+v", got, before)
+			}
+			if tc.name == "compact-final-child-refs" && !nodeHasFinalChildRefs(root) {
+				t.Fatal("canonical JavaScript finalization drained compact final-child refs")
+			}
+		})
+	}
+}
+
 func TestNormalizeJavaScriptTrailingContinueCommentSiblings(t *testing.T) {
 	lang := &Language{
 		Name:        "javascript",

@@ -92,8 +92,6 @@ func normalizeReturnedTree(root *Node, source []byte, lang *Language) {
 		normalizeRootEOFNewlineSpan(root, source, lang)
 	case "html":
 		normalizeHTMLRecoveredNestedCustomTagRanges(root, source, lang)
-	case "javascript":
-		normalizeJavaScriptProgramEnd(root, source, lang)
 	}
 }
 

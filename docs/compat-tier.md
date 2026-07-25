@@ -18,11 +18,11 @@ The v1 registry freezes the current surface:
 - 78 explicit `runLanguageResultCompatibility` switch arms covering 85
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
-- two generic passes that run after language dispatch;
-- one retained post-finalization second-pass fixpoint with three switch arms
-  covering Scala, HTML, and JavaScript.
+- one generic pass that runs after language dispatch;
+- one retained post-finalization second-pass fixpoint with two switch arms
+  covering Scala and HTML.
 
-That is 82 live registry entries. The registry covers only this documented
+That is 81 live registry entries. The registry covers only this documented
 internal result-compatibility tier; scheduler experiments and other engine
 research belong in their owning subsystem's durable traces.
 
@@ -88,15 +88,33 @@ child identity has been lost, a display-name-compatible caller artifact is no
 longer guessed into shape; custom artifacts must carry the explicit native
 capability and exact metadata receipt to opt in.
 
+## Current progress: trailing root trivia
+
+Clean hidden whitespace-only root tails are now finalized as root span coverage
+instead of reconstructed in the shared compatibility tail. The rule applies
+before result compatibility, including compatibility-free production and
+compact parses; forest and incremental routes share the same root finalizer.
+Error roots retain their recovery extra, and lazy final-child references are
+filtered without draining the compact range. Real RST and Comment fixtures are
+exact against their C oracles. The generic trailing-extra pass is retired.
+
 ## The retained second pass
 
 `normalizePostFinalizationReturnedTree` deliberately runs a bounded second
-pass for Scala, HTML, and JavaScript. It remains live because the first pass
-can expose information needed by later normalization. In particular, it may
-not be retired until the HTML producer/materializer emits final nested custom
-tag ranges without `normalizeHTMLRecoveredNestedCustomTagRanges`. Scala and
-JavaScript producers must likewise emit their final annotations and spans in
-one pass, and all registered route receipts must show the second pass is inert.
+pass for Scala and HTML. It remains live because the first pass can expose
+information needed by later normalization. In particular, it may not be
+retired until the HTML producer/materializer emits final nested custom-tag
+ranges without `normalizeHTMLRecoveredNestedCustomTagRanges`. Scala must
+likewise emit its final annotations and spans in one pass, and all registered
+route receipts must show the second pass is inert.
+
+JavaScript no longer participates in this fixpoint. Its canonical
+compatibility pipeline already extends `program` and recovery-root terminator
+tails after every JavaScript shape and span rewrite. The only intervening work
+before returned-tree publication is terminal-leaf normalization and optional
+parent-link wiring; neither can shorten or reclassify the root. The registry
+retains a retired historical entry for the deleted JavaScript arm and its
+production, compact-final-ref, forest, and incremental span receipts.
 
 Removing the second pass because it looks repetitive would reopen known
 fixpoint behavior; its registry retirement condition is the deletion gate.
