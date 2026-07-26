@@ -1,6 +1,13 @@
 package gotreesitter
 
-import "testing"
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+)
 
 func TestNormalizeResultTerminalLeafNodesCollapsesRedundantAnonymousTokenChild(t *testing.T) {
 	lang := &Language{
@@ -392,5 +399,268 @@ func TestNormalizeResultTerminalLeafNodesPreservesFieldedTerminal(t *testing.T) 
 	}
 	if got, want := token.fieldIDs()[0], FieldID(1); got != want {
 		t.Fatalf("token.fieldIDs()[0] = %d, want %d", got, want)
+	}
+}
+
+// terminalLeafCensusRewrites returns how many nodes the generic.terminal-leaf
+// pass rewrote during the parse that produced this parser's current stats.
+func terminalLeafCensusRewrites(p *Parser) (visited, rewritten uint64, sawPass bool) {
+	if p == nil {
+		return 0, 0, false
+	}
+	for i := range p.normalizationStats.namedPasses {
+		pass := &p.normalizationStats.namedPasses[i]
+		if pass.name != "generic.terminal-leaf" {
+			continue
+		}
+		return pass.nodesVisited, pass.nodesRewritten, true
+	}
+	return 0, 0, false
+}
+
+// TestGenericTerminalLeafCensusProbeIsWired is the positive control required by
+// docs/root-normalization-retirement.md before a zero-rewrite census can be
+// acted on. It proves the census counter is wired to the PRODUCTION call site
+// and observes real traffic, so a zero rewrite count means "the pass found
+// nothing to do", not "the probe was never called".
+//
+// That the pass is capable of rewriting at all is proven separately, and
+// already, by the registered witnesses in parser_result_terminal_leaf_test.go:
+// TestNormalizeResultTerminalLeafNodesCollapsesRedundantAnonymousTokenChild and
+// TestNormalizeResultTerminalLeafNodesCollapsesTerminalAliasTarget both assert
+// nodesRewritten == 1 on constructed input. Those are the "probe can fire"
+// control; this is the "probe is connected" control.
+func TestGenericTerminalLeafCensusProbeIsWired(t *testing.T) {
+	lang := loadGoTestLanguageForCensus(t)
+	parser := NewParser(lang)
+	if _, err := parser.Parse([]byte("package p\n\nfunc F() int { return 1 }\n")); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	visited, _, sawPass := terminalLeafCensusRewrites(parser)
+	if !sawPass {
+		t.Fatal("generic.terminal-leaf census counter never recorded: the probe is not wired to the production call site, so any zero-rewrite census result would be vacuous")
+	}
+	if visited == 0 {
+		t.Fatal("generic.terminal-leaf visited 0 nodes on a tree with nodes: the probe records but does not observe")
+	}
+	t.Logf("probe is wired and observing: visited=%d", visited)
+}
+
+// TestGenericTerminalLeafCensusOverRepoCorpus is the census itself. It parses
+// this repository's own Go sources, which is a large authenticated corpus that
+// is always present, and reports whether the last live generic compatibility
+// pass ever rewrites a node.
+//
+// This test does not assert zero. It records the receipt. Turning a zero result
+// into a deletion is a separate step that also needs the production, compact,
+// forest, incremental and per-grammar C-oracle route receipts the retirement
+// plan requires. Set GTS_TERMINAL_LEAF_CENSUS_STRICT=1 to fail on any rewrite,
+// which is how a later PR pins the pass as inert once it has been retired.
+func TestGenericTerminalLeafCensusOverRepoCorpus(t *testing.T) {
+	lang := loadGoTestLanguageForCensus(t)
+
+	var files []string
+	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+		if err != nil || info == nil || info.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		if info.Size() > 512*1024 {
+			return nil
+		}
+		files = append(files, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if len(files) == 0 {
+		t.Skip("no Go sources found for census")
+	}
+
+	var totalVisited, totalRewritten uint64
+	rewritingFiles := map[string]uint64{}
+	parsed := 0
+	for _, path := range files {
+		src, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		parser := NewParser(lang)
+		if _, err := parser.Parse(src); err != nil {
+			continue
+		}
+		parsed++
+		visited, rewritten, _ := terminalLeafCensusRewrites(parser)
+		totalVisited += visited
+		totalRewritten += rewritten
+		if rewritten > 0 {
+			rewritingFiles[path] = rewritten
+		}
+	}
+
+	t.Logf("generic.terminal-leaf census: files=%d visited=%d rewritten=%d rewriting_files=%d",
+		parsed, totalVisited, totalRewritten, len(rewritingFiles))
+	shown := 0
+	for path, n := range rewritingFiles {
+		if shown >= 10 {
+			break
+		}
+		t.Logf("  rewrote %d node(s): %s", n, path)
+		shown++
+	}
+
+	if totalVisited == 0 {
+		t.Fatal("census visited no nodes across the corpus: the probe did not observe, so the result is vacuous")
+	}
+	if strings.TrimSpace(os.Getenv("GTS_TERMINAL_LEAF_CENSUS_STRICT")) != "" && totalRewritten != 0 {
+		t.Fatalf("strict census: generic.terminal-leaf rewrote %d node(s) across %d file(s)", totalRewritten, len(rewritingFiles))
+	}
+}
+
+func loadGoTestLanguageForCensus(t *testing.T) *Language {
+	t.Helper()
+	blob, err := os.ReadFile("grammars/grammar_blobs/go.bin")
+	if err != nil {
+		t.Skipf("go grammar blob unavailable: %v", err)
+	}
+	lang, err := LoadLanguage(blob)
+	if err != nil {
+		t.Fatalf("load go grammar: %v", err)
+	}
+	return lang
+}
+
+// TestGenericTerminalLeafCensusMultiLanguage widens the census beyond Go across
+// the real-source corpus in cgo_harness/corpus_real, which carries files for
+// roughly 48 grammars.
+//
+// The registry lists generic.terminal-leaf as languages:["*"], so a Go-only
+// zero is not sufficient evidence to retire it. This reports per-language
+// coverage explicitly: a language counts as censused only when the probe
+// actually observed nodes for it. Languages whose probe never fires are
+// reported as UNCOVERED rather than being silently folded into the zero, which
+// is the same vacuous-zero failure mode the wiring control guards against.
+//
+// This is a receipt, not a gate. It does not assert zero rewrites, because
+// discovering which grammars still need the collapse is the point.
+//
+// KNOWN COVERAGE LIMIT. This test loads grammars with the root package's raw
+// LoadLanguage, which attaches no external scanner and no native result
+// compatibility, because the root package cannot import gotreesitter/grammars
+// without an import cycle. Grammars that need a scanner therefore parse to an
+// error root here, and the pass returns before visiting anything when the root
+// carries an error. Those languages are reported as UNCOVERED with their error
+// root counts so the zero above is never mistaken for evidence about them.
+// Closing that gap needs the census to run against grammars loaded the way
+// production loads them, which in turn needs a small exported accessor for the
+// normalization counters. Until then the covered set is the receipt.
+func TestGenericTerminalLeafCensusMultiLanguage(t *testing.T) {
+	const corpusRoot = "cgo_harness/corpus_real"
+	entries, err := os.ReadDir(corpusRoot)
+	if err != nil {
+		t.Skipf("real corpus unavailable: %v", err)
+	}
+
+	type langResult struct {
+		files      int
+		visited    uint64
+		rewritten  uint64
+		errorRoots int
+	}
+	results := map[string]*langResult{}
+	var uncovered, noBlob, parseFailed []string
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		blob, err := os.ReadFile(filepath.Join("grammars", "grammar_blobs", name+".bin"))
+		if err != nil {
+			noBlob = append(noBlob, name)
+			continue
+		}
+		lang, err := LoadLanguage(blob)
+		if err != nil {
+			noBlob = append(noBlob, name)
+			continue
+		}
+		files, err := os.ReadDir(filepath.Join(corpusRoot, name))
+		if err != nil {
+			continue
+		}
+		res := &langResult{}
+		for _, f := range files {
+			if f.IsDir() {
+				continue
+			}
+			src, err := os.ReadFile(filepath.Join(corpusRoot, name, f.Name()))
+			if err != nil || len(src) == 0 || len(src) > 512*1024 {
+				continue
+			}
+			parser := NewParser(lang)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				parseFailed = append(parseFailed, name+"/"+f.Name())
+				continue
+			}
+			res.files++
+			if tree != nil && tree.RootNode() != nil && tree.RootNode().HasError() {
+				res.errorRoots++
+			}
+			visited, rewritten, _ := terminalLeafCensusRewrites(parser)
+			res.visited += visited
+			res.rewritten += rewritten
+		}
+		if res.files == 0 {
+			continue
+		}
+		if res.visited == 0 {
+			// Record why. The pass returns immediately when the root carries an
+			// error, so an all-error-root language is uncovered because this
+			// harness could not parse it cleanly, not because the pass skips it.
+			uncovered = append(uncovered, fmt.Sprintf("%s(files=%d,errorRoots=%d)", name, res.files, res.errorRoots))
+			continue
+		}
+		results[name] = res
+	}
+
+	var totalVisited, totalRewritten uint64
+	var rewriting []string
+	for name, res := range results {
+		totalVisited += res.visited
+		totalRewritten += res.rewritten
+		if res.rewritten > 0 {
+			rewriting = append(rewriting, name)
+		}
+	}
+	sort.Strings(rewriting)
+	sort.Strings(uncovered)
+
+	t.Logf("generic.terminal-leaf multi-language census: censused_languages=%d visited=%d rewritten=%d",
+		len(results), totalVisited, totalRewritten)
+	if len(rewriting) > 0 {
+		t.Logf("  languages that STILL REWRITE (%d): %s", len(rewriting), strings.Join(rewriting, " "))
+		for _, name := range rewriting {
+			t.Logf("    %-12s files=%d visited=%d rewritten=%d", name, results[name].files, results[name].visited, results[name].rewritten)
+		}
+	} else {
+		t.Logf("  no censused language rewrote any node")
+	}
+	if len(uncovered) > 0 {
+		t.Logf("  UNCOVERED, probe never observed (%d): %s", len(uncovered), strings.Join(uncovered, " "))
+	}
+	if len(noBlob) > 0 {
+		t.Logf("  no usable grammar blob (%d)", len(noBlob))
+	}
+	if len(parseFailed) > 0 {
+		t.Logf("  parse errors (%d)", len(parseFailed))
+	}
+
+	if len(results) == 0 {
+		t.Fatal("multi-language census covered no language: the result is vacuous")
 	}
 }
