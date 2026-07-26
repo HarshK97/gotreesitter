@@ -31,6 +31,17 @@ var gssNodeHashPendingPool = sync.Pool{
 	},
 }
 
+// resetGSSNodeHashPendingForPool removes node references before pool release.
+// It reports false when the buffer should be dropped instead.
+func resetGSSNodeHashPendingForPool(pending *[]*gssNode) bool {
+	if pending == nil || cap(*pending) > maxPooledGSSHashWalkCap {
+		return false
+	}
+	clear(*pending)
+	*pending = (*pending)[:0]
+	return true
+}
+
 const (
 	defaultGSSNodeSlabCap      = 4 * 1024
 	fullParseGSSNodeSlabCap    = 32 * 1024
@@ -422,9 +433,7 @@ func gssNodeHash(n *gssNode) uint64 {
 	// Released explicitly rather than with defer: this is a hot path and the
 	// function has a single exit once the walk buffer exists.
 	if pooled != nil {
-		if cap(*pooled) <= maxPooledGSSHashWalkCap {
-			clear(*pooled)
-			*pooled = (*pooled)[:0]
+		if resetGSSNodeHashPendingForPool(pooled) {
 			gssNodeHashPendingPool.Put(pooled)
 		}
 	}

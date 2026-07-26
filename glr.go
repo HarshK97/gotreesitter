@@ -33,6 +33,16 @@ var gssCanReachVisitedPool = sync.Pool{
 	New: func() any { return make(map[*gssNode]bool, 256) },
 }
 
+// resetGSSCanReachVisitedMapForPool removes node references before pool release.
+// It reports false when the map should be dropped instead.
+func resetGSSCanReachVisitedMapForPool(visited map[*gssNode]bool) bool {
+	if visited == nil || len(visited) > maxPooledGSSVisitedEntries {
+		return false
+	}
+	clear(visited)
+	return true
+}
+
 // glrStack is one version of the parse stack in a GLR parser.
 // When the parse table has multiple actions for a (state, symbol) pair,
 // the parser forks: one glrStack per alternative. Stacks that hit errors
@@ -3398,8 +3408,7 @@ func gssNodeCanReach(from, target *gssNode) bool {
 		}
 		// Drop rather than pool a map that grew pathologically large; pooling it
 		// would retain its whole bucket array process-wide.
-		if len(visitedMap) <= maxPooledGSSVisitedEntries {
-			clear(visitedMap)
+		if resetGSSCanReachVisitedMapForPool(visitedMap) {
 			gssCanReachVisitedPool.Put(visitedMap)
 		}
 		visitedMap = nil

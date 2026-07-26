@@ -3929,37 +3929,19 @@ func TestGSSNodesCanMergeRejectsZeroWidthAncestorDescendantPackedMerge(t *testin
 	}
 }
 
-// TestGSSNodeCanReachPooledVisitedMapClearedBeforeReturningToPool proves the
-// gssCanReachVisitedPool clearing contract (glr.go, above the pool
-// declaration): a map handed back to the pool must not carry live *gssNode
-// entries from the call that just released it. Before the fix, clearing
-// happened on ACQUIRE (right after Get()) rather than on release, so a map
-// went back to the pool still populated -- keeping every node it referenced,
-// and everything each one transitively reached, reachable from the pool for
-// at least one more GC cycle after the parse that built them was gone.
-//
-// The chain built here is a straight line with no branching, so
-// gssNodeCanReach's DFS from the tail must visit every one of its 100
-// ancestors before it can conclude the unrelated node is unreachable --
-// well past the 64-entry inline array, which forces the pooled fallback map
-// on both the acquire and the release side.
-func TestGSSNodeCanReachPooledVisitedMapClearedBeforeReturningToPool(t *testing.T) {
-	var scratch gssScratch
-	var prev *gssNode
-	const chainDepth = 100 // > gssNodeCanReach's 64-entry inline visited array.
-	for i := 0; i < chainDepth; i++ {
-		prev = scratch.allocNode(stackEntry{state: StateID(i + 1)}, prev, uint32(i+1))
-	}
-	unrelated := scratch.allocNode(stackEntry{state: 9999}, nil, 1)
-
-	if gssNodeCanReach(prev, unrelated) {
-		t.Fatal("gssNodeCanReach = true for a node on a disjoint chain")
+// TestResetGSSCanReachVisitedMapForPoolClearsExactMap proves the map clearing
+// contract without depending on sync.Pool to return a specific item.
+func TestResetGSSCanReachVisitedMapForPoolClearsExactMap(t *testing.T) {
+	visited := make(map[*gssNode]bool, 100)
+	for i := 0; i < 100; i++ {
+		visited[&gssNode{depth: uint32(i + 1)}] = true
 	}
 
-	got := gssCanReachVisitedPool.Get().(map[*gssNode]bool)
-	defer gssCanReachVisitedPool.Put(got)
-	if len(got) != 0 {
-		t.Fatalf("pooled visited map returned from Get() with %d stale entr(y/ies), want 0 (clearing contract violated)", len(got))
+	if !resetGSSCanReachVisitedMapForPool(visited) {
+		t.Fatal("ordinary visited map was rejected from the pool")
+	}
+	if len(visited) != 0 {
+		t.Fatalf("released visited map retained %d node pointer(s)", len(visited))
 	}
 }
 
