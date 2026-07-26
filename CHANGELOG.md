@@ -9,6 +9,28 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Large GLR parses allocate far less. Two hot-path buffers grew without
+  amortization or reuse:
+
+  - The three merge-scratch helpers (`ensureMergeResultCap`,
+    `ensureMergeSlotCap` and `ensureMergeLargeSlotCap`) allocated exactly the
+    requested length. Every merge pass sizes them from the live-stack count, so
+    a parse whose stack count climbs reallocated the whole buffer on each
+    increment, which makes total allocation grow with the square of the peak
+    stack count. One element of the large-slot buffer holds two 256-entry
+    arrays, so this dominated wide parses. They now double.
+  - `gssNodeCanReach` built a new fallback map each time a link graph outgrew
+    its 64-entry local array. On grammars that reach that size routinely, the
+    map became the largest single allocation in the parse. The fallback map is
+    now pooled and reused.
+
+  Measured on a C# corpus of repeated method declarations, with the grammar
+  loaded before measuring: allocation per source byte falls from 119,036 to
+  17,207, total allocation for an 8.7 KB input falls from 989 MB to 143 MB, and
+  the parse runs in 200 ms instead of 335 ms. On a 137 KiB input, allocation
+  falls from 5462 MB to 1111 MB and the parse takes 4.0 s instead of 6.5 s.
+  Java, C++, Go and JavaScript allocate exactly as before.
+
 - A GLR stack that needs a different tokenization of the same bytes now gets
   one. tree-sitter C lexes once per parse version, so two versions in different
   states can receive different symbols for the same characters. This engine

@@ -3,8 +3,23 @@ package gotreesitter
 import (
 	"fmt"
 	"os"
+	"sync"
 	"unsafe"
 )
+
+// gssCanReachVisitedPool recycles the fallback visited set used by
+// gssNodeCanReach when a link graph outgrows its 64-entry local array.
+//
+// The map used to be allocated per call. That is fine when the fallback is
+// rare, which is what the original comment assumed, but on grammars whose GSS
+// link graphs routinely exceed the local array it becomes the dominant cost of
+// the whole parse: profiling a 137 KiB C# corpus attributed 3.47 GB of 4.36 GB
+// total allocation to this one make. Pooling keeps the fallback's bucket
+// storage alive between calls, so a merge-heavy parse reuses one map instead of
+// allocating a fresh one per reachability query.
+var gssCanReachVisitedPool = sync.Pool{
+	New: func() any { return make(map[*gssNode]bool, 256) },
+}
 
 // glrStack is one version of the parse stack in a GLR parser.
 // When the parse table has multiple actions for a (state, symbol) pair,
@@ -3353,7 +3368,8 @@ func gssNodeCanReach(from, target *gssNode) bool {
 			return
 		}
 		if len(visited) == cap(visited) && len(visited) >= len(visitedLocal) {
-			visitedMap = make(map[*gssNode]bool, 2*len(visited))
+			visitedMap = gssCanReachVisitedPool.Get().(map[*gssNode]bool)
+			clear(visitedMap)
 			for _, v := range visited {
 				visitedMap[v] = true
 			}
@@ -3361,6 +3377,15 @@ func gssNodeCanReach(from, target *gssNode) bool {
 			return
 		}
 		visited = append(visited, n)
+	}
+	// releaseVisited returns a pooled fallback map. Called on every exit taken
+	// after markVisited may have promoted to the map; the fast path that never
+	// promotes leaves visitedMap nil and does no pool work at all.
+	releaseVisited := func() {
+		if visitedMap != nil {
+			gssCanReachVisitedPool.Put(visitedMap)
+			visitedMap = nil
+		}
 	}
 	stack = append(stack, from)
 	for len(stack) > 0 {
@@ -3370,6 +3395,7 @@ func gssNodeCanReach(from, target *gssNode) bool {
 			continue
 		}
 		if cur == target {
+			releaseVisited()
 			return true
 		}
 		markVisited(cur)
@@ -3378,6 +3404,7 @@ func gssNodeCanReach(from, target *gssNode) bool {
 			stack = append(stack, prev)
 		}
 	}
+	releaseVisited()
 	return false
 }
 
@@ -5277,9 +5304,33 @@ func recomputeMergeLargeSlotHashMask(slot *glrMergeLargeSlot) uint64 {
 	return mask
 }
 
+// grownMergeScratchCap returns the capacity to allocate when a merge-scratch
+// buffer must grow past n.
+//
+// The three ensureMerge*Cap helpers below used to allocate exactly n. Every
+// merge pass calls them with the current live-stack count, so a parse whose
+// stack count creeps upward reallocated the whole buffer on each increment,
+// making total allocation quadratic in the peak stack count. That is affordable
+// for the small glrMergeSlot buffers and ruinous for glrMergeLargeSlot, which
+// carries two maxStacksPerMergeKeyCeiling-sized arrays and so weighs several
+// kilobytes per element. Profiling a C# corpus of 400 trivial method
+// declarations (8.7 KB of source) attributed 683 MB of 884 MB total allocation
+// to ensureMergeLargeSlotCap alone.
+//
+// Doubling makes the growth amortized, so a parse pays O(peak) instead of
+// O(peak^2). Overshoot is bounded: these buffers are already capped by
+// maxMergeAliveStacks, so the worst case is one doubling past that ceiling.
+func grownMergeScratchCap(oldCap, n int) int {
+	grown := oldCap * 2
+	if grown < n {
+		grown = n
+	}
+	return grown
+}
+
 func ensureMergeResultCap(scratch *glrMergeScratch, n int) []glrStack {
 	if cap(scratch.result) < n {
-		scratch.result = make([]glrStack, 0, n)
+		scratch.result = make([]glrStack, 0, grownMergeScratchCap(cap(scratch.result), n))
 		scratch.resultBytes = glrStackBytesForCap(cap(scratch.result))
 	}
 	return scratch.result[:0]
@@ -5287,7 +5338,7 @@ func ensureMergeResultCap(scratch *glrMergeScratch, n int) []glrStack {
 
 func ensureMergeSlotCap(scratch *glrMergeScratch, n int) []glrMergeSlot {
 	if cap(scratch.slots) < n {
-		scratch.slots = make([]glrMergeSlot, n)
+		scratch.slots = make([]glrMergeSlot, n, grownMergeScratchCap(cap(scratch.slots), n))
 		scratch.slotBytes = glrMergeSlotBytesForCap(cap(scratch.slots))
 		return scratch.slots
 	}
@@ -5296,7 +5347,7 @@ func ensureMergeSlotCap(scratch *glrMergeScratch, n int) []glrMergeSlot {
 
 func ensureMergeLargeSlotCap(scratch *glrMergeScratch, n int) []glrMergeLargeSlot {
 	if cap(scratch.largeSlots) < n {
-		scratch.largeSlots = make([]glrMergeLargeSlot, n)
+		scratch.largeSlots = make([]glrMergeLargeSlot, n, grownMergeScratchCap(cap(scratch.largeSlots), n))
 		scratch.largeSlotBytes = glrMergeLargeSlotBytesForCap(cap(scratch.largeSlots))
 		return scratch.largeSlots
 	}
