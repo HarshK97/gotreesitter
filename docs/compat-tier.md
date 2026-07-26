@@ -15,16 +15,24 @@ without updating that registry.
 
 The v1 registry freezes the current surface:
 
-- 78 explicit `runLanguageResultCompatibility` switch arms covering 85
+- 75 explicit `runLanguageResultCompatibility` switch arms covering 82
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - one generic pass that runs after language dispatch;
 - one retained post-finalization second-pass fixpoint with two switch arms
   covering Scala and HTML.
 
-That is 81 live registry entries. The registry covers only this documented
+That is 78 live registry entries. The registry covers only this documented
 internal result-compatibility tier; scheduler experiments and other engine
 research belong in their owning subsystem's durable traces.
+
+R2 of `docs/root-normalization-retirement.md` retired three dispatcher arms:
+OCaml's collapsed named-leaf restoration, Ruby's top-level module bound
+shrink, and half of HTML's arm (the ERROR-root nested-custom-tag
+reconstruction). HTML's other function,
+`normalizeHTMLRecoveredNestedCustomTagRanges`, stays live: see "The retained
+second pass" below. The retired entries stay in the registry as historical
+receipts.
 
 Each registry entry has a stable ID, functions and files, languages, purpose,
 authoritative owner, witnesses, a retirement condition, coverage fields for

@@ -82,6 +82,25 @@ for tags and release notes while still in `0.x`.
   itself allocated, so they stop the same input at the same place every time.
   A downstream user reported this behavior in issue #454.
 
+### Removed
+
+- **Three dead per-language result-normalization dispatcher arms** (R2 of
+  `docs/root-normalization-retirement.md`). The three are OCaml's collapsed
+  named-leaf restoration, Ruby's top-level module bound shrink, and HTML's
+  ERROR-root nested-custom-tag reconstruction
+  (`normalizeHTMLRecoveredNestedCustomTags`). HTML's sibling function,
+  `normalizeHTMLRecoveredNestedCustomTagRanges`, stays live: the separate
+  returned-tree second pass still calls it. A real-corpus census measured
+  zero rewrites for all three arms. Native-parse regression tests confirm
+  the reduce engine already produces the corrected shape without them.
+
+  A fourth candidate, Elixir, stayed live. Its census also measured zero
+  rewrites over the real corpus. A native-parse regression test found the
+  cause: the corpus sample lacked the triggering construct. Two consecutive
+  top-level comments — a common file-header shape — still lose their hidden
+  `_newline_before_comment` sibling without the normalizer. The ownership
+  registry keeps all four entries as historical receipts.
+
 ### Changed
 
 - JavaScript program-end finalization now has one authoritative compatibility
