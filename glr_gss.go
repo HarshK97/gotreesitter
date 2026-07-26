@@ -1,9 +1,25 @@
 package gotreesitter
 
 import (
+	"sync"
 	"sync/atomic"
 	"unsafe"
 )
+
+// gssNodeHashPendingPool recycles the walk buffer gssNodeHash uses when an
+// unhashed chain is longer than its 32-entry inline array.
+//
+// The buffer used to grow on the heap from scratch on every such call. A chain
+// only needs hashing until it reaches an already-hashed node, so this is cheap
+// on ordinary parses; on an error path that rebuilds deep GSS chains it is not.
+// Profiling a PHP transient-error edit attributed 124 MB of allocation to this
+// one walk. Pooling keeps the buffer alive across calls.
+var gssNodeHashPendingPool = sync.Pool{
+	New: func() any {
+		s := make([]*gssNode, 0, 256)
+		return &s
+	},
+}
 
 const (
 	defaultGSSNodeSlabCap      = 4 * 1024
@@ -363,8 +379,20 @@ func gssNodeHash(n *gssNode) uint64 {
 
 	var local [32]*gssNode
 	pending := local[:0]
+	var pooled *[]*gssNode
 	for cur := n; cur != nil && cur.hash == 0; cur = cur.prev {
+		if pooled == nil && len(pending) == len(local) {
+			// The chain outgrew the inline array. Move to a pooled buffer so a
+			// deep walk reuses one allocation instead of growing a fresh slice
+			// on every call.
+			pooled = gssNodeHashPendingPool.Get().(*[]*gssNode)
+			*pooled = append((*pooled)[:0], pending...)
+			pending = *pooled
+		}
 		pending = append(pending, cur)
+		if pooled != nil {
+			*pooled = pending
+		}
 	}
 	prevHash := gssHashSeed
 	if len(pending) < int(n.depth) {
@@ -380,6 +408,11 @@ func gssNodeHash(n *gssNode) uint64 {
 		}
 		pending[i].hash = h
 		prevHash = h
+	}
+	// Released explicitly rather than with defer: this is a hot path and the
+	// function has a single exit once the walk buffer exists.
+	if pooled != nil {
+		gssNodeHashPendingPool.Put(pooled)
 	}
 	return n.hash
 }

@@ -4559,7 +4559,14 @@ func (p *Parser) relexTokenForStackLexState(source []byte, state StateID, tok To
 	if ls == noLookaheadLexState || int(ls) >= len(lang.LexStates) {
 		return tok, false
 	}
-	probe := Lexer{
+	// GLR prunes branches at no-action points constantly during ordinary
+	// parses, so this probe runs often even on grammars that never need a
+	// re-lex. Reuse one parser-owned Lexer rather than constructing a fresh one
+	// per call so the probe stays allocation-free on that hot path. Measured
+	// against origin/main with the grammar pre-warmed, java, cpp, go and
+	// javascript allocate byte-identically with the probe in place.
+	probe := &p.relexProbeLexer
+	*probe = Lexer{
 		states:          lang.LexStates,
 		asciiTable:      lang.LexAsciiTable(),
 		source:          source,

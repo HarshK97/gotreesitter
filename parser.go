@@ -122,6 +122,11 @@ type Parser struct {
 	// errorCostCompetition enables the faithful C error-recovery port
 	// (parser_recover_c.go) for this grammar; see errorCostCompetitionLanguage.
 	errorCostCompetition bool
+	// relexProbeLexer is the reusable scratch lexer for
+	// relexTokenForStackLexState's per-stack re-lex probe. One instance per
+	// parser keeps the probe allocation-free at no-action points, which GLR
+	// reaches constantly while pruning branches.
+	relexProbeLexer Lexer
 	// crecoveryEnteredErrorState is set once per Parse() call the first time
 	// cHandleError actually runs (a no-action point was hit for the current
 	// lookahead in some parser state). It is reset at the start of
