@@ -1,10 +1,6 @@
 package gotreesitter
 
-import (
-	"runtime"
-	"runtime/debug"
-	"testing"
-)
+import "testing"
 
 // TestRuntimeMemoryBudgetSoftBudgetNeverStopsParse pins the issue #454
 // determinism contract: the soft per-parse budget must never stop a parse from
@@ -151,36 +147,13 @@ func TestRuntimeMemoryVolumeTriggerBypassesPollMask(t *testing.T) {
 		t.Fatalf("test setup invariant broken: poll count %d not actually masked", skippedPollCount)
 	}
 
-	// Disable GC for the measured window: this package's full test binary
-	// allocates heavily elsewhere, and a concurrent GC cycle reclaiming that
-	// unrelated garbage can otherwise offset this test's own ballast growth
-	// enough that HeapAlloc undercounts it relative to Sys, flipping which
-	// source (runtime_heap vs runtime_sys) the check attributes the stop to.
-	oldGC := debug.SetGCPercent(-1)
-	defer debug.SetGCPercent(oldGC)
-
-	// A loose-mask-selecting budget (255 mask, > parseRuntimeMemoryTightBudget)
-	// is itself at least ~64MiB, so proving "heapGrowth >= budget" needs a real
-	// allocation of that scale rather than relying on ambient process heap
-	// size. Capture a real baseline, then deliberately grow the live heap past
-	// the budget so runtimeMemoryBudgetStopReasonNow's comparison is genuine.
-	var before runtime.MemStats
-	runtime.ReadMemStats(&before)
-	const budget = parseRuntimeMemoryTightBudget + 8<<20 // ~72MiB: > tight threshold, selects mask 255
-	ballast := make([]byte, budget+(16<<20))             // guarantee >= budget bytes of real growth
-	for i := range ballast {
-		ballast[i] = byte(i)
-	}
-	t.Cleanup(func() { runtime.KeepAlive(ballast) })
-
-	// The soft budget still selects the poll mask, but only the hard ceiling can
-	// stop a parse (see the issue #454 determinism contract), so arm the ceiling
-	// at the same size to prove the forced poll reached a real ReadMemStats
-	// comparison rather than being skipped by the mask.
+	// Select the loose mask with the soft budget. Arm a deterministic hard
+	// ceiling so a real sample stops without process-global ballast.
+	const looseBudget = parseRuntimeMemoryTightBudget + 1
 	parser := &Parser{
-		parseRuntimeMemoryBudgetBytes:      budget,
-		parseRuntimeMemoryHardCeilingBytes: budget,
-		parseRuntimeMemoryBaselineBytes:    before.HeapAlloc,
+		parseRuntimeMemoryBudgetBytes:      looseBudget,
+		parseRuntimeMemoryHardCeilingBytes: 1,
+		parseRuntimeMemoryBaselineBytes:    0,
 		parseRuntimeMemoryPoll:             skippedPollCount - 1,
 		parseRuntimeMemoryVolumeAtPoll:     0,
 		parseMemoryBudgetDiagActive:        true,
@@ -196,14 +169,9 @@ func TestRuntimeMemoryVolumeTriggerBypassesPollMask(t *testing.T) {
 	if got := parser.runtimeMemoryBudgetStopReason(parseRuntimeMemoryVolumePollThresholdBytes); got != ParseStopMemoryBudget {
 		t.Fatalf("runtimeMemoryBudgetStopReason(volume >= threshold) = %q, want %q (volume trigger should bypass the mask)", got, ParseStopMemoryBudget)
 	}
-	// The hard ceiling is now the only source that can stop a parse, so it is a
-	// single exact expectation. The old two-source allowance existed because the
-	// heap and sys arms raced each other under -race, which is precisely the
-	// nondeterminism this contract removes.
 	if got, want := parser.parseMemoryBudgetDiag.source, parseMemoryBudgetStopSourceHardCeiling; got != want {
 		t.Fatalf("memory budget stop source = %q, want %q", got, want)
 	}
-	runtime.KeepAlive(ballast)
 }
 
 // TestParseMemoryHardCeilingStopsIndependentlyOfSoftBudget exercises the
