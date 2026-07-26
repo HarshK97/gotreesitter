@@ -1,5 +1,7 @@
 package gotreesitter
 
+import "os"
+
 type resultCompatibilityContext struct {
 	root      *Node
 	source    []byte
@@ -92,180 +94,360 @@ func (ctx resultCompatibilityContext) stopReason() ParseStopReason {
 
 func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompatibilityResult {
 	if isCobolLanguage(ctx.lang) {
-		normalizeCobolCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "predicate.cobol-exact", func() {
+			normalizeCobolCompatibility(ctx.root, ctx.source, ctx.lang)
+		})
 		return resultCompatibilityResult{stopReason: ctx.stopReason()}
 	}
 
 	switch ctx.lang.Name {
 	case "ada":
-		normalizeAdaCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.ada", func() { normalizeAdaCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "angular":
-		normalizeAngularCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.angular", func() { normalizeAngularCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "apex":
-		normalizeApexCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.apex", func() { normalizeApexCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "authzed":
-		normalizeAuthzedCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.authzed", func() { normalizeAuthzedCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "awk":
-		normalizeAwkCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.awk", func() { normalizeAwkCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "bibtex":
-		normalizeBibtexCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.bibtex", func() { normalizeBibtexCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "bash":
-		normalizeBashProgramVariableAssignments(ctx.root, ctx.lang)
-		normalizeBashGeneratedCommandAssignments(ctx.root, ctx.source, ctx.lang)
-		normalizeBashCommandNameArguments(ctx.root, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.bash", func() {
+			normalizeBashProgramVariableAssignments(ctx.root, ctx.lang)
+			normalizeBashGeneratedCommandAssignments(ctx.root, ctx.source, ctx.lang)
+			normalizeBashCommandNameArguments(ctx.root, ctx.lang)
+		})
 	case "bitbake":
-		normalizeBitbakeCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.bitbake", func() { normalizeBitbakeCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "chatito":
-		normalizeChatitoCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.chatito", func() { normalizeChatitoCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "arduino":
-		normalizeArduinoBuiltinPrimitiveTypes(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.arduino", func() { normalizeArduinoBuiltinPrimitiveTypes(ctx.root, ctx.source, ctx.lang) })
 	case "c", "cpp":
-		normalizeCCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.c_cpp", func() { normalizeCCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "c_sharp":
-		normalizeCSharpCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.c_sharp", func() { normalizeCSharpCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "caddy", "comment", "fortran", "nim", "pug", "rst":
-		normalizeResultTrailingSpanCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.shared_trailing_span", func() { normalizeResultTrailingSpanCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "cooklang":
-		normalizeCooklangCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.cooklang", func() { normalizeCooklangCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "corn":
-		normalizeCornCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.corn", func() { normalizeCornCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "crystal":
-		normalizeCrystalCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.crystal", func() { normalizeCrystalCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "cpon":
-		normalizeCPONCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.cpon", func() { normalizeCPONCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "cue":
-		normalizeCueCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.cue", func() { normalizeCueCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "d":
-		normalizeDCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.d", func() { normalizeDCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "dart":
-		normalizeDartCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.dart", func() { normalizeDartCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "doxygen":
-		normalizeDoxygenCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.doxygen", func() { normalizeDoxygenCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "jsdoc":
-		normalizeJsdocCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.jsdoc", func() { normalizeJsdocCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "dtd":
-		normalizeDTDCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.dtd", func() { normalizeDTDCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "elixir":
-		normalizeElixirCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.elixir", func() { normalizeElixirCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "enforce":
-		normalizeEnforceCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.enforce", func() { normalizeEnforceCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "ebnf":
-		normalizeEBNFCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.ebnf", func() { normalizeEBNFCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "eds":
-		normalizeEDSCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.eds", func() { normalizeEDSCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "erlang":
-		normalizeErlangSourceFileForms(ctx.root, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.erlang", func() { normalizeErlangSourceFileForms(ctx.root, ctx.lang) })
 	case "fsharp":
-		normalizeFSharpCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.fsharp", func() { normalizeFSharpCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "forth":
-		normalizeForthCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.forth", func() { normalizeForthCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "fidl":
-		normalizeFIDLCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.fidl", func() { normalizeFIDLCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "go":
-		return resultCompatibilityResult{stopReason: normalizeGoReturnedTreeCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang, ctx.incrementalRanges)}
+		var stopReason ParseStopReason
+		dispatcherArmCensus(ctx, "dispatch.go", func() {
+			stopReason = normalizeGoReturnedTreeCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang, ctx.incrementalRanges)
+		})
+		return resultCompatibilityResult{stopReason: stopReason}
 	case "gitcommit":
-		normalizeGitcommitCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.gitcommit", func() { normalizeGitcommitCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "haskell":
-		normalizeHaskellCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.haskell", func() { normalizeHaskellCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "hcl":
-		normalizeHCLConfigFileRoot(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.hcl", func() { normalizeHCLConfigFileRoot(ctx.root, ctx.source, ctx.lang) })
 	case "html":
-		normalizeHTMLCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.html", func() { normalizeHTMLCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "http":
-		normalizeHTTPCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.http", func() { normalizeHTTPCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "hurl":
-		normalizeHurlCompatibility(ctx.root, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.hurl", func() { normalizeHurlCompatibility(ctx.root, ctx.lang) })
 	case "hlsl":
-		normalizeHLSLCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.hlsl", func() { normalizeHLSLCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "hyprlang":
-		normalizeHyprlangCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.hyprlang", func() { normalizeHyprlangCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "ini":
-		return normalizeIniCompatibility(ctx.root, ctx.source, ctx.lang)
+		var res resultCompatibilityResult
+		dispatcherArmCensus(ctx, "dispatch.ini", func() {
+			res = normalizeIniCompatibility(ctx.root, ctx.source, ctx.lang)
+		})
+		return res
 	case "javascript":
-		return resultCompatibilityResult{stopReason: normalizeJavaScriptCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)}
+		var stopReason ParseStopReason
+		dispatcherArmCensus(ctx, "dispatch.javascript", func() {
+			stopReason = normalizeJavaScriptCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
+		})
+		return resultCompatibilityResult{stopReason: stopReason}
 	case "julia":
-		normalizeJuliaCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.julia", func() { normalizeJuliaCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "just":
-		normalizeJustTopLevelTrailingLineBreakSpans(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.just", func() { normalizeJustTopLevelTrailingLineBreakSpans(ctx.root, ctx.source, ctx.lang) })
 	case "ledger":
-		normalizeLedgerCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.ledger", func() { normalizeLedgerCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "linkerscript":
-		normalizeLinkerscriptCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.linkerscript", func() { normalizeLinkerscriptCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "kotlin":
-		normalizeKotlinCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.kotlin", func() { normalizeKotlinCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "lua":
-		normalizeLuaChunkLocalDeclarationFields(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.lua", func() { normalizeLuaChunkLocalDeclarationFields(ctx.root, ctx.source, ctx.lang) })
 	case "luau":
-		normalizeLuauCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.luau", func() { normalizeLuauCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "make":
-		normalizeMakeConditionalConsequenceFields(ctx.root, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.make", func() { normalizeMakeConditionalConsequenceFields(ctx.root, ctx.lang) })
 	case "objc":
-		normalizeObjcCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.objc", func() { normalizeObjcCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "nginx":
-		normalizeNginxAttributeLineBreaks(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.nginx", func() { normalizeNginxAttributeLineBreaks(ctx.root, ctx.source, ctx.lang) })
 	case "ninja":
-		normalizeNinjaCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.ninja", func() { normalizeNinjaCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "ocaml":
-		normalizeOCamlCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.ocaml", func() { normalizeOCamlCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "pascal":
-		normalizePascalTopLevelProgramEnd(ctx.root, ctx.source, ctx.lang)
-		normalizePascalTrailingExtraTrivia(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.pascal", func() {
+			normalizePascalTopLevelProgramEnd(ctx.root, ctx.source, ctx.lang)
+			normalizePascalTrailingExtraTrivia(ctx.root, ctx.source, ctx.lang)
+		})
 	case "perl":
-		normalizePerlCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.perl", func() { normalizePerlCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "php":
-		normalizePHPCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.php", func() { normalizePHPCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "powershell":
-		normalizePowerShellProgramShape(ctx.root, ctx.source, ctx.lang)
-		normalizePowerShellErrorProgramRoot(ctx.root, ctx.lang)
-		normalizePowerShellAssignmentOperatorTokens(ctx.root, ctx.source, ctx.lang)
-		normalizePowerShellPathCommandNameVariables(ctx.root, ctx.source, ctx.lang)
-		normalizePowerShellEnumStatementKeywordSpans(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.powershell", func() {
+			normalizePowerShellProgramShape(ctx.root, ctx.source, ctx.lang)
+			normalizePowerShellErrorProgramRoot(ctx.root, ctx.lang)
+			normalizePowerShellAssignmentOperatorTokens(ctx.root, ctx.source, ctx.lang)
+			normalizePowerShellPathCommandNameVariables(ctx.root, ctx.source, ctx.lang)
+			normalizePowerShellEnumStatementKeywordSpans(ctx.root, ctx.source, ctx.lang)
+		})
 	case "ql":
-		normalizeQLCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.ql", func() { normalizeQLCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "r":
-		normalizeRCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.r", func() { normalizeRCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "python":
-		normalizePythonCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.python", func() { normalizePythonCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "rescript":
-		normalizeRescriptCompatibility(ctx.root, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.rescript", func() { normalizeRescriptCompatibility(ctx.root, ctx.lang) })
 	case "robot":
-		normalizeRobotCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.robot", func() { normalizeRobotCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "rust":
-		normalizeRustCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.rust", func() { normalizeRustCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "ruby":
-		normalizeRubyTopLevelModuleBounds(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.ruby", func() { normalizeRubyTopLevelModuleBounds(ctx.root, ctx.source, ctx.lang) })
 	case "scala":
-		normalizeScalaCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.scala", func() { normalizeScalaCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "scheme":
-		normalizeSchemeCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.scheme", func() { normalizeSchemeCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "solidity":
-		normalizeSolidityMemberObjectWrappers(ctx.root, ctx.lang)
-		normalizeSolidityCallExpressionAliases(ctx.root, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.solidity", func() {
+			normalizeSolidityMemberObjectWrappers(ctx.root, ctx.lang)
+			normalizeSolidityCallExpressionAliases(ctx.root, ctx.lang)
+		})
 	case "sql":
-		normalizeSQLRecoveredSelectRoot(ctx.root, ctx.lang)
-		normalizeSQLTrailingSelectListError(ctx.root, ctx.lang)
-		if ctx.parser != nil && !ctx.parser.skipRecoveryReparse {
-			normalizeSQLRecoveredTopLevelSelectStatements(ctx.root, ctx.source, ctx.parser, ctx.lang)
-		}
-		normalizeSQLSelectClauseBodyIntoFields(ctx.root, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.sql", func() {
+			normalizeSQLRecoveredSelectRoot(ctx.root, ctx.lang)
+			normalizeSQLTrailingSelectListError(ctx.root, ctx.lang)
+			if ctx.parser != nil && !ctx.parser.skipRecoveryReparse {
+				normalizeSQLRecoveredTopLevelSelectStatements(ctx.root, ctx.source, ctx.parser, ctx.lang)
+			}
+			normalizeSQLSelectClauseBodyIntoFields(ctx.root, ctx.lang)
+		})
 	case "squirrel":
-		normalizeSquirrelCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.squirrel", func() { normalizeSquirrelCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "swift":
-		normalizeSwiftCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.swift", func() { normalizeSwiftCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "templ":
-		normalizeTemplCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.templ", func() { normalizeTemplCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "wgsl":
-		normalizeWGSLCompatibility(ctx.root, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.wgsl", func() { normalizeWGSLCompatibility(ctx.root, ctx.lang) })
 	case "wolfram":
-		normalizeWolframCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.wolfram", func() { normalizeWolframCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "tsx", "typescript":
-		return resultCompatibilityResult{stopReason: normalizeTypeScriptTreeCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)}
+		var stopReason ParseStopReason
+		dispatcherArmCensus(ctx, "dispatch.typescript", func() {
+			stopReason = normalizeTypeScriptTreeCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
+		})
+		return resultCompatibilityResult{stopReason: stopReason}
 	case "typst":
-		normalizeTypstCompatibility(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.typst", func() { normalizeTypstCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "yaml":
-		normalizeYAMLRecoveredRoot(ctx.root, ctx.source, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.yaml", func() { normalizeYAMLRecoveredRoot(ctx.root, ctx.source, ctx.lang) })
 	case "zig":
-		normalizeZigEmptyInitListFields(ctx.root, ctx.lang)
+		dispatcherArmCensus(ctx, "dispatch.zig", func() { normalizeZigEmptyInitListFields(ctx.root, ctx.lang) })
 	}
 	return resultCompatibilityResult{stopReason: ctx.stopReason()}
+}
+
+// --- R2 dispatcher-arm census (docs/root-normalization-retirement.md) ---
+//
+// runLanguageResultCompatibility's switch is the per-language dispatcher arm
+// registry described in testdata/result_compat_ownership_v1.json
+// ("dispatcher_arms"). Most arms return nothing: whether a given call ever
+// actually rewrites the tree has never been measured in production, only
+// asserted by unit fixtures that construct the triggering shape by hand. R2
+// requires a census before any retirement.
+//
+// dispatcherArmCensus is the uniform, zero-per-function-surgery probe: it
+// snapshots a full structural fingerprint of ctx.root immediately before and
+// after the arm's closure runs and diffs the two snapshots. This needs no
+// changes to any of the ~80 normalizeXCompatibility functions themselves and
+// covers every arm identically, including the multi-function arms (bash,
+// pascal, powershell, solidity, sql) where "the arm" is the whole case body,
+// matching the registry's one-entry-per-language granularity.
+//
+// It is gated behind GTS_DISPATCHER_CENSUS=1 so the fingerprint walk (which
+// is a full O(n) tree traversal, run twice) costs nothing on an ordinary
+// parse: dispatcherCensusEnabled's os.Getenv check is the only overhead paid
+// when the flag is unset, and every dispatcher arm already performs at least
+// one full-tree walk of its own, so even the closure indirection paid when
+// the flag is set is in the noise relative to the arm's own cost.
+func dispatcherCensusEnabled() bool {
+	return os.Getenv("GTS_DISPATCHER_CENSUS") != ""
+}
+
+// dispatcherArmCensus runs fn (the body of one dispatcher-arm switch case)
+// and, only when census instrumentation is enabled, records whether fn
+// changed ctx.root's structural fingerprint under armID via
+// (*Parser).recordNormalizationMetric. armID matches the corresponding
+// "dispatch.<name>" / "predicate.<name>" id in
+// testdata/result_compat_ownership_v1.json so census receipts trace directly
+// back to the registry entry they measure.
+func dispatcherArmCensus(ctx resultCompatibilityContext, armID string, fn func()) {
+	if !dispatcherCensusEnabled() {
+		fn()
+		return
+	}
+	before := captureDispatcherFingerprint(ctx.root)
+	fn()
+	after := captureDispatcherFingerprint(ctx.root)
+	visited, rewritten := diffDispatcherFingerprint(before, after)
+	if ctx.parser != nil {
+		ctx.parser.recordNormalizationMetric(armID, 1, 1, visited, rewritten)
+	}
+}
+
+// dispatcherNodeSignature captures exactly the observable-from-outside-the-
+// package surface of one Node: its type (symbol), its span, its child
+// structure (child count), the field name assigned to it in its parent's
+// child slot, and the content-relevant flags a caller can query (IsNamed,
+// IsMissing, IsExtra, HasError, external-scanner-token). It deliberately
+// excludes purely internal bookkeeping bits (dirty, fragile-left/right,
+// field-ID cache-computed) that are incremental-reuse or GLR-disambiguation
+// housekeeping, not tree content, and could otherwise churn independently of
+// whatever the dispatcher arm itself did.
+//
+// This is the full set of fields Node exposes that can differ between two
+// trees built from the same source: if every signature in a preorder walk is
+// identical before and after an arm runs, nothing the arm could have done is
+// observable through the public Node API, so "no rewrite" is a sound
+// conclusion, not merely a hash coincidence (there is no hashing here at
+// all -- fields are compared for exact equality).
+type dispatcherNodeSignature struct {
+	symbol     Symbol
+	startByte  uint32
+	endByte    uint32
+	childCount int32
+	fieldID    FieldID
+	flags      nodeFlags
+}
+
+// dispatcherCensusContentFlagMask selects the nodeFlags bits that are part of
+// a node's observable content (see dispatcherNodeSignature) and excludes
+// internal-only bookkeeping bits.
+const dispatcherCensusContentFlagMask = nodeFlagNamed | nodeFlagExtra | nodeFlagMissing | nodeFlagHasError | nodeFlagExternalScannerToken
+
+// captureDispatcherFingerprint walks root in preorder (iteratively, to avoid
+// recursion-depth limits on deep or adversarial trees) and returns one
+// signature per node. The walk order itself is part of the fingerprint: a
+// normalizer that reorders, inserts, removes, or reparents nodes shifts later
+// positions even when the individual node contents are byte-identical, so a
+// structural edit is still detected even when no single node's own fields
+// changed.
+func captureDispatcherFingerprint(root *Node) []dispatcherNodeSignature {
+	if root == nil {
+		return nil
+	}
+	type pending struct {
+		node    *Node
+		fieldID FieldID
+	}
+	out := make([]dispatcherNodeSignature, 0, 64)
+	stack := make([]pending, 0, 64)
+	stack = append(stack, pending{node: root})
+	for len(stack) > 0 {
+		top := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		n := top.node
+		if n == nil {
+			continue
+		}
+		childCount := n.ChildCount()
+		out = append(out, dispatcherNodeSignature{
+			symbol:     n.symbol,
+			startByte:  n.startByte,
+			endByte:    n.endByte,
+			childCount: int32(childCount),
+			fieldID:    top.fieldID,
+			flags:      n.flags & dispatcherCensusContentFlagMask,
+		})
+		for i := childCount - 1; i >= 0; i-- {
+			stack = append(stack, pending{node: n.Child(i), fieldID: nodeFieldIDAt(n, i)})
+		}
+	}
+	return out
+}
+
+// diffDispatcherFingerprint compares two preorder signature snapshots of the
+// same root captured immediately before and after a dispatcher arm ran.
+// visited is the node count of the "before" snapshot (what the probe had to
+// look at). rewritten is a position-wise difference count: it is exact when
+// nothing structural changed (same length, same content at every position
+// yields rewritten == 0, an exact, hash-free equality check), but it is only
+// an approximation of "how many nodes changed" when a node was inserted or
+// removed near the root, because every following node's preorder position
+// shifts by one and each shifted position then also compares unequal even
+// though its own content did not change. Callers should treat rewritten == 0
+// as an exact "no rewrite" receipt and rewritten > 0 as an exact "the arm
+// changed something" receipt, but should not treat the magnitude of a
+// nonzero rewritten count as a precise edit distance.
+func diffDispatcherFingerprint(before, after []dispatcherNodeSignature) (visited, rewritten uint64) {
+	visited = uint64(len(before))
+	shorter := len(before)
+	if len(after) < shorter {
+		shorter = len(after)
+	}
+	var changed uint64
+	for i := 0; i < shorter; i++ {
+		if before[i] != after[i] {
+			changed++
+		}
+	}
+	lengthDelta := len(before) - len(after)
+	if lengthDelta < 0 {
+		lengthDelta = -lengthDelta
+	}
+	changed += uint64(lengthDelta)
+	return visited, changed
 }

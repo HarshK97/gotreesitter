@@ -42,6 +42,69 @@ func TestNormalizeMakeConditionalConsequenceFieldsExtendsAcrossLeadingTabs(t *te
 	}
 }
 
+// TestDispatcherArmCensusProbeIsWiredForMake is the production-wiring
+// positive control the R2 dispatcher-arm census requires
+// (docs/root-normalization-retirement.md; see
+// parser_result_test/dispatcher_census_test.go for the census itself). It
+// reuses the exact fixture from
+// TestNormalizeMakeConditionalConsequenceFieldsExtendsAcrossLeadingTabs
+// above, which independently proves normalizeMakeConditionalConsequenceFields
+// rewrites root.fieldIDs()[1] from 0 to 1 on this input, but drives it
+// through the real production entry point (normalizeResultCompatibility) and
+// the real "make" switch case instead of calling the normalizer directly.
+// This proves the census counters observe what production actually runs, so
+// a zero-rewrite census result for some OTHER language is a claim about that
+// language, not evidence the probe never fires.
+func TestDispatcherArmCensusProbeIsWiredForMake(t *testing.T) {
+	t.Setenv("GTS_DISPATCHER_CENSUS", "1")
+
+	lang := &Language{
+		Name:        "make",
+		SymbolNames: []string{"EOF", "conditional", "ifneq_directive", "\t", "recipe_line", "else_directive", "endif"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "conditional", Visible: true, Named: true},
+			{Name: "ifneq_directive", Visible: true, Named: true},
+			{Name: "\t", Visible: true, Named: false},
+			{Name: "recipe_line", Visible: true, Named: true},
+			{Name: "else_directive", Visible: true, Named: true},
+			{Name: "endif", Visible: true, Named: false},
+		},
+		FieldNames: []string{"", "consequence"},
+	}
+
+	arena := newNodeArena(arenaClassFull)
+	directive := newLeafNodeInArena(arena, 2, true, 0, 5, Point{}, Point{Column: 5})
+	tab := newLeafNodeInArena(arena, 3, false, 5, 6, Point{Column: 5}, Point{Column: 6})
+	recipe := newLeafNodeInArena(arena, 4, true, 6, 12, Point{Column: 6}, Point{Column: 12})
+	elseDir := newLeafNodeInArena(arena, 5, true, 12, 16, Point{Column: 12}, Point{Column: 16})
+	endif := newLeafNodeInArena(arena, 6, false, 16, 21, Point{Column: 16}, Point{Column: 21})
+	root := newParentNodeInArena(arena, 1, true, []*Node{directive, tab, recipe, elseDir, endif}, []FieldID{0, 0, 1, 1, 0}, 0)
+	root.setFieldSources([]uint8{0, 0, fieldSourceDirect, fieldSourceDirect, 0})
+
+	source := make([]byte, 21)
+	parser := &Parser{language: lang}
+
+	normalizeResultCompatibility(root, source, parser, nil)
+
+	var pass *normalizationNamedPassStats
+	for i := range parser.normalizationStats.namedPasses {
+		if parser.normalizationStats.namedPasses[i].name == "dispatch.make" {
+			pass = &parser.normalizationStats.namedPasses[i]
+		}
+	}
+	if pass == nil {
+		t.Fatal("dispatch.make census was never recorded: the probe is not wired to the production dispatcher, so any zero-rewrite census result for another language would be vacuous")
+	}
+	if pass.checked == 0 || pass.run == 0 {
+		t.Fatalf("dispatch.make census checked=%d run=%d, want both > 0", pass.checked, pass.run)
+	}
+	if pass.nodesRewritten == 0 {
+		t.Fatal("dispatch.make census recorded zero rewrites on an input known to mutate a field (see TestNormalizeMakeConditionalConsequenceFieldsExtendsAcrossLeadingTabs): the fingerprint probe did not observe a change it should have caught")
+	}
+	t.Logf("probe caught a real production rewrite: visited=%d rewritten=%d", pass.nodesVisited, pass.nodesRewritten)
+}
+
 func TestNormalizeIniSectionStartsSnapToFirstChild(t *testing.T) {
 	lang := &Language{
 		Name:        "ini",

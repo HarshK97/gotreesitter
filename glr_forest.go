@@ -373,6 +373,18 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 	p.finalizeForestRoot(root, source)
 	tree := newTreeWithArenas(root, source, p.language, arena, nil)
 	tree.setParseRuntime(forestAcceptedRuntime(root, source))
+	// Diagnostic-only: mirrors the copyNormalizationStats call every other
+	// route makes (parser.go's parseInternal tail; tree.go's
+	// ensureResultCompatibility). forestAcceptedRuntime above deliberately
+	// builds a minimal ParseRuntime and does not itself carry normalization
+	// stats, so without this the dispatcher-arm census
+	// (GTS_DISPATCHER_CENSUS, parser_result_compat.go) would see every
+	// forest-fast-path language as having never run its normalizer, even
+	// though finalizeForestRoot (above) already ran it. p.normalizationStats
+	// is only ever non-empty when that census flag is set (see
+	// dispatcherArmCensus), so this is a no-op field copy in every ordinary
+	// parse.
+	p.copyNormalizationStats(tree.rawParseRuntime())
 	tree.forestFastPath = true
 	if !incrementalReuseProven {
 		tree.incrementalReuseDisabled = true
@@ -669,6 +681,15 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 		progress.beginDetail(time.Now(), "forest_normalize_begin", "forest_normalize_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
 	}
 	p.normalizeReturnedTreeForParse(tree, source)
+	// Diagnostic-only: see the matching comment in ParseForestExperimental.
+	// finalizeForestRoot (above, via finalizeResultRoot) and
+	// normalizeReturnedTreeForParse (immediately above) can each run the
+	// dispatcher-arm census's per-language normalizer once, but
+	// forestAcceptedRuntime's ParseRuntime never carries normalization
+	// stats, so this copy has to happen after both calls, not just once
+	// up front. No-op unless GTS_DISPATCHER_CENSUS populated
+	// p.normalizationStats.
+	p.copyNormalizationStats(tree.rawParseRuntime())
 	if progress.enabled {
 		progress.endDetail(time.Now(), "forest_normalize_end", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, fmt.Sprintf("root_end=%d", root.EndByte()))
 		progress.emit(time.Now(), "forest_try_success", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, fmt.Sprintf("root_end=%d", root.EndByte()))

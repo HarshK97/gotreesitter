@@ -2357,9 +2357,19 @@ func (t *Tree) ensureResultCompatibility() {
 			return
 		}
 		if !parsePhaseTimingEnabled() {
-			result := normalizeResultCompatibility(t.root, t.source, &Parser{language: t.language}, nil)
+			parser := &Parser{language: t.language}
+			result := normalizeResultCompatibility(t.root, t.source, parser, nil)
 			t.resultErrorSummary = result.errorSummary
 			t.resultCompatibilityApplied = !parseStopReasonIsActive(result.stopReason)
+			// Diagnostic-only, mirrors the timing-enabled branch below: without
+			// this, every deferred-compatibility language (ini always;
+			// typescript/tsx by default, see shouldDeferResultCompatibility) would
+			// look UNCOVERED to the dispatcher-arm census
+			// (GTS_DISPATCHER_CENSUS, parser_result_compat.go) even though its
+			// normalizer just ran on the line above. parser.normalizationStats is
+			// only ever non-empty when that census flag is set, so this is a
+			// no-op field copy in every ordinary parse.
+			parser.copyNormalizationStats(&t.parseRuntime)
 			t.finishDeferredResultCompatibility(result)
 			return
 		}

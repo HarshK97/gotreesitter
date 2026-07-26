@@ -664,3 +664,78 @@ func TestGenericTerminalLeafCensusMultiLanguage(t *testing.T) {
 		t.Fatal("multi-language census covered no language: the result is vacuous")
 	}
 }
+
+// TestDispatcherArmCensusFingerprintDetectsEveryObservableChange is the
+// mechanism-level positive control for the R2 dispatcher-arm census
+// (docs/root-normalization-retirement.md; see parser_result_compat.go's
+// captureDispatcherFingerprint/diffDispatcherFingerprint). Before trusting a
+// per-language "INERT" receipt from the census, this proves the probe itself
+// is sound: a no-op comparison reports zero rewrites, and each of the
+// distinct kinds of tree mutation a result-compatibility normalizer can make
+// (span edit, flag edit, field edit, and structural insertion) is caught.
+// A production-wiring control (that the probe observes a REAL normalizer's
+// REAL rewrite) lives alongside the Make fixture in
+// TestDispatcherArmCensusProbeIsWiredForMake
+// (parser_result_make_ini_zig_test.go).
+func TestDispatcherArmCensusFingerprintDetectsEveryObservableChange(t *testing.T) {
+	build := func() (*Node, *Node) {
+		arena := newNodeArena(arenaClassFull)
+		leaf1 := newLeafNodeInArena(arena, 10, true, 0, 3, Point{Column: 0}, Point{Column: 3})
+		leaf2 := newLeafNodeInArena(arena, 11, true, 3, 6, Point{Column: 3}, Point{Column: 6})
+		root := newParentNodeInArena(arena, 1, true, []*Node{leaf1, leaf2}, []FieldID{0, 0}, 0)
+		return root, leaf2
+	}
+
+	root, _ := build()
+	before := captureDispatcherFingerprint(root)
+	if len(before) != 3 {
+		t.Fatalf("captureDispatcherFingerprint visited %d nodes, want 3 (root + 2 leaves)", len(before))
+	}
+
+	// No-op: capturing twice without any mutation must show no rewrite.
+	if visited, rewritten := diffDispatcherFingerprint(before, captureDispatcherFingerprint(root)); rewritten != 0 || visited == 0 {
+		t.Fatalf("identical snapshots reported visited=%d rewritten=%d, want visited>0 rewritten=0", visited, rewritten)
+	}
+
+	// Span edit: the most common shape of a result-compatibility rewrite
+	// (extending or trimming a node's byte range).
+	root2, leaf2b := build()
+	before2 := captureDispatcherFingerprint(root2)
+	leaf2b.endByte = 9
+	if visited, rewritten := diffDispatcherFingerprint(before2, captureDispatcherFingerprint(root2)); rewritten == 0 {
+		t.Fatalf("span edit went undetected: visited=%d rewritten=%d", visited, rewritten)
+	}
+
+	// Flag edit: some normalizers mark a node MISSING/EXTRA without touching
+	// its span at all.
+	root3, leaf2c := build()
+	before3 := captureDispatcherFingerprint(root3)
+	leaf2c.setFlag(nodeFlagExtra, true)
+	if visited, rewritten := diffDispatcherFingerprint(before3, captureDispatcherFingerprint(root3)); rewritten == 0 {
+		t.Fatalf("flag edit went undetected: visited=%d rewritten=%d", visited, rewritten)
+	}
+
+	// Field edit: some normalizers (e.g. normalizeMakeConditionalConsequenceFields)
+	// only reassign which field a child fills, changing neither its span nor
+	// its symbol.
+	root4, _ := build()
+	before4 := captureDispatcherFingerprint(root4)
+	root4.setFieldIDs([]FieldID{0, 7})
+	if visited, rewritten := diffDispatcherFingerprint(before4, captureDispatcherFingerprint(root4)); rewritten == 0 {
+		t.Fatalf("field edit went undetected: visited=%d rewritten=%d", visited, rewritten)
+	}
+
+	// Structural edit: some normalizers insert a synthesized/recovered node.
+	root5, _ := build()
+	before5 := captureDispatcherFingerprint(root5)
+	arena := newNodeArena(arenaClassFull)
+	extra := newLeafNodeInArena(arena, 12, true, 6, 9, Point{Column: 6}, Point{Column: 9})
+	root5.children = append(root5.children, extra)
+	after5 := captureDispatcherFingerprint(root5)
+	if len(after5) != len(before5)+1 {
+		t.Fatalf("captureDispatcherFingerprint after insertion visited %d nodes, want %d", len(after5), len(before5)+1)
+	}
+	if visited, rewritten := diffDispatcherFingerprint(before5, after5); rewritten == 0 {
+		t.Fatalf("structural insertion went undetected: visited=%d rewritten=%d", visited, rewritten)
+	}
+}
