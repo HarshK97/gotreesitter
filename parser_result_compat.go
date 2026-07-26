@@ -53,8 +53,8 @@ func normalizeResultCompatibility(root *Node, source []byte, p *Parser, incremen
 	// normalizeGoReturnedTreeCompatibility) may now report ParseStopMemoryBudget,
 	// which parseStopReasonIsActive deliberately excludes (many callers rely on
 	// its narrower Timeout/Cancelled-only semantics). Without this, a
-	// budget-stopped Go result would still fall through into the generic
-	// terminal-leaf pass below.
+	// budget-stopped Go result would still fall through into the read-only
+	// error-summary walk below.
 	if resultMaterializationShouldStop(result.stopReason) {
 		return result
 	}
@@ -62,18 +62,12 @@ func normalizeResultCompatibility(root *Node, source []byte, p *Parser, incremen
 		result.stopReason = reason
 		return result
 	}
-	result.stopReason, result.errorSummary = normalizeResultTerminalLeafMutationRetirementPending(root, ctx.stopCheck)
+	result.stopReason, result.errorSummary = summarizeResultErrorsWithStop(root, ctx.stopCheck)
 	if parseStopReasonIsActive(result.stopReason) {
 		return result
 	}
 	result.stopReason = ctx.stopReason()
 	return result
-}
-
-// normalizeResultTerminalLeafMutationRetirementPending keeps the ownership
-// registry valid until a retirement commit exists. It does not mutate trees.
-func normalizeResultTerminalLeafMutationRetirementPending(root *Node, stopCheck parseStopCheck) (ParseStopReason, resultErrorSummary) {
-	return summarizeResultErrorsWithStop(root, stopCheck)
 }
 
 func (ctx resultCompatibilityContext) stopReason() ParseStopReason {

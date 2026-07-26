@@ -18,17 +18,13 @@ The v1 registry freezes the current surface:
 - 75 explicit `runLanguageResultCompatibility` switch arms covering 82
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
-- one temporary read-only generic wrapper after language dispatch;
+- zero generic passes after language dispatch;
 - one retained post-finalization second-pass fixpoint with two switch arms
   covering Scala and HTML.
 
-That is 78 live registry entries. The registry covers only this documented
-internal result-compatibility tier; scheduler experiments and other engine
-research belong in their owning subsystem's durable traces.
-
-The generic wrapper keeps the registry bisectable until its retirement commit
-exists. It computes only the error summary and polls the stop source.
-It does not mutate a tree.
+That is 77 live registry entries and 7 retired entries. The registry covers
+only this documented internal result-compatibility tier. Scheduler experiments
+and other engine research belong in their owning subsystem's durable traces.
 
 R2 of `docs/root-normalization-retirement.md` retired three dispatcher arms:
 OCaml's collapsed named-leaf restoration, Ruby's top-level module bound
@@ -115,8 +111,13 @@ The focused Go tree also matches the locked C tree.
 The full error-summary walk remains. It preserves exact retry selection for
 under-set descendant errors and keeps the existing stop polls.
 
-The registry retains a temporary read-only wrapper until checkpoint 1 exists.
-Checkpoint 2 must record checkpoint 1 as `retired_commit`.
+The registry records checkpoint 1 commit
+`31bc9f1ed88bc930d22d0c2eaedc84195604cce1` as `retired_commit`.
+The commit is on branch `codex/retire-generic-terminal-leaf-20260726`.
+It is not merged.
+
+`normalizeResultCompatibility` now calls `summarizeResultErrorsWithStop`
+directly.
 
 ## Current progress: trailing root trivia
 
@@ -141,10 +142,10 @@ route receipts must show the second pass is inert.
 JavaScript no longer participates in this fixpoint. Its canonical
 compatibility pipeline already extends `program` and recovery-root terminator
 tails after every JavaScript shape and span rewrite. The only intervening work
-before returned-tree publication is terminal-leaf normalization and optional
-parent-link wiring; neither can shorten or reclassify the root. The registry
-retains a retired historical entry for the deleted JavaScript arm and its
-production, compact-final-ref, forest, and incremental span receipts.
+before returned-tree publication is the read-only error-summary walk and
+optional parent-link wiring. Neither can shorten or reclassify the root.
+The registry retains a retired historical entry for the deleted JavaScript
+arm and its production, compact-final-ref, forest, and incremental receipts.
 
 Removing the second pass because it looks repetitive would reopen known
 fixpoint behavior; its registry retirement condition is the deletion gate.
