@@ -63,3 +63,24 @@ func TestHTMLNestedCustomTagReconstructionRetiredDispatchArm(t *testing.T) {
 		}
 	})
 }
+
+func TestHTMLNestedCustomTagReconstructionRetiredDispatchArmRoutes(t *testing.T) {
+	lang := HtmlLanguage()
+	receipts := retiredDispatchRouteReceipts(t, lang, []byte("<div><xyz><xyz>text</div>"))
+	for _, receipt := range receipts {
+		root := receipt.tree.RootNode()
+		if root.HasError() || root.Type(lang) != "document" {
+			t.Fatalf("%s route returned an invalid document: %s", receipt.name, root.SExpr(lang))
+		}
+		outer := findFirstNamedDescendantWhere(root, lang, "element", func(*ts.Node) bool { return true })
+		if outer == nil {
+			t.Fatalf("%s route is missing the outer element: %s", receipt.name, root.SExpr(lang))
+		}
+		inner := findFirstNamedDescendantWhere(outer, lang, "element", func(node *ts.Node) bool {
+			return node != outer
+		})
+		if inner == nil {
+			t.Fatalf("%s route is missing the nested element: %s", receipt.name, root.SExpr(lang))
+		}
+	}
+}

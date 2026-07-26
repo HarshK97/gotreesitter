@@ -95,8 +95,9 @@ arms.
 
 ### R2 — census and remove inert language passes
 
-Status: first retirement PR landed; eight more dispatcher arms censused zero
-and stayed live pending a wider corpus or a narrower sub-pass split.
+Status: the first retirement PR is prepared; eight more dispatcher arms
+censused zero and stayed live pending a wider corpus or a narrower sub-pass
+split.
 
 The mandatory shape is census before migration. Historical audits already
 found that table or engine fixes can leave old normalizers behind.

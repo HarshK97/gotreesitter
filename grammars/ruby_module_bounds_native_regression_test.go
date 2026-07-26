@@ -23,17 +23,30 @@ func TestRubyTopLevelModuleBoundsNativeRetiredDispatchArm(t *testing.T) {
 	const moduleEnd = uint32(len("module Foo\nend"))
 
 	cases := []struct {
-		name string
-		src  string
+		name      string
+		src       string
+		wantStart uint32
+		wantEnd   uint32
 	}{
-		{"trailing_blank_lines", "module Foo\nend\n\n\n"},
-		{"trailing_comment", "module Foo\nend\n# trailing\n"},
-		{"trailing_spaces", "module Foo\nend   "},
-		{"no_trailing_content", "module Foo\nend"},
-		{"trailing_second_module", "module Foo\nend\nmodule Bar\nend\n"},
-		{"nested_module_body", "module Foo\n  module Bar\n    X = 1\n  end\nend\n\n"},
-		{"trailing_crlf", "module Foo\r\nend\r\n\r\n"},
-		{"one_liner_semicolon", "module Foo; end\n"},
+		{"trailing_blank_lines", "module Foo\nend\n\n\n", 0, moduleEnd},
+		{"trailing_comment", "module Foo\nend\n# trailing\n", 0, moduleEnd},
+		{"trailing_spaces", "module Foo\nend   ", 0, moduleEnd},
+		{"no_trailing_content", "module Foo\nend", 0, moduleEnd},
+		{"trailing_second_module", "module Foo\nend\nmodule Bar\nend\n", 0, moduleEnd},
+		{
+			"nested_module_body",
+			"module Foo\n  module Bar\n    X = 1\n  end\nend\n\n",
+			0,
+			uint32(len("module Foo\n  module Bar\n    X = 1\n  end\nend")),
+		},
+		{"trailing_crlf", "module Foo\r\nend\r\n\r\n", 0, uint32(len("module Foo\r\nend"))},
+		{"one_liner_semicolon", "module Foo; end\n", 0, uint32(len("module Foo; end"))},
+		{
+			"leading_comment",
+			"# comment\nmodule Foo\nend\n",
+			uint32(len("# comment\n")),
+			uint32(len("# comment\nmodule Foo\nend")),
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -50,19 +63,34 @@ func TestRubyTopLevelModuleBoundsNativeRetiredDispatchArm(t *testing.T) {
 			if mod == nil {
 				t.Fatalf("missing module node: %s", root.SExpr(lang))
 			}
-			if tc.name == "trailing_second_module" || tc.name == "nested_module_body" || tc.name == "trailing_crlf" || tc.name == "one_liner_semicolon" {
-				// These shapes don't share the fixed moduleEnd byte offset;
-				// the invariant under test is only that EndByte never
-				// extends past the module's own `end` keyword to swallow
-				// trailing trivia or a following sibling.
-				if mod.EndByte() > root.EndByte() {
-					t.Fatalf("module EndByte %d exceeds root EndByte %d", mod.EndByte(), root.EndByte())
-				}
-				return
+			if got := mod.StartByte(); got != tc.wantStart {
+				t.Fatalf("module StartByte = %d, want %d: %s", got, tc.wantStart, root.SExpr(lang))
 			}
-			if got := mod.EndByte(); got != moduleEnd {
-				t.Fatalf("module EndByte = %d, want %d (already excludes trailing trivia natively): %s", got, moduleEnd, root.SExpr(lang))
+			if got := mod.EndByte(); got != tc.wantEnd {
+				t.Fatalf("module EndByte = %d, want %d: %s", got, tc.wantEnd, root.SExpr(lang))
 			}
 		})
+	}
+}
+
+func TestRubyTopLevelModuleBoundsRetiredDispatchArmRoutes(t *testing.T) {
+	lang := RubyLanguage()
+	const source = "module Foo\nend"
+	receipts := retiredDispatchRouteReceipts(t, lang, []byte(source))
+	for _, receipt := range receipts {
+		root := receipt.tree.RootNode()
+		mod := findFirstNamedDescendantWhere(root, lang, "module", func(*ts.Node) bool { return true })
+		if mod == nil {
+			t.Fatalf("%s route is missing module: %s", receipt.name, root.SExpr(lang))
+		}
+		if mod.StartByte() != 0 || mod.EndByte() != uint32(len(source)) {
+			t.Fatalf(
+				"%s module bounds = %d:%d, want 0:%d",
+				receipt.name,
+				mod.StartByte(),
+				mod.EndByte(),
+				len(source),
+			)
+		}
 	}
 }

@@ -1022,21 +1022,23 @@
       "authoritative_owner": "scheduler_action_semantics",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go",
         "parser_result_test/dispatcher_census_test.go",
         "grammars/html_nested_custom_tag_native_regression_test.go",
         "grammars/html_parse_regression_test.go"
       ],
-      "retirement_condition": "Satisfied: the reduce engine no longer produces the flat ERROR-root run of bare start_tag siblings normalizeHTMLRecoveredNestedCustomTags reconstructed; production, compact, forest, incremental, and C-oracle route receipts are exact for every registered witness.",
+      "retirement_condition": "Satisfied: the reduce engine no longer produces the flat ERROR-root run of bare start_tag siblings normalizeHTMLRecoveredNestedCustomTags reconstructed. A focused native test compares exact production, forced-compact, forest, and incremental trees. The focused C-oracle test records the pre-existing document-child divergence for the malformed witness and exact parity for the auto-closing witness.",
       "route_coverage": {
         "production": "retired_exact_receipt",
         "compact": "retired_exact_receipt",
         "forest": "retired_exact_receipt",
         "incremental": "retired_exact_receipt",
-        "c_oracle": "retired_exact_receipt"
+        "c_oracle": "retired_known_divergence_receipt"
       },
       "status": "retired",
-      "retired_commit": "PENDING-FILL-IN-ON-MERGE",
+      "retired_commit": "c79ee1ca40a332739374652beb02df9df5280e83",
       "receipt_refs": [
+        "cgo_harness/retired_dispatch_arm_parity_test.go",
         "parser_result_test/dispatcher_census_test.go",
         "grammars/html_nested_custom_tag_native_regression_test.go",
         "grammars/html_parse_regression_test.go"
@@ -1534,10 +1536,11 @@
       "authoritative_owner": "materialization",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go",
         "parser_result_test/dispatcher_census_test.go",
         "grammars/ocaml_collapsed_native_regression_test.go"
       ],
-      "retirement_condition": "Satisfied: materialization retains the boolean/and_operator/or_operator anonymous token child natively; production, compact, forest, incremental, and C-oracle route receipts are exact for every registered witness.",
+      "retirement_condition": "Satisfied: materialization retains the boolean/and_operator/or_operator anonymous token child natively. A focused native test compares exact production, forced-compact, forest, and incremental trees. A focused cgo parity test covers the C oracle.",
       "route_coverage": {
         "production": "retired_exact_receipt",
         "compact": "retired_exact_receipt",
@@ -1546,8 +1549,9 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "PENDING-FILL-IN-ON-MERGE",
+      "retired_commit": "c79ee1ca40a332739374652beb02df9df5280e83",
       "receipt_refs": [
+        "cgo_harness/retired_dispatch_arm_parity_test.go",
         "parser_result_test/dispatcher_census_test.go",
         "grammars/ocaml_collapsed_native_regression_test.go"
       ]
@@ -1853,10 +1857,12 @@
       "authoritative_owner": "materialization",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go",
         "parser_result_test/dispatcher_census_test.go",
-        "grammars/ruby_module_bounds_native_regression_test.go"
+        "grammars/ruby_module_bounds_native_regression_test.go",
+        "parser_result_test/parser_result_ruby_module_bounds_test.go"
       ],
-      "retirement_condition": "Satisfied: materialization keeps module's end span bound to its own `end` keyword natively; production, compact, forest, incremental, and C-oracle route receipts are exact for every registered witness.",
+      "retirement_condition": "Satisfied: materialization keeps a module span bound to its own declaration. A focused native test compares exact production, forced-compact, forest, and incremental trees. A focused cgo parity test covers the C oracle.",
       "route_coverage": {
         "production": "retired_exact_receipt",
         "compact": "retired_exact_receipt",
@@ -1865,10 +1871,12 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "PENDING-FILL-IN-ON-MERGE",
+      "retired_commit": "c79ee1ca40a332739374652beb02df9df5280e83",
       "receipt_refs": [
+        "cgo_harness/retired_dispatch_arm_parity_test.go",
         "parser_result_test/dispatcher_census_test.go",
-        "grammars/ruby_module_bounds_native_regression_test.go"
+        "grammars/ruby_module_bounds_native_regression_test.go",
+        "parser_result_test/parser_result_ruby_module_bounds_test.go"
       ]
     },
     {

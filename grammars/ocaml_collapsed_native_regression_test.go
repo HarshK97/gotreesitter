@@ -31,8 +31,10 @@ func TestOCamlCollapsedNamedLeafChildrenNativeRetiredDispatchArm(t *testing.T) {
 	}{
 		{"boolean_true", "let x = true\n", "boolean", "true"},
 		{"boolean_false", "let x = false\n", "boolean", "false"},
-		{"and_operator", "let x = a && b\n", "and_operator", "&&"},
-		{"or_operator", "let x = a || b\n", "or_operator", "||"},
+		{"and_operator_ampersand", "let x = a & b\n", "and_operator", "&"},
+		{"and_operator_double_ampersand", "let x = a && b\n", "and_operator", "&&"},
+		{"or_operator_keyword", "let x = a or b\n", "or_operator", "or"},
+		{"or_operator_double_bar", "let x = a || b\n", "or_operator", "||"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -57,5 +59,25 @@ func TestOCamlCollapsedNamedLeafChildrenNativeRetiredDispatchArm(t *testing.T) {
 				t.Fatalf("%s child = %v, want anonymous %q", tc.nodeType, child, tc.token)
 			}
 		})
+	}
+}
+
+func TestOCamlCollapsedNamedLeafChildrenRetiredDispatchArmRoutes(t *testing.T) {
+	lang := OcamlLanguage()
+	receipts := retiredDispatchRouteReceipts(t, lang, []byte("let x = a && b"))
+	for _, receipt := range receipts {
+		node := findFirstNamedDescendantWhere(
+			receipt.tree.RootNode(),
+			lang,
+			"and_operator",
+			func(*ts.Node) bool { return true },
+		)
+		if node == nil {
+			t.Fatalf("%s route is missing and_operator", receipt.name)
+		}
+		child := node.Child(0)
+		if node.ChildCount() != 1 || child == nil || child.Type(lang) != "&&" || child.IsNamed() {
+			t.Fatalf("%s route did not retain the anonymous && child", receipt.name)
+		}
 	}
 }
