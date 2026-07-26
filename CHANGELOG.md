@@ -9,6 +9,14 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- The no-live-action re-lex no longer checks the grammar's name. This recovery
+  step re-lexes the lookahead when no live stack has any parse action for it,
+  and it was gated to JavaScript. The condition it guards is grammar
+  independent: `noLiveStackCanAcceptLookahead` already proves that no live stack
+  can consume the token, so re-lexing cannot take a token another version was
+  going to use, whatever the grammar. Every grammar now gets the same recovery
+  step. This retires one per-language gate from the parser core.
+
 - Large GLR parses allocate far less. Two hot-path buffers grew without
   amortization or reuse:
 

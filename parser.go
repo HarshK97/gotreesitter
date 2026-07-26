@@ -5577,7 +5577,12 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					return ns
 				}
 				sameState := parseStacksShareState(stacks, currentState)
-				canRelexNoLiveAction := !sameState && p.language != nil && p.language.Name == "javascript" && p.noLiveStackCanAcceptLookahead(stacks, tok)
+				// Retirement of a per-language patch: this relex was gated to
+				// javascript by name, but the condition it guards is grammar
+				// independent. noLiveStackCanAcceptLookahead already proves no live
+				// stack has an action for the lookahead, so re-lexing cannot steal a
+				// token another version was going to consume, whatever the grammar.
+				canRelexNoLiveAction := !sameState && p.language != nil && p.noLiveStackCanAcceptLookahead(stacks, tok)
 				if tok.Symbol == errorSymbol && tok.StartByte != tok.EndByte && p.errorCostCompetitionEnabled() {
 					// Faithful C recovery port: an unlexable-run lookahead has
 					// no table actions in C either; the version pauses and the
