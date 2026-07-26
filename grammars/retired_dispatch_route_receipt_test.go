@@ -8,8 +8,9 @@ import (
 )
 
 type retiredDispatchRouteReceipt struct {
-	name string
-	tree *gotreesitter.Tree
+	name               string
+	tree               *gotreesitter.Tree
+	incrementalProfile gotreesitter.IncrementalParseProfile
 }
 
 func retiredDispatchRouteReceipts(
@@ -79,7 +80,7 @@ func retiredDispatchRouteReceipts(
 		OldEndPoint: endPoint,
 		NewEndPoint: gotreesitter.Point{Row: endPoint.Row + 1},
 	})
-	incremental, _, err := oldParser.ParseIncrementalProfiled(source, oldTree)
+	incremental, incrementalProfile, err := oldParser.ParseIncrementalProfiled(source, oldTree)
 	if err != nil {
 		t.Fatalf("incremental parse failed: %v", err)
 	}
@@ -89,7 +90,7 @@ func retiredDispatchRouteReceipts(
 		{name: "production", tree: production},
 		{name: "compact", tree: compact},
 		{name: "forest", tree: forest},
-		{name: "incremental", tree: incremental},
+		{name: "incremental", tree: incremental, incrementalProfile: incrementalProfile},
 	}
 	want, err := benchfixtures.InspectGoTree(production.RootNode(), lang)
 	if err != nil {

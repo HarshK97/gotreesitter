@@ -5,7 +5,7 @@
     "dispatcher_arms": 75,
     "dispatcher_languages": 82,
     "dispatcher_predicates": 1,
-    "generic_passes": 1,
+    "generic_passes": 0,
     "post_finalization_arms": 2,
     "post_finalization_languages": 2
   },
@@ -2325,21 +2325,32 @@
       "languages": [
         "*"
       ],
-      "purpose": "Apply generic terminal-leaf, alias-target, stop-reason, and error-summary compatibility.",
+      "purpose": "Historical: applied generic terminal-leaf, alias-target, stop-reason, and error-summary compatibility. Retired after reduction and alias materialization produced the terminal shape natively across every registered route.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "parser_result_terminal_leaf_test.go"
+        "cgo_harness/terminal_leaf_native_parity_test.go",
+        "grammars/terminal_leaf_native_regression_test.go",
+        "parser_collapsed_child_policy_test.go",
+        "parser_result_test/dispatcher_census_test.go",
+        "parser_retry_summary_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: materialization emits the same tree natively for every registered witness, and all five route receipts are exact.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "31bc9f1ed88bc930d22d0c2eaedc84195604cce1",
+      "receipt_refs": [
+        "cgo_harness/terminal_leaf_native_parity_test.go",
+        "grammars/terminal_leaf_native_regression_test.go",
+        "parser_collapsed_child_policy_test.go",
+        "parser_result_test/dispatcher_census_test.go",
+        "parser_retry_summary_test.go"
+      ]
     },
     {
       "id": "generic.collapsed-named-leaf",

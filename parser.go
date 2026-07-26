@@ -328,7 +328,6 @@ type Parser struct {
 	reduceChainHintByState       []int
 	reduceAliasSeq               [][]Symbol
 	aliasTargetSymbol            []bool
-	visibleAliasTargetSymbol     []bool
 	keepSameNamedAnonChildSymbol []bool
 	sharedAnonymousTokenSymbol   []bool
 	reduceHasFields              []bool
@@ -1494,7 +1493,6 @@ func NewParser(lang *Language) *Parser {
 		p.reduceChainHintByState = buildReduceChainHintIndex(p.reduceChainHints)
 		p.reduceAliasSeq = buildReduceAliasSequences(lang)
 		p.aliasTargetSymbol = buildAliasTargetSymbols(lang)
-		p.visibleAliasTargetSymbol = buildVisibleAliasTargetSymbols(lang)
 		p.keepSameNamedAnonChildSymbol = buildKeepSameNamedAnonChildSymbols(lang)
 		p.sharedAnonymousTokenSymbol = buildSharedAnonymousTokenSymbols(lang)
 		p.reduceHasFields = buildReduceFieldPresence(lang)

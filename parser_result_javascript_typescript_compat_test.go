@@ -304,22 +304,18 @@ func TestParserKeepsTypeScriptCompatibilityLazyUntilFirstPublicTreeRead(t *testi
 // sanity check used to call the PUBLIC tree.ParseRuntime() accessor as a
 // sanity check on the just-materialized tree. That accessor fires the tree's
 // one-shot deferred-compatibility finalizer (ensureResultCompatibility,
-// tree.go), which -- for a deferred-compat language -- writes the
-// normalization counters (NormalizationPasses and friends) into the runtime
-// record. A few lines later, setParseRuntime full-struct-replaced that same
-// record to install the final accepted stop reason, permanently erasing what
-// the finalizer had just written (the finalizer runs at most once). ini is a
-// deferred-compat language (shouldDeferResultCompatibility,
-// parser_result_root_build.go) that always defers, unconditionally, so it
-// needs no feature-flag gate to exercise this.
+// tree.go), which writes named normalization counters into the runtime record.
+// A few lines later, setParseRuntime full-struct-replaced that same record to
+// install the final accepted stop reason. This permanently erased the metrics
+// because the finalizer runs at most once. All generic passes are now retired.
+// This test enables the dispatcher census so INI records the intentional
+// dispatch.ini metric across the same publication boundary. INI always defers
+// compatibility, so it needs no compatibility feature flag.
 //
-// Two preconditions, verified directly rather than assumed:
+// Two preconditions are verified directly:
 //
-//  1. GOT_PARSE_PHASE_TIMING must be enabled for NormalizationPasses to be
-//     populated AT ALL -- ensureResultCompatibility only calls
-//     copyNormalizationStats on the phase-timing branch -- independent of
-//     this bug. Set here, matching
-//     TestDeferredResultCompatibilitySynchronizesConcurrentTreeReaders above.
+//  1. GTS_DISPATCHER_CENSUS must be enabled because no generic pass remains
+//     to supply a named metric. The census records dispatch.ini.
 //  2. DEFAULT admission settings are sufficient to route this parse through
 //     the compact engine: no SetAdmissionCandidateRoute override is used
 //     below. Confirmed with AdmissionCandidateCounters that a fresh default
@@ -332,7 +328,7 @@ func TestParserKeepsTypeScriptCompatibilityLazyUntilFirstPublicTreeRead(t *testi
 // tree.ParseRuntime() again instead of tree.rawParseRuntime()/rawParseStopReason())
 // reproduces the bug directly: NormalizationPasses goes back to nil below.
 func TestParseRuntimeNormalizationPassesSurvivesCompactPublicationForIni(t *testing.T) {
-	t.Setenv("GOT_PARSE_PHASE_TIMING", "1")
+	t.Setenv("GTS_DISPATCHER_CENSUS", "1")
 	ResetParseEnvConfigCacheForTests()
 	t.Cleanup(ResetParseEnvConfigCacheForTests)
 	resetAdmissionCandidateCounters()
@@ -372,8 +368,8 @@ func TestParseRuntimeNormalizationPassesSurvivesCompactPublicationForIni(t *test
 	if rt.StopReason != ParseStopAccepted {
 		t.Fatalf("StopReason = %s, want %s (%s)", rt.StopReason, ParseStopAccepted, rt.Summary())
 	}
-	if rt.NormalizationPasses == nil || len(*rt.NormalizationPasses) == 0 {
-		t.Fatal("NormalizationPasses is nil/empty after a real Parse() through the compact route: the phase0 runtime-clobber regressed")
+	if !parseRuntimeHasNormalizationPass(rt, "dispatch.ini") {
+		t.Fatal("NormalizationPasses has no dispatch.ini metric after a real Parse() through the compact route: the phase0 runtime-clobber regressed")
 	}
 }
 

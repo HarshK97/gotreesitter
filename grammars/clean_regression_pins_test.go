@@ -186,8 +186,7 @@ func TestCleanRegressionPinGitRebasePick(t *testing.T) {
 // visible) as a child (ChildCount==1). Divergence class:
 // accepted_shape_materialization — a terminal-leaf on a NONTERMINAL wrapper.
 //
-// Root cause: normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary
-// (parser_result_terminal_leaf.go) only collapses parents that are visible
+// The retired terminal-leaf mutation only collapsed parents that were visible
 // terminals or visible alias targets.
 // `any_character` is a visible NAMED NONTERMINAL (sym 50) whose sole production
 // is the single anonymous literal '.', which C compiles as a terminal-equiv

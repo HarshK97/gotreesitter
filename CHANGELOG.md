@@ -84,6 +84,12 @@ for tags and release notes while still in `0.x`.
 
 ### Removed
 
+- **The generic terminal-leaf tree mutation.** Reduction and alias
+  materialization now own the terminal shape. Production, compact, forest,
+  incremental, scanner-aware corpus, and locked Go C-oracle receipts find no
+  retired shape. The exact retry error summary and stop polling remain as a
+  read-only full-tree walk.
+
 - **Three dead per-language result-normalization dispatcher arms** (R2 of
   `docs/root-normalization-retirement.md`). The three are OCaml's collapsed
   named-leaf restoration, Ruby's top-level module bound shrink, and HTML's
@@ -210,10 +216,9 @@ for tags and release notes while still in `0.x`.
   parent/raw-child metadata identities; display-name or pair-level metadata
   matches do not admit arbitrary custom grammars. Focused adapted
   incremental/fresh witnesses require exact
-  deep-tree equality and zero safety-net rewrites. The generic pass remains
-  fail-closed for a quantified synthetic lost-identity residual whose live
-  construction provenance is still unknown; no language-specific normalizer
-  was added.
+  deep-tree equality and zero safety-net rewrites. A quantified synthetic
+  lost-identity residual remains unsupported because its live construction
+  provenance is unknown. No language-specific normalizer was added.
 
 ## [0.46.0] - 2026-07-21
 
