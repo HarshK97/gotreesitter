@@ -90,8 +90,6 @@ func normalizeReturnedTree(root *Node, source []byte, lang *Language) {
 		normalizeScalaTemplateBodyFunctionEnds(root, source, lang)
 		normalizeScalaCaseClauseEnds(root, source, lang)
 		normalizeRootEOFNewlineSpan(root, source, lang)
-	case "html":
-		normalizeHTMLReturnedTreeFixpointRetirementPending(root, source, lang)
 	}
 }
 

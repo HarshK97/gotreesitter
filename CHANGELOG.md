@@ -84,12 +84,11 @@ for tags and release notes while still in `0.x`.
 
 ### Removed
 
-- **The mutating HTML returned-tree range fixup.** Materialization now extends recovered
+- **The HTML returned-tree range fixup.** Materialization now extends recovered
   custom elements through each structural `_implicit_end_tag` child.
   Production, compact, forest, and incremental routes return the exact
   absolute ranges. The incremental route also proves nonzero old-tree reuse.
   The locked C reference parser returns the same recovered ranges and points.
-  A temporary inert HTML wrapper stays registered until this commit exists.
 
 - **The generic terminal-leaf tree mutation.** Reduction and alias
   materialization now own the terminal shape. Production, compact, forest,

@@ -19,10 +19,10 @@ The v1 registry freezes the current surface:
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
-- one retained post-finalization second-pass fixpoint with two switch arms
-  covering Scala and HTML.
+- one retained post-finalization second-pass fixpoint with one Scala switch
+  arm.
 
-That is 77 live registry entries and 7 retired entries. The registry covers
+That is 77 live registry entries and 8 retired entries. The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
 
@@ -30,8 +30,8 @@ R2 of `docs/root-normalization-retirement.md` retired three dispatcher arms:
 OCaml's collapsed named-leaf restoration, Ruby's top-level module bound
 shrink, and half of HTML's arm (the ERROR-root nested-custom-tag
 reconstruction). At that checkpoint, HTML's range function stayed live.
-R1 has now removed that mutator. Its inert wrapper remains registered until
-the retirement commit exists.
+R1 later retired that separate second-pass function. The registry keeps both
+retired mechanisms as distinct historical receipts.
 
 Each registry entry has a stable ID, functions and files, languages, purpose,
 authoritative owner, witnesses, a retirement condition, coverage fields for
@@ -130,17 +130,16 @@ exact against their C oracles. The generic trailing-extra pass is retired.
 
 ## The retained second pass
 
-`normalizePostFinalizationReturnedTree` runs a bounded second pass for Scala
-and a temporary inert HTML wrapper. Scala remains live because the first pass
-can expose information needed by later normalization.
+`normalizePostFinalizationReturnedTree` deliberately runs a bounded second
+pass for Scala. It remains live because the first pass can expose information
+needed by later normalization. Scala must emit its final annotations and spans
+in one pass before this arm can retire.
 
-The HTML mutator is removed. Materialization extends each recovered custom
-element through its structural `_implicit_end_tag` child. All native routes
-return the same absolute ranges and points. The incremental receipt proves
-nonzero old-tree reuse. The locked C parser returns the same ranges and points.
-
-The HTML wrapper does not mutate the tree. The next checkpoint removes it and
-records this commit as the retirement receipt.
+HTML no longer participates in this fixpoint. Materialization extends each
+recovered custom element through its structural `_implicit_end_tag` child.
+Production, compact, forest, and incremental routes return the same absolute
+ranges and points. The incremental receipt proves nonzero old-tree reuse.
+The locked C parser returns the same recovered ranges and points.
 
 JavaScript no longer participates in this fixpoint. Its canonical
 compatibility pipeline already extends `program` and recovery-root terminator
