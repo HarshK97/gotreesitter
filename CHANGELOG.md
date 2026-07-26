@@ -9,6 +9,28 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- A GLR stack that needs a different tokenization of the same bytes now gets
+  one. tree-sitter C lexes once per parse version, so two versions in different
+  states can receive different symbols for the same characters. This engine
+  lexes one token for every stack, which is cheaper and correct while all live
+  stacks accept that token. Where one stack's state required a different symbol,
+  that stack found no parse action, paused, and the condense step dropped it
+  because an unpaused rival was still alive. The rival then reached a dead end
+  and the whole file became one `ERROR` node. Scala shows the failure most
+  clearly, because `+`, `-`, `!` and `~` are its only prefix operators: in
+  `if (a) c + 2` the correct derivation needs `+` as the generic
+  `operator_identifier`, while the rival needs the dedicated `+` token that
+  exists so `prefix_expression` can spell unary plus. `while (a) c + 2` failed
+  the same way, and `if (a) c * 2` always worked because `*` is not a prefix
+  operator. The parser now re-lexes at the stack's own byte offset with the
+  stack's own lex mode before pausing it. It adopts the result only when the new
+  token covers the same byte span, which keeps every version at the same offset,
+  and only when the stack's state has a real action for the new symbol. The
+  re-lex reads the internal lexer only, so no external scanner state changes.
+  Clean parses are unaffected, because the probe runs only where a stack would
+  otherwise pause. Any grammar whose characters lex differently by state gains
+  the same protection.
+
 - Parse results no longer depend on garbage-collection timing. The soft
   per-parse memory budget stopped a parse when `runtime.MemStats.HeapAlloc` or
   `runtime.MemStats.Sys` grew past the budget. Both values cover the whole

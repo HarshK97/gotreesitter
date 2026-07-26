@@ -4504,3 +4504,97 @@ func (p *Parser) newRecoveryParentNodeInArena(arena *nodeArena, sym Symbol, name
 	}
 	return newParentNodeInArena(arena, sym, named, children, nil, productionID)
 }
+
+// relexTokenForStackLexState re-lexes the current lookahead using one GLR
+// stack's own lex mode.
+//
+// Background (issue #454 Scala investigation). tree-sitter C lexes once per
+// parse version, so two versions sitting in different states can legitimately
+// receive different tokenizations of the same bytes. This engine lexes once for
+// all stacks (see updateParserStateTokenSource), which is cheaper and correct
+// whenever every live stack accepts the shared token. It starves a stack when
+// the same bytes must lex as a different symbol in that stack's state.
+//
+// Scala is the witness. In `if (a) c + 2` the correct derivation reduces `(a)`
+// to _if_condition and then needs `+` as the grammar's generic
+// operator_identifier. The rival derivation, which treats `(a)` as a plain
+// expression, needs the dedicated `+` token that exists so prefix_expression
+// can spell unary plus. The shared lexer emits the dedicated `+`, the correct
+// stack finds no action for it, pauses, and the condense step drops it because
+// the rival is still unpaused. The rival then dead-ends and the whole file
+// becomes one ERROR. The C oracle parses the same input cleanly.
+//
+// This is not Scala-specific. Any grammar where one byte sequence lexes as
+// different symbols depending on parse state has the same exposure: `+ - ! ~`
+// as unary or binary, `/` as divide or regex start, `<` as comparison or type
+// bracket.
+//
+// The re-lex is deliberately narrow, so it cannot disturb the lockstep token
+// loop the rest of the engine relies on:
+//
+//   - It only runs where the stack would otherwise pause with no action, so a
+//     parse in which every stack accepts the shared token pays nothing.
+//   - It requires the re-lexed token to cover exactly the shared token's byte
+//     span. Same span means a stack that adopts it advances to the same offset
+//     as every stack that took the shared token, so the versions stay in
+//     lockstep and no caller has to reason about a ragged frontier.
+//   - It requires the stack's state to have a real action for the re-lexed
+//     symbol, so a failed probe leaves the existing pause path untouched.
+//   - It runs the internal DFA only. The external scanner is never re-entered,
+//     so no scanner state is mutated or needs restoring.
+func (p *Parser) relexTokenForStackLexState(source []byte, state StateID, tok Token) (Token, bool) {
+	lang := p.language
+	if lang == nil || len(lang.LexStates) == 0 || int(state) >= len(lang.LexModes) {
+		return tok, false
+	}
+	// Zero-width, missing, error-run and EOF lookaheads have no alternative
+	// tokenization to find; they are handled by the paths above the pause.
+	if tok.Symbol == 0 || tok.Symbol == errorSymbol || tok.Missing || tok.NoLookahead {
+		return tok, false
+	}
+	if tok.StartByte >= tok.EndByte || int(tok.StartByte) >= len(source) {
+		return tok, false
+	}
+	ls := lang.LexModes[state].LexStateIndex()
+	if ls == noLookaheadLexState || int(ls) >= len(lang.LexStates) {
+		return tok, false
+	}
+	probe := Lexer{
+		states:          lang.LexStates,
+		asciiTable:      lang.LexAsciiTable(),
+		source:          source,
+		pos:             int(tok.StartByte),
+		row:             tok.StartPoint.Row,
+		col:             tok.StartPoint.Column,
+		immediateTokens: lang.ImmediateTokens,
+		zeroWidthTokens: lang.ZeroWidthTokens,
+	}
+	relexed, ok := probe.scan(uint32(ls), probe.pos, probe.row, probe.col)
+	if !ok || relexed.Symbol == 0 || relexed.Symbol == tok.Symbol {
+		return tok, false
+	}
+	// Exact-span requirement: this is what keeps the shared-token loop in
+	// lockstep. A shorter or longer re-lex would leave this stack at a
+	// different byte offset than its siblings.
+	if relexed.StartByte != tok.StartByte || relexed.EndByte != tok.EndByte {
+		return tok, false
+	}
+	if !p.stateHasActionForSymbol(state, relexed.Symbol) {
+		return tok, false
+	}
+	return relexed, true
+}
+
+// stateHasActionForSymbol reports whether state carries at least one real parse
+// action for sym. It mirrors the action-lookup guard in the dispatch loop.
+func (p *Parser) stateHasActionForSymbol(state StateID, sym Symbol) bool {
+	if p.language == nil {
+		return false
+	}
+	parseActions := p.language.ParseActions
+	idx := p.lookupActionIndex(state, sym)
+	if idx == 0 || int(idx) >= len(parseActions) {
+		return false
+	}
+	return len(parseActions[idx].Actions) > 0
+}
