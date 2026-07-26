@@ -2,8 +2,8 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 78,
-    "dispatcher_languages": 85,
+    "dispatcher_arms": 75,
+    "dispatcher_languages": 82,
     "dispatcher_predicates": 1,
     "generic_passes": 1,
     "post_finalization_arms": 2,
@@ -1018,21 +1018,31 @@
       "languages": [
         "html"
       ],
-      "purpose": "Reconcile HTML recovery and nested-tag returned-tree shape.",
+      "purpose": "Historical: reconciled HTML ERROR-root recovery for deeply nested unclosed custom tags (normalizeHTMLRecoveredNestedCustomTags) alongside the still-live nested-custom-tag range fixup. Retired after a real-corpus census (parser_result_test's dispatcher census, R2) found zero rewrites and adversarial real-parse probing of mismatched and auto-closing nested custom-tag HTML never reproduced the flat unwrapped start_tag-sibling ERROR shape the reconstruction targeted. normalizeHTMLRecoveredNestedCustomTagRanges and its shared helpers (htmlExtendLeadingElementChain, htmlElementIsUnclosedChain) remain in parser_result_html.go: they are also called directly from the separate fixpoint.returned-tree-second-pass mechanism (R1 of the retirement plan), which this retirement does not touch.",
       "authoritative_owner": "scheduler_action_semantics",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "cgo_harness/parity_cgo_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go",
+        "parser_result_test/dispatcher_census_test.go",
+        "grammars/html_nested_custom_tag_native_regression_test.go",
+        "grammars/html_parse_regression_test.go"
       ],
-      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: the reduce engine no longer produces the flat ERROR-root run of bare start_tag siblings normalizeHTMLRecoveredNestedCustomTags reconstructed. A focused native test compares exact production, forced-compact, forest, and incremental trees. The focused C-oracle test records the pre-existing document-child divergence for the malformed witness and exact parity for the auto-closing witness.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_known_divergence_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "c79ee1ca40a332739374652beb02df9df5280e83",
+      "receipt_refs": [
+        "cgo_harness/retired_dispatch_arm_parity_test.go",
+        "parser_result_test/dispatcher_census_test.go",
+        "grammars/html_nested_custom_tag_native_regression_test.go",
+        "grammars/html_parse_regression_test.go"
+      ]
     },
     {
       "id": "dispatch.http",
@@ -1522,21 +1532,29 @@
       "languages": [
         "ocaml"
       ],
-      "purpose": "Reconcile OCaml returned-tree fields and spans.",
+      "purpose": "Historical: restored a missing anonymous token child under childless boolean/and_operator/or_operator collapsed-named-leaf nodes. Retired after a real-corpus census found zero rewrites and direct probing across 20+ real-shaped OCaml constructs (booleans in records, lists, tuples, classes, modules, match arms, while loops) showed the reduce engine already keeps these single-token wrapper children, the same shouldKeepVisibleAnonymousTokenChild invariant already proven for Elixir's boolean node (elixir_boolean_parse_regression_test.go) and for the retired generic.collapsed-named-leaf pass.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "cgo_harness/parity_cgo_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go",
+        "parser_result_test/dispatcher_census_test.go",
+        "grammars/ocaml_collapsed_native_regression_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: materialization retains the boolean/and_operator/or_operator anonymous token child natively. A focused native test compares exact production, forced-compact, forest, and incremental trees. A focused cgo parity test covers the C oracle.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "c79ee1ca40a332739374652beb02df9df5280e83",
+      "receipt_refs": [
+        "cgo_harness/retired_dispatch_arm_parity_test.go",
+        "parser_result_test/dispatcher_census_test.go",
+        "grammars/ocaml_collapsed_native_regression_test.go"
+      ]
     },
     {
       "id": "dispatch.pascal",
@@ -1835,21 +1853,31 @@
       "languages": [
         "ruby"
       ],
-      "purpose": "Reconcile Ruby top-level module bounds.",
+      "purpose": "Historical: shrank a top-level module node's end span back from a trailing-trivia boundary it shared with the enclosing program root. Retired after a real-corpus census (both censused real Ruby files carry top-level module blocks) found zero rewrites and direct probing across 8 trailing-trivia, nested-module, and multi-sibling shapes showed root finalization already keeps module's own span bound to its `end` keyword natively, never sharing the outer root's trailing-trivia boundary.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "cgo_harness/parity_cgo_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go",
+        "parser_result_test/dispatcher_census_test.go",
+        "grammars/ruby_module_bounds_native_regression_test.go",
+        "parser_result_test/parser_result_ruby_module_bounds_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: materialization keeps a module span bound to its own declaration. A focused native test compares exact production, forced-compact, forest, and incremental trees. A focused cgo parity test covers the C oracle.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "c79ee1ca40a332739374652beb02df9df5280e83",
+      "receipt_refs": [
+        "cgo_harness/retired_dispatch_arm_parity_test.go",
+        "parser_result_test/dispatcher_census_test.go",
+        "grammars/ruby_module_bounds_native_regression_test.go",
+        "parser_result_test/parser_result_ruby_module_bounds_test.go"
+      ]
     },
     {
       "id": "dispatch.scala",

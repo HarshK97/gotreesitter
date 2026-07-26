@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +16,8 @@ import (
 )
 
 const resultCompatOwnershipRegistryPath = "testdata/result_compat_ownership_v1.json"
+
+var resultCompatRetiredCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type resultCompatOwnershipRegistry struct {
 	Schema          string                       `json:"schema"`
@@ -115,8 +118,11 @@ func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 				t.Errorf("%s is live but has no functions", entry.ID)
 			}
 		case "retired":
-			if entry.RetiredCommit == "" || len(entry.ReceiptRefs) == 0 {
-				t.Errorf("%s is retired but lacks retired_commit or receipt_refs", entry.ID)
+			if !resultCompatRetiredCommitPattern.MatchString(entry.RetiredCommit) {
+				t.Errorf("%s retired_commit = %q, want a lowercase 40-character commit hash", entry.ID, entry.RetiredCommit)
+			}
+			if len(entry.ReceiptRefs) == 0 {
+				t.Errorf("%s is retired but lacks receipt_refs", entry.ID)
 			}
 		default:
 			t.Errorf("%s has unsupported status %q", entry.ID, entry.Status)
@@ -187,7 +193,12 @@ func assertOwnershipStatusAndRoutes(t *testing.T, entry resultCompatOwnershipEnt
 			Compact:     "retired_exact_receipt",
 			Forest:      "retired_exact_receipt",
 			Incremental: "retired_exact_receipt",
-			COracle:     "retired_exact_receipt",
+			COracle:     entry.RouteCoverage.COracle,
+		}
+		switch entry.RouteCoverage.COracle {
+		case "retired_exact_receipt", "retired_known_divergence_receipt":
+		default:
+			t.Errorf("%s has unsupported retired C-oracle receipt %q", entry.ID, entry.RouteCoverage.COracle)
 		}
 	} else {
 		switch entry.Kind {

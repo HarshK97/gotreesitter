@@ -95,7 +95,9 @@ arms.
 
 ### R2 — census and remove inert language passes
 
-Status: active after R1's first PR.
+Status: the first retirement PR is prepared; eight more dispatcher arms
+censused zero and stayed live pending a wider corpus or a narrower sub-pass
+split.
 
 The mandatory shape is census before migration. Historical audits already
 found that table or engine fixes can leave old normalizers behind.
@@ -117,6 +119,44 @@ release gate.
 
 Exit: no compatibility pass is retained solely because an old fixture calls
 it directly.
+
+First retirement PR: eleven dispatcher arms censused zero rewrites over the
+real corpus. The eleven were bash, elixir, html, julia, kotlin, ocaml, php,
+ruby, rust, swift, and yaml. A per-language re-verification then added
+native-parse regression tests. These tests check the engine's output
+directly; they do not just repeat the corpus census.
+
+The re-verification found three arms genuinely dead:
+
+- OCaml's collapsed named-leaf restoration.
+- Ruby's top-level module bound shrink.
+- Half of HTML's arm: the ERROR-root nested-custom-tag reconstruction. The
+  shared nested-custom-tag range fixup stays live. The separate
+  returned-tree second pass still calls it.
+
+This PR retires those three arms.
+
+The re-verification kept the other eight arms live. For each of the eight, a
+registered witness or a new native-parse regression test still fires on a
+real construct. The thin corpus sample happened to miss that construct:
+
+- Rust: recovered function items and token-tree recovery.
+- Julia: return-range, macro-juxtaposition, and matrix-subscript repairs.
+- Kotlin: the generic-call-with-trailing-lambda repair. This is a common
+  Gradle DSL shape.
+- PHP: list-destructuring retyping.
+- Swift: ternary-expression recovery.
+- YAML: malformed-flow-collection recovery.
+- Bash: multi-assignment splitting, for example `a=1 b=2 c=3`. A first,
+  single-line probe missed this; a second, adversarial probe caught it.
+- Elixir: the hidden-newline-before-comment filter. A first probe reused
+  source strings the normalizer was still active for, so it missed the
+  construct too; a later native-parse regression test caught it.
+
+This is the exact failure mode item 2 above warns about. A zero rewrite
+count over a three-file corpus is a lead, not proof. Only a native-parse
+regression test — run after removing the candidate code, not before — can
+confirm dead code.
 
 ### R3 — move materialization invariants upstream
 
@@ -174,6 +214,7 @@ there.
 | --- | --- | ---: | ---: | --- |
 | Generic trailing-extra pass | pending merge | 2 generic passes | 1 | RST and Comment production/compact/forest/incremental witnesses plus isolated C-oracle parity |
 | JavaScript returned-tree arm | pending merge | 3 fixpoint arms | 2 | pre-second-pass root-span witness, JavaScript real-corpus parity, and 30/30 valid incremental/fresh edits |
+| R2 dead dispatcher arms (OCaml, Ruby, half of HTML) | pending merge | 78 dispatcher arms | 75 | real-corpus census, native-parse regression tests per language, `TestResultCompatibilityOwnershipRegistry` |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.

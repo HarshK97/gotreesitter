@@ -179,8 +179,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.haskell", func() { normalizeHaskellCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "hcl":
 		dispatcherArmCensus(ctx, "dispatch.hcl", func() { normalizeHCLConfigFileRoot(ctx.root, ctx.source, ctx.lang) })
-	case "html":
-		dispatcherArmCensus(ctx, "dispatch.html", func() { normalizeHTMLCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "http":
 		dispatcherArmCensus(ctx, "dispatch.http", func() { normalizeHTTPCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "hurl":
@@ -223,8 +221,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.nginx", func() { normalizeNginxAttributeLineBreaks(ctx.root, ctx.source, ctx.lang) })
 	case "ninja":
 		dispatcherArmCensus(ctx, "dispatch.ninja", func() { normalizeNinjaCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "ocaml":
-		dispatcherArmCensus(ctx, "dispatch.ocaml", func() { normalizeOCamlCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "pascal":
 		dispatcherArmCensus(ctx, "dispatch.pascal", func() {
 			normalizePascalTopLevelProgramEnd(ctx.root, ctx.source, ctx.lang)
@@ -254,8 +250,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.robot", func() { normalizeRobotCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "rust":
 		dispatcherArmCensus(ctx, "dispatch.rust", func() { normalizeRustCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
-	case "ruby":
-		dispatcherArmCensus(ctx, "dispatch.ruby", func() { normalizeRubyTopLevelModuleBounds(ctx.root, ctx.source, ctx.lang) })
 	case "scala":
 		dispatcherArmCensus(ctx, "dispatch.scala", func() { normalizeScalaCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "scheme":

@@ -40,6 +40,7 @@ type dispatcherOwnershipEntry struct {
 	ID        string   `json:"id"`
 	Kind      string   `json:"kind"`
 	Languages []string `json:"languages"`
+	Status    string   `json:"status"`
 }
 
 type dispatcherOwnershipRegistry struct {
@@ -66,6 +67,9 @@ func dispatcherArmLanguages(t *testing.T) map[string]string {
 	langToArm := map[string]string{}
 	for _, e := range reg.Entries {
 		if e.Kind != "dispatcher_arm" && e.Kind != "dispatcher_predicate" {
+			continue
+		}
+		if e.Status == "retired" {
 			continue
 		}
 		for _, lang := range e.Languages {
