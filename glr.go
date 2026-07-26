@@ -7,8 +7,20 @@ import (
 	"unsafe"
 )
 
+// maxPooledGSSVisitedEntries bounds what gssCanReachVisitedPool will retain.
+// A pathological parse can grow the fallback set to millions of entries; handing
+// that back to the pool would keep the whole allocation alive across GC cycles
+// for the rest of the process.
+const maxPooledGSSVisitedEntries = 1 << 16
+
 // gssCanReachVisitedPool recycles the fallback visited set used by
 // gssNodeCanReach when a link graph outgrows its 64-entry local array.
+//
+// CLEARING CONTRACT: the map keys are *gssNode. A pooled map is reachable from
+// the pool for at least one GC cycle, so returning it populated would keep every
+// node it references alive and defeat collection of the whole GSS graph long
+// after the parse that built it is gone. Entries are therefore released before
+// the map goes back, and oversized maps are dropped instead of pooled.
 //
 // The map used to be allocated per call. That is fine when the fallback is
 // rare, which is what the original comment assumed, but on grammars whose GSS
@@ -19,6 +31,16 @@ import (
 // allocating a fresh one per reachability query.
 var gssCanReachVisitedPool = sync.Pool{
 	New: func() any { return make(map[*gssNode]bool, 256) },
+}
+
+// resetGSSCanReachVisitedMapForPool removes node references before pool release.
+// It reports false when the map should be dropped instead.
+func resetGSSCanReachVisitedMapForPool(visited map[*gssNode]bool) bool {
+	if visited == nil || len(visited) > maxPooledGSSVisitedEntries {
+		return false
+	}
+	clear(visited)
+	return true
 }
 
 // glrStack is one version of the parse stack in a GLR parser.
@@ -3369,7 +3391,6 @@ func gssNodeCanReach(from, target *gssNode) bool {
 		}
 		if len(visited) == cap(visited) && len(visited) >= len(visitedLocal) {
 			visitedMap = gssCanReachVisitedPool.Get().(map[*gssNode]bool)
-			clear(visitedMap)
 			for _, v := range visited {
 				visitedMap[v] = true
 			}
@@ -3382,10 +3403,15 @@ func gssNodeCanReach(from, target *gssNode) bool {
 	// after markVisited may have promoted to the map; the fast path that never
 	// promotes leaves visitedMap nil and does no pool work at all.
 	releaseVisited := func() {
-		if visitedMap != nil {
-			gssCanReachVisitedPool.Put(visitedMap)
-			visitedMap = nil
+		if visitedMap == nil {
+			return
 		}
+		// Drop rather than pool a map that grew pathologically large; pooling it
+		// would retain its whole bucket array process-wide.
+		if resetGSSCanReachVisitedMapForPool(visitedMap) {
+			gssCanReachVisitedPool.Put(visitedMap)
+		}
+		visitedMap = nil
 	}
 	stack = append(stack, from)
 	for len(stack) > 0 {

@@ -2089,8 +2089,20 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 	if tree == nil || tree.root == nil {
 		return rejectTree(errors.New("parser-core phase zero: accepted compact derivation materialized no root"))
 	}
-	if runtime := tree.ParseRuntime(); runtime.StopReason != ParseStopNone || runtime.Truncated || runtime.TokenSourceEOFEarly {
-		return rejectTree(fmt.Errorf("parser-core phase zero: accepted-tree materialization returned an incomplete runtime: %s", runtime.Summary()))
+	// Use the raw (parser-owned) runtime record for this internal sanity check
+	// instead of the public ParseRuntime() accessor. ParseRuntime() fires the
+	// tree's one-shot deferred-compatibility finalizer (ensureResultCompatibility,
+	// which runs for deferred-compat languages such as typescript/tsx/ini via
+	// shouldDeferResultCompatibility). Firing it here would be premature: a few
+	// lines below, setParseRuntime full-struct-replaces the runtime record, which
+	// would permanently erase the normalization counters the finalizer just wrote
+	// (NormalizationPasses and friends), since the finalizer only ever runs once.
+	// rawParseRuntime does not normalize StopReason the way the public accessor
+	// does, so compare with rawParseStopReason, which treats an empty raw
+	// StopReason the same as ParseStopNone.
+	rawRuntime := tree.rawParseRuntime()
+	if reason := tree.rawParseStopReason(); reason != ParseStopNone || rawRuntime.Truncated || rawRuntime.TokenSourceEOFEarly {
+		return rejectTree(fmt.Errorf("parser-core phase zero: accepted-tree materialization returned an incomplete runtime: %s", rawRuntime.Summary()))
 	}
 	if err := poll(); err != nil {
 		return rejectTree(err)

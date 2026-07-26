@@ -3929,6 +3929,22 @@ func TestGSSNodesCanMergeRejectsZeroWidthAncestorDescendantPackedMerge(t *testin
 	}
 }
 
+// TestResetGSSCanReachVisitedMapForPoolClearsExactMap proves the map clearing
+// contract without depending on sync.Pool to return a specific item.
+func TestResetGSSCanReachVisitedMapForPoolClearsExactMap(t *testing.T) {
+	visited := make(map[*gssNode]bool, 100)
+	for i := 0; i < 100; i++ {
+		visited[&gssNode{depth: uint32(i + 1)}] = true
+	}
+
+	if !resetGSSCanReachVisitedMapForPool(visited) {
+		t.Fatal("ordinary visited map was rejected from the pool")
+	}
+	if len(visited) != 0 {
+		t.Fatalf("released visited map retained %d node pointer(s)", len(visited))
+	}
+}
+
 func TestMergeStacksGeneralFaithfulGSSUnionPreservesMoreThanFourStacks(t *testing.T) {
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = true

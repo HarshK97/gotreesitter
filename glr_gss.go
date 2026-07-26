@@ -6,8 +6,18 @@ import (
 	"unsafe"
 )
 
+// maxPooledGSSHashWalkCap bounds what gssNodeHashPendingPool will retain, so a
+// single very deep chain cannot park a huge backing array in the pool for the
+// rest of the process.
+const maxPooledGSSHashWalkCap = 1 << 16
+
 // gssNodeHashPendingPool recycles the walk buffer gssNodeHash uses when an
 // unhashed chain is longer than its 32-entry inline array.
+//
+// CLEARING CONTRACT: the buffer holds *gssNode pointers. A pooled slice stays
+// reachable from the pool for at least one GC cycle, so returning it with live
+// pointers still in its backing array would keep those nodes, and everything
+// they reach, uncollectable. The contents are cleared before it goes back.
 //
 // The buffer used to grow on the heap from scratch on every such call. A chain
 // only needs hashing until it reaches an already-hashed node, so this is cheap
@@ -19,6 +29,17 @@ var gssNodeHashPendingPool = sync.Pool{
 		s := make([]*gssNode, 0, 256)
 		return &s
 	},
+}
+
+// resetGSSNodeHashPendingForPool removes node references before pool release.
+// It reports false when the buffer should be dropped instead.
+func resetGSSNodeHashPendingForPool(pending *[]*gssNode) bool {
+	if pending == nil || cap(*pending) > maxPooledGSSHashWalkCap {
+		return false
+	}
+	clear(*pending)
+	*pending = (*pending)[:0]
+	return true
 }
 
 const (
@@ -109,7 +130,7 @@ func (n *gssNode) appendExtraLink(link gssMainLink) {
 		n.extraLinkCount++
 		workCountRecordGraphLinkAddition()
 		workCountRecordAlternatePredecessorLinkAppended() // work-count-assembly: alternate predecessor append-reuse seam
-		workCountRecordGSSMutation() // work-count-assembly: GSS mutation append-reuse seam
+		workCountRecordGSSMutation()                      // work-count-assembly: GSS mutation append-reuse seam
 		return
 	}
 	newCapacity := 1
@@ -129,7 +150,7 @@ func (n *gssNode) appendExtraLink(link gssMainLink) {
 	n.extraLinkCap = uint8(newCapacity)
 	workCountRecordGraphLinkAddition()
 	workCountRecordAlternatePredecessorLinkAppended() // work-count-assembly: alternate predecessor append-grow seam
-	workCountRecordGSSMutation() // work-count-assembly: GSS mutation append-grow seam
+	workCountRecordGSSMutation()                      // work-count-assembly: GSS mutation append-grow seam
 }
 
 // gssStack is a shared-prefix stack foundation for future GLR work.
@@ -412,7 +433,9 @@ func gssNodeHash(n *gssNode) uint64 {
 	// Released explicitly rather than with defer: this is a hot path and the
 	// function has a single exit once the walk buffer exists.
 	if pooled != nil {
-		gssNodeHashPendingPool.Put(pooled)
+		if resetGSSNodeHashPendingForPool(pooled) {
+			gssNodeHashPendingPool.Put(pooled)
+		}
 	}
 	return n.hash
 }

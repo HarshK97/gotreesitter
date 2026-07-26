@@ -3,6 +3,7 @@ package gotreesitter
 import (
 	"bytes"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -294,6 +295,85 @@ func TestParserKeepsTypeScriptCompatibilityLazyUntilFirstPublicTreeRead(t *testi
 	_ = tree.RootNode()
 	if got := tree.ParseRuntime().NormalizationPassesRun; got != first.NormalizationPassesRun {
 		t.Fatalf("deferred compatibility ran more than once: first=%d after=%d", first.NormalizationPassesRun, got)
+	}
+}
+
+// TestParseRuntimeNormalizationPassesSurvivesCompactPublicationForIni proves
+// the phase0 runtime-clobber fix in materializeDiagnosticParserCoreAcceptedSelection
+// (parsercore_phase0_driver.go). The compact/phase0 admission route's internal
+// sanity check used to call the PUBLIC tree.ParseRuntime() accessor as a
+// sanity check on the just-materialized tree. That accessor fires the tree's
+// one-shot deferred-compatibility finalizer (ensureResultCompatibility,
+// tree.go), which -- for a deferred-compat language -- writes the
+// normalization counters (NormalizationPasses and friends) into the runtime
+// record. A few lines later, setParseRuntime full-struct-replaced that same
+// record to install the final accepted stop reason, permanently erasing what
+// the finalizer had just written (the finalizer runs at most once). ini is a
+// deferred-compat language (shouldDeferResultCompatibility,
+// parser_result_root_build.go) that always defers, unconditionally, so it
+// needs no feature-flag gate to exercise this.
+//
+// Two preconditions, verified directly rather than assumed:
+//
+//  1. GOT_PARSE_PHASE_TIMING must be enabled for NormalizationPasses to be
+//     populated AT ALL -- ensureResultCompatibility only calls
+//     copyNormalizationStats on the phase-timing branch -- independent of
+//     this bug. Set here, matching
+//     TestDeferredResultCompatibilitySynchronizesConcurrentTreeReaders above.
+//  2. DEFAULT admission settings are sufficient to route this parse through
+//     the compact engine: no SetAdmissionCandidateRoute override is used
+//     below. Confirmed with AdmissionCandidateCounters that a fresh default
+//     Parser already reports routed=1, fallback=0 for this ~23-byte ini
+//     source, because the compact candidate route has been the process
+//     default since Phase-3 admission and this input is far under the 64 KiB
+//     production-memory-budget size-gate floor that would otherwise decline it.
+//
+// Reverting the fix (materializeDiagnosticParserCoreAcceptedSelection calling
+// tree.ParseRuntime() again instead of tree.rawParseRuntime()/rawParseStopReason())
+// reproduces the bug directly: NormalizationPasses goes back to nil below.
+func TestParseRuntimeNormalizationPassesSurvivesCompactPublicationForIni(t *testing.T) {
+	t.Setenv("GOT_PARSE_PHASE_TIMING", "1")
+	ResetParseEnvConfigCacheForTests()
+	t.Cleanup(ResetParseEnvConfigCacheForTests)
+	resetAdmissionCandidateCounters()
+
+	blob, err := os.ReadFile("grammars/grammar_blobs/ini.bin")
+	if err != nil {
+		t.Skipf("ini grammar blob unavailable: %v", err)
+	}
+	lang, err := LoadLanguage(blob)
+	if err != nil {
+		t.Fatalf("load ini grammar: %v", err)
+	}
+
+	parser := NewParser(lang)
+	tree, err := parser.Parse([]byte("[section]\nkey = value\n"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+
+	if routed, _ := AdmissionCandidateCounters(); routed == 0 {
+		// Mirrors TestAdmissionCandidateMemoryBudgetContractPreserved
+		// (admission_switch_test.go): in the emergency opt-out build
+		// (-tags gts_no_parsercorephase0) the compact engine is compiled out,
+		// so the routed counter cannot move and this test cannot exercise the
+		// route it claims to. Skip rather than fail in that configuration.
+		if reason := AdmissionCandidateLastFallbackReason(); strings.Contains(reason, "compiled out") {
+			t.Skip("compact candidate route compiled out (-tags gts_no_parsercorephase0); cannot exercise the phase0 route")
+		}
+		t.Fatalf("default admission settings did not route this small, clean ini source through the compact engine; routed=%d", routed)
+	}
+	if !tree.compactMaterialized {
+		t.Fatal("expected the compact/phase0 route to have materialized this tree")
+	}
+
+	rt := tree.ParseRuntime()
+	if rt.StopReason != ParseStopAccepted {
+		t.Fatalf("StopReason = %s, want %s (%s)", rt.StopReason, ParseStopAccepted, rt.Summary())
+	}
+	if rt.NormalizationPasses == nil || len(*rt.NormalizationPasses) == 0 {
+		t.Fatal("NormalizationPasses is nil/empty after a real Parse() through the compact route: the phase0 runtime-clobber regressed")
 	}
 }
 

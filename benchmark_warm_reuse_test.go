@@ -1,8 +1,10 @@
 package gotreesitter_test
 
 import (
+	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 
@@ -107,6 +109,15 @@ func BenchmarkSelfParseWarmReuse(b *testing.B) {
 //
 // This test is intentionally strict: 30 MB is well above the expected ~12 MB
 // but far below the ~545 MB that stale node-pointer retention can cause.
+//
+// NOT COVERAGE FOR THE GSS FALLBACK POOLS. This test parses parser_test.go, a
+// conflict-free Go file, so the parse never forks and never calls
+// gssNodeCanReach or gssNodeHash at all (0.0% coverage of both, verified with
+// -covermode=count). It was previously miscited as justification for the
+// gssCanReachVisitedPool / gssNodeHashPendingPool clearing fix (glr.go,
+// glr_gss.go); it is not. TestGSSNodeCanReachPooledFallbackRealCSharpMergeHeavyAmbiguity
+// and TestGSSNodeHashPooledFallbackRealPHPTransientErrorChain below are the
+// tests that actually exercise those two pooled fallback paths.
 func TestArenaGCRetentionAfterRelease(t *testing.T) {
 	gotreesitter.DrainArenaPools()
 	t.Cleanup(gotreesitter.DrainArenaPools)
@@ -138,6 +149,133 @@ func TestArenaGCRetentionAfterRelease(t *testing.T) {
 			"Hint: arena slab backing arrays may not be fully cleared on reset,\n"+
 			"leaving stale *Node pointers that prevent GC collection.",
 			ms.HeapAlloc/1024/1024, maxRetainedBytes/1024/1024)
+	}
+}
+
+// csharpNestedGenericMethodCallAmbiguitySource builds a C# expression that
+// nests `f(a<b,c>(...))`-shaped calls depth levels deep. Each `identifier <`
+// is ambiguous in C# between a less-than comparison and the start of a
+// generic type-argument list; the parser cannot tell which until it sees
+// whether a matching `>` is followed by `(`. Nesting these keeps multiple GLR
+// interpretations alive simultaneously instead of resolving one token later,
+// which is what makes this construct "merge-heavy" rather than an ordinary,
+// quickly-resolved local ambiguity.
+func csharpNestedGenericMethodCallAmbiguitySource(depth int) []byte {
+	var open, closeParens strings.Builder
+	for i := 0; i < depth; i++ {
+		fmt.Fprintf(&open, "f%d(a%d<b%d,c%d>(", i, i, i, i)
+		closeParens.WriteString("))")
+	}
+	return []byte("class C { void M() {\n" + open.String() + "x" + closeParens.String() + ";\n} }\n")
+}
+
+// TestGSSNodeCanReachPooledFallbackRealCSharpMergeHeavyAmbiguity proves that a
+// real parse -- not a synthetic direct call -- drives gssNodeCanReach
+// (glr.go) into its pooled fallback map. gssCanReachVisitedPool's own doc
+// comment records the original motivation: "profiling a 137 KiB C# corpus
+// attributed 3.47 GB of 4.36 GB total allocation to this one make" on a
+// merge-heavy grammar. This test is a small, fast, self-contained
+// reproduction of that same class of trigger.
+//
+// Measured with `go test -run TestGSSNodeCanReachPooledFallbackRealCSharpMergeHeavyAmbiguity
+// -covermode=count -coverprofile=...` then `go tool cover -func`: gssNodeCanReach
+// reaches 87.8% statement coverage, and line-level inspection of the profile
+// shows glr.go:3382 (the "promote visited set to the pooled map" branch) and
+// glr.go:3401-3404 (the "clear and return the map to the pool" branch) each
+// hit 12 times by this test alone. Depth 20 has margin: depths from 10 to 30
+// all reproduced a nonzero hit count in the same sweep.
+func TestGSSNodeCanReachPooledFallbackRealCSharpMergeHeavyAmbiguity(t *testing.T) {
+	lang := grammars.CSharpLanguage()
+	src := csharpNestedGenericMethodCallAmbiguitySource(20)
+
+	profile := gotreesitter.NewAmbiguityProfile()
+	parser := gotreesitter.NewParser(lang)
+	parser.SetAmbiguityProfile(profile)
+	parser.SetTimeoutMicros(20_000_000)
+
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Release()
+
+	var totalForks uint64
+	for _, st := range profile.SnapshotTop(64) {
+		totalForks += st.Forks
+	}
+	// A liveness check, not a vacuous receipt: if a future change stopped this
+	// construct from forking at all, gssNodeCanReach would go back to 0%
+	// coverage here exactly as it silently did for TestArenaGCRetentionAfterRelease.
+	if totalForks == 0 {
+		t.Fatal("nested generic-call C# source produced no GLR forks; this test no longer exercises gssNodeCanReach's merge path")
+	}
+	rt := tree.ParseRuntime()
+	if rt.MaxStacksSeen < 2 {
+		t.Fatalf("MaxStacksSeen = %d, want >= 2 (construct must actually fork to exercise gssNodesCanMerge)", rt.MaxStacksSeen)
+	}
+	if tree.RootNode().HasError() {
+		t.Fatalf("nested generic-call ambiguity failed to resolve cleanly: %s", rt.Summary())
+	}
+}
+
+// phpTransientVariableErrorSource builds a PHP function body with n sequential
+// `$xI = I;` assignments, except at index breakAt, where the variable name's
+// leading letter is dropped ("$0" instead of "$x0"). "$0" is not a valid PHP
+// variable token, so this is a transient syntax error surrounded by hundreds
+// of otherwise-clean statements -- the shape of a single mistyped or
+// in-flight-edited character, not a structurally broken file.
+func phpTransientVariableErrorSource(n, breakAt int) []byte {
+	var b strings.Builder
+	b.WriteString("<?php\nfunction f() {\n")
+	for i := 0; i < n; i++ {
+		if i == breakAt {
+			fmt.Fprintf(&b, "$%d = %d;\n", i, i)
+		} else {
+			fmt.Fprintf(&b, "$x%d = %d;\n", i, i)
+		}
+	}
+	b.WriteString("}\n")
+	return []byte(b.String())
+}
+
+// TestGSSNodeHashPooledFallbackRealPHPTransientErrorChain proves that a real
+// parse drives gssNodeHash (glr_gss.go) into its pooled walk buffer.
+// gssNodeHashPendingPool's own doc comment records the original motivation:
+// "Profiling a PHP transient-error edit attributed 124 MB of allocation to
+// this one walk." This test is a small, fast, self-contained reproduction of
+// that same class of trigger: the invalid "$0" token forces error-recovery
+// GSS chains deep enough to blow past the 32-entry inline array gssNodeHash
+// normally uses.
+//
+// Measured with `go test -run TestGSSNodeHashPooledFallbackRealPHPTransientErrorChain
+// -covermode=count -coverprofile=...` then `go tool cover -func`: gssNodeHash
+// reaches 93.8% statement coverage run alone, and line-level inspection of the
+// profile shows glr_gss.go:394-401 (the "chain outgrew the inline array, move
+// to the pooled buffer" branch) and glr_gss.go:424-429 (the "clear and return
+// the buffer to the pool" branch) each hit 725 times by this test alone.
+func TestGSSNodeHashPooledFallbackRealPHPTransientErrorChain(t *testing.T) {
+	lang := grammars.PhpLanguage()
+	src := phpTransientVariableErrorSource(200, 100)
+
+	parser := gotreesitter.NewParser(lang)
+	parser.SetTimeoutMicros(10_000_000)
+
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Release()
+
+	rt := tree.ParseRuntime()
+	// Liveness check: the deliberately-invalid "$0" token must still be
+	// reachable as a genuine parse error, and the recovery search around it
+	// must actually fork, or this test stops exercising gssNodeHash's pooled
+	// walk and would silently regress to a vacuous receipt.
+	if !tree.RootNode().HasError() {
+		t.Fatal("expected the invalid \"$0\" token to produce a parse error")
+	}
+	if rt.MaxStacksSeen < 2 {
+		t.Fatalf("MaxStacksSeen = %d, want >= 2 (error recovery must fork to build the deep GSS chains gssNodeHash walks)", rt.MaxStacksSeen)
 	}
 }
 

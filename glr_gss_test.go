@@ -149,6 +149,29 @@ func TestGSSNodeHashComputedLazilyForSingleStackNodes(t *testing.T) {
 	}
 }
 
+// TestResetGSSNodeHashPendingForPoolClearsExactBacking proves the slice
+// clearing contract without depending on sync.Pool to return a specific item.
+func TestResetGSSNodeHashPendingForPoolClearsExactBacking(t *testing.T) {
+	const used = 64
+	backing := make([]*gssNode, 96)
+	for i := 0; i < used; i++ {
+		backing[i] = &gssNode{depth: uint32(i + 1)}
+	}
+	pending := backing[:used]
+
+	if !resetGSSNodeHashPendingForPool(&pending) {
+		t.Fatal("ordinary hash walk buffer was rejected from the pool")
+	}
+	if len(pending) != 0 {
+		t.Fatalf("released hash walk length = %d, want 0", len(pending))
+	}
+	for i, node := range pending[:cap(pending)] {
+		if node != nil {
+			t.Fatalf("released hash walk backing slot %d retained a node pointer", i)
+		}
+	}
+}
+
 func TestGSSEntryHashMatchesAccessorSemantics(t *testing.T) {
 	node := &Node{
 		children:      []*Node{{symbol: 20, startByte: 1, endByte: 2, preGotoState: 8, fieldMetadata: &nodeFieldMetadata{ids: []FieldID{3}}, flags: nodeFlagNamed}},
