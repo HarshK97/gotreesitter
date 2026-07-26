@@ -5444,8 +5444,20 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 			}
 		}
+		// stackRelexRestoreTok holds the shared lookahead while one stack
+		// dispatches on its own re-lexed tokenization of the same bytes (see
+		// relexTokenForStackLexState). The re-lex is scoped to that stack: the
+		// shared token is restored before the next stack dispatches, and again
+		// after the loop, so a sibling that does accept the original symbol is
+		// never handed a token it cannot use.
+		stackRelexRestoreTok := Token{}
+		stackRelexActive := false
 		for si := 0; si < numStacks; si++ {
 			s := &stacks[si]
+			if stackRelexActive {
+				tok = stackRelexRestoreTok
+				stackRelexActive = false
+			}
 			// reduceActionConflict is scoped to a single stack's dispatch; a
 			// fresh iteration must not inherit the previous stack's conflict
 			// context (see the "if len(actions) > 1" block below, which is
@@ -5732,6 +5744,29 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					}
 				}
 				if p.errorCostCompetitionEnabled() {
+					// C lexes once per version, so a version whose state needs
+					// a different tokenization of these exact bytes gets it.
+					// This engine shares one token across all stacks, so give
+					// this stack its own lex mode before pausing it. See
+					// relexTokenForStackLexState (issue #454): the re-lex is
+					// span-exact, action-verified, and DFA-only, so the token
+					// loop stays in lockstep and the external scanner is never
+					// re-entered. Restored for the next stack at the top of the
+					// dispatch loop so the shared token never leaks sideways.
+					if reTok, ok := p.relexTokenForStackLexState(source, currentState, tok); ok {
+						if p.glrTrace {
+							fmt.Printf("  stack[%d] C-STACK-RELEX: sym=%d -> sym=%d [%d-%d] in state=%d\n",
+								si, tok.Symbol, reTok.Symbol, reTok.StartByte, reTok.EndByte, currentState)
+						}
+						stackRelexRestoreTok = tok
+						stackRelexActive = true
+						tok = reTok
+						if actionTiming != nil {
+							ns := recordNoActionTiming()
+							actionTiming.actionNoActionRelexNanos += ns
+						}
+						goto retryAction
+					}
 					// Faithful C recovery port: no action for the lookahead —
 					// pause the version (C detect_error / ts_stack_pause) and
 					// let the post-pass condense step resume or remove it.
@@ -6168,6 +6203,13 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					}
 				}
 			}
+		}
+		// The last stack in the loop may have dispatched on its own re-lexed
+		// tokenization; restore the shared lookahead before anything after the
+		// dispatch loop reads it.
+		if stackRelexActive {
+			tok = stackRelexRestoreTok
+			stackRelexActive = false
 		}
 		if phaseTiming {
 			actionDispatchNanos += time.Since(dispatchStart).Nanoseconds()
