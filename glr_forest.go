@@ -359,6 +359,7 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 	// an already-budgeted Parse() (were that ever wired up) would not reset it.
 	endBudget := p.enterParseBudget()
 	defer endBudget()
+	p.resetNormalizationStats()
 	arena := acquireNodeArena(arenaClassFull)
 	incrementalReuseProven := forestIncrementalReuseProven(p.language)
 	// A forest tree whose scanner class is not admitted can never consume
@@ -599,6 +600,7 @@ func (p *Parser) tryForestFastPath(source []byte) *Tree {
 	if p.forestDeclineMemoHit(source) {
 		return nil
 	}
+	p.resetNormalizationStats()
 	progress := newParseProgressTelemetry(p, len(source), uint32(len(source)), time.Now())
 	if progress.enabled {
 		progress.emit(time.Now(), "forest_try_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")

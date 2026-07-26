@@ -290,6 +290,61 @@ func TestRepairPythonRootNodeNoopKeepsFinalChildRefsLazy(t *testing.T) {
 	}
 }
 
+func TestDispatcherArmCensusKeepsPythonFinalChildRefsLazy(t *testing.T) {
+	t.Setenv("GTS_DISPATCHER_CENSUS", "1")
+	lang := &Language{
+		Name:        "python",
+		SymbolNames: []string{"EOF", "module", "comment", "import_statement", "_simple_statements"},
+	}
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	comment := newCompactFullLeafInArena(arena, 2, true, 0, 5, Point{}, Point{Column: 5})
+	comment.parseState = 11
+	comment.setExtra(true)
+	stmt := newCompactFullLeafInArena(arena, 3, true, 6, 15, Point{Row: 1}, Point{Row: 1, Column: 9})
+	stmt.parseState = 12
+	parent := newPendingParentInArena(arena, 1, true, 13, []stackEntry{
+		newStackEntryCompactFullLeaf(comment.parseState, comment),
+		newStackEntryCompactFullLeaf(stmt.parseState, stmt),
+	}, 0, 15, Point{}, Point{Row: 1, Column: 9}, false)
+	parent.parseState = 14
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil || !nodeHasFinalChildRefs(root) {
+		t.Fatal("fixture did not retain Python final-child refs")
+	}
+
+	parser := NewParser(lang)
+	runLanguageResultCompatibility(resultCompatibilityContext{
+		root:   root,
+		parser: parser,
+		lang:   lang,
+	})
+
+	var pass *normalizationNamedPassStats
+	for i := range parser.normalizationStats.namedPasses {
+		if parser.normalizationStats.namedPasses[i].name == "dispatch.python" {
+			pass = &parser.normalizationStats.namedPasses[i]
+			break
+		}
+	}
+	if pass == nil || pass.run != 1 || pass.nodesVisited == 0 || pass.nodesRewritten != 0 {
+		t.Fatalf("Python dispatcher census pass = %+v, want one observed no-op", pass)
+	}
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("census materialized final-child parent ranges = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildAccesses; got != 0 {
+		t.Fatalf("census accessed final-child refs through materialization = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("census materialized Python children = %d, want 0", got)
+	}
+	if !nodeHasFinalChildRefs(root) {
+		t.Fatal("census drained Python final-child refs")
+	}
+}
+
 func TestRepairPythonRootNodeClearsErrorWithoutDrainingFinalRefs(t *testing.T) {
 	lang := &Language{
 		Name:        "python",

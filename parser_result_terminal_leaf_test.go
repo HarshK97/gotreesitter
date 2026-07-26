@@ -706,6 +706,30 @@ func TestDispatcherArmCensusFingerprintDetectsEveryObservableChange(t *testing.T
 		t.Fatalf("span edit went undetected: visited=%d rewritten=%d", visited, rewritten)
 	}
 
+	// Point edit: a normalizer can repair row and column positions while the
+	// byte range stays unchanged.
+	rootPoint, leafPoint := build()
+	beforePoint := captureDispatcherFingerprint(rootPoint)
+	leafPoint.endPoint = Point{Row: 2, Column: 1}
+	if visited, rewritten := diffDispatcherFingerprint(beforePoint, captureDispatcherFingerprint(rootPoint)); rewritten == 0 {
+		t.Fatalf("point edit went undetected: visited=%d rewritten=%d", visited, rewritten)
+	}
+
+	// Parser-state edits are public and affect later incremental reuse.
+	rootParseState, leafParseState := build()
+	beforeParseState := captureDispatcherFingerprint(rootParseState)
+	leafParseState.parseState = 41
+	if visited, rewritten := diffDispatcherFingerprint(beforeParseState, captureDispatcherFingerprint(rootParseState)); rewritten == 0 {
+		t.Fatalf("parse-state edit went undetected: visited=%d rewritten=%d", visited, rewritten)
+	}
+
+	rootPreGotoState, leafPreGotoState := build()
+	beforePreGotoState := captureDispatcherFingerprint(rootPreGotoState)
+	leafPreGotoState.preGotoState = 42
+	if visited, rewritten := diffDispatcherFingerprint(beforePreGotoState, captureDispatcherFingerprint(rootPreGotoState)); rewritten == 0 {
+		t.Fatalf("pre-goto-state edit went undetected: visited=%d rewritten=%d", visited, rewritten)
+	}
+
 	// Flag edit: some normalizers mark a node MISSING/EXTRA without touching
 	// its span at all.
 	root3, leaf2c := build()
@@ -713,6 +737,13 @@ func TestDispatcherArmCensusFingerprintDetectsEveryObservableChange(t *testing.T
 	leaf2c.setFlag(nodeFlagExtra, true)
 	if visited, rewritten := diffDispatcherFingerprint(before3, captureDispatcherFingerprint(root3)); rewritten == 0 {
 		t.Fatalf("flag edit went undetected: visited=%d rewritten=%d", visited, rewritten)
+	}
+
+	rootDirty, leafDirty := build()
+	beforeDirty := captureDispatcherFingerprint(rootDirty)
+	leafDirty.setDirty(true)
+	if visited, rewritten := diffDispatcherFingerprint(beforeDirty, captureDispatcherFingerprint(rootDirty)); rewritten == 0 {
+		t.Fatalf("dirty-flag edit went undetected: visited=%d rewritten=%d", visited, rewritten)
 	}
 
 	// Field edit: some normalizers (e.g. normalizeMakeConditionalConsequenceFields)
@@ -737,5 +768,58 @@ func TestDispatcherArmCensusFingerprintDetectsEveryObservableChange(t *testing.T
 	}
 	if visited, rewritten := diffDispatcherFingerprint(before5, after5); rewritten == 0 {
 		t.Fatalf("structural insertion went undetected: visited=%d rewritten=%d", visited, rewritten)
+	}
+}
+
+func TestDispatcherArmCensusFingerprintPreservesCompactFinalChildRefs(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+	leaf := newCompactFullLeafInArena(arena, 2, true, 0, 4, Point{}, Point{Column: 4})
+	leaf.parseState = 12
+	leaf.preGotoState = 11
+	parent := newPendingParentInArena(arena, 1, true, 0, []stackEntry{
+		newStackEntryCompactFullLeaf(leaf.parseState, leaf),
+	}, 0, 4, Point{}, Point{Column: 4}, false)
+	parent.parseState = 14
+	parent.preGotoState = 13
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
+	if root == nil || !nodeHasFinalChildRefs(root) {
+		t.Fatal("fixture did not retain compact final-child refs")
+	}
+
+	lazy := captureDispatcherFingerprint(root)
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("fingerprint materialized final-child parent ranges = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildAccesses; got != 0 {
+		t.Fatalf("fingerprint accessed final-child refs through materialization = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("fingerprint materialized compact children = %d, want 0", got)
+	}
+	if !nodeHasFinalChildRefs(root) {
+		t.Fatal("fingerprint drained final-child refs")
+	}
+
+	if child := root.Child(0); child == nil {
+		t.Fatal("explicit materialization returned nil child")
+	}
+	eager := captureDispatcherFingerprint(root)
+	if visited, rewritten := diffDispatcherFingerprint(lazy, eager); rewritten != 0 || visited == 0 {
+		t.Fatalf("lazy and materialized fingerprints differ: visited=%d rewritten=%d", visited, rewritten)
+	}
+}
+
+func TestDispatcherCensusRequiresExactOne(t *testing.T) {
+	for _, value := range []string{"", "0", "false", "2"} {
+		t.Setenv("GTS_DISPATCHER_CENSUS", value)
+		if dispatcherCensusEnabled() {
+			t.Fatalf("GTS_DISPATCHER_CENSUS=%q enabled the census", value)
+		}
+	}
+	t.Setenv("GTS_DISPATCHER_CENSUS", "1")
+	if !dispatcherCensusEnabled() {
+		t.Fatal("GTS_DISPATCHER_CENSUS=1 did not enable the census")
 	}
 }
