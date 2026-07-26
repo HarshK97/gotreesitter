@@ -62,23 +62,18 @@ func normalizeResultCompatibility(root *Node, source []byte, p *Parser, incremen
 		result.stopReason = reason
 		return result
 	}
-	var terminalReason ParseStopReason
-	var terminalCounters normalizationPassCounters
-	terminalCounters, terminalReason, result.errorSummary = normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary(root, lang, p.visibleAliasTargetSymbol, ctx.stopCheck)
-	// Census instrumentation for the generic.terminal-leaf retirement (R1.3 of
-	// docs/root-normalization-retirement.md). This is the last live generic
-	// pass, and its production call site discarded the counters, so no receipt
-	// existed for how often it actually rewrites a node. The retirement plan
-	// requires census before migration: a zero rewrite count over the
-	// authenticated corpus is only actionable when positive controls prove the
-	// probe fires, and this is the probe.
-	p.recordNormalizationMetric("generic.terminal-leaf", 1, 1, terminalCounters.nodesVisited, terminalCounters.nodesRewritten)
-	if parseStopReasonIsActive(terminalReason) {
-		result.stopReason = terminalReason
+	result.stopReason, result.errorSummary = normalizeResultTerminalLeafMutationRetirementPending(root, ctx.stopCheck)
+	if parseStopReasonIsActive(result.stopReason) {
 		return result
 	}
 	result.stopReason = ctx.stopReason()
 	return result
+}
+
+// normalizeResultTerminalLeafMutationRetirementPending keeps the ownership
+// registry valid until a retirement commit exists. It does not mutate trees.
+func normalizeResultTerminalLeafMutationRetirementPending(root *Node, stopCheck parseStopCheck) (ParseStopReason, resultErrorSummary) {
+	return summarizeResultErrorsWithStop(root, stopCheck)
 }
 
 func (ctx resultCompatibilityContext) stopReason() ParseStopReason {

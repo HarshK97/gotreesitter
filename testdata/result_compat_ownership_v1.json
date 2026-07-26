@@ -2317,18 +2317,22 @@
       "id": "generic.terminal-leaf",
       "kind": "generic_pass",
       "functions": [
-        "normalizeResultTerminalLeafNodesWithAliasTargetsAndStopAndErrorSummary"
+        "normalizeResultTerminalLeafMutationRetirementPending"
       ],
       "files": [
-        "parser_result_terminal_leaf.go"
+        "parser_result_compat.go"
       ],
       "languages": [
         "*"
       ],
-      "purpose": "Apply generic terminal-leaf, alias-target, stop-reason, and error-summary compatibility.",
+      "purpose": "Keep a read-only wrapper until the terminal-leaf mutation retirement commit exists.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "parser_result_terminal_leaf_test.go"
+        "cgo_harness/terminal_leaf_native_parity_test.go",
+        "grammars/terminal_leaf_native_regression_test.go",
+        "parser_collapsed_child_policy_test.go",
+        "parser_result_test/dispatcher_census_test.go",
+        "parser_retry_summary_test.go"
       ],
       "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
       "route_coverage": {
@@ -2339,7 +2343,13 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "receipt_refs": [
+        "cgo_harness/terminal_leaf_native_parity_test.go",
+        "grammars/terminal_leaf_native_regression_test.go",
+        "parser_collapsed_child_policy_test.go",
+        "parser_result_test/dispatcher_census_test.go",
+        "parser_retry_summary_test.go"
+      ]
     },
     {
       "id": "generic.collapsed-named-leaf",

@@ -258,3 +258,48 @@ func TestCollapsedNamedLeafCompatibilityTraversalIsRetired(t *testing.T) {
 		t.Fatalf("retired compatibility traversal reported runtime counters: %+v", stats)
 	}
 }
+
+func TestTerminalLeafCompatibilityMutationIsRetired(t *testing.T) {
+	lang := &Language{
+		TokenCount: 3,
+		SymbolNames: []string{
+			"EOF",
+			".",
+			"any_character",
+			"root",
+		},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: ".", Visible: true},
+			{Name: "any_character", Visible: true, Named: true},
+			{Name: "root", Visible: true, Named: true},
+		},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	child := newLeafNodeInArena(arena, 1, false, 11, 12, Point{Column: 11}, Point{Column: 12})
+	token := newParentNodeInArena(arena, 2, true, []*Node{child}, nil, 0)
+	token.startByte = 10
+	token.endByte = 12
+	token.startPoint = Point{Column: 10}
+	token.endPoint = Point{Column: 12}
+	root := newParentNodeInArena(arena, 3, true, []*Node{token}, nil, 0)
+
+	result := normalizeResultCompatibility(root, []byte("           ."), parser, nil)
+
+	if result.stopReason != ParseStopNone {
+		t.Fatalf("stop reason = %q, want none", result.stopReason)
+	}
+	if result.errorSummary != resultErrorSummaryClean {
+		t.Fatalf("error summary = %d, want clean", result.errorSummary)
+	}
+	if token.ChildCount() != 1 || token.Child(0) != child {
+		t.Fatalf("retired compatibility mutation changed terminal child: count=%d child=%p", token.ChildCount(), token.Child(0))
+	}
+	if token.StartByte() != 10 || token.EndByte() != 12 {
+		t.Fatalf("retired compatibility mutation changed terminal span: %d..%d", token.StartByte(), token.EndByte())
+	}
+	if stats := parser.normalizationStats; stats.nodesVisited != 0 || stats.nodesRewritten != 0 {
+		t.Fatalf("retired compatibility mutation reported counters: %+v", stats)
+	}
+}

@@ -212,9 +212,10 @@ there.
 
 | Ratchet | Status | Before | After | Evidence |
 | --- | --- | ---: | ---: | --- |
-| Generic trailing-extra pass | pending merge | 2 generic passes | 1 | RST and Comment production/compact/forest/incremental witnesses plus isolated C-oracle parity |
-| JavaScript returned-tree arm | pending merge | 3 fixpoint arms | 2 | pre-second-pass root-span witness, JavaScript real-corpus parity, and 30/30 valid incremental/fresh edits |
-| R2 dead dispatcher arms (OCaml, Ruby, half of HTML) | pending merge | 78 dispatcher arms | 75 | real-corpus census, native-parse regression tests per language, `TestResultCompatibilityOwnershipRegistry` |
+| Generic trailing-extra pass | merged in PR #453 | 2 generic passes | 1 | RST and Comment production/compact/forest/incremental witnesses plus isolated C-oracle parity |
+| JavaScript returned-tree arm | merged in PR #459 | 3 fixpoint arms | 2 | pre-second-pass root-span witness, JavaScript real-corpus parity, and 30/30 valid incremental/fresh edits |
+| R2 dead dispatcher arms (OCaml, Ruby, half of HTML) | merged in PR #463 | 78 dispatcher arms | 75 | real-corpus census, native-parse regression tests per language, `TestResultCompatibilityOwnershipRegistry` |
+| Generic terminal-leaf mutation | checkpoint 1 pending | 1 tree mutation | 0 | production, compact, forest, incremental, scanner-aware corpus, and Go C-oracle receipts |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.

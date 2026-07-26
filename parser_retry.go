@@ -320,6 +320,50 @@ func retryTreeHasError(tree *Tree) bool {
 	return retryNodeSubtreeHasError(root, 0)
 }
 
+// summarizeResultErrorsWithStop computes the retry error receipt.
+// It polls the stop source during its full-tree walk.
+func summarizeResultErrorsWithStop(root *Node, stopCheck parseStopCheck) (ParseStopReason, resultErrorSummary) {
+	if root == nil {
+		return ParseStopNone, resultErrorSummaryUnknown
+	}
+	if root.hasError() {
+		return ParseStopNone, resultErrorSummaryPresent
+	}
+	errorSummary := resultErrorSummaryClean
+	if root.IsError() {
+		errorSummary = resultErrorSummaryPresent
+	}
+	poller := parseStopPoller{check: stopCheck}
+	if reason := poller.pollNow(); parseStopReasonIsActive(reason) {
+		if errorSummary != resultErrorSummaryPresent {
+			errorSummary = resultErrorSummaryUnknown
+		}
+		return reason, errorSummary
+	}
+	var stopReason ParseStopReason
+	walkResultTreeUntil(root, func(n *Node) bool {
+		if reason := poller.poll(); parseStopReasonIsActive(reason) {
+			stopReason = reason
+			return false
+		}
+		if n.IsError() || n.hasError() {
+			errorSummary = resultErrorSummaryPresent
+		}
+		return true
+	})
+	if parseStopReasonIsActive(stopReason) {
+		if errorSummary != resultErrorSummaryPresent {
+			errorSummary = resultErrorSummaryUnknown
+		}
+		return stopReason, errorSummary
+	}
+	stopReason = poller.pollNow()
+	if parseStopReasonIsActive(stopReason) && errorSummary != resultErrorSummaryPresent {
+		errorSummary = resultErrorSummaryUnknown
+	}
+	return stopReason, errorSummary
+}
+
 func retryNodeSubtreeHasError(node *Node, depth int) bool {
 	if node == nil {
 		return false

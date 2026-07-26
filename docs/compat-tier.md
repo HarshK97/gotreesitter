@@ -18,13 +18,17 @@ The v1 registry freezes the current surface:
 - 75 explicit `runLanguageResultCompatibility` switch arms covering 82
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
-- one generic pass that runs after language dispatch;
+- one temporary read-only generic wrapper after language dispatch;
 - one retained post-finalization second-pass fixpoint with two switch arms
   covering Scala and HTML.
 
 That is 78 live registry entries. The registry covers only this documented
 internal result-compatibility tier; scheduler experiments and other engine
 research belong in their owning subsystem's durable traces.
+
+The generic wrapper keeps the registry bisectable until its retirement commit
+exists. It computes only the error summary and polls the stop source.
+It does not mutate a tree.
 
 R2 of `docs/root-normalization-retirement.md` retired three dispatcher arms:
 OCaml's collapsed named-leaf restoration, Ruby's top-level module bound
@@ -97,6 +101,22 @@ The generic reconstruction walk is therefore retired and deleted. Once raw
 child identity has been lost, a display-name-compatible caller artifact is no
 longer guessed into shape; custom artifacts must carry the explicit native
 capability and exact metadata receipt to opt in.
+
+## Current progress: terminal leaves
+
+The generic terminal-leaf mutation is removed. Reduction and alias
+materialization now own its tree shape.
+
+The route receipt covers production, compact, forest, and incremental parsing.
+The scanner-aware corpus receipt covers 45 languages and 868,010 nodes.
+It finds no retired shape and reports 161 languages as uncovered.
+The focused Go tree also matches the locked C tree.
+
+The full error-summary walk remains. It preserves exact retry selection for
+under-set descendant errors and keeps the existing stop polls.
+
+The registry retains a temporary read-only wrapper until checkpoint 1 exists.
+Checkpoint 2 must record checkpoint 1 as `retired_commit`.
 
 ## Current progress: trailing root trivia
 
