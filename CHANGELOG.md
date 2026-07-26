@@ -23,6 +23,11 @@ for tags and release notes while still in `0.x`.
     its 64-entry local array. On grammars that reach that size routinely, the
     map became the largest single allocation in the parse. The fallback map is
     now pooled and reused.
+  - `gssNodeHash` grew a fresh walk buffer on the heap whenever an unhashed
+    chain was longer than its 32-entry inline array. Ordinary parses stop at
+    the first already-hashed node, so this only bites where an error path
+    rebuilds deep chains: a PHP edit that introduces a transient error spent
+    124 MB there. The walk buffer is now pooled.
 
   Measured on a C# corpus of repeated method declarations, with the grammar
   loaded before measuring: allocation per source byte falls from 119,036 to
