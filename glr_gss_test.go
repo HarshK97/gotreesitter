@@ -149,6 +149,42 @@ func TestGSSNodeHashComputedLazilyForSingleStackNodes(t *testing.T) {
 	}
 }
 
+// TestGSSNodeHashPooledWalkBufferClearedBeforeReturningToPool proves the
+// gssNodeHashPendingPool clearing contract (glr_gss.go, above the pool
+// declaration): a walk buffer handed back to the pool must not carry live
+// *gssNode entries from the call that just released it. Before the fix,
+// gssNodeHash's pooled acquire/release pair mirrored the same acquire-time
+// clearing bug as gssCanReachVisitedPool: pooling a buffer with entries still
+// in its backing array keeps those nodes, and everything they reach,
+// uncollectable for at least one more GC cycle.
+//
+// singleStackMode keeps allocNode's hash lazy (every pushed node starts with
+// hash == 0), so gssNodeHash must actually walk the chain rather than finding
+// an already-hashed node immediately. A 64-deep chain forces gssNodeHash past
+// its 32-entry inline array on both the acquire and the release side.
+func TestGSSNodeHashPooledWalkBufferClearedBeforeReturningToPool(t *testing.T) {
+	var scratch gssScratch
+	scratch.singleStackMode = true
+	var s gssStack
+	const chainDepth = 64 // > gssNodeHash's 32-entry inline walk array.
+	for i := 0; i < chainDepth; i++ {
+		s.push(StateID(i+1), nil, &scratch)
+	}
+	if s.head.hash != 0 {
+		t.Fatal("head hash must start at 0 (lazy) for this test to force the pooled walk")
+	}
+
+	if got := gssNodeHash(s.head); got == 0 {
+		t.Fatal("gssNodeHash returned 0 for a real chain")
+	}
+
+	pooled := gssNodeHashPendingPool.Get().(*[]*gssNode)
+	defer gssNodeHashPendingPool.Put(pooled)
+	if got := len(*pooled); got != 0 {
+		t.Fatalf("pooled hash walk buffer returned from Get() with %d stale entr(y/ies), want 0 (clearing contract violated)", got)
+	}
+}
+
 func TestGSSEntryHashMatchesAccessorSemantics(t *testing.T) {
 	node := &Node{
 		children:      []*Node{{symbol: 20, startByte: 1, endByte: 2, preGotoState: 8, fieldMetadata: &nodeFieldMetadata{ids: []FieldID{3}}, flags: nodeFlagNamed}},
