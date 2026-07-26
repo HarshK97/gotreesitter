@@ -1,6 +1,7 @@
 package grammars
 
 import (
+	"strings"
 	"testing"
 
 	ts "github.com/odvcencio/gotreesitter"
@@ -66,7 +67,16 @@ func TestHTMLNestedCustomTagReconstructionRetiredDispatchArm(t *testing.T) {
 
 func TestHTMLNestedCustomTagReconstructionRetiredDispatchArmRoutes(t *testing.T) {
 	lang := HtmlLanguage()
-	receipts := retiredDispatchRouteReceipts(t, lang, []byte("<div><xyz><xyz>text</div>"))
+	const source = "<div><xyz><xyz>text</div>"
+	receipts := retiredDispatchRouteReceipts(t, lang, []byte(source))
+	firstStart := strings.Index(source, "<xyz>")
+	secondStart := strings.LastIndex(source, "<xyz>")
+	closeStart := strings.Index(source, "</div>")
+	if firstStart < 0 || secondStart < 0 || closeStart < 0 {
+		t.Fatal("test source lacks a required HTML marker")
+	}
+	wantEndPoint := retiredDispatchPointAtByte([]byte(source+"\n"), closeStart)
+
 	for _, receipt := range receipts {
 		root := receipt.tree.RootNode()
 		if root.HasError() || root.Type(lang) != "document" {
@@ -81,6 +91,24 @@ func TestHTMLNestedCustomTagReconstructionRetiredDispatchArmRoutes(t *testing.T)
 		})
 		if inner == nil {
 			t.Fatalf("%s route is missing the nested element: %s", receipt.name, root.SExpr(lang))
+		}
+		for _, start := range []int{firstStart, secondStart} {
+			element := findHTMLElementStartingAt(root, lang, uint32(start))
+			if element == nil {
+				t.Fatalf("%s route is missing the element at %d: %s", receipt.name, start, root.SExpr(lang))
+			}
+			if got := element.EndByte(); got != uint32(closeStart) {
+				t.Fatalf("%s route element at %d ends at %d, want %d", receipt.name, start, got, closeStart)
+			}
+			if got := element.EndPoint(); got != wantEndPoint {
+				t.Fatalf("%s route element at %d ends at %#v, want %#v", receipt.name, start, got, wantEndPoint)
+			}
+		}
+		if receipt.name == "incremental" {
+			profile := receipt.incrementalProfile
+			if !profile.OldTreeReuseRoute || profile.ReusedSubtrees == 0 || profile.ReusedBytes == 0 {
+				t.Fatalf("incremental route did not reuse the old tree: %+v", profile)
+			}
 		}
 	}
 }

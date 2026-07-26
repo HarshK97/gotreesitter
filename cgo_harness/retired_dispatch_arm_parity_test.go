@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	gotreesitter "github.com/odvcencio/gotreesitter"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -90,4 +91,104 @@ func retiredDispatchArmCOracleDivergences(t *testing.T, test parityCase, source 
 	var divergences []string
 	compareNodes(goTree.RootNode(), goLanguage, cTree.RootNode(), "root", &divergences)
 	return divergences
+}
+
+func TestHTMLRecoveredNestedCustomTagRangeCOracleParity(t *testing.T) {
+	scheduleParityMemoryScavenge(t)
+
+	const sourceText = "<div><xyz><xyz>text</div>\n"
+	source := []byte(sourceText)
+	test := parityCase{name: "html", source: sourceText}
+	goTree, goLanguage, err := parseWithGo(test, source, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseGoTree(goTree)
+
+	cLanguage, err := ParityCLanguage(test.name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cParser := sitter.NewParser()
+	defer cParser.Close()
+	if err := cParser.SetLanguage(cLanguage); err != nil {
+		t.Fatal(err)
+	}
+	cTree := cParser.Parse(source, nil)
+	if cTree == nil || cTree.RootNode() == nil {
+		t.Fatal("C reference parser returned a nil tree")
+	}
+	defer cTree.Close()
+
+	var divergences []string
+	compareNodes(goTree.RootNode(), goLanguage, cTree.RootNode(), "root", &divergences)
+	if len(divergences) != 0 {
+		t.Fatalf("C-oracle divergences = %v", divergences)
+	}
+
+	firstStart := strings.Index(sourceText, "<xyz>")
+	secondStart := strings.LastIndex(sourceText, "<xyz>")
+	closeStart := strings.Index(sourceText, "</div>")
+	if firstStart < 0 || secondStart < 0 || closeStart < 0 {
+		t.Fatal("test source lacks a required HTML marker")
+	}
+	wantEndPoint := pointAtOffset(source, closeStart)
+	for _, start := range []int{firstStart, secondStart} {
+		goElement := findGoNodeByTypeAndStart(goTree.RootNode(), goLanguage, "element", uint32(start))
+		if goElement == nil {
+			t.Fatalf("Go tree is missing the element at %d", start)
+		}
+		cElement := findCNodeByKindAndStart(cTree.RootNode(), "element", uint(start))
+		if cElement == nil {
+			t.Fatalf("C tree is missing the element at %d", start)
+		}
+		if got := goElement.EndByte(); got != uint32(closeStart) {
+			t.Fatalf("Go element at %d ends at %d, want %d", start, got, closeStart)
+		}
+		if got := cElement.EndByte(); got != uint(closeStart) {
+			t.Fatalf("C element at %d ends at %d, want %d", start, got, closeStart)
+		}
+		if got := goElement.EndPoint(); got != wantEndPoint {
+			t.Fatalf("Go element at %d ends at %#v, want %#v", start, got, wantEndPoint)
+		}
+		cEndPoint := cElement.EndPosition()
+		if uint32(cEndPoint.Row) != wantEndPoint.Row || uint32(cEndPoint.Column) != wantEndPoint.Column {
+			t.Fatalf("C element at %d ends at %#v, want %#v", start, cEndPoint, wantEndPoint)
+		}
+	}
+}
+
+func findGoNodeByTypeAndStart(
+	node *gotreesitter.Node,
+	lang *gotreesitter.Language,
+	typ string,
+	start uint32,
+) *gotreesitter.Node {
+	if node == nil {
+		return nil
+	}
+	if node.Type(lang) == typ && node.StartByte() == start {
+		return node
+	}
+	for index := 0; index < node.ChildCount(); index++ {
+		if found := findGoNodeByTypeAndStart(node.Child(index), lang, typ, start); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func findCNodeByKindAndStart(node *sitter.Node, kind string, start uint) *sitter.Node {
+	if node == nil {
+		return nil
+	}
+	if node.Kind() == kind && node.StartByte() == start {
+		return node
+	}
+	for index := uint(0); index < node.ChildCount(); index++ {
+		if found := findCNodeByKindAndStart(node.Child(index), kind, start); found != nil {
+			return found
+		}
+	}
+	return nil
 }

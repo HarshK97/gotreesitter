@@ -91,7 +91,7 @@ func normalizeReturnedTree(root *Node, source []byte, lang *Language) {
 		normalizeScalaCaseClauseEnds(root, source, lang)
 		normalizeRootEOFNewlineSpan(root, source, lang)
 	case "html":
-		normalizeHTMLRecoveredNestedCustomTagRanges(root, source, lang)
+		normalizeHTMLReturnedTreeFixpointRetirementPending(root, source, lang)
 	}
 }
 
