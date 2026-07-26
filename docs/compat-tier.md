@@ -19,20 +19,19 @@ The v1 registry freezes the current surface:
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
-- one retained post-finalization second-pass fixpoint with two switch arms
-  covering Scala and HTML.
+- one retained post-finalization second-pass fixpoint with one Scala switch
+  arm.
 
-That is 77 live registry entries and 7 retired entries. The registry covers
+That is 77 live registry entries and 8 retired entries. The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
 
 R2 of `docs/root-normalization-retirement.md` retired three dispatcher arms:
 OCaml's collapsed named-leaf restoration, Ruby's top-level module bound
 shrink, and half of HTML's arm (the ERROR-root nested-custom-tag
-reconstruction). HTML's other function,
-`normalizeHTMLRecoveredNestedCustomTagRanges`, stays live: see "The retained
-second pass" below. The retired entries stay in the registry as historical
-receipts.
+reconstruction). At that checkpoint, HTML's range function stayed live.
+R1 later retired that separate second-pass function. The registry keeps both
+retired mechanisms as distinct historical receipts.
 
 Each registry entry has a stable ID, functions and files, languages, purpose,
 authoritative owner, witnesses, a retirement condition, coverage fields for
@@ -132,12 +131,15 @@ exact against their C oracles. The generic trailing-extra pass is retired.
 ## The retained second pass
 
 `normalizePostFinalizationReturnedTree` deliberately runs a bounded second
-pass for Scala and HTML. It remains live because the first pass can expose
-information needed by later normalization. In particular, it may not be
-retired until the HTML producer/materializer emits final nested custom-tag
-ranges without `normalizeHTMLRecoveredNestedCustomTagRanges`. Scala must
-likewise emit its final annotations and spans in one pass, and all registered
-route receipts must show the second pass is inert.
+pass for Scala. It remains live because the first pass can expose information
+needed by later normalization. Scala must emit its final annotations and spans
+in one pass before this arm can retire.
+
+HTML no longer participates in this fixpoint. Materialization extends each
+recovered custom element through its structural `_implicit_end_tag` child.
+Production, compact, forest, and incremental routes return the same absolute
+ranges and points. The incremental receipt proves nonzero old-tree reuse.
+The locked C parser returns the same recovered ranges and points.
 
 JavaScript no longer participates in this fixpoint. Its canonical
 compatibility pipeline already extends `program` and recovery-root terminator
@@ -147,8 +149,8 @@ optional parent-link wiring. Neither can shorten or reclassify the root.
 The registry retains a retired historical entry for the deleted JavaScript
 arm and its production, compact-final-ref, forest, and incremental receipts.
 
-Removing the second pass because it looks repetitive would reopen known
-fixpoint behavior; its registry retirement condition is the deletion gate.
+Removing the Scala second pass now would reopen known fixpoint behavior.
+Its registry retirement condition remains the deletion gate.
 
 ## Editing and validation
 

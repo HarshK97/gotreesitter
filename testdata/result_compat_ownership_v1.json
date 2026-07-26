@@ -6,8 +6,8 @@
     "dispatcher_languages": 82,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
-    "post_finalization_arms": 2,
-    "post_finalization_languages": 2
+    "post_finalization_arms": 1,
+    "post_finalization_languages": 1
   },
   "owner_categories": [
     "scheduler_action_semantics",
@@ -2403,18 +2403,15 @@
         "normalizeScalaTemplateBodyFunctionAnnotations",
         "normalizeScalaTemplateBodyFunctionEnds",
         "normalizeScalaCaseClauseEnds",
-        "normalizeRootEOFNewlineSpan",
-        "normalizeHTMLRecoveredNestedCustomTagRanges"
+        "normalizeRootEOFNewlineSpan"
       ],
       "files": [
         "parser_api.go",
         "parser_result_scala_template.go",
         "parser_result_scala_compilation.go",
-        "parser_result_misc_spans.go",
-        "parser_result_html.go"
+        "parser_result_misc_spans.go"
       ],
       "languages": [
-        "html",
         "scala"
       ],
       "entrypoint_calls": [
@@ -2434,23 +2431,14 @@
             "normalizeScalaCaseClauseEnds",
             "normalizeRootEOFNewlineSpan"
           ]
-        },
-        {
-          "languages": [
-            "html"
-          ],
-          "functions": [
-            "normalizeHTMLRecoveredNestedCustomTagRanges"
-          ]
         }
       ],
-      "purpose": "Retain the bounded second pass that reaches a returned-tree fixpoint after finalization for Scala annotations and bounds and HTML recovered nested custom-tag ranges. JavaScript program-end ownership is native to its canonical compatibility pass and needs no returned-tree second pass.",
+      "purpose": "Retain the bounded second pass that reaches a returned-tree fixpoint after finalization for Scala annotations and bounds.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "parser_result_html_test.go",
         "parser_result_test/parser_result_scala_comment_attachment_test.go"
       ],
-      "retirement_condition": "Delete only after the HTML producer/materializer emits final nested custom-tag ranges without normalizeHTMLRecoveredNestedCustomTagRanges, the Scala producer emits its final annotations and spans in one pass, and exact production, compact, forest, incremental, and C-oracle receipts prove the second pass is inert.",
+      "retirement_condition": "Delete only after the Scala producer emits final annotations and spans in one pass. Require exact production, compact, forest, incremental, and C-oracle receipts.",
       "route_coverage": {
         "production": "post_finalization_fixpoint",
         "compact": "post_finalization_fixpoint",
@@ -2460,6 +2448,58 @@
       },
       "status": "live",
       "receipt_refs": []
+    },
+    {
+      "id": "fixpoint.returned-tree-second-pass.html",
+      "kind": "second_pass_fixpoint",
+      "functions": [
+        "normalizeReturnedTree",
+        "normalizePostFinalizationReturnedTree",
+        "normalizeHTMLRecoveredNestedCustomTagRanges"
+      ],
+      "files": [
+        "parser_api.go",
+        "parser_result_html.go"
+      ],
+      "languages": [
+        "html"
+      ],
+      "entrypoint_calls": [
+        "normalizeReturnedTree"
+      ],
+      "switch_arms": [
+        {
+          "languages": [
+            "html"
+          ],
+          "functions": [
+            "normalizeHTMLRecoveredNestedCustomTagRanges"
+          ]
+        }
+      ],
+      "purpose": "Historical HTML arm of the returned-tree second-pass fixpoint. It extended recovered nested custom-tag ranges after finalization.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "grammars/html_parse_regression_test.go",
+        "grammars/html_nested_custom_tag_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
+      ],
+      "retirement_condition": "Satisfied: materialization extends recovered custom elements through the structural _implicit_end_tag child. Exact route receipts prove the second pass is inert.",
+      "route_coverage": {
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
+      },
+      "status": "retired",
+      "retired_commit": "22f506d9b633b9b83f405ca1d7d2770527b9a8cd",
+      "receipt_refs": [
+        "parser_reduce_span_test.go",
+        "grammars/html_parse_regression_test.go",
+        "grammars/html_nested_custom_tag_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
+      ]
     },
     {
       "id": "fixpoint.returned-tree-second-pass.javascript",

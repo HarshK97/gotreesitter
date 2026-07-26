@@ -48,14 +48,16 @@ Each PR retires one ownership mechanism or one proven-inert family:
 3. Implement the capability or invariant once in the owning subsystem. Do not
    add a replacement language allowlist, source-text heuristic, or per-language
    parser patch.
-4. Prove production, compact, forest, and incremental routes. Run C-oracle
+4. Use a language-neutral producer invariant by default. Do not replace a
+   retired patch with another language-specific returned-tree condition.
+5. Prove production, compact, forest, and incremental routes. Run C-oracle
    parity one grammar at a time for every affected language.
-5. Delete the normalizer and its exclusively owned helpers and tests. Preserve
+6. Delete the normalizer and its exclusively owned helpers and tests. Preserve
    useful acceptance assertions at the new owner.
-6. Update the registry, this plan when its schedule changes, the compatibility
+7. Update the registry, this plan when its schedule changes, the compatibility
    guide, and the changelog. Retired registry entries remain as historical
    receipts.
-7. Run Canopy impact and quality checks, review the diff directly, and record
+8. Run Canopy impact and quality checks, review the diff directly, and record
    the ratchet in Hyphae.
 
 Correctness is the merge gate. Performance measurements may select the next
@@ -86,9 +88,9 @@ Status: in progress.
 3. Retire the remaining generic terminal-leaf pass by moving the invariant
    into construction/materialization. This must cover lazy compact child
    references without forcing them.
-4. Retire the HTML and Scala second-pass arms independently. Each first needs
-   a pre-publication witness showing that a single canonical pass reaches the
-   final tree. The shared fixpoint is deleted only after both arms are gone.
+4. Retire the HTML and Scala second-pass arms independently. The HTML arm is
+   retired with exact range receipts. The Scala arm remains.
+   Delete the shared fixpoint only after the Scala arm retires.
 
 Exit: zero generic compatibility passes and zero post-finalization fixpoint
 arms.
@@ -130,9 +132,9 @@ The re-verification found three arms genuinely dead:
 
 - OCaml's collapsed named-leaf restoration.
 - Ruby's top-level module bound shrink.
-- Half of HTML's arm: the ERROR-root nested-custom-tag reconstruction. The
-  shared nested-custom-tag range fixup stays live. The separate
-  returned-tree second pass still calls it.
+- Half of HTML's arm: the ERROR-root nested-custom-tag reconstruction. At this
+  R2 checkpoint, the separate returned-tree second pass still called the range
+  fixup. R1 later retired that independent function.
 
 This PR retires those three arms.
 
@@ -215,7 +217,8 @@ there.
 | Generic trailing-extra pass | merged in PR #453 | 2 generic passes | 1 | RST and Comment production/compact/forest/incremental witnesses plus isolated C-oracle parity |
 | JavaScript returned-tree arm | merged in PR #459 | 3 fixpoint arms | 2 | pre-second-pass root-span witness, JavaScript real-corpus parity, and 30/30 valid incremental/fresh edits |
 | R2 dead dispatcher arms (OCaml, Ruby, half of HTML) | merged in PR #463 | 78 dispatcher arms | 75 | real-corpus census, native-parse regression tests per language, `TestResultCompatibilityOwnershipRegistry` |
-| Generic terminal-leaf mutation | implementation commit `31bc9f1ed88bc930d22d0c2eaedc84195604cce1` on branch `codex/retire-generic-terminal-leaf-20260726`; not merged | 1 tree mutation | 0 | production, compact, forest, incremental, scanner-aware corpus, and Go C-oracle receipts |
+| Generic terminal-leaf mutation | merged in PR #465 | 1 tree mutation | 0 | production, compact, forest, incremental, scanner-aware corpus, and Go C-oracle receipts |
+| HTML returned-tree range arm | retirement commit `22f506d9b633b9b83f405ca1d7d2770527b9a8cd` on branch `codex/retire-html-fixpoint-20260726`; not merged | 2 fixpoint arms | 1 | producer unit, absolute production/compact/forest/incremental ranges and points, nonzero incremental reuse, and exact C ranges and points |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.

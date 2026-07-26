@@ -84,6 +84,12 @@ for tags and release notes while still in `0.x`.
 
 ### Removed
 
+- **The HTML returned-tree range fixup.** Materialization now extends recovered
+  custom elements through each structural `_implicit_end_tag` child.
+  Production, compact, forest, and incremental routes return the exact
+  absolute ranges. The incremental route also proves nonzero old-tree reuse.
+  The locked C reference parser returns the same recovered ranges and points.
+
 - **The generic terminal-leaf tree mutation.** Reduction and alias
   materialization now own the terminal shape. Production, compact, forest,
   incremental, scanner-aware corpus, and locked Go C-oracle receipts find no
@@ -94,11 +100,11 @@ for tags and release notes while still in `0.x`.
   `docs/root-normalization-retirement.md`). The three are OCaml's collapsed
   named-leaf restoration, Ruby's top-level module bound shrink, and HTML's
   ERROR-root nested-custom-tag reconstruction
-  (`normalizeHTMLRecoveredNestedCustomTags`). HTML's sibling function,
-  `normalizeHTMLRecoveredNestedCustomTagRanges`, stays live: the separate
-  returned-tree second pass still calls it. A real-corpus census measured
-  zero rewrites for all three arms. Native-parse regression tests confirm
-  the reduce engine already produces the corrected shape without them.
+  (`normalizeHTMLRecoveredNestedCustomTags`). At the R2 checkpoint, HTML's
+  separate range function stayed live. The R1 item above now removes that
+  function independently. A real-corpus census measured zero rewrites for all
+  three dispatcher arms. Native-parse tests confirm that the reduce engine
+  already produces the corrected shape without them.
 
   A fourth candidate, Elixir, stayed live. Its census also measured zero
   rewrites over the real corpus. A native-parse regression test found the
