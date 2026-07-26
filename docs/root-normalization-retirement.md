@@ -112,6 +112,11 @@ found that table or engine fixes can leave old normalizers behind.
    out of dead-code PRs; they belong to materialization and recovered-forest
    work respectively.
 
+The tracked CI ratchet in `testdata/dispatcher_census_tracked_v1.json` pins
+source hashes, arm identities, and exact census totals for a small source set.
+It does not replace the full authenticated corpus, which remains an external
+release gate.
+
 Exit: no compatibility pass is retained solely because an old fixture calls
 it directly.
 

@@ -1,6 +1,7 @@
 package parserresult_test
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -39,6 +40,7 @@ type dispatcherOwnershipEntry struct {
 	ID        string   `json:"id"`
 	Kind      string   `json:"kind"`
 	Languages []string `json:"languages"`
+	Status    string   `json:"status"`
 }
 
 type dispatcherOwnershipRegistry struct {
@@ -67,8 +69,15 @@ func dispatcherArmLanguages(t *testing.T) map[string]string {
 		if e.Kind != "dispatcher_arm" && e.Kind != "dispatcher_predicate" {
 			continue
 		}
+		if e.Status == "retired" {
+			continue
+		}
 		for _, lang := range e.Languages {
-			langToArm[strings.ToLower(lang)] = e.ID
+			name := strings.ToLower(lang)
+			if previous, exists := langToArm[name]; exists && previous != e.ID {
+				t.Fatalf("ownership registry assigns language %q to both %q and %q", name, previous, e.ID)
+			}
+			langToArm[name] = e.ID
 		}
 	}
 	if len(langToArm) == 0 {
@@ -92,12 +101,12 @@ type dispatcherLangCensus struct {
 	errorRoots int
 }
 
-// parseRealCorpusFile parses one real-corpus source file the same way
-// production callers do: through grammars.LangEntry.Language() (attaches the
-// language's external scanner) and the backend
-// grammars.AuditParseSupport() reports for it (DFA vs. token-source).
+// parseRealCorpusFile uses the production language loader and backend. It
+// disables the admission candidate so the receipt measures the production
+// parser lane.
 func parseRealCorpusFile(entry grammars.LangEntry, backend grammars.ParseBackend, lang *gotreesitter.Language, src []byte) (*gotreesitter.Tree, error) {
 	parser := gotreesitter.NewParser(lang)
+	parser.SetAdmissionCandidateRoute(false)
 	switch backend {
 	case grammars.ParseBackendTokenSource:
 		if entry.TokenSourceFactory == nil {
@@ -141,7 +150,7 @@ func TestDispatcherArmCensusOverRealCorpus(t *testing.T) {
 	}
 
 	results := map[string]*dispatcherLangCensus{}
-	var uncovered []string     // has a registered arm, but the probe never observed a pass record
+	uncoveredByLanguage := map[string]string{}
 	var notApplicable []string // corpus dir has no registered dispatcher arm at all
 	var noLangEntry []string
 	var parseFailed []string
@@ -188,6 +197,9 @@ func TestDispatcherArmCensusOverRealCorpus(t *testing.T) {
 			}
 			if tree == nil || tree.RootNode() == nil {
 				parseFailed = append(parseFailed, name+"/"+f.Name()+": nil tree/root")
+				if tree != nil {
+					tree.Release()
+				}
 				continue
 			}
 			filesParsed++
@@ -195,6 +207,7 @@ func TestDispatcherArmCensusOverRealCorpus(t *testing.T) {
 				census.errorRoots++
 			}
 			rt := tree.ParseRuntime()
+			tree.Release()
 			if rt.NormalizationPasses == nil {
 				continue
 			}
@@ -213,6 +226,9 @@ func TestDispatcherArmCensusOverRealCorpus(t *testing.T) {
 		}
 		census.files = filesParsed
 		if filesParsed == 0 {
+			if hasArm {
+				uncoveredByLanguage[name] = fmt.Sprintf("%s(files=0,errorRoots=0,arm=%s,reason=no-parsed-files)", name, armID)
+			}
 			continue
 		}
 
@@ -221,10 +237,20 @@ func TestDispatcherArmCensusOverRealCorpus(t *testing.T) {
 			continue
 		}
 		if census.run == 0 {
-			uncovered = append(uncovered, fmt.Sprintf("%s(files=%d,errorRoots=%d,arm=%s)", name, filesParsed, census.errorRoots, armID))
+			uncoveredByLanguage[name] = fmt.Sprintf("%s(files=%d,errorRoots=%d,arm=%s,reason=no-pass-record)", name, filesParsed, census.errorRoots, armID)
 			continue
 		}
 		results[name] = census
+	}
+
+	for name, armID := range armLanguages {
+		if _, covered := results[name]; covered {
+			continue
+		}
+		if _, recorded := uncoveredByLanguage[name]; recorded {
+			continue
+		}
+		uncoveredByLanguage[name] = fmt.Sprintf("%s(files=0,errorRoots=0,arm=%s,reason=no-corpus-directory)", name, armID)
 	}
 
 	var inert, active []string
@@ -234,6 +260,10 @@ func TestDispatcherArmCensusOverRealCorpus(t *testing.T) {
 		} else {
 			inert = append(inert, name)
 		}
+	}
+	uncovered := make([]string, 0, len(uncoveredByLanguage))
+	for _, detail := range uncoveredByLanguage {
+		uncovered = append(uncovered, detail)
 	}
 	sort.Strings(inert)
 	sort.Strings(active)
@@ -257,13 +287,17 @@ func TestDispatcherArmCensusOverRealCorpus(t *testing.T) {
 		c := results[name]
 		t.Logf("  %-14s arm=%-28s files=%d checked=%d run=%d visited=%d rewritten=%d",
 			name, c.armID, c.files, c.checked, c.run, c.visited, c.rewritten)
-		shown := 0
-		for file, n := range c.rewriteIn {
-			if shown >= 5 {
+		rewriteFiles := make([]string, 0, len(c.rewriteIn))
+		for file := range c.rewriteIn {
+			rewriteFiles = append(rewriteFiles, file)
+		}
+		sort.Strings(rewriteFiles)
+		for i, file := range rewriteFiles {
+			if i >= 5 {
 				break
 			}
+			n := c.rewriteIn[file]
 			t.Logf("      rewrote %d position(s) in %s", n, file)
-			shown++
 		}
 	}
 
@@ -282,5 +316,119 @@ func TestDispatcherArmCensusOverRealCorpus(t *testing.T) {
 
 	if len(results) == 0 {
 		t.Fatal("dispatcher-arm census covered zero languages: the result is vacuous")
+	}
+}
+
+type trackedDispatcherCensusFixture struct {
+	Language       string `json:"language"`
+	Path           string `json:"path"`
+	SHA256         string `json:"sha256"`
+	ArmID          string `json:"arm_id"`
+	Checked        uint64 `json:"checked"`
+	Run            uint64 `json:"run"`
+	NodesVisited   uint64 `json:"nodes_visited"`
+	NodesRewritten uint64 `json:"nodes_rewritten"`
+	ErrorRoot      bool   `json:"error_root"`
+}
+
+type trackedDispatcherCensusReceipt struct {
+	Schema     string                           `json:"schema"`
+	Limitation string                           `json:"limitation"`
+	Fixtures   []trackedDispatcherCensusFixture `json:"fixtures"`
+}
+
+// TestDispatcherArmCensusTrackedReceipt validates a small tracked corpus on
+// every run. The full authenticated corpus remains an external release gate.
+func TestDispatcherArmCensusTrackedReceipt(t *testing.T) {
+	t.Setenv("GTS_DISPATCHER_CENSUS", "1")
+
+	raw, err := os.ReadFile(filepath.Join("..", "testdata", "dispatcher_census_tracked_v1.json"))
+	if err != nil {
+		t.Fatalf("read tracked dispatcher census receipt: %v", err)
+	}
+	var receipt trackedDispatcherCensusReceipt
+	if err := json.Unmarshal(raw, &receipt); err != nil {
+		t.Fatalf("parse tracked dispatcher census receipt: %v", err)
+	}
+	if receipt.Schema != "gts-dispatcher-census-tracked/v1" {
+		t.Fatalf("tracked dispatcher census schema = %q", receipt.Schema)
+	}
+	if strings.TrimSpace(receipt.Limitation) == "" || len(receipt.Fixtures) == 0 {
+		t.Fatal("tracked dispatcher census receipt lacks its limitation or fixtures")
+	}
+
+	armLanguages := dispatcherArmLanguages(t)
+	langEntries := map[string]grammars.LangEntry{}
+	for _, entry := range grammars.AllLanguages() {
+		langEntries[entry.Name] = entry
+	}
+	backends := map[string]grammars.ParseBackend{}
+	for _, report := range grammars.AuditParseSupport() {
+		backends[report.Name] = report.Backend
+	}
+
+	previousKey := ""
+	for _, fixture := range receipt.Fixtures {
+		key := fixture.Language + "\x00" + fixture.Path
+		if key <= previousKey {
+			t.Fatalf("tracked dispatcher census fixtures are not strictly sorted at %q", key)
+		}
+		previousKey = key
+		if fixture.Checked == 0 || fixture.Run == 0 || fixture.NodesVisited == 0 {
+			t.Fatalf("%s has a vacuous tracked census receipt", fixture.Path)
+		}
+		armID, ok := armLanguages[fixture.Language]
+		if !ok || armID != fixture.ArmID {
+			t.Fatalf("%s arm = %q, want %q", fixture.Language, armID, fixture.ArmID)
+		}
+		entry, ok := langEntries[fixture.Language]
+		if !ok {
+			t.Fatalf("%s has no grammar entry", fixture.Language)
+		}
+		backend, ok := backends[fixture.Language]
+		if !ok {
+			t.Fatalf("%s has no parse backend", fixture.Language)
+		}
+		src, err := os.ReadFile(filepath.Join("..", filepath.FromSlash(fixture.Path)))
+		if err != nil {
+			t.Fatalf("read %s: %v", fixture.Path, err)
+		}
+		if got := fmt.Sprintf("%x", sha256.Sum256(src)); got != fixture.SHA256 {
+			t.Fatalf("%s SHA-256 = %s, want %s", fixture.Path, got, fixture.SHA256)
+		}
+
+		tree, err := parseRealCorpusFile(entry, backend, entry.Language(), src)
+		if err != nil {
+			t.Fatalf("%s parse: %v", fixture.Path, err)
+		}
+		if tree == nil || tree.RootNode() == nil {
+			if tree != nil {
+				tree.Release()
+			}
+			t.Fatalf("%s returned a nil tree or root", fixture.Path)
+		}
+		errorRoot := tree.RootNode().HasError()
+		rt := tree.ParseRuntime()
+		tree.Release()
+
+		var checked, run, visited, rewritten uint64
+		if rt.NormalizationPasses != nil {
+			for _, pass := range *rt.NormalizationPasses {
+				if pass.Name != fixture.ArmID {
+					continue
+				}
+				checked += pass.Checked
+				run += pass.Run
+				visited += pass.NodesVisited
+				rewritten += pass.NodesRewritten
+			}
+		}
+		if checked != fixture.Checked || run != fixture.Run ||
+			visited != fixture.NodesVisited || rewritten != fixture.NodesRewritten ||
+			errorRoot != fixture.ErrorRoot {
+			t.Errorf("%s census = checked:%d run:%d visited:%d rewritten:%d error_root:%t, want checked:%d run:%d visited:%d rewritten:%d error_root:%t",
+				fixture.Path, checked, run, visited, rewritten, errorRoot,
+				fixture.Checked, fixture.Run, fixture.NodesVisited, fixture.NodesRewritten, fixture.ErrorRoot)
+		}
 	}
 }

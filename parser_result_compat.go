@@ -318,7 +318,7 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 // one full-tree walk of its own, so even the closure indirection paid when
 // the flag is set is in the noise relative to the arm's own cost.
 func dispatcherCensusEnabled() bool {
-	return os.Getenv("GTS_DISPATCHER_CENSUS") != ""
+	return os.Getenv("GTS_DISPATCHER_CENSUS") == "1"
 }
 
 // dispatcherArmCensus runs fn (the body of one dispatcher-arm switch case)
@@ -342,15 +342,9 @@ func dispatcherArmCensus(ctx resultCompatibilityContext, armID string, fn func()
 	}
 }
 
-// dispatcherNodeSignature captures exactly the observable-from-outside-the-
-// package surface of one Node: its type (symbol), its span, its child
-// structure (child count), the field name assigned to it in its parent's
-// child slot, and the content-relevant flags a caller can query (IsNamed,
-// IsMissing, IsExtra, HasError, external-scanner-token). It deliberately
-// excludes purely internal bookkeeping bits (dirty, fragile-left/right,
-// field-ID cache-computed) that are incremental-reuse or GLR-disambiguation
-// housekeeping, not tree content, and could otherwise churn independently of
-// whatever the dispatcher arm itself did.
+// dispatcherNodeSignature captures the observable surface of one Node. It
+// includes the parser states because callers can query them and incremental
+// reuse consumes them. It excludes internal caches and GLR bookkeeping.
 //
 // This is the full set of fields Node exposes that can differ between two
 // trees built from the same source: if every signature in a preorder walk is
@@ -359,18 +353,54 @@ func dispatcherArmCensus(ctx resultCompatibilityContext, armID string, fn func()
 // conclusion, not merely a hash coincidence (there is no hashing here at
 // all -- fields are compared for exact equality).
 type dispatcherNodeSignature struct {
-	symbol     Symbol
-	startByte  uint32
-	endByte    uint32
-	childCount int32
-	fieldID    FieldID
-	flags      nodeFlags
+	symbol       Symbol
+	startByte    uint32
+	endByte      uint32
+	startPoint   Point
+	endPoint     Point
+	parseState   StateID
+	preGotoState StateID
+	childCount   int32
+	fieldID      FieldID
+	flags        nodeFlags
 }
 
 // dispatcherCensusContentFlagMask selects the nodeFlags bits that are part of
 // a node's observable content (see dispatcherNodeSignature) and excludes
 // internal-only bookkeeping bits.
-const dispatcherCensusContentFlagMask = nodeFlagNamed | nodeFlagExtra | nodeFlagMissing | nodeFlagHasError | nodeFlagExternalScannerToken
+const dispatcherCensusContentFlagMask = nodeFlagNamed | nodeFlagExtra | nodeFlagMissing | nodeFlagHasError | nodeFlagDirty | nodeFlagExternalScannerToken
+
+func dispatcherFingerprintEntryFlags(entry stackEntry) nodeFlags {
+	if node := stackEntryNode(entry); node != nil {
+		return node.flags & dispatcherCensusContentFlagMask
+	}
+	if node := stackEntryNoTreeNode(entry); node != nil {
+		return node.flags & dispatcherCensusContentFlagMask
+	}
+	if node := stackEntryCompactFullLeaf(entry); node != nil {
+		return node.flags & dispatcherCensusContentFlagMask
+	}
+	if node := stackEntryPendingParent(entry); node != nil {
+		return node.flags & dispatcherCensusContentFlagMask
+	}
+	return 0
+}
+
+func dispatcherFingerprintChild(entry stackEntry, arena *nodeArena, i int) (stackEntry, *nodeArena, FieldID, bool) {
+	child, ok := stackEntryPendingChildAt(arena, entry, i)
+	if !ok || !stackEntryHasNode(child) {
+		return stackEntry{}, nil, 0, false
+	}
+	fieldID, _, fieldOK := stackEntryPendingFieldMetadataAt(arena, entry, i)
+	if !fieldOK {
+		fieldID = 0
+	}
+	childArena := arena
+	if node := stackEntryNode(child); node != nil {
+		childArena = node.ownerArena
+	}
+	return child, childArena, fieldID, true
+}
 
 // captureDispatcherFingerprint walks root in preorder (iteratively, to avoid
 // recursion-depth limits on deep or adversarial trees) and returns one
@@ -384,30 +414,41 @@ func captureDispatcherFingerprint(root *Node) []dispatcherNodeSignature {
 		return nil
 	}
 	type pending struct {
-		node    *Node
+		entry   stackEntry
+		arena   *nodeArena
 		fieldID FieldID
 	}
 	out := make([]dispatcherNodeSignature, 0, 64)
 	stack := make([]pending, 0, 64)
-	stack = append(stack, pending{node: root})
+	stack = append(stack, pending{
+		entry: newStackEntryNode(root.parseState, root),
+		arena: root.ownerArena,
+	})
 	for len(stack) > 0 {
 		top := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		n := top.node
-		if n == nil {
+		if !stackEntryHasNode(top.entry) {
 			continue
 		}
-		childCount := n.ChildCount()
+		childCount := stackEntryNodeChildCount(top.entry)
 		out = append(out, dispatcherNodeSignature{
-			symbol:     n.symbol,
-			startByte:  n.startByte,
-			endByte:    n.endByte,
-			childCount: int32(childCount),
-			fieldID:    top.fieldID,
-			flags:      n.flags & dispatcherCensusContentFlagMask,
+			symbol:       stackEntryNodeSymbol(top.entry),
+			startByte:    stackEntryNodeStartByte(top.entry),
+			endByte:      stackEntryNodeEndByte(top.entry),
+			startPoint:   stackEntryNodeStartPoint(top.entry),
+			endPoint:     stackEntryNodeEndPoint(top.entry),
+			parseState:   stackEntryNodeParseState(top.entry),
+			preGotoState: stackEntryNodePreGotoState(top.entry),
+			childCount:   int32(childCount),
+			fieldID:      top.fieldID,
+			flags:        dispatcherFingerprintEntryFlags(top.entry),
 		})
 		for i := childCount - 1; i >= 0; i-- {
-			stack = append(stack, pending{node: n.Child(i), fieldID: nodeFieldIDAt(n, i)})
+			child, childArena, fieldID, ok := dispatcherFingerprintChild(top.entry, top.arena, i)
+			if !ok {
+				continue
+			}
+			stack = append(stack, pending{entry: child, arena: childArena, fieldID: fieldID})
 		}
 	}
 	return out
