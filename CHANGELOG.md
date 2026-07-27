@@ -12,7 +12,7 @@ for tags and release notes while still in `0.x`.
 - The shared root-extra classifier now drops zero-width scanner tokens from
   child lists. The repetition-skip fold also stops the historical Typst
   comma artifact. These producer rules retire two returned-tree walks.
-  Haskell and Typst keep their dispatcher arms for other repairs.
+  Typst keeps its dispatcher arm for other repairs.
 
 - Root spans now exclude unowned leading token padding through one shared
   materialization rule. This removes seven language-local repairs.
@@ -97,6 +97,13 @@ for tags and release notes while still in `0.x`.
   A downstream user reported this behavior in issue #454.
 
 ### Removed
+
+- **The Haskell section-span result repair.** Native reduction and root
+  finalization already produce the exact `imports` and `declarations` ranges.
+  The real-corpus census found no remaining rewrite.
+  Production, compact, incremental, and locked C receipts match.
+  The forest route retains its existing section reduction-cap limit.
+  This removes the remaining Haskell dispatcher arm.
 
 - **The source-driven collapsed-token repair family for HCL, CPON, C#, and
   PowerShell.** Reduction now preserves each required anonymous token child.
