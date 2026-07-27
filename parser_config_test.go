@@ -22,6 +22,75 @@ func TestResetParseEnvConfigCacheDoesNotOwnFaithfulCondenseMode(t *testing.T) {
 	}
 }
 
+func TestParseLimitEnvPresenceSharesValueSnapshot(t *testing.T) {
+	tests := []struct {
+		name       string
+		env        string
+		defaultVal int
+		value      func() int
+		configured func() bool
+	}{
+		{
+			name:       "node_limit_scale",
+			env:        "GOT_PARSE_NODE_LIMIT_SCALE",
+			defaultVal: 1,
+			value:      parseNodeLimitScaleFactor,
+			configured: parseNodeLimitScaleEnvConfigured,
+		},
+		{
+			name:       "max_glr_stacks",
+			env:        "GOT_GLR_MAX_STACKS",
+			defaultVal: maxGLRStacks,
+			value:      parseMaxGLRStacksValue,
+			configured: parseMaxGLRStacksEnvConfigured,
+		},
+		{
+			name:       "max_merge_per_key",
+			env:        "GOT_GLR_MAX_MERGE_PER_KEY",
+			defaultVal: maxStacksPerMergeKey,
+			value:      parseMaxMergePerKeyValue,
+			configured: parseMaxMergePerKeyEnvConfigured,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv(test.env, "")
+			ResetParseEnvConfigCacheForTests()
+			t.Cleanup(ResetParseEnvConfigCacheForTests)
+
+			if got := test.value(); got != test.defaultVal {
+				t.Fatalf("default value = %d, want %d", got, test.defaultVal)
+			}
+			if test.configured() {
+				t.Fatal("empty environment reported an explicit override")
+			}
+
+			t.Setenv(test.env, "7")
+			if got := test.value(); got != test.defaultVal {
+				t.Fatalf("cached value = %d, want %d", got, test.defaultVal)
+			}
+			if test.configured() {
+				t.Fatal("presence changed outside the cached value snapshot")
+			}
+
+			ResetParseEnvConfigCacheForTests()
+			if got := test.value(); got != 7 {
+				t.Fatalf("reset value = %d, want 7", got)
+			}
+			if !test.configured() {
+				t.Fatal("reset omitted the explicit override")
+			}
+
+			t.Setenv(test.env, "")
+			if !test.configured() {
+				t.Fatal("presence changed outside the cached value snapshot")
+			}
+		})
+	}
+}
+
 func TestTransientReduceLanguageDefaultsToDisabled(t *testing.T) {
 	t.Setenv("GOT_TRANSIENT_REDUCE_CHILDREN", "")
 	t.Setenv("GOT_TRANSIENT_REDUCE_PARENTS", "")

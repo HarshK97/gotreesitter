@@ -10,14 +10,17 @@ import (
 var (
 	parseNodeLimitScaleOnce     sync.Once
 	parseNodeLimitScale         int
+	parseNodeLimitScaleEnvSet   bool
 	parseMemoryBudgetOnce       sync.Once
 	parseMemoryBudgetMBVal      int
 	parseMemoryHardCeilingOnce  sync.Once
 	parseMemoryHardCeilingMBVal int
 	parseMaxGLRStacksOnce       sync.Once
 	parseMaxGLRStacks           int
+	parseMaxGLRStacksEnvSet     bool
 	parseMaxMergePerKeyOnce     sync.Once
 	parseMaxMergePerKey         int
+	parseMaxMergePerKeyEnvSet   bool
 	preMaterializationDiagOnce  sync.Once
 	preMaterializationDiag      bool
 	parsePhaseTimingOnce        sync.Once
@@ -49,14 +52,17 @@ var (
 func ResetParseEnvConfigCacheForTests() {
 	parseNodeLimitScaleOnce = sync.Once{}
 	parseNodeLimitScale = 0
+	parseNodeLimitScaleEnvSet = false
 	parseMemoryBudgetOnce = sync.Once{}
 	parseMemoryBudgetMBVal = 0
 	parseMemoryHardCeilingOnce = sync.Once{}
 	parseMemoryHardCeilingMBVal = 0
 	parseMaxGLRStacksOnce = sync.Once{}
 	parseMaxGLRStacks = 0
+	parseMaxGLRStacksEnvSet = false
 	parseMaxMergePerKeyOnce = sync.Once{}
 	parseMaxMergePerKey = 0
+	parseMaxMergePerKeyEnvSet = false
 	preMaterializationDiagOnce = sync.Once{}
 	preMaterializationDiag = false
 	parsePhaseTimingOnce = sync.Once{}
@@ -79,7 +85,8 @@ func parseNodeLimitScaleFactor() int {
 	parseNodeLimitScaleOnce.Do(func() {
 		parseNodeLimitScale = 1
 		raw := strings.TrimSpace(os.Getenv("GOT_PARSE_NODE_LIMIT_SCALE"))
-		if raw == "" {
+		parseNodeLimitScaleEnvSet = raw != ""
+		if !parseNodeLimitScaleEnvSet {
 			return
 		}
 		n, err := strconv.Atoi(raw)
@@ -91,14 +98,16 @@ func parseNodeLimitScaleFactor() int {
 }
 
 func parseNodeLimitScaleEnvConfigured() bool {
-	return strings.TrimSpace(os.Getenv("GOT_PARSE_NODE_LIMIT_SCALE")) != ""
+	_ = parseNodeLimitScaleFactor()
+	return parseNodeLimitScaleEnvSet
 }
 
 func parseMaxGLRStacksValue() int {
 	parseMaxGLRStacksOnce.Do(func() {
 		parseMaxGLRStacks = maxGLRStacks
 		raw := strings.TrimSpace(os.Getenv("GOT_GLR_MAX_STACKS"))
-		if raw == "" {
+		parseMaxGLRStacksEnvSet = raw != ""
+		if !parseMaxGLRStacksEnvSet {
 			return
 		}
 		n, err := strconv.Atoi(raw)
@@ -113,7 +122,8 @@ func parseMaxMergePerKeyValue() int {
 	parseMaxMergePerKeyOnce.Do(func() {
 		parseMaxMergePerKey = maxStacksPerMergeKey
 		raw := strings.TrimSpace(os.Getenv("GOT_GLR_MAX_MERGE_PER_KEY"))
-		if raw == "" {
+		parseMaxMergePerKeyEnvSet = raw != ""
+		if !parseMaxMergePerKeyEnvSet {
 			return
 		}
 		n, err := strconv.Atoi(raw)
@@ -125,7 +135,8 @@ func parseMaxMergePerKeyValue() int {
 }
 
 func parseMaxMergePerKeyEnvConfigured() bool {
-	return strings.TrimSpace(os.Getenv("GOT_GLR_MAX_MERGE_PER_KEY")) != ""
+	_ = parseMaxMergePerKeyValue()
+	return parseMaxMergePerKeyEnvSet
 }
 
 // parseMaxGLRStacksEnvConfigured reports whether GOT_GLR_MAX_STACKS was set
@@ -133,7 +144,8 @@ func parseMaxMergePerKeyEnvConfigured() bool {
 // the retry ladder must treat it as a true ceiling instead of silently
 // widening past it (fullParseRetryMaxStacksOverride).
 func parseMaxGLRStacksEnvConfigured() bool {
-	return strings.TrimSpace(os.Getenv("GOT_GLR_MAX_STACKS")) != ""
+	_ = parseMaxGLRStacksValue()
+	return parseMaxGLRStacksEnvSet
 }
 
 // glrFaithfulCapOneMerge (GOT_FAITHFUL_CONDENSE=1) makes cap-one condense
