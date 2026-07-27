@@ -7,10 +7,7 @@ import (
 )
 
 // TestCPONBooleanKeepsTrueTokenChildViaEngine proves that the reduce engine
-// restores the anonymous `true` token child of `boolean` on a real parse,
-// without help from the (now removed)
-// normalizeCollapsedNamedLeafChildrenBySource(..., "boolean", "true",
-// "false") call inside normalizeCPONCompatibility.
+// preserves the anonymous `true` token child of `boolean` on a real parse.
 // shouldKeepVisibleAnonymousTokenChild keeps different-named
 // single-token-wrapper anonymous children unconditionally, so `boolean`
 // (named) wrapping `true`/`false` (anonymous) is never collapsed to a

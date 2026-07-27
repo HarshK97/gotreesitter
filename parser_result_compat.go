@@ -124,8 +124,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.corn", func() { normalizeCornCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "crystal":
 		dispatcherArmCensus(ctx, "dispatch.crystal", func() { normalizeCrystalCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "cpon":
-		dispatcherArmCensus(ctx, "dispatch.cpon", func() { normalizeCPONCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "d":
 		dispatcherArmCensus(ctx, "dispatch.d", func() { normalizeDCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "dart":
@@ -204,7 +202,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.powershell", func() {
 			normalizePowerShellProgramShape(ctx.root, ctx.source, ctx.lang)
 			normalizePowerShellErrorProgramRoot(ctx.root, ctx.lang)
-			normalizePowerShellAssignmentOperatorTokens(ctx.root, ctx.source, ctx.lang)
 			normalizePowerShellPathCommandNameVariables(ctx.root, ctx.source, ctx.lang)
 			normalizePowerShellEnumStatementKeywordSpans(ctx.root, ctx.source, ctx.lang)
 		})

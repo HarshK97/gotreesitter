@@ -7,12 +7,10 @@ import (
 )
 
 // TestPowerShellOperatorWrappersKeepTokenChildrenViaEngine proves that the
-// reduce engine restores the anonymous token children of PowerShell's
+// reduce engine preserves the anonymous token children of PowerShell's
 // command_argument_sep/comparison_operator/format_operator/
 // file_redirection_operator/merging_redirection_operator/
-// command_invokation_operator wrapper nodes on real parses, without help
-// from the (now removed) powershell
-// normalizePowerShellAssignmentOperatorTokens calls for those symbols.
+// command_invokation_operator wrapper nodes on real parses.
 // shouldKeepVisibleAnonymousTokenChild keeps different-named
 // single-token-wrapper anonymous children unconditionally, so these named
 // wrappers around anonymous operator/separator tokens are never collapsed to
