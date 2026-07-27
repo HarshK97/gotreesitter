@@ -388,6 +388,9 @@ func TestBuildReduceChildrenProjectsConflictedInheritedFieldsBySymbol(t *testing
 			{FieldID: 1, ChildIndex: 0, Inherited: true},
 			{FieldID: 2, ChildIndex: 0, Inherited: true},
 		},
+		ParseActions: []ParseActionEntry{
+			{Actions: []ParseAction{{Type: ParseActionReduce, Symbol: 4, ChildCount: 1, ProductionID: 0}}},
+		},
 	}
 	parser := NewParser(lang)
 	arena := newNodeArena(arenaClassFull)

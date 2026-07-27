@@ -315,8 +315,16 @@ func buildReduceFieldPlans(lang *Language) []reduceFieldPlan {
 }
 
 func fieldMapHasEffectiveFields(lang *Language, childCount int, productionID uint16) bool {
-	fieldIDs, _, _ := buildFieldPlanForProduction(lang, childCount, productionID)
-	return fieldIDSliceHasAny(fieldIDs)
+	fieldIDs, _, conflictedInherited := buildFieldPlanForProduction(lang, childCount, productionID)
+	if fieldIDSliceHasAny(fieldIDs) {
+		return true
+	}
+	for _, conflicted := range conflictedInherited {
+		if conflicted {
+			return true
+		}
+	}
+	return false
 }
 
 func buildFieldPlanForProduction(lang *Language, childCount int, productionID uint16) ([]FieldID, []bool, []bool) {

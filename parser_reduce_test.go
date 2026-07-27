@@ -1554,7 +1554,7 @@ func TestNonTerminalAliasMapPreservesInvisibleUnaryWrappers(t *testing.T) {
 	}
 }
 
-func TestReduceProductionHasEffectiveFieldsIgnoresConflictedZeroFields(t *testing.T) {
+func TestReduceProductionHasEffectiveFieldsKeepsConflictedInheritedProjection(t *testing.T) {
 	lang := &Language{
 		SymbolMetadata: []SymbolMetadata{
 			{Name: "EOF"},
@@ -1576,11 +1576,11 @@ func TestReduceProductionHasEffectiveFieldsIgnoresConflictedZeroFields(t *testin
 	p := NewParser(lang)
 	arena := newNodeArena(arenaClassFull)
 
-	if p.reduceProductionHasFields(0) {
-		t.Fatal("reduceProductionHasFields = true, want false for conflicted zero field IDs")
+	if !p.reduceProductionHasFields(0) {
+		t.Fatal("reduceProductionHasFields = false, want true for conflicted inherited fields")
 	}
-	if p.reduceProductionHasEffectiveFields(1, 0, arena) {
-		t.Fatal("reduceProductionHasEffectiveFields = true, want false for conflicted zero field IDs")
+	if !p.reduceProductionHasEffectiveFields(1, 0, arena) {
+		t.Fatal("reduceProductionHasEffectiveFields = false, want true for conflicted inherited fields")
 	}
 	fieldIDs, _, conflictedInherited := p.buildFieldIDs(1, 0, arena)
 	if got := len(fieldIDs); got != 1 {
@@ -1594,7 +1594,7 @@ func TestReduceProductionHasEffectiveFieldsIgnoresConflictedZeroFields(t *testin
 	}
 }
 
-func TestTryPushPendingNoFieldParentAllowsEffectiveNoFieldProduction(t *testing.T) {
+func TestTryPushPendingNoFieldParentRejectsConflictedInheritedFields(t *testing.T) {
 	lang := &Language{
 		SymbolMetadata: []SymbolMetadata{
 			{Name: "EOF"},
@@ -1623,30 +1623,26 @@ func TestTryPushPendingNoFieldParentAllowsEffectiveNoFieldProduction(t *testing.
 	anyReduced := false
 	nodeCount := 0
 
-	if !p.tryPushPendingNoFieldParent(stack, act, Token{}, &anyReduced, &nodeCount, arena, nil, nil, []stackEntry{entry}, 0, 1, 1, 0, 0) {
-		t.Fatal("tryPushPendingNoFieldParent = false, want true for effective no-field production")
+	if p.tryPushPendingNoFieldParent(stack, act, Token{}, &anyReduced, &nodeCount, arena, nil, nil, []stackEntry{entry}, 0, 1, 1, 0, 0) {
+		t.Fatal("tryPushPendingNoFieldParent = true, want false for conflicted inherited fields")
 	}
-	if !anyReduced {
-		t.Fatal("anyReduced = false, want true")
+	if anyReduced {
+		t.Fatal("anyReduced = true, want false")
 	}
-	if nodeCount != 1 {
-		t.Fatalf("nodeCount = %d, want 1", nodeCount)
+	if nodeCount != 0 {
+		t.Fatalf("nodeCount = %d, want 0", nodeCount)
 	}
-	if got := arena.pendingParentRejectedFields; got != 0 {
-		t.Fatalf("pendingParentRejectedFields = %d, want 0", got)
+	if got := arena.pendingParentRejectedFields; got != 1 {
+		t.Fatalf("pendingParentRejectedFields = %d, want 1", got)
 	}
-	if got := arena.pendingParentCreated; got != 1 {
-		t.Fatalf("pendingParentCreated = %d, want 1", got)
+	if got := arena.pendingParentCreated; got != 0 {
+		t.Fatalf("pendingParentCreated = %d, want 0", got)
 	}
 	if got := len(stack.entries); got != 1 {
 		t.Fatalf("stack entries = %d, want 1", got)
 	}
-	parent := stackEntryPendingParent(stack.entries[0])
-	if parent == nil {
-		t.Fatal("stack entry is not a pending parent")
-	}
-	if got := parent.childEntryCount(); got != 1 {
-		t.Fatalf("pending parent child count = %d, want 1", got)
+	if got := stackEntryCompactFullLeaf(stack.entries[0]); got == nil {
+		t.Fatal("stack entry changed, want original compact leaf")
 	}
 }
 
