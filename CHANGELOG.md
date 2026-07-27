@@ -88,6 +88,14 @@ for tags and release notes while still in `0.x`.
 
 ### Removed
 
+- **The trailing root and child span compatibility family.** Materialization
+  now owns the exact spans for Caddy, Comment, Fortran, Just, Nginx, Nim,
+  Pascal, Pug, and RST. The compact scheduler admits progressing zero-width
+  external extras. Forest publication omits zero-width synchronization extras
+  as children while it retains their source-range ownership. Native producer,
+  production, compact, forest, incremental, reuse, and isolated C-oracle
+  receipts support the removal of four dispatcher arms.
+
 - **The Lua, Make, and Zig field-projection passes.** Reduction now projects
   inherited and direct fields through hidden productions.
   The Zig grammar metadata emits initializer lists without `field_constant`.

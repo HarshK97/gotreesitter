@@ -53,3 +53,29 @@ func TestForestTrailingExtraRetained(t *testing.T) {
 		}
 	})
 }
+
+func TestForestOmitsZeroWidthRootExtraLikeProduction(t *testing.T) {
+	source := []byte("echo \"hello\"\n")
+	lang := grammars.NimLanguage()
+
+	productionParser := gts.NewParser(lang)
+	productionParser.SetAdmissionCandidateRoute(false)
+	production, err := productionParser.Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer production.Release()
+
+	forest, ok := gts.NewParser(lang).ParseForestExperimental(source)
+	if !ok || forest == nil {
+		t.Fatal("forest declined the zero-width external extra fixture")
+	}
+	defer forest.Release()
+
+	if got, want := forest.RootNode().SExpr(lang), production.RootNode().SExpr(lang); got != want {
+		t.Fatalf("forest shape=%s, want production %s", got, want)
+	}
+	if got, want := forest.RootNode().ChildCount(), production.RootNode().ChildCount(); got != want {
+		t.Fatalf("forest root children=%d, want %d", got, want)
+	}
+}

@@ -183,8 +183,8 @@ func (c *Core) prepareExtraClassifiedCohortInto(boundaries []ClassifiedBoundary,
 	if len(targets) != len(boundaries) {
 		return errors.New("parser-core phase zero: extra cohort target storage length mismatch")
 	}
-	if !shifted.Extra || shifted.EndByte <= shifted.StartByte {
-		return errors.New("parser-core phase zero: cohort token is not a positive-width extra terminal")
+	if !shifted.Extra || shifted.EndByte < shifted.StartByte || shifted.EndByte == shifted.StartByte && !shifted.External {
+		return errors.New("parser-core phase zero: cohort token has invalid extra-terminal geometry")
 	}
 	for index, boundary := range boundaries {
 		if shifted.Symbol != boundary.lookahead {

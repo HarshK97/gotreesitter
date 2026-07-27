@@ -104,6 +104,120 @@ func TestDiagnosticParserCoreGenericSingleExtraPreservesPayloadAndState(t *testi
 	}
 }
 
+func TestDiagnosticParserCoreGenericZeroWidthExternalExtraAdvancesCheckpoint(t *testing.T) {
+	table := &genericConflictTable{cells: map[genericConflictCell][]core.Action{
+		{state: 5, symbol: 9}: {{Type: core.ActionShift, Extra: true}},
+	}}
+	compact, err := core.New(table, core.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := compact.Seed(5, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterBytes := []byte{2}
+	afterID := mustDiagnosticCheckpointID(t, compact, afterBytes)
+	if err := compact.SetPhaseCheckpoint(afterID); err != nil {
+		t.Fatal(err)
+	}
+	token := Token{
+		Symbol: 9, StartByte: 10, EndByte: 10,
+		ExternalScannerToken: true, ExternalScannerStartByte: 10,
+	}
+	election := DiagnosticParserCoreElection{
+		Token:         token,
+		ScannerBefore: parserCoreCheckpoint(nil),
+		ScannerAfter:  parserCoreCheckpoint(afterBytes),
+	}
+	scheduler := &diagnosticParserCoreGenericScheduler{
+		compact: compact,
+		headers: []diagnosticParserCoreHeader{{head: seed, checkpoint: afterID}},
+		token:   token, checkpoint: election.ScannerAfter, checkpointID: afterID,
+		currentElection: election, electionIndex: 1,
+		options: DiagnosticParserCorePrefixOptions{MaxDispatches: 10},
+		receipt: &DiagnosticParserCoreGenericScheduler{},
+	}
+	stop, err := scheduler.dispatchPass()
+	if err != nil || stop != nil {
+		t.Fatalf("zero-width external extra stop=%+v err=%v", stop, err)
+	}
+	state, offset, err := compact.Boundary(scheduler.headers[0].head)
+	if err != nil || state != 5 || offset != 10 || !scheduler.headers[0].shifted {
+		t.Fatalf("zero-width external extra boundary=(%d,%d) shifted=%t err=%v", state, offset, scheduler.headers[0].shifted, err)
+	}
+	if len(scheduler.receipt.ExternalShifts) != 1 ||
+		len(scheduler.receipt.ExternalShifts[0].Payloads) != 1 {
+		t.Fatalf("zero-width external receipt=%+v", scheduler.receipt.ExternalShifts)
+	}
+	payload := scheduler.receipt.ExternalShifts[0].Payloads[0]
+	if payload.StartByte != 10 || payload.EndByte != 10 || !payload.Extra || !payload.External || !payload.Terminal {
+		t.Fatalf("zero-width external payload=%+v", payload)
+	}
+}
+
+func TestDiagnosticParserCoreGenericZeroWidthExtraRequiresProgress(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		target    core.StateID
+		wantStop  bool
+		wantState core.StateID
+	}{
+		{name: "no progress", wantStop: true, wantState: 5},
+		{name: "parser state progress", target: 7, wantState: 7},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			table := &genericConflictTable{cells: map[genericConflictCell][]core.Action{
+				{state: 5, symbol: 9}: {{Type: core.ActionShift, State: test.target, Extra: true}},
+			}}
+			compact, err := core.New(table, core.Limits{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			seed, err := compact.Seed(5, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := compact.Stats(seed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			token := Token{Symbol: 9, StartByte: 10, EndByte: 10, ExternalScannerToken: true}
+			election := DiagnosticParserCoreElection{
+				Token: token, ScannerBefore: parserCoreCheckpoint(nil), ScannerAfter: parserCoreCheckpoint(nil),
+			}
+			scheduler := &diagnosticParserCoreGenericScheduler{
+				compact: compact, headers: []diagnosticParserCoreHeader{{head: seed}},
+				token: token, currentElection: election,
+				options: DiagnosticParserCorePrefixOptions{MaxDispatches: 10},
+				receipt: &DiagnosticParserCoreGenericScheduler{},
+			}
+			stop, err := scheduler.dispatchPass()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.wantStop {
+				if stop == nil || stop.boundary != DiagnosticParserCoreRoute ||
+					stop.detail != "generic scheduler zero-width extra shift has no scanner or parser-state progress" {
+					t.Fatalf("zero-width no-progress stop=%+v", stop)
+				}
+				after, statsErr := compact.Stats(seed)
+				if statsErr != nil || after != before || scheduler.dispatches != 0 {
+					t.Fatalf("zero-width no-progress mutated state: before=%+v after=%+v err=%v", before, after, statsErr)
+				}
+				return
+			}
+			if stop != nil {
+				t.Fatalf("zero-width parser-state progress stop=%+v", stop)
+			}
+			state, offset, boundaryErr := compact.Boundary(scheduler.headers[0].head)
+			if boundaryErr != nil || state != test.wantState || offset != 10 {
+				t.Fatalf("zero-width parser-state boundary=(%d,%d) err=%v", state, offset, boundaryErr)
+			}
+		})
+	}
+}
+
 func TestDiagnosticParserCoreGenericMultiHeadExtraSharesPayload(t *testing.T) {
 	table := &genericConflictTable{cells: map[genericConflictCell][]core.Action{
 		{state: 5, symbol: 9}: {{Type: core.ActionShift, Extra: true}},

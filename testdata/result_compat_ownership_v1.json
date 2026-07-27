@@ -2,8 +2,8 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 72,
-    "dispatcher_languages": 79,
+    "dispatcher_arms": 68,
+    "dispatcher_languages": 70,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
@@ -374,21 +374,30 @@
         "pug",
         "rst"
       ],
-      "purpose": "Reconcile grammar-specific trailing root and trivia spans.",
+      "purpose": "Historical: reconciled grammar-specific trailing root and trivia spans before materialization owned the same spans.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/trailing_span_native_regression_test.go",
+        "parsercore_phase0_generic_extra_internal_test.go",
+        "forest_trailing_extra_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: materialization owns visible trailing extras and full root ranges, compact scheduling admits progressing external zero-width extras, and every route receipt is exact.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "2e0ed636316e82eaaea2b3c89aecd957a80af499",
+      "receipt_refs": [
+        "grammars/trailing_span_native_regression_test.go",
+        "parsercore_phase0_generic_extra_internal_test.go",
+        "forest_trailing_extra_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.cooklang",
@@ -1252,21 +1261,26 @@
       "languages": [
         "just"
       ],
-      "purpose": "Reconcile Just top-level trailing line-break spans.",
+      "purpose": "Historical: reconciled Just top-level trailing line-break spans before materialization owned them.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/trailing_span_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: materialization emits the exact trailing line-break spans, and every route receipt is exact.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "2e0ed636316e82eaaea2b3c89aecd957a80af499",
+      "receipt_refs": [
+        "grammars/trailing_span_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.ledger",
@@ -1490,21 +1504,26 @@
       "languages": [
         "nginx"
       ],
-      "purpose": "Reconcile Nginx attribute line-break spans.",
+      "purpose": "Historical: reconciled Nginx attribute line-break spans before materialization owned them.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/trailing_span_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: materialization emits the exact attribute line-break spans, and every route receipt is exact.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "2e0ed636316e82eaaea2b3c89aecd957a80af499",
+      "receipt_refs": [
+        "grammars/trailing_span_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.ninja",
@@ -1583,21 +1602,26 @@
       "languages": [
         "pascal"
       ],
-      "purpose": "Reconcile Pascal program end and trailing trivia spans.",
+      "purpose": "Historical: reconciled Pascal program-end and trailing-trivia spans before materialization owned them.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/trailing_span_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: materialization emits the exact program-end and trailing-trivia spans, and every route receipt is exact.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "2e0ed636316e82eaaea2b3c89aecd957a80af499",
+      "receipt_refs": [
+        "grammars/trailing_span_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.perl",

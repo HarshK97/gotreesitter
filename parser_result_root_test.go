@@ -2,6 +2,37 @@ package gotreesitter
 
 import "testing"
 
+func TestAttachResultRootExtraSplitOmitsZeroWidthChildren(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "source_file", "comment"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "comment", Visible: true, Named: true},
+		},
+	}
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	child := newLeafNodeInArena(arena, 1, true, 1, 3, Point{Column: 1}, Point{Column: 3})
+	root := newParentNodeInArena(arena, 1, true, []*Node{child}, nil, 0)
+	zeroWidth := newLeafNodeInArena(arena, 2, true, 0, 0, Point{}, Point{})
+	zeroWidth.setExtra(true)
+	positiveWidth := newLeafNodeInArena(arena, 2, true, 3, 4, Point{Column: 3}, Point{Column: 4})
+	positiveWidth.setExtra(true)
+
+	split := classifyResultRootExtras([]*Node{zeroWidth, positiveWidth}, lang)
+	attachResultRootExtraSplit(root, split, arena)
+
+	children := resultChildSliceForMutation(root)
+	if len(children) != 2 || children[0] != child || children[1] != positiveWidth {
+		t.Fatalf("attached root children=%+v", children)
+	}
+	if root.startByte != 0 || root.endByte != 4 {
+		t.Fatalf("attached root span=%d..%d, want 0..4", root.startByte, root.endByte)
+	}
+}
+
 func newRootFrameReplayLanguage(name, rootName, childName string, repeat bool) *Language {
 	const (
 		childSym = Symbol(3)

@@ -3538,7 +3538,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 			// below it on the accepted stack); fold them into the root the way the
 			// production result builder does, splitting by position.
 			if len(extras) > 0 {
-				foldResultRootExtras(root, extras, arena)
+				attachResultRootExtraSplit(root, classifyResultRootExtras(extras, p.language), arena)
 			}
 			// The production root spans the whole input, including trailing
 			// trivia; the forest root stops at the last token. Extend to match

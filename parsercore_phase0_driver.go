@@ -2307,6 +2307,9 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				boundary: DiagnosticParserCoreExtra, detail: "generic scheduler requires a homogeneous all-runnable extra cohort", headerIndex: cells[0].headerIndex,
 			}, nil
 		}
+		if unsupported := s.zeroWidthExtraShiftWithoutProgress(cells); unsupported != nil {
+			return unsupported, nil
+		}
 		return nil, s.applyGenericExtraShifts(before, cells)
 	}
 
@@ -2323,6 +2326,28 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 		return nil, s.applyGenericConflict(before, cells[conflictCell])
 	}
 	return nil, s.applyGenericShifts(before, cells)
+}
+
+func (s *diagnosticParserCoreGenericScheduler) zeroWidthExtraShiftWithoutProgress(cells []diagnosticParserCoreGenericCell) *diagnosticParserCoreGenericUnsupported {
+	if s.token.EndByte != s.token.StartByte ||
+		s.currentElection.ScannerAfter != s.currentElection.ScannerBefore {
+		return nil
+	}
+	for _, cell := range cells {
+		action := cell.actions().At(0)
+		target := action.State
+		if target == 0 {
+			target = cell.boundary.State()
+		}
+		if target == cell.boundary.State() {
+			return &diagnosticParserCoreGenericUnsupported{
+				boundary:    DiagnosticParserCoreRoute,
+				detail:      "generic scheduler zero-width extra shift has no scanner or parser-state progress",
+				headerIndex: cell.headerIndex,
+			}
+		}
+	}
+	return nil
 }
 
 func (s *diagnosticParserCoreGenericScheduler) applyGenericAccept(before []DiagnosticParserCoreHeaderReceipt, cell diagnosticParserCoreGenericCell) (err error) {
@@ -3081,8 +3106,8 @@ func diagnosticParserCoreGenericUnsupportedCellDescriptor(headerIndex int, token
 	case core.ActionRowShift:
 		return nil
 	case core.ActionRowExtraShift:
-		if token.EndByte <= token.StartByte {
-			return unsupported(DiagnosticParserCoreRoute, "generic scheduler extra shift is not positive-width")
+		if token.EndByte < token.StartByte || token.EndByte == token.StartByte && !token.ExternalScannerToken {
+			return unsupported(DiagnosticParserCoreRoute, "generic scheduler extra shift has invalid token geometry")
 		}
 		return nil
 	case core.ActionRowReduce:
