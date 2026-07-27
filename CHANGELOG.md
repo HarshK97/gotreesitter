@@ -9,6 +9,11 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Root spans now exclude unowned leading token padding through one shared
+  materialization rule. This removes seven language-local repairs.
+  Compact admission now accepts the same first-token start as the C oracle.
+  Squirrel's result-compatibility dispatcher arm is retired.
+
 - Rust dot ranges now parse without a result repair.
   The exact collapsed-child policy retains each bare `..` token.
   The merged-left-side conflict rule selects chained dot-range shifts.

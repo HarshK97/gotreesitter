@@ -171,7 +171,9 @@ confirm dead code.
 Status: in progress.
 
 PR #471 retired the Lua, Make, and Zig field-projection arms.
-The trailing-span family is the next materialization retirement.
+PR #472 retired the trailing-span family.
+Shared root finalization now owns the leading-trivia root family.
+This change removes seven language-local repairs and retires Squirrel's arm.
 
 Group by invariant, not language:
 
