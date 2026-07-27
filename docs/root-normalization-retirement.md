@@ -189,7 +189,7 @@ references. Native HCL reduction already owns each body span.
 The HCL dispatcher arm is retired.
 Native reduction already owns D `module_def` bounds.
 The D dispatcher remains live for unrelated shape repairs.
-Native derivation election owns Erlang macro replacement selection.
+Native derivation election chooses the correct Erlang macro replacement.
 Native reduction owns Erlang top-level form spans.
 The Erlang dispatcher arm is retired.
 

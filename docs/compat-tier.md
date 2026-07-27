@@ -220,15 +220,16 @@ Root acceptance preserves producer fields when it absorbs surrounding trivia.
 
 ## Current progress: Erlang native ownership
 
-Native derivation election distinguishes two macro replacement families.
-It keeps function clauses separate from case and receive clauses.
+Native derivation election chooses the correct Erlang macro replacement.
+It separates function clauses from case and receive clauses.
 Reduction also owns each top-level form span.
 
 The authenticated Erlang corpus reports zero dispatcher rewrites.
-Compatibility-free witnesses cover both replacement families and form spans.
+Compatibility-free witnesses cover both macro replacements.
+They also cover the top-level form spans.
 Production, compact, forest, and incremental routes return exact trees.
 The incremental route reuses the old tree.
-The locked C parser returns the same shapes and spans.
+The reference C parser returns the same shapes and spans.
 The Erlang dispatcher arm is retired.
 
 Compatibility-free parses prove each producer shape.
