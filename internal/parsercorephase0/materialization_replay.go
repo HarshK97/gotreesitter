@@ -4,20 +4,25 @@ package parsercorephase0
 // parse-state replay traversal. It remains valid until the Core is reset.
 // Callers must not retain it past that boundary.
 type MaterializationReplayChildren struct {
-	ids []SubtreeID
+	first uint32
+	count uint32
 }
 
 // Len returns the number of compact children.
-func (c MaterializationReplayChildren) Len() int {
-	return len(c.ids)
+func (c MaterializationReplayChildren) Len() uint32 {
+	return c.count
 }
 
 // At returns one compact child without copying the child arena.
-func (c MaterializationReplayChildren) At(index int) (SubtreeID, bool) {
-	if index < 0 || index >= len(c.ids) {
+func (c *Core) MaterializationReplayChild(children MaterializationReplayChildren, index uint32) (SubtreeID, bool) {
+	if c == nil || index >= children.count {
 		return 0, false
 	}
-	return c.ids[index], true
+	childIndex := uint64(children.first) + uint64(index)
+	if childIndex >= uint64(len(c.children)) {
+		return 0, false
+	}
+	return c.children[childIndex], true
 }
 
 // MaterializationReplayView exposes only the compact fields that parse-state
@@ -38,7 +43,8 @@ func (c *Core) MaterializationReplayView(id SubtreeID) (MaterializationReplayVie
 	return MaterializationReplayView{
 		Symbol: record.symbol,
 		Children: MaterializationReplayChildren{
-			ids: c.children[record.firstChild : record.firstChild+record.childCount],
+			first: record.firstChild,
+			count: record.childCount,
 		},
 		Extra:    record.extra,
 		Terminal: record.terminal,

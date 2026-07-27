@@ -69,7 +69,7 @@ func setParserCoreReplayParseStatesForTest(on bool) {
 type compactReplayFrame struct {
 	cursor    StateID
 	children  core.MaterializationReplayChildren
-	nextChild int
+	nextChild uint32
 }
 
 // compactReplayStates holds the reconstructed per-derivation-node parser
@@ -189,7 +189,7 @@ func (p *Parser) replayCompactDerivation(compact *core.Core, roots []core.Subtre
 				continue
 			}
 
-			child, ok := top.children.At(top.nextChild)
+			child, ok := compact.MaterializationReplayChild(top.children, top.nextChild)
 			if !ok {
 				return fail(errors.New("parser-core phase zero: replay child index is invalid"))
 			}
