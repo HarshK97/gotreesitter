@@ -39,34 +39,6 @@ func TestNormalizeDModuleDefinitionBoundsSnapToStructuralChildren(t *testing.T) 
 	}
 }
 
-func TestNormalizeDSourceFileLeadingTriviaSnapsToFirstChild(t *testing.T) {
-	lang := &Language{
-		Name:        "d",
-		SymbolNames: []string{"EOF", "source_file", "variable_declaration"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "source_file", Visible: true, Named: true},
-			{Name: "variable_declaration", Visible: true, Named: true},
-		},
-	}
-
-	source := []byte("\nint i = 1;\n")
-	arena := newNodeArena(arenaClassFull)
-	decl := newLeafNodeInArena(arena, 2, true, 1, 11, Point{Row: 1}, Point{Row: 1, Column: 10})
-	root := newParentNodeInArena(arena, 1, true, []*Node{decl}, nil, 0)
-	root.startByte = 0
-	root.startPoint = Point{}
-
-	normalizeDSourceFileLeadingTrivia(root, source, lang)
-
-	if got, want := root.startByte, uint32(1); got != want {
-		t.Fatalf("root.startByte = %d, want %d", got, want)
-	}
-	if got, want := root.startPoint, decl.startPoint; got != want {
-		t.Fatalf("root.startPoint = %#v, want %#v", got, want)
-	}
-}
-
 func TestNormalizeDVariableStorageClassWrappersWrapsStaticLeaf(t *testing.T) {
 	lang := &Language{
 		Name:        "d",

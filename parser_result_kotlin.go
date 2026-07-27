@@ -10,7 +10,6 @@ func normalizeKotlinCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeKotlinRawStringTrailingContent(root, source, lang)
 	normalizeKotlinCallableReferenceNavigations(root, source, lang)
 	normalizeKotlinReceiverFunctionNames(root, source, lang)
-	normalizeKotlinSourceFileLeadingTriviaStart(root, source, lang)
 }
 
 // normalizeKotlinGenericCallTypeArguments rewrites the GLR choice
@@ -549,39 +548,6 @@ func normalizeKotlinCallableReferenceNavigations(root *Node, source []byte, lang
 		n.productionID = 0
 		populateParentNode(n, n.children)
 	})
-}
-
-// normalizeKotlinSourceFileLeadingTriviaStart restores the C-aligned root
-// start offset for sources that begin with whitespace: C tree-sitter treats
-// whitespace as token padding (never a node), so the source_file root starts
-// at the first non-whitespace byte. The generic root normalization forces the
-// root start back to 0; this pass — which runs afterwards — snaps the root
-// start back to its first child when only whitespace precedes it.
-func normalizeKotlinSourceFileLeadingTriviaStart(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "kotlin" || root.Type(lang) != "source_file" || len(source) == 0 || len(root.children) == 0 {
-		return
-	}
-	first := root.children[0]
-	if first == nil || first.startByte == 0 || first.startByte > uint32(len(source)) {
-		return
-	}
-	if !kotlinLeadingTriviaOnly(source[:first.startByte]) {
-		return
-	}
-	root.startByte = first.startByte
-	root.startPoint = first.startPoint
-}
-
-func kotlinLeadingTriviaOnly(prefix []byte) bool {
-	for _, b := range prefix {
-		switch b {
-		case ' ', '\t', '\n', '\r':
-			continue
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 // normalizeKotlinRawStringTrailingContent restores the final raw-string

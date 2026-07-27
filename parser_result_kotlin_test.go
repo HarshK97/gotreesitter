@@ -64,20 +64,6 @@ func testKotlinCompatibilityLanguage() *Language {
 	}
 }
 
-func kotlinLeadingTriviaTestLanguage() *Language {
-	return &Language{
-		Name:        "kotlin",
-		SymbolNames: []string{"EOF", "source_file", "import_list", "identifier", "simple_identifier"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF"},
-			{Name: "source_file", Visible: true, Named: true},
-			{Name: "import_list", Visible: true, Named: true},
-			{Name: "identifier", Visible: true, Named: true},
-			{Name: "simple_identifier", Visible: true, Named: true},
-		},
-	}
-}
-
 func kotlinGenericCallTestLanguage() *Language {
 	return &Language{
 		Name: "kotlin",
@@ -538,44 +524,5 @@ func TestNormalizeKotlinReceiverFunctionNamesSkipsRealNames(t *testing.T) {
 	}
 	if got, want := user.ChildCount(), 1; got != want {
 		t.Fatalf("user_type child count = %d, want %d", got, want)
-	}
-}
-
-func TestNormalizeKotlinSourceFileLeadingTriviaStart(t *testing.T) {
-	lang := kotlinLeadingTriviaTestLanguage()
-	// Mirrors CacheRedirector.kt, which begins with a newline: C tree-sitter
-	// roots the source_file at byte 1.
-	source := []byte("\nimport a.b")
-	arena := newNodeArena(arenaClassFull)
-	child := newLeafNodeInArena(arena, 2, true, 1, uint32(len(source)), Point{Row: 1}, Point{Row: 1, Column: 10})
-	root := newParentNodeInArena(arena, 1, true, []*Node{child}, nil, 0)
-	root.startByte = 0
-	root.startPoint = Point{}
-	root.endByte = uint32(len(source))
-	root.endPoint = Point{Row: 1, Column: 10}
-
-	normalizeKotlinCompatibility(root, source, lang)
-
-	if got, want := root.StartByte(), uint32(1); got != want {
-		t.Fatalf("root start byte = %d, want %d", got, want)
-	}
-	if got, want := root.StartPoint(), (Point{Row: 1}); got != want {
-		t.Fatalf("root start point = %+v, want %+v", got, want)
-	}
-}
-
-func TestNormalizeKotlinSourceFileLeadingTriviaStartRejectsNonTrivia(t *testing.T) {
-	lang := kotlinLeadingTriviaTestLanguage()
-	source := []byte("x import a.b")
-	arena := newNodeArena(arenaClassFull)
-	child := newLeafNodeInArena(arena, 2, true, 2, uint32(len(source)), Point{Column: 2}, Point{Column: uint32(len(source))})
-	root := newParentNodeInArena(arena, 1, true, []*Node{child}, nil, 0)
-	root.startByte = 0
-	root.startPoint = Point{}
-
-	normalizeKotlinCompatibility(root, source, lang)
-
-	if got, want := root.StartByte(), uint32(0); got != want {
-		t.Fatalf("root start byte = %d, want %d", got, want)
 	}
 }

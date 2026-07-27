@@ -7,32 +7,7 @@ import (
 
 // normalizeCueCompatibility aligns CUE trees with C tree-sitter output.
 func normalizeCueCompatibility(root *Node, source []byte, lang *Language) {
-	normalizeCueRootLeadingTriviaStart(root, source, lang)
 	normalizeCueValueLeafChildren(root, source, lang)
-}
-
-// normalizeCueRootLeadingTriviaStart moves the source_file root start past
-// leading whitespace. C tree-sitter roots source_file at the first non-extra
-// byte when a file begins with blank lines (root-span-leading-extras);
-// gotreesitter roots at byte 0.
-func normalizeCueRootLeadingTriviaStart(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "cue" || len(source) == 0 ||
-		root.Type(lang) != "source_file" || len(root.children) == 0 {
-		return
-	}
-	first := root.children[0]
-	if first == nil || first.startByte == 0 || int(first.startByte) > len(source) {
-		return
-	}
-	for _, b := range source[:first.startByte] {
-		switch b {
-		case ' ', '\t', '\n', '\r':
-		default:
-			return
-		}
-	}
-	root.startByte = first.startByte
-	root.startPoint = first.startPoint
 }
 
 // normalizeCueValueLeafChildren rebuilds collapsed `value` nodes.

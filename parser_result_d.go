@@ -1,7 +1,6 @@
 package gotreesitter
 
 func normalizeDCompatibility(root *Node, source []byte, lang *Language) {
-	normalizeDSourceFileLeadingTrivia(root, source, lang)
 	normalizeDModuleDefinitionBounds(root, lang)
 	normalizeDCallExpressionTemplateTypes(root, lang)
 	normalizeDCallExpressionPropertyTypes(root, lang)
@@ -25,21 +24,6 @@ func normalizeDModuleDefinitionBounds(root *Node, lang *Language) {
 			}
 		}
 	})
-}
-
-func normalizeDSourceFileLeadingTrivia(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "d" || root.Type(lang) != "source_file" || len(root.children) == 0 {
-		return
-	}
-	first := root.children[0]
-	if first == nil || root.startByte >= first.startByte || int(first.startByte) > len(source) {
-		return
-	}
-	if !bytesAreTrivia(source[root.startByte:first.startByte]) {
-		return
-	}
-	root.startByte = first.startByte
-	root.startPoint = first.startPoint
 }
 
 func normalizeDVariableStorageClassWrappers(root *Node, lang *Language) {

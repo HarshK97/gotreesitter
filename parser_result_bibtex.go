@@ -1,7 +1,6 @@
 package gotreesitter
 
 func normalizeBibtexCompatibility(root *Node, source []byte, lang *Language) {
-	normalizeRootLeadingTriviaStart(root, source)
 	if root == nil || lang == nil || lang.Name != "bibtex" {
 		return
 	}

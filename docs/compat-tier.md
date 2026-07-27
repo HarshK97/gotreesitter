@@ -15,13 +15,13 @@ without updating that registry.
 
 The v1 registry freezes the current surface:
 
-- 68 explicit `runLanguageResultCompatibility` switch arms covering 70
+- 67 explicit `runLanguageResultCompatibility` switch arms covering 69
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-That is 69 live registry entries and 16 retired entries. The registry covers
+That is 68 live registry entries and 17 retired entries. The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
 
@@ -143,6 +143,26 @@ Production, compact, forest, incremental, and locked C routes return exact
 spans for all nine languages. Pascal proves actual old-tree reuse. Comment
 proves its expected root-only invalidation. External scanner limits prevent
 reuse for the other seven languages.
+
+## Current progress: leading root trivia
+
+Shared root finalization now excludes unowned leading token padding.
+It preserves a prefix when the first retained child owns that prefix.
+
+The compact admission gate accepts the same first-token start.
+This rule applies to all result routes without a language allowlist.
+
+The change removes local repairs for:
+
+- BibTeX.
+- CPON.
+- CUE.
+- D.
+- Forth.
+- Kotlin.
+- Squirrel.
+
+Squirrel needed no other result repair, so its dispatcher arm is retired.
 
 ## Current progress: field projection
 

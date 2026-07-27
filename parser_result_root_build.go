@@ -1100,18 +1100,29 @@ func (p *Parser) normalizeRootSourceStart(root *Node, source []byte) {
 	if p != nil && len(p.included) > 0 {
 		return
 	}
-	// tree-sitter C starts the root at the first non-whitespace byte: leading
-	// whitespace is token padding, excluded from every node extent including
-	// the root's (oracle-verified on faust/css/squirrel corpora — squirrel
-	// previously compensated per-grammar in normalizeSquirrelCompatibility).
-	// Pull a root that starts late (dropped leading extras) BACK to that
-	// position — never all the way to 0 unless a token really starts there.
-	first := firstNonTriviaByteStart(source)
-	if first >= root.startByte {
-		// Root already starts at or before the first token (a child may
-		// genuinely cover leading bytes, e.g. error absorption) — leave it.
+	// C excludes leading token padding from the root span. Keep a prefix only
+	// when a retained child owns it. This rule covers production, compact,
+	// forest, deferred, and incremental result materialization.
+	firstSource := firstNonTriviaByteStart(source)
+	if firstSource == root.startByte {
 		return
 	}
-	root.startByte = first
-	root.startPoint = advancePointByBytes(Point{}, source[:first])
+	if firstSource < root.startByte {
+		// A root can start after a dropped leading extra. Pull it back to the
+		// first source token so the root still covers the lost token.
+		root.startByte = firstSource
+		root.startPoint = advancePointByBytes(Point{}, source[:firstSource])
+		return
+	}
+	if firstSource == 0 || resultChildCount(root) == 0 {
+		return
+	}
+	firstChild := resultChildAt(root, 0)
+	if firstChild == nil || firstChild.startByte != firstSource {
+		// A retained child can own the prefix through error recovery or an
+		// explicit extra. Do not move the root past that ownership.
+		return
+	}
+	root.startByte = firstSource
+	root.startPoint = firstChild.startPoint
 }

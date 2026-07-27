@@ -4,7 +4,6 @@ func normalizeForthCompatibility(root *Node, source []byte, lang *Language) {
 	if root == nil || lang == nil || lang.Name != "forth" {
 		return
 	}
-	normalizeRootLeadingTriviaStart(root, source)
 	normalizeForthUnterminatedDefinitions(root, lang)
 }
 
