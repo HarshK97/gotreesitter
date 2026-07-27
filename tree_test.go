@@ -1,6 +1,7 @@
 package gotreesitter
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"unsafe"
@@ -1163,6 +1164,126 @@ func TestTreeEditMatchesCMultilineDeletionAndReplacement(t *testing.T) {
 			}
 			if got := trailing.EndPoint(); got != tc.wantTrailingEnd {
 				t.Fatalf("trailing EndPoint = %+v, want %+v", got, tc.wantTrailingEnd)
+			}
+		})
+	}
+}
+
+type treeEditNodeState struct {
+	startByte  uint32
+	endByte    uint32
+	startPoint Point
+	endPoint   Point
+	dirty      bool
+	childCount int
+}
+
+func snapshotTreeEditNodeStates(root *Node) []treeEditNodeState {
+	var states []treeEditNodeState
+	var visit func(*Node)
+	visit = func(node *Node) {
+		if node == nil {
+			return
+		}
+		states = append(states, treeEditNodeState{
+			startByte:  node.startByte,
+			endByte:    node.endByte,
+			startPoint: node.startPoint,
+			endPoint:   node.endPoint,
+			dirty:      node.dirty(),
+			childCount: len(node.children),
+		})
+		for _, child := range node.children {
+			visit(child)
+		}
+	}
+	visit(root)
+	return states
+}
+
+func TestInputEditIsSingleByteReplacement(t *testing.T) {
+	base := InputEdit{
+		StartByte:   2,
+		OldEndByte:  3,
+		NewEndByte:  3,
+		StartPoint:  Point{Column: 2},
+		OldEndPoint: Point{Column: 3},
+		NewEndPoint: Point{Column: 3},
+	}
+	multipleBytes := base
+	multipleBytes.OldEndByte = 4
+	multipleBytes.NewEndByte = 4
+	lengthChange := base
+	lengthChange.NewEndByte = 4
+	pointShift := base
+	pointShift.NewEndPoint = Point{Row: 1}
+	tests := []struct {
+		name string
+		edit InputEdit
+		want bool
+	}{
+		{name: "single byte", edit: base, want: true},
+		{name: "multiple bytes", edit: multipleBytes},
+		{name: "length change", edit: lengthChange},
+		{name: "point shift", edit: pointShift},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := inputEditIsSingleByteReplacement(test.edit); got != test.want {
+				t.Fatalf("inputEditIsSingleByteReplacement() = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestTreeEditSingleByteReplacementMatchesGeneralEditor(t *testing.T) {
+	buildTree := func() *Tree {
+		leaves := make([]*Node, 5)
+		for i := range leaves {
+			leaves[i] = NewLeafNode(
+				Symbol(1),
+				true,
+				uint32(i),
+				uint32(i+1),
+				Point{Column: uint32(i)},
+				Point{Column: uint32(i + 1)},
+			)
+		}
+		left := NewParentNode(Symbol(3), true, leaves[:2], nil, 0)
+		right := NewParentNode(Symbol(3), true, leaves[3:], nil, 0)
+		root := NewParentNode(Symbol(4), true, []*Node{left, leaves[2], right}, nil, 0)
+		return NewTree(root, []byte("abcde"), testLanguage())
+	}
+
+	for offset := uint32(0); offset < 5; offset++ {
+		t.Run(string(rune('a'+offset)), func(t *testing.T) {
+			edit := InputEdit{
+				StartByte:   offset,
+				OldEndByte:  offset + 1,
+				NewEndByte:  offset + 1,
+				StartPoint:  Point{Column: offset},
+				OldEndPoint: Point{Column: offset + 1},
+				NewEndPoint: Point{Column: offset + 1},
+			}
+			fast := buildTree()
+			general := buildTree()
+
+			fast.Edit(edit)
+			general.edits = append(general.edits, edit)
+			var shiftScratch []*Node
+			editNodeWithDelta(general.root, edit, 0, 0, false, &shiftScratch, &general.lastEditedLeaf)
+
+			fastState := snapshotTreeEditNodeStates(fast.root)
+			generalState := snapshotTreeEditNodeStates(general.root)
+			if !reflect.DeepEqual(fastState, generalState) {
+				t.Fatalf("tree state differs: fast=%#v general=%#v", fastState, generalState)
+			}
+			if fast.lastEditedLeaf == nil || general.lastEditedLeaf == nil {
+				t.Fatalf("leaf hint is nil: fast=%p general=%p", fast.lastEditedLeaf, general.lastEditedLeaf)
+			}
+			if fast.lastEditedLeaf.startByte != general.lastEditedLeaf.startByte ||
+				fast.lastEditedLeaf.endByte != general.lastEditedLeaf.endByte {
+				t.Fatalf("leaf hint differs: fast=%+v general=%+v", fast.lastEditedLeaf, general.lastEditedLeaf)
 			}
 		})
 	}

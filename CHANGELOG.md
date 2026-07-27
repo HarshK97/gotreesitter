@@ -183,6 +183,11 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Same-length single-byte replacements now mark the affected path without
+  recomputing unchanged spans. Other edits and compact child references keep
+  the general editor. The pinned incremental benchmark improves 2.10 percent
+  with zero allocations.
+
 - Fresh parse finalization now computes the retry error summary while it wires
   parent links. This removes one complete tree traversal.
   Deferred and incremental paths retain their separate summary walk.
