@@ -217,6 +217,19 @@ Erlang proves old-tree reuse and exact isolated C parity.
 Haskell records its external scanner reuse limit.
 Its isolated C results match the unchanged base floors.
 
+## Current progress: zero-width artifacts
+
+Root publication omits visible zero-width extras from child lists.
+It retains every extra when it computes the root source range.
+The C-faithful repetition-skip fold prevents the historical Typst comma artifact.
+These shared producer rules make two returned-tree walks obsolete.
+
+Native Haskell scanner controls prove that UPDATE is a real zero-width token.
+Typst uses a minimized historical witness from its component corpus.
+Production, forest, and incremental routes contain no retired artifacts.
+The shared compact-child receipt keeps final references lazy.
+The Haskell and Typst dispatcher arms remain live for unrelated repairs.
+
 ## The retired second pass
 
 Checkpoint A removed the span calls and their two exclusive helpers.
