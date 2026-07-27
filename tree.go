@@ -3888,6 +3888,13 @@ func inputEditIsNoop(edit InputEdit) bool {
 		edit.OldEndPoint == edit.NewEndPoint
 }
 
+func inputEditIsSingleByteReplacement(edit InputEdit) bool {
+	return edit.NewEndByte == edit.OldEndByte &&
+		edit.OldEndByte > edit.StartByte &&
+		edit.OldEndByte-edit.StartByte == 1 &&
+		edit.NewEndPoint == edit.OldEndPoint
+}
+
 // Edit records an edit on this tree. Call this before ParseIncremental to
 // inform the parser which regions changed. The edit adjusts byte offsets
 // and marks overlapping nodes as dirty so the incremental parser knows
@@ -3903,6 +3910,10 @@ func (t *Tree) Edit(edit InputEdit) {
 	t.edits = append(t.edits, edit)
 	t.lastEditedLeaf = nil
 	if t.root != nil {
+		if inputEditIsSingleByteReplacement(edit) {
+			editNodeSingleByteReplacement(t.root, edit, &t.lastEditedLeaf)
+			return
+		}
 		byteDelta := int64(edit.NewEndByte) - int64(edit.OldEndByte)
 		rowDelta := int64(edit.NewEndPoint.Row) - int64(edit.OldEndPoint.Row)
 		hasTailShift := byteDelta != 0 || edit.NewEndPoint != edit.OldEndPoint
@@ -3987,6 +3998,38 @@ func addUint32Delta(value uint32, delta int64) uint32 {
 		return ^uint32(0)
 	}
 	return uint32(next)
+}
+
+// editNodeSingleByteReplacement marks the affected path without recomputing unchanged spans.
+func editNodeSingleByteReplacement(n *Node, edit InputEdit, leafHint **Node) {
+	if n.endByte <= edit.StartByte || n.startByte >= edit.OldEndByte {
+		return
+	}
+	if nodeHasFinalChildRefs(n) {
+		var shiftScratch []*Node
+		editNodeWithDelta(n, edit, 0, 0, false, &shiftScratch, leafHint)
+		return
+	}
+
+	n.setDirty(true)
+	if perfCountersEnabled {
+		perfRecordNodeEditMarked()
+	}
+
+	descended := false
+	for _, child := range n.children {
+		if child.endByte <= edit.StartByte {
+			continue
+		}
+		if child.startByte >= edit.OldEndByte {
+			break
+		}
+		descended = true
+		editNodeSingleByteReplacement(child, edit, leafHint)
+	}
+	if leafHint != nil && !descended && len(n.children) == 0 {
+		*leafHint = n
+	}
 }
 
 func editNodeWithDelta(n *Node, edit InputEdit, byteDelta, rowDelta int64, hasTailShift bool, shiftScratch *[]*Node, leafHint **Node) {
