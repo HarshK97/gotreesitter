@@ -149,6 +149,11 @@ func TestRetiredDispatchArmCOracleParity(t *testing.T) {
 			language: "r",
 			source:   "\"\\\\\"\n",
 		},
+		{
+			name:     "haskell_section_spans",
+			language: "haskell",
+			source:   "module M where\nimport A\nimport B\n\nvalue = 1\n",
+		},
 	}
 	for _, test := range tests {
 		test := test
