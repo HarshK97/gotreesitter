@@ -219,16 +219,16 @@ Its isolated C results match the unchanged base floors.
 
 ## Current progress: zero-width artifacts
 
-Root publication omits visible zero-width extras from child lists.
-It retains every extra when it computes the root source range.
-The C-faithful repetition-skip fold prevents the historical Typst comma artifact.
-These shared producer rules make two returned-tree walks obsolete.
+The root classifier drops visible zero-width extras from child lists.
+The classifier keeps every extra when it computes the root byte range.
+The C-faithful repetition-skip fold stops the historical Typst comma
+artifact. These shared producer rules retire two returned-tree walks.
 
-Native Haskell scanner controls prove that UPDATE is a real zero-width token.
-Typst uses a minimized historical witness from its component corpus.
-Production, forest, and incremental routes contain no retired artifacts.
+The native Haskell scanner proves UPDATE is a real zero-width token.
+Typst uses a minimized witness from its pinned component corpus.
+Production, forest, and incremental routes contain no retired artifact.
 The shared compact-child receipt keeps final references lazy.
-The Haskell and Typst dispatcher arms remain live for unrelated repairs.
+The Haskell and Typst dispatcher arms remain live for other repairs.
 
 ## The retired second pass
 

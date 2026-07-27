@@ -18,6 +18,14 @@ const typstHistoricalZeroWidthCommaSource = `#let html-section(
       })
 `
 
+const haskellNestedUpdateSource = `module Main where
+f x = y
+  where
+    y = x
+`
+
+const typstDeepGroupSource = `#f(g(h(1,)),)`
+
 func TestHaskellUpdateControlTokenIsZeroWidth(t *testing.T) {
 	source := []byte("\nmodule Main where\n")
 	lexer := newZeroWidthRetirementLexer(source, 0, 0, 0)
@@ -55,19 +63,33 @@ func TestHaskellUpdateControlTokenIsZeroWidth(t *testing.T) {
 
 func TestZeroWidthArtifactsNeedNoResultCompatibility(t *testing.T) {
 	for _, test := range []struct {
-		name     string
-		language *gotreesitter.Language
-		source   []byte
+		name      string
+		language  *gotreesitter.Language
+		source    []byte
+		wantClean bool
 	}{
 		{
-			name:     "haskell_update",
-			language: HaskellLanguage(),
-			source:   []byte("\nmodule Main where\n"),
+			name:      "haskell_update",
+			language:  HaskellLanguage(),
+			source:    []byte("\nmodule Main where\n"),
+			wantClean: true,
+		},
+		{
+			name:      "haskell_nested_update",
+			language:  HaskellLanguage(),
+			source:    []byte(haskellNestedUpdateSource),
+			wantClean: true,
 		},
 		{
 			name:     "typst_repetition_skip",
 			language: TypstLanguage(),
 			source:   []byte(typstHistoricalZeroWidthCommaSource),
+		},
+		{
+			name:      "typst_deep_group",
+			language:  TypstLanguage(),
+			source:    []byte(typstDeepGroupSource),
+			wantClean: true,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -78,6 +100,9 @@ func TestZeroWidthArtifactsNeedNoResultCompatibility(t *testing.T) {
 			}
 			t.Cleanup(tree.Release)
 			assertNoZeroWidthArtifact(t, "production", tree, test.language)
+			if test.wantClean && tree.RootNode().HasError() {
+				t.Fatalf("production root has an error: %s", tree.RootNode().SExpr(test.language))
+			}
 			runtime := tree.ParseRuntime()
 			if runtime.NormalizationPassesChecked != 0 ||
 				runtime.NormalizationPassesRun != 0 ||
