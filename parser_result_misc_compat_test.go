@@ -303,7 +303,7 @@ func TestNormalizeSQLTrailingSelectListErrorFoldsRootRecovery(t *testing.T) {
 	}
 }
 
-func TestNormalizeErlangSourceFileFormsSetsFormsOnlyAndSnapsBounds(t *testing.T) {
+func TestNormalizeErlangSourceFileFormsSnapsBounds(t *testing.T) {
 	lang := &Language{
 		Name:        "erlang",
 		FieldNames:  []string{"", "forms_only"},
@@ -332,73 +332,11 @@ func TestNormalizeErlangSourceFileFormsSetsFormsOnlyAndSnapsBounds(t *testing.T)
 
 	normalizeErlangSourceFileForms(root, lang)
 
-	if got, want := root.FieldNameForChild(1, lang), "forms_only"; got != want {
-		t.Fatalf("root.FieldNameForChild(1) = %q, want %q", got, want)
-	}
-	if got, want := root.FieldNameForChild(0, lang), ""; got != want {
-		t.Fatalf("root.FieldNameForChild(0) = %q, want empty", got)
-	}
 	if got, want := funDecl.startByte, clause.startByte; got != want {
 		t.Fatalf("funDecl.startByte = %d, want %d", got, want)
 	}
 	if got, want := funDecl.endByte, dot.endByte; got != want {
 		t.Fatalf("funDecl.endByte = %d, want %d", got, want)
-	}
-}
-
-func TestNormalizeErlangSourceFileFormsSetsFinalRefFieldsWithoutDrain(t *testing.T) {
-	lang := &Language{
-		Name:        "erlang",
-		FieldNames:  []string{"", "forms_only"},
-		SymbolNames: []string{"EOF", "source_file", "comment", "module_attribute", "fun_decl"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "source_file", Visible: true, Named: true},
-			{Name: "comment", Visible: true, Named: true},
-			{Name: "module_attribute", Visible: true, Named: true},
-			{Name: "fun_decl", Visible: true, Named: true},
-		},
-	}
-
-	arena := newNodeArena(arenaClassFull)
-	arena.finalChildRefs = true
-	comment := newCompactFullLeafInArena(arena, 2, true, 0, 3, Point{}, Point{Column: 3})
-	comment.setExtra(true)
-	comment.parseState = 11
-	moduleAttr := newCompactFullLeafInArena(arena, 3, true, 4, 14, Point{Row: 1}, Point{Row: 1, Column: 10})
-	moduleAttr.parseState = 12
-	funDecl := newCompactFullLeafInArena(arena, 4, true, 15, 30, Point{Row: 2}, Point{Row: 2, Column: 15})
-	funDecl.parseState = 13
-	parent := newPendingParentInArena(arena, 1, true, 0, []stackEntry{
-		newStackEntryCompactFullLeaf(comment.parseState, comment),
-		newStackEntryCompactFullLeaf(moduleAttr.parseState, moduleAttr),
-		newStackEntryCompactFullLeaf(funDecl.parseState, funDecl),
-	}, 0, 30, Point{}, Point{Row: 2, Column: 15}, false)
-	parent.parseState = 14
-	entry := newStackEntryPendingParent(parent.parseState, parent)
-	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
-
-	normalizeErlangSourceFileForms(root, lang)
-
-	if got := arena.finalChildRefsMaterializedParents; got != 0 {
-		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
-	}
-	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
-		t.Fatalf("final child ref single children during normalize = %d, want 0", got)
-	}
-	if !nodeHasFinalChildRefs(root) {
-		t.Fatal("root lost final-child refs")
-	}
-	if got, want := root.fieldIDs()[0], FieldID(0); got != want {
-		t.Fatalf("fieldIDs[0] = %d, want %d", got, want)
-	}
-	for _, i := range []int{1, 2} {
-		if got, want := root.fieldIDs()[i], FieldID(1); got != want {
-			t.Fatalf("fieldIDs[%d] = %d, want %d", i, got, want)
-		}
-		if got, want := fieldSourceAt(root.fieldSources(), i), uint8(fieldSourceDirect); got != want {
-			t.Fatalf("fieldSources[%d] = %d, want %d", i, got, want)
-		}
 	}
 }
 

@@ -3,7 +3,6 @@ package gotreesitter
 func normalizeHaskellCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeHaskellImportsSpan(root, source, lang)
 	normalizeHaskellZeroWidthTokens(root, lang)
-	normalizeHaskellRootImportField(root, lang)
 	normalizeHaskellDeclarationsSpan(root, source, lang)
 }
 
@@ -81,37 +80,6 @@ func normalizeHaskellZeroWidthTokens(root *Node, lang *Language) {
 	root.children = cloneNodeSliceInArena(root.ownerArena, filtered)
 	root.clearFieldMetadata()
 	populateParentNode(root, root.children)
-}
-
-func normalizeHaskellRootImportField(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "haskell" || resultChildCount(root) == 0 {
-		return
-	}
-	if len(lang.FieldNames) == 0 {
-		return
-	}
-	view := resultMutableChildrenForMutation(root)
-	fieldIDs := root.fieldIDs()
-	fieldSources := root.fieldSources()
-	fieldStorageReady := len(fieldIDs) == view.Len() && len(fieldSources) == view.Len()
-	for i := 0; i < view.Len(); i++ {
-		entry, ok := view.Entry(i)
-		if !ok {
-			continue
-		}
-		fid, ok := lang.FieldByName(symbolTypeName(lang, stackEntryNodeSymbol(entry)))
-		if !ok {
-			continue
-		}
-		if !fieldStorageReady {
-			ensureNodeFieldStorage(root, view.Len())
-			fieldIDs = root.fieldIDs()
-			fieldSources = root.fieldSources()
-			fieldStorageReady = true
-		}
-		fieldIDs[i] = fid
-		fieldSources[i] = fieldSourceInherited
-	}
 }
 
 func normalizeHaskellDeclarationsSpan(root *Node, source []byte, lang *Language) {

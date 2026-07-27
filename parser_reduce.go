@@ -46,9 +46,10 @@ type reduceChainHint struct {
 }
 
 type reduceFieldPlan struct {
-	childCount uint8
-	fieldIDs   []FieldID
-	inherited  []bool
+	childCount          uint8
+	fieldIDs            []FieldID
+	inherited           []bool
+	conflictedInherited []bool
 }
 
 func buildReduceChainHintIndex(hints []reduceChainHint) []int {
@@ -293,14 +294,15 @@ func buildReduceFieldPlans(lang *Language) []reduceFieldPlan {
 			if pid < 0 || pid >= len(out) || seen[pid] {
 				continue
 			}
-			fieldIDs, inherited := buildFieldPlanForProduction(lang, int(act.ChildCount), act.ProductionID)
+			fieldIDs, inherited, conflictedInherited := buildFieldPlanForProduction(lang, int(act.ChildCount), act.ProductionID)
 			if fieldIDs == nil {
 				continue
 			}
 			out[pid] = reduceFieldPlan{
-				childCount: act.ChildCount,
-				fieldIDs:   fieldIDs,
-				inherited:  inherited,
+				childCount:          act.ChildCount,
+				fieldIDs:            fieldIDs,
+				inherited:           inherited,
+				conflictedInherited: conflictedInherited,
 			}
 			seen[pid] = true
 			any = true
@@ -313,26 +315,26 @@ func buildReduceFieldPlans(lang *Language) []reduceFieldPlan {
 }
 
 func fieldMapHasEffectiveFields(lang *Language, childCount int, productionID uint16) bool {
-	fieldIDs, _ := buildFieldPlanForProduction(lang, childCount, productionID)
+	fieldIDs, _, _ := buildFieldPlanForProduction(lang, childCount, productionID)
 	return fieldIDSliceHasAny(fieldIDs)
 }
 
-func buildFieldPlanForProduction(lang *Language, childCount int, productionID uint16) ([]FieldID, []bool) {
+func buildFieldPlanForProduction(lang *Language, childCount int, productionID uint16) ([]FieldID, []bool, []bool) {
 	if lang == nil || childCount <= 0 || len(lang.FieldMapEntries) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	pid := int(productionID)
 	if pid < 0 || pid >= len(lang.FieldMapSlices) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	fm := lang.FieldMapSlices[pid]
 	count := int(fm[1])
 	if count == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	fieldIDs := make([]FieldID, childCount)
 	inherited := make([]bool, childCount)
-	conflictedInherited := make([]bool, childCount)
+	var conflictedInherited []bool
 	start := int(fm[0])
 	assigned := false
 	for i := 0; i < count; i++ {
@@ -346,7 +348,7 @@ func buildFieldPlanForProduction(lang *Language, childCount int, productionID ui
 		}
 		idx := entry.ChildIndex
 		switch {
-		case conflictedInherited[idx]:
+		case conflictedInherited != nil && conflictedInherited[idx]:
 			if !entry.Inherited {
 				fieldIDs[idx] = entry.FieldID
 				inherited[idx] = false
@@ -361,6 +363,9 @@ func buildFieldPlanForProduction(lang *Language, childCount int, productionID ui
 		case entry.Inherited && inherited[idx] && fieldIDs[idx] != entry.FieldID:
 			fieldIDs[idx] = 0
 			inherited[idx] = false
+			if conflictedInherited == nil {
+				conflictedInherited = make([]bool, childCount)
+			}
 			conflictedInherited[idx] = true
 		case entry.Inherited == inherited[idx]:
 			fieldIDs[idx] = entry.FieldID
@@ -369,9 +374,9 @@ func buildFieldPlanForProduction(lang *Language, childCount int, productionID ui
 		assigned = true
 	}
 	if !assigned {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return fieldIDs, inherited
+	return fieldIDs, inherited, conflictedInherited
 }
 
 // buildKeepSameNamedAnonChildSymbols computes, for each visible named rule
@@ -4698,7 +4703,7 @@ func (p *Parser) tryPushPendingNoFieldParent(s *glrStack, act ParseAction, tok T
 		return false
 	}
 	if p.reduceProductionHasEffectiveFields(int(act.ChildCount), act.ProductionID, arena) {
-		rawFieldIDs, rawInherited := p.buildFieldIDs(int(act.ChildCount), act.ProductionID, arena)
+		rawFieldIDs, rawInherited, _ := p.buildFieldIDs(int(act.ChildCount), act.ProductionID, arena)
 		if p.tryPushPendingDirectFieldParent(s, act, tok, anyReduced, nodeCount, arena, entryScratch, gssScratch, entries, start, reducedEnd, trailingEnd, topState, truncateDepth, rawFieldIDs, rawInherited) {
 			return true
 		}
@@ -5123,7 +5128,7 @@ func (p *Parser) recordPendingFieldRejectShape(arena *nodeArena, act ParseAction
 		arena.recordPendingParentFieldRejected(pendingParentFieldRejectParentHidden)
 		return
 	}
-	rawFieldIDs, rawInherited := p.buildFieldIDs(int(act.ChildCount), act.ProductionID, arena)
+	rawFieldIDs, rawInherited, _ := p.buildFieldIDs(int(act.ChildCount), act.ProductionID, arena)
 	if len(rawFieldIDs) == 0 {
 		arena.recordPendingParentFieldRejected(pendingParentFieldRejectNoIDs)
 		return
@@ -6170,13 +6175,13 @@ func (p *Parser) buildReduceChildrenWithPath(entries []stackEntry, start, end, c
 		}
 	}
 
-	rawFieldIDs, rawInherited := p.buildFieldIDs(childCount, productionID, arena)
+	rawFieldIDs, rawInherited, rawConflictedInherited := p.buildFieldIDs(childCount, productionID, arena)
 	if children, fieldIDs, fieldSources, ok := p.buildReduceChildrenAllVisible(entries, start, end, childCount, aliasSeq, rawFieldIDs, rawInherited, parentVisible, symbolMeta, arena); ok {
 		return children, fieldIDs, fieldSources, reduceChildPathForLen(len(children), reduceChildPathAllVisible)
 	}
 
 	scratch := p.newReduceBuildScratch(rawFieldIDs)
-	p.appendReduceChildrenToScratch(scratch, entries, start, end, aliasSeq, rawFieldIDs, rawInherited, parentVisible, symbolMeta, arena, lang)
+	p.appendReduceChildrenToScratch(scratch, entries, start, end, productionID, aliasSeq, rawFieldIDs, rawInherited, rawConflictedInherited, parentVisible, symbolMeta, arena, lang)
 	if scratch.trackFields {
 		p.suppressReducedChildFields(scratch.nodes, scratch.fieldIDs, scratch.fieldSources)
 	}
@@ -6325,15 +6330,21 @@ type reduceChildBuildItem struct {
 	node                *Node
 	fieldID             FieldID
 	inherited           bool
+	conflictedInherited bool
+	structuralIndex     int
 	nextStructuralIndex int
 }
 
-func (p *Parser) reduceChildBuildItemForEntry(entry stackEntry, structuralChildIndex int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, arena *nodeArena) (reduceChildBuildItem, bool) {
+func (p *Parser) reduceChildBuildItemForEntry(entry stackEntry, structuralChildIndex int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, rawConflictedInherited []bool, arena *nodeArena) (reduceChildBuildItem, bool) {
 	n := stackEntryNode(entry)
 	if n == nil {
 		return reduceChildBuildItem{}, false
 	}
-	item := reduceChildBuildItem{node: n, nextStructuralIndex: structuralChildIndex}
+	item := reduceChildBuildItem{
+		node:                n,
+		structuralIndex:     structuralChildIndex,
+		nextStructuralIndex: structuralChildIndex,
+	}
 	if n.isExtra() {
 		return item, true
 	}
@@ -6341,6 +6352,9 @@ func (p *Parser) reduceChildBuildItemForEntry(entry stackEntry, structuralChildI
 		item.fieldID = rawFieldIDs[structuralChildIndex]
 		if structuralChildIndex < len(rawInherited) {
 			item.inherited = rawInherited[structuralChildIndex]
+		}
+		if structuralChildIndex < len(rawConflictedInherited) {
+			item.conflictedInherited = rawConflictedInherited[structuralChildIndex]
 		}
 	}
 	if structuralChildIndex < len(aliasSeq) {
@@ -6352,19 +6366,19 @@ func (p *Parser) reduceChildBuildItemForEntry(entry stackEntry, structuralChildI
 	return item, true
 }
 
-func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entries []stackEntry, start, end int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, parentVisible bool, symbolMeta []SymbolMetadata, arena *nodeArena, lang *Language) {
+func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entries []stackEntry, start, end int, productionID uint16, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, rawConflictedInherited []bool, parentVisible bool, symbolMeta []SymbolMetadata, arena *nodeArena, lang *Language) {
 	structuralChildIndex := 0
 	var pendingPaddingStart uint32
 	var pendingPaddingPoint Point
 	var pendingPaddingSource *Node
 	havePendingPadding := false
 	for i := start; i < end; i++ {
-		item, ok := p.reduceChildBuildItemForEntry(entries[i], structuralChildIndex, aliasSeq, rawFieldIDs, rawInherited, arena)
+		item, ok := p.reduceChildBuildItemForEntry(entries[i], structuralChildIndex, aliasSeq, rawFieldIDs, rawInherited, rawConflictedInherited, arena)
 		if !ok {
 			continue
 		}
 		structuralChildIndex = item.nextStructuralIndex
-		spanStart, spanEnd := p.appendReduceChildItemToScratch(scratch, item, rawFieldIDs, structuralChildIndex, parentVisible, symbolMeta, havePendingPadding, pendingPaddingStart, pendingPaddingPoint, pendingPaddingSource, arena)
+		spanStart, spanEnd := p.appendReduceChildItemToScratch(scratch, item, productionID, rawFieldIDs, structuralChildIndex, parentVisible, symbolMeta, havePendingPadding, pendingPaddingStart, pendingPaddingPoint, pendingPaddingSource, arena)
 		if !symbolVisibleForPending(item.node.symbol, symbolMeta) {
 			pendingPaddingStart, pendingPaddingPoint, havePendingPadding = flattenedHiddenEntryPadding(item.node, scratch.nodes, spanStart, spanEnd)
 			pendingPaddingSource = item.node
@@ -6374,7 +6388,7 @@ func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entr
 	}
 }
 
-func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, item reduceChildBuildItem, rawFieldIDs []FieldID, nextStructuralChildIndex int, parentVisible bool, symbolMeta []SymbolMetadata, havePadding bool, paddingStartByte uint32, paddingStartPoint Point, paddingSource *Node, arena *nodeArena) (int, int) {
+func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, item reduceChildBuildItem, productionID uint16, rawFieldIDs []FieldID, nextStructuralChildIndex int, parentVisible bool, symbolMeta []SymbolMetadata, havePadding bool, paddingStartByte uint32, paddingStartPoint Point, paddingSource *Node, arena *nodeArena) (int, int) {
 	n := item.node
 	if symbolVisibleForPending(n.symbol, symbolMeta) {
 		if havePadding && flattenedHiddenSiblingPaddingTarget(n, paddingSource, symbolMeta) && paddingStartByte < n.startByte {
@@ -6412,6 +6426,15 @@ func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, ite
 		appendFlattenedHiddenChildrenToScratch(scratch, n, symbolMeta, nil)
 	}
 	if item.fieldID == 0 {
+		if !n.isExtra() && item.conflictedInherited {
+			p.projectConflictedInheritedFields(
+				scratch,
+				productionID,
+				item.structuralIndex,
+				spanStart,
+				len(scratch.nodes),
+			)
+		}
 		return spanStart, len(scratch.nodes)
 	}
 	if !scratch.trackFields {
@@ -6430,6 +6453,61 @@ func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, ite
 		fieldIDAppearsLater(rawFieldIDs, nextStructuralChildIndex, item.fieldID),
 	)
 	return spanStart, len(scratch.nodes)
+}
+
+func (p *Parser) projectConflictedInheritedFields(
+	scratch *reduceBuildScratch,
+	productionID uint16,
+	structuralChildIndex int,
+	spanStart int,
+	spanEnd int,
+) {
+	if p == nil ||
+		p.language == nil ||
+		scratch == nil ||
+		structuralChildIndex < 0 ||
+		spanStart < 0 ||
+		spanStart >= spanEnd ||
+		spanEnd > len(scratch.nodes) {
+		return
+	}
+	pid := int(productionID)
+	if pid < 0 || pid >= len(p.language.FieldMapSlices) {
+		return
+	}
+	fieldMap := p.language.FieldMapSlices[pid]
+	start := int(fieldMap[0])
+	end := start + int(fieldMap[1])
+	if start < 0 || start >= len(p.language.FieldMapEntries) {
+		return
+	}
+	if end > len(p.language.FieldMapEntries) {
+		end = len(p.language.FieldMapEntries)
+	}
+	scratch.ensureFieldStorage()
+	for _, entry := range p.language.FieldMapEntries[start:end] {
+		if int(entry.ChildIndex) != structuralChildIndex ||
+			!entry.Inherited ||
+			entry.FieldID == 0 ||
+			int(entry.FieldID) >= len(p.language.FieldNames) {
+			continue
+		}
+		fieldName := p.language.FieldNames[entry.FieldID]
+		if fieldName == "" {
+			continue
+		}
+		for index := spanStart; index < spanEnd; index++ {
+			child := scratch.nodes[index]
+			if child == nil ||
+				!child.isNamed() ||
+				scratch.fieldIDs[index] != 0 ||
+				symbolTypeName(p.language, child.symbol) != fieldName {
+				continue
+			}
+			scratch.fieldIDs[index] = entry.FieldID
+			scratch.fieldSources[index] = fieldSourceInherited
+		}
+	}
 }
 
 func (p *Parser) appendVisibleReduceChildToScratch(scratch *reduceBuildScratch, n *Node, fid FieldID, inherited bool) {
@@ -8671,25 +8749,25 @@ func (p *Parser) fieldFlagScratch(childCount int) ([]bool, []bool) {
 }
 
 // buildFieldIDs creates the temporary field ID slice for a reduce action.
-func (p *Parser) buildFieldIDs(childCount int, productionID uint16, _ *nodeArena) ([]FieldID, []bool) {
+func (p *Parser) buildFieldIDs(childCount int, productionID uint16, _ *nodeArena) ([]FieldID, []bool, []bool) {
 	if childCount <= 0 || len(p.language.FieldMapEntries) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	pid := int(productionID)
 	if pid >= len(p.language.FieldMapSlices) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if pid < len(p.reduceFieldPlans) {
 		plan := p.reduceFieldPlans[pid]
 		if plan.fieldIDs != nil && int(plan.childCount) == childCount {
-			return plan.fieldIDs, plan.inherited
+			return plan.fieldIDs, plan.inherited, plan.conflictedInherited
 		}
 	}
 	fm := p.language.FieldMapSlices[pid]
 	count := int(fm[1])
 	if count == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	var fieldIDs []FieldID
@@ -8733,9 +8811,9 @@ func (p *Parser) buildFieldIDs(childCount int, productionID uint16, _ *nodeArena
 	}
 
 	if !assigned {
-		return nil, nil
+		return nil, nil, nil
 	}
-	return fieldIDs, inherited
+	return fieldIDs, inherited, conflictedInherited
 }
 
 func (p *Parser) fieldIDScratchFor(childCount int) []FieldID {

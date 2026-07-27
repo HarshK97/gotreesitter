@@ -1480,6 +1480,9 @@ func (p *Parser) buildResultFromNodes(nodes []*Node, source []byte, arena *nodeA
 		return tree
 	}
 
+	if builder.hasExpectedRoot && len(nodes) > 1 {
+		nodes = flattenRootSelfFragments(nodes, arena, builder.expectedRootSymbol)
+	}
 	return builder.buildSyntheticRootTree(nodes)
 }
 

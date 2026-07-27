@@ -43,10 +43,23 @@ func (b *resultRootBuild) prepareRootNodes(nodes []*Node) []*Node {
 		nodes = b.repairPythonKeywordNodes(nodes)
 		nodes = collapsePythonRootFragments(nodes, b.arena, b.lang)
 	}
-	if b.hasExpectedRoot && len(nodes) > 1 {
+	if b.hasExpectedRoot &&
+		len(nodes) > 1 &&
+		!fieldedExpectedRootPresent(nodes, b.expectedRootSymbol) {
 		nodes = flattenRootSelfFragments(nodes, b.arena, b.expectedRootSymbol)
 	}
 	return nodes
+}
+
+func fieldedExpectedRootPresent(nodes []*Node, expectedRoot Symbol) bool {
+	for _, node := range nodes {
+		if node != nil &&
+			node.symbol == expectedRoot &&
+			fieldIDSliceHasAny(node.fieldIDs()) {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *resultRootBuild) buildSingleRootTree(candidate *Node) *Tree {

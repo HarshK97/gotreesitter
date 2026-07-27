@@ -372,6 +372,91 @@ func TestBuildReduceChildrenInheritedFieldOverridesInheritedInnerFieldOnFlattene
 	}
 }
 
+func TestBuildReduceChildrenProjectsConflictedInheritedFieldsBySymbol(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "_sections", "imports", "declarations", "root"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false},
+			{Name: "_sections", Visible: false, Named: true},
+			{Name: "imports", Visible: true, Named: true},
+			{Name: "declarations", Visible: true, Named: true},
+			{Name: "root", Visible: true, Named: true},
+		},
+		FieldNames:     []string{"", "imports", "declarations"},
+		FieldMapSlices: [][2]uint16{{0, 2}},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 1, ChildIndex: 0, Inherited: true},
+			{FieldID: 2, ChildIndex: 0, Inherited: true},
+		},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	imports := newLeafNodeInArena(arena, 2, true, 0, 7, Point{}, Point{Column: 7})
+	declarations := newLeafNodeInArena(arena, 3, true, 8, 20, Point{Column: 8}, Point{Column: 20})
+	sections := newParentNodeInArena(arena, 1, true, []*Node{imports, declarations}, nil, 0)
+
+	children, fieldIDs, fieldSources := parser.buildReduceChildren(
+		[]stackEntry{newStackEntryNode(0, sections)},
+		0,
+		1,
+		1,
+		4,
+		0,
+		arena,
+	)
+	if got, want := len(children), 2; got != want {
+		t.Fatalf("child count = %d, want %d", got, want)
+	}
+	for index, want := range []FieldID{1, 2} {
+		if got := fieldIDs[index]; got != want {
+			t.Fatalf("field %d = %d, want %d", index, got, want)
+		}
+		if got := fieldSourceAt(fieldSources, index); got != fieldSourceInherited {
+			t.Fatalf("field source %d = %d, want inherited", index, got)
+		}
+	}
+}
+
+func TestBuildReduceChildrenLeavesUnmatchedInheritedFieldConflictUnprojected(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "_sections", "header", "body", "root"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false},
+			{Name: "_sections", Visible: false, Named: true},
+			{Name: "header", Visible: true, Named: true},
+			{Name: "body", Visible: true, Named: true},
+			{Name: "root", Visible: true, Named: true},
+		},
+		FieldNames:     []string{"", "imports", "declarations"},
+		FieldMapSlices: [][2]uint16{{0, 2}},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 1, ChildIndex: 0, Inherited: true},
+			{FieldID: 2, ChildIndex: 0, Inherited: true},
+		},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	header := newLeafNodeInArena(arena, 2, true, 0, 6, Point{}, Point{Column: 6})
+	body := newLeafNodeInArena(arena, 3, true, 7, 11, Point{Column: 7}, Point{Column: 11})
+	sections := newParentNodeInArena(arena, 1, true, []*Node{header, body}, nil, 0)
+
+	children, fieldIDs, _ := parser.buildReduceChildren(
+		[]stackEntry{newStackEntryNode(0, sections)},
+		0,
+		1,
+		1,
+		4,
+		0,
+		arena,
+	)
+	if got, want := len(children), 2; got != want {
+		t.Fatalf("child count = %d, want %d", got, want)
+	}
+	if fieldIDSliceHasAny(fieldIDs) {
+		t.Fatalf("unmatched conflict fields = %v, want none", fieldIDs)
+	}
+}
+
 func TestBuildReduceChildrenDirectFieldOverridesSingleIndirectNamedChild(t *testing.T) {
 	lang := &Language{
 		SymbolNames: []string{"EOF", "_hidden_inner", "type_identifier", "arguments", "visible_parent"},
@@ -1037,7 +1122,7 @@ func TestBuildFieldIDsSkipsConflictingInheritedEntriesOnSameChild(t *testing.T) 
 
 	parser := NewParser(lang)
 	arena := newNodeArena(arenaClassFull)
-	fieldIDs, inherited := parser.buildFieldIDs(1, 0, arena)
+	fieldIDs, inherited, _ := parser.buildFieldIDs(1, 0, arena)
 	if got, want := len(fieldIDs), 1; got != want {
 		t.Fatalf("len(fieldIDs) = %d, want %d", got, want)
 	}

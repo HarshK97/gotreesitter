@@ -26,6 +26,10 @@ func TestFieldProjectionRetiredDispatchArmRoutes(t *testing.T) {
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
+			if test.name == "haskell_root_sections" || test.name == "erlang_root_forms" {
+				assertFieldProjectionProductionIncrementalRoutes(t, test)
+				return
+			}
 			for _, receipt := range retiredDispatchRouteReceipts(t, test.language, test.source) {
 				t.Run(receipt.name, func(t *testing.T) {
 					test.assert(t, receipt.tree.RootNode(), test.language)
@@ -42,6 +46,52 @@ func TestFieldProjectionRetiredDispatchArmRoutes(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func assertFieldProjectionProductionIncrementalRoutes(
+	t *testing.T,
+	test fieldProjectionRetirementCase,
+) {
+	t.Helper()
+	source := append(append([]byte(nil), test.source...), '\n')
+	parser := gotreesitter.NewParser(test.language)
+	parser.SetAdmissionCandidateRoute(false)
+	production, err := parser.Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(production.Release)
+	test.assert(t, production.RootNode(), test.language)
+
+	oldTree, err := parser.Parse(test.source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(oldTree.Release)
+	endPoint := retiredDispatchPointAtByte(test.source, len(test.source))
+	oldTree.Edit(gotreesitter.InputEdit{
+		StartByte:   uint32(len(test.source)),
+		OldEndByte:  uint32(len(test.source)),
+		NewEndByte:  uint32(len(source)),
+		StartPoint:  endPoint,
+		OldEndPoint: endPoint,
+		NewEndPoint: gotreesitter.Point{Row: endPoint.Row + 1},
+	})
+	incremental, profile, err := parser.ParseIncrementalProfiled(source, oldTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(incremental.Release)
+	test.assert(t, incremental.RootNode(), test.language)
+	if test.reuseUnsupportedReason != "" {
+		if !profile.ReuseUnsupported || profile.ReuseUnsupportedReason != test.reuseUnsupportedReason {
+			t.Fatalf("incremental reuse status = %+v", profile)
+		}
+		return
+	}
+	if !profile.OldTreeReuseRoute || profile.ReusedSubtrees == 0 || profile.ReusedBytes == 0 {
+		t.Fatalf("incremental route did not reuse the old tree: %+v", profile)
 	}
 }
 
@@ -74,6 +124,19 @@ func fieldProjectionRetirementCases() []fieldProjectionRetirementCase {
 			source:   []byte("const x = .{};\nconst y = .{\"x\"};"),
 			language: ZigLanguage(),
 			assert:   assertZigInitializerListFields,
+		},
+		{
+			name:                   "haskell_root_sections",
+			source:                 []byte("{-# LANGUAGE OverloadedStrings #-}\n-- | module docs\nmodule Main where\nimport Data.List\n\nx = 1"),
+			language:               HaskellLanguage(),
+			assert:                 assertHaskellRootSectionFields,
+			reuseUnsupportedReason: "external_scanner_unsupported",
+		},
+		{
+			name:     "erlang_root_forms",
+			source:   []byte("% file comment\n-module(test).\n-export([main/0]).\nmain() ->\n  ok % inner comment\n  ."),
+			language: ErlangLanguage(),
+			assert:   assertErlangRootFormFields,
 		},
 	}
 }
@@ -126,6 +189,39 @@ func assertZigInitializerListFields(t *testing.T, root *gotreesitter.Node, lang 
 	visit(root)
 	if count != 2 {
 		t.Fatalf("Zig initializer count = %d, want 2: %s", count, root.SExpr(lang))
+	}
+}
+
+func assertHaskellRootSectionFields(t *testing.T, root *gotreesitter.Node, lang *gotreesitter.Language) {
+	t.Helper()
+	if root == nil || root.HasError() || root.Type(lang) != "haskell" {
+		t.Fatalf("unexpected Haskell root: %v", root)
+	}
+	wantFields := map[string]string{
+		"imports":      "imports",
+		"declarations": "declarations",
+	}
+	for index := 0; index < root.ChildCount(); index++ {
+		want := wantFields[root.Child(index).Type(lang)]
+		if got := root.FieldNameForChild(index, lang); got != want {
+			t.Fatalf("Haskell child %d field = %q, want %q", index, got, want)
+		}
+	}
+}
+
+func assertErlangRootFormFields(t *testing.T, root *gotreesitter.Node, lang *gotreesitter.Language) {
+	t.Helper()
+	if root == nil || root.HasError() || root.Type(lang) != "source_file" {
+		t.Fatalf("unexpected Erlang root: %v", root)
+	}
+	for index := 0; index < root.ChildCount(); index++ {
+		want := "forms_only"
+		if root.Child(index).IsExtra() {
+			want = ""
+		}
+		if got := root.FieldNameForChild(index, lang); got != want {
+			t.Fatalf("Erlang child %d field = %q, want %q", index, got, want)
+		}
 	}
 }
 
