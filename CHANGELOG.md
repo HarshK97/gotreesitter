@@ -9,6 +9,11 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Bare Rust ranges keep their anonymous `..` token during materialization.
+  The exact collapsed-child policy retains this occurrence.
+  The Rust compatibility pass preserves the shape that the parser produced.
+  Chained invalid dot ranges still use their recovery repair.
+
 - The no-live-action re-lex no longer checks the grammar's name. This recovery
   step re-lexes the lookahead when no live stack has any parse action for it,
   and it was gated to JavaScript. The condition it guards is grammar
