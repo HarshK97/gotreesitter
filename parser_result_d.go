@@ -1,29 +1,11 @@
 package gotreesitter
 
 func normalizeDCompatibility(root *Node, source []byte, lang *Language) {
-	normalizeDModuleDefinitionBounds(root, lang)
 	normalizeDCallExpressionTemplateTypes(root, lang)
 	normalizeDCallExpressionPropertyTypes(root, lang)
 	normalizeDCallExpressionSimpleTypeCallees(root, lang)
 	normalizeDVariableTypeQualifiers(root, lang)
 	normalizeDVariableStorageClassWrappers(root, lang)
-}
-func normalizeDModuleDefinitionBounds(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "d" {
-		return
-	}
-	walkResultTree(root, func(n *Node) {
-		if n.Type(lang) == "module_def" {
-			if first := pythonBlockStartAnchor(n.children, lang); first != nil && n.startByte < first.startByte {
-				n.startByte = first.startByte
-				n.startPoint = first.startPoint
-			}
-			if last := pythonBlockEndAnchor(n.children); last != nil && n.endByte > last.endByte {
-				n.endByte = last.endByte
-				n.endPoint = last.endPoint
-			}
-		}
-	})
 }
 
 func normalizeDVariableStorageClassWrappers(root *Node, lang *Language) {

@@ -120,6 +120,11 @@ func TestRetiredDispatchArmCOracleParity(t *testing.T) {
 			source:   "\nmodule m;\nint main() { return 0; }\n",
 		},
 		{
+			name:     "d_module_bounds",
+			language: "d",
+			source:   "// license\n\nmodule test;\nimport std.stdio;\n",
+		},
+		{
 			name:     "forth_leading_trivia_root",
 			language: "forth",
 			source:   "\n: square dup * ;\n",

@@ -108,6 +108,12 @@ for tags and release notes while still in `0.x`.
 
 ### Removed
 
+- **The D module-bound result repair.** Native reduction already excludes
+  leading comments and trailing trivia from each `module_def` span.
+  Production, compact, forest, incremental, and C-oracle routes match.
+  Incremental parsing reuses the old tree.
+  The D dispatcher remains live for unrelated shape repairs.
+
 - **The HCL root normalization pass.** Shared root finalization now removes
   hidden whitespace extras at every root position.
   Native reduction already produces each exact HCL body span.

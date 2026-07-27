@@ -2,43 +2,6 @@ package gotreesitter
 
 import "testing"
 
-func TestNormalizeDModuleDefinitionBoundsSnapToStructuralChildren(t *testing.T) {
-	lang := &Language{
-		Name:        "d",
-		SymbolNames: []string{"EOF", "module_def", "module_declaration", "import_declaration"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "module_def", Visible: true, Named: true},
-			{Name: "module_declaration", Visible: true, Named: true},
-			{Name: "import_declaration", Visible: true, Named: true},
-		},
-	}
-
-	arena := newNodeArena(arenaClassFull)
-	moduleDecl := newLeafNodeInArena(arena, 2, true, 133, 178, Point{Row: 4}, Point{Row: 4, Column: 45})
-	importDecl := newLeafNodeInArena(arena, 3, true, 179, 9486, Point{Row: 5}, Point{Row: 319, Column: 1})
-	moduleDef := newParentNodeInArena(arena, 1, true, []*Node{moduleDecl, importDecl}, nil, 0)
-	moduleDef.startByte = 0
-	moduleDef.startPoint = Point{}
-	moduleDef.endByte = 9487
-	moduleDef.endPoint = Point{Row: 319, Column: 2}
-
-	normalizeDModuleDefinitionBounds(moduleDef, lang)
-
-	if got, want := moduleDef.startByte, uint32(133); got != want {
-		t.Fatalf("moduleDef.startByte = %d, want %d", got, want)
-	}
-	if got, want := moduleDef.startPoint, moduleDecl.startPoint; got != want {
-		t.Fatalf("moduleDef.startPoint = %#v, want %#v", got, want)
-	}
-	if got, want := moduleDef.endByte, uint32(9486); got != want {
-		t.Fatalf("moduleDef.endByte = %d, want %d", got, want)
-	}
-	if got, want := moduleDef.endPoint, importDecl.endPoint; got != want {
-		t.Fatalf("moduleDef.endPoint = %#v, want %#v", got, want)
-	}
-}
-
 func TestNormalizeDVariableStorageClassWrappersWrapsStaticLeaf(t *testing.T) {
 	lang := &Language{
 		Name:        "d",
