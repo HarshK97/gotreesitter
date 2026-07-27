@@ -15,13 +15,13 @@ without updating that registry.
 
 The v1 registry freezes the current surface:
 
-- 72 explicit `runLanguageResultCompatibility` switch arms covering 79
+- 68 explicit `runLanguageResultCompatibility` switch arms covering 70
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-That is 73 live registry entries and 12 retired entries. The registry covers
+That is 69 live registry entries and 16 retired entries. The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
 
@@ -127,6 +127,22 @@ compact parses; forest and incremental routes share the same root finalizer.
 Error roots retain their recovery extra, and lazy final-child references are
 filtered without draining the compact range. Real RST and Comment fixtures are
 exact against their C oracles. The generic trailing-extra pass is retired.
+
+## Current progress: trailing root and child spans
+
+Materialization now owns the retired trailing-span family for nine languages.
+This family covered Caddy, Comment, Fortran, Just, Nginx, Nim, Pascal, Pug,
+and RST.
+
+The compact scheduler admits a zero-width extra only when an external scanner
+produces it and the scanner checkpoint or parser state advances. Forest
+publication omits zero-width synchronization extras as visible children.
+These extras still extend the source range.
+
+Production, compact, forest, incremental, and locked C routes return exact
+spans for all nine languages. Pascal proves actual old-tree reuse. Comment
+proves its expected root-only invalidation. External scanner limits prevent
+reuse for the other seven languages.
 
 ## Current progress: field projection
 

@@ -14,17 +14,6 @@
       "error_root": false
     },
     {
-      "language": "caddy",
-      "path": "testdata/caddy/security-header.Caddyfile",
-      "sha256": "d8b46d494010164bf3e600259fd7d175c2dabdcd8652accfe361b8f123810391",
-      "arm_id": "dispatch.shared_trailing_span",
-      "checked": 1,
-      "run": 1,
-      "nodes_visited": 47,
-      "nodes_rewritten": 0,
-      "error_root": true
-    },
-    {
       "language": "go",
       "path": "cgo_harness/corpus_structural/go_sample.go",
       "sha256": "262c7b8359a364b56db8549f65f4f2e01ed43de096e607dd05f50b94bd45efb0",

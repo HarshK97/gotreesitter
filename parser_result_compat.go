@@ -118,8 +118,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.c_cpp", func() { normalizeCCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "c_sharp":
 		dispatcherArmCensus(ctx, "dispatch.c_sharp", func() { normalizeCSharpCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
-	case "caddy", "comment", "fortran", "nim", "pug", "rst":
-		dispatcherArmCensus(ctx, "dispatch.shared_trailing_span", func() { normalizeResultTrailingSpanCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "cooklang":
 		dispatcherArmCensus(ctx, "dispatch.cooklang", func() { normalizeCooklangCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "corn":
@@ -190,8 +188,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		return resultCompatibilityResult{stopReason: stopReason}
 	case "julia":
 		dispatcherArmCensus(ctx, "dispatch.julia", func() { normalizeJuliaCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "just":
-		dispatcherArmCensus(ctx, "dispatch.just", func() { normalizeJustTopLevelTrailingLineBreakSpans(ctx.root, ctx.source, ctx.lang) })
 	case "ledger":
 		dispatcherArmCensus(ctx, "dispatch.ledger", func() { normalizeLedgerCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "linkerscript":
@@ -202,15 +198,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.luau", func() { normalizeLuauCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "objc":
 		dispatcherArmCensus(ctx, "dispatch.objc", func() { normalizeObjcCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "nginx":
-		dispatcherArmCensus(ctx, "dispatch.nginx", func() { normalizeNginxAttributeLineBreaks(ctx.root, ctx.source, ctx.lang) })
 	case "ninja":
 		dispatcherArmCensus(ctx, "dispatch.ninja", func() { normalizeNinjaCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "pascal":
-		dispatcherArmCensus(ctx, "dispatch.pascal", func() {
-			normalizePascalTopLevelProgramEnd(ctx.root, ctx.source, ctx.lang)
-			normalizePascalTrailingExtraTrivia(ctx.root, ctx.source, ctx.lang)
-		})
 	case "perl":
 		dispatcherArmCensus(ctx, "dispatch.perl", func() { normalizePerlCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "php":
