@@ -2072,14 +2072,28 @@ func populateParentNodeNoLinks(n *Node, children []*Node, trackChildErrors bool)
 }
 
 func wireParentLinksWithScratch(root *Node, scratch *[]*Node) {
-	wireParentLinksWithScratchUntil(root, scratch, nil)
+	wireParentLinksWithScratchUntil(root, scratch, nil, nil)
 }
 
-func wireParentLinksWithScratchUntil(root *Node, scratch *[]*Node, p *Parser) bool {
+func wireParentLinksWithScratchUntil(
+	root *Node,
+	scratch *[]*Node,
+	p *Parser,
+	errorSummary *resultErrorSummary,
+) bool {
 	if root == nil {
+		if errorSummary != nil {
+			*errorSummary = resultErrorSummaryUnknown
+		}
 		return true
 	}
 	setNodeRootLink(root)
+	if errorSummary != nil {
+		*errorSummary = resultErrorSummaryClean
+		if root.IsError() || root.hasError() {
+			*errorSummary = resultErrorSummaryPresent
+		}
+	}
 
 	var stack []*Node
 	if scratch != nil {
@@ -2094,10 +2108,16 @@ func wireParentLinksWithScratchUntil(root *Node, scratch *[]*Node, p *Parser) bo
 			if scratch != nil {
 				*scratch = stack[:0]
 			}
+			if errorSummary != nil && *errorSummary != resultErrorSummaryPresent {
+				*errorSummary = resultErrorSummaryUnknown
+			}
 			return false
 		}
 		n := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
+		if errorSummary != nil && (n.IsError() || n.hasError()) {
+			*errorSummary = resultErrorSummaryPresent
+		}
 		childCount := nodeChildCountNoMaterialize(n)
 		for i := 0; i < childCount; i++ {
 			c := nodeChildAtForReason(n, i, materializeForParentAPI)
@@ -2110,6 +2130,14 @@ func wireParentLinksWithScratchUntil(root *Node, scratch *[]*Node, p *Parser) bo
 	}
 	if scratch != nil {
 		*scratch = stack[:0]
+	}
+	if errorSummary != nil {
+		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			if *errorSummary != resultErrorSummaryPresent {
+				*errorSummary = resultErrorSummaryUnknown
+			}
+			return false
+		}
 	}
 	return true
 }
