@@ -1233,6 +1233,44 @@ func TestShiftExtraCohortSharesOneTerminalPayloadAndRetainsZeroTargets(t *testin
 	}
 }
 
+func TestShiftExtraCohortAllowsZeroWidthExternalTerminal(t *testing.T) {
+	tables := &fakeTable{actions: map[tableCell][]Action{
+		{state: 1, symbol: 9}: {{Type: ActionShift, Extra: true}},
+	}}
+	compact, err := New(tables, Limits{MaxDerivations: 4, MaxPopPaths: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := compact.Seed(1, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shifted, err := compact.ShiftExtraCohort([]ExtraCohortShiftInput{{Head: seed}}, 9, Token{
+		Symbol: 9, StartByte: 4, EndByte: 4, Extra: true, External: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(shifted) != 1 {
+		t.Fatalf("shifted cohort length=%d, want 1", len(shifted))
+	}
+	state, offset, err := compact.Boundary(shifted[0])
+	if err != nil || state != 1 || offset != 4 {
+		t.Fatalf("zero-width external boundary=(%d,%d) err=%v", state, offset, err)
+	}
+	paths, err := compact.Derivations(shifted[0])
+	if err != nil || len(paths) != 1 || len(paths[0].Payloads) != 1 {
+		t.Fatalf("zero-width external paths=%+v err=%v", paths, err)
+	}
+	view, err := compact.Subtree(paths[0].Payloads[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.StartByte != 4 || view.EndByte != 4 || !view.Extra || !view.External || !view.Terminal {
+		t.Fatalf("zero-width external payload=%+v", view)
+	}
+}
+
 func TestShiftExtraCohortValidatesBeforeMutation(t *testing.T) {
 	tables := &fakeTable{actions: map[tableCell][]Action{
 		{state: 1, symbol: 9}: {{Type: ActionShift, Extra: true}},

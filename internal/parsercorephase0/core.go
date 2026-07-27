@@ -1278,10 +1278,11 @@ func (c *Core) ShiftOrdinaryClassifiedCohort(boundaries []ClassifiedBoundary, to
 	return out, err
 }
 
-// ShiftExtraCohort applies one positive-width extra terminal election to
-// distinct scheduler heads while allocating exactly one immutable terminal
-// payload. Every selected cell must contain one undecorated extra shift. A
-// target state of zero retains that head's current state, matching production
+// ShiftExtraCohort applies one extra terminal election to distinct scheduler
+// heads while allocating exactly one immutable terminal payload. An external
+// terminal can have zero width when its scheduler proves scanner or parser
+// state progress. Every selected cell must contain one undecorated extra shift.
+// A target state of zero retains that head's current state, matching production
 // extraShiftTargetState semantics.
 // The returned slice is transient scheduler-owned scratch. It stays valid
 // only until the next cohort shift on this Core; clone it to retain it.

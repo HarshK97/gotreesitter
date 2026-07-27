@@ -54,6 +54,51 @@ func TestRetiredDispatchArmCOracleParity(t *testing.T) {
 			language: "zig",
 			source:   "const x = .{};\nconst y = .{\"x\"};\n",
 		},
+		{
+			name:     "caddy_sole_child_line_break",
+			language: "caddy",
+			source:   ":8080 {\n}\n",
+		},
+		{
+			name:     "comment_hidden_trailing_extra",
+			language: "comment",
+			source:   "one line\n",
+		},
+		{
+			name:     "fortran_statement_line_breaks",
+			language: "fortran",
+			source:   "program hello\n  implicit none\nend program hello\n",
+		},
+		{
+			name:     "just_assignment_line_break",
+			language: "just",
+			source:   "name := \"value\"\n",
+		},
+		{
+			name:     "nginx_attribute_line_breaks",
+			language: "nginx",
+			source:   "http {\n  server {\n    listen 80;\n    server_name example.com;\n  }\n}\n",
+		},
+		{
+			name:     "nim_child_excludes_trailing_line_break",
+			language: "nim",
+			source:   "echo \"hello\"\n",
+		},
+		{
+			name:     "pascal_program_excludes_trailing_line_break",
+			language: "pascal",
+			source:   "program hello;\nbegin\nend.\n",
+		},
+		{
+			name:     "pug_sole_child_line_break",
+			language: "pug",
+			source:   "p hello\n",
+		},
+		{
+			name:     "rst_section_excludes_trailing_line_break",
+			language: "rst",
+			source:   "Title\n=====\n",
+		},
 	}
 	for _, test := range tests {
 		test := test

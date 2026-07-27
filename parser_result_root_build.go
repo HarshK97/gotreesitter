@@ -100,11 +100,8 @@ func (b *resultRootBuild) tryBuildRealRootTree(nodes []*Node) *Tree {
 		realRoot.parent = nil
 		realRoot.childIndex = -1
 	}
-	if returnRealRoot && extraSplit.canFoldVisibleExtras() {
-		foldResultRootExtras(realRoot, extraSplit.visibleExtras, b.arena)
-	}
 	if returnRealRoot {
-		extendResultRootRangeToExtras(realRoot, extraSplit.allExtras)
+		attachResultRootExtraSplit(realRoot, extraSplit, b.arena)
 	}
 	realRoot = b.repairPythonRoot(realRoot)
 	extendTrailing := returnRealRoot || !realRoot.hasError()
@@ -880,6 +877,30 @@ func (s resultRootExtraSplit) canFoldVisibleExtras() bool {
 		}
 	}
 	return true
+}
+
+func classifyResultRootExtras(extras []*Node, lang *Language) resultRootExtraSplit {
+	split := resultRootExtraSplit{allExtras: extras}
+	for _, extra := range extras {
+		if extra != nil && symbolIsVisible(lang, extra.symbol) && extra.endByte > extra.startByte {
+			split.visibleExtras = append(split.visibleExtras, extra)
+		}
+	}
+	return split
+}
+
+// attachResultRootExtraSplit publishes only visible, positive-width extras as
+// root children. All extras still contribute their source range. This keeps
+// production and forest materialization aligned for scanner synchronization
+// tokens that carry state but no source bytes.
+func attachResultRootExtraSplit(root *Node, split resultRootExtraSplit, arena *nodeArena) {
+	if root == nil || len(split.allExtras) == 0 {
+		return
+	}
+	if split.canFoldVisibleExtras() {
+		foldResultRootExtras(root, split.visibleExtras, arena)
+	}
+	extendResultRootRangeToExtras(root, split.allExtras)
 }
 
 func foldResultRootExtras(root *Node, extras []*Node, arena *nodeArena) {
