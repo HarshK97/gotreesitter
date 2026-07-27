@@ -15,13 +15,13 @@ without updating that registry.
 
 The v1 registry freezes the current surface:
 
-- 67 explicit `runLanguageResultCompatibility` switch arms covering 69
+- 64 explicit `runLanguageResultCompatibility` switch arms covering 66
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-That is 68 live registry entries and 17 retired entries. The registry covers
+That is 65 live registry entries and 20 retired entries. The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
 
@@ -85,7 +85,7 @@ make the exported API surface worse without changing its ownership.
 
 ## Current progress: collapsed children
 
-All 24 registered collapsed child rows for the seven affected built-in
+All 27 registered collapsed child rows for the ten affected built-in
 languages now produce their child shape natively. The occurrence policy is
 admitted by the exact-profile receipt and compiled from exact named parent and
 raw-child metadata identities, so true adapted clones retaining both take the
@@ -97,6 +97,22 @@ The generic reconstruction walk is therefore retired and deleted. Once raw
 child identity has been lost, a display-name-compatible caller artifact is no
 longer guessed into shape; custom artifacts must carry the explicit native
 capability and exact metadata receipt to opt in.
+
+## Current progress: alias-preserved wrappers
+
+The pinned CUE, Git Commit, and R blobs now carry their C alias maps.
+Materialization uses that metadata before it publishes a tree.
+
+The native producer now keeps these collapsed children:
+
+- The CUE `value` wrapper keeps its named `identifier`.
+- The Git Commit `message` wrapper keeps its named `message_line`.
+- The R `string_content` wrapper keeps its named `escape_sequence`.
+
+All four native routes return the same trees without a compatibility walk.
+CUE proves nonzero old-tree reuse.
+Git Commit and R record their external scanner reuse limit.
+The locked C parsers return the same child shapes and spans.
 
 ## Current progress: terminal leaves
 
