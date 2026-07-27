@@ -2,8 +2,8 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 64,
-    "dispatcher_languages": 66,
+    "dispatcher_arms": 63,
+    "dispatcher_languages": 65,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
@@ -495,21 +495,26 @@
       "languages": [
         "cpon"
       ],
-      "purpose": "Reconcile CPON returned-tree shape and spans.",
+      "purpose": "Historical: removed a duplicate anonymous null child from each childless CPON null node after source-driven reconstruction.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/collapsed_token_native_regression_test.go",
+        "cgo_harness/collapsed_token_retirement_parity_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: reduction preserves required wrapper tokens and collapses the same-name CPON null token without source reconstruction. Compatibility-free, production, compact, forest, incremental, and C-oracle receipts return the same tree.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "6f9047d75b4406e2aadf8eeb1a47ebca752734b5",
+      "receipt_refs": [
+        "grammars/collapsed_token_native_regression_test.go",
+        "cgo_harness/collapsed_token_retirement_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.cue",
@@ -1017,7 +1022,7 @@
       "languages": [
         "hcl"
       ],
-      "purpose": "Reconcile HCL config-file root materialization.",
+      "purpose": "Filter unowned HCL root whitespace and align each body span with its structural children.",
       "authoritative_owner": "materialization",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go"
@@ -1703,7 +1708,6 @@
       "functions": [
         "normalizePowerShellProgramShape",
         "normalizePowerShellErrorProgramRoot",
-        "normalizePowerShellAssignmentOperatorTokens",
         "normalizePowerShellPathCommandNameVariables",
         "normalizePowerShellEnumStatementKeywordSpans"
       ],
@@ -1713,7 +1717,7 @@
       "languages": [
         "powershell"
       ],
-      "purpose": "Reconcile PowerShell recovery, tokens, variables, and spans.",
+      "purpose": "Reconcile PowerShell recovery, command-name variables, and enum keyword spans.",
       "authoritative_owner": "scheduler_action_semantics",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go"

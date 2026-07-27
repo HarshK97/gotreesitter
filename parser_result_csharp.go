@@ -128,17 +128,13 @@ func normalizeCSharpSurfaceCompatibility(root *Node, source []byte, lang *Langua
 	if root == nil || lang == nil || lang.Name != "c_sharp" || len(source) == 0 {
 		return
 	}
-	booleanSym, hasBoolean := symbolByName(lang, "boolean_literal")
 	modifierSym, hasModifier := symbolByName(lang, "modifier")
-	aliasSym, hasAlias := symbolByName(lang, "alias_qualified_name")
 	identifierSym, hasIdentifier := symbolByName(lang, "identifier")
 	nullSym, hasNull := symbolByName(lang, "null_literal")
-	globalSym, hasGlobal := symbolByName(lang, "global")
 	lambdaSym, ok := symbolByName(lang, "lambda_expression")
 	hasLambda := ok
 	argSym, hasArgument := symbolByName(lang, "argument")
 	stringLiteralSym, hasStringLiteral := symbolByName(lang, "string_literal")
-	globalNamed := symbolIsNamed(lang, globalSym)
 	modifierNamed := symbolIsNamed(lang, modifierSym)
 	nullNamed := symbolIsNamed(lang, nullSym)
 	walkResultTree(root, func(n *Node) {
@@ -146,34 +142,11 @@ func normalizeCSharpSurfaceCompatibility(root *Node, source []byte, lang *Langua
 			return
 		}
 		childCount := resultChildCount(n)
-		if childCount == 0 {
-			if hasBoolean && n.symbol == booleanSym {
-				if childSym, ok := csharpCollapsedBooleanTokenSymbol(lang, source, n); ok {
-					csharpInstallCollapsedChild(n, childSym, symbolIsNamed(lang, childSym))
-				}
-				return
-			}
-			if hasModifier && n.symbol == modifierSym {
-				if childSym, ok := csharpCollapsedModifierTokenSymbol(lang, source, n); ok {
-					csharpInstallCollapsedChild(n, childSym, symbolIsNamed(lang, childSym))
-				}
-				return
-			}
-		}
 		if hasIdentifier && hasNull && n.Type(lang) == "identifier" &&
 			n.startByte < n.endByte && int(n.endByte) <= len(source) &&
 			string(source[n.startByte:n.endByte]) == "null" {
 			retagResultRoot(n, nullSym, nullNamed)
 			replaceNodeChildrenUnfielded(n, nil)
-			return
-		}
-		if hasAlias && hasIdentifier && hasGlobal && n.symbol == aliasSym && childCount > 0 {
-			first := resultChildAt(n, 0)
-			if first != nil && first.symbol == identifierSym && resultChildCount(first) == 0 &&
-				first.startByte < first.endByte && int(first.endByte) <= len(source) &&
-				string(source[first.startByte:first.endByte]) == "global" {
-				csharpInstallCollapsedChild(first, globalSym, globalNamed)
-			}
 			return
 		}
 		if hasLambda && hasIdentifier && hasModifier && n.symbol == lambdaSym && childCount > 0 && len(n.fieldIDs()) > 0 {
@@ -601,61 +574,6 @@ func csharpUnwrapTypeArgumentListParameters(typeArgs *Node, lang *Language) bool
 	}
 	populateParentNode(typeArgs, typeArgs.children)
 	return true
-}
-
-func csharpCollapsedBooleanTokenSymbol(lang *Language, source []byte, n *Node) (Symbol, bool) {
-	if n == nil || n.startByte >= n.endByte || int(n.endByte) > len(source) {
-		return 0, false
-	}
-	text := string(source[n.startByte:n.endByte])
-	switch text {
-	case "true", "false":
-		return symbolByName(lang, text)
-	default:
-		return 0, false
-	}
-}
-
-func csharpCollapsedModifierTokenSymbol(lang *Language, source []byte, n *Node) (Symbol, bool) {
-	if n == nil || n.startByte >= n.endByte || int(n.endByte) > len(source) {
-		return 0, false
-	}
-	text := string(source[n.startByte:n.endByte])
-	switch text {
-	case "abstract",
-		"const",
-		"extern",
-		"file",
-		"fixed",
-		"internal",
-		"new",
-		"override",
-		"partial",
-		"private",
-		"protected",
-		"public",
-		"readonly",
-		"ref",
-		"required",
-		"sealed",
-		"static",
-		"unsafe",
-		"virtual",
-		"volatile":
-		return symbolByName(lang, text)
-	default:
-		return 0, false
-	}
-}
-
-func csharpInstallCollapsedChild(n *Node, childSym Symbol, childNamed bool) {
-	if n == nil || resultChildCount(n) != 0 {
-		return
-	}
-	child := newLeafNodeInArena(n.ownerArena, childSym, childNamed, n.startByte, n.endByte, n.startPoint, n.endPoint)
-	child.parent = n
-	child.childIndex = 0
-	n.children = cloneNodeSliceInArena(n.ownerArena, []*Node{child})
 }
 
 func csharpRewriteInterpolatedStringExpression(n *Node, source []byte, lang *Language) bool {

@@ -93,6 +93,14 @@ for tags and release notes while still in `0.x`.
 
 ### Removed
 
+- **The source-driven collapsed-token repair family for HCL, CPON, C#, and
+  PowerShell.** Reduction now preserves each required anonymous token child.
+  The same-name collapse keeps CPON null nodes childless.
+  This removes the CPON dispatcher arm.
+  The other three arms remain live for unrelated repairs.
+  Compatibility-free, production, compact, forest, incremental, and isolated
+  C-oracle receipts return the same trees.
+
 - **The CUE, Git Commit, and R alias-map result repairs.** Their pinned blobs
   now carry the nonterminal alias metadata from each C parser table.
   Materialization keeps the required named child under each collapsed wrapper.
