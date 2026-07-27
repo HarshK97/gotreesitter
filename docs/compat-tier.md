@@ -15,13 +15,13 @@ without updating that registry.
 
 The v1 registry freezes the current surface:
 
-- 60 explicit `runLanguageResultCompatibility` switch arms covering 62
+- 59 explicit `runLanguageResultCompatibility` switch arms covering 61
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-That is 61 live registry entries and 24 retired entries. The registry covers
+That is 60 live registry entries and 25 retired entries. The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
 
@@ -31,6 +31,11 @@ shrink, and half of HTML's arm (the ERROR-root nested-custom-tag
 reconstruction). At that checkpoint, HTML's range function stayed live.
 R1 later retired that separate second-pass function. The registry keeps both
 retired mechanisms as distinct historical receipts.
+
+R3 also retires Arduino's primitive-type arm.
+DFA keyword promotion now emits those types before compatibility.
+Native Objective-C projection also owns protocol type identifiers.
+Other Objective-C repairs remain live.
 
 The exact collapsed-child policy retains a bare Rust `..` token.
 The merged-left-side conflict rule selects chained dot-range shifts.

@@ -192,6 +192,10 @@ The D dispatcher remains live for unrelated shape repairs.
 Native derivation election chooses the correct Erlang macro replacement.
 Native reduction owns Erlang top-level form spans.
 The Erlang dispatcher arm is retired.
+The DFA keyword path now owns Arduino primitive-type projection.
+Native Objective-C materialization owns protocol type identifiers.
+This change retires Arduino's arm and one Objective-C subpass.
+Other Objective-C repairs remain live.
 
 Group by invariant, not language:
 
