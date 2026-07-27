@@ -9,6 +9,11 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- The shared root-extra classifier now drops zero-width scanner tokens from
+  child lists. The repetition-skip fold also stops the historical Typst
+  comma artifact. These producer rules retire two returned-tree walks.
+  Haskell and Typst keep their dispatcher arms for other repairs.
+
 - Root spans now exclude unowned leading token padding through one shared
   materialization rule. This removes seven language-local repairs.
   Compact admission now accepts the same first-token start as the C oracle.

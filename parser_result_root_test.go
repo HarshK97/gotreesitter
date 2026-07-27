@@ -33,6 +33,91 @@ func TestAttachResultRootExtraSplitOmitsZeroWidthChildren(t *testing.T) {
 	}
 }
 
+func TestAttachResultRootExtraSplitOmitsZeroWidthFinalRefsWithoutDrain(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "source_file", "declaration", "comment"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF"},
+			{Name: "source_file", Visible: true, Named: true},
+			{Name: "declaration", Visible: true, Named: true},
+			{Name: "comment", Visible: true, Named: true},
+		},
+	}
+	arena := newNodeArena(arenaClassFull)
+	arena.finalChildRefs = true
+
+	child := newCompactFullLeafInArena(
+		arena,
+		2,
+		true,
+		1,
+		3,
+		Point{Column: 1},
+		Point{Column: 3},
+	)
+	child.parseState = 12
+	parent := newPendingParentInArena(
+		arena,
+		1,
+		true,
+		0,
+		[]stackEntry{newStackEntryCompactFullLeaf(child.parseState, child)},
+		1,
+		3,
+		Point{Column: 1},
+		Point{Column: 3},
+		false,
+	)
+	parent.parseState = 13
+	entry := newStackEntryPendingParent(parent.parseState, parent)
+	root := materializeStackEntryPendingParent(
+		arena,
+		&entry,
+		pendingParentMaterializeForFinalTree,
+	)
+
+	zeroWidth := newLeafNodeInArena(arena, 3, true, 0, 0, Point{}, Point{})
+	zeroWidth.setExtra(true)
+	positiveWidth := newLeafNodeInArena(
+		arena,
+		3,
+		true,
+		3,
+		4,
+		Point{Column: 3},
+		Point{Column: 4},
+	)
+	positiveWidth.setExtra(true)
+
+	split := classifyResultRootExtras([]*Node{zeroWidth, positiveWidth}, lang)
+	attachResultRootExtraSplit(root, split, arena)
+
+	if got := arena.finalChildRefsMaterializedParents; got != 0 {
+		t.Fatalf("materialized parent count = %d, want 0", got)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("materialized child count = %d, want 0", got)
+	}
+	if !nodeHasFinalChildRefs(root) {
+		t.Fatal("root lost final-child refs")
+	}
+	if got, want := root.ChildCount(), 2; got != want {
+		t.Fatalf("root child count = %d, want %d", got, want)
+	}
+	if got := root.Child(1); got != positiveWidth {
+		t.Fatalf("root child 1 = %p, want %p", got, positiveWidth)
+	}
+	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
+		t.Fatalf("materialized child count after edge access = %d, want 0", got)
+	}
+	if got, want := root.startByte, uint32(0); got != want {
+		t.Fatalf("root start = %d, want %d", got, want)
+	}
+	if got, want := root.endByte, uint32(4); got != want {
+		t.Fatalf("root end = %d, want %d", got, want)
+	}
+}
+
 func newRootFrameReplayLanguage(name, rootName, childName string, repeat bool) *Language {
 	const (
 		childSym = Symbol(3)

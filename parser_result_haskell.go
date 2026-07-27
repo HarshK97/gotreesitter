@@ -2,7 +2,6 @@ package gotreesitter
 
 func normalizeHaskellCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeHaskellImportsSpan(root, source, lang)
-	normalizeHaskellZeroWidthTokens(root, lang)
 	normalizeHaskellDeclarationsSpan(root, source, lang)
 }
 
@@ -33,53 +32,6 @@ func normalizeHaskellImportsSpan(root *Node, source []byte, lang *Language) {
 		left.endByte = right.startByte
 		left.endPoint = advancePointByBytes(left.endPoint, gap)
 	}
-}
-
-func normalizeHaskellZeroWidthTokens(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "haskell" || resultChildCount(root) == 0 {
-		return
-	}
-	tokenSym, hasTokenSym := symbolByName(lang, "_token1")
-	view := resultMutableChildrenForMutation(root)
-	if view.hasFinalChildRefs() && hasTokenSym {
-		changed := false
-		for i := 0; i < view.Len(); i++ {
-			entry, ok := view.Entry(i)
-			if ok && stackEntryNodeSymbol(entry) == tokenSym && stackEntryNodeStartByte(entry) == stackEntryNodeEndByte(entry) {
-				changed = true
-				break
-			}
-		}
-		if changed {
-			view.FilterFinalRefs(func(_ int, entry stackEntry) bool {
-				return stackEntryNodeSymbol(entry) != tokenSym || stackEntryNodeStartByte(entry) != stackEntryNodeEndByte(entry)
-			})
-		}
-		return
-	}
-	if !hasTokenSym {
-		return
-	}
-	children := resultChildSliceForMutation(root)
-	filtered := children[:0]
-	changed := false
-	for _, child := range children {
-		if child == nil {
-			changed = true
-			continue
-		}
-		if child.symbol == tokenSym && child.startByte == child.endByte {
-			changed = true
-			continue
-		}
-		filtered = append(filtered, child)
-	}
-	if !changed {
-		return
-	}
-	root.children = cloneNodeSliceInArena(root.ownerArena, filtered)
-	root.clearFieldMetadata()
-	populateParentNode(root, root.children)
 }
 
 func normalizeHaskellDeclarationsSpan(root *Node, source []byte, lang *Language) {

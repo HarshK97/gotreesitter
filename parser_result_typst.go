@@ -7,10 +7,6 @@ func normalizeTypstCompatibility(root *Node, source []byte, lang *Language) {
 	if len(source) > 0 && root.endByte != uint32(len(source)) {
 		return
 	}
-	groupSym, hasGroup := symbolByName(lang, "group")
-	if hasGroup {
-		normalizeTypstZeroWidthGroupCommas(root, lang, groupSym)
-	}
 	if root.hasError() {
 		return
 	}
@@ -23,45 +19,6 @@ func normalizeTypstCompatibility(root *Node, source []byte, lang *Language) {
 		return
 	}
 	normalizeTypstNestedItems(root, contentSym, itemSym)
-}
-
-func normalizeTypstZeroWidthGroupCommas(node *Node, lang *Language, groupSym Symbol) {
-	if node == nil {
-		return
-	}
-	for i := 0; i < resultChildCount(node); i++ {
-		normalizeTypstZeroWidthGroupCommas(resultChildAt(node, i), lang, groupSym)
-	}
-	if node.symbol != groupSym || resultChildCount(node) < 2 {
-		return
-	}
-	children := resultChildSliceForMutation(node)
-	startByte := node.startByte
-	endByte := node.endByte
-	startPoint := node.startPoint
-	endPoint := node.endPoint
-	out := make([]*Node, 0, len(children))
-	changed := false
-	for i := 0; i < len(children); i++ {
-		child := children[i]
-		if i+1 < len(children) &&
-			child != nil &&
-			symbolTypeName(lang, child.symbol) == "," &&
-			child.startByte == child.endByte &&
-			children[i+1] != nil &&
-			symbolTypeName(lang, children[i+1].symbol) == ")" {
-			changed = true
-			continue
-		}
-		out = append(out, child)
-	}
-	if changed {
-		replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, out))
-		node.startByte = startByte
-		node.endByte = endByte
-		node.startPoint = startPoint
-		node.endPoint = endPoint
-	}
 }
 
 func normalizeTypstNestedItems(node *Node, contentSym, itemSym Symbol) {
