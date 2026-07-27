@@ -565,10 +565,12 @@
       "languages": [
         "d"
       ],
-      "purpose": "Reconcile D returned-tree fields, aliases, and spans.",
+      "purpose": "Reconcile D returned-tree fields and aliases. Native reduction owns module_def bounds.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "cgo_harness/parity_cgo_test.go",
+        "grammars/d_module_span_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
       ],
       "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
       "route_coverage": {
@@ -579,7 +581,10 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "receipt_refs": [
+        "grammars/d_module_span_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.dart",
