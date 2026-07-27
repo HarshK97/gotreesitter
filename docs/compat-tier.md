@@ -15,13 +15,13 @@ without updating that registry.
 
 The v1 registry freezes the current surface:
 
-- 63 explicit `runLanguageResultCompatibility` switch arms covering 65
+- 62 explicit `runLanguageResultCompatibility` switch arms covering 64
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-That is 64 live registry entries and 21 retired entries. The registry covers
+That is 63 live registry entries and 22 retired entries. The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
 
@@ -228,7 +228,18 @@ The native Haskell scanner proves UPDATE is a real zero-width token.
 Typst uses a minimized witness from its pinned component corpus.
 Production, forest, and incremental routes contain no retired artifact.
 The shared compact-child receipt keeps final references lazy.
-The Haskell and Typst dispatcher arms remain live for other repairs.
+Typst keeps its dispatcher arm for other repairs.
+
+## Current progress: Haskell section spans
+
+Native reduction owns the Haskell `imports` and `declarations` ranges.
+The real-corpus census found zero Haskell span rewrites across three files.
+Production and compact routes return the exact native ranges.
+The incremental route returns the same ranges after its scanner limitation.
+The Haskell forest route publishes its existing module-only witness.
+It declines the section witness at its existing reduction cap.
+The locked C parser returns the same section shapes and ranges.
+No Haskell result-compatibility arm remains.
 
 ## The retired second pass
 

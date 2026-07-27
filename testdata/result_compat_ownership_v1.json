@@ -2,8 +2,8 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 63,
-    "dispatcher_languages": 65,
+    "dispatcher_arms": 62,
+    "dispatcher_languages": 64,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
@@ -998,25 +998,26 @@
       "languages": [
         "haskell"
       ],
-      "purpose": "Reconcile Haskell import and declaration spans.",
+      "purpose": "Historical: extended Haskell import and declaration spans across trivia after publication. Retired after native reduction and root finalization produced both ranges exactly.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/haskell_span_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
       ],
       "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
+      "status": "retired",
+      "retired_commit": "aadc2fed64f072499f8cc9485f7cd86db2a274c3",
       "receipt_refs": [
-        "grammars/field_projection_native_regression_test.go",
+        "grammars/haskell_span_native_regression_test.go",
         "grammars/zero_width_native_regression_test.go",
-        "parser_reduce_fields_test.go",
-        "parser_recover_c_test.go"
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
       ]
     },
     {
