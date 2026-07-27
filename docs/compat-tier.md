@@ -202,11 +202,20 @@ It projects inherited fields through hidden productions.
 It also projects direct fields across each flattened child span.
 The Zig grammar metadata does not assign `field_constant` to initializer lists.
 
+Reduction also owns the Haskell and Erlang root field shapes.
+The field plan retains each conflicting inherited mapping.
+The reduce path projects a mapping only when a named child matches its field.
+Root acceptance preserves producer fields when it absorbs surrounding trivia.
+
 Compatibility-free parses prove each producer shape.
 Production, compact, forest, and incremental routes return the same trees.
 Make and Zig prove old-tree reuse.
 Lua records its external scanner reuse limitation.
 The locked C parsers return the same fields.
+
+Erlang proves old-tree reuse and exact isolated C parity.
+Haskell records its external scanner reuse limit.
+Its isolated C results match the unchanged base floors.
 
 ## The retired second pass
 

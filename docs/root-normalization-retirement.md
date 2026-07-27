@@ -179,6 +179,8 @@ This change retires three more dispatcher arms.
 Reduction now owns one collapsed-token family across HCL, CPON, C#, and
 PowerShell. This change retires CPON's dispatcher arm.
 The other three arms remain live for unrelated repairs.
+Reduction and root acceptance now own Haskell and Erlang root fields.
+This change retires two language-local field repairs.
 
 Group by invariant, not language:
 
@@ -244,6 +246,7 @@ there.
 | Leading root trivia | retirement change | 7 local repairs / 1 dispatcher arm | 0 | native producer, production, compact, forest, incremental, reuse, and C-oracle receipts |
 | Alias-preserved wrappers | retirement change | 3 dispatcher arms | 0 | pinned alias maps, native producer, production, compact, forest, incremental, reuse, and C-oracle receipts |
 | Collapsed token wrappers | retirement change | 4 local repair families / 1 dispatcher arm | 0 | native producer, production, compact, forest, incremental, reuse, and four isolated C-oracle receipts |
+| Haskell and Erlang root fields | retirement change | 2 local field repairs | 0 | native producer, production, incremental, reuse, and isolated C-oracle receipts |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.

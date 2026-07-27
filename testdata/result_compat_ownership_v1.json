@@ -817,7 +817,7 @@
       "languages": [
         "erlang"
       ],
-      "purpose": "Reconcile Erlang source-file form materialization.",
+      "purpose": "Reconcile Erlang replacement clauses and top-level form spans.",
       "authoritative_owner": "materialization",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go"
@@ -831,7 +831,11 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "receipt_refs": [
+        "grammars/field_projection_native_regression_test.go",
+        "parser_reduce_fields_test.go",
+        "parser_recover_c_test.go"
+      ]
     },
     {
       "id": "dispatch.fsharp",
@@ -994,7 +998,7 @@
       "languages": [
         "haskell"
       ],
-      "purpose": "Reconcile Haskell returned-tree fields and spans.",
+      "purpose": "Reconcile Haskell import, declaration, and zero-width token spans.",
       "authoritative_owner": "materialization",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go"
@@ -1008,7 +1012,11 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "receipt_refs": [
+        "grammars/field_projection_native_regression_test.go",
+        "parser_reduce_fields_test.go",
+        "parser_recover_c_test.go"
+      ]
     },
     {
       "id": "dispatch.hcl",
