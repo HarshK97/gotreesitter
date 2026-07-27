@@ -1849,6 +1849,26 @@ func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.H
 	return materializeDiagnosticParserCoreAcceptedSelection(compact, head, derivations[0].Payloads, parser, source, nil, forceReplayParseStates)
 }
 
+func finalizeDiagnosticParserCoreAcceptedRootSpan(root *Node, source []byte, sourceLen uint32) error {
+	expectedStart := firstNonTriviaByteStart(source)
+	if root.startByte == expectedStart && root.endByte < sourceLen &&
+		!root.IsError() && !root.HasError() {
+		extendRootToAcceptedCleanTail(root, source, sourceLen, nil)
+	}
+	if root.startByte == expectedStart && root.endByte == sourceLen &&
+		!root.IsError() && !root.HasError() {
+		return nil
+	}
+	return fmt.Errorf(
+		"parser-core phase zero: accepted compact root is incomplete or erroneous: span=%d..%d expected=%d..%d error=%t",
+		root.startByte,
+		root.endByte,
+		expectedStart,
+		sourceLen,
+		root.HasError(),
+	)
+}
+
 // materializeDiagnosticParserCoreAcceptedSelection materializes the accepted
 // compact derivation into a public tree. When scratch is non-nil the runner's
 // reusable buffers back the transient materialization storage, so the warm
@@ -2109,21 +2129,8 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 	}
 	sourceLen := uint32(len(source))
 	root := tree.root
-	expectedStart := firstNonTriviaByteStart(source)
-	if root.startByte == expectedStart && root.endByte < sourceLen &&
-		!root.IsError() && !root.HasError() {
-		extendRootToAcceptedCleanTail(root, source, sourceLen, nil)
-	}
-	if root.startByte != expectedStart || root.endByte != sourceLen ||
-		root.IsError() || root.HasError() {
-		return rejectTree(fmt.Errorf(
-			"parser-core phase zero: accepted compact root is incomplete or erroneous: span=%d..%d expected=%d..%d error=%t",
-			root.startByte,
-			root.endByte,
-			expectedStart,
-			sourceLen,
-			root.HasError(),
-		))
+	if err := finalizeDiagnosticParserCoreAcceptedRootSpan(root, source, sourceLen); err != nil {
+		return rejectTree(err)
 	}
 	tree.incrementalReuseDisabled = !incrementalReuseProven
 	tree.compactMaterialized = true
