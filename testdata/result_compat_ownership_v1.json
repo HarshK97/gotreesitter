@@ -2,8 +2,8 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 62,
-    "dispatcher_languages": 64,
+    "dispatcher_arms": 61,
+    "dispatcher_languages": 63,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
@@ -1032,21 +1032,27 @@
       "languages": [
         "hcl"
       ],
-      "purpose": "Filter unowned HCL root whitespace and align each body span with its structural children.",
+      "purpose": "Historical: filtered hidden HCL root whitespace and aligned body spans after publication. Shared root finalization now removes hidden trivia extras. Native reduction already owns each body span.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/hcl_hidden_trivia_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: shared finalization removes hidden childless root trivia without a language allowlist. Native HCL reduction emits exact body spans. Production, compact, forest, incremental, and C-oracle receipts match.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "49d776674b2f599fa162874bbf74dc119fa9e7d4",
+      "receipt_refs": [
+        "parser_result_trailing_extra_native_test.go",
+        "grammars/hcl_hidden_trivia_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.html",

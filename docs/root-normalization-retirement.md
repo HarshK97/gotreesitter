@@ -183,6 +183,10 @@ Reduction and root acceptance now own Haskell and Erlang root fields.
 This change retires two language-local field repairs.
 Native reduction and root finalization own Haskell section spans.
 The remaining Haskell dispatcher arm is retired.
+Shared root finalization now removes hidden whitespace extras at every root
+position. The rule preserves visible extras, fields, spans, and lazy child
+references. Native HCL reduction already owns each body span.
+The HCL dispatcher arm is retired.
 
 Group by invariant, not language:
 
@@ -251,6 +255,7 @@ there.
 | Haskell and Erlang root fields | retirement change | 2 local field repairs | 0 | native producer, production, incremental, reuse, and isolated C-oracle receipts |
 | Zero-width artifact repairs | merged in PR #480 | 2 language walks | 0 | Haskell scanner control-token and Typst historical repetition-fold witnesses |
 | Haskell section spans | retirement commit `aadc2fed64f072499f8cc9485f7cd86db2a274c3` | 1 dispatcher arm | 0 | zero-rewrite real-corpus census, native production, compact, incremental, forest-limit, and isolated C-oracle receipts |
+| Hidden root trivia | retirement commit `49d776674b2f599fa162874bbf74dc119fa9e7d4` | 1 dispatcher arm | 0 | generalized root finalization, 114 native HCL body spans, four result routes, and isolated C-oracle parity |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.
