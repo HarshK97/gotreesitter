@@ -154,6 +154,11 @@ func TestRetiredDispatchArmCOracleParity(t *testing.T) {
 			language: "haskell",
 			source:   "module M where\nimport A\nimport B\n\nvalue = 1\n",
 		},
+		{
+			name:     "hcl_hidden_root_trivia",
+			language: "hcl",
+			source:   "# first\n\n# second\n\nvalue = true\n",
+		},
 	}
 	for _, test := range tests {
 		test := test

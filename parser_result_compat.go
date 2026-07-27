@@ -178,8 +178,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 			stopReason = normalizeGoReturnedTreeCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang, ctx.incrementalRanges)
 		})
 		return resultCompatibilityResult{stopReason: stopReason}
-	case "hcl":
-		dispatcherArmCensus(ctx, "dispatch.hcl", func() { normalizeHCLConfigFileRoot(ctx.root, ctx.source, ctx.lang) })
 	case "http":
 		dispatcherArmCensus(ctx, "dispatch.http", func() { normalizeHTTPCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "hurl":

@@ -67,71 +67,125 @@ func lastNonTriviaByteEnd(source []byte) uint32 {
 	return 0
 }
 
-// trimTrailingExtraTriviaRoot drops a trailing extra child that is pure
-// whitespace AND hidden (SymbolMetadata.Visible == false) from the root,
-// widening the root's own span to still cover it instead. It targets grammars
-// whose extras rule captures raw whitespace as its own (unnamed, invisible)
-// token: tree-sitter C never surfaces that as a distinct trailing child, only
-// as span coverage. A VISIBLE extra (e.g. an anonymous-but-shown punctuation
-// token used as a stand-in "extra" in a synthetic fixture, or any grammar that
-// deliberately gives its trivia a visible node type) is intentionally shown in
-// the tree, so it is left alone even when its bytes happen to be whitespace —
-// only the hidden case is the "never really a node" pattern this normalizes.
-func trimTrailingExtraTriviaRoot(root *Node, source []byte, lang *Language) {
+// filterHiddenExtraTriviaRoot removes hidden, childless whitespace extras from
+// a clean root. The root keeps its produced span. Visible extras remain public.
+// Error roots keep every extra to preserve recovery evidence.
+func filterHiddenExtraTriviaRoot(root *Node, source []byte, lang *Language) {
 	view := resultMutableChildrenForMutation(root)
 	childCount := view.Len()
 	if root == nil || childCount == 0 || len(source) == 0 {
 		return
 	}
 	if view.hasFinalChildRefs() {
-		last, ok := view.Entry(childCount - 1)
-		if !ok || !stackEntryNodeIsExtra(last) || stackEntryNodeChildCount(last) != 0 {
+		found := false
+		for i := 0; i < childCount; i++ {
+			entry, ok := view.Entry(i)
+			if ok && rootEntryIsHiddenExtraTrivia(root, entry, source, lang) {
+				found = true
+				break
+			}
+		}
+		if !found {
 			return
 		}
-		if symbolIsVisible(lang, stackEntryNodeSymbol(last)) {
-			return
-		}
-		start := stackEntryNodeStartByte(last)
-		end := stackEntryNodeEndByte(last)
-		if start >= end || end != root.endByte || int(end) > len(source) {
-			return
-		}
-		if !bytesAreTrivia(source[start:end]) {
-			return
-		}
-		view.FilterFinalRefs(func(i int, entry stackEntry) bool {
-			return i+1 < childCount
+		view.FilterFinalRefs(func(_ int, entry stackEntry) bool {
+			return !rootEntryIsHiddenExtraTrivia(root, entry, source, lang)
 		})
 		return
 	}
-	last := resultChildAt(root, childCount-1)
-	if last == nil || !last.IsExtra() || resultChildCount(last) != 0 {
-		return
-	}
-	if symbolIsVisible(lang, last.symbol) {
-		return
-	}
-	if last.startByte >= last.endByte || last.endByte != root.endByte || int(last.endByte) > len(source) {
-		return
-	}
-	if !bytesAreTrivia(source[last.startByte:last.endByte]) {
+	fieldIDs := root.fieldIDs()
+	fieldSources := root.fieldSources()
+	if (len(fieldIDs) != 0 && len(fieldIDs) != childCount) ||
+		(len(fieldSources) != 0 && len(fieldSources) != childCount) {
 		return
 	}
 	children := resultChildSliceForMutation(root)
-	root.children = cloneNodeSliceInArena(root.ownerArena, children[:len(children)-1])
-	fieldIDs := root.fieldIDs()
-	fieldSources := root.fieldSources()
-	metadataChanged := false
-	if len(fieldIDs) > len(root.children) {
-		fieldIDs = fieldIDs[:len(root.children)]
-		metadataChanged = true
+	found := false
+	for _, child := range children {
+		if rootNodeIsHiddenExtraTrivia(root, child, source, lang) {
+			found = true
+			break
+		}
 	}
-	if len(fieldSources) > len(root.children) {
-		fieldSources = fieldSources[:len(root.children)]
-		metadataChanged = true
+	if !found {
+		return
 	}
-	if metadataChanged {
-		root.setFieldMetadata(fieldIDs, fieldSources)
+	keptIndexes := make([]int, 0, len(children))
+	for i, child := range children {
+		if rootNodeIsHiddenExtraTrivia(root, child, source, lang) {
+			continue
+		}
+		keptIndexes = append(keptIndexes, i)
 	}
-	populateParentNode(root, root.children)
+	filtered := make([]*Node, len(keptIndexes))
+	for i, oldIndex := range keptIndexes {
+		filtered[i] = children[oldIndex]
+	}
+	root.children = cloneNodeSliceInArena(root.ownerArena, filtered)
+	var filteredFieldIDs []FieldID
+	if len(fieldIDs) == childCount {
+		filteredFieldIDs = cloneFieldIDSliceInArena(root.ownerArena, make([]FieldID, len(keptIndexes)))
+		for i, oldIndex := range keptIndexes {
+			filteredFieldIDs[i] = fieldIDs[oldIndex]
+		}
+	}
+	var filteredFieldSources []uint8
+	if len(fieldSources) == childCount {
+		if root.ownerArena != nil {
+			filteredFieldSources = root.ownerArena.allocFieldSourceSlice(len(keptIndexes))
+		} else {
+			filteredFieldSources = make([]uint8, len(keptIndexes))
+		}
+		for i, oldIndex := range keptIndexes {
+			filteredFieldSources[i] = fieldSources[oldIndex]
+		}
+	}
+	root.setFieldMetadata(filteredFieldIDs, filteredFieldSources)
+	for i, child := range root.children {
+		setNodeParentLink(child, root, i)
+	}
+}
+
+func rootEntryIsHiddenExtraTrivia(root *Node, entry stackEntry, source []byte, lang *Language) bool {
+	if !stackEntryNodeIsExtra(entry) || stackEntryNodeChildCount(entry) != 0 {
+		return false
+	}
+	return rootRangeIsHiddenExtraTrivia(
+		root,
+		stackEntryNodeSymbol(entry),
+		stackEntryNodeStartByte(entry),
+		stackEntryNodeEndByte(entry),
+		source,
+		lang,
+	)
+}
+
+func rootNodeIsHiddenExtraTrivia(root, child *Node, source []byte, lang *Language) bool {
+	if child == nil || !child.IsExtra() || resultChildCount(child) != 0 {
+		return false
+	}
+	return rootRangeIsHiddenExtraTrivia(
+		root,
+		child.symbol,
+		child.startByte,
+		child.endByte,
+		source,
+		lang,
+	)
+}
+
+func rootRangeIsHiddenExtraTrivia(
+	root *Node,
+	symbol Symbol,
+	start, end uint32,
+	source []byte,
+	lang *Language,
+) bool {
+	if root == nil || symbolIsVisible(lang, symbol) || start >= end {
+		return false
+	}
+	if int(end) > len(source) {
+		return false
+	}
+	return bytesAreTrivia(source[start:end])
 }
