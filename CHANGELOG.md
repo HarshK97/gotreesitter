@@ -84,6 +84,23 @@ for tags and release notes while still in `0.x`.
 
 ### Removed
 
+- **The Scala returned-tree span repair subfamily.** A language-neutral
+  in-place rewrite refresh now preserves a valid producer-owned span and can
+  widen it. This change deletes the Scala function-end and case-clause helpers.
+  It also removes the second-pass root-end call and its duplicate case-clause
+  block. Production, compact, forest, changed incremental, fresh, and
+  locked C routes return the exact ranges and points. Scala incremental reuse
+  remains unsupported and reports zero reuse.
+
+- **The duplicate Scala returned-tree repair calls.** Recovery, field, and
+  annotation repair now runs only in the canonical compatibility pass.
+  Mandatory fixtures and the authenticated corpus report zero mutations when
+  the deleted calls run again.
+
+- **The shared returned-tree fixpoint.** The last Scala arm became inert after
+  checkpoints A and B. The publication paths no longer call a repeated
+  post-finalization normalizer.
+
 - **The HTML returned-tree range fixup.** Materialization now extends recovered
   custom elements through each structural `_implicit_end_tag` child.
   Production, compact, forest, and incremental routes return the exact

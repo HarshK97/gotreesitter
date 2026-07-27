@@ -77,22 +77,6 @@ const (
 // ParserLogger receives parser debug logs when configured via SetLogger.
 type ParserLogger func(kind ParserLogType, message string)
 
-func normalizeReturnedTree(root *Node, source []byte, lang *Language) {
-	if root == nil || lang == nil {
-		return
-	}
-	switch lang.Name {
-	case "scala":
-		normalizeScalaTemplateBodyObjectFragments(root, source, nil, lang)
-		normalizeScalaRecoveredObjectTemplateBodies(root, source, nil, lang)
-		normalizeScalaDefinitionFields(root, source, lang)
-		normalizeScalaTemplateBodyFunctionAnnotations(root, source, nil, lang)
-		normalizeScalaTemplateBodyFunctionEnds(root, source, lang)
-		normalizeScalaCaseClauseEnds(root, source, lang)
-		normalizeRootEOFNewlineSpan(root, source, lang)
-	}
-}
-
 func shouldNormalizeIncrementalReturnedTree(tree, oldTree *Tree) bool {
 	if tree == nil {
 		return false
@@ -121,10 +105,6 @@ func (p *Parser) normalizeReturnedIncrementalTree(tree, oldTree *Tree, source []
 			return
 		}
 		tree.resultCompatibilityApplied = true
-	}
-	if reason := p.normalizePostFinalizationReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
-		tree.setParseStopReason(reason)
-		return
 	}
 	finalizeReturnedTreeRootSpan(tree, source)
 }
@@ -159,10 +139,6 @@ func (p *Parser) normalizeReturnedTreeForParse(tree *Tree, source []byte) {
 			return
 		}
 		tree.resultCompatibilityApplied = true
-	}
-	if reason := p.normalizePostFinalizationReturnedTree(rawRootOrNil(tree), source); parseStopReasonIsTerminal(reason) {
-		tree.setParseStopReason(reason)
-		return
 	}
 	finalizeReturnedTreeRootSpan(tree, source)
 }
@@ -387,17 +363,6 @@ func (p *Parser) normalizeReturnedTree(root *Node, source []byte, incrementalRan
 		return reason
 	}
 	normalizeResultCompatibility(root, source, p, incrementalRanges)
-	return p.parseStopReasonNow()
-}
-
-func (p *Parser) normalizePostFinalizationReturnedTree(root *Node, source []byte) ParseStopReason {
-	if p == nil || p.language == nil || root == nil || p.noResultCompatibilityBenchmarkOnly {
-		return ParseStopNone
-	}
-	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-		return reason
-	}
-	normalizeReturnedTree(root, source, p.language)
 	return p.parseStopReasonNow()
 }
 

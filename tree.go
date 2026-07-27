@@ -1987,13 +1987,42 @@ func populateParentNode(n *Node, children []*Node) {
 		n.startPoint = first.startPoint
 		n.endPoint = last.endPoint
 
+		hasError := false
 		for i, c := range children {
 			setNodeParentLink(c, n, i)
 			if c.hasError() {
-				n.setHasError(true)
-				break
+				hasError = true
 			}
 		}
+		n.setHasError(hasError)
+	}
+}
+
+// refreshRewrittenParentPreservingProducedSpan refreshes an existing parent
+// after an in-place child rewrite. A produced span can widen but cannot shrink.
+func refreshRewrittenParentPreservingProducedSpan(n *Node, children []*Node) {
+	if n == nil {
+		return
+	}
+	oldStartByte := n.startByte
+	oldEndByte := n.endByte
+	oldStartPoint := n.startPoint
+	oldEndPoint := n.endPoint
+	preserveProducedSpan := n.productionID != 0 &&
+		oldStartByte <= oldEndByte &&
+		!pointLessThan(oldEndPoint, oldStartPoint)
+
+	populateParentNode(n, children)
+	if !preserveProducedSpan {
+		return
+	}
+	if n.startByte >= oldStartByte {
+		n.startByte = oldStartByte
+		n.startPoint = oldStartPoint
+	}
+	if n.endByte <= oldEndByte {
+		n.endByte = oldEndByte
+		n.endPoint = oldEndPoint
 	}
 }
 
