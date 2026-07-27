@@ -10,9 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     time \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm --global --loglevel=warn install tree-sitter-cli@0.24.7
