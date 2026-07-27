@@ -81,6 +81,14 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		blobSHA256:                    mustRuntimeProfileSHA256("e906c8fec1d2ef49d7dbb349a9ed39fb894f7d8ae0024b2ee45a9956f050bd69"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
 	},
+	"cue": {
+		blobSHA256:                mustRuntimeProfileSHA256("3ff52c09bc788d87116ec56070c4733829513c3d3beadc9028ea4ef7b1d3609a"),
+		nativeResultCompatibility: gotreesitter.ResultCompatibilityNativeCollapsedChildren,
+	},
+	"gitcommit": {
+		blobSHA256:                mustRuntimeProfileSHA256("739548172c738dfa86c6f4c3177009ba20e5d3c48f5669d5fab478de1db5cca4"),
+		nativeResultCompatibility: gotreesitter.ResultCompatibilityNativeCollapsedChildren,
+	},
 	// Haxe's accepted-error retry ladder selects the same tree on every pass.
 	// Keep the first accepted result instead of running either retry ladder.
 	"haxe": {
@@ -112,6 +120,10 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	},
 	"rust": {
 		blobSHA256:                mustRuntimeProfileSHA256("1f00617f5a6cb9106bb3739d6ab8c592772b87b20d232adff9faf1552fa396fd"),
+		nativeResultCompatibility: gotreesitter.ResultCompatibilityNativeCollapsedChildren,
+	},
+	"r": {
+		blobSHA256:                mustRuntimeProfileSHA256("b09226c9eae0afc795d22e3dbed168118554d05b7ab80113bf06bb4315b90c4d"),
 		nativeResultCompatibility: gotreesitter.ResultCompatibilityNativeCollapsedChildren,
 	},
 	// Matlab's external-scanner repeat selects the same tree after the complete

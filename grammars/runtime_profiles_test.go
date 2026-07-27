@@ -54,8 +54,8 @@ func TestCrystalAndMatlabKeepAcceptedErrorRetryLadder(t *testing.T) {
 }
 
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	// 33 = the prior 28 plus Apex, Elixir, Hack, Ruby, and Rust.
-	// Their collapsed-child capability is bound to exact blob identity.
+	// 36 = the prior 33 plus CUE, Git Commit, and R.
+	// Their collapsed-child capability is bound to an exact blob identity.
 	// D and Groovy's retry ceilings
 	// moved out of parser-core name switches and onto exact-blob profiles. The
 	// prior gomod and C additions moved hardcoded compat-tier behavior to profiles.
@@ -68,7 +68,7 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	// the gomod entry), so it does not add a map entry. Crystal and Matlab add
 	// exact-blob external-scanner repeat suppression while retaining the full
 	// accepted-error retry ladder.
-	if got, want := len(builtinLanguageRuntimeProfiles), 33; got != want {
+	if got, want := len(builtinLanguageRuntimeProfiles), 36; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
