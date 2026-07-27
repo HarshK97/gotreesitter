@@ -39,6 +39,21 @@ func TestRetiredDispatchArmCOracleParity(t *testing.T) {
 			language: "ruby",
 			source:   "# comment\nmodule Foo\nend\n",
 		},
+		{
+			name:     "lua_local_declarations",
+			language: "lua",
+			source:   "local function foo() end\nlocal x = 1\n",
+		},
+		{
+			name:     "make_conditional_consequence",
+			language: "make",
+			source:   "ifneq (a,b)\n\t@echo x\nelse\n\t@echo y\nendif\n",
+		},
+		{
+			name:     "zig_initializer_list",
+			language: "zig",
+			source:   "const x = .{};\nconst y = .{\"x\"};\n",
+		},
 	}
 	for _, test := range tests {
 		test := test

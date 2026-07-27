@@ -2,40 +2,6 @@ package gotreesitter
 
 import "testing"
 
-func TestNormalizeLuaChunkLocalDeclarationFields(t *testing.T) {
-	lang := &Language{
-		Name:        "lua",
-		FieldNames:  []string{"", "local_declaration"},
-		SymbolNames: []string{"EOF", "chunk", "function_declaration", "function_call", "variable_declaration"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "chunk", Visible: true, Named: true},
-			{Name: "function_declaration", Visible: true, Named: true},
-			{Name: "function_call", Visible: true, Named: true},
-			{Name: "variable_declaration", Visible: true, Named: true},
-		},
-	}
-
-	source := []byte("local function foo() end\nprint(foo)\nlocal x = 1\n")
-	arena := newNodeArena(arenaClassFull)
-	localFn := newLeafNodeInArena(arena, 2, true, 0, 24, Point{}, Point{Row: 0, Column: 24})
-	call := newLeafNodeInArena(arena, 3, true, 25, 35, Point{Row: 1}, Point{Row: 1, Column: 10})
-	localVar := newLeafNodeInArena(arena, 4, true, 36, 47, Point{Row: 2}, Point{Row: 2, Column: 11})
-	root := newParentNodeInArena(arena, 1, true, []*Node{localFn, call, localVar}, nil, 0)
-
-	normalizeLuaChunkLocalDeclarationFields(root, source, lang)
-
-	if got, want := root.FieldNameForChild(0, lang), "local_declaration"; got != want {
-		t.Fatalf("root.FieldNameForChild(0) = %q, want %q", got, want)
-	}
-	if got := root.FieldNameForChild(1, lang); got != "" {
-		t.Fatalf("root.FieldNameForChild(1) = %q, want empty", got)
-	}
-	if got, want := root.FieldNameForChild(2, lang), "local_declaration"; got != want {
-		t.Fatalf("root.FieldNameForChild(2) = %q, want %q", got, want)
-	}
-}
-
 func TestNormalizeHCLConfigFileRootDropsTopLevelWhitespace(t *testing.T) {
 	lang := &Language{
 		Name:        "hcl",
