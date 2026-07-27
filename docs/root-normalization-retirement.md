@@ -101,8 +101,8 @@ arms.
 ### R2 — census and remove inert language passes
 
 Status: the first dispatcher retirement merged in PR #463.
-Bare Rust ranges now have a producer-owned anonymous token.
-Chained invalid ranges still require the compatibility repair.
+PR #470 retired the Rust dot-range repair.
+Other Rust recovery behavior remains live.
 
 The mandatory shape is census before migration. Historical audits already
 found that table or engine fixes can leave old normalizers behind.
@@ -111,7 +111,8 @@ found that table or engine fixes can leave old normalizers behind.
    The exact collapsed-child policy now retains each bare anonymous `..` token.
    The authenticated producer census found no remaining bare-range candidate.
    It covered 37,121 nonempty, clean files and 18,506 truncated files.
-   Keep the chained invalid-range repair until its producer emits the C shape.
+   The merged-left-side conflict rule now selects chained dot-range shifts.
+   PR #470 removed the remaining repair.
 2. Re-census any pass whose original bug is now covered upstream or whose
    registered witness no longer reaches it. A zero rewrite count is only
    actionable when positive controls prove the probe.
@@ -226,7 +227,9 @@ there.
 | HTML returned-tree range arm | merged in PR #467 | 2 fixpoint arms | 1 | producer unit, absolute production/compact/forest/incremental ranges and points, nonzero incremental reuse, and exact C ranges and points |
 | Scala returned-tree span repairs | checkpoint A commit `c334bace7da734d40e481ee236f5293b37db9a38` | 7 Scala calls | 4 duplicate calls plus one inert marker | producer controls, exact production, compact, forest, incremental, fresh, and C ranges and points |
 | Scala returned-tree duplicate calls | retirement commit `d82f9c2cadb81242cb324ba751aa2805038d4b60` | 4 duplicate calls plus one inert marker | one inert marker | mandatory fixtures, authenticated corpus census, and canonical first-pass fingerprint |
-| Shared returned-tree fixpoint | deleted on branch `codex/generalize-scala-produced-spans-20260726` | 1 inert arm | 0 | ownership denominator, focused route tests, and exact Scala C-oracle receipt |
+| Shared returned-tree fixpoint | merged in PR #469 | 1 inert arm | 0 | ownership denominator, focused route tests, and exact Scala C-oracle receipt |
+| Rust dot-range repair | merged in PR #470 | 1 materialization subfamily | 0 | collapsed-child census and merged-left-side conflict receipts |
+| Lua, Make, and Zig field projection | retirement change | 3 dispatcher arms | 0 | pre-compatibility producer and production, compact, forest, incremental, and C-oracle receipts |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.

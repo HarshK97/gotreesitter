@@ -15,13 +15,13 @@ without updating that registry.
 
 The v1 registry freezes the current surface:
 
-- 75 explicit `runLanguageResultCompatibility` switch arms covering 82
+- 72 explicit `runLanguageResultCompatibility` switch arms covering 79
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-That is 76 live registry entries and 9 retired entries. The registry covers
+That is 73 live registry entries and 12 retired entries. The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
 
@@ -33,8 +33,8 @@ R1 later retired that separate second-pass function. The registry keeps both
 retired mechanisms as distinct historical receipts.
 
 The exact collapsed-child policy retains a bare Rust `..` token.
-The compatibility pass preserves the shape that the parser produced.
-Chained invalid dot ranges still require their recovery repair.
+The merged-left-side conflict rule selects chained dot-range shifts.
+The dot-range compatibility repair is retired.
 
 Each registry entry has a stable ID, functions and files, languages, purpose,
 authoritative owner, witnesses, a retirement condition, coverage fields for
@@ -113,8 +113,7 @@ under-set descendant errors and keeps the existing stop polls.
 
 The registry records checkpoint 1 commit
 `31bc9f1ed88bc930d22d0c2eaedc84195604cce1` as `retired_commit`.
-The commit is on branch `codex/retire-generic-terminal-leaf-20260726`.
-It is not merged.
+PR #465 merged the retirement.
 
 `normalizeResultCompatibility` now calls `summarizeResultErrorsWithStop`
 directly.
@@ -128,6 +127,19 @@ compact parses; forest and incremental routes share the same root finalizer.
 Error roots retain their recovery extra, and lazy final-child references are
 filtered without draining the compact range. Real RST and Comment fixtures are
 exact against their C oracles. The generic trailing-extra pass is retired.
+
+## Current progress: field projection
+
+Reduction now owns the retired Lua, Make, and Zig field shapes.
+It projects inherited fields through hidden productions.
+It also projects direct fields across each flattened child span.
+The Zig grammar metadata does not assign `field_constant` to initializer lists.
+
+Compatibility-free parses prove each producer shape.
+Production, compact, forest, and incremental routes return the same trees.
+Make and Zig prove old-tree reuse.
+Lua records its external scanner reuse limitation.
+The locked C parsers return the same fields.
 
 ## The retired second pass
 

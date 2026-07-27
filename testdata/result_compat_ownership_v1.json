@@ -2,8 +2,8 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 75,
-    "dispatcher_languages": 82,
+    "dispatcher_arms": 72,
+    "dispatcher_languages": 79,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
@@ -1364,21 +1364,28 @@
       "languages": [
         "lua"
       ],
-      "purpose": "Reconcile Lua local-declaration field materialization.",
+      "purpose": "Historical: assigned local_declaration to top-level Lua declarations after materialization. Reduction now projects the inherited field through the hidden production.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/field_projection_native_regression_test.go",
+        "parser_reduce_fields_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: reduction projects local_declaration through the hidden Lua production. Compatibility-free, production, compact, forest, incremental, and C-oracle receipts return the same fields.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "617dd66e8a6e2c270b1f98be021861b838fdff74",
+      "receipt_refs": [
+        "grammars/field_projection_native_regression_test.go",
+        "parser_reduce_fields_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.luau",
@@ -1420,21 +1427,28 @@
       "languages": [
         "make"
       ],
-      "purpose": "Reconcile Make conditional consequence fields.",
+      "purpose": "Historical: extended Make consequence fields across leading anonymous tab children. Reduction now projects each direct field across its flattened child span.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/field_projection_native_regression_test.go",
+        "parser_reduce_fields_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: reduction assigns consequence to the anonymous tab and named recipe children. Compatibility-free, production, compact, forest, incremental, and C-oracle receipts return the same fields.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "617dd66e8a6e2c270b1f98be021861b838fdff74",
+      "receipt_refs": [
+        "grammars/field_projection_native_regression_test.go",
+        "parser_reduce_fields_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.objc",
@@ -2232,21 +2246,26 @@
       "languages": [
         "zig"
       ],
-      "purpose": "Reconcile Zig empty initializer-list fields.",
+      "purpose": "Historical: removed field_constant from Zig initializer lists after materialization. The current grammar metadata does not assign that field.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/field_projection_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: the Zig grammar metadata emits initializer lists without field_constant. Compatibility-free, production, compact, forest, incremental, and C-oracle receipts return the same fields.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "617dd66e8a6e2c270b1f98be021861b838fdff74",
+      "receipt_refs": [
+        "grammars/field_projection_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
+      ]
     },
     {
       "id": "predicate.cobol-exact",

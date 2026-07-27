@@ -198,12 +198,8 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.linkerscript", func() { normalizeLinkerscriptCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "kotlin":
 		dispatcherArmCensus(ctx, "dispatch.kotlin", func() { normalizeKotlinCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "lua":
-		dispatcherArmCensus(ctx, "dispatch.lua", func() { normalizeLuaChunkLocalDeclarationFields(ctx.root, ctx.source, ctx.lang) })
 	case "luau":
 		dispatcherArmCensus(ctx, "dispatch.luau", func() { normalizeLuauCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "make":
-		dispatcherArmCensus(ctx, "dispatch.make", func() { normalizeMakeConditionalConsequenceFields(ctx.root, ctx.lang) })
 	case "objc":
 		dispatcherArmCensus(ctx, "dispatch.objc", func() { normalizeObjcCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "nginx":
@@ -277,8 +273,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.typst", func() { normalizeTypstCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "yaml":
 		dispatcherArmCensus(ctx, "dispatch.yaml", func() { normalizeYAMLRecoveredRoot(ctx.root, ctx.source, ctx.lang) })
-	case "zig":
-		dispatcherArmCensus(ctx, "dispatch.zig", func() { normalizeZigEmptyInitListFields(ctx.root, ctx.lang) })
 	}
 	return resultCompatibilityResult{stopReason: ctx.stopReason()}
 }

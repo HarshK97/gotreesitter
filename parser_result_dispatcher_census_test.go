@@ -71,9 +71,7 @@ func TestDispatcherArmCensusFingerprintDetectsEveryObservableChange(t *testing.T
 		t.Fatalf("dirty-flag edit went undetected: visited=%d rewritten=%d", visited, rewritten)
 	}
 
-	// Field edit: some normalizers (e.g. normalizeMakeConditionalConsequenceFields)
-	// only reassign which field a child fills, changing neither its span nor
-	// its symbol.
+	// A field edit can change only the field that a child fills.
 	root4, _ := build()
 	before4 := captureDispatcherFingerprint(root4)
 	root4.setFieldIDs([]FieldID{0, 7})

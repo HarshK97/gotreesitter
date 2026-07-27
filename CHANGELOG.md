@@ -9,10 +9,9 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
-- Bare Rust ranges keep their anonymous `..` token during materialization.
-  The exact collapsed-child policy retains this occurrence.
-  The Rust compatibility pass preserves the shape that the parser produced.
-  Chained invalid dot ranges still use their recovery repair.
+- Rust dot ranges now parse without a result repair.
+  The exact collapsed-child policy retains each bare `..` token.
+  The merged-left-side conflict rule selects chained dot-range shifts.
 
 - The no-live-action re-lex no longer checks the grammar's name. This recovery
   step re-lexes the lookahead when no live stack has any parse action for it,
@@ -88,6 +87,14 @@ for tags and release notes while still in `0.x`.
   A downstream user reported this behavior in issue #454.
 
 ### Removed
+
+- **The Lua, Make, and Zig field-projection passes.** Reduction now projects
+  inherited and direct fields through hidden productions.
+  The Zig grammar metadata emits initializer lists without `field_constant`.
+  Compatibility-free, production, compact, forest, incremental, and locked C
+  receipts return the same fields.
+  Make and Zig preserve old-tree reuse.
+  Lua records its external scanner reuse limitation.
 
 - **The Scala returned-tree span repair subfamily.** A language-neutral
   in-place rewrite refresh now preserves a valid producer-owned span and can

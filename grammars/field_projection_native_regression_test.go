@@ -29,6 +29,16 @@ func TestFieldProjectionRetiredDispatchArmRoutes(t *testing.T) {
 			for _, receipt := range retiredDispatchRouteReceipts(t, test.language, test.source) {
 				t.Run(receipt.name, func(t *testing.T) {
 					test.assert(t, receipt.tree.RootNode(), test.language)
+					if receipt.name == "incremental" {
+						profile := receipt.incrementalProfile
+						if test.reuseUnsupportedReason != "" {
+							if !profile.ReuseUnsupported || profile.ReuseUnsupportedReason != test.reuseUnsupportedReason {
+								t.Fatalf("incremental reuse status = %+v", profile)
+							}
+						} else if !profile.OldTreeReuseRoute || profile.ReusedSubtrees == 0 || profile.ReusedBytes == 0 {
+							t.Fatalf("incremental route did not reuse the old tree: %+v", profile)
+						}
+					}
 				})
 			}
 		})
@@ -40,15 +50,18 @@ type fieldProjectionRetirementCase struct {
 	source   []byte
 	language *gotreesitter.Language
 	assert   func(*testing.T, *gotreesitter.Node, *gotreesitter.Language)
+	// reuseUnsupportedReason records a locked grammar limitation.
+	reuseUnsupportedReason string
 }
 
 func fieldProjectionRetirementCases() []fieldProjectionRetirementCase {
 	return []fieldProjectionRetirementCase{
 		{
-			name:     "lua_local_declarations",
-			source:   []byte("local function foo() end\nlocal x = 1"),
-			language: LuaLanguage(),
-			assert:   assertLuaLocalDeclarationFields,
+			name:                   "lua_local_declarations",
+			source:                 []byte("local function foo() end\nlocal x = 1"),
+			language:               LuaLanguage(),
+			assert:                 assertLuaLocalDeclarationFields,
+			reuseUnsupportedReason: "external_scanner_unsupported",
 		},
 		{
 			name:     "make_conditional_consequence",
