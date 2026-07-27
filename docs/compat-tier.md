@@ -15,13 +15,13 @@ without updating that registry.
 
 The v1 registry freezes the current surface:
 
-- 61 explicit `runLanguageResultCompatibility` switch arms covering 63
+- 60 explicit `runLanguageResultCompatibility` switch arms covering 62
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-That is 62 live registry entries and 23 retired entries. The registry covers
+That is 61 live registry entries and 24 retired entries. The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
 
@@ -217,6 +217,19 @@ Reduction also owns the Haskell and Erlang root field shapes.
 The field plan retains each conflicting inherited mapping.
 The reduce path projects a mapping only when a named child matches its field.
 Root acceptance preserves producer fields when it absorbs surrounding trivia.
+
+## Current progress: Erlang native ownership
+
+Native derivation election distinguishes two macro replacement families.
+It keeps function clauses separate from case and receive clauses.
+Reduction also owns each top-level form span.
+
+The authenticated Erlang corpus reports zero dispatcher rewrites.
+Compatibility-free witnesses cover both replacement families and form spans.
+Production, compact, forest, and incremental routes return exact trees.
+The incremental route reuses the old tree.
+The locked C parser returns the same shapes and spans.
+The Erlang dispatcher arm is retired.
 
 Compatibility-free parses prove each producer shape.
 Production, compact, forest, and incremental routes return the same trees.

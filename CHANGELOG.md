@@ -9,6 +9,11 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Erlang macro replacement election now stays in the parser.
+  It distinguishes function clauses from case and receive clauses.
+  Reduction already emits exact top-level form spans.
+  These owners retire the Erlang result-compatibility arm.
+
 - Compact parse-state replay now visits each derivation node once.
   Its depth-first worklist retains only the active derivation path.
   The stable full-parse benchmark improves without new allocations or

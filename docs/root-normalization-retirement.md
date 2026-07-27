@@ -189,6 +189,9 @@ references. Native HCL reduction already owns each body span.
 The HCL dispatcher arm is retired.
 Native reduction already owns D `module_def` bounds.
 The D dispatcher remains live for unrelated shape repairs.
+Native derivation election owns Erlang macro replacement selection.
+Native reduction owns Erlang top-level form spans.
+The Erlang dispatcher arm is retired.
 
 Group by invariant, not language:
 
@@ -259,6 +262,7 @@ there.
 | Haskell section spans | retirement commit `aadc2fed64f072499f8cc9485f7cd86db2a274c3` | 1 dispatcher arm | 0 | zero-rewrite real-corpus census, native production, compact, incremental, forest-limit, and isolated C-oracle receipts |
 | Hidden root trivia | retirement commit `49d776674b2f599fa162874bbf74dc119fa9e7d4` | 1 dispatcher arm | 0 | generalized root finalization, 114 native HCL body spans, four result routes, and isolated C-oracle parity |
 | D module bounds | retirement change | 1 language-local span walk | 0 | compatibility-free producer, production, compact, forest, incremental reuse, and isolated C-oracle receipts |
+| Erlang replacement election and form spans | retirement commit `144b30c9ee085406335f4549272e1ae843427993` | 1 dispatcher arm | 0 | zero-rewrite real-corpus census, native producer, production, compact, forest, incremental reuse, and isolated C-oracle receipts |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.
