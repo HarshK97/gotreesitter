@@ -9,6 +9,11 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Compact parse-state replay now visits each derivation node once.
+  Its depth-first worklist retains only the active derivation path.
+  The stable full-parse benchmark improves without new allocations or
+  incremental regressions.
+
 - Clean roots now keep hidden, childless whitespace extras as span coverage.
   They do not publish those extras as children.
   Visible comments and error-root evidence remain unchanged.
