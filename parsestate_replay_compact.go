@@ -67,8 +67,9 @@ func setParserCoreReplayParseStatesForTest(on bool) {
 // replayCompactDerivation to avoid deep Go recursion on pathologically deep
 // derivations.
 type compactReplayFrame struct {
-	id      core.SubtreeID
-	preGoto StateID
+	cursor    StateID
+	children  core.MaterializationReplayChildren
+	nextChild int
 }
 
 // compactReplayStates holds the reconstructed per-derivation-node parser
@@ -111,12 +112,10 @@ func acquireCompactReplayStates(n int) *compactReplayStates {
 		s.preGotoState = s.preGotoState[:n]
 		s.psKnown = s.psKnown[:n]
 		s.preKnown = s.preKnown[:n]
-		for i := 0; i < n; i++ {
-			s.parseState[i] = 0
-			s.preGotoState[i] = 0
-			s.psKnown[i] = false
-			s.preKnown[i] = false
-		}
+		clear(s.parseState)
+		clear(s.preGotoState)
+		clear(s.psKnown)
+		clear(s.preKnown)
 	}
 	return s
 }
@@ -152,67 +151,72 @@ func (p *Parser) replayCompactDerivation(compact *core.Core, roots []core.Subtre
 	seed := p.replayRootPreGotoState()
 
 	stack := states.frames[:0]
-	for _, root := range roots {
-		stack = append(stack, compactReplayFrame{id: root, preGoto: seed})
+	fail := func(err error) (*compactReplayStates, error) {
+		clear(stack)
+		states.frames = stack[:0]
+		states.release()
+		return nil, err
 	}
-	for len(stack) > 0 {
-		top := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		view, err := compact.MaterializationView(top.id)
+	// Process one root at a time. This bounds the worklist by derivation depth
+	// instead of the width of every sibling cohort.
+	for rootIndex := len(roots) - 1; rootIndex >= 0; rootIndex-- {
+		root := roots[rootIndex]
+		view, err := compact.MaterializationReplayView(root)
 		if err != nil {
-			// Return the pooled state object before bailing so the pool contract
-			// is honoured (otherwise it is dropped and silently reallocated).
-			states.frames = stack[:0]
-			states.release()
-			return nil, err
+			return fail(err)
 		}
-		ps, ok := p.replayTransition(top.preGoto, Symbol(view.Symbol), view.Terminal)
-		if ok && uint64(top.id) < uint64(len(states.parseState)) {
-			// Record an AUTHORITATIVE parseState: replayTransition found a real
-			// shift/goto for this id from top.preGoto. When ok is false the
-			// transition fell back to top.preGoto (a node whose shape is not a
-			// plain shift/goto of its visible symbol); recording that fallback
-			// would stamp a known-wrong trusted state, so we abstain and leave
-			// the id at its zero "unknown -> recompute" sentinel.
-			states.parseState[top.id] = ps
-			states.psKnown[top.id] = true
-			// The preGotoState is authoritative only for non-extra nodes. Extras
-			// (comments) float to a tree position that does not match their
-			// live-parse stack state, so their inherited preGoto is not
-			// reconstructable; abstain on it (leave 0) while keeping the exact
-			// parseState above (Lane 3 review amendment 1).
+		rootParseState, rootStateKnown := p.replayTransition(seed, Symbol(view.Symbol), view.Terminal)
+		if rootStateKnown && uint64(root) < uint64(len(states.parseState)) {
+			states.parseState[root] = rootParseState
+			states.psKnown[root] = true
 			if !view.Extra {
-				states.preGotoState[top.id] = top.preGoto
-				states.preKnown[top.id] = true
+				states.preGotoState[root] = seed
+				states.preKnown[root] = true
 			}
 		}
-		kids := view.Children
-		if len(kids) == 0 {
-			continue
-		}
-		if len(kids) == 1 {
-			stack = append(stack, compactReplayFrame{id: kids[0], preGoto: top.preGoto})
-			continue
-		}
-		base := len(stack)
-		cursor := top.preGoto
-		for _, child := range kids {
-			cview, err := compact.MaterializationView(child)
+		stack = append(stack, compactReplayFrame{
+			cursor: seed, children: view.Children,
+		})
+
+		for len(stack) > 0 {
+			topIndex := len(stack) - 1
+			top := &stack[topIndex]
+			if top.nextChild >= top.children.Len() {
+				// Clear the borrowed child slice before the frame returns to the
+				// global pool. This prevents a transient Core from being retained.
+				stack[topIndex] = compactReplayFrame{}
+				stack = stack[:topIndex]
+				continue
+			}
+
+			child, ok := top.children.At(top.nextChild)
+			if !ok {
+				return fail(errors.New("parser-core phase zero: replay child index is invalid"))
+			}
+			childPreGoto := top.cursor
+			top.nextChild++
+			cview, err := compact.MaterializationReplayView(child)
 			if err != nil {
-				// Return the pooled state object before bailing (see above).
-				states.frames = stack[:0]
-				states.release()
-				return nil, err
+				return fail(err)
 			}
-			stack = append(stack, compactReplayFrame{id: child, preGoto: cursor})
-			cursor, _ = p.replayTransition(cursor, Symbol(cview.Symbol), cview.Terminal)
-		}
-		// Reverse the just-appended child frames so pop order is left-to-right.
-		for i, j := base, len(stack)-1; i < j; i, j = i+1, j-1 {
-			stack[i], stack[j] = stack[j], stack[i]
+			childParseState, childStateKnown := p.replayTransition(childPreGoto, Symbol(cview.Symbol), cview.Terminal)
+			top.cursor = childParseState
+			if childStateKnown && uint64(child) < uint64(len(states.parseState)) {
+				// Record only authoritative transitions. A failed transition
+				// returns childPreGoto as a traversal fallback.
+				states.parseState[child] = childParseState
+				states.psKnown[child] = true
+				if !cview.Extra {
+					states.preGotoState[child] = childPreGoto
+					states.preKnown[child] = true
+				}
+			}
+			stack = append(stack, compactReplayFrame{
+				cursor: childPreGoto, children: cview.Children,
+			})
 		}
 	}
-	// Retain the (possibly grown) worklist backing store for the next parse.
+	// Retain the cleared worklist backing store for the next parse.
 	states.frames = stack[:0]
 	return states, nil
 }
