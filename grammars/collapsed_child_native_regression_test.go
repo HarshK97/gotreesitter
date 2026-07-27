@@ -40,7 +40,7 @@ func TestCollapsedChildLedgerRealLanguagesNeedNoSafetyNetRewrite(t *testing.T) {
 			named bool
 			count int
 		}{"identifier": {child: "simple_identifier", named: true, count: 2}}},
-		{name: "hack", lang: HackLanguage, src: "<?hh function f(): void { $a = true; $b = false; $c = null; }\n", compactDecline: true, want: map[string]struct {
+		{name: "hack", lang: HackLanguage, src: "<?hh function f(): void { $a = true; $b = false; $c = null; }\n", want: map[string]struct {
 			child string
 			named bool
 			count int
