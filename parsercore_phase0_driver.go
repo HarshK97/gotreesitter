@@ -555,7 +555,7 @@ func (a *parserCoreRootTables) ProductionFields(productionID uint16, childCount 
 // field-map entries. It reads only language data, so it serves both the shared
 // table build and the per-Parser TableView fallback.
 func parserCoreProductionFields(lang *Language, productionID uint16, childCount int) ([]core.FieldMapEntry, error) {
-	fieldIDs, inherited := buildFieldPlanForProduction(lang, childCount, productionID)
+	fieldIDs, inherited, _ := buildFieldPlanForProduction(lang, childCount, productionID)
 	var out []core.FieldMapEntry
 	for index, fieldID := range fieldIDs {
 		if fieldID == 0 {

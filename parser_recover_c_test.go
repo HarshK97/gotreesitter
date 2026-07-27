@@ -2170,3 +2170,58 @@ func TestCRecordSummaryDepthsAreMonotonic(t *testing.T) {
 		t.Fatalf("vacuous entry coverage: error=%d nodeless=%d nodes=%d extras=%d", errorEntries, nodelessEntries, nodeEntries, extraEntries)
 	}
 }
+
+func TestCAcceptRootRebuildPreservesCandidateFields(t *testing.T) {
+	lang := &Language{
+		SymbolMetadata: []SymbolMetadata{
+			{},
+			{Name: "root", Visible: true, Named: true},
+			{Name: "comment", Visible: true, Named: true},
+			{Name: "item", Visible: true, Named: true},
+		},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	comment := newLeafNodeInArena(arena, 2, true, 0, 2, Point{}, Point{Column: 2})
+	comment.setExtra(true)
+	first := newLeafNodeInArena(arena, 3, true, 3, 4, Point{Column: 3}, Point{Column: 4})
+	second := newLeafNodeInArena(arena, 3, true, 5, 6, Point{Column: 5}, Point{Column: 6})
+	trailing := newLeafNodeInArena(arena, 2, true, 7, 9, Point{Column: 7}, Point{Column: 9})
+	trailing.setExtra(true)
+	candidate := newParentNodeInArenaWithFieldSources(
+		arena,
+		1,
+		true,
+		[]*Node{first, second},
+		[]FieldID{7, 8},
+		[]uint8{fieldSourceDirect, fieldSourceInherited},
+		23,
+	)
+	stack := glrStack{
+		accepted: true,
+		entries: []stackEntry{
+			{state: 1},
+			newStackEntryNode(1, comment),
+			newStackEntryNode(2, candidate),
+			newStackEntryNode(3, trailing),
+		},
+	}
+	var entries glrEntryScratch
+	var gss gssScratch
+	if reason := parser.cAcceptRootRebuild(&stack, arena, &entries, &gss); reason != ParseStopNone {
+		t.Fatalf("accept rebuild stopped: %s", reason)
+	}
+	root := stackEntryNode(stack.top())
+	if root == nil {
+		t.Fatal("accept rebuild returned no root")
+	}
+	if root.productionID != candidate.productionID {
+		t.Fatalf("root production = %d, want %d", root.productionID, candidate.productionID)
+	}
+	if got, want := root.fieldIDs(), []FieldID{0, 7, 8, 0}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("root fields = %v, want %v", got, want)
+	}
+	if got, want := root.fieldSources(), []uint8{0, fieldSourceDirect, fieldSourceInherited, 0}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("root field sources = %v, want %v", got, want)
+	}
+}

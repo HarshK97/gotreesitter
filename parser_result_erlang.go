@@ -5,21 +5,15 @@ func normalizeErlangSourceFileForms(root *Node, lang *Language) {
 		return
 	}
 	normalizeErlangReplacementClauses(root, lang)
-	formsOnlyID, ok := lang.FieldByName("forms_only")
-	if !ok || !erlangSourceFileLooksLikeForms(root, lang) {
+	if !erlangSourceFileLooksLikeForms(root, lang) {
 		return
 	}
 	view := resultMutableChildrenForMutation(root)
-	ensureNodeFieldStorage(root, view.Len())
-	fieldIDs := root.fieldIDs()
-	fieldSources := root.fieldSources()
 	for i := 0; i < view.Len(); i++ {
 		entry, ok := view.Entry(i)
 		if !ok || stackEntryNodeIsExtra(entry) {
 			continue
 		}
-		fieldIDs[i] = formsOnlyID
-		fieldSources[i] = fieldSourceDirect
 		if stackEntryNodeChildCount(entry) > 0 {
 			normalizeErlangTopLevelFormBounds(view.Child(i))
 		}

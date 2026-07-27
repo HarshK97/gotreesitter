@@ -124,6 +124,12 @@ for tags and release notes while still in `0.x`.
   Make and Zig preserve old-tree reuse.
   Lua records its external scanner reuse limitation.
 
+- **The Haskell and Erlang root field repairs.** Reduction now retains each
+  inherited field conflict and projects it by an exact named-symbol match.
+  Root acceptance preserves producer field metadata when it absorbs trivia.
+  Compatibility-free, production, incremental, and isolated C-oracle receipts
+  preserve the expected root fields.
+
 - **The Scala returned-tree span repair subfamily.** A language-neutral
   in-place rewrite refresh now preserves a valid producer-owned span and can
   widen it. This change deletes the Scala function-end and case-clause helpers.

@@ -4340,6 +4340,7 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 			return p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceArena)
 		}
 	}
+	candidateOffset := len(children)
 	var ok bool
 	children, ok = cAppendNodeSliceUntil(children, cand.children, childLimit)
 	if !ok {
@@ -4362,7 +4363,14 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 		}
 	}
 	children = cloneNodeSliceInArena(arena, children)
-	root := p.newRecoveryParentNodeInArena(arena, cand.symbol, p.isNamedSymbol(cand.symbol), children, 0)
+	fieldIDs, fieldSources := cAcceptRootFieldMetadata(
+		arena,
+		len(children),
+		candidateOffset,
+		cand,
+	)
+	root := p.newRecoveryParentNodeInArena(arena, cand.symbol, p.isNamedSymbol(cand.symbol), children, cand.productionID)
+	root.setFieldMetadata(fieldIDs, fieldSources)
 	root.rawShape = captureRawShapeForNodeSlice(arena, cand.symbol, cand.productionID, children)
 	root.dynamicPrecedence = nodeSliceDynamicPrecedence(children)
 	first, last := nodes[0], nodes[len(nodes)-1]
@@ -4386,6 +4394,32 @@ func (p *Parser) cAcceptRootRebuild(s *glrStack, arena *nodeArena, entryScratch 
 		debugRecoveryCheckNodeAcyclic(p, arena, "accept-root-rebuild", root)
 	}
 	return ParseStopNone
+}
+
+func cAcceptRootFieldMetadata(
+	arena *nodeArena,
+	childCount int,
+	candidateOffset int,
+	candidate *Node,
+) ([]FieldID, []uint8) {
+	if candidate == nil || childCount <= 0 || candidateOffset < 0 {
+		return nil, nil
+	}
+	candidateFields := candidate.fieldIDs()
+	if len(candidateFields) == 0 ||
+		!fieldIDSliceHasAny(candidateFields) ||
+		candidateOffset+len(candidateFields) > childCount {
+		return nil, nil
+	}
+	fieldIDs := arena.allocFieldIDSlice(childCount)
+	copy(fieldIDs[candidateOffset:], candidateFields)
+	candidateSources := candidate.fieldSources()
+	if len(candidateSources) == 0 {
+		return fieldIDs, nil
+	}
+	fieldSources := arena.allocFieldSourceSlice(childCount)
+	copy(fieldSources[candidateOffset:], candidateSources)
+	return fieldIDs, fieldSources
 }
 
 func cAcceptRootRebuildChildLimit(arena *nodeArena) int {
