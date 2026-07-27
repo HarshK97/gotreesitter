@@ -52,6 +52,7 @@ func TestExternalScannerIncrementalReusePolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			lang := tc.lang()
 			parser := gotreesitter.NewParser(lang)
+			parser.SetAdmissionCandidateRoute(false)
 			src := tc.source(128)
 			sites := makeBenchmarkEditSites(src, tc.marker)
 			if len(sites) == 0 {

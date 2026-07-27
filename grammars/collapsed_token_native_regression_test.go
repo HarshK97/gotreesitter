@@ -158,11 +158,10 @@ func TestCollapsedTokenRetirementRoutes(t *testing.T) {
 func collapsedTokenRetirementCases() []collapsedTokenRetirementCase {
 	return []collapsedTokenRetirementCase{
 		{
-			name:           "hcl",
-			language:       HclLanguage,
-			source:         []byte("a {\n b = true\n c = [false]\n d = {}\n}"),
-			compactDecline: true,
-			assert:         assertHCLCollapsedTokens,
+			name:     "hcl",
+			language: HclLanguage,
+			source:   []byte("a {\n b = true\n c = [false]\n d = {}\n}"),
+			assert:   assertHCLCollapsedTokens,
 		},
 		{
 			name:     "cpon",

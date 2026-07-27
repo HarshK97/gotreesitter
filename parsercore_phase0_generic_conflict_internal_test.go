@@ -16,11 +16,116 @@ func TestDiagnosticParserCoreGenericWorkSaturatesCausalCounters(t *testing.T) {
 	work := DiagnosticParserCoreGenericWork{
 		ConflictActionArmsAdmitted: math.MaxUint64 - 1,
 		CausalConflictForks:        math.MaxUint64 - 2,
+		RepetitionFolds:            math.MaxUint64,
 	}
 	work.add(&work.ConflictActionArmsAdmitted, 2)
 	work.add(&work.CausalConflictForks, 3)
-	if work.ConflictActionArmsAdmitted != math.MaxUint64 || work.CausalConflictForks != math.MaxUint64 || !work.Overflow {
+	work.add(&work.RepetitionFolds, 1)
+	if work.ConflictActionArmsAdmitted != math.MaxUint64 || work.CausalConflictForks != math.MaxUint64 ||
+		work.RepetitionFolds != math.MaxUint64 || !work.Overflow {
 		t.Fatalf("scheduler causal saturation=%+v", work)
+	}
+}
+
+func TestDiagnosticParserCoreGenericRepetitionFoldMatchesProductionScope(t *testing.T) {
+	actions := core.NewActionRow([]core.Action{
+		{Type: core.ActionShift, State: 2, Repetition: true},
+		{Type: core.ActionReduce, Symbol: 4},
+	})
+	if ordinal, ok := diagnosticParserCoreRepetitionFoldOrdinal(&Language{Name: "bash"}, actions); !ok || ordinal != 1 {
+		t.Fatalf("bash repetition fold ordinal=%d ok=%t, want 1 true", ordinal, ok)
+	}
+	if _, ok := diagnosticParserCoreRepetitionFoldOrdinal(&Language{Name: "dart"}, actions); ok {
+		t.Fatal("dart repetition fold bypassed the production opt-out")
+	}
+	if _, ok := diagnosticParserCoreRepetitionFoldOrdinal(&Language{Name: "markdown_inline"}, actions); ok {
+		t.Fatal("Markdown Inline repetition fold bypassed the compact frontier opt-out")
+	}
+	if _, ok := diagnosticParserCoreRepetitionFoldOrdinal(nil, actions); ok {
+		t.Fatal("nil-language repetition fold was admitted")
+	}
+	malformed := []core.ActionRow{
+		core.NewActionRow([]core.Action{{Type: core.ActionShift, State: 2, Repetition: true}}),
+		core.NewActionRow([]core.Action{
+			{Type: core.ActionShift, State: 2},
+			{Type: core.ActionReduce, Symbol: 4},
+		}),
+		core.NewActionRow([]core.Action{
+			{Type: core.ActionShift, State: 2, Repetition: true},
+			{Type: core.ActionReduce, Symbol: 4},
+			{Type: core.ActionReduce, Symbol: 5},
+		}),
+	}
+	for index, row := range malformed {
+		if _, ok := diagnosticParserCoreRepetitionFoldOrdinal(&Language{Name: "bash"}, row); ok {
+			t.Fatalf("malformed repetition row %d was admitted", index)
+		}
+	}
+}
+
+func TestDiagnosticParserCoreGenericRepetitionFoldReducesWithoutFork(t *testing.T) {
+	table := &genericConflictTable{
+		cells: map[genericConflictCell][]core.Action{
+			{state: 1, symbol: 9}: {
+				{Type: core.ActionShift, State: 3, Repetition: true},
+				{Type: core.ActionReduce, Symbol: 4},
+			},
+		},
+		gotos: map[genericConflictCell]core.StateID{
+			{state: 1, symbol: 4}: 2,
+		},
+	}
+	compact, err := core.New(table, core.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler := &diagnosticParserCoreGenericScheduler{
+		compact:     compact,
+		tokenSource: &dfaTokenSource{language: &Language{Name: "bash"}},
+		headers:     []diagnosticParserCoreHeader{{head: head}},
+		token:       Token{Symbol: 9, EndByte: 1},
+		options: DiagnosticParserCorePrefixOptions{
+			MaxDispatches: 8,
+			ReceiptMode:   DiagnosticParserCoreReceiptFull,
+		},
+		receipt: &DiagnosticParserCoreGenericScheduler{},
+	}
+	stop, err := scheduler.dispatchPass()
+	if err != nil || stop != nil {
+		t.Fatalf("repetition fold stop=%+v err=%v", stop, err)
+	}
+	state, _, err := compact.Boundary(scheduler.headers[0].head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != 2 || scheduler.dispatches != 1 || scheduler.work.RepetitionFolds != 1 ||
+		scheduler.work.Reductions != 1 || scheduler.work.Conflicts != 0 || scheduler.work.Forks != 0 {
+		t.Fatalf("repetition fold state=%d dispatches=%d work=%+v", state, scheduler.dispatches, scheduler.work)
+	}
+	if len(scheduler.receipt.Rounds) != 1 || len(scheduler.receipt.Rounds[0].Actions) != 1 {
+		t.Fatalf("repetition fold rounds=%+v", scheduler.receipt.Rounds)
+	}
+	action := scheduler.receipt.Rounds[0].Actions[0]
+	if action.Ordinal != 1 || action.Action.Type != ParseActionReduce {
+		t.Fatalf("repetition fold action=%+v, want reduction ordinal 1", action)
+	}
+	derivations, err := compact.Derivations(scheduler.headers[0].head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(derivations) != 1 || len(derivations[0].Payloads) != 1 {
+		t.Fatalf("repetition fold derivations=%+v, want one reduced payload", derivations)
+	}
+	view, err := compact.MaterializationView(derivations[0].Payloads[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !view.Fragile {
+		t.Fatal("repetition fold reduction lost its conflict fragility")
 	}
 }
 

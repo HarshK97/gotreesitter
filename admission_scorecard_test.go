@@ -63,34 +63,34 @@ type scorecardRow struct {
 // runtime routing allowlist.
 var admissionScorecardRequiredCompactPasses = map[string]struct{}{
 	"ada": {}, "agda": {}, "angular": {}, "apex": {}, "arduino": {},
-	"astro": {}, "awk": {}, "bash": {}, "beancount": {}, "bibtex": {},
+	"asm": {}, "astro": {}, "awk": {}, "bash": {}, "bass": {}, "beancount": {}, "bibtex": {},
 	"bicep": {}, "bitbake": {}, "blade": {}, "brightscript": {}, "c_sharp": {},
 	"caddy": {}, "cairo": {}, "capnp": {}, "chatito": {}, "circom": {},
-	"commonlisp": {}, "corn": {}, "cpon": {}, "crystal": {}, "css": {},
+	"clojure": {}, "cmake": {}, "comment": {}, "commonlisp": {}, "corn": {}, "cpon": {}, "crystal": {}, "css": {},
 	"csv": {}, "cuda": {}, "cue": {}, "cylc": {}, "d": {}, "dart": {},
-	"desktop": {}, "devicetree": {}, "dhall": {}, "disassembly": {}, "dockerfile": {},
+	"desktop": {}, "devicetree": {}, "dhall": {}, "diff": {}, "disassembly": {}, "djot": {}, "dockerfile": {},
 	"dot": {}, "dtd": {}, "earthfile": {}, "ebnf": {}, "editorconfig": {},
-	"eds": {}, "elisp": {}, "elixir": {}, "elm": {}, "elsa": {}, "enforce": {},
+	"eds": {}, "eex": {}, "elisp": {}, "elixir": {}, "elm": {}, "elsa": {}, "embedded_template": {}, "enforce": {},
 	"erlang": {}, "facility": {}, "faust": {}, "fennel": {}, "fidl": {},
 	"firrtl": {}, "fish": {}, "foam": {}, "forth": {}, "fortran": {}, "fsharp": {},
-	"gdscript": {}, "git_config": {}, "git_rebase": {}, "gitcommit": {}, "gleam": {},
+	"gdscript": {}, "git_config": {}, "git_rebase": {}, "gitattributes": {}, "gitcommit": {}, "gitignore": {}, "gleam": {},
 	"glsl": {}, "gn": {}, "go": {}, "godot_resource": {}, "gomod": {}, "graphql": {},
-	"groovy": {}, "hack": {}, "hare": {}, "haxe": {}, "hcl": {}, "heex": {},
-	"hlsl": {}, "html": {}, "hyprlang": {}, "ini": {}, "javascript": {}, "jq": {},
-	"json5": {}, "jsonnet": {}, "julia": {}, "just": {}, "kconfig": {}, "kotlin": {},
+	"groovy": {}, "hack": {}, "hare": {}, "haskell": {}, "haxe": {}, "hcl": {}, "heex": {},
+	"hlsl": {}, "html": {}, "hurl": {}, "hyprlang": {}, "ini": {}, "janet": {}, "javascript": {}, "jinja2": {}, "jq": {},
+	"json5": {}, "jsonnet": {}, "julia": {}, "just": {}, "kconfig": {}, "kdl": {}, "kotlin": {},
 	"ledger": {}, "less": {}, "linkerscript": {}, "liquid": {}, "llvm": {}, "lua": {},
 	"luau": {}, "make": {}, "markdown": {}, "matlab": {}, "mermaid": {}, "mojo": {},
-	"move": {}, "nginx": {}, "nickel": {}, "ninja": {}, "nix": {}, "nushell": {},
+	"move": {}, "nginx": {}, "nickel": {}, "nim": {}, "ninja": {}, "nix": {}, "norg": {}, "nushell": {},
 	"objc": {}, "ocaml": {}, "odin": {}, "org": {}, "pascal": {}, "pem": {}, "perl": {},
 	"php": {}, "pkl": {}, "powershell": {}, "prisma": {}, "prolog": {}, "promql": {},
-	"proto": {}, "pug": {}, "puppet": {}, "purescript": {}, "python": {}, "ql": {},
-	"r": {}, "regex": {}, "rego": {}, "requirements": {}, "rescript": {}, "ron": {},
-	"rst": {}, "ruby": {}, "rust": {}, "scala": {}, "scss": {}, "smithy": {},
+	"properties": {}, "proto": {}, "pug": {}, "puppet": {}, "purescript": {}, "python": {}, "ql": {},
+	"r": {}, "racket": {}, "regex": {}, "rego": {}, "requirements": {}, "rescript": {}, "ron": {},
+	"rst": {}, "ruby": {}, "rust": {}, "scala": {}, "scheme": {}, "scss": {}, "smithy": {},
 	"solidity": {}, "sparql": {}, "sql": {}, "squirrel": {}, "starlark": {}, "svelte": {},
-	"swift": {}, "tablegen": {}, "tcl": {}, "teal": {}, "templ": {}, "textproto": {},
-	"thrift": {}, "tlaplus": {}, "tmux": {}, "tsx": {}, "turtle": {}, "twig": {},
+	"ssh_config": {}, "swift": {}, "tablegen": {}, "tcl": {}, "teal": {}, "templ": {}, "textproto": {},
+	"thrift": {}, "tlaplus": {}, "tmux": {}, "todotxt": {}, "toml": {}, "tsx": {}, "turtle": {}, "twig": {},
 	"typescript": {}, "typst": {}, "uxntal": {}, "v": {}, "verilog": {}, "vimdoc": {},
-	"vue": {}, "wgsl": {}, "wolfram": {}, "xml": {}, "yaml": {}, "zig": {},
+	"vue": {}, "wat": {}, "wgsl": {}, "wolfram": {}, "xml": {}, "yaml": {}, "yuck": {}, "zig": {},
 }
 
 func TestAdmissionCandidateScorecard206(t *testing.T) {
@@ -146,8 +146,8 @@ func TestAdmissionCandidateScorecard206(t *testing.T) {
 		// review and ratchet update.
 		const (
 			wantTotal   = 206
-			minPass     = 166
-			maxFallback = 35
+			minPass     = 192
+			maxFallback = 9
 			wantSkip    = 5
 		)
 		if got := len(admissionScorecardRequiredCompactPasses); got != minPass {

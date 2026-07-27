@@ -51,6 +51,7 @@ func TestGomodRequireListStaysSingleStack(t *testing.T) {
 	src := []byte("module example.com/m\n\ngo 1.26.0\n\nrequire (\n\texample.com/a v1.2.3\n\texample.com/b v1.2.4\n\texample.com/c v1.2.5\n)\n")
 	lang := GomodLanguage()
 	parser := gotreesitter.NewParser(lang)
+	parser.SetAdmissionCandidateRoute(false)
 	tree, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("parse failed: %v", err)
