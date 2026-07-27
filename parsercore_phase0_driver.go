@@ -139,6 +139,7 @@ type DiagnosticParserCoreGenericWork struct {
 	ConflictActionArmsAdmitted uint64
 	CausalConflictForks        uint64
 	ConflictHeads              uint64
+	RepetitionFolds            uint64
 	Reductions                 uint64
 	OrdinaryShifts             uint64
 	OrdinaryCohorts            uint64
@@ -1472,13 +1473,58 @@ func newDiagnosticParserCoreGenericScheduler(
 }
 
 type diagnosticParserCoreGenericCell struct {
-	headerIndex int
-	boundary    core.ClassifiedBoundary
+	headerIndex             int
+	boundary                core.ClassifiedBoundary
+	repetitionFold          bool
+	repetitionReduceOrdinal int
 }
 
 func (cell diagnosticParserCoreGenericCell) actions() core.ActionRow { return cell.boundary.Actions() }
 func (cell diagnosticParserCoreGenericCell) descriptor() core.ActionRowDescriptor {
 	return cell.boundary.Actions().Descriptor()
+}
+func (cell diagnosticParserCoreGenericCell) kind() core.ActionRowKind {
+	if cell.repetitionFold {
+		return core.ActionRowReduce
+	}
+	return cell.descriptor().Kind()
+}
+func (cell diagnosticParserCoreGenericCell) selectedActionOrdinal() int {
+	if cell.repetitionFold {
+		return cell.repetitionReduceOrdinal
+	}
+	return 0
+}
+
+// diagnosticParserCoreRepetitionFoldOrdinal mirrors the production parser's
+// certified single-reduce repetition fold for a clean compact lineage.
+func diagnosticParserCoreRepetitionFoldOrdinal(language *Language, actions core.ActionRow) (int, bool) {
+	if actions.Len() < 2 || language == nil || cRepetitionSkipOptOut[language.Name] {
+		return 0, false
+	}
+	reduceOrdinal := -1
+	shiftFound := false
+	for ordinal := 0; ordinal < actions.Len(); ordinal++ {
+		action := actions.At(ordinal)
+		switch action.Type {
+		case core.ActionReduce:
+			if reduceOrdinal >= 0 {
+				return 0, false
+			}
+			reduceOrdinal = ordinal
+		case core.ActionShift:
+			if !action.Repetition || shiftFound {
+				return 0, false
+			}
+			shiftFound = true
+		default:
+			return 0, false
+		}
+	}
+	if reduceOrdinal < 0 || !shiftFound {
+		return 0, false
+	}
+	return reduceOrdinal, true
 }
 
 type diagnosticParserCoreDispatchScratch struct {
@@ -2259,7 +2305,11 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			s.dispatchScratch.noActionIndices = append(s.dispatchScratch.noActionIndices, index)
 			continue
 		}
-		s.dispatchScratch.cells = append(s.dispatchScratch.cells, diagnosticParserCoreGenericCell{headerIndex: index, boundary: boundary})
+		cell := diagnosticParserCoreGenericCell{headerIndex: index, boundary: boundary}
+		if actions.Descriptor().Kind() == core.ActionRowUnsupported && s.tokenSource != nil {
+			cell.repetitionReduceOrdinal, cell.repetitionFold = diagnosticParserCoreRepetitionFoldOrdinal(s.tokenSource.language, actions)
+		}
+		s.dispatchScratch.cells = append(s.dispatchScratch.cells, cell)
 	}
 	cells := s.dispatchScratch.cells
 	noActionIndices := s.dispatchScratch.noActionIndices
@@ -2270,10 +2320,12 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 	conflictCell := -1
 	for index, cell := range cells {
 		descriptor := cell.descriptor()
-		if unsupported := diagnosticParserCoreGenericUnsupportedCellDescriptor(cell.headerIndex, s.token, cell.actions(), descriptor); unsupported != nil {
-			return unsupported, nil
+		if !cell.repetitionFold {
+			if unsupported := diagnosticParserCoreGenericUnsupportedCellDescriptor(cell.headerIndex, s.token, cell.actions(), descriptor); unsupported != nil {
+				return unsupported, nil
+			}
 		}
-		switch descriptor.Kind() {
+		switch cell.kind() {
 		case core.ActionRowAccept:
 			if acceptCell < 0 {
 				acceptCell = index
@@ -2586,7 +2638,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 	if err := s.reserveDispatches(1); err != nil {
 		return err
 	}
-	outputs, err := s.compact.ReduceOutputsClassifiedIntoOwned(owner, s.reductionOutputs, cell.boundary, 0, core.ForkOrder{})
+	ordinal := cell.selectedActionOrdinal()
+	outputs, err := s.compact.ReduceOutputsClassifiedIntoOwned(owner, s.reductionOutputs, cell.boundary, ordinal, core.ForkOrder{})
 	if err != nil {
 		return err
 	}
@@ -2639,6 +2692,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 	if madeFreshProgress {
 		s.epochProgress = true
 	}
+	if cell.repetitionFold {
+		s.work.add(&s.work.RepetitionFolds, 1)
+	}
 	s.work.Reductions++
 	s.work.Dispatches++
 	if err := s.canonicalize(); err != nil {
@@ -2653,7 +2709,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 			Index: len(s.receipt.Rounds), Before: before,
 			Actions: []DiagnosticParserCoreRoundAction{{
 				HeaderIndex: cell.headerIndex, State: StateID(cell.boundary.State()), ByteOffset: cell.boundary.ByteOffset(),
-				Ordinal: 0, Action: rootParserCoreAction(cell.actions().At(0)),
+				Ordinal: ordinal, Action: rootParserCoreAction(cell.actions().At(ordinal)),
 			}},
 			After: after,
 		})
