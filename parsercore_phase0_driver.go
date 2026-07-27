@@ -1496,10 +1496,17 @@ func (cell diagnosticParserCoreGenericCell) selectedActionOrdinal() int {
 	return 0
 }
 
+var diagnosticParserCoreRepetitionFoldOptOut = map[string]bool{
+	// The compact reduction frontier splits an attribute-bearing HTML tag.
+	// TestMarkdownInlineAttributeHTMLTagStaysWhole protects the production shape.
+	"markdown_inline": true,
+}
+
 // diagnosticParserCoreRepetitionFoldOrdinal mirrors the production parser's
 // certified single-reduce repetition fold for a clean compact lineage.
 func diagnosticParserCoreRepetitionFoldOrdinal(language *Language, actions core.ActionRow) (int, bool) {
-	if actions.Len() < 2 || language == nil || cRepetitionSkipOptOut[language.Name] {
+	if actions.Len() < 2 || language == nil || cRepetitionSkipOptOut[language.Name] ||
+		diagnosticParserCoreRepetitionFoldOptOut[language.Name] {
 		return 0, false
 	}
 	reduceOrdinal := -1
@@ -2639,6 +2646,10 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		return err
 	}
 	ordinal := cell.selectedActionOrdinal()
+	if cell.repetitionFold {
+		s.compact.SetReduceConflictContext(true)
+		defer s.compact.SetReduceConflictContext(false)
+	}
 	outputs, err := s.compact.ReduceOutputsClassifiedIntoOwned(owner, s.reductionOutputs, cell.boundary, ordinal, core.ForkOrder{})
 	if err != nil {
 		return err

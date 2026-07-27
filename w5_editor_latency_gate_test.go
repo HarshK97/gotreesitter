@@ -440,6 +440,14 @@ type w5Sample struct {
 	FreshWallNs  int64
 }
 
+// w5ProductionParser keeps this incremental reuse gate on its certified route.
+// Compact-tree incremental reuse remains barred by decision 0008.
+func w5ProductionParser(lang *gts.Language) *gts.Parser {
+	parser := gts.NewParser(lang)
+	parser.SetAdmissionCandidateRoute(false)
+	return parser
+}
+
 func w5RunSample(t *testing.T, spec w5LangSpec, tier w5SizeTier, class w5EditClass, pos w5Position) w5Sample {
 	t.Helper()
 	src, itemCount := spec.build(tier.targetSize)
@@ -452,7 +460,7 @@ func w5RunSampleAtOffset(t *testing.T, spec w5LangSpec, tier w5SizeTier, class w
 	t.Helper()
 	lang := spec.lang()
 
-	parser := gts.NewParser(lang)
+	parser := w5ProductionParser(lang)
 	oldTree, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("%s/%s base parse: %v", spec.name, tier.name, err)
@@ -464,7 +472,7 @@ func w5RunSampleAtOffset(t *testing.T, spec w5LangSpec, tier w5SizeTier, class w
 
 	edited, edit := w5ApplyEdit(src, offset, class)
 
-	freshParser := gts.NewParser(lang)
+	freshParser := w5ProductionParser(lang)
 	freshStart := time.Now()
 	freshTree, err := freshParser.Parse(edited)
 	freshWall := time.Since(freshStart)
@@ -928,7 +936,7 @@ func TestW5CSSNearTopReuseAssertion(t *testing.T) {
 	}
 	offset := braceIdx - 1
 
-	parser := gts.NewParser(lang)
+	parser := w5ProductionParser(lang)
 	oldTree, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("base parse: %v", err)
@@ -940,7 +948,7 @@ func TestW5CSSNearTopReuseAssertion(t *testing.T) {
 
 	edited, edit := w5ApplyEdit(src, offset, w5Insert)
 
-	freshParser := gts.NewParser(lang)
+	freshParser := w5ProductionParser(lang)
 	freshTree, err := freshParser.Parse(edited)
 	if err != nil {
 		t.Fatalf("fresh parse of edited: %v", err)
@@ -992,7 +1000,7 @@ func TestW5DeterminismAcrossFreshParsers(t *testing.T) {
 					offset := w5LastDigitOffset(t, src, spec.marker(sites[w5Middle]))
 
 					run := func() gts.IncrementalParseProfile {
-						parser := gts.NewParser(spec.lang())
+						parser := w5ProductionParser(spec.lang())
 						oldTree, err := parser.Parse(src)
 						if err != nil {
 							t.Fatalf("base parse: %v", err)

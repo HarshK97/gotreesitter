@@ -37,6 +37,7 @@ import (
 func leadingParseAt(t *testing.T, lang *gts.Language, src []byte, off int, class string) (fresh, incr *gts.Node, prof gts.IncrementalParseProfile, edited []byte) {
 	t.Helper()
 	parser := gts.NewParser(lang)
+	parser.SetAdmissionCandidateRoute(false)
 	oldTree, err := parser.Parse(src)
 	if err != nil {
 		t.Fatalf("base parse: %v", err)
@@ -46,7 +47,9 @@ func leadingParseAt(t *testing.T, lang *gts.Language, src []byte, off int, class
 	}
 	edited, edit := incrGateBuildEdit(src, off, class)
 
-	freshTree, err := gts.NewParser(lang).Parse(edited)
+	freshParser := gts.NewParser(lang)
+	freshParser.SetAdmissionCandidateRoute(false)
+	freshTree, err := freshParser.Parse(edited)
 	if err != nil {
 		t.Fatalf("fresh parse of edited: %v", err)
 	}

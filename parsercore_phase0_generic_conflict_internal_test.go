@@ -38,6 +38,9 @@ func TestDiagnosticParserCoreGenericRepetitionFoldMatchesProductionScope(t *test
 	if _, ok := diagnosticParserCoreRepetitionFoldOrdinal(&Language{Name: "dart"}, actions); ok {
 		t.Fatal("dart repetition fold bypassed the production opt-out")
 	}
+	if _, ok := diagnosticParserCoreRepetitionFoldOrdinal(&Language{Name: "markdown_inline"}, actions); ok {
+		t.Fatal("Markdown Inline repetition fold bypassed the compact frontier opt-out")
+	}
 	if _, ok := diagnosticParserCoreRepetitionFoldOrdinal(nil, actions); ok {
 		t.Fatal("nil-language repetition fold was admitted")
 	}
@@ -109,6 +112,20 @@ func TestDiagnosticParserCoreGenericRepetitionFoldReducesWithoutFork(t *testing.
 	action := scheduler.receipt.Rounds[0].Actions[0]
 	if action.Ordinal != 1 || action.Action.Type != ParseActionReduce {
 		t.Fatalf("repetition fold action=%+v, want reduction ordinal 1", action)
+	}
+	derivations, err := compact.Derivations(scheduler.headers[0].head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(derivations) != 1 || len(derivations[0].Payloads) != 1 {
+		t.Fatalf("repetition fold derivations=%+v, want one reduced payload", derivations)
+	}
+	view, err := compact.MaterializationView(derivations[0].Payloads[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !view.Fragile {
+		t.Fatal("repetition fold reduction lost its conflict fragility")
 	}
 }
 
