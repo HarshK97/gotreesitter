@@ -164,6 +164,21 @@ func TestRetiredDispatchArmCOracleParity(t *testing.T) {
 			language: "hcl",
 			source:   "# first\n\n# second\n\nvalue = true\n",
 		},
+		{
+			name:     "erlang_function_clause_replacement",
+			language: "erlang",
+			source:   "-define(X, foo() -> ok; foo() -> not_ok).\n",
+		},
+		{
+			name:     "erlang_case_clause_replacement",
+			language: "erlang",
+			source:   "-define(X, [] -> ok; [_ | _] -> not_ok).\n",
+		},
+		{
+			name:     "erlang_top_level_form_bounds",
+			language: "erlang",
+			source:   "% lead\n-module(sample).\nfoo() -> ok.\n",
+		},
 	}
 	for _, test := range tests {
 		test := test
