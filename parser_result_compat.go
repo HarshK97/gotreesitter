@@ -126,8 +126,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.crystal", func() { normalizeCrystalCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "cpon":
 		dispatcherArmCensus(ctx, "dispatch.cpon", func() { normalizeCPONCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "cue":
-		dispatcherArmCensus(ctx, "dispatch.cue", func() { normalizeCueCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "d":
 		dispatcherArmCensus(ctx, "dispatch.d", func() { normalizeDCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "dart":
@@ -160,8 +158,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 			stopReason = normalizeGoReturnedTreeCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang, ctx.incrementalRanges)
 		})
 		return resultCompatibilityResult{stopReason: stopReason}
-	case "gitcommit":
-		dispatcherArmCensus(ctx, "dispatch.gitcommit", func() { normalizeGitcommitCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "haskell":
 		dispatcherArmCensus(ctx, "dispatch.haskell", func() { normalizeHaskellCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "hcl":
@@ -214,8 +210,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		})
 	case "ql":
 		dispatcherArmCensus(ctx, "dispatch.ql", func() { normalizeQLCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "r":
-		dispatcherArmCensus(ctx, "dispatch.r", func() { normalizeRCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "python":
 		dispatcherArmCensus(ctx, "dispatch.python", func() { normalizePythonCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "rescript":

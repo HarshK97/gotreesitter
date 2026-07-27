@@ -60,6 +60,21 @@ func TestCollapsedChildLedgerRealLanguagesNeedNoSafetyNetRewrite(t *testing.T) {
 			named bool
 			count int
 		}{"range_expression": {child: "..", count: 1}}},
+		{name: "cue", lang: CueLanguage, src: "x: sub\n", forestEligible: true, want: map[string]struct {
+			child string
+			named bool
+			count int
+		}{"value": {child: "identifier", named: true, count: 1}}},
+		{name: "gitcommit", lang: GitcommitLanguage, src: "subject\n\nbody line\n", forestEligible: true, want: map[string]struct {
+			child string
+			named bool
+			count int
+		}{"message": {child: "message_line", named: true, count: 1}}},
+		{name: "r", lang: RLanguage, src: "\"\\\\\"\n", forestEligible: true, want: map[string]struct {
+			child string
+			named bool
+			count int
+		}{"string_content": {child: "escape_sequence", named: true, count: 1}}},
 		{name: "apex", lang: ApexLanguage, forestEligible: true,
 			compactSrc: "trigger T on Account (before insert, after delete) { System.debug(UserInfo.getUserId()); }\n",
 			compactWant: map[string]struct {
@@ -102,8 +117,8 @@ public class C { public C(){ super(); } void f(Account a, User u) { insert a; de
 			seenPairs[key] = struct{}{}
 		}
 	}
-	if got := len(seenPairs); got != 24 {
-		t.Fatalf("exact-artifact collapsed-child route rows=%d, want 24", got)
+	if got := len(seenPairs); got != 27 {
+		t.Fatalf("exact-artifact collapsed-child route rows=%d, want 27", got)
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

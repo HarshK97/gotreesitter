@@ -93,6 +93,13 @@ for tags and release notes while still in `0.x`.
 
 ### Removed
 
+- **The CUE, Git Commit, and R alias-map result repairs.** Their pinned blobs
+  now carry the nonterminal alias metadata from each C parser table.
+  Materialization keeps the required named child under each collapsed wrapper.
+  Production, compact, forest, incremental, and locked C receipts match.
+  CUE also proves nonzero old-tree reuse.
+  Git Commit and R record their external scanner reuse limit.
+
 - **The trailing root and child span compatibility family.** Materialization
   now owns the exact spans for Caddy, Comment, Fortran, Just, Nginx, Nim,
   Pascal, Pug, and RST. The compact scheduler admits progressing zero-width

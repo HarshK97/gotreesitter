@@ -134,6 +134,21 @@ func TestRetiredDispatchArmCOracleParity(t *testing.T) {
 			language: "squirrel",
 			source:   "\nlocal x = 1;\n",
 		},
+		{
+			name:     "cue_alias_map_value_child",
+			language: "cue",
+			source:   "x: sub\n",
+		},
+		{
+			name:     "gitcommit_alias_map_message_child",
+			language: "gitcommit",
+			source:   "subject\n\nbody line\n",
+		},
+		{
+			name:     "r_alias_map_string_content_child",
+			language: "r",
+			source:   "\"\\\\\"\n",
+		},
 	}
 	for _, test := range tests {
 		test := test
