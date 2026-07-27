@@ -173,6 +173,13 @@ for tags and release notes while still in `0.x`.
   retiring a generic compatibility pass while preserving error-root recovery
   extras and lazy compact child references.
 
+### Performance
+
+- Parser retry policy now snapshots override presence with each parsed value.
+  This removes repeated environment lookups from the incremental hot path.
+  The pinned edited incremental benchmark improves 1.28 percent with zero
+  allocations.
+
 ## [0.47.0] - 2026-07-22
 
 ### Changed

@@ -687,9 +687,11 @@ func TestCertifiedDuplicateWideRetryFallbackScope(t *testing.T) {
 	for _, env := range []string{"GOT_GLR_MAX_STACKS", "GOT_GLR_MAX_MERGE_PER_KEY", "GOT_PARSE_NODE_LIMIT_SCALE"} {
 		t.Run(env, func(t *testing.T) {
 			t.Setenv(env, "2")
+			ResetParseEnvConfigCacheForTests()
 			parser, tree := eligible()
 			assertFallback("explicit "+env, parser, tree, sourceLen, fullParseRetryOriginFresh, 0)
 			t.Setenv(env, "")
+			ResetParseEnvConfigCacheForTests()
 		})
 	}
 }
