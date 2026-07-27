@@ -12,6 +12,25 @@ func bytesAreTrivia(b []byte) bool {
 	return true
 }
 
+// firstNonTriviaByteStart returns the first non-whitespace byte. It skips an
+// optional UTF-8 byte order mark. It returns zero for an all-whitespace source.
+func firstNonTriviaByteStart(source []byte) uint32 {
+	start := 0
+	if len(source) >= len(utf8BOM) &&
+		source[0] == utf8BOM[0] && source[1] == utf8BOM[1] && source[2] == utf8BOM[2] {
+		start = len(utf8BOM)
+	}
+	for index := start; index < len(source); index++ {
+		switch source[index] {
+		case ' ', '\t', '\n', '\r', '\f':
+			continue
+		default:
+			return uint32(index)
+		}
+	}
+	return 0
+}
+
 // bytesAreInterTokenTrivia is bytesAreTrivia plus line-continuation backslashes
 // (`\` immediately before a newline). The forest's reduce-coverage rejection
 // uses it to decide whether a hole BETWEEN two reduced children is real
@@ -34,21 +53,6 @@ func bytesAreInterTokenTrivia(b []byte) bool {
 		}
 	}
 	return true
-}
-
-func normalizeRootLeadingTriviaStart(root *Node, source []byte) {
-	if root == nil || len(source) == 0 || resultChildCount(root) == 0 {
-		return
-	}
-	first := resultChildAt(root, 0)
-	if first == nil || root.startByte >= first.startByte || int(first.startByte) > len(source) {
-		return
-	}
-	if !bytesAreTrivia(source[root.startByte:first.startByte]) {
-		return
-	}
-	root.startByte = first.startByte
-	root.startPoint = first.startPoint
 }
 
 func lastNonTriviaByteEnd(source []byte) uint32 {

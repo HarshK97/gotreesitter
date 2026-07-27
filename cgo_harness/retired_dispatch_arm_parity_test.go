@@ -99,6 +99,41 @@ func TestRetiredDispatchArmCOracleParity(t *testing.T) {
 			language: "rst",
 			source:   "Title\n=====\n",
 		},
+		{
+			name:     "bibtex_leading_trivia_root",
+			language: "bibtex",
+			source:   "\n@article{key, author={A}}\n",
+		},
+		{
+			name:     "cpon_leading_trivia_root",
+			language: "cpon",
+			source:   "\n{\"a\":1}\n",
+		},
+		{
+			name:     "cue_leading_trivia_root",
+			language: "cue",
+			source:   "\nx: 1\n",
+		},
+		{
+			name:     "d_leading_trivia_root",
+			language: "d",
+			source:   "\nmodule m;\nint main() { return 0; }\n",
+		},
+		{
+			name:     "forth_leading_trivia_root",
+			language: "forth",
+			source:   "\n: square dup * ;\n",
+		},
+		{
+			name:     "kotlin_leading_trivia_root",
+			language: "kotlin",
+			source:   "\nfun main() {}\n",
+		},
+		{
+			name:     "squirrel_leading_trivia_root",
+			language: "squirrel",
+			source:   "\nlocal x = 1;\n",
+		},
 	}
 	for _, test := range tests {
 		test := test

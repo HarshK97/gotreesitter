@@ -144,51 +144,6 @@ func TestNormalizeCueValueWithChildrenUntouched(t *testing.T) {
 	}
 }
 
-// A source that begins with whitespace: C roots source_file at the first
-// non-extra byte (root-span-leading-extras), Go roots at byte 0.
-func TestNormalizeCueRootLeadingTriviaStart(t *testing.T) {
-	lang := newCueTestLanguage()
-	source := []byte("\nmodule: 123\n")
-	arena := newNodeArena(arenaClassFull)
-	field := newParentNodeInArena(arena, cueTestSymField, true, []*Node{
-		newLeafNodeInArena(arena, cueTestSymIdentifier, true, 1, 7, Point{Row: 1}, Point{Row: 1, Column: 6}),
-		newLeafNodeInArena(arena, cueTestSymValue, true, 9, 12, Point{Row: 1, Column: 8}, Point{Row: 1, Column: 11}),
-	}, nil, 0)
-	root := newParentNodeInArena(arena, cueTestSymSourceFile, true, []*Node{field}, nil, 0)
-	root.startByte = 0
-	root.startPoint = Point{}
-	root.endByte = uint32(len(source))
-
-	normalizeCueCompatibility(root, source, lang)
-
-	if got, want := root.StartByte(), uint32(1); got != want {
-		t.Fatalf("root start byte = %d, want %d", got, want)
-	}
-	if got, want := root.StartPoint(), (Point{Row: 1}); got != want {
-		t.Fatalf("root start point = %+v, want %+v", got, want)
-	}
-}
-
-// Non-whitespace prefixes (e.g. a leading comment node would be a child) do
-// not move the root start.
-func TestNormalizeCueRootNonTriviaPrefixUntouched(t *testing.T) {
-	lang := newCueTestLanguage()
-	source := []byte("m: 1\n")
-	arena := newNodeArena(arenaClassFull)
-	field := newParentNodeInArena(arena, cueTestSymField, true, []*Node{
-		newLeafNodeInArena(arena, cueTestSymValue, true, 3, 4, Point{Column: 3}, Point{Column: 4}),
-	}, nil, 0)
-	field.startByte = 0
-	field.startPoint = Point{}
-	root := newParentNodeInArena(arena, cueTestSymSourceFile, true, []*Node{field}, nil, 0)
-
-	normalizeCueCompatibility(root, source, lang)
-
-	if got, want := root.StartByte(), uint32(0); got != want {
-		t.Fatalf("root start byte = %d, want %d", got, want)
-	}
-}
-
 func TestCueClassifyValueLeafText(t *testing.T) {
 	cases := []struct {
 		in   string

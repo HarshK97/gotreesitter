@@ -3,9 +3,8 @@ package gotreesitter_test
 // tree-sitter C starts the root node at the first non-whitespace byte:
 // leading whitespace is token padding, excluded from every node extent,
 // including the root's. normalizeRootSourceStart must therefore never pull a
-// root back to byte 0 across leading whitespace (oracle-verified on the
-// faust/css corpora, e.g. osc.dsp "\n\n\ndeclare …" → C root [3:…]; squirrel
-// previously compensated per-grammar in normalizeSquirrelCompatibility).
+// root back to byte 0 across leading whitespace. The C oracle verifies this
+// rule on the representative language family below.
 
 import (
 	"testing"
@@ -25,7 +24,12 @@ func TestRootStartsAtFirstNonWhitespaceByte(t *testing.T) {
 		{"css leading newlines", grammars.CssLanguage(), "\n\na { color: red; }\n", 2},
 		{"css no leading trivia", grammars.CssLanguage(), "a { color: red; }\n", 0},
 		{"css leading comment keeps byte 0", grammars.CssLanguage(), "/* c */\na { color: red; }\n", 0},
+		{"bibtex leading newline", grammars.BibtexLanguage(), "\n@article{key, author={A}}\n", 1},
+		{"cpon leading newline", grammars.CponLanguage(), "\n{\"a\":1}\n", 1},
+		{"cue leading newline", grammars.CueLanguage(), "\nx: 1\n", 1},
+		{"d leading newline", grammars.DLanguage(), "\nmodule m;\nint main() { return 0; }\n", 1},
 		{"forth leading newline", grammars.ForthLanguage(), "\nhex\n", 1},
+		{"kotlin leading newline", grammars.KotlinLanguage(), "\nfun main() {}\n", 1},
 		{"squirrel leading whitespace", grammars.SquirrelLanguage(), "\n\tx <- 1\n", 2},
 		{"regex leading bom", grammars.RegexLanguage(), "\xef\xbb\xbfa", 3},
 		{"regex leading bom and whitespace", grammars.RegexLanguage(), "\xef\xbb\xbf\na", 4},

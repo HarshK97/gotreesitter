@@ -242,8 +242,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 			}
 			normalizeSQLSelectClauseBodyIntoFields(ctx.root, ctx.lang)
 		})
-	case "squirrel":
-		dispatcherArmCensus(ctx, "dispatch.squirrel", func() { normalizeSquirrelCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "swift":
 		dispatcherArmCensus(ctx, "dispatch.swift", func() { normalizeSwiftCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "templ":

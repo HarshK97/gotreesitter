@@ -2109,11 +2109,21 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 	}
 	sourceLen := uint32(len(source))
 	root := tree.root
-	if root.startByte == 0 && root.endByte < sourceLen && !root.IsError() && !root.HasError() {
+	expectedStart := firstNonTriviaByteStart(source)
+	if root.startByte == expectedStart && root.endByte < sourceLen &&
+		!root.IsError() && !root.HasError() {
 		extendRootToAcceptedCleanTail(root, source, sourceLen, nil)
 	}
-	if root.startByte != 0 || root.endByte != sourceLen || root.IsError() || root.HasError() {
-		return rejectTree(fmt.Errorf("parser-core phase zero: accepted compact root is incomplete or erroneous: span=%d..%d source=%d error=%t", root.startByte, root.endByte, sourceLen, root.HasError()))
+	if root.startByte != expectedStart || root.endByte != sourceLen ||
+		root.IsError() || root.HasError() {
+		return rejectTree(fmt.Errorf(
+			"parser-core phase zero: accepted compact root is incomplete or erroneous: span=%d..%d expected=%d..%d error=%t",
+			root.startByte,
+			root.endByte,
+			expectedStart,
+			sourceLen,
+			root.HasError(),
+		))
 	}
 	tree.incrementalReuseDisabled = !incrementalReuseProven
 	tree.compactMaterialized = true
