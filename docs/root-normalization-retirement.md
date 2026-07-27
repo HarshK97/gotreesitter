@@ -176,6 +176,9 @@ Shared root finalization now owns the leading-trivia root family.
 This change removes seven language-local repairs and retires Squirrel's arm.
 Pinned alias maps now own the CUE, Git Commit, and R collapsed children.
 This change retires three more dispatcher arms.
+Reduction now owns one collapsed-token family across HCL, CPON, C#, and
+PowerShell. This change retires CPON's dispatcher arm.
+The other three arms remain live for unrelated repairs.
 
 Group by invariant, not language:
 
@@ -240,6 +243,7 @@ there.
 | Trailing root and child spans | retirement change | 4 dispatcher arms / 9 languages | 0 | native producer, production, compact, forest, incremental, reuse, and C-oracle receipts |
 | Leading root trivia | retirement change | 7 local repairs / 1 dispatcher arm | 0 | native producer, production, compact, forest, incremental, reuse, and C-oracle receipts |
 | Alias-preserved wrappers | retirement change | 3 dispatcher arms | 0 | pinned alias maps, native producer, production, compact, forest, incremental, reuse, and C-oracle receipts |
+| Collapsed token wrappers | retirement change | 4 local repair families / 1 dispatcher arm | 0 | native producer, production, compact, forest, incremental, reuse, and four isolated C-oracle receipts |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.

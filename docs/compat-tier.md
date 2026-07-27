@@ -15,13 +15,13 @@ without updating that registry.
 
 The v1 registry freezes the current surface:
 
-- 64 explicit `runLanguageResultCompatibility` switch arms covering 66
+- 63 explicit `runLanguageResultCompatibility` switch arms covering 65
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-That is 65 live registry entries and 20 retired entries. The registry covers
+That is 64 live registry entries and 21 retired entries. The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
 
@@ -97,6 +97,21 @@ The generic reconstruction walk is therefore retired and deleted. Once raw
 child identity has been lost, a display-name-compatible caller artifact is no
 longer guessed into shape; custom artifacts must carry the explicit native
 capability and exact metadata receipt to opt in.
+
+## Current progress: collapsed token wrappers
+
+Reduction now owns one four-language collapsed-token family.
+It uses grammar metadata and token identity without a language list.
+
+- HCL wrapper nodes keep their punctuation and boolean token children.
+- C# modifiers, booleans, and the `global` identifier keep their token children.
+- PowerShell assignment operators keep their token children.
+- CPON null nodes remain childless after the same-name token collapse.
+
+The CPON dispatcher arm is retired.
+The HCL, C#, and PowerShell arms remain live for unrelated repairs.
+Compatibility-free, production, compact, forest, and incremental routes match.
+Each isolated C-oracle receipt also matches.
 
 ## Current progress: alias-preserved wrappers
 
