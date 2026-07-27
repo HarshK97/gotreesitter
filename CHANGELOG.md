@@ -9,6 +9,11 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Clean roots now keep hidden, childless whitespace extras as span coverage.
+  They do not publish those extras as children.
+  Visible comments and error-root evidence remain unchanged.
+  Final-child filtering now preserves fields without materializing lazy ranges.
+
 - The shared root-extra classifier now drops zero-width scanner tokens from
   child lists. The repetition-skip fold also stops the historical Typst
   comma artifact. These producer rules retire two returned-tree walks.
@@ -97,6 +102,13 @@ for tags and release notes while still in `0.x`.
   A downstream user reported this behavior in issue #454.
 
 ### Removed
+
+- **The HCL root normalization pass.** Shared root finalization now removes
+  hidden whitespace extras at every root position.
+  Native reduction already produces each exact HCL body span.
+  Production, compact, forest, incremental, and locked C receipts match.
+  The three-file census found no mismatch across 114 body nodes.
+  This removes the HCL result-compatibility dispatcher arm.
 
 - **The Haskell section-span result repair.** Native reduction and root
   finalization already produce the exact `imports` and `declarations` ranges.

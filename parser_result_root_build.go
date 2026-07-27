@@ -996,8 +996,14 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 	if reason := p.resultMaterializationStopReason(root.ownerArena); resultMaterializationShouldStop(reason) {
 		return errorSummary, compatibilityApplied
 	}
+	hasHiddenRootTrivia := false
 	if p != nil {
-		root = flattenInvisibleRootChildren(root, root.ownerArena, p.language)
+		root, hasHiddenRootTrivia = flattenInvisibleRootChildrenWithTriviaHint(
+			root,
+			root.ownerArena,
+			p.language,
+			source,
+		)
 	}
 	widenNodeSpanToRetainedChildren(root)
 	if reason := p.resultMaterializationStopReason(root.ownerArena); resultMaterializationShouldStop(reason) {
@@ -1017,13 +1023,11 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 	if reason := p.resultMaterializationStopReason(root.ownerArena); resultMaterializationShouldStop(reason) {
 		return errorSummary, compatibilityApplied
 	}
-	// A clean root owns hidden trailing whitespace as span coverage, not as a
-	// public extra child. Resolve that shape while the root is finalized so
-	// production, compact, forest, deferred, and compatibility-free routes all
-	// observe the same materialized tree. Error roots deliberately retain the
-	// extra for recovery fidelity.
-	if p != nil && p.language != nil && !root.hasError() {
-		trimTrailingExtraTriviaRoot(root, source, p.language)
+	// A clean root owns hidden whitespace extras as span coverage. It does not
+	// publish them as children. Apply this rule to every result route. Error
+	// roots retain the extras as recovery evidence.
+	if p != nil && p.language != nil && !root.hasError() && hasHiddenRootTrivia {
+		filterHiddenExtraTriviaRoot(root, source, p.language)
 		if extendTrailing {
 			extendNodeToTrailingWhitespace(root, source)
 		}
@@ -1052,11 +1056,8 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 			p.markActiveParseStopped(compat.stopReason)
 		}
 		timing.addResultCompatibility(start)
-		// Per-language compatibility passes can filter trailing trivia children
-		// (e.g. HCL drops _whitespace from config_file), which may shrink the root
-		// back below the source end. Re-extend so the ROOT still spans its trailing
-		// whitespace — the root covers the whole source in tree-sitter C. Idempotent
-		// (no-op) when compatibility did not shrink the root.
+		// A compatibility pass can shrink the root below the source end.
+		// Re-extend the root so it keeps trailing whitespace as span coverage.
 		if extendTrailing {
 			extendNodeToTrailingWhitespace(root, source)
 		}

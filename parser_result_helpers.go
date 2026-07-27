@@ -147,7 +147,15 @@ func (v resultMutableChildView) FilterFinalRefs(keep func(i int, entry stackEntr
 	if !v.hasFinalChildRefs() || keep == nil {
 		return false
 	}
+	oldLen := len(v.refs)
+	parentFieldIDs := v.parent.fieldIDs()
+	parentFieldSources := v.parent.fieldSources()
+	if (len(parentFieldIDs) != 0 && len(parentFieldIDs) != oldLen) ||
+		(len(parentFieldSources) != 0 && len(parentFieldSources) != oldLen) {
+		return false
+	}
 	kept := make([]stackEntry, 0, len(v.refs))
+	keptIndexes := make([]int, 0, len(v.refs))
 	changed := false
 	for i, ref := range v.refs {
 		entry := ref.stackEntry()
@@ -157,6 +165,7 @@ func (v resultMutableChildView) FilterFinalRefs(keep func(i int, entry stackEntr
 		}
 		if keep(i, entry) {
 			kept = append(kept, entry)
+			keptIndexes = append(keptIndexes, i)
 			continue
 		}
 		changed = true
@@ -165,20 +174,38 @@ func (v resultMutableChildView) FilterFinalRefs(keep func(i int, entry stackEntr
 		return false
 	}
 	v.parent.children = nil
-	v.parent.clearFieldMetadata()
 	if len(kept) == 0 {
+		v.parent.clearFieldMetadata()
 		v.arena.clearFinalChildRefs(v.parent)
 		return true
 	}
 	childRange, refs := v.arena.allocPendingChildEntries(len(kept))
 	for i, entry := range kept {
 		refs[i] = newPendingChildEntry(entry)
+		if child := stackEntryNode(entry); child != nil {
+			setNodeParentLink(child, v.parent, i)
+		}
 	}
 	sidecar, ok := v.arena.finalChildSidecarForNode(v.parent)
 	if !ok {
 		return false
 	}
 	sidecar.childRange = childRange
+	var filteredFieldIDs []FieldID
+	if len(parentFieldIDs) == oldLen {
+		filteredFieldIDs = v.arena.allocFieldIDSlice(len(kept))
+		for i, oldIndex := range keptIndexes {
+			filteredFieldIDs[i] = parentFieldIDs[oldIndex]
+		}
+	}
+	var filteredFieldSources []uint8
+	if len(parentFieldSources) == oldLen {
+		filteredFieldSources = v.arena.allocFieldSourceSlice(len(kept))
+		for i, oldIndex := range keptIndexes {
+			filteredFieldSources[i] = parentFieldSources[oldIndex]
+		}
+	}
+	v.parent.setFieldMetadata(filteredFieldIDs, filteredFieldSources)
 	if perfCountersEnabled {
 		perfRecordMutationChildRefCopyOnWrite(len(kept))
 	}

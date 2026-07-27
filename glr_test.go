@@ -1,6 +1,7 @@
 package gotreesitter
 
 import (
+	"bytes"
 	"sync"
 	"testing"
 	"unsafe"
@@ -966,6 +967,10 @@ func TestResultMutableChildViewFilterFinalRefsCopyOnWrite(t *testing.T) {
 	if root == nil {
 		t.Fatal("root = nil")
 	}
+	root.setFieldMetadata(
+		[]FieldID{1, 2, 3},
+		[]uint8{fieldSourceDirect, fieldSourceInherited, fieldSourceDirect},
+	)
 	oldRange, ok := arena.finalChildRange(root)
 	if !ok {
 		t.Fatal("root did not start with final-child refs")
@@ -974,7 +979,7 @@ func TestResultMutableChildViewFilterFinalRefsCopyOnWrite(t *testing.T) {
 
 	view := resultMutableChildrenForMutation(root)
 	if !view.FilterFinalRefs(func(_ int, entry stackEntry) bool {
-		return stackEntryNodeSymbol(entry) != dropped.symbol
+		return stackEntryNodeSymbol(entry) != right.symbol
 	}) {
 		t.Fatal("FilterFinalRefs returned false")
 	}
@@ -993,6 +998,12 @@ func TestResultMutableChildViewFilterFinalRefsCopyOnWrite(t *testing.T) {
 	}
 	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
 		t.Fatalf("final child ref single children during filter = %d, want 0", got)
+	}
+	if got, want := root.fieldIDs(), []FieldID{1, 3}; !equalFieldIDSlices(got, want) {
+		t.Fatalf("root field IDs = %v, want %v", got, want)
+	}
+	if got, want := root.fieldSources(), []uint8{fieldSourceDirect, fieldSourceDirect}; !bytes.Equal(got, want) {
+		t.Fatalf("root field sources = %v, want %v", got, want)
 	}
 
 	other := newCompactFullLeafInArena(arena, 9, true, 9, 10, Point{Column: 9}, Point{Column: 10})
@@ -1059,41 +1070,61 @@ func TestReplaceChildRangeWithSingleNodeKeepsFinalRefsLazy(t *testing.T) {
 	}
 }
 
-func TestTrimTrailingExtraTriviaRootFiltersFinalRefsWithoutDrain(t *testing.T) {
+func TestFilterHiddenExtraTriviaRootFiltersFinalRefsWithoutDrain(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
 	arena.finalChildRefs = true
-	body := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
-	body.parseState = 11
+	left := newCompactFullLeafInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	left.parseState = 11
 	trivia := newCompactFullLeafInArena(arena, 2, false, 1, 2, Point{Column: 1}, Point{Column: 2})
 	trivia.setExtra(true)
 	trivia.parseState = 12
+	right := newCompactFullLeafInArena(arena, 1, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	right.parseState = 13
 	parent := newPendingParentInArena(arena, 3, true, 4, []stackEntry{
-		newStackEntryCompactFullLeaf(body.parseState, body),
+		newStackEntryCompactFullLeaf(left.parseState, left),
 		newStackEntryCompactFullLeaf(trivia.parseState, trivia),
-	}, 0, 2, Point{}, Point{Column: 2}, false)
-	parent.parseState = 13
+		newStackEntryCompactFullLeaf(right.parseState, right),
+	}, 0, 3, Point{}, Point{Column: 3}, false)
+	parent.parseState = 14
 
 	entry := newStackEntryPendingParent(parent.parseState, parent)
 	root := materializeStackEntryPendingParent(arena, &entry, pendingParentMaterializeForFinalTree)
 	if root == nil {
 		t.Fatal("root = nil")
 	}
-	trimTrailingExtraTriviaRoot(root, []byte("a "), nil)
+	root.setFieldMetadata(
+		[]FieldID{1, 0, 2},
+		[]uint8{fieldSourceDirect, fieldSourceNone, fieldSourceInherited},
+	)
+	filterHiddenExtraTriviaRoot(root, []byte("a b"), nil)
 	if got := arena.finalChildRefsMaterializedParents; got != 0 {
 		t.Fatalf("final child ref range materialized parents = %d, want 0", got)
 	}
 	if got := arena.finalChildRefsSingleChildMaterializedChildren; got != 0 {
-		t.Fatalf("final child ref single children during trim = %d, want 0", got)
+		t.Fatalf("final child ref single children during filter = %d, want 0", got)
 	}
 	if !nodeHasFinalChildRefs(root) {
-		t.Fatal("trim dropped final-child refs")
+		t.Fatal("filter dropped final-child refs")
 	}
-	if got := root.ChildCount(); got != 1 {
-		t.Fatalf("root child count after trim = %d, want 1", got)
+	if got := root.ChildCount(); got != 2 {
+		t.Fatalf("root child count after filter = %d, want 2", got)
 	}
-	child := root.Child(0)
-	if child == nil || child.Symbol() != body.symbol || child.EndByte() != 1 {
-		t.Fatalf("root child after trim = %#v, want body leaf", child)
+	if child := root.Child(0); child == nil || child.Symbol() != left.symbol ||
+		child.StartByte() != 0 || child.EndByte() != 1 {
+		t.Fatalf("root child 0 = %#v, want left leaf", child)
+	}
+	if child := root.Child(1); child == nil || child.Symbol() != right.symbol ||
+		child.StartByte() != 2 || child.EndByte() != 3 {
+		t.Fatalf("root child 1 = %#v, want right leaf", child)
+	}
+	if got, want := root.fieldIDs(), []FieldID{1, 2}; !equalFieldIDSlices(got, want) {
+		t.Fatalf("root field IDs = %v, want %v", got, want)
+	}
+	if got, want := root.fieldSources(), []uint8{fieldSourceDirect, fieldSourceInherited}; !bytes.Equal(got, want) {
+		t.Fatalf("root field sources = %v, want %v", got, want)
+	}
+	if got, want := root.EndByte(), uint32(3); got != want {
+		t.Fatalf("root end byte = %d, want %d", got, want)
 	}
 }
 

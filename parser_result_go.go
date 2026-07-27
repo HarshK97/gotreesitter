@@ -1799,21 +1799,37 @@ func flattenRootSelfFragments(nodes []*Node, arena *nodeArena, rootSymbol Symbol
 }
 
 func flattenInvisibleRootChildren(root *Node, arena *nodeArena, lang *Language) *Node {
+	root, _ = flattenInvisibleRootChildrenWithTriviaHint(root, arena, lang, nil)
+	return root
+}
+
+func flattenInvisibleRootChildrenWithTriviaHint(
+	root *Node,
+	arena *nodeArena,
+	lang *Language,
+	source []byte,
+) (*Node, bool) {
 	if root == nil || lang == nil || resultChildCount(root) == 0 {
-		return root
+		return root, false
 	}
 	symbolMeta := lang.SymbolMetadata
 	changed := false
+	hasHiddenTrivia := false
 	childCount := resultChildCount(root)
 	for i := 0; i < childCount; i++ {
 		child := resultChildAt(root, i)
 		if shouldFlattenInvisibleRootChild(child, symbolMeta) {
 			changed = true
+		}
+		if len(source) > 0 && rootNodeIsHiddenExtraTrivia(root, child, source, lang) {
+			hasHiddenTrivia = true
+		}
+		if changed && hasHiddenTrivia {
 			break
 		}
 	}
 	if !changed {
-		return root
+		return root, hasHiddenTrivia
 	}
 	// Capture the pre-flatten span before mutating: an invisible (hidden,
 	// non-extra) LEAF child contributes zero substitute children when
@@ -1846,7 +1862,17 @@ func flattenInvisibleRootChildren(root *Node, arena *nodeArena, lang *Language) 
 	}
 	replaceNodeChildrenUnfielded(root, out)
 	widenNodeSpanToChildSpan(root, origStartByte, origEndByte, origStartPoint, origEndPoint)
-	return root
+	if len(source) == 0 {
+		return root, false
+	}
+	hasHiddenTrivia = false
+	for _, child := range root.children {
+		if rootNodeIsHiddenExtraTrivia(root, child, source, lang) {
+			hasHiddenTrivia = true
+			break
+		}
+	}
+	return root, hasHiddenTrivia
 }
 
 func appendFlattenedInvisibleRootChild(out []*Node, child *Node, arena *nodeArena, symbolMeta []SymbolMetadata) []*Node {

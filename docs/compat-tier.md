@@ -15,13 +15,13 @@ without updating that registry.
 
 The v1 registry freezes the current surface:
 
-- 62 explicit `runLanguageResultCompatibility` switch arms covering 64
+- 61 explicit `runLanguageResultCompatibility` switch arms covering 63
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-That is 63 live registry entries and 22 retired entries. The registry covers
+That is 62 live registry entries and 23 retired entries. The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
 
@@ -158,6 +158,17 @@ compact parses; forest and incremental routes share the same root finalizer.
 Error roots retain their recovery extra, and lazy final-child references are
 filtered without draining the compact range. Real RST and Comment fixtures are
 exact against their C oracles. The generic trailing-extra pass is retired.
+
+## Current progress: hidden root trivia
+
+Shared root finalization now removes hidden, childless whitespace extras at
+every root position. It preserves visible comments, fields, spans, and lazy
+final child references. Error roots keep every extra as recovery evidence.
+
+The HCL real-corpus census found no body span mismatch across 114 bodies.
+Production, compact, forest, and incremental routes return the native shape.
+HCL records its external scanner reuse limit. The locked C parser matches.
+No HCL result-compatibility arm remains.
 
 ## Current progress: trailing root and child spans
 
