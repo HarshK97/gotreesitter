@@ -183,6 +183,12 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Fresh parse finalization now computes the retry error summary while it wires
+  parent links. This removes one complete tree traversal.
+  Deferred and incremental paths retain their separate summary walk.
+  Under-flagged errors and stop polling keep their existing behavior.
+  The pinned Go full-parse benchmark improves 0.81 percent.
+
 - Parser retry policy now snapshots override presence with each parsed value.
   This removes repeated environment lookups from the incremental hot path.
   The pinned edited incremental benchmark improves 1.28 percent with zero

@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestSummarizeResultErrorsStopsOnActiveParseBudget(t *testing.T) {
 	arena := newNodeArena(arenaClassFull)
@@ -83,6 +86,78 @@ func TestSummarizeResultErrorsFindsUnderFlaggedErrorRoot(t *testing.T) {
 	}
 	if summary != resultErrorSummaryPresent {
 		t.Fatalf("error summary = %d, want present", summary)
+	}
+}
+
+func TestFinalizeResultRootSummarizesErrorsWithAndWithoutParentWiring(t *testing.T) {
+	for _, wireParentLinks := range []bool{false, true} {
+		t.Run(fmt.Sprintf("wire_parent_links_%t", wireParentLinks), func(t *testing.T) {
+			language := buildArithmeticLanguage()
+			parser := NewParser(language)
+			arena := newNodeArena(arenaClassFull)
+			errNode := newLeafNodeInArena(arena, errorSymbol, true, 0, 1, Point{}, Point{Column: 1})
+			errNode.setHasError(true)
+			root := newParentNodeInArena(arena, 1, true, []*Node{errNode}, nil, 0)
+			root.setHasError(false)
+			errNode.parent = nil
+			errNode.childIndex = -1
+
+			summary, compatibilityApplied := parser.finalizeResultRoot(
+				root,
+				[]byte("x"),
+				nil,
+				wireParentLinks,
+				false,
+				nil,
+			)
+
+			if summary != resultErrorSummaryPresent {
+				t.Fatalf("error summary = %d, want present", summary)
+			}
+			if !compatibilityApplied {
+				t.Fatal("result compatibility was not recorded as applied")
+			}
+			if root.HasError() {
+				t.Fatal("test setup changed root HasError to true")
+			}
+			wantParent := (*Node)(nil)
+			if wireParentLinks {
+				wantParent = root
+			}
+			if errNode.Parent() != wantParent {
+				t.Fatalf("parent = %p, want %p", errNode.Parent(), wantParent)
+			}
+		})
+	}
+}
+
+func TestWireParentLinksSummaryPreservesKnownErrorOnStop(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		rootHasError bool
+		want         resultErrorSummary
+	}{
+		{name: "clean_is_unknown", want: resultErrorSummaryUnknown},
+		{name: "known_error_stays_present", rootHasError: true, want: resultErrorSummaryPresent},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			arena := newNodeArena(arenaClassFull)
+			root := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+			root.setHasError(test.rootHasError)
+			cancelled := uint32(1)
+			parser := NewParser(buildArithmeticLanguage())
+			parser.SetCancellationFlag(&cancelled)
+			summary := resultErrorSummaryUnknown
+
+			complete := wireParentLinksWithScratchUntil(root, nil, parser, &summary)
+
+			if complete {
+				t.Fatal("parent-link walk completed after cancellation")
+			}
+			if summary != test.want {
+				t.Fatalf("error summary = %d, want %d", summary, test.want)
+			}
+		})
 	}
 }
 

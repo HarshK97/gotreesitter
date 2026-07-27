@@ -1015,9 +1015,18 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 			extendNodeToTrailingWhitespace(root, source)
 		}
 	}
+	summarizeDuringParentLinks := false
 	if p == nil || (!p.noResultCompatibilityBenchmarkOnly && !p.shouldDeferResultCompatibility(root)) {
 		start = materializationTimingStart(timing)
-		compat := normalizeResultCompatibility(root, source, p, incrementalRanges)
+		summarizeDuringParentLinks = p != nil &&
+			wireParentLinks &&
+			!p.shouldDeferResultParentLinks(root)
+		var compat resultCompatibilityResult
+		if summarizeDuringParentLinks {
+			compat = applyResultCompatibilityForParentLinkSummary(root, source, p, incrementalRanges)
+		} else {
+			compat = normalizeResultCompatibility(root, source, p, incrementalRanges)
+		}
 		errorSummary = compat.errorSummary
 		// resultMaterializationShouldStop (not parseStopReasonIsActive): Go's
 		// normalizer can now report ParseStopMemoryBudget (see
@@ -1047,7 +1056,11 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 		if p != nil && p.shouldDeferResultParentLinks(root) {
 			root.ownerArena.deferParentLinks(root)
 		} else {
-			if !wireParentLinksWithScratchUntil(root, linkScratch, p) && root.ownerArena != nil {
+			var summaryTarget *resultErrorSummary
+			if summarizeDuringParentLinks {
+				summaryTarget = &errorSummary
+			}
+			if !wireParentLinksWithScratchUntil(root, linkScratch, p, summaryTarget) && root.ownerArena != nil {
 				root.ownerArena.deferParentLinks(root)
 			}
 		}

@@ -29,6 +29,25 @@ type resultCompatibilityResult struct {
 // keep gotreesitter output aligned with C tree-sitter and existing recovery
 // expectations for grammars with known normalization gaps.
 func normalizeResultCompatibility(root *Node, source []byte, p *Parser, incrementalRanges []Range) resultCompatibilityResult {
+	return applyResultCompatibility(root, source, p, incrementalRanges, true)
+}
+
+func applyResultCompatibilityForParentLinkSummary(
+	root *Node,
+	source []byte,
+	p *Parser,
+	incrementalRanges []Range,
+) resultCompatibilityResult {
+	return applyResultCompatibility(root, source, p, incrementalRanges, false)
+}
+
+func applyResultCompatibility(
+	root *Node,
+	source []byte,
+	p *Parser,
+	incrementalRanges []Range,
+	summarizeErrors bool,
+) resultCompatibilityResult {
 	var lang *Language
 	if p != nil {
 		lang = p.language
@@ -60,6 +79,9 @@ func normalizeResultCompatibility(root *Node, source []byte, p *Parser, incremen
 	}
 	if reason := ctx.stopReason(); parseStopReasonIsActive(reason) {
 		result.stopReason = reason
+		return result
+	}
+	if !summarizeErrors {
 		return result
 	}
 	result.stopReason, result.errorSummary = summarizeResultErrorsWithStop(root, ctx.stopCheck)
