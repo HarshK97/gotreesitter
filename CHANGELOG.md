@@ -9,7 +9,7 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
-- Single-header compact dispatch now keeps its cell on the stack.
+- PR #498 moved the single-header compact dispatch cell onto the stack.
   This removes one allocation from the common full-parse path.
   The stable Go benchmark improves full-parse time by 15.57 percent.
   Allocated bytes fall by 20.25 percent.
@@ -37,11 +37,11 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
-- Locked GraphQL and Svelte fixtures now protect direct compact-parser routes.
+- PRs #497 and #500 add locked GraphQL and Svelte direct-route fixtures.
   Each fixture records its source commit and SHA-256 digest.
   Dedicated C-oracle tests require exact trees and zero fallback.
 
-- The native Typst scanner now initializes its indentation stack on creation.
+- PR #499 initializes the native Typst scanner indentation stack on creation.
   Native scanner semantics remove the nested-list comma artifact.
   This retires the remaining Typst compatibility dispatcher arm.
 
