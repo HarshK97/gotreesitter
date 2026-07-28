@@ -47,6 +47,8 @@ func newAdmissionCandidateRunner(p *Parser) (*parserCoreFreshFullRunner, error) 
 		freshSchedulerSession:          true,
 		allowEOFAcceptNoActionSiblings: p.language.CompactEOFAcceptNoActionSiblingsCertified,
 		allowPrimaryAcceptDerivation:   p.language.CompactPrimaryAcceptanceDerivationCertified,
+		noLookaheadRootSymbol:          p.rootSymbol,
+		hasNoLookaheadRootSymbol:       p.hasRootSymbol,
 	}
 	tables, err := newParserCoreRootTables(p)
 	if err != nil {

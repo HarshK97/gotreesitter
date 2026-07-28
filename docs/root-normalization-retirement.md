@@ -226,6 +226,10 @@ explicitly classified as retained format-boundary behavior.
 
 Status: mechanism work required.
 
+The compact scheduler now owns bounded no-lookahead reductions.
+This removes three smoke fallbacks without a language-specific runtime rule.
+No result normalizer retired in this step.
+
 1. Express ambiguity and dynamic-precedence decisions in certified conflict
    or derivation policy when the parser actually observes competing actions.
 2. Do not force deterministic post-parse rewrites into conflict policy; the

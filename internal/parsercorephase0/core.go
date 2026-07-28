@@ -604,6 +604,10 @@ type Core struct {
 	// so a plain field is safe here -- see Parser.reduceActionConflict
 	// (parser.go) for the identical pattern and its safety argument.
 	reduceConflictContext bool
+	// reduceNoLookaheadContext marks a reduction triggered by the parser's
+	// synthetic EOF token. A transparent goto completes an extra in place.
+	// The scheduler sets this only around one authenticated reduction.
+	reduceNoLookaheadContext bool
 }
 
 // SetReduceConflictContext sets/clears the transient conflict-context
@@ -615,6 +619,15 @@ func (c *Core) SetReduceConflictContext(v bool) {
 		return
 	}
 	c.reduceConflictContext = v
+}
+
+// SetReduceNoLookaheadContext sets or clears synthetic-EOF reduction context.
+// Callers must pair a true set with a deferred false reset.
+func (c *Core) SetReduceNoLookaheadContext(v bool) {
+	if c == nil {
+		return
+	}
+	c.reduceNoLookaheadContext = v
 }
 
 // inlineAdjacencyCapacity covers the production default without forcing a
@@ -1018,6 +1031,8 @@ func (c *Core) Reset() error {
 	c.popScratch.resetLogical()
 	c.reductionScratch.finish()
 	c.metadataConstructionAuthenticated = true
+	c.reduceConflictContext = false
+	c.reduceNoLookaheadContext = false
 	return nil
 }
 
@@ -1525,6 +1540,13 @@ func (c *Core) reductionParentForPath(
 		dynamicPrecedence: act.DynamicPrecedence,
 		startByte:         path.startByte, endByte: path.structuralEnd,
 		fragile: fragile,
+	}
+	if c.reduceNoLookaheadContext {
+		predecessor, err := c.node(path.prev)
+		if err != nil {
+			return 0, 0, ForkOrder{}, err
+		}
+		parent.extra = key.state == predecessor.state
 	}
 	order := path.order
 	if fork.Present {

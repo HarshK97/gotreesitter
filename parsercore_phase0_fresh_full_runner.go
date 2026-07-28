@@ -65,6 +65,8 @@ func newParserCoreFreshFullRunner(scanner ExternalScanner, options DiagnosticPar
 		return nil, err
 	}
 	parser := NewParser(lang)
+	options.noLookaheadRootSymbol = parser.rootSymbol
+	options.hasNoLookaheadRootSymbol = parser.hasRootSymbol
 	tables, err := newParserCoreRootTables(parser)
 	if err != nil {
 		return nil, err

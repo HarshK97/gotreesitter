@@ -59,6 +59,8 @@ type DiagnosticParserCorePrefixOptions struct {
 	// callers retain the conservative false defaults.
 	allowEOFAcceptNoActionSiblings bool
 	allowPrimaryAcceptDerivation   bool
+	noLookaheadRootSymbol          Symbol
+	hasNoLookaheadRootSymbol       bool
 }
 
 type DiagnosticParserCoreScannerCheckpoint struct {
@@ -681,6 +683,8 @@ func DiagnosticParseParserCorePrefix(scanner ExternalScanner, source []byte, opt
 		options.MaxTokens = 100000
 	}
 	parser := NewParser(lang)
+	options.noLookaheadRootSymbol = parser.rootSymbol
+	options.hasNoLookaheadRootSymbol = parser.hasRootSymbol
 	tables, err := newParserCoreRootTables(parser)
 	if err != nil {
 		return result, err
@@ -1363,41 +1367,45 @@ func diagnosticParserCoreHeaderPathReceipts(compact *core.Core, headers []diagno
 }
 
 type diagnosticParserCoreGenericScheduler struct {
-	compact                    *core.Core
-	tokenSource                *dfaTokenSource
-	scannerScratch             *[]byte
-	headers                    []diagnosticParserCoreHeader
-	token                      Token
-	checkpoint                 DiagnosticParserCoreScannerCheckpoint
-	checkpointID               core.CheckpointID
-	currentElection            DiagnosticParserCoreElection
-	electionIndex              int
-	tokens                     uint64
-	dispatches                 uint64
-	branchOrder                uint64
-	nextSeq                    uint64
-	options                    DiagnosticParserCorePrefixOptions
-	receipt                    *DiagnosticParserCoreGenericScheduler
-	summaryHeaderScratch       []DiagnosticParserCoreHeaderReceipt
-	headerRollbackScratch      diagnosticParserCoreHeaderRollbackScratch
-	canonicalScratch           diagnosticParserCoreCanonicalScratch
-	dispatchScratch            diagnosticParserCoreDispatchScratch
-	conflictScratch            diagnosticParserCoreConflictScratch
-	reductionOutputs           []core.ReductionOutput
-	reductionReplacements      []diagnosticParserCoreHeader
-	classifiedBoundaries       []core.ClassifiedBoundary
-	electStates                []StateID
-	electGLRStates             []StateID
-	work                       DiagnosticParserCoreGenericWork
-	epochProgress              bool
-	acceptedHead               core.Head
-	acceptedPayloads           []core.SubtreeID
-	conflictPostExecutionFault func() error
-	extraPostExecutionFault    func() error
-	freshSessionOwner          *core.SchedulerTransactionToken
-	observer                   diagnosticParserCoreSeedObserver
-	stoppedAfterElection       bool
+	compact                       *core.Core
+	tokenSource                   *dfaTokenSource
+	scannerScratch                *[]byte
+	headers                       []diagnosticParserCoreHeader
+	token                         Token
+	checkpoint                    DiagnosticParserCoreScannerCheckpoint
+	checkpointID                  core.CheckpointID
+	currentElection               DiagnosticParserCoreElection
+	electionIndex                 int
+	noLookaheadSteps              uint8
+	tokens                        uint64
+	dispatches                    uint64
+	branchOrder                   uint64
+	nextSeq                       uint64
+	options                       DiagnosticParserCorePrefixOptions
+	receipt                       *DiagnosticParserCoreGenericScheduler
+	summaryHeaderScratch          []DiagnosticParserCoreHeaderReceipt
+	headerRollbackScratch         diagnosticParserCoreHeaderRollbackScratch
+	canonicalScratch              diagnosticParserCoreCanonicalScratch
+	dispatchScratch               diagnosticParserCoreDispatchScratch
+	conflictScratch               diagnosticParserCoreConflictScratch
+	reductionOutputs              []core.ReductionOutput
+	reductionReplacements         []diagnosticParserCoreHeader
+	classifiedBoundaries          []core.ClassifiedBoundary
+	electStates                   []StateID
+	electGLRStates                []StateID
+	work                          DiagnosticParserCoreGenericWork
+	epochProgress                 bool
+	acceptedHead                  core.Head
+	acceptedPayloads              []core.SubtreeID
+	conflictPostExecutionFault    func() error
+	extraPostExecutionFault       func() error
+	freshSessionOwner             *core.SchedulerTransactionToken
+	observer                      diagnosticParserCoreSeedObserver
+	stoppedAfterElection          bool
+	requireEOFPostNoLookaheadRoot bool
 }
+
+const maxDiagnosticParserCoreNoLookaheadSteps = 64
 
 func (s *diagnosticParserCoreGenericScheduler) fullReceipts() bool {
 	return s != nil && s.options.ReceiptMode == DiagnosticParserCoreReceiptFull
@@ -2335,6 +2343,9 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 	}
 	cells := s.dispatchScratch.cells
 	noActionIndices := s.dispatchScratch.noActionIndices
+	if unsupported := s.validateGenericNoLookaheadReduction(cells, noActionIndices); unsupported != nil {
+		return unsupported, nil
+	}
 	acceptCell := -1
 	extraCells := 0
 	reductionCell := -1
@@ -2731,6 +2742,10 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		s.compact.SetReduceConflictContext(true)
 		defer s.compact.SetReduceConflictContext(false)
 	}
+	if s.token.NoLookahead {
+		s.compact.SetReduceNoLookaheadContext(true)
+		defer s.compact.SetReduceNoLookaheadContext(false)
+	}
 	outputs, err := s.compact.ReduceOutputsClassifiedIntoOwned(owner, s.reductionOutputs, cell.boundary, ordinal, core.ForkOrder{})
 	if err != nil {
 		return err
@@ -2761,6 +2776,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		replacement := s.headers[cell.headerIndex]
 		replacement.head = output.Head
 		replacement.paused = false
+		replacement.shifted = s.token.NoLookahead
 		replacement.convergedReductionSplit = replacement.convergedReductionSplit || convergedReductionSplit
 		if len(replacements) > 0 {
 			if s.nextSeq == math.MaxUint64 {
@@ -2807,6 +2823,10 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 			}},
 			After: after,
 		})
+	}
+	if s.token.NoLookahead &&
+		Symbol(cell.actions().At(ordinal).Symbol) == s.options.noLookaheadRootSymbol {
+		s.requireEOFPostNoLookaheadRoot = true
 	}
 	return nil
 }
@@ -3319,10 +3339,6 @@ func diagnosticParserCoreGenericUnsupportedCellDescriptor(headerIndex int, token
 
 func diagnosticParserCoreGenericUnsupportedToken(token Token) *diagnosticParserCoreGenericUnsupported {
 	switch {
-	case token.NoLookahead:
-		return &diagnosticParserCoreGenericUnsupported{
-			boundary: DiagnosticParserCoreRoute, detail: "generic scheduler does not support no-lookahead tokens",
-		}
 	case token.Missing:
 		return &diagnosticParserCoreGenericUnsupported{
 			boundary: DiagnosticParserCoreRoute, detail: "generic scheduler does not support missing tokens",
@@ -3330,6 +3346,42 @@ func diagnosticParserCoreGenericUnsupportedToken(token Token) *diagnosticParserC
 	default:
 		return nil
 	}
+}
+
+// validateGenericNoLookaheadReduction admits the narrow production-equivalent
+// synthetic-EOF shape. One closed head may apply one reduction, then it must
+// re-elect at the same byte. A root reduction also authenticates the next EOF.
+func (s *diagnosticParserCoreGenericScheduler) validateGenericNoLookaheadReduction(
+	cells []diagnosticParserCoreGenericCell,
+	noActionIndices []int,
+) *diagnosticParserCoreGenericUnsupported {
+	if !s.token.NoLookahead {
+		return nil
+	}
+	unsupported := func(detail string) *diagnosticParserCoreGenericUnsupported {
+		return &diagnosticParserCoreGenericUnsupported{
+			boundary: DiagnosticParserCoreRoute, detail: detail, headerIndex: 0,
+		}
+	}
+	if s.token.Symbol != 0 || s.token.StartByte != s.token.EndByte ||
+		s.token.Missing || s.token.ExternalScannerToken {
+		return unsupported("generic scheduler no-lookahead token is not authenticated synthetic EOF")
+	}
+	if s.currentElection.ScannerBefore != s.currentElection.ScannerAfter {
+		return unsupported("generic scheduler no-lookahead election changed scanner state")
+	}
+	if len(s.headers) != 1 || len(cells) != 1 || len(noActionIndices) != 0 ||
+		cells[0].headerIndex != 0 {
+		return unsupported("generic scheduler no-lookahead reduction requires one runnable head")
+	}
+	actions := cells[0].actions()
+	if actions.Len() != 1 || cells[0].descriptor().Kind() != core.ActionRowReduce {
+		return unsupported("generic scheduler no-lookahead token requires one sole reduction")
+	}
+	if !s.options.hasNoLookaheadRootSymbol {
+		return unsupported("generic scheduler no-lookahead reduction requires an authenticated root symbol")
+	}
+	return nil
 }
 
 // replaceDiagnosticParserCoreHeader replaces headers[index] with replacements.
@@ -3434,6 +3486,27 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 		return err
 	}
 	current, currentStart, currentEnd, currentValid := currentExternalScannerCheckpoint(s.tokenSource)
+	if s.requireEOFPostNoLookaheadRoot {
+		if token.Symbol != 0 || token.StartByte != token.EndByte ||
+			token.Missing || token.NoLookahead || token.ExternalScannerToken {
+			return &diagnosticParserCoreDecline{
+				boundary: DiagnosticParserCoreRoute,
+				detail:   "generic scheduler root reduction on no-lookahead was not followed by authenticated EOF",
+			}
+		}
+		s.requireEOFPostNoLookaheadRoot = false
+	}
+	if token.NoLookahead {
+		s.noLookaheadSteps++
+		if s.noLookaheadSteps > maxDiagnosticParserCoreNoLookaheadSteps {
+			return &diagnosticParserCoreDecline{
+				boundary: DiagnosticParserCoreCap,
+				detail:   "generic scheduler no-lookahead re-election cap",
+			}
+		}
+	} else {
+		s.noLookaheadSteps = 0
+	}
 	if err := s.compact.BeginFrontier(); err != nil {
 		return err
 	}

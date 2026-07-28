@@ -9,6 +9,13 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Compact admission now supports bounded no-lookahead reductions.
+  One runnable head can reduce a synthetic EOF and re-elect at the same byte.
+  Transparent gotos mark the reduced node as an extra.
+  A root reduction requires authenticated EOF on the next election.
+  Doxygen, JSDoc, and VHDL now route directly.
+  The smoke scorecard reports 198 direct routes and three fallbacks.
+
 - Compact admission now supports two certified acceptance-frontier shapes.
   HTTP and Robot can drop EOF siblings with no actions.
   Meson can select the sole primary accepted derivation.

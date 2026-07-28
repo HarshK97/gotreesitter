@@ -26,8 +26,8 @@ The current 206-language smoke scorecard reports:
 
 | Status | Languages |
 |---|---:|
-| PASS | 195 |
-| FALLBACK | 6 |
+| PASS | 198 |
+| FALLBACK | 3 |
 | SKIP | 5 |
 | DIVERGE | 0 |
 | ERROR | 0 |
@@ -60,6 +60,21 @@ The evidence is in these artifact directories:
 - `harness_out/docker/20260728T054206Z-compact-split-javascript-c-oracle-fields`
 
 Custom, adapted, stale, and same-name grammars retain conservative defaults.
+
+## Bounded no-lookahead reductions
+
+The generic scheduler now supports one authenticated synthetic-EOF shape.
+One runnable head can apply one reduction and re-elect at the same byte.
+A transparent goto marks the reduced node as an extra.
+A root reduction must meet authenticated EOF on the next election.
+The scheduler declines wider frontiers, scanner changes, and runaway re-election.
+
+This mechanism routes the Doxygen, JSDoc, and VHDL smoke fixtures.
+Field-aware C-oracle runs passed for all three grammars:
+
+- `harness_out/docker/20260728T061644Z-compact-nolookahead-doxygen-c-oracle-fields`
+- `harness_out/docker/20260728T061726Z-compact-nolookahead-jsdoc-c-oracle-fields`
+- `harness_out/docker/20260728T061735Z-compact-nolookahead-vhdl-c-oracle-fields`
 
 ## Rejected C# convergence candidate
 

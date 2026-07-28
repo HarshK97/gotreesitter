@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"testing"
 
 	gts "github.com/odvcencio/gotreesitter"
@@ -69,27 +70,27 @@ var admissionScorecardRequiredCompactPasses = map[string]struct{}{
 	"clojure": {}, "cmake": {}, "comment": {}, "commonlisp": {}, "corn": {}, "cpon": {}, "crystal": {}, "css": {},
 	"csv": {}, "cuda": {}, "cue": {}, "cylc": {}, "d": {}, "dart": {},
 	"desktop": {}, "devicetree": {}, "dhall": {}, "diff": {}, "disassembly": {}, "djot": {}, "dockerfile": {},
-	"dot": {}, "dtd": {}, "earthfile": {}, "ebnf": {}, "editorconfig": {},
+	"dot": {}, "doxygen": {}, "dtd": {}, "earthfile": {}, "ebnf": {}, "editorconfig": {},
 	"eds": {}, "eex": {}, "elisp": {}, "elixir": {}, "elm": {}, "elsa": {}, "embedded_template": {}, "enforce": {},
 	"erlang": {}, "facility": {}, "faust": {}, "fennel": {}, "fidl": {},
 	"firrtl": {}, "fish": {}, "foam": {}, "forth": {}, "fortran": {}, "fsharp": {},
 	"gdscript": {}, "git_config": {}, "git_rebase": {}, "gitattributes": {}, "gitcommit": {}, "gitignore": {}, "gleam": {},
 	"glsl": {}, "gn": {}, "go": {}, "godot_resource": {}, "gomod": {}, "graphql": {},
 	"groovy": {}, "hack": {}, "hare": {}, "haskell": {}, "haxe": {}, "hcl": {}, "heex": {},
-	"hlsl": {}, "html": {}, "hurl": {}, "hyprlang": {}, "ini": {}, "janet": {}, "javascript": {}, "jinja2": {}, "jq": {},
+	"hlsl": {}, "html": {}, "http": {}, "hurl": {}, "hyprlang": {}, "ini": {}, "janet": {}, "javascript": {}, "jinja2": {}, "jq": {}, "jsdoc": {},
 	"json5": {}, "jsonnet": {}, "julia": {}, "just": {}, "kconfig": {}, "kdl": {}, "kotlin": {},
 	"ledger": {}, "less": {}, "linkerscript": {}, "liquid": {}, "llvm": {}, "lua": {},
-	"luau": {}, "make": {}, "markdown": {}, "matlab": {}, "mermaid": {}, "mojo": {},
+	"luau": {}, "make": {}, "markdown": {}, "matlab": {}, "mermaid": {}, "meson": {}, "mojo": {},
 	"move": {}, "nginx": {}, "nickel": {}, "nim": {}, "ninja": {}, "nix": {}, "norg": {}, "nushell": {},
 	"objc": {}, "ocaml": {}, "odin": {}, "org": {}, "pascal": {}, "pem": {}, "perl": {},
 	"php": {}, "pkl": {}, "powershell": {}, "prisma": {}, "prolog": {}, "promql": {},
 	"properties": {}, "proto": {}, "pug": {}, "puppet": {}, "purescript": {}, "python": {}, "ql": {},
-	"r": {}, "racket": {}, "regex": {}, "rego": {}, "requirements": {}, "rescript": {}, "ron": {},
+	"r": {}, "racket": {}, "regex": {}, "rego": {}, "requirements": {}, "rescript": {}, "robot": {}, "ron": {},
 	"rst": {}, "ruby": {}, "rust": {}, "scala": {}, "scheme": {}, "scss": {}, "smithy": {},
 	"solidity": {}, "sparql": {}, "sql": {}, "squirrel": {}, "starlark": {}, "svelte": {},
 	"ssh_config": {}, "swift": {}, "tablegen": {}, "tcl": {}, "teal": {}, "templ": {}, "textproto": {},
 	"thrift": {}, "tlaplus": {}, "tmux": {}, "todotxt": {}, "toml": {}, "tsx": {}, "turtle": {}, "twig": {},
-	"typescript": {}, "typst": {}, "uxntal": {}, "v": {}, "verilog": {}, "vimdoc": {},
+	"typescript": {}, "typst": {}, "uxntal": {}, "v": {}, "verilog": {}, "vhdl": {}, "vimdoc": {},
 	"vue": {}, "wat": {}, "wgsl": {}, "wolfram": {}, "xml": {}, "yaml": {}, "yuck": {}, "zig": {},
 }
 
@@ -146,8 +147,8 @@ func TestAdmissionCandidateScorecard206(t *testing.T) {
 		// review and ratchet update.
 		const (
 			wantTotal   = 206
-			minPass     = 192
-			maxFallback = 9
+			minPass     = 198
+			maxFallback = 3
 			wantSkip    = 5
 		)
 		if got := len(admissionScorecardRequiredCompactPasses); got != minPass {
@@ -178,6 +179,42 @@ func TestAdmissionCandidateScorecard206(t *testing.T) {
 				counts[scorecardPass], minPass, counts[scorecardDiverge], counts[scorecardFallback], maxFallback,
 				counts[scorecardSkip], wantSkip, counts[scorecardError], len(rows), wantTotal)
 		}
+	}
+}
+
+func TestAdmissionCandidateNoLookaheadSmokeRatchet(t *testing.T) {
+	wanted := map[string]struct{}{
+		"doxygen": {},
+		"jsdoc":   {},
+		"vhdl":    {},
+	}
+	var doxygen grammars.LangEntry
+	for _, entry := range grammars.AllLanguages() {
+		if _, ok := wanted[entry.Name]; !ok {
+			continue
+		}
+		if entry.Name == "doxygen" {
+			doxygen = entry
+		}
+		row := runAdmissionScorecardLanguage(entry)
+		if row.status != scorecardPass {
+			t.Errorf("%s compact no-lookahead route=%s: %s", row.name, row.status, row.detail)
+		}
+		delete(wanted, entry.Name)
+	}
+	for name := range wanted {
+		t.Errorf("compact no-lookahead ratchet language %q is missing", name)
+	}
+	if doxygen.Name == "" {
+		return
+	}
+	row := runAdmissionScorecardSource(
+		doxygen,
+		[]byte("/** first */\n/** second */\n"),
+	)
+	if row.status != scorecardFallback ||
+		!strings.Contains(row.detail, "root reduction on no-lookahead was not followed by authenticated EOF") {
+		t.Errorf("doxygen mid-source no-lookahead route=%s: %s", row.status, row.detail)
 	}
 }
 
