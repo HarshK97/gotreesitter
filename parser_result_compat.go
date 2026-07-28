@@ -134,8 +134,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.bitbake", func() { normalizeBitbakeCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "chatito":
 		dispatcherArmCensus(ctx, "dispatch.chatito", func() { normalizeChatitoCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "arduino":
-		dispatcherArmCensus(ctx, "dispatch.arduino", func() { normalizeArduinoBuiltinPrimitiveTypes(ctx.root, ctx.source, ctx.lang) })
 	case "c", "cpp":
 		dispatcherArmCensus(ctx, "dispatch.c_cpp", func() { normalizeCCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "c_sharp":

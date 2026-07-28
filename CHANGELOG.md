@@ -9,6 +9,10 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- DFA keyword promotion now owns Arduino primitive types before compatibility.
+  Native materialization owns Objective-C protocol type identifiers.
+  This retires Arduino's dispatcher arm and the matching Objective-C subpass.
+
 - Erlang macro replacement election now stays in the parser.
   It distinguishes function clauses from case and receive clauses.
   Reduction already emits exact top-level form spans.

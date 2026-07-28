@@ -2,7 +2,6 @@ package gotreesitter
 
 func normalizeObjcCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeObjcMethodTypeIdentifiers(root, lang)
-	normalizeObjcParameterizedArgumentTypeIdentifiers(root, lang)
 	normalizeObjcSizeofTypeIdentifierOperands(root, lang)
 	normalizeObjcAtStringLiterals(root, lang)
 	normalizeObjcStructSizedTypeSpecifiers(root, lang)
@@ -24,38 +23,6 @@ func normalizeObjcMethodTypeIdentifiers(root *Node, lang *Language) {
 	typeIdentifierNamed := symbolIsNamed(lang, typeIdentifierSym)
 	walkResultTree(root, func(n *Node) {
 		if n == nil || n.symbol != methodTypeSym {
-			return
-		}
-		for i := 0; i < resultChildCount(n); i++ {
-			typeName := resultChildAt(n, i)
-			if typeName == nil || typeName.symbol != typeNameSym {
-				continue
-			}
-			for j := 0; j < resultChildCount(typeName); j++ {
-				child := resultChildAt(typeName, j)
-				if child != nil && child.symbol == identifierSym {
-					child.symbol = typeIdentifierSym
-					child.setNamed(typeIdentifierNamed)
-				}
-			}
-		}
-	})
-}
-
-func normalizeObjcParameterizedArgumentTypeIdentifiers(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "objc" {
-		return
-	}
-	parameterizedArgumentsSym, ok1 := symbolByName(lang, "parameterized_arguments")
-	typeNameSym, ok2 := symbolByName(lang, "type_name")
-	identifierSym, ok3 := symbolByName(lang, "identifier")
-	typeIdentifierSym, ok4 := symbolByName(lang, "type_identifier")
-	if !ok1 || !ok2 || !ok3 || !ok4 {
-		return
-	}
-	typeIdentifierNamed := symbolIsNamed(lang, typeIdentifierSym)
-	walkResultTree(root, func(n *Node) {
-		if n == nil || n.symbol != parameterizedArgumentsSym {
 			return
 		}
 		for i := 0; i < resultChildCount(n); i++ {

@@ -88,9 +88,8 @@ func normalizeGoReturnedTreeCompatibility(root *Node, source []byte, p *Parser, 
 // retags node symbols/named-ness and child field labels (never bytes, never
 // node count, never parent/child structure) and only for the one syntactic
 // position the owner-confirmed divergence covers — the sole/leading argument
-// of a literal `new`/`make` call. It mirrors the existing precedent for this
-// class of fix (see normalizeArduinoBuiltinPrimitiveTypes in
-// parser_result_c.go).
+// of a literal `new`/`make` call. It follows the same bounded symbol-retagging
+// pattern as the other result-compatibility repairs.
 //
 // The base case retags a bare identifier (`new(dirInfo)`) to type_identifier.
 // goNewMakeTypeRetagCtx.relabel extends the same retag to the three other
