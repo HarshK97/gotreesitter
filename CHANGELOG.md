@@ -27,7 +27,8 @@ for tags and release notes while still in `0.x`.
 - Native visible-wrapper election now owns D storage classes.
   This retires the matching result-normalization subpass.
   Native reduction also owns D variable-type qualifiers.
-  Two D subpasses remain live.
+  Native call targets now match C for qualified, template, and simple callees.
+  This retires the D dispatcher arm.
 
 - The Cooklang smoke fixture now uses a valid ingredient instruction.
   The previous period required production recovery and was omitted from the

@@ -202,13 +202,13 @@ Native visible-wrapper election also preserves D storage classes.
 This change retires the D storage-class wrapper.
 Native reduction places D type qualifiers inside the following type.
 This change retires the D variable-type qualifier repair.
-Two D subpasses remain live.
+Native reduction and derivation selection now own each remaining D call target.
+This change retires the D dispatcher arm.
 The field-aware C-oracle receipt is:
 `harness_out/docker/20260728T070352Z-retire-d-storage-class-c-oracle-fields`.
 The D qualifier C-oracle receipt is:
 `harness_out/docker/20260728T081051Z`.
-A final-newline route probe rejected the simple type-call retirement.
-For `void f() { Type(); }\n`, native production still emits a `type` wrapper.
+Final-line-break probes now preserve qualified, template, and simple callees.
 Exact stack-node equivalence preserves deep Objective-C alternatives.
 Generic alias-target selection now owns `@encode` identifiers and function
 pointer expressions.
@@ -299,6 +299,7 @@ there.
 | D and Objective-C subpass census | retirement change | 2 aggregate arm receipts | 6 named live subpass receipts | positive controls, exact fingerprints, and absent retired labels |
 | D storage-class wrappers | retirement change | 1 D subpass | 0 | visible named wrapper election, compatibility-free producer, production, compact fallback, forest, incremental reuse, and isolated C-oracle parity |
 | D variable-type qualifiers | retirement change | 1 D subpass | 0 | compatibility-free producer, production, compact fallback, forest, incremental reuse, and isolated C-oracle parity |
+| D call-expression targets | retirement commit `6a650454e5698d64a0148629cfa444b3dbce6877` | 2 D subpasses / 1 dispatcher arm | 0 | compatibility-free producer, production, compact fallback, forest, incremental, and three isolated C-oracle receipts |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.

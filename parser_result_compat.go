@@ -144,10 +144,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.corn", func() { normalizeCornCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "crystal":
 		dispatcherArmCensus(ctx, "dispatch.crystal", func() { normalizeCrystalCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "d":
-		dispatcherArmSubpassCensus(ctx, "dispatch.d", func(census materializationSubpassCensus) {
-			normalizeDCompatibility(ctx.root, ctx.lang, census)
-		})
 	case "dart":
 		dispatcherArmCensus(ctx, "dispatch.dart", func() { normalizeDartCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "doxygen":
