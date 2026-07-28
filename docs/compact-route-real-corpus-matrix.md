@@ -26,8 +26,8 @@ The current 206-language smoke scorecard reports:
 
 | Status | Languages |
 |---|---:|
-| PASS | 198 |
-| FALLBACK | 3 |
+| PASS | 199 |
+| FALLBACK | 2 |
 | SKIP | 5 |
 | DIVERGE | 0 |
 | ERROR | 0 |
@@ -75,6 +75,17 @@ Field-aware C-oracle runs passed for all three grammars:
 - `harness_out/docker/20260728T061644Z-compact-nolookahead-doxygen-c-oracle-fields`
 - `harness_out/docker/20260728T061726Z-compact-nolookahead-jsdoc-c-oracle-fields`
 - `harness_out/docker/20260728T061735Z-compact-nolookahead-vhdl-c-oracle-fields`
+
+## Zero-width extras with byte progress
+
+The generic scheduler now recognizes progress from a parser boundary to the
+end of a zero-width extra token.
+It still declines when the byte, parser state, and scanner state do not change.
+
+This mechanism routes the COBOL smoke fixture.
+Its field-aware C-oracle run passed:
+
+- `harness_out/docker/20260728T064111Z-compact-zero-width-cobol-c-oracle-fields`
 
 ## Rejected C# convergence candidate
 

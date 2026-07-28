@@ -67,7 +67,7 @@ var admissionScorecardRequiredCompactPasses = map[string]struct{}{
 	"asm": {}, "astro": {}, "awk": {}, "bash": {}, "bass": {}, "beancount": {}, "bibtex": {},
 	"bicep": {}, "bitbake": {}, "blade": {}, "brightscript": {}, "c_sharp": {},
 	"caddy": {}, "cairo": {}, "capnp": {}, "chatito": {}, "circom": {},
-	"clojure": {}, "cmake": {}, "comment": {}, "commonlisp": {}, "corn": {}, "cpon": {}, "crystal": {}, "css": {},
+	"clojure": {}, "cmake": {}, "cobol": {}, "comment": {}, "commonlisp": {}, "corn": {}, "cpon": {}, "crystal": {}, "css": {},
 	"csv": {}, "cuda": {}, "cue": {}, "cylc": {}, "d": {}, "dart": {},
 	"desktop": {}, "devicetree": {}, "dhall": {}, "diff": {}, "disassembly": {}, "djot": {}, "dockerfile": {},
 	"dot": {}, "doxygen": {}, "dtd": {}, "earthfile": {}, "ebnf": {}, "editorconfig": {},
@@ -147,8 +147,8 @@ func TestAdmissionCandidateScorecard206(t *testing.T) {
 		// review and ratchet update.
 		const (
 			wantTotal   = 206
-			minPass     = 198
-			maxFallback = 3
+			minPass     = 199
+			maxFallback = 2
 			wantSkip    = 5
 		)
 		if got := len(admissionScorecardRequiredCompactPasses); got != minPass {

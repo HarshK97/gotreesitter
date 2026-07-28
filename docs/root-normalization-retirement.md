@@ -228,6 +228,8 @@ Status: mechanism work required.
 
 The compact scheduler now owns bounded no-lookahead reductions.
 This removes three smoke fallbacks without a language-specific runtime rule.
+Byte-boundary progress now admits COBOL zero-width extras.
+This removes one more smoke fallback.
 No result normalizer retired in this step.
 
 1. Express ambiguity and dynamic-precedence decisions in certified conflict

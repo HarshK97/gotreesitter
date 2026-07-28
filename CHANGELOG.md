@@ -9,6 +9,12 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Compact admission now treats zero-width extras as progress when their token
+  end advances the parser boundary.
+  COBOL fixed-format padding now routes directly without weakening the
+  same-byte no-progress guard.
+  The smoke scorecard reports 199 direct routes and two fallbacks.
+
 - Compact admission now supports bounded no-lookahead reductions.
   One runnable head can reduce a synthetic EOF and re-elect at the same byte.
   Transparent gotos mark the reduced node as an extra.

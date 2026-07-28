@@ -2466,7 +2466,8 @@ func (s *diagnosticParserCoreGenericScheduler) zeroWidthExtraShiftWithoutProgres
 		if target == 0 {
 			target = cell.boundary.State()
 		}
-		if target == cell.boundary.State() {
+		if target == cell.boundary.State() &&
+			s.token.EndByte <= cell.boundary.ByteOffset() {
 			return &diagnosticParserCoreGenericUnsupported{
 				boundary:    DiagnosticParserCoreRoute,
 				detail:      "generic scheduler zero-width extra shift has no scanner or parser-state progress",
