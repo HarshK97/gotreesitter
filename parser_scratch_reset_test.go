@@ -43,8 +43,7 @@ func TestGLRMergeScratchResetPreservesCleanZeroEpochAndRejectsReusedAddress(t *t
 	scratch.cleanZeroCache = map[*gssNode]gssCleanZeroErrorCacheEntry{
 		old: {resultEpoch: scratch.cleanZeroEpoch, clean: true},
 	}
-	scratch.cleanZeroStack = append(scratch.cleanZeroStack, old)
-	scratch.cleanZeroVisited = append(scratch.cleanZeroVisited, old)
+	scratch.cleanZeroFrames = append(scratch.cleanZeroFrames, gssCleanZeroFrame{node: old})
 
 	epochBefore := scratch.cleanZeroEpoch
 	scratch.reset()
@@ -57,14 +56,11 @@ func TestGLRMergeScratchResetPreservesCleanZeroEpochAndRejectsReusedAddress(t *t
 	if len(scratch.cleanZeroCache) != 0 {
 		t.Fatalf("clean-zero map retained %d GSS pointers", len(scratch.cleanZeroCache))
 	}
-	if len(scratch.cleanZeroStack) != 0 || len(scratch.cleanZeroVisited) != 0 {
-		t.Fatalf("clean-zero traversal scratch not reset: stack=%d visited=%d", len(scratch.cleanZeroStack), len(scratch.cleanZeroVisited))
+	if len(scratch.cleanZeroFrames) != 0 {
+		t.Fatalf("clean-zero traversal scratch not reset: frames=%d", len(scratch.cleanZeroFrames))
 	}
-	if cap(scratch.cleanZeroStack) > 0 && scratch.cleanZeroStack[:cap(scratch.cleanZeroStack)][0] != nil {
-		t.Fatal("clean-zero stack backing retained a GSS pointer")
-	}
-	if cap(scratch.cleanZeroVisited) > 0 && scratch.cleanZeroVisited[:cap(scratch.cleanZeroVisited)][0] != nil {
-		t.Fatal("clean-zero visited backing retained a GSS pointer")
+	if cap(scratch.cleanZeroFrames) > 0 && scratch.cleanZeroFrames[:cap(scratch.cleanZeroFrames)][0].node != nil {
+		t.Fatal("clean-zero frame backing retained a GSS pointer")
 	}
 
 	nodes.recycleForParse()

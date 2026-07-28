@@ -1030,8 +1030,7 @@ func TestParserRecycleDemotedGSSInvalidatesPointerHolders(t *testing.T) {
 	stacks := scratch.merge.result[:1]
 	scratch.merge.cPrefixPath = append(scratch.merge.cPrefixPath, oldHead)
 	scratch.merge.cleanZeroCache = map[*gssNode]gssCleanZeroErrorCacheEntry{oldHead: {clean: true}}
-	scratch.merge.cleanZeroStack = append(scratch.merge.cleanZeroStack, oldHead)
-	scratch.merge.cleanZeroVisited = append(scratch.merge.cleanZeroVisited, oldHead)
+	scratch.merge.cleanZeroFrames = append(scratch.merge.cleanZeroFrames, gssCleanZeroFrame{node: oldHead})
 	scratch.merge.spineVisit = append(scratch.merge.spineVisit, spinePairKey{a: oldHead, b: oldHead.prev})
 	scratch.merge.mergeSeen = map[gssMergePair]bool{{a: oldHead, b: oldHead.prev}: true}
 	scratch.merge.preflight = newGSSMainPreflight(nil)

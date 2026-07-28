@@ -233,8 +233,7 @@ type glrMergeScratch struct {
 	cleanZeroCache   map[*gssNode]gssCleanZeroErrorCacheEntry
 	cleanZeroFront   []glrCleanZeroFrontCacheEntry
 	cleanZeroBytes   int64
-	cleanZeroStack   []*gssNode
-	cleanZeroVisited []*gssNode
+	cleanZeroFrames  []gssCleanZeroFrame
 	// childErrors points at parseInternal's sticky proof for fresh full parses.
 	// false means no ERROR, MISSING, or has-error payload has been constructed
 	// anywhere in this parse, so every GSS path has zero subtree error cost and
@@ -270,6 +269,11 @@ type glrMergeScratch struct {
 	// at the top of every mergeStacksWithScratch call so a stale flag from a
 	// previous merge in the same pooled scratch can never leak forward.
 	mergeBudgetStopReason ParseStopReason
+}
+
+type gssCleanZeroFrame struct {
+	node     *gssNode
+	nextLink int
 }
 
 func (s *glrMergeScratch) provesNoChildErrors() bool {
@@ -1144,13 +1148,9 @@ func (s *glrMergeScratch) invalidateGSSPointersForReuse() {
 	if len(s.cleanZeroCache) > 0 {
 		clear(s.cleanZeroCache)
 	}
-	if cap(s.cleanZeroStack) > 0 {
-		clear(s.cleanZeroStack[:cap(s.cleanZeroStack)])
-		s.cleanZeroStack = s.cleanZeroStack[:0]
-	}
-	if cap(s.cleanZeroVisited) > 0 {
-		clear(s.cleanZeroVisited[:cap(s.cleanZeroVisited)])
-		s.cleanZeroVisited = s.cleanZeroVisited[:0]
+	if cap(s.cleanZeroFrames) > 0 {
+		clear(s.cleanZeroFrames[:cap(s.cleanZeroFrames)])
+		s.cleanZeroFrames = s.cleanZeroFrames[:0]
 	}
 	if cap(s.spineVisit) > 0 {
 		clear(s.spineVisit[:cap(s.spineVisit)])
@@ -3502,53 +3502,59 @@ func gssNodeCleanZeroErrorAllLinksWithScratch(scratch *glrMergeScratch, n *gssNo
 	}
 	scratch.cleanZeroScan++
 	scanEpoch := scratch.cleanZeroScan
-	stack := scratch.cleanZeroStack[:0]
-	visited := scratch.cleanZeroVisited[:0]
-	stack = append(stack, n)
-	for len(stack) > 0 {
-		last := len(stack) - 1
-		cur := stack[last]
-		stack = stack[:last]
-		if cur == nil {
-			continue
-		}
-		entry, ok := scratch.cleanZeroCache[cur]
-		if ok && entry.resultEpoch == scratch.cleanZeroEpoch {
-			if !entry.clean {
-				scratch.cleanZeroCache[n] = gssCleanZeroErrorCacheEntry{resultEpoch: scratch.cleanZeroEpoch, clean: false}
-				storeCleanZeroFrontCache(scratch, n, false)
-				scratch.cleanZeroStack = stack[:0]
-				scratch.cleanZeroVisited = visited[:0]
-				return false
+	frames := scratch.cleanZeroFrames[:0]
+	frames = append(frames, gssCleanZeroFrame{node: n})
+	cacheFailure := func() bool {
+		for _, frame := range frames {
+			scratch.cleanZeroCache[frame.node] = gssCleanZeroErrorCacheEntry{
+				resultEpoch: scratch.cleanZeroEpoch,
+				clean:       false,
 			}
-			continue
 		}
-		if ok && entry.scanEpoch == scanEpoch {
-			continue
-		}
-		entry.scanEpoch = scanEpoch
-		scratch.cleanZeroCache[cur] = entry
-		visited = append(visited, cur)
-		for i := 0; i < cur.linkCount(); i++ {
-			prev, linkEntry := cur.link(i)
-			if stackEntryHasNode(linkEntry) &&
-				(stackEntryNodeHasError(linkEntry) || stackEntryNodeIsMissing(linkEntry) || stackEntryNodeSymbol(linkEntry) == errorSymbol) {
-				scratch.cleanZeroCache[cur] = gssCleanZeroErrorCacheEntry{resultEpoch: scratch.cleanZeroEpoch, clean: false}
-				scratch.cleanZeroCache[n] = gssCleanZeroErrorCacheEntry{resultEpoch: scratch.cleanZeroEpoch, clean: false}
-				storeCleanZeroFrontCache(scratch, n, false)
-				scratch.cleanZeroStack = stack[:0]
-				scratch.cleanZeroVisited = visited[:0]
-				return false
-			}
-			stack = append(stack, prev)
-		}
+		storeCleanZeroFrontCache(scratch, n, false)
+		scratch.cleanZeroFrames = frames[:0]
+		return false
 	}
-	for _, node := range visited {
-		scratch.cleanZeroCache[node] = gssCleanZeroErrorCacheEntry{resultEpoch: scratch.cleanZeroEpoch, clean: true}
+	for len(frames) > 0 {
+		last := len(frames) - 1
+		frame := &frames[last]
+		cur := frame.node
+		if frame.nextLink == 0 {
+			entry, ok := scratch.cleanZeroCache[cur]
+			if ok && entry.resultEpoch == scratch.cleanZeroEpoch {
+				if !entry.clean {
+					return cacheFailure()
+				}
+				frames = frames[:last]
+				continue
+			}
+			if ok && entry.scanEpoch == scanEpoch {
+				frames = frames[:last]
+				continue
+			}
+			entry.scanEpoch = scanEpoch
+			scratch.cleanZeroCache[cur] = entry
+		}
+		if frame.nextLink == cur.linkCount() {
+			scratch.cleanZeroCache[cur] = gssCleanZeroErrorCacheEntry{
+				resultEpoch: scratch.cleanZeroEpoch,
+				clean:       true,
+			}
+			frames = frames[:last]
+			continue
+		}
+		prev, linkEntry := cur.link(frame.nextLink)
+		frame.nextLink++
+		if stackEntryHasNode(linkEntry) &&
+			(stackEntryNodeHasError(linkEntry) || stackEntryNodeIsMissing(linkEntry) || stackEntryNodeSymbol(linkEntry) == errorSymbol) {
+			return cacheFailure()
+		}
+		if prev != nil {
+			frames = append(frames, gssCleanZeroFrame{node: prev})
+		}
 	}
 	storeCleanZeroFrontCache(scratch, n, true)
-	scratch.cleanZeroStack = stack[:0]
-	scratch.cleanZeroVisited = visited[:0]
+	scratch.cleanZeroFrames = frames[:0]
 	return true
 }
 
@@ -5464,17 +5470,11 @@ func (s *glrMergeScratch) reset() {
 	if len(s.cleanZeroCache) > 0 {
 		clear(s.cleanZeroCache)
 	}
-	if cap(s.cleanZeroStack) > maxRetainedMergeResultCap {
-		s.cleanZeroStack = nil
-	} else if cap(s.cleanZeroStack) > 0 {
-		clear(s.cleanZeroStack[:cap(s.cleanZeroStack)])
-		s.cleanZeroStack = s.cleanZeroStack[:0]
-	}
-	if cap(s.cleanZeroVisited) > maxRetainedMergeResultCap {
-		s.cleanZeroVisited = nil
-	} else if cap(s.cleanZeroVisited) > 0 {
-		clear(s.cleanZeroVisited[:cap(s.cleanZeroVisited)])
-		s.cleanZeroVisited = s.cleanZeroVisited[:0]
+	if cap(s.cleanZeroFrames) > maxRetainedMergeResultCap {
+		s.cleanZeroFrames = nil
+	} else if cap(s.cleanZeroFrames) > 0 {
+		clear(s.cleanZeroFrames[:cap(s.cleanZeroFrames)])
+		s.cleanZeroFrames = s.cleanZeroFrames[:0]
 	}
 	s.cleanZeroScan = 0
 	s.childErrors = nil
