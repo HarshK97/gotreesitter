@@ -2,8 +2,8 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 55,
-    "dispatcher_languages": 57,
+    "dispatcher_arms": 54,
+    "dispatcher_languages": 56,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
@@ -1831,34 +1831,6 @@
         "cgo_harness/parity_cgo_test.go"
       ],
       "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
-      "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
-      },
-      "status": "live",
-      "receipt_refs": []
-    },
-    {
-      "id": "dispatch.rescript",
-      "kind": "dispatcher_arm",
-      "functions": [
-        "normalizeRescriptCompatibility"
-      ],
-      "files": [
-        "parser_result_rescript.go"
-      ],
-      "languages": [
-        "rescript"
-      ],
-      "purpose": "Reconcile ReScript aliases and returned-tree shape.",
-      "authoritative_owner": "materialization",
-      "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
-      ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
       "route_coverage": {
         "production": "shared_result_compatibility_tail",
         "compact": "shared_result_compatibility_tail",
