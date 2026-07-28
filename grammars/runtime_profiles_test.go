@@ -611,6 +611,7 @@ func TestResidualRetryProfilesRequireExactBlobIdentity(t *testing.T) {
 				SkipCompleteMaxEntryScratchPeak:            csharpAcceptedErrorRetryMaxEntryScratchPeak,
 				FreshErrorNoStacksRetryMaxStacks:           csharpFreshErrorNoStacksRetryMaxStacks,
 				SkipInitialCompleteAcceptedErrorMergeRetry: true,
+				GSSConvergenceAcceptedErrorMergePerKey:     csharpGSSConvergenceErrorMergePerKey,
 			},
 		},
 		{
