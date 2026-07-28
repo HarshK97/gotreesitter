@@ -286,13 +286,24 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 			FreshErrorNoStacksMaxPasses:    1,
 		},
 	},
-	// Haskell's expression-list repeat has one exact comma row where C folds
-	// the reduce/repetition-shift pair deterministically. Retaining both arms
-	// grows a new GSS frontier for every list element.
+	// Haskell has three exact repeat rows where C selects the reduce arm.
+	// Retaining both arms grows new graph-structured stack frontiers.
 	"haskell": {
 		blobSHA256:                 mustRuntimeProfileSHA256("fcfc8794bca4442ebf5688d88e2397c78a22c8f0b585c4e1b868986cfa52dd09"),
 		compactConvergedSplitDrops: true,
 		conflictPolicies: []gotreesitter.ConflictPolicy{
+			{
+				State:         9609,
+				Lookahead:     gotreesitter.ConflictPolicyAnyLookahead,
+				Kind:          gotreesitter.ConflictPolicyRepetitionReduce,
+				ReduceSymbols: []gotreesitter.Symbol{518},
+			},
+			{
+				State:         10984,
+				Lookahead:     gotreesitter.ConflictPolicyAnyLookahead,
+				Kind:          gotreesitter.ConflictPolicyRepetitionReduce,
+				ReduceSymbols: []gotreesitter.Symbol{516},
+			},
 			{
 				State:         11192,
 				Lookahead:     4,

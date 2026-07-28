@@ -339,17 +339,34 @@ func TestBuiltinHaskellConflictPolicyAttaches(t *testing.T) {
 	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
 
 	lang := HaskellLanguage()
+	want := map[gotreesitter.StateID]struct {
+		lookahead gotreesitter.Symbol
+		reduce    gotreesitter.Symbol
+	}{
+		9609:  {lookahead: gotreesitter.ConflictPolicyAnyLookahead, reduce: 518},
+		10984: {lookahead: gotreesitter.ConflictPolicyAnyLookahead, reduce: 516},
+		11192: {lookahead: 4, reduce: 500},
+	}
+	seen := make(map[gotreesitter.StateID]bool, len(want))
 	for _, policy := range lang.ConflictPolicies {
-		if policy.State != 11192 || policy.Lookahead != 4 {
+		expected, ok := want[policy.State]
+		if !ok {
 			continue
 		}
-		if policy.Kind != gotreesitter.ConflictPolicyRepetitionReduce ||
-			len(policy.ReduceSymbols) != 1 || policy.ReduceSymbols[0] != 500 {
-			t.Fatalf("Haskell conflict policy = %+v, want certified expression-list reduce", policy)
+		seen[policy.State] = true
+		if policy.Lookahead != expected.lookahead {
+			t.Fatalf("Haskell conflict policy at state %d has lookahead %d, want %d", policy.State, policy.Lookahead, expected.lookahead)
 		}
-		return
+		if policy.Kind != gotreesitter.ConflictPolicyRepetitionReduce ||
+			len(policy.ReduceSymbols) != 1 || policy.ReduceSymbols[0] != expected.reduce {
+			t.Fatalf("Haskell conflict policy at state %d = %+v, want repetition reduce over symbol %d", policy.State, policy, expected.reduce)
+		}
 	}
-	t.Fatal("Haskell expression-list conflict policy was not attached")
+	for state := range want {
+		if !seen[state] {
+			t.Fatalf("Haskell conflict policy for state %d was not attached", state)
+		}
+	}
 }
 
 func TestBuiltinHaskellConflictPolicyRequiresCertifiedBlobAndAttachesOnce(t *testing.T) {
@@ -369,14 +386,14 @@ func TestBuiltinHaskellConflictPolicyRequiresCertifiedBlobAndAttachesOnce(t *tes
 	if !attachBuiltinLanguageRuntimeProfile("haskell", sum, lang) {
 		t.Fatal("certified Haskell blob did not attach its runtime profile")
 	}
-	if got := len(lang.ConflictPolicies); got != 1 {
-		t.Fatalf("certified Haskell conflict policies = %d, want 1", got)
+	if got := len(lang.ConflictPolicies); got != 3 {
+		t.Fatalf("certified Haskell conflict policies = %d, want 3", got)
 	}
 	if attachBuiltinLanguageRuntimeProfile("haskell", sum, lang) {
 		t.Fatal("reattaching the same Haskell profile reported a change")
 	}
-	if got := len(lang.ConflictPolicies); got != 1 {
-		t.Fatalf("reattached Haskell conflict policies = %d, want 1", got)
+	if got := len(lang.ConflictPolicies); got != 3 {
+		t.Fatalf("reattached Haskell conflict policies = %d, want 3", got)
 	}
 }
 

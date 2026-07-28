@@ -7863,30 +7863,6 @@ func kotlinObjectLiteralConflictChoice(lang *Language, actions []ParseAction) (P
 	return ParseAction{}, false
 }
 
-// haskellRepeatBoundaryConflictChoice collapses the two profiled Haskell
-// repeat-boundary forks that dominate large real-corpus parsing. Layout
-// declaration lists (state 9609) and export lists (state 10984) both offer a
-// reduce of the current repeat alongside a repetition shift; reducing here
-// matches C tree-sitter's boundary choice for the real-corpus cases.
-func haskellRepeatBoundaryConflictChoice(lang *Language, state StateID, actions []ParseAction) (ParseAction, bool) {
-	if lang == nil {
-		return ParseAction{}, false
-	}
-	switch state {
-	case 9609:
-		if !allReducesHaveSymbol(lang, actions, "declarations_repeat1") {
-			return ParseAction{}, false
-		}
-	case 10984:
-		if !allReducesHaveSymbol(lang, actions, "exports_repeat1") {
-			return ParseAction{}, false
-		}
-	default:
-		return ParseAction{}, false
-	}
-	return singleReduceAgainstRepetitionShiftConflictChoice(actions)
-}
-
 func swiftBraceTypeExpressionConflictChoice(lang *Language, tok Token, state StateID, actions []ParseAction) (ParseAction, bool) {
 	if lang == nil {
 		return ParseAction{}, false
