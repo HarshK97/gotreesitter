@@ -1017,7 +1017,7 @@ func TestResolveParseMergePerKeyCapGSSConvergencePolicyPrecedence(t *testing.T) 
 	})
 }
 
-func TestConfigureParseCapsScopesGSSConvergenceToFreshCapOne(t *testing.T) {
+func TestConfigureParseCapsScopesFaithfulGSSConvergenceToFreshCapOne(t *testing.T) {
 	oldFaithful := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = false
 	t.Cleanup(func() { glrFaithfulCapOneMerge = oldFaithful })
@@ -1066,6 +1066,45 @@ func TestConfigureParseCapsScopesGSSConvergenceToFreshCapOne(t *testing.T) {
 			"explicit cap=%d faithful=%t, want cap=4 faithful=false",
 			explicitCaps.mergePerKeyCap,
 			explicit.merge.faithfulCapOne,
+		)
+	}
+
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "1")
+	ResetParseEnvConfigCacheForTests()
+	uncertifiedParser := &Parser{language: &Language{Name: "uncertified"}}
+	var explicitCapOne parserScratch
+	explicitCapOneCaps := uncertifiedParser.configureParseCaps(
+		[]byte("source"),
+		nil,
+		arenaClassFull,
+		&explicitCapOne,
+		0,
+		0,
+		0,
+	)
+	if explicitCapOneCaps.mergePerKeyCap != 1 || !explicitCapOne.merge.faithfulCapOne {
+		t.Fatalf(
+			"explicit cap=%d faithful=%t, want cap=1 faithful=true",
+			explicitCapOneCaps.mergePerKeyCap,
+			explicitCapOne.merge.faithfulCapOne,
+		)
+	}
+
+	var incrementalCapOne parserScratch
+	incrementalCapOneCaps := uncertifiedParser.configureParseCaps(
+		[]byte("source"),
+		&reuseCursor{},
+		arenaClassIncremental,
+		&incrementalCapOne,
+		0,
+		0,
+		0,
+	)
+	if incrementalCapOneCaps.mergePerKeyCap != 1 || incrementalCapOne.merge.faithfulCapOne {
+		t.Fatalf(
+			"incremental explicit cap=%d faithful=%t, want cap=1 faithful=false",
+			incrementalCapOneCaps.mergePerKeyCap,
+			incrementalCapOne.merge.faithfulCapOne,
 		)
 	}
 }

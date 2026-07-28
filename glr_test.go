@@ -3632,7 +3632,7 @@ func TestMergeStacksSmallFaithfulGSSUnionPreservesExtraLinks(t *testing.T) {
 	}
 }
 
-func TestFaithfulCapOneMergeEnabledByCertifiedLanguage(t *testing.T) {
+func TestFaithfulCapOneMergeEnabledByParsePolicy(t *testing.T) {
 	old := glrFaithfulCapOneMerge
 	glrFaithfulCapOneMerge = false
 	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
