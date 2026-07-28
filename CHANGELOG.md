@@ -80,6 +80,10 @@ for tags and release notes while still in `0.x`.
   The parser now owns those identifiers before result compatibility.
   This retires a fifth Objective-C normalization subpass.
 
+- Generic result selection preserves both valid Objective-C `sizeof` branches.
+  It selects the C-equivalent expression branch for an unknown type name.
+  This retires the final Objective-C subpass and its dispatcher arm.
+
 - DFA keyword promotion now owns Arduino primitive types before compatibility.
   Native materialization owns Objective-C protocol type identifiers.
   This retires Arduino's dispatcher arm and the matching Objective-C subpass.

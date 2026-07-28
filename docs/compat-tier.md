@@ -35,7 +35,8 @@ retired mechanisms as distinct historical receipts.
 R3 also retires Arduino's primitive-type arm.
 DFA keyword promotion now emits those types before compatibility.
 Native Objective-C projection also owns protocol type identifiers.
-Other Objective-C repairs remain live.
+Generic result selection owns the remaining ambiguous `sizeof` operand.
+No Objective-C result-compatibility repair remains live.
 
 The exact collapsed-child policy retains a bare Rust `..` token.
 The merged-left-side conflict rule selects chained dot-range shifts.

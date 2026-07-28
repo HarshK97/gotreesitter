@@ -202,10 +202,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.kotlin", func() { normalizeKotlinCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "luau":
 		dispatcherArmCensus(ctx, "dispatch.luau", func() { normalizeLuauCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "objc":
-		dispatcherArmSubpassCensus(ctx, "dispatch.objc", func(census materializationSubpassCensus) {
-			normalizeObjcCompatibility(ctx.root, ctx.source, ctx.lang, census)
-		})
 	case "ninja":
 		dispatcherArmCensus(ctx, "dispatch.ninja", func() { normalizeNinjaCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "perl":

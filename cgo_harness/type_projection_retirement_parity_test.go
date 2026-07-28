@@ -36,6 +36,10 @@ func TestTypeProjectionRetirementCOracleParity(t *testing.T) {
 				"- (void)reset;\n" +
 				"@end\n",
 		},
+		{
+			name:   "objc",
+			source: "void f(){int a=sizeof(CustomType);int b=sizeof(int);}\n",
+		},
 	}
 	for index, test := range tests {
 		test := test

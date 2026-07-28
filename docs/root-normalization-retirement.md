@@ -222,6 +222,10 @@ hashes.
 This change preserves method type identifiers before result compatibility.
 It retires a fifth Objective-C subpass.
 One Objective-C subpass remains live.
+Generic result selection preserves the expression and type alternatives for
+an Objective-C `sizeof` operand.
+It selects the C-equivalent expression for an unknown type name.
+This change retires the final Objective-C subpass and its dispatcher arm.
 The field-aware C-oracle receipt is:
 `harness_out/docker/20260728T111158Z-objc-struct-sized-postfilter-final`.
 The method type C-oracle receipt is:
@@ -310,6 +314,7 @@ there.
 | Objective-C encode and function-pointer repairs | retirement change | 2 Objective-C subpasses | 0 | exact stack equivalence, generic alias selection, production, incremental, and isolated field-aware C-oracle receipts |
 | Objective-C compound struct types | retirement change | 1 Objective-C subpass | 0 | raw-shape hash equivalence, compatibility-free producer, production, census, and isolated C-oracle receipt |
 | D and Objective-C subpass census | retirement change | 2 aggregate arm receipts | 6 named live subpass receipts | positive controls, exact fingerprints, and absent retired labels |
+| Objective-C `sizeof` operands | retirement change | 1 Objective-C subpass / 1 dispatcher arm | 0 | retained generalized alternatives, generic result selection, compatibility-free producer, census, and isolated C-oracle receipt |
 | D storage-class wrappers | retirement change | 1 D subpass | 0 | visible named wrapper election, compatibility-free producer, production, compact fallback, forest, incremental reuse, and isolated C-oracle parity |
 | D variable-type qualifiers | retirement change | 1 D subpass | 0 | compatibility-free producer, production, compact fallback, forest, incremental reuse, and isolated C-oracle parity |
 | D call-expression targets | retirement commit `6a650454e5698d64a0148629cfa444b3dbce6877` | 2 D subpasses / 1 dispatcher arm | 0 | compatibility-free producer, production, compact fallback, forest, incremental, and three isolated C-oracle receipts |
