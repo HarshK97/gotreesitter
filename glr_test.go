@@ -3867,6 +3867,41 @@ func TestGSSCleanZeroAllLinksRejectsErrorBearingPackedPredecessor(t *testing.T) 
 	}
 }
 
+func TestGSSCleanZeroAllLinksCachesFailureForEveryActiveAncestor(t *testing.T) {
+	var nodes gssScratch
+	var scratch glrMergeScratch
+	scratch.beginEquivEpoch()
+
+	cleanSibling := nodes.allocNode(stackEntry{state: 8}, nil, 1)
+	errorPrev := nodes.allocNode(stackEntry{state: 9}, nil, 1)
+	errorEntry := newStackEntryNode(10, NewLeafNode(errorSymbol, true, 0, 1, Point{}, Point{Column: 1}))
+	stackEntryNode(errorEntry).setHasError(true)
+	bad := nodes.allocNode(stackEntry{state: 3}, nil, 1)
+	bad.appendExtraLink(gssMainLink{prev: errorPrev, entry: errorEntry})
+	middle := nodes.allocNode(stackEntry{state: 2}, bad, 2)
+	head := nodes.allocNode(stackEntry{state: 1}, cleanSibling, 3)
+	head.appendExtraLink(gssMainLink{prev: middle, entry: stackEntry{state: 2}})
+
+	if gssNodeCleanZeroErrorAllLinksWithScratch(&scratch, head) {
+		t.Fatal("clean-zero scan accepted an error-bearing ancestor path")
+	}
+	for _, node := range []*gssNode{head, middle, bad} {
+		entry := scratch.cleanZeroCache[node]
+		if entry.resultEpoch != scratch.cleanZeroEpoch || entry.clean {
+			t.Fatalf("ancestor cache = %#v, want current-epoch failure", entry)
+		}
+	}
+	if entry := scratch.cleanZeroCache[cleanSibling]; entry.resultEpoch != scratch.cleanZeroEpoch || !entry.clean {
+		t.Fatalf("clean sibling cache = %#v, want current-epoch success", entry)
+	}
+	if gssNodeCleanZeroErrorAllLinksWithScratch(&scratch, middle) {
+		t.Fatal("cached ancestor failure returned clean")
+	}
+	if len(scratch.cleanZeroFrames) != 0 {
+		t.Fatalf("clean-zero frames after cached failure = %d, want 0", len(scratch.cleanZeroFrames))
+	}
+}
+
 func TestGSSCleanZeroAllLinksFreshParseProofFallsBackAfterError(t *testing.T) {
 	var gssScratch gssScratch
 	childErrors := false
@@ -3885,6 +3920,32 @@ func TestGSSCleanZeroAllLinksFreshParseProofFallsBackAfterError(t *testing.T) {
 	childErrors = true
 	if gssNodeCleanZeroErrorAllLinksWithScratch(&mergeScratch, head) {
 		t.Fatal("clean-zero proof did not fall back after an error was recorded")
+	}
+}
+
+func BenchmarkGSSCleanZeroAllLinksNegativeAncestorCache(b *testing.B) {
+	var nodes gssScratch
+	errorEntry := newStackEntryNode(10, NewLeafNode(errorSymbol, true, 0, 1, Point{}, Point{Column: 1}))
+	stackEntryNode(errorEntry).setHasError(true)
+	bad := nodes.allocNode(stackEntry{state: 3}, nil, 1)
+	bad.appendExtraLink(gssMainLink{entry: errorEntry})
+
+	head := bad
+	const chainLen = 1000
+	for i := 1; i < chainLen; i++ {
+		head = nodes.allocNode(stackEntry{state: StateID(i%17 + 1)}, head, uint32(i+1))
+	}
+
+	var scratch glrMergeScratch
+	scratch.ensureMergeHotCaches()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		scratch.beginCleanZeroEpoch()
+		for node := head; node != nil; node = node.prev {
+			if gssNodeCleanZeroErrorAllLinksWithScratch(&scratch, node) {
+				b.Fatal("negative ancestor returned clean")
+			}
+		}
 	}
 }
 
