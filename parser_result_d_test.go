@@ -2,49 +2,6 @@ package gotreesitter
 
 import "testing"
 
-func TestNormalizeDVariableTypeQualifiersMergesSharedIntoType(t *testing.T) {
-	lang := &Language{
-		Name:        "d",
-		SymbolNames: []string{"EOF", "variable_declaration", "storage_class", "type_ctor", "shared", "type", "identifier", "declarator", ";"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "variable_declaration", Visible: true, Named: true},
-			{Name: "storage_class", Visible: true, Named: true},
-			{Name: "type_ctor", Visible: true, Named: true},
-			{Name: "shared", Visible: true, Named: false},
-			{Name: "type", Visible: true, Named: true},
-			{Name: "identifier", Visible: true, Named: true},
-			{Name: "declarator", Visible: true, Named: true},
-			{Name: ";", Visible: true, Named: false},
-		},
-	}
-
-	arena := newNodeArena(arenaClassFull)
-	sharedLeaf := newLeafNodeInArena(arena, 4, false, 7, 13, Point{Column: 7}, Point{Column: 13})
-	typeCtor := newParentNodeInArena(arena, 3, true, []*Node{sharedLeaf}, nil, 0)
-	storageClass := newParentNodeInArena(arena, 2, true, []*Node{typeCtor}, nil, 0)
-	ident := newLeafNodeInArena(arena, 6, true, 14, 31, Point{Column: 14}, Point{Column: 31})
-	typ := newParentNodeInArena(arena, 5, true, []*Node{ident}, nil, 0)
-	decl := newLeafNodeInArena(arena, 7, true, 32, 40, Point{Column: 32}, Point{Column: 40})
-	semi := newLeafNodeInArena(arena, 8, false, 40, 41, Point{Column: 40}, Point{Column: 41})
-	varDecl := newParentNodeInArena(arena, 1, true, []*Node{storageClass, typ, decl, semi}, nil, 0)
-
-	normalizeDVariableTypeQualifiers(varDecl, lang)
-
-	if got, want := len(varDecl.children), 3; got != want {
-		t.Fatalf("variable child count = %d, want %d", got, want)
-	}
-	if got, want := varDecl.children[0].Type(lang), "type"; got != want {
-		t.Fatalf("varDecl.children[0].Type = %q, want %q", got, want)
-	}
-	if got, want := len(varDecl.children[0].children), 2; got != want {
-		t.Fatalf("type child count = %d, want %d", got, want)
-	}
-	if got, want := varDecl.children[0].children[0].Type(lang), "type_ctor"; got != want {
-		t.Fatalf("type child[0] = %q, want %q", got, want)
-	}
-}
-
 func TestNormalizeDCallExpressionPropertyTypesWrapsQualifiedTarget(t *testing.T) {
 	lang := &Language{
 		Name:        "d",

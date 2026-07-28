@@ -135,6 +135,11 @@ func TestRetiredDispatchArmCOracleParity(t *testing.T) {
 			source:   "module m;\nvoid f() { static int value; }\n",
 		},
 		{
+			name:     "d_variable_type_qualifier",
+			language: "d",
+			source:   "static shared Mallocator instance;",
+		},
+		{
 			name:     "forth_leading_trivia_root",
 			language: "forth",
 			source:   "\n: square dup * ;\n",
