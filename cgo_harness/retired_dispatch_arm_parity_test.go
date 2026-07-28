@@ -140,6 +140,21 @@ func TestRetiredDispatchArmCOracleParity(t *testing.T) {
 			source:   "static shared Mallocator instance;",
 		},
 		{
+			name:     "d_property_call_type",
+			language: "d",
+			source:   "void f() { a.b.c(); }\n",
+		},
+		{
+			name:     "d_property_template_call_type",
+			language: "d",
+			source:   "void f() { a.b.foo!int(); }\n",
+		},
+		{
+			name:     "d_simple_type_callee",
+			language: "d",
+			source:   "void f() { Type(); }\n",
+		},
+		{
 			name:     "forth_leading_trivia_root",
 			language: "forth",
 			source:   "\n: square dup * ;\n",
