@@ -156,8 +156,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.elixir", func() { normalizeElixirCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "enforce":
 		dispatcherArmCensus(ctx, "dispatch.enforce", func() { normalizeEnforceCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "ebnf":
-		dispatcherArmCensus(ctx, "dispatch.ebnf", func() { normalizeEBNFCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "eds":
 		dispatcherArmCensus(ctx, "dispatch.eds", func() { normalizeEDSCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "fsharp":
