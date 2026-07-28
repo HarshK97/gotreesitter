@@ -6806,7 +6806,11 @@ func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClas
 	}
 	mergePerKeyCap := p.resolveParseMergePerKeyCap(source, reuse, maxMergePerKeyOverride)
 	scratch.merge.perKeyCap = mergePerKeyCap
-	scratch.merge.faithfulCapOne = reuse == nil && mergePerKeyCap == 1
+	scratch.merge.faithfulCapOne = reuse == nil &&
+		mergePerKeyCap == 1 &&
+		((p.language != nil && p.language.FullParseGSSConvergenceEnabled) ||
+			parseMaxMergePerKeyEnvConfigured() ||
+			maxMergePerKeyOverride < 0)
 
 	maxNodes := parseNodeLimitForLanguage(len(source), p.language)
 	if maxNodesOverride > maxNodes {

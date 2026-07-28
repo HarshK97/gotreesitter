@@ -1022,9 +1022,29 @@ func TestConfigureParseCapsScopesFaithfulGSSConvergenceToFreshCapOne(t *testing.
 		)
 	}
 
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	uncertifiedParser := &Parser{language: &Language{Name: "kotlin"}}
+	var uncertifiedDefault parserScratch
+	uncertifiedDefaultCaps := uncertifiedParser.configureParseCaps(
+		[]byte("source"),
+		nil,
+		arenaClassFull,
+		&uncertifiedDefault,
+		0,
+		0,
+		0,
+	)
+	if uncertifiedDefaultCaps.mergePerKeyCap != 1 || uncertifiedDefault.merge.faithfulCapOne {
+		t.Fatalf(
+			"uncertified default cap=%d faithful=%t, want cap=1 faithful=false",
+			uncertifiedDefaultCaps.mergePerKeyCap,
+			uncertifiedDefault.merge.faithfulCapOne,
+		)
+	}
+
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "1")
 	ResetParseEnvConfigCacheForTests()
-	uncertifiedParser := &Parser{language: &Language{Name: "uncertified"}}
 	var explicitCapOne parserScratch
 	explicitCapOneCaps := uncertifiedParser.configureParseCaps(
 		[]byte("source"),
