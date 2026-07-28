@@ -3215,6 +3215,58 @@ func TestTryGSSMainMergeResultClearsMaterializingCache(t *testing.T) {
 	}
 }
 
+func TestCertifiedMaterializingShapeHashIncludesRawDescendants(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	parser := &Parser{}
+	makeMethodType := func(leafSymbol Symbol) *Node {
+		leaf := NewLeafNode(leafSymbol, true, 1, 4, Point{Column: 1}, Point{Column: 4})
+		inner := NewParentNode(356, true, []*Node{leaf}, nil, 0)
+		inner.parseState = 3814
+		inner.rawShape = parser.captureRawShape(
+			nil,
+			arena,
+			inner.symbol,
+			inner.productionID,
+			[]stackEntry{newStackEntryNode(inner.parseState, leaf)},
+			0,
+			1,
+		)
+		outer := NewParentNode(469, true, []*Node{inner}, nil, 0)
+		outer.parseState = 4827
+		outer.rawShape = parser.captureRawShape(
+			nil,
+			arena,
+			outer.symbol,
+			outer.productionID,
+			[]stackEntry{newStackEntryNode(outer.parseState, inner)},
+			0,
+			1,
+		)
+		return outer
+	}
+
+	leftEntry := newStackEntryNode(4827, makeMethodType(1))
+	rightEntry := newStackEntryNode(4827, makeMethodType(587))
+	if leftHash, rightHash := gssEntryHash(gssHashSeed, leftEntry), gssEntryHash(gssHashSeed, rightEntry); leftHash != rightHash {
+		t.Fatalf("test setup shallow hashes differ: left=%d right=%d", leftHash, rightHash)
+	}
+
+	var gssScratch gssScratch
+	left := glrStack{gss: buildGSSStack([]stackEntry{{state: 1}, leftEntry}, &gssScratch), byteOffset: 4}
+	right := glrStack{gss: buildGSSStack([]stackEntry{{state: 1}, rightEntry}, &gssScratch), byteOffset: 4}
+	scratch := glrMergeScratch{
+		arena: arena,
+		language: &Language{
+			ExactStackNodeEquivalenceCertified: true,
+		},
+	}
+	scratch.beginEquivEpoch()
+	scratch.ensureMergeHotCaches()
+	if !gssStacksHaveDistinctMaterializingShapesWithScratch(&scratch, &left, &right) {
+		t.Fatal("certified materializing shape hash merged alias-distinct descendants")
+	}
+}
+
 func TestTryGSSMainMergeResultRejectsDistinctScoreBeforeMutation(t *testing.T) {
 	var gssScratch gssScratch
 	node := NewLeafNode(11, true, 0, 5, Point{}, Point{Column: 5})

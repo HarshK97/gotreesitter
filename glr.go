@@ -966,10 +966,25 @@ func stackMaterializingShapeHashWithScratch(scratch *glrMergeScratch, s *glrStac
 		if !stackEntryMaterializesForResult(s.entries[i]) {
 			continue
 		}
-		h = gssEntryHash(h, s.entries[i])
+		h = materializingShapeEntryHashWithScratch(scratch, h, s.entries[i])
 		count++
 	}
 	return finalizeMaterializingShapeHash(glrMaterializingShapeHash{hash: h, count: count})
+}
+
+func materializingShapeEntryHashWithScratch(scratch *glrMergeScratch, h uint64, entry stackEntry) uint64 {
+	h = gssEntryHash(h, entry)
+	if scratch == nil ||
+		scratch.language == nil ||
+		!scratch.language.ExactStackNodeEquivalenceCertified ||
+		scratch.arena == nil {
+		return h
+	}
+	if shape, ok := rawShapeForStackEntry(scratch.arena, entry); ok {
+		h ^= shape.contentHash
+		h *= gssHashPrime
+	}
+	return h
 }
 
 func finalizeMaterializingShapeHash(prefix glrMaterializingShapeHash) (uint64, bool) {
@@ -1011,7 +1026,7 @@ func gssMaterializingShapePrefix(scratch *glrMergeScratch, n *gssNode) glrMateri
 		cur := pending[i]
 		if stackEntryMaterializesForResult(cur.entry) {
 			prefix = glrMaterializingShapeHash{
-				hash:  gssEntryHash(prefix.hash, cur.entry),
+				hash:  materializingShapeEntryHashWithScratch(scratch, prefix.hash, cur.entry),
 				count: prefix.count + 1,
 			}
 		}
@@ -2607,6 +2622,10 @@ func languageNeedsExactStackNodeEquivalence(lang *Language) bool {
 	if lang == nil {
 		return false
 	}
+	if lang.ExactStackNodeEquivalenceCertified {
+		return true
+	}
+	// These historical grammar-name rules predate exact artifact profiles.
 	switch lang.Name {
 	case "typescript", "tsx":
 		return true
@@ -3569,7 +3588,20 @@ func stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(scratch *glrMergeScr
 	an := stackEntryNode(a)
 	bn := stackEntryNode(b)
 	if an != nil && bn != nil {
-		return stackEntryNodesEquivalentIgnoringDynamic(an, bn)
+		if !stackEntryNodesEquivalentIgnoringDynamic(an, bn) {
+			return false
+		}
+		if scratch != nil &&
+			scratch.language != nil &&
+			scratch.language.ExactStackNodeEquivalenceCertified &&
+			scratch.arena != nil {
+			aShape, aOK := rawShapeForStackEntry(scratch.arena, a)
+			bShape, bOK := rawShapeForStackEntry(scratch.arena, b)
+			if aOK && bOK && aShape.contentHash != bShape.contentHash {
+				return false
+			}
+		}
+		return true
 	}
 	if !stackEntryHasNode(a) || !stackEntryHasNode(b) {
 		return !stackEntryHasNode(a) && !stackEntryHasNode(b)

@@ -1572,6 +1572,65 @@ func TestReduceDoesNotShareDifferentChildIdentity(t *testing.T) {
 	}
 }
 
+func TestNoLookaheadReductionMarksOnlyTransparentGotoExtra(t *testing.T) {
+	run := func(t *testing.T, gotoState StateID, wantExtra bool) {
+		t.Helper()
+		tables := &fakeTable{
+			actions: map[tableCell][]Action{
+				{state: 1, symbol: 9}: {{Type: ActionShift, State: 2}},
+				{state: 2, symbol: 0}: {{Type: ActionReduce, Symbol: 5, ChildCount: 1}},
+			},
+			gotos: map[tableCell]StateID{
+				{state: 1, symbol: 5}: gotoState,
+			},
+		}
+		compact, err := New(tables, Limits{MaxDerivations: 4, MaxPopPaths: 4})
+		if err != nil {
+			t.Fatal(err)
+		}
+		seed, err := compact.Seed(1, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shifted, err := compact.Shift(
+			seed,
+			9,
+			0,
+			Token{Symbol: 9, StartByte: 0, EndByte: 1},
+			ForkOrder{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		compact.SetReduceNoLookaheadContext(true)
+		reduced, err := compact.Reduce(shifted, 0, 0, ForkOrder{})
+		compact.SetReduceNoLookaheadContext(false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(reduced) != 1 {
+			t.Fatalf("reduction outputs=%d, want 1", len(reduced))
+		}
+		paths, err := compact.Derivations(reduced[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(paths) != 1 || len(paths[0].Payloads) != 1 {
+			t.Fatalf("reduced paths=%+v, want one payload", paths)
+		}
+		view, err := compact.Subtree(paths[0].Payloads[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if view.Extra != wantExtra {
+			t.Fatalf("reduced parent extra=%t, want %t", view.Extra, wantExtra)
+		}
+	}
+
+	t.Run("transparent", func(t *testing.T) { run(t, 1, true) })
+	t.Run("state-progress", func(t *testing.T) { run(t, 3, false) })
+}
+
 func TestReduceOutputsAggregatesFreshnessPerFinalBoundary(t *testing.T) {
 	t.Run("new-dominates-later-fold", func(t *testing.T) {
 		tables := &fakeTable{

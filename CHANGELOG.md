@@ -7,7 +7,82 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Performance
+
+- The compact full-parse runner now reuses buffers during canonicalization and
+  tree materialization.
+  Warm materialization drops from 136,584 to 272 bytes per operation.
+  Its allocation count drops from 47 to 8.
+  Total warm allocation drops from 20,440 to 5,208 bytes per operation.
+  Total parse time remains statistically unchanged.
+
+- The compact scheduler stores its one-element seed frontier inside the
+  scheduler allocation.
+  The warm full-parse benchmark drops from 20,352 to 20,328 bytes per operation.
+  Allocations drop from 66 to 65 per operation.
+  Parse time remains statistically unchanged.
+
 ### Fixed
+
+- Result materialization now rejects a transient replacement that points back
+  to its current parent.
+  The parser returns an acyclic invariant error tree before it creates a
+  self-edge.
+
+- Native visible-wrapper election now owns D storage classes.
+  This retires the matching result-normalization subpass.
+  Native reduction also owns D variable-type qualifiers.
+  Native call targets now match C for qualified, template, and simple callees.
+  This retires the D dispatcher arm.
+
+- The Cooklang smoke fixture now uses a valid ingredient instruction.
+  The previous period required production recovery and was omitted from the
+  resulting tree.
+  The valid fixture routes directly while the recovered form still falls back.
+  The smoke scorecard reports 200 direct routes and one fallback.
+
+- Compact admission now treats zero-width extras as progress when their token
+  end advances the parser boundary.
+  COBOL fixed-format padding now routes directly without weakening the
+  same-byte no-progress guard.
+  The smoke scorecard reports 199 direct routes and two fallbacks.
+
+- Compact admission now supports bounded no-lookahead reductions.
+  One runnable head can reduce a synthetic EOF and re-elect at the same byte.
+  Transparent gotos mark the reduced node as an extra.
+  A root reduction requires authenticated EOF on the next election.
+  Doxygen, JSDoc, and VHDL now route directly.
+  The smoke scorecard reports 198 direct routes and three fallbacks.
+
+- Compact admission now supports two certified acceptance-frontier shapes.
+  HTTP and Robot can drop EOF siblings with no actions.
+  Meson can select the sole primary accepted derivation.
+  Exact blob profiles and field-aware C-oracle receipts guard these choices.
+  The current smoke scorecard reports 195 direct routes and no divergence.
+
+- Compact admission now permits certified converged-path reduction split drops
+  for the exact Bash, Erlang, Haskell, and JavaScript artifacts.
+  Field-aware C-oracle receipts cover each selected compact tree.
+  Three real-corpus files and the Haskell smoke fixture now route directly.
+
+- Compact reduction outputs now carry their multi-pop fact directly.
+  This avoids two full work snapshots on every reduction.
+  The stable full-parse control improves by 8 percent against `main`.
+  Full-parse allocation falls by 12 percent with no new allocations.
+
+- The dispatcher census now records each live D and Objective-C subpass.
+  Exact fingerprints retain spans, points, fields, flags, and parser states.
+  The census does not materialize compact final-child references.
+
+- The parser now folds raw descendant content into certified
+  materializing-shape hashes.
+  This prevents shallow GSS merges from discarding Objective-C method types.
+  The parser now owns those identifiers before result compatibility.
+  This retires a fifth Objective-C normalization subpass.
+
+- Generic result selection preserves both valid Objective-C `sizeof` branches.
+  It selects the C-equivalent expression branch for an unknown type name.
+  This retires the final Objective-C subpass and its dispatcher arm.
 
 - DFA keyword promotion now owns Arduino primitive types before compatibility.
   Native materialization owns Objective-C protocol type identifiers.
@@ -116,6 +191,20 @@ for tags and release notes while still in `0.x`.
   A downstream user reported this behavior in issue #454.
 
 ### Removed
+
+- **The D template-call type result repair.** Generic result election now
+  preserves a visible named unary wrapper over its direct-child alternative.
+  Production, forest, incremental, and isolated C-oracle receipts match.
+  Four unrelated D subpasses remain live.
+
+- **Two Objective-C result repairs.** Exact stack-node equivalence preserves
+  deep alternatives for generic alias-target selection.
+  Native selection now owns `@encode` identifiers and function-pointer
+  expression shapes.
+  Production, incremental, and field-aware C-oracle receipts match.
+  Native selection also owns single and concatenated `@` strings.
+  Raw-shape equivalence now preserves compound struct type specifiers.
+  Two unrelated Objective-C subpasses remain live.
 
 - **The D module-bound result repair.** Native reduction already excludes
   leading comments and trailing trivia from each `module_def` span.

@@ -144,8 +144,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.corn", func() { normalizeCornCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "crystal":
 		dispatcherArmCensus(ctx, "dispatch.crystal", func() { normalizeCrystalCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "d":
-		dispatcherArmCensus(ctx, "dispatch.d", func() { normalizeDCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "dart":
 		dispatcherArmCensus(ctx, "dispatch.dart", func() { normalizeDartCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "doxygen":
@@ -204,8 +202,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.kotlin", func() { normalizeKotlinCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "luau":
 		dispatcherArmCensus(ctx, "dispatch.luau", func() { normalizeLuauCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "objc":
-		dispatcherArmCensus(ctx, "dispatch.objc", func() { normalizeObjcCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "ninja":
 		dispatcherArmCensus(ctx, "dispatch.ninja", func() { normalizeNinjaCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "perl":
@@ -310,6 +306,52 @@ func dispatcherArmCensus(ctx resultCompatibilityContext, armID string, fn func()
 	}
 	before := captureDispatcherFingerprint(ctx.root)
 	fn()
+	after := captureDispatcherFingerprint(ctx.root)
+	visited, rewritten := diffDispatcherFingerprint(before, after)
+	if ctx.parser != nil {
+		ctx.parser.recordNormalizationMetric(armID, 1, 1, visited, rewritten)
+	}
+}
+
+// materializationSubpassCensus records one named subpass within a dispatcher
+// arm. The parent arm supplies its enabled state, so each subpass avoids
+// another environment lookup.
+type materializationSubpassCensus struct {
+	ctx     resultCompatibilityContext
+	enabled bool
+}
+
+// run invokes fn and records its exact tree mutation receipt when the parent
+// dispatcher census is enabled.
+func (c materializationSubpassCensus) run(subpassID string, fn func()) {
+	if !c.enabled {
+		fn()
+		return
+	}
+	before := captureDispatcherFingerprint(c.ctx.root)
+	fn()
+	after := captureDispatcherFingerprint(c.ctx.root)
+	visited, rewritten := diffDispatcherFingerprint(before, after)
+	if c.ctx.parser != nil {
+		c.ctx.parser.recordNormalizationMetric(subpassID, 1, 1, visited, rewritten)
+	}
+}
+
+// dispatcherArmSubpassCensus preserves the aggregate dispatcher receipt and
+// supplies one recorder for its materialization subpasses.
+func dispatcherArmSubpassCensus(
+	ctx resultCompatibilityContext,
+	armID string,
+	fn func(materializationSubpassCensus),
+) {
+	enabled := dispatcherCensusEnabled()
+	census := materializationSubpassCensus{ctx: ctx, enabled: enabled}
+	if !enabled {
+		fn(census)
+		return
+	}
+	before := captureDispatcherFingerprint(ctx.root)
+	fn(census)
 	after := captureDispatcherFingerprint(ctx.root)
 	visited, rewritten := diffDispatcherFingerprint(before, after)
 	if ctx.parser != nil {

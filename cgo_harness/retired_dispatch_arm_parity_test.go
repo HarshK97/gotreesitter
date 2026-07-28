@@ -125,6 +125,36 @@ func TestRetiredDispatchArmCOracleParity(t *testing.T) {
 			source:   "// license\n\nmodule test;\nimport std.stdio;\n",
 		},
 		{
+			name:     "d_template_call_type",
+			language: "d",
+			source:   "void f() { foo!int(); }\n",
+		},
+		{
+			name:     "d_storage_class_wrapper",
+			language: "d",
+			source:   "module m;\nvoid f() { static int value; }\n",
+		},
+		{
+			name:     "d_variable_type_qualifier",
+			language: "d",
+			source:   "static shared Mallocator instance;",
+		},
+		{
+			name:     "d_property_call_type",
+			language: "d",
+			source:   "void f() { a.b.c(); }\n",
+		},
+		{
+			name:     "d_property_template_call_type",
+			language: "d",
+			source:   "void f() { a.b.foo!int(); }\n",
+		},
+		{
+			name:     "d_simple_type_callee",
+			language: "d",
+			source:   "void f() { Type(); }\n",
+		},
+		{
 			name:     "forth_leading_trivia_root",
 			language: "forth",
 			source:   "\n: square dup * ;\n",

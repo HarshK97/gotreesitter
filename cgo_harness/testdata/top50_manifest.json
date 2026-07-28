@@ -149,6 +149,66 @@
       "language": "go",
       "repo_url": "https://github.com/kubernetes/api",
       "commit": "83e86af0041ff45347a425182506d7c28d173d1f"
+    },
+    {
+      "language": "typescript",
+      "repo_url": "https://github.com/sindresorhus/type-fest",
+      "commit": "48ddc4ba71cb215c3e3d98b0257360edc229fa75",
+      "subdir": "source"
+    },
+    {
+      "language": "kotlin",
+      "repo_url": "https://github.com/Kotlin/kotlinx-datetime",
+      "commit": "292e7e0ce510407ca6907f634731e84b104e51cc"
+    },
+    {
+      "language": "lua",
+      "repo_url": "https://github.com/nvim-lua/plenary.nvim",
+      "commit": "74b06c6c75e4eeb3108ec01852001636d85a932b",
+      "subdir": "lua"
+    },
+    {
+      "language": "xml",
+      "repo_url": "https://github.com/apache/maven",
+      "commit": "8d0f7bc2a36f199b79a30c7676b0f00c2e9eb293"
+    },
+    {
+      "language": "toml",
+      "repo_url": "https://github.com/tree-sitter/tree-sitter",
+      "commit": "4deef2d5ef0d2dc738289f50622211a24ff7d9a0"
+    },
+    {
+      "language": "markdown",
+      "repo_url": "https://github.com/tree-sitter/tree-sitter",
+      "commit": "4deef2d5ef0d2dc738289f50622211a24ff7d9a0",
+      "subdir": "docs"
+    },
+    {
+      "language": "gomod",
+      "repo_url": "https://github.com/golang/tools",
+      "commit": "63ec6f9ccb03c2a50c7e30d4e0ad29bf301e6d36"
+    },
+    {
+      "language": "ini",
+      "repo_url": "https://github.com/pytest-dev/pytest",
+      "commit": "ab2ba2dcb35958dfaae65e6485055f157daafbb8"
+    },
+    {
+      "language": "json5",
+      "repo_url": "https://github.com/wtetsu/mouse-dictionary",
+      "commit": "bbd6e14f63b1cfd427a545e0ce82301bc5d2ac64",
+      "subdir": "data"
+    },
+    {
+      "language": "zig",
+      "repo_url": "https://github.com/ziglang/zig",
+      "commit": "738d2be9d6b6ef3ff3559130c05159ef53336224",
+      "subdir": "lib"
+    },
+    {
+      "language": "make",
+      "repo_url": "https://github.com/sudar/Arduino-Makefile",
+      "commit": "a1fbda0c53a75862bd7ac6285b70103ed04f70a6"
     }
   ]
 }

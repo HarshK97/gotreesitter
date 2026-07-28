@@ -2,8 +2,8 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 59,
-    "dispatcher_languages": 61,
+    "dispatcher_arms": 57,
+    "dispatcher_languages": 59,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
@@ -570,24 +570,27 @@
       "languages": [
         "d"
       ],
-      "purpose": "Reconcile D returned-tree fields and aliases. Native reduction owns module_def bounds.",
+      "purpose": "Native reduction and derivation selection own D module bounds and call-expression targets.",
       "authoritative_owner": "materialization",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go",
         "grammars/d_module_span_native_regression_test.go",
+        "grammars/d_call_expression_native_regression_test.go",
         "cgo_harness/retired_dispatch_arm_parity_test.go"
       ],
       "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
+      "status": "retired",
+      "retired_commit": "6a650454e5698d64a0148629cfa444b3dbce6877",
       "receipt_refs": [
         "grammars/d_module_span_native_regression_test.go",
+        "grammars/d_call_expression_native_regression_test.go",
         "cgo_harness/retired_dispatch_arm_parity_test.go"
       ]
     },
@@ -1527,23 +1530,28 @@
       "languages": [
         "objc"
       ],
-      "purpose": "Reconcile Objective-C method types, sizeof operands, literals, sized types, encode types, function pointers, fields, and spans. Native projection now owns protocol type identifiers.",
+      "purpose": "Reconcile Objective-C method types, sizeof operands, literals, sized types, encode types, function pointers, fields, and spans.",
       "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go",
-        "grammars/type_projection_native_regression_test.go",
+        "parser_result_objc_test.go",
+        "grammars/objc_sizeof_native_regression_test.go",
         "cgo_harness/type_projection_retirement_parity_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: generalized parsing retains both valid sizeof branches. Generic result selection chooses the C-equivalent expression branch without result compatibility.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "d84aff3d1fa3031e911317ce342e2c6d10697f20",
+      "receipt_refs": [
+        "parser_result_objc_test.go",
+        "grammars/objc_sizeof_native_regression_test.go",
+        "cgo_harness/type_projection_retirement_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.nginx",

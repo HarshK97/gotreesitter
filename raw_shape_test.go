@@ -387,18 +387,67 @@ func TestForestChildAlternativeResolutionPreservesVisibleNamedUnaryWrapper(t *te
 	}
 	parser := &Parser{language: lang, hasRootSymbol: true, rootSymbol: rootSym}
 
-	target := newLeafNodeInArena(arena, targetSym, true, 8, 12, Point{Column: 8}, Point{Column: 12})
-	call := newParentNodeInArena(arena, callSym, true, []*Node{target}, nil, 0)
+	targetA := newLeafNodeInArena(arena, targetSym, true, 8, 10, Point{Column: 8}, Point{Column: 10})
+	targetB := newLeafNodeInArena(arena, targetSym, true, 10, 12, Point{Column: 10}, Point{Column: 12})
+	call := newParentNodeInArena(arena, callSym, true, []*Node{targetA, targetB}, nil, 0)
 	guard := newParentNodeInArena(arena, guardSym, true, []*Node{call}, nil, 0)
 	root := newParentNodeInArena(arena, rootSym, true, []*Node{guard}, nil, 0)
 	root.rawShape = parser.captureRawShape(nil, arena, rootSym, 0, []stackEntry{newStackEntryNode(0, guard)}, 0, 1)
 
+	prev := &gssForestNode{state: 7}
+	local := &gssForestNode{
+		state:      42,
+		byteOffset: 12,
+		links: []gssLink{
+			{prev: prev, subtree: newStackEntryNode(42, guard), score: 0, errorCost: 0},
+			{prev: prev, subtree: newStackEntryNode(42, call), score: 10, errorCost: 0},
+		},
+	}
 	alternatives := newForestAlternativeIndex(4)
-	alternatives.setNode(guard, &gssForestNode{state: 10})
-	alternatives.setNode(call, &gssForestNode{state: 20})
+	forestRecordAlternative(alternatives, newStackEntryNode(42, guard), local)
+	forestRecordParentChildAlternatives(
+		alternatives,
+		root,
+		root.children,
+		[]stackEntry{newStackEntryNode(42, guard)},
+	)
 	resolveForestChildAlternatives(parser, arena, root, alternatives, nil, 0)
 	if got := root.children[0]; got != guard {
 		t.Fatalf("resolved child = %v, want visible guard_clause wrapper preserved", got)
+	}
+}
+
+func TestStackEntryDirectChildPreferencePreservesVisibleNamedUnaryWrapper(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	const (
+		wrapperSym Symbol = 1
+		directSym  Symbol = 2
+		partSym    Symbol = 3
+	)
+	lang := &Language{
+		SymbolNames: []string{"EOF", "type", "template_instance", "part"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "type", Visible: true, Named: true},
+			{Name: "template_instance", Visible: true, Named: true},
+			{Name: "part", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{language: lang}
+	partA := newLeafNodeInArena(arena, partSym, true, 0, 1, Point{}, Point{Column: 1})
+	partB := newLeafNodeInArena(arena, partSym, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	direct := newParentNodeInArena(arena, directSym, true, []*Node{partA, partB}, nil, 0)
+	wrapper := newParentNodeInArena(arena, wrapperSym, true, []*Node{direct}, nil, 0)
+	wrapperEntry := newStackEntryNode(1, wrapper)
+	directEntry := newStackEntryNode(1, direct)
+
+	if cmp := compareStackEntryDirectChildPreference(parser, arena, wrapperEntry, directEntry, 0); cmp <= 0 {
+		t.Fatalf("wrapper/direct preference = %d, want wrapper winner", cmp)
+	}
+	if cmp := compareStackEntryDirectChildPreference(parser, arena, directEntry, wrapperEntry, 0); cmp >= 0 {
+		t.Fatalf("direct/wrapper preference = %d, want direct loser", cmp)
 	}
 }
 

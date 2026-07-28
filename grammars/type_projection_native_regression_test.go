@@ -157,6 +157,32 @@ func typeProjectionRetirementCases() []typeProjectionRetirementCase {
 			assert:         assertObjcProtocolTypeIdentifier,
 			compactDecline: true,
 		},
+		{
+			name: "objc_method_type_sequence_scalar_first",
+			source: []byte(
+				"@interface T : NSObject\n" +
+					"- (NSUInteger)count;\n" +
+					"+ (NSArray*)items;\n" +
+					"- (void)reset;\n" +
+					"@end",
+			),
+			language:       ObjcLanguage(),
+			assert:         assertObjcMethodTypeSequence,
+			compactDecline: true,
+		},
+		{
+			name: "objc_method_type_sequence_pointer_first",
+			source: []byte(
+				"@interface T : NSObject\n" +
+					"+ (NSArray*)items;\n" +
+					"- (NSUInteger)count;\n" +
+					"- (void)reset;\n" +
+					"@end",
+			),
+			language:       ObjcLanguage(),
+			assert:         assertObjcMethodTypeSequence,
+			compactDecline: true,
+		},
 	}
 }
 
@@ -196,6 +222,50 @@ func assertObjcProtocolTypeIdentifier(
 ) {
 	t.Helper()
 	assertTypeProjectionLeaf(t, root, language, source, "type_identifier", "ClientProtocol")
+}
+
+func assertObjcMethodTypeSequence(
+	t *testing.T,
+	root *gotreesitter.Node,
+	language *gotreesitter.Language,
+	source []byte,
+) {
+	t.Helper()
+	scalar := findTypeProjectionNode(
+		root,
+		language,
+		source,
+		"type_name",
+		"NSUInteger",
+	)
+	if scalar == nil || scalar.ChildCount() != 1 ||
+		scalar.Child(0).Type(language) != "type_identifier" {
+		t.Fatalf("Objective-C scalar method type = %v: %s", scalar, root.SExpr(language))
+	}
+
+	pointer := findTypeProjectionNode(
+		root,
+		language,
+		source,
+		"type_name",
+		"NSArray*",
+	)
+	if pointer == nil || pointer.ChildCount() != 2 ||
+		pointer.Child(0).Type(language) != "type_identifier" ||
+		pointer.Child(1).Type(language) != "abstract_pointer_declarator" {
+		t.Fatalf("Objective-C pointer method type = %v: %s", pointer, root.SExpr(language))
+	}
+
+	primitive := findTypeProjectionNode(
+		root,
+		language,
+		source,
+		"primitive_type",
+		"void",
+	)
+	if primitive == nil {
+		t.Fatalf("Objective-C primitive method type is missing: %s", root.SExpr(language))
+	}
 }
 
 func assertTypeProjectionLeaf(

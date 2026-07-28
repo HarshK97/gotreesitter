@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"testing"
 
 	gts "github.com/odvcencio/gotreesitter"
@@ -66,30 +67,30 @@ var admissionScorecardRequiredCompactPasses = map[string]struct{}{
 	"asm": {}, "astro": {}, "awk": {}, "bash": {}, "bass": {}, "beancount": {}, "bibtex": {},
 	"bicep": {}, "bitbake": {}, "blade": {}, "brightscript": {}, "c_sharp": {},
 	"caddy": {}, "cairo": {}, "capnp": {}, "chatito": {}, "circom": {},
-	"clojure": {}, "cmake": {}, "comment": {}, "commonlisp": {}, "corn": {}, "cpon": {}, "crystal": {}, "css": {},
+	"clojure": {}, "cmake": {}, "cobol": {}, "comment": {}, "commonlisp": {}, "cooklang": {}, "corn": {}, "cpon": {}, "crystal": {}, "css": {},
 	"csv": {}, "cuda": {}, "cue": {}, "cylc": {}, "d": {}, "dart": {},
 	"desktop": {}, "devicetree": {}, "dhall": {}, "diff": {}, "disassembly": {}, "djot": {}, "dockerfile": {},
-	"dot": {}, "dtd": {}, "earthfile": {}, "ebnf": {}, "editorconfig": {},
+	"dot": {}, "doxygen": {}, "dtd": {}, "earthfile": {}, "ebnf": {}, "editorconfig": {},
 	"eds": {}, "eex": {}, "elisp": {}, "elixir": {}, "elm": {}, "elsa": {}, "embedded_template": {}, "enforce": {},
 	"erlang": {}, "facility": {}, "faust": {}, "fennel": {}, "fidl": {},
 	"firrtl": {}, "fish": {}, "foam": {}, "forth": {}, "fortran": {}, "fsharp": {},
 	"gdscript": {}, "git_config": {}, "git_rebase": {}, "gitattributes": {}, "gitcommit": {}, "gitignore": {}, "gleam": {},
 	"glsl": {}, "gn": {}, "go": {}, "godot_resource": {}, "gomod": {}, "graphql": {},
 	"groovy": {}, "hack": {}, "hare": {}, "haskell": {}, "haxe": {}, "hcl": {}, "heex": {},
-	"hlsl": {}, "html": {}, "hurl": {}, "hyprlang": {}, "ini": {}, "janet": {}, "javascript": {}, "jinja2": {}, "jq": {},
+	"hlsl": {}, "html": {}, "http": {}, "hurl": {}, "hyprlang": {}, "ini": {}, "janet": {}, "javascript": {}, "jinja2": {}, "jq": {}, "jsdoc": {},
 	"json5": {}, "jsonnet": {}, "julia": {}, "just": {}, "kconfig": {}, "kdl": {}, "kotlin": {},
 	"ledger": {}, "less": {}, "linkerscript": {}, "liquid": {}, "llvm": {}, "lua": {},
-	"luau": {}, "make": {}, "markdown": {}, "matlab": {}, "mermaid": {}, "mojo": {},
+	"luau": {}, "make": {}, "markdown": {}, "matlab": {}, "mermaid": {}, "meson": {}, "mojo": {},
 	"move": {}, "nginx": {}, "nickel": {}, "nim": {}, "ninja": {}, "nix": {}, "norg": {}, "nushell": {},
 	"objc": {}, "ocaml": {}, "odin": {}, "org": {}, "pascal": {}, "pem": {}, "perl": {},
 	"php": {}, "pkl": {}, "powershell": {}, "prisma": {}, "prolog": {}, "promql": {},
 	"properties": {}, "proto": {}, "pug": {}, "puppet": {}, "purescript": {}, "python": {}, "ql": {},
-	"r": {}, "racket": {}, "regex": {}, "rego": {}, "requirements": {}, "rescript": {}, "ron": {},
+	"r": {}, "racket": {}, "regex": {}, "rego": {}, "requirements": {}, "rescript": {}, "robot": {}, "ron": {},
 	"rst": {}, "ruby": {}, "rust": {}, "scala": {}, "scheme": {}, "scss": {}, "smithy": {},
 	"solidity": {}, "sparql": {}, "sql": {}, "squirrel": {}, "starlark": {}, "svelte": {},
 	"ssh_config": {}, "swift": {}, "tablegen": {}, "tcl": {}, "teal": {}, "templ": {}, "textproto": {},
 	"thrift": {}, "tlaplus": {}, "tmux": {}, "todotxt": {}, "toml": {}, "tsx": {}, "turtle": {}, "twig": {},
-	"typescript": {}, "typst": {}, "uxntal": {}, "v": {}, "verilog": {}, "vimdoc": {},
+	"typescript": {}, "typst": {}, "uxntal": {}, "v": {}, "verilog": {}, "vhdl": {}, "vimdoc": {},
 	"vue": {}, "wat": {}, "wgsl": {}, "wolfram": {}, "xml": {}, "yaml": {}, "yuck": {}, "zig": {},
 }
 
@@ -146,8 +147,8 @@ func TestAdmissionCandidateScorecard206(t *testing.T) {
 		// review and ratchet update.
 		const (
 			wantTotal   = 206
-			minPass     = 192
-			maxFallback = 9
+			minPass     = 200
+			maxFallback = 1
 			wantSkip    = 5
 		)
 		if got := len(admissionScorecardRequiredCompactPasses); got != minPass {
@@ -178,6 +179,65 @@ func TestAdmissionCandidateScorecard206(t *testing.T) {
 				counts[scorecardPass], minPass, counts[scorecardDiverge], counts[scorecardFallback], maxFallback,
 				counts[scorecardSkip], wantSkip, counts[scorecardError], len(rows), wantTotal)
 		}
+	}
+}
+
+func TestAdmissionCandidateNoLookaheadSmokeRatchet(t *testing.T) {
+	wanted := map[string]struct{}{
+		"doxygen": {},
+		"jsdoc":   {},
+		"vhdl":    {},
+	}
+	var doxygen grammars.LangEntry
+	for _, entry := range grammars.AllLanguages() {
+		if _, ok := wanted[entry.Name]; !ok {
+			continue
+		}
+		if entry.Name == "doxygen" {
+			doxygen = entry
+		}
+		row := runAdmissionScorecardLanguage(entry)
+		if row.status != scorecardPass {
+			t.Errorf("%s compact no-lookahead route=%s: %s", row.name, row.status, row.detail)
+		}
+		delete(wanted, entry.Name)
+	}
+	for name := range wanted {
+		t.Errorf("compact no-lookahead ratchet language %q is missing", name)
+	}
+	if doxygen.Name == "" {
+		return
+	}
+	row := runAdmissionScorecardSource(
+		doxygen,
+		[]byte("/** first */\n/** second */\n"),
+	)
+	if row.status != scorecardFallback ||
+		!strings.Contains(row.detail, "root reduction on no-lookahead was not followed by authenticated EOF") {
+		t.Errorf("doxygen mid-source no-lookahead route=%s: %s", row.status, row.detail)
+	}
+}
+
+func TestAdmissionCandidateCooklangSmokeRatchet(t *testing.T) {
+	const cleanSmoke = "Add @salt{1%tsp}\n"
+	if got := grammars.ParseSmokeSample("cooklang"); got != cleanSmoke {
+		t.Fatalf("cooklang smoke=%q, want %q", got, cleanSmoke)
+	}
+	var cooklang grammars.LangEntry
+	for _, entry := range grammars.AllLanguages() {
+		if entry.Name == "cooklang" {
+			cooklang = entry
+			break
+		}
+	}
+	if cooklang.Name == "" {
+		t.Fatal("cooklang is missing from the grammar registry")
+	}
+	if row := runAdmissionScorecardSource(cooklang, []byte(cleanSmoke)); row.status != scorecardPass {
+		t.Errorf("clean cooklang compact route=%s: %s", row.status, row.detail)
+	}
+	if row := runAdmissionScorecardSource(cooklang, []byte("Add @salt{1%tsp}.\n")); row.status != scorecardFallback {
+		t.Errorf("recovered dotted cooklang route=%s: %s", row.status, row.detail)
 	}
 }
 
@@ -259,6 +319,10 @@ func TestAdmissionSwitchRoutePrecedenceRatchet(t *testing.T) {
 }
 
 func runAdmissionScorecardLanguage(entry grammars.LangEntry) (row scorecardRow) {
+	return runAdmissionScorecardSource(entry, []byte(grammars.ParseSmokeSample(entry.Name)))
+}
+
+func runAdmissionScorecardSource(entry grammars.LangEntry, source []byte) (row scorecardRow) {
 	row = scorecardRow{name: entry.Name, status: scorecardError}
 	defer func() {
 		if r := recover(); r != nil {
@@ -281,8 +345,6 @@ func runAdmissionScorecardLanguage(entry grammars.LangEntry) (row scorecardRow) 
 		row.detail = "not DFA-routable: " + support.Reason
 		return row
 	}
-
-	source := []byte(grammars.ParseSmokeSample(entry.Name))
 
 	production := gts.NewParser(lang)
 	production.SetAdmissionCandidateRoute(false)
@@ -307,9 +369,14 @@ func runAdmissionScorecardLanguage(entry grammars.LangEntry) (row scorecardRow) 
 		return row
 	}
 	defer candidateTree.Release()
-	routed, _ := gts.AdmissionCandidateCounters()
+	routed, fallback := gts.AdmissionCandidateCounters()
 
 	if routed == 0 {
+		if fallback == 0 {
+			row.status = scorecardSkip
+			row.detail = "compact route was not eligible for this source"
+			return row
+		}
 		row.status = scorecardFallback
 		row.detail = gts.AdmissionCandidateLastFallbackReason()
 		return row
@@ -329,6 +396,80 @@ func runAdmissionScorecardLanguage(entry grammars.LangEntry) (row scorecardRow) 
 		return row
 	}
 	row.status = scorecardDiverge
-	row.detail = fmt.Sprintf("candidate=%s production=%s", candidateInspection.SHA256[:12], productionInspection.SHA256[:12])
+	first := firstAdmissionTreeDivergence(candidateTree.RootNode(), productionTree.RootNode(), lang, "root")
+	if first == "" {
+		first = "digest mismatch without a visible node mismatch"
+	}
+	row.detail = fmt.Sprintf(
+		"candidate=%s production=%s first=%s",
+		candidateInspection.SHA256[:12],
+		productionInspection.SHA256[:12],
+		first,
+	)
 	return row
+}
+
+func firstAdmissionTreeDivergence(candidate, production *gts.Node, lang *gts.Language, path string) string {
+	if candidate == nil || production == nil {
+		return fmt.Sprintf("%s nil candidate=%t production=%t", path, candidate == nil, production == nil)
+	}
+	candidateStart, productionStart := candidate.StartPoint(), production.StartPoint()
+	candidateEnd, productionEnd := candidate.EndPoint(), production.EndPoint()
+	if candidate.Type(lang) != production.Type(lang) ||
+		candidate.StartByte() != production.StartByte() ||
+		candidate.EndByte() != production.EndByte() ||
+		candidateStart != productionStart ||
+		candidateEnd != productionEnd ||
+		candidate.IsNamed() != production.IsNamed() ||
+		candidate.IsExtra() != production.IsExtra() ||
+		candidate.IsMissing() != production.IsMissing() ||
+		candidate.IsError() != production.IsError() ||
+		candidate.ChildCount() != production.ChildCount() {
+		return fmt.Sprintf(
+			"%s candidate=%s[%d:%d] children=%d flags=%t/%t/%t/%t production=%s[%d:%d] children=%d flags=%t/%t/%t/%t",
+			path,
+			candidate.Type(lang),
+			candidate.StartByte(),
+			candidate.EndByte(),
+			candidate.ChildCount(),
+			candidate.IsNamed(),
+			candidate.IsExtra(),
+			candidate.IsMissing(),
+			candidate.IsError(),
+			production.Type(lang),
+			production.StartByte(),
+			production.EndByte(),
+			production.ChildCount(),
+			production.IsNamed(),
+			production.IsExtra(),
+			production.IsMissing(),
+			production.IsError(),
+		)
+	}
+	for index := 0; index < candidate.ChildCount(); index++ {
+		candidateField := candidate.FieldNameForChild(index, lang)
+		productionField := production.FieldNameForChild(index, lang)
+		if candidateField != productionField {
+			return fmt.Sprintf(
+				"%s/%d field candidate=%q production=%q",
+				path,
+				index,
+				candidateField,
+				productionField,
+			)
+		}
+		childPath := fmt.Sprintf("%s/%s[%d]", path, candidate.Child(index).Type(lang), index)
+		if diff := firstAdmissionTreeDivergence(candidate.Child(index), production.Child(index), lang, childPath); diff != "" {
+			return diff
+		}
+	}
+	if candidate.HasError() != production.HasError() {
+		return fmt.Sprintf(
+			"%s has_error candidate=%t production=%t",
+			path,
+			candidate.HasError(),
+			production.HasError(),
+		)
+	}
+	return ""
 }

@@ -49,6 +49,35 @@ func TestParserCoreFreshFullRunnerRepeatedCanonicalLifecycle(t *testing.T) {
 	}
 }
 
+func TestParserCoreFreshFullRunnerScratchDoesNotAliasLiveTree(t *testing.T) {
+	runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, parserCoreFreshFullCanonicalOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRow := diagnosticParserCoreCanonicalAdmissions[0]
+	firstFixture := loadDiagnosticParserCoreCanonicalFixture(t, firstRow.id)
+	firstTree, err := runner.parse(firstFixture.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer firstTree.Release()
+	firstDigest := requireDiagnosticParserCoreCanonicalTreeDigest(t, firstTree, runner.lang)
+
+	secondRow := diagnosticParserCoreCanonicalAdmissions[1]
+	secondFixture := loadDiagnosticParserCoreCanonicalFixture(t, secondRow.id)
+	secondTree, err := runner.parse(secondFixture.Source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer secondTree.Release()
+	if got := requireDiagnosticParserCoreCanonicalTreeDigest(t, secondTree, runner.lang); got != secondRow.deepTreeSHA256 {
+		t.Fatalf("second tree digest=%s want=%s", got, secondRow.deepTreeSHA256)
+	}
+	if got := requireDiagnosticParserCoreCanonicalTreeDigest(t, firstTree, runner.lang); got != firstDigest {
+		t.Fatalf("first live tree changed after scratch reuse: digest=%s want=%s", got, firstDigest)
+	}
+}
+
 func TestParserCoreFreshFullRunnerResetsAfterCap(t *testing.T) {
 	options := parserCoreFreshFullCanonicalOptions()
 	runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, options)

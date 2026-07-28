@@ -129,6 +129,135 @@ func TestDiagnosticParserCoreGenericRepetitionFoldReducesWithoutFork(t *testing.
 	}
 }
 
+func TestDiagnosticParserCoreGenericConflictPolicySelectsRepetitionReduce(t *testing.T) {
+	table := &genericConflictTable{
+		cells: map[genericConflictCell][]core.Action{
+			{state: 1, symbol: 9}: {
+				{Type: core.ActionShift, State: 3, Repetition: true},
+				{Type: core.ActionReduce, Symbol: 4},
+			},
+		},
+		gotos: map[genericConflictCell]core.StateID{
+			{state: 1, symbol: 4}: 2,
+		},
+	}
+	compact, err := core.New(table, core.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	language := &Language{
+		Name: "haskell",
+		ConflictPolicies: []ConflictPolicy{{
+			State: 1, Lookahead: 9, Kind: ConflictPolicyRepetitionReduce,
+			ReduceSymbols: []Symbol{4},
+		}},
+	}
+	scheduler := &diagnosticParserCoreGenericScheduler{
+		compact:     compact,
+		tokenSource: &dfaTokenSource{language: language},
+		headers:     []diagnosticParserCoreHeader{{head: head}},
+		token:       Token{Symbol: 9, EndByte: 1},
+		options: DiagnosticParserCorePrefixOptions{
+			MaxDispatches: 8,
+			ReceiptMode:   DiagnosticParserCoreReceiptFull,
+		},
+		receipt: &DiagnosticParserCoreGenericScheduler{},
+	}
+	stop, err := scheduler.dispatchPass()
+	if err != nil || stop != nil {
+		t.Fatalf("conflict policy reduce stop=%+v err=%v", stop, err)
+	}
+	state, _, err := compact.Boundary(scheduler.headers[0].head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != 2 || scheduler.work.RepetitionFolds != 1 ||
+		scheduler.work.Reductions != 1 || scheduler.work.Conflicts != 0 ||
+		scheduler.work.Forks != 0 {
+		t.Fatalf("conflict policy reduce state=%d work=%+v", state, scheduler.work)
+	}
+	action := scheduler.receipt.Rounds[0].Actions[0]
+	if action.Ordinal != 1 || action.Action.Type != ParseActionReduce {
+		t.Fatalf("conflict policy reduce action=%+v", action)
+	}
+}
+
+func TestDiagnosticParserCoreGenericConflictPolicySelectsRepetitionShift(t *testing.T) {
+	actions := []core.Action{
+		{Type: core.ActionReduce, Symbol: 4},
+		{Type: core.ActionShift, State: 3, Repetition: true},
+	}
+	compact, err := core.New(&genericConflictTable{actions: actions}, core.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	language := &Language{
+		Name: "dart",
+		ConflictPolicies: []ConflictPolicy{{
+			State: 1, Lookahead: 9, Kind: ConflictPolicyRepetitionShift,
+			ReduceSymbols: []Symbol{4},
+		}},
+	}
+	scheduler := &diagnosticParserCoreGenericScheduler{
+		compact:     compact,
+		tokenSource: &dfaTokenSource{language: language},
+		headers:     []diagnosticParserCoreHeader{{head: head}},
+		token:       Token{Symbol: 9, EndByte: 1},
+		options: DiagnosticParserCorePrefixOptions{
+			MaxDispatches: 8,
+			ReceiptMode:   DiagnosticParserCoreReceiptFull,
+		},
+		receipt: &DiagnosticParserCoreGenericScheduler{},
+	}
+	stop, err := scheduler.dispatchPass()
+	if err != nil || stop != nil {
+		t.Fatalf("conflict policy shift stop=%+v err=%v", stop, err)
+	}
+	state, byteOffset, err := compact.Boundary(scheduler.headers[0].head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != 3 || byteOffset != 1 || scheduler.work.RepetitionFolds != 0 ||
+		scheduler.work.OrdinaryShifts != 1 || scheduler.work.Conflicts != 0 ||
+		scheduler.work.Forks != 0 {
+		t.Fatalf("conflict policy shift state=%d byte=%d work=%+v", state, byteOffset, scheduler.work)
+	}
+	action := scheduler.receipt.Rounds[0].Actions[0]
+	if action.Ordinal != 1 || action.Action.Type != ParseActionShift || !action.Action.Repetition {
+		t.Fatalf("conflict policy shift action=%+v", action)
+	}
+}
+
+func TestDiagnosticParserCoreGenericConflictPolicyRequiresExactRow(t *testing.T) {
+	actions := core.NewActionRow([]core.Action{
+		{Type: core.ActionShift, State: 3, Repetition: true},
+		{Type: core.ActionReduce, Symbol: 4},
+	})
+	language := &Language{
+		Name: "haskell",
+		ConflictPolicies: []ConflictPolicy{{
+			State: 2, Lookahead: 9, Kind: ConflictPolicyRepetitionReduce,
+			ReduceSymbols: []Symbol{4},
+		}},
+	}
+	if _, ok := diagnosticParserCoreConflictPolicyOrdinal(language, Token{Symbol: 9}, 1, actions); ok {
+		t.Fatal("conflict policy admitted an unmatched state")
+	}
+	language.ConflictPolicies[0].State = 1
+	language.ConflictPolicies[0].ReduceSymbols = []Symbol{5}
+	if _, ok := diagnosticParserCoreConflictPolicyOrdinal(language, Token{Symbol: 9}, 1, actions); ok {
+		t.Fatal("conflict policy admitted an unmatched reduce symbol")
+	}
+}
+
 func TestDiagnosticParserCoreGenericConflictIgnoresNoArmsWhenRepetitionDeclinesCell(t *testing.T) {
 	actions := []core.Action{
 		{Type: core.ActionShift, State: 2},

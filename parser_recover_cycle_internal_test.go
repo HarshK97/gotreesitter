@@ -64,37 +64,24 @@ func TestRecoveryParentPreservesTransientSentinel(t *testing.T) {
 	}
 }
 
-// TestEagerWiringOnTransientChildYieldsSelfLoop documents the pre-fix defect
-// mechanism end-to-end and pins the debug detector on it: eager parent-link
-// wiring into a transient child makes the materializer link the wrapper under
-// itself.
-func TestEagerWiringOnTransientChildYieldsSelfLoop(t *testing.T) {
+// TestEagerWiringOnTransientChildFailsClosedBeforeSelfLoop documents the
+// defect mechanism. The materializer must reject the replacement before it
+// links the wrapper under itself.
+func TestEagerWiringOnTransientChildFailsClosedBeforeSelfLoop(t *testing.T) {
 	arena, scratch, transient := newTransientSentinelFixture(t)
 
-	// The pre-fix construction: populateParentNode wires transient.parent.
+	// Simulate a pre-fix construction that wired transient.parent.
 	wrapper := newParentNodeInArena(arena, errorSymbol, true, []*Node{transient}, nil, 0)
 	if transient.parent != wrapper {
 		t.Fatal("simulation expects eager wiring to set the transient child's parent")
 	}
 
 	nodes := []*Node{wrapper}
-	scratch.materializeNodeSliceUntil(nodes, arena, nil, nil)
-	if len(wrapper.children) != 1 || wrapper.children[0] != wrapper {
-		t.Fatalf("expected the corrupted sentinel to produce the self-loop; children=%v", wrapper.children)
+	if reason := scratch.materializeNodeSliceUntil(nodes, arena, nil, nil); reason != ParseStopInvariantViolation {
+		t.Fatalf("materialize stop reason = %v, want invariant violation", reason)
 	}
-
-	savedReports := debugRecoveryCycleReportsLeft
-	savedFound := debugRecoveryCyclesFound
-	debugRecoveryCycleReportsLeft = 0
-	defer func() {
-		debugRecoveryCycleReportsLeft = savedReports
-		debugRecoveryCyclesFound = savedFound
-	}()
-	if debugRecoveryCheckNodeAcyclic(nil, arena, "test-self-loop", wrapper) {
-		t.Fatal("cycle detector missed the self-loop")
-	}
-	if debugRecoveryCyclesFound == savedFound {
-		t.Fatal("cycle counter did not advance on a detected back-edge")
+	if len(wrapper.children) != 1 || wrapper.children[0] != transient {
+		t.Fatal("materializer changed the child before it rejected the replacement")
 	}
 }
 
@@ -169,7 +156,7 @@ func TestTrailingEOFRecoveryPreservesTransientSentinel(t *testing.T) {
 // validator must leave that evidence untouched and return a standalone error
 // tree that publicly reports an invariant stop.
 func TestTrailingEOFEagerWiringSelfLoopFailsClosedAsInvariantViolation(t *testing.T) {
-	arena, scratch, transient := newTransientSentinelFixture(t)
+	arena, _, transient := newTransientSentinelFixture(t)
 
 	trailing := stackEntryNode(newStackEntryNode(transient.parseState, transient))
 	wrapper := newParentNodeInArena(arena, errorSymbol, true, []*Node{trailing}, nil, 0)
@@ -178,12 +165,7 @@ func TestTrailingEOFEagerWiringSelfLoopFailsClosedAsInvariantViolation(t *testin
 	}
 
 	nodes := []*Node{wrapper}
-	if reason := scratch.materializeNodeSliceUntil(nodes, arena, nil, nil); reason != ParseStopNone {
-		t.Fatalf("materialize stop reason = %v, want none", reason)
-	}
-	if len(wrapper.children) != 1 || wrapper.children[0] != wrapper {
-		t.Fatalf("expected historical self-loop; children=%v", wrapper.children)
-	}
+	wrapper.children[0] = wrapper
 
 	tree := recoveredResultInvariantErrorTree(nodes, []byte("x"), &Language{Name: "test"}, arena)
 	if tree == nil {

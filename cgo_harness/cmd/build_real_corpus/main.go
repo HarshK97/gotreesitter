@@ -106,7 +106,7 @@ func main() {
 
 	flag.StringVar(&lockPath, "lock", "", "path to grammars/languages.lock (auto-detected when empty)")
 	flag.StringVar(&profilePath, "profile", "", "optional profile JSON path (e.g. cgo_harness/testdata/top50_manifest.json)")
-	flag.StringVar(&langsRaw, "langs", "top50", "language list: all, top50, or comma-separated names")
+	flag.StringVar(&langsRaw, "langs", "top50", "language list: all, top50, or comma-separated names; an explicit list limits a profile")
 	flag.StringVar(&langsFile, "langs-file", "", "newline-, whitespace-, or comma-separated language list path")
 	flag.StringVar(&outDir, "out", "cgo_harness/corpus_real", "output corpus directory")
 	flag.StringVar(&workDir, "work-dir", "", "temporary clone work directory (default: temp dir)")
@@ -253,9 +253,9 @@ func main() {
 			continue
 		}
 
-		langOutDir := filepath.Join(outDir, lang)
-		if err := os.MkdirAll(langOutDir, 0o755); err != nil {
-			fatalf("create output directory for %q: %v", lang, err)
+		langOutDir, err := resetCorpusLanguageOutput(outDir, lang)
+		if err != nil {
+			fatalf("reset output directory for %q: %v", lang, err)
 		}
 		usedNames := make(map[string]bool)
 		for _, sf := range selected {
@@ -314,6 +314,36 @@ func main() {
 	if len(manifest.Missing) > 0 {
 		fmt.Printf("Missing/failed: %d (%s)\n", len(manifest.Missing), strings.Join(manifest.Missing, ", "))
 	}
+}
+
+func resetCorpusLanguageOutput(outDir, lang string) (string, error) {
+	cleanName := safeName(lang)
+	if cleanName != lang || cleanName == "file" {
+		return "", fmt.Errorf("unsafe language name %q", lang)
+	}
+	targetPath := filepath.Join(outDir, cleanName)
+	absOut, err := filepath.Abs(outDir)
+	if err != nil {
+		return "", err
+	}
+	absTarget, err := filepath.Abs(targetPath)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(absOut, absTarget)
+	if err != nil {
+		return "", err
+	}
+	if rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("language output %q escapes %q", absTarget, absOut)
+	}
+	if err := os.RemoveAll(absTarget); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(absTarget, 0o755); err != nil {
+		return "", err
+	}
+	return targetPath, nil
 }
 
 func loadExistingCorpusManifest(path string) (corpusManifest, bool, error) {
@@ -467,6 +497,22 @@ func resolveLanguageList(profilePath, langsRaw, langsFile string, lockEntries ma
 		if err != nil {
 			return "", profileFile{}, nil, err
 		}
+		if !isDefaultLanguageSelector(langsRaw) {
+			selected := parseInlineLanguageSelector(langsRaw)
+			if len(selected) == 0 {
+				return "", profileFile{}, nil, fmt.Errorf("profile language subset is empty")
+			}
+			available := make(map[string]struct{}, len(profile.Languages))
+			for _, name := range profile.Languages {
+				available[name] = struct{}{}
+			}
+			for _, name := range selected {
+				if _, ok := available[name]; !ok {
+					return "", profileFile{}, nil, fmt.Errorf("language %q is not in profile %s", name, p)
+				}
+			}
+			return p, profile, selected, nil
+		}
 		return p, profile, dedupe(profile.Languages), nil
 	}
 	value := strings.TrimSpace(langsRaw)
@@ -490,18 +536,22 @@ func resolveLanguageList(profilePath, langsRaw, langsFile string, lockEntries ma
 		profile := profileFile{Name: "top50", Languages: dedupe(langs)}
 		return "", profile, profile.Languages, nil
 	default:
-		parts := strings.Split(value, ",")
-		out := make([]string, 0, len(parts))
-		for _, part := range parts {
-			name := strings.TrimSpace(part)
-			if name == "" {
-				continue
-			}
-			out = append(out, name)
-		}
+		out := parseInlineLanguageSelector(value)
 		profile := profileFile{Name: "inline", Languages: dedupe(out)}
 		return "", profile, profile.Languages, nil
 	}
+}
+
+func parseInlineLanguageSelector(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		name := strings.TrimSpace(part)
+		if name != "" {
+			out = append(out, name)
+		}
+	}
+	return dedupe(out)
 }
 
 func isDefaultLanguageSelector(value string) bool {

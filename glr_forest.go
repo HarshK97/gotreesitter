@@ -1354,6 +1354,33 @@ func coalesceForestWithRawAndAlternatives(p *Parser, arena *nodeArena, index *gs
 				}
 			}
 			if !rawEqual {
+				if errorCost == l.errorCost && score == l.score {
+					switch compareStackEntryVisibleNamedWrapperPreference(p, arena, entry, l.subtree, 0) {
+					case 1:
+						oldScore := l.score
+						*l = gssLink{
+							prev:      prev,
+							prevDirty: forestNodeDirty(prev),
+							subtree:   entry,
+							score:     score,
+							errorCost: errorCost,
+						}
+						forestRecordAlternative(alternatives, entry, node)
+						if oldScore == node.minLinkScore {
+							forestRefreshMinLinkScore(node)
+						}
+						node.dirty++
+						if perfCountersEnabled {
+							perfRecordForestCoalesceDedupHit(true)
+						}
+						return node
+					case -1:
+						if perfCountersEnabled {
+							perfRecordForestCoalesceDedupHit(false)
+						}
+						return node
+					}
+				}
 				continue
 			}
 			// Competing reduction reaching the same (prev, symbol, span): keep the
@@ -2237,6 +2264,9 @@ func forestRecordedUnaryDirectChildAlternative(p *Parser, arena *nodeArena, alte
 	if len(wrapper.children) != 1 || alternatives.node(wrapper) == nil {
 		return nil
 	}
+	if forestVisibleNamedStructuralContainer(p, wrapper) {
+		return nil
+	}
 	direct := wrapper.children[0]
 	if direct == nil || len(direct.children) <= 1 || alternatives.node(direct) == nil {
 		return nil
@@ -2255,6 +2285,11 @@ func forestAlternativeFitsChildSlot(p *Parser, original, candidate *Node) bool {
 		original.endByte != candidate.endByte ||
 		original.isExtra() != candidate.isExtra() ||
 		original.isMissing() != candidate.isMissing() {
+		return false
+	}
+	if forestVisibleNamedStructuralContainer(p, original) &&
+		len(original.children) == 1 &&
+		original.children[0] == candidate {
 		return false
 	}
 	if forestVisibleNamedStructuralContainer(p, original) && !forestVisibleNamedStructuralContainer(p, candidate) {
