@@ -217,9 +217,14 @@ Native derivation selection also owns single and concatenated `@` strings.
 This change retires a third Objective-C subpass.
 Raw-shape equivalence now preserves compound struct type specifiers.
 This change retires a fourth Objective-C subpass.
-Two Objective-C subpasses remain live.
+Certified materializing-shape hashes now include raw descendants.
+This change preserves method type identifiers before result compatibility.
+It retires a fifth Objective-C subpass.
+One Objective-C subpass remains live.
 The field-aware C-oracle receipt is:
 `harness_out/docker/20260728T111158Z-objc-struct-sized-postfilter-final`.
+The method type C-oracle receipt is:
+`harness_out/docker/20260728T113024Z`.
 The dispatcher census now records each remaining D and Objective-C subpass.
 
 Group by invariant, not language:

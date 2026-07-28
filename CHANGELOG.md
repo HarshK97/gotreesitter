@@ -69,6 +69,11 @@ for tags and release notes while still in `0.x`.
   Exact fingerprints retain spans, points, fields, flags, and parser states.
   The census does not materialize compact final-child references.
 
+- Certified materializing-shape hashes now include raw descendant content.
+  This prevents shallow GSS merges from discarding Objective-C method types.
+  The parser now owns those identifiers before result compatibility.
+  This retires a fifth Objective-C normalization subpass.
+
 - DFA keyword promotion now owns Arduino primitive types before compatibility.
   Native materialization owns Objective-C protocol type identifiers.
   This retires Arduino's dispatcher arm and the matching Objective-C subpass.

@@ -20,6 +20,22 @@ func TestTypeProjectionRetirementCOracleParity(t *testing.T) {
 			name:   "objc",
 			source: "@interface CallbackClient : NSObject <ClientProtocol>\n@end\n",
 		},
+		{
+			name: "objc",
+			source: "@interface T : NSObject\n" +
+				"- (NSUInteger)count;\n" +
+				"+ (NSArray*)items;\n" +
+				"- (void)reset;\n" +
+				"@end\n",
+		},
+		{
+			name: "objc",
+			source: "@interface T : NSObject\n" +
+				"+ (NSArray*)items;\n" +
+				"- (NSUInteger)count;\n" +
+				"- (void)reset;\n" +
+				"@end\n",
+		},
 	}
 	for index, test := range tests {
 		test := test

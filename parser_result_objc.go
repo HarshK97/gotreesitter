@@ -1,43 +1,8 @@
 package gotreesitter
 
 func normalizeObjcCompatibility(root *Node, source []byte, lang *Language, census materializationSubpassCensus) {
-	census.run("dispatch.objc.method-type-identifiers", func() {
-		normalizeObjcMethodTypeIdentifiers(root, lang)
-	})
 	census.run("dispatch.objc.sizeof-type-identifier-operands", func() {
 		normalizeObjcSizeofTypeIdentifierOperands(root, lang)
-	})
-}
-
-func normalizeObjcMethodTypeIdentifiers(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "objc" {
-		return
-	}
-	methodTypeSym, ok1 := symbolByName(lang, "method_type")
-	typeNameSym, ok2 := symbolByName(lang, "type_name")
-	identifierSym, ok3 := symbolByName(lang, "identifier")
-	typeIdentifierSym, ok4 := symbolByName(lang, "type_identifier")
-	if !ok1 || !ok2 || !ok3 || !ok4 {
-		return
-	}
-	typeIdentifierNamed := symbolIsNamed(lang, typeIdentifierSym)
-	walkResultTree(root, func(n *Node) {
-		if n == nil || n.symbol != methodTypeSym {
-			return
-		}
-		for i := 0; i < resultChildCount(n); i++ {
-			typeName := resultChildAt(n, i)
-			if typeName == nil || typeName.symbol != typeNameSym {
-				continue
-			}
-			for j := 0; j < resultChildCount(typeName); j++ {
-				child := resultChildAt(typeName, j)
-				if child != nil && child.symbol == identifierSym {
-					child.symbol = typeIdentifierSym
-					child.setNamed(typeIdentifierNamed)
-				}
-			}
-		}
 	})
 }
 
