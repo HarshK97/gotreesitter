@@ -15,13 +15,13 @@ without updating that registry.
 
 The v1 registry freezes the current surface:
 
-- 59 explicit `runLanguageResultCompatibility` switch arms covering 61
+- 56 explicit `runLanguageResultCompatibility` switch arms covering 58
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-That is 60 live registry entries and 25 retired entries. The registry covers
+That is 57 live registry entries and 28 retired entries. The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
 
@@ -37,6 +37,9 @@ DFA keyword promotion now emits those types before compatibility.
 Native Objective-C projection also owns protocol type identifiers.
 Generic result selection owns the remaining ambiguous `sizeof` operand.
 No Objective-C result-compatibility repair remains live.
+
+The parser covers every byte in each recovered EBNF source.
+This change removes the EBNF compatibility arm.
 
 The exact collapsed-child policy retains a bare Rust `..` token.
 The merged-left-side conflict rule selects chained dot-range shifts.

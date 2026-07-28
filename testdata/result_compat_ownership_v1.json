@@ -2,8 +2,8 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 57,
-    "dispatcher_languages": 59,
+    "dispatcher_arms": 56,
+    "dispatcher_languages": 58,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
@@ -774,21 +774,26 @@
       "languages": [
         "ebnf"
       ],
-      "purpose": "Reconcile EBNF recovery and returned-tree shape.",
-      "authoritative_owner": "scheduler_action_semantics",
+      "purpose": "Historical: extended a recovered EBNF root by one byte. Native root materialization now owns the full source span.",
+      "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/ebnf_native_regression_test.go",
+        "cgo_harness/ebnf_retirement_parity_test.go"
       ],
-      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: native root materialization covers the complete recovered source span. Compatibility-free, production, compact, forest, incremental, and C-oracle receipts return the same tree.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "29b6e302701058e2ed101941c6da5f52a98dfe9a",
+      "receipt_refs": [
+        "grammars/ebnf_native_regression_test.go",
+        "cgo_harness/ebnf_retirement_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.eds",

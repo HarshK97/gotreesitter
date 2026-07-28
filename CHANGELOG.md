@@ -24,6 +24,9 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- The parser covers every byte in each recovered EBNF source.
+  This change removes the EBNF compatibility arm.
+
 - Result materialization now rejects a transient replacement that points back
   to its current parent.
   The parser returns an acyclic invariant error tree before it creates a
