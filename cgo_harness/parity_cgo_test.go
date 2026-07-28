@@ -834,6 +834,7 @@ func TestParityCompactConvergedSplitCorpus(t *testing.T) {
 		{name: "erlang", corpusPath: "corpus_real/erlang/medium__attributes.erl"},
 		{name: "haskell", source: grammars.ParseSmokeSample("haskell")},
 		{name: "javascript", corpusPath: "corpus_real/javascript/small__functions.js"},
+		{name: "python", source: "def greet(name):\n    return f\"hello {name}\"\n\nprint(greet(\"world\"))\n"},
 	}
 
 	for _, test := range tests {

@@ -40,6 +40,11 @@ func TestAdmissionCandidateCertifiedConvergedPathSplitsMatchProduction(t *testin
 			corpusPath: filepath.Join("cgo_harness", "corpus_real", "javascript", "small__functions.js"),
 			load:       grammars.JavascriptLanguage,
 		},
+		{
+			name:   "python",
+			source: "def greet(name):\n    return f\"hello {name}\"\n\nprint(greet(\"world\"))\n",
+			load:   grammars.PythonLanguage,
+		},
 	}
 
 	for _, test := range tests {

@@ -45,14 +45,16 @@ Exact artifact profiles now enable three generic selection mechanisms.
 | Erlang | Allow converged-path reduction split drops | `1d78195c4fbb1fc027eb3e4220427f1eb8bfc89e` |
 | Haskell | Allow converged-path reduction split drops | `0975ef72fc3c47b530309ca93937d7d143523628` |
 | JavaScript | Allow converged-path reduction split drops | `58404d8cf191d69f2674a8fd507bd5776f46cb11` |
+| Python | Allow converged-path reduction split drops | `bffb65a8cfe4e46290331dfef0dbf0ef3679de11` |
 
 Separate Docker runs compared each selected Go tree with its pinned C parser.
-All seven passed field-aware exhaustive comparison.
+All eight passed field-aware exhaustive comparison.
 
 The evidence is in these artifact directories:
 
 - `harness_out/docker/20260728T050445Z-compact-frontier-http-c-oracle-fields`
 - `harness_out/docker/20260728T050509Z-compact-frontier-robot-c-oracle-fields`
+- `harness_out/docker/20260728T104318Z-pr491-python-cert`
 - `harness_out/docker/20260728T050512Z-compact-frontier-meson-c-oracle-fields`
 - `harness_out/docker/20260728T054141Z-compact-split-bash-c-oracle-fields`
 - `harness_out/docker/20260728T054151Z-compact-split-erlang-c-oracle-fields`

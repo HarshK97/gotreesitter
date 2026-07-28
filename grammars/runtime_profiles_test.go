@@ -190,6 +190,7 @@ func TestBuiltinCompactConvergedSplitProfilesRequireExactBlobIdentity(t *testing
 		{name: "go", load: GoLanguage},
 		{name: "haskell", load: HaskellLanguage},
 		{name: "javascript", load: JavascriptLanguage},
+		{name: "python", load: PythonLanguage},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
