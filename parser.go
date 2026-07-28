@@ -6833,7 +6833,7 @@ func (p *Parser) resolveParseMergePerKeyCap(source []byte, reuse *reuseCursor, m
 		mergePerKeyCap = javaFullParseRetryMaxMergePerKey
 	}
 	// Certified languages preserve clean, equal-header alternatives through
-	// packed GSS links. Use one materialized survivor per merge key for fresh
+	// packed graph-structured stack links. Use one survivor per merge key for fresh
 	// full parses. Explicit policy remains authoritative.
 	if reuse == nil && p.language != nil && p.language.FullParseGSSConvergenceEnabled &&
 		!parseMaxMergePerKeyEnvConfigured() {
