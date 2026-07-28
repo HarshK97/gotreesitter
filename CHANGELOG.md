@@ -9,6 +9,12 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Single-header compact dispatch now keeps its cell on the stack.
+  This removes one allocation from the common full-parse path.
+  The stable Go benchmark improves full-parse time by 15.57 percent.
+  Allocated bytes fall by 20.25 percent.
+  The allocation count falls by 7.89 percent.
+
 - Certified graph-structured stack convergence now merges duplicate C# full-parse
   stacks while it retains their packed alternatives.
   The 137 KiB witness improves from 1.629 seconds to 98.7 milliseconds.
@@ -30,6 +36,14 @@ for tags and release notes while still in `0.x`.
   Parse time remains statistically unchanged.
 
 ### Fixed
+
+- Locked GraphQL and Svelte fixtures now protect direct compact-parser routes.
+  Each fixture records its source commit and SHA-256 digest.
+  Dedicated C-oracle tests require exact trees and zero fallback.
+
+- The native Typst scanner now initializes its indentation stack on creation.
+  Native scanner semantics remove the nested-list comma artifact.
+  This retires the remaining Typst compatibility dispatcher arm.
 
 - Accepted-error C# full parses now retry with a certified merge width after
   cap-one convergence.
