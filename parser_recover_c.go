@@ -2627,7 +2627,8 @@ func (p *Parser) cReductionCandidatesForAction(source []byte, start glrStack, ac
 	fork := start.cloneWithScratch(gssScratch)
 	fork.cRec = start.cRec.clone()
 	var dummy bool
-	p.applyAction(source, &fork, act, tok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
+	deferParentLinks := p.reduceScratch != nil && p.reduceScratch.transientParents != nil
+	p.applyAction(source, &fork, act, tok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, deferParentLinks, trackChildErrors)
 	if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 		return nil, reason
 	}

@@ -35,10 +35,9 @@ for tags and release notes while still in `0.x`.
 - The parser covers every byte in each recovered EBNF source.
   This change removes the EBNF compatibility arm.
 
-- Result materialization now rejects a transient replacement that points back
-  to its current parent.
-  The parser returns an acyclic invariant error tree before it creates a
-  self-edge.
+- Recovery reductions now preserve deferred parent links during fresh parses.
+  This keeps valid Go files complete during final result materialization.
+  The invariant guard still rejects invalid transient replacements.
 
 - Native visible-wrapper election now owns D storage classes.
   This retires the matching result-normalization subpass.
