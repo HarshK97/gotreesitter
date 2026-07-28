@@ -24,6 +24,10 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Native ReScript materialization now owns value identifier path aliases.
+  This change adds two small corpus fixtures.
+  It removes the ReScript compatibility arm.
+
 - Native Linker Script recovery now owns named error nodes and root spans.
   This change adds clean and recovered corpus fixtures.
   It removes the Linker Script compatibility arm.
