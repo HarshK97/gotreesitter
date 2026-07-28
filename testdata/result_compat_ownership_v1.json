@@ -2,8 +2,8 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 53,
-    "dispatcher_languages": 55,
+    "dispatcher_arms": 52,
+    "dispatcher_languages": 54,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
@@ -472,21 +472,26 @@
       "languages": [
         "crystal"
       ],
-      "purpose": "Reconcile Crystal recovery and returned-tree shape.",
-      "authoritative_owner": "scheduler_action_semantics",
+      "purpose": "Historical: Crystal brace containers rewrote external-scanner opener spans after materialization.",
+      "authoritative_owner": "scanner_checkpoint_state",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/crystal_opener_span_native_regression_test.go",
+        "cgo_harness/crystal_opener_span_parity_cgo_test.go"
       ],
-      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: the Crystal scanner skips post-opener whitespace during lookahead. Production, compact, forest, incremental, and C-oracle receipts now preserve exact opener spans.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "0b64c6fc02d8a606f919a6a68ae6c6811d2f16ad",
+      "receipt_refs": [
+        "grammars/crystal_opener_span_native_regression_test.go",
+        "cgo_harness/crystal_opener_span_parity_cgo_test.go"
+      ]
     },
     {
       "id": "dispatch.cpon",
