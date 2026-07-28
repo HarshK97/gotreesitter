@@ -24,6 +24,11 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Result materialization now rejects a transient replacement that points back
+  to its current parent.
+  The parser returns an acyclic invariant error tree before it creates a
+  self-edge.
+
 - Native visible-wrapper election now owns D storage classes.
   This retires the matching result-normalization subpass.
   Native reduction also owns D variable-type qualifiers.

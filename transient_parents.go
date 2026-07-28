@@ -276,10 +276,16 @@ func (s *transientParentScratch) materializeVisitedNodeUntil(n *Node, arena *nod
 				}
 			}
 			if replacement := s.transientReplacement(child); replacement != nil {
+				if replacement == n {
+					return ParseStopInvariantViolation
+				}
 				out[i] = replacement
 				continue
 			}
 			if replacement, ok := s.seen[child]; ok {
+				if replacement == n {
+					return ParseStopInvariantViolation
+				}
 				out[i] = replacement
 			}
 		}
@@ -298,10 +304,16 @@ func (s *transientParentScratch) materializeVisitedNodeUntil(n *Node, arena *nod
 				continue
 			}
 			if replacement := s.transientReplacement(child); replacement != nil {
+				if replacement == n {
+					return ParseStopInvariantViolation
+				}
 				rawChildren[i].retargetNodePreservingShapeRef(replacement)
 				continue
 			}
 			if replacement, ok := s.seen[child]; ok && replacement != child {
+				if replacement == n {
+					return ParseStopInvariantViolation
+				}
 				rawChildren[i].retargetNodePreservingShapeRef(replacement)
 			}
 		}
