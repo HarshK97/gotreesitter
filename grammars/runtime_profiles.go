@@ -40,6 +40,10 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		blobSHA256:                 mustRuntimeProfileSHA256("9cf914d26d962d1a62e7954f8b20b302337a44cb7d4a07218eec482c45a57a08"),
 		compactConvergedSplitDrops: true,
 	},
+	"erlang": {
+		blobSHA256:                 mustRuntimeProfileSHA256("355deb34ae4b9d8e0bf649c1c36096929d5e403107fa3c8b9c2ee82b138dfdc5"),
+		compactConvergedSplitDrops: true,
+	},
 	// These exact artifacts select one accepting EOF head while all sibling
 	// heads have no EOF action. Field-aware C-oracle parity certifies the
 	// production selection for each smoke witness.
@@ -65,6 +69,7 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	"javascript": {
 		blobSHA256:                     mustRuntimeProfileSHA256("6706f93890f24d8ea90d6a140df5dde29c02ec8a3213bae16e8cc4df37e33ee0"),
 		automaticForestMemoryAllowance: javascriptAutomaticForestMemoryAllowance,
+		compactConvergedSplitDrops:     true,
 	},
 	// These scanner-backed grammars have certified the first retry ladder's
 	// selected accepted-error tree as authoritative. Repeating the whole ladder
@@ -200,7 +205,8 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	// reach EOF. Re-running the accepted-error ladder does not improve their
 	// selected trees, so the exact certified blobs keep the first result.
 	"bash": {
-		blobSHA256: mustRuntimeProfileSHA256("a3e898c88f6ad918d4d619dff2a4e74d613bda93c90e4a3f9fb7587c1952f3fb"),
+		blobSHA256:                 mustRuntimeProfileSHA256("a3e898c88f6ad918d4d619dff2a4e74d613bda93c90e4a3f9fb7587c1952f3fb"),
+		compactConvergedSplitDrops: true,
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry: true,
 		},
@@ -284,7 +290,8 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	// the reduce/repetition-shift pair deterministically. Retaining both arms
 	// grows a new GSS frontier for every list element.
 	"haskell": {
-		blobSHA256: mustRuntimeProfileSHA256("fcfc8794bca4442ebf5688d88e2397c78a22c8f0b585c4e1b868986cfa52dd09"),
+		blobSHA256:                 mustRuntimeProfileSHA256("fcfc8794bca4442ebf5688d88e2397c78a22c8f0b585c4e1b868986cfa52dd09"),
+		compactConvergedSplitDrops: true,
 		conflictPolicies: []gotreesitter.ConflictPolicy{
 			{
 				State:         11192,

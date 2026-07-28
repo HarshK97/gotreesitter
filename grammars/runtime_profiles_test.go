@@ -54,9 +54,9 @@ func TestCrystalAndMatlabKeepAcceptedErrorRetryLadder(t *testing.T) {
 }
 
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	// 40 = the prior 36 plus three compact profiles and Objective-C exact
-	// stack-node equivalence.
-	// Their collapsed-child capability is bound to an exact blob identity.
+	// 41 = the prior 40 plus the Erlang compact profile.
+	// Bash, Haskell, and JavaScript reuse their existing exact profiles.
+	// Exact blob identity bounds each profile capability.
 	// D and Groovy's retry ceilings
 	// moved out of parser-core name switches and onto exact-blob profiles. The
 	// prior gomod and C additions moved hardcoded compat-tier behavior to profiles.
@@ -69,7 +69,7 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	// the gomod entry), so it does not add a map entry. Crystal and Matlab add
 	// exact-blob external-scanner repeat suppression while retaining the full
 	// accepted-error retry ladder.
-	if got, want := len(builtinLanguageRuntimeProfiles), 40; got != want {
+	if got, want := len(builtinLanguageRuntimeProfiles), 41; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -177,39 +177,53 @@ func TestBuiltinCompactAcceptanceProfilesRequireExactBlobIdentity(t *testing.T) 
 	}
 }
 
-func TestBuiltinGoCompactConvergedSplitProfileRequiresExactBlobIdentity(t *testing.T) {
+func TestBuiltinCompactConvergedSplitProfilesRequireExactBlobIdentity(t *testing.T) {
 	PurgeEmbeddedLanguageCache()
 	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
 
-	builtin := GoLanguage()
-	if !builtin.CompactConvergedReductionSplitDropsCertified {
-		t.Fatal("exact built-in Go artifact did not receive compact converged-split certification")
+	tests := []struct {
+		name string
+		load func() *gotreesitter.Language
+	}{
+		{name: "bash", load: BashLanguage},
+		{name: "erlang", load: ErlangLanguage},
+		{name: "go", load: GoLanguage},
+		{name: "haskell", load: HaskellLanguage},
+		{name: "javascript", load: JavascriptLanguage},
 	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			builtin := test.load()
+			if !builtin.CompactConvergedReductionSplitDropsCertified {
+				t.Fatal("exact built-in artifact did not receive compact converged-split certification")
+			}
 
-	custom := &gotreesitter.Language{Name: "go"}
-	AttachLanguageSupport("go", custom)
-	if custom.CompactConvergedReductionSplitDropsCertified {
-		t.Fatal("same-name custom Go grammar enabled compact converged-split drops")
-	}
+			custom := &gotreesitter.Language{Name: test.name}
+			AttachLanguageSupport(test.name, custom)
+			if custom.CompactConvergedReductionSplitDropsCertified {
+				t.Fatal("same-name custom grammar enabled compact converged-split drops")
+			}
 
-	blob := BlobByName("go")
-	if len(blob) == 0 {
-		t.Fatal("BlobByName(go) returned no data")
-	}
-	stale := &gotreesitter.Language{Name: "go"}
-	if attachBuiltinLanguageRuntimeProfile("go", sha256.Sum256([]byte("stale")), stale) {
-		t.Fatal("stale Go blob unexpectedly attached a runtime profile")
-	}
-	if stale.CompactConvergedReductionSplitDropsCertified {
-		t.Fatal("stale Go blob enabled compact converged-split drops")
-	}
+			blob := BlobByName(test.name)
+			if len(blob) == 0 {
+				t.Fatalf("BlobByName(%s) returned no data", test.name)
+			}
+			stale := &gotreesitter.Language{Name: test.name}
+			if attachBuiltinLanguageRuntimeProfile(test.name, sha256.Sum256([]byte("stale")), stale) {
+				t.Fatal("stale blob unexpectedly attached a runtime profile")
+			}
+			if stale.CompactConvergedReductionSplitDropsCertified {
+				t.Fatal("stale blob enabled compact converged-split drops")
+			}
 
-	exact := &gotreesitter.Language{Name: "go"}
-	if !attachBuiltinLanguageRuntimeProfile("go", sha256.Sum256(blob), exact) {
-		t.Fatal("exact Go blob did not attach its runtime profile")
-	}
-	if !exact.CompactConvergedReductionSplitDropsCertified {
-		t.Fatal("exact Go blob did not enable compact converged-split drops")
+			exact := &gotreesitter.Language{Name: test.name}
+			if !attachBuiltinLanguageRuntimeProfile(test.name, sha256.Sum256(blob), exact) {
+				t.Fatal("exact blob did not attach its runtime profile")
+			}
+			if !exact.CompactConvergedReductionSplitDropsCertified {
+				t.Fatal("exact blob did not enable compact converged-split drops")
+			}
+		})
 	}
 }
 

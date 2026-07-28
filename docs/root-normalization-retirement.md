@@ -199,6 +199,8 @@ Other Objective-C repairs remain live.
 Generic result election now preserves visible named unary wrappers.
 This change retires the D template-call type wrapper.
 Four D subpasses remain live.
+A final-newline route probe rejected the simple type-call retirement.
+For `void f() { Type(); }\n`, native production still emits a `type` wrapper.
 Exact stack-node equivalence preserves deep Objective-C alternatives.
 Generic alias-target selection now owns `@encode` identifiers and function
 pointer expressions.

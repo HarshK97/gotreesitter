@@ -8,8 +8,8 @@ The bounded matrix completed with no silent divergence.
 
 | Status | Files |
 |---|---:|
-| PASS | 58 |
-| FALLBACK | 41 |
+| PASS | 61 |
+| FALLBACK | 38 |
 | SKIP | 10 |
 | DIVERGE | 0 |
 | ERROR | 0 |
@@ -19,38 +19,45 @@ The corpus manifest contains 146 verified files across 50 languages.
 This run selected files smaller than 16,384 bytes and excluded AWK.
 The AWK medium file needs a separate slow-path budget.
 
-The direct route served 53 percent of the selected files.
+The direct route served 56 percent of the selected files.
 Production served every fallback and every ineligible file.
 
 The current 206-language smoke scorecard reports:
 
 | Status | Languages |
 |---|---:|
-| PASS | 194 |
-| FALLBACK | 7 |
+| PASS | 195 |
+| FALLBACK | 6 |
 | SKIP | 5 |
 | DIVERGE | 0 |
 | ERROR | 0 |
 
 ## Certified acceptance frontiers
 
-Three smoke fixtures previously stopped at conservative acceptance boundaries.
-Exact artifact profiles now enable two generic selection mechanisms.
+Exact artifact profiles now enable three generic selection mechanisms.
 
 | Language | Mechanism | Pinned C commit |
 |---|---|---|
 | HTTP | Accept one EOF head and drop no-action siblings | `db8b4398de90b6d0b6c780aba96aaa2cd8e9202c` |
 | Robot | Accept one EOF head and drop no-action siblings | `278958ff2fc44732833f717ee864c9fe4dae6e11` |
 | Meson | Select the sole primary accepted derivation | `c84f3540624b81fc44067030afce2ff78d6ede05` |
+| Bash | Allow converged-path reduction split drops | `a06c2e4415e9bc0346c6b86d401879ffb44058f7` |
+| Erlang | Allow converged-path reduction split drops | `1d78195c4fbb1fc027eb3e4220427f1eb8bfc89e` |
+| Haskell | Allow converged-path reduction split drops | `0975ef72fc3c47b530309ca93937d7d143523628` |
+| JavaScript | Allow converged-path reduction split drops | `58404d8cf191d69f2674a8fd507bd5776f46cb11` |
 
-Separate Docker runs compared each production tree with its pinned C parser.
-All three passed field-aware exhaustive comparison.
+Separate Docker runs compared each selected Go tree with its pinned C parser.
+All seven passed field-aware exhaustive comparison.
 
 The evidence is in these artifact directories:
 
 - `harness_out/docker/20260728T050445Z-compact-frontier-http-c-oracle-fields`
 - `harness_out/docker/20260728T050509Z-compact-frontier-robot-c-oracle-fields`
 - `harness_out/docker/20260728T050512Z-compact-frontier-meson-c-oracle-fields`
+- `harness_out/docker/20260728T054141Z-compact-split-bash-c-oracle-fields`
+- `harness_out/docker/20260728T054151Z-compact-split-erlang-c-oracle-fields`
+- `harness_out/docker/20260728T054158Z-compact-split-haskell-c-oracle-fields`
+- `harness_out/docker/20260728T054206Z-compact-split-javascript-c-oracle-fields`
 
 Custom, adapted, stale, and same-name grammars retain conservative defaults.
 
@@ -131,7 +138,7 @@ Use these optional filters:
 
 | Language | PASS | FALLBACK | SKIP |
 |---|---:|---:|---:|
-| bash | 1 | 2 | 0 |
+| bash | 2 | 1 | 0 |
 | c | 0 | 0 | 2 |
 | c_sharp | 0 | 2 | 0 |
 | clojure | 2 | 0 | 0 |
@@ -142,7 +149,7 @@ Use these optional filters:
 | dart | 0 | 2 | 0 |
 | elixir | 2 | 1 | 0 |
 | elm | 2 | 0 | 0 |
-| erlang | 1 | 1 | 0 |
+| erlang | 2 | 0 | 0 |
 | go | 2 | 0 | 0 |
 | gomod | 0 | 3 | 0 |
 | graphql | 3 | 0 | 0 |
@@ -151,7 +158,7 @@ Use these optional filters:
 | html | 3 | 0 | 0 |
 | ini | 0 | 2 | 0 |
 | java | 0 | 0 | 2 |
-| javascript | 0 | 1 | 0 |
+| javascript | 1 | 0 | 0 |
 | json | 0 | 0 | 3 |
 | json5 | 2 | 0 | 0 |
 | julia | 0 | 2 | 0 |
@@ -197,19 +204,19 @@ The compact scheduler merged two conflict paths.
 A later reduction split those paths into separate heads.
 The scheduler then dropped one head and accepted the other.
 
-Admission now fails closed after this unproved frontier shape.
-The exact built-in Go artifact keeps its prior certified behavior.
-Custom, adapted, and other built-in grammars stay conservative.
+Admission fails closed after this unproved frontier shape.
+Exact built-in profiles can certify the behavior against the C oracle.
+Custom, adapted, stale, and unproved built-in grammars stay conservative.
 
-The new boundary moved four files to FALLBACK:
+The boundary originally moved four files to FALLBACK:
 
 - Bash medium
 - Erlang medium
 - JavaScript small
 - Kotlin small
 
-The first three files matched production before the new boundary.
-Do not certify them without a focused C-oracle receipt.
+Focused field-aware C-oracle receipts now certify Bash, Erlang, and JavaScript.
+Those files route directly again. Kotlin remains fail-closed.
 
 ## Corpus state
 

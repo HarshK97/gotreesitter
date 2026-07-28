@@ -3,12 +3,108 @@
 package gotreesitter_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	gts "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
 )
+
+func TestAdmissionCandidateCertifiedConvergedPathSplitsMatchProduction(t *testing.T) {
+	tests := []struct {
+		name       string
+		corpusPath string
+		source     string
+		load       func() *gts.Language
+	}{
+		{
+			name:       "bash",
+			corpusPath: filepath.Join("cgo_harness", "corpus_real", "bash", "medium__clean-old.sh"),
+			load:       grammars.BashLanguage,
+		},
+		{
+			name:       "erlang",
+			corpusPath: filepath.Join("cgo_harness", "corpus_real", "erlang", "medium__attributes.erl"),
+			load:       grammars.ErlangLanguage,
+		},
+		{
+			name:   "haskell",
+			source: grammars.ParseSmokeSample("haskell"),
+			load:   grammars.HaskellLanguage,
+		},
+		{
+			name:       "javascript",
+			corpusPath: filepath.Join("cgo_harness", "corpus_real", "javascript", "small__functions.js"),
+			load:       grammars.JavascriptLanguage,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := []byte(test.source)
+			if test.corpusPath != "" {
+				var err error
+				source, err = os.ReadFile(test.corpusPath)
+				if os.IsNotExist(err) {
+					t.Skipf("real-corpus witness is unavailable: %s", test.corpusPath)
+				}
+				if err != nil {
+					t.Fatalf("read real-corpus witness: %v", err)
+				}
+			}
+
+			lang := test.load()
+			if !lang.CompactConvergedReductionSplitDropsCertified {
+				t.Fatal("exact artifact lacks converged-split certification")
+			}
+
+			production := gts.NewParser(lang)
+			production.SetAdmissionCandidateRoute(false)
+			productionTree, err := production.Parse(source)
+			if err != nil {
+				t.Fatalf("production parse: %v", err)
+			}
+			defer productionTree.Release()
+
+			gts.ResetAdmissionCandidateCountersForTest()
+			candidate := gts.NewParser(lang)
+			candidate.SetAdmissionCandidateRoute(true)
+			candidateTree, err := candidate.Parse(source)
+			if err != nil {
+				t.Fatalf("candidate parse: %v", err)
+			}
+			defer candidateTree.Release()
+
+			routed, fallback := gts.AdmissionCandidateCounters()
+			if routed != 1 || fallback != 0 {
+				t.Fatalf(
+					"candidate route counters = %d/%d, want 1/0; reason=%s",
+					routed,
+					fallback,
+					gts.AdmissionCandidateLastFallbackReason(),
+				)
+			}
+			candidateInspection, err := benchfixtures.InspectGoTree(candidateTree.RootNode(), lang)
+			if err != nil {
+				t.Fatalf("inspect candidate tree: %v", err)
+			}
+			productionInspection, err := benchfixtures.InspectGoTree(productionTree.RootNode(), lang)
+			if err != nil {
+				t.Fatalf("inspect production tree: %v", err)
+			}
+			if candidateInspection.SHA256 != productionInspection.SHA256 {
+				t.Fatalf(
+					"candidate digest %s differs from production %s",
+					candidateInspection.SHA256,
+					productionInspection.SHA256,
+				)
+			}
+		})
+	}
+}
 
 // TestAdmissionCandidateConvergedPathSplitFailsClosed covers a compact-route
 // divergence found by the refreshed Kotlin corpus. The visibility-modifier and

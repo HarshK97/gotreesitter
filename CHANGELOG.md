@@ -13,7 +13,12 @@ for tags and release notes while still in `0.x`.
   HTTP and Robot can drop EOF siblings with no actions.
   Meson can select the sole primary accepted derivation.
   Exact blob profiles and field-aware C-oracle receipts guard these choices.
-  The current smoke scorecard reports 194 direct routes and no divergence.
+  The current smoke scorecard reports 195 direct routes and no divergence.
+
+- Compact admission now permits certified converged-path reduction split drops
+  for the exact Bash, Erlang, Haskell, and JavaScript artifacts.
+  Field-aware C-oracle receipts cover each selected compact tree.
+  Three real-corpus files and the Haskell smoke fixture now route directly.
 
 - Compact reduction outputs now carry their multi-pop fact directly.
   This avoids two full work snapshots on every reduction.

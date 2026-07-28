@@ -64,8 +64,9 @@ var knownDegradedStructural = map[string]string{
 var knownDegradedNoErrorClean = map[string]struct{}{}
 
 type parityCase struct {
-	name   string
-	source string
+	name           string
+	source         string
+	candidateRoute *bool
 }
 
 // parityCases is built dynamically from the full language registry so that
@@ -467,6 +468,9 @@ func parseWithGo(tc parityCase, src []byte, oldTree *gotreesitter.Tree) (*gotree
 
 	lang := entry.Language()
 	parser := gotreesitter.NewParser(lang)
+	if tc.candidateRoute != nil {
+		parser.SetAdmissionCandidateRoute(*tc.candidateRoute)
+	}
 
 	var tree *gotreesitter.Tree
 	var parseErr error
@@ -814,6 +818,55 @@ func TestParityFreshParse(t *testing.T) {
 				t.Skipf("known mismatch: %s", reason)
 			}
 			runParityCase(t, tc, "fresh", normalizedSource(tc.name, tc.source))
+		})
+	}
+}
+
+func TestParityCompactConvergedSplitCorpus(t *testing.T) {
+	parityRequireExhaustive(t, "compact converged-split corpus parity")
+	candidateRoute := true
+	tests := []struct {
+		name       string
+		corpusPath string
+		source     string
+	}{
+		{name: "bash", corpusPath: "corpus_real/bash/medium__clean-old.sh"},
+		{name: "erlang", corpusPath: "corpus_real/erlang/medium__attributes.erl"},
+		{name: "haskell", source: grammars.ParseSmokeSample("haskell")},
+		{name: "javascript", corpusPath: "corpus_real/javascript/small__functions.js"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := []byte(test.source)
+			if test.corpusPath != "" {
+				var err error
+				source, err = os.ReadFile(test.corpusPath)
+				if os.IsNotExist(err) {
+					t.Skipf("real-corpus witness is unavailable: %s", test.corpusPath)
+				}
+				if err != nil {
+					t.Fatalf("read real-corpus witness: %v", err)
+				}
+			}
+
+			beforeRouted, beforeFallback := gotreesitter.AdmissionCandidateCounters()
+			runParityCase(t, parityCase{
+				name:           test.name,
+				source:         string(source),
+				candidateRoute: &candidateRoute,
+			}, "compact-converged-split", source)
+			afterRouted, afterFallback := gotreesitter.AdmissionCandidateCounters()
+			routed := afterRouted - beforeRouted
+			fallback := afterFallback - beforeFallback
+			if routed != 1 || fallback != 0 {
+				t.Fatalf(
+					"candidate route counters = %d/%d, want 1/0; reason=%s",
+					routed,
+					fallback,
+					gotreesitter.AdmissionCandidateLastFallbackReason(),
+				)
+			}
 		})
 	}
 }
