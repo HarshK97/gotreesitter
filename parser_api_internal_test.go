@@ -543,6 +543,57 @@ func TestCertifiedInitialMergeRetrySkipHonorsExplicitOverrides(t *testing.T) {
 	}
 }
 
+func TestCertifiedGSSConvergenceAcceptedErrorSchedulesFallbackWidth(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_STACKS", "")
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	t.Cleanup(ResetParseEnvConfigCacheForTests)
+
+	const sourceLen = 128
+	tree := certifiedAcceptedErrorRetryTestTree(false, sourceLen)
+	tree.language.FullParseGSSConvergenceEnabled = true
+	tree.language.FullParseAcceptedErrorRetryProfile = FullParseAcceptedErrorRetryProfile{
+		SkipCompleteAcceptedErrorRetry:             true,
+		SkipInitialCompleteAcceptedErrorMergeRetry: true,
+		GSSConvergenceAcceptedErrorMergePerKey:     12,
+	}
+
+	if got := certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, sourceLen); got != 12 {
+		t.Fatalf("certified fallback width = %d, want 12", got)
+	}
+	if !shouldRunInitialFullParseMergeRetry(tree, sourceLen, fullParseRetryOriginFresh) {
+		t.Fatal("certified convergence tree skipped its accepted-error fallback")
+	}
+	if got := fullParseRetryMergePerKeyOverride(tree, sourceLen, 8); got != 12 {
+		t.Fatalf("merge retry width = %d, want 12", got)
+	}
+
+	tree.root.flags = 0
+	if got := certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, sourceLen); got != 0 {
+		t.Fatalf("clean tree fallback width = %d, want 0", got)
+	}
+}
+
+func TestCertifiedGSSConvergenceFallbackHonorsExplicitOverrides(t *testing.T) {
+	for _, env := range []string{"GOT_GLR_MAX_STACKS", "GOT_GLR_MAX_MERGE_PER_KEY"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv("GOT_GLR_MAX_STACKS", "")
+			t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+			t.Setenv(env, "8")
+			ResetParseEnvConfigCacheForTests()
+			t.Cleanup(ResetParseEnvConfigCacheForTests)
+
+			const sourceLen = 128
+			tree := certifiedAcceptedErrorRetryTestTree(false, sourceLen)
+			tree.language.FullParseGSSConvergenceEnabled = true
+			tree.language.FullParseAcceptedErrorRetryProfile.GSSConvergenceAcceptedErrorMergePerKey = 12
+			if got := certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, sourceLen); got != 0 {
+				t.Fatalf("explicit %s fallback width = %d, want 0", env, got)
+			}
+		})
+	}
+}
+
 func TestCertifiedInitialMergeRetrySkipKeepsWideningAndTreeSelection(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_STACKS", "")
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")

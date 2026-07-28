@@ -415,6 +415,7 @@ func TestBuiltinCompleteAcceptedErrorRetryProfilesAttach(t *testing.T) {
 			}
 			if tt.name == "c_sharp" && (profile.SkipCompleteMaxEntryScratchPeak != csharpAcceptedErrorRetryMaxEntryScratchPeak ||
 				profile.FreshErrorNoStacksRetryMaxStacks != csharpFreshErrorNoStacksRetryMaxStacks ||
+				profile.GSSConvergenceAcceptedErrorMergePerKey != csharpGSSConvergenceErrorMergePerKey ||
 				!profile.SkipInitialCompleteAcceptedErrorMergeRetry) {
 				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want bounded C# retry profile", profile)
 			}
@@ -546,6 +547,7 @@ func TestBuiltinCSharpRetryProfileRequiresCertifiedBlob(t *testing.T) {
 		SkipCompleteMaxEntryScratchPeak:            csharpAcceptedErrorRetryMaxEntryScratchPeak,
 		FreshErrorNoStacksRetryMaxStacks:           csharpFreshErrorNoStacksRetryMaxStacks,
 		SkipInitialCompleteAcceptedErrorMergeRetry: true,
+		GSSConvergenceAcceptedErrorMergePerKey:     csharpGSSConvergenceErrorMergePerKey,
 	}
 	if got := lang.FullParseAcceptedErrorRetryProfile; got != want {
 		t.Fatalf("certified C# retry profile = %+v, want %+v", got, want)

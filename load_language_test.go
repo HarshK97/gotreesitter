@@ -9,10 +9,11 @@ import (
 
 func TestFullParseAcceptedErrorRetryProfileLanguageBlobRoundTrip(t *testing.T) {
 	want := FullParseAcceptedErrorRetryProfile{
-		SkipCompleteAcceptedErrorRetry: true,
-		SkipCompleteMinSourceBytes:     2 * 1024,
-		ReuseCleanWideForWideRetry:     true,
-		ReuseCleanWideMinSourceBytes:   128 * 1024,
+		SkipCompleteAcceptedErrorRetry:         true,
+		SkipCompleteMinSourceBytes:             2 * 1024,
+		ReuseCleanWideForWideRetry:             true,
+		ReuseCleanWideMinSourceBytes:           128 * 1024,
+		GSSConvergenceAcceptedErrorMergePerKey: 12,
 	}
 	lang := &Language{
 		Name:                               "accepted_error_retry_profile_round_trip",

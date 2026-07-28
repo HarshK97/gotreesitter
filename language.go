@@ -384,6 +384,10 @@ type FullParseAcceptedErrorRetryProfile struct {
 	// ReuseCleanWideMinSourceBytes limits clean-wide reuse to the certified
 	// large-source class. Zero disables the policy even when the boolean is set.
 	ReuseCleanWideMinSourceBytes uint32
+	// GSSConvergenceAcceptedErrorMergePerKey sets the exact merge width for an
+	// accepted-error retry after a certified cap-one full parse. Zero keeps the
+	// other retry policies. Explicit environment settings disable this policy.
+	GSSConvergenceAcceptedErrorMergePerKey uint16
 }
 
 // ResultCompatibilityCapability records result-tree shapes that a language

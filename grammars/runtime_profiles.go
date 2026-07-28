@@ -26,6 +26,7 @@ type builtinLanguageRuntimeProfile struct {
 const (
 	csharpAcceptedErrorRetryMaxEntryScratchPeak = 690_365
 	csharpFreshErrorNoStacksRetryMaxStacks      = 16
+	csharpGSSConvergenceErrorMergePerKey        = 12
 	mesonAcceptedErrorRetryMinSourceBytes       = 2 * 1024
 	javascriptAutomaticForestMemoryAllowance    = 128 * 1024 * 1024
 )
@@ -74,6 +75,7 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 			SkipCompleteMaxEntryScratchPeak:            csharpAcceptedErrorRetryMaxEntryScratchPeak,
 			FreshErrorNoStacksRetryMaxStacks:           csharpFreshErrorNoStacksRetryMaxStacks,
 			SkipInitialCompleteAcceptedErrorMergeRetry: true,
+			GSSConvergenceAcceptedErrorMergePerKey:     csharpGSSConvergenceErrorMergePerKey,
 		},
 	},
 	// Crystal's external-scanner repeat selects the same tree after the complete
