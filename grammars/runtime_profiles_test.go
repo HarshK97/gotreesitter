@@ -527,6 +527,9 @@ func TestBuiltinCSharpRetryProfileRequiresCertifiedBlob(t *testing.T) {
 	if got := lang.FullParseAcceptedErrorRetryProfile; got != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) {
 		t.Fatalf("uncertified C# blob changed retry profile to %+v", got)
 	}
+	if lang.FullParseGSSConvergenceEnabled {
+		t.Fatal("uncertified C# blob enabled full-parse GSS convergence")
+	}
 
 	blob := BlobByName("c_sharp")
 	if len(blob) == 0 {
@@ -546,6 +549,9 @@ func TestBuiltinCSharpRetryProfileRequiresCertifiedBlob(t *testing.T) {
 	}
 	if got := lang.FullParseAcceptedErrorRetryProfile; got != want {
 		t.Fatalf("certified C# retry profile = %+v, want %+v", got, want)
+	}
+	if !lang.FullParseGSSConvergenceEnabled {
+		t.Fatal("certified C# blob did not enable full-parse GSS convergence")
 	}
 }
 

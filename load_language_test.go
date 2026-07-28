@@ -32,6 +32,25 @@ func TestFullParseAcceptedErrorRetryProfileLanguageBlobRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFullParseGSSConvergenceLanguageBlobRoundTrip(t *testing.T) {
+	lang := &Language{
+		Name:                           "gss_convergence_round_trip",
+		FullParseGSSConvergenceEnabled: true,
+	}
+
+	blob, err := EncodeLanguageBlob(lang)
+	if err != nil {
+		t.Fatalf("EncodeLanguageBlob: %v", err)
+	}
+	decoded, err := LoadLanguage(blob)
+	if err != nil {
+		t.Fatalf("LoadLanguage: %v", err)
+	}
+	if !decoded.FullParseGSSConvergenceEnabled {
+		t.Fatal("FullParseGSSConvergenceEnabled = false, want true")
+	}
+}
+
 func TestLoadLanguageInfersGeneratedRepeatAuxMetadata(t *testing.T) {
 	var buf bytes.Buffer
 	gzw := gzip.NewWriter(&buf)

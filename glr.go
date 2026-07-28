@@ -204,6 +204,7 @@ type glrMergeScratch struct {
 	perKeyCap         int
 	language          *Language
 	arena             *nodeArena
+	faithfulCapOne    bool
 	deferExactDedupe  bool
 	frontierMergeHash bool
 	trace             bool
@@ -3136,7 +3137,7 @@ func stackCompareMerge(a, b *glrStack) int {
 	return 0
 }
 
-func stackCompareMergeSmallCapOne(a, b *glrStack) int {
+func stackCompareMergeSmallCapOne(scratch *glrMergeScratch, a, b *glrStack) int {
 	if perfCountersEnabled {
 		perfRecordStackCompare()
 	}
@@ -3172,7 +3173,7 @@ func stackCompareMergeSmallCapOne(a, b *glrStack) int {
 		}
 		return -1
 	}
-	if glrFaithfulCapOneMerge {
+	if faithfulCapOneMergeEnabled(scratch) {
 		return 0
 	}
 	aDepth := a.depth()
@@ -4418,6 +4419,10 @@ func preserveCapOneStackInSlot(result *[]glrStack, slot *glrMergeSlot, stack glr
 	return true
 }
 
+func faithfulCapOneMergeEnabled(scratch *glrMergeScratch) bool {
+	return glrFaithfulCapOneMerge || (scratch != nil && scratch.faithfulCapOne)
+}
+
 func mergeSlotTrackedCount(slot *glrMergeSlot) int {
 	if slot == nil {
 		return 0
@@ -4554,7 +4559,7 @@ func mergeStacksSmallForLanguage(alive []glrStack, scratch *glrMergeScratch, lan
 				if cRecoverySameCostIndex >= 0 && j != cRecoverySameCostIndex {
 					continue
 				}
-				cmp := stackCompareMergeSmallCapOne(&stack, &result[j])
+				cmp := stackCompareMergeSmallCapOne(scratch, &stack, &result[j])
 				if cmp > 0 {
 					result[j] = stack
 					duplicateIndex = j
@@ -4631,7 +4636,7 @@ func mergeStacksSmallDeferExact(alive []glrStack, scratch *glrMergeScratch, lang
 				if cRecoverySameCostIndex >= 0 && j != cRecoverySameCostIndex {
 					continue
 				}
-				cmp := stackCompareMergeSmallCapOne(&stack, &result[j])
+				cmp := stackCompareMergeSmallCapOne(scratch, &stack, &result[j])
 				if cmp > 0 {
 					result[j] = stack
 					duplicateIndex = j
@@ -4802,7 +4807,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 			if idx < 0 {
 				idx = mergeSlotIndexAt(slot, 0)
 			}
-			cmp := stackCompareMergeSmallCapOne(&stack, &result[idx])
+			cmp := stackCompareMergeSmallCapOne(scratch, &stack, &result[idx])
 			if cmp > 0 {
 				result[idx] = stack
 				if pos := mergeSlotPositionForIndex(slot, idx); pos >= 0 {
@@ -4885,7 +4890,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 		if perfCountersEnabled {
 			perfRecordMergePerKeyOverflow()
 		}
-		if perKeyCap == 1 && glrFaithfulCapOneMerge {
+		if perKeyCap == 1 && faithfulCapOneMergeEnabled(scratch) {
 			merged := false
 			attempted := false
 			for j, n := 0, mergeSlotTrackedCount(slot); j < n; j++ {
@@ -4991,7 +4996,7 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 			if idx < 0 {
 				idx = mergeSlotIndexAt(slot, 0)
 			}
-			cmp := stackCompareMergeSmallCapOne(&stack, &result[idx])
+			cmp := stackCompareMergeSmallCapOne(scratch, &stack, &result[idx])
 			if cmp > 0 {
 				result[idx] = stack
 				if pos := mergeSlotPositionForIndex(slot, idx); pos >= 0 {
@@ -5071,7 +5076,7 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 		if perfCountersEnabled {
 			perfRecordMergePerKeyOverflow()
 		}
-		if perKeyCap == 1 && glrFaithfulCapOneMerge {
+		if perKeyCap == 1 && faithfulCapOneMergeEnabled(scratch) {
 			merged := false
 			attempted := false
 			for j, n := 0, mergeSlotTrackedCount(slot); j < n; j++ {

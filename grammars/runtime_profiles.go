@@ -18,6 +18,7 @@ type builtinLanguageRuntimeProfile struct {
 	automaticForestMemoryAllowance     int64
 	automaticForestEnabled             bool
 	fullParseArenaDensityCap           bool
+	fullParseGSSConvergence            bool
 	nativeResultCompatibility          gotreesitter.ResultCompatibilityCapability
 	conflictPolicies                   []gotreesitter.ConflictPolicy
 }
@@ -62,6 +63,7 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	"c_sharp": {
 		blobSHA256:                    mustRuntimeProfileSHA256("7ad425e89733339dde94e3c03b762ae478fb453b530493f5d62e1ae7537e1784"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
+		fullParseGSSConvergence:       true,
 		nativeResultCompatibility: gotreesitter.ResultCompatibilityCSharpNativeNotNull |
 			gotreesitter.ResultCompatibilityCSharpNativeUnicodeIdentifiers |
 			gotreesitter.ResultCompatibilityCSharpNativeScopedLambdaStatements |
@@ -390,6 +392,10 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 	}
 	if profile.fullParseArenaDensityCap && !lang.FullParseArenaDensityCapEnabled {
 		lang.FullParseArenaDensityCapEnabled = true
+		changed = true
+	}
+	if profile.fullParseGSSConvergence && !lang.FullParseGSSConvergenceEnabled {
+		lang.FullParseGSSConvergenceEnabled = true
 		changed = true
 	}
 	if missing := profile.nativeResultCompatibility &^ lang.NativeResultCompatibility; missing != 0 {

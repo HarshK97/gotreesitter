@@ -646,6 +646,13 @@ type Language struct {
 	// custom or adapted languages; false preserves the baseline arena policy.
 	FullParseArenaDensityCapEnabled bool
 
+	// FullParseGSSConvergenceEnabled certifies cap-one full parses for this
+	// language artifact. Clean, equal-header alternatives remain available as
+	// graph-structured stack links. Checked-in built-ins receive this setting
+	// only through an exact-blob runtime profile. Callers may opt in custom or
+	// adapted languages after they certify equivalent result trees.
+	FullParseGSSConvergenceEnabled bool
+
 	// NativeResultCompatibility identifies result-tree shapes produced natively
 	// by this exact language artifact. Zero keeps conservative post-parse
 	// compatibility fallbacks for legacy blobs, generated grammars, caller-built
