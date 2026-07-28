@@ -130,6 +130,11 @@ func TestRetiredDispatchArmCOracleParity(t *testing.T) {
 			source:   "void f() { foo!int(); }\n",
 		},
 		{
+			name:     "d_storage_class_wrapper",
+			language: "d",
+			source:   "module m;\nvoid f() { static int value; }\n",
+		},
+		{
 			name:     "forth_leading_trivia_root",
 			language: "forth",
 			source:   "\n: square dup * ;\n",

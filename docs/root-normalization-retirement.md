@@ -198,7 +198,11 @@ This change retires Arduino's arm and one Objective-C subpass.
 Other Objective-C repairs remain live.
 Generic result election now preserves visible named unary wrappers.
 This change retires the D template-call type wrapper.
-Four D subpasses remain live.
+Native visible-wrapper election also preserves D storage classes.
+This change retires the D storage-class wrapper.
+Three D subpasses remain live.
+The field-aware C-oracle receipt is:
+`harness_out/docker/20260728T070352Z-retire-d-storage-class-c-oracle-fields`.
 A final-newline route probe rejected the simple type-call retirement.
 For `void f() { Type(); }\n`, native production still emits a `type` wrapper.
 Exact stack-node equivalence preserves deep Objective-C alternatives.
@@ -289,6 +293,7 @@ there.
 | D template-call type wrappers | retirement change | 1 D subpass | 0 | generalized visible named wrapper election, compatibility-free producer, production, forest, incremental, and isolated C-oracle receipts |
 | Objective-C encode and function-pointer repairs | retirement change | 2 Objective-C subpasses | 0 | exact stack equivalence, generic alias selection, production, incremental, and isolated field-aware C-oracle receipts |
 | D and Objective-C subpass census | retirement change | 2 aggregate arm receipts | 8 named live subpass receipts | positive controls, exact fingerprints, and absent retired labels |
+| D storage-class wrappers | retirement change | 1 D subpass | 0 | visible named wrapper election, compatibility-free producer, production, compact fallback, forest, incremental reuse, and isolated C-oracle parity |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.

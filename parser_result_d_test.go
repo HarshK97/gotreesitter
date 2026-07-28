@@ -2,41 +2,6 @@ package gotreesitter
 
 import "testing"
 
-func TestNormalizeDVariableStorageClassWrappersWrapsStaticLeaf(t *testing.T) {
-	lang := &Language{
-		Name:        "d",
-		SymbolNames: []string{"EOF", "variable_declaration", "storage_class", "static", "type", "declarator", ";"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "variable_declaration", Visible: true, Named: true},
-			{Name: "storage_class", Visible: true, Named: true},
-			{Name: "static", Visible: true, Named: false},
-			{Name: "type", Visible: true, Named: true},
-			{Name: "declarator", Visible: true, Named: true},
-			{Name: ";", Visible: true, Named: false},
-		},
-	}
-
-	arena := newNodeArena(arenaClassFull)
-	staticLeaf := newLeafNodeInArena(arena, 3, false, 0, 6, Point{}, Point{Column: 6})
-	typ := newLeafNodeInArena(arena, 4, true, 7, 17, Point{Column: 7}, Point{Column: 17})
-	decl := newLeafNodeInArena(arena, 5, true, 18, 26, Point{Column: 18}, Point{Column: 26})
-	semi := newLeafNodeInArena(arena, 6, false, 26, 27, Point{Column: 26}, Point{Column: 27})
-	varDecl := newParentNodeInArena(arena, 1, true, []*Node{staticLeaf, typ, decl, semi}, nil, 0)
-
-	normalizeDVariableStorageClassWrappers(varDecl, lang)
-
-	if got, want := varDecl.children[0].Type(lang), "storage_class"; got != want {
-		t.Fatalf("varDecl.children[0].Type = %q, want %q", got, want)
-	}
-	if got, want := len(varDecl.children[0].children), 1; got != want {
-		t.Fatalf("storage_class child count = %d, want %d", got, want)
-	}
-	if got, want := varDecl.children[0].children[0].Type(lang), "static"; got != want {
-		t.Fatalf("wrapped child type = %q, want %q", got, want)
-	}
-}
-
 func TestNormalizeDVariableTypeQualifiersMergesSharedIntoType(t *testing.T) {
 	lang := &Language{
 		Name:        "d",

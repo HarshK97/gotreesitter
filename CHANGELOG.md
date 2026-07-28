@@ -17,6 +17,10 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Native visible-wrapper election now owns D storage classes.
+  This retires the matching result-normalization subpass.
+  Three D subpasses remain live.
+
 - The Cooklang smoke fixture now uses a valid ingredient instruction.
   The previous period required production recovery and was omitted from the
   resulting tree.

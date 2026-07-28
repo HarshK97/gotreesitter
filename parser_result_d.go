@@ -10,31 +10,6 @@ func normalizeDCompatibility(root *Node, lang *Language, census materializationS
 	census.run("dispatch.d.variable-type-qualifiers", func() {
 		normalizeDVariableTypeQualifiers(root, lang)
 	})
-	census.run("dispatch.d.variable-storage-class-wrappers", func() {
-		normalizeDVariableStorageClassWrappers(root, lang)
-	})
-}
-
-func normalizeDVariableStorageClassWrappers(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "d" {
-		return
-	}
-	storageClassSym, ok := lang.SymbolByName("storage_class")
-	if !ok {
-		return
-	}
-	storageClassNamed := symbolIsNamed(lang, storageClassSym)
-	walkResultTree(root, func(n *Node) {
-		if n.Type(lang) == "variable_declaration" {
-			for i, child := range n.children {
-				if child == nil || child.Type(lang) != "static" {
-					continue
-				}
-				wrapper := newParentNodeInArena(n.ownerArena, storageClassSym, storageClassNamed, []*Node{child}, nil, 0)
-				n.children[i] = wrapper
-			}
-		}
-	})
 }
 
 func normalizeDVariableTypeQualifiers(root *Node, lang *Language) {
