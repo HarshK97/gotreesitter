@@ -14,3 +14,9 @@ and run receipts separately. It defaults to a dry run. `--delete` removes only
 root build products and reproducible caches; durable harness and benchmark
 receipts require the separate `--delete-receipts` opt-in. It never includes
 private `.gts/`, `.tiller/`, or other agent notes.
+
+`canopy_query.sh` validates the cached index before each structural query. It
+uses a fresh scoped query when indexed files or the source set changed.
+
+`refresh_canopy_index.sh` builds a temporary index and validates it. It records
+the Git commit only after it promotes the validated index.

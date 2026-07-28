@@ -3,14 +3,14 @@
 This file defines how agents should work in this repo.
 
 ### 1) Non-negotiables
-- Use `canopy` for structural inspection, review, dead-code, impact, and hotspot runs.
+- Use `scripts/canopy_query.sh` for cached structural searches and analyses.
+- Use direct `canopy ... --no-cache` commands for narrow searches of changed files.
 - Use `rg` for literal text. Plain `canopy search grep` patterns start structural parsing.
 - Scope structural Canopy searches to the smallest useful path.
-- Apply the bounded Canopy wrapper and `--limit` to structural searches.
+- Apply `--limit` to structural searches.
 - Do not run concurrent repository-wide Canopy searches.
-- Run `canopy index validate . --cache .canopy/index.json` before selector searches.
-- Canopy 0.16.2 validation does not detect new source files.
-- Use `--no-cache` for a narrow search of a changed or new file.
+- The query wrapper detects changed, missing, and new source files.
+- The query wrapper uses a fresh scoped query when the cache is stale.
 - Run `scripts/refresh_canopy_index.sh` before a broad search when the source set changed.
 - The refresh script promotes its temporary cache only after a successful build and validation.
 - Do not run repo-wide `go test ./...` or `go test ./... -race` on the host. Broad host sweeps can OOM developer machines and make attribution harder.
