@@ -6,11 +6,13 @@ This file defines how agents should work in this repo.
 - Use `canopy` for structural inspection, review, dead-code, impact, and hotspot runs.
 - Use `rg` for literal text. Plain `canopy search grep` patterns start structural parsing.
 - Scope structural Canopy searches to the smallest useful path.
-- Apply `timeout -k 2s 30s` and `--limit` to structural searches.
+- Apply the bounded Canopy wrapper and `--limit` to structural searches.
 - Do not run concurrent repository-wide Canopy searches.
 - Run `canopy index validate . --cache .canopy/index.json` before selector searches.
-- Rebuild a stale index with `timeout -k 2s 30s canopy index build . --incremental`.
-- Validate the index again after the rebuild.
+- Canopy 0.16.2 validation does not detect new source files.
+- Use `--no-cache` for a narrow search of a changed or new file.
+- Run `scripts/refresh_canopy_index.sh` before a broad search when the source set changed.
+- The refresh script promotes its temporary cache only after a successful build and validation.
 - Do not run repo-wide `go test ./...` or `go test ./... -race` on the host. Broad host sweeps can OOM developer machines and make attribution harder.
 - For heavy correctness, parity, or race coverage, use Docker isolation only and keep runs to one language/grammar at a time.
 - Keep correctness gating separate from performance gating.
