@@ -213,7 +213,9 @@ Exact stack-node equivalence preserves deep Objective-C alternatives.
 Generic alias-target selection now owns `@encode` identifiers and function
 pointer expressions.
 This change retires two Objective-C subpasses.
-Four Objective-C subpasses remain live.
+Native derivation selection also owns single and concatenated `@` strings.
+This change retires a third Objective-C subpass.
+Three Objective-C subpasses remain live.
 The dispatcher census now records each remaining D and Objective-C subpass.
 
 Group by invariant, not language:

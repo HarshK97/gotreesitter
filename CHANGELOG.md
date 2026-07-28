@@ -187,7 +187,8 @@ for tags and release notes while still in `0.x`.
   Native selection now owns `@encode` identifiers and function-pointer
   expression shapes.
   Production, incremental, and field-aware C-oracle receipts match.
-  Four unrelated Objective-C subpasses remain live.
+  Native selection also owns single and concatenated `@` strings.
+  Three unrelated Objective-C subpasses remain live.
 
 - **The D module-bound result repair.** Native reduction already excludes
   leading comments and trailing trivia from each `module_def` span.

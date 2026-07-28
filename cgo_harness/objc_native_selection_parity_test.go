@@ -16,6 +16,10 @@ func TestObjcNativeAlternativeSelectionParity(t *testing.T) {
   NSComparisonResult (*comp)(id, SEL, id) = 0;
 }
 `},
+		{name: "at_string", source: `int main() { NSLog(@"one"); }
+`},
+		{name: "at_concatenated_string", source: `int main() { NSLog(@"one" @"two"); }
+`},
 	}
 	for _, source := range sources {
 		t.Run(source.name, func(t *testing.T) {

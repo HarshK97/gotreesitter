@@ -247,7 +247,6 @@ func TestObjcNormalizationSubpassCensus(t *testing.T) {
 		"dispatch.objc",
 		"dispatch.objc.method-type-identifiers",
 		"dispatch.objc.sizeof-type-identifier-operands",
-		"dispatch.objc.at-string-literals",
 		"dispatch.objc.struct-sized-type-specifiers",
 	} {
 		pass, ok := got[name]
@@ -262,6 +261,7 @@ func TestObjcNormalizationSubpassCensus(t *testing.T) {
 	for _, retired := range []string{
 		"dispatch.objc.encode-type-identifiers",
 		"dispatch.objc.function-pointer-declarations-as-expressions",
+		"dispatch.objc.at-string-literals",
 	} {
 		if _, ok := got[retired]; ok {
 			t.Errorf("normalization census retained retired subpass %q", retired)
