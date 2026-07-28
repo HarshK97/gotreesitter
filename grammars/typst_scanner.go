@@ -287,7 +287,7 @@ func (s *typstScannerState) termination(lexer *gotreesitter.ExternalLexer, valid
 type TypstExternalScanner struct{}
 
 func (TypstExternalScanner) Create() any {
-	return &typstScannerState{}
+	return &typstScannerState{indentation: []uint32{0}}
 }
 
 func (TypstExternalScanner) Destroy(payload any) {}

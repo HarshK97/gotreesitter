@@ -1146,6 +1146,55 @@ func newCRecoverySyntheticReduceParser() *Parser {
 	return &Parser{language: lang, denseLimit: len(lang.ParseTable)}
 }
 
+func TestCRecoveryReductionPreservesTransientParentState(t *testing.T) {
+	parser := newCRecoverySyntheticReduceParser()
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch parserScratch
+	scratch.reduce.transientParents = &scratch.transientParents
+	parser.reduceScratch = &scratch.reduce
+	defer func() {
+		parser.reduceScratch = nil
+	}()
+
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	transient := scratch.transientParents.allocParent(
+		arena,
+		1,
+		true,
+		[]*Node{leaf},
+		0,
+		true,
+	)
+	right := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	start := newGLRStack(1)
+	start.pushEntry(newStackEntryNode(2, transient), &scratch.entries, &scratch.gss)
+	start.pushEntry(newStackEntryNode(3, right), &scratch.entries, &scratch.gss)
+
+	nodeCount := 0
+	candidates, reason := parser.cReductionCandidatesForAction(
+		nil,
+		start,
+		ParseAction{Type: ParseActionReduce, Symbol: 4, ChildCount: 2},
+		Token{},
+		&nodeCount,
+		arena,
+		&scratch.entries,
+		&scratch.gss,
+		nil,
+	)
+	if reason != ParseStopNone {
+		t.Fatalf("recovery reduction stop reason = %v, want none", reason)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("recovery reduction candidates = %d, want 1", len(candidates))
+	}
+	if transient.parent != nil {
+		t.Fatal("recovery reduction replaced transient parent state")
+	}
+}
+
 // TestCDoAllPotentialReductionsKeepsShiftableOriginalWithReductionFork pins
 // C's version bookkeeping (parser.c ts_parser__do_all_potential_reductions):
 // a version whose state has a non-extra shift action for SOME token is KEPT

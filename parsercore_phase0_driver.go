@@ -2394,6 +2394,9 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			return nil, err
 		}
 	}
+	var singletonCells [1]diagnosticParserCoreGenericCell
+	cells := singletonCells[:0]
+	scratchCells := s.dispatchScratch.cells
 	for index, header := range s.headers {
 		if header.shifted || header.accepted {
 			continue
@@ -2425,9 +2428,16 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				cell.repetitionReduceOrdinal, cell.repetitionFold = diagnosticParserCoreRepetitionFoldOrdinal(s.tokenSource.language, actions)
 			}
 		}
-		s.dispatchScratch.cells = append(s.dispatchScratch.cells, cell)
+		if len(s.headers) == 1 {
+			cells = append(cells, cell)
+		} else {
+			scratchCells = append(scratchCells, cell)
+		}
 	}
-	cells := s.dispatchScratch.cells
+	if len(s.headers) != 1 {
+		s.dispatchScratch.cells = scratchCells
+		cells = scratchCells
+	}
 	noActionIndices := s.dispatchScratch.noActionIndices
 	if unsupported := s.validateGenericNoLookaheadReduction(cells, noActionIndices); unsupported != nil {
 		return unsupported, nil

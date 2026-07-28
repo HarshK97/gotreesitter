@@ -251,8 +251,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 			stopReason = normalizeTypeScriptTreeCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
 		})
 		return resultCompatibilityResult{stopReason: stopReason}
-	case "typst":
-		dispatcherArmCensus(ctx, "dispatch.typst", func() { normalizeTypstCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "yaml":
 		dispatcherArmCensus(ctx, "dispatch.yaml", func() { normalizeYAMLRecoveredRoot(ctx.root, ctx.source, ctx.lang) })
 	}

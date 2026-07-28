@@ -35,11 +35,6 @@ for tags and release notes while still in `0.x`.
 - The parser covers every byte in each recovered EBNF source.
   This change removes the EBNF compatibility arm.
 
-- Result materialization now rejects a transient replacement that points back
-  to its current parent.
-  The parser returns an acyclic invariant error tree before it creates a
-  self-edge.
-
 - Native visible-wrapper election now owns D storage classes.
   This retires the matching result-normalization subpass.
   Native reduction also owns D variable-type qualifiers.
@@ -348,6 +343,14 @@ for tags and release notes while still in `0.x`.
   This removes repeated environment lookups from the incremental hot path.
   The pinned edited incremental benchmark improves 1.28 percent with zero
   allocations.
+
+## [0.47.1] - 2026-07-28
+
+### Fixed
+
+- Recovery reductions preserve deferred parent links during fresh parses.
+  Valid Go files remain complete during final result materialization.
+  The invariant guard still rejects invalid transient replacements.
 
 ## [0.47.0] - 2026-07-22
 
@@ -3955,7 +3958,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.47.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.47.1...HEAD
+[0.47.1]: https://github.com/odvcencio/gotreesitter/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/odvcencio/gotreesitter/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/odvcencio/gotreesitter/compare/v0.45.0...v0.46.0
 [0.45.0]: https://github.com/odvcencio/gotreesitter/compare/v0.44.1...v0.45.0
