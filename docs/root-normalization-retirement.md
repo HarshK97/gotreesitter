@@ -226,9 +226,8 @@ Generic result selection preserves the expression and type alternatives for
 an Objective-C `sizeof` operand.
 It selects the C-equivalent expression for an unknown type name.
 This change retires the final Objective-C subpass and its dispatcher arm.
-Native root materialization covers each recovered EBNF root through the final
-source byte.
-This change retires the EBNF dispatcher arm.
+The parser covers every byte in each recovered EBNF source.
+This change removes the EBNF dispatcher arm.
 The field-aware C-oracle receipt is:
 `harness_out/docker/20260728T111158Z-objc-struct-sized-postfilter-final`.
 The method type C-oracle receipt is:

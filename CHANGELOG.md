@@ -24,8 +24,8 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
-- Native root materialization covers the complete recovered EBNF source span.
-  This retires the EBNF result-compatibility arm.
+- The parser covers every byte in each recovered EBNF source.
+  This change removes the EBNF compatibility arm.
 
 - Result materialization now rejects a transient replacement that points back
   to its current parent.

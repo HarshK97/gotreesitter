@@ -38,8 +38,8 @@ Native Objective-C projection also owns protocol type identifiers.
 Generic result selection owns the remaining ambiguous `sizeof` operand.
 No Objective-C result-compatibility repair remains live.
 
-Native root materialization covers each recovered EBNF root through the final
-source byte. The EBNF result-compatibility arm is retired.
+The parser covers every byte in each recovered EBNF source.
+This change removes the EBNF compatibility arm.
 
 The exact collapsed-child policy retains a bare Rust `..` token.
 The merged-left-side conflict rule selects chained dot-range shifts.
