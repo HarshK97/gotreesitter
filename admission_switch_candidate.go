@@ -40,11 +40,13 @@ func newAdmissionCandidateRunner(p *Parser) (*parserCoreFreshFullRunner, error) 
 		return nil, errors.New("admission candidate route: parser has no language")
 	}
 	options := DiagnosticParserCorePrefixOptions{
-		ReceiptMode:           DiagnosticParserCoreReceiptSummary,
-		MaxTokens:             1 << 24,
-		MaxDispatches:         1 << 24,
-		Limits:                admissionCandidateLimits(),
-		freshSchedulerSession: true,
+		ReceiptMode:                    DiagnosticParserCoreReceiptSummary,
+		MaxTokens:                      1 << 24,
+		MaxDispatches:                  1 << 24,
+		Limits:                         admissionCandidateLimits(),
+		freshSchedulerSession:          true,
+		allowEOFAcceptNoActionSiblings: p.language.CompactEOFAcceptNoActionSiblingsCertified,
+		allowPrimaryAcceptDerivation:   p.language.CompactPrimaryAcceptanceDerivationCertified,
 	}
 	tables, err := newParserCoreRootTables(p)
 	if err != nil {
@@ -60,7 +62,8 @@ func newAdmissionCandidateRunner(p *Parser) (*parserCoreFreshFullRunner, error) 
 		// table-replayed state proof. Diagnostic runners retain their explicit
 		// GTS_REPLAY_PARSESTATE A/B switch; the production candidate always asks
 		// for the proof and still fails closed per tree when it is incomplete.
-		replayParseStates: true,
+		replayParseStates:                 true,
+		allowConvergedReductionSplitDrops: p.language.CompactConvergedReductionSplitDropsCertified,
 	}, nil
 }
 

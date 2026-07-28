@@ -54,7 +54,8 @@ func TestCrystalAndMatlabKeepAcceptedErrorRetryLadder(t *testing.T) {
 }
 
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	// 36 = the prior 33 plus CUE, Git Commit, and R.
+	// 40 = the prior 36 plus three compact profiles and Objective-C exact
+	// stack-node equivalence.
 	// Their collapsed-child capability is bound to an exact blob identity.
 	// D and Groovy's retry ceilings
 	// moved out of parser-core name switches and onto exact-blob profiles. The
@@ -68,7 +69,7 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	// the gomod entry), so it does not add a map entry. Crystal and Matlab add
 	// exact-blob external-scanner repeat suppression while retaining the full
 	// accepted-error retry ladder.
-	if got, want := len(builtinLanguageRuntimeProfiles), 36; got != want {
+	if got, want := len(builtinLanguageRuntimeProfiles), 40; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -86,6 +87,129 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	}
 	if lang.FullParseArenaDensityCapEnabled {
 		t.Fatal("unknown runtime profile enabled the full-parse arena density cap")
+	}
+	if lang.CompactConvergedReductionSplitDropsCertified {
+		t.Fatal("unknown runtime profile enabled compact converged-split drops")
+	}
+	if lang.CompactEOFAcceptNoActionSiblingsCertified {
+		t.Fatal("unknown runtime profile enabled compact EOF sibling drops")
+	}
+	if lang.CompactPrimaryAcceptanceDerivationCertified {
+		t.Fatal("unknown runtime profile enabled compact primary derivation selection")
+	}
+	if lang.ExactStackNodeEquivalenceCertified {
+		t.Fatal("unknown runtime profile enabled exact stack-node equivalence")
+	}
+}
+
+func TestBuiltinObjcExactStackEquivalenceProfileRequiresExactBlobIdentity(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	builtin := ObjcLanguage()
+	if !builtin.ExactStackNodeEquivalenceCertified {
+		t.Fatal("exact built-in Objective-C artifact did not receive exact stack-node equivalence")
+	}
+
+	custom := &gotreesitter.Language{Name: "objc"}
+	AttachLanguageSupport("objc", custom)
+	if custom.ExactStackNodeEquivalenceCertified {
+		t.Fatal("same-name custom Objective-C grammar enabled exact stack-node equivalence")
+	}
+
+	wrongIdentity := &gotreesitter.Language{Name: "objc"}
+	if attachBuiltinLanguageRuntimeProfile("objc", sha256.Sum256([]byte("uncertified")), wrongIdentity) {
+		t.Fatal("wrong Objective-C blob identity unexpectedly attached a runtime profile")
+	}
+	if wrongIdentity.ExactStackNodeEquivalenceCertified {
+		t.Fatal("wrong Objective-C blob identity enabled exact stack-node equivalence")
+	}
+}
+
+func TestBuiltinCompactAcceptanceProfilesRequireExactBlobIdentity(t *testing.T) {
+	tests := []struct {
+		name string
+		load func() *gotreesitter.Language
+		want func(*gotreesitter.Language) bool
+	}{
+		{
+			name: "http", load: HttpLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactEOFAcceptNoActionSiblingsCertified
+			},
+		},
+		{
+			name: "robot", load: RobotLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactEOFAcceptNoActionSiblingsCertified
+			},
+		},
+		{
+			name: "meson", load: MesonLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactPrimaryAcceptanceDerivationCertified
+			},
+		},
+	}
+
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if lang := tt.load(); !tt.want(lang) {
+				t.Fatal("exact built-in artifact did not receive compact acceptance certification")
+			}
+
+			custom := &gotreesitter.Language{Name: tt.name}
+			AttachLanguageSupport(tt.name, custom)
+			if tt.want(custom) {
+				t.Fatal("same-name custom grammar enabled compact acceptance certification")
+			}
+
+			wrongIdentity := &gotreesitter.Language{Name: tt.name}
+			if attachBuiltinLanguageRuntimeProfile(tt.name, sha256.Sum256([]byte("uncertified")), wrongIdentity) {
+				t.Fatal("wrong blob identity unexpectedly attached a runtime profile")
+			}
+			if tt.want(wrongIdentity) {
+				t.Fatal("wrong blob identity enabled compact acceptance certification")
+			}
+		})
+	}
+}
+
+func TestBuiltinGoCompactConvergedSplitProfileRequiresExactBlobIdentity(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	builtin := GoLanguage()
+	if !builtin.CompactConvergedReductionSplitDropsCertified {
+		t.Fatal("exact built-in Go artifact did not receive compact converged-split certification")
+	}
+
+	custom := &gotreesitter.Language{Name: "go"}
+	AttachLanguageSupport("go", custom)
+	if custom.CompactConvergedReductionSplitDropsCertified {
+		t.Fatal("same-name custom Go grammar enabled compact converged-split drops")
+	}
+
+	blob := BlobByName("go")
+	if len(blob) == 0 {
+		t.Fatal("BlobByName(go) returned no data")
+	}
+	stale := &gotreesitter.Language{Name: "go"}
+	if attachBuiltinLanguageRuntimeProfile("go", sha256.Sum256([]byte("stale")), stale) {
+		t.Fatal("stale Go blob unexpectedly attached a runtime profile")
+	}
+	if stale.CompactConvergedReductionSplitDropsCertified {
+		t.Fatal("stale Go blob enabled compact converged-split drops")
+	}
+
+	exact := &gotreesitter.Language{Name: "go"}
+	if !attachBuiltinLanguageRuntimeProfile("go", sha256.Sum256(blob), exact) {
+		t.Fatal("exact Go blob did not attach its runtime profile")
+	}
+	if !exact.CompactConvergedReductionSplitDropsCertified {
+		t.Fatal("exact Go blob did not enable compact converged-split drops")
 	}
 }
 

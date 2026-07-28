@@ -1361,8 +1361,9 @@ const (
 // ReductionOutput is one final canonical boundary and its aggregate freshness
 // relative to the boundary map at entry to ReduceOutputs.
 type ReductionOutput struct {
-	Head      Head
-	Freshness ReductionFreshness
+	Head             Head
+	Freshness        ReductionFreshness
+	MultiplePopPaths bool
 }
 
 const inlineReductionBoundaryOutputs = 2

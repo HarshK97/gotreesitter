@@ -2607,6 +2607,10 @@ func languageNeedsExactStackNodeEquivalence(lang *Language) bool {
 	if lang == nil {
 		return false
 	}
+	if lang.ExactStackNodeEquivalenceCertified {
+		return true
+	}
+	// These historical grammar-name rules predate exact artifact profiles.
 	switch lang.Name {
 	case "typescript", "tsx":
 		return true

@@ -19,6 +19,10 @@ type builtinLanguageRuntimeProfile struct {
 	automaticForestEnabled             bool
 	fullParseArenaDensityCap           bool
 	nativeResultCompatibility          gotreesitter.ResultCompatibilityCapability
+	compactConvergedSplitDrops         bool
+	compactEOFAcceptNoActionSiblings   bool
+	compactPrimaryAcceptDerivation     bool
+	exactStackNodeEquivalence          bool
 	conflictPolicies                   []gotreesitter.ConflictPolicy
 }
 
@@ -30,6 +34,30 @@ const (
 )
 
 var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
+	// The canonical compact corpus certifies Go's converged-path split drops
+	// against the production parser and the tree-sitter C oracle.
+	"go": {
+		blobSHA256:                 mustRuntimeProfileSHA256("9cf914d26d962d1a62e7954f8b20b302337a44cb7d4a07218eec482c45a57a08"),
+		compactConvergedSplitDrops: true,
+	},
+	// These exact artifacts select one accepting EOF head while all sibling
+	// heads have no EOF action. Field-aware C-oracle parity certifies the
+	// production selection for each smoke witness.
+	"http": {
+		blobSHA256:                       mustRuntimeProfileSHA256("332d50a15b3facb407f6c449fe8bbcd2fda55efffefbfd4d8d9ce2c75fbb7bda"),
+		compactEOFAcceptNoActionSiblings: true,
+	},
+	"robot": {
+		blobSHA256:                       mustRuntimeProfileSHA256("25075ecf5323eeb88af4f71b55f51867cef38a277aaa60f01b879ee8abb4c74f"),
+		compactEOFAcceptNoActionSiblings: true,
+	},
+	// Objective-C keeps parity-relevant alternatives below the bounded stack
+	// comparison frontier. Exact comparison preserves them until generic result
+	// selection chooses the C-equivalent alias-target shape.
+	"objc": {
+		blobSHA256:                mustRuntimeProfileSHA256("c04e841cf500f2b213d699681930a16f3c5f0e74e60f8a4488c36c38015bc09f"),
+		exactStackNodeEquivalence: true,
+	},
 	// JavaScript's speculative automatic forest phase is bounded separately
 	// from the production fallback. The exact locked corpus retained identical
 	// trees and outcomes across all files while cutting aggregate allocations;
@@ -223,7 +251,8 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	// but is redundant for complete accepted-error sources at or above this
 	// conservative exact-blob corpus-certified floor.
 	"meson": {
-		blobSHA256: mustRuntimeProfileSHA256("b3b7e74bcd35614419f5359c31eb8a05bd58c0b97529f133f2aea2f40796789d"),
+		blobSHA256:                     mustRuntimeProfileSHA256("b3b7e74bcd35614419f5359c31eb8a05bd58c0b97529f133f2aea2f40796789d"),
+		compactPrimaryAcceptDerivation: true,
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry: true,
 			SkipCompleteMinSourceBytes:     mesonAcceptedErrorRetryMinSourceBytes,
@@ -394,6 +423,22 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 	}
 	if missing := profile.nativeResultCompatibility &^ lang.NativeResultCompatibility; missing != 0 {
 		lang.NativeResultCompatibility |= missing
+		changed = true
+	}
+	if profile.compactConvergedSplitDrops && !lang.CompactConvergedReductionSplitDropsCertified {
+		lang.CompactConvergedReductionSplitDropsCertified = true
+		changed = true
+	}
+	if profile.compactEOFAcceptNoActionSiblings && !lang.CompactEOFAcceptNoActionSiblingsCertified {
+		lang.CompactEOFAcceptNoActionSiblingsCertified = true
+		changed = true
+	}
+	if profile.compactPrimaryAcceptDerivation && !lang.CompactPrimaryAcceptanceDerivationCertified {
+		lang.CompactPrimaryAcceptanceDerivationCertified = true
+		changed = true
+	}
+	if profile.exactStackNodeEquivalence && !lang.ExactStackNodeEquivalenceCertified {
+		lang.ExactStackNodeEquivalenceCertified = true
 		changed = true
 	}
 	for _, policy := range profile.conflictPolicies {

@@ -365,7 +365,11 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 		scratch.store(boundaryIndex, seen, reductionBoundaryOutput{key: key, head: out, freshness: freshness})
 	}
 	for _, output := range scratch.boundaries {
-		frontier = append(frontier, ReductionOutput{Head: output.head, Freshness: output.freshness})
+		frontier = append(frontier, ReductionOutput{
+			Head:             output.head,
+			Freshness:        output.freshness,
+			MultiplePopPaths: multiPop,
+		})
 	}
 	phase0AFinishReductionConstruction(c)
 	return frontier, nil

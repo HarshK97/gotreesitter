@@ -196,6 +196,15 @@ The DFA keyword path now owns Arduino primitive-type projection.
 Native Objective-C materialization owns protocol type identifiers.
 This change retires Arduino's arm and one Objective-C subpass.
 Other Objective-C repairs remain live.
+Generic result election now preserves visible named unary wrappers.
+This change retires the D template-call type wrapper.
+Four D subpasses remain live.
+Exact stack-node equivalence preserves deep Objective-C alternatives.
+Generic alias-target selection now owns `@encode` identifiers and function
+pointer expressions.
+This change retires two Objective-C subpasses.
+Four Objective-C subpasses remain live.
+The dispatcher census now records each remaining D and Objective-C subpass.
 
 Group by invariant, not language:
 
@@ -267,6 +276,9 @@ there.
 | Hidden root trivia | retirement commit `49d776674b2f599fa162874bbf74dc119fa9e7d4` | 1 dispatcher arm | 0 | generalized root finalization, 114 native HCL body spans, four result routes, and isolated C-oracle parity |
 | D module bounds | retirement change | 1 language-local span walk | 0 | compatibility-free producer, production, compact, forest, incremental reuse, and isolated C-oracle receipts |
 | Erlang replacement election and form spans | retirement commit `144b30c9ee085406335f4549272e1ae843427993` | 1 dispatcher arm | 0 | zero-rewrite real-corpus census, native producer, production, compact, forest, incremental reuse, and isolated C-oracle receipts |
+| D template-call type wrappers | retirement change | 1 D subpass | 0 | generalized visible named wrapper election, compatibility-free producer, production, forest, incremental, and isolated C-oracle receipts |
+| Objective-C encode and function-pointer repairs | retirement change | 2 Objective-C subpasses | 0 | exact stack equivalence, generic alias selection, production, incremental, and isolated field-aware C-oracle receipts |
+| D and Objective-C subpass census | retirement change | 2 aggregate arm receipts | 8 named live subpass receipts | positive controls, exact fingerprints, and absent retired labels |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.

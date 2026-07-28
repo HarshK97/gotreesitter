@@ -37,37 +37,6 @@ func TestNormalizeDVariableStorageClassWrappersWrapsStaticLeaf(t *testing.T) {
 	}
 }
 
-func TestNormalizeDCallExpressionTemplateTypesWrapsLeadingTemplateInstance(t *testing.T) {
-	lang := &Language{
-		Name:        "d",
-		SymbolNames: []string{"EOF", "call_expression", "type", "template_instance", "named_arguments"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "call_expression", Visible: true, Named: true},
-			{Name: "type", Visible: true, Named: true},
-			{Name: "template_instance", Visible: true, Named: true},
-			{Name: "named_arguments", Visible: true, Named: true},
-		},
-	}
-
-	arena := newNodeArena(arenaClassFull)
-	templateInstance := newLeafNodeInArena(arena, 3, true, 0, 15, Point{}, Point{Column: 15})
-	args := newLeafNodeInArena(arena, 4, true, 15, 17, Point{Column: 15}, Point{Column: 17})
-	call := newParentNodeInArena(arena, 1, true, []*Node{templateInstance, args}, nil, 0)
-
-	normalizeDCallExpressionTemplateTypes(call, lang)
-
-	if got, want := call.children[0].Type(lang), "type"; got != want {
-		t.Fatalf("call.children[0].Type = %q, want %q", got, want)
-	}
-	if got, want := len(call.children[0].children), 1; got != want {
-		t.Fatalf("type child count = %d, want %d", got, want)
-	}
-	if got, want := call.children[0].children[0].Type(lang), "template_instance"; got != want {
-		t.Fatalf("wrapped child type = %q, want %q", got, want)
-	}
-}
-
 func TestNormalizeDVariableTypeQualifiersMergesSharedIntoType(t *testing.T) {
 	lang := &Language{
 		Name:        "d",

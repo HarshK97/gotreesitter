@@ -1,11 +1,18 @@
 package gotreesitter
 
-func normalizeDCompatibility(root *Node, source []byte, lang *Language) {
-	normalizeDCallExpressionTemplateTypes(root, lang)
-	normalizeDCallExpressionPropertyTypes(root, lang)
-	normalizeDCallExpressionSimpleTypeCallees(root, lang)
-	normalizeDVariableTypeQualifiers(root, lang)
-	normalizeDVariableStorageClassWrappers(root, lang)
+func normalizeDCompatibility(root *Node, lang *Language, census materializationSubpassCensus) {
+	census.run("dispatch.d.call-expression-property-types", func() {
+		normalizeDCallExpressionPropertyTypes(root, lang)
+	})
+	census.run("dispatch.d.call-expression-simple-type-callees", func() {
+		normalizeDCallExpressionSimpleTypeCallees(root, lang)
+	})
+	census.run("dispatch.d.variable-type-qualifiers", func() {
+		normalizeDVariableTypeQualifiers(root, lang)
+	})
+	census.run("dispatch.d.variable-storage-class-wrappers", func() {
+		normalizeDVariableStorageClassWrappers(root, lang)
+	})
 }
 
 func normalizeDVariableStorageClassWrappers(root *Node, lang *Language) {
@@ -25,25 +32,6 @@ func normalizeDVariableStorageClassWrappers(root *Node, lang *Language) {
 				}
 				wrapper := newParentNodeInArena(n.ownerArena, storageClassSym, storageClassNamed, []*Node{child}, nil, 0)
 				n.children[i] = wrapper
-			}
-		}
-	})
-}
-
-func normalizeDCallExpressionTemplateTypes(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "d" {
-		return
-	}
-	typeSym, ok := lang.SymbolByName("type")
-	if !ok {
-		return
-	}
-	typeNamed := symbolIsNamed(lang, typeSym)
-	walkResultTree(root, func(n *Node) {
-		if n.Type(lang) == "call_expression" && len(n.children) > 0 {
-			child := n.children[0]
-			if child != nil && child.Type(lang) == "template_instance" {
-				n.children[0] = newParentNodeInArena(n.ownerArena, typeSym, typeNamed, []*Node{child}, nil, 0)
 			}
 		}
 	})

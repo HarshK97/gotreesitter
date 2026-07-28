@@ -24,13 +24,14 @@ import (
 // acquiring a production DFA token source, so a declined or capped parse
 // cannot publish state into the next call.
 type parserCoreFreshFullRunner struct {
-	lang              *Language
-	parser            *Parser
-	tables            *parserCoreRootTables
-	compact           *core.Core
-	options           DiagnosticParserCorePrefixOptions
-	replayParseStates bool
-	scannerScratch    []byte
+	lang                              *Language
+	parser                            *Parser
+	tables                            *parserCoreRootTables
+	compact                           *core.Core
+	options                           DiagnosticParserCorePrefixOptions
+	replayParseStates                 bool
+	allowConvergedReductionSplitDrops bool
+	scannerScratch                    []byte
 	// scratch retains the reusable per-parse materialization buffers. The runner
 	// is per-Parser and single-goroutine, so reusing these buffers across parses
 	// mirrors production's parser-held arena reuse and keeps the warm steady
@@ -74,6 +75,7 @@ func newParserCoreFreshFullRunner(scanner ExternalScanner, options DiagnosticPar
 	}
 	return &parserCoreFreshFullRunner{
 		lang: lang, parser: parser, tables: tables, compact: compact, options: options,
+		allowConvergedReductionSplitDrops: true,
 	}, nil
 }
 
@@ -98,14 +100,14 @@ func (r *parserCoreFreshFullRunner) executeSchedulerOpen(source []byte, compact 
 		tokenSource.Close()
 		return nil, nil, err
 	}
-	if err := requireParserCoreFreshFullAcceptance(scheduler, source); err != nil {
+	if err := requireParserCoreFreshFullAcceptance(scheduler, source, r.allowConvergedReductionSplitDrops); err != nil {
 		tokenSource.Close()
 		return nil, nil, err
 	}
 	return scheduler, tokenSource, nil
 }
 
-func requireParserCoreFreshFullAcceptance(scheduler *diagnosticParserCoreGenericScheduler, source []byte) error {
+func requireParserCoreFreshFullAcceptance(scheduler *diagnosticParserCoreGenericScheduler, source []byte, allowConvergedReductionSplitDrops bool) error {
 	if scheduler == nil || scheduler.receipt == nil || scheduler.receipt.Acceptance == nil || scheduler.acceptedHead.Node == 0 {
 		// GTS_ADMISSION_CENSUS=1 (admission_census.go) re-surfaces the boundary
 		// and detail the scheduler already recorded in scheduler.receipt.Stop
@@ -122,9 +124,11 @@ func requireParserCoreFreshFullAcceptance(scheduler *diagnosticParserCoreGeneric
 	acceptance := scheduler.receipt.Acceptance
 	wantEOF := uint32(len(source))
 	header := acceptance.Header.Header
+	selectedCertifiedPrimary := scheduler.options.allowPrimaryAcceptDerivation &&
+		header.ExactPaths > 1 && !acceptance.HasBranchOrder
 	if acceptance.Token.Symbol != 0 || acceptance.Token.StartByte != wantEOF || acceptance.Token.EndByte != wantEOF ||
 		acceptance.Token.Missing || acceptance.Token.NoLookahead || acceptance.Token.ExternalScannerToken ||
-		!header.Accepted || header.Paused || header.ExactPaths != 1 ||
+		!header.Accepted || header.Paused || header.ExactPaths != 1 && !selectedCertifiedPrimary ||
 		!parserCoreFreshFullAcceptedTailIsClean(source, header.ByteOffset) || acceptance.Accepts != 1 || acceptance.Work.Accepts != 1 {
 		// See the comment above: census classification is opt-in and additive.
 		if admissionCensusEnabled() {
@@ -132,6 +136,15 @@ func requireParserCoreFreshFullAcceptance(scheduler *diagnosticParserCoreGeneric
 		}
 		return fmt.Errorf("parser-core fresh-full runner acceptance is not sole exact EOF: token=%+v header=%+v accepts=%d/%d",
 			acceptance.Token, acceptance.Header.Header, acceptance.Accepts, acceptance.Work.Accepts)
+	}
+	if acceptance.Work.ConvergedReductionSplitDrops != 0 && !allowConvergedReductionSplitDrops {
+		return &diagnosticParserCoreDecline{
+			boundary: DiagnosticParserCoreAccept,
+			detail: fmt.Sprintf(
+				"accepted frontier followed %d converged-path reduction split drops",
+				acceptance.Work.ConvergedReductionSplitDrops,
+			),
+		}
 	}
 	return nil
 }

@@ -125,6 +125,11 @@ func TestRetiredDispatchArmCOracleParity(t *testing.T) {
 			source:   "// license\n\nmodule test;\nimport std.stdio;\n",
 		},
 		{
+			name:     "d_template_call_type",
+			language: "d",
+			source:   "void f() { foo!int(); }\n",
+		},
+		{
 			name:     "forth_leading_trivia_root",
 			language: "forth",
 			source:   "\n: square dup * ;\n",

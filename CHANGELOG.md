@@ -9,6 +9,21 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Compact admission now supports two certified acceptance-frontier shapes.
+  HTTP and Robot can drop EOF siblings with no actions.
+  Meson can select the sole primary accepted derivation.
+  Exact blob profiles and field-aware C-oracle receipts guard these choices.
+  The current smoke scorecard reports 194 direct routes and no divergence.
+
+- Compact reduction outputs now carry their multi-pop fact directly.
+  This avoids two full work snapshots on every reduction.
+  The stable full-parse control improves by 8 percent against `main`.
+  Full-parse allocation falls by 12 percent with no new allocations.
+
+- The dispatcher census now records each live D and Objective-C subpass.
+  Exact fingerprints retain spans, points, fields, flags, and parser states.
+  The census does not materialize compact final-child references.
+
 - DFA keyword promotion now owns Arduino primitive types before compatibility.
   Native materialization owns Objective-C protocol type identifiers.
   This retires Arduino's dispatcher arm and the matching Objective-C subpass.
@@ -116,6 +131,18 @@ for tags and release notes while still in `0.x`.
   A downstream user reported this behavior in issue #454.
 
 ### Removed
+
+- **The D template-call type result repair.** Generic result election now
+  preserves a visible named unary wrapper over its direct-child alternative.
+  Production, forest, incremental, and isolated C-oracle receipts match.
+  Four unrelated D subpasses remain live.
+
+- **Two Objective-C result repairs.** Exact stack-node equivalence preserves
+  deep alternatives for generic alias-target selection.
+  Native selection now owns `@encode` identifiers and function-pointer
+  expression shapes.
+  Production, incremental, and field-aware C-oracle receipts match.
+  Four unrelated Objective-C subpasses remain live.
 
 - **The D module-bound result repair.** Native reduction already excludes
   leading comments and trailing trivia from each `module_def` span.

@@ -224,6 +224,51 @@ func TestObjcInitializedFunctionPointerDeclarationCanMatchExpressionOracle(t *te
 	}
 }
 
+func TestObjcNormalizationSubpassCensus(t *testing.T) {
+	t.Setenv("GTS_DISPATCHER_CENSUS", "1")
+
+	src := []byte("@interface Box : NSObject\n{\n  unsigned long _version;\n}\n- (Foo) method;\n@end\nvoid f(){ int a = sizeof(GCInfo); NSLog(@\"one\"); }\n")
+	lang := grammars.ObjcLanguage()
+	tree, err := gts.NewParser(lang).Parse(src)
+	if err != nil || tree == nil || tree.RootNode() == nil {
+		t.Fatalf("parse failed: tree=%v err=%v", tree, err)
+	}
+	defer tree.Release()
+
+	runtime := tree.ParseRuntime()
+	if runtime.NormalizationPasses == nil {
+		t.Fatal("normalization census did not publish named passes")
+	}
+	got := make(map[string]gts.NormalizationPassRuntime, len(*runtime.NormalizationPasses))
+	for _, pass := range *runtime.NormalizationPasses {
+		got[pass.Name] = pass
+	}
+	for _, name := range []string{
+		"dispatch.objc",
+		"dispatch.objc.method-type-identifiers",
+		"dispatch.objc.sizeof-type-identifier-operands",
+		"dispatch.objc.at-string-literals",
+		"dispatch.objc.struct-sized-type-specifiers",
+	} {
+		pass, ok := got[name]
+		if !ok {
+			t.Errorf("normalization census omitted %q: %+v", name, got)
+			continue
+		}
+		if pass.Checked != 1 || pass.Run != 1 {
+			t.Errorf("%s checked/run = %d/%d, want 1/1", name, pass.Checked, pass.Run)
+		}
+	}
+	for _, retired := range []string{
+		"dispatch.objc.encode-type-identifiers",
+		"dispatch.objc.function-pointer-declarations-as-expressions",
+	} {
+		if _, ok := got[retired]; ok {
+			t.Errorf("normalization census retained retired subpass %q", retired)
+		}
+	}
+}
+
 func firstObjcNodeByType(n *gts.Node, lang *gts.Language, typ string) *gts.Node {
 	if n == nil {
 		return nil
