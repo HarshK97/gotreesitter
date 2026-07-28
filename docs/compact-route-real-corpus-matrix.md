@@ -147,6 +147,11 @@ A balanced rerun measured 83,240 KiB for the base and 83,360 KiB for the head.
 Compact reduction outputs now carry the multi-pop fact directly.
 This avoids copying the complete compact work record twice per reduction.
 
+The compact scheduler now stores its seed frontier in its own allocation.
+The warm full-parse benchmark moves from 20,352 to 20,328 bytes per operation.
+Allocation count moves from 66 to 65 per operation.
+Time remains statistically unchanged (`p=0.853`).
+
 ## Reproduce the run
 
 Run this command from the repository root:

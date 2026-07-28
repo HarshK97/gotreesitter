@@ -7,6 +7,14 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Performance
+
+- The compact scheduler stores its one-element seed frontier inside the
+  scheduler allocation.
+  The warm full-parse benchmark drops from 20,352 to 20,328 bytes per operation.
+  Allocations drop from 66 to 65 per operation.
+  Parse time remains statistically unchanged.
+
 ### Fixed
 
 - The Cooklang smoke fixture now uses a valid ingredient instruction.

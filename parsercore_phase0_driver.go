@@ -1403,6 +1403,7 @@ type diagnosticParserCoreGenericScheduler struct {
 	observer                      diagnosticParserCoreSeedObserver
 	stoppedAfterElection          bool
 	requireEOFPostNoLookaheadRoot bool
+	seedHeaders                   [1]diagnosticParserCoreHeader
 }
 
 const maxDiagnosticParserCoreNoLookaheadSteps = 64
@@ -1477,7 +1478,7 @@ func newDiagnosticParserCoreGenericScheduler(
 	header := diagnosticParserCoreHeader{head: head, checkpoint: checkpointID}
 	scheduler := &diagnosticParserCoreGenericScheduler{
 		compact: compact, tokenSource: tokenSource, scannerScratch: scannerScratch,
-		headers: []diagnosticParserCoreHeader{header}, checkpoint: checkpoint, checkpointID: checkpointID,
+		checkpoint: checkpoint, checkpointID: checkpointID,
 		electionIndex: -1, nextSeq: 1,
 		options: options, observer: observer,
 		receipt: &DiagnosticParserCoreGenericScheduler{
@@ -1485,6 +1486,8 @@ func newDiagnosticParserCoreGenericScheduler(
 			StartCheckpoint: checkpoint,
 		},
 	}
+	scheduler.seedHeaders[0] = header
+	scheduler.headers = scheduler.seedHeaders[:]
 	if scheduler.fullReceipts() {
 		startHeaders, err := diagnosticParserCoreHeaderPathReceipts(compact, scheduler.headers)
 		if err != nil {
