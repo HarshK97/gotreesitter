@@ -259,6 +259,10 @@ func TestAdmissionSwitchRoutePrecedenceRatchet(t *testing.T) {
 }
 
 func runAdmissionScorecardLanguage(entry grammars.LangEntry) (row scorecardRow) {
+	return runAdmissionScorecardSource(entry, []byte(grammars.ParseSmokeSample(entry.Name)))
+}
+
+func runAdmissionScorecardSource(entry grammars.LangEntry, source []byte) (row scorecardRow) {
 	row = scorecardRow{name: entry.Name, status: scorecardError}
 	defer func() {
 		if r := recover(); r != nil {
@@ -281,8 +285,6 @@ func runAdmissionScorecardLanguage(entry grammars.LangEntry) (row scorecardRow) 
 		row.detail = "not DFA-routable: " + support.Reason
 		return row
 	}
-
-	source := []byte(grammars.ParseSmokeSample(entry.Name))
 
 	production := gts.NewParser(lang)
 	production.SetAdmissionCandidateRoute(false)
@@ -307,9 +309,14 @@ func runAdmissionScorecardLanguage(entry grammars.LangEntry) (row scorecardRow) 
 		return row
 	}
 	defer candidateTree.Release()
-	routed, _ := gts.AdmissionCandidateCounters()
+	routed, fallback := gts.AdmissionCandidateCounters()
 
 	if routed == 0 {
+		if fallback == 0 {
+			row.status = scorecardSkip
+			row.detail = "compact route was not eligible for this source"
+			return row
+		}
 		row.status = scorecardFallback
 		row.detail = gts.AdmissionCandidateLastFallbackReason()
 		return row
@@ -329,6 +336,80 @@ func runAdmissionScorecardLanguage(entry grammars.LangEntry) (row scorecardRow) 
 		return row
 	}
 	row.status = scorecardDiverge
-	row.detail = fmt.Sprintf("candidate=%s production=%s", candidateInspection.SHA256[:12], productionInspection.SHA256[:12])
+	first := firstAdmissionTreeDivergence(candidateTree.RootNode(), productionTree.RootNode(), lang, "root")
+	if first == "" {
+		first = "digest mismatch without a visible node mismatch"
+	}
+	row.detail = fmt.Sprintf(
+		"candidate=%s production=%s first=%s",
+		candidateInspection.SHA256[:12],
+		productionInspection.SHA256[:12],
+		first,
+	)
 	return row
+}
+
+func firstAdmissionTreeDivergence(candidate, production *gts.Node, lang *gts.Language, path string) string {
+	if candidate == nil || production == nil {
+		return fmt.Sprintf("%s nil candidate=%t production=%t", path, candidate == nil, production == nil)
+	}
+	candidateStart, productionStart := candidate.StartPoint(), production.StartPoint()
+	candidateEnd, productionEnd := candidate.EndPoint(), production.EndPoint()
+	if candidate.Type(lang) != production.Type(lang) ||
+		candidate.StartByte() != production.StartByte() ||
+		candidate.EndByte() != production.EndByte() ||
+		candidateStart != productionStart ||
+		candidateEnd != productionEnd ||
+		candidate.IsNamed() != production.IsNamed() ||
+		candidate.IsExtra() != production.IsExtra() ||
+		candidate.IsMissing() != production.IsMissing() ||
+		candidate.IsError() != production.IsError() ||
+		candidate.ChildCount() != production.ChildCount() {
+		return fmt.Sprintf(
+			"%s candidate=%s[%d:%d] children=%d flags=%t/%t/%t/%t production=%s[%d:%d] children=%d flags=%t/%t/%t/%t",
+			path,
+			candidate.Type(lang),
+			candidate.StartByte(),
+			candidate.EndByte(),
+			candidate.ChildCount(),
+			candidate.IsNamed(),
+			candidate.IsExtra(),
+			candidate.IsMissing(),
+			candidate.IsError(),
+			production.Type(lang),
+			production.StartByte(),
+			production.EndByte(),
+			production.ChildCount(),
+			production.IsNamed(),
+			production.IsExtra(),
+			production.IsMissing(),
+			production.IsError(),
+		)
+	}
+	for index := 0; index < candidate.ChildCount(); index++ {
+		candidateField := candidate.FieldNameForChild(index, lang)
+		productionField := production.FieldNameForChild(index, lang)
+		if candidateField != productionField {
+			return fmt.Sprintf(
+				"%s/%d field candidate=%q production=%q",
+				path,
+				index,
+				candidateField,
+				productionField,
+			)
+		}
+		childPath := fmt.Sprintf("%s/%s[%d]", path, candidate.Child(index).Type(lang), index)
+		if diff := firstAdmissionTreeDivergence(candidate.Child(index), production.Child(index), lang, childPath); diff != "" {
+			return diff
+		}
+	}
+	if candidate.HasError() != production.HasError() {
+		return fmt.Sprintf(
+			"%s has_error candidate=%t production=%t",
+			path,
+			candidate.HasError(),
+			production.HasError(),
+		)
+	}
+	return ""
 }

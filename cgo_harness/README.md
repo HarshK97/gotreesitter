@@ -460,6 +460,9 @@ Notes:
 
 - Selection is deterministic and bucketed (`small`, `medium`, `large`) per language.
 - Selection targets `small`/`medium`/`large` buckets per language, with deterministic fallback when one bucket has no candidates.
+- Combine `-profile` with `-langs` to rebuild a validated profile subset.
+- The builder clears each selected language directory before it writes files.
+- Use `-merge-existing` to retain unselected manifest entries during a subset refresh.
 - Source files are pulled from pinned upstream commits and recorded in
   `cgo_harness/corpus_real/manifest.json` with SHA256 + source path metadata.
 - Validate corpus quality bar:
