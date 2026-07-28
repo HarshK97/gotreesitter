@@ -8,7 +8,7 @@ import (
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
-func TestGoRepeatedCoreTestFragmentProducesAcyclicTree(t *testing.T) {
+func TestIssue490GoGrammarRegression(t *testing.T) {
 	data, err := os.ReadFile("internal/parsercorephase0/core_test.go")
 	if err != nil {
 		t.Fatal(err)
@@ -30,8 +30,21 @@ func TestGoRepeatedCoreTestFragmentProducesAcyclicTree(t *testing.T) {
 	}
 	t.Cleanup(tree.Release)
 
+	if tree.ParseStoppedEarly() {
+		t.Fatalf("Go parse stopped early: %s", tree.ParseRuntime().Summary())
+	}
+	root := tree.RootNode()
+	if root == nil {
+		t.Fatal("Go parse returned no root")
+	}
+	if root.HasError() {
+		t.Fatal("Go parse returned an error tree")
+	}
+	if root.EndByte() != uint32(len(source)) {
+		t.Fatalf("Go root ends at %d, want %d", root.EndByte(), len(source))
+	}
 	if !publicResultTreeAcyclic(tree.RootNode()) {
-		t.Fatal("Go parse returned a cyclic result tree")
+		t.Fatal("Go parse returned an invalid result tree")
 	}
 }
 
