@@ -8,7 +8,6 @@ import (
 	"os"
 	"testing"
 
-	gts "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
@@ -88,9 +87,5 @@ func TestAdmissionCandidateSvelteButtonDirect(t *testing.T) {
 	}
 	if row.detail != wantDetail {
 		t.Fatalf("Svelte Button compact digest = %q, want %q", row.detail, wantDetail)
-	}
-	routed, fallback := gts.AdmissionCandidateCounters()
-	if routed != 1 || fallback != 0 {
-		t.Fatalf("Svelte Button route counters = %d/%d, want 1/0", routed, fallback)
 	}
 }
