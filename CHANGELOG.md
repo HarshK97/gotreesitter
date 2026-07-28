@@ -9,6 +9,13 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- The compact full-parse runner now reuses buffers during canonicalization and
+  tree materialization.
+  Warm materialization drops from 136,584 to 272 bytes per operation.
+  Its allocation count drops from 47 to 8.
+  Total warm allocation drops from 20,440 to 5,208 bytes per operation.
+  Total parse time remains statistically unchanged.
+
 - The compact scheduler stores its one-element seed frontier inside the
   scheduler allocation.
   The warm full-parse benchmark drops from 20,352 to 20,328 bytes per operation.

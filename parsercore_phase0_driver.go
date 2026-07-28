@@ -1154,8 +1154,10 @@ type diagnosticParserCorePhaseHead struct {
 
 type diagnosticParserCoreCanonicalScratch struct {
 	headerBuffers [2][]diagnosticParserCoreHeader
+	inlineHeaders [2][diagnosticParserCoreLinearCanonicalLimit]diagnosticParserCoreHeader
 	nextBuffer    uint8
 	keys          []diagnosticParserCorePhaseHead
+	inlineKeys    [diagnosticParserCoreLinearCanonicalLimit]diagnosticParserCorePhaseHead
 	groups        map[diagnosticParserCorePhaseHead]diagnosticParserCoreCanonicalGroup
 }
 
@@ -1177,14 +1179,22 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalize(compact *core.Core, 
 	}
 	normalized := s.headerBuffers[target]
 	if cap(normalized) < len(headers) {
-		normalized = make([]diagnosticParserCoreHeader, len(headers))
+		if len(headers) <= len(s.inlineHeaders[target]) {
+			normalized = s.inlineHeaders[target][:len(headers)]
+		} else {
+			normalized = make([]diagnosticParserCoreHeader, len(headers))
+		}
 	} else {
 		normalized = normalized[:len(headers)]
 	}
 	copy(normalized, headers)
 	s.headerBuffers[target] = normalized
 	if cap(s.keys) < len(headers) {
-		s.keys = make([]diagnosticParserCorePhaseHead, len(headers))
+		if len(headers) <= len(s.inlineKeys) {
+			s.keys = s.inlineKeys[:len(headers)]
+		} else {
+			s.keys = make([]diagnosticParserCorePhaseHead, len(headers))
+		}
 	} else {
 		s.keys = s.keys[:len(headers)]
 	}
@@ -1846,6 +1856,7 @@ const parserCoreMaxRetainedLineStarts = 256 * 1024
 // scratch on every parse.
 type parserCoreRunnerScratch struct {
 	materialization diagnosticParserCoreMaterializationScratch
+	postorder       core.MaterializationPostorderScratch
 	nodesByID       []*Node
 	nodes           []*Node
 	linkScratch     []*Node
@@ -1892,6 +1903,7 @@ func (s *parserCoreRunnerScratch) resetTreeBuffers() {
 	if s == nil {
 		return
 	}
+	s.postorder.Reset()
 	s.nodesByID = clearNodeScratch(s.nodesByID)
 	s.nodes = clearNodeScratch(s.nodes)
 	s.linkScratch = clearNodeScratch(s.linkScratch)
@@ -1973,7 +1985,7 @@ func (index *diagnosticParserCorePointIndex) pointUncached(offset uint32) Point 
 	return Point{Row: uint32(line), Column: offset - index.lineStarts[line]}
 }
 
-func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.Head, parser *Parser, source []byte, forceReplayParseStates bool) (*Tree, error) {
+func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.Head, parser *Parser, source []byte, scratch *parserCoreRunnerScratch, forceReplayParseStates bool) (*Tree, error) {
 	if compact == nil || parser == nil || parser.language == nil || head.Node == 0 {
 		return nil, errors.New("parser-core phase zero: incomplete accepted-tree materialization input")
 	}
@@ -1984,7 +1996,7 @@ func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.H
 	if len(derivations) != 1 {
 		return nil, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreAccept, detail: "materialization requires one exact accepted derivation"}
 	}
-	return materializeDiagnosticParserCoreAcceptedSelection(compact, head, derivations[0].Payloads, parser, source, nil, forceReplayParseStates)
+	return materializeDiagnosticParserCoreAcceptedSelection(compact, head, derivations[0].Payloads, parser, source, scratch, forceReplayParseStates)
 }
 
 func finalizeDiagnosticParserCoreAcceptedRootSpan(root *Node, source []byte, sourceLen uint32) error {
@@ -2127,7 +2139,7 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 		node.setFragileRight(true)
 	}
 	materializeVisit := func(materializationScratch *diagnosticParserCoreMaterializationScratch) error {
-		return compact.VisitMaterializationPostorder(payloads, poll, func(id core.SubtreeID, view core.MaterializationSubtreeView) error {
+		visit := func(id core.SubtreeID, view core.MaterializationSubtreeView) error {
 			if view.EndByte < view.StartByte || view.EndByte > uint32(len(source)) {
 				return errors.New("parser-core phase zero: compact subtree extent is outside source")
 			}
@@ -2193,7 +2205,11 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 			markFragile(parent, view.Fragile)
 			stamp(id, parent, false)
 			return nil
-		})
+		}
+		if scratch != nil {
+			return compact.VisitMaterializationPostorderWithScratch(payloads, poll, &scratch.postorder, visit)
+		}
+		return compact.VisitMaterializationPostorder(payloads, poll, visit)
 	}
 	if scratch != nil {
 		err = withProvidedMaterializationScratch(parser, &scratch.materialization, materializeVisit)

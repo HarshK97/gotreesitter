@@ -2,6 +2,7 @@ package parsercorephase0
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -325,6 +326,169 @@ func TestVisitMaterializationPostorderStopsBeforeVisit(t *testing.T) {
 	})
 	if err != errMaterializationOrderStop || polls != 1 || visits != 0 {
 		t.Fatalf("stopped err=%v polls=%d visits=%d", err, polls, visits)
+	}
+}
+
+func TestVisitMaterializationPostorderScratchReusesAndResets(t *testing.T) {
+	compact, err := New(&fakeTable{}, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := compact.appendSubtree(subtreeRecord{symbol: 1, endByte: 1, terminal: true}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := compact.appendSubtree(subtreeRecord{symbol: 2, endByte: 1}, []SubtreeID{leaf}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var scratch MaterializationPostorderScratch
+	want := []SubtreeID{leaf, root}
+	for run := 0; run < 2; run++ {
+		var got []SubtreeID
+		if err := compact.VisitMaterializationPostorderWithScratch([]SubtreeID{root}, nil, &scratch, func(id SubtreeID, _ MaterializationSubtreeView) error {
+			got = append(got, id)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("run %d order=%v want=%v", run, got, want)
+		}
+		requireMaterializationPostorderScratchReset(t, &scratch)
+		if run == 0 {
+			continue
+		}
+	}
+	if cap(scratch.colors) < len(compact.subtrees)+1 || cap(scratch.frames) < 64 {
+		t.Fatalf("scratch did not retain traversal storage: colors=%d frames=%d", cap(scratch.colors), cap(scratch.frames))
+	}
+	colorStorage := &scratch.colors[:cap(scratch.colors)][0]
+	frameStorage := &scratch.frames[:cap(scratch.frames)][0]
+	if err := compact.VisitMaterializationPostorderWithScratch([]SubtreeID{root}, nil, &scratch, func(SubtreeID, MaterializationSubtreeView) error {
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if colorStorage != &scratch.colors[:cap(scratch.colors)][0] ||
+		frameStorage != &scratch.frames[:cap(scratch.frames)][0] {
+		t.Fatal("postorder traversal replaced reusable scratch storage")
+	}
+	requireMaterializationPostorderScratchReset(t, &scratch)
+}
+
+func TestVisitMaterializationPostorderScratchRollsBackVisitorFailure(t *testing.T) {
+	compact, err := New(&fakeTable{}, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := compact.appendSubtree(subtreeRecord{symbol: 1, endByte: 1, terminal: true}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := compact.appendSubtree(subtreeRecord{symbol: 2, endByte: 1}, []SubtreeID{leaf}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var scratch MaterializationPostorderScratch
+	if err := compact.VisitMaterializationPostorderWithScratch([]SubtreeID{root}, nil, &scratch, func(SubtreeID, MaterializationSubtreeView) error {
+		return errMaterializationOrderStop
+	}); err != errMaterializationOrderStop {
+		t.Fatalf("visitor failure=%v want=%v", err, errMaterializationOrderStop)
+	}
+	requireMaterializationPostorderScratchReset(t, &scratch)
+	colorStorage := &scratch.colors[:cap(scratch.colors)][0]
+	frameStorage := &scratch.frames[:cap(scratch.frames)][0]
+
+	var got []SubtreeID
+	if err := compact.VisitMaterializationPostorderWithScratch([]SubtreeID{root}, nil, &scratch, func(id SubtreeID, _ MaterializationSubtreeView) error {
+		got = append(got, id)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []SubtreeID{leaf, root}; !slices.Equal(got, want) {
+		t.Fatalf("post-rollback order=%v want=%v", got, want)
+	}
+	if colorStorage != &scratch.colors[:cap(scratch.colors)][0] ||
+		frameStorage != &scratch.frames[:cap(scratch.frames)][0] {
+		t.Fatal("rollback discarded reusable scratch storage")
+	}
+	requireMaterializationPostorderScratchReset(t, &scratch)
+}
+
+func TestVisitMaterializationPostorderScratchRejectsInvalidScratchBeforePoll(t *testing.T) {
+	compact, err := New(&fakeTable{}, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := compact.appendSubtree(subtreeRecord{symbol: 1, endByte: 1, terminal: true}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	polls := 0
+	poll := func() error {
+		polls++
+		return nil
+	}
+	visit := func(SubtreeID, MaterializationSubtreeView) error { return nil }
+	if err := compact.VisitMaterializationPostorderWithScratch([]SubtreeID{leaf}, poll, nil, visit); err == nil ||
+		!strings.Contains(err.Error(), "scratch is nil") {
+		t.Fatalf("nil scratch error=%v", err)
+	}
+	busy := MaterializationPostorderScratch{inUse: true}
+	if err := compact.VisitMaterializationPostorderWithScratch([]SubtreeID{leaf}, poll, &busy, visit); err == nil ||
+		!strings.Contains(err.Error(), "already in use") {
+		t.Fatalf("busy scratch error=%v", err)
+	}
+	if polls != 0 {
+		t.Fatalf("invalid scratch invoked poll %d times", polls)
+	}
+}
+
+func TestVisitMaterializationPostorderScratchRollsBackFinalPollFailure(t *testing.T) {
+	compact, err := New(&fakeTable{}, Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := compact.appendSubtree(subtreeRecord{symbol: 1, endByte: 1, terminal: true}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var scratch MaterializationPostorderScratch
+	polls := 0
+	poll := func() error {
+		polls++
+		if polls == 2 {
+			return errMaterializationOrderStop
+		}
+		return nil
+	}
+	if err := compact.VisitMaterializationPostorderWithScratch([]SubtreeID{leaf}, poll, &scratch, func(SubtreeID, MaterializationSubtreeView) error {
+		return nil
+	}); err != errMaterializationOrderStop {
+		t.Fatalf("final poll failure=%v want=%v", err, errMaterializationOrderStop)
+	}
+	requireMaterializationPostorderScratchReset(t, &scratch)
+	if err := compact.VisitMaterializationPostorderWithScratch([]SubtreeID{leaf}, nil, &scratch, func(SubtreeID, MaterializationSubtreeView) error {
+		return nil
+	}); err != nil {
+		t.Fatalf("reuse after final poll failure: %v", err)
+	}
+	requireMaterializationPostorderScratchReset(t, &scratch)
+}
+
+func requireMaterializationPostorderScratchReset(t *testing.T, scratch *MaterializationPostorderScratch) {
+	t.Helper()
+	if scratch.inUse || len(scratch.colors) != 0 || len(scratch.frames) != 0 {
+		t.Fatalf("scratch was not reset: inUse=%t colors=%d frames=%d", scratch.inUse, len(scratch.colors), len(scratch.frames))
+	}
+	for index, color := range scratch.colors[:cap(scratch.colors)] {
+		if color != 0 {
+			t.Fatalf("scratch color %d was not cleared: %d", index, color)
+		}
 	}
 }
 

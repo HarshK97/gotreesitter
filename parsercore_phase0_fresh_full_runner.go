@@ -167,7 +167,7 @@ func (r *parserCoreFreshFullRunner) materialize(source []byte, compact *core.Cor
 	if r == nil {
 		return nil, errors.New("parser-core fresh-full runner is nil")
 	}
-	return materializeDiagnosticParserCoreAcceptedTree(compact, head, r.parser, source, r.replayParseStates)
+	return materializeDiagnosticParserCoreAcceptedTree(compact, head, r.parser, source, &r.scratch, r.replayParseStates)
 }
 
 func (r *parserCoreFreshFullRunner) materializeSelection(source []byte, compact *core.Core, scheduler *diagnosticParserCoreGenericScheduler) (*Tree, error) {
