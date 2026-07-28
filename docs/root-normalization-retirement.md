@@ -215,7 +215,11 @@ pointer expressions.
 This change retires two Objective-C subpasses.
 Native derivation selection also owns single and concatenated `@` strings.
 This change retires a third Objective-C subpass.
-Three Objective-C subpasses remain live.
+Raw-shape equivalence now preserves compound struct type specifiers.
+This change retires a fourth Objective-C subpass.
+Two Objective-C subpasses remain live.
+The field-aware C-oracle receipt is:
+`harness_out/docker/20260728T111158Z-objc-struct-sized-postfilter-final`.
 The dispatcher census now records each remaining D and Objective-C subpass.
 
 Group by invariant, not language:
@@ -298,6 +302,7 @@ there.
 | Erlang replacement election and form spans | retirement commit `144b30c9ee085406335f4549272e1ae843427993` | 1 dispatcher arm | 0 | zero-rewrite real-corpus census, native producer, production, compact, forest, incremental reuse, and isolated C-oracle receipts |
 | D template-call type wrappers | retirement change | 1 D subpass | 0 | generalized visible named wrapper election, compatibility-free producer, production, forest, incremental, and isolated C-oracle receipts |
 | Objective-C encode and function-pointer repairs | retirement change | 2 Objective-C subpasses | 0 | exact stack equivalence, generic alias selection, production, incremental, and isolated field-aware C-oracle receipts |
+| Objective-C compound struct types | retirement change | 1 Objective-C subpass | 0 | raw-shape hash equivalence, compatibility-free producer, production, census, and isolated C-oracle receipt |
 | D and Objective-C subpass census | retirement change | 2 aggregate arm receipts | 6 named live subpass receipts | positive controls, exact fingerprints, and absent retired labels |
 | D storage-class wrappers | retirement change | 1 D subpass | 0 | visible named wrapper election, compatibility-free producer, production, compact fallback, forest, incremental reuse, and isolated C-oracle parity |
 | D variable-type qualifiers | retirement change | 1 D subpass | 0 | compatibility-free producer, production, compact fallback, forest, incremental reuse, and isolated C-oracle parity |

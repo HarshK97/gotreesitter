@@ -3573,7 +3573,20 @@ func stackEntryPayloadsEquivalentIgnoringDynamicWithScratch(scratch *glrMergeScr
 	an := stackEntryNode(a)
 	bn := stackEntryNode(b)
 	if an != nil && bn != nil {
-		return stackEntryNodesEquivalentIgnoringDynamic(an, bn)
+		if !stackEntryNodesEquivalentIgnoringDynamic(an, bn) {
+			return false
+		}
+		if scratch != nil &&
+			scratch.language != nil &&
+			scratch.language.ExactStackNodeEquivalenceCertified &&
+			scratch.arena != nil {
+			aShape, aOK := rawShapeForStackEntry(scratch.arena, a)
+			bShape, bOK := rawShapeForStackEntry(scratch.arena, b)
+			if aOK && bOK && aShape.contentHash != bShape.contentHash {
+				return false
+			}
+		}
+		return true
 	}
 	if !stackEntryHasNode(a) || !stackEntryHasNode(b) {
 		return !stackEntryHasNode(a) && !stackEntryHasNode(b)

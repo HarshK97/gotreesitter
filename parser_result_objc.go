@@ -7,9 +7,6 @@ func normalizeObjcCompatibility(root *Node, source []byte, lang *Language, censu
 	census.run("dispatch.objc.sizeof-type-identifier-operands", func() {
 		normalizeObjcSizeofTypeIdentifierOperands(root, lang)
 	})
-	census.run("dispatch.objc.struct-sized-type-specifiers", func() {
-		normalizeObjcStructSizedTypeSpecifiers(root, lang)
-	})
 }
 
 func normalizeObjcMethodTypeIdentifiers(root *Node, lang *Language) {
@@ -78,42 +75,6 @@ func normalizeObjcSizeofTypeIdentifierOperands(root *Node, lang *Language) {
 			ensureNodeFieldStorage(n, len(n.children))
 			n.fieldIDs()[1] = valueFieldID
 			n.fieldSources()[1] = fieldSourceDirect
-		}
-	})
-}
-
-func normalizeObjcStructSizedTypeSpecifiers(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "objc" {
-		return
-	}
-	structDeclarationSym, ok1 := symbolByName(lang, "struct_declaration")
-	sizedTypeSpecifierSym, ok2 := symbolByName(lang, "sized_type_specifier")
-	if !ok1 || !ok2 {
-		return
-	}
-	sizedTypeSpecifierNamed := symbolIsNamed(lang, sizedTypeSpecifierSym)
-	walkResultTree(root, func(n *Node) {
-		if n == nil || n.symbol != structDeclarationSym || resultChildCount(n) < 4 {
-			return
-		}
-		children := resultChildSliceForMutation(n)
-		for i := 0; i+1 < len(children); i++ {
-			left := children[i]
-			right := children[i+1]
-			if left == nil || right == nil || left.symbol != sizedTypeSpecifierSym || right.symbol != sizedTypeSpecifierSym {
-				continue
-			}
-			if resultChildCount(left) != 1 || resultChildCount(right) != 1 {
-				continue
-			}
-			mergedChildren := []*Node{resultChildAt(left, 0), resultChildAt(right, 0)}
-			merged := newParentNodeInArena(n.ownerArena, sizedTypeSpecifierSym, sizedTypeSpecifierNamed, cloneNodeSliceIfArena(n.ownerArena, mergedChildren), nil, 0)
-			merged.startByte = left.startByte
-			merged.endByte = right.endByte
-			merged.startPoint = left.startPoint
-			merged.endPoint = right.endPoint
-			replaceChildRangeWithSingleNode(n, i, i+2, merged)
-			return
 		}
 	})
 }

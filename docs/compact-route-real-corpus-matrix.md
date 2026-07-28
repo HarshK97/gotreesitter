@@ -54,12 +54,12 @@ The evidence is in these artifact directories:
 
 - `harness_out/docker/20260728T050445Z-compact-frontier-http-c-oracle-fields`
 - `harness_out/docker/20260728T050509Z-compact-frontier-robot-c-oracle-fields`
-- `harness_out/docker/20260728T104318Z-pr491-python-cert`
 - `harness_out/docker/20260728T050512Z-compact-frontier-meson-c-oracle-fields`
 - `harness_out/docker/20260728T054141Z-compact-split-bash-c-oracle-fields`
 - `harness_out/docker/20260728T054151Z-compact-split-erlang-c-oracle-fields`
 - `harness_out/docker/20260728T054158Z-compact-split-haskell-c-oracle-fields`
 - `harness_out/docker/20260728T054206Z-compact-split-javascript-c-oracle-fields`
+- `harness_out/docker/20260728T104725Z-pr491-python-cert-final`
 
 Custom, adapted, stale, and same-name grammars retain conservative defaults.
 
