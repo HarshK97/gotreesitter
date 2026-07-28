@@ -69,7 +69,8 @@ for tags and release notes while still in `0.x`.
   Exact fingerprints retain spans, points, fields, flags, and parser states.
   The census does not materialize compact final-child references.
 
-- Certified materializing-shape hashes now include raw descendant content.
+- The parser now folds raw descendant content into certified
+  materializing-shape hashes.
   This prevents shallow GSS merges from discarding Objective-C method types.
   The parser now owns those identifiers before result compatibility.
   This retires a fifth Objective-C normalization subpass.

@@ -217,7 +217,8 @@ Native derivation selection also owns single and concatenated `@` strings.
 This change retires a third Objective-C subpass.
 Raw-shape equivalence now preserves compound struct type specifiers.
 This change retires a fourth Objective-C subpass.
-Certified materializing-shape hashes now include raw descendants.
+The parser now folds raw descendants into certified materializing-shape
+hashes.
 This change preserves method type identifiers before result compatibility.
 It retires a fifth Objective-C subpass.
 One Objective-C subpass remains live.
