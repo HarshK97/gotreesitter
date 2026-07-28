@@ -24,6 +24,10 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Native Linker Script recovery now owns named error nodes and root spans.
+  This change adds clean and recovered corpus fixtures.
+  It removes the Linker Script compatibility arm.
+
 - The parser covers every byte in each recovered EBNF source.
   This change removes the EBNF compatibility arm.
 

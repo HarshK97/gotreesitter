@@ -2,8 +2,8 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 56,
-    "dispatcher_languages": 58,
+    "dispatcher_arms": 55,
+    "dispatcher_languages": 57,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
@@ -1354,34 +1354,6 @@
         "ledger"
       ],
       "purpose": "Reconcile Ledger recovery and returned-tree shape.",
-      "authoritative_owner": "scheduler_action_semantics",
-      "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
-      ],
-      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
-      "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
-      },
-      "status": "live",
-      "receipt_refs": []
-    },
-    {
-      "id": "dispatch.linkerscript",
-      "kind": "dispatcher_arm",
-      "functions": [
-        "normalizeLinkerscriptCompatibility"
-      ],
-      "files": [
-        "parser_result_linkerscript.go"
-      ],
-      "languages": [
-        "linkerscript"
-      ],
-      "purpose": "Reconcile linker-script recovery and returned-tree shape.",
       "authoritative_owner": "scheduler_action_semantics",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go"

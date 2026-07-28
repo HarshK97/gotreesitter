@@ -194,8 +194,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.julia", func() { normalizeJuliaCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "ledger":
 		dispatcherArmCensus(ctx, "dispatch.ledger", func() { normalizeLedgerCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
-	case "linkerscript":
-		dispatcherArmCensus(ctx, "dispatch.linkerscript", func() { normalizeLinkerscriptCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "kotlin":
 		dispatcherArmCensus(ctx, "dispatch.kotlin", func() { normalizeKotlinCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "luau":
