@@ -496,6 +496,57 @@ func TestCertifiedInitialMergeRetrySkipHonorsExplicitOverrides(t *testing.T) {
 	}
 }
 
+func TestCertifiedGSSConvergenceAcceptedErrorSchedulesFallbackWidth(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_STACKS", "")
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	t.Cleanup(ResetParseEnvConfigCacheForTests)
+
+	const sourceLen = 128
+	tree := certifiedAcceptedErrorRetryTestTree(false, sourceLen)
+	tree.language.FullParseGSSConvergenceEnabled = true
+	tree.language.FullParseAcceptedErrorRetryProfile = FullParseAcceptedErrorRetryProfile{
+		SkipCompleteAcceptedErrorRetry:             true,
+		SkipInitialCompleteAcceptedErrorMergeRetry: true,
+		GSSConvergenceAcceptedErrorMergePerKey:     12,
+	}
+
+	if got := certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, sourceLen); got != 12 {
+		t.Fatalf("certified fallback width = %d, want 12", got)
+	}
+	if !shouldRunInitialFullParseMergeRetry(tree, sourceLen, fullParseRetryOriginFresh) {
+		t.Fatal("certified convergence tree skipped its accepted-error fallback")
+	}
+	if got := fullParseRetryMergePerKeyOverride(tree, sourceLen, 8); got != 12 {
+		t.Fatalf("merge retry width = %d, want 12", got)
+	}
+
+	tree.root.flags = 0
+	if got := certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, sourceLen); got != 0 {
+		t.Fatalf("clean tree fallback width = %d, want 0", got)
+	}
+}
+
+func TestCertifiedGSSConvergenceFallbackHonorsExplicitOverrides(t *testing.T) {
+	for _, env := range []string{"GOT_GLR_MAX_STACKS", "GOT_GLR_MAX_MERGE_PER_KEY"} {
+		t.Run(env, func(t *testing.T) {
+			t.Setenv("GOT_GLR_MAX_STACKS", "")
+			t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+			t.Setenv(env, "8")
+			ResetParseEnvConfigCacheForTests()
+			t.Cleanup(ResetParseEnvConfigCacheForTests)
+
+			const sourceLen = 128
+			tree := certifiedAcceptedErrorRetryTestTree(false, sourceLen)
+			tree.language.FullParseGSSConvergenceEnabled = true
+			tree.language.FullParseAcceptedErrorRetryProfile.GSSConvergenceAcceptedErrorMergePerKey = 12
+			if got := certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, sourceLen); got != 0 {
+				t.Fatalf("explicit %s fallback width = %d, want 0", env, got)
+			}
+		})
+	}
+}
+
 func TestCertifiedInitialMergeRetrySkipKeepsWideningAndTreeSelection(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_STACKS", "")
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
@@ -877,28 +928,158 @@ func TestIncrementalAcceptedErrorBaseMergeRetryUsesFinalFreshPolicy(t *testing.T
 	}
 }
 
-func TestResolveParseMergePerKeyCapCSharpPolicyPrecedence(t *testing.T) {
+func TestResolveParseMergePerKeyCapGSSConvergencePolicyPrecedence(t *testing.T) {
 	t.Run("certified fresh default", func(t *testing.T) {
 		t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
 		ResetParseEnvConfigCacheForTests()
 		defer ResetParseEnvConfigCacheForTests()
-		parser := &Parser{language: &Language{Name: "c_sharp"}}
-		if got := parser.resolveParseMergePerKeyCap([]byte("class Demo {}"), nil, 0); got != 16 {
-			t.Fatalf("C# certified fresh cap = %d, want 16", got)
+		parser := &Parser{language: &Language{
+			Name:                           "certified",
+			FullParseGSSConvergenceEnabled: true,
+		}}
+		if got := parser.resolveParseMergePerKeyCap([]byte("source"), nil, 0); got != 1 {
+			t.Fatalf("certified fresh cap = %d, want 1", got)
 		}
-		if got := parser.resolveParseMergePerKeyCap([]byte("class Demo {}"), nil, -3); got != 3 {
-			t.Fatalf("C# negative exact cap = %d, want 3", got)
+		if got := parser.resolveParseMergePerKeyCap([]byte("source"), nil, -3); got != 3 {
+			t.Fatalf("negative exact cap = %d, want 3", got)
+		}
+		if got := parser.resolveParseMergePerKeyCap([]byte("source"), &reuseCursor{}, 0); got != maxStacksPerMergeKey {
+			t.Fatalf("incremental cap = %d, want %d", got, maxStacksPerMergeKey)
+		}
+	})
+	t.Run("same name without certification", func(t *testing.T) {
+		t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+		ResetParseEnvConfigCacheForTests()
+		defer ResetParseEnvConfigCacheForTests()
+		parser := &Parser{language: &Language{Name: "c_sharp"}}
+		if got := parser.resolveParseMergePerKeyCap([]byte("class Demo {}"), nil, 0); got != maxStacksPerMergeKey {
+			t.Fatalf("uncertified same-name cap = %d, want %d", got, maxStacksPerMergeKey)
 		}
 	})
 	t.Run("explicit environment", func(t *testing.T) {
 		t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "4")
 		ResetParseEnvConfigCacheForTests()
 		defer ResetParseEnvConfigCacheForTests()
-		parser := &Parser{language: &Language{Name: "c_sharp"}}
-		if got := parser.resolveParseMergePerKeyCap([]byte("class Demo {}"), nil, 0); got != 4 {
-			t.Fatalf("C# explicit environment cap = %d, want exact 4", got)
+		parser := &Parser{language: &Language{
+			Name:                           "certified",
+			FullParseGSSConvergenceEnabled: true,
+		}}
+		if got := parser.resolveParseMergePerKeyCap([]byte("source"), nil, 0); got != 4 {
+			t.Fatalf("explicit environment cap = %d, want exact 4", got)
 		}
 	})
+}
+
+func TestConfigureParseCapsScopesFaithfulGSSConvergenceToFreshCapOne(t *testing.T) {
+	oldFaithful := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = false
+	t.Cleanup(func() { glrFaithfulCapOneMerge = oldFaithful })
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	t.Cleanup(ResetParseEnvConfigCacheForTests)
+
+	parser := &Parser{language: &Language{
+		Name:                           "certified",
+		FullParseGSSConvergenceEnabled: true,
+	}}
+	var fresh parserScratch
+	freshCaps := parser.configureParseCaps([]byte("source"), nil, arenaClassFull, &fresh, 0, 0, 0)
+	if freshCaps.mergePerKeyCap != 1 || !fresh.merge.faithfulCapOne {
+		t.Fatalf(
+			"fresh cap=%d faithful=%t, want cap=1 faithful=true",
+			freshCaps.mergePerKeyCap,
+			fresh.merge.faithfulCapOne,
+		)
+	}
+
+	var incremental parserScratch
+	incrementalCaps := parser.configureParseCaps(
+		[]byte("source"),
+		&reuseCursor{},
+		arenaClassIncremental,
+		&incremental,
+		0,
+		0,
+		0,
+	)
+	if incrementalCaps.mergePerKeyCap == 1 || incremental.merge.faithfulCapOne {
+		t.Fatalf(
+			"incremental cap=%d faithful=%t, want a wider cap and faithful=false",
+			incrementalCaps.mergePerKeyCap,
+			incremental.merge.faithfulCapOne,
+		)
+	}
+
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "4")
+	ResetParseEnvConfigCacheForTests()
+	var explicit parserScratch
+	explicitCaps := parser.configureParseCaps([]byte("source"), nil, arenaClassFull, &explicit, 0, 0, 0)
+	if explicitCaps.mergePerKeyCap != 4 || explicit.merge.faithfulCapOne {
+		t.Fatalf(
+			"explicit cap=%d faithful=%t, want cap=4 faithful=false",
+			explicitCaps.mergePerKeyCap,
+			explicit.merge.faithfulCapOne,
+		)
+	}
+
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	ResetParseEnvConfigCacheForTests()
+	uncertifiedParser := &Parser{language: &Language{Name: "kotlin"}}
+	var uncertifiedDefault parserScratch
+	uncertifiedDefaultCaps := uncertifiedParser.configureParseCaps(
+		[]byte("source"),
+		nil,
+		arenaClassFull,
+		&uncertifiedDefault,
+		0,
+		0,
+		0,
+	)
+	if uncertifiedDefaultCaps.mergePerKeyCap != 1 || uncertifiedDefault.merge.faithfulCapOne {
+		t.Fatalf(
+			"uncertified default cap=%d faithful=%t, want cap=1 faithful=false",
+			uncertifiedDefaultCaps.mergePerKeyCap,
+			uncertifiedDefault.merge.faithfulCapOne,
+		)
+	}
+
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "1")
+	ResetParseEnvConfigCacheForTests()
+	var explicitCapOne parserScratch
+	explicitCapOneCaps := uncertifiedParser.configureParseCaps(
+		[]byte("source"),
+		nil,
+		arenaClassFull,
+		&explicitCapOne,
+		0,
+		0,
+		0,
+	)
+	if explicitCapOneCaps.mergePerKeyCap != 1 || !explicitCapOne.merge.faithfulCapOne {
+		t.Fatalf(
+			"explicit cap=%d faithful=%t, want cap=1 faithful=true",
+			explicitCapOneCaps.mergePerKeyCap,
+			explicitCapOne.merge.faithfulCapOne,
+		)
+	}
+
+	var incrementalCapOne parserScratch
+	incrementalCapOneCaps := uncertifiedParser.configureParseCaps(
+		[]byte("source"),
+		&reuseCursor{},
+		arenaClassIncremental,
+		&incrementalCapOne,
+		0,
+		0,
+		0,
+	)
+	if incrementalCapOneCaps.mergePerKeyCap != 1 || incrementalCapOne.merge.faithfulCapOne {
+		t.Fatalf(
+			"incremental explicit cap=%d faithful=%t, want cap=1 faithful=false",
+			incrementalCapOneCaps.mergePerKeyCap,
+			incrementalCapOne.merge.faithfulCapOne,
+		)
+	}
 }
 
 func TestIncrementalAcceptedErrorBaseMergeRetryRequiresOldTreeRoute(t *testing.T) {

@@ -3726,7 +3726,7 @@ func (p *Parser) tryFastUnaryCollapseFromGSS(s *glrStack, act ParseAction, tok T
 }
 
 func (p *Parser) applyNoTreeReduceActionFromGSS(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, tmp []stackEntry, trackChildErrors bool) {
-	if glrFaithfulCapOneMerge && s.gss.head != nil && !gssSpanIsLinear(s.gss.head, int(act.ChildCount)) {
+	if faithfulCapOneMergeEnabled(p.mergeScratch) && s.gss.head != nil && !gssSpanIsLinear(s.gss.head, int(act.ChildCount)) {
 		s.dead = true
 		releaseReduceWindowEntries(tmpEntries, nil)
 		return

@@ -944,6 +944,7 @@ func (p *Parser) stopFrontierSameHeaderSummary(stacks []glrStack) string {
 		// borrow the active arena so pending-parent diagnostics use the same exact
 		// equality as production merge decisions instead of failing closed.
 		scratch.arena = p.mergeScratch.arena
+		scratch.faithfulCapOne = p.mergeScratch.faithfulCapOne
 	}
 	for gi := range groups {
 		size := len(groups[gi].indices)
@@ -2288,7 +2289,7 @@ func (p *Parser) tryRecoverPreviousShiftAsError(s *glrStack, tok Token, nodeCoun
 }
 
 func (p *Parser) rejectUndrainedPendingForkStacks(s *glrStack) bool {
-	if p == nil || !glrFaithfulCapOneMerge || len(p.pendingForkStacks) == 0 {
+	if p == nil || !faithfulCapOneMergeEnabled(p.mergeScratch) || len(p.pendingForkStacks) == 0 {
 		return false
 	}
 	workCountRecordPendingTransition(p, &p.pendingForkStacks[0], len(p.pendingForkStacks), 0, workCountConvergenceOutcomePendingDiscarded, "undrained post-reduce candidates rejected")
@@ -4397,7 +4398,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	var pendingTraceActionCount int
 	var pendingTraceAction ParseAction
 	drainPendingForkStacks := func() {
-		if !glrFaithfulCapOneMerge || len(p.pendingForkStacks) == 0 {
+		if !faithfulCapOneMergeEnabled(p.mergeScratch) || len(p.pendingForkStacks) == 0 {
 			return
 		}
 		pendingCount := len(p.pendingForkStacks)
@@ -6805,6 +6806,11 @@ func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClas
 	}
 	mergePerKeyCap := p.resolveParseMergePerKeyCap(source, reuse, maxMergePerKeyOverride)
 	scratch.merge.perKeyCap = mergePerKeyCap
+	scratch.merge.faithfulCapOne = reuse == nil &&
+		mergePerKeyCap == 1 &&
+		((p.language != nil && p.language.FullParseGSSConvergenceEnabled) ||
+			parseMaxMergePerKeyEnvConfigured() ||
+			maxMergePerKeyOverride < 0)
 
 	maxNodes := parseNodeLimitForLanguage(len(source), p.language)
 	if maxNodesOverride > maxNodes {
@@ -6830,12 +6836,11 @@ func (p *Parser) resolveParseMergePerKeyCap(source []byte, reuse *reuseCursor, m
 	if javaFullParseNeedsAnnotationDeclarationMergeWidth(p.language, source, reuse) && mergePerKeyCap < javaFullParseRetryMaxMergePerKey {
 		mergePerKeyCap = javaFullParseRetryMaxMergePerKey
 	}
-	// C#'s certified fresh default needs a wider floor, but explicit policy is
-	// authoritative. Environment configuration and the negative internal exact
-	// override both remain exact rather than being silently raised afterward.
-	if reuse == nil && p.language != nil && p.language.Name == "c_sharp" &&
-		!parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap < 16 {
-		mergePerKeyCap = 16
+	// Certified languages keep clean alternatives in the graph. Use one survivor
+	// per merge group for fresh full parses. Explicit settings take precedence.
+	if reuse == nil && p.language != nil && p.language.FullParseGSSConvergenceEnabled &&
+		!parseMaxMergePerKeyEnvConfigured() {
+		mergePerKeyCap = 1
 	}
 	if maxMergePerKeyOverride < 0 {
 		mergePerKeyCap = -maxMergePerKeyOverride

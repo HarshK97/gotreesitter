@@ -1302,6 +1302,24 @@ func certifiedAcceptedErrorRetrySkipsComplete(tree *Tree, sourceLen int) bool {
 		retryTreeCoversExpectedEOF(tree)
 }
 
+func certifiedGSSConvergenceAcceptedErrorMergePerKey(tree *Tree, sourceLen int) int {
+	if tree == nil || tree.language == nil || sourceLen <= 0 ||
+		!tree.language.FullParseGSSConvergenceEnabled ||
+		parseMaxGLRStacksEnvConfigured() || parseMaxMergePerKeyEnvConfigured() {
+		return 0
+	}
+	mergePerKey := int(tree.language.FullParseAcceptedErrorRetryProfile.GSSConvergenceAcceptedErrorMergePerKey)
+	if mergePerKey <= 1 {
+		return 0
+	}
+	rt := tree.rawParseRuntime()
+	if rt.StopReason != ParseStopAccepted || rt.Truncated || rt.TokenSourceEOFEarly ||
+		!retryTreeHasError(tree) || !retryTreeCoversExpectedEOF(tree) {
+		return 0
+	}
+	return mergePerKey
+}
+
 func certifiedFreshErrorNoStacksRetryPassLimit(tree *Tree, sourceLen int, origin fullParseRetryOrigin) int {
 	if tree == nil || tree.language == nil || origin != fullParseRetryOriginFresh ||
 		sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes {
@@ -1364,6 +1382,9 @@ func fullParseRetryMergePerKeyOverride(tree *Tree, sourceLen int, initialMaxStac
 	case ParseStopAccepted, ParseStopNoStacksAlive, ParseStopNodeLimit:
 	default:
 		return 0
+	}
+	if mergePerKey := certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, sourceLen); mergePerKey != 0 {
+		return mergePerKey
 	}
 	if certifiedAcceptedErrorRetrySkipsComplete(tree, sourceLen) {
 		return 0
@@ -1446,6 +1467,9 @@ func shouldRunInitialFullParseMergeRetry(tree *Tree, sourceLen int, origin fullP
 }
 
 func certifiedAcceptedErrorRetrySkipsInitialMerge(tree *Tree, sourceLen int, origin fullParseRetryOrigin) bool {
+	if certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, sourceLen) != 0 {
+		return false
+	}
 	if tree == nil || tree.language == nil || sourceLen <= 0 || origin != fullParseRetryOriginFresh ||
 		!tree.language.FullParseAcceptedErrorRetryProfile.SkipInitialCompleteAcceptedErrorMergeRetry ||
 		parseMaxGLRStacksEnvConfigured() || parseMaxMergePerKeyEnvConfigured() {
@@ -1598,7 +1622,8 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 	}
 	// C# namespace recovery can clear this exact accepted-error shape during
 	// normal result compatibility; avoid paying the full retry ladder first.
-	if csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree, source) {
+	if certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, len(source)) == 0 &&
+		csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree, source) {
 		return tree
 	}
 	runRetryAttempt := func(logicalRung, operationCause string, maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {

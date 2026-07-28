@@ -18,6 +18,7 @@ type builtinLanguageRuntimeProfile struct {
 	automaticForestMemoryAllowance     int64
 	automaticForestEnabled             bool
 	fullParseArenaDensityCap           bool
+	fullParseGSSConvergence            bool
 	nativeResultCompatibility          gotreesitter.ResultCompatibilityCapability
 	compactConvergedSplitDrops         bool
 	compactEOFAcceptNoActionSiblings   bool
@@ -29,6 +30,7 @@ type builtinLanguageRuntimeProfile struct {
 const (
 	csharpAcceptedErrorRetryMaxEntryScratchPeak = 690_365
 	csharpFreshErrorNoStacksRetryMaxStacks      = 16
+	csharpGSSConvergenceErrorMergePerKey        = 12
 	mesonAcceptedErrorRetryMinSourceBytes       = 2 * 1024
 	javascriptAutomaticForestMemoryAllowance    = 128 * 1024 * 1024
 )
@@ -95,6 +97,7 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	"c_sharp": {
 		blobSHA256:                    mustRuntimeProfileSHA256("7ad425e89733339dde94e3c03b762ae478fb453b530493f5d62e1ae7537e1784"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
+		fullParseGSSConvergence:       true,
 		nativeResultCompatibility: gotreesitter.ResultCompatibilityCSharpNativeNotNull |
 			gotreesitter.ResultCompatibilityCSharpNativeUnicodeIdentifiers |
 			gotreesitter.ResultCompatibilityCSharpNativeScopedLambdaStatements |
@@ -105,6 +108,7 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 			SkipCompleteMaxEntryScratchPeak:            csharpAcceptedErrorRetryMaxEntryScratchPeak,
 			FreshErrorNoStacksRetryMaxStacks:           csharpFreshErrorNoStacksRetryMaxStacks,
 			SkipInitialCompleteAcceptedErrorMergeRetry: true,
+			GSSConvergenceAcceptedErrorMergePerKey:     csharpGSSConvergenceErrorMergePerKey,
 		},
 	},
 	// Crystal's external-scanner repeat selects the same tree after the complete
@@ -438,6 +442,10 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 	}
 	if profile.fullParseArenaDensityCap && !lang.FullParseArenaDensityCapEnabled {
 		lang.FullParseArenaDensityCapEnabled = true
+		changed = true
+	}
+	if profile.fullParseGSSConvergence && !lang.FullParseGSSConvergenceEnabled {
+		lang.FullParseGSSConvergenceEnabled = true
 		changed = true
 	}
 	if missing := profile.nativeResultCompatibility &^ lang.NativeResultCompatibility; missing != 0 {

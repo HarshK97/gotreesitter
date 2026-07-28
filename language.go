@@ -384,6 +384,10 @@ type FullParseAcceptedErrorRetryProfile struct {
 	// ReuseCleanWideMinSourceBytes limits clean-wide reuse to the certified
 	// large-source class. Zero disables the policy even when the boolean is set.
 	ReuseCleanWideMinSourceBytes uint32
+	// GSSConvergenceAcceptedErrorMergePerKey sets the exact merge width for an
+	// accepted-error retry after a certified cap-one full parse. Zero keeps the
+	// other retry policies. Explicit environment settings disable this policy.
+	GSSConvergenceAcceptedErrorMergePerKey uint16
 }
 
 // ResultCompatibilityCapability records result-tree shapes that a language
@@ -645,6 +649,14 @@ type Language struct {
 	// only through an exact-blob runtime profile. Callers may explicitly opt in
 	// custom or adapted languages; false preserves the baseline arena policy.
 	FullParseArenaDensityCapEnabled bool
+
+	// FullParseGSSConvergenceEnabled certifies faithful convergence for this
+	// language artifact. The parser keeps clean alternatives in the graph when
+	// one stack survives each merge group. Checked-in languages receive this
+	// setting only through an exact blob profile. Callers can enable it for
+	// custom languages after equivalent tree tests. An explicit merge limit of
+	// one also enables this behavior for a fresh full parse.
+	FullParseGSSConvergenceEnabled bool
 
 	// NativeResultCompatibility identifies result-tree shapes produced natively
 	// by this exact language artifact. Zero keeps conservative post-parse

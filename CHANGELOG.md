@@ -9,6 +9,13 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Certified graph-structured stack convergence now merges duplicate C# full-parse
+  stacks while it retains their packed alternatives.
+  The 137 KiB witness improves from 1.629 seconds to 98.7 milliseconds.
+  Allocated bytes fall from 135.6 MB to 50.4 MB.
+  The allocation count falls from 7,820 to 1,429 per parse.
+  Incremental parses retain their previous merge policy.
+
 - The compact full-parse runner now reuses buffers during canonicalization and
   tree materialization.
   Warm materialization drops from 136,584 to 272 bytes per operation.
@@ -23,6 +30,13 @@ for tags and release notes while still in `0.x`.
   Parse time remains statistically unchanged.
 
 ### Fixed
+
+- Accepted-error C# full parses now retry with a certified merge width after
+  cap-one convergence.
+  Exact grammar identity gates the policy.
+  Explicit environment settings keep precedence.
+  This preserves recovered declarations while clean full parses remain on the
+  faster path.
 
 - Native ReScript materialization now owns value identifier path aliases.
   This change adds two small corpus fixtures.

@@ -3653,7 +3653,7 @@ func TestMergeStacksLargeCapPreservesDifferentCRecoveryCosts(t *testing.T) {
 
 func TestMergeStacksSmallFaithfulGSSUnionPreservesExtraLinks(t *testing.T) {
 	old := glrFaithfulCapOneMerge
-	glrFaithfulCapOneMerge = true
+	glrFaithfulCapOneMerge = false
 	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
 
 	var gssScratch gssScratch
@@ -3668,6 +3668,7 @@ func TestMergeStacksSmallFaithfulGSSUnionPreservesExtraLinks(t *testing.T) {
 
 	var scratch glrMergeScratch
 	scratch.perKeyCap = 1
+	scratch.faithfulCapOne = true
 	scratch.beginEquivEpoch()
 
 	result := mergeStacksWithScratch([]glrStack{buildStack(11), buildStack(12)}, &scratch)
@@ -3680,6 +3681,22 @@ func TestMergeStacksSmallFaithfulGSSUnionPreservesExtraLinks(t *testing.T) {
 	_, extra := result[0].gss.head.link(1)
 	if got := stackEntryNodeSymbol(extra); got != 12 {
 		t.Fatalf("extra link symbol = %d, want 12", got)
+	}
+}
+
+func TestFaithfulCapOneMergeEnabledByParsePolicy(t *testing.T) {
+	old := glrFaithfulCapOneMerge
+	glrFaithfulCapOneMerge = false
+	t.Cleanup(func() { glrFaithfulCapOneMerge = old })
+
+	if faithfulCapOneMergeEnabled(&glrMergeScratch{}) {
+		t.Fatal("inactive parse enabled faithful cap-one merge")
+	}
+	scratch := &glrMergeScratch{
+		faithfulCapOne: true,
+	}
+	if !faithfulCapOneMergeEnabled(scratch) {
+		t.Fatal("active parse did not enable faithful cap-one merge")
 	}
 }
 
