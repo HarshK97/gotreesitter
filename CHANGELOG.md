@@ -37,6 +37,10 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Native Crystal scanner lookahead now skips whitespace after hash and
+  named-tuple openers.
+  Exact token boundaries retire the Crystal compatibility dispatcher arm.
+
 - PRs #497 and #500 add locked GraphQL and Svelte direct-route fixtures.
   Each fixture records its source commit and SHA-256 digest.
   Dedicated C-oracle tests require exact trees and zero fallback.

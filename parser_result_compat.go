@@ -142,8 +142,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.cooklang", func() { normalizeCooklangCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "corn":
 		dispatcherArmCensus(ctx, "dispatch.corn", func() { normalizeCornCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "crystal":
-		dispatcherArmCensus(ctx, "dispatch.crystal", func() { normalizeCrystalCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "dart":
 		dispatcherArmCensus(ctx, "dispatch.dart", func() { normalizeDartCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "doxygen":
