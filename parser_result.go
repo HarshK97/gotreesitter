@@ -648,6 +648,10 @@ func compareStackEntryTreeOrder(p *Parser, arena *nodeArena, a, b stackEntry, de
 			return 0
 		}
 		if !stackEntriesHaveSameTreeOrderEnvelope(aChild, bChild) {
+			if stackEntryVisibleNamedUnaryWrapperContains(p, arena, aChild, bChild) ||
+				stackEntryVisibleNamedUnaryWrapperContains(p, arena, bChild, aChild) {
+				return 0
+			}
 			if cmp := compareStackEntryDirectChildPreference(p, arena, aChild, bChild, depth+1); cmp != 0 {
 				return cmp
 			}
@@ -673,6 +677,12 @@ func compareStackEntryDirectChildPreference(p *Parser, arena *nodeArena, a, b st
 	if depth > maxTreeWalkDepth {
 		return 0
 	}
+	if stackEntryVisibleNamedUnaryWrapperContains(p, arena, a, b) {
+		return 1
+	}
+	if stackEntryVisibleNamedUnaryWrapperContains(p, arena, b, a) {
+		return -1
+	}
 	if stackEntryUnaryWrapperContains(p, arena, a, b, depth+1) {
 		return -1
 	}
@@ -680,6 +690,60 @@ func compareStackEntryDirectChildPreference(p *Parser, arena *nodeArena, a, b st
 		return 1
 	}
 	return 0
+}
+
+func compareStackEntryVisibleNamedWrapperPreference(p *Parser, arena *nodeArena, a, b stackEntry, depth int) int {
+	if depth > maxTreeWalkDepth || !stackEntriesHaveSameTreeOrderEnvelope(a, b) {
+		return 0
+	}
+	aCount := stackEntryNodeChildCount(a)
+	bCount := stackEntryNodeChildCount(b)
+	if aCount != bCount {
+		return 0
+	}
+	for i := 0; i < aCount; i++ {
+		aChild, aOK := stackEntryAliasChild(a, arena, i)
+		bChild, bOK := stackEntryAliasChild(b, arena, i)
+		if !aOK || !bOK {
+			return 0
+		}
+		if stackEntriesHaveSameTreeOrderEnvelope(aChild, bChild) {
+			if cmp := compareStackEntryVisibleNamedWrapperPreference(p, arena, aChild, bChild, depth+1); cmp != 0 {
+				return cmp
+			}
+			continue
+		}
+		if stackEntryVisibleNamedUnaryWrapperContains(p, arena, aChild, bChild) {
+			return 1
+		}
+		if stackEntryVisibleNamedUnaryWrapperContains(p, arena, bChild, aChild) {
+			return -1
+		}
+		return 0
+	}
+	return 0
+}
+
+func stackEntryVisibleNamedUnaryWrapperContains(p *Parser, arena *nodeArena, wrapper, direct stackEntry) bool {
+	if p == nil || p.language == nil || !stackEntryHasNode(wrapper) || !stackEntryHasNode(direct) {
+		return false
+	}
+	sym := stackEntryNodeSymbol(wrapper)
+	if int(sym) >= len(p.language.SymbolMetadata) {
+		return false
+	}
+	meta := p.language.SymbolMetadata[sym]
+	if (!meta.Visible && !meta.Named) ||
+		stackEntryNodeIsExtra(wrapper) ||
+		stackEntryNodeIsMissing(wrapper) ||
+		stackEntryNodeHasError(wrapper) ||
+		stackEntryNodeChildCount(wrapper) != 1 ||
+		stackEntryNodeStartByte(wrapper) != stackEntryNodeStartByte(direct) ||
+		stackEntryNodeEndByte(wrapper) != stackEntryNodeEndByte(direct) {
+		return false
+	}
+	child, ok := stackEntryAliasChild(wrapper, arena, 0)
+	return ok && stackEntriesHaveSameTreeOrderEnvelope(child, direct)
 }
 
 func stackEntryUnaryWrapperContains(p *Parser, arena *nodeArena, wrapper, direct stackEntry, depth int) bool {

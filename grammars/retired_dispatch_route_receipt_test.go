@@ -18,6 +18,23 @@ func retiredDispatchRouteReceipts(
 	lang *gotreesitter.Language,
 	baseSource []byte,
 ) []retiredDispatchRouteReceipt {
+	return retiredDispatchRouteReceiptsWithCompactPolicy(t, lang, baseSource, true)
+}
+
+func retiredDispatchRouteReceiptsAllowCompactFallback(
+	t *testing.T,
+	lang *gotreesitter.Language,
+	baseSource []byte,
+) []retiredDispatchRouteReceipt {
+	return retiredDispatchRouteReceiptsWithCompactPolicy(t, lang, baseSource, false)
+}
+
+func retiredDispatchRouteReceiptsWithCompactPolicy(
+	t *testing.T,
+	lang *gotreesitter.Language,
+	baseSource []byte,
+	requireDirectCompact bool,
+) []retiredDispatchRouteReceipt {
 	t.Helper()
 
 	source := append(append([]byte(nil), baseSource...), '\n')
@@ -42,7 +59,9 @@ func retiredDispatchRouteReceipts(
 	}
 	t.Cleanup(compact.Release)
 	routedAfter, fallbackAfter := gotreesitter.AdmissionCandidateCounters()
-	if routedAfter != routedBefore+1 || fallbackAfter != fallbackBefore {
+	direct := routedAfter == routedBefore+1 && fallbackAfter == fallbackBefore
+	fallback := routedAfter == routedBefore && fallbackAfter == fallbackBefore+1
+	if requireDirectCompact && !direct || !requireDirectCompact && !direct && !fallback {
 		t.Fatalf(
 			"compact route counters routed=%d/%d fallback=%d/%d: %s",
 			routedBefore,

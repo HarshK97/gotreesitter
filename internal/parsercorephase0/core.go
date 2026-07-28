@@ -604,6 +604,14 @@ type Core struct {
 	// so a plain field is safe here -- see Parser.reduceActionConflict
 	// (parser.go) for the identical pattern and its safety argument.
 	reduceConflictContext bool
+	// reduceNoLookaheadContext marks a reduction triggered by the parser's
+	// synthetic EOF token. A transparent goto completes an extra in place.
+	// The scheduler sets this only around one authenticated reduction.
+	reduceNoLookaheadContext bool
+	// externalPayloadsQuiescent is a one-way language capability. The caller
+	// certifies that external payload identity does not depend on scanner state.
+	// Reset retains it because the property is stable for this core's tables.
+	externalPayloadsQuiescent bool
 }
 
 // SetReduceConflictContext sets/clears the transient conflict-context
@@ -615,6 +623,28 @@ func (c *Core) SetReduceConflictContext(v bool) {
 		return
 	}
 	c.reduceConflictContext = v
+}
+
+// SetReduceNoLookaheadContext sets or clears synthetic-EOF reduction context.
+// Callers must pair a true set with a deferred false reset.
+func (c *Core) SetReduceNoLookaheadContext(v bool) {
+	if c == nil {
+		return
+	}
+	c.reduceNoLookaheadContext = v
+}
+
+// CertifyExternalPayloadsQuiescent permits recursive insertion to compare and
+// retain external payloads. Call this only when scanner state cannot change
+// the identity of any external payload produced by this core's language.
+//
+// The certificate is permanent for the Core. Reset retains it because Reset
+// also retains the authenticated language tables.
+func (c *Core) CertifyExternalPayloadsQuiescent() {
+	if c == nil {
+		return
+	}
+	c.externalPayloadsQuiescent = true
 }
 
 // inlineAdjacencyCapacity covers the production default without forcing a
@@ -1018,6 +1048,8 @@ func (c *Core) Reset() error {
 	c.popScratch.resetLogical()
 	c.reductionScratch.finish()
 	c.metadataConstructionAuthenticated = true
+	c.reduceConflictContext = false
+	c.reduceNoLookaheadContext = false
 	return nil
 }
 
@@ -1361,8 +1393,9 @@ const (
 // ReductionOutput is one final canonical boundary and its aggregate freshness
 // relative to the boundary map at entry to ReduceOutputs.
 type ReductionOutput struct {
-	Head      Head
-	Freshness ReductionFreshness
+	Head             Head
+	Freshness        ReductionFreshness
+	MultiplePopPaths bool
 }
 
 const inlineReductionBoundaryOutputs = 2
@@ -1524,6 +1557,13 @@ func (c *Core) reductionParentForPath(
 		dynamicPrecedence: act.DynamicPrecedence,
 		startByte:         path.startByte, endByte: path.structuralEnd,
 		fragile: fragile,
+	}
+	if c.reduceNoLookaheadContext {
+		predecessor, err := c.node(path.prev)
+		if err != nil {
+			return 0, 0, ForkOrder{}, err
+		}
+		parent.extra = key.state == predecessor.state
 	}
 	order := path.order
 	if fork.Present {
@@ -2063,6 +2103,7 @@ type shallowPayloadClass struct {
 	size       uint32
 	childCount uint32
 	extra      bool
+	external   bool
 }
 
 func (c *Core) shallowPayloadClassEqual(link linkRecord, in linkInput) (bool, error) {
@@ -2341,6 +2382,12 @@ func (c *Core) insertLinkOneLayer(state StateID, byteOffset uint32, links []link
 }
 
 func (c *Core) subtreeHasNoExternalDescendant(root SubtreeID) (bool, error) {
+	if _, err := c.subtree(root); err != nil {
+		return false, err
+	}
+	if c.externalPayloadsQuiescent {
+		return true, nil
+	}
 	seen := make(map[SubtreeID]bool)
 	visiting := make(map[SubtreeID]bool)
 	var walk func(SubtreeID) (bool, error)
@@ -2574,9 +2621,8 @@ func (c *Core) shallowPayloadClass(prevID NodeID, payloadID SubtreeID) (shallowP
 	}
 	// The compact phase-zero core cannot represent recovery/error subtrees yet,
 	// so every resident non-external payload is clean by construction. External
-	// scanner payloads remain ineligible until scanner-state equality is part of
-	// the compact graph.
-	if payload.external {
+	// payloads require an explicit language-level scanner-state certificate.
+	if payload.external && !c.externalPayloadsQuiescent {
 		return shallowPayloadClass{}, false, nil
 	}
 	if payload.startByte < prev.byteOffset || payload.endByte < payload.startByte {
@@ -2585,7 +2631,7 @@ func (c *Core) shallowPayloadClass(prevID NodeID, payloadID SubtreeID) (shallowP
 	return shallowPayloadClass{
 		symbol: payload.symbol, padding: payload.startByte - prev.byteOffset,
 		size: payload.endByte - payload.startByte, childCount: payload.childCount,
-		extra: payload.extra,
+		extra: payload.extra, external: payload.external,
 	}, true, nil
 }
 
@@ -3118,89 +3164,8 @@ func (c *Core) VisitMaterializationPostorder(
 	poll func() error,
 	visit func(SubtreeID, MaterializationSubtreeView) error,
 ) error {
-	if c == nil || len(roots) == 0 {
-		return errors.New("parser-core phase zero: materialization requires at least one compact root")
-	}
-	if visit == nil {
-		return errors.New("parser-core phase zero: materialization requires a visitor")
-	}
-	if poll == nil {
-		poll = func() error { return nil }
-	}
-	if err := poll(); err != nil {
-		return err
-	}
-
-	// Zero is unseen, one is the active path, and two is already owned. This
-	// single state vector proves both acyclicity and unique public ownership.
-	colors := make([]uint8, len(c.subtrees)+1)
-	type frame struct {
-		id   SubtreeID
-		next uint32
-	}
-	stack := make([]frame, 0, 64)
-	var visited, work uint64
-	for _, root := range roots {
-		if _, err := c.subtree(root); err != nil {
-			return err
-		}
-		if colors[root] != 0 {
-			return errors.New("parser-core phase zero: compact subtree has repeated public-tree ownership")
-		}
-		colors[root] = 1
-		stack = append(stack, frame{id: root})
-		for len(stack) != 0 {
-			work++
-			if work&255 == 0 {
-				if err := poll(); err != nil {
-					return err
-				}
-			}
-			top := &stack[len(stack)-1]
-			record, err := c.subtree(top.id)
-			if err != nil {
-				return err
-			}
-			if top.next < record.childCount {
-				child := c.children[record.firstChild+top.next]
-				top.next++
-				if _, err := c.subtree(child); err != nil {
-					return err
-				}
-				switch colors[child] {
-				case 0:
-					colors[child] = 1
-					stack = append(stack, frame{id: child})
-					continue
-				case 1:
-					return errors.New("parser-core phase zero: compact subtree cycle during materialization")
-				default:
-					return errors.New("parser-core phase zero: compact subtree has repeated public-tree ownership")
-				}
-			}
-			if err := c.validateMaterializationMetadata(top.id, *record); err != nil {
-				return err
-			}
-			view := MaterializationSubtreeView{
-				Symbol: record.symbol, ProductionID: record.productionID,
-				DynamicPrecedence: record.dynamicPrecedence,
-				StartByte:         record.startByte, EndByte: record.endByte,
-				Children: c.children[record.firstChild : record.firstChild+record.childCount],
-				Extra:    record.extra, External: record.external, Terminal: record.terminal,
-				Fragile: record.fragile,
-			}
-			if err := visit(top.id, view); err != nil {
-				return err
-			}
-			colors[top.id] = 2
-			visited++
-			stack = stack[:len(stack)-1]
-		}
-	}
-	if visited > uint64(len(c.subtrees)) {
-		return errors.New("parser-core phase zero: materialization exceeded compact subtree arena")
-	}
-	return poll()
+	var scratch MaterializationPostorderScratch
+	return c.VisitMaterializationPostorderWithScratch(roots, poll, &scratch, visit)
 }
 
 // MaterializationView returns the borrowed materialization view for one

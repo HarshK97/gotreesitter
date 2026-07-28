@@ -662,6 +662,31 @@ type Language struct {
 	// compatibility fallbacks for legacy blobs, generated grammars, caller-built
 	// languages, and overrides whose native behavior has not been certified.
 	NativeResultCompatibility ResultCompatibilityCapability
+
+	// CompactConvergedReductionSplitDropsCertified permits the compact
+	// fresh-full route to accept after it drops a no-action head descended from
+	// a converged-path reduction split. Exact built-in artifact profiles set
+	// this only after C-oracle parity proves that production selects the same
+	// surviving path. Custom and adapted languages fail closed by default.
+	CompactConvergedReductionSplitDropsCertified bool
+
+	// CompactEOFAcceptNoActionSiblingsCertified permits one authenticated EOF
+	// accept head to discard siblings that have no action for that same EOF.
+	// Exact built-in profiles set this only after C-oracle parity proves the
+	// accepted head matches production. Custom and adapted languages fail closed.
+	CompactEOFAcceptNoActionSiblingsCertified bool
+
+	// CompactPrimaryAcceptanceDerivationCertified permits the compact fresh-full
+	// route to select one primary derivation over secondary conflict derivations.
+	// The primary score must be at least every secondary score. Exact built-in
+	// profiles set this only after C-oracle parity proves production selects it.
+	CompactPrimaryAcceptanceDerivationCertified bool
+
+	// ExactStackNodeEquivalenceCertified preserves deep stack-node alternatives
+	// until generic result selection. Exact built-in profiles set this only when
+	// bounded equivalence can merge parity-relevant shapes. Custom, adapted, and
+	// stale artifacts retain bounded equivalence unless callers opt in.
+	ExactStackNodeEquivalenceCertified bool
 }
 
 type symbolNameNamedKey struct {

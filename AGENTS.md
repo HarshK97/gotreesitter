@@ -3,7 +3,16 @@
 This file defines how agents should work in this repo.
 
 ### 1) Non-negotiables
-- `canopy` (successor to `gts-suite`) is the structural-analysis tool of choice for inspection, review, dead-code, impact, and hotspot runs. The earlier memory-pressure caveats no longer apply — run it freely on host.
+- Use `scripts/canopy_query.sh` for cached structural searches and analyses.
+- Use direct `canopy ... --no-cache` commands for narrow searches of changed files.
+- Use `rg` for literal text. Plain `canopy search grep` patterns start structural parsing.
+- Scope structural Canopy searches to the smallest useful path.
+- Apply `--limit` to structural searches.
+- Do not run concurrent repository-wide Canopy searches.
+- The query wrapper detects changed, missing, and new source files.
+- The query wrapper uses a fresh scoped query when the cache is stale.
+- Run `scripts/refresh_canopy_index.sh` before a broad search when the source set changed.
+- The refresh script promotes its temporary cache only after a successful build and validation.
 - Do not run repo-wide `go test ./...` or `go test ./... -race` on the host. Broad host sweeps can OOM developer machines and make attribution harder.
 - For heavy correctness, parity, or race coverage, use Docker isolation only and keep runs to one language/grammar at a time.
 - Keep correctness gating separate from performance gating.

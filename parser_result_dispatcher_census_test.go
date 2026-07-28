@@ -146,3 +146,80 @@ func TestDispatcherCensusRequiresExactOne(t *testing.T) {
 		t.Fatal("GTS_DISPATCHER_CENSUS=1 did not enable the census")
 	}
 }
+
+func TestDispatcherArmSubpassCensusRecordsDistinctReceipts(t *testing.T) {
+	t.Setenv("GTS_DISPATCHER_CENSUS", "1")
+
+	arena := newNodeArena(arenaClassFull)
+	left := newLeafNodeInArena(arena, 10, true, 0, 3, Point{}, Point{Column: 3})
+	right := newLeafNodeInArena(arena, 11, true, 3, 6, Point{Column: 3}, Point{Column: 6})
+	root := newParentNodeInArena(arena, 1, true, []*Node{left, right}, nil, 0)
+	parser := &Parser{}
+	ctx := resultCompatibilityContext{root: root, parser: parser}
+
+	dispatcherArmSubpassCensus(ctx, "dispatch.fixture", func(census materializationSubpassCensus) {
+		census.run("dispatch.fixture.retype-left", func() {
+			left.symbol = 12
+		})
+		census.run("dispatch.fixture.inspect-right", func() {})
+	})
+
+	want := map[string]normalizationNamedPassStats{
+		"dispatch.fixture": {
+			name:           "dispatch.fixture",
+			checked:        1,
+			run:            1,
+			nodesVisited:   3,
+			nodesRewritten: 1,
+		},
+		"dispatch.fixture.retype-left": {
+			name:           "dispatch.fixture.retype-left",
+			checked:        1,
+			run:            1,
+			nodesVisited:   3,
+			nodesRewritten: 1,
+		},
+		"dispatch.fixture.inspect-right": {
+			name:         "dispatch.fixture.inspect-right",
+			checked:      1,
+			run:          1,
+			nodesVisited: 3,
+		},
+	}
+	if got := len(parser.normalizationStats.namedPasses); got != len(want) {
+		t.Fatalf("named census receipts = %d, want %d: %+v", got, len(want), parser.normalizationStats.namedPasses)
+	}
+	for _, got := range parser.normalizationStats.namedPasses {
+		expected, ok := want[got.name]
+		if !ok {
+			t.Errorf("unexpected named census receipt %+v", got)
+			continue
+		}
+		if got != expected {
+			t.Errorf("%s census receipt = %+v, want %+v", got.name, got, expected)
+		}
+	}
+}
+
+func TestDispatcherArmSubpassCensusDisabledRunsWithoutReceipts(t *testing.T) {
+	t.Setenv("GTS_DISPATCHER_CENSUS", "")
+
+	arena := newNodeArena(arenaClassFull)
+	leaf := newLeafNodeInArena(arena, 10, true, 0, 3, Point{}, Point{Column: 3})
+	root := newParentNodeInArena(arena, 1, true, []*Node{leaf}, nil, 0)
+	parser := &Parser{}
+	ctx := resultCompatibilityContext{root: root, parser: parser}
+
+	dispatcherArmSubpassCensus(ctx, "dispatch.fixture", func(census materializationSubpassCensus) {
+		census.run("dispatch.fixture.retype", func() {
+			leaf.symbol = 12
+		})
+	})
+
+	if leaf.symbol != 12 {
+		t.Fatalf("disabled census did not run the subpass: symbol = %d", leaf.symbol)
+	}
+	if got := parser.normalizationStats.namedPasses; len(got) != 0 {
+		t.Fatalf("disabled census recorded receipts: %+v", got)
+	}
+}

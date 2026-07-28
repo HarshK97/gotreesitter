@@ -1,5 +1,9 @@
 # Compact-route coverage census
 
+> Historical snapshot: This report records the 2026-07-20 smoke census.
+> See [compact-route-real-corpus-matrix.md](compact-route-real-corpus-matrix.md)
+> for the current pinned-corpus matrix.
+
 Date: 2026-07-20. Base commit: `7a43c9cb` (origin/main). Branch:
 `codex/compact-coverage-census`.
 

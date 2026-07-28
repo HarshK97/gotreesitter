@@ -641,6 +641,40 @@ func TestResolveLanguageListInlineStillDedupes(t *testing.T) {
 	}
 }
 
+func TestResolveLanguageListProfileHonorsExplicitSubset(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profile.json")
+	mustWriteText(t, path, `{
+  "name": "test",
+  "languages": ["go", "python", "rust"],
+  "sources": [
+    {
+      "language": "python",
+      "repo_url": "https://example.com/python",
+      "commit": "0123456789abcdef0123456789abcdef01234567"
+    }
+  ]
+}`)
+
+	profilePath, profile, langs, err := resolveLanguageList(path, "python,go,python", "", nil)
+	if err != nil {
+		t.Fatalf("resolveLanguageList: %v", err)
+	}
+	if profilePath != path {
+		t.Fatalf("profilePath = %q, want %q", profilePath, path)
+	}
+	if got, want := len(profile.Sources), 1; got != want {
+		t.Fatalf("profile sources = %d, want %d", got, want)
+	}
+	want := []string{"python", "go"}
+	if strings.Join(langs, ",") != strings.Join(want, ",") {
+		t.Fatalf("langs = %#v, want %#v", langs, want)
+	}
+
+	if _, _, _, err := resolveLanguageList(path, "zig", "", nil); err == nil {
+		t.Fatal("expected error for a subset language outside the profile")
+	}
+}
+
 func TestResolveLanguageListFileParsesGeneratedBatch(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "langs.txt")
 	mustWriteText(t, path, strings.Join([]string{
@@ -675,6 +709,32 @@ func TestResolveLanguageListFileRejectsAmbiguousSources(t *testing.T) {
 	}
 	if _, _, _, err := resolveLanguageList("", "go", path, nil); err == nil {
 		t.Fatal("expected error for explicit langs plus langs-file")
+	}
+}
+
+func TestResetCorpusLanguageOutputRemovesOnlySelectedLanguage(t *testing.T) {
+	root := t.TempDir()
+	selected := filepath.Join(root, "go")
+	sibling := filepath.Join(root, "python")
+	mustWriteText(t, filepath.Join(selected, "stale.go"), "stale")
+	mustWriteText(t, filepath.Join(sibling, "keep.py"), "keep")
+
+	got, err := resetCorpusLanguageOutput(root, "go")
+	if err != nil {
+		t.Fatalf("resetCorpusLanguageOutput: %v", err)
+	}
+	if got != selected {
+		t.Fatalf("output = %q, want %q", got, selected)
+	}
+	if entries, err := os.ReadDir(selected); err != nil || len(entries) != 0 {
+		t.Fatalf("selected directory entries = %v, err = %v", entries, err)
+	}
+	if _, err := os.Stat(filepath.Join(sibling, "keep.py")); err != nil {
+		t.Fatalf("sibling file changed: %v", err)
+	}
+
+	if _, err := resetCorpusLanguageOutput(root, "../outside"); err == nil {
+		t.Fatal("expected unsafe language name rejection")
 	}
 }
 

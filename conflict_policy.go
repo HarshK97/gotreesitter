@@ -146,13 +146,10 @@ var cRepetitionSkipOptOut = map[string]bool{
 	"c": true,
 	// haskell: the engine-wide fold KILLS a previously clean parse — A/B
 	// (wave-2b, 2026-07-07) flips SetupHooks.hs (Cabal-hooks) from
-	// accepted/error-free (151ms) to no_stacks_alive at byte ~17k: at some
-	// haskell state outside the two proven fold states (9609/10984, see
-	// haskellRepeatBoundaryConflictChoice) the repetition-marked shift is
-	// NOT re-reachable after the fold, so the fold's losslessness invariant
-	// does not hold on this table (huge external-scanner grammar; table
-	// fidelity suspect). The scoped 2-state fold helper stays as the proven
-	// subset; the memory_budget wins the global fold showed (LicenseId.hs,
+	// accepted/error-free (151ms) to no_stacks_alive at byte ~17k. At another
+	// Haskell state, the repetition shift is not reachable after the fold.
+	// The exact conflict-policy rows keep the proven subset.
+	// The memory-budget wins from the global fold (LicenseId.hs and
 	// Licenses.hs ~1.9s->~0.1s) are forfeited until the offending state is
 	// isolated.
 	"haskell": true,
@@ -285,14 +282,6 @@ func (p *Parser) deterministicConflictChoiceForDispatch(source []byte, s *glrSta
 		// Non-repetition: `case A ->` switch-label disambiguation via a
 		// goto/action-table probe on the reduce's landing state.
 		chosen, ok = p.javaSwitchArrowConflictChoice(s, tok, actions)
-	case "haskell":
-		// KEPT, and haskell is also in cRepetitionSkipOptOut: this is the
-		// proven-safe scoped subset of the fold (REDUCE at states
-		// 9609/10984 via singleReduceAgainstRepetitionShiftConflictChoice —
-		// the same choice the global rule would make there). The engine-wide
-		// fold dead-ends SetupHooks.hs (see the opt-out entry), so haskell
-		// keeps only these two certified states.
-		chosen, ok = haskellRepeatBoundaryConflictChoice(p.language, currentState, actions)
 	case "c_sharp":
 		// KEPT, and c_sharp is also in cRepetitionSkipOptOut: the
 		// engine-wide fold flips DeployCommandTests.cs from clean to ERROR

@@ -160,11 +160,14 @@ func TestDiagnosticParserCoreGenericZeroWidthExtraRequiresProgress(t *testing.T)
 	for _, test := range []struct {
 		name      string
 		target    core.StateID
+		tokenByte uint32
 		wantStop  bool
 		wantState core.StateID
+		wantByte  uint32
 	}{
-		{name: "no progress", wantStop: true, wantState: 5},
-		{name: "parser state progress", target: 7, wantState: 7},
+		{name: "no progress", tokenByte: 10, wantStop: true, wantState: 5, wantByte: 10},
+		{name: "parser state progress", target: 7, tokenByte: 10, wantState: 7, wantByte: 10},
+		{name: "byte boundary progress", tokenByte: 20, wantState: 5, wantByte: 20},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			table := &genericConflictTable{cells: map[genericConflictCell][]core.Action{
@@ -182,7 +185,10 @@ func TestDiagnosticParserCoreGenericZeroWidthExtraRequiresProgress(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			token := Token{Symbol: 9, StartByte: 10, EndByte: 10, ExternalScannerToken: true}
+			token := Token{
+				Symbol: 9, StartByte: test.tokenByte, EndByte: test.tokenByte,
+				ExternalScannerToken: true,
+			}
 			election := DiagnosticParserCoreElection{
 				Token: token, ScannerBefore: parserCoreCheckpoint(nil), ScannerAfter: parserCoreCheckpoint(nil),
 			}
@@ -211,7 +217,7 @@ func TestDiagnosticParserCoreGenericZeroWidthExtraRequiresProgress(t *testing.T)
 				t.Fatalf("zero-width parser-state progress stop=%+v", stop)
 			}
 			state, offset, boundaryErr := compact.Boundary(scheduler.headers[0].head)
-			if boundaryErr != nil || state != test.wantState || offset != 10 {
+			if boundaryErr != nil || state != test.wantState || offset != test.wantByte {
 				t.Fatalf("zero-width parser-state boundary=(%d,%d) err=%v", state, offset, boundaryErr)
 			}
 		})

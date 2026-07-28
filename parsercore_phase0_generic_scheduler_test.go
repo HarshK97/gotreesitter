@@ -58,7 +58,8 @@ func TestDiagnosticParserCoreGenericSchedulerClosesAtRequestedByte(t *testing.T)
 			Conflicts: 8, ConflictActions: 16, Forks: 8, ConflictHeads: 17,
 			ConflictActionArmsAdmitted: 16, CausalConflictForks: 8,
 			Reductions: 131, OrdinaryShifts: 133, OrdinaryCohorts: 10, ExtraShifts: 7, NoActionDrops: 8,
-			Elections: 132, Canonicalizations: 269, PeakHeaders: 3,
+			ConvergedReductionSplitDrops: 5,
+			Elections:                    132, Canonicalizations: 269, PeakHeaders: 3,
 		}) {
 			t.Fatalf("run %d generic scheduler work=%+v", run, completion.Work)
 		}
@@ -231,7 +232,8 @@ func TestDiagnosticParserCoreGenericSchedulerContinuesToNextRequestedClosedByte(
 			Conflicts: 8, ConflictActions: 16, Forks: 8, ConflictHeads: 17,
 			ConflictActionArmsAdmitted: 16, CausalConflictForks: 8,
 			Reductions: 132, OrdinaryShifts: 134, OrdinaryCohorts: 10, ExtraShifts: 7, NoActionDrops: 8,
-			Elections: 133, Canonicalizations: 271, PeakHeaders: 3,
+			ConvergedReductionSplitDrops: 5,
+			Elections:                    133, Canonicalizations: 271, PeakHeaders: 3,
 		}) {
 		t.Fatalf("continuation drifted: result=%+v generic=%+v", result, generic)
 	}
@@ -282,7 +284,8 @@ func TestDiagnosticParserCoreGenericSchedulerCrossesReductionFreshnessCycle(t *t
 			Conflicts: 84, ConflictActions: 176, Forks: 92, ConflictHeads: 188,
 			ConflictActionArmsAdmitted: 176, CausalConflictForks: 92,
 			Reductions: 681, OrdinaryShifts: 711, OrdinaryCohorts: 122, ExtraShifts: 18,
-			ReductionPauses: 20, NoActionDrops: 92, Elections: 598, Canonicalizations: 1357, PeakHeaders: 4,
+			ReductionPauses: 20, NoActionDrops: 92, ConvergedReductionSplitDrops: 89,
+			Elections: 598, Canonicalizations: 1357, PeakHeaders: 4,
 		}) || len(result.GenericScheduler.Rounds) != 1357 || len(result.GenericScheduler.NoActionDrops) != 92 {
 		t.Fatalf("byte 3070 closure drifted: %+v", completion)
 	}
@@ -348,7 +351,8 @@ func TestDiagnosticParserCoreGenericSchedulerCrossesMultiHeadExtraCohort(t *test
 			Conflicts: 95, ConflictActions: 198, Forks: 103, ConflictHeads: 211,
 			ConflictActionArmsAdmitted: 198, CausalConflictForks: 103,
 			Reductions: 785, OrdinaryShifts: 800, OrdinaryCohorts: 138, ExtraShifts: 21, ExtraCohorts: 1,
-			ReductionPauses: 22, NoActionDrops: 103, Elections: 674, Canonicalizations: 1547, PeakHeaders: 4,
+			ReductionPauses: 22, NoActionDrops: 103, ConvergedReductionSplitDrops: 100,
+			Elections: 674, Canonicalizations: 1547, PeakHeaders: 4,
 		}) || len(result.GenericScheduler.Rounds) != 1547 || len(result.GenericScheduler.NoActionDrops) != 103 || len(result.GenericScheduler.ExternalShifts) != 46 {
 		t.Fatalf("post-comment boundary drifted: %+v", completion)
 	}
@@ -395,7 +399,7 @@ func TestDiagnosticParserCoreGenericSchedulerAcceptsAndMaterializesExactRewrite(
 			ConflictActionArmsAdmitted: 328, CausalConflictForks: 168,
 			Reductions: 1256, OrdinaryShifts: 1238, OrdinaryCohorts: 215,
 			ExtraShifts: 27, ExtraCohorts: 1, Accepts: 1,
-			ReductionPauses: 31, NoActionDrops: 167, Elections: 1036,
+			ReductionPauses: 31, NoActionDrops: 167, ConvergedReductionSplitDrops: 164, Elections: 1036,
 			Canonicalizations: 2443, PeakHeaders: 4,
 		}) || len(result.GenericScheduler.Elections) != 1036 || len(result.GenericScheduler.Rounds) != 2443 || len(result.GenericScheduler.NoActionDrops) != 167 || len(result.GenericScheduler.ExternalShifts) != 83 {
 		t.Fatalf("acceptance receipt drifted: result=%+v acceptance=%+v", result, acceptance)

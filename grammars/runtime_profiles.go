@@ -20,6 +20,10 @@ type builtinLanguageRuntimeProfile struct {
 	fullParseArenaDensityCap           bool
 	fullParseGSSConvergence            bool
 	nativeResultCompatibility          gotreesitter.ResultCompatibilityCapability
+	compactConvergedSplitDrops         bool
+	compactEOFAcceptNoActionSiblings   bool
+	compactPrimaryAcceptDerivation     bool
+	exactStackNodeEquivalence          bool
 	conflictPolicies                   []gotreesitter.ConflictPolicy
 }
 
@@ -32,6 +36,34 @@ const (
 )
 
 var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
+	// The canonical compact corpus certifies Go's converged-path split drops
+	// against the production parser and the tree-sitter C oracle.
+	"go": {
+		blobSHA256:                 mustRuntimeProfileSHA256("9cf914d26d962d1a62e7954f8b20b302337a44cb7d4a07218eec482c45a57a08"),
+		compactConvergedSplitDrops: true,
+	},
+	"erlang": {
+		blobSHA256:                 mustRuntimeProfileSHA256("355deb34ae4b9d8e0bf649c1c36096929d5e403107fa3c8b9c2ee82b138dfdc5"),
+		compactConvergedSplitDrops: true,
+	},
+	// These exact artifacts select one accepting EOF head while all sibling
+	// heads have no EOF action. Field-aware C-oracle parity certifies the
+	// production selection for each smoke witness.
+	"http": {
+		blobSHA256:                       mustRuntimeProfileSHA256("332d50a15b3facb407f6c449fe8bbcd2fda55efffefbfd4d8d9ce2c75fbb7bda"),
+		compactEOFAcceptNoActionSiblings: true,
+	},
+	"robot": {
+		blobSHA256:                       mustRuntimeProfileSHA256("25075ecf5323eeb88af4f71b55f51867cef38a277aaa60f01b879ee8abb4c74f"),
+		compactEOFAcceptNoActionSiblings: true,
+	},
+	// Objective-C keeps parity-relevant alternatives below the bounded stack
+	// comparison frontier. Exact comparison preserves them until generic result
+	// selection chooses the C-equivalent alias-target shape.
+	"objc": {
+		blobSHA256:                mustRuntimeProfileSHA256("c04e841cf500f2b213d699681930a16f3c5f0e74e60f8a4488c36c38015bc09f"),
+		exactStackNodeEquivalence: true,
+	},
 	// JavaScript's speculative automatic forest phase is bounded separately
 	// from the production fallback. The exact locked corpus retained identical
 	// trees and outcomes across all files while cutting aggregate allocations;
@@ -39,6 +71,7 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	"javascript": {
 		blobSHA256:                     mustRuntimeProfileSHA256("6706f93890f24d8ea90d6a140df5dde29c02ec8a3213bae16e8cc4df37e33ee0"),
 		automaticForestMemoryAllowance: javascriptAutomaticForestMemoryAllowance,
+		compactConvergedSplitDrops:     true,
 	},
 	// These scanner-backed grammars have certified the first retry ladder's
 	// selected accepted-error tree as authoritative. Repeating the whole ladder
@@ -150,6 +183,7 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	"python": {
 		blobSHA256:                    mustRuntimeProfileSHA256("cde4a67dc6af6e1232dbbd1eab8618478d1d73727020e8a8002542390a452d37"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
+		compactConvergedSplitDrops:    true,
 	},
 	// Swift's low-pressure accepted-error parses select the same tree across
 	// the retry ladder. High-pressure parses still benefit from the first
@@ -176,7 +210,8 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	// reach EOF. Re-running the accepted-error ladder does not improve their
 	// selected trees, so the exact certified blobs keep the first result.
 	"bash": {
-		blobSHA256: mustRuntimeProfileSHA256("a3e898c88f6ad918d4d619dff2a4e74d613bda93c90e4a3f9fb7587c1952f3fb"),
+		blobSHA256:                 mustRuntimeProfileSHA256("a3e898c88f6ad918d4d619dff2a4e74d613bda93c90e4a3f9fb7587c1952f3fb"),
+		compactConvergedSplitDrops: true,
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry: true,
 		},
@@ -227,7 +262,8 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	// but is redundant for complete accepted-error sources at or above this
 	// conservative exact-blob corpus-certified floor.
 	"meson": {
-		blobSHA256: mustRuntimeProfileSHA256("b3b7e74bcd35614419f5359c31eb8a05bd58c0b97529f133f2aea2f40796789d"),
+		blobSHA256:                     mustRuntimeProfileSHA256("b3b7e74bcd35614419f5359c31eb8a05bd58c0b97529f133f2aea2f40796789d"),
+		compactPrimaryAcceptDerivation: true,
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry: true,
 			SkipCompleteMinSourceBytes:     mesonAcceptedErrorRetryMinSourceBytes,
@@ -255,12 +291,24 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 			FreshErrorNoStacksMaxPasses:    1,
 		},
 	},
-	// Haskell's expression-list repeat has one exact comma row where C folds
-	// the reduce/repetition-shift pair deterministically. Retaining both arms
-	// grows a new GSS frontier for every list element.
+	// Haskell has three exact repeat rows where C selects the reduce arm.
+	// Retaining both arms grows new graph-structured stack frontiers.
 	"haskell": {
-		blobSHA256: mustRuntimeProfileSHA256("fcfc8794bca4442ebf5688d88e2397c78a22c8f0b585c4e1b868986cfa52dd09"),
+		blobSHA256:                 mustRuntimeProfileSHA256("fcfc8794bca4442ebf5688d88e2397c78a22c8f0b585c4e1b868986cfa52dd09"),
+		compactConvergedSplitDrops: true,
 		conflictPolicies: []gotreesitter.ConflictPolicy{
+			{
+				State:         9609,
+				Lookahead:     gotreesitter.ConflictPolicyAnyLookahead,
+				Kind:          gotreesitter.ConflictPolicyRepetitionReduce,
+				ReduceSymbols: []gotreesitter.Symbol{518},
+			},
+			{
+				State:         10984,
+				Lookahead:     gotreesitter.ConflictPolicyAnyLookahead,
+				Kind:          gotreesitter.ConflictPolicyRepetitionReduce,
+				ReduceSymbols: []gotreesitter.Symbol{516},
+			},
 			{
 				State:         11192,
 				Lookahead:     4,
@@ -402,6 +450,22 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 	}
 	if missing := profile.nativeResultCompatibility &^ lang.NativeResultCompatibility; missing != 0 {
 		lang.NativeResultCompatibility |= missing
+		changed = true
+	}
+	if profile.compactConvergedSplitDrops && !lang.CompactConvergedReductionSplitDropsCertified {
+		lang.CompactConvergedReductionSplitDropsCertified = true
+		changed = true
+	}
+	if profile.compactEOFAcceptNoActionSiblings && !lang.CompactEOFAcceptNoActionSiblingsCertified {
+		lang.CompactEOFAcceptNoActionSiblingsCertified = true
+		changed = true
+	}
+	if profile.compactPrimaryAcceptDerivation && !lang.CompactPrimaryAcceptanceDerivationCertified {
+		lang.CompactPrimaryAcceptanceDerivationCertified = true
+		changed = true
+	}
+	if profile.exactStackNodeEquivalence && !lang.ExactStackNodeEquivalenceCertified {
+		lang.ExactStackNodeEquivalenceCertified = true
 		changed = true
 	}
 	for _, policy := range profile.conflictPolicies {

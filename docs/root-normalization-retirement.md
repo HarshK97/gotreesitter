@@ -196,6 +196,43 @@ The DFA keyword path now owns Arduino primitive-type projection.
 Native Objective-C materialization owns protocol type identifiers.
 This change retires Arduino's arm and one Objective-C subpass.
 Other Objective-C repairs remain live.
+Generic result election now preserves visible named unary wrappers.
+This change retires the D template-call type wrapper.
+Native visible-wrapper election also preserves D storage classes.
+This change retires the D storage-class wrapper.
+Native reduction places D type qualifiers inside the following type.
+This change retires the D variable-type qualifier repair.
+Native reduction and derivation selection now own each remaining D call target.
+This change retires the D dispatcher arm.
+The field-aware C-oracle receipt is:
+`harness_out/docker/20260728T070352Z-retire-d-storage-class-c-oracle-fields`.
+The D qualifier C-oracle receipt is:
+`harness_out/docker/20260728T081051Z`.
+Final-line-break probes now preserve qualified, template, and simple callees.
+Exact stack-node equivalence preserves deep Objective-C alternatives.
+Generic alias-target selection now owns `@encode` identifiers and function
+pointer expressions.
+This change retires two Objective-C subpasses.
+Native derivation selection also owns single and concatenated `@` strings.
+This change retires a third Objective-C subpass.
+Raw-shape equivalence now preserves compound struct type specifiers.
+This change retires a fourth Objective-C subpass.
+The parser now folds raw descendants into certified materializing-shape
+hashes.
+This change preserves method type identifiers before result compatibility.
+It retires a fifth Objective-C subpass.
+One Objective-C subpass remains live.
+Generic result selection preserves the expression and type alternatives for
+an Objective-C `sizeof` operand.
+It selects the C-equivalent expression for an unknown type name.
+This change retires the final Objective-C subpass and its dispatcher arm.
+The parser covers every byte in each recovered EBNF source.
+This change removes the EBNF dispatcher arm.
+The field-aware C-oracle receipt is:
+`harness_out/docker/20260728T111158Z-objc-struct-sized-postfilter-final`.
+The method type C-oracle receipt is:
+`harness_out/docker/20260728T113024Z`.
+The dispatcher census now records each remaining D and Objective-C subpass.
 
 Group by invariant, not language:
 
@@ -214,6 +251,14 @@ explicitly classified as retained format-boundary behavior.
 ### R4 — derivation election and scheduler/recovery
 
 Status: mechanism work required.
+
+The compact scheduler now owns bounded no-lookahead reductions.
+This removes three smoke fallbacks without a language-specific runtime rule.
+Byte-boundary progress now admits COBOL zero-width extras.
+This removes one more smoke fallback.
+The Cooklang smoke fixture no longer requires production recovery.
+This removes one fixture-induced fallback without a runtime change.
+No result normalizer retired in this step.
 
 1. Express ambiguity and dynamic-precedence decisions in certified conflict
    or derivation policy when the parser actually observes competing actions.
@@ -267,6 +312,14 @@ there.
 | Hidden root trivia | retirement commit `49d776674b2f599fa162874bbf74dc119fa9e7d4` | 1 dispatcher arm | 0 | generalized root finalization, 114 native HCL body spans, four result routes, and isolated C-oracle parity |
 | D module bounds | retirement change | 1 language-local span walk | 0 | compatibility-free producer, production, compact, forest, incremental reuse, and isolated C-oracle receipts |
 | Erlang replacement election and form spans | retirement commit `144b30c9ee085406335f4549272e1ae843427993` | 1 dispatcher arm | 0 | zero-rewrite real-corpus census, native producer, production, compact, forest, incremental reuse, and isolated C-oracle receipts |
+| D template-call type wrappers | retirement change | 1 D subpass | 0 | generalized visible named wrapper election, compatibility-free producer, production, forest, incremental, and isolated C-oracle receipts |
+| Objective-C encode and function-pointer repairs | retirement change | 2 Objective-C subpasses | 0 | exact stack equivalence, generic alias selection, production, incremental, and isolated field-aware C-oracle receipts |
+| Objective-C compound struct types | retirement change | 1 Objective-C subpass | 0 | raw-shape hash equivalence, compatibility-free producer, production, census, and isolated C-oracle receipt |
+| D and Objective-C subpass census | retirement change | 2 aggregate arm receipts | 6 named live subpass receipts | positive controls, exact fingerprints, and absent retired labels |
+| Objective-C `sizeof` operands | retirement change | 1 Objective-C subpass / 1 dispatcher arm | 0 | retained generalized alternatives, generic result selection, compatibility-free producer, census, and isolated C-oracle receipt |
+| D storage-class wrappers | retirement change | 1 D subpass | 0 | visible named wrapper election, compatibility-free producer, production, compact fallback, forest, incremental reuse, and isolated C-oracle parity |
+| D variable-type qualifiers | retirement change | 1 D subpass | 0 | compatibility-free producer, production, compact fallback, forest, incremental reuse, and isolated C-oracle parity |
+| D call-expression targets | retirement commit `6a650454e5698d64a0148629cfa444b3dbce6877` | 2 D subpasses / 1 dispatcher arm | 0 | compatibility-free producer, production, compact fallback, forest, incremental, and three isolated C-oracle receipts |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.

@@ -54,8 +54,9 @@ func TestCrystalAndMatlabKeepAcceptedErrorRetryLadder(t *testing.T) {
 }
 
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	// 36 = the prior 33 plus CUE, Git Commit, and R.
-	// Their collapsed-child capability is bound to an exact blob identity.
+	// 41 = the prior 40 plus the Erlang compact profile.
+	// Bash, Haskell, and JavaScript reuse their existing exact profiles.
+	// Exact blob identity bounds each profile capability.
 	// D and Groovy's retry ceilings
 	// moved out of parser-core name switches and onto exact-blob profiles. The
 	// prior gomod and C additions moved hardcoded compat-tier behavior to profiles.
@@ -68,7 +69,7 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	// the gomod entry), so it does not add a map entry. Crystal and Matlab add
 	// exact-blob external-scanner repeat suppression while retaining the full
 	// accepted-error retry ladder.
-	if got, want := len(builtinLanguageRuntimeProfiles), 36; got != want {
+	if got, want := len(builtinLanguageRuntimeProfiles), 41; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -86,6 +87,144 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	}
 	if lang.FullParseArenaDensityCapEnabled {
 		t.Fatal("unknown runtime profile enabled the full-parse arena density cap")
+	}
+	if lang.CompactConvergedReductionSplitDropsCertified {
+		t.Fatal("unknown runtime profile enabled compact converged-split drops")
+	}
+	if lang.CompactEOFAcceptNoActionSiblingsCertified {
+		t.Fatal("unknown runtime profile enabled compact EOF sibling drops")
+	}
+	if lang.CompactPrimaryAcceptanceDerivationCertified {
+		t.Fatal("unknown runtime profile enabled compact primary derivation selection")
+	}
+	if lang.ExactStackNodeEquivalenceCertified {
+		t.Fatal("unknown runtime profile enabled exact stack-node equivalence")
+	}
+}
+
+func TestBuiltinObjcExactStackEquivalenceProfileRequiresExactBlobIdentity(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	builtin := ObjcLanguage()
+	if !builtin.ExactStackNodeEquivalenceCertified {
+		t.Fatal("exact built-in Objective-C artifact did not receive exact stack-node equivalence")
+	}
+
+	custom := &gotreesitter.Language{Name: "objc"}
+	AttachLanguageSupport("objc", custom)
+	if custom.ExactStackNodeEquivalenceCertified {
+		t.Fatal("same-name custom Objective-C grammar enabled exact stack-node equivalence")
+	}
+
+	wrongIdentity := &gotreesitter.Language{Name: "objc"}
+	if attachBuiltinLanguageRuntimeProfile("objc", sha256.Sum256([]byte("uncertified")), wrongIdentity) {
+		t.Fatal("wrong Objective-C blob identity unexpectedly attached a runtime profile")
+	}
+	if wrongIdentity.ExactStackNodeEquivalenceCertified {
+		t.Fatal("wrong Objective-C blob identity enabled exact stack-node equivalence")
+	}
+}
+
+func TestBuiltinCompactAcceptanceProfilesRequireExactBlobIdentity(t *testing.T) {
+	tests := []struct {
+		name string
+		load func() *gotreesitter.Language
+		want func(*gotreesitter.Language) bool
+	}{
+		{
+			name: "http", load: HttpLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactEOFAcceptNoActionSiblingsCertified
+			},
+		},
+		{
+			name: "robot", load: RobotLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactEOFAcceptNoActionSiblingsCertified
+			},
+		},
+		{
+			name: "meson", load: MesonLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactPrimaryAcceptanceDerivationCertified
+			},
+		},
+	}
+
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if lang := tt.load(); !tt.want(lang) {
+				t.Fatal("exact built-in artifact did not receive compact acceptance certification")
+			}
+
+			custom := &gotreesitter.Language{Name: tt.name}
+			AttachLanguageSupport(tt.name, custom)
+			if tt.want(custom) {
+				t.Fatal("same-name custom grammar enabled compact acceptance certification")
+			}
+
+			wrongIdentity := &gotreesitter.Language{Name: tt.name}
+			if attachBuiltinLanguageRuntimeProfile(tt.name, sha256.Sum256([]byte("uncertified")), wrongIdentity) {
+				t.Fatal("wrong blob identity unexpectedly attached a runtime profile")
+			}
+			if tt.want(wrongIdentity) {
+				t.Fatal("wrong blob identity enabled compact acceptance certification")
+			}
+		})
+	}
+}
+
+func TestBuiltinCompactConvergedSplitProfilesRequireExactBlobIdentity(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	tests := []struct {
+		name string
+		load func() *gotreesitter.Language
+	}{
+		{name: "bash", load: BashLanguage},
+		{name: "erlang", load: ErlangLanguage},
+		{name: "go", load: GoLanguage},
+		{name: "haskell", load: HaskellLanguage},
+		{name: "javascript", load: JavascriptLanguage},
+		{name: "python", load: PythonLanguage},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			builtin := test.load()
+			if !builtin.CompactConvergedReductionSplitDropsCertified {
+				t.Fatal("exact built-in artifact did not receive compact converged-split certification")
+			}
+
+			custom := &gotreesitter.Language{Name: test.name}
+			AttachLanguageSupport(test.name, custom)
+			if custom.CompactConvergedReductionSplitDropsCertified {
+				t.Fatal("same-name custom grammar enabled compact converged-split drops")
+			}
+
+			blob := BlobByName(test.name)
+			if len(blob) == 0 {
+				t.Fatalf("BlobByName(%s) returned no data", test.name)
+			}
+			stale := &gotreesitter.Language{Name: test.name}
+			if attachBuiltinLanguageRuntimeProfile(test.name, sha256.Sum256([]byte("stale")), stale) {
+				t.Fatal("stale blob unexpectedly attached a runtime profile")
+			}
+			if stale.CompactConvergedReductionSplitDropsCertified {
+				t.Fatal("stale blob enabled compact converged-split drops")
+			}
+
+			exact := &gotreesitter.Language{Name: test.name}
+			if !attachBuiltinLanguageRuntimeProfile(test.name, sha256.Sum256(blob), exact) {
+				t.Fatal("exact blob did not attach its runtime profile")
+			}
+			if !exact.CompactConvergedReductionSplitDropsCertified {
+				t.Fatal("exact blob did not enable compact converged-split drops")
+			}
+		})
 	}
 }
 
@@ -201,17 +340,34 @@ func TestBuiltinHaskellConflictPolicyAttaches(t *testing.T) {
 	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
 
 	lang := HaskellLanguage()
+	want := map[gotreesitter.StateID]struct {
+		lookahead gotreesitter.Symbol
+		reduce    gotreesitter.Symbol
+	}{
+		9609:  {lookahead: gotreesitter.ConflictPolicyAnyLookahead, reduce: 518},
+		10984: {lookahead: gotreesitter.ConflictPolicyAnyLookahead, reduce: 516},
+		11192: {lookahead: 4, reduce: 500},
+	}
+	seen := make(map[gotreesitter.StateID]bool, len(want))
 	for _, policy := range lang.ConflictPolicies {
-		if policy.State != 11192 || policy.Lookahead != 4 {
+		expected, ok := want[policy.State]
+		if !ok {
 			continue
 		}
-		if policy.Kind != gotreesitter.ConflictPolicyRepetitionReduce ||
-			len(policy.ReduceSymbols) != 1 || policy.ReduceSymbols[0] != 500 {
-			t.Fatalf("Haskell conflict policy = %+v, want certified expression-list reduce", policy)
+		seen[policy.State] = true
+		if policy.Lookahead != expected.lookahead {
+			t.Fatalf("Haskell conflict policy at state %d has lookahead %d, want %d", policy.State, policy.Lookahead, expected.lookahead)
 		}
-		return
+		if policy.Kind != gotreesitter.ConflictPolicyRepetitionReduce ||
+			len(policy.ReduceSymbols) != 1 || policy.ReduceSymbols[0] != expected.reduce {
+			t.Fatalf("Haskell conflict policy at state %d = %+v, want repetition reduce over symbol %d", policy.State, policy, expected.reduce)
+		}
 	}
-	t.Fatal("Haskell expression-list conflict policy was not attached")
+	for state := range want {
+		if !seen[state] {
+			t.Fatalf("Haskell conflict policy for state %d was not attached", state)
+		}
+	}
 }
 
 func TestBuiltinHaskellConflictPolicyRequiresCertifiedBlobAndAttachesOnce(t *testing.T) {
@@ -231,14 +387,14 @@ func TestBuiltinHaskellConflictPolicyRequiresCertifiedBlobAndAttachesOnce(t *tes
 	if !attachBuiltinLanguageRuntimeProfile("haskell", sum, lang) {
 		t.Fatal("certified Haskell blob did not attach its runtime profile")
 	}
-	if got := len(lang.ConflictPolicies); got != 1 {
-		t.Fatalf("certified Haskell conflict policies = %d, want 1", got)
+	if got := len(lang.ConflictPolicies); got != 3 {
+		t.Fatalf("certified Haskell conflict policies = %d, want 3", got)
 	}
 	if attachBuiltinLanguageRuntimeProfile("haskell", sum, lang) {
 		t.Fatal("reattaching the same Haskell profile reported a change")
 	}
-	if got := len(lang.ConflictPolicies); got != 1 {
-		t.Fatalf("reattached Haskell conflict policies = %d, want 1", got)
+	if got := len(lang.ConflictPolicies); got != 3 {
+		t.Fatalf("reattached Haskell conflict policies = %d, want 3", got)
 	}
 }
 
