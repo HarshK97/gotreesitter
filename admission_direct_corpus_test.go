@@ -8,6 +8,7 @@ import (
 	"os"
 	"testing"
 
+	gts "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
@@ -46,5 +47,50 @@ func TestAdmissionCandidateGraphQLRootFieldsDirect(t *testing.T) {
 	}
 	if row.detail != wantDetail {
 		t.Fatalf("GraphQL RootFields compact digest = %q, want %q", row.detail, wantDetail)
+	}
+}
+
+func TestAdmissionCandidateSvelteButtonDirect(t *testing.T) {
+	const (
+		fixturePath = "testdata/admission_direct/svelte_button.svelte"
+		// This source comes from themesberg/flowbite-svelte at commit
+		// df3404b81aefbd91cb178dd68e4844a4e4e31066.
+		// Its path is src/routes/docs-examples/typography/link/Button.svelte.
+		// The locked Svelte grammar uses commit
+		// ae5199db47757f785e43a14b332118a5474de1a2.
+		sourceSHA256 = "fcbd956e6e07fbd1c2f52da59bcc0d35c9de495e425959a4cfddff2ea74ef7e4"
+		wantDetail   = "digest 7697435b1072"
+	)
+
+	source, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatalf("read Svelte admission fixture: %v", err)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(source)); got != sourceSHA256 {
+		t.Fatalf("Svelte admission fixture SHA-256 = %s, want %s", got, sourceSHA256)
+	}
+
+	var svelte grammars.LangEntry
+	for _, entry := range grammars.AllLanguages() {
+		if entry.Name == "svelte" {
+			svelte = entry
+			break
+		}
+	}
+	if svelte.Name == "" {
+		t.Fatal("Svelte grammar is not registered")
+	}
+	t.Cleanup(func() { grammars.PurgeEmbeddedLanguageCache() })
+
+	row := runAdmissionScorecardSource(svelte, source)
+	if row.status != scorecardPass {
+		t.Fatalf("Svelte Button compact route = %s: %s", row.status, row.detail)
+	}
+	if row.detail != wantDetail {
+		t.Fatalf("Svelte Button compact digest = %q, want %q", row.detail, wantDetail)
+	}
+	routed, fallback := gts.AdmissionCandidateCounters()
+	if routed != 1 || fallback != 0 {
+		t.Fatalf("Svelte Button route counters = %d/%d, want 1/0", routed, fallback)
 	}
 }
