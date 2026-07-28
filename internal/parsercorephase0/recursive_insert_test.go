@@ -17,6 +17,13 @@ type recursiveInsertFixture struct {
 	checkpoint                 CheckpointID
 }
 
+type certifiedExternalRecursiveInsertFixture struct {
+	core                       *Core
+	oldTop, rightPrev          Head
+	lowerLeft, lowerRight, top SubtreeID
+	key                        boundaryKey
+}
+
 func newRecursiveInsertFixture(t *testing.T) recursiveInsertFixture {
 	return newRecursiveInsertFixtureWithCheckpoint(t, [32]byte{})
 }
@@ -74,6 +81,56 @@ func newRecursiveInsertFixtureWithCheckpoint(t *testing.T, checkpoint [32]byte) 
 		core: core, rootA: rootA, rootB: rootB,
 		leftPredecessor: Head{Node: leftID}, rightPrev: Head{Node: rightID}, oldTop: oldTop,
 		topPayload: top, classAFirst: payloads[0], classBFirst: payloads[2], checkpoint: checkpointID,
+	}
+}
+
+func newCertifiedExternalRecursiveInsertFixture(t *testing.T, externalDescendant bool) certifiedExternalRecursiveInsertFixture {
+	t.Helper()
+	core := newTinyCoreWithLimits(t, Limits{MaxDerivations: 8, MaxPopPaths: 8})
+	core.CertifyExternalPayloadsQuiescent()
+	rootA, err := core.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootB, err := core.Seed(2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lowerLeft := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, endByte: 10})
+	lowerRight := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 21, endByte: 10})
+	left, err := core.appendAdjacencyNode(7, 10, []linkRecord{{prev: rootA.Node, payload: lowerLeft}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := core.appendAdjacencyNode(7, 10, []linkRecord{{prev: rootB.Node, payload: lowerRight}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var top SubtreeID
+	if externalDescendant {
+		externalChild := appendShallowPayload(t, core, shallowPayloadSpec{
+			symbol: 31, startByte: 10, endByte: 11, external: true,
+		})
+		top, err = core.appendSubtree(
+			subtreeRecord{symbol: 30, startByte: 10, endByte: 11},
+			[]SubtreeID{externalChild}, nil, nil,
+		)
+	} else {
+		top = appendShallowPayload(t, core, shallowPayloadSpec{
+			symbol: 30, startByte: 10, endByte: 11, external: true,
+		})
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := core.boundaryKey(8, 11)
+	oldTop, err := core.condense(key, linkInput{prev: left, payload: top})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return certifiedExternalRecursiveInsertFixture{
+		core: core, oldTop: oldTop, rightPrev: Head{Node: right},
+		lowerLeft: lowerLeft, lowerRight: lowerRight, top: top, key: key,
 	}
 }
 
@@ -375,6 +432,101 @@ func TestRecursiveInsertDeclinesUnsupportedProvenanceAndDepth(t *testing.T) {
 			t.Fatalf("second-layer decline mutated storage: before=%+v after=%+v", before, after)
 		}
 	})
+}
+
+func TestRecursiveInsertCertifiedQuiescentExternalPayloads(t *testing.T) {
+	for _, test := range []struct {
+		name               string
+		externalDescendant bool
+	}{
+		{name: "top"},
+		{name: "descendant", externalDescendant: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newCertifiedExternalRecursiveInsertFixture(t, test.externalDescendant)
+			merged, err := fixture.core.condense(fixture.key, linkInput{
+				prev: fixture.rightPrev.Node, payload: fixture.top,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			paths, err := fixture.core.Derivations(merged)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []Derivation{
+				{Payloads: []SubtreeID{fixture.lowerLeft, fixture.top}},
+				{Payloads: []SubtreeID{fixture.lowerRight, fixture.top}},
+			}
+			if !reflect.DeepEqual(paths, want) {
+				t.Fatalf("certified external derivations=%#v, want %#v", paths, want)
+			}
+		})
+	}
+}
+
+func TestRecursiveInsertCertifiedExternalIdentityAndValidation(t *testing.T) {
+	core := newTinyCoreWithLimits(t, Limits{})
+	core.CertifyExternalPayloadsQuiescent()
+	seed, err := core.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clean := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, endByte: 1})
+	external := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, endByte: 1, external: true})
+	equal, err := core.shallowPayloadsEqual(seed.Node, clean, seed.Node, external)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if equal {
+		t.Fatal("certified external payload matched a non-external shallow class")
+	}
+	if _, err := core.subtreeHasNoExternalDescendant(SubtreeID(len(core.subtrees) + 1)); err == nil {
+		t.Fatal("certified external fast path accepted an invalid subtree identifier")
+	}
+	if err := core.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	external = appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, endByte: 1, external: true})
+	if clean, err := core.subtreeHasNoExternalDescendant(external); err != nil || !clean {
+		t.Fatalf("reset lost the external-payload certificate: clean=%t err=%v", clean, err)
+	}
+}
+
+func TestRecursiveInsertCertifiedExternalRollback(t *testing.T) {
+	fixture := newCertifiedExternalRecursiveInsertFixture(t, false)
+	core := fixture.core
+	before, err := core.Stats(fixture.oldTop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeWork := core.Work()
+	beforePaths, err := core.Derivations(fixture.oldTop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.limits.MaxLinks = uint32(len(core.links) + 2)
+	if _, err := core.condense(fixture.key, linkInput{
+		prev: fixture.rightPrev.Node, payload: fixture.top,
+	}); err == nil || !strings.Contains(err.Error(), "link arena cap") {
+		t.Fatalf("certified external cap error=%v", err)
+	}
+	after, err := core.Stats(fixture.oldTop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterPaths, err := core.Derivations(fixture.oldTop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, ok := core.CanonicalBoundary(8, 11, false, 0)
+	if after != before || core.Work() != beforeWork ||
+		!reflect.DeepEqual(afterPaths, beforePaths) || !ok || canonical != fixture.oldTop {
+		t.Fatalf(
+			"certified external rollback drift: stats=%+v/%+v work=%+v/%+v paths=%#v/%#v canonical=%+v ok=%t",
+			after, before, core.Work(), beforeWork, afterPaths, beforePaths, canonical, ok,
+		)
+	}
 }
 
 func TestRecursiveInsertDeclinesSelfAndAncestry(t *testing.T) {

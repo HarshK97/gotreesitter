@@ -608,6 +608,10 @@ type Core struct {
 	// synthetic EOF token. A transparent goto completes an extra in place.
 	// The scheduler sets this only around one authenticated reduction.
 	reduceNoLookaheadContext bool
+	// externalPayloadsQuiescent is a one-way language capability. The caller
+	// certifies that external payload identity does not depend on scanner state.
+	// Reset retains it because the property is stable for this core's tables.
+	externalPayloadsQuiescent bool
 }
 
 // SetReduceConflictContext sets/clears the transient conflict-context
@@ -628,6 +632,19 @@ func (c *Core) SetReduceNoLookaheadContext(v bool) {
 		return
 	}
 	c.reduceNoLookaheadContext = v
+}
+
+// CertifyExternalPayloadsQuiescent permits recursive insertion to compare and
+// retain external payloads. Call this only when scanner state cannot change
+// the identity of any external payload produced by this core's language.
+//
+// The certificate is permanent for the Core. Reset retains it because Reset
+// also retains the authenticated language tables.
+func (c *Core) CertifyExternalPayloadsQuiescent() {
+	if c == nil {
+		return
+	}
+	c.externalPayloadsQuiescent = true
 }
 
 // inlineAdjacencyCapacity covers the production default without forcing a
@@ -2086,6 +2103,7 @@ type shallowPayloadClass struct {
 	size       uint32
 	childCount uint32
 	extra      bool
+	external   bool
 }
 
 func (c *Core) shallowPayloadClassEqual(link linkRecord, in linkInput) (bool, error) {
@@ -2364,6 +2382,12 @@ func (c *Core) insertLinkOneLayer(state StateID, byteOffset uint32, links []link
 }
 
 func (c *Core) subtreeHasNoExternalDescendant(root SubtreeID) (bool, error) {
+	if _, err := c.subtree(root); err != nil {
+		return false, err
+	}
+	if c.externalPayloadsQuiescent {
+		return true, nil
+	}
 	seen := make(map[SubtreeID]bool)
 	visiting := make(map[SubtreeID]bool)
 	var walk func(SubtreeID) (bool, error)
@@ -2597,9 +2621,8 @@ func (c *Core) shallowPayloadClass(prevID NodeID, payloadID SubtreeID) (shallowP
 	}
 	// The compact phase-zero core cannot represent recovery/error subtrees yet,
 	// so every resident non-external payload is clean by construction. External
-	// scanner payloads remain ineligible until scanner-state equality is part of
-	// the compact graph.
-	if payload.external {
+	// payloads require an explicit language-level scanner-state certificate.
+	if payload.external && !c.externalPayloadsQuiescent {
 		return shallowPayloadClass{}, false, nil
 	}
 	if payload.startByte < prev.byteOffset || payload.endByte < payload.startByte {
@@ -2608,7 +2631,7 @@ func (c *Core) shallowPayloadClass(prevID NodeID, payloadID SubtreeID) (shallowP
 	return shallowPayloadClass{
 		symbol: payload.symbol, padding: payload.startByte - prev.byteOffset,
 		size: payload.endByte - payload.startByte, childCount: payload.childCount,
-		extra: payload.extra,
+		extra: payload.extra, external: payload.external,
 	}, true, nil
 }
 

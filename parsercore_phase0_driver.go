@@ -655,6 +655,12 @@ func diagnosticParserCoreInternCheckpoint(compact *core.Core, bytes []byte) (cor
 	return id, DiagnosticParserCoreScannerCheckpoint{Length: int(length), SHA256: digest}, nil
 }
 
+func certifyParserCoreExternalPayloadQuiescence(compact *core.Core, lang *Language) {
+	if compact != nil && classifyExternalScannerQuiescence(lang) == scannerQuiescenceProven {
+		compact.CertifyExternalPayloadsQuiescent()
+	}
+}
+
 // DiagnosticParseParserCorePrefix independently schedules one compact seed
 // against the complete production DFA/scanner election stream. Unsupported
 // boundaries remain fail-closed. It never calls the production parser.
@@ -693,6 +699,7 @@ func DiagnosticParseParserCorePrefix(scanner ExternalScanner, source []byte, opt
 	if err != nil {
 		return result, err
 	}
+	certifyParserCoreExternalPayloadQuiescence(compact, lang)
 	tokenSource := parser.acquireParserDFATokenSource(source)
 	if tokenSource == nil {
 		return result, errors.New("parser-core phase zero: production DFA unavailable")
