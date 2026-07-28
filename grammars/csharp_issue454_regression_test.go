@@ -1,4 +1,4 @@
-package gotreesitter_test
+package grammars_test
 
 import (
 	"bytes"
