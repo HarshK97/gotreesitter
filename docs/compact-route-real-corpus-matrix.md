@@ -26,8 +26,8 @@ The current 206-language smoke scorecard reports:
 
 | Status | Languages |
 |---|---:|
-| PASS | 199 |
-| FALLBACK | 2 |
+| PASS | 200 |
+| FALLBACK | 1 |
 | SKIP | 5 |
 | DIVERGE | 0 |
 | ERROR | 0 |
@@ -86,6 +86,18 @@ This mechanism routes the COBOL smoke fixture.
 Its field-aware C-oracle run passed:
 
 - `harness_out/docker/20260728T064111Z-compact-zero-width-cobol-c-oracle-fields`
+
+## Cooklang smoke fixture
+
+The prior Cooklang smoke source ended an ingredient instruction with a period.
+Production recovery discarded that period.
+The fixture now uses a valid ingredient instruction without the period.
+The corrected source routes directly.
+The old dotted source remains a required compact fallback.
+
+The Cooklang field-aware C-oracle run passed:
+
+- `harness_out/docker/20260728T064513Z-compact-clean-smoke-cooklang-c-oracle-fields`
 
 ## Rejected C# convergence candidate
 

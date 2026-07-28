@@ -67,7 +67,7 @@ var admissionScorecardRequiredCompactPasses = map[string]struct{}{
 	"asm": {}, "astro": {}, "awk": {}, "bash": {}, "bass": {}, "beancount": {}, "bibtex": {},
 	"bicep": {}, "bitbake": {}, "blade": {}, "brightscript": {}, "c_sharp": {},
 	"caddy": {}, "cairo": {}, "capnp": {}, "chatito": {}, "circom": {},
-	"clojure": {}, "cmake": {}, "cobol": {}, "comment": {}, "commonlisp": {}, "corn": {}, "cpon": {}, "crystal": {}, "css": {},
+	"clojure": {}, "cmake": {}, "cobol": {}, "comment": {}, "commonlisp": {}, "cooklang": {}, "corn": {}, "cpon": {}, "crystal": {}, "css": {},
 	"csv": {}, "cuda": {}, "cue": {}, "cylc": {}, "d": {}, "dart": {},
 	"desktop": {}, "devicetree": {}, "dhall": {}, "diff": {}, "disassembly": {}, "djot": {}, "dockerfile": {},
 	"dot": {}, "doxygen": {}, "dtd": {}, "earthfile": {}, "ebnf": {}, "editorconfig": {},
@@ -147,8 +147,8 @@ func TestAdmissionCandidateScorecard206(t *testing.T) {
 		// review and ratchet update.
 		const (
 			wantTotal   = 206
-			minPass     = 199
-			maxFallback = 2
+			minPass     = 200
+			maxFallback = 1
 			wantSkip    = 5
 		)
 		if got := len(admissionScorecardRequiredCompactPasses); got != minPass {
@@ -215,6 +215,29 @@ func TestAdmissionCandidateNoLookaheadSmokeRatchet(t *testing.T) {
 	if row.status != scorecardFallback ||
 		!strings.Contains(row.detail, "root reduction on no-lookahead was not followed by authenticated EOF") {
 		t.Errorf("doxygen mid-source no-lookahead route=%s: %s", row.status, row.detail)
+	}
+}
+
+func TestAdmissionCandidateCooklangSmokeRatchet(t *testing.T) {
+	const cleanSmoke = "Add @salt{1%tsp}\n"
+	if got := grammars.ParseSmokeSample("cooklang"); got != cleanSmoke {
+		t.Fatalf("cooklang smoke=%q, want %q", got, cleanSmoke)
+	}
+	var cooklang grammars.LangEntry
+	for _, entry := range grammars.AllLanguages() {
+		if entry.Name == "cooklang" {
+			cooklang = entry
+			break
+		}
+	}
+	if cooklang.Name == "" {
+		t.Fatal("cooklang is missing from the grammar registry")
+	}
+	if row := runAdmissionScorecardSource(cooklang, []byte(cleanSmoke)); row.status != scorecardPass {
+		t.Errorf("clean cooklang compact route=%s: %s", row.status, row.detail)
+	}
+	if row := runAdmissionScorecardSource(cooklang, []byte("Add @salt{1%tsp}.\n")); row.status != scorecardFallback {
+		t.Errorf("recovered dotted cooklang route=%s: %s", row.status, row.detail)
 	}
 }
 

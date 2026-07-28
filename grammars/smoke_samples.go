@@ -161,7 +161,7 @@ var ParseSmokeSamples = map[string]string{
 	"clojure":         "(def x 1)\n",
 	"cmake":           "cmake_minimum_required(VERSION 3.10)\n",
 	"commonlisp":      "(defun f () 1)\n",
-	"cooklang":        "Add @salt{1%tsp}.\n",
+	"cooklang":        "Add @salt{1%tsp}\n",
 	"cpon":            "{\"a\":1}\n",
 	"csv":             "a,b,c\n1,2,3\n",
 	"cuda":            "__global__ void kernel() {}\n",

@@ -9,6 +9,12 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- The Cooklang smoke fixture now uses a valid ingredient instruction.
+  The previous period required production recovery and was omitted from the
+  resulting tree.
+  The valid fixture routes directly while the recovered form still falls back.
+  The smoke scorecard reports 200 direct routes and one fallback.
+
 - Compact admission now treats zero-width extras as progress when their token
   end advances the parser boundary.
   COBOL fixed-format padding now routes directly without weakening the
