@@ -648,6 +648,10 @@ func compareStackEntryTreeOrder(p *Parser, arena *nodeArena, a, b stackEntry, de
 			return 0
 		}
 		if !stackEntriesHaveSameTreeOrderEnvelope(aChild, bChild) {
+			if stackEntryVisibleNamedUnaryWrapperContains(p, arena, aChild, bChild) ||
+				stackEntryVisibleNamedUnaryWrapperContains(p, arena, bChild, aChild) {
+				return 0
+			}
 			if cmp := compareStackEntryDirectChildPreference(p, arena, aChild, bChild, depth+1); cmp != 0 {
 				return cmp
 			}
