@@ -2344,8 +2344,14 @@ func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
 	if got := unsafe.Sizeof(nodeRecord{}); got != 24 {
 		t.Fatalf("nodeRecord size = %d, want 24", got)
 	}
-	if got := unsafe.Sizeof(linkRecord{}); got > 32 {
-		t.Fatalf("linkRecord size = %d, want <= 32", got)
+	if got := unsafe.Sizeof(linkRecord{}); got != 32 {
+		t.Fatalf("linkRecord size = %d, want 32", got)
+	}
+	if got := unsafe.Sizeof(ReductionOutput{}); got != 8 {
+		t.Fatalf("ReductionOutput size = %d, want 8", got)
+	}
+	if got := unsafe.Sizeof(popPath{}); got != 88 {
+		t.Fatalf("popPath size = %d, want 88", got)
 	}
 	if got := unsafe.Sizeof(subtreeRecord{}); got != 44 {
 		t.Fatalf("subtreeRecord size = %d, want 44", got)
