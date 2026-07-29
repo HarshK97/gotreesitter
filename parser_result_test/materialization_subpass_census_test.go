@@ -1,0 +1,415 @@
+//go:build !grammar_subset
+
+package parserresult_test
+
+import (
+	"testing"
+
+	gotreesitter "github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
+)
+
+type materializationSubpassProbe struct {
+	name               string
+	language           func() *gotreesitter.Language
+	source             string
+	wantRawDigest      string
+	wantResultDigest   string
+	expectedSubpasses  []string
+	rewrittenSubpasses []string
+}
+
+func TestMaterializationSubpassCompatibilityFreeProducerProbes(t *testing.T) {
+	for _, probe := range materializationSubpassProbes() {
+		probe := probe
+		t.Run(probe.name, func(t *testing.T) {
+			language := probe.language()
+			source := []byte(probe.source)
+
+			t.Setenv("GTS_DISPATCHER_CENSUS", "")
+			rawDigest, _ := materializationSubpassParseDigest(
+				t,
+				language,
+				source,
+				true,
+			)
+			resultDigest, _ := materializationSubpassParseDigest(
+				t,
+				language,
+				source,
+				false,
+			)
+
+			t.Setenv("GTS_DISPATCHER_CENSUS", "1")
+			censusDigest, runtime := materializationSubpassParseDigest(
+				t,
+				language,
+				source,
+				false,
+			)
+			if censusDigest != resultDigest {
+				t.Fatalf(
+					"census changed production output: got %s, want %s",
+					censusDigest,
+					resultDigest,
+				)
+			}
+			if probe.wantRawDigest != "" && rawDigest != probe.wantRawDigest {
+				t.Fatalf("raw digest = %s, want %s", rawDigest, probe.wantRawDigest)
+			}
+			if probe.wantResultDigest != "" && resultDigest != probe.wantResultDigest {
+				t.Fatalf(
+					"result digest = %s, want %s",
+					resultDigest,
+					probe.wantResultDigest,
+				)
+			}
+			assertMaterializationSubpassReceipts(
+				t,
+				runtime,
+				probe.expectedSubpasses,
+				probe.rewrittenSubpasses,
+			)
+			t.Logf("raw=%s result=%s", rawDigest, resultDigest)
+		})
+	}
+}
+
+func materializationSubpassParseDigest(
+	t *testing.T,
+	language *gotreesitter.Language,
+	source []byte,
+	withoutCompatibility bool,
+) (string, gotreesitter.ParseRuntime) {
+	t.Helper()
+	parser := gotreesitter.NewParser(language)
+	parser.SetAdmissionCandidateRoute(false)
+	var (
+		tree *gotreesitter.Tree
+		err  error
+	)
+	if withoutCompatibility {
+		tree, err = parser.ParseNoResultCompatibilityBenchmarkOnly(source)
+	} else {
+		tree, err = parser.Parse(source)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("parse returned no tree")
+	}
+	defer tree.Release()
+	inspection, err := benchfixtures.InspectGoTree(tree.RootNode(), language)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return inspection.SHA256, tree.ParseRuntime()
+}
+
+func assertMaterializationSubpassReceipts(
+	t *testing.T,
+	runtime gotreesitter.ParseRuntime,
+	expected []string,
+	rewritten []string,
+) {
+	t.Helper()
+	if runtime.NormalizationPasses == nil {
+		t.Fatal("census recorded no normalization passes")
+	}
+	passes := make(map[string]gotreesitter.NormalizationPassRuntime)
+	for _, pass := range *runtime.NormalizationPasses {
+		passes[pass.Name] = pass
+	}
+	wantRewritten := make(map[string]bool, len(rewritten))
+	for _, name := range rewritten {
+		wantRewritten[name] = true
+	}
+	for _, name := range expected {
+		pass, ok := passes[name]
+		if !ok {
+			t.Errorf("census did not record %s: %+v", name, passes)
+			continue
+		}
+		if pass.Checked == 0 || pass.Run == 0 || pass.NodesVisited == 0 {
+			t.Errorf("%s has a vacuous census receipt: %+v", name, pass)
+		}
+		if got := pass.NodesRewritten > 0; got != wantRewritten[name] {
+			t.Errorf(
+				"%s rewrite state = %t, want %t: %+v",
+				name,
+				got,
+				wantRewritten[name],
+				pass,
+			)
+		}
+		t.Logf("%s: %+v", name, pass)
+	}
+}
+
+func materializationSubpassProbes() []materializationSubpassProbe {
+	return []materializationSubpassProbe{
+		{
+			name:     "ada_locked_named_array_aggregate",
+			language: grammars.AdaLanguage,
+			// tree-sitter-ada test/corpus/arrays.txt, commit 6b58259a.
+			source: "package P is\n" +
+				"   type A is array (1 .. 2) of Boolean;\n" +
+				"   V : constant A := (1 => True, 2 => False);\n" +
+				"   V2 : constant A := (1 => True, others => False);\n" +
+				"end P;\n",
+			wantRawDigest:    "728491faf7df326e0557c468af03e026a9b4461b86f9de9f28da9162f9510c71",
+			wantResultDigest: "728491faf7df326e0557c468af03e026a9b4461b86f9de9f28da9162f9510c71",
+			expectedSubpasses: []string{
+				"dispatch.ada",
+			},
+		},
+		{
+			name:     "ada_locked_positional_array_aggregate",
+			language: grammars.AdaLanguage,
+			// tree-sitter-ada test/corpus/arrays.txt, commit 6b58259a.
+			source: "package P is\n" +
+				"   type A is array (1 .. 3) of Boolean;\n" +
+				"   V : constant A := (1, 2, 3);\n" +
+				"end;\n",
+			wantRawDigest:    "2548948d4cac86cf3b438642ac347917b72371467fd928be0de7437210e98a50",
+			wantResultDigest: "c056e4222c7e642fbf23054a75b40f3ff186ff687eb49e8bcd5a36c513d10f14",
+			expectedSubpasses: []string{
+				"dispatch.ada",
+				"dispatch.ada.aggregate-kind-election",
+			},
+			rewrittenSubpasses: []string{
+				"dispatch.ada",
+				"dispatch.ada.aggregate-kind-election",
+			},
+		},
+		{
+			name:     "ada_locked_record_aggregate",
+			language: grammars.AdaLanguage,
+			// tree-sitter-ada test/corpus/records.txt, commit 6b58259a.
+			source: "procedure P is\n" +
+				"begin\n" +
+				"   A := (F1 => 1, F2 => 2);\n" +
+				"end;\n",
+			wantRawDigest:    "ef26cc01b0dee3da50728dbfa242162ba837798c34450674d8b3ce3ed06955d6",
+			wantResultDigest: "ef26cc01b0dee3da50728dbfa242162ba837798c34450674d8b3ce3ed06955d6",
+			expectedSubpasses: []string{
+				"dispatch.ada",
+			},
+		},
+		{
+			name:     "ada_array_others_choice",
+			language: grammars.AdaLanguage,
+			source: "procedure P is\n" +
+				"begin\n" +
+				"   A := (others => 0);\n" +
+				"end;\n",
+			wantRawDigest:    "436a2b8ebb3e7d0a6ebad2fddaae9bd3a1f7a040a91741581109fa3d59558f7e",
+			wantResultDigest: "67f7351db255e847be4172f69a33cd349b2883c693b837eebb32979ccaf4b9a7",
+			expectedSubpasses: []string{
+				"dispatch.ada",
+				"dispatch.ada.aggregate-kind-election",
+				"dispatch.ada.association-choice-materialization",
+			},
+			rewrittenSubpasses: []string{
+				"dispatch.ada",
+				"dispatch.ada.aggregate-kind-election",
+				"dispatch.ada.association-choice-materialization",
+			},
+		},
+		{
+			name:     "ada_attribute_constraint",
+			language: grammars.AdaLanguage,
+			source: "procedure P is\n" +
+				"begin\n" +
+				"   A := new T (F => Pkg.Obj'Access);\n" +
+				"end;\n",
+			wantRawDigest:    "a35538112ad4ae10df6d5544c7f0a58f3e6a3ecb5fd5fb842808d0e31ac27ac2",
+			wantResultDigest: "d0006efd9f34dce85ac48330642b378dc2b5f995004c9c11a20aee98ac6be8a2",
+			expectedSubpasses: []string{
+				"dispatch.ada",
+				"dispatch.ada.constraint-kind-election",
+			},
+			rewrittenSubpasses: []string{
+				"dispatch.ada",
+				"dispatch.ada.constraint-kind-election",
+			},
+		},
+		{
+			name:     "apex_generic_local_declaration",
+			language: grammars.ApexLanguage,
+			source: "public class C {\n" +
+				"  void m() {\n" +
+				"    List<List<SObject>> searchResults = [FIND :keyword IN ALL FIELDS];\n" +
+				"  }\n" +
+				"}\n",
+			wantRawDigest:    "84ea02bcd332e4fea9eb6d7f7e13102b489c8e1fa002cc1dfbea938c2e1d25a7",
+			wantResultDigest: "35ec351ac90dcccd197a426a9f4d0d663aa9df54c5612157b95352c3943f8a4a",
+			expectedSubpasses: []string{
+				"dispatch.apex",
+				"dispatch.apex.generic-local-declaration",
+				"dispatch.apex.class-literal-alias",
+			},
+			rewrittenSubpasses: []string{
+				"dispatch.apex",
+				"dispatch.apex.generic-local-declaration",
+			},
+		},
+		{
+			name:     "apex_class_literal_alias",
+			language: grammars.ApexLanguage,
+			source: "public class C {\n" +
+				"  void m() {\n" +
+				"    Object t = RecordPage.class;\n" +
+				"  }\n" +
+				"}\n",
+			wantRawDigest:    "a7ce1bb2fb703f6c85a85bac1116a31f9d14f03cd4560f8fe81f518b19d36f33",
+			wantResultDigest: "691872382855aafce9519a115ca30ac191c4a118d4ab7170e88e0193fd2f5bb6",
+			expectedSubpasses: []string{
+				"dispatch.apex",
+				"dispatch.apex.generic-local-declaration",
+				"dispatch.apex.class-literal-alias",
+			},
+			rewrittenSubpasses: []string{
+				"dispatch.apex",
+				"dispatch.apex.class-literal-alias",
+			},
+		},
+		{
+			name:             "bash_assignment_wrapper",
+			language:         grammars.BashLanguage,
+			source:           "a=1 b=2 c=3",
+			wantRawDigest:    "acf5436fdf47d1af14d387f9bc7ebc30ec09b4874d6a9e9caf452678e387c9f6",
+			wantResultDigest: "81ace1f9c8a394d177e5ea909ff3012329ec78b255e45a235fc8a3eea4a67a16",
+			expectedSubpasses: []string{
+				"dispatch.bash",
+				"dispatch.bash.variable-assignment-wrapper-flattening",
+				"dispatch.bash.generated-command-assignment",
+				"dispatch.bash.command-name-concatenation",
+			},
+			rewrittenSubpasses: []string{
+				"dispatch.bash",
+				"dispatch.bash.variable-assignment-wrapper-flattening",
+			},
+		},
+		{
+			name:             "bash_generated_command_assignment",
+			language:         grammars.BashLanguage,
+			source:           "zipname=npm-$(node ../cli.js -v).zip",
+			wantRawDigest:    "a2dac68ad605a69720f13549488b1519627653226bb252bd89db912ae1558e8b",
+			wantResultDigest: "a2dac68ad605a69720f13549488b1519627653226bb252bd89db912ae1558e8b",
+			expectedSubpasses: []string{
+				"dispatch.bash",
+				"dispatch.bash.generated-command-assignment",
+				"dispatch.bash.command-name-concatenation",
+			},
+		},
+		{
+			name:             "bash_command_name_concatenation",
+			language:         grammars.BashLanguage,
+			source:           "${0%/*}/check-unsafe-assertions.sh",
+			wantRawDigest:    "a5b4479ddfaa21239153effb0ee7b1f886155c25e2ea6ba43d56c5087a211819",
+			wantResultDigest: "a5b4479ddfaa21239153effb0ee7b1f886155c25e2ea6ba43d56c5087a211819",
+			expectedSubpasses: []string{
+				"dispatch.bash",
+				"dispatch.bash.generated-command-assignment",
+				"dispatch.bash.command-name-concatenation",
+			},
+		},
+		{
+			name:     "bash_if_condition_field",
+			language: grammars.BashLanguage,
+			source: "if [ $ret -eq 0 ]; then\n" +
+				"  (exit 0)\n" +
+				"else\n" +
+				"  rm npm-install-$$.sh\n" +
+				"  echo \"Failed to download script\" >&2\n" +
+				"  exit $ret\n" +
+				"fi\n",
+			wantRawDigest:    "7d110bcd4998cf43995020d6ee6326ef0e060b587ce44fa75943d95d86156cd5",
+			wantResultDigest: "7d110bcd4998cf43995020d6ee6326ef0e060b587ce44fa75943d95d86156cd5",
+			expectedSubpasses: []string{
+				"dispatch.bash",
+				"dispatch.bash.if-condition-field-projection",
+				"dispatch.bash.generated-command-assignment",
+				"dispatch.bash.command-name-concatenation",
+			},
+		},
+		{
+			name:             "cooklang_trailing_step_tail",
+			language:         grammars.CooklangLanguage,
+			source:           "Add @salt{1%tsp}.\n",
+			wantRawDigest:    "0e6880ec4902576c2a6de014424c3cba7eef99cdc5fd8fded8ceb6382a6df9cd",
+			wantResultDigest: "c6e4535b725516550ca7a0ee4c69974799c2d2d10fed4e5f1ba6b71e43c5ba8a",
+			expectedSubpasses: []string{
+				"dispatch.cooklang",
+				"dispatch.cooklang.trailing-step-tail",
+				"dispatch.cooklang.recovered-recipe",
+			},
+			rewrittenSubpasses: []string{
+				"dispatch.cooklang",
+				"dispatch.cooklang.recovered-recipe",
+			},
+		},
+		{
+			name:     "cooklang_recovered_recipe",
+			language: grammars.CooklangLanguage,
+			source: "---\n" +
+				"servings: 4\n" +
+				"emoji: 🥟\n" +
+				"tags: warm, fried, starter\n" +
+				"---\n\n" +
+				"Serve hot.\n",
+			wantRawDigest:    "896d9f79d941c3869dca7b855bae45738392d02519f0fbe3ac45cc2623fcfa2f",
+			wantResultDigest: "814240a8aff9c3e253b37ce1ff535ff2cd96510c6afea40680a270405699967f",
+			expectedSubpasses: []string{
+				"dispatch.cooklang",
+				"dispatch.cooklang.trailing-step-tail",
+				"dispatch.cooklang.recovered-recipe",
+			},
+			rewrittenSubpasses: []string{
+				"dispatch.cooklang",
+				"dispatch.cooklang.recovered-recipe",
+			},
+		},
+		{
+			name:             "cooklang_step_tail_without_newline",
+			language:         grammars.CooklangLanguage,
+			source:           "Add @salt{1%tsp}.",
+			wantRawDigest:    "f49ca1a85a0b2ee7ed7f07993d6bc8b103d66311f83d4a026e085cf2013a69ec",
+			wantResultDigest: "dd3692a1a0e9145af9f2d082126a1e798d60cbe74942427746d3f0e83bd31e1c",
+			expectedSubpasses: []string{
+				"dispatch.cooklang",
+				"dispatch.cooklang.trailing-step-tail",
+				"dispatch.cooklang.recovered-recipe",
+			},
+			rewrittenSubpasses: []string{
+				"dispatch.cooklang",
+				"dispatch.cooklang.recovered-recipe",
+			},
+		},
+		{
+			name:             "http_blank_section",
+			language:         grammars.HttpLanguage,
+			source:           "# c\n\n### next\n",
+			wantRawDigest:    "12c900585dc7ecae3a5dc6c3a7072b927a56d0c5dd7f9f699eb8169acceb948b",
+			wantResultDigest: "12c900585dc7ecae3a5dc6c3a7072b927a56d0c5dd7f9f699eb8169acceb948b",
+			expectedSubpasses: []string{
+				"dispatch.http",
+				"dispatch.http.document-section-coalescing",
+			},
+		},
+		{
+			name:             "http_content_sections",
+			language:         grammars.HttpLanguage,
+			source:           "### a\n# c\nGET /\n### b\n",
+			wantRawDigest:    "e67faf42a5f1da1b558a4b40acc86c011ad900b6aa573713729ee1a7bcf43e7e",
+			wantResultDigest: "e67faf42a5f1da1b558a4b40acc86c011ad900b6aa573713729ee1a7bcf43e7e",
+			expectedSubpasses: []string{
+				"dispatch.http",
+				"dispatch.http.document-section-coalescing",
+			},
+		},
+	}
+}

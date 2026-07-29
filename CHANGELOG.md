@@ -9,6 +9,10 @@ for tags and release notes while still in `0.x`.
 
 ### Added
 
+- The dispatcher census now reports distinct Ada, Apex, Bash, Cooklang, and
+  HTTP materialization subpasses.
+  Compatibility-free probes record active and inert producer behavior.
+
 - `grammargen -js-cli` now resolves `grammar.js` with Tree-sitter 0.26 or newer.
   It imports the temporary canonical `grammar.json` through the existing path.
   The explicit flag warns that grammar evaluation executes JavaScript.

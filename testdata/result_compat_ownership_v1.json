@@ -22,10 +22,55 @@
       "id": "dispatch.ada",
       "kind": "dispatcher_arm",
       "functions": [
-        "normalizeAdaCompatibility"
+        "normalizeAdaCompatibilityWithCensus"
       ],
       "files": [
         "parser_result_ada.go"
+      ],
+      "subpasses": [
+        {
+          "id": "dispatch.ada.constraint-kind-election",
+          "functions": [
+            "normalizeAdaCompatibilityWithCensus"
+          ],
+          "files": [
+            "parser_result_ada.go"
+          ],
+          "purpose": "Select an index constraint and construct its attribute-reference children when the selected Ada derivation has the discriminant shape.",
+          "authoritative_owner": "derivation_election_selection",
+          "witnesses": [
+            "parser_result_test/materialization_subpass_census_test.go"
+          ]
+        },
+        {
+          "id": "dispatch.ada.aggregate-kind-election",
+          "functions": [
+            "normalizeAdaCompatibilityWithCensus"
+          ],
+          "files": [
+            "parser_result_ada.go"
+          ],
+          "purpose": "Select the record, named-array, or positional-array aggregate type.",
+          "authoritative_owner": "derivation_election_selection",
+          "witnesses": [
+            "parser_result_test/materialization_subpass_census_test.go"
+          ]
+        },
+        {
+          "id": "dispatch.ada.association-choice-materialization",
+          "functions": [
+            "normalizeAdaArrayAssociationChoicesWithCensus",
+            "normalizeAdaRecordAssociationChoicesWithCensus"
+          ],
+          "files": [
+            "parser_result_ada.go"
+          ],
+          "purpose": "Construct the selected record or array association-choice wrappers.",
+          "authoritative_owner": "materialization",
+          "witnesses": [
+            "parser_result_test/materialization_subpass_census_test.go"
+          ]
+        }
       ],
       "languages": [
         "ada"
@@ -83,10 +128,41 @@
       "id": "dispatch.apex",
       "kind": "dispatcher_arm",
       "functions": [
-        "normalizeApexCompatibility"
+        "normalizeApexClassLiteralAccess",
+        "normalizeApexGenericLocalDeclarations"
       ],
       "files": [
         "parser_result_apex.go"
+      ],
+      "subpasses": [
+        {
+          "id": "dispatch.apex.generic-local-declaration",
+          "functions": [
+            "normalizeApexGenericLocalDeclarations"
+          ],
+          "files": [
+            "parser_result_apex.go"
+          ],
+          "purpose": "Select and construct a generic local-variable declaration from the parsed expression shape.",
+          "authoritative_owner": "derivation_election_selection",
+          "witnesses": [
+            "parser_result_test/materialization_subpass_census_test.go"
+          ]
+        },
+        {
+          "id": "dispatch.apex.class-literal-alias",
+          "functions": [
+            "normalizeApexClassLiteralAccess"
+          ],
+          "files": [
+            "parser_result_apex.go"
+          ],
+          "purpose": "Materialize the field-access aliases for an Apex class literal.",
+          "authoritative_owner": "materialization",
+          "witnesses": [
+            "parser_result_test/materialization_subpass_census_test.go"
+          ]
+        }
       ],
       "languages": [
         "apex"
@@ -200,12 +276,70 @@
       "id": "dispatch.bash",
       "kind": "dispatcher_arm",
       "functions": [
-        "normalizeBashProgramVariableAssignments",
+        "normalizeBashProgramVariableAssignmentsWithCensus",
         "normalizeBashGeneratedCommandAssignments",
         "normalizeBashCommandNameArguments"
       ],
       "files": [
         "parser_result_bash.go"
+      ],
+      "subpasses": [
+        {
+          "id": "dispatch.bash.variable-assignment-wrapper-flattening",
+          "functions": [
+            "normalizeBashVariableAssignmentsInNodeWithCensus"
+          ],
+          "files": [
+            "parser_result_bash.go"
+          ],
+          "purpose": "Materialize assignment siblings without a generated variable-assignments wrapper.",
+          "authoritative_owner": "materialization",
+          "witnesses": [
+            "parser_result_test/materialization_subpass_census_test.go"
+          ]
+        },
+        {
+          "id": "dispatch.bash.generated-command-assignment",
+          "functions": [
+            "normalizeBashGeneratedCommandAssignments"
+          ],
+          "files": [
+            "parser_result_bash.go"
+          ],
+          "purpose": "Select an assignment action instead of a generated command action.",
+          "authoritative_owner": "scheduler_action_semantics",
+          "witnesses": [
+            "parser_result_test/materialization_subpass_census_test.go"
+          ]
+        },
+        {
+          "id": "dispatch.bash.command-name-concatenation",
+          "functions": [
+            "normalizeBashCommandNameArguments"
+          ],
+          "files": [
+            "parser_result_bash.go"
+          ],
+          "purpose": "Construct one command-name concatenation from adjacent command children.",
+          "authoritative_owner": "materialization",
+          "witnesses": [
+            "parser_result_test/materialization_subpass_census_test.go"
+          ]
+        },
+        {
+          "id": "dispatch.bash.if-condition-field-projection",
+          "functions": [
+            "assignBashIfConditionField"
+          ],
+          "files": [
+            "parser_result_bash.go"
+          ],
+          "purpose": "Project the condition field from the Bash reduction metadata.",
+          "authoritative_owner": "materialization",
+          "witnesses": [
+            "parser_result_test/materialization_subpass_census_test.go"
+          ]
+        }
       ],
       "languages": [
         "bash"
@@ -423,10 +557,41 @@
       "id": "dispatch.cooklang",
       "kind": "dispatcher_arm",
       "functions": [
-        "normalizeCooklangCompatibility"
+        "normalizeCooklangCompatibilityWithCensus"
       ],
       "files": [
-        "parser_result_cooklang.go"
+        "parser_result_cooklang.go",
+        "parser_result_misc_spans.go"
+      ],
+      "subpasses": [
+        {
+          "id": "dispatch.cooklang.trailing-step-tail",
+          "functions": [
+            "normalizeCooklangTrailingStepTail"
+          ],
+          "files": [
+            "parser_result_misc_spans.go"
+          ],
+          "purpose": "Publish the punctuation tail and the complete recipe span.",
+          "authoritative_owner": "scanner_checkpoint_state",
+          "witnesses": [
+            "parser_result_test/materialization_subpass_census_test.go"
+          ]
+        },
+        {
+          "id": "dispatch.cooklang.recovered-recipe",
+          "functions": [
+            "normalizeCooklangRecoveredRecipe"
+          ],
+          "files": [
+            "parser_result_cooklang.go"
+          ],
+          "purpose": "Select and construct recovered steps, metadata, punctuation errors, and fence comments.",
+          "authoritative_owner": "scheduler_action_semantics",
+          "witnesses": [
+            "parser_result_test/materialization_subpass_census_test.go"
+          ]
+        }
       ],
       "languages": [
         "cooklang"
@@ -1155,6 +1320,22 @@
       ],
       "files": [
         "parser_result_http.go"
+      ],
+      "subpasses": [
+        {
+          "id": "dispatch.http.document-section-coalescing",
+          "functions": [
+            "normalizeHTTPDocumentSections"
+          ],
+          "files": [
+            "parser_result_http.go"
+          ],
+          "purpose": "Select and construct one section from adjacent recovered document sections.",
+          "authoritative_owner": "scheduler_action_semantics",
+          "witnesses": [
+            "parser_result_test/materialization_subpass_census_test.go"
+          ]
+        }
       ],
       "languages": [
         "http"

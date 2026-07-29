@@ -85,6 +85,39 @@ These are evidence labels, not claims that all five engines have independent
 implementations. The shared-tail value means that route reaches the same
 post-parse normalization tail.
 
+## Materialization subpass census
+
+Five live arms still use `materialization` as their aggregate owner.
+Each arm now declares its distinct subpasses in the registry.
+
+Set `GTS_DISPATCHER_CENSUS=1` to record each subpass and its aggregate arm.
+The census does not change parser output when it is disabled.
+
+| Arm | Subpass | Upstream owner |
+|---|---|---|
+| Ada | constraint kind election | `derivation_election_selection` |
+| Ada | aggregate kind election | `derivation_election_selection` |
+| Ada | association choice construction | `materialization` |
+| Apex | generic local declaration | `derivation_election_selection` |
+| Apex | class literal alias | `materialization` |
+| Bash | assignment wrapper flattening | `materialization` |
+| Bash | generated command assignment | `scheduler_action_semantics` |
+| Bash | command name concatenation | `materialization` |
+| Bash | `if` condition field projection | `materialization` |
+| Cooklang | trailing step tail | `scanner_checkpoint_state` |
+| Cooklang | recovered recipe | `scheduler_action_semantics` |
+| HTTP | document section coalescing | `scheduler_action_semantics` |
+
+Cooklang calls its trailing-tail subpass from `parser_result_misc_spans.go`.
+The registry now includes that function and file.
+
+The probes parse each source without result compatibility.
+They also compare census-enabled output with normal production output.
+Each digest matches base commit
+`4f077315d3aa5dcec4f5392c7eb17a1bbc27a455`.
+The locked Ada probes come from tree-sitter-ada commit
+`6b58259a08b1a22ba0247a7ce30be384db618da6`.
+
 ## Why it exists
 
 Two GLR parsers can accept the same input and still return different trees

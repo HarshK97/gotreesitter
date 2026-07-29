@@ -110,18 +110,31 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 
 	switch ctx.lang.Name {
 	case "ada":
-		dispatcherArmCensus(ctx, "dispatch.ada", func() { normalizeAdaCompatibility(ctx.root, ctx.source, ctx.lang) })
+		dispatcherArmSubpassCensus(ctx, "dispatch.ada", func(census materializationSubpassCensus) {
+			normalizeAdaCompatibilityWithCensus(ctx.root, ctx.source, ctx.lang, census)
+		})
 	case "apex":
-		dispatcherArmCensus(ctx, "dispatch.apex", func() { normalizeApexCompatibility(ctx.root, ctx.source, ctx.lang) })
+		dispatcherArmSubpassCensus(ctx, "dispatch.apex", func(census materializationSubpassCensus) {
+			census.run("dispatch.apex.generic-local-declaration", func() {
+				normalizeApexGenericLocalDeclarations(ctx.root, ctx.source, ctx.lang)
+			})
+			census.run("dispatch.apex.class-literal-alias", func() {
+				normalizeApexClassLiteralAccess(ctx.root, ctx.source, ctx.lang)
+			})
+		})
 	case "authzed":
 		dispatcherArmCensus(ctx, "dispatch.authzed", func() { normalizeAuthzedCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "awk":
 		dispatcherArmCensus(ctx, "dispatch.awk", func() { normalizeAwkCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "bash":
-		dispatcherArmCensus(ctx, "dispatch.bash", func() {
-			normalizeBashProgramVariableAssignments(ctx.root, ctx.lang)
-			normalizeBashGeneratedCommandAssignments(ctx.root, ctx.source, ctx.lang)
-			normalizeBashCommandNameArguments(ctx.root, ctx.lang)
+		dispatcherArmSubpassCensus(ctx, "dispatch.bash", func(census materializationSubpassCensus) {
+			normalizeBashProgramVariableAssignmentsWithCensus(ctx.root, ctx.lang, census)
+			census.run("dispatch.bash.generated-command-assignment", func() {
+				normalizeBashGeneratedCommandAssignments(ctx.root, ctx.source, ctx.lang)
+			})
+			census.run("dispatch.bash.command-name-concatenation", func() {
+				normalizeBashCommandNameArguments(ctx.root, ctx.lang)
+			})
 		})
 	case "bitbake":
 		dispatcherArmCensus(ctx, "dispatch.bitbake", func() { normalizeBitbakeCompatibility(ctx.root, ctx.source, ctx.lang) })
@@ -130,7 +143,9 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 	case "c_sharp":
 		dispatcherArmCensus(ctx, "dispatch.c_sharp", func() { normalizeCSharpCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "cooklang":
-		dispatcherArmCensus(ctx, "dispatch.cooklang", func() { normalizeCooklangCompatibility(ctx.root, ctx.source, ctx.lang) })
+		dispatcherArmSubpassCensus(ctx, "dispatch.cooklang", func(census materializationSubpassCensus) {
+			normalizeCooklangCompatibilityWithCensus(ctx.root, ctx.source, ctx.lang, census)
+		})
 	case "corn":
 		dispatcherArmCensus(ctx, "dispatch.corn", func() { normalizeCornCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "dart":
@@ -154,7 +169,11 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		})
 		return resultCompatibilityResult{stopReason: stopReason}
 	case "http":
-		dispatcherArmCensus(ctx, "dispatch.http", func() { normalizeHTTPCompatibility(ctx.root, ctx.source, ctx.lang) })
+		dispatcherArmSubpassCensus(ctx, "dispatch.http", func(census materializationSubpassCensus) {
+			census.run("dispatch.http.document-section-coalescing", func() {
+				normalizeHTTPCompatibility(ctx.root, ctx.source, ctx.lang)
+			})
+		})
 	case "hlsl":
 		dispatcherArmCensus(ctx, "dispatch.hlsl", func() { normalizeHLSLCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "hyprlang":
