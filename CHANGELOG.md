@@ -27,7 +27,7 @@ for tags and release notes while still in `0.x`.
   buffer.
   The 235,626-byte Go fixture allocates 7.583 MiB instead of 48.073 MiB.
   Allocations fall from 10,404 to 513 per parse.
-  Stable parse time improves by 15.46 percent.
+  Two stable pairs improve parse time by 9.52 to 15.46 percent.
   Maximum resident set size falls from 228,272 KiB to 176,612 KiB.
 
 - Direct parser-state re-lex probes now use their existing outer transaction.
