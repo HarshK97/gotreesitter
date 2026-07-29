@@ -60,6 +60,11 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- The native reduction path now sets Dart switch-expression body fields.
+  It now sets the target field for nested Elixir calls.
+  This change removes two inert language-local field repairs.
+  The Scala and SQL field corrections remain live.
+
 - The compact admission census now separates runnable no-table-action stops
   from paused frontiers.
   The real-corpus matrix labels production error trees.

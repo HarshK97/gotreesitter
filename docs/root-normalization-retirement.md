@@ -228,6 +228,10 @@ It selects the C-equivalent expression for an unknown type name.
 This change retires the final Objective-C subpass and its dispatcher arm.
 The parser covers every byte in each recovered EBNF source.
 This change removes the EBNF dispatcher arm.
+The native reduction path sets Dart switch-expression body fields.
+It sets the target field for nested Elixir calls.
+The Dart and Elixir dispatcher arms remain live for unrelated repairs.
+The Scala and SQL field corrections remain live counterexamples.
 The field-aware C-oracle receipt is:
 `harness_out/docker/20260728T111158Z-objc-struct-sized-postfilter-final`.
 The method type C-oracle receipt is:
@@ -321,6 +325,7 @@ there.
 | D variable-type qualifiers | retirement change | 1 D subpass | 0 | compatibility-free producer, production, compact fallback, forest, incremental reuse, and isolated C-oracle parity |
 | D call-expression targets | retirement commit `6a650454e5698d64a0148629cfa444b3dbce6877` | 2 D subpasses / 1 dispatcher arm | 0 | compatibility-free producer, production, compact fallback, forest, incremental, and three isolated C-oracle receipts |
 | Certified unary named wrappers | retirement change | 1 dispatcher arm | 0 | exact-profile census, compatibility-free producer, production, compact fallback, forest fail-closed behavior, incremental, parent links, deterministic digest, and isolated C-oracle parity |
+| Dart and Elixir inherited fields | retirement change | 2 language-local field repairs | 0 | compatibility-free producer, refreshed corpus, production, compact, forest, incremental, and isolated C-oracle receipts |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.

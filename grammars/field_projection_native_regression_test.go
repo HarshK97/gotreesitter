@@ -138,6 +138,18 @@ func fieldProjectionRetirementCases() []fieldProjectionRetirementCase {
 			language: ErlangLanguage(),
 			assert:   assertErlangRootFormFields,
 		},
+		{
+			name:     "dart_switch_expression_body",
+			source:   []byte("int f(Object value) => switch (value) { int n => n, _ => 0 };\n"),
+			language: DartLanguage(),
+			assert:   assertDartSwitchExpressionBodyFields,
+		},
+		{
+			name:     "elixir_nested_call_target",
+			source:   []byte("def unquote(f)(x), do: nil\n"),
+			language: ElixirLanguage(),
+			assert:   assertElixirNestedCallTargetField,
+		},
 	}
 }
 
@@ -222,6 +234,61 @@ func assertErlangRootFormFields(t *testing.T, root *gotreesitter.Node, lang *got
 		if got := root.FieldNameForChild(index, lang); got != want {
 			t.Fatalf("Erlang child %d field = %q, want %q", index, got, want)
 		}
+	}
+}
+
+func assertDartSwitchExpressionBodyFields(t *testing.T, root *gotreesitter.Node, lang *gotreesitter.Language) {
+	t.Helper()
+	switchExpression := findFirstNamedDescendantWhere(
+		root,
+		lang,
+		"switch_expression",
+		func(*gotreesitter.Node) bool { return true },
+	)
+	if switchExpression == nil {
+		t.Fatalf("missing Dart switch expression: %s", root.SExpr(lang))
+	}
+	bodyFields := 0
+	bodyStarted := false
+	for index := 0; index < switchExpression.ChildCount(); index++ {
+		child := switchExpression.Child(index)
+		if child == nil {
+			continue
+		}
+		field := switchExpression.FieldNameForChild(index, lang)
+		if field == "body" {
+			bodyFields++
+			bodyStarted = true
+			continue
+		}
+		if bodyStarted {
+			t.Fatalf("Dart switch child %d field = %q after body start", index, field)
+		}
+	}
+	if bodyFields < 2 {
+		t.Fatalf("Dart switch body field count = %d, want at least 2", bodyFields)
+	}
+}
+
+func assertElixirNestedCallTargetField(t *testing.T, root *gotreesitter.Node, lang *gotreesitter.Language) {
+	t.Helper()
+	nested := findFirstNamedDescendantWhere(
+		root,
+		lang,
+		"call",
+		func(node *gotreesitter.Node) bool {
+			return node.ChildCount() >= 2 &&
+				node.Child(0) != nil &&
+				node.Child(0).Type(lang) == "call" &&
+				node.Child(1) != nil &&
+				node.Child(1).Type(lang) == "arguments"
+		},
+	)
+	if nested == nil {
+		t.Fatalf("missing Elixir nested call: %s", root.SExpr(lang))
+	}
+	if got := nested.FieldNameForChild(0, lang); got != "target" {
+		t.Fatalf("Elixir nested call target field = %q, want target", got)
 	}
 }
 
