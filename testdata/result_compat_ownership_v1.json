@@ -1339,7 +1339,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "c5730b2c4e315fec677252304fd2548e9df8faec",
+      "retired_commit": "2722c6efd7f5ccdbcf38c69d88aa01fd7c924b70",
       "receipt_refs": [
         "grammars/http_section_native_regression_test.go",
         "cgo_harness/retired_dispatch_arm_parity_test.go"
