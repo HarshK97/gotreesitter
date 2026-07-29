@@ -7556,7 +7556,17 @@ func (p *Parser) tryRelexSingleParserState(tok Token, state StateID, ts TokenSou
 	}
 	stateful.SetParserState(state)
 	clearGLRStateTokenSource(stateful, scratch)
-	next, ok := relexer.RelexFromTokenStart(tok)
+	var (
+		next Token
+		ok   bool
+	)
+	if ts == dts {
+		// The outer snapshot already owns rollback for the direct source.
+		// Do not start a redundant nested transaction.
+		next, ok = dts.relexFromTokenStartInTransaction(tok)
+	} else {
+		next, ok = relexer.RelexFromTokenStart(tok)
+	}
 	actionIndex := p.lookupActionIndex(state, next.Symbol)
 	if !ok || !next.ExternalScannerToken || next.StartByte != tok.StartByte || next.EndByte != next.StartByte || (next.Symbol == tok.Symbol && next.StartByte == tok.StartByte && next.EndByte == tok.EndByte) || actionIndex == 0 || int(actionIndex) >= len(p.language.ParseActions) {
 		restoreRejectedProbe()

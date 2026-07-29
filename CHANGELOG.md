@@ -23,6 +23,12 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Direct parser-state re-lex probes now use their existing outer transaction.
+  This removes a redundant scanner-state snapshot.
+  The 235,626-byte Go fixture allocates 48.07 MiB instead of 86.69 MiB.
+  Allocations fall from 20,290 to 10,400 per parse.
+  Three stable benchmark pairs improve parse time by 10.90 to 15.26 percent.
+
 - The compact scheduler now stores its common rollback frontier inline.
   This removes one allocation from a fresh full parse.
 

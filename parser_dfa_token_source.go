@@ -2792,6 +2792,16 @@ func (d *dfaTokenSource) RelexFromTokenStart(tok Token) (Token, bool) {
 		return Token{}, false
 	}
 	snapshot := d.snapshotRelexState()
+	next, ok := d.relexFromTokenStartInTransaction(tok)
+	if !ok {
+		snapshot.restore(d)
+	}
+	return next, ok
+}
+
+// relexFromTokenStartInTransaction re-reads tok without starting a transaction.
+// The caller must restore its transaction when it rejects the result.
+func (d *dfaTokenSource) relexFromTokenStartInTransaction(tok Token) (Token, bool) {
 	target := int(tok.StartByte)
 	d.lexer.pos = target
 	d.lexer.row = tok.StartPoint.Row
@@ -2818,7 +2828,6 @@ func (d *dfaTokenSource) RelexFromTokenStart(tok Token) (Token, bool) {
 	}
 	next := d.Next()
 	if next.StartByte != tok.StartByte || next.StartPoint != tok.StartPoint {
-		snapshot.restore(d)
 		return Token{}, false
 	}
 	if tok.ExternalScannerToken && next.ExternalScannerToken &&
