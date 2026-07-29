@@ -204,7 +204,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 			if ctx.parser != nil && !ctx.parser.skipRecoveryReparse {
 				normalizeSQLRecoveredTopLevelSelectStatements(ctx.root, ctx.source, ctx.parser, ctx.lang)
 			}
-			normalizeSQLSelectClauseBodyIntoFields(ctx.root, ctx.lang)
 		})
 	case "swift":
 		dispatcherArmCensus(ctx, "dispatch.swift", func() { normalizeSwiftCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })

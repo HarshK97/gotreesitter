@@ -251,7 +251,10 @@ Root acceptance preserves producer fields when it absorbs surrounding trivia.
 The native reduction path sets Dart switch-expression body fields.
 It sets the target field for nested Elixir calls.
 The two language-local repairs are inert and removed.
-The Scala field repair and SQL field cleanup remain live counterexamples.
+Inherited reduction fields now preserve repeated direct descendants.
+They fill anonymous separators only between those direct descendants.
+An inherited field without direct evidence cannot cross a leading separator.
+These rules remove three Scala field repairs and the SQL `INTO` cleanup.
 
 ## Current progress: Erlang native ownership
 

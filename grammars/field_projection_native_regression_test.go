@@ -150,6 +150,27 @@ func fieldProjectionRetirementCases() []fieldProjectionRetirementCase {
 			language: ElixirLanguage(),
 			assert:   assertElixirNestedCallTargetField,
 		},
+		{
+			name: "scala_inherited_field_provenance",
+			source: []byte(`import foo.bar.Baz
+object Outer {
+  private def search(value: Int): Int =
+    if value == 0 then 1 else 2
+}
+`),
+			language:               ScalaLanguage(),
+			assert:                 assertScalaInheritedFieldProvenance,
+			reuseUnsupportedReason: "external_scanner_unsupported",
+		},
+		{
+			name: "sql_into_field_provenance",
+			source: []byte(`SELECT (SELECT 1), a
+FROM (SELECT a FROM table) AS b;
+SELECT a INTO b;
+`),
+			language: SqlLanguage(),
+			assert:   assertSQLIntoFieldProvenance,
+		},
 	}
 }
 
@@ -289,6 +310,171 @@ func assertElixirNestedCallTargetField(t *testing.T, root *gotreesitter.Node, la
 	}
 	if got := nested.FieldNameForChild(0, lang); got != "target" {
 		t.Fatalf("Elixir nested call target field = %q, want target", got)
+	}
+}
+
+func assertScalaInheritedFieldProvenance(t *testing.T, root *gotreesitter.Node, lang *gotreesitter.Language) {
+	t.Helper()
+	if root == nil || root.HasError() {
+		t.Fatalf("unexpected Scala root: %v", root)
+	}
+	importDeclaration := findFirstNamedDescendantWhere(
+		root,
+		lang,
+		"import_declaration",
+		func(*gotreesitter.Node) bool { return true },
+	)
+	if importDeclaration == nil {
+		t.Fatalf("missing Scala import declaration: %s", root.SExpr(lang))
+	}
+	for index := 1; index < importDeclaration.ChildCount(); index++ {
+		child := importDeclaration.Child(index)
+		if child == nil {
+			continue
+		}
+		if typ := child.Type(lang); typ != "identifier" && typ != "." {
+			continue
+		}
+		if got := importDeclaration.FieldNameForChild(index, lang); got != "path" {
+			t.Fatalf("Scala import child %d field = %q, want path", index, got)
+		}
+	}
+
+	objectDefinition := findFirstNamedDescendantWhere(
+		root,
+		lang,
+		"object_definition",
+		func(*gotreesitter.Node) bool { return true },
+	)
+	if objectDefinition == nil {
+		t.Fatalf("missing Scala object definition: %s", root.SExpr(lang))
+	}
+	var sawName, sawBody bool
+	for index := 0; index < objectDefinition.ChildCount(); index++ {
+		child := objectDefinition.Child(index)
+		if child == nil {
+			continue
+		}
+		switch child.Type(lang) {
+		case "identifier":
+			sawName = objectDefinition.FieldNameForChild(index, lang) == "name"
+		case "template_body":
+			sawBody = objectDefinition.FieldNameForChild(index, lang) == "body"
+		}
+	}
+	if !sawName || !sawBody {
+		t.Fatalf("Scala object fields are incomplete: %s", objectDefinition.SExpr(lang))
+	}
+
+	functionDefinition := findFirstNamedDescendantWhere(
+		objectDefinition,
+		lang,
+		"function_definition",
+		func(*gotreesitter.Node) bool { return true },
+	)
+	if functionDefinition == nil {
+		t.Fatalf("missing Scala function definition: %s", objectDefinition.SExpr(lang))
+	}
+	wantFields := map[string]string{
+		"identifier":      "name",
+		"parameters":      "parameters",
+		"type_identifier": "return_type",
+	}
+	sawFunctionBody := false
+	for index := 0; index < functionDefinition.ChildCount(); index++ {
+		child := functionDefinition.Child(index)
+		if child == nil {
+			continue
+		}
+		if child.Type(lang) == "modifiers" {
+			if got := functionDefinition.FieldNameForChild(index, lang); got != "" {
+				t.Fatalf("Scala modifiers field = %q, want empty", got)
+			}
+			continue
+		}
+		if functionDefinition.FieldNameForChild(index, lang) == "body" {
+			sawFunctionBody = true
+		}
+		want, ok := wantFields[child.Type(lang)]
+		if !ok {
+			continue
+		}
+		if got := functionDefinition.FieldNameForChild(index, lang); got != want {
+			t.Fatalf("Scala %s field = %q, want %q", child.Type(lang), got, want)
+		}
+		delete(wantFields, child.Type(lang))
+	}
+	if len(wantFields) != 0 || !sawFunctionBody {
+		t.Fatalf("Scala function fields are incomplete: fields=%v body=%t", wantFields, sawFunctionBody)
+	}
+
+	ifExpression := findFirstNamedDescendantWhere(
+		functionDefinition,
+		lang,
+		"if_expression",
+		func(*gotreesitter.Node) bool { return true },
+	)
+	if ifExpression == nil {
+		t.Fatalf("missing Scala if expression: %s", functionDefinition.SExpr(lang))
+	}
+	wantIfFields := map[string]bool{
+		"condition":   false,
+		"consequence": false,
+		"alternative": false,
+	}
+	for index := 0; index < ifExpression.ChildCount(); index++ {
+		field := ifExpression.FieldNameForChild(index, lang)
+		if _, ok := wantIfFields[field]; ok {
+			wantIfFields[field] = true
+		}
+	}
+	for field, found := range wantIfFields {
+		if !found {
+			t.Fatalf("Scala if expression lacks %s: %s", field, ifExpression.SExpr(lang))
+		}
+	}
+}
+
+func assertSQLIntoFieldProvenance(t *testing.T, root *gotreesitter.Node, lang *gotreesitter.Language) {
+	t.Helper()
+	if root == nil || root.HasError() {
+		t.Fatalf("unexpected SQL root: %v", root)
+	}
+	var bodies int
+	var explicitInto int
+	var visit func(*gotreesitter.Node)
+	visit = func(node *gotreesitter.Node) {
+		if node == nil {
+			return
+		}
+		if node.Type(lang) == "select_clause_body" {
+			bodies++
+			hasIntoKeyword := false
+			for index := 0; index < node.ChildCount(); index++ {
+				child := node.Child(index)
+				if child != nil && child.Type(lang) == "INTO" {
+					hasIntoKeyword = true
+				}
+			}
+			for index := 0; index < node.ChildCount(); index++ {
+				if got := node.FieldNameForChild(index, lang); got == "into" {
+					if !hasIntoKeyword {
+						t.Fatalf("SQL body has an into field without INTO: %s", node.SExpr(lang))
+					}
+					explicitInto++
+				}
+			}
+		}
+		for index := 0; index < node.ChildCount(); index++ {
+			visit(node.Child(index))
+		}
+	}
+	visit(root)
+	if bodies < 4 {
+		t.Fatalf("SQL select body count = %d, want at least 4", bodies)
+	}
+	if explicitInto != 1 {
+		t.Fatalf("SQL explicit into field count = %d, want 1", explicitInto)
 	}
 }
 

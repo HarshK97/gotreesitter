@@ -2086,8 +2086,7 @@
       "functions": [
         "normalizeSQLRecoveredSelectRoot",
         "normalizeSQLTrailingSelectListError",
-        "normalizeSQLRecoveredTopLevelSelectStatements",
-        "normalizeSQLSelectClauseBodyIntoFields"
+        "normalizeSQLRecoveredTopLevelSelectStatements"
       ],
       "files": [
         "parser_result_sql.go"
@@ -2095,7 +2094,7 @@
       "languages": [
         "sql"
       ],
-      "purpose": "Reconcile SQL recovery roots, errors, statements, and fields.",
+      "purpose": "Reconcile SQL recovery roots, errors, and statements.",
       "authoritative_owner": "scheduler_action_semantics",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go"
@@ -2568,7 +2567,7 @@
           ]
         }
       ],
-      "purpose": "Historical Scala arm of the returned-tree second-pass fixpoint. It repeated recovery, field, annotation, and span repairs after finalization.",
+      "purpose": "Historical Scala arm of the returned-tree second-pass fixpoint. It repeated recovery, annotation, and span repairs after finalization.",
       "authoritative_owner": "materialization",
       "witnesses": [
         "parser_result_test/parser_result_scala_comment_attachment_test.go",
@@ -2578,7 +2577,7 @@
         "grammars/scala_span_ownership_test.go",
         "cgo_harness/scala_span_ownership_parity_test.go"
       ],
-      "retirement_condition": "Satisfied: canonical compatibility owns recovery, fields, and annotations. Materialization and rewrite refresh own final spans.",
+      "retirement_condition": "Satisfied: canonical compatibility owns recovery and annotations. Reduction owns fields. Materialization and rewrite refresh own final spans.",
       "route_coverage": {
         "production": "retired_exact_receipt",
         "compact": "retired_exact_receipt",

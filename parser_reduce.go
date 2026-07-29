@@ -6542,6 +6542,11 @@ func (p *Parser) appendVisibleReduceChildToScratch(scratch *reduceBuildScratch, 
 func applyParentFieldToFlattenedHiddenSpan(children []*Node, fieldIDs []FieldID, fieldSources []uint8, hiddenParent *Node, spanStart, fieldEnd int, fid FieldID, inherited, appearsLater bool) {
 	source := fieldSourceForInheritance(inherited)
 	hasField := flattenedSpanHasFieldID(fieldIDs, spanStart, fieldEnd, fid)
+	if inherited && hasField {
+		fillAnonymousGapsBetweenDirectFields(children, fieldIDs, fieldSources, spanStart, fieldEnd, fid)
+		normalizeMixedSourceFieldSpan(fieldIDs, fieldSources, spanStart, fieldEnd)
+		return
+	}
 	if inherited && !hasField {
 		if assignSingleDescendantInheritedField(children, fieldIDs, fieldSources, spanStart, fieldEnd, fid) {
 			normalizeMixedSourceFieldSpan(fieldIDs, fieldSources, spanStart, fieldEnd)
@@ -6556,6 +6561,42 @@ func applyParentFieldToFlattenedHiddenSpan(children []*Node, fieldIDs []FieldID,
 	}
 	applyFieldToFlattenedSpan(children, fieldIDs, fieldSources, spanStart, fieldEnd, fid, source, true)
 	normalizeMixedSourceFieldSpan(fieldIDs, fieldSources, spanStart, fieldEnd)
+}
+
+func fillAnonymousGapsBetweenDirectFields(
+	children []*Node,
+	fieldIDs []FieldID,
+	fieldSources []uint8,
+	start int,
+	end int,
+	fid FieldID,
+) {
+	previous := -1
+	for i := start; i < end; i++ {
+		if fieldIDs[i] != fid || !fieldSourceIsDirect(fieldSourceAt(fieldSources, i)) {
+			continue
+		}
+		if previous < 0 {
+			previous = i
+			continue
+		}
+		fill := true
+		for gap := previous + 1; gap < i; gap++ {
+			child := children[gap]
+			if child == nil || child.isNamed() || child.isExtra() || child.isMissing() || fieldIDs[gap] != 0 {
+				fill = false
+				break
+			}
+		}
+		if !fill {
+			previous = i
+			continue
+		}
+		for gap := previous + 1; gap < i; gap++ {
+			assignFlattenedField(fieldIDs, fieldSources, gap, fid, fieldSourceDirect)
+		}
+		previous = i
+	}
 }
 
 func resolveDeferredParentField(children []*Node, fieldIDs []FieldID, fieldSources []uint8, hiddenParent *Node, spanStart, fieldEnd int, fid FieldID, source uint8) (direct, deferred bool) {
@@ -6596,6 +6637,12 @@ func shouldSkipInheritedParentFieldForFlattenedSpan(children []*Node, fieldIDs [
 	}
 	if hiddenParent.isNamed() && countEligibleNamedFieldTargets(children, fieldIDs, spanStart, fieldEnd) > 1 {
 		return true
+	}
+	if fieldEnd-spanStart > 1 {
+		first := children[spanStart]
+		if first != nil && !first.isNamed() && !first.isExtra() && !first.isMissing() {
+			return true
+		}
 	}
 	if !flattenedSpanHasAnyDirectField(children, fieldIDs, fieldSources, spanStart, fieldEnd) {
 		return false

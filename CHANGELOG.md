@@ -69,7 +69,11 @@ for tags and release notes while still in `0.x`.
 - The native reduction path now sets Dart switch-expression body fields.
   It now sets the target field for nested Elixir calls.
   This change removes two inert language-local field repairs.
-  The Scala and SQL field corrections remain live.
+
+- Inherited reduction fields now fill anonymous gaps between repeated direct
+  descendants.
+  They do not cross a leading separator without direct descendant evidence.
+  This change removes three Scala field repairs and the SQL `INTO` cleanup.
 
 - Compact graph insertion now persists exact predecessor merges across a
   bounded 16-level path.
