@@ -225,6 +225,9 @@ func TestDiagnosticParserCoreHeaderRollbackScratchRestoresAndReuses(t *testing.T
 	if err := scratch.begin(current); err != nil {
 		t.Fatal(err)
 	}
+	if len(scratch.headers) == 0 || &scratch.headers[0] != &scratch.inline[0] {
+		t.Fatal("initial rollback snapshot did not use inline storage")
+	}
 	current[0] = diagnosticParserCoreHeader{head: core.Head{Node: 9}, accepted: true}
 	current = current[:1]
 	scratch.finish(&current, true)
@@ -258,4 +261,14 @@ func TestDiagnosticParserCoreHeaderRollbackScratchRestoresAndReuses(t *testing.T
 	if scratch.busy || scratch.headers != nil {
 		t.Fatalf("reset rollback scratch=%+v", scratch)
 	}
+
+	wide := make([]diagnosticParserCoreHeader, len(scratch.inline)+1)
+	if err := scratch.begin(wide); err != nil {
+		t.Fatal(err)
+	}
+	if cap(scratch.headers) < len(wide) {
+		t.Fatalf("wide rollback capacity=%d want at least %d", cap(scratch.headers), len(wide))
+	}
+	scratch.finish(&wide, false)
+	scratch.reset()
 }

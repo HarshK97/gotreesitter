@@ -1738,11 +1738,14 @@ type diagnosticParserCoreDispatchScratch struct {
 // frontier while one scheduler mutation is in flight. Scheduler operations are
 // deliberately non-reentrant, so one bounded buffer can serve every accept,
 // reduction, conflict, ordinary-shift, and extra-shift transaction in a parse.
+// The inline buffer covers the common one-to-eight-header frontier. Wider
+// frontiers retain the existing heap-backed growth path.
 //
 // diagnosticParserCoreHeader is pointer-free today. reset nevertheless clears
 // the retained capacity at the end of the scheduler lifecycle so adding a
 // pointer-bearing field later cannot make this scratch retain parse state.
 type diagnosticParserCoreHeaderRollbackScratch struct {
+	inline  [8]diagnosticParserCoreHeader
 	busy    bool
 	headers []diagnosticParserCoreHeader
 }
@@ -1756,8 +1759,12 @@ func (scratch *diagnosticParserCoreHeaderRollbackScratch) begin(headers []diagno
 	}
 	scratch.busy = true
 	if cap(scratch.headers) < len(headers) {
-		capacity := max(len(headers), cap(scratch.headers)*2)
-		scratch.headers = make([]diagnosticParserCoreHeader, len(headers), capacity)
+		if len(headers) <= len(scratch.inline) {
+			scratch.headers = scratch.inline[:len(headers)]
+		} else {
+			capacity := max(len(headers), cap(scratch.headers)*2)
+			scratch.headers = make([]diagnosticParserCoreHeader, len(headers), capacity)
+		}
 	} else {
 		scratch.headers = scratch.headers[:len(headers)]
 	}

@@ -9,6 +9,9 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- The compact scheduler now stores its common rollback frontier inline.
+  This removes one allocation from a fresh full parse.
+
 - The fresh compact runner now reuses its scheduler storage across parses.
   Full-parse allocations fall from 15 to 14 per operation.
   Parse time and allocated bytes remain statistically unchanged.
