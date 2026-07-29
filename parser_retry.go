@@ -1794,12 +1794,16 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 				}
 			}
 			nodeRetryTree = secondaryTree
-			replaceBest(&bestTree, secondaryTree)
-		} else {
-			replaceBest(&bestTree, retryTree)
 		}
 	}
 
+	// Keep the last widened candidate alive until its runtime can schedule the
+	// combined stack-and-merge retry below. Releasing it through replaceBest
+	// first clears the runtime receipt and silently skips that final rung.
+	if nodeRetryTree != nil && treeParseClean(nodeRetryTree) {
+		replaceBest(&bestTree, nodeRetryTree)
+		nodeRetryTree = nil
+	}
 	if treeParseClean(bestTree) {
 		if nodeRetryTree != nil && nodeRetryTree != bestTree && nodeRetryTree != tree {
 			release(nodeRetryTree)
@@ -1807,10 +1811,9 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 		return bestTree
 	}
 	maxMergePerKeyOverride := fullParseRetryMergePerKeyOverride(nodeRetryTree, len(source), initialMaxStacks)
+	replaceBest(&bestTree, nodeRetryTree)
+	nodeRetryTree = nil
 	if maxMergePerKeyOverride == 0 {
-		if nodeRetryTree != nil && nodeRetryTree != bestTree && nodeRetryTree != tree {
-			release(nodeRetryTree)
-		}
 		return bestTree
 	}
 	if retryDeadlineExceeded() {
@@ -1823,11 +1826,6 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 		maxMergePerKeyOverride,
 		maxNodesOverride,
 	)
-	// nodeRetryTree is no longer needed; drop it before potentially replacing
-	// bestTree so we don't leak it if it was also the incumbent.
-	if nodeRetryTree != nil && nodeRetryTree != bestTree && nodeRetryTree != tree {
-		release(nodeRetryTree)
-	}
 	replaceBest(&bestTree, mergeRetryTree)
 	return bestTree
 }

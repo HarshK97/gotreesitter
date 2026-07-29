@@ -244,16 +244,11 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 				"    List<List<SObject>> searchResults = [FIND :keyword IN ALL FIELDS];\n" +
 				"  }\n" +
 				"}\n",
-			wantRawDigest:    "84ea02bcd332e4fea9eb6d7f7e13102b489c8e1fa002cc1dfbea938c2e1d25a7",
-			wantResultDigest: "35ec351ac90dcccd197a426a9f4d0d663aa9df54c5612157b95352c3943f8a4a",
+			wantRawDigest:    "7d39cbbd2e1ae5eb23bfd005f4a893688c380f3366cc0c2894d66d752e93f0a3",
+			wantResultDigest: "7d39cbbd2e1ae5eb23bfd005f4a893688c380f3366cc0c2894d66d752e93f0a3",
 			expectedSubpasses: []string{
 				"dispatch.apex",
-				"dispatch.apex.generic-local-declaration",
 				"dispatch.apex.class-literal-alias",
-			},
-			rewrittenSubpasses: []string{
-				"dispatch.apex",
-				"dispatch.apex.generic-local-declaration",
 			},
 		},
 		{
@@ -268,7 +263,6 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 			wantResultDigest: "691872382855aafce9519a115ca30ac191c4a118d4ab7170e88e0193fd2f5bb6",
 			expectedSubpasses: []string{
 				"dispatch.apex",
-				"dispatch.apex.generic-local-declaration",
 				"dispatch.apex.class-literal-alias",
 			},
 			rewrittenSubpasses: []string{

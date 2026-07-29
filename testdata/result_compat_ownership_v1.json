@@ -128,27 +128,12 @@
       "id": "dispatch.apex",
       "kind": "dispatcher_arm",
       "functions": [
-        "normalizeApexClassLiteralAccess",
-        "normalizeApexGenericLocalDeclarations"
+        "normalizeApexClassLiteralAccess"
       ],
       "files": [
         "parser_result_apex.go"
       ],
       "subpasses": [
-        {
-          "id": "dispatch.apex.generic-local-declaration",
-          "functions": [
-            "normalizeApexGenericLocalDeclarations"
-          ],
-          "files": [
-            "parser_result_apex.go"
-          ],
-          "purpose": "Select and construct a generic local-variable declaration from the parsed expression shape.",
-          "authoritative_owner": "derivation_election_selection",
-          "witnesses": [
-            "parser_result_test/materialization_subpass_census_test.go"
-          ]
-        },
         {
           "id": "dispatch.apex.class-literal-alias",
           "functions": [
