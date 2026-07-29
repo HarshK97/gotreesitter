@@ -96,11 +96,6 @@ func TestResetDiagnosticParserCoreRetainedSliceBoundsAndClears(t *testing.T) {
 	if retained := resetDiagnosticParserCoreRetainedSlice(large); retained != nil {
 		t.Fatalf("oversized retained slice cap=%d", cap(retained))
 	}
-	for index, item := range large {
-		if item != nil {
-			t.Fatalf("oversized retained slice item %d was not cleared", index)
-		}
-	}
 }
 
 func TestResetDiagnosticParserCoreGenericSchedulerRejectsActiveScratch(t *testing.T) {

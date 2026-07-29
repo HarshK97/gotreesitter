@@ -1433,10 +1433,10 @@ func resetDiagnosticParserCoreRetainedSlice[T any](items []T) []T {
 	if cap(items) == 0 {
 		return nil
 	}
-	clear(items[:cap(items)])
 	if cap(items) > diagnosticParserCoreRetainedScratchCapacity {
 		return nil
 	}
+	clear(items[:cap(items)])
 	return items[:0]
 }
 
