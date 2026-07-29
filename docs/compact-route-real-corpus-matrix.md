@@ -1,7 +1,7 @@
 # Compact route real-corpus matrix
 
 Current evidence date: 2026-07-29.
-Current base commit: `088e6e12` from `main`.
+Current base commit: `50bbcf7e` from `main`.
 
 ## Current bounded result
 
