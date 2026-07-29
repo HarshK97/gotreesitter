@@ -15,13 +15,13 @@ without updating that registry.
 
 The v1 registry freezes the current source and registry:
 
-- 42 explicit `runLanguageResultCompatibility` switch arms covering 44
+- 41 explicit `runLanguageResultCompatibility` switch arms covering 43
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-That is 43 live registry entries and 40 retired entries. These counts backfill
+That is 42 live registry entries and 41 retired entries. These counts backfill
 earlier retirements. This field repair change does not remove a dispatcher arm.
 The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
