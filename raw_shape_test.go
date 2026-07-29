@@ -579,6 +579,66 @@ func TestForestRootPreservesVisibleContainerAlternativeOverHiddenRepeatSlice(t *
 	}
 }
 
+func TestForestRootPreservesRepeatedVisibleContainerAlternative(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	const (
+		rootSym      Symbol = 1
+		containerSym Symbol = 2
+		headSym      Symbol = 3
+		bodySym      Symbol = 4
+		nextSym      Symbol = 5
+	)
+	lang := &Language{
+		Name:        "forest-root-repeated-visible-container-test",
+		SymbolNames: []string{"EOF", "root", "container", "head", "body", "next"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "root", Visible: true, Named: true},
+			{Name: "container", Visible: true, Named: true},
+			{Name: "head", Visible: true, Named: true},
+			{Name: "body", Visible: true, Named: true},
+			{Name: "next", Visible: true, Named: true},
+		},
+	}
+	parser := &Parser{language: lang, hasRootSymbol: true, rootSymbol: rootSym}
+
+	head := newLeafNodeInArena(arena, headSym, true, 0, 1, Point{}, Point{Column: 1})
+	body := newLeafNodeInArena(arena, bodySym, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	next := newLeafNodeInArena(arena, nextSym, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	first := newParentNodeInArena(arena, containerSym, true, []*Node{head}, nil, 0)
+	second := newParentNodeInArena(arena, containerSym, true, []*Node{body}, nil, 0)
+	third := newParentNodeInArena(arena, containerSym, true, []*Node{next}, nil, 0)
+	root := newParentNodeInArena(arena, rootSym, true, []*Node{first, second, third}, nil, 0)
+
+	candidateHead := newLeafNodeInArena(arena, headSym, true, 0, 1, Point{}, Point{Column: 1})
+	candidateBody := newLeafNodeInArena(arena, bodySym, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	candidate := newParentNodeInArena(
+		arena,
+		containerSym,
+		true,
+		[]*Node{candidateHead, candidateBody},
+		nil,
+		0,
+	)
+
+	alternatives := newForestAlternativeIndex(4)
+	alternatives.setNode(candidate, &gssForestNode{state: 10})
+	if !forestPreserveRootVisibleContainerAlternatives(parser, arena, root, alternatives) {
+		t.Fatal("forestPreserveRootVisibleContainerAlternatives = false, want true")
+	}
+	if got, want := resultChildCount(root), 2; got != want {
+		t.Fatalf("root child count = %d, want %d", got, want)
+	}
+	if got := resultChildAt(root, 0); got != candidate {
+		t.Fatalf("root child = %v, want recorded container alternative", got)
+	}
+	if got := resultChildAt(root, 1); got != third {
+		t.Fatalf("root final child = %v, want untouched sibling", got)
+	}
+}
+
 func TestAcceptedStackSelectionUsesDynamicPrecedenceBeforeRawShape(t *testing.T) {
 	arena := acquireNodeArena(arenaClassFull)
 	defer arena.Release()

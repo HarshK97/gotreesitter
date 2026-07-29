@@ -2,8 +2,8 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 41,
-    "dispatcher_languages": 43,
+    "dispatcher_arms": 40,
+    "dispatcher_languages": 42,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
@@ -1321,40 +1321,29 @@
       "files": [
         "parser_result_http.go"
       ],
-      "subpasses": [
-        {
-          "id": "dispatch.http.document-section-coalescing",
-          "functions": [
-            "normalizeHTTPDocumentSections"
-          ],
-          "files": [
-            "parser_result_http.go"
-          ],
-          "purpose": "Select and construct one section from adjacent recovered document sections.",
-          "authoritative_owner": "scheduler_action_semantics",
-          "witnesses": [
-            "parser_result_test/materialization_subpass_census_test.go"
-          ]
-        }
-      ],
       "languages": [
         "http"
       ],
-      "purpose": "Reconcile HTTP returned-tree shape and spans.",
-      "authoritative_owner": "materialization",
+      "purpose": "Historical: coalesce adjacent recovered HTTP document sections after publication.",
+      "authoritative_owner": "derivation_election_selection",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/http_section_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: native parser actions emit each section tree without result compatibility. Forest selection preserves the recorded same-symbol container alternative. Compact parsing fails closed. Incremental parsing uses the old tree and preserves the exact result.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_or_fail_closed_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "receipt_refs": []
+      "status": "retired",
+      "retired_commit": "c5730b2c4e315fec677252304fd2548e9df8faec",
+      "receipt_refs": [
+        "grammars/http_section_native_regression_test.go",
+        "cgo_harness/retired_dispatch_arm_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.hurl",
