@@ -23,6 +23,13 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Outer parser-state re-lex transactions now reuse one 4 KiB scanner-state
+  buffer.
+  The 235,626-byte Go fixture allocates 7.583 MiB instead of 48.073 MiB.
+  Allocations fall from 10,404 to 513 per parse.
+  Two stable pairs improve parse time by 9.52 to 15.46 percent.
+  Maximum resident set size falls from 220,236 KiB to 185,920 KiB.
+
 - Direct parser-state re-lex probes now use their existing outer transaction.
   This removes a redundant scanner-state snapshot.
   The 235,626-byte Go fixture allocates 48.07 MiB instead of 86.69 MiB.

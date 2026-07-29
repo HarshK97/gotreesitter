@@ -7545,11 +7545,12 @@ func (p *Parser) tryRelexSingleParserState(tok Token, state StateID, ts TokenSou
 	if !statefulOK || !relexerOK || dts == nil || !relexer.CanRelexFromTokenStart(tok) {
 		return Token{}, false
 	}
-	snapshot := dts.snapshotRelexState()
+	snapshot, retainedSnapshot := scratch.snapshotDFARelexState(dts)
 	savedState := dts.state
 	savedGLRStates := dts.glrStates
 	restoreRejectedProbe := func() {
 		snapshot.restore(dts)
+		scratch.releaseDFARelexSnapshot(retainedSnapshot)
 		dts.state = savedState
 		dts.glrStates = savedGLRStates
 		p.updateCurrentRelexParserStateTokenSource(ts, stacks, scratch)
@@ -7580,6 +7581,7 @@ func (p *Parser) tryRelexSingleParserState(tok Token, state StateID, ts TokenSou
 	// The returned token and committed scanner checkpoint belong to this parser
 	// state. Keep the source isolated through dispatch; the outer loop refreshes
 	// the live frontier before its next read, and same-pass re-lex paths set it.
+	scratch.releaseDFARelexSnapshot(retainedSnapshot)
 	return next, true
 }
 

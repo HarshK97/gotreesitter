@@ -42,7 +42,34 @@ func TestDFARelexFailureRestoresThroughOuterTransaction(t *testing.T) {
 		EndPoint:   Point{Column: 1},
 	}
 
-	snapshot := ts.snapshotRelexState()
+	scratch := &parserScratch{
+		relexSnapshotBuffer: make([]byte, externalScannerSerializationBufferSize),
+	}
+	for i := range scratch.relexSnapshotBuffer {
+		scratch.relexSnapshotBuffer[i] = 0xff
+	}
+	snapshot, retained := scratch.snapshotDFARelexState(ts)
+	if !retained || !scratch.relexSnapshotInUse {
+		t.Fatal("outer re-lex snapshot did not retain parser scratch")
+	}
+	if got := cap(scratch.relexSnapshotBuffer); got != externalScannerSerializationBufferSize {
+		t.Fatalf("retained buffer capacity = %d, want %d", got, externalScannerSerializationBufferSize)
+	}
+	for i, b := range scratch.relexSnapshotBuffer[:cap(scratch.relexSnapshotBuffer)] {
+		if i == 0 {
+			continue
+		}
+		if b != 0 {
+			t.Fatalf("retained buffer byte %d = %d, want cleared before reuse", i, b)
+		}
+	}
+	nested, nestedRetained := scratch.snapshotDFARelexState(ts)
+	if nestedRetained {
+		t.Fatal("nested re-lex snapshot reused the active outer buffer")
+	}
+	if &nested.externalPayload[0] == &snapshot.externalPayload[0] {
+		t.Fatal("nested re-lex snapshot aliases the active outer buffer")
+	}
 	if got, ok := ts.relexFromTokenStartInTransaction(tok); ok {
 		t.Fatalf("relexFromTokenStartInTransaction = (%+v, true), want false for skipped-start token", got)
 	}
@@ -50,6 +77,7 @@ func TestDFARelexFailureRestoresThroughOuterTransaction(t *testing.T) {
 		t.Fatal("failed probe restored itself; want the outer transaction to own rollback")
 	}
 	snapshot.restore(ts)
+	scratch.releaseDFARelexSnapshot(retained)
 
 	if ts.lexer.pos != 2 || ts.lexer.row != 4 || ts.lexer.col != 6 {
 		t.Fatalf("lexer = pos %d row %d col %d, want restored 2/4/6", ts.lexer.pos, ts.lexer.row, ts.lexer.col)
@@ -62,6 +90,75 @@ func TestDFARelexFailureRestoresThroughOuterTransaction(t *testing.T) {
 	}
 	if ts.zeroWidthPos != 9 || ts.zeroWidthCount != 3 {
 		t.Fatalf("zero-width guard = pos %d count %d, want 9/3", ts.zeroWidthPos, ts.zeroWidthCount)
+	}
+	if scratch.relexSnapshotInUse {
+		t.Fatal("outer re-lex snapshot remains active after rollback")
+	}
+	for i, b := range scratch.relexSnapshotBuffer[:cap(scratch.relexSnapshotBuffer)] {
+		if b != 0 {
+			t.Fatalf("released buffer byte %d = %d, want zero", i, b)
+		}
+	}
+}
+
+func TestParserScratchDropsOversizedDFARelexSnapshotBuffer(t *testing.T) {
+	oversized := make([]byte, externalScannerSerializationBufferSize+1)
+	for i := range oversized {
+		oversized[i] = 0xff
+	}
+	scratch := &parserScratch{
+		relexSnapshotBuffer: oversized,
+		relexSnapshotInUse:  true,
+	}
+	scratch.releaseDFARelexSnapshot(true)
+	if scratch.relexSnapshotBuffer != nil {
+		t.Fatalf("oversized re-lex buffer capacity = %d, want dropped", cap(scratch.relexSnapshotBuffer))
+	}
+	if scratch.relexSnapshotInUse {
+		t.Fatal("oversized re-lex buffer remains active after release")
+	}
+	for i, b := range oversized {
+		if b != 0 {
+			t.Fatalf("dropped buffer byte %d = %d, want zero", i, b)
+		}
+	}
+}
+
+func TestParserScratchReusesDFARelexSnapshotBufferAfterCommit(t *testing.T) {
+	lang := &Language{ExternalScanner: byteStateExternalScanner{}}
+	payload := lang.ExternalScanner.Create()
+	*payload.(*byte) = 9
+	ts := &dfaTokenSource{
+		lexer:              NewLexer(nil, nil),
+		language:           lang,
+		externalPayload:    payload,
+		hasExternalScanner: true,
+	}
+	scratch := &parserScratch{}
+
+	first, firstRetained := scratch.snapshotDFARelexState(ts)
+	if !firstRetained || len(first.externalPayload) != 1 {
+		t.Fatalf("first snapshot = retained %t payload %v, want true/[9]", firstRetained, first.externalPayload)
+	}
+	firstBuffer := &first.externalPayload[0]
+	*payload.(*byte) = 7
+	scratch.releaseDFARelexSnapshot(firstRetained)
+	if got := *payload.(*byte); got != 7 {
+		t.Fatalf("committed scanner state = %d, want 7", got)
+	}
+
+	second, secondRetained := scratch.snapshotDFARelexState(ts)
+	if !secondRetained || len(second.externalPayload) != 1 {
+		t.Fatalf("second snapshot = retained %t payload %v, want true/[7]", secondRetained, second.externalPayload)
+	}
+	if &second.externalPayload[0] != firstBuffer {
+		t.Fatal("completed outer transaction did not reuse its retained buffer")
+	}
+	*payload.(*byte) = 3
+	second.restore(ts)
+	scratch.releaseDFARelexSnapshot(secondRetained)
+	if got := *payload.(*byte); got != 7 {
+		t.Fatalf("rolled-back scanner state = %d, want 7", got)
 	}
 }
 
