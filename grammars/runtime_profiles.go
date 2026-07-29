@@ -124,7 +124,8 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 			gotreesitter.ResultCompatibilityCSharpNativeUnicodeIdentifiers |
 			gotreesitter.ResultCompatibilityCSharpNativeScopedLambdaStatements |
 			gotreesitter.ResultCompatibilityCSharpNativeScopedLambdaBlocks |
-			gotreesitter.ResultCompatibilityCSharpNativeQueryExpressions,
+			gotreesitter.ResultCompatibilityCSharpNativeQueryExpressions |
+			gotreesitter.ResultCompatibilityNativeRecoveredStructure,
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry:             true,
 			SkipCompleteMaxEntryScratchPeak:            csharpAcceptedErrorRetryMaxEntryScratchPeak,

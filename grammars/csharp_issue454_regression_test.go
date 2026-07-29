@@ -84,11 +84,14 @@ func TestIssue454CSharpFreshAndIncrementalConverge(t *testing.T) {
 				NewEndPoint: gotreesitter.Point{Row: point.Row, Column: point.Column + test.newCols},
 			})
 
-			incremental, _, err := gotreesitter.NewParser(lang).ParseIncrementalProfiled(test.edited, oldTree)
+			incremental, profile, err := gotreesitter.NewParser(lang).ParseIncrementalProfiled(test.edited, oldTree)
 			if err != nil {
 				t.Fatalf("ParseIncrementalProfiled: %v", err)
 			}
 			defer incremental.Release()
+			if !profile.ReuseUnsupported || profile.ReuseUnsupportedReason != "external_scanner_unsupported" {
+				t.Fatalf("incremental fallback status = %+v", profile)
+			}
 			fresh, err := gotreesitter.NewParser(lang).Parse(test.edited)
 			if err != nil {
 				t.Fatalf("fresh edited Parse: %v", err)
@@ -106,7 +109,32 @@ func TestIssue454CSharpFreshAndIncrementalConverge(t *testing.T) {
 					want.hasError,
 				)
 			}
+			if test.name == "delete" && !got.hasError {
+				t.Fatal("delete parse did not retain the localized parse error")
+			}
 		})
+	}
+}
+
+func BenchmarkIssue454CSharpRecoveredFullParse(b *testing.B) {
+	lang := grammars.CSharpLanguage()
+	source := issue454CSharpSource(137 * 1024)
+	site := bytes.Index(source, []byte("x0"))
+	if site < 0 {
+		b.Fatal("C# edit marker is absent")
+	}
+	source = append(append([]byte(nil), source[:site]...), source[site+1:]...)
+	parser := gotreesitter.NewParser(lang)
+	parser.SetAdmissionCandidateRoute(false)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(source)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tree, err := parser.Parse(source)
+		if err != nil {
+			b.Fatal(err)
+		}
+		tree.Release()
 	}
 }
 

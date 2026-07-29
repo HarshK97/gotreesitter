@@ -27,6 +27,17 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- The parser now skips four redundant source reconstruction passes for
+  certified isolated C# recovered roots.
+  The receipt requires one one-byte error, no missing nodes, and matching raw
+  top-level spans.
+  The 137 KiB deletion witness still matches the pinned C parser.
+  Median full-parse time falls from 8.24 seconds to 5.01 seconds.
+  Median memory falls from 608 MB to 195 MB.
+  Median allocation count falls from 286,009 to 9,663.
+  `BenchmarkIssue454CSharpRecoveredFullParse` uses `GOMAXPROCS=1`,
+  `-benchmem`, `-benchtime=1x`, and `-count=5`.
+
 - The graph-structured stack shape walk now skips a duplicate cache lookup
   after a known head miss.
   The standard full-parse benchmark improves by 5.12 percent across 20 samples.

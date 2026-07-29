@@ -8,12 +8,13 @@ type normalizationPassCounters struct {
 }
 
 type normalizationStats struct {
-	passesChecked  uint64
-	passesRun      uint64
-	nodesVisited   uint64
-	nodesRewritten uint64
-	nanos          int64
-	namedPasses    []normalizationNamedPassStats
+	passesChecked                         uint64
+	passesRun                             uint64
+	nodesVisited                          uint64
+	nodesRewritten                        uint64
+	nanos                                 int64
+	namedPasses                           []normalizationNamedPassStats
+	nativeRecoveredStructureAuthoritative bool
 }
 
 type normalizationNamedPassStats struct {
@@ -121,6 +122,7 @@ func (p *Parser) copyNormalizationStats(rt *ParseRuntime) {
 	rt.NormalizationNodesVisited = p.normalizationStats.nodesVisited
 	rt.NormalizationNodesRewritten = p.normalizationStats.nodesRewritten
 	rt.NormalizationNanos = p.normalizationStats.nanos
+	rt.NativeRecoveredStructureAuthoritative = p.normalizationStats.nativeRecoveredStructureAuthoritative
 	if len(p.normalizationStats.namedPasses) > 0 {
 		passes := make([]NormalizationPassRuntime, len(p.normalizationStats.namedPasses))
 		for i, pass := range p.normalizationStats.namedPasses {
