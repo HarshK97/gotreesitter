@@ -1,6 +1,7 @@
 package gotreesitter
 
 import (
+	"fmt"
 	"testing"
 	"unsafe"
 )
@@ -146,6 +147,57 @@ func TestGSSNodeHashComputedLazilyForSingleStackNodes(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("lazy hash = %d, want %d", got, want)
+	}
+}
+
+func TestGSSNodeHashMatchesAcrossInlineBoundary(t *testing.T) {
+	for _, length := range []int{1, 31, 32, 33, 64} {
+		t.Run(fmt.Sprintf("length_%d", length), func(t *testing.T) {
+			nodes := make([]gssNode, length)
+			want := uint64(gssHashSeed)
+			for i := range nodes {
+				nodes[i].entry.state = StateID(i + 1)
+				nodes[i].depth = uint32(i + 1)
+				if i > 0 {
+					nodes[i].prev = &nodes[i-1]
+				}
+				want = gssEntryHash(want, nodes[i].entry)
+				if want == 0 {
+					want = 1
+				}
+			}
+			if got := gssNodeHash(&nodes[len(nodes)-1]); got != want {
+				t.Fatalf("hash = %d, want %d", got, want)
+			}
+			for i := range nodes {
+				if nodes[i].hash == 0 {
+					t.Fatalf("node %d hash remains zero", i)
+				}
+			}
+		})
+	}
+}
+
+func TestGSSNodeHashInlineWalkDoesNotAllocate(t *testing.T) {
+	var nodes [32]gssNode
+	for i := range nodes {
+		nodes[i].entry.state = StateID(i + 1)
+		nodes[i].depth = uint32(i + 1)
+		if i > 0 {
+			nodes[i].prev = &nodes[i-1]
+		}
+	}
+
+	allocs := testing.AllocsPerRun(100, func() {
+		for i := range nodes {
+			nodes[i].hash = 0
+		}
+		if got := gssNodeHash(&nodes[len(nodes)-1]); got == 0 {
+			t.Fatal("inline hash walk returned zero")
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("inline hash walk allocated %.0f objects, want 0", allocs)
 	}
 }
 
