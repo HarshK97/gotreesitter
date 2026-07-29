@@ -471,6 +471,14 @@ type Head struct {
 	Node NodeID
 }
 
+// CondenseCandidate identifies one active scheduler version that a new action
+// output can merge into. The scheduler excludes the source version.
+type CondenseCandidate struct {
+	Head       Head
+	Shifted    bool
+	Checkpoint CheckpointID
+}
+
 // Derivation is one retained exact root-to-head path after local shallow-link
 // precedence selection.
 type Derivation struct {
@@ -585,6 +593,9 @@ type Core struct {
 	checkpoints         checkpointInterner
 	boundaries          boundaryIndex
 	boundaryJournal     []boundaryMutation
+	condenseCandidates  []CondenseCandidate
+	condenseNewNode     NodeID
+	condenseScopeActive bool
 	transactions        []uint64
 	nextTransaction     uint64
 	classificationPhase uint64
@@ -1064,6 +1075,7 @@ func (c *Core) Reset() error {
 	c.boundaries.reset()
 	clear(c.boundaryJournal)
 	c.boundaryJournal = c.boundaryJournal[:0]
+	c.clearLiveCondenseCandidates()
 	c.transactions = c.transactions[:0]
 	c.nextTransaction = 0
 	c.schedulerFrame.clearInactive()
@@ -1204,7 +1216,25 @@ func (c *Core) CanonicalBoundary(state StateID, byteOffset uint32, consumed bool
 		frontier: c.frontier, state: state, byteOffset: byteOffset,
 		shifted: consumed, checkpoint: checkpoint,
 	}))
+	if probe.found && !c.condenseNodeIsLive(id) {
+		return Head{}, false
+	}
 	return Head{Node: id}, probe.found
+}
+
+func (c *Core) condenseNodeIsLive(id NodeID) bool {
+	if !c.condenseScopeActive {
+		return true
+	}
+	if id >= c.condenseNewNode {
+		return true
+	}
+	for _, candidate := range c.condenseCandidates {
+		if candidate.Head.Node == id {
+			return true
+		}
+	}
+	return false
 }
 
 // InternCheckpoint returns the core-local identity of an exact serialized
@@ -1948,9 +1978,12 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 		return condenseOutcome{}, err
 	}
 	probe, oldID := c.boundaries.probe(boundaryIdentityFromKey(key))
+	if probe.found && !c.condenseNodeIsLive(oldID) {
+		oldID = 0
+	}
 	var old nodeRecord
 	var oldLinks []linkRecord
-	if probe.found {
+	if oldID != 0 {
 		oldRecord, err := c.node(oldID)
 		if err != nil {
 			return condenseOutcome{}, err

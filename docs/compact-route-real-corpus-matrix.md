@@ -1,7 +1,7 @@
 # Compact route real-corpus matrix
 
 Current evidence date: 2026-07-29.
-Current base commit: `50bbcf7e` from `main`.
+Current base commit: `83548f55` from `main`.
 
 ## Current bounded result
 
@@ -9,8 +9,8 @@ The bounded matrix completed with no silent divergence.
 
 | Status | Files |
 |---|---:|
-| PASS | 66 |
-| FALLBACK | 33 |
+| PASS | 70 |
+| FALLBACK | 29 |
 | SKIP | 10 |
 | DIVERGE | 0 |
 | ERROR | 0 |
@@ -20,21 +20,20 @@ The corpus manifest contains 146 verified files across 50 languages.
 This run selected files smaller than 16,384 bytes and excluded AWK.
 The AWK medium file needs a separate slow-path budget.
 
-The direct route served 61 percent of the selected files.
+The direct route served 64 percent of the selected files.
 Production served every fallback and every ineligible file.
 
 ## Current fallback taxonomy
 
-The 33 fallbacks divide into 18 clean production trees and 15 production error trees.
+The 29 fallbacks divide into 14 clean production trees and 15 production error trees.
 
 | Class | Clean | Error tree | Total | Exact trigger |
 |---|---:|---:|---:|---|
 | Recovery handoff | 0 | 13 | 13 | The elected token has no table action at end-of-file. |
-| Selected-lineage ownership | 11 | 1 | 12 | A converged split drop lacks one selected-lineage proof. |
+| Selected-lineage ownership | 10 | 1 | 11 | A converged split drop lacks one selected-lineage proof. |
 | Certified repetition conflicts | 3 | 0 | 3 | The generic scheduler declines a repetition shift. |
-| Shared cap ranking | 3 | 0 | 3 | One shared boundary has nine live links under the cap of eight. |
 | Acceptance-frontier ownership | 1 | 1 | 2 | The end-of-file frontier has more than one active head. |
-| Total | 18 | 15 | 33 | |
+| Total | 14 | 15 | 29 | |
 
 The recovery handoff class contains these witnesses:
 
@@ -57,13 +56,17 @@ The selected-lineage class contains these witnesses:
 - Elixir
 - Julia
 - Kotlin, two files
-- Perl, two files
+- Perl
 - Scala, two files
 - TSX
 
 The repetition class contains one C# file and two Haskell files.
-The shared cap class contains Go module, OCaml, and Rust files.
 The acceptance class contains one Bash file and one Markdown file.
+
+The scheduler now scopes each condense action to live headers.
+It no longer counts removed versions against the shared link cap.
+This retires the prior Go module, OCaml, and Rust shared-cap witnesses.
+The same correction also retires one Perl selected-lineage fallback.
 
 ## Class prerequisites
 
@@ -75,9 +78,6 @@ An artifact certificate can authorize only a pinned grammar with C-oracle eviden
 
 Certified repetition conflicts need one reusable conflict rule or exact artifact evidence.
 Do not add a grammar-name branch to the scheduler.
-
-Shared cap ranking must identify the production-selected live link before a drop.
-Raising the cap alone does not prove selection.
 
 Post-accept continuation must preserve an accepted result while live end-of-file reductions finish.
 The Markdown continuation reaches score 160 and branch 8.

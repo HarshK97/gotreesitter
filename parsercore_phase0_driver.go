@@ -1514,6 +1514,7 @@ type diagnosticParserCoreGenericScheduler struct {
 	reductionOutputs              []core.ReductionOutput
 	reductionReplacements         []diagnosticParserCoreHeader
 	classifiedBoundaries          []core.ClassifiedBoundary
+	condenseCandidates            []core.CondenseCandidate
 	electStates                   []StateID
 	electGLRStates                []StateID
 	work                          DiagnosticParserCoreGenericWork
@@ -1560,6 +1561,7 @@ func resetDiagnosticParserCoreGenericScheduler(scheduler *diagnosticParserCoreGe
 	reductionOutputs := resetDiagnosticParserCoreRetainedSlice(scheduler.reductionOutputs)
 	reductionReplacements := resetDiagnosticParserCoreRetainedSlice(scheduler.reductionReplacements)
 	classifiedBoundaries := resetDiagnosticParserCoreRetainedSlice(scheduler.classifiedBoundaries)
+	condenseCandidates := resetDiagnosticParserCoreRetainedSlice(scheduler.condenseCandidates)
 	electStates := resetDiagnosticParserCoreRetainedSlice(scheduler.electStates)
 	electGLRStates := resetDiagnosticParserCoreRetainedSlice(scheduler.electGLRStates)
 	acceptedPayloads := resetDiagnosticParserCoreRetainedSlice(scheduler.acceptedPayloads)
@@ -1576,6 +1578,7 @@ func resetDiagnosticParserCoreGenericScheduler(scheduler *diagnosticParserCoreGe
 		reductionOutputs:      reductionOutputs,
 		reductionReplacements: reductionReplacements,
 		classifiedBoundaries:  classifiedBoundaries,
+		condenseCandidates:    condenseCandidates,
 		electStates:           electStates,
 		electGLRStates:        electGLRStates,
 		acceptedPayloads:      acceptedPayloads,
@@ -3245,6 +3248,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 	if err := s.reserveDispatches(1); err != nil {
 		return err
 	}
+	candidates := s.collectCondenseCandidates(cell.headerIndex)
 	ordinal := cell.selectedActionOrdinal()
 	if cell.selectsConflictReduction() {
 		s.compact.SetReduceConflictContext(true)
@@ -3255,7 +3259,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		s.compact.SetReduceNoLookaheadContext(true)
 		defer s.compact.SetReduceNoLookaheadContext(false)
 	}
-	outputs, err := s.compact.ReduceOutputsClassifiedIntoOwned(owner, s.reductionOutputs, cell.boundary, ordinal, core.ForkOrder{})
+	outputs, err := s.compact.ReduceOutputsClassifiedIntoWithLiveCondenseCandidatesOwned(
+		owner, candidates, s.reductionOutputs, cell.boundary, ordinal, core.ForkOrder{},
+	)
 	if err != nil {
 		return err
 	}
@@ -3364,6 +3370,26 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 	return nil
 }
 
+// reindexCondenseCandidatesOwned retains only active sibling versions.
+// Tree-sitter C does not merge a new reduction into its source version.
+func (s *diagnosticParserCoreGenericScheduler) reindexCondenseCandidatesOwned(owner core.SchedulerTransactionToken, source int) error {
+	return s.compact.ReindexCondenseCandidatesOwned(owner, s.collectCondenseCandidates(source))
+}
+
+func (s *diagnosticParserCoreGenericScheduler) collectCondenseCandidates(source int) []core.CondenseCandidate {
+	candidates := s.condenseCandidates[:0]
+	for index, header := range s.headers {
+		if index == source || header.accepted || header.paused {
+			continue
+		}
+		candidates = append(candidates, core.CondenseCandidate{
+			Head: header.head, Shifted: header.shifted, Checkpoint: header.checkpoint,
+		})
+	}
+	s.condenseCandidates = candidates
+	return candidates
+}
+
 // adoptUpdatedReductionSibling updates an already-active canonical sibling in
 // place. The sibling keeps its scheduler slot and creation sequence; a paused
 // copy becomes runnable because the canonical boundary materially changed.
@@ -3457,6 +3483,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflict(before []Dia
 func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner core.SchedulerTransactionToken, before []DiagnosticParserCoreHeaderReceipt, cell diagnosticParserCoreGenericCell) (err error) {
 	branchOrderBefore, nextSeqBefore := s.branchOrder, s.nextSeq
 	if err = s.reserveDispatches(1); err != nil {
+		return err
+	}
+	if err = s.reindexCondenseCandidatesOwned(owner, cell.headerIndex); err != nil {
 		return err
 	}
 	externalStatsBefore, err := s.genericExternalStats()
@@ -3667,7 +3696,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 			s.classifiedBoundaries = append(s.classifiedBoundaries, cell.boundary)
 		}
 		token := cells[0].dispatchToken(s.token)
-		heads, err := s.compact.ShiftOrdinaryClassifiedCohortOwned(owner, s.classifiedBoundaries, core.Token{
+		heads, err := s.compact.ShiftOrdinaryClassifiedCohortWithLiveCondenseCandidatesOwned(owner, nil, s.classifiedBoundaries, core.Token{
 			Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte, External: token.ExternalScannerToken,
 		})
 		if err != nil {
@@ -3689,9 +3718,16 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 				return errors.New("parser-core phase zero: ordinary shift selection is not an ordinary shift")
 			}
 			token := cell.dispatchToken(s.token)
-			head, err := s.compact.ShiftClassifiedOwned(owner, cell.boundary, ordinal, core.Token{
+			var head core.Head
+			var err error
+			shifted := core.Token{
 				Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte, External: token.ExternalScannerToken,
-			}, core.ForkOrder{})
+			}
+			if index == 0 {
+				head, err = s.compact.ShiftClassifiedWithLiveCondenseCandidatesOwned(owner, nil, cell.boundary, ordinal, shifted, core.ForkOrder{})
+			} else {
+				head, err = s.compact.ShiftClassifiedOwned(owner, cell.boundary, ordinal, shifted, core.ForkOrder{})
+			}
 			if err != nil {
 				return err
 			}
@@ -3768,7 +3804,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 			s.classifiedBoundaries = append(s.classifiedBoundaries, cell.boundary)
 		}
 		token := cells[0].dispatchToken(s.token)
-		heads, err := s.compact.ShiftExtraClassifiedCohortOwned(owner, s.classifiedBoundaries, core.Token{
+		heads, err := s.compact.ShiftExtraClassifiedCohortWithLiveCondenseCandidatesOwned(owner, nil, s.classifiedBoundaries, core.Token{
 			Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte,
 			Extra: true, External: token.ExternalScannerToken,
 		})

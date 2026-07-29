@@ -7,10 +7,107 @@ import (
 
 const inlineSchedulerCohortTargets = 8
 
+// ReindexCondenseCandidatesOwned replaces the retained boundary lookup set
+// with the scheduler versions that can receive the next action output.
+func (c *Core) ReindexCondenseCandidatesOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate) error {
+	return c.RunSchedulerOwned(owner, func() error {
+		return c.reindexCondenseCandidatesUncheckpointed(candidates)
+	})
+}
+
+func (c *Core) runSchedulerMaybeLiveScopedOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, liveScoped bool, fn func() error) error {
+	return c.RunSchedulerOwned(owner, func() error {
+		if !liveScoped {
+			return fn()
+		}
+		return c.runLiveCondenseCandidates(candidates, fn)
+	})
+}
+
+func (c *Core) runLiveCondenseCandidates(candidates []CondenseCandidate, fn func() error) error {
+	if c.condenseScopeActive {
+		return errors.New("parser-core phase zero: nested live condense candidate scope")
+	}
+	for index, candidate := range candidates {
+		node, err := c.node(candidate.Head.Node)
+		if err != nil {
+			return err
+		}
+		for prior := 0; prior < index; prior++ {
+			other := candidates[prior]
+			otherNode, err := c.node(other.Head.Node)
+			if err != nil {
+				return err
+			}
+			if node.state == otherNode.state &&
+				node.byteOffset == otherNode.byteOffset &&
+				candidate.Shifted == other.Shifted &&
+				candidate.Checkpoint == other.Checkpoint &&
+				candidate.Head.Node != other.Head.Node {
+				return errors.New("parser-core phase zero: distinct condense candidates share one boundary")
+			}
+		}
+	}
+	c.condenseCandidates = candidates
+	c.condenseNewNode = NodeID(len(c.nodes) + 1)
+	c.condenseScopeActive = true
+	if c.schedulerFrame.fresh {
+		err := fn()
+		c.clearLiveCondenseCandidates()
+		return err
+	}
+	defer c.clearLiveCondenseCandidates()
+	return fn()
+}
+
+func (c *Core) clearLiveCondenseCandidates() {
+	if c == nil {
+		return
+	}
+	c.condenseCandidates = nil
+	c.condenseNewNode = 0
+	c.condenseScopeActive = false
+}
+
+func (c *Core) reindexCondenseCandidatesUncheckpointed(candidates []CondenseCandidate) error {
+	c.boundaries.advanceGeneration()
+	for _, candidate := range candidates {
+		node, err := c.node(candidate.Head.Node)
+		if err != nil {
+			return err
+		}
+		key := boundaryKey{
+			frontier: c.frontier, state: node.state, byteOffset: node.byteOffset,
+			shifted: candidate.Shifted, checkpoint: candidate.Checkpoint,
+		}
+		probe, existing := c.boundaries.probe(boundaryIdentityFromKey(key))
+		if probe.found {
+			if existing != candidate.Head.Node {
+				return errors.New("parser-core phase zero: distinct condense candidates share one boundary")
+			}
+			continue
+		}
+		if err := c.publishBoundary(probe, candidate.Head.Node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ShiftClassifiedOwned authenticates the scheduler owner, then delegates to
 // the same uncheckpointed implementation used by standalone ShiftClassified.
 func (c *Core) ShiftClassifiedOwned(owner SchedulerTransactionToken, boundary ClassifiedBoundary, actionOrdinal int, shifted Token, fork ForkOrder) (out Head, err error) {
-	err = c.RunSchedulerOwned(owner, func() error {
+	return c.shiftClassifiedMaybeLiveScopedOwned(owner, nil, false, boundary, actionOrdinal, shifted, fork)
+}
+
+// ShiftClassifiedWithLiveCondenseCandidatesOwned scopes condense candidates and shifts
+// under one scheduler ownership check.
+func (c *Core) ShiftClassifiedWithLiveCondenseCandidatesOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, boundary ClassifiedBoundary, actionOrdinal int, shifted Token, fork ForkOrder) (out Head, err error) {
+	return c.shiftClassifiedMaybeLiveScopedOwned(owner, candidates, true, boundary, actionOrdinal, shifted, fork)
+}
+
+func (c *Core) shiftClassifiedMaybeLiveScopedOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, liveScoped bool, boundary ClassifiedBoundary, actionOrdinal int, shifted Token, fork ForkOrder) (out Head, err error) {
+	err = c.runSchedulerMaybeLiveScopedOwned(owner, candidates, liveScoped, func() error {
 		var innerErr error
 		out, innerErr = c.shiftClassifiedUncheckpointed(boundary, actionOrdinal, shifted, fork)
 		return innerErr
@@ -57,7 +154,17 @@ func (c *Core) shiftClassifiedUncheckpointed(boundary ClassifiedBoundary, action
 // ShiftOrdinaryClassifiedCohortOwned authenticates the scheduler owner, then
 // delegates to the standalone cohort's uncheckpointed implementation.
 func (c *Core) ShiftOrdinaryClassifiedCohortOwned(owner SchedulerTransactionToken, boundaries []ClassifiedBoundary, shifted Token) (out []Head, err error) {
-	err = c.RunSchedulerOwned(owner, func() error {
+	return c.shiftOrdinaryClassifiedCohortMaybeLiveScopedOwned(owner, nil, false, boundaries, shifted)
+}
+
+// ShiftOrdinaryClassifiedCohortWithLiveCondenseCandidatesOwned scopes the
+// condense candidates and shifts one cohort under one scheduler ownership check.
+func (c *Core) ShiftOrdinaryClassifiedCohortWithLiveCondenseCandidatesOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, boundaries []ClassifiedBoundary, shifted Token) (out []Head, err error) {
+	return c.shiftOrdinaryClassifiedCohortMaybeLiveScopedOwned(owner, candidates, true, boundaries, shifted)
+}
+
+func (c *Core) shiftOrdinaryClassifiedCohortMaybeLiveScopedOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, liveScoped bool, boundaries []ClassifiedBoundary, shifted Token) (out []Head, err error) {
+	err = c.runSchedulerMaybeLiveScopedOwned(owner, candidates, liveScoped, func() error {
 		var inlineTargets [inlineSchedulerCohortTargets]StateID
 		targets := inlineTargets[:]
 		if len(boundaries) > len(targets) {
@@ -158,7 +265,17 @@ func (c *Core) cohortHeads(width int) []Head {
 // ShiftExtraClassifiedCohortOwned authenticates the scheduler owner, then
 // delegates to the standalone cohort's uncheckpointed implementation.
 func (c *Core) ShiftExtraClassifiedCohortOwned(owner SchedulerTransactionToken, boundaries []ClassifiedBoundary, shifted Token) (out []Head, err error) {
-	err = c.RunSchedulerOwned(owner, func() error {
+	return c.shiftExtraClassifiedCohortMaybeLiveScopedOwned(owner, nil, false, boundaries, shifted)
+}
+
+// ShiftExtraClassifiedCohortWithLiveCondenseCandidatesOwned scopes the condense candidates
+// and shifts one extra cohort under one scheduler ownership check.
+func (c *Core) ShiftExtraClassifiedCohortWithLiveCondenseCandidatesOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, boundaries []ClassifiedBoundary, shifted Token) (out []Head, err error) {
+	return c.shiftExtraClassifiedCohortMaybeLiveScopedOwned(owner, candidates, true, boundaries, shifted)
+}
+
+func (c *Core) shiftExtraClassifiedCohortMaybeLiveScopedOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, liveScoped bool, boundaries []ClassifiedBoundary, shifted Token) (out []Head, err error) {
+	err = c.runSchedulerMaybeLiveScopedOwned(owner, candidates, liveScoped, func() error {
 		var inlineTargets [inlineSchedulerCohortTargets]StateID
 		targets := inlineTargets[:]
 		if len(boundaries) > len(targets) {
@@ -234,7 +351,17 @@ func (c *Core) shiftExtraClassifiedCohortUncheckpointed(boundaries []ClassifiedB
 // ReduceOutputsClassifiedIntoOwned authenticates the scheduler owner, then
 // delegates to the standalone reduction's uncheckpointed implementation.
 func (c *Core) ReduceOutputsClassifiedIntoOwned(owner SchedulerTransactionToken, dst []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) (frontier []ReductionOutput, err error) {
-	err = c.RunSchedulerOwned(owner, func() error {
+	return c.reduceOutputsClassifiedIntoMaybeLiveScopedOwned(owner, nil, false, dst, boundary, actionOrdinal, fork)
+}
+
+// ReduceOutputsClassifiedIntoWithLiveCondenseCandidatesOwned scopes the condense candidates
+// and reduces under one scheduler ownership check.
+func (c *Core) ReduceOutputsClassifiedIntoWithLiveCondenseCandidatesOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, dst []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) (frontier []ReductionOutput, err error) {
+	return c.reduceOutputsClassifiedIntoMaybeLiveScopedOwned(owner, candidates, true, dst, boundary, actionOrdinal, fork)
+}
+
+func (c *Core) reduceOutputsClassifiedIntoMaybeLiveScopedOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, liveScoped bool, dst []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) (frontier []ReductionOutput, err error) {
+	err = c.runSchedulerMaybeLiveScopedOwned(owner, candidates, liveScoped, func() error {
 		var innerErr error
 		frontier, innerErr = c.reduceOutputsClassifiedIntoUncheckpointed(dst, boundary, actionOrdinal, fork)
 		return innerErr
