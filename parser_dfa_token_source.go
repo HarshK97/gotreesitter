@@ -2740,6 +2740,11 @@ type dfaRelexSnapshot struct {
 }
 
 func (d *dfaTokenSource) snapshotRelexState() dfaRelexSnapshot {
+	snapshot, _ := d.snapshotRelexStateWithExternalBuffer(nil)
+	return snapshot
+}
+
+func (d *dfaTokenSource) snapshotRelexStateWithExternalBuffer(buf []byte) (dfaRelexSnapshot, []byte) {
 	s := dfaRelexSnapshot{
 		lexerPos:                    d.lexer.pos,
 		lexerRow:                    d.lexer.row,
@@ -2758,12 +2763,20 @@ func (d *dfaTokenSource) snapshotRelexState() dfaRelexSnapshot {
 		zeroWidthCount:              d.zeroWidthCount,
 	}
 	if d.hasExternalScanner && d.language != nil && d.language.ExternalScanner != nil {
-		buf := make([]byte, externalScannerSerializationBufferSize)
+		if cap(buf) != externalScannerSerializationBufferSize {
+			if cap(buf) > 0 {
+				clear(buf[:cap(buf)])
+			}
+			buf = make([]byte, externalScannerSerializationBufferSize)
+		} else {
+			buf = buf[:externalScannerSerializationBufferSize]
+			clear(buf)
+		}
 		if n := d.language.ExternalScanner.Serialize(d.externalPayload, buf); n > 0 {
 			s.externalPayload = buf[:n]
 		}
 	}
-	return s
+	return s, buf
 }
 
 func (s dfaRelexSnapshot) restore(d *dfaTokenSource) {

@@ -23,6 +23,8 @@ type parserScratch struct {
 	transientParents         transientParentScratch
 	transientCheckpointBytes int64
 	transientCheckpoints     uint64
+	relexSnapshotBuffer      []byte
+	relexSnapshotInUse       bool
 	trackChildErrors         bool
 	budgetBytes              int64
 	budgetBaselineBytes      int64
@@ -75,6 +77,31 @@ func (s *parserScratch) budgetExhausted() bool {
 		used = 0
 	}
 	return used >= s.budgetBytes
+}
+
+func (s *parserScratch) snapshotDFARelexState(d *dfaTokenSource) (dfaRelexSnapshot, bool) {
+	if s == nil || s.relexSnapshotInUse {
+		return d.snapshotRelexState(), false
+	}
+	s.relexSnapshotInUse = true
+	snapshot, buf := d.snapshotRelexStateWithExternalBuffer(s.relexSnapshotBuffer)
+	s.relexSnapshotBuffer = buf[:0]
+	return snapshot, true
+}
+
+func (s *parserScratch) releaseDFARelexSnapshot(retained bool) {
+	if s == nil || !retained {
+		return
+	}
+	if cap(s.relexSnapshotBuffer) > 0 {
+		clear(s.relexSnapshotBuffer[:cap(s.relexSnapshotBuffer)])
+	}
+	if cap(s.relexSnapshotBuffer) == externalScannerSerializationBufferSize {
+		s.relexSnapshotBuffer = s.relexSnapshotBuffer[:0]
+	} else {
+		s.relexSnapshotBuffer = nil
+	}
+	s.relexSnapshotInUse = false
 }
 
 func releaseParserScratch(s *parserScratch, skipGSSClear bool) {
@@ -150,6 +177,15 @@ func releaseParserScratch(s *parserScratch, skipGSSClear bool) {
 	s.transientParents.resetForRelease()
 	s.transientCheckpointBytes = 0
 	s.transientCheckpoints = 0
+	if cap(s.relexSnapshotBuffer) > 0 {
+		clear(s.relexSnapshotBuffer[:cap(s.relexSnapshotBuffer)])
+	}
+	if cap(s.relexSnapshotBuffer) != externalScannerSerializationBufferSize {
+		s.relexSnapshotBuffer = nil
+	} else {
+		s.relexSnapshotBuffer = s.relexSnapshotBuffer[:0]
+	}
+	s.relexSnapshotInUse = false
 	s.trackChildErrors = false
 	s.entries.reset()
 	s.gss.skipClear = skipGSSClear
