@@ -2158,6 +2158,13 @@ func forestRootSliceMatchesRepeatedVisibleContainer(
 	for i := start; i < end; i++ {
 		child := resultChildAt(root, i)
 		for j := 0; j < resultChildCount(child); j++ {
+			childFieldID := nodeFieldIDAt(child, j)
+			candidateFieldID := nodeFieldIDAt(candidate, candidateIndex)
+			if childFieldID != candidateFieldID ||
+				normalizedFieldSourceForID(child.fieldIDs(), child.fieldSources(), j) !=
+					normalizedFieldSourceForID(candidate.fieldIDs(), candidate.fieldSources(), candidateIndex) {
+				return false
+			}
 			if !forestNodesHaveSameTreeOrderEnvelope(
 				resultChildAt(child, j),
 				resultChildAt(candidate, candidateIndex),
