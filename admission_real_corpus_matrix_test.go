@@ -208,6 +208,40 @@ func TestAdmissionCandidateRealCorpusMatrix(t *testing.T) {
 		)
 	}
 
+	if os.Getenv("GTS_ADMISSION_REAL_CORPUS_RATCHET") == "1" {
+		if len(selectedLanguages) != 0 || len(selectedBuckets) != 0 ||
+			len(excludedLanguages) != 1 || !excludedLanguages["awk"] ||
+			maxBytes != 16_383 {
+			t.Fatal("real-corpus ratchet requires the canonical scope: no language or bucket filters, AWK excluded, and max bytes 16383")
+		}
+		const (
+			minRows     = 110
+			minPass     = 67
+			maxFallback = 33
+			wantSkip    = 10
+		)
+		if len(rows) < minRows ||
+			counts[scorecardPass] < minPass ||
+			counts[scorecardFallback] > maxFallback ||
+			counts[scorecardSkip] != wantSkip ||
+			counts[scorecardDiverge] != 0 ||
+			counts[scorecardError] != 0 {
+			t.Fatalf(
+				"real-corpus breadth ratchet failed: PASS=%d (min %d) DIVERGE=%d FALLBACK=%d (max %d) SKIP=%d (want %d) ERROR=%d total=%d (min %d)",
+				counts[scorecardPass],
+				minPass,
+				counts[scorecardDiverge],
+				counts[scorecardFallback],
+				maxFallback,
+				counts[scorecardSkip],
+				wantSkip,
+				counts[scorecardError],
+				len(rows),
+				minRows,
+			)
+		}
+	}
+
 	if counts[scorecardDiverge] != 0 || counts[scorecardError] != 0 {
 		t.Fatalf(
 			"real-corpus matrix has DIVERGE=%d ERROR=%d",
