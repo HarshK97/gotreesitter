@@ -6179,12 +6179,18 @@ func (p *Parser) buildReduceChildrenWithPath(entries []stackEntry, start, end, c
 	productionHasFields := p.reduceProductionHasEffectiveFields(childCount, productionID, arena)
 	if len(aliasSeq) == 0 && !productionHasFields {
 		if children, fieldIDs, fieldSources, path, ok := p.buildReduceChildrenNoAliasNoFieldsPlanned(entries, start, end, parentSymbol, symbolMeta, arena); ok {
+			if len(p.unaryWrapperFlatteningSet) != 0 {
+				children = p.flattenNativeUnaryWrapperChildren(parentSymbol, children)
+			}
 			return children, fieldIDs, fieldSources, path
 		}
 	}
 
 	rawFieldIDs, rawInherited, rawConflictedInherited := p.buildFieldIDs(childCount, productionID, arena)
 	if children, fieldIDs, fieldSources, ok := p.buildReduceChildrenAllVisible(entries, start, end, childCount, aliasSeq, rawFieldIDs, rawInherited, parentVisible, symbolMeta, arena); ok {
+		if len(p.unaryWrapperFlatteningSet) != 0 {
+			children = p.flattenNativeUnaryWrapperChildren(parentSymbol, children)
+		}
 		return children, fieldIDs, fieldSources, reduceChildPathForLen(len(children), reduceChildPathAllVisible)
 	}
 
@@ -6198,6 +6204,9 @@ func (p *Parser) buildReduceChildrenWithPath(entries []stackEntry, start, end, c
 	}
 	arena.recordReduceChildSliceScratchGeneral(len(scratch.nodes))
 	children, fieldIDs, fieldSources := materializeReduceChildrenFromScratch(scratch, arena)
+	if len(p.unaryWrapperFlatteningSet) != 0 {
+		children = p.flattenNativeUnaryWrapperChildren(parentSymbol, children)
+	}
 	return children, fieldIDs, fieldSources, reduceChildPathForLen(len(children), reduceChildPathScratchGeneral)
 }
 
