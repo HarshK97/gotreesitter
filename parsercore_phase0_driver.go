@@ -3894,7 +3894,7 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 	if err := s.compact.BeginFrontier(); err != nil {
 		return err
 	}
-	if err := s.compact.SetPhaseCheckpoint(afterID); err != nil {
+	if err := s.compact.SetPhaseExternalTokenScannerCheckpoints(beforeID, afterID); err != nil {
 		return err
 	}
 	for index := range s.headers {

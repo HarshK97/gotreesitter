@@ -416,6 +416,14 @@ type subtreeRecord struct {
 	fragile bool
 }
 
+// externalPayloadProvenance stores the exact scanner states for one external
+// terminal. Sparse storage preserves the compact subtree record size.
+type externalPayloadProvenance struct {
+	payload SubtreeID
+	start   CheckpointID
+	end     CheckpointID
+}
+
 // pathMeta is stored on a graph link. ScoreDelta includes the contributions
 // collapsed into that payload; BranchOrder optionally overrides the current
 // path-local order when an authenticated dispatch event created a fork.
@@ -565,8 +573,10 @@ type Core struct {
 	limits              Limits
 	diagnostics         diagnosticOptions
 	nodes               []nodeRecord
+	nodeCheckpoints     []CheckpointID
 	links               []linkRecord
 	subtrees            []subtreeRecord
+	externalProvenance  []externalPayloadProvenance
 	children            []SubtreeID
 	fields              []FieldMapEntry
 	aliases             []Symbol
@@ -612,6 +622,12 @@ type Core struct {
 	// certifies that external payload identity does not depend on scanner state.
 	// Reset retains it because the property is stable for this core's tables.
 	externalPayloadsQuiescent bool
+	// externalTokenScannerStart and externalTokenScannerEnd authenticate one
+	// elected token. Only an authenticated external shift copies this pair into
+	// its immutable terminal payload.
+	externalTokenScannerStart CheckpointID
+	externalTokenScannerEnd   CheckpointID
+	externalTokenScannerExact bool
 }
 
 // SetReduceConflictContext sets/clears the transient conflict-context
@@ -657,13 +673,14 @@ type diagnosticOptions struct {
 }
 
 type checkpoint struct {
-	nodes, links, subtrees, children, fields, aliases int
-	frontier                                          uint64
-	checkpoint                                        CheckpointID
-	boundaryIndex                                     boundaryIndexSnapshot
-	journal                                           int
-	transaction                                       uint64
-	work                                              Work
+	nodes, nodeCheckpoints, links, subtrees, externalProvenance int
+	children, fields, aliases                                   int
+	frontier                                                    uint64
+	checkpoint                                                  CheckpointID
+	boundaryIndex                                               boundaryIndexSnapshot
+	journal                                                     int
+	transaction                                                 uint64
+	work                                                        Work
 }
 
 // SchedulerTransactionToken is an opaque capability for one active
@@ -702,7 +719,9 @@ func (c *Core) markInto(mark *checkpoint) {
 	c.nextTransaction++
 	*mark = checkpoint{
 		nodes: len(c.nodes), links: len(c.links), subtrees: len(c.subtrees),
-		children: len(c.children), fields: len(c.fields), aliases: len(c.aliases),
+		nodeCheckpoints:    len(c.nodeCheckpoints),
+		externalProvenance: len(c.externalProvenance),
+		children:           len(c.children), fields: len(c.fields), aliases: len(c.aliases),
 		frontier: c.frontier, checkpoint: c.checkpoint,
 		boundaryIndex: c.boundaries.snapshot(),
 		journal:       len(c.boundaryJournal), transaction: c.nextTransaction,
@@ -733,8 +752,10 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 	}
 	c.classificationPhase++
 	c.nodes = c.nodes[:mark.nodes]
+	c.nodeCheckpoints = c.nodeCheckpoints[:mark.nodeCheckpoints]
 	c.links = c.links[:mark.links]
 	c.subtrees = c.subtrees[:mark.subtrees]
+	c.externalProvenance = c.externalProvenance[:mark.externalProvenance]
 	c.children = c.children[:mark.children]
 	c.fields = c.fields[:mark.fields]
 	c.aliases = c.aliases[:mark.aliases]
@@ -1030,8 +1051,10 @@ func (c *Core) Reset() error {
 	}
 	c.classificationPhase++
 	c.nodes = c.nodes[:0]
+	c.nodeCheckpoints = c.nodeCheckpoints[:0]
 	c.links = c.links[:0]
 	c.subtrees = c.subtrees[:0]
+	c.externalProvenance = c.externalProvenance[:0]
 	c.children = c.children[:0]
 	c.fields = c.fields[:0]
 	c.aliases = c.aliases[:0]
@@ -1050,6 +1073,9 @@ func (c *Core) Reset() error {
 	c.metadataConstructionAuthenticated = true
 	c.reduceConflictContext = false
 	c.reduceNoLookaheadContext = false
+	c.externalTokenScannerStart = 0
+	c.externalTokenScannerEnd = 0
+	c.externalTokenScannerExact = false
 	return nil
 }
 
@@ -1070,6 +1096,9 @@ func (c *Core) BeginFrontier() error {
 	c.frontier++
 	c.classificationPhase++
 	c.checkpoint = 0
+	c.externalTokenScannerStart = 0
+	c.externalTokenScannerEnd = 0
+	c.externalTokenScannerExact = false
 	return nil
 }
 
@@ -1080,6 +1109,9 @@ func (c *Core) SetPhaseCheckpoint(checkpoint CheckpointID) error {
 	if len(c.transactions) != 0 {
 		return errors.New("parser-core phase zero: set checkpoint during active transaction")
 	}
+	c.externalTokenScannerStart = 0
+	c.externalTokenScannerEnd = 0
+	c.externalTokenScannerExact = false
 	if checkpoint != 0 {
 		if _, ok := c.checkpoints.record(checkpoint); !ok {
 			return errors.New("parser-core phase zero: unknown checkpoint identity")
@@ -1093,6 +1125,23 @@ func (c *Core) SetPhaseCheckpoint(checkpoint CheckpointID) error {
 	}
 	c.classificationPhase++
 	c.checkpoint = checkpoint
+	return nil
+}
+
+// SetPhaseExternalTokenScannerCheckpoints binds one election to its exact
+// scanner states. It leaves no exact token proof when either identity fails.
+func (c *Core) SetPhaseExternalTokenScannerCheckpoints(start, end CheckpointID) error {
+	if err := c.SetPhaseCheckpoint(end); err != nil {
+		return err
+	}
+	if start != 0 {
+		if _, ok := c.checkpoints.record(start); !ok {
+			return errors.New("parser-core phase zero: unknown external token start checkpoint identity")
+		}
+	}
+	c.externalTokenScannerStart = start
+	c.externalTokenScannerEnd = end
+	c.externalTokenScannerExact = true
 	return nil
 }
 
@@ -1120,12 +1169,17 @@ func (c *Core) Seed(state StateID, byteOffset uint32) (Head, error) {
 	if probe.found {
 		return Head{Node: id}, nil
 	}
-	id, err := c.appendNode(nodeRecord{state: state, byteOffset: byteOffset, pathCount: 1})
+	id, err := c.appendNodeAt(nodeRecord{
+		state: state, byteOffset: byteOffset, pathCount: 1,
+	}, key.checkpoint)
 	if err != nil {
 		return Head{}, err
 	}
 	if err := c.publishBoundary(probe, id); err != nil {
 		c.nodes = c.nodes[:len(c.nodes)-1]
+		if !c.externalPayloadsQuiescent {
+			c.nodeCheckpoints = c.nodeCheckpoints[:len(c.nodeCheckpoints)-1]
+		}
 		return Head{}, err
 	}
 	return Head{Node: id}, nil
@@ -1923,6 +1977,17 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 				if !equal {
 					continue
 				}
+				_, incumbentExact, err := c.subtreeExternalProvenance(link.payload)
+				if err != nil {
+					return condenseOutcome{}, err
+				}
+				_, incomingExact, err := c.subtreeExternalProvenance(in.payload)
+				if err != nil {
+					return condenseOutcome{}, err
+				}
+				if !incumbentExact || !incomingExact {
+					return condenseOutcome{}, errors.New("parser-core phase zero: shallow fold declined inexact external payload provenance")
+				}
 				shallowCount++
 				if firstShallow < 0 {
 					firstShallow = index
@@ -2068,10 +2133,10 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 		order: in.order.Value, flags: flags, next: LinkID(old.firstLink),
 	})
 	c.addWork(&c.work.GraphLinkAdditionsProxy, 1)
-	id, err := c.appendNode(nodeRecord{
+	id, err := c.appendNodeAt(nodeRecord{
 		state: key.state, byteOffset: key.byteOffset,
 		firstLink: uint32(linkID), linkCount: linkCount, pathCount: newPathCount,
-	})
+	}, key.checkpoint)
 	if err != nil {
 		return condenseOutcome{}, err
 	}
@@ -2158,16 +2223,16 @@ func (c *Core) factorExactPredecessor(key boundaryKey, probe boundaryProbe, oldI
 		if !exactEdge && !shallow {
 			continue
 		}
-		leftClean, cleanErr := c.subtreeHasNoExternalDescendant(incumbent.payload)
-		if cleanErr != nil {
-			return condenseOutcome{}, true, cleanErr
+		_, leftExact, provenanceErr := c.subtreeExternalProvenance(incumbent.payload)
+		if provenanceErr != nil {
+			return condenseOutcome{}, true, provenanceErr
 		}
-		rightClean, cleanErr := c.subtreeHasNoExternalDescendant(in.payload)
-		if cleanErr != nil {
-			return condenseOutcome{}, true, cleanErr
+		_, rightExact, provenanceErr := c.subtreeExternalProvenance(in.payload)
+		if provenanceErr != nil {
+			return condenseOutcome{}, true, provenanceErr
 		}
-		if !leftClean || !rightClean {
-			return condenseOutcome{}, true, errors.New("parser-core phase zero: recursive insertion declined external payload")
+		if !leftExact || !rightExact {
+			return condenseOutcome{}, true, errors.New("parser-core phase zero: recursive insertion declined inexact external payload provenance")
 		}
 		if !exactEdge {
 			return condenseOutcome{}, true, errors.New("parser-core phase zero: recursive insertion declined shallow non-exact outer edge")
@@ -2257,7 +2322,10 @@ func (c *Core) mergePredecessorsBounded(leftID, rightID NodeID, depth int) (Node
 	if err != nil {
 		return 0, false, err
 	}
-	if left.state != right.state || left.byteOffset != right.byteOffset {
+	leftCheckpoint, leftExact := c.nodeScannerCheckpoint(leftID)
+	rightCheckpoint, rightExact := c.nodeScannerCheckpoint(rightID)
+	if left.state != right.state || left.byteOffset != right.byteOffset ||
+		!leftExact || !rightExact || leftCheckpoint != rightCheckpoint {
 		return 0, false, errors.New("parser-core phase zero: recursive predecessors are not boundary-equivalent")
 	}
 	related, err := c.nodesAncestryRelated(leftID, rightID)
@@ -2290,7 +2358,7 @@ func (c *Core) mergePredecessorsBounded(leftID, rightID NodeID, depth int) (Node
 	if !changed {
 		return leftID, false, nil
 	}
-	merged, err := c.appendAdjacencyNode(left.state, left.byteOffset, links)
+	merged, err := c.appendAdjacencyNodeAt(left.state, left.byteOffset, leftCheckpoint, links)
 	if err != nil {
 		return 0, false, err
 	}
@@ -2307,24 +2375,24 @@ func (c *Core) insertLinkBounded(state StateID, byteOffset uint32, links []linkR
 		return append(slices.Clone(links), incoming), true, nil
 	}
 	c.recordLinkUnionAttempt()
-	clean, err := c.subtreeHasNoExternalDescendant(incoming.payload)
+	_, incomingExact, err := c.subtreeExternalProvenance(incoming.payload)
 	if err != nil {
 		c.recordLinkUnionRejected()
 		return nil, false, err
 	}
-	if !clean {
+	if !incomingExact {
 		c.recordLinkUnionRejected()
-		return nil, false, errors.New("parser-core phase zero: recursive insertion declined external payload")
+		return nil, false, errors.New("parser-core phase zero: recursive insertion declined inexact external payload provenance")
 	}
 	for index, incumbent := range links {
-		clean, err := c.subtreeHasNoExternalDescendant(incumbent.payload)
+		_, incumbentExact, err := c.subtreeExternalProvenance(incumbent.payload)
 		if err != nil {
 			c.recordLinkUnionRejected()
 			return nil, false, err
 		}
-		if !clean {
+		if !incumbentExact {
 			c.recordLinkUnionRejected()
-			return nil, false, errors.New("parser-core phase zero: recursive insertion declined external payload")
+			return nil, false, errors.New("parser-core phase zero: recursive insertion declined inexact external payload provenance")
 		}
 		if c.linkRecordsEqual(incumbent, incoming) {
 			c.recordLinkUnionDuplicateNoop()
@@ -2422,42 +2490,78 @@ func (c *Core) insertLinkBounded(state StateID, byteOffset uint32, links []linkR
 	return append(slices.Clone(links), incoming), true, nil
 }
 
-func (c *Core) subtreeHasNoExternalDescendant(root SubtreeID) (bool, error) {
+// subtreeExternalProvenance reports whether a payload contains an external
+// terminal and whether every such terminal has an exact scanner-state pair.
+func (c *Core) subtreeExternalProvenance(root SubtreeID) (hasExternal, exact bool, err error) {
 	if _, err := c.subtree(root); err != nil {
-		return false, err
+		return false, false, err
 	}
 	if c.externalPayloadsQuiescent {
-		return true, nil
+		return false, true, nil
 	}
 	seen := make(map[SubtreeID]bool)
 	visiting := make(map[SubtreeID]bool)
-	var walk func(SubtreeID) (bool, error)
-	walk = func(id SubtreeID) (bool, error) {
+	var walk func(SubtreeID) (bool, bool, error)
+	walk = func(id SubtreeID) (bool, bool, error) {
 		if visiting[id] {
-			return false, errors.New("parser-core phase zero: compact subtree cycle during recursive insertion")
+			return false, false, errors.New("parser-core phase zero: compact subtree cycle during recursive insertion")
 		}
 		if seen[id] {
-			return true, nil
+			return false, true, nil
 		}
 		record, err := c.subtree(id)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		if record.external {
-			return false, nil
+			provenance, ok := c.externalPayloadScannerProvenance(id)
+			if !record.terminal || !ok {
+				return true, false, nil
+			}
+			for _, checkpoint := range [...]CheckpointID{provenance.start, provenance.end} {
+				if checkpoint == 0 {
+					continue
+				}
+				if _, ok := c.checkpoints.record(checkpoint); !ok {
+					return true, false, nil
+				}
+			}
+			return true, true, nil
 		}
 		seen[id] = true
 		visiting[id] = true
 		defer delete(visiting, id)
+		has := false
 		for _, child := range c.children[record.firstChild : record.firstChild+record.childCount] {
-			clean, err := walk(child)
-			if err != nil || !clean {
-				return clean, err
+			if child >= id {
+				return false, false, errors.New("parser-core phase zero: compact subtree child does not precede its parent")
 			}
+			childHas, childExact, err := walk(child)
+			if err != nil || !childExact {
+				return has || childHas, childExact, err
+			}
+			has = has || childHas
 		}
-		return true, nil
+		return has, true, nil
 	}
 	return walk(root)
+}
+
+func (c *Core) externalPayloadScannerProvenance(payload SubtreeID) (externalPayloadProvenance, bool) {
+	low, high := 0, len(c.externalProvenance)
+	for low < high {
+		mid := low + (high-low)/2
+		candidate := c.externalProvenance[mid]
+		if candidate.payload < payload {
+			low = mid + 1
+			continue
+		}
+		high = mid
+	}
+	if low >= len(c.externalProvenance) || c.externalProvenance[low].payload != payload {
+		return externalPayloadProvenance{}, false
+	}
+	return c.externalProvenance[low], true
 }
 
 func (c *Core) predecessorBoundariesMatch(leftID, rightID NodeID) (bool, error) {
@@ -2469,7 +2573,28 @@ func (c *Core) predecessorBoundariesMatch(leftID, rightID NodeID) (bool, error) 
 	if err != nil {
 		return false, err
 	}
-	return left.state == right.state && left.byteOffset == right.byteOffset, nil
+	leftCheckpoint, leftExact := c.nodeScannerCheckpoint(leftID)
+	rightCheckpoint, rightExact := c.nodeScannerCheckpoint(rightID)
+	return left.state == right.state &&
+		left.byteOffset == right.byteOffset &&
+		leftExact && rightExact &&
+		leftCheckpoint == rightCheckpoint, nil
+}
+
+func (c *Core) nodeScannerCheckpoint(id NodeID) (CheckpointID, bool) {
+	if c.externalPayloadsQuiescent {
+		return 0, true
+	}
+	if id == 0 || uint64(id) > uint64(len(c.nodeCheckpoints)) {
+		return 0, false
+	}
+	checkpoint := c.nodeCheckpoints[id-1]
+	if checkpoint != 0 {
+		if _, ok := c.checkpoints.record(checkpoint); !ok {
+			return 0, false
+		}
+	}
+	return checkpoint, true
 }
 
 func (c *Core) shallowPayloadsEqual(leftPrev NodeID, leftPayload SubtreeID, rightPrev NodeID, rightPayload SubtreeID) (bool, error) {
@@ -2548,6 +2673,10 @@ func (c *Core) nodeReaches(start, target NodeID) (bool, error) {
 }
 
 func (c *Core) appendAdjacencyNode(state StateID, byteOffset uint32, links []linkRecord) (NodeID, error) {
+	return c.appendAdjacencyNodeAt(state, byteOffset, c.checkpoint, links)
+}
+
+func (c *Core) appendAdjacencyNodeAt(state StateID, byteOffset uint32, checkpoint CheckpointID, links []linkRecord) (NodeID, error) {
 	if len(links) == 0 {
 		return 0, errors.New("parser-core phase zero: recursive insertion produced empty adjacency")
 	}
@@ -2580,10 +2709,10 @@ func (c *Core) appendAdjacencyNode(state StateID, byteOffset uint32, links []lin
 		c.addWork(&c.work.GraphLinkAdditionsProxy, 1)
 		first = LinkID(len(c.links))
 	}
-	return c.appendNode(nodeRecord{
+	return c.appendNodeAt(nodeRecord{
 		state: state, byteOffset: byteOffset, firstLink: uint32(first),
 		linkCount: uint32(len(links)), pathCount: pathCount,
-	})
+	}, checkpoint)
 }
 
 // subtreesStructurallyEqual reports whether two compact payload subtrees are the
@@ -2625,6 +2754,15 @@ func (c *Core) subtreesStructurallyEqual(left, right SubtreeID) (bool, error) {
 		l.extra != r.extra || l.external != r.external || l.terminal != r.terminal {
 		return false, nil
 	}
+	if l.external {
+		leftProvenance, leftExact := c.externalPayloadScannerProvenance(left)
+		rightProvenance, rightExact := c.externalPayloadScannerProvenance(right)
+		if leftExact != rightExact ||
+			leftExact && (leftProvenance.start != rightProvenance.start ||
+				leftProvenance.end != rightProvenance.end) {
+			return false, nil
+		}
+	}
 	if !slices.Equal(
 		c.fields[l.firstField:l.firstField+l.fieldCount],
 		c.fields[r.firstField:r.firstField+r.fieldCount],
@@ -2662,9 +2800,13 @@ func (c *Core) shallowPayloadClass(prevID NodeID, payloadID SubtreeID) (shallowP
 	}
 	// The compact phase-zero core cannot represent recovery/error subtrees yet,
 	// so every resident non-external payload is clean by construction. External
-	// payloads require an explicit language-level scanner-state certificate.
+	// payloads require exact per-token scanner provenance or a stable language
+	// certificate.
 	if payload.external && !c.externalPayloadsQuiescent {
-		return shallowPayloadClass{}, false, nil
+		_, exact, err := c.subtreeExternalProvenance(payloadID)
+		if err != nil || !exact {
+			return shallowPayloadClass{}, false, err
+		}
 	}
 	if payload.startByte < prev.byteOffset || payload.endByte < payload.startByte {
 		return shallowPayloadClass{}, false, errors.New("parser-core phase zero: invalid shallow payload extent")
@@ -2710,10 +2852,10 @@ func (c *Core) replaceBoundaryLink(key boundaryKey, probe boundaryProbe, old nod
 		c.addWork(&c.work.GraphLinkAdditionsProxy, 1)
 		first = LinkID(len(c.links))
 	}
-	id, err := c.appendNode(nodeRecord{
+	id, err := c.appendNodeAt(nodeRecord{
 		state: key.state, byteOffset: key.byteOffset,
 		firstLink: uint32(first), linkCount: old.linkCount, pathCount: old.pathCount,
-	})
+	}, key.checkpoint)
 	if err != nil {
 		c.links = c.links[:linkMark]
 		return Head{}, err
@@ -3370,14 +3512,26 @@ func (c *Core) RawSelectedSubtreeCensus(roots []SubtreeID) (RawSelectedCensus, e
 }
 
 func (c *Core) appendNode(r nodeRecord) (NodeID, error) {
+	return c.appendNodeAt(r, c.checkpoint)
+}
+
+func (c *Core) appendNodeAt(r nodeRecord, checkpoint CheckpointID) (NodeID, error) {
 	if uint64(len(c.nodes))+1 > uint64(c.limits.MaxNodes) || uint64(len(c.nodes)) >= math.MaxUint32 {
 		return 0, errors.New("parser-core phase zero: node arena cap")
+	}
+	if !c.externalPayloadsQuiescent && checkpoint != 0 {
+		if _, ok := c.checkpoints.record(checkpoint); !ok {
+			return 0, errors.New("parser-core phase zero: node scanner checkpoint is unavailable")
+		}
 	}
 	next := NodeID(uint64(len(c.nodes)) + 1)
 	if err := c.validatePublishedNodeDAG(r, next); err != nil {
 		return 0, err
 	}
 	c.nodes = append(c.nodes, r)
+	if !c.externalPayloadsQuiescent {
+		c.nodeCheckpoints = append(c.nodeCheckpoints, checkpoint)
+	}
 	return next, nil
 }
 
@@ -3430,9 +3584,20 @@ func (c *Core) appendSubtree(r subtreeRecord, children []SubtreeID, fields []Fie
 
 func (c *Core) appendAuthenticatedTerminal(r subtreeRecord) (SubtreeID, error) {
 	// The AST provenance ratchet requires every caller to pass a subtreeRecord
-	// literal with terminal:true. Keep this seam as pure forwarding so terminal
-	// construction does not add a partial store before the hot record copy.
-	return c.appendSubtreeRecord(r, nil, nil, nil)
+	// literal with terminal:true. Publish the terminal once. Then append its
+	// sparse scanner proof when the current election supplied one.
+	payload, err := c.appendSubtreeRecord(r, nil, nil, nil)
+	if err != nil {
+		return 0, err
+	}
+	if r.external && c.externalTokenScannerExact {
+		c.externalProvenance = append(c.externalProvenance, externalPayloadProvenance{
+			payload: payload,
+			start:   c.externalTokenScannerStart,
+			end:     c.externalTokenScannerEnd,
+		})
+	}
+	return payload, nil
 }
 
 func (c *Core) appendSubtreeRecord(r subtreeRecord, children []SubtreeID, fields []FieldMapEntry, aliases []Symbol) (SubtreeID, error) {

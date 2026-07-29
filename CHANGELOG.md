@@ -74,6 +74,11 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Compact recursive insertion now proves external token identity from exact
+  scanner checkpoints.
+  Mismatched or missing checkpoints fail closed.
+  Locked Kotlin, OCaml, Perl, and Rust fixtures now reach their next parser gate.
+
 - The native reduction path now sets Dart switch-expression body fields.
   It now sets the target field for nested Elixir calls.
   This change removes two inert language-local field repairs.
