@@ -228,10 +228,10 @@ It selects the C-equivalent expression for an unknown type name.
 This change retires the final Objective-C subpass and its dispatcher arm.
 The parser covers every byte in each recovered EBNF source.
 This change removes the EBNF dispatcher arm.
-Native field projection owns Dart switch-expression body fields.
-It also owns the target field for nested Elixir calls.
+The native reduction path sets Dart switch-expression body fields.
+It sets the target field for nested Elixir calls.
 The Dart and Elixir dispatcher arms remain live for unrelated repairs.
-Scala and SQL field corrections remain live counterexamples.
+The Scala and SQL field corrections remain live counterexamples.
 The field-aware C-oracle receipt is:
 `harness_out/docker/20260728T111158Z-objc-struct-sized-postfilter-final`.
 The method type C-oracle receipt is:

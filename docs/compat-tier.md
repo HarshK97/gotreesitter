@@ -13,7 +13,7 @@ without updating that registry.
 
 ## Current denominator
 
-The v1 registry freezes the current surface:
+The v1 registry freezes the current source and registry:
 
 - 42 explicit `runLanguageResultCompatibility` switch arms covering 44
   language names;
@@ -21,7 +21,9 @@ The v1 registry freezes the current surface:
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-That is 43 live registry entries and 40 retired entries. The registry covers
+That is 43 live registry entries and 40 retired entries. These counts backfill
+earlier retirements. This field repair change does not remove a dispatcher arm.
+The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
 
@@ -246,10 +248,10 @@ The field plan retains each conflicting inherited mapping.
 The reduce path projects a mapping only when a named child matches its field.
 Root acceptance preserves producer fields when it absorbs surrounding trivia.
 
-Reduction also owns Dart switch-expression body fields.
-It owns the target field for nested Elixir calls.
+The native reduction path sets Dart switch-expression body fields.
+It sets the target field for nested Elixir calls.
 The two language-local repairs are inert and removed.
-Scala field repair and SQL field cleanup remain live counterexamples.
+The Scala field repair and SQL field cleanup remain live counterexamples.
 
 ## Current progress: Erlang native ownership
 

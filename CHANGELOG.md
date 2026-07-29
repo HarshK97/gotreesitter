@@ -57,10 +57,10 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
-- Native reduction now owns Dart switch-expression body fields.
-  It also owns target fields for nested Elixir calls.
-  This removes two inert language-local field repairs.
-  Scala and SQL field corrections remain live.
+- The native reduction path now sets Dart switch-expression body fields.
+  It now sets the target field for nested Elixir calls.
+  This change removes two inert language-local field repairs.
+  The Scala and SQL field corrections remain live.
 
 - The compact admission census now separates runnable no-table-action stops
   from paused frontiers.
