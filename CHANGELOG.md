@@ -80,6 +80,12 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- AWK recovery now captures the original splice parent before it constructs a
+  replacement concatenation.
+  This prevents self-parent links during recovered expression materialization.
+  A locked 7,392-byte production fixture now verifies bounded completion and
+  a stable tree digest.
+
 - Compact recursive insertion now proves external token identity from exact
   scanner checkpoints.
   Mismatched or missing checkpoints fail closed.

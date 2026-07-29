@@ -1091,19 +1091,19 @@ func awkPrependRecoveredExpr(prefixExpr, errNode, rightExpr *Node, source []byte
 	if leftmost == nil {
 		return nil, false
 	}
+	parent, childIndex, hasParent := nodeParentLink(leftmost)
 	combined, ok := awkCombinedStringConcat(prefixExpr, errNode, leftmost, source, lang, arena)
 	if !ok {
 		return nil, false
 	}
-	if leftmost.parent == nil {
+	if !hasParent {
 		return combined, true
 	}
-	parent := leftmost.parent
-	if int(leftmost.childIndex) < 0 || int(leftmost.childIndex) >= resultChildCount(parent) {
+	if childIndex < 0 || childIndex >= resultChildCount(parent) {
 		return nil, false
 	}
 	children := resultChildSliceForMutation(parent)
-	children[leftmost.childIndex] = combined
+	children[childIndex] = combined
 	replaceNodeChildrenUnfielded(parent, cloneNodeSliceInArena(arena, children))
 	awkSetStringConcatFields(parent, lang)
 	for n := parent; n != nil; n = n.parent {
