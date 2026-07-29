@@ -183,19 +183,20 @@ func sameSortedLR0CoreEntries(a, b []lr0CoreEntry) bool {
 
 // lrAction is a parse table action.
 type lrAction struct {
-	kind              lrActionKind
-	state             int   // shift target / goto target
-	prodIdx           int   // reduce production index
-	prec              int   // for shift: precedence of the item's production
-	hasPrec           bool  // production had an explicit compile-time precedence wrapper
-	assoc             Assoc // for shift: associativity of the item's production
-	lhsSym            int   // LHS nonterminal of the production (for conflict detection)
-	lhsSyms           []int // additional LHS symbols (when shifts from multiple rules merge)
-	shiftContributors []lrShiftContributor
-	isExtra           bool  // true if this action comes from a nonterminal extra production
-	repeat            bool  // true if this shift continues a recursive repeat wrapper
-	repeatLHS         int   // generated repeat-helper LHS continued by this shift, or 0 when unknown
-	repeatLHSSyms     []int // additional generated repeat-helper LHS symbols for merged shifts
+	kind                 lrActionKind
+	state                int   // shift target / goto target
+	prodIdx              int   // reduce production index
+	prec                 int   // for shift: precedence of the item's production
+	hasPrec              bool  // production had an explicit compile-time precedence wrapper
+	assoc                Assoc // for shift: associativity of the item's production
+	lhsSym               int   // LHS nonterminal of the production (for conflict detection)
+	lhsSyms              []int // additional LHS symbols (when shifts from multiple rules merge)
+	shiftContributors    []lrShiftContributor
+	conflictContributors []lrShiftContributor
+	isExtra              bool  // true if this action comes from a nonterminal extra production
+	repeat               bool  // true if this shift continues a recursive repeat wrapper
+	repeatLHS            int   // generated repeat-helper LHS continued by this shift, or 0 when unknown
+	repeatLHSSyms        []int // additional generated repeat-helper LHS symbols for merged shifts
 }
 
 type lrShiftContributor struct {
@@ -280,6 +281,23 @@ func (a *lrAction) addShiftContributor(lhs, prec int, hasPrec bool, assoc Assoc)
 	})
 }
 
+func (a *lrAction) addConflictContributor(lhs, prec int, hasPrec bool, assoc Assoc) {
+	if a == nil || lhs <= 0 {
+		return
+	}
+	for _, existing := range a.conflictContributors {
+		if existing.lhsSym == lhs && existing.prec == prec && existing.hasPrec == hasPrec && existing.assoc == assoc {
+			return
+		}
+	}
+	a.conflictContributors = append(a.conflictContributors, lrShiftContributor{
+		lhsSym:  lhs,
+		prec:    prec,
+		hasPrec: hasPrec,
+		assoc:   assoc,
+	})
+}
+
 func (a *lrAction) mergeShiftContributors(other lrAction) {
 	if a == nil || a.kind != lrShift || other.kind != lrShift {
 		return
@@ -288,6 +306,9 @@ func (a *lrAction) mergeShiftContributors(other lrAction) {
 	other.ensureShiftContributors()
 	for _, contributor := range other.shiftContributors {
 		a.addShiftContributor(contributor.lhsSym, contributor.prec, contributor.hasPrec, contributor.assoc)
+	}
+	for _, contributor := range other.conflictContributors {
+		a.addConflictContributor(contributor.lhsSym, contributor.prec, contributor.hasPrec, contributor.assoc)
 	}
 }
 
@@ -676,6 +697,9 @@ func buildLRTablesInternal(bgCtx context.Context, ng *NormalizedGrammar, trackPr
 						lhsSym:  prod.LHS,
 						isExtra: prod.IsExtra,
 					}
+					if ce.dot > 0 {
+						action.addConflictContributor(prod.LHS, prod.Prec, prod.HasExplicitPrec, prod.Assoc)
+					}
 					for _, lhs := range repeatLHSs {
 						action.addRepeatLHS(lhs)
 					}
@@ -742,7 +766,7 @@ func propagateEntryShiftMetadata(tables *LRTables, itemSets []lrItemSet, ctx *lr
 					if act.kind != lrShift || !shiftMatchesEntrySymbol(act, nextSym, leading) {
 						continue
 					}
-					tables.addAction(stateIdx, la, lrAction{
+					action := lrAction{
 						kind:          lrShift,
 						state:         act.state,
 						prec:          prod.Prec,
@@ -753,7 +777,11 @@ func propagateEntryShiftMetadata(tables *LRTables, itemSets []lrItemSet, ctx *lr
 						repeat:        act.repeat,
 						repeatLHS:     act.repeatLHS,
 						repeatLHSSyms: append([]int(nil), act.repeatLHSSyms...),
-					})
+					}
+					if ce.dot > 0 {
+						action.addConflictContributor(prod.LHS, prod.Prec, prod.HasExplicitPrec, prod.Assoc)
+					}
+					tables.addAction(stateIdx, la, action)
 				}
 			})
 		}
@@ -3641,6 +3669,9 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		if preferred, ok := preferredClosureParametersReduce(shifts, reduces, ng); ok {
 			return preferred, nil
 		}
+		if preferred, ok := preferredAdvancedShiftPrecedence(shifts, reduces, ng); ok {
+			return preferred, nil
+		}
 
 		// Tree-sitter keeps S/R as GLR when the reduce LHS and a shift LHS
 		// are both in the same declared conflict group.
@@ -5180,6 +5211,21 @@ func shiftMetadataForReduce(shift lrAction, reduceLHS int, ng *NormalizedGrammar
 	if shift.kind != lrShift || ng == nil || reduceLHS < 0 || reduceLHS >= len(ng.Symbols) {
 		return fallback
 	}
+	var advancedExact lrConflictMetadata
+	advancedExactFound := false
+	for _, contributor := range shift.conflictContributors {
+		if contributor.lhsSym != reduceLHS {
+			continue
+		}
+		candidate := lrConflictMetadata{prec: contributor.prec, hasPrec: contributor.hasPrec, assoc: contributor.assoc}
+		if !advancedExactFound || compareConflictMetadata(candidate, advancedExact) > 0 {
+			advancedExact = candidate
+			advancedExactFound = true
+		}
+	}
+	if advancedExactFound {
+		return advancedExact
+	}
 	contributors := shift.shiftContributors
 	if len(contributors) == 0 {
 		contributors = append(contributors, lrShiftContributor{lhsSym: shift.lhsSym, prec: shift.prec, hasPrec: shift.hasPrec, assoc: shift.assoc})
@@ -5228,6 +5274,46 @@ func shiftMetadataForReduce(shift lrAction, reduceLHS int, ng *NormalizedGrammar
 		return best
 	}
 	return fallback
+}
+
+// preferredAdvancedShiftPrecedence compares only items whose production prefix
+// has consumed input. Tree-sitter excludes closure items at dot zero.
+func preferredAdvancedShiftPrecedence(shifts, reduces []lrAction, ng *NormalizedGrammar) ([]lrAction, bool) {
+	if len(shifts) != 1 || len(reduces) != 1 || ng == nil {
+		return nil, false
+	}
+	reduce := reduces[0]
+	if reduce.prodIdx < 0 || reduce.prodIdx >= len(ng.Productions) {
+		return nil, false
+	}
+	contributors := shifts[0].conflictContributors
+	if len(contributors) == 0 {
+		return nil, false
+	}
+	reducePrec := ng.Productions[reduce.prodIdx].Prec
+	direction := 0
+	for _, contributor := range contributors {
+		cmp := 0
+		if contributor.prec < reducePrec {
+			cmp = -1
+		} else if contributor.prec > reducePrec {
+			cmp = 1
+		}
+		if cmp == 0 {
+			return nil, false
+		}
+		if direction != 0 && direction != cmp {
+			return nil, false
+		}
+		direction = cmp
+	}
+	if direction < 0 {
+		return []lrAction{reduce}, true
+	}
+	if direction > 0 {
+		return []lrAction{shifts[0]}, true
+	}
+	return nil, false
 }
 
 func reduceMetadataForShiftConflict(reduce lrAction, shift lrAction, ng *NormalizedGrammar, cache *conflictResolutionCache) lrConflictMetadata {
