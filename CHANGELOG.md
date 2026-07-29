@@ -102,6 +102,9 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Native `grammar.js` import now ignores comments in semantic AST children.
+  All 206 pinned grammars show import coverage increasing from 62 to 70.
+
 - AWK recovery now captures the original splice parent before it constructs a
   replacement concatenation.
   This prevents self-parent links during recovered expression materialization.
