@@ -871,7 +871,7 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 		if s.dead || s.accepted || s.shifted || s.cPaused || s.depth() == 0 {
 			return
 		}
-		actionIdx := p.lookupActionIndex(s.top().state, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, s.top().state, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(p.language.ParseActions) {
 			return
 		}
@@ -1972,7 +1972,7 @@ func (p *Parser) chainSingleReduceActions(source []byte, s *glrStack, tok Token,
 	for chainLen < maxInlineReduceChain {
 		currentState := s.top().state
 		currentDepth := s.depth()
-		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, currentState, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(parseActions) {
 			return false
 		}
@@ -2085,7 +2085,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedHinted(source []byte, s *glrS
 	steps := 0
 	for steps < int(hint.maxSteps) {
 		currentState := s.top().state
-		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, currentState, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(actions) {
 			if reduceChainHintTerminalMatches(hint, currentState, classifiedParseActionNoAction) {
 				if perfCountersEnabled {
@@ -2161,7 +2161,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedDefault(source []byte, s *glr
 	for chainLen < maxInlineReduceChain {
 		currentState := s.top().state
 		currentDepth := s.depth()
-		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, currentState, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(actions) {
 			return false
 		}
@@ -2214,7 +2214,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedBenchmarkOnly(source []byte, 
 	const maxInlineReduceChain = 256
 	actions := p.classifiedActions
 	for chainLen := 0; chainLen < maxInlineReduceChain; {
-		actionIdx := p.lookupActionIndex(s.top().state, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, s.top().state, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(actions) {
 			return false
 		}
@@ -2265,7 +2265,7 @@ func (p *Parser) chainSingleReduceActionsProfiled(source []byte, s *glrStack, to
 	for chainLen < maxInlineReduceChain {
 		currentState := s.top().state
 		currentDepth := s.depth()
-		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, currentState, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(parseActions) {
 			p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, currentState, classifiedParseActionNoAction, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopNoAction)
 			return false
@@ -2360,7 +2360,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedHintedProfiled(source []byte,
 	chainStart := time.Now()
 	for chainLen < int(hint.maxSteps) {
 		currentState := s.top().state
-		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, currentState, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(actions) {
 			if reduceChainHintTerminalMatches(hint, currentState, classifiedParseActionNoAction) {
 				if perfCountersEnabled {
@@ -2452,7 +2452,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedProfiledDefault(source []byte
 	for chainLen < maxInlineReduceChain {
 		currentState := s.top().state
 		currentDepth := s.depth()
-		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, currentState, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(actions) {
 			p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, currentState, classifiedParseActionNoAction, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopNoAction)
 			return false

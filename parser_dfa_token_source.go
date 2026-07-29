@@ -2164,9 +2164,7 @@ func (d *dfaTokenSource) splitCompactCloseAngleToken(tok Token) (Token, int, uin
 	if d == nil || d.language == nil || d.lookupActionIndex == nil {
 		return tok, 0, 0, 0, false
 	}
-	switch d.language.Name {
-	case "dart", "java", "tsx", "typescript":
-	default:
+	if !supportsCompactCloseAngleSplit(d.language.Name) {
 		return tok, 0, 0, 0, false
 	}
 	if d.symbolName(tok.Symbol) != ">>" {
@@ -2192,6 +2190,89 @@ func (d *dfaTokenSource) splitCompactCloseAngleToken(tok Token) (Token, int, uin
 		tok.Text = tok.Text[:1]
 	}
 	return tok, int(tok.EndByte), tok.EndPoint.Row, tok.EndPoint.Column, true
+}
+
+func supportsCompactCloseAngleSplit(languageName string) bool {
+	switch languageName {
+	case "dart", "java", "swift", "tsx", "typescript":
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) contextualActionIndex(source []byte, state StateID, tok Token) uint16 {
+	actionIdx := p.lookupActionIndex(state, tok.Symbol)
+	if actionIdx != 0 && p.shouldDeferContextualCloseAngleAction(source, state, tok) {
+		return 0
+	}
+	return actionIdx
+}
+
+// shouldDeferContextualCloseAngleAction reports that this stack's lex mode
+// reads an adjacent pair as one operator. Another live stack selected the
+// single close-angle prefix, so this stack must not consume that prefix.
+func (p *Parser) shouldDeferContextualCloseAngleAction(source []byte, state StateID, tok Token) bool {
+	lang := p.language
+	if lang == nil || int(tok.Symbol) >= len(lang.SymbolNames) ||
+		lang.SymbolNames[tok.Symbol] != ">" ||
+		tok.EndByte != tok.StartByte+1 ||
+		tok.EndPoint.Row != tok.StartPoint.Row {
+		return false
+	}
+	start := int(tok.StartByte)
+	if start < 0 || start+1 >= len(source) || source[start] != '>' || source[start+1] != '>' ||
+		int(state) >= len(lang.LexModes) {
+		return false
+	}
+	lexState := lang.LexModes[state].LexStateIndex()
+	if lexState == noLookaheadLexState || int(lexState) >= len(lang.LexStates) {
+		return false
+	}
+
+	probe := &p.relexProbeLexer
+	*probe = Lexer{
+		states:          lang.LexStates,
+		asciiTable:      lang.LexAsciiTable(),
+		source:          source,
+		pos:             start,
+		row:             tok.StartPoint.Row,
+		col:             tok.StartPoint.Column,
+		immediateTokens: lang.ImmediateTokens,
+		zeroWidthTokens: lang.ZeroWidthTokens,
+	}
+	stateToken, ok := probe.scan(uint32(lexState), probe.pos, probe.row, probe.col)
+	if !ok || int(stateToken.Symbol) >= len(lang.SymbolNames) {
+		return false
+	}
+	stateTokenName := lang.SymbolNames[stateToken.Symbol]
+	if !isWideCloseAngleTokenName(stateTokenName) ||
+		stateToken.StartByte != tok.StartByte ||
+		!p.stateHasActionForSymbol(state, stateToken.Symbol) {
+		return false
+	}
+	width := uint32(len(stateTokenName))
+	if stateToken.EndByte != tok.StartByte+width {
+		return false
+	}
+	closeIdx := p.lookupActionIndex(state, tok.Symbol)
+	shiftIdx := p.lookupActionIndex(state, stateToken.Symbol)
+	if closeIdx != 0 && closeIdx == shiftIdx && int(closeIdx) < len(lang.ParseActions) {
+		actions := lang.ParseActions[closeIdx].Actions
+		if len(actions) > 0 {
+			reduceOnly := true
+			for _, action := range actions {
+				if action.Type != ParseActionReduce {
+					reduceOnly = false
+					break
+				}
+			}
+			if reduceOnly {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (d *dfaTokenSource) shouldSplitCompactCloseAngleToken(tok Token, gtSym, shiftSym Symbol, shiftOK bool) bool {
@@ -2519,13 +2600,17 @@ func (d *dfaTokenSource) compareAngleTokenPreference(candTok, bestTok Token) int
 	// close-angle run at different widths. Prefer one close angle. A parser can
 	// compose later angles into nested generic closers, while a wide token
 	// consumes those bytes before that lineage can use them.
-	if candName == ">" && len(bestName) > 1 && strings.Trim(bestName, ">") == "" {
+	if candName == ">" && isWideCloseAngleTokenName(bestName) {
 		return 1
 	}
-	if bestName == ">" && len(candName) > 1 && strings.Trim(candName, ">") == "" {
+	if bestName == ">" && isWideCloseAngleTokenName(candName) {
 		return -1
 	}
 	return 0
+}
+
+func isWideCloseAngleTokenName(name string) bool {
+	return len(name) > 1 && strings.Trim(name, ">") == ""
 }
 
 func (d *dfaTokenSource) sameSymbolName(a, b Symbol) bool {

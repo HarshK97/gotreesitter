@@ -1111,7 +1111,10 @@ func TestNextGLRUnionDFATokenPrefersComposableCloseAngle(t *testing.T) {
 }
 
 func TestCompareAngleTokenPreferenceCoversWideCloseRuns(t *testing.T) {
-	lang := &Language{SymbolNames: []string{"end", ">", ">>", ">>>", ">="}}
+	lang := &Language{
+		Name:        "typescript",
+		SymbolNames: []string{"end", ">", ">>", ">>>", ">="},
+	}
 	d := &dfaTokenSource{language: lang}
 	for _, wider := range []Symbol{2, 3} {
 		if got := d.compareAngleTokenPreference(Token{Symbol: 1}, Token{Symbol: wider}); got != 1 {
@@ -1123,6 +1126,54 @@ func TestCompareAngleTokenPreferenceCoversWideCloseRuns(t *testing.T) {
 	}
 	if got := d.compareAngleTokenPreference(Token{Symbol: 1}, Token{Symbol: 4}); got != 0 {
 		t.Fatalf("> versus >= preference = %d, want 0", got)
+	}
+}
+
+func TestContextualActionDefersUnsignedShiftLineageAfterSingleCloseElection(t *testing.T) {
+	lang := &Language{
+		Name:        "artifact_probe",
+		SymbolNames: []string{"end", ">", ">>>"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "end", Visible: false, Named: false},
+			{Name: ">", Visible: true, Named: false},
+			{Name: ">>>", Visible: true, Named: false},
+		},
+		SymbolCount:     3,
+		TokenCount:      3,
+		StateCount:      2,
+		LargeStateCount: 2,
+		InitialState:    1,
+		LexStates: []LexState{
+			{Default: -1, EOF: -1},
+			{AcceptToken: 0, Default: -1, EOF: -1, Transitions: []LexTransition{{Lo: '>', Hi: '>', NextState: 2}}},
+			{AcceptToken: 1, Default: -1, EOF: -1, Transitions: []LexTransition{{Lo: '>', Hi: '>', NextState: 3}}},
+			{AcceptToken: 1, Default: -1, EOF: -1, Transitions: []LexTransition{{Lo: '>', Hi: '>', NextState: 4}}},
+			{AcceptToken: 2, Default: -1, EOF: -1},
+		},
+		LexModes: []LexMode{
+			{LexState: 0},
+			{LexState: 1},
+		},
+		ParseTable: [][]uint16{
+			{0, 0, 0},
+			{0, 1, 2},
+		},
+		ParseActions: []ParseActionEntry{
+			{Actions: nil},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+			{Actions: []ParseAction{{Type: ParseActionShift, State: 1}}},
+		},
+	}
+	parser := NewParser(lang)
+	tok := Token{
+		Symbol:     1,
+		StartByte:  0,
+		EndByte:    1,
+		StartPoint: Point{},
+		EndPoint:   Point{Column: 1},
+	}
+	if !parser.shouldDeferContextualCloseAngleAction([]byte(">>>"), 1, tok) {
+		t.Fatal("unsigned-shift lineage accepted the elected single close angle")
 	}
 }
 

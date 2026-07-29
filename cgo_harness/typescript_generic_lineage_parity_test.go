@@ -30,6 +30,14 @@ func TestTypeScriptGenericLineageCOracleParity(t *testing.T) {
 			name:   "issue_544_zod_union",
 			source: stress,
 		},
+		{
+			name:   "right_shift",
+			source: []byte("const shifted = value >> 1;"),
+		},
+		{
+			name:   "unsigned_right_shift",
+			source: []byte("const shifted = value >>> 1;"),
+		},
 	}
 
 	goLang := grammars.TypescriptLanguage()

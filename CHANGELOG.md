@@ -116,6 +116,11 @@ for tags and release notes while still in `0.x`.
   fixture.
   This fixes [issue #544](https://github.com/odvcencio/gotreesitter/issues/544).
 
+- The DFA lexer now splits adjacent Swift generic closers by parser state.
+  It preserves `>>` when the active state accepts the shift operator.
+  The pinned C oracle now matches without divergence.
+  This fixes [#543](https://github.com/odvcencio/gotreesitter/issues/543).
+
 - Native `grammar.js` import now ignores comments in semantic AST children.
   All 206 pinned grammars show import coverage increasing from 62 to 70.
 
