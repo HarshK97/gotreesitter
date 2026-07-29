@@ -2164,9 +2164,7 @@ func (d *dfaTokenSource) splitCompactCloseAngleToken(tok Token) (Token, int, uin
 	if d == nil || d.language == nil || d.lookupActionIndex == nil {
 		return tok, 0, 0, 0, false
 	}
-	switch d.language.Name {
-	case "dart", "java", "tsx", "typescript":
-	default:
+	if !supportsContextualCloseAngleSplit(d.language.Name) {
 		return tok, 0, 0, 0, false
 	}
 	if d.symbolName(tok.Symbol) != ">>" {
@@ -2192,6 +2190,85 @@ func (d *dfaTokenSource) splitCompactCloseAngleToken(tok Token) (Token, int, uin
 		tok.Text = tok.Text[:1]
 	}
 	return tok, int(tok.EndByte), tok.EndPoint.Row, tok.EndPoint.Column, true
+}
+
+func supportsContextualCloseAngleSplit(languageName string) bool {
+	switch languageName {
+	case "dart", "java", "swift", "tsx", "typescript":
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) contextualActionIndex(source []byte, state StateID, tok Token) uint16 {
+	actionIdx := p.lookupActionIndex(state, tok.Symbol)
+	if actionIdx != 0 && p.shouldDeferContextualCloseAngleAction(source, state, tok) {
+		return 0
+	}
+	return actionIdx
+}
+
+// shouldDeferContextualCloseAngleAction reports that this stack's lex mode
+// reads an adjacent pair as one operator. Another live stack selected the
+// single close-angle prefix, so this stack must not consume that prefix.
+func (p *Parser) shouldDeferContextualCloseAngleAction(source []byte, state StateID, tok Token) bool {
+	lang := p.language
+	if lang == nil || !supportsContextualCloseAngleSplit(lang.Name) ||
+		int(tok.Symbol) >= len(lang.SymbolNames) || lang.SymbolNames[tok.Symbol] != ">" ||
+		tok.EndByte != tok.StartByte+1 ||
+		tok.EndPoint.Row != tok.StartPoint.Row {
+		return false
+	}
+	start := int(tok.StartByte)
+	if start < 0 || start+1 >= len(source) || source[start] != '>' || source[start+1] != '>' ||
+		int(state) >= len(lang.LexModes) {
+		return false
+	}
+	lexState := lang.LexModes[state].LexStateIndex()
+	if lexState == noLookaheadLexState || int(lexState) >= len(lang.LexStates) {
+		return false
+	}
+
+	probe := &p.relexProbeLexer
+	*probe = Lexer{
+		states:          lang.LexStates,
+		asciiTable:      lang.LexAsciiTable(),
+		source:          source,
+		pos:             start,
+		row:             tok.StartPoint.Row,
+		col:             tok.StartPoint.Column,
+		immediateTokens: lang.ImmediateTokens,
+		zeroWidthTokens: lang.ZeroWidthTokens,
+	}
+	stateToken, ok := probe.scan(uint32(lexState), probe.pos, probe.row, probe.col)
+	if !ok || int(stateToken.Symbol) >= len(lang.SymbolNames) {
+		return false
+	}
+	if lang.SymbolNames[stateToken.Symbol] != ">>" ||
+		stateToken.StartByte != tok.StartByte ||
+		stateToken.EndByte != tok.StartByte+2 ||
+		!p.stateHasActionForSymbol(state, stateToken.Symbol) {
+		return false
+	}
+	closeIdx := p.lookupActionIndex(state, tok.Symbol)
+	shiftIdx := p.lookupActionIndex(state, stateToken.Symbol)
+	if closeIdx != 0 && closeIdx == shiftIdx && int(closeIdx) < len(lang.ParseActions) {
+		actions := lang.ParseActions[closeIdx].Actions
+		if len(actions) > 0 {
+			reduceOnly := true
+			for _, action := range actions {
+				if action.Type != ParseActionReduce {
+					reduceOnly = false
+					break
+				}
+			}
+			if reduceOnly {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (d *dfaTokenSource) shouldSplitCompactCloseAngleToken(tok Token, gtSym, shiftSym Symbol, shiftOK bool) bool {
