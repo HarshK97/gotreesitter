@@ -3,8 +3,26 @@ package gotreesitter
 import "bytes"
 
 func normalizeCooklangCompatibility(root *Node, source []byte, lang *Language) {
-	normalizeCooklangTrailingStepTail(root, source, lang)
-	normalizeCooklangRecoveredRecipe(root, source, lang)
+	normalizeCooklangCompatibilityWithCensus(
+		root,
+		source,
+		lang,
+		materializationSubpassCensus{},
+	)
+}
+
+func normalizeCooklangCompatibilityWithCensus(
+	root *Node,
+	source []byte,
+	lang *Language,
+	census materializationSubpassCensus,
+) {
+	census.run("dispatch.cooklang.trailing-step-tail", func() {
+		normalizeCooklangTrailingStepTail(root, source, lang)
+	})
+	census.run("dispatch.cooklang.recovered-recipe", func() {
+		normalizeCooklangRecoveredRecipe(root, source, lang)
+	})
 }
 
 func normalizeCooklangRecoveredRecipe(root *Node, source []byte, lang *Language) {

@@ -41,6 +41,7 @@ type resultCompatOwnershipEntry struct {
 	Kind                string                    `json:"kind"`
 	Functions           []string                  `json:"functions"`
 	Files               []string                  `json:"files"`
+	Subpasses           []resultCompatSubpass     `json:"subpasses,omitempty"`
 	Languages           []string                  `json:"languages"`
 	MatchPredicate      string                    `json:"match_predicate,omitempty"`
 	EntrypointCalls     []string                  `json:"entrypoint_calls,omitempty"`
@@ -53,6 +54,15 @@ type resultCompatOwnershipEntry struct {
 	Status              string                    `json:"status"`
 	ReceiptRefs         []string                  `json:"receipt_refs,omitempty"`
 	RetiredCommit       string                    `json:"retired_commit,omitempty"`
+}
+
+type resultCompatSubpass struct {
+	ID                 string   `json:"id"`
+	Functions          []string `json:"functions"`
+	Files              []string `json:"files"`
+	Purpose            string   `json:"purpose"`
+	AuthoritativeOwner string   `json:"authoritative_owner"`
+	Witnesses          []string `json:"witnesses"`
 }
 
 type resultCompatSwitchArm struct {
@@ -137,6 +147,7 @@ func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 		if entry.Status == "live" {
 			assertRegistryFunctionsExist(t, entry)
 		}
+		assertRegistrySubpasses(t, entry, allowedOwners)
 		if entry.Status != "retired" {
 			entriesByKind[entry.Kind] = append(entriesByKind[entry.Kind], entry)
 		}
@@ -145,6 +156,93 @@ func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 	assertDispatcherRegistry(t, registry.Denominator, entriesByKind)
 	assertGenericPassRegistry(t, registry.Denominator, entriesByKind)
 	assertPostFinalizationRegistry(t, registry.Denominator, entriesByKind)
+}
+
+func assertRegistrySubpasses(
+	t *testing.T,
+	entry resultCompatOwnershipEntry,
+	allowedOwners map[string]bool,
+) {
+	t.Helper()
+	if entry.Status == "live" && entry.AuthoritativeOwner == "materialization" &&
+		len(entry.Subpasses) == 0 {
+		t.Errorf("%s must classify its materialization subpasses", entry.ID)
+	}
+	seen := make(map[string]bool)
+	for _, subpass := range entry.Subpasses {
+		if subpass.ID == "" || seen[subpass.ID] {
+			t.Errorf("%s has an empty or duplicate subpass id %q", entry.ID, subpass.ID)
+			continue
+		}
+		seen[subpass.ID] = true
+		if !strings.HasPrefix(subpass.ID, entry.ID+".") {
+			t.Errorf("%s subpass id %q must use the parent id prefix", entry.ID, subpass.ID)
+		}
+		if !allowedOwners[subpass.AuthoritativeOwner] {
+			t.Errorf(
+				"%s authoritative_owner = %q, want registered owner category",
+				subpass.ID,
+				subpass.AuthoritativeOwner,
+			)
+		}
+		if subpass.Purpose == "" || len(subpass.Functions) == 0 ||
+			len(subpass.Files) == 0 || len(subpass.Witnesses) == 0 {
+			t.Errorf(
+				"%s must declare functions, files, purpose, and witnesses",
+				subpass.ID,
+			)
+		}
+		if ownershipHasDuplicateStrings(subpass.Functions) {
+			t.Errorf("%s functions must be a duplicate-free set: %v", subpass.ID, subpass.Functions)
+		}
+		for _, path := range append(append([]string{}, subpass.Files...), subpass.Witnesses...) {
+			if _, err := os.Stat(filepath.Clean(path)); err != nil {
+				t.Errorf("%s references missing path %q: %v", subpass.ID, path, err)
+			}
+		}
+		assertRegistryFunctionsInFiles(t, subpass.ID, subpass.Functions, subpass.Files)
+		sourceFiles := append([]string{"parser_result_compat.go"}, entry.Files...)
+		if !ownershipSubpassCensusIDExists(t, sourceFiles, subpass.ID) {
+			t.Errorf("%s has no census.run call in %v", subpass.ID, sourceFiles)
+		}
+	}
+}
+
+func ownershipSubpassCensusIDExists(t *testing.T, files []string, want string) bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	for _, path := range files {
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Errorf("parse %s for subpass census ids: %v", path, err)
+			continue
+		}
+		found := false
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok || len(call.Args) == 0 {
+				return true
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || selector.Sel.Name != "run" {
+				return true
+			}
+			literal, ok := call.Args[0].(*ast.BasicLit)
+			if !ok || literal.Kind != token.STRING {
+				return true
+			}
+			value, err := strconv.Unquote(literal.Value)
+			if err == nil && value == want {
+				found = true
+				return false
+			}
+			return true
+		})
+		if found {
+			return true
+		}
+	}
+	return false
 }
 
 func loadResultCompatOwnershipRegistry(t *testing.T) resultCompatOwnershipRegistry {
@@ -254,12 +352,22 @@ func assertOwnershipStatusAndRoutes(t *testing.T, entry resultCompatOwnershipEnt
 
 func assertRegistryFunctionsExist(t *testing.T, entry resultCompatOwnershipEntry) {
 	t.Helper()
+	assertRegistryFunctionsInFiles(t, entry.ID, entry.Functions, entry.Files)
+}
+
+func assertRegistryFunctionsInFiles(
+	t *testing.T,
+	entryID string,
+	functions []string,
+	files []string,
+) {
+	t.Helper()
 	declared := make(map[string]bool)
 	fset := token.NewFileSet()
-	for _, path := range entry.Files {
+	for _, path := range files {
 		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
-			t.Errorf("%s parse %s: %v", entry.ID, path, err)
+			t.Errorf("%s parse %s: %v", entryID, path, err)
 			continue
 		}
 		for _, decl := range file.Decls {
@@ -268,9 +376,9 @@ func assertRegistryFunctionsExist(t *testing.T, entry resultCompatOwnershipEntry
 			}
 		}
 	}
-	for _, function := range entry.Functions {
+	for _, function := range functions {
 		if !declared[function] {
-			t.Errorf("%s live function %s is absent from registered files %v", entry.ID, function, entry.Files)
+			t.Errorf("%s function %s is absent from registered files %v", entryID, function, files)
 		}
 	}
 }

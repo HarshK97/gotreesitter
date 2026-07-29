@@ -1,19 +1,43 @@
 package gotreesitter
 
 func normalizeBashProgramVariableAssignments(root *Node, lang *Language) {
+	normalizeBashProgramVariableAssignmentsWithCensus(
+		root,
+		lang,
+		materializationSubpassCensus{},
+	)
+}
+
+func normalizeBashProgramVariableAssignmentsWithCensus(
+	root *Node,
+	lang *Language,
+	census materializationSubpassCensus,
+) {
 	if root == nil || lang == nil || lang.Name != "bash" || root.Type(lang) != "program" || len(root.children) == 0 {
 		return
 	}
-	normalizeBashVariableAssignmentsInNode(root, lang)
+	normalizeBashVariableAssignmentsInNodeWithCensus(root, lang, census)
 }
 
 func normalizeBashVariableAssignmentsInNode(node *Node, lang *Language) {
+	normalizeBashVariableAssignmentsInNodeWithCensus(
+		node,
+		lang,
+		materializationSubpassCensus{},
+	)
+}
+
+func normalizeBashVariableAssignmentsInNodeWithCensus(
+	node *Node,
+	lang *Language,
+	census materializationSubpassCensus,
+) {
 	if node == nil || lang == nil || len(node.children) == 0 {
 		return
 	}
 	for _, child := range node.children {
 		if child != nil {
-			normalizeBashVariableAssignmentsInNode(child, lang)
+			normalizeBashVariableAssignmentsInNodeWithCensus(child, lang, census)
 		}
 	}
 	out := make([]*Node, 0, len(node.children))
@@ -30,17 +54,23 @@ func normalizeBashVariableAssignmentsInNode(node *Node, lang *Language) {
 		out = append(out, child)
 	}
 	if !changed {
-		assignBashIfConditionField(node, lang)
+		census.run("dispatch.bash.if-condition-field-projection", func() {
+			assignBashIfConditionField(node, lang)
+		})
 		return
 	}
-	if node.ownerArena != nil {
-		buf := node.ownerArena.allocNodeSlice(len(out))
-		copy(buf, out)
-		out = buf
-	}
-	node.children = out
-	node.clearFieldMetadata()
-	assignBashIfConditionField(node, lang)
+	census.run("dispatch.bash.variable-assignment-wrapper-flattening", func() {
+		if node.ownerArena != nil {
+			buf := node.ownerArena.allocNodeSlice(len(out))
+			copy(buf, out)
+			out = buf
+		}
+		node.children = out
+		node.clearFieldMetadata()
+	})
+	census.run("dispatch.bash.if-condition-field-projection", func() {
+		assignBashIfConditionField(node, lang)
+	})
 }
 
 func normalizeBashGeneratedCommandAssignments(root *Node, source []byte, lang *Language) {
