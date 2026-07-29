@@ -57,10 +57,11 @@ type DiagnosticParserCorePrefixOptions struct {
 	freshSchedulerSession bool
 	// These acceptance options require exact artifact certification. Diagnostic
 	// callers retain the conservative false defaults.
-	allowEOFAcceptNoActionSiblings bool
-	allowPrimaryAcceptDerivation   bool
-	noLookaheadRootSymbol          Symbol
-	hasNoLookaheadRootSymbol       bool
+	allowEOFAcceptNoActionSiblings  bool
+	allowPrimaryAcceptDerivation    bool
+	allowConvergedSplitDropArtifact bool
+	noLookaheadRootSymbol           Symbol
+	hasNoLookaheadRootSymbol        bool
 }
 
 type DiagnosticParserCoreScannerCheckpoint struct {
@@ -148,19 +149,22 @@ type DiagnosticParserCoreGenericWork struct {
 	// ConvergedReductionSplitDrops counts no-action drops descended from a
 	// reduction that split multiple compact predecessor paths into live heads.
 	ConvergedReductionSplitDrops uint64
-	RepetitionFolds              uint64
-	Reductions                   uint64
-	OrdinaryShifts               uint64
-	OrdinaryCohorts              uint64
-	ExtraShifts                  uint64
-	ExtraCohorts                 uint64
-	Accepts                      uint64
-	ReductionPauses              uint64
-	NoActionDrops                uint64
-	Elections                    uint64
-	Canonicalizations            uint64
-	PeakHeaders                  uint64
-	Overflow                     bool
+	// SelectedLineageDrops counts converged split drops whose unselected rank
+	// matched one surviving selected header from the same reduction.
+	SelectedLineageDrops uint64
+	RepetitionFolds      uint64
+	Reductions           uint64
+	OrdinaryShifts       uint64
+	OrdinaryCohorts      uint64
+	ExtraShifts          uint64
+	ExtraCohorts         uint64
+	Accepts              uint64
+	ReductionPauses      uint64
+	NoActionDrops        uint64
+	Elections            uint64
+	Canonicalizations    uint64
+	PeakHeaders          uint64
+	Overflow             bool
 }
 
 func (w *DiagnosticParserCoreGenericWork) add(counter *uint64, delta uint64) {
@@ -679,6 +683,7 @@ func DiagnosticParseParserCorePrefix(scanner ExternalScanner, source []byte, opt
 	result.Grammar = lang.Name
 	result.ExactRootDFA = true
 	result.GrammarBlobSHA256 = sha256.Sum256(parserCoreCertifiedGoBlob)
+	options.allowConvergedSplitDropArtifact = lang.CompactConvergedReductionSplitDropsCertified
 	if options.Recovery || options.Retry || options.Incremental || options.IncludedRanges {
 		result.Boundary, result.Detail = DiagnosticParserCoreRoute, "recovery/retry/incremental/included-range routes decline"
 		return result, &diagnosticParserCoreDecline{boundary: result.Boundary, detail: result.Detail}
@@ -857,6 +862,72 @@ type diagnosticParserCoreHeader struct {
 	accepted                bool
 	paused                  bool
 	convergedReductionSplit bool
+	cleanPathRank           core.CleanPathRankSelection
+	cleanPathLineage        uint16
+}
+
+func nextDiagnosticParserCoreCleanPathLineage(next *uint16) (uint16, error) {
+	if next == nil || *next == 0 {
+		return 0, &diagnosticParserCoreDecline{
+			boundary: DiagnosticParserCoreCap,
+			detail:   "clean multi-pop lineage identity cap",
+		}
+	}
+	lineage := *next
+	if lineage == math.MaxUint16 {
+		*next = 0
+	} else {
+		(*next)++
+	}
+	return lineage, nil
+}
+
+func mergeDiagnosticParserCoreCleanPathLineage(
+	leftRank core.CleanPathRankSelection,
+	leftLineage uint16,
+	rightRank core.CleanPathRankSelection,
+	rightLineage uint16,
+) (core.CleanPathRankSelection, uint16) {
+	if leftRank == core.CleanPathRankUnknown || rightRank == core.CleanPathRankUnknown {
+		return core.CleanPathRankUnknown, 0
+	}
+	if leftRank == core.CleanPathRankNotApplicable || leftLineage == 0 {
+		return rightRank, rightLineage
+	}
+	if rightRank == core.CleanPathRankNotApplicable || rightLineage == 0 {
+		return leftRank, leftLineage
+	}
+	if leftLineage != rightLineage {
+		return core.CleanPathRankUnknown, 0
+	}
+	if leftRank == core.CleanPathRankSelected || rightRank == core.CleanPathRankSelected {
+		return core.CleanPathRankSelected, leftLineage
+	}
+	return core.CleanPathRankUnselected, leftLineage
+}
+
+func applyDiagnosticParserCoreCleanPathOutput(
+	header *diagnosticParserCoreHeader,
+	rank core.CleanPathRankSelection,
+	lineage uint16,
+) {
+	if header == nil || header.cleanPathRank == core.CleanPathRankUnknown {
+		return
+	}
+	if rank == core.CleanPathRankNotApplicable || lineage == 0 {
+		return
+	}
+	header.cleanPathRank = rank
+	header.cleanPathLineage = lineage
+}
+
+func markDiagnosticParserCoreExternalLineage(header *diagnosticParserCoreHeader, token Token) {
+	if header == nil || !token.ExternalScannerToken ||
+		header.cleanPathRank == core.CleanPathRankNotApplicable {
+		return
+	}
+	header.cleanPathRank = core.CleanPathRankUnknown
+	header.cleanPathLineage = 0
 }
 
 func diagnosticParserCoreCheckpointDigest(compact *core.Core, id core.CheckpointID) ([32]byte, error) {
@@ -1032,8 +1103,10 @@ func (s *diagnosticParserCoreConflictScratch) finish() {
 }
 
 type diagnosticParserCoreActionOutput struct {
-	head      core.Head
-	freshness core.ReductionFreshness
+	head             core.Head
+	freshness        core.ReductionFreshness
+	cleanPathRank    core.CleanPathRankSelection
+	cleanPathLineage uint16
 }
 
 func executeDiagnosticParserCoreGenericConflictDetailed(
@@ -1044,6 +1117,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 	token Token,
 	classified core.ClassifiedBoundary,
 	branchOrder uint64,
+	nextCleanPathLineage *uint16,
 	collectReceipts bool,
 	scratch *diagnosticParserCoreConflictScratch,
 ) (diagnosticParserCoreConflictExecution, error) {
@@ -1085,7 +1159,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 			var applyErr error
 			scratch.actionOutputs, scratch.reductionOutputs, applyErr = applyParserCoreConflictActionInto(
 				scratch.actionOutputs[:0], scratch.reductionOutputs[:0], compact, owner, classified, token,
-				action, ordinal, core.ForkOrder{Present: true, Value: trialOrder},
+				action, ordinal, core.ForkOrder{Present: true, Value: trialOrder}, nextCleanPathLineage,
 			)
 			if applyErr != nil {
 				return applyErr
@@ -1096,6 +1170,11 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 				secondary.head = output.head
 				secondary.shifted = action.Type == core.ActionShift
 				secondary.freshness = output.freshness
+				secondary.convergedReductionSplit = secondary.convergedReductionSplit || output.cleanPathLineage != 0
+				applyDiagnosticParserCoreCleanPathOutput(&secondary, output.cleanPathRank, output.cleanPathLineage)
+				if action.Type == core.ActionShift {
+					markDiagnosticParserCoreExternalLineage(&secondary, token)
+				}
 				scratch.outputs = append(scratch.outputs, secondary)
 			}
 			scratch.armRanges[ordinal] = diagnosticParserCoreConflictArmRange{start: start, end: len(scratch.outputs)}
@@ -1110,7 +1189,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 		var applyErr error
 		scratch.actionOutputs, scratch.reductionOutputs, applyErr = applyParserCoreConflictActionInto(
 			scratch.actionOutputs[:0], scratch.reductionOutputs[:0], compact, owner, classified, token,
-			primaryAction, 0, core.ForkOrder{},
+			primaryAction, 0, core.ForkOrder{}, nextCleanPathLineage,
 		)
 		if applyErr != nil {
 			return applyErr
@@ -1121,6 +1200,11 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 			primary.head = output.head
 			primary.shifted = primaryAction.Type == core.ActionShift
 			primary.freshness = output.freshness
+			primary.convergedReductionSplit = primary.convergedReductionSplit || output.cleanPathLineage != 0
+			applyDiagnosticParserCoreCleanPathOutput(&primary, output.cleanPathRank, output.cleanPathLineage)
+			if primaryAction.Type == core.ActionShift {
+				markDiagnosticParserCoreExternalLineage(&primary, token)
+			}
 			scratch.outputs = append(scratch.outputs, primary)
 		}
 		scratch.armRanges[0] = diagnosticParserCoreConflictArmRange{start: start, end: len(scratch.outputs)}
@@ -1166,6 +1250,8 @@ type diagnosticParserCoreCanonicalGroup struct {
 	winner                  int
 	runnable                bool
 	convergedReductionSplit bool
+	cleanPathRank           core.CleanPathRankSelection
+	cleanPathLineage        uint16
 }
 
 const diagnosticParserCoreLinearCanonicalLimit = 8
@@ -1249,6 +1335,7 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(normalized []d
 				diagnosticParserCoreCanonicalGroup: diagnosticParserCoreCanonicalGroup{
 					winner: index, runnable: !header.paused,
 					convergedReductionSplit: header.convergedReductionSplit,
+					cleanPathRank:           header.cleanPathRank, cleanPathLineage: header.cleanPathLineage,
 				},
 			}
 			groupCount++
@@ -1257,6 +1344,12 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(normalized []d
 		group := &groups[groupIndex].diagnosticParserCoreCanonicalGroup
 		group.runnable = group.runnable || !header.paused
 		group.convergedReductionSplit = group.convergedReductionSplit || header.convergedReductionSplit
+		group.cleanPathRank, group.cleanPathLineage = mergeDiagnosticParserCoreCleanPathLineage(
+			group.cleanPathRank,
+			group.cleanPathLineage,
+			header.cleanPathRank,
+			header.cleanPathLineage,
+		)
 		if diagnosticParserCoreCanonicalCandidateWins(normalized[group.winner], header) {
 			group.winner = index
 		}
@@ -1271,6 +1364,8 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(normalized []d
 			header.paused = !group.runnable
 			header.freshness = 0
 			header.convergedReductionSplit = group.convergedReductionSplit
+			header.cleanPathRank = group.cleanPathRank
+			header.cleanPathLineage = group.cleanPathLineage
 			normalized[write] = header
 			write++
 			break
@@ -1295,6 +1390,12 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMapped(normalized []d
 		}
 		group.runnable = group.runnable || !header.paused
 		group.convergedReductionSplit = group.convergedReductionSplit || header.convergedReductionSplit
+		group.cleanPathRank, group.cleanPathLineage = mergeDiagnosticParserCoreCleanPathLineage(
+			group.cleanPathRank,
+			group.cleanPathLineage,
+			header.cleanPathRank,
+			header.cleanPathLineage,
+		)
 		s.groups[key] = group
 	}
 	write := 0
@@ -1306,6 +1407,8 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMapped(normalized []d
 		header.paused = !group.runnable
 		header.freshness = 0
 		header.convergedReductionSplit = group.convergedReductionSplit
+		header.cleanPathRank = group.cleanPathRank
+		header.cleanPathLineage = group.cleanPathLineage
 		normalized[write] = header
 		write++
 	}
@@ -1399,6 +1502,7 @@ type diagnosticParserCoreGenericScheduler struct {
 	dispatches                    uint64
 	branchOrder                   uint64
 	nextSeq                       uint64
+	nextCleanPathLineage          uint16
 	options                       DiagnosticParserCorePrefixOptions
 	receiptBacking                DiagnosticParserCoreGenericScheduler
 	receipt                       *DiagnosticParserCoreGenericScheduler
@@ -1586,6 +1690,7 @@ func initializeDiagnosticParserCoreGenericScheduler(
 	scheduler.checkpointID = checkpointID
 	scheduler.electionIndex = -1
 	scheduler.nextSeq = 1
+	scheduler.nextCleanPathLineage = 1
 	scheduler.options = options
 	scheduler.observer = observer
 	// Public diagnostic results retain their receipt after the scheduler returns.
@@ -3015,6 +3120,42 @@ func diagnosticParserCoreGenericNoActionDropEligible(headers []diagnosticParserC
 	return false
 }
 
+func diagnosticParserCoreSelectedLineageDrops(
+	headers []diagnosticParserCoreHeader,
+	indices []int,
+) (uint64, bool) {
+	var proved uint64
+	for _, index := range indices {
+		if index < 0 || index >= len(headers) {
+			return 0, false
+		}
+		dropped := headers[index]
+		if !dropped.convergedReductionSplit {
+			continue
+		}
+		if dropped.cleanPathRank != core.CleanPathRankUnselected || dropped.cleanPathLineage == 0 {
+			return 0, false
+		}
+		matched := false
+		for survivorIndex, survivor := range headers {
+			dropIndex := sort.SearchInts(indices, survivorIndex)
+			if dropIndex < len(indices) && indices[dropIndex] == survivorIndex {
+				continue
+			}
+			if survivor.cleanPathRank == core.CleanPathRankSelected &&
+				survivor.cleanPathLineage == dropped.cleanPathLineage {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return 0, false
+		}
+		proved++
+	}
+	return proved, true
+}
+
 // dropGenericNoActionHeads removes the paused/no-action heads named by indices.
 // indices is produced in ascending, unique header order by the dispatch pass,
 // so the surviving frontier is compacted in place with no allocation. The drop
@@ -3023,6 +3164,13 @@ func diagnosticParserCoreGenericNoActionDropEligible(headers []diagnosticParserC
 func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices []int) error {
 	if len(indices) == 0 || len(indices) >= len(s.headers) {
 		return errors.New("parser-core phase zero: sibling-backed no-action drop removed the complete frontier")
+	}
+	selectedLineageDrops, proved := diagnosticParserCoreSelectedLineageDrops(s.headers, indices)
+	if !proved && !s.options.allowConvergedSplitDropArtifact {
+		return &diagnosticParserCoreDecline{
+			boundary: DiagnosticParserCoreNoAction,
+			detail:   "converged-path reduction split no-action drop lacks one exact unselected-to-selected lineage",
+		}
 	}
 	if s.fullReceipts() {
 		pathReceipts, err := diagnosticParserCoreHeaderPathReceipts(s.compact, s.headers)
@@ -3063,6 +3211,7 @@ func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices 
 	s.headers = s.headers[:write]
 	s.work.NoActionDrops += uint64(len(indices))
 	s.work.add(&s.work.ConvergedReductionSplitDrops, convergedReductionSplitDrops)
+	s.work.add(&s.work.SelectedLineageDrops, selectedLineageDrops)
 	return nil
 }
 
@@ -3074,6 +3223,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReduction(before []Di
 		return err
 	}
 	dispatchesBefore, nextSeqBefore := s.dispatches, s.nextSeq
+	nextCleanPathLineageBefore := s.nextCleanPathLineage
 	workBefore, epochProgressBefore := s.work, s.epochProgress
 	roundsBefore := len(s.receipt.Rounds)
 	defer func() {
@@ -3082,6 +3232,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReduction(before []Di
 			return
 		}
 		s.dispatches, s.nextSeq = dispatchesBefore, nextSeqBefore
+		s.nextCleanPathLineage = nextCleanPathLineageBefore
 		s.work, s.epochProgress = workBefore, epochProgressBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 	}()
@@ -3108,7 +3259,13 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 	if err != nil {
 		return err
 	}
-	convergedReductionSplit := len(outputs) > 1 && outputs[0].MultiplePopPaths
+	var cleanPathLineage uint16
+	if len(outputs) != 0 && outputs[0].MultiplePopPaths {
+		cleanPathLineage, err = nextDiagnosticParserCoreCleanPathLineage(&s.nextCleanPathLineage)
+		if err != nil {
+			return err
+		}
+	}
 	s.reductionOutputs = outputs
 	s.reductionReplacements = s.reductionReplacements[:0]
 	replacements := s.reductionReplacements
@@ -3116,6 +3273,17 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 	for _, output := range outputs {
 		switch output.Freshness {
 		case core.ReductionUnchanged:
+			if output.MultiplePopPaths {
+				if _, err := s.adoptUpdatedReductionSibling(
+					cell.headerIndex,
+					output.Head,
+					output.CleanPathRank,
+					cleanPathLineage,
+					true,
+				); err != nil {
+					return err
+				}
+			}
 			continue
 		case core.ReductionNew, core.ReductionUpdated:
 		default:
@@ -3123,7 +3291,13 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		}
 		madeFreshProgress = true
 		if output.Freshness == core.ReductionUpdated {
-			adopted, err := s.adoptUpdatedReductionSibling(cell.headerIndex, output.Head)
+			adopted, err := s.adoptUpdatedReductionSibling(
+				cell.headerIndex,
+				output.Head,
+				output.CleanPathRank,
+				cleanPathLineage,
+				output.MultiplePopPaths,
+			)
 			if err != nil {
 				return err
 			}
@@ -3135,7 +3309,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		replacement.head = output.Head
 		replacement.paused = false
 		replacement.shifted = token.NoLookahead
-		replacement.convergedReductionSplit = replacement.convergedReductionSplit || convergedReductionSplit
+		replacement.convergedReductionSplit = replacement.convergedReductionSplit || output.MultiplePopPaths
+		applyDiagnosticParserCoreCleanPathOutput(&replacement, output.CleanPathRank, cleanPathLineage)
 		if len(replacements) > 0 {
 			if s.nextSeq == math.MaxUint64 {
 				return errors.New("parser-core phase zero: reduction creation sequence overflow")
@@ -3192,7 +3367,13 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 // adoptUpdatedReductionSibling updates an already-active canonical sibling in
 // place. The sibling keeps its scheduler slot and creation sequence; a paused
 // copy becomes runnable because the canonical boundary materially changed.
-func (s *diagnosticParserCoreGenericScheduler) adoptUpdatedReductionSibling(source int, head core.Head) (bool, error) {
+func (s *diagnosticParserCoreGenericScheduler) adoptUpdatedReductionSibling(
+	source int,
+	head core.Head,
+	rank core.CleanPathRankSelection,
+	lineage uint16,
+	convergedReductionSplit bool,
+) (bool, error) {
 	for index := range s.headers {
 		if index == source {
 			continue
@@ -3208,6 +3389,9 @@ func (s *diagnosticParserCoreGenericScheduler) adoptUpdatedReductionSibling(sour
 		}
 		s.headers[index].head = head
 		s.headers[index].paused = false
+		s.headers[index].convergedReductionSplit =
+			s.headers[index].convergedReductionSplit || convergedReductionSplit
+		applyDiagnosticParserCoreCleanPathOutput(&s.headers[index], rank, lineage)
 		return true, nil
 	}
 	return false, nil
@@ -3217,13 +3401,22 @@ func (s *diagnosticParserCoreGenericScheduler) reconcileGenericConflictOutputs(s
 	kept := outputs[:0]
 	adopted := 0
 	for _, output := range outputs {
-		if output.freshness == core.ReductionUpdated {
-			ok, err := s.adoptUpdatedReductionSibling(source, output.head)
+		if output.freshness == core.ReductionUpdated || output.freshness == core.ReductionUnchanged {
+			ok, err := s.adoptUpdatedReductionSibling(
+				source,
+				output.head,
+				output.cleanPathRank,
+				output.cleanPathLineage,
+				output.cleanPathLineage != 0,
+			)
 			if err != nil {
 				return nil, 0, err
 			}
 			if ok {
 				adopted++
+				continue
+			}
+			if output.freshness == core.ReductionUnchanged {
 				continue
 			}
 		}
@@ -3240,6 +3433,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflict(before []Dia
 		return err
 	}
 	dispatchesBefore, branchOrderBefore, nextSeqBefore := s.dispatches, s.branchOrder, s.nextSeq
+	nextCleanPathLineageBefore := s.nextCleanPathLineage
 	workBefore, epochProgressBefore := s.work, s.epochProgress
 	roundsBefore, conflictsBefore := len(s.receipt.Rounds), len(s.receipt.Conflicts)
 	externalShiftsBefore := len(s.receipt.ExternalShifts)
@@ -3249,6 +3443,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflict(before []Dia
 			return
 		}
 		s.dispatches, s.branchOrder, s.nextSeq = dispatchesBefore, branchOrderBefore, nextSeqBefore
+		s.nextCleanPathLineage = nextCleanPathLineageBefore
 		s.work, s.epochProgress = workBefore, epochProgressBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 		s.receipt.Conflicts = s.receipt.Conflicts[:conflictsBefore]
@@ -3275,7 +3470,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner c
 	defer s.conflictScratch.finish()
 	execution, err := executeDiagnosticParserCoreGenericConflictDetailed(
 		s.compact, owner, s.headers[cell.headerIndex], cell.headerIndex, cell.dispatchToken(s.token), cell.boundary,
-		s.branchOrder, s.fullReceipts(), &s.conflictScratch,
+		s.branchOrder, &s.nextCleanPathLineage, s.fullReceipts(), &s.conflictScratch,
 	)
 	if err != nil {
 		return err
@@ -3482,6 +3677,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 			cell := &cells[index]
 			s.headers[cell.headerIndex].head = heads[index]
 			s.headers[cell.headerIndex].shifted = true
+			markDiagnosticParserCoreExternalLineage(&s.headers[cell.headerIndex], token)
 		}
 		s.work.OrdinaryCohorts++
 	} else {
@@ -3501,6 +3697,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 			}
 			s.headers[cell.headerIndex].head = head
 			s.headers[cell.headerIndex].shifted = true
+			markDiagnosticParserCoreExternalLineage(&s.headers[cell.headerIndex], token)
 		}
 	}
 	s.epochProgress = true
@@ -3582,6 +3779,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 			cell := &cells[index]
 			s.headers[cell.headerIndex].head = heads[index]
 			s.headers[cell.headerIndex].shifted = true
+			markDiagnosticParserCoreExternalLineage(&s.headers[cell.headerIndex], token)
 		}
 		if s.extraPostExecutionFault != nil {
 			if err := s.extraPostExecutionFault(); err != nil {
@@ -4030,6 +4228,7 @@ func authenticatedParserCoreGoLanguage(scanner ExternalScanner) (*Language, erro
 	}
 	decoded.Name = "go"
 	decoded.ExternalScanner = scanner
+	decoded.CompactConvergedReductionSplitDropsCertified = true
 	CertifyCRecoveryCostCompetition(decoded)
 	return decoded, nil
 }
@@ -4060,6 +4259,7 @@ func applyParserCoreConflictActionInto(
 	action core.Action,
 	ordinal int,
 	fork core.ForkOrder,
+	nextCleanPathLineage *uint16,
 ) ([]diagnosticParserCoreActionOutput, []core.ReductionOutput, error) {
 	if action.Type != core.ActionReduce {
 		switch action.Type {
@@ -4081,11 +4281,25 @@ func applyParserCoreConflictActionInto(
 	if err != nil {
 		return nil, outputs, err
 	}
+	var lineage uint16
+	if len(outputs) != 0 && outputs[0].MultiplePopPaths {
+		lineage, err = nextDiagnosticParserCoreCleanPathLineage(nextCleanPathLineage)
+		if err != nil {
+			return nil, outputs, err
+		}
+	}
 	for _, output := range outputs {
 		switch output.Freshness {
 		case core.ReductionUnchanged:
+			dst = append(dst, diagnosticParserCoreActionOutput{
+				head: output.Head, freshness: output.Freshness,
+				cleanPathRank: output.CleanPathRank, cleanPathLineage: lineage,
+			})
 		case core.ReductionNew, core.ReductionUpdated:
-			dst = append(dst, diagnosticParserCoreActionOutput{head: output.Head, freshness: output.Freshness})
+			dst = append(dst, diagnosticParserCoreActionOutput{
+				head: output.Head, freshness: output.Freshness,
+				cleanPathRank: output.CleanPathRank, cleanPathLineage: lineage,
+			})
 		default:
 			return nil, outputs, errors.New("parser-core phase zero: reduction returned invalid freshness")
 		}

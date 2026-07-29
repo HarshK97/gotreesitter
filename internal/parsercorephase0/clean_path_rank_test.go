@@ -10,6 +10,7 @@ type cleanPathRankBranch struct {
 	prefixScore []int64
 	windowScore int64
 	gotoState   StateID
+	external    bool
 }
 
 func newCleanPathRankFixture(tb testing.TB, branches []cleanPathRankBranch) (*Core, Head) {
@@ -65,7 +66,7 @@ func newCleanPathRankFixture(tb testing.TB, branches []cleanPathRankBranch) (*Co
 		}
 		child, err := compact.appendSubtree(subtreeRecord{
 			symbol: 10, startByte: 0, endByte: 1,
-			terminal: true,
+			terminal: true, external: branch.external,
 		}, nil, nil, nil)
 		if err != nil {
 			tb.Fatal(err)
@@ -251,6 +252,39 @@ func TestCleanPathRankPrefixCapIsUnknown(t *testing.T) {
 		if output.CleanPathRank != CleanPathRankUnknown {
 			t.Fatalf("capped ranked output=%+v, want unknown", output)
 		}
+	}
+}
+
+func TestCleanPathRankExternalPayloadIsUnknown(t *testing.T) {
+	compact, head := newCleanPathRankFixture(t, []cleanPathRankBranch{
+		{predecessor: 1, prefixScore: []int64{5}, gotoState: 60, external: true},
+		{predecessor: 2, prefixScore: []int64{2}, gotoState: 61},
+	})
+	outputs, err := compact.ReduceOutputs(head, 9, 0, ForkOrder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, output := range outputs {
+		if output.CleanPathRank != CleanPathRankUnknown {
+			t.Fatalf("external ranked output=%+v, want unknown", output)
+		}
+	}
+}
+
+func TestCleanPathRankExternalPayloadSteadyStateDoesNotAllocate(t *testing.T) {
+	compact, head := newCleanPathRankFixture(t, []cleanPathRankBranch{
+		{predecessor: 1, prefixScore: []int64{5}, gotoState: 60, external: true},
+		{predecessor: 2, prefixScore: []int64{2}, gotoState: 61},
+	})
+	paths, err := compact.popPaths(head.Node, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compact.markCleanProductionRank(paths)
+	if got := testing.AllocsPerRun(100, func() {
+		compact.markCleanProductionRank(paths)
+	}); got != 0 {
+		t.Fatalf("external clean path rank allocations/run=%f, want 0", got)
 	}
 }
 

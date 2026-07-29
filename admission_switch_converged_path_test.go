@@ -124,6 +124,70 @@ func TestAdmissionCandidateCertifiedConvergedPathSplitsMatchProduction(t *testin
 	}
 }
 
+func TestAdmissionCandidateSelectedLineageSplitsMatchProduction(t *testing.T) {
+	tests := []struct {
+		name string
+		load func() *gts.Language
+	}{
+		{name: "dart", load: grammars.DartLanguage},
+		{name: "elixir", load: grammars.ElixirLanguage},
+		{name: "perl", load: grammars.PerlLanguage},
+		{name: "scala", load: grammars.ScalaLanguage},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			source := []byte(grammars.ParseSmokeSample(test.name))
+			lang := test.load()
+			if lang.CompactConvergedReductionSplitDropsCertified {
+				t.Fatal("selected-lineage witness unexpectedly has an artifact certificate")
+			}
+
+			production := gts.NewParser(lang)
+			production.SetAdmissionCandidateRoute(false)
+			productionTree, err := production.Parse(source)
+			if err != nil {
+				t.Fatalf("production parse: %v", err)
+			}
+			defer productionTree.Release()
+
+			gts.ResetAdmissionCandidateCountersForTest()
+			candidate := gts.NewParser(lang)
+			candidate.SetAdmissionCandidateRoute(true)
+			candidateTree, err := candidate.Parse(source)
+			if err != nil {
+				t.Fatalf("candidate parse: %v", err)
+			}
+			defer candidateTree.Release()
+
+			routed, fallback := gts.AdmissionCandidateCounters()
+			if routed != 1 || fallback != 0 {
+				t.Fatalf(
+					"candidate route counters = %d/%d, want 1/0; reason=%s",
+					routed,
+					fallback,
+					gts.AdmissionCandidateLastFallbackReason(),
+				)
+			}
+			candidateInspection, err := benchfixtures.InspectGoTree(candidateTree.RootNode(), lang)
+			if err != nil {
+				t.Fatalf("inspect candidate tree: %v", err)
+			}
+			productionInspection, err := benchfixtures.InspectGoTree(productionTree.RootNode(), lang)
+			if err != nil {
+				t.Fatalf("inspect production tree: %v", err)
+			}
+			if candidateInspection.SHA256 != productionInspection.SHA256 {
+				t.Fatalf(
+					"candidate digest %s differs from production %s",
+					candidateInspection.SHA256,
+					productionInspection.SHA256,
+				)
+			}
+		})
+	}
+}
+
 // TestAdmissionCandidateConvergedPathSplitFailsClosed covers a compact-route
 // divergence found by the refreshed Kotlin corpus. The visibility-modifier and
 // identifier conflict paths merge, then split during a later reduction.
@@ -163,5 +227,63 @@ func TestAdmissionCandidateConvergedPathSplitFailsClosed(t *testing.T) {
 	}
 	if candidateSExpr := candidateTree.RootNode().SExpr(lang); candidateSExpr != productionSExpr {
 		t.Fatalf("fallback tree diverged:\nproduction=%s\ncandidate=%s", productionSExpr, candidateSExpr)
+	}
+}
+
+func TestAdmissionCandidateSelectedLineageJuliaFailsClosed(t *testing.T) {
+	const (
+		sourcePath   = "testdata/compact_selected_lineage/julia_utils.jl"
+		sourceSHA256 = "d81017a2d640f6c84f2ca2a7030687049b7334bdb75ad5c50302b29052ecf79c"
+	)
+	source, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("read Julia selected-lineage witness: %v", err)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(source)); got != sourceSHA256 {
+		t.Fatalf("Julia selected-lineage witness SHA-256 = %s, want %s", got, sourceSHA256)
+	}
+	lang := grammars.JuliaLanguage()
+	if lang.CompactConvergedReductionSplitDropsCertified {
+		t.Fatal("Julia unexpectedly has an artifact certificate")
+	}
+
+	production := gts.NewParser(lang)
+	production.SetAdmissionCandidateRoute(false)
+	productionTree, err := production.Parse(source)
+	if err != nil {
+		t.Fatalf("production parse: %v", err)
+	}
+	defer productionTree.Release()
+
+	gts.ResetAdmissionCandidateCountersForTest()
+	candidate := gts.NewParser(lang)
+	candidate.SetAdmissionCandidateRoute(true)
+	candidateTree, err := candidate.Parse(source)
+	if err != nil {
+		t.Fatalf("candidate parse: %v", err)
+	}
+	defer candidateTree.Release()
+
+	routed, fallback := gts.AdmissionCandidateCounters()
+	if routed != 0 || fallback != 1 {
+		t.Fatalf("Julia selected-lineage witness did not fail closed: routed=%d fallback=%d", routed, fallback)
+	}
+	if reason := gts.AdmissionCandidateLastFallbackReason(); !strings.Contains(reason, "converged-path reduction split") {
+		t.Fatalf("fallback reason=%q", reason)
+	}
+	productionInspection, err := benchfixtures.InspectGoTree(productionTree.RootNode(), lang)
+	if err != nil {
+		t.Fatalf("inspect production tree: %v", err)
+	}
+	candidateInspection, err := benchfixtures.InspectGoTree(candidateTree.RootNode(), lang)
+	if err != nil {
+		t.Fatalf("inspect fallback tree: %v", err)
+	}
+	if candidateInspection.SHA256 != productionInspection.SHA256 {
+		t.Fatalf(
+			"fallback digest %s differs from production %s",
+			candidateInspection.SHA256,
+			productionInspection.SHA256,
+		)
 	}
 }

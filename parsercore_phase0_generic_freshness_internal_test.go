@@ -362,7 +362,7 @@ func TestDiagnosticParserCoreConflictPostExecutionFailureRollsBack(t *testing.T)
 	source, _ := compact.Seed(1, 0)
 	scheduler := &diagnosticParserCoreGenericScheduler{
 		compact: compact, headers: []diagnosticParserCoreHeader{{head: source, creationSeq: 4}},
-		token: Token{Symbol: 9, EndByte: 1}, branchOrder: 7, nextSeq: 10,
+		token: Token{Symbol: 9, EndByte: 1}, branchOrder: 7, nextSeq: 10, nextCleanPathLineage: 11,
 		options: DiagnosticParserCorePrefixOptions{MaxDispatches: 20}, receipt: &DiagnosticParserCoreGenericScheduler{},
 		conflictPostExecutionFault: func() error { return errors.New("post-execution fault") },
 	}
@@ -375,7 +375,7 @@ func TestDiagnosticParserCoreConflictPostExecutionFailureRollsBack(t *testing.T)
 		t.Fatal("post-execution fault unexpectedly succeeded")
 	}
 	afterStats, _ := compact.Stats(source)
-	if beforeStats != afterStats || !reflect.DeepEqual(scheduler.headers, beforeHeaders) || scheduler.branchOrder != 7 || scheduler.nextSeq != 10 || scheduler.dispatches != 0 || scheduler.work != (DiagnosticParserCoreGenericWork{}) || !reflect.DeepEqual(scheduler.receipt, &DiagnosticParserCoreGenericScheduler{}) {
+	if beforeStats != afterStats || !reflect.DeepEqual(scheduler.headers, beforeHeaders) || scheduler.branchOrder != 7 || scheduler.nextSeq != 10 || scheduler.nextCleanPathLineage != 11 || scheduler.dispatches != 0 || scheduler.work != (DiagnosticParserCoreGenericWork{}) || !reflect.DeepEqual(scheduler.receipt, &DiagnosticParserCoreGenericScheduler{}) {
 		t.Fatalf("post-execution rollback leaked: before=%+v after=%+v scheduler=%+v", beforeStats, afterStats, scheduler)
 	}
 	for _, state := range []core.StateID{2, 3} {

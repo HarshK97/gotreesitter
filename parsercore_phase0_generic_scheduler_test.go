@@ -369,6 +369,9 @@ func TestDiagnosticParserCoreGenericSchedulerCrossesMultiHeadExtraCohort(t *test
 
 func TestDiagnosticParserCoreGenericSchedulerAcceptsAndMaterializesExactRewrite(t *testing.T) {
 	source := parserCoreGenericRewriteSource(t)
+	if !grammars.GoLanguage().CompactConvergedReductionSplitDropsCertified {
+		t.Fatal("authenticated Go diagnostic lost its exact-blob split-drop certificate")
+	}
 	result, routeErr := gotreesitter.DiagnosticParseParserCorePrefix(
 		grammars.GoExternalScanner{}, source,
 		gotreesitter.DiagnosticParserCorePrefixOptions{},
@@ -399,7 +402,7 @@ func TestDiagnosticParserCoreGenericSchedulerAcceptsAndMaterializesExactRewrite(
 			ConflictActionArmsAdmitted: 328, CausalConflictForks: 168,
 			Reductions: 1256, OrdinaryShifts: 1238, OrdinaryCohorts: 215,
 			ExtraShifts: 27, ExtraCohorts: 1, Accepts: 1,
-			ReductionPauses: 31, NoActionDrops: 167, ConvergedReductionSplitDrops: 164, Elections: 1036,
+			ReductionPauses: 31, NoActionDrops: 167, ConvergedReductionSplitDrops: 165, SelectedLineageDrops: 1, Elections: 1036,
 			Canonicalizations: 2443, PeakHeaders: 4,
 		}) || len(result.GenericScheduler.Elections) != 1036 || len(result.GenericScheduler.Rounds) != 2443 || len(result.GenericScheduler.NoActionDrops) != 167 || len(result.GenericScheduler.ExternalShifts) != 83 {
 		t.Fatalf("acceptance receipt drifted: result=%+v acceptance=%+v", result, acceptance)
@@ -498,7 +501,7 @@ func TestDiagnosticParserCoreSummaryReceiptPreservesExactRewrite(t *testing.T) {
 				ConflictActionArmsAdmitted: 328, CausalConflictForks: 168,
 				Reductions: 1256, OrdinaryShifts: 1238, OrdinaryCohorts: 215,
 				ExtraShifts: 27, ExtraCohorts: 1, Accepts: 1,
-				ReductionPauses: 31, NoActionDrops: 167, ConvergedReductionSplitDrops: 164, Elections: 1036,
+				ReductionPauses: 31, NoActionDrops: 167, ConvergedReductionSplitDrops: 165, SelectedLineageDrops: 1, Elections: 1036,
 				Canonicalizations: 2443, PeakHeaders: 4,
 			}) {
 			result.MaterializedTree.Release()
