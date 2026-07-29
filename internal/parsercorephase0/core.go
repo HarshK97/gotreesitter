@@ -1444,20 +1444,35 @@ const (
 	ReductionUpdated
 )
 
+// CleanPathRankSelection reports how one output relates to the unique clean
+// path selected by production's same-boundary stack rank. The compact core
+// does not apply this result yet. The scheduler can inspect it in a later
+// admission tranche.
+type CleanPathRankSelection uint8
+
+const (
+	CleanPathRankNotApplicable CleanPathRankSelection = iota
+	CleanPathRankUnselected
+	CleanPathRankSelected
+	CleanPathRankUnknown
+)
+
 // ReductionOutput is one final canonical boundary and its aggregate freshness
 // relative to the boundary map at entry to ReduceOutputs.
 type ReductionOutput struct {
 	Head             Head
 	Freshness        ReductionFreshness
+	CleanPathRank    CleanPathRankSelection
 	MultiplePopPaths bool
 }
 
 const inlineReductionBoundaryOutputs = 2
 
 type reductionBoundaryOutput struct {
-	key       boundaryKey
-	head      Head
-	freshness ReductionFreshness
+	key           boundaryKey
+	head          Head
+	freshness     ReductionFreshness
+	cleanPathRank CleanPathRankSelection
 }
 
 // reductionOutputScratch owns the ephemeral aggregation state for one
@@ -2871,6 +2886,7 @@ func (c *Core) replaceBoundaryLink(key boundaryKey, probe boundaryProbe, old nod
 
 type popPath struct {
 	prev          NodeID
+	cleanPathRank CleanPathRankSelection
 	children      []SubtreeID
 	trailing      []pathPayload
 	score         int64
@@ -2935,6 +2951,211 @@ func (s *popEnumerationScratch) nextPath() *popPath {
 		}
 	}
 	return &s.paths[index]
+}
+
+type cleanPathRank struct {
+	score int64
+	depth uint64
+}
+
+type cleanPathRankAccumulator struct {
+	best       cleanPathRank
+	winner     int
+	found      bool
+	crossTie   bool
+	pathIndex  int
+	windowRank cleanPathRank
+}
+
+func compareCleanPathRank(left, right cleanPathRank) int {
+	if left.score != right.score {
+		if left.score > right.score {
+			return 1
+		}
+		return -1
+	}
+	if left.depth != right.depth {
+		if left.depth > right.depth {
+			return 1
+		}
+		return -1
+	}
+	return 0
+}
+
+func (a *cleanPathRankAccumulator) observe(prefixScore int64, prefixDepth uint64) bool {
+	score, err := checkedAddScore(prefixScore, a.windowRank.score)
+	if err != nil {
+		return false
+	}
+	candidate := cleanPathRank{
+		score: score,
+		depth: prefixDepth + a.windowRank.depth,
+	}
+	switch {
+	case !a.found || compareCleanPathRank(candidate, a.best) > 0:
+		a.best = candidate
+		a.winner = a.pathIndex
+		a.found = true
+		a.crossTie = false
+	case compareCleanPathRank(candidate, a.best) == 0 && a.winner != a.pathIndex:
+		a.crossTie = true
+	}
+	return true
+}
+
+// markCleanProductionRank selects one clean multi-pop path by production's
+// same-boundary rank: higher cumulative dynamic precedence, then greater
+// physical stack depth. Accepted and shifted status are equal for paths in one
+// classified reduction. An exact cross-path tie stays unknown.
+//
+// The walk reuses popScratch's existing traversal storage. It does not publish
+// arena data or allocate selector-owned storage.
+func (c *Core) markCleanProductionRank(paths []popPath) {
+	if len(paths) < 2 {
+		return
+	}
+	for index := range paths {
+		paths[index].cleanPathRank = CleanPathRankUnselected
+	}
+	scratch := &c.popScratch
+	scratch.finishTraversal()
+	defer scratch.finishTraversal()
+
+	var rank cleanPathRankAccumulator
+	for index := range paths {
+		path := &paths[index]
+		prefix, err := c.node(path.prev)
+		if err != nil || prefix.pathCount == math.MaxUint64 ||
+			prefix.pathCount > c.limits.MaxDerivations {
+			markCleanPathRankUnknown(paths)
+			return
+		}
+		rank.pathIndex = index
+		rank.windowRank = cleanPathRank{
+			score: path.score,
+			depth: uint64(len(path.children) + len(path.trailing)),
+		}
+		ok, err := c.walkCleanPrefixRanks(path.prev, &rank)
+		if err != nil || !ok {
+			markCleanPathRankUnknown(paths)
+			return
+		}
+	}
+	if !rank.found || rank.crossTie {
+		markCleanPathRankUnknown(paths)
+		return
+	}
+	paths[rank.winner].cleanPathRank = CleanPathRankSelected
+}
+
+func markCleanPathRankUnknown(paths []popPath) {
+	for index := range paths {
+		paths[index].cleanPathRank = CleanPathRankUnknown
+	}
+}
+
+// walkCleanPrefixRanks visits each retained prefix derivation without a map.
+// The persistent graph is an append-only directed acyclic graph. Existing
+// link-frame and score scratch provide the iterative traversal stack.
+func (c *Core) walkCleanPrefixRanks(root NodeID, rank *cleanPathRankAccumulator) (bool, error) {
+	scratch := &c.popScratch
+	scratch.finishTraversal()
+	id := root
+	score := int64(0)
+	depth := uint64(0)
+	active := 0
+
+descend:
+	for {
+		node, err := c.node(id)
+		if err != nil {
+			return false, err
+		}
+		switch node.linkCount {
+		case 0:
+			if !rank.observe(score, depth) {
+				return false, nil
+			}
+			break descend
+		case 1:
+			if node.firstLink == 0 || uint64(node.firstLink) > uint64(len(c.links)) {
+				return false, errors.New("parser-core phase zero: clean path link is out of range")
+			}
+			link := c.links[node.firstLink-1]
+			if link.next != 0 {
+				return false, errors.New("parser-core phase zero: clean path single link has a successor")
+			}
+			score, err = checkedAddScore(score, link.scoreDelta)
+			if err != nil {
+				return false, nil
+			}
+			depth++
+			id = link.prev
+		default:
+			if len(scratch.linkFrames) <= active {
+				scratch.linkFrames = append(scratch.linkFrames, nil)
+			}
+			links, err := c.nodeLinksInto(scratch.linkFrames[active], *node)
+			if err != nil {
+				return false, err
+			}
+			scratch.linkFrames[active] = links
+			if len(scratch.revOrders) == active {
+				scratch.revOrders = append(scratch.revOrders, ForkOrder{})
+			} else {
+				scratch.revOrders[active] = ForkOrder{}
+				scratch.revOrders = scratch.revOrders[:active+1]
+			}
+			scoreIndex := active * 2
+			if len(scratch.revScores) == scoreIndex {
+				scratch.revScores = append(scratch.revScores, score, int64(depth))
+			} else {
+				scratch.revScores[scoreIndex] = score
+				scratch.revScores[scoreIndex+1] = int64(depth)
+				scratch.revScores = scratch.revScores[:scoreIndex+2]
+			}
+			active++
+			break descend
+		}
+	}
+
+	for active != 0 {
+		frameIndex := active - 1
+		frame := scratch.linkFrames[frameIndex]
+		cursor := int(scratch.revOrders[frameIndex].Value)
+		if cursor >= len(frame) {
+			scratch.linkFrames[frameIndex] = frame[:0]
+			scratch.revScores = scratch.revScores[:frameIndex*2]
+			scratch.revOrders = scratch.revOrders[:frameIndex]
+			active--
+			continue
+		}
+		link := frame[cursor]
+		scratch.revOrders[frameIndex].Value++
+		var err error
+		score, err = checkedAddScore(scratch.revScores[frameIndex*2], link.scoreDelta)
+		if err != nil {
+			return false, nil
+		}
+		depth = uint64(scratch.revScores[frameIndex*2+1]) + 1
+		id = link.prev
+		goto descend
+	}
+	return true, nil
+}
+
+func mergeCleanPathRank(left, right CleanPathRankSelection) CleanPathRankSelection {
+	switch {
+	case left == CleanPathRankUnknown || right == CleanPathRankUnknown:
+		return CleanPathRankUnknown
+	case left == CleanPathRankSelected || right == CleanPathRankSelected:
+		return CleanPathRankSelected
+	case left == CleanPathRankUnselected || right == CleanPathRankUnselected:
+		return CleanPathRankUnselected
+	default:
+		return CleanPathRankNotApplicable
+	}
 }
 
 // popPaths returns Core-owned ephemeral storage. ReduceOutputs consumes the

@@ -294,6 +294,9 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 	// parent reductionParentForPath builds in this loop is fragile in that
 	// case; see its doc comment.
 	multiPop := len(paths) > 1
+	if multiPop {
+		c.markCleanProductionRank(paths)
+	}
 	for _, path := range paths {
 		prev, err := c.node(path.prev)
 		if err != nil {
@@ -350,6 +353,7 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 			previous = scratch.boundaries[boundaryIndex]
 		}
 		freshness := previous.freshness
+		cleanPathRank := mergeCleanPathRank(previous.cleanPathRank, path.cleanPathRank)
 		switch outcome.change {
 		case condenseUnchanged:
 			if !seen {
@@ -362,12 +366,15 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 				freshness = ReductionUpdated
 			}
 		}
-		scratch.store(boundaryIndex, seen, reductionBoundaryOutput{key: key, head: out, freshness: freshness})
+		scratch.store(boundaryIndex, seen, reductionBoundaryOutput{
+			key: key, head: out, freshness: freshness, cleanPathRank: cleanPathRank,
+		})
 	}
 	for _, output := range scratch.boundaries {
 		frontier = append(frontier, ReductionOutput{
 			Head:             output.head,
 			Freshness:        output.freshness,
+			CleanPathRank:    output.cleanPathRank,
 			MultiplePopPaths: multiPop,
 		})
 	}
