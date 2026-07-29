@@ -1015,9 +1015,9 @@ func gssMaterializingShapePrefix(scratch *glrMergeScratch, n *gssNode) glrMateri
 		return cached
 	}
 	var local [32]*gssNode
-	pending := local[:0]
+	pending := append(local[:0], n)
 	prefix := glrMaterializingShapeHash{hash: gssHashSeed}
-	for cur := n; cur != nil; cur = cur.prev {
+	for cur := n.prev; cur != nil; cur = cur.prev {
 		if cached, ok := lookupShapePrefixCache(scratch, cur); ok {
 			prefix = cached
 			break

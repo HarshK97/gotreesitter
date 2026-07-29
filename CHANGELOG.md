@@ -27,6 +27,11 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- The graph-structured stack shape walk now skips a duplicate cache lookup
+  after a known head miss.
+  The standard full-parse benchmark improves by 5.12 percent across 20 samples.
+  Allocations remain at nine per parse.
+
 - Graph-structured stack hashing now selects inline or pooled walk storage
   before it collects nodes.
   The 235,626-byte Go fixture allocates 24.84 KiB instead of 110.34 KiB.
