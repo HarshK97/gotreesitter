@@ -683,6 +683,7 @@ func DiagnosticParseParserCorePrefix(scanner ExternalScanner, source []byte, opt
 	result.Grammar = lang.Name
 	result.ExactRootDFA = true
 	result.GrammarBlobSHA256 = sha256.Sum256(parserCoreCertifiedGoBlob)
+	options.allowConvergedSplitDropArtifact = lang.CompactConvergedReductionSplitDropsCertified
 	if options.Recovery || options.Retry || options.Incremental || options.IncludedRanges {
 		result.Boundary, result.Detail = DiagnosticParserCoreRoute, "recovery/retry/incremental/included-range routes decline"
 		return result, &diagnosticParserCoreDecline{boundary: result.Boundary, detail: result.Detail}
@@ -4227,6 +4228,7 @@ func authenticatedParserCoreGoLanguage(scanner ExternalScanner) (*Language, erro
 	}
 	decoded.Name = "go"
 	decoded.ExternalScanner = scanner
+	decoded.CompactConvergedReductionSplitDropsCertified = true
 	CertifyCRecoveryCostCompetition(decoded)
 	return decoded, nil
 }
