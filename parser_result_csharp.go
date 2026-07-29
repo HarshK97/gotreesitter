@@ -62,6 +62,9 @@ const (
 func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *Language) {
 	missing := csharpMissingNativeResultCompatibility(lang)
 	nativeRecoveredStructure := nativeRecoveredStructureIsAuthoritative(root, source, p, lang)
+	if p != nil {
+		p.normalizationStats.nativeRecoveredStructureAuthoritative = nativeRecoveredStructure
+	}
 	if p != nil && p.skipRecoveryReparse {
 		if missing&ResultCompatibilityCSharpNativeUnicodeIdentifiers != 0 {
 			normalizeCSharpUnicodeIdentifierSpans(root, source, lang)

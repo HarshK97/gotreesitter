@@ -5,7 +5,10 @@ package cgoharness
 import (
 	"bytes"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -83,11 +86,165 @@ func TestCSharpJsonTextReaderRecoveredStructureRequiresCompatibility(t *testing.
 	if productionTree.RootNode().HasError() {
 		t.Fatal("JsonTextReader bypassed required C# compatibility reconstruction")
 	}
+	if productionTree.ParseRuntime().NativeRecoveredStructureAuthoritative {
+		t.Fatal("JsonTextReader received native recovered structure authority")
+	}
 }
 
 func TestCSharpIssue454RecoveredStructureMatchesCBeforeCompatibility(t *testing.T) {
 	src := csharpIssue454Source(t)
 	assertCSharpRecoveredStructureMatchesC(t, src)
+	parser := gotreesitter.NewParser(grammars.CSharpLanguage())
+	parser.SetAdmissionCandidateRoute(false)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tree.Release()
+	if !tree.ParseRuntime().NativeRecoveredStructureAuthoritative {
+		t.Fatal("issue 454 witness did not receive native recovered structure authority")
+	}
+}
+
+func TestCSharpRecoveredStructureAuthorityCorpus(t *testing.T) {
+	root := strings.TrimSpace(os.Getenv(grammargenCGORootEnv))
+	if root == "" {
+		root = "/tmp/grammar_parity"
+	}
+	repoRoot := filepath.Join(root, "c_sharp")
+	if _, err := os.Stat(repoRoot); err != nil {
+		t.Skipf("C# corpus unavailable: %v", err)
+	}
+
+	samples := collectCSharpReceiptCorpus(t, repoRoot)
+	const pinnedCorpusSources = 158
+	if len(samples) != pinnedCorpusSources {
+		t.Fatalf(
+			"C# corpus source count=%d, want pinned count %d",
+			len(samples),
+			pinnedCorpusSources,
+		)
+	}
+
+	goLang := grammars.CSharpLanguage()
+	cLang, err := ParityCLanguage("c_sharp")
+	if err != nil {
+		t.Fatalf("C parser unavailable: %v", err)
+	}
+	cParser := sitter.NewParser()
+	defer cParser.Close()
+	if err := cParser.SetLanguage(cLang); err != nil {
+		t.Fatalf("C SetLanguage: %v", err)
+	}
+
+	var authoritative []string
+	for _, sample := range samples {
+		source := []byte(sample.Text)
+		productionParser := gotreesitter.NewParser(goLang)
+		productionParser.SetAdmissionCandidateRoute(false)
+		productionTree, err := productionParser.Parse(source)
+		if err != nil {
+			t.Fatalf("%s production parse: %v", sample.ID, err)
+		}
+		isAuthoritative := productionTree.ParseRuntime().NativeRecoveredStructureAuthoritative
+		productionTree.Release()
+		if !isAuthoritative {
+			continue
+		}
+		authoritative = append(authoritative, sample.ID)
+
+		rawParser := gotreesitter.NewParser(goLang)
+		rawParser.SetAdmissionCandidateRoute(false)
+		rawTree, err := rawParser.ParseNoResultCompatibilityBenchmarkOnly(source)
+		if err != nil {
+			t.Fatalf("%s raw parse: %v", sample.ID, err)
+		}
+		cTree := cParser.Parse(source, nil)
+		if cTree == nil || cTree.RootNode() == nil {
+			rawTree.Release()
+			t.Fatalf("%s C parse returned no root", sample.ID)
+		}
+
+		var errs []string
+		compareNodes(rawTree.RootNode(), goLang, cTree.RootNode(), "root", &errs)
+		compareCSharpRecoveryFields(rawTree.RootNode(), goLang, cTree.RootNode(), "root", &errs)
+		if rawTree.RootNode().HasError() != cTree.RootNode().HasError() {
+			errs = append(
+				errs,
+				fmt.Sprintf(
+					"root: HasError go=%t c=%t",
+					rawTree.RootNode().HasError(),
+					cTree.RootNode().HasError(),
+				),
+			)
+		}
+		rawTree.Release()
+		cTree.Close()
+		if len(errs) > 0 {
+			if len(errs) > 20 {
+				errs = errs[:20]
+			}
+			t.Fatalf(
+				"%s received authority but its raw tree diverged from C:\n%s",
+				sample.ID,
+				strings.Join(errs, "\n"),
+			)
+		}
+	}
+
+	t.Logf(
+		"C# authority-positive corpus sources: %d/%d\n%s",
+		len(authoritative),
+		len(samples),
+		strings.Join(authoritative, "\n"),
+	)
+	if len(authoritative) != 0 {
+		t.Fatalf(
+			"unexpected C# authority-positive corpus sources:\n%s",
+			strings.Join(authoritative, "\n"),
+		)
+	}
+}
+
+type csharpReceiptCorpusSample struct {
+	ID   string
+	Text string
+}
+
+func collectCSharpReceiptCorpus(t *testing.T, repoRoot string) []csharpReceiptCorpusSample {
+	t.Helper()
+	var samples []csharpReceiptCorpusSample
+	for _, dir := range existingSubdirs(repoRoot, []string{"test/corpus", "tests/corpus", "corpus"}) {
+		err := filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			blocks := extractCorpusBlocks(data)
+			rel, err := filepath.Rel(repoRoot, path)
+			if err != nil {
+				return err
+			}
+			for i, block := range blocks {
+				samples = append(samples, csharpReceiptCorpusSample{
+					ID:   fmt.Sprintf("%s#%d", filepath.ToSlash(rel), i+1),
+					Text: block,
+				})
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("collect C# corpus: %v", err)
+		}
+	}
+	sort.Slice(samples, func(i, j int) bool { return samples[i].ID < samples[j].ID })
+	return samples
 }
 
 func csharpIssue454Source(t *testing.T) []byte {
