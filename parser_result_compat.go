@@ -285,9 +285,10 @@ func nativeRecoveredStructureHasIsolatedErrorReceipt(root *Node) bool {
 
 	explicitErrors := 0
 	valid := true
-	var walk func(*Node)
-	walk = func(node *Node) {
-		if node == nil || !valid {
+	var walk func(*Node, int)
+	walk = func(node *Node, depth int) {
+		if node == nil || !valid || depth >= maxTreeWalkDepth {
+			valid = false
 			return
 		}
 		if node.isMissing() {
@@ -296,16 +297,18 @@ func nativeRecoveredStructureHasIsolatedErrorReceipt(root *Node) bool {
 		}
 		if node.symbol == errorSymbol {
 			explicitErrors++
-			if explicitErrors > 1 || node.endByte-node.startByte != 1 {
+			if explicitErrors > 1 ||
+				node.endByte <= node.startByte ||
+				node.endByte != node.startByte+1 {
 				valid = false
 				return
 			}
 		}
 		for i := 0; i < resultChildCount(node); i++ {
-			walk(resultChildAt(node, i))
+			walk(resultChildAt(node, i), depth+1)
 		}
 	}
-	walk(root)
+	walk(root, 0)
 	return valid && explicitErrors == 1
 }
 

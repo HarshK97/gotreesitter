@@ -314,6 +314,7 @@ func TestNativeRecoveredStructureIsolatedErrorReceipt(t *testing.T) {
 	}{
 		{name: "isolated_error", errorSpans: [][2]uint32{{0, 1}}, want: true},
 		{name: "wide_error", errorSpans: [][2]uint32{{0, 2}}},
+		{name: "reversed_error_span", errorSpans: [][2]uint32{{2, 1}}},
 		{name: "multiple_errors", errorSpans: [][2]uint32{{0, 1}, {1, 2}}},
 		{name: "missing_node", errorSpans: [][2]uint32{{0, 1}}, missing: true},
 		{name: "raw_child_mismatch", errorSpans: [][2]uint32{{0, 1}}, rawMismatch: true},
@@ -371,6 +372,36 @@ func TestNativeRecoveredStructureIsolatedErrorReceipt(t *testing.T) {
 				t.Fatalf("isolated-error receipt = %t, want %t", got, test.want)
 			}
 		})
+	}
+}
+
+func TestNativeRecoveredStructureReceiptRejectsDepthExhaustion(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	node := newLeafNodeInArena(
+		arena,
+		errorSymbol,
+		true,
+		0,
+		1,
+		Point{},
+		Point{Column: 1},
+	)
+	node.setHasError(true)
+	for depth := 0; depth < maxTreeWalkDepth; depth++ {
+		node = newParentNodeInArena(arena, 2, true, []*Node{node}, nil, 0)
+		node.setHasError(true)
+	}
+	node.rawShape = captureRawShapeForNodeSlice(
+		arena,
+		node.symbol,
+		0,
+		[]*Node{resultChildAt(node, 0)},
+	)
+
+	if nativeRecoveredStructureHasIsolatedErrorReceipt(node) {
+		t.Fatal("depth-exhausted tree received native recovered structure authority")
 	}
 }
 
