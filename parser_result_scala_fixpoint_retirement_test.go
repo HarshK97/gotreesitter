@@ -90,7 +90,6 @@ func assertScalaFormerSecondPassIsInert(t *testing.T, lang *Language, source []b
 	before := scalaFixpointRetirementTreeFingerprint(root)
 	normalizeScalaTemplateBodyObjectFragments(root, source, nil, lang)
 	normalizeScalaRecoveredObjectTemplateBodies(root, source, nil, lang)
-	normalizeScalaDefinitionFields(root, source, lang)
 	normalizeScalaTemplateBodyFunctionAnnotations(root, source, nil, lang)
 	after := scalaFixpointRetirementTreeFingerprint(root)
 	if after != before {

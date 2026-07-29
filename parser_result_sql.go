@@ -227,45 +227,6 @@ func sqlSingleErrorComma(node *Node, lang *Language) *Node {
 	return comma
 }
 
-func normalizeSQLSelectClauseBodyIntoFields(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "sql" {
-		return
-	}
-	intoFID, ok := lang.FieldByName("into")
-	if !ok || intoFID == 0 {
-		return
-	}
-	walkResultTree(root, func(node *Node) {
-		if node == nil || node.Type(lang) != "select_clause_body" {
-			return
-		}
-		children := resultDenseChildrenFallbackForMutation(node)
-		for i := range children {
-			if nodeFieldIDAt(node, i) != intoFID {
-				continue
-			}
-			if sqlSelectClauseBodyChildHasIntoKeywordBefore(children, i, lang) {
-				continue
-			}
-			clearNodeChildField(node, i)
-		}
-	})
-}
-
-func sqlSelectClauseBodyChildHasIntoKeywordBefore(children []*Node, childIndex int, lang *Language) bool {
-	if childIndex <= 0 || childIndex > len(children) {
-		return false
-	}
-	for i := childIndex - 1; i >= 0; i-- {
-		child := children[i]
-		if child == nil || child.isExtra() {
-			continue
-		}
-		return child.Type(lang) == "INTO"
-	}
-	return false
-}
-
 func normalizeSQLRecoveredTopLevelSelectStatements(root *Node, source []byte, p *Parser, lang *Language) {
 	if root == nil || p == nil || lang == nil || lang.Name != "sql" || root.Type(lang) != "source_file" || len(source) == 0 || root.ownerArena == nil || !root.HasError() {
 		return

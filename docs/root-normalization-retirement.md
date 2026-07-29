@@ -231,7 +231,10 @@ This change removes the EBNF dispatcher arm.
 The native reduction path sets Dart switch-expression body fields.
 It sets the target field for nested Elixir calls.
 The Dart and Elixir dispatcher arms remain live for unrelated repairs.
-The Scala and SQL field corrections remain live counterexamples.
+Reduction now owns the remaining Scala and SQL field corrections.
+Inherited edges fill anonymous gaps between repeated direct descendants.
+They do not cross a leading separator without direct descendant evidence.
+This change removes three Scala repairs and the SQL `INTO` cleanup.
 The field-aware C-oracle receipt is:
 `harness_out/docker/20260728T111158Z-objc-struct-sized-postfilter-final`.
 The method type C-oracle receipt is:

@@ -687,6 +687,112 @@ func TestBuildReduceChildrenRepeatedDirectFieldOnHiddenPathLeavesAnonymousGapUnf
 	}
 }
 
+func TestBuildReduceChildrenInheritedFieldFillsRepeatedDirectAnonymousGaps(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "_hidden_inner", ".", "identifier", "visible_parent"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "_hidden_inner", Visible: false, Named: false},
+			{Name: ".", Visible: true, Named: false},
+			{Name: "identifier", Visible: true, Named: true},
+			{Name: "visible_parent", Visible: true, Named: true},
+		},
+		FieldNames: []string{"", "path"},
+		FieldMapSlices: [][2]uint16{
+			{0, 1},
+		},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 1, ChildIndex: 0, Inherited: true},
+		},
+	}
+
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	java := newLeafNodeInArena(arena, 3, true, 0, 4, Point{}, Point{Column: 4})
+	dot0 := newLeafNodeInArena(arena, 2, false, 4, 5, Point{Column: 4}, Point{Column: 5})
+	net := newLeafNodeInArena(arena, 3, true, 5, 8, Point{Column: 5}, Point{Column: 8})
+	dot1 := newLeafNodeInArena(arena, 2, false, 8, 9, Point{Column: 8}, Point{Column: 9})
+	url := newLeafNodeInArena(arena, 3, true, 9, 12, Point{Column: 9}, Point{Column: 12})
+	hidden := newParentNodeInArena(
+		arena,
+		1,
+		false,
+		[]*Node{java, dot0, net, dot1, url},
+		[]FieldID{1, 0, 1, 0, 1},
+		0,
+	)
+	hidden.setFieldSources([]uint8{
+		fieldSourceDirect,
+		fieldSourceNone,
+		fieldSourceDirect,
+		fieldSourceNone,
+		fieldSourceDirect,
+	})
+
+	children, fieldIDs, fieldSources := parser.buildReduceChildren(
+		[]stackEntry{newStackEntryNode(0, hidden)},
+		0,
+		1,
+		1,
+		4,
+		0,
+		arena,
+	)
+	if got, want := len(children), 5; got != want {
+		t.Fatalf("child count = %d, want %d", got, want)
+	}
+	for index := range children {
+		if got, want := fieldIDs[index], FieldID(1); got != want {
+			t.Fatalf("field %d = %d, want %d", index, got, want)
+		}
+		if got, want := fieldSourceAt(fieldSources, index), uint8(fieldSourceDirect); got != want {
+			t.Fatalf("field source %d = %d, want %d", index, got, want)
+		}
+	}
+}
+
+func TestBuildReduceChildrenInheritedFieldDoesNotCrossLeadingSeparator(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "_hidden_inner", ",", "identifier", "visible_parent"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "_hidden_inner", Visible: false, Named: false},
+			{Name: ",", Visible: true, Named: false},
+			{Name: "identifier", Visible: true, Named: true},
+			{Name: "visible_parent", Visible: true, Named: true},
+		},
+		FieldNames: []string{"", "into"},
+		FieldMapSlices: [][2]uint16{
+			{0, 1},
+		},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 1, ChildIndex: 0, Inherited: true},
+		},
+	}
+
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	comma := newLeafNodeInArena(arena, 2, false, 0, 1, Point{}, Point{Column: 1})
+	identifier := newLeafNodeInArena(arena, 3, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	hidden := newParentNodeInArena(arena, 1, false, []*Node{comma, identifier}, nil, 0)
+
+	children, fieldIDs, _ := parser.buildReduceChildren(
+		[]stackEntry{newStackEntryNode(0, hidden)},
+		0,
+		1,
+		1,
+		4,
+		0,
+		arena,
+	)
+	if got, want := len(children), 2; got != want {
+		t.Fatalf("child count = %d, want %d", got, want)
+	}
+	if fieldIDSliceHasAny(fieldIDs) {
+		t.Fatalf("fields = %v, want none", fieldIDs)
+	}
+}
+
 func TestBuildReduceChildrenInheritedFieldYieldsToDirectTargetOnHiddenSpan(t *testing.T) {
 	lang := &Language{
 		SymbolNames: []string{"EOF", "_hidden_inner", "modifiers", "def", "identifier", ":", "type_identifier", "visible_parent"},
