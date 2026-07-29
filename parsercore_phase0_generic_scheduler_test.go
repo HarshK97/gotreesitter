@@ -498,7 +498,7 @@ func TestDiagnosticParserCoreSummaryReceiptPreservesExactRewrite(t *testing.T) {
 				ConflictActionArmsAdmitted: 328, CausalConflictForks: 168,
 				Reductions: 1256, OrdinaryShifts: 1238, OrdinaryCohorts: 215,
 				ExtraShifts: 27, ExtraCohorts: 1, Accepts: 1,
-				ReductionPauses: 31, NoActionDrops: 167, Elections: 1036,
+				ReductionPauses: 31, NoActionDrops: 167, ConvergedReductionSplitDrops: 164, Elections: 1036,
 				Canonicalizations: 2443, PeakHeaders: 4,
 			}) {
 			result.MaterializedTree.Release()
