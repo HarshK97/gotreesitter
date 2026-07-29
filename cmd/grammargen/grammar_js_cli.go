@@ -50,7 +50,7 @@ func importGrammarJSWithCLI(path, executable string) (*grammargen.Grammar, error
 	cmd.Dir = filepath.Dir(grammarPath)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, commandError("tree-sitter generate", err, output)
+		return nil, grammarJSGenerateError(err, output)
 	}
 
 	jsonPath := filepath.Join(outputDir, "grammar.json")
@@ -63,6 +63,17 @@ func importGrammarJSWithCLI(path, executable string) (*grammargen.Grammar, error
 		return nil, fmt.Errorf("import generated grammar.json: %w", err)
 	}
 	return g, nil
+}
+
+func grammarJSGenerateError(err error, output []byte) error {
+	cause := commandError("tree-sitter generate", err, output)
+	if strings.Contains(string(output), "Failed to run `node`") {
+		return fmt.Errorf(
+			"-js-cli requires Tree-sitter CLI 0.26 or newer and a JavaScript runtime such as Node on PATH: %w",
+			cause,
+		)
+	}
+	return cause
 }
 
 func requireTreeSitterCLICapabilities(cli string) error {

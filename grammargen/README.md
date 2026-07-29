@@ -102,9 +102,9 @@ go run ./cmd/grammargen doctor <grammar> -lr-split -sample sample.<ext>
 go run ./cmd/grammargen emit <grammar> -lr-split -bin grammars/grammar_blobs/<grammar>.bin
 ```
 
-`-js-cli` needs Tree-sitter 0.26 or newer on `PATH`. It generates only
-`grammar.json` and `node-types.json` in a temporary directory. It then removes
-that directory.
+`-js-cli` needs Tree-sitter 0.26 or newer on `PATH`. It also needs a JavaScript
+runtime, such as Node, on `PATH`. It generates only `grammar.json` and
+`node-types.json` in a temporary directory. It then removes that directory.
 
 Set `TREE_SITTER_JS_RUNTIME=native` to use the native runtime in Tree-sitter
 0.26 or newer. Install the grammar's required packages before compilation.

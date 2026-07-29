@@ -113,7 +113,7 @@ func runEmitCommand(args []string) {
 
 func registerSourceFlags(fs *flag.FlagSet, src *sourceFlags) {
 	fs.StringVar(&src.jsInput, "js", "", "path to a tree-sitter grammar.js file to import")
-	fs.StringVar(&src.jsCLIInput, "js-cli", "", "path to grammar.js to resolve with tree-sitter CLI (executes arbitrary JavaScript)")
+	fs.StringVar(&src.jsCLIInput, "js-cli", "", "path to grammar.js; requires tree-sitter CLI 0.26+ and a JavaScript runtime; executes arbitrary JavaScript")
 	fs.StringVar(&src.jsonInput, "json", "", "path to a resolved tree-sitter grammar.json file to import")
 	fs.StringVar(&src.grammarFile, "grammar", "", "path to a .grammar file to parse")
 	fs.BoolVar(&src.lrSplit, "lr-split", false, "enable LR(1) state splitting before generation")
