@@ -73,6 +73,56 @@ func TestParserCoreFreshFullRunnerReusesSchedulerStorage(t *testing.T) {
 	}
 }
 
+func TestResetDiagnosticParserCoreRetainedSliceBoundsAndClears(t *testing.T) {
+	value := 1
+	small := make([]*int, 4)
+	for index := range small {
+		small[index] = &value
+	}
+	retained := resetDiagnosticParserCoreRetainedSlice(small)
+	if len(retained) != 0 || cap(retained) != 4 {
+		t.Fatalf("small retained slice len=%d cap=%d", len(retained), cap(retained))
+	}
+	for index, item := range retained[:cap(retained)] {
+		if item != nil {
+			t.Fatalf("small retained slice item %d was not cleared", index)
+		}
+	}
+
+	large := make([]*int, diagnosticParserCoreRetainedScratchCapacity+1)
+	for index := range large {
+		large[index] = &value
+	}
+	if retained := resetDiagnosticParserCoreRetainedSlice(large); retained != nil {
+		t.Fatalf("oversized retained slice cap=%d", cap(retained))
+	}
+	for index, item := range large {
+		if item != nil {
+			t.Fatalf("oversized retained slice item %d was not cleared", index)
+		}
+	}
+}
+
+func TestResetDiagnosticParserCoreGenericSchedulerRejectsActiveScratch(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		scheduler diagnosticParserCoreGenericScheduler
+	}{
+		{name: "dispatch", scheduler: diagnosticParserCoreGenericScheduler{
+			dispatchScratch: diagnosticParserCoreDispatchScratch{busy: true},
+		}},
+		{name: "conflict", scheduler: diagnosticParserCoreGenericScheduler{
+			conflictScratch: diagnosticParserCoreConflictScratch{busy: true},
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := resetDiagnosticParserCoreGenericScheduler(&test.scheduler); err == nil || !strings.Contains(err.Error(), "scratch is active") {
+				t.Fatalf("active scratch error=%v", err)
+			}
+		})
+	}
+}
+
 func TestParserCoreFreshFullRunnerScratchDoesNotAliasLiveTree(t *testing.T) {
 	runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, parserCoreFreshFullCanonicalOptions())
 	if err != nil {
