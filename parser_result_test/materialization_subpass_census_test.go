@@ -337,14 +337,13 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 			},
 		},
 		{
-			name:             "cooklang_trailing_step_tail",
+			name:             "cooklang_punctuation_recipe",
 			language:         grammars.CooklangLanguage,
 			source:           "Add @salt{1%tsp}.\n",
 			wantRawDigest:    "0e6880ec4902576c2a6de014424c3cba7eef99cdc5fd8fded8ceb6382a6df9cd",
 			wantResultDigest: "c6e4535b725516550ca7a0ee4c69974799c2d2d10fed4e5f1ba6b71e43c5ba8a",
 			expectedSubpasses: []string{
 				"dispatch.cooklang",
-				"dispatch.cooklang.trailing-step-tail",
 				"dispatch.cooklang.recovered-recipe",
 			},
 			rewrittenSubpasses: []string{
@@ -365,7 +364,6 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 			wantResultDigest: "814240a8aff9c3e253b37ce1ff535ff2cd96510c6afea40680a270405699967f",
 			expectedSubpasses: []string{
 				"dispatch.cooklang",
-				"dispatch.cooklang.trailing-step-tail",
 				"dispatch.cooklang.recovered-recipe",
 			},
 			rewrittenSubpasses: []string{
@@ -374,14 +372,13 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 			},
 		},
 		{
-			name:             "cooklang_step_tail_without_newline",
+			name:             "cooklang_recovered_recipe_without_newline",
 			language:         grammars.CooklangLanguage,
 			source:           "Add @salt{1%tsp}.",
 			wantRawDigest:    "f49ca1a85a0b2ee7ed7f07993d6bc8b103d66311f83d4a026e085cf2013a69ec",
 			wantResultDigest: "dd3692a1a0e9145af9f2d082126a1e798d60cbe74942427746d3f0e83bd31e1c",
 			expectedSubpasses: []string{
 				"dispatch.cooklang",
-				"dispatch.cooklang.trailing-step-tail",
 				"dispatch.cooklang.recovered-recipe",
 			},
 			rewrittenSubpasses: []string{

@@ -560,24 +560,9 @@
         "normalizeCooklangCompatibilityWithCensus"
       ],
       "files": [
-        "parser_result_cooklang.go",
-        "parser_result_misc_spans.go"
+        "parser_result_cooklang.go"
       ],
       "subpasses": [
-        {
-          "id": "dispatch.cooklang.trailing-step-tail",
-          "functions": [
-            "normalizeCooklangTrailingStepTail"
-          ],
-          "files": [
-            "parser_result_misc_spans.go"
-          ],
-          "purpose": "Publish the punctuation tail and the complete recipe span.",
-          "authoritative_owner": "scanner_checkpoint_state",
-          "witnesses": [
-            "parser_result_test/materialization_subpass_census_test.go"
-          ]
-        },
         {
           "id": "dispatch.cooklang.recovered-recipe",
           "functions": [
@@ -596,8 +581,8 @@
       "languages": [
         "cooklang"
       ],
-      "purpose": "Reconcile Cooklang returned-tree shape and spans.",
-      "authoritative_owner": "materialization",
+      "purpose": "Construct recovered Cooklang steps, metadata, punctuation errors, and fence comments.",
+      "authoritative_owner": "scheduler_action_semantics",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go"
       ],

@@ -17,9 +17,6 @@ func normalizeCooklangCompatibilityWithCensus(
 	lang *Language,
 	census materializationSubpassCensus,
 ) {
-	census.run("dispatch.cooklang.trailing-step-tail", func() {
-		normalizeCooklangTrailingStepTail(root, source, lang)
-	})
 	census.run("dispatch.cooklang.recovered-recipe", func() {
 		normalizeCooklangRecoveredRecipe(root, source, lang)
 	})
