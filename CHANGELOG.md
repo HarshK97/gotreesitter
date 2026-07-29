@@ -102,6 +102,20 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Shared DFA token election now prefers one composable close angle over a
+  wider close-angle token.
+  Nested TypeScript union arguments now retain the generic-call lineage.
+  This fixes [issue #541](https://github.com/odvcencio/gotreesitter/issues/541).
+  Apex nested generic declarations now match the pinned C tree without a
+  result rewrite.
+  This retires the Apex generic local declaration compatibility pass.
+
+- The full-parse retry ladder now retains a widened candidate until it reads
+  the candidate's runtime receipt.
+  This enables the existing combined stack-and-merge retry for the ZodUnion
+  fixture.
+  This fixes [issue #544](https://github.com/odvcencio/gotreesitter/issues/544).
+
 - The DFA lexer now splits adjacent Swift generic closers by parser state.
   It preserves `>>` when the active state accepts the shift operator.
   The pinned C oracle now matches without divergence.

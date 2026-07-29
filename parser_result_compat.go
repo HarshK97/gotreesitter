@@ -115,9 +115,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		})
 	case "apex":
 		dispatcherArmSubpassCensus(ctx, "dispatch.apex", func(census materializationSubpassCensus) {
-			census.run("dispatch.apex.generic-local-declaration", func() {
-				normalizeApexGenericLocalDeclarations(ctx.root, ctx.source, ctx.lang)
-			})
 			census.run("dispatch.apex.class-literal-alias", func() {
 				normalizeApexClassLiteralAccess(ctx.root, ctx.source, ctx.lang)
 			})

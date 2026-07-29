@@ -2164,7 +2164,7 @@ func (d *dfaTokenSource) splitCompactCloseAngleToken(tok Token) (Token, int, uin
 	if d == nil || d.language == nil || d.lookupActionIndex == nil {
 		return tok, 0, 0, 0, false
 	}
-	if !supportsContextualCloseAngleSplit(d.language.Name) {
+	if !supportsCompactCloseAngleSplit(d.language.Name) {
 		return tok, 0, 0, 0, false
 	}
 	if d.symbolName(tok.Symbol) != ">>" {
@@ -2192,7 +2192,7 @@ func (d *dfaTokenSource) splitCompactCloseAngleToken(tok Token) (Token, int, uin
 	return tok, int(tok.EndByte), tok.EndPoint.Row, tok.EndPoint.Column, true
 }
 
-func supportsContextualCloseAngleSplit(languageName string) bool {
+func supportsCompactCloseAngleSplit(languageName string) bool {
 	switch languageName {
 	case "dart", "java", "swift", "tsx", "typescript":
 		return true
@@ -2214,8 +2214,8 @@ func (p *Parser) contextualActionIndex(source []byte, state StateID, tok Token) 
 // single close-angle prefix, so this stack must not consume that prefix.
 func (p *Parser) shouldDeferContextualCloseAngleAction(source []byte, state StateID, tok Token) bool {
 	lang := p.language
-	if lang == nil || !supportsContextualCloseAngleSplit(lang.Name) ||
-		int(tok.Symbol) >= len(lang.SymbolNames) || lang.SymbolNames[tok.Symbol] != ">" ||
+	if lang == nil || int(tok.Symbol) >= len(lang.SymbolNames) ||
+		lang.SymbolNames[tok.Symbol] != ">" ||
 		tok.EndByte != tok.StartByte+1 ||
 		tok.EndPoint.Row != tok.StartPoint.Row {
 		return false
@@ -2245,10 +2245,14 @@ func (p *Parser) shouldDeferContextualCloseAngleAction(source []byte, state Stat
 	if !ok || int(stateToken.Symbol) >= len(lang.SymbolNames) {
 		return false
 	}
-	if lang.SymbolNames[stateToken.Symbol] != ">>" ||
+	stateTokenName := lang.SymbolNames[stateToken.Symbol]
+	if !isWideCloseAngleTokenName(stateTokenName) ||
 		stateToken.StartByte != tok.StartByte ||
-		stateToken.EndByte != tok.StartByte+2 ||
 		!p.stateHasActionForSymbol(state, stateToken.Symbol) {
+		return false
+	}
+	width := uint32(len(stateTokenName))
+	if stateToken.EndByte != tok.StartByte+width {
 		return false
 	}
 	closeIdx := p.lookupActionIndex(state, tok.Symbol)
@@ -2587,23 +2591,26 @@ func (d *dfaTokenSource) compareAngleTokenPreference(candTok, bestTok Token) int
 	if d == nil || d.language == nil {
 		return 0
 	}
-	switch d.language.Name {
-	case "dart", "java", "tsx", "typescript":
-	default:
-		return 0
-	}
 	if int(candTok.Symbol) >= len(d.language.SymbolNames) || int(bestTok.Symbol) >= len(d.language.SymbolNames) {
 		return 0
 	}
 	candName := d.language.SymbolNames[candTok.Symbol]
 	bestName := d.language.SymbolNames[bestTok.Symbol]
-	if candName == ">" && bestName == ">>" {
+	// One shared token cannot preserve parse versions whose lex modes split a
+	// close-angle run at different widths. Prefer one close angle. A parser can
+	// compose later angles into nested generic closers, while a wide token
+	// consumes those bytes before that lineage can use them.
+	if candName == ">" && isWideCloseAngleTokenName(bestName) {
 		return 1
 	}
-	if candName == ">>" && bestName == ">" {
+	if bestName == ">" && isWideCloseAngleTokenName(candName) {
 		return -1
 	}
 	return 0
+}
+
+func isWideCloseAngleTokenName(name string) bool {
+	return len(name) > 1 && strings.Trim(name, ">") == ""
 }
 
 func (d *dfaTokenSource) sameSymbolName(a, b Symbol) bool {
