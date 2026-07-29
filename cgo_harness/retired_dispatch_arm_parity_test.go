@@ -3,6 +3,8 @@
 package cgoharness
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -209,6 +211,16 @@ func TestRetiredDispatchArmCOracleParity(t *testing.T) {
 			language: "erlang",
 			source:   "% lead\n-module(sample).\nfoo() -> ok.\n",
 		},
+		{
+			name:     "http_blank_section",
+			language: "http",
+			source:   "# c\n\n### next\n",
+		},
+		{
+			name:     "http_content_sections",
+			language: "http",
+			source:   "### a\n# c\nGET /\n### b\n",
+		},
 	}
 	for _, test := range tests {
 		test := test
@@ -230,6 +242,38 @@ func TestRetiredDispatchArmCOracleParity(t *testing.T) {
 				parityCase{name: test.language, source: test.source},
 				"retired-dispatch-arm",
 				[]byte(test.source),
+			)
+		})
+	}
+}
+
+func TestHTTPSectionRetirementLockedCorpusCOracleParity(t *testing.T) {
+	root := os.Getenv("GTS_HTTP_LOCKED_CORPUS")
+	if root == "" {
+		t.Skip("set GTS_HTTP_LOCKED_CORPUS to the rest.nvim corpus root")
+	}
+	for _, path := range []string{
+		"spec/examples/basic_get.http",
+		"spec/examples/dotenv/with_dotenv.http",
+		"spec/examples/dotenv/without_dotenv.http",
+		"spec/examples/request_body/external_body.http",
+		"spec/examples/script/post_request_script.http",
+		"spec/examples/url_without_host.http",
+		"spec/examples/variables/dynamic_vars.http",
+		"spec/examples/variables/prompt_variables.http",
+	} {
+		path := path
+		t.Run(filepath.ToSlash(path), func(t *testing.T) {
+			source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			scheduleParityMemoryScavenge(t)
+			runParityCase(
+				t,
+				parityCase{name: "http", source: string(source)},
+				"http-section-retirement-locked-corpus",
+				source,
 			)
 		})
 	}

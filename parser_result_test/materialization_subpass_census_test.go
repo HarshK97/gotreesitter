@@ -389,27 +389,5 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 				"dispatch.cooklang.recovered-recipe",
 			},
 		},
-		{
-			name:             "http_blank_section",
-			language:         grammars.HttpLanguage,
-			source:           "# c\n\n### next\n",
-			wantRawDigest:    "12c900585dc7ecae3a5dc6c3a7072b927a56d0c5dd7f9f699eb8169acceb948b",
-			wantResultDigest: "12c900585dc7ecae3a5dc6c3a7072b927a56d0c5dd7f9f699eb8169acceb948b",
-			expectedSubpasses: []string{
-				"dispatch.http",
-				"dispatch.http.document-section-coalescing",
-			},
-		},
-		{
-			name:             "http_content_sections",
-			language:         grammars.HttpLanguage,
-			source:           "### a\n# c\nGET /\n### b\n",
-			wantRawDigest:    "e67faf42a5f1da1b558a4b40acc86c011ad900b6aa573713729ee1a7bcf43e7e",
-			wantResultDigest: "e67faf42a5f1da1b558a4b40acc86c011ad900b6aa573713729ee1a7bcf43e7e",
-			expectedSubpasses: []string{
-				"dispatch.http",
-				"dispatch.http.document-section-coalescing",
-			},
-		},
 	}
 }

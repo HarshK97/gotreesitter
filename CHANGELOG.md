@@ -9,8 +9,8 @@ for tags and release notes while still in `0.x`.
 
 ### Added
 
-- The dispatcher census now reports distinct Ada, Apex, Bash, Cooklang, and
-  HTTP materialization subpasses.
+- The dispatcher census now reports distinct Ada, Apex, Bash, and Cooklang
+  materialization subpasses.
   Compatibility-free probes record active and inert producer behavior.
 
 - `grammargen -js-cli` now resolves `grammar.js` with Tree-sitter 0.26 or newer.
@@ -78,6 +78,10 @@ for tags and release notes while still in `0.x`.
   scanner checkpoints.
   Mismatched or missing checkpoints fail closed.
   Locked Kotlin, OCaml, Perl, and Rust fixtures now reach their next parser gate.
+
+- Forest result selection now preserves an existing same-symbol container.
+  Its children must exactly match adjacent visible root containers.
+  This removes the inert HTTP section-coalescing compatibility pass.
 
 - The native reduction path now sets Dart switch-expression body fields.
   It now sets the target field for nested Elixir calls.

@@ -2097,6 +2097,9 @@ func forestRootSliceMatchesVisibleContainer(p *Parser, arena *nodeArena, root *N
 	if start < 0 || end <= start || candidate == nil {
 		return false
 	}
+	if forestRootSliceMatchesRepeatedVisibleContainer(p, root, start, end, candidate) {
+		return true
+	}
 	sawFlattenable := false
 	flattened := make([]*Node, 0, end-start)
 	for i := start; i < end; i++ {
@@ -2118,6 +2121,57 @@ func forestRootSliceMatchesVisibleContainer(p *Parser, arena *nodeArena, root *N
 	for i := range flattened {
 		if !forestNodesHaveSameTreeOrderEnvelope(flattened[i], resultChildAt(candidate, i)) {
 			return false
+		}
+	}
+	return true
+}
+
+func forestRootSliceMatchesRepeatedVisibleContainer(
+	p *Parser,
+	root *Node,
+	start, end int,
+	candidate *Node,
+) bool {
+	if p == nil || p.language == nil || end-start < 2 {
+		return false
+	}
+	flattenedCount := 0
+	for i := start; i < end; i++ {
+		child := resultChildAt(root, i)
+		if child == nil || child == candidate || child.symbol != candidate.symbol {
+			return false
+		}
+		symbol := int(child.symbol)
+		if symbol < 0 || symbol >= len(p.language.SymbolMetadata) {
+			return false
+		}
+		meta := p.language.SymbolMetadata[symbol]
+		if !meta.Visible && !meta.Named {
+			return false
+		}
+		flattenedCount += resultChildCount(child)
+	}
+	if flattenedCount != resultChildCount(candidate) {
+		return false
+	}
+	candidateIndex := 0
+	for i := start; i < end; i++ {
+		child := resultChildAt(root, i)
+		for j := 0; j < resultChildCount(child); j++ {
+			childFieldID := nodeFieldIDAt(child, j)
+			candidateFieldID := nodeFieldIDAt(candidate, candidateIndex)
+			if childFieldID != candidateFieldID ||
+				normalizedFieldSourceForID(child.fieldIDs(), child.fieldSources(), j) !=
+					normalizedFieldSourceForID(candidate.fieldIDs(), candidate.fieldSources(), candidateIndex) {
+				return false
+			}
+			if !forestNodesHaveSameTreeOrderEnvelope(
+				resultChildAt(child, j),
+				resultChildAt(candidate, candidateIndex),
+			) {
+				return false
+			}
+			candidateIndex++
 		}
 	}
 	return true

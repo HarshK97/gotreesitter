@@ -87,7 +87,7 @@ post-parse normalization tail.
 
 ## Materialization subpass census
 
-Five live arms still use `materialization` as their aggregate owner.
+Four live arms still use `materialization` as their aggregate owner.
 Each arm now declares its distinct subpasses in the registry.
 
 Set `GTS_DISPATCHER_CENSUS=1` to record each subpass and its aggregate arm.
@@ -106,12 +106,14 @@ The census does not change parser output when it is disabled.
 | Bash | `if` condition field projection | `materialization` |
 | Cooklang | trailing step tail | `scanner_checkpoint_state` |
 | Cooklang | recovered recipe | `scheduler_action_semantics` |
-| HTTP | document section coalescing | `scheduler_action_semantics` |
 
 Cooklang calls its trailing-tail subpass from `parser_result_misc_spans.go`.
 The registry now includes that function and file.
 
-The probes parse each source without result compatibility.
+The HTTP section-coalescing subpass retired after its exact and locked probes
+reported zero rewrites. Native route tests now preserve that receipt.
+
+The live probes parse each source without result compatibility.
 They also compare census-enabled output with normal production output.
 Each digest matches base commit
 `4f077315d3aa5dcec4f5392c7eb17a1bbc27a455`.
