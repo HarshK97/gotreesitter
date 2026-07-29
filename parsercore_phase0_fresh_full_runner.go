@@ -60,6 +60,7 @@ func newParserCoreFreshFullRunner(scanner ExternalScanner, options DiagnosticPar
 		options.MaxTokens = 100000
 	}
 	options.freshSchedulerSession = true
+	options.allowConvergedSplitDropArtifact = true
 
 	lang, err := authenticatedParserCoreGoLanguage(scanner)
 	if err != nil {
@@ -141,12 +142,14 @@ func requireParserCoreFreshFullAcceptance(scheduler *diagnosticParserCoreGeneric
 		return fmt.Errorf("parser-core fresh-full runner acceptance is not sole exact EOF: token=%+v header=%+v accepts=%d/%d",
 			acceptance.Token, acceptance.Header.Header, acceptance.Accepts, acceptance.Work.Accepts)
 	}
-	if acceptance.Work.ConvergedReductionSplitDrops != 0 && !allowConvergedReductionSplitDrops {
+	if !allowConvergedReductionSplitDrops &&
+		acceptance.Work.ConvergedReductionSplitDrops != acceptance.Work.SelectedLineageDrops {
 		return &diagnosticParserCoreDecline{
 			boundary: DiagnosticParserCoreAccept,
 			detail: fmt.Sprintf(
-				"accepted frontier followed %d converged-path reduction split drops",
+				"accepted frontier followed %d converged-path reduction split drops with %d exact selected-lineage proofs",
 				acceptance.Work.ConvergedReductionSplitDrops,
+				acceptance.Work.SelectedLineageDrops,
 			),
 		}
 	}

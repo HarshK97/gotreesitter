@@ -40,15 +40,16 @@ func newAdmissionCandidateRunner(p *Parser) (*parserCoreFreshFullRunner, error) 
 		return nil, errors.New("admission candidate route: parser has no language")
 	}
 	options := DiagnosticParserCorePrefixOptions{
-		ReceiptMode:                    DiagnosticParserCoreReceiptSummary,
-		MaxTokens:                      1 << 24,
-		MaxDispatches:                  1 << 24,
-		Limits:                         admissionCandidateLimits(),
-		freshSchedulerSession:          true,
-		allowEOFAcceptNoActionSiblings: p.language.CompactEOFAcceptNoActionSiblingsCertified,
-		allowPrimaryAcceptDerivation:   p.language.CompactPrimaryAcceptanceDerivationCertified,
-		noLookaheadRootSymbol:          p.rootSymbol,
-		hasNoLookaheadRootSymbol:       p.hasRootSymbol,
+		ReceiptMode:                     DiagnosticParserCoreReceiptSummary,
+		MaxTokens:                       1 << 24,
+		MaxDispatches:                   1 << 24,
+		Limits:                          admissionCandidateLimits(),
+		freshSchedulerSession:           true,
+		allowEOFAcceptNoActionSiblings:  p.language.CompactEOFAcceptNoActionSiblingsCertified,
+		allowPrimaryAcceptDerivation:    p.language.CompactPrimaryAcceptanceDerivationCertified,
+		allowConvergedSplitDropArtifact: p.language.CompactConvergedReductionSplitDropsCertified,
+		noLookaheadRootSymbol:           p.rootSymbol,
+		hasNoLookaheadRootSymbol:        p.hasRootSymbol,
 	}
 	tables, err := newParserCoreRootTables(p)
 	if err != nil {

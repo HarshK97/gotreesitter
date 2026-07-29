@@ -2908,6 +2908,7 @@ type popEnumerationScratch struct {
 	revScores  []int64
 	revOrders  []ForkOrder
 	trailing   []pathPayload
+	external   []SubtreeID
 	paths      []popPath
 }
 
@@ -2919,6 +2920,7 @@ func (s *popEnumerationScratch) begin() {
 	s.revScores = s.revScores[:0]
 	s.revOrders = s.revOrders[:0]
 	s.trailing = s.trailing[:0]
+	s.external = s.external[:0]
 	s.paths = s.paths[:0]
 }
 
@@ -2930,6 +2932,7 @@ func (s *popEnumerationScratch) finishTraversal() {
 	s.revScores = s.revScores[:0]
 	s.revOrders = s.revOrders[:0]
 	s.trailing = s.trailing[:0]
+	s.external = s.external[:0]
 }
 
 func (s *popEnumerationScratch) resetLogical() {
@@ -3025,6 +3028,20 @@ func (c *Core) markCleanProductionRank(paths []popPath) {
 	var rank cleanPathRankAccumulator
 	for index := range paths {
 		path := &paths[index]
+		for _, payload := range path.children {
+			hasExternal, err := c.cleanPathPayloadHasExternal(payload)
+			if err != nil || hasExternal {
+				markCleanPathRankUnknown(paths)
+				return
+			}
+		}
+		for _, trailing := range path.trailing {
+			hasExternal, err := c.cleanPathPayloadHasExternal(trailing.payload)
+			if err != nil || hasExternal {
+				markCleanPathRankUnknown(paths)
+				return
+			}
+		}
 		prefix, err := c.node(path.prev)
 		if err != nil || prefix.pathCount == math.MaxUint64 ||
 			prefix.pathCount > c.limits.MaxDerivations {
@@ -3053,6 +3070,48 @@ func markCleanPathRankUnknown(paths []popPath) {
 	for index := range paths {
 		paths[index].cleanPathRank = CleanPathRankUnknown
 	}
+}
+
+func (c *Core) cleanPathPayloadHasExternal(root SubtreeID) (bool, error) {
+	if c.externalPayloadsQuiescent {
+		return false, nil
+	}
+	if root == 0 {
+		return false, errors.New("parser-core phase zero: clean path has no payload")
+	}
+	stack := c.popScratch.external[:0]
+	stack = append(stack, root)
+	c.popScratch.external = stack
+	visited := uint64(0)
+	for len(stack) != 0 {
+		last := len(stack) - 1
+		id := stack[last]
+		stack = stack[:last]
+		record, err := c.subtree(id)
+		if err != nil {
+			c.popScratch.external = stack[:0]
+			return false, err
+		}
+		visited++
+		if visited > uint64(c.limits.MaxSubtrees) {
+			c.popScratch.external = stack[:0]
+			return false, errors.New("parser-core phase zero: clean path external payload walk cap")
+		}
+		if record.external {
+			c.popScratch.external = stack[:0]
+			return true, nil
+		}
+		for _, child := range c.children[record.firstChild : record.firstChild+record.childCount] {
+			if child == 0 || child >= id {
+				c.popScratch.external = stack[:0]
+				return false, errors.New("parser-core phase zero: clean path subtree order is invalid")
+			}
+			stack = append(stack, child)
+		}
+		c.popScratch.external = stack
+	}
+	c.popScratch.external = stack[:0]
+	return false, nil
 }
 
 // walkCleanPrefixRanks visits each retained prefix derivation without a map.
@@ -3085,6 +3144,10 @@ descend:
 			link := c.links[node.firstLink-1]
 			if link.next != 0 {
 				return false, errors.New("parser-core phase zero: clean path single link has a successor")
+			}
+			hasExternal, err := c.cleanPathPayloadHasExternal(link.payload)
+			if err != nil || hasExternal {
+				return false, err
 			}
 			score, err = checkedAddScore(score, link.scoreDelta)
 			if err != nil {
@@ -3134,6 +3197,10 @@ descend:
 		link := frame[cursor]
 		scratch.revOrders[frameIndex].Value++
 		var err error
+		hasExternal, err := c.cleanPathPayloadHasExternal(link.payload)
+		if err != nil || hasExternal {
+			return false, err
+		}
 		score, err = checkedAddScore(scratch.revScores[frameIndex*2], link.scoreDelta)
 		if err != nil {
 			return false, nil
