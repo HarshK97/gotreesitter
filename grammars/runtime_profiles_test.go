@@ -648,6 +648,7 @@ func TestBuiltinExternalScannerRetryProfilesRequireCertifiedBlob(t *testing.T) {
 		{name: "crystal", scanner: CrystalExternalScanner{}},
 		{name: "kotlin", scanner: KotlinExternalScanner{}},
 		{name: "matlab", scanner: MatlabExternalScanner{}},
+		{name: "swift", scanner: SwiftExternalScanner{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

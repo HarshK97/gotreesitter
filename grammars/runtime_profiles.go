@@ -211,7 +211,7 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	// the retry ladder. High-pressure parses still benefit from the first
 	// ladder, while repeating that ladder for the external scanner does not.
 	"swift": {
-		blobSHA256:                    mustRuntimeProfileSHA256("d0bb8834f9a93fee2a268c81c04e9a36dde5f725db2e3ebc785ab43f79d2ae6a"),
+		blobSHA256:                    mustRuntimeProfileSHA256("be4575bc0acc3c60324aab635d067f940ac5f0557b80a8e3565d1e7d02d53582"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry:  true,
