@@ -647,6 +647,49 @@ func TestCertifiedDuplicateWideRetryPreservesPassAccounting(t *testing.T) {
 	}
 }
 
+func TestWideRetryReceiptSurvivesLosingTreeSelection(t *testing.T) {
+	t.Setenv("GOT_GLR_MAX_STACKS", "")
+	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")
+	t.Setenv("GOT_PARSE_NODE_LIMIT_SCALE", "")
+	ResetParseEnvConfigCacheForTests()
+	t.Cleanup(ResetParseEnvConfigCacheForTests)
+
+	const sourceLen = 4096
+	initial := duplicateWideRetryTestTree(sourceLen, 100, 8, false)
+	parser := &Parser{}
+	var calls []struct {
+		stacks int
+		merge  int
+		clean  bool
+	}
+	got := parser.retryFullParse(make([]byte, sourceLen), 3, initial, func(maxStacks, maxMergePerKeyOverride, maxNodes int) *Tree {
+		calls = append(calls, struct {
+			stacks int
+			merge  int
+			clean  bool
+		}{maxStacks, maxMergePerKeyOverride, parser.forceCleanRetryPass})
+		candidate := duplicateWideRetryTestTree(sourceLen, 200, 8, false)
+		candidate.root.children = []*Node{{symbol: 1}}
+		if maxStacks == fullParseRetryMaxGLRStacks && maxMergePerKeyOverride == fullParseRetryMaxMergePerKey {
+			candidate.root.flags = 0
+			candidate.root.children = nil
+		}
+		return candidate
+	})
+	defer got.Release()
+
+	if got == initial || retryTreeHasError(got) {
+		t.Fatal("combined stack-and-merge retry did not return the clean candidate")
+	}
+	if got, want := len(calls), 4; got != want {
+		t.Fatalf("retry calls = %+v, want initial merge, clean wide, recovery wide, and combined retry", calls)
+	}
+	last := calls[len(calls)-1]
+	if last.stacks != fullParseRetryMaxGLRStacks || last.merge != fullParseRetryMaxMergePerKey {
+		t.Fatalf("final retry = %+v, want stacks=%d merge=%d", last, fullParseRetryMaxGLRStacks, fullParseRetryMaxMergePerKey)
+	}
+}
+
 func TestCertifiedDuplicateWideRetryFallbackScope(t *testing.T) {
 	t.Setenv("GOT_GLR_MAX_STACKS", "")
 	t.Setenv("GOT_GLR_MAX_MERGE_PER_KEY", "")

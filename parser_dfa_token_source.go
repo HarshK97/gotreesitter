@@ -2510,20 +2510,19 @@ func (d *dfaTokenSource) compareAngleTokenPreference(candTok, bestTok Token) int
 	if d == nil || d.language == nil {
 		return 0
 	}
-	switch d.language.Name {
-	case "dart", "java", "tsx", "typescript":
-	default:
-		return 0
-	}
 	if int(candTok.Symbol) >= len(d.language.SymbolNames) || int(bestTok.Symbol) >= len(d.language.SymbolNames) {
 		return 0
 	}
 	candName := d.language.SymbolNames[candTok.Symbol]
 	bestName := d.language.SymbolNames[bestTok.Symbol]
-	if candName == ">" && bestName == ">>" {
+	// One shared token cannot preserve parse versions whose lex modes split a
+	// close-angle run at different widths. Prefer one close angle. A parser can
+	// compose later angles into nested generic closers, while a wide token
+	// consumes those bytes before that lineage can use them.
+	if candName == ">" && len(bestName) > 1 && strings.Trim(bestName, ">") == "" {
 		return 1
 	}
-	if candName == ">>" && bestName == ">" {
+	if bestName == ">" && len(candName) > 1 && strings.Trim(candName, ">") == "" {
 		return -1
 	}
 	return 0

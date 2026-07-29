@@ -102,6 +102,17 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Shared DFA token election now prefers one composable close angle over a
+  wider close-angle token.
+  Nested TypeScript union arguments now retain the generic-call lineage.
+  This fixes [issue #541](https://github.com/odvcencio/gotreesitter/issues/541).
+
+- The full-parse retry ladder now retains a widened candidate until it reads
+  the candidate's runtime receipt.
+  This enables the existing combined stack-and-merge retry for the ZodUnion
+  fixture.
+  This fixes [issue #544](https://github.com/odvcencio/gotreesitter/issues/544).
+
 - Native `grammar.js` import now ignores comments in semantic AST children.
   All 206 pinned grammars show import coverage increasing from 62 to 70.
 

@@ -1094,7 +1094,7 @@ func TestCollectGLRDFATokenFrontierKeepsNoLookaheadEOFToken(t *testing.T) {
 	}
 }
 
-func TestNextGLRUnionDFATokenStillChoosesLegacyBest(t *testing.T) {
+func TestNextGLRUnionDFATokenPrefersComposableCloseAngle(t *testing.T) {
 	lang := testCloseAngleFrontierLanguage()
 	d := newCloseAngleFrontierTokenSource(lang, 1, 2)
 
@@ -1102,11 +1102,27 @@ func TestNextGLRUnionDFATokenStillChoosesLegacyBest(t *testing.T) {
 	if !ok {
 		t.Fatal("nextGLRUnionDFAToken returned ok=false, want true")
 	}
-	if got, want := tok.Symbol, Symbol(2); got != want {
+	if got, want := tok.Symbol, Symbol(1); got != want {
 		t.Fatalf("token symbol = %d (%q), want %d (%q)", got, lang.SymbolNames[got], want, lang.SymbolNames[want])
 	}
-	if got, want := d.lexer.pos, 2; got != want {
+	if got, want := d.lexer.pos, 1; got != want {
 		t.Fatalf("lexer.pos = %d, want %d", got, want)
+	}
+}
+
+func TestCompareAngleTokenPreferenceCoversWideCloseRuns(t *testing.T) {
+	lang := &Language{SymbolNames: []string{"end", ">", ">>", ">>>", ">="}}
+	d := &dfaTokenSource{language: lang}
+	for _, wider := range []Symbol{2, 3} {
+		if got := d.compareAngleTokenPreference(Token{Symbol: 1}, Token{Symbol: wider}); got != 1 {
+			t.Fatalf("> versus %q preference = %d, want 1", lang.SymbolNames[wider], got)
+		}
+		if got := d.compareAngleTokenPreference(Token{Symbol: wider}, Token{Symbol: 1}); got != -1 {
+			t.Fatalf("%q versus > preference = %d, want -1", lang.SymbolNames[wider], got)
+		}
+	}
+	if got := d.compareAngleTokenPreference(Token{Symbol: 1}, Token{Symbol: 4}); got != 0 {
+		t.Fatalf("> versus >= preference = %d, want 0", got)
 	}
 }
 
