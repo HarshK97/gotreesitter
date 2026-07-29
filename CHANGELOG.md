@@ -106,6 +106,9 @@ for tags and release notes while still in `0.x`.
   wider close-angle token.
   Nested TypeScript union arguments now retain the generic-call lineage.
   This fixes [issue #541](https://github.com/odvcencio/gotreesitter/issues/541).
+  Apex nested generic declarations now match the pinned C tree without a
+  result rewrite.
+  This retires the Apex generic local declaration compatibility pass.
 
 - The full-parse retry ladder now retains a widened candidate until it reads
   the candidate's runtime receipt.
