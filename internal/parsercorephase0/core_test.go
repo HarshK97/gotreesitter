@@ -2329,9 +2329,10 @@ func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
 		t.Fatalf("ClassifiedBoundary size = %d, want <= 56", got)
 	}
 	for name, typ := range map[string]reflect.Type{
-		"node":    reflect.TypeFor[nodeRecord](),
-		"link":    reflect.TypeFor[linkRecord](),
-		"subtree": reflect.TypeFor[subtreeRecord](),
+		"node":                reflect.TypeFor[nodeRecord](),
+		"link":                reflect.TypeFor[linkRecord](),
+		"subtree":             reflect.TypeFor[subtreeRecord](),
+		"external-provenance": reflect.TypeFor[externalPayloadProvenance](),
 	} {
 		for i := 0; i < typ.NumField(); i++ {
 			kind := typ.Field(i).Type.Kind()
@@ -2340,14 +2341,17 @@ func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
 			}
 		}
 	}
-	if got := unsafe.Sizeof(nodeRecord{}); got > 32 {
-		t.Fatalf("nodeRecord size = %d, want <= 32", got)
+	if got := unsafe.Sizeof(nodeRecord{}); got != 24 {
+		t.Fatalf("nodeRecord size = %d, want 24", got)
 	}
 	if got := unsafe.Sizeof(linkRecord{}); got > 32 {
 		t.Fatalf("linkRecord size = %d, want <= 32", got)
 	}
 	if got := unsafe.Sizeof(subtreeRecord{}); got != 44 {
 		t.Fatalf("subtreeRecord size = %d, want 44", got)
+	}
+	if got := unsafe.Sizeof(externalPayloadProvenance{}); got != 12 {
+		t.Fatalf("externalPayloadProvenance size = %d, want 12", got)
 	}
 }
 

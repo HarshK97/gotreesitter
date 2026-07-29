@@ -134,6 +134,62 @@ func newCertifiedExternalRecursiveInsertFixture(t *testing.T, externalDescendant
 	}
 }
 
+func newExactExternalRecursiveInsertFixture(t *testing.T, externalDescendant bool) certifiedExternalRecursiveInsertFixture {
+	t.Helper()
+	core := newTinyCoreWithLimits(t, Limits{MaxDerivations: 8, MaxPopPaths: 8})
+	start := mustInternCheckpoint(t, core, []byte{1, 2})
+	end := mustInternCheckpoint(t, core, []byte{3, 4})
+	if err := core.SetPhaseCheckpoint(end); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.SetPhaseExternalTokenScannerCheckpoints(start, end); err != nil {
+		t.Fatal(err)
+	}
+	rootA, err := core.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootB, err := core.Seed(2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lowerLeft := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, endByte: 10})
+	lowerRight := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 21, endByte: 10})
+	left, err := core.appendAdjacencyNode(7, 10, []linkRecord{{prev: rootA.Node, payload: lowerLeft}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := core.appendAdjacencyNode(7, 10, []linkRecord{{prev: rootB.Node, payload: lowerRight}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	externalChild, err := core.appendAuthenticatedTerminal(subtreeRecord{
+		symbol: 31, startByte: 10, endByte: 11, external: true, terminal: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	top := externalChild
+	if externalDescendant {
+		top, err = core.appendSubtree(
+			subtreeRecord{symbol: 30, startByte: 10, endByte: 11},
+			[]SubtreeID{externalChild}, nil, nil,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	key := core.boundaryKey(8, 11)
+	oldTop, err := core.condense(key, linkInput{prev: left, payload: top})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return certifiedExternalRecursiveInsertFixture{
+		core: core, oldTop: oldTop, rightPrev: Head{Node: right},
+		lowerLeft: lowerLeft, lowerRight: lowerRight, top: top, key: key,
+	}
+}
+
 func TestRecursiveInsertAcceptsAuthenticatedNonzeroCheckpoint(t *testing.T) {
 	checkpoint := [32]byte{1, 3, 5, 7}
 	fixture := newRecursiveInsertFixtureWithCheckpoint(t, checkpoint)
@@ -566,6 +622,131 @@ func TestRecursiveInsertCertifiedQuiescentExternalPayloads(t *testing.T) {
 	}
 }
 
+func TestRecursiveInsertAcceptsExactExternalScannerProvenance(t *testing.T) {
+	for _, test := range []struct {
+		name               string
+		externalDescendant bool
+	}{
+		{name: "top"},
+		{name: "descendant", externalDescendant: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newExactExternalRecursiveInsertFixture(t, test.externalDescendant)
+			merged, err := fixture.core.condense(fixture.key, linkInput{
+				prev: fixture.rightPrev.Node, payload: fixture.top,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			paths, err := fixture.core.Derivations(merged)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := []Derivation{
+				{Payloads: []SubtreeID{fixture.lowerLeft, fixture.top}},
+				{Payloads: []SubtreeID{fixture.lowerRight, fixture.top}},
+			}
+			if !reflect.DeepEqual(paths, want) {
+				t.Fatalf("exact external derivations=%#v, want %#v", paths, want)
+			}
+		})
+	}
+}
+
+func TestRecursiveInsertKeepsScannerCheckpointMismatchSeparate(t *testing.T) {
+	core := newTinyCoreWithLimits(t, Limits{MaxDerivations: 8, MaxPopPaths: 8})
+	start := mustInternCheckpoint(t, core, []byte{1})
+	leftCheckpoint := mustInternCheckpoint(t, core, []byte{2})
+	rightCheckpoint := mustInternCheckpoint(t, core, []byte{3})
+	if err := core.SetPhaseCheckpoint(rightCheckpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.SetPhaseExternalTokenScannerCheckpoints(start, rightCheckpoint); err != nil {
+		t.Fatal(err)
+	}
+	leftRoot, _ := core.appendNodeAt(nodeRecord{
+		state: 1, byteOffset: 0, pathCount: 1,
+	}, leftCheckpoint)
+	rightRoot, _ := core.appendNodeAt(nodeRecord{
+		state: 1, byteOffset: 0, pathCount: 1,
+	}, rightCheckpoint)
+	lower := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, endByte: 10})
+	left, err := core.appendAdjacencyNodeAt(
+		7, 10, leftCheckpoint, []linkRecord{{prev: leftRoot, payload: lower}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := core.appendAdjacencyNodeAt(
+		7, 10, rightCheckpoint, []linkRecord{{prev: rightRoot, payload: lower}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	top, err := core.appendAuthenticatedTerminal(subtreeRecord{
+		symbol: 30, startByte: 10, endByte: 11, external: true, terminal: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := core.boundaryKey(8, 11)
+	if _, err := core.condense(key, linkInput{prev: left, payload: top}); err != nil {
+		t.Fatal(err)
+	}
+	merged, err := core.condense(key, linkInput{prev: right, payload: top})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := core.Derivations(merged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 || core.Work().PredecessorLinkUnionRecursiveChanged != 0 {
+		t.Fatalf("checkpoint mismatch paths=%#v work=%+v", paths, core.Work())
+	}
+}
+
+func TestExternalTokenScannerCheckpointValidation(t *testing.T) {
+	core := newTinyCoreWithLimits(t, Limits{})
+	known := mustInternCheckpoint(t, core, []byte{1})
+	if err := core.SetPhaseCheckpoint(known); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.SetPhaseExternalTokenScannerCheckpoints(known, CheckpointID(99)); err == nil {
+		t.Fatal("unknown end checkpoint was accepted")
+	}
+	if err := core.SetPhaseExternalTokenScannerCheckpoints(CheckpointID(99), known); err == nil {
+		t.Fatal("unknown start checkpoint was accepted")
+	}
+	if err := core.SetPhaseExternalTokenScannerCheckpoints(known, known); err != nil {
+		t.Fatal(err)
+	}
+	if !core.externalTokenScannerExact {
+		t.Fatal("exact token checkpoint pair was not retained")
+	}
+	if err := core.SetPhaseExternalTokenScannerCheckpoints(known, CheckpointID(99)); err == nil {
+		t.Fatal("unknown end checkpoint was accepted after exact proof")
+	}
+	if core.externalTokenScannerExact {
+		t.Fatal("rejected token checkpoint pair retained stale exact proof")
+	}
+	if err := core.SetPhaseExternalTokenScannerCheckpoints(known, known); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.SetPhaseCheckpoint(known); err != nil {
+		t.Fatal(err)
+	}
+	if core.externalTokenScannerExact {
+		t.Fatal("phase checkpoint election retained stale token proof")
+	}
+	if err := core.BeginFrontier(); err != nil {
+		t.Fatal(err)
+	}
+	if core.externalTokenScannerExact {
+		t.Fatal("frontier advance retained a stale token checkpoint pair")
+	}
+}
+
 func TestRecursiveInsertCertifiedExternalIdentityAndValidation(t *testing.T) {
 	core := newTinyCoreWithLimits(t, Limits{})
 	core.CertifyExternalPayloadsQuiescent()
@@ -582,15 +763,15 @@ func TestRecursiveInsertCertifiedExternalIdentityAndValidation(t *testing.T) {
 	if equal {
 		t.Fatal("certified external payload matched a non-external shallow class")
 	}
-	if _, err := core.subtreeHasNoExternalDescendant(SubtreeID(len(core.subtrees) + 1)); err == nil {
+	if _, _, err := core.subtreeExternalProvenance(SubtreeID(len(core.subtrees) + 1)); err == nil {
 		t.Fatal("certified external fast path accepted an invalid subtree identifier")
 	}
 	if err := core.Reset(); err != nil {
 		t.Fatal(err)
 	}
 	external = appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, endByte: 1, external: true})
-	if clean, err := core.subtreeHasNoExternalDescendant(external); err != nil || !clean {
-		t.Fatalf("reset lost the external-payload certificate: clean=%t err=%v", clean, err)
+	if _, exact, err := core.subtreeExternalProvenance(external); err != nil || !exact {
+		t.Fatalf("reset lost the external-payload certificate: exact=%t err=%v", exact, err)
 	}
 }
 
@@ -625,6 +806,35 @@ func TestRecursiveInsertCertifiedExternalRollback(t *testing.T) {
 		!reflect.DeepEqual(afterPaths, beforePaths) || !ok || canonical != fixture.oldTop {
 		t.Fatalf(
 			"certified external rollback drift: stats=%+v/%+v work=%+v/%+v paths=%#v/%#v canonical=%+v ok=%t",
+			after, before, core.Work(), beforeWork, afterPaths, beforePaths, canonical, ok,
+		)
+	}
+}
+
+func TestRecursiveInsertExactExternalRollback(t *testing.T) {
+	fixture := newExactExternalRecursiveInsertFixture(t, false)
+	core := fixture.core
+	before, _ := core.Stats(fixture.oldTop)
+	beforeWork := core.Work()
+	beforePaths, _ := core.Derivations(fixture.oldTop)
+	core.limits.MaxLinks = uint32(len(core.links) + 2)
+	if _, err := core.condense(fixture.key, linkInput{
+		prev: fixture.rightPrev.Node, payload: fixture.top,
+	}); err == nil || !strings.Contains(err.Error(), "link arena cap") {
+		t.Fatalf("exact external cap error=%v", err)
+	}
+	after, _ := core.Stats(fixture.oldTop)
+	afterPaths, _ := core.Derivations(fixture.oldTop)
+	canonical, ok := core.CanonicalBoundary(
+		fixture.key.state,
+		fixture.key.byteOffset,
+		fixture.key.shifted,
+		fixture.key.checkpoint,
+	)
+	if after != before || core.Work() != beforeWork ||
+		!reflect.DeepEqual(afterPaths, beforePaths) || !ok || canonical != fixture.oldTop {
+		t.Fatalf(
+			"exact external rollback drift: stats=%+v/%+v work=%+v/%+v paths=%#v/%#v canonical=%+v ok=%t",
 			after, before, core.Work(), beforeWork, afterPaths, beforePaths, canonical, ok,
 		)
 	}
