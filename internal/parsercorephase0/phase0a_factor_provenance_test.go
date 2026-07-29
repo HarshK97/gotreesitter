@@ -356,6 +356,54 @@ func TestPhase0AFactorChoiceBindsExactLowerRoutes(t *testing.T) {
 	phase0AObservers.Unlock()
 }
 
+func TestPhase0AFactorChoiceBindsRecursiveLowerRoutes(t *testing.T) {
+	core := newTinyCoreWithLimits(t, Limits{MaxDerivations: 16, MaxPopPaths: 16})
+	run := phase0ABeginShiftProvenanceRun(t, core, Phase0AObserverLimits{
+		MaxCores: 2, MaxRecords: 4096, MaxBytes: 1 << 20, MaxFrames: 32, MaxMutations: 512,
+		MaxOccurrences: 128, MaxOccurrenceBytes: 128 << 10,
+		MaxCandidates: 128, MaxExpressions: 128, MaxBindings: 256, MaxTransitions: 512, MaxSelectors: 32, MaxSelectorRoutes: 128,
+	})
+	rootA, err := core.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootB, err := core.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftPayload, _ := core.appendSubtree(subtreeRecord{symbol: 20, endByte: 10, terminal: true}, nil, nil, nil)
+	rightPayload, _ := core.appendSubtree(subtreeRecord{symbol: 21, endByte: 10, terminal: true}, nil, nil, nil)
+	wrapper, _ := core.appendSubtree(subtreeRecord{symbol: 30, startByte: 10, endByte: 11, terminal: true}, nil, nil, nil)
+	topPayload, _ := core.appendSubtree(subtreeRecord{symbol: 40, startByte: 11, endByte: 12, terminal: true}, nil, nil, nil)
+	leftLower := phase0AObservedPrivate(t, core, leftPayload, rootA.Node, 7, 10)
+	rightLower := phase0AObservedPrivate(t, core, rightPayload, rootB.Node, 7, 10)
+	leftUpper := phase0AObservedPrivate(t, core, wrapper, leftLower.Node, 8, 11)
+	rightUpper := phase0AObservedPrivate(t, core, wrapper, rightLower.Node, 8, 11)
+	old := phase0AObservedCondense(t, core, topPayload, leftUpper.Node, 9, 12)
+	merged := phase0AObservedCondense(t, core, topPayload, rightUpper.Node, 9, 12)
+	if old.change != condenseNew || merged.change != condenseUpdated || old.head == merged.head {
+		t.Fatalf("recursive factor outcomes old=%+v merged=%+v", old, merged)
+	}
+	proof, err := Phase0AObserverProof(core, run)
+	if err != nil {
+		t.Fatalf("recursive proof=%+v err=%v", proof, err)
+	}
+	factorExpressions := 0
+	for _, expression := range proof.Expressions {
+		if expression.Kind == Phase0AExpressionFactorChoice {
+			factorExpressions++
+		}
+	}
+	if len(proof.Selectors) != 2 || len(proof.SelectorRoutes) != 3 ||
+		proof.Selectors[0].RouteCount != 2 || proof.Selectors[1].RouteCount != 1 ||
+		factorExpressions != 2 {
+		t.Fatalf(
+			"recursive proof selectors=%+v routes=%+v factor expressions=%d expressions=%+v",
+			proof.Selectors, proof.SelectorRoutes, factorExpressions, proof.Expressions,
+		)
+	}
+}
+
 func TestPhase0APhysicalLinkReuseKeepsRollbackTombstone(t *testing.T) {
 	core := newTinyCoreWithLimits(t, Limits{})
 	run := phase0ABeginShiftProvenanceRun(t, core, phase0AShiftProvenanceLimits())

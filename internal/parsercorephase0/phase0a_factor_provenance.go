@@ -682,6 +682,64 @@ func phase0AMergeDecision(core *Core, incumbent int, kind Phase0ATransitionKind)
 	}
 }
 
+func phase0AMergeRecursiveDecision(core *Core, incumbent int, merged NodeID) {
+	phase0AObservers.Lock()
+	defer phase0AObservers.Unlock()
+	observer := phase0AObservers.byCore[core]
+	if observer == nil || !observer.active || observer.failure != nil {
+		return
+	}
+	if len(observer.factor.mergePlans) == 0 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorUnsupportedProof, Namespace: observer.run, Detail: "recursive merge decision has no plan"})
+		return
+	}
+	plan := &observer.factor.mergePlans[len(observer.factor.mergePlans)-1]
+	plan.rightIndex++
+	if plan.rightIndex < 0 || plan.rightIndex >= len(plan.rightIDs) || incumbent < 0 || incumbent >= len(plan.entries) {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorUnsupportedProof, Namespace: observer.run, Detail: "recursive merge decision input mismatch"})
+		return
+	}
+	rightExpression, ok := phase0ALiveExpressionLocked(observer, plan.rightIDs[plan.rightIndex])
+	if !ok {
+		return
+	}
+	left := plan.entries[incumbent]
+	if _, ok := phase0ALiveExpressionLocked(observer, left.source); !ok {
+		return
+	}
+	selectorIndex := -1
+	for index := len(observer.factor.selectors) - 1; index >= 0; index-- {
+		selector := observer.factor.selectors[index]
+		if selector.MergedPredecessor == merged && !selector.RolledBack {
+			selectorIndex = index
+			break
+		}
+	}
+	if selectorIndex < 0 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorUnsupportedProof, Namespace: observer.run, Detail: "recursive merge selector is unavailable"})
+		return
+	}
+	if observer.factor.nextExpression == math.MaxUint64 {
+		phase0AStickyLocked(observer, &Phase0AError{Kind: Phase0AErrorCounterOverflow, Namespace: observer.run, Detail: "recursive merge expression serial"})
+		return
+	}
+	if err := phase0AReserveFactorRowsLocked(observer, 0, 1, 0, 0, 0, 0, 0); err != nil {
+		return
+	}
+	selector := observer.factor.selectors[selectorIndex]
+	transaction := phase0ACurrentTransaction(observer)
+	observer.factor.nextExpression++
+	expression := Phase0AExpressionID(observer.factor.nextExpression)
+	observer.factor.expressions = append(observer.factor.expressions, Phase0AExpressionRecord{
+		ID: expression, Kind: Phase0AExpressionFactorChoice, TransactionID: transaction,
+		Selector: selector.ID, Left: left.expression, Right: rightExpression,
+	})
+	plan.entries[incumbent] = phase0AMergeEntry{
+		expression: expression, source: left.source, branch: left.branch,
+		kind: Phase0ATransitionFactorChoice, selector: selector.ID,
+	}
+}
+
 func phase0AAbortPredecessorMerge(core *Core) {
 	phase0AObservers.Lock()
 	defer phase0AObservers.Unlock()

@@ -368,6 +368,65 @@ func TestRecursiveInsertSamePairPrecedenceAndDistinctClass(t *testing.T) {
 	}
 }
 
+func TestRecursiveInsertPersistsTwoPredecessorLevels(t *testing.T) {
+	core := newTinyCoreWithLimits(t, Limits{MaxDerivations: 8, MaxPopPaths: 8})
+	rootA, err := core.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootB, err := core.Seed(2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lowerA := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, endByte: 10})
+	lowerB := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 21, endByte: 10})
+	leftLower, err := core.appendAdjacencyNode(7, 10, []linkRecord{{prev: rootA.Node, payload: lowerA}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightLower, err := core.appendAdjacencyNode(7, 10, []linkRecord{{prev: rootB.Node, payload: lowerB}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapper := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 30, startByte: 10, endByte: 11})
+	leftUpper, err := core.appendAdjacencyNode(8, 11, []linkRecord{{prev: leftLower, payload: wrapper}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightUpper, err := core.appendAdjacencyNode(8, 11, []linkRecord{{prev: rightLower, payload: wrapper}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	top := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 40, startByte: 11, endByte: 12})
+	key := core.boundaryKey(9, 12)
+	old, err := core.condense(key, linkInput{prev: leftUpper, payload: top})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldPaths, err := core.Derivations(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged, err := core.condense(key, linkInput{prev: rightUpper, payload: top})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := core.Derivations(merged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Derivation{
+		{Payloads: []SubtreeID{lowerA, wrapper, top}},
+		{Payloads: []SubtreeID{lowerB, wrapper, top}},
+	}
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("bounded recursive derivations=%#v, want %#v", paths, want)
+	}
+	if got, err := core.Derivations(old); err != nil || !reflect.DeepEqual(got, oldPaths) {
+		t.Fatalf("historical recursive head changed: paths=%#v want=%#v err=%v", got, oldPaths, err)
+	}
+}
+
 func TestRecursiveInsertDeclinesUnsupportedProvenanceAndDepth(t *testing.T) {
 	t.Run("external-top-leaf", func(t *testing.T) {
 		core := newTinyCoreWithLimits(t, Limits{})
@@ -413,23 +472,65 @@ func TestRecursiveInsertDeclinesUnsupportedProvenanceAndDepth(t *testing.T) {
 		}
 	})
 
-	t.Run("second-recursive-layer", func(t *testing.T) {
+	t.Run("non-exact-nested-edge", func(t *testing.T) {
 		core := newTinyCoreWithLimits(t, Limits{})
 		rootA, _ := core.Seed(1, 0)
 		rootBID, _ := core.appendNode(nodeRecord{state: 1, byteOffset: 0, pathCount: 1})
-		lower := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, endByte: 10})
-		left, _ := core.appendAdjacencyNode(7, 10, []linkRecord{{prev: rootA.Node, payload: lower}})
-		right, _ := core.appendAdjacencyNode(7, 10, []linkRecord{{prev: rootBID, payload: lower}})
-		top := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 30, startByte: 10, endByte: 11})
-		key := core.boundaryKey(8, 11)
+		lowerA := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, productionID: 1, endByte: 10})
+		lowerB := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, productionID: 2, endByte: 10})
+		leftLower, _ := core.appendAdjacencyNode(7, 10, []linkRecord{{prev: rootA.Node, payload: lowerA}})
+		rightLower, _ := core.appendAdjacencyNode(7, 10, []linkRecord{{prev: rootBID, payload: lowerB}})
+		wrapper := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 30, startByte: 10, endByte: 11})
+		left, _ := core.appendAdjacencyNode(8, 11, []linkRecord{{prev: leftLower, payload: wrapper}})
+		right, _ := core.appendAdjacencyNode(8, 11, []linkRecord{{prev: rightLower, payload: wrapper}})
+		top := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 40, startByte: 11, endByte: 12})
+		key := core.boundaryKey(9, 12)
 		old, _ := core.condense(key, linkInput{prev: left, payload: top})
 		before, _ := core.Stats(old)
-		if _, err := core.condense(key, linkInput{prev: right, payload: top}); err == nil || !strings.Contains(err.Error(), "beyond one predecessor layer") {
-			t.Fatalf("second-layer error=%v", err)
+		beforeWork := core.Work()
+		if _, err := core.condense(key, linkInput{prev: right, payload: top}); err == nil || !strings.Contains(err.Error(), "non-exact nested edge") {
+			t.Fatalf("non-exact nested edge error=%v", err)
 		}
 		after, _ := core.Stats(old)
-		if after != before {
-			t.Fatalf("second-layer decline mutated storage: before=%+v after=%+v", before, after)
+		if after != before || core.Work() != beforeWork {
+			t.Fatalf("non-exact nested decline mutated storage/work: before=%+v after=%+v work=%+v/%+v", before, after, core.Work(), beforeWork)
+		}
+	})
+
+	t.Run("depth-limit", func(t *testing.T) {
+		core := newTinyCoreWithLimits(t, Limits{})
+		left, _ := core.Seed(1, 0)
+		rightID, _ := core.appendNode(nodeRecord{state: 1, byteOffset: 0, pathCount: 1})
+		right := Head{Node: rightID}
+		for depth := 0; depth <= maxRecursiveInsertDepth; depth++ {
+			offset := uint32(depth + 1)
+			payload := appendShallowPayload(t, core, shallowPayloadSpec{
+				symbol: Symbol(20 + depth), startByte: offset - 1, endByte: offset,
+			})
+			leftID, err := core.appendAdjacencyNode(StateID(10+depth), offset, []linkRecord{{prev: left.Node, payload: payload}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rightID, err := core.appendAdjacencyNode(StateID(10+depth), offset, []linkRecord{{prev: right.Node, payload: payload}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			left, right = Head{Node: leftID}, Head{Node: rightID}
+		}
+		top := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 50, startByte: 17, endByte: 18})
+		key := core.boundaryKey(60, 18)
+		old, err := core.condense(key, linkInput{prev: left.Node, payload: top})
+		if err != nil {
+			t.Fatal(err)
+		}
+		before, _ := core.Stats(old)
+		beforeWork := core.Work()
+		if _, err := core.condense(key, linkInput{prev: right.Node, payload: top}); err == nil || !strings.Contains(err.Error(), "depth limit") {
+			t.Fatalf("recursive depth error=%v", err)
+		}
+		after, _ := core.Stats(old)
+		if after != before || core.Work() != beforeWork {
+			t.Fatalf("recursive depth decline mutated storage/work: before=%+v after=%+v work=%+v/%+v", before, after, core.Work(), beforeWork)
 		}
 	})
 }
@@ -532,13 +633,13 @@ func TestRecursiveInsertCertifiedExternalRollback(t *testing.T) {
 func TestRecursiveInsertDeclinesSelfAndAncestry(t *testing.T) {
 	core := newTinyCoreWithLimits(t, Limits{})
 	seed, _ := core.Seed(1, 0)
-	if _, _, err := core.mergePredecessorsOneLayer(seed.Node, seed.Node); err == nil || !strings.Contains(err.Error(), "self-merge") {
+	if _, _, err := core.mergePredecessorsBounded(seed.Node, seed.Node, 0); err == nil || !strings.Contains(err.Error(), "self-merge") {
 		t.Fatalf("self merge error=%v", err)
 	}
 	payload := appendShallowPayload(t, core, shallowPayloadSpec{symbol: 20, endByte: 1})
 	rightID, _ := core.appendNode(nodeRecord{state: 7, byteOffset: 1, pathCount: 1})
 	leftID, _ := core.appendAdjacencyNode(7, 1, []linkRecord{{prev: rightID, payload: payload}})
-	if _, _, err := core.mergePredecessorsOneLayer(leftID, rightID); err == nil || !strings.Contains(err.Error(), "ancestry-related") {
+	if _, _, err := core.mergePredecessorsBounded(leftID, rightID, 0); err == nil || !strings.Contains(err.Error(), "ancestry-related") {
 		t.Fatalf("ancestry merge error=%v", err)
 	}
 }
