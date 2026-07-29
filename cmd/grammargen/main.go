@@ -121,7 +121,7 @@ func parseCLIConfig() cliConfig {
 	flag.StringVar(&cfg.cOut, "c", "", "output path for tree-sitter parser.c")
 	flag.StringVar(&cfg.goOut, "go", "", "output path for grammargen Go DSL source")
 	flag.StringVar(&cfg.jsInput, "js", "", "path to a tree-sitter grammar.js file to import")
-	flag.StringVar(&cfg.jsCLIInput, "js-cli", "", "path to grammar.js to resolve with tree-sitter CLI (executes arbitrary JavaScript)")
+	flag.StringVar(&cfg.jsCLIInput, "js-cli", "", "path to grammar.js; requires tree-sitter CLI 0.26+ and a JavaScript runtime; executes arbitrary JavaScript")
 	flag.StringVar(&cfg.jsonInput, "json", "", "path to a resolved tree-sitter grammar.json file to import")
 	flag.StringVar(&cfg.grammarFile, "grammar", "", "path to a .grammar file to parse")
 	flag.StringVar(&cfg.pkgName, "pkg", "grammargen", "package name for -go output")

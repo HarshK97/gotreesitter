@@ -129,6 +129,22 @@ func TestImportGrammarJSWithCLIReportsGenerateFailure(t *testing.T) {
 	}
 }
 
+func TestImportGrammarJSWithCLIReportsMissingJavaScriptRuntime(t *testing.T) {
+	tmp := t.TempDir()
+	grammarPath := filepath.Join(tmp, "grammar.js")
+	if err := os.WriteFile(grammarPath, []byte("module.exports = grammar({});\n"), 0o644); err != nil {
+		t.Fatalf("write grammar.js: %v", err)
+	}
+	t.Setenv("FAKE_GENERATE_ERROR", "Failed to load grammar.js -- Failed to run `node` -- No such file or directory")
+	cli := writeFakeTreeSitterCLI(t, tmp, "0.26.6", "", 7)
+	_, err := importGrammarJSWithCLI(grammarPath, cli)
+	if err == nil ||
+		!strings.Contains(err.Error(), "JavaScript runtime such as Node") ||
+		!strings.Contains(err.Error(), "tree-sitter generate") {
+		t.Fatalf("error = %v, want JavaScript runtime requirement and generation context", err)
+	}
+}
+
 func TestImportGrammarJSWithCLIRejectsMissingCapability(t *testing.T) {
 	tmp := t.TempDir()
 	grammarPath := filepath.Join(tmp, "grammar.js")
@@ -160,7 +176,7 @@ fi
 printf '%s\n' "$@" > "${FAKE_ARGS_PATH:-/dev/null}"
 printf '%s\n' "$PWD" > "${FAKE_DIR_PATH:-/dev/null}"
 if test "$FAKE_GENERATE_STATUS" != "0"; then
-  printf 'fake generation failed\n' >&2
+  printf '%s\n' "${FAKE_GENERATE_ERROR:-fake generation failed}" >&2
   exit "$FAKE_GENERATE_STATUS"
 fi
 output=
