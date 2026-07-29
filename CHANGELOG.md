@@ -23,6 +23,12 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Graph-structured stack hashing now selects inline or pooled walk storage
+  before it collects nodes.
+  The 235,626-byte Go fixture allocates 24.84 KiB instead of 110.34 KiB.
+  Allocations fall from 511 to 169 per parse.
+  Parse time and maximum resident set size remain unchanged.
+
 - Outer parser-state re-lex transactions now reuse one 4 KiB scanner-state
   buffer.
   The 235,626-byte Go fixture allocates 7.583 MiB instead of 48.073 MiB.
