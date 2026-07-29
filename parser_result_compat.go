@@ -254,8 +254,62 @@ func nativeRecoveredStructureIsAuthoritative(root *Node, source []byte, p *Parse
 	if root.rawShape == 0 || !root.hasError() {
 		return false
 	}
-	return root.startByte <= firstNonTriviaByteStart(source) &&
-		root.endByte >= lastNonTriviaByteEnd(source)
+	if root.startByte > firstNonTriviaByteStart(source) ||
+		root.endByte < lastNonTriviaByteEnd(source) {
+		return false
+	}
+	return nativeRecoveredStructureHasIsolatedErrorReceipt(root)
+}
+
+// nativeRecoveredStructureHasIsolatedErrorReceipt verifies a narrow
+// recovered-root class. Raw top-level spans must agree.
+// The tree must contain one one-byte error and no missing nodes.
+func nativeRecoveredStructureHasIsolatedErrorReceipt(root *Node) bool {
+	if root == nil || root.ownerArena == nil || root.rawShape == 0 {
+		return false
+	}
+	shape, ok := root.ownerArena.rawShapeForRef(root.rawShape)
+	if !ok || shape.symbol != root.symbol || int(shape.childCount) != resultChildCount(root) {
+		return false
+	}
+	rawChildren := root.ownerArena.rawShapeChildren(shape)
+	if len(rawChildren) != resultChildCount(root) {
+		return false
+	}
+	for i := range rawChildren {
+		rawChild := stackEntryNode(rawChildren[i].entry())
+		child := resultChildAt(root, i)
+		if rawChild == nil || child == nil ||
+			rawChild.startByte != child.startByte ||
+			rawChild.endByte != child.endByte {
+			return false
+		}
+	}
+
+	explicitErrors := 0
+	valid := true
+	var walk func(*Node)
+	walk = func(node *Node) {
+		if node == nil || !valid {
+			return
+		}
+		if node.isMissing() {
+			valid = false
+			return
+		}
+		if node.symbol == errorSymbol {
+			explicitErrors++
+			if explicitErrors > 1 || node.endByte-node.startByte != 1 {
+				valid = false
+				return
+			}
+		}
+		for i := 0; i < resultChildCount(node); i++ {
+			walk(resultChildAt(node, i))
+		}
+	}
+	walk(root)
+	return valid && explicitErrors == 1
 }
 
 // --- R2 dispatcher-arm census (docs/root-normalization-retirement.md) ---

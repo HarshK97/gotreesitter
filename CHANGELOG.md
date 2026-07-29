@@ -27,12 +27,16 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
-- Certified C# recovered roots now skip four redundant source reconstruction
-  passes.
+- Certified isolated C# recovered roots now skip four redundant source
+  reconstruction passes.
+  The receipt requires one one-byte error, no missing nodes, and matching raw
+  top-level spans.
   The 137 KiB deletion witness still matches the pinned C parser.
   Median full-parse time falls from 8.24 seconds to 5.01 seconds.
   Median allocation falls from 608 MB and 286,009 allocations to 195 MB and
   9,663 allocations.
+  `BenchmarkIssue454CSharpRecoveredFullParse` uses `GOMAXPROCS=1`,
+  `-benchmem`, `-benchtime=1x`, and `-count=5`.
 
 - The graph-structured stack shape walk now skips a duplicate cache lookup
   after a known head miss.

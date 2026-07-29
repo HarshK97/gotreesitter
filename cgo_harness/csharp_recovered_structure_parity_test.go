@@ -5,6 +5,7 @@ package cgoharness
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -14,7 +15,83 @@ import (
 	"github.com/odvcencio/gotreesitter/grammars"
 )
 
+func TestCSharpJsonTextReaderRecoveredStructureRequiresCompatibility(t *testing.T) {
+	source, err := os.ReadFile("../testdata/parser_result/csharp/jsontextreader_excerpt.cs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	goLang := grammars.CSharpLanguage()
+	parser := gotreesitter.NewParser(goLang)
+	parser.SetAdmissionCandidateRoute(false)
+	rawTree, err := parser.ParseNoResultCompatibilityBenchmarkOnly(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawTree.Release()
+
+	cLang, err := ParityCLanguage("c_sharp")
+	if err != nil {
+		t.Fatalf("C parser unavailable: %v", err)
+	}
+	cParser := sitter.NewParser()
+	defer cParser.Close()
+	if err := cParser.SetLanguage(cLang); err != nil {
+		t.Fatalf("C SetLanguage: %v", err)
+	}
+	cTree := cParser.Parse(source, nil)
+	if cTree == nil || cTree.RootNode() == nil {
+		t.Fatal("C parse returned no root")
+	}
+	defer cTree.Close()
+
+	rawRoot := rawTree.RootNode()
+	cRoot := cTree.RootNode()
+	if rawRoot.ChildCount() != 5 || cRoot.ChildCount() != 6 {
+		t.Fatalf("root child counts go=%d c=%d, want 5 and 6", rawRoot.ChildCount(), cRoot.ChildCount())
+	}
+	rawNamespace := rawRoot.Child(4)
+	cNamespace := cRoot.Child(4)
+	cTrailing := cRoot.Child(5)
+	if rawNamespace.Type(goLang) != "namespace_declaration" ||
+		rawNamespace.EndByte() != 12407 ||
+		cNamespace.Kind() != "namespace_declaration" ||
+		cNamespace.EndByte() != 12405 ||
+		cTrailing.Kind() != "ERROR" ||
+		cTrailing.StartByte() != 12406 ||
+		cTrailing.EndByte() != 12407 {
+		t.Fatalf(
+			"unexpected negative-control boundary: go=%s[%d,%d) c=%s[%d,%d) trailing=%s[%d,%d)",
+			rawNamespace.Type(goLang),
+			rawNamespace.StartByte(),
+			rawNamespace.EndByte(),
+			cNamespace.Kind(),
+			cNamespace.StartByte(),
+			cNamespace.EndByte(),
+			cTrailing.Kind(),
+			cTrailing.StartByte(),
+			cTrailing.EndByte(),
+		)
+	}
+
+	productionParser := gotreesitter.NewParser(goLang)
+	productionParser.SetAdmissionCandidateRoute(false)
+	productionTree, err := productionParser.Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer productionTree.Release()
+	if productionTree.RootNode().HasError() {
+		t.Fatal("JsonTextReader bypassed required C# compatibility reconstruction")
+	}
+}
+
 func TestCSharpIssue454RecoveredStructureMatchesCBeforeCompatibility(t *testing.T) {
+	src := csharpIssue454Source(t)
+	assertCSharpRecoveredStructureMatchesC(t, src)
+}
+
+func csharpIssue454Source(t *testing.T) []byte {
+	t.Helper()
 	var source strings.Builder
 	source.Grow(137*1024 + 256)
 	source.WriteString("namespace Bench {\n")
@@ -35,8 +112,11 @@ func TestCSharpIssue454RecoveredStructureMatchesCBeforeCompatibility(t *testing.
 	if site < 0 {
 		t.Fatal("C# edit marker is absent")
 	}
-	src = append(append([]byte(nil), src[:site]...), src[site+1:]...)
+	return append(append([]byte(nil), src[:site]...), src[site+1:]...)
+}
 
+func assertCSharpRecoveredStructureMatchesC(t *testing.T, src []byte) {
+	t.Helper()
 	goLang := grammars.CSharpLanguage()
 	cLang, err := ParityCLanguage("c_sharp")
 	if err != nil {

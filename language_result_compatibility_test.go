@@ -304,6 +304,76 @@ func TestCSharpRecoveredStructureCapabilityKeepsSyntheticRepair(t *testing.T) {
 	}
 }
 
+func TestNativeRecoveredStructureIsolatedErrorReceipt(t *testing.T) {
+	tests := []struct {
+		name        string
+		errorSpans  [][2]uint32
+		missing     bool
+		rawMismatch bool
+		want        bool
+	}{
+		{name: "isolated_error", errorSpans: [][2]uint32{{0, 1}}, want: true},
+		{name: "wide_error", errorSpans: [][2]uint32{{0, 2}}},
+		{name: "multiple_errors", errorSpans: [][2]uint32{{0, 1}, {1, 2}}},
+		{name: "missing_node", errorSpans: [][2]uint32{{0, 1}}, missing: true},
+		{name: "raw_child_mismatch", errorSpans: [][2]uint32{{0, 1}}, rawMismatch: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			arena := acquireNodeArena(arenaClassFull)
+			defer arena.Release()
+
+			children := make([]*Node, 0, len(test.errorSpans)+1)
+			for _, span := range test.errorSpans {
+				node := newLeafNodeInArena(
+					arena,
+					errorSymbol,
+					true,
+					span[0],
+					span[1],
+					Point{Column: span[0]},
+					Point{Column: span[1]},
+				)
+				node.setHasError(true)
+				children = append(children, node)
+			}
+			if test.missing {
+				node := newLeafNodeInArena(
+					arena,
+					1,
+					true,
+					1,
+					1,
+					Point{Column: 1},
+					Point{Column: 1},
+				)
+				node.setMissing(true)
+				node.setHasError(true)
+				children = append(children, node)
+			}
+			root := newParentNodeInArena(arena, 2, true, children, nil, 0)
+			root.setHasError(true)
+			rawChildren := children
+			if test.rawMismatch {
+				rawChildren = []*Node{newLeafNodeInArena(
+					arena,
+					errorSymbol,
+					true,
+					0,
+					2,
+					Point{},
+					Point{Column: 2},
+				)}
+			}
+			root.rawShape = captureRawShapeForNodeSlice(arena, root.symbol, 0, rawChildren)
+
+			if got := nativeRecoveredStructureHasIsolatedErrorReceipt(root); got != test.want {
+				t.Fatalf("isolated-error receipt = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 func readCSharpLegacyTestBlob(t *testing.T) []byte {
 	t.Helper()
 	blob, err := os.ReadFile("grammars/grammar_blobs/c_sharp.bin")
