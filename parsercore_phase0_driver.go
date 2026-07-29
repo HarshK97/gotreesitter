@@ -1630,8 +1630,8 @@ type diagnosticParserCoreGenericCell struct {
 	selectedBy      diagnosticParserCoreCellSelection
 }
 
-func (cell diagnosticParserCoreGenericCell) actions() core.ActionRow { return cell.boundary.Actions() }
-func (cell diagnosticParserCoreGenericCell) dispatchToken(shared Token) Token {
+func (cell *diagnosticParserCoreGenericCell) actions() core.ActionRow { return cell.boundary.Actions() }
+func (cell *diagnosticParserCoreGenericCell) dispatchToken(shared Token) Token {
 	if cell.relexedSymbol != 0 {
 		shared.Symbol = cell.relexedSymbol
 		shared.ExternalScannerToken = false
@@ -1639,10 +1639,10 @@ func (cell diagnosticParserCoreGenericCell) dispatchToken(shared Token) Token {
 	}
 	return shared
 }
-func (cell diagnosticParserCoreGenericCell) descriptor() core.ActionRowDescriptor {
+func (cell *diagnosticParserCoreGenericCell) descriptor() core.ActionRowDescriptor {
 	return cell.boundary.Actions().Descriptor()
 }
-func (cell diagnosticParserCoreGenericCell) kind() core.ActionRowKind {
+func (cell *diagnosticParserCoreGenericCell) kind() core.ActionRowKind {
 	if cell.selectedBy == diagnosticParserCoreCellSelectionConflictPolicy {
 		switch cell.actions().At(cell.selectedOrdinal).Type {
 		case core.ActionShift:
@@ -1656,14 +1656,14 @@ func (cell diagnosticParserCoreGenericCell) kind() core.ActionRowKind {
 	}
 	return cell.descriptor().Kind()
 }
-func (cell diagnosticParserCoreGenericCell) selectedActionOrdinal() int {
+func (cell *diagnosticParserCoreGenericCell) selectedActionOrdinal() int {
 	if cell.selectedBy != diagnosticParserCoreCellSelectionNone {
 		return cell.selectedOrdinal
 	}
 	return 0
 }
 
-func (cell diagnosticParserCoreGenericCell) selectsConflictReduction() bool {
+func (cell *diagnosticParserCoreGenericCell) selectsConflictReduction() bool {
 	return cell.selectedBy != diagnosticParserCoreCellSelectionNone &&
 		cell.actions().At(cell.selectedActionOrdinal()).Type == core.ActionReduce
 }
@@ -2686,7 +2686,8 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 	reductionCell := -1
 	reductionConflict := false
 	conflictCell := -1
-	for index, cell := range cells {
+	for index := range cells {
+		cell := &cells[index]
 		descriptor := cell.descriptor()
 		if cell.selectedBy == diagnosticParserCoreCellSelectionNone {
 			if unsupported := diagnosticParserCoreGenericUnsupportedCellDescriptor(cell.headerIndex, cell.dispatchToken(s.token), cell.actions(), descriptor); unsupported != nil {
@@ -2775,7 +2776,8 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				boundary: DiagnosticParserCoreExtra, detail: "generic scheduler requires a homogeneous all-runnable extra cohort", headerIndex: cells[0].headerIndex,
 			}, nil
 		}
-		for _, cell := range cells[1:] {
+		for index := 1; index < len(cells); index++ {
+			cell := &cells[index]
 			if cell.dispatchToken(s.token) != cells[0].dispatchToken(s.token) {
 				return &diagnosticParserCoreGenericUnsupported{
 					boundary: DiagnosticParserCoreExtra, detail: "generic scheduler extra cohort requires one tokenization", headerIndex: cell.headerIndex,
@@ -2807,7 +2809,8 @@ func (s *diagnosticParserCoreGenericScheduler) zeroWidthExtraShiftWithoutProgres
 	if s.currentElection.ScannerAfter != s.currentElection.ScannerBefore {
 		return nil
 	}
-	for _, cell := range cells {
+	for index := range cells {
+		cell := &cells[index]
 		token := cell.dispatchToken(s.token)
 		if token.EndByte != token.StartByte {
 			continue
@@ -3455,7 +3458,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 		return err
 	}
 	ordinaryCohort := len(cells) > 1
-	for _, cell := range cells {
+	for index := range cells {
+		cell := &cells[index]
 		if cell.selectedActionOrdinal() != 0 || cell.dispatchToken(s.token) != cells[0].dispatchToken(s.token) {
 			ordinaryCohort = false
 			break
@@ -3463,7 +3467,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 	}
 	if ordinaryCohort {
 		s.classifiedBoundaries = s.classifiedBoundaries[:0]
-		for _, cell := range cells {
+		for index := range cells {
+			cell := &cells[index]
 			s.classifiedBoundaries = append(s.classifiedBoundaries, cell.boundary)
 		}
 		token := cells[0].dispatchToken(s.token)
@@ -3473,13 +3478,15 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 		if err != nil {
 			return err
 		}
-		for index, cell := range cells {
+		for index := range cells {
+			cell := &cells[index]
 			s.headers[cell.headerIndex].head = heads[index]
 			s.headers[cell.headerIndex].shifted = true
 		}
 		s.work.OrdinaryCohorts++
 	} else {
-		for _, cell := range cells {
+		for index := range cells {
+			cell := &cells[index]
 			ordinal := cell.selectedActionOrdinal()
 			action := cell.actions().At(ordinal)
 			if action.Type != core.ActionShift || action.Extra {
@@ -3505,7 +3512,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 	roundIndex := -1
 	if s.fullReceipts() {
 		actions := make([]DiagnosticParserCoreRoundAction, len(cells))
-		for index, cell := range cells {
+		for index := range cells {
+			cell := &cells[index]
 			ordinal := cell.selectedActionOrdinal()
 			actions[index] = DiagnosticParserCoreRoundAction{
 				HeaderIndex: cell.headerIndex, State: StateID(cell.boundary.State()), ByteOffset: cell.boundary.ByteOffset(),
@@ -3544,7 +3552,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 		if len(cells) == 0 {
 			return errors.New("parser-core phase zero: empty extra shift cohort")
 		}
-		for _, cell := range cells {
+		for index := range cells {
+			cell := &cells[index]
 			if cell.actions().Len() != 1 || cell.actions().At(0).Type != core.ActionShift || !cell.actions().At(0).Extra {
 				return errors.New("parser-core phase zero: extra cohort requires one decoded extra action per head")
 			}
@@ -3557,7 +3566,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 			return err
 		}
 		s.classifiedBoundaries = s.classifiedBoundaries[:0]
-		for _, cell := range cells {
+		for index := range cells {
+			cell := &cells[index]
 			s.classifiedBoundaries = append(s.classifiedBoundaries, cell.boundary)
 		}
 		token := cells[0].dispatchToken(s.token)
@@ -3568,7 +3578,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 		if err != nil {
 			return err
 		}
-		for index, cell := range cells {
+		for index := range cells {
+			cell := &cells[index]
 			s.headers[cell.headerIndex].head = heads[index]
 			s.headers[cell.headerIndex].shifted = true
 		}
@@ -3593,7 +3604,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 				return err
 			}
 			actions := make([]DiagnosticParserCoreRoundAction, len(cells))
-			for index, cell := range cells {
+			for index := range cells {
+				cell := &cells[index]
 				actions[index] = DiagnosticParserCoreRoundAction{
 					HeaderIndex: cell.headerIndex, State: StateID(cell.boundary.State()), ByteOffset: cell.boundary.ByteOffset(),
 					Ordinal: 0, Action: rootParserCoreAction(cell.actions().At(0)),
