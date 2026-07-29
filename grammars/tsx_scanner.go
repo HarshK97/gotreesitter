@@ -23,12 +23,12 @@ const (
 )
 
 const (
-	tsxSymAutoSemicolon   gotreesitter.Symbol = 165
-	tsxSymTemplateChars   gotreesitter.Symbol = 166
-	tsxSymTernaryQmark    gotreesitter.Symbol = 167
-	tsxSymHtmlComment     gotreesitter.Symbol = 168
-	tsxSymJsxText         gotreesitter.Symbol = 169
-	tsxSymFuncSigAutoSemi gotreesitter.Symbol = 170
+	tsxSymAutoSemicolon   gotreesitter.Symbol = 166
+	tsxSymTemplateChars   gotreesitter.Symbol = 167
+	tsxSymTernaryQmark    gotreesitter.Symbol = 168
+	tsxSymHtmlComment     gotreesitter.Symbol = 169
+	tsxSymJsxText         gotreesitter.Symbol = 170
+	tsxSymFuncSigAutoSemi gotreesitter.Symbol = 171
 )
 
 // TsxExternalScanner handles automatic semicolons, template strings,
@@ -167,8 +167,10 @@ func tsxScanAutoSemicolon(lexer *gotreesitter.ExternalLexer, validSymbols []bool
 	}
 
 	switch lexer.Lookahead() {
-	case '`', ',', '.', ';', '*', '%', '>', '<', '=', '?', '^', '|', '&', '/', ':':
+	case '`', ',', '.', ';', '*', '%', '>', '=', '?', '^', '|', '&', '/', ':':
 		return false
+	case '<':
+		return tsxValid(validSymbols, tsxTokFuncSigAutoSemi)
 	case '{':
 		if tsxValid(validSymbols, tsxTokFuncSigAutoSemi) {
 			return false
