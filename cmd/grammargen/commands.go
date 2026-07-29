@@ -15,6 +15,7 @@ import (
 
 type sourceFlags struct {
 	jsInput     string
+	jsCLIInput  string
 	jsonInput   string
 	grammarFile string
 	lrSplit     bool
@@ -112,6 +113,7 @@ func runEmitCommand(args []string) {
 
 func registerSourceFlags(fs *flag.FlagSet, src *sourceFlags) {
 	fs.StringVar(&src.jsInput, "js", "", "path to a tree-sitter grammar.js file to import")
+	fs.StringVar(&src.jsCLIInput, "js-cli", "", "path to grammar.js to resolve with tree-sitter CLI (executes arbitrary JavaScript)")
 	fs.StringVar(&src.jsonInput, "json", "", "path to a resolved tree-sitter grammar.json file to import")
 	fs.StringVar(&src.grammarFile, "grammar", "", "path to a .grammar file to parse")
 	fs.BoolVar(&src.lrSplit, "lr-split", false, "enable LR(1) state splitting before generation")
@@ -134,6 +136,7 @@ func registerParseOptionFlags(fs *flag.FlagSet, opts *parseOptions) {
 func loadCommandGrammar(src sourceFlags) (*grammargen.Grammar, string) {
 	cfg := cliConfig{
 		jsInput:     src.jsInput,
+		jsCLIInput:  src.jsCLIInput,
 		jsonInput:   src.jsonInput,
 		grammarFile: src.grammarFile,
 		lrSplit:     src.lrSplit,
@@ -737,6 +740,8 @@ func sourceSpecifier(name string, src sourceFlags) string {
 		return "-grammar " + commandArg(src.grammarFile)
 	case src.jsonInput != "":
 		return "-json " + commandArg(src.jsonInput)
+	case src.jsCLIInput != "":
+		return "-js-cli " + commandArg(src.jsCLIInput)
 	case src.jsInput != "":
 		return "-js " + commandArg(src.jsInput)
 	case name != "":
@@ -794,6 +799,7 @@ func normalizeSubcommandArgs(args []string) []string {
 		"func":         true,
 		"go":           true,
 		"js":           true,
+		"js-cli":       true,
 		"json":         true,
 		"json-out":     true,
 		"grammar":      true,

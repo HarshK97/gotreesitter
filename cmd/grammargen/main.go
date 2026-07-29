@@ -8,6 +8,7 @@
 //
 //	<name>          Built-in grammar (json, calc, glr, go, js, ts, tsx, fortran, etc.)
 //	-js <path>      Import a tree-sitter grammar.js file
+//	-js-cli <path>  Resolve grammar.js with tree-sitter, then import grammar.json
 //	-json <path>    Import a resolved tree-sitter grammar.json file
 //	-grammar <path> Parse a portable .grammar file
 //
@@ -68,6 +69,7 @@ type cliConfig struct {
 	cOut        string
 	goOut       string
 	jsInput     string
+	jsCLIInput  string
 	jsonInput   string
 	grammarFile string
 	pkgName     string
@@ -119,6 +121,7 @@ func parseCLIConfig() cliConfig {
 	flag.StringVar(&cfg.cOut, "c", "", "output path for tree-sitter parser.c")
 	flag.StringVar(&cfg.goOut, "go", "", "output path for grammargen Go DSL source")
 	flag.StringVar(&cfg.jsInput, "js", "", "path to a tree-sitter grammar.js file to import")
+	flag.StringVar(&cfg.jsCLIInput, "js-cli", "", "path to grammar.js to resolve with tree-sitter CLI (executes arbitrary JavaScript)")
 	flag.StringVar(&cfg.jsonInput, "json", "", "path to a resolved tree-sitter grammar.json file to import")
 	flag.StringVar(&cfg.grammarFile, "grammar", "", "path to a .grammar file to parse")
 	flag.StringVar(&cfg.pkgName, "pkg", "grammargen", "package name for -go output")
@@ -142,10 +145,16 @@ func runListMode() {
 
 func loadGrammar(cfg cliConfig) (*grammargen.Grammar, string) {
 	switch {
-	case cfg.jsInput != "" && cfg.jsonInput != "":
-		exitf("use only one of -js or -json")
+	case countImportInputs(cfg) > 1:
+		exitf("use only one of -js, -js-cli, or -json")
 	case cfg.jsonInput != "":
 		return loadImportedGrammar(cfg.jsonInput, grammargen.ImportGrammarJSON)
+	case cfg.jsCLIInput != "":
+		g, err := importGrammarJSWithCLI(cfg.jsCLIInput, "tree-sitter")
+		if err != nil {
+			exitf("import %s: %v", cfg.jsCLIInput, err)
+		}
+		return g, grammarDisplayName(g, cfg.jsCLIInput)
 	case cfg.jsInput != "":
 		return loadImportedGrammar(cfg.jsInput, grammargen.ImportGrammarJS)
 	case cfg.grammarFile != "":
@@ -154,6 +163,16 @@ func loadGrammar(cfg cliConfig) (*grammargen.Grammar, string) {
 		return loadBuiltinGrammar(cfg.args)
 	}
 	return nil, ""
+}
+
+func countImportInputs(cfg cliConfig) int {
+	count := 0
+	for _, input := range []string{cfg.jsInput, cfg.jsCLIInput, cfg.jsonInput} {
+		if input != "" {
+			count++
+		}
+	}
+	return count
 }
 
 func loadImportedGrammar(path string, importGrammar func([]byte) (*grammargen.Grammar, error)) (*grammargen.Grammar, string) {
@@ -307,6 +326,7 @@ func writeCOutput(path string, g *grammargen.Grammar) {
 func printUsageError() {
 	fmt.Fprintln(os.Stderr, "usage: grammargen [flags] <grammar-name>")
 	fmt.Fprintln(os.Stderr, "       grammargen -js <grammar.js> [flags]")
+	fmt.Fprintln(os.Stderr, "       grammargen -js-cli <grammar.js> [flags]")
 	fmt.Fprintln(os.Stderr, "       grammargen -json <grammar.json> [flags]")
 	fmt.Fprintln(os.Stderr, "       grammargen -grammar <file.grammar> [flags]")
 	fmt.Fprintln(os.Stderr, "       grammargen emit [flags] <grammar-name>")
