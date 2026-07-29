@@ -1,6 +1,6 @@
 # Compact route real-corpus matrix
 
-Date: 2026-07-28. Base commit: `f639fbaa` from `main`.
+Date: 2026-07-29. Base commit: `382080a3` from `main`.
 
 ## Result
 
@@ -8,18 +8,18 @@ The bounded matrix completed with no silent divergence.
 
 | Status | Files |
 |---|---:|
-| PASS | 61 |
-| FALLBACK | 38 |
+| PASS | 67 |
+| FALLBACK | 33 |
 | SKIP | 10 |
 | DIVERGE | 0 |
 | ERROR | 0 |
-| Total | 109 |
+| Total | 110 |
 
-The corpus manifest contains 146 verified files across 50 languages.
+The corpus manifest contains 147 verified files across 50 languages.
 This run selected files smaller than 16,384 bytes and excluded AWK.
 The AWK medium file needs a separate slow-path budget.
 
-The direct route served 56 percent of the selected files.
+The direct route served 61 percent of the selected files.
 Production served every fallback and every ineligible file.
 
 The current 206-language smoke scorecard reports:
@@ -101,6 +101,37 @@ The Cooklang field-aware C-oracle run passed:
 
 - `harness_out/docker/20260728T064513Z-compact-clean-smoke-cooklang-c-oracle-fields`
 
+## Lock-pinned corpus refresh
+
+The previous 109-file matrix used a stale generated corpus directory.
+The current builder selects one additional Elm highlight source.
+Two independent rebuilds produced the same normalized manifest hash.
+After volatile fields are removed, the hash is
+`1e9998f1e4282c3c3397f518638a8779e016a0038064903f8de90f48b781661e`.
+
+| Field | Value |
+|---|---|
+| Repository | `elm-tooling/tree-sitter-elm` |
+| Commit | `6d9511c28181db66daee4e883f811f6251220943` |
+| Source path | `test/highlight/basic.elm` |
+| Bytes | 1,231 |
+| SHA-256 | `8fca87bd8cc2735e83704acd8d06ffbc6cf04e386505de45596218d7fb72642c` |
+| Compact result | PASS |
+
+The tracked [Elm fixture](../testdata/admission_direct/elm_highlight_basic.elm)
+protects this source when the generated corpus directory is absent.
+
+The canonical matrix now enforces these bounds:
+
+- At least 110 selected rows.
+- At least 67 direct PASS rows.
+- At most 33 FALLBACK rows.
+- Exactly 10 SKIP rows.
+- No DIVERGE or ERROR rows.
+
+Ratchet mode rejects noncanonical language, bucket, AWK, and byte filters.
+Manifest order does not affect the aggregate bounds.
+
 ## Rejected C# convergence candidate
 
 The cap-one GSS convergence candidate did not preserve C# parity.
@@ -160,6 +191,7 @@ Run this command from the repository root:
 
 ```sh
 GTS_ADMISSION_REAL_CORPUS=1 \
+GTS_ADMISSION_REAL_CORPUS_RATCHET=1 \
 GTS_ADMISSION_REAL_CORPUS_EXCLUDE_LANGS=awk \
 GTS_ADMISSION_REAL_CORPUS_MAX_BYTES=16383 \
 go test . \
@@ -193,10 +225,10 @@ Use these optional filters:
 | d | 1 | 1 | 0 |
 | dart | 0 | 2 | 0 |
 | elixir | 2 | 1 | 0 |
-| elm | 2 | 0 | 0 |
+| elm | 3 | 0 | 0 |
 | erlang | 2 | 0 | 0 |
 | go | 2 | 0 | 0 |
-| gomod | 0 | 3 | 0 |
+| gomod | 1 | 2 | 0 |
 | graphql | 3 | 0 | 0 |
 | haskell | 0 | 2 | 0 |
 | hcl | 2 | 0 | 0 |
@@ -206,9 +238,9 @@ Use these optional filters:
 | javascript | 1 | 0 | 0 |
 | json | 0 | 0 | 3 |
 | json5 | 2 | 0 | 0 |
-| julia | 0 | 2 | 0 |
+| julia | 1 | 1 | 0 |
 | kotlin | 0 | 2 | 0 |
-| lua | 0 | 2 | 0 |
+| lua | 2 | 0 | 0 |
 | make | 1 | 1 | 0 |
 | markdown | 1 | 1 | 0 |
 | nix | 3 | 0 | 0 |
@@ -219,7 +251,7 @@ Use these optional filters:
 | powershell | 1 | 1 | 0 |
 | python | 2 | 0 | 0 |
 | r | 3 | 0 | 0 |
-| ruby | 1 | 1 | 0 |
+| ruby | 2 | 0 | 0 |
 | rust | 0 | 1 | 0 |
 | scala | 0 | 2 | 0 |
 | scss | 2 | 0 | 0 |
@@ -269,7 +301,7 @@ The refreshed manifest has these properties:
 
 - 50 declared languages
 - 50 languages with selected files
-- 146 files
+- 147 files
 - No missing files
 - No size mismatches
 - No SHA-256 mismatches

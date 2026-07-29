@@ -13,6 +13,10 @@ for tags and release notes while still in `0.x`.
   It imports the temporary canonical `grammar.json` through the existing path.
   The explicit flag warns that grammar evaluation executes JavaScript.
 
+- The canonical compact real-corpus matrix now enforces 67 direct routes,
+  at most 33 fallbacks, exactly 10 skips, and no divergence or error.
+  A lock-pinned Elm highlight fixture protects the refreshed 110-row corpus.
+
 ### Performance
 
 - The compact scheduler now stores its common rollback frontier inline.

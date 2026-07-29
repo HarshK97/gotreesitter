@@ -89,3 +89,46 @@ func TestAdmissionCandidateSvelteButtonDirect(t *testing.T) {
 		t.Fatalf("Svelte Button compact digest = %q, want %q", row.detail, wantDetail)
 	}
 }
+
+func TestAdmissionCandidateElmHighlightDirect(t *testing.T) {
+	const (
+		fixturePath = "testdata/admission_direct/elm_highlight_basic.elm"
+		// This source comes from elm-tooling/tree-sitter-elm at commit
+		// 6d9511c28181db66daee4e883f811f6251220943.
+		// Its path is test/highlight/basic.elm.
+		sourceBytes  = 1231
+		sourceSHA256 = "8fca87bd8cc2735e83704acd8d06ffbc6cf04e386505de45596218d7fb72642c"
+		wantDetail   = "digest 67329ce8b319"
+	)
+
+	source, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatalf("read Elm admission fixture: %v", err)
+	}
+	if len(source) != sourceBytes {
+		t.Fatalf("Elm admission fixture bytes = %d, want %d", len(source), sourceBytes)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(source)); got != sourceSHA256 {
+		t.Fatalf("Elm admission fixture SHA-256 = %s, want %s", got, sourceSHA256)
+	}
+
+	var elm grammars.LangEntry
+	for _, entry := range grammars.AllLanguages() {
+		if entry.Name == "elm" {
+			elm = entry
+			break
+		}
+	}
+	if elm.Name == "" {
+		t.Fatal("Elm grammar is not registered")
+	}
+	t.Cleanup(func() { grammars.PurgeEmbeddedLanguageCache() })
+
+	row := runAdmissionScorecardSource(elm, source)
+	if row.status != scorecardPass {
+		t.Fatalf("Elm highlight compact route = %s: %s", row.status, row.detail)
+	}
+	if row.detail != wantDetail {
+		t.Fatalf("Elm highlight compact digest = %q, want %q", row.detail, wantDetail)
+	}
+}
