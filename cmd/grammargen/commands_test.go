@@ -28,6 +28,7 @@ func TestNormalizeSubcommandArgsHandlesAuthoringValueFlags(t *testing.T) {
 		"-expect", "want.sexpr",
 		"-write-expect", "got.sexpr",
 		"-json-out", "grammar.json",
+		"-js-cli", "grammar.js",
 		"-conflicts", "2",
 	})
 	want := []string{
@@ -35,6 +36,7 @@ func TestNormalizeSubcommandArgsHandlesAuthoringValueFlags(t *testing.T) {
 		"-expect", "want.sexpr",
 		"-write-expect", "got.sexpr",
 		"-json-out", "grammar.json",
+		"-js-cli", "grammar.js",
 		"-conflicts", "2",
 		"calc",
 	}

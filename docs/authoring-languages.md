@@ -19,7 +19,9 @@ inside this repo's 200+ embedded set. You do not need it.
 ## The pipeline
 
 ```
-grammar.json ──ImportGrammarJSON──▶ *grammargen.Grammar (IR)
+grammar.js ──grammargen -js-cli──▶ temporary grammar.json
+                                      │
+grammar.json ──ImportGrammarJSON──────┴──▶ *grammargen.Grammar (IR)
                                           │
                               GenerateLanguageAndBlob
                                           │
@@ -65,7 +67,34 @@ if err != nil {
 }
 ```
 
-### Option B: write the Go DSL directly
+### Option B: resolve grammar.js with Tree-sitter
+
+Use `-js-cli` when the repository does not contain a resolved `grammar.json`.
+This explicit mode needs Tree-sitter 0.26 or newer on `PATH`.
+
+> **Warning:** This command evaluates `grammar.js` and its imports as
+> JavaScript. Use it only with code that you trust.
+
+```sh
+go run ./cmd/grammargen doctor \
+  -js-cli ./grammar.js \
+  -sample ./examples/example.txt
+
+go run ./cmd/grammargen emit \
+  -js-cli ./grammar.js \
+  -bin ./language.bin
+```
+
+The command asks Tree-sitter to generate only its structured files. It imports
+the temporary `grammar.json` through `ImportGrammarJSON`, then removes it.
+
+The grammar's external token declarations stay in the imported grammar. You
+must still register a compatible Go external scanner for runtime parsing.
+
+The older `-js` flag remains a best-effort pure-Go importer. It does not execute
+JavaScript, but it cannot resolve all helpers or `require()` calls.
+
+### Option C: write the Go DSL directly
 
 For small DSLs there is no need for a JavaScript grammar at all. The
 builder functions live in `grammargen/grammar.go`: `NewGrammar`, `Define`,
