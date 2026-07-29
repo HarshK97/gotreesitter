@@ -27,8 +27,8 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
-- Certified isolated C# recovered roots now skip four redundant source
-  reconstruction passes.
+- The parser now skips four redundant source reconstruction passes for
+  certified isolated C# recovered roots.
   The receipt requires one one-byte error, no missing nodes, and matching raw
   top-level spans.
   The 137 KiB deletion witness still matches the pinned C parser.

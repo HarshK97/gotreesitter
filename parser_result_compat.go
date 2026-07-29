@@ -235,9 +235,9 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 	return resultCompatibilityResult{stopReason: ctx.stopReason()}
 }
 
-// nativeRecoveredStructureIsAuthoritative reports whether the selected parser
-// reduction owns a complete recovered root. Exact runtime profiles certify the
-// native structure. Synthetic roots and partial roots keep conservative repair.
+// nativeRecoveredStructureIsAuthoritative returns true when the selected
+// parser reduction owns a complete recovered root. Exact runtime profiles
+// certify the native structure. Use conservative repair for other roots.
 func nativeRecoveredStructureIsAuthoritative(root *Node, source []byte, p *Parser, lang *Language) bool {
 	if root == nil || p == nil || lang == nil || p.language != lang || len(source) == 0 {
 		return false
