@@ -1,10 +1,99 @@
 # Compact route real-corpus matrix
 
-Date: 2026-07-29. Base commit: `382080a3` from `main`.
+Current evidence date: 2026-07-29.
+Current base commit: `088e6e12` from `main`.
 
-## Result
+## Current bounded result
 
 The bounded matrix completed with no silent divergence.
+
+| Status | Files |
+|---|---:|
+| PASS | 66 |
+| FALLBACK | 33 |
+| SKIP | 10 |
+| DIVERGE | 0 |
+| ERROR | 0 |
+| Total | 109 |
+
+The corpus manifest contains 146 verified files across 50 languages.
+This run selected files smaller than 16,384 bytes and excluded AWK.
+The AWK medium file needs a separate slow-path budget.
+
+The direct route served 61 percent of the selected files.
+Production served every fallback and every ineligible file.
+
+## Current fallback taxonomy
+
+The 33 fallbacks divide into 18 clean production trees and 15 production error trees.
+
+| Class | Clean | Error tree | Total | Exact trigger |
+|---|---:|---:|---:|---|
+| Recovery handoff | 0 | 13 | 13 | The elected token has no table action at end-of-file. |
+| Selected-lineage ownership | 11 | 1 | 12 | A converged split drop lacks one selected-lineage proof. |
+| Certified repetition conflicts | 3 | 0 | 3 | The generic scheduler declines a repetition shift. |
+| Shared cap ranking | 3 | 0 | 3 | One shared boundary has nine live links under the cap of eight. |
+| Acceptance-frontier ownership | 1 | 1 | 2 | The end-of-file frontier has more than one active head. |
+| Total | 18 | 15 | 33 | |
+
+The recovery handoff class contains these witnesses:
+
+- Dart
+- Go module
+- INI, two files
+- Make
+- Objective-C
+- PHP, two files
+- PowerShell
+- SQL, two files
+- Swift
+- TypeScript
+
+The selected-lineage class contains these witnesses:
+
+- C#
+- D
+- Dart
+- Elixir
+- Julia
+- Kotlin, two files
+- Perl, two files
+- Scala, two files
+- TSX
+
+The repetition class contains one C# file and two Haskell files.
+The shared cap class contains Go module, OCaml, and Rust files.
+The acceptance class contains one Bash file and one Markdown file.
+
+## Class prerequisites
+
+The recovery handoff must preserve production error-tree ownership.
+Do not convert a failed compact acceptance into a clean result.
+
+Selected-lineage ownership must identify the exact surviving reduction path.
+An artifact certificate can authorize only a pinned grammar with C-oracle evidence.
+
+Certified repetition conflicts need one reusable conflict rule or exact artifact evidence.
+Do not add a grammar-name branch to the scheduler.
+
+Shared cap ranking must identify the production-selected live link before a drop.
+Raising the cap alone does not prove selection.
+
+Post-accept continuation must preserve an accepted result while live end-of-file reductions finish.
+The Markdown continuation reaches score 160 and branch 8.
+It materializes the exact production digest `a411b8648c76`.
+The path still needs one selected-lineage proof for an intervening converged split drop.
+
+The Bash frontier has one accept head and one table-dead head.
+Production returns an error tree for that file.
+Keep this file on the production route.
+
+## Historical bounded result at `382080a3`
+
+Commit `963fae08` recorded this receipt on 2026-07-29.
+The run used `382080a3` as its base.
+It is not the current matrix result.
+It enabled ratchet mode, excluded AWK, and set the maximum file size to 16,383 bytes.
 
 | Status | Files |
 |---|---:|
@@ -15,14 +104,12 @@ The bounded matrix completed with no silent divergence.
 | ERROR | 0 |
 | Total | 110 |
 
-The corpus manifest contains 147 verified files across 50 languages.
-This run selected files smaller than 16,384 bytes and excluded AWK.
-The AWK medium file needs a separate slow-path budget.
+That corpus manifest contained 147 verified files across 50 languages.
+The run selected files smaller than 16,384 bytes and excluded AWK.
+Its manifest included one additional Elm highlight file.
+The current 146-file manifest does not include that generated file.
 
-The direct route served 61 percent of the selected files.
-Production served every fallback and every ineligible file.
-
-The current 206-language smoke scorecard reports:
+That receipt also recorded this 206-language smoke scorecard:
 
 | Status | Languages |
 |---|---:|
@@ -32,7 +119,12 @@ The current 206-language smoke scorecard reports:
 | DIVERGE | 0 |
 | ERROR | 0 |
 
-## Certified acceptance frontiers
+## Earlier campaign receipts
+
+The following sections preserve earlier certification, fixture, corpus, rejection, and performance evidence.
+They do not replace the current bounded result.
+
+### Certified acceptance frontiers
 
 Exact artifact profiles now enable three generic selection mechanisms.
 
@@ -63,7 +155,7 @@ The evidence is in these artifact directories:
 
 Custom, adapted, stale, and same-name grammars retain conservative defaults.
 
-## Bounded no-lookahead reductions
+### Bounded no-lookahead reductions
 
 The generic scheduler now supports one authenticated synthetic-EOF shape.
 One runnable head can apply one reduction and re-elect at the same byte.
@@ -78,7 +170,7 @@ Field-aware C-oracle runs passed for all three grammars:
 - `harness_out/docker/20260728T061726Z-compact-nolookahead-jsdoc-c-oracle-fields`
 - `harness_out/docker/20260728T061735Z-compact-nolookahead-vhdl-c-oracle-fields`
 
-## Zero-width extras with byte progress
+### Zero-width extras with byte progress
 
 The generic scheduler now recognizes progress from a parser boundary to the
 end of a zero-width extra token.
@@ -89,7 +181,7 @@ Its field-aware C-oracle run passed:
 
 - `harness_out/docker/20260728T064111Z-compact-zero-width-cobol-c-oracle-fields`
 
-## Cooklang smoke fixture
+### Cooklang smoke fixture
 
 The prior Cooklang smoke source ended an ingredient instruction with a period.
 Production recovery discarded that period.
@@ -101,10 +193,10 @@ The Cooklang field-aware C-oracle run passed:
 
 - `harness_out/docker/20260728T064513Z-compact-clean-smoke-cooklang-c-oracle-fields`
 
-## Lock-pinned corpus refresh
+### Lock-pinned corpus refresh
 
 The previous 109-file matrix used a stale generated corpus directory.
-The current builder selects one additional Elm highlight source.
+The builder at `382080a3` selected one additional Elm highlight source.
 Two independent rebuilds produced the same normalized manifest hash.
 After volatile fields are removed, the hash is
 `1e9998f1e4282c3c3397f518638a8779e016a0038064903f8de90f48b781661e`.
@@ -121,7 +213,7 @@ After volatile fields are removed, the hash is
 The tracked [Elm fixture](../testdata/admission_direct/elm_highlight_basic.elm)
 protects this source when the generated corpus directory is absent.
 
-The canonical matrix now enforces these bounds:
+The historical ratchet enforced these bounds:
 
 - At least 110 selected rows.
 - At least 67 direct PASS rows.
@@ -132,7 +224,7 @@ The canonical matrix now enforces these bounds:
 Ratchet mode rejects noncanonical language, bucket, AWK, and byte filters.
 Manifest order does not affect the aggregate bounds.
 
-## Rejected C# convergence candidate
+### Rejected C# convergence candidate
 
 The cap-one GSS convergence candidate did not preserve C# parity.
 Commit `3204480b` lost field attributes and a modifier in this 65-byte witness:
@@ -157,7 +249,7 @@ The 25-case Docker suite also found a net correctness and memory loss.
 
 The campaign rejected this candidate.
 
-## Performance gate
+### Performance gate
 
 The stable benchmark trio used:
 
@@ -191,10 +283,10 @@ Run this command from the repository root:
 
 ```sh
 GTS_ADMISSION_REAL_CORPUS=1 \
-GTS_ADMISSION_REAL_CORPUS_RATCHET=1 \
 GTS_ADMISSION_REAL_CORPUS_EXCLUDE_LANGS=awk \
 GTS_ADMISSION_REAL_CORPUS_MAX_BYTES=16383 \
-go test . \
+GTS_ADMISSION_CENSUS=1 \
+GOMAXPROCS=1 go test . \
   -tags gts_parsercorephase0 \
   -run '^TestAdmissionCandidateRealCorpusMatrix$' \
   -count=1 \
@@ -203,6 +295,9 @@ go test . \
 
 The test reads `cgo_harness/corpus_real/manifest.json` by default.
 Use `GTS_ADMISSION_REAL_CORPUS_MANIFEST` to select another manifest.
+
+Do not add ratchet mode when you reproduce the current 109-row receipt.
+At `088e6e12`, ratchet mode still expects the historical 110-row bounds.
 
 Use these optional filters:
 
@@ -225,7 +320,7 @@ Use these optional filters:
 | d | 1 | 1 | 0 |
 | dart | 0 | 2 | 0 |
 | elixir | 2 | 1 | 0 |
-| elm | 3 | 0 | 0 |
+| elm | 2 | 0 | 0 |
 | erlang | 2 | 0 | 0 |
 | go | 2 | 0 | 0 |
 | gomod | 1 | 2 | 0 |
@@ -265,7 +360,7 @@ Use these optional filters:
 | yaml | 3 | 0 | 0 |
 | zig | 2 | 0 | 0 |
 
-## New safety boundary
+## Historical safety boundary receipt
 
 The refreshed Kotlin fixture exposed one silent compact divergence.
 The 38-byte reduction is:
@@ -297,11 +392,11 @@ Those files route directly again. Kotlin remains fail-closed.
 
 ## Corpus state
 
-The refreshed manifest has these properties:
+The current manifest has these properties:
 
 - 50 declared languages
 - 50 languages with selected files
-- 147 files
+- 146 files
 - No missing files
 - No size mismatches
 - No SHA-256 mismatches
