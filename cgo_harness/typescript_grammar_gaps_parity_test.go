@@ -64,6 +64,10 @@ func TestTypeScriptGrammarGapCOracleParity(t *testing.T) {
 			source: "type Methods = {\n  first<T>(): T\n  second<U>(): U\n}\n",
 		},
 		{
+			name:   "ordinary_generic_call_after_newline",
+			source: "foo\n<number>(1)",
+		},
+		{
 			name:   "mixed_members",
 			source: "type Mixed = {\n  value: string;\n  <T>(): T\n  create<U>(): U;\n  [key: number]: string\n}",
 		},

@@ -15,10 +15,11 @@ func TestTypeScriptGrammarGapRegressions(t *testing.T) {
 		{name: "tsx", load: TsxLanguage},
 	}
 	tests := []struct {
-		name         string
-		source       string
-		wantVariance int
-		wantCalls    int
+		name                string
+		source              string
+		wantVariance        int
+		wantCalls           int
+		wantCallExpressions int
 	}{
 		{
 			name: "variance_annotations",
@@ -66,6 +67,11 @@ func TestTypeScriptGrammarGapRegressions(t *testing.T) {
 			source: "type Methods = {\n  first<T>(): T\n  second<U>(): U\n}\n",
 		},
 		{
+			name:                "ordinary_generic_call_after_newline",
+			source:              "foo\n<number>(1)",
+			wantCallExpressions: 1,
+		},
+		{
 			name:      "mixed_members",
 			source:    "type Mixed = {\n  value: string;\n  <T>(): T\n  create<U>(): U;\n  [key: number]: string\n}",
 			wantCalls: 1,
@@ -95,6 +101,9 @@ func TestTypeScriptGrammarGapRegressions(t *testing.T) {
 					}
 					if got := countTypeScriptNodes(root, lang, "call_signature"); got != test.wantCalls {
 						t.Fatalf("call signature count = %d, want %d: %s", got, test.wantCalls, root.SExpr(lang))
+					}
+					if got := countTypeScriptNodes(root, lang, "call_expression"); got != test.wantCallExpressions {
+						t.Fatalf("call expression count = %d, want %d: %s", got, test.wantCallExpressions, root.SExpr(lang))
 					}
 				})
 			}
