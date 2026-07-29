@@ -238,6 +238,26 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 	return resultCompatibilityResult{stopReason: ctx.stopReason()}
 }
 
+// nativeRecoveredStructureIsAuthoritative reports whether the selected parser
+// reduction owns a complete recovered root. Exact runtime profiles certify the
+// native structure. Synthetic roots and partial roots keep conservative repair.
+func nativeRecoveredStructureIsAuthoritative(root *Node, source []byte, p *Parser, lang *Language) bool {
+	if root == nil || p == nil || lang == nil || p.language != lang || len(source) == 0 {
+		return false
+	}
+	if lang.NativeResultCompatibility&ResultCompatibilityNativeRecoveredStructure == 0 {
+		return false
+	}
+	if len(p.included) > 0 || !p.hasRootSymbol || root.symbol != p.rootSymbol {
+		return false
+	}
+	if root.rawShape == 0 || !root.hasError() {
+		return false
+	}
+	return root.startByte <= firstNonTriviaByteStart(source) &&
+		root.endByte >= lastNonTriviaByteEnd(source)
+}
+
 // --- R2 dispatcher-arm census (docs/root-normalization-retirement.md) ---
 //
 // runLanguageResultCompatibility's switch is the per-language dispatcher arm

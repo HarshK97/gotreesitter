@@ -8,7 +8,7 @@ import (
 )
 
 func TestResultCompatibilityCapabilityLanguageBlobRoundTrip(t *testing.T) {
-	wantValues := []ResultCompatibilityCapability{1 << 0, 1 << 1, 1 << 2, 1 << 3, 1 << 4, 1 << 5}
+	wantValues := []ResultCompatibilityCapability{1 << 0, 1 << 1, 1 << 2, 1 << 3, 1 << 4, 1 << 5, 1 << 6}
 	gotValues := []ResultCompatibilityCapability{
 		ResultCompatibilityCSharpNativeNotNull,
 		ResultCompatibilityCSharpNativeUnicodeIdentifiers,
@@ -16,6 +16,7 @@ func TestResultCompatibilityCapabilityLanguageBlobRoundTrip(t *testing.T) {
 		ResultCompatibilityCSharpNativeScopedLambdaBlocks,
 		ResultCompatibilityCSharpNativeQueryExpressions,
 		ResultCompatibilityNativeCollapsedChildren,
+		ResultCompatibilityNativeRecoveredStructure,
 	}
 	for i := range wantValues {
 		if gotValues[i] != wantValues[i] {
@@ -28,7 +29,8 @@ func TestResultCompatibilityCapabilityLanguageBlobRoundTrip(t *testing.T) {
 		ResultCompatibilityCSharpNativeScopedLambdaStatements |
 		ResultCompatibilityCSharpNativeScopedLambdaBlocks |
 		ResultCompatibilityCSharpNativeQueryExpressions |
-		ResultCompatibilityNativeCollapsedChildren
+		ResultCompatibilityNativeCollapsedChildren |
+		ResultCompatibilityNativeRecoveredStructure
 	lang := &Language{
 		Name:                      "result_compatibility_round_trip",
 		NativeResultCompatibility: want,
@@ -271,6 +273,34 @@ func TestCSharpLegacyQueryExpressionRepairHonorsNativeCapability(t *testing.T) {
 				t.Fatalf("query repair = %v, want %v: %s", gotRepair, tt.wantRepair, root.SExpr(lang))
 			}
 		})
+	}
+}
+
+func TestCSharpRecoveredStructureCapabilityKeepsSyntheticRepair(t *testing.T) {
+	blob := readCSharpLegacyTestBlob(t)
+	lang := loadCSharpLegacyTestLanguage(t, blob)
+	lang.NativeResultCompatibility = ResultCompatibilityNativeRecoveredStructure
+	source := []byte("class C {}")
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	root := csharpLegacyTestLeaf(
+		t,
+		arena,
+		lang,
+		"compilation_unit",
+		source,
+		0,
+		uint32(len(source)),
+	)
+	root.setHasError(true)
+	parser := NewParser(lang)
+
+	if nativeRecoveredStructureIsAuthoritative(root, source, parser, lang) {
+		t.Fatal("a synthetic full-span root received native producer authority")
+	}
+	normalizeCSharpCompatibility(root, source, parser, lang)
+	if root.HasError() || !csharpLegacyTreeHasType(root, lang, "class_declaration") {
+		t.Fatalf("synthetic accepted root did not receive conservative repair: %s", root.SExpr(lang))
 	}
 }
 
