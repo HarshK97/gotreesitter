@@ -1425,6 +1425,60 @@ type diagnosticParserCoreGenericScheduler struct {
 	seedHeaders                   [1]diagnosticParserCoreHeader
 }
 
+// Keep only small scheduler scratch buffers between fresh full parses. This
+// bound prevents one wide frontier from retaining disproportionate memory.
+const diagnosticParserCoreRetainedScratchCapacity = 64
+
+func resetDiagnosticParserCoreRetainedSlice[T any](items []T) []T {
+	if cap(items) == 0 {
+		return nil
+	}
+	if cap(items) > diagnosticParserCoreRetainedScratchCapacity {
+		return nil
+	}
+	clear(items[:cap(items)])
+	return items[:0]
+}
+
+func resetDiagnosticParserCoreGenericScheduler(scheduler *diagnosticParserCoreGenericScheduler) error {
+	if scheduler.dispatchScratch.busy || scheduler.conflictScratch.busy {
+		return errors.New("parser-core phase zero: seed scheduler scratch is active")
+	}
+	summaryHeaders := resetDiagnosticParserCoreRetainedSlice(scheduler.summaryHeaderScratch)
+	dispatchCells := resetDiagnosticParserCoreRetainedSlice(scheduler.dispatchScratch.cells)
+	noActionIndices := resetDiagnosticParserCoreRetainedSlice(scheduler.dispatchScratch.noActionIndices)
+	conflictActionOutputs := resetDiagnosticParserCoreRetainedSlice(scheduler.conflictScratch.actionOutputs)
+	conflictReductionOutputs := resetDiagnosticParserCoreRetainedSlice(scheduler.conflictScratch.reductionOutputs)
+	conflictOutputs := resetDiagnosticParserCoreRetainedSlice(scheduler.conflictScratch.outputs)
+	conflictArmRanges := resetDiagnosticParserCoreRetainedSlice(scheduler.conflictScratch.armRanges)
+	conflictAdopted := resetDiagnosticParserCoreRetainedSlice(scheduler.conflictScratch.adopted)
+	conflictHeaderAssembly := resetDiagnosticParserCoreRetainedSlice(scheduler.conflictScratch.headerAssembly)
+	reductionOutputs := resetDiagnosticParserCoreRetainedSlice(scheduler.reductionOutputs)
+	reductionReplacements := resetDiagnosticParserCoreRetainedSlice(scheduler.reductionReplacements)
+	classifiedBoundaries := resetDiagnosticParserCoreRetainedSlice(scheduler.classifiedBoundaries)
+	electStates := resetDiagnosticParserCoreRetainedSlice(scheduler.electStates)
+	electGLRStates := resetDiagnosticParserCoreRetainedSlice(scheduler.electGLRStates)
+	acceptedPayloads := resetDiagnosticParserCoreRetainedSlice(scheduler.acceptedPayloads)
+	*scheduler = diagnosticParserCoreGenericScheduler{
+		summaryHeaderScratch: summaryHeaders,
+		dispatchScratch: diagnosticParserCoreDispatchScratch{
+			cells: dispatchCells, noActionIndices: noActionIndices,
+		},
+		conflictScratch: diagnosticParserCoreConflictScratch{
+			actionOutputs: conflictActionOutputs, reductionOutputs: conflictReductionOutputs,
+			outputs: conflictOutputs, armRanges: conflictArmRanges, adopted: conflictAdopted,
+			headerAssembly: conflictHeaderAssembly,
+		},
+		reductionOutputs:      reductionOutputs,
+		reductionReplacements: reductionReplacements,
+		classifiedBoundaries:  classifiedBoundaries,
+		electStates:           electStates,
+		electGLRStates:        electGLRStates,
+		acceptedPayloads:      acceptedPayloads,
+	}
+	return nil
+}
+
 const maxDiagnosticParserCoreNoLookaheadSteps = 64
 
 func (s *diagnosticParserCoreGenericScheduler) fullReceipts() bool {
@@ -1504,7 +1558,9 @@ func initializeDiagnosticParserCoreGenericScheduler(
 	if scheduler == nil {
 		return nil, errors.New("parser-core phase zero: seed scheduler storage is nil")
 	}
-	*scheduler = diagnosticParserCoreGenericScheduler{}
+	if err := resetDiagnosticParserCoreGenericScheduler(scheduler); err != nil {
+		return nil, err
+	}
 	if compact == nil || tokenSource == nil || scannerScratch == nil || head.Node == 0 {
 		return nil, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreRoute, detail: "generic scheduler requires a compact core, token source, scanner scratch, and seed head"}
 	}
@@ -1523,12 +1579,15 @@ func initializeDiagnosticParserCoreGenericScheduler(
 		return nil, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreIdentity, detail: "generic seed head was not created under its scanner checkpoint identity"}
 	}
 	header := diagnosticParserCoreHeader{head: head, checkpoint: checkpointID}
-	*scheduler = diagnosticParserCoreGenericScheduler{
-		compact: compact, tokenSource: tokenSource, scannerScratch: scannerScratch,
-		checkpoint: checkpoint, checkpointID: checkpointID,
-		electionIndex: -1, nextSeq: 1,
-		options: options, observer: observer,
-	}
+	scheduler.compact = compact
+	scheduler.tokenSource = tokenSource
+	scheduler.scannerScratch = scannerScratch
+	scheduler.checkpoint = checkpoint
+	scheduler.checkpointID = checkpointID
+	scheduler.electionIndex = -1
+	scheduler.nextSeq = 1
+	scheduler.options = options
+	scheduler.observer = observer
 	// Public diagnostic results retain their receipt after the scheduler returns.
 	// Embed only for a fresh runner, which never publishes its receipt.
 	if options.freshSchedulerSession {
