@@ -38,6 +38,98 @@ func TestResolveConflictsHonorsCanceledContext(t *testing.T) {
 	}
 }
 
+func TestResolveShiftReduceUsesAdvancedItemPrecedence(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "{", Kind: SymbolTerminal},
+			{Name: "lambda_literal", Kind: SymbolNonterminal},
+			{Name: "call_expression", Kind: SymbolNonterminal},
+			{Name: "_if_let_binding", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 3},
+		},
+	}
+	shift := lrAction{
+		kind:    lrShift,
+		state:   10,
+		prec:    0,
+		hasPrec: true,
+		lhsSym:  1,
+	}
+	shift.addConflictContributor(2, -2, true, AssocNone)
+	reduce := lrAction{kind: lrReduce, prodIdx: 0}
+
+	got, err := resolveActionConflict(0, []lrAction{shift, reduce}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrReduce {
+		t.Fatalf("resolved actions = %+v, want the higher-precedence reduce", got)
+	}
+}
+
+func TestResolveShiftReducePreservesEqualAdvancedSelfConflict(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "{", Kind: SymbolTerminal},
+			{Name: "lambda_literal", Kind: SymbolNonterminal},
+			{Name: "call_suffix", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 2, Prec: -2, HasExplicitPrec: true},
+		},
+		Conflicts: [][]int{{2}},
+	}
+	shift := lrAction{
+		kind:    lrShift,
+		state:   10,
+		prec:    0,
+		hasPrec: true,
+		lhsSym:  1,
+		lhsSyms: []int{2},
+	}
+	shift.addConflictContributor(2, -2, true, AssocNone)
+	reduce := lrAction{kind: lrReduce, prodIdx: 0}
+
+	got, err := resolveActionConflict(0, []lrAction{shift, reduce}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("resolved actions = %+v, want both declared interpretations", got)
+	}
+}
+
+func TestResolveShiftReduceDoesNotUseClosureItemPrecedence(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "{", Kind: SymbolTerminal},
+			{Name: "lambda_literal", Kind: SymbolNonterminal},
+			{Name: "_if_let_binding", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 2},
+		},
+	}
+	shift := lrAction{
+		kind:    lrShift,
+		state:   10,
+		prec:    0,
+		hasPrec: true,
+		lhsSym:  1,
+	}
+	reduce := lrAction{kind: lrReduce, prodIdx: 0}
+
+	got, err := resolveActionConflict(0, []lrAction{shift, reduce}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrShift {
+		t.Fatalf("resolved actions = %+v, want the default shift", got)
+	}
+}
+
 func TestRRPickBestUsesSymbolVsNamedPrecedenceOrder(t *testing.T) {
 	ng := &NormalizedGrammar{
 		Symbols: []SymbolInfo{

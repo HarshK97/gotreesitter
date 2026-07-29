@@ -127,6 +127,12 @@ for tags and release notes while still in `0.x`.
   fixture.
   This fixes [issue #544](https://github.com/odvcencio/gotreesitter/issues/544).
 
+- Swift optional bindings now keep the statement body separate from a trailing
+  closure. The generator now uses exact advanced LR item precedence.
+  Production, compact, and pinned C tests cover the correction.
+  The regenerated Swift blob retains its exact runtime profile certification.
+  This fixes [#542](https://github.com/odvcencio/gotreesitter/issues/542).
+
 - The DFA lexer now splits adjacent Swift generic closers by parser state.
   It preserves `>>` when the active state accepts the shift operator.
   The pinned C oracle now matches without divergence.
