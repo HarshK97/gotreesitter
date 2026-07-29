@@ -419,6 +419,10 @@ const (
 	// metadata alone is insufficient. Keep the bit append-only because Language
 	// blobs encode capability values.
 	ResultCompatibilityNativeCollapsedChildren ResultCompatibilityCapability = 1 << 5
+	// ResultCompatibilityNativeRecoveredStructure permits receipt checks for
+	// error-bearing native roots. Consumers must also verify the complete source
+	// span, raw top-level spans, and the isolated-error shape.
+	ResultCompatibilityNativeRecoveredStructure ResultCompatibilityCapability = 1 << 6
 )
 
 // Language holds all data needed to parse a specific language.

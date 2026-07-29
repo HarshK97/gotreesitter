@@ -235,6 +235,83 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 	return resultCompatibilityResult{stopReason: ctx.stopReason()}
 }
 
+// nativeRecoveredStructureIsAuthoritative returns true when the selected
+// parser reduction owns a complete recovered root. Exact runtime profiles
+// certify the native structure. Use conservative repair for other roots.
+func nativeRecoveredStructureIsAuthoritative(root *Node, source []byte, p *Parser, lang *Language) bool {
+	if root == nil || p == nil || lang == nil || p.language != lang || len(source) == 0 {
+		return false
+	}
+	if lang.NativeResultCompatibility&ResultCompatibilityNativeRecoveredStructure == 0 {
+		return false
+	}
+	if len(p.included) > 0 || !p.hasRootSymbol || root.symbol != p.rootSymbol {
+		return false
+	}
+	if root.rawShape == 0 || !root.hasError() {
+		return false
+	}
+	if root.startByte > firstNonTriviaByteStart(source) ||
+		root.endByte < lastNonTriviaByteEnd(source) {
+		return false
+	}
+	return nativeRecoveredStructureHasIsolatedErrorReceipt(root)
+}
+
+// nativeRecoveredStructureHasIsolatedErrorReceipt verifies a narrow
+// recovered-root class. Raw top-level spans must agree.
+// The tree must contain one one-byte error and no missing nodes.
+func nativeRecoveredStructureHasIsolatedErrorReceipt(root *Node) bool {
+	if root == nil || root.ownerArena == nil || root.rawShape == 0 {
+		return false
+	}
+	shape, ok := root.ownerArena.rawShapeForRef(root.rawShape)
+	if !ok || shape.symbol != root.symbol || int(shape.childCount) != resultChildCount(root) {
+		return false
+	}
+	rawChildren := root.ownerArena.rawShapeChildren(shape)
+	if len(rawChildren) != resultChildCount(root) {
+		return false
+	}
+	for i := range rawChildren {
+		rawChild := stackEntryNode(rawChildren[i].entry())
+		child := resultChildAt(root, i)
+		if rawChild == nil || child == nil ||
+			rawChild.startByte != child.startByte ||
+			rawChild.endByte != child.endByte {
+			return false
+		}
+	}
+
+	explicitErrors := 0
+	valid := true
+	var walk func(*Node, int)
+	walk = func(node *Node, depth int) {
+		if node == nil || !valid || depth >= maxTreeWalkDepth {
+			valid = false
+			return
+		}
+		if node.isMissing() {
+			valid = false
+			return
+		}
+		if node.symbol == errorSymbol {
+			explicitErrors++
+			if explicitErrors > 1 ||
+				node.endByte <= node.startByte ||
+				node.endByte != node.startByte+1 {
+				valid = false
+				return
+			}
+		}
+		for i := 0; i < resultChildCount(node); i++ {
+			walk(resultChildAt(node, i), depth+1)
+		}
+	}
+	walk(root, 0)
+	return valid && explicitErrors == 1
+}
+
 // --- R2 dispatcher-arm census (docs/root-normalization-retirement.md) ---
 //
 // runLanguageResultCompatibility's switch is the per-language dispatcher arm

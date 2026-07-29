@@ -1144,6 +1144,9 @@ type ParseRuntime struct {
 	NormalizationNodesRewritten         uint64
 	NormalizationNanos                  int64
 	NormalizationPasses                 *[]NormalizationPassRuntime
+	// The parser sets NativeRecoveredStructureAuthoritative when an exact
+	// grammar profile certifies the recovered tree before compatibility.
+	NativeRecoveredStructureAuthoritative bool
 }
 
 type NormalizationPassRuntime struct {

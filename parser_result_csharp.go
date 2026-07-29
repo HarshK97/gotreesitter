@@ -61,6 +61,10 @@ const (
 
 func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *Language) {
 	missing := csharpMissingNativeResultCompatibility(lang)
+	nativeRecoveredStructure := nativeRecoveredStructureIsAuthoritative(root, source, p, lang)
+	if p != nil {
+		p.normalizationStats.nativeRecoveredStructureAuthoritative = nativeRecoveredStructure
+	}
 	if p != nil && p.skipRecoveryReparse {
 		if missing&ResultCompatibilityCSharpNativeUnicodeIdentifiers != 0 {
 			normalizeCSharpUnicodeIdentifierSpans(root, source, lang)
@@ -88,9 +92,11 @@ func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *La
 		normalizeCSharpSwitchTupleCasePatterns(root, lang)
 		return
 	}
-	normalizeCSharpRecoveredTopLevelChunks(root, source, p)
-	normalizeCSharpRecoveredNamespaces(root, source, p, lang)
-	normalizeCSharpRecoveredTypeDeclarations(root, source, p, lang)
+	if !nativeRecoveredStructure {
+		normalizeCSharpRecoveredTopLevelChunks(root, source, p)
+		normalizeCSharpRecoveredNamespaces(root, source, p, lang)
+		normalizeCSharpRecoveredTypeDeclarations(root, source, p, lang)
+	}
 	if missing&ResultCompatibilityCSharpNativeUnicodeIdentifiers != 0 {
 		normalizeCSharpUnicodeIdentifierSpans(root, source, lang)
 	}
@@ -106,7 +112,9 @@ func normalizeCSharpCompatibility(root *Node, source []byte, p *Parser, lang *La
 	if missing&ResultCompatibilityCSharpNativeScopedLambdaBlocks != 0 {
 		normalizeCSharpRecoveredScopedLambdaBlocks(root, source, p)
 	}
-	normalizeCSharpRecoveredMethodBlocks(root, source, p)
+	if !nativeRecoveredStructure {
+		normalizeCSharpRecoveredMethodBlocks(root, source, p)
+	}
 	normalizeCSharpInvocationStatements(root, source, lang)
 	normalizeCSharpDereferenceLogicalAndCasts(root, source, lang)
 	normalizeCSharpConditionalIsPatternInitializers(root, source, lang)

@@ -8,7 +8,7 @@ import (
 )
 
 func TestResultCompatibilityCapabilityLanguageBlobRoundTrip(t *testing.T) {
-	wantValues := []ResultCompatibilityCapability{1 << 0, 1 << 1, 1 << 2, 1 << 3, 1 << 4, 1 << 5}
+	wantValues := []ResultCompatibilityCapability{1 << 0, 1 << 1, 1 << 2, 1 << 3, 1 << 4, 1 << 5, 1 << 6}
 	gotValues := []ResultCompatibilityCapability{
 		ResultCompatibilityCSharpNativeNotNull,
 		ResultCompatibilityCSharpNativeUnicodeIdentifiers,
@@ -16,6 +16,7 @@ func TestResultCompatibilityCapabilityLanguageBlobRoundTrip(t *testing.T) {
 		ResultCompatibilityCSharpNativeScopedLambdaBlocks,
 		ResultCompatibilityCSharpNativeQueryExpressions,
 		ResultCompatibilityNativeCollapsedChildren,
+		ResultCompatibilityNativeRecoveredStructure,
 	}
 	for i := range wantValues {
 		if gotValues[i] != wantValues[i] {
@@ -28,7 +29,8 @@ func TestResultCompatibilityCapabilityLanguageBlobRoundTrip(t *testing.T) {
 		ResultCompatibilityCSharpNativeScopedLambdaStatements |
 		ResultCompatibilityCSharpNativeScopedLambdaBlocks |
 		ResultCompatibilityCSharpNativeQueryExpressions |
-		ResultCompatibilityNativeCollapsedChildren
+		ResultCompatibilityNativeCollapsedChildren |
+		ResultCompatibilityNativeRecoveredStructure
 	lang := &Language{
 		Name:                      "result_compatibility_round_trip",
 		NativeResultCompatibility: want,
@@ -271,6 +273,135 @@ func TestCSharpLegacyQueryExpressionRepairHonorsNativeCapability(t *testing.T) {
 				t.Fatalf("query repair = %v, want %v: %s", gotRepair, tt.wantRepair, root.SExpr(lang))
 			}
 		})
+	}
+}
+
+func TestCSharpRecoveredStructureCapabilityKeepsSyntheticRepair(t *testing.T) {
+	blob := readCSharpLegacyTestBlob(t)
+	lang := loadCSharpLegacyTestLanguage(t, blob)
+	lang.NativeResultCompatibility = ResultCompatibilityNativeRecoveredStructure
+	source := []byte("class C {}")
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	root := csharpLegacyTestLeaf(
+		t,
+		arena,
+		lang,
+		"compilation_unit",
+		source,
+		0,
+		uint32(len(source)),
+	)
+	root.setHasError(true)
+	parser := NewParser(lang)
+
+	if nativeRecoveredStructureIsAuthoritative(root, source, parser, lang) {
+		t.Fatal("a synthetic full-span root received native producer authority")
+	}
+	normalizeCSharpCompatibility(root, source, parser, lang)
+	if root.HasError() || !csharpLegacyTreeHasType(root, lang, "class_declaration") {
+		t.Fatalf("synthetic accepted root did not receive conservative repair: %s", root.SExpr(lang))
+	}
+}
+
+func TestNativeRecoveredStructureIsolatedErrorReceipt(t *testing.T) {
+	tests := []struct {
+		name        string
+		errorSpans  [][2]uint32
+		missing     bool
+		rawMismatch bool
+		want        bool
+	}{
+		{name: "isolated_error", errorSpans: [][2]uint32{{0, 1}}, want: true},
+		{name: "wide_error", errorSpans: [][2]uint32{{0, 2}}},
+		{name: "reversed_error_span", errorSpans: [][2]uint32{{2, 1}}},
+		{name: "multiple_errors", errorSpans: [][2]uint32{{0, 1}, {1, 2}}},
+		{name: "missing_node", errorSpans: [][2]uint32{{0, 1}}, missing: true},
+		{name: "raw_child_mismatch", errorSpans: [][2]uint32{{0, 1}}, rawMismatch: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			arena := acquireNodeArena(arenaClassFull)
+			defer arena.Release()
+
+			children := make([]*Node, 0, len(test.errorSpans)+1)
+			for _, span := range test.errorSpans {
+				node := newLeafNodeInArena(
+					arena,
+					errorSymbol,
+					true,
+					span[0],
+					span[1],
+					Point{Column: span[0]},
+					Point{Column: span[1]},
+				)
+				node.setHasError(true)
+				children = append(children, node)
+			}
+			if test.missing {
+				node := newLeafNodeInArena(
+					arena,
+					1,
+					true,
+					1,
+					1,
+					Point{Column: 1},
+					Point{Column: 1},
+				)
+				node.setMissing(true)
+				node.setHasError(true)
+				children = append(children, node)
+			}
+			root := newParentNodeInArena(arena, 2, true, children, nil, 0)
+			root.setHasError(true)
+			rawChildren := children
+			if test.rawMismatch {
+				rawChildren = []*Node{newLeafNodeInArena(
+					arena,
+					errorSymbol,
+					true,
+					0,
+					2,
+					Point{},
+					Point{Column: 2},
+				)}
+			}
+			root.rawShape = captureRawShapeForNodeSlice(arena, root.symbol, 0, rawChildren)
+
+			if got := nativeRecoveredStructureHasIsolatedErrorReceipt(root); got != test.want {
+				t.Fatalf("isolated-error receipt = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
+func TestNativeRecoveredStructureReceiptRejectsDepthExhaustion(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	node := newLeafNodeInArena(
+		arena,
+		errorSymbol,
+		true,
+		0,
+		1,
+		Point{},
+		Point{Column: 1},
+	)
+	node.setHasError(true)
+	for depth := 0; depth < maxTreeWalkDepth; depth++ {
+		node = newParentNodeInArena(arena, 2, true, []*Node{node}, nil, 0)
+		node.setHasError(true)
+	}
+	node.rawShape = captureRawShapeForNodeSlice(
+		arena,
+		node.symbol,
+		0,
+		[]*Node{resultChildAt(node, 0)},
+	)
+
+	if nativeRecoveredStructureHasIsolatedErrorReceipt(node) {
+		t.Fatal("depth-exhausted tree received native recovered structure authority")
 	}
 }
 

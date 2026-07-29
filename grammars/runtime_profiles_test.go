@@ -815,7 +815,8 @@ func TestCSharpNativeResultCompatibilityRequiresExactBlobIdentity(t *testing.T) 
 		gotreesitter.ResultCompatibilityCSharpNativeUnicodeIdentifiers |
 		gotreesitter.ResultCompatibilityCSharpNativeScopedLambdaStatements |
 		gotreesitter.ResultCompatibilityCSharpNativeScopedLambdaBlocks |
-		gotreesitter.ResultCompatibilityCSharpNativeQueryExpressions
+		gotreesitter.ResultCompatibilityCSharpNativeQueryExpressions |
+		gotreesitter.ResultCompatibilityNativeRecoveredStructure
 
 	wrongSHA := &gotreesitter.Language{Name: "c_sharp"}
 	if attachBuiltinLanguageRuntimeProfile("c_sharp", sha256.Sum256([]byte("uncertified")), wrongSHA) {
