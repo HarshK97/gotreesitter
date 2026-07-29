@@ -1555,21 +1555,28 @@ func initializeDiagnosticParserCoreGenericScheduler(
 	return scheduler, nil
 }
 
+type diagnosticParserCoreCellSelection uint8
+
+const (
+	diagnosticParserCoreCellSelectionNone diagnosticParserCoreCellSelection = iota
+	diagnosticParserCoreCellSelectionConflictPolicy
+	diagnosticParserCoreCellSelectionRepetitionFold
+)
+
 type diagnosticParserCoreGenericCell struct {
-	headerIndex             int
-	boundary                core.ClassifiedBoundary
-	token                   Token
-	stateRelexed            bool
-	conflictPolicy          bool
-	conflictPolicyOrdinal   int
-	repetitionFold          bool
-	repetitionReduceOrdinal int
+	headerIndex     int
+	boundary        core.ClassifiedBoundary
+	selectedOrdinal int
+	relexedSymbol   Symbol
+	selectedBy      diagnosticParserCoreCellSelection
 }
 
 func (cell diagnosticParserCoreGenericCell) actions() core.ActionRow { return cell.boundary.Actions() }
 func (cell diagnosticParserCoreGenericCell) dispatchToken(shared Token) Token {
-	if cell.stateRelexed {
-		return cell.token
+	if cell.relexedSymbol != 0 {
+		shared.Symbol = cell.relexedSymbol
+		shared.ExternalScannerToken = false
+		shared.ExternalScannerStartByte = 0
 	}
 	return shared
 }
@@ -1577,32 +1584,43 @@ func (cell diagnosticParserCoreGenericCell) descriptor() core.ActionRowDescripto
 	return cell.boundary.Actions().Descriptor()
 }
 func (cell diagnosticParserCoreGenericCell) kind() core.ActionRowKind {
-	if cell.conflictPolicy {
-		switch cell.actions().At(cell.conflictPolicyOrdinal).Type {
+	if cell.selectedBy == diagnosticParserCoreCellSelectionConflictPolicy {
+		switch cell.actions().At(cell.selectedOrdinal).Type {
 		case core.ActionShift:
 			return core.ActionRowShift
 		case core.ActionReduce:
 			return core.ActionRowReduce
 		}
 	}
-	if cell.repetitionFold {
+	if cell.selectedBy == diagnosticParserCoreCellSelectionRepetitionFold {
 		return core.ActionRowReduce
 	}
 	return cell.descriptor().Kind()
 }
 func (cell diagnosticParserCoreGenericCell) selectedActionOrdinal() int {
-	if cell.conflictPolicy {
-		return cell.conflictPolicyOrdinal
-	}
-	if cell.repetitionFold {
-		return cell.repetitionReduceOrdinal
+	if cell.selectedBy != diagnosticParserCoreCellSelectionNone {
+		return cell.selectedOrdinal
 	}
 	return 0
 }
 
 func (cell diagnosticParserCoreGenericCell) selectsConflictReduction() bool {
-	return (cell.conflictPolicy || cell.repetitionFold) &&
+	return cell.selectedBy != diagnosticParserCoreCellSelectionNone &&
 		cell.actions().At(cell.selectedActionOrdinal()).Type == core.ActionReduce
+}
+
+func diagnosticParserCoreRelexedSymbol(shared, relexed Token) (Symbol, bool) {
+	if relexed.Symbol == 0 || relexed.Symbol == shared.Symbol {
+		return 0, false
+	}
+	candidate := shared
+	candidate.Symbol = relexed.Symbol
+	candidate.ExternalScannerToken = false
+	candidate.ExternalScannerStartByte = 0
+	if candidate != relexed {
+		return 0, false
+	}
+	return relexed.Symbol, true
 }
 
 var diagnosticParserCoreRepetitionFoldOptOut = map[string]bool{
@@ -2536,6 +2554,7 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			continue
 		}
 		cellToken := s.token
+		var relexedSymbol Symbol
 		boundary, err := s.compact.ClassifyBoundary(header.head, core.Symbol(cellToken.Symbol))
 		if err != nil {
 			return nil, err
@@ -2548,14 +2567,17 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			if len(s.headers) > 1 {
 				relexed, ok := s.relexTokenForState(state, s.token)
 				if ok {
-					cellToken = relexed
-					boundary, err = s.compact.ClassifyBoundary(header.head, core.Symbol(cellToken.Symbol))
-					if err != nil {
-						return nil, err
+					relexedSymbol, ok = diagnosticParserCoreRelexedSymbol(s.token, relexed)
+					if ok {
+						cellToken = relexed
+						boundary, err = s.compact.ClassifyBoundary(header.head, core.Symbol(cellToken.Symbol))
+						if err != nil {
+							return nil, err
+						}
+						s.work.ActionLookups++
+						actions = boundary.Actions()
+						workCountRecordResolvedActionCell(actions.Len())
 					}
-					s.work.ActionLookups++
-					actions = boundary.Actions()
-					workCountRecordResolvedActionCell(actions.Len())
 				}
 			}
 			if actions.Len() == 0 {
@@ -2564,20 +2586,26 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			}
 		}
 		cell := diagnosticParserCoreGenericCell{
-			headerIndex:  index,
-			boundary:     boundary,
-			token:        cellToken,
-			stateRelexed: cellToken != s.token,
+			headerIndex:   index,
+			boundary:      boundary,
+			relexedSymbol: relexedSymbol,
 		}
 		if s.tokenSource != nil {
-			cell.conflictPolicyOrdinal, cell.conflictPolicy = diagnosticParserCoreConflictPolicyOrdinal(
+			if ordinal, ok := diagnosticParserCoreConflictPolicyOrdinal(
 				s.tokenSource.language,
 				cell.dispatchToken(s.token),
 				boundary.State(),
 				actions,
-			)
-			if !cell.conflictPolicy && actions.Descriptor().Kind() == core.ActionRowUnsupported {
-				cell.repetitionReduceOrdinal, cell.repetitionFold = diagnosticParserCoreRepetitionFoldOrdinal(s.tokenSource.language, actions)
+			); ok {
+				cell.selectedOrdinal = ordinal
+				cell.selectedBy = diagnosticParserCoreCellSelectionConflictPolicy
+			}
+			if cell.selectedBy == diagnosticParserCoreCellSelectionNone &&
+				actions.Descriptor().Kind() == core.ActionRowUnsupported {
+				if ordinal, ok := diagnosticParserCoreRepetitionFoldOrdinal(s.tokenSource.language, actions); ok {
+					cell.selectedOrdinal = ordinal
+					cell.selectedBy = diagnosticParserCoreCellSelectionRepetitionFold
+				}
 			}
 		}
 		if len(s.headers) == 1 {
@@ -2601,7 +2629,7 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 	conflictCell := -1
 	for index, cell := range cells {
 		descriptor := cell.descriptor()
-		if !cell.conflictPolicy && !cell.repetitionFold {
+		if cell.selectedBy == diagnosticParserCoreCellSelectionNone {
 			if unsupported := diagnosticParserCoreGenericUnsupportedCellDescriptor(cell.headerIndex, cell.dispatchToken(s.token), cell.actions(), descriptor); unsupported != nil {
 				return unsupported, nil
 			}
