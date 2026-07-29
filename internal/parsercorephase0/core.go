@@ -2195,7 +2195,7 @@ func (c *Core) factorExactPredecessorMerge(key boundaryKey, probe boundaryProbe,
 	if phase0AEnabled {
 		phase0ABeginPredecessorMerge(c, incumbent.prev, in.prev)
 	}
-	merged, changed, mergeErr := c.mergePredecessorsOneLayer(incumbent.prev, in.prev)
+	merged, changed, mergeErr := c.mergePredecessorsBounded(incumbent.prev, in.prev, 0)
 	if mergeErr != nil {
 		if phase0AEnabled {
 			phase0AAbortPredecessorMerge(c)
@@ -2237,7 +2237,15 @@ func (c *Core) factorExactPredecessorMerge(key boundaryKey, probe boundaryProbe,
 	return condenseOutcome{head: Head{Node: id}, change: condenseUpdated}, true, nil
 }
 
-func (c *Core) mergePredecessorsOneLayer(leftID, rightID NodeID) (NodeID, bool, error) {
+// maxRecursiveInsertDepth bounds the persistent counterpart of C's recursive
+// stack-link insertion. Sixteen levels cover the measured clean corpus
+// family while keeping pathological graphs on a small, fixed stack budget.
+const maxRecursiveInsertDepth = 16
+
+func (c *Core) mergePredecessorsBounded(leftID, rightID NodeID, depth int) (NodeID, bool, error) {
+	if depth > maxRecursiveInsertDepth {
+		return 0, false, errors.New("parser-core phase zero: recursive insertion depth limit")
+	}
 	if leftID == rightID {
 		return 0, false, errors.New("parser-core phase zero: recursive insertion self-merge")
 	}
@@ -2273,7 +2281,7 @@ func (c *Core) mergePredecessorsOneLayer(leftID, rightID NodeID) (NodeID, bool, 
 	changed := false
 	for _, incoming := range rightLinks {
 		var inserted bool
-		links, inserted, err = c.insertLinkOneLayer(left.state, left.byteOffset, links, incoming)
+		links, inserted, err = c.insertLinkBounded(left.state, left.byteOffset, links, incoming, depth)
 		if err != nil {
 			return 0, false, err
 		}
@@ -2289,12 +2297,12 @@ func (c *Core) mergePredecessorsOneLayer(leftID, rightID NodeID) (NodeID, bool, 
 	return merged, true, nil
 }
 
-// insertLinkOneLayer mirrors the measured lower-adjacency decisions of
+// insertLinkBounded mirrors the measured lower-adjacency decisions of
 // stack_node_add_link without mutating an existing adjacency. Same-pair
 // shallow payloads select the higher effective subtree precedence; every
-// other clean class remains in stable incumbent-first order. A second
-// different-predecessor merge is outside this tranche and declines.
-func (c *Core) insertLinkOneLayer(state StateID, byteOffset uint32, links []linkRecord, incoming linkRecord) ([]linkRecord, bool, error) {
+// other clean class remains in stable incumbent-first order. Boundary-equal
+// predecessors recurse only when their complete outer edges are exact.
+func (c *Core) insertLinkBounded(state StateID, byteOffset uint32, links []linkRecord, incoming linkRecord, depth int) ([]linkRecord, bool, error) {
 	if len(links) == 0 {
 		return append(slices.Clone(links), incoming), true, nil
 	}
@@ -2367,8 +2375,41 @@ func (c *Core) insertLinkOneLayer(state StateID, byteOffset uint32, links []link
 		if !mergeable {
 			continue
 		}
-		c.recordLinkUnionRejected()
-		return nil, false, errors.New("parser-core phase zero: recursive insertion declined beyond one predecessor layer")
+		if !c.linkEdgesEqual(incumbent, incoming) {
+			c.recordLinkUnionRejected()
+			return nil, false, errors.New("parser-core phase zero: recursive insertion declined non-exact nested edge")
+		}
+		if depth >= maxRecursiveInsertDepth {
+			c.recordLinkUnionRejected()
+			return nil, false, errors.New("parser-core phase zero: recursive insertion depth limit")
+		}
+		if phase0AEnabled {
+			phase0ABeginPredecessorMerge(c, incumbent.prev, incoming.prev)
+		}
+		merged, changed, err := c.mergePredecessorsBounded(incumbent.prev, incoming.prev, depth+1)
+		if err != nil {
+			if phase0AEnabled {
+				phase0AAbortPredecessorMerge(c)
+			}
+			c.recordLinkUnionRejected()
+			return nil, false, err
+		}
+		if !changed {
+			if phase0AEnabled {
+				phase0AAbortPredecessorMerge(c)
+				phase0AMergeDecision(c, index, phase0ATransitionDuplicateDrop)
+			}
+			c.recordLinkUnionDuplicateNoop()
+			return links, false, nil
+		}
+		if phase0AEnabled {
+			phase0AObserveAdjacencyPublished(c, merged)
+			phase0AMergeRecursiveDecision(c, index, merged)
+		}
+		updated := slices.Clone(links)
+		updated[index].prev = merged
+		c.recordLinkUnionRecursiveChanged()
+		return updated, true, nil
 	}
 	if uint32(len(links)) >= c.limits.MaxLinksPerBoundary {
 		c.recordLinkUnionRejected()

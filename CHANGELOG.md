@@ -71,6 +71,11 @@ for tags and release notes while still in `0.x`.
   This change removes two inert language-local field repairs.
   The Scala and SQL field corrections remain live.
 
+- Compact graph insertion now persists exact predecessor merges across a
+  bounded 16-level path.
+  Non-exact nested edges and deeper paths still fail closed.
+  Locked C#, Elixir, Perl, and Scala fixtures now reach their next parser gate.
+
 - The compact admission census now separates runnable no-table-action stops
   from paused frontiers.
   The real-corpus matrix labels production error trees.

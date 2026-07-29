@@ -88,6 +88,7 @@ func phase0ABeginReplacement(*Core, boundaryKey, linkInput, NodeID, int)        
 func phase0AObserveReplacementPublished(*Core, boundaryKey, linkInput, NodeID, LinkID, int, int)    {}
 func phase0ABeginPredecessorMerge(*Core, NodeID, NodeID)                                            {}
 func phase0AMergeDecision(*Core, int, phase0ATransitionKind)                                        {}
+func phase0AMergeRecursiveDecision(*Core, int, NodeID)                                              {}
 func phase0AAbortPredecessorMerge(*Core)                                                            {}
 func phase0AObserveAdjacencyPublished(*Core, NodeID)                                                {}
 func phase0AObserveFactorNoChange(*Core, boundaryKey, linkInput, NodeID, int)                       {}
