@@ -113,6 +113,17 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- TypeScript and TSX now parse `in`, `out`, and `in out` variance
+  annotations on type parameters.
+  The source overlay uses the semantics from upstream pull request 361.
+  This fixes [issue #539](https://github.com/odvcencio/gotreesitter/issues/539).
+
+- TypeScript and TSX now separate adjacent generic call signatures at a
+  newline.
+  The grammar uses the dedicated function-signature separator.
+  Generic automatic-semicolon behavior remains unchanged.
+  This fixes [issue #540](https://github.com/odvcencio/gotreesitter/issues/540).
+
 - Shared DFA token election now prefers one composable close angle over a
   wider close-angle token.
   Nested TypeScript union arguments now retain the generic-call lineage.
