@@ -66,6 +66,75 @@ func TestSwiftMemberKeywordSelfAfterDotStaysNavigable(t *testing.T) {
 	}
 }
 
+func TestSwiftNestedGenericCallAdjacentClosers(t *testing.T) {
+	lang := SwiftLanguage()
+	for _, route := range []struct {
+		name    string
+		compact bool
+	}{
+		{name: "production"},
+		{name: "compact", compact: true},
+	} {
+		t.Run(route.name, func(t *testing.T) {
+			src := []byte("let v = X<Y<Z>>()\n")
+			parser := gotreesitter.NewParser(lang)
+			parser.SetAdmissionCandidateRoute(route.compact)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse nested generic call: %v", err)
+			}
+			defer tree.Release()
+
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("nested generic call has parse errors: %s", root.SExpr(lang))
+			}
+			sexpr := root.SExpr(lang)
+			if got, want := strings.Count(sexpr, "(type_arguments"), 2; got != want {
+				t.Fatalf("type argument count = %d, want %d; tree: %s", got, want, sexpr)
+			}
+			if !strings.Contains(sexpr, "(constructor_expression") ||
+				!strings.Contains(sexpr, "(constructor_suffix") {
+				t.Fatalf("nested generic call has no constructor call: %s", sexpr)
+			}
+		})
+	}
+}
+
+func TestSwiftRightShiftOperatorUnaffected(t *testing.T) {
+	lang := SwiftLanguage()
+	for _, route := range []struct {
+		name    string
+		compact bool
+	}{
+		{name: "production"},
+		{name: "compact", compact: true},
+	} {
+		t.Run(route.name, func(t *testing.T) {
+			src := []byte("let v = x >> y\n")
+			parser := gotreesitter.NewParser(lang)
+			parser.SetAdmissionCandidateRoute(route.compact)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse right shift: %v", err)
+			}
+			defer tree.Release()
+
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("right shift has parse errors: %s", root.SExpr(lang))
+			}
+			sexpr := root.SExpr(lang)
+			if !strings.Contains(sexpr, "(bitwise_operation") {
+				t.Fatalf("right shift has no bitwise_operation: %s", sexpr)
+			}
+			if strings.Contains(sexpr, "(type_arguments") {
+				t.Fatalf("right shift became type arguments: %s", sexpr)
+			}
+		})
+	}
+}
+
 // TestSwiftStringLiteralEndingInDotDoesNotCorruptFollowingToken guards against
 // a regression in shouldDemoteSwiftMemberKeyword/isAfterSwiftMemberDot: a
 // string literal whose last content character is '.' immediately before the
