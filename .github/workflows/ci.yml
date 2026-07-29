@@ -85,7 +85,7 @@ jobs:
           GTS_ADMISSION_SCORECARD_RATCHET=1 \
           GOMAXPROCS=1 \
           go test -tags gts_parsercorephase0 . \
-            -run '^(TestAdmissionCandidateScorecard206|TestAdmissionSwitchRoutePrecedenceRatchet|TestAdmissionCandidateYAMLZeroWidthDepth|TestAdmissionCandidateRepresentativeDepthRatchet|TestAdmissionCompactTreeCarriesIncrementalReuseProof)$' \
+            -run '^(TestAdmissionCandidateScorecard206|TestAdmissionSwitchRoutePrecedenceRatchet|TestAdmissionCandidateYAMLZeroWidthDepth|TestAdmissionCandidateRepresentativeDepthRatchet|TestAdmissionCompactTreeCarriesIncrementalReuseProof|TestDiagnosticParserCoreClassifiedBoundaryAndReductionPlanShape|TestDiagnosticParserCoreSummaryReceiptPreservesExactRewrite)$' \
             -count=1 -timeout 10m
 
   race_root_shards:
