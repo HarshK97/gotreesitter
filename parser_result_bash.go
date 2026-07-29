@@ -53,22 +53,24 @@ func normalizeBashVariableAssignmentsInNodeWithCensus(
 		}
 		out = append(out, child)
 	}
-	if changed {
-		census.run("dispatch.bash.variable-assignment-wrapper-flattening", func() {
-			if node.ownerArena != nil {
-				buf := node.ownerArena.allocNodeSlice(len(out))
-				copy(buf, out)
-				out = buf
-			}
-			node.children = out
-			node.clearFieldMetadata()
-		})
-	}
-	if node.Type(lang) == "if_statement" {
+	if !changed {
 		census.run("dispatch.bash.if-condition-field-projection", func() {
 			assignBashIfConditionField(node, lang)
 		})
+		return
 	}
+	census.run("dispatch.bash.variable-assignment-wrapper-flattening", func() {
+		if node.ownerArena != nil {
+			buf := node.ownerArena.allocNodeSlice(len(out))
+			copy(buf, out)
+			out = buf
+		}
+		node.children = out
+		node.clearFieldMetadata()
+	})
+	census.run("dispatch.bash.if-condition-field-projection", func() {
+		assignBashIfConditionField(node, lang)
+	})
 }
 
 func normalizeBashGeneratedCommandAssignments(root *Node, source []byte, lang *Language) {
