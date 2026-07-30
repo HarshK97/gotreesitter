@@ -120,6 +120,10 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Raw error-cost walks now retain each captured child shape reference.
+  A later mutable node update cannot create a recursive shape cycle.
+  The Rust aggressive corpus completes all 25 bounded parses without a crash.
+
 - TypeScript and TSX now parse `in`, `out`, and `in out` variance
   annotations on type parameters.
   The source overlay uses the semantics from upstream pull request 361.
