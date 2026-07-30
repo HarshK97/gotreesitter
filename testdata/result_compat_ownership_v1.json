@@ -262,8 +262,7 @@
       "kind": "dispatcher_arm",
       "functions": [
         "normalizeBashProgramVariableAssignmentsWithCensus",
-        "normalizeBashGeneratedCommandAssignments",
-        "normalizeBashCommandNameArguments"
+        "normalizeBashGeneratedCommandAssignments"
       ],
       "files": [
         "parser_result_bash.go"
@@ -293,20 +292,6 @@
           ],
           "purpose": "Select an assignment action instead of a generated command action.",
           "authoritative_owner": "scheduler_action_semantics",
-          "witnesses": [
-            "parser_result_test/materialization_subpass_census_test.go"
-          ]
-        },
-        {
-          "id": "dispatch.bash.command-name-concatenation",
-          "functions": [
-            "normalizeBashCommandNameArguments"
-          ],
-          "files": [
-            "parser_result_bash.go"
-          ],
-          "purpose": "Construct one command-name concatenation from adjacent command children.",
-          "authoritative_owner": "materialization",
           "witnesses": [
             "parser_result_test/materialization_subpass_census_test.go"
           ]

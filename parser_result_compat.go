@@ -129,9 +129,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 			census.run("dispatch.bash.generated-command-assignment", func() {
 				normalizeBashGeneratedCommandAssignments(ctx.root, ctx.source, ctx.lang)
 			})
-			census.run("dispatch.bash.command-name-concatenation", func() {
-				normalizeBashCommandNameArguments(ctx.root, ctx.lang)
-			})
 		})
 	case "bitbake":
 		dispatcherArmCensus(ctx, "dispatch.bitbake", func() { normalizeBitbakeCompatibility(ctx.root, ctx.source, ctx.lang) })

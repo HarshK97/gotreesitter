@@ -15,13 +15,13 @@ without updating that registry.
 
 The v1 registry freezes the current source and registry:
 
-- 41 explicit `runLanguageResultCompatibility` switch arms covering 43
+- 40 explicit `runLanguageResultCompatibility` switch arms covering 42
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-That is 42 live registry entries and 41 retired entries. These counts backfill
+That is 41 live registry entries and 42 retired entries. These counts backfill
 earlier retirements. This field repair change does not remove a dispatcher arm.
 The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
@@ -102,7 +102,6 @@ The census does not change parser output when it is disabled.
 | Apex | class literal alias | `materialization` |
 | Bash | assignment wrapper flattening | `materialization` |
 | Bash | generated command assignment | `scheduler_action_semantics` |
-| Bash | command name concatenation | `materialization` |
 | Bash | `if` condition field projection | `materialization` |
 | Cooklang | trailing step tail | `scanner_checkpoint_state` |
 | Cooklang | recovered recipe | `scheduler_action_semantics` |
@@ -112,6 +111,10 @@ The registry now includes that function and file.
 
 The HTTP section-coalescing subpass retired after its exact and locked probes
 reported zero rewrites. Native route tests now preserve that receipt.
+
+The Bash command-name concatenation subpass also retired.
+Native reduction already constructs the historical command name.
+The exact 25-case corpus matches baseline `83548f55`.
 
 The live probes parse each source without result compatibility.
 They also compare census-enabled output with normal production output.

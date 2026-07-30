@@ -280,7 +280,6 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 				"dispatch.bash",
 				"dispatch.bash.variable-assignment-wrapper-flattening",
 				"dispatch.bash.generated-command-assignment",
-				"dispatch.bash.command-name-concatenation",
 			},
 			rewrittenSubpasses: []string{
 				"dispatch.bash",
@@ -296,7 +295,6 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 			expectedSubpasses: []string{
 				"dispatch.bash",
 				"dispatch.bash.generated-command-assignment",
-				"dispatch.bash.command-name-concatenation",
 			},
 		},
 		{
@@ -308,7 +306,6 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 			expectedSubpasses: []string{
 				"dispatch.bash",
 				"dispatch.bash.generated-command-assignment",
-				"dispatch.bash.command-name-concatenation",
 			},
 		},
 		{
@@ -327,7 +324,6 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 				"dispatch.bash",
 				"dispatch.bash.if-condition-field-projection",
 				"dispatch.bash.generated-command-assignment",
-				"dispatch.bash.command-name-concatenation",
 			},
 		},
 		{
