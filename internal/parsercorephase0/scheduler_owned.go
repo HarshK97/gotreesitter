@@ -15,6 +15,114 @@ func (c *Core) ReindexCondenseCandidatesOwned(owner SchedulerTransactionToken, c
 	})
 }
 
+// RecordReductionLineageOwned attaches exact scheduler lineage to compact graph
+// versions. The journal restores prior provenance if the scheduler transaction
+// rolls back.
+func (c *Core) RecordReductionLineageOwned(owner SchedulerTransactionToken, outputs []ReductionOutput, lineage uint16) error {
+	return c.RunSchedulerOwned(owner, func() error {
+		if lineage == 0 {
+			return errors.New("parser-core phase zero: zero reduction lineage")
+		}
+		for _, output := range outputs {
+			if !output.MultiplePopPaths {
+				return errors.New("parser-core phase zero: lineage requires multiple pop paths")
+			}
+			if err := c.recordNodeLineage(output.Head, output.CleanPathRank, lineage); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// RecordHeadLineageOwned persists inherited scheduler lineage on one graph
+// version. Unknown lineage invalidates an earlier exact record conservatively.
+func (c *Core) RecordHeadLineageOwned(
+	owner SchedulerTransactionToken,
+	head Head,
+	rank CleanPathRankSelection,
+	lineage uint16,
+) error {
+	return c.RunSchedulerOwned(owner, func() error {
+		if rank != CleanPathRankSelected && rank != CleanPathRankUnselected || lineage == 0 {
+			rank = CleanPathRankUnknown
+			lineage = 0
+		}
+		return c.recordNodeLineage(head, rank, lineage)
+	})
+}
+
+func (c *Core) recordNodeLineage(head Head, rank CleanPathRankSelection, lineage uint16) error {
+	node, err := c.nodeLineage(head.Node)
+	if err != nil {
+		return err
+	}
+	nextRank := rank
+	nextLineage := lineage
+	nextConverged := true
+	switch rank {
+	case CleanPathRankSelected, CleanPathRankUnselected:
+	case CleanPathRankUnknown:
+		nextLineage = 0
+	case CleanPathRankNotApplicable:
+		return nil
+	default:
+		return errors.New("parser-core phase zero: invalid clean path rank")
+	}
+	switch {
+	case node.rank == CleanPathRankNotApplicable && node.lineage == 0:
+	case node.lineage == nextLineage:
+		nextRank = mergeCleanPathRank(node.rank, nextRank)
+		if nextRank == CleanPathRankUnknown {
+			nextLineage = 0
+		}
+	case node.rank == CleanPathRankUnknown && node.lineage == 0:
+		nextRank = CleanPathRankUnknown
+		nextLineage = 0
+	default:
+		nextRank = CleanPathRankUnknown
+		nextLineage = 0
+	}
+	if node.rank == nextRank && node.lineage == nextLineage && node.converged == nextConverged {
+		return nil
+	}
+	if len(c.transactions) != 0 {
+		c.nodeLineageJournal = append(c.nodeLineageJournal, nodeLineageMutation{
+			node: head.Node, owner: node.owner, lineage: node.lineage, rank: node.rank, converged: node.converged,
+		})
+	}
+	node.rank = nextRank
+	node.lineage = nextLineage
+	node.converged = nextConverged
+	return nil
+}
+
+// RecordHeadOwnerOwned binds one compact head to its scheduler lineage.
+func (c *Core) RecordHeadOwnerOwned(owner SchedulerTransactionToken, head Head, lineage uint32) error {
+	return c.RunSchedulerOwned(owner, func() error {
+		if lineage == 0 {
+			return errors.New("parser-core phase zero: zero scheduler lineage")
+		}
+		node, err := c.nodeLineage(head.Node)
+		if err != nil {
+			return err
+		}
+		if node.owner == lineage {
+			return nil
+		}
+		if node.owner != 0 {
+			return errors.New("parser-core phase zero: compact head has multiple scheduler owners")
+		}
+		if len(c.transactions) != 0 {
+			c.nodeLineageJournal = append(c.nodeLineageJournal, nodeLineageMutation{
+				node: head.Node, owner: node.owner, lineage: node.lineage, rank: node.rank, converged: node.converged,
+			})
+		}
+		node.owner = lineage
+		return nil
+	})
+}
+
 func (c *Core) runSchedulerMaybeLiveScopedOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, liveScoped bool, fn func() error) error {
 	return c.RunSchedulerOwned(owner, func() error {
 		if !liveScoped {
@@ -392,6 +500,15 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 	if act.Type != ActionReduce {
 		return nil, fmt.Errorf("parser-core phase zero: action %d is %v, not reduce", actionOrdinal, act.Type)
 	}
+	source, err := c.nodeLineage(boundary.head.Node)
+	if err != nil {
+		return nil, err
+	}
+	previousSourceOwner := c.reductionSourceOwner
+	c.reductionSourceOwner = source.owner
+	defer func() {
+		c.reductionSourceOwner = previousSourceOwner
+	}()
 	plan, err := c.reductionPlan(*act)
 	if err != nil {
 		return nil, err
@@ -482,6 +599,33 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 		freshness := previous.freshness
 		cleanPathRank := mergeCleanPathRank(previous.cleanPathRank, path.cleanPathRank)
 		historicalBoundarySplit := previous.historicalBoundarySplit || outcome.historicalBoundarySplit
+		historicalConvergedSplit := previous.historicalConvergedSplit
+		historicalForestDeterministic := previous.historicalForestDeterministic
+		historicalCleanPathRank := previous.historicalCleanPathRank
+		historicalLineage := previous.historicalLineage
+		if outcome.historicalBoundarySplit {
+			switch {
+			case !previous.historicalBoundarySplit:
+				historicalConvergedSplit = outcome.historicalConvergedSplit
+				historicalForestDeterministic = outcome.historicalForestDeterministic
+				historicalCleanPathRank = outcome.historicalCleanPathRank
+				historicalLineage = outcome.historicalLineage
+			case !historicalConvergedSplit && outcome.historicalConvergedSplit:
+				historicalConvergedSplit = true
+				historicalCleanPathRank = outcome.historicalCleanPathRank
+				historicalLineage = outcome.historicalLineage
+			case historicalConvergedSplit && !outcome.historicalConvergedSplit:
+				// Keep the exact provenance from the converged historical version.
+			case historicalCleanPathRank != outcome.historicalCleanPathRank ||
+				historicalLineage != outcome.historicalLineage:
+				historicalCleanPathRank = CleanPathRankUnknown
+				historicalLineage = 0
+			}
+			if previous.historicalBoundarySplit {
+				historicalForestDeterministic =
+					historicalForestDeterministic && outcome.historicalForestDeterministic
+			}
+		}
 		switch outcome.change {
 		case condenseUnchanged:
 			if !seen {
@@ -496,16 +640,31 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 		}
 		scratch.store(boundaryIndex, seen, reductionBoundaryOutput{
 			key: key, head: out, freshness: freshness, cleanPathRank: cleanPathRank,
-			historicalBoundarySplit: historicalBoundarySplit,
+			historicalBoundarySplit:       historicalBoundarySplit,
+			historicalConvergedSplit:      historicalConvergedSplit,
+			historicalForestDeterministic: historicalForestDeterministic,
+			historicalCleanPathRank:       historicalCleanPathRank,
+			historicalLineage:             historicalLineage,
 		})
 	}
 	for _, output := range scratch.boundaries {
+		historicalProvenance := HistoricalBoundaryNone
+		switch {
+		case output.historicalConvergedSplit:
+			historicalProvenance = HistoricalBoundaryConverged
+		case output.historicalBoundarySplit && output.historicalForestDeterministic:
+			historicalProvenance = HistoricalBoundaryDeterministic
+		case output.historicalBoundarySplit:
+			historicalProvenance = HistoricalBoundaryUnproved
+		}
 		frontier = append(frontier, ReductionOutput{
-			Head:                    output.head,
-			Freshness:               output.freshness,
-			CleanPathRank:           output.cleanPathRank,
-			MultiplePopPaths:        multiPop,
-			HistoricalBoundarySplit: output.historicalBoundarySplit,
+			Head:                         output.head,
+			Freshness:                    output.freshness,
+			CleanPathRank:                output.cleanPathRank,
+			MultiplePopPaths:             multiPop,
+			HistoricalBoundaryProvenance: historicalProvenance,
+			HistoricalCleanPathRank:      output.historicalCleanPathRank,
+			HistoricalCleanPathLineage:   output.historicalLineage,
 		})
 	}
 	phase0AFinishReductionConstruction(c)

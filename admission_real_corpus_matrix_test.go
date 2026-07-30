@@ -215,7 +215,9 @@ func TestAdmissionCandidateRealCorpusMatrix(t *testing.T) {
 			t.Fatal("real-corpus ratchet requires the canonical scope: no language or bucket filters, AWK excluded, and max bytes 16383")
 		}
 		const (
-			minRows     = 110
+			// Pinned Rust has ast.rs at 66,281 bytes and weird-exprs.rs at 6,436 bytes.
+			// This gate excludes ast.rs, so the canonical manifest has 109 rows.
+			minRows     = 109
 			minPass     = 67
 			maxFallback = 33
 			wantSkip    = 10

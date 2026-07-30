@@ -921,13 +921,45 @@ func applyDiagnosticParserCoreCleanPathOutput(
 	header.cleanPathLineage = lineage
 }
 
-func markDiagnosticParserCoreExternalLineage(header *diagnosticParserCoreHeader, token Token) {
+func markDiagnosticParserCoreExternalLineage(
+	header *diagnosticParserCoreHeader,
+	token Token,
+) {
 	if header == nil || !token.ExternalScannerToken ||
 		header.cleanPathRank == core.CleanPathRankNotApplicable {
 		return
 	}
 	header.cleanPathRank = core.CleanPathRankUnknown
 	header.cleanPathLineage = 0
+}
+
+func (s *diagnosticParserCoreGenericScheduler) persistHeaderLineageOwned(
+	owner core.SchedulerTransactionToken,
+) error {
+	for _, header := range s.headers {
+		if header.creationSeq >= math.MaxUint32 {
+			return errors.New("parser-core phase zero: scheduler lineage overflow")
+		}
+		if err := s.compact.RecordHeadOwnerOwned(
+			owner,
+			header.head,
+			uint32(header.creationSeq)+1,
+		); err != nil {
+			return err
+		}
+		if !header.convergedReductionSplit {
+			continue
+		}
+		if err := s.compact.RecordHeadLineageOwned(
+			owner,
+			header.head,
+			header.cleanPathRank,
+			header.cleanPathLineage,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func diagnosticParserCoreCheckpointDigest(compact *core.Core, id core.CheckpointID) ([32]byte, error) {
@@ -996,6 +1028,10 @@ func diagnosticParserCoreHeaderReceipts(compact *core.Core, headers []diagnostic
 }
 
 func validateDiagnosticParserCoreCell(token Token, actions core.ActionRow) error {
+	return validateDiagnosticParserCoreCellWithRepetitionFork(token, actions, false)
+}
+
+func validateDiagnosticParserCoreCellWithRepetitionFork(token Token, actions core.ActionRow, allowRepetitionFork bool) error {
 	if token.NoLookahead {
 		return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreRoute, detail: "no-lookahead tokens require production recovery semantics"}
 	}
@@ -1005,6 +1041,9 @@ func validateDiagnosticParserCoreCell(token Token, actions core.ActionRow) error
 	for ordinal := 0; ordinal < actions.Len(); ordinal++ {
 		action := actions.At(ordinal)
 		if action.Repetition {
+			if _, ok := diagnosticParserCoreSingleReduceRepetitionShiftOrdinal(actions); allowRepetitionFork && ok {
+				continue
+			}
 			return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreRoute, detail: "repetition shifts require production frontier suppression semantics"}
 		}
 		if action.ExtraChain {
@@ -1118,6 +1157,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 	classified core.ClassifiedBoundary,
 	branchOrder uint64,
 	nextCleanPathLineage *uint16,
+	allowRepetitionFork bool,
 	collectReceipts bool,
 	scratch *diagnosticParserCoreConflictScratch,
 ) (diagnosticParserCoreConflictExecution, error) {
@@ -1133,7 +1173,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 			return diagnosticParserCoreConflictExecution{}, err
 		}
 	}
-	if err := validateDiagnosticParserCoreCell(token, actions); err != nil {
+	if err := validateDiagnosticParserCoreCellWithRepetitionFork(token, actions, allowRepetitionFork); err != nil {
 		return diagnosticParserCoreConflictExecution{}, err
 	}
 	if actions.Len() < 2 {
@@ -1728,6 +1768,7 @@ const (
 	diagnosticParserCoreCellSelectionNone diagnosticParserCoreCellSelection = iota
 	diagnosticParserCoreCellSelectionConflictPolicy
 	diagnosticParserCoreCellSelectionRepetitionFold
+	diagnosticParserCoreCellSelectionRepetitionFork
 )
 
 type diagnosticParserCoreGenericCell struct {
@@ -1762,6 +1803,9 @@ func (cell *diagnosticParserCoreGenericCell) kind() core.ActionRowKind {
 	if cell.selectedBy == diagnosticParserCoreCellSelectionRepetitionFold {
 		return core.ActionRowReduce
 	}
+	if cell.selectedBy == diagnosticParserCoreCellSelectionRepetitionFork {
+		return core.ActionRowConflict
+	}
 	return cell.descriptor().Kind()
 }
 func (cell *diagnosticParserCoreGenericCell) selectedActionOrdinal() int {
@@ -1773,6 +1817,7 @@ func (cell *diagnosticParserCoreGenericCell) selectedActionOrdinal() int {
 
 func (cell *diagnosticParserCoreGenericCell) selectsConflictReduction() bool {
 	return cell.selectedBy != diagnosticParserCoreCellSelectionNone &&
+		cell.selectedBy != diagnosticParserCoreCellSelectionRepetitionFork &&
 		cell.actions().At(cell.selectedActionOrdinal()).Type == core.ActionReduce
 }
 
@@ -1803,6 +1848,12 @@ func diagnosticParserCoreRepetitionFoldOrdinal(language *Language, actions core.
 		diagnosticParserCoreRepetitionFoldOptOut[language.Name] {
 		return 0, false
 	}
+	return diagnosticParserCoreSingleReduceRepetitionShiftOrdinal(actions)
+}
+
+// diagnosticParserCoreSingleReduceRepetitionShiftOrdinal identifies the exact
+// two-arm row that production either folds or keeps as one conflict fork.
+func diagnosticParserCoreSingleReduceRepetitionShiftOrdinal(actions core.ActionRow) (int, bool) {
 	reduceOrdinal := -1
 	shiftFound := false
 	for ordinal := 0; ordinal < actions.Len(); ordinal++ {
@@ -2064,6 +2115,9 @@ func executeDiagnosticParserCoreGenericSchedulerFromSeedInto(
 			return compact.RunFreshSchedulerSession(func(owner core.SchedulerTransactionToken) error {
 				scheduler.freshSessionOwner = &owner
 				defer func() { scheduler.freshSessionOwner = nil }()
+				if err := scheduler.persistHeaderLineageOwned(owner); err != nil {
+					return err
+				}
 				return scheduler.run()
 			})
 		}
@@ -2772,6 +2826,11 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				if ordinal, ok := diagnosticParserCoreRepetitionFoldOrdinal(s.tokenSource.language, actions); ok {
 					cell.selectedOrdinal = ordinal
 					cell.selectedBy = diagnosticParserCoreCellSelectionRepetitionFold
+				} else if _, ok := diagnosticParserCoreSingleReduceRepetitionShiftOrdinal(actions); ok &&
+					cRepetitionSkipOptOut[s.tokenSource.language.Name] {
+					// Production keeps both arms for a language with a proven
+					// fold counterexample. Use the existing conflict executor.
+					cell.selectedBy = diagnosticParserCoreCellSelectionRepetitionFork
 				}
 			}
 		}
@@ -3265,17 +3324,20 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 	if err != nil {
 		return err
 	}
-	hasConvergedHistory := false
+	hasMultiplePopPaths := false
 	for _, output := range outputs {
-		if output.MultiplePopPaths || output.HistoricalBoundarySplit {
-			hasConvergedHistory = true
+		if output.MultiplePopPaths {
+			hasMultiplePopPaths = true
 			break
 		}
 	}
-	var cleanPathLineage uint16
-	if hasConvergedHistory {
-		cleanPathLineage, err = nextDiagnosticParserCoreCleanPathLineage(&s.nextCleanPathLineage)
+	var reductionLineage uint16
+	if hasMultiplePopPaths {
+		reductionLineage, err = nextDiagnosticParserCoreCleanPathLineage(&s.nextCleanPathLineage)
 		if err != nil {
+			return err
+		}
+		if err := s.compact.RecordReductionLineageOwned(owner, outputs, reductionLineage); err != nil {
 			return err
 		}
 	}
@@ -3284,15 +3346,24 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 	replacements := s.reductionReplacements
 	madeFreshProgress := false
 	for _, output := range outputs {
-		convergedHistory := output.MultiplePopPaths || output.HistoricalBoundarySplit
+		convergedHistory := output.MultiplePopPaths ||
+			output.HistoricalBoundaryProvenance == core.HistoricalBoundaryConverged ||
+			output.HistoricalBoundaryProvenance == core.HistoricalBoundaryUnproved
+		rank := output.CleanPathRank
+		lineage := reductionLineage
+		if !output.MultiplePopPaths &&
+			output.HistoricalBoundaryProvenance == core.HistoricalBoundaryConverged {
+			rank = output.HistoricalCleanPathRank
+			lineage = output.HistoricalCleanPathLineage
+		}
 		switch output.Freshness {
 		case core.ReductionUnchanged:
 			if convergedHistory {
 				if _, err := s.adoptUpdatedReductionSibling(
 					cell.headerIndex,
 					output.Head,
-					output.CleanPathRank,
-					cleanPathLineage,
+					rank,
+					lineage,
 					true,
 				); err != nil {
 					return err
@@ -3308,8 +3379,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 			adopted, err := s.adoptUpdatedReductionSibling(
 				cell.headerIndex,
 				output.Head,
-				output.CleanPathRank,
-				cleanPathLineage,
+				rank,
+				lineage,
 				convergedHistory,
 			)
 			if err != nil {
@@ -3324,7 +3395,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		replacement.paused = false
 		replacement.shifted = token.NoLookahead
 		replacement.convergedReductionSplit = replacement.convergedReductionSplit || convergedHistory
-		applyDiagnosticParserCoreCleanPathOutput(&replacement, output.CleanPathRank, cleanPathLineage)
+		applyDiagnosticParserCoreCleanPathOutput(&replacement, rank, lineage)
 		if len(replacements) > 0 {
 			if s.nextSeq == math.MaxUint64 {
 				return errors.New("parser-core phase zero: reduction creation sequence overflow")
@@ -3355,6 +3426,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 	s.work.Reductions++
 	s.work.Dispatches++
 	if err := s.canonicalize(); err != nil {
+		return err
+	}
+	if err := s.persistHeaderLineageOwned(owner); err != nil {
 		return err
 	}
 	if s.fullReceipts() {
@@ -3507,7 +3581,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner c
 	defer s.conflictScratch.finish()
 	execution, err := executeDiagnosticParserCoreGenericConflictDetailed(
 		s.compact, owner, s.headers[cell.headerIndex], cell.headerIndex, cell.dispatchToken(s.token), cell.boundary,
-		s.branchOrder, &s.nextCleanPathLineage, s.fullReceipts(), &s.conflictScratch,
+		s.branchOrder, &s.nextCleanPathLineage,
+		cell.selectedBy == diagnosticParserCoreCellSelectionRepetitionFork,
+		s.fullReceipts(), &s.conflictScratch,
 	)
 	if err != nil {
 		return err
@@ -3601,6 +3677,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner c
 	s.work.ConflictHeads += uint64(outputCount)
 	s.work.Dispatches++
 	if err := s.canonicalize(); err != nil {
+		return err
+	}
+	if err := s.persistHeaderLineageOwned(owner); err != nil {
 		return err
 	}
 	roundIndex := -1
@@ -3747,6 +3826,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 	if err := s.canonicalize(); err != nil {
 		return err
 	}
+	if err := s.persistHeaderLineageOwned(owner); err != nil {
+		return err
+	}
 	roundIndex := -1
 	if s.fullReceipts() {
 		actions := make([]DiagnosticParserCoreRoundAction, len(cells))
@@ -3834,6 +3916,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 		}
 		s.work.Dispatches += uint64(len(cells))
 		if err := s.canonicalize(); err != nil {
+			return err
+		}
+		if err := s.persistHeaderLineageOwned(owner); err != nil {
 			return err
 		}
 		roundIndex := -1
@@ -4326,6 +4411,9 @@ func applyParserCoreConflictActionInto(
 	if len(outputs) != 0 && outputs[0].MultiplePopPaths {
 		lineage, err = nextDiagnosticParserCoreCleanPathLineage(nextCleanPathLineage)
 		if err != nil {
+			return nil, outputs, err
+		}
+		if err := compact.RecordReductionLineageOwned(owner, outputs, lineage); err != nil {
 			return nil, outputs, err
 		}
 	}
