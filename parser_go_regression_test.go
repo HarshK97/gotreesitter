@@ -1,6 +1,7 @@
 package gotreesitter_test
 
 import (
+	"bytes"
 	"os"
 	"testing"
 
@@ -13,9 +14,14 @@ func TestIssue490GoGrammarRegression(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const start, end, repeats = 60255, 68583, 8
+	const fragmentBytes, repeats = 8328, 8
+	start := bytes.Index(data, []byte("func TestReduceOutputsAggregatesFreshnessPerFinalBoundary"))
+	if start < 0 {
+		t.Fatal("Go regression fixture marker is absent")
+	}
+	end := start + fragmentBytes
 	if len(data) < end {
-		t.Fatalf("fixture length = %d, want at least %d", len(data), end)
+		t.Fatalf("fixture bytes after marker = %d, want at least %d", len(data)-start, fragmentBytes)
 	}
 	source := append([]byte("package p\n"), data[start:end]...)
 	fragment := append([]byte(nil), data[start:end]...)

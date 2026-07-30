@@ -163,7 +163,7 @@ func TestParserCoreFreshFullRunnerResetsAfterCap(t *testing.T) {
 		t.Fatalf("capped parse tree=%v err=%v, want fail-closed dispatch cap", tree != nil, err)
 	}
 
-	runner.options = options
+	runner.options.MaxDispatches = options.MaxDispatches
 	tree, err := runner.parse(fixture.Source)
 	if err != nil {
 		t.Fatalf("parse after cap did not reset reusable state: %v", err)

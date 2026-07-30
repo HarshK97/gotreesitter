@@ -1,7 +1,8 @@
 # Compact route real-corpus matrix
 
-Current evidence date: 2026-07-29.
-Current base commit: `50bbcf7e` from `main`.
+Current evidence date: 2026-07-30.
+Current base commit: `83548f55` from `main`.
+Current candidate base commit: `44e0a0fc`.
 
 ## Current bounded result
 
@@ -9,32 +10,31 @@ The bounded matrix completed with no silent divergence.
 
 | Status | Files |
 |---|---:|
-| PASS | 66 |
-| FALLBACK | 33 |
+| PASS | 70 |
+| FALLBACK | 30 |
 | SKIP | 10 |
 | DIVERGE | 0 |
 | ERROR | 0 |
-| Total | 109 |
+| Total | 110 |
 
-The corpus manifest contains 146 verified files across 50 languages.
+The corpus manifest contains 147 verified files across 50 languages.
 This run selected files smaller than 16,384 bytes and excluded AWK.
 The AWK medium file needs a separate slow-path budget.
 
-The direct route served 61 percent of the selected files.
+The direct route served 64 percent of the selected files.
 Production served every fallback and every ineligible file.
 
 ## Current fallback taxonomy
 
-The 33 fallbacks divide into 18 clean production trees and 15 production error trees.
+The 30 fallbacks divide into 15 clean production trees and 15 production error trees.
 
 | Class | Clean | Error tree | Total | Exact trigger |
 |---|---:|---:|---:|---|
 | Recovery handoff | 0 | 13 | 13 | The elected token has no table action at end-of-file. |
 | Selected-lineage ownership | 11 | 1 | 12 | A converged split drop lacks one selected-lineage proof. |
 | Certified repetition conflicts | 3 | 0 | 3 | The generic scheduler declines a repetition shift. |
-| Shared cap ranking | 3 | 0 | 3 | One shared boundary has nine live links under the cap of eight. |
 | Acceptance-frontier ownership | 1 | 1 | 2 | The end-of-file frontier has more than one active head. |
-| Total | 18 | 15 | 33 | |
+| Total | 15 | 15 | 30 | |
 
 The recovery handoff class contains these witnesses:
 
@@ -62,8 +62,13 @@ The selected-lineage class contains these witnesses:
 - TSX
 
 The repetition class contains one C# file and two Haskell files.
-The shared cap class contains Go module, OCaml, and Rust files.
 The acceptance class contains one Bash file and one Markdown file.
+
+The scheduler now scopes each condense action to live headers.
+It no longer counts removed versions against the shared link cap.
+This retires the prior Go module, OCaml, and Rust shared-cap witnesses.
+The live scope retains discarded boundary history as split provenance.
+Both Perl witnesses remain on the production route without an exact lineage proof.
 
 ## Class prerequisites
 
@@ -75,9 +80,6 @@ An artifact certificate can authorize only a pinned grammar with C-oracle eviden
 
 Certified repetition conflicts need one reusable conflict rule or exact artifact evidence.
 Do not add a grammar-name branch to the scheduler.
-
-Shared cap ranking must identify the production-selected live link before a drop.
-Raising the cap alone does not prove selection.
 
 Post-accept continuation must preserve an accepted result while live end-of-file reductions finish.
 The Markdown continuation reaches score 160 and branch 8.
@@ -107,7 +109,7 @@ It enabled ratchet mode, excluded AWK, and set the maximum file size to 16,383 b
 That corpus manifest contained 147 verified files across 50 languages.
 The run selected files smaller than 16,384 bytes and excluded AWK.
 Its manifest included one additional Elm highlight file.
-The current 146-file manifest does not include that generated file.
+The current manifest includes that generated file.
 
 That receipt also recorded this 206-language smoke scorecard:
 
@@ -213,7 +215,7 @@ After volatile fields are removed, the hash is
 The tracked [Elm fixture](../testdata/admission_direct/elm_highlight_basic.elm)
 protects this source when the generated corpus directory is absent.
 
-The historical ratchet enforced these bounds:
+The canonical ratchet enforces these bounds:
 
 - At least 110 selected rows.
 - At least 67 direct PASS rows.
@@ -283,6 +285,7 @@ Run this command from the repository root:
 
 ```sh
 GTS_ADMISSION_REAL_CORPUS=1 \
+GTS_ADMISSION_REAL_CORPUS_RATCHET=1 \
 GTS_ADMISSION_REAL_CORPUS_EXCLUDE_LANGS=awk \
 GTS_ADMISSION_REAL_CORPUS_MAX_BYTES=16383 \
 GTS_ADMISSION_CENSUS=1 \
@@ -296,8 +299,8 @@ GOMAXPROCS=1 go test . \
 The test reads `cgo_harness/corpus_real/manifest.json` by default.
 Use `GTS_ADMISSION_REAL_CORPUS_MANIFEST` to select another manifest.
 
-Do not add ratchet mode when you reproduce the current 109-row receipt.
-At `088e6e12`, ratchet mode still expects the historical 110-row bounds.
+Add ratchet mode when you reproduce the current 110-row receipt.
+The current result satisfies the canonical 110-row bounds.
 
 Use these optional filters:
 
@@ -320,10 +323,10 @@ Use these optional filters:
 | d | 1 | 1 | 0 |
 | dart | 0 | 2 | 0 |
 | elixir | 2 | 1 | 0 |
-| elm | 2 | 0 | 0 |
+| elm | 3 | 0 | 0 |
 | erlang | 2 | 0 | 0 |
 | go | 2 | 0 | 0 |
-| gomod | 1 | 2 | 0 |
+| gomod | 2 | 1 | 0 |
 | graphql | 3 | 0 | 0 |
 | haskell | 0 | 2 | 0 |
 | hcl | 2 | 0 | 0 |
@@ -340,14 +343,14 @@ Use these optional filters:
 | markdown | 1 | 1 | 0 |
 | nix | 3 | 0 | 0 |
 | objc | 1 | 1 | 0 |
-| ocaml | 1 | 1 | 0 |
+| ocaml | 2 | 0 | 0 |
 | perl | 1 | 2 | 0 |
 | php | 1 | 2 | 0 |
 | powershell | 1 | 1 | 0 |
 | python | 2 | 0 | 0 |
 | r | 3 | 0 | 0 |
 | ruby | 2 | 0 | 0 |
-| rust | 0 | 1 | 0 |
+| rust | 1 | 0 | 0 |
 | scala | 0 | 2 | 0 |
 | scss | 2 | 0 | 0 |
 | sql | 1 | 2 | 0 |
@@ -396,7 +399,7 @@ The current manifest has these properties:
 
 - 50 declared languages
 - 50 languages with selected files
-- 146 files
+- 147 files
 - No missing files
 - No size mismatches
 - No SHA-256 mismatches

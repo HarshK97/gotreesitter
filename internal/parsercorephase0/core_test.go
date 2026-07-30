@@ -368,6 +368,113 @@ func TestDefaultLiveLinkCapRejectsNinthDistinctLink(t *testing.T) {
 	}
 }
 
+func TestLiveCondenseCandidatesDropsSequentialVersionHistory(t *testing.T) {
+	compact := newTinyCoreWithLimits(t, Limits{MaxLinksPerBoundary: 2})
+	compact.diagnostics.foldSamePredecessorShallowPayloads = false
+	seed, _ := compact.Seed(1, 0)
+	payload, _ := compact.appendSubtree(subtreeRecord{symbol: 1, terminal: true, endByte: 1}, nil, nil, nil)
+	key := compact.boundaryKey(2, 1)
+	var first, second Head
+	var secondOutcome condenseOutcome
+	err := compact.ApplySchedulerAtomic(func(_ SchedulerTransactionToken) error {
+		var err error
+		first, err = compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 1})
+		if err != nil {
+			return err
+		}
+		first, err = compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 2})
+		if err != nil {
+			return err
+		}
+		return compact.runLiveCondenseCandidates(nil, func() error {
+			secondOutcome, err = compact.condenseWithOutcome(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 3})
+			second = secondOutcome.head
+			return err
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("sequential versions share one physical head: %+v", first)
+	}
+	if !secondOutcome.historicalBoundarySplit {
+		t.Fatal("sequential version replacement lost historical boundary split provenance")
+	}
+	record, err := compact.node(second.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.linkCount != 1 {
+		t.Fatalf("second sequential version links = %d, want 1", record.linkCount)
+	}
+}
+
+func TestLiveCondenseCandidatesMergesActiveHead(t *testing.T) {
+	compact := newTinyCoreWithLimits(t, Limits{MaxLinksPerBoundary: 2})
+	compact.diagnostics.foldSamePredecessorShallowPayloads = false
+	seed, _ := compact.Seed(1, 0)
+	payload, _ := compact.appendSubtree(subtreeRecord{symbol: 1, terminal: true, endByte: 1}, nil, nil, nil)
+	key := compact.boundaryKey(2, 1)
+	var active, merged Head
+	err := compact.ApplySchedulerAtomic(func(_ SchedulerTransactionToken) error {
+		var err error
+		active, err = compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 1})
+		if err != nil {
+			return err
+		}
+		candidates := []CondenseCandidate{{Head: active}}
+		return compact.runLiveCondenseCandidates(candidates, func() error {
+			merged, err = compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 2})
+			return err
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := compact.node(merged.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.linkCount != 2 {
+		t.Fatalf("merged active candidate links = %d, want 2", record.linkCount)
+	}
+}
+
+func TestLiveCondenseCandidatesPreservesSameDispatchMergeOrder(t *testing.T) {
+	compact := newTinyCoreWithLimits(t, Limits{MaxLinksPerBoundary: 2})
+	compact.diagnostics.foldSamePredecessorShallowPayloads = false
+	seed, _ := compact.Seed(1, 0)
+	payload, _ := compact.appendSubtree(subtreeRecord{symbol: 1, terminal: true, endByte: 1}, nil, nil, nil)
+	key := compact.boundaryKey(2, 1)
+	var head Head
+	err := compact.ApplySchedulerAtomic(func(_ SchedulerTransactionToken) error {
+		return compact.runLiveCondenseCandidates(nil, func() error {
+			if _, err := compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 1}); err != nil {
+				return err
+			}
+			var err error
+			head, err = compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 2})
+			return err
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := compact.node(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inline [inlineAdjacencyCapacity]linkRecord
+	links, err := compact.publishedNodeLinksInto(inline[:0], *record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 2 || links[0].scoreDelta != 1 || links[1].scoreDelta != 2 {
+		t.Fatalf("same-dispatch link order = %+v, want score deltas [1 2]", links)
+	}
+}
+
 func TestExtraShiftWithZeroTargetRetainsCurrentState(t *testing.T) {
 	tables := &fakeTable{
 		actions: map[tableCell][]Action{

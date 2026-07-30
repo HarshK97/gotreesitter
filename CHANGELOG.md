@@ -21,11 +21,18 @@ for tags and release notes while still in `0.x`.
   Tree-sitter cannot start Node. The command help and README list both
   prerequisites.
 
-- The canonical compact real-corpus matrix now records 66 direct routes,
-  33 fallbacks, exactly 10 skips, and no divergence or error.
-  The bounded current receipt covers 109 rows.
+- The canonical compact real-corpus matrix now records 70 direct routes,
+  30 fallbacks, exactly 10 skips, and no divergence or error.
+  The bounded current receipt covers 110 rows.
 
 ### Performance
+
+- Live-header scoping reduces compact full-parse allocation counts by
+  11.27 percent on the 235,626-byte Go fixture.
+  Allocated bytes fall by 26.64 percent.
+  Parse time remains statistically unchanged for that fixture.
+  The rewrite fixture regresses by 19.99 percent.
+  The query-compile fixture regresses by 15.77 percent.
 
 - The parser now skips four redundant source reconstruction passes for
   certified isolated C# recovered roots.
@@ -123,6 +130,10 @@ for tags and release notes while still in `0.x`.
   The grammar uses the dedicated function-signature separator.
   Generic automatic-semicolon behavior remains unchanged.
   This fixes [issue #540](https://github.com/odvcencio/gotreesitter/issues/540).
+
+- Compact reductions now merge only with live scheduler headers.
+  Removed historical versions no longer consume the shared boundary link cap.
+  This retires four real-corpus fallbacks without a tree divergence.
 
 - Shared DFA token election now prefers one composable close angle over a
   wider close-angle token.
