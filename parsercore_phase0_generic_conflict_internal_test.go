@@ -129,6 +129,58 @@ func TestDiagnosticParserCoreGenericRepetitionFoldReducesWithoutFork(t *testing.
 	}
 }
 
+func TestDiagnosticParserCoreGenericRepetitionForkMatchesProductionOptOut(t *testing.T) {
+	table := &genericConflictTable{
+		cells: map[genericConflictCell][]core.Action{
+			{state: 1, symbol: 9}: {
+				{Type: core.ActionShift, State: 3, Repetition: true},
+				{Type: core.ActionReduce, Symbol: 4},
+			},
+		},
+		gotos: map[genericConflictCell]core.StateID{
+			{state: 1, symbol: 4}: 2,
+		},
+	}
+	compact, err := core.New(table, core.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduler := &diagnosticParserCoreGenericScheduler{
+		compact:     compact,
+		tokenSource: &dfaTokenSource{language: &Language{Name: "haskell"}},
+		headers:     []diagnosticParserCoreHeader{{head: head}},
+		token:       Token{Symbol: 9, EndByte: 1},
+		options: DiagnosticParserCorePrefixOptions{
+			MaxDispatches: 8,
+			ReceiptMode:   DiagnosticParserCoreReceiptFull,
+		},
+		receipt: &DiagnosticParserCoreGenericScheduler{},
+	}
+	stop, err := scheduler.dispatchPass()
+	if err != nil || stop != nil {
+		t.Fatalf("repetition fork stop=%+v err=%v", stop, err)
+	}
+	if len(scheduler.headers) != 2 || scheduler.work.Conflicts != 1 ||
+		scheduler.work.Forks != 1 || scheduler.work.RepetitionFolds != 0 {
+		t.Fatalf("repetition fork headers=%d work=%+v", len(scheduler.headers), scheduler.work)
+	}
+	got := make(map[StateID]uint32, 2)
+	for _, header := range scheduler.headers {
+		state, byteOffset, err := compact.Boundary(header.head)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got[StateID(state)] = byteOffset
+	}
+	if got[2] != 0 || got[3] != 1 {
+		t.Fatalf("repetition fork boundaries=%v, want reduce state 2 at byte 0 and shift state 3 at byte 1", got)
+	}
+}
+
 func TestDiagnosticParserCoreGenericConflictPolicySelectsRepetitionReduce(t *testing.T) {
 	table := &genericConflictTable{
 		cells: map[genericConflictCell][]core.Action{
