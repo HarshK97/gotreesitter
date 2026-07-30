@@ -3004,43 +3004,105 @@ func (p *Parser) reduceForkTemporaryParentErrorCost(arena *nodeArena, parentSymb
 	return cost
 }
 
+type rawStackWalkEntry struct {
+	entry         stackEntry
+	shapeRef      rawShapeRef
+	shapeRefKnown bool
+}
+
+func rawShapeForStackWalkEntry(arena *nodeArena, item rawStackWalkEntry) (*rawShape, rawShapeRef, bool) {
+	ref := stackEntryRawShapeRef(item.entry)
+	if item.shapeRefKnown {
+		ref = item.shapeRef
+	}
+	if ref == 0 {
+		return nil, 0, false
+	}
+	shape, ok := arena.rawShapeForRef(ref)
+	return shape, ref, ok
+}
+
+func rawStackWalkChildAt(arena *nodeArena, item rawStackWalkEntry, i int) (rawStackWalkEntry, bool) {
+	if shape, parentRef, ok := rawShapeForStackWalkEntry(arena, item); ok {
+		children := arena.rawShapeChildren(shape)
+		if i < 0 || i >= len(children) {
+			return rawStackWalkEntry{}, false
+		}
+		child := children[i]
+		childRef := child.shapeRef()
+		if childRef != 0 && childRef >= parentRef {
+			// Captured child shapes always precede their parent. Treat a
+			// forward or self reference as absent instead of following a
+			// malformed cycle.
+			childRef = 0
+		}
+		entry := child.entry()
+		return rawStackWalkEntry{
+			entry:         entry,
+			shapeRef:      childRef,
+			shapeRefKnown: true,
+		}, stackEntryHasNode(entry)
+	}
+	if item.shapeRefKnown {
+		// A captured zero or invalid reference is authoritative. Do not
+		// follow a later mutable node shape through the packed entry.
+		return rawStackWalkEntry{}, false
+	}
+	if node := stackEntryNode(item.entry); node != nil {
+		child, ok := nodeChildEntryAtNoMaterialize(node, i)
+		return rawStackWalkEntry{entry: child}, ok
+	}
+	if parent := stackEntryPendingParent(item.entry); parent != nil {
+		child := parent.childEntry(arena, i)
+		return rawStackWalkEntry{entry: child}, stackEntryHasNode(child)
+	}
+	return rawStackWalkEntry{}, false
+}
+
 func (p *Parser) rawStackEntryErrorCost(arena *nodeArena, entry stackEntry) uint32 {
-	if !stackEntryHasNode(entry) {
-		return 0
-	}
-	if stackEntryNodeIsMissing(entry) && stackEntryNodeChildCount(entry) == 0 {
-		return cErrCostPerMissingTree + cErrCostPerRecovery
-	}
 	var cost uint32
-	childCount := stackEntryNodeChildCount(entry)
-	for i := 0; i < childCount; i++ {
-		child, ok := rawStackEntryChildAt(arena, entry, i)
-		if !ok {
+	pending := []rawStackWalkEntry{{entry: entry}}
+	for len(pending) > 0 {
+		last := len(pending) - 1
+		item := pending[last]
+		pending = pending[:last]
+		if !stackEntryHasNode(item.entry) {
 			continue
 		}
-		cost += p.rawStackEntryErrorCost(arena, child)
-	}
-	if stackEntryNodeSymbol(entry) == errorSymbol {
+		childCount := stackEntryNodeChildCount(item.entry)
+		if stackEntryNodeIsMissing(item.entry) && childCount == 0 {
+			cost += cErrCostPerMissingTree + cErrCostPerRecovery
+			continue
+		}
+		for i := childCount - 1; i >= 0; i-- {
+			child, ok := rawStackWalkChildAt(arena, item, i)
+			if ok {
+				pending = append(pending, child)
+			}
+		}
+		if stackEntryNodeSymbol(item.entry) != errorSymbol {
+			continue
+		}
 		for i := 0; i < childCount; i++ {
-			child, ok := rawStackEntryChildAt(arena, entry, i)
-			if !ok || stackEntryNodeIsExtra(child) {
+			child, ok := rawStackWalkChildAt(arena, item, i)
+			if !ok || stackEntryNodeIsExtra(child.entry) {
 				continue
 			}
-			if stackEntryNodeSymbol(child) == errorSymbol && stackEntryNodeChildCount(child) == 0 {
+			if stackEntryNodeSymbol(child.entry) == errorSymbol && stackEntryNodeChildCount(child.entry) == 0 {
 				continue
 			}
-			if cSymbolVisibleLang(p.language, stackEntryNodeSymbol(child)) {
+			if cSymbolVisibleLang(p.language, stackEntryNodeSymbol(child.entry)) {
 				cost += cErrCostPerSkippedTree
-			} else if count := p.rawStackEntryVisibleChildCount(arena, child); count > 0 {
+			} else if count := p.rawStackWalkVisibleChildCount(arena, child); count > 0 {
 				cost += cErrCostPerSkippedTree * uint32(count)
 			}
 		}
 		bytes := uint32(0)
 		rows := uint32(0)
-		if endByte, startByte := stackEntryNodeEndByte(entry), stackEntryNodeStartByte(entry); endByte > startByte {
+		if endByte, startByte := stackEntryNodeEndByte(item.entry), stackEntryNodeStartByte(item.entry); endByte > startByte {
 			bytes = endByte - startByte
 		}
-		if endPoint, startPoint := stackEntryNodeEndPoint(entry), stackEntryNodeStartPoint(entry); endPoint.Row > startPoint.Row {
+		if endPoint, startPoint := stackEntryNodeEndPoint(item.entry), stackEntryNodeStartPoint(item.entry); endPoint.Row > startPoint.Row {
 			rows = endPoint.Row - startPoint.Row
 		}
 		cost += cErrCostPerRecovery + cErrCostPerSkippedChar*bytes + cErrCostPerSkippedLine*rows
@@ -3049,19 +3111,29 @@ func (p *Parser) rawStackEntryErrorCost(arena *nodeArena, entry stackEntry) uint
 }
 
 func (p *Parser) rawStackEntryVisibleChildCount(arena *nodeArena, entry stackEntry) int {
-	if !stackEntryHasNode(entry) {
-		return 0
-	}
-	if cSymbolVisibleLang(p.language, stackEntryNodeSymbol(entry)) {
-		return 1
-	}
+	return p.rawStackWalkVisibleChildCount(arena, rawStackWalkEntry{entry: entry})
+}
+
+func (p *Parser) rawStackWalkVisibleChildCount(arena *nodeArena, root rawStackWalkEntry) int {
 	count := 0
-	for i, n := 0, stackEntryNodeChildCount(entry); i < n; i++ {
-		child, ok := rawStackEntryChildAt(arena, entry, i)
-		if !ok {
+	pending := []rawStackWalkEntry{root}
+	for len(pending) > 0 {
+		last := len(pending) - 1
+		item := pending[last]
+		pending = pending[:last]
+		if !stackEntryHasNode(item.entry) {
 			continue
 		}
-		count += p.rawStackEntryVisibleChildCount(arena, child)
+		if cSymbolVisibleLang(p.language, stackEntryNodeSymbol(item.entry)) {
+			count++
+			continue
+		}
+		for i := stackEntryNodeChildCount(item.entry) - 1; i >= 0; i-- {
+			child, ok := rawStackWalkChildAt(arena, item, i)
+			if ok {
+				pending = append(pending, child)
+			}
+		}
 	}
 	return count
 }

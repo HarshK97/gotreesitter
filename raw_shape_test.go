@@ -40,6 +40,42 @@ func TestRawShapeChildPacksShapeRefAndRestoresCurrentState(t *testing.T) {
 	}
 }
 
+func TestRawErrorCostUsesCapturedZeroShapeReference(t *testing.T) {
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	parser := testRawShapeParser()
+
+	leaf := newLeafNodeInArena(arena, 3, true, 0, 1, Point{}, Point{Column: 1})
+	parent := newParentNodeInArena(arena, 1, true, []*Node{leaf}, nil, 0)
+	parent.rawShape = parser.captureRawShape(
+		nil,
+		arena,
+		1,
+		0,
+		[]stackEntry{newStackEntryNode(0, parent)},
+		0,
+		1,
+	)
+	if parent.rawShape == 0 {
+		t.Fatal("parent raw shape = 0")
+	}
+	shape, ok := arena.rawShapeForRef(parent.rawShape)
+	if !ok {
+		t.Fatal("parent raw shape is unavailable")
+	}
+	children := arena.rawShapeChildren(shape)
+	if len(children) != 1 || children[0].shapeRef() != 0 {
+		t.Fatalf("captured child shape refs = %+v, want one zero ref", children)
+	}
+
+	if got := parser.rawStackEntryErrorCost(arena, newStackEntryNode(1, parent)); got != 0 {
+		t.Fatalf("raw error cost = %d, want 0", got)
+	}
+	if parent.rawShape == 0 {
+		t.Fatal("raw error-cost walk cleared the live parent shape")
+	}
+}
+
 func testRawShapeParser() *Parser {
 	lang := &Language{
 		Name:        "raw-shape-test",
