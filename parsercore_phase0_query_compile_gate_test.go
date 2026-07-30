@@ -71,12 +71,12 @@ func TestDiagnosticParserCoreSummaryAcceptsExactQueryCompile(t *testing.T) {
 
 	first := runDiagnosticParserCoreQueryCompile(t, fixture)
 	wantWork := core.Work{
-		Shifts: 6685, Reductions: 7440, ReductionPopRequests: 7440,
-		EmittedPopPaths: 8103, EmittedPopPayloads: 14703,
-		PredecessorLinkUnionAttempts: 954, PredecessorLinkUnionDuplicateNoop: 81,
-		PredecessorLinkUnionPrecedenceReplaced: 199, PredecessorLinkUnionAlternateAppended: 674,
-		GraphLinkAdditionsProxy: 14749, LeafConstructionsProxy: 5546,
-		ParentConstructionsProxy: 7537,
+		Shifts: 6685, Reductions: 7509, ReductionPopRequests: 7509,
+		EmittedPopPaths: 8108, EmittedPopPayloads: 14730,
+		PredecessorLinkUnionAttempts: 722, PredecessorLinkUnionDuplicateNoop: 36,
+		PredecessorLinkUnionPrecedenceReplaced: 75, PredecessorLinkUnionAlternateAppended: 611,
+		GraphLinkAdditionsProxy: 14789, LeafConstructionsProxy: 5546,
+		ParentConstructionsProxy: 7542,
 	}
 	if first.Acceptance.CoreWork != wantWork {
 		t.Fatalf("query_compile parser-core work drifted: got=%+v want=%+v", first.Acceptance.CoreWork, wantWork)
