@@ -33,21 +33,18 @@ func TestDiagnosticParserCoreGenericReductionPauseIsFinite(t *testing.T) {
 		cells: map[genericConflictCell][]core.Action{
 			{state: 1, symbol: 8}: {{Type: core.ActionShift, State: 3}},
 			{state: 3, symbol: 9}: {{Type: core.ActionReduce, Symbol: 2, ChildCount: 1}},
-			{state: 8, symbol: 9}: {{Type: core.ActionShift, State: 10}},
+			{state: 4, symbol: 9}: {{Type: core.ActionShift, State: 10}},
 		},
 		gotos: map[genericConflictCell]core.StateID{{state: 1, symbol: 2}: 4},
 	}
 	compact, source := newGenericFreshnessSource(t, table)
-	if outputs, err := compact.ReduceOutputs(source, 9, 0, core.ForkOrder{}); err != nil || len(outputs) != 1 || outputs[0].Freshness != core.ReductionNew {
+	outputs, err := compact.ReduceOutputs(source, 9, 0, core.ForkOrder{})
+	if err != nil || len(outputs) != 1 || outputs[0].Freshness != core.ReductionNew {
 		t.Fatalf("prepopulate outputs=%+v err=%v", outputs, err)
-	}
-	sibling, err := compact.Seed(8, 1)
-	if err != nil {
-		t.Fatal(err)
 	}
 	scheduler := &diagnosticParserCoreGenericScheduler{
 		compact: compact,
-		headers: []diagnosticParserCoreHeader{{head: source, creationSeq: 3}, {head: sibling, creationSeq: 7}},
+		headers: []diagnosticParserCoreHeader{{head: source, creationSeq: 3}, {head: outputs[0].Head, creationSeq: 7}},
 		token:   Token{Symbol: 9, StartByte: 1, EndByte: 2},
 		options: DiagnosticParserCorePrefixOptions{MaxDispatches: 20},
 		receipt: &DiagnosticParserCoreGenericScheduler{},
@@ -74,14 +71,9 @@ func TestDiagnosticParserCoreGenericReductionPauseIsFinite(t *testing.T) {
 	}
 
 	sole := &diagnosticParserCoreGenericScheduler{
-		compact: compact, headers: []diagnosticParserCoreHeader{{head: source}},
+		compact: compact, headers: []diagnosticParserCoreHeader{{head: source, paused: true}},
 		token:   Token{Symbol: 9, StartByte: 1, EndByte: 2},
 		options: DiagnosticParserCorePrefixOptions{MaxDispatches: 20}, receipt: &DiagnosticParserCoreGenericScheduler{},
-	}
-	soleBefore, _ := diagnosticParserCoreHeaderReceipts(compact, sole.headers)
-	soleCell := mustDiagnosticParserCoreGenericCell(t, compact, 0, sole.headers[0], 9)
-	if err := sole.applyGenericReduction(soleBefore, soleCell); err != nil {
-		t.Fatal(err)
 	}
 	stop, err := sole.dispatchPass()
 	if err != nil || stop == nil || stop.boundary != DiagnosticParserCoreNoAction ||
@@ -177,7 +169,7 @@ func TestDiagnosticParserCoreUpdatedReductionAdoptsActiveSibling(t *testing.T) {
 	}
 	scheduler := &diagnosticParserCoreGenericScheduler{
 		compact: compact,
-		headers: []diagnosticParserCoreHeader{{head: high, creationSeq: 3}, {head: lowOutputs[0].Head, creationSeq: 11, paused: true}},
+		headers: []diagnosticParserCoreHeader{{head: high, creationSeq: 3}, {head: lowOutputs[0].Head, creationSeq: 11}},
 		token:   Token{Symbol: 9, StartByte: 1, EndByte: 2}, nextSeq: math.MaxUint64,
 		options: DiagnosticParserCorePrefixOptions{MaxDispatches: 20}, receipt: &DiagnosticParserCoreGenericScheduler{},
 	}

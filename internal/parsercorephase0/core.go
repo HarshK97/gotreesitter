@@ -373,6 +373,21 @@ type nodeRecord struct {
 	pathCount  uint64
 }
 
+type nodeLineageRecord struct {
+	owner     uint32
+	lineage   uint16
+	rank      CleanPathRankSelection
+	converged bool
+}
+
+type nodeLineageMutation struct {
+	node      NodeID
+	owner     uint32
+	lineage   uint16
+	rank      CleanPathRankSelection
+	converged bool
+}
+
 type linkRecord struct {
 	scoreDelta int64
 	order      uint64
@@ -574,40 +589,44 @@ type RawSelectedCensus struct {
 // Core is the compact, persistent diagnostic graph. All records are indexes
 // into pointer-free slices; the production parser is unaffected.
 type Core struct {
-	tables              TableView
-	plans               ReductionPlanProvider
-	selectedProvider    SelectedStorePolicyProvider
-	selectedPolicy      *SelectedStorePolicy
-	limits              Limits
-	diagnostics         diagnosticOptions
-	nodes               []nodeRecord
-	nodeCheckpoints     []CheckpointID
-	links               []linkRecord
-	subtrees            []subtreeRecord
-	externalProvenance  []externalPayloadProvenance
-	children            []SubtreeID
-	fields              []FieldMapEntry
-	aliases             []Symbol
-	frontier            uint64
-	checkpoint          CheckpointID
-	checkpoints         checkpointInterner
-	boundaries          boundaryIndex
-	boundaryJournal     []boundaryMutation
-	condenseCandidates  []CondenseCandidate
-	condenseNewNode     NodeID
-	condenseScopeActive bool
-	transactions        []uint64
-	nextTransaction     uint64
-	classificationPhase uint64
-	work                Work
-	popScratch          popEnumerationScratch
-	reductionScratch    reductionOutputScratch
-	cohortHeadScratch   []Head
-	factorLinkScratch   []linkRecord
-	selectedBuild       selectedStoreBuildScratch
-	selectedPoolMu      sync.Mutex
-	selectedPool        selectedStoreBacking
-	schedulerFrame      schedulerTransactionFrame
+	tables                TableView
+	plans                 ReductionPlanProvider
+	selectedProvider      SelectedStorePolicyProvider
+	selectedPolicy        *SelectedStorePolicy
+	limits                Limits
+	diagnostics           diagnosticOptions
+	nodes                 []nodeRecord
+	nodeLineages          []nodeLineageRecord
+	nodeCheckpoints       []CheckpointID
+	links                 []linkRecord
+	subtrees              []subtreeRecord
+	externalProvenance    []externalPayloadProvenance
+	children              []SubtreeID
+	fields                []FieldMapEntry
+	aliases               []Symbol
+	frontier              uint64
+	checkpoint            CheckpointID
+	checkpoints           checkpointInterner
+	boundaries            boundaryIndex
+	boundaryJournal       []boundaryMutation
+	nodeLineageJournal    []nodeLineageMutation
+	condenseCandidates    []CondenseCandidate
+	condenseNewNode       NodeID
+	condenseScopeActive   bool
+	reductionSourceOwner  uint32
+	transactions          []uint64
+	nextTransaction       uint64
+	classificationPhase   uint64
+	work                  Work
+	popScratch            popEnumerationScratch
+	reductionScratch      reductionOutputScratch
+	historicalNodeScratch []NodeID
+	cohortHeadScratch     []Head
+	factorLinkScratch     []linkRecord
+	selectedBuild         selectedStoreBuildScratch
+	selectedPoolMu        sync.Mutex
+	selectedPool          selectedStoreBacking
+	schedulerFrame        schedulerTransactionFrame
 	// metadataConstructionAuthenticated remains true only while every compact
 	// subtree was published through the authenticated shift/reduction seams.
 	// Diagnostic generic publication clears it monotonically until Reset.
@@ -684,14 +703,15 @@ type diagnosticOptions struct {
 }
 
 type checkpoint struct {
-	nodes, nodeCheckpoints, links, subtrees, externalProvenance int
-	children, fields, aliases                                   int
-	frontier                                                    uint64
-	checkpoint                                                  CheckpointID
-	boundaryIndex                                               boundaryIndexSnapshot
-	journal                                                     int
-	transaction                                                 uint64
-	work                                                        Work
+	nodes, nodeLineages, nodeCheckpoints, links, subtrees, externalProvenance int
+	children, fields, aliases                                                 int
+	frontier                                                                  uint64
+	checkpoint                                                                CheckpointID
+	boundaryIndex                                                             boundaryIndexSnapshot
+	journal                                                                   int
+	nodeLineageJournal                                                        int
+	transaction                                                               uint64
+	work                                                                      Work
 }
 
 // SchedulerTransactionToken is an opaque capability for one active
@@ -729,14 +749,17 @@ func (c *Core) markInto(mark *checkpoint) {
 	}
 	c.nextTransaction++
 	*mark = checkpoint{
-		nodes: len(c.nodes), links: len(c.links), subtrees: len(c.subtrees),
+		nodes: len(c.nodes), nodeLineages: len(c.nodeLineages),
+		links: len(c.links), subtrees: len(c.subtrees),
 		nodeCheckpoints:    len(c.nodeCheckpoints),
 		externalProvenance: len(c.externalProvenance),
 		children:           len(c.children), fields: len(c.fields), aliases: len(c.aliases),
 		frontier: c.frontier, checkpoint: c.checkpoint,
-		boundaryIndex: c.boundaries.snapshot(),
-		journal:       len(c.boundaryJournal), transaction: c.nextTransaction,
-		work: c.work,
+		boundaryIndex:      c.boundaries.snapshot(),
+		journal:            len(c.boundaryJournal),
+		nodeLineageJournal: len(c.nodeLineageJournal),
+		transaction:        c.nextTransaction,
+		work:               c.work,
 	}
 	c.transactions = append(c.transactions, mark.transaction)
 	parent := uint64(0)
@@ -763,6 +786,7 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 	}
 	c.classificationPhase++
 	c.nodes = c.nodes[:mark.nodes]
+	c.nodeLineages = c.nodeLineages[:mark.nodeLineages]
 	c.nodeCheckpoints = c.nodeCheckpoints[:mark.nodeCheckpoints]
 	c.links = c.links[:mark.links]
 	c.subtrees = c.subtrees[:mark.subtrees]
@@ -777,9 +801,22 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 		mutation := c.boundaryJournal[index]
 		mutation.slots[mutation.index] = mutation.previous
 	}
+	for index := len(c.nodeLineageJournal) - 1; index >= mark.nodeLineageJournal; index-- {
+		mutation := c.nodeLineageJournal[index]
+		nodeIndex := int(mutation.node) - 1
+		if nodeIndex < 0 || nodeIndex >= len(c.nodes) {
+			continue
+		}
+		c.nodeLineages[nodeIndex].owner = mutation.owner
+		c.nodeLineages[nodeIndex].lineage = mutation.lineage
+		c.nodeLineages[nodeIndex].rank = mutation.rank
+		c.nodeLineages[nodeIndex].converged = mutation.converged
+	}
 	c.boundaries.restore(mark.boundaryIndex)
 	clear(c.boundaryJournal[mark.journal:])
 	c.boundaryJournal = c.boundaryJournal[:mark.journal]
+	clear(c.nodeLineageJournal[mark.nodeLineageJournal:])
+	c.nodeLineageJournal = c.nodeLineageJournal[:mark.nodeLineageJournal]
 	phase0AObserveRollback(c, mark.transaction, phase0ATakeRollbackCause(c))
 	c.finishTransaction()
 }
@@ -809,6 +846,8 @@ func (c *Core) finishTransaction() {
 	if len(c.transactions) == 0 {
 		clear(c.boundaryJournal)
 		c.boundaryJournal = c.boundaryJournal[:0]
+		clear(c.nodeLineageJournal)
+		c.nodeLineageJournal = c.nodeLineageJournal[:0]
 	}
 }
 
@@ -1062,6 +1101,7 @@ func (c *Core) Reset() error {
 	}
 	c.classificationPhase++
 	c.nodes = c.nodes[:0]
+	c.nodeLineages = c.nodeLineages[:0]
 	c.nodeCheckpoints = c.nodeCheckpoints[:0]
 	c.links = c.links[:0]
 	c.subtrees = c.subtrees[:0]
@@ -1075,13 +1115,17 @@ func (c *Core) Reset() error {
 	c.boundaries.reset()
 	clear(c.boundaryJournal)
 	c.boundaryJournal = c.boundaryJournal[:0]
+	clear(c.nodeLineageJournal)
+	c.nodeLineageJournal = c.nodeLineageJournal[:0]
 	c.clearLiveCondenseCandidates()
+	c.reductionSourceOwner = 0
 	c.transactions = c.transactions[:0]
 	c.nextTransaction = 0
 	c.schedulerFrame.clearInactive()
 	c.work = Work{}
 	c.popScratch.resetLogical()
 	c.reductionScratch.finish()
+	c.historicalNodeScratch = c.historicalNodeScratch[:0]
 	c.metadataConstructionAuthenticated = true
 	c.reduceConflictContext = false
 	c.reduceNoLookaheadContext = false
@@ -1189,6 +1233,7 @@ func (c *Core) Seed(state StateID, byteOffset uint32) (Head, error) {
 	}
 	if err := c.publishBoundary(probe, id); err != nil {
 		c.nodes = c.nodes[:len(c.nodes)-1]
+		c.nodeLineages = c.nodeLineages[:len(c.nodeLineages)-1]
 		if !c.externalPayloadsQuiescent {
 			c.nodeCheckpoints = c.nodeCheckpoints[:len(c.nodeCheckpoints)-1]
 		}
@@ -1487,25 +1532,42 @@ const (
 	CleanPathRankUnknown
 )
 
+// HistoricalBoundaryProvenance classifies one retired boundary version.
+// Deterministic versions contain no fragile or converged forest. Converged
+// versions retain selected-lineage provenance. Unproved versions fail closed.
+type HistoricalBoundaryProvenance uint8
+
+const (
+	HistoricalBoundaryNone HistoricalBoundaryProvenance = iota
+	HistoricalBoundaryDeterministic
+	HistoricalBoundaryConverged
+	HistoricalBoundaryUnproved
+)
+
 // ReductionOutput is one final canonical boundary and its aggregate freshness
-// relative to the boundary map at entry to ReduceOutputs. HistoricalBoundarySplit
-// reports a stale canonical boundary that live scoping excluded.
+// relative to the boundary map at entry to ReduceOutputs.
 type ReductionOutput struct {
-	Head                    Head
-	Freshness               ReductionFreshness
-	CleanPathRank           CleanPathRankSelection
-	MultiplePopPaths        bool
-	HistoricalBoundarySplit bool
+	Head                         Head
+	Freshness                    ReductionFreshness
+	CleanPathRank                CleanPathRankSelection
+	MultiplePopPaths             bool
+	HistoricalBoundaryProvenance HistoricalBoundaryProvenance
+	HistoricalCleanPathRank      CleanPathRankSelection
+	HistoricalCleanPathLineage   uint16
 }
 
 const inlineReductionBoundaryOutputs = 2
 
 type reductionBoundaryOutput struct {
-	key                     boundaryKey
-	head                    Head
-	freshness               ReductionFreshness
-	cleanPathRank           CleanPathRankSelection
-	historicalBoundarySplit bool
+	key                           boundaryKey
+	head                          Head
+	freshness                     ReductionFreshness
+	cleanPathRank                 CleanPathRankSelection
+	historicalBoundarySplit       bool
+	historicalConvergedSplit      bool
+	historicalForestDeterministic bool
+	historicalCleanPathRank       CleanPathRankSelection
+	historicalLineage             uint16
 }
 
 // reductionOutputScratch owns the ephemeral aggregation state for one
@@ -1946,9 +2008,13 @@ const (
 )
 
 type condenseOutcome struct {
-	head                    Head
-	change                  condenseChange
-	historicalBoundarySplit bool
+	head                          Head
+	change                        condenseChange
+	historicalBoundarySplit       bool
+	historicalConvergedSplit      bool
+	historicalForestDeterministic bool
+	historicalCleanPathRank       CleanPathRankSelection
+	historicalLineage             uint16
 }
 
 func (c *Core) condense(key boundaryKey, in linkInput) (Head, error) {
@@ -1983,8 +2049,28 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 	}
 	probe, oldID := c.boundaries.probe(boundaryIdentityFromKey(key))
 	historicalBoundarySplit := false
+	var historicalCleanPathRank CleanPathRankSelection
+	var historicalLineage uint16
+	historicalConvergedSplit := false
+	historicalForestDeterministic := false
 	if probe.found && !c.condenseNodeIsLive(oldID) {
 		historicalBoundarySplit = true
+		old, oldErr := c.nodeLineage(oldID)
+		if oldErr != nil {
+			return condenseOutcome{}, oldErr
+		}
+		if old.owner != 0 && old.owner == c.reductionSourceOwner {
+			historicalForestDeterministic = true
+		} else {
+			deterministic, deterministicErr := c.historicalForestIsDeterministic(oldID, in)
+			if deterministicErr != nil {
+				return condenseOutcome{}, deterministicErr
+			}
+			historicalForestDeterministic = deterministic
+			historicalCleanPathRank = old.rank
+			historicalLineage = old.lineage
+			historicalConvergedSplit = old.converged
+		}
 		oldID = 0
 	}
 	var old nodeRecord
@@ -2013,7 +2099,11 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 				}
 				return condenseOutcome{
 					head: Head{Node: oldID}, change: condenseUnchanged,
-					historicalBoundarySplit: historicalBoundarySplit,
+					historicalBoundarySplit:       historicalBoundarySplit,
+					historicalConvergedSplit:      historicalConvergedSplit,
+					historicalForestDeterministic: historicalForestDeterministic,
+					historicalCleanPathRank:       historicalCleanPathRank,
+					historicalLineage:             historicalLineage,
 				}, nil
 			}
 		}
@@ -2213,13 +2303,88 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 	}
 	return condenseOutcome{
 		head: Head{Node: id}, change: change,
-		historicalBoundarySplit: historicalBoundarySplit,
+		historicalBoundarySplit:       historicalBoundarySplit,
+		historicalConvergedSplit:      historicalConvergedSplit,
+		historicalForestDeterministic: historicalForestDeterministic,
+		historicalCleanPathRank:       historicalCleanPathRank,
+		historicalLineage:             historicalLineage,
 	}, nil
 }
 
 func (c *Core) linkEqualInput(link linkRecord, in linkInput) (bool, error) {
 	return link.prev == in.prev && link.payload == in.payload && link.scoreDelta == in.scoreDelta &&
 		link.hasOrder() == in.order.Present && (!link.hasOrder() || link.order == in.order.Value), nil
+}
+
+func (c *Core) historicalForestIsDeterministic(oldID NodeID, in linkInput) (bool, error) {
+	incomingPayload, err := c.subtree(in.payload)
+	if err != nil {
+		return false, err
+	}
+	if incomingPayload.fragile {
+		return false, nil
+	}
+	oldDeterministic, err := c.graphVersionIsDeterministic(oldID)
+	if err != nil || !oldDeterministic {
+		return oldDeterministic, err
+	}
+	return c.graphVersionIsDeterministic(in.prev)
+}
+
+func (c *Core) graphVersionIsDeterministic(root NodeID) (bool, error) {
+	stack := c.historicalNodeScratch[:0]
+	stack = append(stack, root)
+	defer func() {
+		clear(stack)
+		c.historicalNodeScratch = stack[:0]
+	}()
+	var visits uint64
+	for len(stack) != 0 {
+		if visits >= uint64(c.limits.MaxNodes) {
+			return false, nil
+		}
+		visits++
+		last := len(stack) - 1
+		id := stack[last]
+		stack = stack[:last]
+		node, err := c.node(id)
+		if err != nil {
+			return false, err
+		}
+		provenance, err := c.nodeLineage(id)
+		if err != nil {
+			return false, err
+		}
+		if provenance.converged {
+			return false, nil
+		}
+		linkID := LinkID(node.firstLink)
+		for count := uint32(0); count < node.linkCount; count++ {
+			if linkID == 0 || uint64(linkID) > uint64(len(c.links)) {
+				return false, errors.New("parser-core phase zero: historical forest has an invalid link")
+			}
+			link := c.links[linkID-1]
+			payload, err := c.subtree(link.payload)
+			if err != nil {
+				return false, err
+			}
+			if payload.fragile {
+				return false, nil
+			}
+			if link.prev >= id {
+				return false, errors.New("parser-core phase zero: historical forest predecessor is not earlier than its node")
+			}
+			stack = append(stack, link.prev)
+			linkID = link.next
+		}
+		if linkID != 0 {
+			return false, errors.New("parser-core phase zero: historical forest has excess links")
+		}
+		if node.linkCount == 0 && node.firstLink != 0 {
+			return false, errors.New("parser-core phase zero: empty historical forest node has a link")
+		}
+	}
+	return true, nil
 }
 
 type shallowPayloadClass struct {
@@ -3862,6 +4027,7 @@ func (c *Core) appendNodeAt(r nodeRecord, checkpoint CheckpointID) (NodeID, erro
 		return 0, err
 	}
 	c.nodes = append(c.nodes, r)
+	c.nodeLineages = append(c.nodeLineages, nodeLineageRecord{})
 	if !c.externalPayloadsQuiescent {
 		c.nodeCheckpoints = append(c.nodeCheckpoints, checkpoint)
 	}
@@ -3996,6 +4162,13 @@ func (c *Core) node(id NodeID) (*nodeRecord, error) {
 		return nil, fmt.Errorf("parser-core phase zero: invalid node id %d", id)
 	}
 	return &c.nodes[id-1], nil
+}
+
+func (c *Core) nodeLineage(id NodeID) (*nodeLineageRecord, error) {
+	if id == 0 || uint64(id) > uint64(len(c.nodeLineages)) {
+		return nil, fmt.Errorf("parser-core phase zero: invalid node lineage id %d", id)
+	}
+	return &c.nodeLineages[id-1], nil
 }
 
 func (c *Core) subtree(id SubtreeID) (*subtreeRecord, error) {
