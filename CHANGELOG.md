@@ -21,8 +21,8 @@ for tags and release notes while still in `0.x`.
   Tree-sitter cannot start Node. The command help and README list both
   prerequisites.
 
-- The canonical compact real-corpus matrix now records 71 direct routes,
-  29 fallbacks, exactly 10 skips, and no divergence or error.
+- The canonical compact real-corpus matrix now records 70 direct routes,
+  30 fallbacks, exactly 10 skips, and no divergence or error.
   The bounded current receipt covers 110 rows.
 
 ### Performance

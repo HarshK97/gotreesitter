@@ -1488,21 +1488,24 @@ const (
 )
 
 // ReductionOutput is one final canonical boundary and its aggregate freshness
-// relative to the boundary map at entry to ReduceOutputs.
+// relative to the boundary map at entry to ReduceOutputs. HistoricalBoundarySplit
+// reports a stale canonical boundary that live scoping excluded.
 type ReductionOutput struct {
-	Head             Head
-	Freshness        ReductionFreshness
-	CleanPathRank    CleanPathRankSelection
-	MultiplePopPaths bool
+	Head                    Head
+	Freshness               ReductionFreshness
+	CleanPathRank           CleanPathRankSelection
+	MultiplePopPaths        bool
+	HistoricalBoundarySplit bool
 }
 
 const inlineReductionBoundaryOutputs = 2
 
 type reductionBoundaryOutput struct {
-	key           boundaryKey
-	head          Head
-	freshness     ReductionFreshness
-	cleanPathRank CleanPathRankSelection
+	key                     boundaryKey
+	head                    Head
+	freshness               ReductionFreshness
+	cleanPathRank           CleanPathRankSelection
+	historicalBoundarySplit bool
 }
 
 // reductionOutputScratch owns the ephemeral aggregation state for one
@@ -1943,8 +1946,9 @@ const (
 )
 
 type condenseOutcome struct {
-	head   Head
-	change condenseChange
+	head                    Head
+	change                  condenseChange
+	historicalBoundarySplit bool
 }
 
 func (c *Core) condense(key boundaryKey, in linkInput) (Head, error) {
@@ -1978,7 +1982,9 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 		return condenseOutcome{}, err
 	}
 	probe, oldID := c.boundaries.probe(boundaryIdentityFromKey(key))
+	historicalBoundarySplit := false
 	if probe.found && !c.condenseNodeIsLive(oldID) {
+		historicalBoundarySplit = true
 		oldID = 0
 	}
 	var old nodeRecord
@@ -2005,7 +2011,10 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 				if phase0AEnabled {
 					phase0AObserveCandidateDrop(c, key, in, oldID, index, phase0ATransitionDuplicateDrop)
 				}
-				return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, nil
+				return condenseOutcome{
+					head: Head{Node: oldID}, change: condenseUnchanged,
+					historicalBoundarySplit: historicalBoundarySplit,
+				}, nil
 			}
 		}
 		if c.diagnostics.foldSamePredecessorShallowPayloads {
@@ -2202,7 +2211,10 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 		change = condenseUpdated
 		c.recordLinkUnionAlternateAppended()
 	}
-	return condenseOutcome{head: Head{Node: id}, change: change}, nil
+	return condenseOutcome{
+		head: Head{Node: id}, change: change,
+		historicalBoundarySplit: historicalBoundarySplit,
+	}, nil
 }
 
 func (c *Core) linkEqualInput(link linkRecord, in linkInput) (bool, error) {

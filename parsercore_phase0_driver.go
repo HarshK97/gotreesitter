@@ -3265,8 +3265,15 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 	if err != nil {
 		return err
 	}
+	hasConvergedHistory := false
+	for _, output := range outputs {
+		if output.MultiplePopPaths || output.HistoricalBoundarySplit {
+			hasConvergedHistory = true
+			break
+		}
+	}
 	var cleanPathLineage uint16
-	if len(outputs) != 0 && outputs[0].MultiplePopPaths {
+	if hasConvergedHistory {
 		cleanPathLineage, err = nextDiagnosticParserCoreCleanPathLineage(&s.nextCleanPathLineage)
 		if err != nil {
 			return err
@@ -3277,9 +3284,10 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 	replacements := s.reductionReplacements
 	madeFreshProgress := false
 	for _, output := range outputs {
+		convergedHistory := output.MultiplePopPaths || output.HistoricalBoundarySplit
 		switch output.Freshness {
 		case core.ReductionUnchanged:
-			if output.MultiplePopPaths {
+			if convergedHistory {
 				if _, err := s.adoptUpdatedReductionSibling(
 					cell.headerIndex,
 					output.Head,
@@ -3302,7 +3310,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 				output.Head,
 				output.CleanPathRank,
 				cleanPathLineage,
-				output.MultiplePopPaths,
+				convergedHistory,
 			)
 			if err != nil {
 				return err
@@ -3315,7 +3323,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		replacement.head = output.Head
 		replacement.paused = false
 		replacement.shifted = token.NoLookahead
-		replacement.convergedReductionSplit = replacement.convergedReductionSplit || output.MultiplePopPaths
+		replacement.convergedReductionSplit = replacement.convergedReductionSplit || convergedHistory
 		applyDiagnosticParserCoreCleanPathOutput(&replacement, output.CleanPathRank, cleanPathLineage)
 		if len(replacements) > 0 {
 			if s.nextSeq == math.MaxUint64 {
@@ -3718,16 +3726,13 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 				return errors.New("parser-core phase zero: ordinary shift selection is not an ordinary shift")
 			}
 			token := cell.dispatchToken(s.token)
-			var head core.Head
-			var err error
 			shifted := core.Token{
 				Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte, External: token.ExternalScannerToken,
 			}
-			if index == 0 {
-				head, err = s.compact.ShiftClassifiedWithLiveCondenseCandidatesOwned(owner, nil, cell.boundary, ordinal, shifted, core.ForkOrder{})
-			} else {
-				head, err = s.compact.ShiftClassifiedOwned(owner, cell.boundary, ordinal, shifted, core.ForkOrder{})
-			}
+			head, err := s.compact.ShiftClassifiedWithLiveCondenseCandidatesOwned(
+				owner, s.collectCondenseCandidates(cell.headerIndex),
+				cell.boundary, ordinal, shifted, core.ForkOrder{},
+			)
 			if err != nil {
 				return err
 			}

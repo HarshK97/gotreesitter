@@ -369,20 +369,26 @@ func TestDefaultLiveLinkCapRejectsNinthDistinctLink(t *testing.T) {
 }
 
 func TestLiveCondenseCandidatesDropsSequentialVersionHistory(t *testing.T) {
-	compact := newTinyCoreWithLimits(t, Limits{MaxLinksPerBoundary: 1})
+	compact := newTinyCoreWithLimits(t, Limits{MaxLinksPerBoundary: 2})
 	compact.diagnostics.foldSamePredecessorShallowPayloads = false
 	seed, _ := compact.Seed(1, 0)
 	payload, _ := compact.appendSubtree(subtreeRecord{symbol: 1, terminal: true, endByte: 1}, nil, nil, nil)
 	key := compact.boundaryKey(2, 1)
 	var first, second Head
+	var secondOutcome condenseOutcome
 	err := compact.ApplySchedulerAtomic(func(_ SchedulerTransactionToken) error {
 		var err error
 		first, err = compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 1})
 		if err != nil {
 			return err
 		}
+		first, err = compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 2})
+		if err != nil {
+			return err
+		}
 		return compact.runLiveCondenseCandidates(nil, func() error {
-			second, err = compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 2})
+			secondOutcome, err = compact.condenseWithOutcome(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 3})
+			second = secondOutcome.head
 			return err
 		})
 	})
@@ -391,6 +397,9 @@ func TestLiveCondenseCandidatesDropsSequentialVersionHistory(t *testing.T) {
 	}
 	if first == second {
 		t.Fatalf("sequential versions share one physical head: %+v", first)
+	}
+	if !secondOutcome.historicalBoundarySplit {
+		t.Fatal("sequential version replacement lost historical boundary split provenance")
 	}
 	record, err := compact.node(second.Node)
 	if err != nil {

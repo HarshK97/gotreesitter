@@ -1,8 +1,8 @@
 # Compact route real-corpus matrix
 
-Current evidence date: 2026-07-29.
+Current evidence date: 2026-07-30.
 Current base commit: `83548f55` from `main`.
-Current candidate commit: `44e0a0fc`.
+Current candidate base commit: `44e0a0fc`.
 
 ## Current bounded result
 
@@ -10,8 +10,8 @@ The bounded matrix completed with no silent divergence.
 
 | Status | Files |
 |---|---:|
-| PASS | 71 |
-| FALLBACK | 29 |
+| PASS | 70 |
+| FALLBACK | 30 |
 | SKIP | 10 |
 | DIVERGE | 0 |
 | ERROR | 0 |
@@ -21,20 +21,20 @@ The corpus manifest contains 147 verified files across 50 languages.
 This run selected files smaller than 16,384 bytes and excluded AWK.
 The AWK medium file needs a separate slow-path budget.
 
-The direct route served 65 percent of the selected files.
+The direct route served 64 percent of the selected files.
 Production served every fallback and every ineligible file.
 
 ## Current fallback taxonomy
 
-The 29 fallbacks divide into 14 clean production trees and 15 production error trees.
+The 30 fallbacks divide into 15 clean production trees and 15 production error trees.
 
 | Class | Clean | Error tree | Total | Exact trigger |
 |---|---:|---:|---:|---|
 | Recovery handoff | 0 | 13 | 13 | The elected token has no table action at end-of-file. |
-| Selected-lineage ownership | 10 | 1 | 11 | A converged split drop lacks one selected-lineage proof. |
+| Selected-lineage ownership | 11 | 1 | 12 | A converged split drop lacks one selected-lineage proof. |
 | Certified repetition conflicts | 3 | 0 | 3 | The generic scheduler declines a repetition shift. |
 | Acceptance-frontier ownership | 1 | 1 | 2 | The end-of-file frontier has more than one active head. |
-| Total | 14 | 15 | 29 | |
+| Total | 15 | 15 | 30 | |
 
 The recovery handoff class contains these witnesses:
 
@@ -57,7 +57,7 @@ The selected-lineage class contains these witnesses:
 - Elixir
 - Julia
 - Kotlin, two files
-- Perl
+- Perl, two files
 - Scala, two files
 - TSX
 
@@ -67,7 +67,8 @@ The acceptance class contains one Bash file and one Markdown file.
 The scheduler now scopes each condense action to live headers.
 It no longer counts removed versions against the shared link cap.
 This retires the prior Go module, OCaml, and Rust shared-cap witnesses.
-The same correction also retires one Perl selected-lineage fallback.
+The live scope retains discarded boundary history as split provenance.
+Both Perl witnesses remain on the production route without an exact lineage proof.
 
 ## Class prerequisites
 
@@ -343,7 +344,7 @@ Use these optional filters:
 | nix | 3 | 0 | 0 |
 | objc | 1 | 1 | 0 |
 | ocaml | 2 | 0 | 0 |
-| perl | 2 | 1 | 0 |
+| perl | 1 | 2 | 0 |
 | php | 1 | 2 | 0 |
 | powershell | 1 | 1 | 0 |
 | python | 2 | 0 | 0 |

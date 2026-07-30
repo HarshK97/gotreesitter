@@ -481,6 +481,7 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 		}
 		freshness := previous.freshness
 		cleanPathRank := mergeCleanPathRank(previous.cleanPathRank, path.cleanPathRank)
+		historicalBoundarySplit := previous.historicalBoundarySplit || outcome.historicalBoundarySplit
 		switch outcome.change {
 		case condenseUnchanged:
 			if !seen {
@@ -495,14 +496,16 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 		}
 		scratch.store(boundaryIndex, seen, reductionBoundaryOutput{
 			key: key, head: out, freshness: freshness, cleanPathRank: cleanPathRank,
+			historicalBoundarySplit: historicalBoundarySplit,
 		})
 	}
 	for _, output := range scratch.boundaries {
 		frontier = append(frontier, ReductionOutput{
-			Head:             output.head,
-			Freshness:        output.freshness,
-			CleanPathRank:    output.cleanPathRank,
-			MultiplePopPaths: multiPop,
+			Head:                    output.head,
+			Freshness:               output.freshness,
+			CleanPathRank:           output.cleanPathRank,
+			MultiplePopPaths:        multiPop,
+			HistoricalBoundarySplit: output.historicalBoundarySplit,
 		})
 	}
 	phase0AFinishReductionConstruction(c)
