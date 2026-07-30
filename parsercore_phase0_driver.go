@@ -1028,6 +1028,10 @@ func diagnosticParserCoreHeaderReceipts(compact *core.Core, headers []diagnostic
 }
 
 func validateDiagnosticParserCoreCell(token Token, actions core.ActionRow) error {
+	return validateDiagnosticParserCoreCellWithRepetitionFork(token, actions, false)
+}
+
+func validateDiagnosticParserCoreCellWithRepetitionFork(token Token, actions core.ActionRow, allowRepetitionFork bool) error {
 	if token.NoLookahead {
 		return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreRoute, detail: "no-lookahead tokens require production recovery semantics"}
 	}
@@ -1037,6 +1041,9 @@ func validateDiagnosticParserCoreCell(token Token, actions core.ActionRow) error
 	for ordinal := 0; ordinal < actions.Len(); ordinal++ {
 		action := actions.At(ordinal)
 		if action.Repetition {
+			if _, ok := diagnosticParserCoreSingleReduceRepetitionShiftOrdinal(actions); allowRepetitionFork && ok {
+				continue
+			}
 			return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreRoute, detail: "repetition shifts require production frontier suppression semantics"}
 		}
 		if action.ExtraChain {
@@ -1150,6 +1157,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 	classified core.ClassifiedBoundary,
 	branchOrder uint64,
 	nextCleanPathLineage *uint16,
+	allowRepetitionFork bool,
 	collectReceipts bool,
 	scratch *diagnosticParserCoreConflictScratch,
 ) (diagnosticParserCoreConflictExecution, error) {
@@ -1165,7 +1173,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 			return diagnosticParserCoreConflictExecution{}, err
 		}
 	}
-	if err := validateDiagnosticParserCoreCell(token, actions); err != nil {
+	if err := validateDiagnosticParserCoreCellWithRepetitionFork(token, actions, allowRepetitionFork); err != nil {
 		return diagnosticParserCoreConflictExecution{}, err
 	}
 	if actions.Len() < 2 {
@@ -1760,6 +1768,7 @@ const (
 	diagnosticParserCoreCellSelectionNone diagnosticParserCoreCellSelection = iota
 	diagnosticParserCoreCellSelectionConflictPolicy
 	diagnosticParserCoreCellSelectionRepetitionFold
+	diagnosticParserCoreCellSelectionRepetitionFork
 )
 
 type diagnosticParserCoreGenericCell struct {
@@ -1794,6 +1803,9 @@ func (cell *diagnosticParserCoreGenericCell) kind() core.ActionRowKind {
 	if cell.selectedBy == diagnosticParserCoreCellSelectionRepetitionFold {
 		return core.ActionRowReduce
 	}
+	if cell.selectedBy == diagnosticParserCoreCellSelectionRepetitionFork {
+		return core.ActionRowConflict
+	}
 	return cell.descriptor().Kind()
 }
 func (cell *diagnosticParserCoreGenericCell) selectedActionOrdinal() int {
@@ -1805,6 +1817,7 @@ func (cell *diagnosticParserCoreGenericCell) selectedActionOrdinal() int {
 
 func (cell *diagnosticParserCoreGenericCell) selectsConflictReduction() bool {
 	return cell.selectedBy != diagnosticParserCoreCellSelectionNone &&
+		cell.selectedBy != diagnosticParserCoreCellSelectionRepetitionFork &&
 		cell.actions().At(cell.selectedActionOrdinal()).Type == core.ActionReduce
 }
 
@@ -1835,6 +1848,12 @@ func diagnosticParserCoreRepetitionFoldOrdinal(language *Language, actions core.
 		diagnosticParserCoreRepetitionFoldOptOut[language.Name] {
 		return 0, false
 	}
+	return diagnosticParserCoreSingleReduceRepetitionShiftOrdinal(actions)
+}
+
+// diagnosticParserCoreSingleReduceRepetitionShiftOrdinal identifies the exact
+// two-arm row that production either folds or keeps as one conflict fork.
+func diagnosticParserCoreSingleReduceRepetitionShiftOrdinal(actions core.ActionRow) (int, bool) {
 	reduceOrdinal := -1
 	shiftFound := false
 	for ordinal := 0; ordinal < actions.Len(); ordinal++ {
@@ -2807,6 +2826,11 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				if ordinal, ok := diagnosticParserCoreRepetitionFoldOrdinal(s.tokenSource.language, actions); ok {
 					cell.selectedOrdinal = ordinal
 					cell.selectedBy = diagnosticParserCoreCellSelectionRepetitionFold
+				} else if _, ok := diagnosticParserCoreSingleReduceRepetitionShiftOrdinal(actions); ok &&
+					cRepetitionSkipOptOut[s.tokenSource.language.Name] {
+					// Production keeps both arms for a language with a proven
+					// fold counterexample. Use the existing conflict executor.
+					cell.selectedBy = diagnosticParserCoreCellSelectionRepetitionFork
 				}
 			}
 		}
@@ -3557,7 +3581,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner c
 	defer s.conflictScratch.finish()
 	execution, err := executeDiagnosticParserCoreGenericConflictDetailed(
 		s.compact, owner, s.headers[cell.headerIndex], cell.headerIndex, cell.dispatchToken(s.token), cell.boundary,
-		s.branchOrder, &s.nextCleanPathLineage, s.fullReceipts(), &s.conflictScratch,
+		s.branchOrder, &s.nextCleanPathLineage,
+		cell.selectedBy == diagnosticParserCoreCellSelectionRepetitionFork,
+		s.fullReceipts(), &s.conflictScratch,
 	)
 	if err != nil {
 		return err
