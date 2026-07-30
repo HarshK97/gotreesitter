@@ -417,6 +417,12 @@ for tags and release notes while still in `0.x`.
 
 ### Removed
 
+- **The Bash command-name concatenation repair.** Native reduction now
+  constructs the complete command name before result compatibility.
+  The historical producer, all result routes, and the isolated C oracle match.
+  The 25-case Bash corpus matches baseline `83548f55` exactly.
+  Three unrelated Bash subpasses remain live.
+
 - **The D template-call type result repair.** Generic result election now
   preserves a visible named unary wrapper over its direct-child alternative.
   Production, forest, incremental, and isolated C-oracle receipts match.
