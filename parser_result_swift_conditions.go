@@ -1,6 +1,6 @@
 package gotreesitter
 
-// Swift control-flow trailing-closure ambiguity recovery (issues #118, #123).
+// Swift control-flow trailing-closure ambiguity recovery (issues #118, #123, #561).
 //
 // The Swift grammar misparses a control-flow header whose expression ends in a
 // value that can take a trailing closure, because the following statement body
@@ -15,6 +15,14 @@ package gotreesitter
 //     function silently collapses to _modifierless_function_declaration_no_body
 //     with the body statements re-homed as siblings — and *without* an ERROR
 //     node, so it can't even be detected as a parse failure.
+//   - for…in with a range iterable, inside a type body, followed by another
+//     method (#561): `class T { func a() { for n in 4...100 { } } func b() {} }`
+//     hits the same trailing-closure absorption, but this time a for_statement
+//     node still forms (nesting the `for` token), so the #123 detection — which
+//     only looks for a `for` token with no for_statement parent — misses it. The
+//     absorption still leaves an ERROR somewhere in the for_statement's subtree
+//     (the swallowed loop body plus whatever the parser glued the next member
+//     onto), so this case is detected by that for_statement's HasError() bit.
 //
 // Swift's real grammar forbids trailing closures in both positions; wrapping the
 // condition / iterable in parentheses removes the ambiguity (`if (x > 0) {…}`,
@@ -94,11 +102,15 @@ func normalizeSwiftRecoveredTrailingClosureConditions(root *Node, source []byte,
 
 // swiftCollectConditionParenInserts walks the (broken) tree with explicit parent
 // tracking and, for every `if`/`while` keyword that failed to form its statement
-// (#118) and every `for` keyword whose loop failed to form a for_statement
-// (#123), computes a `(`/`)` insertion pair around the trailing-closure-ambiguous
-// expression (the condition, or the for…in iterable). The body brace is located
-// by scanning the source forward to the first top-level `{`, skipping comments,
-// strings and bracketed/parenthesised groups.
+// (#118), every `if_statement` whose then-block was swallowed as a trailing
+// closure and whose real `else` landed in an ERROR node instead of the
+// else-clause (#560), every `for` keyword whose loop failed to form a
+// for_statement (#123), and every `for` keyword whose for_statement formed but
+// still carries an ERROR (#561), computes a `(`/`)` insertion pair around the
+// trailing-closure-ambiguous expression (the condition, or the for…in
+// iterable). The body brace is located by scanning the source forward to the
+// first top-level `{`, skipping comments, strings and bracketed/parenthesised
+// groups.
 func swiftCollectConditionParenInserts(root *Node, source []byte, lang *Language) []swiftParenInsert {
 	var inserts []swiftParenInsert
 	seen := make(map[uint32]bool)
@@ -129,10 +141,26 @@ func swiftCollectConditionParenInserts(root *Node, source []byte, lang *Language
 				// the body's matching close brace.
 				swiftCollectIfChainParens(source, n.endByte, add)
 			}
+		case typ == "if_statement":
+			if keywordEnd, ok := swiftIfStatementSwallowedThenBlockKeywordEnd(n, lang); ok {
+				// The condition's last operand absorbed the then-block as a
+				// trailing closure (#560), so the real `else` that follows could
+				// not close this if_statement and was wrapped in an ERROR node
+				// instead — with the block after it reinterpreted as this
+				// if_statement's own body. Bracket the condition the same way as
+				// the orphaned-`if` case above.
+				swiftCollectIfChainParens(source, keywordEnd, add)
+			}
 		case typ == "for" && resultChildCount(n) == 0:
-			// A well-formed loop nests the `for` token inside a for_statement;
-			// a collapsed one leaves it dangling under source_file/ERROR/etc.
-			if parentType != "for_statement" {
+			// A well-formed loop nests the `for` token inside an error-free
+			// for_statement. Two broken shapes both need the same iterable
+			// bracketing: a total collapse leaves the `for` token dangling
+			// under source_file/ERROR/etc (#123), while a partial collapse
+			// (#561) still nests it inside a for_statement, but the loop's
+			// own closing brace was greedily consumed as a trailing closure
+			// on the iterable's upper bound, so the for_statement (and
+			// everything the parser glued on after it) carries an ERROR.
+			if parentType != "for_statement" || (parent != nil && parent.HasError()) {
 				lp, rp, ok := swiftForIterableParenPositions(source, n.endByte)
 				add(lp, rp, ok)
 			}
@@ -143,6 +171,35 @@ func swiftCollectConditionParenInserts(root *Node, source []byte, lang *Language
 	}
 	walk(root, nil)
 	return inserts
+}
+
+// swiftIfStatementSwallowedThenBlockKeywordEnd reports whether if_statement n
+// suffers the #560 collapse: a comparison condition whose last operand takes a
+// parenthesised-member-access argument absorbs the then-block as a trailing
+// closure, so the real `else` keyword that follows cannot close this
+// if_statement and is wrapped in an ERROR node instead — with the block after
+// that ERROR node reinterpreted as this if_statement's own body. On success it
+// returns the byte offset just past this if_statement's own `if` keyword,
+// ready for swiftCollectIfChainParens.
+func swiftIfStatementSwallowedThenBlockKeywordEnd(n *Node, lang *Language) (uint32, bool) {
+	childCount := resultChildCount(n)
+	if childCount == 0 {
+		return 0, false
+	}
+	first := resultChildAt(n, 0)
+	if first == nil || first.Type(lang) != "if" {
+		return 0, false
+	}
+	for i := 1; i < childCount; i++ {
+		child := resultChildAt(n, i)
+		if child == nil || child.Type(lang) != "ERROR" || resultChildCount(child) == 0 {
+			continue
+		}
+		if errFirst := resultChildAt(child, 0); errFirst != nil && errFirst.Type(lang) == "else" {
+			return first.endByte, true
+		}
+	}
+	return 0, false
 }
 
 // swiftCollectIfChainParens brackets the condition of an `if`/`while` header that
