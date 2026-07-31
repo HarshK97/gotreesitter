@@ -385,6 +385,99 @@ func TestSwiftForRangeIterableRecoversFunction(t *testing.T) {
 	}
 }
 
+// TestSwiftForRangeThenMethodRecoversFunction covers issue #561: a for…in loop
+// over a range, nested in a type body, followed by another method. The #123 fix
+// only detects a total collapse (the `for` token left with no for_statement
+// parent); here a for_statement node still forms — its own closing brace is
+// still absorbed as a trailing closure on the range's upper bound, but the
+// method that follows keeps the parser from collapsing cleanly, so it hits an
+// ERROR instead. That ERROR still needs the same iterable-bracketing recovery.
+func TestSwiftForRangeThenMethodRecoversFunction(t *testing.T) {
+	lang := SwiftLanguage()
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"class-closed-range", "class T {\n  func a() {\n    for n in 4...100 {\n    }\n  }\n  func b() {\n  }\n}\n"},
+		{"struct-closed-range", "struct T {\n  func a() {\n    for n in 4...100 {\n    }\n  }\n  func b() {\n  }\n}\n"},
+		{"extension-closed-range", "extension T {\n  func a() {\n    for n in 4...100 {\n    }\n  }\n  func b() {\n  }\n}\n"},
+		{"half-open-range", "class T {\n  func a() {\n    for n in 0..<10 {\n    }\n  }\n  func b() {\n  }\n}\n"},
+		{"identifier-operands", "class T {\n  func a() {\n    for n in a...b {\n    }\n  }\n  func b() {\n  }\n}\n"},
+		{"non-empty-bodies", "class T {\n  func a() {\n    for n in 4...100 { g(n) }\n  }\n  func b() { h() }\n}\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			defer tree.Release()
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("recovered tree still reports error: %s", root.SExpr(lang))
+			}
+			if got, want := root.EndByte(), uint32(len(src)); got != want {
+				t.Fatalf("root end = %d, want %d (span not byte-faithful): %s", got, want, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "function_declaration"); got != 2 {
+				t.Fatalf("function_declaration count = %d, want 2: %s", got, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "for_statement"); got != 1 {
+				t.Fatalf("for_statement count = %d, want 1: %s", got, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "lambda_literal"); got != 0 {
+				t.Fatalf("range upper bound absorbed a trailing closure: %s", root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "tuple_expression"); got != 0 {
+				t.Fatalf("synthetic parenthesis leaked as tuple_expression: %s", root.SExpr(lang))
+			}
+		})
+	}
+}
+
+// TestSwiftForRangeThenMethodCleanVariantsUnaffected guards the shapes from
+// issue #561 that already parse cleanly, so the broadened #561 detection (any
+// for_statement with an ERROR descendant, not just a totally collapsed `for`
+// token) doesn't start rewriting sources that don't need it.
+func TestSwiftForRangeThenMethodCleanVariantsUnaffected(t *testing.T) {
+	lang := SwiftLanguage()
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"no-enclosing-type", "func a() { for n in 4...100 { } }\nfunc b() { }\n"},
+		{"only-one-method", "class T { func a() { for n in 4...100 { } } }\n"},
+		{"iterable-not-a-range", "class T {\n  func a() { for n in xs { } }\n  func b() { }\n}\nlet xs = [1, 2, 3]\n"},
+		{"following-member-is-a-property", "class T {\n  func a() { for n in 4...100 { } }\n  var b = 1\n}\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			defer tree.Release()
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("clean source reported error: %s", root.SExpr(lang))
+			}
+			if got, want := root.EndByte(), uint32(len(src)); got != want {
+				t.Fatalf("root end = %d, want %d (span not byte-faithful): %s", got, want, root.SExpr(lang))
+			}
+			if countSwiftNodeType(lang, root, "for_statement") != 1 {
+				t.Fatalf("expected exactly one for_statement: %s", root.SExpr(lang))
+			}
+			if countSwiftNodeType(lang, root, "tuple_expression") != 0 {
+				t.Fatalf("recovery pass wrapped a clean iterable in tuple_expression: %s", root.SExpr(lang))
+			}
+		})
+	}
+}
+
 // TestSwiftForBareIdentifierUnaffected guards against the recovery pass disturbing
 // a for…in over a bare identifier, which already parses correctly.
 func TestSwiftForBareIdentifierUnaffected(t *testing.T) {
