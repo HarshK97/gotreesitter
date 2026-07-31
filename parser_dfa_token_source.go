@@ -3100,6 +3100,9 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 			return Token{}, false
 		}
 	}
+	if d.shouldDeferSwiftOptionalGenericCloseToDFA(valid, states) {
+		return Token{}, false
+	}
 	if d.shouldDeferFortranExternalEndOfStatementToDFA(valid, states) {
 		return Token{}, false
 	}
@@ -3143,6 +3146,12 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 	}
 	tok.ExternalScannerToken = true
 	tok.ExternalScannerStartByte = uint32(d.lexer.pos)
+	if splitTok, endPos, endRow, endCol, ok := d.splitSwiftWideCloseAngleToken(tok, states); ok {
+		d.lexer.pos = endPos
+		d.lexer.row = endRow
+		d.lexer.col = endCol
+		return splitTok, true
+	}
 
 	if dfaTok, endPos, endRow, endCol, ok := d.preferDFASemicolonOverJSXText(tok, states); ok {
 		d.lexer.pos = endPos
@@ -3157,6 +3166,172 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 	d.lexer.row = tok.EndPoint.Row
 	d.lexer.col = tok.EndPoint.Column
 	return tok, true
+}
+
+// splitSwiftWideCloseAngleToken narrows a run of external `_custom_operator`
+// close-angle characters (">>", ">>>", ">>>>", ...) down to a single `>` when
+// the run is really N adjacent generic closers, e.g. the trailing `>>>` in
+// `A<B<C<Int>>>`. Swift's external scanner has no notion of generic nesting:
+// it greedily lexes any maximal run of `>` bytes as one custom-operator
+// token, so only the parser's own angle-bracket bookkeeping can tell that
+// run apart from a genuine multi-character user operator (Swift lets you
+// declare `infix operator >>> : ...` and use it standalone, e.g. `x >>> y`).
+//
+// hasSwiftUnclosedAngleBefore is the load-bearing guard: it requires at
+// least one unclosed '<' before this run. Without an open generic to close,
+// `x >>> y` must be refused here and left as one _custom_operator token.
+// This function only ever runs for language "swift" (guard below), so Java
+// and JavaScript/TypeScript `>>>`/`>>>=` shift operators never reach it.
+//
+// Known limitation, tracked separately and not fixed here: a run like
+// `>>>?` (close-angle run immediately followed by optional-chaining `?`)
+// isn't handled by this split — the all-'>' check below refuses it as soon
+// as it sees the `?`, so `A<B<C<Int>>>?` still needs its own follow-up fix.
+func (d *dfaTokenSource) splitSwiftWideCloseAngleToken(tok Token, states []StateID) (Token, int, uint32, uint32, bool) {
+	if d == nil || d.language == nil || d.language.Name != "swift" || d.lexer == nil ||
+		tok.EndPoint.Row != tok.StartPoint.Row || tok.EndByte <= tok.StartByte+1 {
+		return tok, 0, 0, 0, false
+	}
+	if len(tok.Text) == 0 {
+		start, end := int(tok.StartByte), int(tok.EndByte)
+		if start < 0 || end > len(d.lexer.source) {
+			return tok, 0, 0, 0, false
+		}
+		tok.Text = bytesToStringNoCopy(d.lexer.source[start:end])
+	}
+	for i := 0; i < len(tok.Text); i++ {
+		if tok.Text[i] != '>' {
+			return tok, 0, 0, 0, false
+		}
+	}
+	if !d.hasSwiftUnclosedAngleBefore(int(tok.StartByte)) {
+		return tok, 0, 0, 0, false
+	}
+	gtSym, ok := d.bestActiveSymbolByName(">")
+	if !ok || gtSym == 0 {
+		return tok, 0, 0, 0, false
+	}
+	// Secondary safety net alongside the angle-depth gate above: if the
+	// parser's own action tables treat the run as a more specific match kept
+	// whole (as the custom operator) than as a lone '>', defer to that
+	// reading. Mirrors the gtSym/shiftSym specificity comparison in
+	// shouldSplitCompactCloseAngleToken.
+	if d.activeActionSpecificity(gtSym) < d.activeActionSpecificity(tok.Symbol) {
+		return tok, 0, 0, 0, false
+	}
+	for _, state := range states {
+		if d.lookupActionIndex(state, gtSym) != 0 {
+			tok.Symbol = gtSym
+			tok.Text = tok.Text[:1]
+			tok.EndByte = tok.StartByte + 1
+			tok.EndPoint = Point{Row: tok.StartPoint.Row, Column: tok.StartPoint.Column + 1}
+			// tok.ExternalScannerToken stays true (it was set by the caller
+			// before this function ran): realTokenAttachmentGapIsParserPadding
+			// (parser.go) relies on that flag to treat the gap between the
+			// previous real token and this narrowed token as scanner padding
+			// rather than a parse error.
+			return tok, int(tok.EndByte), tok.EndPoint.Row, tok.EndPoint.Column, true
+		}
+	}
+	return tok, 0, 0, 0, false
+}
+
+// hasSwiftUnclosedAngleBefore reports whether an unclosed '<' opens before
+// byte pos in the current statement/scope. This is the same "are we inside a
+// generic argument list" heuristic hasJavaUnclosedAngleBefore uses for Java.
+// The scan stops at a statement/scope boundary (; { } ( )) so an operator in
+// one statement is never mistaken for a generic closer left open by an
+// unrelated, already-closed earlier statement.
+func (d *dfaTokenSource) hasSwiftUnclosedAngleBefore(pos int) bool {
+	if d == nil || d.lexer == nil || pos <= 0 {
+		return false
+	}
+	depth := 0
+	for i := pos - 1; i >= 0; i-- {
+		switch d.lexer.source[i] {
+		case ';', '{', '}', '(', ')':
+			return depth > 0
+		case '>':
+			depth--
+		case '<':
+			depth++
+			if depth > 0 {
+				return true
+			}
+		}
+	}
+	return depth > 0
+}
+
+// shouldDeferSwiftOptionalGenericCloseToDFA reports that the byte pair at the
+// lexer position is `>?` and that at least one active state resolves the DFA's
+// plain `>` candidate by reducing a production (closing an open generic
+// argument list), not merely shifting it. A shift-only match means some other
+// live GLR stack reads `>` as the start of an unrelated construct (for
+// example a comparison operator continuing across a line break); deferring
+// there would starve every stack of the external `_custom_operator` token
+// and turn a harmless trailing `>?` into a full parse failure. Requiring a
+// reduce restricts deferral to states where `>` genuinely closes a
+// `type_arguments` list, matching the C tree-sitter behavior of splitting the
+// generic close from the following `?` only in that context.
+//
+// Known limitation: this only recognizes the exact `>?` byte pair. A run of
+// closing angle brackets before the `?` (for example `A<B<Int>>?`) still
+// combines into one external `_custom_operator` token and is out of scope for
+// this fix; see the follow-up issue for the `>`-run-then-`?` family.
+func (d *dfaTokenSource) shouldDeferSwiftOptionalGenericCloseToDFA(valid []bool, states []StateID) bool {
+	if d == nil || d.language == nil || d.lexer == nil || d.lookupActionIndex == nil || d.language.Name != "swift" {
+		return false
+	}
+	pos := d.lexer.pos
+	if pos < 0 || pos+1 >= len(d.lexer.source) || d.lexer.source[pos] != '>' || d.lexer.source[pos+1] != '?' {
+		return false
+	}
+	customOperator := false
+	for i, isValid := range valid {
+		if !isValid || i >= len(d.language.ExternalSymbols) {
+			continue
+		}
+		if d.symbolName(d.language.ExternalSymbols[i]) == "_custom_operator" {
+			customOperator = true
+			break
+		}
+	}
+	if !customOperator {
+		return false
+	}
+	if len(states) == 0 {
+		var single [1]StateID
+		single[0] = d.state
+		states = single[:]
+	}
+	for _, state := range states {
+		cand, endPos, _, _ := d.scanPreferredTokenForState(state)
+		if cand.Symbol == 0 || cand.StartByte != uint32(pos) || endPos <= pos || d.symbolName(cand.Symbol) != ">" {
+			continue
+		}
+		actionIdx := d.lookupActionIndex(state, cand.Symbol)
+		if actionIdx == 0 || int(actionIdx) >= len(d.language.ParseActions) {
+			continue
+		}
+		if d.swiftCloseAngleActionReduces(actionIdx) {
+			return true
+		}
+	}
+	return false
+}
+
+// swiftCloseAngleActionReduces reports that the parse action entry contains a
+// reduce action. A reduce here means the `>` candidate closes an open
+// production (a generic argument list) rather than merely shifting into a
+// state that expects further tokens.
+func (d *dfaTokenSource) swiftCloseAngleActionReduces(actionIdx uint16) bool {
+	for _, a := range d.language.ParseActions[actionIdx].Actions {
+		if a.Type == ParseActionReduce {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *dfaTokenSource) bashGeneratedSyntheticExternalLiteral(valid []bool) (Token, bool) {
