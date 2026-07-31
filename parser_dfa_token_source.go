@@ -3100,6 +3100,9 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 			return Token{}, false
 		}
 	}
+	if d.shouldDeferSwiftOptionalGenericCloseToDFA(valid, states) {
+		return Token{}, false
+	}
 	if d.shouldDeferFortranExternalEndOfStatementToDFA(valid, states) {
 		return Token{}, false
 	}
@@ -3258,6 +3261,77 @@ func (d *dfaTokenSource) hasSwiftUnclosedAngleBefore(pos int) bool {
 		}
 	}
 	return depth > 0
+}
+
+// shouldDeferSwiftOptionalGenericCloseToDFA reports that the byte pair at the
+// lexer position is `>?` and that at least one active state resolves the DFA's
+// plain `>` candidate by reducing a production (closing an open generic
+// argument list), not merely shifting it. A shift-only match means some other
+// live GLR stack reads `>` as the start of an unrelated construct (for
+// example a comparison operator continuing across a line break); deferring
+// there would starve every stack of the external `_custom_operator` token
+// and turn a harmless trailing `>?` into a full parse failure. Requiring a
+// reduce restricts deferral to states where `>` genuinely closes a
+// `type_arguments` list, matching the C tree-sitter behavior of splitting the
+// generic close from the following `?` only in that context.
+//
+// Known limitation: this only recognizes the exact `>?` byte pair. A run of
+// closing angle brackets before the `?` (for example `A<B<Int>>?`) still
+// combines into one external `_custom_operator` token and is out of scope for
+// this fix; see the follow-up issue for the `>`-run-then-`?` family.
+func (d *dfaTokenSource) shouldDeferSwiftOptionalGenericCloseToDFA(valid []bool, states []StateID) bool {
+	if d == nil || d.language == nil || d.lexer == nil || d.lookupActionIndex == nil || d.language.Name != "swift" {
+		return false
+	}
+	pos := d.lexer.pos
+	if pos < 0 || pos+1 >= len(d.lexer.source) || d.lexer.source[pos] != '>' || d.lexer.source[pos+1] != '?' {
+		return false
+	}
+	customOperator := false
+	for i, isValid := range valid {
+		if !isValid || i >= len(d.language.ExternalSymbols) {
+			continue
+		}
+		if d.symbolName(d.language.ExternalSymbols[i]) == "_custom_operator" {
+			customOperator = true
+			break
+		}
+	}
+	if !customOperator {
+		return false
+	}
+	if len(states) == 0 {
+		var single [1]StateID
+		single[0] = d.state
+		states = single[:]
+	}
+	for _, state := range states {
+		cand, endPos, _, _ := d.scanPreferredTokenForState(state)
+		if cand.Symbol == 0 || cand.StartByte != uint32(pos) || endPos <= pos || d.symbolName(cand.Symbol) != ">" {
+			continue
+		}
+		actionIdx := d.lookupActionIndex(state, cand.Symbol)
+		if actionIdx == 0 || int(actionIdx) >= len(d.language.ParseActions) {
+			continue
+		}
+		if d.swiftCloseAngleActionReduces(actionIdx) {
+			return true
+		}
+	}
+	return false
+}
+
+// swiftCloseAngleActionReduces reports that the parse action entry contains a
+// reduce action. A reduce here means the `>` candidate closes an open
+// production (a generic argument list) rather than merely shifting into a
+// state that expects further tokens.
+func (d *dfaTokenSource) swiftCloseAngleActionReduces(actionIdx uint16) bool {
+	for _, a := range d.language.ParseActions[actionIdx].Actions {
+		if a.Type == ParseActionReduce {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *dfaTokenSource) bashGeneratedSyntheticExternalLiteral(valid []bool) (Token, bool) {
