@@ -101,6 +101,26 @@ func TestSwiftNestedGenericCallAdjacentClosers(t *testing.T) {
 	}
 }
 
+func TestSwiftOptionalGenericTypeParses(t *testing.T) {
+	lang := SwiftLanguage()
+	for _, src := range []string{
+		"struct S { internal let kRange: Range<Int>? }",
+		"struct S { let value: Dictionary<String, Int>? }",
+	} {
+		t.Run(src, func(t *testing.T) {
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse([]byte(src))
+			if err != nil {
+				t.Fatalf("parse optional generic type: %v", err)
+			}
+			defer tree.Release()
+			if root := tree.RootNode(); root.HasError() {
+				t.Fatalf("optional generic type has parse errors: %s", root.SExpr(lang))
+			}
+		})
+	}
+}
+
 func TestSwiftRightShiftOperatorUnaffected(t *testing.T) {
 	lang := SwiftLanguage()
 	for _, route := range []struct {
