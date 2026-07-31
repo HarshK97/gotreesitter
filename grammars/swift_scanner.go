@@ -316,7 +316,7 @@ var swtReservedOps = [swtReservedOpCount]string{
 
 // ---------- non-consuming cross-semi characters ----------
 
-var swtNonConsumingCrossSemiChars = [3]rune{'?', ':', '{'}
+var swtNonConsumingCrossSemiChars = [4]rune{'?', ':', '{', ','}
 
 // ---------- parse directive ----------
 
@@ -773,6 +773,7 @@ func swtEatWhitespace(
 	lexer *gotreesitter.ExternalLexer,
 	validSymbols []bool,
 ) (directive int, symbolResult int) {
+	previous := lexer.Previous()
 	wsDirective := swtContinueParsingNothingFound
 	semiIsValid := validSymbols[swtTokImplicitSemi] && validSymbols[swtTokExplicitSemi]
 
@@ -839,6 +840,12 @@ func swtEatWhitespace(
 		// Promote to explicit result.
 		wsDirective = swtStopParsingTokenFound
 		return wsDirective, swtTokImplicitSemi
+	}
+
+	// A comma continues a list across a newline. Do not synthesize a
+	// semicolon before the next constraint in a multiline where clause.
+	if wsDirective == swtContinueParsingTokenFound && previous == ',' {
+		return swtContinueParsingNothingFound, 0
 	}
 
 	// Check non-consuming cross-semi characters.

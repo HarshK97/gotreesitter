@@ -60,6 +60,16 @@ func (l *ExternalLexer) Lookahead() rune {
 	return r
 }
 
+// Previous returns the rune immediately before the current lexer position.
+// It returns 0 at the start of the source or when the previous byte is invalid.
+func (l *ExternalLexer) Previous() rune {
+	if l == nil || l.pos <= 0 || l.pos > len(l.source) {
+		return 0
+	}
+	r, _ := utf8.DecodeLastRune(l.source[:l.pos])
+	return r
+}
+
 // Advance consumes one rune. When skip is true, consumed bytes are excluded
 // from the token span (scanner whitespace skipping behavior).
 func (l *ExternalLexer) Advance(skip bool) {

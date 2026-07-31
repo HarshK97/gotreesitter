@@ -584,3 +584,17 @@ func TestSwiftTernaryFieldsAndShape(t *testing.T) {
 		t.Fatalf("ternary end = %d, want %d", got, want)
 	}
 }
+
+func TestSwiftMultilineExtensionWhereClauseParses(t *testing.T) {
+	lang := SwiftLanguage()
+	src := []byte("extension X: P\nwhere\n  Base: Q,\n  Base.Element: Q\n{\n  func f() {}\n}\n")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse multiline extension where clause: %v", err)
+	}
+	defer tree.Release()
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("multiline extension where clause has parse errors: %s", root.SExpr(lang))
+	}
+}
