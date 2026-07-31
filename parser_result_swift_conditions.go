@@ -1,6 +1,6 @@
 package gotreesitter
 
-// Swift control-flow trailing-closure ambiguity recovery (issues #118, #123).
+// Swift control-flow trailing-closure ambiguity recovery (issues #118, #123, #561).
 //
 // The Swift grammar misparses a control-flow header whose expression ends in a
 // value that can take a trailing closure, because the following statement body
@@ -15,6 +15,14 @@ package gotreesitter
 //     function silently collapses to _modifierless_function_declaration_no_body
 //     with the body statements re-homed as siblings — and *without* an ERROR
 //     node, so it can't even be detected as a parse failure.
+//   - for…in with a range iterable, inside a type body, followed by another
+//     method (#561): `class T { func a() { for n in 4...100 { } } func b() {} }`
+//     hits the same trailing-closure absorption, but this time a for_statement
+//     node still forms (nesting the `for` token), so the #123 detection — which
+//     only looks for a `for` token with no for_statement parent — misses it. The
+//     absorption still leaves an ERROR somewhere in the for_statement's subtree
+//     (the swallowed loop body plus whatever the parser glued the next member
+//     onto), so this case is detected by that for_statement's HasError() bit.
 //
 // Swift's real grammar forbids trailing closures in both positions; wrapping the
 // condition / iterable in parentheses removes the ambiguity (`if (x > 0) {…}`,
@@ -94,11 +102,15 @@ func normalizeSwiftRecoveredTrailingClosureConditions(root *Node, source []byte,
 
 // swiftCollectConditionParenInserts walks the (broken) tree with explicit parent
 // tracking and, for every `if`/`while` keyword that failed to form its statement
-// (#118) and every `for` keyword whose loop failed to form a for_statement
-// (#123), computes a `(`/`)` insertion pair around the trailing-closure-ambiguous
-// expression (the condition, or the for…in iterable). The body brace is located
-// by scanning the source forward to the first top-level `{`, skipping comments,
-// strings and bracketed/parenthesised groups.
+// (#118), every `if_statement` whose then-block was swallowed as a trailing
+// closure and whose real `else` landed in an ERROR node instead of the
+// else-clause (#560), every `for` keyword whose loop failed to form a
+// for_statement (#123), and every `for` keyword whose for_statement formed but
+// still carries an ERROR (#561), computes a `(`/`)` insertion pair around the
+// trailing-closure-ambiguous expression (the condition, or the for…in
+// iterable). The body brace is located by scanning the source forward to the
+// first top-level `{`, skipping comments, strings and bracketed/parenthesised
+// groups.
 func swiftCollectConditionParenInserts(root *Node, source []byte, lang *Language) []swiftParenInsert {
 	var inserts []swiftParenInsert
 	seen := make(map[uint32]bool)
@@ -129,10 +141,26 @@ func swiftCollectConditionParenInserts(root *Node, source []byte, lang *Language
 				// the body's matching close brace.
 				swiftCollectIfChainParens(source, n.endByte, add)
 			}
+		case typ == "if_statement":
+			if keywordEnd, ok := swiftIfStatementSwallowedThenBlockKeywordEnd(n, lang); ok {
+				// The condition's last operand absorbed the then-block as a
+				// trailing closure (#560), so the real `else` that follows could
+				// not close this if_statement and was wrapped in an ERROR node
+				// instead — with the block after it reinterpreted as this
+				// if_statement's own body. Bracket the condition the same way as
+				// the orphaned-`if` case above.
+				swiftCollectIfChainParens(source, keywordEnd, add)
+			}
 		case typ == "for" && resultChildCount(n) == 0:
-			// A well-formed loop nests the `for` token inside a for_statement;
-			// a collapsed one leaves it dangling under source_file/ERROR/etc.
-			if parentType != "for_statement" {
+			// A well-formed loop nests the `for` token inside an error-free
+			// for_statement. Two broken shapes both need the same iterable
+			// bracketing: a total collapse leaves the `for` token dangling
+			// under source_file/ERROR/etc (#123), while a partial collapse
+			// (#561) still nests it inside a for_statement, but the loop's
+			// own closing brace was greedily consumed as a trailing closure
+			// on the iterable's upper bound, so the for_statement (and
+			// everything the parser glued on after it) carries an ERROR.
+			if parentType != "for_statement" || (parent != nil && parent.HasError()) {
 				lp, rp, ok := swiftForIterableParenPositions(source, n.endByte)
 				add(lp, rp, ok)
 			}
@@ -143,6 +171,35 @@ func swiftCollectConditionParenInserts(root *Node, source []byte, lang *Language
 	}
 	walk(root, nil)
 	return inserts
+}
+
+// swiftIfStatementSwallowedThenBlockKeywordEnd reports whether if_statement n
+// suffers the #560 collapse: a comparison condition whose last operand takes a
+// parenthesised-member-access argument absorbs the then-block as a trailing
+// closure, so the real `else` keyword that follows cannot close this
+// if_statement and is wrapped in an ERROR node instead — with the block after
+// that ERROR node reinterpreted as this if_statement's own body. On success it
+// returns the byte offset just past this if_statement's own `if` keyword,
+// ready for swiftCollectIfChainParens.
+func swiftIfStatementSwallowedThenBlockKeywordEnd(n *Node, lang *Language) (uint32, bool) {
+	childCount := resultChildCount(n)
+	if childCount == 0 {
+		return 0, false
+	}
+	first := resultChildAt(n, 0)
+	if first == nil || first.Type(lang) != "if" {
+		return 0, false
+	}
+	for i := 1; i < childCount; i++ {
+		child := resultChildAt(n, i)
+		if child == nil || child.Type(lang) != "ERROR" || resultChildCount(child) == 0 {
+			continue
+		}
+		if errFirst := resultChildAt(child, 0); errFirst != nil && errFirst.Type(lang) == "else" {
+			return first.endByte, true
+		}
+	}
+	return 0, false
 }
 
 // swiftCollectIfChainParens brackets the condition of an `if`/`while` header that
@@ -161,19 +218,27 @@ func swiftCollectIfChainParens(source []byte, keywordEnd uint32, add func(lp, rp
 		if !found {
 			return
 		}
-		rp := bodyOpen
-		for rp > condStart {
-			switch source[rp-1] {
-			case ' ', '\t', '\n', '\r':
-				rp--
-				continue
+		// An optional-binding condition (`if let a = a {`, `if var a = a {`)
+		// cannot be bracketed as a whole: real Swift forbids parenthesizing the
+		// entire `let PATTERN = EXPR` clause. Bracket only the right-hand-side
+		// expression instead (#558), leaving the pattern and `=` untouched.
+		if lp, rp, ok := swiftOptionalBindingConditionParens(source, condStart, bodyOpen); ok {
+			add(lp, rp, true)
+		} else {
+			rp := bodyOpen
+			for rp > condStart {
+				switch source[rp-1] {
+				case ' ', '\t', '\n', '\r':
+					rp--
+					continue
+				}
+				break
 			}
-			break
-		}
-		// Skip the insertion when the span is empty or already parenthesised
-		// (`if (cond) {`); swiftConditionParenPositions applies the same guard.
-		if condStart < rp && !(source[condStart] == '(' && source[rp-1] == ')') {
-			add(condStart, rp, true)
+			// Skip the insertion when the span is empty or already parenthesised
+			// (`if (cond) {`); swiftConditionParenPositions applies the same guard.
+			if condStart < rp && !(source[condStart] == '(' && source[rp-1] == ')') {
+				add(condStart, rp, true)
+			}
 		}
 		// Follow an `else if` continuation: find the body's matching close brace,
 		// then look for `else if`. Anything else (a plain `else {` block, or the end
@@ -188,6 +253,226 @@ func swiftCollectIfChainParens(source []byte, keywordEnd uint32, add func(lp, rp
 		}
 		keywordEnd = nextKeywordEnd
 	}
+}
+
+// swiftOptionalBindingConditionParens computes paren-insert positions around
+// only the right-hand-side expression of a `let`/`var` optional-binding
+// condition (`if let a = a {`), when the ambiguous nested-if-let and
+// if-let-with-&&-and-nested-if shapes (#558) collapse the header into an
+// ERROR node the same way the plain-boolean-condition case (#118) does.
+// Returns ok=false when condStart does not begin with a `let`/`var` keyword,
+// so the caller falls back to bracketing the entire condition.
+func swiftOptionalBindingConditionParens(source []byte, condStart, bodyOpen uint32) (lp, rp uint32, ok bool) {
+	patternStart, matched := swiftSkipOptionalBindingKeyword(source, condStart)
+	if !matched {
+		return 0, 0, false
+	}
+	eq, found := swiftFindOptionalBindingEquals(source, patternStart, bodyOpen)
+	if !found {
+		return 0, 0, false
+	}
+	rhsStart := swiftSkipHorizontalAndNewlineSpace(source, eq+1)
+	rhsEnd := swiftFindOptionalBindingRHSEnd(source, rhsStart, bodyOpen)
+	for rhsEnd > rhsStart {
+		switch source[rhsEnd-1] {
+		case ' ', '\t', '\n', '\r':
+			rhsEnd--
+			continue
+		}
+		break
+	}
+	if rhsStart >= rhsEnd {
+		return 0, 0, false
+	}
+	// Already parenthesised (`if let a = (a) {`): no need to inject.
+	if source[rhsStart] == '(' && source[rhsEnd-1] == ')' {
+		return 0, 0, false
+	}
+	return rhsStart, rhsEnd, true
+}
+
+// swiftSkipOptionalBindingKeyword reports whether source at pos begins with
+// the `let` or `var` keyword, word-boundaried, and if so returns the byte
+// offset just past it.
+func swiftSkipOptionalBindingKeyword(source []byte, pos uint32) (uint32, bool) {
+	n := uint32(len(source))
+	for _, kw := range [...]string{"let", "var"} {
+		end := pos + uint32(len(kw))
+		if end > n || string(source[pos:end]) != kw {
+			continue
+		}
+		if end < n && isSwiftWordByte(source[end]) {
+			continue // `letter`/`variable`, not the keyword
+		}
+		return end, true
+	}
+	return 0, false
+}
+
+// swiftFindOptionalBindingEquals scans forward from patternStart (right after
+// the `let`/`var` keyword) to limit, looking for the pattern-binding `=` at
+// bracket depth zero. It skips line/block comments, string literals, and
+// ()/[] nesting (so tuple patterns like `let (a, b) = c` and type-annotated
+// patterns like `let a: Foo = b` are handled), and rejects `==`, `!=`, `<=`,
+// `>=`, and compound-assignment operators so a comparison is never mistaken
+// for the binding operator.
+func swiftFindOptionalBindingEquals(source []byte, patternStart, limit uint32) (uint32, bool) {
+	depth := 0
+	i := patternStart
+	for i < limit {
+		b := source[i]
+		if b == '/' && i+1 < limit {
+			if source[i+1] == '/' {
+				i += 2
+				for i < limit && source[i] != '\n' {
+					i++
+				}
+				continue
+			}
+			if source[i+1] == '*' {
+				i += 2
+				depthC := 1
+				for i+1 < limit && depthC > 0 {
+					if source[i] == '/' && source[i+1] == '*' {
+						depthC++
+						i += 2
+					} else if source[i] == '*' && source[i+1] == '/' {
+						depthC--
+						i += 2
+					} else {
+						i++
+					}
+				}
+				continue
+			}
+		}
+		if b == '"' {
+			if i+2 < limit && source[i+1] == '"' && source[i+2] == '"' {
+				i += 3
+				for i+2 < limit && !(source[i] == '"' && source[i+1] == '"' && source[i+2] == '"') {
+					if source[i] == '\\' {
+						i++
+					}
+					i++
+				}
+				i += 3
+				continue
+			}
+			i++
+			for i < limit && source[i] != '"' {
+				if source[i] == '\\' {
+					i++
+				}
+				i++
+			}
+			i++
+			continue
+		}
+		switch b {
+		case '(', '[':
+			depth++
+		case ')', ']':
+			if depth > 0 {
+				depth--
+			}
+		case '=':
+			if depth == 0 {
+				prevOK := i == patternStart || !swiftIsAssignmentOperatorByte(source[i-1])
+				nextOK := i+1 >= limit || source[i+1] != '='
+				if prevOK && nextOK {
+					return i, true
+				}
+			}
+		}
+		i++
+	}
+	return 0, false
+}
+
+// swiftIsAssignmentOperatorByte reports whether b is an operator character
+// that, immediately before `=`, would make it part of a compound-assignment
+// or comparison operator (`==`, `!=`, `<=`, `>=`, `+=`, ...) rather than the
+// bare pattern-binding `=`.
+func swiftIsAssignmentOperatorByte(b byte) bool {
+	switch b {
+	case '<', '>', '!', '+', '-', '*', '/', '%', '&', '|', '^', '~':
+		return true
+	default:
+		return false
+	}
+}
+
+// swiftFindOptionalBindingRHSEnd scans forward from rhsStart to limit at
+// bracket depth zero for the end of the binding's right-hand-side expression:
+// either a top-level `,` (a further condition-list item, e.g. `if let a = a,
+// let b = b {`) or limit itself (the body brace), whichever comes first.
+func swiftFindOptionalBindingRHSEnd(source []byte, rhsStart, limit uint32) uint32 {
+	depth := 0
+	i := rhsStart
+	for i < limit {
+		b := source[i]
+		if b == '/' && i+1 < limit {
+			if source[i+1] == '/' {
+				i += 2
+				for i < limit && source[i] != '\n' {
+					i++
+				}
+				continue
+			}
+			if source[i+1] == '*' {
+				i += 2
+				depthC := 1
+				for i+1 < limit && depthC > 0 {
+					if source[i] == '/' && source[i+1] == '*' {
+						depthC++
+						i += 2
+					} else if source[i] == '*' && source[i+1] == '/' {
+						depthC--
+						i += 2
+					} else {
+						i++
+					}
+				}
+				continue
+			}
+		}
+		if b == '"' {
+			if i+2 < limit && source[i+1] == '"' && source[i+2] == '"' {
+				i += 3
+				for i+2 < limit && !(source[i] == '"' && source[i+1] == '"' && source[i+2] == '"') {
+					if source[i] == '\\' {
+						i++
+					}
+					i++
+				}
+				i += 3
+				continue
+			}
+			i++
+			for i < limit && source[i] != '"' {
+				if source[i] == '\\' {
+					i++
+				}
+				i++
+			}
+			i++
+			continue
+		}
+		switch b {
+		case '(', '[':
+			depth++
+		case ')', ']':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				return i
+			}
+		}
+		i++
+	}
+	return limit
 }
 
 // swiftFindMatchingCloseBrace scans forward from openPos (which must point at a

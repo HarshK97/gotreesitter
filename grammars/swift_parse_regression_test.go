@@ -529,6 +529,99 @@ func TestSwiftForRangeIterableRecoversFunction(t *testing.T) {
 	}
 }
 
+// TestSwiftForRangeThenMethodRecoversFunction covers issue #561: a for…in loop
+// over a range, nested in a type body, followed by another method. The #123 fix
+// only detects a total collapse (the `for` token left with no for_statement
+// parent); here a for_statement node still forms — its own closing brace is
+// still absorbed as a trailing closure on the range's upper bound, but the
+// method that follows keeps the parser from collapsing cleanly, so it hits an
+// ERROR instead. That ERROR still needs the same iterable-bracketing recovery.
+func TestSwiftForRangeThenMethodRecoversFunction(t *testing.T) {
+	lang := SwiftLanguage()
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"class-closed-range", "class T {\n  func a() {\n    for n in 4...100 {\n    }\n  }\n  func b() {\n  }\n}\n"},
+		{"struct-closed-range", "struct T {\n  func a() {\n    for n in 4...100 {\n    }\n  }\n  func b() {\n  }\n}\n"},
+		{"extension-closed-range", "extension T {\n  func a() {\n    for n in 4...100 {\n    }\n  }\n  func b() {\n  }\n}\n"},
+		{"half-open-range", "class T {\n  func a() {\n    for n in 0..<10 {\n    }\n  }\n  func b() {\n  }\n}\n"},
+		{"identifier-operands", "class T {\n  func a() {\n    for n in a...b {\n    }\n  }\n  func b() {\n  }\n}\n"},
+		{"non-empty-bodies", "class T {\n  func a() {\n    for n in 4...100 { g(n) }\n  }\n  func b() { h() }\n}\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			defer tree.Release()
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("recovered tree still reports error: %s", root.SExpr(lang))
+			}
+			if got, want := root.EndByte(), uint32(len(src)); got != want {
+				t.Fatalf("root end = %d, want %d (span not byte-faithful): %s", got, want, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "function_declaration"); got != 2 {
+				t.Fatalf("function_declaration count = %d, want 2: %s", got, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "for_statement"); got != 1 {
+				t.Fatalf("for_statement count = %d, want 1: %s", got, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "lambda_literal"); got != 0 {
+				t.Fatalf("range upper bound absorbed a trailing closure: %s", root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "tuple_expression"); got != 0 {
+				t.Fatalf("synthetic parenthesis leaked as tuple_expression: %s", root.SExpr(lang))
+			}
+		})
+	}
+}
+
+// TestSwiftForRangeThenMethodCleanVariantsUnaffected guards the shapes from
+// issue #561 that already parse cleanly, so the broadened #561 detection (any
+// for_statement with an ERROR descendant, not just a totally collapsed `for`
+// token) doesn't start rewriting sources that don't need it.
+func TestSwiftForRangeThenMethodCleanVariantsUnaffected(t *testing.T) {
+	lang := SwiftLanguage()
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"no-enclosing-type", "func a() { for n in 4...100 { } }\nfunc b() { }\n"},
+		{"only-one-method", "class T { func a() { for n in 4...100 { } } }\n"},
+		{"iterable-not-a-range", "class T {\n  func a() { for n in xs { } }\n  func b() { }\n}\nlet xs = [1, 2, 3]\n"},
+		{"following-member-is-a-property", "class T {\n  func a() { for n in 4...100 { } }\n  var b = 1\n}\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			defer tree.Release()
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("clean source reported error: %s", root.SExpr(lang))
+			}
+			if got, want := root.EndByte(), uint32(len(src)); got != want {
+				t.Fatalf("root end = %d, want %d (span not byte-faithful): %s", got, want, root.SExpr(lang))
+			}
+			if countSwiftNodeType(lang, root, "for_statement") != 1 {
+				t.Fatalf("expected exactly one for_statement: %s", root.SExpr(lang))
+			}
+			if countSwiftNodeType(lang, root, "tuple_expression") != 0 {
+				t.Fatalf("recovery pass wrapped a clean iterable in tuple_expression: %s", root.SExpr(lang))
+			}
+		})
+	}
+}
+
 // TestSwiftForBareIdentifierUnaffected guards against the recovery pass disturbing
 // a for…in over a bare identifier, which already parses correctly.
 func TestSwiftForBareIdentifierUnaffected(t *testing.T) {
@@ -726,5 +819,219 @@ func TestSwiftTernaryFieldsAndShape(t *testing.T) {
 	}
 	if got, want := tern.EndByte(), uint32(17); got != want {
 		t.Fatalf("ternary end = %d, want %d", got, want)
+	}
+}
+
+// issue #560: an if/else whose condition is a comparison and whose then-branch
+// contains a member access inside a parenthesised context (a call argument or
+// a parenthesised negation) makes the condition's last operand absorb the
+// then-block as a trailing closure. The real `else` keyword that follows can
+// no longer close the if_statement, so it lands in an ERROR node instead —
+// with the block after it reinterpreted as the if_statement's own body.
+func TestSwiftComparisonThenBranchMemberAccessRecoversElse(t *testing.T) {
+	lang := SwiftLanguage()
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"top-level-minimal", "if a == b { f(c.d) } else {}\n"},
+		{"no-call-negated-paren", "func f() {\n  if i == e {\n    d = -(a.b)\n  } else {\n  }\n}\n"},
+		{"literal-on-left", "func f() { if 0 == i { d = -(a.b) } else {} }\n"},
+		{"less-than", "func f() { if a < b { f(c.d) } else {} }\n"},
+		{"statement-form-no-return", "func f() { if i == e { g(base.x) } else { g(0) } }\n"},
+		{"deeper-member-path", "func f() { if i == e { g(a.b.c) } else {} }\n"},
+		{"else-if-non-comparison", "func f() { if i == e { d = -(a.b) } else if x { } }\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			defer tree.Release()
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("recovered tree still reports error: %s", root.SExpr(lang))
+			}
+			if got, want := root.EndByte(), uint32(len(src)); got != want {
+				t.Fatalf("root end = %d, want %d (span not byte-faithful): %s", got, want, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "if_statement"); got < 1 {
+				t.Fatalf("if_statement count = %d, want >= 1: %s", got, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "lambda_literal"); got != 0 {
+				t.Fatalf("then-branch misparsed as trailing-closure lambda_literal: %s", root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "tuple_expression"); got != 0 {
+				t.Fatalf("synthetic parenthesis leaked as tuple_expression: %s", root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "else"); got < 1 {
+				t.Fatalf("else keyword count = %d, want >= 1 (else clause not reconstructed): %s", got, root.SExpr(lang))
+			}
+		})
+	}
+}
+
+// TestSwiftComparisonThenBranchMemberAccessTreeIsFaithful checks the recovered
+// tree for the 28-byte repro is structurally correct: a proper if_statement
+// whose condition is the bare equality_expression (the synthetic parenthesis
+// used during recovery is stripped), with the then-branch call and the else
+// block both preserved as ordinary siblings of the if_statement.
+func TestSwiftComparisonThenBranchMemberAccessTreeIsFaithful(t *testing.T) {
+	lang := SwiftLanguage()
+	src := []byte("if a == b { f(c.d) } else {}\n")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	sexpr := root.SExpr(lang)
+	for _, want := range []string{"(if_statement", "(equality_expression", "(call_expression", "(navigation_expression"} {
+		if !strings.Contains(sexpr, want) {
+			t.Fatalf("missing %s in recovered tree: %s", want, sexpr)
+		}
+	}
+	if countSwiftNodeType(lang, root, "constructor_expression") != 0 {
+		t.Fatalf("condition operand misparsed as constructor_expression: %s", sexpr)
+	}
+	if countSwiftNodeType(lang, root, "lambda_literal") != 0 {
+		t.Fatalf("then-block misparsed as trailing-closure lambda_literal: %s", sexpr)
+	}
+	if countSwiftNodeType(lang, root, "ERROR") != 0 {
+		t.Fatalf("ERROR node present after recovery: %s", sexpr)
+	}
+}
+
+// TestSwiftComparisonThenBranchGuardVariantsUnaffected guards the ingredients
+// the #560 report identified as individually necessary: each variant below
+// drops exactly one ingredient (comparison, member access, parenthesised
+// context) and must keep parsing clean, both before and after this fix.
+func TestSwiftComparisonThenBranchGuardVariantsUnaffected(t *testing.T) {
+	lang := SwiftLanguage()
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"not-a-comparison", "func f() -> Int { if x { return g(base.x) } else { return 0 } }\n"},
+		{"arg-not-member-access", "func f() -> Int { if i == e { return g(x) } else { return 0 } }\n"},
+		{"no-parenthesised-context", "func f() -> Int { if i == e { return base.x } else { return 0 } }\n"},
+		{"subscript-not-member-access", "func f() -> Int { if i == e { return g(a[j]) } else { return 0 } }\n"},
+		{"parens-without-member-access", "func f() { if i == e { d = -(a - 1) } else {} }\n"},
+		{"member-access-without-parens", "func f() { if i == e { d = -a.b } else {} }\n"},
+		{"no-else-branch", "func f() -> Int {\n  if i == e {\n    return g(base.x)\n  }\n  return 0\n}\n"},
+		{"literal-on-right", "func f() { if i == 0 { d = -(a.b) } else {} }\n"},
+		{"else-if-comparison", "func f() { if i == e { d = -(a.b) } else if j == k { } }\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			defer tree.Release()
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("clean source reported error: %s", root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "lambda_literal"); got != 0 {
+				t.Fatalf("clean source misparsed a trailing-closure lambda_literal: %s", root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "tuple_expression"); got != 0 {
+				t.Fatalf("recovery pass wrapped a clean condition in tuple_expression: %s", root.SExpr(lang))
+			}
+		})
+	}
+}
+
+// TestSwiftNestedIfLetWithCallParses covers issue #558 repro 1: a nested
+// if-let whose inner body calls a function with an argument. Single-level
+// if-let and one-line multiple bindings must stay clean.
+func TestSwiftNestedIfLetWithCallParses(t *testing.T) {
+	lang := SwiftLanguage()
+	src := []byte("func f() {\n  if let a = a {\n    if let b = b {\n      print(a, b)\n    }\n  }\n}\n")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse nested if-let with call: %v", err)
+	}
+	defer tree.Release()
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("nested if-let with call has parse errors: %s", root.SExpr(lang))
+	}
+}
+
+// TestSwiftIfLetWithAndConditionAndNestedIfParses covers issue #558 repro 2:
+// an if-let containing an if whose condition uses && followed by a further
+// nested if. Each pairwise combination in isolation must stay clean.
+func TestSwiftIfLetWithAndConditionAndNestedIfParses(t *testing.T) {
+	lang := SwiftLanguage()
+	src := []byte("func f() {\n  if let limit = limit {\n    if baseIdx == nil {\n      if baseDistance > 0 && limit == endIndex {\n        if self.distance(from: i, to: limit) < distance {\n          return\n        }\n      }\n    }\n  }\n}\n")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse if-let with && and nested if: %v", err)
+	}
+	defer tree.Release()
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("if-let with && and nested if has parse errors: %s", root.SExpr(lang))
+	}
+}
+
+// TestSwiftNestedIfLetCleanVariantsStayClean guards the shapes the issue
+// says must remain clean today: single-level if-let, one-line multiple
+// bindings, and the pairwise combinations that isolate each ingredient.
+func TestSwiftNestedIfLetCleanVariantsStayClean(t *testing.T) {
+	lang := SwiftLanguage()
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "single level if-let",
+			src:  "func f() {\n  if let a = a {\n    print(a)\n  }\n}\n",
+		},
+		{
+			name: "one-line multiple bindings",
+			src:  "func f() {\n  if let a = a, let b = b {\n    print(a, b)\n  }\n}\n",
+		},
+		{
+			name: "nested if-let no call in inner body",
+			src:  "func f() { if let a = a { if let b = b { return } } }\n",
+		},
+		{
+			name: "nested if-let call with no args in inner body",
+			src:  "func f() { if let a = a { if let b = b { g() } } }\n",
+		},
+		{
+			name: "if-let with && nested if, no comparison",
+			src:  "func f() {\n  if let a = a {\n    if b && c {\n      if x {\n        return\n      }\n    }\n  }\n}\n",
+		},
+		{
+			name: "if-let with nested < comparison, no &&",
+			src:  "func f() {\n  if let a = a {\n    if g(x) < b {\n      return\n    }\n  }\n}\n",
+		},
+		{
+			name: "&& and < comparison without outer if-let",
+			src:  "func f() {\n  if a > 0 && b < c {\n    return\n  }\n}\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse([]byte(test.src))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			defer tree.Release()
+			if root := tree.RootNode(); root.HasError() {
+				t.Fatalf("has parse errors: %s", root.SExpr(lang))
+			}
+		})
 	}
 }
