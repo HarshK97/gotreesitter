@@ -677,3 +677,130 @@ func TestSwiftTernaryFieldsAndShape(t *testing.T) {
 		t.Fatalf("ternary end = %d, want %d", got, want)
 	}
 }
+
+// issue #560: an if/else whose condition is a comparison and whose then-branch
+// contains a member access inside a parenthesised context (a call argument or
+// a parenthesised negation) makes the condition's last operand absorb the
+// then-block as a trailing closure. The real `else` keyword that follows can
+// no longer close the if_statement, so it lands in an ERROR node instead —
+// with the block after it reinterpreted as the if_statement's own body.
+func TestSwiftComparisonThenBranchMemberAccessRecoversElse(t *testing.T) {
+	lang := SwiftLanguage()
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"top-level-minimal", "if a == b { f(c.d) } else {}\n"},
+		{"no-call-negated-paren", "func f() {\n  if i == e {\n    d = -(a.b)\n  } else {\n  }\n}\n"},
+		{"literal-on-left", "func f() { if 0 == i { d = -(a.b) } else {} }\n"},
+		{"less-than", "func f() { if a < b { f(c.d) } else {} }\n"},
+		{"statement-form-no-return", "func f() { if i == e { g(base.x) } else { g(0) } }\n"},
+		{"deeper-member-path", "func f() { if i == e { g(a.b.c) } else {} }\n"},
+		{"else-if-non-comparison", "func f() { if i == e { d = -(a.b) } else if x { } }\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			defer tree.Release()
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("recovered tree still reports error: %s", root.SExpr(lang))
+			}
+			if got, want := root.EndByte(), uint32(len(src)); got != want {
+				t.Fatalf("root end = %d, want %d (span not byte-faithful): %s", got, want, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "if_statement"); got < 1 {
+				t.Fatalf("if_statement count = %d, want >= 1: %s", got, root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "lambda_literal"); got != 0 {
+				t.Fatalf("then-branch misparsed as trailing-closure lambda_literal: %s", root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "tuple_expression"); got != 0 {
+				t.Fatalf("synthetic parenthesis leaked as tuple_expression: %s", root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "else"); got < 1 {
+				t.Fatalf("else keyword count = %d, want >= 1 (else clause not reconstructed): %s", got, root.SExpr(lang))
+			}
+		})
+	}
+}
+
+// TestSwiftComparisonThenBranchMemberAccessTreeIsFaithful checks the recovered
+// tree for the 28-byte repro is structurally correct: a proper if_statement
+// whose condition is the bare equality_expression (the synthetic parenthesis
+// used during recovery is stripped), with the then-branch call and the else
+// block both preserved as ordinary siblings of the if_statement.
+func TestSwiftComparisonThenBranchMemberAccessTreeIsFaithful(t *testing.T) {
+	lang := SwiftLanguage()
+	src := []byte("if a == b { f(c.d) } else {}\n")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	sexpr := root.SExpr(lang)
+	for _, want := range []string{"(if_statement", "(equality_expression", "(call_expression", "(navigation_expression"} {
+		if !strings.Contains(sexpr, want) {
+			t.Fatalf("missing %s in recovered tree: %s", want, sexpr)
+		}
+	}
+	if countSwiftNodeType(lang, root, "constructor_expression") != 0 {
+		t.Fatalf("condition operand misparsed as constructor_expression: %s", sexpr)
+	}
+	if countSwiftNodeType(lang, root, "lambda_literal") != 0 {
+		t.Fatalf("then-block misparsed as trailing-closure lambda_literal: %s", sexpr)
+	}
+	if countSwiftNodeType(lang, root, "ERROR") != 0 {
+		t.Fatalf("ERROR node present after recovery: %s", sexpr)
+	}
+}
+
+// TestSwiftComparisonThenBranchGuardVariantsUnaffected guards the ingredients
+// the #560 report identified as individually necessary: each variant below
+// drops exactly one ingredient (comparison, member access, parenthesised
+// context) and must keep parsing clean, both before and after this fix.
+func TestSwiftComparisonThenBranchGuardVariantsUnaffected(t *testing.T) {
+	lang := SwiftLanguage()
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"not-a-comparison", "func f() -> Int { if x { return g(base.x) } else { return 0 } }\n"},
+		{"arg-not-member-access", "func f() -> Int { if i == e { return g(x) } else { return 0 } }\n"},
+		{"no-parenthesised-context", "func f() -> Int { if i == e { return base.x } else { return 0 } }\n"},
+		{"subscript-not-member-access", "func f() -> Int { if i == e { return g(a[j]) } else { return 0 } }\n"},
+		{"parens-without-member-access", "func f() { if i == e { d = -(a - 1) } else {} }\n"},
+		{"member-access-without-parens", "func f() { if i == e { d = -a.b } else {} }\n"},
+		{"no-else-branch", "func f() -> Int {\n  if i == e {\n    return g(base.x)\n  }\n  return 0\n}\n"},
+		{"literal-on-right", "func f() { if i == 0 { d = -(a.b) } else {} }\n"},
+		{"else-if-comparison", "func f() { if i == e { d = -(a.b) } else if j == k { } }\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src)
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse(src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			defer tree.Release()
+			root := tree.RootNode()
+			if root.HasError() {
+				t.Fatalf("clean source reported error: %s", root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "lambda_literal"); got != 0 {
+				t.Fatalf("clean source misparsed a trailing-closure lambda_literal: %s", root.SExpr(lang))
+			}
+			if got := countSwiftNodeType(lang, root, "tuple_expression"); got != 0 {
+				t.Fatalf("recovery pass wrapped a clean condition in tuple_expression: %s", root.SExpr(lang))
+			}
+		})
+	}
+}
