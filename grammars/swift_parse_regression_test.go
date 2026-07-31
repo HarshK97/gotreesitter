@@ -584,3 +584,24 @@ func TestSwiftTernaryFieldsAndShape(t *testing.T) {
 		t.Fatalf("ternary end = %d, want %d", got, want)
 	}
 }
+
+func TestSwiftTripleNestedGenericTypeAnnotationParses(t *testing.T) {
+	lang := SwiftLanguage()
+	for _, src := range []string{
+		"struct S { let value: A<B<C<Int>>> }",
+		"func f(value: A<B<C<Int>>>) {}",
+		"let value: A<B<C<Int>>> = make()",
+	} {
+		t.Run(src, func(t *testing.T) {
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse([]byte(src))
+			if err != nil {
+				t.Fatalf("parse triple nested generic type: %v", err)
+			}
+			defer tree.Release()
+			if root := tree.RootNode(); root.HasError() {
+				t.Fatalf("triple nested generic type has parse errors: %s", root.SExpr(lang))
+			}
+		})
+	}
+}

@@ -3143,6 +3143,12 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 	}
 	tok.ExternalScannerToken = true
 	tok.ExternalScannerStartByte = uint32(d.lexer.pos)
+	if splitTok, endPos, endRow, endCol, ok := d.splitSwiftWideCloseAngleToken(tok, states); ok {
+		d.lexer.pos = endPos
+		d.lexer.row = endRow
+		d.lexer.col = endCol
+		return splitTok, true
+	}
 
 	if dfaTok, endPos, endRow, endCol, ok := d.preferDFASemicolonOverJSXText(tok, states); ok {
 		d.lexer.pos = endPos
@@ -3157,6 +3163,39 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 	d.lexer.row = tok.EndPoint.Row
 	d.lexer.col = tok.EndPoint.Column
 	return tok, true
+}
+
+func (d *dfaTokenSource) splitSwiftWideCloseAngleToken(tok Token, states []StateID) (Token, int, uint32, uint32, bool) {
+	if d == nil || d.language == nil || d.language.Name != "swift" || d.lexer == nil ||
+		tok.EndPoint.Row != tok.StartPoint.Row || tok.EndByte <= tok.StartByte+1 {
+		return tok, 0, 0, 0, false
+	}
+	if len(tok.Text) == 0 {
+		start, end := int(tok.StartByte), int(tok.EndByte)
+		if start < 0 || end > len(d.lexer.source) {
+			return tok, 0, 0, 0, false
+		}
+		tok.Text = bytesToStringNoCopy(d.lexer.source[start:end])
+	}
+	for _, ch := range tok.Text {
+		if ch != '>' {
+			return tok, 0, 0, 0, false
+		}
+	}
+	gtSym, ok := d.bestActiveSymbolByName(">")
+	if !ok || gtSym == 0 {
+		return tok, 0, 0, 0, false
+	}
+	for _, state := range states {
+		if d.lookupActionIndex(state, gtSym) != 0 {
+			tok.Symbol = gtSym
+			tok.Text = ">"
+			tok.EndByte = tok.StartByte + 1
+			tok.EndPoint = Point{Row: tok.StartPoint.Row, Column: tok.StartPoint.Column + 1}
+			return tok, int(tok.EndByte), tok.EndPoint.Row, tok.EndPoint.Column, true
+		}
+	}
+	return tok, 0, 0, 0, false
 }
 
 func (d *dfaTokenSource) bashGeneratedSyntheticExternalLiteral(valid []bool) (Token, bool) {
