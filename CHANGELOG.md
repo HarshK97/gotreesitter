@@ -7,7 +7,16 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.48.0] - 2026-08-06
+
 ### Added
+
+- A validated Swift corpus now guards real-code parsing.
+  Twelve files come from swiftlang/swift 6.3 and apple/swift-algorithms 1.2.1.
+  A ratcheting expectations test fails on any regression or unrecorded fix.
+  Five upstream grammar gaps are recorded in issues
+  [#574](https://github.com/odvcencio/gotreesitter/issues/574) through
+  [#578](https://github.com/odvcencio/gotreesitter/issues/578).
 
 - The dispatcher census now reports distinct Ada, Apex, Bash, and Cooklang
   materialization subpasses.
@@ -125,6 +134,30 @@ for tags and release notes while still in `0.x`.
   parenthesised negation). The then-block no longer swallows the trailing
   `else` as a call's trailing closure.
   This fixes [#560](https://github.com/odvcencio/gotreesitter/issues/560).
+
+- A Swift optional generic type such as `Range<Int>?` now parses cleanly.
+  The token source defers the closer to the DFA only when a reduce action
+  closes an open `type_arguments` production.
+  This fixes [#556](https://github.com/odvcencio/gotreesitter/issues/556).
+
+- A Swift constrained extension with a multiline `where` clause now parses
+  cleanly. The scanner carries the resolved previous rune across comment
+  handoffs instead of re-reading a raw source byte.
+  This fixes [#557](https://github.com/odvcencio/gotreesitter/issues/557).
+
+- Swift nested `if let` chains inside methods now parse cleanly.
+  The recovery pass brackets only the right-hand side of the binding.
+  This fixes [#558](https://github.com/odvcencio/gotreesitter/issues/558).
+
+- Three or more nested Swift generic type arguments such as `A<B<C<Int>>>`
+  now parse cleanly. The split fires only when an unclosed `<` sits open, so
+  custom operators such as `>>>` stay intact.
+  This fixes [#559](https://github.com/odvcencio/gotreesitter/issues/559).
+
+- A Swift method that contains a `for` loop over a range, followed by another
+  method, now parses cleanly. The recovery pass also fires when the `for`
+  statement forms with an error inside it.
+  This fixes [#561](https://github.com/odvcencio/gotreesitter/issues/561).
 
 - Raw error-cost walks now retain each captured child shape reference.
   A later mutable node update cannot create a recursive shape cycle.
@@ -4204,7 +4237,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.47.1...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.48.0...HEAD
+[0.48.0]: https://github.com/odvcencio/gotreesitter/compare/v0.47.1...v0.48.0
 [0.47.1]: https://github.com/odvcencio/gotreesitter/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/odvcencio/gotreesitter/compare/v0.46.0...v0.47.0
 [0.46.0]: https://github.com/odvcencio/gotreesitter/compare/v0.45.0...v0.46.0
