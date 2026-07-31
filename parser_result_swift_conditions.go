@@ -218,19 +218,27 @@ func swiftCollectIfChainParens(source []byte, keywordEnd uint32, add func(lp, rp
 		if !found {
 			return
 		}
-		rp := bodyOpen
-		for rp > condStart {
-			switch source[rp-1] {
-			case ' ', '\t', '\n', '\r':
-				rp--
-				continue
+		// An optional-binding condition (`if let a = a {`, `if var a = a {`)
+		// cannot be bracketed as a whole: real Swift forbids parenthesizing the
+		// entire `let PATTERN = EXPR` clause. Bracket only the right-hand-side
+		// expression instead (#558), leaving the pattern and `=` untouched.
+		if lp, rp, ok := swiftOptionalBindingConditionParens(source, condStart, bodyOpen); ok {
+			add(lp, rp, true)
+		} else {
+			rp := bodyOpen
+			for rp > condStart {
+				switch source[rp-1] {
+				case ' ', '\t', '\n', '\r':
+					rp--
+					continue
+				}
+				break
 			}
-			break
-		}
-		// Skip the insertion when the span is empty or already parenthesised
-		// (`if (cond) {`); swiftConditionParenPositions applies the same guard.
-		if condStart < rp && !(source[condStart] == '(' && source[rp-1] == ')') {
-			add(condStart, rp, true)
+			// Skip the insertion when the span is empty or already parenthesised
+			// (`if (cond) {`); swiftConditionParenPositions applies the same guard.
+			if condStart < rp && !(source[condStart] == '(' && source[rp-1] == ')') {
+				add(condStart, rp, true)
+			}
 		}
 		// Follow an `else if` continuation: find the body's matching close brace,
 		// then look for `else if`. Anything else (a plain `else {` block, or the end
@@ -245,6 +253,226 @@ func swiftCollectIfChainParens(source []byte, keywordEnd uint32, add func(lp, rp
 		}
 		keywordEnd = nextKeywordEnd
 	}
+}
+
+// swiftOptionalBindingConditionParens computes paren-insert positions around
+// only the right-hand-side expression of a `let`/`var` optional-binding
+// condition (`if let a = a {`), when the ambiguous nested-if-let and
+// if-let-with-&&-and-nested-if shapes (#558) collapse the header into an
+// ERROR node the same way the plain-boolean-condition case (#118) does.
+// Returns ok=false when condStart does not begin with a `let`/`var` keyword,
+// so the caller falls back to bracketing the entire condition.
+func swiftOptionalBindingConditionParens(source []byte, condStart, bodyOpen uint32) (lp, rp uint32, ok bool) {
+	patternStart, matched := swiftSkipOptionalBindingKeyword(source, condStart)
+	if !matched {
+		return 0, 0, false
+	}
+	eq, found := swiftFindOptionalBindingEquals(source, patternStart, bodyOpen)
+	if !found {
+		return 0, 0, false
+	}
+	rhsStart := swiftSkipHorizontalAndNewlineSpace(source, eq+1)
+	rhsEnd := swiftFindOptionalBindingRHSEnd(source, rhsStart, bodyOpen)
+	for rhsEnd > rhsStart {
+		switch source[rhsEnd-1] {
+		case ' ', '\t', '\n', '\r':
+			rhsEnd--
+			continue
+		}
+		break
+	}
+	if rhsStart >= rhsEnd {
+		return 0, 0, false
+	}
+	// Already parenthesised (`if let a = (a) {`): no need to inject.
+	if source[rhsStart] == '(' && source[rhsEnd-1] == ')' {
+		return 0, 0, false
+	}
+	return rhsStart, rhsEnd, true
+}
+
+// swiftSkipOptionalBindingKeyword reports whether source at pos begins with
+// the `let` or `var` keyword, word-boundaried, and if so returns the byte
+// offset just past it.
+func swiftSkipOptionalBindingKeyword(source []byte, pos uint32) (uint32, bool) {
+	n := uint32(len(source))
+	for _, kw := range [...]string{"let", "var"} {
+		end := pos + uint32(len(kw))
+		if end > n || string(source[pos:end]) != kw {
+			continue
+		}
+		if end < n && isSwiftWordByte(source[end]) {
+			continue // `letter`/`variable`, not the keyword
+		}
+		return end, true
+	}
+	return 0, false
+}
+
+// swiftFindOptionalBindingEquals scans forward from patternStart (right after
+// the `let`/`var` keyword) to limit, looking for the pattern-binding `=` at
+// bracket depth zero. It skips line/block comments, string literals, and
+// ()/[] nesting (so tuple patterns like `let (a, b) = c` and type-annotated
+// patterns like `let a: Foo = b` are handled), and rejects `==`, `!=`, `<=`,
+// `>=`, and compound-assignment operators so a comparison is never mistaken
+// for the binding operator.
+func swiftFindOptionalBindingEquals(source []byte, patternStart, limit uint32) (uint32, bool) {
+	depth := 0
+	i := patternStart
+	for i < limit {
+		b := source[i]
+		if b == '/' && i+1 < limit {
+			if source[i+1] == '/' {
+				i += 2
+				for i < limit && source[i] != '\n' {
+					i++
+				}
+				continue
+			}
+			if source[i+1] == '*' {
+				i += 2
+				depthC := 1
+				for i+1 < limit && depthC > 0 {
+					if source[i] == '/' && source[i+1] == '*' {
+						depthC++
+						i += 2
+					} else if source[i] == '*' && source[i+1] == '/' {
+						depthC--
+						i += 2
+					} else {
+						i++
+					}
+				}
+				continue
+			}
+		}
+		if b == '"' {
+			if i+2 < limit && source[i+1] == '"' && source[i+2] == '"' {
+				i += 3
+				for i+2 < limit && !(source[i] == '"' && source[i+1] == '"' && source[i+2] == '"') {
+					if source[i] == '\\' {
+						i++
+					}
+					i++
+				}
+				i += 3
+				continue
+			}
+			i++
+			for i < limit && source[i] != '"' {
+				if source[i] == '\\' {
+					i++
+				}
+				i++
+			}
+			i++
+			continue
+		}
+		switch b {
+		case '(', '[':
+			depth++
+		case ')', ']':
+			if depth > 0 {
+				depth--
+			}
+		case '=':
+			if depth == 0 {
+				prevOK := i == patternStart || !swiftIsAssignmentOperatorByte(source[i-1])
+				nextOK := i+1 >= limit || source[i+1] != '='
+				if prevOK && nextOK {
+					return i, true
+				}
+			}
+		}
+		i++
+	}
+	return 0, false
+}
+
+// swiftIsAssignmentOperatorByte reports whether b is an operator character
+// that, immediately before `=`, would make it part of a compound-assignment
+// or comparison operator (`==`, `!=`, `<=`, `>=`, `+=`, ...) rather than the
+// bare pattern-binding `=`.
+func swiftIsAssignmentOperatorByte(b byte) bool {
+	switch b {
+	case '<', '>', '!', '+', '-', '*', '/', '%', '&', '|', '^', '~':
+		return true
+	default:
+		return false
+	}
+}
+
+// swiftFindOptionalBindingRHSEnd scans forward from rhsStart to limit at
+// bracket depth zero for the end of the binding's right-hand-side expression:
+// either a top-level `,` (a further condition-list item, e.g. `if let a = a,
+// let b = b {`) or limit itself (the body brace), whichever comes first.
+func swiftFindOptionalBindingRHSEnd(source []byte, rhsStart, limit uint32) uint32 {
+	depth := 0
+	i := rhsStart
+	for i < limit {
+		b := source[i]
+		if b == '/' && i+1 < limit {
+			if source[i+1] == '/' {
+				i += 2
+				for i < limit && source[i] != '\n' {
+					i++
+				}
+				continue
+			}
+			if source[i+1] == '*' {
+				i += 2
+				depthC := 1
+				for i+1 < limit && depthC > 0 {
+					if source[i] == '/' && source[i+1] == '*' {
+						depthC++
+						i += 2
+					} else if source[i] == '*' && source[i+1] == '/' {
+						depthC--
+						i += 2
+					} else {
+						i++
+					}
+				}
+				continue
+			}
+		}
+		if b == '"' {
+			if i+2 < limit && source[i+1] == '"' && source[i+2] == '"' {
+				i += 3
+				for i+2 < limit && !(source[i] == '"' && source[i+1] == '"' && source[i+2] == '"') {
+					if source[i] == '\\' {
+						i++
+					}
+					i++
+				}
+				i += 3
+				continue
+			}
+			i++
+			for i < limit && source[i] != '"' {
+				if source[i] == '\\' {
+					i++
+				}
+				i++
+			}
+			i++
+			continue
+		}
+		switch b {
+		case '(', '[':
+			depth++
+		case ')', ']':
+			if depth > 0 {
+				depth--
+			}
+		case ',':
+			if depth == 0 {
+				return i
+			}
+		}
+		i++
+	}
+	return limit
 }
 
 // swiftFindMatchingCloseBrace scans forward from openPos (which must point at a

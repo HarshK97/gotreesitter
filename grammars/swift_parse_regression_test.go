@@ -804,3 +804,90 @@ func TestSwiftComparisonThenBranchGuardVariantsUnaffected(t *testing.T) {
 		})
 	}
 }
+
+// TestSwiftNestedIfLetWithCallParses covers issue #558 repro 1: a nested
+// if-let whose inner body calls a function with an argument. Single-level
+// if-let and one-line multiple bindings must stay clean.
+func TestSwiftNestedIfLetWithCallParses(t *testing.T) {
+	lang := SwiftLanguage()
+	src := []byte("func f() {\n  if let a = a {\n    if let b = b {\n      print(a, b)\n    }\n  }\n}\n")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse nested if-let with call: %v", err)
+	}
+	defer tree.Release()
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("nested if-let with call has parse errors: %s", root.SExpr(lang))
+	}
+}
+
+// TestSwiftIfLetWithAndConditionAndNestedIfParses covers issue #558 repro 2:
+// an if-let containing an if whose condition uses && followed by a further
+// nested if. Each pairwise combination in isolation must stay clean.
+func TestSwiftIfLetWithAndConditionAndNestedIfParses(t *testing.T) {
+	lang := SwiftLanguage()
+	src := []byte("func f() {\n  if let limit = limit {\n    if baseIdx == nil {\n      if baseDistance > 0 && limit == endIndex {\n        if self.distance(from: i, to: limit) < distance {\n          return\n        }\n      }\n    }\n  }\n}\n")
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse if-let with && and nested if: %v", err)
+	}
+	defer tree.Release()
+	if root := tree.RootNode(); root.HasError() {
+		t.Fatalf("if-let with && and nested if has parse errors: %s", root.SExpr(lang))
+	}
+}
+
+// TestSwiftNestedIfLetCleanVariantsStayClean guards the shapes the issue
+// says must remain clean today: single-level if-let, one-line multiple
+// bindings, and the pairwise combinations that isolate each ingredient.
+func TestSwiftNestedIfLetCleanVariantsStayClean(t *testing.T) {
+	lang := SwiftLanguage()
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "single level if-let",
+			src:  "func f() {\n  if let a = a {\n    print(a)\n  }\n}\n",
+		},
+		{
+			name: "one-line multiple bindings",
+			src:  "func f() {\n  if let a = a, let b = b {\n    print(a, b)\n  }\n}\n",
+		},
+		{
+			name: "nested if-let no call in inner body",
+			src:  "func f() { if let a = a { if let b = b { return } } }\n",
+		},
+		{
+			name: "nested if-let call with no args in inner body",
+			src:  "func f() { if let a = a { if let b = b { g() } } }\n",
+		},
+		{
+			name: "if-let with && nested if, no comparison",
+			src:  "func f() {\n  if let a = a {\n    if b && c {\n      if x {\n        return\n      }\n    }\n  }\n}\n",
+		},
+		{
+			name: "if-let with nested < comparison, no &&",
+			src:  "func f() {\n  if let a = a {\n    if g(x) < b {\n      return\n    }\n  }\n}\n",
+		},
+		{
+			name: "&& and < comparison without outer if-let",
+			src:  "func f() {\n  if a > 0 && b < c {\n    return\n  }\n}\n",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			parser := gotreesitter.NewParser(lang)
+			tree, err := parser.Parse([]byte(test.src))
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			defer tree.Release()
+			if root := tree.RootNode(); root.HasError() {
+				t.Fatalf("has parse errors: %s", root.SExpr(lang))
+			}
+		})
+	}
+}
