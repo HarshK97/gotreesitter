@@ -7,6 +7,19 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Changed
+
+- The condense-candidate dispatch path no longer passes a closure through
+  two wrapper layers per event.
+  Each shift, cohort, and reduction entry point now validates the scheduler
+  owner and calls the uncheckpointed operation directly.
+  Behavior is unchanged; every identity, work-count, and allocation check
+  still passes.
+  Local timing on a shared host showed no significant change across four
+  fixtures.
+  The host carried heavy background load throughout the run, so the result
+  is not a sealed measurement.
+
 ## [0.48.0] - 2026-08-01
 
 ### Added
