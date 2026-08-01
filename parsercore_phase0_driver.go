@@ -962,10 +962,16 @@ func (s *diagnosticParserCoreGenericScheduler) persistHeaderLineageOwned(
 	return nil
 }
 
+// errDiagnosticParserCoreUnknownCheckpointIdentity is the shared sentinel for
+// a header (or a cold-path identity-gate reject) that names a checkpoint the
+// compact core never interned. Both callers below return it unwrapped, so
+// callers may compare with errors.Is.
+var errDiagnosticParserCoreUnknownCheckpointIdentity = errors.New("parser-core phase zero: header references unknown checkpoint identity")
+
 func diagnosticParserCoreCheckpointDigest(compact *core.Core, id core.CheckpointID) ([32]byte, error) {
 	_, digest, ok := compact.CheckpointReceipt(id)
 	if !ok {
-		return [32]byte{}, errors.New("parser-core phase zero: header references unknown checkpoint identity")
+		return [32]byte{}, errDiagnosticParserCoreUnknownCheckpointIdentity
 	}
 	return digest, nil
 }
@@ -1316,6 +1322,27 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalize(compact *core.Core, 
 	}
 	copy(normalized, headers)
 	s.headerBuffers[target] = normalized
+	// Single-head frontiers never reach canonicalizeLinear/canonicalizeMapped,
+	// so the per-header canonical group key they group by carries no
+	// semantics here -- only the canonical remap (the compact.Boundary +
+	// CanonicalBoundary probe) and the freshness reset do. Skip the key-slice
+	// sizing and key-struct build entirely on this path; the double-buffer
+	// copy above still runs unchanged, since the aliasing check above and on
+	// the next call depends on the returned slice living in s.headerBuffers.
+	if len(normalized) == 1 {
+		header := normalized[0]
+		state, byteOffset, err := compact.Boundary(header.head)
+		if err != nil {
+			return nil, err
+		}
+		if canonical, ok := compact.CanonicalBoundary(state, byteOffset, header.shifted, header.checkpoint); ok {
+			header.head = canonical
+		}
+		header.freshness = 0
+		normalized[0] = header
+		s.nextBuffer = uint8(target ^ 1)
+		return normalized, nil
+	}
 	if cap(s.keys) < len(headers) {
 		if len(headers) <= len(s.inlineKeys) {
 			s.keys = s.inlineKeys[:len(headers)]
@@ -1340,9 +1367,6 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalize(compact *core.Core, 
 	var out []diagnosticParserCoreHeader
 	switch {
 	case len(normalized) == 0:
-		out = normalized
-	case len(normalized) == 1:
-		normalized[0].freshness = 0
 		out = normalized
 	case len(normalized) <= diagnosticParserCoreLinearCanonicalLimit:
 		out = s.canonicalizeLinear(normalized)
@@ -1637,6 +1661,28 @@ func (s *diagnosticParserCoreGenericScheduler) headerReceipt(header diagnosticPa
 		return diagnosticParserCoreHeaderReceipt(s.compact, header)
 	}
 	return diagnosticParserCoreHeaderSummary(s.compact, header)
+}
+
+// electHeaderState resolves only what one election round needs from a
+// header: its authentic StateID. Shifted/Accepted are read directly off the
+// header by the caller, so this skips the checkpoint-digest lookup that
+// diagnosticParserCoreHeaderSummary otherwise pays on every header on every
+// election — that digest has no reader on this path. Full-receipt mode keeps
+// paying it, since diagnosticParserCoreHeaderReceipt is also what tests and
+// diagnostics observe and must stay byte-identical there.
+func (s *diagnosticParserCoreGenericScheduler) electHeaderState(header diagnosticParserCoreHeader) (StateID, error) {
+	if s.fullReceipts() {
+		receipt, err := diagnosticParserCoreHeaderReceipt(s.compact, header)
+		if err != nil {
+			return 0, err
+		}
+		return receipt.State, nil
+	}
+	state, _, err := s.compact.Boundary(header.head)
+	if err != nil {
+		return 0, err
+	}
+	return StateID(state), nil
 }
 
 func (s *diagnosticParserCoreGenericScheduler) headerReceipts(headers []diagnosticParserCoreHeader) ([]DiagnosticParserCoreHeaderReceipt, error) {
@@ -4151,15 +4197,28 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 		states = make([]StateID, 0, max(len(s.headers), 2*cap(states)))
 	}
 	for _, header := range s.headers {
-		receipt, err := s.headerReceipt(header)
+		state, err := s.electHeaderState(header)
 		if err != nil {
 			return err
 		}
-		shiftIdentity := receipt.Shifted || first && !receipt.Shifted
-		if !shiftIdentity || receipt.Accepted || header.checkpoint != s.checkpointID {
+		shiftIdentity := header.shifted || first && !header.shifted
+		// Precondition: s.checkpointID always holds a value produced by
+		// diagnosticParserCoreInternCheckpoint, set only at its two writer sites
+		// (the scheduler seed above and the election afterID assignment below), so
+		// this raw identity comparison is a sound substitute for a digest lookup.
+		if !shiftIdentity || header.accepted || header.checkpoint != s.checkpointID {
+			// Full receipts already validated the checkpoint while reading the
+			// header. Summary mode skips that digest lookup on the healthy hot
+			// path, but keeps the legacy invalid-checkpoint error when this cold
+			// identity gate rejects a malformed header.
+			if !s.fullReceipts() {
+				if _, _, ok := s.compact.CheckpointReceipt(header.checkpoint); !ok {
+					return errDiagnosticParserCoreUnknownCheckpointIdentity
+				}
+			}
 			return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreIdentity, detail: "generic scheduler election frontier is not closed and checkpoint-continuous"}
 		}
-		states = append(states, receipt.State)
+		states = append(states, state)
 	}
 	s.electStates = states
 	if s.observer.beforeElection != nil {
