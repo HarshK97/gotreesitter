@@ -166,7 +166,7 @@
             "parser_result_apex.go"
           ],
           "purpose": "Materialize the field-access aliases for an Apex class literal.",
-          "authoritative_owner": "materialization",
+          "authoritative_owner": "derivation_election_selection",
           "witnesses": [
             "parser_result_test/materialization_subpass_census_test.go"
           ]
@@ -176,7 +176,7 @@
         "apex"
       ],
       "purpose": "Reconcile Apex returned-tree aliases, fields, and spans.",
-      "authoritative_owner": "materialization",
+      "authoritative_owner": "derivation_election_selection",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go"
       ],
