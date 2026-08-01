@@ -10,6 +10,10 @@ Planned releases require a 48-hour soak after the exact commit completes the
 hosted continuous integration (CI) workflow in `ci.yml`. Keep this conservative
 rule until the project reviews a risk classifier.
 
+The one-time `owner-waived-minor` route applies only to v0.48.0. It waives the
+Thursday and soak rules. It requires an owner waiver reason, an incident, and a
+delay rationale. Remove the route after the v0.48.0 tag exists.
+
 Patch releases may happen outside the cadence for urgent correctness,
 security, or packaging regressions. Ordinary maintenance waits for the next
 Thursday. Release planning and in-progress campaign notes live in the private
@@ -33,12 +37,14 @@ the next eligible Thursday after v0.47.0.
    candidate commit hash, release route, and governing Hyphae receipt.
 6. For an urgent patch, also supply the incident and explain why waiting is
    worse. Do not use this route for ordinary maintenance.
-7. Review the verification evidence. Approve the protected `release`
+7. For the v0.48.0 waiver, supply an owner reason, incident, and delay rationale.
+   This route waives only the Thursday and soak rules.
+8. Review the verification evidence. Approve the protected `release`
    environment only when Arbiter selects `Allow`.
-8. Let the workflow repeat the mutable checks. Arbiter reevaluates the
+9. Let the workflow repeat the mutable checks. Arbiter reevaluates the
    resulting facts before the workflow creates the tag and GitHub release.
-9. Verify that the module proxy can fetch the new version.
-10. Checkpoint the version, commit hash, gate results, and any intentionally
+10. Verify that the module proxy can fetch the new version.
+11. Checkpoint the version, commit hash, gate results, and any intentionally
    deferred work in Hyphae. Close campaign issues only when the release
    contains their documented acceptance evidence.
 
@@ -56,6 +62,7 @@ The strategy denies a release when a fact does not satisfy the release receipt.
 These facts include:
 
 - the weekday;
+- the one-time waiver route and its required reasons;
 - the current `main` commit;
 - the exact manual CI run, result, and soak;
 - the document state;

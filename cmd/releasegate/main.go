@@ -30,6 +30,7 @@ type validationInput struct {
 	CandidateSHA       string
 	ReleaseKind        string
 	ReceiptURI         string
+	OwnerWaiverReason  string
 	Incident           string
 	WhyWaitingIsWorse  string
 	LatestTag          string
@@ -47,12 +48,14 @@ type validationInput struct {
 }
 
 type releasePolicyFacts struct {
-	Kind                  string `json:"kind"`
-	VersionIncrement      string `json:"version_increment"`
-	LosAngelesThursday    bool   `json:"los_angeles_thursday"`
-	SoakSeconds           int64  `json:"soak_seconds"`
-	IncidentPresent       bool   `json:"incident_present"`
-	DelayRationalePresent bool   `json:"delay_rationale_present"`
+	Kind                     string `json:"kind"`
+	Version                  string `json:"version"`
+	VersionIncrement         string `json:"version_increment"`
+	LosAngelesThursday       bool   `json:"los_angeles_thursday"`
+	SoakSeconds              int64  `json:"soak_seconds"`
+	OwnerWaiverReasonPresent bool   `json:"owner_waiver_reason_present"`
+	IncidentPresent          bool   `json:"incident_present"`
+	DelayRationalePresent    bool   `json:"delay_rationale_present"`
 }
 
 type evidencePolicyFacts struct {
@@ -102,6 +105,7 @@ func main() {
 	flag.StringVar(&input.CandidateSHA, "candidate-sha", "", "release candidate commit")
 	flag.StringVar(&input.ReleaseKind, "release-kind", "", "release route")
 	flag.StringVar(&input.ReceiptURI, "receipt-uri", "", "Hyphae release receipt")
+	flag.StringVar(&input.OwnerWaiverReason, "owner-waiver-reason", "", "owner reason for the one-time minor release waiver")
 	flag.StringVar(&input.Incident, "incident", "", "urgent patch incident")
 	flag.StringVar(&input.WhyWaitingIsWorse, "why-waiting-is-worse", "", "urgent patch delay rationale")
 	flag.StringVar(&input.LatestTag, "latest-tag", "", "latest stable tag")
@@ -180,12 +184,14 @@ func collectReleaseEvidence(input validationInput) (validationResult, error) {
 
 	facts := policyFacts{
 		Release: releasePolicyFacts{
-			Kind:                  input.ReleaseKind,
-			VersionIncrement:      classifyVersionIncrement(version, latest),
-			LosAngelesThursday:    localNow.Weekday() == time.Thursday,
-			SoakSeconds:           int64(actualSoak / time.Second),
-			IncidentPresent:       strings.TrimSpace(input.Incident) != "",
-			DelayRationalePresent: strings.TrimSpace(input.WhyWaitingIsWorse) != "",
+			Kind:                     input.ReleaseKind,
+			Version:                  input.Version,
+			VersionIncrement:         classifyVersionIncrement(version, latest),
+			LosAngelesThursday:       localNow.Weekday() == time.Thursday,
+			SoakSeconds:              int64(actualSoak / time.Second),
+			OwnerWaiverReasonPresent: strings.TrimSpace(input.OwnerWaiverReason) != "",
+			IncidentPresent:          strings.TrimSpace(input.Incident) != "",
+			DelayRationalePresent:    strings.TrimSpace(input.WhyWaitingIsWorse) != "",
 		},
 		Evidence: evidencePolicyFacts{
 			MainExactCandidate:      input.MainExactCandidate,
@@ -301,9 +307,12 @@ func buildSummary(
 	}
 	fmt.Fprintf(&summary, "- Soak duration: `%s`\n", actualSoak.Round(time.Second))
 	fmt.Fprintln(&summary, "- Policy facts: `policy-facts.json`")
-	if input.ReleaseKind == "urgent-patch" {
+	if input.ReleaseKind == "urgent-patch" || input.ReleaseKind == "owner-waived-minor" {
 		fmt.Fprintf(&summary, "- Incident: %s\n", strings.TrimSpace(input.Incident))
 		fmt.Fprintf(&summary, "- Delay rationale: %s\n", strings.TrimSpace(input.WhyWaitingIsWorse))
+	}
+	if input.ReleaseKind == "owner-waived-minor" {
+		fmt.Fprintf(&summary, "- Owner waiver reason: %s\n", strings.TrimSpace(input.OwnerWaiverReason))
 	}
 	return summary.String()
 }

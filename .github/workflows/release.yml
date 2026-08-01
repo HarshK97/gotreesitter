@@ -18,16 +18,21 @@ on:
         options:
           - planned-minor
           - urgent-patch
+          - owner-waived-minor
       receipt_uri:
         description: Governing Hyphae release receipt
         required: true
         type: string
       incident:
-        description: Urgent patch incident
+        description: Urgent patch or owner-waiver incident
         required: false
         type: string
       why_waiting_is_worse:
-        description: Reason that an urgent patch cannot wait
+        description: Urgent patch or owner-waiver delay rationale
+        required: false
+        type: string
+      owner_waiver_reason:
+        description: Owner reason for the one-time v0.48.0 minor waiver
         required: false
         type: string
 
@@ -50,6 +55,7 @@ jobs:
       CANDIDATE_SHA: ${{ inputs.candidate_sha }}
       RELEASE_KIND: ${{ inputs.release_kind }}
       RECEIPT_URI: ${{ inputs.receipt_uri }}
+      OWNER_WAIVER_REASON: ${{ inputs.owner_waiver_reason }}
       INCIDENT: ${{ inputs.incident }}
       WHY_WAITING_IS_WORSE: ${{ inputs.why_waiting_is_worse }}
       GH_TOKEN: ${{ github.token }}
@@ -211,6 +217,7 @@ jobs:
             -candidate-sha "$CANDIDATE_SHA" \
             -release-kind "$RELEASE_KIND" \
             -receipt-uri "$RECEIPT_URI" \
+            -owner-waiver-reason "$OWNER_WAIVER_REASON" \
             -incident "$INCIDENT" \
             -why-waiting-is-worse "$WHY_WAITING_IS_WORSE" \
             -latest-tag "${{ steps.facts.outputs.latest_tag }}" \
@@ -259,6 +266,7 @@ jobs:
       CANDIDATE_SHA: ${{ inputs.candidate_sha }}
       RELEASE_KIND: ${{ inputs.release_kind }}
       RECEIPT_URI: ${{ inputs.receipt_uri }}
+      OWNER_WAIVER_REASON: ${{ inputs.owner_waiver_reason }}
       INCIDENT: ${{ inputs.incident }}
       WHY_WAITING_IS_WORSE: ${{ inputs.why_waiting_is_worse }}
       GH_TOKEN: ${{ github.token }}
@@ -409,6 +417,7 @@ jobs:
             -candidate-sha "$CANDIDATE_SHA" \
             -release-kind "$RELEASE_KIND" \
             -receipt-uri "$RECEIPT_URI" \
+            -owner-waiver-reason "$OWNER_WAIVER_REASON" \
             -incident "$INCIDENT" \
             -why-waiting-is-worse "$WHY_WAITING_IS_WORSE" \
             -latest-tag "${{ steps.facts.outputs.latest_tag }}" \
