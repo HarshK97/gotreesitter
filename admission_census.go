@@ -89,6 +89,14 @@ const (
 	// censusMechanismNoTableAction: every runnable frontier head lacks an
 	// action for the elected token. This often marks an input that needs
 	// recovery. A clean production tree can instead reveal a scheduler gap.
+	//
+	// B3 stage S1 promoted the pure form of this shape (every no-action head
+	// genuinely table-empty, none from the unrelated group-election pause)
+	// from a detail-string match here to its own dispatch boundary,
+	// DiagnosticParserCoreRecovery (parsercore_phase0_driver.go), which
+	// classifies as censusMechanismRecovery below instead. This case and
+	// constant stay as a defensive mapping for any other caller that still
+	// pairs DiagnosticParserCoreNoAction with diagnosticParserCoreNoTableActionDetail.
 	censusMechanismNoTableAction admissionCensusMechanism = "no-table-action"
 	// censusMechanismSchedulerShape: the generic scheduler's structural
 	// invariants (sole runnable head, homogeneous accept frontier, no mixed

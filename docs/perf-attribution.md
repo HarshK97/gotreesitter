@@ -85,7 +85,7 @@ vice versa.
 
 ## The attribution tree
 
-Eight components, mutually exclusive and collectively exhaustive. Every
+Nine components, mutually exclusive and collectively exhaustive. Every
 CPU-profile sample lands in exactly one.
 
 1. **scheduler-dispatch** — the scheduler loop, per-token boundary
@@ -140,7 +140,19 @@ CPU-profile sample lands in exactly one.
    `tryCompactFullParseRoute`, `attemptAdmissionCandidateFullParse`,
    `admissionCandidateFullParseEligible` (the whole of `admission_switch.go`
    and `admission_switch_candidate.go` — a whole-file rule).
-8. **other** — every sample the walk cannot attribute to a named component:
+8. **recovery** — the compact core's native locked-C recovery mechanism
+   (error cost, missing-token insertion, retry, and recovery election over
+   compact subtrees; campaign v7 tranche B3). Added in tranche B3 stage S1,
+   before any recovery engine code exists, per gate G5 ("classifier
+   first... so recovery cost can never hide in `other`"). It owns no
+   functions yet — compact has no recovery implementation (B3 stages S2-S5
+   add error-cost, absorb/condense-resume, election, and missing-token code
+   class by class) — so it reads 0.0% on every clean canonical fixture
+   today, the same way `compat-tail`'s conditional work reads 0.0% below.
+   The whole-file rule for `internal/parsercorephase0/recovery_cost.go`
+   (stage S2's planned file) is forward-declared now so landing that file
+   does not also require touching this table.
+9. **other** — every sample the walk cannot attribute to a named component:
    Go runtime, garbage collection, and goroutine-scheduling frames with no
    gotreesitter-domain ancestor, plus any genuinely unclassified function.
    The tool separately reports the largest unclassified, non-runtime
@@ -327,6 +339,24 @@ inside `Tree.Release`), `hiddenTreeHasFieldIDs`, and
 None of them changes the qualitative picture; they are recorded as a known
 small residual rather than folded into a component that would overstate its
 weight.
+
+### B3 stage S1 addendum: the `recovery` component
+
+The table above predates the `recovery` component (added to
+`cgo_harness/attribution/classify.go` in campaign v7 tranche B3 stage S1, per
+gate G5) and so has no `recovery` column. A local reproduction of the same
+command on stage S1's branch, after the classifier change and before any
+recovery engine code, confirmed `recovery` reads exactly 0.0% on every lane
+and fixture — diagnostic lane (`rewrite`, `query_compile`, `language`,
+`grammargen_lr`) and shipped route (`rewrite`, `query_compile`, `language`)
+alike — matching `compat-tail`'s 0.0% pattern above. This is expected: the
+component owns no functions yet (B3 stages S2-S5 add error-cost,
+absorb/condense-resume, election, and missing-token code class by class), so
+no sample can land there. This local run is a verification check, not a new
+sealed or C0-authoritative epoch; it does not replace the receipt above or
+`docs/perf-attribution-receipt.json`. The next full regeneration (any future
+tranche that re-seals this board) will show `recovery` alongside the other
+eight components by construction, with no further classifier change needed.
 
 ### Noise floor (interleaved A/A, identical binary, 12 pairs per fixture)
 
