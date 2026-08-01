@@ -4191,13 +4191,22 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 		states = make([]StateID, 0, max(len(s.headers), 2*cap(states)))
 	}
 	for _, header := range s.headers {
-		shiftIdentity := header.shifted || first && !header.shifted
-		if !shiftIdentity || header.accepted || header.checkpoint != s.checkpointID {
-			return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreIdentity, detail: "generic scheduler election frontier is not closed and checkpoint-continuous"}
-		}
 		state, err := s.electHeaderState(header)
 		if err != nil {
 			return err
+		}
+		shiftIdentity := header.shifted || first && !header.shifted
+		if !shiftIdentity || header.accepted || header.checkpoint != s.checkpointID {
+			// Full receipts already validated the checkpoint while reading the
+			// header. Summary mode skips that digest lookup on the healthy hot
+			// path, but keeps the legacy invalid-checkpoint error when this cold
+			// identity gate rejects a malformed header.
+			if !s.fullReceipts() {
+				if _, _, ok := s.compact.CheckpointReceipt(header.checkpoint); !ok {
+					return errors.New("parser-core phase zero: header references unknown checkpoint identity")
+				}
+			}
+			return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreIdentity, detail: "generic scheduler election frontier is not closed and checkpoint-continuous"}
 		}
 		states = append(states, state)
 	}
