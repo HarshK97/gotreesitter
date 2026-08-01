@@ -13,6 +13,13 @@ type normalizationStats struct {
 	nodesVisited                          uint64
 	nodesRewritten                        uint64
 	nanos                                 int64
+	recoveryProbeInitialAttempts          uint64
+	recoveryProbeInitialAccepted          uint64
+	recoveryProbeLegacyFallbacks          uint64
+	recoveryProbeInitialRetryPasses       uint64
+	recoveryProbeLegacyRetryPasses        uint64
+	swiftLegacyRecoverySubparseAttempts   uint64
+	swiftLegacyRecoveryRetryPasses        uint64
 	namedPasses                           []normalizationNamedPassStats
 	nativeRecoveredStructureAuthoritative bool
 }
@@ -103,6 +110,37 @@ func (p *Parser) recordNormalizationMetric(name string, checked, run, nodesVisit
 	pass.nodesRewritten += nodesRewritten
 }
 
+func (p *Parser) recordRecoveryProbeInitial(retryPasses uint64) {
+	if p == nil {
+		return
+	}
+	p.normalizationStats.recoveryProbeInitialAttempts++
+	p.normalizationStats.recoveryProbeInitialRetryPasses += retryPasses
+}
+
+func (p *Parser) recordRecoveryProbeInitialAccepted() {
+	if p == nil {
+		return
+	}
+	p.normalizationStats.recoveryProbeInitialAccepted++
+}
+
+func (p *Parser) recordRecoveryProbeLegacyFallback(retryPasses uint64) {
+	if p == nil {
+		return
+	}
+	p.normalizationStats.recoveryProbeLegacyFallbacks++
+	p.normalizationStats.recoveryProbeLegacyRetryPasses += retryPasses
+}
+
+func (p *Parser) recordSwiftLegacyRecoverySubparse(retryPasses uint64) {
+	if p == nil {
+		return
+	}
+	p.normalizationStats.swiftLegacyRecoverySubparseAttempts++
+	p.normalizationStats.swiftLegacyRecoveryRetryPasses += retryPasses
+}
+
 func (s *normalizationStats) namedPass(name string) *normalizationNamedPassStats {
 	for i := range s.namedPasses {
 		if s.namedPasses[i].name == name {
@@ -122,6 +160,13 @@ func (p *Parser) copyNormalizationStats(rt *ParseRuntime) {
 	rt.NormalizationNodesVisited = p.normalizationStats.nodesVisited
 	rt.NormalizationNodesRewritten = p.normalizationStats.nodesRewritten
 	rt.NormalizationNanos = p.normalizationStats.nanos
+	rt.RecoveryProbeInitialAttempts = p.normalizationStats.recoveryProbeInitialAttempts
+	rt.RecoveryProbeInitialAccepted = p.normalizationStats.recoveryProbeInitialAccepted
+	rt.RecoveryProbeLegacyFallbacks = p.normalizationStats.recoveryProbeLegacyFallbacks
+	rt.RecoveryProbeInitialRetryPasses = p.normalizationStats.recoveryProbeInitialRetryPasses
+	rt.RecoveryProbeLegacyRetryPasses = p.normalizationStats.recoveryProbeLegacyRetryPasses
+	rt.SwiftLegacyRecoverySubparseAttempts = p.normalizationStats.swiftLegacyRecoverySubparseAttempts
+	rt.SwiftLegacyRecoveryRetryPasses = p.normalizationStats.swiftLegacyRecoveryRetryPasses
 	rt.NativeRecoveredStructureAuthoritative = p.normalizationStats.nativeRecoveredStructureAuthoritative
 	if len(p.normalizationStats.namedPasses) > 0 {
 		passes := make([]NormalizationPassRuntime, len(p.normalizationStats.namedPasses))

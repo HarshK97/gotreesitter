@@ -64,6 +64,13 @@ func strictParseResult(tree *Tree, err error) (*Tree, error) {
 // TokenSourceFactory builds a token source for parser source bytes.
 type TokenSourceFactory func(source []byte) (TokenSource, error)
 
+type recoveryParseMode uint8
+
+const (
+	recoveryParseLegacy recoveryParseMode = iota
+	recoveryParseInitialOnly
+)
+
 // ParserLogType categorizes parser log messages.
 type ParserLogType uint8
 
@@ -479,6 +486,35 @@ func (p *Parser) tokenSourceReparseFactory(ts TokenSource) TokenSourceFactory {
 }
 
 func (p *Parser) parseForRecovery(source []byte) (*Tree, error) {
+	return p.parseForRecoveryWithMode(source, recoveryParseLegacy)
+}
+
+// parseForRecoveryInitialOnly runs one production recovery parse without the
+// retry ladder. It is for a caller that can reject its result safely.
+func (p *Parser) parseForRecoveryInitialOnly(source []byte) (*Tree, error) {
+	return p.parseForRecoveryWithMode(source, recoveryParseInitialOnly)
+}
+
+// parseForRecoveryInitialOnlyOrLegacy runs the initial-only probe first. It
+// returns that tree only when accept confirms it. Otherwise it releases the
+// probe and runs the unchanged legacy recovery parse.
+func (p *Parser) parseForRecoveryInitialOnlyOrLegacy(source []byte, accept func(*Tree) bool) (*Tree, error) {
+	initial, initialErr := p.parseForRecoveryInitialOnly(source)
+	p.recordRecoveryProbeInitial(p.recoveryParserRetryPasses())
+	if initialErr == nil && initial != nil && accept != nil && accept(initial) {
+		p.recordRecoveryProbeInitialAccepted()
+		return initial, nil
+	}
+	if initial != nil {
+		initial.Release()
+	}
+
+	legacy, legacyErr := p.parseForRecovery(source)
+	p.recordRecoveryProbeLegacyFallback(p.recoveryParserRetryPasses())
+	return legacy, legacyErr
+}
+
+func (p *Parser) parseForRecoveryWithMode(source []byte, mode recoveryParseMode) (*Tree, error) {
 	if p == nil || p.language == nil {
 		return nil, ErrNoLanguage
 	}
@@ -497,6 +533,11 @@ func (p *Parser) parseForRecovery(source []byte) (*Tree, error) {
 		p.recoveryParser = parser
 	}
 	parser.skipRecoveryReparse = true
+	previousInitialOnly := parser.recoveryInitialOnly
+	parser.recoveryInitialOnly = mode == recoveryParseInitialOnly
+	defer func() {
+		parser.recoveryInitialOnly = previousInitialOnly
+	}()
 	parser.timeoutMicros = p.remainingTimeoutMicros()
 	parser.cancellationFlag = p.cancellationFlag
 	if p.reparseFactory != nil {
@@ -515,6 +556,13 @@ func (p *Parser) parseForRecovery(source []byte) (*Tree, error) {
 		p.markActiveParseStopped(tree.rawParseStopReason())
 	}
 	return tree, err
+}
+
+func (p *Parser) recoveryParserRetryPasses() uint64 {
+	if p == nil || p.recoveryParser == nil || p.recoveryParser.fullParseRetryPassesTaken <= 0 {
+		return 0
+	}
+	return uint64(p.recoveryParser.fullParseRetryPassesTaken)
 }
 
 func (p *Parser) clearRecoveryParser() {
@@ -625,8 +673,10 @@ func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFact
 	// stream and cannot honor arbitrary tokens, so this always declines and
 	// runs production. The seam stays here so the policy is enforced in one
 	// place for every fresh full-parse entry point.
-	if tree, ok := p.attemptAdmissionCandidateFullParse(source, nil, false); ok {
-		return tree, nil
+	if !p.recoveryInitialOnly {
+		if tree, ok := p.attemptAdmissionCandidateFullParse(source, nil, false); ok {
+			return tree, nil
+		}
 	}
 	endBudget := p.beginParseOperationBudget()
 	defer endBudget()
@@ -645,7 +695,7 @@ func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFact
 	initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth)
 	workCountSetNextParseAttempt("initial_full", "fresh_token_source_full_parse")
 	tree := p.parseInternal(source, p.wrapIncludedRanges(ts), nil, nil, arenaClassFull, nil, initialMaxStacks, 0, 0, deterministicExternalConflicts)
-	if tree != nil && !tree.rawParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) {
+	if !p.recoveryInitialOnly && tree != nil && !tree.rawParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) {
 		tree = p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
 		if tree != nil && !tree.rawParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) && shouldRepeatExternalScannerFullParse(p.language, tree) {
 			tree = p.retryFullParseWithTokenSource(source, ts, initialMaxStacks, deterministicExternalConflicts, tree)
@@ -957,8 +1007,10 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	// route can reproduce. When the switch is on and the candidate route
 	// accepts this input, return its tree; otherwise fall through to production
 	// (the fallback counter records the decline).
-	if tree, ok := p.attemptAdmissionCandidateFullParse(source, nil, true); ok {
-		return tree, nil
+	if !p.recoveryInitialOnly {
+		if tree, ok := p.attemptAdmissionCandidateFullParse(source, nil, true); ok {
+			return tree, nil
+		}
 	}
 	endBudget := p.beginParseOperationBudget()
 	defer endBudget()
@@ -975,11 +1027,13 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 	if progress.enabled {
 		progress.emit(time.Now(), "forest_fast_path_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
 	}
-	if tree := p.tryForestFastPath(source); tree != nil {
-		if progress.enabled {
-			progress.emit(time.Now(), "forest_fast_path_end", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "used=true")
+	if !p.recoveryInitialOnly {
+		if tree := p.tryForestFastPath(source); tree != nil {
+			if progress.enabled {
+				progress.emit(time.Now(), "forest_fast_path_end", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "used=true")
+			}
+			return tree, nil
 		}
-		return tree, nil
 	}
 	if progress.enabled {
 		progress.emit(time.Now(), "forest_fast_path_end", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "used=false")
@@ -1023,7 +1077,7 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 		if progress.enabled {
 			progress.emit(time.Now(), "retry_begin", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "")
 		}
-		if tree != nil && !tree.rawParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) {
+		if !p.recoveryInitialOnly && tree != nil && !tree.rawParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) {
 			tree = p.retryFullParseWithDFA(source, initialMaxStacks, deterministicExternalConflicts, tree)
 			if tree != nil && !tree.rawParseStoppedEarly() && !parseStopReasonIsActive(p.activeParseStopReason()) && shouldRepeatExternalScannerFullParse(p.language, tree) {
 				tree = p.retryFullParseWithDFA(source, initialMaxStacks, deterministicExternalConflicts, tree)
@@ -1033,7 +1087,9 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 			progress.emit(time.Now(), "retry_end", 0, 0, Token{}, false, nil, 0, 0, 0, false, 0, 0, "")
 		}
 		p.normalizeReturnedTreeForParse(tree, source)
-		tree = p.resolveCRecoverySwallowedError(source, tree)
+		if !p.recoveryInitialOnly {
+			tree = p.resolveCRecoverySwallowedError(source, tree)
+		}
 		tree = p.maybeCompactReturnedFullTree(tree, source)
 	}
 	return tree, nil

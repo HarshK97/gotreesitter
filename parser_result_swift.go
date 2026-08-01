@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "bytes"
+import (
+	"bytes"
+	"os"
+)
 
 // normalizeSwiftCompatibility recovers the leading control-keyword token that
 // grammargen's reduce path drops from `control_transfer_statement` nodes for
@@ -13,15 +16,52 @@ import "bytes"
 // engine now preserves that keyword child natively (see
 // TestSwiftBareControlTransferKeywordChild in grammars/).
 func normalizeSwiftCompatibility(root *Node, source []byte, p *Parser, lang *Language) {
+	normalizeSwiftCompatibilityWithCensus(root, source, p, lang, materializationSubpassCensus{})
+}
+
+func normalizeSwiftCompatibilityWithCensus(root *Node, source []byte, p *Parser, lang *Language, census materializationSubpassCensus) {
 	if root == nil || lang == nil || lang.Name != "swift" {
 		return
 	}
-	normalizeSwiftRecoveredTrailingClosureConditions(root, source, p, lang)
-	normalizeSwiftRecoveredTernaryExpressions(root, source, p, lang)
-	normalizeSwiftRecoveredTopLevelDeclarations(root, source, p, lang)
+	census.run("dispatch.swift.conditions", func() {
+		normalizeSwiftRecoveredTrailingClosureConditions(root, source, p, lang)
+	})
+	census.run("dispatch.swift.ternary", func() {
+		normalizeSwiftRecoveredTernaryExpressions(root, source, p, lang)
+	})
+	census.run("dispatch.swift.top-level", func() {
+		normalizeSwiftRecoveredTopLevelDeclarations(root, source, p, lang)
+	})
 	// `return <expr>` case: existing children present but the keyword leaf is
 	// missing as the first child and the span starts at the result expression.
-	prependSwiftControlTransferKeyword(root, source, lang)
+	census.run("dispatch.swift.control", func() {
+		prependSwiftControlTransferKeyword(root, source, lang)
+	})
+}
+
+const swiftCleanRecoveryProbeModeEnv = "GOT_SWIFT_CLEAN_RECOVERY_PROBE_MODE"
+
+// parseSwiftCleanFullSourceRecovery runs the initial-only probe for the two
+// whole-source Swift recoveries with a clean, full-span gate. Set the mode to
+// "legacy" only to compare the old route in a test or a diagnostic run.
+func parseSwiftCleanFullSourceRecovery(p *Parser, source []byte, lang *Language) (*Tree, error) {
+	if p == nil || lang == nil {
+		return nil, ErrNoLanguage
+	}
+	if os.Getenv(swiftCleanRecoveryProbeModeEnv) == "legacy" {
+		return p.parseForRecovery(source)
+	}
+	return p.parseForRecoveryInitialOnlyOrLegacy(source, func(tree *Tree) bool {
+		return swiftCleanFullSourceRecoveryAccepted(tree, source, lang)
+	})
+}
+
+func swiftCleanFullSourceRecoveryAccepted(tree *Tree, source []byte, lang *Language) bool {
+	if tree == nil || lang == nil {
+		return false
+	}
+	root := tree.RootNode()
+	return root != nil && !root.HasError() && root.Type(lang) == "source_file" && root.endByte == uint32(len(source))
 }
 
 func normalizeSwiftRecoveredTopLevelDeclarations(root *Node, source []byte, p *Parser, lang *Language) {
@@ -38,6 +78,10 @@ func normalizeSwiftRecoveredTopLevelDeclarations(root *Node, source []byte, p *P
 			continue
 		}
 		if !child.HasError() {
+			recoveredChildren = append(recoveredChildren, child)
+			continue
+		}
+		if !swiftTopLevelRecoveryCanRepairChild(child) {
 			recoveredChildren = append(recoveredChildren, child)
 			continue
 		}
@@ -79,6 +123,7 @@ func swiftRecoverTopLevelDeclarationFromRange(source []byte, start, end uint32, 
 		return nil, false
 	}
 	tree, err := p.parseForRecovery(source[start:end])
+	p.recordSwiftLegacyRecoverySubparse(p.recoveryParserRetryPasses())
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		if tree != nil {
 			tree.Release()

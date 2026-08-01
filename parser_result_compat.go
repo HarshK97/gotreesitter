@@ -213,7 +213,9 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 			}
 		})
 	case "swift":
-		dispatcherArmCensus(ctx, "dispatch.swift", func() { normalizeSwiftCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
+		dispatcherArmSubpassCensus(ctx, "dispatch.swift", func(census materializationSubpassCensus) {
+			normalizeSwiftCompatibilityWithCensus(ctx.root, ctx.source, ctx.parser, ctx.lang, census)
+		})
 	case "templ":
 		dispatcherArmCensus(ctx, "dispatch.templ", func() { normalizeTemplCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "wgsl":

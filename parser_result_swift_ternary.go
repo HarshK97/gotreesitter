@@ -91,9 +91,12 @@ func normalizeSwiftRecoveredTernaryExpressions(root *Node, source []byte, p *Par
 		}
 		blankRanges = append(blankRanges, [2]uint32{s.questPos, s.ifFalseEnd})
 	}
+	if !swiftTernaryRecoveryCanReachCleanTree(root, blankRanges) {
+		return
+	}
 
 	transformed := swiftBlankRanges(source, blankRanges)
-	tree, err := p.parseForRecovery(transformed)
+	tree, err := parseSwiftCleanFullSourceRecovery(p, transformed, lang)
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		if tree != nil {
 			tree.Release()
@@ -103,7 +106,7 @@ func normalizeSwiftRecoveredTernaryExpressions(root *Node, source []byte, p *Par
 	skeleton := tree.RootNode()
 	// Accept only a fully clean, byte-faithful skeleton — same gate the
 	// trailing-closure recovery uses.
-	if skeleton.HasError() || skeleton.Type(lang) != "source_file" || skeleton.endByte != uint32(len(transformed)) {
+	if !swiftCleanFullSourceRecoveryAccepted(tree, transformed, lang) {
 		tree.Release()
 		return
 	}
@@ -268,6 +271,7 @@ func (b *swiftTernaryBuilder) buildOperand(start, end uint32) *Node {
 	}
 	sub := b.source[start:end]
 	tree, err := b.parser.parseForRecovery(sub)
+	b.parser.recordSwiftLegacyRecoverySubparse(b.parser.recoveryParserRetryPasses())
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		if tree != nil {
 			tree.Release()

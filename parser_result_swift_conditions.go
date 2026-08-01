@@ -51,8 +51,11 @@ func normalizeSwiftRecoveredTrailingClosureConditions(root *Node, source []byte,
 	if len(inserts) == 0 {
 		return
 	}
+	if !swiftConditionRecoveryCanReachCleanTree(root, source, inserts) {
+		return
+	}
 	transformed, insTPos := swiftApplyParenInserts(source, inserts)
-	tree, err := p.parseForRecovery(transformed)
+	tree, err := parseSwiftCleanFullSourceRecovery(p, transformed, lang)
 	if err != nil || tree == nil || tree.RootNode() == nil {
 		if tree != nil {
 			tree.Release()
@@ -68,7 +71,7 @@ func normalizeSwiftRecoveredTrailingClosureConditions(root *Node, source []byte,
 	// still collapses to _modifierless_function_declaration_no_body and silently
 	// drops trailing statements *without* an ERROR node (#131), so HasError alone
 	// would accept a truncated, still-broken reparse.
-	if tRoot.HasError() || tRoot.Type(lang) != "source_file" || tRoot.endByte != uint32(len(transformed)) {
+	if !swiftCleanFullSourceRecoveryAccepted(tree, transformed, lang) {
 		return
 	}
 	rm := &swiftRemap{
