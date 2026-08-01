@@ -26,6 +26,7 @@ import (
 
 	gts "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
+	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
 )
 
 type b4bShadowCensusRow struct {
@@ -37,8 +38,14 @@ func TestDiagnosticParserCoreB4bShadowCensusSmokeCorpusReport(t *testing.T) {
 	if os.Getenv("GTS_B4B_SHADOW_CENSUS_REPORT") != "1" {
 		t.Skip("set GTS_B4B_SHADOW_CENSUS_REPORT=1 to run the B4b stage 1 shadow census over the smoke corpus")
 	}
+	// See parsercore_phase0_b4b_shadow_census_internal_test.go: the census
+	// comparison switch and the recording switch are independent cached
+	// reads of the same environment variable, so the ForTest override must
+	// enable both.
 	restore := gts.SetDiagnosticParserCoreShadowCensusEnabledForTest(true)
 	defer restore()
+	restoreRecording := core.SetAlternativeSetRecordingEnabledForTest(true)
+	defer restoreRecording()
 	t.Cleanup(func() { grammars.PurgeEmbeddedLanguageCache() })
 
 	var rows []b4bShadowCensusRow

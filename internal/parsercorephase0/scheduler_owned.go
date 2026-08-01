@@ -41,19 +41,27 @@ func (c *Core) RecordReductionLineageOwned(owner SchedulerTransactionToken, outp
 // RecordHeadLineageOwned persists inherited scheduler lineage on one graph
 // version, and unions set into its recorded alternative set in the same
 // scheduler-owned operation. Unknown lineage invalidates an earlier exact
-// scalar record conservatively; set is never invalidated (union only), so
-// its update always runs, independent of the scalar outcome
-// (spec.b4b-alternative-set.v1 section 4). Sharing one RunSchedulerOwned
-// call for both halves -- rather than a second Owned call for the set --
-// halves the per-header token-validation cost of
-// persistHeaderLineageOwned's per-dispatch persistence loop
+// scalar record conservatively; set is never invalidated (union only).
+// Sharing one RunSchedulerOwned call for both halves -- rather than a
+// second Owned call for the set -- halves the per-header token-validation
+// cost of persistHeaderLineageOwned's per-dispatch persistence loop
 // (parsercore_phase0_driver.go), its sole caller.
+//
+// setDirty lets that caller skip the set union outright: scalar dirtiness
+// cannot be inferred from set dirtiness (a rank flip on an already-recorded
+// lineage id changes rank without adding a member), so the scalar merge
+// always runs -- it is already cheap when nothing changed
+// (recordNodeLineage's own no-op guard) -- but the set union is both more
+// expensive per call and, empirically, redundant far more often (the same
+// (head, altSet) pair persisted again on a dispatch that never touched this
+// header), so the caller may prove that in advance and skip it entirely.
 func (c *Core) RecordHeadLineageOwned(
 	owner SchedulerTransactionToken,
 	head Head,
 	rank CleanPathRankSelection,
 	lineage uint16,
 	set AlternativeSet,
+	setDirty bool,
 ) error {
 	return c.RunSchedulerOwned(owner, func() error {
 		if rank != CleanPathRankSelected && rank != CleanPathRankUnselected || lineage == 0 {
@@ -62,6 +70,9 @@ func (c *Core) RecordHeadLineageOwned(
 		}
 		if err := c.recordNodeLineage(head, rank, lineage); err != nil {
 			return err
+		}
+		if !setDirty {
+			return nil
 		}
 		return c.recordNodeLineageSet(head, set)
 	})
@@ -181,6 +192,9 @@ func (c *Core) recordNodeLineageSet(head Head, set AlternativeSet) error {
 // runs alongside, and never changes the outcome of, recordNodeLineage's
 // existing scalar merge.
 func (c *Core) recordNodeLineageMember(head Head, member uint16) error {
+	if !alternativeSetRecordingEnabled() {
+		return nil
+	}
 	node, err := c.nodeLineage(head.Node)
 	if err != nil {
 		return err

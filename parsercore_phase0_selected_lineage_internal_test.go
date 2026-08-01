@@ -94,6 +94,7 @@ func TestDiagnosticParserCoreExternalShiftInvalidatesLineage(t *testing.T) {
 // with the carry assertion once the set becomes the live proof; this pin
 // documents the property from stage 1 on.
 func TestDiagnosticParserCoreExternalShiftCarriesAlternativeSet(t *testing.T) {
+	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
 	header := diagnosticParserCoreHeader{
 		cleanPathRank: core.CleanPathRankSelected, cleanPathLineage: 7,
 		altSet: core.NewAlternativeSetMember(7),
@@ -133,6 +134,7 @@ func newAlternativeSetPinScheduler(t *testing.T) *diagnosticParserCoreGenericSch
 }
 
 func TestDiagnosticParserCoreConvergedCoverageDropsProof(t *testing.T) {
+	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
 	member := func(members ...uint16) core.AlternativeSet {
 		var set core.AlternativeSet
 		compact, err := core.New(alternativeSetPinCoverageTable{}, core.Limits{})
@@ -219,6 +221,7 @@ func TestDiagnosticParserCoreConvergedCoverageDropsProof(t *testing.T) {
 }
 
 func TestDiagnosticParserCoreConvergedCoverageDropsOverflowedDroppedFailsClosed(t *testing.T) {
+	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
 	scheduler := newAlternativeSetPinScheduler(t)
 	dropped := core.NewAlternativeSetMember(1)
 	for member := uint16(2); member <= 40; member++ {
@@ -243,6 +246,7 @@ func TestDiagnosticParserCoreConvergedCoverageDropsOverflowedDroppedFailsClosed(
 // TestDiagnosticParserCoreSelectedLineageProofAllocations
 // (spec.b4b-alternative-set.v1 section 3.4's second new pin).
 func TestDiagnosticParserCoreConvergedCoverageDropsProofAllocations(t *testing.T) {
+	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
 	scheduler := newAlternativeSetPinScheduler(t)
 	survivorSet := core.NewAlternativeSetMember(7)
 	scheduler.compact.UnionAlternativeSet(&survivorSet, core.NewAlternativeSetMember(9))

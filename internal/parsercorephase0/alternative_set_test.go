@@ -21,6 +21,13 @@ func TestNewAlternativeSetMember(t *testing.T) {
 	if got := NewAlternativeSetMember(0); got != (AlternativeSet{}) {
 		t.Fatalf("NewAlternativeSetMember(0) = %+v, want empty set", got)
 	}
+	// The recording gate defaults to off (GTS_B4B_SHADOW_CENSUS unset): a
+	// nonzero member still returns the empty set until recording is
+	// enabled.
+	if got := NewAlternativeSetMember(7); got != (AlternativeSet{}) {
+		t.Fatalf("NewAlternativeSetMember(7) with recording disabled = %+v, want empty set", got)
+	}
+	defer SetAlternativeSetRecordingEnabledForTest(true)()
 	compact := &Core{}
 	set := NewAlternativeSetMember(7)
 	if got := alternativeSetMembersForTest(t, compact, set); !slices.Equal(got, []uint16{7}) {
@@ -306,6 +313,7 @@ func TestAlternativeSetMembersRejectsUnresolvableSpill(t *testing.T) {
 // set, even across an out-of-order union that forces a fresh spill segment
 // mid-transaction.
 func TestAlternativeSetJournalRestoresExactMembershipAcrossSpill(t *testing.T) {
+	defer SetAlternativeSetRecordingEnabledForTest(true)()
 	compact := newTinyCore(t, 4)
 	head, err := compact.Seed(1, 0)
 	if err != nil {
@@ -382,6 +390,7 @@ func TestAlternativeSetJournalRestoresExactMembershipAcrossSpill(t *testing.T) {
 // merge outcome (stage 1: no behavior change) while also recording the
 // member.
 func TestAlternativeSetEstablishmentInsertsMemberAlongsideScalar(t *testing.T) {
+	defer SetAlternativeSetRecordingEnabledForTest(true)()
 	compact := newTinyCore(t, 4)
 	head, err := compact.Seed(1, 0)
 	if err != nil {
@@ -404,6 +413,39 @@ func TestAlternativeSetEstablishmentInsertsMemberAlongsideScalar(t *testing.T) {
 	}
 	if got := alternativeSetMembersForTest(t, compact, record.set); !slices.Equal(got, []uint16{9}) {
 		t.Fatalf("established members = %v, want [9]", got)
+	}
+}
+
+// TestAlternativeSetRecordingDisabledByDefaultLeavesSetEmptyButScalarIntact
+// pins the always-off-by-default recording gate (GTS_B4B_SHADOW_CENSUS):
+// with no override, establishment records no member at all, while the
+// existing scalar rank/lineage mechanism is completely unaffected.
+func TestAlternativeSetRecordingDisabledByDefaultLeavesSetEmptyButScalarIntact(t *testing.T) {
+	compact := newTinyCore(t, 4)
+	head, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputs := []ReductionOutput{{
+		Head: head, CleanPathRank: CleanPathRankUnselected, MultiplePopPaths: true,
+	}}
+	if err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return compact.RecordReductionLineageOwned(owner, outputs, 9)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	record, err := compact.nodeLineage(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.rank != CleanPathRankUnselected || record.lineage != 9 || !record.converged {
+		t.Fatalf("scalar record with recording disabled = %+v, want unselected lineage 9 converged (unaffected by the gate)", *record)
+	}
+	if record.set.Len() != 0 {
+		t.Fatalf("set with recording disabled = %+v (len %d), want empty", record.set, record.set.Len())
+	}
+	if len(compact.alternativeSpillArena) != 0 {
+		t.Fatalf("spill arena grew with recording disabled: len=%d, want 0", len(compact.alternativeSpillArena))
 	}
 }
 
@@ -440,5 +482,54 @@ func TestAlternativeSetWarmInsertAllocations(t *testing.T) {
 		}
 	}); allocations != 0 {
 		t.Fatalf("warm alternative-set insert allocations = %g, want 0", allocations)
+	}
+}
+
+// TestRecordHeadLineageOwnedSetDirtyFalseSkipsSetButKeepsScalar pins
+// RecordHeadLineageOwned's setDirty parameter: false must skip the set
+// union entirely (the node's recorded set is untouched, even though the
+// call passes a set argument), while the scalar rank/lineage merge still
+// runs unconditionally, since a rank flip on an already-recorded lineage id
+// changes the scalar pair without adding a member.
+func TestRecordHeadLineageOwnedSetDirtyFalseSkipsSetButKeepsScalar(t *testing.T) {
+	defer SetAlternativeSetRecordingEnabledForTest(true)()
+	compact := newTinyCore(t, 4)
+	head, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unrelated := NewAlternativeSetMember(99)
+	if err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return compact.RecordHeadLineageOwned(owner, head, CleanPathRankUnselected, 7, unrelated, false)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	record, err := compact.nodeLineage(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.rank != CleanPathRankUnselected || record.lineage != 7 || !record.converged {
+		t.Fatalf("scalar record with setDirty=false = %+v, want unselected lineage 7 converged", *record)
+	}
+	if record.set.Len() != 0 {
+		t.Fatalf("set = %+v (len %d), want untouched/empty: setDirty=false must skip the union", record.set, record.set.Len())
+	}
+	// setDirty=true now unions the same set: scalar re-merges (rank flips to
+	// Selected on the same lineage, matching applyDiagnosticParserCoreCleanPathOutput's
+	// overwrite rule) and the set gains the member.
+	if err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return compact.RecordHeadLineageOwned(owner, head, CleanPathRankSelected, 7, unrelated, true)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	record, err = compact.nodeLineage(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.rank != CleanPathRankSelected {
+		t.Fatalf("scalar rank after setDirty=true = %v, want Selected", record.rank)
+	}
+	if got := alternativeSetMembersForTest(t, compact, record.set); !slices.Equal(got, []uint16{99}) {
+		t.Fatalf("set members after setDirty=true = %v, want [99]", got)
 	}
 }

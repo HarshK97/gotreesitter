@@ -879,6 +879,17 @@ type diagnosticParserCoreHeader struct {
 	// diagnosticParserCoreConvergedCoverageDrops and the shadow census; it
 	// never changes routing (spec.b4b-alternative-set.v1 section 7).
 	altSet core.AlternativeSet
+	// lastPersistedHead and lastPersistedAltSet record the (head, altSet)
+	// pair persistHeaderLineageOwned last actually wrote to a node. Both are
+	// plain comparable values, so persistHeaderLineageOwned can detect a
+	// no-op persist (same node, same set already recorded there) with two
+	// equality checks instead of re-entering the scheduler-owned set-union
+	// machinery every dispatch. A rolled-back dispatch reverts these fields
+	// along with the rest of the header (diagnosticParserCoreHeaderRollbackScratch
+	// snapshots the whole struct by value), so they never claim a persist
+	// that Core itself undid.
+	lastPersistedHead   core.Head
+	lastPersistedAltSet core.AlternativeSet
 }
 
 func nextDiagnosticParserCoreCleanPathLineage(next *uint16) (uint16, error) {
@@ -951,7 +962,8 @@ func markDiagnosticParserCoreExternalLineage(
 func (s *diagnosticParserCoreGenericScheduler) persistHeaderLineageOwned(
 	owner core.SchedulerTransactionToken,
 ) error {
-	for _, header := range s.headers {
+	for index := range s.headers {
+		header := &s.headers[index]
 		if header.creationSeq >= math.MaxUint32 {
 			return errors.New("parser-core phase zero: scheduler lineage overflow")
 		}
@@ -965,15 +977,28 @@ func (s *diagnosticParserCoreGenericScheduler) persistHeaderLineageOwned(
 		if !header.convergedReductionSplit {
 			continue
 		}
+		// The scalar pair is re-merged unconditionally: recordNodeLineage
+		// already no-ops cheaply when nothing changed, and rank can flip
+		// (Unselected -> Selected on the same lineage id) without altSet
+		// gaining a member, so scalar dirtiness can't be inferred from set
+		// dirtiness alone. The set union is the expensive, and far more
+		// often redundant, half (persistHeaderLineageOwned runs every
+		// dispatch for every still-active header, not only the one that
+		// dispatch actually touched): skip it when this exact (head, altSet)
+		// pair is already what was last persisted for this header.
+		setDirty := header.head != header.lastPersistedHead || header.altSet != header.lastPersistedAltSet
 		if err := s.compact.RecordHeadLineageOwned(
 			owner,
 			header.head,
 			header.cleanPathRank,
 			header.cleanPathLineage,
 			header.altSet,
+			setDirty,
 		); err != nil {
 			return err
 		}
+		header.lastPersistedHead = header.head
+		header.lastPersistedAltSet = header.altSet
 	}
 	return nil
 }

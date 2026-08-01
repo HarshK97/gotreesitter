@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"slices"
 	"sync"
 )
@@ -428,12 +429,54 @@ type AlternativeSet struct {
 	spillRef uint32 // 1-based start index into Core.alternativeSpillArena
 }
 
-// NewAlternativeSetMember returns the singleton set {member}. member==0 (the
-// reserved "no event" identity) returns the empty set. Never allocates: a
-// single fresh member always fits inline.
+// alternativeSetRecordingEnabledOnce and alternativeSetRecordingEnabledVal
+// cache GTS_B4B_SHADOW_CENSUS, the same switch that gates the shadow census
+// itself. No production or stage-1 diagnostic decision reads a recorded
+// AlternativeSet except that census, so recording is off by default and
+// only turns on with it -- this package has no way to reach the census's
+// own copy of the flag (parsercorephase0 has no dependency on the higher
+// package that defines it), so it caches an independent read of the same
+// environment variable; both settle on the same cached value for the life
+// of a process.
+var (
+	alternativeSetRecordingEnabledOnce sync.Once
+	alternativeSetRecordingEnabledVal  bool
+)
+
+func alternativeSetRecordingEnabled() bool {
+	alternativeSetRecordingEnabledOnce.Do(func() {
+		switch os.Getenv("GTS_B4B_SHADOW_CENSUS") {
+		case "1", "true", "TRUE", "True", "on", "ON", "yes", "YES":
+			alternativeSetRecordingEnabledVal = true
+		}
+	})
+	return alternativeSetRecordingEnabledVal
+}
+
+// SetAlternativeSetRecordingEnabledForTest overrides the recording gate for
+// one test process, mirroring the census's own ForTest override. Restore
+// the previous value (the returned func) when done.
+func SetAlternativeSetRecordingEnabledForTest(on bool) func() {
+	alternativeSetRecordingEnabledOnce.Do(func() {})
+	previous := alternativeSetRecordingEnabledVal
+	alternativeSetRecordingEnabledVal = on
+	return func() { alternativeSetRecordingEnabledVal = previous }
+}
+
+// NewAlternativeSetMember returns the singleton set {member}, or the empty
+// set when member==0 (the reserved "no event" identity) or when the
+// recording gate is off. Every driver-side alternative-set value not
+// copied or unioned from an existing header/node set originates here, so
+// gating this one construction point -- together with
+// recordNodeLineageMember, the only other place a member is ever inserted
+// -- keeps every set in the system at its zero value for the life of the
+// parse when recording is disabled: every downstream union or insert then
+// sees an empty source and no-ops through its own existing zero-cost guard,
+// with no further gating needed at any of those call sites. Never
+// allocates: a single fresh member always fits inline.
 func NewAlternativeSetMember(member uint16) AlternativeSet {
 	var set AlternativeSet
-	if member == 0 {
+	if member == 0 || !alternativeSetRecordingEnabled() {
 		return set
 	}
 	set.inline[0] = member
@@ -4475,8 +4518,19 @@ func (c *Core) alternativeSetUnion(dst *AlternativeSet, src AlternativeSet) bool
 // alternativeSetSortedContainsAll reports whether every member of needle is
 // present in haystack. Both slices are sorted ascending (AlternativeSet's
 // section 3.2 invariant), so this is a single merge-scan, never allocating.
+// A cheap O(1) range check on the first and last elements proves
+// non-containment (and so skips the O(len(needle)+len(haystack)) scan
+// entirely) whenever needle reaches outside haystack's covered range --
+// sound in both directions, since haystack sorted implies every member of
+// needle must fall within [haystack[0], haystack[len-1]] to be contained.
 func alternativeSetSortedContainsAll(needle, haystack []uint16) bool {
 	if len(needle) > len(haystack) {
+		return false
+	}
+	if len(needle) == 0 {
+		return true
+	}
+	if needle[0] < haystack[0] || needle[len(needle)-1] > haystack[len(haystack)-1] {
 		return false
 	}
 	haystackIndex := 0

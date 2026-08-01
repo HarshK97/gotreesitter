@@ -428,10 +428,12 @@ func TestDiagnosticParserCoreCheckpointCompactLayoutsAMD64(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("amd64 layout receipt")
 	}
-	// spec.b4b-alternative-set.v1 section 3.2: diagnosticParserCoreHeader
-	// grows by 16 bytes for the added altSet field.
-	if got := unsafe.Sizeof(diagnosticParserCoreHeader{}); got != 40 {
-		t.Fatalf("scheduler header size=%d, want 40", got)
+	// diagnosticParserCoreHeader grows by 16 bytes for the added altSet
+	// field, then by another 24 bytes (lastPersistedHead core.Head +
+	// lastPersistedAltSet core.AlternativeSet) for the per-dispatch persist
+	// skip: 24 -> 40 -> 64.
+	if got := unsafe.Sizeof(diagnosticParserCoreHeader{}); got != 64 {
+		t.Fatalf("scheduler header size=%d, want 64", got)
 	}
 	if got := unsafe.Sizeof(diagnosticParserCorePhaseHead{}); got != 12 {
 		t.Fatalf("canonical phase key size=%d, want 12", got)

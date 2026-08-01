@@ -18,14 +18,24 @@ package gotreesitter
 import (
 	"os"
 	"testing"
+
+	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
 )
 
 func TestDiagnosticParserCoreB4bShadowCensusCanonicalReport(t *testing.T) {
 	if os.Getenv("GTS_B4B_SHADOW_CENSUS_REPORT") != "1" {
 		t.Skip("set GTS_B4B_SHADOW_CENSUS_REPORT=1 to run the B4b stage 1 shadow census over the canonical fixtures")
 	}
+	// The census comparison switch and the recording switch are two
+	// independent cached reads of the same GTS_B4B_SHADOW_CENSUS
+	// environment variable (recording lives in parsercorephase0, which
+	// cannot depend back on this package's copy of the flag); a real
+	// process setting the env var enables both together, so the ForTest
+	// override here must enable both explicitly.
 	restore := SetDiagnosticParserCoreShadowCensusEnabledForTest(true)
 	defer restore()
+	restoreRecording := core.SetAlternativeSetRecordingEnabledForTest(true)
+	defer restoreRecording()
 
 	var grandTotal DiagnosticParserCoreShadowCensusTotals
 	var allFalsifiers []DiagnosticParserCoreShadowCensusFalsifier
