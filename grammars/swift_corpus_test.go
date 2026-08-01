@@ -52,17 +52,17 @@ type swiftCorpusExpectation struct {
 var swiftCorpusExpectations = map[string]swiftCorpusExpectation{
 	"stdlib_ASCII.swift": {
 		status: swiftCorpusKnownFailing,
-		// Matches no open issue. Minimal repro: `let x = 1&<<7`. The
+		// Tracks #574. Minimal repro: `let x = 1&<<7`. The
 		// masking left-shift operator `&<<` (and, presumably, the rest of
 		// the overflow-operator family `&+`, `&-`, `&*`, `&>>`) breaks the
 		// surrounding infix_expression, leaving an ERROR node in place of
 		// the right operand. See stdlib_ASCII.swift's `encode(_:)`:
 		// `guard source.value < (1&<<7) else { return nil }`.
-		issue: "new: masking left-shift operator &<< breaks the enclosing infix_expression",
+		issue: "#574",
 	},
 	"stdlib_Collection.swift": {
 		status: swiftCorpusKnownFailing,
-		// Matches no open issue. Minimal repro:
+		// Tracks #575. Minimal repro:
 		//   protocol P {
 		//     associatedtype Iterator
 		//     override __consuming func makeIterator() -> Iterator
@@ -72,7 +72,7 @@ var swiftCorpusExpectations = map[string]swiftCorpusExpectation{
 		// produces an ERROR node covering `__consuming`. See
 		// stdlib_Collection.swift's Sequence protocol requirement
 		// `override __consuming func makeIterator() -> Iterator`.
-		issue: "new: `override __consuming func` modifier combination on a protocol requirement",
+		issue: "#575",
 	},
 	"stdlib_CollectionAlgorithms.swift": {
 		status: swiftCorpusKnownFailing,
@@ -82,21 +82,21 @@ var swiftCorpusExpectations = map[string]swiftCorpusExpectation{
 		// (byte 13232) and only starts failing once `partition(by:)`
 		// appears, which contains `try unsafe
 		// withContiguousMutableStorageIfAvailable { ... }`.
-		issue: "new: `unsafe` expression-prefix keyword (see stdlib_FloatingPointToString.swift)",
+		issue: "#576",
 	},
 	"stdlib_FloatingPointToString.swift": {
 		status: swiftCorpusKnownFailing,
-		// Matches no open issue. Minimal repro: `let x = unsafe bar()`.
+		// Tracks #576. Minimal repro: `let x = unsafe bar()`.
 		// The `unsafe` keyword used as an expression prefix (Swift's
 		// strict-memory-safety opt-in, used throughout this file as
 		// `unsafe buffer.storeBytes(...)`, `let x = unsafe
 		// utf8Buffer.mutableBytes`, etc.) is not recognized; it leaves an
 		// ERROR node in place of the wrapped expression.
-		issue: "new: `unsafe` expression-prefix keyword is not recognized",
+		issue: "#576",
 	},
 	"stdlib_Optional.swift": {
 		status: swiftCorpusKnownFailing,
-		// Matches no open issue. Minimal repro:
+		// Tracks #577. Minimal repro:
 		//   struct S {
 		//     @lifetime(copy value)
 		//     public init(_ value: Int) {}
@@ -109,14 +109,14 @@ var swiftCorpusExpectations = map[string]swiftCorpusExpectation{
 		// construct). See stdlib_Optional.swift's noncopyable-Optional
 		// initializer `@lifetime(copy value) public init(_ value:
 		// consuming Wrapped)`.
-		issue: "new: `@lifetime(copy/borrow x)` attribute argument syntax produces a phantom MISSING node",
+		issue: "#577",
 	},
 	"stdlib_Repeat.swift": {
 		status: swiftCorpusClean,
 	},
 	"stdlib_Stride.swift": {
 		status: swiftCorpusKnownFailing,
-		// Matches no open issue. Minimal repro:
+		// Tracks #578. Minimal repro:
 		//   protocol P {
 		//     associatedtype Stride: SignedNumeric, Comparable
 		//   }
@@ -125,7 +125,7 @@ var swiftCorpusExpectations = map[string]swiftCorpusExpectation{
 		// first constraint and the comma. See stdlib_Stride.swift's
 		// `associatedtype Stride: SignedNumeric, Comparable` in the
 		// `Strideable` protocol.
-		issue: "new: associatedtype with a comma-separated multi-conformance constraint list",
+		issue: "#578",
 	},
 	"swift-algorithms_AdjacentPairsTests.swift": {
 		status: swiftCorpusClean,
