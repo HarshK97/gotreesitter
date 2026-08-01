@@ -5793,6 +5793,9 @@ const (
 	fieldSourceDeferredDirect
 	fieldSourceDeferredInherited
 	fieldSourceDeferredInheritedLater
+	// A projected direct field keeps its hidden-parent provenance until the
+	// visible reduction resolves competing parent fields.
+	fieldSourceProjectedDirect
 )
 
 func deferredFieldSource(inherited, appearsLater bool) uint8 {
@@ -5819,7 +5822,9 @@ func decodeDeferredFieldSource(source uint8) (inherited, appearsLater, ok bool) 
 }
 
 func fieldSourceIsDirect(source uint8) bool {
-	return source == fieldSourceDirect || source == fieldSourceDeferredDirect
+	return source == fieldSourceDirect ||
+		source == fieldSourceDeferredDirect ||
+		source == fieldSourceProjectedDirect
 }
 
 func fieldSourceAt(fieldSources []uint8, i int) uint8 {
@@ -6082,7 +6087,7 @@ func appendFlattenedHiddenChildrenWithFieldScratch(scratch *reduceBuildScratch, 
 			source = fieldSourceDirect
 		}
 		applyFieldToFlattenedSpan(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, spanStart, spanEnd, fieldIDs[i], source, false)
-		if source == fieldSourceDirect {
+		if fieldSourceIsDirect(source) {
 			scratch.recordRepeatedField(repeatEpoch, fieldIDs[i], source)
 		}
 	}
@@ -6270,6 +6275,9 @@ func (p *Parser) buildReduceChildrenWithPath(entries []stackEntry, start, end, c
 	p.appendReduceChildrenToScratch(scratch, entries, start, end, productionID, aliasSeq, rawFieldIDs, rawInherited, rawConflictedInherited, parentVisible, symbolMeta, arena, lang)
 	if scratch.trackFields {
 		p.suppressReducedChildFields(scratch.nodes, scratch.fieldIDs, scratch.fieldSources)
+		if parentVisible {
+			normalizeProjectedDirectFieldSources(scratch.fieldSources)
+		}
 	}
 	if perfCountersEnabled {
 		perfRecordReduceScratchGeneral(len(scratch.nodes))
@@ -6676,11 +6684,20 @@ func resolveDeferredParentField(children []*Node, fieldIDs []FieldID, fieldSourc
 	if !deferred {
 		return false, false
 	}
+	if !inherited {
+		applyDeferredDirectFieldToFlattenedSpan(children, fieldIDs, fieldSources, spanStart, fieldEnd, fid)
+		return true, true
+	}
 	applyParentFieldToFlattenedHiddenSpan(
 		children, fieldIDs, fieldSources, hiddenParent,
 		spanStart, fieldEnd, fid, inherited, appearsLater,
 	)
-	return !inherited, true
+	return false, true
+}
+
+func applyDeferredDirectFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID) {
+	applyFieldToFlattenedSpan(children, fieldIDs, fieldSources, start, end, fid, fieldSourceProjectedDirect, true)
+	normalizeMixedSourceFieldSpan(fieldIDs, fieldSources, start, end)
 }
 
 func fieldSourceForInheritance(inherited bool) uint8 {
@@ -6827,7 +6844,7 @@ func appendFlattenedHiddenChildrenWithFields(dst []*Node, fieldDst []FieldID, fi
 				source = fieldSourceDirect
 			}
 			applyFieldToFlattenedSpan(dst, fieldDst, fieldSrcDst, spanStart, out, fieldIDs[i], source, false)
-			if source == fieldSourceDirect && spanStart < out {
+			if fieldSourceIsDirect(source) && spanStart < out {
 				if repeated == nil {
 					repeated = make(map[FieldID]hiddenFieldSpan)
 				}
@@ -6944,7 +6961,7 @@ func normalizeMixedSourceFieldSpan(fieldIDs []FieldID, fieldSources []uint8, sta
 			continue
 		}
 		source := fieldSourceAt(fieldSources, i)
-		if source != fieldSourceDirect && source != fieldSourceInherited {
+		if !fieldSourceIsDirect(source) && source != fieldSourceInherited {
 			continue
 		}
 		idx := -1
@@ -6965,14 +6982,14 @@ func normalizeMixedSourceFieldSpan(fieldIDs []FieldID, fieldSources []uint8, sta
 			idx = len(spans) - 1
 		}
 		span := &spans[idx].span
-		switch source {
-		case fieldSourceDirect:
+		switch {
+		case fieldSourceIsDirect(source):
 			if !span.hasDirect {
 				span.firstDirect = i
 			}
 			span.lastDirect = i
 			span.hasDirect = true
-		case fieldSourceInherited:
+		case source == fieldSourceInherited:
 			span.hasInherited = true
 		}
 	}
@@ -6994,6 +7011,14 @@ func normalizeMixedSourceFieldSpan(fieldIDs []FieldID, fieldSources []uint8, sta
 	}
 }
 
+func normalizeProjectedDirectFieldSources(fieldSources []uint8) {
+	for i, source := range fieldSources {
+		if source == fieldSourceProjectedDirect {
+			fieldSources[i] = fieldSourceDirect
+		}
+	}
+}
+
 func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID, source uint8, preferNamed bool) {
 	if fid == 0 || fieldIDs == nil || start >= end {
 		return
@@ -7001,11 +7026,11 @@ func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSource
 	inherited := source == fieldSourceInherited
 	conflictCount, multipleKinds := flattenedSpanConflictSummary(children, fieldIDs, start, end, fid)
 	if !multipleKinds && conflictCount >= 2 {
-		assignFieldToFlattenedSpanTargets(children, fieldIDs, fieldSources, start, end, fid, source, inherited, false, false)
+		assignFieldToFlattenedSpanTargets(children, fieldIDs, fieldSources, start, end, fid, source, false, false)
 		return
 	}
 	if !multipleKinds && conflictCount == 1 && preferNamed {
-		if assignFieldToFlattenedSpanTargets(children, fieldIDs, fieldSources, start, end, fid, source, inherited, true, true) {
+		if assignFieldToFlattenedSpanTargets(children, fieldIDs, fieldSources, start, end, fid, source, true, true) {
 			return
 		}
 	}
@@ -7017,20 +7042,22 @@ func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSource
 			return
 		}
 	}
-	if source == fieldSourceDirect {
+	if fieldSourceIsDirect(source) {
 		applyDirectFieldToUnassignedFlattenedSpan(children, fieldIDs, fieldSources, start, end, fid, source, preferNamed)
 		return
 	}
 	assignFirstInheritedFieldToFlattenedSpan(children, fieldIDs, fieldSources, start, end, fid, source, preferNamed, inherited)
 }
 
-func assignFieldToFlattenedSpanTargets(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID, source uint8, inherited, requireNamed, firstOnly bool) bool {
+func assignFieldToFlattenedSpanTargets(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID, source uint8, requireNamed, firstOnly bool) bool {
 	assigned := false
 	for j := start; j < end; j++ {
 		if !flattenedFieldTargetEligible(children[j], requireNamed) {
 			continue
 		}
-		if inherited && fieldIDs[j] != 0 && fieldIDs[j] != fid && fieldSourceAt(fieldSources, j) == fieldSourceDirect {
+		existingSource := fieldSourceAt(fieldSources, j)
+		if fieldIDs[j] != 0 && fieldIDs[j] != fid &&
+			fieldAssignmentKeepsExistingDirect(source, existingSource) {
 			continue
 		}
 		assignFlattenedField(fieldIDs, fieldSources, j, fid, source)
@@ -7040,6 +7067,16 @@ func assignFieldToFlattenedSpanTargets(children []*Node, fieldIDs []FieldID, fie
 		}
 	}
 	return assigned
+}
+
+func fieldAssignmentKeepsExistingDirect(incomingSource, existingSource uint8) bool {
+	if !fieldSourceIsDirect(existingSource) {
+		return false
+	}
+	if incomingSource == fieldSourceInherited || incomingSource == fieldSourceProjectedDirect {
+		return true
+	}
+	return existingSource == fieldSourceProjectedDirect
 }
 
 func applyDirectFieldToUnassignedFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID, source uint8, preferNamed bool) {
