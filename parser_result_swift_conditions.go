@@ -51,7 +51,7 @@ func normalizeSwiftRecoveredTrailingClosureConditions(root *Node, source []byte,
 	if len(inserts) == 0 {
 		return
 	}
-	if !swiftConditionRecoveryCanReachCleanTree(root, source, inserts) {
+	if !swiftConditionRecoveryCanReachCleanTree(root) {
 		return
 	}
 	transformed, insTPos := swiftApplyParenInserts(source, inserts)

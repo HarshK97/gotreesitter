@@ -2297,7 +2297,7 @@
       "id": "dispatch.swift",
       "kind": "dispatcher_arm",
       "functions": [
-        "normalizeSwiftCompatibility"
+        "normalizeSwiftCompatibilityWithCensus"
       ],
       "files": [
         "parser_result_swift.go"

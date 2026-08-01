@@ -1,66 +1,21 @@
 package gotreesitter
 
+// swiftCleanRecoveryProbeMaxTerminalDiagnostics limits a full-source probe to
+// a small, recoverable diagnostic set. A larger set has no single target.
+const swiftCleanRecoveryProbeMaxTerminalDiagnostics = 8
+
 // swiftConditionRecoveryCanReachCleanTree declines a whole-source recovery
-// when a terminal diagnostic occurs before every proposed control header.
-// Later parentheses cannot repair that earlier source region.
-func swiftConditionRecoveryCanReachCleanTree(root *Node, source []byte, inserts []swiftParenInsert) bool {
-	if root == nil || !root.HasError() {
-		return true
-	}
-	firstDiagnostic, foundDiagnostic := swiftFirstTerminalDiagnosticStart(root)
-	if !foundDiagnostic {
+// when the raw tree has many terminal diagnostics. A small set can result
+// from one trailing-closure collapse before the affected control header.
+func swiftConditionRecoveryCanReachCleanTree(root *Node) bool {
+	if root == nil {
 		return false
 	}
-	firstHeader, foundHeader := swiftFirstConditionRecoveryHeader(source, inserts)
-	return foundHeader && firstDiagnostic >= firstHeader
-}
-
-func swiftFirstConditionRecoveryHeader(source []byte, inserts []swiftParenInsert) (uint32, bool) {
-	var first uint32
-	found := false
-	for _, insert := range inserts {
-		if insert.ch != '(' {
-			continue
-		}
-		header, ok := swiftLastControlHeaderBefore(source, insert.pos)
-		if !ok {
-			continue
-		}
-		if !found || header < first {
-			first = header
-			found = true
-		}
+	if !root.HasError() {
+		return true
 	}
-	return first, found
-}
-
-func swiftLastControlHeaderBefore(source []byte, end uint32) (uint32, bool) {
-	if end > uint32(len(source)) {
-		end = uint32(len(source))
-	}
-	var last uint32
-	found := false
-	for i := uint32(0); i < end; {
-		if next, code := swiftSkipStringOrComment(source, i); !code {
-			i = next
-			continue
-		}
-		if !isSwiftWordByte(source[i]) || (i > 0 && isSwiftWordByte(source[i-1])) {
-			i++
-			continue
-		}
-		j := i + 1
-		for j < end && isSwiftWordByte(source[j]) {
-			j++
-		}
-		switch string(source[i:j]) {
-		case "if", "while", "for":
-			last = i
-			found = true
-		}
-		i = j
-	}
-	return last, found
+	terminalDiagnostics := swiftTerminalDiagnosticCount(root)
+	return terminalDiagnostics > 0 && terminalDiagnostics <= swiftCleanRecoveryProbeMaxTerminalDiagnostics
 }
 
 // swiftTernaryRecoveryCanReachCleanTree declines a whole-source recovery
@@ -86,11 +41,7 @@ func swiftTopLevelRecoveryCanRepairChild(child *Node) bool {
 	if child == nil || !child.HasError() {
 		return false
 	}
-	terminalDiagnostics := 0
-	swiftVisitTerminalDiagnostics(child, func(*Node) {
-		terminalDiagnostics++
-	})
-	return terminalDiagnostics == 1
+	return swiftTerminalDiagnosticCount(child) == 1
 }
 
 func swiftTerminalDiagnosticOverlapsRanges(n *Node, ranges [][2]uint32) bool {
@@ -111,16 +62,12 @@ func swiftTerminalDiagnosticOverlapsRanges(n *Node, ranges [][2]uint32) bool {
 	return false
 }
 
-func swiftFirstTerminalDiagnosticStart(root *Node) (uint32, bool) {
-	var first uint32
-	found := false
-	swiftVisitTerminalDiagnostics(root, func(n *Node) {
-		if !found || n.startByte < first {
-			first = n.startByte
-			found = true
-		}
+func swiftTerminalDiagnosticCount(root *Node) int {
+	count := 0
+	swiftVisitTerminalDiagnostics(root, func(*Node) {
+		count++
 	})
-	return first, found
+	return count
 }
 
 func swiftVisitTerminalDiagnostics(root *Node, visit func(*Node)) bool {
