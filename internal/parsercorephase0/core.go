@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"slices"
 	"sync"
 )
@@ -378,19 +379,122 @@ type nodeRecord struct {
 }
 
 type nodeLineageRecord struct {
-	owner     uint32
+	owner uint32
+	set   AlternativeSet
+	// transition only, deleted at stage 3 cleanup (spec.b4b-alternative-set.v1
+	// section 3.2):
 	lineage   uint16
 	rank      CleanPathRankSelection
 	converged bool
 }
 
 type nodeLineageMutation struct {
-	node      NodeID
-	owner     uint32
-	lineage   uint16
-	rank      CleanPathRankSelection
-	converged bool
+	node        NodeID
+	owner       uint32
+	setCount    uint8
+	setFlags    uint8
+	setSpillRef uint32
+	lineage     uint16
+	rank        CleanPathRankSelection
+	converged   bool
 }
+
+// alternativeSetInlineCapacity is the fixed inline member width of
+// AlternativeSet before it spills into Core.alternativeSpillArena.
+// alternativeSetHardCap is the total recorded-member ceiling; a set that
+// would exceed it stops recording new members and reports Overflowed.
+// spec.b4b-alternative-set.v1 section 3.2, open question 5.
+const (
+	alternativeSetInlineCapacity = 4
+	alternativeSetHardCap        = 32
+)
+
+const (
+	alternativeSetFlagOverflowed uint8 = 1 << iota
+	alternativeSetFlagSpilled
+)
+
+// AlternativeSet is a sorted, deduplicated set of converged-split-event
+// lineage identities ("members"; spec.b4b-alternative-set.v1 section 3.1). A
+// member is established once, at multi-pop reduction time, and the set only
+// ever grows by insertion or union -- it is never invalidated. Beyond
+// alternativeSetInlineCapacity members it spills into Core's shared arena;
+// beyond alternativeSetHardCap members it stops recording new members and
+// sets Overflowed, so the recorded set stays a genuine subset of the true
+// membership. The zero value is the empty set.
+type AlternativeSet struct {
+	inline   [alternativeSetInlineCapacity]uint16
+	count    uint8
+	flags    uint8
+	spillRef uint32 // 1-based start index into Core.alternativeSpillArena
+}
+
+// alternativeSetRecordingEnabledOnce and alternativeSetRecordingEnabledVal
+// cache GTS_B4B_SHADOW_CENSUS, the same switch that gates the shadow census
+// itself. No production or stage-1 diagnostic decision reads a recorded
+// AlternativeSet except that census, so recording is off by default and
+// only turns on with it -- this package has no way to reach the census's
+// own copy of the flag (parsercorephase0 has no dependency on the higher
+// package that defines it), so it caches an independent read of the same
+// environment variable; both settle on the same cached value for the life
+// of a process.
+var (
+	alternativeSetRecordingEnabledOnce sync.Once
+	alternativeSetRecordingEnabledVal  bool
+)
+
+func alternativeSetRecordingEnabled() bool {
+	alternativeSetRecordingEnabledOnce.Do(func() {
+		switch os.Getenv("GTS_B4B_SHADOW_CENSUS") {
+		case "1", "true", "TRUE", "True", "on", "ON", "yes", "YES":
+			alternativeSetRecordingEnabledVal = true
+		}
+	})
+	return alternativeSetRecordingEnabledVal
+}
+
+// SetAlternativeSetRecordingEnabledForTest overrides the recording gate for
+// one test process, mirroring the census's own ForTest override. Restore
+// the previous value (the returned func) when done.
+func SetAlternativeSetRecordingEnabledForTest(on bool) func() {
+	alternativeSetRecordingEnabledOnce.Do(func() {})
+	previous := alternativeSetRecordingEnabledVal
+	alternativeSetRecordingEnabledVal = on
+	return func() { alternativeSetRecordingEnabledVal = previous }
+}
+
+// NewAlternativeSetMember returns the singleton set {member}, or the empty
+// set when member==0 (the reserved "no event" identity) or when the
+// recording gate is off. Every driver-side alternative-set value not
+// copied or unioned from an existing header/node set originates here, so
+// gating this one construction point -- together with
+// recordNodeLineageMember, the only other place a member is ever inserted
+// -- keeps every set in the system at its zero value for the life of the
+// parse when recording is disabled: every downstream union or insert then
+// sees an empty source and no-ops through its own existing zero-cost guard,
+// with no further gating needed at any of those call sites. Never
+// allocates: a single fresh member always fits inline.
+func NewAlternativeSetMember(member uint16) AlternativeSet {
+	var set AlternativeSet
+	if member == 0 || !alternativeSetRecordingEnabled() {
+		return set
+	}
+	set.inline[0] = member
+	set.count = 1
+	return set
+}
+
+func (s AlternativeSet) spilled() bool { return s.flags&alternativeSetFlagSpilled != 0 }
+
+// Overflowed reports whether this set declined at least one member at the
+// hard cap. An overflowed set's recorded members remain a genuine subset of
+// the true membership; only completeness is lost, so containment proofs
+// against an overflowed dropped-side set must fail closed.
+func (s AlternativeSet) Overflowed() bool { return s.flags&alternativeSetFlagOverflowed != 0 }
+
+// Len reports the recorded member count (inline plus spilled), which may be
+// less than the true member count when Overflowed.
+func (s AlternativeSet) Len() int { return int(s.count) }
 
 type linkRecord struct {
 	scoreDelta int64
@@ -614,6 +718,13 @@ type Core struct {
 	boundaries            boundaryIndex
 	boundaryJournal       []boundaryMutation
 	nodeLineageJournal    []nodeLineageMutation
+	// alternativeSpillArena backs every AlternativeSet beyond
+	// alternativeSetInlineCapacity members, shared by nodeLineages and every
+	// diagnosticParserCoreHeader.altSet (parsercore_phase0_driver.go). It
+	// resets to length zero (capacity retained) only on Reset, matching
+	// nodeLineageJournal; a rolled-back or superseded segment leaks arena
+	// space until then, bounded by alternativeSetHardCap per record.
+	alternativeSpillArena []uint16
 	condenseCandidates    []CondenseCandidate
 	condenseNewNode       NodeID
 	condenseScopeActive   bool
@@ -812,6 +923,9 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 			continue
 		}
 		c.nodeLineages[nodeIndex].owner = mutation.owner
+		c.nodeLineages[nodeIndex].set.count = mutation.setCount
+		c.nodeLineages[nodeIndex].set.flags = mutation.setFlags
+		c.nodeLineages[nodeIndex].set.spillRef = mutation.setSpillRef
 		c.nodeLineages[nodeIndex].lineage = mutation.lineage
 		c.nodeLineages[nodeIndex].rank = mutation.rank
 		c.nodeLineages[nodeIndex].converged = mutation.converged
@@ -1145,6 +1259,7 @@ func (c *Core) Reset() error {
 	c.boundaryJournal = c.boundaryJournal[:0]
 	clear(c.nodeLineageJournal)
 	c.nodeLineageJournal = c.nodeLineageJournal[:0]
+	c.alternativeSpillArena = c.alternativeSpillArena[:0]
 	c.clearLiveCondenseCandidates()
 	c.reductionSourceOwner = 0
 	c.transactions = c.transactions[:0]
@@ -1582,6 +1697,13 @@ type ReductionOutput struct {
 	HistoricalBoundaryProvenance HistoricalBoundaryProvenance
 	HistoricalCleanPathRank      CleanPathRankSelection
 	HistoricalCleanPathLineage   uint16
+	// HistoricalAlternativeSet is the union of every dead predecessor's
+	// recorded alternative set discovered while producing this boundary
+	// (spec.b4b-alternative-set.v1 section 4, "Dead-node historical
+	// import"). Unlike HistoricalCleanPathRank/Lineage, multiple historical
+	// versions union here instead of poisoning to Unknown/0, because
+	// membership is never invalidated.
+	HistoricalAlternativeSet AlternativeSet
 }
 
 const inlineReductionBoundaryOutputs = 2
@@ -1596,6 +1718,7 @@ type reductionBoundaryOutput struct {
 	historicalForestDeterministic bool
 	historicalCleanPathRank       CleanPathRankSelection
 	historicalLineage             uint16
+	historicalSet                 AlternativeSet
 }
 
 // reductionOutputScratch owns the ephemeral aggregation state for one
@@ -2043,6 +2166,14 @@ type condenseOutcome struct {
 	historicalForestDeterministic bool
 	historicalCleanPathRank       CleanPathRankSelection
 	historicalLineage             uint16
+	// historicalNode is the dead predecessor's NodeID, captured before
+	// condenseWithOutcomeAtomic clears oldID below. Its nodeLineage record
+	// (and alternative set) persists for the rest of the parse, so callers
+	// can read it back through NodeLineageAlternativeSet for dead-node
+	// import (spec.b4b-alternative-set.v1 section 4). Populated whenever
+	// historicalBoundarySplit is true, regardless of which branch below
+	// computed the scalar historical fields.
+	historicalNode NodeID
 }
 
 func (c *Core) condense(key boundaryKey, in linkInput) (Head, error) {
@@ -2079,10 +2210,12 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 	historicalBoundarySplit := false
 	var historicalCleanPathRank CleanPathRankSelection
 	var historicalLineage uint16
+	var historicalNode NodeID
 	historicalConvergedSplit := false
 	historicalForestDeterministic := false
 	if probe.found && !c.condenseNodeIsLive(oldID) {
 		historicalBoundarySplit = true
+		historicalNode = oldID
 		old, oldErr := c.nodeLineage(oldID)
 		if oldErr != nil {
 			return condenseOutcome{}, oldErr
@@ -2116,6 +2249,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 			historicalForestDeterministic: historicalForestDeterministic,
 			historicalCleanPathRank:       historicalCleanPathRank,
 			historicalLineage:             historicalLineage,
+			historicalNode:                historicalNode,
 		}
 	}
 	var old nodeRecord
@@ -4200,6 +4334,233 @@ func (c *Core) nodeLineage(id NodeID) (*nodeLineageRecord, error) {
 		return nil, fmt.Errorf("parser-core phase zero: invalid node lineage id %d", id)
 	}
 	return &c.nodeLineages[id-1], nil
+}
+
+// NodeLineageAlternativeSet returns the currently recorded alternative set
+// for id. A dead (superseded) node keeps its lineage record for the rest of
+// the parse, so this also resolves historical membership for dead-node
+// import (spec.b4b-alternative-set.v1 section 4, "Dead-node historical
+// import").
+func (c *Core) NodeLineageAlternativeSet(id NodeID) (AlternativeSet, error) {
+	record, err := c.nodeLineage(id)
+	if err != nil {
+		return AlternativeSet{}, err
+	}
+	return record.set, nil
+}
+
+// alternativeSetMembers resolves set's sorted member slice, reading through
+// the shared spill arena when set has spilled. The returned slice aliases
+// Core-owned storage and is invalidated by the next mutation to any set; it
+// never allocates and never writes.
+func (c *Core) alternativeSetMembers(set AlternativeSet) ([]uint16, bool) {
+	if !set.spilled() {
+		return set.inline[:set.count], true
+	}
+	if set.spillRef == 0 {
+		return nil, set.count == 0
+	}
+	start := int(set.spillRef) - 1
+	end := start + int(set.count)
+	if start < 0 || end > len(c.alternativeSpillArena) {
+		return nil, false
+	}
+	return c.alternativeSpillArena[start:end], true
+}
+
+// AlternativeSetMembers is the exported form of alternativeSetMembers for
+// cross-package readers (the shadow predicate and census in
+// parsercore_phase0_driver.go). ok is false only when set's spill reference
+// is out of range for the current arena; every recording path in this
+// package keeps that from happening, so callers treat !ok as a fail-closed
+// signal, not a recoverable case.
+func (c *Core) AlternativeSetMembers(set AlternativeSet) ([]uint16, bool) {
+	return c.alternativeSetMembers(set)
+}
+
+// searchAlternativeSetMembers returns the sorted insertion position for
+// member within the already-sorted, deduplicated members, and whether member
+// is already present. Linear scan is deliberate: members is bounded by
+// alternativeSetHardCap (32), where a branch-predictable scan outperforms a
+// callback-based binary search and never allocates.
+func searchAlternativeSetMembers(members []uint16, member uint16) (int, bool) {
+	for index, existing := range members {
+		if existing == member {
+			return index, true
+		}
+		if existing > member {
+			return index, false
+		}
+	}
+	return len(members), false
+}
+
+// alternativeSetInsert inserts one member into set in place and reports
+// whether the set changed. It is a no-op for member==0 (reserved) or an
+// already-present member. Every mutation is append-only at the byte level:
+// positions below the pre-call count are never rewritten. Three cases, from
+// cheapest to most expensive:
+//
+//  1. Pure ascending tail append while still inline: writes only the new
+//     inline slot.
+//  2. Pure ascending tail append while spilled, and this set's segment is
+//     still the live tail of Core.alternativeSpillArena (nothing else has
+//     grown the arena since): extends the segment and the arena together
+//     with one appended element, O(1) amortized. This is the common case --
+//     a header or node accumulating its own establishment/union history in
+//     temporal (hence ascending) order, spec.b4b-alternative-set.v1 section
+//     3.1's monotonic lineage-id allocation -- and is what keeps repeated
+//     per-dispatch persistence (persistHeaderLineageOwned) cheap on a long
+//     parse instead of re-copying a growing segment on every call.
+//  3. Anything else (inline growth beyond capacity, an insertion that is not
+//     the new maximum, or a spilled segment that is no longer the arena's
+//     tail): writes a complete fresh sorted copy to a new segment at the
+//     current end of the arena, leaving prior storage untouched and unread
+//     from then on.
+//
+// Case 3's untouched-prior-storage property (shared with cases 1 and 2) is
+// what lets the journal restore an exact prior set by truncating
+// count/flags/spillRef alone (section 3.3); a superseded segment simply
+// leaks arena space until the next Reset, bounded by alternativeSetHardCap
+// per record.
+func (c *Core) alternativeSetInsert(set *AlternativeSet, member uint16) bool {
+	if member == 0 {
+		return false
+	}
+	current, ok := c.alternativeSetMembers(*set)
+	if !ok {
+		return false
+	}
+	position, found := searchAlternativeSetMembers(current, member)
+	if found {
+		return false
+	}
+	if int(set.count) >= alternativeSetHardCap {
+		if set.flags&alternativeSetFlagOverflowed == 0 {
+			set.flags |= alternativeSetFlagOverflowed
+			return true
+		}
+		return false
+	}
+	if position == len(current) {
+		switch {
+		case !set.spilled() && len(current) < alternativeSetInlineCapacity:
+			set.inline[len(current)] = member
+			set.count++
+			return true
+		case set.spilled() && int(set.spillRef)-1+len(current) == len(c.alternativeSpillArena):
+			c.alternativeSpillArena = append(c.alternativeSpillArena, member)
+			set.count++
+			return true
+		}
+	}
+	start := len(c.alternativeSpillArena)
+	c.alternativeSpillArena = append(c.alternativeSpillArena, current[:position]...)
+	c.alternativeSpillArena = append(c.alternativeSpillArena, member)
+	c.alternativeSpillArena = append(c.alternativeSpillArena, current[position:]...)
+	set.spillRef = uint32(start) + 1
+	set.count = uint8(len(current) + 1)
+	set.flags |= alternativeSetFlagSpilled
+	return true
+}
+
+// alternativeSetUnion unions src's recorded members into *dst in place and
+// reports whether dst changed. An overflowed source propagates its overflow
+// flag: a union whose source is overflowed marks the destination overflowed
+// (spec.b4b-alternative-set.v1 section 4, "Overflow propagation").
+//
+// Header-to-node persistence (persistHeaderLineageOwned,
+// parsercore_phase0_driver.go) re-unions every convergedReductionSplit
+// header's accumulated set into its node on every dispatch, mirroring the
+// existing scalar RecordHeadLineageOwned call at the same frequency, and
+// header.head moves to a freshly allocated node on most dispatches -- so the
+// destination is empty far more often than it already equals src. Two fast
+// paths keep that pattern cheap:
+//
+//  1. dst is empty: *dst = src, an O(1) value copy. This aliases src's spill
+//     segment (if any) rather than copying it, which is safe: every further
+//     mutation to either set only ever appends past its own recorded count
+//     (alternativeSetInsert's append-only invariant), so neither set's
+//     existing view is ever disturbed by growth on the other.
+//  2. dst already contains every member of src (the steady state once a
+//     header's set stops growing): one O(len(src)+len(dst)) merge-scan
+//     (containsAll) instead of insert's O(len(src)) x O(len(dst))
+//     member-by-member scan.
+func (c *Core) alternativeSetUnion(dst *AlternativeSet, src AlternativeSet) bool {
+	if src.count == 0 {
+		return c.alternativeSetPropagateOverflow(dst, src)
+	}
+	if dst.count == 0 {
+		*dst = src
+		return true
+	}
+	srcMembers, ok := c.alternativeSetMembers(src)
+	if !ok {
+		return c.alternativeSetPropagateOverflow(dst, src)
+	}
+	if dstMembers, dstOK := c.alternativeSetMembers(*dst); dstOK &&
+		(!src.Overflowed() || dst.Overflowed()) &&
+		alternativeSetSortedContainsAll(srcMembers, dstMembers) {
+		return false
+	}
+	changed := false
+	for _, member := range srcMembers {
+		if c.alternativeSetInsert(dst, member) {
+			changed = true
+		}
+	}
+	if c.alternativeSetPropagateOverflow(dst, src) {
+		changed = true
+	}
+	return changed
+}
+
+// alternativeSetSortedContainsAll reports whether every member of needle is
+// present in haystack. Both slices are sorted ascending (AlternativeSet's
+// section 3.2 invariant), so this is a single merge-scan, never allocating.
+// A cheap O(1) range check on the first and last elements proves
+// non-containment (and so skips the O(len(needle)+len(haystack)) scan
+// entirely) whenever needle reaches outside haystack's covered range --
+// sound in both directions, since haystack sorted implies every member of
+// needle must fall within [haystack[0], haystack[len-1]] to be contained.
+func alternativeSetSortedContainsAll(needle, haystack []uint16) bool {
+	if len(needle) > len(haystack) {
+		return false
+	}
+	if len(needle) == 0 {
+		return true
+	}
+	if needle[0] < haystack[0] || needle[len(needle)-1] > haystack[len(haystack)-1] {
+		return false
+	}
+	haystackIndex := 0
+	for _, member := range needle {
+		for haystackIndex < len(haystack) && haystack[haystackIndex] < member {
+			haystackIndex++
+		}
+		if haystackIndex >= len(haystack) || haystack[haystackIndex] != member {
+			return false
+		}
+		haystackIndex++
+	}
+	return true
+}
+
+func (c *Core) alternativeSetPropagateOverflow(dst *AlternativeSet, src AlternativeSet) bool {
+	if src.Overflowed() && dst.flags&alternativeSetFlagOverflowed == 0 {
+		dst.flags |= alternativeSetFlagOverflowed
+		return true
+	}
+	return false
+}
+
+// UnionAlternativeSet is the exported form of alternativeSetUnion for
+// cross-package writers (parsercore_phase0_driver.go's header-scratch
+// propagation sites: canonicalize fold, sibling adoption, dead-node import).
+// Zero-alloc once c's shared spill arena has warmed to the parse's
+// high-water mark, matching nodeLineageJournal and popScratch.
+func (c *Core) UnionAlternativeSet(dst *AlternativeSet, src AlternativeSet) bool {
+	return c.alternativeSetUnion(dst, src)
 }
 
 func (c *Core) subtree(id SubtreeID) (*subtreeRecord, error) {

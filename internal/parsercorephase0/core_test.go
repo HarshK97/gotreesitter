@@ -450,7 +450,12 @@ func TestReductionLineageRollsBackWithSchedulerTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *provenance != (nodeLineageRecord{}) {
+	// The alternative set's rollback restores count/flags/spillRef only
+	// (spec.b4b-alternative-set.v1 section 3.3); an inline slot the rolled-
+	// back insert wrote is deliberately left as unread stale data beyond the
+	// restored count, so compare membership (Len), not raw struct equality.
+	if provenance.owner != 0 || provenance.lineage != 0 || provenance.rank != CleanPathRankNotApplicable ||
+		provenance.converged || provenance.set.Len() != 0 {
 		t.Fatalf("rolled-back lineage = %+v, want zero", *provenance)
 	}
 	err = compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
@@ -2669,14 +2674,22 @@ func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
 	if got := unsafe.Sizeof(nodeRecord{}); got != 24 {
 		t.Fatalf("nodeRecord size = %d, want 24", got)
 	}
-	if got := unsafe.Sizeof(nodeLineageRecord{}); got != 8 {
-		t.Fatalf("nodeLineageRecord size = %d, want 8", got)
+	// spec.b4b-alternative-set.v1 section 3.2: nodeLineageRecord grew from 8
+	// bytes to the transition size of 24 (owner uint32 + AlternativeSet's 16
+	// bytes + the still-present transition scalars lineage/rank/converged);
+	// stage 3 deletes the transition scalars for a final 20-byte record. The
+	// grown field (AlternativeSet) stays pointer-free, checked above.
+	if got := unsafe.Sizeof(nodeLineageRecord{}); got != 24 {
+		t.Fatalf("nodeLineageRecord size = %d, want 24", got)
 	}
 	if got := unsafe.Sizeof(linkRecord{}); got != 32 {
 		t.Fatalf("linkRecord size = %d, want 32", got)
 	}
-	if got := unsafe.Sizeof(ReductionOutput{}); got != 12 {
-		t.Fatalf("ReductionOutput size = %d, want 12", got)
+	// spec.b4b-alternative-set.v1 section 4: ReductionOutput grew from 12
+	// bytes to 28 with the added HistoricalAlternativeSet field (dead-node
+	// historical import), which stays pointer-free, checked above.
+	if got := unsafe.Sizeof(ReductionOutput{}); got != 28 {
+		t.Fatalf("ReductionOutput size = %d, want 28", got)
 	}
 	if got := unsafe.Sizeof(popPath{}); got != 88 {
 		t.Fatalf("popPath size = %d, want 88", got)
