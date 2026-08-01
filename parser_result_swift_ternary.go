@@ -91,9 +91,6 @@ func normalizeSwiftRecoveredTernaryExpressions(root *Node, source []byte, p *Par
 		}
 		blankRanges = append(blankRanges, [2]uint32{s.questPos, s.ifFalseEnd})
 	}
-	if !swiftTernaryRecoveryCanReachCleanTree(root, blankRanges) {
-		return
-	}
 
 	transformed := swiftBlankRanges(source, blankRanges)
 	tree, err := parseSwiftCleanFullSourceRecovery(p, transformed, lang)

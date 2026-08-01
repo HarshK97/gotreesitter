@@ -1,8 +1,10 @@
 package grammars
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter"
@@ -76,7 +78,7 @@ func TestSwiftCleanRecoveryProbeMatchesLegacyTree(t *testing.T) {
 	}
 }
 
-func TestSwiftUnsafeWitnessKeepsCurrentGoTreeAndSkipsRecoveryProbe(t *testing.T) {
+func TestSwiftUnsafeWitnessKeepsCurrentGoTreeAcrossRecoveryProbe(t *testing.T) {
 	lang := SwiftLanguage()
 	source, err := os.ReadFile(filepath.Join("testdata", "swift_corpus", "stdlib_FloatingPointToString.swift"))
 	if err != nil {
@@ -108,27 +110,30 @@ func TestSwiftUnsafeWitnessKeepsCurrentGoTreeAndSkipsRecoveryProbe(t *testing.T)
 	}
 	t.Logf("Swift unsafe witness gts-deep-tree-v1 digest: %s", inspection.SHA256)
 
-	if got := runtime.RecoveryProbeInitialAttempts; got != 0 {
-		t.Fatalf("initial probes = %d, want 0", got)
+	// This file carries too many independent parse errors for any whole-source
+	// recovery reparse to reach a clean tree. The now-removed terminal-
+	// diagnostic-count pre-gates used to skip the probe for a case like this
+	// before it ever ran; without them the probe still runs (see
+	// swiftRecoveryProbeMatchesLegacyRoute, parser_result_swift.go) and
+	// correctly declines, and the legacy route it falls back to also declines,
+	// so the tree this witness pins never changes. The exact attempt/retry
+	// counts below are the legacy engine's own business, not this contract's,
+	// so only the invariant and the "never accepted" guarantee are asserted.
+	if got, want := runtime.RecoveryProbeInitialAttempts, runtime.RecoveryProbeInitialAccepted+runtime.RecoveryProbeLegacyFallbacks; got != want {
+		t.Fatalf("initial probe attempts = %d, want accepted(%d)+legacy fallbacks(%d) = %d", got, runtime.RecoveryProbeInitialAccepted, runtime.RecoveryProbeLegacyFallbacks, want)
+	}
+	if got := runtime.RecoveryProbeInitialAttempts; got == 0 {
+		t.Fatal("initial probe attempts = 0, want at least one whole-source recovery attempt on this witness")
 	}
 	if got := runtime.RecoveryProbeInitialAccepted; got != 0 {
-		t.Fatalf("accepted initial probes = %d, want 0", got)
-	}
-	if got := runtime.RecoveryProbeLegacyFallbacks; got != 0 {
-		t.Fatalf("legacy fallbacks = %d, want 0", got)
+		t.Fatalf("accepted initial probes = %d, want 0 (this witness cannot reach a clean tree)", got)
 	}
 	if got := runtime.RecoveryProbeInitialRetryPasses; got != 0 {
-		t.Fatalf("initial retry passes = %d, want 0", got)
+		t.Fatalf("initial retry passes = %d, want 0 (the initial-only probe never runs the retry ladder)", got)
 	}
-	if got := runtime.RecoveryProbeLegacyRetryPasses; got != 0 {
-		t.Fatalf("legacy retry passes = %d, want 0", got)
-	}
-	if got := runtime.SwiftLegacyRecoverySubparseAttempts; got != 0 {
-		t.Fatalf("Swift legacy recovery parses = %d, want 0", got)
-	}
-	if got := runtime.SwiftLegacyRecoveryRetryPasses; got != 0 {
-		t.Fatalf("Swift legacy retry passes = %d, want 0", got)
-	}
+	t.Logf("legacy fallbacks=%d legacy retry passes=%d Swift legacy recovery subparses=%d Swift legacy recovery retry passes=%d",
+		runtime.RecoveryProbeLegacyFallbacks, runtime.RecoveryProbeLegacyRetryPasses,
+		runtime.SwiftLegacyRecoverySubparseAttempts, runtime.SwiftLegacyRecoveryRetryPasses)
 
 	for _, name := range []string{
 		"dispatch.swift.conditions",
@@ -149,6 +154,123 @@ func TestSwiftUnsafeWitnessKeepsCurrentGoTreeAndSkipsRecoveryProbe(t *testing.T)
 		if pass.NodesRewritten != 0 {
 			t.Fatalf("census pass %q rewrote %d nodes, want 0", name, pass.NodesRewritten)
 		}
+	}
+}
+
+// swiftForInRangeLoopCountSource builds a single Swift function containing
+// count copies of the #123 for…in trailing-closure-ambiguity trigger
+// (`for i in 0..<10 { }`). Each loop independently forces a recovery reparse
+// of the whole function; a large count raises the number of live GLR stacks
+// the raw (pre-recovery) parse explores, which is what the removed
+// terminal-diagnostic-count pre-gates (mechanism 2) used to miscount as
+// "too broken to recover" past a fixed threshold.
+func swiftForInRangeLoopCountSource(count int) []byte {
+	var b strings.Builder
+	b.WriteString("func manyLoops() {\n")
+	for i := 0; i < count; i++ {
+		b.WriteString("    for i in 0..<10 { }\n")
+	}
+	b.WriteString("}\n")
+	return []byte(b.String())
+}
+
+// TestSwiftForInRangeLoopCountParityWitness is the committed regression test
+// for the mechanism-2 parity cliff: swiftConditionRecoveryCanReachCleanTree
+// (removed) declined the whole-source recovery reparse once a for…in-loop
+// function's raw terminal-diagnostic count crossed
+// swiftCleanRecoveryProbeMaxTerminalDiagnostics (8), even though the reparse
+// would have reached a tree byte-identical to origin/main's. At 10 and 20
+// loops the PR (before this fix) returned an ERROR tree where origin/main —
+// and the locked C oracle — agree on a clean, full-span source_file; at 9
+// loops the count stayed under the old gate's threshold and matched. This
+// asserts hasError=false and pins the gts-deep-tree-v1 digest for 9, 10, and
+// 20 loops so the cliff can never come back silently. The digests were
+// computed on this fixed branch and independently verified to equal
+// origin/main's digest for the same construction (byte-identical output).
+func TestSwiftForInRangeLoopCountParityWitness(t *testing.T) {
+	lang := SwiftLanguage()
+	cases := []struct {
+		count      int
+		wantDigest string
+	}{
+		{count: 9, wantDigest: "f16a8f340ad64c0b3670a2b478cb0d38ffae1350fbaa6e46cc79b25aff5c4776"},
+		{count: 10, wantDigest: "b0249428fe5a3f03ecac47bb836f7609d70fde35836bc1f01499c270051e13ae"},
+		{count: 20, wantDigest: "6d379d19b0b253647b5e441d58278fb83eaa874bba874415143f436342205b49"},
+	}
+
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("loops=%d", tc.count), func(t *testing.T) {
+			source := swiftForInRangeLoopCountSource(tc.count)
+
+			legacy, _ := parseSwiftRecoveryProbeRoute(t, lang, source, "legacy")
+			defer legacy.Release()
+			initial, runtime := parseSwiftRecoveryProbeRoute(t, lang, source, "")
+			defer initial.Release()
+
+			legacyRoot := legacy.RootNode()
+			initialRoot := initial.RootNode()
+			swiftRequireSameRecoveryProbeTree(t, lang, legacyRoot, initialRoot, "root")
+
+			if legacyRoot == nil || legacyRoot.HasError() {
+				t.Fatalf("legacy route hasError=%v, want false (%d-loop witness must reach a clean tree)", legacyRoot == nil || legacyRoot.HasError(), tc.count)
+			}
+			if initialRoot == nil || initialRoot.HasError() {
+				t.Fatalf("probe route hasError=%v, want false (%d-loop witness must reach a clean tree)", initialRoot == nil || initialRoot.HasError(), tc.count)
+			}
+			if got, want := initialRoot.EndByte(), uint32(len(source)); got != want {
+				t.Fatalf("%d-loop witness root end = %d, want %d", tc.count, got, want)
+			}
+
+			inspection, err := benchfixtures.InspectGoTree(initialRoot, lang)
+			if err != nil {
+				t.Fatalf("inspect %d-loop witness: %v", tc.count, err)
+			}
+			if inspection.SHA256 != tc.wantDigest {
+				t.Fatalf("%d-loop witness digest = %s, want %s (origin/main's digest for the same source)", tc.count, inspection.SHA256, tc.wantDigest)
+			}
+			t.Logf("%d-loop witness gts-deep-tree-v1 digest: %s", tc.count, inspection.SHA256)
+
+			if got := runtime.RecoveryProbeLegacyFallbacks; got != 0 {
+				t.Fatalf("%d-loop witness legacy fallbacks = %d, want 0 (the tightened accept gate must accept the probe)", tc.count, got)
+			}
+		})
+	}
+}
+
+// TestSwiftCorpusProbeMatchesLegacy asserts that the initial-only recovery
+// probe (mechanism 1) never diverges from the unchanged legacy recovery
+// route for any file in the Swift corpus: for every *.swift file under
+// testdata/swift_corpus, parsing through the probe route and through the
+// forced-legacy route (GOT_SWIFT_CLEAN_RECOVERY_PROBE_MODE=legacy) must
+// produce byte-identical trees. This is the corpus-wide counterpart to
+// swiftRecoveryProbeMatchesLegacyRoute's per-accept-decision contract
+// (parser_result_swift.go): the accept gate may only take the probe's answer
+// when it is provably identical to what legacy would return, and this is the
+// empirical check that the contract holds on real-world files, not just the
+// hand-built unit cases above.
+func TestSwiftCorpusProbeMatchesLegacy(t *testing.T) {
+	dir := "testdata/swift_corpus"
+	lang := SwiftLanguage()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dir, err)
+	}
+	for _, e := range entries {
+		if filepath.Ext(e.Name()) != ".swift" {
+			continue
+		}
+		name := e.Name()
+		t.Run(name, func(t *testing.T) {
+			src, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil {
+				t.Fatalf("reading corpus file: %v", err)
+			}
+			legacy, _ := parseSwiftRecoveryProbeRoute(t, lang, src, "legacy")
+			defer legacy.Release()
+			probe, _ := parseSwiftRecoveryProbeRoute(t, lang, src, "")
+			defer probe.Release()
+			swiftRequireSameRecoveryProbeTree(t, lang, legacy.RootNode(), probe.RootNode(), "root")
+		})
 	}
 }
 

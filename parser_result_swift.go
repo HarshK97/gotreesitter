@@ -39,7 +39,25 @@ func normalizeSwiftCompatibilityWithCensus(root *Node, source []byte, p *Parser,
 	})
 }
 
+// swiftCleanRecoveryProbeModeEnv names the test/diagnostic-only kill switch
+// that forces parseSwiftCleanFullSourceRecovery to bypass the initial-only
+// probe (mechanism 1) and always take the unchanged legacy recovery route.
+// It is not a production tuning knob — see swiftCleanRecoveryProbeForcedLegacy.
 const swiftCleanRecoveryProbeModeEnv = "GOT_SWIFT_CLEAN_RECOVERY_PROBE_MODE"
+
+// swiftCleanRecoveryProbeForcedLegacy reports whether
+// GOT_SWIFT_CLEAN_RECOVERY_PROBE_MODE=legacy is set. This is read fresh on
+// every call rather than cached at package init: callers (see
+// grammars/swift_recovery_probe_test.go) flip it mid-process with
+// t.Setenv/b.Setenv to compare the probe route against the legacy route
+// within one test binary, which a package-init-time cache could never
+// observe. The cost of the extra call is an in-memory os.Getenv scan (Go
+// does not make a syscall for it), and it is only paid once per whole-source
+// Swift recovery attempt — already gated behind a full nested reparse — so it
+// stays in the noise next to that reparse.
+func swiftCleanRecoveryProbeForcedLegacy() bool {
+	return os.Getenv(swiftCleanRecoveryProbeModeEnv) == "legacy"
+}
 
 // parseSwiftCleanFullSourceRecovery runs the initial-only probe for the two
 // whole-source Swift recoveries with a clean, full-span gate. Set the mode to
@@ -48,20 +66,82 @@ func parseSwiftCleanFullSourceRecovery(p *Parser, source []byte, lang *Language)
 	if p == nil || lang == nil {
 		return nil, ErrNoLanguage
 	}
-	if os.Getenv(swiftCleanRecoveryProbeModeEnv) == "legacy" {
+	if swiftCleanRecoveryProbeForcedLegacy() {
 		return p.parseForRecovery(source)
 	}
 	return p.parseForRecoveryInitialOnlyOrLegacy(source, func(tree *Tree) bool {
-		return swiftCleanFullSourceRecoveryAccepted(tree, source, lang)
+		return swiftCleanFullSourceRecoveryAccepted(tree, source, lang) &&
+			swiftRecoveryProbeMatchesLegacyRoute(p, tree, len(source))
 	})
 }
 
+// swiftCleanFullSourceRecoveryAccepted is the byte-faithfulness gate shared by
+// every caller that inspects a Swift whole-source recovery result (the probe
+// accept callback below, and the two normalizeSwiftRecovered* callers that
+// re-check the tree parseSwiftCleanFullSourceRecovery returns, whichever
+// route produced it). It only asks "is this a clean, full-span source_file",
+// never anything about how the tree was produced.
 func swiftCleanFullSourceRecoveryAccepted(tree *Tree, source []byte, lang *Language) bool {
 	if tree == nil || lang == nil {
 		return false
 	}
 	root := tree.RootNode()
 	return root != nil && !root.HasError() && root.Type(lang) == "source_file" && root.endByte == uint32(len(source))
+}
+
+// swiftRecoveryProbeMatchesLegacyRoute reports whether accepting the
+// initial-only probe tree is provably identical to what the legacy recovery
+// route (p.parseForRecovery, which runs Parser.Parse with
+// recoveryInitialOnly=false) would have returned for the same source.
+//
+// The probe runs with recoveryInitialOnly=true, so — unlike legacy — it never
+// runs:
+//   - the full-parse retry ladder (retryFullParseWithDFA /
+//     shouldRetryStackPressureCleanFullParse, parser_retry.go), which can
+//     discard a clean tree that was reached only because the global stack
+//     cap evicted live GLR stacks, and replace it with a second pass that
+//     legitimately reaches an ERROR tree instead (preferRetryTree,
+//     parser_retry.go); or
+//   - the swallowed-error safety net (resolveCRecoverySwallowedError,
+//     parser_api.go), which can replace a clean C-recovery result with an
+//     error-carrying resync fallback when the selected lineage's own
+//     ParseRuntime shows it dropped recovery-owned content for a marker-free
+//     sibling.
+//
+// Reproducing either pass's full logic here (or worse, running both passes
+// against the probe tree unconditionally) would spend back the probe's
+// performance win. Instead this checks only the cheap precondition each pass
+// itself checks before doing any of that work: if either precondition holds,
+// legacy's answer is not provably identical to the probe's, so this declines
+// and the caller falls back to the unchanged legacy route.
+func swiftRecoveryProbeMatchesLegacyRoute(p *Parser, tree *Tree, sourceLen int) bool {
+	if p == nil || tree == nil {
+		return false
+	}
+	rt := tree.rawParseRuntime()
+	if rt == nil || rt.StopReason != ParseStopAccepted {
+		return false
+	}
+	// shouldRetryStackPressureCleanFullParse already requires a clean root and
+	// StopReason in {Accepted, NoStacksAlive}; the StopReason check above
+	// already restricts us to Accepted, so this only adds the
+	// GlobalCullStacksIn>Out (actual stack eviction) condition.
+	if shouldRetryStackPressureCleanFullParse(tree, sourceLen, 0) {
+		return false
+	}
+	// Use the same recovery-parser instance the legacy route reuses (set by
+	// the initial-only probe call that produced tree) so this reads the exact
+	// state resolveCRecoverySwallowedError would see, not just a same-language
+	// proxy.
+	rp := p.recoveryParser
+	if rp == nil {
+		rp = p
+	}
+	if rp.errorCostCompetitionEnabled() && !rp.crecoverySwallowedErrorCheckActive &&
+		rt.CRecoveryEnteredErrorState && rt.CRecoveryDroppedErrorForClean {
+		return false
+	}
+	return true
 }
 
 func normalizeSwiftRecoveredTopLevelDeclarations(root *Node, source []byte, p *Parser, lang *Language) {
@@ -78,10 +158,6 @@ func normalizeSwiftRecoveredTopLevelDeclarations(root *Node, source []byte, p *P
 			continue
 		}
 		if !child.HasError() {
-			recoveredChildren = append(recoveredChildren, child)
-			continue
-		}
-		if !swiftTopLevelRecoveryCanRepairChild(child) {
 			recoveredChildren = append(recoveredChildren, child)
 			continue
 		}
