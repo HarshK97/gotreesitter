@@ -79,6 +79,9 @@ func TestSwiftCleanRecoveryProbeMatchesLegacyTree(t *testing.T) {
 }
 
 func TestSwiftUnsafeWitnessKeepsCurrentGoTreeAcrossRecoveryProbe(t *testing.T) {
+	if raceEnabled {
+		t.Skip("this witness drives full error recovery twice with the dispatcher census enabled; its cost under the race detector exceeds the CI shard budget; the witness runs in every non-race lane")
+	}
 	lang := SwiftLanguage()
 	source, err := os.ReadFile(filepath.Join("testdata", "swift_corpus", "stdlib_FloatingPointToString.swift"))
 	if err != nil {
@@ -261,6 +264,9 @@ func TestSwiftCorpusProbeMatchesLegacy(t *testing.T) {
 		}
 		name := e.Name()
 		t.Run(name, func(t *testing.T) {
+			if exp, ok := swiftCorpusExpectations[name]; raceEnabled && ok && exp.status == swiftCorpusKnownFailing {
+				t.Skip("known-failing file drives full error recovery twice here; its cost under the race detector exceeds the CI shard budget; equivalence still holds in non-race lanes")
+			}
 			src, err := os.ReadFile(filepath.Join(dir, name))
 			if err != nil {
 				t.Fatalf("reading corpus file: %v", err)
