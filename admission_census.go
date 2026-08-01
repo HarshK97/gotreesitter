@@ -103,6 +103,16 @@ const (
 	// accepted/shifted heads, closed-and-checkpoint-continuous election) were
 	// not met, independent of any specific grammar feature.
 	censusMechanismSchedulerShape admissionCensusMechanism = "scheduler-frontier-shape"
+	// censusMechanismAcceptedLeafTilingGap: the scheduler accepted a clean,
+	// full-span root, but diagnosticParserCoreReduceChildrenTilingGap
+	// (parsercore_phase0_driver.go, campaign v7 tranche B1), checked once per
+	// reduce during materialization, found a byte range under some subtree's
+	// declared span with no covering child and no tolerated-trivia excuse.
+	// This is the false-clean route-equality gate: without it, the accepted
+	// derivation would publish HasError()==false while production and the
+	// locked C oracle both return an error tree for the same input
+	// (cgo_harness/testdata/compact_t3_oracle_witnesses_v2.json).
+	censusMechanismAcceptedLeafTilingGap admissionCensusMechanism = "accepted-leaf-tiling-gap"
 	// censusMechanismOther is the catch-all for a decline this classifier
 	// does not yet recognize. The full original detail is always preserved
 	// alongside it.
@@ -164,7 +174,12 @@ func admissionCensusClassify(boundary DiagnosticParserCoreBoundaryKind, detail s
 			return censusMechanismNoTableAction
 		}
 		return censusMechanismSchedulerShape
-	case DiagnosticParserCoreAccept, DiagnosticParserCoreGenericClosed:
+	case DiagnosticParserCoreAccept:
+		if strings.Contains(detail, "accepted-leaf-tiling-gap") {
+			return censusMechanismAcceptedLeafTilingGap
+		}
+		return censusMechanismSchedulerShape
+	case DiagnosticParserCoreGenericClosed:
 		return censusMechanismSchedulerShape
 	case censusBoundaryMultiDerivation:
 		return censusMechanismMultiDerivation

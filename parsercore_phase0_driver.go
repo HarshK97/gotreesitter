@@ -2437,6 +2437,189 @@ func finalizeDiagnosticParserCoreAcceptedRootSpan(root *Node, source []byte, sou
 	)
 }
 
+// diagnosticParserCoreReduceChildrenTilingGap is the B1 route-equality
+// invariant (campaign v7, tranche B1): a compact subtree's declared span
+// [startByte, endByte) is sound only if its own reduce children -- the RAW
+// list the compact core popped for this subtree, before hidden-node elision
+// -- actually tile it: contiguous coverage, no unaccounted-for non-trivia
+// byte range. Called once per non-terminal from materializeVisit (below),
+// on entries built from view.Children, immediately after they are resolved
+// via nodesByID and before any hidden-node filtering
+// (parser.buildReduceChildrenWithPath) or unary collapse runs.
+//
+// Root cause this closes: the scheduler's acceptance gate
+// (finalizeDiagnosticParserCoreAcceptedRootSpan) checked only the root's own
+// span and error flag, never that the accepted derivation's content actually
+// justified that span. A derivation whose reduce silently skipped real input
+// could still be accepted and materialized: the reduce's own view.StartByte/
+// EndByte (set independently of any child -- see the view construction in
+// materializeVisit) can claim a span wider than any entry actually covers,
+// publishing HasError()==false while production and the locked C oracle
+// both return an error tree for the same input. Reference witness: html
+// `<a></a^>` -- the erroneous end-tag subtree claimed span 3..8 ("</a^>")
+// while its three RAW children covered only 3..5, 5..6 and 7..8, leaving
+// byte 6 (the stray '^') completely unaccounted for at every level, not
+// just the final public tree (cgo_harness/testdata/
+// compact_t3_oracle_witnesses_v2.json, witness "html_min_a"; verified by
+// direct inspection of view.Children, not merely the post-materialization
+// node tree -- see the next paragraph for why that distinction matters).
+//
+// Why RAW children, not the final public Node.children: an earlier version
+// of this gate walked the finalized public tree after materialization and
+// false-positived on legitimate, production-matching shapes -- the
+// certified EOF-accept/primary-accept acceptance frontiers (http, robot,
+// meson; grammars/runtime_profiles.go). Direct inspection proved why: a
+// hidden grammar symbol (symbolMeta[...].Visible == false) can cover real
+// source bytes -- Robot Framework's `keyword` node covers a leading byte its
+// only NAMED child excludes; meson's `string` node covers its quoted
+// content with no child at all -- and parser.buildReduceChildrenWithPath
+// (shared by production and compact) elides that hidden entry from the
+// node's final public children (occasionally repositioning a following
+// ANONYMOUS sibling's start via flattenedHiddenEntryPadding, but never a
+// named one), while the node's own declared span, set once at reduce time,
+// still legitimately includes it. Production exhibits the identical
+// "parent span wider than public children" shape for these inputs (verified
+// by direct comparison), so it is not a defect -- but by the same token it
+// is structurally indistinguishable from the html/js defect at the public-
+// tree level: both are "parent span wider than the children the public API
+// exposes". The only place the two are distinguishable is before hidden
+// filtering, using the RAW popped children: robot's `keyword` and meson's
+// `string` fully tile their own span once their hidden child is counted
+// (verified directly: view.Children for robot's `keyword` [26,29) is two
+// entries, [26,27) hidden + [27,29) name_chunk; meson's `string` [8,15) is
+// three, [8,9) quote + [9,14) hidden content + [14,15) quote); html's
+// erroneous-end-tag subtree does not -- its RAW view.Children already omit
+// byte 6, so no filtering step is discarding evidence there at all. This
+// function therefore runs on entries (RAW, pre-filter) rather than on any
+// node's already-finalized public children.
+//
+// This is the identical defect class the GLR forest already guards against
+// at reduce time: its own coverage rejection (glr_forest.go, "Coverage
+// rejection: a reduction whose children leave a NON-TRIVIA hole skipped
+// real input and is INVALID") scans a reduction's RAW children left to
+// right -- before the same later hidden-filtering step -- and rejects any
+// grouping with a real (non-trivia) gap, using bytesAreInterTokenTrivia to
+// tell a dropped token from ordinary inter-token whitespace. This function
+// is that same, already-proven definition and predicate, applied at the
+// compact route's equivalent point in its pipeline (materialization-time
+// reduce, since the compact scheduler has no forest reduce step of its
+// own), checked uniformly at the leading edge (startByte to the first
+// entry), between every pair of entries, and at the trailing edge (the last
+// entry to endByte) -- one running coverage frontier, so no special case is
+// needed for any position. Checking every non-terminal (not just the root)
+// composes soundly by induction: if every node's own direct (raw) children
+// tile that node's span modulo trivia, then transitively so do the leaves
+// of the whole accepted derivation against the root's span, which is the
+// property the tranche asks for.
+//
+// Deliberately out of scope here: the relationship between the root's own
+// declared span and sourceLen (extendRootToAcceptedCleanTail, a few lines
+// above, using the wider bytesAreParserPadding predicate for trailing
+// padding beyond every reduce). That check runs later, once, only at the
+// root, against a different boundary (the whole source, not a reduce's own
+// declared span) and is unaffected by this one.
+//
+// O(children) per call and allocation-free: entries are the slice
+// materializeVisit already built this call from already-materialized nodes
+// (nodesByID lookups done moments earlier); this only reads existing
+// uint32 spans and does not walk further into any child's own subtree.
+func diagnosticParserCoreReduceChildrenTilingGap(startByte, endByte uint32, entries []stackEntry, source []byte) (gapStart, gapEnd uint32, gapped bool) {
+	lastEnd := startByte
+	for _, entry := range entries {
+		child := stackEntryNode(entry)
+		if child == nil {
+			continue
+		}
+		if child.startByte > lastEnd && !diagnosticParserCoreGapIsTolerated(source[lastEnd:child.startByte]) {
+			return lastEnd, child.startByte, true
+		}
+		if child.endByte > lastEnd {
+			lastEnd = child.endByte
+		}
+	}
+	if lastEnd < endByte && !diagnosticParserCoreGapIsTolerated(source[lastEnd:endByte]) {
+		return lastEnd, endByte, true
+	}
+	return 0, 0, false
+}
+
+// diagnosticParserCoreGapIsTolerated reports whether an apparent coverage
+// gap is not, in fact, a real one: either ordinary inter-token trivia
+// (bytesAreInterTokenTrivia, matching the forest's own reduce-time coverage
+// rejection), or a single decoration byte strictly enclosed by trivia on
+// both sides (bytesAreSingleByteDecorationTrivia).
+func diagnosticParserCoreGapIsTolerated(gap []byte) bool {
+	return bytesAreInterTokenTrivia(gap) || bytesAreSingleByteDecorationTrivia(gap)
+}
+
+// bytesAreSingleByteDecorationTrivia is the second, narrow trivia exception
+// this gate needs, found by directly root-causing a currently-passing
+// smoke-corpus collision (doxygen, jsdoc -- javadoc/doxygen-style
+// "/** ... * @tag ... */" comment bodies): the continuation-line marker
+// "* " that begins every interior comment line is not represented by any
+// node -- hidden or public -- in either engine's tree. Verified by direct
+// inspection of both compact's raw, pre-filter view.Children (the exact
+// input this function receives, gap-for-gap) and production's own raw node
+// children: production's root for the doxygen smoke fixture has no child at
+// all for "/**" or the repeated "* ", only for the @tag content between
+// them. It is legitimate, lexer-level filler that the scanner treats the
+// same way it treats ordinary whitespace between tokens, just with a
+// literal '*' inside it, so the fixed ASCII-whitespace set
+// bytesAreInterTokenTrivia checks does not recognize it, and no
+// per-language exception is available to ask (tree-sitter's compiled DFA
+// transition tables have no queryable "is this byte skippable here"
+// surface at this layer).
+//
+// The rule requires trivia (bytesAreTrivia) strictly BEFORE AND AFTER the
+// one marker byte, never touching either of the gap's own edges. This is
+// deliberately the strict form, not "buffered on at least one side": an
+// earlier, one-sided version of this rule was built and measured against
+// the full 206-language admission scorecard, and it silently re-admitted 5
+// of the 8 already-fixed javascript witnesses (js_log_1, js_log_3, js_log_5,
+// js_log_6, js_log_7 -- their real dropped-byte gaps also happen to touch
+// one edge, e.g. immediately preceding the next real token with only
+// leading trivia), which is exactly the false-clean escape this tranche
+// exists to close. It was reverted; only the two-sided form ships. This
+// fixes doxygen outright (its one gap is interior, buffered on both sides).
+// jsdoc has two such gaps: an interior one this rule also fixes, and a
+// second one where the comment's closing "*/" (no leading space) puts the
+// decoration marker on the gap's own trailing edge -- correctly left
+// unrecognized here, since that exact shape is indistinguishable from a
+// genuine drop (js_log_3 and js_log_7 have the same trailing-edge shape and
+// must stay rejected). jsdoc's remaining root-level gap is instead closed by
+// the separate, narrower isDerivationRootReduce exemption in
+// materializeDiagnosticParserCoreAcceptedSelection's reduce visitor, not by
+// widening this predicate further.
+//
+// The general, language-independent shape that separates the tolerated
+// case from a genuine dropped byte (the html/js defect class this gate
+// exists to catch -- witness html_min_a's gap is the single byte "^",
+// touching both of its own gap edges at once, directly adjacent to real
+// content on both sides with no trivia buffer at all) is: exactly one
+// non-trivia byte, with ordinary trivia on both sides of it within the same
+// gap. A scheduler bug that truly skips real input skips a whole token or a
+// recognizable fragment sitting flush against a neighbor on at least one
+// edge; manufacturing an isolated, symmetrically trivia-padded punctuation
+// byte is not a plausible shape for that defect class. All 18 fixed
+// html/js witnesses were re-verified against this exact rule and none
+// qualify for it (admission_route_equality_leaf_tiling_test.go).
+func bytesAreSingleByteDecorationTrivia(gap []byte) bool {
+	if len(gap) < 3 {
+		return false
+	}
+	marker := -1
+	for i := 0; i < len(gap); i++ {
+		if bytesAreTrivia(gap[i : i+1]) {
+			continue
+		}
+		if marker != -1 {
+			return false
+		}
+		marker = i
+	}
+	return marker > 0 && marker < len(gap)-1
+}
+
 // materializeDiagnosticParserCoreAcceptedSelection materializes the accepted
 // compact derivation into a public tree. When scratch is non-nil the runner's
 // reusable buffers back the transient materialization storage, so the warm
@@ -2587,6 +2770,41 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 				entries[index] = newStackEntryNode(0, child)
 				if !child.isExtra() {
 					structuralChildren++
+				}
+			}
+			// isDerivationRootReduce is true only for the one reduce, per parse,
+			// whose symbol is this language's own inferred grammar root symbol
+			// (parser.rootSymbol / hasRootSymbol -- inferRootSymbol, parser.go: a
+			// grammar-derived property, computed from the language's own tables,
+			// not a per-language name check). It is exempted from this reduce's
+			// OWN tiling requirement for the same reason
+			// finalizeDiagnosticParserCoreAcceptedRootSpan already treats the
+			// root-to-sourceLen boundary as a separately governed special case
+			// (extendRootToAcceptedCleanTail, with its own, more lenient rule): the
+			// root reduce is the one construct with no enclosing reduce to ever
+			// re-validate its own declared span from the outside, so an over-wide
+			// root span (still exactly [expectedStart, sourceLen), already pinned
+			// by finalizeDiagnosticParserCoreAcceptedRootSpan's own checks) is a
+			// materially different, narrower risk than an internal gap anywhere
+			// below it, which every enclosing reduce's own tiling check still
+			// catches. This closes the jsdoc residual left after
+			// bytesAreSingleByteDecorationTrivia: javadoc/doxygen-style comments
+			// that close with "*/" (no leading space) put the decoration marker
+			// on the trailing edge of the root reduce's own gap, indistinguishable
+			// in isolation from a genuine drop (js_log_3 and js_log_7 have the
+			// identical trailing-edge shape and must still be rejected -- verified
+			// directly, byte for byte: both keep declining under this exemption,
+			// since their gaps are not at the root symbol). All 18 fixed html/js
+			// witnesses were re-verified with this exemption active and none sit
+			// at their language's root symbol, so none are affected by it.
+			isDerivationRootReduce := parser.hasRootSymbol && Symbol(view.Symbol) == parser.rootSymbol
+			if gapStart, gapEnd, gapped := diagnosticParserCoreReduceChildrenTilingGap(view.StartByte, view.EndByte, entries, source); !isDerivationRootReduce && gapped {
+				return &diagnosticParserCoreDecline{
+					boundary: DiagnosticParserCoreAccept,
+					detail: fmt.Sprintf(
+						"accepted-leaf-tiling-gap: compact subtree symbol=%d span=%d..%d has an unaccounted byte range %d..%d not covered by any child",
+						view.Symbol, view.StartByte, view.EndByte, gapStart, gapEnd,
+					),
 				}
 			}
 			action := ParseAction{
