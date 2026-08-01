@@ -1,0 +1,416 @@
+//go:build !gts_no_parsercorephase0
+
+package gotreesitter_test
+
+import (
+	"fmt"
+	"sort"
+	"testing"
+
+	gts "github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
+	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
+)
+
+// routeEqualityFuzzLanguages is the curated language set this fuzzer drives:
+// the compact-certified heavyweights (go, javascript, html, swift, python,
+// bash) plus three more compact-eligible languages (erlang, haskell, rust)
+// that also pass the compact admission smoke ratchet
+// (admissionScorecardRequiredCompactPasses, admission_scorecard_test.go).
+// The fuzz language-selector byte indexes into this slice (modulo its
+// length), so its order is part of the corpus contract: changing it changes
+// which language a committed seed exercises.
+var routeEqualityFuzzLanguages = []string{
+	"go",
+	"javascript",
+	"html",
+	"swift",
+	"python",
+	"bash",
+	"erlang",
+	"haskell",
+	"rust",
+}
+
+// admissionRouteEqualityLanguage bundles one curated language with a
+// compact-forced and a production-forced Parser, both built once and reused
+// for the whole fuzz run (matching FuzzGoParseDoesNotPanic's convention in
+// fuzz_parser_test.go).
+type admissionRouteEqualityLanguage struct {
+	name       string
+	lang       *gts.Language
+	compact    *gts.Parser
+	production *gts.Parser
+}
+
+// routeEqualityFuzzMaxInputBytes bounds every fuzz input, well below the 64
+// KiB compact admission wall. This is a latency safety cap, not a
+// correctness one: the language-selector byte mutates independently of the
+// content byte, so the mutator can and does pair a large seed (e.g. a
+// canonical Go fixture) with an unrelated curated language. Measured
+// directly (production-forced parses of real Go source, mis-parsed as each
+// curated language): swift and erlang stay under 50ms through 16,000 bytes
+// but climb past 3s by 32,000 and past 7s by 65,000 -- a shape consistent
+// with GLR multi-stack growth on ambiguous, wrong-grammar token streams, not
+// a hang. Below this cap every curated language stayed under 60ms on the
+// same probe. A go-test-fuzz worker that runs a multi-second input risks
+// Go's own hang detector killing it, which reports as a spurious failure
+// unrelated to route equality. 4096 is a full order of magnitude below the
+// measured slow region.
+const routeEqualityFuzzMaxInputBytes = 4096
+
+// FuzzAdmissionRouteEquality is the campaign v7 tranche B2 standing
+// generative gate: on every fuzz input where the compact admission
+// candidate route accepts a fresh full parse, its published tree must equal
+// the production route's tree exactly -- HasError, deep structure (type,
+// byte span, point span, field name, and the named/extra/missing/error
+// flags), and full leaf byte coverage. When the compact route declines
+// (an engine-side fallback, or a never-attempted eligibility decline), the
+// shipped Parse call already served the parse via production within the
+// same call (the B1 fail-closed guarantee), so the input is vacuous for
+// this assertion; it still runs for panic and hang coverage and stays in
+// the corpus.
+//
+// The fuzz entry point is the shipped Parser.Parse route, reached through
+// the same public per-Parser admission switch every caller can use
+// (SetAdmissionCandidateRoute, admission_switch.go) -- not the C0
+// attribution harness's diagnostic lane (cgo_harness/attribution), which
+// bypasses Parse and the admission switch entirely and never ships.
+//
+// KNOWN OPEN FINDING (root-reduce leaf-tiling exemption; not fixed by this
+// tranche): live fuzzing reproducibly finds a false-clean divergence in
+// under 4 seconds from a cold cache, independent of which curated language
+// it lands on. Confirmed witnesses: html "&0", "&;", "&#", "&09", ">0";
+// erlang "\x010", "\x100"; haskell "\"\n" -- all two bytes, all the same
+// shape: one non-trivia byte at byte 0 (document start) that compact drops
+// silently (HasError()==false, no child covers it) while production
+// correctly reports HasError()==true. Root cause, verified by direct
+// read of parsercore_phase0_driver.go: materializeDiagnosticParserCoreAcceptedSelection's
+// reduce visitor calls diagnosticParserCoreReduceChildrenTilingGap (the B1
+// fix) for every reduce EXCEPT the derivation's own root symbol
+// (isDerivationRootReduce, ~line 2800) -- a deliberate exemption, but its own
+// comment justifies it only against finalizeDiagnosticParserCoreAcceptedRootSpan
+// pinning "an over-wide root span"; that function (~line 2420) verifies only
+// that the root's span bounds equal [expectedStart, sourceLen), never that
+// the root's own raw children actually tile it, so a LEADING (or interior)
+// gap at the root symbol specifically is unchecked by either function. The
+// exemption's one documented motivating case (jsdoc's unspaced "*/" comment
+// terminator) is a TRAILING-edge gap; every reproduction found here is a
+// LEADING-edge gap, a materially different shape the exemption's own
+// reasoning does not cover. A narrow fix -- keep the exemption only for a
+// gap that reaches the root's own endByte (trailing), not one that starts
+// at the root's own startByte or sits between two of its children -- was
+// identified but deliberately NOT implemented here: correctly scoping and
+// re-validating any change to this function needs the full B1 validation
+// surface (98-witness manifest, real-corpus matrix, 206-language scorecard,
+// cgo C-oracle parity), none of which a B2-scoped fuzzer change should touch
+// ad hoc. Filed as a campaign finding for a B1 follow-up tranche.
+//
+// Because this reproduces from a cold cache in seconds regardless of which
+// curated language the mutator lands on, the bounded CI fuzz lane
+// (.github/workflows/ci.yml) runs this target as an ADVISORY step, not a
+// blocking one, until that follow-up lands; only the seed-corpus regression
+// step (this file's committed f.Add corpus, which excludes every witness
+// above) is required. See this tranche's spore for the full writeup.
+func FuzzAdmissionRouteEquality(f *testing.F) {
+	// Several curated languages (html, javascript, swift, ...) are not
+	// otherwise loaded by the always-on suite; purge the process-wide
+	// embedded cache afterward so this fuzzer does not inflate heap for
+	// later suite tests (matches admission_scorecard_test.go and
+	// admission_route_equality_leaf_tiling_test.go).
+	f.Cleanup(func() { grammars.PurgeEmbeddedLanguageCache() })
+
+	languages := make([]admissionRouteEqualityLanguage, len(routeEqualityFuzzLanguages))
+	for i, name := range routeEqualityFuzzLanguages {
+		entry := grammars.DetectLanguageByName(name)
+		if entry == nil {
+			f.Fatalf("curated route-equality language %q is not registered", name)
+		}
+		lang := entry.Language()
+		if lang == nil {
+			f.Fatalf("curated route-equality language %q resolved a nil Language", name)
+		}
+		if support := grammars.EvaluateParseSupport(*entry, lang); support.Backend != grammars.ParseBackendDFA {
+			f.Fatalf("curated route-equality language %q is not DFA-routable (backend=%s reason=%s); Parser.Parse cannot serve it",
+				name, support.Backend, support.Reason)
+		}
+
+		compact := gts.NewParser(lang)
+		compact.SetAdmissionCandidateRoute(true)
+		production := gts.NewParser(lang)
+		production.SetAdmissionCandidateRoute(false)
+		languages[i] = admissionRouteEqualityLanguage{name: name, lang: lang, compact: compact, production: production}
+	}
+
+	seedAdmissionRouteEqualityCorpus(f, languages)
+
+	f.Fuzz(func(t *testing.T, src []byte, langSel byte) {
+		if len(src) >= routeEqualityFuzzMaxInputBytes {
+			t.Skip("input at or above the fuzz latency safety cap")
+		}
+		lp := languages[int(langSel)%len(languages)]
+
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("panic during route-equality fuzz (lang=%s bytes=%d): %v\ninput=%s",
+					lp.name, len(src), r, previewRouteEqualityInput(src))
+			}
+		}()
+
+		gts.ResetAdmissionCandidateCountersForTest()
+		compactTree, err := lp.compact.Parse(src)
+		if err != nil {
+			t.Fatalf("lang=%s compact-lane Parse: %v (input=%s)", lp.name, err, previewRouteEqualityInput(src))
+		}
+		if compactTree == nil {
+			t.Fatalf("lang=%s compact-lane Parse returned a nil tree with no error (input=%s)", lp.name, previewRouteEqualityInput(src))
+		}
+		defer compactTree.Release()
+
+		routed, _ := gts.AdmissionCandidateCounters()
+		if routed != 1 {
+			// Compact declined -- engine-side, or never attempted. Parse
+			// already served production internally within this same call
+			// (the B1 fail-closed guarantee), so compactTree already IS the
+			// production tree. Vacuous for route equality; still exercised
+			// for panic and hang coverage.
+			return
+		}
+
+		productionTree, err := lp.production.Parse(src)
+		if err != nil {
+			t.Fatalf("lang=%s production-lane Parse: %v (input=%s)", lp.name, err, previewRouteEqualityInput(src))
+		}
+		if productionTree == nil {
+			t.Fatalf("lang=%s production-lane Parse returned a nil tree with no error (input=%s)", lp.name, previewRouteEqualityInput(src))
+		}
+		defer productionTree.Release()
+
+		assertAdmissionRouteEquality(t, lp, src, compactTree, productionTree)
+	})
+}
+
+// seedAdmissionRouteEqualityCorpus commits the B2 seed corpus: the 20-witness
+// B0/B1 adjudication manifest (minus the two documented open swift
+// residuals), the four canonical Go BENCH.md fixtures (trimmed below the
+// compact size wall when needed), one smoke snippet per curated language,
+// and an empty-source edge case. languages supplies the language-selector
+// byte for each language name.
+func seedAdmissionRouteEqualityCorpus(f *testing.F, languages []admissionRouteEqualityLanguage) {
+	f.Helper()
+
+	langIndex := make(map[string]byte, len(languages))
+	for i, lp := range languages {
+		langIndex[lp.name] = byte(i)
+	}
+
+	// Empty source: Parse's documented nil-root edge case.
+	f.Add([]byte{}, langIndex["go"])
+
+	// One smoke snippet per curated language (grammars.ParseSmokeSamples,
+	// the same manifest the compact admission scorecard drives).
+	for _, name := range routeEqualityFuzzLanguages {
+		f.Add([]byte(grammars.ParseSmokeSample(name)), langIndex[name])
+	}
+
+	// The four canonical Go full-parse fixtures (BENCH.md / internal/
+	// benchfixtures), heads trimmed to routeEqualityFuzzMaxInputBytes: only
+	// rewrite.go (5,116 bytes) already fits; query_compile.go (20,168),
+	// language.go (41,387), and grammargen_lr.go (235,626) all need a
+	// trimmed head. An untrimmed seed would immediately skip on every run
+	// (the fuzz body's own size cap), so trimming here is what makes these
+	// fixtures actually exercise the corpus.
+	fixtures, err := benchfixtures.LoadGoFullParseFixtures()
+	if err != nil {
+		f.Fatalf("load canonical Go fixtures: %v", err)
+	}
+	for _, lf := range fixtures {
+		src := lf.Source
+		if len(src) >= routeEqualityFuzzMaxInputBytes {
+			src = append([]byte(nil), src[:routeEqualityFuzzMaxInputBytes-1]...)
+		}
+		f.Add(src, langIndex["go"])
+	}
+
+	// The 20-witness B0/B1 adjudication manifest (cgo_harness/testdata/
+	// compact_t3_oracle_witnesses_v2.json): 10 html, 8 javascript, 2 swift.
+	// These are the false-clean witnesses the B1 leaf-tiling gate now
+	// declines (admission_route_equality_leaf_tiling_test.go). html_min_a is
+	// the literal B1 reference witness "<a></a^>"
+	// (TestCompactRouteHTMLErroneousEndTagByteGapDeclines); it is seeded
+	// here as that witness, not duplicated.
+	//
+	// swift_log_1 and swift_log_2 are deliberately EXCLUDED. Both are a
+	// documented, still-open compact-accepts/production-errors divergence
+	// that the B1 tiling gate does not, and must not, reject: compact's
+	// accepted derivation fully tiles the source for both; the two engines
+	// instead disagree on shift/reduce resolution for the ambiguous
+	// trailing ">>" in "x >> y>>" -- a different mechanism from the byte-
+	// coverage gap this tranche's gate closes. See
+	// TestCompactRouteSwiftShiftComparisonGapIsNotATilingDefect
+	// (admission_route_equality_swift_residual_test.go), which pins the
+	// still-open state as its own dedicated, documented residual. Seeding
+	// them here would fail this fuzzer's equality assertion on every run
+	// for an already-known, already-tracked finding, not a new one.
+	// Promote them into this corpus once that residual closes.
+	witnesses := loadRouteEqualityWitnesses(f)
+	ids := make([]string, 0, len(witnesses))
+	for id := range witnesses {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	excludedWitnesses := map[string]bool{"swift_log_1": true, "swift_log_2": true}
+	for _, id := range ids {
+		if excludedWitnesses[id] {
+			continue
+		}
+		w := witnesses[id]
+		idx, ok := langIndex[w.Language]
+		if !ok {
+			f.Fatalf("witness %q language %q is outside the curated route-equality language set", id, w.Language)
+		}
+		f.Add([]byte(w.SourceUTF8), idx)
+	}
+}
+
+// assertAdmissionRouteEquality enforces the B2 gate: when the compact route
+// accepted, its tree must equal production's on every dimension the gate
+// names -- HasError, deep structure (type, span, field, flags, named-ness),
+// and full leaf byte coverage.
+func assertAdmissionRouteEquality(t *testing.T, lp admissionRouteEqualityLanguage, src []byte, compactTree, productionTree *gts.Tree) {
+	t.Helper()
+
+	compactRoot := compactTree.RootNode()
+	productionRoot := productionTree.RootNode()
+	if (compactRoot == nil) != (productionRoot == nil) {
+		t.Fatalf("lang=%s bytes=%d root nilness diverges: compact=%t production=%t (input=%s)",
+			lp.name, len(src), compactRoot == nil, productionRoot == nil, previewRouteEqualityInput(src))
+	}
+	if compactRoot == nil {
+		return
+	}
+
+	if compactRoot.HasError() != productionRoot.HasError() {
+		t.Fatalf("lang=%s bytes=%d HasError diverges: compact=%t production=%t (input=%s)",
+			lp.name, len(src), compactRoot.HasError(), productionRoot.HasError(), previewRouteEqualityInput(src))
+	}
+
+	if diff := routeEqualityFirstDivergence(compactRoot, productionRoot, lp.lang, "root"); diff != "" {
+		t.Fatalf("lang=%s bytes=%d structural divergence: %s (input=%s)", lp.name, len(src), diff, previewRouteEqualityInput(src))
+	}
+
+	compactCoverage := routeEqualityLeafRanges(compactRoot)
+	productionCoverage := routeEqualityLeafRanges(productionRoot)
+	if diff := routeEqualityCoverageDivergence(compactCoverage, productionCoverage); diff != "" {
+		t.Fatalf("lang=%s bytes=%d byte-coverage divergence: %s (input=%s)", lp.name, len(src), diff, previewRouteEqualityInput(src))
+	}
+
+	// Belt-and-suspenders: an independent whole-tree digest (type, field,
+	// span, flags, child count, in preorder) must also agree.
+	compactDigest, err := benchfixtures.InspectGoTree(compactRoot, lp.lang)
+	if err != nil {
+		t.Fatalf("lang=%s bytes=%d compact deep-tree digest: %v", lp.name, len(src), err)
+	}
+	productionDigest, err := benchfixtures.InspectGoTree(productionRoot, lp.lang)
+	if err != nil {
+		t.Fatalf("lang=%s bytes=%d production deep-tree digest: %v", lp.name, len(src), err)
+	}
+	if compactDigest.SHA256 != productionDigest.SHA256 {
+		t.Fatalf("lang=%s bytes=%d deep-tree digest diverges without a node mismatch found by the walk above: compact=%s production=%s (input=%s)",
+			lp.name, len(src), compactDigest.SHA256, productionDigest.SHA256, previewRouteEqualityInput(src))
+	}
+}
+
+// routeEqualityFirstDivergence walks compact and production together in
+// preorder and returns a description of the first mismatch in type, byte
+// span, point span, field name, or the named/extra/missing/error/has-error
+// flags -- or "" when every node agrees.
+func routeEqualityFirstDivergence(compact, production *gts.Node, lang *gts.Language, path string) string {
+	if compact == nil || production == nil {
+		if compact == nil && production == nil {
+			return ""
+		}
+		return fmt.Sprintf("%s nil compact=%t production=%t", path, compact == nil, production == nil)
+	}
+	if compact.Type(lang) != production.Type(lang) ||
+		compact.StartByte() != production.StartByte() ||
+		compact.EndByte() != production.EndByte() ||
+		compact.StartPoint() != production.StartPoint() ||
+		compact.EndPoint() != production.EndPoint() ||
+		compact.IsNamed() != production.IsNamed() ||
+		compact.IsExtra() != production.IsExtra() ||
+		compact.IsMissing() != production.IsMissing() ||
+		compact.IsError() != production.IsError() ||
+		compact.ChildCount() != production.ChildCount() {
+		return fmt.Sprintf(
+			"%s compact=%s[%d:%d] named=%t extra=%t missing=%t error=%t children=%d production=%s[%d:%d] named=%t extra=%t missing=%t error=%t children=%d",
+			path,
+			compact.Type(lang), compact.StartByte(), compact.EndByte(),
+			compact.IsNamed(), compact.IsExtra(), compact.IsMissing(), compact.IsError(), compact.ChildCount(),
+			production.Type(lang), production.StartByte(), production.EndByte(),
+			production.IsNamed(), production.IsExtra(), production.IsMissing(), production.IsError(), production.ChildCount(),
+		)
+	}
+	if compact.HasError() != production.HasError() {
+		return fmt.Sprintf("%s has_error compact=%t production=%t", path, compact.HasError(), production.HasError())
+	}
+	for i := 0; i < compact.ChildCount(); i++ {
+		compactField := compact.FieldNameForChild(i, lang)
+		productionField := production.FieldNameForChild(i, lang)
+		if compactField != productionField {
+			return fmt.Sprintf("%s/%d field compact=%q production=%q", path, i, compactField, productionField)
+		}
+		childPath := fmt.Sprintf("%s/%s[%d]", path, compact.Child(i).Type(lang), i)
+		if diff := routeEqualityFirstDivergence(compact.Child(i), production.Child(i), lang, childPath); diff != "" {
+			return diff
+		}
+	}
+	return ""
+}
+
+// routeEqualityLeafRanges returns every leaf's [start, end) byte range in
+// preorder -- the B2 gate's explicit full-byte-coverage dimension,
+// independent of the general structural walk above.
+func routeEqualityLeafRanges(root *gts.Node) [][2]uint32 {
+	if root == nil {
+		return nil
+	}
+	var ranges [][2]uint32
+	var walk func(n *gts.Node)
+	walk = func(n *gts.Node) {
+		if n.ChildCount() == 0 {
+			ranges = append(ranges, [2]uint32{n.StartByte(), n.EndByte()})
+			return
+		}
+		for i := 0; i < n.ChildCount(); i++ {
+			walk(n.Child(i))
+		}
+	}
+	walk(root)
+	return ranges
+}
+
+// routeEqualityCoverageDivergence compares two leaf byte-range lists and
+// describes the first mismatch, or "" when they agree exactly.
+func routeEqualityCoverageDivergence(compact, production [][2]uint32) string {
+	if len(compact) != len(production) {
+		return fmt.Sprintf("leaf count compact=%d production=%d", len(compact), len(production))
+	}
+	for i := range compact {
+		if compact[i] != production[i] {
+			return fmt.Sprintf("leaf[%d] byte range compact=%d..%d production=%d..%d", i, compact[i][0], compact[i][1], production[i][0], production[i][1])
+		}
+	}
+	return ""
+}
+
+// previewRouteEqualityInput renders a fuzz input as a bounded, safely
+// quoted string for failure messages: arbitrary fuzz bytes may not be valid
+// UTF-8 or printable.
+func previewRouteEqualityInput(src []byte) string {
+	const maxPreviewBytes = 200
+	if len(src) > maxPreviewBytes {
+		src = src[:maxPreviewBytes]
+	}
+	return fmt.Sprintf("%q", src)
+}

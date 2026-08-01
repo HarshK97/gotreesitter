@@ -37,7 +37,10 @@ type routeEqualityWitness struct {
 	} `json:"expected"`
 }
 
-func loadRouteEqualityWitnesses(t *testing.T) map[string]routeEqualityWitness {
+// loadRouteEqualityWitnesses accepts testing.TB (not just *testing.T) so
+// FuzzAdmissionRouteEquality (fuzz_admission_route_equality_test.go, campaign
+// v7 tranche B2) can reuse it from a *testing.F during corpus setup.
+func loadRouteEqualityWitnesses(t testing.TB) map[string]routeEqualityWitness {
 	t.Helper()
 	raw, err := os.ReadFile(compactT3RouteEqualityWitnessManifestPath)
 	if err != nil {
