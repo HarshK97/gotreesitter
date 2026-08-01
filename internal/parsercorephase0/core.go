@@ -2073,6 +2073,23 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 		}
 		oldID = 0
 	}
+	// buildOutcome stamps a returned condenseOutcome with the historical
+	// provenance snapshot captured above. Every return below resolves the
+	// same boundary key, so a historical split discovered above belongs on
+	// whichever path this call actually takes, not only on the path that
+	// happens to run first. This applies the duplicate-drop path's existing
+	// propagation uniformly instead of letting the other early returns
+	// silently drop it.
+	buildOutcome := func(head Head, change condenseChange) condenseOutcome {
+		return condenseOutcome{
+			head: head, change: change,
+			historicalBoundarySplit:       historicalBoundarySplit,
+			historicalConvergedSplit:      historicalConvergedSplit,
+			historicalForestDeterministic: historicalForestDeterministic,
+			historicalCleanPathRank:       historicalCleanPathRank,
+			historicalLineage:             historicalLineage,
+		}
+	}
 	var old nodeRecord
 	var oldLinks []linkRecord
 	if oldID != 0 {
@@ -2097,14 +2114,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 				if phase0AEnabled {
 					phase0AObserveCandidateDrop(c, key, in, oldID, index, phase0ATransitionDuplicateDrop)
 				}
-				return condenseOutcome{
-					head: Head{Node: oldID}, change: condenseUnchanged,
-					historicalBoundarySplit:       historicalBoundarySplit,
-					historicalConvergedSplit:      historicalConvergedSplit,
-					historicalForestDeterministic: historicalForestDeterministic,
-					historicalCleanPathRank:       historicalCleanPathRank,
-					historicalLineage:             historicalLineage,
-				}, nil
+				return buildOutcome(Head{Node: oldID}, condenseUnchanged), nil
 			}
 		}
 		if c.diagnostics.foldSamePredecessorShallowPayloads {
@@ -2161,7 +2171,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 				if phase0AEnabled {
 					phase0AObserveCandidateDrop(c, key, in, oldID, structuralMatch, phase0ATransitionPrecedenceDrop)
 				}
-				return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, nil
+				return buildOutcome(Head{Node: oldID}, condenseUnchanged), nil
 			case shallowCount == 1:
 				// Exactly one shallow-class incumbent, structurally different. Rank
 				// the two by dynamic precedence, production's primary disambiguation
@@ -2184,7 +2194,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 					if phase0AEnabled {
 						phase0AObserveCandidateDrop(c, key, in, oldID, incumbent, phase0ATransitionPrecedenceDrop)
 					}
-					return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, nil
+					return buildOutcome(Head{Node: oldID}, condenseUnchanged), nil
 				case incomingPrecedence > incumbentPrecedence:
 					// The incoming payload strictly dominates; replace the incumbent.
 					if phase0AEnabled {
@@ -2196,7 +2206,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 					} else {
 						c.recordLinkUnionPrecedenceReplaced()
 					}
-					return condenseOutcome{head: head, change: condenseUpdated}, err
+					return buildOutcome(head, condenseUpdated), err
 				default:
 					// A precedence tie between two structurally different same-span
 					// payloads. Dynamic precedence cannot rank them, and the compact
@@ -2301,14 +2311,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 		change = condenseUpdated
 		c.recordLinkUnionAlternateAppended()
 	}
-	return condenseOutcome{
-		head: Head{Node: id}, change: change,
-		historicalBoundarySplit:       historicalBoundarySplit,
-		historicalConvergedSplit:      historicalConvergedSplit,
-		historicalForestDeterministic: historicalForestDeterministic,
-		historicalCleanPathRank:       historicalCleanPathRank,
-		historicalLineage:             historicalLineage,
-	}, nil
+	return buildOutcome(Head{Node: id}, change), nil
 }
 
 func (c *Core) linkEqualInput(link linkRecord, in linkInput) (bool, error) {
