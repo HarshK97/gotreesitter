@@ -871,6 +871,14 @@ type diagnosticParserCoreHeader struct {
 	convergedReductionSplit bool
 	cleanPathRank           core.CleanPathRankSelection
 	cleanPathLineage        uint16
+	// altSet mirrors cleanPathRank/cleanPathLineage but by union rather than
+	// overwrite: it accumulates every converged-split event this derivation
+	// thread has passed through and is never invalidated (carried unchanged
+	// through an external shift that zeroes cleanPathLineage; see
+	// markDiagnosticParserCoreExternalLineage). Stage 1: shadow-only, read by
+	// diagnosticParserCoreConvergedCoverageDrops and the shadow census; it
+	// never changes routing (spec.b4b-alternative-set.v1 section 7).
+	altSet core.AlternativeSet
 }
 
 func nextDiagnosticParserCoreCleanPathLineage(next *uint16) (uint16, error) {
@@ -962,6 +970,7 @@ func (s *diagnosticParserCoreGenericScheduler) persistHeaderLineageOwned(
 			header.head,
 			header.cleanPathRank,
 			header.cleanPathLineage,
+			header.altSet,
 		); err != nil {
 			return err
 		}
@@ -1159,6 +1168,7 @@ type diagnosticParserCoreActionOutput struct {
 	freshness        core.ReductionFreshness
 	cleanPathRank    core.CleanPathRankSelection
 	cleanPathLineage uint16
+	cleanPathSet     core.AlternativeSet
 }
 
 func executeDiagnosticParserCoreGenericConflictDetailed(
@@ -1225,6 +1235,9 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 				secondary.freshness = output.freshness
 				secondary.convergedReductionSplit = secondary.convergedReductionSplit || output.cleanPathLineage != 0
 				applyDiagnosticParserCoreCleanPathOutput(&secondary, output.cleanPathRank, output.cleanPathLineage)
+				if output.cleanPathSet.Len() != 0 {
+					compact.UnionAlternativeSet(&secondary.altSet, output.cleanPathSet)
+				}
 				if action.Type == core.ActionShift {
 					markDiagnosticParserCoreExternalLineage(&secondary, token)
 				}
@@ -1255,6 +1268,9 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 			primary.freshness = output.freshness
 			primary.convergedReductionSplit = primary.convergedReductionSplit || output.cleanPathLineage != 0
 			applyDiagnosticParserCoreCleanPathOutput(&primary, output.cleanPathRank, output.cleanPathLineage)
+			if output.cleanPathSet.Len() != 0 {
+				compact.UnionAlternativeSet(&primary.altSet, output.cleanPathSet)
+			}
 			if primaryAction.Type == core.ActionShift {
 				markDiagnosticParserCoreExternalLineage(&primary, token)
 			}
@@ -1305,6 +1321,7 @@ type diagnosticParserCoreCanonicalGroup struct {
 	convergedReductionSplit bool
 	cleanPathRank           core.CleanPathRankSelection
 	cleanPathLineage        uint16
+	altSet                  core.AlternativeSet
 }
 
 const diagnosticParserCoreLinearCanonicalLimit = 8
@@ -1376,16 +1393,16 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalize(compact *core.Core, 
 	case len(normalized) == 0:
 		out = normalized
 	case len(normalized) <= diagnosticParserCoreLinearCanonicalLimit:
-		out = s.canonicalizeLinear(normalized)
+		out = s.canonicalizeLinear(compact, normalized)
 	default:
-		out = s.canonicalizeMapped(normalized)
+		out = s.canonicalizeMapped(compact, normalized)
 	}
 	s.headerBuffers[target] = out
 	s.nextBuffer = uint8(target ^ 1)
 	return out, nil
 }
 
-func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(normalized []diagnosticParserCoreHeader) []diagnosticParserCoreHeader {
+func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(compact *core.Core, normalized []diagnosticParserCoreHeader) []diagnosticParserCoreHeader {
 	type linearGroup struct {
 		keyIndex int
 		diagnosticParserCoreCanonicalGroup
@@ -1407,6 +1424,7 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(normalized []d
 					winner: index, runnable: !header.paused,
 					convergedReductionSplit: header.convergedReductionSplit,
 					cleanPathRank:           header.cleanPathRank, cleanPathLineage: header.cleanPathLineage,
+					altSet: header.altSet,
 				},
 			}
 			groupCount++
@@ -1421,6 +1439,13 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(normalized []d
 			header.cleanPathRank,
 			header.cleanPathLineage,
 		)
+		// Union, never poison: the group's alternative set accumulates every
+		// member any header folding into this canonical group carries, even
+		// when the scalar pair above disagrees and resets to Unknown/0
+		// (spec.b4b-alternative-set.v1 section 4).
+		if header.altSet.Len() != 0 {
+			compact.UnionAlternativeSet(&group.altSet, header.altSet)
+		}
 		if diagnosticParserCoreCanonicalCandidateWins(normalized[group.winner], header) {
 			group.winner = index
 		}
@@ -1437,6 +1462,7 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(normalized []d
 			header.convergedReductionSplit = group.convergedReductionSplit
 			header.cleanPathRank = group.cleanPathRank
 			header.cleanPathLineage = group.cleanPathLineage
+			header.altSet = group.altSet
 			normalized[write] = header
 			write++
 			break
@@ -1445,7 +1471,7 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(normalized []d
 	return normalized[:write]
 }
 
-func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMapped(normalized []diagnosticParserCoreHeader) []diagnosticParserCoreHeader {
+func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMapped(compact *core.Core, normalized []diagnosticParserCoreHeader) []diagnosticParserCoreHeader {
 	if s.groups == nil {
 		s.groups = make(map[diagnosticParserCorePhaseHead]diagnosticParserCoreCanonicalGroup, len(normalized))
 	} else {
@@ -1467,6 +1493,9 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMapped(normalized []d
 			header.cleanPathRank,
 			header.cleanPathLineage,
 		)
+		if header.altSet.Len() != 0 {
+			compact.UnionAlternativeSet(&group.altSet, header.altSet)
+		}
 		s.groups[key] = group
 	}
 	write := 0
@@ -1480,6 +1509,7 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMapped(normalized []d
 		header.convergedReductionSplit = group.convergedReductionSplit
 		header.cleanPathRank = group.cleanPathRank
 		header.cleanPathLineage = group.cleanPathLineage
+		header.altSet = group.altSet
 		normalized[write] = header
 		write++
 	}
@@ -3517,6 +3547,13 @@ func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices 
 		return errors.New("parser-core phase zero: sibling-backed no-action drop removed the complete frontier")
 	}
 	selectedLineageDrops, proved := diagnosticParserCoreSelectedLineageDrops(s.headers, indices)
+	if diagnosticParserCoreShadowCensusEnabled() {
+		// Stage 1 shadow proof: evaluates the alternative-set containment
+		// predicate and tallies the comparison against the scalar decision
+		// above. Never influences the decision below
+		// (spec.b4b-alternative-set.v1 section 7).
+		s.diagnosticParserCoreRunShadowCensus(indices, proved)
+	}
 	if !proved && !s.options.allowConvergedSplitDropArtifact {
 		return &diagnosticParserCoreDecline{
 			boundary: DiagnosticParserCoreNoAction,
@@ -3640,10 +3677,22 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 			output.HistoricalBoundaryProvenance == core.HistoricalBoundaryUnproved
 		rank := output.CleanPathRank
 		lineage := reductionLineage
+		var outputSet core.AlternativeSet
+		if output.MultiplePopPaths {
+			outputSet = core.NewAlternativeSetMember(reductionLineage)
+		}
 		if !output.MultiplePopPaths &&
 			output.HistoricalBoundaryProvenance == core.HistoricalBoundaryConverged {
 			rank = output.HistoricalCleanPathRank
 			lineage = output.HistoricalCleanPathLineage
+		}
+		if output.HistoricalBoundaryProvenance == core.HistoricalBoundaryConverged &&
+			output.HistoricalAlternativeSet.Len() != 0 {
+			// Union unconditionally, unlike the !MultiplePopPaths-gated scalar
+			// override above: historical ancestry is a fact regardless of
+			// whether this same reduction also established a fresh split on
+			// this output (spec.b4b-alternative-set.v1 section 4).
+			s.compact.UnionAlternativeSet(&outputSet, output.HistoricalAlternativeSet)
 		}
 		switch output.Freshness {
 		case core.ReductionUnchanged:
@@ -3653,6 +3702,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 					output.Head,
 					rank,
 					lineage,
+					outputSet,
 					true,
 				); err != nil {
 					return err
@@ -3670,6 +3720,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 				output.Head,
 				rank,
 				lineage,
+				outputSet,
 				convergedHistory,
 			)
 			if err != nil {
@@ -3685,6 +3736,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		replacement.shifted = token.NoLookahead
 		replacement.convergedReductionSplit = replacement.convergedReductionSplit || convergedHistory
 		applyDiagnosticParserCoreCleanPathOutput(&replacement, rank, lineage)
+		if outputSet.Len() != 0 {
+			s.compact.UnionAlternativeSet(&replacement.altSet, outputSet)
+		}
 		if len(replacements) > 0 {
 			if s.nextSeq == math.MaxUint64 {
 				return errors.New("parser-core phase zero: reduction creation sequence overflow")
@@ -3769,6 +3823,7 @@ func (s *diagnosticParserCoreGenericScheduler) adoptUpdatedReductionSibling(
 	head core.Head,
 	rank core.CleanPathRankSelection,
 	lineage uint16,
+	set core.AlternativeSet,
 	convergedReductionSplit bool,
 ) (bool, error) {
 	for index := range s.headers {
@@ -3789,6 +3844,9 @@ func (s *diagnosticParserCoreGenericScheduler) adoptUpdatedReductionSibling(
 		s.headers[index].convergedReductionSplit =
 			s.headers[index].convergedReductionSplit || convergedReductionSplit
 		applyDiagnosticParserCoreCleanPathOutput(&s.headers[index], rank, lineage)
+		if set.Len() != 0 {
+			s.compact.UnionAlternativeSet(&s.headers[index].altSet, set)
+		}
 		return true, nil
 	}
 	return false, nil
@@ -3804,6 +3862,7 @@ func (s *diagnosticParserCoreGenericScheduler) reconcileGenericConflictOutputs(s
 				output.head,
 				output.cleanPathRank,
 				output.cleanPathLineage,
+				output.altSet,
 				output.cleanPathLineage != 0,
 			)
 			if err != nil {
@@ -4720,16 +4779,24 @@ func applyParserCoreConflictActionInto(
 		}
 	}
 	for _, output := range outputs {
+		var set core.AlternativeSet
+		if lineage != 0 {
+			set = core.NewAlternativeSetMember(lineage)
+		}
+		if output.HistoricalBoundaryProvenance == core.HistoricalBoundaryConverged &&
+			output.HistoricalAlternativeSet.Len() != 0 {
+			compact.UnionAlternativeSet(&set, output.HistoricalAlternativeSet)
+		}
 		switch output.Freshness {
 		case core.ReductionUnchanged:
 			dst = append(dst, diagnosticParserCoreActionOutput{
 				head: output.Head, freshness: output.Freshness,
-				cleanPathRank: output.CleanPathRank, cleanPathLineage: lineage,
+				cleanPathRank: output.CleanPathRank, cleanPathLineage: lineage, cleanPathSet: set,
 			})
 		case core.ReductionNew, core.ReductionUpdated:
 			dst = append(dst, diagnosticParserCoreActionOutput{
 				head: output.Head, freshness: output.Freshness,
-				cleanPathRank: output.CleanPathRank, cleanPathLineage: lineage,
+				cleanPathRank: output.CleanPathRank, cleanPathLineage: lineage, cleanPathSet: set,
 			})
 		default:
 			return nil, outputs, errors.New("parser-core phase zero: reduction returned invalid freshness")

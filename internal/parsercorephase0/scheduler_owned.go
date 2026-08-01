@@ -30,25 +30,40 @@ func (c *Core) RecordReductionLineageOwned(owner SchedulerTransactionToken, outp
 			if err := c.recordNodeLineage(output.Head, output.CleanPathRank, lineage); err != nil {
 				return err
 			}
+			if err := c.recordNodeLineageMember(output.Head, lineage); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
 }
 
 // RecordHeadLineageOwned persists inherited scheduler lineage on one graph
-// version. Unknown lineage invalidates an earlier exact record conservatively.
+// version, and unions set into its recorded alternative set in the same
+// scheduler-owned operation. Unknown lineage invalidates an earlier exact
+// scalar record conservatively; set is never invalidated (union only), so
+// its update always runs, independent of the scalar outcome
+// (spec.b4b-alternative-set.v1 section 4). Sharing one RunSchedulerOwned
+// call for both halves -- rather than a second Owned call for the set --
+// halves the per-header token-validation cost of
+// persistHeaderLineageOwned's per-dispatch persistence loop
+// (parsercore_phase0_driver.go), its sole caller.
 func (c *Core) RecordHeadLineageOwned(
 	owner SchedulerTransactionToken,
 	head Head,
 	rank CleanPathRankSelection,
 	lineage uint16,
+	set AlternativeSet,
 ) error {
 	return c.RunSchedulerOwned(owner, func() error {
 		if rank != CleanPathRankSelected && rank != CleanPathRankUnselected || lineage == 0 {
 			rank = CleanPathRankUnknown
 			lineage = 0
 		}
-		return c.recordNodeLineage(head, rank, lineage)
+		if err := c.recordNodeLineage(head, rank, lineage); err != nil {
+			return err
+		}
+		return c.recordNodeLineageSet(head, set)
 	})
 }
 
@@ -88,7 +103,9 @@ func (c *Core) recordNodeLineage(head Head, rank CleanPathRankSelection, lineage
 	}
 	if len(c.transactions) != 0 {
 		c.nodeLineageJournal = append(c.nodeLineageJournal, nodeLineageMutation{
-			node: head.Node, owner: node.owner, lineage: node.lineage, rank: node.rank, converged: node.converged,
+			node: head.Node, owner: node.owner,
+			setCount: node.set.count, setFlags: node.set.flags, setSpillRef: node.set.spillRef,
+			lineage: node.lineage, rank: node.rank, converged: node.converged,
 		})
 	}
 	node.rank = nextRank
@@ -115,12 +132,71 @@ func (c *Core) RecordHeadOwnerOwned(owner SchedulerTransactionToken, head Head, 
 		}
 		if len(c.transactions) != 0 {
 			c.nodeLineageJournal = append(c.nodeLineageJournal, nodeLineageMutation{
-				node: head.Node, owner: node.owner, lineage: node.lineage, rank: node.rank, converged: node.converged,
+				node: head.Node, owner: node.owner,
+				setCount: node.set.count, setFlags: node.set.flags, setSpillRef: node.set.spillRef,
+				lineage: node.lineage, rank: node.rank, converged: node.converged,
 			})
 		}
 		node.owner = lineage
 		return nil
 	})
+}
+
+// RecordHeadLineageSetOwned unions set into one compact head's node record.
+// Unlike the scalar clean-path pair, membership is never invalidated: this
+// is a pure union, never a poisoning overwrite (spec.b4b-alternative-set.v1
+// section 4).
+func (c *Core) RecordHeadLineageSetOwned(owner SchedulerTransactionToken, head Head, set AlternativeSet) error {
+	return c.RunSchedulerOwned(owner, func() error {
+		return c.recordNodeLineageSet(head, set)
+	})
+}
+
+func (c *Core) recordNodeLineageSet(head Head, set AlternativeSet) error {
+	if set.count == 0 {
+		return nil
+	}
+	node, err := c.nodeLineage(head.Node)
+	if err != nil {
+		return err
+	}
+	before := node.set
+	if !c.alternativeSetUnion(&node.set, set) {
+		return nil
+	}
+	if len(c.transactions) != 0 {
+		c.nodeLineageJournal = append(c.nodeLineageJournal, nodeLineageMutation{
+			node: head.Node, owner: node.owner,
+			setCount: before.count, setFlags: before.flags, setSpillRef: before.spillRef,
+			lineage: node.lineage, rank: node.rank, converged: node.converged,
+		})
+	}
+	return nil
+}
+
+// recordNodeLineageMember inserts member into head's node's alternative set,
+// unconditionally: membership is a per-event ancestry fact established at
+// multi-pop reduction time, and it is never gated by clean-path rank or
+// invalidated once recorded (spec.b4b-alternative-set.v1 section 4). This
+// runs alongside, and never changes the outcome of, recordNodeLineage's
+// existing scalar merge.
+func (c *Core) recordNodeLineageMember(head Head, member uint16) error {
+	node, err := c.nodeLineage(head.Node)
+	if err != nil {
+		return err
+	}
+	before := node.set
+	if !c.alternativeSetInsert(&node.set, member) {
+		return nil
+	}
+	if len(c.transactions) != 0 {
+		c.nodeLineageJournal = append(c.nodeLineageJournal, nodeLineageMutation{
+			node: head.Node, owner: node.owner,
+			setCount: before.count, setFlags: before.flags, setSpillRef: before.spillRef,
+			lineage: node.lineage, rank: node.rank, converged: node.converged,
+		})
+	}
+	return nil
 }
 
 // enterLiveCondenseCandidates installs the live condense-candidate scope:
@@ -700,6 +776,7 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 		historicalForestDeterministic := previous.historicalForestDeterministic
 		historicalCleanPathRank := previous.historicalCleanPathRank
 		historicalLineage := previous.historicalLineage
+		historicalSet := previous.historicalSet
 		if outcome.historicalBoundarySplit {
 			switch {
 			case !previous.historicalBoundarySplit:
@@ -722,6 +799,18 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 				historicalForestDeterministic =
 					historicalForestDeterministic && outcome.historicalForestDeterministic
 			}
+			// Membership is never invalidated: where the scalar pair above may
+			// poison to Unknown/0 on disagreement between multiple historical
+			// versions landing on the same boundary, the alternative set instead
+			// unions every converged historical version's recorded set
+			// (spec.b4b-alternative-set.v1 section 4, "Dead-node historical
+			// import"). The dead node's lineage record persists for the rest of
+			// the parse.
+			if outcome.historicalConvergedSplit {
+				if dead, err := c.nodeLineage(outcome.historicalNode); err == nil {
+					c.alternativeSetUnion(&historicalSet, dead.set)
+				}
+			}
 		}
 		switch outcome.change {
 		case condenseUnchanged:
@@ -742,6 +831,7 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 			historicalForestDeterministic: historicalForestDeterministic,
 			historicalCleanPathRank:       historicalCleanPathRank,
 			historicalLineage:             historicalLineage,
+			historicalSet:                 historicalSet,
 		})
 	}
 	for _, output := range scratch.boundaries {
@@ -762,6 +852,7 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 			HistoricalBoundaryProvenance: historicalProvenance,
 			HistoricalCleanPathRank:      output.historicalCleanPathRank,
 			HistoricalCleanPathLineage:   output.historicalLineage,
+			HistoricalAlternativeSet:     output.historicalSet,
 		})
 	}
 	phase0AFinishReductionConstruction(c)
