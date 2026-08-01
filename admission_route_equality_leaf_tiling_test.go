@@ -13,11 +13,14 @@ import (
 )
 
 // compactT3RouteEqualityWitnessManifestPath is the manifest committed by PR
-// #573 and read directly by cgo_harness/compact_t3_oracle_adjudication_test.go
-// (cgo- and Docker-gated, so not runnable here). cgo_harness is a separate Go
+// #573 (v1) and upgraded to v2 by the B3 stage S1 structural-parity harness,
+// read directly by cgo_harness/compact_t3_oracle_adjudication_test.go (cgo-
+// and Docker-gated, so not runnable here). cgo_harness is a separate Go
 // module (its own go.mod), so this package cannot import its types; it
-// decodes the same committed JSON with a local, minimal struct instead.
-const compactT3RouteEqualityWitnessManifestPath = "cgo_harness/testdata/compact_t3_oracle_witnesses_v1.json"
+// decodes the same committed JSON with a local, minimal struct instead. The
+// v2 manifest adds a top-level "denominator" object this struct does not
+// declare; json.Unmarshal (no DisallowUnknownFields here) ignores it.
+const compactT3RouteEqualityWitnessManifestPath = "cgo_harness/testdata/compact_t3_oracle_witnesses_v2.json"
 
 type routeEqualityWitnessManifest struct {
 	Witnesses []routeEqualityWitness `json:"witnesses"`
@@ -106,12 +109,15 @@ func TestCompactRouteHTMLErroneousEndTagByteGapDeclines(t *testing.T) {
 // subset (3 html, 3 javascript) from the 20-witness committed manifest (10
 // html, 8 javascript, 2 swift). Each entry was, before the B1 tiling gate,
 // accepted by the compact route with HasError()==false while production and
-// the locked C oracle both report an error
-// (compact_t3_oracle_witnesses_v1.json: c_has_error=production_has_error=
-// true, compact_has_error=false for all 20). This asserts the fixed
-// contract: compact declines specifically at the new tiling gate, the
-// caller falls back to production within the same Parse call, and the
-// production-served tree's HasError matches the manifest's adjudicated
+// the locked C oracle both report an error (compact_t3_oracle_witnesses_v2.
+// json: c_has_error=production_has_error=true for all 20; compact_has_error
+// was false for all 20 before this tranche's fix, and is now recorded true
+// for the 18 html/javascript entries this gate closes -- see
+// TestCompactRouteSwiftShiftComparisonGapIsNotATilingDefect for the 2 swift
+// entries, which stay false). This asserts the fixed contract: compact
+// declines specifically at the new tiling gate, the caller falls back to
+// production within the same Parse call, and the production-served tree's
+// HasError matches the manifest's adjudicated
 // verdict.
 //
 // Scope note: the manifest's 2 swift entries (swift_log_1, swift_log_2) are
@@ -159,8 +165,19 @@ func TestCompactRouteDeclinesAdjudicatedFalseCleanWitnesses(t *testing.T) {
 			if witness.Expected.CHasError == nil || witness.Expected.ProductionHasError == nil || witness.Expected.CompactHasError == nil {
 				t.Fatalf("witness %q has an incomplete expected outcome", id)
 			}
-			if *witness.Expected.CompactHasError {
-				t.Fatalf("witness %q manifest compact_has_error=true, want the documented pre-fix false-clean baseline (false)", id)
+			// The manifest's compact_has_error records what the compact-routed
+			// Parse() call actually returns, not a fixed pre-adjudication
+			// snapshot. This tranche's fix makes that value match production's
+			// (decline, fall back within the same call), so the manifest now
+			// records compact_has_error=true for these 18 entries -- the same
+			// value as production_has_error, both true. A manifest that still
+			// showed compact_has_error=false here would mean either this
+			// witness's manifest record was not updated for the fix, or the
+			// fix has regressed; both are the same failure from this test's
+			// point of view.
+			if *witness.Expected.CompactHasError != *witness.Expected.ProductionHasError {
+				t.Fatalf("witness %q manifest compact_has_error=%t disagrees with production_has_error=%t; the fixed manifest must record that compact now matches production",
+					id, *witness.Expected.CompactHasError, *witness.Expected.ProductionHasError)
 			}
 			if *witness.Expected.CHasError != *witness.Expected.ProductionHasError {
 				t.Fatalf("witness %q manifest c_has_error=%t disagrees with production_has_error=%t; adjudication requires the C oracle to side with production",
