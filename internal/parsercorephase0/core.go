@@ -1,16 +1,20 @@
-// Package parsercorephase0 contains a diagnostic-only parser-core prototype.
+// Package parsercorephase0 contains the admitted compact parser core.
 //
-// It deliberately is not imported by the production parser. The prototype
-// consumes a dependency-neutral TableView, but it does not own a lexer, an
-// external-scanner election, recovery, retries, included ranges, or
-// incremental parsing. A future build-tagged diagnostic driver in the root
-// package may adapt canonical production tables while independently scheduling
-// against the exact root lexer/scanner election; the ordinary production
-// parser does not import this package. Differential replay is debugging
-// evidence, not the execution route. Exact scanner/election integration remains
-// required before any full-parse timing claim. Callers must treat a decline as
-// a request to use the production parser; this package never silently
-// substitutes partial work.
+// The root package routes every fresh full parse of a source under 64 KiB
+// through this engine by default. The admission switch in
+// admission_switch.go controls this routing.
+//
+// The engine consumes a dependency-neutral TableView. It does not own a
+// lexer, an external-scanner election, recovery, retries, or included
+// ranges. Incremental parsing stays on the production engine.
+//
+// The engine fails closed. A decline at any eligibility check, or during
+// the engine run, sends the parse to the production lane. This package
+// never substitutes partial work.
+//
+// Build with -tags gts_no_parsercorephase0 as the emergency opt-out. This
+// tag removes the engine. Every full parse then runs on the production
+// lane.
 package parsercorephase0
 
 import (
