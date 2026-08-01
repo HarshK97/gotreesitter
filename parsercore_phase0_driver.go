@@ -962,10 +962,16 @@ func (s *diagnosticParserCoreGenericScheduler) persistHeaderLineageOwned(
 	return nil
 }
 
+// errDiagnosticParserCoreUnknownCheckpointIdentity is the shared sentinel for
+// a header (or a cold-path identity-gate reject) that names a checkpoint the
+// compact core never interned. Both callers below return it unwrapped, so
+// callers may compare with errors.Is.
+var errDiagnosticParserCoreUnknownCheckpointIdentity = errors.New("parser-core phase zero: header references unknown checkpoint identity")
+
 func diagnosticParserCoreCheckpointDigest(compact *core.Core, id core.CheckpointID) ([32]byte, error) {
 	_, digest, ok := compact.CheckpointReceipt(id)
 	if !ok {
-		return [32]byte{}, errors.New("parser-core phase zero: header references unknown checkpoint identity")
+		return [32]byte{}, errDiagnosticParserCoreUnknownCheckpointIdentity
 	}
 	return digest, nil
 }
@@ -4196,6 +4202,10 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 			return err
 		}
 		shiftIdentity := header.shifted || first && !header.shifted
+		// Precondition: s.checkpointID always holds a value produced by
+		// diagnosticParserCoreInternCheckpoint, set only at its two writer sites
+		// (the scheduler seed above and the election afterID assignment below), so
+		// this raw identity comparison is a sound substitute for a digest lookup.
 		if !shiftIdentity || header.accepted || header.checkpoint != s.checkpointID {
 			// Full receipts already validated the checkpoint while reading the
 			// header. Summary mode skips that digest lookup on the healthy hot
@@ -4203,7 +4213,7 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 			// identity gate rejects a malformed header.
 			if !s.fullReceipts() {
 				if _, _, ok := s.compact.CheckpointReceipt(header.checkpoint); !ok {
-					return errors.New("parser-core phase zero: header references unknown checkpoint identity")
+					return errDiagnosticParserCoreUnknownCheckpointIdentity
 				}
 			}
 			return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreIdentity, detail: "generic scheduler election frontier is not closed and checkpoint-continuous"}

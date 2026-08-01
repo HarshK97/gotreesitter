@@ -349,6 +349,28 @@ func TestDiagnosticParserCoreCanonicalScratchSteadyStateDoesNotAllocate(t *testi
 	}
 }
 
+// TestDiagnosticParserCoreCanonicalScratchSteadyStateSingleHeaderDoesNotAllocate
+// pins the single-header fast path in canonicalize (the len(normalized) == 1
+// branch), which skips the key-slice sizing and key-struct build that the
+// two-header case above still exercises. Both cases must independently stay
+// at zero steady-state allocations.
+func TestDiagnosticParserCoreCanonicalScratchSteadyStateSingleHeaderDoesNotAllocate(t *testing.T) {
+	compact, first, _ := newDiagnosticParserCoreCanonicalTestCore(t)
+	input := []diagnosticParserCoreHeader{{head: first, creationSeq: 3}}
+	var scratch diagnosticParserCoreCanonicalScratch
+	for range 4 {
+		if _, err := scratch.canonicalize(compact, input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var runErr error
+	if allocs := testing.AllocsPerRun(1000, func() {
+		_, runErr = scratch.canonicalize(compact, input)
+	}); allocs != 0 || runErr != nil {
+		t.Fatalf("steady single-header canonicalization allocs=%v err=%v", allocs, runErr)
+	}
+}
+
 func TestDiagnosticParserCoreCanonicalScratchMappedSpillPreservesSemantics(t *testing.T) {
 	compact, err := core.New(&genericConflictTable{}, core.Limits{})
 	if err != nil {
