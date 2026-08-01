@@ -15,16 +15,22 @@ import (
 	"testing"
 )
 
-const resultCompatOwnershipRegistryPath = "testdata/result_compat_ownership_v1.json"
+const (
+	resultCompatOwnershipRegistryPath        = "testdata/result_compat_ownership_v1.json"
+	resultCompatDispatcherCensusEvidencePath = "parser_result_test/dispatcher_census_test.go"
+	resultCompatCOracleEvidencePath          = "cgo_harness/parity_cgo_test.go"
+	resultCompatBaselineEvidenceScope        = "baseline_corpus_wide_only"
+)
 
 var resultCompatRetiredCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type resultCompatOwnershipRegistry struct {
-	Schema          string                       `json:"schema"`
-	SourceOfTruth   bool                         `json:"source_of_truth"`
-	Denominator     resultCompatDenominator      `json:"denominator"`
-	OwnerCategories []string                     `json:"owner_categories"`
-	Entries         []resultCompatOwnershipEntry `json:"entries"`
+	Schema               string                           `json:"schema"`
+	SourceOfTruth        bool                             `json:"source_of_truth"`
+	Denominator          resultCompatDenominator          `json:"denominator"`
+	LiveEvidenceBaseline resultCompatLiveEvidenceBaseline `json:"live_evidence_baseline"`
+	OwnerCategories      []string                         `json:"owner_categories"`
+	Entries              []resultCompatOwnershipEntry     `json:"entries"`
 }
 
 type resultCompatDenominator struct {
@@ -34,6 +40,8 @@ type resultCompatDenominator struct {
 	GenericPasses             int `json:"generic_passes"`
 	PostFinalizationArms      int `json:"post_finalization_arms"`
 	PostFinalizationLanguages int `json:"post_finalization_languages"`
+	LiveEntries               int `json:"live_entries"`
+	RetiredEntries            int `json:"retired_entries"`
 }
 
 type resultCompatOwnershipEntry struct {
@@ -52,8 +60,20 @@ type resultCompatOwnershipEntry struct {
 	RetirementCondition string                    `json:"retirement_condition"`
 	RouteCoverage       resultCompatRouteCoverage `json:"route_coverage"`
 	Status              string                    `json:"status"`
+	EvidenceScope       string                    `json:"evidence_scope,omitempty"`
 	ReceiptRefs         []string                  `json:"receipt_refs,omitempty"`
 	RetiredCommit       string                    `json:"retired_commit,omitempty"`
+}
+
+type resultCompatLiveEvidenceBaseline struct {
+	Scope       string                       `json:"scope"`
+	Sources     []resultCompatBaselineSource `json:"sources"`
+	Limitations []string                     `json:"limitations"`
+}
+
+type resultCompatBaselineSource struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
 }
 
 type resultCompatSubpass struct {
@@ -80,6 +100,7 @@ type resultCompatRouteCoverage struct {
 
 func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 	registry := loadResultCompatOwnershipRegistry(t)
+	assertLiveOwnershipEvidenceBaseline(t, registry.LiveEvidenceBaseline)
 
 	allowedOwners := map[string]bool{
 		"scheduler_action_semantics":    true,
@@ -95,6 +116,8 @@ func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 
 	entriesByKind := make(map[string][]resultCompatOwnershipEntry)
 	seenIDs := make(map[string]bool)
+	liveEntries := 0
+	retiredEntries := 0
 	allowedKinds := map[string]bool{
 		"dispatcher_arm":       true,
 		"dispatcher_predicate": true,
@@ -124,16 +147,20 @@ func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 		assertOwnershipStatusAndRoutes(t, entry)
 		switch entry.Status {
 		case "live":
+			liveEntries++
 			if len(entry.Functions) == 0 {
 				t.Errorf("%s is live but has no functions", entry.ID)
 			}
+			assertLiveOwnershipEvidenceScope(t, entry, registry.LiveEvidenceBaseline)
 		case "retired":
+			retiredEntries++
 			if !resultCompatRetiredCommitPattern.MatchString(entry.RetiredCommit) {
 				t.Errorf("%s retired_commit = %q, want a lowercase 40-character commit hash", entry.ID, entry.RetiredCommit)
 			}
-			if len(entry.ReceiptRefs) == 0 {
-				t.Errorf("%s is retired but lacks receipt_refs", entry.ID)
+			if entry.EvidenceScope != "" {
+				t.Errorf("%s retired entry has live evidence_scope %q", entry.ID, entry.EvidenceScope)
 			}
+			assertRetiredOwnershipReceiptRefs(t, entry)
 		default:
 			t.Errorf("%s has unsupported status %q", entry.ID, entry.Status)
 		}
@@ -152,10 +179,114 @@ func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 			entriesByKind[entry.Kind] = append(entriesByKind[entry.Kind], entry)
 		}
 	}
+	if got, want := liveEntries, registry.Denominator.LiveEntries; got != want {
+		t.Errorf("live registry entries = %d, frozen denominator = %d", got, want)
+	}
+	if got, want := retiredEntries, registry.Denominator.RetiredEntries; got != want {
+		t.Errorf("retired registry entries = %d, frozen denominator = %d", got, want)
+	}
 
 	assertDispatcherRegistry(t, registry.Denominator, entriesByKind)
 	assertGenericPassRegistry(t, registry.Denominator, entriesByKind)
 	assertPostFinalizationRegistry(t, registry.Denominator, entriesByKind)
+}
+
+func assertRetiredOwnershipReceiptRefs(t *testing.T, entry resultCompatOwnershipEntry) {
+	t.Helper()
+	assertOwnershipEvidencePaths(t, entry.ID+" retirement receipt_refs", entry.ReceiptRefs)
+}
+
+func assertOwnershipEvidencePaths(t *testing.T, label string, paths []string) {
+	t.Helper()
+	if len(paths) == 0 {
+		t.Errorf("%s lacks evidence paths", label)
+		return
+	}
+	if ownershipHasDuplicateStrings(paths) {
+		t.Errorf("%s paths must be a duplicate-free set: %v", label, paths)
+	}
+	for _, path := range paths {
+		clean := filepath.Clean(path)
+		if filepath.IsAbs(clean) || clean == "." || clean == ".." ||
+			strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			t.Errorf("%s contains unsafe path %q", label, path)
+			continue
+		}
+		info, err := os.Stat(clean)
+		if err != nil {
+			t.Errorf("%s references missing path %q: %v", label, path, err)
+			continue
+		}
+		if info.IsDir() {
+			t.Errorf("%s path %q is a directory", label, path)
+		}
+	}
+}
+
+func assertLiveOwnershipEvidenceBaseline(t *testing.T, baseline resultCompatLiveEvidenceBaseline) {
+	t.Helper()
+	if baseline.Scope != resultCompatBaselineEvidenceScope {
+		t.Errorf("live_evidence_baseline scope = %q, want %q", baseline.Scope, resultCompatBaselineEvidenceScope)
+	}
+	wantSources := map[string]string{
+		resultCompatDispatcherCensusEvidencePath: "dispatcher_census",
+		resultCompatCOracleEvidencePath:          "c_oracle_structural_parity",
+	}
+	paths := make([]string, 0, len(baseline.Sources))
+	seen := make(map[string]bool, len(baseline.Sources))
+	for _, source := range baseline.Sources {
+		paths = append(paths, source.Path)
+		wantKind, known := wantSources[source.Path]
+		if !known {
+			t.Errorf("live_evidence_baseline has unknown source %q", source.Path)
+			continue
+		}
+		if seen[source.Path] {
+			t.Errorf("live_evidence_baseline repeats source %q", source.Path)
+		}
+		seen[source.Path] = true
+		if source.Kind != wantKind {
+			t.Errorf("live_evidence_baseline source %q kind = %q, want %q", source.Path, source.Kind, wantKind)
+		}
+	}
+	if got, want := len(baseline.Sources), len(wantSources); got != want {
+		t.Errorf("live_evidence_baseline sources = %d, want %d", got, want)
+	}
+	for path := range wantSources {
+		if !seen[path] {
+			t.Errorf("live_evidence_baseline lacks source %q", path)
+		}
+	}
+	assertOwnershipEvidencePaths(t, "live_evidence_baseline sources", paths)
+
+	wantLimitations := []string{
+		"no_compact_coverage_floor",
+		"no_exact_field_parity",
+		"no_exact_per_record_parity",
+		"no_exact_point_parity",
+		"no_forest_coverage_floor",
+		"no_incremental_coverage_floor",
+	}
+	if ownershipHasDuplicateStrings(baseline.Limitations) {
+		t.Errorf("live_evidence_baseline limitations must be a duplicate-free set: %v", baseline.Limitations)
+	}
+	if got := sortedStrings(baseline.Limitations); !equalStrings(got, wantLimitations) {
+		t.Errorf("live_evidence_baseline limitations = %v, want %v", got, wantLimitations)
+	}
+}
+
+func assertLiveOwnershipEvidenceScope(
+	t *testing.T,
+	entry resultCompatOwnershipEntry,
+	baseline resultCompatLiveEvidenceBaseline,
+) {
+	t.Helper()
+	if entry.EvidenceScope != baseline.Scope {
+		t.Errorf("%s live evidence_scope = %q, want %q", entry.ID, entry.EvidenceScope, baseline.Scope)
+	}
+	if len(entry.ReceiptRefs) != 0 {
+		t.Errorf("%s live entry declares retirement receipt_refs %v", entry.ID, entry.ReceiptRefs)
+	}
 }
 
 func assertRegistrySubpasses(

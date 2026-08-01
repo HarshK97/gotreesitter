@@ -7,7 +7,30 @@
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
-    "post_finalization_languages": 0
+    "post_finalization_languages": 0,
+    "live_entries": 41,
+    "retired_entries": 42
+  },
+  "live_evidence_baseline": {
+    "scope": "baseline_corpus_wide_only",
+    "sources": [
+      {
+        "path": "parser_result_test/dispatcher_census_test.go",
+        "kind": "dispatcher_census"
+      },
+      {
+        "path": "cgo_harness/parity_cgo_test.go",
+        "kind": "c_oracle_structural_parity"
+      }
+    ],
+    "limitations": [
+      "no_compact_coverage_floor",
+      "no_exact_field_parity",
+      "no_exact_per_record_parity",
+      "no_exact_point_parity",
+      "no_forest_coverage_floor",
+      "no_incremental_coverage_floor"
+    ]
   },
   "owner_categories": [
     "scheduler_action_semantics",
@@ -89,7 +112,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.angular",
@@ -166,7 +189,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.authzed",
@@ -194,7 +217,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.awk",
@@ -222,7 +245,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.bibtex",
@@ -328,7 +351,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.bitbake",
@@ -356,7 +379,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.chatito",
@@ -451,7 +474,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.c_sharp",
@@ -479,7 +502,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.shared_trailing_span",
@@ -565,7 +588,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.corn",
@@ -593,7 +616,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.crystal",
@@ -760,7 +783,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.doxygen",
@@ -788,7 +811,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.jsdoc",
@@ -816,7 +839,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.dtd",
@@ -844,7 +867,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.elixir",
@@ -872,7 +895,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.enforce",
@@ -900,7 +923,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.ebnf",
@@ -1094,7 +1117,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.go",
@@ -1122,7 +1145,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.gitcommit",
@@ -1359,7 +1382,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.hyprlang",
@@ -1387,7 +1410,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.ini",
@@ -1448,7 +1471,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.julia",
@@ -1476,7 +1499,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.just",
@@ -1537,7 +1560,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.kotlin",
@@ -1565,7 +1588,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.lua",
@@ -1764,7 +1787,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.ocaml",
@@ -1862,7 +1885,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.php",
@@ -1890,7 +1913,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.powershell",
@@ -1921,7 +1944,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.ql",
@@ -1949,7 +1972,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.r",
@@ -2014,7 +2037,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.robot",
@@ -2075,7 +2098,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.ruby",
@@ -2141,7 +2164,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.scheme",
@@ -2203,7 +2226,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.sql",
@@ -2233,7 +2256,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.squirrel",
@@ -2296,7 +2319,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.templ",
@@ -2324,7 +2347,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.wgsl",
@@ -2352,7 +2375,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.wolfram",
@@ -2380,7 +2403,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.typescript",
@@ -2409,7 +2432,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.typst",
@@ -2470,7 +2493,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "dispatch.zig",
@@ -2534,7 +2557,7 @@
         "c_oracle": "curated_single_grammar_parity"
       },
       "status": "live",
-      "receipt_refs": []
+      "evidence_scope": "baseline_corpus_wide_only"
     },
     {
       "id": "generic.trailing-extra-trivia",
