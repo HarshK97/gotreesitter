@@ -15,8 +15,9 @@ import (
 const losAngelesZone = "America/Los_Angeles"
 
 var (
-	releaseVersionPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
-	shaPattern            = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	releaseVersionPattern       = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+	shaPattern                  = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	signedSporeReceiptIDPattern = regexp.MustCompile(`^hypha-receipt:([0-9]{4}-[0-9]{2}-[0-9]{2}):([a-z0-9][a-z0-9-]*)$`)
 )
 
 type releaseVersion struct {
@@ -180,7 +181,7 @@ func collectReleaseEvidence(input validationInput) (validationResult, error) {
 	unreleasedLink := "[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/" + input.Version + "...HEAD"
 	versionLink := "[" + strings.TrimPrefix(input.Version, "v") + "]: https://github.com/odvcencio/gotreesitter/compare/" +
 		input.LatestTag + "..." + input.Version
-	receipt := strings.TrimSpace(input.ReceiptURI)
+	receiptID := strings.TrimSpace(input.ReceiptURI)
 
 	facts := policyFacts{
 		Release: releasePolicyFacts{
@@ -201,7 +202,7 @@ func collectReleaseEvidence(input validationInput) (validationResult, error) {
 			CICompletionNotFuture:   completionErr == nil && !now.Before(completedAt),
 			TagAbsent:               input.TagAbsent,
 			ReleaseAbsent:           input.ReleaseAbsent,
-			ReceiptValid:            strings.HasPrefix(receipt, "hypha://") && len(receipt) > len("hypha://"),
+			ReceiptValid:            validSignedSporeReceiptID(receiptID),
 			ChangelogSectionPresent: sectionPresent,
 			ChangelogNotesPresent:   notesPresent,
 			ChangelogDateMatches:    sectionPresent && date == localNow.Format("2006-01-02"),
@@ -247,6 +248,15 @@ func parseReleaseVersion(value string) (releaseVersion, error) {
 		return releaseVersion{}, fmt.Errorf("parse version %q: %w", value, err)
 	}
 	return version, nil
+}
+
+func validSignedSporeReceiptID(value string) bool {
+	match := signedSporeReceiptIDPattern.FindStringSubmatch(value)
+	if match == nil {
+		return false
+	}
+	_, err := time.Parse("2006-01-02", match[1])
+	return err == nil
 }
 
 func extractVersionNotes(changelog, version string) (notes, date string, sectionPresent, notesPresent bool) {
