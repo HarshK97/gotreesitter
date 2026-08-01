@@ -21,7 +21,7 @@ The v1 registry freezes the current source and registry:
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-That is 41 live registry entries and 42 retired entries. These counts backfill
+That is 41 live registry entries and 44 retired entries. These counts backfill
 earlier retirements. This field repair change does not remove a dispatcher arm.
 The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments

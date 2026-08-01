@@ -1,16 +1,20 @@
-// Package parsercorephase0 contains a diagnostic-only parser-core prototype.
+// Package parsercorephase0 contains the admitted compact parser core.
 //
-// It deliberately is not imported by the production parser. The prototype
-// consumes a dependency-neutral TableView, but it does not own a lexer, an
-// external-scanner election, recovery, retries, included ranges, or
-// incremental parsing. A future build-tagged diagnostic driver in the root
-// package may adapt canonical production tables while independently scheduling
-// against the exact root lexer/scanner election; the ordinary production
-// parser does not import this package. Differential replay is debugging
-// evidence, not the execution route. Exact scanner/election integration remains
-// required before any full-parse timing claim. Callers must treat a decline as
-// a request to use the production parser; this package never silently
-// substitutes partial work.
+// The root package routes every fresh full parse of a source under 64 KiB
+// through this engine by default. The admission switch in
+// admission_switch.go controls this routing.
+//
+// The engine consumes a dependency-neutral TableView. It does not own a
+// lexer, an external-scanner election, recovery, retries, or included
+// ranges. Incremental parsing stays on the production engine.
+//
+// The engine fails closed. A decline at any eligibility check, or during
+// the engine run, sends the parse to the production lane. This package
+// never substitutes partial work.
+//
+// Build with -tags gts_no_parsercorephase0 as the emergency opt-out. This
+// tag removes the engine. Every full parse then runs on the production
+// lane.
 package parsercorephase0
 
 import (
@@ -2073,6 +2077,23 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 		}
 		oldID = 0
 	}
+	// buildOutcome stamps a returned condenseOutcome with the historical
+	// provenance snapshot captured above. Every return below resolves the
+	// same boundary key, so a historical split discovered above belongs on
+	// whichever path this call actually takes, not only on the path that
+	// happens to run first. This applies the duplicate-drop path's existing
+	// propagation uniformly instead of letting the other early returns
+	// silently drop it.
+	buildOutcome := func(head Head, change condenseChange) condenseOutcome {
+		return condenseOutcome{
+			head: head, change: change,
+			historicalBoundarySplit:       historicalBoundarySplit,
+			historicalConvergedSplit:      historicalConvergedSplit,
+			historicalForestDeterministic: historicalForestDeterministic,
+			historicalCleanPathRank:       historicalCleanPathRank,
+			historicalLineage:             historicalLineage,
+		}
+	}
 	var old nodeRecord
 	var oldLinks []linkRecord
 	if oldID != 0 {
@@ -2097,14 +2118,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 				if phase0AEnabled {
 					phase0AObserveCandidateDrop(c, key, in, oldID, index, phase0ATransitionDuplicateDrop)
 				}
-				return condenseOutcome{
-					head: Head{Node: oldID}, change: condenseUnchanged,
-					historicalBoundarySplit:       historicalBoundarySplit,
-					historicalConvergedSplit:      historicalConvergedSplit,
-					historicalForestDeterministic: historicalForestDeterministic,
-					historicalCleanPathRank:       historicalCleanPathRank,
-					historicalLineage:             historicalLineage,
-				}, nil
+				return buildOutcome(Head{Node: oldID}, condenseUnchanged), nil
 			}
 		}
 		if c.diagnostics.foldSamePredecessorShallowPayloads {
@@ -2161,7 +2175,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 				if phase0AEnabled {
 					phase0AObserveCandidateDrop(c, key, in, oldID, structuralMatch, phase0ATransitionPrecedenceDrop)
 				}
-				return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, nil
+				return buildOutcome(Head{Node: oldID}, condenseUnchanged), nil
 			case shallowCount == 1:
 				// Exactly one shallow-class incumbent, structurally different. Rank
 				// the two by dynamic precedence, production's primary disambiguation
@@ -2184,7 +2198,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 					if phase0AEnabled {
 						phase0AObserveCandidateDrop(c, key, in, oldID, incumbent, phase0ATransitionPrecedenceDrop)
 					}
-					return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, nil
+					return buildOutcome(Head{Node: oldID}, condenseUnchanged), nil
 				case incomingPrecedence > incumbentPrecedence:
 					// The incoming payload strictly dominates; replace the incumbent.
 					if phase0AEnabled {
@@ -2196,7 +2210,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 					} else {
 						c.recordLinkUnionPrecedenceReplaced()
 					}
-					return condenseOutcome{head: head, change: condenseUpdated}, err
+					return buildOutcome(head, condenseUpdated), err
 				default:
 					// A precedence tie between two structurally different same-span
 					// payloads. Dynamic precedence cannot rank them, and the compact
@@ -2301,14 +2315,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 		change = condenseUpdated
 		c.recordLinkUnionAlternateAppended()
 	}
-	return condenseOutcome{
-		head: Head{Node: id}, change: change,
-		historicalBoundarySplit:       historicalBoundarySplit,
-		historicalConvergedSplit:      historicalConvergedSplit,
-		historicalForestDeterministic: historicalForestDeterministic,
-		historicalCleanPathRank:       historicalCleanPathRank,
-		historicalLineage:             historicalLineage,
-	}, nil
+	return buildOutcome(Head{Node: id}, change), nil
 }
 
 func (c *Core) linkEqualInput(link linkRecord, in linkInput) (bool, error) {
