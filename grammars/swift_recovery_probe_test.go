@@ -173,7 +173,7 @@ func BenchmarkSwiftCleanFullSourceRecoveryProbe(b *testing.B) {
 			b.SetBytes(int64(len(source)))
 			b.ReportAllocs()
 			b.ResetTimer()
-			for b.Loop() {
+			for i := 0; i < b.N; i++ {
 				tree, err := parser.Parse(source)
 				if err != nil {
 					b.Fatalf("parse: %v", err)
