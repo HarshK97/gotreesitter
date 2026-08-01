@@ -111,7 +111,7 @@ const (
 	// This is the false-clean route-equality gate: without it, the accepted
 	// derivation would publish HasError()==false while production and the
 	// locked C oracle both return an error tree for the same input
-	// (cgo_harness/testdata/compact_t3_oracle_witnesses_v1.json).
+	// (cgo_harness/testdata/compact_t3_oracle_witnesses_v2.json).
 	censusMechanismAcceptedLeafTilingGap admissionCensusMechanism = "accepted-leaf-tiling-gap"
 	// censusMechanismOther is the catch-all for a decline this classifier
 	// does not yet recognize. The full original detail is always preserved

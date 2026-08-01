@@ -2460,7 +2460,7 @@ func finalizeDiagnosticParserCoreAcceptedRootSpan(root *Node, source []byte, sou
 // while its three RAW children covered only 3..5, 5..6 and 7..8, leaving
 // byte 6 (the stray '^') completely unaccounted for at every level, not
 // just the final public tree (cgo_harness/testdata/
-// compact_t3_oracle_witnesses_v1.json, witness "html_min_a"; verified by
+// compact_t3_oracle_witnesses_v2.json, witness "html_min_a"; verified by
 // direct inspection of view.Children, not merely the post-materialization
 // node tree -- see the next paragraph for why that distinction matters).
 //
