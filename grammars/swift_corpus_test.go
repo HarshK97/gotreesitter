@@ -264,6 +264,9 @@ func TestSwiftCorpus(t *testing.T) {
 	for name, exp := range swiftCorpusExpectations {
 		name, exp := name, exp
 		t.Run(name, func(t *testing.T) {
+			if raceEnabled && exp.status == swiftCorpusKnownFailing {
+				t.Skip("known-failing file drives full error recovery; its cost under the race detector exceeds the CI shard budget; the ratchet runs in non-race lanes")
+			}
 			src, err := os.ReadFile(filepath.Join(dir, name))
 			if err != nil {
 				t.Fatalf("reading corpus file: %v", err)

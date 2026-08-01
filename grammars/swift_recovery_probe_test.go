@@ -261,6 +261,9 @@ func TestSwiftCorpusProbeMatchesLegacy(t *testing.T) {
 		}
 		name := e.Name()
 		t.Run(name, func(t *testing.T) {
+			if exp, ok := swiftCorpusExpectations[name]; raceEnabled && ok && exp.status == swiftCorpusKnownFailing {
+				t.Skip("known-failing file drives full error recovery twice here; its cost under the race detector exceeds the CI shard budget; equivalence still holds in non-race lanes")
+			}
 			src, err := os.ReadFile(filepath.Join(dir, name))
 			if err != nil {
 				t.Fatalf("reading corpus file: %v", err)
