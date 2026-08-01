@@ -9,7 +9,7 @@
     "post_finalization_arms": 0,
     "post_finalization_languages": 0,
     "live_entries": 41,
-    "retired_entries": 42
+    "retired_entries": 44
   },
   "live_evidence_baseline": {
     "scope": "baseline_corpus_wide_only",
@@ -1563,6 +1563,39 @@
       "evidence_scope": "baseline_corpus_wide_only"
     },
     {
+      "id": "dispatch.linkerscript",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeLinkerscriptCompatibility"
+      ],
+      "files": [
+        "parser_result_linkerscript.go"
+      ],
+      "languages": [
+        "linkerscript"
+      ],
+      "purpose": "Historical: reconciled Linker Script recovery and returned-tree shape.",
+      "authoritative_owner": "scheduler_action_semantics",
+      "witnesses": [
+        "grammars/linkerscript_native_regression_test.go",
+        "cgo_harness/linkerscript_retirement_parity_test.go"
+      ],
+      "retirement_condition": "Satisfied: native parsing emits named ERROR nodes and covers the full source span without a compatibility pass. Production, compact, forest, and incremental routes return the same digest for the clean and recovered fixtures. The C-oracle receipt reports zero divergences.",
+      "route_coverage": {
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
+      },
+      "status": "retired",
+      "retired_commit": "4ac19d4446b4b41daa236465a5316d624214343c",
+      "receipt_refs": [
+        "grammars/linkerscript_native_regression_test.go",
+        "cgo_harness/linkerscript_retirement_parity_test.go"
+      ]
+    },
+    {
       "id": "dispatch.kotlin",
       "kind": "dispatcher_arm",
       "functions": [
@@ -2038,6 +2071,39 @@
       },
       "status": "live",
       "evidence_scope": "baseline_corpus_wide_only"
+    },
+    {
+      "id": "dispatch.rescript",
+      "kind": "dispatcher_arm",
+      "functions": [
+        "normalizeRescriptCompatibility"
+      ],
+      "files": [
+        "parser_result_rescript.go"
+      ],
+      "languages": [
+        "rescript"
+      ],
+      "purpose": "Historical: reconciled ReScript aliases and returned-tree shape.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "grammars/rescript_native_regression_test.go",
+        "cgo_harness/rescript_retirement_parity_test.go"
+      ],
+      "retirement_condition": "Satisfied: native materialization emits value_identifier_path nodes directly. Production, compact, forest, and incremental routes return the same digest for the alias and control fixtures. The C-oracle receipt reports zero divergences.",
+      "route_coverage": {
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_or_fail_closed_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
+      },
+      "status": "retired",
+      "retired_commit": "c73670f0a4af1c6d9ba9572fb04eef2795bdfd26",
+      "receipt_refs": [
+        "grammars/rescript_native_regression_test.go",
+        "cgo_harness/rescript_retirement_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.robot",
