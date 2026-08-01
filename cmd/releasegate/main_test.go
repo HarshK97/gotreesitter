@@ -257,6 +257,49 @@ func TestMutableGitHubFactsReachThePolicy(t *testing.T) {
 	}
 }
 
+func TestReceiptFactRequiresASignedSporeReceiptID(t *testing.T) {
+	tests := []struct {
+		name    string
+		receipt string
+		want    bool
+	}{
+		{
+			name:    "signed spore receipt",
+			receipt: "hypha-receipt:2026-08-01:v048-release",
+			want:    true,
+		},
+		{
+			name:    "legacy Hyphae URI",
+			receipt: "hypha://m31labs/gotreesitter/release/v0.48.0",
+			want:    false,
+		},
+		{
+			name:    "invalid receipt date",
+			receipt: "hypha-receipt:2026-02-30:v048-release",
+			want:    false,
+		},
+		{
+			name:    "missing short ID",
+			receipt: "hypha-receipt:2026-08-01:",
+			want:    false,
+		},
+		{
+			name:    "non-spore receipt",
+			receipt: "hypha-receipt:graft:2026-08-01:7f3a",
+			want:    false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := plannedInput(t, time.Date(2026, 7, 31, 2, 0, 0, 0, time.UTC))
+			input.ReceiptURI = test.receipt
+			if got := collect(t, input).PolicyFacts.Evidence.ReceiptValid; got != test.want {
+				t.Fatalf("receipt valid = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 func TestReleaseDocumentFacts(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -395,7 +438,7 @@ func plannedInput(t *testing.T, now time.Time) validationInput {
 		Version:            "v0.48.0",
 		CandidateSHA:       strings.Repeat("a", 40),
 		ReleaseKind:        "planned-minor",
-		ReceiptURI:         "hypha://m31labs/gotreesitter/release/v0.48.0",
+		ReceiptURI:         "hypha-receipt:2026-08-01:v048-release",
 		LatestTag:          "v0.47.0",
 		CIRunID:            "29892922471",
 		CIRunURL:           "https://github.com/odvcencio/gotreesitter/actions/runs/29892922471",
@@ -420,7 +463,7 @@ func urgentInput(t *testing.T, now time.Time) validationInput {
 		Version:            "v0.47.1",
 		CandidateSHA:       strings.Repeat("b", 40),
 		ReleaseKind:        "urgent-patch",
-		ReceiptURI:         "hypha://m31labs/gotreesitter/release/v0.47.1",
+		ReceiptURI:         "hypha-receipt:2026-07-29:v0471-patch",
 		Incident:           "The parser returns a wrong tree.",
 		WhyWaitingIsWorse:  "Users receive incorrect parse results.",
 		LatestTag:          "v0.47.0",
@@ -447,7 +490,7 @@ func ownerWaivedMinorInput(t *testing.T, now time.Time) validationInput {
 		Version:            "v0.48.0",
 		CandidateSHA:       strings.Repeat("c", 40),
 		ReleaseKind:        "owner-waived-minor",
-		ReceiptURI:         "hypha://m31labs/gotreesitter/release/v0.48.0",
+		ReceiptURI:         "hypha-receipt:2026-08-01:v048-release",
 		OwnerWaiverReason:  "The planned release was missed.",
 		Incident:           "The release was not published on its scheduled date.",
 		WhyWaitingIsWorse:  "Users need the verified release now.",
