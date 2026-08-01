@@ -641,11 +641,32 @@ func assertDispatcherRegistry(t *testing.T, denominator resultCompatDenominator,
 	}
 }
 
+// assertGenericPassRegistry ratchets unconditional ("generic") normalize
+// calls: calls that run for every language instead of behind a registered
+// dispatcher arm or predicate. normalizeResultCompatibility now only
+// delegates to applyResultCompatibility, so this inspects all three layers
+// of the delegation chain. Calls inside the COBOL predicate branch and inside
+// the language switch of runLanguageResultCompatibility are excluded because
+// assertDispatcherRegistry already ratchets those against the registry; a
+// generic call added anywhere else in the chain must still surface here.
 func assertGenericPassRegistry(t *testing.T, denominator resultCompatDenominator, byKind map[string][]resultCompatOwnershipEntry) {
 	t.Helper()
 	file := parseOwnershipGoFile(t, "parser_result_compat.go")
-	fn := findOwnershipFunction(t, file, "normalizeResultCompatibility")
-	sourceFunctions := sortedStrings(ownershipNormalizeCalls(fn.Body))
+	entrypoint := findOwnershipFunction(t, file, "normalizeResultCompatibility")
+	applied := findOwnershipFunction(t, file, "applyResultCompatibility")
+	dispatcher := findOwnershipFunction(t, file, "runLanguageResultCompatibility")
+
+	seen := make(map[string]bool)
+	for _, name := range ownershipNormalizeCallOccurrences(entrypoint.Body) {
+		seen[name] = true
+	}
+	for _, name := range ownershipNormalizeCallOccurrences(applied.Body) {
+		seen[name] = true
+	}
+	for _, name := range ownershipUndispatchedNormalizeCalls(dispatcher.Body) {
+		seen[name] = true
+	}
+	sourceFunctions := sortedMapKeys(seen)
 
 	var registryFunctions []string
 	for _, entry := range byKind["generic_pass"] {
@@ -661,6 +682,39 @@ func assertGenericPassRegistry(t *testing.T, denominator resultCompatDenominator
 	if !equalStrings(sourceFunctions, registryFunctions) {
 		t.Errorf("generic normalization calls = %v, registry = %v", sourceFunctions, registryFunctions)
 	}
+}
+
+// ownershipUndispatchedNormalizeCalls returns the normalize-prefixed calls in
+// runLanguageResultCompatibility's body that sit outside every if-statement
+// and switch-statement it contains. Today that means outside the COBOL
+// predicate branch and outside the language switch: both are already
+// ratcheted call-by-call in assertDispatcherRegistry. Skipping their subtrees
+// here keeps this function honest about only reporting calls neither ratchet
+// already covers, instead of double-counting the 40 dispatcher arms.
+func ownershipUndispatchedNormalizeCalls(body ast.Node) []string {
+	var calls []string
+	ast.Inspect(body, func(node ast.Node) bool {
+		switch node.(type) {
+		case *ast.IfStmt, *ast.SwitchStmt:
+			return false
+		}
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		var name string
+		switch function := call.Fun.(type) {
+		case *ast.Ident:
+			name = function.Name
+		case *ast.SelectorExpr:
+			name = function.Sel.Name
+		}
+		if strings.HasPrefix(name, "normalize") {
+			calls = append(calls, name)
+		}
+		return true
+	})
+	return calls
 }
 
 func assertPostFinalizationRegistry(t *testing.T, denominator resultCompatDenominator, byKind map[string][]resultCompatOwnershipEntry) {
