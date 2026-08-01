@@ -497,6 +497,46 @@ func TestBuildReduceChildrenDirectFieldOverridesSingleIndirectNamedChild(t *test
 	}
 }
 
+func TestBuildReduceChildrenDirectFieldKeepsInnerHiddenProjection(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "_inner", "type_identifier", "user_type", "visible_parent"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false, Named: false},
+			{Name: "_inner", Visible: false, Named: false},
+			{Name: "type_identifier", Visible: true, Named: true},
+			{Name: "user_type", Visible: true, Named: true},
+			{Name: "visible_parent", Visible: true, Named: true},
+		},
+		FieldNames: []string{"", "name", "type"},
+		FieldMapSlices: [][2]uint16{
+			{0, 1},
+		},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 2, ChildIndex: 0, Inherited: false},
+		},
+	}
+
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	typeIdentifier := newLeafNodeInArena(arena, 2, true, 0, 3, Point{}, Point{Column: 3})
+	userType := newParentNodeInArena(arena, 3, true, []*Node{typeIdentifier}, nil, 0)
+	inner := newParentNodeInArena(arena, 1, false, []*Node{userType}, []FieldID{1}, 0)
+	inner.setFieldSources([]uint8{fieldSourceDeferredDirect})
+
+	children, fieldIDs, fieldSources := parser.buildReduceChildren(
+		[]stackEntry{newStackEntryNode(0, inner)}, 0, 1, 1, 4, 0, arena,
+	)
+	if got, want := len(children), 1; got != want {
+		t.Fatalf("len(children) = %d, want %d", got, want)
+	}
+	if got, want := fieldIDs[0], FieldID(1); got != want {
+		t.Fatalf("fieldIDs[0] = %d, want %d", got, want)
+	}
+	if got, want := fieldSourceAt(fieldSources, 0), uint8(fieldSourceDirect); got != want {
+		t.Fatalf("fieldSources[0] = %d, want %d", got, want)
+	}
+}
+
 func TestBuildReduceChildrenInheritedFieldDoesNotBlanketSpanWithoutConflict(t *testing.T) {
 	lang := &Language{
 		SymbolNames: []string{"EOF", "_hidden_inner", "identifier", ".", "namespace_wildcard", "visible_parent"},
