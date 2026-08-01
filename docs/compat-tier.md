@@ -87,8 +87,13 @@ post-parse normalization tail.
 
 ## Materialization subpass census
 
-Four live arms still use `materialization` as their aggregate owner.
-Each arm now declares its distinct subpasses in the registry.
+Two live arms, Apex and Bash, still use `materialization` as their aggregate
+owner. Ada's entry now aggregates under `derivation_election_selection`. Two
+of its three subpasses pick a winning derivation from source text. They
+choose between grammatically distinct productions. The entry-level owner now
+matches that majority. The association-choice subpass still builds its own
+wrapper. It keeps `materialization` at the subpass level. Each arm declares
+its distinct subpasses in the registry.
 
 Set `GTS_DISPATCHER_CENSUS=1` to record each subpass and its aggregate arm.
 The census does not change parser output when it is disabled.

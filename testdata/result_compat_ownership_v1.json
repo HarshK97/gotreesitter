@@ -99,7 +99,7 @@
         "ada"
       ],
       "purpose": "Reconcile Ada returned-tree fields, aliases, and spans.",
-      "authoritative_owner": "materialization",
+      "authoritative_owner": "derivation_election_selection",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go"
       ],
