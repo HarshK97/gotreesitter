@@ -87,13 +87,18 @@ post-parse normalization tail.
 
 ## Materialization subpass census
 
-Two live arms, Apex and Bash, still use `materialization` as their aggregate
-owner. Ada's entry now aggregates under `derivation_election_selection`. Two
-of its three subpasses pick a winning derivation from source text. They
+One live arm, Bash, still uses `materialization` as its aggregate owner.
+Ada's and Apex's entries now aggregate under `derivation_election_selection`.
+Two of Ada's three subpasses pick a winning derivation from source text. They
 choose between grammatically distinct productions. The entry-level owner now
 matches that majority. The association-choice subpass still builds its own
-wrapper. It keeps `materialization` at the subpass level. Each arm declares
-its distinct subpasses in the registry.
+wrapper. It keeps `materialization` at the subpass level. Apex's single
+subpass relabels a locked C-oracle-diverging derivation election: a grammar-
+declared conflict between `class_literal` and `field_access` with no
+`prec.dynamic` tie-break, where both derivations reach acceptance and
+gotreesitter's runtime accept-selection elects the derivation the C oracle
+does not; the entry-level owner now matches. Each arm declares its distinct
+subpasses in the registry.
 
 Set `GTS_DISPATCHER_CENSUS=1` to record each subpass and its aggregate arm.
 The census does not change parser output when it is disabled.
@@ -104,7 +109,7 @@ The census does not change parser output when it is disabled.
 | Ada | aggregate kind election | `derivation_election_selection` |
 | Ada | association choice construction | `materialization` |
 | Apex | generic local declaration | `derivation_election_selection` |
-| Apex | class literal alias | `materialization` |
+| Apex | class literal alias | `derivation_election_selection` |
 | Bash | assignment wrapper flattening | `materialization` |
 | Bash | generated command assignment | `scheduler_action_semantics` |
 | Bash | `if` condition field projection | `materialization` |

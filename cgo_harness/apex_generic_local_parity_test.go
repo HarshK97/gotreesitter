@@ -34,6 +34,20 @@ func TestApexCloseAngleRawCOracleParity(t *testing.T) {
 				"  }\n" +
 				"}\n"),
 		},
+		{
+			// Witness for issue #601: both class_literal and field_access
+			// reach acceptance as live parallel derivations (a grammar-
+			// declared conflict with no prec.dynamic tie-break), and
+			// gotreesitter's runtime accept-selection elects class_literal
+			// where the locked C oracle elects field_access. This case is
+			// expected to fail until that runtime election is realigned.
+			name: "class_literal_alias",
+			source: []byte("public class C {\n" +
+				"  void m() {\n" +
+				"    Object t = RecordPage.class;\n" +
+				"  }\n" +
+				"}\n"),
+		},
 	}
 
 	cLang, err := COracleLanguage("apex")
