@@ -1,0 +1,554 @@
+{
+  "schema": "compact-t3-c-oracle-witnesses-v1",
+  "version": 1,
+  "parity_scope": "has_error_only",
+  "tracking_issue": "https://github.com/odvcencio/gotreesitter/issues/587",
+  "witness_count": 20,
+  "language_counts": {
+    "html": 10,
+    "javascript": 8,
+    "swift": 2
+  },
+  "witnesses": [
+    {
+      "id": "html_min_a",
+      "language": "html",
+      "failure_class": "html_erroneous_end_tag",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "reported_minimum"
+      },
+      "source_utf8": "<a></a^>",
+      "source_sha256": "80334c0dad68b2a2d87ff7081b667a289704d8447467bdd60c09ae5abb9a70c0",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-html",
+        "grammar_commit": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "f8a5b35b517fc5dd2c6706d62efcf6a9a2787e3dd1e4dcc70775d2c588e801c3"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "html_min_html",
+      "language": "html",
+      "failure_class": "html_erroneous_end_tag",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "reported_minimum"
+      },
+      "source_utf8": "<html></html^>",
+      "source_sha256": "c4f99da2c8a2e0c00f16c586259ec5c0d79be77a9fbdda718e2cbe8291b7b792",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-html",
+        "grammar_commit": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "f8a5b35b517fc5dd2c6706d62efcf6a9a2787e3dd1e4dcc70775d2c588e801c3"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "html_log_1",
+      "language": "html",
+      "failure_class": "html_erroneous_end_tag",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "<html>/<body>Hello</body^></html>\n",
+      "source_sha256": "d49eab8aa2c058e9e402a4a99e13e4c542aae0e2dd975d205fcfdc4984ac4901",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-html",
+        "grammar_commit": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "f8a5b35b517fc5dd2c6706d62efcf6a9a2787e3dd1e4dcc70775d2c588e801c3"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "html_log_2",
+      "language": "html",
+      "failure_class": "html_erroneous_end_tag",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "<html><bod\">Hello</body></html>\n",
+      "source_sha256": "efbe5dbd55e7cbea08b6874731c537569b62ac3f51bfcb7344355ac2c7d5e881",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-html",
+        "grammar_commit": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "f8a5b35b517fc5dd2c6706d62efcf6a9a2787e3dd1e4dcc70775d2c588e801c3"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "html_log_3",
+      "language": "html",
+      "failure_class": "html_erroneous_end_tag",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "<html><body>Hello</bo^y>:</html>\n",
+      "source_sha256": "a298ea9116d1423906f8337944a5d0a4a778c5f784a7f921e8140e3b529d5103",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-html",
+        "grammar_commit": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "f8a5b35b517fc5dd2c6706d62efcf6a9a2787e3dd1e4dcc70775d2c588e801c3"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "html_log_4",
+      "language": "html",
+      "failure_class": "html_erroneous_end_tag",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "<html><body>H}llo</boy></h!tml>\n",
+      "source_sha256": "49707ad1af00e841f05bb768ff56f9dd940215091f7b74ad2fdce53c52123111",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-html",
+        "grammar_commit": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "f8a5b35b517fc5dd2c6706d62efcf6a9a2787e3dd1e4dcc70775d2c588e801c3"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "html_log_5",
+      "language": "html",
+      "failure_class": "html_erroneous_end_tag",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "<html><body>Hello /bod></html>\n",
+      "source_sha256": "d8bb11ac98460d06cf08b24339cb1e4c2413e4a38621b29f97f0074c4e64f6d3",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-html",
+        "grammar_commit": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "f8a5b35b517fc5dd2c6706d62efcf6a9a2787e3dd1e4dcc70775d2c588e801c3"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "html_log_6",
+      "language": "html",
+      "failure_class": "html_erroneous_end_tag",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "<html><body>Hell</body>y></html>\n",
+      "source_sha256": "e06052f41c8e1ff1d043e3ecda32b7b5aecc019874940cc5915c0af30351ca61",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-html",
+        "grammar_commit": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "f8a5b35b517fc5dd2c6706d62efcf6a9a2787e3dd1e4dcc70775d2c588e801c3"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "html_log_7",
+      "language": "html",
+      "failure_class": "html_erroneous_end_tag",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "<html><bodyHello</body></html>\n",
+      "source_sha256": "5ee9bc39f8551cd889db66b5d9b79c76f60e2b03c3604ec16d7e7949a8b26df7",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-html",
+        "grammar_commit": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "f8a5b35b517fc5dd2c6706d62efcf6a9a2787e3dd1e4dcc70775d2c588e801c3"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "html_log_8",
+      "language": "html",
+      "failure_class": "html_erroneous_end_tag",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "<html> body>Hello</body></html>\n",
+      "source_sha256": "090792a0c50532aae4e6f176bfecf56df24c1ec6258c9a88bc54acf79dd47996",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-html",
+        "grammar_commit": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "f8a5b35b517fc5dd2c6706d62efcf6a9a2787e3dd1e4dcc70775d2c588e801c3"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "js_log_1",
+      "language": "javascript",
+      "failure_class": "js_arrow_param_recovery",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "function f() { return 1; }\nconst x = ()? => x + 1;\n",
+      "source_sha256": "69ad18e272af9b48b0e4ad143391a722951174d09cb85a66949e4345bf2566e7",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-javascript",
+        "grammar_commit": "58404d8cf191d69f2674a8fd507bd5776f46cb11",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "dd450343dbf6ff1542a20e413e01a3ef08d543e8bb5b9f0c4697b05d2ef0f096"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "js_log_2",
+      "language": "javascript",
+      "failure_class": "js_arrow_param_recovery",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "function f()^{ return 1; }\nconstx = () => x + 1;\n",
+      "source_sha256": "6e2506b2f9200fbdc67318a5683bba163aa568d62cfce55fe62d4b0c27abecd8",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-javascript",
+        "grammar_commit": "58404d8cf191d69f2674a8fd507bd5776f46cb11",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "dd450343dbf6ff1542a20e413e01a3ef08d543e8bb5b9f0c4697b05d2ef0f096"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "js_log_3",
+      "language": "javascript",
+      "failure_class": "js_arrow_param_recovery",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "const f = (a) => a + 1;\nclass  A { m() { return 1 } )}\n",
+      "source_sha256": "f6d80e87368d55d4e8d63e138db22d2183ed7f1099430aad6c8aa1b6196cd6ad",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-javascript",
+        "grammar_commit": "58404d8cf191d69f2674a8fd507bd5776f46cb11",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "dd450343dbf6ff1542a20e413e01a3ef08d543e8bb5b9f0c4697b05d2ef0f096"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "js_log_4",
+      "language": "javascript",
+      "failure_class": "js_arrow_param_recovery",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "function f()&{ return 1; }\nconst x = () => x + 1;\n",
+      "source_sha256": "131abc98a4feed3aaddd88c577ad35a92dbb44bda6c6e925cdc671bc64d1fa33",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-javascript",
+        "grammar_commit": "58404d8cf191d69f2674a8fd507bd5776f46cb11",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "dd450343dbf6ff1542a20e413e01a3ef08d543e8bb5b9f0c4697b05d2ef0f096"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "js_log_5",
+      "language": "javascript",
+      "failure_class": "js_arrow_param_recovery",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "const f = (a) =. + + 1;\nclass A { m() { return 1 } }\n\n",
+      "source_sha256": "100746f1daa0724a53dd53b9356dd1480a407c065c4bf88dca6fa776020ac946",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-javascript",
+        "grammar_commit": "58404d8cf191d69f2674a8fd507bd5776f46cb11",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "dd450343dbf6ff1542a20e413e01a3ef08d543e8bb5b9f0c4697b05d2ef0f096"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "js_log_6",
+      "language": "javascript",
+      "failure_class": "js_arrow_param_recovery",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "const f = (a) => a + 1;&\nclass A { m() { return 1 } }\n\n",
+      "source_sha256": "dcd98da448ad19b90a575fd8fe5e4b875f4aff7633318b89bc8aa877011ce750",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-javascript",
+        "grammar_commit": "58404d8cf191d69f2674a8fd507bd5776f46cb11",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "dd450343dbf6ff1542a20e413e01a3ef08d543e8bb5b9f0c4697b05d2ef0f096"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "js_log_7",
+      "language": "javascript",
+      "failure_class": "js_arrow_param_recovery",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "const f = (a) => a + 1;\nclass A ?{ m() { return 1 } }\n",
+      "source_sha256": "8e03fa43f2c7f82f1e26742a64626fc0447f356b25441c8e63f0049538626651",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-javascript",
+        "grammar_commit": "58404d8cf191d69f2674a8fd507bd5776f46cb11",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "dd450343dbf6ff1542a20e413e01a3ef08d543e8bb5b9f0c4697b05d2ef0f096"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "js_log_8",
+      "language": "javascript",
+      "failure_class": "js_arrow_param_recovery",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "function f() { return 1; ^}\ncon\nconst x = () => x + 1;\n",
+      "source_sha256": "644cf11a9a181aa0877b823ec7ec640a686b06cf8907a6d470dcc27c8696a531",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/tree-sitter/tree-sitter-javascript",
+        "grammar_commit": "58404d8cf191d69f2674a8fd507bd5776f46cb11",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "dd450343dbf6ff1542a20e413e01a3ef08d543e8bb5b9f0c4697b05d2ef0f096"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "swift_log_1",
+      "language": "swift",
+      "failure_class": "swift_shift_comparison",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "let v = x >> y>>",
+      "source_sha256": "f4df50494533761a596b3eb5255f8adf1fe108108419317897ba91cd77026f8e",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/alex-pinkus/tree-sitter-swift",
+        "grammar_commit": "41d6e5fe811ec94229ee71771174a8cce558dfee",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "2a9f14046d4ca88b6db1316ee5f48b876aea1700e3c09811b3c87257fe827c5c"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    },
+    {
+      "id": "swift_log_2",
+      "language": "swift",
+      "failure_class": "swift_shift_comparison",
+      "source_provenance": {
+        "origin": "compact_route_differential_fuzz",
+        "record": "retained_fuzz_log_witness"
+      },
+      "source_utf8": "letv = x >> \n",
+      "source_sha256": "62adf7e4fde458d44c25d50214d9f6ee82770a336dbe58c807f2e2271a443944",
+      "c_oracle": {
+        "contract": "tree-sitter-c-v1",
+        "binding_commit": "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3",
+        "runtime_commit": "f5afe475deb7c0bae6407fb776c76824f717bb61",
+        "grammar_repository": "https://github.com/alex-pinkus/tree-sitter-swift",
+        "grammar_commit": "41d6e5fe811ec94229ee71771174a8cce558dfee",
+        "compiler_path": "/usr/bin/cc",
+        "compiler_version": "cc (Debian 12.2.0-14+deb12u1) 12.2.0",
+        "grammar_compile_flags": "-std=c11 -fPIC -O2 -I .",
+        "grammar_artifact_sha256": "2a9f14046d4ca88b6db1316ee5f48b876aea1700e3c09811b3c87257fe827c5c"
+      },
+      "expected": {
+        "c_has_error": true,
+        "production_has_error": true,
+        "compact_has_error": false
+      }
+    }
+  ]
+}
