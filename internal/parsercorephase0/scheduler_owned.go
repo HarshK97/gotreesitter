@@ -123,16 +123,15 @@ func (c *Core) RecordHeadOwnerOwned(owner SchedulerTransactionToken, head Head, 
 	})
 }
 
-func (c *Core) runSchedulerMaybeLiveScopedOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, liveScoped bool, fn func() error) error {
-	return c.RunSchedulerOwned(owner, func() error {
-		if !liveScoped {
-			return fn()
-		}
-		return c.runLiveCondenseCandidates(candidates, fn)
-	})
-}
-
-func (c *Core) runLiveCondenseCandidates(candidates []CondenseCandidate, fn func() error) error {
+// enterLiveCondenseCandidates installs the live condense-candidate scope:
+// reject nesting, reject two candidates that would collide on one boundary,
+// then publish the scope fields (condenseCandidates, condenseNewNode,
+// condenseScopeActive) that condenseNodeIsLive reads during the dispatch that
+// follows. It is the non-closure setup half of runLiveCondenseCandidates,
+// factored out so the hot shift/reduce/cohort dispatch paths below can call
+// it directly instead of threading a fn func() error parameter through two
+// extra wrapper layers.
+func (c *Core) enterLiveCondenseCandidates(candidates []CondenseCandidate) error {
 	if c.condenseScopeActive {
 		return errors.New("parser-core phase zero: nested live condense candidate scope")
 	}
@@ -159,6 +158,16 @@ func (c *Core) runLiveCondenseCandidates(candidates []CondenseCandidate, fn func
 	c.condenseCandidates = candidates
 	c.condenseNewNode = NodeID(len(c.nodes) + 1)
 	c.condenseScopeActive = true
+	return nil
+}
+
+// runLiveCondenseCandidates keeps the closure-taking shape used directly by
+// tests. Production dispatch no longer routes through it; see
+// enterLiveCondenseCandidates and the *MaybeLiveScopedOwned methods below.
+func (c *Core) runLiveCondenseCandidates(candidates []CondenseCandidate, fn func() error) error {
+	if err := c.enterLiveCondenseCandidates(candidates); err != nil {
+		return err
+	}
 	if c.schedulerFrame.fresh {
 		err := fn()
 		c.clearLiveCondenseCandidates()
@@ -214,13 +223,34 @@ func (c *Core) ShiftClassifiedWithLiveCondenseCandidatesOwned(owner SchedulerTra
 	return c.shiftClassifiedMaybeLiveScopedOwned(owner, candidates, true, boundary, actionOrdinal, shifted, fork)
 }
 
+// shiftClassifiedMaybeLiveScopedOwned inlines the former
+// runSchedulerMaybeLiveScopedOwned/runLiveCondenseCandidates closure chain: it
+// validates the owner, installs the live condense scope (when requested),
+// calls the uncheckpointed shift directly, and tears the scope back down --
+// all without allocating or invoking a fn func() error value. Every step here
+// mirrors RunSchedulerOwned's and runLiveCondenseCandidates's own semantics
+// exactly (same validation, same panic/error poisoning, same fresh-session
+// cleanup asymmetry), so this dispatch call site is direct and inlinable.
 func (c *Core) shiftClassifiedMaybeLiveScopedOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, liveScoped bool, boundary ClassifiedBoundary, actionOrdinal int, shifted Token, fork ForkOrder) (out Head, err error) {
-	err = c.runSchedulerMaybeLiveScopedOwned(owner, candidates, liveScoped, func() error {
-		var innerErr error
-		out, innerErr = c.shiftClassifiedUncheckpointed(boundary, actionOrdinal, shifted, fork)
-		return innerErr
-	})
-	return out, err
+	if err = c.beginSchedulerOwned(owner); err != nil {
+		return out, err
+	}
+	defer c.recoverSchedulerOwnedPanic(owner)
+	if !liveScoped {
+		out, err = c.shiftClassifiedUncheckpointed(boundary, actionOrdinal, shifted, fork)
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	if err = c.enterLiveCondenseCandidates(candidates); err != nil {
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	if c.schedulerFrame.fresh {
+		out, err = c.shiftClassifiedUncheckpointed(boundary, actionOrdinal, shifted, fork)
+		c.clearLiveCondenseCandidates()
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	defer c.clearLiveCondenseCandidates()
+	out, err = c.shiftClassifiedUncheckpointed(boundary, actionOrdinal, shifted, fork)
+	return out, c.finishSchedulerOwned(owner, err)
 }
 
 func (c *Core) shiftClassifiedUncheckpointed(boundary ClassifiedBoundary, actionOrdinal int, shifted Token, fork ForkOrder) (Head, error) {
@@ -271,23 +301,48 @@ func (c *Core) ShiftOrdinaryClassifiedCohortWithLiveCondenseCandidatesOwned(owne
 	return c.shiftOrdinaryClassifiedCohortMaybeLiveScopedOwned(owner, candidates, true, boundaries, shifted)
 }
 
+// shiftOrdinaryClassifiedCohortPrepared computes shift targets for one
+// ordinary cohort and performs the shift. It hoists the former
+// runSchedulerMaybeLiveScopedOwned closure body into a named, directly
+// callable method so the dispatch site below never builds a func value.
+func (c *Core) shiftOrdinaryClassifiedCohortPrepared(boundaries []ClassifiedBoundary, shifted Token) ([]Head, error) {
+	var inlineTargets [inlineSchedulerCohortTargets]StateID
+	targets := inlineTargets[:]
+	if len(boundaries) > len(targets) {
+		targets = make([]StateID, len(boundaries))
+	} else {
+		targets = targets[:len(boundaries)]
+	}
+	if err := c.prepareOrdinaryClassifiedCohortInto(boundaries, shifted, targets); err != nil {
+		return nil, err
+	}
+	return c.shiftOrdinaryClassifiedCohortUncheckpointed(boundaries, targets, shifted)
+}
+
+// shiftOrdinaryClassifiedCohortMaybeLiveScopedOwned inlines the former
+// runSchedulerMaybeLiveScopedOwned/runLiveCondenseCandidates closure chain;
+// see shiftClassifiedMaybeLiveScopedOwned's doc comment for the equivalence
+// argument, which applies identically here.
 func (c *Core) shiftOrdinaryClassifiedCohortMaybeLiveScopedOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, liveScoped bool, boundaries []ClassifiedBoundary, shifted Token) (out []Head, err error) {
-	err = c.runSchedulerMaybeLiveScopedOwned(owner, candidates, liveScoped, func() error {
-		var inlineTargets [inlineSchedulerCohortTargets]StateID
-		targets := inlineTargets[:]
-		if len(boundaries) > len(targets) {
-			targets = make([]StateID, len(boundaries))
-		} else {
-			targets = targets[:len(boundaries)]
-		}
-		if err := c.prepareOrdinaryClassifiedCohortInto(boundaries, shifted, targets); err != nil {
-			return err
-		}
-		var innerErr error
-		out, innerErr = c.shiftOrdinaryClassifiedCohortUncheckpointed(boundaries, targets, shifted)
-		return innerErr
-	})
-	return out, err
+	if err = c.beginSchedulerOwned(owner); err != nil {
+		return out, err
+	}
+	defer c.recoverSchedulerOwnedPanic(owner)
+	if !liveScoped {
+		out, err = c.shiftOrdinaryClassifiedCohortPrepared(boundaries, shifted)
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	if err = c.enterLiveCondenseCandidates(candidates); err != nil {
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	if c.schedulerFrame.fresh {
+		out, err = c.shiftOrdinaryClassifiedCohortPrepared(boundaries, shifted)
+		c.clearLiveCondenseCandidates()
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	defer c.clearLiveCondenseCandidates()
+	out, err = c.shiftOrdinaryClassifiedCohortPrepared(boundaries, shifted)
+	return out, c.finishSchedulerOwned(owner, err)
 }
 
 func (c *Core) prepareOrdinaryClassifiedCohortInto(boundaries []ClassifiedBoundary, shifted Token, targets []StateID) error {
@@ -382,23 +437,48 @@ func (c *Core) ShiftExtraClassifiedCohortWithLiveCondenseCandidatesOwned(owner S
 	return c.shiftExtraClassifiedCohortMaybeLiveScopedOwned(owner, candidates, true, boundaries, shifted)
 }
 
+// shiftExtraClassifiedCohortPrepared computes shift targets for one extra
+// cohort and performs the shift. It hoists the former
+// runSchedulerMaybeLiveScopedOwned closure body into a named, directly
+// callable method so the dispatch site below never builds a func value.
+func (c *Core) shiftExtraClassifiedCohortPrepared(boundaries []ClassifiedBoundary, shifted Token) ([]Head, error) {
+	var inlineTargets [inlineSchedulerCohortTargets]StateID
+	targets := inlineTargets[:]
+	if len(boundaries) > len(targets) {
+		targets = make([]StateID, len(boundaries))
+	} else {
+		targets = targets[:len(boundaries)]
+	}
+	if err := c.prepareExtraClassifiedCohortInto(boundaries, shifted, targets); err != nil {
+		return nil, err
+	}
+	return c.shiftExtraClassifiedCohortUncheckpointed(boundaries, targets, shifted)
+}
+
+// shiftExtraClassifiedCohortMaybeLiveScopedOwned inlines the former
+// runSchedulerMaybeLiveScopedOwned/runLiveCondenseCandidates closure chain;
+// see shiftClassifiedMaybeLiveScopedOwned's doc comment for the equivalence
+// argument, which applies identically here.
 func (c *Core) shiftExtraClassifiedCohortMaybeLiveScopedOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, liveScoped bool, boundaries []ClassifiedBoundary, shifted Token) (out []Head, err error) {
-	err = c.runSchedulerMaybeLiveScopedOwned(owner, candidates, liveScoped, func() error {
-		var inlineTargets [inlineSchedulerCohortTargets]StateID
-		targets := inlineTargets[:]
-		if len(boundaries) > len(targets) {
-			targets = make([]StateID, len(boundaries))
-		} else {
-			targets = targets[:len(boundaries)]
-		}
-		if err := c.prepareExtraClassifiedCohortInto(boundaries, shifted, targets); err != nil {
-			return err
-		}
-		var innerErr error
-		out, innerErr = c.shiftExtraClassifiedCohortUncheckpointed(boundaries, targets, shifted)
-		return innerErr
-	})
-	return out, err
+	if err = c.beginSchedulerOwned(owner); err != nil {
+		return out, err
+	}
+	defer c.recoverSchedulerOwnedPanic(owner)
+	if !liveScoped {
+		out, err = c.shiftExtraClassifiedCohortPrepared(boundaries, shifted)
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	if err = c.enterLiveCondenseCandidates(candidates); err != nil {
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	if c.schedulerFrame.fresh {
+		out, err = c.shiftExtraClassifiedCohortPrepared(boundaries, shifted)
+		c.clearLiveCondenseCandidates()
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	defer c.clearLiveCondenseCandidates()
+	out, err = c.shiftExtraClassifiedCohortPrepared(boundaries, shifted)
+	return out, c.finishSchedulerOwned(owner, err)
 }
 
 func (c *Core) prepareExtraClassifiedCohortInto(boundaries []ClassifiedBoundary, shifted Token, targets []StateID) error {
@@ -468,13 +548,30 @@ func (c *Core) ReduceOutputsClassifiedIntoWithLiveCondenseCandidatesOwned(owner 
 	return c.reduceOutputsClassifiedIntoMaybeLiveScopedOwned(owner, candidates, true, dst, boundary, actionOrdinal, fork)
 }
 
+// reduceOutputsClassifiedIntoMaybeLiveScopedOwned inlines the former
+// runSchedulerMaybeLiveScopedOwned/runLiveCondenseCandidates closure chain;
+// see shiftClassifiedMaybeLiveScopedOwned's doc comment for the equivalence
+// argument, which applies identically here.
 func (c *Core) reduceOutputsClassifiedIntoMaybeLiveScopedOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, liveScoped bool, dst []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) (frontier []ReductionOutput, err error) {
-	err = c.runSchedulerMaybeLiveScopedOwned(owner, candidates, liveScoped, func() error {
-		var innerErr error
-		frontier, innerErr = c.reduceOutputsClassifiedIntoUncheckpointed(dst, boundary, actionOrdinal, fork)
-		return innerErr
-	})
-	return frontier, err
+	if err = c.beginSchedulerOwned(owner); err != nil {
+		return frontier, err
+	}
+	defer c.recoverSchedulerOwnedPanic(owner)
+	if !liveScoped {
+		frontier, err = c.reduceOutputsClassifiedIntoUncheckpointed(dst, boundary, actionOrdinal, fork)
+		return frontier, c.finishSchedulerOwned(owner, err)
+	}
+	if err = c.enterLiveCondenseCandidates(candidates); err != nil {
+		return frontier, c.finishSchedulerOwned(owner, err)
+	}
+	if c.schedulerFrame.fresh {
+		frontier, err = c.reduceOutputsClassifiedIntoUncheckpointed(dst, boundary, actionOrdinal, fork)
+		c.clearLiveCondenseCandidates()
+		return frontier, c.finishSchedulerOwned(owner, err)
+	}
+	defer c.clearLiveCondenseCandidates()
+	frontier, err = c.reduceOutputsClassifiedIntoUncheckpointed(dst, boundary, actionOrdinal, fork)
+	return frontier, c.finishSchedulerOwned(owner, err)
 }
 
 func (c *Core) reduceOutputsClassifiedIntoUncheckpointed(dst []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) ([]ReductionOutput, error) {

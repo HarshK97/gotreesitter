@@ -966,24 +966,48 @@ func (c *Core) RunSchedulerOwned(token SchedulerTransactionToken, fn func() erro
 		phase0AObserveSchedulerPoison(c, token, Phase0APoisonReturnedError)
 		return err
 	}
+	if err = c.beginSchedulerOwned(token); err != nil {
+		return err
+	}
+	defer c.recoverSchedulerOwnedPanic(token)
+	return c.finishSchedulerOwned(token, fn())
+}
+
+// beginSchedulerOwned validates token ownership and poisons the owner on
+// failure. It is the entry half of RunSchedulerOwned, factored out so the hot
+// shift/reduce/cohort dispatch paths in scheduler_owned.go can call it
+// directly instead of threading a fn func() error parameter through an extra
+// wrapper layer.
+func (c *Core) beginSchedulerOwned(token SchedulerTransactionToken) error {
 	if err := c.validateSchedulerTransaction(token); err != nil {
 		err = c.poisonSchedulerTransaction(token, err)
 		phase0AObserveSchedulerPoison(c, token, Phase0APoisonReturnedError)
 		return err
 	}
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			c.poisonSchedulerTransaction(token, fmt.Errorf("parser-core phase zero: scheduler-owned operation panicked: %v", recovered))
-			phase0AObserveSchedulerPoison(c, token, Phase0APoisonPanic)
-			panic(recovered)
-		}
-	}()
-	if err = fn(); err != nil {
+	return nil
+}
+
+// finishSchedulerOwned poisons the owner on a non-nil error, mirroring the
+// exit half of RunSchedulerOwned. It returns the (possibly rewritten) error
+// so callers can fold it directly into a return statement.
+func (c *Core) finishSchedulerOwned(token SchedulerTransactionToken, err error) error {
+	if err != nil {
 		err = c.poisonSchedulerTransaction(token, err)
 		phase0AObserveSchedulerPoison(c, token, Phase0APoisonReturnedError)
-		return err
 	}
-	return nil
+	return err
+}
+
+// recoverSchedulerOwnedPanic mirrors RunSchedulerOwned's deferred panic
+// handler. Deferring this bound method directly -- instead of a deferred
+// closure literal that calls back into RunSchedulerOwned -- keeps every hot
+// dispatch call a direct, inlinable call with no func-value indirection.
+func (c *Core) recoverSchedulerOwnedPanic(token SchedulerTransactionToken) {
+	if recovered := recover(); recovered != nil {
+		c.poisonSchedulerTransaction(token, fmt.Errorf("parser-core phase zero: scheduler-owned operation panicked: %v", recovered))
+		phase0AObserveSchedulerPoison(c, token, Phase0APoisonPanic)
+		panic(recovered)
+	}
 }
 
 // ApplySchedulerAtomic owns one retained checkpoint for an authenticated
