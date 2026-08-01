@@ -7,7 +7,7 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
-## [0.48.0] - 2026-08-06
+## [0.48.0] - 2026-07-31
 
 ### Added
 
@@ -468,6 +468,12 @@ for tags and release notes while still in `0.x`.
   stack limits continue to bound memory. Those layers measure what the parse
   itself allocated, so they stop the same input at the same place every time.
   A downstream user reported this behavior in issue #454.
+
+### Changed
+
+- v0.48.0 adds fields to `FullParseAcceptedErrorRetryProfile`, `ParseRuntime`,
+  and `DiagnosticParserCoreGenericWork`. Change unkeyed literals to keyed
+  literals before you upgrade.
 
 ### Removed
 
