@@ -79,6 +79,9 @@ func TestSwiftCleanRecoveryProbeMatchesLegacyTree(t *testing.T) {
 }
 
 func TestSwiftUnsafeWitnessKeepsCurrentGoTreeAcrossRecoveryProbe(t *testing.T) {
+	if raceEnabled {
+		t.Skip("this witness drives full error recovery twice with the dispatcher census enabled; its cost under the race detector exceeds the CI shard budget; the witness runs in every non-race lane")
+	}
 	lang := SwiftLanguage()
 	source, err := os.ReadFile(filepath.Join("testdata", "swift_corpus", "stdlib_FloatingPointToString.swift"))
 	if err != nil {
