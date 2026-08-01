@@ -1976,6 +1976,21 @@ func TestParseForRecoveryReusesRecoveryParser(t *testing.T) {
 	if parser.recoveryParser != first {
 		t.Fatal("parseForRecovery did not reuse recoveryParser instance")
 	}
+
+	tree, err = parser.parseForRecoveryInitialOnly([]byte("5+6"))
+	if err != nil {
+		t.Fatalf("initial-only parseForRecovery error: %v", err)
+	}
+	if tree == nil || tree.RootNode() == nil {
+		t.Fatal("initial-only parseForRecovery returned nil tree/root")
+	}
+	tree.Release()
+	if parser.recoveryParser != first {
+		t.Fatal("initial-only parseForRecovery did not reuse recoveryParser instance")
+	}
+	if parser.recoveryParser.recoveryInitialOnly {
+		t.Fatal("initial-only parseForRecovery left recoveryInitialOnly set")
+	}
 }
 
 func TestResetSnippetParserClearsTransientState(t *testing.T) {
@@ -1983,6 +1998,7 @@ func TestResetSnippetParserClearsTransientState(t *testing.T) {
 	parser.reparseFactory = func(source []byte) (TokenSource, error) { return nil, nil }
 	parser.recoveryParser = NewParser(buildArithmeticLanguage())
 	parser.skipRecoveryReparse = true
+	parser.recoveryInitialOnly = true
 	parser.fullArenaHint = 123
 	parser.compactFullArenaHint = 456
 	parser.included = []Range{{StartByte: 1, EndByte: 2}}
@@ -2005,6 +2021,9 @@ func TestResetSnippetParserClearsTransientState(t *testing.T) {
 	}
 	if parser.skipRecoveryReparse {
 		t.Fatal("resetSnippetParser did not clear skipRecoveryReparse")
+	}
+	if parser.recoveryInitialOnly {
+		t.Fatal("resetSnippetParser did not clear recoveryInitialOnly")
 	}
 	if parser.fullArenaHint != 0 {
 		t.Fatal("resetSnippetParser did not clear fullArenaHint")

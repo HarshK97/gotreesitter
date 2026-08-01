@@ -24,6 +24,10 @@ type Parser struct {
 	reparseFactory      TokenSourceFactory
 	recoveryParser      *Parser
 	skipRecoveryReparse bool
+	// recoveryInitialOnly suppresses all full-parse retry work for one nested
+	// recovery probe. The caller accepts the initial tree or runs the legacy
+	// recovery parse.
+	recoveryInitialOnly bool
 	// forceCleanRetryPass forces a single parseInternal call to behave as a
 	// non-retry ("clean") pass even when the caller widened the GLR stack
 	// budget via maxStacksOverride. A widened retry would normally also enable
@@ -1580,6 +1584,7 @@ func resetSnippetParser(parser *Parser) {
 	parser.reparseFactory = nil
 	parser.recoveryParser = nil
 	parser.skipRecoveryReparse = false
+	parser.recoveryInitialOnly = false
 	parser.releaseCompatibilityBorrowedArenas()
 	parser.fullArenaHint = 0
 	parser.pendingFullArenaHint = 0

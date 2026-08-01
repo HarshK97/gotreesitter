@@ -1144,6 +1144,26 @@ type ParseRuntime struct {
 	NormalizationNodesRewritten         uint64
 	NormalizationNanos                  int64
 	NormalizationPasses                 *[]NormalizationPassRuntime
+	// RecoveryProbeInitialAttempts counts initial-only nested recovery probes.
+	// Only scoped clean full-source recovery normalizers use these probes.
+	RecoveryProbeInitialAttempts uint64
+	// RecoveryProbeInitialAccepted counts probes that met the caller's exact
+	// clean and full-span acceptance rule.
+	RecoveryProbeInitialAccepted uint64
+	// RecoveryProbeLegacyFallbacks counts probes that ran the legacy retry path.
+	RecoveryProbeLegacyFallbacks uint64
+	// RecoveryProbeInitialRetryPasses is zero when the initial-only contract
+	// holds. It records violations for diagnostics.
+	RecoveryProbeInitialRetryPasses uint64
+	// RecoveryProbeLegacyRetryPasses counts retry-ladder passes after a probe
+	// declined its initial result.
+	RecoveryProbeLegacyRetryPasses uint64
+	// SwiftLegacyRecoverySubparseAttempts counts legacy Swift recovery parses.
+	// It excludes the initial-only probe and its measured fallback route.
+	SwiftLegacyRecoverySubparseAttempts uint64
+	// SwiftLegacyRecoveryRetryPasses counts retry-ladder passes in those Swift
+	// legacy recovery parses.
+	SwiftLegacyRecoveryRetryPasses uint64
 	// The parser sets NativeRecoveredStructureAuthoritative when an exact
 	// grammar profile certifies the recovered tree before compatibility.
 	NativeRecoveredStructureAuthoritative bool
