@@ -92,74 +92,6 @@ func TestUrgentPatchReasonFactsAreIndependent(t *testing.T) {
 	}
 }
 
-func TestOwnerWaivedMinorFactsCaptureRequiredInputs(t *testing.T) {
-	input := ownerWaivedMinorInput(t, time.Date(2026, 8, 1, 2, 0, 0, 0, time.UTC))
-	result := collect(t, input)
-	facts := result.PolicyFacts.Release
-	if facts.Kind != "owner-waived-minor" || facts.Version != "v0.48.0" {
-		t.Fatalf("owner waiver route facts = %+v", facts)
-	}
-	if facts.VersionIncrement != "next-minor" {
-		t.Fatalf("version increment = %q", facts.VersionIncrement)
-	}
-	if facts.LosAngelesThursday || facts.SoakSeconds >= 172800 {
-		t.Fatalf("owner waiver did not exercise the cadence exception: %+v", facts)
-	}
-	if !facts.OwnerWaiverReasonPresent || !facts.IncidentPresent || !facts.DelayRationalePresent {
-		t.Fatalf("owner waiver reason facts = %+v", facts)
-	}
-	for _, expected := range []string{input.OwnerWaiverReason, input.Incident, input.WhyWaitingIsWorse} {
-		if !strings.Contains(result.Summary, expected) {
-			t.Fatalf("summary does not contain %q:\n%s", expected, result.Summary)
-		}
-	}
-}
-
-func TestOwnerWaivedMinorReasonFactsAreIndependent(t *testing.T) {
-	tests := []struct {
-		name   string
-		mutate func(*validationInput)
-		check  func(releasePolicyFacts) bool
-	}{
-		{
-			name: "missing owner waiver reason",
-			mutate: func(input *validationInput) {
-				input.OwnerWaiverReason = ""
-			},
-			check: func(facts releasePolicyFacts) bool {
-				return !facts.OwnerWaiverReasonPresent && facts.IncidentPresent && facts.DelayRationalePresent
-			},
-		},
-		{
-			name: "missing incident",
-			mutate: func(input *validationInput) {
-				input.Incident = ""
-			},
-			check: func(facts releasePolicyFacts) bool {
-				return facts.OwnerWaiverReasonPresent && !facts.IncidentPresent && facts.DelayRationalePresent
-			},
-		},
-		{
-			name: "missing delay rationale",
-			mutate: func(input *validationInput) {
-				input.WhyWaitingIsWorse = ""
-			},
-			check: func(facts releasePolicyFacts) bool {
-				return facts.OwnerWaiverReasonPresent && facts.IncidentPresent && !facts.DelayRationalePresent
-			},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			input := ownerWaivedMinorInput(t, time.Date(2026, 8, 1, 2, 0, 0, 0, time.UTC))
-			test.mutate(&input)
-			if facts := collect(t, input).PolicyFacts.Release; !test.check(facts) {
-				t.Fatalf("unexpected owner waiver facts: %+v", facts)
-			}
-		})
-	}
-}
-
 func TestVersionIncrementFactsDoNotChooseARoute(t *testing.T) {
 	t.Run("minor increment on urgent input", func(t *testing.T) {
 		input := urgentInput(t, time.Date(2026, 7, 29, 19, 0, 0, 0, time.UTC))
@@ -480,34 +412,6 @@ func urgentInput(t *testing.T, now time.Time) validationInput {
 		Now:                now,
 	}
 	writeReleaseFiles(t, root, input.Version, localDate(t, now), input.LatestTag, "### Fixed\n\n- Urgent correction.\n")
-	return input
-}
-
-func ownerWaivedMinorInput(t *testing.T, now time.Time) validationInput {
-	t.Helper()
-	root := t.TempDir()
-	input := validationInput{
-		Version:            "v0.48.0",
-		CandidateSHA:       strings.Repeat("c", 40),
-		ReleaseKind:        "owner-waived-minor",
-		ReceiptURI:         "hypha-receipt:2026-08-01:v048-release",
-		OwnerWaiverReason:  "The planned release was missed.",
-		Incident:           "The release was not published on its scheduled date.",
-		WhyWaitingIsWorse:  "Users need the verified release now.",
-		LatestTag:          "v0.47.0",
-		CIRunID:            "29892922471",
-		CIRunURL:           "https://github.com/odvcencio/gotreesitter/actions/runs/29892922471",
-		CIEvent:            "workflow_dispatch",
-		CISHA:              strings.Repeat("c", 40),
-		CIConclusion:       "success",
-		CICompletedAt:      now.Add(-time.Hour).Format(time.RFC3339),
-		MainExactCandidate: true,
-		TagAbsent:          true,
-		ReleaseAbsent:      true,
-		RepositoryRoot:     root,
-		Now:                now,
-	}
-	writeReleaseFiles(t, root, input.Version, localDate(t, now), input.LatestTag, "### Changed\n\n- Owner waiver route.\n")
 	return input
 }
 

@@ -33,14 +33,6 @@ strategy ReleasePublication returns ReleaseDecision {
                 and release.incident_present
                 and release.delay_rationale_present
             )
-            or (
-                release.kind == "owner-waived-minor"
-                and release.version == "v0.48.0"
-                and release.version_increment == "next-minor"
-                and release.owner_waiver_reason_present
-                and release.incident_present
-                and release.delay_rationale_present
-            )
         )
     } then Allow {
         action: "allow",
