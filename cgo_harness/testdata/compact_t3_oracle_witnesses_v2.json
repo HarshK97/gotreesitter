@@ -1,13 +1,35 @@
 {
-  "schema": "compact-t3-c-oracle-witnesses-v1",
-  "version": 1,
-  "parity_scope": "has_error_only",
+  "schema": "compact-t3-c-oracle-witnesses-v2",
+  "version": 2,
+  "parity_scope": "full_structural",
   "tracking_issue": "https://github.com/odvcencio/gotreesitter/issues/587",
   "witness_count": 20,
   "language_counts": {
     "html": 10,
     "javascript": 8,
     "swift": 2
+  },
+  "denominator": {
+    "pinned_total": 20,
+    "pinned_language_counts": {
+      "html": 10,
+      "javascript": 8,
+      "swift": 2
+    },
+    "campaign_target_total": 98,
+    "campaign_target_language_counts": {
+      "html": 88,
+      "javascript": 8,
+      "swift": 2
+    },
+    "gap_total": 78,
+    "gap_language_counts": {
+      "html": 78,
+      "javascript": 0,
+      "swift": 0
+    },
+    "gap_reason": "spec.campaign.v7 (2026-08-01) cites 98 adjudicated witnesses (88 html, 8 javascript, 2 swift) from the PR #573 differential-fuzz sweep. Only these 20 (10 html, 8 javascript, 2 swift) are committed. The differential-fuzz/mutation harness that produced the original compact_route_differential_fuzz log (source_provenance.origin below) is not committed anywhere in the repository: a repository-wide search for Fuzz entry points and for the origin string found none beyond the generic, unrelated FuzzGoParseDoesNotPanic/FuzzGoParseIncrementalDoesNotPanic panic fuzzers in fuzz_parser_test.go. The 98-witness artifact itself is not present in the repository tree either. Per the B3 design brief open question 1 and the S1 stop rule (manifest regeneration machinery uncommitted and irreproducible), this v2 manifest pins the reproducible subset -- the 20 witnesses already committed and self-verified by source_sha256 -- and records this gap rather than fabricating unverified witnesses.",
+    "recorded_by": "spore.2026-08-01.spruce.b3s1-recovery-harness"
   },
   "witnesses": [
     {

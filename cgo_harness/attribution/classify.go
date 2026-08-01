@@ -16,10 +16,24 @@ const (
 	ComponentLexing            Component = "lexing"
 	ComponentMaterialization   Component = "materialization"
 	ComponentCompatTail        Component = "compat-tail"
-	ComponentOther             Component = "other"
+	// ComponentRecovery is the compact-core native recovery mechanism (B3
+	// campaign tranche): error cost, missing-token insertion, retry, and
+	// recovery election over compact subtrees. Added in tranche B3 stage S1,
+	// before any recovery engine code exists, per gate G5 ("classifier
+	// first... so recovery cost can never hide in other",
+	// docs/perf-attribution.md). It owns no functions yet -- compact has no
+	// recovery implementation (B3 stages S2-S5 add error-cost, absorb/
+	// condense-resume, election, and missing-token code class by class) -- so
+	// it reads 0.0% on every clean canonical fixture today, exactly like
+	// compat-tail's conditional-work components do before their trigger
+	// fires. The whole-file rule for internal/parsercorephase0/recovery_cost.go
+	// below (stage S2's planned file) is forward-declared now so that landing
+	// it does not also require touching this table.
+	ComponentRecovery Component = "recovery"
+	ComponentOther    Component = "other"
 )
 
-// ComponentOrder is the fixed display and receipt order for all eight
+// ComponentOrder is the fixed display and receipt order for all nine
 // components.
 var ComponentOrder = []Component{
 	ComponentSchedulerDispatch,
@@ -29,6 +43,7 @@ var ComponentOrder = []Component{
 	ComponentLexing,
 	ComponentMaterialization,
 	ComponentCompatTail,
+	ComponentRecovery,
 	ComponentOther,
 }
 
@@ -80,6 +95,14 @@ func classifyFunction(fn pbFrame) (Component, bool) {
 		// materialization in case a shared helper is ever reached; expected
 		// near-zero.
 		return ComponentMaterialization, true
+	case strings.HasSuffix(file, "/recovery_cost.go"):
+		// B3 stage S2's planned file (internal/parsercorephase0/recovery_cost.go):
+		// compact equivalents of cNodeErrorCostLang, cSymbolVisibleLang, and
+		// cVersionStatus over immutable compact subtrees. Does not exist yet
+		// (B3 stage S1 adds only this classification rule, not the file), so
+		// this arm cannot match anything today; it is forward-declared so S2
+		// lands inert cost-model code without also having to touch this table.
+		return ComponentRecovery, true
 	}
 
 	// --- Explicit function-name overrides (the two mixed files: the driver's

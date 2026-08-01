@@ -149,15 +149,39 @@ func TestDiagnosticParserCoreDispatchScratchDoesNotAliasFullReceipts(t *testing.
 	assertDiagnosticParserCoreDispatchScratchClean(t, scheduler)
 }
 
+// TestDiagnosticParserCoreDispatchScratchCleansNoActionReturn covers the pure
+// no-table-action shape: the sole head has an empty action row, with no
+// group-election pause involved. B3 stage S1 reclassified this exact shape
+// from the generic no-action boundary to the typed recovery boundary
+// (parsercore_phase0_driver.go), mirroring locked-C production's cPaused
+// trigger ("the stack hit a no-action point").
 func TestDiagnosticParserCoreDispatchScratchCleansNoActionReturn(t *testing.T) {
 	scheduler, _ := newDiagnosticParserCoreDispatchProbeScheduler(t, &genericConflictTable{})
 	stop, err := scheduler.dispatchPass()
-	if err != nil || stop == nil || stop.boundary != DiagnosticParserCoreNoAction || stop.headerIndex != 0 ||
+	if err != nil || stop == nil || stop.boundary != DiagnosticParserCoreRecovery || stop.headerIndex != 0 ||
 		stop.detail != diagnosticParserCoreNoTableActionDetail {
 		t.Fatalf("no-action stop=%+v err=%v", stop, err)
 	}
 	if cap(scheduler.dispatchScratch.noActionIndices) == 0 {
 		t.Fatal("no-action classification capacity was not retained")
+	}
+	assertDiagnosticParserCoreDispatchScratchClean(t, scheduler)
+}
+
+// TestDiagnosticParserCoreDispatchScratchKeepsGroupElectionPauseAsNoAction
+// covers the other, unrelated "paused" mechanism: a header the scheduler
+// itself marked paused during group election (diagnosticParserCoreHeader.paused,
+// set from the elect/canonicalize winner selection, not from a table lookup).
+// B3 stage S1's typed-recovery reclassification must not touch this shape --
+// it stays the generic no-action boundary, because it is not a locked-C
+// recovery trigger.
+func TestDiagnosticParserCoreDispatchScratchKeepsGroupElectionPauseAsNoAction(t *testing.T) {
+	scheduler, _ := newDiagnosticParserCoreDispatchProbeScheduler(t, &genericConflictTable{})
+	scheduler.headers[0].paused = true
+	stop, err := scheduler.dispatchPass()
+	if err != nil || stop == nil || stop.boundary != DiagnosticParserCoreNoAction || stop.headerIndex != 0 ||
+		stop.detail != "generic scheduler has only paused heads for the elected token" {
+		t.Fatalf("paused-frontier stop=%+v err=%v", stop, err)
 	}
 	assertDiagnosticParserCoreDispatchScratchClean(t, scheduler)
 }

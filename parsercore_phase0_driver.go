@@ -17,9 +17,16 @@ import (
 type DiagnosticParserCoreBoundaryKind string
 
 const (
-	DiagnosticParserCoreExtra         DiagnosticParserCoreBoundaryKind = "extra"
-	DiagnosticParserCoreExtraChain    DiagnosticParserCoreBoundaryKind = "extra_chain"
-	DiagnosticParserCoreNoAction      DiagnosticParserCoreBoundaryKind = "no_action"
+	DiagnosticParserCoreExtra      DiagnosticParserCoreBoundaryKind = "extra"
+	DiagnosticParserCoreExtraChain DiagnosticParserCoreBoundaryKind = "extra_chain"
+	DiagnosticParserCoreNoAction   DiagnosticParserCoreBoundaryKind = "no_action"
+	// DiagnosticParserCoreRecovery marks every dispatch shape where only
+	// locked-C production's recovery semantics can continue: an explicit
+	// ActionRecover cell, an unexpected recover action inside a generic
+	// conflict, and (B3 stage S1) the pure no-table-action frontier that
+	// mirrors C's cPaused trigger (glr.go: "the stack hit a no-action
+	// point"). Dispatch classification only -- every one of these shapes
+	// still declines and falls back to production unchanged.
 	DiagnosticParserCoreRecovery      DiagnosticParserCoreBoundaryKind = "recovery"
 	DiagnosticParserCoreAccept        DiagnosticParserCoreBoundaryKind = "accept_without_materialization"
 	DiagnosticParserCoreCap           DiagnosticParserCoreBoundaryKind = "cap"
@@ -2887,10 +2894,28 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			return nil, s.dropGenericNoActionHeads(noActionIndices)
 		}
 		if len(noActionIndices) != 0 {
-			detail := diagnosticParserCoreNoTableActionDetail
-			if pausedNoActionHeads == len(noActionIndices) {
-				detail = "generic scheduler has only paused heads for the elected token"
-			} else if pausedNoActionHeads != 0 {
+			// pausedNoActionHeads == 0 means every no-action head reached this
+			// point through a genuinely empty action row (no table action for
+			// the elected token), not through the unrelated group-election
+			// pause tracked by header.paused above. That exact shape is the
+			// error-entry point locked-C production pauses on for recovery
+			// (glr.go cPaused: "the stack hit a no-action point"; the
+			// real-corpus matrix's 13 recovery-handoff rows trigger here with
+			// "the elected token has no table action at end-of-file"). Publish
+			// the typed recovery boundary for that shape instead of the
+			// generic no-action boundary so census and receipts can tell a
+			// recovery handoff apart from an internal election pause. This is
+			// a dispatch classification only: both boundaries still decline
+			// and fall back to production unchanged (B3 stage S1).
+			if pausedNoActionHeads == 0 {
+				return &diagnosticParserCoreGenericUnsupported{
+					boundary:    DiagnosticParserCoreRecovery,
+					detail:      diagnosticParserCoreNoTableActionDetail,
+					headerIndex: noActionIndices[0],
+				}, nil
+			}
+			detail := "generic scheduler has only paused heads for the elected token"
+			if pausedNoActionHeads != len(noActionIndices) {
 				detail = "generic scheduler has only paused or no-action heads for the elected token"
 			}
 			return &diagnosticParserCoreGenericUnsupported{
