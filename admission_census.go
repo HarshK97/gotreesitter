@@ -113,6 +113,21 @@ const (
 	// locked C oracle both return an error tree for the same input
 	// (cgo_harness/testdata/compact_t3_oracle_witnesses_v2.json).
 	censusMechanismAcceptedLeafTilingGap admissionCensusMechanism = "accepted-leaf-tiling-gap"
+	// censusMechanismAcceptedRootLeadingGap: the accepted derivation's own
+	// root reduce declared a span starting after the source's first
+	// non-trivia byte (parsercore_phase0_driver.go,
+	// materializeDiagnosticParserCoreAcceptedSelection). The root reduce is
+	// exempt from censusMechanismAcceptedLeafTilingGap's own-children check
+	// (isDerivationRootReduce), so a dropped leading byte at the root symbol
+	// itself passes that gate by construction; the shared post-materialization
+	// normalizeRootSourceStart (parser_result_root_build.go) then pulls the
+	// public root span back over the gap on the assumption of a legitimately
+	// elided leading extra, publishing HasError()==false. This is the second,
+	// root-specific false-clean route-equality gate: without it, an accepted
+	// derivation that never represented one real byte at document start would
+	// publish a clean tree while production and the locked C oracle both
+	// report an error for the same input.
+	censusMechanismAcceptedRootLeadingGap admissionCensusMechanism = "accepted-root-leading-gap"
 	// censusMechanismOther is the catch-all for a decline this classifier
 	// does not yet recognize. The full original detail is always preserved
 	// alongside it.
@@ -175,10 +190,14 @@ func admissionCensusClassify(boundary DiagnosticParserCoreBoundaryKind, detail s
 		}
 		return censusMechanismSchedulerShape
 	case DiagnosticParserCoreAccept:
-		if strings.Contains(detail, "accepted-leaf-tiling-gap") {
+		switch {
+		case strings.Contains(detail, "accepted-leaf-tiling-gap"):
 			return censusMechanismAcceptedLeafTilingGap
+		case strings.Contains(detail, "accepted-root-leading-gap"):
+			return censusMechanismAcceptedRootLeadingGap
+		default:
+			return censusMechanismSchedulerShape
 		}
-		return censusMechanismSchedulerShape
 	case DiagnosticParserCoreGenericClosed:
 		return censusMechanismSchedulerShape
 	case censusBoundaryMultiDerivation:
