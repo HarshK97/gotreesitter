@@ -209,6 +209,30 @@ func TestRealLanguageExternalBindingTablesArePositional(t *testing.T) {
 	if got, want := javascript.symbols, jsDefaultSymTable; got != want {
 		t.Fatalf("javascript post-bind symbols = %v, want default table %v", got, want)
 	}
+
+	// typescript and tsx: pin the currently-shipped typescript.bin/tsx.bin
+	// bindings as permanent regression guards, the same way as javascript
+	// above. Both carry the same 10 externals (javascript's 8 plus
+	// _function_signature_automatic_semicolon and __error_recovery), so a
+	// future blob regen that shifts the automaton's absolute symbol
+	// numbering still passes this externalToToken check (index-based, not
+	// value-based) but would only pass the symbols equality below if the
+	// external declaration order is unchanged.
+	typescript := TypeScriptExternalScanner{}.ExternalScannerForLanguage(TypescriptLanguage()).(TypeScriptExternalScanner)
+	if got, want := typescript.externalToToken, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}; !slices.Equal(got, want) {
+		t.Fatalf("typescript externalToToken = %v, want %v", got, want)
+	}
+	if got, want := typescript.symbols, tsDefaultSymTable; got != want {
+		t.Fatalf("typescript post-bind symbols = %v, want default table %v", got, want)
+	}
+
+	tsx := TsxExternalScanner{}.ExternalScannerForLanguage(TsxLanguage()).(TsxExternalScanner)
+	if got, want := tsx.externalToToken, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}; !slices.Equal(got, want) {
+		t.Fatalf("tsx externalToToken = %v, want %v", got, want)
+	}
+	if got, want := tsx.symbols, tsxDefaultSymTable; got != want {
+		t.Fatalf("tsx post-bind symbols = %v, want default table %v", got, want)
+	}
 }
 
 // Note: the pure-unit drift and length-mismatch tests for
