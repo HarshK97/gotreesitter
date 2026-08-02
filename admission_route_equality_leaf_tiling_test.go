@@ -59,10 +59,18 @@ func loadRouteEqualityWitnesses(t testing.TB) map[string]routeEqualityWitness {
 
 // TestCompactRouteHTMLErroneousEndTagByteGapDeclines pins the B1 reference
 // witness by its literal bytes, independent of the committed manifest file:
-// html "<a></a^>" must decline the compact route because no leaf covers byte
-// 6 (the stray '^' inside the malformed close tag), and production must
-// report HasError()==true for the same bytes. Before the tiling gate, the
-// compact route accepted this input and published document[0:8] clean.
+// html "<a></a^>". Through B3 stage S2 the compact route declined this input
+// (no leaf covered byte 6, the stray '^' inside the malformed close tag) and
+// fell back to production, which reports HasError()==true for the same
+// bytes. B3 stage S3 lands native strategy-2 recovery (error-region absorb
+// and condense-resume) for exactly this witness class
+// (html_erroneous_end_tag): compact now routes this input itself instead of
+// declining, publishing an ERROR-wrapped tree that matches the pinned C
+// oracle exactly (cgo_harness/compact_t3_oracle_adjudication_test.go's
+// compactT3S3CertifiedWitnesses asserts the full structural comparison
+// under cgo; this always-on test pins only the route decision and root
+// HasError, which do not need cgo). Before either gate landed, the compact
+// route accepted this input and published document[0:8] clean.
 func TestCompactRouteHTMLErroneousEndTagByteGapDeclines(t *testing.T) {
 	// This loads the html grammar into the process-wide embedded cache; purge
 	// afterward so it does not inflate heap for later whole-process tests
@@ -96,15 +104,11 @@ func TestCompactRouteHTMLErroneousEndTagByteGapDeclines(t *testing.T) {
 	defer candidateTree.Release()
 
 	routed, fallback := gts.AdmissionCandidateCounters()
-	if routed != 0 || fallback != 1 {
-		t.Fatalf("route counters routed=%d fallback=%d, want routed=0 fallback=1 (compact must decline)", routed, fallback)
-	}
-	reason := gts.AdmissionCandidateLastFallbackReason()
-	if !strings.Contains(reason, "accepted-leaf-tiling-gap") {
-		t.Fatalf("fallback reason=%q, want it to cite accepted-leaf-tiling-gap", reason)
+	if routed != 1 || fallback != 0 {
+		t.Fatalf("route counters routed=%d fallback=%d, want routed=1 fallback=0 (B3 stage S3: compact now handles this witness natively)", routed, fallback)
 	}
 	if !candidateTree.RootNode().HasError() {
-		t.Fatal("production-served (post-fallback) tree HasError=false, want true")
+		t.Fatal("natively-routed compact tree HasError=false, want true")
 	}
 }
 
@@ -114,14 +118,19 @@ func TestCompactRouteHTMLErroneousEndTagByteGapDeclines(t *testing.T) {
 // accepted by the compact route with HasError()==false while production and
 // the locked C oracle both report an error (compact_t3_oracle_witnesses_v2.
 // json: c_has_error=production_has_error=true for all 20; compact_has_error
-// was false for all 20 before this tranche's fix, and is now recorded true
-// for the 18 html/javascript entries this gate closes -- see
+// was false for all 20 before B1's fix). B1 made compact decline and fall
+// back to production for all 18 html/javascript entries (see
 // TestCompactRouteSwiftShiftComparisonGapIsNotATilingDefect for the 2 swift
-// entries, which stay false). This asserts the fixed contract: compact
-// declines specifically at the new tiling gate, the caller falls back to
-// production within the same Parse call, and the production-served tree's
-// HasError matches the manifest's adjudicated
-// verdict.
+// entries, which stay a different, non-tiling mechanism). B3 stage S3 then
+// landed native strategy-2 recovery for the html_erroneous_end_tag class:
+// the 3 html entries here (html_min_a, html_min_html, html_log_1) now route
+// natively instead of declining, publishing a compact-native tree with the
+// same root HasError as production (exact structural C-oracle parity is
+// asserted separately, under cgo, by
+// cgo_harness/compact_t3_oracle_adjudication_test.go's
+// compactT3S3CertifiedWitnesses). The 3 javascript entries are outside B3's
+// witness classes staged so far and still decline at the tiling gate exactly
+// as B1 left them.
 //
 // Scope note: the manifest's 2 swift entries (swift_log_1, swift_log_2) are
 // NOT in this list. Root-cause (verified by direct tree inspection):
@@ -204,17 +213,237 @@ func TestCompactRouteDeclinesAdjudicatedFalseCleanWitnesses(t *testing.T) {
 			defer tree.Release()
 
 			routed, fallback := gts.AdmissionCandidateCounters()
-			if routed != 0 || fallback != 1 {
-				t.Fatalf("witness %q: route counters routed=%d fallback=%d, want routed=0 fallback=1 (compact must decline)", id, routed, fallback)
-			}
-			reason := gts.AdmissionCandidateLastFallbackReason()
-			if !strings.Contains(reason, "accepted-leaf-tiling-gap") {
-				t.Fatalf("witness %q: fallback reason=%q, want it to cite accepted-leaf-tiling-gap", id, reason)
+			if witness.Language == "html" {
+				// B3 stage S3: html_erroneous_end_tag now routes natively.
+				if routed != 1 || fallback != 0 {
+					t.Fatalf("witness %q: route counters routed=%d fallback=%d, want routed=1 fallback=0 (B3 stage S3: compact now handles this witness natively)", id, routed, fallback)
+				}
+			} else {
+				if routed != 0 || fallback != 1 {
+					t.Fatalf("witness %q: route counters routed=%d fallback=%d, want routed=0 fallback=1 (compact must decline)", id, routed, fallback)
+				}
+				reason := gts.AdmissionCandidateLastFallbackReason()
+				if !strings.Contains(reason, "accepted-leaf-tiling-gap") {
+					t.Fatalf("witness %q: fallback reason=%q, want it to cite accepted-leaf-tiling-gap", id, reason)
+				}
 			}
 
 			if got := tree.RootNode().HasError(); got != *witness.Expected.ProductionHasError {
 				t.Fatalf("witness %q: production-served HasError=%t, want %t (manifest production_has_error, C-adjudicated)",
 					id, got, *witness.Expected.ProductionHasError)
+			}
+		})
+	}
+}
+
+// TestCompactRouteAcceptedRootLeafCoverageGapDeclines pins the adversarial
+// review finding against B3 stage S3's first shipped revision: html
+// "<!--c-->>" (9 bytes) reduced the compact route's accepted root over zero
+// real children (a hollow "document[0:9]"), and the tiling audit of the era
+// could not catch it because isDerivationRootReduce exempts the root's own
+// reduce from the per-reduce raw-children check, and the root was the only
+// accepted payload. finalizeDiagnosticParserCoreAcceptedRootSpan's
+// allowErrorRoot branch now runs a second, root-only audit
+// (diagnosticParserCoreAcceptedTreeLeafCoverageGap) after materialization:
+// it walks the finalized public tree and requires every genuine terminal
+// leaf (or built-in ERROR leaf) to tile [firstNonTriviaByte, sourceLen)
+// modulo trivia, independent of which reduce claimed which span. A hollow
+// non-terminal reduce (a childless node whose symbol is not a terminal and
+// not ERROR) contributes no coverage, so it can no longer paper over lost
+// bytes.
+//
+// Each case here absorbed a comment and a stray '>' (or more) into an S3
+// error region and then reduced "document" over nothing; every one must now
+// decline and fall back to production, which reports the correct
+// ERROR-wrapped, HasError=true tree for all five.
+func TestCompactRouteAcceptedRootLeafCoverageGapDeclines(t *testing.T) {
+	t.Cleanup(func() { grammars.PurgeEmbeddedLanguageCache() })
+	entry := grammars.DetectLanguageByName("html")
+	if entry == nil {
+		t.Fatal("html is not registered")
+	}
+	lang := entry.Language()
+
+	sources := []string{
+		"<!--c-->>",
+		"<!-- c -->>",
+		"<!--c--> >",
+		"<!--c-->>>",
+		"<!--c--><!--d-->>",
+	}
+	for _, src := range sources {
+		src := src
+		t.Run(src, func(t *testing.T) {
+			source := []byte(src)
+
+			production := gts.NewParser(lang)
+			production.SetAdmissionCandidateRoute(false)
+			productionTree, err := production.Parse(source)
+			if err != nil {
+				t.Fatalf("production parse: %v", err)
+			}
+			defer productionTree.Release()
+			if !productionTree.RootNode().HasError() {
+				t.Fatalf("production HasError=false, want true for %q", src)
+			}
+
+			gts.ResetAdmissionCandidateCountersForTest()
+			candidate := gts.NewParser(lang)
+			candidate.SetAdmissionCandidateRoute(true)
+			candidateTree, err := candidate.Parse(source)
+			if err != nil {
+				t.Fatalf("candidate parse: %v", err)
+			}
+			defer candidateTree.Release()
+
+			routed, fallback := gts.AdmissionCandidateCounters()
+			if routed != 0 || fallback != 1 {
+				t.Fatalf("%q: route counters routed=%d fallback=%d, want routed=0 fallback=1 (root leaf-coverage gap must decline)", src, routed, fallback)
+			}
+			reason := gts.AdmissionCandidateLastFallbackReason()
+			if !strings.Contains(reason, "do not tile the accepted span") {
+				t.Fatalf("%q: fallback reason=%q, want it to cite the root leaf-coverage gap", src, reason)
+			}
+
+			if !candidateTree.RootNode().HasError() {
+				t.Fatalf("%q: production-served HasError=false, want true", src)
+			}
+			if got, want := candidateTree.RootNode().SExpr(lang), productionTree.RootNode().SExpr(lang); got != want {
+				t.Fatalf("%q: served tree diverges from production\n got:  %s\n want: %s", src, got, want)
+			}
+		})
+	}
+}
+
+// TestCompactRouteAcceptedRootTrailingErrorExtraDeclines pins the
+// adversarial review round-2 finding: the accept-time splice gap. C's
+// ts_parser__accept rebuilds the last non-extra tree over the remaining
+// stack contents, INCLUDING trailing extras, at the moment of accepting.
+// This materializer's S3 accept path did not perform that splice: an ERROR
+// region that resumes onto a head already past the last structural reduce
+// (s3CloseInProgressProductions's own eager closure can land there) ended
+// up attached as the accepted root's own sibling instead of nested inside
+// the preceding element -- one level too shallow. Every byte was still
+// covered (so REQUIRED 1's leaf-coverage audit could not catch this), but
+// the ATTACHMENT was wrong, and it flipped the enclosing element's own span
+// and HasError, which callers read.
+//
+// html "<html><body>x</body>\x00>" is the minimal reproducer: compact
+// published document[0:22] with 2 children (element[0:20] HasError=false,
+// ERROR[20:22] extra) where the C oracle reports 1 child (element[0:22]
+// HasError=true, the same byte-identical ERROR nested inside it). The 3
+// sibling reproducers here were found by construction (two hand-built
+// variants on the same base) and by direct search of the committed
+// adversarial-review fuzz corpus (the fourth, "the corpus original").
+//
+// Fixed fail-closed (diagnosticParserCoreAcceptedRootTrailingErrorExtraGap,
+// parsercore_phase0_driver.go): every one of these now declines and falls
+// back to production instead of publishing the misattached tree.
+func TestCompactRouteAcceptedRootTrailingErrorExtraDeclines(t *testing.T) {
+	t.Cleanup(func() { grammars.PurgeEmbeddedLanguageCache() })
+	entry := grammars.DetectLanguageByName("html")
+	if entry == nil {
+		t.Fatal("html is not registered")
+	}
+	lang := entry.Language()
+
+	sources := []string{
+		"<html><body>x</body>\x00>",
+		"<html><body>x</body>\x00/h>",
+		"<html><body>x</body>\x00/h>\x00/html>",
+		"<html><body>-->Hello</body>\x00/h>\x00/html>\n",
+	}
+	for _, src := range sources {
+		src := src
+		t.Run(src, func(t *testing.T) {
+			source := []byte(src)
+
+			gts.ResetAdmissionCandidateCountersForTest()
+			candidate := gts.NewParser(lang)
+			candidate.SetAdmissionCandidateRoute(true)
+			candidateTree, err := candidate.Parse(source)
+			if err != nil {
+				t.Fatalf("candidate parse: %v", err)
+			}
+			defer candidateTree.Release()
+
+			routed, fallback := gts.AdmissionCandidateCounters()
+			if routed != 0 || fallback != 1 {
+				t.Fatalf("%q: route counters routed=%d fallback=%d, want routed=0 fallback=1 (accept-time splice gap must decline)", src, routed, fallback)
+			}
+			reason := gts.AdmissionCandidateLastFallbackReason()
+			if !strings.Contains(reason, "error-bearing trailing extra") {
+				t.Fatalf("%q: fallback reason=%q, want it to cite the trailing extra splice gap", src, reason)
+			}
+		})
+	}
+}
+
+// TestCompactRouteCleanTrailingExtraStillRoutesNatively is the control case
+// for TestCompactRouteAcceptedRootTrailingErrorExtraDeclines: an ordinary
+// trailing extra (a comment, carrying no error at all) legitimately sits
+// beside -- or, once the enclosing element is genuinely still open, inside
+// -- a root's non-extra child in both engines, and must keep routing
+// natively. diagnosticParserCoreAcceptedRootTrailingErrorExtraGap is
+// deliberately narrower than "any trailing extra" specifically so these
+// two shapes do not trip it:
+//
+//   - "<html><body>x</body><!--c-->": the trailing comment is spliced into
+//     the still-open outer element by compact's ordinary (non-S3) extra-
+//     shift machinery before that element's own reduce ever fires --
+//     document ends up with exactly 1 child, matching production and the C
+//     oracle, so this shape is not even a root-level trailing extra.
+//   - "<a></a><!--trailing-->": the outer element closes explicitly (a real
+//     "</a>"), so the trailing comment lands beside it as document's own
+//     second child in every engine alike -- document[0:22], 2 children
+//     (element, comment), byte-identical between compact and production.
+//
+// Both must keep serving the compact-native tree; neither carries an
+// error-bearing trailing extra, so neither is the shape this gate exists
+// to reject.
+func TestCompactRouteCleanTrailingExtraStillRoutesNatively(t *testing.T) {
+	t.Cleanup(func() { grammars.PurgeEmbeddedLanguageCache() })
+	entry := grammars.DetectLanguageByName("html")
+	if entry == nil {
+		t.Fatal("html is not registered")
+	}
+	lang := entry.Language()
+
+	sources := []string{
+		"<html><body>x</body><!--c-->",
+		"<a></a><!--trailing-->",
+	}
+	for _, src := range sources {
+		src := src
+		t.Run(src, func(t *testing.T) {
+			source := []byte(src)
+
+			production := gts.NewParser(lang)
+			production.SetAdmissionCandidateRoute(false)
+			productionTree, err := production.Parse(source)
+			if err != nil {
+				t.Fatalf("production parse: %v", err)
+			}
+			defer productionTree.Release()
+
+			gts.ResetAdmissionCandidateCountersForTest()
+			candidate := gts.NewParser(lang)
+			candidate.SetAdmissionCandidateRoute(true)
+			candidateTree, err := candidate.Parse(source)
+			if err != nil {
+				t.Fatalf("candidate parse: %v", err)
+			}
+			defer candidateTree.Release()
+
+			routed, fallback := gts.AdmissionCandidateCounters()
+			if routed != 1 || fallback != 0 {
+				t.Fatalf("%q: route counters routed=%d fallback=%d, want routed=1 fallback=0 (clean trailing extra must not trip the splice-gap decline)", src, routed, fallback)
+			}
+			if candidateTree.RootNode().HasError() {
+				t.Fatalf("%q: candidate HasError=true, want false (clean trailing extra)", src)
+			}
+			if got, want := candidateTree.RootNode().SExpr(lang), productionTree.RootNode().SExpr(lang); got != want {
+				t.Fatalf("%q: served tree diverges from production\n got:  %s\n want: %s", src, got, want)
 			}
 		})
 	}

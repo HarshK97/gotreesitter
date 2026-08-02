@@ -67,8 +67,15 @@ type DiagnosticParserCorePrefixOptions struct {
 	allowEOFAcceptNoActionSiblings  bool
 	allowPrimaryAcceptDerivation    bool
 	allowConvergedSplitDropArtifact bool
-	noLookaheadRootSymbol           Symbol
-	hasNoLookaheadRootSymbol        bool
+	// allowCompactStrategy2ErrorRegion permits the generic scheduler to
+	// attempt native S3 recovery (error-region absorb and condense-resume)
+	// at a true no-table-action point instead of declining. Set only from
+	// Language.CompactStrategy2ErrorRegionCertified (grammar-blob-keyed, not
+	// name-keyed -- design section 7). Recovery must also be true: this
+	// option alone does not admit the fresh-full runner's recovery guard.
+	allowCompactStrategy2ErrorRegion bool
+	noLookaheadRootSymbol            Symbol
+	hasNoLookaheadRootSymbol         bool
 	// stopControlParser, when non-nil, arms the scheduler's stop-control poll
 	// (spec.campaign.v7 tranche B8): once per dispatch-pass-loop iteration,
 	// diagnosticParserCoreGenericScheduler.run checks this Parser's deadline
@@ -785,7 +792,7 @@ func diagnosticParseParserCoreGenericFromSeed(
 		return result, &diagnosticParserCoreDecline{boundary: result.Boundary, detail: result.Detail}
 	}
 	return publishDiagnosticParserCoreGenericResult(result, scheduler, func(head core.Head) (*Tree, error) {
-		return materializeDiagnosticParserCoreAcceptedSelection(compact, head, scheduler.acceptedPayloads, parser, source, nil, false)
+		return materializeDiagnosticParserCoreAcceptedSelection(compact, head, scheduler.acceptedPayloads, parser, source, nil, false, options.Recovery && options.allowCompactStrategy2ErrorRegion)
 	})
 }
 
@@ -939,6 +946,30 @@ type diagnosticParserCoreHeader struct {
 	// witness (section 5).
 	blended              bool
 	lastPersistedBlended bool
+	// s3Region marks a header carrying an open native strategy-2 recovery
+	// region (campaign v7 tranche B3 stage S3: error-region absorb and
+	// condense-resume). nil for every header outside recovery, mirroring
+	// glrStack.cRec's nil-for-clean-stacks discipline (glr.go) -- the S3
+	// zero-cost clean-path gate (design section 8, G2). Never mutated in
+	// place: s3AdvanceErrorRegion and s3TryOpenErrorRegion always publish a
+	// fresh *diagnosticParserCoreS3Region and reassign this field, so a
+	// header snapshot taken by diagnosticParserCoreHeaderRollbackScratch
+	// (a plain by-value struct copy) restores a correct, independent region
+	// state on rollback without aliasing the live one.
+	s3Region *diagnosticParserCoreS3Region
+}
+
+// diagnosticParserCoreS3Region is the open ERROR container a native S3
+// recovery region accumulates on its owning header -- the compact analogue
+// of glrStack.cRec.openErr (glr.go), living on the header rather than the
+// arena until s3AdvanceErrorRegion resolves it (design section 4, restating
+// the S2 doc comment for S3). state is the pre-error state probed for resume
+// each pass (depth-0 resume only; see s3RegionResumeAction).
+type diagnosticParserCoreS3Region struct {
+	state     core.StateID
+	startByte uint32
+	endByte   uint32
+	children  []core.SubtreeID
 }
 
 func nextDiagnosticParserCoreCleanPathLineage(next *uint16) (uint16, error) {
@@ -2548,7 +2579,7 @@ func (index *diagnosticParserCorePointIndex) pointUncached(offset uint32) Point 
 	return Point{Row: uint32(line), Column: offset - index.lineStarts[line]}
 }
 
-func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.Head, parser *Parser, source []byte, scratch *parserCoreRunnerScratch, forceReplayParseStates bool) (*Tree, error) {
+func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.Head, parser *Parser, source []byte, scratch *parserCoreRunnerScratch, forceReplayParseStates bool, allowErrorRoot bool) (*Tree, error) {
 	if compact == nil || parser == nil || parser.language == nil || head.Node == 0 {
 		return nil, errors.New("parser-core phase zero: incomplete accepted-tree materialization input")
 	}
@@ -2559,27 +2590,203 @@ func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.H
 	if len(derivations) != 1 {
 		return nil, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreAccept, detail: "materialization requires one exact accepted derivation"}
 	}
-	return materializeDiagnosticParserCoreAcceptedSelection(compact, head, derivations[0].Payloads, parser, source, scratch, forceReplayParseStates)
+	return materializeDiagnosticParserCoreAcceptedSelection(compact, head, derivations[0].Payloads, parser, source, scratch, forceReplayParseStates, allowErrorRoot)
 }
 
-func finalizeDiagnosticParserCoreAcceptedRootSpan(root *Node, source []byte, sourceLen uint32) error {
+// finalizeDiagnosticParserCoreAcceptedRootSpan requires a complete, clean
+// root span by default: compact has no error recovery outside the B3 stage
+// S3 certified shape, so an error/incomplete root anywhere else is a defect,
+// not a legitimate result. allowErrorRoot, true only when this parse ran
+// under an admitted native S3 recovery region (design section 4;
+// s3ErrorRegionAdmitted's exact gate, threaded down from the caller), lifts
+// the !root.IsError() && !root.HasError() bar so a genuinely recovered tree
+// can complete -- the span-completeness half of the check (root must still
+// cover the whole source) stays in force unconditionally either way.
+func finalizeDiagnosticParserCoreAcceptedRootSpan(root *Node, source []byte, sourceLen uint32, allowErrorRoot bool, tokenCount uint32) error {
 	expectedStart := firstNonTriviaByteStart(source)
-	if root.startByte == expectedStart && root.endByte < sourceLen &&
-		!root.IsError() && !root.HasError() {
+	clean := allowErrorRoot || (!root.IsError() && !root.HasError())
+	if root.startByte == expectedStart && root.endByte < sourceLen && clean {
 		extendRootToAcceptedCleanTail(root, source, sourceLen, nil)
 	}
-	if root.startByte == expectedStart && root.endByte == sourceLen &&
-		!root.IsError() && !root.HasError() {
+	if root.startByte == expectedStart && root.endByte == sourceLen && clean {
+		if allowErrorRoot {
+			// B3 stage S3 fail-closed audit (adversarial review finding,
+			// html "<!--c-->>"): allowErrorRoot lets a root whose OWN
+			// HasError reads false past the ordinary !IsError()&&!HasError()
+			// bar, because a native recovery region can legitimately accept
+			// with an unlinked ERROR payload sitting beside the structural
+			// root reduce rather than under it. That same relaxation also
+			// let a genuinely hollow accept through once: the accepted
+			// payload set held [comment(extra), ERROR(extra),
+			// document(span 9..9, 0 children)] -- production's own
+			// ts_parser__accept splices sibling extra payloads into the
+			// root; this materializer's root-payload-only path does not, so
+			// "document" reduced over zero real content, its 0 (raw and
+			// public) children trivially satisfied
+			// diagnosticParserCoreReduceChildrenTilingGap's per-reduce check
+			// (isDerivationRootReduce exempts the root from that check
+			// besides), and extendRootToAcceptedCleanTail above then
+			// stretched the empty span to the full source with nothing
+			// re-checking that the stretch was justified by covered
+			// content: document[0:9], 0 children, HasError()==false --
+			// total byte loss, silently reported clean. Independent of
+			// which reduce claims it, or whether that reduce is exempt from
+			// the per-reduce check, the FINAL PUBLIC TREE'S leaves must
+			// still tile the accepted span; this is that closing check, and
+			// it runs only in the one case that needs it (allowErrorRoot),
+			// so every other language and every non-recovery compact parse
+			// pays nothing.
+			if gapStart, gapEnd, gapped := diagnosticParserCoreAcceptedTreeLeafCoverageGap(root, source, expectedStart, sourceLen, tokenCount); gapped {
+				return fmt.Errorf(
+					"parser-core phase zero: accepted compact root leaves do not tile the accepted span: gap=%d..%d root=%d..%d",
+					gapStart, gapEnd, root.startByte, root.endByte,
+				)
+			}
+			// Round-2 adversarial review, accept-time splice gap: the leaf-
+			// coverage audit above closed the BYTE-LOSS symptom of a related
+			// gap; it cannot see this one, since every byte is still
+			// covered -- only the ATTACHMENT point is wrong. See
+			// diagnosticParserCoreAcceptedRootTrailingErrorExtraGap's own
+			// doc comment.
+			if diagnosticParserCoreAcceptedRootTrailingErrorExtraGap(root) {
+				return fmt.Errorf(
+					"parser-core phase zero: accepted compact root carries an error-bearing trailing extra payload after its last non-extra child: root=%d..%d",
+					root.startByte, root.endByte,
+				)
+			}
+		}
 		return nil
 	}
 	return fmt.Errorf(
-		"parser-core phase zero: accepted compact root is incomplete or erroneous: span=%d..%d expected=%d..%d error=%t",
+		"parser-core phase zero: accepted compact root is incomplete or erroneous: span=%d..%d expected=%d..%d error=%t allowErrorRoot=%t",
 		root.startByte,
 		root.endByte,
 		expectedStart,
 		sourceLen,
 		root.HasError(),
+		allowErrorRoot,
 	)
+}
+
+// diagnosticParserCoreAcceptedTreeLeafCoverageGap walks root's already-
+// materialized, public tree (the same surface go-tree-sitter callers see) in
+// byte order and reports the first non-trivia byte range no genuine terminal
+// leaf covers -- the same predicate diagnosticParserCoreReduceChildrenTilingGap
+// uses per reduce (diagnosticParserCoreGapIsTolerated), applied once, across
+// the whole finalized tree, independent of which reduce's declared span
+// claimed which bytes. See finalizeDiagnosticParserCoreAcceptedRootSpan's
+// allowErrorRoot branch for why the per-reduce check alone is not sufficient
+// here.
+//
+// A childless NODE only counts as covering its span when it is a genuine
+// terminal: symbol < tokenCount (an ordinary lexed token, matching the exact
+// bound s3CloseInProgressProductions already uses to enumerate terminals),
+// or the built-in ERROR symbol (a leaf absorbed into an open S3 region,
+// which is also structurally childless -- html_min_a's innermost
+// "(ERROR (ERROR))", for one). A childless NON-terminal (symbol >=
+// tokenCount, not ERROR) covers NOTHING: this is exactly the shape the
+// adversarial finding exposed -- html "<!--c-->>" reduces "document" over
+// zero real children, and treating that hollow reduce as if it were a leaf
+// spanning its own (already-stretched) declared range let the accept
+// through with the comment and the absorbed '>' entirely unrepresented in
+// the public tree.
+func diagnosticParserCoreAcceptedTreeLeafCoverageGap(root *Node, source []byte, expectedStart, sourceLen, tokenCount uint32) (gapStart, gapEnd uint32, gapped bool) {
+	cur := expectedStart
+	var walk func(n *Node) (uint32, uint32, bool)
+	walk = func(n *Node) (uint32, uint32, bool) {
+		if n == nil {
+			return 0, 0, false
+		}
+		count := n.ChildCount()
+		if count == 0 {
+			sym := n.Symbol()
+			if uint32(sym) >= tokenCount && sym != errorSymbol {
+				// A hollow non-terminal: covers nothing, does not advance
+				// cur. Any real content it claimed but does not itself
+				// contain surfaces as a gap at the next genuine leaf (or at
+				// the trailing check below, if it was the last thing in the
+				// tree).
+				return 0, 0, false
+			}
+			if n.startByte > cur && !diagnosticParserCoreGapIsTolerated(source[cur:n.startByte]) {
+				return cur, n.startByte, true
+			}
+			if n.endByte > cur {
+				cur = n.endByte
+			}
+			return 0, 0, false
+		}
+		for i := 0; i < count; i++ {
+			if gs, ge, gapped := walk(n.Child(i)); gapped {
+				return gs, ge, true
+			}
+		}
+		return 0, 0, false
+	}
+	if gs, ge, gapped := walk(root); gapped {
+		return gs, ge, true
+	}
+	if cur < sourceLen && !diagnosticParserCoreGapIsTolerated(source[cur:sourceLen]) {
+		return cur, sourceLen, true
+	}
+	return 0, 0, false
+}
+
+// diagnosticParserCoreAcceptedRootTrailingErrorExtraGap reports whether
+// root's direct children end with an error-bearing extra payload trailing
+// the last non-extra child -- the accept-time splice gap (adversarial
+// review round 2, html "<html><body>x</body>\x00>"). C's ts_parser__accept
+// rebuilds the last non-extra tree over the remaining stack contents,
+// INCLUDING trailing extras, at the moment of accepting; this splices a
+// trailing extra into whatever real content precedes it, extending that
+// content's own span and propagating its own HasError up through ordinary
+// ancestor propagation. This materializer's S3 accept path does not
+// perform that splice: an ERROR region that resumes onto a head already
+// past the last structural reduce (s3CloseInProgressProductions's own
+// eager closure -- correct and necessary on its own terms -- can land
+// there) ends up attached as the ROOT's own sibling instead, one level too
+// shallow. Observed: document[0:22], 2 children (element[0:20]
+// HasError=false, ERROR[20:22] extra) where the C oracle reports 1 child
+// (element[0:22] HasError=true, the same byte-identical ERROR nested
+// inside it) -- tokenization and the ERROR container itself are identical;
+// only the attachment point differs, and it flips the enclosing element's
+// own span and HasError, which callers read.
+//
+// This audit runs only under allowErrorRoot (S3-admitted parses), same as
+// the leaf-coverage gap above, and closes a different symptom of a related
+// class: that audit requires every byte to be COVERED by some leaf, which
+// this shape already satisfies (nothing is lost, just misattached), so it
+// cannot see this gap on its own.
+//
+// Deliberately narrower than "any trailing extra": an ordinary trailing
+// comment or whitespace extra (IsError()==false, HasError()==false)
+// legitimately sits beside a root's non-extra child in BOTH engines --
+// confirmed necessary: html "<a></a><!--trailing-->" produces
+// document[0:22], 2 children (element, comment), byte-identical between
+// compact and production, and must not decline. Only an error-bearing
+// trailing extra (the shape C would have spliced into the preceding
+// content instead of leaving as the root's own sibling) trips this gap.
+func diagnosticParserCoreAcceptedRootTrailingErrorExtraGap(root *Node) bool {
+	count := root.ChildCount()
+	if count < 2 {
+		return false
+	}
+	lastNonExtra := -1
+	for i := 0; i < count; i++ {
+		if !root.Child(i).IsExtra() {
+			lastNonExtra = i
+		}
+	}
+	if lastNonExtra < 0 {
+		return false
+	}
+	for i := lastNonExtra + 1; i < count; i++ {
+		child := root.Child(i)
+		if child.IsExtra() && (child.IsError() || child.HasError()) {
+			return true
+		}
+	}
+	return false
 }
 
 // diagnosticParserCoreReduceChildrenTilingGap is the B1 route-equality
@@ -2770,7 +2977,7 @@ func bytesAreSingleByteDecorationTrivia(gap []byte) bool {
 // reusable buffers back the transient materialization storage, so the warm
 // steady state does not re-allocate the public-tree scratch on every parse.
 // scratch is reset on return, so it is safe to reuse for the next parse.
-func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head core.Head, payloads []core.SubtreeID, parser *Parser, source []byte, scratch *parserCoreRunnerScratch, forceReplayParseStates bool) (*Tree, error) {
+func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head core.Head, payloads []core.SubtreeID, parser *Parser, source []byte, scratch *parserCoreRunnerScratch, forceReplayParseStates bool, allowErrorRoot bool) (*Tree, error) {
 	if compact == nil || parser == nil || parser.language == nil || head.Node == 0 || len(payloads) == 0 {
 		return nil, errors.New("parser-core phase zero: incomplete accepted-tree selection input")
 	}
@@ -2890,6 +3097,19 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 				return errors.New("parser-core phase zero: compact subtree extent is outside source")
 			}
 			named := parser.isNamedSymbol(Symbol(view.Symbol))
+			// B3 stage S3: the built-in ERROR symbol (65535) sits outside
+			// every real grammar's SymbolMetadata table, so isNamedSymbol's
+			// bounds check above always reads false for it. Tree-sitter
+			// treats ERROR as named unconditionally (visible in
+			// S-expressions and named-child traversal, matching the pinned
+			// C oracle's own "(ERROR ...)"/"(ERROR (UNEXPECTED 'x'))"
+			// rendering for both the container and a raw unlexable-byte
+			// leaf) -- force it here rather than teach the shared,
+			// grammar-table-driven isNamedSymbol about a symbol that is
+			// never a real grammar table entry.
+			if Symbol(view.Symbol) == errorSymbol {
+				named = true
+			}
 			if view.Terminal {
 				node := newLeafNodeInArena(
 					arena, Symbol(view.Symbol), named, view.StartByte, view.EndByte,
@@ -2951,6 +3171,50 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 						view.Symbol, view.StartByte, view.EndByte, gapStart, gapEnd,
 					),
 				}
+			}
+			// B3 stage S3: an ERROR-symbol reduce is a native recovery region
+			// (s3TryOpenErrorRegion/ErrorRegionResume), never a real grammar
+			// production. It always bypasses unary self-reduction collapse
+			// (errorSymbol's huge numeric value falls outside every real
+			// grammar's SymbolMetadata table, so the collapse checks below
+			// would either safely no-op or -- for the one case they would
+			// not, a childless absorbed leaf sharing the ERROR symbol itself
+			// -- wrongly elide the wrapper the C oracle keeps; skip them
+			// outright instead of relying on that bound check), matching
+			// production's own recovery construction (newRecoveryParentNodeInArena,
+			// parser_recover_c.go), which never goes through the shared
+			// collapsibleRawUnarySelfReduction/collapsibleUnarySelfReduction
+			// path either.
+			if Symbol(view.Symbol) == errorSymbol {
+				children, fieldIDs, fieldSources, _ := parser.buildReduceChildrenWithPath(
+					entries, 0, len(entries), structuralChildren,
+					Symbol(view.Symbol), view.ProductionID, arena,
+				)
+				parent := newParentNodeInArenaWithFieldSources(
+					arena, Symbol(view.Symbol), named, children, fieldIDs, fieldSources, view.ProductionID,
+				)
+				parent.dynamicPrecedence += int32(view.DynamicPrecedence)
+				parent.startByte = view.StartByte
+				parent.endByte = view.EndByte
+				parent.startPoint = points.point(view.StartByte)
+				parent.endPoint = points.point(view.EndByte)
+				parent.setExtra(view.Extra)
+				// The ERROR container's own HasError is always true,
+				// regardless of what populateParentNode's children-OR
+				// propagation computed: matching the pinned C oracle, an
+				// absorbed leaf's own HasError stays false even when the
+				// leaf is itself an unlexable byte (ErrorRegionLeaf's doc
+				// comment; finding production-recovery-structural-divergence),
+				// so this explicit set is the only place HasError=true
+				// originates for the whole region. Every enclosing ordinary
+				// reduce above this one propagates it up for free through
+				// populateParentNode's existing, unmodified OR-of-children
+				// walk (tree.go) -- no further HasError code is needed
+				// anywhere else in this file.
+				parent.setHasError(true)
+				markFragile(parent, view.Fragile)
+				stamp(id, parent, false)
+				return nil
 			}
 			action := ParseAction{
 				Type: ParseActionReduce, Symbol: Symbol(view.Symbol), ChildCount: uint8(structuralChildren),
@@ -3081,7 +3345,7 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 	}
 	sourceLen := uint32(len(source))
 	root := tree.root
-	if err := finalizeDiagnosticParserCoreAcceptedRootSpan(root, source, sourceLen); err != nil {
+	if err := finalizeDiagnosticParserCoreAcceptedRootSpan(root, source, sourceLen, allowErrorRoot, parser.language.TokenCount); err != nil {
 		return rejectTree(err)
 	}
 	// accepted-root-leading-gap: the derivation's own root reduce is exempt
@@ -3298,6 +3562,160 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			pausedNoActionHeads++
 			continue
 		}
+		if header.s3Region != nil {
+			region := header.s3Region
+			// A header sitting on an open region is the compact analogue of
+			// a live C stack in ERROR_STATE, which lexes with a completely
+			// different (most-permissive, LexModes[0]) mode than the
+			// ordinary per-state shared election every other header uses
+			// this pass (cRecoverElectionLookaheadSymbol's own doc comment,
+			// parser_recover_c.go). Prefer that error-mode view whenever it
+			// disagrees with the shared token by still reporting this
+			// position unlexable: s3ErrorModeRelex's doc comment records the
+			// witness (html_log_8) that needs this to avoid resuming one
+			// byte early.
+			resumeToken := s.token
+			relexDisagreesUnmodeled := false
+			if relexed, relexOK := s.s3ErrorModeRelex(region.endByte); relexOK {
+				sharedIsRealContent := s.token.StartByte != s.token.EndByte
+				switch {
+				case relexed.Symbol == errorSymbol:
+					resumeToken = relexed
+				case sharedIsRealContent && (relexed.Symbol != s.token.Symbol || relexed.EndByte != s.token.EndByte):
+					// REQUIRED 2b (adversarial review, corpus witness
+					// "a>[/>"): the error-mode lexer (the lex state a live C
+					// ERROR_STATE stack actually uses) found a REAL terminal
+					// here too, but a differently-classified or differently-
+					// wide one than the ordinary shared election found for
+					// every other header this pass. Silently keeping the
+					// ordinary (here, narrower) token let this region resume
+					// one byte-run short of where C's own error-mode lexer
+					// would have kept absorbing, producing a resumed tree
+					// this single-path model cannot prove matches C. Only
+					// the already-handled errorSymbol case above is proven
+					// safe (html_log_8); every other disagreement between
+					// two REAL (non-zero-width) lex views is unmodeled and
+					// must decline, not silently prefer one view over the
+					// other.
+					//
+					// Guarding on sharedIsRealContent (confirmed necessary:
+					// html_erroneous_end_tag/html_log_6's own resume point)
+					// keeps this from over-firing when the ordinary shared
+					// token is zero-width: a zero-width token is a pure
+					// lookahead/existence marker at this exact byte offset,
+					// not consumed content, so its own table entry (used by
+					// s3RegionResumeAction just below, as the lookahead
+					// symbol for the resume-action probe, not as something
+					// this code shifts) answers "would resuming exactly here
+					// work" on its own terms -- disagreeing with the error-
+					// mode lexer's independent, wider real-content
+					// classification a few bytes later is expected, not a
+					// sign this single-path model might be wrong.
+					relexDisagreesUnmodeled = true
+				}
+			}
+			hasAction, actErr := s3RegionResumeAction(s.compact, region.state, Symbol(resumeToken.Symbol))
+			if actErr != nil {
+				return nil, actErr
+			}
+			if relexDisagreesUnmodeled {
+				return &diagnosticParserCoreGenericUnsupported{
+					boundary:    DiagnosticParserCoreRoute,
+					detail:      "generic scheduler s3 error region error-mode lex disagrees with the ordinary shared election in an unmodeled way",
+					headerIndex: index,
+				}, nil
+			}
+			// REQUIRED 2b (adversarial review): a real live C stack would
+			// scan its stack summary up to depth cRecoverMaxSummaryDepth for
+			// a state that resumes with an action before ever falling
+			// through to strategy 2's next absorb (cRecoverDispatchInError).
+			// S3 owns only depth-0 resume; probing deeper here is a bounded
+			// existence check (AncestorStateWithActionExists's own doc
+			// comment), not an attempt to perform that deeper resume.
+			deeperResumeExists := false
+			if !hasAction && resumeToken.Symbol != 0 {
+				deeperResumeExists, actErr = s.compact.AncestorStateWithActionExists(header.head, core.Symbol(resumeToken.Symbol), cRecoverMaxSummaryDepth)
+				if actErr != nil {
+					return nil, actErr
+				}
+			}
+			switch {
+			case hasAction:
+				// Depth-0 resume: the pre-error state now accepts the current
+				// token. Publish the ERROR container over the absorbed
+				// children and condense it onto the pre-error head (the
+				// compact equivalent of cRecoverToState's
+				// pushStackNode(fork, goal, errNode, ...)), then fall through
+				// to ordinary classification below using the refreshed head.
+				newHead, resumeErr := s.compact.ErrorRegionResume(header.head, region.state, region.startByte, region.endByte, region.children)
+				if resumeErr != nil {
+					return nil, resumeErr
+				}
+				s.headers[index].head = newHead
+				s.headers[index].s3Region = nil
+				header = s.headers[index]
+			case resumeToken.Symbol == 0:
+				// EOF while a region is open: cRecoverEOFAccept's whole-file
+				// wrap is out of S3 scope (s3TryOpenErrorRegion's doc
+				// comment). Fall through to ordinary classification
+				// unchanged; it finds no action against the still-open head
+				// and lands back in noActionIndices, where
+				// s3TryOpenErrorRegion bails (s3Region already set) and the
+				// existing decline applies -- fail-closed, not a guess.
+			case deeperResumeExists:
+				// A stack entry above depth 0 would accept resumeToken: C's
+				// own election could pick that deeper resume instead of
+				// continuing to absorb (strategy 1, out of S3 scope). Keeping
+				// this region growing here would risk swallowing bytes C's
+				// oracle would instead have left outside the ERROR container
+				// entirely -- decline rather than guess which one C picks.
+				return &diagnosticParserCoreGenericUnsupported{
+					boundary:    DiagnosticParserCoreRoute,
+					detail:      "generic scheduler s3 error region found a deeper stack-summary resume opportunity outside single-path depth-0 scope",
+					headerIndex: index,
+				}, nil
+			default:
+				tokenExtra, extraErr := s3TokenIsExtraShift(s.compact, resumeToken.Symbol)
+				if extraErr != nil {
+					return nil, extraErr
+				}
+				leafID, leafErr := s.compact.ErrorRegionLeaf(core.Symbol(resumeToken.Symbol), resumeToken.StartByte, resumeToken.EndByte, tokenExtra)
+				if leafErr != nil {
+					return nil, leafErr
+				}
+				grown := make([]core.SubtreeID, len(region.children)+1)
+				copy(grown, region.children)
+				grown[len(region.children)] = leafID
+				s.headers[index].s3Region = &diagnosticParserCoreS3Region{
+					state: region.state, startByte: region.startByte, endByte: resumeToken.EndByte, children: grown,
+				}
+				s.headers[index].shifted = true
+				if resumeToken.EndByte != s.token.EndByte {
+					// The error-mode relex consumed a different span than
+					// the shared election (a wider unlexable run, matching
+					// C's error-mode lexer): resync the shared token
+					// source's cursor so the next elect() call continues
+					// from where this absorb actually left off, not from
+					// the shared token's own (now-stale) end.
+					s.tokenSource.SeekTokenFrontier(resumeToken.EndByte, resumeToken.EndPoint)
+				}
+				// Return this pass immediately: a header can only reach
+				// s3Region!=nil through s3TryOpenErrorRegion, which requires
+				// len(s.headers)==1 (S3 owns no forking), so this absorb is
+				// the whole pass's work. Falling through to the per-header
+				// loop's tail (as a bare `continue` would, once the sole
+				// header's iteration ends) reaches the "len(cells)==0, no
+				// runnable head" branch with nothing recorded in cells or
+				// noActionIndices for this pass, an unsupported_route decline
+				// this stage does not own -- confirmed necessary:
+				// html_erroneous_end_tag/html_log_8 needs a second
+				// consecutive absorb (the region opened by
+				// s3TryOpenErrorRegion for '>' does not resume until the
+				// error-mode-relexed run through 'o' completes), and only
+				// this direct return reaches that second absorb at all.
+				return nil, nil
+			}
+		}
 		cellToken := s.token
 		var relexedSymbol Symbol
 		boundary, err := s.compact.ClassifyBoundary(header.head, core.Symbol(cellToken.Symbol))
@@ -3438,6 +3856,24 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			// a dispatch classification only: both boundaries still decline
 			// and fall back to production unchanged (B3 stage S1).
 			if pausedNoActionHeads == 0 {
+				// B3 stage S3: attempt native strategy-2 recovery for the
+				// certified witness class instead of declining outright.
+				// Scoped to the sole-header, sole-no-action-head shape only
+				// (design section 4's "at most one fork" ceiling starts here
+				// at zero forks: S3 owns no election and no forking at all).
+				// Any other shape, and any ownership attempt that hits
+				// genuine ambiguity, falls through unchanged to the existing
+				// decline -- fail-closed, never a guess (design section 4's
+				// fail-closed rule).
+				if len(s.headers) == 1 && len(noActionIndices) == 1 {
+					handled, s3Err := s.s3TryOpenErrorRegion(noActionIndices[0])
+					if s3Err != nil {
+						return nil, s3Err
+					}
+					if handled {
+						return nil, nil
+					}
+				}
 				return &diagnosticParserCoreGenericUnsupported{
 					boundary:    DiagnosticParserCoreRecovery,
 					detail:      diagnosticParserCoreNoTableActionDetail,
@@ -3525,6 +3961,432 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 		return nil, s.applyGenericConflict(before, cells[conflictCell])
 	}
 	return nil, s.applyGenericShifts(before, cells)
+}
+
+// ---------------------------------------------------------------------------
+// B3 stage S3: native strategy-2 recovery (error-region absorb and
+// condense-resume) over the sole no-action head. See spec.
+// compact-recovery-ownership.v1 section 4 and internal/parsercorephase0/
+// error_region.go's file doc comment for the mechanism this ports.
+// ---------------------------------------------------------------------------
+
+// s3ErrorRegionAdmitted reports whether native S3 recovery may attempt to
+// own a true no-action point for the current parse instead of declining.
+// Both the caller-declared operation shape (Recovery) and the certified,
+// grammar-blob-keyed capability (allowCompactStrategy2ErrorRegion, set only
+// from Language.CompactStrategy2ErrorRegionCertified) must hold -- an
+// uncertified grammar, or a caller that never asked for recovery, changes
+// nothing here (design section 7: no grammar-name branches, gate on
+// certified capability artifacts).
+func (s *diagnosticParserCoreGenericScheduler) s3ErrorRegionAdmitted() bool {
+	return s.options.Recovery && s.options.allowCompactStrategy2ErrorRegion
+}
+
+// s3TokenIsExtraShift reports whether symbol shifts as extra in state 1: the
+// compact equivalent of cAbsorbTokenIntoError's own state-1 probe
+// (parser_recover_c.go:3769, "if the token shifts as extra in state 1, mark
+// it extra so it is not counted in error cost calculations"). Compact's
+// generic-scheduler Token carries no Extra bit of its own (unlike the
+// internal package's Token, lexer.go), so this reproduces the same table
+// lookup production performs instead of trusting an absent field.
+func s3TokenIsExtraShift(compact *core.Core, symbol Symbol) (bool, error) {
+	row, err := compact.Actions(1, core.Symbol(symbol))
+	if err != nil {
+		return false, err
+	}
+	if row.Len() == 0 {
+		return false, nil
+	}
+	last := row.At(row.Len() - 1)
+	return last.Type == core.ActionShift && last.Extra, nil
+}
+
+// s3RegionResumeAction reports whether state has a genuine dispatchable
+// action for lookahead: the compact equivalent of cRecoverDispatchInError's
+// leading action-row check, restricted to depth-0 resume (state is always
+// exactly the state the region opened at -- never a deeper stack-summary
+// entry; scanning deeper is strategy-1 election, out of S3 scope per the
+// stage stop rule).
+func s3RegionResumeAction(compact *core.Core, state core.StateID, lookahead Symbol) (bool, error) {
+	row, err := compact.Actions(state, core.Symbol(lookahead))
+	if err != nil {
+		return false, err
+	}
+	return row.Len() > 0, nil
+}
+
+// s3ErrorModeRelex re-lexes at startByte using the grammar's error-mode lex
+// state (LexModes[0], the most permissive catch-all mode): the compact
+// equivalent of cRecoverElectionLookaheadSymbol's own relex
+// (parser_recover_c.go:3230-3275). A live C stack sitting in ERROR_STATE
+// lexes with this mode, not the mode its pre-error state would use; a
+// header holding an open S3 region is that same shape, so probing "would
+// resuming work" against the ordinary shared election (s.token, elected
+// once per pass for every header alike) is not faithful on its own --
+// confirmed necessary: html_erroneous_end_tag/html_log_8 shows the ordinary
+// shared election finding an immediately resumable "text" token for 'H'
+// where the pinned C oracle's error-mode lex keeps 'H' (and the letters
+// after it) inside the same open error run, one byte-run token wider than
+// what plain per-state lexing would report. ok is false when this
+// grammar has no distinct error-mode lex state (or startByte is past the
+// source), in which case the caller falls back to the ordinary shared
+// token unmodified -- the same conservative fallback
+// cRecoverElectionLookaheadSymbol itself takes.
+func (s *diagnosticParserCoreGenericScheduler) s3ErrorModeRelex(startByte uint32) (Token, bool) {
+	if s.tokenSource == nil || s.tokenSource.language == nil || s.tokenSource.lexer == nil {
+		return Token{}, false
+	}
+	lang := s.tokenSource.language
+	if len(lang.LexModes) == 0 || len(lang.LexStates) == 0 {
+		return Token{}, false
+	}
+	ls := lang.LexModes[0].LexStateIndex()
+	if ls == noLookaheadLexState || int(ls) >= len(lang.LexStates) {
+		return Token{}, false
+	}
+	source := s.tokenSource.lexer.source
+	if int(startByte) >= len(source) {
+		return Token{}, false
+	}
+	lx := Lexer{
+		states:              lang.LexStates,
+		asciiTable:          lang.LexAsciiTable(),
+		source:              source,
+		pos:                 int(startByte),
+		immediateTokens:     lang.ImmediateTokens,
+		zeroWidthTokens:     lang.ZeroWidthTokens,
+		errorRunLexState:    ls,
+		hasErrorRunLexState: true,
+	}
+	relexed := lx.NextWithErrorRuns(ls)
+	if relexed.Symbol == 0 && relexed.StartByte == relexed.EndByte {
+		return Token{}, false
+	}
+	return relexed, true
+}
+
+// s3MissingTokenOpportunityExists reports whether a synthetic missing-token
+// insertion at state would let the current elected token proceed: the
+// compact equivalent of cHandleError step 2's scan (parser_recover_c.go,
+// mirroring cTerminalNextState/stateHasLeadingReduceAction). For every
+// terminal ms, if state has a genuine shift for ms (Extra tokens keep the
+// same state, matching cTerminalNextState) to some other state, and that
+// state's leading action for the actual current token is a reduce, a
+// missing-token insertion here would let the parse continue -- exactly the
+// shape S5 owns (design section 4's stop rule), so the caller must decline
+// rather than absorb the real token that opportunity would have consumed.
+func (s *diagnosticParserCoreGenericScheduler) s3MissingTokenOpportunityExists(state core.StateID) (bool, error) {
+	if s.tokenSource == nil || s.tokenSource.language == nil {
+		return false, nil
+	}
+	tokenCount := Symbol(s.tokenSource.language.TokenCount)
+	if tokenCount == 0 {
+		return false, nil
+	}
+	for ms := Symbol(1); ms < tokenCount; ms++ {
+		row, err := s.compact.Actions(state, core.Symbol(ms))
+		if err != nil {
+			return false, err
+		}
+		if row.Len() == 0 {
+			continue
+		}
+		last := row.At(row.Len() - 1)
+		if last.Type != core.ActionShift {
+			continue
+		}
+		nextState := core.StateID(last.State)
+		if last.Extra {
+			nextState = state
+		}
+		if nextState == 0 || nextState == state {
+			continue
+		}
+		nextRow, err := s.compact.Actions(nextState, core.Symbol(s.token.Symbol))
+		if err != nil {
+			return false, err
+		}
+		if nextRow.Len() == 0 {
+			continue
+		}
+		if nextRow.At(0).Type == core.ActionReduce {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// s3CloseInProgressProductionsMaxSteps bounds the eager reduction closure
+// below. Any real single-path closure chain in the certified witness class
+// resolves in a handful of steps; a chain this long almost certainly means
+// the walk stopped terminating for a reason S3 does not understand, so
+// bailing out (a decline, not a guess) is the safe default.
+const s3CloseInProgressProductionsMaxSteps = 64
+
+// s3CloseInProgressProductions eagerly reduces head across every terminal
+// symbol's action row until either some symbol yields a genuine (non-extra,
+// non-repetition) shift/accept/recover action at the resulting state (a real
+// dispatchable state -- stop here, nothing more to close) or no symbol
+// yields any reduce action at all (a dead end -- also stop, keeping the
+// pre-closure head, mirroring C's anyLookahead=true dead-end-stays-in-place
+// rule). This is the compact equivalent of cDoAllPotentialReductions's
+// "close in-progress productions" step (parser_recover_c.go:2523),
+// restricted to the single deterministic path S3 owns: a state offering
+// more than one distinct reduce candidate with no shift is genuine ambiguity
+// (true strategy-1 territory), and this function reports ok=false rather
+// than choosing among candidates.
+//
+// Two exclusions keep the single dispatchable-action test faithful to C's
+// own has_shift_action (adversarial review finding, REQUIRED 2b): extra
+// shifts (a comment/whitespace token is shiftable from nearly every state,
+// in this grammar and most others, so treating that as "a real dispatchable
+// action exists, stop closing" would end the walk almost immediately,
+// everywhere, independent of whether the actual error the walk is trying to
+// close resolves) and repetition shifts (a self-loop that does not
+// represent grammatical progress out of the error) are excluded from
+// setting hasShift, exactly as C's has_shift_action excludes them.
+//
+// A reduce action with ChildCount==0 (a nullable/epsilon production) is a
+// real reduce this closure does not know how to fold into its single-path
+// walk -- applying it would require reasoning this stage does not own, and
+// silently ignoring it (treating the state as if that action did not exist)
+// would let the walk report a stale, pre-reduce state as final, exactly the
+// missing-token-insertion-detection gap REQUIRED 2a names. Either shape
+// forces ok=false: an epsilon reduce is exactly the kind of reduce
+// candidate "the single-path closure does not reproduce."
+//
+// changed reports whether at least one reduction actually ran (so the
+// caller knows to adopt the returned head instead of discarding it).
+func (s *diagnosticParserCoreGenericScheduler) s3CloseInProgressProductions(head core.Head) (out core.Head, changed bool, ok bool, err error) {
+	if s.tokenSource == nil || s.tokenSource.language == nil {
+		return head, false, false, nil
+	}
+	tokenCount := Symbol(s.tokenSource.language.TokenCount)
+	if tokenCount == 0 {
+		return head, false, false, nil
+	}
+	current := head
+	for steps := 0; steps < s3CloseInProgressProductionsMaxSteps; steps++ {
+		state, _, boundaryErr := s.compact.Boundary(current)
+		if boundaryErr != nil {
+			return core.Head{}, changed, false, boundaryErr
+		}
+		hasShift := false
+		reduceCandidates := 0
+		sawUnmodeledReduce := false
+		var reduceLookahead Symbol
+		var reduceOrdinal int
+		var reduceKeySymbol core.Symbol
+		var reduceKeyCount uint8
+		haveKey := false
+		for sym := Symbol(1); sym < tokenCount; sym++ {
+			row, actionsErr := s.compact.Actions(state, core.Symbol(sym))
+			if actionsErr != nil {
+				return core.Head{}, changed, false, actionsErr
+			}
+			for i := 0; i < row.Len(); i++ {
+				act := row.At(i)
+				switch act.Type {
+				case core.ActionShift:
+					if !act.Extra && !act.Repetition {
+						hasShift = true
+					}
+				case core.ActionAccept, core.ActionRecover:
+					hasShift = true
+				case core.ActionReduce:
+					if act.ChildCount == 0 {
+						sawUnmodeledReduce = true
+						continue
+					}
+					if haveKey && act.Symbol == reduceKeySymbol && act.ChildCount == reduceKeyCount {
+						continue // same production reachable on another symbol: not a new candidate
+					}
+					reduceCandidates++
+					reduceLookahead, reduceOrdinal = sym, i
+					reduceKeySymbol, reduceKeyCount, haveKey = act.Symbol, act.ChildCount, true
+				}
+			}
+		}
+		if hasShift {
+			// A real dispatchable action exists here regardless of what else
+			// this state also offers: stop closing, nothing more to do.
+			return current, changed, true, nil
+		}
+		if sawUnmodeledReduce {
+			// No real shift to fall back on, and at least one reduce
+			// candidate here is a shape this single-path closure cannot
+			// safely apply (see doc comment): decline rather than either
+			// silently discarding it (the pre-fix bug) or guessing at how
+			// to fold it into the walk.
+			return current, changed, false, nil
+		}
+		if reduceCandidates == 0 {
+			return current, changed, true, nil
+		}
+		if reduceCandidates > 1 {
+			return current, changed, false, nil
+		}
+		frontier, reduceErr := s.compact.Reduce(current, core.Symbol(reduceLookahead), reduceOrdinal, core.ForkOrder{})
+		if reduceErr != nil {
+			return core.Head{}, changed, false, reduceErr
+		}
+		if len(frontier) != 1 {
+			return current, changed, false, nil
+		}
+		current = frontier[0]
+		changed = true
+	}
+	return current, changed, false, nil
+}
+
+// s3TryOpenErrorRegion attempts to open (and immediately begin absorbing
+// into) a native S3 error region for the sole no-action header index.
+// handled=true means this pass is fully accounted for: either closure alone
+// resolved the no-action point (an LALR table gap, not malformed input -- no
+// region needed, and the caller redispatches this same pass against the
+// closed head) or a region was opened and the current token absorbed.
+// handled=false means the caller must fall back to the existing decline path
+// unchanged: recovery is not admitted, the shape is not a single deterministic
+// path, or absorbing would require the EOF wrap S3 does not own.
+func (s *diagnosticParserCoreGenericScheduler) s3TryOpenErrorRegion(index int) (handled bool, err error) {
+	if !s.s3ErrorRegionAdmitted() {
+		return false, nil
+	}
+	header := &s.headers[index]
+	if header.s3Region != nil {
+		// Already owned by the per-header advance hook (dispatchPassActive's
+		// s3Region branch); that hook declined to widen absorption to EOF.
+		// Fall through to the existing decline unchanged.
+		return false, nil
+	}
+	// A no-action point at or before the source's first non-trivia byte is
+	// the root-leading-gap shape (finalizeDiagnosticParserCoreAcceptedRootSpan's
+	// sibling gate, diagnosticParserCoreReduceChildrenTilingGap's
+	// isDerivationRootReduce exemption): one real byte at document start
+	// that no node in ANY derivation ever represents, a pre-existing,
+	// separately-owned decline path this stage must not intrude on. Every
+	// committed html_erroneous_end_tag witness needs at least one real
+	// shifted tag before its absorbed byte (structurally, an end-tag error
+	// cannot exist with no preceding start tag), so this guard never blocks
+	// the certified witness class -- confirmed necessary: without it,
+	// TestCompactRouteRootLeadingGapDeclines's html cases ("&0", "&;", "&#",
+	// ">0", "&000") get absorbed here instead of reaching the existing,
+	// unverified-for-this-shape accepted-root-leading-gap decline.
+	if s.tokenSource != nil && s.tokenSource.lexer != nil &&
+		s.token.StartByte <= firstNonTriviaByteStart(s.tokenSource.lexer.source) {
+		return false, nil
+	}
+	// Comment-accuracy note (adversarial review, MINOR item a): every decline
+	// below this line runs AFTER s3CloseInProgressProductions, which -- when
+	// it applies a reduce candidate while walking toward a dispatchable
+	// state or a dead end -- has already performed a real reduction,
+	// appending new node/subtree records to the compact arena. That ordering
+	// is intentional, not an oversight to fix by moving these checks above
+	// the closure: s3RegionResumeAction, the error-mode-lex-disagreement
+	// check, the EOF check, the missing-token-opportunity check, and the
+	// deeper-resume check all need the CLOSED head's own state, not the
+	// pre-closure one, to answer their own question correctly, so they
+	// cannot run any earlier than this. It is also safe: the compact arena
+	// is append-only and immutable once published (core.go's own
+	// documentation on this invariant), and every decline path here means
+	// the caller falls back to production for the whole parse, not a
+	// partial/local rollback -- so nothing downstream ever reads whatever
+	// extra records this closure left behind. No dirty state escapes a
+	// decline; only tree records that are already immutable, unreferenced
+	// by anything the caller ultimately serves, and cheap.
+	closedHead, changed, ok, closeErr := s.s3CloseInProgressProductions(header.head)
+	if closeErr != nil {
+		return false, closeErr
+	}
+	if !ok {
+		return false, nil
+	}
+	if changed {
+		header.head = closedHead
+	}
+	state, _, boundaryErr := s.compact.Boundary(header.head)
+	if boundaryErr != nil {
+		return false, boundaryErr
+	}
+	// REQUIRED 2b (adversarial review): the same error-mode-lex-disagreement
+	// guard Hook A runs before every subsequent absorb (dispatchPassActive's
+	// s3Region branch doc comment) applies here too, symmetrically, for the
+	// very first token a brand-new region would absorb -- a live C stack
+	// enters ERROR_STATE (and its permissive lex mode) at exactly this same
+	// no-action point, not one absorb later, so the first token deserves the
+	// identical disagreement check, not just every token after it.
+	if relexed, relexOK := s.s3ErrorModeRelex(s.token.StartByte); relexOK && relexed.Symbol != errorSymbol {
+		sharedIsRealContent := s.token.StartByte != s.token.EndByte
+		if sharedIsRealContent && (relexed.Symbol != s.token.Symbol || relexed.EndByte != s.token.EndByte) {
+			return false, nil
+		}
+	}
+	hasAction, actionErr := s3RegionResumeAction(s.compact, state, Symbol(s.token.Symbol))
+	if actionErr != nil {
+		return false, actionErr
+	}
+	if hasAction {
+		// Closure alone resolved it: this was never a real error. Let the
+		// ordinary dispatch loop redispatch this pass against the closed head.
+		return true, nil
+	}
+	// EOF at the very first no-action point, nothing absorbed yet:
+	// cRecoverEOFAccept's whole-file wrap is out of S3 scope. No committed
+	// html_erroneous_end_tag witness needs it (verified against the pinned C
+	// oracle: every native witness resumes before EOF).
+	if s.token.Symbol == 0 {
+		return false, nil
+	}
+	// C's cHandleError tries missing-token insertion (step 2, "once across
+	// the version set, in order") before it ever tries strategy 2 absorb.
+	// This stage does not own missing-token insertion (S5) or strategy-1
+	// election (S4; design section 4's stop rule: "if any html witness needs
+	// strategy 1 or missing insertion, leave it fail-closed"), so it must
+	// decline whenever a missing-token insertion opportunity exists here,
+	// rather than silently absorbing the real token that opportunity would
+	// have consumed instead. Confirmed necessary: html_erroneous_end_tag/
+	// html_log_7 (a dangling start_tag whose next real token is a valid "</"
+	// it cannot use) needs a MISSING ">" here; absorbing "</" as an ordinary
+	// error-region token instead produced a confirmed wrong tree.
+	missingOpportunity, missingErr := s.s3MissingTokenOpportunityExists(state)
+	if missingErr != nil {
+		return false, missingErr
+	}
+	if missingOpportunity {
+		return false, nil
+	}
+	// REQUIRED 2b (adversarial review): before absorbing the first token
+	// into a brand-new region, also rule out a deeper (depth 1..
+	// cRecoverMaxSummaryDepth) stack-summary resume -- the same existence
+	// probe Hook A runs before every subsequent absorb (dispatchPassActive's
+	// s3Region branch). A live C stack would try that deeper resume
+	// (strategy 1) before ever falling through to strategy 2's absorb; S3
+	// owns only depth-0 resume, so finding one here means this shape is out
+	// of scope and must decline instead of guessing which one C's election
+	// would pick.
+	deeperResumeExists, deeperErr := s.compact.AncestorStateWithActionExists(header.head, core.Symbol(s.token.Symbol), cRecoverMaxSummaryDepth)
+	if deeperErr != nil {
+		return false, deeperErr
+	}
+	if deeperResumeExists {
+		return false, nil
+	}
+	tokenExtra, extraErr := s3TokenIsExtraShift(s.compact, s.token.Symbol)
+	if extraErr != nil {
+		return false, extraErr
+	}
+	leafID, leafErr := s.compact.ErrorRegionLeaf(core.Symbol(s.token.Symbol), s.token.StartByte, s.token.EndByte, tokenExtra)
+	if leafErr != nil {
+		return false, leafErr
+	}
+	header.s3Region = &diagnosticParserCoreS3Region{
+		state:     state,
+		startByte: s.token.StartByte,
+		endByte:   s.token.EndByte,
+		children:  []core.SubtreeID{leafID},
+	}
+	header.shifted = true
+	return true, nil
 }
 
 func (s *diagnosticParserCoreGenericScheduler) zeroWidthExtraShiftWithoutProgress(cells []diagnosticParserCoreGenericCell) *diagnosticParserCoreGenericUnsupported {
