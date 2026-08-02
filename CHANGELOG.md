@@ -20,6 +20,19 @@ for tags and release notes while still in `0.x`.
   A new unit test pins the retention rule directly against the generator.
   Regressions now surface without a blob rebuild.
 
+- The Swift optional-binding vs trailing-closure fix (#542) added a
+  shift/reduce precedence branch to `grammargen/lr.go`.
+  It ran before the declared-conflict retention check.
+  It also matched ordinary undeclared conflicts in other grammars and
+  picked the wrong side.
+  JavaScript's `update_expression` vs `binary_expression` conflict is one
+  example.
+  The branch now runs last, after declared-conflict retention and the
+  ordinary precedence ladder get a chance to resolve the conflict first.
+  The Swift case from #542 still resolves correctly.
+  A new test now guards javascript and typescript regeneration against the
+  C reference parser on real source files.
+
 ### Changed
 
 - The condense-candidate dispatch path no longer passes a closure through
