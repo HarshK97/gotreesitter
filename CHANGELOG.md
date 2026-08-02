@@ -46,6 +46,27 @@ for tags and release notes while still in `0.x`.
   The host carried heavy background load throughout the run, so the result
   is not a sealed measurement.
 
+- Removed the 64 KiB source-length eligibility decline from the compact
+  admission switch.
+  A fresh full parse of any size now attempts the compact route first.
+  The scheduler's stop-control poll bounds a large or pathological input:
+  it compares the compact core's own real retained-memory footprint
+  against the same soft memory budget production honors, and falls back to
+  production with a matching `ParseStopMemoryBudget` stop reason when the
+  budget is exceeded.
+  Every decline path now releases the compact core's retained capacity
+  before returning, not only its logical record count, so a production
+  fallback does not run alongside megabytes of memory an earlier declined
+  attempt on the same parser left allocated.
+  An operator watching `AdmissionCandidateCounters()` sees this directly:
+  a large input that declines bumps the fallback count exactly as a small
+  one always did.
+  This bounds retained footprint, not the compact scheduler's own transient
+  per-token allocation during a declined attempt; closing that remaining
+  gap trades against how large an input the compact route can still serve,
+  and is an open follow-up, not resolved by this change.
+  Routing only changes; every canonical tree digest stays identical.
+
 ## [0.48.0] - 2026-08-01
 
 ### Added

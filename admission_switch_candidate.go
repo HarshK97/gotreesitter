@@ -105,6 +105,46 @@ func (p *Parser) acquireAdmissionCandidateRunner() (*parserCoreFreshFullRunner, 
 	return runner, nil
 }
 
+// admissionCandidateCompactStorageBytes reports p's cached admission-candidate
+// runner's current compact-core storage (internal/parsercorephase0.Core.
+// StorageBytes()), or 0 when no runner is cached yet.
+//
+// StorageBytes reads 0 after ANY Reset, released or not: it counts live
+// length, and Reset always truncates length to zero even when it leaves
+// capacity retained. It cannot by itself distinguish "genuinely released"
+// from "reset but still holding a large backing array" -- use
+// admissionCandidateCompactFootprintBytes for that (tranche B9 gate).
+func admissionCandidateCompactStorageBytes(p *Parser) uint64 {
+	if p == nil {
+		return 0
+	}
+	runner, ok := p.admissionCandidateRunner.(*parserCoreFreshFullRunner)
+	if !ok || runner == nil || runner.compact == nil {
+		return 0
+	}
+	return runner.compact.StorageBytes()
+}
+
+// admissionCandidateCompactFootprintBytes reports p's cached
+// admission-candidate runner's current compact-core retained-memory
+// footprint (internal/parsercorephase0.Core.FootprintBytes()), or 0 when no
+// runner is cached yet. Unlike admissionCandidateCompactStorageBytes, this
+// reads real retained CAPACITY, so it can actually detect whether a decline
+// path released its retained arenas or merely truncated their logical
+// length (tranche B9 storage-release gate). It exists for regression tests
+// proving that gate: a declined parse must not leave compact storage
+// retained while the caller's production fallback runs.
+func admissionCandidateCompactFootprintBytes(p *Parser) uint64 {
+	if p == nil {
+		return 0
+	}
+	runner, ok := p.admissionCandidateRunner.(*parserCoreFreshFullRunner)
+	if !ok || runner == nil || runner.compact == nil {
+		return 0
+	}
+	return runner.compact.FootprintBytes()
+}
+
 // tryCompactFullParseRoute attempts the compact candidate route for a fresh
 // full parse. It returns (tree, true, "") on success and (nil, false, reason)
 // on any decline, so the caller falls back to production.

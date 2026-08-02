@@ -12,3 +12,16 @@ package gotreesitter
 func (p *Parser) tryCompactFullParseRoute(_ []byte) (*Tree, bool, string) {
 	return nil, false, "compact candidate route compiled out (built with -tags gts_no_parsercorephase0)"
 }
+
+// admissionCandidateCompactStorageBytes is the emergency-build stub: the
+// compact engine is compiled out, so no cached runner and no compact storage
+// ever exist.
+func admissionCandidateCompactStorageBytes(_ *Parser) uint64 {
+	return 0
+}
+
+// admissionCandidateCompactFootprintBytes is the emergency-build stub,
+// matching admissionCandidateCompactStorageBytes above.
+func admissionCandidateCompactFootprintBytes(_ *Parser) uint64 {
+	return 0
+}
