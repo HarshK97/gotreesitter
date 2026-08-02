@@ -77,41 +77,43 @@ const routeEqualityFuzzMaxInputBytes = 4096
 // attribution harness's diagnostic lane (cgo_harness/attribution), which
 // bypasses Parse and the admission switch entirely and never ships.
 //
-// KNOWN OPEN FINDING (root-reduce leaf-tiling exemption; not fixed by this
-// tranche): live fuzzing reproducibly finds a false-clean divergence in
-// under 4 seconds from a cold cache, independent of which curated language
-// it lands on. Confirmed witnesses: html "&0", "&;", "&#", "&09", ">0";
-// erlang "\x010", "\x100"; haskell "\"\n" -- all two bytes, all the same
-// shape: one non-trivia byte at byte 0 (document start) that compact drops
-// silently (HasError()==false, no child covers it) while production
-// correctly reports HasError()==true. Root cause, verified by direct
-// read of parsercore_phase0_driver.go: materializeDiagnosticParserCoreAcceptedSelection's
-// reduce visitor calls diagnosticParserCoreReduceChildrenTilingGap (the B1
-// fix) for every reduce EXCEPT the derivation's own root symbol
-// (isDerivationRootReduce, ~line 2800) -- a deliberate exemption, but its own
-// comment justifies it only against finalizeDiagnosticParserCoreAcceptedRootSpan
-// pinning "an over-wide root span"; that function (~line 2420) verifies only
-// that the root's span bounds equal [expectedStart, sourceLen), never that
-// the root's own raw children actually tile it, so a LEADING (or interior)
-// gap at the root symbol specifically is unchecked by either function. The
-// exemption's one documented motivating case (jsdoc's unspaced "*/" comment
-// terminator) is a TRAILING-edge gap; every reproduction found here is a
-// LEADING-edge gap, a materially different shape the exemption's own
-// reasoning does not cover. A narrow fix -- keep the exemption only for a
-// gap that reaches the root's own endByte (trailing), not one that starts
-// at the root's own startByte or sits between two of its children -- was
-// identified but deliberately NOT implemented here: correctly scoping and
-// re-validating any change to this function needs the full B1 validation
-// surface (98-witness manifest, real-corpus matrix, 206-language scorecard,
-// cgo C-oracle parity), none of which a B2-scoped fuzzer change should touch
-// ad hoc. Filed as a campaign finding for a B1 follow-up tranche.
+// FIXED FINDING (root-start pull-back leading-byte drop): live fuzzing used
+// to reproduce a false-clean divergence in under 4 seconds from a cold
+// cache, independent of which curated language it landed on. Confirmed
+// witnesses: html "&0", "&;", "&#", ">0", "&000"; erlang "\x010", "\x100";
+// haskell "\"\n" -- all the same shape: one non-trivia byte at byte 0
+// (document start) that the accepted derivation's own root reduce never
+// represented (HasError()==false, no node anywhere in the derivation covers
+// the byte) while production correctly reported HasError()==true.
+// diagnosticParserCoreReduceChildrenTilingGap (the B1 fix) never saw this
+// gap because it is exempt at the derivation's own root symbol
+// (isDerivationRootReduce, parsercore_phase0_driver.go); the shared post-
+// materialization normalizeRootSourceStart (parser_result_root_build.go)
+// then pulled the public root span back over the missing byte on the
+// assumption of a legitimately elided leading extra, so
+// finalizeDiagnosticParserCoreAcceptedRootSpan's own start check saw an
+// already-laundered, tautologically-correct span. Fixed by a second,
+// root-specific decline in materializeDiagnosticParserCoreAcceptedSelection
+// (parsercore_phase0_driver.go) that reads the derivation's raw,
+// pre-normalization root span start -- the one value the pull-back
+// overwrites -- and declines fail-closed whenever it starts after the
+// source's first non-trivia byte. See
+// TestCompactRouteRootLeadingGapDeclines
+// (admission_route_equality_root_leading_gap_test.go) for the pinned
+// per-witness regression and TestCompactRouteLeadingCommentStillServes for
+// the fail-open control (a legitimate leading comment still routes through
+// the compact candidate).
 //
-// Because this reproduces from a cold cache in seconds regardless of which
-// curated language the mutator lands on, the bounded CI fuzz lane
-// (.github/workflows/ci.yml) runs this target as an ADVISORY step, not a
-// blocking one, until that follow-up lands; only the seed-corpus regression
-// step (this file's committed f.Add corpus, which excludes every witness
-// above) is required. See this tranche's spore for the full writeup.
+// The bounded CI fuzz lane (.github/workflows/ci.yml) still runs this
+// target's live-mutation step as ADVISORY, not blocking: a 90-second local
+// session with this finding fixed found zero occurrences of this class
+// across go, javascript, html, swift, python, bash, erlang, and rust, but
+// surfaced a separate, unrelated, pre-existing structural divergence on
+// haskell (matching HasError, differing child count -- a different
+// mechanism from this finding's HasError divergence). Promote the live-
+// mutation step once that residual is filed and resolved. The seed-corpus
+// regression step (this file's committed f.Add corpus) is unaffected and
+// stays required.
 func FuzzAdmissionRouteEquality(f *testing.F) {
 	// Several curated languages (html, javascript, swift, ...) are not
 	// otherwise loaded by the always-on suite; purge the process-wide

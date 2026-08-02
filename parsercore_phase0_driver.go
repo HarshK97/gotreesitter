@@ -2869,6 +2869,23 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 		}
 		nodes[index] = nodesByID[payload]
 	}
+	// acceptedRootSpanStart is each top-level node's OWN declared startByte
+	// (view.StartByte, stamped verbatim at materializeVisit and never mutated
+	// since), captured before buildResultFromNodes runs. It must be read here:
+	// buildResultFromNodes's finalizeResultRoot calls normalizeRootSourceStart
+	// (parser_result_root_build.go), which unconditionally pulls a wider root
+	// back to source's first non-trivia byte on the assumption of a
+	// legitimately elided leading extra. That pull-back overwrites this exact
+	// field, so any check against the post-build root.startByte is tautological
+	// (it always reads back whatever normalizeRootSourceStart just wrote). See
+	// the leading-gap decline below, which compares this pre-normalization
+	// value instead.
+	acceptedRootSpanStart := nodes[0].startByte
+	for _, n := range nodes[1:] {
+		if n.startByte < acceptedRootSpanStart {
+			acceptedRootSpanStart = n.startByte
+		}
+	}
 	if err := poll(); err != nil {
 		return nil, err
 	}
@@ -2921,6 +2938,31 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 	root := tree.root
 	if err := finalizeDiagnosticParserCoreAcceptedRootSpan(root, source, sourceLen); err != nil {
 		return rejectTree(err)
+	}
+	// accepted-root-leading-gap: the derivation's own root reduce is exempt
+	// from diagnosticParserCoreReduceChildrenTilingGap (isDerivationRootReduce,
+	// above), so a root whose declared span starts strictly after the source's
+	// first non-trivia byte passes that check by construction -- no child ever
+	// needed to cover the missing prefix because the root itself never claimed
+	// it. finalizeDiagnosticParserCoreAcceptedRootSpan does not catch this
+	// either: it runs after normalizeRootSourceStart has already pulled
+	// root.startByte back to expectedStart, so its equality check is
+	// tautological for this exact shape. acceptedRootSpanStart (captured
+	// before that pull-back) is the only place this information still exists.
+	// A raw start after the first real byte means at least one leading byte
+	// was never represented by any node in the accepted derivation; decline
+	// fail-closed rather than let normalizeRootSourceStart's legitimate-
+	// elision assumption launder it into a clean tree. Conservative by
+	// design: a genuine legitimately-elided leading extra also declines here
+	// and falls back to production, which still serves it correctly.
+	if expectedStart := firstNonTriviaByteStart(source); acceptedRootSpanStart > expectedStart {
+		return rejectTree(&diagnosticParserCoreDecline{
+			boundary: DiagnosticParserCoreAccept,
+			detail: fmt.Sprintf(
+				"accepted-root-leading-gap: accepted derivation's own root span started at byte %d, after source's first non-trivia byte %d",
+				acceptedRootSpanStart, expectedStart,
+			),
+		})
 	}
 	tree.incrementalReuseDisabled = !incrementalReuseProven
 	tree.compactMaterialized = true
