@@ -20,20 +20,90 @@ const (
 	tsTokJsxText         = 7
 	tsTokFuncSigAutoSemi = 8
 	tsTokErrorRecovery   = 9
+	tsTokenCount         = 10
 )
 
+// Concrete symbol IDs from the checked-in TypeScript grammar ExternalSymbols.
+// These are DEFAULTS only: the fallback entries in tsDefaultSymTable, used
+// as-is if Scan is ever invoked on a scanner value that was never bound to a
+// Language (should not happen in production; see ExternalScannerForLanguage).
+// ExternalScannerForLanguage binds the real per-Language symbols
+// POSITIONALLY (by external index, via bindExternalScannerSymbolNames), not
+// by these absolute IDs, so a grammargen-regenerated typescript blob -- which
+// emits the same 10 externals in the same order but under different absolute
+// Symbol numbering once the automaton grows or shrinks -- still lexes
+// correctly instead of silently mistyping every external scan result. See
+// bindExternalScannerSymbolNames for why positional (not absolute-ID or
+// by-name) binding is required; the same pattern is used by the
+// javascript/kotlin/python/swift/dart/rust/hcl scanners.
 const (
 	tsSymAutoSemicolon   gotreesitter.Symbol = 160
 	tsSymTemplateChars   gotreesitter.Symbol = 161
 	tsSymTernaryQmark    gotreesitter.Symbol = 162
 	tsSymHtmlComment     gotreesitter.Symbol = 163
+	tsSymLogicalOr       gotreesitter.Symbol = 72
+	tsSymEscapeSequence  gotreesitter.Symbol = 103
+	tsSymRegexPattern    gotreesitter.Symbol = 108
 	tsSymJsxText         gotreesitter.Symbol = 164
 	tsSymFuncSigAutoSemi gotreesitter.Symbol = 165
+	tsSymErrorRecovery   gotreesitter.Symbol = 166
 )
+
+// tsDefaultSymTable mirrors the tsTok* index order above.
+var tsDefaultSymTable = [tsTokenCount]gotreesitter.Symbol{
+	tsTokAutoSemicolon:   tsSymAutoSemicolon,
+	tsTokTemplateChars:   tsSymTemplateChars,
+	tsTokTernaryQmark:    tsSymTernaryQmark,
+	tsTokHtmlComment:     tsSymHtmlComment,
+	tsTokLogicalOr:       tsSymLogicalOr,
+	tsTokEscapeSequence:  tsSymEscapeSequence,
+	tsTokRegexPattern:    tsSymRegexPattern,
+	tsTokJsxText:         tsSymJsxText,
+	tsTokFuncSigAutoSemi: tsSymFuncSigAutoSemi,
+	tsTokErrorRecovery:   tsSymErrorRecovery,
+}
+
+// tsExternalSymbolNames lists the typescript grammar's external tokens in
+// declaration order (matching the tsTok* indexes above and the language's
+// ExternalSymbols order). Used by ExternalScannerForLanguage to bind this
+// scanner's token slots to a Language's external symbols positionally, the
+// same pattern used by the javascript/kotlin/python/swift/dart/rust/hcl
+// scanners. See bindExternalScannerSymbolNames for why positional (not
+// absolute-ID or by-name) binding is required.
+var tsExternalSymbolNames = []string{
+	"_automatic_semicolon",
+	"_template_chars",
+	"_ternary_qmark",
+	"html_comment",
+	"||",
+	"escape_sequence",
+	"regex_pattern",
+	"jsx_text",
+	"_function_signature_automatic_semicolon",
+	"__error_recovery",
+}
 
 // TypeScriptExternalScanner handles automatic semicolons, template strings,
 // JSX text, ternary question marks, and HTML comments for TypeScript.
-type TypeScriptExternalScanner struct{}
+type TypeScriptExternalScanner struct {
+	symbols         [tsTokenCount]gotreesitter.Symbol
+	externalToToken []int
+}
+
+// ExternalScannerForLanguage binds this scanner's token slots to lang's
+// external symbols positionally (external index i -> scanner token i), so
+// Scan resolves result symbols through the bound table instead of the
+// hardcoded absolute IDs above. Required whenever the attached Language did
+// not come from the exact blob those absolute IDs were pinned against (e.g.
+// a grammargen regeneration that shifts the automaton's overall symbol
+// numbering) -- see bindExternalScannerSymbolNames.
+func (TypeScriptExternalScanner) ExternalScannerForLanguage(lang *gotreesitter.Language) gotreesitter.ExternalScanner {
+	s := TypeScriptExternalScanner{symbols: tsDefaultSymTable}
+	s.externalToToken = bindExternalScannerSymbolNames(lang, tsExternalSymbolNames, func(tokenIdx int, sym gotreesitter.Symbol) {
+		s.symbols[tokenIdx] = sym
+	})
+	return s
+}
 
 func (TypeScriptExternalScanner) Create() any                           { return nil }
 func (TypeScriptExternalScanner) Destroy(payload any)                   {}
@@ -41,54 +111,91 @@ func (TypeScriptExternalScanner) Serialize(payload any, buf []byte) int { return
 func (TypeScriptExternalScanner) Deserialize(payload any, buf []byte)   {}
 func (TypeScriptExternalScanner) SupportsIncrementalReuse() bool        { return true }
 
-func (TypeScriptExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
+// symbolTable returns the per-Language-bound result-symbol table, falling
+// back to the pinned defaults when Scan is invoked on an unbound scanner
+// value (s.symbols is still its zero value).
+func (s TypeScriptExternalScanner) symbolTable() *[tsTokenCount]gotreesitter.Symbol {
+	if s.symbols == ([tsTokenCount]gotreesitter.Symbol{}) {
+		return &tsDefaultSymTable
+	}
+	return &s.symbols
+}
+
+// remapValidSymbols translates a Language-external-indexed validSymbols
+// slice into scanner-token-indexed space via s.externalToToken. When the
+// Language's external count and order agree with tsExternalSymbolNames (the
+// common case), externalToToken is the identity permutation and this is a
+// copy; it only diverges when a future grammar version adds, removes, or
+// reorders an external token relative to tsExternalSymbolNames.
+func (s TypeScriptExternalScanner) remapValidSymbols(validSymbols []bool, semanticValid *[tsTokenCount]bool) []bool {
+	if len(s.externalToToken) == 0 {
+		return validSymbols
+	}
+	*semanticValid = [tsTokenCount]bool{}
+	for externalIdx, valid := range validSymbols {
+		if !valid || externalIdx >= len(s.externalToToken) {
+			continue
+		}
+		tokenIdx := s.externalToToken[externalIdx]
+		if tokenIdx >= 0 && tokenIdx < tsTokenCount {
+			semanticValid[tokenIdx] = true
+		}
+	}
+	return semanticValid[:]
+}
+
+func (s TypeScriptExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
+	var semanticValid [tsTokenCount]bool
+	validSymbols = s.remapValidSymbols(validSymbols, &semanticValid)
+	symbols := s.symbolTable()
+
 	if tsValid(validSymbols, tsTokTemplateChars) {
 		if tsValid(validSymbols, tsTokAutoSemicolon) {
 			return false
 		}
-		return tsScanTemplateChars(lexer)
+		return tsScanTemplateChars(lexer, symbols)
 	}
 
 	preferAutoSemicolon := tsPreferAutoSemicolonOverJsxText(lexer, validSymbols)
 
 	if tsValid(validSymbols, tsTokJsxText) && !preferAutoSemicolon {
-		if tsScanJsxText(lexer) {
+		if tsScanJsxText(lexer, symbols) {
 			return true
 		}
 	}
 
 	if tsValid(validSymbols, tsTokAutoSemicolon) || tsValid(validSymbols, tsTokFuncSigAutoSemi) {
 		scannedComment := false
-		ret := tsScanAutoSemicolon(lexer, validSymbols, &scannedComment)
+		ret := tsScanAutoSemicolon(lexer, validSymbols, symbols, &scannedComment)
 		if !ret && !scannedComment && tsValid(validSymbols, tsTokTernaryQmark) && lexer.Lookahead() == '?' {
-			return tsScanTernaryQmark(lexer)
+			return tsScanTernaryQmark(lexer, symbols)
 		}
 		if !ret && !scannedComment && preferAutoSemicolon && tsValid(validSymbols, tsTokJsxText) {
-			return tsScanJsxText(lexer)
+			return tsScanJsxText(lexer, symbols)
 		}
 		return ret
 	}
 
 	if tsValid(validSymbols, tsTokJsxText) && preferAutoSemicolon {
-		return tsScanJsxText(lexer)
+		return tsScanJsxText(lexer, symbols)
 	}
 
 	if tsValid(validSymbols, tsTokTernaryQmark) {
-		return tsScanTernaryQmark(lexer)
+		return tsScanTernaryQmark(lexer, symbols)
 	}
 
 	if tsValid(validSymbols, tsTokHtmlComment) &&
 		!tsValid(validSymbols, tsTokLogicalOr) &&
 		!tsValid(validSymbols, tsTokEscapeSequence) &&
 		!tsValid(validSymbols, tsTokRegexPattern) {
-		return tsScanClosingComment(lexer)
+		return tsScanClosingComment(lexer, symbols)
 	}
 
 	return false
 }
 
-func tsScanTemplateChars(lexer *gotreesitter.ExternalLexer) bool {
-	lexer.SetResultSymbol(tsSymTemplateChars)
+func tsScanTemplateChars(lexer *gotreesitter.ExternalLexer, symbols *[tsTokenCount]gotreesitter.Symbol) bool {
+	lexer.SetResultSymbol(symbols[tsTokTemplateChars])
 	hasContent := false
 	for {
 		lexer.MarkEnd()
@@ -116,8 +223,8 @@ func tsScanTemplateChars(lexer *gotreesitter.ExternalLexer) bool {
 	}
 }
 
-func tsScanAutoSemicolon(lexer *gotreesitter.ExternalLexer, validSymbols []bool, scannedComment *bool) bool {
-	lexer.SetResultSymbol(tsSymAutoSemicolon)
+func tsScanAutoSemicolon(lexer *gotreesitter.ExternalLexer, validSymbols []bool, symbols *[tsTokenCount]gotreesitter.Symbol, scannedComment *bool) bool {
+	lexer.SetResultSymbol(symbols[tsTokAutoSemicolon])
 	lexer.MarkEnd()
 
 	for {
@@ -247,7 +354,7 @@ func tsScanWSAndComments(lexer *gotreesitter.ExternalLexer, scannedComment *bool
 	}
 }
 
-func tsScanTernaryQmark(lexer *gotreesitter.ExternalLexer) bool {
+func tsScanTernaryQmark(lexer *gotreesitter.ExternalLexer, symbols *[tsTokenCount]gotreesitter.Symbol) bool {
 	for unicode.IsSpace(lexer.Lookahead()) {
 		lexer.Advance(true)
 	}
@@ -263,7 +370,7 @@ func tsScanTernaryQmark(lexer *gotreesitter.ExternalLexer) bool {
 	}
 
 	lexer.MarkEnd()
-	lexer.SetResultSymbol(tsSymTernaryQmark)
+	lexer.SetResultSymbol(symbols[tsTokTernaryQmark])
 
 	for unicode.IsSpace(lexer.Lookahead()) {
 		lexer.Advance(false)
@@ -280,7 +387,7 @@ func tsScanTernaryQmark(lexer *gotreesitter.ExternalLexer) bool {
 	return true
 }
 
-func tsScanClosingComment(lexer *gotreesitter.ExternalLexer) bool {
+func tsScanClosingComment(lexer *gotreesitter.ExternalLexer, symbols *[tsTokenCount]gotreesitter.Symbol) bool {
 	for unicode.IsSpace(lexer.Lookahead()) || lexer.Lookahead() == 0x2028 || lexer.Lookahead() == 0x2029 {
 		lexer.Advance(true)
 	}
@@ -311,12 +418,12 @@ func tsScanClosingComment(lexer *gotreesitter.ExternalLexer) bool {
 		lexer.Advance(false)
 	}
 
-	lexer.SetResultSymbol(tsSymHtmlComment)
+	lexer.SetResultSymbol(symbols[tsTokHtmlComment])
 	lexer.MarkEnd()
 	return true
 }
 
-func tsScanJsxText(lexer *gotreesitter.ExternalLexer) bool {
+func tsScanJsxText(lexer *gotreesitter.ExternalLexer, symbols *[tsTokenCount]gotreesitter.Symbol) bool {
 	sawText := false
 	atNewline := false
 	onlyWhitespace := true
@@ -368,7 +475,7 @@ func tsScanJsxText(lexer *gotreesitter.ExternalLexer) bool {
 	}
 
 	lexer.MarkEnd()
-	lexer.SetResultSymbol(tsSymJsxText)
+	lexer.SetResultSymbol(symbols[tsTokJsxText])
 	return sawText
 }
 
