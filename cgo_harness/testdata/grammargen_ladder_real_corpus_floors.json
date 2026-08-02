@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "generated_at": "2026-08-02T00:00:00Z",
+  "corpus_root": "GTS_GRAMMARGEN_LADDER_CORPUS_ROOT (defaults to cgo_harness/corpus_real)",
+  "max_cases": 5,
+  "max_bytes": 500000,
+  "grammar_count": 2,
+  "total_eligible": 0,
+  "total_no_error": 0,
+  "total_tree_parity": 0,
+  "metrics": {
+    "javascript": {
+      "eligible": 3,
+      "no_error": 3,
+      "tree_parity": 3,
+      "divergences": 0
+    },
+    "typescript": {
+      "eligible": 2,
+      "no_error": 2,
+      "tree_parity": 0,
+      "divergences": 21
+    }
+  }
+}

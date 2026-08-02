@@ -3669,9 +3669,6 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		if preferred, ok := preferredClosureParametersReduce(shifts, reduces, ng); ok {
 			return preferred, nil
 		}
-		if preferred, ok := preferredAdvancedShiftPrecedence(shifts, reduces, ng); ok {
-			return preferred, nil
-		}
 
 		// Tree-sitter keeps S/R as GLR when the reduce LHS and a shift LHS
 		// are both in the same declared conflict group.
@@ -3872,6 +3869,20 @@ func resolveActionConflict(lookaheadSym int, actions []lrAction, ng *NormalizedG
 		}
 
 		if preferred, ok := preferredExpressionOperatorIdentifierReduce(lookaheadSym, shifts, reduces, ng); ok {
+			return preferred, nil
+		}
+
+		// Last resort, only for conflicts with no declared-conflict group on
+		// either side (both retention branches above already returned) and
+		// that the ordinary precedence/associativity ladder above left
+		// unresolved (zero precedence, no associativity): prefer whichever
+		// side every advanced (dot>0) item unanimously outranks the other on
+		// precedence. This is the narrow signal issue #542 needs for Swift's
+		// optional-binding vs trailing-closure conflict; it must not run
+		// earlier or it mis-resolves ordinary undeclared conflicts that the
+		// ladder above already knows how to answer (for example JavaScript's
+		// update_expression vs binary_expression).
+		if preferred, ok := preferredAdvancedShiftPrecedence(shifts, reduces, ng); ok {
 			return preferred, nil
 		}
 
