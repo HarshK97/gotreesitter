@@ -1061,6 +1061,18 @@ func repairPythonRootNode(root *Node, arena *nodeArena, lang *Language) *Node {
 		return root
 	}
 	if !pythonRootRepairNeedsMaterializedChildren(root, lang) {
+		// This branch (root.hasError() true while the no-materialize fast path
+		// applies) was measured, both by an independent PR #636 review and by
+		// an isolated-revert re-sweep of the full incremental-gate corpus here
+		// (5,241 sites, all three edit classes), to never fire in practice: no
+		// known witness reaches pythonRootRepairNeedsMaterializedChildren==false
+		// with root.hasError()==true. Reverting the HasError check inside
+		// pythonModuleChildrenLookCompleteNoMaterialize entirely still produced
+		// zero witnesses on that corpus. The check is kept anyway: it is cheap,
+		// and it holds the same ERROR-FREE-shape contract as the materialize
+		// path (pythonModuleChildrenLookComplete, which the same review
+		// independently confirmed DOES have live teeth -- 762 witnesses) for
+		// whichever future input first reaches this branch with a real error.
 		if root.hasError() && pythonModuleChildrenLookCompleteNoMaterialize(root, lang) {
 			cloned := cloneNodeInArenaPreservingFinalRefsForMutation(arena, root)
 			cloned.setHasError(false)
@@ -1329,6 +1341,10 @@ func pythonStackEntryChildEntryAtNoMaterialize(arena *nodeArena, entry stackEntr
 	return stackEntry{}, false
 }
 
+// pythonModuleChildrenLookCompleteNoMaterialize is the no-materialize twin of
+// pythonModuleChildrenLookComplete: same ERROR-FREE-shape contract (see that
+// function's doc), evaluated over stack entries so the fast path never has to
+// materialize root's children just to answer the question.
 func pythonModuleChildrenLookCompleteNoMaterialize(root *Node, lang *Language) bool {
 	childCount := resultChildCount(root)
 	if childCount == 0 {
@@ -1339,6 +1355,12 @@ func pythonModuleChildrenLookCompleteNoMaterialize(root *Node, lang *Language) b
 	for i := 0; i < childCount; i++ {
 		entry, ok := nodeChildEntryAtNoMaterialize(root, i)
 		if !ok || !stackEntryHasNode(entry) {
+			return false
+		}
+		// HasError before the extra-skip: see pythonModuleChildrenLookComplete's
+		// doc comment -- an extra child can be a genuinely-erroring EXTRA ERROR
+		// leaf (materializeSkippedGapAsExtraError), not just benign trivia.
+		if stackEntryNodeHasError(entry) {
 			return false
 		}
 		if stackEntryNodeIsExtra(entry) {
@@ -2206,13 +2228,35 @@ func pythonSyntheticIfFieldIDs(arena *nodeArena, childCount int, lang *Language)
 	return fieldIDs
 }
 
+// pythonModuleChildrenLookComplete reports whether nodes are a plausible,
+// ERROR-FREE set of module-level children: each child is either a properly
+// named statement production or an unnamed `_simple_statements` wrapper, AND
+// no child (nor anything nested under it) carries HasError. The HasError
+// check runs BEFORE the extra-skip and applies to every non-nil child,
+// including extras: an extra child is normally benign trivia and is rightly
+// excluded from the shape/seen accounting below, but it is not exempt from
+// the error check -- materializeSkippedGapAsExtraError (parser.go) pushes
+// genuinely-erroring EXTRA ERROR leaves for lexer-skipped gaps, so "is extra"
+// no longer implies "cannot carry HasError". Checking shape alone, or
+// checking HasError only on non-extra children, both under-detect: a child
+// can be a perfectly well-shaped named statement (e.g. expression_statement)
+// while still containing a genuinely erroring descendant (e.g. a malformed
+// call several levels down), and an erroring child can be marked extra.
+// Callers rely on this function to decide whether it is safe to report the
+// rebuilt root as HasError=false.
 func pythonModuleChildrenLookComplete(nodes []*Node, lang *Language) bool {
 	if len(nodes) == 0 {
 		return false
 	}
 	seen := 0
 	for _, n := range nodes {
-		if n == nil || n.isExtra() {
+		if n == nil {
+			continue
+		}
+		if n.hasError() {
+			return false
+		}
+		if n.isExtra() {
 			continue
 		}
 		if n.IsNamed() {
