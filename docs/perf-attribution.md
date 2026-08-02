@@ -374,6 +374,216 @@ median ns/op) is consistent with that same shared, uncontrolled-host
 variance, not a new finding. As with the S1 addendum, this is a
 verification check, not a new sealed epoch.
 
+### 2026-08-02 addendum: the provenance-predicate flip receipt
+
+The compact scheduler's no-action head drop now decides with the
+alternative-set containment predicate by default. The scalar rank-walk
+(`markCleanProductionRank`) still exists in the source. It now runs only
+under a diagnostic flag (`GTS_B4B_SHADOW_CENSUS`), not on the default
+path. Alternative-set recording used to run only under that same flag. It
+now runs unconditionally, because the containment predicate needs a
+populated set to decide.
+
+This addendum re-runs the documented command. It adds one targeted
+profile of the changed functions. The goal is one question: how much CPU
+does the changed provenance machinery cost today, and where should the
+next performance lever land.
+
+#### Component shares (regenerated receipt)
+
+Generated 2026-08-02T04:38:36Z. Host: shared WSL2 development host,
+background load uncontrolled. Git commit
+`193c44b340538b78770da68e4246abd253c81710`. This run's noise floor (see
+below) sits far above the first receipt's 7.4%-10.8%. Read every share
+below as a rough reading, not an exact one. This run's raw JSON output was
+not committed, matching the existing `harness_out/` git-ignore rule;
+rerun the documented command to reproduce it.
+
+| lane | fixture | wall ns/op | scheduler-dispatch | elections | reductions-and-pops | canonicalization | lexing | materialization | compat-tail | recovery | other |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| diagnostic lane | rewrite | 2.389ms | 21.6 | 8.0 | 22.7 | 10.2 | 21.6 | 14.8 | 0.0 | 0.0 | 1.1 |
+| diagnostic lane | query_compile | 11.201ms | 26.1 | 8.0 | 20.5 | 8.0 | 22.7 | 13.6 | 0.0 | 0.0 | 1.1 |
+| diagnostic lane | language | 12.511ms | 14.8 | 6.8 | 25.0 | 15.9 | 15.9 | 21.6 | 0.0 | 0.0 | 0.0 |
+| diagnostic lane | grammargen_lr | 125.275ms | 22.9 | 7.3 | 20.8 | 15.6 | 15.6 | 16.7 | 0.0 | 0.0 | 1.0 |
+| shipped route | rewrite | 2.452ms | 21.6 | 6.8 | 31.8 | 11.4 | 10.2 | 15.9 | 1.1 | 0.0 | 1.1 |
+| shipped route | query_compile | 11.824ms | 21.6 | 4.5 | 25.0 | 10.2 | 18.2 | 20.5 | 0.0 | 0.0 | 0.0 |
+| shipped route | language | 12.202ms | 10.2 | 4.5 | 33.0 | 12.5 | 20.5 | 19.3 | 0.0 | 0.0 | 0.0 |
+
+`recovery` reads 0.0% on every row. This matches every prior receipt: the
+inert cost model from stage S2 still has no call site. The `compat-tail`
+reading for shipped-route `rewrite` (1.1%) is one profiled sample out of
+roughly ninety. Treat it as noise, not a new conditional-cost finding,
+given this run's wide noise floor.
+
+Scheduler-dispatch, elections, reductions-and-pops, and canonicalization
+together still cover 60.2%-71.6% of wall time across every fixture above.
+No lever in the ranked list below reaches that scale on its own; see item
+5.
+
+#### Noise floor (this run)
+
+| fixture | pairs | median ns/op | p95 \|delta\| | p95 \|delta\| as % of median |
+|---|---:|---:|---:|---:|
+| `grammargen_lr` | 10 | 122.945ms | 68.439ms | 55.7% |
+| `rewrite` | 10 | 2.448ms | 1.038ms | 42.4% |
+| `query_compile` | 10 | 11.862ms | 4.626ms | 39.0% |
+| `language` | 10 | 12.123ms | 3.725ms | 30.7% |
+
+Other automated workers ran concurrent CPU-bound jobs on this host
+throughout this run. Read every ns/op number above as directional, not
+exact. Component shares still rest on firmer ground than raw ns/op does:
+the CPU profiler samples on-CPU time, so host contention stretches
+wall-clock duration without moving which component a sample belongs to
+(see "Noise floor," above).
+
+#### Targeted profile: the provenance-predicate family
+
+The component table above answers where compact wall time goes, across
+nine wide boundaries. It does not answer a narrower question: how much of
+the reductions-and-pops and canonicalization shares still belongs to the
+mechanism this flip changed. This section profiles that mechanism by
+function name.
+
+Method: `go test -tags gts_parsercorephase0 -bench
+BenchmarkParserCoreFreshFullCanonical/query_compile -benchtime 6s
+-cpuprofile`, `GOMAXPROCS=1`, pinned to one core with `taskset -c 0`,
+`GTS_B4B_SHADOW_CENSUS` unset (the shipped default). 630 iterations, 9.55
+seconds of profiled samples. `query_compile` matches the fixture the
+original regression bisect used, so the reading below is
+fixture-consistent with that bisect. The bisect's own numbers predate
+this tool's interleaved-capture methodology, so treat the comparison as
+fixture-consistent, not protocol-identical.
+
+| function | flat % | cum % |
+|---|---:|---:|
+| `condenseWithOutcomeAtomic` | 5.1% | 9.2% |
+| `persistHeaderLineageOwned` | 1.5% | 7.3% |
+| `RecordHeadLineageOwned` | 0.2% | 4.0% |
+| `RecordHeadOwnerOwned` | 0.2% | 1.9% |
+| `recordNodeLineageSet` | 0.5% | 2.1% |
+| `recordNodeLineage` | 0.5% | 0.7% |
+| `RecordReductionLineageOwned` | 0.0% | 0.4% |
+| `alternativeSetInsert` | 0.1% | 0.3% |
+| `alternativeSetUnion` | 0.0% | 0.3% |
+| `alternativeSetSortedContainsAll` | 0.0% | 0.0% |
+| the v2 containment predicate (`dropGenericNoActionHeads`'s decider) | 0.0% | 0.1% |
+| `enterLiveCondenseCandidates` | 0.3% | 0.3% |
+| `clearLiveCondenseCandidates` | 0.1% | 0.1% |
+| `condenseNodeIsLive` | 0.2% | 0.2% |
+| `runLiveCondenseCandidates` (old closure-wrapper form) | 0.0% | 0.0% |
+| `markCleanProductionRank` | 0.0% | 0.0% |
+| `walkCleanPrefixRanks` | 0.0% | 0.0% |
+
+`condenseWithOutcomeAtomic` is a shared GSS merge primitive that predates
+the regression; it is not itself a provenance-family member, and it is
+the single largest function this profile named. `condenseNodeIsLive` runs
+nested inside it. `RecordHeadLineageOwned` and `RecordHeadOwnerOwned` run
+nested inside `persistHeaderLineageOwned`, as two separate transactions,
+not one inside the other; `recordNodeLineageSet`, `recordNodeLineage`,
+`alternativeSetInsert`, and `alternativeSetUnion` run nested inside
+`RecordHeadLineageOwned` in turn. None of these nested cum numbers add on
+top of their parent row.
+
+Pre/post comparison, rolled up to the mechanism level (query_compile;
+pre-flip numbers from the regression bisect, at the commit that
+introduced them):
+
+| mechanism | pre-flip cumulative CPU | today's cumulative CPU |
+|---|---|---|
+| condense live-scoping and liveness check (`enterLiveCondenseCandidates`, `clearLiveCondenseCandidates`, `condenseNodeIsLive`) | 26%-30% (as the old closure-wrapper form, `runLiveCondenseCandidates`) | 0.6% |
+| lineage-and-set recording (`persistHeaderLineageOwned` and everything nested below it, plus `RecordReductionLineageOwned`) | canonicalization's whole component share grew by +3.8 percentage points (3.0% to 6.8%) when this family was introduced, per the bisect's own before/after reading; the family did not yet have a separate cum number | 7.7% |
+| scalar rank-walk (`markCleanProductionRank`) | part of the two rows above; not separated at bisect time | 0.0% (retired) |
+| v2 containment predicate (decider) | did not exist | 0.1% |
+
+This run's own component table (above) reads canonicalization at 8.0% for
+`query_compile`, diagnostic lane. Lineage-and-set recording alone (7.7%)
+now accounts for nearly all of that share. Canonicalization today is
+almost entirely lineage-and-set recording, not the header-merge mechanics
+the component predates.
+
+Two readings follow.
+
+The retirement holds. `markCleanProductionRank` and `walkCleanPrefixRanks`
+carry zero samples on the default path. `runLiveCondenseCandidates`'s
+closure-wrapper form also carries zero samples: an earlier, separate fix
+replaced its call sites with direct calls before this predicate flip
+landed. Both retirements match their design intent.
+
+The residual moved; it did not vanish. Live-condense scoping fell from
+26%-30% to 0.6%, but lineage-and-set recording rose from a gated-off 0%
+to 7.7%, because recording is now unconditional. The family's live cost
+today concentrates almost entirely in `persistHeaderLineageOwned` and its
+two callees (7.3% cumulative), not in `alternativeSetInsert` or
+`alternativeSetUnion` (0.3% cumulative, combined). An overflow fast path
+already made the set math cheap: on this corpus, most sets saturate their
+cap early, and both functions return immediately once a set carries the
+overflow flag. The remaining cost sits above that math, in the per-header
+transaction wrapper that runs whether or not the math underneath does
+anything.
+
+#### Ranked residual levers
+
+Five candidate levers, ranked by addressable share:
+
+1. **Further live-condense scoping reduction.** Addressable share: under
+   1% cumulative CPU (0.6% combined, `query_compile`, the three-function
+   row above). An earlier de-indirection fix already captured this
+   lever's addressable share. The remainder is the scoping check's own
+   cost, not avoidable call overhead. Not recommended: too little room
+   left.
+2. **Stage-3 scalar-field deletion.** `nodeLineageRecord` carries 36 bytes
+   today, measured directly (`unsafe.Sizeof`). Two fields marked
+   "transition only" in their own source comment, a 2-byte lineage ID and
+   a 1-byte rank, could shrink it by roughly 11%. Both fields sit inside a
+   component that already costs under 8% of wall time, so their removal
+   has a ceiling near or under 1% of wall time. Worth doing for code
+   hygiene; not a performance lever on its own.
+3. **Recording-overhead reduction.** The set math is now cheap. The
+   transaction wrapper around it, for each header, is not. Today,
+   `persistHeaderLineageOwned` opens one scheduler-owned transaction for
+   owner persistence on every header (`RecordHeadOwnerOwned`, 1.9%
+   cumulative), and a second, separate transaction for lineage-and-set
+   persistence on headers with a converged reduction split
+   (`RecordHeadLineageOwned`, 4.0% cumulative). One source comment already
+   states the merge goal for the second transaction's own two halves:
+   halve the per-header token-validation cost. Folding the owner write
+   into the same transaction is not free: the owner write fires on every
+   header, and the lineage write fires only on converged ones, so a naive
+   merge would change which headers get an owner write. A follow-up needs
+   to preserve that distinction inside one transaction. Addressable
+   share, before subtracting the work that must stay: up to 7.3%
+   cumulative CPU on `query_compile`.
+4. **The remaining L1 deterministic-frontier follow-ons.** An earlier
+   lever selection modeled five single-head-frontier fast-path sub-items.
+   A shipped change captured two of them: a checkpoint-digest skip inside
+   election, and a canonical-group-key skip inside single-head
+   canonicalization (roughly 4.3 modeled percentage points of an 8.1
+   modeled total). Two more never landed: a direct-append path for
+   `condenseWithOutcomeAtomic` on an exact single pop path, and a
+   validation skip inside the dispatch loop's per-cell checks. Modeled
+   addressable share for the two open sub-items: roughly 3.8% combined,
+   against a `condenseWithOutcomeAtomic` share this run measured at 9.2%
+   cumulative, the single largest function this profile named. The model
+   predates this run by several days of intervening change and needs
+   re-validation before a bet. The target function is still large and
+   still un-optimized.
+5. **The bytecode-scheduler structural bet.** Scheduler-dispatch,
+   elections, reductions-and-pops, and canonicalization together still
+   cover 60.2%-71.6% of wall time on every fixture in the component table
+   above. None of the other four levers reach that scale; this is a
+   separate, larger, and longer-horizon bet.
+
+Recommendation: pursue item 4 next, ahead of item 3. Item 4 targets one
+named function this run confirmed still costs 9.2% cumulative CPU. It
+already has a capture model and two concrete, previously scoped
+sub-items. Item 3 is real, but smaller: an overhead layer on an
+already-cheap operation, entangled with a correctness distinction a
+follow-up must preserve. It needs its own follow-up profile, to separate
+wrapper cost from the work that must stay, before a precise size. Land
+items 1 and 2 opportunistically. Neither earns a dedicated lever slot.
+Item 5 stays the standing structural option, for whenever items 3 and 4
+stop paying.
+
 ### Noise floor (interleaved A/A, identical binary, 12 pairs per fixture)
 
 | fixture | median ns/op | p95 \|delta\| | p95 \|delta\| as % of median |
