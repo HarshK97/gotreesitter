@@ -89,15 +89,14 @@ func TestDiagnosticParserCoreExternalShiftInvalidatesLineage(t *testing.T) {
 // TestDiagnosticParserCoreExternalShiftCarriesAlternativeSet pins the
 // opposite property for the new record: unlike the scalar pair above, an
 // external shift must never erase altSet (spec.b4b-alternative-set.v1
-// section 4, "External shifts: carry, do not erase" -- the F1 fix). Stage 2
-// replaces TestDiagnosticParserCoreExternalShiftInvalidatesLineage itself
-// with the carry assertion once the set becomes the live proof; this pin
-// documents the property from stage 1 on.
+// section 4, "External shifts: carry, do not erase" -- the F1 fix). The
+// scalar pair stays the live decider through stage 2a, but altSet's own
+// carry property is unconditional regardless of which proof decides.
 func TestDiagnosticParserCoreExternalShiftCarriesAlternativeSet(t *testing.T) {
 	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
 	header := diagnosticParserCoreHeader{
 		cleanPathRank: core.CleanPathRankSelected, cleanPathLineage: 7,
-		altSet: core.NewAlternativeSetMember(7),
+		altSet: core.NewAlternativeSetMember(7, 0),
 	}
 	before := header.altSet
 	markDiagnosticParserCoreExternalLineage(&header, Token{ExternalScannerToken: true})
@@ -133,19 +132,40 @@ func newAlternativeSetPinScheduler(t *testing.T) *diagnosticParserCoreGenericSch
 	return &diagnosticParserCoreGenericScheduler{compact: compact}
 }
 
-func TestDiagnosticParserCoreConvergedCoverageDropsProof(t *testing.T) {
-	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
-	member := func(members ...uint16) core.AlternativeSet {
-		var set core.AlternativeSet
-		compact, err := core.New(alternativeSetPinCoverageTable{}, core.Limits{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, m := range members {
-			compact.UnionAlternativeSet(&set, core.NewAlternativeSetMember(m))
-		}
-		return set
+// alternativeSetPinMember builds a set from bare events, each on branch 0 --
+// the v1-equivalent shape (spec.b4b-alternative-set.v1 section 5) -- for
+// tests that exercise only event-only containment.
+func alternativeSetPinMember(t *testing.T, members ...uint16) core.AlternativeSet {
+	t.Helper()
+	var set core.AlternativeSet
+	compact, err := core.New(alternativeSetPinCoverageTable{}, core.Limits{})
+	if err != nil {
+		t.Fatal(err)
 	}
+	for _, m := range members {
+		compact.UnionAlternativeSet(&set, core.NewAlternativeSetMember(m, 0))
+	}
+	return set
+}
+
+// alternativeSetPinBranchMember builds a set from explicit (event, branch)
+// pairs, for v2-specific tests.
+func alternativeSetPinBranchMember(t *testing.T, pairs ...[2]uint16) core.AlternativeSet {
+	t.Helper()
+	var set core.AlternativeSet
+	compact, err := core.New(alternativeSetPinCoverageTable{}, core.Limits{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pair := range pairs {
+		compact.UnionAlternativeSet(&set, core.NewAlternativeSetMember(pair[0], pair[1]))
+	}
+	return set
+}
+
+func TestDiagnosticParserCoreConvergedCoverageDropsV1Proof(t *testing.T) {
+	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
+	member := func(members ...uint16) core.AlternativeSet { return alternativeSetPinMember(t, members...) }
 	tests := []struct {
 		name    string
 		headers []diagnosticParserCoreHeader
@@ -212,7 +232,7 @@ func TestDiagnosticParserCoreConvergedCoverageDropsProof(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			scheduler := newAlternativeSetPinScheduler(t)
 			scheduler.headers = test.headers
-			count, proved := scheduler.diagnosticParserCoreConvergedCoverageDrops(test.indices)
+			count, proved := scheduler.diagnosticParserCoreConvergedCoverageDropsV1(test.indices)
 			if count != test.count || proved != test.proved {
 				t.Fatalf("proof = %d/%t, want %d/%t", count, proved, test.count, test.proved)
 			}
@@ -220,12 +240,12 @@ func TestDiagnosticParserCoreConvergedCoverageDropsProof(t *testing.T) {
 	}
 }
 
-func TestDiagnosticParserCoreConvergedCoverageDropsOverflowedDroppedFailsClosed(t *testing.T) {
+func TestDiagnosticParserCoreConvergedCoverageDropsV1OverflowedDroppedFailsClosed(t *testing.T) {
 	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
 	scheduler := newAlternativeSetPinScheduler(t)
-	dropped := core.NewAlternativeSetMember(1)
+	dropped := core.NewAlternativeSetMember(1, 0)
 	for member := uint16(2); member <= 40; member++ {
-		scheduler.compact.UnionAlternativeSet(&dropped, core.NewAlternativeSetMember(member))
+		scheduler.compact.UnionAlternativeSet(&dropped, core.NewAlternativeSetMember(member, 0))
 	}
 	if !dropped.Overflowed() {
 		t.Fatal("setup did not overflow the dropped set")
@@ -235,32 +255,165 @@ func TestDiagnosticParserCoreConvergedCoverageDropsOverflowedDroppedFailsClosed(
 		{convergedReductionSplit: true, altSet: survivor},
 		{convergedReductionSplit: true, altSet: dropped},
 	}
-	count, proved := scheduler.diagnosticParserCoreConvergedCoverageDrops([]int{1})
+	count, proved := scheduler.diagnosticParserCoreConvergedCoverageDropsV1([]int{1})
 	if count != 0 || proved {
 		t.Fatalf("proof = %d/%t, want 0/false (overflowed dropped set is incomplete)", count, proved)
 	}
 }
 
-// TestDiagnosticParserCoreConvergedCoverageDropsProofAllocations is the
+// TestDiagnosticParserCoreConvergedCoverageDropsV1ProofAllocations is the
 // converged-coverage counterpart to
 // TestDiagnosticParserCoreSelectedLineageProofAllocations
 // (spec.b4b-alternative-set.v1 section 3.4's second new pin).
-func TestDiagnosticParserCoreConvergedCoverageDropsProofAllocations(t *testing.T) {
+func TestDiagnosticParserCoreConvergedCoverageDropsV1ProofAllocations(t *testing.T) {
 	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
 	scheduler := newAlternativeSetPinScheduler(t)
-	survivorSet := core.NewAlternativeSetMember(7)
-	scheduler.compact.UnionAlternativeSet(&survivorSet, core.NewAlternativeSetMember(9))
+	survivorSet := core.NewAlternativeSetMember(7, 0)
+	scheduler.compact.UnionAlternativeSet(&survivorSet, core.NewAlternativeSetMember(9, 0))
 	scheduler.headers = []diagnosticParserCoreHeader{
 		{convergedReductionSplit: true, altSet: survivorSet},
-		{convergedReductionSplit: true, altSet: core.NewAlternativeSetMember(7)},
+		{convergedReductionSplit: true, altSet: core.NewAlternativeSetMember(7, 0)},
 	}
 	indices := []int{1}
 	if allocations := testing.AllocsPerRun(1000, func() {
-		count, proved := scheduler.diagnosticParserCoreConvergedCoverageDrops(indices)
+		count, proved := scheduler.diagnosticParserCoreConvergedCoverageDropsV1(indices)
 		if count != 1 || !proved {
-			panic("converged-coverage proof failed")
+			panic("converged-coverage v1 proof failed")
 		}
 	}); allocations != 0 {
-		t.Fatalf("warm converged-coverage proof allocations = %g, want 0", allocations)
+		t.Fatalf("warm converged-coverage v1 proof allocations = %g, want 0", allocations)
+	}
+}
+
+// TestDiagnosticParserCoreConvergedCoverageDropsV2Proof pins the revised
+// theorem's (event, branch) exact-match containment and blended-witness veto
+// (spec.b4b-alternative-set.v2 section 5).
+func TestDiagnosticParserCoreConvergedCoverageDropsV2Proof(t *testing.T) {
+	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
+	branchMember := func(pairs ...[2]uint16) core.AlternativeSet { return alternativeSetPinBranchMember(t, pairs...) }
+	tests := []struct {
+		name    string
+		headers []diagnosticParserCoreHeader
+		indices []int
+		count   uint64
+		proved  bool
+	}{
+		{
+			name: "identical-branch-admits",
+			headers: []diagnosticParserCoreHeader{
+				{convergedReductionSplit: true, altSet: branchMember([2]uint16{5, 0})},
+				{convergedReductionSplit: true, altSet: branchMember([2]uint16{5, 0})},
+			},
+			indices: []int{1}, count: 1, proved: true,
+		},
+		{
+			// The Kotlin class (spec section 6.1): same event, different
+			// branch. v1 event-only identity would admit this; v2 must
+			// decline, since neither packed value contains the other.
+			name: "differing-branch-same-event-declines",
+			headers: []diagnosticParserCoreHeader{
+				{convergedReductionSplit: true, altSet: branchMember([2]uint16{5, 1})},
+				{convergedReductionSplit: true, altSet: branchMember([2]uint16{5, 0})},
+			},
+			indices: []int{1},
+		},
+		{
+			// A blended survivor cannot serve as a witness even though it
+			// exactly contains the dropped member (spec section 3.4/5).
+			name: "blended-witness-vetoed",
+			headers: []diagnosticParserCoreHeader{
+				{convergedReductionSplit: true, altSet: branchMember([2]uint16{5, 0}), blended: true},
+				{convergedReductionSplit: true, altSet: branchMember([2]uint16{5, 0})},
+			},
+			indices: []int{1},
+		},
+		{
+			// The nested-ambiguity asymmetric-superset case (spec section
+			// 6.2): D={(A,1)}, S={(A,1),(B,x)} is safely admitted.
+			name: "asymmetric-superset-admits",
+			headers: []diagnosticParserCoreHeader{
+				{convergedReductionSplit: true, altSet: branchMember([2]uint16{1, 1}, [2]uint16{2, 9})},
+				{convergedReductionSplit: true, altSet: branchMember([2]uint16{1, 1})},
+			},
+			indices: []int{1}, count: 1, proved: true,
+		},
+		{
+			name: "empty-dropped-set-fails-closed",
+			headers: []diagnosticParserCoreHeader{
+				{convergedReductionSplit: true, altSet: branchMember([2]uint16{5, 0})},
+				{convergedReductionSplit: true},
+			},
+			indices: []int{1},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			scheduler := newAlternativeSetPinScheduler(t)
+			scheduler.headers = test.headers
+			count, proved := scheduler.diagnosticParserCoreConvergedCoverageDropsV2(test.indices)
+			if count != test.count || proved != test.proved {
+				t.Fatalf("proof = %d/%t, want %d/%t", count, proved, test.count, test.proved)
+			}
+		})
+	}
+}
+
+func TestDiagnosticParserCoreConvergedCoverageDropsV2BlendedVetoFiredDetail(t *testing.T) {
+	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
+	scheduler := newAlternativeSetPinScheduler(t)
+	scheduler.headers = []diagnosticParserCoreHeader{
+		{convergedReductionSplit: true, altSet: alternativeSetPinBranchMember(t, [2]uint16{5, 0}), blended: true},
+		{convergedReductionSplit: true, altSet: alternativeSetPinBranchMember(t, [2]uint16{5, 0})},
+	}
+	blendedVetoFired, count, proved, overflowDeclined := scheduler.diagnosticParserCoreConvergedCoverageDropsV2Detail([]int{1})
+	if !blendedVetoFired {
+		t.Fatal("expected the blended veto to fire: an exact-member-containing witness was rejected only for being blended")
+	}
+	if count != 0 || proved || overflowDeclined {
+		t.Fatalf("detail = count=%d proved=%t overflowDeclined=%t, want 0/false/false", count, proved, overflowDeclined)
+	}
+}
+
+func TestDiagnosticParserCoreConvergedCoverageDropsV2OverflowedDroppedFailsClosed(t *testing.T) {
+	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
+	scheduler := newAlternativeSetPinScheduler(t)
+	dropped := core.NewAlternativeSetMember(1, 0)
+	for member := uint16(2); member <= 40; member++ {
+		scheduler.compact.UnionAlternativeSet(&dropped, core.NewAlternativeSetMember(member, 0))
+	}
+	if !dropped.Overflowed() {
+		t.Fatal("setup did not overflow the dropped set")
+	}
+	survivor := dropped
+	scheduler.headers = []diagnosticParserCoreHeader{
+		{convergedReductionSplit: true, altSet: survivor},
+		{convergedReductionSplit: true, altSet: dropped},
+	}
+	count, proved := scheduler.diagnosticParserCoreConvergedCoverageDropsV2([]int{1})
+	if count != 0 || proved {
+		t.Fatalf("proof = %d/%t, want 0/false (overflowed dropped set is incomplete)", count, proved)
+	}
+}
+
+// TestDiagnosticParserCoreConvergedCoverageDropsV2ProofAllocations is the
+// v2 counterpart to TestDiagnosticParserCoreSelectedLineageProofAllocations.
+func TestDiagnosticParserCoreConvergedCoverageDropsV2ProofAllocations(t *testing.T) {
+	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
+	scheduler := newAlternativeSetPinScheduler(t)
+	survivorSet := core.NewAlternativeSetMember(7, 0)
+	scheduler.compact.UnionAlternativeSet(&survivorSet, core.NewAlternativeSetMember(9, 0))
+	scheduler.headers = []diagnosticParserCoreHeader{
+		{convergedReductionSplit: true, altSet: survivorSet},
+		{convergedReductionSplit: true, altSet: core.NewAlternativeSetMember(7, 0)},
+	}
+	indices := []int{1}
+	if allocations := testing.AllocsPerRun(1000, func() {
+		count, proved := scheduler.diagnosticParserCoreConvergedCoverageDropsV2(indices)
+		if count != 1 || !proved {
+			panic("converged-coverage v2 proof failed")
+		}
+	}); allocations != 0 {
+		t.Fatalf("warm converged-coverage v2 proof allocations = %g, want 0", allocations)
 	}
 }

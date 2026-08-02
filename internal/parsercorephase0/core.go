@@ -386,6 +386,11 @@ type nodeLineageRecord struct {
 	lineage   uint16
 	rank      CleanPathRankSelection
 	converged bool
+	// blended records whether this record's set was ever produced by folding
+	// two incomparable recorded sets together (spec.b4b-alternative-set.v2
+	// section 3.4). A blended record can never serve as a v2 containment
+	// witness (section 5); it may still safely be dropped itself.
+	blended bool
 }
 
 type nodeLineageMutation struct {
@@ -397,6 +402,7 @@ type nodeLineageMutation struct {
 	lineage     uint16
 	rank        CleanPathRankSelection
 	converged   bool
+	blended     bool
 }
 
 // alternativeSetInlineCapacity is the fixed inline member width of
@@ -414,20 +420,53 @@ const (
 	alternativeSetFlagSpilled
 )
 
-// AlternativeSet is a sorted, deduplicated set of converged-split-event
-// lineage identities ("members"; spec.b4b-alternative-set.v1 section 3.1). A
-// member is established once, at multi-pop reduction time, and the set only
-// ever grows by insertion or union -- it is never invalidated. Beyond
-// alternativeSetInlineCapacity members it spills into Core's shared arena;
-// beyond alternativeSetHardCap members it stops recording new members and
-// sets Overflowed, so the recorded set stays a genuine subset of the true
-// membership. The zero value is the empty set.
+// alternativeSetBranchCap is the exclusive ceiling on a ReductionOutput's
+// establishment ordinal within one dispatch (spec.b4b-alternative-set.v2
+// section 3.2). A branch is a uint16, so it has headroom to 65535, but that
+// top value stays reserved -- mirroring the lineage-id wraparound decline
+// (nextDiagnosticParserCoreCleanPathLineage, parsercore_phase0_driver.go) --
+// so establishment can decline before overflow instead of silently wrapping.
+// Canonical reductions produce one output 95% of the time and at most two
+// observed; this cap is unreachable on the certified corpora and exists only
+// as a defensive decline.
+const alternativeSetBranchCap = 65535
+
+// errAlternativeSetBranchOrdinalCap is returned by RecordReductionLineageOwned
+// when a single dispatch produces alternativeSetBranchCap or more outputs.
+var errAlternativeSetBranchOrdinalCap = errors.New("parser-core phase zero: reduction output branch ordinal cap")
+
+// AlternativeSet is a sorted, deduplicated set of (event, branch) converged-
+// split-resolution identities ("members"; spec.b4b-alternative-set.v2 section
+// 3.1). A member packs a uint16 event (the multi-pop reduce dispatch's
+// lineage id, allocated exactly as v1's event-only identity was) and a
+// uint16 branch (the ReductionOutput's ordinal within that one dispatch, in
+// its stable first-boundary order) into one uint32:
+// uint32(event)<<16 | uint32(branch). A member is established once, at
+// multi-pop reduction time, and the set only ever grows by insertion or
+// union -- it is never invalidated. Beyond alternativeSetInlineCapacity
+// members it spills into Core's shared arena; beyond alternativeSetHardCap
+// members it stops recording new members and sets Overflowed, so the
+// recorded set stays a genuine subset of the true membership. The zero value
+// is the empty set. Ascending uint32 order sorts event-major, branch-minor,
+// so every branch of one event sits adjacent.
 type AlternativeSet struct {
-	inline   [alternativeSetInlineCapacity]uint16
+	inline   [alternativeSetInlineCapacity]uint32
 	count    uint8
 	flags    uint8
 	spillRef uint32 // 1-based start index into Core.alternativeSpillArena
 }
+
+// packAlternativeSetMember packs one (event, branch) pair into the single
+// uint32 member identity (spec.b4b-alternative-set.v2 section 3.1).
+func packAlternativeSetMember(event, branch uint16) uint32 {
+	return uint32(event)<<16 | uint32(branch)
+}
+
+// AlternativeSetMemberEvent unpacks the event half of a packed member.
+func AlternativeSetMemberEvent(member uint32) uint16 { return uint16(member >> 16) }
+
+// AlternativeSetMemberBranch unpacks the branch half of a packed member.
+func AlternativeSetMemberBranch(member uint32) uint16 { return uint16(member) }
 
 // alternativeSetRecordingEnabledOnce and alternativeSetRecordingEnabledVal
 // cache GTS_B4B_SHADOW_CENSUS, the same switch that gates the shadow census
@@ -463,23 +502,26 @@ func SetAlternativeSetRecordingEnabledForTest(on bool) func() {
 	return func() { alternativeSetRecordingEnabledVal = previous }
 }
 
-// NewAlternativeSetMember returns the singleton set {member}, or the empty
-// set when member==0 (the reserved "no event" identity) or when the
-// recording gate is off. Every driver-side alternative-set value not
-// copied or unioned from an existing header/node set originates here, so
-// gating this one construction point -- together with
-// recordNodeLineageMember, the only other place a member is ever inserted
-// -- keeps every set in the system at its zero value for the life of the
-// parse when recording is disabled: every downstream union or insert then
-// sees an empty source and no-ops through its own existing zero-cost guard,
-// with no further gating needed at any of those call sites. Never
+// NewAlternativeSetMember returns the singleton set {pack(event, branch)},
+// or the empty set when event==0 (the reserved "no event" identity) or when
+// the recording gate is off. branch is the ReductionOutput's ordinal within
+// the establishing dispatch (spec.b4b-alternative-set.v2 section 3.1); it is
+// not independently reserved -- only event==0 makes the packed value zero,
+// since establishment always guards event!=0 first. Every driver-side
+// alternative-set value not copied or unioned from an existing header/node
+// set originates here, so gating this one construction point -- together
+// with recordNodeLineageMember, the only other place a member is ever
+// inserted -- keeps every set in the system at its zero value for the life
+// of the parse when recording is disabled: every downstream union or insert
+// then sees an empty source and no-ops through its own existing zero-cost
+// guard, with no further gating needed at any of those call sites. Never
 // allocates: a single fresh member always fits inline.
-func NewAlternativeSetMember(member uint16) AlternativeSet {
+func NewAlternativeSetMember(event, branch uint16) AlternativeSet {
 	var set AlternativeSet
-	if member == 0 || !alternativeSetRecordingEnabled() {
+	if event == 0 || !alternativeSetRecordingEnabled() {
 		return set
 	}
-	set.inline[0] = member
+	set.inline[0] = packAlternativeSetMember(event, branch)
 	set.count = 1
 	return set
 }
@@ -697,34 +739,34 @@ type RawSelectedCensus struct {
 // Core is the compact, persistent diagnostic graph. All records are indexes
 // into pointer-free slices; the production parser is unaffected.
 type Core struct {
-	tables                TableView
-	plans                 ReductionPlanProvider
-	selectedProvider      SelectedStorePolicyProvider
-	selectedPolicy        *SelectedStorePolicy
-	limits                Limits
-	diagnostics           diagnosticOptions
-	nodes                 []nodeRecord
-	nodeLineages          []nodeLineageRecord
-	nodeCheckpoints       []CheckpointID
-	links                 []linkRecord
-	subtrees              []subtreeRecord
-	externalProvenance    []externalPayloadProvenance
-	children              []SubtreeID
-	fields                []FieldMapEntry
-	aliases               []Symbol
-	frontier              uint64
-	checkpoint            CheckpointID
-	checkpoints           checkpointInterner
-	boundaries            boundaryIndex
-	boundaryJournal       []boundaryMutation
-	nodeLineageJournal    []nodeLineageMutation
+	tables             TableView
+	plans              ReductionPlanProvider
+	selectedProvider   SelectedStorePolicyProvider
+	selectedPolicy     *SelectedStorePolicy
+	limits             Limits
+	diagnostics        diagnosticOptions
+	nodes              []nodeRecord
+	nodeLineages       []nodeLineageRecord
+	nodeCheckpoints    []CheckpointID
+	links              []linkRecord
+	subtrees           []subtreeRecord
+	externalProvenance []externalPayloadProvenance
+	children           []SubtreeID
+	fields             []FieldMapEntry
+	aliases            []Symbol
+	frontier           uint64
+	checkpoint         CheckpointID
+	checkpoints        checkpointInterner
+	boundaries         boundaryIndex
+	boundaryJournal    []boundaryMutation
+	nodeLineageJournal []nodeLineageMutation
 	// alternativeSpillArena backs every AlternativeSet beyond
 	// alternativeSetInlineCapacity members, shared by nodeLineages and every
 	// diagnosticParserCoreHeader.altSet (parsercore_phase0_driver.go). It
 	// resets to length zero (capacity retained) only on Reset, matching
 	// nodeLineageJournal; a rolled-back or superseded segment leaks arena
 	// space until then, bounded by alternativeSetHardCap per record.
-	alternativeSpillArena []uint16
+	alternativeSpillArena []uint32
 	condenseCandidates    []CondenseCandidate
 	condenseNewNode       NodeID
 	condenseScopeActive   bool
@@ -929,6 +971,7 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 		c.nodeLineages[nodeIndex].lineage = mutation.lineage
 		c.nodeLineages[nodeIndex].rank = mutation.rank
 		c.nodeLineages[nodeIndex].converged = mutation.converged
+		c.nodeLineages[nodeIndex].blended = mutation.blended
 	}
 	c.boundaries.restore(mark.boundaryIndex)
 	clear(c.boundaryJournal[mark.journal:])
@@ -1704,6 +1747,12 @@ type ReductionOutput struct {
 	// versions union here instead of poisoning to Unknown/0, because
 	// membership is never invalidated.
 	HistoricalAlternativeSet AlternativeSet
+	// HistoricalBlended carries forward the blended mark accumulated while
+	// building HistoricalAlternativeSet: true when an imported dead record
+	// was itself blended, or when two dead sets unioned into this one
+	// boundary were incomparable under containment (spec.b4b-alternative-
+	// set.v2 section 3.4).
+	HistoricalBlended bool
 }
 
 const inlineReductionBoundaryOutputs = 2
@@ -1719,6 +1768,7 @@ type reductionBoundaryOutput struct {
 	historicalCleanPathRank       CleanPathRankSelection
 	historicalLineage             uint16
 	historicalSet                 AlternativeSet
+	historicalBlended             bool
 }
 
 // reductionOutputScratch owns the ephemeral aggregation state for one
@@ -4353,7 +4403,7 @@ func (c *Core) NodeLineageAlternativeSet(id NodeID) (AlternativeSet, error) {
 // the shared spill arena when set has spilled. The returned slice aliases
 // Core-owned storage and is invalidated by the next mutation to any set; it
 // never allocates and never writes.
-func (c *Core) alternativeSetMembers(set AlternativeSet) ([]uint16, bool) {
+func (c *Core) alternativeSetMembers(set AlternativeSet) ([]uint32, bool) {
 	if !set.spilled() {
 		return set.inline[:set.count], true
 	}
@@ -4374,7 +4424,7 @@ func (c *Core) alternativeSetMembers(set AlternativeSet) ([]uint16, bool) {
 // is out of range for the current arena; every recording path in this
 // package keeps that from happening, so callers treat !ok as a fail-closed
 // signal, not a recoverable case.
-func (c *Core) AlternativeSetMembers(set AlternativeSet) ([]uint16, bool) {
+func (c *Core) AlternativeSetMembers(set AlternativeSet) ([]uint32, bool) {
 	return c.alternativeSetMembers(set)
 }
 
@@ -4383,7 +4433,7 @@ func (c *Core) AlternativeSetMembers(set AlternativeSet) ([]uint16, bool) {
 // is already present. Linear scan is deliberate: members is bounded by
 // alternativeSetHardCap (32), where a branch-predictable scan outperforms a
 // callback-based binary search and never allocates.
-func searchAlternativeSetMembers(members []uint16, member uint16) (int, bool) {
+func searchAlternativeSetMembers(members []uint32, member uint32) (int, bool) {
 	for index, existing := range members {
 		if existing == member {
 			return index, true
@@ -4423,7 +4473,7 @@ func searchAlternativeSetMembers(members []uint16, member uint16) (int, bool) {
 // count/flags/spillRef alone (section 3.3); a superseded segment simply
 // leaks arena space until the next Reset, bounded by alternativeSetHardCap
 // per record.
-func (c *Core) alternativeSetInsert(set *AlternativeSet, member uint16) bool {
+func (c *Core) alternativeSetInsert(set *AlternativeSet, member uint32) bool {
 	if member == 0 {
 		return false
 	}
@@ -4523,7 +4573,7 @@ func (c *Core) alternativeSetUnion(dst *AlternativeSet, src AlternativeSet) bool
 // entirely) whenever needle reaches outside haystack's covered range --
 // sound in both directions, since haystack sorted implies every member of
 // needle must fall within [haystack[0], haystack[len-1]] to be contained.
-func alternativeSetSortedContainsAll(needle, haystack []uint16) bool {
+func alternativeSetSortedContainsAll(needle, haystack []uint32) bool {
 	if len(needle) > len(haystack) {
 		return false
 	}
@@ -4561,6 +4611,31 @@ func (c *Core) alternativeSetPropagateOverflow(dst *AlternativeSet, src Alternat
 // high-water mark, matching nodeLineageJournal and popScratch.
 func (c *Core) UnionAlternativeSet(dst *AlternativeSet, src AlternativeSet) bool {
 	return c.alternativeSetUnion(dst, src)
+}
+
+// AlternativeSetIncomparable reports whether a and b are incomparable under
+// containment -- neither's recorded members are a subset of the other's
+// (spec.b4b-alternative-set.v2 section 3.4). Every fold-class union site
+// (every AlternativeSet union except establishment's own first insert into a
+// fresh output) calls this before the union to decide whether the
+// destination's blended mark must become true. It costs one extra
+// merge-scan beyond the union itself, bounded by alternativeSetHardCap, paid
+// only on the already-cold fold path -- extend (establishment) sites never
+// call it. An unresolvable spill reference on either side reads as an empty
+// member slice, which is always comparable (subset of anything): blended
+// computation fails toward "not blended" on that unreachable case, since the
+// predicate's own fail-closed containment check (not this helper) is what
+// guards soundness against an unresolvable set.
+func (c *Core) AlternativeSetIncomparable(a, b AlternativeSet) bool {
+	aMembers, _ := c.alternativeSetMembers(a)
+	bMembers, _ := c.alternativeSetMembers(b)
+	if alternativeSetSortedContainsAll(aMembers, bMembers) {
+		return false
+	}
+	if alternativeSetSortedContainsAll(bMembers, aMembers) {
+		return false
+	}
+	return true
 }
 
 func (c *Core) subtree(id SubtreeID) (*subtreeRecord, error) {

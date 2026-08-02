@@ -869,16 +869,30 @@ type diagnosticParserCoreHeader struct {
 	accepted                bool
 	paused                  bool
 	convergedReductionSplit bool
-	cleanPathRank           core.CleanPathRankSelection
-	cleanPathLineage        uint16
+	// resurrectionUnproved marks a header descended from a
+	// HistoricalBoundaryUnproved dead-node import: a non-deterministic,
+	// non-converged historical boundary with no recorded provenance to prove
+	// (spec.b4b-alternative-set.v2 section 5, F4 disposition). It carries no
+	// alternative-set members, so containment can never prove it; it fails a
+	// no-action drop closed independently of the live proof, waived by the
+	// same certified-language artifact escape that waives the proof itself.
+	resurrectionUnproved bool
+	cleanPathRank        core.CleanPathRankSelection
+	cleanPathLineage     uint16
 	// altSet mirrors cleanPathRank/cleanPathLineage but by union rather than
-	// overwrite: it accumulates every converged-split event this derivation
-	// thread has passed through and is never invalidated (carried unchanged
-	// through an external shift that zeroes cleanPathLineage; see
-	// markDiagnosticParserCoreExternalLineage). Stage 1: shadow-only, read by
-	// diagnosticParserCoreConvergedCoverageDrops and the shadow census; it
-	// never changes routing (spec.b4b-alternative-set.v1 section 7).
+	// overwrite: it accumulates every converged-split (event, branch) member
+	// this derivation thread has passed through and is never invalidated
+	// (carried unchanged through an external shift that zeroes
+	// cleanPathLineage; see markDiagnosticParserCoreExternalLineage). The
+	// scalar (rank, lineage) pair remains the live decider
+	// (dropGenericNoActionHeads); altSet and blended are read by the v1/v2
+	// containment census only (spec.b4b-alternative-set.v2 section 7).
 	altSet core.AlternativeSet
+	// blended records whether altSet was ever produced by folding two
+	// incomparable recorded sets together (spec.b4b-alternative-set.v2
+	// section 3.4). A blended header can never serve as a v2 containment
+	// witness (section 5).
+	blended bool
 	// lastPersistedHead and lastPersistedAltSet record the (head, altSet)
 	// pair persistHeaderLineageOwned last actually wrote to a node. Both are
 	// plain comparable values, so persistHeaderLineageOwned can detect a
@@ -887,9 +901,12 @@ type diagnosticParserCoreHeader struct {
 	// machinery every dispatch. A rolled-back dispatch reverts these fields
 	// along with the rest of the header (diagnosticParserCoreHeaderRollbackScratch
 	// snapshots the whole struct by value), so they never claim a persist
-	// that Core itself undid.
-	lastPersistedHead   core.Head
-	lastPersistedAltSet core.AlternativeSet
+	// that Core itself undid. lastPersistedBlended extends the same no-op
+	// detection to blended: persistHeaderLineageOwned must also re-persist
+	// when only blended changed (spec.b4b-alternative-set.v2 section 10).
+	lastPersistedHead    core.Head
+	lastPersistedAltSet  core.AlternativeSet
+	lastPersistedBlended bool
 }
 
 func nextDiagnosticParserCoreCleanPathLineage(next *uint16) (uint16, error) {
@@ -984,21 +1001,27 @@ func (s *diagnosticParserCoreGenericScheduler) persistHeaderLineageOwned(
 		// dirtiness alone. The set union is the expensive, and far more
 		// often redundant, half (persistHeaderLineageOwned runs every
 		// dispatch for every still-active header, not only the one that
-		// dispatch actually touched): skip it when this exact (head, altSet)
-		// pair is already what was last persisted for this header.
-		setDirty := header.head != header.lastPersistedHead || header.altSet != header.lastPersistedAltSet
+		// dispatch actually touched): skip it when this exact (head, altSet,
+		// blended) triple is already what was last persisted for this header
+		// (spec.b4b-alternative-set.v2 section 10: the dirtiness check must
+		// also compare blended, or conservatively persist when it changes).
+		setDirty := header.head != header.lastPersistedHead ||
+			header.altSet != header.lastPersistedAltSet ||
+			header.blended != header.lastPersistedBlended
 		if err := s.compact.RecordHeadLineageOwned(
 			owner,
 			header.head,
 			header.cleanPathRank,
 			header.cleanPathLineage,
 			header.altSet,
+			header.blended,
 			setDirty,
 		); err != nil {
 			return err
 		}
 		header.lastPersistedHead = header.head
 		header.lastPersistedAltSet = header.altSet
+		header.lastPersistedBlended = header.blended
 	}
 	return nil
 }
@@ -1194,6 +1217,7 @@ type diagnosticParserCoreActionOutput struct {
 	cleanPathRank    core.CleanPathRankSelection
 	cleanPathLineage uint16
 	cleanPathSet     core.AlternativeSet
+	cleanPathBlended bool
 }
 
 func executeDiagnosticParserCoreGenericConflictDetailed(
@@ -1261,7 +1285,16 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 				secondary.convergedReductionSplit = secondary.convergedReductionSplit || output.cleanPathLineage != 0
 				applyDiagnosticParserCoreCleanPathOutput(&secondary, output.cleanPathRank, output.cleanPathLineage)
 				if output.cleanPathSet.Len() != 0 {
+					// Conflict-arm application is fold-class (spec.b4b-
+					// alternative-set.v2 section 3.4): secondary starts as a
+					// copy of incoming's own already-accumulated history,
+					// and output.cleanPathSet is this mutually exclusive
+					// arm's own independently established set -- two
+					// separately tracked histories, not one popped cone's
+					// uniform extension.
+					incomparable := compact.AlternativeSetIncomparable(secondary.altSet, output.cleanPathSet)
 					compact.UnionAlternativeSet(&secondary.altSet, output.cleanPathSet)
+					secondary.blended = secondary.blended || output.cleanPathBlended || incomparable
 				}
 				if action.Type == core.ActionShift {
 					markDiagnosticParserCoreExternalLineage(&secondary, token)
@@ -1294,7 +1327,10 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 			primary.convergedReductionSplit = primary.convergedReductionSplit || output.cleanPathLineage != 0
 			applyDiagnosticParserCoreCleanPathOutput(&primary, output.cleanPathRank, output.cleanPathLineage)
 			if output.cleanPathSet.Len() != 0 {
+				// See the secondary loop's identical fold-class comment above.
+				incomparable := compact.AlternativeSetIncomparable(primary.altSet, output.cleanPathSet)
 				compact.UnionAlternativeSet(&primary.altSet, output.cleanPathSet)
+				primary.blended = primary.blended || output.cleanPathBlended || incomparable
 			}
 			if primaryAction.Type == core.ActionShift {
 				markDiagnosticParserCoreExternalLineage(&primary, token)
@@ -1344,9 +1380,11 @@ type diagnosticParserCoreCanonicalGroup struct {
 	winner                  int
 	runnable                bool
 	convergedReductionSplit bool
+	resurrectionUnproved    bool
 	cleanPathRank           core.CleanPathRankSelection
 	cleanPathLineage        uint16
 	altSet                  core.AlternativeSet
+	blended                 bool
 }
 
 const diagnosticParserCoreLinearCanonicalLimit = 8
@@ -1448,8 +1486,9 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(compact *core.
 				diagnosticParserCoreCanonicalGroup: diagnosticParserCoreCanonicalGroup{
 					winner: index, runnable: !header.paused,
 					convergedReductionSplit: header.convergedReductionSplit,
+					resurrectionUnproved:    header.resurrectionUnproved,
 					cleanPathRank:           header.cleanPathRank, cleanPathLineage: header.cleanPathLineage,
-					altSet: header.altSet,
+					altSet: header.altSet, blended: header.blended,
 				},
 			}
 			groupCount++
@@ -1458,6 +1497,7 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(compact *core.
 		group := &groups[groupIndex].diagnosticParserCoreCanonicalGroup
 		group.runnable = group.runnable || !header.paused
 		group.convergedReductionSplit = group.convergedReductionSplit || header.convergedReductionSplit
+		group.resurrectionUnproved = group.resurrectionUnproved || header.resurrectionUnproved
 		group.cleanPathRank, group.cleanPathLineage = mergeDiagnosticParserCoreCleanPathLineage(
 			group.cleanPathRank,
 			group.cleanPathLineage,
@@ -1467,9 +1507,15 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(compact *core.
 		// Union, never poison: the group's alternative set accumulates every
 		// member any header folding into this canonical group carries, even
 		// when the scalar pair above disagrees and resets to Unknown/0
-		// (spec.b4b-alternative-set.v1 section 4).
+		// (spec.b4b-alternative-set.v1 section 4). Fold-class union
+		// (spec.b4b-alternative-set.v2 section 3.4): the group's blended mark
+		// becomes true when header was already blended, or when the group's
+		// accumulated set and header's set are incomparable under
+		// containment -- computed before the union mutates group.altSet.
 		if header.altSet.Len() != 0 {
+			incomparable := compact.AlternativeSetIncomparable(group.altSet, header.altSet)
 			compact.UnionAlternativeSet(&group.altSet, header.altSet)
+			group.blended = group.blended || header.blended || incomparable
 		}
 		if diagnosticParserCoreCanonicalCandidateWins(normalized[group.winner], header) {
 			group.winner = index
@@ -1485,9 +1531,11 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(compact *core.
 			header.paused = !group.runnable
 			header.freshness = 0
 			header.convergedReductionSplit = group.convergedReductionSplit
+			header.resurrectionUnproved = group.resurrectionUnproved
 			header.cleanPathRank = group.cleanPathRank
 			header.cleanPathLineage = group.cleanPathLineage
 			header.altSet = group.altSet
+			header.blended = group.blended
 			normalized[write] = header
 			write++
 			break
@@ -1512,14 +1560,18 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMapped(compact *core.
 		}
 		group.runnable = group.runnable || !header.paused
 		group.convergedReductionSplit = group.convergedReductionSplit || header.convergedReductionSplit
+		group.resurrectionUnproved = group.resurrectionUnproved || header.resurrectionUnproved
 		group.cleanPathRank, group.cleanPathLineage = mergeDiagnosticParserCoreCleanPathLineage(
 			group.cleanPathRank,
 			group.cleanPathLineage,
 			header.cleanPathRank,
 			header.cleanPathLineage,
 		)
+		// See canonicalizeLinear's identical fold-class comment.
 		if header.altSet.Len() != 0 {
+			incomparable := compact.AlternativeSetIncomparable(group.altSet, header.altSet)
 			compact.UnionAlternativeSet(&group.altSet, header.altSet)
+			group.blended = group.blended || header.blended || incomparable
 		}
 		s.groups[key] = group
 	}
@@ -1532,9 +1584,11 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMapped(compact *core.
 		header.paused = !group.runnable
 		header.freshness = 0
 		header.convergedReductionSplit = group.convergedReductionSplit
+		header.resurrectionUnproved = group.resurrectionUnproved
 		header.cleanPathRank = group.cleanPathRank
 		header.cleanPathLineage = group.cleanPathLineage
 		header.altSet = group.altSet
+		header.blended = group.blended
 		normalized[write] = header
 		write++
 	}
@@ -3613,13 +3667,43 @@ func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices 
 	if len(indices) == 0 || len(indices) >= len(s.headers) {
 		return errors.New("parser-core phase zero: sibling-backed no-action drop removed the complete frontier")
 	}
-	selectedLineageDrops, proved := diagnosticParserCoreSelectedLineageDrops(s.headers, indices)
+	// F4 disposition (spec.b4b-alternative-set.v2 section 5): a resurrection
+	// descended from a HistoricalBoundaryUnproved dead-node import carries no
+	// recorded provenance to prove, so it fails closed independently of the
+	// proof below -- waived by the same certified-language artifact escape
+	// that waives the proof itself. The detail keeps the "converged-path
+	// reduction split" substring every existing fallback-reason assertion
+	// keys on (admission_switch_converged_path_test.go,
+	// admission_switch_erlang_converged_split_probe_test.go), distinguished
+	// by the trailing clause.
+	if !s.options.allowConvergedSplitDropArtifact {
+		for _, index := range indices {
+			if index >= 0 && index < len(s.headers) && s.headers[index].resurrectionUnproved {
+				return &diagnosticParserCoreDecline{
+					boundary: DiagnosticParserCoreNoAction,
+					detail:   "converged-path reduction split no-action drop descends from an unproved historical boundary resurrection",
+				}
+			}
+		}
+	}
+	// The scalar (rank, lineage) proof remains the live decider throughout
+	// stage 2a (spec.b4b-alternative-set.v2 section 7); the v2 predicate
+	// below only ever substitutes when the differential-harness opt-in
+	// override is engaged (test-only, never the default).
+	selectedLineageDrops, scalarProved := diagnosticParserCoreSelectedLineageDrops(s.headers, indices)
+	proved := scalarProved
+	if alternativeSetV2OptInDeciderEnabled() {
+		_, v2Proved := s.diagnosticParserCoreConvergedCoverageDropsV2(indices)
+		proved = v2Proved
+	}
 	if diagnosticParserCoreShadowCensusEnabled() {
-		// Stage 1 shadow proof: evaluates the alternative-set containment
-		// predicate and tallies the comparison against the scalar decision
-		// above. Never influences the decision below
-		// (spec.b4b-alternative-set.v1 section 7).
-		s.diagnosticParserCoreRunShadowCensus(indices, proved)
+		// Three-proof census: evaluates the v1 (event-only) and v2 ((event,
+		// branch) plus blended-witness veto) containment predicates next to
+		// the scalar decision above and tallies every pairwise comparison,
+		// including the declined-drop classes the stage 1 census could not
+		// see. Never influences the decision below
+		// (spec.b4b-alternative-set.v2 section 7).
+		s.diagnosticParserCoreRunThreeProofCensus(indices, scalarProved)
 	}
 	if !proved && !s.options.allowConvergedSplitDropArtifact {
 		return &diagnosticParserCoreDecline{
@@ -3738,15 +3822,27 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 	s.reductionReplacements = s.reductionReplacements[:0]
 	replacements := s.reductionReplacements
 	madeFreshProgress := false
-	for _, output := range outputs {
+	for outputIndex, output := range outputs {
 		convergedHistory := output.MultiplePopPaths ||
-			output.HistoricalBoundaryProvenance == core.HistoricalBoundaryConverged ||
-			output.HistoricalBoundaryProvenance == core.HistoricalBoundaryUnproved
+			output.HistoricalBoundaryProvenance == core.HistoricalBoundaryConverged
+		// resurrectionUnproved (spec.b4b-alternative-set.v2 section 5, F4
+		// disposition): a HistoricalBoundaryUnproved dead-node import no
+		// longer contributes to convergedReductionSplit -- it carries no
+		// recorded alternative-set members, so containment could never prove
+		// it -- but it is still tracked as its own independent, fail-closed
+		// veto bit on whichever header inherits it (dropGenericNoActionHeads).
+		resurrectionUnproved := output.HistoricalBoundaryProvenance == core.HistoricalBoundaryUnproved
 		rank := output.CleanPathRank
 		lineage := reductionLineage
 		var outputSet core.AlternativeSet
+		var outputSetBlended bool
 		if output.MultiplePopPaths {
-			outputSet = core.NewAlternativeSetMember(reductionLineage)
+			// Establishment/extend (spec.b4b-alternative-set.v2 section 3.4):
+			// the branch is this output's index within outputs, the
+			// dispatch's stable first-boundary order -- the identical slice
+			// RecordReductionLineageOwned above already iterated, so the
+			// ordinals agree with no further synchronization.
+			outputSet = core.NewAlternativeSetMember(reductionLineage, uint16(outputIndex))
 		}
 		if !output.MultiplePopPaths &&
 			output.HistoricalBoundaryProvenance == core.HistoricalBoundaryConverged {
@@ -3758,19 +3854,26 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 			// Union unconditionally, unlike the !MultiplePopPaths-gated scalar
 			// override above: historical ancestry is a fact regardless of
 			// whether this same reduction also established a fresh split on
-			// this output (spec.b4b-alternative-set.v1 section 4).
+			// this output (spec.b4b-alternative-set.v1 section 4). Fold-class
+			// union (spec.b4b-alternative-set.v2 section 3.4): this
+			// dispatch's own fresh outputSet and the imported dead history
+			// are two independently tracked sets.
+			incomparable := s.compact.AlternativeSetIncomparable(outputSet, output.HistoricalAlternativeSet)
 			s.compact.UnionAlternativeSet(&outputSet, output.HistoricalAlternativeSet)
+			outputSetBlended = outputSetBlended || output.HistoricalBlended || incomparable
 		}
 		switch output.Freshness {
 		case core.ReductionUnchanged:
-			if convergedHistory {
+			if convergedHistory || resurrectionUnproved {
 				if _, err := s.adoptUpdatedReductionSibling(
 					cell.headerIndex,
 					output.Head,
 					rank,
 					lineage,
 					outputSet,
-					true,
+					outputSetBlended,
+					convergedHistory,
+					resurrectionUnproved,
 				); err != nil {
 					return err
 				}
@@ -3788,7 +3891,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 				rank,
 				lineage,
 				outputSet,
+				outputSetBlended,
 				convergedHistory,
+				resurrectionUnproved,
 			)
 			if err != nil {
 				return err
@@ -3802,9 +3907,16 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		replacement.paused = false
 		replacement.shifted = token.NoLookahead
 		replacement.convergedReductionSplit = replacement.convergedReductionSplit || convergedHistory
+		replacement.resurrectionUnproved = replacement.resurrectionUnproved || resurrectionUnproved
 		applyDiagnosticParserCoreCleanPathOutput(&replacement, rank, lineage)
 		if outputSet.Len() != 0 {
+			// Extend (spec.b4b-alternative-set.v2 section 3.4): this union
+			// plants exactly this dispatch's own established (and already
+			// fold-classified above) set onto its own uniformly extending
+			// derivation thread. It never independently computes
+			// incomparability; it only propagates outputSetBlended.
 			s.compact.UnionAlternativeSet(&replacement.altSet, outputSet)
+			replacement.blended = replacement.blended || outputSetBlended
 		}
 		if len(replacements) > 0 {
 			if s.nextSeq == math.MaxUint64 {
@@ -3891,7 +4003,9 @@ func (s *diagnosticParserCoreGenericScheduler) adoptUpdatedReductionSibling(
 	rank core.CleanPathRankSelection,
 	lineage uint16,
 	set core.AlternativeSet,
+	setBlended bool,
 	convergedReductionSplit bool,
+	resurrectionUnproved bool,
 ) (bool, error) {
 	for index := range s.headers {
 		if index == source {
@@ -3910,9 +4024,18 @@ func (s *diagnosticParserCoreGenericScheduler) adoptUpdatedReductionSibling(
 		s.headers[index].paused = false
 		s.headers[index].convergedReductionSplit =
 			s.headers[index].convergedReductionSplit || convergedReductionSplit
+		s.headers[index].resurrectionUnproved =
+			s.headers[index].resurrectionUnproved || resurrectionUnproved
 		applyDiagnosticParserCoreCleanPathOutput(&s.headers[index], rank, lineage)
 		if set.Len() != 0 {
-			s.compact.UnionAlternativeSet(&s.headers[index].altSet, set)
+			// Fold-class union (spec.b4b-alternative-set.v2 section 3.4):
+			// index is a genuinely different, independently tracked header
+			// from source -- this is a joint-resolution merge, not a single
+			// thread's own uniform extension.
+			dst := &s.headers[index]
+			incomparable := s.compact.AlternativeSetIncomparable(dst.altSet, set)
+			s.compact.UnionAlternativeSet(&dst.altSet, set)
+			dst.blended = dst.blended || setBlended || incomparable
 		}
 		return true, nil
 	}
@@ -3924,13 +4047,21 @@ func (s *diagnosticParserCoreGenericScheduler) reconcileGenericConflictOutputs(s
 	adopted := 0
 	for _, output := range outputs {
 		if output.freshness == core.ReductionUpdated || output.freshness == core.ReductionUnchanged {
+			// The conflict-arm path's diagnosticParserCoreActionOutput never
+			// carries HistoricalBoundaryProvenance (applyParserCoreConflictActionInto
+			// derives convergedReductionSplit from cleanPathLineage != 0
+			// alone, pre-dating and orthogonal to the F4 resurrection
+			// signal), so there is no resurrectionUnproved bit to thread
+			// here.
 			ok, err := s.adoptUpdatedReductionSibling(
 				source,
 				output.head,
 				output.cleanPathRank,
 				output.cleanPathLineage,
 				output.altSet,
+				output.blended,
 				output.cleanPathLineage != 0,
+				false,
 			)
 			if err != nil {
 				return nil, 0, err
@@ -4845,25 +4976,35 @@ func applyParserCoreConflictActionInto(
 			return nil, outputs, err
 		}
 	}
-	for _, output := range outputs {
+	for outputIndex, output := range outputs {
 		var set core.AlternativeSet
+		var setBlended bool
 		if lineage != 0 {
-			set = core.NewAlternativeSetMember(lineage)
+			// Establishment/extend (spec.b4b-alternative-set.v2 section
+			// 3.4): branch is this output's index within outputs, agreeing
+			// with RecordReductionLineageOwned's identical iteration above.
+			set = core.NewAlternativeSetMember(lineage, uint16(outputIndex))
 		}
 		if output.HistoricalBoundaryProvenance == core.HistoricalBoundaryConverged &&
 			output.HistoricalAlternativeSet.Len() != 0 {
+			// Fold-class union (spec.b4b-alternative-set.v2 section 3.4):
+			// see applyGenericReductionOwned's identical dead-node-import site.
+			incomparable := compact.AlternativeSetIncomparable(set, output.HistoricalAlternativeSet)
 			compact.UnionAlternativeSet(&set, output.HistoricalAlternativeSet)
+			setBlended = setBlended || output.HistoricalBlended || incomparable
 		}
 		switch output.Freshness {
 		case core.ReductionUnchanged:
 			dst = append(dst, diagnosticParserCoreActionOutput{
 				head: output.Head, freshness: output.Freshness,
 				cleanPathRank: output.CleanPathRank, cleanPathLineage: lineage, cleanPathSet: set,
+				cleanPathBlended: setBlended,
 			})
 		case core.ReductionNew, core.ReductionUpdated:
 			dst = append(dst, diagnosticParserCoreActionOutput{
 				head: output.Head, freshness: output.Freshness,
 				cleanPathRank: output.CleanPathRank, cleanPathLineage: lineage, cleanPathSet: set,
+				cleanPathBlended: setBlended,
 			})
 		default:
 			return nil, outputs, errors.New("parser-core phase zero: reduction returned invalid freshness")

@@ -2,14 +2,14 @@
 
 package gotreesitter_test
 
-// B4b stage 1 shadow census runner, smoke-corpus half (spec.b4b-alternative-
-// set.v1 section 7, "Agreement census on the smoke corpus"). Opt-in and
-// diagnostic-only, mirroring TestAdmissionCandidateScorecard206's own gating:
-// it drives the compact candidate route across every registered language's
-// smoke fixture, resetting the shadow census
-// (parsercore_phase0_alternative_set_census.go) around each source so the
-// per-language agree/old-proved-new-unproved/new-proved-old-unproved counts
-// can be attributed and reported. The four-canonical-fixture half lives in
+// B4b stage 2a three-proof census runner, smoke-corpus half (spec.b4b-
+// alternative-set.v2 section 7). Opt-in and diagnostic-only, mirroring
+// TestAdmissionCandidateScorecard206's own gating: it drives the compact
+// candidate route across every registered language's smoke fixture,
+// resetting the census (parsercore_phase0_alternative_set_census.go) around
+// each source so the per-language scalar/v1/v2 and class1/2/3/4 counts can be
+// attributed and reported. The four-canonical-fixture and six-certified-
+// language halves live in
 // parsercore_phase0_b4b_shadow_census_internal_test.go (package
 // gotreesitter), which reuses the canonical fixture loader already wired for
 // TestDiagnosticParserCoreCanonicalAdmissions.
@@ -18,6 +18,20 @@ package gotreesitter_test
 //
 //	GTS_B4B_SHADOW_CENSUS_REPORT=1 go test -tags gts_parsercorephase0 \
 //	  -run TestDiagnosticParserCoreB4bShadowCensusSmokeCorpusReport -v .
+//
+// Gate: the stage 2b flip requires zero class-1 (v2-admits-where-scalar-
+// declines) elections whose compact tree diverges from the C-oracle-
+// adjudicated production route (campaign amendment 2026-08-02). This report
+// tallies and logs class 1 candidates per language; it does not itself run
+// the tree/C-oracle differential (parsercore_phase0_alternative_set_v2_class1_differential_test.go
+// and the cgo_harness C-oracle adjudication cover that). A non-zero class-1
+// count here is expected and desired (spec section 7: "the class the stage 1
+// census structurally missed"), so it is reported, not failed.
+//
+// See also parsercore_phase0_b4b_shadow_census_internal_test.go for the
+// v2-opt-in-decider corpus-wide differential (every smoke source re-parsed
+// with v2 substituted for the scalar decider, tree digest compared against
+// production).
 
 import (
 	"os"
@@ -29,27 +43,26 @@ import (
 	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
 )
 
-type b4bShadowCensusRow struct {
+type b4bThreeProofCensusRow struct {
 	name   string
-	totals gts.DiagnosticParserCoreShadowCensusTotals
+	totals gts.DiagnosticParserCoreThreeProofCensusTotals
 }
 
 func TestDiagnosticParserCoreB4bShadowCensusSmokeCorpusReport(t *testing.T) {
 	if os.Getenv("GTS_B4B_SHADOW_CENSUS_REPORT") != "1" {
-		t.Skip("set GTS_B4B_SHADOW_CENSUS_REPORT=1 to run the B4b stage 1 shadow census over the smoke corpus")
+		t.Skip("set GTS_B4B_SHADOW_CENSUS_REPORT=1 to run the B4b stage 2a three-proof census over the smoke corpus")
 	}
-	// See parsercore_phase0_b4b_shadow_census_internal_test.go: the census
-	// comparison switch and the recording switch are independent cached
-	// reads of the same environment variable, so the ForTest override must
-	// enable both.
+	// The census comparison switch and the recording switch are independent
+	// cached reads of the same environment variable, so the ForTest override
+	// must enable both.
 	restore := gts.SetDiagnosticParserCoreShadowCensusEnabledForTest(true)
 	defer restore()
 	restoreRecording := core.SetAlternativeSetRecordingEnabledForTest(true)
 	defer restoreRecording()
 	t.Cleanup(func() { grammars.PurgeEmbeddedLanguageCache() })
 
-	var rows []b4bShadowCensusRow
-	var allFalsifiers []gts.DiagnosticParserCoreShadowCensusFalsifier
+	var rows []b4bThreeProofCensusRow
+	var allClass1 []gts.DiagnosticParserCoreClass1Candidate
 
 	entries := grammars.AllLanguages()
 	for _, entry := range entries {
@@ -58,35 +71,49 @@ func TestDiagnosticParserCoreB4bShadowCensusSmokeCorpusReport(t *testing.T) {
 			defer func() { recover() }() // a candidate parse failure/panic must not lose the census so far
 			runB4bShadowCensusLanguageSmoke(entry)
 		}()
-		totals := gts.DiagnosticParserCoreShadowCensusSnapshotForTest()
-		rows = append(rows, b4bShadowCensusRow{name: entry.Name, totals: totals})
-		allFalsifiers = append(allFalsifiers, gts.DiagnosticParserCoreShadowCensusFalsifiersForTest()...)
+		totals := gts.DiagnosticParserCoreThreeProofCensusSnapshotForTest()
+		rows = append(rows, b4bThreeProofCensusRow{name: entry.Name, totals: totals})
+		allClass1 = append(allClass1, gts.DiagnosticParserCoreClass1CandidatesForTest()...)
 	}
 
 	sort.Slice(rows, func(i, j int) bool { return rows[i].name < rows[j].name })
 
-	var grandTotal gts.DiagnosticParserCoreShadowCensusTotals
-	t.Logf("=== B4b stage 1 shadow census: smoke corpus (%d languages) ===", len(rows))
+	var grand gts.DiagnosticParserCoreThreeProofCensusTotals
+	t.Logf("=== B4b stage 2a three-proof census: smoke corpus (%d languages) ===", len(rows))
 	for _, row := range rows {
 		total := row.totals
-		grandTotal.Agree += total.Agree
-		grandTotal.OldProvedNewUnproved += total.OldProvedNewUnproved
-		grandTotal.NewProvedOldUnproved += total.NewProvedOldUnproved
-		grandTotal.NeitherProved += total.NeitherProved
-		if total == (gts.DiagnosticParserCoreShadowCensusTotals{}) {
-			continue // no converged-split drop attempts observed for this source
+		grand.Elections += total.Elections
+		grand.ScalarProved += total.ScalarProved
+		grand.V1Proved += total.V1Proved
+		grand.V2Proved += total.V2Proved
+		grand.Class1V2AdmitsScalarDeclines += total.Class1V2AdmitsScalarDeclines
+		grand.Class2ScalarProvesV2Declines += total.Class2ScalarProvesV2Declines
+		grand.Class3V1ProvesV2Declines += total.Class3V1ProvesV2Declines
+		grand.BlendedVetoFirings += total.BlendedVetoFirings
+		grand.OverflowDeclines += total.OverflowDeclines
+		grand.SpillElections += total.SpillElections
+		grand.SpillObserved += total.SpillObserved
+		if total.MaxBranchOrdinalObserved > grand.MaxBranchOrdinalObserved {
+			grand.MaxBranchOrdinalObserved = total.MaxBranchOrdinalObserved
 		}
-		t.Logf("%-20s agree=%-6d old-proved/new-unproved=%-6d new-proved/old-unproved=%-6d neither=%-6d",
-			row.name, total.Agree, total.OldProvedNewUnproved, total.NewProvedOldUnproved, total.NeitherProved)
+		if total.Elections == 0 {
+			continue // no converged-split drop elections observed for this source
+		}
+		t.Logf("%-20s elections=%-5d scalar=%-5d v1=%-5d v2=%-5d class1=%-4d class2=%-4d class3=%-4d blendedVeto=%-4d overflow=%-4d maxBranch=%-3d",
+			row.name, total.Elections, total.ScalarProved, total.V1Proved, total.V2Proved,
+			total.Class1V2AdmitsScalarDeclines, total.Class2ScalarProvesV2Declines, total.Class3V1ProvesV2Declines,
+			total.BlendedVetoFirings, total.OverflowDeclines, total.MaxBranchOrdinalObserved)
 	}
-	t.Logf("--- totals: agree=%d old-proved/new-unproved=%d new-proved/old-unproved=%d neither=%d falsifiers=%d ---",
-		grandTotal.Agree, grandTotal.OldProvedNewUnproved, grandTotal.NewProvedOldUnproved, grandTotal.NeitherProved, len(allFalsifiers))
+	t.Logf("--- totals: elections=%d scalar=%d v1=%d v2=%d class1=%d class2=%d class3=%d blendedVeto=%d overflow=%d spill=%d/%d maxBranch=%d ---",
+		grand.Elections, grand.ScalarProved, grand.V1Proved, grand.V2Proved,
+		grand.Class1V2AdmitsScalarDeclines, grand.Class2ScalarProvesV2Declines, grand.Class3V1ProvesV2Declines,
+		grand.BlendedVetoFirings, grand.OverflowDeclines, grand.SpillObserved, grand.SpillElections, grand.MaxBranchOrdinalObserved)
 
-	if len(allFalsifiers) > 0 {
-		for index, falsifier := range allFalsifiers {
-			t.Logf("FALSIFIER[%d]: %s", index, falsifier.Detail)
+	if len(allClass1) > 0 {
+		t.Logf("class-1 (v2-admits-where-scalar-declines) candidates: %d -- see the class-1 differential harness for the tree/C-oracle adjudication gate", len(allClass1))
+		for index, candidate := range allClass1 {
+			t.Logf("CLASS1[%d]: %s", index, candidate.Detail)
 		}
-		t.Fatalf("design falsifier: %d old-proved/new-unproved drop(s); the alternative-set containment predicate must be a superset of the scalar proof (spec.b4b-alternative-set.v1 section 7 stop rule)", len(allFalsifiers))
 	}
 }
 

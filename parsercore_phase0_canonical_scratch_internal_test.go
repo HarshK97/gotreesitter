@@ -431,9 +431,12 @@ func TestDiagnosticParserCoreCheckpointCompactLayoutsAMD64(t *testing.T) {
 	// diagnosticParserCoreHeader grows by 16 bytes for the added altSet
 	// field, then by another 24 bytes (lastPersistedHead core.Head +
 	// lastPersistedAltSet core.AlternativeSet) for the per-dispatch persist
-	// skip: 24 -> 40 -> 64.
-	if got := unsafe.Sizeof(diagnosticParserCoreHeader{}); got != 64 {
-		t.Fatalf("scheduler header size=%d, want 64", got)
+	// skip: 24 -> 40 -> 64. spec.b4b-alternative-set.v2 section 3.2/3.4
+	// widens altSet and lastPersistedAltSet (uint32 members, +8 bytes each)
+	// and adds three bools (blended, resurrectionUnproved,
+	// lastPersistedBlended, +1 each): 64 -> 80 -> 83, padded to 88.
+	if got := unsafe.Sizeof(diagnosticParserCoreHeader{}); got != 88 {
+		t.Fatalf("scheduler header size=%d, want 88", got)
 	}
 	if got := unsafe.Sizeof(diagnosticParserCorePhaseHead{}); got != 12 {
 		t.Fatalf("canonical phase key size=%d, want 12", got)
