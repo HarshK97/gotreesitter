@@ -358,6 +358,22 @@ sealed or C0-authoritative epoch; it does not replace the receipt above or
 tranche that re-seals this board) will show `recovery` alongside the other
 eight components by construction, with no further classifier change needed.
 
+### B3 stage S2 addendum: the inert error-cost model
+
+Stage S2 added `internal/parsercorephase0/recovery_cost.go`: compact
+equivalents of `cNodeErrorCostLang`, `cSymbolVisibleLang`, and
+`cVersionStatus`, callable on demand but wired into nothing (no call site
+exists outside the file's own tests; a compile-time AST ratchet,
+`TestRecoveryCostNoOutsideCallSitesRatchet`, enforces this). A local
+reproduction of the documented command on stage S2's branch, with the file
+present, again confirmed `recovery` reads exactly 0.0% on every lane and
+fixture — diagnostic lane and shipped route alike. Every other component
+share stayed within this host's published noise floor of the stage-S1-era
+receipt above; the local noise floor measured on this run (8.2%-11.9% of
+median ns/op) is consistent with that same shared, uncontrolled-host
+variance, not a new finding. As with the S1 addendum, this is a
+verification check, not a new sealed epoch.
+
 ### Noise floor (interleaved A/A, identical binary, 12 pairs per fixture)
 
 | fixture | median ns/op | p95 \|delta\| | p95 \|delta\| as % of median |
