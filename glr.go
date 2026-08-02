@@ -5675,6 +5675,23 @@ func (s *glrEntryScratch) reset() {
 		// Keep the newest/largest slabs up to the retention budget.
 		keepFrom := len(s.slabs) - 1
 		retained := len(s.slabs[keepFrom].data)
+		if retained > maxRetainedStackEntryCap {
+			// Even the single most recent slab alone outgrew the retention
+			// budget: a pathological wide/deep GLR stack on one parse (a
+			// denser grammar table forking or reducing less eagerly can
+			// drive one stack's entries far past ordinary steady state).
+			// Drop every slab rather than pool an oversized backing array,
+			// which would otherwise sit in the process-wide sync.Pool and
+			// get billed, unshrunk, to every unrelated future parse that
+			// reuses this scratch object regardless of language or file
+			// size. The next parse that needs entries simply reallocates.
+			s.slabs = nil
+			s.slabCursor = 0
+			s.usedTotal = 0
+			s.peakUsed = 0
+			s.allocatedBytes = 0
+			return
+		}
 		for keepFrom > 0 {
 			next := retained + len(s.slabs[keepFrom-1].data)
 			if next > maxRetainedStackEntryCap {

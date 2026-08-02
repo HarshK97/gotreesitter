@@ -711,22 +711,35 @@ func (s *gssScratch) reset() {
 	if total > maxRetainedGSSNodes {
 		keepFrom := len(s.slabs) - 1
 		retained := len(s.slabs[keepFrom].data)
-		for keepFrom > 0 {
-			next := retained + len(s.slabs[keepFrom-1].data)
-			if next > maxRetainedGSSNodes {
-				break
+		if retained > maxRetainedGSSNodes {
+			// Even the single most recent slab alone outgrew the retention
+			// budget: a pathological wide GLR fork count on one parse (a
+			// denser grammar table forking more can drive one parse's GSS
+			// far past ordinary steady state). Drop every slab rather than
+			// pool an oversized backing array, which would otherwise sit in
+			// the process-wide sync.Pool and get billed, unshrunk, to every
+			// unrelated future parse that reuses this scratch object
+			// regardless of language or file size. The next parse that
+			// needs GSS nodes simply reallocates.
+			s.slabs = nil
+		} else {
+			for keepFrom > 0 {
+				next := retained + len(s.slabs[keepFrom-1].data)
+				if next > maxRetainedGSSNodes {
+					break
+				}
+				keepFrom--
+				retained = next
 			}
-			keepFrom--
-			retained = next
-		}
-		if keepFrom > 0 {
-			oldLen := len(s.slabs)
-			copy(s.slabs, s.slabs[keepFrom:])
-			newLen := oldLen - keepFrom
-			for i := newLen; i < oldLen; i++ {
-				s.slabs[i] = gssNodeSlab{}
+			if keepFrom > 0 {
+				oldLen := len(s.slabs)
+				copy(s.slabs, s.slabs[keepFrom:])
+				newLen := oldLen - keepFrom
+				for i := newLen; i < oldLen; i++ {
+					s.slabs[i] = gssNodeSlab{}
+				}
+				s.slabs = s.slabs[:newLen]
 			}
-			s.slabs = s.slabs[:newLen]
 		}
 	}
 	for i := range s.slabs {
