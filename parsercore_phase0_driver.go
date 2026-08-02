@@ -3282,7 +3282,20 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 	for index := range cells {
 		cell := &cells[index]
 		descriptor := cell.descriptor()
-		if cell.selectedBy == diagnosticParserCoreCellSelectionNone {
+		// descriptor.DispatchSupported() is table-derived and immutable once
+		// this row was decoded (core.describeActionRow, once per distinct
+		// action row -- not once per dispatch pass): it is true exactly when
+		// diagnosticParserCoreGenericUnsupportedCellDescriptor's own kind
+		// switch below would already return a nil decline without reading
+		// its token argument (Shift, Reduce, and Conflict rows). Skipping
+		// the call for those rows avoids re-deriving that same kind-only
+		// fact, and the cell.dispatchToken(s.token) token-struct copy that
+		// building its argument would cost, on every pass that dispatches an
+		// already-proven-supported cell (spec.campaign.v7 tranche C0 item 4,
+		// the "cell-array and descriptor validation" L1 sub-item). Rows that
+		// still need the token (ExtraShift, Accept) or are never supported
+		// (Empty, Unsupported) keep paying the full per-pass call unchanged.
+		if cell.selectedBy == diagnosticParserCoreCellSelectionNone && !descriptor.DispatchSupported() {
 			if unsupported := diagnosticParserCoreGenericUnsupportedCellDescriptor(cell.headerIndex, cell.dispatchToken(s.token), cell.actions(), descriptor); unsupported != nil {
 				return unsupported, nil
 			}
