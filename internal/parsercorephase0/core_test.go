@@ -2676,20 +2676,26 @@ func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
 	}
 	// spec.b4b-alternative-set.v1 section 3.2: nodeLineageRecord grew from 8
 	// bytes to the transition size of 24 (owner uint32 + AlternativeSet's 16
-	// bytes + the still-present transition scalars lineage/rank/converged);
-	// stage 3 deletes the transition scalars for a final 20-byte record. The
-	// grown field (AlternativeSet) stays pointer-free, checked above.
-	if got := unsafe.Sizeof(nodeLineageRecord{}); got != 24 {
-		t.Fatalf("nodeLineageRecord size = %d, want 24", got)
+	// bytes + the still-present transition scalars lineage/rank/converged).
+	// spec.b4b-alternative-set.v2 section 3.2 widens AlternativeSet's inline
+	// members to uint32 (16 -> 24 bytes padded, +8) and adds the blended
+	// bool (+1, padded): 24 -> 36. Stage 3 deletes the transition scalars
+	// for a smaller final record. The grown field (AlternativeSet) stays
+	// pointer-free, checked above.
+	if got := unsafe.Sizeof(nodeLineageRecord{}); got != 36 {
+		t.Fatalf("nodeLineageRecord size = %d, want 36", got)
 	}
 	if got := unsafe.Sizeof(linkRecord{}); got != 32 {
 		t.Fatalf("linkRecord size = %d, want 32", got)
 	}
 	// spec.b4b-alternative-set.v1 section 4: ReductionOutput grew from 12
 	// bytes to 28 with the added HistoricalAlternativeSet field (dead-node
-	// historical import), which stays pointer-free, checked above.
-	if got := unsafe.Sizeof(ReductionOutput{}); got != 28 {
-		t.Fatalf("ReductionOutput size = %d, want 28", got)
+	// historical import). spec.b4b-alternative-set.v2 section 3.2 widens
+	// AlternativeSet's inline members to uint32 (+8) and adds
+	// HistoricalBlended (+1, padded): 28 -> 40. Stays pointer-free, checked
+	// above.
+	if got := unsafe.Sizeof(ReductionOutput{}); got != 40 {
+		t.Fatalf("ReductionOutput size = %d, want 40", got)
 	}
 	if got := unsafe.Sizeof(popPath{}); got != 88 {
 		t.Fatalf("popPath size = %d, want 88", got)

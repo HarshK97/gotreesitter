@@ -18,19 +18,31 @@ func (c *Core) ReindexCondenseCandidatesOwned(owner SchedulerTransactionToken, c
 // RecordReductionLineageOwned attaches exact scheduler lineage to compact graph
 // versions. The journal restores prior provenance if the scheduler transaction
 // rolls back.
+//
+// Each output's branch identity (spec.b4b-alternative-set.v2 section 3.1) is
+// its index within outputs, the dispatch's stable first-boundary order
+// (reduceOutputsClassifiedIntoActive's final emission loop below). The
+// driver's own establishment loops (parsercore_phase0_driver.go) iterate the
+// identical outputs slice after this call returns, so their ordinals agree
+// with no further synchronization. alternativeSetBranchCap declines rather
+// than silently wrapping a branch ordinal past uint16 range; canonical
+// reductions never approach it.
 func (c *Core) RecordReductionLineageOwned(owner SchedulerTransactionToken, outputs []ReductionOutput, lineage uint16) error {
 	return c.RunSchedulerOwned(owner, func() error {
 		if lineage == 0 {
 			return errors.New("parser-core phase zero: zero reduction lineage")
 		}
-		for _, output := range outputs {
+		if len(outputs) >= alternativeSetBranchCap {
+			return errAlternativeSetBranchOrdinalCap
+		}
+		for index, output := range outputs {
 			if !output.MultiplePopPaths {
 				return errors.New("parser-core phase zero: lineage requires multiple pop paths")
 			}
 			if err := c.recordNodeLineage(output.Head, output.CleanPathRank, lineage); err != nil {
 				return err
 			}
-			if err := c.recordNodeLineageMember(output.Head, lineage); err != nil {
+			if err := c.recordNodeLineageMember(output.Head, lineage, uint16(index)); err != nil {
 				return err
 			}
 		}
@@ -61,6 +73,7 @@ func (c *Core) RecordHeadLineageOwned(
 	rank CleanPathRankSelection,
 	lineage uint16,
 	set AlternativeSet,
+	setBlended bool,
 	setDirty bool,
 ) error {
 	return c.RunSchedulerOwned(owner, func() error {
@@ -74,7 +87,7 @@ func (c *Core) RecordHeadLineageOwned(
 		if !setDirty {
 			return nil
 		}
-		return c.recordNodeLineageSet(head, set)
+		return c.recordNodeLineageSet(head, set, setBlended)
 	})
 }
 
@@ -116,7 +129,7 @@ func (c *Core) recordNodeLineage(head Head, rank CleanPathRankSelection, lineage
 		c.nodeLineageJournal = append(c.nodeLineageJournal, nodeLineageMutation{
 			node: head.Node, owner: node.owner,
 			setCount: node.set.count, setFlags: node.set.flags, setSpillRef: node.set.spillRef,
-			lineage: node.lineage, rank: node.rank, converged: node.converged,
+			lineage: node.lineage, rank: node.rank, converged: node.converged, blended: node.blended,
 		})
 	}
 	node.rank = nextRank
@@ -145,7 +158,7 @@ func (c *Core) RecordHeadOwnerOwned(owner SchedulerTransactionToken, head Head, 
 			c.nodeLineageJournal = append(c.nodeLineageJournal, nodeLineageMutation{
 				node: head.Node, owner: node.owner,
 				setCount: node.set.count, setFlags: node.set.flags, setSpillRef: node.set.spillRef,
-				lineage: node.lineage, rank: node.rank, converged: node.converged,
+				lineage: node.lineage, rank: node.rank, converged: node.converged, blended: node.blended,
 			})
 		}
 		node.owner = lineage
@@ -157,13 +170,22 @@ func (c *Core) RecordHeadOwnerOwned(owner SchedulerTransactionToken, head Head, 
 // Unlike the scalar clean-path pair, membership is never invalidated: this
 // is a pure union, never a poisoning overwrite (spec.b4b-alternative-set.v1
 // section 4).
-func (c *Core) RecordHeadLineageSetOwned(owner SchedulerTransactionToken, head Head, set AlternativeSet) error {
+func (c *Core) RecordHeadLineageSetOwned(owner SchedulerTransactionToken, head Head, set AlternativeSet, setBlended bool) error {
 	return c.RunSchedulerOwned(owner, func() error {
-		return c.recordNodeLineageSet(head, set)
+		return c.recordNodeLineageSet(head, set, setBlended)
 	})
 }
 
-func (c *Core) recordNodeLineageSet(head Head, set AlternativeSet) error {
+// recordNodeLineageSet unions set into head's node's recorded alternative
+// set. This is a fold-class union (spec.b4b-alternative-set.v2 section 3.4):
+// the node's own recorded set may already carry ancestry from a different
+// header/derivation thread that structurally shares this node (the shape
+// section 2 describes), so set and the node's prior set are two
+// independently tracked histories. The node's blended mark becomes true when
+// setBlended is true, or when the node's prior recorded set and the
+// incoming set are incomparable under containment -- computed before the
+// union, since the union itself mutates node.set in place.
+func (c *Core) recordNodeLineageSet(head Head, set AlternativeSet, setBlended bool) error {
 	if set.count == 0 {
 		return nil
 	}
@@ -172,26 +194,33 @@ func (c *Core) recordNodeLineageSet(head Head, set AlternativeSet) error {
 		return err
 	}
 	before := node.set
+	beforeBlended := node.blended
+	incomparable := c.AlternativeSetIncomparable(before, set)
 	if !c.alternativeSetUnion(&node.set, set) {
 		return nil
 	}
+	nextBlended := beforeBlended || setBlended || incomparable
 	if len(c.transactions) != 0 {
 		c.nodeLineageJournal = append(c.nodeLineageJournal, nodeLineageMutation{
 			node: head.Node, owner: node.owner,
 			setCount: before.count, setFlags: before.flags, setSpillRef: before.spillRef,
-			lineage: node.lineage, rank: node.rank, converged: node.converged,
+			lineage: node.lineage, rank: node.rank, converged: node.converged, blended: beforeBlended,
 		})
 	}
+	node.blended = nextBlended
 	return nil
 }
 
-// recordNodeLineageMember inserts member into head's node's alternative set,
-// unconditionally: membership is a per-event ancestry fact established at
-// multi-pop reduction time, and it is never gated by clean-path rank or
-// invalidated once recorded (spec.b4b-alternative-set.v1 section 4). This
-// runs alongside, and never changes the outcome of, recordNodeLineage's
-// existing scalar merge.
-func (c *Core) recordNodeLineageMember(head Head, member uint16) error {
+// recordNodeLineageMember inserts pack(event, branch) into head's node's
+// alternative set, unconditionally: membership is a per-event ancestry fact
+// established at multi-pop reduction time, and it is never gated by
+// clean-path rank or invalidated once recorded (spec.b4b-alternative-set.v1
+// section 4). This runs alongside, and never changes the outcome of,
+// recordNodeLineage's existing scalar merge. Establishment (spec.b4b-
+// alternative-set.v2 section 3.4): inserting one freshly established member
+// can never make a set incomparable with its own prior self, so this never
+// touches the node's blended mark.
+func (c *Core) recordNodeLineageMember(head Head, event, branch uint16) error {
 	if !alternativeSetRecordingEnabled() {
 		return nil
 	}
@@ -200,14 +229,14 @@ func (c *Core) recordNodeLineageMember(head Head, member uint16) error {
 		return err
 	}
 	before := node.set
-	if !c.alternativeSetInsert(&node.set, member) {
+	if !c.alternativeSetInsert(&node.set, packAlternativeSetMember(event, branch)) {
 		return nil
 	}
 	if len(c.transactions) != 0 {
 		c.nodeLineageJournal = append(c.nodeLineageJournal, nodeLineageMutation{
 			node: head.Node, owner: node.owner,
 			setCount: before.count, setFlags: before.flags, setSpillRef: before.spillRef,
-			lineage: node.lineage, rank: node.rank, converged: node.converged,
+			lineage: node.lineage, rank: node.rank, converged: node.converged, blended: node.blended,
 		})
 	}
 	return nil
@@ -791,6 +820,7 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 		historicalCleanPathRank := previous.historicalCleanPathRank
 		historicalLineage := previous.historicalLineage
 		historicalSet := previous.historicalSet
+		historicalBlended := previous.historicalBlended
 		if outcome.historicalBoundarySplit {
 			switch {
 			case !previous.historicalBoundarySplit:
@@ -819,9 +849,13 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 			// unions every converged historical version's recorded set
 			// (spec.b4b-alternative-set.v1 section 4, "Dead-node historical
 			// import"). The dead node's lineage record persists for the rest of
-			// the parse.
+			// the parse. Fold-class union (spec.b4b-alternative-set.v2 section
+			// 3.4): two differing dead sets unioning into one output, or a dead
+			// record that was itself blended, mark this boundary's accumulated
+			// historicalSet blended -- computed before the union mutates it.
 			if outcome.historicalConvergedSplit {
 				if dead, err := c.nodeLineage(outcome.historicalNode); err == nil {
+					historicalBlended = historicalBlended || dead.blended || c.AlternativeSetIncomparable(historicalSet, dead.set)
 					c.alternativeSetUnion(&historicalSet, dead.set)
 				}
 			}
@@ -846,6 +880,7 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 			historicalCleanPathRank:       historicalCleanPathRank,
 			historicalLineage:             historicalLineage,
 			historicalSet:                 historicalSet,
+			historicalBlended:             historicalBlended,
 		})
 	}
 	for _, output := range scratch.boundaries {
@@ -867,6 +902,7 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 			HistoricalCleanPathRank:      output.historicalCleanPathRank,
 			HistoricalCleanPathLineage:   output.historicalLineage,
 			HistoricalAlternativeSet:     output.historicalSet,
+			HistoricalBlended:            output.historicalBlended,
 		})
 	}
 	phase0AFinishReductionConstruction(c)
