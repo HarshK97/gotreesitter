@@ -97,6 +97,15 @@ func (r *parserCoreFreshFullRunner) executeSchedulerOpen(source []byte, compact 
 	if tokenSource == nil {
 		return nil, nil, errors.New("parser-core fresh-full runner: production DFA unavailable")
 	}
+	// Recomputed fresh for every call: the production soft budget is a
+	// function of source length (parseMemoryBudgetForParser), and this
+	// runner is reused across parses of different sizes. Only armed when the
+	// caller bound a stop-control Parser (admission_switch_candidate.go); the
+	// diagnostic and benchmark runners leave stopControlParser nil, so this
+	// stays zero and the scheduler's memory-budget poll is a no-op for them.
+	if r.options.stopControlParser != nil {
+		r.options.stopControlMemoryBudgetBytes = parseMemoryBudgetForParser(r.options.stopControlParser, len(source))
+	}
 	scheduler, err := executeDiagnosticParserCoreGenericSchedulerFromSeedInto(
 		&r.scheduler, compact, tokenSource, &r.scannerScratch, r.lang.InitialState,
 		r.options, diagnosticParserCoreSeedObserver{},

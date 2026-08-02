@@ -69,6 +69,21 @@ type DiagnosticParserCorePrefixOptions struct {
 	allowConvergedSplitDropArtifact bool
 	noLookaheadRootSymbol           Symbol
 	hasNoLookaheadRootSymbol        bool
+	// stopControlParser, when non-nil, arms the scheduler's stop-control poll
+	// (spec.campaign.v7 tranche B8): once per dispatch-pass-loop iteration,
+	// diagnosticParserCoreGenericScheduler.run checks this Parser's deadline
+	// (timeoutMicros) and cancellation flag through the exact production
+	// check (activeParseStopReason), plus the deterministic compact-arena
+	// memory budget below. Nil (the default for every diagnostic and
+	// benchmark caller) disables the whole poll, matching prior behavior
+	// byte-for-byte -- only the admission-candidate route sets this field.
+	stopControlParser *Parser
+	// stopControlMemoryBudgetBytes is the production engine's own soft
+	// per-parse byte budget (parseMemoryBudgetForParser), recomputed from the
+	// caller's source length immediately before each scheduler run. Zero
+	// disables the memory-budget half of the poll, mirroring production's
+	// own "budget disabled" contract (parseMemoryBudget's mb<=0 case).
+	stopControlMemoryBudgetBytes int64
 }
 
 type DiagnosticParserCoreScannerCheckpoint struct {
@@ -3103,7 +3118,70 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 	return tree, nil
 }
 
+// diagnosticParserCoreStopControlTripped renders a poll-detected stop-control
+// trip (spec.campaign.v7 tranche B8: memory budget, deadline, or
+// cancellation) as the same kind of decline every other scheduler cap uses.
+// Returning a real error here -- not the graceful s.finish(...) receipt path
+// -- matters: run executes inside compact.RunFreshSchedulerSession for the
+// admission-candidate route (options.freshSchedulerSession), whose deferred
+// cleanup resets the whole core on any non-nil error. That is what releases
+// the compact arenas' accumulated storage before the caller's production
+// fallback engages, with no extra cleanup call needed here.
+func diagnosticParserCoreStopControlTripped(reason ParseStopReason) error {
+	return &diagnosticParserCoreDecline{
+		boundary: DiagnosticParserCoreCap,
+		detail:   "scheduler stop-control tripped: " + string(reason),
+	}
+}
+
+// stopControlMemoryBudgetReason compares the compact core's own live storage
+// accounting against the production engine's soft per-parse byte budget
+// (stopControlMemoryBudgetBytes, sourced from parseMemoryBudgetForParser so
+// the same GOT_PARSE_MEMORY_BUDGET_MB configuration governs both engines).
+// Every input is Core.StorageBytes(): six already-tracked slice lengths times
+// a compile-time-constant record size, so this is pure deterministic integer
+// arithmetic -- no wall clock, no GC-timing dependence, and (same input, same
+// budget) the same trip point on every run, unlike the runtime heap/sys
+// signal production's own hard ceiling uses (parser_memory_budget_runtime.go).
+func (s *diagnosticParserCoreGenericScheduler) stopControlMemoryBudgetReason() ParseStopReason {
+	if s == nil || s.options.stopControlMemoryBudgetBytes <= 0 {
+		return ParseStopNone
+	}
+	if s.compact.StorageBytes() < uint64(s.options.stopControlMemoryBudgetBytes) {
+		return ParseStopNone
+	}
+	return ParseStopMemoryBudget
+}
+
+// pollStopControl is the bounded scheduler-boundary poll (spec.campaign.v7
+// tranche B8): the memory-budget check above, then -- only when the caller
+// armed stop control by binding a Parser (stopControlParser, set only by the
+// admission-candidate route) -- the exact production deadline/cancellation
+// check (activeParseStopReason). It runs once before the scheduler's first
+// election and once per iteration of run's dispatch-pass loop: every loop
+// iteration is either one dispatch pass or one re-election round, so this
+// granularity bounds both a runaway dispatch grind and a runaway election
+// cycle. Nil stopControlParser and a zero budget make this two nil/zero
+// comparisons -- the diagnostic and benchmark runners, which never set
+// either, pay that and nothing else.
+func (s *diagnosticParserCoreGenericScheduler) pollStopControl() error {
+	if reason := s.stopControlMemoryBudgetReason(); reason != ParseStopNone {
+		return diagnosticParserCoreStopControlTripped(reason)
+	}
+	parser := s.options.stopControlParser
+	if parser == nil {
+		return nil
+	}
+	if reason := parser.activeParseStopReason(); parseStopReasonIsActive(reason) {
+		return diagnosticParserCoreStopControlTripped(reason)
+	}
+	return nil
+}
+
 func (s *diagnosticParserCoreGenericScheduler) run() error {
+	if err := s.pollStopControl(); err != nil {
+		return err
+	}
 	if err := s.elect(true); err != nil {
 		return err
 	}
@@ -3112,6 +3190,9 @@ func (s *diagnosticParserCoreGenericScheduler) run() error {
 		return nil
 	}
 	for {
+		if err := s.pollStopControl(); err != nil {
+			return err
+		}
 		if uint64(len(s.headers)) > s.work.PeakHeaders {
 			s.work.PeakHeaders = uint64(len(s.headers))
 		}
