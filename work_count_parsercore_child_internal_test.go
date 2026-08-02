@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	parserCoreWorkCountChildSchema = "gts-work-count-parsercore-child/v3"
+	parserCoreWorkCountChildSchema = "gts-work-count-parsercore-child/v4"
 	parserCoreWorkCountEngine      = "go-compact-parsercore-phase0-tagged-diagnostic"
 	parserCoreWorkCountContract    = "gts-work-count/v2"
 	parserCoreWorkCountDigest      = "gts-deep-tree-v1"

@@ -21,7 +21,7 @@ const (
 	workCountBoardGoBackendEnv            = "GTS_WORK_COUNT_GO_BACKEND"
 	workCountBoardGoProduction            = "production"
 	workCountBoardGoParserCore            = "parsercore_phase0"
-	workCountBoardParserCoreChildSchema   = "gts-work-count-parsercore-child/v3"
+	workCountBoardParserCoreChildSchema   = "gts-work-count-parsercore-child/v4"
 	workCountBoardParserCoreEngine        = "go-compact-parsercore-phase0-tagged-diagnostic"
 	workCountBoardSchema                  = "gts-work-count-board/v5"
 	workCountBoardContractSchema          = "gts-work-count-board-contract/v3"

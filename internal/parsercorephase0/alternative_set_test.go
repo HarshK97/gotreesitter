@@ -21,11 +21,14 @@ func TestNewAlternativeSetMember(t *testing.T) {
 	if got := NewAlternativeSetMember(0, 0); got != (AlternativeSet{}) {
 		t.Fatalf("NewAlternativeSetMember(0, 0) = %+v, want empty set", got)
 	}
-	// The recording gate defaults to off (GTS_B4B_SHADOW_CENSUS unset): a
-	// nonzero event still returns the empty set until recording is enabled.
-	if got := NewAlternativeSetMember(7, 0); got != (AlternativeSet{}) {
-		t.Fatalf("NewAlternativeSetMember(7, 0) with recording disabled = %+v, want empty set", got)
-	}
+	// Stage 2b made recording unconditional in production (the v2 deciding
+	// proof requires a populated set); the disabled path is test-only.
+	func() {
+		defer SetAlternativeSetRecordingEnabledForTest(false)()
+		if got := NewAlternativeSetMember(7, 0); got != (AlternativeSet{}) {
+			t.Fatalf("NewAlternativeSetMember(7, 0) with recording explicitly disabled = %+v, want empty set", got)
+		}
+	}()
 	defer SetAlternativeSetRecordingEnabledForTest(true)()
 	compact := &Core{}
 	set := NewAlternativeSetMember(7, 0)
@@ -303,6 +306,239 @@ func TestAlternativeSetUnionPropagatesOverflow(t *testing.T) {
 	}
 }
 
+// buildOverflowedAlternativeSetForTest inserts alternativeSetHardCap+1 real
+// members starting at start, so the returned set overflowed by genuine
+// natural growth (not by manual flag manipulation), for tests that need a
+// realistic overflowed source or destination.
+func buildOverflowedAlternativeSetForTest(t *testing.T, compact *Core, start uint32) AlternativeSet {
+	t.Helper()
+	var set AlternativeSet
+	for member := start; member < start+alternativeSetHardCap+1; member++ {
+		compact.alternativeSetInsert(&set, member)
+	}
+	if !set.Overflowed() {
+		t.Fatal("setup did not overflow the set")
+	}
+	return set
+}
+
+// TestAlternativeSetInsertFrozenOnceOverflowed pins the tightened invariant
+// the stage 2b fast path relies on: once alternativeSetFlagOverflowed is
+// set -- by any path, including propagation onto a set whose count never
+// itself reached alternativeSetHardCap -- the set is permanently frozen.
+// Manually marks a two-member set overflowed (the shape a union propagation
+// produces, spec.b4b-alternative-set.v2 section 3.2) to isolate
+// alternativeSetInsert's own short-circuit from alternativeSetUnion's.
+func TestAlternativeSetInsertFrozenOnceOverflowed(t *testing.T) {
+	compact := &Core{}
+	var set AlternativeSet
+	compact.alternativeSetInsert(&set, 5)
+	compact.alternativeSetInsert(&set, 9)
+	set.flags |= alternativeSetFlagOverflowed
+	before := set
+
+	if compact.alternativeSetInsert(&set, 7) {
+		t.Fatal("insert into an overflowed set reported a change")
+	}
+	if set != before {
+		t.Fatalf("overflowed set mutated by a declined insert: got %+v, want %+v", set, before)
+	}
+	if got := alternativeSetMembersForTest(t, compact, set); !slices.Equal(got, []uint32{5, 9}) {
+		t.Fatalf("overflowed set members = %v, want [5 9] (frozen at its pre-overflow content)", got)
+	}
+}
+
+// TestAlternativeSetUnionNoopWhenDestinationAlreadyOverflowed pins the
+// destination-side freeze: an already-overflowed dst can never change
+// again, regardless of what src offers, and the check runs before any
+// member resolution on either side.
+func TestAlternativeSetUnionNoopWhenDestinationAlreadyOverflowed(t *testing.T) {
+	compact := &Core{}
+	dst := buildOverflowedAlternativeSetForTest(t, compact, 1)
+	before := dst
+	beforeMembers := alternativeSetMembersForTest(t, compact, dst)
+
+	var src AlternativeSet
+	compact.alternativeSetInsert(&src, 9000)
+	if compact.alternativeSetUnion(&dst, src) {
+		t.Fatal("union into an already-overflowed destination reported a change")
+	}
+	if dst != before {
+		t.Fatalf("already-overflowed destination mutated: got %+v, want %+v", dst, before)
+	}
+	if got := alternativeSetMembersForTest(t, compact, dst); !slices.Equal(got, beforeMembers) {
+		t.Fatalf("already-overflowed destination members = %v, want %v (unchanged)", got, beforeMembers)
+	}
+}
+
+// TestAlternativeSetUnionFreezesDestinationAtCurrentMembersWhenSourceOverflowed
+// pins the coordinator-specified semantics for the asymmetric case: an
+// overflowed source has incomplete true membership, so the sound
+// conclusion is that dst's own true union is unknowable beyond what dst
+// already recorded. dst becomes overflowed-and-done at exactly its
+// pre-union members -- it does not partially merge src's known members
+// first, unlike the pre-stage-2b behavior.
+func TestAlternativeSetUnionFreezesDestinationAtCurrentMembersWhenSourceOverflowed(t *testing.T) {
+	compact := &Core{}
+	var dst AlternativeSet
+	compact.alternativeSetInsert(&dst, 11)
+	compact.alternativeSetInsert(&dst, 22)
+	beforeMembers := alternativeSetMembersForTest(t, compact, dst)
+
+	src := buildOverflowedAlternativeSetForTest(t, compact, 1)
+
+	if !compact.alternativeSetUnion(&dst, src) {
+		t.Fatal("union with an overflowed source reported no change")
+	}
+	if !dst.Overflowed() {
+		t.Fatal("destination did not become overflowed")
+	}
+	if got := alternativeSetMembersForTest(t, compact, dst); !slices.Equal(got, beforeMembers) {
+		t.Fatalf("destination members after overflow propagation = %v, want %v (frozen at pre-union content, not merged with src)", got, beforeMembers)
+	}
+}
+
+// TestAlternativeSetUnionBothOverflowedIsNoop pins the case where both
+// sides are already overflowed: the destination-side freeze check alone
+// must short-circuit before even inspecting src.
+func TestAlternativeSetUnionBothOverflowedIsNoop(t *testing.T) {
+	compact := &Core{}
+	dst := buildOverflowedAlternativeSetForTest(t, compact, 1)
+	src := buildOverflowedAlternativeSetForTest(t, compact, 1000)
+	before := dst
+
+	if compact.alternativeSetUnion(&dst, src) {
+		t.Fatal("union of two already-overflowed sets reported a change")
+	}
+	if dst != before {
+		t.Fatalf("already-overflowed destination mutated by a both-overflowed union: got %+v, want %+v", dst, before)
+	}
+}
+
+// TestAlternativeSetInsertOverflowFlagRestoredOnJournalRollback pins that a
+// transaction crossing the hard cap and then rolling back restores both the
+// overflow flag and the recorded count exactly, matching the generic
+// nodeLineageJournal mechanism (core.go's rollback loop restores
+// set.count/set.flags/set.spillRef from the pre-mutation snapshot
+// unconditionally, independent of what triggered the mutation).
+func TestAlternativeSetInsertOverflowFlagRestoredOnJournalRollback(t *testing.T) {
+	defer SetAlternativeSetRecordingEnabledForTest(true)()
+	compact := newTinyCore(t, 4)
+	head, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		for member := uint16(1); member <= alternativeSetHardCap; member++ {
+			if err := compact.RecordHeadLineageSetOwned(owner, head, NewAlternativeSetMember(member, 0), false); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := compact.nodeLineage(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.set.Overflowed() || before.set.Len() != alternativeSetHardCap {
+		t.Fatalf("setup did not reach exactly the hard cap unoverflowed: set=%+v", before.set)
+	}
+	beforeSet := before.set
+
+	sentinel := errors.New("rollback overflow insert")
+	err = compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		if err := compact.RecordHeadLineageSetOwned(owner, head, NewAlternativeSetMember(alternativeSetHardCap+1, 0), false); err != nil {
+			return err
+		}
+		mid, err := compact.nodeLineage(head.Node)
+		if err != nil {
+			return err
+		}
+		if !mid.set.Overflowed() {
+			return errors.New("mid-transaction insert did not overflow")
+		}
+		return sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("rollback err = %v, want %v", err, sentinel)
+	}
+	after, err := compact.nodeLineage(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.set != beforeSet {
+		t.Fatalf("rolled-back set = %+v, want %+v", after.set, beforeSet)
+	}
+	if after.set.Overflowed() {
+		t.Fatal("rollback left the overflow flag set")
+	}
+	if compact.alternativeSetInsert(&after.set, alternativeSetHardCap+2) == false {
+		t.Fatal("rolled-back set incorrectly still refuses new members as if overflowed")
+	}
+}
+
+// TestAlternativeSetUnionOverflowPropagationRestoredOnJournalRollback pins
+// the same rollback exactness for the propagation path: a transaction that
+// unions in an overflowed source (freezing the destination) and then rolls
+// back must restore the destination's pre-transaction flag and members,
+// not leave it overflowed.
+func TestAlternativeSetUnionOverflowPropagationRestoredOnJournalRollback(t *testing.T) {
+	defer SetAlternativeSetRecordingEnabledForTest(true)()
+	compact := newTinyCore(t, 4)
+	head, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return compact.RecordHeadLineageSetOwned(owner, head, NewAlternativeSetMember(11, 0), false)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := compact.nodeLineage(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeSet := before.set
+	if beforeSet.Overflowed() {
+		t.Fatal("setup destination is already overflowed")
+	}
+
+	overflowedSource := buildOverflowedAlternativeSetForTest(t, compact, 1000)
+
+	sentinel := errors.New("rollback overflow union")
+	err = compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		if err := compact.RecordHeadLineageSetOwned(owner, head, overflowedSource, false); err != nil {
+			return err
+		}
+		mid, err := compact.nodeLineage(head.Node)
+		if err != nil {
+			return err
+		}
+		if !mid.set.Overflowed() {
+			return errors.New("mid-transaction union did not propagate overflow")
+		}
+		return sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("rollback err = %v, want %v", err, sentinel)
+	}
+	after, err := compact.nodeLineage(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.set != beforeSet {
+		t.Fatalf("rolled-back set = %+v, want %+v", after.set, beforeSet)
+	}
+	if after.set.Overflowed() {
+		t.Fatal("rollback left the propagated overflow flag set")
+	}
+	if got := alternativeSetMembersForTest(t, compact, after.set); !slices.Equal(got, []uint32{packAlternativeSetMember(11, 0)}) {
+		t.Fatalf("rolled-back members = %v, want [pack(11,0)]", got)
+	}
+}
+
 func TestAlternativeSetMembersRejectsUnresolvableSpill(t *testing.T) {
 	compact := &Core{}
 	bad := AlternativeSet{}
@@ -516,11 +752,14 @@ func TestAlternativeSetEstablishmentBranchOrdinalTracksOutputIndex(t *testing.T)
 	}
 }
 
-// TestAlternativeSetRecordingDisabledByDefaultLeavesSetEmptyButScalarIntact
-// pins the always-off-by-default recording gate (GTS_B4B_SHADOW_CENSUS):
-// with no override, establishment records no member at all, while the
+// TestAlternativeSetRecordingExplicitlyDisabledLeavesSetEmptyButScalarIntact
+// pins the recording gate's disabled path: stage 2b turned recording
+// unconditional in production (the v2 deciding proof requires a populated
+// set), so the only way to observe the gate off is the test-only override.
+// With it forced off, establishment records no member at all, while the
 // existing scalar rank/lineage mechanism is completely unaffected.
-func TestAlternativeSetRecordingDisabledByDefaultLeavesSetEmptyButScalarIntact(t *testing.T) {
+func TestAlternativeSetRecordingExplicitlyDisabledLeavesSetEmptyButScalarIntact(t *testing.T) {
+	defer SetAlternativeSetRecordingEnabledForTest(false)()
 	compact := newTinyCore(t, 4)
 	head, err := compact.Seed(1, 0)
 	if err != nil {

@@ -155,6 +155,7 @@ func newAmbiguousPrefixRankFixture(tb testing.TB) (*Core, Head) {
 }
 
 func TestCleanPathRankUsesScoreBeforeDepth(t *testing.T) {
+	defer SetCleanPathRankWalkEnabledForTest(true)()
 	compact, head := newCleanPathRankFixture(t, []cleanPathRankBranch{
 		{predecessor: 1, prefixScore: []int64{5}, gotoState: 60},
 		{predecessor: 2, prefixScore: []int64{2, 2}, gotoState: 61},
@@ -174,6 +175,7 @@ func TestCleanPathRankUsesScoreBeforeDepth(t *testing.T) {
 }
 
 func TestCleanPathRankUsesDepthAfterEqualScore(t *testing.T) {
+	defer SetCleanPathRankWalkEnabledForTest(true)()
 	compact, head := newCleanPathRankFixture(t, []cleanPathRankBranch{
 		{predecessor: 1, prefixScore: []int64{3}, gotoState: 60},
 		{predecessor: 2, prefixScore: []int64{1, 2}, gotoState: 61},
@@ -193,6 +195,7 @@ func TestCleanPathRankUsesDepthAfterEqualScore(t *testing.T) {
 }
 
 func TestCleanPathRankExactCrossPathTieIsUnknown(t *testing.T) {
+	defer SetCleanPathRankWalkEnabledForTest(true)()
 	compact, head := newCleanPathRankFixture(t, []cleanPathRankBranch{
 		{predecessor: 1, prefixScore: []int64{3}, gotoState: 60},
 		{predecessor: 2, prefixScore: []int64{3}, gotoState: 61},
@@ -212,6 +215,7 @@ func TestCleanPathRankExactCrossPathTieIsUnknown(t *testing.T) {
 }
 
 func TestCleanPathRankAggregatesSelectedOccurrence(t *testing.T) {
+	defer SetCleanPathRankWalkEnabledForTest(true)()
 	compact, head := newCleanPathRankFixture(t, []cleanPathRankBranch{
 		{predecessor: 1, prefixScore: []int64{5}, gotoState: 60},
 		{predecessor: 2, prefixScore: []int64{4}, gotoState: 60},
@@ -226,6 +230,7 @@ func TestCleanPathRankAggregatesSelectedOccurrence(t *testing.T) {
 }
 
 func TestCleanPathRankKeepsSamePathPrefixTieKnown(t *testing.T) {
+	defer SetCleanPathRankWalkEnabledForTest(true)()
 	compact, head := newAmbiguousPrefixRankFixture(t)
 	outputs, err := compact.ReduceOutputs(head, 9, 0, ForkOrder{})
 	if err != nil {
@@ -242,6 +247,7 @@ func TestCleanPathRankKeepsSamePathPrefixTieKnown(t *testing.T) {
 }
 
 func TestCleanPathRankPrefixCapIsUnknown(t *testing.T) {
+	defer SetCleanPathRankWalkEnabledForTest(true)()
 	compact, head := newAmbiguousPrefixRankFixture(t)
 	compact.limits.MaxDerivations = 1
 	outputs, err := compact.ReduceOutputs(head, 9, 0, ForkOrder{})
@@ -256,6 +262,7 @@ func TestCleanPathRankPrefixCapIsUnknown(t *testing.T) {
 }
 
 func TestCleanPathRankExternalPayloadIsUnknown(t *testing.T) {
+	defer SetCleanPathRankWalkEnabledForTest(true)()
 	compact, head := newCleanPathRankFixture(t, []cleanPathRankBranch{
 		{predecessor: 1, prefixScore: []int64{5}, gotoState: 60, external: true},
 		{predecessor: 2, prefixScore: []int64{2}, gotoState: 61},
@@ -303,6 +310,7 @@ func TestCleanPathRankSteadyStateDoesNotAllocate(t *testing.T) {
 }
 
 func TestCleanPathRankPanicRollsBackAndRetries(t *testing.T) {
+	defer SetCleanPathRankWalkEnabledForTest(true)()
 	compact, head := newCleanPathRankFixture(t, []cleanPathRankBranch{
 		{predecessor: 1, prefixScore: []int64{5}, gotoState: 60},
 		{predecessor: 2, prefixScore: []int64{1, 2}, gotoState: 61},

@@ -11,29 +11,32 @@ import (
 	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
 )
 
-// The converged-alternative-set proofs and the stage 2a three-proof census.
+// The converged-alternative-set proofs and the stage 2 census.
 //
-// A converged-split no-action drop is proved admissible by a scalar (rank,
-// lineage) pair recorded on each header (diagnosticParserCoreSelectedLineageDrops).
-// That scalar proof remains the live decider throughout stage 2a
-// (spec.b4b-alternative-set.v2 section 7): the decider does not flip. This
-// file adds two alternative proofs, both diagnostic-only until their own
-// stage 2b gate passes:
+// Through stage 2a, a converged-split no-action drop was proved admissible
+// by a scalar (rank, lineage) pair recorded on each header
+// (diagnosticParserCoreSelectedLineageDrops). Stage 2b flips
+// dropGenericNoActionHeads to decide with the v2 predicate instead
+// (spec.b4b-alternative-set.v2 section 8), after the section 7 gate passed
+// (zero class-1 differing-tree cases; the Kotlin witness declines under v2;
+// stage 1's gates re-passed). This file carries three proofs:
 //
-//   - v1 (event-only): a drop is admissible when one surviving header's
-//     recorded set contains, for every recorded (event, branch) member of
-//     the dropped header's set, some member of that same event -- ignoring
-//     branch (spec.b4b-alternative-set.v1 section 5, superseded).
-//   - v2 ((event, branch), blended-witness veto): a drop is admissible when
-//     one surviving header's recorded set contains every recorded (event,
-//     branch) member of the dropped header's set exactly, and the
-//     surviving header is not blended (spec.b4b-alternative-set.v2 section
-//     5, the revised theorem).
+//   - v1 (event-only, superseded): a drop is admissible when one surviving
+//     header's recorded set contains, for every recorded (event, branch)
+//     member of the dropped header's set, some member of that same event --
+//     ignoring branch (spec.b4b-alternative-set.v1 section 5).
+//   - v2 ((event, branch), blended-witness veto, the decider): a drop is
+//     admissible when one surviving header's recorded set contains every
+//     recorded (event, branch) member of the dropped header's set exactly,
+//     and the surviving header is not blended (spec.b4b-alternative-set.v2
+//     section 5, the revised theorem).
+//   - scalar (rank, lineage), retired: the pre-B4b proof dropGenericNoActionHeads
+//     decided with through stage 2a. Evaluated only inside this file's
+//     census now, as an ongoing regression check while more languages
+//     decertify in stage 3.
 //
-// dropGenericNoActionHeads evaluates the scalar proof to decide, evaluates
-// v2 only when the differential-harness opt-in override is engaged
-// (alternativeSetV2OptInDeciderEnabled, test-only, never default), and
-// evaluates all three proofs together for the census whenever
+// dropGenericNoActionHeads decides with v2 unconditionally for uncertified
+// languages and evaluates all three proofs together for the census whenever
 // diagnosticParserCoreShadowCensusEnabled reports true. The census never
 // influences routing.
 //
@@ -212,13 +215,13 @@ func alternativeSetEventOnlyContainsAll(dropped, survivor []uint32) bool {
 }
 
 // DiagnosticParserCoreShadowCensusTotals tallies the comparison between the
-// scalar rank/lineage proof (diagnosticParserCoreSelectedLineageDrops, the
-// live decider) and the v2 alternative-set containment proof
-// (diagnosticParserCoreConvergedCoverageDropsV2) across every converged-split
-// no-action drop election observed while the census is enabled. Retained
-// under its stage 1 name for callers already reading it; see
-// DiagnosticParserCoreThreeProofCensusTotals for the full v1/v2/scalar
-// breakdown stage 2a adds.
+// retired scalar rank/lineage proof (diagnosticParserCoreSelectedLineageDrops)
+// and the v2 alternative-set containment proof
+// (diagnosticParserCoreConvergedCoverageDropsV2, the live decider since
+// stage 2b) across every converged-split no-action drop election observed
+// while the census is enabled. Retained under its stage 1 name for callers
+// already reading it; see DiagnosticParserCoreThreeProofCensusTotals for the
+// full v1/v2/scalar breakdown stage 2a adds.
 type DiagnosticParserCoreShadowCensusTotals struct {
 	// Agree: both proofs reached the same verdict (both proved or both
 	// declined).
@@ -251,17 +254,19 @@ type DiagnosticParserCoreThreeProofCensusTotals struct {
 	ScalarProved uint64
 	V1Proved     uint64
 	V2Proved     uint64
-	// Class1V2AdmitsScalarDeclines: v2 proves where the scalar (live)
-	// decider declines -- the class the stage 1 census structurally could
-	// not see, and the Kotlin class detector (spec section 7 class 1). The
-	// stage 2b gate requires this class to carry zero differing-tree cases
+	// Class1V2AdmitsScalarDeclines: v2 proves where the retired scalar proof
+	// declines -- the class the stage 1 census structurally could not see,
+	// and the Kotlin class detector (spec section 7 class 1). The stage 2b
+	// gate required this class to carry zero differing-tree cases
 	// (adjudicated against the C oracle, not raw production equality;
-	// campaign amendment 2026-08-02) across the corpora in scope.
+	// campaign amendment 2026-08-02) across the corpora in scope; it stays a
+	// live regression watch now that v2 is the decider.
 	Class1V2AdmitsScalarDeclines uint64
-	// Class2ScalarProvesV2Declines: the scalar (live) decider proves where
-	// v2 declines -- expected non-zero (rank-preference drops, the
-	// coincidental-premise class v1's own design indicted; spec section 7
-	// class 2). No gate.
+	// Class2ScalarProvesV2Declines: the retired scalar proof proves where v2
+	// (the live decider) declines -- expected non-zero (rank-preference
+	// drops, the coincidental-premise class v1's own design indicted; spec
+	// section 7 class 2). No gate; these are the newly-declined drops v2
+	// falls back on.
 	Class2ScalarProvesV2Declines uint64
 	// Class3V1ProvesV2Declines: v1 (event-only) proves where v2 declines --
 	// the branch-discrimination accepted capability cost (spec section 7
@@ -327,39 +332,6 @@ func diagnosticParserCoreShadowCensusEnabled() bool {
 		}
 	})
 	return diagnosticParserCoreShadowCensusEnabledVal
-}
-
-var (
-	alternativeSetV2OptInDeciderOnce sync.Once
-	alternativeSetV2OptInDeciderVal  bool
-)
-
-// alternativeSetV2OptInDeciderEnabled reports whether the differential
-// harness's v2-as-decider override is engaged (GTS_B4B_V2_OPT_IN_DECIDER).
-// This never affects default routing: it exists solely so a harness can
-// re-run a source with v2 substituted for the scalar proof as the deciding
-// predicate in dropGenericNoActionHeads and compare the resulting tree
-// against production (spec.b4b-alternative-set.v2 section 7 class 1's
-// differential harness). Off by default; cached the same zero-cost-when-off
-// way as diagnosticParserCoreShadowCensusEnabled.
-func alternativeSetV2OptInDeciderEnabled() bool {
-	alternativeSetV2OptInDeciderOnce.Do(func() {
-		switch os.Getenv("GTS_B4B_V2_OPT_IN_DECIDER") {
-		case "1", "true", "TRUE", "True", "on", "ON", "yes", "YES":
-			alternativeSetV2OptInDeciderVal = true
-		}
-	})
-	return alternativeSetV2OptInDeciderVal
-}
-
-// SetAlternativeSetV2OptInDeciderEnabledForTest overrides the v2 opt-in
-// decider gate for one test process. Restore the previous value (the
-// returned func) when done.
-func SetAlternativeSetV2OptInDeciderEnabledForTest(on bool) func() {
-	alternativeSetV2OptInDeciderOnce.Do(func() {})
-	previous := alternativeSetV2OptInDeciderVal
-	alternativeSetV2OptInDeciderVal = on
-	return func() { alternativeSetV2OptInDeciderVal = previous }
 }
 
 // diagnosticParserCoreRunThreeProofCensus evaluates the v1 and v2

@@ -45,7 +45,7 @@ import (
 // has no matching selected survivor of the same lineage (an unprovable drop).
 // The paired control below proves the certificate is exactly what makes that
 // same source route WITH the certificate: it accepts via the artifact escape
-// with ConvergedReductionSplitDrops=1, SelectedLineageDrops=0 (an accepted,
+// with ConvergedReductionSplitDrops=1, ConvergedCoverageDrops=0 (an accepted,
 // unprovable drop). The trigger is any macro that expands to a top-level
 // function definition -- even a single clause with no guard; a plain,
 // non-macro function with the identical clauses routes cleanly. Macro-defined
@@ -405,7 +405,7 @@ func TestAdmissionCandidateErlangConvergedSplitAdversarialProbe(t *testing.T) {
 				t.Skipf(
 					"campaign-v7 B4d finding: erlang's CompactConvergedReductionSplitDropsCertified grant is load-bearing for this source. "+
 						"Without the certificate: declined (%s). "+
-						"With the certificate: routed only via the artifact escape with an unproved drop (ConvergedReductionSplitDrops=%d, SelectedLineageDrops=%d). "+
+						"With the certificate: routed only via the artifact escape with an unproved drop (ConvergedReductionSplitDrops=%d, ConvergedCoverageDrops=%d). "+
 						"Erlang's corpus-zero dependence finding (hypha spore b4-provenance-families) is incomplete for macro-expanded top-level function definitions. "+
 						"The grant in grammars/runtime_profiles.go is NOT retired; retirement is blocked pending a B4b converged-alternative-set proof.",
 					reason, certDrops, certProved,
