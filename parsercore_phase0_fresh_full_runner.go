@@ -143,13 +143,13 @@ func requireParserCoreFreshFullAcceptance(scheduler *diagnosticParserCoreGeneric
 			acceptance.Token, acceptance.Header.Header, acceptance.Accepts, acceptance.Work.Accepts)
 	}
 	if !allowConvergedReductionSplitDrops &&
-		acceptance.Work.ConvergedReductionSplitDrops != acceptance.Work.SelectedLineageDrops {
+		acceptance.Work.ConvergedReductionSplitDrops != acceptance.Work.ConvergedCoverageDrops {
 		return &diagnosticParserCoreDecline{
 			boundary: DiagnosticParserCoreAccept,
 			detail: fmt.Sprintf(
-				"accepted frontier followed %d converged-path reduction split drops with %d exact selected-lineage proofs",
+				"accepted frontier followed %d converged-path reduction split drops with %d alternative-set coverage proofs",
 				acceptance.Work.ConvergedReductionSplitDrops,
-				acceptance.Work.SelectedLineageDrops,
+				acceptance.Work.ConvergedCoverageDrops,
 			),
 		}
 	}

@@ -156,22 +156,26 @@ type DiagnosticParserCoreGenericWork struct {
 	// ConvergedReductionSplitDrops counts no-action drops descended from a
 	// reduction that split multiple compact predecessor paths into live heads.
 	ConvergedReductionSplitDrops uint64
-	// SelectedLineageDrops counts converged split drops whose unselected rank
-	// matched one surviving selected header from the same reduction.
-	SelectedLineageDrops uint64
-	RepetitionFolds      uint64
-	Reductions           uint64
-	OrdinaryShifts       uint64
-	OrdinaryCohorts      uint64
-	ExtraShifts          uint64
-	ExtraCohorts         uint64
-	Accepts              uint64
-	ReductionPauses      uint64
-	NoActionDrops        uint64
-	Elections            uint64
-	Canonicalizations    uint64
-	PeakHeaders          uint64
-	Overflow             bool
+	// ConvergedCoverageDrops counts converged split drops whose dropped
+	// header's recorded alternative set was contained in one surviving,
+	// non-blended header's recorded set (spec.b4b-alternative-set.v2 section
+	// 5, the revised theorem). Renamed from SelectedLineageDrops at stage
+	// 2b, when the v2 containment predicate replaced the scalar (rank,
+	// lineage) proof as the deciding proof.
+	ConvergedCoverageDrops uint64
+	RepetitionFolds        uint64
+	Reductions             uint64
+	OrdinaryShifts         uint64
+	OrdinaryCohorts        uint64
+	ExtraShifts            uint64
+	ExtraCohorts           uint64
+	Accepts                uint64
+	ReductionPauses        uint64
+	NoActionDrops          uint64
+	Elections              uint64
+	Canonicalizations      uint64
+	PeakHeaders            uint64
+	Overflow               bool
 }
 
 func (w *DiagnosticParserCoreGenericWork) add(counter *uint64, delta uint64) {
@@ -3686,29 +3690,27 @@ func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices 
 			}
 		}
 	}
-	// The scalar (rank, lineage) proof remains the live decider throughout
-	// stage 2a (spec.b4b-alternative-set.v2 section 7); the v2 predicate
-	// below only ever substitutes when the differential-harness opt-in
-	// override is engaged (test-only, never the default).
-	selectedLineageDrops, scalarProved := diagnosticParserCoreSelectedLineageDrops(s.headers, indices)
-	proved := scalarProved
-	if alternativeSetV2OptInDeciderEnabled() {
-		_, v2Proved := s.diagnosticParserCoreConvergedCoverageDropsV2(indices)
-		proved = v2Proved
-	}
+	// Stage 2b (spec.b4b-alternative-set.v2 section 8): the v2 containment
+	// predicate -- (event, branch) exact-member containment plus the
+	// blended-witness veto -- is the deciding proof for uncertified
+	// languages, replacing the scalar (rank, lineage) proof stage 2a kept
+	// live while the re-census ran. The section 7 gate passed (zero class-1
+	// differing-tree cases, the Kotlin witness declines under v2, stage 1's
+	// gates re-passed); erlang's own class-3 probe re-proof miss is scoped
+	// to its stage 3 certificate precondition, not this gate.
+	convergedCoverageDrops, proved := s.diagnosticParserCoreConvergedCoverageDropsV2(indices)
 	if diagnosticParserCoreShadowCensusEnabled() {
-		// Three-proof census: evaluates the v1 (event-only) and v2 ((event,
-		// branch) plus blended-witness veto) containment predicates next to
-		// the scalar decision above and tallies every pairwise comparison,
-		// including the declined-drop classes the stage 1 census could not
-		// see. Never influences the decision below
-		// (spec.b4b-alternative-set.v2 section 7).
+		// The retired scalar proof is evaluated only here, next to the v2
+		// decision above, for the ongoing three-proof regression check as
+		// more languages decertify in stage 3. Never influences the
+		// decision below.
+		_, scalarProved := diagnosticParserCoreSelectedLineageDrops(s.headers, indices)
 		s.diagnosticParserCoreRunThreeProofCensus(indices, scalarProved)
 	}
 	if !proved && !s.options.allowConvergedSplitDropArtifact {
 		return &diagnosticParserCoreDecline{
 			boundary: DiagnosticParserCoreNoAction,
-			detail:   "converged-path reduction split no-action drop lacks one exact unselected-to-selected lineage",
+			detail:   "converged-path reduction split no-action drop lacks alternative-set coverage by one non-blended survivor",
 		}
 	}
 	if s.fullReceipts() {
@@ -3750,7 +3752,7 @@ func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices 
 	s.headers = s.headers[:write]
 	s.work.NoActionDrops += uint64(len(indices))
 	s.work.add(&s.work.ConvergedReductionSplitDrops, convergedReductionSplitDrops)
-	s.work.add(&s.work.SelectedLineageDrops, selectedLineageDrops)
+	s.work.add(&s.work.ConvergedCoverageDrops, convergedCoverageDrops)
 	return nil
 }
 

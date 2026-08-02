@@ -755,7 +755,21 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 	// case; see its doc comment.
 	multiPop := len(paths) > 1
 	if multiPop {
-		c.markCleanProductionRank(paths)
+		// Stage 2b (spec.b4b-alternative-set.v2 section 8): the v2
+		// containment predicate is the deciding proof and never reads
+		// cleanPathRank/cleanPathLineage on the routing path, so the
+		// prefix-DAG walk (markCleanProductionRank, the bisected dominant
+		// share of the recording-era compact-perf regression) runs only
+		// when the three-proof census asks for a meaningful scalar
+		// comparison. Otherwise every path is marked Unknown directly --
+		// cheap, and still marks nodeLineageRecord.converged=true, so
+		// historical-boundary classification and alternative-set import are
+		// unaffected (see cleanPathRankWalkEnabled's doc comment).
+		if cleanPathRankWalkEnabled() {
+			c.markCleanProductionRank(paths)
+		} else {
+			markCleanPathRankUnknown(paths)
+		}
 	}
 	for _, path := range paths {
 		prev, err := c.node(path.prev)

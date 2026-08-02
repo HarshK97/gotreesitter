@@ -469,14 +469,15 @@ func AlternativeSetMemberEvent(member uint32) uint16 { return uint16(member >> 1
 func AlternativeSetMemberBranch(member uint32) uint16 { return uint16(member) }
 
 // alternativeSetRecordingEnabledOnce and alternativeSetRecordingEnabledVal
-// cache GTS_B4B_SHADOW_CENSUS, the same switch that gates the shadow census
-// itself. No production or stage-1 diagnostic decision reads a recorded
-// AlternativeSet except that census, so recording is off by default and
-// only turns on with it -- this package has no way to reach the census's
-// own copy of the flag (parsercorephase0 has no dependency on the higher
-// package that defines it), so it caches an independent read of the same
-// environment variable; both settle on the same cached value for the life
-// of a process.
+// cache the recording gate. Stage 1 kept recording shadow-only, off by
+// default, behind GTS_B4B_SHADOW_CENSUS. Stage 2b promotes the v2
+// containment predicate (diagnosticParserCoreConvergedCoverageDropsV2) to
+// the deciding proof for uncertified languages, so recording must be
+// unconditional: a header whose set was never populated fails closed on
+// every drop it is asked to prove, which would silently turn every
+// converged-split drop into a decline. Recording is allocation-free by
+// construction (spec.b4b-alternative-set.v2 section 3.4), so turning it on
+// always costs real CPU, never allocation.
 var (
 	alternativeSetRecordingEnabledOnce sync.Once
 	alternativeSetRecordingEnabledVal  bool
@@ -484,30 +485,74 @@ var (
 
 func alternativeSetRecordingEnabled() bool {
 	alternativeSetRecordingEnabledOnce.Do(func() {
-		switch os.Getenv("GTS_B4B_SHADOW_CENSUS") {
-		case "1", "true", "TRUE", "True", "on", "ON", "yes", "YES":
-			alternativeSetRecordingEnabledVal = true
-		}
+		alternativeSetRecordingEnabledVal = true
 	})
 	return alternativeSetRecordingEnabledVal
 }
 
 // SetAlternativeSetRecordingEnabledForTest overrides the recording gate for
-// one test process, mirroring the census's own ForTest override. Restore
-// the previous value (the returned func) when done.
+// one test process. Restore the previous value (the returned func) when
+// done. Production never disables recording; this exists so a test can
+// exercise the disabled-gate code path in isolation. Reads through
+// alternativeSetRecordingEnabled first (rather than forcing the sync.Once
+// with an empty closure) so the captured "previous" is always the gate's
+// real value -- true on its first-ever call in a process -- never an
+// artifact of which caller happened to fire the Once first.
 func SetAlternativeSetRecordingEnabledForTest(on bool) func() {
-	alternativeSetRecordingEnabledOnce.Do(func() {})
-	previous := alternativeSetRecordingEnabledVal
+	previous := alternativeSetRecordingEnabled()
 	alternativeSetRecordingEnabledVal = on
 	return func() { alternativeSetRecordingEnabledVal = previous }
 }
 
+// cleanPathRankWalkEnabledOnce and cleanPathRankWalkEnabledVal cache
+// GTS_B4B_SHADOW_CENSUS, independently of the outer package's own copy of the
+// same switch (parsercorephase0 has no dependency on the package that
+// defines the census) -- the pattern alternativeSetRecordingEnabled used
+// before stage 2b made set recording unconditional. Once the converged-
+// coverage v2 predicate became the deciding proof, nothing on the routing
+// path reads markCleanProductionRank's scalar (rank, lineage) output except
+// the three-proof census's scalar comparison, so the DAG walk itself now
+// runs only when that census is requested. Off by default, multi-pop paths
+// are marked Unknown instead (markCleanPathRankUnknown): a single field
+// write per path, no derivation walk. Unknown still marks
+// nodeLineageRecord.converged=true exactly as Selected/Unselected would
+// (recordNodeLineage), so HistoricalBoundaryConverged classification and
+// alternative-set historical import (spec section 4, "Dead-node historical
+// import") are unaffected -- only the now-unread scalar rank/lineage values
+// degrade to Unknown/0.
+var (
+	cleanPathRankWalkEnabledOnce sync.Once
+	cleanPathRankWalkEnabledVal  bool
+)
+
+func cleanPathRankWalkEnabled() bool {
+	cleanPathRankWalkEnabledOnce.Do(func() {
+		switch os.Getenv("GTS_B4B_SHADOW_CENSUS") {
+		case "1", "true", "TRUE", "True", "on", "ON", "yes", "YES":
+			cleanPathRankWalkEnabledVal = true
+		}
+	})
+	return cleanPathRankWalkEnabledVal
+}
+
+// SetCleanPathRankWalkEnabledForTest overrides the rank-walk gate for one
+// test process, mirroring SetAlternativeSetRecordingEnabledForTest's
+// override pattern. Restore the previous value (the returned func) when
+// done.
+func SetCleanPathRankWalkEnabledForTest(on bool) func() {
+	previous := cleanPathRankWalkEnabled()
+	cleanPathRankWalkEnabledVal = on
+	return func() { cleanPathRankWalkEnabledVal = previous }
+}
+
 // NewAlternativeSetMember returns the singleton set {pack(event, branch)},
 // or the empty set when event==0 (the reserved "no event" identity) or when
-// the recording gate is off. branch is the ReductionOutput's ordinal within
-// the establishing dispatch (spec.b4b-alternative-set.v2 section 3.1); it is
-// not independently reserved -- only event==0 makes the packed value zero,
-// since establishment always guards event!=0 first. Every driver-side
+// the recording gate is off (test-only; see
+// SetAlternativeSetRecordingEnabledForTest). branch is the ReductionOutput's
+// ordinal within the establishing dispatch (spec.b4b-alternative-set.v2
+// section 3.1); it is not independently reserved -- only event==0 makes the
+// packed value zero, since establishment always guards event!=0 first.
+// Every driver-side
 // alternative-set value not copied or unioned from an existing header/node
 // set originates here, so gating this one construction point -- together
 // with recordNodeLineageMember, the only other place a member is ever
@@ -4473,8 +4518,21 @@ func searchAlternativeSetMembers(members []uint32, member uint32) (int, bool) {
 // count/flags/spillRef alone (section 3.3); a superseded segment simply
 // leaks arena space until the next Reset, bounded by alternativeSetHardCap
 // per record.
+//
+// Overflowed is frozen, uniformly. Once alternativeSetFlagOverflowed is set
+// -- whether by this function's own count reaching alternativeSetHardCap,
+// or by alternativeSetUnion propagating an overflowed source's incomplete
+// knowledge onto set (below) -- no further insert can ever change set
+// again: the check runs first, before any member resolution or scan, so a
+// set that stays overflowed for the rest of a parse (the canonical corpus
+// census found this true for 98.7% of elections at (event, branch) member
+// width) costs one flag test per call instead of a spill-arena read and a
+// linear scan that would always end in the identical no-op.
 func (c *Core) alternativeSetInsert(set *AlternativeSet, member uint32) bool {
 	if member == 0 {
+		return false
+	}
+	if set.flags&alternativeSetFlagOverflowed != 0 {
 		return false
 	}
 	current, ok := c.alternativeSetMembers(*set)
@@ -4486,11 +4544,8 @@ func (c *Core) alternativeSetInsert(set *AlternativeSet, member uint32) bool {
 		return false
 	}
 	if int(set.count) >= alternativeSetHardCap {
-		if set.flags&alternativeSetFlagOverflowed == 0 {
-			set.flags |= alternativeSetFlagOverflowed
-			return true
-		}
-		return false
+		set.flags |= alternativeSetFlagOverflowed
+		return true
 	}
 	if position == len(current) {
 		switch {
@@ -4515,17 +4570,27 @@ func (c *Core) alternativeSetInsert(set *AlternativeSet, member uint32) bool {
 }
 
 // alternativeSetUnion unions src's recorded members into *dst in place and
-// reports whether dst changed. An overflowed source propagates its overflow
-// flag: a union whose source is overflowed marks the destination overflowed
-// (spec.b4b-alternative-set.v1 section 4, "Overflow propagation").
+// reports whether dst changed. Overflowed is frozen, uniformly (see
+// alternativeSetInsert's doc comment): this function never changes an
+// already-overflowed dst, and never partially merges an overflowed src's
+// known members before freezing dst -- an overflowed source's recorded
+// members are an incomplete view of its true membership (spec.b4b-
+// alternative-set.v1 section 3.2), so the only sound conclusion is that
+// dst's own true union is unknowable beyond what dst already has recorded.
+// dst becomes overflowed-and-done at exactly its pre-union state, rather
+// than spending a merge loop whose result is discarded the moment the flag
+// is set regardless. Checked first, in both directions, before any member
+// resolution: on the hot, already-saturated path (98.7% of canonical-corpus
+// elections touch an overflowed set), this turns a spill-arena read plus a
+// linear scan into one flag test.
 //
 // Header-to-node persistence (persistHeaderLineageOwned,
 // parsercore_phase0_driver.go) re-unions every convergedReductionSplit
 // header's accumulated set into its node on every dispatch, mirroring the
 // existing scalar RecordHeadLineageOwned call at the same frequency, and
 // header.head moves to a freshly allocated node on most dispatches -- so the
-// destination is empty far more often than it already equals src. Two fast
-// paths keep that pattern cheap:
+// destination is empty far more often than it already equals src. Two more
+// fast paths keep that pattern cheap once both sides are known unfrozen:
 //
 //  1. dst is empty: *dst = src, an O(1) value copy. This aliases src's spill
 //     segment (if any) rather than copying it, which is safe: every further
@@ -4537,8 +4602,15 @@ func (c *Core) alternativeSetInsert(set *AlternativeSet, member uint32) bool {
 //     (containsAll) instead of insert's O(len(src)) x O(len(dst))
 //     member-by-member scan.
 func (c *Core) alternativeSetUnion(dst *AlternativeSet, src AlternativeSet) bool {
+	if dst.flags&alternativeSetFlagOverflowed != 0 {
+		return false
+	}
+	if src.Overflowed() {
+		dst.flags |= alternativeSetFlagOverflowed
+		return true
+	}
 	if src.count == 0 {
-		return c.alternativeSetPropagateOverflow(dst, src)
+		return false
 	}
 	if dst.count == 0 {
 		*dst = src
@@ -4546,10 +4618,9 @@ func (c *Core) alternativeSetUnion(dst *AlternativeSet, src AlternativeSet) bool
 	}
 	srcMembers, ok := c.alternativeSetMembers(src)
 	if !ok {
-		return c.alternativeSetPropagateOverflow(dst, src)
+		return false
 	}
 	if dstMembers, dstOK := c.alternativeSetMembers(*dst); dstOK &&
-		(!src.Overflowed() || dst.Overflowed()) &&
 		alternativeSetSortedContainsAll(srcMembers, dstMembers) {
 		return false
 	}
@@ -4558,9 +4629,6 @@ func (c *Core) alternativeSetUnion(dst *AlternativeSet, src AlternativeSet) bool
 		if c.alternativeSetInsert(dst, member) {
 			changed = true
 		}
-	}
-	if c.alternativeSetPropagateOverflow(dst, src) {
-		changed = true
 	}
 	return changed
 }
@@ -4594,14 +4662,6 @@ func alternativeSetSortedContainsAll(needle, haystack []uint32) bool {
 		haystackIndex++
 	}
 	return true
-}
-
-func (c *Core) alternativeSetPropagateOverflow(dst *AlternativeSet, src AlternativeSet) bool {
-	if src.Overflowed() && dst.flags&alternativeSetFlagOverflowed == 0 {
-		dst.flags |= alternativeSetFlagOverflowed
-		return true
-	}
-	return false
 }
 
 // UnionAlternativeSet is the exported form of alternativeSetUnion for

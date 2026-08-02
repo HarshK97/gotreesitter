@@ -2,23 +2,27 @@
 
 package gotreesitter_test
 
-// The B4b stage 2a class-1 differential harness (spec.b4b-alternative-
-// set.v2 section 7 class 1, and the stage 2b gate). For each corpus source
-// this file re-parses the candidate route twice: once normally (the live
-// scalar decider, unchanged default), and once with v2 substituted as the
-// decider (SetAlternativeSetV2OptInDeciderEnabledForTest, test-only,
-// differential-harness-only). If v2 ever proves a converged-split drop that
-// the scalar decider alone would not have (spec section 7 class 1), forcing
-// it through this way is exactly "compact-if-forced": the v2-opt-in-decider
-// parse either declines somewhere else and falls back to production
-// trivially (nothing interesting -- the tree is production's by
-// construction), or it fully routes on v2's own proof alone, in which case
-// its resulting tree must equal production's. A mismatch there is a class-1
-// differing-tree case: per the campaign's C-oracle adjudication amendment
-// (2026-08-02), that is not automatically a v2 theorem falsifier -- the
-// cgo_harness C-oracle adjudication (b4b_alternative_set_v2_kotlin_adjudication_test.go)
-// determines whether production or the v2-admitted compact route is the
-// side that diverges from the locked C oracle.
+// The B4b stage 2b class-1 differential regression witness (spec.b4b-
+// alternative-set.v2 section 7 class 1, and the stage 2b gate). Stage 2a
+// built this harness around a test-only opt-in override
+// (SetAlternativeSetV2OptInDeciderEnabledForTest) that substituted v2 for
+// the then-live scalar decider; the section 7 gate passed and stage 2b
+// flipped dropGenericNoActionHeads to decide with v2 unconditionally for
+// uncertified languages, so that override was retired and this file now
+// exercises the plain candidate route. For each corpus source this file
+// re-parses twice: once with the candidate route disabled (production),
+// and once with it enabled (v2 decides). If v2 ever proves a converged-
+// split drop that the retired scalar decider alone would not have (spec
+// section 7 class 1), the candidate parse either declines somewhere else
+// and falls back to production trivially (nothing interesting -- the tree
+// is production's by construction), or it fully routes on v2's own proof
+// alone, in which case its resulting tree must equal production's. A
+// mismatch there is a class-1 differing-tree case: per the campaign's
+// C-oracle adjudication amendment (2026-08-02), that is not automatically a
+// v2 theorem falsifier -- the cgo_harness C-oracle adjudication
+// (b4b_alternative_set_v2_kotlin_adjudication_test.go) determines whether
+// production or the v2-admitted compact route is the side that diverges
+// from the locked C oracle.
 //
 // Run with:
 //
@@ -51,11 +55,13 @@ type v2DifferentialResult struct {
 }
 
 // runV2OptInDeciderDifferential parses source under production and under the
-// candidate route with v2 substituted as the deciding proof
-// (dropGenericNoActionHeads), and reports whether the resulting trees match.
-// Recording must be forced on: 2a's default-off recording gate would
-// otherwise leave every altSet empty, making v2 decline everything
-// trivially and defeating the harness's purpose.
+// candidate route, which decides converged-split drops with the v2 proof
+// unconditionally since the stage 2b flip (dropGenericNoActionHeads), and
+// reports whether the resulting trees match. Recording is forced on
+// explicitly (defense-in-depth): production has recorded it unconditional
+// since stage 2b, but an empty altSet would make v2 decline everything
+// trivially and silently defeat this harness's purpose, so the requirement
+// stays pinned here regardless of the current default.
 func runV2OptInDeciderDifferential(t testing.TB, name string, lang *gts.Language, source []byte) v2DifferentialResult {
 	t.Helper()
 	result := v2DifferentialResult{name: name}
@@ -75,8 +81,6 @@ func runV2OptInDeciderDifferential(t testing.TB, name string, lang *gts.Language
 	}
 	result.productionDigest = productionInspection.SHA256
 
-	restoreV2 := gts.SetAlternativeSetV2OptInDeciderEnabledForTest(true)
-	defer restoreV2()
 	restoreRecording := core.SetAlternativeSetRecordingEnabledForTest(true)
 	defer restoreRecording()
 
@@ -85,7 +89,7 @@ func runV2OptInDeciderDifferential(t testing.TB, name string, lang *gts.Language
 	candidate.SetAdmissionCandidateRoute(true)
 	candidateTree, err := candidate.Parse(source)
 	if err != nil {
-		result.err = fmt.Errorf("v2-opt-in-decider candidate parse: %w", err)
+		result.err = fmt.Errorf("v2-decider candidate parse: %w", err)
 		return result
 	}
 	defer candidateTree.Release()
