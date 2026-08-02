@@ -73,8 +73,11 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	// tied-election-family-compact-retirement). Apex and Python add compact
 	// primary-acceptance-derivation certification (Python also adds
 	// converged-split-drop certification); Perl and Ada are new entries
-	// carrying both certifications. Kotlin's entry stays unchanged (both
-	// grants withheld; see the "kotlin" map entry comment).
+	// carrying both certifications. Kotlin's pre-existing entry stays
+	// unchanged in count (it does not add a map entry) but later adds both
+	// grants in place once selectCompactAcceptanceDerivation's materiality
+	// gate resolves the interaction that withheld them; see the "kotlin" map
+	// entry comment.
 	// 45 = the prior 44 plus the B3 stage S3 html entry, certifying native
 	// strategy-2 error-region recovery for the html_erroneous_end_tag class
 	// (spec.compact-recovery-ownership.v1).
@@ -163,9 +166,10 @@ func TestBuiltinCompactAcceptanceProfilesRequireExactBlobIdentity(t *testing.T) 
 		// spec.campaign.v7, finding
 		// tied-election-family-compact-retirement): full-corpus field-aware
 		// C-oracle verification certifies primary-acceptance-derivation
-		// selection for four of the five languages. Kotlin is withheld: see
-		// the runtime_profiles.go "kotlin" entry comment and
-		// TestKotlinCompactCertificationObjectDeclarationRegressionWithheld.
+		// selection for all five languages. Kotlin's grant lands under
+		// selectCompactAcceptanceDerivation's materiality gate
+		// (parsercore_phase0_driver.go, compactAcceptanceElectionIsVacuous);
+		// see the runtime_profiles.go "kotlin" entry comment.
 		{
 			name: "python", load: PythonLanguage,
 			want: func(lang *gotreesitter.Language) bool {
@@ -186,6 +190,12 @@ func TestBuiltinCompactAcceptanceProfilesRequireExactBlobIdentity(t *testing.T) 
 		},
 		{
 			name: "ada", load: AdaLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactPrimaryAcceptanceDerivationCertified
+			},
+		},
+		{
+			name: "kotlin", load: KotlinLanguage,
 			want: func(lang *gotreesitter.Language) bool {
 				return lang.CompactPrimaryAcceptanceDerivationCertified
 			},
@@ -235,9 +245,10 @@ func TestBuiltinCompactConvergedSplitProfilesRequireExactBlobIdentity(t *testing
 		// tied-election-family-compact-retirement): Perl and Ada certify
 		// converged-path split-drop acceptance after full-corpus field-aware
 		// C-oracle verification. Apex does not need this certification and
-		// stays out of this table. Kotlin is withheld: see the
-		// runtime_profiles.go "kotlin" entry comment and
-		// TestKotlinCompactCertificationObjectDeclarationRegressionWithheld.
+		// stays out of this table. Kotlin's grant stays withheld: review
+		// found a compact-only divergence class (an annotated extension
+		// property with a getter and a trailing comment); see the
+		// runtime_profiles.go "kotlin" entry comment.
 		{name: "perl", load: PerlLanguage},
 		{name: "ada", load: AdaLanguage},
 	}

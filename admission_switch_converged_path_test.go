@@ -196,14 +196,31 @@ func TestAdmissionCandidateSelectedLineageSplitsMatchProduction(t *testing.T) {
 	}
 }
 
-// TestAdmissionCandidateConvergedPathSplitFailsClosed covers a compact-route
-// divergence found by the refreshed Kotlin corpus. The visibility-modifier and
-// identifier conflict paths merge, then split during a later reduction.
-// Production and tree-sitter C recover the identifier path. The compact route
-// otherwise drops that path and returns a different clean tree.
-func TestAdmissionCandidateConvergedPathSplitFailsClosed(t *testing.T) {
+// TestAdmissionCandidateKotlinPlatformModifierSplitDeclinesWithSplitDropsWithheld
+// covers a compact-route divergence found by the refreshed Kotlin corpus.
+// The visibility-modifier and identifier conflict paths merge, then split
+// during a later reduction. Production and tree-sitter C recover the
+// identifier path. The compact route otherwise drops that path and returns
+// a different clean tree.
+//
+// CompactConvergedReductionSplitDropsCertified would resolve this witness
+// correctly (TestKotlinCompactCertificationPlatformModifierSplitOnlyIsSafe,
+// admission_switch_kotlin_certification_test.go, pins that it is safe in
+// isolation), but that grant stays withheld: review found a distinct,
+// compact-only divergence class on an annotated extension property (see the
+// runtime_profiles.go "kotlin" entry comment). Kotlin's shipped profile
+// carries CompactPrimaryAcceptanceDerivationCertified only, which this
+// witness's converged-path split does not reach -- it declines at the
+// converged-path-split checkpoint itself and falls back to production's
+// still-buggy (issue #93-adjacent) tree. This is the accepted, measured
+// cost of withholding split-drops: status quo ante, not a regression this
+// PR introduces.
+func TestAdmissionCandidateKotlinPlatformModifierSplitDeclinesWithSplitDropsWithheld(t *testing.T) {
 	source := []byte("internal actual fun f(): String = \"x\"\n")
 	lang := grammars.KotlinLanguage()
+	if lang.CompactConvergedReductionSplitDropsCertified {
+		t.Fatal("kotlin unexpectedly carries the withheld converged-split-drop certification")
+	}
 
 	production := gts.NewParser(lang)
 	production.SetAdmissionCandidateRoute(false)

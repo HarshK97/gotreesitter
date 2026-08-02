@@ -14,12 +14,19 @@ import (
 
 // This file is the shared A3 certification-workstream (spec.campaign.v7,
 // finding tied-election-family-compact-retirement) full-corpus verification
-// harness. Each certified language (perl, python, apex, ada; kotlin is
-// withheld, see admission_switch_kotlin_certification_withheld_test.go and
-// kotlin_a3_certification_object_declaration_regression_test.go) has its own
-// sweep test file that calls runA3CertificationSweep with that language's
-// full real-corpus-or-constructed source set and its certification flags
-// already landed in grammars/runtime_profiles.go.
+// harness. Each certified language (perl, python, apex, ada, kotlin) has its
+// own sweep test file that calls runA3CertificationSweep with that
+// language's full real-corpus-or-constructed source set and its
+// certification flags already landed in grammars/runtime_profiles.go.
+// Kotlin ships CompactPrimaryAcceptanceDerivationCertified only --
+// selectCompactAcceptanceDerivation's materiality gate
+// (parsercore_phase0_driver.go, compactAcceptanceElectionIsVacuous) is what
+// makes that grant safe on its own. CompactConvergedReductionSplitDropsCertified
+// stays withheld: review found a compact-only divergence class on an
+// annotated extension property; see the runtime_profiles.go "kotlin" entry
+// comment, admission_switch_kotlin_certification_test.go, and
+// kotlin_a3_certification_object_declaration_regression_test.go for the
+// dedicated receipts.
 //
 // Method (matches the admission_switch_converged_path_test.go flag-mutation
 // pattern): for every source, parse once on production (compat tail on,
@@ -100,6 +107,24 @@ func a3DeclineReasonClass(reason string) string {
 		return "unknown-empty-reason"
 	case strings.Contains(reason, "converged-path reduction split"):
 		return "converged-path-reduction-split"
+	case strings.Contains(reason, "material-acceptance-election"):
+		// Must precede the "did not accept EOF" case below: the materiality
+		// gate's full decline detail (admission_census.go,
+		// admissionCensusStopDecline) wraps its own boundary text with a
+		// "did not accept EOF: " prefix, so that coarser, generic substring
+		// always matches too. Checking this first keeps a genuine tied
+		// election (parsercore_phase0_driver.go,
+		// compactAcceptanceElectionIsVacuous) out of the no-eof-accept
+		// catch-all bucket.
+		//
+		// This bucket only ever fires with GTS_ADMISSION_CENSUS=1: without
+		// it, requireParserCoreFreshFullAcceptance
+		// (parsercore_phase0_fresh_full_runner.go) returns the plain,
+		// unclassified "did not accept EOF" error instead of the detailed
+		// boundary text this case matches. testmain_cgo_test.go's TestMain
+		// sets that env var process-wide for this package before any test
+		// runs, so every sweep's decline classification is honest.
+		return "material-acceptance-election"
 	case strings.Contains(reason, "did not accept EOF"):
 		return "no-eof-accept"
 	case strings.Contains(reason, "not sole exact EOF") || strings.Contains(reason, "acceptance is not sole exact EOF"):

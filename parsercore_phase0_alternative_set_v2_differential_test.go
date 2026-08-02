@@ -228,10 +228,24 @@ func TestB4bV2OptInDeciderDifferentialSmokeCorpus(t *testing.T) {
 // v2's own branch-discriminated proof must decline this drop -- the
 // v2-opt-in-decider route must therefore fall back to production, exactly
 // like the live scalar decider already does
-// (TestAdmissionCandidateConvergedPathSplitFailsClosed).
+// (TestAdmissionCandidateKotlinPlatformModifierSplitDeclinesWithSplitDropsWithheld).
+//
+// Kotlin's A3 certification (grammars/runtime_profiles.go) ships
+// CompactPrimaryAcceptanceDerivationCertified only.
+// CompactConvergedReductionSplitDropsCertified -- the certified artifact
+// escape this witness would need to route regardless of v2's own proof,
+// the same mechanism TestB4bV2OptInDeciderDifferentialErlangProbes documents
+// for Erlang -- stays withheld: review found a distinct, compact-only
+// divergence class on an annotated extension property (see the
+// runtime_profiles.go "kotlin" entry comment). Without that escape, this
+// witness declines exactly as it did before any Kotlin certification
+// landed.
 func TestB4bV2OptInDeciderDifferentialKotlinWitness(t *testing.T) {
 	source := []byte("internal actual fun f(): String = \"x\"\n")
 	lang := grammars.KotlinLanguage()
+	if lang.CompactConvergedReductionSplitDropsCertified {
+		t.Fatal("kotlin unexpectedly carries the withheld converged-split-drop certification")
+	}
 
 	result := runV2OptInDeciderDifferential(t, "kotlin_witness", lang, source)
 	if result.err != nil {
