@@ -7,6 +7,19 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- Corrected the root-cause comment on the javascript declared-conflict
+  election witness test.
+  `grammargen/lr.go` already retains the `labeled_statement`/`_property_name`
+  GLR fork that the real tree-sitter-javascript grammar declares.
+  That fix landed 2026-03-16.
+  The shipped `javascript.bin` blob predates the fix by two weeks.
+  Nothing resynced the blob afterward, so the raw parse still diverges from
+  the C oracle today.
+  A new unit test pins the retention rule directly against the generator.
+  Regressions now surface without a blob rebuild.
+
 ### Changed
 
 - The condense-candidate dispatch path no longer passes a closure through
