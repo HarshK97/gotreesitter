@@ -308,6 +308,30 @@ func ParseRuntimeMemoryMinSourceBytesForTest() int {
 	return parseRuntimeMemoryMinSourceBytes
 }
 
+// TryCompactFullParseRouteForTest exposes the admission-candidate engine seam
+// directly (bypassing eligibility and the size gate) so external test code
+// can drive the compact route's own accept-or-decline outcome, including its
+// decline detail string, without going through the public Parse route. Both
+// build configurations define tryCompactFullParseRoute (the real engine
+// under the default build, a fail-closed stub under -tags
+// gts_no_parsercorephase0), so this resolves in either build.
+func TryCompactFullParseRouteForTest(p *Parser, source []byte) (tree *Tree, ok bool, reason string) {
+	return p.tryCompactFullParseRoute(source)
+}
+
+// BeginParseOperationBudgetForTest opens the same outer parse-budget scope
+// Parse itself opens (beginParseOperationBudget), so external test code can
+// pin a deadline via SetTimeoutMicros, sleep past it, and then call Parse:
+// the nested budget scope Parse opens internally (including inside the
+// tranche B8 admission-candidate route) inherits this already-expired
+// deadline instead of computing a fresh one, giving a deterministic --
+// not call-overhead-dependent -- expired-timeout witness. Mirrors the
+// technique TestParseWithSnippetParserInheritsExpiredParentDeadline already
+// uses from inside the package.
+func (p *Parser) BeginParseOperationBudgetForTest() func() {
+	return p.beginParseOperationBudget()
+}
+
 // AdmissionSubParserProbe bundles internal sub-parser construction so the
 // external test package can prove recovery, snippet, and injection sub-parsers
 // are born pinned to the production route.

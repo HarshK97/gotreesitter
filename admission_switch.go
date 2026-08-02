@@ -95,8 +95,11 @@ func admissionCandidateEnvEnabled() bool {
 // at scheduler granularity, so the switch declines every input at or above the
 // source-length floor where the production route arms that budget
 // (parseRuntimeMemoryMinSourceBytes). Such inputs stay on production and honor
-// ParseStopMemoryBudget. Explicit timeouts, cancellation flags, included ranges,
-// and observability hooks also keep a parse on production.
+// ParseStopMemoryBudget. Below that floor, an explicit timeout, cancellation
+// flag, or the scheduler's own memory-budget poll is honored on the candidate
+// route itself, with a compatible stop receipt (falling back to production
+// when needed); included ranges and observability hooks still keep a parse on
+// production.
 func SetAdmissionCandidateRouteDefault(enabled bool) {
 	admissionCandidateRouteDefault.Store(enabled)
 }
@@ -113,9 +116,10 @@ func AdmissionCandidateRouteDefault() bool {
 // enabled=true still respects every per-input eligibility decline: the switch
 // declines inputs at or above the source-length floor where the production
 // route arms the automatic memory budget (parseRuntimeMemoryMinSourceBytes), so
-// large inputs stay on production and honor ParseStopMemoryBudget. Explicit
-// timeouts, cancellation flags, included ranges, and observability hooks also
-// keep a parse on production.
+// large inputs stay on production and honor ParseStopMemoryBudget. Included
+// ranges and observability hooks also keep a parse on production; an explicit
+// timeout or cancellation flag no longer does (the scheduler polls and honors
+// them with a compatible stop receipt).
 func (p *Parser) SetAdmissionCandidateRoute(enabled bool) {
 	if p == nil {
 		return
@@ -208,14 +212,17 @@ func (p *Parser) admissionCandidateFullParseEligible(oldTree *Tree, usingProduct
 	if len(p.included) > 0 {
 		return false
 	}
-	// Preserve liveness fidelity: the compact scheduler does not poll an explicit
-	// timeout or cancellation flag, so decline when a caller set one. Production
-	// then honors the deadline exactly. (The automatic large-input memory budget
-	// is honored by the per-input size decline in attemptAdmissionCandidateFullParse,
-	// which keeps every budget-eligible input on the production route.)
-	if p.timeoutMicros != 0 || p.cancellationFlag != nil {
-		return false
-	}
+	// An explicit timeout or cancellation flag no longer declines eligibility
+	// (tranche B8): the scheduler polls both through the exact production
+	// check (diagnosticParserCoreGenericScheduler.pollStopControl, once per
+	// dispatch-pass-loop iteration) and cleanly aborts -- releasing the
+	// compact arenas before falling back -- so production still serves a
+	// tripped deadline or cancellation with its own compatible stop receipt.
+	// (The automatic large-input memory budget is honored by the per-input
+	// size decline in attemptAdmissionCandidateFullParse, which keeps every
+	// budget-eligible input on the production route; below that size, the
+	// scheduler's own memory-budget poll now covers the same soft budget.)
+	//
 	// Preserve callback fidelity: the compact route does not emit the parser's
 	// logger, GLR-trace, ambiguity-profile, or parse-progress events, so decline
 	// (fall back to production) whenever a consumer has attached one. Production

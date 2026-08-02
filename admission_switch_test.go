@@ -251,10 +251,15 @@ func TestAdmissionSwitchDeclinesWhenIncludedRangesSet(t *testing.T) {
 	}
 }
 
-// TestAdmissionSwitchDeclinesWhenTimeoutSet proves the candidate route declines
-// when a caller set a timeout: the compact scheduler does not poll deadlines, so
-// the parse stays on production which honors it.
-func TestAdmissionSwitchDeclinesWhenTimeoutSet(t *testing.T) {
+// TestAdmissionSwitchConsultsCandidateWhenTimeoutSetButNotExpired proves
+// that, since tranche B8 wired the scheduler's own deadline poll, a live but
+// unexpired timeout no longer declines eligibility outright: the parse now
+// consults the candidate route (one routing event) and still returns a clean
+// tree. Like the rest of this file it asserts the routing EVENT, not which
+// engine served the parse, so it holds under every build (including
+// -tags gts_no_parsercorephase0, where the engine itself is a stub that
+// always declines: the event still fires, just as a fallback).
+func TestAdmissionSwitchConsultsCandidateWhenTimeoutSetButNotExpired(t *testing.T) {
 	restore := gts.AdmissionCandidateRouteDefault()
 	defer gts.SetAdmissionCandidateRouteDefault(restore)
 	gts.SetAdmissionCandidateRouteDefault(true)
@@ -268,14 +273,19 @@ func TestAdmissionSwitchDeclinesWhenTimeoutSet(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	defer tree.Release()
-	if got := admissionRoutingEvents(t); got != before {
-		t.Fatalf("a timeout must keep the parse on production: %d -> %d", before, got)
+	requireCleanFullTree(t, tree, source, "timeout-armed-but-not-tripped")
+	if got := tree.ParseStopReason(); got == gts.ParseStopTimeout {
+		t.Fatalf("a generous timeout must not trip: ParseStopReason() = %q", got)
+	}
+	if got := admissionRoutingEvents(t); got != before+1 {
+		t.Fatalf("a live but unexpired timeout must be eligible (exactly one routing event): %d -> %d", before, got)
 	}
 }
 
-// TestAdmissionSwitchDeclinesWhenCancellationFlagSet proves the candidate route
-// declines when a caller set a cancellation flag.
-func TestAdmissionSwitchDeclinesWhenCancellationFlagSet(t *testing.T) {
+// TestAdmissionSwitchConsultsCandidateWhenCancellationFlagSetButNotTripped is
+// the cancellation-flag counterpart of
+// TestAdmissionSwitchConsultsCandidateWhenTimeoutSetButNotExpired.
+func TestAdmissionSwitchConsultsCandidateWhenCancellationFlagSetButNotTripped(t *testing.T) {
 	restore := gts.AdmissionCandidateRouteDefault()
 	defer gts.SetAdmissionCandidateRouteDefault(restore)
 	gts.SetAdmissionCandidateRouteDefault(true)
@@ -290,8 +300,12 @@ func TestAdmissionSwitchDeclinesWhenCancellationFlagSet(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	defer tree.Release()
-	if got := admissionRoutingEvents(t); got != before {
-		t.Fatalf("a cancellation flag must keep the parse on production: %d -> %d", before, got)
+	requireCleanFullTree(t, tree, source, "cancellation-armed-but-not-tripped")
+	if got := tree.ParseStopReason(); got == gts.ParseStopCancelled {
+		t.Fatalf("an unset cancellation flag must not trip: ParseStopReason() = %q", got)
+	}
+	if got := admissionRoutingEvents(t); got != before+1 {
+		t.Fatalf("a live but untripped cancellation flag must be eligible (exactly one routing event): %d -> %d", before, got)
 	}
 }
 

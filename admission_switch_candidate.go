@@ -50,6 +50,13 @@ func newAdmissionCandidateRunner(p *Parser) (*parserCoreFreshFullRunner, error) 
 		allowConvergedSplitDropArtifact: p.language.CompactConvergedReductionSplitDropsCertified,
 		noLookaheadRootSymbol:           p.rootSymbol,
 		hasNoLookaheadRootSymbol:        p.hasRootSymbol,
+		// Tranche B8 scheduler stop-control: bind this Parser so the scheduler
+		// polls its deadline, cancellation flag, and (via
+		// stopControlMemoryBudgetBytes, recomputed per parse in
+		// executeSchedulerOpen) its production-compatible memory budget. This
+		// is the one runner constructor that arms the poll; the diagnostic and
+		// benchmark runner (newParserCoreFreshFullRunner) leaves it nil.
+		stopControlParser: p,
 	}
 	tables, err := newParserCoreRootTables(p)
 	if err != nil {
