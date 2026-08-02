@@ -157,14 +157,31 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 			SkipCompleteAcceptedErrorRetry: true,
 		},
 	},
+	// Kotlin's tied platform-modifier recovery witness (internal actual fun
+	// f(): String = "x") matches the C oracle once the compact route accepts
+	// after a converged-path split drop. A3 certification-workstream
+	// verification withholds certification here: combining that grant with
+	// primary-acceptance-derivation selection regresses a distinct witness
+	// (object Singleton { fun work() = Unit }, issue #93) to an
+	// infix_expression misparse that diverges from the C oracle, which sides
+	// with production's object_declaration. Neither grant lands until that
+	// interaction is resolved (see
+	// TestKotlinCompactCertificationObjectDeclarationRegressionWithheld).
 	"kotlin": {
 		blobSHA256:                    mustRuntimeProfileSHA256("643a3e6b60d07846dd972849b612159ff9bf09734b09fb00013229c8593a8c78"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
 		nativeResultCompatibility:     gotreesitter.ResultCompatibilityNativeCollapsedChildren,
 	},
+	// Apex's tied class-literal election matches the C oracle once the
+	// compact route selects the sole primary derivation; the compact tree is
+	// strictly more faithful than production plus the compat arm here. Apex
+	// has no converged-path split-drop shape, so it does not certify that
+	// mechanism. Full-corpus field-aware C-oracle verification certifies this
+	// exact blob (A3 certification workstream, spec.campaign.v7).
 	"apex": {
-		blobSHA256:                mustRuntimeProfileSHA256("69fc1b577f1f783a204c98719d55d2f15f329d296b9e227d651056ce878c1bd2"),
-		nativeResultCompatibility: gotreesitter.ResultCompatibilityNativeCollapsedChildren,
+		blobSHA256:                     mustRuntimeProfileSHA256("69fc1b577f1f783a204c98719d55d2f15f329d296b9e227d651056ce878c1bd2"),
+		nativeResultCompatibility:      gotreesitter.ResultCompatibilityNativeCollapsedChildren,
+		compactPrimaryAcceptDerivation: true,
 	},
 	"elixir": {
 		blobSHA256:                mustRuntimeProfileSHA256("9889f5f6704ea87f357c8d65ef3194d88fb5865922b45767fe4df0f2eda7e3f0"),
@@ -203,10 +220,37 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 			SkipCompleteAcceptedErrorRetry: true,
 		},
 	},
+	// Python's tied tuple-assignment election matches the C oracle once the
+	// compact route selects the sole primary derivation. Full-corpus
+	// field-aware C-oracle verification certifies this mechanism for this
+	// exact blob, alongside the existing converged-path split-drop
+	// certification (A3 certification workstream, spec.campaign.v7).
 	"python": {
-		blobSHA256:                    mustRuntimeProfileSHA256("cde4a67dc6af6e1232dbbd1eab8618478d1d73727020e8a8002542390a452d37"),
-		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
-		compactConvergedSplitDrops:    true,
+		blobSHA256:                     mustRuntimeProfileSHA256("cde4a67dc6af6e1232dbbd1eab8618478d1d73727020e8a8002542390a452d37"),
+		externalScannerFullParseRetry:  gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
+		compactConvergedSplitDrops:     true,
+		compactPrimaryAcceptDerivation: true,
+	},
+	// Perl's tied push-list election matches the C oracle once the compact
+	// route accepts after a converged-path split drop and selects the sole
+	// primary derivation. Full-corpus field-aware C-oracle verification
+	// certifies both mechanisms for this exact blob (A3 certification
+	// workstream, spec.campaign.v7).
+	"perl": {
+		blobSHA256:                     mustRuntimeProfileSHA256("22388f06c2c54bb4748fd5f5f682ed25eecff8115a7e8e6a98f94f9c94bb9820"),
+		compactConvergedSplitDrops:     true,
+		compactPrimaryAcceptDerivation: true,
+	},
+	// Ada's tied aggregate elections (positional-array and others-choice)
+	// match the C oracle once the compact route accepts after a
+	// converged-path split drop and selects the sole primary derivation.
+	// Full-corpus field-aware C-oracle verification certifies both
+	// mechanisms for this exact blob (A3 certification workstream,
+	// spec.campaign.v7).
+	"ada": {
+		blobSHA256:                     mustRuntimeProfileSHA256("32f2dd8f0053ffb7e6b7014f6ff2eb7025287c0d5fcdab6ce1f6a694c2d8899e"),
+		compactConvergedSplitDrops:     true,
+		compactPrimaryAcceptDerivation: true,
 	},
 	// Swift's low-pressure accepted-error parses select the same tree across
 	// the retry ladder. High-pressure parses still benefit from the first

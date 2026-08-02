@@ -68,8 +68,14 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	// retired outright, not migrated (see the "NOTE on dot" comment above
 	// the gomod entry), so it does not add a map entry. Crystal and Matlab add
 	// exact-blob external-scanner repeat suppression while retaining the full
-	// accepted-error retry ladder.
-	if got, want := len(builtinLanguageRuntimeProfiles), 42; got != want {
+	// 44 = the prior 42 plus two new A3 certification-workstream entries:
+	// Perl and Ada (spec.campaign.v7, finding
+	// tied-election-family-compact-retirement). Apex and Python add compact
+	// primary-acceptance-derivation certification (Python also adds
+	// converged-split-drop certification); Perl and Ada are new entries
+	// carrying both certifications. Kotlin's entry stays unchanged (both
+	// grants withheld; see the "kotlin" map entry comment).
+	if got, want := len(builtinLanguageRuntimeProfiles), 44; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -150,6 +156,37 @@ func TestBuiltinCompactAcceptanceProfilesRequireExactBlobIdentity(t *testing.T) 
 				return lang.CompactPrimaryAcceptanceDerivationCertified
 			},
 		},
+		// The tied-election family (A3 certification workstream,
+		// spec.campaign.v7, finding
+		// tied-election-family-compact-retirement): full-corpus field-aware
+		// C-oracle verification certifies primary-acceptance-derivation
+		// selection for four of the five languages. Kotlin is withheld: see
+		// the runtime_profiles.go "kotlin" entry comment and
+		// TestKotlinCompactCertificationObjectDeclarationRegressionWithheld.
+		{
+			name: "python", load: PythonLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactPrimaryAcceptanceDerivationCertified
+			},
+		},
+		{
+			name: "apex", load: ApexLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactPrimaryAcceptanceDerivationCertified
+			},
+		},
+		{
+			name: "perl", load: PerlLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactPrimaryAcceptanceDerivationCertified
+			},
+		},
+		{
+			name: "ada", load: AdaLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactPrimaryAcceptanceDerivationCertified
+			},
+		},
 	}
 
 	PurgeEmbeddedLanguageCache()
@@ -191,6 +228,15 @@ func TestBuiltinCompactConvergedSplitProfilesRequireExactBlobIdentity(t *testing
 		{name: "haskell", load: HaskellLanguage},
 		{name: "javascript", load: JavascriptLanguage},
 		{name: "python", load: PythonLanguage},
+		// A3 certification workstream (spec.campaign.v7, finding
+		// tied-election-family-compact-retirement): Perl and Ada certify
+		// converged-path split-drop acceptance after full-corpus field-aware
+		// C-oracle verification. Apex does not need this certification and
+		// stays out of this table. Kotlin is withheld: see the
+		// runtime_profiles.go "kotlin" entry comment and
+		// TestKotlinCompactCertificationObjectDeclarationRegressionWithheld.
+		{name: "perl", load: PerlLanguage},
+		{name: "ada", load: AdaLanguage},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
