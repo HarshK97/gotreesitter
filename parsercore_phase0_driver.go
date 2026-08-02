@@ -864,10 +864,46 @@ func diagnosticParserCoreSelectedNodeCensus(root *Node) diagnosticParserCoreSele
 	return census
 }
 
+// Field order groups creationSeq (8-byte aligned), then every 4-byte-aligned
+// field (head, checkpoint, altSet, lastPersistedHead, lastPersistedAltSet),
+// then cleanPathLineage (2-byte aligned), then every remaining byte-sized
+// field. This is layout-only: every construction site across the package
+// and its tests uses keyed fields (grep-verified), so declaration order
+// changes memory footprint, never behavior. It restores this struct to its
+// pre-b4b-v2 64 bytes (unsafe.Sizeof-verified, parsercore_phase0_canonical_scratch_internal_test.go)
+// despite carrying two full (event, branch) alternative sets plus three
+// bools v1 never had (b4b-width-repair audit, 2026-08): the widened
+// AlternativeSet's own inline-capacity reduction (core.go) supplies most of
+// the recovered space, and this reorder folds the three new bools into
+// padding a naive append-at-the-end declaration order would otherwise pay
+// for separately.
 type diagnosticParserCoreHeader struct {
-	creationSeq             uint64
-	head                    core.Head
-	checkpoint              core.CheckpointID
+	creationSeq uint64
+	head        core.Head
+	checkpoint  core.CheckpointID
+	// altSet mirrors cleanPathRank/cleanPathLineage but by union rather than
+	// overwrite: it accumulates every converged-split (event, branch) member
+	// this derivation thread has passed through and is never invalidated
+	// (carried unchanged through an external shift that zeroes
+	// cleanPathLineage; see markDiagnosticParserCoreExternalLineage). The
+	// scalar (rank, lineage) pair remains the live decider
+	// (dropGenericNoActionHeads); altSet and blended are read by the v1/v2
+	// containment census only (spec.b4b-alternative-set.v2 section 7).
+	altSet core.AlternativeSet
+	// lastPersistedHead and lastPersistedAltSet record the (head, altSet)
+	// pair persistHeaderLineageOwned last actually wrote to a node. Both are
+	// plain comparable values, so persistHeaderLineageOwned can detect a
+	// no-op persist (same node, same set already recorded there) with two
+	// equality checks instead of re-entering the scheduler-owned set-union
+	// machinery every dispatch. A rolled-back dispatch reverts these fields
+	// along with the rest of the header (diagnosticParserCoreHeaderRollbackScratch
+	// snapshots the whole struct by value), so they never claim a persist
+	// that Core itself undid. lastPersistedBlended extends the same no-op
+	// detection to blended: persistHeaderLineageOwned must also re-persist
+	// when only blended changed (spec.b4b-alternative-set.v2 section 10).
+	lastPersistedHead       core.Head
+	lastPersistedAltSet     core.AlternativeSet
+	cleanPathLineage        uint16
 	freshness               core.ReductionFreshness
 	shifted                 bool
 	accepted                bool
@@ -882,34 +918,11 @@ type diagnosticParserCoreHeader struct {
 	// same certified-language artifact escape that waives the proof itself.
 	resurrectionUnproved bool
 	cleanPathRank        core.CleanPathRankSelection
-	cleanPathLineage     uint16
-	// altSet mirrors cleanPathRank/cleanPathLineage but by union rather than
-	// overwrite: it accumulates every converged-split (event, branch) member
-	// this derivation thread has passed through and is never invalidated
-	// (carried unchanged through an external shift that zeroes
-	// cleanPathLineage; see markDiagnosticParserCoreExternalLineage). The
-	// scalar (rank, lineage) pair remains the live decider
-	// (dropGenericNoActionHeads); altSet and blended are read by the v1/v2
-	// containment census only (spec.b4b-alternative-set.v2 section 7).
-	altSet core.AlternativeSet
 	// blended records whether altSet was ever produced by folding two
 	// incomparable recorded sets together (spec.b4b-alternative-set.v2
 	// section 3.4). A blended header can never serve as a v2 containment
 	// witness (section 5).
-	blended bool
-	// lastPersistedHead and lastPersistedAltSet record the (head, altSet)
-	// pair persistHeaderLineageOwned last actually wrote to a node. Both are
-	// plain comparable values, so persistHeaderLineageOwned can detect a
-	// no-op persist (same node, same set already recorded there) with two
-	// equality checks instead of re-entering the scheduler-owned set-union
-	// machinery every dispatch. A rolled-back dispatch reverts these fields
-	// along with the rest of the header (diagnosticParserCoreHeaderRollbackScratch
-	// snapshots the whole struct by value), so they never claim a persist
-	// that Core itself undid. lastPersistedBlended extends the same no-op
-	// detection to blended: persistHeaderLineageOwned must also re-persist
-	// when only blended changed (spec.b4b-alternative-set.v2 section 10).
-	lastPersistedHead    core.Head
-	lastPersistedAltSet  core.AlternativeSet
+	blended              bool
 	lastPersistedBlended bool
 }
 
@@ -1380,14 +1393,18 @@ type diagnosticParserCoreCanonicalScratch struct {
 	groups        map[diagnosticParserCorePhaseHead]diagnosticParserCoreCanonicalGroup
 }
 
+// Field order groups winner (8-byte aligned int) and altSet (4-byte
+// aligned) up front, then the byte/uint16-sized fields; the sole
+// construction site (canonicalizeLinear/canonicalizeMapped) uses keyed
+// fields, so this reorder is layout-only (b4b-width-repair audit, 2026-08).
 type diagnosticParserCoreCanonicalGroup struct {
 	winner                  int
+	altSet                  core.AlternativeSet
+	cleanPathLineage        uint16
 	runnable                bool
 	convergedReductionSplit bool
 	resurrectionUnproved    bool
 	cleanPathRank           core.CleanPathRankSelection
-	cleanPathLineage        uint16
-	altSet                  core.AlternativeSet
 	blended                 bool
 }
 

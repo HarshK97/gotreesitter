@@ -134,14 +134,18 @@ func newAlternativeSetPinScheduler(t *testing.T) *diagnosticParserCoreGenericSch
 
 // alternativeSetPinMember builds a set from bare events, each on branch 0 --
 // the v1-equivalent shape (spec.b4b-alternative-set.v1 section 5) -- for
-// tests that exercise only event-only containment.
-func alternativeSetPinMember(t *testing.T, members ...uint16) core.AlternativeSet {
+// tests that exercise only event-only containment. compact must be the same
+// Core instance the caller will later read the set back through (typically
+// scheduler.compact): a spilled set's spillRef only resolves against the
+// arena that produced it (core.go's alternativeSetMembers doc comment), so
+// building with one Core and reading with another silently fails closed the
+// moment a set actually spills. This was previously masked at the pre-b4b-
+// width-repair inline capacity (4): every set literal in this file has at
+// most 3 members, which never spilled at capacity 4 but does at the audited
+// capacity of 2 (core.go), so the aliasing defect is load-bearing now.
+func alternativeSetPinMember(t *testing.T, compact *core.Core, members ...uint16) core.AlternativeSet {
 	t.Helper()
 	var set core.AlternativeSet
-	compact, err := core.New(alternativeSetPinCoverageTable{}, core.Limits{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, m := range members {
 		compact.UnionAlternativeSet(&set, core.NewAlternativeSetMember(m, 0))
 	}
@@ -149,14 +153,11 @@ func alternativeSetPinMember(t *testing.T, members ...uint16) core.AlternativeSe
 }
 
 // alternativeSetPinBranchMember builds a set from explicit (event, branch)
-// pairs, for v2-specific tests.
-func alternativeSetPinBranchMember(t *testing.T, pairs ...[2]uint16) core.AlternativeSet {
+// pairs, for v2-specific tests. See alternativeSetPinMember's doc comment
+// for why compact must be the same Core instance the caller reads through.
+func alternativeSetPinBranchMember(t *testing.T, compact *core.Core, pairs ...[2]uint16) core.AlternativeSet {
 	t.Helper()
 	var set core.AlternativeSet
-	compact, err := core.New(alternativeSetPinCoverageTable{}, core.Limits{})
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, pair := range pairs {
 		compact.UnionAlternativeSet(&set, core.NewAlternativeSetMember(pair[0], pair[1]))
 	}
@@ -165,7 +166,12 @@ func alternativeSetPinBranchMember(t *testing.T, pairs ...[2]uint16) core.Altern
 
 func TestDiagnosticParserCoreConvergedCoverageDropsV1Proof(t *testing.T) {
 	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
-	member := func(members ...uint16) core.AlternativeSet { return alternativeSetPinMember(t, members...) }
+	// One shared scheduler (and compact) builds every test-table set below
+	// and later reads each back: diagnosticParserCoreConvergedCoverageDropsV1
+	// only reads through scheduler.compact, so sharing it across subtests is
+	// safe, and it is required -- see alternativeSetPinMember's doc comment.
+	scheduler := newAlternativeSetPinScheduler(t)
+	member := func(members ...uint16) core.AlternativeSet { return alternativeSetPinMember(t, scheduler.compact, members...) }
 	tests := []struct {
 		name    string
 		headers []diagnosticParserCoreHeader
@@ -230,7 +236,6 @@ func TestDiagnosticParserCoreConvergedCoverageDropsV1Proof(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			scheduler := newAlternativeSetPinScheduler(t)
 			scheduler.headers = test.headers
 			count, proved := scheduler.diagnosticParserCoreConvergedCoverageDropsV1(test.indices)
 			if count != test.count || proved != test.proved {
@@ -290,7 +295,12 @@ func TestDiagnosticParserCoreConvergedCoverageDropsV1ProofAllocations(t *testing
 // (spec.b4b-alternative-set.v2 section 5).
 func TestDiagnosticParserCoreConvergedCoverageDropsV2Proof(t *testing.T) {
 	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
-	branchMember := func(pairs ...[2]uint16) core.AlternativeSet { return alternativeSetPinBranchMember(t, pairs...) }
+	// One shared scheduler (and compact) builds every test-table set below
+	// and later reads each back -- see
+	// TestDiagnosticParserCoreConvergedCoverageDropsV1Proof's identical setup
+	// and alternativeSetPinMember's doc comment.
+	scheduler := newAlternativeSetPinScheduler(t)
+	branchMember := func(pairs ...[2]uint16) core.AlternativeSet { return alternativeSetPinBranchMember(t, scheduler.compact, pairs...) }
 	tests := []struct {
 		name    string
 		headers []diagnosticParserCoreHeader
@@ -349,7 +359,6 @@ func TestDiagnosticParserCoreConvergedCoverageDropsV2Proof(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			scheduler := newAlternativeSetPinScheduler(t)
 			scheduler.headers = test.headers
 			count, proved := scheduler.diagnosticParserCoreConvergedCoverageDropsV2(test.indices)
 			if count != test.count || proved != test.proved {
@@ -363,8 +372,8 @@ func TestDiagnosticParserCoreConvergedCoverageDropsV2BlendedVetoFiredDetail(t *t
 	defer core.SetAlternativeSetRecordingEnabledForTest(true)()
 	scheduler := newAlternativeSetPinScheduler(t)
 	scheduler.headers = []diagnosticParserCoreHeader{
-		{convergedReductionSplit: true, altSet: alternativeSetPinBranchMember(t, [2]uint16{5, 0}), blended: true},
-		{convergedReductionSplit: true, altSet: alternativeSetPinBranchMember(t, [2]uint16{5, 0})},
+		{convergedReductionSplit: true, altSet: alternativeSetPinBranchMember(t, scheduler.compact, [2]uint16{5, 0}), blended: true},
+		{convergedReductionSplit: true, altSet: alternativeSetPinBranchMember(t, scheduler.compact, [2]uint16{5, 0})},
 	}
 	blendedVetoFired, count, proved, overflowDeclined := scheduler.diagnosticParserCoreConvergedCoverageDropsV2Detail([]int{1})
 	if !blendedVetoFired {

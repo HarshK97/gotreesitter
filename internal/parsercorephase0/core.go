@@ -414,12 +414,19 @@ type nodeLineageRecord struct {
 	blended bool
 }
 
+// Field order groups the two uint32 members (node, owner, setSpillRef)
+// before the trailing byte/uint16-sized fields: setSpillRef needs 4-byte
+// alignment, so declaring it after the 1-byte setCount/setFlags pair (as an
+// earlier revision did) forced 2 bytes of mid-struct padding that this order
+// avoids, matching journal-append-site field order 1:1 (every
+// nodeLineageJournal append already names every field, so this reorder is
+// layout-only and touches no call site).
 type nodeLineageMutation struct {
 	node        NodeID
 	owner       uint32
+	setSpillRef uint32
 	setCount    uint8
 	setFlags    uint8
-	setSpillRef uint32
 	lineage     uint16
 	rank        CleanPathRankSelection
 	converged   bool
@@ -431,8 +438,29 @@ type nodeLineageMutation struct {
 // alternativeSetHardCap is the total recorded-member ceiling; a set that
 // would exceed it stops recording new members and reports Overflowed.
 // spec.b4b-alternative-set.v1 section 3.2, open question 5.
+//
+// v2 widened one packed member from uint16 (event only) to uint32 (event,
+// branch), doubling AlternativeSet's inline array from 8 to 16 bytes and,
+// with it, every by-value container that embeds a set (nodeLineageRecord,
+// ReductionOutput, and diagnosticParserCoreHeader's two copies) -- paid on
+// every header canonicalize double-buffer copy, rollback scratch snapshot,
+// and reduction-output propagation, whether or not that particular set is
+// ever populated (b4b-width-repair audit, 2026-08). 4 was never a load-
+// bearing width: the canonical-fixture census (four fixtures, 8537 converged
+// -split elections) shows 8519/8537 (99.8%) already touch a spilled set by
+// election time and 8424/8537 (98.7%) are already Overflowed at the hard
+// cap, so the inline/spill boundary is nearly vestigial in steady state.
+// Lowering it to 2 -- matching "canonical reductions produce one output 95%
+// of the time and at most two observed" (packAlternativeSetMember's doc
+// comment; census maxBranch=1 on all four fixtures) so a fresh establishment
+// plus one sibling union still never spills -- restores AlternativeSet's
+// inline array to its pre-v2 8 bytes (2 members x 4 bytes, vs. the original
+// 4 members x 2 bytes) at the same total 16-byte struct size, with no change
+// to member encoding, hard cap, or any observable membership: spilled
+// storage is exact and zero-alloc once warm (alternativeSetInsert/
+// alternativeSetMembers already treat inline and spilled uniformly).
 const (
-	alternativeSetInlineCapacity = 4
+	alternativeSetInlineCapacity = 2
 	alternativeSetHardCap        = 32
 )
 
@@ -1797,22 +1825,27 @@ const (
 )
 
 // ReductionOutput is one final canonical boundary and its aggregate freshness
-// relative to the boundary map at entry to ReduceOutputs.
+// relative to the boundary map at entry to ReduceOutputs. Field order groups
+// Head with HistoricalAlternativeSet up front (both 4-byte aligned, so the
+// set immediately follows Head with no gap) and the byte/uint16-sized fields
+// after; every construction site uses keyed fields
+// (reduceOutputsClassifiedIntoActive, scheduler_owned.go), so this reorder
+// is layout-only (b4b-width-repair audit, 2026-08).
 type ReductionOutput struct {
-	Head                         Head
-	Freshness                    ReductionFreshness
-	CleanPathRank                CleanPathRankSelection
-	MultiplePopPaths             bool
-	HistoricalBoundaryProvenance HistoricalBoundaryProvenance
-	HistoricalCleanPathRank      CleanPathRankSelection
-	HistoricalCleanPathLineage   uint16
+	Head Head
 	// HistoricalAlternativeSet is the union of every dead predecessor's
 	// recorded alternative set discovered while producing this boundary
 	// (spec.b4b-alternative-set.v1 section 4, "Dead-node historical
 	// import"). Unlike HistoricalCleanPathRank/Lineage, multiple historical
 	// versions union here instead of poisoning to Unknown/0, because
 	// membership is never invalidated.
-	HistoricalAlternativeSet AlternativeSet
+	HistoricalAlternativeSet     AlternativeSet
+	HistoricalCleanPathLineage   uint16
+	Freshness                    ReductionFreshness
+	CleanPathRank                CleanPathRankSelection
+	MultiplePopPaths             bool
+	HistoricalBoundaryProvenance HistoricalBoundaryProvenance
+	HistoricalCleanPathRank      CleanPathRankSelection
 	// HistoricalBlended carries forward the blended mark accumulated while
 	// building HistoricalAlternativeSet: true when an imported dead record
 	// was itself blended, or when two dead sets unioned into this one
@@ -1823,17 +1856,21 @@ type ReductionOutput struct {
 
 const inlineReductionBoundaryOutputs = 2
 
+// Field order groups key (8-byte aligned), head and historicalSet (4-byte
+// aligned) up front, then the byte/uint16-sized fields; the sole
+// construction site (scratch.store, scheduler_owned.go) uses keyed fields,
+// so this reorder is layout-only (b4b-width-repair audit, 2026-08).
 type reductionBoundaryOutput struct {
 	key                           boundaryKey
 	head                          Head
+	historicalSet                 AlternativeSet
+	historicalLineage             uint16
 	freshness                     ReductionFreshness
 	cleanPathRank                 CleanPathRankSelection
 	historicalBoundarySplit       bool
 	historicalConvergedSplit      bool
 	historicalForestDeterministic bool
 	historicalCleanPathRank       CleanPathRankSelection
-	historicalLineage             uint16
-	historicalSet                 AlternativeSet
 	historicalBlended             bool
 }
 
