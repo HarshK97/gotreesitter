@@ -415,10 +415,13 @@ func (s *diagnosticParserCoreGenericScheduler) diagnosticParserCoreRunThreeProof
 // influences any proof outcome.
 func (s *diagnosticParserCoreGenericScheduler) diagnosticParserCoreThreeProofSpillAndBranchSample(indices []int) (spilled bool, maxBranch uint16) {
 	// alternativeSetInlineSampleCapacity mirrors core.AlternativeSet's own
-	// inline capacity (parsercorephase0/core.go, unexported): a recorded set
-	// longer than this has spilled into the shared arena. Census-only proxy;
-	// never used for a proof decision.
-	const alternativeSetInlineSampleCapacity = 4
+	// inline capacity (internal/parsercorephase0/core.go's unexported
+	// alternativeSetInlineCapacity, currently 2 as of the b4b-width-repair
+	// audit, 2026-08): a recorded set longer than this has spilled into the
+	// shared arena. Census-only proxy; never used for a proof decision, so a
+	// stale value here cannot desync any drop decision -- only this rate
+	// counter (SpillObserved/SpillElections).
+	const alternativeSetInlineSampleCapacity = 2
 	for _, header := range s.headers {
 		members, ok := s.compact.AlternativeSetMembers(header.altSet)
 		if !ok {

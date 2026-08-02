@@ -51,52 +51,69 @@ func TestNewAlternativeSetMember(t *testing.T) {
 	}
 }
 
+// TestAlternativeSetInsertAscendingStaysInline pins the inline/spill
+// boundary at alternativeSetInlineCapacity members (not a hardcoded literal:
+// the b4b-width-repair audit, 2026-08, tuned this constant down from 4 to 2,
+// and this test must track it rather than re-pin the old width).
 func TestAlternativeSetInsertAscendingStaysInline(t *testing.T) {
 	compact := &Core{}
 	var set AlternativeSet
-	for _, member := range []uint32{2, 5, 9, 20} {
+	members := make([]uint32, alternativeSetInlineCapacity)
+	for i := range members {
+		members[i] = uint32(2 + i*3)
+	}
+	for _, member := range members {
 		if !compact.alternativeSetInsert(&set, member) {
 			t.Fatalf("insert(%d) reported no change", member)
 		}
 	}
 	if set.spilled() {
-		t.Fatalf("four ascending inserts spilled: %+v", set)
+		t.Fatalf("%d ascending inserts (at capacity) spilled: %+v", alternativeSetInlineCapacity, set)
 	}
-	if got := alternativeSetMembersForTest(t, compact, set); !slices.Equal(got, []uint32{2, 5, 9, 20}) {
-		t.Fatalf("members = %v, want [2 5 9 20]", got)
+	if got := alternativeSetMembersForTest(t, compact, set); !slices.Equal(got, members) {
+		t.Fatalf("members = %v, want %v", got, members)
 	}
 	// Duplicate and zero are no-ops.
-	if compact.alternativeSetInsert(&set, 9) {
+	if compact.alternativeSetInsert(&set, members[len(members)-1]) {
 		t.Fatal("duplicate insert reported a change")
 	}
 	if compact.alternativeSetInsert(&set, 0) {
 		t.Fatal("zero-member insert reported a change")
 	}
-	if got := alternativeSetMembersForTest(t, compact, set); !slices.Equal(got, []uint32{2, 5, 9, 20}) {
-		t.Fatalf("members after no-ops = %v, want [2 5 9 20]", got)
+	if got := alternativeSetMembersForTest(t, compact, set); !slices.Equal(got, members) {
+		t.Fatalf("members after no-ops = %v, want %v", got, members)
 	}
 }
 
-func TestAlternativeSetFifthMemberSpills(t *testing.T) {
+// TestAlternativeSetOneBeyondCapacitySpills pins that the (capacity+1)th
+// ascending insert -- and only that one -- forces the spill, tracking
+// alternativeSetInlineCapacity rather than a hardcoded literal (see
+// TestAlternativeSetInsertAscendingStaysInline's doc comment).
+func TestAlternativeSetOneBeyondCapacitySpills(t *testing.T) {
 	compact := &Core{}
 	var set AlternativeSet
-	for _, member := range []uint32{1, 2, 3, 4} {
+	for member := uint32(1); member <= alternativeSetInlineCapacity; member++ {
 		compact.alternativeSetInsert(&set, member)
 	}
 	if set.spilled() {
-		t.Fatal("four members already spilled")
+		t.Fatalf("%d members already spilled", alternativeSetInlineCapacity)
 	}
-	if !compact.alternativeSetInsert(&set, 5) {
-		t.Fatal("fifth insert reported no change")
+	overflowMember := uint32(alternativeSetInlineCapacity + 1)
+	if !compact.alternativeSetInsert(&set, overflowMember) {
+		t.Fatal("capacity+1'th insert reported no change")
 	}
 	if !set.spilled() {
-		t.Fatal("fifth member did not spill")
+		t.Fatal("capacity+1'th member did not spill")
 	}
-	if got := alternativeSetMembersForTest(t, compact, set); !slices.Equal(got, []uint32{1, 2, 3, 4, 5}) {
-		t.Fatalf("members after spill = %v, want [1 2 3 4 5]", got)
+	want := make([]uint32, alternativeSetInlineCapacity+1)
+	for i := range want {
+		want[i] = uint32(i + 1)
 	}
-	if len(compact.alternativeSpillArena) != 5 {
-		t.Fatalf("spill arena length = %d, want 5", len(compact.alternativeSpillArena))
+	if got := alternativeSetMembersForTest(t, compact, set); !slices.Equal(got, want) {
+		t.Fatalf("members after spill = %v, want %v", got, want)
+	}
+	if len(compact.alternativeSpillArena) != alternativeSetInlineCapacity+1 {
+		t.Fatalf("spill arena length = %d, want %d", len(compact.alternativeSpillArena), alternativeSetInlineCapacity+1)
 	}
 }
 
