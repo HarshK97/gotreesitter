@@ -32,9 +32,73 @@ func TestAdaA3CompactCertificationFullCorpusSweep(t *testing.T) {
 	}
 	sources = append(sources, adaA3TiedElectionWitnesses()...)
 	sources = append(sources, adaA3AdversarialSources()...)
+	// Ada has no cgo_harness/corpus_real directory on any host (it is not
+	// one of the top-50 languages the real-corpus manifest profiles), so
+	// real=0 here is a documented, permanent property of this sweep, not a
+	// silent degradation -- unlike python/perl (a3LoadRealCorpusDir), there
+	// is no missing-fixture condition to detect for this language.
+	t.Logf("ada A3 full-corpus sweep source denominator: real=0 (no corpus_real/ada on any host) constructed=%d total=%d", len(sources), len(sources))
 
-	result := runA3CertificationSweep(t, "ada", "ada", lang, sources)
+	result := runA3CertificationSweep(t, "ada", "ada", lang, sources, adaA3KnownDivergences)
 	a3ReportSweep(t, result)
+}
+
+// adaA3KnownDivergences are already-triaged, pre-existing production-route
+// defects the tightened sweep criterion surfaced: the compact route only
+// reproduces what production already produces (verified directly, with the
+// compact route disabled) on each of these witnesses.
+//
+// Six of the seven are family M (materialization: an inherited field-map
+// entry names a child Go's flattened-hidden-span heuristic should not; C's
+// node.c filters inherited entries and never does). Ada's grammar declares
+// "name"/"subtype_mark" as inherited fields on productions whose actual
+// child production (named_array_aggregate, range_g) never carries them
+// directly; Go's applyParentFieldToFlattenedHiddenSpan re-attaches the
+// inherited field anyway.
+//
+// attribute_constraint is family D: Ada's grammar declares
+// prec.dynamic(1, discriminant_constraint) over index_constraint with an
+// explicit grammar comment choosing it, and Go's reduceForkWindowPreference
+// still picks index_constraint.
+//
+// Not tied elections, not this gate's scope; repair lanes are tracked
+// separately.
+var adaA3KnownDivergences = []a3KnownDivergence{
+	{
+		Witness:   "attribute_constraint",
+		FirstPath: "/compilation/compilation_unit[0]/subprogram_body[0]/handled_sequence_of_statements[3]/assignment_statement[0]/expression[2]/term[0]/allocator[0]/index_constraint[2]",
+		GoValue:   "index_constraint", CValue: "discriminant_constraint", Family: "D",
+	},
+	{
+		Witness:   "locked_positional_array_aggregate",
+		FirstPath: "/compilation/compilation_unit[0]/package_declaration[0]/full_type_declaration[3]/array_type_definition[3]/range_g[2]",
+		GoValue:   "subtype_mark", CValue: "", Family: "M",
+	},
+	{
+		Witness:   "array_others_choice",
+		FirstPath: "/compilation/compilation_unit[0]/subprogram_body[0]/handled_sequence_of_statements[3]/assignment_statement[0]/expression[2]/term[0]/named_array_aggregate[0]",
+		GoValue:   "name", CValue: "", Family: "M",
+	},
+	{
+		Witness:   "named_array_aggregate",
+		FirstPath: "/compilation/compilation_unit[0]/package_declaration[0]/full_type_declaration[3]/array_type_definition[3]/range_g[2]",
+		GoValue:   "subtype_mark", CValue: "", Family: "M",
+	},
+	{
+		Witness:   "mixed_positional_named_aggregate",
+		FirstPath: "/compilation/compilation_unit[0]/package_declaration[0]/full_type_declaration[3]/array_type_definition[3]/range_g[2]",
+		GoValue:   "subtype_mark", CValue: "", Family: "M",
+	},
+	{
+		Witness:   "qualified_expression",
+		FirstPath: "/compilation/compilation_unit[0]/package_declaration[0]/full_type_declaration[3]/array_type_definition[3]/range_g[2]",
+		GoValue:   "subtype_mark", CValue: "", Family: "M",
+	},
+	{
+		Witness:   "attribute_range_and_first_last",
+		FirstPath: "/compilation/compilation_unit[0]/subprogram_body[0]/non_empty_declarative_part[2]/full_type_declaration[0]/array_type_definition[3]/range_g[2]",
+		GoValue:   "subtype_mark", CValue: "", Family: "M",
+	},
 }
 
 // adaA3TiedElectionWitnesses reuses the three witnesses already vetted in
@@ -209,5 +273,20 @@ func adaA3AdversarialSources() []a3CertificationSweepSource {
 				"      end return;\n" +
 				"   end Make;\n" +
 				"end P;\n")},
+		// bare_aggregate_assignment_material_election is a permanent
+		// regression fixture: a genuinely material tied election outside
+		// this sweep's original corpus. The C oracle picks the derivation
+		// whose outer production is record_aggregate; the certified compact
+		// route's old positional primary picked the derivation whose outer
+		// production is named_array_aggregate instead (matching production,
+		// which also diverges from C here). Under the materiality gate
+		// (selectCompactAcceptanceDerivation, compactAcceptanceElectionIsVacuous)
+		// the two tied derivations are not byte-identical, so this now
+		// declines instead of accepting the C-divergent tree.
+		{Name: "bare_aggregate_assignment_material_election", Source: []byte(
+			"procedure P is\n" +
+				"begin\n" +
+				"   R := (F => 1, G => 2);\n" +
+				"end;\n")},
 	}
 }

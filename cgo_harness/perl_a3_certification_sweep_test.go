@@ -27,15 +27,47 @@ func TestPerlA3CompactCertificationFullCorpusSweep(t *testing.T) {
 		t.Fatal("perl did not receive the A3 converged-split-drop certification")
 	}
 
-	sources := a3LoadRealCorpusDir(t, filepath.Join("corpus_real", "perl"))
-	sources = append(sources, a3CertificationSweepSource{
+	real := a3LoadRealCorpusDir(t, "perl", filepath.Join("corpus_real", "perl"))
+	constructed := append([]a3CertificationSweepSource{{
 		Name:   "smoke_sample",
 		Source: []byte(grammars.ParseSmokeSample("perl")),
-	})
-	sources = append(sources, perlA3AdversarialSources()...)
+	}}, perlA3AdversarialSources()...)
+	sources := append(append([]a3CertificationSweepSource{}, real...), constructed...)
+	t.Logf("perl A3 full-corpus sweep source denominator: real=%d constructed=%d total=%d", len(real), len(constructed), len(sources))
 
-	result := runA3CertificationSweep(t, "perl", "perl", lang, sources)
+	result := runA3CertificationSweep(t, "perl", "perl", lang, sources, perlA3KnownDivergences)
 	a3ReportSweep(t, result)
+}
+
+// perlA3KnownDivergences are already-triaged, pre-existing production-route
+// defects the tightened sweep criterion surfaced: the compact route only
+// reproduces what production already produces (verified directly, with the
+// compact route disabled) on each of these witnesses. All four are family D
+// (GLR derivation selection at a declared conflict: Go's
+// reduceForkWindowPreference disagrees with C's ts_parser__select_tree on
+// which branch of a real grammar-declared conflict to keep). Not tied
+// elections, not this gate's scope; repair lanes are tracked separately.
+var perlA3KnownDivergences = []a3KnownDivergence{
+	{
+		Witness:   "medium__statements.pm",
+		FirstPath: "/source_file/try_statement[69]/block[1]/expression_statement[1]/ambiguous_function_call_expression[0]",
+		GoValue:   "ambiguous_function_call_expression", CValue: "function_call_expression", Family: "D",
+	},
+	{
+		Witness:   "join_assignment",
+		FirstPath: "/source_file/expression_statement[0]/list_expression[0]",
+		GoValue:   "list_expression", CValue: "assignment_expression", Family: "D",
+	},
+	{
+		Witness:   "return_list",
+		FirstPath: "/source_file/subroutine_declaration_statement[0]/block[2]/expression_statement[1]/list_expression[0]",
+		GoValue:   "list_expression", CValue: "return_expression", Family: "D",
+	},
+	{
+		Witness:   "local_dynamic_scope",
+		FirstPath: "/source_file/subroutine_declaration_statement[2]/block[2]/expression_statement[3]/ambiguous_function_call_expression[0]",
+		GoValue:   "ambiguous_function_call_expression", CValue: "function_call_expression", Family: "D",
+	},
 }
 
 // perlA3AdversarialSources reuses Perl's tied push-list election witness
@@ -60,5 +92,16 @@ func perlA3AdversarialSources() []a3CertificationSweepSource {
 		{Name: "ternary_list_context", Source: []byte("my @r = $flag ? (1, 2) : (3, 4);\n")},
 		{Name: "local_dynamic_scope", Source: []byte("our $x = 1;\nsub f { local $x = 2; g(); }\n")},
 		{Name: "wantarray_dispatch", Source: []byte("sub f { return wantarray ? (1, 2) : 1; }\n")},
+		// print_filehandle_list_material_election is a permanent regression
+		// fixture: a genuinely material tied election outside this sweep's
+		// original corpus. The C oracle picks the derivation whose outer
+		// production is ambiguous_function_call_expression; the certified
+		// compact route's old positional primary picked the derivation whose
+		// outer production is list_expression instead (matching production,
+		// which also diverges from C here). Under the materiality gate
+		// (selectCompactAcceptanceDerivation, compactAcceptanceElectionIsVacuous)
+		// the two tied derivations are not byte-identical, so this now
+		// declines instead of accepting the C-divergent tree.
+		{Name: "print_filehandle_list_material_election", Source: []byte("print $fh, \"a\", \"b\";\n")},
 	}
 }
