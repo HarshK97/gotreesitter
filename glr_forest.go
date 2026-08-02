@@ -606,6 +606,13 @@ func automaticForestMemoryBudget(p *Parser, operationBudget int64) int64 {
 // off by default so the production path is unchanged until per-language corpus
 // parity is verified and the gate is lifted.
 func (p *Parser) tryForestFastPath(source []byte) *Tree {
+	// Reset first, before any early-return decline path below (included
+	// ranges, the decline memo, the unary-wrapper-profile decline, ...):
+	// several of those return nil without ever reaching parseForest, whose
+	// own reset would otherwise be skipped, leaving a *reused* Parser's
+	// ForestCapTieStats reporting an earlier, unrelated parse's counts (see
+	// resetForestCapTieStats's doc comment).
+	p.resetForestCapTieStats()
 	if !glrForestEnabled || !parserWantsForest(p) {
 		return nil
 	}
@@ -1542,6 +1549,23 @@ func forestCapReplacementIndex(p *Parser, arena *nodeArena, node *gssForestNode,
 	// unrelated), narrow it to the exact bucket the caller already found via
 	// forestWorstSameRawBucketLink (same raw shape) rather than the plain
 	// same-symbol/tied-score condition used here.
+	//
+	// Stage 0 span-maximal pinning
+	// (spec.forest-coalescer-dedup-generalization.v1 Section 5). The
+	// "keep the incumbent" arm below is exactly the drop-on-arrival defect
+	// the spec's evidence base identified: a REGENERATED javascript table's
+	// binary-repeat lowering mints one hidden link per bracketing split of a
+	// run of top-level items, forestMaxLinksPerNode=8 fills with narrow
+	// splits before the sole full-coverage split arrives, and this tie-as-
+	// no-op policy silently discards it (cedar-d, N=11). Two links coalesced
+	// at the SAME node always share subtree.endByte (both were just produced
+	// at this node's byteOffset), so the full-coverage split is always the
+	// smallest-startByte (widest-span) member of its symbol group.
+	// forestCapTiePinsCandidate keeps that member over a same-symbol tied
+	// sibling regardless of arrival order; every other tie (different
+	// symbol, or an exact span tie the proxy cannot break) is untouched —
+	// the cap itself is not raised, only which side of an already-arbitrary
+	// tie survives.
 	hiddenSym := false
 	if p != nil && p.language != nil && candidate.subtree.kind == stackEntryKindNode && candidate.subtree.node != nil {
 		esym, _, _ := entrySymSpan(candidate.subtree)
@@ -1550,6 +1574,22 @@ func forestCapReplacementIndex(p *Parser, arena *nodeArena, node *gssForestNode,
 	if p != nil && arena != nil {
 		if same, idx := forestWorstSameRawBucketLink(p, arena, node, candidate); same {
 			if hiddenSym && candidate.errorCost == node.links[idx].errorCost && candidate.score == node.links[idx].score {
+				// This bucket's candidate is raw-shape-exact-equal to
+				// node.links[idx] (forestWorstSameRawBucketLink), which is a
+				// stronger match than span-maximal pinning needs to act on,
+				// but it does not by itself prove the two share a span: the
+				// unshaped arm of forestRawStackEntriesExactEqualRec compares
+				// the entry's own start/end directly, but the shaped arm
+				// (forestRawShapesExactEqualRec) only walks CHILDREN's
+				// absolute spans, never the root shape's own -- a
+				// zero-child (epsilon) shape has no child comparison to
+				// constrain it. That gap does not matter here: this branch
+				// never calls forestCapTiePinsCandidate, so it stays exactly
+				// the legacy stable-incumbent behavior regardless of span,
+				// unaffected by span-maximal pinning either way. Still
+				// recorded so the instrument's counts cover every
+				// hidden-tie decision, not only the ones pinning can act on.
+				p.recordForestCapTie(candidate, &node.links[idx], false)
 				return idx, false
 			}
 			return idx, forestResultLinkCompare(p, arena, node, candidate, candidateOrder, &node.links[idx], idx) > 0
@@ -1567,9 +1607,184 @@ func forestCapReplacementIndex(p *Parser, arena *nodeArena, node *gssForestNode,
 	// of candidate — cache it the same way (see cachedWorstResidentLink).
 	worst := node.cachedWorstResidentLink(p, arena)
 	if hiddenSym && candidate.errorCost == node.links[worst].errorCost && candidate.score == node.links[worst].score {
+		if forestCapTiePinsCandidate(candidate, &node.links[worst]) {
+			p.recordForestCapTie(candidate, &node.links[worst], true)
+			return worst, true
+		}
+		p.recordForestCapTie(candidate, &node.links[worst], false)
 		return worst, false
 	}
 	return worst, forestResultLinkCompare(p, arena, node, candidate, candidateOrder, &node.links[worst], worst) > 0
+}
+
+// forestCapTiePinsCandidate is Stage 0's span-maximal pinning predicate: true
+// when candidate must survive over incumbent at a hidden-symbol cap tie
+// because candidate is the wider (more span-maximal) member of the pair.
+// Both links were coalesced at the same node, so subtree.endByte is
+// expected to be identical for both; "wider span" then reduces to "smaller
+// startByte". That expectation is a measured fact about every table
+// exercised so far (12.5M coalesce calls, zero end mismatches), not a
+// structural guarantee: coalescing keys on parser input position, not
+// necessarily the visible node span (see the reduce-span comment a few
+// hundred lines below, "Coalescing tracks parser input position, not
+// necessarily the visible node span" — trimmed trailing delimiters are the
+// documented case where a node's own endByte can trail the stack position).
+// So this is a checked precondition, not an assumption: candidateEnd ==
+// incumbentEnd is required before "smaller start" is trusted to mean
+// "wider span". A future table that violates it simply leaves the tie at
+// the existing stable-incumbent policy (fail closed) instead of silently
+// misordering by a stale premise. Scoped to one symbol group by design
+// (Section 5's "each symbol group") — a cross-symbol tie is left to the
+// existing stable-incumbent policy untouched either way.
+func forestCapTiePinsCandidate(candidate, incumbent *gssLink) bool {
+	if candidate == nil || incumbent == nil ||
+		candidate.subtree.kind != stackEntryKindNode || candidate.subtree.node == nil ||
+		incumbent.subtree.kind != stackEntryKindNode || incumbent.subtree.node == nil {
+		return false
+	}
+	candidateSym, candidateStart, candidateEnd := entrySymSpan(candidate.subtree)
+	incumbentSym, incumbentStart, incumbentEnd := entrySymSpan(incumbent.subtree)
+	return candidateSym == incumbentSym && candidateEnd == incumbentEnd && candidateStart < incumbentStart
+}
+
+// forestCapTieDumpEnabled reads whether the receipt half of Stage 0's
+// cap-event instrument is requested (spec.forest-coalescer-dedup-
+// generalization.v1 Section 5): GOT_FOREST_CAP_TIE_DUMP=1 records a bounded
+// per-decision receipt for every hidden-symbol cap tie, alongside the
+// summary counts that Parser.ForestCapTieStats always maintains. Not
+// latched at package init (unlike most GOT_* flags in this file) so tests
+// can toggle it with t.Setenv; instead resetForestCapTieStats reads it once
+// per parse and caches the result on Parser.forestCapTieDumpActive --
+// recordForestCapTie itself never calls this, it just reads that field. A
+// hot corpus (a single large JSON5 array can hit tens of thousands of
+// hidden-symbol cap ties in one parse) made a per-tie os.Getenv call a real
+// cost: os.Getenv takes an internal lock on the process environment on
+// every call, not a free boolean check.
+func forestCapTieDumpEnabled() bool {
+	return os.Getenv("GOT_FOREST_CAP_TIE_DUMP") == "1"
+}
+
+// forestCapTieReceiptLimit bounds the receipt list so a saturated node in a
+// long fixture (e.g. the W5 137KB corpus) cannot grow the dump without
+// bound; the summary counts on ForestCapTieStats stay exact regardless.
+const forestCapTieReceiptLimit = 512
+
+// resetForestCapTieStats clears the cap-tie instrument for a new parse
+// attempt and re-latches Parser.forestCapTieDumpActive from the
+// environment, reading it once per parse instead of once per tie decision
+// (see forestCapTieDumpEnabled's doc comment for why that matters).
+// Preserves the Receipts slice's backing array (append reuses capacity)
+// rather than reallocating every parse. Called at the top of every forest
+// entry point (tryForestFastPath and parseForest) so
+// Parser.ForestCapTieStats() never returns a stale result left over from an
+// earlier call on the same *Parser -- including the paths that decline
+// before parseForest ever runs, such as an included-ranges parse
+// immediately after a forest-routed one on a reused Parser.
+func (p *Parser) resetForestCapTieStats() {
+	if p == nil {
+		return
+	}
+	p.forestCapTieStats = ForestCapTieStats{Receipts: p.forestCapTieStats.Receipts[:0]}
+	p.forestCapTieDumpActive = forestCapTieDumpEnabled()
+}
+
+// ForestCapTieStats is Stage 0's cap-event instrument: how many hidden-
+// symbol ties were decided at the forest link cap, how many span-maximal
+// pinning kept over the arrival-order default, how many were themselves an
+// exact-span tie (the case the span-maximal proxy cannot break -- see the
+// spec's Open Questions), and, only when GOT_FOREST_CAP_TIE_DUMP=1, a
+// bounded per-decision receipt list. Valid after any Parse or
+// ParseForestExperimental call.
+type ForestCapTieStats struct {
+	HiddenTieDecisions int
+	CandidatesPinned   int
+	SameSpanTies       int
+	Receipts           []ForestCapTieReceipt
+}
+
+// ForestCapTieReceipt is one hidden-symbol cap-tie decision: (symbol, span,
+// prev.state, prev.byteOffset) for the arriving candidate and the incumbent
+// it was compared against, matching the spec Section 5 instrumentation
+// shape.
+type ForestCapTieReceipt struct {
+	Symbol             Symbol
+	CandidateStart     uint32
+	CandidateEnd       uint32
+	CandidatePrevState StateID
+	CandidatePrevByte  uint32
+	IncumbentStart     uint32
+	IncumbentEnd       uint32
+	IncumbentPrevState StateID
+	IncumbentPrevByte  uint32
+	SameSpan           bool
+	CandidateKept      bool
+}
+
+// ForestCapTieStats returns Stage 0's cap-event counts recorded during the
+// most recent forest parse on this Parser. The returned Receipts slice is a
+// copy: the next parse on this same *Parser reuses forestCapTieStats.
+// Receipts' backing array (resetForestCapTieStats truncates it with [:0]
+// rather than reallocating), so a caller that held the previous slice
+// without copying would see its own already-returned receipts silently
+// rewritten by the next parse's recordForestCapTie appends.
+func (p *Parser) ForestCapTieStats() ForestCapTieStats {
+	if p == nil {
+		return ForestCapTieStats{}
+	}
+	stats := p.forestCapTieStats
+	if len(stats.Receipts) > 0 {
+		stats.Receipts = append([]ForestCapTieReceipt(nil), stats.Receipts...)
+	}
+	return stats
+}
+
+// recordForestCapTie updates the cap-tie instrument for one hidden-symbol
+// cap decision. kept reports whether span-maximal pinning overrode the
+// stable-incumbent default to keep candidate instead of incumbent. Every
+// production forest link is stackEntryKindNode with a non-nil node (every
+// coalesceForestWithRawAndAlternatives call site builds one that way), but
+// this stays defensive like forestCapTiePinsCandidate: decline to record
+// rather than reinterpret a non-Node subtree as one.
+func (p *Parser) recordForestCapTie(candidate, incumbent *gssLink, kept bool) {
+	if p == nil || candidate == nil || incumbent == nil ||
+		candidate.subtree.kind != stackEntryKindNode || candidate.subtree.node == nil ||
+		incumbent.subtree.kind != stackEntryKindNode || incumbent.subtree.node == nil {
+		return
+	}
+	csym, cstart, cend := entrySymSpan(candidate.subtree)
+	_, istart, iend := entrySymSpan(incumbent.subtree)
+	p.forestCapTieStats.HiddenTieDecisions++
+	if kept {
+		p.forestCapTieStats.CandidatesPinned++
+	}
+	sameSpan := cstart == istart && cend == iend
+	if sameSpan {
+		p.forestCapTieStats.SameSpanTies++
+	}
+	if !p.forestCapTieDumpActive || len(p.forestCapTieStats.Receipts) >= forestCapTieReceiptLimit {
+		return
+	}
+	p.forestCapTieStats.Receipts = append(p.forestCapTieStats.Receipts, ForestCapTieReceipt{
+		Symbol: csym, CandidateStart: cstart, CandidateEnd: cend,
+		CandidatePrevState: forestLinkPrevState(candidate), CandidatePrevByte: forestLinkPrevByteOffset(candidate),
+		IncumbentStart: istart, IncumbentEnd: iend,
+		IncumbentPrevState: forestLinkPrevState(incumbent), IncumbentPrevByte: forestLinkPrevByteOffset(incumbent),
+		SameSpan: sameSpan, CandidateKept: kept,
+	})
+}
+
+func forestLinkPrevState(link *gssLink) StateID {
+	if link == nil || link.prev == nil {
+		return 0
+	}
+	return link.prev.state
+}
+
+func forestLinkPrevByteOffset(link *gssLink) uint32 {
+	if link == nil || link.prev == nil {
+		return 0
+	}
+	return link.prev.byteOffset
 }
 
 func forestWorstSameRawBucketLink(p *Parser, arena *nodeArena, node *gssForestNode, candidate *gssLink) (bool, int) {
@@ -2982,6 +3197,7 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 	p.forestDeclineReason = ""
 	p.forestDeclineByte, p.forestDeclineSym = 0, 0
 	p.forestDeclineStates = p.forestDeclineStates[:0]
+	p.resetForestCapTieStats()
 	progress := newParseProgressTelemetry(p, len(source), uint32(len(source)), time.Now())
 	if progress.enabled {
 		progress.emit(time.Now(), "forest_parse_begin", 0, 0, Token{}, false, nil, 0, 0, 0, true, 0, 0, "")
