@@ -76,14 +76,32 @@ const (
 // repeatedly interpreting immutable action records without weakening the
 // existing ordering and authentication gates.
 type ActionRowDescriptor struct {
-	kind      ActionRowKind
-	hasShift  bool
-	hasReduce bool
+	kind              ActionRowKind
+	hasShift          bool
+	hasReduce         bool
+	dispatchSupported bool
 }
 
 func (d ActionRowDescriptor) Kind() ActionRowKind { return d.kind }
 func (d ActionRowDescriptor) HasShift() bool      { return d.hasShift }
 func (d ActionRowDescriptor) HasReduce() bool     { return d.hasReduce }
+
+// DispatchSupported reports whether the root package's generic scheduler
+// dispatch loop can prove this row is not an unsupported cell without
+// reading the current token. It holds exactly for ActionRowShift,
+// ActionRowReduce, and ActionRowConflict: parsercore_phase0_driver.go's
+// diagnosticParserCoreGenericUnsupportedCellDescriptor returns "supported"
+// (a nil decline) for those three kinds unconditionally, never consulting
+// its token argument, while ActionRowExtraShift and ActionRowAccept still
+// need the token's width/EOF shape and ActionRowEmpty/ActionRowUnsupported
+// are never supported. This is table-derived and immutable once the row is
+// decoded (describeActionRow computes it once per distinct action row, not
+// once per dispatch pass), so the dispatch loop's per-cell, per-pass
+// unsupported check can read this field instead of re-deriving the same
+// kind-only fact on every pass a cell with this shape is dispatched
+// (spec.campaign.v7 tranche C0 item 4, the "cell-array and descriptor
+// validation" L1 sub-item). Keep this in sync with that function's switch.
+func (d ActionRowDescriptor) DispatchSupported() bool { return d.dispatchSupported }
 
 type actionRowData struct {
 	actions    []Action
@@ -174,6 +192,7 @@ func describeActionRow(actions []Action) ActionRowDescriptor {
 	}
 	if len(actions) > 1 {
 		descriptor.kind = ActionRowConflict
+		descriptor.dispatchSupported = true
 		return descriptor
 	}
 	switch actions[0].Type {
@@ -182,9 +201,11 @@ func describeActionRow(actions []Action) ActionRowDescriptor {
 			descriptor.kind = ActionRowExtraShift
 		} else {
 			descriptor.kind = ActionRowShift
+			descriptor.dispatchSupported = true
 		}
 	case ActionReduce:
 		descriptor.kind = ActionRowReduce
+		descriptor.dispatchSupported = true
 	case ActionAccept:
 		descriptor.kind = ActionRowAccept
 	default:
@@ -2302,6 +2323,26 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 		return condenseOutcome{}, err
 	}
 	probe, oldID := c.boundaries.probe(boundaryIdentityFromKey(key))
+	if !probe.found {
+		// No incumbent has ever published this boundary in the current
+		// frontier: exactly one candidate exists (the incoming link), so no
+		// fold comparison against another link is possible, and there is no
+		// historical predecessor to retire. This is the L1
+		// deterministic-frontier direct-append fast path (spec.campaign.v7
+		// tranche C0 item 4; ginkgo's open question 3, "can
+		// condenseWithOutcomeAtomic prove a single pop path and take a
+		// direct append"). condenseDirectAppend produces the exact bytes the
+		// general path below would: every historical* field stays zero,
+		// oldID stays 0, and the ~200-line fold-comparison block is
+		// unreachable for this shape either way. This is a restructuring of
+		// already-dead branches for a proven condition, not a behavior
+		// change. publishBoundary still gates journal writes on
+		// len(c.transactions) unchanged, so the rollback contract this
+		// function depends on is untouched -- this function still cannot
+		// prove a caller can never roll back past this append, so it does
+		// not weaken that contract.
+		return c.condenseDirectAppend(key, probe, prev.pathCount, in)
+	}
 	historicalBoundarySplit := false
 	var historicalCleanPathRank CleanPathRankSelection
 	var historicalLineage uint16
@@ -2569,6 +2610,49 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 		c.recordLinkUnionAlternateAppended()
 	}
 	return buildOutcome(Head{Node: id}, change), nil
+}
+
+// condenseDirectAppend is condenseWithOutcomeAtomic's single-candidate fast
+// path: probe.found is false, so this frontier has never published key
+// before, in is the sole candidate, and no fold comparison or historical
+// retirement applies. Every argument and every write below matches exactly
+// what the general path performs when oldID stays 0 throughout -- the same
+// arena-cap checks, the same unlinked (next: 0) single-link node, the same
+// publishBoundary call against the same probe, and the same zero-valued
+// condenseOutcome shape (change: condenseNew, every historical* field at its
+// zero value). publishBoundary keeps deciding journal writes from
+// len(c.transactions) unchanged; this helper does not touch that contract.
+func (c *Core) condenseDirectAppend(key boundaryKey, probe boundaryProbe, prevPathCount uint64, in linkInput) (condenseOutcome, error) {
+	if uint64(len(c.links))+1 > uint64(c.limits.MaxLinks) || uint64(len(c.links)) >= math.MaxUint32 {
+		return condenseOutcome{}, errors.New("parser-core phase zero: link arena cap")
+	}
+	if uint64(len(c.nodes))+1 > uint64(c.limits.MaxNodes) || uint64(len(c.nodes)) >= math.MaxUint32 {
+		return condenseOutcome{}, errors.New("parser-core phase zero: node arena cap")
+	}
+	linkID := LinkID(uint64(len(c.links)) + 1)
+	flags := uint32(0)
+	if in.order.Present {
+		flags |= linkFlagHasOrder
+	}
+	c.links = append(c.links, linkRecord{
+		prev: in.prev, payload: in.payload, scoreDelta: in.scoreDelta,
+		order: in.order.Value, flags: flags,
+	})
+	c.addWork(&c.work.GraphLinkAdditionsProxy, 1)
+	id, err := c.appendNodeAt(nodeRecord{
+		state: key.state, byteOffset: key.byteOffset,
+		firstLink: uint32(linkID), linkCount: 1, pathCount: prevPathCount,
+	}, key.checkpoint)
+	if err != nil {
+		return condenseOutcome{}, err
+	}
+	if err := c.publishBoundary(probe, id); err != nil {
+		return condenseOutcome{}, err
+	}
+	if phase0AEnabled {
+		phase0AObserveDirectPublication(c, key, in, linkID, id, 0)
+	}
+	return condenseOutcome{head: Head{Node: id}, change: condenseNew}, nil
 }
 
 func (c *Core) linkEqualInput(link linkRecord, in linkInput) (bool, error) {
