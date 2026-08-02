@@ -1907,7 +1907,8 @@
       "purpose": "Reconcile Perl recovery and returned-tree shape.",
       "authoritative_owner": "scheduler_action_semantics",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "cgo_harness/parity_cgo_test.go",
+        "cgo_harness/perl_scheduler_action_local_parity_test.go"
       ],
       "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
       "route_coverage": {
@@ -2059,7 +2060,8 @@
       "purpose": "Reconcile Python recovery and returned-tree shape.",
       "authoritative_owner": "scheduler_action_semantics",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "cgo_harness/parity_cgo_test.go",
+        "cgo_harness/python_scheduler_action_local_parity_test.go"
       ],
       "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
       "route_coverage": {
