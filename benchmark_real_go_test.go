@@ -100,6 +100,18 @@ func benchmarkWarmRealGoDFA(b *testing.B, fixture benchfixtures.LoadedFixture, l
 	admitRealGoBenchmarkFixture(b, fixture, lang)
 	gotreesitter.DrainArenaPools()
 	parser := gotreesitter.NewParser(lang)
+	// Pin to production, mirroring admitRealGoBenchmarkFixture's own parser
+	// above: this benchmark reports and asserts on GLR-only runtime counters
+	// (max_stacks, peak_depth, nodes/op below), which the compact candidate
+	// route never populates. Phase-3 admission defaults the candidate route
+	// on, and every one of this benchmark's fixtures sits under the compact
+	// eligibility ceiling, so an unpinned parser here silently measures the
+	// compact route on both sides of an A/B comparison instead of production
+	// (b4b-width-repair audit, 2026-08; oak-b's v9 decomposition first
+	// caught this reproducing unmodified on origin/main). The guard
+	// assertion after the timed loop below fails loudly if this pin is ever
+	// lost again, instead of silently re-conflating the two routes.
+	parser.SetAdmissionCandidateRoute(false)
 	warmTree, err := parser.Parse(fixture.Source)
 	if err != nil {
 		releaseBenchmarkTree(warmTree)
@@ -110,6 +122,8 @@ func benchmarkWarmRealGoDFA(b *testing.B, fixture benchfixtures.LoadedFixture, l
 		b.Fatalf("%s warm parse: %v", fixture.Fixture.ID, err)
 	}
 	warmTree.Release()
+
+	routedBefore, _ := gotreesitter.AdmissionCandidateCounters()
 
 	b.ReportAllocs()
 	b.SetBytes(int64(len(fixture.Source)))
@@ -132,7 +146,30 @@ func benchmarkWarmRealGoDFA(b *testing.B, fixture benchfixtures.LoadedFixture, l
 		tree.Release()
 	}
 	b.StopTimer()
+	verifyRealGoBenchmarkMeasuredProduction(b, fixture.Fixture.ID, routedBefore, lastRuntime)
 	reportRealGoRuntime(b, lastRuntime)
+}
+
+// verifyRealGoBenchmarkMeasuredProduction guards against silently re-
+// conflating the compact candidate route into a benchmark that pins and
+// reports on the production route (b4b-width-repair audit, 2026-08; see
+// benchmarkWarmRealGoDFA's SetAdmissionCandidateRoute comment above). It
+// fails closed on either signal alone: the process-wide candidate-route
+// counter must not have moved across the timed loop (routedBefore is
+// sampled after the pinned warm parse, so this isolates the b.N loop), and
+// the final timed parse's GLR-only runtime counters -- which the compact
+// route never populates -- must be nonzero. A genuine production route parse
+// always seeds at least one GSS stack, so MaxStacksSeen/PeakStackDepth are
+// never legitimately zero on success.
+func verifyRealGoBenchmarkMeasuredProduction(b *testing.B, fixtureID string, routedBefore uint64, rt gotreesitter.ParseRuntime) {
+	b.Helper()
+	routedAfter, _ := gotreesitter.AdmissionCandidateCounters()
+	if routedAfter != routedBefore {
+		b.Fatalf("%s: compact candidate route counter moved (%d -> %d) during the pinned timed loop: this benchmark is measuring the compact route, not production", fixtureID, routedBefore, routedAfter)
+	}
+	if rt.MaxStacksSeen == 0 && rt.PeakStackDepth == 0 {
+		b.Fatalf("%s: timed parse reported MaxStacksSeen=0 and PeakStackDepth=0 -- GLR-only counters the compact route never populates; this benchmark is not measuring production", fixtureID)
+	}
 }
 
 func verifyRealGoBenchmarkGrammarIdentity() error {
