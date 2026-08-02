@@ -737,6 +737,11 @@ func (p *Parser) parseIncrementalWithTokenSourceChanged(source []byte, oldTree *
 	if initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth); tree != oldTree && shouldRetryIncrementalParseAsFull(tree, len(source), initialMaxStacks) {
 		tree = p.retryIncrementalParseAsFullWithTokenSource(source, ts, initialMaxStacks, tree, nil)
 	}
+	// A separate, narrower fail-closed floor for ParseStopMemoryBudget: see
+	// shouldRetryIncrementalMemoryBudgetAsPlainFull (issue #454).
+	if tree != oldTree && shouldRetryIncrementalMemoryBudgetAsPlainFull(tree, len(source)) {
+		tree = p.retryIncrementalMemoryBudgetAsPlainFullWithTokenSource(source, ts, tree, nil)
+	}
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
 	return tree, nil
 }
@@ -1477,6 +1482,21 @@ func (p *Parser) parseIncrementalChanged(source []byte, oldTree *Tree) (*Tree, e
 	defer ts.Close()
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), nil)
 	tree = p.retryIncrementalAcceptedErrorWithDFA(source, oldTree, tree, nil)
+	// Never hand oldTree to the retry helper: it releases the losing tree, and
+	// oldTree is owned by the caller. Fail-closed floor (issue #454): an
+	// incremental attempt that tripped an abnormal stop (no-stacks-alive,
+	// node-limit, or a wide-stack accepted error) has not produced a
+	// validated parse of the edited text and must not be published as-is --
+	// see shouldRetryIncrementalParseAsFull.
+	if initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth); tree != oldTree && shouldRetryIncrementalParseAsFull(tree, len(source), initialMaxStacks) {
+		tree = p.retryIncrementalParseAsFullWithDFA(source, initialMaxStacks, tree, nil)
+	}
+	// A separate, narrower fail-closed floor for ParseStopMemoryBudget: see
+	// shouldRetryIncrementalMemoryBudgetAsPlainFull for why this cannot share
+	// the ladder above.
+	if tree != oldTree && shouldRetryIncrementalMemoryBudgetAsPlainFull(tree, len(source)) {
+		tree = p.retryIncrementalMemoryBudgetAsPlainFullWithDFA(source, tree, nil)
+	}
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
 	return tree, nil
 }
@@ -1642,6 +1662,15 @@ func (p *Parser) parseIncrementalChangedProfiled(source []byte, oldTree *Tree) (
 	timing := &incrementalParseTiming{}
 	tree := p.parseIncrementalInternal(source, oldTree, p.wrapIncludedRanges(ts), timing)
 	tree = p.retryIncrementalAcceptedErrorWithDFA(source, oldTree, tree, timing)
+	// See parseIncrementalChanged's identical guards: an incremental attempt
+	// that tripped an abnormal stop reason has not produced a validated parse
+	// of the edited text and must not be published as-is (issue #454).
+	if initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth); tree != oldTree && shouldRetryIncrementalParseAsFull(tree, len(source), initialMaxStacks) {
+		tree = p.retryIncrementalParseAsFullWithDFA(source, initialMaxStacks, tree, timing)
+	}
+	if tree != oldTree && shouldRetryIncrementalMemoryBudgetAsPlainFull(tree, len(source)) {
+		tree = p.retryIncrementalMemoryBudgetAsPlainFullWithDFA(source, tree, timing)
+	}
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
 	return tree, timing.toProfile(), nil
 }
@@ -1677,6 +1706,11 @@ func (p *Parser) parseIncrementalWithTokenSourceChangedProfiled(source []byte, o
 	// and oldTree is owned by the caller.
 	if initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth); tree != oldTree && shouldRetryIncrementalParseAsFull(tree, len(source), initialMaxStacks) {
 		tree = p.retryIncrementalParseAsFullWithTokenSource(source, ts, initialMaxStacks, tree, timing)
+	}
+	// A separate, narrower fail-closed floor for ParseStopMemoryBudget: see
+	// shouldRetryIncrementalMemoryBudgetAsPlainFull (issue #454).
+	if tree != oldTree && shouldRetryIncrementalMemoryBudgetAsPlainFull(tree, len(source)) {
+		tree = p.retryIncrementalMemoryBudgetAsPlainFullWithTokenSource(source, ts, tree, timing)
 	}
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
 	return tree, timing.toProfile(), nil

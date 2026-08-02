@@ -2,6 +2,7 @@
 # count-balanced root-package shards remain bounded on hosted runners.
 TestParseGoNewMakeTypeArgumentDiffCorpus
 TestPythonIncrementalSingleByteDeleteSweepMatchesFresh
+TestIncrementalInvariantGateC
 TestIncrementalInvariantGateCSS
 TestIncrementalInvariantGateGo
 TestIncrementalInvariantGateJSON
