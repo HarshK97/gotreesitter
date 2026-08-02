@@ -2983,6 +2983,25 @@ func (t *Tree) RootNodeWithOffset(offsetBytes uint32, offsetExtent Point) *Node 
 // Source returns the original source text.
 func (t *Tree) Source() []byte { return t.source }
 
+// UsedForestFastPath reports whether the node data behind this tree was
+// produced by the GSS-forest GLR fast path (Parser.Parse trying
+// tryForestFastPath before the production loop, or a direct
+// ParseForestExperimental call) rather than the production parser. Unlike
+// LanguageWantsForest (which only reports whether a language is eligible for
+// the fast path), this reports what actually produced the data for a FRESH
+// parse. It is provenance of the data, not necessarily of this exact call:
+// reuseTreeWithNewSource (incremental_leaf_fastpath.go) copies the field from
+// the old tree onto a new *Tree sharing the old root when reusing a tree
+// incrementally, so an incrementally-reused tree reports whichever route
+// produced the shared data, not whether this particular reuse call itself
+// dispatched to forest (it did not run parser dispatch at all). Regression
+// gates that always call Parser.Parse fresh (never ParseIncremental) are
+// unaffected by this distinction; callers mixing in incremental reuse should
+// not read this as "this call routed through forest."
+func (t *Tree) UsedForestFastPath() bool {
+	return t != nil && t.forestFastPath
+}
+
 // SourceEncoding returns the encoding used by the caller that produced this tree.
 //
 // For UTF-16 parses, Source still returns the parser's canonical UTF-8 copy.
