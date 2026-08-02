@@ -188,6 +188,27 @@ func TestRealLanguageExternalBindingTablesArePositional(t *testing.T) {
 	if got, want := rust.symbols, rustDefaultSymTable; got != want {
 		t.Fatalf("rust post-bind symbols = %v, want default table %v", got, want)
 	}
+
+	// javascript: pins the currently-shipped javascript.bin's binding as a
+	// permanent regression guard. This equality is non-tautological the same
+	// way as the other five languages: positional binding sets symbols[i] =
+	// lang.ExternalSymbols[i], while jsDefaultSymTable[i] is jsSym*'s
+	// independently recorded expectation for that same slot. If a future
+	// javascript.bin regen shifts the automaton's absolute symbol numbering
+	// (as it does today at grammargen HEAD -- see
+	// TestJavaScriptExternalScannerBindsPositionally for the synthetic-Language
+	// reproduction of that shift), this externalToToken check still passes
+	// (positional binding is index-based, not value-based) but the CI blob-swap
+	// proof in the scanner-adapt-corruption spore is what actually matters for
+	// end-to-end correctness -- this test only guards the shipped blob's
+	// binding, not a hypothetical regenerated one.
+	javascript := JavaScriptExternalScanner{}.ExternalScannerForLanguage(JavascriptLanguage()).(JavaScriptExternalScanner)
+	if got, want := javascript.externalToToken, []int{0, 1, 2, 3, 4, 5, 6, 7}; !slices.Equal(got, want) {
+		t.Fatalf("javascript externalToToken = %v, want %v", got, want)
+	}
+	if got, want := javascript.symbols, jsDefaultSymTable; got != want {
+		t.Fatalf("javascript post-bind symbols = %v, want default table %v", got, want)
+	}
 }
 
 // Note: the pure-unit drift and length-mismatch tests for

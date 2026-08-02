@@ -18,19 +18,69 @@ const (
 	jsTokEscapeSequence = 5
 	jsTokRegexPattern   = 6
 	jsTokJsxText        = 7
+	jsTokenCount        = 8
 )
 
+// Concrete symbol IDs from the checked-in JavaScript grammar ExternalSymbols.
+// These are DEFAULTS only: the fallback entries in jsDefaultSymTable, used
+// as-is if Scan is ever invoked on a scanner value that was never bound to a
+// Language (should not happen in production; see ExternalScannerForLanguage).
+// ExternalScannerForLanguage binds the real per-Language symbols
+// POSITIONALLY (by external index, via bindExternalScannerSymbolNames), not
+// by these absolute IDs, so a grammargen-regenerated javascript blob — which
+// emits the same 8 externals in the same order but under different absolute
+// Symbol numbering once the automaton grows or shrinks — still lexes
+// correctly instead of silently mistyping every external scan result. See
+// bindExternalScannerSymbolNames for why positional (not absolute-ID or
+// by-name) binding is required; the same pattern is used by the
+// kotlin/python/swift/dart/rust/hcl scanners.
 const (
-	jsSymAutoSemicolon gotreesitter.Symbol = 129
-	jsSymTemplateChars gotreesitter.Symbol = 130
-	jsSymTernaryQmark  gotreesitter.Symbol = 131
-	jsSymHtmlComment   gotreesitter.Symbol = 132
-	jsSymJsxText       gotreesitter.Symbol = 133
+	jsSymAutoSemicolon  gotreesitter.Symbol = 129
+	jsSymTemplateChars  gotreesitter.Symbol = 130
+	jsSymTernaryQmark   gotreesitter.Symbol = 131
+	jsSymHtmlComment    gotreesitter.Symbol = 132
+	jsSymLogicalOr      gotreesitter.Symbol = 78
+	jsSymEscapeSequence gotreesitter.Symbol = 107
+	jsSymRegexPattern   gotreesitter.Symbol = 112
+	jsSymJsxText        gotreesitter.Symbol = 133
 )
+
+// jsDefaultSymTable mirrors the jsTok* index order above.
+var jsDefaultSymTable = [jsTokenCount]gotreesitter.Symbol{
+	jsTokAutoSemicolon:  jsSymAutoSemicolon,
+	jsTokTemplateChars:  jsSymTemplateChars,
+	jsTokTernaryQmark:   jsSymTernaryQmark,
+	jsTokHtmlComment:    jsSymHtmlComment,
+	jsTokLogicalOr:      jsSymLogicalOr,
+	jsTokEscapeSequence: jsSymEscapeSequence,
+	jsTokRegexPattern:   jsSymRegexPattern,
+	jsTokJsxText:        jsSymJsxText,
+}
+
+// jsExternalSymbolNames lists the javascript grammar's external tokens in
+// declaration order (matching the jsTok* indexes above and the language's
+// ExternalSymbols order). Used by ExternalScannerForLanguage to bind this
+// scanner's token slots to a Language's external symbols positionally, the
+// same pattern used by the kotlin/python/swift/dart/rust/hcl scanners. See
+// bindExternalScannerSymbolNames for why positional (not absolute-ID or
+// by-name) binding is required.
+var jsExternalSymbolNames = []string{
+	"_automatic_semicolon",
+	"_template_chars",
+	"_ternary_qmark",
+	"html_comment",
+	"||",
+	"escape_sequence",
+	"regex_pattern",
+	"jsx_text",
+}
 
 // JavaScriptExternalScanner handles automatic semicolons, template strings,
 // JSX text, ternary question marks, and HTML comments for JavaScript.
-type JavaScriptExternalScanner struct{}
+type JavaScriptExternalScanner struct {
+	symbols         [jsTokenCount]gotreesitter.Symbol
+	externalToToken []int
+}
 
 type jsWhitespaceResult uint8
 
@@ -39,6 +89,21 @@ const (
 	jsWhitespaceNoNewline
 	jsWhitespaceAccept
 )
+
+// ExternalScannerForLanguage binds this scanner's token slots to lang's
+// external symbols positionally (external index i -> scanner token i), so
+// Scan resolves result symbols through the bound table instead of the
+// hardcoded absolute IDs above. Required whenever the attached Language did
+// not come from the exact blob those absolute IDs were pinned against (e.g.
+// a grammargen regeneration that shifts the automaton's overall symbol
+// numbering) — see bindExternalScannerSymbolNames.
+func (JavaScriptExternalScanner) ExternalScannerForLanguage(lang *gotreesitter.Language) gotreesitter.ExternalScanner {
+	s := JavaScriptExternalScanner{symbols: jsDefaultSymTable}
+	s.externalToToken = bindExternalScannerSymbolNames(lang, jsExternalSymbolNames, func(tokenIdx int, sym gotreesitter.Symbol) {
+		s.symbols[tokenIdx] = sym
+	})
+	return s
+}
 
 func (JavaScriptExternalScanner) Create() any                           { return nil }
 func (JavaScriptExternalScanner) Destroy(payload any)                   {}
@@ -51,54 +116,91 @@ func (JavaScriptExternalScanner) SupportsIncrementalReuse() bool    { return tru
 func (JavaScriptExternalScanner) ExternalScannerIsStateless() bool  { return true }
 func (JavaScriptExternalScanner) PreservesStateOnScanFailure() bool { return true }
 
-func (JavaScriptExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
+// symbolTable returns the per-Language-bound result-symbol table, falling
+// back to the pinned defaults when Scan is invoked on an unbound scanner
+// value (s.symbols is still its zero value).
+func (s JavaScriptExternalScanner) symbolTable() *[jsTokenCount]gotreesitter.Symbol {
+	if s.symbols == ([jsTokenCount]gotreesitter.Symbol{}) {
+		return &jsDefaultSymTable
+	}
+	return &s.symbols
+}
+
+// remapValidSymbols translates a Language-external-indexed validSymbols
+// slice into scanner-token-indexed space via s.externalToToken. When the
+// Language's external count and order agree with jsExternalSymbolNames (the
+// common case), externalToToken is the identity permutation and this is a
+// copy; it only diverges when a future grammar version adds, removes, or
+// reorders an external token relative to jsExternalSymbolNames.
+func (s JavaScriptExternalScanner) remapValidSymbols(validSymbols []bool, semanticValid *[jsTokenCount]bool) []bool {
+	if len(s.externalToToken) == 0 {
+		return validSymbols
+	}
+	*semanticValid = [jsTokenCount]bool{}
+	for externalIdx, valid := range validSymbols {
+		if !valid || externalIdx >= len(s.externalToToken) {
+			continue
+		}
+		tokenIdx := s.externalToToken[externalIdx]
+		if tokenIdx >= 0 && tokenIdx < jsTokenCount {
+			semanticValid[tokenIdx] = true
+		}
+	}
+	return semanticValid[:]
+}
+
+func (s JavaScriptExternalScanner) Scan(payload any, lexer *gotreesitter.ExternalLexer, validSymbols []bool) bool {
+	var semanticValid [jsTokenCount]bool
+	validSymbols = s.remapValidSymbols(validSymbols, &semanticValid)
+	symbols := s.symbolTable()
+
 	if jsValid(validSymbols, jsTokTemplateChars) {
 		if jsValid(validSymbols, jsTokAutoSemicolon) {
 			return false
 		}
-		return jsScanTemplateChars(lexer)
+		return jsScanTemplateChars(lexer, symbols)
 	}
 
 	preferAutoSemicolon := jsPreferAutoSemicolonOverJsxText(lexer, validSymbols)
 
 	if jsValid(validSymbols, jsTokJsxText) && !preferAutoSemicolon {
-		if jsScanJsxText(lexer) {
+		if jsScanJsxText(lexer, symbols) {
 			return true
 		}
 	}
 
 	if jsValid(validSymbols, jsTokAutoSemicolon) {
 		scannedComment := false
-		ret := jsScanAutoSemicolon(lexer, validSymbols, &scannedComment)
+		ret := jsScanAutoSemicolon(lexer, validSymbols, symbols, &scannedComment)
 		if !ret && !scannedComment && jsValid(validSymbols, jsTokTernaryQmark) && lexer.Lookahead() == '?' {
-			return jsScanTernaryQmark(lexer)
+			return jsScanTernaryQmark(lexer, symbols)
 		}
 		if !ret && !scannedComment && preferAutoSemicolon && jsValid(validSymbols, jsTokJsxText) {
-			return jsScanJsxText(lexer)
+			return jsScanJsxText(lexer, symbols)
 		}
 		return ret
 	}
 
 	if jsValid(validSymbols, jsTokJsxText) && preferAutoSemicolon {
-		return jsScanJsxText(lexer)
+		return jsScanJsxText(lexer, symbols)
 	}
 
 	if jsValid(validSymbols, jsTokTernaryQmark) {
-		return jsScanTernaryQmark(lexer)
+		return jsScanTernaryQmark(lexer, symbols)
 	}
 
 	if jsValid(validSymbols, jsTokHtmlComment) &&
 		!jsValid(validSymbols, jsTokLogicalOr) &&
 		!jsValid(validSymbols, jsTokEscapeSequence) &&
 		!jsValid(validSymbols, jsTokRegexPattern) {
-		return jsScanClosingComment(lexer)
+		return jsScanClosingComment(lexer, symbols)
 	}
 
 	return false
 }
 
-func jsScanTemplateChars(lexer *gotreesitter.ExternalLexer) bool {
-	lexer.SetResultSymbol(jsSymTemplateChars)
+func jsScanTemplateChars(lexer *gotreesitter.ExternalLexer, symbols *[jsTokenCount]gotreesitter.Symbol) bool {
+	lexer.SetResultSymbol(symbols[jsTokTemplateChars])
 	hasContent := false
 	for {
 		lexer.MarkEnd()
@@ -126,8 +228,8 @@ func jsScanTemplateChars(lexer *gotreesitter.ExternalLexer) bool {
 	}
 }
 
-func jsScanAutoSemicolon(lexer *gotreesitter.ExternalLexer, validSymbols []bool, scannedComment *bool) bool {
-	lexer.SetResultSymbol(jsSymAutoSemicolon)
+func jsScanAutoSemicolon(lexer *gotreesitter.ExternalLexer, validSymbols []bool, symbols *[jsTokenCount]gotreesitter.Symbol, scannedComment *bool) bool {
+	lexer.SetResultSymbol(symbols[jsTokAutoSemicolon])
 	lexer.MarkEnd()
 
 	for {
@@ -320,7 +422,7 @@ func jsScanWSAndComments(lexer *gotreesitter.ExternalLexer, scannedComment *bool
 	}
 }
 
-func jsScanTernaryQmark(lexer *gotreesitter.ExternalLexer) bool {
+func jsScanTernaryQmark(lexer *gotreesitter.ExternalLexer, symbols *[jsTokenCount]gotreesitter.Symbol) bool {
 	for unicode.IsSpace(lexer.Lookahead()) {
 		lexer.Advance(true)
 	}
@@ -336,7 +438,7 @@ func jsScanTernaryQmark(lexer *gotreesitter.ExternalLexer) bool {
 	}
 
 	lexer.MarkEnd()
-	lexer.SetResultSymbol(jsSymTernaryQmark)
+	lexer.SetResultSymbol(symbols[jsTokTernaryQmark])
 
 	for unicode.IsSpace(lexer.Lookahead()) {
 		lexer.Advance(false)
@@ -353,7 +455,7 @@ func jsScanTernaryQmark(lexer *gotreesitter.ExternalLexer) bool {
 	return true
 }
 
-func jsScanClosingComment(lexer *gotreesitter.ExternalLexer) bool {
+func jsScanClosingComment(lexer *gotreesitter.ExternalLexer, symbols *[jsTokenCount]gotreesitter.Symbol) bool {
 	for unicode.IsSpace(lexer.Lookahead()) || lexer.Lookahead() == 0x2028 || lexer.Lookahead() == 0x2029 {
 		lexer.Advance(true)
 	}
@@ -384,12 +486,12 @@ func jsScanClosingComment(lexer *gotreesitter.ExternalLexer) bool {
 		lexer.Advance(false)
 	}
 
-	lexer.SetResultSymbol(jsSymHtmlComment)
+	lexer.SetResultSymbol(symbols[jsTokHtmlComment])
 	lexer.MarkEnd()
 	return true
 }
 
-func jsScanJsxText(lexer *gotreesitter.ExternalLexer) bool {
+func jsScanJsxText(lexer *gotreesitter.ExternalLexer, symbols *[jsTokenCount]gotreesitter.Symbol) bool {
 	sawText := false
 	atNewline := false
 	onlyWhitespace := true
@@ -441,7 +543,7 @@ func jsScanJsxText(lexer *gotreesitter.ExternalLexer) bool {
 	}
 
 	lexer.MarkEnd()
-	lexer.SetResultSymbol(jsSymJsxText)
+	lexer.SetResultSymbol(symbols[jsTokJsxText])
 	return sawText
 }
 
