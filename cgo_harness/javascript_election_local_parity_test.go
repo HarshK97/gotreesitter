@@ -53,11 +53,30 @@ func TestJavaScriptElectionRawCOracleParity(t *testing.T) {
 			// over cgo_harness/corpus_real/javascript): dispatch.javascript
 			// rewrites 7 positions in this exact file; the two dynamic-import
 			// witnesses above show no rewrites, so this is the live-firing shape.
-			// For `{ key: value }` at the start of a statement, the grammar
-			// table drops the action that would let the object-literal
-			// derivation survive as a live fork, keeping only the
-			// labeled-statement/block derivation, so the raw tree diverges
-			// from the C oracle here.
+			//
+			// For `{ key: value }` at the start of a statement, the C oracle
+			// forks between labeled_statement and an object-literal pair, then
+			// elects the object literal. The shipped javascript.bin blob still
+			// elects labeled_statement only, but the current generator source
+			// does not cause that: grammar.js declares
+			// [$.labeled_statement, $._property_name] in `conflicts`, and
+			// grammargen/lr.go's shiftReduceInConflictGroup already retains
+			// both actions for this exact shape (added 2026-03-16, commit
+			// bb6c8aa0; pinned by
+			// TestResolveShiftReduceKeepsLabeledStatementPropertyNameDeclaredConflict
+			// in grammargen/lr_conflict_resolution_test.go). The blob was last
+			// regenerated 2026-03-02, two weeks before that fix landed, and was
+			// never resynced afterward.
+			//
+			// Regenerating the blob is blocked by a separate, unrelated bug:
+			// grammars.AdaptScannerForLanguage corrupts the raw parse of a
+			// freshly regenerated javascript blob (early truncation, exposed
+			// supertype nodes) through the production loading path
+			// (grammars.JavascriptLanguage / grammars.LoadLanguage). This
+			// reproduces with no table-generation change at all. See
+			// hypha://m31labs/gotreesitter/object/spore.2026-08-02.pecan.javascript-blob-regen-scanner-corruption.
+			// wantDivergence stays true until both the blob resync and the
+			// scanner fix land.
 			name:           "corpus_real_small_functions",
 			source:         mustReadCorpusFile(t, "corpus_real/javascript/small__functions.js"),
 			wantDivergence: true,
@@ -96,7 +115,7 @@ func TestJavaScriptElectionRawCOracleParity(t *testing.T) {
 				if len(mismatches) == 0 {
 					t.Fatalf("expected %q to diverge from the C oracle, but the raw trees now match; the underlying table-generation fix landed -- flip wantDivergence to false and re-verify before shipping", test.name)
 				}
-				t.Skipf("known divergence from the C oracle, the grammar table drops the object-literal derivation before it can fork:\n%s", strings.Join(mismatches, "\n"))
+				t.Skipf("known divergence from the C oracle: the shipped javascript.bin blob predates the 2026-03-16 declared-conflict retention fix and was never resynced (see the witness comment above):\n%s", strings.Join(mismatches, "\n"))
 				return
 			}
 			if len(mismatches) != 0 {

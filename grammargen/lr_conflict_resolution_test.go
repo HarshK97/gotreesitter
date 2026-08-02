@@ -2955,3 +2955,49 @@ func TestResolveAuxToParentsUsesCachedReverseParents(t *testing.T) {
 		t.Fatalf("cached resolveAuxToParents(value_token1) = %v, want [0]", again)
 	}
 }
+
+// TestResolveShiftReduceKeepsLabeledStatementPropertyNameDeclaredConflict
+// pins the T1 election-table-parity witness (spec.a2-election-table-parity,
+// tranche T1): the real tree-sitter-javascript grammar.js declares
+//
+//	conflicts: $ => [ ..., [$.labeled_statement, $._property_name], ... ]
+//
+// because at statement position, `identifier ':'` right after `{` is
+// ambiguous between a labeled_statement (`label ':' body`) and an object
+// literal's pair (`_property_name ':' value`). On lookahead ':', the state
+// offers a SHIFT that continues labeled_statement's `label • ':' body` and a
+// REDUCE that completes `_property_name -> identifier`. Upstream's generator
+// keeps both actions (a GLR table entry) whenever precedence does not
+// resolve a declared-conflict pair; it never silently drops one side. This
+// test asserts resolveActionConflict does the same for the exact shape that
+// reaches it once shift/reduce metadata is separated (grammargen/lr.go
+// shiftReduceInConflictGroup, ~lr.go:3676-3709): shift LHS and reduce LHS
+// are different members of the same declared conflict group, so both
+// actions must survive so the runtime GLR engine (labeled_statement carries
+// prec.dynamic(-1); _property_name carries none) can elect the object
+// literal at merge time.
+func TestResolveShiftReduceKeepsLabeledStatementPropertyNameDeclaredConflict(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: ":", Kind: SymbolTerminal},
+			{Name: "identifier", Kind: SymbolTerminal},
+			{Name: "labeled_statement", Kind: SymbolNonterminal, Visible: true, Named: true},
+			{Name: "_property_name", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 3, RHS: []int{1}}, // _property_name -> identifier
+		},
+		Conflicts: [][]int{{2, 3}}, // declared: [labeled_statement, _property_name]
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 10, lhsSym: 2}, // labeled_statement: label . ':' body
+		{kind: lrReduce, prodIdx: 0},          // _property_name -> identifier .
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("resolved actions = %+v, want both the labeled_statement shift and the _property_name reduce kept (declared conflict, GLR fork)", got)
+	}
+}
