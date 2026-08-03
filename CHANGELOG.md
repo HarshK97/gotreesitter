@@ -7,6 +7,43 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Removed
+
+- One member of the Go result-compatibility arm is retired: the member
+  that widened the root span across a trailing end-of-file newline.
+  `extendNodeToTrailingWhitespace` runs unconditionally after the
+  compatibility pass and accepts a superset of the byte set the Go member
+  tested, so the Go member could never reach a span the later pass did not
+  already reach.
+  A census recorded 35,244 gate entries and zero rewrites.
+  The four pinned canonical Go deep-tree digests are byte-identical, and
+  the exhaustive C-oracle fresh and incremental parity sweep stays green.
+
+### Added
+
+- The included-ranges route now has committed test coverage.
+  `Parser.SetIncludedRanges` had no test for any language, and injection
+  uses that call for every injected child.
+  A Markdown document with two or more Go fences reaches it in production.
+  Four new gates cover the route: a root-symbol gate, a positive control
+  that proves the Go arm still rewrites the tree there, a C-oracle table
+  that pins the measured root of both parsers across four range
+  geometries, and a deletion guard.
+  The route is not at parity with C, and the new tests do not claim it is.
+  The root span matches C only when the first range starts at byte 0 and
+  the last ends at end of file, which is a shape an injection child never
+  receives.
+  One pinned geometry publishes an `ERROR` root where C publishes
+  `source_file`.
+  That case is an open defect in included-range clipping, recorded so the
+  fix moves the pin.
+
+- The Go result-compatibility arm's three members are now registered as
+  named census subpasses, so a census receipt names the member that
+  rewrote the tree instead of only the arm.
+  Census receipts are recorded on the production route only; the default
+  candidate route leaves `ParseRuntime().NormalizationPasses` nil.
+
 ### Fixed
 
 - The C-recovery missing-token search (`cHandleError` /

@@ -2,8 +2,12 @@ package gotreesitter
 
 import "bytes"
 
-// normalizeGoReturnedTreeCompatibility drives Go's post-build compatibility
-// pipeline. Every stage boundary already re-checked p.activeParseStopReason()
+// normalizeGoReturnedTreeCompatibilityWithCensus drives Go's post-build
+// compatibility pipeline. Each member runs under its own census subpass id, so
+// the R2 census reports which member rewrote the tree, not only whether the arm
+// did.
+//
+// Every stage boundary already re-checked p.activeParseStopReason()
 // (Timeout/Cancelled); it now also re-checks the memory budget via
 // goCompatMemoryBudgetStopReason so a parse that is already over budget (the
 // parse loop stopped, or the arena/runtime heap grew past budget during an
@@ -17,9 +21,9 @@ import "bytes"
 // normalization they were built with, so the walk skips their subtrees and
 // becomes O(edit) instead of O(file). Nil (every fresh parse, and any
 // incremental parse without reuse) keeps the full walk. Only the range-capable
-// walk stage consumes it; the surrounding root/EOF/new-make stages are already
+// walk stage consumes it; the surrounding root/new-make stages are already
 // bounded or guarded and stay full-tree.
-func normalizeGoReturnedTreeCompatibility(root *Node, source []byte, p *Parser, lang *Language, incrementalRanges []Range) ParseStopReason {
+func normalizeGoReturnedTreeCompatibilityWithCensus(root *Node, source []byte, p *Parser, lang *Language, incrementalRanges []Range, census materializationSubpassCensus) ParseStopReason {
 	var arena *nodeArena
 	if root != nil {
 		arena = root.ownerArena
@@ -30,15 +34,21 @@ func normalizeGoReturnedTreeCompatibility(root *Node, source []byte, p *Parser, 
 	if reason := p.goCompatMemoryBudgetStopReason(arena); reason == ParseStopMemoryBudget {
 		return reason
 	}
-	normalizeGoSourceFileRoot(root, source, p)
+	census.run("dispatch.go.source-file-root", func() {
+		normalizeGoSourceFileRoot(root, source, p)
+	})
 	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
 		return reason
 	}
 	if reason := p.goCompatMemoryBudgetStopReason(arena); reason == ParseStopMemoryBudget {
 		return reason
 	}
-	if reason := normalizeGoCompatibilityInRangesWithParser(root, source, lang, incrementalRanges, p); resultMaterializationShouldStop(reason) {
-		return reason
+	var walkReason ParseStopReason
+	census.run("dispatch.go.compat-walk", func() {
+		walkReason = normalizeGoCompatibilityInRangesWithParser(root, source, lang, incrementalRanges, p)
+	})
+	if resultMaterializationShouldStop(walkReason) {
+		return walkReason
 	}
 	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
 		return reason
@@ -46,14 +56,9 @@ func normalizeGoReturnedTreeCompatibility(root *Node, source []byte, p *Parser, 
 	if reason := p.goCompatMemoryBudgetStopReason(arena); reason == ParseStopMemoryBudget {
 		return reason
 	}
-	normalizeRootEOFNewlineSpan(root, source, lang)
-	if reason := p.activeParseStopReason(); parseStopReasonIsActive(reason) {
-		return reason
-	}
-	if reason := p.goCompatMemoryBudgetStopReason(arena); reason == ParseStopMemoryBudget {
-		return reason
-	}
-	normalizeGoNewMakeTypeArgument(root, source, lang)
+	census.run("dispatch.go.new-make-type", func() {
+		normalizeGoNewMakeTypeArgument(root, source, lang)
+	})
 	return p.goCompatMemoryBudgetStopReason(arena)
 }
 
