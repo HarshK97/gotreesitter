@@ -66,7 +66,7 @@ func TestKotlinA3CompactCertificationFullCorpusSweep(t *testing.T) {
 	t.Logf("kotlin A3 full-corpus sweep source denominator: real=%d constructed=%d total=%d", len(real), len(constructed), len(sources))
 
 	result := runA3CertificationSweep(t, "kotlin", "kotlin", lang, sources, kotlinA3KnownDivergences)
-	a3ReportSweep(t, result)
+	a3ReportSweep(t, result, kotlinA3KnownDivergences)
 }
 
 // kotlinA3KnownDivergences is an already-triaged, pre-existing
@@ -95,6 +95,13 @@ var kotlinA3KnownDivergences = []a3KnownDivergence{
 		Witness:   "large__DeprecatedInstant.kt",
 		FirstPath: "/source_file/assignment[14]",
 		GoValue:   "assignment", CValue: "getter", Family: "D",
+		// Dormant for the reason the paragraph above records: the withheld
+		// split-drops certificate makes this witness decline, so the sweep
+		// never reaches the comparison that would match this entry. The
+		// entry stays a true statement about production and reattaches if
+		// split-drops is re-granted. The stale-entry ratchet in
+		// a3ReportSweep skips it for that reason alone.
+		Dormant: true,
 	},
 }
 

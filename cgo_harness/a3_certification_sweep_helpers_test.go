@@ -59,6 +59,12 @@ type a3CertificationSweepResult struct {
 	AdjudicatedExceptions []string
 	Divergences           []string
 	TrackedDivergences    []string
+	// MatchedKnownDivergences records every a3KnownDivergence entry that
+	// a3MatchesKnownDivergence actually matched against a live divergence
+	// during this sweep. a3ReportSweep diffs this against the caller's known
+	// list to catch a repaired entry nobody removed: see the stale-entry
+	// ratchet there.
+	MatchedKnownDivergences map[a3KnownDivergence]bool
 }
 
 // a3KnownDivergence is one already-triaged, pre-existing production-route
@@ -83,6 +89,15 @@ type a3KnownDivergence struct {
 	GoValue   string
 	CValue    string
 	Family    string
+	// Dormant exempts this entry from the stale-entry ratchet in
+	// a3ReportSweep. Set it only for an entry that stays a true statement
+	// about the production route but cannot match today, because the sweep
+	// declines the witness before it compares trees. A dormant entry
+	// reattaches on its own when the decline goes away. Every use needs a
+	// written reason beside the entry that names what suppresses the match.
+	// Do not set it to quiet an entry whose defect the repair fixed: that
+	// entry must come out.
+	Dormant bool
 }
 
 // a3MatchesKnownDivergence reports whether first (the first entry in a
@@ -149,7 +164,11 @@ func a3DeclineReasonClass(reason string) string {
 // lang.
 func runA3CertificationSweep(t *testing.T, language, cLangName string, lang *gotreesitter.Language, sources []a3CertificationSweepSource, known []a3KnownDivergence) a3CertificationSweepResult {
 	t.Helper()
-	result := a3CertificationSweepResult{Language: language, DeclineByReason: map[string]int{}}
+	result := a3CertificationSweepResult{
+		Language:                language,
+		DeclineByReason:         map[string]int{},
+		MatchedKnownDivergences: map[a3KnownDivergence]bool{},
+	}
 
 	cLang, err := COracleLanguage(cLangName)
 	if err != nil {
@@ -216,6 +235,7 @@ func runA3CertificationSweep(t *testing.T, language, cLangName string, lang *got
 				// divergence at a different node or with different Go/C
 				// values, is not a match and still fails.
 				if k, ok := a3MatchesKnownDivergence(known, src.Name, cDivergences[0]); ok {
+					result.MatchedKnownDivergences[k] = true
 					detail := fmt.Sprintf(
 						"%s: TRACKED DIVERGENCE (family %s, pre-existing production-route defect) -- compact matches production but both diverge from the C oracle at %d point(s), first: %s",
 						src.Name, k.Family, len(cDivergences), compactT3FormatDivergence(cDivergences[0]),
@@ -232,6 +252,7 @@ func runA3CertificationSweep(t *testing.T, language, cLangName string, lang *got
 				t.Log(detail)
 			default:
 				if k, ok := a3MatchesKnownDivergence(known, src.Name, cDivergences[0]); ok {
+					result.MatchedKnownDivergences[k] = true
 					detail := fmt.Sprintf(
 						"%s: TRACKED DIVERGENCE (family %s, pre-existing production-route defect) -- compact matches neither production (%d pt(s), first: %s) nor the C oracle (%d pt(s), first: %s)",
 						src.Name, k.Family, len(prodDivergences), prodDivergences[0], len(cDivergences), compactT3FormatDivergence(cDivergences[0]),
@@ -267,10 +288,13 @@ func runA3CertificationSweep(t *testing.T, language, cLangName string, lang *got
 }
 
 // a3ReportSweep logs the scorecard and fails the test if any unadjudicated
-// divergence was found. Declines, adjudicated exceptions, and tracked
+// divergence was found, or if any entry in known went stale (see the
+// stale-entry ratchet below). Declines, adjudicated exceptions, and tracked
 // (already-triaged, pre-existing production-route) divergences never fail
-// the sweep.
-func a3ReportSweep(t *testing.T, result a3CertificationSweepResult) {
+// the sweep on their own. known must be the exact list runA3CertificationSweep
+// produced result from; pass nil for a language with no known-divergence
+// list.
+func a3ReportSweep(t *testing.T, result a3CertificationSweepResult, known []a3KnownDivergence) {
 	t.Helper()
 	t.Logf(
 		"%s A3 sweep: files=%d accepted=%d declined=%d adjudicated-exceptions=%d tracked-divergences=%d divergences=%d",
@@ -286,6 +310,35 @@ func a3ReportSweep(t *testing.T, result a3CertificationSweepResult) {
 	for _, d := range result.TrackedDivergences {
 		t.Logf("%s tracked divergence: %s", result.Language, d)
 	}
+
+	// Stale-entry ratchet: a known-divergence entry suppresses one exact,
+	// currently-live divergence. After the repair for that divergence lands,
+	// the sweep no longer reaches the entry. runA3CertificationSweep records
+	// a match only when a3MatchesKnownDivergence fires. Such an entry then
+	// certifies nothing, but it still reads as a live defect to a person who
+	// skims the list. Fail loud instead. PR #638 removed eight repaired
+	// entries by hand; this ratchet makes the next burn-down mandatory.
+	//
+	// An entry marked Dormant is exempt. A dormant entry describes a
+	// production defect that is still real, but the sweep declines its
+	// witness before it compares trees, so no match can happen today. See
+	// the Dormant field's own comment for the rules.
+	var stale []string
+	for _, k := range known {
+		if k.Dormant {
+			continue
+		}
+		if !result.MatchedKnownDivergences[k] {
+			stale = append(stale, fmt.Sprintf("%s (family %s, path %s)", k.Witness, k.Family, k.FirstPath))
+		}
+	}
+	if len(stale) != 0 {
+		for _, s := range stale {
+			t.Errorf("%s A3 sweep: stale allowlist entry -- remove it: %s", result.Language, s)
+		}
+		t.Fatalf("%s A3 sweep found %d stale known-divergence entry(s) that matched nothing this run; the repair landed, burn the entry down", result.Language, len(stale))
+	}
+
 	if len(result.Divergences) != 0 {
 		for _, d := range result.Divergences {
 			t.Error(d)
