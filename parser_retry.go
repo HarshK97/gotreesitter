@@ -79,6 +79,16 @@ const (
 	// Retries are best-effort improvements: when the budget is exhausted the
 	// incumbent best tree is returned, never a worse result.
 	fullParseRetryMaxTotalPasses = 24
+	// fullParseCertifiedNoStacksPressureRetryMaxGLRStacks and
+	// fullParseCertifiedNoStacksPressureRetryMaxMergePerKey are the final,
+	// single-rung retry ceiling for a fresh full parse that proves both global
+	// stack pressure and merge-survivor pressure. This does not change either
+	// steady-state default. The rung runs only after the default no-stacks
+	// result and the ordinary bounded retry both truncate with no stacks alive.
+	// Its 256 KiB source ceiling keeps the exceptional pass off large files.
+	fullParseCertifiedNoStacksPressureRetryMaxGLRStacks   = 160
+	fullParseCertifiedNoStacksPressureRetryMaxMergePerKey = 160
+	fullParseCertifiedNoStacksPressureRetryMaxSourceBytes = 256 * 1024 // 256 KiB
 )
 
 type resettableTokenSource interface {
@@ -1249,6 +1259,29 @@ func fullParseRetryMaxStacksOverrideForOrigin(tree *Tree, sourceLen int, initial
 	return 0
 }
 
+// shouldRetryCertifiedNoStacksPressure permits one final retry only after a
+// fresh full parse proves that both the default and ordinary retry stack caps
+// exhausted live stacks. The initial tree must be clean-but-truncated: this
+// distinguishes cap pressure from an input that already contains a syntax
+// error. Explicit diagnostic caps remain authoritative.
+func shouldRetryCertifiedNoStacksPressure(tree, retryTree *Tree, sourceLen, initialMaxStacks, retryMaxStacks int, origin fullParseRetryOrigin) bool {
+	if tree == nil || retryTree == nil || origin != fullParseRetryOriginFresh ||
+		sourceLen <= 0 || sourceLen > fullParseCertifiedNoStacksPressureRetryMaxSourceBytes ||
+		parseMaxGLRStacksEnvConfigured() || parseMaxMergePerKeyEnvConfigured() ||
+		initialMaxStacks >= fullParseCertifiedNoStacksPressureRetryMaxGLRStacks ||
+		retryMaxStacks >= fullParseCertifiedNoStacksPressureRetryMaxGLRStacks {
+		return false
+	}
+	initial := tree.rawParseRuntime()
+	if initial.StopReason != ParseStopNoStacksAlive || !initial.Truncated ||
+		retryTreeHasError(tree) || initial.MaxStacksSeen < initialMaxStacks {
+		return false
+	}
+	retry := retryTree.rawParseRuntime()
+	return retry.StopReason == ParseStopNoStacksAlive && retry.Truncated &&
+		retryTreeHasError(retryTree) && retry.MaxStacksSeen >= retryMaxStacks
+}
+
 func fullParseRetryUsesInitialStackCeiling(tree *Tree, sourceLen int, initialMaxStacks int) bool {
 	return fullParseRetryUsesInitialStackCeilingForOrigin(tree, sourceLen, initialMaxStacks, fullParseRetryOriginFresh)
 }
@@ -1351,6 +1384,11 @@ func fullParseRetrySecondaryNodeLimitOverride(tree *Tree, sourceLen int) int {
 
 func fullParseRetryMergePerKeyOverride(tree *Tree, sourceLen int, initialMaxStacks int) int {
 	if tree == nil || sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes {
+		return 0
+	}
+	// An explicit merge cap is authoritative for every retry rung. Returning a
+	// retry override here would silently replace the caller's diagnostic cap.
+	if parseMaxMergePerKeyEnvConfigured() {
 		return 0
 	}
 	if treeParseClean(tree) {
@@ -1771,7 +1809,17 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 			nodeRetryTree = secondaryTree
 			replaceBest(&bestTree, secondaryTree)
 		} else {
-			replaceBest(&bestTree, retryTree)
+			// Keep the ordinary widened retry alive until the final merge
+			// decision below. It can lose the ranking to the original clean
+			// but truncated no-stacks tree, yet still be the evidence that
+			// selects a bounded merge or certified-pressure retry. Releasing it
+			// here clears its runtime data and silently suppresses those rungs.
+			if retryTree != nil && preferRetryTree(p, retryTree, bestTree) {
+				if bestTree != retryTree {
+					release(bestTree)
+				}
+				bestTree = retryTree
+			}
 		}
 	}
 
@@ -1798,6 +1846,23 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 		maxMergePerKeyOverride,
 		maxNodesOverride,
 	)
+	if shouldRetryCertifiedNoStacksPressure(tree, mergeRetryTree, len(source), initialMaxStacks, retryMaxStacks, origin) && !retryDeadlineExceeded() {
+		pressureRetryTree := runRetryAttempt(
+			"certified_no_stacks_pressure",
+			"default_and_bounded_stack_caps_exhausted",
+			fullParseCertifiedNoStacksPressureRetryMaxGLRStacks,
+			fullParseCertifiedNoStacksPressureRetryMaxMergePerKey,
+			0,
+		)
+		// nodeRetryTree is no longer needed; drop it before potentially
+		// replacing bestTree so we do not retain a losing retry arena.
+		if nodeRetryTree != nil && nodeRetryTree != bestTree && nodeRetryTree != tree {
+			release(nodeRetryTree)
+		}
+		replaceBest(&bestTree, mergeRetryTree)
+		replaceBest(&bestTree, pressureRetryTree)
+		return bestTree
+	}
 	// nodeRetryTree is no longer needed; drop it before potentially replacing
 	// bestTree so we don't leak it if it was also the incumbent.
 	if nodeRetryTree != nil && nodeRetryTree != bestTree && nodeRetryTree != tree {
