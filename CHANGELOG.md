@@ -7,6 +7,8 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.49.0] - 2026-08-04
+
 ### Removed
 
 - One member of the Go result-compatibility arm is retired: the member
@@ -20,6 +22,10 @@ for tags and release notes while still in `0.x`.
   the exhaustive C-oracle fresh and incremental parity sweep stays green.
 
 ### Added
+
+- A regression guard covers issue #660.
+  It checks anonymous comma nodes in Python imports and subscripts on both
+  parser routes.
 
 - The included-ranges route now has committed test coverage.
   `Parser.SetIncludedRanges` had no test for any language, and injection
@@ -201,6 +207,15 @@ for tags and release notes while still in `0.x`.
   gap trades against how large an input the compact route can still serve,
   and is an open follow-up, not resolved by this change.
   Routing only changes; every canonical tree digest stays identical.
+
+## [0.48.1] - 2026-08-04
+
+### Fixed
+
+- Anonymous separator nodes in Python import and subscript forms stay
+  unfielded.
+  The patch restores field-name behavior from the reference C runtime.
+  This fixes [issue #660](https://github.com/odvcencio/gotreesitter/issues/660).
 
 ## [0.48.0] - 2026-08-01
 
@@ -419,11 +434,6 @@ for tags and release notes while still in `0.x`.
 - The native reduction path now sets Dart switch-expression body fields.
   It now sets the target field for nested Elixir calls.
   This change removes two inert language-local field repairs.
-
-- Inherited reduction fields now fill anonymous gaps between repeated direct
-  descendants.
-  They do not cross a leading separator without direct descendant evidence.
-  This change removes three Scala field repairs and the SQL `INTO` cleanup.
 
 - Compact graph insertion now persists exact predecessor merges across a
   bounded 16-level path.
@@ -4438,7 +4448,9 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.48.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.49.0...HEAD
+[0.49.0]: https://github.com/odvcencio/gotreesitter/compare/v0.48.1...v0.49.0
+[0.48.1]: https://github.com/odvcencio/gotreesitter/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/odvcencio/gotreesitter/compare/v0.47.1...v0.48.0
 [0.47.1]: https://github.com/odvcencio/gotreesitter/compare/v0.47.0...v0.47.1
 [0.47.0]: https://github.com/odvcencio/gotreesitter/compare/v0.46.0...v0.47.0

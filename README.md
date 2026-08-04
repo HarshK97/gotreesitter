@@ -752,10 +752,10 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.48.0**. It closes six Swift real-code parse
-defects found against apple/swift-algorithms and the Swift 6.3 standard
-library. It adds a validated Swift corpus with a ratcheting regression suite.
-It also cuts incremental re-lex and compact full-parse allocation costs.
+The current release is **v0.49.0**. It consolidates parser correctness,
+reference parity, recovery bounds, and compact-route work since v0.48.1.
+It also includes the issue #660 field-projection correction and its
+regression guard.
 
 Detailed shipped evidence lives in [CHANGELOG.md](CHANGELOG.md). Planned minor
 releases are batched on Thursdays; the immutable-tag process and exceptions are
