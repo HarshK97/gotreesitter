@@ -19,7 +19,7 @@ on:
           - planned-minor
           - urgent-patch
       receipt_uri:
-        description: Governing Hyphae release receipt
+        description: "Signed Hyphae receipt ID: hypha-receipt:YYYY-MM-DD:<short-id>"
         required: true
         type: string
       incident:

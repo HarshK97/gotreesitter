@@ -61,11 +61,11 @@ var diagnosticParserCoreCanonicalAdmissions = []diagnosticParserCoreCanonicalAdm
 		conflictArms: 328, causalForks: 168,
 		rawSelected: core.RawSelectedCensus{Nodes: 2237, Parents: 1202, Leaves: 1035},
 		work: core.Work{
-			Shifts: 1348, Reductions: 1501, ReductionPopRequests: 1501,
-			EmittedPopPaths: 1646, EmittedPopPayloads: 2995,
-			PredecessorLinkUnionAttempts: 211, PredecessorLinkUnionDuplicateNoop: 6,
-			PredecessorLinkUnionPrecedenceReplaced: 57, PredecessorLinkUnionAlternateAppended: 148,
-			GraphLinkAdditionsProxy: 3004, LeafConstructionsProxy: 1109,
+			Shifts: 1348, Reductions: 1504, ReductionPopRequests: 1504,
+			EmittedPopPaths: 1646, EmittedPopPayloads: 2993,
+			PredecessorLinkUnionAttempts: 174, PredecessorLinkUnionDuplicateNoop: 4,
+			PredecessorLinkUnionPrecedenceReplaced: 25, PredecessorLinkUnionAlternateAppended: 145,
+			GraphLinkAdditionsProxy: 3006, LeafConstructionsProxy: 1109,
 			ParentConstructionsProxy: 1515,
 		},
 	},
@@ -77,12 +77,12 @@ var diagnosticParserCoreCanonicalAdmissions = []diagnosticParserCoreCanonicalAdm
 		conflictArms: 1365, causalForks: 685,
 		rawSelected: core.RawSelectedCensus{Nodes: 11331, Parents: 6206, Leaves: 5125},
 		work: core.Work{
-			Shifts: 6685, Reductions: 7440, ReductionPopRequests: 7440,
-			EmittedPopPaths: 8103, EmittedPopPayloads: 14703,
-			PredecessorLinkUnionAttempts: 954, PredecessorLinkUnionDuplicateNoop: 81,
-			PredecessorLinkUnionPrecedenceReplaced: 199, PredecessorLinkUnionAlternateAppended: 674,
-			GraphLinkAdditionsProxy: 14749, LeafConstructionsProxy: 5546,
-			ParentConstructionsProxy: 7537,
+			Shifts: 6685, Reductions: 7509, ReductionPopRequests: 7509,
+			EmittedPopPaths: 8108, EmittedPopPayloads: 14730,
+			PredecessorLinkUnionAttempts: 722, PredecessorLinkUnionDuplicateNoop: 36,
+			PredecessorLinkUnionPrecedenceReplaced: 75, PredecessorLinkUnionAlternateAppended: 611,
+			GraphLinkAdditionsProxy: 14789, LeafConstructionsProxy: 5546,
+			ParentConstructionsProxy: 7542,
 		},
 	},
 	{
@@ -93,13 +93,13 @@ var diagnosticParserCoreCanonicalAdmissions = []diagnosticParserCoreCanonicalAdm
 		conflictArms: 1216, causalForks: 618,
 		rawSelected: core.RawSelectedCensus{Nodes: 10761, Parents: 5704, Leaves: 5057},
 		work: core.Work{
-			Shifts: 6512, Reductions: 7561, ReductionPopRequests: 7561,
-			EmittedPopPaths: 8408, EmittedPopPayloads: 15864,
-			PredecessorLinkUnionAttempts: 1676, PredecessorLinkUnionDuplicateNoop: 55,
-			PredecessorLinkUnionPrecedenceReplaced: 771, PredecessorLinkUnionRecursiveChanged: 10,
-			PredecessorLinkUnionAlternateAppended: 840,
-			GraphLinkAdditionsProxy:               15145, LeafConstructionsProxy: 5375,
-			ParentConstructionsProxy: 7707,
+			Shifts: 6512, Reductions: 7564, ReductionPopRequests: 7564,
+			EmittedPopPaths: 8377, EmittedPopPayloads: 15816,
+			PredecessorLinkUnionAttempts: 1036, PredecessorLinkUnionDuplicateNoop: 18,
+			PredecessorLinkUnionPrecedenceReplaced: 207, PredecessorLinkUnionRecursiveChanged: 1,
+			PredecessorLinkUnionAlternateAppended: 810,
+			GraphLinkAdditionsProxy:               15124, LeafConstructionsProxy: 5375,
+			ParentConstructionsProxy: 7674,
 		},
 	},
 	{
@@ -107,16 +107,16 @@ var diagnosticParserCoreCanonicalAdmissions = []diagnosticParserCoreCanonicalAdm
 		sourceSHA256:   "a7e4a1a64b25a60aea36183b9d6d53dcd9240942cdb10e67a3cf9e6ce30f95b2",
 		deepTreeSHA256: "1472cfd9a014d4034dbc1456afd12c282630ef787c3543cf0cecb73619883ad2",
 		selectedNodes:  71768, selectedParents: 26371, selectedLeaves: 45397,
-		conflictArms: 16045, causalForks: 8156,
+		conflictArms: 16043, causalForks: 8155,
 		rawSelected: core.RawSelectedCensus{Nodes: 109614, Parents: 59703, Leaves: 49911},
 		work: core.Work{
-			Shifts: 66119, Reductions: 75988, ReductionPopRequests: 75988,
-			EmittedPopPaths: 84928, EmittedPopPayloads: 153463,
-			PredecessorLinkUnionAttempts: 13752, PredecessorLinkUnionDuplicateNoop: 1638,
-			PredecessorLinkUnionPrecedenceReplaced: 3577, PredecessorLinkUnionRecursiveChanged: 7,
-			PredecessorLinkUnionAlternateAppended: 8530,
-			GraphLinkAdditionsProxy:               150275, LeafConstructionsProxy: 53897,
-			ParentConstructionsProxy: 78430,
+			Shifts: 66115, Reductions: 76310, ReductionPopRequests: 76310,
+			EmittedPopPaths: 83658, EmittedPopPayloads: 151917,
+			PredecessorLinkUnionAttempts: 9137, PredecessorLinkUnionDuplicateNoop: 325,
+			PredecessorLinkUnionPrecedenceReplaced: 1376, PredecessorLinkUnionRecursiveChanged: 1,
+			PredecessorLinkUnionAlternateAppended: 7435,
+			GraphLinkAdditionsProxy:               149768, LeafConstructionsProxy: 53896,
+			ParentConstructionsProxy: 77168,
 		},
 	},
 }
@@ -259,11 +259,7 @@ func TestDiagnosticParserCoreBoundaryIndexCensus(t *testing.T) {
 			var scannerScratch []byte
 			scheduler, err := executeDiagnosticParserCoreGenericSchedulerFromSeed(
 				compact, tokenSource, &scannerScratch, lang.InitialState,
-				DiagnosticParserCorePrefixOptions{
-					ReceiptMode: DiagnosticParserCoreReceiptSummary,
-					MaxTokens:   300000, MaxDispatches: 600000,
-					Limits: diagnosticParserCoreCanonicalLimits(),
-				},
+				diagnosticParserCoreCanonicalSeedOptions(lang),
 				observer,
 			)
 			if err != nil {
@@ -298,11 +294,7 @@ func BenchmarkDiagnosticParserCoreCanonicalSchedulerCold(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			options := DiagnosticParserCorePrefixOptions{
-				ReceiptMode: DiagnosticParserCoreReceiptSummary,
-				MaxTokens:   300000, MaxDispatches: 600000,
-				Limits: diagnosticParserCoreCanonicalLimits(),
-			}
+			options := diagnosticParserCoreCanonicalSeedOptions(lang)
 			var scannerScratch []byte
 			b.ReportAllocs()
 			b.SetBytes(int64(len(fixture.Source)))
@@ -375,6 +367,33 @@ func diagnosticParserCoreCanonicalLimits() core.Limits {
 		MaxChildren: 4 << 20, MaxMetadata: 2 << 20,
 		MaxLinksPerBoundary: 8, MaxPopPaths: 1 << 16, MaxDerivations: 1 << 16,
 	}
+}
+
+// diagnosticParserCoreCanonicalSeedOptions builds the prefix options for the
+// canonical instruments that seed the generic scheduler themselves rather
+// than call DiagnosticParseParserCorePrefix.
+//
+// allowConvergedSplitDropArtifact is the load-bearing field. The driver sets
+// it from the language's own certification record
+// (lang.CompactConvergedReductionSplitDropsCertified,
+// parsercore_phase0_driver.go), so every route that goes through
+// DiagnosticParseParserCorePrefix or the admission-candidate runner carries
+// it. An instrument that builds its own option literal and seeds
+// executeDiagnosticParserCoreGenericSchedulerFromSeed directly bypasses that
+// seam. Without this field the certified Go grammar's converged-path
+// reduction split no-action drop fails the alternative-set coverage proof
+// (dropGenericNoActionHeads) and every canonical fixture declines, so the
+// instrument measures nothing at all.
+func diagnosticParserCoreCanonicalSeedOptions(lang *Language) DiagnosticParserCorePrefixOptions {
+	options := DiagnosticParserCorePrefixOptions{
+		ReceiptMode: DiagnosticParserCoreReceiptSummary,
+		MaxTokens:   300000, MaxDispatches: 600000,
+		Limits: diagnosticParserCoreCanonicalLimits(),
+	}
+	if lang != nil {
+		options.allowConvergedSplitDropArtifact = lang.CompactConvergedReductionSplitDropsCertified
+	}
+	return options
 }
 
 func loadDiagnosticParserCoreCanonicalFixture(t testing.TB, id string) DiagnosticParserCoreCanonicalFixtureForTest {

@@ -13,9 +13,12 @@ The authoring surface is intentionally input-neutral:
 - `.grammar` files, a compact ecosystem-agnostic grammar format that parses
   into the same IR and can emit Go DSL.
 
-`grammar.js` import also exists, but `grammar.json` is usually more reliable
-because helper functions, `require()` calls, and JavaScript evaluation have
-already been resolved by tree-sitter.
+Two `grammar.js` paths exist. The `-js` flag uses the best-effort pure-Go
+importer. The `-js-cli` flag uses Tree-sitter 0.26 or newer to resolve helpers
+and imports before it imports the generated `grammar.json`.
+
+> **Warning:** `-js-cli` evaluates the grammar as JavaScript. Use it only with
+> code that you trust. The `-js` and `-json` flags do not execute JavaScript.
 
 ## Authoring Commands
 
@@ -26,6 +29,7 @@ next command.
 ```sh
 go run ./cmd/grammargen doctor calc -text '1+2*3'
 go run ./cmd/grammargen doctor -json /tmp/grammar_parity/go/src/grammar.json -sample sample.go
+go run ./cmd/grammargen doctor -js-cli ./grammar.js -sample sample.txt
 go run ./cmd/grammargen doctor -grammar ./mini.grammar -text '123'
 go run ./cmd/grammargen doctor calc -text '1+2*3' -conflicts 3
 go run ./cmd/grammargen doctor calc -text '1+2*3' -format json
@@ -52,6 +56,11 @@ go run ./cmd/grammargen emit \
   -go grammargen/go_grammar.go \
   -pkg grammargen \
   -func GoGrammar
+
+# Resolve grammar.js through canonical grammar.json
+go run ./cmd/grammargen emit \
+  -js-cli ./grammar.js \
+  -bin ./language.bin
 
 # Go DSL source from a .grammar file
 go run ./cmd/grammargen emit -grammar ./mini.grammar -go ./mini_grammar.go -pkg grammargen
@@ -92,6 +101,16 @@ For grammars that benefit from local LR(1) state splitting, pass `-lr-split`:
 go run ./cmd/grammargen doctor <grammar> -lr-split -sample sample.<ext>
 go run ./cmd/grammargen emit <grammar> -lr-split -bin grammars/grammar_blobs/<grammar>.bin
 ```
+
+`-js-cli` needs Tree-sitter 0.26 or newer on `PATH`. It also needs a JavaScript
+runtime, such as Node, on `PATH`. It generates only `grammar.json` and
+`node-types.json` in a temporary directory. It then removes that directory.
+
+Set `TREE_SITTER_JS_RUNTIME=native` to use the native runtime in Tree-sitter
+0.26 or newer. Install the grammar's required packages before compilation.
+
+The canonical JSON keeps external token declarations. Register a compatible Go
+external scanner when you load the generated blob.
 
 Go's blob is generated without `-lr-split`:
 

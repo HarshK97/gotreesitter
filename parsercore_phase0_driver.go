@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"sort"
 
 	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
@@ -17,9 +18,16 @@ import (
 type DiagnosticParserCoreBoundaryKind string
 
 const (
-	DiagnosticParserCoreExtra         DiagnosticParserCoreBoundaryKind = "extra"
-	DiagnosticParserCoreExtraChain    DiagnosticParserCoreBoundaryKind = "extra_chain"
-	DiagnosticParserCoreNoAction      DiagnosticParserCoreBoundaryKind = "no_action"
+	DiagnosticParserCoreExtra      DiagnosticParserCoreBoundaryKind = "extra"
+	DiagnosticParserCoreExtraChain DiagnosticParserCoreBoundaryKind = "extra_chain"
+	DiagnosticParserCoreNoAction   DiagnosticParserCoreBoundaryKind = "no_action"
+	// DiagnosticParserCoreRecovery marks every dispatch shape where only
+	// locked-C production's recovery semantics can continue: an explicit
+	// ActionRecover cell, an unexpected recover action inside a generic
+	// conflict, and (B3 stage S1) the pure no-table-action frontier that
+	// mirrors C's cPaused trigger (glr.go: "the stack hit a no-action
+	// point"). Dispatch classification only -- every one of these shapes
+	// still declines and falls back to production unchanged.
 	DiagnosticParserCoreRecovery      DiagnosticParserCoreBoundaryKind = "recovery"
 	DiagnosticParserCoreAccept        DiagnosticParserCoreBoundaryKind = "accept_without_materialization"
 	DiagnosticParserCoreCap           DiagnosticParserCoreBoundaryKind = "cap"
@@ -57,10 +65,77 @@ type DiagnosticParserCorePrefixOptions struct {
 	freshSchedulerSession bool
 	// These acceptance options require exact artifact certification. Diagnostic
 	// callers retain the conservative false defaults.
-	allowEOFAcceptNoActionSiblings bool
-	allowPrimaryAcceptDerivation   bool
-	noLookaheadRootSymbol          Symbol
-	hasNoLookaheadRootSymbol       bool
+	allowEOFAcceptNoActionSiblings  bool
+	allowPrimaryAcceptDerivation    bool
+	allowConvergedSplitDropArtifact bool
+	// allowCompactStrategy2ErrorRegion permits the generic scheduler to
+	// attempt native S3 recovery (error-region absorb and condense-resume)
+	// at a true no-table-action point instead of declining. Set only from
+	// Language.CompactStrategy2ErrorRegionCertified (grammar-blob-keyed, not
+	// name-keyed -- design section 7). Recovery must also be true: this
+	// option alone does not admit the fresh-full runner's recovery guard.
+	allowCompactStrategy2ErrorRegion bool
+	noLookaheadRootSymbol            Symbol
+	hasNoLookaheadRootSymbol         bool
+	// stopControlParser, when non-nil, arms the scheduler's stop-control poll
+	// (spec.campaign.v7 tranche B8): once per dispatch-pass-loop iteration,
+	// diagnosticParserCoreGenericScheduler.run checks this Parser's deadline
+	// (timeoutMicros) and cancellation flag through the exact production
+	// check (activeParseStopReason), plus the deterministic compact-arena
+	// memory budget below. Nil (the default for every diagnostic and
+	// benchmark caller) disables the whole poll, matching prior behavior
+	// byte-for-byte -- only the admission-candidate route sets this field.
+	stopControlParser *Parser
+	// stopControlMemoryBudgetBytes is the production engine's own soft
+	// per-parse byte budget (parseMemoryBudgetForParser), recomputed from the
+	// caller's source length immediately before each scheduler run. Zero
+	// disables the memory-budget half of the poll, mirroring production's
+	// own "budget disabled" contract (parseMemoryBudget's mb<=0 case).
+	stopControlMemoryBudgetBytes int64
+	// stopControlHardCeilingBytes is production's own absolute, decoupled
+	// hard ceiling (parseMemoryHardCeilingBytes, parser_config.go),
+	// independent of the soft budget above: it stays armed even when a
+	// caller explicitly disables the soft budget (GOT_PARSE_MEMORY_BUDGET_MB=0),
+	// the same independence production's own runtime-heap watchdog keeps
+	// (runtimeMemoryHardCeilingEnabled, parser_memory_budget_runtime.go).
+	// Without this the candidate route had no backstop at all when a caller
+	// zeroed the soft budget (tranche B9 honest-accounting gate). Zero
+	// disables it, mirroring the production contract's own 0=off escape
+	// hatch.
+	stopControlHardCeilingBytes int64
+	// materializationParser, materializationSource,
+	// materializationForceReplayParseStates, and materializationContextSet
+	// back the compact acceptance-election materiality gate
+	// (completeAcceptance -> compactAcceptanceElectionIsVacuous): when a
+	// certified primary derivation election has more than one live
+	// candidate, the gate re-materializes every candidate through the same
+	// public-tree pipeline the accepted parse itself uses, so it can require
+	// every candidate's tree to match the primary before admitting it.
+	//
+	// materializationForceReplayParseStates must match the value the
+	// caller's own post-acceptance materialization will use, not just be
+	// "some" value: it decides whether replayCompactDerivation stamps
+	// ParseState/PreGotoState on the materialized nodes at all, and the
+	// gate's comparator reads those stamps. A mismatched value would compare
+	// an attribute the published tree does not actually carry.
+	//
+	// All fields are set by the two production seed entry points
+	// (DiagnosticParseParserCorePrefix, parserCoreFreshFullRunner's
+	// executeSchedulerOpen) from state those callers already hold:
+	// DiagnosticParseParserCorePrefix always forces false (its own
+	// materialization call does the same); executeSchedulerOpen forwards the
+	// runner's own replayParseStates field, which is true only for the
+	// admission-candidate route (admission_switch_candidate.go).
+	//
+	// materializationContextSet distinguishes "no caller has set this
+	// context" (fail closed: the gate cannot materialize at all) from "the
+	// caller set it, and the source legitimately empty" (a zero-length
+	// source is a normal, if degenerate, parse input) -- len(source) == 0
+	// alone cannot tell those apart.
+	materializationParser                 *Parser
+	materializationSource                 []byte
+	materializationForceReplayParseStates bool
+	materializationContextSet             bool
 }
 
 type DiagnosticParserCoreScannerCheckpoint struct {
@@ -136,7 +211,17 @@ type DiagnosticParserCoreHeaderPathReceipt struct {
 // DiagnosticParserCoreGenericWork records semantic scheduler work separately
 // from the compact core's physical arena storage.
 type DiagnosticParserCoreGenericWork struct {
-	Passes                     uint64
+	Passes uint64
+	// SingleHeaderPasses counts dispatch passes executed against a
+	// single-header frontier (spec.c4-bytecode-isa.v1 section 5, obligation
+	// R6). It is count-only and published on the gts_workcount board so
+	// corridor coverage is a committed board row rather than a
+	// profile-derived figure. It is a strict subset of Passes.
+	SingleHeaderPasses uint64
+	// CorridorPasses counts the subset of SingleHeaderPasses the C4 bytecode
+	// corridor executed. It is zero on every build and every parse with the
+	// corridor lane off, so it never perturbs the pinned board.
+	CorridorPasses             uint64
 	ActionLookups              uint64
 	Dispatches                 uint64
 	Conflicts                  uint64
@@ -148,19 +233,26 @@ type DiagnosticParserCoreGenericWork struct {
 	// ConvergedReductionSplitDrops counts no-action drops descended from a
 	// reduction that split multiple compact predecessor paths into live heads.
 	ConvergedReductionSplitDrops uint64
-	RepetitionFolds              uint64
-	Reductions                   uint64
-	OrdinaryShifts               uint64
-	OrdinaryCohorts              uint64
-	ExtraShifts                  uint64
-	ExtraCohorts                 uint64
-	Accepts                      uint64
-	ReductionPauses              uint64
-	NoActionDrops                uint64
-	Elections                    uint64
-	Canonicalizations            uint64
-	PeakHeaders                  uint64
-	Overflow                     bool
+	// ConvergedCoverageDrops counts converged split drops whose dropped
+	// header's recorded alternative set was contained in one surviving,
+	// non-blended header's recorded set (spec.b4b-alternative-set.v2 section
+	// 5, the revised theorem). Renamed from SelectedLineageDrops at stage
+	// 2b, when the v2 containment predicate replaced the scalar (rank,
+	// lineage) proof as the deciding proof.
+	ConvergedCoverageDrops uint64
+	RepetitionFolds        uint64
+	Reductions             uint64
+	OrdinaryShifts         uint64
+	OrdinaryCohorts        uint64
+	ExtraShifts            uint64
+	ExtraCohorts           uint64
+	Accepts                uint64
+	ReductionPauses        uint64
+	NoActionDrops          uint64
+	Elections              uint64
+	Canonicalizations      uint64
+	PeakHeaders            uint64
+	Overflow               bool
 }
 
 func (w *DiagnosticParserCoreGenericWork) add(counter *uint64, delta uint64) {
@@ -285,6 +377,7 @@ type DiagnosticParserCoreGenericScheduler struct {
 	NoActionDrops     []DiagnosticParserCoreGenericNoActionDrop
 	Completion        *DiagnosticParserCoreGenericCompletion
 	Acceptance        *DiagnosticParserCoreGenericAcceptance
+	acceptanceBacking DiagnosticParserCoreGenericAcceptance
 	Stop              DiagnosticParserCoreGenericStop
 	Tokens            uint64
 	Dispatches        uint64
@@ -678,6 +771,7 @@ func DiagnosticParseParserCorePrefix(scanner ExternalScanner, source []byte, opt
 	result.Grammar = lang.Name
 	result.ExactRootDFA = true
 	result.GrammarBlobSHA256 = sha256.Sum256(parserCoreCertifiedGoBlob)
+	options.allowConvergedSplitDropArtifact = lang.CompactConvergedReductionSplitDropsCertified
 	if options.Recovery || options.Retry || options.Incremental || options.IncludedRanges {
 		result.Boundary, result.Detail = DiagnosticParserCoreRoute, "recovery/retry/incremental/included-range routes decline"
 		return result, &diagnosticParserCoreDecline{boundary: result.Boundary, detail: result.Detail}
@@ -734,6 +828,14 @@ func diagnosticParseParserCoreGenericFromSeed(
 	source []byte,
 	options DiagnosticParserCorePrefixOptions,
 ) (DiagnosticParserCorePrefixResult, error) {
+	options.materializationParser = parser
+	options.materializationSource = source
+	// The diagnostic prefix route's own post-acceptance materialization
+	// (below, and publishDiagnosticParserCoreGenericResult's callback) always
+	// forces false; match it so the gate compares the same ParseState/
+	// PreGotoState presence the published tree actually carries.
+	options.materializationForceReplayParseStates = false
+	options.materializationContextSet = true
 	scheduler, runErr := executeDiagnosticParserCoreGenericSchedulerFromSeed(
 		compact, tokenSource, scannerScratch, initialState, options, diagnosticParserCoreSeedObserver{},
 	)
@@ -753,7 +855,7 @@ func diagnosticParseParserCoreGenericFromSeed(
 		return result, &diagnosticParserCoreDecline{boundary: result.Boundary, detail: result.Detail}
 	}
 	return publishDiagnosticParserCoreGenericResult(result, scheduler, func(head core.Head) (*Tree, error) {
-		return materializeDiagnosticParserCoreAcceptedSelection(compact, head, scheduler.acceptedPayloads, parser, source, nil, false)
+		return materializeDiagnosticParserCoreAcceptedSelection(compact, head, scheduler.acceptedPayloads, parser, source, nil, false, options.Recovery && options.allowCompactStrategy2ErrorRegion)
 	})
 }
 
@@ -847,21 +949,219 @@ func diagnosticParserCoreSelectedNodeCensus(root *Node) diagnosticParserCoreSele
 	return census
 }
 
+// Field order groups creationSeq (8-byte aligned), then every 4-byte-aligned
+// field (head, checkpoint, altSet, lastPersistedHead, lastPersistedAltSet),
+// then cleanPathLineage (2-byte aligned), then every remaining byte-sized
+// field. This is layout-only: every construction site across the package
+// and its tests uses keyed fields (grep-verified), so declaration order
+// changes memory footprint, never behavior. It restores this struct to its
+// pre-b4b-v2 64 bytes (unsafe.Sizeof-verified, parsercore_phase0_canonical_scratch_internal_test.go)
+// despite carrying two full (event, branch) alternative sets plus three
+// bools v1 never had (b4b-width-repair audit, 2026-08): the widened
+// AlternativeSet's own inline-capacity reduction (core.go) supplies most of
+// the recovered space, and this reorder folds the three new bools into
+// padding a naive append-at-the-end declaration order would otherwise pay
+// for separately.
 type diagnosticParserCoreHeader struct {
-	creationSeq             uint64
-	head                    core.Head
-	checkpoint              core.CheckpointID
+	creationSeq uint64
+	head        core.Head
+	checkpoint  core.CheckpointID
+	// altSet mirrors cleanPathRank/cleanPathLineage but by union rather than
+	// overwrite: it accumulates every converged-split (event, branch) member
+	// this derivation thread has passed through and is never invalidated
+	// (carried unchanged through an external shift that zeroes
+	// cleanPathLineage; see markDiagnosticParserCoreExternalLineage). The
+	// scalar (rank, lineage) pair remains the live decider
+	// (dropGenericNoActionHeads); altSet and blended are read by the v1/v2
+	// containment census only (spec.b4b-alternative-set.v2 section 7).
+	altSet core.AlternativeSet
+	// lastPersistedHead and lastPersistedAltSet record the (head, altSet)
+	// pair persistHeaderLineageOwned last actually wrote to a node. Both are
+	// plain comparable values, so persistHeaderLineageOwned can detect a
+	// no-op persist (same node, same set already recorded there) with two
+	// equality checks instead of re-entering the scheduler-owned set-union
+	// machinery every dispatch. A rolled-back dispatch reverts these fields
+	// along with the rest of the header (diagnosticParserCoreHeaderRollbackScratch
+	// snapshots the whole struct by value), so they never claim a persist
+	// that Core itself undid. lastPersistedBlended extends the same no-op
+	// detection to blended: persistHeaderLineageOwned must also re-persist
+	// when only blended changed (spec.b4b-alternative-set.v2 section 10).
+	lastPersistedHead       core.Head
+	lastPersistedAltSet     core.AlternativeSet
+	cleanPathLineage        uint16
 	freshness               core.ReductionFreshness
 	shifted                 bool
 	accepted                bool
 	paused                  bool
 	convergedReductionSplit bool
+	// resurrectionUnproved marks a header descended from a
+	// HistoricalBoundaryUnproved dead-node import: a non-deterministic,
+	// non-converged historical boundary with no recorded provenance to prove
+	// (spec.b4b-alternative-set.v2 section 5, F4 disposition). It carries no
+	// alternative-set members, so containment can never prove it; it fails a
+	// no-action drop closed independently of the live proof, waived by the
+	// same certified-language artifact escape that waives the proof itself.
+	resurrectionUnproved bool
+	cleanPathRank        core.CleanPathRankSelection
+	// blended records whether altSet was ever produced by folding two
+	// incomparable recorded sets together (spec.b4b-alternative-set.v2
+	// section 3.4). A blended header can never serve as a v2 containment
+	// witness (section 5).
+	blended              bool
+	lastPersistedBlended bool
+	// s3Region marks a header carrying an open native strategy-2 recovery
+	// region (campaign v7 tranche B3 stage S3: error-region absorb and
+	// condense-resume). nil for every header outside recovery, mirroring
+	// glrStack.cRec's nil-for-clean-stacks discipline (glr.go) -- the S3
+	// zero-cost clean-path gate (design section 8, G2). Never mutated in
+	// place: s3AdvanceErrorRegion and s3TryOpenErrorRegion always publish a
+	// fresh *diagnosticParserCoreS3Region and reassign this field, so a
+	// header snapshot taken by diagnosticParserCoreHeaderRollbackScratch
+	// (a plain by-value struct copy) restores a correct, independent region
+	// state on rollback without aliasing the live one.
+	s3Region *diagnosticParserCoreS3Region
 }
+
+// diagnosticParserCoreS3Region is the open ERROR container a native S3
+// recovery region accumulates on its owning header -- the compact analogue
+// of glrStack.cRec.openErr (glr.go), living on the header rather than the
+// arena until s3AdvanceErrorRegion resolves it (design section 4, restating
+// the S2 doc comment for S3). state is the pre-error state probed for resume
+// each pass (depth-0 resume only; see s3RegionResumeAction).
+type diagnosticParserCoreS3Region struct {
+	state     core.StateID
+	startByte uint32
+	endByte   uint32
+	children  []core.SubtreeID
+}
+
+func nextDiagnosticParserCoreCleanPathLineage(next *uint16) (uint16, error) {
+	if next == nil || *next == 0 {
+		return 0, &diagnosticParserCoreDecline{
+			boundary: DiagnosticParserCoreCap,
+			detail:   "clean multi-pop lineage identity cap",
+		}
+	}
+	lineage := *next
+	if lineage == math.MaxUint16 {
+		*next = 0
+	} else {
+		(*next)++
+	}
+	return lineage, nil
+}
+
+func mergeDiagnosticParserCoreCleanPathLineage(
+	leftRank core.CleanPathRankSelection,
+	leftLineage uint16,
+	rightRank core.CleanPathRankSelection,
+	rightLineage uint16,
+) (core.CleanPathRankSelection, uint16) {
+	if leftRank == core.CleanPathRankUnknown || rightRank == core.CleanPathRankUnknown {
+		return core.CleanPathRankUnknown, 0
+	}
+	if leftRank == core.CleanPathRankNotApplicable || leftLineage == 0 {
+		return rightRank, rightLineage
+	}
+	if rightRank == core.CleanPathRankNotApplicable || rightLineage == 0 {
+		return leftRank, leftLineage
+	}
+	if leftLineage != rightLineage {
+		return core.CleanPathRankUnknown, 0
+	}
+	if leftRank == core.CleanPathRankSelected || rightRank == core.CleanPathRankSelected {
+		return core.CleanPathRankSelected, leftLineage
+	}
+	return core.CleanPathRankUnselected, leftLineage
+}
+
+func applyDiagnosticParserCoreCleanPathOutput(
+	header *diagnosticParserCoreHeader,
+	rank core.CleanPathRankSelection,
+	lineage uint16,
+) {
+	if header == nil || header.cleanPathRank == core.CleanPathRankUnknown {
+		return
+	}
+	if rank == core.CleanPathRankNotApplicable || lineage == 0 {
+		return
+	}
+	header.cleanPathRank = rank
+	header.cleanPathLineage = lineage
+}
+
+func markDiagnosticParserCoreExternalLineage(
+	header *diagnosticParserCoreHeader,
+	token Token,
+) {
+	if header == nil || !token.ExternalScannerToken ||
+		header.cleanPathRank == core.CleanPathRankNotApplicable {
+		return
+	}
+	header.cleanPathRank = core.CleanPathRankUnknown
+	header.cleanPathLineage = 0
+}
+
+func (s *diagnosticParserCoreGenericScheduler) persistHeaderLineageOwned(
+	owner core.SchedulerTransactionToken,
+) error {
+	for index := range s.headers {
+		header := &s.headers[index]
+		if header.creationSeq >= math.MaxUint32 {
+			return errors.New("parser-core phase zero: scheduler lineage overflow")
+		}
+		if err := s.compact.RecordHeadOwnerOwned(
+			owner,
+			header.head,
+			uint32(header.creationSeq)+1,
+		); err != nil {
+			return err
+		}
+		if !header.convergedReductionSplit {
+			continue
+		}
+		// The scalar pair is re-merged unconditionally: recordNodeLineage
+		// already no-ops cheaply when nothing changed, and rank can flip
+		// (Unselected -> Selected on the same lineage id) without altSet
+		// gaining a member, so scalar dirtiness can't be inferred from set
+		// dirtiness alone. The set union is the expensive, and far more
+		// often redundant, half (persistHeaderLineageOwned runs every
+		// dispatch for every still-active header, not only the one that
+		// dispatch actually touched): skip it when this exact (head, altSet,
+		// blended) triple is already what was last persisted for this header
+		// (spec.b4b-alternative-set.v2 section 10: the dirtiness check must
+		// also compare blended, or conservatively persist when it changes).
+		setDirty := header.head != header.lastPersistedHead ||
+			header.altSet != header.lastPersistedAltSet ||
+			header.blended != header.lastPersistedBlended
+		if err := s.compact.RecordHeadLineageOwned(
+			owner,
+			header.head,
+			header.cleanPathRank,
+			header.cleanPathLineage,
+			header.altSet,
+			header.blended,
+			setDirty,
+		); err != nil {
+			return err
+		}
+		header.lastPersistedHead = header.head
+		header.lastPersistedAltSet = header.altSet
+		header.lastPersistedBlended = header.blended
+	}
+	return nil
+}
+
+// errDiagnosticParserCoreUnknownCheckpointIdentity is the shared sentinel for
+// a header (or a cold-path identity-gate reject) that names a checkpoint the
+// compact core never interned. Both callers below return it unwrapped, so
+// callers may compare with errors.Is.
+var errDiagnosticParserCoreUnknownCheckpointIdentity = errors.New("parser-core phase zero: header references unknown checkpoint identity")
 
 func diagnosticParserCoreCheckpointDigest(compact *core.Core, id core.CheckpointID) ([32]byte, error) {
 	_, digest, ok := compact.CheckpointReceipt(id)
 	if !ok {
-		return [32]byte{}, errors.New("parser-core phase zero: header references unknown checkpoint identity")
+		return [32]byte{}, errDiagnosticParserCoreUnknownCheckpointIdentity
 	}
 	return digest, nil
 }
@@ -924,6 +1224,10 @@ func diagnosticParserCoreHeaderReceipts(compact *core.Core, headers []diagnostic
 }
 
 func validateDiagnosticParserCoreCell(token Token, actions core.ActionRow) error {
+	return validateDiagnosticParserCoreCellWithRepetitionFork(token, actions, false)
+}
+
+func validateDiagnosticParserCoreCellWithRepetitionFork(token Token, actions core.ActionRow, allowRepetitionFork bool) error {
 	if token.NoLookahead {
 		return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreRoute, detail: "no-lookahead tokens require production recovery semantics"}
 	}
@@ -933,6 +1237,9 @@ func validateDiagnosticParserCoreCell(token Token, actions core.ActionRow) error
 	for ordinal := 0; ordinal < actions.Len(); ordinal++ {
 		action := actions.At(ordinal)
 		if action.Repetition {
+			if _, ok := diagnosticParserCoreSingleReduceRepetitionShiftOrdinal(actions); allowRepetitionFork && ok {
+				continue
+			}
 			return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreRoute, detail: "repetition shifts require production frontier suppression semantics"}
 		}
 		if action.ExtraChain {
@@ -1031,8 +1338,12 @@ func (s *diagnosticParserCoreConflictScratch) finish() {
 }
 
 type diagnosticParserCoreActionOutput struct {
-	head      core.Head
-	freshness core.ReductionFreshness
+	head             core.Head
+	freshness        core.ReductionFreshness
+	cleanPathRank    core.CleanPathRankSelection
+	cleanPathLineage uint16
+	cleanPathSet     core.AlternativeSet
+	cleanPathBlended bool
 }
 
 func executeDiagnosticParserCoreGenericConflictDetailed(
@@ -1043,6 +1354,8 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 	token Token,
 	classified core.ClassifiedBoundary,
 	branchOrder uint64,
+	nextCleanPathLineage *uint16,
+	allowRepetitionFork bool,
 	collectReceipts bool,
 	scratch *diagnosticParserCoreConflictScratch,
 ) (diagnosticParserCoreConflictExecution, error) {
@@ -1058,7 +1371,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 			return diagnosticParserCoreConflictExecution{}, err
 		}
 	}
-	if err := validateDiagnosticParserCoreCell(token, actions); err != nil {
+	if err := validateDiagnosticParserCoreCellWithRepetitionFork(token, actions, allowRepetitionFork); err != nil {
 		return diagnosticParserCoreConflictExecution{}, err
 	}
 	if actions.Len() < 2 {
@@ -1084,7 +1397,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 			var applyErr error
 			scratch.actionOutputs, scratch.reductionOutputs, applyErr = applyParserCoreConflictActionInto(
 				scratch.actionOutputs[:0], scratch.reductionOutputs[:0], compact, owner, classified, token,
-				action, ordinal, core.ForkOrder{Present: true, Value: trialOrder},
+				action, ordinal, core.ForkOrder{Present: true, Value: trialOrder}, nextCleanPathLineage,
 			)
 			if applyErr != nil {
 				return applyErr
@@ -1095,6 +1408,23 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 				secondary.head = output.head
 				secondary.shifted = action.Type == core.ActionShift
 				secondary.freshness = output.freshness
+				secondary.convergedReductionSplit = secondary.convergedReductionSplit || output.cleanPathLineage != 0
+				applyDiagnosticParserCoreCleanPathOutput(&secondary, output.cleanPathRank, output.cleanPathLineage)
+				if output.cleanPathSet.Len() != 0 {
+					// Conflict-arm application is fold-class (spec.b4b-
+					// alternative-set.v2 section 3.4): secondary starts as a
+					// copy of incoming's own already-accumulated history,
+					// and output.cleanPathSet is this mutually exclusive
+					// arm's own independently established set -- two
+					// separately tracked histories, not one popped cone's
+					// uniform extension.
+					incomparable := compact.AlternativeSetIncomparable(secondary.altSet, output.cleanPathSet)
+					compact.UnionAlternativeSet(&secondary.altSet, output.cleanPathSet)
+					secondary.blended = secondary.blended || output.cleanPathBlended || incomparable
+				}
+				if action.Type == core.ActionShift {
+					markDiagnosticParserCoreExternalLineage(&secondary, token)
+				}
 				scratch.outputs = append(scratch.outputs, secondary)
 			}
 			scratch.armRanges[ordinal] = diagnosticParserCoreConflictArmRange{start: start, end: len(scratch.outputs)}
@@ -1109,7 +1439,7 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 		var applyErr error
 		scratch.actionOutputs, scratch.reductionOutputs, applyErr = applyParserCoreConflictActionInto(
 			scratch.actionOutputs[:0], scratch.reductionOutputs[:0], compact, owner, classified, token,
-			primaryAction, 0, core.ForkOrder{},
+			primaryAction, 0, core.ForkOrder{}, nextCleanPathLineage,
 		)
 		if applyErr != nil {
 			return applyErr
@@ -1120,6 +1450,17 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 			primary.head = output.head
 			primary.shifted = primaryAction.Type == core.ActionShift
 			primary.freshness = output.freshness
+			primary.convergedReductionSplit = primary.convergedReductionSplit || output.cleanPathLineage != 0
+			applyDiagnosticParserCoreCleanPathOutput(&primary, output.cleanPathRank, output.cleanPathLineage)
+			if output.cleanPathSet.Len() != 0 {
+				// See the secondary loop's identical fold-class comment above.
+				incomparable := compact.AlternativeSetIncomparable(primary.altSet, output.cleanPathSet)
+				compact.UnionAlternativeSet(&primary.altSet, output.cleanPathSet)
+				primary.blended = primary.blended || output.cleanPathBlended || incomparable
+			}
+			if primaryAction.Type == core.ActionShift {
+				markDiagnosticParserCoreExternalLineage(&primary, token)
+			}
 			scratch.outputs = append(scratch.outputs, primary)
 		}
 		scratch.armRanges[0] = diagnosticParserCoreConflictArmRange{start: start, end: len(scratch.outputs)}
@@ -1161,10 +1502,19 @@ type diagnosticParserCoreCanonicalScratch struct {
 	groups        map[diagnosticParserCorePhaseHead]diagnosticParserCoreCanonicalGroup
 }
 
+// Field order groups winner (8-byte aligned int) and altSet (4-byte
+// aligned) up front, then the byte/uint16-sized fields; the sole
+// construction site (canonicalizeLinear/canonicalizeMapped) uses keyed
+// fields, so this reorder is layout-only (b4b-width-repair audit, 2026-08).
 type diagnosticParserCoreCanonicalGroup struct {
 	winner                  int
+	altSet                  core.AlternativeSet
+	cleanPathLineage        uint16
 	runnable                bool
 	convergedReductionSplit bool
+	resurrectionUnproved    bool
+	cleanPathRank           core.CleanPathRankSelection
+	blended                 bool
 }
 
 const diagnosticParserCoreLinearCanonicalLimit = 8
@@ -1189,6 +1539,27 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalize(compact *core.Core, 
 	}
 	copy(normalized, headers)
 	s.headerBuffers[target] = normalized
+	// Single-head frontiers never reach canonicalizeLinear/canonicalizeMapped,
+	// so the per-header canonical group key they group by carries no
+	// semantics here -- only the canonical remap (the compact.Boundary +
+	// CanonicalBoundary probe) and the freshness reset do. Skip the key-slice
+	// sizing and key-struct build entirely on this path; the double-buffer
+	// copy above still runs unchanged, since the aliasing check above and on
+	// the next call depends on the returned slice living in s.headerBuffers.
+	if len(normalized) == 1 {
+		header := normalized[0]
+		state, byteOffset, err := compact.Boundary(header.head)
+		if err != nil {
+			return nil, err
+		}
+		if canonical, ok := compact.CanonicalBoundary(state, byteOffset, header.shifted, header.checkpoint); ok {
+			header.head = canonical
+		}
+		header.freshness = 0
+		normalized[0] = header
+		s.nextBuffer = uint8(target ^ 1)
+		return normalized, nil
+	}
 	if cap(s.keys) < len(headers) {
 		if len(headers) <= len(s.inlineKeys) {
 			s.keys = s.inlineKeys[:len(headers)]
@@ -1214,20 +1585,17 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalize(compact *core.Core, 
 	switch {
 	case len(normalized) == 0:
 		out = normalized
-	case len(normalized) == 1:
-		normalized[0].freshness = 0
-		out = normalized
 	case len(normalized) <= diagnosticParserCoreLinearCanonicalLimit:
-		out = s.canonicalizeLinear(normalized)
+		out = s.canonicalizeLinear(compact, normalized)
 	default:
-		out = s.canonicalizeMapped(normalized)
+		out = s.canonicalizeMapped(compact, normalized)
 	}
 	s.headerBuffers[target] = out
 	s.nextBuffer = uint8(target ^ 1)
 	return out, nil
 }
 
-func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(normalized []diagnosticParserCoreHeader) []diagnosticParserCoreHeader {
+func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(compact *core.Core, normalized []diagnosticParserCoreHeader) []diagnosticParserCoreHeader {
 	type linearGroup struct {
 		keyIndex int
 		diagnosticParserCoreCanonicalGroup
@@ -1248,6 +1616,9 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(normalized []d
 				diagnosticParserCoreCanonicalGroup: diagnosticParserCoreCanonicalGroup{
 					winner: index, runnable: !header.paused,
 					convergedReductionSplit: header.convergedReductionSplit,
+					resurrectionUnproved:    header.resurrectionUnproved,
+					cleanPathRank:           header.cleanPathRank, cleanPathLineage: header.cleanPathLineage,
+					altSet: header.altSet, blended: header.blended,
 				},
 			}
 			groupCount++
@@ -1256,6 +1627,26 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(normalized []d
 		group := &groups[groupIndex].diagnosticParserCoreCanonicalGroup
 		group.runnable = group.runnable || !header.paused
 		group.convergedReductionSplit = group.convergedReductionSplit || header.convergedReductionSplit
+		group.resurrectionUnproved = group.resurrectionUnproved || header.resurrectionUnproved
+		group.cleanPathRank, group.cleanPathLineage = mergeDiagnosticParserCoreCleanPathLineage(
+			group.cleanPathRank,
+			group.cleanPathLineage,
+			header.cleanPathRank,
+			header.cleanPathLineage,
+		)
+		// Union, never poison: the group's alternative set accumulates every
+		// member any header folding into this canonical group carries, even
+		// when the scalar pair above disagrees and resets to Unknown/0
+		// (spec.b4b-alternative-set.v1 section 4). Fold-class union
+		// (spec.b4b-alternative-set.v2 section 3.4): the group's blended mark
+		// becomes true when header was already blended, or when the group's
+		// accumulated set and header's set are incomparable under
+		// containment -- computed before the union mutates group.altSet.
+		if header.altSet.Len() != 0 {
+			incomparable := compact.AlternativeSetIncomparable(group.altSet, header.altSet)
+			compact.UnionAlternativeSet(&group.altSet, header.altSet)
+			group.blended = group.blended || header.blended || incomparable
+		}
 		if diagnosticParserCoreCanonicalCandidateWins(normalized[group.winner], header) {
 			group.winner = index
 		}
@@ -1270,6 +1661,11 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(normalized []d
 			header.paused = !group.runnable
 			header.freshness = 0
 			header.convergedReductionSplit = group.convergedReductionSplit
+			header.resurrectionUnproved = group.resurrectionUnproved
+			header.cleanPathRank = group.cleanPathRank
+			header.cleanPathLineage = group.cleanPathLineage
+			header.altSet = group.altSet
+			header.blended = group.blended
 			normalized[write] = header
 			write++
 			break
@@ -1278,7 +1674,7 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeLinear(normalized []d
 	return normalized[:write]
 }
 
-func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMapped(normalized []diagnosticParserCoreHeader) []diagnosticParserCoreHeader {
+func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMapped(compact *core.Core, normalized []diagnosticParserCoreHeader) []diagnosticParserCoreHeader {
 	if s.groups == nil {
 		s.groups = make(map[diagnosticParserCorePhaseHead]diagnosticParserCoreCanonicalGroup, len(normalized))
 	} else {
@@ -1294,6 +1690,19 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMapped(normalized []d
 		}
 		group.runnable = group.runnable || !header.paused
 		group.convergedReductionSplit = group.convergedReductionSplit || header.convergedReductionSplit
+		group.resurrectionUnproved = group.resurrectionUnproved || header.resurrectionUnproved
+		group.cleanPathRank, group.cleanPathLineage = mergeDiagnosticParserCoreCleanPathLineage(
+			group.cleanPathRank,
+			group.cleanPathLineage,
+			header.cleanPathRank,
+			header.cleanPathLineage,
+		)
+		// See canonicalizeLinear's identical fold-class comment.
+		if header.altSet.Len() != 0 {
+			incomparable := compact.AlternativeSetIncomparable(group.altSet, header.altSet)
+			compact.UnionAlternativeSet(&group.altSet, header.altSet)
+			group.blended = group.blended || header.blended || incomparable
+		}
 		s.groups[key] = group
 	}
 	write := 0
@@ -1305,6 +1714,11 @@ func (s *diagnosticParserCoreCanonicalScratch) canonicalizeMapped(normalized []d
 		header.paused = !group.runnable
 		header.freshness = 0
 		header.convergedReductionSplit = group.convergedReductionSplit
+		header.resurrectionUnproved = group.resurrectionUnproved
+		header.cleanPathRank = group.cleanPathRank
+		header.cleanPathLineage = group.cleanPathLineage
+		header.altSet = group.altSet
+		header.blended = group.blended
 		normalized[write] = header
 		write++
 	}
@@ -1398,7 +1812,9 @@ type diagnosticParserCoreGenericScheduler struct {
 	dispatches                    uint64
 	branchOrder                   uint64
 	nextSeq                       uint64
+	nextCleanPathLineage          uint16
 	options                       DiagnosticParserCorePrefixOptions
+	receiptBacking                DiagnosticParserCoreGenericScheduler
 	receipt                       *DiagnosticParserCoreGenericScheduler
 	summaryHeaderScratch          []DiagnosticParserCoreHeaderReceipt
 	headerRollbackScratch         diagnosticParserCoreHeaderRollbackScratch
@@ -1408,6 +1824,7 @@ type diagnosticParserCoreGenericScheduler struct {
 	reductionOutputs              []core.ReductionOutput
 	reductionReplacements         []diagnosticParserCoreHeader
 	classifiedBoundaries          []core.ClassifiedBoundary
+	condenseCandidates            []core.CondenseCandidate
 	electStates                   []StateID
 	electGLRStates                []StateID
 	work                          DiagnosticParserCoreGenericWork
@@ -1421,6 +1838,74 @@ type diagnosticParserCoreGenericScheduler struct {
 	stoppedAfterElection          bool
 	requireEOFPostNoLookaheadRoot bool
 	seedHeaders                   [1]diagnosticParserCoreHeader
+	// corridor is the compiled C4 bytecode program for this parse's language,
+	// or nil when the corridor lane is off or the grammar did not compile
+	// (spec.c4-bytecode-isa.v1 section 6.2). corridorCells is the lane's own
+	// singleton dispatch-cell buffer, so the corridor never touches the
+	// generic pass's dispatch scratch.
+	corridor *ParserCoreCorridorProgram
+	// corridorRows is the shared converted action-row table, indexed by the
+	// action-row index every executable corridor body carries. It is the same
+	// immutable slice the compact core's TableView reads, so the corridor and
+	// the generic lane resolve one cell to one row.
+	corridorRows  []core.ActionRow
+	corridorCells [1]diagnosticParserCoreGenericCell
+}
+
+// Keep only small scheduler scratch buffers between fresh full parses. This
+// bound prevents one wide frontier from retaining disproportionate memory.
+const diagnosticParserCoreRetainedScratchCapacity = 64
+
+func resetDiagnosticParserCoreRetainedSlice[T any](items []T) []T {
+	if cap(items) == 0 {
+		return nil
+	}
+	if cap(items) > diagnosticParserCoreRetainedScratchCapacity {
+		return nil
+	}
+	clear(items[:cap(items)])
+	return items[:0]
+}
+
+func resetDiagnosticParserCoreGenericScheduler(scheduler *diagnosticParserCoreGenericScheduler) error {
+	if scheduler.dispatchScratch.busy || scheduler.conflictScratch.busy {
+		return errors.New("parser-core phase zero: seed scheduler scratch is active")
+	}
+	summaryHeaders := resetDiagnosticParserCoreRetainedSlice(scheduler.summaryHeaderScratch)
+	dispatchCells := resetDiagnosticParserCoreRetainedSlice(scheduler.dispatchScratch.cells)
+	noActionIndices := resetDiagnosticParserCoreRetainedSlice(scheduler.dispatchScratch.noActionIndices)
+	conflictActionOutputs := resetDiagnosticParserCoreRetainedSlice(scheduler.conflictScratch.actionOutputs)
+	conflictReductionOutputs := resetDiagnosticParserCoreRetainedSlice(scheduler.conflictScratch.reductionOutputs)
+	conflictOutputs := resetDiagnosticParserCoreRetainedSlice(scheduler.conflictScratch.outputs)
+	conflictArmRanges := resetDiagnosticParserCoreRetainedSlice(scheduler.conflictScratch.armRanges)
+	conflictAdopted := resetDiagnosticParserCoreRetainedSlice(scheduler.conflictScratch.adopted)
+	conflictHeaderAssembly := resetDiagnosticParserCoreRetainedSlice(scheduler.conflictScratch.headerAssembly)
+	reductionOutputs := resetDiagnosticParserCoreRetainedSlice(scheduler.reductionOutputs)
+	reductionReplacements := resetDiagnosticParserCoreRetainedSlice(scheduler.reductionReplacements)
+	classifiedBoundaries := resetDiagnosticParserCoreRetainedSlice(scheduler.classifiedBoundaries)
+	condenseCandidates := resetDiagnosticParserCoreRetainedSlice(scheduler.condenseCandidates)
+	electStates := resetDiagnosticParserCoreRetainedSlice(scheduler.electStates)
+	electGLRStates := resetDiagnosticParserCoreRetainedSlice(scheduler.electGLRStates)
+	acceptedPayloads := resetDiagnosticParserCoreRetainedSlice(scheduler.acceptedPayloads)
+	*scheduler = diagnosticParserCoreGenericScheduler{
+		summaryHeaderScratch: summaryHeaders,
+		dispatchScratch: diagnosticParserCoreDispatchScratch{
+			cells: dispatchCells, noActionIndices: noActionIndices,
+		},
+		conflictScratch: diagnosticParserCoreConflictScratch{
+			actionOutputs: conflictActionOutputs, reductionOutputs: conflictReductionOutputs,
+			outputs: conflictOutputs, armRanges: conflictArmRanges, adopted: conflictAdopted,
+			headerAssembly: conflictHeaderAssembly,
+		},
+		reductionOutputs:      reductionOutputs,
+		reductionReplacements: reductionReplacements,
+		classifiedBoundaries:  classifiedBoundaries,
+		condenseCandidates:    condenseCandidates,
+		electStates:           electStates,
+		electGLRStates:        electGLRStates,
+		acceptedPayloads:      acceptedPayloads,
+	}
+	return nil
 }
 
 const maxDiagnosticParserCoreNoLookaheadSteps = 64
@@ -1434,6 +1919,28 @@ func (s *diagnosticParserCoreGenericScheduler) headerReceipt(header diagnosticPa
 		return diagnosticParserCoreHeaderReceipt(s.compact, header)
 	}
 	return diagnosticParserCoreHeaderSummary(s.compact, header)
+}
+
+// electHeaderState resolves only what one election round needs from a
+// header: its authentic StateID. Shifted/Accepted are read directly off the
+// header by the caller, so this skips the checkpoint-digest lookup that
+// diagnosticParserCoreHeaderSummary otherwise pays on every header on every
+// election — that digest has no reader on this path. Full-receipt mode keeps
+// paying it, since diagnosticParserCoreHeaderReceipt is also what tests and
+// diagnostics observe and must stay byte-identical there.
+func (s *diagnosticParserCoreGenericScheduler) electHeaderState(header diagnosticParserCoreHeader) (StateID, error) {
+	if s.fullReceipts() {
+		receipt, err := diagnosticParserCoreHeaderReceipt(s.compact, header)
+		if err != nil {
+			return 0, err
+		}
+		return receipt.State, nil
+	}
+	state, _, err := s.compact.Boundary(header.head)
+	if err != nil {
+		return 0, err
+	}
+	return StateID(state), nil
 }
 
 func (s *diagnosticParserCoreGenericScheduler) headerReceipts(headers []diagnosticParserCoreHeader) ([]DiagnosticParserCoreHeaderReceipt, error) {
@@ -1475,6 +1982,36 @@ func newDiagnosticParserCoreGenericScheduler(
 	observer diagnosticParserCoreSeedObserver,
 	options DiagnosticParserCorePrefixOptions,
 ) (*diagnosticParserCoreGenericScheduler, error) {
+	return initializeDiagnosticParserCoreGenericScheduler(
+		&diagnosticParserCoreGenericScheduler{},
+		compact,
+		tokenSource,
+		scannerScratch,
+		head,
+		checkpointID,
+		checkpoint,
+		observer,
+		options,
+	)
+}
+
+func initializeDiagnosticParserCoreGenericScheduler(
+	scheduler *diagnosticParserCoreGenericScheduler,
+	compact *core.Core,
+	tokenSource *dfaTokenSource,
+	scannerScratch *[]byte,
+	head core.Head,
+	checkpointID core.CheckpointID,
+	checkpoint DiagnosticParserCoreScannerCheckpoint,
+	observer diagnosticParserCoreSeedObserver,
+	options DiagnosticParserCorePrefixOptions,
+) (*diagnosticParserCoreGenericScheduler, error) {
+	if scheduler == nil {
+		return nil, errors.New("parser-core phase zero: seed scheduler storage is nil")
+	}
+	if err := resetDiagnosticParserCoreGenericScheduler(scheduler); err != nil {
+		return nil, err
+	}
 	if compact == nil || tokenSource == nil || scannerScratch == nil || head.Node == 0 {
 		return nil, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreRoute, detail: "generic scheduler requires a compact core, token source, scanner scratch, and seed head"}
 	}
@@ -1493,18 +2030,44 @@ func newDiagnosticParserCoreGenericScheduler(
 		return nil, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreIdentity, detail: "generic seed head was not created under its scanner checkpoint identity"}
 	}
 	header := diagnosticParserCoreHeader{head: head, checkpoint: checkpointID}
-	scheduler := &diagnosticParserCoreGenericScheduler{
-		compact: compact, tokenSource: tokenSource, scannerScratch: scannerScratch,
-		checkpoint: checkpoint, checkpointID: checkpointID,
-		electionIndex: -1, nextSeq: 1,
-		options: options, observer: observer,
-		receipt: &DiagnosticParserCoreGenericScheduler{
+	scheduler.compact = compact
+	scheduler.tokenSource = tokenSource
+	scheduler.scannerScratch = scannerScratch
+	scheduler.checkpoint = checkpoint
+	scheduler.checkpointID = checkpointID
+	scheduler.electionIndex = -1
+	scheduler.nextSeq = 1
+	scheduler.nextCleanPathLineage = 1
+	scheduler.options = options
+	scheduler.observer = observer
+	// Public diagnostic results retain their receipt after the scheduler returns.
+	// Embed only for a fresh runner, which never publishes its receipt.
+	if options.freshSchedulerSession {
+		scheduler.receiptBacking = DiagnosticParserCoreGenericScheduler{
 			ReceiptMode:     options.ReceiptMode,
 			StartCheckpoint: checkpoint,
-		},
+		}
+		scheduler.receipt = &scheduler.receiptBacking
+	} else {
+		scheduler.receipt = &DiagnosticParserCoreGenericScheduler{
+			ReceiptMode:     options.ReceiptMode,
+			StartCheckpoint: checkpoint,
+		}
 	}
 	scheduler.seedHeaders[0] = header
 	scheduler.headers = scheduler.seedHeaders[:]
+	// C4 corridor: attach the compiled bytecode program for this language when
+	// the lane is on. The program is memoized on the *Language, so this is one
+	// atomic load per parse after the first (spec.c4-bytecode-isa.v1 section
+	// 3.6). A grammar that does not compile keeps the generic lane.
+	if parserCoreCorridorEnabled() {
+		if program := acquireParserCoreCorridorProgram(tokenSource.language); program != nil {
+			if rows, ok := tokenSource.language.compactTables.(*parserCoreLanguageTables); ok && rows != nil {
+				scheduler.corridor = program
+				scheduler.corridorRows = rows.actionRows
+			}
+		}
+	}
 	if scheduler.fullReceipts() {
 		startHeaders, err := diagnosticParserCoreHeaderPathReceipts(compact, scheduler.headers)
 		if err != nil {
@@ -1515,46 +2078,77 @@ func newDiagnosticParserCoreGenericScheduler(
 	return scheduler, nil
 }
 
+type diagnosticParserCoreCellSelection uint8
+
+const (
+	diagnosticParserCoreCellSelectionNone diagnosticParserCoreCellSelection = iota
+	diagnosticParserCoreCellSelectionConflictPolicy
+	diagnosticParserCoreCellSelectionRepetitionFold
+	diagnosticParserCoreCellSelectionRepetitionFork
+)
+
 type diagnosticParserCoreGenericCell struct {
-	headerIndex             int
-	boundary                core.ClassifiedBoundary
-	conflictPolicy          bool
-	conflictPolicyOrdinal   int
-	repetitionFold          bool
-	repetitionReduceOrdinal int
+	headerIndex     int
+	boundary        core.ClassifiedBoundary
+	selectedOrdinal int
+	relexedSymbol   Symbol
+	selectedBy      diagnosticParserCoreCellSelection
 }
 
-func (cell diagnosticParserCoreGenericCell) actions() core.ActionRow { return cell.boundary.Actions() }
-func (cell diagnosticParserCoreGenericCell) descriptor() core.ActionRowDescriptor {
+func (cell *diagnosticParserCoreGenericCell) actions() core.ActionRow { return cell.boundary.Actions() }
+func (cell *diagnosticParserCoreGenericCell) dispatchToken(shared Token) Token {
+	if cell.relexedSymbol != 0 {
+		shared.Symbol = cell.relexedSymbol
+		shared.ExternalScannerToken = false
+		shared.ExternalScannerStartByte = 0
+	}
+	return shared
+}
+func (cell *diagnosticParserCoreGenericCell) descriptor() core.ActionRowDescriptor {
 	return cell.boundary.Actions().Descriptor()
 }
-func (cell diagnosticParserCoreGenericCell) kind() core.ActionRowKind {
-	if cell.conflictPolicy {
-		switch cell.actions().At(cell.conflictPolicyOrdinal).Type {
+func (cell *diagnosticParserCoreGenericCell) kind() core.ActionRowKind {
+	if cell.selectedBy == diagnosticParserCoreCellSelectionConflictPolicy {
+		switch cell.actions().At(cell.selectedOrdinal).Type {
 		case core.ActionShift:
 			return core.ActionRowShift
 		case core.ActionReduce:
 			return core.ActionRowReduce
 		}
 	}
-	if cell.repetitionFold {
+	if cell.selectedBy == diagnosticParserCoreCellSelectionRepetitionFold {
 		return core.ActionRowReduce
+	}
+	if cell.selectedBy == diagnosticParserCoreCellSelectionRepetitionFork {
+		return core.ActionRowConflict
 	}
 	return cell.descriptor().Kind()
 }
-func (cell diagnosticParserCoreGenericCell) selectedActionOrdinal() int {
-	if cell.conflictPolicy {
-		return cell.conflictPolicyOrdinal
-	}
-	if cell.repetitionFold {
-		return cell.repetitionReduceOrdinal
+func (cell *diagnosticParserCoreGenericCell) selectedActionOrdinal() int {
+	if cell.selectedBy != diagnosticParserCoreCellSelectionNone {
+		return cell.selectedOrdinal
 	}
 	return 0
 }
 
-func (cell diagnosticParserCoreGenericCell) selectsConflictReduction() bool {
-	return (cell.conflictPolicy || cell.repetitionFold) &&
+func (cell *diagnosticParserCoreGenericCell) selectsConflictReduction() bool {
+	return cell.selectedBy != diagnosticParserCoreCellSelectionNone &&
+		cell.selectedBy != diagnosticParserCoreCellSelectionRepetitionFork &&
 		cell.actions().At(cell.selectedActionOrdinal()).Type == core.ActionReduce
+}
+
+func diagnosticParserCoreRelexedSymbol(shared, relexed Token) (Symbol, bool) {
+	if relexed.Symbol == 0 || relexed.Symbol == shared.Symbol {
+		return 0, false
+	}
+	candidate := shared
+	candidate.Symbol = relexed.Symbol
+	candidate.ExternalScannerToken = false
+	candidate.ExternalScannerStartByte = 0
+	if candidate != relexed {
+		return 0, false
+	}
+	return relexed.Symbol, true
 }
 
 var diagnosticParserCoreRepetitionFoldOptOut = map[string]bool{
@@ -1570,6 +2164,12 @@ func diagnosticParserCoreRepetitionFoldOrdinal(language *Language, actions core.
 		diagnosticParserCoreRepetitionFoldOptOut[language.Name] {
 		return 0, false
 	}
+	return diagnosticParserCoreSingleReduceRepetitionShiftOrdinal(actions)
+}
+
+// diagnosticParserCoreSingleReduceRepetitionShiftOrdinal identifies the exact
+// two-arm row that production either folds or keeps as one conflict fork.
+func diagnosticParserCoreSingleReduceRepetitionShiftOrdinal(actions core.ActionRow) (int, bool) {
 	reduceOrdinal := -1
 	shiftFound := false
 	for ordinal := 0; ordinal < actions.Len(); ordinal++ {
@@ -1629,6 +2229,57 @@ func diagnosticParserCoreConflictPolicyOrdinal(
 	return 0, false
 }
 
+// relexTokenForState mirrors the production parser's span-exact lexer probe.
+// It gives one no-action header the tokenization required by its current state.
+func (s *diagnosticParserCoreGenericScheduler) relexTokenForState(state StateID, tok Token) (Token, bool) {
+	if s == nil || s.tokenSource == nil || s.tokenSource.lexer == nil {
+		return tok, false
+	}
+	lang := s.tokenSource.language
+	source := s.tokenSource.lexer.source
+	if lang == nil || len(lang.LexStates) == 0 || int(state) >= len(lang.LexModes) {
+		return tok, false
+	}
+	// A stateless external scanner has no checkpoint identity for this probe.
+	// Keep that route unchanged until each header can own its scanner state.
+	if lang.ExternalScanner != nil && s.checkpoint.Length == 0 {
+		return tok, false
+	}
+	if tok.Symbol == 0 || tok.Symbol == errorSymbol || tok.Missing || tok.NoLookahead ||
+		tok.StartByte >= tok.EndByte || int(tok.StartByte) >= len(source) {
+		return tok, false
+	}
+	lexState := lang.LexModes[state].LexStateIndex()
+	if lexState == noLookaheadLexState || int(lexState) >= len(lang.LexStates) {
+		return tok, false
+	}
+	// Match Parser.relexTokenForStackLexState. Lexer.scan reads only these
+	// DFA fields, so this probe does not need parser or scanner state.
+	probe := s.tokenSource.relexProbeLexer
+	if probe == nil {
+		probe = &Lexer{}
+		s.tokenSource.relexProbeLexer = probe
+	}
+	*probe = Lexer{
+		states:          lang.LexStates,
+		asciiTable:      lang.LexAsciiTable(),
+		source:          source,
+		pos:             int(tok.StartByte),
+		row:             tok.StartPoint.Row,
+		col:             tok.StartPoint.Column,
+		immediateTokens: lang.ImmediateTokens,
+		zeroWidthTokens: lang.ZeroWidthTokens,
+	}
+	relexed, ok := probe.scan(uint32(lexState), probe.pos, probe.row, probe.col)
+	if !ok || relexed.Symbol == 0 || relexed.Symbol == tok.Symbol {
+		return tok, false
+	}
+	if relexed.StartByte != tok.StartByte || relexed.EndByte != tok.EndByte {
+		return tok, false
+	}
+	return relexed, true
+}
+
 type diagnosticParserCoreDispatchScratch struct {
 	busy            bool
 	cells           []diagnosticParserCoreGenericCell
@@ -1639,11 +2290,14 @@ type diagnosticParserCoreDispatchScratch struct {
 // frontier while one scheduler mutation is in flight. Scheduler operations are
 // deliberately non-reentrant, so one bounded buffer can serve every accept,
 // reduction, conflict, ordinary-shift, and extra-shift transaction in a parse.
+// The inline buffer covers the common one-to-eight-header frontier. Wider
+// frontiers retain the existing heap-backed growth path.
 //
 // diagnosticParserCoreHeader is pointer-free today. reset nevertheless clears
 // the retained capacity at the end of the scheduler lifecycle so adding a
 // pointer-bearing field later cannot make this scratch retain parse state.
 type diagnosticParserCoreHeaderRollbackScratch struct {
+	inline  [8]diagnosticParserCoreHeader
 	busy    bool
 	headers []diagnosticParserCoreHeader
 }
@@ -1657,8 +2311,12 @@ func (scratch *diagnosticParserCoreHeaderRollbackScratch) begin(headers []diagno
 	}
 	scratch.busy = true
 	if cap(scratch.headers) < len(headers) {
-		capacity := max(len(headers), cap(scratch.headers)*2)
-		scratch.headers = make([]diagnosticParserCoreHeader, len(headers), capacity)
+		if len(headers) <= len(scratch.inline) {
+			scratch.headers = scratch.inline[:len(headers)]
+		} else {
+			capacity := max(len(headers), cap(scratch.headers)*2)
+			scratch.headers = make([]diagnosticParserCoreHeader, len(headers), capacity)
+		}
 	} else {
 		scratch.headers = scratch.headers[:len(headers)]
 	}
@@ -1723,6 +2381,20 @@ func executeDiagnosticParserCoreGenericSchedulerFromSeed(
 	options DiagnosticParserCorePrefixOptions,
 	observer diagnosticParserCoreSeedObserver,
 ) (*diagnosticParserCoreGenericScheduler, error) {
+	return executeDiagnosticParserCoreGenericSchedulerFromSeedInto(
+		nil, compact, tokenSource, scannerScratch, initialState, options, observer,
+	)
+}
+
+func executeDiagnosticParserCoreGenericSchedulerFromSeedInto(
+	scheduler *diagnosticParserCoreGenericScheduler,
+	compact *core.Core,
+	tokenSource *dfaTokenSource,
+	scannerScratch *[]byte,
+	initialState StateID,
+	options DiagnosticParserCorePrefixOptions,
+	observer diagnosticParserCoreSeedObserver,
+) (*diagnosticParserCoreGenericScheduler, error) {
 	if compact == nil || tokenSource == nil || scannerScratch == nil {
 		return nil, errors.New("parser-core phase zero: seed scheduler requires compact core and production token source")
 	}
@@ -1736,13 +2408,33 @@ func executeDiagnosticParserCoreGenericSchedulerFromSeed(
 	if err := compact.SetPhaseCheckpoint(initialCheckpointID); err != nil {
 		return nil, err
 	}
+	// Reserve the five record arenas from the source length before the seed
+	// publishes the first node, so a cold parse starts at its expected
+	// capacity instead of growing there from zero. The ceiling comes from
+	// compactArenaReserveBytes (parsercore_phase0_arena_reserve.go); the
+	// estimator is Core.ReserveRecordArenas
+	// (internal/parsercorephase0/arena_reserve.go). This is the one seam
+	// every compact route passes through: the shipped admission-candidate
+	// route, the diagnostic prefix route, and the benchmark runners all reach
+	// the scheduler here. Pure capacity -- no length, no record, and no Work
+	// counter moves -- so it cannot change a parse result.
+	compact.ReserveRecordArenas(
+		tokenSource.sourceLength(),
+		compactArenaReserveBytes(options.stopControlMemoryBudgetBytes, options.stopControlHardCeilingBytes),
+	)
 	head, err := compact.Seed(core.StateID(initialState), 0)
 	if err != nil {
 		return nil, err
 	}
-	scheduler, err := newDiagnosticParserCoreGenericScheduler(
-		compact, tokenSource, scannerScratch, head, initialCheckpointID, initialCheckpointReceipt, observer, options,
-	)
+	if scheduler == nil {
+		scheduler, err = newDiagnosticParserCoreGenericScheduler(
+			compact, tokenSource, scannerScratch, head, initialCheckpointID, initialCheckpointReceipt, observer, options,
+		)
+	} else {
+		scheduler, err = initializeDiagnosticParserCoreGenericScheduler(
+			scheduler, compact, tokenSource, scannerScratch, head, initialCheckpointID, initialCheckpointReceipt, observer, options,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1753,6 +2445,9 @@ func executeDiagnosticParserCoreGenericSchedulerFromSeed(
 			return compact.RunFreshSchedulerSession(func(owner core.SchedulerTransactionToken) error {
 				scheduler.freshSessionOwner = &owner
 				defer func() { scheduler.freshSessionOwner = nil }()
+				if err := scheduler.persistHeaderLineageOwned(owner); err != nil {
+					return err
+				}
 				return scheduler.run()
 			})
 		}
@@ -1985,7 +2680,7 @@ func (index *diagnosticParserCorePointIndex) pointUncached(offset uint32) Point 
 	return Point{Row: uint32(line), Column: offset - index.lineStarts[line]}
 }
 
-func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.Head, parser *Parser, source []byte, scratch *parserCoreRunnerScratch, forceReplayParseStates bool) (*Tree, error) {
+func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.Head, parser *Parser, source []byte, scratch *parserCoreRunnerScratch, forceReplayParseStates bool, allowErrorRoot bool) (*Tree, error) {
 	if compact == nil || parser == nil || parser.language == nil || head.Node == 0 {
 		return nil, errors.New("parser-core phase zero: incomplete accepted-tree materialization input")
 	}
@@ -1996,27 +2691,364 @@ func materializeDiagnosticParserCoreAcceptedTree(compact *core.Core, head core.H
 	if len(derivations) != 1 {
 		return nil, &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreAccept, detail: "materialization requires one exact accepted derivation"}
 	}
-	return materializeDiagnosticParserCoreAcceptedSelection(compact, head, derivations[0].Payloads, parser, source, scratch, forceReplayParseStates)
+	return materializeDiagnosticParserCoreAcceptedSelection(compact, head, derivations[0].Payloads, parser, source, scratch, forceReplayParseStates, allowErrorRoot)
 }
 
-func finalizeDiagnosticParserCoreAcceptedRootSpan(root *Node, source []byte, sourceLen uint32) error {
+// finalizeDiagnosticParserCoreAcceptedRootSpan requires a complete, clean
+// root span by default: compact has no error recovery outside the B3 stage
+// S3 certified shape, so an error/incomplete root anywhere else is a defect,
+// not a legitimate result. allowErrorRoot, true only when this parse ran
+// under an admitted native S3 recovery region (design section 4;
+// s3ErrorRegionAdmitted's exact gate, threaded down from the caller), lifts
+// the !root.IsError() && !root.HasError() bar so a genuinely recovered tree
+// can complete -- the span-completeness half of the check (root must still
+// cover the whole source) stays in force unconditionally either way.
+func finalizeDiagnosticParserCoreAcceptedRootSpan(root *Node, source []byte, sourceLen uint32, allowErrorRoot bool, tokenCount uint32, continuationEscape byte) error {
 	expectedStart := firstNonTriviaByteStart(source)
-	if root.startByte == expectedStart && root.endByte < sourceLen &&
-		!root.IsError() && !root.HasError() {
-		extendRootToAcceptedCleanTail(root, source, sourceLen, nil)
+	clean := allowErrorRoot || (!root.IsError() && !root.HasError())
+	if root.startByte == expectedStart && root.endByte < sourceLen && clean {
+		extendRootToAcceptedCleanTail(root, source, sourceLen, nil, continuationEscape)
 	}
-	if root.startByte == expectedStart && root.endByte == sourceLen &&
-		!root.IsError() && !root.HasError() {
+	if root.startByte == expectedStart && root.endByte == sourceLen && clean {
+		if allowErrorRoot {
+			// B3 stage S3 fail-closed audit (adversarial review finding,
+			// html "<!--c-->>"): allowErrorRoot lets a root whose OWN
+			// HasError reads false past the ordinary !IsError()&&!HasError()
+			// bar, because a native recovery region can legitimately accept
+			// with an unlinked ERROR payload sitting beside the structural
+			// root reduce rather than under it. That same relaxation also
+			// let a genuinely hollow accept through once: the accepted
+			// payload set held [comment(extra), ERROR(extra),
+			// document(span 9..9, 0 children)] -- production's own
+			// ts_parser__accept splices sibling extra payloads into the
+			// root; this materializer's root-payload-only path does not, so
+			// "document" reduced over zero real content, its 0 (raw and
+			// public) children trivially satisfied
+			// diagnosticParserCoreReduceChildrenTilingGap's per-reduce check
+			// (isDerivationRootReduce exempts the root from that check
+			// besides), and extendRootToAcceptedCleanTail above then
+			// stretched the empty span to the full source with nothing
+			// re-checking that the stretch was justified by covered
+			// content: document[0:9], 0 children, HasError()==false --
+			// total byte loss, silently reported clean. Independent of
+			// which reduce claims it, or whether that reduce is exempt from
+			// the per-reduce check, the FINAL PUBLIC TREE'S leaves must
+			// still tile the accepted span; this is that closing check, and
+			// it runs only in the one case that needs it (allowErrorRoot),
+			// so every other language and every non-recovery compact parse
+			// pays nothing.
+			if gapStart, gapEnd, gapped := diagnosticParserCoreAcceptedTreeLeafCoverageGap(root, source, expectedStart, sourceLen, tokenCount); gapped {
+				return fmt.Errorf(
+					"parser-core phase zero: accepted compact root leaves do not tile the accepted span: gap=%d..%d root=%d..%d",
+					gapStart, gapEnd, root.startByte, root.endByte,
+				)
+			}
+			// Round-2 adversarial review, accept-time splice gap: the leaf-
+			// coverage audit above closed the BYTE-LOSS symptom of a related
+			// gap; it cannot see this one, since every byte is still
+			// covered -- only the ATTACHMENT point is wrong. See
+			// diagnosticParserCoreAcceptedRootTrailingErrorExtraGap's own
+			// doc comment.
+			if diagnosticParserCoreAcceptedRootTrailingErrorExtraGap(root) {
+				return fmt.Errorf(
+					"parser-core phase zero: accepted compact root carries an error-bearing trailing extra payload after its last non-extra child: root=%d..%d",
+					root.startByte, root.endByte,
+				)
+			}
+		}
 		return nil
 	}
 	return fmt.Errorf(
-		"parser-core phase zero: accepted compact root is incomplete or erroneous: span=%d..%d expected=%d..%d error=%t",
+		"parser-core phase zero: accepted compact root is incomplete or erroneous: span=%d..%d expected=%d..%d error=%t allowErrorRoot=%t",
 		root.startByte,
 		root.endByte,
 		expectedStart,
 		sourceLen,
 		root.HasError(),
+		allowErrorRoot,
 	)
+}
+
+// diagnosticParserCoreAcceptedTreeLeafCoverageGap walks root's already-
+// materialized, public tree (the same surface go-tree-sitter callers see) in
+// byte order and reports the first non-trivia byte range no genuine terminal
+// leaf covers -- the same predicate diagnosticParserCoreReduceChildrenTilingGap
+// uses per reduce (diagnosticParserCoreGapIsTolerated), applied once, across
+// the whole finalized tree, independent of which reduce's declared span
+// claimed which bytes. See finalizeDiagnosticParserCoreAcceptedRootSpan's
+// allowErrorRoot branch for why the per-reduce check alone is not sufficient
+// here.
+//
+// A childless NODE only counts as covering its span when it is a genuine
+// terminal: symbol < tokenCount (an ordinary lexed token, matching the exact
+// bound s3CloseInProgressProductions already uses to enumerate terminals),
+// or the built-in ERROR symbol (a leaf absorbed into an open S3 region,
+// which is also structurally childless -- html_min_a's innermost
+// "(ERROR (ERROR))", for one). A childless NON-terminal (symbol >=
+// tokenCount, not ERROR) covers NOTHING: this is exactly the shape the
+// adversarial finding exposed -- html "<!--c-->>" reduces "document" over
+// zero real children, and treating that hollow reduce as if it were a leaf
+// spanning its own (already-stretched) declared range let the accept
+// through with the comment and the absorbed '>' entirely unrepresented in
+// the public tree.
+func diagnosticParserCoreAcceptedTreeLeafCoverageGap(root *Node, source []byte, expectedStart, sourceLen, tokenCount uint32) (gapStart, gapEnd uint32, gapped bool) {
+	cur := expectedStart
+	var walk func(n *Node) (uint32, uint32, bool)
+	walk = func(n *Node) (uint32, uint32, bool) {
+		if n == nil {
+			return 0, 0, false
+		}
+		count := n.ChildCount()
+		if count == 0 {
+			sym := n.Symbol()
+			if uint32(sym) >= tokenCount && sym != errorSymbol {
+				// A hollow non-terminal: covers nothing, does not advance
+				// cur. Any real content it claimed but does not itself
+				// contain surfaces as a gap at the next genuine leaf (or at
+				// the trailing check below, if it was the last thing in the
+				// tree).
+				return 0, 0, false
+			}
+			if n.startByte > cur && !diagnosticParserCoreGapIsTolerated(source[cur:n.startByte]) {
+				return cur, n.startByte, true
+			}
+			if n.endByte > cur {
+				cur = n.endByte
+			}
+			return 0, 0, false
+		}
+		for i := 0; i < count; i++ {
+			if gs, ge, gapped := walk(n.Child(i)); gapped {
+				return gs, ge, true
+			}
+		}
+		return 0, 0, false
+	}
+	if gs, ge, gapped := walk(root); gapped {
+		return gs, ge, true
+	}
+	if cur < sourceLen && !diagnosticParserCoreGapIsTolerated(source[cur:sourceLen]) {
+		return cur, sourceLen, true
+	}
+	return 0, 0, false
+}
+
+// diagnosticParserCoreAcceptedRootTrailingErrorExtraGap reports whether
+// root's direct children end with an error-bearing extra payload trailing
+// the last non-extra child -- the accept-time splice gap (adversarial
+// review round 2, html "<html><body>x</body>\x00>"). C's ts_parser__accept
+// rebuilds the last non-extra tree over the remaining stack contents,
+// INCLUDING trailing extras, at the moment of accepting; this splices a
+// trailing extra into whatever real content precedes it, extending that
+// content's own span and propagating its own HasError up through ordinary
+// ancestor propagation. This materializer's S3 accept path does not
+// perform that splice: an ERROR region that resumes onto a head already
+// past the last structural reduce (s3CloseInProgressProductions's own
+// eager closure -- correct and necessary on its own terms -- can land
+// there) ends up attached as the ROOT's own sibling instead, one level too
+// shallow. Observed: document[0:22], 2 children (element[0:20]
+// HasError=false, ERROR[20:22] extra) where the C oracle reports 1 child
+// (element[0:22] HasError=true, the same byte-identical ERROR nested
+// inside it) -- tokenization and the ERROR container itself are identical;
+// only the attachment point differs, and it flips the enclosing element's
+// own span and HasError, which callers read.
+//
+// This audit runs only under allowErrorRoot (S3-admitted parses), same as
+// the leaf-coverage gap above, and closes a different symptom of a related
+// class: that audit requires every byte to be COVERED by some leaf, which
+// this shape already satisfies (nothing is lost, just misattached), so it
+// cannot see this gap on its own.
+//
+// Deliberately narrower than "any trailing extra": an ordinary trailing
+// comment or whitespace extra (IsError()==false, HasError()==false)
+// legitimately sits beside a root's non-extra child in BOTH engines --
+// confirmed necessary: html "<a></a><!--trailing-->" produces
+// document[0:22], 2 children (element, comment), byte-identical between
+// compact and production, and must not decline. Only an error-bearing
+// trailing extra (the shape C would have spliced into the preceding
+// content instead of leaving as the root's own sibling) trips this gap.
+func diagnosticParserCoreAcceptedRootTrailingErrorExtraGap(root *Node) bool {
+	count := root.ChildCount()
+	if count < 2 {
+		return false
+	}
+	lastNonExtra := -1
+	for i := 0; i < count; i++ {
+		if !root.Child(i).IsExtra() {
+			lastNonExtra = i
+		}
+	}
+	if lastNonExtra < 0 {
+		return false
+	}
+	for i := lastNonExtra + 1; i < count; i++ {
+		child := root.Child(i)
+		if child.IsExtra() && (child.IsError() || child.HasError()) {
+			return true
+		}
+	}
+	return false
+}
+
+// diagnosticParserCoreReduceChildrenTilingGap is the B1 route-equality
+// invariant (campaign v7, tranche B1): a compact subtree's declared span
+// [startByte, endByte) is sound only if its own reduce children -- the RAW
+// list the compact core popped for this subtree, before hidden-node elision
+// -- actually tile it: contiguous coverage, no unaccounted-for non-trivia
+// byte range. Called once per non-terminal from materializeVisit (below),
+// on entries built from view.Children, immediately after they are resolved
+// via nodesByID and before any hidden-node filtering
+// (parser.buildReduceChildrenWithPath) or unary collapse runs.
+//
+// Root cause this closes: the scheduler's acceptance gate
+// (finalizeDiagnosticParserCoreAcceptedRootSpan) checked only the root's own
+// span and error flag, never that the accepted derivation's content actually
+// justified that span. A derivation whose reduce silently skipped real input
+// could still be accepted and materialized: the reduce's own view.StartByte/
+// EndByte (set independently of any child -- see the view construction in
+// materializeVisit) can claim a span wider than any entry actually covers,
+// publishing HasError()==false while production and the locked C oracle
+// both return an error tree for the same input. Reference witness: html
+// `<a></a^>` -- the erroneous end-tag subtree claimed span 3..8 ("</a^>")
+// while its three RAW children covered only 3..5, 5..6 and 7..8, leaving
+// byte 6 (the stray '^') completely unaccounted for at every level, not
+// just the final public tree (cgo_harness/testdata/
+// compact_t3_oracle_witnesses_v2.json, witness "html_min_a"; verified by
+// direct inspection of view.Children, not merely the post-materialization
+// node tree -- see the next paragraph for why that distinction matters).
+//
+// Why RAW children, not the final public Node.children: an earlier version
+// of this gate walked the finalized public tree after materialization and
+// false-positived on legitimate, production-matching shapes -- the
+// certified EOF-accept/primary-accept acceptance frontiers (http, robot,
+// meson; grammars/runtime_profiles.go). Direct inspection proved why: a
+// hidden grammar symbol (symbolMeta[...].Visible == false) can cover real
+// source bytes -- Robot Framework's `keyword` node covers a leading byte its
+// only NAMED child excludes; meson's `string` node covers its quoted
+// content with no child at all -- and parser.buildReduceChildrenWithPath
+// (shared by production and compact) elides that hidden entry from the
+// node's final public children (occasionally repositioning a following
+// ANONYMOUS sibling's start via flattenedHiddenEntryPadding, but never a
+// named one), while the node's own declared span, set once at reduce time,
+// still legitimately includes it. Production exhibits the identical
+// "parent span wider than public children" shape for these inputs (verified
+// by direct comparison), so it is not a defect -- but by the same token it
+// is structurally indistinguishable from the html/js defect at the public-
+// tree level: both are "parent span wider than the children the public API
+// exposes". The only place the two are distinguishable is before hidden
+// filtering, using the RAW popped children: robot's `keyword` and meson's
+// `string` fully tile their own span once their hidden child is counted
+// (verified directly: view.Children for robot's `keyword` [26,29) is two
+// entries, [26,27) hidden + [27,29) name_chunk; meson's `string` [8,15) is
+// three, [8,9) quote + [9,14) hidden content + [14,15) quote); html's
+// erroneous-end-tag subtree does not -- its RAW view.Children already omit
+// byte 6, so no filtering step is discarding evidence there at all. This
+// function therefore runs on entries (RAW, pre-filter) rather than on any
+// node's already-finalized public children.
+//
+// This is the identical defect class the GLR forest already guards against
+// at reduce time: its own coverage rejection (glr_forest.go, "Coverage
+// rejection: a reduction whose children leave a NON-TRIVIA hole skipped
+// real input and is INVALID") scans a reduction's RAW children left to
+// right -- before the same later hidden-filtering step -- and rejects any
+// grouping with a real (non-trivia) gap, using bytesAreInterTokenTrivia to
+// tell a dropped token from ordinary inter-token whitespace. This function
+// is that same, already-proven definition and predicate, applied at the
+// compact route's equivalent point in its pipeline (materialization-time
+// reduce, since the compact scheduler has no forest reduce step of its
+// own), checked uniformly at the leading edge (startByte to the first
+// entry), between every pair of entries, and at the trailing edge (the last
+// entry to endByte) -- one running coverage frontier, so no special case is
+// needed for any position. Checking every non-terminal (not just the root)
+// composes soundly by induction: if every node's own direct (raw) children
+// tile that node's span modulo trivia, then transitively so do the leaves
+// of the whole accepted derivation against the root's span, which is the
+// property the tranche asks for.
+//
+// Deliberately out of scope here: the relationship between the root's own
+// declared span and sourceLen (extendRootToAcceptedCleanTail, a few lines
+// above, using the wider bytesAreParserPadding predicate for trailing
+// padding beyond every reduce). That check runs later, once, only at the
+// root, against a different boundary (the whole source, not a reduce's own
+// declared span) and is unaffected by this one.
+//
+// O(children) per call and allocation-free: entries are the slice
+// materializeVisit already built this call from already-materialized nodes
+// (nodesByID lookups done moments earlier); this only reads existing
+// uint32 spans and does not walk further into any child's own subtree.
+func diagnosticParserCoreReduceChildrenTilingGap(startByte, endByte uint32, entries []stackEntry, source []byte) (gapStart, gapEnd uint32, gapped bool) {
+	lastEnd := startByte
+	for _, entry := range entries {
+		child := stackEntryNode(entry)
+		if child == nil {
+			continue
+		}
+		if child.startByte > lastEnd && !diagnosticParserCoreGapIsTolerated(source[lastEnd:child.startByte]) {
+			return lastEnd, child.startByte, true
+		}
+		if child.endByte > lastEnd {
+			lastEnd = child.endByte
+		}
+	}
+	if lastEnd < endByte && !diagnosticParserCoreGapIsTolerated(source[lastEnd:endByte]) {
+		return lastEnd, endByte, true
+	}
+	return 0, 0, false
+}
+
+// diagnosticParserCoreGapIsTolerated reports whether an apparent coverage
+// gap is not, in fact, a real one: ordinary inter-token trivia
+// (bytesAreInterTokenTrivia, matching the forest's own reduce-time coverage
+// rejection).
+//
+// RETIRED (campaign v7 class-e closure, spore.2026-08-02.alder-e.js-false-
+// clean): this gate used to also tolerate a single decoration byte strictly
+// enclosed by trivia on both sides (bytesAreSingleByteDecorationTrivia),
+// added to excuse a doxygen/jsdoc comment-continuation marker ("* ") this B1
+// post-hoc auditor could not otherwise place. That predicate's own doctrine
+// comment claimed the shape was not a plausible one for a real scheduler
+// drop to produce; a stray byte injected between two spaces produces that
+// exact shape. The measured false-clean sweep found 189 occurrences of it
+// across javascript, haskell, html, and bash. Direct measurement (disabling
+// only this predicate, no other change) closes the class: 0 residual
+// divergences in a 624-input javascript-family probe, and only the
+// pre-existing, separately tracked 25-input haskell residual (a different
+// mechanism; compact may be correct there) surviving the 5,148-input probe
+// restricted to the 9 curated languages (routeEqualityFuzzLanguages,
+// fuzz_admission_route_equality_test.go). A wider, 45-language review sweep
+// (11,884 inputs, unchanged before and after this predicate's retirement)
+// separately observed two more residual members outside that curated set,
+// hcl (12 instances) and doxygen (22 instances) -- both a different
+// mechanism from this class-e closure, neither touched by this predicate's
+// removal, and neither in scope here; they need their own adjudication,
+// same as the haskell residual. Retiring this predicate moves jsdoc from PASS to
+// FALLBACK on the 206-language admission scorecard (its own gap now
+// correctly declines at accepted-leaf-tiling-gap below); doxygen does not
+// regress -- verified directly, its gap sits at the derivation root
+// (isDerivationRootReduce, materializeDiagnosticParserCoreAcceptedSelection's
+// reduce visitor below), a position this predicate's retirement does not
+// touch.
+//
+// A companion dispatch-time byte-continuity guard in dispatchPassActive
+// (declining before any shift crosses an unexplained gap, one site upstream
+// of every compact shift call) was built and measured as a candidate
+// replacement. It over-declines: production's own tolerance for this exact
+// doxygen shape is decided only after full tree construction, by the
+// language-general "result compatibility" normalization layer
+// (finalizeResultRoot / normalizeResultCompatibility, parser_result_root_
+// build.go and parser_result_compat.go), which drops the interior error
+// production's own single-stack GLR run really does create for doxygen's
+// smoke sample (verified with GLR tracing: production shifts the gap,
+// tryMaterializeSkippedRealGap pushes a real, hasError=true ERROR node, the
+// root reduce includes it as a raw child with hasError=true, and only the
+// later result-compatibility pass removes it and clears the flag). No
+// three-exemption mirror at the compact scheduler's dispatch point --
+// necessarily earlier than materialization, let alone this later
+// normalization pass -- can see that decision. The guard was reverted for
+// this reason; this predicate retirement alone is the shipped fix. See
+// spore.2026-08-02.hornbeam-e.byte-continuity for the full account.
+func diagnosticParserCoreGapIsTolerated(gap []byte) bool {
+	return bytesAreInterTokenTrivia(gap)
 }
 
 // materializeDiagnosticParserCoreAcceptedSelection materializes the accepted
@@ -2024,7 +3056,7 @@ func finalizeDiagnosticParserCoreAcceptedRootSpan(root *Node, source []byte, sou
 // reusable buffers back the transient materialization storage, so the warm
 // steady state does not re-allocate the public-tree scratch on every parse.
 // scratch is reset on return, so it is safe to reuse for the next parse.
-func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head core.Head, payloads []core.SubtreeID, parser *Parser, source []byte, scratch *parserCoreRunnerScratch, forceReplayParseStates bool) (*Tree, error) {
+func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head core.Head, payloads []core.SubtreeID, parser *Parser, source []byte, scratch *parserCoreRunnerScratch, forceReplayParseStates bool, allowErrorRoot bool) (*Tree, error) {
 	if compact == nil || parser == nil || parser.language == nil || head.Node == 0 || len(payloads) == 0 {
 		return nil, errors.New("parser-core phase zero: incomplete accepted-tree selection input")
 	}
@@ -2144,6 +3176,19 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 				return errors.New("parser-core phase zero: compact subtree extent is outside source")
 			}
 			named := parser.isNamedSymbol(Symbol(view.Symbol))
+			// B3 stage S3: the built-in ERROR symbol (65535) sits outside
+			// every real grammar's SymbolMetadata table, so isNamedSymbol's
+			// bounds check above always reads false for it. Tree-sitter
+			// treats ERROR as named unconditionally (visible in
+			// S-expressions and named-child traversal, matching the pinned
+			// C oracle's own "(ERROR ...)"/"(ERROR (UNEXPECTED 'x'))"
+			// rendering for both the container and a raw unlexable-byte
+			// leaf) -- force it here rather than teach the shared,
+			// grammar-table-driven isNamedSymbol about a symbol that is
+			// never a real grammar table entry.
+			if Symbol(view.Symbol) == errorSymbol {
+				named = true
+			}
 			if view.Terminal {
 				node := newLeafNodeInArena(
 					arena, Symbol(view.Symbol), named, view.StartByte, view.EndByte,
@@ -2170,6 +3215,86 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 				if !child.isExtra() {
 					structuralChildren++
 				}
+			}
+			// isDerivationRootReduce is true only for the one reduce, per parse,
+			// whose symbol is this language's own inferred grammar root symbol
+			// (parser.rootSymbol / hasRootSymbol -- inferRootSymbol, parser.go: a
+			// grammar-derived property, computed from the language's own tables,
+			// not a per-language name check). It is exempted from this reduce's
+			// OWN tiling requirement for the same reason
+			// finalizeDiagnosticParserCoreAcceptedRootSpan already treats the
+			// root-to-sourceLen boundary as a separately governed special case
+			// (extendRootToAcceptedCleanTail, with its own, more lenient rule): the
+			// root reduce is the one construct with no enclosing reduce to ever
+			// re-validate its own declared span from the outside, so an over-wide
+			// root span (still exactly [expectedStart, sourceLen), already pinned
+			// by finalizeDiagnosticParserCoreAcceptedRootSpan's own checks) is a
+			// materially different, narrower risk than an internal gap anywhere
+			// below it, which every enclosing reduce's own tiling check still
+			// catches. This closes a jsdoc residual the retired
+			// bytesAreSingleByteDecorationTrivia predicate used to leave standing:
+			// javadoc/doxygen-style comments that close with "*/" (no leading
+			// space) put the decoration marker
+			// on the trailing edge of the root reduce's own gap, indistinguishable
+			// in isolation from a genuine drop (js_log_3 and js_log_7 have the
+			// identical trailing-edge shape and must still be rejected -- verified
+			// directly, byte for byte: both keep declining under this exemption,
+			// since their gaps are not at the root symbol). All 18 fixed html/js
+			// witnesses were re-verified with this exemption active and none sit
+			// at their language's root symbol, so none are affected by it.
+			isDerivationRootReduce := parser.hasRootSymbol && Symbol(view.Symbol) == parser.rootSymbol
+			if gapStart, gapEnd, gapped := diagnosticParserCoreReduceChildrenTilingGap(view.StartByte, view.EndByte, entries, source); !isDerivationRootReduce && gapped {
+				return &diagnosticParserCoreDecline{
+					boundary: DiagnosticParserCoreAccept,
+					detail: fmt.Sprintf(
+						"accepted-leaf-tiling-gap: compact subtree symbol=%d span=%d..%d has an unaccounted byte range %d..%d not covered by any child",
+						view.Symbol, view.StartByte, view.EndByte, gapStart, gapEnd,
+					),
+				}
+			}
+			// B3 stage S3: an ERROR-symbol reduce is a native recovery region
+			// (s3TryOpenErrorRegion/ErrorRegionResume), never a real grammar
+			// production. It always bypasses unary self-reduction collapse
+			// (errorSymbol's huge numeric value falls outside every real
+			// grammar's SymbolMetadata table, so the collapse checks below
+			// would either safely no-op or -- for the one case they would
+			// not, a childless absorbed leaf sharing the ERROR symbol itself
+			// -- wrongly elide the wrapper the C oracle keeps; skip them
+			// outright instead of relying on that bound check), matching
+			// production's own recovery construction (newRecoveryParentNodeInArena,
+			// parser_recover_c.go), which never goes through the shared
+			// collapsibleRawUnarySelfReduction/collapsibleUnarySelfReduction
+			// path either.
+			if Symbol(view.Symbol) == errorSymbol {
+				children, fieldIDs, fieldSources, _ := parser.buildReduceChildrenWithPath(
+					entries, 0, len(entries), structuralChildren,
+					Symbol(view.Symbol), view.ProductionID, arena,
+				)
+				parent := newParentNodeInArenaWithFieldSources(
+					arena, Symbol(view.Symbol), named, children, fieldIDs, fieldSources, view.ProductionID,
+				)
+				parent.dynamicPrecedence += int32(view.DynamicPrecedence)
+				parent.startByte = view.StartByte
+				parent.endByte = view.EndByte
+				parent.startPoint = points.point(view.StartByte)
+				parent.endPoint = points.point(view.EndByte)
+				parent.setExtra(view.Extra)
+				// The ERROR container's own HasError is always true,
+				// regardless of what populateParentNode's children-OR
+				// propagation computed: matching the pinned C oracle, an
+				// absorbed leaf's own HasError stays false even when the
+				// leaf is itself an unlexable byte (ErrorRegionLeaf's doc
+				// comment; finding production-recovery-structural-divergence),
+				// so this explicit set is the only place HasError=true
+				// originates for the whole region. Every enclosing ordinary
+				// reduce above this one propagates it up for free through
+				// populateParentNode's existing, unmodified OR-of-children
+				// walk (tree.go) -- no further HasError code is needed
+				// anywhere else in this file.
+				parent.setHasError(true)
+				markFragile(parent, view.Fragile)
+				stamp(id, parent, false)
+				return nil
 			}
 			action := ParseAction{
 				Type: ParseActionReduce, Symbol: Symbol(view.Symbol), ChildCount: uint8(structuralChildren),
@@ -2233,6 +3358,23 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 		}
 		nodes[index] = nodesByID[payload]
 	}
+	// acceptedRootSpanStart is each top-level node's OWN declared startByte
+	// (view.StartByte, stamped verbatim at materializeVisit and never mutated
+	// since), captured before buildResultFromNodes runs. It must be read here:
+	// buildResultFromNodes's finalizeResultRoot calls normalizeRootSourceStart
+	// (parser_result_root_build.go), which unconditionally pulls a wider root
+	// back to source's first non-trivia byte on the assumption of a
+	// legitimately elided leading extra. That pull-back overwrites this exact
+	// field, so any check against the post-build root.startByte is tautological
+	// (it always reads back whatever normalizeRootSourceStart just wrote). See
+	// the leading-gap decline below, which compares this pre-normalization
+	// value instead.
+	acceptedRootSpanStart := nodes[0].startByte
+	for _, n := range nodes[1:] {
+		if n.startByte < acceptedRootSpanStart {
+			acceptedRootSpanStart = n.startByte
+		}
+	}
 	if err := poll(); err != nil {
 		return nil, err
 	}
@@ -2283,8 +3425,33 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 	}
 	sourceLen := uint32(len(source))
 	root := tree.root
-	if err := finalizeDiagnosticParserCoreAcceptedRootSpan(root, source, sourceLen); err != nil {
+	if err := finalizeDiagnosticParserCoreAcceptedRootSpan(root, source, sourceLen, allowErrorRoot, parser.language.TokenCount, parser.lineContinuationEscapeByte()); err != nil {
 		return rejectTree(err)
+	}
+	// accepted-root-leading-gap: the derivation's own root reduce is exempt
+	// from diagnosticParserCoreReduceChildrenTilingGap (isDerivationRootReduce,
+	// above), so a root whose declared span starts strictly after the source's
+	// first non-trivia byte passes that check by construction -- no child ever
+	// needed to cover the missing prefix because the root itself never claimed
+	// it. finalizeDiagnosticParserCoreAcceptedRootSpan does not catch this
+	// either: it runs after normalizeRootSourceStart has already pulled
+	// root.startByte back to expectedStart, so its equality check is
+	// tautological for this exact shape. acceptedRootSpanStart (captured
+	// before that pull-back) is the only place this information still exists.
+	// A raw start after the first real byte means at least one leading byte
+	// was never represented by any node in the accepted derivation; decline
+	// fail-closed rather than let normalizeRootSourceStart's legitimate-
+	// elision assumption launder it into a clean tree. Conservative by
+	// design: a genuine legitimately-elided leading extra also declines here
+	// and falls back to production, which still serves it correctly.
+	if expectedStart := firstNonTriviaByteStart(source); acceptedRootSpanStart > expectedStart {
+		return rejectTree(&diagnosticParserCoreDecline{
+			boundary: DiagnosticParserCoreAccept,
+			detail: fmt.Sprintf(
+				"accepted-root-leading-gap: accepted derivation's own root span started at byte %d, after source's first non-trivia byte %d",
+				acceptedRootSpanStart, expectedStart,
+			),
+		})
 	}
 	tree.incrementalReuseDisabled = !incrementalReuseProven
 	tree.compactMaterialized = true
@@ -2295,7 +3462,152 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 	return tree, nil
 }
 
+// diagnosticParserCoreStopControlTripped renders a poll-detected stop-control
+// trip (spec.campaign.v7 tranche B8: memory budget, deadline, or
+// cancellation) as the same kind of decline every other scheduler cap uses.
+// Returning a real error here -- not the graceful s.finish(...) receipt path
+// -- matters: run executes inside compact.RunFreshSchedulerSession for the
+// admission-candidate route (options.freshSchedulerSession), whose deferred
+// cleanup resets the whole core on any non-nil error. That is what releases
+// the compact arenas' accumulated storage before the caller's production
+// fallback engages, with no extra cleanup call needed here.
+func diagnosticParserCoreStopControlTripped(reason ParseStopReason) error {
+	return &diagnosticParserCoreDecline{
+		boundary: DiagnosticParserCoreCap,
+		detail:   "scheduler stop-control tripped: " + string(reason),
+	}
+}
+
+// stopControlFootprintChurnRatio documents a measured, deliberately UNUSED
+// lever (tranche B9 honest-accounting gate). FootprintBytes gauges retained
+// structure; it is blind to per-token ephemeral allocation (temporary
+// values the dispatch/election hot path creates and discards -- boxed
+// action results, scanner-state capture buffers, and similar -- that a live
+// GC reclaims continuously in normal operation but that accumulate
+// unbounded in any measurement that holds GC off for the whole parse,
+// including the RCA-era production replica test this poll is compared
+// against). On the giant-table-literal witness, a scheduler run whose
+// tracked footprint reached 103.6 MB at decline had allocated 516.5 MB
+// cumulative by then: a ~5x ratio.
+//
+// A runtime-heap-based soft stop is not an option here. The determinism
+// contract at parser_memory_budget_runtime.go:162-172 (issue #454) bars a
+// runtime.MemStats reading (HeapAlloc, Sys) from stopping a parse at
+// anything but the absolute hard ceiling: both readings are process-global
+// and shift run to run with GC timing, not with the input, so using either
+// one for the SOFT per-parse budget would make this poll's trip point
+// non-deterministic. FootprintBytes is the deterministic, capacity-based
+// gauge that keeps the soft budget reproducible instead.
+//
+// Discounting the comparison threshold by a fixed divisor (tripping the
+// poll at budget/divisor instead of budget) was tried and reverted: at
+// divisor 2, the giant-table-literal replica still exceeded the 6x
+// cumulative-allocation contract (6.15-6.70x measured, still over), and a
+// realistic, currently-passing witness (a 140KB clean Go source, budget 48
+// MB) started declining before completion, because ITS OWN legitimate
+// footprint at completion (measured (34,36] MB) already exceeds budget/2. At
+// divisor 3 the replica came inside the contract (5.0-5.9x) but the same
+// 140KB/48MB witness still regressed. No tested divisor cleared the
+// pathological witness without cutting into ordinary coverage, because the
+// two witnesses need materially different discounts: the giant literal's
+// churn ratio is a property of ITS shape (dense, repeated struct-literal
+// reduction), not a universal constant every input pays.
+//
+// stopControlMemoryBudgetReason therefore compares FootprintBytes against
+// the configured budget with NO discount (ratio effectively 1): the honest,
+// cap()-based, structure-complete gauge alone, with its own measured
+// improvement (11.51x to 9.14-9.56x cumulative allocation on the same
+// replica, down from the pre-B9-honest-accounting baseline). That
+// improvement is not free at low budgets: FootprintBytes reads higher than
+// the length-only StorageBytes gauge tranche B9 replaced, so the minimum
+// budget a realistic witness needs to still route (rather than decline)
+// rose too -- measured +25-29% on two witnesses (the same 140KB clean Go
+// source referenced above: 28 MB to 36 MB; a 238KB one: 48 MB to 60 MB).
+// The cost is nil at the shipped 512 MB default budget, which clears both
+// thresholds with wide margin; it only reaches a caller who configured a
+// budget close to a witness's pre-B9 threshold. Closing the remaining gap
+// to the 6x contract needs either an owner decision to accept the
+// divisor-discount coverage cost described above, or a deeper change to
+// reduce the scheduler's own per-token ephemeral allocation rate (out of
+// this tranche's scope). See the tranche's PR for the full witness table.
+const stopControlFootprintChurnRatio = 1
+
+// stopControlMemoryBudgetReason compares the compact core's own real
+// retained-memory footprint against the production engine's soft per-parse
+// byte budget (stopControlMemoryBudgetBytes, sourced from
+// parseMemoryBudgetForParser so the same GOT_PARSE_MEMORY_BUDGET_MB
+// configuration governs both engines) and, independently, against
+// production's own absolute hard ceiling (stopControlHardCeilingBytes,
+// armed even when the soft budget is disabled). Every input is
+// Core.FootprintBytes(): already-tracked slice/map length and capacity
+// reads times compile-time-constant record sizes, so this is pure
+// deterministic integer arithmetic -- no wall clock, no GC-timing
+// dependence, and (same input, same budget) the same trip point on every
+// run, unlike the runtime heap/sys signal production's own hard ceiling
+// poll uses (parser_memory_budget_runtime.go). FootprintBytes, not
+// StorageBytes, is deliberate here: StorageBytes counts live length only,
+// so it reads near zero for a core whose arenas hold retained capacity from
+// an earlier declined attempt on the same cached runner, and it never
+// counted scratch, the boundary index, or checkpoint interning at all --
+// either gap let a pathological input's real footprint clear the configured
+// budget well before this poll noticed (tranche B9 honest-accounting gate).
+// See stopControlFootprintChurnRatio's doc comment for the ephemeral-churn
+// gap this gauge still has, and why closing it further is left as an owner
+// decision rather than a silent default change.
+func (s *diagnosticParserCoreGenericScheduler) stopControlMemoryBudgetReason() ParseStopReason {
+	if s == nil {
+		return ParseStopNone
+	}
+	footprint := uint64(0)
+	haveFootprint := false
+	footprintAtLeast := func(bytes int64) bool {
+		if bytes <= 0 {
+			return false
+		}
+		if !haveFootprint {
+			footprint = s.compact.FootprintBytes()
+			haveFootprint = true
+		}
+		return footprint*stopControlFootprintChurnRatio >= uint64(bytes)
+	}
+	if footprintAtLeast(s.options.stopControlMemoryBudgetBytes) {
+		return ParseStopMemoryBudget
+	}
+	if footprintAtLeast(s.options.stopControlHardCeilingBytes) {
+		return ParseStopMemoryBudget
+	}
+	return ParseStopNone
+}
+
+// pollStopControl is the bounded scheduler-boundary poll (spec.campaign.v7
+// tranche B8): the memory-budget check above, then -- only when the caller
+// armed stop control by binding a Parser (stopControlParser, set only by the
+// admission-candidate route) -- the exact production deadline/cancellation
+// check (activeParseStopReason). It runs once before the scheduler's first
+// election and once per iteration of run's dispatch-pass loop: every loop
+// iteration is either one dispatch pass or one re-election round, so this
+// granularity bounds both a runaway dispatch grind and a runaway election
+// cycle. Nil stopControlParser and a zero budget make this two nil/zero
+// comparisons -- the diagnostic and benchmark runners, which never set
+// either, pay that and nothing else.
+func (s *diagnosticParserCoreGenericScheduler) pollStopControl() error {
+	if reason := s.stopControlMemoryBudgetReason(); reason != ParseStopNone {
+		return diagnosticParserCoreStopControlTripped(reason)
+	}
+	parser := s.options.stopControlParser
+	if parser == nil {
+		return nil
+	}
+	if reason := parser.activeParseStopReason(); parseStopReasonIsActive(reason) {
+		return diagnosticParserCoreStopControlTripped(reason)
+	}
+	return nil
+}
+
 func (s *diagnosticParserCoreGenericScheduler) run() error {
+	if err := s.pollStopControl(); err != nil {
+		return err
+	}
 	if err := s.elect(true); err != nil {
 		return err
 	}
@@ -2304,6 +3616,9 @@ func (s *diagnosticParserCoreGenericScheduler) run() error {
 		return nil
 	}
 	for {
+		if err := s.pollStopControl(); err != nil {
+			return err
+		}
 		if uint64(len(s.headers)) > s.work.PeakHeaders {
 			s.work.PeakHeaders = uint64(len(s.headers))
 		}
@@ -2347,6 +3662,22 @@ func (s *diagnosticParserCoreGenericScheduler) run() error {
 			}
 			continue
 		}
+		// C4 corridor: when the frontier is the deterministic single-header
+		// shape the bytecode lane owns, run the compiled program instead of
+		// the interpreted dispatch pass. The corridor executes
+		// election-to-election corridors and returns on any boundary opcode;
+		// it never produces a decline of its own, so the generic pass below
+		// still owns every boundary verbatim (spec.c4-bytecode-isa.v1
+		// section 6.2).
+		if s.corridorEligible() {
+			progressed, err := s.dispatchCorridor()
+			if err != nil {
+				return err
+			}
+			if progressed {
+				continue
+			}
+		}
 		stop, err := s.dispatchPass()
 		if err != nil {
 			return err
@@ -2363,6 +3694,8 @@ type diagnosticParserCoreGenericUnsupported struct {
 	headerIndex int
 }
 
+const diagnosticParserCoreNoTableActionDetail = "generic scheduler has no table action for the elected token"
+
 func (s *diagnosticParserCoreGenericScheduler) dispatchPass() (*diagnosticParserCoreGenericUnsupported, error) {
 	if err := s.dispatchScratch.begin(); err != nil {
 		return nil, err
@@ -2376,6 +3709,12 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPass() (*diagnosticParser
 
 func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnosticParserCoreGenericUnsupported, error) {
 	s.work.Passes++
+	// R6 pass-mix counter. A single-header pass is exactly the shape the C4
+	// bytecode corridor is eligible for, so this count makes corridor coverage
+	// measurable on the committed board.
+	if len(s.headers) == 1 {
+		s.work.SingleHeaderPasses++
+	}
 	if unsupported := diagnosticParserCoreGenericUnsupportedToken(s.token); unsupported != nil {
 		return unsupported, nil
 	}
@@ -2394,15 +3733,176 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			return nil, err
 		}
 	}
+	var singletonCells [1]diagnosticParserCoreGenericCell
+	cells := singletonCells[:0]
+	scratchCells := s.dispatchScratch.cells
+	pausedNoActionHeads := 0
 	for index, header := range s.headers {
 		if header.shifted || header.accepted {
 			continue
 		}
 		if header.paused {
 			s.dispatchScratch.noActionIndices = append(s.dispatchScratch.noActionIndices, index)
+			pausedNoActionHeads++
 			continue
 		}
-		boundary, err := s.compact.ClassifyBoundary(header.head, core.Symbol(s.token.Symbol))
+		if header.s3Region != nil {
+			region := header.s3Region
+			// A header sitting on an open region is the compact analogue of
+			// a live C stack in ERROR_STATE, which lexes with a completely
+			// different (most-permissive, LexModes[0]) mode than the
+			// ordinary per-state shared election every other header uses
+			// this pass (cRecoverElectionLookaheadSymbol's own doc comment,
+			// parser_recover_c.go). Prefer that error-mode view whenever it
+			// disagrees with the shared token by still reporting this
+			// position unlexable: s3ErrorModeRelex's doc comment records the
+			// witness (html_log_8) that needs this to avoid resuming one
+			// byte early.
+			resumeToken := s.token
+			relexDisagreesUnmodeled := false
+			if relexed, relexOK := s.s3ErrorModeRelex(region.endByte); relexOK {
+				sharedIsRealContent := s.token.StartByte != s.token.EndByte
+				switch {
+				case relexed.Symbol == errorSymbol:
+					resumeToken = relexed
+				case sharedIsRealContent && (relexed.Symbol != s.token.Symbol || relexed.EndByte != s.token.EndByte):
+					// REQUIRED 2b (adversarial review, corpus witness
+					// "a>[/>"): the error-mode lexer (the lex state a live C
+					// ERROR_STATE stack actually uses) found a REAL terminal
+					// here too, but a differently-classified or differently-
+					// wide one than the ordinary shared election found for
+					// every other header this pass. Silently keeping the
+					// ordinary (here, narrower) token let this region resume
+					// one byte-run short of where C's own error-mode lexer
+					// would have kept absorbing, producing a resumed tree
+					// this single-path model cannot prove matches C. Only
+					// the already-handled errorSymbol case above is proven
+					// safe (html_log_8); every other disagreement between
+					// two REAL (non-zero-width) lex views is unmodeled and
+					// must decline, not silently prefer one view over the
+					// other.
+					//
+					// Guarding on sharedIsRealContent (confirmed necessary:
+					// html_erroneous_end_tag/html_log_6's own resume point)
+					// keeps this from over-firing when the ordinary shared
+					// token is zero-width: a zero-width token is a pure
+					// lookahead/existence marker at this exact byte offset,
+					// not consumed content, so its own table entry (used by
+					// s3RegionResumeAction just below, as the lookahead
+					// symbol for the resume-action probe, not as something
+					// this code shifts) answers "would resuming exactly here
+					// work" on its own terms -- disagreeing with the error-
+					// mode lexer's independent, wider real-content
+					// classification a few bytes later is expected, not a
+					// sign this single-path model might be wrong.
+					relexDisagreesUnmodeled = true
+				}
+			}
+			hasAction, actErr := s3RegionResumeAction(s.compact, region.state, Symbol(resumeToken.Symbol))
+			if actErr != nil {
+				return nil, actErr
+			}
+			if relexDisagreesUnmodeled {
+				return &diagnosticParserCoreGenericUnsupported{
+					boundary:    DiagnosticParserCoreRoute,
+					detail:      "generic scheduler s3 error region error-mode lex disagrees with the ordinary shared election in an unmodeled way",
+					headerIndex: index,
+				}, nil
+			}
+			// REQUIRED 2b (adversarial review): a real live C stack would
+			// scan its stack summary up to depth cRecoverMaxSummaryDepth for
+			// a state that resumes with an action before ever falling
+			// through to strategy 2's next absorb (cRecoverDispatchInError).
+			// S3 owns only depth-0 resume; probing deeper here is a bounded
+			// existence check (AncestorStateWithActionExists's own doc
+			// comment), not an attempt to perform that deeper resume.
+			deeperResumeExists := false
+			if !hasAction && resumeToken.Symbol != 0 {
+				deeperResumeExists, actErr = s.compact.AncestorStateWithActionExists(header.head, core.Symbol(resumeToken.Symbol), cRecoverMaxSummaryDepth)
+				if actErr != nil {
+					return nil, actErr
+				}
+			}
+			switch {
+			case hasAction:
+				// Depth-0 resume: the pre-error state now accepts the current
+				// token. Publish the ERROR container over the absorbed
+				// children and condense it onto the pre-error head (the
+				// compact equivalent of cRecoverToState's
+				// pushStackNode(fork, goal, errNode, ...)), then fall through
+				// to ordinary classification below using the refreshed head.
+				newHead, resumeErr := s.compact.ErrorRegionResume(header.head, region.state, region.startByte, region.endByte, region.children)
+				if resumeErr != nil {
+					return nil, resumeErr
+				}
+				s.headers[index].head = newHead
+				s.headers[index].s3Region = nil
+				header = s.headers[index]
+			case resumeToken.Symbol == 0:
+				// EOF while a region is open: cRecoverEOFAccept's whole-file
+				// wrap is out of S3 scope (s3TryOpenErrorRegion's doc
+				// comment). Fall through to ordinary classification
+				// unchanged; it finds no action against the still-open head
+				// and lands back in noActionIndices, where
+				// s3TryOpenErrorRegion bails (s3Region already set) and the
+				// existing decline applies -- fail-closed, not a guess.
+			case deeperResumeExists:
+				// A stack entry above depth 0 would accept resumeToken: C's
+				// own election could pick that deeper resume instead of
+				// continuing to absorb (strategy 1, out of S3 scope). Keeping
+				// this region growing here would risk swallowing bytes C's
+				// oracle would instead have left outside the ERROR container
+				// entirely -- decline rather than guess which one C picks.
+				return &diagnosticParserCoreGenericUnsupported{
+					boundary:    DiagnosticParserCoreRoute,
+					detail:      "generic scheduler s3 error region found a deeper stack-summary resume opportunity outside single-path depth-0 scope",
+					headerIndex: index,
+				}, nil
+			default:
+				tokenExtra, extraErr := s3TokenIsExtraShift(s.compact, resumeToken.Symbol)
+				if extraErr != nil {
+					return nil, extraErr
+				}
+				leafID, leafErr := s.compact.ErrorRegionLeaf(core.Symbol(resumeToken.Symbol), resumeToken.StartByte, resumeToken.EndByte, tokenExtra)
+				if leafErr != nil {
+					return nil, leafErr
+				}
+				grown := make([]core.SubtreeID, len(region.children)+1)
+				copy(grown, region.children)
+				grown[len(region.children)] = leafID
+				s.headers[index].s3Region = &diagnosticParserCoreS3Region{
+					state: region.state, startByte: region.startByte, endByte: resumeToken.EndByte, children: grown,
+				}
+				s.headers[index].shifted = true
+				if resumeToken.EndByte != s.token.EndByte {
+					// The error-mode relex consumed a different span than
+					// the shared election (a wider unlexable run, matching
+					// C's error-mode lexer): resync the shared token
+					// source's cursor so the next elect() call continues
+					// from where this absorb actually left off, not from
+					// the shared token's own (now-stale) end.
+					s.tokenSource.SeekTokenFrontier(resumeToken.EndByte, resumeToken.EndPoint)
+				}
+				// Return this pass immediately: a header can only reach
+				// s3Region!=nil through s3TryOpenErrorRegion, which requires
+				// len(s.headers)==1 (S3 owns no forking), so this absorb is
+				// the whole pass's work. Falling through to the per-header
+				// loop's tail (as a bare `continue` would, once the sole
+				// header's iteration ends) reaches the "len(cells)==0, no
+				// runnable head" branch with nothing recorded in cells or
+				// noActionIndices for this pass, an unsupported_route decline
+				// this stage does not own -- confirmed necessary:
+				// html_erroneous_end_tag/html_log_8 needs a second
+				// consecutive absorb (the region opened by
+				// s3TryOpenErrorRegion for '>' does not resume until the
+				// error-mode-relexed run through 'o' completes), and only
+				// this direct return reaches that second absorb at all.
+				return nil, nil
+			}
+		}
+		cellToken := s.token
+		var relexedSymbol Symbol
+		boundary, err := s.compact.ClassifyBoundary(header.head, core.Symbol(cellToken.Symbol))
 		if err != nil {
 			return nil, err
 		}
@@ -2410,24 +3910,66 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 		actions := boundary.Actions()
 		workCountRecordResolvedActionCell(actions.Len())
 		if actions.Len() == 0 {
-			s.dispatchScratch.noActionIndices = append(s.dispatchScratch.noActionIndices, index)
-			continue
-		}
-		cell := diagnosticParserCoreGenericCell{headerIndex: index, boundary: boundary}
-		if s.tokenSource != nil {
-			cell.conflictPolicyOrdinal, cell.conflictPolicy = diagnosticParserCoreConflictPolicyOrdinal(
-				s.tokenSource.language,
-				s.token,
-				boundary.State(),
-				actions,
-			)
-			if !cell.conflictPolicy && actions.Descriptor().Kind() == core.ActionRowUnsupported {
-				cell.repetitionReduceOrdinal, cell.repetitionFold = diagnosticParserCoreRepetitionFoldOrdinal(s.tokenSource.language, actions)
+			state := StateID(boundary.State())
+			if len(s.headers) > 1 {
+				relexed, ok := s.relexTokenForState(state, s.token)
+				if ok {
+					relexedSymbol, ok = diagnosticParserCoreRelexedSymbol(s.token, relexed)
+					if ok {
+						cellToken = relexed
+						boundary, err = s.compact.ClassifyBoundary(header.head, core.Symbol(cellToken.Symbol))
+						if err != nil {
+							return nil, err
+						}
+						s.work.ActionLookups++
+						actions = boundary.Actions()
+						workCountRecordResolvedActionCell(actions.Len())
+					}
+				}
+			}
+			if actions.Len() == 0 {
+				s.dispatchScratch.noActionIndices = append(s.dispatchScratch.noActionIndices, index)
+				continue
 			}
 		}
-		s.dispatchScratch.cells = append(s.dispatchScratch.cells, cell)
+		cell := diagnosticParserCoreGenericCell{
+			headerIndex:   index,
+			boundary:      boundary,
+			relexedSymbol: relexedSymbol,
+		}
+		if s.tokenSource != nil {
+			if ordinal, ok := diagnosticParserCoreConflictPolicyOrdinal(
+				s.tokenSource.language,
+				cell.dispatchToken(s.token),
+				boundary.State(),
+				actions,
+			); ok {
+				cell.selectedOrdinal = ordinal
+				cell.selectedBy = diagnosticParserCoreCellSelectionConflictPolicy
+			}
+			if cell.selectedBy == diagnosticParserCoreCellSelectionNone &&
+				actions.Descriptor().Kind() == core.ActionRowUnsupported {
+				if ordinal, ok := diagnosticParserCoreRepetitionFoldOrdinal(s.tokenSource.language, actions); ok {
+					cell.selectedOrdinal = ordinal
+					cell.selectedBy = diagnosticParserCoreCellSelectionRepetitionFold
+				} else if _, ok := diagnosticParserCoreSingleReduceRepetitionShiftOrdinal(actions); ok &&
+					cRepetitionSkipOptOut[s.tokenSource.language.Name] {
+					// Production keeps both arms for a language with a proven
+					// fold counterexample. Use the existing conflict executor.
+					cell.selectedBy = diagnosticParserCoreCellSelectionRepetitionFork
+				}
+			}
+		}
+		if len(s.headers) == 1 {
+			cells = append(cells, cell)
+		} else {
+			scratchCells = append(scratchCells, cell)
+		}
 	}
-	cells := s.dispatchScratch.cells
+	if len(s.headers) != 1 {
+		s.dispatchScratch.cells = scratchCells
+		cells = scratchCells
+	}
 	noActionIndices := s.dispatchScratch.noActionIndices
 	if unsupported := s.validateGenericNoLookaheadReduction(cells, noActionIndices); unsupported != nil {
 		return unsupported, nil
@@ -2437,10 +3979,24 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 	reductionCell := -1
 	reductionConflict := false
 	conflictCell := -1
-	for index, cell := range cells {
+	for index := range cells {
+		cell := &cells[index]
 		descriptor := cell.descriptor()
-		if !cell.conflictPolicy && !cell.repetitionFold {
-			if unsupported := diagnosticParserCoreGenericUnsupportedCellDescriptor(cell.headerIndex, s.token, cell.actions(), descriptor); unsupported != nil {
+		// descriptor.DispatchSupported() is table-derived and immutable once
+		// this row was decoded (core.describeActionRow, once per distinct
+		// action row -- not once per dispatch pass): it is true exactly when
+		// diagnosticParserCoreGenericUnsupportedCellDescriptor's own kind
+		// switch below would already return a nil decline without reading
+		// its token argument (Shift, Reduce, and Conflict rows). Skipping
+		// the call for those rows avoids re-deriving that same kind-only
+		// fact, and the cell.dispatchToken(s.token) token-struct copy that
+		// building its argument would cost, on every pass that dispatches an
+		// already-proven-supported cell (spec.campaign.v7 tranche C0 item 4,
+		// the "cell-array and descriptor validation" L1 sub-item). Rows that
+		// still need the token (ExtraShift, Accept) or are never supported
+		// (Empty, Unsupported) keep paying the full per-pass call unchanged.
+		if cell.selectedBy == diagnosticParserCoreCellSelectionNone && !descriptor.DispatchSupported() {
+			if unsupported := diagnosticParserCoreGenericUnsupportedCellDescriptor(cell.headerIndex, cell.dispatchToken(s.token), cell.actions(), descriptor); unsupported != nil {
 				return unsupported, nil
 			}
 		}
@@ -2470,9 +4026,51 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			return nil, s.dropGenericNoActionHeads(noActionIndices)
 		}
 		if len(noActionIndices) != 0 {
+			// pausedNoActionHeads == 0 means every no-action head reached this
+			// point through a genuinely empty action row (no table action for
+			// the elected token), not through the unrelated group-election
+			// pause tracked by header.paused above. That exact shape is the
+			// error-entry point locked-C production pauses on for recovery
+			// (glr.go cPaused: "the stack hit a no-action point"; the
+			// real-corpus matrix's 13 recovery-handoff rows trigger here with
+			// "the elected token has no table action at end-of-file"). Publish
+			// the typed recovery boundary for that shape instead of the
+			// generic no-action boundary so census and receipts can tell a
+			// recovery handoff apart from an internal election pause. This is
+			// a dispatch classification only: both boundaries still decline
+			// and fall back to production unchanged (B3 stage S1).
+			if pausedNoActionHeads == 0 {
+				// B3 stage S3: attempt native strategy-2 recovery for the
+				// certified witness class instead of declining outright.
+				// Scoped to the sole-header, sole-no-action-head shape only
+				// (design section 4's "at most one fork" ceiling starts here
+				// at zero forks: S3 owns no election and no forking at all).
+				// Any other shape, and any ownership attempt that hits
+				// genuine ambiguity, falls through unchanged to the existing
+				// decline -- fail-closed, never a guess (design section 4's
+				// fail-closed rule).
+				if len(s.headers) == 1 && len(noActionIndices) == 1 {
+					handled, s3Err := s.s3TryOpenErrorRegion(noActionIndices[0])
+					if s3Err != nil {
+						return nil, s3Err
+					}
+					if handled {
+						return nil, nil
+					}
+				}
+				return &diagnosticParserCoreGenericUnsupported{
+					boundary:    DiagnosticParserCoreRecovery,
+					detail:      diagnosticParserCoreNoTableActionDetail,
+					headerIndex: noActionIndices[0],
+				}, nil
+			}
+			detail := "generic scheduler has only paused heads for the elected token"
+			if pausedNoActionHeads != len(noActionIndices) {
+				detail = "generic scheduler has only paused or no-action heads for the elected token"
+			}
 			return &diagnosticParserCoreGenericUnsupported{
 				boundary:    DiagnosticParserCoreNoAction,
-				detail:      "generic scheduler has only paused no-action heads for the elected token",
+				detail:      detail,
 				headerIndex: noActionIndices[0],
 			}, nil
 		}
@@ -2520,6 +4118,14 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				boundary: DiagnosticParserCoreExtra, detail: "generic scheduler requires a homogeneous all-runnable extra cohort", headerIndex: cells[0].headerIndex,
 			}, nil
 		}
+		for index := 1; index < len(cells); index++ {
+			cell := &cells[index]
+			if cell.dispatchToken(s.token) != cells[0].dispatchToken(s.token) {
+				return &diagnosticParserCoreGenericUnsupported{
+					boundary: DiagnosticParserCoreExtra, detail: "generic scheduler extra cohort requires one tokenization", headerIndex: cell.headerIndex,
+				}, nil
+			}
+		}
 		if unsupported := s.zeroWidthExtraShiftWithoutProgress(cells); unsupported != nil {
 			return unsupported, nil
 		}
@@ -2541,19 +4147,449 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 	return nil, s.applyGenericShifts(before, cells)
 }
 
+// ---------------------------------------------------------------------------
+// B3 stage S3: native strategy-2 recovery (error-region absorb and
+// condense-resume) over the sole no-action head. See spec.
+// compact-recovery-ownership.v1 section 4 and internal/parsercorephase0/
+// error_region.go's file doc comment for the mechanism this ports.
+// ---------------------------------------------------------------------------
+
+// s3ErrorRegionAdmitted reports whether native S3 recovery may attempt to
+// own a true no-action point for the current parse instead of declining.
+// Both the caller-declared operation shape (Recovery) and the certified,
+// grammar-blob-keyed capability (allowCompactStrategy2ErrorRegion, set only
+// from Language.CompactStrategy2ErrorRegionCertified) must hold -- an
+// uncertified grammar, or a caller that never asked for recovery, changes
+// nothing here (design section 7: no grammar-name branches, gate on
+// certified capability artifacts).
+func (s *diagnosticParserCoreGenericScheduler) s3ErrorRegionAdmitted() bool {
+	return s.options.Recovery && s.options.allowCompactStrategy2ErrorRegion
+}
+
+// s3TokenIsExtraShift reports whether symbol shifts as extra in state 1: the
+// compact equivalent of cAbsorbTokenIntoError's own state-1 probe
+// (parser_recover_c.go:3769, "if the token shifts as extra in state 1, mark
+// it extra so it is not counted in error cost calculations"). Compact's
+// generic-scheduler Token carries no Extra bit of its own (unlike the
+// internal package's Token, lexer.go), so this reproduces the same table
+// lookup production performs instead of trusting an absent field.
+func s3TokenIsExtraShift(compact *core.Core, symbol Symbol) (bool, error) {
+	row, err := compact.Actions(1, core.Symbol(symbol))
+	if err != nil {
+		return false, err
+	}
+	if row.Len() == 0 {
+		return false, nil
+	}
+	last := row.At(row.Len() - 1)
+	return last.Type == core.ActionShift && last.Extra, nil
+}
+
+// s3RegionResumeAction reports whether state has a genuine dispatchable
+// action for lookahead: the compact equivalent of cRecoverDispatchInError's
+// leading action-row check, restricted to depth-0 resume (state is always
+// exactly the state the region opened at -- never a deeper stack-summary
+// entry; scanning deeper is strategy-1 election, out of S3 scope per the
+// stage stop rule).
+func s3RegionResumeAction(compact *core.Core, state core.StateID, lookahead Symbol) (bool, error) {
+	row, err := compact.Actions(state, core.Symbol(lookahead))
+	if err != nil {
+		return false, err
+	}
+	return row.Len() > 0, nil
+}
+
+// s3ErrorModeRelex re-lexes at startByte using the grammar's error-mode lex
+// state (LexModes[0], the most permissive catch-all mode): the compact
+// equivalent of cRecoverElectionLookaheadSymbol's own relex
+// (parser_recover_c.go:3230-3275). A live C stack sitting in ERROR_STATE
+// lexes with this mode, not the mode its pre-error state would use; a
+// header holding an open S3 region is that same shape, so probing "would
+// resuming work" against the ordinary shared election (s.token, elected
+// once per pass for every header alike) is not faithful on its own --
+// confirmed necessary: html_erroneous_end_tag/html_log_8 shows the ordinary
+// shared election finding an immediately resumable "text" token for 'H'
+// where the pinned C oracle's error-mode lex keeps 'H' (and the letters
+// after it) inside the same open error run, one byte-run token wider than
+// what plain per-state lexing would report. ok is false when this
+// grammar has no distinct error-mode lex state (or startByte is past the
+// source), in which case the caller falls back to the ordinary shared
+// token unmodified -- the same conservative fallback
+// cRecoverElectionLookaheadSymbol itself takes.
+func (s *diagnosticParserCoreGenericScheduler) s3ErrorModeRelex(startByte uint32) (Token, bool) {
+	if s.tokenSource == nil || s.tokenSource.language == nil || s.tokenSource.lexer == nil {
+		return Token{}, false
+	}
+	lang := s.tokenSource.language
+	if len(lang.LexModes) == 0 || len(lang.LexStates) == 0 {
+		return Token{}, false
+	}
+	ls := lang.LexModes[0].LexStateIndex()
+	if ls == noLookaheadLexState || int(ls) >= len(lang.LexStates) {
+		return Token{}, false
+	}
+	source := s.tokenSource.lexer.source
+	if int(startByte) >= len(source) {
+		return Token{}, false
+	}
+	lx := Lexer{
+		states:              lang.LexStates,
+		asciiTable:          lang.LexAsciiTable(),
+		source:              source,
+		pos:                 int(startByte),
+		immediateTokens:     lang.ImmediateTokens,
+		zeroWidthTokens:     lang.ZeroWidthTokens,
+		errorRunLexState:    ls,
+		hasErrorRunLexState: true,
+	}
+	relexed := lx.NextWithErrorRuns(ls)
+	if relexed.Symbol == 0 && relexed.StartByte == relexed.EndByte {
+		return Token{}, false
+	}
+	return relexed, true
+}
+
+// s3MissingTokenOpportunityExists reports whether a synthetic missing-token
+// insertion at state would let the current elected token proceed: the
+// compact equivalent of cHandleError step 2's scan (parser_recover_c.go,
+// mirroring cTerminalNextState/stateHasLeadingReduceAction). For every
+// terminal ms, if state has a genuine shift for ms (Extra tokens keep the
+// same state, matching cTerminalNextState) to some other state, and that
+// state's leading action for the actual current token is a reduce, a
+// missing-token insertion here would let the parse continue -- exactly the
+// shape S5 owns (design section 4's stop rule), so the caller must decline
+// rather than absorb the real token that opportunity would have consumed.
+func (s *diagnosticParserCoreGenericScheduler) s3MissingTokenOpportunityExists(state core.StateID) (bool, error) {
+	if s.tokenSource == nil || s.tokenSource.language == nil {
+		return false, nil
+	}
+	tokenCount := Symbol(s.tokenSource.language.TokenCount)
+	if tokenCount == 0 {
+		return false, nil
+	}
+	for ms := Symbol(1); ms < tokenCount; ms++ {
+		row, err := s.compact.Actions(state, core.Symbol(ms))
+		if err != nil {
+			return false, err
+		}
+		if row.Len() == 0 {
+			continue
+		}
+		last := row.At(row.Len() - 1)
+		if last.Type != core.ActionShift {
+			continue
+		}
+		nextState := core.StateID(last.State)
+		if last.Extra {
+			nextState = state
+		}
+		if nextState == 0 || nextState == state {
+			continue
+		}
+		nextRow, err := s.compact.Actions(nextState, core.Symbol(s.token.Symbol))
+		if err != nil {
+			return false, err
+		}
+		if nextRow.Len() == 0 {
+			continue
+		}
+		if nextRow.At(0).Type == core.ActionReduce {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// s3CloseInProgressProductionsMaxSteps bounds the eager reduction closure
+// below. Any real single-path closure chain in the certified witness class
+// resolves in a handful of steps; a chain this long almost certainly means
+// the walk stopped terminating for a reason S3 does not understand, so
+// bailing out (a decline, not a guess) is the safe default.
+const s3CloseInProgressProductionsMaxSteps = 64
+
+// s3CloseInProgressProductions eagerly reduces head across every terminal
+// symbol's action row until either some symbol yields a genuine (non-extra,
+// non-repetition) shift/accept/recover action at the resulting state (a real
+// dispatchable state -- stop here, nothing more to close) or no symbol
+// yields any reduce action at all (a dead end -- also stop, keeping the
+// pre-closure head, mirroring C's anyLookahead=true dead-end-stays-in-place
+// rule). This is the compact equivalent of cDoAllPotentialReductions's
+// "close in-progress productions" step (parser_recover_c.go:2523),
+// restricted to the single deterministic path S3 owns: a state offering
+// more than one distinct reduce candidate with no shift is genuine ambiguity
+// (true strategy-1 territory), and this function reports ok=false rather
+// than choosing among candidates.
+//
+// Two exclusions keep the single dispatchable-action test faithful to C's
+// own has_shift_action (adversarial review finding, REQUIRED 2b): extra
+// shifts (a comment/whitespace token is shiftable from nearly every state,
+// in this grammar and most others, so treating that as "a real dispatchable
+// action exists, stop closing" would end the walk almost immediately,
+// everywhere, independent of whether the actual error the walk is trying to
+// close resolves) and repetition shifts (a self-loop that does not
+// represent grammatical progress out of the error) are excluded from
+// setting hasShift, exactly as C's has_shift_action excludes them.
+//
+// A reduce action with ChildCount==0 (a nullable/epsilon production) is a
+// real reduce this closure does not know how to fold into its single-path
+// walk -- applying it would require reasoning this stage does not own, and
+// silently ignoring it (treating the state as if that action did not exist)
+// would let the walk report a stale, pre-reduce state as final, exactly the
+// missing-token-insertion-detection gap REQUIRED 2a names. Either shape
+// forces ok=false: an epsilon reduce is exactly the kind of reduce
+// candidate "the single-path closure does not reproduce."
+//
+// changed reports whether at least one reduction actually ran (so the
+// caller knows to adopt the returned head instead of discarding it).
+func (s *diagnosticParserCoreGenericScheduler) s3CloseInProgressProductions(head core.Head) (out core.Head, changed bool, ok bool, err error) {
+	if s.tokenSource == nil || s.tokenSource.language == nil {
+		return head, false, false, nil
+	}
+	tokenCount := Symbol(s.tokenSource.language.TokenCount)
+	if tokenCount == 0 {
+		return head, false, false, nil
+	}
+	current := head
+	for steps := 0; steps < s3CloseInProgressProductionsMaxSteps; steps++ {
+		state, _, boundaryErr := s.compact.Boundary(current)
+		if boundaryErr != nil {
+			return core.Head{}, changed, false, boundaryErr
+		}
+		hasShift := false
+		reduceCandidates := 0
+		sawUnmodeledReduce := false
+		var reduceLookahead Symbol
+		var reduceOrdinal int
+		var reduceKeySymbol core.Symbol
+		var reduceKeyCount uint8
+		haveKey := false
+		for sym := Symbol(1); sym < tokenCount; sym++ {
+			row, actionsErr := s.compact.Actions(state, core.Symbol(sym))
+			if actionsErr != nil {
+				return core.Head{}, changed, false, actionsErr
+			}
+			for i := 0; i < row.Len(); i++ {
+				act := row.At(i)
+				switch act.Type {
+				case core.ActionShift:
+					if !act.Extra && !act.Repetition {
+						hasShift = true
+					}
+				case core.ActionAccept, core.ActionRecover:
+					hasShift = true
+				case core.ActionReduce:
+					if act.ChildCount == 0 {
+						sawUnmodeledReduce = true
+						continue
+					}
+					if haveKey && act.Symbol == reduceKeySymbol && act.ChildCount == reduceKeyCount {
+						continue // same production reachable on another symbol: not a new candidate
+					}
+					reduceCandidates++
+					reduceLookahead, reduceOrdinal = sym, i
+					reduceKeySymbol, reduceKeyCount, haveKey = act.Symbol, act.ChildCount, true
+				}
+			}
+		}
+		if hasShift {
+			// A real dispatchable action exists here regardless of what else
+			// this state also offers: stop closing, nothing more to do.
+			return current, changed, true, nil
+		}
+		if sawUnmodeledReduce {
+			// No real shift to fall back on, and at least one reduce
+			// candidate here is a shape this single-path closure cannot
+			// safely apply (see doc comment): decline rather than either
+			// silently discarding it (the pre-fix bug) or guessing at how
+			// to fold it into the walk.
+			return current, changed, false, nil
+		}
+		if reduceCandidates == 0 {
+			return current, changed, true, nil
+		}
+		if reduceCandidates > 1 {
+			return current, changed, false, nil
+		}
+		frontier, reduceErr := s.compact.Reduce(current, core.Symbol(reduceLookahead), reduceOrdinal, core.ForkOrder{})
+		if reduceErr != nil {
+			return core.Head{}, changed, false, reduceErr
+		}
+		if len(frontier) != 1 {
+			return current, changed, false, nil
+		}
+		current = frontier[0]
+		changed = true
+	}
+	return current, changed, false, nil
+}
+
+// s3TryOpenErrorRegion attempts to open (and immediately begin absorbing
+// into) a native S3 error region for the sole no-action header index.
+// handled=true means this pass is fully accounted for: either closure alone
+// resolved the no-action point (an LALR table gap, not malformed input -- no
+// region needed, and the caller redispatches this same pass against the
+// closed head) or a region was opened and the current token absorbed.
+// handled=false means the caller must fall back to the existing decline path
+// unchanged: recovery is not admitted, the shape is not a single deterministic
+// path, or absorbing would require the EOF wrap S3 does not own.
+func (s *diagnosticParserCoreGenericScheduler) s3TryOpenErrorRegion(index int) (handled bool, err error) {
+	if !s.s3ErrorRegionAdmitted() {
+		return false, nil
+	}
+	header := &s.headers[index]
+	if header.s3Region != nil {
+		// Already owned by the per-header advance hook (dispatchPassActive's
+		// s3Region branch); that hook declined to widen absorption to EOF.
+		// Fall through to the existing decline unchanged.
+		return false, nil
+	}
+	// A no-action point at or before the source's first non-trivia byte is
+	// the root-leading-gap shape (finalizeDiagnosticParserCoreAcceptedRootSpan's
+	// sibling gate, diagnosticParserCoreReduceChildrenTilingGap's
+	// isDerivationRootReduce exemption): one real byte at document start
+	// that no node in ANY derivation ever represents, a pre-existing,
+	// separately-owned decline path this stage must not intrude on. Every
+	// committed html_erroneous_end_tag witness needs at least one real
+	// shifted tag before its absorbed byte (structurally, an end-tag error
+	// cannot exist with no preceding start tag), so this guard never blocks
+	// the certified witness class -- confirmed necessary: without it,
+	// TestCompactRouteRootLeadingGapDeclines's html cases ("&0", "&;", "&#",
+	// ">0", "&000") get absorbed here instead of reaching the existing,
+	// unverified-for-this-shape accepted-root-leading-gap decline.
+	if s.tokenSource != nil && s.tokenSource.lexer != nil &&
+		s.token.StartByte <= firstNonTriviaByteStart(s.tokenSource.lexer.source) {
+		return false, nil
+	}
+	// Comment-accuracy note (adversarial review, MINOR item a): every decline
+	// below this line runs AFTER s3CloseInProgressProductions, which -- when
+	// it applies a reduce candidate while walking toward a dispatchable
+	// state or a dead end -- has already performed a real reduction,
+	// appending new node/subtree records to the compact arena. That ordering
+	// is intentional, not an oversight to fix by moving these checks above
+	// the closure: s3RegionResumeAction, the error-mode-lex-disagreement
+	// check, the EOF check, the missing-token-opportunity check, and the
+	// deeper-resume check all need the CLOSED head's own state, not the
+	// pre-closure one, to answer their own question correctly, so they
+	// cannot run any earlier than this. It is also safe: the compact arena
+	// is append-only and immutable once published (core.go's own
+	// documentation on this invariant), and every decline path here means
+	// the caller falls back to production for the whole parse, not a
+	// partial/local rollback -- so nothing downstream ever reads whatever
+	// extra records this closure left behind. No dirty state escapes a
+	// decline; only tree records that are already immutable, unreferenced
+	// by anything the caller ultimately serves, and cheap.
+	closedHead, changed, ok, closeErr := s.s3CloseInProgressProductions(header.head)
+	if closeErr != nil {
+		return false, closeErr
+	}
+	if !ok {
+		return false, nil
+	}
+	if changed {
+		header.head = closedHead
+	}
+	state, _, boundaryErr := s.compact.Boundary(header.head)
+	if boundaryErr != nil {
+		return false, boundaryErr
+	}
+	// REQUIRED 2b (adversarial review): the same error-mode-lex-disagreement
+	// guard Hook A runs before every subsequent absorb (dispatchPassActive's
+	// s3Region branch doc comment) applies here too, symmetrically, for the
+	// very first token a brand-new region would absorb -- a live C stack
+	// enters ERROR_STATE (and its permissive lex mode) at exactly this same
+	// no-action point, not one absorb later, so the first token deserves the
+	// identical disagreement check, not just every token after it.
+	if relexed, relexOK := s.s3ErrorModeRelex(s.token.StartByte); relexOK && relexed.Symbol != errorSymbol {
+		sharedIsRealContent := s.token.StartByte != s.token.EndByte
+		if sharedIsRealContent && (relexed.Symbol != s.token.Symbol || relexed.EndByte != s.token.EndByte) {
+			return false, nil
+		}
+	}
+	hasAction, actionErr := s3RegionResumeAction(s.compact, state, Symbol(s.token.Symbol))
+	if actionErr != nil {
+		return false, actionErr
+	}
+	if hasAction {
+		// Closure alone resolved it: this was never a real error. Let the
+		// ordinary dispatch loop redispatch this pass against the closed head.
+		return true, nil
+	}
+	// EOF at the very first no-action point, nothing absorbed yet:
+	// cRecoverEOFAccept's whole-file wrap is out of S3 scope. No committed
+	// html_erroneous_end_tag witness needs it (verified against the pinned C
+	// oracle: every native witness resumes before EOF).
+	if s.token.Symbol == 0 {
+		return false, nil
+	}
+	// C's cHandleError tries missing-token insertion (step 2, "once across
+	// the version set, in order") before it ever tries strategy 2 absorb.
+	// This stage does not own missing-token insertion (S5) or strategy-1
+	// election (S4; design section 4's stop rule: "if any html witness needs
+	// strategy 1 or missing insertion, leave it fail-closed"), so it must
+	// decline whenever a missing-token insertion opportunity exists here,
+	// rather than silently absorbing the real token that opportunity would
+	// have consumed instead. Confirmed necessary: html_erroneous_end_tag/
+	// html_log_7 (a dangling start_tag whose next real token is a valid "</"
+	// it cannot use) needs a MISSING ">" here; absorbing "</" as an ordinary
+	// error-region token instead produced a confirmed wrong tree.
+	missingOpportunity, missingErr := s.s3MissingTokenOpportunityExists(state)
+	if missingErr != nil {
+		return false, missingErr
+	}
+	if missingOpportunity {
+		return false, nil
+	}
+	// REQUIRED 2b (adversarial review): before absorbing the first token
+	// into a brand-new region, also rule out a deeper (depth 1..
+	// cRecoverMaxSummaryDepth) stack-summary resume -- the same existence
+	// probe Hook A runs before every subsequent absorb (dispatchPassActive's
+	// s3Region branch). A live C stack would try that deeper resume
+	// (strategy 1) before ever falling through to strategy 2's absorb; S3
+	// owns only depth-0 resume, so finding one here means this shape is out
+	// of scope and must decline instead of guessing which one C's election
+	// would pick.
+	deeperResumeExists, deeperErr := s.compact.AncestorStateWithActionExists(header.head, core.Symbol(s.token.Symbol), cRecoverMaxSummaryDepth)
+	if deeperErr != nil {
+		return false, deeperErr
+	}
+	if deeperResumeExists {
+		return false, nil
+	}
+	tokenExtra, extraErr := s3TokenIsExtraShift(s.compact, s.token.Symbol)
+	if extraErr != nil {
+		return false, extraErr
+	}
+	leafID, leafErr := s.compact.ErrorRegionLeaf(core.Symbol(s.token.Symbol), s.token.StartByte, s.token.EndByte, tokenExtra)
+	if leafErr != nil {
+		return false, leafErr
+	}
+	header.s3Region = &diagnosticParserCoreS3Region{
+		state:     state,
+		startByte: s.token.StartByte,
+		endByte:   s.token.EndByte,
+		children:  []core.SubtreeID{leafID},
+	}
+	header.shifted = true
+	return true, nil
+}
+
 func (s *diagnosticParserCoreGenericScheduler) zeroWidthExtraShiftWithoutProgress(cells []diagnosticParserCoreGenericCell) *diagnosticParserCoreGenericUnsupported {
-	if s.token.EndByte != s.token.StartByte ||
-		s.currentElection.ScannerAfter != s.currentElection.ScannerBefore {
+	if s.currentElection.ScannerAfter != s.currentElection.ScannerBefore {
 		return nil
 	}
-	for _, cell := range cells {
+	for index := range cells {
+		cell := &cells[index]
+		token := cell.dispatchToken(s.token)
+		if token.EndByte != token.StartByte {
+			continue
+		}
 		action := cell.actions().At(0)
 		target := action.State
 		if target == 0 {
 			target = cell.boundary.State()
 		}
 		if target == cell.boundary.State() &&
-			s.token.EndByte <= cell.boundary.ByteOffset() {
+			token.EndByte <= cell.boundary.ByteOffset() {
 			return &diagnosticParserCoreGenericUnsupported{
 				boundary:    DiagnosticParserCoreRoute,
 				detail:      "generic scheduler zero-width extra shift has no scanner or parser-state progress",
@@ -2581,7 +4617,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericAccept(before []Diagn
 	if cell.actions().Len() != 1 || cell.actions().At(0).Type != core.ActionAccept {
 		return errors.New("parser-core phase zero: generic accept requires one accept action")
 	}
-	if s.token.Symbol != 0 || s.token.StartByte != s.token.EndByte || s.token.Missing || s.token.NoLookahead || s.token.ExternalScannerToken {
+	token := cell.dispatchToken(s.token)
+	if token.Symbol != 0 || token.StartByte != token.EndByte || token.Missing || token.NoLookahead || token.ExternalScannerToken {
 		return errors.New("parser-core phase zero: generic accept requires authenticated zero-width EOF")
 	}
 	if err := s.reserveDispatches(1); err != nil {
@@ -2621,12 +4658,77 @@ func (s *diagnosticParserCoreGenericScheduler) completeAcceptance() error {
 	}
 	paths, err := compactDerivationsForAcceptance(s.compact, s.headers[0].head)
 	if err != nil {
+		// Stage D0 instrument (spec.derivation-set-equivalence.v1): a capped
+		// enumeration leaves D unknown, which the differential must not read
+		// as an empty set. Compiled out of the shipped build; see
+		// parsercore_phase0_derivation_set_census_disabled.go.
+		s.censusAcceptanceDerivationSetTruncated()
 		return err
 	}
 	path, selected := selectCompactAcceptanceDerivation(paths, s.options.allowPrimaryAcceptDerivation)
 	if !selected {
+		s.censusAcceptanceDerivationSet(paths, core.Derivation{}, false, false)
 		return s.finish(DiagnosticParserCoreAccept, "generic scheduler requires one certified accepted derivation", 0)
 	}
+	// R1 materiality gate: selectCompactAcceptanceDerivation's tie guard has
+	// no C-faithful basis for choosing among score-tied derivations. It is
+	// only safe to admit the positional primary when every live derivation
+	// materializes to the identical tree (a vacuous election -- any pick is
+	// correct). len(paths) > 1 here means the tie guard, not the len(paths)
+	// == 1 fast path, selected primary, so every entry in paths is live.
+	//
+	// COST, stated plainly, not special-cased away: Apex's class_literal_alias
+	// witness ("Object t = RecordPage.class;", apexA3TiedElectionWitnesses,
+	// apex_a3_certification_sweep_test.go) was already in the certified sweep
+	// corpus before this gate existed, and on main its positional primary was
+	// the C-exact derivation while production diverged (a sanctioned
+	// adjudicated exception). This gate cannot tell that apart from a tied
+	// election where the primary is wrong: it declines class_literal_alias
+	// too, and the route now serves production's C-divergent tree instead of
+	// compact's C-exact one -- public output got worse on this one input.
+	// This is judged acceptable because it restores the pre-compact status
+	// quo (production already served every input before the compact route
+	// existed) and because the planned C-comparator port (R2) recovers it
+	// properly, by comparing error cost/dynamic precedence/structural order
+	// the way the C runtime does instead of requiring exact identity. It is
+	// not fixed by special-casing this witness.
+	if len(paths) > 1 {
+		if len(paths) > compactAcceptanceElectionMaxLiveDerivations {
+			// Observed live-derivation counts top out at 8 (bounded by
+			// MaxLinksPerBoundary); Limits.MaxDerivations itself allows up
+			// to 1<<16. Materializing and comparing every candidate up to
+			// that theoretical count is an unbounded-cost path with no
+			// observed witness anywhere near it, so decline outright above
+			// this cap rather than pay for a comparison this rare. Counted
+			// under the same material-acceptance-election census mechanism
+			// (admission_census.go), with a distinguishable detail string.
+			s.censusAcceptanceDerivationSet(paths, path, true, true)
+			return s.finish(DiagnosticParserCoreAccept, compactAcceptanceElectionCandidateCapDetail, 0)
+		}
+		if !s.options.materializationContextSet {
+			// No caller in this parse set up a materialization context, so no
+			// comparison can run at all here -- distinct from the case below,
+			// where a comparison ran and found (or failed to prove) equality.
+			// Every real parse entry point sets the context before running
+			// the scheduler (parsercore_phase0_fresh_full_runner.go
+			// executeSchedulerOpen, diagnosticParseParserCoreGenericFromSeed),
+			// so this is a fail-closed guard for a caller shape not observed
+			// in the certified sweep corpora.
+			s.censusAcceptanceDerivationSet(paths, path, true, true)
+			return s.finish(DiagnosticParserCoreAccept, compactAcceptanceElectionNoContextDetail, 0)
+		}
+		if !compactAcceptanceElectionIsVacuous(
+			s.compact, s.options.materializationParser, s.options.materializationSource,
+			s.options.materializationForceReplayParseStates, s.options.materializationContextSet,
+			s.headers[0].head, paths, path,
+		) {
+			s.censusAcceptanceDerivationSet(paths, path, true, true)
+			return s.finish(DiagnosticParserCoreAccept, compactAcceptanceElectionMaterialDetail, 0)
+		}
+	}
+	// Stage D0 instrument (spec.derivation-set-equivalence.v1): record the
+	// accepted derivation set D. Compiled out of the shipped build.
+	s.censusAcceptanceDerivationSet(paths, path, true, false)
 	if core.Phase0AEnabled {
 		if err := core.RecordPhase0ADiagnosticAcceptedRoots(s.compact, path.Payloads); err != nil {
 			return err
@@ -2665,12 +4767,13 @@ func (s *diagnosticParserCoreGenericScheduler) completeAcceptance() error {
 	}
 	s.acceptedHead = s.headers[0].head
 	s.acceptedPayloads = append(s.acceptedPayloads[:0], path.Payloads...)
-	s.receipt.Acceptance = &DiagnosticParserCoreGenericAcceptance{
+	s.receipt.acceptanceBacking = DiagnosticParserCoreGenericAcceptance{
 		ElectionIndex: s.electionIndex, Token: s.token, Header: header,
 		Payloads: payloads, Score: path.Score, BranchOrder: path.BranchOrder,
 		HasBranchOrder: path.HasBranchOrder, CoreWork: s.compact.Work(),
 		Accepts: s.work.Accepts, Stats: stats, Work: s.work,
 	}
+	s.receipt.Acceptance = &s.receipt.acceptanceBacking
 	s.publishTotals()
 	return nil
 }
@@ -2717,6 +4820,210 @@ func compactDerivationsForAcceptance(compact *core.Core, head core.Head) ([]core
 	return paths, err
 }
 
+// compactAcceptanceElectionMaterialDetail is the counted decline reason FIX
+// R1 uses when a tied compact acceptance election is material: more than one
+// live derivation exists at the accepted head, and materializing every one of
+// them does not prove they all publish the same tree. The compact route has
+// no C-faithful tiebreak for this shape, so it declines instead of guessing
+// which derivation the locked C runtime would have picked; production still
+// serves the input. See admissionCensusClassify (admission_census.go) for the
+// counted mechanism class this detail is matched into.
+const compactAcceptanceElectionMaterialDetail = "material-acceptance-election: certified primary derivation is not proven byte-identical to every tied secondary derivation"
+
+// compactAcceptanceElectionNoContextDetail is the counted decline reason for
+// a tied election reached with no materialization context available: no
+// caller in this parse set DiagnosticParserCorePrefixOptions
+// .materializationContextSet, so compactAcceptanceElectionIsVacuous never
+// ran, and no comparison happened at all. This is deliberately distinct
+// wording from compactAcceptanceElectionMaterialDetail -- "not proven
+// byte-identical" would overstate what happened when no comparison ran.
+// completeAcceptance checks materializationContextSet itself and selects
+// this detail before ever calling compactAcceptanceElectionIsVacuous, so
+// that function's own internal contextSet check is a second, defensive
+// fail-closed guard for any other caller, not the source of this wording.
+// Classifies under the same material-acceptance-election census mechanism
+// (admissionCensusClassify, admission_census.go) as the other two decline
+// details in this family: the public contract is identical across all
+// three -- the route could not prove this election vacuous, so it declines
+// rather than guess.
+const compactAcceptanceElectionNoContextDetail = "material-acceptance-election: materialization context unavailable; election cannot be proven vacuous"
+
+// compactAcceptanceElectionMaxLiveDerivations bounds how many live
+// derivations compactAcceptanceElectionIsVacuous will materialize and
+// compare. Observed live-derivation counts at a tied accepted head top out
+// at 8 (bounded in practice by MaxLinksPerBoundary); core.Limits.MaxDerivations
+// itself permits up to 1<<16 exact paths, so an adversarial or pathological
+// grammar/input combination could in principle present far more live
+// candidates than any witness measured so far. Materializing and comparing
+// every one of them is unbounded cost with no known witness anywhere near
+// this bound; completeAcceptance declines outright above it instead.
+const compactAcceptanceElectionMaxLiveDerivations = 8
+
+// compactAcceptanceElectionCandidateCapDetail is the counted decline reason
+// for a tied election whose live-derivation count exceeds
+// compactAcceptanceElectionMaxLiveDerivations. It is a distinct string from
+// compactAcceptanceElectionMaterialDetail (the gate never ran a comparison
+// here) but classifies under the same material-acceptance-election census
+// mechanism (admissionCensusClassify, admission_census.go), since both
+// outcomes share the same public contract: the route could not prove this
+// election vacuous, so it declines rather than guess.
+const compactAcceptanceElectionCandidateCapDetail = "material-acceptance-election: tied derivation count exceeds the materiality gate's comparison cap"
+
+// compactAcceptanceElectionIsVacuous decides whether every derivation in
+// paths materializes to the same public tree as the already-selected primary.
+// Called only when selectCompactAcceptanceDerivation has admitted primary
+// under its score-tie guard with 2 to compactAcceptanceElectionMaxLiveDerivations
+// entries in paths (completeAcceptance declines above the cap before ever
+// calling this function), so every entry is a live, score-tied-or-losing
+// candidate.
+//
+// This is NOT a property every multi-derivation accept in the certified
+// languages' own sweep corpora already had before this gate landed: Apex's
+// class_literal_alias witness (apexA3TiedElectionWitnesses,
+// apex_a3_certification_sweep_test.go) was already in that sweep corpus, and
+// its two derivations are not byte-identical -- one assigns an "object"
+// field the other does not. Before this gate, the route accepted it anyway
+// (the positional primary, which happened to be the byte-identical-to-C one
+// on this witness); this gate now declines it. See the cost note where
+// completeAcceptance calls this function for that specific regression.
+//
+// forceReplayParseStates must equal the value the caller's own
+// post-acceptance materialization will use (DiagnosticParserCorePrefixOptions
+// .materializationForceReplayParseStates): it decides whether the
+// materialized nodes carry ParseState/PreGotoState stamps at all, and this
+// function's contract is to compare what the published tree actually
+// carries, not some other configuration. contextSet distinguishes "no caller
+// provided a materialization context" (fail closed) from "the caller
+// provided one, and the source is legitimately empty". completeAcceptance
+// checks contextSet itself before calling this function and picks
+// compactAcceptanceElectionNoContextDetail instead of running a call that
+// can only fail closed, so the contextSet check inside this function is a
+// second, defensive guard for any other caller, not the source of the
+// no-context detail text.
+//
+// A materialization failure on any candidate (a cap, a tiling-gap decline,
+// or any other error) is treated as "not proven vacuous", matching the
+// fail-closed contract every other compact decline in this file uses: the
+// route never guesses.
+//
+// This redundantly re-materializes primary (once here for comparison, once
+// again by the caller's normal post-acceptance materialization). That cost
+// lands only on multi-derivation accepts, which are rare; a sole-derivation
+// accept (the overwhelming majority) never reaches this function at all.
+func compactAcceptanceElectionIsVacuous(
+	compact *core.Core, parser *Parser, source []byte,
+	forceReplayParseStates bool, contextSet bool,
+	head core.Head, paths []core.Derivation, primary core.Derivation,
+) bool {
+	if len(paths) < 2 {
+		return true
+	}
+	if !contextSet || compact == nil || parser == nil {
+		return false
+	}
+	// allowErrorRoot is always false here (B3 stage S3, materializeDiagnosticParserCoreAcceptedSelection):
+	// this gate only runs on a clean, non-recovery tied accept, and a
+	// candidate that needs allowErrorRoot=true to materialize is not
+	// something this gate is equipped to reason about -- it fails the trial
+	// materialization, which the fail-closed contract below already treats
+	// as "not proven vacuous". forceReplayParseStates is threaded through
+	// (not hardcoded) so the trial materialization matches the caller's own
+	// post-acceptance one -- see this function's doc comment.
+	primaryTree, err := materializeDiagnosticParserCoreAcceptedSelection(compact, head, primary.Payloads, parser, source, nil, forceReplayParseStates, false)
+	if err != nil {
+		return false
+	}
+	defer primaryTree.Release()
+	primaryRoot := primaryTree.RootNode()
+	for _, candidate := range paths {
+		if slices.Equal(candidate.Payloads, primary.Payloads) {
+			continue
+		}
+		candidateTree, err := materializeDiagnosticParserCoreAcceptedSelection(compact, head, candidate.Payloads, parser, source, nil, forceReplayParseStates, false)
+		if err != nil {
+			return false
+		}
+		equal := compactAcceptanceDerivationTreesEqual(parser.language, primaryRoot, candidateTree.RootNode())
+		candidateTree.Release()
+		if !equal {
+			return false
+		}
+	}
+	return true
+}
+
+// compactAcceptanceDerivationTreesEqual reports whether two materialized
+// derivation trees of the same accepted head publish the same PUBLIC tree
+// shape: the same node symbol, byte span, named/extra/missing flags, the
+// same field assignment per child, and the same children, recursively. This
+// is deliberately narrower than "identical in every internal attribute a
+// *Node carries" -- see the scope note below. Field assignment matters here
+// even though it is invisible in an SExpr dump: a materiality census that
+// only compared SExpr text would miss a tied election where both candidates
+// share a symbol and shape but assign a field (for example "object") on only
+// one side. HasError is not compared separately -- it is a pure function of
+// the subtree below a node, so it is already implied once every descendant
+// symbol and shape matches.
+//
+// Scope note (evaluated and rejected: ParseState, PreGotoState, the fragile
+// flag, and the external-scanner-token flag). All four are gotreesitter's
+// own internal construction bookkeeping, not part of the tree-sitter tree
+// shape the C oracle can be compared against -- the C runtime has no
+// equivalent of any of them. Adding any of the four to this comparator was
+// measured directly against the five R1 target languages' full sweep
+// corpora (perl, python, apex, ada, kotlin; certificates forced,
+// GTS_ADMISSION_CENSUS=1). Only ParseState/PreGotoState decline a source
+// that was otherwise a clean, C-exact accept: Perl push_two_args_real_corpus_
+// witness, push_three_args, and Python assignment_bare_tuple_real_corpus_
+// witness, assignment_bare_pair, assignment_bare_single_trailing_comma (5
+// sources). In every one, the two derivations' PUBLIC trees are already
+// byte-identical, so adding either attribute declines a correct accept for
+// no benefit. That is the entire measured cost of this scope boundary.
+//
+// The other two measured effects are not an additional cost, because
+// neither source involved was a clean pass to begin with:
+//   - ParseState/PreGotoState also decline four already-tracked,
+//     C-divergent sources: Perl join_assignment, return_list, and Python
+//     fstring_interpolation_bare_tuple, fstring_interpolation_splat.
+//     Declining them buys nothing for parity -- production already carries
+//     the identical divergence -- but costs nothing new either.
+//   - The fragile/external-scanner-token pair declines exactly one source,
+//     Ada array_others_choice, which is itself a tracked Family M
+//     divergence (adaA3KnownDivergences), not a clean pass. This pair's
+//     measured effect is a wash: no fidelity change either way.
+//
+// None of the four are compared here; the measured, avoidable cost is
+// confined to the five ParseState/PreGotoState witnesses named above.
+// ParseState/PreGotoState trustworthiness for incremental reuse is guarded
+// separately and already, per materialized tree, by
+// incrementalReuseProven / Tree.incrementalReuseDisabled
+// (materializeDiagnosticParserCoreAcceptedSelection) -- that mechanism does
+// not depend on which of two shape-identical derivations was published, so
+// this gate does not need to duplicate it.
+func compactAcceptanceDerivationTreesEqual(lang *Language, a, b *Node) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.Symbol() != b.Symbol() ||
+		a.StartByte() != b.StartByte() || a.EndByte() != b.EndByte() ||
+		a.IsNamed() != b.IsNamed() || a.IsExtra() != b.IsExtra() || a.IsMissing() != b.IsMissing() {
+		return false
+	}
+	childCount := a.ChildCount()
+	if childCount != b.ChildCount() {
+		return false
+	}
+	for i := 0; i < childCount; i++ {
+		if a.FieldNameForChild(i, lang) != b.FieldNameForChild(i, lang) {
+			return false
+		}
+		if !compactAcceptanceDerivationTreesEqual(lang, a.Child(i), b.Child(i)) {
+			return false
+		}
+	}
+	return true
+}
+
 // diagnosticParserCoreGenericNoActionDropEligible reports whether at least one
 // non-paused sibling head is still live (shifted or accepted). noActionIndices
 // is ascending and unique (dispatch-pass order), so the paused set is matched
@@ -2745,6 +5052,42 @@ func diagnosticParserCoreGenericNoActionDropEligible(headers []diagnosticParserC
 	return false
 }
 
+func diagnosticParserCoreSelectedLineageDrops(
+	headers []diagnosticParserCoreHeader,
+	indices []int,
+) (uint64, bool) {
+	var proved uint64
+	for _, index := range indices {
+		if index < 0 || index >= len(headers) {
+			return 0, false
+		}
+		dropped := headers[index]
+		if !dropped.convergedReductionSplit {
+			continue
+		}
+		if dropped.cleanPathRank != core.CleanPathRankUnselected || dropped.cleanPathLineage == 0 {
+			return 0, false
+		}
+		matched := false
+		for survivorIndex, survivor := range headers {
+			dropIndex := sort.SearchInts(indices, survivorIndex)
+			if dropIndex < len(indices) && indices[dropIndex] == survivorIndex {
+				continue
+			}
+			if survivor.cleanPathRank == core.CleanPathRankSelected &&
+				survivor.cleanPathLineage == dropped.cleanPathLineage {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return 0, false
+		}
+		proved++
+	}
+	return proved, true
+}
+
 // dropGenericNoActionHeads removes the paused/no-action heads named by indices.
 // indices is produced in ascending, unique header order by the dispatch pass,
 // so the surviving frontier is compacted in place with no allocation. The drop
@@ -2753,6 +5096,48 @@ func diagnosticParserCoreGenericNoActionDropEligible(headers []diagnosticParserC
 func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices []int) error {
 	if len(indices) == 0 || len(indices) >= len(s.headers) {
 		return errors.New("parser-core phase zero: sibling-backed no-action drop removed the complete frontier")
+	}
+	// F4 disposition (spec.b4b-alternative-set.v2 section 5): a resurrection
+	// descended from a HistoricalBoundaryUnproved dead-node import carries no
+	// recorded provenance to prove, so it fails closed independently of the
+	// proof below -- waived by the same certified-language artifact escape
+	// that waives the proof itself. The detail keeps the "converged-path
+	// reduction split" substring every existing fallback-reason assertion
+	// keys on (admission_switch_converged_path_test.go,
+	// admission_switch_erlang_converged_split_probe_test.go), distinguished
+	// by the trailing clause.
+	if !s.options.allowConvergedSplitDropArtifact {
+		for _, index := range indices {
+			if index >= 0 && index < len(s.headers) && s.headers[index].resurrectionUnproved {
+				return &diagnosticParserCoreDecline{
+					boundary: DiagnosticParserCoreNoAction,
+					detail:   "converged-path reduction split no-action drop descends from an unproved historical boundary resurrection",
+				}
+			}
+		}
+	}
+	// Stage 2b (spec.b4b-alternative-set.v2 section 8): the v2 containment
+	// predicate -- (event, branch) exact-member containment plus the
+	// blended-witness veto -- is the deciding proof for uncertified
+	// languages, replacing the scalar (rank, lineage) proof stage 2a kept
+	// live while the re-census ran. The section 7 gate passed (zero class-1
+	// differing-tree cases, the Kotlin witness declines under v2, stage 1's
+	// gates re-passed); erlang's own class-3 probe re-proof miss is scoped
+	// to its stage 3 certificate precondition, not this gate.
+	convergedCoverageDrops, proved := s.diagnosticParserCoreConvergedCoverageDropsV2(indices)
+	if diagnosticParserCoreShadowCensusEnabled() {
+		// The retired scalar proof is evaluated only here, next to the v2
+		// decision above, for the ongoing three-proof regression check as
+		// more languages decertify in stage 3. Never influences the
+		// decision below.
+		_, scalarProved := diagnosticParserCoreSelectedLineageDrops(s.headers, indices)
+		s.diagnosticParserCoreRunThreeProofCensus(indices, scalarProved)
+	}
+	if !proved && !s.options.allowConvergedSplitDropArtifact {
+		return &diagnosticParserCoreDecline{
+			boundary: DiagnosticParserCoreNoAction,
+			detail:   "converged-path reduction split no-action drop lacks alternative-set coverage by one non-blended survivor",
+		}
 	}
 	if s.fullReceipts() {
 		pathReceipts, err := diagnosticParserCoreHeaderPathReceipts(s.compact, s.headers)
@@ -2793,6 +5178,7 @@ func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices 
 	s.headers = s.headers[:write]
 	s.work.NoActionDrops += uint64(len(indices))
 	s.work.add(&s.work.ConvergedReductionSplitDrops, convergedReductionSplitDrops)
+	s.work.add(&s.work.ConvergedCoverageDrops, convergedCoverageDrops)
 	return nil
 }
 
@@ -2804,6 +5190,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReduction(before []Di
 		return err
 	}
 	dispatchesBefore, nextSeqBefore := s.dispatches, s.nextSeq
+	nextCleanPathLineageBefore := s.nextCleanPathLineage
 	workBefore, epochProgressBefore := s.work, s.epochProgress
 	roundsBefore := len(s.receipt.Rounds)
 	defer func() {
@@ -2812,6 +5199,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReduction(before []Di
 			return
 		}
 		s.dispatches, s.nextSeq = dispatchesBefore, nextSeqBefore
+		s.nextCleanPathLineage = nextCleanPathLineageBefore
 		s.work, s.epochProgress = workBefore, epochProgressBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 	}()
@@ -2824,27 +5212,100 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 	if err := s.reserveDispatches(1); err != nil {
 		return err
 	}
+	candidates := s.collectCondenseCandidates(cell.headerIndex)
 	ordinal := cell.selectedActionOrdinal()
 	if cell.selectsConflictReduction() {
 		s.compact.SetReduceConflictContext(true)
 		defer s.compact.SetReduceConflictContext(false)
 	}
-	if s.token.NoLookahead {
+	token := cell.dispatchToken(s.token)
+	if token.NoLookahead {
 		s.compact.SetReduceNoLookaheadContext(true)
 		defer s.compact.SetReduceNoLookaheadContext(false)
 	}
-	outputs, err := s.compact.ReduceOutputsClassifiedIntoOwned(owner, s.reductionOutputs, cell.boundary, ordinal, core.ForkOrder{})
+	outputs, err := s.compact.ReduceOutputsClassifiedIntoWithLiveCondenseCandidatesOwned(
+		owner, candidates, s.reductionOutputs, cell.boundary, ordinal, core.ForkOrder{},
+	)
 	if err != nil {
 		return err
 	}
-	convergedReductionSplit := len(outputs) > 1 && outputs[0].MultiplePopPaths
+	hasMultiplePopPaths := false
+	for _, output := range outputs {
+		if output.MultiplePopPaths {
+			hasMultiplePopPaths = true
+			break
+		}
+	}
+	var reductionLineage uint16
+	if hasMultiplePopPaths {
+		reductionLineage, err = nextDiagnosticParserCoreCleanPathLineage(&s.nextCleanPathLineage)
+		if err != nil {
+			return err
+		}
+		if err := s.compact.RecordReductionLineageOwned(owner, outputs, reductionLineage); err != nil {
+			return err
+		}
+	}
 	s.reductionOutputs = outputs
 	s.reductionReplacements = s.reductionReplacements[:0]
 	replacements := s.reductionReplacements
 	madeFreshProgress := false
-	for _, output := range outputs {
+	for outputIndex, output := range outputs {
+		convergedHistory := output.MultiplePopPaths ||
+			output.HistoricalBoundaryProvenance == core.HistoricalBoundaryConverged
+		// resurrectionUnproved (spec.b4b-alternative-set.v2 section 5, F4
+		// disposition): a HistoricalBoundaryUnproved dead-node import no
+		// longer contributes to convergedReductionSplit -- it carries no
+		// recorded alternative-set members, so containment could never prove
+		// it -- but it is still tracked as its own independent, fail-closed
+		// veto bit on whichever header inherits it (dropGenericNoActionHeads).
+		resurrectionUnproved := output.HistoricalBoundaryProvenance == core.HistoricalBoundaryUnproved
+		rank := output.CleanPathRank
+		lineage := reductionLineage
+		var outputSet core.AlternativeSet
+		var outputSetBlended bool
+		if output.MultiplePopPaths {
+			// Establishment/extend (spec.b4b-alternative-set.v2 section 3.4):
+			// the branch is this output's index within outputs, the
+			// dispatch's stable first-boundary order -- the identical slice
+			// RecordReductionLineageOwned above already iterated, so the
+			// ordinals agree with no further synchronization.
+			outputSet = core.NewAlternativeSetMember(reductionLineage, uint16(outputIndex))
+		}
+		if !output.MultiplePopPaths &&
+			output.HistoricalBoundaryProvenance == core.HistoricalBoundaryConverged {
+			rank = output.HistoricalCleanPathRank
+			lineage = output.HistoricalCleanPathLineage
+		}
+		if output.HistoricalBoundaryProvenance == core.HistoricalBoundaryConverged &&
+			output.HistoricalAlternativeSet.Len() != 0 {
+			// Union unconditionally, unlike the !MultiplePopPaths-gated scalar
+			// override above: historical ancestry is a fact regardless of
+			// whether this same reduction also established a fresh split on
+			// this output (spec.b4b-alternative-set.v1 section 4). Fold-class
+			// union (spec.b4b-alternative-set.v2 section 3.4): this
+			// dispatch's own fresh outputSet and the imported dead history
+			// are two independently tracked sets.
+			incomparable := s.compact.AlternativeSetIncomparable(outputSet, output.HistoricalAlternativeSet)
+			s.compact.UnionAlternativeSet(&outputSet, output.HistoricalAlternativeSet)
+			outputSetBlended = outputSetBlended || output.HistoricalBlended || incomparable
+		}
 		switch output.Freshness {
 		case core.ReductionUnchanged:
+			if convergedHistory || resurrectionUnproved {
+				if _, err := s.adoptUpdatedReductionSibling(
+					cell.headerIndex,
+					output.Head,
+					rank,
+					lineage,
+					outputSet,
+					outputSetBlended,
+					convergedHistory,
+					resurrectionUnproved,
+				); err != nil {
+					return err
+				}
+			}
 			continue
 		case core.ReductionNew, core.ReductionUpdated:
 		default:
@@ -2852,7 +5313,16 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		}
 		madeFreshProgress = true
 		if output.Freshness == core.ReductionUpdated {
-			adopted, err := s.adoptUpdatedReductionSibling(cell.headerIndex, output.Head)
+			adopted, err := s.adoptUpdatedReductionSibling(
+				cell.headerIndex,
+				output.Head,
+				rank,
+				lineage,
+				outputSet,
+				outputSetBlended,
+				convergedHistory,
+				resurrectionUnproved,
+			)
 			if err != nil {
 				return err
 			}
@@ -2863,8 +5333,19 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		replacement := s.headers[cell.headerIndex]
 		replacement.head = output.Head
 		replacement.paused = false
-		replacement.shifted = s.token.NoLookahead
-		replacement.convergedReductionSplit = replacement.convergedReductionSplit || convergedReductionSplit
+		replacement.shifted = token.NoLookahead
+		replacement.convergedReductionSplit = replacement.convergedReductionSplit || convergedHistory
+		replacement.resurrectionUnproved = replacement.resurrectionUnproved || resurrectionUnproved
+		applyDiagnosticParserCoreCleanPathOutput(&replacement, rank, lineage)
+		if outputSet.Len() != 0 {
+			// Extend (spec.b4b-alternative-set.v2 section 3.4): this union
+			// plants exactly this dispatch's own established (and already
+			// fold-classified above) set onto its own uniformly extending
+			// derivation thread. It never independently computes
+			// incomparability; it only propagates outputSetBlended.
+			s.compact.UnionAlternativeSet(&replacement.altSet, outputSet)
+			replacement.blended = replacement.blended || outputSetBlended
+		}
 		if len(replacements) > 0 {
 			if s.nextSeq == math.MaxUint64 {
 				return errors.New("parser-core phase zero: reduction creation sequence overflow")
@@ -2897,6 +5378,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 	if err := s.canonicalize(); err != nil {
 		return err
 	}
+	if err := s.persistHeaderLineageOwned(owner); err != nil {
+		return err
+	}
 	if s.fullReceipts() {
 		after, err := diagnosticParserCoreHeaderReceipts(s.compact, s.headers)
 		if err != nil {
@@ -2911,17 +5395,46 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 			After: after,
 		})
 	}
-	if s.token.NoLookahead &&
+	if token.NoLookahead &&
 		Symbol(cell.actions().At(ordinal).Symbol) == s.options.noLookaheadRootSymbol {
 		s.requireEOFPostNoLookaheadRoot = true
 	}
 	return nil
 }
 
+// reindexCondenseCandidatesOwned retains only active sibling versions.
+// Tree-sitter C does not merge a new reduction into its source version.
+func (s *diagnosticParserCoreGenericScheduler) reindexCondenseCandidatesOwned(owner core.SchedulerTransactionToken, source int) error {
+	return s.compact.ReindexCondenseCandidatesOwned(owner, s.collectCondenseCandidates(source))
+}
+
+func (s *diagnosticParserCoreGenericScheduler) collectCondenseCandidates(source int) []core.CondenseCandidate {
+	candidates := s.condenseCandidates[:0]
+	for index, header := range s.headers {
+		if index == source || header.accepted || header.paused {
+			continue
+		}
+		candidates = append(candidates, core.CondenseCandidate{
+			Head: header.head, Shifted: header.shifted, Checkpoint: header.checkpoint,
+		})
+	}
+	s.condenseCandidates = candidates
+	return candidates
+}
+
 // adoptUpdatedReductionSibling updates an already-active canonical sibling in
 // place. The sibling keeps its scheduler slot and creation sequence; a paused
 // copy becomes runnable because the canonical boundary materially changed.
-func (s *diagnosticParserCoreGenericScheduler) adoptUpdatedReductionSibling(source int, head core.Head) (bool, error) {
+func (s *diagnosticParserCoreGenericScheduler) adoptUpdatedReductionSibling(
+	source int,
+	head core.Head,
+	rank core.CleanPathRankSelection,
+	lineage uint16,
+	set core.AlternativeSet,
+	setBlended bool,
+	convergedReductionSplit bool,
+	resurrectionUnproved bool,
+) (bool, error) {
 	for index := range s.headers {
 		if index == source {
 			continue
@@ -2937,6 +5450,21 @@ func (s *diagnosticParserCoreGenericScheduler) adoptUpdatedReductionSibling(sour
 		}
 		s.headers[index].head = head
 		s.headers[index].paused = false
+		s.headers[index].convergedReductionSplit =
+			s.headers[index].convergedReductionSplit || convergedReductionSplit
+		s.headers[index].resurrectionUnproved =
+			s.headers[index].resurrectionUnproved || resurrectionUnproved
+		applyDiagnosticParserCoreCleanPathOutput(&s.headers[index], rank, lineage)
+		if set.Len() != 0 {
+			// Fold-class union (spec.b4b-alternative-set.v2 section 3.4):
+			// index is a genuinely different, independently tracked header
+			// from source -- this is a joint-resolution merge, not a single
+			// thread's own uniform extension.
+			dst := &s.headers[index]
+			incomparable := s.compact.AlternativeSetIncomparable(dst.altSet, set)
+			s.compact.UnionAlternativeSet(&dst.altSet, set)
+			dst.blended = dst.blended || setBlended || incomparable
+		}
 		return true, nil
 	}
 	return false, nil
@@ -2946,13 +5474,31 @@ func (s *diagnosticParserCoreGenericScheduler) reconcileGenericConflictOutputs(s
 	kept := outputs[:0]
 	adopted := 0
 	for _, output := range outputs {
-		if output.freshness == core.ReductionUpdated {
-			ok, err := s.adoptUpdatedReductionSibling(source, output.head)
+		if output.freshness == core.ReductionUpdated || output.freshness == core.ReductionUnchanged {
+			// The conflict-arm path's diagnosticParserCoreActionOutput never
+			// carries HistoricalBoundaryProvenance (applyParserCoreConflictActionInto
+			// derives convergedReductionSplit from cleanPathLineage != 0
+			// alone, pre-dating and orthogonal to the F4 resurrection
+			// signal), so there is no resurrectionUnproved bit to thread
+			// here.
+			ok, err := s.adoptUpdatedReductionSibling(
+				source,
+				output.head,
+				output.cleanPathRank,
+				output.cleanPathLineage,
+				output.altSet,
+				output.blended,
+				output.cleanPathLineage != 0,
+				false,
+			)
 			if err != nil {
 				return nil, 0, err
 			}
 			if ok {
 				adopted++
+				continue
+			}
+			if output.freshness == core.ReductionUnchanged {
 				continue
 			}
 		}
@@ -2969,6 +5515,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflict(before []Dia
 		return err
 	}
 	dispatchesBefore, branchOrderBefore, nextSeqBefore := s.dispatches, s.branchOrder, s.nextSeq
+	nextCleanPathLineageBefore := s.nextCleanPathLineage
 	workBefore, epochProgressBefore := s.work, s.epochProgress
 	roundsBefore, conflictsBefore := len(s.receipt.Rounds), len(s.receipt.Conflicts)
 	externalShiftsBefore := len(s.receipt.ExternalShifts)
@@ -2978,6 +5525,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflict(before []Dia
 			return
 		}
 		s.dispatches, s.branchOrder, s.nextSeq = dispatchesBefore, branchOrderBefore, nextSeqBefore
+		s.nextCleanPathLineage = nextCleanPathLineageBefore
 		s.work, s.epochProgress = workBefore, epochProgressBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 		s.receipt.Conflicts = s.receipt.Conflicts[:conflictsBefore]
@@ -2993,6 +5541,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner c
 	if err = s.reserveDispatches(1); err != nil {
 		return err
 	}
+	if err = s.reindexCondenseCandidatesOwned(owner, cell.headerIndex); err != nil {
+		return err
+	}
 	externalStatsBefore, err := s.genericExternalStats()
 	if err != nil {
 		return err
@@ -3003,8 +5554,10 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner c
 	}
 	defer s.conflictScratch.finish()
 	execution, err := executeDiagnosticParserCoreGenericConflictDetailed(
-		s.compact, owner, s.headers[cell.headerIndex], cell.headerIndex, s.token, cell.boundary,
-		s.branchOrder, s.fullReceipts(), &s.conflictScratch,
+		s.compact, owner, s.headers[cell.headerIndex], cell.headerIndex, cell.dispatchToken(s.token), cell.boundary,
+		s.branchOrder, &s.nextCleanPathLineage,
+		cell.selectedBy == diagnosticParserCoreCellSelectionRepetitionFork,
+		s.fullReceipts(), &s.conflictScratch,
 	)
 	if err != nil {
 		return err
@@ -3100,6 +5653,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner c
 	if err := s.canonicalize(); err != nil {
 		return err
 	}
+	if err := s.persistHeaderLineageOwned(owner); err != nil {
+		return err
+	}
 	roundIndex := -1
 	if s.fullReceipts() {
 		primaryReceipts, err := diagnosticParserCoreHeaderReceipts(s.compact, primaries)
@@ -3138,7 +5694,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericConflictOwned(owner c
 		roundIndex = round.Index
 		s.receipt.Rounds = append(s.receipt.Rounds, round)
 		conflict := DiagnosticParserCoreGenericConflict{
-			ElectionIndex: s.electionIndex, Token: s.token, HeaderIndex: cell.headerIndex,
+			ElectionIndex: s.electionIndex, Token: cell.dispatchToken(s.token), HeaderIndex: cell.headerIndex,
 			BranchOrderBefore: branchOrderBefore, BranchOrderAfter: s.branchOrder,
 			NextCreationSeqBefore: nextSeqBefore, NextCreationSeqAfter: s.nextSeq,
 			Round: round, Prefix: prefixReceipts,
@@ -3187,43 +5743,55 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 		return err
 	}
 	ordinaryCohort := len(cells) > 1
-	for _, cell := range cells {
-		if cell.selectedActionOrdinal() != 0 {
+	for index := range cells {
+		cell := &cells[index]
+		if cell.selectedActionOrdinal() != 0 || cell.dispatchToken(s.token) != cells[0].dispatchToken(s.token) {
 			ordinaryCohort = false
 			break
 		}
 	}
 	if ordinaryCohort {
 		s.classifiedBoundaries = s.classifiedBoundaries[:0]
-		for _, cell := range cells {
+		for index := range cells {
+			cell := &cells[index]
 			s.classifiedBoundaries = append(s.classifiedBoundaries, cell.boundary)
 		}
-		heads, err := s.compact.ShiftOrdinaryClassifiedCohortOwned(owner, s.classifiedBoundaries, core.Token{
-			Symbol: core.Symbol(s.token.Symbol), StartByte: s.token.StartByte, EndByte: s.token.EndByte, External: s.token.ExternalScannerToken,
+		token := cells[0].dispatchToken(s.token)
+		heads, err := s.compact.ShiftOrdinaryClassifiedCohortWithLiveCondenseCandidatesOwned(owner, nil, s.classifiedBoundaries, core.Token{
+			Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte, External: token.ExternalScannerToken,
 		})
 		if err != nil {
 			return err
 		}
-		for index, cell := range cells {
+		for index := range cells {
+			cell := &cells[index]
 			s.headers[cell.headerIndex].head = heads[index]
 			s.headers[cell.headerIndex].shifted = true
+			markDiagnosticParserCoreExternalLineage(&s.headers[cell.headerIndex], token)
 		}
 		s.work.OrdinaryCohorts++
 	} else {
-		for _, cell := range cells {
+		for index := range cells {
+			cell := &cells[index]
 			ordinal := cell.selectedActionOrdinal()
 			action := cell.actions().At(ordinal)
 			if action.Type != core.ActionShift || action.Extra {
 				return errors.New("parser-core phase zero: ordinary shift selection is not an ordinary shift")
 			}
-			head, err := s.compact.ShiftClassifiedOwned(owner, cell.boundary, ordinal, core.Token{
-				Symbol: core.Symbol(s.token.Symbol), StartByte: s.token.StartByte, EndByte: s.token.EndByte, External: s.token.ExternalScannerToken,
-			}, core.ForkOrder{})
+			token := cell.dispatchToken(s.token)
+			shifted := core.Token{
+				Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte, External: token.ExternalScannerToken,
+			}
+			head, err := s.compact.ShiftClassifiedWithLiveCondenseCandidatesOwned(
+				owner, s.collectCondenseCandidates(cell.headerIndex),
+				cell.boundary, ordinal, shifted, core.ForkOrder{},
+			)
 			if err != nil {
 				return err
 			}
 			s.headers[cell.headerIndex].head = head
 			s.headers[cell.headerIndex].shifted = true
+			markDiagnosticParserCoreExternalLineage(&s.headers[cell.headerIndex], token)
 		}
 	}
 	s.epochProgress = true
@@ -3232,10 +5800,14 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericShiftsOwned(owner cor
 	if err := s.canonicalize(); err != nil {
 		return err
 	}
+	if err := s.persistHeaderLineageOwned(owner); err != nil {
+		return err
+	}
 	roundIndex := -1
 	if s.fullReceipts() {
 		actions := make([]DiagnosticParserCoreRoundAction, len(cells))
-		for index, cell := range cells {
+		for index := range cells {
+			cell := &cells[index]
 			ordinal := cell.selectedActionOrdinal()
 			actions[index] = DiagnosticParserCoreRoundAction{
 				HeaderIndex: cell.headerIndex, State: StateID(cell.boundary.State()), ByteOffset: cell.boundary.ByteOffset(),
@@ -3274,7 +5846,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 		if len(cells) == 0 {
 			return errors.New("parser-core phase zero: empty extra shift cohort")
 		}
-		for _, cell := range cells {
+		for index := range cells {
+			cell := &cells[index]
 			if cell.actions().Len() != 1 || cell.actions().At(0).Type != core.ActionShift || !cell.actions().At(0).Extra {
 				return errors.New("parser-core phase zero: extra cohort requires one decoded extra action per head")
 			}
@@ -3287,19 +5860,23 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 			return err
 		}
 		s.classifiedBoundaries = s.classifiedBoundaries[:0]
-		for _, cell := range cells {
+		for index := range cells {
+			cell := &cells[index]
 			s.classifiedBoundaries = append(s.classifiedBoundaries, cell.boundary)
 		}
-		heads, err := s.compact.ShiftExtraClassifiedCohortOwned(owner, s.classifiedBoundaries, core.Token{
-			Symbol: core.Symbol(s.token.Symbol), StartByte: s.token.StartByte, EndByte: s.token.EndByte,
-			Extra: true, External: s.token.ExternalScannerToken,
+		token := cells[0].dispatchToken(s.token)
+		heads, err := s.compact.ShiftExtraClassifiedCohortWithLiveCondenseCandidatesOwned(owner, nil, s.classifiedBoundaries, core.Token{
+			Symbol: core.Symbol(token.Symbol), StartByte: token.StartByte, EndByte: token.EndByte,
+			Extra: true, External: token.ExternalScannerToken,
 		})
 		if err != nil {
 			return err
 		}
-		for index, cell := range cells {
+		for index := range cells {
+			cell := &cells[index]
 			s.headers[cell.headerIndex].head = heads[index]
 			s.headers[cell.headerIndex].shifted = true
+			markDiagnosticParserCoreExternalLineage(&s.headers[cell.headerIndex], token)
 		}
 		if s.extraPostExecutionFault != nil {
 			if err := s.extraPostExecutionFault(); err != nil {
@@ -3315,6 +5892,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 		if err := s.canonicalize(); err != nil {
 			return err
 		}
+		if err := s.persistHeaderLineageOwned(owner); err != nil {
+			return err
+		}
 		roundIndex := -1
 		if s.fullReceipts() {
 			after, err := diagnosticParserCoreHeaderReceipts(s.compact, s.headers)
@@ -3322,7 +5902,8 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericExtraShifts(before []
 				return err
 			}
 			actions := make([]DiagnosticParserCoreRoundAction, len(cells))
-			for index, cell := range cells {
+			for index := range cells {
+				cell := &cells[index]
 				actions[index] = DiagnosticParserCoreRoundAction{
 					HeaderIndex: cell.headerIndex, State: StateID(cell.boundary.State()), ByteOffset: cell.boundary.ByteOffset(),
 					Ordinal: 0, Action: rootParserCoreAction(cell.actions().At(0)),
@@ -3544,15 +6125,28 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 		states = make([]StateID, 0, max(len(s.headers), 2*cap(states)))
 	}
 	for _, header := range s.headers {
-		receipt, err := s.headerReceipt(header)
+		state, err := s.electHeaderState(header)
 		if err != nil {
 			return err
 		}
-		shiftIdentity := receipt.Shifted || first && !receipt.Shifted
-		if !shiftIdentity || receipt.Accepted || header.checkpoint != s.checkpointID {
+		shiftIdentity := header.shifted || first && !header.shifted
+		// Precondition: s.checkpointID always holds a value produced by
+		// diagnosticParserCoreInternCheckpoint, set only at its two writer sites
+		// (the scheduler seed above and the election afterID assignment below), so
+		// this raw identity comparison is a sound substitute for a digest lookup.
+		if !shiftIdentity || header.accepted || header.checkpoint != s.checkpointID {
+			// Full receipts already validated the checkpoint while reading the
+			// header. Summary mode skips that digest lookup on the healthy hot
+			// path, but keeps the legacy invalid-checkpoint error when this cold
+			// identity gate rejects a malformed header.
+			if !s.fullReceipts() {
+				if _, _, ok := s.compact.CheckpointReceipt(header.checkpoint); !ok {
+					return errDiagnosticParserCoreUnknownCheckpointIdentity
+				}
+			}
 			return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreIdentity, detail: "generic scheduler election frontier is not closed and checkpoint-continuous"}
 		}
-		states = append(states, receipt.State)
+		states = append(states, state)
 	}
 	s.electStates = states
 	if s.observer.beforeElection != nil {
@@ -3611,7 +6205,7 @@ func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
 	if err := s.compact.BeginFrontier(); err != nil {
 		return err
 	}
-	if err := s.compact.SetPhaseCheckpoint(afterID); err != nil {
+	if err := s.compact.SetPhaseExternalTokenScannerCheckpoints(beforeID, afterID); err != nil {
 		return err
 	}
 	for index := range s.headers {
@@ -3747,6 +6341,7 @@ func authenticatedParserCoreGoLanguage(scanner ExternalScanner) (*Language, erro
 	}
 	decoded.Name = "go"
 	decoded.ExternalScanner = scanner
+	decoded.CompactConvergedReductionSplitDropsCertified = true
 	CertifyCRecoveryCostCompetition(decoded)
 	return decoded, nil
 }
@@ -3777,6 +6372,7 @@ func applyParserCoreConflictActionInto(
 	action core.Action,
 	ordinal int,
 	fork core.ForkOrder,
+	nextCleanPathLineage *uint16,
 ) ([]diagnosticParserCoreActionOutput, []core.ReductionOutput, error) {
 	if action.Type != core.ActionReduce {
 		switch action.Type {
@@ -3798,11 +6394,46 @@ func applyParserCoreConflictActionInto(
 	if err != nil {
 		return nil, outputs, err
 	}
-	for _, output := range outputs {
+	var lineage uint16
+	if len(outputs) != 0 && outputs[0].MultiplePopPaths {
+		lineage, err = nextDiagnosticParserCoreCleanPathLineage(nextCleanPathLineage)
+		if err != nil {
+			return nil, outputs, err
+		}
+		if err := compact.RecordReductionLineageOwned(owner, outputs, lineage); err != nil {
+			return nil, outputs, err
+		}
+	}
+	for outputIndex, output := range outputs {
+		var set core.AlternativeSet
+		var setBlended bool
+		if lineage != 0 {
+			// Establishment/extend (spec.b4b-alternative-set.v2 section
+			// 3.4): branch is this output's index within outputs, agreeing
+			// with RecordReductionLineageOwned's identical iteration above.
+			set = core.NewAlternativeSetMember(lineage, uint16(outputIndex))
+		}
+		if output.HistoricalBoundaryProvenance == core.HistoricalBoundaryConverged &&
+			output.HistoricalAlternativeSet.Len() != 0 {
+			// Fold-class union (spec.b4b-alternative-set.v2 section 3.4):
+			// see applyGenericReductionOwned's identical dead-node-import site.
+			incomparable := compact.AlternativeSetIncomparable(set, output.HistoricalAlternativeSet)
+			compact.UnionAlternativeSet(&set, output.HistoricalAlternativeSet)
+			setBlended = setBlended || output.HistoricalBlended || incomparable
+		}
 		switch output.Freshness {
 		case core.ReductionUnchanged:
+			dst = append(dst, diagnosticParserCoreActionOutput{
+				head: output.Head, freshness: output.Freshness,
+				cleanPathRank: output.CleanPathRank, cleanPathLineage: lineage, cleanPathSet: set,
+				cleanPathBlended: setBlended,
+			})
 		case core.ReductionNew, core.ReductionUpdated:
-			dst = append(dst, diagnosticParserCoreActionOutput{head: output.Head, freshness: output.Freshness})
+			dst = append(dst, diagnosticParserCoreActionOutput{
+				head: output.Head, freshness: output.Freshness,
+				cleanPathRank: output.CleanPathRank, cleanPathLineage: lineage, cleanPathSet: set,
+				cleanPathBlended: setBlended,
+			})
 		default:
 			return nil, outputs, errors.New("parser-core phase zero: reduction returned invalid freshness")
 		}

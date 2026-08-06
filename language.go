@@ -169,6 +169,16 @@ type ProductionSignature struct {
 	RHS          []Symbol
 }
 
+// UnaryWrapperFlatteningRule identifies one exact public-parent, wrapper, leaf,
+// and parser-state chain that native materialization must flatten. Runtime
+// profiles attach these rules only to certified grammar artifacts.
+type UnaryWrapperFlatteningRule struct {
+	PublicParent        Symbol
+	Wrapper             Symbol
+	Leaf                Symbol
+	WrapperPreGotoState StateID
+}
+
 // ExternalScanner is the interface for language-specific external scanners.
 // Languages like Python and JavaScript need these for indent tracking,
 // template literals, regex vs division, etc.
@@ -384,6 +394,10 @@ type FullParseAcceptedErrorRetryProfile struct {
 	// ReuseCleanWideMinSourceBytes limits clean-wide reuse to the certified
 	// large-source class. Zero disables the policy even when the boolean is set.
 	ReuseCleanWideMinSourceBytes uint32
+	// GSSConvergenceAcceptedErrorMergePerKey sets the exact merge width for an
+	// accepted-error retry after a certified cap-one full parse. Zero keeps the
+	// other retry policies. Explicit environment settings disable this policy.
+	GSSConvergenceAcceptedErrorMergePerKey uint16
 }
 
 // ResultCompatibilityCapability records result-tree shapes that a language
@@ -405,6 +419,10 @@ const (
 	// metadata alone is insufficient. Keep the bit append-only because Language
 	// blobs encode capability values.
 	ResultCompatibilityNativeCollapsedChildren ResultCompatibilityCapability = 1 << 5
+	// ResultCompatibilityNativeRecoveredStructure permits receipt checks for
+	// error-bearing native roots. Consumers must also verify the complete source
+	// span, raw top-level spans, and the isolated-error shape.
+	ResultCompatibilityNativeRecoveredStructure ResultCompatibilityCapability = 1 << 6
 )
 
 // Language holds all data needed to parse a specific language.
@@ -610,6 +628,17 @@ type Language struct {
 	compactTables     any   // *parserCoreLanguageTables under the default build
 	compactTablesErr  error // the build error, memoized alongside compactTables
 
+	// corridorProgram memoizes the compiled C4 bytecode corridor program for
+	// this Language (spec.c4-bytecode-isa.v1 section 3.6: the stream is
+	// memoized per *Language beside compactTables and dies with the Language).
+	// It is typed as any for the same reason compactTables is: the concrete
+	// type (*ParserCoreCorridorProgram) only exists under the default build.
+	// A grammar whose compile hits an unsupported construct simply keeps the
+	// generic lane, so a non-nil corridorProgramErr is never fatal.
+	corridorProgramOnce sync.Once
+	corridorProgram     any   // *ParserCoreCorridorProgram under the default build
+	corridorProgramErr  error // the compile error, memoized alongside corridorProgram
+
 	// NonTerminalAliasMap mirrors tree-sitter C's ts_non_terminal_alias_map.
 	// Rows are indexed by nonterminal symbol and contain aliases that require
 	// preserving the wrapper during alias-bearing reductions. This is cold
@@ -646,11 +675,25 @@ type Language struct {
 	// custom or adapted languages; false preserves the baseline arena policy.
 	FullParseArenaDensityCapEnabled bool
 
+	// FullParseGSSConvergenceEnabled certifies faithful convergence for this
+	// language artifact. The parser keeps clean alternatives in the graph when
+	// one stack survives each merge group. Checked-in languages receive this
+	// setting only through an exact blob profile. Callers can enable it for
+	// custom languages after equivalent tree tests. An explicit merge limit of
+	// one also enables this behavior for a fresh full parse.
+	FullParseGSSConvergenceEnabled bool
+
 	// NativeResultCompatibility identifies result-tree shapes produced natively
 	// by this exact language artifact. Zero keeps conservative post-parse
 	// compatibility fallbacks for legacy blobs, generated grammars, caller-built
 	// languages, and overrides whose native behavior has not been certified.
 	NativeResultCompatibility ResultCompatibilityCapability
+
+	// NativeUnaryWrapperFlattening identifies exact same-span unary wrappers
+	// that C omits below a public parent in one parser state. Exact runtime
+	// profiles populate the symbol and state identities. Custom and stale
+	// artifacts keep the wrappers.
+	NativeUnaryWrapperFlattening []UnaryWrapperFlatteningRule
 
 	// CompactConvergedReductionSplitDropsCertified permits the compact
 	// fresh-full route to accept after it drops a no-action head descended from
@@ -676,6 +719,44 @@ type Language struct {
 	// bounded equivalence can merge parity-relevant shapes. Custom, adapted, and
 	// stale artifacts retain bounded equivalence unless callers opt in.
 	ExactStackNodeEquivalenceCertified bool
+
+	// CompactStrategy2ErrorRegionCertified permits the compact fresh-full route
+	// to attempt native strategy-2 recovery (error-region absorb and
+	// condense-resume, campaign v7 tranche B3 stage S3) for a true no-table-
+	// action point: close in-progress productions on a single deterministic
+	// path, open an ERROR region, absorb tokens the table cannot place, and
+	// resume once the pre-error state accepts the current token. Exact
+	// built-in profiles set this only after C-oracle parity proves the
+	// resulting tree matches the pinned C oracle exactly for the certified
+	// witness class. Custom and adapted languages fail closed: an
+	// uncertified grammar keeps declining to production at the same
+	// no-action point exactly as before this stage landed.
+	CompactStrategy2ErrorRegionCertified bool
+
+	// LineContinuationEscapeByte declares the single byte this language's
+	// scanner treats as a line-continuation escape when immediately followed
+	// by a newline (LF, or CR+LF) — for example PowerShell's backtick. C
+	// tree-sitter's scanner consumes an escape+newline pair as ordinary
+	// skipped trivia, the same treatment bytesAreParserPadding (mid-parse gap
+	// classification) and parserTailAllowsCleanAcceptance (accepted-stack and
+	// accepted-tree tail classification) already give backslash+newline
+	// unconditionally. Backslash needs no per-language gate because no
+	// grammar this parser loads leaves a bare backslash+newline as an
+	// uncovered gap that must not be crossed: languages whose grammar assigns
+	// backslash+newline its own meaning (for example Python's line_continuation
+	// node) tokenize it as a real, accounted-for node rather than leaving a
+	// gap for these padding checks to ever see. An arbitrary escape byte
+	// cannot get that same unconditional treatment because it can collide
+	// with unrelated grammar meaning elsewhere (for example backtick opens a
+	// Markdown fence and a shell command substitution), so acceptance
+	// requires this explicit per-language declaration. Zero (the default)
+	// declares no continuation escape and leaves padding classification
+	// exactly as it was before this field existed. Exact built-in profiles
+	// set this only after C-oracle parity confirms the escape+newline pair is
+	// scanner-owned padding for the certified blob (see
+	// grammars/runtime_profiles.go). Custom, adapted, and generated languages
+	// default to zero and are unaffected.
+	LineContinuationEscapeByte byte
 }
 
 type symbolNameNamedKey struct {

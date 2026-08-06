@@ -84,6 +84,46 @@ var incrGateCorpus = []incrGateCorpusEntry{
 	// one the campaign's evidence base describes as already having
 	// working top-level sibling reuse.
 	{language: "css", path: "css_stylesheet.css", stride: 300},
+	// c_repeated_functions.c: there was previously no C entry in this
+	// corpus at all, which is how issue #454's C incremental-delete defect
+	// (see TestIssue454CIncrementalDeleteMatchesFresh,
+	// grammars/c_issue454_regression_test.go, for the exact 1-node repro
+	// pinned as a named regression) escaped: no gate exercised a
+	// large-enough C fixture to trip ParseStopMemoryBudget. This entry adds
+	// the same harness's general-purpose sweep coverage for C (broad
+	// structural-divergence protection at every "genuinely clean" edit
+	// site, matching every other language above) using the same
+	// repeated-function generator shape, scaled down to 24 KiB.
+	//
+	// It deliberately does NOT re-exercise issue #454's exact failure mode:
+	// that defect's edit is a "transient error" by construction (deleting
+	// one byte of an "x0" identifier leaves the invalid declarator "0", so
+	// the FRESH parse of the edited text always carries a local ERROR/MISSING
+	// node near the edit). This gate's freshClean scope deliberately excludes
+	// exactly that class of site (see the file-level doc comment above) --
+	// confirmed interactively: sweeping this fixture with the fix reverted
+	// still reports zero divergences, because the one site that reaches
+	// ParseStopMemoryBudget (a delete landing inside an "xN" declarator, the
+	// same shape as the reported defect) is excluded from freshClean before
+	// the comparison ever runs. TestIssue454CIncrementalDeleteMatchesFresh
+	// has no such filter and is the actual regression gate for that defect.
+	//
+	// stride=3999 was chosen after an interactive sweep of this exact
+	// fixture found delete/insert edits at several byte offsets (not
+	// monotonic in position -- keyed to which token the edit lands in) drove
+	// NewNodesAllocated past 700K (correct once resolved, ~0.6-1.5s wall
+	// time at this 24 KiB scale) before the same ParseStopMemoryBudget
+	// fallback in production landed on one of them (byte 4000) at every
+	// checked stack (both ParseIncrementalWithTokenSource, this gate's own
+	// route for "c", and the plain DFA path). At the full ~137 KiB scale
+	// used by the named regression test, the same pattern was observed
+	// taking upward of a minute at some offsets before the fallback resolves
+	// it correctly -- too slow and non-uniform for a general sweep's CI
+	// budget, hence the smaller fixture here. 7 sites span top (byte 1)
+	// through near-bottom (byte 23995) of the 24616-byte fixture per the
+	// task's "top/middle/bottom" ask, and this sweep completes in well
+	// under a minute even when every site is reuse-hostile.
+	{language: "c", path: "c_repeated_functions.c", stride: 3999},
 }
 
 type incrGateCorpusEntry struct {
@@ -171,6 +211,24 @@ func TestIncrementalInvariantGateRust(t *testing.T) {
 
 func TestIncrementalInvariantGateCSS(t *testing.T) {
 	testIncrementalInvariantGateLanguage(t, "css")
+}
+
+// TestIncrementalInvariantGateC adds C to this file's general sweep, using
+// the same harness every other language gate uses. There was previously no C
+// entry in incrGateCorpus at all -- part of how issue #454's C
+// incremental-delete defect (a reuse-hostile delete tripped
+// ParseStopMemoryBudget and published a 1-node ERROR tree against a fresh
+// parse of tens of thousands of nodes) escaped: C shipped "certified" (a
+// reuse path opened) with no gate exercising a large-enough fixture to trip
+// the failure. This sweep's freshClean scope structurally excludes that
+// defect's own edit shape (see the c_repeated_functions.c corpus entry's
+// comment for why); TestIssue454CIncrementalDeleteMatchesFresh
+// (grammars/c_issue454_regression_test.go) is the pinned named regression
+// for that specific defect. This gate is the general-purpose complement:
+// broad structural-divergence protection for C at every genuinely clean
+// edit site, matching the coverage every other language here already has.
+func TestIncrementalInvariantGateC(t *testing.T) {
+	testIncrementalInvariantGateLanguage(t, "c")
 }
 
 func testIncrementalInvariantGateLanguage(t *testing.T, language string) {

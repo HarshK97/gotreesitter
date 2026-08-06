@@ -86,11 +86,56 @@ const (
 	// example a trailing extra/whitespace token attached outside the
 	// accepted derivation).
 	censusMechanismEOFByteShort admissionCensusMechanism = "eof-byte-short-frontier"
+	// censusMechanismNoTableAction: every runnable frontier head lacks an
+	// action for the elected token. This often marks an input that needs
+	// recovery. A clean production tree can instead reveal a scheduler gap.
+	//
+	// B3 stage S1 promoted the pure form of this shape (every no-action head
+	// genuinely table-empty, none from the unrelated group-election pause)
+	// from a detail-string match here to its own dispatch boundary,
+	// DiagnosticParserCoreRecovery (parsercore_phase0_driver.go), which
+	// classifies as censusMechanismRecovery below instead. This case and
+	// constant stay as a defensive mapping for any other caller that still
+	// pairs DiagnosticParserCoreNoAction with diagnosticParserCoreNoTableActionDetail.
+	censusMechanismNoTableAction admissionCensusMechanism = "no-table-action"
 	// censusMechanismSchedulerShape: the generic scheduler's structural
 	// invariants (sole runnable head, homogeneous accept frontier, no mixed
 	// accepted/shifted heads, closed-and-checkpoint-continuous election) were
 	// not met, independent of any specific grammar feature.
 	censusMechanismSchedulerShape admissionCensusMechanism = "scheduler-frontier-shape"
+	// censusMechanismAcceptedLeafTilingGap: the scheduler accepted a clean,
+	// full-span root, but diagnosticParserCoreReduceChildrenTilingGap
+	// (parsercore_phase0_driver.go, campaign v7 tranche B1), checked once per
+	// reduce during materialization, found a byte range under some subtree's
+	// declared span with no covering child and no tolerated-trivia excuse.
+	// This is the false-clean route-equality gate: without it, the accepted
+	// derivation would publish HasError()==false while production and the
+	// locked C oracle both return an error tree for the same input
+	// (cgo_harness/testdata/compact_t3_oracle_witnesses_v2.json).
+	censusMechanismAcceptedLeafTilingGap admissionCensusMechanism = "accepted-leaf-tiling-gap"
+	// censusMechanismAcceptedRootLeadingGap: the accepted derivation's own
+	// root reduce declared a span starting after the source's first
+	// non-trivia byte (parsercore_phase0_driver.go,
+	// materializeDiagnosticParserCoreAcceptedSelection). The root reduce is
+	// exempt from censusMechanismAcceptedLeafTilingGap's own-children check
+	// (isDerivationRootReduce), so a dropped leading byte at the root symbol
+	// itself passes that gate by construction; the shared post-materialization
+	// normalizeRootSourceStart (parser_result_root_build.go) then pulls the
+	// public root span back over the gap on the assumption of a legitimately
+	// elided leading extra, publishing HasError()==false. This is the second,
+	// root-specific false-clean route-equality gate: without it, an accepted
+	// derivation that never represented one real byte at document start would
+	// publish a clean tree while production and the locked C oracle both
+	// report an error for the same input.
+	censusMechanismAcceptedRootLeadingGap admissionCensusMechanism = "accepted-root-leading-gap"
+	// censusMechanismMaterialAcceptanceElection: the accepted head carried a
+	// tied compact acceptance election (selectCompactAcceptanceDerivation's
+	// score-tie guard, gated by compactAcceptanceElectionIsVacuous in
+	// parsercore_phase0_driver.go) with more than one live derivation, and
+	// materializing every one of them did not prove they all publish the
+	// same tree. The route declines instead of admitting the positional
+	// primary derivation; production still serves the input.
+	censusMechanismMaterialAcceptanceElection admissionCensusMechanism = "material-acceptance-election"
 	// censusMechanismOther is the catch-all for a decline this classifier
 	// does not yet recognize. The full original detail is always preserved
 	// alongside it.
@@ -147,7 +192,23 @@ func admissionCensusClassify(boundary DiagnosticParserCoreBoundaryKind, detail s
 		default:
 			return censusMechanismSchedulerShape
 		}
-	case DiagnosticParserCoreNoAction, DiagnosticParserCoreAccept, DiagnosticParserCoreGenericClosed:
+	case DiagnosticParserCoreNoAction:
+		if detail == diagnosticParserCoreNoTableActionDetail {
+			return censusMechanismNoTableAction
+		}
+		return censusMechanismSchedulerShape
+	case DiagnosticParserCoreAccept:
+		switch {
+		case strings.Contains(detail, "accepted-leaf-tiling-gap"):
+			return censusMechanismAcceptedLeafTilingGap
+		case strings.Contains(detail, "accepted-root-leading-gap"):
+			return censusMechanismAcceptedRootLeadingGap
+		case strings.Contains(detail, "material-acceptance-election"):
+			return censusMechanismMaterialAcceptanceElection
+		default:
+			return censusMechanismSchedulerShape
+		}
+	case DiagnosticParserCoreGenericClosed:
 		return censusMechanismSchedulerShape
 	case censusBoundaryMultiDerivation:
 		return censusMechanismMultiDerivation

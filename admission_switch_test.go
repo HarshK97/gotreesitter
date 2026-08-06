@@ -251,10 +251,15 @@ func TestAdmissionSwitchDeclinesWhenIncludedRangesSet(t *testing.T) {
 	}
 }
 
-// TestAdmissionSwitchDeclinesWhenTimeoutSet proves the candidate route declines
-// when a caller set a timeout: the compact scheduler does not poll deadlines, so
-// the parse stays on production which honors it.
-func TestAdmissionSwitchDeclinesWhenTimeoutSet(t *testing.T) {
+// TestAdmissionSwitchConsultsCandidateWhenTimeoutSetButNotExpired proves
+// that, since tranche B8 wired the scheduler's own deadline poll, a live but
+// unexpired timeout no longer declines eligibility outright: the parse now
+// consults the candidate route (one routing event) and still returns a clean
+// tree. Like the rest of this file it asserts the routing EVENT, not which
+// engine served the parse, so it holds under every build (including
+// -tags gts_no_parsercorephase0, where the engine itself is a stub that
+// always declines: the event still fires, just as a fallback).
+func TestAdmissionSwitchConsultsCandidateWhenTimeoutSetButNotExpired(t *testing.T) {
 	restore := gts.AdmissionCandidateRouteDefault()
 	defer gts.SetAdmissionCandidateRouteDefault(restore)
 	gts.SetAdmissionCandidateRouteDefault(true)
@@ -268,14 +273,19 @@ func TestAdmissionSwitchDeclinesWhenTimeoutSet(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	defer tree.Release()
-	if got := admissionRoutingEvents(t); got != before {
-		t.Fatalf("a timeout must keep the parse on production: %d -> %d", before, got)
+	requireCleanFullTree(t, tree, source, "timeout-armed-but-not-tripped")
+	if got := tree.ParseStopReason(); got == gts.ParseStopTimeout {
+		t.Fatalf("a generous timeout must not trip: ParseStopReason() = %q", got)
+	}
+	if got := admissionRoutingEvents(t); got != before+1 {
+		t.Fatalf("a live but unexpired timeout must be eligible (exactly one routing event): %d -> %d", before, got)
 	}
 }
 
-// TestAdmissionSwitchDeclinesWhenCancellationFlagSet proves the candidate route
-// declines when a caller set a cancellation flag.
-func TestAdmissionSwitchDeclinesWhenCancellationFlagSet(t *testing.T) {
+// TestAdmissionSwitchConsultsCandidateWhenCancellationFlagSetButNotTripped is
+// the cancellation-flag counterpart of
+// TestAdmissionSwitchConsultsCandidateWhenTimeoutSetButNotExpired.
+func TestAdmissionSwitchConsultsCandidateWhenCancellationFlagSetButNotTripped(t *testing.T) {
 	restore := gts.AdmissionCandidateRouteDefault()
 	defer gts.SetAdmissionCandidateRouteDefault(restore)
 	gts.SetAdmissionCandidateRouteDefault(true)
@@ -290,8 +300,12 @@ func TestAdmissionSwitchDeclinesWhenCancellationFlagSet(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 	defer tree.Release()
-	if got := admissionRoutingEvents(t); got != before {
-		t.Fatalf("a cancellation flag must keep the parse on production: %d -> %d", before, got)
+	requireCleanFullTree(t, tree, source, "cancellation-armed-but-not-tripped")
+	if got := tree.ParseStopReason(); got == gts.ParseStopCancelled {
+		t.Fatalf("an unset cancellation flag must not trip: ParseStopReason() = %q", got)
+	}
+	if got := admissionRoutingEvents(t); got != before+1 {
+		t.Fatalf("a live but untripped cancellation flag must be eligible (exactly one routing event): %d -> %d", before, got)
 	}
 }
 
@@ -401,18 +415,22 @@ func TestAdmissionSwitchDeclinesWhenLoggerAttached(t *testing.T) {
 	}
 }
 
-// TestAdmissionCandidateMemoryBudgetContractPreserved proves the Phase-3 size
-// gate keeps the automatic large-input memory budget contract intact even with
-// the candidate route on by default.
+// TestAdmissionCandidateMemoryBudgetContractPreserved proves the automatic
+// large-input memory budget contract survives tranche B9's removal of the
+// source-length eligibility decline.
 //
-// The compact scheduler does not poll the automatic memory budget, so the
-// switch declines every input at or above the source-length floor where the
-// production route arms that budget (parseRuntimeMemoryMinSourceBytes, 64 KiB).
-// Such inputs stay on production and honor ParseStopMemoryBudget. Inputs below
-// the floor, where no budget arms on either route, still route freely.
+// Before tranche B9, the switch declined every input at or above
+// parseRuntimeMemoryMinSourceBytes (64 KiB) outright: the compact scheduler
+// never attempted them, so it never needed to poll the budget itself. Tranche
+// B9 removed that decline; a large input now attempts the candidate route
+// like any other. The tranche B8 scheduler stop-control poll is what keeps
+// the contract intact: it compares the compact core's own deterministic
+// StorageBytes() against the same soft budget production's arena/scratch
+// accounting honors, declines (falls back to production) when the budget is
+// exceeded, and releases the compact core's storage before returning -- so a
+// pathological large input still stops at the configured budget and still
+// reports ParseStopMemoryBudget, just via a different mechanism than before.
 func TestAdmissionCandidateMemoryBudgetContractPreserved(t *testing.T) {
-	// Pin the gate to the single source of truth rather than copy the 64 KiB
-	// literal (parseRuntimeMemoryMinSourceBytes, parser_memory_budget_runtime.go).
 	minBudgetSourceBytes := gts.ParseRuntimeMemoryMinSourceBytesForTest()
 
 	restore := gts.AdmissionCandidateRouteDefault()
@@ -421,7 +439,7 @@ func TestAdmissionCandidateMemoryBudgetContractPreserved(t *testing.T) {
 
 	lang := grammars.GoLanguage()
 
-	// Positive control: a small clean source below the floor routes.
+	// Positive control: a small clean source routes.
 	small := []byte(grammars.ParseSmokeSample("go"))
 	if len(small) == 0 || len(small) >= minBudgetSourceBytes {
 		t.Skipf("go smoke sample unsuitable for the control (%d bytes)", len(small))
@@ -433,21 +451,22 @@ func TestAdmissionCandidateMemoryBudgetContractPreserved(t *testing.T) {
 		t.Fatalf("small parse: %v", err)
 	}
 	smallTree.Release()
+	compiledOut := false
 	if routed, _ := gts.AdmissionCandidateCounters(); routed == 0 {
 		// In the emergency opt-out build (-tags gts_no_parsercorephase0) the
 		// compact engine is compiled out, so every eligible parse fails closed and
-		// the routed counter cannot move. The size-gate contract this test proves
-		// (budget-eligible inputs stay on production) still holds, so skip the
-		// positive control rather than fail. The stub records the "compiled out"
-		// fallback reason (admission_switch_stub.go).
+		// the routed counter cannot move. The budget contract this test proves
+		// still holds trivially (every parse stays on production), so record that
+		// and skip the routing-specific assertions below rather than fail.
 		if reason := gts.AdmissionCandidateLastFallbackReason(); strings.Contains(reason, "compiled out") {
-			t.Skip("compact candidate route compiled out (-tags gts_no_parsercorephase0); the routed counter cannot move")
+			compiledOut = true
+		} else {
+			t.Fatalf("small clean source did not route to the candidate; routed=%d", routed)
 		}
-		t.Fatalf("small clean source below the floor did not route to the candidate; routed=%d", routed)
 	}
 
-	// A clean source at or above the floor must NOT route: the size gate keeps
-	// it on production even with the switch on.
+	// A clean source well above the former 64 KiB floor now routes too: no
+	// eligibility decline stops it by length alone (tranche B9).
 	var big bytes.Buffer
 	big.WriteString("package p\n\nfunc f() {\n")
 	for big.Len() < minBudgetSourceBytes+(1<<15) {
@@ -464,59 +483,23 @@ func TestAdmissionCandidateMemoryBudgetContractPreserved(t *testing.T) {
 		t.Fatalf("large parse: %v", err)
 	}
 	bigTree.Release()
-	if routed, _ := gts.AdmissionCandidateCounters(); routed != 0 {
-		t.Fatalf("source of %d bytes (>= %d floor) routed to the candidate; the memory-budget size gate did not decline it (routed=%d)",
-			big.Len(), minBudgetSourceBytes, routed)
+	if routed, fallback := gts.AdmissionCandidateCounters(); !compiledOut && (routed != 1 || fallback != 0) {
+		t.Fatalf("source of %d bytes (>= %d former floor) did not route cleanly to the candidate: routed=%d fallback=%d reason=%q",
+			big.Len(), minBudgetSourceBytes, routed, fallback, gts.AdmissionCandidateLastFallbackReason())
 	}
 
-	// Exact-boundary cases pin the gate's strict comparison
-	// (admissionCandidateInputSizeEligible: sourceLen < floor): floor-1 is
-	// eligible and admits, the floor byte is not eligible and declines.
-	for _, bc := range []struct {
-		name       string
-		length     int
-		wantRouted bool
-	}{
-		{"floor_minus_one", minBudgetSourceBytes - 1, true},
-		{"floor_exact", minBudgetSourceBytes, false},
-	} {
-		src := cleanGoSourceOfExactLength(t, bc.length)
-		if len(src) != bc.length {
-			t.Fatalf("%s: built %d bytes, want exactly %d", bc.name, len(src), bc.length)
-		}
-		gts.ResetAdmissionCandidateCountersForTest()
-		boundaryParser := gts.NewParser(lang)
-		boundaryTree, parseErr := boundaryParser.Parse(src)
-		if parseErr != nil {
-			t.Fatalf("%s parse: %v", bc.name, parseErr)
-		}
-		boundaryTree.Release()
-		routed, _ := gts.AdmissionCandidateCounters()
-		if bc.wantRouted {
-			if routed == 0 {
-				// The size gate admitted the input (it is below the floor). Whether the
-				// compact engine then accepts it is a separate concern; in the emergency
-				// opt-out build it is always declined. Only a size-gate failure is a bug.
-				if reason := gts.AdmissionCandidateLastFallbackReason(); strings.Contains(reason, "compiled out") {
-					continue
-				}
-				t.Fatalf("%s (%d bytes, below the %d floor) did not route; the size gate must admit it (routed=%d, reason=%q)",
-					bc.name, bc.length, minBudgetSourceBytes, routed, gts.AdmissionCandidateLastFallbackReason())
-			}
-			continue
-		}
-		if routed != 0 {
-			t.Fatalf("%s (%d bytes, at the %d floor) routed; the size gate must decline it (routed=%d)",
-				bc.name, bc.length, minBudgetSourceBytes, routed)
-		}
-	}
-
-	// With a low budget, a pathological large source on production honors
-	// ParseStopMemoryBudget -- the exact contract the size gate preserves by
-	// routing every budget-eligible input to production.
+	// With a low budget, a pathological large source still stops at
+	// ParseStopMemoryBudget: the candidate route attempts it, the scheduler's
+	// storage-based stop-control poll trips before completion (an engine
+	// decline, not a never-attempted eligibility decline), and production
+	// serves the fallback honoring the identical configured budget. The
+	// decline must also release the compact core's storage before returning,
+	// so production's fallback never runs alongside retained compact storage
+	// (tranche B9 storage-release gate).
 	t.Setenv("GOT_PARSE_MEMORY_BUDGET_MB", "1")
 	gts.ResetParseEnvConfigCacheForTests()
 	defer gts.ResetParseEnvConfigCacheForTests()
+	gts.DrainArenaPools()
 
 	var huge bytes.Buffer
 	huge.WriteString("package p\nfunc f() {\n")
@@ -531,33 +514,158 @@ func TestAdmissionCandidateMemoryBudgetContractPreserved(t *testing.T) {
 		t.Fatalf("huge parse: %v", err)
 	}
 	defer hugeTree.Release()
-	if routed, _ := gts.AdmissionCandidateCounters(); routed != 0 {
-		t.Fatalf("budgeted large source routed to the candidate; routed=%d", routed)
-	}
 	if got := hugeTree.ParseStopReason(); got != gts.ParseStopMemoryBudget {
-		t.Fatalf("ParseStopReason() = %q, want %q (production must honor the budget the candidate cannot poll)",
+		t.Fatalf("ParseStopReason() = %q, want %q (production must serve the fallback and honor the budget)",
 			got, gts.ParseStopMemoryBudget)
+	}
+	if routed, fallback := gts.AdmissionCandidateCounters(); routed != 0 || (!compiledOut && fallback != 1) {
+		t.Fatalf("budgeted huge source: routed=%d fallback=%d (want routed=0, fallback=1 unless compiled out)", routed, fallback)
+	}
+	// StorageBytes reads 0 after any Reset regardless of retained capacity
+	// (it counts live length, not backing-array size), so it cannot detect a
+	// decline that reset length but left a large arena retained -- assert
+	// FootprintBytes instead, which reads real capacity. requireCompactFootprintReleased
+	// bounds it well under the pre-fix retained level (157-193MB measured for
+	// this decline class before the retention-cap gate existed).
+	requireCompactFootprintReleased(t, hugeParser, "stop-control memory-budget decline")
+}
+
+// compactFootprintReleasedCapBytes bounds a "genuinely released" reading in
+// the tests below. It intentionally sits above internal/parsercorephase0's
+// own coreRetentionCapBytes (48 MiB): these tests assert the OUTCOME
+// (retention stays in the same order of magnitude as production's own
+// steady-state ~12-15MB, not the 157-193MB measured before the tranche B9
+// retention-cap gate), not the exact internal threshold, so the two can
+// evolve independently without coupling this test to that constant's value.
+//
+// Only one of the three requireCompactFootprintReleased call sites below is
+// load-bearing against a deleted release call. Measured on the development
+// host with release disabled: the stop-control decline's witness peaks
+// around 1 MiB, and the acceptance-gate decline's witness peaks under
+// 0.1 MiB -- both already well under this cap whether or not release runs,
+// so their own assertions pass either way and prove only the OUTPUT (a
+// small footprint), not that release produced it. The
+// materialization-decline witness peaks around 77 MiB un-released, so it
+// is the one call site here that actually fails when the release call is
+// removed. Keep that witness large enough to clear this cap if it is ever
+// resized.
+const compactFootprintReleasedCapBytes = 64 << 20 // 64 MiB
+
+// requireCompactFootprintReleased asserts p's cached admission-candidate
+// runner's compact-core FootprintBytes (real retained capacity, not live
+// length) stays well under the pre-fix retained level after a decline,
+// proving the tranche B9 storage-release gate for the class of decline
+// label names.
+func requireCompactFootprintReleased(t *testing.T, p *gts.Parser, label string) {
+	t.Helper()
+	if got := gts.AdmissionCandidateCompactFootprintBytesForTest(p); got > compactFootprintReleasedCapBytes {
+		t.Fatalf("%s: compact footprint retained after decline: %d bytes (want <= %d, released before production's fallback ran)",
+			label, got, compactFootprintReleasedCapBytes)
 	}
 }
 
-// cleanGoSourceOfExactLength builds a valid Go source of exactly n bytes. It
-// pads the remainder inside a mid-source block comment (trivia the parser
-// skips) and ends with a clean statement, so the source parses cleanly at any
-// exact byte length at or above the minimum without a trailing-trivia EOF edge.
-func cleanGoSourceOfExactLength(t *testing.T, n int) []byte {
-	t.Helper()
-	const prefix = "package p\n/*"   // opens the padding block comment
-	const suffix = "*/\nvar x = 1\n" // closes it, then a clean statement
-	if n < len(prefix)+len(suffix) {
-		t.Fatalf("exact length %d is below the %d-byte minimum valid program", n, len(prefix)+len(suffix))
+// TestAdmissionCandidateStorageReleasedOnAcceptanceGateDecline drives the
+// acceptance-gate decline class specifically -- a different release path
+// from TestAdmissionCandidateMemoryBudgetContractPreserved's stop-control
+// class above. Here the compact scheduler run itself completes without a Go
+// error (it never reaches an accepted EOF frontier, so
+// RunFreshSchedulerSession commits rather than resets), and the runner's own
+// strict sole-exact-EOF acceptance gate declines afterward
+// (requireParserCoreFreshFullAcceptance, parsercore_phase0_fresh_full_runner.go).
+// Before the tranche B9 reset-completeness gate, this specific path retained
+// whatever the scheduler run had allocated until the next parse call on the
+// same runner reset it lazily.
+//
+// The Go generic-instantiation/type-conversion ambiguity
+// (TestAdmissionCandidateGoTypeConversionFailsClosed's witness) triggers
+// this class naturally: the compact scheduler forks on the conflict but
+// cannot rank the two arms by dynamic precedence, so it never reaches an
+// accepted EOF frontier at all ("did not accept EOF") rather than hitting a
+// hard scheduler error mid-run.
+func TestAdmissionCandidateStorageReleasedOnAcceptanceGateDecline(t *testing.T) {
+	src := "package p\n\n" +
+		"type Foo[T any] struct {\n\tV T\n}\n\n" +
+		"func f() {\n" +
+		"\ta := Foo[int]{}\n" +
+		"\tb := Foo[int](a)\n" +
+		"\t_ = a\n" +
+		"\t_ = b\n" +
+		"}\n"
+	lang := grammars.GoLanguage()
+	parser := gts.NewParser(lang)
+	tree, ok, reason := gts.TryCompactFullParseRouteForTest(parser, []byte(src))
+	if ok || tree != nil {
+		t.Fatalf("candidate engine accepted instead of declining at the acceptance gate (reason=%q); "+
+			"re-verify TestAdmissionCandidateGoTypeConversionFailsClosed's witness still forks this conflict", reason)
 	}
-	src := make([]byte, n)
-	copy(src, prefix)
-	for i := len(prefix); i < n-len(suffix); i++ {
-		src[i] = ' '
+	if !strings.Contains(reason, "did not accept EOF") {
+		t.Fatalf("decline reason = %q, want the acceptance-gate \"did not accept EOF\" class "+
+			"(a different decline no longer exercises this path; this test needs a new acceptance-gate witness)", reason)
 	}
-	copy(src[n-len(suffix):], suffix)
-	return src
+	requireCompactFootprintReleased(t, parser, "acceptance-gate decline")
+}
+
+// TestAdmissionCandidateStorageReleasedOnMaterializationDecline drives the
+// materialization-decline class specifically: the scheduler accepts a clean
+// EOF frontier (the full accepted derivation graph is now committed to the
+// compact core), and then a stop-control check inside materialization
+// itself (parser.resultMaterializationStopReason, parsercore_phase0_driver.go
+// -- not the scheduler's own dispatch-loop poll) trips. Before the tranche
+// B9 reset-completeness gate, this path released nothing at all: the core
+// held the entire accepted parse graph -- the largest possible retention
+// for a given witness, since acceptance is a precondition for reaching
+// materialization at all -- while production's fallback ran beside it.
+//
+// The witness is a ~315KB clean Go source (45,000 "_ = 1" statements), well
+// past this file's other two decline witnesses: its accepted derivation
+// graph's un-released FootprintBytes measures around 77 MiB on the
+// development host, clearing compactFootprintReleasedCapBytes (64 MiB). This
+// makes the requireCompactFootprintReleased call below load-bearing -- see
+// that constant's doc comment -- unlike the stop-control and acceptance-gate
+// witnesses, which stay under the cap whether or not release runs.
+//
+// A timeout in the microsecond band where the scheduler itself has already
+// accepted but materialization has not yet finished reliably reproduces
+// this: too short and the scheduler's own dispatch-loop poll trips first (a
+// different, already-covered path, "scheduler stop-control tripped"); too
+// long and materialization finishes before the poll fires at all (a
+// successful route, not a decline). The band below is measured against this
+// witness on the development host and swept coarsely, resetting the
+// counters each attempt so a stale reason from an earlier iteration or an
+// earlier test cannot be misread as this iteration's outcome, to absorb
+// scheduling jitter; like every other timeout-banded test in this file it
+// may need retuning against a materially different host, so an unreproduced
+// band skips rather than fails.
+func TestAdmissionCandidateStorageReleasedOnMaterializationDecline(t *testing.T) {
+	lang := grammars.GoLanguage()
+	var src bytes.Buffer
+	src.WriteString("package p\n\nfunc f() {\n")
+	for i := 0; i < 45000; i++ {
+		src.WriteString("\t_ = 1\n")
+	}
+	src.WriteString("}\n")
+
+	const loBandMicros, hiBandMicros, stepMicros = 250_000, 600_000, 10_000
+	var lastReason string
+	for us := loBandMicros; us <= hiBandMicros; us += stepMicros {
+		gts.DrainArenaPools()
+		gts.ResetAdmissionCandidateCountersForTest()
+		parser := gts.NewParser(lang)
+		parser.SetTimeoutMicros(uint64(us))
+		tree, err := parser.Parse(src.Bytes())
+		if err != nil {
+			t.Fatalf("timeout=%dus: Parse() error = %v", us, err)
+		}
+		lastReason = gts.AdmissionCandidateLastFallbackReason()
+		tree.Release()
+		if strings.Contains(lastReason, "accepted-tree materialization stopped: timeout") {
+			requireCompactFootprintReleased(t, parser, "materialization decline")
+			return
+		}
+	}
+	t.Skipf("no timeout in [%d, %d]us band reproduced a materialization-band timeout decline on this host; last reason=%q "+
+		"(the band may need retuning against the current witness or host)",
+		loBandMicros, hiBandMicros, lastReason)
 }
 
 // TestAdmissionCandidateGoTypeConversionFailsClosed proves the compact candidate

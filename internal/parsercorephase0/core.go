@@ -1,22 +1,29 @@
-// Package parsercorephase0 contains a diagnostic-only parser-core prototype.
+// Package parsercorephase0 contains the admitted compact parser core.
 //
-// It deliberately is not imported by the production parser. The prototype
-// consumes a dependency-neutral TableView, but it does not own a lexer, an
-// external-scanner election, recovery, retries, included ranges, or
-// incremental parsing. A future build-tagged diagnostic driver in the root
-// package may adapt canonical production tables while independently scheduling
-// against the exact root lexer/scanner election; the ordinary production
-// parser does not import this package. Differential replay is debugging
-// evidence, not the execution route. Exact scanner/election integration remains
-// required before any full-parse timing claim. Callers must treat a decline as
-// a request to use the production parser; this package never silently
-// substitutes partial work.
+// The root package routes every eligible fresh full parse through this
+// engine by default, regardless of source size. The admission switch in
+// admission_switch.go controls this routing; a scheduler stop-control poll
+// (memory budget, deadline, cancellation) bounds a large input instead of a
+// source-length eligibility decline.
+//
+// The engine consumes a dependency-neutral TableView. It does not own a
+// lexer, an external-scanner election, recovery, retries, or included
+// ranges. Incremental parsing stays on the production engine.
+//
+// The engine fails closed. A decline at any eligibility check, or during
+// the engine run, sends the parse to the production lane. This package
+// never substitutes partial work.
+//
+// Build with -tags gts_no_parsercorephase0 as the emergency opt-out. This
+// tag removes the engine. Every full parse then runs on the production
+// lane.
 package parsercorephase0
 
 import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"slices"
 	"sync"
 )
@@ -71,14 +78,32 @@ const (
 // repeatedly interpreting immutable action records without weakening the
 // existing ordering and authentication gates.
 type ActionRowDescriptor struct {
-	kind      ActionRowKind
-	hasShift  bool
-	hasReduce bool
+	kind              ActionRowKind
+	hasShift          bool
+	hasReduce         bool
+	dispatchSupported bool
 }
 
 func (d ActionRowDescriptor) Kind() ActionRowKind { return d.kind }
 func (d ActionRowDescriptor) HasShift() bool      { return d.hasShift }
 func (d ActionRowDescriptor) HasReduce() bool     { return d.hasReduce }
+
+// DispatchSupported reports whether the root package's generic scheduler
+// dispatch loop can prove this row is not an unsupported cell without
+// reading the current token. It holds exactly for ActionRowShift,
+// ActionRowReduce, and ActionRowConflict: parsercore_phase0_driver.go's
+// diagnosticParserCoreGenericUnsupportedCellDescriptor returns "supported"
+// (a nil decline) for those three kinds unconditionally, never consulting
+// its token argument, while ActionRowExtraShift and ActionRowAccept still
+// need the token's width/EOF shape and ActionRowEmpty/ActionRowUnsupported
+// are never supported. This is table-derived and immutable once the row is
+// decoded (describeActionRow computes it once per distinct action row, not
+// once per dispatch pass), so the dispatch loop's per-cell, per-pass
+// unsupported check can read this field instead of re-deriving the same
+// kind-only fact on every pass a cell with this shape is dispatched
+// (spec.campaign.v7 tranche C0 item 4, the "cell-array and descriptor
+// validation" L1 sub-item). Keep this in sync with that function's switch.
+func (d ActionRowDescriptor) DispatchSupported() bool { return d.dispatchSupported }
 
 type actionRowData struct {
 	actions    []Action
@@ -169,6 +194,7 @@ func describeActionRow(actions []Action) ActionRowDescriptor {
 	}
 	if len(actions) > 1 {
 		descriptor.kind = ActionRowConflict
+		descriptor.dispatchSupported = true
 		return descriptor
 	}
 	switch actions[0].Type {
@@ -177,9 +203,11 @@ func describeActionRow(actions []Action) ActionRowDescriptor {
 			descriptor.kind = ActionRowExtraShift
 		} else {
 			descriptor.kind = ActionRowShift
+			descriptor.dispatchSupported = true
 		}
 	case ActionReduce:
 		descriptor.kind = ActionRowReduce
+		descriptor.dispatchSupported = true
 	case ActionAccept:
 		descriptor.kind = ActionRowAccept
 	default:
@@ -373,6 +401,239 @@ type nodeRecord struct {
 	pathCount  uint64
 }
 
+type nodeLineageRecord struct {
+	owner uint32
+	set   AlternativeSet
+	// transition only, deleted at stage 3 cleanup (spec.b4b-alternative-set.v1
+	// section 3.2):
+	lineage   uint16
+	rank      CleanPathRankSelection
+	converged bool
+	// blended records whether this record's set was ever produced by folding
+	// two incomparable recorded sets together (spec.b4b-alternative-set.v2
+	// section 3.4). A blended record can never serve as a v2 containment
+	// witness (section 5); it may still safely be dropped itself.
+	blended bool
+}
+
+// Field order groups the two uint32 members (node, owner, setSpillRef)
+// before the trailing byte/uint16-sized fields: setSpillRef needs 4-byte
+// alignment, so declaring it after the 1-byte setCount/setFlags pair (as an
+// earlier revision did) forced 2 bytes of mid-struct padding that this order
+// avoids, matching journal-append-site field order 1:1 (every
+// nodeLineageJournal append already names every field, so this reorder is
+// layout-only and touches no call site).
+type nodeLineageMutation struct {
+	node        NodeID
+	owner       uint32
+	setSpillRef uint32
+	setCount    uint8
+	setFlags    uint8
+	lineage     uint16
+	rank        CleanPathRankSelection
+	converged   bool
+	blended     bool
+}
+
+// alternativeSetInlineCapacity is the fixed inline member width of
+// AlternativeSet before it spills into Core.alternativeSpillArena.
+// alternativeSetHardCap is the total recorded-member ceiling; a set that
+// would exceed it stops recording new members and reports Overflowed.
+// spec.b4b-alternative-set.v1 section 3.2, open question 5.
+//
+// v2 widened one packed member from uint16 (event only) to uint32 (event,
+// branch), doubling AlternativeSet's inline array from 8 to 16 bytes and,
+// with it, every by-value container that embeds a set (nodeLineageRecord,
+// ReductionOutput, and diagnosticParserCoreHeader's two copies) -- paid on
+// every header canonicalize double-buffer copy, rollback scratch snapshot,
+// and reduction-output propagation, whether or not that particular set is
+// ever populated (b4b-width-repair audit, 2026-08). 4 was never a load-
+// bearing width: the canonical-fixture census (four fixtures, 8537 converged
+// -split elections) shows 8519/8537 (99.8%) already touch a spilled set by
+// election time and 8424/8537 (98.7%) are already Overflowed at the hard
+// cap, so the inline/spill boundary is nearly vestigial in steady state.
+// Lowering it to 2 -- matching "canonical reductions produce one output 95%
+// of the time and at most two observed" (packAlternativeSetMember's doc
+// comment; census maxBranch=1 on all four fixtures) so a fresh establishment
+// plus one sibling union still never spills -- restores AlternativeSet's
+// inline array to its pre-v2 8 bytes (2 members x 4 bytes, vs. the original
+// 4 members x 2 bytes) at the same total 16-byte struct size, with no change
+// to member encoding, hard cap, or any observable membership: spilled
+// storage is exact and zero-alloc once warm (alternativeSetInsert/
+// alternativeSetMembers already treat inline and spilled uniformly).
+const (
+	alternativeSetInlineCapacity = 2
+	alternativeSetHardCap        = 32
+)
+
+const (
+	alternativeSetFlagOverflowed uint8 = 1 << iota
+	alternativeSetFlagSpilled
+)
+
+// alternativeSetBranchCap is the exclusive ceiling on a ReductionOutput's
+// establishment ordinal within one dispatch (spec.b4b-alternative-set.v2
+// section 3.2). A branch is a uint16, so it has headroom to 65535, but that
+// top value stays reserved -- mirroring the lineage-id wraparound decline
+// (nextDiagnosticParserCoreCleanPathLineage, parsercore_phase0_driver.go) --
+// so establishment can decline before overflow instead of silently wrapping.
+// Canonical reductions produce one output 95% of the time and at most two
+// observed; this cap is unreachable on the certified corpora and exists only
+// as a defensive decline.
+const alternativeSetBranchCap = 65535
+
+// errAlternativeSetBranchOrdinalCap is returned by RecordReductionLineageOwned
+// when a single dispatch produces alternativeSetBranchCap or more outputs.
+var errAlternativeSetBranchOrdinalCap = errors.New("parser-core phase zero: reduction output branch ordinal cap")
+
+// AlternativeSet is a sorted, deduplicated set of (event, branch) converged-
+// split-resolution identities ("members"; spec.b4b-alternative-set.v2 section
+// 3.1). A member packs a uint16 event (the multi-pop reduce dispatch's
+// lineage id, allocated exactly as v1's event-only identity was) and a
+// uint16 branch (the ReductionOutput's ordinal within that one dispatch, in
+// its stable first-boundary order) into one uint32:
+// uint32(event)<<16 | uint32(branch). A member is established once, at
+// multi-pop reduction time, and the set only ever grows by insertion or
+// union -- it is never invalidated. Beyond alternativeSetInlineCapacity
+// members it spills into Core's shared arena; beyond alternativeSetHardCap
+// members it stops recording new members and sets Overflowed, so the
+// recorded set stays a genuine subset of the true membership. The zero value
+// is the empty set. Ascending uint32 order sorts event-major, branch-minor,
+// so every branch of one event sits adjacent.
+type AlternativeSet struct {
+	inline   [alternativeSetInlineCapacity]uint32
+	count    uint8
+	flags    uint8
+	spillRef uint32 // 1-based start index into Core.alternativeSpillArena
+}
+
+// packAlternativeSetMember packs one (event, branch) pair into the single
+// uint32 member identity (spec.b4b-alternative-set.v2 section 3.1).
+func packAlternativeSetMember(event, branch uint16) uint32 {
+	return uint32(event)<<16 | uint32(branch)
+}
+
+// AlternativeSetMemberEvent unpacks the event half of a packed member.
+func AlternativeSetMemberEvent(member uint32) uint16 { return uint16(member >> 16) }
+
+// AlternativeSetMemberBranch unpacks the branch half of a packed member.
+func AlternativeSetMemberBranch(member uint32) uint16 { return uint16(member) }
+
+// alternativeSetRecordingEnabledOnce and alternativeSetRecordingEnabledVal
+// cache the recording gate. Stage 1 kept recording shadow-only, off by
+// default, behind GTS_B4B_SHADOW_CENSUS. Stage 2b promotes the v2
+// containment predicate (diagnosticParserCoreConvergedCoverageDropsV2) to
+// the deciding proof for uncertified languages, so recording must be
+// unconditional: a header whose set was never populated fails closed on
+// every drop it is asked to prove, which would silently turn every
+// converged-split drop into a decline. Recording is allocation-free by
+// construction (spec.b4b-alternative-set.v2 section 3.4), so turning it on
+// always costs real CPU, never allocation.
+var (
+	alternativeSetRecordingEnabledOnce sync.Once
+	alternativeSetRecordingEnabledVal  bool
+)
+
+func alternativeSetRecordingEnabled() bool {
+	alternativeSetRecordingEnabledOnce.Do(func() {
+		alternativeSetRecordingEnabledVal = true
+	})
+	return alternativeSetRecordingEnabledVal
+}
+
+// SetAlternativeSetRecordingEnabledForTest overrides the recording gate for
+// one test process. Restore the previous value (the returned func) when
+// done. Production never disables recording; this exists so a test can
+// exercise the disabled-gate code path in isolation. Reads through
+// alternativeSetRecordingEnabled first (rather than forcing the sync.Once
+// with an empty closure) so the captured "previous" is always the gate's
+// real value -- true on its first-ever call in a process -- never an
+// artifact of which caller happened to fire the Once first.
+func SetAlternativeSetRecordingEnabledForTest(on bool) func() {
+	previous := alternativeSetRecordingEnabled()
+	alternativeSetRecordingEnabledVal = on
+	return func() { alternativeSetRecordingEnabledVal = previous }
+}
+
+// cleanPathRankWalkEnabledOnce and cleanPathRankWalkEnabledVal cache
+// GTS_B4B_SHADOW_CENSUS, independently of the outer package's own copy of the
+// same switch (parsercorephase0 has no dependency on the package that
+// defines the census) -- the pattern alternativeSetRecordingEnabled used
+// before stage 2b made set recording unconditional. Once the converged-
+// coverage v2 predicate became the deciding proof, nothing on the routing
+// path reads markCleanProductionRank's scalar (rank, lineage) output except
+// the three-proof census's scalar comparison, so the DAG walk itself now
+// runs only when that census is requested. Off by default, multi-pop paths
+// are marked Unknown instead (markCleanPathRankUnknown): a single field
+// write per path, no derivation walk. Unknown still marks
+// nodeLineageRecord.converged=true exactly as Selected/Unselected would
+// (recordNodeLineage), so HistoricalBoundaryConverged classification and
+// alternative-set historical import (spec section 4, "Dead-node historical
+// import") are unaffected -- only the now-unread scalar rank/lineage values
+// degrade to Unknown/0.
+var (
+	cleanPathRankWalkEnabledOnce sync.Once
+	cleanPathRankWalkEnabledVal  bool
+)
+
+func cleanPathRankWalkEnabled() bool {
+	cleanPathRankWalkEnabledOnce.Do(func() {
+		switch os.Getenv("GTS_B4B_SHADOW_CENSUS") {
+		case "1", "true", "TRUE", "True", "on", "ON", "yes", "YES":
+			cleanPathRankWalkEnabledVal = true
+		}
+	})
+	return cleanPathRankWalkEnabledVal
+}
+
+// SetCleanPathRankWalkEnabledForTest overrides the rank-walk gate for one
+// test process, mirroring SetAlternativeSetRecordingEnabledForTest's
+// override pattern. Restore the previous value (the returned func) when
+// done.
+func SetCleanPathRankWalkEnabledForTest(on bool) func() {
+	previous := cleanPathRankWalkEnabled()
+	cleanPathRankWalkEnabledVal = on
+	return func() { cleanPathRankWalkEnabledVal = previous }
+}
+
+// NewAlternativeSetMember returns the singleton set {pack(event, branch)},
+// or the empty set when event==0 (the reserved "no event" identity) or when
+// the recording gate is off (test-only; see
+// SetAlternativeSetRecordingEnabledForTest). branch is the ReductionOutput's
+// ordinal within the establishing dispatch (spec.b4b-alternative-set.v2
+// section 3.1); it is not independently reserved -- only event==0 makes the
+// packed value zero, since establishment always guards event!=0 first.
+// Every driver-side
+// alternative-set value not copied or unioned from an existing header/node
+// set originates here, so gating this one construction point -- together
+// with recordNodeLineageMember, the only other place a member is ever
+// inserted -- keeps every set in the system at its zero value for the life
+// of the parse when recording is disabled: every downstream union or insert
+// then sees an empty source and no-ops through its own existing zero-cost
+// guard, with no further gating needed at any of those call sites. Never
+// allocates: a single fresh member always fits inline.
+func NewAlternativeSetMember(event, branch uint16) AlternativeSet {
+	var set AlternativeSet
+	if event == 0 || !alternativeSetRecordingEnabled() {
+		return set
+	}
+	set.inline[0] = packAlternativeSetMember(event, branch)
+	set.count = 1
+	return set
+}
+
+func (s AlternativeSet) spilled() bool { return s.flags&alternativeSetFlagSpilled != 0 }
+
+// Overflowed reports whether this set declined at least one member at the
+// hard cap. An overflowed set's recorded members remain a genuine subset of
+// the true membership; only completeness is lost, so containment proofs
+// against an overflowed dropped-side set must fail closed.
+func (s AlternativeSet) Overflowed() bool { return s.flags&alternativeSetFlagOverflowed != 0 }
+
+// Len reports the recorded member count (inline plus spilled), which may be
+// less than the true member count when Overflowed.
+func (s AlternativeSet) Len() int { return int(s.count) }
+
 type linkRecord struct {
 	scoreDelta int64
 	order      uint64
@@ -414,6 +675,14 @@ type subtreeRecord struct {
 	// gotreesitter's own production fragility metadata (see PHASE-3 LANE 1,
 	// tree.go/parser_reduce.go).
 	fragile bool
+}
+
+// externalPayloadProvenance stores the exact scanner states for one external
+// terminal. Sparse storage preserves the compact subtree record size.
+type externalPayloadProvenance struct {
+	payload SubtreeID
+	start   CheckpointID
+	end     CheckpointID
 }
 
 // pathMeta is stored on a graph link. ScoreDelta includes the contributions
@@ -461,6 +730,14 @@ type ExtraCohortShiftInput struct {
 // Head is a compact parse-version head referencing a persistent graph node.
 type Head struct {
 	Node NodeID
+}
+
+// CondenseCandidate identifies one active scheduler version that a new action
+// output can merge into. The scheduler excludes the source version.
+type CondenseCandidate struct {
+	Head       Head
+	Shifted    bool
+	Checkpoint CheckpointID
 }
 
 // Derivation is one retained exact root-to-head path after local shallow-link
@@ -558,35 +835,51 @@ type RawSelectedCensus struct {
 // Core is the compact, persistent diagnostic graph. All records are indexes
 // into pointer-free slices; the production parser is unaffected.
 type Core struct {
-	tables              TableView
-	plans               ReductionPlanProvider
-	selectedProvider    SelectedStorePolicyProvider
-	selectedPolicy      *SelectedStorePolicy
-	limits              Limits
-	diagnostics         diagnosticOptions
-	nodes               []nodeRecord
-	links               []linkRecord
-	subtrees            []subtreeRecord
-	children            []SubtreeID
-	fields              []FieldMapEntry
-	aliases             []Symbol
-	frontier            uint64
-	checkpoint          CheckpointID
-	checkpoints         checkpointInterner
-	boundaries          boundaryIndex
-	boundaryJournal     []boundaryMutation
-	transactions        []uint64
-	nextTransaction     uint64
-	classificationPhase uint64
-	work                Work
-	popScratch          popEnumerationScratch
-	reductionScratch    reductionOutputScratch
-	cohortHeadScratch   []Head
-	factorLinkScratch   []linkRecord
-	selectedBuild       selectedStoreBuildScratch
-	selectedPoolMu      sync.Mutex
-	selectedPool        selectedStoreBacking
-	schedulerFrame      schedulerTransactionFrame
+	tables             TableView
+	plans              ReductionPlanProvider
+	selectedProvider   SelectedStorePolicyProvider
+	selectedPolicy     *SelectedStorePolicy
+	limits             Limits
+	diagnostics        diagnosticOptions
+	nodes              []nodeRecord
+	nodeLineages       []nodeLineageRecord
+	nodeCheckpoints    []CheckpointID
+	links              []linkRecord
+	subtrees           []subtreeRecord
+	externalProvenance []externalPayloadProvenance
+	children           []SubtreeID
+	fields             []FieldMapEntry
+	aliases            []Symbol
+	frontier           uint64
+	checkpoint         CheckpointID
+	checkpoints        checkpointInterner
+	boundaries         boundaryIndex
+	boundaryJournal    []boundaryMutation
+	nodeLineageJournal []nodeLineageMutation
+	// alternativeSpillArena backs every AlternativeSet beyond
+	// alternativeSetInlineCapacity members, shared by nodeLineages and every
+	// diagnosticParserCoreHeader.altSet (parsercore_phase0_driver.go). It
+	// resets to length zero (capacity retained) only on Reset, matching
+	// nodeLineageJournal; a rolled-back or superseded segment leaks arena
+	// space until then, bounded by alternativeSetHardCap per record.
+	alternativeSpillArena []uint32
+	condenseCandidates    []CondenseCandidate
+	condenseNewNode       NodeID
+	condenseScopeActive   bool
+	reductionSourceOwner  uint32
+	transactions          []uint64
+	nextTransaction       uint64
+	classificationPhase   uint64
+	work                  Work
+	popScratch            popEnumerationScratch
+	reductionScratch      reductionOutputScratch
+	historicalNodeScratch []NodeID
+	cohortHeadScratch     []Head
+	factorLinkScratch     []linkRecord
+	selectedBuild         selectedStoreBuildScratch
+	selectedPoolMu        sync.Mutex
+	selectedPool          selectedStoreBacking
+	schedulerFrame        schedulerTransactionFrame
 	// metadataConstructionAuthenticated remains true only while every compact
 	// subtree was published through the authenticated shift/reduction seams.
 	// Diagnostic generic publication clears it monotonically until Reset.
@@ -612,6 +905,12 @@ type Core struct {
 	// certifies that external payload identity does not depend on scanner state.
 	// Reset retains it because the property is stable for this core's tables.
 	externalPayloadsQuiescent bool
+	// externalTokenScannerStart and externalTokenScannerEnd authenticate one
+	// elected token. Only an authenticated external shift copies this pair into
+	// its immutable terminal payload.
+	externalTokenScannerStart CheckpointID
+	externalTokenScannerEnd   CheckpointID
+	externalTokenScannerExact bool
 }
 
 // SetReduceConflictContext sets/clears the transient conflict-context
@@ -657,13 +956,15 @@ type diagnosticOptions struct {
 }
 
 type checkpoint struct {
-	nodes, links, subtrees, children, fields, aliases int
-	frontier                                          uint64
-	checkpoint                                        CheckpointID
-	boundaryIndex                                     boundaryIndexSnapshot
-	journal                                           int
-	transaction                                       uint64
-	work                                              Work
+	nodes, nodeLineages, nodeCheckpoints, links, subtrees, externalProvenance int
+	children, fields, aliases                                                 int
+	frontier                                                                  uint64
+	checkpoint                                                                CheckpointID
+	boundaryIndex                                                             boundaryIndexSnapshot
+	journal                                                                   int
+	nodeLineageJournal                                                        int
+	transaction                                                               uint64
+	work                                                                      Work
 }
 
 // SchedulerTransactionToken is an opaque capability for one active
@@ -701,12 +1002,17 @@ func (c *Core) markInto(mark *checkpoint) {
 	}
 	c.nextTransaction++
 	*mark = checkpoint{
-		nodes: len(c.nodes), links: len(c.links), subtrees: len(c.subtrees),
-		children: len(c.children), fields: len(c.fields), aliases: len(c.aliases),
+		nodes: len(c.nodes), nodeLineages: len(c.nodeLineages),
+		links: len(c.links), subtrees: len(c.subtrees),
+		nodeCheckpoints:    len(c.nodeCheckpoints),
+		externalProvenance: len(c.externalProvenance),
+		children:           len(c.children), fields: len(c.fields), aliases: len(c.aliases),
 		frontier: c.frontier, checkpoint: c.checkpoint,
-		boundaryIndex: c.boundaries.snapshot(),
-		journal:       len(c.boundaryJournal), transaction: c.nextTransaction,
-		work: c.work,
+		boundaryIndex:      c.boundaries.snapshot(),
+		journal:            len(c.boundaryJournal),
+		nodeLineageJournal: len(c.nodeLineageJournal),
+		transaction:        c.nextTransaction,
+		work:               c.work,
 	}
 	c.transactions = append(c.transactions, mark.transaction)
 	parent := uint64(0)
@@ -733,8 +1039,11 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 	}
 	c.classificationPhase++
 	c.nodes = c.nodes[:mark.nodes]
+	c.nodeLineages = c.nodeLineages[:mark.nodeLineages]
+	c.nodeCheckpoints = c.nodeCheckpoints[:mark.nodeCheckpoints]
 	c.links = c.links[:mark.links]
 	c.subtrees = c.subtrees[:mark.subtrees]
+	c.externalProvenance = c.externalProvenance[:mark.externalProvenance]
 	c.children = c.children[:mark.children]
 	c.fields = c.fields[:mark.fields]
 	c.aliases = c.aliases[:mark.aliases]
@@ -745,9 +1054,26 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 		mutation := c.boundaryJournal[index]
 		mutation.slots[mutation.index] = mutation.previous
 	}
+	for index := len(c.nodeLineageJournal) - 1; index >= mark.nodeLineageJournal; index-- {
+		mutation := c.nodeLineageJournal[index]
+		nodeIndex := int(mutation.node) - 1
+		if nodeIndex < 0 || nodeIndex >= len(c.nodes) {
+			continue
+		}
+		c.nodeLineages[nodeIndex].owner = mutation.owner
+		c.nodeLineages[nodeIndex].set.count = mutation.setCount
+		c.nodeLineages[nodeIndex].set.flags = mutation.setFlags
+		c.nodeLineages[nodeIndex].set.spillRef = mutation.setSpillRef
+		c.nodeLineages[nodeIndex].lineage = mutation.lineage
+		c.nodeLineages[nodeIndex].rank = mutation.rank
+		c.nodeLineages[nodeIndex].converged = mutation.converged
+		c.nodeLineages[nodeIndex].blended = mutation.blended
+	}
 	c.boundaries.restore(mark.boundaryIndex)
 	clear(c.boundaryJournal[mark.journal:])
 	c.boundaryJournal = c.boundaryJournal[:mark.journal]
+	clear(c.nodeLineageJournal[mark.nodeLineageJournal:])
+	c.nodeLineageJournal = c.nodeLineageJournal[:mark.nodeLineageJournal]
 	phase0AObserveRollback(c, mark.transaction, phase0ATakeRollbackCause(c))
 	c.finishTransaction()
 }
@@ -777,6 +1103,8 @@ func (c *Core) finishTransaction() {
 	if len(c.transactions) == 0 {
 		clear(c.boundaryJournal)
 		c.boundaryJournal = c.boundaryJournal[:0]
+		clear(c.nodeLineageJournal)
+		c.nodeLineageJournal = c.nodeLineageJournal[:0]
 	}
 }
 
@@ -849,7 +1177,7 @@ func (c *Core) RunFreshSchedulerSession(fn func(SchedulerTransactionToken) error
 		recovered := recover()
 		if recovered != nil {
 			frame.clearInactive()
-			_ = c.Reset()
+			_ = c.ResetReleasingRetention()
 			panic(recovered)
 		}
 		if err == nil && frame.poisoned != nil {
@@ -857,7 +1185,14 @@ func (c *Core) RunFreshSchedulerSession(fn func(SchedulerTransactionToken) error
 		}
 		frame.clearInactive()
 		if err != nil {
-			if resetErr := c.Reset(); resetErr != nil {
+			// ResetReleasingRetention, not plain Reset: a declined session
+			// leaves no future value in whatever capacity this run grew, and
+			// this is the automatic reset every stop-control trip and every
+			// mid-run hard decline (recovery, extra-chain, cap hits, and
+			// friends) already goes through, so it is also the natural place
+			// to release retention on the class of decline this covers
+			// (tranche B9 retention-cap gate).
+			if resetErr := c.ResetReleasingRetention(); resetErr != nil {
 				err = errors.Join(err, fmt.Errorf("parser-core phase zero: reset failed after fresh scheduler error: %w", resetErr))
 			}
 		}
@@ -891,24 +1226,48 @@ func (c *Core) RunSchedulerOwned(token SchedulerTransactionToken, fn func() erro
 		phase0AObserveSchedulerPoison(c, token, Phase0APoisonReturnedError)
 		return err
 	}
+	if err = c.beginSchedulerOwned(token); err != nil {
+		return err
+	}
+	defer c.recoverSchedulerOwnedPanic(token)
+	return c.finishSchedulerOwned(token, fn())
+}
+
+// beginSchedulerOwned validates token ownership and poisons the owner on
+// failure. It is the entry half of RunSchedulerOwned, factored out so the hot
+// shift/reduce/cohort dispatch paths in scheduler_owned.go can call it
+// directly instead of threading a fn func() error parameter through an extra
+// wrapper layer.
+func (c *Core) beginSchedulerOwned(token SchedulerTransactionToken) error {
 	if err := c.validateSchedulerTransaction(token); err != nil {
 		err = c.poisonSchedulerTransaction(token, err)
 		phase0AObserveSchedulerPoison(c, token, Phase0APoisonReturnedError)
 		return err
 	}
-	defer func() {
-		if recovered := recover(); recovered != nil {
-			c.poisonSchedulerTransaction(token, fmt.Errorf("parser-core phase zero: scheduler-owned operation panicked: %v", recovered))
-			phase0AObserveSchedulerPoison(c, token, Phase0APoisonPanic)
-			panic(recovered)
-		}
-	}()
-	if err = fn(); err != nil {
+	return nil
+}
+
+// finishSchedulerOwned poisons the owner on a non-nil error, mirroring the
+// exit half of RunSchedulerOwned. It returns the (possibly rewritten) error
+// so callers can fold it directly into a return statement.
+func (c *Core) finishSchedulerOwned(token SchedulerTransactionToken, err error) error {
+	if err != nil {
 		err = c.poisonSchedulerTransaction(token, err)
 		phase0AObserveSchedulerPoison(c, token, Phase0APoisonReturnedError)
-		return err
 	}
-	return nil
+	return err
+}
+
+// recoverSchedulerOwnedPanic mirrors RunSchedulerOwned's deferred panic
+// handler. Deferring this bound method directly -- instead of a deferred
+// closure literal that calls back into RunSchedulerOwned -- keeps every hot
+// dispatch call a direct, inlinable call with no func-value indirection.
+func (c *Core) recoverSchedulerOwnedPanic(token SchedulerTransactionToken) {
+	if recovered := recover(); recovered != nil {
+		c.poisonSchedulerTransaction(token, fmt.Errorf("parser-core phase zero: scheduler-owned operation panicked: %v", recovered))
+		phase0AObserveSchedulerPoison(c, token, Phase0APoisonPanic)
+		panic(recovered)
+	}
 }
 
 // ApplySchedulerAtomic owns one retained checkpoint for an authenticated
@@ -1030,8 +1389,11 @@ func (c *Core) Reset() error {
 	}
 	c.classificationPhase++
 	c.nodes = c.nodes[:0]
+	c.nodeLineages = c.nodeLineages[:0]
+	c.nodeCheckpoints = c.nodeCheckpoints[:0]
 	c.links = c.links[:0]
 	c.subtrees = c.subtrees[:0]
+	c.externalProvenance = c.externalProvenance[:0]
 	c.children = c.children[:0]
 	c.fields = c.fields[:0]
 	c.aliases = c.aliases[:0]
@@ -1041,15 +1403,47 @@ func (c *Core) Reset() error {
 	c.boundaries.reset()
 	clear(c.boundaryJournal)
 	c.boundaryJournal = c.boundaryJournal[:0]
+	clear(c.nodeLineageJournal)
+	c.nodeLineageJournal = c.nodeLineageJournal[:0]
+	c.alternativeSpillArena = c.alternativeSpillArena[:0]
+	c.clearLiveCondenseCandidates()
+	c.reductionSourceOwner = 0
 	c.transactions = c.transactions[:0]
 	c.nextTransaction = 0
 	c.schedulerFrame.clearInactive()
 	c.work = Work{}
 	c.popScratch.resetLogical()
 	c.reductionScratch.finish()
+	c.historicalNodeScratch = c.historicalNodeScratch[:0]
 	c.metadataConstructionAuthenticated = true
 	c.reduceConflictContext = false
 	c.reduceNoLookaheadContext = false
+	c.externalTokenScannerStart = 0
+	c.externalTokenScannerEnd = 0
+	c.externalTokenScannerExact = false
+	return nil
+}
+
+// ResetReleasingRetention performs the same truncation as Reset, then drops
+// retained capacity in two steps: every record arena ReserveRecordArenas
+// reserves goes unconditionally (releaseRecordArenaReserve), and every other
+// growable family goes when the combined FootprintBytes that remains still
+// exceeds coreRetentionCapBytes (releaseOversizedRetention). Reset alone
+// preserves capacity for legitimate reuse across repeated large-file parses
+// -- the routine "clear the slate before the next attempt" call every fresh
+// parse makes through the admission-candidate runner. This variant is for
+// decline paths specifically: a just-declined attempt's retained capacity has
+// no future value, and keeping it would otherwise stay billed to every later
+// unrelated parse on the same cached runner regardless of that parse's own
+// size (tranche B9 retention-cap gate). The record arenas need the stronger
+// unconditional rule because a reserve is sized below the retention cap by
+// construction, so the size gate alone can never see it.
+func (c *Core) ResetReleasingRetention() error {
+	if err := c.Reset(); err != nil {
+		return err
+	}
+	c.releaseRecordArenaReserve()
+	c.releaseOversizedRetention()
 	return nil
 }
 
@@ -1070,6 +1464,9 @@ func (c *Core) BeginFrontier() error {
 	c.frontier++
 	c.classificationPhase++
 	c.checkpoint = 0
+	c.externalTokenScannerStart = 0
+	c.externalTokenScannerEnd = 0
+	c.externalTokenScannerExact = false
 	return nil
 }
 
@@ -1080,6 +1477,9 @@ func (c *Core) SetPhaseCheckpoint(checkpoint CheckpointID) error {
 	if len(c.transactions) != 0 {
 		return errors.New("parser-core phase zero: set checkpoint during active transaction")
 	}
+	c.externalTokenScannerStart = 0
+	c.externalTokenScannerEnd = 0
+	c.externalTokenScannerExact = false
 	if checkpoint != 0 {
 		if _, ok := c.checkpoints.record(checkpoint); !ok {
 			return errors.New("parser-core phase zero: unknown checkpoint identity")
@@ -1093,6 +1493,23 @@ func (c *Core) SetPhaseCheckpoint(checkpoint CheckpointID) error {
 	}
 	c.classificationPhase++
 	c.checkpoint = checkpoint
+	return nil
+}
+
+// SetPhaseExternalTokenScannerCheckpoints binds one election to its exact
+// scanner states. It leaves no exact token proof when either identity fails.
+func (c *Core) SetPhaseExternalTokenScannerCheckpoints(start, end CheckpointID) error {
+	if err := c.SetPhaseCheckpoint(end); err != nil {
+		return err
+	}
+	if start != 0 {
+		if _, ok := c.checkpoints.record(start); !ok {
+			return errors.New("parser-core phase zero: unknown external token start checkpoint identity")
+		}
+	}
+	c.externalTokenScannerStart = start
+	c.externalTokenScannerEnd = end
+	c.externalTokenScannerExact = true
 	return nil
 }
 
@@ -1120,12 +1537,18 @@ func (c *Core) Seed(state StateID, byteOffset uint32) (Head, error) {
 	if probe.found {
 		return Head{Node: id}, nil
 	}
-	id, err := c.appendNode(nodeRecord{state: state, byteOffset: byteOffset, pathCount: 1})
+	id, err := c.appendNodeAt(nodeRecord{
+		state: state, byteOffset: byteOffset, pathCount: 1,
+	}, key.checkpoint)
 	if err != nil {
 		return Head{}, err
 	}
 	if err := c.publishBoundary(probe, id); err != nil {
 		c.nodes = c.nodes[:len(c.nodes)-1]
+		c.nodeLineages = c.nodeLineages[:len(c.nodeLineages)-1]
+		if !c.externalPayloadsQuiescent {
+			c.nodeCheckpoints = c.nodeCheckpoints[:len(c.nodeCheckpoints)-1]
+		}
 		return Head{}, err
 	}
 	return Head{Node: id}, nil
@@ -1142,6 +1565,83 @@ func (c *Core) Boundary(head Head) (StateID, uint32, error) {
 	return node.state, node.byteOffset, nil
 }
 
+// AncestorStateWithActionExists reports whether any ancestor of head, found
+// by walking predecessor links up to maxDepth steps back (depth 1 is head's
+// own direct predecessors; head's own state is never itself checked here --
+// a caller that also needs that check performs it separately, exactly like
+// a depth-0 resume probe would), has a dispatchable action for lookahead. It
+// explores every predecessor link the condensed graph records at each depth
+// -- a node can carry more than one incoming link even without genuine
+// grammar ambiguity, from shallow path-merging condensation alone
+// (mergePredecessorsBounded's own doc comment) -- stopping at the first
+// depth where any visited state accepts lookahead. Link adjacency is a
+// strictly-decreasing-NodeID DAG by construction (validatePublishedNodeDAG
+// rejects any link.prev >= the node being published), so this walk cannot
+// cycle; the visited-node cap below exists only to bound pathological
+// fan-out, not to guard against a cycle that cannot occur.
+//
+// This is a bounded existence probe, not a resume: it performs no cost
+// comparison, no election, and no state mutation, and a true result names
+// no specific resume target. It exists purely so a caller working depth-0
+// recovery can detect "a deeper stack entry might accept this lookahead"
+// (the shape a full stack-summary election -- cRecoverMaxSummaryDepth in
+// the production Go port -- would explore and resolve) and decline instead
+// of silently assuming no such entry exists.
+func (c *Core) AncestorStateWithActionExists(head Head, lookahead Symbol, maxDepth int) (bool, error) {
+	if maxDepth <= 0 {
+		return false, nil
+	}
+	const maxVisitedNodes = 4096 // generous: no real S3 region approaches this
+	frontier := []NodeID{head.Node}
+	visited := map[NodeID]bool{head.Node: true}
+	for depth := 1; depth <= maxDepth && len(frontier) > 0; depth++ {
+		var next []NodeID
+		for _, id := range frontier {
+			n, err := c.node(id)
+			if err != nil {
+				return false, err
+			}
+			count := n.linkCount
+			if count == 0 {
+				continue
+			}
+			if uint64(count) > uint64(c.limits.MaxLinks) || uint64(count) > uint64(c.limits.MaxLinksPerBoundary) {
+				return false, errors.New("parser-core phase zero: recorded link count exceeds configured limit")
+			}
+			linkID := LinkID(n.firstLink)
+			for remaining := count; remaining > 0; remaining-- {
+				if linkID == 0 || uint64(linkID) > uint64(len(c.links)) {
+					return false, errors.New("parser-core phase zero: ancestor adjacency out of range")
+				}
+				link := c.links[linkID-1]
+				if link.prev != 0 && !visited[link.prev] {
+					visited[link.prev] = true
+					if len(visited) > maxVisitedNodes {
+						return false, nil
+					}
+					next = append(next, link.prev)
+				}
+				linkID = link.next
+			}
+		}
+		for _, id := range next {
+			ancestor, err := c.node(id)
+			if err != nil {
+				return false, err
+			}
+			row, err := c.tables.Actions(ancestor.state, lookahead)
+			if err != nil {
+				return false, err
+			}
+			if row.Len() > 0 {
+				return true, nil
+			}
+		}
+		frontier = next
+	}
+	return false, nil
+}
+
 // CanonicalBoundary returns the latest condensed head for one complete
 // same-lookahead scheduler phase identity. Headers use it at pass barriers to
 // replace stale immutable NodeIDs without changing their first-slot order.
@@ -1150,7 +1650,25 @@ func (c *Core) CanonicalBoundary(state StateID, byteOffset uint32, consumed bool
 		frontier: c.frontier, state: state, byteOffset: byteOffset,
 		shifted: consumed, checkpoint: checkpoint,
 	}))
+	if probe.found && !c.condenseNodeIsLive(id) {
+		return Head{}, false
+	}
 	return Head{Node: id}, probe.found
+}
+
+func (c *Core) condenseNodeIsLive(id NodeID) bool {
+	if !c.condenseScopeActive {
+		return true
+	}
+	if id >= c.condenseNewNode {
+		return true
+	}
+	for _, candidate := range c.condenseCandidates {
+		if candidate.Head.Node == id {
+			return true
+		}
+	}
+	return false
 }
 
 // InternCheckpoint returns the core-local identity of an exact serialized
@@ -1211,6 +1729,33 @@ func (c *Core) ClassifyBoundary(head Head, lookahead Symbol) (ClassifiedBoundary
 		return ClassifiedBoundary{}, err
 	}
 	actions, err := c.tables.Actions(node.state, lookahead)
+	if err != nil {
+		return ClassifiedBoundary{}, err
+	}
+	return ClassifiedBoundary{
+		owner: c, actions: actions, phase: c.classificationPhase,
+		head: head, state: node.state, byteOffset: node.byteOffset, lookahead: lookahead,
+	}, nil
+}
+
+// ClassifyBoundaryWithRow builds one authenticated classification from an
+// action row the caller already resolved for this head's state and lookahead.
+// It exists for the compiled-corridor lane: that lane resolves the cell
+// through its own validated instruction stream, whose row index is a
+// projection of the same TableView this core reads, so consulting the parse
+// table a second time would be pure duplicate work
+// (spec.c4-bytecode-isa.v1 section 6.1: the win is removing the
+// state-to-row indirection chain).
+//
+// The caller owns the obligation that actions is exactly what
+// Actions(state, lookahead) returns for this head. The corridor discharges it
+// statically: its per-state decode-back test walks every (state, symbol) cell
+// and requires the compiled row index to equal the table's own action index,
+// and its stream validator runs once at build so the interpreter can trust
+// the stream (obligations S2 and S3). Every other caller must use
+// ClassifyBoundary, which resolves the row itself.
+func (c *Core) ClassifyBoundaryWithRow(head Head, lookahead Symbol, actions ActionRow) (ClassifiedBoundary, error) {
+	node, err := c.node(head.Node)
 	if err != nil {
 		return ClassifiedBoundary{}, err
 	}
@@ -1390,20 +1935,79 @@ const (
 	ReductionUpdated
 )
 
+// CleanPathRankSelection reports how one output relates to the unique clean
+// path selected by production's same-boundary stack rank. The compact core
+// does not apply this result yet. The scheduler can inspect it in a later
+// admission tranche.
+type CleanPathRankSelection uint8
+
+const (
+	CleanPathRankNotApplicable CleanPathRankSelection = iota
+	CleanPathRankUnselected
+	CleanPathRankSelected
+	CleanPathRankUnknown
+)
+
+// HistoricalBoundaryProvenance classifies one retired boundary version.
+// Deterministic versions contain no fragile or converged forest. Converged
+// versions retain selected-lineage provenance. Unproved versions fail closed.
+type HistoricalBoundaryProvenance uint8
+
+const (
+	HistoricalBoundaryNone HistoricalBoundaryProvenance = iota
+	HistoricalBoundaryDeterministic
+	HistoricalBoundaryConverged
+	HistoricalBoundaryUnproved
+)
+
 // ReductionOutput is one final canonical boundary and its aggregate freshness
-// relative to the boundary map at entry to ReduceOutputs.
+// relative to the boundary map at entry to ReduceOutputs. Field order groups
+// Head with HistoricalAlternativeSet up front (both 4-byte aligned, so the
+// set immediately follows Head with no gap) and the byte/uint16-sized fields
+// after; every construction site uses keyed fields
+// (reduceOutputsClassifiedIntoActive, scheduler_owned.go), so this reorder
+// is layout-only (b4b-width-repair audit, 2026-08).
 type ReductionOutput struct {
-	Head             Head
-	Freshness        ReductionFreshness
-	MultiplePopPaths bool
+	Head Head
+	// HistoricalAlternativeSet is the union of every dead predecessor's
+	// recorded alternative set discovered while producing this boundary
+	// (spec.b4b-alternative-set.v1 section 4, "Dead-node historical
+	// import"). Unlike HistoricalCleanPathRank/Lineage, multiple historical
+	// versions union here instead of poisoning to Unknown/0, because
+	// membership is never invalidated.
+	HistoricalAlternativeSet     AlternativeSet
+	HistoricalCleanPathLineage   uint16
+	Freshness                    ReductionFreshness
+	CleanPathRank                CleanPathRankSelection
+	MultiplePopPaths             bool
+	HistoricalBoundaryProvenance HistoricalBoundaryProvenance
+	HistoricalCleanPathRank      CleanPathRankSelection
+	// HistoricalBlended carries forward the blended mark accumulated while
+	// building HistoricalAlternativeSet: true when an imported dead record
+	// was itself blended, or when two dead sets unioned into this one
+	// boundary were incomparable under containment (spec.b4b-alternative-
+	// set.v2 section 3.4).
+	HistoricalBlended bool
 }
 
 const inlineReductionBoundaryOutputs = 2
 
+// Field order groups key (8-byte aligned), head and historicalSet (4-byte
+// aligned) up front, then the byte/uint16-sized fields; the sole
+// construction site (scratch.store, scheduler_owned.go) uses keyed fields,
+// so this reorder is layout-only (b4b-width-repair audit, 2026-08).
 type reductionBoundaryOutput struct {
-	key       boundaryKey
-	head      Head
-	freshness ReductionFreshness
+	key                           boundaryKey
+	head                          Head
+	historicalSet                 AlternativeSet
+	historicalLineage             uint16
+	freshness                     ReductionFreshness
+	cleanPathRank                 CleanPathRankSelection
+	historicalBoundarySplit       bool
+	historicalConvergedSplit      bool
+	historicalForestDeterministic bool
+	historicalCleanPathRank       CleanPathRankSelection
+	historicalBlended             bool
 }
 
 // reductionOutputScratch owns the ephemeral aggregation state for one
@@ -1844,8 +2448,21 @@ const (
 )
 
 type condenseOutcome struct {
-	head   Head
-	change condenseChange
+	head                          Head
+	change                        condenseChange
+	historicalBoundarySplit       bool
+	historicalConvergedSplit      bool
+	historicalForestDeterministic bool
+	historicalCleanPathRank       CleanPathRankSelection
+	historicalLineage             uint16
+	// historicalNode is the dead predecessor's NodeID, captured before
+	// condenseWithOutcomeAtomic clears oldID below. Its nodeLineage record
+	// (and alternative set) persists for the rest of the parse, so callers
+	// can read it back through NodeLineageAlternativeSet for dead-node
+	// import (spec.b4b-alternative-set.v1 section 4). Populated whenever
+	// historicalBoundarySplit is true, regardless of which branch below
+	// computed the scalar historical fields.
+	historicalNode NodeID
 }
 
 func (c *Core) condense(key boundaryKey, in linkInput) (Head, error) {
@@ -1879,9 +2496,74 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 		return condenseOutcome{}, err
 	}
 	probe, oldID := c.boundaries.probe(boundaryIdentityFromKey(key))
+	if !probe.found {
+		// No incumbent has ever published this boundary in the current
+		// frontier: exactly one candidate exists (the incoming link), so no
+		// fold comparison against another link is possible, and there is no
+		// historical predecessor to retire. This is the L1
+		// deterministic-frontier direct-append fast path (spec.campaign.v7
+		// tranche C0 item 4; ginkgo's open question 3, "can
+		// condenseWithOutcomeAtomic prove a single pop path and take a
+		// direct append"). condenseDirectAppend produces the exact bytes the
+		// general path below would: every historical* field stays zero,
+		// oldID stays 0, and the ~200-line fold-comparison block is
+		// unreachable for this shape either way. This is a restructuring of
+		// already-dead branches for a proven condition, not a behavior
+		// change. publishBoundary still gates journal writes on
+		// len(c.transactions) unchanged, so the rollback contract this
+		// function depends on is untouched -- this function still cannot
+		// prove a caller can never roll back past this append, so it does
+		// not weaken that contract.
+		return c.condenseDirectAppend(key, probe, prev.pathCount, in)
+	}
+	historicalBoundarySplit := false
+	var historicalCleanPathRank CleanPathRankSelection
+	var historicalLineage uint16
+	var historicalNode NodeID
+	historicalConvergedSplit := false
+	historicalForestDeterministic := false
+	if probe.found && !c.condenseNodeIsLive(oldID) {
+		historicalBoundarySplit = true
+		historicalNode = oldID
+		old, oldErr := c.nodeLineage(oldID)
+		if oldErr != nil {
+			return condenseOutcome{}, oldErr
+		}
+		if old.owner != 0 && old.owner == c.reductionSourceOwner {
+			historicalForestDeterministic = true
+		} else {
+			deterministic, deterministicErr := c.historicalForestIsDeterministic(oldID, in)
+			if deterministicErr != nil {
+				return condenseOutcome{}, deterministicErr
+			}
+			historicalForestDeterministic = deterministic
+			historicalCleanPathRank = old.rank
+			historicalLineage = old.lineage
+			historicalConvergedSplit = old.converged
+		}
+		oldID = 0
+	}
+	// buildOutcome stamps a returned condenseOutcome with the historical
+	// provenance snapshot captured above. Every return below resolves the
+	// same boundary key, so a historical split discovered above belongs on
+	// whichever path this call actually takes, not only on the path that
+	// happens to run first. This applies the duplicate-drop path's existing
+	// propagation uniformly instead of letting the other early returns
+	// silently drop it.
+	buildOutcome := func(head Head, change condenseChange) condenseOutcome {
+		return condenseOutcome{
+			head: head, change: change,
+			historicalBoundarySplit:       historicalBoundarySplit,
+			historicalConvergedSplit:      historicalConvergedSplit,
+			historicalForestDeterministic: historicalForestDeterministic,
+			historicalCleanPathRank:       historicalCleanPathRank,
+			historicalLineage:             historicalLineage,
+			historicalNode:                historicalNode,
+		}
+	}
 	var old nodeRecord
 	var oldLinks []linkRecord
-	if probe.found {
+	if oldID != 0 {
 		oldRecord, err := c.node(oldID)
 		if err != nil {
 			return condenseOutcome{}, err
@@ -1903,7 +2585,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 				if phase0AEnabled {
 					phase0AObserveCandidateDrop(c, key, in, oldID, index, phase0ATransitionDuplicateDrop)
 				}
-				return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, nil
+				return buildOutcome(Head{Node: oldID}, condenseUnchanged), nil
 			}
 		}
 		if c.diagnostics.foldSamePredecessorShallowPayloads {
@@ -1922,6 +2604,17 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 				}
 				if !equal {
 					continue
+				}
+				_, incumbentExact, err := c.subtreeExternalProvenance(link.payload)
+				if err != nil {
+					return condenseOutcome{}, err
+				}
+				_, incomingExact, err := c.subtreeExternalProvenance(in.payload)
+				if err != nil {
+					return condenseOutcome{}, err
+				}
+				if !incumbentExact || !incomingExact {
+					return condenseOutcome{}, errors.New("parser-core phase zero: shallow fold declined inexact external payload provenance")
 				}
 				shallowCount++
 				if firstShallow < 0 {
@@ -1949,7 +2642,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 				if phase0AEnabled {
 					phase0AObserveCandidateDrop(c, key, in, oldID, structuralMatch, phase0ATransitionPrecedenceDrop)
 				}
-				return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, nil
+				return buildOutcome(Head{Node: oldID}, condenseUnchanged), nil
 			case shallowCount == 1:
 				// Exactly one shallow-class incumbent, structurally different. Rank
 				// the two by dynamic precedence, production's primary disambiguation
@@ -1972,7 +2665,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 					if phase0AEnabled {
 						phase0AObserveCandidateDrop(c, key, in, oldID, incumbent, phase0ATransitionPrecedenceDrop)
 					}
-					return condenseOutcome{head: Head{Node: oldID}, change: condenseUnchanged}, nil
+					return buildOutcome(Head{Node: oldID}, condenseUnchanged), nil
 				case incomingPrecedence > incumbentPrecedence:
 					// The incoming payload strictly dominates; replace the incumbent.
 					if phase0AEnabled {
@@ -1984,7 +2677,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 					} else {
 						c.recordLinkUnionPrecedenceReplaced()
 					}
-					return condenseOutcome{head: head, change: condenseUpdated}, err
+					return buildOutcome(head, condenseUpdated), err
 				default:
 					// A precedence tie between two structurally different same-span
 					// payloads. Dynamic precedence cannot rank them, and the compact
@@ -2068,10 +2761,10 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 		order: in.order.Value, flags: flags, next: LinkID(old.firstLink),
 	})
 	c.addWork(&c.work.GraphLinkAdditionsProxy, 1)
-	id, err := c.appendNode(nodeRecord{
+	id, err := c.appendNodeAt(nodeRecord{
 		state: key.state, byteOffset: key.byteOffset,
 		firstLink: uint32(linkID), linkCount: linkCount, pathCount: newPathCount,
-	})
+	}, key.checkpoint)
 	if err != nil {
 		return condenseOutcome{}, err
 	}
@@ -2089,12 +2782,126 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 		change = condenseUpdated
 		c.recordLinkUnionAlternateAppended()
 	}
-	return condenseOutcome{head: Head{Node: id}, change: change}, nil
+	return buildOutcome(Head{Node: id}, change), nil
+}
+
+// condenseDirectAppend is condenseWithOutcomeAtomic's single-candidate fast
+// path: probe.found is false, so this frontier has never published key
+// before, in is the sole candidate, and no fold comparison or historical
+// retirement applies. Every argument and every write below matches exactly
+// what the general path performs when oldID stays 0 throughout -- the same
+// arena-cap checks, the same unlinked (next: 0) single-link node, the same
+// publishBoundary call against the same probe, and the same zero-valued
+// condenseOutcome shape (change: condenseNew, every historical* field at its
+// zero value). publishBoundary keeps deciding journal writes from
+// len(c.transactions) unchanged; this helper does not touch that contract.
+func (c *Core) condenseDirectAppend(key boundaryKey, probe boundaryProbe, prevPathCount uint64, in linkInput) (condenseOutcome, error) {
+	if uint64(len(c.links))+1 > uint64(c.limits.MaxLinks) || uint64(len(c.links)) >= math.MaxUint32 {
+		return condenseOutcome{}, errors.New("parser-core phase zero: link arena cap")
+	}
+	if uint64(len(c.nodes))+1 > uint64(c.limits.MaxNodes) || uint64(len(c.nodes)) >= math.MaxUint32 {
+		return condenseOutcome{}, errors.New("parser-core phase zero: node arena cap")
+	}
+	linkID := LinkID(uint64(len(c.links)) + 1)
+	flags := uint32(0)
+	if in.order.Present {
+		flags |= linkFlagHasOrder
+	}
+	c.links = append(c.links, linkRecord{
+		prev: in.prev, payload: in.payload, scoreDelta: in.scoreDelta,
+		order: in.order.Value, flags: flags,
+	})
+	c.addWork(&c.work.GraphLinkAdditionsProxy, 1)
+	id, err := c.appendNodeAt(nodeRecord{
+		state: key.state, byteOffset: key.byteOffset,
+		firstLink: uint32(linkID), linkCount: 1, pathCount: prevPathCount,
+	}, key.checkpoint)
+	if err != nil {
+		return condenseOutcome{}, err
+	}
+	if err := c.publishBoundary(probe, id); err != nil {
+		return condenseOutcome{}, err
+	}
+	if phase0AEnabled {
+		phase0AObserveDirectPublication(c, key, in, linkID, id, 0)
+	}
+	return condenseOutcome{head: Head{Node: id}, change: condenseNew}, nil
 }
 
 func (c *Core) linkEqualInput(link linkRecord, in linkInput) (bool, error) {
 	return link.prev == in.prev && link.payload == in.payload && link.scoreDelta == in.scoreDelta &&
 		link.hasOrder() == in.order.Present && (!link.hasOrder() || link.order == in.order.Value), nil
+}
+
+func (c *Core) historicalForestIsDeterministic(oldID NodeID, in linkInput) (bool, error) {
+	incomingPayload, err := c.subtree(in.payload)
+	if err != nil {
+		return false, err
+	}
+	if incomingPayload.fragile {
+		return false, nil
+	}
+	oldDeterministic, err := c.graphVersionIsDeterministic(oldID)
+	if err != nil || !oldDeterministic {
+		return oldDeterministic, err
+	}
+	return c.graphVersionIsDeterministic(in.prev)
+}
+
+func (c *Core) graphVersionIsDeterministic(root NodeID) (bool, error) {
+	stack := c.historicalNodeScratch[:0]
+	stack = append(stack, root)
+	defer func() {
+		clear(stack)
+		c.historicalNodeScratch = stack[:0]
+	}()
+	var visits uint64
+	for len(stack) != 0 {
+		if visits >= uint64(c.limits.MaxNodes) {
+			return false, nil
+		}
+		visits++
+		last := len(stack) - 1
+		id := stack[last]
+		stack = stack[:last]
+		node, err := c.node(id)
+		if err != nil {
+			return false, err
+		}
+		provenance, err := c.nodeLineage(id)
+		if err != nil {
+			return false, err
+		}
+		if provenance.converged {
+			return false, nil
+		}
+		linkID := LinkID(node.firstLink)
+		for count := uint32(0); count < node.linkCount; count++ {
+			if linkID == 0 || uint64(linkID) > uint64(len(c.links)) {
+				return false, errors.New("parser-core phase zero: historical forest has an invalid link")
+			}
+			link := c.links[linkID-1]
+			payload, err := c.subtree(link.payload)
+			if err != nil {
+				return false, err
+			}
+			if payload.fragile {
+				return false, nil
+			}
+			if link.prev >= id {
+				return false, errors.New("parser-core phase zero: historical forest predecessor is not earlier than its node")
+			}
+			stack = append(stack, link.prev)
+			linkID = link.next
+		}
+		if linkID != 0 {
+			return false, errors.New("parser-core phase zero: historical forest has excess links")
+		}
+		if node.linkCount == 0 && node.firstLink != 0 {
+			return false, errors.New("parser-core phase zero: empty historical forest node has a link")
+		}
+	}
+	return true, nil
 }
 
 type shallowPayloadClass struct {
@@ -2158,16 +2965,16 @@ func (c *Core) factorExactPredecessor(key boundaryKey, probe boundaryProbe, oldI
 		if !exactEdge && !shallow {
 			continue
 		}
-		leftClean, cleanErr := c.subtreeHasNoExternalDescendant(incumbent.payload)
-		if cleanErr != nil {
-			return condenseOutcome{}, true, cleanErr
+		_, leftExact, provenanceErr := c.subtreeExternalProvenance(incumbent.payload)
+		if provenanceErr != nil {
+			return condenseOutcome{}, true, provenanceErr
 		}
-		rightClean, cleanErr := c.subtreeHasNoExternalDescendant(in.payload)
-		if cleanErr != nil {
-			return condenseOutcome{}, true, cleanErr
+		_, rightExact, provenanceErr := c.subtreeExternalProvenance(in.payload)
+		if provenanceErr != nil {
+			return condenseOutcome{}, true, provenanceErr
 		}
-		if !leftClean || !rightClean {
-			return condenseOutcome{}, true, errors.New("parser-core phase zero: recursive insertion declined external payload")
+		if !leftExact || !rightExact {
+			return condenseOutcome{}, true, errors.New("parser-core phase zero: recursive insertion declined inexact external payload provenance")
 		}
 		if !exactEdge {
 			return condenseOutcome{}, true, errors.New("parser-core phase zero: recursive insertion declined shallow non-exact outer edge")
@@ -2195,7 +3002,7 @@ func (c *Core) factorExactPredecessorMerge(key boundaryKey, probe boundaryProbe,
 	if phase0AEnabled {
 		phase0ABeginPredecessorMerge(c, incumbent.prev, in.prev)
 	}
-	merged, changed, mergeErr := c.mergePredecessorsOneLayer(incumbent.prev, in.prev)
+	merged, changed, mergeErr := c.mergePredecessorsBounded(incumbent.prev, in.prev, 0)
 	if mergeErr != nil {
 		if phase0AEnabled {
 			phase0AAbortPredecessorMerge(c)
@@ -2237,7 +3044,15 @@ func (c *Core) factorExactPredecessorMerge(key boundaryKey, probe boundaryProbe,
 	return condenseOutcome{head: Head{Node: id}, change: condenseUpdated}, true, nil
 }
 
-func (c *Core) mergePredecessorsOneLayer(leftID, rightID NodeID) (NodeID, bool, error) {
+// maxRecursiveInsertDepth bounds the persistent counterpart of C's recursive
+// stack-link insertion. Sixteen levels cover the measured clean corpus
+// family while keeping pathological graphs on a small, fixed stack budget.
+const maxRecursiveInsertDepth = 16
+
+func (c *Core) mergePredecessorsBounded(leftID, rightID NodeID, depth int) (NodeID, bool, error) {
+	if depth > maxRecursiveInsertDepth {
+		return 0, false, errors.New("parser-core phase zero: recursive insertion depth limit")
+	}
 	if leftID == rightID {
 		return 0, false, errors.New("parser-core phase zero: recursive insertion self-merge")
 	}
@@ -2249,7 +3064,10 @@ func (c *Core) mergePredecessorsOneLayer(leftID, rightID NodeID) (NodeID, bool, 
 	if err != nil {
 		return 0, false, err
 	}
-	if left.state != right.state || left.byteOffset != right.byteOffset {
+	leftCheckpoint, leftExact := c.nodeScannerCheckpoint(leftID)
+	rightCheckpoint, rightExact := c.nodeScannerCheckpoint(rightID)
+	if left.state != right.state || left.byteOffset != right.byteOffset ||
+		!leftExact || !rightExact || leftCheckpoint != rightCheckpoint {
 		return 0, false, errors.New("parser-core phase zero: recursive predecessors are not boundary-equivalent")
 	}
 	related, err := c.nodesAncestryRelated(leftID, rightID)
@@ -2273,7 +3091,7 @@ func (c *Core) mergePredecessorsOneLayer(leftID, rightID NodeID) (NodeID, bool, 
 	changed := false
 	for _, incoming := range rightLinks {
 		var inserted bool
-		links, inserted, err = c.insertLinkOneLayer(left.state, left.byteOffset, links, incoming)
+		links, inserted, err = c.insertLinkBounded(left.state, left.byteOffset, links, incoming, depth)
 		if err != nil {
 			return 0, false, err
 		}
@@ -2282,41 +3100,41 @@ func (c *Core) mergePredecessorsOneLayer(leftID, rightID NodeID) (NodeID, bool, 
 	if !changed {
 		return leftID, false, nil
 	}
-	merged, err := c.appendAdjacencyNode(left.state, left.byteOffset, links)
+	merged, err := c.appendAdjacencyNodeAt(left.state, left.byteOffset, leftCheckpoint, links)
 	if err != nil {
 		return 0, false, err
 	}
 	return merged, true, nil
 }
 
-// insertLinkOneLayer mirrors the measured lower-adjacency decisions of
+// insertLinkBounded mirrors the measured lower-adjacency decisions of
 // stack_node_add_link without mutating an existing adjacency. Same-pair
 // shallow payloads select the higher effective subtree precedence; every
-// other clean class remains in stable incumbent-first order. A second
-// different-predecessor merge is outside this tranche and declines.
-func (c *Core) insertLinkOneLayer(state StateID, byteOffset uint32, links []linkRecord, incoming linkRecord) ([]linkRecord, bool, error) {
+// other clean class remains in stable incumbent-first order. Boundary-equal
+// predecessors recurse only when their complete outer edges are exact.
+func (c *Core) insertLinkBounded(state StateID, byteOffset uint32, links []linkRecord, incoming linkRecord, depth int) ([]linkRecord, bool, error) {
 	if len(links) == 0 {
 		return append(slices.Clone(links), incoming), true, nil
 	}
 	c.recordLinkUnionAttempt()
-	clean, err := c.subtreeHasNoExternalDescendant(incoming.payload)
+	_, incomingExact, err := c.subtreeExternalProvenance(incoming.payload)
 	if err != nil {
 		c.recordLinkUnionRejected()
 		return nil, false, err
 	}
-	if !clean {
+	if !incomingExact {
 		c.recordLinkUnionRejected()
-		return nil, false, errors.New("parser-core phase zero: recursive insertion declined external payload")
+		return nil, false, errors.New("parser-core phase zero: recursive insertion declined inexact external payload provenance")
 	}
 	for index, incumbent := range links {
-		clean, err := c.subtreeHasNoExternalDescendant(incumbent.payload)
+		_, incumbentExact, err := c.subtreeExternalProvenance(incumbent.payload)
 		if err != nil {
 			c.recordLinkUnionRejected()
 			return nil, false, err
 		}
-		if !clean {
+		if !incumbentExact {
 			c.recordLinkUnionRejected()
-			return nil, false, errors.New("parser-core phase zero: recursive insertion declined external payload")
+			return nil, false, errors.New("parser-core phase zero: recursive insertion declined inexact external payload provenance")
 		}
 		if c.linkRecordsEqual(incumbent, incoming) {
 			c.recordLinkUnionDuplicateNoop()
@@ -2367,8 +3185,41 @@ func (c *Core) insertLinkOneLayer(state StateID, byteOffset uint32, links []link
 		if !mergeable {
 			continue
 		}
-		c.recordLinkUnionRejected()
-		return nil, false, errors.New("parser-core phase zero: recursive insertion declined beyond one predecessor layer")
+		if !c.linkEdgesEqual(incumbent, incoming) {
+			c.recordLinkUnionRejected()
+			return nil, false, errors.New("parser-core phase zero: recursive insertion declined non-exact nested edge")
+		}
+		if depth >= maxRecursiveInsertDepth {
+			c.recordLinkUnionRejected()
+			return nil, false, errors.New("parser-core phase zero: recursive insertion depth limit")
+		}
+		if phase0AEnabled {
+			phase0ABeginPredecessorMerge(c, incumbent.prev, incoming.prev)
+		}
+		merged, changed, err := c.mergePredecessorsBounded(incumbent.prev, incoming.prev, depth+1)
+		if err != nil {
+			if phase0AEnabled {
+				phase0AAbortPredecessorMerge(c)
+			}
+			c.recordLinkUnionRejected()
+			return nil, false, err
+		}
+		if !changed {
+			if phase0AEnabled {
+				phase0AAbortPredecessorMerge(c)
+				phase0AMergeDecision(c, index, phase0ATransitionDuplicateDrop)
+			}
+			c.recordLinkUnionDuplicateNoop()
+			return links, false, nil
+		}
+		if phase0AEnabled {
+			phase0AObserveAdjacencyPublished(c, merged)
+			phase0AMergeRecursiveDecision(c, index, merged)
+		}
+		updated := slices.Clone(links)
+		updated[index].prev = merged
+		c.recordLinkUnionRecursiveChanged()
+		return updated, true, nil
 	}
 	if uint32(len(links)) >= c.limits.MaxLinksPerBoundary {
 		c.recordLinkUnionRejected()
@@ -2381,42 +3232,78 @@ func (c *Core) insertLinkOneLayer(state StateID, byteOffset uint32, links []link
 	return append(slices.Clone(links), incoming), true, nil
 }
 
-func (c *Core) subtreeHasNoExternalDescendant(root SubtreeID) (bool, error) {
+// subtreeExternalProvenance reports whether a payload contains an external
+// terminal and whether every such terminal has an exact scanner-state pair.
+func (c *Core) subtreeExternalProvenance(root SubtreeID) (hasExternal, exact bool, err error) {
 	if _, err := c.subtree(root); err != nil {
-		return false, err
+		return false, false, err
 	}
 	if c.externalPayloadsQuiescent {
-		return true, nil
+		return false, true, nil
 	}
 	seen := make(map[SubtreeID]bool)
 	visiting := make(map[SubtreeID]bool)
-	var walk func(SubtreeID) (bool, error)
-	walk = func(id SubtreeID) (bool, error) {
+	var walk func(SubtreeID) (bool, bool, error)
+	walk = func(id SubtreeID) (bool, bool, error) {
 		if visiting[id] {
-			return false, errors.New("parser-core phase zero: compact subtree cycle during recursive insertion")
+			return false, false, errors.New("parser-core phase zero: compact subtree cycle during recursive insertion")
 		}
 		if seen[id] {
-			return true, nil
+			return false, true, nil
 		}
 		record, err := c.subtree(id)
 		if err != nil {
-			return false, err
+			return false, false, err
 		}
 		if record.external {
-			return false, nil
+			provenance, ok := c.externalPayloadScannerProvenance(id)
+			if !record.terminal || !ok {
+				return true, false, nil
+			}
+			for _, checkpoint := range [...]CheckpointID{provenance.start, provenance.end} {
+				if checkpoint == 0 {
+					continue
+				}
+				if _, ok := c.checkpoints.record(checkpoint); !ok {
+					return true, false, nil
+				}
+			}
+			return true, true, nil
 		}
 		seen[id] = true
 		visiting[id] = true
 		defer delete(visiting, id)
+		has := false
 		for _, child := range c.children[record.firstChild : record.firstChild+record.childCount] {
-			clean, err := walk(child)
-			if err != nil || !clean {
-				return clean, err
+			if child >= id {
+				return false, false, errors.New("parser-core phase zero: compact subtree child does not precede its parent")
 			}
+			childHas, childExact, err := walk(child)
+			if err != nil || !childExact {
+				return has || childHas, childExact, err
+			}
+			has = has || childHas
 		}
-		return true, nil
+		return has, true, nil
 	}
 	return walk(root)
+}
+
+func (c *Core) externalPayloadScannerProvenance(payload SubtreeID) (externalPayloadProvenance, bool) {
+	low, high := 0, len(c.externalProvenance)
+	for low < high {
+		mid := low + (high-low)/2
+		candidate := c.externalProvenance[mid]
+		if candidate.payload < payload {
+			low = mid + 1
+			continue
+		}
+		high = mid
+	}
+	if low >= len(c.externalProvenance) || c.externalProvenance[low].payload != payload {
+		return externalPayloadProvenance{}, false
+	}
+	return c.externalProvenance[low], true
 }
 
 func (c *Core) predecessorBoundariesMatch(leftID, rightID NodeID) (bool, error) {
@@ -2428,7 +3315,28 @@ func (c *Core) predecessorBoundariesMatch(leftID, rightID NodeID) (bool, error) 
 	if err != nil {
 		return false, err
 	}
-	return left.state == right.state && left.byteOffset == right.byteOffset, nil
+	leftCheckpoint, leftExact := c.nodeScannerCheckpoint(leftID)
+	rightCheckpoint, rightExact := c.nodeScannerCheckpoint(rightID)
+	return left.state == right.state &&
+		left.byteOffset == right.byteOffset &&
+		leftExact && rightExact &&
+		leftCheckpoint == rightCheckpoint, nil
+}
+
+func (c *Core) nodeScannerCheckpoint(id NodeID) (CheckpointID, bool) {
+	if c.externalPayloadsQuiescent {
+		return 0, true
+	}
+	if id == 0 || uint64(id) > uint64(len(c.nodeCheckpoints)) {
+		return 0, false
+	}
+	checkpoint := c.nodeCheckpoints[id-1]
+	if checkpoint != 0 {
+		if _, ok := c.checkpoints.record(checkpoint); !ok {
+			return 0, false
+		}
+	}
+	return checkpoint, true
 }
 
 func (c *Core) shallowPayloadsEqual(leftPrev NodeID, leftPayload SubtreeID, rightPrev NodeID, rightPayload SubtreeID) (bool, error) {
@@ -2507,6 +3415,10 @@ func (c *Core) nodeReaches(start, target NodeID) (bool, error) {
 }
 
 func (c *Core) appendAdjacencyNode(state StateID, byteOffset uint32, links []linkRecord) (NodeID, error) {
+	return c.appendAdjacencyNodeAt(state, byteOffset, c.checkpoint, links)
+}
+
+func (c *Core) appendAdjacencyNodeAt(state StateID, byteOffset uint32, checkpoint CheckpointID, links []linkRecord) (NodeID, error) {
 	if len(links) == 0 {
 		return 0, errors.New("parser-core phase zero: recursive insertion produced empty adjacency")
 	}
@@ -2539,10 +3451,10 @@ func (c *Core) appendAdjacencyNode(state StateID, byteOffset uint32, links []lin
 		c.addWork(&c.work.GraphLinkAdditionsProxy, 1)
 		first = LinkID(len(c.links))
 	}
-	return c.appendNode(nodeRecord{
+	return c.appendNodeAt(nodeRecord{
 		state: state, byteOffset: byteOffset, firstLink: uint32(first),
 		linkCount: uint32(len(links)), pathCount: pathCount,
-	})
+	}, checkpoint)
 }
 
 // subtreesStructurallyEqual reports whether two compact payload subtrees are the
@@ -2584,6 +3496,15 @@ func (c *Core) subtreesStructurallyEqual(left, right SubtreeID) (bool, error) {
 		l.extra != r.extra || l.external != r.external || l.terminal != r.terminal {
 		return false, nil
 	}
+	if l.external {
+		leftProvenance, leftExact := c.externalPayloadScannerProvenance(left)
+		rightProvenance, rightExact := c.externalPayloadScannerProvenance(right)
+		if leftExact != rightExact ||
+			leftExact && (leftProvenance.start != rightProvenance.start ||
+				leftProvenance.end != rightProvenance.end) {
+			return false, nil
+		}
+	}
 	if !slices.Equal(
 		c.fields[l.firstField:l.firstField+l.fieldCount],
 		c.fields[r.firstField:r.firstField+r.fieldCount],
@@ -2621,9 +3542,13 @@ func (c *Core) shallowPayloadClass(prevID NodeID, payloadID SubtreeID) (shallowP
 	}
 	// The compact phase-zero core cannot represent recovery/error subtrees yet,
 	// so every resident non-external payload is clean by construction. External
-	// payloads require an explicit language-level scanner-state certificate.
+	// payloads require exact per-token scanner provenance or a stable language
+	// certificate.
 	if payload.external && !c.externalPayloadsQuiescent {
-		return shallowPayloadClass{}, false, nil
+		_, exact, err := c.subtreeExternalProvenance(payloadID)
+		if err != nil || !exact {
+			return shallowPayloadClass{}, false, err
+		}
 	}
 	if payload.startByte < prev.byteOffset || payload.endByte < payload.startByte {
 		return shallowPayloadClass{}, false, errors.New("parser-core phase zero: invalid shallow payload extent")
@@ -2669,10 +3594,10 @@ func (c *Core) replaceBoundaryLink(key boundaryKey, probe boundaryProbe, old nod
 		c.addWork(&c.work.GraphLinkAdditionsProxy, 1)
 		first = LinkID(len(c.links))
 	}
-	id, err := c.appendNode(nodeRecord{
+	id, err := c.appendNodeAt(nodeRecord{
 		state: key.state, byteOffset: key.byteOffset,
 		firstLink: uint32(first), linkCount: old.linkCount, pathCount: old.pathCount,
-	})
+	}, key.checkpoint)
 	if err != nil {
 		c.links = c.links[:linkMark]
 		return Head{}, err
@@ -2688,6 +3613,7 @@ func (c *Core) replaceBoundaryLink(key boundaryKey, probe boundaryProbe, old nod
 
 type popPath struct {
 	prev          NodeID
+	cleanPathRank CleanPathRankSelection
 	children      []SubtreeID
 	trailing      []pathPayload
 	score         int64
@@ -2709,6 +3635,7 @@ type popEnumerationScratch struct {
 	revScores  []int64
 	revOrders  []ForkOrder
 	trailing   []pathPayload
+	external   []SubtreeID
 	paths      []popPath
 }
 
@@ -2720,6 +3647,7 @@ func (s *popEnumerationScratch) begin() {
 	s.revScores = s.revScores[:0]
 	s.revOrders = s.revOrders[:0]
 	s.trailing = s.trailing[:0]
+	s.external = s.external[:0]
 	s.paths = s.paths[:0]
 }
 
@@ -2731,6 +3659,7 @@ func (s *popEnumerationScratch) finishTraversal() {
 	s.revScores = s.revScores[:0]
 	s.revOrders = s.revOrders[:0]
 	s.trailing = s.trailing[:0]
+	s.external = s.external[:0]
 }
 
 func (s *popEnumerationScratch) resetLogical() {
@@ -2752,6 +3681,275 @@ func (s *popEnumerationScratch) nextPath() *popPath {
 		}
 	}
 	return &s.paths[index]
+}
+
+type cleanPathRank struct {
+	score int64
+	depth uint64
+}
+
+type cleanPathRankAccumulator struct {
+	best       cleanPathRank
+	winner     int
+	found      bool
+	crossTie   bool
+	pathIndex  int
+	windowRank cleanPathRank
+}
+
+func compareCleanPathRank(left, right cleanPathRank) int {
+	if left.score != right.score {
+		if left.score > right.score {
+			return 1
+		}
+		return -1
+	}
+	if left.depth != right.depth {
+		if left.depth > right.depth {
+			return 1
+		}
+		return -1
+	}
+	return 0
+}
+
+func (a *cleanPathRankAccumulator) observe(prefixScore int64, prefixDepth uint64) bool {
+	score, err := checkedAddScore(prefixScore, a.windowRank.score)
+	if err != nil {
+		return false
+	}
+	candidate := cleanPathRank{
+		score: score,
+		depth: prefixDepth + a.windowRank.depth,
+	}
+	switch {
+	case !a.found || compareCleanPathRank(candidate, a.best) > 0:
+		a.best = candidate
+		a.winner = a.pathIndex
+		a.found = true
+		a.crossTie = false
+	case compareCleanPathRank(candidate, a.best) == 0 && a.winner != a.pathIndex:
+		a.crossTie = true
+	}
+	return true
+}
+
+// markCleanProductionRank selects one clean multi-pop path by production's
+// same-boundary rank: higher cumulative dynamic precedence, then greater
+// physical stack depth. Accepted and shifted status are equal for paths in one
+// classified reduction. An exact cross-path tie stays unknown.
+//
+// The walk reuses popScratch's existing traversal storage. It does not publish
+// arena data or allocate selector-owned storage.
+func (c *Core) markCleanProductionRank(paths []popPath) {
+	if len(paths) < 2 {
+		return
+	}
+	for index := range paths {
+		paths[index].cleanPathRank = CleanPathRankUnselected
+	}
+	scratch := &c.popScratch
+	scratch.finishTraversal()
+	defer scratch.finishTraversal()
+
+	var rank cleanPathRankAccumulator
+	for index := range paths {
+		path := &paths[index]
+		for _, payload := range path.children {
+			hasExternal, err := c.cleanPathPayloadHasExternal(payload)
+			if err != nil || hasExternal {
+				markCleanPathRankUnknown(paths)
+				return
+			}
+		}
+		for _, trailing := range path.trailing {
+			hasExternal, err := c.cleanPathPayloadHasExternal(trailing.payload)
+			if err != nil || hasExternal {
+				markCleanPathRankUnknown(paths)
+				return
+			}
+		}
+		prefix, err := c.node(path.prev)
+		if err != nil || prefix.pathCount == math.MaxUint64 ||
+			prefix.pathCount > c.limits.MaxDerivations {
+			markCleanPathRankUnknown(paths)
+			return
+		}
+		rank.pathIndex = index
+		rank.windowRank = cleanPathRank{
+			score: path.score,
+			depth: uint64(len(path.children) + len(path.trailing)),
+		}
+		ok, err := c.walkCleanPrefixRanks(path.prev, &rank)
+		if err != nil || !ok {
+			markCleanPathRankUnknown(paths)
+			return
+		}
+	}
+	if !rank.found || rank.crossTie {
+		markCleanPathRankUnknown(paths)
+		return
+	}
+	paths[rank.winner].cleanPathRank = CleanPathRankSelected
+}
+
+func markCleanPathRankUnknown(paths []popPath) {
+	for index := range paths {
+		paths[index].cleanPathRank = CleanPathRankUnknown
+	}
+}
+
+func (c *Core) cleanPathPayloadHasExternal(root SubtreeID) (bool, error) {
+	if c.externalPayloadsQuiescent {
+		return false, nil
+	}
+	if root == 0 {
+		return false, errors.New("parser-core phase zero: clean path has no payload")
+	}
+	stack := c.popScratch.external[:0]
+	stack = append(stack, root)
+	c.popScratch.external = stack
+	visited := uint64(0)
+	for len(stack) != 0 {
+		last := len(stack) - 1
+		id := stack[last]
+		stack = stack[:last]
+		record, err := c.subtree(id)
+		if err != nil {
+			c.popScratch.external = stack[:0]
+			return false, err
+		}
+		visited++
+		if visited > uint64(c.limits.MaxSubtrees) {
+			c.popScratch.external = stack[:0]
+			return false, errors.New("parser-core phase zero: clean path external payload walk cap")
+		}
+		if record.external {
+			c.popScratch.external = stack[:0]
+			return true, nil
+		}
+		for _, child := range c.children[record.firstChild : record.firstChild+record.childCount] {
+			if child == 0 || child >= id {
+				c.popScratch.external = stack[:0]
+				return false, errors.New("parser-core phase zero: clean path subtree order is invalid")
+			}
+			stack = append(stack, child)
+		}
+		c.popScratch.external = stack
+	}
+	c.popScratch.external = stack[:0]
+	return false, nil
+}
+
+// walkCleanPrefixRanks visits each retained prefix derivation without a map.
+// The persistent graph is an append-only directed acyclic graph. Existing
+// link-frame and score scratch provide the iterative traversal stack.
+func (c *Core) walkCleanPrefixRanks(root NodeID, rank *cleanPathRankAccumulator) (bool, error) {
+	scratch := &c.popScratch
+	scratch.finishTraversal()
+	id := root
+	score := int64(0)
+	depth := uint64(0)
+	active := 0
+
+descend:
+	for {
+		node, err := c.node(id)
+		if err != nil {
+			return false, err
+		}
+		switch node.linkCount {
+		case 0:
+			if !rank.observe(score, depth) {
+				return false, nil
+			}
+			break descend
+		case 1:
+			if node.firstLink == 0 || uint64(node.firstLink) > uint64(len(c.links)) {
+				return false, errors.New("parser-core phase zero: clean path link is out of range")
+			}
+			link := c.links[node.firstLink-1]
+			if link.next != 0 {
+				return false, errors.New("parser-core phase zero: clean path single link has a successor")
+			}
+			hasExternal, err := c.cleanPathPayloadHasExternal(link.payload)
+			if err != nil || hasExternal {
+				return false, err
+			}
+			score, err = checkedAddScore(score, link.scoreDelta)
+			if err != nil {
+				return false, nil
+			}
+			depth++
+			id = link.prev
+		default:
+			if len(scratch.linkFrames) <= active {
+				scratch.linkFrames = append(scratch.linkFrames, nil)
+			}
+			links, err := c.nodeLinksInto(scratch.linkFrames[active], *node)
+			if err != nil {
+				return false, err
+			}
+			scratch.linkFrames[active] = links
+			if len(scratch.revOrders) == active {
+				scratch.revOrders = append(scratch.revOrders, ForkOrder{})
+			} else {
+				scratch.revOrders[active] = ForkOrder{}
+				scratch.revOrders = scratch.revOrders[:active+1]
+			}
+			scoreIndex := active * 2
+			if len(scratch.revScores) == scoreIndex {
+				scratch.revScores = append(scratch.revScores, score, int64(depth))
+			} else {
+				scratch.revScores[scoreIndex] = score
+				scratch.revScores[scoreIndex+1] = int64(depth)
+				scratch.revScores = scratch.revScores[:scoreIndex+2]
+			}
+			active++
+			break descend
+		}
+	}
+
+	for active != 0 {
+		frameIndex := active - 1
+		frame := scratch.linkFrames[frameIndex]
+		cursor := int(scratch.revOrders[frameIndex].Value)
+		if cursor >= len(frame) {
+			scratch.linkFrames[frameIndex] = frame[:0]
+			scratch.revScores = scratch.revScores[:frameIndex*2]
+			scratch.revOrders = scratch.revOrders[:frameIndex]
+			active--
+			continue
+		}
+		link := frame[cursor]
+		scratch.revOrders[frameIndex].Value++
+		var err error
+		hasExternal, err := c.cleanPathPayloadHasExternal(link.payload)
+		if err != nil || hasExternal {
+			return false, err
+		}
+		score, err = checkedAddScore(scratch.revScores[frameIndex*2], link.scoreDelta)
+		if err != nil {
+			return false, nil
+		}
+		depth = uint64(scratch.revScores[frameIndex*2+1]) + 1
+		id = link.prev
+		goto descend
+	}
+	return true, nil
+}
+
+func mergeCleanPathRank(left, right CleanPathRankSelection) CleanPathRankSelection {
+	switch {
+	case left == CleanPathRankUnknown || right == CleanPathRankUnknown:
+		return CleanPathRankUnknown
+	case left == CleanPathRankSelected || right == CleanPathRankSelected:
+		return CleanPathRankSelected
+	case left == CleanPathRankUnselected || right == CleanPathRankUnselected:
+		return CleanPathRankUnselected
+	default:
+		return CleanPathRankNotApplicable
+	}
 }
 
 // popPaths returns Core-owned ephemeral storage. ReduceOutputs consumes the
@@ -3329,14 +4527,27 @@ func (c *Core) RawSelectedSubtreeCensus(roots []SubtreeID) (RawSelectedCensus, e
 }
 
 func (c *Core) appendNode(r nodeRecord) (NodeID, error) {
+	return c.appendNodeAt(r, c.checkpoint)
+}
+
+func (c *Core) appendNodeAt(r nodeRecord, checkpoint CheckpointID) (NodeID, error) {
 	if uint64(len(c.nodes))+1 > uint64(c.limits.MaxNodes) || uint64(len(c.nodes)) >= math.MaxUint32 {
 		return 0, errors.New("parser-core phase zero: node arena cap")
+	}
+	if !c.externalPayloadsQuiescent && checkpoint != 0 {
+		if _, ok := c.checkpoints.record(checkpoint); !ok {
+			return 0, errors.New("parser-core phase zero: node scanner checkpoint is unavailable")
+		}
 	}
 	next := NodeID(uint64(len(c.nodes)) + 1)
 	if err := c.validatePublishedNodeDAG(r, next); err != nil {
 		return 0, err
 	}
 	c.nodes = append(c.nodes, r)
+	c.nodeLineages = append(c.nodeLineages, nodeLineageRecord{})
+	if !c.externalPayloadsQuiescent {
+		c.nodeCheckpoints = append(c.nodeCheckpoints, checkpoint)
+	}
 	return next, nil
 }
 
@@ -3389,9 +4600,20 @@ func (c *Core) appendSubtree(r subtreeRecord, children []SubtreeID, fields []Fie
 
 func (c *Core) appendAuthenticatedTerminal(r subtreeRecord) (SubtreeID, error) {
 	// The AST provenance ratchet requires every caller to pass a subtreeRecord
-	// literal with terminal:true. Keep this seam as pure forwarding so terminal
-	// construction does not add a partial store before the hot record copy.
-	return c.appendSubtreeRecord(r, nil, nil, nil)
+	// literal with terminal:true. Publish the terminal once. Then append its
+	// sparse scanner proof when the current election supplied one.
+	payload, err := c.appendSubtreeRecord(r, nil, nil, nil)
+	if err != nil {
+		return 0, err
+	}
+	if r.external && c.externalTokenScannerExact {
+		c.externalProvenance = append(c.externalProvenance, externalPayloadProvenance{
+			payload: payload,
+			start:   c.externalTokenScannerStart,
+			end:     c.externalTokenScannerEnd,
+		})
+	}
+	return payload, nil
 }
 
 func (c *Core) appendSubtreeRecord(r subtreeRecord, children []SubtreeID, fields []FieldMapEntry, aliases []Symbol) (SubtreeID, error) {
@@ -3457,6 +4679,280 @@ func (c *Core) node(id NodeID) (*nodeRecord, error) {
 		return nil, fmt.Errorf("parser-core phase zero: invalid node id %d", id)
 	}
 	return &c.nodes[id-1], nil
+}
+
+func (c *Core) nodeLineage(id NodeID) (*nodeLineageRecord, error) {
+	if id == 0 || uint64(id) > uint64(len(c.nodeLineages)) {
+		return nil, fmt.Errorf("parser-core phase zero: invalid node lineage id %d", id)
+	}
+	return &c.nodeLineages[id-1], nil
+}
+
+// NodeLineageAlternativeSet returns the currently recorded alternative set
+// for id. A dead (superseded) node keeps its lineage record for the rest of
+// the parse, so this also resolves historical membership for dead-node
+// import (spec.b4b-alternative-set.v1 section 4, "Dead-node historical
+// import").
+func (c *Core) NodeLineageAlternativeSet(id NodeID) (AlternativeSet, error) {
+	record, err := c.nodeLineage(id)
+	if err != nil {
+		return AlternativeSet{}, err
+	}
+	return record.set, nil
+}
+
+// alternativeSetMembers resolves set's sorted member slice, reading through
+// the shared spill arena when set has spilled. The returned slice aliases
+// Core-owned storage and is invalidated by the next mutation to any set; it
+// never allocates and never writes.
+func (c *Core) alternativeSetMembers(set AlternativeSet) ([]uint32, bool) {
+	if !set.spilled() {
+		return set.inline[:set.count], true
+	}
+	if set.spillRef == 0 {
+		return nil, set.count == 0
+	}
+	start := int(set.spillRef) - 1
+	end := start + int(set.count)
+	if start < 0 || end > len(c.alternativeSpillArena) {
+		return nil, false
+	}
+	return c.alternativeSpillArena[start:end], true
+}
+
+// AlternativeSetMembers is the exported form of alternativeSetMembers for
+// cross-package readers (the shadow predicate and census in
+// parsercore_phase0_driver.go). ok is false only when set's spill reference
+// is out of range for the current arena; every recording path in this
+// package keeps that from happening, so callers treat !ok as a fail-closed
+// signal, not a recoverable case.
+func (c *Core) AlternativeSetMembers(set AlternativeSet) ([]uint32, bool) {
+	return c.alternativeSetMembers(set)
+}
+
+// searchAlternativeSetMembers returns the sorted insertion position for
+// member within the already-sorted, deduplicated members, and whether member
+// is already present. Linear scan is deliberate: members is bounded by
+// alternativeSetHardCap (32), where a branch-predictable scan outperforms a
+// callback-based binary search and never allocates.
+func searchAlternativeSetMembers(members []uint32, member uint32) (int, bool) {
+	for index, existing := range members {
+		if existing == member {
+			return index, true
+		}
+		if existing > member {
+			return index, false
+		}
+	}
+	return len(members), false
+}
+
+// alternativeSetInsert inserts one member into set in place and reports
+// whether the set changed. It is a no-op for member==0 (reserved) or an
+// already-present member. Every mutation is append-only at the byte level:
+// positions below the pre-call count are never rewritten. Three cases, from
+// cheapest to most expensive:
+//
+//  1. Pure ascending tail append while still inline: writes only the new
+//     inline slot.
+//  2. Pure ascending tail append while spilled, and this set's segment is
+//     still the live tail of Core.alternativeSpillArena (nothing else has
+//     grown the arena since): extends the segment and the arena together
+//     with one appended element, O(1) amortized. This is the common case --
+//     a header or node accumulating its own establishment/union history in
+//     temporal (hence ascending) order, spec.b4b-alternative-set.v1 section
+//     3.1's monotonic lineage-id allocation -- and is what keeps repeated
+//     per-dispatch persistence (persistHeaderLineageOwned) cheap on a long
+//     parse instead of re-copying a growing segment on every call.
+//  3. Anything else (inline growth beyond capacity, an insertion that is not
+//     the new maximum, or a spilled segment that is no longer the arena's
+//     tail): writes a complete fresh sorted copy to a new segment at the
+//     current end of the arena, leaving prior storage untouched and unread
+//     from then on.
+//
+// Case 3's untouched-prior-storage property (shared with cases 1 and 2) is
+// what lets the journal restore an exact prior set by truncating
+// count/flags/spillRef alone (section 3.3); a superseded segment simply
+// leaks arena space until the next Reset, bounded by alternativeSetHardCap
+// per record.
+//
+// Overflowed is frozen, uniformly. Once alternativeSetFlagOverflowed is set
+// -- whether by this function's own count reaching alternativeSetHardCap,
+// or by alternativeSetUnion propagating an overflowed source's incomplete
+// knowledge onto set (below) -- no further insert can ever change set
+// again: the check runs first, before any member resolution or scan, so a
+// set that stays overflowed for the rest of a parse (the canonical corpus
+// census found this true for 98.7% of elections at (event, branch) member
+// width) costs one flag test per call instead of a spill-arena read and a
+// linear scan that would always end in the identical no-op.
+func (c *Core) alternativeSetInsert(set *AlternativeSet, member uint32) bool {
+	if member == 0 {
+		return false
+	}
+	if set.flags&alternativeSetFlagOverflowed != 0 {
+		return false
+	}
+	current, ok := c.alternativeSetMembers(*set)
+	if !ok {
+		return false
+	}
+	position, found := searchAlternativeSetMembers(current, member)
+	if found {
+		return false
+	}
+	if int(set.count) >= alternativeSetHardCap {
+		set.flags |= alternativeSetFlagOverflowed
+		return true
+	}
+	if position == len(current) {
+		switch {
+		case !set.spilled() && len(current) < alternativeSetInlineCapacity:
+			set.inline[len(current)] = member
+			set.count++
+			return true
+		case set.spilled() && int(set.spillRef)-1+len(current) == len(c.alternativeSpillArena):
+			c.alternativeSpillArena = append(c.alternativeSpillArena, member)
+			set.count++
+			return true
+		}
+	}
+	start := len(c.alternativeSpillArena)
+	c.alternativeSpillArena = append(c.alternativeSpillArena, current[:position]...)
+	c.alternativeSpillArena = append(c.alternativeSpillArena, member)
+	c.alternativeSpillArena = append(c.alternativeSpillArena, current[position:]...)
+	set.spillRef = uint32(start) + 1
+	set.count = uint8(len(current) + 1)
+	set.flags |= alternativeSetFlagSpilled
+	return true
+}
+
+// alternativeSetUnion unions src's recorded members into *dst in place and
+// reports whether dst changed. Overflowed is frozen, uniformly (see
+// alternativeSetInsert's doc comment): this function never changes an
+// already-overflowed dst, and never partially merges an overflowed src's
+// known members before freezing dst -- an overflowed source's recorded
+// members are an incomplete view of its true membership (spec.b4b-
+// alternative-set.v1 section 3.2), so the only sound conclusion is that
+// dst's own true union is unknowable beyond what dst already has recorded.
+// dst becomes overflowed-and-done at exactly its pre-union state, rather
+// than spending a merge loop whose result is discarded the moment the flag
+// is set regardless. Checked first, in both directions, before any member
+// resolution: on the hot, already-saturated path (98.7% of canonical-corpus
+// elections touch an overflowed set), this turns a spill-arena read plus a
+// linear scan into one flag test.
+//
+// Header-to-node persistence (persistHeaderLineageOwned,
+// parsercore_phase0_driver.go) re-unions every convergedReductionSplit
+// header's accumulated set into its node on every dispatch, mirroring the
+// existing scalar RecordHeadLineageOwned call at the same frequency, and
+// header.head moves to a freshly allocated node on most dispatches -- so the
+// destination is empty far more often than it already equals src. Two more
+// fast paths keep that pattern cheap once both sides are known unfrozen:
+//
+//  1. dst is empty: *dst = src, an O(1) value copy. This aliases src's spill
+//     segment (if any) rather than copying it, which is safe: every further
+//     mutation to either set only ever appends past its own recorded count
+//     (alternativeSetInsert's append-only invariant), so neither set's
+//     existing view is ever disturbed by growth on the other.
+//  2. dst already contains every member of src (the steady state once a
+//     header's set stops growing): one O(len(src)+len(dst)) merge-scan
+//     (containsAll) instead of insert's O(len(src)) x O(len(dst))
+//     member-by-member scan.
+func (c *Core) alternativeSetUnion(dst *AlternativeSet, src AlternativeSet) bool {
+	if dst.flags&alternativeSetFlagOverflowed != 0 {
+		return false
+	}
+	if src.Overflowed() {
+		dst.flags |= alternativeSetFlagOverflowed
+		return true
+	}
+	if src.count == 0 {
+		return false
+	}
+	if dst.count == 0 {
+		*dst = src
+		return true
+	}
+	srcMembers, ok := c.alternativeSetMembers(src)
+	if !ok {
+		return false
+	}
+	if dstMembers, dstOK := c.alternativeSetMembers(*dst); dstOK &&
+		alternativeSetSortedContainsAll(srcMembers, dstMembers) {
+		return false
+	}
+	changed := false
+	for _, member := range srcMembers {
+		if c.alternativeSetInsert(dst, member) {
+			changed = true
+		}
+	}
+	return changed
+}
+
+// alternativeSetSortedContainsAll reports whether every member of needle is
+// present in haystack. Both slices are sorted ascending (AlternativeSet's
+// section 3.2 invariant), so this is a single merge-scan, never allocating.
+// A cheap O(1) range check on the first and last elements proves
+// non-containment (and so skips the O(len(needle)+len(haystack)) scan
+// entirely) whenever needle reaches outside haystack's covered range --
+// sound in both directions, since haystack sorted implies every member of
+// needle must fall within [haystack[0], haystack[len-1]] to be contained.
+func alternativeSetSortedContainsAll(needle, haystack []uint32) bool {
+	if len(needle) > len(haystack) {
+		return false
+	}
+	if len(needle) == 0 {
+		return true
+	}
+	if needle[0] < haystack[0] || needle[len(needle)-1] > haystack[len(haystack)-1] {
+		return false
+	}
+	haystackIndex := 0
+	for _, member := range needle {
+		for haystackIndex < len(haystack) && haystack[haystackIndex] < member {
+			haystackIndex++
+		}
+		if haystackIndex >= len(haystack) || haystack[haystackIndex] != member {
+			return false
+		}
+		haystackIndex++
+	}
+	return true
+}
+
+// UnionAlternativeSet is the exported form of alternativeSetUnion for
+// cross-package writers (parsercore_phase0_driver.go's header-scratch
+// propagation sites: canonicalize fold, sibling adoption, dead-node import).
+// Zero-alloc once c's shared spill arena has warmed to the parse's
+// high-water mark, matching nodeLineageJournal and popScratch.
+func (c *Core) UnionAlternativeSet(dst *AlternativeSet, src AlternativeSet) bool {
+	return c.alternativeSetUnion(dst, src)
+}
+
+// AlternativeSetIncomparable reports whether a and b are incomparable under
+// containment -- neither's recorded members are a subset of the other's
+// (spec.b4b-alternative-set.v2 section 3.4). Every fold-class union site
+// (every AlternativeSet union except establishment's own first insert into a
+// fresh output) calls this before the union to decide whether the
+// destination's blended mark must become true. It costs one extra
+// merge-scan beyond the union itself, bounded by alternativeSetHardCap, paid
+// only on the already-cold fold path -- extend (establishment) sites never
+// call it. An unresolvable spill reference on either side reads as an empty
+// member slice, which is always comparable (subset of anything): blended
+// computation fails toward "not blended" on that unreachable case, since the
+// predicate's own fail-closed containment check (not this helper) is what
+// guards soundness against an unresolvable set.
+func (c *Core) AlternativeSetIncomparable(a, b AlternativeSet) bool {
+	aMembers, _ := c.alternativeSetMembers(a)
+	bMembers, _ := c.alternativeSetMembers(b)
+	if alternativeSetSortedContainsAll(aMembers, bMembers) {
+		return false
+	}
+	if alternativeSetSortedContainsAll(bMembers, aMembers) {
+		return false
+	}
+	return true
 }
 
 func (c *Core) subtree(id SubtreeID) (*subtreeRecord, error) {

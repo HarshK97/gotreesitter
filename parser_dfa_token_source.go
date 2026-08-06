@@ -107,6 +107,12 @@ type dfaTokenSource struct {
 	// reference) but keeps the allocation for the next pooled acquire. Callers
 	// that pass their own lexer simply leave it unused.
 	ownedLexer *Lexer
+
+	// relexProbeLexer is a private Lexer.
+	// It probes the deterministic finite automaton for one parser state.
+	// Keep it outside the compact scheduler to limit each scheduler allocation.
+	// Close drops its source reference.
+	relexProbeLexer *Lexer
 }
 
 const maxConsecutiveZeroWidthTokens = 4
@@ -270,6 +276,7 @@ func resetPooledDFATokenSource(ts *dfaTokenSource) {
 	savedSQLKeywordScratch := ts.sqlKeywordScratch[:0]
 	savedExtZeroTried := ts.extZeroTried[:0]
 	savedOwnedLexer := ts.ownedLexer
+	savedRelexProbeLexer := ts.relexProbeLexer
 	var savedGLRUnionScanScratch []glrUnionDFAScan
 	if cap(ts.glrUnionScanScratch) > len(ts.glrUnionScanInline) {
 		// Close clears every Token before the source enters the pool. Preserve
@@ -283,6 +290,7 @@ func resetPooledDFATokenSource(ts *dfaTokenSource) {
 		bashArithmeticCachePos: -1,
 	}
 	ts.ownedLexer = savedOwnedLexer
+	ts.relexProbeLexer = savedRelexProbeLexer
 	ts.externalValid = savedExternalValid
 	ts.externalTokenStart = savedExternalTokenStart
 	ts.externalTokenEnd = savedExternalTokenEnd
@@ -421,6 +429,9 @@ func (d *dfaTokenSource) Close() {
 		// contents so no source bytes or table slices stay pinned while the
 		// token source sits in the pool.
 		*d.ownedLexer = Lexer{}
+	}
+	if d.relexProbeLexer != nil {
+		*d.relexProbeLexer = Lexer{}
 	}
 	d.lexer = nil
 	d.language = nil
@@ -2153,9 +2164,7 @@ func (d *dfaTokenSource) splitCompactCloseAngleToken(tok Token) (Token, int, uin
 	if d == nil || d.language == nil || d.lookupActionIndex == nil {
 		return tok, 0, 0, 0, false
 	}
-	switch d.language.Name {
-	case "dart", "java", "tsx", "typescript":
-	default:
+	if !supportsCompactCloseAngleSplit(d.language.Name) {
 		return tok, 0, 0, 0, false
 	}
 	if d.symbolName(tok.Symbol) != ">>" {
@@ -2181,6 +2190,89 @@ func (d *dfaTokenSource) splitCompactCloseAngleToken(tok Token) (Token, int, uin
 		tok.Text = tok.Text[:1]
 	}
 	return tok, int(tok.EndByte), tok.EndPoint.Row, tok.EndPoint.Column, true
+}
+
+func supportsCompactCloseAngleSplit(languageName string) bool {
+	switch languageName {
+	case "dart", "java", "swift", "tsx", "typescript":
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) contextualActionIndex(source []byte, state StateID, tok Token) uint16 {
+	actionIdx := p.lookupActionIndex(state, tok.Symbol)
+	if actionIdx != 0 && p.shouldDeferContextualCloseAngleAction(source, state, tok) {
+		return 0
+	}
+	return actionIdx
+}
+
+// shouldDeferContextualCloseAngleAction reports that this stack's lex mode
+// reads an adjacent pair as one operator. Another live stack selected the
+// single close-angle prefix, so this stack must not consume that prefix.
+func (p *Parser) shouldDeferContextualCloseAngleAction(source []byte, state StateID, tok Token) bool {
+	lang := p.language
+	if lang == nil || int(tok.Symbol) >= len(lang.SymbolNames) ||
+		lang.SymbolNames[tok.Symbol] != ">" ||
+		tok.EndByte != tok.StartByte+1 ||
+		tok.EndPoint.Row != tok.StartPoint.Row {
+		return false
+	}
+	start := int(tok.StartByte)
+	if start < 0 || start+1 >= len(source) || source[start] != '>' || source[start+1] != '>' ||
+		int(state) >= len(lang.LexModes) {
+		return false
+	}
+	lexState := lang.LexModes[state].LexStateIndex()
+	if lexState == noLookaheadLexState || int(lexState) >= len(lang.LexStates) {
+		return false
+	}
+
+	probe := &p.relexProbeLexer
+	*probe = Lexer{
+		states:          lang.LexStates,
+		asciiTable:      lang.LexAsciiTable(),
+		source:          source,
+		pos:             start,
+		row:             tok.StartPoint.Row,
+		col:             tok.StartPoint.Column,
+		immediateTokens: lang.ImmediateTokens,
+		zeroWidthTokens: lang.ZeroWidthTokens,
+	}
+	stateToken, ok := probe.scan(uint32(lexState), probe.pos, probe.row, probe.col)
+	if !ok || int(stateToken.Symbol) >= len(lang.SymbolNames) {
+		return false
+	}
+	stateTokenName := lang.SymbolNames[stateToken.Symbol]
+	if !isWideCloseAngleTokenName(stateTokenName) ||
+		stateToken.StartByte != tok.StartByte ||
+		!p.stateHasActionForSymbol(state, stateToken.Symbol) {
+		return false
+	}
+	width := uint32(len(stateTokenName))
+	if stateToken.EndByte != tok.StartByte+width {
+		return false
+	}
+	closeIdx := p.lookupActionIndex(state, tok.Symbol)
+	shiftIdx := p.lookupActionIndex(state, stateToken.Symbol)
+	if closeIdx != 0 && closeIdx == shiftIdx && int(closeIdx) < len(lang.ParseActions) {
+		actions := lang.ParseActions[closeIdx].Actions
+		if len(actions) > 0 {
+			reduceOnly := true
+			for _, action := range actions {
+				if action.Type != ParseActionReduce {
+					reduceOnly = false
+					break
+				}
+			}
+			if reduceOnly {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (d *dfaTokenSource) shouldSplitCompactCloseAngleToken(tok Token, gtSym, shiftSym Symbol, shiftOK bool) bool {
@@ -2499,23 +2591,26 @@ func (d *dfaTokenSource) compareAngleTokenPreference(candTok, bestTok Token) int
 	if d == nil || d.language == nil {
 		return 0
 	}
-	switch d.language.Name {
-	case "dart", "java", "tsx", "typescript":
-	default:
-		return 0
-	}
 	if int(candTok.Symbol) >= len(d.language.SymbolNames) || int(bestTok.Symbol) >= len(d.language.SymbolNames) {
 		return 0
 	}
 	candName := d.language.SymbolNames[candTok.Symbol]
 	bestName := d.language.SymbolNames[bestTok.Symbol]
-	if candName == ">" && bestName == ">>" {
+	// One shared token cannot preserve parse versions whose lex modes split a
+	// close-angle run at different widths. Prefer one close angle. A parser can
+	// compose later angles into nested generic closers, while a wide token
+	// consumes those bytes before that lineage can use them.
+	if candName == ">" && isWideCloseAngleTokenName(bestName) {
 		return 1
 	}
-	if candName == ">>" && bestName == ">" {
+	if bestName == ">" && isWideCloseAngleTokenName(candName) {
 		return -1
 	}
 	return 0
+}
+
+func isWideCloseAngleTokenName(name string) bool {
+	return len(name) > 1 && strings.Trim(name, ">") == ""
 }
 
 func (d *dfaTokenSource) sameSymbolName(a, b Symbol) bool {
@@ -2729,6 +2824,11 @@ type dfaRelexSnapshot struct {
 }
 
 func (d *dfaTokenSource) snapshotRelexState() dfaRelexSnapshot {
+	snapshot, _ := d.snapshotRelexStateWithExternalBuffer(nil)
+	return snapshot
+}
+
+func (d *dfaTokenSource) snapshotRelexStateWithExternalBuffer(buf []byte) (dfaRelexSnapshot, []byte) {
 	s := dfaRelexSnapshot{
 		lexerPos:                    d.lexer.pos,
 		lexerRow:                    d.lexer.row,
@@ -2747,12 +2847,20 @@ func (d *dfaTokenSource) snapshotRelexState() dfaRelexSnapshot {
 		zeroWidthCount:              d.zeroWidthCount,
 	}
 	if d.hasExternalScanner && d.language != nil && d.language.ExternalScanner != nil {
-		buf := make([]byte, externalScannerSerializationBufferSize)
+		if cap(buf) != externalScannerSerializationBufferSize {
+			if cap(buf) > 0 {
+				clear(buf[:cap(buf)])
+			}
+			buf = make([]byte, externalScannerSerializationBufferSize)
+		} else {
+			buf = buf[:externalScannerSerializationBufferSize]
+			clear(buf)
+		}
 		if n := d.language.ExternalScanner.Serialize(d.externalPayload, buf); n > 0 {
 			s.externalPayload = buf[:n]
 		}
 	}
-	return s
+	return s, buf
 }
 
 func (s dfaRelexSnapshot) restore(d *dfaTokenSource) {
@@ -2781,6 +2889,16 @@ func (d *dfaTokenSource) RelexFromTokenStart(tok Token) (Token, bool) {
 		return Token{}, false
 	}
 	snapshot := d.snapshotRelexState()
+	next, ok := d.relexFromTokenStartInTransaction(tok)
+	if !ok {
+		snapshot.restore(d)
+	}
+	return next, ok
+}
+
+// relexFromTokenStartInTransaction re-reads tok without starting a transaction.
+// The caller must restore its transaction when it rejects the result.
+func (d *dfaTokenSource) relexFromTokenStartInTransaction(tok Token) (Token, bool) {
 	target := int(tok.StartByte)
 	d.lexer.pos = target
 	d.lexer.row = tok.StartPoint.Row
@@ -2807,7 +2925,6 @@ func (d *dfaTokenSource) RelexFromTokenStart(tok Token) (Token, bool) {
 	}
 	next := d.Next()
 	if next.StartByte != tok.StartByte || next.StartPoint != tok.StartPoint {
-		snapshot.restore(d)
 		return Token{}, false
 	}
 	if tok.ExternalScannerToken && next.ExternalScannerToken &&
@@ -2983,6 +3100,9 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 			return Token{}, false
 		}
 	}
+	if d.shouldDeferSwiftOptionalGenericCloseToDFA(valid, states) {
+		return Token{}, false
+	}
 	if d.shouldDeferFortranExternalEndOfStatementToDFA(valid, states) {
 		return Token{}, false
 	}
@@ -3026,6 +3146,12 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 	}
 	tok.ExternalScannerToken = true
 	tok.ExternalScannerStartByte = uint32(d.lexer.pos)
+	if splitTok, endPos, endRow, endCol, ok := d.splitSwiftWideCloseAngleToken(tok, states); ok {
+		d.lexer.pos = endPos
+		d.lexer.row = endRow
+		d.lexer.col = endCol
+		return splitTok, true
+	}
 
 	if dfaTok, endPos, endRow, endCol, ok := d.preferDFASemicolonOverJSXText(tok, states); ok {
 		d.lexer.pos = endPos
@@ -3040,6 +3166,172 @@ func (d *dfaTokenSource) nextExternalToken() (Token, bool) {
 	d.lexer.row = tok.EndPoint.Row
 	d.lexer.col = tok.EndPoint.Column
 	return tok, true
+}
+
+// splitSwiftWideCloseAngleToken narrows a run of external `_custom_operator`
+// close-angle characters (">>", ">>>", ">>>>", ...) down to a single `>` when
+// the run is really N adjacent generic closers, e.g. the trailing `>>>` in
+// `A<B<C<Int>>>`. Swift's external scanner has no notion of generic nesting:
+// it greedily lexes any maximal run of `>` bytes as one custom-operator
+// token, so only the parser's own angle-bracket bookkeeping can tell that
+// run apart from a genuine multi-character user operator (Swift lets you
+// declare `infix operator >>> : ...` and use it standalone, e.g. `x >>> y`).
+//
+// hasSwiftUnclosedAngleBefore is the load-bearing guard: it requires at
+// least one unclosed '<' before this run. Without an open generic to close,
+// `x >>> y` must be refused here and left as one _custom_operator token.
+// This function only ever runs for language "swift" (guard below), so Java
+// and JavaScript/TypeScript `>>>`/`>>>=` shift operators never reach it.
+//
+// Known limitation, tracked separately and not fixed here: a run like
+// `>>>?` (close-angle run immediately followed by optional-chaining `?`)
+// isn't handled by this split — the all-'>' check below refuses it as soon
+// as it sees the `?`, so `A<B<C<Int>>>?` still needs its own follow-up fix.
+func (d *dfaTokenSource) splitSwiftWideCloseAngleToken(tok Token, states []StateID) (Token, int, uint32, uint32, bool) {
+	if d == nil || d.language == nil || d.language.Name != "swift" || d.lexer == nil ||
+		tok.EndPoint.Row != tok.StartPoint.Row || tok.EndByte <= tok.StartByte+1 {
+		return tok, 0, 0, 0, false
+	}
+	if len(tok.Text) == 0 {
+		start, end := int(tok.StartByte), int(tok.EndByte)
+		if start < 0 || end > len(d.lexer.source) {
+			return tok, 0, 0, 0, false
+		}
+		tok.Text = bytesToStringNoCopy(d.lexer.source[start:end])
+	}
+	for i := 0; i < len(tok.Text); i++ {
+		if tok.Text[i] != '>' {
+			return tok, 0, 0, 0, false
+		}
+	}
+	if !d.hasSwiftUnclosedAngleBefore(int(tok.StartByte)) {
+		return tok, 0, 0, 0, false
+	}
+	gtSym, ok := d.bestActiveSymbolByName(">")
+	if !ok || gtSym == 0 {
+		return tok, 0, 0, 0, false
+	}
+	// Secondary safety net alongside the angle-depth gate above: if the
+	// parser's own action tables treat the run as a more specific match kept
+	// whole (as the custom operator) than as a lone '>', defer to that
+	// reading. Mirrors the gtSym/shiftSym specificity comparison in
+	// shouldSplitCompactCloseAngleToken.
+	if d.activeActionSpecificity(gtSym) < d.activeActionSpecificity(tok.Symbol) {
+		return tok, 0, 0, 0, false
+	}
+	for _, state := range states {
+		if d.lookupActionIndex(state, gtSym) != 0 {
+			tok.Symbol = gtSym
+			tok.Text = tok.Text[:1]
+			tok.EndByte = tok.StartByte + 1
+			tok.EndPoint = Point{Row: tok.StartPoint.Row, Column: tok.StartPoint.Column + 1}
+			// tok.ExternalScannerToken stays true (it was set by the caller
+			// before this function ran): realTokenAttachmentGapIsParserPadding
+			// (parser.go) relies on that flag to treat the gap between the
+			// previous real token and this narrowed token as scanner padding
+			// rather than a parse error.
+			return tok, int(tok.EndByte), tok.EndPoint.Row, tok.EndPoint.Column, true
+		}
+	}
+	return tok, 0, 0, 0, false
+}
+
+// hasSwiftUnclosedAngleBefore reports whether an unclosed '<' opens before
+// byte pos in the current statement/scope. This is the same "are we inside a
+// generic argument list" heuristic hasJavaUnclosedAngleBefore uses for Java.
+// The scan stops at a statement/scope boundary (; { } ( )) so an operator in
+// one statement is never mistaken for a generic closer left open by an
+// unrelated, already-closed earlier statement.
+func (d *dfaTokenSource) hasSwiftUnclosedAngleBefore(pos int) bool {
+	if d == nil || d.lexer == nil || pos <= 0 {
+		return false
+	}
+	depth := 0
+	for i := pos - 1; i >= 0; i-- {
+		switch d.lexer.source[i] {
+		case ';', '{', '}', '(', ')':
+			return depth > 0
+		case '>':
+			depth--
+		case '<':
+			depth++
+			if depth > 0 {
+				return true
+			}
+		}
+	}
+	return depth > 0
+}
+
+// shouldDeferSwiftOptionalGenericCloseToDFA reports that the byte pair at the
+// lexer position is `>?` and that at least one active state resolves the DFA's
+// plain `>` candidate by reducing a production (closing an open generic
+// argument list), not merely shifting it. A shift-only match means some other
+// live GLR stack reads `>` as the start of an unrelated construct (for
+// example a comparison operator continuing across a line break); deferring
+// there would starve every stack of the external `_custom_operator` token
+// and turn a harmless trailing `>?` into a full parse failure. Requiring a
+// reduce restricts deferral to states where `>` genuinely closes a
+// `type_arguments` list, matching the C tree-sitter behavior of splitting the
+// generic close from the following `?` only in that context.
+//
+// Known limitation: this only recognizes the exact `>?` byte pair. A run of
+// closing angle brackets before the `?` (for example `A<B<Int>>?`) still
+// combines into one external `_custom_operator` token and is out of scope for
+// this fix; see the follow-up issue for the `>`-run-then-`?` family.
+func (d *dfaTokenSource) shouldDeferSwiftOptionalGenericCloseToDFA(valid []bool, states []StateID) bool {
+	if d == nil || d.language == nil || d.lexer == nil || d.lookupActionIndex == nil || d.language.Name != "swift" {
+		return false
+	}
+	pos := d.lexer.pos
+	if pos < 0 || pos+1 >= len(d.lexer.source) || d.lexer.source[pos] != '>' || d.lexer.source[pos+1] != '?' {
+		return false
+	}
+	customOperator := false
+	for i, isValid := range valid {
+		if !isValid || i >= len(d.language.ExternalSymbols) {
+			continue
+		}
+		if d.symbolName(d.language.ExternalSymbols[i]) == "_custom_operator" {
+			customOperator = true
+			break
+		}
+	}
+	if !customOperator {
+		return false
+	}
+	if len(states) == 0 {
+		var single [1]StateID
+		single[0] = d.state
+		states = single[:]
+	}
+	for _, state := range states {
+		cand, endPos, _, _ := d.scanPreferredTokenForState(state)
+		if cand.Symbol == 0 || cand.StartByte != uint32(pos) || endPos <= pos || d.symbolName(cand.Symbol) != ">" {
+			continue
+		}
+		actionIdx := d.lookupActionIndex(state, cand.Symbol)
+		if actionIdx == 0 || int(actionIdx) >= len(d.language.ParseActions) {
+			continue
+		}
+		if d.swiftCloseAngleActionReduces(actionIdx) {
+			return true
+		}
+	}
+	return false
+}
+
+// swiftCloseAngleActionReduces reports that the parse action entry contains a
+// reduce action. A reduce here means the `>` candidate closes an open
+// production (a generic argument list) rather than merely shifting into a
+// state that expects further tokens.
+func (d *dfaTokenSource) swiftCloseAngleActionReduces(actionIdx uint16) bool {
+	for _, a := range d.language.ParseActions[actionIdx].Actions {
+		if a.Type == ParseActionReduce {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *dfaTokenSource) bashGeneratedSyntheticExternalLiteral(valid []bool) (Token, bool) {

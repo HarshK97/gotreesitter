@@ -49,6 +49,75 @@ func TestParserCoreFreshFullRunnerRepeatedCanonicalLifecycle(t *testing.T) {
 	}
 }
 
+func TestParserCoreFreshFullRunnerReusesSchedulerStorage(t *testing.T) {
+	runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, parserCoreFreshFullCanonicalOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := loadDiagnosticParserCoreCanonicalFixture(t, "rewrite")
+	first, tokenSource, err := runner.executeSchedulerOpen(fixture.Source, runner.compact, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenSource.Close()
+	if first != &runner.scheduler {
+		t.Fatal("fresh-full runner did not use its scheduler storage")
+	}
+	second, tokenSource, err := runner.executeSchedulerOpen(fixture.Source, runner.compact, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenSource.Close()
+	if second != first {
+		t.Fatal("fresh-full runner replaced its scheduler storage")
+	}
+}
+
+func TestResetDiagnosticParserCoreRetainedSliceBoundsAndClears(t *testing.T) {
+	value := 1
+	small := make([]*int, 4)
+	for index := range small {
+		small[index] = &value
+	}
+	retained := resetDiagnosticParserCoreRetainedSlice(small)
+	if len(retained) != 0 || cap(retained) != 4 {
+		t.Fatalf("small retained slice len=%d cap=%d", len(retained), cap(retained))
+	}
+	for index, item := range retained[:cap(retained)] {
+		if item != nil {
+			t.Fatalf("small retained slice item %d was not cleared", index)
+		}
+	}
+
+	large := make([]*int, diagnosticParserCoreRetainedScratchCapacity+1)
+	for index := range large {
+		large[index] = &value
+	}
+	if retained := resetDiagnosticParserCoreRetainedSlice(large); retained != nil {
+		t.Fatalf("oversized retained slice cap=%d", cap(retained))
+	}
+}
+
+func TestResetDiagnosticParserCoreGenericSchedulerRejectsActiveScratch(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		scheduler diagnosticParserCoreGenericScheduler
+	}{
+		{name: "dispatch", scheduler: diagnosticParserCoreGenericScheduler{
+			dispatchScratch: diagnosticParserCoreDispatchScratch{busy: true},
+		}},
+		{name: "conflict", scheduler: diagnosticParserCoreGenericScheduler{
+			conflictScratch: diagnosticParserCoreConflictScratch{busy: true},
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := resetDiagnosticParserCoreGenericScheduler(&test.scheduler); err == nil || !strings.Contains(err.Error(), "scratch is active") {
+				t.Fatalf("active scratch error=%v", err)
+			}
+		})
+	}
+}
+
 func TestParserCoreFreshFullRunnerScratchDoesNotAliasLiveTree(t *testing.T) {
 	runner, err := newParserCoreFreshFullRunner(parserCoreWarmGoScanner, parserCoreFreshFullCanonicalOptions())
 	if err != nil {
@@ -94,7 +163,7 @@ func TestParserCoreFreshFullRunnerResetsAfterCap(t *testing.T) {
 		t.Fatalf("capped parse tree=%v err=%v, want fail-closed dispatch cap", tree != nil, err)
 	}
 
-	runner.options = options
+	runner.options.MaxDispatches = options.MaxDispatches
 	tree, err := runner.parse(fixture.Source)
 	if err != nil {
 		t.Fatalf("parse after cap did not reset reusable state: %v", err)
@@ -191,7 +260,7 @@ func TestParserCoreFreshFullAcceptedTailRequiresParserPadding(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := parserCoreFreshFullAcceptedTailIsClean([]byte(test.source), test.headByte); got != test.want {
+			if got := parserCoreFreshFullAcceptedTailIsClean([]byte(test.source), test.headByte, 0); got != test.want {
 				t.Fatalf("clean accepted tail=%t, want %t", got, test.want)
 			}
 		})

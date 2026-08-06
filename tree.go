@@ -839,7 +839,27 @@ type ParseRuntime struct {
 	// the fallback's false-fire rate (extra latency from a re-parse that is
 	// usually discarded) against their own corpora, e.g. by walking a tree of
 	// known-valid source files and counting how often this is true.
-	CRecoverySwallowedErrorFallbackAttempted      bool
+	CRecoverySwallowedErrorFallbackAttempted bool
+	// CRecoverReductionCandidateCeilingHits and CRecoverMissingTokenCeilingHits
+	// count how many times this parse's cDoAllPotentialReductions /
+	// cHandleError missing-token search hit the
+	// cRecoverMaxReductionCandidateAttempts / cRecoverMaxMissingTokenTrials
+	// Go-side backstop ceilings (parser_recover_c.go), a diagnostic signal for
+	// the spore.2026-08-02.walnut-e.memory-exhaustion fix. Both stay zero on
+	// every currently-passing parse; neither ceiling halts the parse itself
+	// (both fail gracefully into an already-supported "search found nothing"
+	// path), so this counter is the only way to observe that either engaged.
+	CRecoverReductionCandidateCeilingHits uint64
+	CRecoverMissingTokenCeilingHits       uint64
+	// CRecoverReductionCandidateAttemptsPeak and
+	// CRecoverMissingTokenTrialAttemptsPeak record the single largest
+	// candidateAttempts / missingTokenTrialAttempts value any ONE
+	// cDoAllPotentialReductions call / cHandleError missing-token search
+	// reached during this parse (not cumulative across calls). Diagnostic
+	// only: lets a corpus walk report how close real input gets to
+	// cRecoverMaxReductionCandidateAttempts / cRecoverMaxMissingTokenTrials.
+	CRecoverReductionCandidateAttemptsPeak        uint64
+	CRecoverMissingTokenTrialAttemptsPeak         uint64
 	SourceLen                                     uint32
 	ExpectedEOFByte                               uint32
 	RootEndByte                                   uint32
@@ -1144,6 +1164,29 @@ type ParseRuntime struct {
 	NormalizationNodesRewritten         uint64
 	NormalizationNanos                  int64
 	NormalizationPasses                 *[]NormalizationPassRuntime
+	// RecoveryProbeInitialAttempts counts initial-only nested recovery probes.
+	// Only scoped clean full-source recovery normalizers use these probes.
+	RecoveryProbeInitialAttempts uint64
+	// RecoveryProbeInitialAccepted counts probes that met the caller's exact
+	// clean and full-span acceptance rule.
+	RecoveryProbeInitialAccepted uint64
+	// RecoveryProbeLegacyFallbacks counts probes that ran the legacy retry path.
+	RecoveryProbeLegacyFallbacks uint64
+	// RecoveryProbeInitialRetryPasses is zero when the initial-only contract
+	// holds. It records violations for diagnostics.
+	RecoveryProbeInitialRetryPasses uint64
+	// RecoveryProbeLegacyRetryPasses counts retry-ladder passes after a probe
+	// declined its initial result.
+	RecoveryProbeLegacyRetryPasses uint64
+	// SwiftLegacyRecoverySubparseAttempts counts legacy Swift recovery parses.
+	// It excludes the initial-only probe and its measured fallback route.
+	SwiftLegacyRecoverySubparseAttempts uint64
+	// SwiftLegacyRecoveryRetryPasses counts retry-ladder passes in those Swift
+	// legacy recovery parses.
+	SwiftLegacyRecoveryRetryPasses uint64
+	// The parser sets NativeRecoveredStructureAuthoritative when an exact
+	// grammar profile certifies the recovered tree before compatibility.
+	NativeRecoveredStructureAuthoritative bool
 }
 
 type NormalizationPassRuntime struct {
@@ -2419,15 +2462,14 @@ func (t *Tree) ensureResultCompatibility() {
 			t.resultErrorSummary = result.errorSummary
 			t.resultCompatibilityApplied = !parseStopReasonIsActive(result.stopReason)
 			// Diagnostic-only, mirrors the timing-enabled branch below: without
-			// this, every deferred-compatibility language (ini always;
-			// typescript/tsx by default, see shouldDeferResultCompatibility) would
+			// this, every deferred-compatibility language (typescript/tsx by
+			// default, see shouldDeferResultCompatibility) would
 			// look UNCOVERED to the dispatcher-arm census
 			// (GTS_DISPATCHER_CENSUS, parser_result_compat.go) even though its
 			// normalizer just ran on the line above. parser.normalizationStats is
 			// only ever non-empty when that census flag is set, so this is a
 			// no-op field copy in every ordinary parse.
 			parser.copyNormalizationStats(&t.parseRuntime)
-			t.finishDeferredResultCompatibility(result)
 			return
 		}
 		timing := &parseMaterializationTiming{}
@@ -2442,21 +2484,7 @@ func (t *Tree) ensureResultCompatibility() {
 		timing.addResultCompatibility(start)
 		t.parseRuntime.ResultCompatibilityNanos += timing.resultCompatibilityNanos
 		parser.copyNormalizationStats(&t.parseRuntime)
-		t.finishDeferredResultCompatibility(result)
 	})
-}
-
-func (t *Tree) finishDeferredResultCompatibility(result resultCompatibilityResult) {
-	if t == nil || t.root == nil || t.language == nil || t.language.Name != "ini" {
-		return
-	}
-	extendNodeToTrailingWhitespace(t.root, t.source)
-	wireParentLinksWithScratch(t.root, nil)
-	if t.parseRuntime.StopReason == ParseStopNoStacksAlive && iniDeferredCompatibilityAccepted(t.root, t.source, t.language, result) {
-		t.parseRuntime.StopReason = ParseStopAccepted
-		t.parseRuntime.RootEndByte = t.root.endByte
-		t.parseRuntime.Truncated = false
-	}
 }
 
 func newParentNode(arena *nodeArena, sym Symbol, named bool, children []*Node, fieldIDs []FieldID, productionID uint16) *Node {
@@ -2974,6 +3002,25 @@ func (t *Tree) RootNodeWithOffset(offsetBytes uint32, offsetExtent Point) *Node 
 
 // Source returns the original source text.
 func (t *Tree) Source() []byte { return t.source }
+
+// UsedForestFastPath reports whether the node data behind this tree was
+// produced by the GSS-forest GLR fast path (Parser.Parse trying
+// tryForestFastPath before the production loop, or a direct
+// ParseForestExperimental call) rather than the production parser. Unlike
+// LanguageWantsForest (which only reports whether a language is eligible for
+// the fast path), this reports what actually produced the data for a FRESH
+// parse. It is provenance of the data, not necessarily of this exact call:
+// reuseTreeWithNewSource (incremental_leaf_fastpath.go) copies the field from
+// the old tree onto a new *Tree sharing the old root when reusing a tree
+// incrementally, so an incrementally-reused tree reports whichever route
+// produced the shared data, not whether this particular reuse call itself
+// dispatched to forest (it did not run parser dispatch at all). Regression
+// gates that always call Parser.Parse fresh (never ParseIncremental) are
+// unaffected by this distinction; callers mixing in incremental reuse should
+// not read this as "this call routed through forest."
+func (t *Tree) UsedForestFastPath() bool {
+	return t != nil && t.forestFastPath
+}
 
 // SourceEncoding returns the encoding used by the caller that produced this tree.
 //

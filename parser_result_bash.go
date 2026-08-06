@@ -1,19 +1,43 @@
 package gotreesitter
 
 func normalizeBashProgramVariableAssignments(root *Node, lang *Language) {
+	normalizeBashProgramVariableAssignmentsWithCensus(
+		root,
+		lang,
+		materializationSubpassCensus{},
+	)
+}
+
+func normalizeBashProgramVariableAssignmentsWithCensus(
+	root *Node,
+	lang *Language,
+	census materializationSubpassCensus,
+) {
 	if root == nil || lang == nil || lang.Name != "bash" || root.Type(lang) != "program" || len(root.children) == 0 {
 		return
 	}
-	normalizeBashVariableAssignmentsInNode(root, lang)
+	normalizeBashVariableAssignmentsInNodeWithCensus(root, lang, census)
 }
 
 func normalizeBashVariableAssignmentsInNode(node *Node, lang *Language) {
+	normalizeBashVariableAssignmentsInNodeWithCensus(
+		node,
+		lang,
+		materializationSubpassCensus{},
+	)
+}
+
+func normalizeBashVariableAssignmentsInNodeWithCensus(
+	node *Node,
+	lang *Language,
+	census materializationSubpassCensus,
+) {
 	if node == nil || lang == nil || len(node.children) == 0 {
 		return
 	}
 	for _, child := range node.children {
 		if child != nil {
-			normalizeBashVariableAssignmentsInNode(child, lang)
+			normalizeBashVariableAssignmentsInNodeWithCensus(child, lang, census)
 		}
 	}
 	out := make([]*Node, 0, len(node.children))
@@ -30,17 +54,23 @@ func normalizeBashVariableAssignmentsInNode(node *Node, lang *Language) {
 		out = append(out, child)
 	}
 	if !changed {
-		assignBashIfConditionField(node, lang)
+		census.run("dispatch.bash.if-condition-field-projection", func() {
+			assignBashIfConditionField(node, lang)
+		})
 		return
 	}
-	if node.ownerArena != nil {
-		buf := node.ownerArena.allocNodeSlice(len(out))
-		copy(buf, out)
-		out = buf
-	}
-	node.children = out
-	node.clearFieldMetadata()
-	assignBashIfConditionField(node, lang)
+	census.run("dispatch.bash.variable-assignment-wrapper-flattening", func() {
+		if node.ownerArena != nil {
+			buf := node.ownerArena.allocNodeSlice(len(out))
+			copy(buf, out)
+			out = buf
+		}
+		node.children = out
+		node.clearFieldMetadata()
+	})
+	census.run("dispatch.bash.if-condition-field-projection", func() {
+		assignBashIfConditionField(node, lang)
+	})
 }
 
 func normalizeBashGeneratedCommandAssignments(root *Node, source []byte, lang *Language) {
@@ -52,81 +82,6 @@ func normalizeBashGeneratedCommandAssignments(root *Node, source []byte, lang *L
 		return
 	}
 	normalizeBashGeneratedCommandAssignmentsInNode(root, source, lang, ctx)
-}
-
-func normalizeBashCommandNameArguments(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "bash" || root.IsError() || root.hasError() {
-		return
-	}
-	commandSym, ok := symbolByName(lang, "command")
-	if !ok {
-		return
-	}
-	commandNameSym, ok := symbolByName(lang, "command_name")
-	if !ok {
-		return
-	}
-	concatenationSym, ok := symbolByName(lang, "concatenation")
-	if !ok {
-		return
-	}
-	normalizeBashCommandNameArgumentsInNode(root, commandSym, commandNameSym, concatenationSym)
-}
-
-func normalizeBashCommandNameArgumentsInNode(node *Node, commandSym, commandNameSym, concatenationSym Symbol) {
-	if node == nil || node.IsError() || node.hasError() {
-		return
-	}
-	for _, child := range node.children {
-		normalizeBashCommandNameArgumentsInNode(child, commandSym, commandNameSym, concatenationSym)
-	}
-	mergeBashCommandNameArguments(node, commandSym, commandNameSym, concatenationSym)
-}
-
-func mergeBashCommandNameArguments(node *Node, commandSym, commandNameSym, concatenationSym Symbol) bool {
-	if node == nil || node.symbol != commandSym || len(node.children) < 2 || node.IsError() || node.hasError() {
-		return false
-	}
-	commandName := node.children[0]
-	if commandName == nil || commandName.symbol != commandNameSym || len(commandName.children) == 0 || commandName.IsError() || commandName.hasError() {
-		return false
-	}
-	if len(commandName.children) == 1 && commandName.children[0] != nil && commandName.children[0].symbol == concatenationSym {
-		return false
-	}
-
-	arena := node.ownerArena
-	mergeEnd := 1
-	lastEnd := commandName.endByte
-	for mergeEnd < len(node.children) {
-		child := node.children[mergeEnd]
-		if child == nil || child.IsError() || child.hasError() || child.startByte != lastEnd {
-			break
-		}
-		lastEnd = child.endByte
-		mergeEnd++
-	}
-	if mergeEnd == 1 {
-		return false
-	}
-
-	parts := make([]*Node, 0, len(commandName.children)+mergeEnd-1)
-	parts = append(parts, commandName.children...)
-	parts = append(parts, node.children[1:mergeEnd]...)
-	concat := newParentNodeInArena(arena, concatenationSym, true, cloneNodeSliceInArena(arena, parts), nil, 0)
-
-	commandName.endByte = concat.endByte
-	commandName.endPoint = concat.endPoint
-	replaceNodeChildrenUnfielded(commandName, []*Node{concat})
-
-	commandChildren := make([]*Node, 0, len(node.children)-mergeEnd+1)
-	commandChildren = append(commandChildren, commandName)
-	commandChildren = append(commandChildren, node.children[mergeEnd:]...)
-	if arena != nil {
-		commandChildren = cloneNodeSliceInArena(arena, commandChildren)
-	}
-	replaceNodeChildrenUnfielded(node, commandChildren)
-	return true
 }
 
 type bashGeneratedAssignmentContext struct {

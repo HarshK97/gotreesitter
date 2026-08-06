@@ -398,29 +398,47 @@ func gssNodeHash(n *gssNode) uint64 {
 		return n.hash
 	}
 
-	var local [32]*gssNode
-	pending := local[:0]
-	var pooled *[]*gssNode
-	for cur := n; cur != nil && cur.hash == 0; cur = cur.prev {
-		if pooled == nil && len(pending) == len(local) {
-			// The chain outgrew the inline array. Move to a pooled buffer so a
-			// deep walk reuses one allocation instead of growing a fresh slice
-			// on every call.
-			pooled = gssNodeHashPendingPool.Get().(*[]*gssNode)
-			*pooled = append((*pooled)[:0], pending...)
-			pending = *pooled
-		}
-		pending = append(pending, cur)
-		if pooled != nil {
-			*pooled = pending
-		}
+	const inlineCap = 32
+	count := 0
+	for ancestor := n; ancestor != nil && ancestor.hash == 0 && count <= inlineCap; ancestor = ancestor.prev {
+		count++
 	}
-	prevHash := gssHashSeed
-	if len(pending) < int(n.depth) {
-		prev := pending[len(pending)-1].prev
-		if prev != nil {
-			prevHash = prev.hash
-		}
+	if count <= inlineCap {
+		return gssNodeHashInline(n, count)
+	}
+
+	// The chain outgrew the inline array. Use pooled storage directly.
+	// This keeps the inline array on the stack for ordinary walks.
+	pooled := gssNodeHashPendingPool.Get().(*[]*gssNode)
+	pending := (*pooled)[:0]
+	for cur := n; cur != nil && cur.hash == 0; cur = cur.prev {
+		pending = append(pending, cur)
+	}
+	*pooled = pending
+	hash := gssNodeHashPending(pending)
+	// Released explicitly rather than with defer: this is a hot path and the
+	// function has a single exit once the walk buffer exists.
+	if resetGSSNodeHashPendingForPool(pooled) {
+		gssNodeHashPendingPool.Put(pooled)
+	}
+	return hash
+}
+
+func gssNodeHashInline(n *gssNode, count int) uint64 {
+	var local [32]*gssNode
+	pending := local[:count]
+	cur := n
+	for i := range pending {
+		pending[i] = cur
+		cur = cur.prev
+	}
+	return gssNodeHashPending(pending)
+}
+
+func gssNodeHashPending(pending []*gssNode) uint64 {
+	prevHash := uint64(gssHashSeed)
+	if prev := pending[len(pending)-1].prev; prev != nil {
+		prevHash = prev.hash
 	}
 	for i := len(pending) - 1; i >= 0; i-- {
 		h := gssEntryHash(prevHash, pending[i].entry)
@@ -430,14 +448,7 @@ func gssNodeHash(n *gssNode) uint64 {
 		pending[i].hash = h
 		prevHash = h
 	}
-	// Released explicitly rather than with defer: this is a hot path and the
-	// function has a single exit once the walk buffer exists.
-	if pooled != nil {
-		if resetGSSNodeHashPendingForPool(pooled) {
-			gssNodeHashPendingPool.Put(pooled)
-		}
-	}
-	return n.hash
+	return pending[0].hash
 }
 
 func newGSSStack(initial StateID, scratch *gssScratch) gssStack {
@@ -700,22 +711,35 @@ func (s *gssScratch) reset() {
 	if total > maxRetainedGSSNodes {
 		keepFrom := len(s.slabs) - 1
 		retained := len(s.slabs[keepFrom].data)
-		for keepFrom > 0 {
-			next := retained + len(s.slabs[keepFrom-1].data)
-			if next > maxRetainedGSSNodes {
-				break
+		if retained > maxRetainedGSSNodes {
+			// Even the single most recent slab alone outgrew the retention
+			// budget: a pathological wide GLR fork count on one parse (a
+			// denser grammar table forking more can drive one parse's GSS
+			// far past ordinary steady state). Drop every slab rather than
+			// pool an oversized backing array, which would otherwise sit in
+			// the process-wide sync.Pool and get billed, unshrunk, to every
+			// unrelated future parse that reuses this scratch object
+			// regardless of language or file size. The next parse that
+			// needs GSS nodes simply reallocates.
+			s.slabs = nil
+		} else {
+			for keepFrom > 0 {
+				next := retained + len(s.slabs[keepFrom-1].data)
+				if next > maxRetainedGSSNodes {
+					break
+				}
+				keepFrom--
+				retained = next
 			}
-			keepFrom--
-			retained = next
-		}
-		if keepFrom > 0 {
-			oldLen := len(s.slabs)
-			copy(s.slabs, s.slabs[keepFrom:])
-			newLen := oldLen - keepFrom
-			for i := newLen; i < oldLen; i++ {
-				s.slabs[i] = gssNodeSlab{}
+			if keepFrom > 0 {
+				oldLen := len(s.slabs)
+				copy(s.slabs, s.slabs[keepFrom:])
+				newLen := oldLen - keepFrom
+				for i := newLen; i < oldLen; i++ {
+					s.slabs[i] = gssNodeSlab{}
+				}
+				s.slabs = s.slabs[:newLen]
 			}
-			s.slabs = s.slabs[:newLen]
 		}
 	}
 	for i := range s.slabs {

@@ -13,15 +13,17 @@ without updating that registry.
 
 ## Current denominator
 
-The v1 registry freezes the current surface:
+The v1 registry freezes the current source and registry:
 
-- 56 explicit `runLanguageResultCompatibility` switch arms covering 58
+- 40 explicit `runLanguageResultCompatibility` switch arms covering 42
   language names;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-That is 57 live registry entries and 28 retired entries. The registry covers
+That is 41 live registry entries and 44 retired entries. These counts backfill
+earlier retirements. This field repair change does not remove a dispatcher arm.
+The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
 
@@ -71,14 +73,65 @@ The route fields use a closed vocabulary enforced by the registry test:
 - live dispatcher, predicate, and generic entries use
   `shared_result_compatibility_tail` for production/compact/forest/incremental
   and `curated_single_grammar_parity` for the C oracle;
-- retired entries use `retired_exact_receipt` for all four native routes.
-  The C oracle uses `retired_exact_receipt` or
-  `retired_known_divergence_receipt`. Each retired entry must include a
-  retirement commit and a receipt reference.
+- retired production and incremental routes use `retired_exact_receipt`;
+- retired compact and forest routes use `retired_exact_receipt` or
+  `retired_exact_or_fail_closed_receipt`;
+- the C oracle uses `retired_exact_receipt` or
+  `retired_known_divergence_receipt`.
+
+Each retired entry must include a retirement commit and a receipt reference.
 
 These are evidence labels, not claims that all five engines have independent
 implementations. The shared-tail value means that route reaches the same
 post-parse normalization tail.
+
+## Materialization subpass census
+
+One live arm, Bash, still uses `materialization` as its aggregate owner.
+Ada's and Apex's entries now aggregate under `derivation_election_selection`.
+Two of Ada's three subpasses pick a winning derivation from source text. They
+choose between grammatically distinct productions. The entry-level owner now
+matches that majority. The association-choice subpass still builds its own
+wrapper. It keeps `materialization` at the subpass level. Apex's single
+subpass relabels a locked C-oracle-diverging derivation election: a grammar-
+declared conflict between `class_literal` and `field_access` with no
+`prec.dynamic` tie-break, where both derivations reach acceptance and
+gotreesitter's runtime accept-selection elects the derivation the C oracle
+does not; the entry-level owner now matches. Each arm declares its distinct
+subpasses in the registry.
+
+Set `GTS_DISPATCHER_CENSUS=1` to record each subpass and its aggregate arm.
+The census does not change parser output when it is disabled.
+
+| Arm | Subpass | Upstream owner |
+|---|---|---|
+| Ada | constraint kind election | `derivation_election_selection` |
+| Ada | aggregate kind election | `derivation_election_selection` |
+| Ada | association choice construction | `materialization` |
+| Apex | generic local declaration | `derivation_election_selection` |
+| Apex | class literal alias | `derivation_election_selection` |
+| Bash | assignment wrapper flattening | `materialization` |
+| Bash | generated command assignment | `scheduler_action_semantics` |
+| Bash | `if` condition field projection | `materialization` |
+| Cooklang | trailing step tail | `scanner_checkpoint_state` |
+| Cooklang | recovered recipe | `scheduler_action_semantics` |
+
+Cooklang calls its trailing-tail subpass from `parser_result_misc_spans.go`.
+The registry now includes that function and file.
+
+The HTTP section-coalescing subpass retired after its exact and locked probes
+reported zero rewrites. Native route tests now preserve that receipt.
+
+The Bash command-name concatenation subpass also retired.
+Native reduction already constructs the historical command name.
+The exact 25-case corpus matches baseline `83548f55`.
+
+The live probes parse each source without result compatibility.
+They also compare census-enabled output with normal production output.
+Each digest matches base commit
+`4f077315d3aa5dcec4f5392c7eb17a1bbc27a455`.
+The locked Ada probes come from tree-sitter-ada commit
+`6b58259a08b1a22ba0247a7ce30be384db618da6`.
 
 ## Why it exists
 
@@ -106,6 +159,22 @@ The generic reconstruction walk is therefore retired and deleted. Once raw
 child identity has been lost, a display-name-compatible caller artifact is no
 longer guessed into shape; custom artifacts must carry the explicit native
 capability and exact metadata receipt to opt in.
+
+## Current progress: unary named wrappers
+
+Reduction materialization now owns certified same-span unary wrapper chains.
+The parser core uses public-parent, wrapper, leaf, and parser-state identities.
+It contains no language-name condition.
+
+The exact F# artifact certifies one declaration-name state.
+Its `long_identifier` materializes as the named `identifier` leaf.
+Expression identifiers and dotted identifiers retain their wrappers.
+Custom, adapted, and stale artifacts retain conservative behavior.
+
+Production and incremental routes return the exact tree without compatibility.
+The compact route returns the exact tree or uses production.
+The forest route fails closed for this profile.
+The pinned C parser supplies the parity oracle.
 
 ## Current progress: collapsed token wrappers
 
@@ -226,6 +295,14 @@ Reduction also owns the Haskell and Erlang root field shapes.
 The field plan retains each conflicting inherited mapping.
 The reduce path projects a mapping only when a named child matches its field.
 Root acceptance preserves producer fields when it absorbs surrounding trivia.
+
+The native reduction path sets Dart switch-expression body fields.
+It sets the target field for nested Elixir calls.
+The two language-local repairs are inert and removed.
+Inherited reduction fields now preserve repeated direct descendants.
+They fill anonymous separators only between those direct descendants.
+An inherited field without direct evidence cannot cross a leading separator.
+These rules remove three Scala field repairs and the SQL `INTO` cleanup.
 
 ## Current progress: Erlang native ownership
 

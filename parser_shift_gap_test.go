@@ -15,7 +15,7 @@ func TestRealShiftGapRejectsNonTriviaSource(t *testing.T) {
 		EndByte:   uint32(len(source)),
 	}
 
-	if realShiftGapIsParserPadding(source, &stack, tok) {
+	if realShiftGapIsParserPadding(source, &stack, tok, 0) {
 		t.Fatalf("realShiftGapIsParserPadding = true, want false for gap %q", source[stack.byteOffset:tok.StartByte])
 	}
 
@@ -38,7 +38,7 @@ func TestRealTokenAttachmentGapRejectsCommentSource(t *testing.T) {
 		EndByte:   uint32(len(source)),
 	}
 
-	if realTokenAttachmentGapIsParserPadding(source, &stack, tok) {
+	if realTokenAttachmentGapIsParserPadding(source, &stack, tok, 0) {
 		t.Fatalf("realTokenAttachmentGapIsParserPadding = true, want false for comment gap %q", source[stack.byteOffset:tok.StartByte])
 	}
 
@@ -61,7 +61,7 @@ func TestRealShiftGapAllowsTriviaOnlySource(t *testing.T) {
 		EndByte:   uint32(len(source)),
 	}
 
-	if !realShiftGapIsParserPadding(source, &stack, tok) {
+	if !realShiftGapIsParserPadding(source, &stack, tok, 0) {
 		t.Fatalf("realShiftGapIsParserPadding = false, want true for gap %q", source[stack.byteOffset:tok.StartByte])
 	}
 
@@ -84,7 +84,7 @@ func TestRealShiftGapAllowsEscapedNewlinePadding(t *testing.T) {
 		EndByte:   uint32(len(source)),
 	}
 
-	if !realShiftGapIsParserPadding(source, &stack, tok) {
+	if !realShiftGapIsParserPadding(source, &stack, tok, 0) {
 		t.Fatalf("realShiftGapIsParserPadding = false, want true for gap %q", source[stack.byteOffset:tok.StartByte])
 	}
 
@@ -94,6 +94,68 @@ func TestRealShiftGapAllowsEscapedNewlinePadding(t *testing.T) {
 	}
 	if stack.dead {
 		t.Fatal("stack.dead = true, want false")
+	}
+}
+
+// TestBytesAreParserPaddingLineContinuationEscapeComposes pins the composition
+// the PowerShell backtick-continuation repair depends on: a language-declared
+// continuation escape (Language.LineContinuationEscapeByte, threaded here as
+// bytesAreParserPadding's continuationEscape parameter) accepts exactly that
+// byte immediately followed by a newline as padding, the same unconditional
+// treatment backslash+newline already gets, while leaving every other gap
+// shape — including a DIFFERENT stray byte at the same position, and the
+// same escape byte with no declaration at all (continuationEscape == 0, what
+// every language gets by default) — exactly as rejected as before this
+// parameter existed. Regression: PR #633 (materializeSkippedGapAsExtraError)
+// must still materialize an ERROR for a genuine lexer-skipped stray; only a
+// declared continuation escape may bypass that path.
+func TestBytesAreParserPaddingLineContinuationEscapeComposes(t *testing.T) {
+	source := []byte("a `\n   b")
+	// [1:7) = " `\n   " -- backtick+LF then three spaces, mirroring the
+	// PowerShell command_argument_sep shape from cgo_harness/corpus_real's
+	// large__packaging.psm1 (C-oracle verified: 2 children, zero ERROR nodes).
+	const start, end = 1, 7
+
+	if !bytesAreParserPadding(source, start, end, '`') {
+		t.Fatalf("bytesAreParserPadding(%q, escape='`') = false, want true", source[start:end])
+	}
+	if bytesAreParserPadding(source, start, end, 0) {
+		t.Fatalf("bytesAreParserPadding(%q, escape=0) = true, want false: an undeclared escape must not become padding", source[start:end])
+	}
+	if bytesAreParserPadding(source, start, end, '@') {
+		t.Fatalf("bytesAreParserPadding(%q, escape='@') = true, want false: declaring an unrelated escape byte must not match a different stray byte", source[start:end])
+	}
+
+	strayNonNewline := []byte("a `x   b") // backtick NOT followed by a newline
+	if bytesAreParserPadding(strayNonNewline, start, end, '`') {
+		t.Fatalf("bytesAreParserPadding(%q, escape='`') = true, want false: the escape byte alone (no following newline) is not padding", strayNonNewline[start:end])
+	}
+}
+
+// TestRealTokenAttachmentGapIsParserPaddingAcceptsDeclaredEscape drives a
+// non-zero continuationEscape through realTokenAttachmentGapIsParserPadding
+// itself (every other direct call in this file passes 0, since those tests
+// predate the continuation-escape parameter and pin unrelated gap shapes).
+// This closes that gap in direct coverage: the function that
+// tryMaterializeSkippedRealGap, guardRealTokenAttachmentGap, and
+// tryReuseSubtree all actually call is exercised here with the same
+// declared-escape argument production passes, not just its
+// bytesAreParserPadding helper in isolation.
+func TestRealTokenAttachmentGapIsParserPaddingAcceptsDeclaredEscape(t *testing.T) {
+	source := []byte("a `\n   b") // same shape TestBytesAreParserPaddingLineContinuationEscapeComposes pins
+	stack := newGLRStack(1)
+	stack.byteOffset = 1
+	tok := Token{
+		Symbol:    1,
+		StartByte: 7,
+		EndByte:   8,
+	}
+
+	if !realTokenAttachmentGapIsParserPadding(source, &stack, tok, '`') {
+		t.Fatalf("realTokenAttachmentGapIsParserPadding(escape='`') = false, want true for gap %q", source[stack.byteOffset:tok.StartByte])
+	}
+	if realTokenAttachmentGapIsParserPadding(source, &stack, tok, 0) {
+		t.Fatalf("realTokenAttachmentGapIsParserPadding(escape=0) = true, want false: an undeclared escape must not become padding for gap %q", source[stack.byteOffset:tok.StartByte])
 	}
 }
 
@@ -108,7 +170,7 @@ func TestRealShiftGapAllowsNoLookaheadToken(t *testing.T) {
 		NoLookahead: true,
 	}
 
-	if !realShiftGapIsParserPadding(source, &stack, tok) {
+	if !realShiftGapIsParserPadding(source, &stack, tok, 0) {
 		t.Fatal("realShiftGapIsParserPadding = false, want true for NoLookahead token")
 	}
 
@@ -134,7 +196,7 @@ func TestRealShiftGapAllowsExternalScannerOwnedSkippedGap(t *testing.T) {
 		ExternalScannerStartByte: 0,
 	}
 
-	if !realShiftGapIsParserPadding(source, &stack, tok) {
+	if !realShiftGapIsParserPadding(source, &stack, tok, 0) {
 		t.Fatalf("realShiftGapIsParserPadding = false, want true for scanner-owned gap %q", source[stack.byteOffset:tok.StartByte])
 	}
 
@@ -160,7 +222,7 @@ func TestRealShiftGapRejectsExternalScannerTokenFromDifferentStart(t *testing.T)
 		ExternalScannerStartByte: 2,
 	}
 
-	if realShiftGapIsParserPadding(source, &stack, tok) {
+	if realShiftGapIsParserPadding(source, &stack, tok, 0) {
 		t.Fatalf("realShiftGapIsParserPadding = true, want false for mismatched scanner start gap %q", source[stack.byteOffset:tok.StartByte])
 	}
 
@@ -225,7 +287,7 @@ func TestRealShiftGapAllowsLeadingBOMPadding(t *testing.T) {
 			EndByte:   uint32(len(source)),
 		}
 
-		if !realShiftGapIsParserPadding(source, &stack, tok) {
+		if !realShiftGapIsParserPadding(source, &stack, tok, 0) {
 			t.Fatalf("realShiftGapIsParserPadding(%q) = false, want true", source[:tok.StartByte])
 		}
 	}
@@ -241,7 +303,7 @@ func TestRealShiftGapRejectsNonLeadingBOM(t *testing.T) {
 		EndByte:   uint32(len(source)),
 	}
 
-	if realShiftGapIsParserPadding(source, &stack, tok) {
+	if realShiftGapIsParserPadding(source, &stack, tok, 0) {
 		t.Fatalf("realShiftGapIsParserPadding = true, want false for non-leading BOM gap %q", source[stack.byteOffset:tok.StartByte])
 	}
 }
@@ -450,7 +512,7 @@ func TestRealShiftGapAllowsSyntheticMissingToken(t *testing.T) {
 		Missing:   true,
 	}
 
-	if !realShiftGapIsParserPadding(source, &stack, tok) {
+	if !realShiftGapIsParserPadding(source, &stack, tok, 0) {
 		t.Fatal("realShiftGapIsParserPadding = false, want true for synthetic missing token")
 	}
 }

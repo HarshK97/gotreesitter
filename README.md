@@ -752,12 +752,10 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.47.0**. It closes the generalized incremental
-correctness campaign with capability-based scanner admission, exact stateful
-checkpoint receipts, GSS forest ownership proof, and bounded JavaScript-family
-recovery scheduling. Uncertified scanners continue to fail closed; their
-individual serialization audits are independent language certification work,
-not exceptions in the parser engine.
+The current release is **v0.49.0**. It consolidates parser correctness,
+reference parity, recovery bounds, and compact-route work since v0.48.1.
+It also includes the issue #660 field-projection correction and its
+regression guard.
 
 Detailed shipped evidence lives in [CHANGELOG.md](CHANGELOG.md). Planned minor
 releases are batched on Thursdays; the immutable-tag process and exceptions are

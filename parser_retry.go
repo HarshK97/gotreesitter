@@ -186,6 +186,34 @@ func shouldRetryNodeLimitParse(tree *Tree, sourceLen int) bool {
 	return tree.rawParseStopReason() == ParseStopNodeLimit
 }
 
+// shouldRetryIncrementalMemoryBudgetAsPlainFull reports whether an
+// incremental attempt that tripped the runtime memory budget
+// (ParseStopMemoryBudget) should be discarded in favor of ONE plain,
+// default-budget full parse. This is deliberately NOT folded into
+// shouldRetryIncrementalParseAsFull / the retryFullParseForOrigin widen
+// ladder: that ladder only ever runs an attempt when
+// fullParseRetryMaxStacksOverrideForOrigin or fullParseRetryNodeLimitOverride
+// compute a nonzero WIDER cap, and neither is keyed to ParseStopMemoryBudget,
+// so folding this in there is a silent no-op (confirmed empirically: it did
+// not change the outcome). Widening the GLR stack/node cap is also the wrong
+// direction here regardless: a memory-budget trip means the incremental loop
+// already explored too much (observed ~3.08M nodes allocated for a ~64K-node
+// file before the guard aborted it, on a reuse-hostile edit -- issue #454's
+// C incremental-delete defect), so asking it to explore with an even WIDER
+// cap would plausibly make memory pressure worse, not better. The correct
+// fail-closed remedy is simpler: throw away the unvalidated, budget-aborted
+// attempt and run exactly one ordinary full parse at the normal default
+// budget -- precisely the equality oracle ParseIncremental must match.
+func shouldRetryIncrementalMemoryBudgetAsPlainFull(tree *Tree, sourceLen int) bool {
+	if tree == nil {
+		return false
+	}
+	if sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes {
+		return false
+	}
+	return tree.rawParseStopReason() == ParseStopMemoryBudget
+}
+
 func shouldRetryIncrementalParseAsFull(tree *Tree, sourceLen int, initialMaxStacks int) bool {
 	if tree == nil {
 		return false
@@ -404,7 +432,7 @@ func retryTreeCoversExpectedEOF(tree *Tree) bool {
 		return true
 	}
 	endByte := retryTreeEndByte(tree)
-	return endByte >= rt.ExpectedEOFByte || parserTailAllowsCleanAcceptance(tree.Source(), endByte, rt.ExpectedEOFByte, tree.includedRanges)
+	return endByte >= rt.ExpectedEOFByte || parserTailAllowsCleanAcceptance(tree.Source(), endByte, rt.ExpectedEOFByte, tree.includedRanges, languageLineContinuationEscapeByte(tree.language))
 }
 
 func retryStopRank(rt *ParseRuntime) int {
@@ -1335,6 +1363,24 @@ func certifiedAcceptedErrorRetrySkipsComplete(tree *Tree, sourceLen int) bool {
 		retryTreeCoversExpectedEOF(tree)
 }
 
+func certifiedGSSConvergenceAcceptedErrorMergePerKey(tree *Tree, sourceLen int) int {
+	if tree == nil || tree.language == nil || sourceLen <= 0 ||
+		!tree.language.FullParseGSSConvergenceEnabled ||
+		parseMaxGLRStacksEnvConfigured() || parseMaxMergePerKeyEnvConfigured() {
+		return 0
+	}
+	mergePerKey := int(tree.language.FullParseAcceptedErrorRetryProfile.GSSConvergenceAcceptedErrorMergePerKey)
+	if mergePerKey <= 1 {
+		return 0
+	}
+	rt := tree.rawParseRuntime()
+	if rt.StopReason != ParseStopAccepted || rt.Truncated || rt.TokenSourceEOFEarly ||
+		!retryTreeHasError(tree) || !retryTreeCoversExpectedEOF(tree) {
+		return 0
+	}
+	return mergePerKey
+}
+
 func certifiedFreshErrorNoStacksRetryPassLimit(tree *Tree, sourceLen int, origin fullParseRetryOrigin) int {
 	if tree == nil || tree.language == nil || origin != fullParseRetryOriginFresh ||
 		sourceLen <= 0 || sourceLen > fullParseRetryMaxSourceBytes {
@@ -1402,6 +1448,9 @@ func fullParseRetryMergePerKeyOverride(tree *Tree, sourceLen int, initialMaxStac
 	case ParseStopAccepted, ParseStopNoStacksAlive, ParseStopNodeLimit:
 	default:
 		return 0
+	}
+	if mergePerKey := certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, sourceLen); mergePerKey != 0 {
+		return mergePerKey
 	}
 	if certifiedAcceptedErrorRetrySkipsComplete(tree, sourceLen) {
 		return 0
@@ -1484,6 +1533,9 @@ func shouldRunInitialFullParseMergeRetry(tree *Tree, sourceLen int, origin fullP
 }
 
 func certifiedAcceptedErrorRetrySkipsInitialMerge(tree *Tree, sourceLen int, origin fullParseRetryOrigin) bool {
+	if certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, sourceLen) != 0 {
+		return false
+	}
 	if tree == nil || tree.language == nil || sourceLen <= 0 || origin != fullParseRetryOriginFresh ||
 		!tree.language.FullParseAcceptedErrorRetryProfile.SkipInitialCompleteAcceptedErrorMergeRetry ||
 		parseMaxGLRStacksEnvConfigured() || parseMaxMergePerKeyEnvConfigured() {
@@ -1636,7 +1688,8 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 	}
 	// C# namespace recovery can clear this exact accepted-error shape during
 	// normal result compatibility; avoid paying the full retry ladder first.
-	if csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree, source) {
+	if certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, len(source)) == 0 &&
+		csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree, source) {
 		return tree
 	}
 	runRetryAttempt := func(logicalRung, operationCause string, maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
@@ -1807,7 +1860,6 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 				}
 			}
 			nodeRetryTree = secondaryTree
-			replaceBest(&bestTree, secondaryTree)
 		} else {
 			// Keep the ordinary widened retry alive until the final merge
 			// decision below. It can lose the ranking to the original clean
@@ -1823,6 +1875,13 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 		}
 	}
 
+	// Keep the last widened candidate alive until its runtime can schedule the
+	// combined stack-and-merge retry below. Releasing it through replaceBest
+	// first clears the runtime receipt and silently skips that final rung.
+	if nodeRetryTree != nil && treeParseClean(nodeRetryTree) {
+		replaceBest(&bestTree, nodeRetryTree)
+		nodeRetryTree = nil
+	}
 	if treeParseClean(bestTree) {
 		if nodeRetryTree != nil && nodeRetryTree != bestTree && nodeRetryTree != tree {
 			release(nodeRetryTree)
@@ -1830,10 +1889,9 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 		return bestTree
 	}
 	maxMergePerKeyOverride := fullParseRetryMergePerKeyOverride(nodeRetryTree, len(source), initialMaxStacks)
+	replaceBest(&bestTree, nodeRetryTree)
+	nodeRetryTree = nil
 	if maxMergePerKeyOverride == 0 {
-		if nodeRetryTree != nil && nodeRetryTree != bestTree && nodeRetryTree != tree {
-			release(nodeRetryTree)
-		}
 		return bestTree
 	}
 	if retryDeadlineExceeded() {
@@ -1873,7 +1931,16 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 }
 
 func (p *Parser) retryFullParseWithDFA(source []byte, initialMaxStacks int, deterministicExternalConflicts bool, tree *Tree) *Tree {
-	result := p.retryFullParse(source, initialMaxStacks, tree, func(maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
+	return p.retryFullParseWithDFAForOrigin(source, initialMaxStacks, deterministicExternalConflicts, tree, fullParseRetryOriginFresh)
+}
+
+// retryFullParseWithDFAForOrigin is retryFullParseWithDFA's origin-aware
+// sibling, mirroring retryFullParseWithTokenSourceForOrigin: it lets a DFA
+// incremental caller (retryIncrementalParseAsFullWithDFA) run the same
+// full-parse retry ladder without pretending the caller is a fresh top-level
+// Parse.
+func (p *Parser) retryFullParseWithDFAForOrigin(source []byte, initialMaxStacks int, deterministicExternalConflicts bool, tree *Tree, origin fullParseRetryOrigin) *Tree {
+	result := p.retryFullParseForOrigin(source, initialMaxStacks, tree, origin, func(maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
 		retryTS := p.acquireParserDFATokenSource(source)
 		defer retryTS.Close()
 		return p.parseInternal(
@@ -1889,11 +1956,53 @@ func (p *Parser) retryFullParseWithDFA(source []byte, initialMaxStacks int, dete
 			deterministicExternalConflicts,
 		)
 	})
+	if origin == fullParseRetryOriginIncremental && result != tree && !preferRetryTreeOverFirstPass(p, result, tree) {
+		// The retry ladder finished without producing a strictly better tree
+		// on any quality axis. Keep the incremental first pass: replacing it
+		// with a quality-tied fresh tree would falsely report
+		// incremental_parse_full_retry and discard a good tree over parse-run
+		// bookkeeping (NodesAllocated).
+		result.Release()
+		return tree
+	}
 	// retryFullParse releases losing retry trees internally (#34), but when a
 	// retry winner replaces the original tree, the original's arena is orphaned.
 	// Release it here since the caller will overwrite its tree reference.
 	if result != tree {
 		tree.Release()
+	}
+	return result
+}
+
+// retryIncrementalParseAsFullWithDFA is retryIncrementalParseAsFullWithTokenSource's
+// DFA-backed sibling: the fail-closed fallback for the plain (non-token-source)
+// ParseIncremental / ParseIncrementalProfiled entry points. Before this
+// existed, only the TokenSource incremental path (parseIncrementalWithTokenSource
+// -Changed[Profiled]) had a safety net for an incremental attempt that never
+// finished a validated parse of the edited text (see
+// shouldRetryIncrementalParseAsFull); the plain DFA path
+// (parseIncrementalChanged[Profiled]) would publish whatever tree the aborted
+// attempt produced, including a near-empty ERROR tree when the attempt tripped
+// ParseStopMemoryBudget mid-parse. That is exactly the issue #454 C
+// incremental-delete defect: a single-byte delete that defeats reuse can drive
+// the incremental GLR loop through unbounded ambiguity exploration that never
+// reaches a clean accept, and the caller must not see that failure as a
+// successful, drastically-truncated tree.
+func (p *Parser) retryIncrementalParseAsFullWithDFA(source []byte, initialMaxStacks int, tree *Tree, timing *incrementalParseTiming) *Tree {
+	if tree == nil {
+		return tree
+	}
+	deterministicExternalConflicts := fullParseUsesDeterministicExternalConflicts(p.language)
+	retryStart := time.Now()
+	result := p.retryFullParseWithDFAForOrigin(source, initialMaxStacks, deterministicExternalConflicts, tree, fullParseRetryOriginIncremental)
+	if result == tree {
+		return tree
+	}
+	if timing != nil {
+		timing.totalNanos += time.Since(retryStart).Nanoseconds()
+		timing.reuseUnsupported = true
+		timing.reuseUnsupportedReason = "incremental_parse_full_retry"
+		copyParseRuntimeToTiming(timing, *result.rawParseRuntime())
 	}
 	return result
 }
@@ -1955,4 +2064,76 @@ func (p *Parser) retryIncrementalParseAsFullWithTokenSource(source []byte, ts To
 		copyParseRuntimeToTiming(timing, *result.rawParseRuntime())
 	}
 	return result
+}
+
+// retryIncrementalMemoryBudgetAsPlainFullWithDFA is the DFA-lexer fail-closed
+// fallback for shouldRetryIncrementalMemoryBudgetAsPlainFull: exactly one
+// plain, default-budget full parse, never the widen-and-retry ladder. See
+// shouldRetryIncrementalMemoryBudgetAsPlainFull for why the ladder is the
+// wrong tool here. It calls parseInternal directly (the same primitive
+// retryFullParseWithDFAForOrigin's callback uses) rather than the high-level
+// Parse entry point, so the caller's own subsequent
+// normalizeReturnedIncrementalTree pass remains this tree's only
+// normalization step -- consistent with every other retry helper in this
+// file, and avoiding a second (Parse-internal) normalization pass on top of
+// it. tree is released and replaced only when the plain full parse actually
+// completes with a root; otherwise the original (already-unsound) tree is
+// returned unchanged rather than risk losing it to a second failed attempt.
+func (p *Parser) retryIncrementalMemoryBudgetAsPlainFullWithDFA(source []byte, tree *Tree, timing *incrementalParseTiming) *Tree {
+	if tree == nil {
+		return tree
+	}
+	deterministicExternalConflicts := fullParseUsesDeterministicExternalConflicts(p.language)
+	initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth)
+	retryStart := time.Now()
+	retryTS := p.acquireParserDFATokenSource(source)
+	defer retryTS.Close()
+	full := p.parseInternal(source, p.wrapIncludedRanges(retryTS), nil, nil, arenaClassFull, nil, initialMaxStacks, 0, 0, deterministicExternalConflicts)
+	if full == nil || full.RootNode() == nil {
+		full.Release()
+		return tree
+	}
+	tree.Release()
+	if timing != nil {
+		timing.totalNanos += time.Since(retryStart).Nanoseconds()
+		timing.reuseUnsupported = true
+		timing.reuseUnsupportedReason = "incremental_parse_memory_budget_full_retry"
+		copyParseRuntimeToTiming(timing, *full.rawParseRuntime())
+	}
+	return full
+}
+
+// retryIncrementalMemoryBudgetAsPlainFullWithTokenSource is
+// retryIncrementalMemoryBudgetAsPlainFullWithDFA's token-source-backed
+// sibling, for languages that must reparse through a caller-supplied
+// TokenSource (for example Go/Rust/TypeScript's Go-native scanner bridges)
+// rather than the DFA lexer. It reuses the same resettableTokenSource
+// contract as retryFullParseWithTokenSourceForOrigin; a token source that
+// cannot be reset is left alone (the original tree is returned unchanged)
+// rather than risk reparsing from a stale scanner position.
+func (p *Parser) retryIncrementalMemoryBudgetAsPlainFullWithTokenSource(source []byte, ts TokenSource, tree *Tree, timing *incrementalParseTiming) *Tree {
+	if tree == nil {
+		return tree
+	}
+	resettable, ok := ts.(resettableTokenSource)
+	if !ok {
+		return tree
+	}
+	deterministicExternalConflicts := fullParseUsesDeterministicExternalConflicts(p.language)
+	initialMaxStacks := fullParseInitialMaxStacks(p.language, p.maxConflictWidth)
+	retryStart := time.Now()
+	resettable.Reset(source)
+	full := p.parseInternal(source, p.wrapIncludedRanges(ts), nil, nil, arenaClassFull, nil, initialMaxStacks, 0, 0, deterministicExternalConflicts)
+	if full == nil || full.RootNode() == nil {
+		full.Release()
+		return tree
+	}
+	tree.Release()
+	if timing != nil {
+		timing.totalNanos += time.Since(retryStart).Nanoseconds()
+		timing.reuseUnsupported = true
+		timing.reuseUnsupportedReason = "incremental_parse_memory_budget_full_retry"
+		copyParseRuntimeToTiming(timing, *full.rawParseRuntime())
+	}
+	return full
 }

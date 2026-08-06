@@ -38,6 +38,98 @@ func TestResolveConflictsHonorsCanceledContext(t *testing.T) {
 	}
 }
 
+func TestResolveShiftReduceUsesAdvancedItemPrecedence(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "{", Kind: SymbolTerminal},
+			{Name: "lambda_literal", Kind: SymbolNonterminal},
+			{Name: "call_expression", Kind: SymbolNonterminal},
+			{Name: "_if_let_binding", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 3},
+		},
+	}
+	shift := lrAction{
+		kind:    lrShift,
+		state:   10,
+		prec:    0,
+		hasPrec: true,
+		lhsSym:  1,
+	}
+	shift.addConflictContributor(2, -2, true, AssocNone)
+	reduce := lrAction{kind: lrReduce, prodIdx: 0}
+
+	got, err := resolveActionConflict(0, []lrAction{shift, reduce}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrReduce {
+		t.Fatalf("resolved actions = %+v, want the higher-precedence reduce", got)
+	}
+}
+
+func TestResolveShiftReducePreservesEqualAdvancedSelfConflict(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "{", Kind: SymbolTerminal},
+			{Name: "lambda_literal", Kind: SymbolNonterminal},
+			{Name: "call_suffix", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 2, Prec: -2, HasExplicitPrec: true},
+		},
+		Conflicts: [][]int{{2}},
+	}
+	shift := lrAction{
+		kind:    lrShift,
+		state:   10,
+		prec:    0,
+		hasPrec: true,
+		lhsSym:  1,
+		lhsSyms: []int{2},
+	}
+	shift.addConflictContributor(2, -2, true, AssocNone)
+	reduce := lrAction{kind: lrReduce, prodIdx: 0}
+
+	got, err := resolveActionConflict(0, []lrAction{shift, reduce}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("resolved actions = %+v, want both declared interpretations", got)
+	}
+}
+
+func TestResolveShiftReduceDoesNotUseClosureItemPrecedence(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: "{", Kind: SymbolTerminal},
+			{Name: "lambda_literal", Kind: SymbolNonterminal},
+			{Name: "_if_let_binding", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 2},
+		},
+	}
+	shift := lrAction{
+		kind:    lrShift,
+		state:   10,
+		prec:    0,
+		hasPrec: true,
+		lhsSym:  1,
+	}
+	reduce := lrAction{kind: lrReduce, prodIdx: 0}
+
+	got, err := resolveActionConflict(0, []lrAction{shift, reduce}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 1 || got[0].kind != lrShift {
+		t.Fatalf("resolved actions = %+v, want the default shift", got)
+	}
+}
+
 func TestRRPickBestUsesSymbolVsNamedPrecedenceOrder(t *testing.T) {
 	ng := &NormalizedGrammar{
 		Symbols: []SymbolInfo{
@@ -2861,5 +2953,51 @@ func TestResolveAuxToParentsUsesCachedReverseParents(t *testing.T) {
 	again := resolveAuxToParents(2, ng, cache)
 	if len(again) != 1 || again[0] != 0 {
 		t.Fatalf("cached resolveAuxToParents(value_token1) = %v, want [0]", again)
+	}
+}
+
+// TestResolveShiftReduceKeepsLabeledStatementPropertyNameDeclaredConflict
+// pins the T1 election-table-parity witness (spec.a2-election-table-parity,
+// tranche T1): the real tree-sitter-javascript grammar.js declares
+//
+//	conflicts: $ => [ ..., [$.labeled_statement, $._property_name], ... ]
+//
+// because at statement position, `identifier ':'` right after `{` is
+// ambiguous between a labeled_statement (`label ':' body`) and an object
+// literal's pair (`_property_name ':' value`). On lookahead ':', the state
+// offers a SHIFT that continues labeled_statement's `label • ':' body` and a
+// REDUCE that completes `_property_name -> identifier`. Upstream's generator
+// keeps both actions (a GLR table entry) whenever precedence does not
+// resolve a declared-conflict pair; it never silently drops one side. This
+// test asserts resolveActionConflict does the same for the exact shape that
+// reaches it once shift/reduce metadata is separated (grammargen/lr.go
+// shiftReduceInConflictGroup, ~lr.go:3676-3709): shift LHS and reduce LHS
+// are different members of the same declared conflict group, so both
+// actions must survive so the runtime GLR engine (labeled_statement carries
+// prec.dynamic(-1); _property_name carries none) can elect the object
+// literal at merge time.
+func TestResolveShiftReduceKeepsLabeledStatementPropertyNameDeclaredConflict(t *testing.T) {
+	ng := &NormalizedGrammar{
+		Symbols: []SymbolInfo{
+			{Name: ":", Kind: SymbolTerminal},
+			{Name: "identifier", Kind: SymbolTerminal},
+			{Name: "labeled_statement", Kind: SymbolNonterminal, Visible: true, Named: true},
+			{Name: "_property_name", Kind: SymbolNonterminal},
+		},
+		Productions: []Production{
+			{LHS: 3, RHS: []int{1}}, // _property_name -> identifier
+		},
+		Conflicts: [][]int{{2, 3}}, // declared: [labeled_statement, _property_name]
+	}
+
+	got, err := resolveActionConflict(0, []lrAction{
+		{kind: lrShift, state: 10, lhsSym: 2}, // labeled_statement: label . ':' body
+		{kind: lrReduce, prodIdx: 0},          // _property_name -> identifier .
+	}, ng)
+	if err != nil {
+		t.Fatalf("resolveActionConflict: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("resolved actions = %+v, want both the labeled_statement shift and the _property_name reduce kept (declared conflict, GLR fork)", got)
 	}
 }

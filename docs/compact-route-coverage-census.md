@@ -316,6 +316,43 @@ requirements, svelte, tcl, templ, tmux, twig, uxntal, v, vimdoc, xml
 
 authzed, c, cpp, java, json
 
+### Preferred token-source DFA shadow audit
+
+The five SKIP entries still use token sources through the grammar registry.
+Each embedded language also has DFA tables. C++ also has its required scanner.
+
+`TestAdmissionCandidateTokenSourceEntriesExposeDFASmoke` records the latent DFA
+capability. It does not change the preferred backend or the SKIP ratchet.
+
+`TestAdmissionCandidateDFASmokeMatchesPreferredTokenSource` adds a separate
+backend-equivalence receipt. The field-aware digest includes:
+
+- Node types and fields.
+- Byte and point spans.
+- Named, extra, missing, and error flags.
+- Child counts and structure.
+
+All five smoke fixtures route through the compact parser. Each result matches
+the preferred token-source tree.
+
+The bounded real-corpus audit used files of 16,383 bytes or less:
+
+- C: both files declined the compact route. Their DFA fallback matched the
+  token-source tree.
+- C++: all three files declined. The DFA fallback differed from the
+  token-source tree on two files.
+- Java: one file routed and matched. One file declined, and its DFA fallback
+  matched.
+- JSON: all three files routed and matched.
+- Authzed: the corpus has no fixture. The canonical smoke fixture is the only
+  current receipt.
+
+Keep all five rows as SKIP. Production promotion needs one public shadow route.
+That route must try compact DFA parsing and use the token source after a
+decline. It must not expose the ordinary DFA fallback.
+
+Add a small canonical Authzed corpus fixture before a depth promotion.
+
 ## Follow-up
 
 - The top-2 real-world burn-down items by this census are

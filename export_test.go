@@ -78,6 +78,27 @@ func (p *Parser) SetDisableLeadingRunSplice(v bool) {
 	p.disableLeadingRunSplice = v
 }
 
+// SetResultCompatibilityElisionForceDisabledForTest forces every language
+// ineligible for the compact fresh path's compat-tail elision (spec.campaign.v7
+// tranche A5/C1, result_compat_elision.go), regardless of the registry-computed
+// eligibility set. It exists ONLY so the elision-equivalence regression tests
+// (admission_compat_tail_elision_test.go) can drive the SAME source through
+// the SAME compact route with elision on and off and diff the two resulting
+// trees. It returns a restore function and lives in export_test.go, so it is
+// compiled only in test builds and is never part of the public API.
+func SetResultCompatibilityElisionForceDisabledForTest(disabled bool) func() {
+	prev := resultCompatibilityElisionForceDisabledForTest.Swap(disabled)
+	return func() { resultCompatibilityElisionForceDisabledForTest.Store(prev) }
+}
+
+// ResultCompatibilityElisionEligibleForTest exposes the registry-computed
+// compat-tail elision eligibility set (result_compat_elision.go) to the
+// external gotreesitter_test package, so a corpus-wide differential test can
+// filter to eligible languages without duplicating the registry parse.
+func ResultCompatibilityElisionEligibleForTest(lang *Language) bool {
+	return resultCompatibilityElisionEligible(lang)
+}
+
 // ReplayDiffTree replays the LR tables over the tree rooted at root and
 // compares the reconstructed states against the recorded ones on every node.
 // It mutates nothing. maxSamples bounds the retained mismatch examples.
@@ -300,12 +321,63 @@ func AdmissionCandidateEnvEnabledForTest() bool {
 	return admissionCandidateEnvEnabled()
 }
 
-// ParseRuntimeMemoryMinSourceBytesForTest exposes the source-length floor where
-// the production route arms the automatic memory budget, so the external test
-// package can pin the admission size gate to the single source of truth
-// (parseRuntimeMemoryMinSourceBytes) instead of copying the 64 KiB literal.
+// ParseRuntimeMemoryMinSourceBytesForTest exposes the source-length floor
+// where the production route arms its own automatic runtime memory budget
+// (parser_memory_budget_runtime.go), so the external test package can pin
+// production-budget tests to the single source of truth instead of copying
+// the 64 KiB literal. Tranche B9 retired this floor's former second use as
+// the compact-route admission size gate; it no longer bounds candidate-route
+// eligibility, only when production's own runtime-heap watchdog arms.
 func ParseRuntimeMemoryMinSourceBytesForTest() int {
 	return parseRuntimeMemoryMinSourceBytes
+}
+
+// TryCompactFullParseRouteForTest exposes the admission-candidate engine seam
+// directly (bypassing the public Parser.Parse eligibility checks) so external
+// test code can drive the compact route's own accept-or-decline outcome,
+// including its decline detail string, without going through the public
+// Parse route. Both build configurations define tryCompactFullParseRoute (the
+// real engine under the default build, a fail-closed stub under -tags
+// gts_no_parsercorephase0), so this resolves in either build.
+func TryCompactFullParseRouteForTest(p *Parser, source []byte) (tree *Tree, ok bool, reason string) {
+	return p.tryCompactFullParseRoute(source)
+}
+
+// AdmissionCandidateCompactStorageBytesForTest exposes the cached
+// admission-candidate runner's current compact-core StorageBytes(): live
+// record length only, always 0 immediately after any Reset regardless of
+// retained capacity. It returns 0 when no runner is cached yet (including
+// under -tags gts_no_parsercorephase0, where the engine never runs). Use
+// AdmissionCandidateCompactFootprintBytesForTest to check the tranche B9
+// storage-RELEASE gate specifically; this one alone cannot.
+func AdmissionCandidateCompactStorageBytesForTest(p *Parser) uint64 {
+	return admissionCandidateCompactStorageBytes(p)
+}
+
+// AdmissionCandidateCompactFootprintBytesForTest exposes the cached
+// admission-candidate runner's current compact-core FootprintBytes(): real
+// retained capacity, not live length. External test code uses this to prove
+// the tranche B9 storage-release gate -- a declined parse must not leave
+// compact storage retained while the caller's production fallback runs --
+// because unlike StorageBytes, this can actually detect a decline path that
+// reset logical length but left a large backing array retained. It returns
+// 0 when no runner is cached yet (including under -tags
+// gts_no_parsercorephase0).
+func AdmissionCandidateCompactFootprintBytesForTest(p *Parser) uint64 {
+	return admissionCandidateCompactFootprintBytes(p)
+}
+
+// BeginParseOperationBudgetForTest opens the same outer parse-budget scope
+// Parse itself opens (beginParseOperationBudget), so external test code can
+// pin a deadline via SetTimeoutMicros, sleep past it, and then call Parse:
+// the nested budget scope Parse opens internally (including inside the
+// tranche B8 admission-candidate route) inherits this already-expired
+// deadline instead of computing a fresh one, giving a deterministic --
+// not call-overhead-dependent -- expired-timeout witness. Mirrors the
+// technique TestParseWithSnippetParserInheritsExpiredParentDeadline already
+// uses from inside the package.
+func (p *Parser) BeginParseOperationBudgetForTest() func() {
+	return p.beginParseOperationBudget()
 }
 
 // AdmissionSubParserProbe bundles internal sub-parser construction so the
@@ -339,6 +411,22 @@ func ParserAdmissionEligibleForTest(p *Parser) bool {
 // occurrence predicate to external-package artifact tests.
 func ParserRetainsCollapsedChildOccurrenceForTest(p *Parser, parent, child Symbol) bool {
 	return p != nil && p.retainsCollapsedChildOccurrence(parent, child)
+}
+
+// SetNoResultCompatibilityBenchmarkOnlyForTest sets p's
+// noResultCompatibilityBenchmarkOnly flag directly, without also suppressing
+// the admission candidate route the way the public
+// ParseNoResultCompatibilityBenchmarkOnly wrapper does (it defers
+// suppressAdmissionCandidateRoute, so it can never serve as a compact-route
+// probe). Combined with SetAdmissionCandidateRoute(true), this lets the A3
+// certification-workstream arm no-op receipt (spec.campaign.v7, finding
+// tied-election-family-compact-retirement) dump the compact route's raw,
+// pre-compat-tail runner tree for comparison against the normal tailed
+// parse. It returns a restore function.
+func SetNoResultCompatibilityBenchmarkOnlyForTest(p *Parser, enabled bool) func() {
+	prev := p.noResultCompatibilityBenchmarkOnly
+	p.noResultCompatibilityBenchmarkOnly = enabled
+	return func() { p.noResultCompatibilityBenchmarkOnly = prev }
 }
 
 // ParserPoolCheckoutForTest checks a parser out of the pool (applying defaults).

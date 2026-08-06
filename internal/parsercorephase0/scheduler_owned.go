@@ -7,15 +7,369 @@ import (
 
 const inlineSchedulerCohortTargets = 8
 
+// ReindexCondenseCandidatesOwned replaces the retained boundary lookup set
+// with the scheduler versions that can receive the next action output.
+func (c *Core) ReindexCondenseCandidatesOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate) error {
+	return c.RunSchedulerOwned(owner, func() error {
+		return c.reindexCondenseCandidatesUncheckpointed(candidates)
+	})
+}
+
+// RecordReductionLineageOwned attaches exact scheduler lineage to compact graph
+// versions. The journal restores prior provenance if the scheduler transaction
+// rolls back.
+//
+// Each output's branch identity (spec.b4b-alternative-set.v2 section 3.1) is
+// its index within outputs, the dispatch's stable first-boundary order
+// (reduceOutputsClassifiedIntoActive's final emission loop below). The
+// driver's own establishment loops (parsercore_phase0_driver.go) iterate the
+// identical outputs slice after this call returns, so their ordinals agree
+// with no further synchronization. alternativeSetBranchCap declines rather
+// than silently wrapping a branch ordinal past uint16 range; canonical
+// reductions never approach it.
+func (c *Core) RecordReductionLineageOwned(owner SchedulerTransactionToken, outputs []ReductionOutput, lineage uint16) error {
+	return c.RunSchedulerOwned(owner, func() error {
+		if lineage == 0 {
+			return errors.New("parser-core phase zero: zero reduction lineage")
+		}
+		if len(outputs) >= alternativeSetBranchCap {
+			return errAlternativeSetBranchOrdinalCap
+		}
+		for index, output := range outputs {
+			if !output.MultiplePopPaths {
+				return errors.New("parser-core phase zero: lineage requires multiple pop paths")
+			}
+			if err := c.recordNodeLineage(output.Head, output.CleanPathRank, lineage); err != nil {
+				return err
+			}
+			if err := c.recordNodeLineageMember(output.Head, lineage, uint16(index)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// RecordHeadLineageOwned persists inherited scheduler lineage on one graph
+// version, and unions set into its recorded alternative set in the same
+// scheduler-owned operation. Unknown lineage invalidates an earlier exact
+// scalar record conservatively; set is never invalidated (union only).
+// Sharing one RunSchedulerOwned call for both halves -- rather than a
+// second Owned call for the set -- halves the per-header token-validation
+// cost of persistHeaderLineageOwned's per-dispatch persistence loop
+// (parsercore_phase0_driver.go), its sole caller.
+//
+// setDirty lets that caller skip the set union outright: scalar dirtiness
+// cannot be inferred from set dirtiness (a rank flip on an already-recorded
+// lineage id changes rank without adding a member), so the scalar merge
+// always runs -- it is already cheap when nothing changed
+// (recordNodeLineage's own no-op guard) -- but the set union is both more
+// expensive per call and, empirically, redundant far more often (the same
+// (head, altSet) pair persisted again on a dispatch that never touched this
+// header), so the caller may prove that in advance and skip it entirely.
+func (c *Core) RecordHeadLineageOwned(
+	owner SchedulerTransactionToken,
+	head Head,
+	rank CleanPathRankSelection,
+	lineage uint16,
+	set AlternativeSet,
+	setBlended bool,
+	setDirty bool,
+) error {
+	return c.RunSchedulerOwned(owner, func() error {
+		if rank != CleanPathRankSelected && rank != CleanPathRankUnselected || lineage == 0 {
+			rank = CleanPathRankUnknown
+			lineage = 0
+		}
+		if err := c.recordNodeLineage(head, rank, lineage); err != nil {
+			return err
+		}
+		if !setDirty {
+			return nil
+		}
+		return c.recordNodeLineageSet(head, set, setBlended)
+	})
+}
+
+func (c *Core) recordNodeLineage(head Head, rank CleanPathRankSelection, lineage uint16) error {
+	node, err := c.nodeLineage(head.Node)
+	if err != nil {
+		return err
+	}
+	nextRank := rank
+	nextLineage := lineage
+	nextConverged := true
+	switch rank {
+	case CleanPathRankSelected, CleanPathRankUnselected:
+	case CleanPathRankUnknown:
+		nextLineage = 0
+	case CleanPathRankNotApplicable:
+		return nil
+	default:
+		return errors.New("parser-core phase zero: invalid clean path rank")
+	}
+	switch {
+	case node.rank == CleanPathRankNotApplicable && node.lineage == 0:
+	case node.lineage == nextLineage:
+		nextRank = mergeCleanPathRank(node.rank, nextRank)
+		if nextRank == CleanPathRankUnknown {
+			nextLineage = 0
+		}
+	case node.rank == CleanPathRankUnknown && node.lineage == 0:
+		nextRank = CleanPathRankUnknown
+		nextLineage = 0
+	default:
+		nextRank = CleanPathRankUnknown
+		nextLineage = 0
+	}
+	if node.rank == nextRank && node.lineage == nextLineage && node.converged == nextConverged {
+		return nil
+	}
+	if len(c.transactions) != 0 {
+		c.nodeLineageJournal = append(c.nodeLineageJournal, nodeLineageMutation{
+			node: head.Node, owner: node.owner,
+			setCount: node.set.count, setFlags: node.set.flags, setSpillRef: node.set.spillRef,
+			lineage: node.lineage, rank: node.rank, converged: node.converged, blended: node.blended,
+		})
+	}
+	node.rank = nextRank
+	node.lineage = nextLineage
+	node.converged = nextConverged
+	return nil
+}
+
+// RecordHeadOwnerOwned binds one compact head to its scheduler lineage.
+func (c *Core) RecordHeadOwnerOwned(owner SchedulerTransactionToken, head Head, lineage uint32) error {
+	return c.RunSchedulerOwned(owner, func() error {
+		if lineage == 0 {
+			return errors.New("parser-core phase zero: zero scheduler lineage")
+		}
+		node, err := c.nodeLineage(head.Node)
+		if err != nil {
+			return err
+		}
+		if node.owner == lineage {
+			return nil
+		}
+		if node.owner != 0 {
+			return errors.New("parser-core phase zero: compact head has multiple scheduler owners")
+		}
+		if len(c.transactions) != 0 {
+			c.nodeLineageJournal = append(c.nodeLineageJournal, nodeLineageMutation{
+				node: head.Node, owner: node.owner,
+				setCount: node.set.count, setFlags: node.set.flags, setSpillRef: node.set.spillRef,
+				lineage: node.lineage, rank: node.rank, converged: node.converged, blended: node.blended,
+			})
+		}
+		node.owner = lineage
+		return nil
+	})
+}
+
+// RecordHeadLineageSetOwned unions set into one compact head's node record.
+// Unlike the scalar clean-path pair, membership is never invalidated: this
+// is a pure union, never a poisoning overwrite (spec.b4b-alternative-set.v1
+// section 4).
+func (c *Core) RecordHeadLineageSetOwned(owner SchedulerTransactionToken, head Head, set AlternativeSet, setBlended bool) error {
+	return c.RunSchedulerOwned(owner, func() error {
+		return c.recordNodeLineageSet(head, set, setBlended)
+	})
+}
+
+// recordNodeLineageSet unions set into head's node's recorded alternative
+// set. This is a fold-class union (spec.b4b-alternative-set.v2 section 3.4):
+// the node's own recorded set may already carry ancestry from a different
+// header/derivation thread that structurally shares this node (the shape
+// section 2 describes), so set and the node's prior set are two
+// independently tracked histories. The node's blended mark becomes true when
+// setBlended is true, or when the node's prior recorded set and the
+// incoming set are incomparable under containment -- computed before the
+// union, since the union itself mutates node.set in place.
+func (c *Core) recordNodeLineageSet(head Head, set AlternativeSet, setBlended bool) error {
+	if set.count == 0 {
+		return nil
+	}
+	node, err := c.nodeLineage(head.Node)
+	if err != nil {
+		return err
+	}
+	before := node.set
+	beforeBlended := node.blended
+	incomparable := c.AlternativeSetIncomparable(before, set)
+	if !c.alternativeSetUnion(&node.set, set) {
+		return nil
+	}
+	nextBlended := beforeBlended || setBlended || incomparable
+	if len(c.transactions) != 0 {
+		c.nodeLineageJournal = append(c.nodeLineageJournal, nodeLineageMutation{
+			node: head.Node, owner: node.owner,
+			setCount: before.count, setFlags: before.flags, setSpillRef: before.spillRef,
+			lineage: node.lineage, rank: node.rank, converged: node.converged, blended: beforeBlended,
+		})
+	}
+	node.blended = nextBlended
+	return nil
+}
+
+// recordNodeLineageMember inserts pack(event, branch) into head's node's
+// alternative set, unconditionally: membership is a per-event ancestry fact
+// established at multi-pop reduction time, and it is never gated by
+// clean-path rank or invalidated once recorded (spec.b4b-alternative-set.v1
+// section 4). This runs alongside, and never changes the outcome of,
+// recordNodeLineage's existing scalar merge. Establishment (spec.b4b-
+// alternative-set.v2 section 3.4): inserting one freshly established member
+// can never make a set incomparable with its own prior self, so this never
+// touches the node's blended mark.
+func (c *Core) recordNodeLineageMember(head Head, event, branch uint16) error {
+	if !alternativeSetRecordingEnabled() {
+		return nil
+	}
+	node, err := c.nodeLineage(head.Node)
+	if err != nil {
+		return err
+	}
+	before := node.set
+	if !c.alternativeSetInsert(&node.set, packAlternativeSetMember(event, branch)) {
+		return nil
+	}
+	if len(c.transactions) != 0 {
+		c.nodeLineageJournal = append(c.nodeLineageJournal, nodeLineageMutation{
+			node: head.Node, owner: node.owner,
+			setCount: before.count, setFlags: before.flags, setSpillRef: before.spillRef,
+			lineage: node.lineage, rank: node.rank, converged: node.converged, blended: node.blended,
+		})
+	}
+	return nil
+}
+
+// enterLiveCondenseCandidates installs the live condense-candidate scope:
+// reject nesting, reject two candidates that would collide on one boundary,
+// then publish the scope fields (condenseCandidates, condenseNewNode,
+// condenseScopeActive) that condenseNodeIsLive reads during the dispatch that
+// follows. It is the non-closure setup half of runLiveCondenseCandidates,
+// factored out so the hot shift/reduce/cohort dispatch paths below can call
+// it directly instead of threading a fn func() error parameter through two
+// extra wrapper layers.
+func (c *Core) enterLiveCondenseCandidates(candidates []CondenseCandidate) error {
+	if c.condenseScopeActive {
+		return errors.New("parser-core phase zero: nested live condense candidate scope")
+	}
+	for index, candidate := range candidates {
+		node, err := c.node(candidate.Head.Node)
+		if err != nil {
+			return err
+		}
+		for prior := 0; prior < index; prior++ {
+			other := candidates[prior]
+			otherNode, err := c.node(other.Head.Node)
+			if err != nil {
+				return err
+			}
+			if node.state == otherNode.state &&
+				node.byteOffset == otherNode.byteOffset &&
+				candidate.Shifted == other.Shifted &&
+				candidate.Checkpoint == other.Checkpoint &&
+				candidate.Head.Node != other.Head.Node {
+				return errors.New("parser-core phase zero: distinct condense candidates share one boundary")
+			}
+		}
+	}
+	c.condenseCandidates = candidates
+	c.condenseNewNode = NodeID(len(c.nodes) + 1)
+	c.condenseScopeActive = true
+	return nil
+}
+
+// runLiveCondenseCandidates keeps the closure-taking shape used directly by
+// tests. Production dispatch no longer routes through it; see
+// enterLiveCondenseCandidates and the *MaybeLiveScopedOwned methods below.
+func (c *Core) runLiveCondenseCandidates(candidates []CondenseCandidate, fn func() error) error {
+	if err := c.enterLiveCondenseCandidates(candidates); err != nil {
+		return err
+	}
+	if c.schedulerFrame.fresh {
+		err := fn()
+		c.clearLiveCondenseCandidates()
+		return err
+	}
+	defer c.clearLiveCondenseCandidates()
+	return fn()
+}
+
+func (c *Core) clearLiveCondenseCandidates() {
+	if c == nil {
+		return
+	}
+	c.condenseCandidates = nil
+	c.condenseNewNode = 0
+	c.condenseScopeActive = false
+}
+
+func (c *Core) reindexCondenseCandidatesUncheckpointed(candidates []CondenseCandidate) error {
+	c.boundaries.advanceGeneration()
+	for _, candidate := range candidates {
+		node, err := c.node(candidate.Head.Node)
+		if err != nil {
+			return err
+		}
+		key := boundaryKey{
+			frontier: c.frontier, state: node.state, byteOffset: node.byteOffset,
+			shifted: candidate.Shifted, checkpoint: candidate.Checkpoint,
+		}
+		probe, existing := c.boundaries.probe(boundaryIdentityFromKey(key))
+		if probe.found {
+			if existing != candidate.Head.Node {
+				return errors.New("parser-core phase zero: distinct condense candidates share one boundary")
+			}
+			continue
+		}
+		if err := c.publishBoundary(probe, candidate.Head.Node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ShiftClassifiedOwned authenticates the scheduler owner, then delegates to
 // the same uncheckpointed implementation used by standalone ShiftClassified.
 func (c *Core) ShiftClassifiedOwned(owner SchedulerTransactionToken, boundary ClassifiedBoundary, actionOrdinal int, shifted Token, fork ForkOrder) (out Head, err error) {
-	err = c.RunSchedulerOwned(owner, func() error {
-		var innerErr error
-		out, innerErr = c.shiftClassifiedUncheckpointed(boundary, actionOrdinal, shifted, fork)
-		return innerErr
-	})
-	return out, err
+	return c.shiftClassifiedMaybeLiveScopedOwned(owner, nil, false, boundary, actionOrdinal, shifted, fork)
+}
+
+// ShiftClassifiedWithLiveCondenseCandidatesOwned scopes condense candidates and shifts
+// under one scheduler ownership check.
+func (c *Core) ShiftClassifiedWithLiveCondenseCandidatesOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, boundary ClassifiedBoundary, actionOrdinal int, shifted Token, fork ForkOrder) (out Head, err error) {
+	return c.shiftClassifiedMaybeLiveScopedOwned(owner, candidates, true, boundary, actionOrdinal, shifted, fork)
+}
+
+// shiftClassifiedMaybeLiveScopedOwned inlines the former
+// runSchedulerMaybeLiveScopedOwned/runLiveCondenseCandidates closure chain: it
+// validates the owner, installs the live condense scope (when requested),
+// calls the uncheckpointed shift directly, and tears the scope back down --
+// all without allocating or invoking a fn func() error value. Every step here
+// mirrors RunSchedulerOwned's and runLiveCondenseCandidates's own semantics
+// exactly (same validation, same panic/error poisoning, same fresh-session
+// cleanup asymmetry), so this dispatch call site is direct and inlinable.
+func (c *Core) shiftClassifiedMaybeLiveScopedOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, liveScoped bool, boundary ClassifiedBoundary, actionOrdinal int, shifted Token, fork ForkOrder) (out Head, err error) {
+	if err = c.beginSchedulerOwned(owner); err != nil {
+		return out, err
+	}
+	defer c.recoverSchedulerOwnedPanic(owner)
+	if !liveScoped {
+		out, err = c.shiftClassifiedUncheckpointed(boundary, actionOrdinal, shifted, fork)
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	if err = c.enterLiveCondenseCandidates(candidates); err != nil {
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	if c.schedulerFrame.fresh {
+		out, err = c.shiftClassifiedUncheckpointed(boundary, actionOrdinal, shifted, fork)
+		c.clearLiveCondenseCandidates()
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	defer c.clearLiveCondenseCandidates()
+	out, err = c.shiftClassifiedUncheckpointed(boundary, actionOrdinal, shifted, fork)
+	return out, c.finishSchedulerOwned(owner, err)
 }
 
 func (c *Core) shiftClassifiedUncheckpointed(boundary ClassifiedBoundary, actionOrdinal int, shifted Token, fork ForkOrder) (Head, error) {
@@ -57,22 +411,57 @@ func (c *Core) shiftClassifiedUncheckpointed(boundary ClassifiedBoundary, action
 // ShiftOrdinaryClassifiedCohortOwned authenticates the scheduler owner, then
 // delegates to the standalone cohort's uncheckpointed implementation.
 func (c *Core) ShiftOrdinaryClassifiedCohortOwned(owner SchedulerTransactionToken, boundaries []ClassifiedBoundary, shifted Token) (out []Head, err error) {
-	err = c.RunSchedulerOwned(owner, func() error {
-		var inlineTargets [inlineSchedulerCohortTargets]StateID
-		targets := inlineTargets[:]
-		if len(boundaries) > len(targets) {
-			targets = make([]StateID, len(boundaries))
-		} else {
-			targets = targets[:len(boundaries)]
-		}
-		if err := c.prepareOrdinaryClassifiedCohortInto(boundaries, shifted, targets); err != nil {
-			return err
-		}
-		var innerErr error
-		out, innerErr = c.shiftOrdinaryClassifiedCohortUncheckpointed(boundaries, targets, shifted)
-		return innerErr
-	})
-	return out, err
+	return c.shiftOrdinaryClassifiedCohortMaybeLiveScopedOwned(owner, nil, false, boundaries, shifted)
+}
+
+// ShiftOrdinaryClassifiedCohortWithLiveCondenseCandidatesOwned scopes the
+// condense candidates and shifts one cohort under one scheduler ownership check.
+func (c *Core) ShiftOrdinaryClassifiedCohortWithLiveCondenseCandidatesOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, boundaries []ClassifiedBoundary, shifted Token) (out []Head, err error) {
+	return c.shiftOrdinaryClassifiedCohortMaybeLiveScopedOwned(owner, candidates, true, boundaries, shifted)
+}
+
+// shiftOrdinaryClassifiedCohortPrepared computes shift targets for one
+// ordinary cohort and performs the shift. It hoists the former
+// runSchedulerMaybeLiveScopedOwned closure body into a named, directly
+// callable method so the dispatch site below never builds a func value.
+func (c *Core) shiftOrdinaryClassifiedCohortPrepared(boundaries []ClassifiedBoundary, shifted Token) ([]Head, error) {
+	var inlineTargets [inlineSchedulerCohortTargets]StateID
+	targets := inlineTargets[:]
+	if len(boundaries) > len(targets) {
+		targets = make([]StateID, len(boundaries))
+	} else {
+		targets = targets[:len(boundaries)]
+	}
+	if err := c.prepareOrdinaryClassifiedCohortInto(boundaries, shifted, targets); err != nil {
+		return nil, err
+	}
+	return c.shiftOrdinaryClassifiedCohortUncheckpointed(boundaries, targets, shifted)
+}
+
+// shiftOrdinaryClassifiedCohortMaybeLiveScopedOwned inlines the former
+// runSchedulerMaybeLiveScopedOwned/runLiveCondenseCandidates closure chain;
+// see shiftClassifiedMaybeLiveScopedOwned's doc comment for the equivalence
+// argument, which applies identically here.
+func (c *Core) shiftOrdinaryClassifiedCohortMaybeLiveScopedOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, liveScoped bool, boundaries []ClassifiedBoundary, shifted Token) (out []Head, err error) {
+	if err = c.beginSchedulerOwned(owner); err != nil {
+		return out, err
+	}
+	defer c.recoverSchedulerOwnedPanic(owner)
+	if !liveScoped {
+		out, err = c.shiftOrdinaryClassifiedCohortPrepared(boundaries, shifted)
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	if err = c.enterLiveCondenseCandidates(candidates); err != nil {
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	if c.schedulerFrame.fresh {
+		out, err = c.shiftOrdinaryClassifiedCohortPrepared(boundaries, shifted)
+		c.clearLiveCondenseCandidates()
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	defer c.clearLiveCondenseCandidates()
+	out, err = c.shiftOrdinaryClassifiedCohortPrepared(boundaries, shifted)
+	return out, c.finishSchedulerOwned(owner, err)
 }
 
 func (c *Core) prepareOrdinaryClassifiedCohortInto(boundaries []ClassifiedBoundary, shifted Token, targets []StateID) error {
@@ -158,22 +547,57 @@ func (c *Core) cohortHeads(width int) []Head {
 // ShiftExtraClassifiedCohortOwned authenticates the scheduler owner, then
 // delegates to the standalone cohort's uncheckpointed implementation.
 func (c *Core) ShiftExtraClassifiedCohortOwned(owner SchedulerTransactionToken, boundaries []ClassifiedBoundary, shifted Token) (out []Head, err error) {
-	err = c.RunSchedulerOwned(owner, func() error {
-		var inlineTargets [inlineSchedulerCohortTargets]StateID
-		targets := inlineTargets[:]
-		if len(boundaries) > len(targets) {
-			targets = make([]StateID, len(boundaries))
-		} else {
-			targets = targets[:len(boundaries)]
-		}
-		if err := c.prepareExtraClassifiedCohortInto(boundaries, shifted, targets); err != nil {
-			return err
-		}
-		var innerErr error
-		out, innerErr = c.shiftExtraClassifiedCohortUncheckpointed(boundaries, targets, shifted)
-		return innerErr
-	})
-	return out, err
+	return c.shiftExtraClassifiedCohortMaybeLiveScopedOwned(owner, nil, false, boundaries, shifted)
+}
+
+// ShiftExtraClassifiedCohortWithLiveCondenseCandidatesOwned scopes the condense candidates
+// and shifts one extra cohort under one scheduler ownership check.
+func (c *Core) ShiftExtraClassifiedCohortWithLiveCondenseCandidatesOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, boundaries []ClassifiedBoundary, shifted Token) (out []Head, err error) {
+	return c.shiftExtraClassifiedCohortMaybeLiveScopedOwned(owner, candidates, true, boundaries, shifted)
+}
+
+// shiftExtraClassifiedCohortPrepared computes shift targets for one extra
+// cohort and performs the shift. It hoists the former
+// runSchedulerMaybeLiveScopedOwned closure body into a named, directly
+// callable method so the dispatch site below never builds a func value.
+func (c *Core) shiftExtraClassifiedCohortPrepared(boundaries []ClassifiedBoundary, shifted Token) ([]Head, error) {
+	var inlineTargets [inlineSchedulerCohortTargets]StateID
+	targets := inlineTargets[:]
+	if len(boundaries) > len(targets) {
+		targets = make([]StateID, len(boundaries))
+	} else {
+		targets = targets[:len(boundaries)]
+	}
+	if err := c.prepareExtraClassifiedCohortInto(boundaries, shifted, targets); err != nil {
+		return nil, err
+	}
+	return c.shiftExtraClassifiedCohortUncheckpointed(boundaries, targets, shifted)
+}
+
+// shiftExtraClassifiedCohortMaybeLiveScopedOwned inlines the former
+// runSchedulerMaybeLiveScopedOwned/runLiveCondenseCandidates closure chain;
+// see shiftClassifiedMaybeLiveScopedOwned's doc comment for the equivalence
+// argument, which applies identically here.
+func (c *Core) shiftExtraClassifiedCohortMaybeLiveScopedOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, liveScoped bool, boundaries []ClassifiedBoundary, shifted Token) (out []Head, err error) {
+	if err = c.beginSchedulerOwned(owner); err != nil {
+		return out, err
+	}
+	defer c.recoverSchedulerOwnedPanic(owner)
+	if !liveScoped {
+		out, err = c.shiftExtraClassifiedCohortPrepared(boundaries, shifted)
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	if err = c.enterLiveCondenseCandidates(candidates); err != nil {
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	if c.schedulerFrame.fresh {
+		out, err = c.shiftExtraClassifiedCohortPrepared(boundaries, shifted)
+		c.clearLiveCondenseCandidates()
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	defer c.clearLiveCondenseCandidates()
+	out, err = c.shiftExtraClassifiedCohortPrepared(boundaries, shifted)
+	return out, c.finishSchedulerOwned(owner, err)
 }
 
 func (c *Core) prepareExtraClassifiedCohortInto(boundaries []ClassifiedBoundary, shifted Token, targets []StateID) error {
@@ -234,12 +658,39 @@ func (c *Core) shiftExtraClassifiedCohortUncheckpointed(boundaries []ClassifiedB
 // ReduceOutputsClassifiedIntoOwned authenticates the scheduler owner, then
 // delegates to the standalone reduction's uncheckpointed implementation.
 func (c *Core) ReduceOutputsClassifiedIntoOwned(owner SchedulerTransactionToken, dst []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) (frontier []ReductionOutput, err error) {
-	err = c.RunSchedulerOwned(owner, func() error {
-		var innerErr error
-		frontier, innerErr = c.reduceOutputsClassifiedIntoUncheckpointed(dst, boundary, actionOrdinal, fork)
-		return innerErr
-	})
-	return frontier, err
+	return c.reduceOutputsClassifiedIntoMaybeLiveScopedOwned(owner, nil, false, dst, boundary, actionOrdinal, fork)
+}
+
+// ReduceOutputsClassifiedIntoWithLiveCondenseCandidatesOwned scopes the condense candidates
+// and reduces under one scheduler ownership check.
+func (c *Core) ReduceOutputsClassifiedIntoWithLiveCondenseCandidatesOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, dst []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) (frontier []ReductionOutput, err error) {
+	return c.reduceOutputsClassifiedIntoMaybeLiveScopedOwned(owner, candidates, true, dst, boundary, actionOrdinal, fork)
+}
+
+// reduceOutputsClassifiedIntoMaybeLiveScopedOwned inlines the former
+// runSchedulerMaybeLiveScopedOwned/runLiveCondenseCandidates closure chain;
+// see shiftClassifiedMaybeLiveScopedOwned's doc comment for the equivalence
+// argument, which applies identically here.
+func (c *Core) reduceOutputsClassifiedIntoMaybeLiveScopedOwned(owner SchedulerTransactionToken, candidates []CondenseCandidate, liveScoped bool, dst []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) (frontier []ReductionOutput, err error) {
+	if err = c.beginSchedulerOwned(owner); err != nil {
+		return frontier, err
+	}
+	defer c.recoverSchedulerOwnedPanic(owner)
+	if !liveScoped {
+		frontier, err = c.reduceOutputsClassifiedIntoUncheckpointed(dst, boundary, actionOrdinal, fork)
+		return frontier, c.finishSchedulerOwned(owner, err)
+	}
+	if err = c.enterLiveCondenseCandidates(candidates); err != nil {
+		return frontier, c.finishSchedulerOwned(owner, err)
+	}
+	if c.schedulerFrame.fresh {
+		frontier, err = c.reduceOutputsClassifiedIntoUncheckpointed(dst, boundary, actionOrdinal, fork)
+		c.clearLiveCondenseCandidates()
+		return frontier, c.finishSchedulerOwned(owner, err)
+	}
+	defer c.clearLiveCondenseCandidates()
+	frontier, err = c.reduceOutputsClassifiedIntoUncheckpointed(dst, boundary, actionOrdinal, fork)
+	return frontier, c.finishSchedulerOwned(owner, err)
 }
 
 func (c *Core) reduceOutputsClassifiedIntoUncheckpointed(dst []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) ([]ReductionOutput, error) {
@@ -265,6 +716,15 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 	if act.Type != ActionReduce {
 		return nil, fmt.Errorf("parser-core phase zero: action %d is %v, not reduce", actionOrdinal, act.Type)
 	}
+	source, err := c.nodeLineage(boundary.head.Node)
+	if err != nil {
+		return nil, err
+	}
+	previousSourceOwner := c.reductionSourceOwner
+	c.reductionSourceOwner = source.owner
+	defer func() {
+		c.reductionSourceOwner = previousSourceOwner
+	}()
 	plan, err := c.reductionPlan(*act)
 	if err != nil {
 		return nil, err
@@ -294,6 +754,23 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 	// parent reductionParentForPath builds in this loop is fragile in that
 	// case; see its doc comment.
 	multiPop := len(paths) > 1
+	if multiPop {
+		// Stage 2b (spec.b4b-alternative-set.v2 section 8): the v2
+		// containment predicate is the deciding proof and never reads
+		// cleanPathRank/cleanPathLineage on the routing path, so the
+		// prefix-DAG walk (markCleanProductionRank, the bisected dominant
+		// share of the recording-era compact-perf regression) runs only
+		// when the three-proof census asks for a meaningful scalar
+		// comparison. Otherwise every path is marked Unknown directly --
+		// cheap, and still marks nodeLineageRecord.converged=true, so
+		// historical-boundary classification and alternative-set import are
+		// unaffected (see cleanPathRankWalkEnabled's doc comment).
+		if cleanPathRankWalkEnabled() {
+			c.markCleanProductionRank(paths)
+		} else {
+			markCleanPathRankUnknown(paths)
+		}
+	}
 	for _, path := range paths {
 		prev, err := c.node(path.prev)
 		if err != nil {
@@ -350,6 +827,53 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 			previous = scratch.boundaries[boundaryIndex]
 		}
 		freshness := previous.freshness
+		cleanPathRank := mergeCleanPathRank(previous.cleanPathRank, path.cleanPathRank)
+		historicalBoundarySplit := previous.historicalBoundarySplit || outcome.historicalBoundarySplit
+		historicalConvergedSplit := previous.historicalConvergedSplit
+		historicalForestDeterministic := previous.historicalForestDeterministic
+		historicalCleanPathRank := previous.historicalCleanPathRank
+		historicalLineage := previous.historicalLineage
+		historicalSet := previous.historicalSet
+		historicalBlended := previous.historicalBlended
+		if outcome.historicalBoundarySplit {
+			switch {
+			case !previous.historicalBoundarySplit:
+				historicalConvergedSplit = outcome.historicalConvergedSplit
+				historicalForestDeterministic = outcome.historicalForestDeterministic
+				historicalCleanPathRank = outcome.historicalCleanPathRank
+				historicalLineage = outcome.historicalLineage
+			case !historicalConvergedSplit && outcome.historicalConvergedSplit:
+				historicalConvergedSplit = true
+				historicalCleanPathRank = outcome.historicalCleanPathRank
+				historicalLineage = outcome.historicalLineage
+			case historicalConvergedSplit && !outcome.historicalConvergedSplit:
+				// Keep the exact provenance from the converged historical version.
+			case historicalCleanPathRank != outcome.historicalCleanPathRank ||
+				historicalLineage != outcome.historicalLineage:
+				historicalCleanPathRank = CleanPathRankUnknown
+				historicalLineage = 0
+			}
+			if previous.historicalBoundarySplit {
+				historicalForestDeterministic =
+					historicalForestDeterministic && outcome.historicalForestDeterministic
+			}
+			// Membership is never invalidated: where the scalar pair above may
+			// poison to Unknown/0 on disagreement between multiple historical
+			// versions landing on the same boundary, the alternative set instead
+			// unions every converged historical version's recorded set
+			// (spec.b4b-alternative-set.v1 section 4, "Dead-node historical
+			// import"). The dead node's lineage record persists for the rest of
+			// the parse. Fold-class union (spec.b4b-alternative-set.v2 section
+			// 3.4): two differing dead sets unioning into one output, or a dead
+			// record that was itself blended, mark this boundary's accumulated
+			// historicalSet blended -- computed before the union mutates it.
+			if outcome.historicalConvergedSplit {
+				if dead, err := c.nodeLineage(outcome.historicalNode); err == nil {
+					historicalBlended = historicalBlended || dead.blended || c.AlternativeSetIncomparable(historicalSet, dead.set)
+					c.alternativeSetUnion(&historicalSet, dead.set)
+				}
+			}
+		}
 		switch outcome.change {
 		case condenseUnchanged:
 			if !seen {
@@ -362,13 +886,37 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 				freshness = ReductionUpdated
 			}
 		}
-		scratch.store(boundaryIndex, seen, reductionBoundaryOutput{key: key, head: out, freshness: freshness})
+		scratch.store(boundaryIndex, seen, reductionBoundaryOutput{
+			key: key, head: out, freshness: freshness, cleanPathRank: cleanPathRank,
+			historicalBoundarySplit:       historicalBoundarySplit,
+			historicalConvergedSplit:      historicalConvergedSplit,
+			historicalForestDeterministic: historicalForestDeterministic,
+			historicalCleanPathRank:       historicalCleanPathRank,
+			historicalLineage:             historicalLineage,
+			historicalSet:                 historicalSet,
+			historicalBlended:             historicalBlended,
+		})
 	}
 	for _, output := range scratch.boundaries {
+		historicalProvenance := HistoricalBoundaryNone
+		switch {
+		case output.historicalConvergedSplit:
+			historicalProvenance = HistoricalBoundaryConverged
+		case output.historicalBoundarySplit && output.historicalForestDeterministic:
+			historicalProvenance = HistoricalBoundaryDeterministic
+		case output.historicalBoundarySplit:
+			historicalProvenance = HistoricalBoundaryUnproved
+		}
 		frontier = append(frontier, ReductionOutput{
-			Head:             output.head,
-			Freshness:        output.freshness,
-			MultiplePopPaths: multiPop,
+			Head:                         output.head,
+			Freshness:                    output.freshness,
+			CleanPathRank:                output.cleanPathRank,
+			MultiplePopPaths:             multiPop,
+			HistoricalBoundaryProvenance: historicalProvenance,
+			HistoricalCleanPathRank:      output.historicalCleanPathRank,
+			HistoricalCleanPathLineage:   output.historicalLineage,
+			HistoricalAlternativeSet:     output.historicalSet,
+			HistoricalBlended:            output.historicalBlended,
 		})
 	}
 	phase0AFinishReductionConstruction(c)

@@ -18,17 +18,29 @@ type builtinLanguageRuntimeProfile struct {
 	automaticForestMemoryAllowance     int64
 	automaticForestEnabled             bool
 	fullParseArenaDensityCap           bool
+	fullParseGSSConvergence            bool
 	nativeResultCompatibility          gotreesitter.ResultCompatibilityCapability
+	nativeUnaryWrapperFlattening       []nativeUnaryWrapperFlatteningProfile
 	compactConvergedSplitDrops         bool
 	compactEOFAcceptNoActionSiblings   bool
 	compactPrimaryAcceptDerivation     bool
 	exactStackNodeEquivalence          bool
+	compactStrategy2ErrorRegion        bool
+	lineContinuationEscapeByte         byte
 	conflictPolicies                   []gotreesitter.ConflictPolicy
+}
+
+type nativeUnaryWrapperFlatteningProfile struct {
+	publicParent        string
+	wrapper             string
+	leaf                string
+	wrapperPreGotoState gotreesitter.StateID
 }
 
 const (
 	csharpAcceptedErrorRetryMaxEntryScratchPeak = 690_365
 	csharpFreshErrorNoStacksRetryMaxStacks      = 16
+	csharpGSSConvergenceErrorMergePerKey        = 12
 	mesonAcceptedErrorRetryMinSourceBytes       = 2 * 1024
 	javascriptAutomaticForestMemoryAllowance    = 128 * 1024 * 1024
 )
@@ -44,6 +56,20 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		blobSHA256:                 mustRuntimeProfileSHA256("355deb34ae4b9d8e0bf649c1c36096929d5e403107fa3c8b9c2ee82b138dfdc5"),
 		compactConvergedSplitDrops: true,
 	},
+	// F# has one declaration-name state where C omits a same-span unary
+	// long_identifier below long_identifier_or_op. Expression identifiers and
+	// dotted long identifiers retain the wrapper.
+	"fsharp": {
+		blobSHA256: mustRuntimeProfileSHA256("409f32a1a287c9f2a385dc96bea03ed8b700bc9bfe92c50f91eed538519475ae"),
+		nativeUnaryWrapperFlattening: []nativeUnaryWrapperFlatteningProfile{
+			{
+				publicParent:        "long_identifier_or_op",
+				wrapper:             "long_identifier",
+				leaf:                "identifier",
+				wrapperPreGotoState: 4258,
+			},
+		},
+	},
 	// These exact artifacts select one accepting EOF head while all sibling
 	// heads have no EOF action. Field-aware C-oracle parity certifies the
 	// production selection for each smoke witness.
@@ -54,6 +80,14 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	"robot": {
 		blobSHA256:                       mustRuntimeProfileSHA256("25075ecf5323eeb88af4f71b55f51867cef38a277aaa60f01b879ee8abb4c74f"),
 		compactEOFAcceptNoActionSiblings: true,
+	},
+	// html_erroneous_end_tag (campaign v7 tranche B3 stage S3): C-oracle parity
+	// certifies native strategy-2 recovery (error-region absorb and
+	// condense-resume) for this exact artifact against the ten pinned
+	// html_erroneous_end_tag witnesses (cgo_harness/testdata/compact_t3_oracle_witnesses_v2.json).
+	"html": {
+		blobSHA256:                  mustRuntimeProfileSHA256("76d3d788ec44b5eaeaa0b3b0069bf52ffc4b125791059ff743301b9938dffd3d"),
+		compactStrategy2ErrorRegion: true,
 	},
 	// Objective-C keeps parity-relevant alternatives below the bounded stack
 	// comparison frontier. Exact comparison preserves them until generic result
@@ -95,16 +129,19 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 	"c_sharp": {
 		blobSHA256:                    mustRuntimeProfileSHA256("7ad425e89733339dde94e3c03b762ae478fb453b530493f5d62e1ae7537e1784"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
+		fullParseGSSConvergence:       true,
 		nativeResultCompatibility: gotreesitter.ResultCompatibilityCSharpNativeNotNull |
 			gotreesitter.ResultCompatibilityCSharpNativeUnicodeIdentifiers |
 			gotreesitter.ResultCompatibilityCSharpNativeScopedLambdaStatements |
 			gotreesitter.ResultCompatibilityCSharpNativeScopedLambdaBlocks |
-			gotreesitter.ResultCompatibilityCSharpNativeQueryExpressions,
+			gotreesitter.ResultCompatibilityCSharpNativeQueryExpressions |
+			gotreesitter.ResultCompatibilityNativeRecoveredStructure,
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry:             true,
 			SkipCompleteMaxEntryScratchPeak:            csharpAcceptedErrorRetryMaxEntryScratchPeak,
 			FreshErrorNoStacksRetryMaxStacks:           csharpFreshErrorNoStacksRetryMaxStacks,
 			SkipInitialCompleteAcceptedErrorMergeRetry: true,
+			GSSConvergenceAcceptedErrorMergePerKey:     csharpGSSConvergenceErrorMergePerKey,
 		},
 	},
 	// Crystal's external-scanner repeat selects the same tree after the complete
@@ -130,14 +167,65 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 			SkipCompleteAcceptedErrorRetry: true,
 		},
 	},
+	// Kotlin certifies CompactPrimaryAcceptanceDerivationCertified only.
+	// selectCompactAcceptanceDerivation's materiality gate
+	// (parsercore_phase0_driver.go, compactAcceptanceElectionIsVacuous) is
+	// what makes that grant safe: the object_declaration tied election
+	// (object Singleton { fun work() = Unit }, issue #93) declines instead
+	// of publishing an unproven positional primary. Full-corpus field-aware
+	// C-oracle verification finds zero unadjudicated divergence under that
+	// gate for this mechanism alone (A3 certification workstream,
+	// spec.campaign.v7; cgo_harness/kotlin_a3_certification_sweep_test.go).
+	//
+	// CompactConvergedReductionSplitDropsCertified stays withheld. Review
+	// found a compact-only divergence class the certification sweep's
+	// 3-file real corpus did not surface: an annotated extension property
+	// with a getter, followed by a trailing comment (line or block), for
+	// example
+	//
+	//	@Deprecated("old")
+	//	val Int.double: Int
+	//	    get() = this * 2
+	//	// trailing
+	//
+	// Production is C-exact on this shape. With split-drops alone forced
+	// on, the compact route accepts a C-divergent tree: the annotation is
+	// torn into a bare prefix_expression and the getter becomes an
+	// assignment (first divergence at /source_file, child count 4 vs the
+	// C oracle's 3). Primary-acceptance-derivation alone is clean on the
+	// same witness: it declines the converged-path split, falling back to
+	// production's correct tree. See
+	// kotlinA3AdversarialSources's annotated_extension_property_getter_*
+	// entries for the pinned regression sweep coverage.
+	//
+	// A net fidelity ledger over 1,061 truncations of the Kotlin real
+	// corpus found split-drops regresses more than it improves (2 improved,
+	// 5 regressed) against a clean primary-accept-only baseline (0
+	// improved, 0 regressed). The two witnesses split-drops alone would
+	// otherwise fix -- the platform-modifier-recovery witness (internal
+	// actual fun f(): String = "x") and small__TimeZoneNative.kt -- both
+	// decline under primary-accept-only and fall back to production's own
+	// (C-divergent, issue #93-adjacent) tree; that reversion to the
+	// pre-certification status quo is the accepted, measured cost of
+	// withholding this grant. The derivation-selection defect in the
+	// converged-path split mechanism itself needs its own repair lane
+	// before this grant is reconsidered.
 	"kotlin": {
-		blobSHA256:                    mustRuntimeProfileSHA256("643a3e6b60d07846dd972849b612159ff9bf09734b09fb00013229c8593a8c78"),
-		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
-		nativeResultCompatibility:     gotreesitter.ResultCompatibilityNativeCollapsedChildren,
+		blobSHA256:                     mustRuntimeProfileSHA256("643a3e6b60d07846dd972849b612159ff9bf09734b09fb00013229c8593a8c78"),
+		externalScannerFullParseRetry:  gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
+		nativeResultCompatibility:      gotreesitter.ResultCompatibilityNativeCollapsedChildren,
+		compactPrimaryAcceptDerivation: true,
 	},
+	// Apex's tied class-literal election matches the C oracle once the
+	// compact route selects the sole primary derivation; the compact tree is
+	// strictly more faithful than production plus the compat arm here. Apex
+	// has no converged-path split-drop shape, so it does not certify that
+	// mechanism. Full-corpus field-aware C-oracle verification certifies this
+	// exact blob (A3 certification workstream, spec.campaign.v7).
 	"apex": {
-		blobSHA256:                mustRuntimeProfileSHA256("69fc1b577f1f783a204c98719d55d2f15f329d296b9e227d651056ce878c1bd2"),
-		nativeResultCompatibility: gotreesitter.ResultCompatibilityNativeCollapsedChildren,
+		blobSHA256:                     mustRuntimeProfileSHA256("69fc1b577f1f783a204c98719d55d2f15f329d296b9e227d651056ce878c1bd2"),
+		nativeResultCompatibility:      gotreesitter.ResultCompatibilityNativeCollapsedChildren,
+		compactPrimaryAcceptDerivation: true,
 	},
 	"elixir": {
 		blobSHA256:                mustRuntimeProfileSHA256("9889f5f6704ea87f357c8d65ef3194d88fb5865922b45767fe4df0f2eda7e3f0"),
@@ -176,16 +264,43 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 			SkipCompleteAcceptedErrorRetry: true,
 		},
 	},
+	// Python's tied tuple-assignment election matches the C oracle once the
+	// compact route selects the sole primary derivation. Full-corpus
+	// field-aware C-oracle verification certifies this mechanism for this
+	// exact blob, alongside the existing converged-path split-drop
+	// certification (A3 certification workstream, spec.campaign.v7).
 	"python": {
-		blobSHA256:                    mustRuntimeProfileSHA256("cde4a67dc6af6e1232dbbd1eab8618478d1d73727020e8a8002542390a452d37"),
-		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
-		compactConvergedSplitDrops:    true,
+		blobSHA256:                     mustRuntimeProfileSHA256("cde4a67dc6af6e1232dbbd1eab8618478d1d73727020e8a8002542390a452d37"),
+		externalScannerFullParseRetry:  gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
+		compactConvergedSplitDrops:     true,
+		compactPrimaryAcceptDerivation: true,
+	},
+	// Perl's tied push-list election matches the C oracle once the compact
+	// route accepts after a converged-path split drop and selects the sole
+	// primary derivation. Full-corpus field-aware C-oracle verification
+	// certifies both mechanisms for this exact blob (A3 certification
+	// workstream, spec.campaign.v7).
+	"perl": {
+		blobSHA256:                     mustRuntimeProfileSHA256("22388f06c2c54bb4748fd5f5f682ed25eecff8115a7e8e6a98f94f9c94bb9820"),
+		compactConvergedSplitDrops:     true,
+		compactPrimaryAcceptDerivation: true,
+	},
+	// Ada's tied aggregate elections (positional-array and others-choice)
+	// match the C oracle once the compact route accepts after a
+	// converged-path split drop and selects the sole primary derivation.
+	// Full-corpus field-aware C-oracle verification certifies both
+	// mechanisms for this exact blob (A3 certification workstream,
+	// spec.campaign.v7).
+	"ada": {
+		blobSHA256:                     mustRuntimeProfileSHA256("32f2dd8f0053ffb7e6b7014f6ff2eb7025287c0d5fcdab6ce1f6a694c2d8899e"),
+		compactConvergedSplitDrops:     true,
+		compactPrimaryAcceptDerivation: true,
 	},
 	// Swift's low-pressure accepted-error parses select the same tree across
 	// the retry ladder. High-pressure parses still benefit from the first
 	// ladder, while repeating that ladder for the external scanner does not.
 	"swift": {
-		blobSHA256:                    mustRuntimeProfileSHA256("d0bb8834f9a93fee2a268c81c04e9a36dde5f725db2e3ebc785ab43f79d2ae6a"),
+		blobSHA256:                    mustRuntimeProfileSHA256("be4575bc0acc3c60324aab635d067f940ac5f0557b80a8e3565d1e7d02d53582"),
 		externalScannerFullParseRetry: gotreesitter.ExternalScannerFullParseRetrySkipRepeat,
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry:  true,
@@ -402,6 +517,19 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 			},
 		},
 	},
+	// PowerShell's backtick immediately followed by a newline is the
+	// language's line-continuation escape: the C reference scanner consumes
+	// it as ordinary skipped trivia (zero ERROR nodes across the sequence,
+	// two children on the enclosing command_argument_sep — the same shape as
+	// any other run of whitespace), never as a token of its own. Declaring it
+	// here lets bytesAreParserPadding give it the same unconditional
+	// treatment already applied to backslash+newline instead of falling
+	// through to skipped-gap ERROR materialization. C-oracle verified on the
+	// enclosing command_argument_sep shape (TestPowerShellBacktickContinuationIsParserPadding).
+	"powershell": {
+		blobSHA256:                 mustRuntimeProfileSHA256("8c7a2b47a39efb590cde7f75c9a1135c6423bc07b13b9604f1fa9f0061231687"),
+		lineContinuationEscapeByte: '`',
+	},
 }
 
 func mustRuntimeProfileSHA256(raw string) (sum [32]byte) {
@@ -446,8 +574,17 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 		lang.FullParseArenaDensityCapEnabled = true
 		changed = true
 	}
+	if profile.fullParseGSSConvergence && !lang.FullParseGSSConvergenceEnabled {
+		lang.FullParseGSSConvergenceEnabled = true
+		changed = true
+	}
 	if missing := profile.nativeResultCompatibility &^ lang.NativeResultCompatibility; missing != 0 {
 		lang.NativeResultCompatibility |= missing
+		changed = true
+	}
+	if rules := resolveNativeUnaryWrapperFlatteningProfile(lang, profile.nativeUnaryWrapperFlattening); len(rules) > 0 &&
+		!slices.Equal(lang.NativeUnaryWrapperFlattening, rules) {
+		lang.NativeUnaryWrapperFlattening = rules
 		changed = true
 	}
 	if profile.compactConvergedSplitDrops && !lang.CompactConvergedReductionSplitDropsCertified {
@@ -466,6 +603,14 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 		lang.ExactStackNodeEquivalenceCertified = true
 		changed = true
 	}
+	if profile.compactStrategy2ErrorRegion && !lang.CompactStrategy2ErrorRegionCertified {
+		lang.CompactStrategy2ErrorRegionCertified = true
+		changed = true
+	}
+	if profile.lineContinuationEscapeByte != 0 && lang.LineContinuationEscapeByte != profile.lineContinuationEscapeByte {
+		lang.LineContinuationEscapeByte = profile.lineContinuationEscapeByte
+		changed = true
+	}
 	for _, policy := range profile.conflictPolicies {
 		if languageHasConflictPolicy(lang, policy) {
 			continue
@@ -475,6 +620,46 @@ func attachBuiltinLanguageRuntimeProfile(name string, blobSHA256 [32]byte, lang 
 		changed = true
 	}
 	return changed
+}
+
+func resolveNativeUnaryWrapperFlatteningProfile(
+	lang *gotreesitter.Language,
+	profile []nativeUnaryWrapperFlatteningProfile,
+) []gotreesitter.UnaryWrapperFlatteningRule {
+	if lang == nil || len(profile) == 0 {
+		return nil
+	}
+	rules := make([]gotreesitter.UnaryWrapperFlatteningRule, 0, len(profile))
+	for _, candidate := range profile {
+		parent, parentOK := runtimeProfileNamedSymbol(lang, candidate.publicParent)
+		wrapper, wrapperOK := runtimeProfileNamedSymbol(lang, candidate.wrapper)
+		leaf, leafOK := runtimeProfileNamedSymbol(lang, candidate.leaf)
+		if !parentOK || !wrapperOK || !leafOK {
+			continue
+		}
+		rules = append(rules, gotreesitter.UnaryWrapperFlatteningRule{
+			PublicParent:        parent,
+			Wrapper:             wrapper,
+			Leaf:                leaf,
+			WrapperPreGotoState: candidate.wrapperPreGotoState,
+		})
+	}
+	return rules
+}
+
+func runtimeProfileNamedSymbol(lang *gotreesitter.Language, name string) (gotreesitter.Symbol, bool) {
+	if lang == nil {
+		return 0, false
+	}
+	for index, symbolName := range lang.SymbolNames {
+		if symbolName == name &&
+			index < len(lang.SymbolMetadata) &&
+			lang.SymbolMetadata[index].Visible &&
+			lang.SymbolMetadata[index].Named {
+			return gotreesitter.Symbol(index), true
+		}
+	}
+	return 0, false
 }
 
 func languageHasConflictPolicy(lang *gotreesitter.Language, want gotreesitter.ConflictPolicy) bool {

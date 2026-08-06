@@ -198,24 +198,26 @@ const (
 )
 
 type glrMergeScratch struct {
-	result            []glrStack
-	slots             []glrMergeSlot
-	largeSlots        []glrMergeLargeSlot
-	perKeyCap         int
-	language          *Language
-	arena             *nodeArena
-	deferExactDedupe  bool
-	frontierMergeHash bool
-	trace             bool
-	cRecoveryCost     bool
-	audit             *runtimeAudit
-	equivEpoch        uint32
-	gssPointerEpoch   uint32
-	equivCache        []glrNodeEquivCacheEntry
-	stackEquivCache   []glrStackEquivCacheEntry
-	spineEquivCache   []glrSpineEquivCacheEntry
-	frontierHashCache []glrStackFrontierHashCacheEntry
-	cErrorCost        map[*Node]glrCErrorCostEntry
+	result                    []glrStack
+	slots                     []glrMergeSlot
+	largeSlots                []glrMergeLargeSlot
+	perKeyCap                 int
+	language                  *Language
+	arena                     *nodeArena
+	faithfulCapOne            bool
+	recoveryCapOneConvergence bool
+	deferExactDedupe          bool
+	frontierMergeHash         bool
+	trace                     bool
+	cRecoveryCost             bool
+	audit                     *runtimeAudit
+	equivEpoch                uint32
+	gssPointerEpoch           uint32
+	equivCache                []glrNodeEquivCacheEntry
+	stackEquivCache           []glrStackEquivCacheEntry
+	spineEquivCache           []glrSpineEquivCacheEntry
+	frontierHashCache         []glrStackFrontierHashCacheEntry
+	cErrorCost                map[*Node]glrCErrorCostEntry
 	// cPrefixPath is the descent scratch for merge-side GSS prefix-aggregate
 	// fills (cStackPrefixCostForMerge, parser_recover_c.go); the aggregates
 	// live on gssNode, validated against gssPrefixAggGen. reset clears the full
@@ -1013,9 +1015,9 @@ func gssMaterializingShapePrefix(scratch *glrMergeScratch, n *gssNode) glrMateri
 		return cached
 	}
 	var local [32]*gssNode
-	pending := local[:0]
+	pending := append(local[:0], n)
 	prefix := glrMaterializingShapeHash{hash: gssHashSeed}
-	for cur := n; cur != nil; cur = cur.prev {
+	for cur := n.prev; cur != nil; cur = cur.prev {
 		if cached, ok := lookupShapePrefixCache(scratch, cur); ok {
 			prefix = cached
 			break
@@ -3155,7 +3157,7 @@ func stackCompareMerge(a, b *glrStack) int {
 	return 0
 }
 
-func stackCompareMergeSmallCapOne(a, b *glrStack) int {
+func stackCompareMergeSmallCapOne(scratch *glrMergeScratch, a, b *glrStack) int {
 	if perfCountersEnabled {
 		perfRecordStackCompare()
 	}
@@ -3191,7 +3193,7 @@ func stackCompareMergeSmallCapOne(a, b *glrStack) int {
 		}
 		return -1
 	}
-	if glrFaithfulCapOneMerge {
+	if faithfulCapOneMergeEnabled(scratch) {
 		return 0
 	}
 	aDepth := a.depth()
@@ -4450,6 +4452,12 @@ func preserveCapOneStackInSlot(result *[]glrStack, slot *glrMergeSlot, stack glr
 	return true
 }
 
+func faithfulCapOneMergeEnabled(scratch *glrMergeScratch) bool {
+	return glrFaithfulCapOneMerge ||
+		(scratch != nil &&
+			(scratch.faithfulCapOne || (scratch.recoveryCapOneConvergence && scratch.cRecoveryCost)))
+}
+
 func mergeSlotTrackedCount(slot *glrMergeSlot) int {
 	if slot == nil {
 		return 0
@@ -4586,7 +4594,7 @@ func mergeStacksSmallForLanguage(alive []glrStack, scratch *glrMergeScratch, lan
 				if cRecoverySameCostIndex >= 0 && j != cRecoverySameCostIndex {
 					continue
 				}
-				cmp := stackCompareMergeSmallCapOne(&stack, &result[j])
+				cmp := stackCompareMergeSmallCapOne(scratch, &stack, &result[j])
 				if cmp > 0 {
 					result[j] = stack
 					duplicateIndex = j
@@ -4663,7 +4671,7 @@ func mergeStacksSmallDeferExact(alive []glrStack, scratch *glrMergeScratch, lang
 				if cRecoverySameCostIndex >= 0 && j != cRecoverySameCostIndex {
 					continue
 				}
-				cmp := stackCompareMergeSmallCapOne(&stack, &result[j])
+				cmp := stackCompareMergeSmallCapOne(scratch, &stack, &result[j])
 				if cmp > 0 {
 					result[j] = stack
 					duplicateIndex = j
@@ -4834,7 +4842,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 			if idx < 0 {
 				idx = mergeSlotIndexAt(slot, 0)
 			}
-			cmp := stackCompareMergeSmallCapOne(&stack, &result[idx])
+			cmp := stackCompareMergeSmallCapOne(scratch, &stack, &result[idx])
 			if cmp > 0 {
 				result[idx] = stack
 				if pos := mergeSlotPositionForIndex(slot, idx); pos >= 0 {
@@ -4917,7 +4925,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 		if perfCountersEnabled {
 			perfRecordMergePerKeyOverflow()
 		}
-		if perKeyCap == 1 && glrFaithfulCapOneMerge {
+		if perKeyCap == 1 && faithfulCapOneMergeEnabled(scratch) {
 			merged := false
 			attempted := false
 			for j, n := 0, mergeSlotTrackedCount(slot); j < n; j++ {
@@ -5023,7 +5031,7 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 			if idx < 0 {
 				idx = mergeSlotIndexAt(slot, 0)
 			}
-			cmp := stackCompareMergeSmallCapOne(&stack, &result[idx])
+			cmp := stackCompareMergeSmallCapOne(scratch, &stack, &result[idx])
 			if cmp > 0 {
 				result[idx] = stack
 				if pos := mergeSlotPositionForIndex(slot, idx); pos >= 0 {
@@ -5103,7 +5111,7 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 		if perfCountersEnabled {
 			perfRecordMergePerKeyOverflow()
 		}
-		if perKeyCap == 1 && glrFaithfulCapOneMerge {
+		if perKeyCap == 1 && faithfulCapOneMergeEnabled(scratch) {
 			merged := false
 			attempted := false
 			for j, n := 0, mergeSlotTrackedCount(slot); j < n; j++ {
@@ -5513,6 +5521,8 @@ func (s *glrMergeScratch) reset() {
 	s.perKeyCap = 0
 	s.language = nil
 	s.arena = nil
+	s.faithfulCapOne = false
+	s.recoveryCapOneConvergence = false
 	s.trace = false
 	s.cRecoveryCost = false
 	s.audit = nil
@@ -5665,6 +5675,23 @@ func (s *glrEntryScratch) reset() {
 		// Keep the newest/largest slabs up to the retention budget.
 		keepFrom := len(s.slabs) - 1
 		retained := len(s.slabs[keepFrom].data)
+		if retained > maxRetainedStackEntryCap {
+			// Even the single most recent slab alone outgrew the retention
+			// budget: a pathological wide/deep GLR stack on one parse (a
+			// denser grammar table forking or reducing less eagerly can
+			// drive one stack's entries far past ordinary steady state).
+			// Drop every slab rather than pool an oversized backing array,
+			// which would otherwise sit in the process-wide sync.Pool and
+			// get billed, unshrunk, to every unrelated future parse that
+			// reuses this scratch object regardless of language or file
+			// size. The next parse that needs entries simply reallocates.
+			s.slabs = nil
+			s.slabCursor = 0
+			s.usedTotal = 0
+			s.peakUsed = 0
+			s.allocatedBytes = 0
+			return
+		}
 		for keepFrom > 0 {
 			next := retained + len(s.slabs[keepFrom-1].data)
 			if next > maxRetainedStackEntryCap {

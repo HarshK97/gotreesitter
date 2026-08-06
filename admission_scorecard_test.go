@@ -49,10 +49,11 @@ const (
 )
 
 type scorecardRow struct {
-	name    string
-	backend string
-	status  string
-	detail  string
+	name               string
+	backend            string
+	status             string
+	detail             string
+	productionHasError bool
 }
 
 // admissionScorecardRequiredCompactPasses is the frozen per-language admission
@@ -77,10 +78,10 @@ var admissionScorecardRequiredCompactPasses = map[string]struct{}{
 	"gdscript": {}, "git_config": {}, "git_rebase": {}, "gitattributes": {}, "gitcommit": {}, "gitignore": {}, "gleam": {},
 	"glsl": {}, "gn": {}, "go": {}, "godot_resource": {}, "gomod": {}, "graphql": {},
 	"groovy": {}, "hack": {}, "hare": {}, "haskell": {}, "haxe": {}, "hcl": {}, "heex": {},
-	"hlsl": {}, "html": {}, "http": {}, "hurl": {}, "hyprlang": {}, "ini": {}, "janet": {}, "javascript": {}, "jinja2": {}, "jq": {}, "jsdoc": {},
+	"hlsl": {}, "html": {}, "http": {}, "hurl": {}, "hyprlang": {}, "ini": {}, "janet": {}, "javascript": {}, "jinja2": {}, "jq": {},
 	"json5": {}, "jsonnet": {}, "julia": {}, "just": {}, "kconfig": {}, "kdl": {}, "kotlin": {},
 	"ledger": {}, "less": {}, "linkerscript": {}, "liquid": {}, "llvm": {}, "lua": {},
-	"luau": {}, "make": {}, "markdown": {}, "matlab": {}, "mermaid": {}, "meson": {}, "mojo": {},
+	"luau": {}, "make": {}, "markdown": {}, "matlab": {}, "mermaid": {}, "mojo": {},
 	"move": {}, "nginx": {}, "nickel": {}, "nim": {}, "ninja": {}, "nix": {}, "norg": {}, "nushell": {},
 	"objc": {}, "ocaml": {}, "odin": {}, "org": {}, "pascal": {}, "pem": {}, "perl": {},
 	"php": {}, "pkl": {}, "powershell": {}, "prisma": {}, "prolog": {}, "promql": {},
@@ -145,10 +146,46 @@ func TestAdmissionCandidateScorecard206(t *testing.T) {
 		// welcome (more PASS, fewer FALLBACK); silent correctness failures,
 		// registry drift, or surrendered route coverage require an explicit
 		// review and ratchet update.
+		//
+		// minPass moved 200 -> 198 and maxFallback 1 -> 3. Three languages
+		// carry the three FALLBACK rows counted here:
+		//
+		//   - markdown_inline: the pre-existing baseline FALLBACK, already
+		//     present before either landing below and unrelated to both.
+		//     Never in admissionScorecardRequiredCompactPasses, so it was
+		//     never counted in minPass either.
+		//   - meson moved PASS -> FALLBACK when
+		//     selectCompactAcceptanceDerivation's materiality gate
+		//     (parsercore_phase0_driver.go, compactAcceptanceElectionIsVacuous)
+		//     landed: meson's smoke sample ("message('hello')") has a genuine,
+		//     score-tied grammar ambiguity between two distinct real symbols
+		//     (variableunit and var_unit -- both present in the compiled
+		//     language's SymbolNames). The old positional rule happened to
+		//     pick the derivation that matches production; the gate cannot
+		//     prove that pick correct without a C oracle, so it now declines
+		//     instead of publishing an unproven tree.
+		//   - jsdoc moved PASS -> FALLBACK (campaign v7 class-e closure,
+		//     spore.2026-08-02.hornbeam-e.byte-continuity): retiring
+		//     bytesAreSingleByteDecorationTrivia (parsercore_phase0_driver.go)
+		//     closes a measured 189-input false-clean class across
+		//     javascript, haskell, html, and bash, and moves jsdoc from PASS
+		//     to FALLBACK (accepted-leaf-tiling-gap: its own interior
+		//     comment-continuation gap no longer has a tolerating exemption).
+		//     Every jsdoc full parse now pays a measured 2.2x-2.5x latency
+		//     cost relative to a plain production parse: the compact route
+		//     always attempts jsdoc first, always declines at this gate, and
+		//     production then parses the same source a second time from
+		//     scratch. Acceptable for a rare grammar on a fail-closed route;
+		//     not free.
+		//
+		// meson's and jsdoc's moves are both PASS-safe FALLBACKs, never a
+		// DIVERGE (see counts[scorecardDiverge] below, unaffected at 0). No
+		// other language's status changes; production still serves
+		// markdown_inline, meson, and jsdoc correctly.
 		const (
 			wantTotal   = 206
-			minPass     = 200
-			maxFallback = 1
+			minPass     = 198
+			maxFallback = 3
 			wantSkip    = 5
 		)
 		if got := len(admissionScorecardRequiredCompactPasses); got != minPass {
@@ -183,9 +220,17 @@ func TestAdmissionCandidateScorecard206(t *testing.T) {
 }
 
 func TestAdmissionCandidateNoLookaheadSmokeRatchet(t *testing.T) {
+	// jsdoc dropped from this set (campaign v7 class-e closure,
+	// spore.2026-08-02.hornbeam-e.byte-continuity): its smoke sample now
+	// correctly declines at accepted-leaf-tiling-gap once
+	// bytesAreSingleByteDecorationTrivia (parsercore_phase0_driver.go) no
+	// longer excuses its interior comment-continuation gap. That decline is
+	// unrelated to the no-lookahead root-reduce shape this test otherwise
+	// covers; see admissionScorecardRequiredCompactPasses's own ratchet
+	// comment (above) for the full accounting. doxygen and vhdl are
+	// unaffected and keep the PASS assertion below.
 	wanted := map[string]struct{}{
 		"doxygen": {},
-		"jsdoc":   {},
 		"vhdl":    {},
 	}
 	var doxygen grammars.LangEntry
@@ -238,6 +283,23 @@ func TestAdmissionCandidateCooklangSmokeRatchet(t *testing.T) {
 	}
 	if row := runAdmissionScorecardSource(cooklang, []byte("Add @salt{1%tsp}.\n")); row.status != scorecardFallback {
 		t.Errorf("recovered dotted cooklang route=%s: %s", row.status, row.detail)
+	}
+}
+
+func TestAdmissionScorecardLabelsProductionErrorTree(t *testing.T) {
+	var goEntry grammars.LangEntry
+	for _, entry := range grammars.AllLanguages() {
+		if entry.Name == "go" {
+			goEntry = entry
+			break
+		}
+	}
+	if goEntry.Name == "" {
+		t.Fatal("go is missing from the grammar registry")
+	}
+	row := runAdmissionScorecardSource(goEntry, []byte("package p\nfunc"))
+	if row.status != scorecardFallback || !row.productionHasError {
+		t.Fatalf("invalid Go route=%s production_error_tree=%t: %s", row.status, row.productionHasError, row.detail)
 	}
 }
 
@@ -354,6 +416,7 @@ func runAdmissionScorecardSource(entry grammars.LangEntry, source []byte) (row s
 		return row
 	}
 	defer productionTree.Release()
+	row.productionHasError = productionTree.RootNode().HasError()
 	productionInspection, err := benchfixtures.InspectGoTree(productionTree.RootNode(), lang)
 	if err != nil {
 		row.detail = "production digest failed: " + err.Error()

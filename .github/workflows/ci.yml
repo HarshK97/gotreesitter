@@ -79,14 +79,69 @@ jobs:
           go-version-file: go.mod
 
       - name: Validate compact admission breadth, route precedence, depth, and incremental bridge
+        # GTS_COMPAT_TAIL_ELISION_EXHAUSTIVE=1 adds the full-registry (206
+        # language) compat-tail elision equivalence gate
+        # (TestCompatTailElisionEquivalenceSmokeExhaustive,
+        # admission_compat_tail_elision_test.go) to this lane. It shares this
+        # lane's own reason for gating a full-registry sweep behind an opt-in
+        # env var instead of running it unconditionally (loading every
+        # registered grammar in one process disturbs
+        # TestArenaGCRetentionAfterRelease elsewhere in this package's
+        # default suite); this lane's own `-run` selection already excludes
+        # that test, so the two do not interact here. Measured added cost is
+        # a few seconds.
         run: |
           set -euo pipefail
           GTS_ADMISSION_SCORECARD=1 \
           GTS_ADMISSION_SCORECARD_RATCHET=1 \
+          GTS_COMPAT_TAIL_ELISION_EXHAUSTIVE=1 \
           GOMAXPROCS=1 \
           go test -tags gts_parsercorephase0 . \
-            -run '^(TestAdmissionCandidateScorecard206|TestAdmissionSwitchRoutePrecedenceRatchet|TestAdmissionCandidateYAMLZeroWidthDepth|TestAdmissionCandidateRepresentativeDepthRatchet|TestAdmissionCompactTreeCarriesIncrementalReuseProof)$' \
+            -run '^(TestAdmissionCandidateScorecard206|TestAdmissionSwitchRoutePrecedenceRatchet|TestAdmissionCandidateYAMLZeroWidthDepth|TestAdmissionCandidateRepresentativeDepthRatchet|TestAdmissionCompactTreeCarriesIncrementalReuseProof|TestDiagnosticParserCoreClassifiedBoundaryAndReductionPlanShape|TestDiagnosticParserCoreSummaryReceiptPreservesExactRewrite|TestCompatTailElisionEquivalenceSmokeExhaustive)$' \
             -count=1 -timeout 10m
+
+  admission_route_equality_fuzz:
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Route-equality seed corpus regression (required)
+        run: |
+          set -euo pipefail
+          GOMAXPROCS=1 go test . -run '^FuzzAdmissionRouteEquality$' -count=1 -v
+
+      - name: Route-equality bounded live fuzzing, 45s (advisory)
+        # Non-blocking, mirroring the grammargen_visibility job's pattern
+        # below for a known, currently-open backlog: live mutation finds a
+        # false-clean divergence in the compact route's root-reduce leaf-
+        # tiling exemption in seconds, on any curated language, independent
+        # of this PR's changes (see the FuzzAdmissionRouteEquality doc
+        # comment in fuzz_admission_route_equality_test.go and this
+        # tranche's spore for the full root-cause writeup). Promote this
+        # step to blocking once that follow-up lands.
+        run: |
+          set +e
+          GOMAXPROCS=1 go test . -run '^$' -fuzz '^FuzzAdmissionRouteEquality$' -fuzztime=45s
+          status=$?
+          set -e
+
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::route-equality live fuzzing found a divergence (status ${status}); informational until the known root-reduce leaf-tiling exemption gap is fixed (see fuzz_admission_route_equality_test.go)."
+            {
+              echo "### Admission Route-Equality Live Fuzzing"
+              echo
+              echo "\`go test . -run '^\$' -fuzz FuzzAdmissionRouteEquality -fuzztime=45s\` exited with status \`${status}\`."
+              echo
+              echo "This step is informational until the documented root-reduce leaf-tiling exemption gap is fixed."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   race_root_shards:
     needs: exhaustive_parity_scope
@@ -480,12 +535,14 @@ jobs:
       - compile
       - selected_store_admission
       - compact_admission_ratchet
+      - admission_route_equality_fuzz
       - race_root
       - race_packages
       - draft_focused_tests
       - parity_report
       - perf_scan_budget
       - exhaustive_parity_scope
+      - compact-t3-oracle-cgo
       - parity-cgo-exhaustive
     if: always()
     runs-on: ubuntu-latest
@@ -498,6 +555,7 @@ jobs:
           COMPILE_RESULT: ${{ needs.compile.result }}
           SELECTED_STORE_ADMISSION_RESULT: ${{ needs.selected_store_admission.result }}
           COMPACT_ADMISSION_RATCHET_RESULT: ${{ needs.compact_admission_ratchet.result }}
+          ADMISSION_ROUTE_EQUALITY_FUZZ_RESULT: ${{ needs.admission_route_equality_fuzz.result }}
           RACE_ROOT_RESULT: ${{ needs.race_root.result }}
           RACE_PACKAGES_RESULT: ${{ needs.race_packages.result }}
           DRAFT_FOCUSED_RESULT: ${{ needs.draft_focused_tests.result }}
@@ -505,6 +563,7 @@ jobs:
           PERF_SCAN_BUDGET_RESULT: ${{ needs.perf_scan_budget.result }}
           EXHAUSTIVE_PARITY_SCOPE_RESULT: ${{ needs.exhaustive_parity_scope.result }}
           EXHAUSTIVE_PARITY_SCOPE: ${{ needs.exhaustive_parity_scope.outputs.run_exhaustive }}
+          COMPACT_T3_ORACLE_CGO_RESULT: ${{ needs.compact-t3-oracle-cgo.result }}
           EXHAUSTIVE_PARITY_RESULT: ${{ needs.parity-cgo-exhaustive.result }}
         run: |
           set -euo pipefail
@@ -537,8 +596,10 @@ jobs:
           require_success "compile" "$COMPILE_RESULT"
           require_success "selected_store_admission" "$SELECTED_STORE_ADMISSION_RESULT"
           require_success "compact_admission_ratchet" "$COMPACT_ADMISSION_RATCHET_RESULT"
+          require_success "admission_route_equality_fuzz" "$ADMISSION_ROUTE_EQUALITY_FUZZ_RESULT"
           require_success "parity_report" "$PARITY_REPORT_RESULT"
           require_success "perf_scan_budget" "$PERF_SCAN_BUDGET_RESULT"
+          require_success "compact-t3-oracle-cgo" "$COMPACT_T3_ORACLE_CGO_RESULT"
 
           if [ "$IS_DRAFT" = "true" ]; then
             require_success "draft_focused_tests" "$DRAFT_FOCUSED_RESULT"
@@ -689,6 +750,34 @@ jobs:
             exit 1
           fi
 
+  compact-t3-oracle-cgo:
+    needs: exhaustive_parity_scope
+    if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Compact T3 C-oracle witness contract
+        run: |
+          GTS_PARITY_MODE=smoke \
+          GTS_PARITY_C_REF_BUILD_CACHE=0 \
+          bash cgo_harness/docker/run_parity_in_docker.sh \
+            --label ci-compact-t3-oracle \
+            --memory 8g \
+            --cpus 2 \
+            --pids 4096 \
+            --gomemlimit 6GiB \
+            --goflags -p=1 \
+            --test-parallel 1 \
+            --c-ref-build-jobs 1 \
+            --timeout 20m \
+            --run '^TestCompactT3OracleAdjudication$'
+
   parity-cgo:
     needs: exhaustive_parity_scope
     if: needs.exhaustive_parity_scope.outputs.run_code_ci == 'true' && (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
@@ -713,7 +802,7 @@ jobs:
             --goflags -p=1 \
             --test-parallel 1 \
             --timeout 20m \
-            --run '^TestParityFreshParse$|^TestParityIncrementalParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityGLRCanaryGo$|^TestParityGLRCanarySet$|^TestParityGLRCapPressureTopLanguages$|^TestParityGateCoverageRatchet$|^TestParityHighlight$|^TestParityJavaScriptAutomaticSemicolonBeforeTrailingComment$|^TestParityJavaScriptAdjacentBlockCommentsDoNotConsumeFollowingToken$'
+            --run '^TestParityFreshParse$|^TestParityIncrementalParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityGLRCanaryGo$|^TestParityGLRCanarySet$|^TestParityGLRCapPressureTopLanguages$|^TestParityGateCoverageRatchet$|^TestParityHighlight$|^TestParityJavaScriptAutomaticSemicolonBeforeTrailingComment$|^TestParityJavaScriptAdjacentBlockCommentsDoNotConsumeFollowingToken$|^TestIncludedRangesGoRootParity$|^TestIncludedRangesGoArmGuardsRootSymbol$|^TestIncludedRangesKotlinRootParity$'
 
   parity-cgo-exhaustive:
     needs: exhaustive_parity_scope
@@ -739,7 +828,7 @@ jobs:
             --goflags -p=1 \
             --test-parallel 1 \
             --timeout 30m \
-            --run '^TestParityFreshParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityKnownDegradedStructuralStillDiverges$|^TestParityJavaScriptAutomaticSemicolonBeforeTrailingComment$|^TestParityJavaScriptAdjacentBlockCommentsDoNotConsumeFollowingToken$'
+            --run '^TestParityFreshParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityKnownDegradedStructuralStillDiverges$|^TestParityJavaScriptAutomaticSemicolonBeforeTrailingComment$|^TestParityJavaScriptAdjacentBlockCommentsDoNotConsumeFollowingToken$|^TestIncludedRangesGoRootParity$|^TestIncludedRangesGoArmGuardsRootSymbol$|^TestIncludedRangesKotlinRootParity$'
 
       - name: CGo Structural Parity Exhaustive (Incremental + GLR)
         run: |

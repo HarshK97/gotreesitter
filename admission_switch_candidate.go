@@ -40,15 +40,32 @@ func newAdmissionCandidateRunner(p *Parser) (*parserCoreFreshFullRunner, error) 
 		return nil, errors.New("admission candidate route: parser has no language")
 	}
 	options := DiagnosticParserCorePrefixOptions{
-		ReceiptMode:                    DiagnosticParserCoreReceiptSummary,
-		MaxTokens:                      1 << 24,
-		MaxDispatches:                  1 << 24,
-		Limits:                         admissionCandidateLimits(),
-		freshSchedulerSession:          true,
-		allowEOFAcceptNoActionSiblings: p.language.CompactEOFAcceptNoActionSiblingsCertified,
-		allowPrimaryAcceptDerivation:   p.language.CompactPrimaryAcceptanceDerivationCertified,
-		noLookaheadRootSymbol:          p.rootSymbol,
-		hasNoLookaheadRootSymbol:       p.hasRootSymbol,
+		ReceiptMode:                     DiagnosticParserCoreReceiptSummary,
+		MaxTokens:                       1 << 24,
+		MaxDispatches:                   1 << 24,
+		Limits:                          admissionCandidateLimits(),
+		freshSchedulerSession:           true,
+		allowEOFAcceptNoActionSiblings:  p.language.CompactEOFAcceptNoActionSiblingsCertified,
+		allowPrimaryAcceptDerivation:    p.language.CompactPrimaryAcceptanceDerivationCertified,
+		allowConvergedSplitDropArtifact: p.language.CompactConvergedReductionSplitDropsCertified,
+		// B3 stage S3: Recovery declares that this operation may attempt
+		// native strategy-2 recovery; allowCompactStrategy2ErrorRegion is the
+		// certified-capability gate the scheduler actually checks
+		// (dispatchPassActive's s3ErrorRegionAdmitted). Both come from the
+		// same grammar-blob-keyed certification, so an uncertified grammar
+		// (every grammar but the one B3 stage S3 witness class covers today)
+		// gets both false and this parse's behavior is unchanged.
+		Recovery:                         p.language.CompactStrategy2ErrorRegionCertified,
+		allowCompactStrategy2ErrorRegion: p.language.CompactStrategy2ErrorRegionCertified,
+		noLookaheadRootSymbol:            p.rootSymbol,
+		hasNoLookaheadRootSymbol:         p.hasRootSymbol,
+		// Tranche B8 scheduler stop-control: bind this Parser so the scheduler
+		// polls its deadline, cancellation flag, and (via
+		// stopControlMemoryBudgetBytes, recomputed per parse in
+		// executeSchedulerOpen) its production-compatible memory budget. This
+		// is the one runner constructor that arms the poll; the diagnostic and
+		// benchmark runner (newParserCoreFreshFullRunner) leaves it nil.
+		stopControlParser: p,
 	}
 	tables, err := newParserCoreRootTables(p)
 	if err != nil {
@@ -88,6 +105,46 @@ func (p *Parser) acquireAdmissionCandidateRunner() (*parserCoreFreshFullRunner, 
 	return runner, nil
 }
 
+// admissionCandidateCompactStorageBytes reports p's cached admission-candidate
+// runner's current compact-core storage (internal/parsercorephase0.Core.
+// StorageBytes()), or 0 when no runner is cached yet.
+//
+// StorageBytes reads 0 after ANY Reset, released or not: it counts live
+// length, and Reset always truncates length to zero even when it leaves
+// capacity retained. It cannot by itself distinguish "genuinely released"
+// from "reset but still holding a large backing array" -- use
+// admissionCandidateCompactFootprintBytes for that (tranche B9 gate).
+func admissionCandidateCompactStorageBytes(p *Parser) uint64 {
+	if p == nil {
+		return 0
+	}
+	runner, ok := p.admissionCandidateRunner.(*parserCoreFreshFullRunner)
+	if !ok || runner == nil || runner.compact == nil {
+		return 0
+	}
+	return runner.compact.StorageBytes()
+}
+
+// admissionCandidateCompactFootprintBytes reports p's cached
+// admission-candidate runner's current compact-core retained-memory
+// footprint (internal/parsercorephase0.Core.FootprintBytes()), or 0 when no
+// runner is cached yet. Unlike admissionCandidateCompactStorageBytes, this
+// reads real retained CAPACITY, so it can actually detect whether a decline
+// path released its retained arenas or merely truncated their logical
+// length (tranche B9 storage-release gate). It exists for regression tests
+// proving that gate: a declined parse must not leave compact storage
+// retained while the caller's production fallback runs.
+func admissionCandidateCompactFootprintBytes(p *Parser) uint64 {
+	if p == nil {
+		return 0
+	}
+	runner, ok := p.admissionCandidateRunner.(*parserCoreFreshFullRunner)
+	if !ok || runner == nil || runner.compact == nil {
+		return 0
+	}
+	return runner.compact.FootprintBytes()
+}
+
 // tryCompactFullParseRoute attempts the compact candidate route for a fresh
 // full parse. It returns (tree, true, "") on success and (nil, false, reason)
 // on any decline, so the caller falls back to production.
@@ -112,10 +169,104 @@ func (p *Parser) tryCompactFullParseRoute(source []byte) (*Tree, bool, string) {
 	// normalized production tree (the canonical admission test proves it), so
 	// this deterministic tail is structure-preserving here; it runs for fidelity
 	// on the shared runtime-flag and root-span finalization steps.
+	//
+	// spec.campaign.v7 tranche A5/C1 (compat-tail elision): for a language with
+	// no live result-compatibility arm (resultCompatibilityElisionActive, see
+	// result_compat_elision.go), two of the three steps below
+	// (resolveCRecoverySwallowedError, maybeCompactReturnedFullTree) are
+	// provably no-ops on THIS route -- see docs/compat-tail-elision.md for the
+	// per-step proof -- so an eligible language skips them. The third step
+	// (normalizeReturnedTreeForParse) is NOT skipped, and its own dispatch
+	// switch (runLanguageResultCompatibility) and error-summary walk
+	// (summarizeResultErrorsWithStop) run ZERO times here, for every
+	// language, eligible or not: materializeDiagnosticParserCoreAcceptedSelection
+	// already ran the full result-compatibility pass during materialization
+	// (buildResultFromNodes -> resultRootBuild.finishTree ->
+	// (*Parser).finalizeResultRoot, parser_result_root_build.go), which sets
+	// tree.resultCompatibilityApplied before tryCompactFullParseRoute ever
+	// runs, so normalizeReturnedTreeForParse's own copy of that dispatch and
+	// walk is dead code on this route already -- a route-wide fact, not an
+	// eligibility-conditioned one. finalizeCompactReturnedTreeForParse below
+	// is control-flow-identical to normalizeReturnedTreeForParse; it exists
+	// as its own function only so this route's benchmarks and profiles can
+	// name it and so the two no-op steps stay skipped for an eligible
+	// language. See docs/compat-tail-elision.md.
+	if resultCompatibilityElisionActive(p.language) {
+		p.finalizeCompactReturnedTreeForParse(tree, source)
+		return tree, true, ""
+	}
 	p.normalizeReturnedTreeForParse(tree, source)
 	tree = p.resolveCRecoverySwallowedError(source, tree)
 	tree = p.maybeCompactReturnedFullTree(tree, source)
 	return tree, true, ""
+}
+
+// finalizeCompactReturnedTreeForParse is normalizeReturnedTreeForParse's own
+// control flow, reproduced exactly, for an elision-eligible language on the
+// compact fresh path. It is NOT a reduced version of that control flow: an
+// earlier version of this function skipped the
+// "!tree.resultCompatibilityApplied" guard's terminal-stop-reason check
+// unconditionally, which was wrong -- see docs/compat-tail-elision.md's
+// "Corrected finding" section for the measured, cross-worktree-verified bug
+// report and the fix below.
+//
+// tree.resultCompatibilityApplied is TRUE for essentially every
+// compact-route tree by the time this runs, for every language, eligible or
+// not: materializeDiagnosticParserCoreAcceptedSelection already ran
+// (*Parser).finalizeResultRoot during materialization (buildResultFromNodes
+// -> resultRootBuild.finishTree), which applies the full result-compatibility
+// pass -- including, for an ineligible language, a live dispatcher arm -- and
+// sets both tree.resultCompatibilityApplied and tree.resultErrorSummary from
+// that pass's own result. So the "!tree.resultCompatibilityApplied" guard
+// below is false in the overwhelmingly common case, and this function's body
+// reduces, in that case, to the same two calls
+// normalizeReturnedTreeForParse's body reduces to:
+// tree.hasDeferredResultCompatibility() (false for every eligible language:
+// shouldDeferResultCompatibility, parser_result_root_build.go, names only
+// typescript and tsx, both ineligible -- NOT because the compact route skips
+// finishTree; it does not) and finalizeReturnedTreeRootSpan. Preserving the
+// guard's exact shape (rather than hoisting the stop-reason check to the top,
+// as an earlier version of this function did) matters precisely because it is
+// usually false: hoisting it added a stop-reason re-check the original
+// control flow never performs once compatibility is already applied, which
+// let an unrelated concurrent cancellation discard an already-complete, good
+// tree that the unmodified tail would have returned successfully.
+//
+// What the elision actually removes for an eligible language, then, is not
+// an O(nodes) walk (see docs/compat-tail-elision.md for why that premise did
+// not hold) but exactly two full-tail calls that are unconditional no-ops on
+// this route regardless of language:
+//
+//  1. resolveCRecoverySwallowedError: it requires
+//     rt.CRecoveryEnteredErrorState && rt.CRecoveryDroppedErrorForClean, both
+//     read from the tree's own captured ParseRuntime. The only assignment
+//     site for either field (parser.go, inside the classic GLR engine's own
+//     result-building code) never runs on the compact route;
+//     materializeDiagnosticParserCoreAcceptedSelection constructs the
+//     returned tree's ParseRuntime from a fresh struct literal that never
+//     touches either field, so both stay false for every compact-route tree.
+//  2. maybeCompactReturnedFullTree: its own gate requires the tree's retained
+//     arena to be at least 512 MiB before it does any O(nodes) work. The
+//     largest retained arena measured across every real-corpus file this
+//     campaign has for an eligible language is 47.45 MiB
+//     (zig/large__x86.zig) -- an 11x margin below the floor, not a general
+//     claim; see docs/compat-tail-elision.md.
+func (p *Parser) finalizeCompactReturnedTreeForParse(tree *Tree, source []byte) {
+	if !shouldNormalizeReturnedTree(tree) {
+		return
+	}
+	if tree.hasDeferredResultCompatibility() {
+		finalizeDeferredReturnedTreeTruncation(tree, source)
+		return
+	}
+	if !tree.resultCompatibilityApplied {
+		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+			tree.setParseStopReason(reason)
+			return
+		}
+		tree.resultCompatibilityApplied = true
+	}
+	finalizeReturnedTreeRootSpan(tree, source)
 }
 
 // admissionCandidateDeclineReason renders a runner error as a compact,

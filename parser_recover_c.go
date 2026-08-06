@@ -71,6 +71,143 @@ const (
 	cErrorState = StateID(0)
 )
 
+// cRecoverMaxReductionCandidateAttempts and cRecoverMaxMissingTokenTrials are
+// Go-side backstop ceilings with NO exact C analog. Background
+// (spore.2026-08-02.walnut-e.memory-exhaustion): a 4-byte erlang input and a
+// 56-byte jsdoc input both drove cHandleError's missing-token search, via
+// cDoAllPotentialReductions/cReductionCandidatesForAction, to clone the whole
+// GSS stack (gssScratch, glr_gss.go) without bound — 2.4-2.6 GB RSS in
+// seconds, unbounded for as long as host memory allows.
+//
+// C DOES intrinsically bound this same search, but by a mechanism that does
+// not transplant onto this port's data structures without a larger, riskier
+// redesign. ts_parser__reduce (parser.c:931-1046, called by both
+// ts_parser__do_all_potential_reductions and, transitively, by
+// ts_parser__handle_error's missing-token loop) checks every new stack
+// version it is about to build against MAX_VERSION_COUNT (6) +
+// MAX_VERSION_COUNT_OVERFLOW (4) BEFORE doing the parent-node/push work
+// (parser.c:955-971), discarding the excess silently and cheaply. That cap is
+// enforced against self->stack's version count, which is one persistent,
+// shared structure for the parser's entire lifetime — a single reduce call's
+// pop can yield several slices (several new versions at once) and the shared
+// counter sees all of them, from every caller, in one place.
+//
+// This port's cDoAllPotentialReductions instead builds a fresh, per-call
+// local `versions := []glrStack{start}` (parser_recover_c.go) with its own
+// local cRecoverMaxVersionCount+1 cap (faithfully porting MAX_VERSION_COUNT
+// itself — see cRecoverMaxVersionCount above), reset on every invocation.
+// cHandleError's missing-token loop calls cDoAllPotentialReductions up to
+// TokenCount-1 times (once per candidate missing symbol that survives the two
+// cheap pre-filters, cTerminalNextState + stateHasLeadingReduceAction), and
+// each of those nested calls gets its OWN fresh ~7-version allowance rather
+// than sharing one global counter the way C's self->stack does. Faithfully
+// porting C's exact mechanism would mean threading one shared, persistent
+// version counter through cHandleError and every nested
+// cDoAllPotentialReductions call it makes (including step 1's own call) and
+// making it interact correctly with the existing local caps everywhere they
+// already gate candidate selection (cAppendReductionVersion,
+// cCollapseSamePopReductionCandidates, the cRecoverMaxVersionCount+1 break at
+// the end of cDoAllPotentialReductions's loop) — exactly the kind of
+// larger, not-yet-authorized redesign spec.recovery-strategy1-linearization-v2
+// is already scoped to attempt, and getting the shared budget's SIZE wrong
+// here risks silently eliminating a candidate an existing corpus fixture
+// depends on (a tree-shape change, not just a slower parse).
+//
+// These two ceilings instead bound total WORK directly and fail exactly the
+// way an ordinary, already-supported "search found nothing" outcome fails —
+// no new ParseStopReason, no early exit that discards progress:
+//   - cRecoverMaxReductionCandidateAttempts bounds total
+//     cReductionCandidatesForAction calls (the expensive GSS-clone-and-reduce
+//     step) within ONE cDoAllPotentialReductions call. Reaching it silently
+//     truncates the remaining candidate exploration and returns whatever
+//     versions/canShift were already accumulated with ParseStopNone — the
+//     same graceful-truncation shape the function already uses at its
+//     existing `len(versions) > cRecoverMaxVersionCount+1` break, and the
+//     same "discard the excess, keep going" spirit as C's own per-slice
+//     check above.
+//   - cRecoverMaxMissingTokenTrials bounds total "expensive" trials (both
+//     cheap pre-filters passed, so a clone + shift + nested
+//     cDoAllPotentialReductions follows) across cHandleError's ENTIRE
+//     missing-token search (every version times every candidate symbol, not
+//     per version). Reaching it abandons the missing-token search exactly as
+//     if every remaining symbol had failed — missingVersions stays nil, the
+//     same outcome an ordinary exhaustive-but-unsuccessful search already
+//     produces routinely, falling through to step 3's discontinuity-push +
+//     ts_parser__recover-equivalent path.
+//
+// Sizing: the measured distribution sets this ceiling, not a tight algebraic
+// bound on the loop shape below. A dedicated corpus pass (2026-08-02,
+// consolidating PR #641 and its follow-up review) recorded
+// CRecoverReductionCandidateAttemptsPeak — the largest candidateAttempts
+// value any one cDoAllPotentialReductions call reached — across 719 real
+// corpus files: 326 files never entered the search (peak 0), 243 files
+// reached 1-9, 148 files reached 10-99, and only 2 files reached 100 or
+// more. The highest value seen anywhere in that walk was 256: a 16x margin
+// below this 4096 ceiling, with zero ceiling hits.
+//
+// A loop-shape argument motivated the original 4096 pick. Read it as rough
+// orientation, not a derivation: it does not land on 4096 cleanly.
+// cDoAllPotentialReductions's outer `for iter` loop shares ONE `iter` counter
+// across the whole call, and the "reprocess in place" branch that can fire
+// up to cRecoverMaxVersionCount (6) times is gated on that same shared
+// counter (`iter < cRecoverMaxVersionCount`) — so those up-to-6 passes sit
+// INSIDE the first 6 total passes, not stacked on top of them. Counting them
+// separately anyway, alongside the up to cRecoverMaxVersionCount+1 (7)
+// passes `v` can spend advancing across version slots before the loop stops
+// accepting new ones, gives a loose upper bound of 6+7 = 13 outer passes,
+// each visiting up to TokenCount (585, cobol, the largest of all 206 bundled
+// grammars) reduce candidates: a naive worst case near 13*585 = 7,605 —
+// already above this 4096 ceiling, so this loop shape alone does not justify
+// 4096 either. The measured distribution above is the reason 4096 holds
+// anyway: real recovery search terminates far short of any of these naive
+// bounds on every file this corpus covers.
+//
+// Corpus-scale sweep, same basis (2026-08-02, consolidating PR #641): a
+// 212-language, 12,717-file walk of real-world source under
+// gotreesitter-corpora/corpus_sources — deliberately including files whose
+// content does not match the language directory it was sampled from (e.g. a
+// git diff fed to the bash grammar), the same "plausible adversarial-but-legal
+// input shape" methodology the removed clone-cap mechanism used — found
+// exactly one file that reaches this ceiling at all: that same content-
+// mismatched diff file, which already failed to parse cleanly on origin/main
+// (stopReason=memory_budget there, before this fix existed) and keeps
+// failing to parse cleanly at every ceiling value tried, including 4x this
+// one (its own search has no natural stopping point short of the ceiling,
+// so it always lands at "ceiling+1", whatever the ceiling is — evidence the
+// search is genuinely unbounded for this input, not evidence the ceiling is
+// undersized). Every OTHER file across all 212 languages, plus every one of
+// the 206 bundled languages' own smoke samples, stayed under this ceiling by
+// a wide margin (missing-token-search peak across the whole walk: 259,
+// against cRecoverMaxMissingTokenTrials's much larger headroom). Raising
+// this ceiling does not help the one adversarial file — it only spends more
+// of the four known memory-exhaustion witnesses' own bounded budget before
+// the ceiling engages (measured: heap growth for the largest witness moved
+// from ~130 MB at 4096 to ~750 MB at a 16384 trial), so it stays at the
+// measured, validated value. Both ceilings stay small enough that reaching
+// them costs a small, bounded amount of additional work (combined with the
+// memory-budget feed alongside this one) well under a second, instead of an
+// unbounded multi-GB climb.
+//
+// cRecoverMaxReductionCandidateAttempts is the ACTIVE mechanism: every
+// witness and corpus-walk ceiling hit recorded against these two backstops
+// (CRecoverReductionCandidateCeilingHits) came from this constant.
+// cRecoverMaxMissingTokenTrials is a backstop that has never fired: across
+// all four memory-exhaustion witnesses and the 719-file corpus pass above,
+// CRecoverMissingTokenCeilingHits stayed 0 and
+// CRecoverMissingTokenTrialAttemptsPeak (mtPeak) ranged 1-11 on the four
+// witnesses and topped out at 120 across the corpus — a 68x margin below
+// this 8192 ceiling. It stays in place: an unfired backstop still guards
+// against a future input shape this codebase has not sampled, and the reduction-
+// candidate ceiling above bounds a narrower scope (one
+// cDoAllPotentialReductions call) than this one does (one entire
+// cHandleError missing-token search). Do not read its silence as proof it is
+// unreachable, and do not treat it as load-bearing for any witness fixed so
+// far — it is not.
+const (
+	cRecoverMaxReductionCandidateAttempts = 4096
+	cRecoverMaxMissingTokenTrials         = 8192
+)
+
 // errorCostCompetitionLanguage reports whether the faithful C error-recovery
 // port is enabled for the active grammar. By default the gate requires
 // parser.c-backed capability metadata, explicit parity certification, and
@@ -2540,6 +2677,7 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 	canShift := false
 	var reduces []ParseAction
 	v := 0
+	candidateAttempts := 0
 	for iter := 0; ; iter++ {
 		if reason := checkStop(); reason != ParseStopNone {
 			return versions, canShift, reason
@@ -2568,6 +2706,19 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 		for _, act := range reduces {
 			if reason := checkStop(); reason != ParseStopNone {
 				return versions, canShift, reason
+			}
+			// cRecoverMaxReductionCandidateAttempts backstop (see its doc
+			// comment above cRecoverMaxVersionCount): truncate exactly like
+			// the existing len(versions) > cRecoverMaxVersionCount+1 break
+			// below — return what has already been accumulated, ParseStopNone,
+			// no halted parse.
+			candidateAttempts++
+			if uint64(candidateAttempts) > p.crecoveryReductionCandidateAttemptsPeak {
+				p.crecoveryReductionCandidateAttemptsPeak = uint64(candidateAttempts)
+			}
+			if candidateAttempts > cRecoverMaxReductionCandidateAttempts {
+				p.crecoveryReductionCandidateCeilingHits++
+				return versions, canShift, ParseStopNone
 			}
 			actionCandidates, reason := p.cReductionCandidatesForAction(source, versions[v], act, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 			if reason != ParseStopNone {
@@ -2627,7 +2778,8 @@ func (p *Parser) cReductionCandidatesForAction(source []byte, start glrStack, ac
 	fork := start.cloneWithScratch(gssScratch)
 	fork.cRec = start.cRec.clone()
 	var dummy bool
-	p.applyAction(source, &fork, act, tok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, false, trackChildErrors)
+	deferParentLinks := p.reduceScratch != nil && p.reduceScratch.transientParents != nil
+	p.applyAction(source, &fork, act, tok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, deferParentLinks, trackChildErrors)
 	if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 		return nil, reason
 	}
@@ -2897,6 +3049,8 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 	// lookahead (the copied version plus its reduction forks).
 	var missingVersions []glrStack
 	if !p.isGraphQLRecoveryTripleQuote(tok.Symbol) {
+		missingTokenTrialAttempts := 0
+	missingTokenSearch:
 		for vi := range versions {
 			if reason := checkStop(); reason != ParseStopNone {
 				return cRecHalted, false, reason
@@ -2915,6 +3069,20 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 				}
 				if !p.stateHasLeadingReduceAction(nextState, tok.Symbol) {
 					continue
+				}
+				// cRecoverMaxMissingTokenTrials backstop (see its doc comment
+				// above cRecoverMaxVersionCount): abandon the missing-token
+				// search across every remaining (version, symbol) pair
+				// exactly as if each had failed its own trial —
+				// missingVersions stays nil, so step 3 below proceeds via its
+				// ordinary "no missing-token match found" path.
+				missingTokenTrialAttempts++
+				if uint64(missingTokenTrialAttempts) > p.crecoveryMissingTokenTrialAttemptsPeak {
+					p.crecoveryMissingTokenTrialAttemptsPeak = uint64(missingTokenTrialAttempts)
+				}
+				if missingTokenTrialAttempts > cRecoverMaxMissingTokenTrials {
+					p.crecoveryMissingTokenCeilingHits++
+					break missingTokenSearch
 				}
 				cand := versions[vi].cloneWithScratch(gssScratch)
 				cand.cRec = nil
@@ -3760,7 +3928,7 @@ func (p *Parser) cAbsorbTokenIntoError(v *glrStack, tok Token, nodeCount *int, a
 	leafVisible := p.cSymbolVisible(tok.Symbol)
 	var leaf *Node
 	if leafVisible {
-		leaf = newLeafNodeInArena(arena, tok.Symbol, p.isNamedSymbol(tok.Symbol),
+		leaf = newLeafNodeInArena(arena, tok.Symbol, tok.Symbol == errorSymbol || p.isNamedSymbol(tok.Symbol),
 			tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
 		leaf.setHasError(true)
 		// C: if the token shifts as extra in state 1, mark it extra so it is

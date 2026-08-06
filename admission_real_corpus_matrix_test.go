@@ -149,19 +149,26 @@ func TestAdmissionCandidateRealCorpusMatrix(t *testing.T) {
 	})
 
 	counts := map[string]int{}
+	parseClassCounts := map[string]int{}
 	languageCounts := map[string]map[string]int{}
 	for _, row := range rows {
 		counts[row.status]++
+		parseClass := "clean"
+		if row.productionHasError {
+			parseClass = "error-tree"
+		}
+		parseClassCounts[row.status+"/"+parseClass]++
 		if languageCounts[row.name] == nil {
 			languageCounts[row.name] = map[string]int{}
 		}
 		languageCounts[row.name][row.status]++
 		t.Logf(
-			"%-9s %-12s %-6s %7d %-5s %s",
+			"%-9s %-12s %-6s %7d %-10s %-5s %s",
 			row.status,
 			row.name,
 			row.backend,
 			row.bytes,
+			parseClass,
 			row.bucket,
 			row.detail,
 		)
@@ -174,6 +181,13 @@ func TestAdmissionCandidateRealCorpusMatrix(t *testing.T) {
 		counts[scorecardSkip],
 		counts[scorecardError],
 		len(rows),
+	)
+	t.Logf(
+		"--- parse class: FALLBACK clean=%d error-tree=%d; PASS clean=%d error-tree=%d ---",
+		parseClassCounts[scorecardFallback+"/clean"],
+		parseClassCounts[scorecardFallback+"/error-tree"],
+		parseClassCounts[scorecardPass+"/clean"],
+		parseClassCounts[scorecardPass+"/error-tree"],
 	)
 
 	names := make([]string, 0, len(languageCounts))
@@ -192,6 +206,42 @@ func TestAdmissionCandidateRealCorpusMatrix(t *testing.T) {
 			count[scorecardSkip],
 			count[scorecardError],
 		)
+	}
+
+	if os.Getenv("GTS_ADMISSION_REAL_CORPUS_RATCHET") == "1" {
+		if len(selectedLanguages) != 0 || len(selectedBuckets) != 0 ||
+			len(excludedLanguages) != 1 || !excludedLanguages["awk"] ||
+			maxBytes != 16_383 {
+			t.Fatal("real-corpus ratchet requires the canonical scope: no language or bucket filters, AWK excluded, and max bytes 16383")
+		}
+		const (
+			// Pinned Rust has ast.rs at 66,281 bytes and weird-exprs.rs at 6,436 bytes.
+			// This gate excludes ast.rs, so the canonical manifest has 109 rows.
+			minRows     = 109
+			minPass     = 67
+			maxFallback = 33
+			wantSkip    = 10
+		)
+		if len(rows) < minRows ||
+			counts[scorecardPass] < minPass ||
+			counts[scorecardFallback] > maxFallback ||
+			counts[scorecardSkip] != wantSkip ||
+			counts[scorecardDiverge] != 0 ||
+			counts[scorecardError] != 0 {
+			t.Fatalf(
+				"real-corpus breadth ratchet failed: PASS=%d (min %d) DIVERGE=%d FALLBACK=%d (max %d) SKIP=%d (want %d) ERROR=%d total=%d (min %d)",
+				counts[scorecardPass],
+				minPass,
+				counts[scorecardDiverge],
+				counts[scorecardFallback],
+				maxFallback,
+				counts[scorecardSkip],
+				wantSkip,
+				counts[scorecardError],
+				len(rows),
+				minRows,
+			)
+		}
 	}
 
 	if counts[scorecardDiverge] != 0 || counts[scorecardError] != 0 {

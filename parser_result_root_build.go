@@ -89,7 +89,7 @@ func (b *resultRootBuild) tryBuildExpectedRootFromSingleError(candidate *Node) *
 		return nil
 	}
 	root := newParentNodeInArena(b.arena, b.expectedRootSymbol, true, rootChildren, nil, 0)
-	if (candidate.hasError() || resultNodesHaveError(rootChildren)) && !b.syntheticRootCanDropError(rootChildren) {
+	if candidate.hasError() || resultNodesHaveError(rootChildren) {
 		root.setHasError(true)
 	}
 	root = b.repairPythonRoot(root)
@@ -140,7 +140,7 @@ func (b *resultRootBuild) buildSyntheticRootTree(nodes []*Node) *Tree {
 	rootHasError := resultNodesHaveError(rootChildren)
 	rootSymbol := b.syntheticRootSymbol(nodes, rootChildren, rootHasError)
 	root := newParentNodeInArena(b.arena, rootSymbol, true, rootChildren, nil, 0)
-	if rootHasError && !b.syntheticRootCanDropError(rootChildren) {
+	if rootHasError {
 		root.setHasError(true)
 	}
 	root = b.repairPythonRoot(root)
@@ -720,10 +720,6 @@ func (b *resultRootBuild) expectedRootEmptyFrameAcceptsEOF() bool {
 	return next != 0 && b.parser.stateHasAcceptOnEOF(next)
 }
 
-func (b *resultRootBuild) syntheticRootCanDropError(rootChildren []*Node) bool {
-	return b.isLanguage("python") && b.hasExpectedRoot && pythonModuleChildrenLookComplete(rootChildren, b.lang)
-}
-
 func (b *resultRootBuild) repairPythonKeywordNode(node *Node) *Node {
 	timing := b.parser.currentMaterializationTiming()
 	start := materializationTimingStart(timing)
@@ -1047,7 +1043,7 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 		errorSummary = compat.errorSummary
 		// resultMaterializationShouldStop (not parseStopReasonIsActive): Go's
 		// normalizer can now report ParseStopMemoryBudget (see
-		// normalizeGoReturnedTreeCompatibility), which parseStopReasonIsActive
+		// normalizeGoReturnedTreeCompatibilityWithCensus), which parseStopReasonIsActive
 		// deliberately excludes. A budget-stopped compat pass did not apply
 		// cleanly and must not be treated as "compatibility applied" any more
 		// than a timeout/cancellation-stopped one is.
@@ -1086,9 +1082,6 @@ func (p *Parser) finalizeResultRoot(root *Node, source []byte, linkScratch *[]*N
 func (p *Parser) shouldDeferResultCompatibility(root *Node) bool {
 	if p == nil || p.language == nil || root == nil || p.noResultCompatibilityBenchmarkOnly || p.noTreeBenchmarkOnly {
 		return false
-	}
-	if p.language.Name == "ini" {
-		return true
 	}
 	if !parseTypeScriptLazyResultCompatibilityEnabled() {
 		return false

@@ -705,6 +705,26 @@ fi"
     clone_block="$(make_clone_block "$grammar")"
   fi
 
+  local source_overlay_block=""
+  case "$grammar" in
+    typescript|tsx)
+      source_overlay_block="
+typescript_repo=/tmp/grammar_parity/typescript
+typescript_patch=/workspace/grammars/patches/tree-sitter-typescript-import-type.patch
+if ! git -C \"\$typescript_repo\" apply --reverse --check \"\$typescript_patch\" >/dev/null 2>&1; then
+  git -C \"\$typescript_repo\" apply --check \"\$typescript_patch\"
+  git -C \"\$typescript_repo\" apply \"\$typescript_patch\"
+fi
+(
+  cd \"\$typescript_repo\"
+  npm ci
+  cd \"$grammar\"
+  ../node_modules/.bin/tree-sitter generate
+)
+"
+      ;;
+  esac
+
   local lr0_core_budget_env=""
   if [[ -n "$effective_lr0_core_budget" ]]; then
     lr0_core_budget_env="GOT_LALR_LR0_CORE_BUDGET=$effective_lr0_core_budget"
@@ -736,6 +756,7 @@ fi
 mkdir -p /tmp/grammar_parity
 $seed_block
 $clone_block
+$source_overlay_block
 
 echo '{}' > /tmp/real_corpus_parity_floors.json
 cd /workspace

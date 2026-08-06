@@ -24,6 +24,10 @@ type Parser struct {
 	reparseFactory      TokenSourceFactory
 	recoveryParser      *Parser
 	skipRecoveryReparse bool
+	// recoveryInitialOnly suppresses all full-parse retry work for one nested
+	// recovery probe. The caller accepts the initial tree or runs the legacy
+	// recovery parse.
+	recoveryInitialOnly bool
 	// forceCleanRetryPass forces a single parseInternal call to behave as a
 	// non-retry ("clean") pass even when the caller widened the GLR stack
 	// budget via maxStacksOverride. A widened retry would normally also enable
@@ -47,6 +51,7 @@ type Parser struct {
 	hasRootSymbol                 bool
 	collapsedChildOccurrencePairs []collapsedChildSymbolPair
 	collapsedChildOccurrenceSet   map[uint32]struct{}
+	unaryWrapperFlatteningSet     map[unaryWrapperFlatteningKey]Symbol
 
 	// admissionCandidateRoute is the per-Parser override for the Phase-3
 	// dual-route admission switch (see admission_switch.go). The zero value
@@ -96,17 +101,36 @@ type Parser struct {
 	forestDeclineSym    Symbol
 	forestDeclineReason string
 	forestDeclineStates []StateID
-	hasRecoverState     []bool
-	hasRecoverSymbol    []bool
-	recoverByState      [][]recoverSymbolAction
-	hasKeywordState     []bool
+	// forestCapTieStats is Stage 0's cap-event instrument (see
+	// ForestCapTieStats and glr_forest.go's forestCapReplacementIndex):
+	// hidden-symbol cap-tie counts for the most recent forest parse. Reset
+	// (along with forestCapTieDumpActive) by resetForestCapTieStats at the
+	// top of every forest entry point, not only the decline diagnostics'
+	// parseForest -- tryForestFastPath's early declines (included ranges,
+	// the decline memo, ...) never reach parseForest at all, and without
+	// their own reset a reused Parser would report a stale prior parse's
+	// counts for a call that did no forest work this time.
+	forestCapTieStats ForestCapTieStats
+	// forestCapTieDumpActive is GOT_FOREST_CAP_TIE_DUMP's value latched once
+	// per parse by resetForestCapTieStats; recordForestCapTie reads this
+	// field on every hidden-symbol cap tie instead of calling os.Getenv
+	// per-tie (see forestCapTieDumpEnabled's doc comment).
+	forestCapTieDumpActive bool
+	hasRecoverState        []bool
+	hasRecoverSymbol       []bool
+	recoverByState         [][]recoverSymbolAction
+	hasKeywordState        []bool
 	// lookupActionIndexFn caches the bound-method closure for
 	// lookupActionIndex. Passing p.lookupActionIndex directly at token-source
 	// construction sites allocates a fresh 16-byte closure per parse; the
 	// bound method only captures p (tables are re-read at call time), so one
 	// closure stays valid for the parser's whole lifetime, including language
 	// changes. See lookupActionIndexFunc (parser_tables.go).
-	lookupActionIndexFn                 func(state StateID, sym Symbol) uint16
+	lookupActionIndexFn func(state StateID, sym Symbol) uint16
+	// activeParseStopCheckFn caches the bound stop-check method. Compact
+	// full parses install this callback in a poller. Reusing one closure avoids
+	// one allocation per parse.
+	activeParseStopCheckFn              parseStopCheck
 	typeScriptPropertyIdentifierSymbol  Symbol
 	typeScriptIdentifierSymbol          Symbol
 	typeScriptHasPropertyIdentifier     bool
@@ -191,6 +215,31 @@ type Parser struct {
 	// candidates routinely settles back to a legitimately clean tree without
 	// ever being "re-validated", so it must not be treated as suspicious.
 	crecoveryHandleErrorSingleStack bool
+	// crecoveryReductionCandidateCeilingHits and
+	// crecoveryMissingTokenCeilingHits count how many times this parse's
+	// cDoAllPotentialReductions / cHandleError missing-token search hit the
+	// cRecoverMaxReductionCandidateAttempts / cRecoverMaxMissingTokenTrials
+	// Go-side backstop ceilings (parser_recover_c.go). Both stay at zero for
+	// every currently-passing parse — see those constants' doc comment for
+	// sizing rationale — and exist purely as a "counted reason" diagnostic
+	// signal (surfaced via ParseRuntime) for the
+	// spore.2026-08-02.walnut-e.memory-exhaustion fix: neither ceiling halts
+	// the parse itself, so without a counter there would be no way to observe
+	// that either one engaged.
+	crecoveryReductionCandidateCeilingHits uint64
+	crecoveryMissingTokenCeilingHits       uint64
+	// crecoveryReductionCandidateAttemptsPeak and
+	// crecoveryMissingTokenTrialAttemptsPeak record the single largest
+	// candidateAttempts / missingTokenTrialAttempts value any ONE
+	// cDoAllPotentialReductions call / cHandleError missing-token search
+	// reached during this parse (not cumulative across calls, unlike the
+	// ceiling-hit counters above). Diagnostic-only, parse-wide max, reset per
+	// parse: lets a corpus walk report how close real, currently-passing
+	// input gets to cRecoverMaxReductionCandidateAttempts /
+	// cRecoverMaxMissingTokenTrials, the same way the ceiling constants'
+	// sizing rationale is measured against.
+	crecoveryReductionCandidateAttemptsPeak uint64
+	crecoveryMissingTokenTrialAttemptsPeak  uint64
 	// crecoveryCostCompetitionRelevant gates the C-recovery merge cost walks
 	// (cRecoveryMergeCostsDiffer / cRecoveryCostClassForSlot/Slice via
 	// scratch.merge.cRecoveryCost): until something cost-relevant happens in
@@ -304,7 +353,7 @@ type Parser struct {
 	parseMemoryBudgetDiag              parseMemoryBudgetDiagnostic
 	parseMemoryBudgetDiagActive        bool
 	// compatMemoryBudgetTripped latches true the moment compat normalization
-	// — Go's (normalizeGoReturnedTreeCompatibility / walkGoCompatSubtree's
+	// — Go's (normalizeGoReturnedTreeCompatibilityWithCensus / walkGoCompatSubtree's
 	// poller) or JS/TS's fused walk (normalizeJavaScriptCompatibility /
 	// normalizeTypeScriptTreeCompatibilityWithParser / rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex's
 	// poller) — observes a runtime memory-budget trip. The runtime heap/sys
@@ -343,6 +392,24 @@ type Parser struct {
 	// materializing-shape prefix cache when they rewrite a spine node's
 	// root->head prefix. nil outside a parse; bumpShapePrefixEpoch is nil-safe.
 	mergeScratch *glrMergeScratch
+	// budgetScratch points at the active parse's *parserScratch for the
+	// duration of parseInternal (set alongside mergeScratch/reduceScratch,
+	// cleared on return). resultMaterializationStopReason uses it to fold
+	// parserScratch's own tracked allocation — dominated in pathological
+	// cases by gssScratch.allocatedBytes — into the per-parse memory-budget
+	// poll. gssScratch carries no budget state of its own (see gssScratch's
+	// doc comment in glr_gss.go); only the owning parserScratch does
+	// (parserScratch.budgetExhausted, already exercised by the main GLR loop
+	// at several per-token checkpoints in parser.go). Before this field
+	// existed, resultMaterializationStopReason — the only poll site
+	// cDoAllPotentialReductions/cHandleError's C-recovery candidate search
+	// reaches (parser_recover_c.go) — had no way to see that check at all,
+	// because scratch is a local variable inside parseInternal, unreachable
+	// from a *Parser-only call chain. nil outside a parse; budgetExhausted()
+	// is itself nil-safe, but callers check budgetScratch != nil explicitly
+	// to match this file's existing arena != nil && arena.budgetExhausted()
+	// convention at the same call site (parser_result.go).
+	budgetScratch *parserScratch
 	// goCompatFrames points at the active parser scratch's reusable result-tree
 	// traversal stack. It is nil outside parseInternal.
 	goCompatFrames                     *[]goCompatSubtreeFrame
@@ -944,6 +1011,7 @@ func (p *Parser) stopFrontierSameHeaderSummary(stacks []glrStack) string {
 		// borrow the active arena so pending-parent diagnostics use the same exact
 		// equality as production merge decisions instead of failing closed.
 		scratch.arena = p.mergeScratch.arena
+		scratch.faithfulCapOne = p.mergeScratch.faithfulCapOne
 	}
 	for gi := range groups {
 		size := len(groups[gi].indices)
@@ -1442,6 +1510,7 @@ type parseReuseState struct {
 // NewParser creates a new Parser for the given language.
 func NewParser(lang *Language) *Parser {
 	p := &Parser{language: lang}
+	p.activeParseStopCheckFn = p.activeParseStopReason
 	if lang != nil {
 		p.forceRawSpanAll = lang.Name == "yaml"
 		p.leafInternByLang = languageWantsLeafInterning(lang.Name)
@@ -1502,6 +1571,7 @@ func NewParser(lang *Language) *Parser {
 		p.spanExtendingInvisibleSymbols, p.nonSpanExtendingInvisibleSymbols = buildInvisibleSpanSymbolTables(lang.SymbolNames)
 		p.aliasPreservedWrapperSymbols = buildAliasPreservedWrapperSymbols(lang)
 		p.collapsedChildOccurrencePairs, p.collapsedChildOccurrenceSet = compileCollapsedChildOccurrencePolicy(lang)
+		p.unaryWrapperFlatteningSet = compileUnaryWrapperFlatteningPolicy(lang)
 		p.initTypeScriptContextualKeywordSymbols(lang)
 		p.initSchemeErrorRecoverySymbols(lang)
 		p.errorCostCompetition = errorCostCompetitionLanguage(lang)
@@ -1572,6 +1642,7 @@ func resetSnippetParser(parser *Parser) {
 	parser.reparseFactory = nil
 	parser.recoveryParser = nil
 	parser.skipRecoveryReparse = false
+	parser.recoveryInitialOnly = false
 	parser.releaseCompatibilityBorrowedArenas()
 	parser.fullArenaHint = 0
 	parser.pendingFullArenaHint = 0
@@ -2288,7 +2359,7 @@ func (p *Parser) tryRecoverPreviousShiftAsError(s *glrStack, tok Token, nodeCoun
 }
 
 func (p *Parser) rejectUndrainedPendingForkStacks(s *glrStack) bool {
-	if p == nil || !glrFaithfulCapOneMerge || len(p.pendingForkStacks) == 0 {
+	if p == nil || !faithfulCapOneMergeEnabled(p.mergeScratch) || len(p.pendingForkStacks) == 0 {
 		return false
 	}
 	workCountRecordPendingTransition(p, &p.pendingForkStacks[0], len(p.pendingForkStacks), 0, workCountConvergenceOutcomePendingDiscarded, "undrained post-reduce candidates rejected")
@@ -3669,7 +3740,7 @@ func recordParseRuntimeRootStats(parseRuntime *ParseRuntime, tree *Tree, source 
 	if parseRuntime.LastTokenWasEOF && parseRuntime.LastTokenEndByte > tailStart && parseRuntime.LastTokenEndByte <= expectedEOFByte {
 		tailStart = parseRuntime.LastTokenEndByte
 	}
-	if parseRuntime.Truncated && parserTailAllowsCleanAcceptance(tailSource, tailStart, expectedEOFByte, included) {
+	if parseRuntime.Truncated && parserTailAllowsCleanAcceptance(tailSource, tailStart, expectedEOFByte, included, languageLineContinuationEscapeByte(lang)) {
 		parseRuntime.Truncated = false
 	}
 	if !collectFinalStats {
@@ -3788,7 +3859,15 @@ func copyParseRuntimeToTiming(timing *incrementalParseTiming, parseRuntime Parse
 	timing.normalizationNanos = parseRuntime.NormalizationNanos
 }
 
-func realTokenAttachmentGapIsParserPadding(source []byte, s *glrStack, tok Token) bool {
+// realTokenAttachmentGapIsParserPadding reports whether the gap between the
+// stack's current byte offset and tok's start is trivia the parser may
+// silently cross before attaching tok. continuationEscape is the calling
+// Parser's language-declared line-continuation escape byte (0 if none —
+// see Language.LineContinuationEscapeByte and (*Parser).lineContinuationEscapeByte),
+// threaded through to bytesAreParserPadding so a language-declared
+// escape+newline (for example PowerShell's backtick) counts as padding here
+// exactly like the unconditional backslash+newline case.
+func realTokenAttachmentGapIsParserPadding(source []byte, s *glrStack, tok Token, continuationEscape byte) bool {
 	if s == nil || tok.Missing || tok.NoLookahead || tok.StartByte <= s.byteOffset {
 		return true
 	}
@@ -3798,30 +3877,27 @@ func realTokenAttachmentGapIsParserPadding(source []byte, s *glrStack, tok Token
 	if int(s.byteOffset) > len(source) || int(tok.StartByte) > len(source) {
 		return true
 	}
-	return bytesAreParserPadding(source, s.byteOffset, tok.StartByte)
+	return bytesAreParserPadding(source, s.byteOffset, tok.StartByte, continuationEscape)
 }
 
-func realShiftGapIsParserPadding(source []byte, s *glrStack, tok Token) bool {
-	return realTokenAttachmentGapIsParserPadding(source, s, tok)
+func realShiftGapIsParserPadding(source []byte, s *glrStack, tok Token, continuationEscape byte) bool {
+	return realTokenAttachmentGapIsParserPadding(source, s, tok, continuationEscape)
 }
 
 // skippedRealGapContinuesSeparatedList reports whether the sole active stack is
 // mid-production immediately after an anonymous separator terminal (e.g. a comma
 // in a separated list) and the real lookahead continues that production. In that
-// position, covering a lexer-skipped stray with a STRUCTURAL error node would
-// insert it between the separator and the next element and corrupt the pending
-// reduction; the correct behavior is to shift across the uncovered gap (as the
-// parser did before the shift-gap guard existed) without materializing any node
-// for the stray, so the skipped bytes stay interior to the covering
-// production's span and total-span invariants hold. That is parse-time
-// behavior only: the stray now lands in no leaf's span, so leaf-level parity
-// with C tree-sitter — which represents such a stray as an EXTRA error
-// transparent to the production — currently depends on a per-language
-// post-parse normalizer re-materializing it (today only
-// normalizeJuliaTrailingCommaAssignmentTuple, dispatched from
-// parser_result_compat.go's language switch). Emitting the EXTRA error
-// directly at parse time, so every language gets it without a bespoke
-// normalizer, is the tracked follow-up.
+// position, covering a lexer-skipped stray with a STRUCTURAL error node — one
+// that changes the automaton state (pushOrExtendErrorNode's
+// schemeErrorRecoveryState target) or counts toward the enclosing production's
+// ChildCount — would corrupt the pending reduction and could collapse the
+// enclosing construct into a flat ERROR. When this returns true,
+// tryMaterializeSkippedRealGap calls materializeSkippedGapAsExtraError instead:
+// it covers the gap with a transparent EXTRA ERROR leaf pushed in the SAME
+// state (not the older silent shift-across, which advanced past the gap with
+// no node at all and left it in no leaf's span, HasError unset). See
+// materializeSkippedGapAsExtraError's doc for the mechanism and its known
+// remaining shape gap versus C tree-sitter's representation of the same stray.
 func (p *Parser) skippedRealGapContinuesSeparatedList(s *glrStack, state StateID, tok Token) bool {
 	if p == nil || s == nil || tok.Symbol == 0 || tok.Symbol == errorSymbol || tok.Missing || tok.NoLookahead {
 		return false
@@ -3860,31 +3936,120 @@ func (p *Parser) stateDeterministicNonExtraShift(state StateID, sym Symbol) bool
 	return actions[0].Type == ParseActionShift && !actions[0].Extra
 }
 
+// languageLineContinuationEscapeByte returns lang's declared line-continuation
+// escape byte (see Language.LineContinuationEscapeByte), or 0 when lang is nil
+// or declares none. This is the single accessor every padding-classification
+// call site reads through — both callers that only have a *Language (a Tree
+// already carries its language; some compact-engine call sites carry lang
+// directly) and (*Parser).lineContinuationEscapeByte below, which is the same
+// lookup for callers that have a *Parser instead. Keeping both behind the
+// same function keeps the gap-padding and tail-acceptance classifications
+// consistent (and default-off for every language that has not declared an
+// escape) no matter which handle a given call site holds.
+func languageLineContinuationEscapeByte(lang *Language) byte {
+	if lang == nil {
+		return 0
+	}
+	return lang.LineContinuationEscapeByte
+}
+
+// lineContinuationEscapeByte returns p's language-declared line-continuation
+// escape byte (see Language.LineContinuationEscapeByte), or 0 when p or its
+// language is nil, or the language declares none. Every production caller of
+// realTokenAttachmentGapIsParserPadding / bytesAreParserPadding /
+// parserTailAllowsCleanAcceptance's chain that has a Parser in scope reads the
+// escape byte through this single accessor so the gap-padding and
+// tail-acceptance classifications stay consistent (and default-off for every
+// language that has not declared an escape) across every caller.
+func (p *Parser) lineContinuationEscapeByte() byte {
+	if p == nil {
+		return 0
+	}
+	return languageLineContinuationEscapeByte(p.language)
+}
+
+// materializeSkippedGapAsExtraError covers a lexer-skipped mid-production gap
+// (a stray run of bytes immediately after an anonymous separator, where the
+// real lookahead continues the production via a single deterministic shift,
+// per skippedRealGapContinuesSeparatedList) with a transparent EXTRA ERROR
+// leaf spanning exactly the gap, then advances the stack's byte offset across
+// it. The leaf is pushed with parseState == state (the same state the caller
+// already resolved the deterministic shift against, not
+// schemeErrorRecoveryState's possibly-different recovery target), so the
+// following action lookup for tok is unaffected: this mirrors
+// pushLexErrorRunLeaf's "resume in the same state" contract. Because
+// reduceWindowFromGSS only counts non-extra stack entries toward a
+// production's ChildCount, the leaf is folded into whichever production
+// later reduces over it without perturbing arity, while populateParentNode's
+// HasError OR propagates the error through the reduce-built ancestors above
+// it, all the way to the tree root. Python's root-level convention (the now-
+// retired syntheticRootCanDropError / pythonModuleChildrenLookComplete pair,
+// parser_result_root_build.go / parser_result_python.go) used to break
+// exactly that propagation for EXTRA children: it skipped extra children
+// before checking their HasError, so this leaf -- extra by construction, see
+// leaf.setExtra(true) below -- could still be silently dropped at the python
+// module root even though it correctly carries HasError=true. PR #636 fixed
+// the check to look at HasError on every child, extra or not, before the
+// extra-skip; the fix then proved the whole drop mechanism inert (measured:
+// consulted thousands of times, actionable on a handful, and wrong every
+// time it acted) and the mechanism was deleted outright
+// (elm/synthetic-root-drop-retirement), so this leaf's error status now
+// reaches the root unconditionally, like any other.
+//
+// This is an ACCOUNTING fix, not a shape fix: the skipped bytes now have a
+// span and HasError=true, matching C tree-sitter's verdict that the
+// construct is erroneous. The leaf's own shape still diverges from C's for
+// the same stray in two ways that remain open follow-up work: the span
+// covers the whole lexer-skipped gap (which can include trivia C would not
+// attribute to the stray), and the leaf is childless where C typically wraps
+// the stray token as a child of its own ERROR/error_repeat node. Closing that
+// gap needs re-lexing the skipped bytes to find the stray token's true
+// bounds and giving the leaf that token as a child, which needs its own
+// verification pass and is out of scope here.
+func (p *Parser) materializeSkippedGapAsExtraError(s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) {
+	// See pushOrExtendErrorNode: error content makes costs relevant. p is
+	// never nil here: the only caller (tryMaterializeSkippedRealGap) reaches
+	// this branch only after p.skippedRealGapContinuesSeparatedList already
+	// returned true, and that function itself returns false for a nil p.
+	p.crecoveryCostCompetitionRelevant = true
+	startPoint := stackEntryNodeEndPoint(s.top())
+	leaf := newLeafNodeInArena(arena, errorSymbol, true, s.byteOffset, tok.StartByte, startPoint, tok.StartPoint)
+	leaf.setHasError(true)
+	leaf.setExtra(true)
+	leaf.parseState = state
+	if perfCountersEnabled {
+		perfRecordErrorNode()
+	}
+	p.pushStackNode(s, state, leaf, entryScratch, gssScratch)
+	if nodeCount != nil {
+		*nodeCount = *nodeCount + 1
+	}
+	if trackChildErrors != nil {
+		*trackChildErrors = true
+	}
+	s.byteOffset = tok.StartByte
+}
+
 func (p *Parser) tryMaterializeSkippedRealGap(source []byte, s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) bool {
-	if s == nil || tok.StartByte <= s.byteOffset || realTokenAttachmentGapIsParserPadding(source, s, tok) {
+	if s == nil || tok.StartByte <= s.byteOffset || realTokenAttachmentGapIsParserPadding(source, s, tok, p.lineContinuationEscapeByte()) {
 		return false
 	}
-	// A stray token that the lexer skipped mid-production (immediately after an
-	// anonymous separator terminal, e.g. a comma in a separated list) must not be
-	// covered by a STRUCTURAL error node here: inserting one between the
-	// separator and the next element corrupts the pending reduction and collapses
-	// the enclosing construct into a flat ERROR. The parser has a concrete shift
-	// for the real lookahead that continues the production, so advance across the
-	// uncovered gap (restoring the pre-guard shift-across behavior) without
-	// materializing a node for the stray: the skipped bytes stay interior to the
-	// covering production's span, so total-span invariants hold, but they now sit
-	// in no leaf's span. Leaf-level parity with C tree-sitter's transparent
-	// EXTRA-error representation of such strays depends on a per-language
-	// post-parse normalizer re-materializing the stray afterward (today only
-	// normalizeJuliaTrailingCommaAssignmentTuple, dispatched from
-	// parser_result_compat.go's language switch); emitting the EXTRA error here
-	// at parse time instead, for every language, is the tracked follow-up.
+	// A stray run of bytes that the lexer skipped mid-production, immediately
+	// after an anonymous separator terminal with a concrete deterministic
+	// shift for the real lookahead, is covered by materializeSkippedGapAsExtraError
+	// rather than by ordinary structural gap materialization below — see that
+	// function's doc and skippedRealGapContinuesSeparatedList's doc for why a
+	// structural node here would corrupt the pending reduction, and for the
+	// accounting-vs-shape distinction in what this branch actually fixes.
+	// parser_shift_gap_test.go's synthetic-language coverage of
+	// skippedRealGapContinuesSeparatedList's guard clauses pins the shapes
+	// this must keep matching.
 	if p.skippedRealGapContinuesSeparatedList(s, state, tok) {
 		if p.glrTrace {
-			fmt.Printf("    SHIFT-ACROSS skipped real gap (mid-list separator): gap=%d..%d before tok=%d..%d\n",
+			fmt.Printf("    MATERIALIZE-EXTRA skipped real gap (mid-list separator): gap=%d..%d before tok=%d..%d\n",
 				s.byteOffset, tok.StartByte, tok.StartByte, tok.EndByte)
 		}
-		s.byteOffset = tok.StartByte
+		p.materializeSkippedGapAsExtraError(s, state, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 		return true
 	}
 	if p.tryExtendHiddenTrailingErrorAcrossSkippedRealGap(source, s, tok, nodeCount, arena, trackChildErrors) {
@@ -4029,7 +4194,15 @@ func extendHiddenErrorAncestorEnd(n *Node, end uint32, point Point) {
 	n.setHasError(true)
 }
 
-func bytesAreParserPadding(source []byte, start, end uint32) bool {
+// bytesAreParserPadding reports whether source[start:end] is entirely
+// trivia a real parser skips silently: plain whitespace, backslash+newline
+// (unconditional — see the field doc for why backslash needs no per-language
+// gate), or, when continuationEscape is non-zero, that language-declared
+// escape byte immediately followed by a newline (see
+// Language.LineContinuationEscapeByte). Pass 0 for continuationEscape at any
+// call site without a language-specific escape to declare; that reproduces
+// this function's behavior before the parameter existed exactly.
+func bytesAreParserPadding(source []byte, start, end uint32, continuationEscape byte) bool {
 	if start > end || int(end) > len(source) {
 		return false
 	}
@@ -4038,7 +4211,8 @@ func bytesAreParserPadding(source []byte, start, end uint32) bool {
 		i = len(utf8BOM)
 	}
 	for ; i < int(end); i++ {
-		switch source[i] {
+		b := source[i]
+		switch b {
 		case ' ', '\t', '\n', '\r', '\f', '\v':
 			continue
 		case '\\':
@@ -4053,13 +4227,46 @@ func bytesAreParserPadding(source []byte, start, end uint32) bool {
 			}
 			return false
 		default:
+			if continuationEscape != 0 && b == continuationEscape {
+				next := i + 1
+				if next < int(end) && source[next] == '\n' {
+					i = next
+					continue
+				}
+				if next+1 < int(end) && source[next] == '\r' && source[next+1] == '\n' {
+					i = next + 1
+					continue
+				}
+			}
 			return false
 		}
 	}
 	return true
 }
 
-func parserTailAllowsCleanAcceptance(source []byte, start, end uint32, included []Range) bool {
+// parserTailAllowsCleanAcceptance reports whether source[start:end] — the
+// tail beyond an accepted stack's, or an accepted tree root's, own span — is
+// entirely parser padding, so the caller may treat that tail as silently
+// swallowed rather than a real, uncovered remainder. continuationEscape
+// carries the same language-declared line-continuation escape byte
+// bytesAreParserPadding accepts elsewhere (0 when the caller has no language
+// in scope, or the language declares none): a trailing continuation escape
+// immediately followed by a newline — for example a PowerShell file or
+// incremental edit that ends mid-backtick-continuation — is exactly as much
+// scanner-owned trivia at the tail as it is mid-file, and every caller here
+// that reaches this function with a language in scope now passes its real
+// escape byte instead of a hardcoded 0. Passing 0 for a language that HAS
+// declared an escape (the historical shape of this function) is the actual
+// defect this parameter closes: an accepted PowerShell stack with nothing but
+// trailing padding used to still get declined here whenever
+// materializeSkippedGapAsExtraError's spurious ERROR (removed for the
+// backtick-continuation gap-classification fix, see
+// realTokenAttachmentGapIsParserPadding) was gone and stackResultErrorRank
+// read 0 — the accepted stack then genuinely reached this tail check, which,
+// blind to the continuation escape, called an ordinary trailing
+// backtick+newline a real tail and forced a degraded fallback despite the
+// stack (and the C oracle) agreeing the parse was clean.
+func parserTailAllowsCleanAcceptance(source []byte, start, end uint32, included []Range, continuationEscape byte) bool {
 	if start >= end {
 		return true
 	}
@@ -4067,7 +4274,7 @@ func parserTailAllowsCleanAcceptance(source []byte, start, end uint32, included 
 		return false
 	}
 	if len(included) == 0 {
-		return bytesAreParserPadding(source, start, end)
+		return bytesAreParserPadding(source, start, end, continuationEscape)
 	}
 	for _, r := range included {
 		if r.EndByte <= start {
@@ -4084,33 +4291,33 @@ func parserTailAllowsCleanAcceptance(source []byte, start, end uint32, included 
 		if r.EndByte < overlapEnd {
 			overlapEnd = r.EndByte
 		}
-		if overlapStart < overlapEnd && !bytesAreParserPadding(source, overlapStart, overlapEnd) {
+		if overlapStart < overlapEnd && !bytesAreParserPadding(source, overlapStart, overlapEnd, continuationEscape) {
 			return false
 		}
 	}
 	return true
 }
 
-func cleanAcceptedStackSelectableAtEOF(source []byte, expectedEOFByte uint32, included []Range, arena *nodeArena, s *glrStack) bool {
+func cleanAcceptedStackSelectableAtEOF(source []byte, expectedEOFByte uint32, included []Range, arena *nodeArena, s *glrStack, continuationEscape byte) bool {
 	if s == nil || !s.accepted {
 		return false
 	}
 	if stackResultErrorRank(s, arena) != 0 {
 		return true
 	}
-	return parserTailAllowsCleanAcceptance(source, s.byteOffset, expectedEOFByte, included)
+	return parserTailAllowsCleanAcceptance(source, s.byteOffset, expectedEOFByte, included, continuationEscape)
 }
 
-func cleanAcceptedTreeLeavesRealTail(tree *Tree, source []byte, expectedEOFByte uint32, included []Range) bool {
+func cleanAcceptedTreeLeavesRealTail(tree *Tree, source []byte, expectedEOFByte uint32, included []Range, continuationEscape byte) bool {
 	root := rawRootOrNil(tree)
 	if root == nil || root.HasError() || root.EndByte() >= expectedEOFByte {
 		return false
 	}
-	return !parserTailAllowsCleanAcceptance(source, root.EndByte(), expectedEOFByte, included)
+	return !parserTailAllowsCleanAcceptance(source, root.EndByte(), expectedEOFByte, included, continuationEscape)
 }
 
 func (p *Parser) guardRealTokenAttachmentGap(source []byte, s *glrStack, tok Token, consumer string) bool {
-	if realTokenAttachmentGapIsParserPadding(source, s, tok) {
+	if realTokenAttachmentGapIsParserPadding(source, s, tok, p.lineContinuationEscapeByte()) {
 		return true
 	}
 	if consumer == "" {
@@ -4218,6 +4425,19 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	defer releaseParserScratch(scratch, deferParentLinks)
 	p.reduceScratch = &scratch.reduce
 	p.mergeScratch = &scratch.merge
+	// budgetScratch is saved and restored, not just cleared, unlike its
+	// siblings above: a nested parseInternal call (a retry or compat-
+	// normalization sub-parse reachable from this call's own body, however
+	// unlikely in practice) must leave the OUTER call's resultMaterializationStopReason
+	// checks intact when the inner call returns. Clearing unconditionally to
+	// nil would silently disable the scratch-budget check (parser_result.go)
+	// for the rest of the outer parse instead of merely losing the inner
+	// call's own coverage — a nested caller degrading to "no fix" is the
+	// acceptable failure mode here, not the outer caller silently losing a
+	// check several of its own materialization-boundary poll sites still
+	// assume is active.
+	prevBudgetScratch := p.budgetScratch
+	p.budgetScratch = scratch
 	p.goCompatFrames = &scratch.goCompatFrames
 	if transientReduceParents {
 		p.reduceScratch.transientParents = &scratch.transientParents
@@ -4226,6 +4446,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	defer func() {
 		p.reduceScratch = nil
 		p.mergeScratch = nil
+		p.budgetScratch = prevBudgetScratch
 		p.goCompatFrames = nil
 	}()
 	scratch.audit.beginParse()
@@ -4253,6 +4474,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		p.beginCNodeMemoEpoch()
 		p.crecoveryEnteredErrorState = false
 		p.crecoveryDroppedErrorForClean = false
+		p.crecoveryReductionCandidateCeilingHits = 0
+		p.crecoveryMissingTokenCeilingHits = 0
+		p.crecoveryReductionCandidateAttemptsPeak = 0
+		p.crecoveryMissingTokenTrialAttemptsPeak = 0
 		// Cost walks stay gated off until this pass proves costs can be
 		// nonzero. A fresh full parse starts clean (false). An incremental
 		// parse over an old tree whose root bit is clean starts clean too.
@@ -4397,7 +4622,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	var pendingTraceActionCount int
 	var pendingTraceAction ParseAction
 	drainPendingForkStacks := func() {
-		if !glrFaithfulCapOneMerge || len(p.pendingForkStacks) == 0 {
+		if !faithfulCapOneMergeEnabled(p.mergeScratch) || len(p.pendingForkStacks) == 0 {
 			return
 		}
 		pendingCount := len(p.pendingForkStacks)
@@ -4693,7 +4918,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 			}
 		}
-		if stopReason == ParseStopAccepted && cleanAcceptedTreeLeavesRealTail(tree, source, expectedEOFByte, p.included) {
+		if stopReason == ParseStopAccepted && cleanAcceptedTreeLeavesRealTail(tree, source, expectedEOFByte, p.included, p.lineContinuationEscapeByte()) {
 			stopReason = ParseStopNoStacksAlive
 			tree = replaceWithOwnedErrorTree(tree, stopReason)
 		}
@@ -4734,6 +4959,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.RuntimeSysGrowthBytes = memoryBudgetDiag.runtimeSysGrowthBytes
 		parseRuntime.CRecoveryEnteredErrorState = p.crecoveryEnteredErrorState
 		parseRuntime.CRecoveryDroppedErrorForClean = p.crecoveryDroppedErrorForClean
+		parseRuntime.CRecoverReductionCandidateCeilingHits = p.crecoveryReductionCandidateCeilingHits
+		parseRuntime.CRecoverMissingTokenCeilingHits = p.crecoveryMissingTokenCeilingHits
+		parseRuntime.CRecoverReductionCandidateAttemptsPeak = p.crecoveryReductionCandidateAttemptsPeak
+		parseRuntime.CRecoverMissingTokenTrialAttemptsPeak = p.crecoveryMissingTokenTrialAttemptsPeak
 		recordParseRuntimeLoopStats(&parseRuntime, scratch, iterationsUsed, nodeCount, peakStackDepth, maxStacksSeen, singleStackIterations, multiStackIterations, singleStackTokens, multiStackTokens)
 		recordParseRuntimePhaseTiming(&parseRuntime, materializationTimingRef, parseStart, parserLoopNanos, tokenNextNanos, actionDispatchNanos, actionLookupNanos, glrMergeNanos, glrCullNanos)
 		recordParseRuntimeMaterializationTiming(&parseRuntime, materializationTimingRef, materializationTiming)
@@ -4987,9 +5216,6 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 			return finalize(stacks, reason)
 		}
-		if scratch.budgetExhausted() {
-			return finalize(stacks, p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch))
-		}
 
 		p.updateParserStateTokenSource(ts, stacks, scratch)
 
@@ -5157,10 +5383,6 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				}
 				if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 					blockStopReason, blockStopped = reason, true
-					break
-				}
-				if scratch.budgetExhausted() {
-					blockStopReason, blockStopped = p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch), true
 					break
 				}
 			}
@@ -5333,7 +5555,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				result.lastReduceDepth = stopActionDiag.lastReduceStackDepth
 			}
 			if s != nil && !s.dead && !s.accepted && !s.shifted && s.depth() > 0 {
-				actionIdx := p.lookupActionIndex(s.top().state, tok.Symbol)
+				actionIdx := p.contextualActionIndex(source, s.top().state, tok)
 				if actionIdx != 0 && p.language != nil && int(actionIdx) < len(p.language.ParseActions) {
 					frontierActions := p.language.ParseActions[actionIdx].Actions
 					result.terminalCount = len(frontierActions)
@@ -5511,7 +5733,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if phaseTiming {
 				actionStart = time.Now()
 			}
-			actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+			actionIdx := p.contextualActionIndex(source, currentState, tok)
 			var actions []ParseAction
 			if actionIdx != 0 && int(actionIdx) < len(parseActions) {
 				actions = parseActions[actionIdx].Actions
@@ -6228,9 +6450,6 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 			return finalize(stacks, reason)
 		}
-		if scratch.budgetExhausted() {
-			return finalize(stacks, p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch))
-		}
 
 		if numStacks > 1 && retryPass && allParseStacksDead(stacks) {
 			bestIdx := bestRetryRecoveryStack(stacks)
@@ -6353,7 +6572,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if s.dead || s.accepted || s.shifted || s.cPaused || s.depth() == 0 {
 					continue
 				}
-				actionIdx := p.lookupActionIndex(s.top().state, tok.Symbol)
+				actionIdx := p.contextualActionIndex(source, s.top().state, tok)
 				if actionIdx == 0 || int(actionIdx) >= len(parseActions) {
 					terminalFrontierOK = false
 					break
@@ -6607,8 +6826,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			if !p.errorCostCompetitionEnabled() || liveUnaccepted == 0 {
 				accepted := compactAcceptedStacks(stacks)
 				selectable := accepted[:0]
+				continuationEscape := p.lineContinuationEscapeByte()
 				for i := range accepted {
-					if cleanAcceptedStackSelectableAtEOF(source, expectedEOFByte, p.included, arena, &accepted[i]) {
+					if cleanAcceptedStackSelectableAtEOF(source, expectedEOFByte, p.included, arena, &accepted[i], continuationEscape) {
 						selectable = append(selectable, accepted[i])
 					}
 				}
@@ -6621,9 +6841,6 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 				if p.errorCostCompetitionEnabled() {
 					if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 						return finalize(accepted, reason)
-					}
-					if scratch.budgetExhausted() {
-						return finalize(accepted, p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch))
 					}
 					// Faithful C recovery port: ts_parser__accept rebuilds the
 					// root around trailing extras before the tree competes.
@@ -6805,6 +7022,18 @@ func (p *Parser) configureParseCaps(source []byte, reuse *reuseCursor, arenaClas
 	}
 	mergePerKeyCap := p.resolveParseMergePerKeyCap(source, reuse, maxMergePerKeyOverride)
 	scratch.merge.perKeyCap = mergePerKeyCap
+	scratch.merge.faithfulCapOne = reuse == nil &&
+		mergePerKeyCap == 1 &&
+		((p.language != nil && p.language.FullParseGSSConvergenceEnabled) ||
+			parseMaxMergePerKeyEnvConfigured() ||
+			maxMergePerKeyOverride < 0)
+	// C keeps equivalent cap-one recovery readings as links on one graph
+	// stack. Preserve that convergence after recovery makes error cost
+	// relevant. Otherwise, separate Go stacks fork each history at each
+	// conflict in the valid suffix. This behavior can grow quadratically.
+	scratch.merge.recoveryCapOneConvergence = reuse == nil &&
+		mergePerKeyCap == 1 &&
+		p.errorCostCompetitionEnabled()
 
 	maxNodes := parseNodeLimitForLanguage(len(source), p.language)
 	if maxNodesOverride > maxNodes {
@@ -6830,12 +7059,11 @@ func (p *Parser) resolveParseMergePerKeyCap(source []byte, reuse *reuseCursor, m
 	if javaFullParseNeedsAnnotationDeclarationMergeWidth(p.language, source, reuse) && mergePerKeyCap < javaFullParseRetryMaxMergePerKey {
 		mergePerKeyCap = javaFullParseRetryMaxMergePerKey
 	}
-	// C#'s certified fresh default needs a wider floor, but explicit policy is
-	// authoritative. Environment configuration and the negative internal exact
-	// override both remain exact rather than being silently raised afterward.
-	if reuse == nil && p.language != nil && p.language.Name == "c_sharp" &&
-		!parseMaxMergePerKeyEnvConfigured() && mergePerKeyCap < 16 {
-		mergePerKeyCap = 16
+	// Certified languages keep clean alternatives in the graph. Use one survivor
+	// per merge group for fresh full parses. Explicit settings take precedence.
+	if reuse == nil && p.language != nil && p.language.FullParseGSSConvergenceEnabled &&
+		!parseMaxMergePerKeyEnvConfigured() {
+		mergePerKeyCap = 1
 	}
 	if maxMergePerKeyOverride < 0 {
 		mergePerKeyCap = -maxMergePerKeyOverride
@@ -6906,10 +7134,6 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 	}
 	if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 		result.stop(reason, false)
-		return result
-	}
-	if scratch.budgetExhausted() {
-		result.stop(p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch), false)
 		return result
 	}
 	if allParseStacksDead(stacks) {
@@ -7526,18 +7750,29 @@ func (p *Parser) tryRelexSingleParserState(tok Token, state StateID, ts TokenSou
 	if !statefulOK || !relexerOK || dts == nil || !relexer.CanRelexFromTokenStart(tok) {
 		return Token{}, false
 	}
-	snapshot := dts.snapshotRelexState()
+	snapshot, retainedSnapshot := scratch.snapshotDFARelexState(dts)
 	savedState := dts.state
 	savedGLRStates := dts.glrStates
 	restoreRejectedProbe := func() {
 		snapshot.restore(dts)
+		scratch.releaseDFARelexSnapshot(retainedSnapshot)
 		dts.state = savedState
 		dts.glrStates = savedGLRStates
 		p.updateCurrentRelexParserStateTokenSource(ts, stacks, scratch)
 	}
 	stateful.SetParserState(state)
 	clearGLRStateTokenSource(stateful, scratch)
-	next, ok := relexer.RelexFromTokenStart(tok)
+	var (
+		next Token
+		ok   bool
+	)
+	if ts == dts {
+		// The outer snapshot already owns rollback for the direct source.
+		// Do not start a redundant nested transaction.
+		next, ok = dts.relexFromTokenStartInTransaction(tok)
+	} else {
+		next, ok = relexer.RelexFromTokenStart(tok)
+	}
 	actionIndex := p.lookupActionIndex(state, next.Symbol)
 	if !ok || !next.ExternalScannerToken || next.StartByte != tok.StartByte || next.EndByte != next.StartByte || (next.Symbol == tok.Symbol && next.StartByte == tok.StartByte && next.EndByte == tok.EndByte) || actionIndex == 0 || int(actionIndex) >= len(p.language.ParseActions) {
 		restoreRejectedProbe()
@@ -7551,6 +7786,7 @@ func (p *Parser) tryRelexSingleParserState(tok Token, state StateID, ts TokenSou
 	// The returned token and committed scanner checkpoint belong to this parser
 	// state. Keep the source isolated through dispatch; the outer loop refreshes
 	// the live frontier before its next read, and same-pass re-lex paths set it.
+	scratch.releaseDFARelexSnapshot(retainedSnapshot)
 	return next, true
 }
 

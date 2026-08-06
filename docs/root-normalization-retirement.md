@@ -228,11 +228,24 @@ It selects the C-equivalent expression for an unknown type name.
 This change retires the final Objective-C subpass and its dispatcher arm.
 The parser covers every byte in each recovered EBNF source.
 This change removes the EBNF dispatcher arm.
+The native reduction path sets Dart switch-expression body fields.
+It sets the target field for nested Elixir calls.
+The Dart and Elixir dispatcher arms remain live for unrelated repairs.
+Reduction now owns the remaining Scala and SQL field corrections.
+Inherited edges fill anonymous gaps between repeated direct descendants.
+They do not cross a leading separator without direct descendant evidence.
+This change removes three Scala repairs and the SQL `INTO` cleanup.
 The field-aware C-oracle receipt is:
 `harness_out/docker/20260728T111158Z-objc-struct-sized-postfilter-final`.
 The method type C-oracle receipt is:
 `harness_out/docker/20260728T113024Z`.
 The dispatcher census now records each remaining D and Objective-C subpass.
+Native HTTP actions already emit complete document sections.
+Forest selection now preserves the equivalent recorded container alternative.
+This change retires the inert section-coalescing subpass and its dispatcher arm.
+Native Bash reduction already emits complete command-name concatenations.
+This change retires the inert command-name subpass.
+The assignment, generated-command, and `if`-field subpasses remain live.
 
 Group by invariant, not language:
 
@@ -320,6 +333,11 @@ there.
 | D storage-class wrappers | retirement change | 1 D subpass | 0 | visible named wrapper election, compatibility-free producer, production, compact fallback, forest, incremental reuse, and isolated C-oracle parity |
 | D variable-type qualifiers | retirement change | 1 D subpass | 0 | compatibility-free producer, production, compact fallback, forest, incremental reuse, and isolated C-oracle parity |
 | D call-expression targets | retirement commit `6a650454e5698d64a0148629cfa444b3dbce6877` | 2 D subpasses / 1 dispatcher arm | 0 | compatibility-free producer, production, compact fallback, forest, incremental, and three isolated C-oracle receipts |
+| Certified unary named wrappers | retirement change | 1 dispatcher arm | 0 | exact-profile census, compatibility-free producer, production, compact fallback, forest fail-closed behavior, incremental, parent links, deterministic digest, and isolated C-oracle parity |
+| Scala and SQL field projection | merged in PR #522 | 4 local field repairs | 0 | native reduction, production, compact fallback, forest, incremental reuse, and isolated Scala and SQL parity |
+| Dart and Elixir inherited fields | retirement change | 2 language-local field repairs | 0 | compatibility-free producer, refreshed corpus, production, compact, forest, incremental, and isolated C-oracle receipts |
+| HTTP document sections | retirement change | 1 subpass / 1 dispatcher arm | 0 | zero-rewrite exact and locked census, compatibility-free producer, compact fail-closed behavior, forest, incremental reuse, and isolated C-oracle receipts |
+| Bash command names | retirement change | 1 Bash subpass | 0 | compatibility-free producer, production, compact fallback, forest, incremental reuse, exact 25-case baseline at `83548f55`, and isolated C-oracle parity |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.

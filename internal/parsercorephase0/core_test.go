@@ -368,6 +368,335 @@ func TestDefaultLiveLinkCapRejectsNinthDistinctLink(t *testing.T) {
 	}
 }
 
+func TestLiveCondenseCandidatesDropsSequentialVersionHistory(t *testing.T) {
+	compact := newTinyCoreWithLimits(t, Limits{MaxLinksPerBoundary: 2})
+	compact.diagnostics.foldSamePredecessorShallowPayloads = false
+	seed, _ := compact.Seed(1, 0)
+	payload, _ := compact.appendSubtree(subtreeRecord{symbol: 1, terminal: true, endByte: 1}, nil, nil, nil)
+	key := compact.boundaryKey(2, 1)
+	var first, second Head
+	var secondOutcome condenseOutcome
+	err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		var err error
+		first, err = compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 1})
+		if err != nil {
+			return err
+		}
+		first, err = compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 2})
+		if err != nil {
+			return err
+		}
+		if err := compact.RecordReductionLineageOwned(owner, []ReductionOutput{{
+			Head: first, CleanPathRank: CleanPathRankSelected, MultiplePopPaths: true,
+		}}, 7); err != nil {
+			return err
+		}
+		return compact.runLiveCondenseCandidates(nil, func() error {
+			secondOutcome, err = compact.condenseWithOutcome(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 3})
+			second = secondOutcome.head
+			return err
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("sequential versions share one physical head: %+v", first)
+	}
+	if !secondOutcome.historicalBoundarySplit {
+		t.Fatal("sequential version replacement lost historical boundary split provenance")
+	}
+	if !secondOutcome.historicalConvergedSplit {
+		t.Fatal("historical converged version lost its split provenance")
+	}
+	if secondOutcome.historicalCleanPathRank != CleanPathRankSelected ||
+		secondOutcome.historicalLineage != 7 {
+		t.Fatalf(
+			"historical lineage = (%v,%d), want (%v,7)",
+			secondOutcome.historicalCleanPathRank,
+			secondOutcome.historicalLineage,
+			CleanPathRankSelected,
+		)
+	}
+	record, err := compact.node(second.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.linkCount != 1 {
+		t.Fatalf("second sequential version links = %d, want 1", record.linkCount)
+	}
+}
+
+func TestReductionLineageRollsBackWithSchedulerTransaction(t *testing.T) {
+	compact := newTinyCore(t, 4)
+	head, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputs := []ReductionOutput{{
+		Head: head, CleanPathRank: CleanPathRankUnselected, MultiplePopPaths: true,
+	}}
+	sentinel := errors.New("rollback lineage")
+	err = compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		if err := compact.RecordReductionLineageOwned(owner, outputs, 11); err != nil {
+			return err
+		}
+		return sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("rollback error = %v, want %v", err, sentinel)
+	}
+	provenance, err := compact.nodeLineage(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The alternative set's rollback restores count/flags/spillRef only
+	// (spec.b4b-alternative-set.v1 section 3.3); an inline slot the rolled-
+	// back insert wrote is deliberately left as unread stale data beyond the
+	// restored count, so compare membership (Len), not raw struct equality.
+	if provenance.owner != 0 || provenance.lineage != 0 || provenance.rank != CleanPathRankNotApplicable ||
+		provenance.converged || provenance.set.Len() != 0 {
+		t.Fatalf("rolled-back lineage = %+v, want zero", *provenance)
+	}
+	err = compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return compact.RecordReductionLineageOwned(owner, outputs, 12)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provenance, err = compact.nodeLineage(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provenance.rank != CleanPathRankUnselected || provenance.lineage != 12 || !provenance.converged {
+		t.Fatalf("committed lineage = %+v, want unselected lineage 12", *provenance)
+	}
+}
+
+func TestHeadOwnerRollsBackWithSchedulerTransaction(t *testing.T) {
+	compact := newTinyCore(t, 4)
+	head, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sentinel := errors.New("rollback owner")
+	err = compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		if err := compact.RecordHeadOwnerOwned(owner, head, 7); err != nil {
+			return err
+		}
+		return sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("rollback error = %v, want %v", err, sentinel)
+	}
+	provenance, err := compact.nodeLineage(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provenance.owner != 0 {
+		t.Fatalf("rolled-back owner = %d, want zero", provenance.owner)
+	}
+	if err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return compact.RecordHeadOwnerOwned(owner, head, 8)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if provenance.owner != 8 {
+		t.Fatalf("committed owner = %d, want 8", provenance.owner)
+	}
+}
+
+func TestHistoricalBoundaryDoesNotInventConvergence(t *testing.T) {
+	compact := newTinyCoreWithLimits(t, Limits{MaxLinksPerBoundary: 2})
+	compact.diagnostics.foldSamePredecessorShallowPayloads = false
+	seed, _ := compact.Seed(1, 0)
+	payload, _ := compact.appendSubtree(subtreeRecord{symbol: 1, terminal: true, endByte: 1}, nil, nil, nil)
+	key := compact.boundaryKey(2, 1)
+	var outcome condenseOutcome
+	err := compact.ApplySchedulerAtomic(func(_ SchedulerTransactionToken) error {
+		if _, err := compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 1}); err != nil {
+			return err
+		}
+		return compact.runLiveCondenseCandidates(nil, func() error {
+			var err error
+			outcome, err = compact.condenseWithOutcome(key, linkInput{
+				prev: seed.Node, payload: payload, scoreDelta: 2,
+			})
+			return err
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !outcome.historicalBoundarySplit {
+		t.Fatal("sequential replacement lost its historical boundary marker")
+	}
+	if outcome.historicalConvergedSplit {
+		t.Fatal("single-path historical boundary invented convergence")
+	}
+	if !outcome.historicalForestDeterministic {
+		t.Fatal("non-fragile historical forest was not marked deterministic")
+	}
+	if outcome.historicalCleanPathRank != CleanPathRankNotApplicable || outcome.historicalLineage != 0 {
+		t.Fatalf("single-path historical provenance = (%v,%d), want none", outcome.historicalCleanPathRank, outcome.historicalLineage)
+	}
+}
+
+func TestHistoricalBoundaryProvesDeterministicForest(t *testing.T) {
+	compact := newTinyCoreWithLimits(t, Limits{MaxLinksPerBoundary: 2})
+	seed, _ := compact.Seed(1, 0)
+	payload, _ := compact.appendSubtree(subtreeRecord{symbol: 1, terminal: true, endByte: 1}, nil, nil, nil)
+	key := compact.boundaryKey(2, 1)
+	input := linkInput{prev: seed.Node, payload: payload, scoreDelta: 1}
+	var outcome condenseOutcome
+	err := compact.ApplySchedulerAtomic(func(_ SchedulerTransactionToken) error {
+		if _, err := compact.condense(key, input); err != nil {
+			return err
+		}
+		return compact.runLiveCondenseCandidates(nil, func() error {
+			var err error
+			outcome, err = compact.condenseWithOutcome(key, input)
+			return err
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !outcome.historicalBoundarySplit || !outcome.historicalForestDeterministic {
+		t.Fatalf("historical replacement provenance = %+v, want deterministic split", outcome)
+	}
+	if outcome.historicalConvergedSplit {
+		t.Fatal("exact single-path replacement invented convergence")
+	}
+}
+
+func TestHistoricalBoundaryKeepsFragileForestUnproved(t *testing.T) {
+	compact := newTinyCoreWithLimits(t, Limits{MaxLinksPerBoundary: 2})
+	seed, _ := compact.Seed(1, 0)
+	payload, _ := compact.appendSubtree(subtreeRecord{
+		symbol: 1, terminal: true, endByte: 1, fragile: true,
+	}, nil, nil, nil)
+	key := compact.boundaryKey(2, 1)
+	input := linkInput{prev: seed.Node, payload: payload}
+	var outcome condenseOutcome
+	err := compact.ApplySchedulerAtomic(func(_ SchedulerTransactionToken) error {
+		if _, err := compact.condense(key, input); err != nil {
+			return err
+		}
+		return compact.runLiveCondenseCandidates(nil, func() error {
+			var err error
+			outcome, err = compact.condenseWithOutcome(key, input)
+			return err
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !outcome.historicalBoundarySplit || outcome.historicalForestDeterministic {
+		t.Fatalf("fragile historical provenance = %+v, want unproved split", outcome)
+	}
+}
+
+func TestHistoricalBoundaryProvesSourceSelfOwnership(t *testing.T) {
+	compact := newTinyCoreWithLimits(t, Limits{MaxLinksPerBoundary: 2})
+	seed, _ := compact.Seed(1, 0)
+	payload, _ := compact.appendSubtree(subtreeRecord{
+		symbol: 1, terminal: true, endByte: 1, fragile: true,
+	}, nil, nil, nil)
+	key := compact.boundaryKey(2, 1)
+	input := linkInput{prev: seed.Node, payload: payload}
+	var outcome condenseOutcome
+	err := compact.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		retired, err := compact.condense(key, input)
+		if err != nil {
+			return err
+		}
+		if err := compact.RecordHeadOwnerOwned(owner, retired, 7); err != nil {
+			return err
+		}
+		compact.reductionSourceOwner = 7
+		defer func() { compact.reductionSourceOwner = 0 }()
+		return compact.runLiveCondenseCandidates(nil, func() error {
+			outcome, err = compact.condenseWithOutcome(key, input)
+			return err
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !outcome.historicalBoundarySplit || !outcome.historicalForestDeterministic {
+		t.Fatalf("source-self historical provenance = %+v, want deterministic", outcome)
+	}
+	if outcome.historicalConvergedSplit {
+		t.Fatal("source-self historical replacement invented convergence")
+	}
+}
+
+func TestLiveCondenseCandidatesMergesActiveHead(t *testing.T) {
+	compact := newTinyCoreWithLimits(t, Limits{MaxLinksPerBoundary: 2})
+	compact.diagnostics.foldSamePredecessorShallowPayloads = false
+	seed, _ := compact.Seed(1, 0)
+	payload, _ := compact.appendSubtree(subtreeRecord{symbol: 1, terminal: true, endByte: 1}, nil, nil, nil)
+	key := compact.boundaryKey(2, 1)
+	var active, merged Head
+	err := compact.ApplySchedulerAtomic(func(_ SchedulerTransactionToken) error {
+		var err error
+		active, err = compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 1})
+		if err != nil {
+			return err
+		}
+		candidates := []CondenseCandidate{{Head: active}}
+		return compact.runLiveCondenseCandidates(candidates, func() error {
+			merged, err = compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 2})
+			return err
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := compact.node(merged.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.linkCount != 2 {
+		t.Fatalf("merged active candidate links = %d, want 2", record.linkCount)
+	}
+}
+
+func TestLiveCondenseCandidatesPreservesSameDispatchMergeOrder(t *testing.T) {
+	compact := newTinyCoreWithLimits(t, Limits{MaxLinksPerBoundary: 2})
+	compact.diagnostics.foldSamePredecessorShallowPayloads = false
+	seed, _ := compact.Seed(1, 0)
+	payload, _ := compact.appendSubtree(subtreeRecord{symbol: 1, terminal: true, endByte: 1}, nil, nil, nil)
+	key := compact.boundaryKey(2, 1)
+	var head Head
+	err := compact.ApplySchedulerAtomic(func(_ SchedulerTransactionToken) error {
+		return compact.runLiveCondenseCandidates(nil, func() error {
+			if _, err := compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 1}); err != nil {
+				return err
+			}
+			var err error
+			head, err = compact.condense(key, linkInput{prev: seed.Node, payload: payload, scoreDelta: 2})
+			return err
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := compact.node(head.Node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inline [inlineAdjacencyCapacity]linkRecord
+	links, err := compact.publishedNodeLinksInto(inline[:0], *record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 2 || links[0].scoreDelta != 1 || links[1].scoreDelta != 2 {
+		t.Fatalf("same-dispatch link order = %+v, want score deltas [1 2]", links)
+	}
+}
+
 func TestExtraShiftWithZeroTargetRetainsCurrentState(t *testing.T) {
 	tables := &fakeTable{
 		actions: map[tableCell][]Action{
@@ -2329,9 +2658,11 @@ func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
 		t.Fatalf("ClassifiedBoundary size = %d, want <= 56", got)
 	}
 	for name, typ := range map[string]reflect.Type{
-		"node":    reflect.TypeFor[nodeRecord](),
-		"link":    reflect.TypeFor[linkRecord](),
-		"subtree": reflect.TypeFor[subtreeRecord](),
+		"node":                reflect.TypeFor[nodeRecord](),
+		"node-lineage":        reflect.TypeFor[nodeLineageRecord](),
+		"link":                reflect.TypeFor[linkRecord](),
+		"subtree":             reflect.TypeFor[subtreeRecord](),
+		"external-provenance": reflect.TypeFor[externalPayloadProvenance](),
 	} {
 		for i := 0; i < typ.NumField(); i++ {
 			kind := typ.Field(i).Type.Kind()
@@ -2340,14 +2671,49 @@ func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
 			}
 		}
 	}
-	if got := unsafe.Sizeof(nodeRecord{}); got > 32 {
-		t.Fatalf("nodeRecord size = %d, want <= 32", got)
+	if got := unsafe.Sizeof(nodeRecord{}); got != 24 {
+		t.Fatalf("nodeRecord size = %d, want 24", got)
 	}
-	if got := unsafe.Sizeof(linkRecord{}); got > 32 {
-		t.Fatalf("linkRecord size = %d, want <= 32", got)
+	// spec.b4b-alternative-set.v1 section 3.2: nodeLineageRecord grew from 8
+	// bytes to the transition size of 24 (owner uint32 + AlternativeSet's 16
+	// bytes + the still-present transition scalars lineage/rank/converged).
+	// spec.b4b-alternative-set.v2 section 3.2 widened AlternativeSet's inline
+	// members to uint32 (16 -> 24 bytes padded, +8) and added the blended
+	// bool (+1, padded): 24 -> 36. The b4b-width-repair audit (2026-08) then
+	// lowered AlternativeSet's inline capacity from 4 to 2 members (still
+	// uint32-packed (event, branch); the canonical-fixture census shows
+	// 99.8% of elections already spill past 4 members by election time, so
+	// the threshold was not load-bearing) to restore the 16-byte set: 36 ->
+	// 28, 4 bytes over the pre-v2 24 for the still-present blended bool.
+	// Stage 3 deletes the transition scalars for a smaller final record. The
+	// grown field (AlternativeSet) stays pointer-free, checked above.
+	if got := unsafe.Sizeof(nodeLineageRecord{}); got != 28 {
+		t.Fatalf("nodeLineageRecord size = %d, want 28", got)
+	}
+	if got := unsafe.Sizeof(linkRecord{}); got != 32 {
+		t.Fatalf("linkRecord size = %d, want 32", got)
+	}
+	// spec.b4b-alternative-set.v1 section 4: ReductionOutput grew from 12
+	// bytes to 28 with the added HistoricalAlternativeSet field (dead-node
+	// historical import). spec.b4b-alternative-set.v2 section 3.2 widened
+	// AlternativeSet's inline members to uint32 (+8) and added
+	// HistoricalBlended (+1, padded): 28 -> 40. The b4b-width-repair audit
+	// (2026-08) lowered AlternativeSet's inline capacity to 2 (see
+	// nodeLineageRecord's comment above) and reordered fields (Head and
+	// HistoricalAlternativeSet first, both 4-byte aligned) to fold
+	// HistoricalBlended into existing padding: 40 -> 28, exactly the pre-v2
+	// size despite the extra field. Stays pointer-free, checked above.
+	if got := unsafe.Sizeof(ReductionOutput{}); got != 28 {
+		t.Fatalf("ReductionOutput size = %d, want 28", got)
+	}
+	if got := unsafe.Sizeof(popPath{}); got != 88 {
+		t.Fatalf("popPath size = %d, want 88", got)
 	}
 	if got := unsafe.Sizeof(subtreeRecord{}); got != 44 {
 		t.Fatalf("subtreeRecord size = %d, want 44", got)
+	}
+	if got := unsafe.Sizeof(externalPayloadProvenance{}); got != 12 {
+		t.Fatalf("externalPayloadProvenance size = %d, want 12", got)
 	}
 }
 

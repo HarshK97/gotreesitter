@@ -4,7 +4,6 @@ func normalizeDartCompatibility(root *Node, source []byte, lang *Language) {
 	normalizeDartConstructorSignatureKinds(root, source, lang)
 	normalizeDartSingleTypeArgumentFreeCalls(root, lang)
 	normalizeDartComplexTypeArgumentRelationalFreeCalls(root, lang)
-	normalizeDartSwitchExpressionBodyFields(root, lang)
 	normalizeDartNestedComplexTypeArgumentRelationalCalls(root, lang)
 	normalizeDartComplexTypeArgumentFreeCalls(root, source, lang)
 }
@@ -591,40 +590,6 @@ func dartConstructorCandidateSignature(member *Node, lang *Language) *Node {
 	return nil
 }
 
-func normalizeDartSwitchExpressionBodyFields(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "dart" {
-		return
-	}
-	bodyID, ok := lang.FieldByName("body")
-	if !ok {
-		return
-	}
-	walkResultTree(root, func(n *Node) {
-		if n.Type(lang) == "switch_expression" && len(n.children) > 0 {
-			ensureNodeFieldStorage(n, len(n.children))
-			fieldIDs := n.fieldIDs()
-			fieldSources := n.fieldSources()
-			start := -1
-			for i := 0; i < len(n.children); i++ {
-				if fieldIDs[i] == bodyID {
-					start = i
-					break
-				}
-			}
-			if start >= 0 {
-				for i := start; i < len(n.children); i++ {
-					if n.children[i] == nil {
-						continue
-					}
-					fieldIDs[i] = bodyID
-					if len(fieldSources) == len(n.children) {
-						fieldSources[i] = fieldSourceDirect
-					}
-				}
-			}
-		}
-	})
-}
 func rewriteDartSingleTypeArgumentFreeCall(parent *Node, idx int, lang *Language, relExprSym Symbol, relExprNamed bool, relOpSym Symbol, relOpNamed bool, parenSym Symbol, parenNamed bool) bool {
 	if parent == nil || idx < 0 || idx+1 >= len(parent.children) || lang == nil {
 		return false

@@ -68,6 +68,29 @@ func (imp *jsImporter) nodeType(n *gotreesitter.Node) string {
 	return n.Type(imp.lang)
 }
 
+// namedChildrenWithoutComments returns the semantic children of a JavaScript
+// list or object. Comments do not contribute to a resolved grammar.
+func (imp *jsImporter) namedChildrenWithoutComments(n *gotreesitter.Node) []*gotreesitter.Node {
+	children := make([]*gotreesitter.Node, 0, n.NamedChildCount())
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		child := n.NamedChild(i)
+		if imp.nodeType(child) != "comment" {
+			children = append(children, child)
+		}
+	}
+	return children
+}
+
+func (imp *jsImporter) firstNamedChildWithoutComments(n *gotreesitter.Node) *gotreesitter.Node {
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		child := n.NamedChild(i)
+		if imp.nodeType(child) != "comment" {
+			return child
+		}
+	}
+	return nil
+}
+
 // extract walks the AST to find module.exports = grammar({...}) and extracts
 // all grammar components.
 func (imp *jsImporter) extract(root *gotreesitter.Node) (*Grammar, error) {
@@ -84,8 +107,7 @@ func (imp *jsImporter) extract(root *gotreesitter.Node) (*Grammar, error) {
 
 	g := NewGrammar("")
 
-	for i := 0; i < int(grammarObj.NamedChildCount()); i++ {
-		child := grammarObj.NamedChild(i)
+	for _, child := range imp.namedChildrenWithoutComments(grammarObj) {
 		if imp.nodeType(child) != "pair" {
 			continue
 		}
@@ -146,8 +168,7 @@ func (imp *jsImporter) extractNamedPrecs(grammarObj *gotreesitter.Node) map[stri
 	}
 
 	var levels [][]string
-	for i := 0; i < int(grammarObj.NamedChildCount()); i++ {
-		child := grammarObj.NamedChild(i)
+	for _, child := range imp.namedChildrenWithoutComments(grammarObj) {
 		if imp.nodeType(child) != "pair" || imp.getPairKey(child) != "precedences" {
 			continue
 		}
@@ -159,14 +180,12 @@ func (imp *jsImporter) extractNamedPrecs(grammarObj *gotreesitter.Node) map[stri
 		if body == nil || imp.nodeType(body) != "array" {
 			return nil
 		}
-		for j := 0; j < int(body.NamedChildCount()); j++ {
-			group := body.NamedChild(j)
+		for _, group := range imp.namedChildrenWithoutComments(body) {
 			if imp.nodeType(group) != "array" {
 				continue
 			}
 			var level []string
-			for k := 0; k < int(group.NamedChildCount()); k++ {
-				entry := group.NamedChild(k)
+			for _, entry := range imp.namedChildrenWithoutComments(group) {
 				switch imp.nodeType(entry) {
 				case "string":
 					level = append(level, imp.extractStringValue(entry))
@@ -215,8 +234,11 @@ func (imp *jsImporter) findGrammarCall(root *gotreesitter.Node) (*gotreesitter.N
 			fn := n.ChildByFieldName("function", imp.lang)
 			if fn != nil && imp.nodeText(fn) == "grammar" {
 				args := n.ChildByFieldName("arguments", imp.lang)
-				if args != nil && int(args.NamedChildCount()) > 0 {
-					firstArg := args.NamedChild(0)
+				if args != nil {
+					firstArg := imp.firstNamedChildWithoutComments(args)
+					if firstArg == nil {
+						return
+					}
 					if imp.nodeType(firstArg) == "object" {
 						result = firstArg
 						return
@@ -271,8 +293,7 @@ func (imp *jsImporter) extractRules(rulesObj *gotreesitter.Node, g *Grammar) err
 		return fmt.Errorf("expected object for rules, got %s", imp.nodeType(rulesObj))
 	}
 
-	for i := 0; i < int(rulesObj.NamedChildCount()); i++ {
-		child := rulesObj.NamedChild(i)
+	for _, child := range imp.namedChildrenWithoutComments(rulesObj) {
 		if imp.nodeType(child) == "method_definition" {
 			name := imp.getMethodName(child)
 			body := imp.getMethodBody(child)
@@ -325,12 +346,9 @@ func (imp *jsImporter) getMethodBody(n *gotreesitter.Node) *gotreesitter.Node {
 		return nil
 	}
 	if imp.nodeType(body) == "statement_block" {
-		for i := 0; i < int(body.NamedChildCount()); i++ {
-			child := body.NamedChild(i)
+		for _, child := range imp.namedChildrenWithoutComments(body) {
 			if imp.nodeType(child) == "return_statement" {
-				if int(child.NamedChildCount()) > 0 {
-					return child.NamedChild(0)
-				}
+				return imp.firstNamedChildWithoutComments(child)
 			}
 		}
 	}
@@ -408,8 +426,8 @@ func (imp *jsImporter) convertRuleExpr(n *gotreesitter.Node) (*Rule, error) {
 		return Pat(inner), nil
 
 	case "parenthesized_expression":
-		if int(n.NamedChildCount()) > 0 {
-			return imp.convertRuleExpr(n.NamedChild(0))
+		if child := imp.firstNamedChildWithoutComments(n); child != nil {
+			return imp.convertRuleExpr(child)
 		}
 		return nil, fmt.Errorf("empty parenthesized expression")
 
@@ -439,14 +457,7 @@ func (imp *jsImporter) convertCallExpr(n *gotreesitter.Node) (*Rule, error) {
 	}
 
 	// Collect arguments, skipping comments.
-	var argNodes []*gotreesitter.Node
-	for i := 0; i < int(args.NamedChildCount()); i++ {
-		child := args.NamedChild(i)
-		if imp.nodeType(child) == "comment" {
-			continue
-		}
-		argNodes = append(argNodes, child)
-	}
+	argNodes := imp.namedChildrenWithoutComments(args)
 
 	switch fnText {
 	case "seq":
@@ -759,8 +770,7 @@ func (imp *jsImporter) extractRuleArray(n *gotreesitter.Node) ([]*Rule, error) {
 	}
 
 	var rules []*Rule
-	for i := 0; i < int(body.NamedChildCount()); i++ {
-		child := body.NamedChild(i)
+	for _, child := range imp.namedChildrenWithoutComments(body) {
 		r, err := imp.convertRuleExpr(child)
 		if err != nil {
 			return nil, err
@@ -782,14 +792,12 @@ func (imp *jsImporter) extractConflicts(n *gotreesitter.Node) ([][]string, error
 	}
 
 	var conflicts [][]string
-	for i := 0; i < int(body.NamedChildCount()); i++ {
-		group := body.NamedChild(i)
+	for _, group := range imp.namedChildrenWithoutComments(body) {
 		if imp.nodeType(group) != "array" {
 			continue
 		}
 		var names []string
-		for j := 0; j < int(group.NamedChildCount()); j++ {
-			elem := group.NamedChild(j)
+		for _, elem := range imp.namedChildrenWithoutComments(group) {
 			if imp.nodeType(elem) == "member_expression" {
 				names = append(names, imp.extractMemberProp(elem))
 			}
@@ -818,8 +826,7 @@ func (imp *jsImporter) extractStringArray(n *gotreesitter.Node) []string {
 	}
 
 	var result []string
-	for i := 0; i < int(body.NamedChildCount()); i++ {
-		child := body.NamedChild(i)
+	for _, child := range imp.namedChildrenWithoutComments(body) {
 		if imp.nodeType(child) == "string" {
 			result = append(result, imp.extractStringValue(child))
 		} else if imp.nodeType(child) == "member_expression" {
@@ -914,30 +921,27 @@ func truncate(s string, n int) string {
 // that are objects mapping string keys to integers (like PREC = {control: 1, ...}).
 func (imp *jsImporter) collectTopLevelConsts(root *gotreesitter.Node) {
 	imp.topLevelConsts = make(map[string]map[string]int)
-	for i := 0; i < int(root.NamedChildCount()); i++ {
-		child := root.NamedChild(i)
+	for _, child := range imp.namedChildrenWithoutComments(root) {
 		if imp.nodeType(child) != "lexical_declaration" {
 			continue
 		}
 		// Look for: const NAME = { key: val, ... }
-		for j := 0; j < int(child.NamedChildCount()); j++ {
-			decl := child.NamedChild(j)
+		for _, decl := range imp.namedChildrenWithoutComments(child) {
 			if imp.nodeType(decl) != "variable_declarator" {
 				continue
 			}
-			nc := int(decl.NamedChildCount())
-			if nc < 2 {
+			declChildren := imp.namedChildrenWithoutComments(decl)
+			if len(declChildren) < 2 {
 				continue
 			}
-			nameNode := decl.NamedChild(0)
-			valueNode := decl.NamedChild(nc - 1)
+			nameNode := declChildren[0]
+			valueNode := declChildren[len(declChildren)-1]
 			if imp.nodeType(valueNode) != "object" {
 				continue
 			}
 			constName := imp.nodeText(nameNode)
 			vals := make(map[string]int)
-			for k := 0; k < int(valueNode.NamedChildCount()); k++ {
-				pair := valueNode.NamedChild(k)
+			for _, pair := range imp.namedChildrenWithoutComments(valueNode) {
 				if imp.nodeType(pair) != "pair" {
 					continue
 				}
@@ -965,8 +969,7 @@ func (imp *jsImporter) collectTopLevelConsts(root *gotreesitter.Node) {
 // (like commaSep, commaSep1, sep, sep1) and stores them for inlining.
 func (imp *jsImporter) collectHelperFunctions(root *gotreesitter.Node) {
 	imp.helperFuncs = make(map[string]*gotreesitter.Node)
-	for i := 0; i < int(root.NamedChildCount()); i++ {
-		child := root.NamedChild(i)
+	for _, child := range imp.namedChildrenWithoutComments(root) {
 		if imp.nodeType(child) == "function_declaration" {
 			name := child.ChildByFieldName("name", imp.lang)
 			if name != nil {
@@ -1023,8 +1026,7 @@ func (imp *jsImporter) getHelperParams(funcNode *gotreesitter.Node) []string {
 		return nil
 	}
 	var names []string
-	for i := 0; i < int(params.NamedChildCount()); i++ {
-		child := params.NamedChild(i)
+	for _, child := range imp.namedChildrenWithoutComments(params) {
 		names = append(names, imp.nodeText(child))
 	}
 	return names
@@ -1042,12 +1044,9 @@ func (imp *jsImporter) getHelperBody(funcNode *gotreesitter.Node) *gotreesitter.
 // findReturnExpr searches a statement_block for a return statement and returns
 // the returned expression node.
 func (imp *jsImporter) findReturnExpr(block *gotreesitter.Node) *gotreesitter.Node {
-	for i := 0; i < int(block.NamedChildCount()); i++ {
-		child := block.NamedChild(i)
+	for _, child := range imp.namedChildrenWithoutComments(block) {
 		if imp.nodeType(child) == "return_statement" {
-			if int(child.NamedChildCount()) > 0 {
-				return child.NamedChild(0)
-			}
+			return imp.firstNamedChildWithoutComments(child)
 		}
 	}
 	return nil
@@ -1057,20 +1056,18 @@ func (imp *jsImporter) findReturnExpr(block *gotreesitter.Node) *gotreesitter.No
 // and stores them in imp.localConsts for variable resolution during conversion.
 func (imp *jsImporter) collectLocalConsts(block *gotreesitter.Node) {
 	imp.localConsts = make(map[string]*gotreesitter.Node)
-	for i := 0; i < int(block.NamedChildCount()); i++ {
-		child := block.NamedChild(i)
+	for _, child := range imp.namedChildrenWithoutComments(block) {
 		typ := imp.nodeType(child)
 		if typ == "lexical_declaration" || typ == "variable_declaration" {
-			for j := 0; j < int(child.NamedChildCount()); j++ {
-				decl := child.NamedChild(j)
+			for _, decl := range imp.namedChildrenWithoutComments(child) {
 				if imp.nodeType(decl) == "variable_declarator" {
 					// Use positional access: first named child is the name,
 					// second named child is the init value.
 					// (ChildByFieldName doesn't work for all grammar blobs.)
-					nc := int(decl.NamedChildCount())
-					if nc >= 2 {
-						name := decl.NamedChild(0)
-						value := decl.NamedChild(nc - 1)
+					declChildren := imp.namedChildrenWithoutComments(decl)
+					if len(declChildren) >= 2 {
+						name := declChildren[0]
+						value := declChildren[len(declChildren)-1]
 						imp.localConsts[imp.nodeText(name)] = value
 					}
 				}

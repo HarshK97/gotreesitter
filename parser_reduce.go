@@ -871,7 +871,7 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 		if s.dead || s.accepted || s.shifted || s.cPaused || s.depth() == 0 {
 			return
 		}
-		actionIdx := p.lookupActionIndex(s.top().state, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, s.top().state, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(p.language.ParseActions) {
 			return
 		}
@@ -1972,7 +1972,7 @@ func (p *Parser) chainSingleReduceActions(source []byte, s *glrStack, tok Token,
 	for chainLen < maxInlineReduceChain {
 		currentState := s.top().state
 		currentDepth := s.depth()
-		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, currentState, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(parseActions) {
 			return false
 		}
@@ -2085,7 +2085,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedHinted(source []byte, s *glrS
 	steps := 0
 	for steps < int(hint.maxSteps) {
 		currentState := s.top().state
-		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, currentState, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(actions) {
 			if reduceChainHintTerminalMatches(hint, currentState, classifiedParseActionNoAction) {
 				if perfCountersEnabled {
@@ -2161,7 +2161,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedDefault(source []byte, s *glr
 	for chainLen < maxInlineReduceChain {
 		currentState := s.top().state
 		currentDepth := s.depth()
-		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, currentState, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(actions) {
 			return false
 		}
@@ -2214,7 +2214,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedBenchmarkOnly(source []byte, 
 	const maxInlineReduceChain = 256
 	actions := p.classifiedActions
 	for chainLen := 0; chainLen < maxInlineReduceChain; {
-		actionIdx := p.lookupActionIndex(s.top().state, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, s.top().state, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(actions) {
 			return false
 		}
@@ -2265,7 +2265,7 @@ func (p *Parser) chainSingleReduceActionsProfiled(source []byte, s *glrStack, to
 	for chainLen < maxInlineReduceChain {
 		currentState := s.top().state
 		currentDepth := s.depth()
-		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, currentState, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(parseActions) {
 			p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, currentState, classifiedParseActionNoAction, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopNoAction)
 			return false
@@ -2360,7 +2360,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedHintedProfiled(source []byte,
 	chainStart := time.Now()
 	for chainLen < int(hint.maxSteps) {
 		currentState := s.top().state
-		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, currentState, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(actions) {
 			if reduceChainHintTerminalMatches(hint, currentState, classifiedParseActionNoAction) {
 				if perfCountersEnabled {
@@ -2452,7 +2452,7 @@ func (p *Parser) chainSingleReduceActionsClassifiedProfiledDefault(source []byte
 	for chainLen < maxInlineReduceChain {
 		currentState := s.top().state
 		currentDepth := s.depth()
-		actionIdx := p.lookupActionIndex(currentState, tok.Symbol)
+		actionIdx := p.contextualActionIndex(source, currentState, tok)
 		if actionIdx == 0 || int(actionIdx) >= len(actions) {
 			p.ambiguityProfile.recordReduceChainRun(chainStartState, tok.Symbol, currentState, classifiedParseActionNoAction, chainLen, chainLen, classHits, time.Since(chainStart).Nanoseconds(), reduceChainStopNoAction)
 			return false
@@ -3004,43 +3004,105 @@ func (p *Parser) reduceForkTemporaryParentErrorCost(arena *nodeArena, parentSymb
 	return cost
 }
 
+type rawStackWalkEntry struct {
+	entry         stackEntry
+	shapeRef      rawShapeRef
+	shapeRefKnown bool
+}
+
+func rawShapeForStackWalkEntry(arena *nodeArena, item rawStackWalkEntry) (*rawShape, rawShapeRef, bool) {
+	ref := stackEntryRawShapeRef(item.entry)
+	if item.shapeRefKnown {
+		ref = item.shapeRef
+	}
+	if ref == 0 {
+		return nil, 0, false
+	}
+	shape, ok := arena.rawShapeForRef(ref)
+	return shape, ref, ok
+}
+
+func rawStackWalkChildAt(arena *nodeArena, item rawStackWalkEntry, i int) (rawStackWalkEntry, bool) {
+	if shape, parentRef, ok := rawShapeForStackWalkEntry(arena, item); ok {
+		children := arena.rawShapeChildren(shape)
+		if i < 0 || i >= len(children) {
+			return rawStackWalkEntry{}, false
+		}
+		child := children[i]
+		childRef := child.shapeRef()
+		if childRef != 0 && childRef >= parentRef {
+			// Captured child shapes always precede their parent. Treat a
+			// forward or self reference as absent instead of following a
+			// malformed cycle.
+			childRef = 0
+		}
+		entry := child.entry()
+		return rawStackWalkEntry{
+			entry:         entry,
+			shapeRef:      childRef,
+			shapeRefKnown: true,
+		}, stackEntryHasNode(entry)
+	}
+	if item.shapeRefKnown {
+		// A captured zero or invalid reference is authoritative. Do not
+		// follow a later mutable node shape through the packed entry.
+		return rawStackWalkEntry{}, false
+	}
+	if node := stackEntryNode(item.entry); node != nil {
+		child, ok := nodeChildEntryAtNoMaterialize(node, i)
+		return rawStackWalkEntry{entry: child}, ok
+	}
+	if parent := stackEntryPendingParent(item.entry); parent != nil {
+		child := parent.childEntry(arena, i)
+		return rawStackWalkEntry{entry: child}, stackEntryHasNode(child)
+	}
+	return rawStackWalkEntry{}, false
+}
+
 func (p *Parser) rawStackEntryErrorCost(arena *nodeArena, entry stackEntry) uint32 {
-	if !stackEntryHasNode(entry) {
-		return 0
-	}
-	if stackEntryNodeIsMissing(entry) && stackEntryNodeChildCount(entry) == 0 {
-		return cErrCostPerMissingTree + cErrCostPerRecovery
-	}
 	var cost uint32
-	childCount := stackEntryNodeChildCount(entry)
-	for i := 0; i < childCount; i++ {
-		child, ok := rawStackEntryChildAt(arena, entry, i)
-		if !ok {
+	pending := []rawStackWalkEntry{{entry: entry}}
+	for len(pending) > 0 {
+		last := len(pending) - 1
+		item := pending[last]
+		pending = pending[:last]
+		if !stackEntryHasNode(item.entry) {
 			continue
 		}
-		cost += p.rawStackEntryErrorCost(arena, child)
-	}
-	if stackEntryNodeSymbol(entry) == errorSymbol {
+		childCount := stackEntryNodeChildCount(item.entry)
+		if stackEntryNodeIsMissing(item.entry) && childCount == 0 {
+			cost += cErrCostPerMissingTree + cErrCostPerRecovery
+			continue
+		}
+		for i := childCount - 1; i >= 0; i-- {
+			child, ok := rawStackWalkChildAt(arena, item, i)
+			if ok {
+				pending = append(pending, child)
+			}
+		}
+		if stackEntryNodeSymbol(item.entry) != errorSymbol {
+			continue
+		}
 		for i := 0; i < childCount; i++ {
-			child, ok := rawStackEntryChildAt(arena, entry, i)
-			if !ok || stackEntryNodeIsExtra(child) {
+			child, ok := rawStackWalkChildAt(arena, item, i)
+			if !ok || stackEntryNodeIsExtra(child.entry) {
 				continue
 			}
-			if stackEntryNodeSymbol(child) == errorSymbol && stackEntryNodeChildCount(child) == 0 {
+			if stackEntryNodeSymbol(child.entry) == errorSymbol && stackEntryNodeChildCount(child.entry) == 0 {
 				continue
 			}
-			if cSymbolVisibleLang(p.language, stackEntryNodeSymbol(child)) {
+			if cSymbolVisibleLang(p.language, stackEntryNodeSymbol(child.entry)) {
 				cost += cErrCostPerSkippedTree
-			} else if count := p.rawStackEntryVisibleChildCount(arena, child); count > 0 {
+			} else if count := p.rawStackWalkVisibleChildCount(arena, child); count > 0 {
 				cost += cErrCostPerSkippedTree * uint32(count)
 			}
 		}
 		bytes := uint32(0)
 		rows := uint32(0)
-		if endByte, startByte := stackEntryNodeEndByte(entry), stackEntryNodeStartByte(entry); endByte > startByte {
+		if endByte, startByte := stackEntryNodeEndByte(item.entry), stackEntryNodeStartByte(item.entry); endByte > startByte {
 			bytes = endByte - startByte
 		}
-		if endPoint, startPoint := stackEntryNodeEndPoint(entry), stackEntryNodeStartPoint(entry); endPoint.Row > startPoint.Row {
+		if endPoint, startPoint := stackEntryNodeEndPoint(item.entry), stackEntryNodeStartPoint(item.entry); endPoint.Row > startPoint.Row {
 			rows = endPoint.Row - startPoint.Row
 		}
 		cost += cErrCostPerRecovery + cErrCostPerSkippedChar*bytes + cErrCostPerSkippedLine*rows
@@ -3049,19 +3111,29 @@ func (p *Parser) rawStackEntryErrorCost(arena *nodeArena, entry stackEntry) uint
 }
 
 func (p *Parser) rawStackEntryVisibleChildCount(arena *nodeArena, entry stackEntry) int {
-	if !stackEntryHasNode(entry) {
-		return 0
-	}
-	if cSymbolVisibleLang(p.language, stackEntryNodeSymbol(entry)) {
-		return 1
-	}
+	return p.rawStackWalkVisibleChildCount(arena, rawStackWalkEntry{entry: entry})
+}
+
+func (p *Parser) rawStackWalkVisibleChildCount(arena *nodeArena, root rawStackWalkEntry) int {
 	count := 0
-	for i, n := 0, stackEntryNodeChildCount(entry); i < n; i++ {
-		child, ok := rawStackEntryChildAt(arena, entry, i)
-		if !ok {
+	pending := []rawStackWalkEntry{root}
+	for len(pending) > 0 {
+		last := len(pending) - 1
+		item := pending[last]
+		pending = pending[:last]
+		if !stackEntryHasNode(item.entry) {
 			continue
 		}
-		count += p.rawStackEntryVisibleChildCount(arena, child)
+		if cSymbolVisibleLang(p.language, stackEntryNodeSymbol(item.entry)) {
+			count++
+			continue
+		}
+		for i := stackEntryNodeChildCount(item.entry) - 1; i >= 0; i-- {
+			child, ok := rawStackWalkChildAt(arena, item, i)
+			if ok {
+				pending = append(pending, child)
+			}
+		}
 	}
 	return count
 }
@@ -3726,7 +3798,7 @@ func (p *Parser) tryFastUnaryCollapseFromGSS(s *glrStack, act ParseAction, tok T
 }
 
 func (p *Parser) applyNoTreeReduceActionFromGSS(s *glrStack, act ParseAction, tok Token, anyReduced *bool, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, tmp []stackEntry, trackChildErrors bool) {
-	if glrFaithfulCapOneMerge && s.gss.head != nil && !gssSpanIsLinear(s.gss.head, int(act.ChildCount)) {
+	if faithfulCapOneMergeEnabled(p.mergeScratch) && s.gss.head != nil && !gssSpanIsLinear(s.gss.head, int(act.ChildCount)) {
 		s.dead = true
 		releaseReduceWindowEntries(tmpEntries, nil)
 		return
@@ -5668,7 +5740,12 @@ func spanBridgeIsParserPadding(source []byte, from, to uint32) bool {
 	if len(source) == 0 || from >= to {
 		return false
 	}
-	return bytesAreParserPadding(source, from, to)
+	// continuationEscape is 0: this is the invisible-child span-extension
+	// bridge used while building a reduced parent's span, a distinct
+	// question from the real-token-attachment gap check
+	// (realTokenAttachmentGapIsParserPadding) that the PowerShell
+	// continuation-padding fix targets. Out of that fix's verified scope.
+	return bytesAreParserPadding(source, from, to, 0)
 }
 
 func buildInvisibleSpanSymbolTables(symbolNames []string) ([]bool, []bool) {
@@ -5720,34 +5797,33 @@ const (
 	// rules as the eager path when the chain reaches a visible boundary.
 	fieldSourceDeferredDirect
 	fieldSourceDeferredInherited
-	fieldSourceDeferredInheritedLater
+	// A projected direct field keeps its hidden-parent provenance until the
+	// visible reduction resolves competing parent fields.
+	fieldSourceProjectedDirect
 )
 
-func deferredFieldSource(inherited, appearsLater bool) uint8 {
+func deferredFieldSource(inherited bool) uint8 {
 	if !inherited {
 		return fieldSourceDeferredDirect
-	}
-	if appearsLater {
-		return fieldSourceDeferredInheritedLater
 	}
 	return fieldSourceDeferredInherited
 }
 
-func decodeDeferredFieldSource(source uint8) (inherited, appearsLater, ok bool) {
+func decodeDeferredFieldSource(source uint8) (inherited, ok bool) {
 	switch source {
 	case fieldSourceDeferredDirect:
-		return false, false, true
+		return false, true
 	case fieldSourceDeferredInherited:
-		return true, false, true
-	case fieldSourceDeferredInheritedLater:
-		return true, true, true
+		return true, true
 	default:
-		return false, false, false
+		return false, false
 	}
 }
 
 func fieldSourceIsDirect(source uint8) bool {
-	return source == fieldSourceDirect || source == fieldSourceDeferredDirect
+	return source == fieldSourceDirect ||
+		source == fieldSourceDeferredDirect ||
+		source == fieldSourceProjectedDirect
 }
 
 func fieldSourceAt(fieldSources []uint8, i int) uint8 {
@@ -5779,18 +5855,6 @@ func countEligibleFieldTargets(children []*Node, fieldIDs []FieldID, start, end 
 	return count
 }
 
-func fieldIDAppearsLater(fieldIDs []FieldID, start int, fid FieldID) bool {
-	if fid == 0 || start < 0 {
-		return false
-	}
-	for i := start; i < len(fieldIDs); i++ {
-		if fieldIDs[i] == fid {
-			return true
-		}
-	}
-	return false
-}
-
 func flattenedSpanHasFieldID(fieldIDs []FieldID, start, end int, fid FieldID) bool {
 	if fid == 0 || fieldIDs == nil || start >= end {
 		return false
@@ -5801,36 +5865,6 @@ func flattenedSpanHasFieldID(fieldIDs []FieldID, start, end int, fid FieldID) bo
 		}
 	}
 	return false
-}
-
-func flattenedSpanHasAnyDirectField(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int) bool {
-	for i := start; i < end; i++ {
-		if i < len(fieldIDs) && fieldIDs[i] != 0 && fieldSourceIsDirect(fieldSourceAt(fieldSources, i)) {
-			return true
-		}
-		if i < len(children) && nodeHasAnyDirectField(children[i]) {
-			return true
-		}
-	}
-	return false
-}
-
-func flattenedSpanSingleDescendantFieldTarget(children []*Node, start, end int, fid FieldID) (int, bool) {
-	if fid == 0 {
-		return 0, false
-	}
-	target := -1
-	for i := start; i < end; i++ {
-		child := children[i]
-		if child == nil || child.isExtra() || !nodeHasDirectFieldID(child, fid) {
-			continue
-		}
-		if target >= 0 {
-			return 0, false
-		}
-		target = i
-	}
-	return target, target >= 0
 }
 
 type reduceBuildScratch struct {
@@ -5999,7 +6033,7 @@ func appendFlattenedHiddenChildrenWithFieldScratch(scratch *reduceBuildScratch, 
 		source := fieldSourceAt(fieldSources, i)
 		if direct, deferred := resolveDeferredParentField(
 			scratch.nodes, scratch.fieldIDs, scratch.fieldSources,
-			child, spanStart, spanEnd, fieldIDs[i], source,
+			spanStart, spanEnd, fieldIDs[i], source,
 		); deferred {
 			if direct {
 				scratch.recordRepeatedField(repeatEpoch, fieldIDs[i], fieldSourceDirect)
@@ -6010,7 +6044,7 @@ func appendFlattenedHiddenChildrenWithFieldScratch(scratch *reduceBuildScratch, 
 			source = fieldSourceDirect
 		}
 		applyFieldToFlattenedSpan(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, spanStart, spanEnd, fieldIDs[i], source, false)
-		if source == fieldSourceDirect {
+		if fieldSourceIsDirect(source) {
 			scratch.recordRepeatedField(repeatEpoch, fieldIDs[i], source)
 		}
 	}
@@ -6179,25 +6213,37 @@ func (p *Parser) buildReduceChildrenWithPath(entries []stackEntry, start, end, c
 	productionHasFields := p.reduceProductionHasEffectiveFields(childCount, productionID, arena)
 	if len(aliasSeq) == 0 && !productionHasFields {
 		if children, fieldIDs, fieldSources, path, ok := p.buildReduceChildrenNoAliasNoFieldsPlanned(entries, start, end, parentSymbol, symbolMeta, arena); ok {
+			if len(p.unaryWrapperFlatteningSet) != 0 {
+				children = p.flattenNativeUnaryWrapperChildren(parentSymbol, children)
+			}
 			return children, fieldIDs, fieldSources, path
 		}
 	}
 
-	rawFieldIDs, rawInherited, rawConflictedInherited := p.buildFieldIDs(childCount, productionID, arena)
+	rawFieldIDs, rawInherited, _ := p.buildFieldIDs(childCount, productionID, arena)
 	if children, fieldIDs, fieldSources, ok := p.buildReduceChildrenAllVisible(entries, start, end, childCount, aliasSeq, rawFieldIDs, rawInherited, parentVisible, symbolMeta, arena); ok {
+		if len(p.unaryWrapperFlatteningSet) != 0 {
+			children = p.flattenNativeUnaryWrapperChildren(parentSymbol, children)
+		}
 		return children, fieldIDs, fieldSources, reduceChildPathForLen(len(children), reduceChildPathAllVisible)
 	}
 
 	scratch := p.newReduceBuildScratch(rawFieldIDs)
-	p.appendReduceChildrenToScratch(scratch, entries, start, end, productionID, aliasSeq, rawFieldIDs, rawInherited, rawConflictedInherited, parentVisible, symbolMeta, arena, lang)
+	p.appendReduceChildrenToScratch(scratch, entries, start, end, aliasSeq, rawFieldIDs, rawInherited, parentVisible, symbolMeta, arena, lang)
 	if scratch.trackFields {
 		p.suppressReducedChildFields(scratch.nodes, scratch.fieldIDs, scratch.fieldSources)
+		if parentVisible {
+			normalizeProjectedDirectFieldSources(scratch.fieldSources)
+		}
 	}
 	if perfCountersEnabled {
 		perfRecordReduceScratchGeneral(len(scratch.nodes))
 	}
 	arena.recordReduceChildSliceScratchGeneral(len(scratch.nodes))
 	children, fieldIDs, fieldSources := materializeReduceChildrenFromScratch(scratch, arena)
+	if len(p.unaryWrapperFlatteningSet) != 0 {
+		children = p.flattenNativeUnaryWrapperChildren(parentSymbol, children)
+	}
 	return children, fieldIDs, fieldSources, reduceChildPathForLen(len(children), reduceChildPathScratchGeneral)
 }
 
@@ -6338,19 +6384,16 @@ type reduceChildBuildItem struct {
 	node                *Node
 	fieldID             FieldID
 	inherited           bool
-	conflictedInherited bool
-	structuralIndex     int
 	nextStructuralIndex int
 }
 
-func (p *Parser) reduceChildBuildItemForEntry(entry stackEntry, structuralChildIndex int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, rawConflictedInherited []bool, arena *nodeArena) (reduceChildBuildItem, bool) {
+func (p *Parser) reduceChildBuildItemForEntry(entry stackEntry, structuralChildIndex int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, arena *nodeArena) (reduceChildBuildItem, bool) {
 	n := stackEntryNode(entry)
 	if n == nil {
 		return reduceChildBuildItem{}, false
 	}
 	item := reduceChildBuildItem{
 		node:                n,
-		structuralIndex:     structuralChildIndex,
 		nextStructuralIndex: structuralChildIndex,
 	}
 	if n.isExtra() {
@@ -6360,9 +6403,6 @@ func (p *Parser) reduceChildBuildItemForEntry(entry stackEntry, structuralChildI
 		item.fieldID = rawFieldIDs[structuralChildIndex]
 		if structuralChildIndex < len(rawInherited) {
 			item.inherited = rawInherited[structuralChildIndex]
-		}
-		if structuralChildIndex < len(rawConflictedInherited) {
-			item.conflictedInherited = rawConflictedInherited[structuralChildIndex]
 		}
 	}
 	if structuralChildIndex < len(aliasSeq) {
@@ -6374,19 +6414,19 @@ func (p *Parser) reduceChildBuildItemForEntry(entry stackEntry, structuralChildI
 	return item, true
 }
 
-func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entries []stackEntry, start, end int, productionID uint16, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, rawConflictedInherited []bool, parentVisible bool, symbolMeta []SymbolMetadata, arena *nodeArena, lang *Language) {
+func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entries []stackEntry, start, end int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, parentVisible bool, symbolMeta []SymbolMetadata, arena *nodeArena, lang *Language) {
 	structuralChildIndex := 0
 	var pendingPaddingStart uint32
 	var pendingPaddingPoint Point
 	var pendingPaddingSource *Node
 	havePendingPadding := false
 	for i := start; i < end; i++ {
-		item, ok := p.reduceChildBuildItemForEntry(entries[i], structuralChildIndex, aliasSeq, rawFieldIDs, rawInherited, rawConflictedInherited, arena)
+		item, ok := p.reduceChildBuildItemForEntry(entries[i], structuralChildIndex, aliasSeq, rawFieldIDs, rawInherited, arena)
 		if !ok {
 			continue
 		}
 		structuralChildIndex = item.nextStructuralIndex
-		spanStart, spanEnd := p.appendReduceChildItemToScratch(scratch, item, productionID, rawFieldIDs, structuralChildIndex, parentVisible, symbolMeta, havePendingPadding, pendingPaddingStart, pendingPaddingPoint, pendingPaddingSource, arena)
+		spanStart, spanEnd := p.appendReduceChildItemToScratch(scratch, item, parentVisible, symbolMeta, havePendingPadding, pendingPaddingStart, pendingPaddingPoint, pendingPaddingSource, arena)
 		if !symbolVisibleForPending(item.node.symbol, symbolMeta) {
 			pendingPaddingStart, pendingPaddingPoint, havePendingPadding = flattenedHiddenEntryPadding(item.node, scratch.nodes, spanStart, spanEnd)
 			pendingPaddingSource = item.node
@@ -6396,7 +6436,7 @@ func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entr
 	}
 }
 
-func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, item reduceChildBuildItem, productionID uint16, rawFieldIDs []FieldID, nextStructuralChildIndex int, parentVisible bool, symbolMeta []SymbolMetadata, havePadding bool, paddingStartByte uint32, paddingStartPoint Point, paddingSource *Node, arena *nodeArena) (int, int) {
+func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, item reduceChildBuildItem, parentVisible bool, symbolMeta []SymbolMetadata, havePadding bool, paddingStartByte uint32, paddingStartPoint Point, paddingSource *Node, arena *nodeArena) (int, int) {
 	n := item.node
 	if symbolVisibleForPending(n.symbol, symbolMeta) {
 		if havePadding && flattenedHiddenSiblingPaddingTarget(n, paddingSource, symbolMeta) && paddingStartByte < n.startByte {
@@ -6419,10 +6459,7 @@ func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, ite
 				scratch.ensureFieldStorage()
 			}
 			scratch.fieldIDs[spanStart] = item.fieldID
-			scratch.fieldSources[spanStart] = deferredFieldSource(
-				item.inherited,
-				fieldIDAppearsLater(rawFieldIDs, nextStructuralChildIndex, item.fieldID),
-			)
+			scratch.fieldSources[spanStart] = deferredFieldSource(item.inherited)
 		}
 		return spanStart, len(scratch.nodes)
 	}
@@ -6434,15 +6471,6 @@ func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, ite
 		appendFlattenedHiddenChildrenToScratch(scratch, n, symbolMeta, nil)
 	}
 	if item.fieldID == 0 {
-		if !n.isExtra() && item.conflictedInherited {
-			p.projectConflictedInheritedFields(
-				scratch,
-				productionID,
-				item.structuralIndex,
-				spanStart,
-				len(scratch.nodes),
-			)
-		}
 		return spanStart, len(scratch.nodes)
 	}
 	if !scratch.trackFields {
@@ -6453,69 +6481,12 @@ func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, ite
 		scratch.nodes,
 		scratch.fieldIDs,
 		scratch.fieldSources,
-		n,
 		spanStart,
 		fieldEnd,
 		item.fieldID,
 		item.inherited,
-		fieldIDAppearsLater(rawFieldIDs, nextStructuralChildIndex, item.fieldID),
 	)
 	return spanStart, len(scratch.nodes)
-}
-
-func (p *Parser) projectConflictedInheritedFields(
-	scratch *reduceBuildScratch,
-	productionID uint16,
-	structuralChildIndex int,
-	spanStart int,
-	spanEnd int,
-) {
-	if p == nil ||
-		p.language == nil ||
-		scratch == nil ||
-		structuralChildIndex < 0 ||
-		spanStart < 0 ||
-		spanStart >= spanEnd ||
-		spanEnd > len(scratch.nodes) {
-		return
-	}
-	pid := int(productionID)
-	if pid < 0 || pid >= len(p.language.FieldMapSlices) {
-		return
-	}
-	fieldMap := p.language.FieldMapSlices[pid]
-	start := int(fieldMap[0])
-	end := start + int(fieldMap[1])
-	if start < 0 || start >= len(p.language.FieldMapEntries) {
-		return
-	}
-	if end > len(p.language.FieldMapEntries) {
-		end = len(p.language.FieldMapEntries)
-	}
-	scratch.ensureFieldStorage()
-	for _, entry := range p.language.FieldMapEntries[start:end] {
-		if int(entry.ChildIndex) != structuralChildIndex ||
-			!entry.Inherited ||
-			entry.FieldID == 0 ||
-			int(entry.FieldID) >= len(p.language.FieldNames) {
-			continue
-		}
-		fieldName := p.language.FieldNames[entry.FieldID]
-		if fieldName == "" {
-			continue
-		}
-		for index := spanStart; index < spanEnd; index++ {
-			child := scratch.nodes[index]
-			if child == nil ||
-				!child.isNamed() ||
-				scratch.fieldIDs[index] != 0 ||
-				symbolTypeName(p.language, child.symbol) != fieldName {
-				continue
-			}
-			scratch.fieldIDs[index] = entry.FieldID
-			scratch.fieldSources[index] = fieldSourceInherited
-		}
-	}
 }
 
 func (p *Parser) appendVisibleReduceChildToScratch(scratch *reduceBuildScratch, n *Node, fid FieldID, inherited bool) {
@@ -6530,35 +6501,67 @@ func (p *Parser) appendVisibleReduceChildToScratch(scratch *reduceBuildScratch, 
 	}
 }
 
-func applyParentFieldToFlattenedHiddenSpan(children []*Node, fieldIDs []FieldID, fieldSources []uint8, hiddenParent *Node, spanStart, fieldEnd int, fid FieldID, inherited, appearsLater bool) {
-	source := fieldSourceForInheritance(inherited)
-	hasField := flattenedSpanHasFieldID(fieldIDs, spanStart, fieldEnd, fid)
-	if inherited && !hasField {
-		if assignSingleDescendantInheritedField(children, fieldIDs, fieldSources, spanStart, fieldEnd, fid) {
-			normalizeMixedSourceFieldSpan(fieldIDs, fieldSources, spanStart, fieldEnd)
-			return
-		}
-		if shouldSkipInheritedParentFieldForFlattenedSpan(children, fieldIDs, fieldSources, hiddenParent, spanStart, fieldEnd, fid) {
-			return
-		}
-	}
-	if inherited && appearsLater {
+// applyParentFieldToFlattenedHiddenSpan projects one field-map entry of the
+// enclosing production onto the span [spanStart, fieldEnd). That entry sits
+// at the structural position of the hidden node that flattened into the
+// span. The function mirrors the C runtime's two-function field resolution
+// exactly (tree-sitter lib/src/node.c):
+//
+//   - ts_node__field_name_from_language (node.c:673-687) filters
+//     !field_map->inherited unconditionally: an inherited entry is never
+//     itself usable as a field name.
+//   - ts_node_field_name_for_child (node.c:689-729) resolves an inherited
+//     entry only by recursing into the referenced child's own (structural,
+//     unflattened) production and repeating the same non-inherited check
+//     one level closer to the target -- the field depends on which hidden
+//     production the child actually came through, not on the shape
+//     (child count, leaf-ness, sibling pattern) of whatever ended up there.
+//
+// Go performs that same recursion eagerly, one hidden level at a time, in
+// appendFlattenedHiddenChildrenWithFieldScratch and resolveDeferredParentField:
+// each hidden node's own field plan (built from its own production id, see
+// buildFieldPlanForProduction/fixedFieldIDsForProduction) is applied to its
+// own children as they are flattened, bottom-up, before this function ever
+// runs for an ancestor's span. So by the time this function is reached,
+// every deeper level has already applied whatever non-inherited entry it
+// owns; flattenedSpanHasFieldID (consulted inside applyFieldToFlattenedSpan
+// for the direct case, and folded into normalizeMixedSourceFieldSpan's
+// existing-assignment checks here) reports exactly what a strictly deeper,
+// non-inherited hit resolved.
+//
+// When inherited is true, this function must therefore never invent a new
+// assignment from the span's shape -- doing so (via a "single non-leaf
+// child" proxy and an "anonymous gap between direct fields" filler, neither
+// of which C has) was the fleet-wide field over-projection defect
+// (finding.production-divergence-census-2026-08-02). There is nothing left
+// to resolve at this level: either a deeper non-inherited hit already
+// claimed the field, or C itself has no field here, and Go must agree.
+func applyParentFieldToFlattenedHiddenSpan(children []*Node, fieldIDs []FieldID, fieldSources []uint8, spanStart, fieldEnd int, fid FieldID, inherited bool) {
+	if inherited {
+		normalizeMixedSourceFieldSpan(fieldIDs, fieldSources, spanStart, fieldEnd)
 		return
 	}
+	source := fieldSourceForInheritance(inherited)
 	applyFieldToFlattenedSpan(children, fieldIDs, fieldSources, spanStart, fieldEnd, fid, source, true)
 	normalizeMixedSourceFieldSpan(fieldIDs, fieldSources, spanStart, fieldEnd)
 }
 
-func resolveDeferredParentField(children []*Node, fieldIDs []FieldID, fieldSources []uint8, hiddenParent *Node, spanStart, fieldEnd int, fid FieldID, source uint8) (direct, deferred bool) {
-	inherited, appearsLater, deferred := decodeDeferredFieldSource(source)
+func resolveDeferredParentField(children []*Node, fieldIDs []FieldID, fieldSources []uint8, spanStart, fieldEnd int, fid FieldID, source uint8) (direct, deferred bool) {
+	inherited, deferred := decodeDeferredFieldSource(source)
 	if !deferred {
 		return false, false
 	}
-	applyParentFieldToFlattenedHiddenSpan(
-		children, fieldIDs, fieldSources, hiddenParent,
-		spanStart, fieldEnd, fid, inherited, appearsLater,
-	)
-	return !inherited, true
+	if !inherited {
+		applyDeferredDirectFieldToFlattenedSpan(children, fieldIDs, fieldSources, spanStart, fieldEnd, fid)
+		return true, true
+	}
+	applyParentFieldToFlattenedHiddenSpan(children, fieldIDs, fieldSources, spanStart, fieldEnd, fid, inherited)
+	return false, true
+}
+
+func applyDeferredDirectFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID) {
+	applyFieldToFlattenedSpan(children, fieldIDs, fieldSources, start, end, fid, fieldSourceProjectedDirect, true)
+	normalizeMixedSourceFieldSpan(fieldIDs, fieldSources, start, end)
 }
 
 func fieldSourceForInheritance(inherited bool) uint8 {
@@ -6566,36 +6569,6 @@ func fieldSourceForInheritance(inherited bool) uint8 {
 		return fieldSourceInherited
 	}
 	return fieldSourceDirect
-}
-
-func assignSingleDescendantInheritedField(children []*Node, fieldIDs []FieldID, fieldSources []uint8, spanStart, fieldEnd int, fid FieldID) bool {
-	target, ok := flattenedSpanSingleDescendantFieldTarget(children, spanStart, fieldEnd, fid)
-	if !ok {
-		return false
-	}
-	fieldIDs[target] = fid
-	fieldSources[target] = fieldSourceInherited
-	return true
-}
-
-func shouldSkipInheritedParentFieldForFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSources []uint8, hiddenParent *Node, spanStart, fieldEnd int, fid FieldID) bool {
-	if fieldEnd-spanStart == 1 {
-		child := children[spanStart]
-		if child == nil || nodeHasDirectFieldID(child, fid) || len(child.children) == 0 {
-			return true
-		}
-	}
-	if hiddenParent.isNamed() && countEligibleNamedFieldTargets(children, fieldIDs, spanStart, fieldEnd) > 1 {
-		return true
-	}
-	if !flattenedSpanHasAnyDirectField(children, fieldIDs, fieldSources, spanStart, fieldEnd) {
-		return false
-	}
-	if fieldEnd-spanStart != 1 {
-		return true
-	}
-	child := children[spanStart]
-	return child == nil || !nodeHasDirectFieldID(child, fid)
 }
 
 func (p *Parser) shouldSuppressVisibleDirectField(n *Node, fid FieldID) bool {
@@ -6681,7 +6654,7 @@ func appendFlattenedHiddenChildrenWithFields(dst []*Node, fieldDst []FieldID, fi
 		if fieldDst != nil && i < len(fieldIDs) && fieldIDs[i] != 0 {
 			source := fieldSourceAt(fieldSources, i)
 			if direct, deferred := resolveDeferredParentField(
-				dst, fieldDst, fieldSrcDst, child,
+				dst, fieldDst, fieldSrcDst,
 				spanStart, out, fieldIDs[i], source,
 			); deferred {
 				if direct && spanStart < out {
@@ -6699,7 +6672,7 @@ func appendFlattenedHiddenChildrenWithFields(dst []*Node, fieldDst []FieldID, fi
 				source = fieldSourceDirect
 			}
 			applyFieldToFlattenedSpan(dst, fieldDst, fieldSrcDst, spanStart, out, fieldIDs[i], source, false)
-			if source == fieldSourceDirect && spanStart < out {
+			if fieldSourceIsDirect(source) && spanStart < out {
 				if repeated == nil {
 					repeated = make(map[FieldID]hiddenFieldSpan)
 				}
@@ -6780,6 +6753,23 @@ func flattenedHiddenPaddingTarget(n, source *Node, symbolMeta []SymbolMetadata) 
 	if n.isExternalScannerToken() {
 		return false
 	}
+	if len(n.children) > 0 && !flattenedHiddenPaddingSourceReachesTarget(n, source) {
+		// n has children (the only shape a preceding hidden node's overhang
+		// can legitimately widen -- see the metadata checks below), but
+		// source's own span ends before n's begins: source cannot be the
+		// hidden node whose flattening produced n, because a real container
+		// always spans at least up to its own descendant's start. That
+		// shape means source is an already-finished, unrelated PRECEDING
+		// SIBLING (e.g. the previous element of an operator repeat), and n
+		// is an independently reduced node -- typically an aliased
+		// multi-token wrapper, e.g. python's `not in` -- whose own span was
+		// already computed correctly from its own first child. The gap
+		// between them is ordinary unclaimed inter-sibling trivia, not
+		// padding a hidden node lost; widening n backward over it would
+		// swallow the separator instead of leaving it unclaimed like any
+		// other inter-token gap.
+		return false
+	}
 	if idx := int(n.symbol); idx >= 0 && idx < len(symbolMeta) {
 		meta := symbolMeta[n.symbol]
 		if !meta.Visible || meta.Named {
@@ -6788,6 +6778,17 @@ func flattenedHiddenPaddingTarget(n, source *Node, symbolMeta []SymbolMetadata) 
 		return len(n.children) > 0
 	}
 	return !n.isNamed() && len(n.children) > 0
+}
+
+// flattenedHiddenPaddingSourceReachesTarget reports whether source's own
+// span extends at least as far as n's recorded start byte -- the shape a
+// genuine container has over a descendant it has not fully accounted for
+// yet (source.startByte <= n.startByte always holds by construction; this
+// checks the other edge). When source's span ends before n begins, source
+// cannot be n's flattening origin: it is a finished, disjoint sibling
+// instead, and any gap before n belongs to neither.
+func flattenedHiddenPaddingSourceReachesTarget(n, source *Node) bool {
+	return source != nil && source.endByte >= n.startByte
 }
 
 func flattenedHiddenSiblingPaddingTarget(n, source *Node, symbolMeta []SymbolMetadata) bool {
@@ -6816,7 +6817,7 @@ func normalizeMixedSourceFieldSpan(fieldIDs []FieldID, fieldSources []uint8, sta
 			continue
 		}
 		source := fieldSourceAt(fieldSources, i)
-		if source != fieldSourceDirect && source != fieldSourceInherited {
+		if !fieldSourceIsDirect(source) && source != fieldSourceInherited {
 			continue
 		}
 		idx := -1
@@ -6837,14 +6838,14 @@ func normalizeMixedSourceFieldSpan(fieldIDs []FieldID, fieldSources []uint8, sta
 			idx = len(spans) - 1
 		}
 		span := &spans[idx].span
-		switch source {
-		case fieldSourceDirect:
+		switch {
+		case fieldSourceIsDirect(source):
 			if !span.hasDirect {
 				span.firstDirect = i
 			}
 			span.lastDirect = i
 			span.hasDirect = true
-		case fieldSourceInherited:
+		case source == fieldSourceInherited:
 			span.hasInherited = true
 		}
 	}
@@ -6866,6 +6867,14 @@ func normalizeMixedSourceFieldSpan(fieldIDs []FieldID, fieldSources []uint8, sta
 	}
 }
 
+func normalizeProjectedDirectFieldSources(fieldSources []uint8) {
+	for i, source := range fieldSources {
+		if source == fieldSourceProjectedDirect {
+			fieldSources[i] = fieldSourceDirect
+		}
+	}
+}
+
 func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID, source uint8, preferNamed bool) {
 	if fid == 0 || fieldIDs == nil || start >= end {
 		return
@@ -6873,11 +6882,11 @@ func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSource
 	inherited := source == fieldSourceInherited
 	conflictCount, multipleKinds := flattenedSpanConflictSummary(children, fieldIDs, start, end, fid)
 	if !multipleKinds && conflictCount >= 2 {
-		assignFieldToFlattenedSpanTargets(children, fieldIDs, fieldSources, start, end, fid, source, inherited, false, false)
+		assignFieldToFlattenedSpanTargets(children, fieldIDs, fieldSources, start, end, fid, source, false, false)
 		return
 	}
 	if !multipleKinds && conflictCount == 1 && preferNamed {
-		if assignFieldToFlattenedSpanTargets(children, fieldIDs, fieldSources, start, end, fid, source, inherited, true, true) {
+		if assignFieldToFlattenedSpanTargets(children, fieldIDs, fieldSources, start, end, fid, source, true, true) {
 			return
 		}
 	}
@@ -6889,20 +6898,22 @@ func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSource
 			return
 		}
 	}
-	if source == fieldSourceDirect {
+	if fieldSourceIsDirect(source) {
 		applyDirectFieldToUnassignedFlattenedSpan(children, fieldIDs, fieldSources, start, end, fid, source, preferNamed)
 		return
 	}
 	assignFirstInheritedFieldToFlattenedSpan(children, fieldIDs, fieldSources, start, end, fid, source, preferNamed, inherited)
 }
 
-func assignFieldToFlattenedSpanTargets(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID, source uint8, inherited, requireNamed, firstOnly bool) bool {
+func assignFieldToFlattenedSpanTargets(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID, source uint8, requireNamed, firstOnly bool) bool {
 	assigned := false
 	for j := start; j < end; j++ {
 		if !flattenedFieldTargetEligible(children[j], requireNamed) {
 			continue
 		}
-		if inherited && fieldIDs[j] != 0 && fieldIDs[j] != fid && fieldSourceAt(fieldSources, j) == fieldSourceDirect {
+		existingSource := fieldSourceAt(fieldSources, j)
+		if fieldIDs[j] != 0 && fieldIDs[j] != fid &&
+			fieldAssignmentKeepsExistingDirect(source, existingSource) {
 			continue
 		}
 		assignFlattenedField(fieldIDs, fieldSources, j, fid, source)
@@ -6912,6 +6923,16 @@ func assignFieldToFlattenedSpanTargets(children []*Node, fieldIDs []FieldID, fie
 		}
 	}
 	return assigned
+}
+
+func fieldAssignmentKeepsExistingDirect(incomingSource, existingSource uint8) bool {
+	if !fieldSourceIsDirect(existingSource) {
+		return false
+	}
+	if incomingSource == fieldSourceInherited || incomingSource == fieldSourceProjectedDirect {
+		return true
+	}
+	return existingSource == fieldSourceProjectedDirect
 }
 
 func applyDirectFieldToUnassignedFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID, source uint8, preferNamed bool) {
@@ -6925,7 +6946,27 @@ func applyDirectFieldToUnassignedFlattenedSpan(children []*Node, fieldIDs []Fiel
 	case allowAnonymousSingleDirectTarget:
 		assignFirstUnassignedFlattenedField(children, fieldIDs, fieldSources, start, end, fid, source, false)
 	case namedTargets > 1:
-		assignAllUnassignedFlattenedFields(children, fieldIDs, fieldSources, start, end, fid, source, true)
+		// A direct (non-inherited) field-map entry that lands on this whole
+		// flattened span (spanning multiple targets with no field of their
+		// own yet) is C's carried fallback for the entire span, not just its
+		// named members: ts_node_field_name_for_child (node.c:689-729) sets
+		// inherited_field_name from a !inherited entry at the position it is
+		// about to descend through, and that value is the answer for every
+		// descendant reached through it -- punctuation included -- unless a
+		// deeper, more specific entry overrides it first (which
+		// flattenedSpanHasFieldID/hasField above already accounts for by the
+		// time this span is unassigned). Excluding anonymous targets here
+		// undershoots C: scala's `import foo.bar.Baz` field-maps "path"
+		// directly onto _namespace_expression's sep1(".", identifier) slot
+		// (grammar.js:232), and the resulting "." separators inside the
+		// generated repeat helper carry no field of their own, so they must
+		// inherit "path" from this level exactly like the identifiers do.
+		// The scala span is a regression-avoidance witness, not proof of a
+		// new repair: the span-shape heuristics PR #638 removed already
+		// produced "path" here. The genuine base defect this branch repairs
+		// is extends_clause under-projection, tracked separately as its own
+		// residual family.
+		assignAllUnassignedFlattenedFields(children, fieldIDs, fieldSources, start, end, fid, source, false)
 	case namedTargets == 1 && totalTargets > 1:
 		assignAllUnassignedFlattenedFields(children, fieldIDs, fieldSources, start, end, fid, source, false)
 	case namedTargets == 1:
@@ -7009,25 +7050,6 @@ func nodeHasDirectFieldID(n *Node, fid FieldID) bool {
 	}
 	for _, fieldID := range n.fieldIDs() {
 		if fieldID == fid {
-			return true
-		}
-	}
-	return false
-}
-
-func nodeHasAnyDirectField(n *Node) bool {
-	if n == nil {
-		return false
-	}
-	fieldIDs := n.fieldIDs()
-	fieldSources := n.fieldSources()
-	for i := range fieldIDs {
-		if fieldIDs[i] != 0 && fieldSourceIsDirect(fieldSourceAt(fieldSources, i)) {
-			return true
-		}
-	}
-	for _, child := range n.children {
-		if nodeHasAnyDirectField(child) {
 			return true
 		}
 	}

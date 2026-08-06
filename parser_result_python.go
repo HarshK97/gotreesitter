@@ -1061,11 +1061,6 @@ func repairPythonRootNode(root *Node, arena *nodeArena, lang *Language) *Node {
 		return root
 	}
 	if !pythonRootRepairNeedsMaterializedChildren(root, lang) {
-		if root.hasError() && pythonModuleChildrenLookCompleteNoMaterialize(root, lang) {
-			cloned := cloneNodeInArenaPreservingFinalRefsForMutation(arena, root)
-			cloned.setHasError(false)
-			return cloned
-		}
 		return root
 	}
 	rootChildren := resultChildSliceForMutation(root)
@@ -1099,11 +1094,6 @@ func repairPythonRootNode(root *Node, arena *nodeArena, lang *Language) *Node {
 	}
 
 	if !changed {
-		if root.hasError() && pythonModuleChildrenLookComplete(repaired, lang) {
-			cloned := cloneNodeInArenaPreservingFinalRefsForMutation(arena, root)
-			cloned.setHasError(false)
-			return cloned
-		}
 		return root
 	}
 
@@ -1115,9 +1105,6 @@ func repairPythonRootNode(root *Node, arena *nodeArena, lang *Language) *Node {
 	}
 	cloned.children = repaired
 	cloned.clearFieldMetadata()
-	if pythonModuleChildrenLookComplete(repaired, lang) {
-		cloned.setHasError(false)
-	}
 	return cloned
 }
 
@@ -1329,34 +1316,6 @@ func pythonStackEntryChildEntryAtNoMaterialize(arena *nodeArena, entry stackEntr
 	return stackEntry{}, false
 }
 
-func pythonModuleChildrenLookCompleteNoMaterialize(root *Node, lang *Language) bool {
-	childCount := resultChildCount(root)
-	if childCount == 0 {
-		return false
-	}
-	simpleStatements, hasSimpleStatements := symbolByName(lang, "_simple_statements")
-	seen := 0
-	for i := 0; i < childCount; i++ {
-		entry, ok := nodeChildEntryAtNoMaterialize(root, i)
-		if !ok || !stackEntryHasNode(entry) {
-			return false
-		}
-		if stackEntryNodeIsExtra(entry) {
-			continue
-		}
-		if stackEntryNodeIsNamed(entry) {
-			seen++
-			continue
-		}
-		if hasSimpleStatements && stackEntryNodeSymbol(entry) == simpleStatements {
-			seen++
-			continue
-		}
-		return false
-	}
-	return seen > 0
-}
-
 func repairPythonKeywordErrorNodes(nodes []*Node, source []byte, arena *nodeArena, lang *Language) ([]*Node, bool) {
 	if len(nodes) == 0 || lang == nil || lang.Name != "python" || len(source) == 0 {
 		return nodes, false
@@ -1393,7 +1352,21 @@ func repairPythonKeywordErrorNode(node *Node, source []byte, arena *nodeArena, l
 		return node
 	}
 	childCount := resultChildCount(node)
-	if node.Type(lang) == "ERROR" && childCount == 0 {
+	// Exclude a childless ERROR leaf that is already EXTRA: relabeling it as
+	// the matched keyword symbol would silently drop the error signal, since
+	// setExtra below preserves Extra but never restores HasError on the
+	// replacement leaf. This case is not unique to one call site --
+	// materializeSkippedGapAsExtraError (parser.go, a lexer-skipped gap that
+	// happens to spell an anonymous symbol's name) is one source, and
+	// tryRecoverPreviousShiftAsError (parser.go, a previously-shifted token
+	// reclassified as an EXTRA error during recovery) is a pre-existing one;
+	// there may be others. Measured on origin/main: the pre-existing sources
+	// already reach this childless-EXTRA-ERROR shape without ever matching
+	// pythonKeywordLeafSymbol, so this exclusion changes no tree at those
+	// sites -- it only changes outcomes for the new source. Non-extra
+	// childless ERROR leaves (the case this repair exists for) are
+	// unaffected regardless of source.
+	if node.Type(lang) == "ERROR" && childCount == 0 && !node.isExtra() {
 		if keyword, ok := pythonKeywordLeafSymbol(node, source, lang); ok {
 			named := symbolIsNamed(lang, keyword)
 			repl := newLeafNodeInArena(arena, keyword, named, node.startByte, node.endByte, node.startPoint, node.endPoint)
@@ -2190,27 +2163,4 @@ func pythonSyntheticIfFieldIDs(arena *nodeArena, childCount int, lang *Language)
 		fieldIDs[3] = fid
 	}
 	return fieldIDs
-}
-
-func pythonModuleChildrenLookComplete(nodes []*Node, lang *Language) bool {
-	if len(nodes) == 0 {
-		return false
-	}
-	seen := 0
-	for _, n := range nodes {
-		if n == nil || n.isExtra() {
-			continue
-		}
-		if n.IsNamed() {
-			seen++
-			continue
-		}
-		switch n.Type(lang) {
-		case "_simple_statements":
-			seen++
-		default:
-			return false
-		}
-	}
-	return seen > 0
 }

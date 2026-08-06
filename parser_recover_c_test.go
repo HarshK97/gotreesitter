@@ -167,6 +167,52 @@ func TestCRecoveryCostCompetitionDisabledInNoTreeModes(t *testing.T) {
 	}
 }
 
+func TestCAbsorbErrorRunKeepsErrorLeafNamed(t *testing.T) {
+	parser := cRecoveryElectionTestParser()
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	openErr := newParentNodeInArena(arena, errorSymbol, true, nil, nil, 0)
+	cSetNodeSpan(openErr, 10, 10, Point{Column: 10}, Point{Column: 10})
+	openErr.setHasError(true)
+	stack := newGLRStack(1)
+	stack.pushEntry(newStackEntryNode(cErrorState, openErr), nil, nil)
+	stack.byteOffset = 10
+	stack.cRec = &cRecoverState{group: &cRecGroup{}, openErr: openErr}
+	nodeCount := 0
+
+	parser.cAbsorbTokenIntoError(
+		&stack,
+		Token{
+			Symbol:    errorSymbol,
+			StartByte: 10,
+			EndByte:   18,
+			StartPoint: Point{
+				Column: 10,
+			},
+			EndPoint: Point{
+				Column: 18,
+			},
+		},
+		&nodeCount,
+		arena,
+		nil,
+		nil,
+		nil,
+	)
+
+	if got, want := openErr.ChildCount(), 1; got != want {
+		t.Fatalf("open error ChildCount = %d, want %d", got, want)
+	}
+	child := openErr.Child(0)
+	if !child.IsError() {
+		t.Fatalf("absorbed child type = %q, want ERROR", child.Type(parser.language))
+	}
+	if !child.IsNamed() {
+		t.Fatal("absorbed ERROR leaf is not named")
+	}
+}
+
 func TestCRecoverDispatchInErrorAdvancesZeroWidthSkippedToken(t *testing.T) {
 	parser := cRecoveryElectionTestParser()
 	arena := acquireNodeArena(arenaClassFull)
@@ -1144,6 +1190,55 @@ func newCRecoverySyntheticReduceParser() *Parser {
 		},
 	}
 	return &Parser{language: lang, denseLimit: len(lang.ParseTable)}
+}
+
+func TestCRecoveryReductionPreservesTransientParentState(t *testing.T) {
+	parser := newCRecoverySyntheticReduceParser()
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+
+	var scratch parserScratch
+	scratch.reduce.transientParents = &scratch.transientParents
+	parser.reduceScratch = &scratch.reduce
+	defer func() {
+		parser.reduceScratch = nil
+	}()
+
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	transient := scratch.transientParents.allocParent(
+		arena,
+		1,
+		true,
+		[]*Node{leaf},
+		0,
+		true,
+	)
+	right := newLeafNodeInArena(arena, 2, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	start := newGLRStack(1)
+	start.pushEntry(newStackEntryNode(2, transient), &scratch.entries, &scratch.gss)
+	start.pushEntry(newStackEntryNode(3, right), &scratch.entries, &scratch.gss)
+
+	nodeCount := 0
+	candidates, reason := parser.cReductionCandidatesForAction(
+		nil,
+		start,
+		ParseAction{Type: ParseActionReduce, Symbol: 4, ChildCount: 2},
+		Token{},
+		&nodeCount,
+		arena,
+		&scratch.entries,
+		&scratch.gss,
+		nil,
+	)
+	if reason != ParseStopNone {
+		t.Fatalf("recovery reduction stop reason = %v, want none", reason)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("recovery reduction candidates = %d, want 1", len(candidates))
+	}
+	if transient.parent != nil {
+		t.Fatal("recovery reduction replaced transient parent state")
+	}
 }
 
 // TestCDoAllPotentialReductionsKeepsShiftableOriginalWithReductionFork pins

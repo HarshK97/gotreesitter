@@ -18,11 +18,8 @@ type resultCompatibilityContext struct {
 }
 
 type resultCompatibilityResult struct {
-	stopReason                     ParseStopReason
-	iniMypyEnableErrorContinuation bool
-	iniContinuationStart           uint32
-	iniContinuationEnd             uint32
-	errorSummary                   resultErrorSummary
+	stopReason   ParseStopReason
+	errorSummary resultErrorSummary
 }
 
 // normalizeResultCompatibility applies narrow post-build tree rewrites that
@@ -69,7 +66,7 @@ func applyResultCompatibility(
 	result := runLanguageResultCompatibility(ctx)
 	// resultMaterializationShouldStop (not parseStopReasonIsActive) here: Go's
 	// normalizer (the only one that can produce it — see
-	// normalizeGoReturnedTreeCompatibility) may now report ParseStopMemoryBudget,
+	// normalizeGoReturnedTreeCompatibilityWithCensus) may now report ParseStopMemoryBudget,
 	// which parseStopReasonIsActive deliberately excludes (many callers rely on
 	// its narrower Timeout/Cancelled-only semantics). Without this, a
 	// budget-stopped Go result would still fall through into the read-only
@@ -113,37 +110,38 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 
 	switch ctx.lang.Name {
 	case "ada":
-		dispatcherArmCensus(ctx, "dispatch.ada", func() { normalizeAdaCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "angular":
-		dispatcherArmCensus(ctx, "dispatch.angular", func() { normalizeAngularCompatibility(ctx.root, ctx.source, ctx.lang) })
+		dispatcherArmSubpassCensus(ctx, "dispatch.ada", func(census materializationSubpassCensus) {
+			normalizeAdaCompatibilityWithCensus(ctx.root, ctx.source, ctx.lang, census)
+		})
 	case "apex":
-		dispatcherArmCensus(ctx, "dispatch.apex", func() { normalizeApexCompatibility(ctx.root, ctx.source, ctx.lang) })
+		dispatcherArmSubpassCensus(ctx, "dispatch.apex", func(census materializationSubpassCensus) {
+			census.run("dispatch.apex.class-literal-alias", func() {
+				normalizeApexClassLiteralAccess(ctx.root, ctx.source, ctx.lang)
+			})
+		})
 	case "authzed":
 		dispatcherArmCensus(ctx, "dispatch.authzed", func() { normalizeAuthzedCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "awk":
 		dispatcherArmCensus(ctx, "dispatch.awk", func() { normalizeAwkCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "bibtex":
-		dispatcherArmCensus(ctx, "dispatch.bibtex", func() { normalizeBibtexCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "bash":
-		dispatcherArmCensus(ctx, "dispatch.bash", func() {
-			normalizeBashProgramVariableAssignments(ctx.root, ctx.lang)
-			normalizeBashGeneratedCommandAssignments(ctx.root, ctx.source, ctx.lang)
-			normalizeBashCommandNameArguments(ctx.root, ctx.lang)
+		dispatcherArmSubpassCensus(ctx, "dispatch.bash", func(census materializationSubpassCensus) {
+			normalizeBashProgramVariableAssignmentsWithCensus(ctx.root, ctx.lang, census)
+			census.run("dispatch.bash.generated-command-assignment", func() {
+				normalizeBashGeneratedCommandAssignments(ctx.root, ctx.source, ctx.lang)
+			})
 		})
 	case "bitbake":
 		dispatcherArmCensus(ctx, "dispatch.bitbake", func() { normalizeBitbakeCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "chatito":
-		dispatcherArmCensus(ctx, "dispatch.chatito", func() { normalizeChatitoCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "c", "cpp":
 		dispatcherArmCensus(ctx, "dispatch.c_cpp", func() { normalizeCCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "c_sharp":
 		dispatcherArmCensus(ctx, "dispatch.c_sharp", func() { normalizeCSharpCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "cooklang":
-		dispatcherArmCensus(ctx, "dispatch.cooklang", func() { normalizeCooklangCompatibility(ctx.root, ctx.source, ctx.lang) })
+		dispatcherArmSubpassCensus(ctx, "dispatch.cooklang", func(census materializationSubpassCensus) {
+			normalizeCooklangCompatibilityWithCensus(ctx.root, ctx.source, ctx.lang, census)
+		})
 	case "corn":
 		dispatcherArmCensus(ctx, "dispatch.corn", func() { normalizeCornCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "crystal":
-		dispatcherArmCensus(ctx, "dispatch.crystal", func() { normalizeCrystalCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "dart":
 		dispatcherArmCensus(ctx, "dispatch.dart", func() { normalizeDartCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "doxygen":
@@ -156,34 +154,18 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.elixir", func() { normalizeElixirCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "enforce":
 		dispatcherArmCensus(ctx, "dispatch.enforce", func() { normalizeEnforceCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "eds":
-		dispatcherArmCensus(ctx, "dispatch.eds", func() { normalizeEDSCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "fsharp":
-		dispatcherArmCensus(ctx, "dispatch.fsharp", func() { normalizeFSharpCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "forth":
-		dispatcherArmCensus(ctx, "dispatch.forth", func() { normalizeForthCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "fidl":
 		dispatcherArmCensus(ctx, "dispatch.fidl", func() { normalizeFIDLCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "go":
 		var stopReason ParseStopReason
-		dispatcherArmCensus(ctx, "dispatch.go", func() {
-			stopReason = normalizeGoReturnedTreeCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang, ctx.incrementalRanges)
+		dispatcherArmSubpassCensus(ctx, "dispatch.go", func(census materializationSubpassCensus) {
+			stopReason = normalizeGoReturnedTreeCompatibilityWithCensus(ctx.root, ctx.source, ctx.parser, ctx.lang, ctx.incrementalRanges, census)
 		})
 		return resultCompatibilityResult{stopReason: stopReason}
-	case "http":
-		dispatcherArmCensus(ctx, "dispatch.http", func() { normalizeHTTPCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "hurl":
-		dispatcherArmCensus(ctx, "dispatch.hurl", func() { normalizeHurlCompatibility(ctx.root, ctx.lang) })
 	case "hlsl":
 		dispatcherArmCensus(ctx, "dispatch.hlsl", func() { normalizeHLSLCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "hyprlang":
 		dispatcherArmCensus(ctx, "dispatch.hyprlang", func() { normalizeHyprlangCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "ini":
-		var res resultCompatibilityResult
-		dispatcherArmCensus(ctx, "dispatch.ini", func() {
-			res = normalizeIniCompatibility(ctx.root, ctx.source, ctx.lang)
-		})
-		return res
 	case "javascript":
 		var stopReason ParseStopReason
 		dispatcherArmCensus(ctx, "dispatch.javascript", func() {
@@ -195,9 +177,9 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 	case "ledger":
 		dispatcherArmCensus(ctx, "dispatch.ledger", func() { normalizeLedgerCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "kotlin":
-		dispatcherArmCensus(ctx, "dispatch.kotlin", func() { normalizeKotlinCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "luau":
-		dispatcherArmCensus(ctx, "dispatch.luau", func() { normalizeLuauCompatibility(ctx.root, ctx.source, ctx.lang) })
+		dispatcherArmSubpassCensus(ctx, "dispatch.kotlin", func(census materializationSubpassCensus) {
+			normalizeKotlinCompatibilityWithCensus(ctx.root, ctx.source, ctx.lang, census)
+		})
 	case "ninja":
 		dispatcherArmCensus(ctx, "dispatch.ninja", func() { normalizeNinjaCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "perl":
@@ -215,16 +197,10 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.ql", func() { normalizeQLCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "python":
 		dispatcherArmCensus(ctx, "dispatch.python", func() { normalizePythonCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang) })
-	case "rescript":
-		dispatcherArmCensus(ctx, "dispatch.rescript", func() { normalizeRescriptCompatibility(ctx.root, ctx.lang) })
-	case "robot":
-		dispatcherArmCensus(ctx, "dispatch.robot", func() { normalizeRobotCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "rust":
 		dispatcherArmCensus(ctx, "dispatch.rust", func() { normalizeRustCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "scala":
 		dispatcherArmCensus(ctx, "dispatch.scala", func() { normalizeScalaCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
-	case "scheme":
-		dispatcherArmCensus(ctx, "dispatch.scheme", func() { normalizeSchemeCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "solidity":
 		dispatcherArmCensus(ctx, "dispatch.solidity", func() {
 			normalizeSolidityMemberObjectWrappers(ctx.root, ctx.lang)
@@ -237,10 +213,11 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 			if ctx.parser != nil && !ctx.parser.skipRecoveryReparse {
 				normalizeSQLRecoveredTopLevelSelectStatements(ctx.root, ctx.source, ctx.parser, ctx.lang)
 			}
-			normalizeSQLSelectClauseBodyIntoFields(ctx.root, ctx.lang)
 		})
 	case "swift":
-		dispatcherArmCensus(ctx, "dispatch.swift", func() { normalizeSwiftCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
+		dispatcherArmSubpassCensus(ctx, "dispatch.swift", func(census materializationSubpassCensus) {
+			normalizeSwiftCompatibilityWithCensus(ctx.root, ctx.source, ctx.parser, ctx.lang, census)
+		})
 	case "templ":
 		dispatcherArmCensus(ctx, "dispatch.templ", func() { normalizeTemplCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "wgsl":
@@ -253,12 +230,87 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 			stopReason = normalizeTypeScriptTreeCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang)
 		})
 		return resultCompatibilityResult{stopReason: stopReason}
-	case "typst":
-		dispatcherArmCensus(ctx, "dispatch.typst", func() { normalizeTypstCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "yaml":
 		dispatcherArmCensus(ctx, "dispatch.yaml", func() { normalizeYAMLRecoveredRoot(ctx.root, ctx.source, ctx.lang) })
 	}
 	return resultCompatibilityResult{stopReason: ctx.stopReason()}
+}
+
+// nativeRecoveredStructureIsAuthoritative returns true when the selected
+// parser reduction owns a complete recovered root. Exact runtime profiles
+// certify the native structure. Use conservative repair for other roots.
+func nativeRecoveredStructureIsAuthoritative(root *Node, source []byte, p *Parser, lang *Language) bool {
+	if root == nil || p == nil || lang == nil || p.language != lang || len(source) == 0 {
+		return false
+	}
+	if lang.NativeResultCompatibility&ResultCompatibilityNativeRecoveredStructure == 0 {
+		return false
+	}
+	if len(p.included) > 0 || !p.hasRootSymbol || root.symbol != p.rootSymbol {
+		return false
+	}
+	if root.rawShape == 0 || !root.hasError() {
+		return false
+	}
+	if root.startByte > firstNonTriviaByteStart(source) ||
+		root.endByte < lastNonTriviaByteEnd(source) {
+		return false
+	}
+	return nativeRecoveredStructureHasIsolatedErrorReceipt(root)
+}
+
+// nativeRecoveredStructureHasIsolatedErrorReceipt verifies a narrow
+// recovered-root class. Raw top-level spans must agree.
+// The tree must contain one one-byte error and no missing nodes.
+func nativeRecoveredStructureHasIsolatedErrorReceipt(root *Node) bool {
+	if root == nil || root.ownerArena == nil || root.rawShape == 0 {
+		return false
+	}
+	shape, ok := root.ownerArena.rawShapeForRef(root.rawShape)
+	if !ok || shape.symbol != root.symbol || int(shape.childCount) != resultChildCount(root) {
+		return false
+	}
+	rawChildren := root.ownerArena.rawShapeChildren(shape)
+	if len(rawChildren) != resultChildCount(root) {
+		return false
+	}
+	for i := range rawChildren {
+		rawChild := stackEntryNode(rawChildren[i].entry())
+		child := resultChildAt(root, i)
+		if rawChild == nil || child == nil ||
+			rawChild.startByte != child.startByte ||
+			rawChild.endByte != child.endByte {
+			return false
+		}
+	}
+
+	explicitErrors := 0
+	valid := true
+	var walk func(*Node, int)
+	walk = func(node *Node, depth int) {
+		if node == nil || !valid || depth >= maxTreeWalkDepth {
+			valid = false
+			return
+		}
+		if node.isMissing() {
+			valid = false
+			return
+		}
+		if node.symbol == errorSymbol {
+			explicitErrors++
+			if explicitErrors > 1 ||
+				node.endByte <= node.startByte ||
+				node.endByte != node.startByte+1 {
+				valid = false
+				return
+			}
+		}
+		for i := 0; i < resultChildCount(node); i++ {
+			walk(resultChildAt(node, i), depth+1)
+		}
+	}
+	walk(root, 0)
+	return valid && explicitErrors == 1
 }
 
 // --- R2 dispatcher-arm census (docs/root-normalization-retirement.md) ---

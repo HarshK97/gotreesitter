@@ -121,6 +121,10 @@ func BenchmarkSelfParseWarmReuse(b *testing.B) {
 func TestArenaGCRetentionAfterRelease(t *testing.T) {
 	gotreesitter.DrainArenaPools()
 	t.Cleanup(gotreesitter.DrainArenaPools)
+	// Earlier tests can retain decoded grammar blobs in the package cache.
+	// Those blobs do not belong to this arena test. Purge the cache before the
+	// baseline so the limit measures this parse lifecycle.
+	grammars.PurgeEmbeddedLanguageCache()
 	src, err := os.ReadFile("parser_test.go")
 	if err != nil {
 		t.Fatalf("read parser_test.go: %v", err)

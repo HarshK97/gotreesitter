@@ -54,7 +54,7 @@ func TestCrystalAndMatlabKeepAcceptedErrorRetryLadder(t *testing.T) {
 }
 
 func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
-	// 41 = the prior 40 plus the Erlang compact profile.
+	// 42 = the prior 41 plus the F# unary-wrapper materialization profile.
 	// Bash, Haskell, and JavaScript reuse their existing exact profiles.
 	// Exact blob identity bounds each profile capability.
 	// D and Groovy's retry ceilings
@@ -68,8 +68,24 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	// retired outright, not migrated (see the "NOTE on dot" comment above
 	// the gomod entry), so it does not add a map entry. Crystal and Matlab add
 	// exact-blob external-scanner repeat suppression while retaining the full
-	// accepted-error retry ladder.
-	if got, want := len(builtinLanguageRuntimeProfiles), 41; got != want {
+	// 44 = the prior 42 plus two new A3 certification-workstream entries:
+	// Perl and Ada (spec.campaign.v7, finding
+	// tied-election-family-compact-retirement). Apex and Python add compact
+	// primary-acceptance-derivation certification (Python also adds
+	// converged-split-drop certification); Perl and Ada are new entries
+	// carrying both certifications. Kotlin's pre-existing entry stays
+	// unchanged in count (it does not add a map entry) but later adds both
+	// grants in place once selectCompactAcceptanceDerivation's materiality
+	// gate resolves the interaction that withheld them; see the "kotlin" map
+	// entry comment.
+	// 45 = the prior 44 plus the B3 stage S3 html entry, certifying native
+	// strategy-2 error-region recovery for the html_erroneous_end_tag class
+	// (spec.compact-recovery-ownership.v1).
+	// 46 = the prior 45 plus the powershell entry, declaring backtick as the
+	// language's line-continuation escape byte (Language.LineContinuationEscapeByte)
+	// so bytesAreParserPadding classifies backtick+newline as padding, matching
+	// the C oracle (spore.2026-08-02.birch-g.powershell-bisect).
+	if got, want := len(builtinLanguageRuntimeProfiles), 46; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
@@ -99,6 +115,9 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	}
 	if lang.ExactStackNodeEquivalenceCertified {
 		t.Fatal("unknown runtime profile enabled exact stack-node equivalence")
+	}
+	if lang.LineContinuationEscapeByte != 0 {
+		t.Fatalf("unknown runtime profile set a line-continuation escape byte: %q", lang.LineContinuationEscapeByte)
 	}
 }
 
@@ -150,6 +169,44 @@ func TestBuiltinCompactAcceptanceProfilesRequireExactBlobIdentity(t *testing.T) 
 				return lang.CompactPrimaryAcceptanceDerivationCertified
 			},
 		},
+		// The tied-election family (A3 certification workstream,
+		// spec.campaign.v7, finding
+		// tied-election-family-compact-retirement): full-corpus field-aware
+		// C-oracle verification certifies primary-acceptance-derivation
+		// selection for all five languages. Kotlin's grant lands under
+		// selectCompactAcceptanceDerivation's materiality gate
+		// (parsercore_phase0_driver.go, compactAcceptanceElectionIsVacuous);
+		// see the runtime_profiles.go "kotlin" entry comment.
+		{
+			name: "python", load: PythonLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactPrimaryAcceptanceDerivationCertified
+			},
+		},
+		{
+			name: "apex", load: ApexLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactPrimaryAcceptanceDerivationCertified
+			},
+		},
+		{
+			name: "perl", load: PerlLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactPrimaryAcceptanceDerivationCertified
+			},
+		},
+		{
+			name: "ada", load: AdaLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactPrimaryAcceptanceDerivationCertified
+			},
+		},
+		{
+			name: "kotlin", load: KotlinLanguage,
+			want: func(lang *gotreesitter.Language) bool {
+				return lang.CompactPrimaryAcceptanceDerivationCertified
+			},
+		},
 	}
 
 	PurgeEmbeddedLanguageCache()
@@ -191,6 +248,16 @@ func TestBuiltinCompactConvergedSplitProfilesRequireExactBlobIdentity(t *testing
 		{name: "haskell", load: HaskellLanguage},
 		{name: "javascript", load: JavascriptLanguage},
 		{name: "python", load: PythonLanguage},
+		// A3 certification workstream (spec.campaign.v7, finding
+		// tied-election-family-compact-retirement): Perl and Ada certify
+		// converged-path split-drop acceptance after full-corpus field-aware
+		// C-oracle verification. Apex does not need this certification and
+		// stays out of this table. Kotlin's grant stays withheld: review
+		// found a compact-only divergence class (an annotated extension
+		// property with a getter and a trailing comment); see the
+		// runtime_profiles.go "kotlin" entry comment.
+		{name: "perl", load: PerlLanguage},
+		{name: "ada", load: AdaLanguage},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -572,6 +639,7 @@ func TestBuiltinCompleteAcceptedErrorRetryProfilesAttach(t *testing.T) {
 			}
 			if tt.name == "c_sharp" && (profile.SkipCompleteMaxEntryScratchPeak != csharpAcceptedErrorRetryMaxEntryScratchPeak ||
 				profile.FreshErrorNoStacksRetryMaxStacks != csharpFreshErrorNoStacksRetryMaxStacks ||
+				profile.GSSConvergenceAcceptedErrorMergePerKey != csharpGSSConvergenceErrorMergePerKey ||
 				!profile.SkipInitialCompleteAcceptedErrorMergeRetry) {
 				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want bounded C# retry profile", profile)
 			}
@@ -648,6 +716,7 @@ func TestBuiltinExternalScannerRetryProfilesRequireCertifiedBlob(t *testing.T) {
 		{name: "crystal", scanner: CrystalExternalScanner{}},
 		{name: "kotlin", scanner: KotlinExternalScanner{}},
 		{name: "matlab", scanner: MatlabExternalScanner{}},
+		{name: "swift", scanner: SwiftExternalScanner{}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -684,6 +753,9 @@ func TestBuiltinCSharpRetryProfileRequiresCertifiedBlob(t *testing.T) {
 	if got := lang.FullParseAcceptedErrorRetryProfile; got != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) {
 		t.Fatalf("uncertified C# blob changed retry profile to %+v", got)
 	}
+	if lang.FullParseGSSConvergenceEnabled {
+		t.Fatal("uncertified C# blob enabled full-parse GSS convergence")
+	}
 
 	blob := BlobByName("c_sharp")
 	if len(blob) == 0 {
@@ -700,9 +772,13 @@ func TestBuiltinCSharpRetryProfileRequiresCertifiedBlob(t *testing.T) {
 		SkipCompleteMaxEntryScratchPeak:            csharpAcceptedErrorRetryMaxEntryScratchPeak,
 		FreshErrorNoStacksRetryMaxStacks:           csharpFreshErrorNoStacksRetryMaxStacks,
 		SkipInitialCompleteAcceptedErrorMergeRetry: true,
+		GSSConvergenceAcceptedErrorMergePerKey:     csharpGSSConvergenceErrorMergePerKey,
 	}
 	if got := lang.FullParseAcceptedErrorRetryProfile; got != want {
 		t.Fatalf("certified C# retry profile = %+v, want %+v", got, want)
+	}
+	if !lang.FullParseGSSConvergenceEnabled {
+		t.Fatal("certified C# blob did not enable full-parse GSS convergence")
 	}
 }
 
@@ -760,6 +836,7 @@ func TestResidualRetryProfilesRequireExactBlobIdentity(t *testing.T) {
 				SkipCompleteMaxEntryScratchPeak:            csharpAcceptedErrorRetryMaxEntryScratchPeak,
 				FreshErrorNoStacksRetryMaxStacks:           csharpFreshErrorNoStacksRetryMaxStacks,
 				SkipInitialCompleteAcceptedErrorMergeRetry: true,
+				GSSConvergenceAcceptedErrorMergePerKey:     csharpGSSConvergenceErrorMergePerKey,
 			},
 		},
 		{
@@ -806,7 +883,8 @@ func TestCSharpNativeResultCompatibilityRequiresExactBlobIdentity(t *testing.T) 
 		gotreesitter.ResultCompatibilityCSharpNativeUnicodeIdentifiers |
 		gotreesitter.ResultCompatibilityCSharpNativeScopedLambdaStatements |
 		gotreesitter.ResultCompatibilityCSharpNativeScopedLambdaBlocks |
-		gotreesitter.ResultCompatibilityCSharpNativeQueryExpressions
+		gotreesitter.ResultCompatibilityCSharpNativeQueryExpressions |
+		gotreesitter.ResultCompatibilityNativeRecoveredStructure
 
 	wrongSHA := &gotreesitter.Language{Name: "c_sharp"}
 	if attachBuiltinLanguageRuntimeProfile("c_sharp", sha256.Sum256([]byte("uncertified")), wrongSHA) {
@@ -934,5 +1012,50 @@ func TestAttachLanguageSupportDoesNotCertifyWithoutBlobIdentity(t *testing.T) {
 	AttachLanguageSupport("rego", rego)
 	if got := rego.FullParseAcceptedErrorRetryProfile; got != (gotreesitter.FullParseAcceptedErrorRetryProfile{}) {
 		t.Fatalf("AttachLanguageSupport certified Rego retry profile without blob identity: %+v", got)
+	}
+}
+
+func TestNativeUnaryWrapperFlatteningProfileCensus(t *testing.T) {
+	configuredLanguages := make(map[string]int)
+	for _, entry := range AllLanguages() {
+		profile, ok := builtinLanguageRuntimeProfiles[entry.Name]
+		if !ok || len(profile.nativeUnaryWrapperFlattening) == 0 {
+			continue
+		}
+		configuredLanguages[entry.Name] = len(profile.nativeUnaryWrapperFlattening)
+	}
+	if len(configuredLanguages) != 1 || configuredLanguages["fsharp"] != 1 {
+		t.Fatalf("native unary-wrapper profile census = %v, want fsharp:1", configuredLanguages)
+	}
+
+	language := FsharpLanguage()
+	if len(language.NativeUnaryWrapperFlattening) != 1 {
+		t.Fatalf("F# native unary-wrapper rules = %d, want 1", len(language.NativeUnaryWrapperFlattening))
+	}
+	rule := language.NativeUnaryWrapperFlattening[0]
+	for symbol, want := range map[gotreesitter.Symbol]string{
+		rule.PublicParent: "long_identifier_or_op",
+		rule.Wrapper:      "long_identifier",
+		rule.Leaf:         "identifier",
+	} {
+		if int(symbol) >= len(language.SymbolNames) || language.SymbolNames[symbol] != want {
+			t.Fatalf("F# unary-wrapper symbol %d = %q, want %q", symbol, language.SymbolNames[symbol], want)
+		}
+	}
+	if got, want := rule.WrapperPreGotoState, gotreesitter.StateID(4258); got != want {
+		t.Fatalf("F# wrapper pre-goto state = %d, want %d", got, want)
+	}
+
+	stale := &gotreesitter.Language{
+		Name:           language.Name,
+		StateCount:     language.StateCount,
+		SymbolNames:    language.SymbolNames,
+		SymbolMetadata: language.SymbolMetadata,
+	}
+	if attachBuiltinLanguageRuntimeProfile("fsharp", [32]byte{}, stale) {
+		t.Fatal("stale F# blob identity attached the unary-wrapper profile")
+	}
+	if len(stale.NativeUnaryWrapperFlattening) != 0 {
+		t.Fatalf("stale F# unary-wrapper rules = %v, want none", stale.NativeUnaryWrapperFlattening)
 	}
 }

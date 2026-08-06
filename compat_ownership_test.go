@@ -15,16 +15,22 @@ import (
 	"testing"
 )
 
-const resultCompatOwnershipRegistryPath = "testdata/result_compat_ownership_v1.json"
+const (
+	resultCompatOwnershipRegistryPath        = "testdata/result_compat_ownership_v1.json"
+	resultCompatDispatcherCensusEvidencePath = "parser_result_test/dispatcher_census_test.go"
+	resultCompatCOracleEvidencePath          = "cgo_harness/parity_cgo_test.go"
+	resultCompatBaselineEvidenceScope        = "baseline_corpus_wide_only"
+)
 
 var resultCompatRetiredCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type resultCompatOwnershipRegistry struct {
-	Schema          string                       `json:"schema"`
-	SourceOfTruth   bool                         `json:"source_of_truth"`
-	Denominator     resultCompatDenominator      `json:"denominator"`
-	OwnerCategories []string                     `json:"owner_categories"`
-	Entries         []resultCompatOwnershipEntry `json:"entries"`
+	Schema               string                           `json:"schema"`
+	SourceOfTruth        bool                             `json:"source_of_truth"`
+	Denominator          resultCompatDenominator          `json:"denominator"`
+	LiveEvidenceBaseline resultCompatLiveEvidenceBaseline `json:"live_evidence_baseline"`
+	OwnerCategories      []string                         `json:"owner_categories"`
+	Entries              []resultCompatOwnershipEntry     `json:"entries"`
 }
 
 type resultCompatDenominator struct {
@@ -34,6 +40,8 @@ type resultCompatDenominator struct {
 	GenericPasses             int `json:"generic_passes"`
 	PostFinalizationArms      int `json:"post_finalization_arms"`
 	PostFinalizationLanguages int `json:"post_finalization_languages"`
+	LiveEntries               int `json:"live_entries"`
+	RetiredEntries            int `json:"retired_entries"`
 }
 
 type resultCompatOwnershipEntry struct {
@@ -41,6 +49,7 @@ type resultCompatOwnershipEntry struct {
 	Kind                string                    `json:"kind"`
 	Functions           []string                  `json:"functions"`
 	Files               []string                  `json:"files"`
+	Subpasses           []resultCompatSubpass     `json:"subpasses,omitempty"`
 	Languages           []string                  `json:"languages"`
 	MatchPredicate      string                    `json:"match_predicate,omitempty"`
 	EntrypointCalls     []string                  `json:"entrypoint_calls,omitempty"`
@@ -51,8 +60,29 @@ type resultCompatOwnershipEntry struct {
 	RetirementCondition string                    `json:"retirement_condition"`
 	RouteCoverage       resultCompatRouteCoverage `json:"route_coverage"`
 	Status              string                    `json:"status"`
+	EvidenceScope       string                    `json:"evidence_scope,omitempty"`
 	ReceiptRefs         []string                  `json:"receipt_refs,omitempty"`
 	RetiredCommit       string                    `json:"retired_commit,omitempty"`
+}
+
+type resultCompatLiveEvidenceBaseline struct {
+	Scope       string                       `json:"scope"`
+	Sources     []resultCompatBaselineSource `json:"sources"`
+	Limitations []string                     `json:"limitations"`
+}
+
+type resultCompatBaselineSource struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+}
+
+type resultCompatSubpass struct {
+	ID                 string   `json:"id"`
+	Functions          []string `json:"functions"`
+	Files              []string `json:"files"`
+	Purpose            string   `json:"purpose"`
+	AuthoritativeOwner string   `json:"authoritative_owner"`
+	Witnesses          []string `json:"witnesses"`
 }
 
 type resultCompatSwitchArm struct {
@@ -70,6 +100,7 @@ type resultCompatRouteCoverage struct {
 
 func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 	registry := loadResultCompatOwnershipRegistry(t)
+	assertLiveOwnershipEvidenceBaseline(t, registry.LiveEvidenceBaseline)
 
 	allowedOwners := map[string]bool{
 		"scheduler_action_semantics":    true,
@@ -85,6 +116,8 @@ func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 
 	entriesByKind := make(map[string][]resultCompatOwnershipEntry)
 	seenIDs := make(map[string]bool)
+	liveEntries := 0
+	retiredEntries := 0
 	allowedKinds := map[string]bool{
 		"dispatcher_arm":       true,
 		"dispatcher_predicate": true,
@@ -114,16 +147,20 @@ func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 		assertOwnershipStatusAndRoutes(t, entry)
 		switch entry.Status {
 		case "live":
+			liveEntries++
 			if len(entry.Functions) == 0 {
 				t.Errorf("%s is live but has no functions", entry.ID)
 			}
+			assertLiveOwnershipEvidenceScope(t, entry, registry.LiveEvidenceBaseline)
 		case "retired":
+			retiredEntries++
 			if !resultCompatRetiredCommitPattern.MatchString(entry.RetiredCommit) {
 				t.Errorf("%s retired_commit = %q, want a lowercase 40-character commit hash", entry.ID, entry.RetiredCommit)
 			}
-			if len(entry.ReceiptRefs) == 0 {
-				t.Errorf("%s is retired but lacks receipt_refs", entry.ID)
+			if entry.EvidenceScope != "" {
+				t.Errorf("%s retired entry has live evidence_scope %q", entry.ID, entry.EvidenceScope)
 			}
+			assertRetiredOwnershipReceiptRefs(t, entry)
 		default:
 			t.Errorf("%s has unsupported status %q", entry.ID, entry.Status)
 		}
@@ -137,14 +174,206 @@ func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 		if entry.Status == "live" {
 			assertRegistryFunctionsExist(t, entry)
 		}
+		assertRegistrySubpasses(t, entry, allowedOwners)
 		if entry.Status != "retired" {
 			entriesByKind[entry.Kind] = append(entriesByKind[entry.Kind], entry)
 		}
+	}
+	if got, want := liveEntries, registry.Denominator.LiveEntries; got != want {
+		t.Errorf("live registry entries = %d, frozen denominator = %d", got, want)
+	}
+	if got, want := retiredEntries, registry.Denominator.RetiredEntries; got != want {
+		t.Errorf("retired registry entries = %d, frozen denominator = %d", got, want)
 	}
 
 	assertDispatcherRegistry(t, registry.Denominator, entriesByKind)
 	assertGenericPassRegistry(t, registry.Denominator, entriesByKind)
 	assertPostFinalizationRegistry(t, registry.Denominator, entriesByKind)
+}
+
+func assertRetiredOwnershipReceiptRefs(t *testing.T, entry resultCompatOwnershipEntry) {
+	t.Helper()
+	assertOwnershipEvidencePaths(t, entry.ID+" retirement receipt_refs", entry.ReceiptRefs)
+}
+
+func assertOwnershipEvidencePaths(t *testing.T, label string, paths []string) {
+	t.Helper()
+	if len(paths) == 0 {
+		t.Errorf("%s lacks evidence paths", label)
+		return
+	}
+	if ownershipHasDuplicateStrings(paths) {
+		t.Errorf("%s paths must be a duplicate-free set: %v", label, paths)
+	}
+	for _, path := range paths {
+		clean := filepath.Clean(path)
+		if filepath.IsAbs(clean) || clean == "." || clean == ".." ||
+			strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			t.Errorf("%s contains unsafe path %q", label, path)
+			continue
+		}
+		info, err := os.Stat(clean)
+		if err != nil {
+			t.Errorf("%s references missing path %q: %v", label, path, err)
+			continue
+		}
+		if info.IsDir() {
+			t.Errorf("%s path %q is a directory", label, path)
+		}
+	}
+}
+
+func assertLiveOwnershipEvidenceBaseline(t *testing.T, baseline resultCompatLiveEvidenceBaseline) {
+	t.Helper()
+	if baseline.Scope != resultCompatBaselineEvidenceScope {
+		t.Errorf("live_evidence_baseline scope = %q, want %q", baseline.Scope, resultCompatBaselineEvidenceScope)
+	}
+	wantSources := map[string]string{
+		resultCompatDispatcherCensusEvidencePath: "dispatcher_census",
+		resultCompatCOracleEvidencePath:          "c_oracle_structural_parity",
+	}
+	paths := make([]string, 0, len(baseline.Sources))
+	seen := make(map[string]bool, len(baseline.Sources))
+	for _, source := range baseline.Sources {
+		paths = append(paths, source.Path)
+		wantKind, known := wantSources[source.Path]
+		if !known {
+			t.Errorf("live_evidence_baseline has unknown source %q", source.Path)
+			continue
+		}
+		if seen[source.Path] {
+			t.Errorf("live_evidence_baseline repeats source %q", source.Path)
+		}
+		seen[source.Path] = true
+		if source.Kind != wantKind {
+			t.Errorf("live_evidence_baseline source %q kind = %q, want %q", source.Path, source.Kind, wantKind)
+		}
+	}
+	if got, want := len(baseline.Sources), len(wantSources); got != want {
+		t.Errorf("live_evidence_baseline sources = %d, want %d", got, want)
+	}
+	for path := range wantSources {
+		if !seen[path] {
+			t.Errorf("live_evidence_baseline lacks source %q", path)
+		}
+	}
+	assertOwnershipEvidencePaths(t, "live_evidence_baseline sources", paths)
+
+	wantLimitations := []string{
+		"no_compact_coverage_floor",
+		"no_exact_field_parity",
+		"no_exact_per_record_parity",
+		"no_exact_point_parity",
+		"no_forest_coverage_floor",
+		"no_incremental_coverage_floor",
+	}
+	if ownershipHasDuplicateStrings(baseline.Limitations) {
+		t.Errorf("live_evidence_baseline limitations must be a duplicate-free set: %v", baseline.Limitations)
+	}
+	if got := sortedStrings(baseline.Limitations); !equalStrings(got, wantLimitations) {
+		t.Errorf("live_evidence_baseline limitations = %v, want %v", got, wantLimitations)
+	}
+}
+
+func assertLiveOwnershipEvidenceScope(
+	t *testing.T,
+	entry resultCompatOwnershipEntry,
+	baseline resultCompatLiveEvidenceBaseline,
+) {
+	t.Helper()
+	if entry.EvidenceScope != baseline.Scope {
+		t.Errorf("%s live evidence_scope = %q, want %q", entry.ID, entry.EvidenceScope, baseline.Scope)
+	}
+	if len(entry.ReceiptRefs) != 0 {
+		t.Errorf("%s live entry declares retirement receipt_refs %v", entry.ID, entry.ReceiptRefs)
+	}
+}
+
+func assertRegistrySubpasses(
+	t *testing.T,
+	entry resultCompatOwnershipEntry,
+	allowedOwners map[string]bool,
+) {
+	t.Helper()
+	if entry.Status == "live" && entry.AuthoritativeOwner == "materialization" &&
+		len(entry.Subpasses) == 0 {
+		t.Errorf("%s must classify its materialization subpasses", entry.ID)
+	}
+	seen := make(map[string]bool)
+	for _, subpass := range entry.Subpasses {
+		if subpass.ID == "" || seen[subpass.ID] {
+			t.Errorf("%s has an empty or duplicate subpass id %q", entry.ID, subpass.ID)
+			continue
+		}
+		seen[subpass.ID] = true
+		if !strings.HasPrefix(subpass.ID, entry.ID+".") {
+			t.Errorf("%s subpass id %q must use the parent id prefix", entry.ID, subpass.ID)
+		}
+		if !allowedOwners[subpass.AuthoritativeOwner] {
+			t.Errorf(
+				"%s authoritative_owner = %q, want registered owner category",
+				subpass.ID,
+				subpass.AuthoritativeOwner,
+			)
+		}
+		if subpass.Purpose == "" || len(subpass.Functions) == 0 ||
+			len(subpass.Files) == 0 || len(subpass.Witnesses) == 0 {
+			t.Errorf(
+				"%s must declare functions, files, purpose, and witnesses",
+				subpass.ID,
+			)
+		}
+		if ownershipHasDuplicateStrings(subpass.Functions) {
+			t.Errorf("%s functions must be a duplicate-free set: %v", subpass.ID, subpass.Functions)
+		}
+		for _, path := range append(append([]string{}, subpass.Files...), subpass.Witnesses...) {
+			if _, err := os.Stat(filepath.Clean(path)); err != nil {
+				t.Errorf("%s references missing path %q: %v", subpass.ID, path, err)
+			}
+		}
+		assertRegistryFunctionsInFiles(t, subpass.ID, subpass.Functions, subpass.Files)
+		sourceFiles := append([]string{"parser_result_compat.go"}, entry.Files...)
+		if !ownershipSubpassCensusIDExists(t, sourceFiles, subpass.ID) {
+			t.Errorf("%s has no census.run call in %v", subpass.ID, sourceFiles)
+		}
+	}
+}
+
+func ownershipSubpassCensusIDExists(t *testing.T, files []string, want string) bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	for _, path := range files {
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Errorf("parse %s for subpass census ids: %v", path, err)
+			continue
+		}
+		found := false
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok || len(call.Args) == 0 {
+				return true
+			}
+			selector, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || selector.Sel.Name != "run" {
+				return true
+			}
+			literal, ok := call.Args[0].(*ast.BasicLit)
+			if !ok || literal.Kind != token.STRING {
+				return true
+			}
+			value, err := strconv.Unquote(literal.Value)
+			if err == nil && value == want {
+				found = true
+				return false
+			}
+			return true
+		})
+		if found {
+			return true
+		}
+	}
+	return false
 }
 
 func loadResultCompatOwnershipRegistry(t *testing.T) resultCompatOwnershipRegistry {
@@ -188,10 +417,20 @@ func assertOwnershipStatusAndRoutes(t *testing.T, entry resultCompatOwnershipEnt
 
 	var want resultCompatRouteCoverage
 	if entry.Status == "retired" {
+		switch entry.RouteCoverage.Compact {
+		case "retired_exact_receipt", "retired_exact_or_fail_closed_receipt":
+		default:
+			t.Errorf("%s has unsupported retired compact receipt %q", entry.ID, entry.RouteCoverage.Compact)
+		}
+		switch entry.RouteCoverage.Forest {
+		case "retired_exact_receipt", "retired_exact_or_fail_closed_receipt":
+		default:
+			t.Errorf("%s has unsupported retired forest receipt %q", entry.ID, entry.RouteCoverage.Forest)
+		}
 		want = resultCompatRouteCoverage{
 			Production:  "retired_exact_receipt",
-			Compact:     "retired_exact_receipt",
-			Forest:      "retired_exact_receipt",
+			Compact:     entry.RouteCoverage.Compact,
+			Forest:      entry.RouteCoverage.Forest,
 			Incremental: "retired_exact_receipt",
 			COracle:     entry.RouteCoverage.COracle,
 		}
@@ -244,12 +483,22 @@ func assertOwnershipStatusAndRoutes(t *testing.T, entry resultCompatOwnershipEnt
 
 func assertRegistryFunctionsExist(t *testing.T, entry resultCompatOwnershipEntry) {
 	t.Helper()
+	assertRegistryFunctionsInFiles(t, entry.ID, entry.Functions, entry.Files)
+}
+
+func assertRegistryFunctionsInFiles(
+	t *testing.T,
+	entryID string,
+	functions []string,
+	files []string,
+) {
+	t.Helper()
 	declared := make(map[string]bool)
 	fset := token.NewFileSet()
-	for _, path := range entry.Files {
+	for _, path := range files {
 		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
-			t.Errorf("%s parse %s: %v", entry.ID, path, err)
+			t.Errorf("%s parse %s: %v", entryID, path, err)
 			continue
 		}
 		for _, decl := range file.Decls {
@@ -258,9 +507,9 @@ func assertRegistryFunctionsExist(t *testing.T, entry resultCompatOwnershipEntry
 			}
 		}
 	}
-	for _, function := range entry.Functions {
+	for _, function := range functions {
 		if !declared[function] {
-			t.Errorf("%s live function %s is absent from registered files %v", entry.ID, function, entry.Files)
+			t.Errorf("%s function %s is absent from registered files %v", entryID, function, files)
 		}
 	}
 }
@@ -392,11 +641,32 @@ func assertDispatcherRegistry(t *testing.T, denominator resultCompatDenominator,
 	}
 }
 
+// assertGenericPassRegistry ratchets unconditional ("generic") normalize
+// calls: calls that run for every language instead of behind a registered
+// dispatcher arm or predicate. normalizeResultCompatibility now only
+// delegates to applyResultCompatibility, so this inspects all three layers
+// of the delegation chain. Calls inside the COBOL predicate branch and inside
+// the language switch of runLanguageResultCompatibility are excluded because
+// assertDispatcherRegistry already ratchets those against the registry; a
+// generic call added anywhere else in the chain must still surface here.
 func assertGenericPassRegistry(t *testing.T, denominator resultCompatDenominator, byKind map[string][]resultCompatOwnershipEntry) {
 	t.Helper()
 	file := parseOwnershipGoFile(t, "parser_result_compat.go")
-	fn := findOwnershipFunction(t, file, "normalizeResultCompatibility")
-	sourceFunctions := sortedStrings(ownershipNormalizeCalls(fn.Body))
+	entrypoint := findOwnershipFunction(t, file, "normalizeResultCompatibility")
+	applied := findOwnershipFunction(t, file, "applyResultCompatibility")
+	dispatcher := findOwnershipFunction(t, file, "runLanguageResultCompatibility")
+
+	seen := make(map[string]bool)
+	for _, name := range ownershipNormalizeCallOccurrences(entrypoint.Body) {
+		seen[name] = true
+	}
+	for _, name := range ownershipNormalizeCallOccurrences(applied.Body) {
+		seen[name] = true
+	}
+	for _, name := range ownershipUndispatchedNormalizeCalls(dispatcher.Body) {
+		seen[name] = true
+	}
+	sourceFunctions := sortedMapKeys(seen)
 
 	var registryFunctions []string
 	for _, entry := range byKind["generic_pass"] {
@@ -412,6 +682,39 @@ func assertGenericPassRegistry(t *testing.T, denominator resultCompatDenominator
 	if !equalStrings(sourceFunctions, registryFunctions) {
 		t.Errorf("generic normalization calls = %v, registry = %v", sourceFunctions, registryFunctions)
 	}
+}
+
+// ownershipUndispatchedNormalizeCalls returns the normalize-prefixed calls in
+// runLanguageResultCompatibility's body that sit outside every if-statement
+// and switch-statement it contains. Today that means outside the COBOL
+// predicate branch and outside the language switch: both are already
+// ratcheted call-by-call in assertDispatcherRegistry. Skipping their subtrees
+// here keeps this function honest about only reporting calls neither ratchet
+// already covers, instead of double-counting the 40 dispatcher arms.
+func ownershipUndispatchedNormalizeCalls(body ast.Node) []string {
+	var calls []string
+	ast.Inspect(body, func(node ast.Node) bool {
+		switch node.(type) {
+		case *ast.IfStmt, *ast.SwitchStmt:
+			return false
+		}
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		var name string
+		switch function := call.Fun.(type) {
+		case *ast.Ident:
+			name = function.Name
+		case *ast.SelectorExpr:
+			name = function.Sel.Name
+		}
+		if strings.HasPrefix(name, "normalize") {
+			calls = append(calls, name)
+		}
+		return true
+	})
+	return calls
 }
 
 func assertPostFinalizationRegistry(t *testing.T, denominator resultCompatDenominator, byKind map[string][]resultCompatOwnershipEntry) {

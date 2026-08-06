@@ -93,7 +93,7 @@ const (
 	COracleBindingCommit   = "adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3"
 	COracleRuntimeVersion  = "0.25.1"
 	COracleRuntimeCommit   = "f5afe475deb7c0bae6407fb776c76824f717bb61"
-	COracleGrammarCFlags   = "-O2 -fPIC"
+	COracleGrammarCFlags   = "-std=c11 -fPIC -O2 -I ."
 )
 
 // COracleBuildIdentity describes the in-process cgo parity transport. The
@@ -960,19 +960,21 @@ func compileParserShared(entry parityLockEntry, repoDir, outSO, objDir string) e
 	for _, source := range sources {
 		ext := strings.ToLower(filepath.Ext(source))
 		obj := filepath.Join(objDir, paritySafeName(filepath.Base(source))+".o")
+		// Use a relative source name so __FILE__ does not contain a temp path.
+		sourceName := filepath.Base(source)
 		switch ext {
 		case ".cc", ".cpp", ".cxx":
 			hasCXX = true
 			if err := runCommand(
-				"",
+				srcDir,
 				"c++",
 				"-std=c++17",
 				"-fPIC",
 				"-O2",
 				"-I",
-				srcDir,
+				".",
 				"-c",
-				source,
+				sourceName,
 				"-o",
 				obj,
 			); err != nil {
@@ -980,15 +982,15 @@ func compileParserShared(entry parityLockEntry, repoDir, outSO, objDir string) e
 			}
 		default:
 			if err := runCommand(
-				"",
+				srcDir,
 				"cc",
 				"-std=c11",
 				"-fPIC",
 				"-O2",
 				"-I",
-				srcDir,
+				".",
 				"-c",
-				source,
+				sourceName,
 				"-o",
 				obj,
 			); err != nil {

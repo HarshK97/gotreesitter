@@ -3,6 +3,7 @@
 package gotreesitter
 
 import (
+	"errors"
 	"reflect"
 	"runtime"
 	"testing"
@@ -97,6 +98,201 @@ func TestDiagnosticParserCoreCanonicalScratchCollapsesCanonicalHeads(t *testing.
 	}
 }
 
+// TestDiagnosticParserCoreCanonicalScratchSingleHeaderRemapsAndPublishesFresh
+// exercises the compact scheduler's single-header shortcut. It keeps the
+// canonical boundary remap, clears reduction freshness, and preserves the
+// double-buffer publication rule.
+func TestDiagnosticParserCoreCanonicalScratchSingleHeaderRemapsAndPublishesFresh(t *testing.T) {
+	table := &genericConflictTable{
+		cells: map[genericConflictCell][]core.Action{
+			{state: 1, symbol: 7}: {{Type: core.ActionShift, State: 5}},
+			{state: 1, symbol: 8}: {{Type: core.ActionShift, State: 3}},
+			{state: 5, symbol: 9}: {{Type: core.ActionReduce, Symbol: 2, ChildCount: 1, DynamicPrecedence: 1}},
+			{state: 3, symbol: 9}: {{Type: core.ActionReduce, Symbol: 2, ChildCount: 1, DynamicPrecedence: 2}},
+		},
+		gotos: map[genericConflictCell]core.StateID{{state: 1, symbol: 2}: 4},
+	}
+	compact, err := core.New(table, core.Limits{MaxDerivations: 8, MaxPopPaths: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	low, err := compact.Shift(seed, 7, 0, core.Token{Symbol: 7, EndByte: 1}, core.ForkOrder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	high, err := compact.Shift(seed, 8, 0, core.Token{Symbol: 8, EndByte: 1}, core.ForkOrder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lowOutputs, err := compact.ReduceOutputs(low, 9, 0, core.ForkOrder{})
+	if err != nil || len(lowOutputs) != 1 {
+		t.Fatalf("low reduction outputs=%+v err=%v", lowOutputs, err)
+	}
+	highOutputs, err := compact.ReduceOutputs(high, 9, 0, core.ForkOrder{})
+	if err != nil || len(highOutputs) != 1 || highOutputs[0].Head == lowOutputs[0].Head {
+		t.Fatalf("high reduction outputs=%+v low=%+v err=%v", highOutputs, lowOutputs, err)
+	}
+	stale := lowOutputs[0].Head
+	canonical := highOutputs[0].Head
+	staleState, staleByte, err := compact.Boundary(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalState, canonicalByte, err := compact.Boundary(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if staleState != canonicalState || staleByte != canonicalByte {
+		t.Fatalf("fixture does not share a canonical boundary: stale=%d/%d canonical=%d/%d", staleState, staleByte, canonicalState, canonicalByte)
+	}
+
+	input := []diagnosticParserCoreHeader{{
+		head: stale, creationSeq: 3, freshness: core.ReductionNew,
+	}}
+	var scratch diagnosticParserCoreCanonicalScratch
+	first, err := scratch.canonicalize(compact, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || first[0].head != canonical || first[0].freshness != 0 {
+		t.Fatalf("single-header remap/freshness=%+v canonical=%+v", first, canonical)
+	}
+	if gotState, gotByte, boundaryErr := compact.Boundary(first[0].head); boundaryErr != nil || gotState != staleState || gotByte != staleByte {
+		t.Fatalf("remapped boundary=%d/%d err=%v, want=%d/%d", gotState, gotByte, boundaryErr, staleState, staleByte)
+	}
+	if &first[0] == &input[0] {
+		t.Fatal("single-header canonicalization aliased caller input")
+	}
+	firstSnapshot := append([]diagnosticParserCoreHeader(nil), first...)
+	second, err := scratch.canonicalize(compact, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 1 || &second[0] == &first[0] {
+		t.Fatal("single-header canonicalization did not alternate published buffers")
+	}
+	second[0].creationSeq = 11
+	if !reflect.DeepEqual(first, firstSnapshot) {
+		t.Fatalf("next single-header output mutated prior publication: got=%+v want=%+v", first, firstSnapshot)
+	}
+}
+
+// TestDiagnosticParserCoreCanonicalScratchSingleHeaderFailureDoesNotPublish
+// keeps an invalid head from advancing the publication buffer or mutating the
+// last valid single-header result.
+func TestDiagnosticParserCoreCanonicalScratchSingleHeaderFailureDoesNotPublish(t *testing.T) {
+	compact, head, _ := newDiagnosticParserCoreCanonicalTestCore(t)
+	var scratch diagnosticParserCoreCanonicalScratch
+	published, err := scratch.canonicalize(compact, []diagnosticParserCoreHeader{{head: head, freshness: core.ReductionNew}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishedSnapshot := append([]diagnosticParserCoreHeader(nil), published...)
+	nextBefore := scratch.nextBuffer
+	_, err = scratch.canonicalize(compact, []diagnosticParserCoreHeader{{
+		head: core.Head{Node: 1 << 30}, freshness: core.ReductionNew,
+	}})
+	if err == nil {
+		t.Fatal("invalid single header unexpectedly canonicalized")
+	}
+	if scratch.nextBuffer != nextBefore || !reflect.DeepEqual(published, publishedSnapshot) {
+		t.Fatalf("failed single-header run published scratch: next=%d want=%d current=%+v want=%+v", scratch.nextBuffer, nextBefore, published, publishedSnapshot)
+	}
+}
+
+// TestDiagnosticParserCoreElectionSummaryMatchesFullReceipt proves that the
+// summary election path produces the same closed-frontier result as the full
+// receipt path. The modes retain different diagnostic detail only.
+func TestDiagnosticParserCoreElectionSummaryMatchesFullReceipt(t *testing.T) {
+	fixture := loadDiagnosticParserCoreCanonicalFixture(t, "rewrite")
+	target := uint32(919)
+	run := func(mode DiagnosticParserCoreReceiptMode) DiagnosticParserCorePrefixResult {
+		result, err := DiagnosticParseParserCorePrefix(
+			parserCoreWarmGoScanner,
+			fixture.Source,
+			DiagnosticParserCorePrefixOptions{
+				ReceiptMode: mode, GenericStopAtClosedByte: &target,
+				MaxTokens: 300000, MaxDispatches: 600000,
+				Limits: diagnosticParserCoreCanonicalLimits(),
+			},
+		)
+		if err != nil {
+			t.Fatalf("%v receipt route declined: result=%+v err=%v", mode, result, err)
+		}
+		return result
+	}
+	full := run(DiagnosticParserCoreReceiptFull)
+	summary := run(DiagnosticParserCoreReceiptSummary)
+	if full.GenericScheduler == nil || summary.GenericScheduler == nil || full.GenericScheduler.Completion == nil || summary.GenericScheduler.Completion == nil {
+		t.Fatalf("missing completion: full=%+v summary=%+v", full.GenericScheduler, summary.GenericScheduler)
+	}
+	if full.Boundary != summary.Boundary || full.Detail != summary.Detail || full.Tokens != summary.Tokens ||
+		full.Dispatches != summary.Dispatches || full.State != summary.State || full.Lookahead != summary.Lookahead ||
+		full.LastBranchOrder != summary.LastBranchOrder || full.Completed != summary.Completed || full.Materialized != summary.Materialized {
+		t.Fatalf("summary/full result drift: full=%+v summary=%+v", full, summary)
+	}
+	fullCompletion := full.GenericScheduler.Completion
+	summaryCompletion := summary.GenericScheduler.Completion
+	if fullCompletion.TargetByte != summaryCompletion.TargetByte || fullCompletion.ElectionIndex != summaryCompletion.ElectionIndex ||
+		fullCompletion.LastToken != summaryCompletion.LastToken || fullCompletion.State != summaryCompletion.State ||
+		fullCompletion.Stats != summaryCompletion.Stats || fullCompletion.Work != summaryCompletion.Work {
+		t.Fatalf("summary/full completion drift: full=%+v summary=%+v", fullCompletion, summaryCompletion)
+	}
+	if len(full.GenericScheduler.Elections) == 0 || len(summary.GenericScheduler.Elections) != 0 ||
+		len(full.Elections) == 0 || len(summary.Elections) != 0 || len(fullCompletion.Headers) == 0 || len(summaryCompletion.Headers) != 0 {
+		t.Fatalf("receipt retention drift: full=%+v summary=%+v", full.GenericScheduler, summary.GenericScheduler)
+	}
+}
+
+// TestDiagnosticParserCoreElectionPreservesInvalidCheckpointDeclines proves
+// the direct summary state read preserves malformed-checkpoint errors and
+// known-checkpoint identity declines in both receipt modes.
+func TestDiagnosticParserCoreElectionPreservesInvalidCheckpointDeclines(t *testing.T) {
+	compact, head, _ := newDiagnosticParserCoreCanonicalTestCore(t)
+	foreign := mustDiagnosticCheckpointID(t, compact, []byte{1})
+	for _, mode := range []DiagnosticParserCoreReceiptMode{
+		DiagnosticParserCoreReceiptFull,
+		DiagnosticParserCoreReceiptSummary,
+	} {
+		for _, test := range []struct {
+			name          string
+			checkpoint    core.CheckpointID
+			wantMalformed bool
+		}{
+			{name: "known-mismatch", checkpoint: foreign},
+			{name: "unknown", checkpoint: core.CheckpointID(99), wantMalformed: true},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				scheduler := &diagnosticParserCoreGenericScheduler{
+					compact: compact,
+					headers: []diagnosticParserCoreHeader{{
+						head: head, shifted: true, checkpoint: test.checkpoint,
+					}},
+					checkpointID: 0,
+					options:      DiagnosticParserCorePrefixOptions{ReceiptMode: mode, MaxTokens: 1},
+				}
+				err := scheduler.elect(false)
+				var decline *diagnosticParserCoreDecline
+				if test.wantMalformed {
+					if err == nil || errors.As(err, &decline) || err.Error() != "parser-core phase zero: header references unknown checkpoint identity" {
+						t.Fatalf("invalid checkpoint err=%v decline=%+v", err, decline)
+					}
+				} else if !errors.As(err, &decline) || decline.boundary != DiagnosticParserCoreIdentity ||
+					decline.detail != "generic scheduler election frontier is not closed and checkpoint-continuous" {
+					t.Fatalf("mismatched checkpoint err=%v decline=%+v", err, decline)
+				}
+				if scheduler.tokens != 0 || scheduler.work.Elections != 0 || len(scheduler.electStates) != 0 || scheduler.headers[0].checkpoint != test.checkpoint {
+					t.Fatalf("checkpoint rejection mutated scheduler: %+v", scheduler)
+				}
+			})
+		}
+	}
+}
+
 func TestDiagnosticParserCoreCanonicalScratchDoesNotAliasPublishedOutput(t *testing.T) {
 	compact, firstHead, secondHead := newDiagnosticParserCoreCanonicalTestCore(t)
 	var scratch diagnosticParserCoreCanonicalScratch
@@ -150,6 +346,28 @@ func TestDiagnosticParserCoreCanonicalScratchSteadyStateDoesNotAllocate(t *testi
 		_, runErr = scratch.canonicalize(compact, input)
 	}); allocs != 0 || runErr != nil {
 		t.Fatalf("steady canonicalization allocs=%v err=%v", allocs, runErr)
+	}
+}
+
+// TestDiagnosticParserCoreCanonicalScratchSteadyStateSingleHeaderDoesNotAllocate
+// pins the single-header fast path in canonicalize (the len(normalized) == 1
+// branch), which skips the key-slice sizing and key-struct build that the
+// two-header case above still exercises. Both cases must independently stay
+// at zero steady-state allocations.
+func TestDiagnosticParserCoreCanonicalScratchSteadyStateSingleHeaderDoesNotAllocate(t *testing.T) {
+	compact, first, _ := newDiagnosticParserCoreCanonicalTestCore(t)
+	input := []diagnosticParserCoreHeader{{head: first, creationSeq: 3}}
+	var scratch diagnosticParserCoreCanonicalScratch
+	for range 4 {
+		if _, err := scratch.canonicalize(compact, input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var runErr error
+	if allocs := testing.AllocsPerRun(1000, func() {
+		_, runErr = scratch.canonicalize(compact, input)
+	}); allocs != 0 || runErr != nil {
+		t.Fatalf("steady single-header canonicalization allocs=%v err=%v", allocs, runErr)
 	}
 }
 
@@ -210,8 +428,28 @@ func TestDiagnosticParserCoreCheckpointCompactLayoutsAMD64(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("amd64 layout receipt")
 	}
-	if got := unsafe.Sizeof(diagnosticParserCoreHeader{}); got != 24 {
-		t.Fatalf("scheduler header size=%d, want 24", got)
+	// diagnosticParserCoreHeader grows by 16 bytes for the added altSet
+	// field, then by another 24 bytes (lastPersistedHead core.Head +
+	// lastPersistedAltSet core.AlternativeSet) for the per-dispatch persist
+	// skip: 24 -> 40 -> 64. spec.b4b-alternative-set.v2 section 3.2/3.4
+	// widened altSet and lastPersistedAltSet (uint32 members, +8 bytes each)
+	// and added three bools (blended, resurrectionUnproved,
+	// lastPersistedBlended, +1 each): 64 -> 80 -> 83, padded to 88. The
+	// b4b-width-repair audit (2026-08) lowered AlternativeSet's inline
+	// capacity from 4 to 2 members (core.go; the canonical-fixture census
+	// shows 99.8% of elections already spill past 4 members by election
+	// time, so 4 was not load-bearing), shrinking each embedded set back to
+	// 16 bytes, and reordered this struct's fields (both sets and both Head
+	// copies grouped up front, all 4-byte aligned, ahead of the
+	// byte/uint16-sized fields) so the three added bools fold into what
+	// would otherwise be trailing padding: 88 -> 64, exactly the pre-v2
+	// size despite carrying the full (event, branch) sets and all three
+	// bools. This struct is copied by value on every dispatch (the header
+	// canonicalize double-buffer and the rollback scratch snapshot), so the
+	// 24-byte-per-header reduction applies once per copy, twice per
+	// dispatch.
+	if got := unsafe.Sizeof(diagnosticParserCoreHeader{}); got != 64 {
+		t.Fatalf("scheduler header size=%d, want 64", got)
 	}
 	if got := unsafe.Sizeof(diagnosticParserCorePhaseHead{}); got != 12 {
 		t.Fatalf("canonical phase key size=%d, want 12", got)

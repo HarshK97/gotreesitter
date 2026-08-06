@@ -30,7 +30,7 @@ the next eligible Thursday after v0.47.0.
 4. Wait at least 48 hours after hosted CI completes for a planned minor
    release. Record the actual soak for an urgent patch.
 5. Dispatch the manual `release.yml` workflow from `main`. Supply the version,
-   candidate commit hash, release route, and governing Hyphae receipt.
+   candidate commit hash, release route, and signed Hyphae receipt ID.
 6. For an urgent patch, also supply the incident and explain why waiting is
    worse. Do not use this route for ordinary maintenance.
 7. Review the verification evidence. Approve the protected `release`
@@ -44,6 +44,10 @@ the next eligible Thursday after v0.47.0.
 
 Tags are immutable. If a release is wrong, preserve its tag and publish a
 follow-up version.
+
+Keep the `receipt_uri` input name for workflow dispatch compatibility. Supply a
+signed Hyphae receipt ID, not a `hypha://` URI. Use
+`hypha-receipt:YYYY-MM-DD:<short-id>`.
 
 The workflow has no schedule. The Go evidence collector writes deterministic
 facts to `policy-facts.json`. It does not choose the release route.

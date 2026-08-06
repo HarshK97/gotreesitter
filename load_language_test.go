@@ -9,10 +9,11 @@ import (
 
 func TestFullParseAcceptedErrorRetryProfileLanguageBlobRoundTrip(t *testing.T) {
 	want := FullParseAcceptedErrorRetryProfile{
-		SkipCompleteAcceptedErrorRetry: true,
-		SkipCompleteMinSourceBytes:     2 * 1024,
-		ReuseCleanWideForWideRetry:     true,
-		ReuseCleanWideMinSourceBytes:   128 * 1024,
+		SkipCompleteAcceptedErrorRetry:         true,
+		SkipCompleteMinSourceBytes:             2 * 1024,
+		ReuseCleanWideForWideRetry:             true,
+		ReuseCleanWideMinSourceBytes:           128 * 1024,
+		GSSConvergenceAcceptedErrorMergePerKey: 12,
 	}
 	lang := &Language{
 		Name:                               "accepted_error_retry_profile_round_trip",
@@ -29,6 +30,25 @@ func TestFullParseAcceptedErrorRetryProfileLanguageBlobRoundTrip(t *testing.T) {
 	}
 	if got := decoded.FullParseAcceptedErrorRetryProfile; got != want {
 		t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want %+v", got, want)
+	}
+}
+
+func TestFullParseGSSConvergenceLanguageBlobRoundTrip(t *testing.T) {
+	lang := &Language{
+		Name:                           "gss_convergence_round_trip",
+		FullParseGSSConvergenceEnabled: true,
+	}
+
+	blob, err := EncodeLanguageBlob(lang)
+	if err != nil {
+		t.Fatalf("EncodeLanguageBlob: %v", err)
+	}
+	decoded, err := LoadLanguage(blob)
+	if err != nil {
+		t.Fatalf("LoadLanguage: %v", err)
+	}
+	if !decoded.FullParseGSSConvergenceEnabled {
+		t.Fatal("FullParseGSSConvergenceEnabled = false, want true")
 	}
 }
 

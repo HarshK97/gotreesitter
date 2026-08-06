@@ -954,6 +954,17 @@ func cryAdvanceSpaceAndNewline(lexer *gotreesitter.ExternalLexer) {
 	}
 }
 
+func crySkipSpaceAndNewline(s *cryScannerState, lexer *gotreesitter.ExternalLexer) {
+	for {
+		la := lexer.Lookahead()
+		if la == ' ' || la == '\t' || la == '\r' || la == '\n' {
+			crySkip(s, lexer)
+		} else {
+			break
+		}
+	}
+}
+
 func cryConsumeConst(lexer *gotreesitter.ExternalLexer) {
 	la := lexer.Lookahead()
 	if 'A' <= la && la <= 'Z' {
@@ -1418,7 +1429,7 @@ func cryInnerScan(s *cryScannerState, lexer *gotreesitter.ExternalLexer, validSy
 
 			} else if braceExpr {
 				lexer.MarkEnd()
-				cryAdvanceSpaceAndNewline(lexer)
+				crySkipSpaceAndNewline(s, lexer)
 
 				if cryIsValid(validSymbols, cryTokStartOfHashOrTuple) && !cryIsValid(validSymbols, cryTokStartOfNamedTuple) {
 					crySetResult(lexer, cryTokStartOfHashOrTuple)
