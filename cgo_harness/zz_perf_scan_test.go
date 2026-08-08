@@ -266,6 +266,7 @@ type perfScanLanguage struct {
 	FilesMeasured int                     `json:"files_measured"`
 	BytesMeasured int64                   `json:"bytes_measured"`
 	ElapsedMS     int64                   `json:"elapsed_ms"`
+	PeakRSSBytes  int64                   `json:"peak_rss_bytes,omitempty"`
 	Verdict       string                  `json:"verdict"`
 	Oracle        *perfScanOracleIdentity `json:"oracle,omitempty"`
 	// ActiveFile is the canonical active-measurement signal. The numeric
@@ -2323,8 +2324,8 @@ func TestPerfScanSweep(t *testing.T) {
 		}
 		board.Languages = append(board.Languages, row)
 		board.Summary[row.Verdict]++
-		t.Logf("  %-14s status=%-14s verdict=%-9s files=%d/%d elapsed=%dms %s",
-			lang, row.Status, row.Verdict, row.FilesMeasured, row.FilesSelected, row.ElapsedMS, row.Detail)
+		t.Logf("  %-14s status=%-14s verdict=%-9s files=%d/%d elapsed=%dms peak_rss=%s %s",
+			lang, row.Status, row.Verdict, row.FilesMeasured, row.FilesSelected, row.ElapsedMS, perfScanFmtRSS(row.PeakRSSBytes), row.Detail)
 	}
 	oracleIdentity, oracleErr := perfScanOracleBoardFromRows(board.Languages)
 	if oracleErr != nil {
@@ -2430,10 +2431,13 @@ func perfScanRunLanguageSubprocess(t *testing.T, lang string, cfg perfScanConfig
 	})
 
 	start := time.Now()
-	runErr, childStop := perfScanRunChild(ctx, cmd, cfg.ChildRSSMB)
+	runErr, childStop, peakRSSBytes := perfScanRunChild(ctx, cmd, cfg.ChildRSSMB)
 	elapsed := time.Since(start)
 
 	fragment, fragErr := perfScanReadLangFragment(absOut, lang)
+	if fragment != nil {
+		fragment.PeakRSSBytes = peakRSSBytes
+	}
 	if childStop != nil && fragment != nil {
 		childStop = perfScanStopWithActiveAttempt(childStop, fragment)
 		fragment.Stop = childStop
@@ -2484,26 +2488,28 @@ func perfScanRunLanguageSubprocess(t *testing.T, lang string, cfg perfScanConfig
 			detail += " | log: " + tail
 		}
 		return &perfScanLanguage{
-			Language:  lang,
-			Status:    status,
-			Detail:    detail,
-			Verdict:   perfScanBucketNoData,
-			ElapsedMS: elapsed.Milliseconds(),
-			Stop:      childStop,
+			Language:     lang,
+			Status:       status,
+			Detail:       detail,
+			Verdict:      perfScanBucketNoData,
+			ElapsedMS:    elapsed.Milliseconds(),
+			PeakRSSBytes: peakRSSBytes,
+			Stop:         childStop,
 		}
 	}
 }
 
-func perfScanRunChild(ctx context.Context, cmd *exec.Cmd, rssLimitMB int) (error, *perfScanStop) {
+func perfScanRunChild(ctx context.Context, cmd *exec.Cmd, rssLimitMB int) (error, *perfScanStop, int64) {
 	if err := perfScanConfigureChildProcessGroup(cmd); err != nil {
-		return err, nil
+		return err, nil, 0
 	}
 	if rssLimitMB <= 0 {
 		err := cmd.Run()
-		return err, perfScanChildExitStop(ctx, err)
+		peakRSSBytes, _ := perfScanProcessStateMaxRSSBytes(cmd.ProcessState)
+		return err, perfScanChildExitStop(ctx, err), peakRSSBytes
 	}
 	if err := cmd.Start(); err != nil {
-		return err, nil
+		return err, nil, 0
 	}
 
 	done := make(chan error, 1)
@@ -2517,12 +2523,25 @@ func perfScanRunChild(ctx context.Context, cmd *exec.Cmd, rssLimitMB int) (error
 	defer ticker.Stop()
 
 	limitBytes := int64(rssLimitMB) << 20
+	peakRSSBytes := int64(0)
+	finish := func(err error, stop *perfScanStop) (error, *perfScanStop, int64) {
+		if finalPeak, ok := perfScanProcessStateMaxRSSBytes(cmd.ProcessState); ok && finalPeak > peakRSSBytes {
+			peakRSSBytes = finalPeak
+		}
+		return err, stop, peakRSSBytes
+	}
 	checkRSS := func() (bool, *perfScanStop) {
 		if cmd.Process == nil {
 			return false, nil
 		}
 		rssBytes, ok := perfScanProcessRSSBytes(cmd.Process.Pid)
-		if !ok || rssBytes < limitBytes {
+		if !ok {
+			return false, nil
+		}
+		if rssBytes > peakRSSBytes {
+			peakRSSBytes = rssBytes
+		}
+		if rssBytes < limitBytes {
 			return false, nil
 		}
 		detail := fmt.Sprintf("child rss exceeded %d MiB limit (rss=%d MiB)",
@@ -2532,21 +2551,21 @@ func perfScanRunChild(ctx context.Context, cmd *exec.Cmd, rssLimitMB int) (error
 	for {
 		select {
 		case err := <-done:
-			return err, perfScanChildExitStop(ctx, err)
+			return finish(err, perfScanChildExitStop(ctx, err))
 		default:
 		}
 		if kill, stop := checkRSS(); kill {
 			_ = perfScanKillChildProcessGroup(cmd)
-			return <-done, stop
+			return finish(<-done, stop)
 		}
 		select {
 		case err := <-done:
-			return err, perfScanChildExitStop(ctx, err)
+			return finish(err, perfScanChildExitStop(ctx, err))
 		case <-ctx.Done():
 			if cmd.Process != nil {
 				_ = perfScanKillChildProcessGroup(cmd)
 			}
-			return <-done, &perfScanStop{Class: perfScanStopWallTimeout, Detail: "language subprocess exceeded hard wall timeout"}
+			return finish(<-done, &perfScanStop{Class: perfScanStopWallTimeout, Detail: "language subprocess exceeded hard wall timeout"})
 		case <-ticker.C:
 		}
 	}
@@ -2655,6 +2674,20 @@ func perfScanProcessRSSBytes(pid int) (int64, bool) {
 	return perfScanParseStatusRSSBytes(string(data))
 }
 
+func perfScanProcessStateMaxRSSBytes(state *os.ProcessState) (int64, bool) {
+	if state == nil {
+		return 0, false
+	}
+	usage, ok := state.SysUsage().(*syscall.Rusage)
+	if !ok || usage.Maxrss <= 0 {
+		return 0, false
+	}
+	if runtime.GOOS == "darwin" {
+		return usage.Maxrss, true
+	}
+	return usage.Maxrss * 1024, true
+}
+
 func perfScanParseStatusRSSBytes(status string) (int64, bool) {
 	for _, line := range strings.Split(status, "\n") {
 		line = strings.TrimSpace(line)
@@ -2682,9 +2715,12 @@ func TestPerfScanRunChildKillsDescendantProcessGroupOnWallStop(t *testing.T) {
 	defer cancel()
 	script := fmt.Sprintf("(sleep 0.4; touch %q) & echo $! > %q; wait", markerPath, pidPath)
 	cmd := exec.CommandContext(ctx, "sh", "-c", script)
-	err, stop := perfScanRunChild(ctx, cmd, 0)
+	err, stop, peakRSSBytes := perfScanRunChild(ctx, cmd, 0)
 	if err == nil || stop == nil || stop.Class != perfScanStopWallTimeout {
 		t.Fatalf("wall-stopped child err=%v stop=%+v", err, stop)
+	}
+	if peakRSSBytes <= 0 {
+		t.Fatalf("wall-stopped child peak RSS=%d", peakRSSBytes)
 	}
 	if _, statErr := os.Stat(pidPath); statErr != nil {
 		t.Fatalf("descendant was not started before wall stop: %v", statErr)
@@ -2890,6 +2926,13 @@ func perfScanFmtNs(ns int64) string {
 	}
 }
 
+func perfScanFmtRSS(bytes int64) string {
+	if bytes <= 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%.1f MiB", float64(bytes)/(1<<20))
+}
+
 func perfScanFmtRatio(agg *perfScanLangAxis) string {
 	if agg == nil {
 		return "-"
@@ -3062,17 +3105,17 @@ func perfScanRenderMarkdown(board *perfScanScoreboard) string {
 	}
 
 	fmt.Fprintf(&b, "\n## Per-language scoreboard\n\n")
-	fmt.Fprintf(&b, "| language | status | files | bytes | full Go | full C | full ratio | verdict |\n")
-	fmt.Fprintf(&b, "|---|---|---|---|---|---|---|---|\n")
+	fmt.Fprintf(&b, "| language | status | files | bytes | peak RSS | full Go | full C | full ratio | verdict |\n")
+	fmt.Fprintf(&b, "|---|---|---|---|---|---|---|---|---|\n")
 	for _, row := range board.Languages {
 		full := row.Axes[perfScanAxisFull]
 		var goNs, cNs int64
 		if full != nil {
 			goNs, cNs = full.GoTotalNs, full.CTotalNs
 		}
-		fmt.Fprintf(&b, "| %s | %s | %d/%d | %d | %s | %s | %s | %s |\n",
+		fmt.Fprintf(&b, "| %s | %s | %d/%d | %d | %s | %s | %s | %s | %s |\n",
 			row.Language, row.Status, row.FilesMeasured, row.FilesSelected, row.BytesMeasured,
-			perfScanFmtNs(goNs), perfScanFmtNs(cNs),
+			perfScanFmtRSS(row.PeakRSSBytes), perfScanFmtNs(goNs), perfScanFmtNs(cNs),
 			perfScanFmtRatio(full), row.Verdict)
 	}
 

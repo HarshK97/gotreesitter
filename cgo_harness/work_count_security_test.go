@@ -181,7 +181,7 @@ func workCountRunCaptured(dir string, env []string, timeout time.Duration, name 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err, stop := perfScanRunChild(ctx, cmd, 0)
+	err, stop, _ := perfScanRunChild(ctx, cmd, 0)
 	if stop != nil && stop.Class == perfScanStopWallTimeout {
 		return stdout.Bytes(), stderr.Bytes(), fmt.Errorf("%s timed out after %s", filepath.Base(name), timeout)
 	}
