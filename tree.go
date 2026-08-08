@@ -777,6 +777,42 @@ const (
 	IncrementalRetryCauseAcceptedErrorBaseMerge
 )
 
+// RecoveryNodeMemoTier identifies the largest bounded recovery memo used by a
+// parse. Entries and Bytes expand the compact telemetry value.
+type RecoveryNodeMemoTier uint8
+
+const (
+	RecoveryNodeMemoTierNone RecoveryNodeMemoTier = iota
+	RecoveryNodeMemoTierInitial
+	RecoveryNodeMemoTierStandard
+	RecoveryNodeMemoTierTemporary
+)
+
+// Entries reports the number of entries in this memo tier.
+func (tier RecoveryNodeMemoTier) Entries() uint32 {
+	switch tier {
+	case RecoveryNodeMemoTierInitial:
+		return cNodeMemoCacheInitialSize
+	case RecoveryNodeMemoTierStandard:
+		return cNodeMemoCacheSize
+	case RecoveryNodeMemoTierTemporary:
+		return cNodeMemoRecoveryCacheSize
+	default:
+		return 0
+	}
+}
+
+// Bytes reports the allocated byte size of this memo tier.
+func (tier RecoveryNodeMemoTier) Bytes() uint32 {
+	return uint32(cNodeMemoCacheBytesForEntries(int(tier.Entries())))
+}
+
+// RecoveryNodeMemoRuntime reports bounded recovery-memo use for one tree.
+type RecoveryNodeMemoRuntime struct {
+	PeakTier   RecoveryNodeMemoTier
+	Collisions uint32
+}
+
 // ParseRuntime captures parser-loop diagnostics for a completed tree.
 type ParseRuntime struct {
 	StopReason     ParseStopReason
@@ -2848,6 +2884,9 @@ type Tree struct {
 	resultCompatibilityApplied   bool
 	resultCompatibilityFinalizer *treeResultCompatibilityFinalizer
 	released                     bool
+	// Recovery-memo telemetry occupies the Tree's existing tail padding.
+	recoveryNodeMemoPeakTier   RecoveryNodeMemoTier
+	recoveryNodeMemoCollisions uint32
 }
 
 const maxRetainedTreeEditCap = 8
@@ -2972,6 +3011,8 @@ func (t *Tree) Release() {
 	t.resultErrorSummary = resultErrorSummaryUnknown
 	t.resultCompatibilityApplied = false
 	t.resultCompatibilityFinalizer = nil
+	t.recoveryNodeMemoPeakTier = RecoveryNodeMemoTierNone
+	t.recoveryNodeMemoCollisions = 0
 	treePool.Put(t)
 }
 
@@ -3778,6 +3819,19 @@ func (t *Tree) ParseRuntime() ParseRuntime {
 	return out
 }
 
+// RecoveryNodeMemoRuntime returns bounded memo telemetry for this tree. The
+// collision count saturates at the uint32 maximum.
+func (t *Tree) RecoveryNodeMemoRuntime() RecoveryNodeMemoRuntime {
+	if t == nil {
+		return RecoveryNodeMemoRuntime{}
+	}
+	t.ensureResultCompatibility()
+	return RecoveryNodeMemoRuntime{
+		PeakTier:   t.recoveryNodeMemoPeakTier,
+		Collisions: t.recoveryNodeMemoCollisions,
+	}
+}
+
 // rawParseRuntime returns the parser-captured runtime record without running
 // deferred result compatibility and without the public accessor's live arena
 // counter overlay. Parser-owned decision helpers may use it only while the tree
@@ -3806,6 +3860,14 @@ func (t *Tree) setParseRuntime(rt ParseRuntime) {
 		rt.StopReason = ParseStopNone
 	}
 	t.parseRuntime = rt
+}
+
+func (t *Tree) setRecoveryNodeMemoRuntime(rt RecoveryNodeMemoRuntime) {
+	if t == nil {
+		return
+	}
+	t.recoveryNodeMemoPeakTier = rt.PeakTier
+	t.recoveryNodeMemoCollisions = rt.Collisions
 }
 
 func (t *Tree) setIncludedRanges(ranges []Range) {

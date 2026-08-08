@@ -377,7 +377,10 @@ func AdmissionCandidateCompactFootprintBytesForTest(p *Parser) uint64 {
 // technique TestParseWithSnippetParserInheritsExpiredParentDeadline already
 // uses from inside the package.
 func (p *Parser) BeginParseOperationBudgetForTest() func() {
-	return p.beginParseOperationBudget()
+	state := p.beginParseOperationBudget()
+	return func() {
+		p.endParseOperationBudget(state)
+	}
 }
 
 // AdmissionSubParserProbe bundles internal sub-parser construction so the

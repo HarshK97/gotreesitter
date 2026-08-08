@@ -2123,6 +2123,11 @@ func TestResetSnippetParserClearsTransientState(t *testing.T) {
 	flag := uint32(1)
 	parser.cancellationFlag = &flag
 	parser.parseBudgetDepth = 1
+	parser.cNodeMemoOperationDepth = 1
+	parser.forestDeclineMemo = &parserColdState{
+		cNodeMemoRetainedCache: make([]cNodeMemoCacheEntry, 1),
+	}
+	parser.cNodeMemoCache = make([]cNodeMemoCacheEntry, 2)
 	parser.parseDeadline = time.Now()
 	parser.parseStoppedReason = ParseStopTimeout
 
@@ -2164,6 +2169,12 @@ func TestResetSnippetParserClearsTransientState(t *testing.T) {
 	if parser.parseBudgetDepth != 0 {
 		t.Fatal("resetSnippetParser did not clear parseBudgetDepth")
 	}
+	if parser.cNodeMemoOperationDepth != 0 {
+		t.Fatal("resetSnippetParser did not clear cNodeMemoOperationDepth")
+	}
+	if len(parser.cNodeMemoCache) != 1 || parser.forestDeclineMemo.cNodeMemoRetainedCache != nil {
+		t.Fatal("resetSnippetParser did not release the temporary recovery memo")
+	}
 	if !parser.parseDeadline.IsZero() {
 		t.Fatal("resetSnippetParser did not clear parseDeadline")
 	}
@@ -2186,8 +2197,8 @@ func TestParseWithSnippetParserParsesSource(t *testing.T) {
 func TestParseWithSnippetParserInheritsExpiredParentDeadline(t *testing.T) {
 	parent := NewParser(buildArithmeticLanguage())
 	parent.SetTimeoutMicros(100)
-	endBudget := parent.beginParseOperationBudget()
-	defer endBudget()
+	operationBudget := parent.beginParseOperationBudget()
+	defer parent.endParseOperationBudget(operationBudget)
 	time.Sleep(2 * time.Millisecond)
 
 	tree, err := parseWithSnippetParserInheriting(buildArithmeticLanguage(), []byte("1+2"), parent)
@@ -2207,8 +2218,8 @@ func TestParseWithSnippetParserInheritsParentCancellation(t *testing.T) {
 	parent := NewParser(buildArithmeticLanguage())
 	var cancelled uint32 = 1
 	parent.SetCancellationFlag(&cancelled)
-	endBudget := parent.beginParseOperationBudget()
-	defer endBudget()
+	operationBudget := parent.beginParseOperationBudget()
+	defer parent.endParseOperationBudget(operationBudget)
 
 	tree, err := parseWithSnippetParserInheriting(buildArithmeticLanguage(), []byte("1+2"), parent)
 	if err != nil {

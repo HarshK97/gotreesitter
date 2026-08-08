@@ -396,8 +396,8 @@ func TestTransientParentScratchMaterializeNodeSliceUntilStopsOnExpiredTimeout(t 
 	var parentScratch transientParentScratch
 	parser := &Parser{}
 	parser.SetTimeoutMicros(100)
-	endBudget := parser.beginParseOperationBudget()
-	defer endBudget()
+	operationBudget := parser.beginParseOperationBudget()
+	defer parser.endParseOperationBudget(operationBudget)
 	time.Sleep(2 * time.Millisecond)
 
 	leaf := newLeafNodeInArena(arena, Symbol(1), true, 0, 1, Point{}, Point{Column: 1})

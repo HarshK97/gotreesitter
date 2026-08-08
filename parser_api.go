@@ -701,8 +701,8 @@ func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFact
 			return tree, nil
 		}
 	}
-	endBudget := p.beginParseOperationBudget()
-	defer endBudget()
+	operationBudget := p.beginParseOperationBudget()
+	defer p.endParseOperationBudget(operationBudget)
 	p.fullParseRetryPassesTaken = 0
 	p.releaseCompatibilityBorrowedArenas()
 	p.clearRecoveryParser()
@@ -735,8 +735,8 @@ func (p *Parser) parseIncrementalWithTokenSource(source []byte, oldTree *Tree, t
 	if ts == nil {
 		return nil, ErrNoTokenSource
 	}
-	endBudget := p.beginParseOperationBudget()
-	defer endBudget()
+	operationBudget := p.beginParseOperationBudget()
+	defer p.endParseOperationBudget(operationBudget)
 	releaseTS := manageTokenSourceLifetime(ts)
 	defer releaseTS()
 	if canReuseUnchangedTree(source, oldTree, p.language) {
@@ -1040,8 +1040,8 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 			return tree, nil
 		}
 	}
-	endBudget := p.beginParseOperationBudget()
-	defer endBudget()
+	operationBudget := p.beginParseOperationBudget()
+	defer p.endParseOperationBudget(operationBudget)
 	p.fullParseRetryPassesTaken = 0
 	progress := newParseProgressTelemetry(p, len(source), uint32(len(source)), time.Now())
 	if progress.enabled {
@@ -1446,8 +1446,8 @@ func (p *Parser) ParseWithTokenSourceFactory(source []byte, factory TokenSourceF
 	if err := p.checkLanguageCompatible(); err != nil {
 		return nil, err
 	}
-	endBudget := p.beginParseOperationBudget()
-	defer endBudget()
+	operationBudget := p.beginParseOperationBudget()
+	defer p.endParseOperationBudget(operationBudget)
 	ts, err := factory(source)
 	if err != nil {
 		return nil, err
@@ -1471,8 +1471,8 @@ func (p *Parser) ParseIncremental(source []byte, oldTree *Tree) (*Tree, error) {
 	if canReuseUnchangedTree(source, oldTree, p.language) {
 		return oldTree, nil
 	}
-	endBudget := p.beginParseOperationBudget()
-	defer endBudget()
+	operationBudget := p.beginParseOperationBudget()
+	defer p.endParseOperationBudget(operationBudget)
 	return p.parseIncrementalChanged(source, oldTree)
 }
 
@@ -1613,8 +1613,8 @@ func (p *Parser) ParseIncrementalWithTokenSourceFactory(source []byte, oldTree *
 	if err := p.checkLanguageCompatible(); err != nil {
 		return nil, err
 	}
-	endBudget := p.beginParseOperationBudget()
-	defer endBudget()
+	operationBudget := p.beginParseOperationBudget()
+	defer p.endParseOperationBudget(operationBudget)
 	ts, err := factory(source)
 	if err != nil {
 		return nil, err
@@ -1647,8 +1647,8 @@ func (p *Parser) ParseIncrementalProfiled(source []byte, oldTree *Tree) (*Tree, 
 	if canReuseUnchangedTree(source, oldTree, p.language) {
 		return oldTree, IncrementalParseProfile{}, nil
 	}
-	endBudget := p.beginParseOperationBudget()
-	defer endBudget()
+	operationBudget := p.beginParseOperationBudget()
+	defer p.endParseOperationBudget(operationBudget)
 	return p.parseIncrementalChangedProfiled(source, oldTree)
 }
 
@@ -1704,8 +1704,8 @@ func (p *Parser) ParseIncrementalWithTokenSourceProfiled(source []byte, oldTree 
 	if err := p.checkLanguageCompatible(); err != nil {
 		return nil, IncrementalParseProfile{}, err
 	}
-	endBudget := p.beginParseOperationBudget()
-	defer endBudget()
+	operationBudget := p.beginParseOperationBudget()
+	defer p.endParseOperationBudget(operationBudget)
 	releaseTS := manageTokenSourceLifetime(ts)
 	defer releaseTS()
 	if canReuseUnchangedTree(source, oldTree, p.language) {

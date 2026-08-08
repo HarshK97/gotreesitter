@@ -1498,6 +1498,10 @@ func TestCNodeMemoEpochAdvancesAcrossParserParses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first parse: %v", err)
 	}
+	memoRuntime := first.RecoveryNodeMemoRuntime()
+	if memoRuntime.PeakTier != RecoveryNodeMemoTierInitial || memoRuntime.Collisions != 0 {
+		t.Fatalf("first parse memo runtime = %+v", memoRuntime)
+	}
 	first.Release()
 	firstEpoch := p.cNodeMemoEpoch
 	if firstEpoch == 0 {
@@ -1586,10 +1590,54 @@ func TestCNodeMemoEpochWrapClearsBeforeEpochReuse(t *testing.T) {
 func TestCNodeMemoCacheEntrySize(t *testing.T) {
 	want := uintptr(20)
 	if unsafe.Sizeof(uintptr(0)) == 8 {
-		want = 32
+		want = 24
 	}
 	if got := unsafe.Sizeof(cNodeMemoCacheEntry{}); got != want {
 		t.Fatalf("cNodeMemoCacheEntry size = %d, want %d", got, want)
+	}
+}
+
+func TestRecoveryMemoTelemetryPreservesAMD64HotLayouts(t *testing.T) {
+	if unsafe.Sizeof(uintptr(0)) != 8 {
+		t.Skip("amd64 layout ratchet")
+	}
+	if got, want := unsafe.Sizeof(Parser{}), uintptr(2176); got != want {
+		t.Fatalf("Parser size = %d, want %d", got, want)
+	}
+	if got, want := unsafe.Sizeof(ParseRuntime{}), uintptr(3040); got != want {
+		t.Fatalf("ParseRuntime size = %d, want %d", got, want)
+	}
+	if got, want := unsafe.Sizeof(Tree{}), uintptr(3240); got != want {
+		t.Fatalf("Tree size = %d, want %d", got, want)
+	}
+	if got, want := unsafe.Offsetof(Parser{}.cNodeMemoPeakTier), unsafe.Offsetof(Parser{}.crecoveryCostCompetitionRelevant)+1; got != want {
+		t.Fatalf("Parser memo peak offset = %d, want %d", got, want)
+	}
+	if got, want := unsafe.Offsetof(Parser{}.fullParseRetryPassesTaken), uintptr(984); got != want {
+		t.Fatalf("Parser full-parse retry offset = %d, want %d", got, want)
+	}
+	if got, want := unsafe.Offsetof(Tree{}.recoveryNodeMemoPeakTier), unsafe.Offsetof(Tree{}.released)+1; got != want {
+		t.Fatalf("Tree memo peak offset = %d, want %d", got, want)
+	}
+	if got, want := unsafe.Offsetof(Tree{}.recoveryNodeMemoCollisions)+unsafe.Sizeof(Tree{}.recoveryNodeMemoCollisions), unsafe.Sizeof(Tree{}); got != want {
+		t.Fatalf("Tree memo telemetry end = %d, want %d", got, want)
+	}
+}
+
+func TestRecoveryNodeMemoTierMetrics(t *testing.T) {
+	if got, want := RecoveryNodeMemoTierTemporary.Entries(), uint32(cNodeMemoRecoveryCacheSize); got != want {
+		t.Fatalf("temporary tier entries = %d, want %d", got, want)
+	}
+	if got, want := RecoveryNodeMemoTierTemporary.Bytes(), uint32(cNodeMemoCacheBytesForEntries(cNodeMemoRecoveryCacheSize)); got != want {
+		t.Fatalf("temporary tier bytes = %d, want %d", got, want)
+	}
+	tree := &Tree{}
+	tree.setRecoveryNodeMemoRuntime(RecoveryNodeMemoRuntime{
+		PeakTier:   RecoveryNodeMemoTierTemporary,
+		Collisions: 123,
+	})
+	if got := tree.RecoveryNodeMemoRuntime(); got.PeakTier != RecoveryNodeMemoTierTemporary || got.Collisions != 123 {
+		t.Fatalf("tree memo runtime = %+v", got)
 	}
 }
 
@@ -1663,6 +1711,118 @@ func TestCNodeMemoSlotAdaptiveGrowIsNoopOnceAtFullSize(t *testing.T) {
 	}
 	if after := &p.cNodeMemoCache[0]; after != before {
 		t.Fatal("cache backing array was reallocated at full size")
+	}
+}
+
+func TestCNodeMemoSlotGrowsTemporaryRecoveryTier(t *testing.T) {
+	p := &Parser{
+		cNodeMemoCache:             make([]cNodeMemoCacheEntry, cNodeMemoCacheSize),
+		crecoveryEnteredErrorState: true,
+		cNodeMemoPeakTier:          RecoveryNodeMemoTierStandard,
+	}
+	p.beginCNodeMemoEpoch()
+	a, b, c := collidingCNodeMemoNodes(t, len(p.cNodeMemoCache)>>1)
+	p.cNodeMemoSlot(a)
+	p.cNodeMemoSlot(b)
+	p.cNodeMemoThrash = cNodeMemoRecoveryThrashGrowThreshold - 1
+	retained := &p.cNodeMemoCache[0]
+
+	slot := p.cNodeMemoSlot(c)
+	if got := len(p.cNodeMemoCache); got != cNodeMemoRecoveryCacheSize {
+		t.Fatalf("temporary cache length = %d, want %d", got, cNodeMemoRecoveryCacheSize)
+	}
+	if got := len(p.forestDeclineMemo.cNodeMemoRetainedCache); got != cNodeMemoCacheSize {
+		t.Fatalf("retained cache length = %d, want %d", got, cNodeMemoCacheSize)
+	}
+	if got := &p.forestDeclineMemo.cNodeMemoRetainedCache[0]; got != retained {
+		t.Fatal("temporary growth did not preserve the standard cache")
+	}
+	if got := p.cNodeMemoPeakTier.Entries(); got != cNodeMemoRecoveryCacheSize {
+		t.Fatalf("peak entries = %d, want %d", got, cNodeMemoRecoveryCacheSize)
+	}
+	if got := p.cNodeMemoCollisionCount(); got != 2 {
+		t.Fatalf("collision count = %d, want 2", got)
+	}
+	setCount := len(p.cNodeMemoCache) >> 1
+	wantIdx := cNodeMemoCacheIndex(uintptr(unsafe.Pointer(c)), setCount)
+	if slot != &p.cNodeMemoCache[wantIdx] {
+		t.Fatalf("slot after temporary growth = %p, want cache[%d]", slot, wantIdx)
+	}
+
+	p.finishCNodeMemoParse()
+	if got := len(p.cNodeMemoCache); got != cNodeMemoCacheSize {
+		t.Fatalf("finished cache length = %d, want %d", got, cNodeMemoCacheSize)
+	}
+	if got := &p.cNodeMemoCache[0]; got != retained {
+		t.Fatal("parse cleanup did not restore the standard cache")
+	}
+	if p.forestDeclineMemo.cNodeMemoRetainedCache != nil {
+		t.Fatal("parse cleanup retained the temporary cache reference")
+	}
+}
+
+func TestCNodeMemoSlotDoesNotGrowTemporaryTierOutsideRecovery(t *testing.T) {
+	p := &Parser{
+		cNodeMemoCache:    make([]cNodeMemoCacheEntry, cNodeMemoCacheSize),
+		cNodeMemoPeakTier: RecoveryNodeMemoTierStandard,
+	}
+	p.beginCNodeMemoEpoch()
+	a, b, c := collidingCNodeMemoNodes(t, len(p.cNodeMemoCache)>>1)
+	p.cNodeMemoSlot(a)
+	p.cNodeMemoSlot(b)
+	p.cNodeMemoThrash = cNodeMemoRecoveryThrashGrowThreshold
+	p.cNodeMemoSlot(c)
+
+	if got := len(p.cNodeMemoCache); got != cNodeMemoCacheSize {
+		t.Fatalf("cache length = %d, want %d without recovery", got, cNodeMemoCacheSize)
+	}
+	if p.forestDeclineMemo != nil && p.forestDeclineMemo.cNodeMemoRetainedCache != nil {
+		t.Fatal("non-recovery contention retained a temporary cache")
+	}
+	if got := p.cNodeMemoPeakTier.Entries(); got != cNodeMemoCacheSize {
+		t.Fatalf("peak entries = %d, want %d", got, cNodeMemoCacheSize)
+	}
+}
+
+func TestCNodeMemoTemporaryTierLivesForParseOperation(t *testing.T) {
+	p := &Parser{
+		cNodeMemoCache:    make([]cNodeMemoCacheEntry, cNodeMemoCacheSize),
+		cNodeMemoPeakTier: RecoveryNodeMemoTierStandard,
+	}
+	retained := &p.cNodeMemoCache[0]
+	outer := p.beginParseOperationBudget()
+	inner := p.beginParseOperationBudget()
+	p.growCNodeMemoCacheTo(cNodeMemoRecoveryCacheSize)
+	if got := len(p.cNodeMemoCache); got != cNodeMemoRecoveryCacheSize {
+		t.Fatalf("active cache length = %d, want %d", got, cNodeMemoRecoveryCacheSize)
+	}
+	p.endParseOperationBudget(inner)
+	if got := len(p.cNodeMemoCache); got != cNodeMemoRecoveryCacheSize {
+		t.Fatalf("cache length after nested operation = %d, want %d", got, cNodeMemoRecoveryCacheSize)
+	}
+	if p.cNodeMemoOperationDepth != 1 {
+		t.Fatalf("nested operation depth = %d, want 1", p.cNodeMemoOperationDepth)
+	}
+	p.endParseOperationBudget(outer)
+
+	if p.cNodeMemoOperationDepth != 0 {
+		t.Fatalf("operation depth = %d, want 0", p.cNodeMemoOperationDepth)
+	}
+	if got := len(p.cNodeMemoCache); got != cNodeMemoCacheSize {
+		t.Fatalf("finished cache length = %d, want %d", got, cNodeMemoCacheSize)
+	}
+	if got := &p.cNodeMemoCache[0]; got != retained {
+		t.Fatal("operation cleanup did not restore the standard cache")
+	}
+	peak, peakBytes, collisions := p.DebugCNodeMemoOperationStats()
+	if peak != cNodeMemoRecoveryCacheSize {
+		t.Fatalf("operation peak = %d, want %d", peak, cNodeMemoRecoveryCacheSize)
+	}
+	if want := cNodeMemoCacheBytesForEntries(cNodeMemoRecoveryCacheSize); peakBytes != want {
+		t.Fatalf("operation peak bytes = %d, want %d", peakBytes, want)
+	}
+	if collisions != 0 {
+		t.Fatalf("operation collisions = %d, want 0", collisions)
 	}
 }
 

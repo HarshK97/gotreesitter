@@ -107,8 +107,10 @@ func TestForestDeclineMemoBoundsAndFIFO(t *testing.T) {
 		t.Fatal("source larger than total retention allocated or populated the lazy memo")
 	}
 
-	parser.forestDeclineMemo = &forestDeclineMemoState{
-		retainedSourceBytes: forestDeclineMemoMaxRetainedSourceBytes,
+	parser.forestDeclineMemo = &parserColdState{
+		forestDeclineMemoState: forestDeclineMemoState{
+			retainedSourceBytes: forestDeclineMemoMaxRetainedSourceBytes,
+		},
 	}
 	parser.rememberForestDecline([]byte("cannot fit"), forestDeclineEOFRecoveryConflict)
 	if parser.forestDeclineMemo.count != 0 || parser.forestDeclineMemo.retainedSourceBytes != forestDeclineMemoMaxRetainedSourceBytes {

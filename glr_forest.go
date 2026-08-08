@@ -182,6 +182,24 @@ type forestDeclineMemoState struct {
 	retainedSourceBytes int
 }
 
+// parserColdState shares the Parser's existing lazy sidecar slot between two
+// uncommon features. It preserves the hot Parser layout for ordinary parses.
+type parserColdState struct {
+	forestDeclineMemoState
+	cNodeMemoRetainedCache []cNodeMemoCacheEntry
+	cNodeMemoCollisions    uint64
+}
+
+func (p *Parser) ensureParserColdState() *parserColdState {
+	if p == nil {
+		return nil
+	}
+	if p.forestDeclineMemo == nil {
+		p.forestDeclineMemo = new(parserColdState)
+	}
+	return p.forestDeclineMemo
+}
+
 // forestDeclineReasonIsMemoizable is intentionally a closed allowlist. Adding
 // a reason requires proof that it is a deterministic semantic outcome for the
 // same language, exact source bytes, and mode. Transient resource and control
@@ -283,7 +301,7 @@ func (p *Parser) rememberForestDecline(source []byte, reason string) {
 	mode := p.forestDeclineMemoMode()
 	hash := forestDeclineSourceHash(source)
 	if p.forestDeclineMemo == nil {
-		p.forestDeclineMemo = new(forestDeclineMemoState)
+		p.forestDeclineMemo = new(parserColdState)
 	}
 	memo := p.forestDeclineMemo
 	for offset := 0; offset < int(memo.count); offset++ {

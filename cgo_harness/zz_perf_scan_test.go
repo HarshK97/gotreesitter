@@ -198,13 +198,32 @@ type perfScanFile struct {
 // summaries include stopped files in the non-clean/error side, matching the
 // parse-gap tools' existing Clean=false policy.
 type perfScanFileClassification struct {
-	Class        string `json:"class"`
-	Reason       string `json:"reason"`
-	GoStatus     string `json:"go_status"`
-	FullSpan     bool   `json:"full_span"`
-	RootHasError bool   `json:"root_has_error"`
-	StoppedEarly bool   `json:"stopped_early"`
-	StopReason   string `json:"stop_reason,omitempty"`
+	Class                       string `json:"class"`
+	Reason                      string `json:"reason"`
+	GoStatus                    string `json:"go_status"`
+	FullSpan                    bool   `json:"full_span"`
+	RootHasError                bool   `json:"root_has_error"`
+	StoppedEarly                bool   `json:"stopped_early"`
+	StopReason                  string `json:"stop_reason,omitempty"`
+	RecoveryNodeMemoPeakTier    string `json:"recovery_node_memo_peak_tier,omitempty"`
+	RecoveryNodeMemoPeakEntries uint32 `json:"recovery_node_memo_peak_entries,omitempty"`
+	RecoveryNodeMemoPeakBytes   uint32 `json:"recovery_node_memo_peak_bytes,omitempty"`
+	RecoveryNodeMemoCollisions  uint32 `json:"recovery_node_memo_collisions,omitempty"`
+}
+
+func perfScanRecoveryNodeMemoTierName(tier gotreesitter.RecoveryNodeMemoTier) string {
+	switch tier {
+	case gotreesitter.RecoveryNodeMemoTierNone:
+		return "none"
+	case gotreesitter.RecoveryNodeMemoTierInitial:
+		return "initial"
+	case gotreesitter.RecoveryNodeMemoTierStandard:
+		return "standard"
+	case gotreesitter.RecoveryNodeMemoTierTemporary:
+		return "temporary"
+	default:
+		return "unknown"
+	}
 }
 
 type perfScanClassTiming struct {
@@ -1715,6 +1734,11 @@ func perfScanClassifyGoFull(tree *gotreesitter.Tree, att perfScanAttempt, source
 		classification.FullSpan = root.StartByte() == 0 && root.EndByte() == uint32(sourceBytes)
 		classification.RootHasError = root.HasError() || root.IsError()
 		classification.StoppedEarly = tree.ParseStoppedEarly()
+		memo := tree.RecoveryNodeMemoRuntime()
+		classification.RecoveryNodeMemoPeakTier = perfScanRecoveryNodeMemoTierName(memo.PeakTier)
+		classification.RecoveryNodeMemoPeakEntries = memo.PeakTier.Entries()
+		classification.RecoveryNodeMemoPeakBytes = memo.PeakTier.Bytes()
+		classification.RecoveryNodeMemoCollisions = memo.Collisions
 	}
 	if att.stop != nil {
 		classification.Class = perfScanClassStopped
@@ -3328,6 +3352,9 @@ func TestPerfScanFullParseClassificationUnit(t *testing.T) {
 	cleanTree.Release()
 	if clean.Class != perfScanClassClean || !clean.FullSpan || clean.RootHasError || clean.StoppedEarly || clean.GoStatus != perfScanStatusOK {
 		t.Fatalf("clean classification = %+v", clean)
+	}
+	if clean.RecoveryNodeMemoPeakTier != perfScanRecoveryNodeMemoTierName(gotreesitter.RecoveryNodeMemoTierNone) || clean.RecoveryNodeMemoPeakEntries != 0 || clean.RecoveryNodeMemoCollisions != 0 {
+		t.Fatalf("clean memo classification = %+v", clean)
 	}
 
 	prefixRoot := gotreesitter.NewLeafNode(1, true, 1, uint32(len(src)), gotreesitter.Point{Column: 1}, gotreesitter.Point{Column: uint32(len(src))})

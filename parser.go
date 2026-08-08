@@ -253,6 +253,11 @@ type Parser struct {
 	// error nodes without any new pause this pass). Reset alongside
 	// crecoveryEnteredErrorState in parseInternal.
 	crecoveryCostCompetitionRelevant bool
+	// Recovery-memo tier and operation fields occupy existing Parser padding.
+	// Keep larger recovery-only state in the lazy cold sidecar at the tail.
+	cNodeMemoPeakTier          RecoveryNodeMemoTier
+	cNodeMemoOperationPeakTier RecoveryNodeMemoTier
+	cNodeMemoOperationDepth    uint8
 	// fullParseRetryPassesTaken counts retry-ladder passes run during the
 	// current top-level parse operation (reset at the public parse entry
 	// funnels). retryFullParse stops launching passes once it reaches
@@ -452,12 +457,11 @@ type Parser struct {
 	pendingFrontierForkStacks  []glrStack
 	disablePostReduceForkMerge bool
 	stopActionDiag             *parseStopActionDiagnostic
-	// forestDeclineMemo lazily remembers a small, strictly bounded set of
-	// deterministic automatic-forest declines for exact source bytes. Keep the
-	// pointer at the end so parsers that never cache a decline pay no sidecar
-	// allocation and the established hot Parser fields retain their layout.
+	// forestDeclineMemo is the lazy parser cold sidecar. It stores the bounded
+	// forest-decline memo and difficult recovery-memo operation state. Parsers
+	// that use neither feature pay no sidecar allocation.
 	// Explicit ParseForestExperimental calls intentionally ignore this memo.
-	forestDeclineMemo *forestDeclineMemoState
+	forestDeclineMemo *parserColdState
 }
 
 var snippetParserPools sync.Map
@@ -1638,6 +1642,7 @@ func resetSnippetParser(parser *Parser) {
 	if parser == nil {
 		return
 	}
+	parser.finishCNodeMemoParse()
 	resetGSSPrefixPath(&parser.cPrefixPath)
 	parser.reparseFactory = nil
 	parser.recoveryParser = nil
@@ -1666,6 +1671,13 @@ func resetSnippetParser(parser *Parser) {
 	parser.timeoutMicros = 0
 	parser.cancellationFlag = nil
 	parser.parseBudgetDepth = 0
+	parser.cNodeMemoOperationDepth = 0
+	parser.cNodeMemoPeakTier = RecoveryNodeMemoTierNone
+	parser.cNodeMemoOperationPeakTier = RecoveryNodeMemoTierNone
+	if cold := parser.forestDeclineMemo; cold != nil {
+		cold.cNodeMemoRetainedCache = nil
+		cold.cNodeMemoCollisions = 0
+	}
 	parser.parseDeadline = time.Time{}
 	parser.parseStoppedReason = ParseStopNone
 	parser.parseRuntimeMemoryBudgetBytes = 0
@@ -4448,10 +4460,21 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		p.mergeScratch = nil
 		p.budgetScratch = prevBudgetScratch
 		p.goCompatFrames = nil
+		if p.cNodeMemoOperationDepth == 0 {
+			p.finishCNodeMemoParse()
+		}
 	}()
 	scratch.audit.beginParse()
 	scratch.merge.audit = nil
 	scratch.gss.audit = nil
+	if p.cNodeMemoOperationDepth == 0 {
+		p.cNodeMemoOperationPeakTier = RecoveryNodeMemoTierNone
+		if cold := p.forestDeclineMemo; cold != nil {
+			cold.cNodeMemoCollisions = 0
+		}
+	}
+	cNodeMemoCollisionStart := p.cNodeMemoCollisionCount()
+	p.cNodeMemoPeakTier = RecoveryNodeMemoTierNone
 	if p.errorCostCompetitionEnabled() {
 		// Faithful C recovery port: arena nodes are pooled across parses, so
 		// stale (pointer, version) memo hits from a previous parse must be
@@ -4471,6 +4494,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			p.cNodeMemoCache = make([]cNodeMemoCacheEntry, cNodeMemoCacheInitialSize)
 		}
 		p.cNodeMemoThrash = 0
+		p.cNodeMemoPeakTier = recoveryNodeMemoTierForEntries(len(p.cNodeMemoCache))
+		if p.cNodeMemoPeakTier > p.cNodeMemoOperationPeakTier {
+			p.cNodeMemoOperationPeakTier = p.cNodeMemoPeakTier
+		}
 		p.beginCNodeMemoEpoch()
 		p.crecoveryEnteredErrorState = false
 		p.crecoveryDroppedErrorForClean = false
@@ -4959,6 +4986,13 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		parseRuntime.RuntimeSysGrowthBytes = memoryBudgetDiag.runtimeSysGrowthBytes
 		parseRuntime.CRecoveryEnteredErrorState = p.crecoveryEnteredErrorState
 		parseRuntime.CRecoveryDroppedErrorForClean = p.crecoveryDroppedErrorForClean
+		memoRuntime := RecoveryNodeMemoRuntime{PeakTier: p.cNodeMemoPeakTier}
+		collisions := p.cNodeMemoCollisionCount() - cNodeMemoCollisionStart
+		if collisions > uint64(^uint32(0)) {
+			memoRuntime.Collisions = ^uint32(0)
+		} else {
+			memoRuntime.Collisions = uint32(collisions)
+		}
 		parseRuntime.CRecoverReductionCandidateCeilingHits = p.crecoveryReductionCandidateCeilingHits
 		parseRuntime.CRecoverMissingTokenCeilingHits = p.crecoveryMissingTokenCeilingHits
 		parseRuntime.CRecoverReductionCandidateAttemptsPeak = p.crecoveryReductionCandidateAttemptsPeak
@@ -4973,6 +5007,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		if tree != nil {
 			tree.setIncludedRanges(p.included)
 			tree.setParseRuntime(parseRuntime)
+			tree.setRecoveryNodeMemoRuntime(memoRuntime)
 			if arenaBreakdown != nil {
 				tree.setArenaBreakdown(arenaBreakdown)
 			}
@@ -6907,6 +6942,7 @@ func (p *Parser) configureParseScratch(scratch *parserScratch, source []byte, re
 		p.transientChildren = nil
 	}
 	scratch.merge.language = p.language
+	scratch.merge.cErrorCostParser = nil
 	scratch.merge.trace = p.glrTrace
 	scratch.merge.beginEquivEpoch()
 	scratch.merge.ensureMergeHotCaches()

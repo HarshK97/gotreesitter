@@ -271,6 +271,10 @@ type glrMergeScratch struct {
 	// at the top of every mergeStacksWithScratch call so a stale flag from a
 	// previous merge in the same pooled scratch can never leak forward.
 	mergeBudgetStopReason ParseStopReason
+	// cErrorCostParser lets the active parse share its bounded, versioned
+	// recovery-cost memo with merge comparisons. Keep this recovery-only field
+	// at the tail so existing hot scratch fields retain their layout.
+	cErrorCostParser *Parser
 }
 
 type gssCleanZeroFrame struct {
@@ -5490,6 +5494,7 @@ func (s *glrMergeScratch) reset() {
 	s.spineEquivBytes = glrSpineEquivCacheBytesForCap(cap(s.spineEquivCache))
 	s.frontierHashBytes = glrStackFrontierHashCacheBytesForCap(cap(s.frontierHashCache))
 	s.frontierMergeHash = false
+	s.cErrorCostParser = nil
 	if len(s.cErrorCost) > maxRetainedMergeResultCap {
 		s.cErrorCost = nil
 	} else if len(s.cErrorCost) > 0 {
