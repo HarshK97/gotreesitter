@@ -53,6 +53,10 @@ type PerfCounters struct {
 	ReduceChildrenScratch                uint64
 	ReduceScratchNoAlias                 uint64
 	ReduceScratchGeneral                 uint64
+	ReduceChildEmptyBuilds               uint64
+	ReduceChildAllVisibleBuilds          uint64
+	ReduceChildScratchNoAliasBuilds      uint64
+	ReduceChildScratchGeneralBuilds      uint64
 	ReduceForkCalls                      uint64
 	ReduceForkWindows                    uint64
 	ReduceForkMaxWindows                 uint64

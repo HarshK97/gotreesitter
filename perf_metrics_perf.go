@@ -63,6 +63,10 @@ type perfCountersData struct {
 	reduceChildrenScratch                atomic.Uint64
 	reduceScratchNoAlias                 atomic.Uint64
 	reduceScratchGeneral                 atomic.Uint64
+	reduceChildEmptyBuilds               atomic.Uint64
+	reduceChildAllVisibleBuilds          atomic.Uint64
+	reduceChildScratchNoAliasBuilds      atomic.Uint64
+	reduceChildScratchGeneralBuilds      atomic.Uint64
 	reduceForkCalls                      atomic.Uint64
 	reduceForkWindows                    atomic.Uint64
 	reduceForkMaxWindows                 atomic.Uint64
@@ -166,6 +170,10 @@ func ResetPerfCounters() {
 	perfCounters.reduceChildrenScratch.Store(0)
 	perfCounters.reduceScratchNoAlias.Store(0)
 	perfCounters.reduceScratchGeneral.Store(0)
+	perfCounters.reduceChildEmptyBuilds.Store(0)
+	perfCounters.reduceChildAllVisibleBuilds.Store(0)
+	perfCounters.reduceChildScratchNoAliasBuilds.Store(0)
+	perfCounters.reduceChildScratchGeneralBuilds.Store(0)
 	perfCounters.reduceForkCalls.Store(0)
 	perfCounters.reduceForkWindows.Store(0)
 	perfCounters.reduceForkMaxWindows.Store(0)
@@ -298,6 +306,10 @@ func PerfCountersSnapshot() PerfCounters {
 	out.ReduceChildrenScratch = perfCounters.reduceChildrenScratch.Load()
 	out.ReduceScratchNoAlias = perfCounters.reduceScratchNoAlias.Load()
 	out.ReduceScratchGeneral = perfCounters.reduceScratchGeneral.Load()
+	out.ReduceChildEmptyBuilds = perfCounters.reduceChildEmptyBuilds.Load()
+	out.ReduceChildAllVisibleBuilds = perfCounters.reduceChildAllVisibleBuilds.Load()
+	out.ReduceChildScratchNoAliasBuilds = perfCounters.reduceChildScratchNoAliasBuilds.Load()
+	out.ReduceChildScratchGeneralBuilds = perfCounters.reduceChildScratchGeneralBuilds.Load()
 	out.ReduceForkCalls = perfCounters.reduceForkCalls.Load()
 	out.ReduceForkWindows = perfCounters.reduceForkWindows.Load()
 	out.ReduceForkMaxWindows = perfCounters.reduceForkMaxWindows.Load()
@@ -609,6 +621,19 @@ func perfRecordReduceScratchNoAlias(count int) {
 func perfRecordReduceScratchGeneral(count int) {
 	if count > 0 {
 		perfCounters.reduceScratchGeneral.Add(uint64(count))
+	}
+}
+
+func perfRecordReduceChildBuild(path reduceChildPath) {
+	switch path {
+	case reduceChildPathNone:
+		perfCounters.reduceChildEmptyBuilds.Add(1)
+	case reduceChildPathAllVisible:
+		perfCounters.reduceChildAllVisibleBuilds.Add(1)
+	case reduceChildPathScratchNoAlias:
+		perfCounters.reduceChildScratchNoAliasBuilds.Add(1)
+	case reduceChildPathScratchGeneral:
+		perfCounters.reduceChildScratchGeneralBuilds.Add(1)
 	}
 }
 

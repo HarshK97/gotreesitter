@@ -55,6 +55,7 @@ func perfRecordReduceChildrenAllVisible(int)         {}
 func perfRecordReduceChildrenScratch(int)            {}
 func perfRecordReduceScratchNoAlias(int)             {}
 func perfRecordReduceScratchGeneral(int)             {}
+func perfRecordReduceChildBuild(reduceChildPath)     {}
 func perfRecordReduceForkCall(int)                   {}
 func perfRecordPostReduceMergeAttempt()              {}
 func perfRecordPostReduceMergePrimarySuccess()       {}
