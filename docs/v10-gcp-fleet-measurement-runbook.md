@@ -31,6 +31,11 @@ export GCP_ZONE=us-central1-c
 export VM_NAME=gts-v10-$(date -u +%Y%m%d-%H%M%S)
 export PERF_HOSTNAME=gts-v10-full-fleet
 export CORPUS_LOCK_SHA=41c744279c8b1d7c9fe7b1b8e26fba733423e77cd48efea46927309c22d163ea
+export V10_VM_MAX_RUN_SECONDS=32400
+export V10_WALL_TIMEOUT=8h
+export V10_GO_TIMEOUT=7h50m
+export V10_LANG_TIMEOUT_MS=240000
+export V10_MAX_COMPUTE_USD=3.00
 ~~~
 
 Record the following values in the final receipt:
@@ -41,6 +46,8 @@ Record the following values in the final receipt:
 - Go and Docker image identities;
 - corpus lock path and SHA-256 digest;
 - full-fleet language count;
+- virtual-machine, campaign, and language time limits;
+- the current Spot price and the maximum estimated cost;
 - output directory and raw logs.
 
 Do not publish a partial or interrupted scan.
@@ -69,15 +76,24 @@ gcloud compute instances create "$VM_NAME" \
   --machine-type c2-standard-8 \
   --provisioning-model SPOT \
   --instance-termination-action DELETE \
+  --max-run-duration "${V10_VM_MAX_RUN_SECONDS}s" \
   --image-family ubuntu-2404-lts-amd64 \
   --image-project ubuntu-os-cloud \
   --boot-disk-size 100GB \
   --boot-disk-type pd-balanced \
-  --metadata enable-oslogin=TRUE
+  --metadata enable-oslogin=TRUE \
+  --labels purpose=gotreesitter-v10,max-run=9h
 ~~~
 
 Use a regular VM when Spot capacity cannot satisfy the measurement window.
 Do not run another workload on this VM.
+
+Check the current Spot price before creation. Multiply that price by nine
+hours, then add the disk estimate. Do not start above
+`V10_MAX_COMPUTE_USD`. Record the estimate in the receipt.
+
+The nine-hour VM limit includes installation and corpus staging. Google Cloud
+deletes the VM when this limit expires. Do not extend the limit in place.
 
 ## Install the fresh machine
 
@@ -183,7 +199,8 @@ bash cgo_harness/docker/run_parity_in_docker.sh \
   --cpuset-cpus 4 \
   --pids 4096 \
   --gomemlimit 6GiB \
-  --timeout 0 \
+  --timeout "$V10_GO_TIMEOUT" \
+  --wall-timeout "$V10_WALL_TIMEOUT" \
   --hostname "$PERF_HOSTNAME" \
   --mount /srv/gotreesitter-perf:/corpus:ro \
   -- \
@@ -201,11 +218,35 @@ bash cgo_harness/docker/run_parity_in_docker.sh \
    GTS_PERF_SCAN_ORDER=largest \
    GTS_PERF_SCAN_REPS=5 \
    GTS_PERF_SCAN_FILE_BUDGET_MS=10000 \
+   GTS_PERF_SCAN_LANG_TIMEOUT_MS=$V10_LANG_TIMEOUT_MS \
    GTS_PERF_SCAN_CHILD_RSS_LIMIT_MB=6144 \
    GTS_PERF_SCAN_OUT=/workspace/$OUT \
    go test -tags 'treesitter_c_parity treesitter_c_perfscan' \
-     -run '^TestPerfScanSweep$' -v -count=1 -timeout 0 ."
+     -run '^TestPerfScanSweep$' -v -count=1 -timeout $V10_GO_TIMEOUT ."
 ~~~
+
+The wrapper returns exit code 124 when the wall limit expires. It stops the
+container and writes `inspect.json` and `metadata.txt`. Treat that run as
+incomplete.
+
+## Monitor campaign checkpoints
+
+Open a second shell on the VM. Count completed language fragments every five
+minutes:
+
+~~~sh
+cd /srv/gotreesitter-perf/gotreesitter
+export OUT='cgo_harness/perf_scan/out/<exact-v10-output-directory>'
+find "$OUT/langs" -maxdepth 1 -type f -name '*.json' | wc -l
+~~~
+
+Record elapsed time at 52, 103, and 155 completed languages. Project the final
+duration after each checkpoint. Stop the run when the projection exceeds the
+eight-hour wall limit.
+
+Each language writes its fragment and log before the next language starts.
+Copy these files after an interrupted run. Never promote them to an accepted
+scoreboard.
 
 The explicit revision and clean-source values authenticate the Docker root
 when Git VCS metadata is unavailable inside the container. Use them only after

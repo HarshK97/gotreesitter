@@ -22,6 +22,7 @@ GOMEMLIMIT_VALUE="${GOMEMLIMIT:-6GiB}"
 GOFLAGS_VALUE="${GOFLAGS:--p=1}"
 TEST_PARALLEL="1"
 TEST_TIMEOUT="20m"
+WALL_TIMEOUT=""
 PARITY_PARALLEL="0"
 C_REF_BUILD_JOBS="1"
 C_REF_BUILD_JOBS_SET="0"
@@ -60,6 +61,8 @@ Options:
   --goflags <value>      GOFLAGS inside container (default: -p=1)
   --test-parallel <n>    go test -parallel value (default: 1)
   --timeout <duration>   go test -timeout value (default: 20m)
+  --wall-timeout <duration>
+                         Stop the container after this wall time. Empty = no limit.
   --parity-parallel <n>  Enable GTS_PARITY_PARALLEL=1 and set -parallel n.
                          This is intentionally container-only.
   --c-ref-build-jobs <n> Concurrent C-reference parser builds (default: 1)
@@ -155,6 +158,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --timeout)
       TEST_TIMEOUT="$2"
+      shift 2
+      ;;
+    --wall-timeout)
+      WALL_TIMEOUT="$2"
       shift 2
       ;;
     --parity-parallel)
@@ -412,8 +419,31 @@ CID="$(docker create \
   bash -c "$INNER_CMD")"
 
 docker start "$CID" >/dev/null
-docker logs -f "$CID" 2>&1 | tee "$OUT_DIR/container.log"
-EXIT_CODE="$(docker wait "$CID")"
+WALL_TIMED_OUT="false"
+LOG_EXIT_CODE="0"
+if [[ -n "$WALL_TIMEOUT" ]]; then
+  set +e
+  timeout --signal=TERM --kill-after=15s "$WALL_TIMEOUT" \
+    docker logs -f "$CID" 2>&1 | tee "$OUT_DIR/container.log"
+  LOG_EXIT_CODE="${PIPESTATUS[0]}"
+  set -e
+  if [[ "$LOG_EXIT_CODE" == "124" ]]; then
+    WALL_TIMED_OUT="true"
+    echo "docker wall timeout reached after $WALL_TIMEOUT" | tee -a "$OUT_DIR/container.log"
+    docker stop --time 10 "$CID" >/dev/null 2>&1 || docker kill "$CID" >/dev/null 2>&1 || true
+  elif [[ "$LOG_EXIT_CODE" != "0" ]]; then
+    docker stop --time 10 "$CID" >/dev/null 2>&1 || docker kill "$CID" >/dev/null 2>&1 || true
+  fi
+else
+  docker logs -f "$CID" 2>&1 | tee "$OUT_DIR/container.log"
+fi
+CONTAINER_EXIT_CODE="$(docker wait "$CID")"
+EXIT_CODE="$CONTAINER_EXIT_CODE"
+if [[ "$WALL_TIMED_OUT" == "true" ]]; then
+  EXIT_CODE="124"
+elif [[ "$LOG_EXIT_CODE" != "0" ]]; then
+  EXIT_CODE="$LOG_EXIT_CODE"
+fi
 RUN_END_NS="$(date +%s%N)"
 RUN_END_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 docker inspect "$CID" >"$OUT_DIR/inspect.json"
@@ -434,6 +464,10 @@ STATE_ERROR="$(docker inspect -f '{{.State.Error}}' "$CID")"
   echo "goflags=$GOFLAGS_VALUE"
   echo "test_parallel=$TEST_PARALLEL"
   echo "test_timeout=$TEST_TIMEOUT"
+  echo "wall_timeout=$WALL_TIMEOUT"
+  echo "wall_timed_out=$WALL_TIMED_OUT"
+  echo "log_exit_code=$LOG_EXIT_CODE"
+  echo "container_exit_code=$CONTAINER_EXIT_CODE"
   echo "parity_parallel=$PARITY_PARALLEL"
   echo "c_ref_build_jobs=$C_REF_BUILD_JOBS"
   echo "strict_scala=$STRICT_SCALA"
@@ -458,6 +492,7 @@ echo "docker parity run complete"
 echo "artifacts: $OUT_DIR"
 echo "exit_code: $EXIT_CODE"
 echo "oom_killed: $OOM_KILLED"
+echo "wall_timed_out: $WALL_TIMED_OUT"
 if [[ -n "$STATE_ERROR" ]]; then
   echo "docker_state_error: $STATE_ERROR"
 fi
