@@ -4172,6 +4172,20 @@ func (c *Core) popSingleLinkPath(head NodeID, childCount int, scratch *popEnumer
 
 // Derivations enumerates the exact alternatives represented by head.
 func (c *Core) Derivations(head Head) ([]Derivation, error) {
+	n, err := c.node(head.Node)
+	if err != nil {
+		return nil, err
+	}
+	if n.pathCount == 1 {
+		path, exact, err := c.singleDerivation(head.Node)
+		if err != nil {
+			return nil, err
+		}
+		if exact {
+			return []Derivation{path}, nil
+		}
+	}
+
 	var out []Derivation
 	visiting := make(map[NodeID]bool)
 	var walk func(NodeID) ([]Derivation, error)
@@ -4232,6 +4246,67 @@ func (c *Core) Derivations(head Head) ([]Derivation, error) {
 	}
 	out = append(out, paths...)
 	return out, nil
+}
+
+// singleDerivation walks a certified single-path graph without recursion.
+// The returned Boolean is false when malformed path telemetry requires the
+// general enumerator to reproduce its fail-closed result.
+func (c *Core) singleDerivation(id NodeID) (Derivation, bool, error) {
+	reverseLinks := make([]LinkID, 0, 64)
+	for {
+		n, err := c.node(id)
+		if err != nil {
+			return Derivation{}, true, err
+		}
+		if n.linkCount == 0 {
+			if n.pathCount != 1 {
+				return Derivation{}, true, errors.New("parser-core phase zero: malformed seed path count")
+			}
+			break
+		}
+		if n.pathCount != 1 || n.linkCount != 1 {
+			return Derivation{}, false, nil
+		}
+
+		linkID := LinkID(n.firstLink)
+		if linkID == 0 {
+			return Derivation{}, true, errors.New("parser-core phase zero: adjacency shorter than recorded link count")
+		}
+		if uint64(linkID) > uint64(len(c.links)) {
+			return Derivation{}, true, errors.New("parser-core phase zero: link adjacency out of range")
+		}
+		link := c.links[linkID-1]
+		if link.next != 0 {
+			if link.next == linkID {
+				return Derivation{}, true, errors.New("parser-core phase zero: adjacency cycle")
+			}
+			if uint64(link.next) > uint64(len(c.links)) {
+				return Derivation{}, true, errors.New("parser-core phase zero: link adjacency out of range")
+			}
+			return Derivation{}, true, errors.New("parser-core phase zero: adjacency exceeds recorded link count")
+		}
+		reverseLinks = append(reverseLinks, linkID)
+		if len(reverseLinks) >= len(c.nodes) {
+			return Derivation{}, true, errors.New("parser-core phase zero: graph cycle")
+		}
+		id = link.prev
+	}
+
+	path := Derivation{Payloads: make([]SubtreeID, len(reverseLinks))}
+	for reverseIndex := len(reverseLinks) - 1; reverseIndex >= 0; reverseIndex-- {
+		link := c.links[reverseLinks[reverseIndex]-1]
+		score, err := checkedAddScore(path.Score, link.scoreDelta)
+		if err != nil {
+			return Derivation{}, true, err
+		}
+		path.Score = score
+		path.Payloads[len(reverseLinks)-1-reverseIndex] = link.payload
+		if link.hasOrder() {
+			path.BranchOrder = link.order
+			path.HasBranchOrder = true
+		}
+	}
+	return path, true, nil
 }
 
 func saturatingAddPaths(left, right uint64) uint64 {

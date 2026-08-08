@@ -3035,6 +3035,58 @@ func TestCycleAndOverflowDeclineFailClosed(t *testing.T) {
 	})
 }
 
+func TestDerivationsDeepSinglePath(t *testing.T) {
+	const depth = 50_000
+	core := newTinyCoreWithLimits(t, Limits{
+		MaxNodes: depth + 1, MaxLinks: depth, MaxSubtrees: depth,
+		MaxDerivations: 2, MaxPopPaths: 2,
+	})
+	seed, err := core.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core.links = make([]linkRecord, depth)
+	core.subtrees = make([]subtreeRecord, depth)
+	core.nodes = append(core.nodes, make([]nodeRecord, depth)...)
+	for index := 0; index < depth; index++ {
+		linkID := LinkID(index + 1)
+		core.links[index] = linkRecord{
+			prev: NodeID(index + 1), payload: SubtreeID(index + 1),
+		}
+		core.nodes[index+1] = nodeRecord{
+			firstLink: uint32(linkID), linkCount: 1, pathCount: 1,
+		}
+	}
+	core.links[0].scoreDelta = 2
+	core.links[depth/2].scoreDelta = -3
+	core.links[depth-1].scoreDelta = 5
+	core.links[0].flags = linkFlagHasOrder
+	core.links[0].order = 7
+	core.links[depth/2].flags = linkFlagHasOrder
+	core.links[depth/2].order = 9
+
+	paths, err := core.Derivations(Head{Node: seed.Node + depth})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 1 {
+		t.Fatalf("derivation count=%d, want 1", len(paths))
+	}
+	path := paths[0]
+	if len(path.Payloads) != depth {
+		t.Fatalf("payload count=%d, want %d", len(path.Payloads), depth)
+	}
+	if path.Payloads[0] != 1 || path.Payloads[depth-1] != depth {
+		t.Fatalf("payload endpoints=%d,%d, want 1,%d", path.Payloads[0], path.Payloads[depth-1], depth)
+	}
+	if path.Score != 4 {
+		t.Fatalf("score=%d, want 4", path.Score)
+	}
+	if !path.HasBranchOrder || path.BranchOrder != 9 {
+		t.Fatalf("branch order=(%t,%d), want (true,9)", path.HasBranchOrder, path.BranchOrder)
+	}
+}
+
 func newTinyCore(t *testing.T, pathCap uint64) *Core {
 	t.Helper()
 	return newTinyCoreWithLimits(t, Limits{MaxDerivations: pathCap, MaxPopPaths: pathCap})
