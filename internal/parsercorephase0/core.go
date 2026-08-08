@@ -651,17 +651,21 @@ type subtreeRecord struct {
 	symbol            Symbol
 	productionID      uint16
 	dynamicPrecedence int16
-	startByte         uint32
-	endByte           uint32
-	firstChild        uint32
-	childCount        uint32
-	firstField        uint32
-	fieldCount        uint32
-	firstAlias        uint32
-	aliasCount        uint32
-	extra             bool
-	external          bool
-	terminal          bool
+	// externalProvenanceState is derived metadata, not subtree identity. Its
+	// position uses one alignment byte before startByte, so the record stays
+	// 44 bytes. Normal publication computes it from child records.
+	externalProvenanceState subtreeExternalProvenanceState
+	startByte               uint32
+	endByte                 uint32
+	firstChild              uint32
+	childCount              uint32
+	firstField              uint32
+	fieldCount              uint32
+	firstAlias              uint32
+	aliasCount              uint32
+	extra                   bool
+	external                bool
+	terminal                bool
 	// fragile mirrors gotreesitter.Node's fragileLeft/fragileRight bits
 	// (tree.go), collapsed to one conservative flag here: set whenever the
 	// record was produced by a reduce/conflict-arm decision that ran under
@@ -684,6 +688,15 @@ type externalPayloadProvenance struct {
 	start   CheckpointID
 	end     CheckpointID
 }
+
+type subtreeExternalProvenanceState uint8
+
+const (
+	subtreeExternalProvenanceUnknown subtreeExternalProvenanceState = iota
+	subtreeExternalProvenanceExactNoExternal
+	subtreeExternalProvenanceExactHasExternal
+	subtreeExternalProvenanceInexactHasExternal
+)
 
 // pathMeta is stored on a graph link. ScoreDelta includes the contributions
 // collapsed into that payload; BranchOrder optionally overrides the current
@@ -2374,6 +2387,10 @@ func reductionParentIdentityEqual(
 	// not. The caller (reductionParentForPath) is responsible for OR-ing the
 	// bit into whichever record survives the dedup -- see its doc comment.
 	left.fragile, right.fragile = false, false
+	// External provenance state is derived from immutable children and scanner
+	// proofs. It is not part of structural identity.
+	left.externalProvenanceState, right.externalProvenanceState =
+		subtreeExternalProvenanceUnknown, subtreeExternalProvenanceUnknown
 	return left == right && slices.Equal(leftChildren, rightChildren) && slices.Equal(leftFields, rightFields) && slices.Equal(leftAliases, rightAliases)
 }
 
@@ -3235,29 +3252,29 @@ func (c *Core) insertLinkBounded(state StateID, byteOffset uint32, links []linkR
 // subtreeExternalProvenance reports whether a payload contains an external
 // terminal and whether every such terminal has an exact scanner-state pair.
 func (c *Core) subtreeExternalProvenance(root SubtreeID) (hasExternal, exact bool, err error) {
-	if _, err := c.subtree(root); err != nil {
+	record, err := c.subtree(root)
+	if err != nil {
 		return false, false, err
 	}
 	if c.externalPayloadsQuiescent {
 		return false, true, nil
 	}
-	seen := make(map[SubtreeID]bool)
-	visiting := make(map[SubtreeID]bool)
+	if has, exact, cached := record.externalProvenanceState.result(); cached {
+		return has, exact, nil
+	}
 	var walk func(SubtreeID) (bool, bool, error)
 	walk = func(id SubtreeID) (bool, bool, error) {
-		if visiting[id] {
-			return false, false, errors.New("parser-core phase zero: compact subtree cycle during recursive insertion")
-		}
-		if seen[id] {
-			return false, true, nil
-		}
 		record, err := c.subtree(id)
 		if err != nil {
 			return false, false, err
 		}
+		if has, exact, cached := record.externalProvenanceState.result(); cached {
+			return has, exact, nil
+		}
 		if record.external {
 			provenance, ok := c.externalPayloadScannerProvenance(id)
 			if !record.terminal || !ok {
+				record.externalProvenanceState = subtreeExternalProvenanceInexactHasExternal
 				return true, false, nil
 			}
 			for _, checkpoint := range [...]CheckpointID{provenance.start, provenance.end} {
@@ -3265,14 +3282,13 @@ func (c *Core) subtreeExternalProvenance(root SubtreeID) (hasExternal, exact boo
 					continue
 				}
 				if _, ok := c.checkpoints.record(checkpoint); !ok {
+					record.externalProvenanceState = subtreeExternalProvenanceInexactHasExternal
 					return true, false, nil
 				}
 			}
+			record.externalProvenanceState = subtreeExternalProvenanceExactHasExternal
 			return true, true, nil
 		}
-		seen[id] = true
-		visiting[id] = true
-		defer delete(visiting, id)
 		has := false
 		for _, child := range c.children[record.firstChild : record.firstChild+record.childCount] {
 			if child >= id {
@@ -3280,13 +3296,60 @@ func (c *Core) subtreeExternalProvenance(root SubtreeID) (hasExternal, exact boo
 			}
 			childHas, childExact, err := walk(child)
 			if err != nil || !childExact {
+				if err == nil {
+					record.externalProvenanceState = subtreeExternalProvenanceInexactHasExternal
+				}
 				return has || childHas, childExact, err
 			}
 			has = has || childHas
 		}
+		record.externalProvenanceState = subtreeExternalProvenanceExactNoExternal
+		if has {
+			record.externalProvenanceState = subtreeExternalProvenanceExactHasExternal
+		}
 		return has, true, nil
 	}
 	return walk(root)
+}
+
+func (state subtreeExternalProvenanceState) result() (hasExternal, exact, cached bool) {
+	switch state {
+	case subtreeExternalProvenanceExactNoExternal:
+		return false, true, true
+	case subtreeExternalProvenanceExactHasExternal:
+		return true, true, true
+	case subtreeExternalProvenanceInexactHasExternal:
+		return true, false, true
+	default:
+		return false, false, false
+	}
+}
+
+func (c *Core) deriveSubtreeExternalProvenanceState(r subtreeRecord, children []SubtreeID) subtreeExternalProvenanceState {
+	if c.externalPayloadsQuiescent {
+		return subtreeExternalProvenanceExactNoExternal
+	}
+	if r.external {
+		return subtreeExternalProvenanceInexactHasExternal
+	}
+	state := subtreeExternalProvenanceExactNoExternal
+	next := SubtreeID(uint64(len(c.subtrees)) + 1)
+	for _, child := range children {
+		if child == 0 || child >= next {
+			return subtreeExternalProvenanceUnknown
+		}
+		hasExternal, exact, cached := c.subtrees[child-1].externalProvenanceState.result()
+		if !cached {
+			return subtreeExternalProvenanceUnknown
+		}
+		if !exact {
+			return subtreeExternalProvenanceInexactHasExternal
+		}
+		if hasExternal {
+			state = subtreeExternalProvenanceExactHasExternal
+		}
+	}
+	return state
 }
 
 func (c *Core) externalPayloadScannerProvenance(payload SubtreeID) (externalPayloadProvenance, bool) {
@@ -4687,6 +4750,9 @@ func (c *Core) appendAuthenticatedTerminal(r subtreeRecord) (SubtreeID, error) {
 			start:   c.externalTokenScannerStart,
 			end:     c.externalTokenScannerEnd,
 		})
+		if !c.externalPayloadsQuiescent {
+			c.subtrees[payload-1].externalProvenanceState = subtreeExternalProvenanceExactHasExternal
+		}
 	}
 	return payload, nil
 }
@@ -4704,6 +4770,7 @@ func (c *Core) appendSubtreeRecord(r subtreeRecord, children []SubtreeID, fields
 	r.firstChild, r.childCount = uint32(len(c.children)), uint32(len(children))
 	r.firstField, r.fieldCount = uint32(len(c.fields)), uint32(len(fields))
 	r.firstAlias, r.aliasCount = uint32(len(c.aliases)), uint32(len(aliases))
+	r.externalProvenanceState = c.deriveSubtreeExternalProvenanceState(r, children)
 	c.children = append(c.children, children...)
 	c.fields = append(c.fields, fields...)
 	c.aliases = append(c.aliases, aliases...)
