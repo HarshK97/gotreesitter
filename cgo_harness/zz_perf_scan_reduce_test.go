@@ -262,6 +262,9 @@ func perfScanReduceScoreboardsForMode(paths []string, lockPath, lockSHA string, 
 		if !shard.Config.HardGate {
 			return nil, fmt.Errorf("shard %s did not run with the hard gate enabled", shardPath)
 		}
+		if shard.Config.CgoAdmissionRSSMB <= 0 {
+			return nil, fmt.Errorf("shard %s did not bound cgo oracle admission RSS", shardPath)
+		}
 		if shard.Config.RequireFleet {
 			return nil, fmt.Errorf("shard %s has require_fleet=true; one-language shards must set it false", shardPath)
 		}
@@ -1139,6 +1142,13 @@ func TestPerfScanReduceScoreboards(t *testing.T) {
 			want: "contains reduction provenance",
 		},
 		{
+			name: "unbounded cgo admission",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Config.CgoAdmissionRSSMB = 0
+			},
+			want: "did not bound cgo oracle admission RSS",
+		},
+		{
 			name: "config mismatch",
 			mutate: func(_, pythonShard *perfScanScoreboard) {
 				pythonShard.Config.Reps++
@@ -1881,6 +1891,7 @@ func perfScanTestShard(lang, lockPath, lockSHA string, lockLanguages int, revisi
 		MaxFileBytes:        4 << 20,
 		Order:               "largest",
 		Axes:                []string{perfScanAxisFull},
+		CgoAdmissionRSSMB:   perfScanDefaultCgoAdmissionRSSMB,
 		HardGate:            true,
 		RequireFleet:        false,
 		CorpusLock:          lockPath,

@@ -114,14 +114,19 @@ Notes on interpretation:
 
 ## Cliff containment (why one 17s file cannot hang the sweep)
 
-Two layers, both represented by structured stop records in `scoreboard.json`:
+Three layers record structured stops in `scoreboard.json`:
+
 1. Per-attempt budget (`GTS_PERF_SCAN_FILE_BUDGET_MS`, default 5000): Go via
    `Parser.SetTimeoutMicros` (partial tree + `ParseStoppedEarly`), C via
    `ts_parser_set_timeout_micros` (nil tree + parser reset). A timed-out Go
    file is recorded as `go_timeout`, `go_budget_stop`, or `go_stopped`, with
    the parser stop reason preserved. Lower-bound ratios remain telemetry, but
    every Go parser timeout or budget stop fails the hard gate.
-2. Per-language subprocess with a hard wall-clock kill
+2. Per-file cgo admission subprocess with an RSS limit
+   (`GTS_PERF_SCAN_CGO_ADMISSION_RSS_LIMIT_MB`, default 4096): the scan stops
+   pathological C trees. It records `c_oracle_resource_limit` and continues
+   with the Go measurement and later files.
+3. Per-language subprocess with a hard wall-clock kill
    (`GTS_PERF_SCAN_LANG_TIMEOUT_MS`, default 10 min): the sweep re-execs the
    test binary per language, so hard hangs, native crashes in a C grammar, or
    OOMs cost one language row, never the sweep. Wall timeout, RSS watchdog,
@@ -162,6 +167,7 @@ GOWORK=off GTS_PARITY_ALLOW_HOST=1 GTS_PERF_SCAN=1 \
   GTS_PERF_SCAN_MAX_FILES=8 GTS_PERF_SCAN_ORDER=largest \
   GTS_PERF_SCAN_REPS=5 GTS_PERF_SCAN_FILE_BUDGET_MS=10000 \
   GTS_PERF_SCAN_CHILD_RSS_LIMIT_MB=6144 \
+  GTS_PERF_SCAN_CGO_ADMISSION_RSS_LIMIT_MB=4096 \
   GTS_PERF_SCAN_OUT=perf_scan/out/authoritative_$(date -u +%Y%m%dT%H%M%SZ) \
   go test -tags "treesitter_c_parity treesitter_c_perfscan" \
       -run '^TestPerfScanSweep$' -v -count=1 -timeout 0 .
@@ -312,6 +318,7 @@ the corpus builder deliberately supplies nested dependency checkouts and
 | `GTS_PERF_SCAN_INPROCESS` | 0 | debug: run languages in-process (no crash isolation) |
 | `GTS_PERF_SCAN_EDIT_CANDIDATES` | 16 | edit-site candidates tried per file |
 | `GTS_PERF_SCAN_CHILD_RSS_LIMIT_MB` | 0 | optional parent-side RSS watchdog for the per-language child process group; when set, kills and reaps the child and its descendants before a container cgroup OOM can kill the sweep parent |
+| `GTS_PERF_SCAN_CGO_ADMISSION_RSS_LIMIT_MB` | 4096 | RSS watchdog for each exact-source cgo admission child; hard-gate scans require a positive value |
 | `GTS_REAL_CORPUS_BENCH_LOCK` | required by hard gate | authenticated corpus selection lock; digest is checked before any language runs |
 | `GTS_C_ORACLE_CACHE` | `harness_out/c_oracle/fleet_static` | cache for pinned runtime/grammar sources and content-keyed fully static timing artifacts |
 

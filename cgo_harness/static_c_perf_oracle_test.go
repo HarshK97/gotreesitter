@@ -44,7 +44,7 @@ const (
 	staticCPerfSourceFlagProtocol  = "default_ndebug_with_exact_source_exceptions/v1"
 	staticCPerfTimingRegion        = "ts_parser_parse_string_only;process,source,parser_setup,tree_delete_excluded"
 	staticCPerfOrderProtocol       = "whole_file_blocks_alternate_by_language_sha256_low_bit_xor_selected_file_ordinal"
-	staticCPerfFailureVocabulary   = "c_oracle_status/v2:admission_error,parser_error,parser_timeout,transport_error,transport_timeout,digest_error,digest_timeout,measurement_error,protocol_error,incomplete,mismatch"
+	staticCPerfFailureVocabulary   = "c_oracle_status/v3:admission_error,parser_error,parser_timeout,transport_error,transport_timeout,digest_error,digest_timeout,resource_limit,measurement_error,protocol_error,incomplete,mismatch"
 	staticCPerfCacheEnv            = "GTS_C_ORACLE_CACHE"
 	staticCPerfCanaryEnv           = "GTS_STATIC_C_PERF_CANARY"
 	staticCPerfWallGrace           = 2 * time.Second
@@ -57,6 +57,7 @@ const (
 	staticCStatusTransportTimeout  = "c_oracle_transport_timeout"
 	staticCStatusDigestError       = "c_oracle_digest_error"
 	staticCStatusDigestTimeout     = "c_oracle_digest_timeout"
+	staticCStatusResourceLimit     = "c_oracle_resource_limit"
 	staticCStatusMeasurementError  = "c_oracle_measurement_error"
 	staticCStatusProtocolError     = "c_oracle_protocol_error"
 	staticCStatusIncomplete        = "c_oracle_incomplete"
@@ -151,6 +152,8 @@ type perfScanOracleAdmission struct {
 	SourceSHA256     string `json:"source_sha256"`
 	StaticDeepSHA256 string `json:"static_deep_sha256"`
 	ParityDeepSHA256 string `json:"parity_deep_sha256"`
+	CgoGrammarSHA256 string `json:"cgo_grammar_sha256,omitempty"`
+	CgoPeakRSSBytes  int64  `json:"cgo_peak_rss_bytes,omitempty"`
 	Admitted         bool   `json:"admitted"`
 	Status           string `json:"status,omitempty"`
 	Detail           string `json:"detail,omitempty"`
@@ -183,6 +186,7 @@ func staticCAdmissionFailureStatus(status string) bool {
 		staticCStatusParserError, staticCStatusParserTimeout,
 		staticCStatusTransportError, staticCStatusTransportTimeout,
 		staticCStatusDigestError, staticCStatusDigestTimeout,
+		staticCStatusResourceLimit,
 		staticCStatusProtocolError,
 		staticCStatusIncomplete, staticCStatusMismatch:
 		return true
@@ -237,6 +241,7 @@ type staticCPerfMeasurement struct {
 type staticCOracleError struct {
 	Status string
 	Detail string
+	Stop   *perfScanStop
 }
 
 func (err *staticCOracleError) Error() string { return err.Detail }
@@ -249,8 +254,21 @@ func staticCOracleErrorStatus(err error) string {
 	return staticCStatusAdmissionError
 }
 
+func staticCOracleErrorStop(err error) *perfScanStop {
+	var oracleErr *staticCOracleError
+	if errors.As(err, &oracleErr) && oracleErr.Stop != nil {
+		stop := *oracleErr.Stop
+		return &stop
+	}
+	return nil
+}
+
 func newStaticCOracleError(status, detail string) error {
 	return &staticCOracleError{Status: status, Detail: detail}
+}
+
+func newStaticCOracleStoppedError(status, detail string, stop *perfScanStop) error {
+	return &staticCOracleError{Status: status, Detail: detail, Stop: stop}
 }
 
 func TestStaticCVerifyArtifactRejectsDynamicExecutable(t *testing.T) {
@@ -692,6 +710,52 @@ func TestStaticCPerfOracleClosedFailureVocabulary(t *testing.T) {
 			t.Fatalf("missing-sample measurement=%+v", measurement)
 		}
 	})
+	if !staticCAdmissionFailureStatus(staticCStatusResourceLimit) {
+		t.Fatalf("resource status %q is outside the admission vocabulary", staticCStatusResourceLimit)
+	}
+}
+
+func TestPerfScanValidateCgoResourceAdmissionEvidence(t *testing.T) {
+	detail := "cgo parity admission child exceeded 16 MiB"
+	file := &perfScanFile{
+		OracleAdmission: &perfScanOracleAdmission{
+			DigestFormat:    "gts-deep-tree-v1",
+			SourceSHA256:    strings.Repeat("a", 64),
+			CgoPeakRSSBytes: 17 << 20,
+			Status:          staticCStatusResourceLimit,
+			Detail:          detail,
+		},
+		Classification: &perfScanFileClassification{
+			Class:    perfScanClassClean,
+			Reason:   "accepted full-span Go tree without ERROR nodes",
+			GoStatus: perfScanStatusOK,
+			FullSpan: true,
+		},
+		Axes: map[string]*perfScanFileAxis{
+			perfScanAxisFull: {
+				Status:     staticCStatusResourceLimit,
+				Detail:     detail,
+				GoMedianNs: 100,
+				GoMinNs:    80,
+				GoMaxNs:    120,
+				Verdict:    perfScanBucketNoData,
+				Stop: &perfScanStop{
+					Class:          perfScanStopRSSLimit,
+					Implementation: "c",
+					Phase:          "oracle_admission",
+					Attempt:        1,
+					Detail:         detail,
+				},
+			},
+		},
+	}
+	if err := perfScanValidateFileOracleEvidence(file, "gts-deep-tree-v1"); err != nil {
+		t.Fatalf("valid resource admission: %v", err)
+	}
+	file.OracleAdmission.CgoPeakRSSBytes = 0
+	if err := perfScanValidateFileOracleEvidence(file, "gts-deep-tree-v1"); err == nil {
+		t.Fatal("resource admission without a measured peak RSS was accepted")
+	}
 }
 
 func perfScanOracleBoardFromRows(rows []*perfScanLanguage) (*perfScanOracleBoardIdentity, error) {
@@ -893,6 +957,9 @@ func perfScanValidateFileOracleEvidence(file *perfScanFile, digestFormat string)
 	if admission.DigestFormat != digestFormat || !staticCSHA256Identity(admission.SourceSHA256) {
 		return fmt.Errorf("invalid static/cgo admission format or source identity")
 	}
+	if admission.CgoGrammarSHA256 != "" && !staticCSHA256Identity(admission.CgoGrammarSHA256) {
+		return fmt.Errorf("invalid cgo grammar identity")
+	}
 	if admission.Admitted {
 		if admission.Status != "" || admission.Detail != "" ||
 			!staticCSHA256Identity(admission.StaticDeepSHA256) ||
@@ -931,6 +998,13 @@ func perfScanValidateFileOracleEvidence(file *perfScanFile, digestFormat string)
 	}
 	if full.Status != admission.Status || strings.TrimSpace(full.Detail) == "" || !strings.Contains(full.Detail, admission.Detail) {
 		return fmt.Errorf("failed oracle admission is not reflected by the full-parse result")
+	}
+	if admission.Status == staticCStatusResourceLimit {
+		if admission.CgoPeakRSSBytes <= 0 || full.Stop == nil ||
+			(full.Stop.Class != perfScanStopRSSLimit && full.Stop.Class != perfScanStopOOMOrKill) ||
+			full.Stop.Implementation != "c" || full.Stop.Phase != "oracle_admission" {
+			return fmt.Errorf("cgo resource admission lacks bounded stop evidence")
+		}
 	}
 	if full.CMedianNs != 0 || full.CMinNs != 0 || full.CMaxNs != 0 || full.Ratio != 0 || full.RatioIsLowerBound || full.Verdict != perfScanBucketNoData {
 		return fmt.Errorf("failed oracle admission contains fabricated C timing or ratio evidence")
