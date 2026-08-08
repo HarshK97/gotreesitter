@@ -148,15 +148,16 @@ type perfScanOracleBoardIdentity struct {
 }
 
 type perfScanOracleAdmission struct {
-	DigestFormat     string `json:"digest_format"`
-	SourceSHA256     string `json:"source_sha256"`
-	StaticDeepSHA256 string `json:"static_deep_sha256"`
-	ParityDeepSHA256 string `json:"parity_deep_sha256"`
-	CgoGrammarSHA256 string `json:"cgo_grammar_sha256,omitempty"`
-	CgoPeakRSSBytes  int64  `json:"cgo_peak_rss_bytes,omitempty"`
-	Admitted         bool   `json:"admitted"`
-	Status           string `json:"status,omitempty"`
-	Detail           string `json:"detail,omitempty"`
+	DigestFormat     string        `json:"digest_format"`
+	SourceSHA256     string        `json:"source_sha256"`
+	StaticDeepSHA256 string        `json:"static_deep_sha256"`
+	ParityDeepSHA256 string        `json:"parity_deep_sha256"`
+	CgoGrammarSHA256 string        `json:"cgo_grammar_sha256,omitempty"`
+	CgoPeakRSSBytes  int64         `json:"cgo_peak_rss_bytes,omitempty"`
+	Stop             *perfScanStop `json:"stop,omitempty"`
+	Admitted         bool          `json:"admitted"`
+	Status           string        `json:"status,omitempty"`
+	Detail           string        `json:"detail,omitempty"`
 }
 
 type staticCPerfOracle struct {
@@ -722,8 +723,15 @@ func TestPerfScanValidateCgoResourceAdmissionEvidence(t *testing.T) {
 			DigestFormat:    "gts-deep-tree-v1",
 			SourceSHA256:    strings.Repeat("a", 64),
 			CgoPeakRSSBytes: 17 << 20,
-			Status:          staticCStatusResourceLimit,
-			Detail:          detail,
+			Stop: &perfScanStop{
+				Class:          perfScanStopRSSLimit,
+				Implementation: "c",
+				Phase:          "oracle_admission",
+				Attempt:        1,
+				Detail:         detail,
+			},
+			Status: staticCStatusResourceLimit,
+			Detail: detail,
 		},
 		Classification: &perfScanFileClassification{
 			Class:    perfScanClassClean,
@@ -755,6 +763,22 @@ func TestPerfScanValidateCgoResourceAdmissionEvidence(t *testing.T) {
 	file.OracleAdmission.CgoPeakRSSBytes = 0
 	if err := perfScanValidateFileOracleEvidence(file, "gts-deep-tree-v1"); err == nil {
 		t.Fatal("resource admission without a measured peak RSS was accepted")
+	}
+	file.OracleAdmission.CgoPeakRSSBytes = 17 << 20
+	file.Axes[perfScanAxisFull].Stop = &perfScanStop{
+		Class:          perfScanStopParserBudget,
+		Reason:         "memory_budget",
+		Implementation: "go",
+		Phase:          "warmup",
+		Attempt:        1,
+		Detail:         "Go parser reached its memory budget",
+	}
+	if err := perfScanValidateFileOracleEvidence(file, "gts-deep-tree-v1"); err != nil {
+		t.Fatalf("valid dual C resource and Go parser stops: %v", err)
+	}
+	file.OracleAdmission.Stop = nil
+	if err := perfScanValidateFileOracleEvidence(file, "gts-deep-tree-v1"); err == nil {
+		t.Fatal("resource admission without its typed C stop was accepted")
 	}
 }
 
@@ -961,7 +985,7 @@ func perfScanValidateFileOracleEvidence(file *perfScanFile, digestFormat string)
 		return fmt.Errorf("invalid cgo grammar identity")
 	}
 	if admission.Admitted {
-		if admission.Status != "" || admission.Detail != "" ||
+		if admission.Status != "" || admission.Detail != "" || admission.Stop != nil ||
 			!staticCSHA256Identity(admission.StaticDeepSHA256) ||
 			admission.StaticDeepSHA256 != admission.ParityDeepSHA256 {
 			return fmt.Errorf("invalid static/cgo deep admission")
@@ -1000,10 +1024,22 @@ func perfScanValidateFileOracleEvidence(file *perfScanFile, digestFormat string)
 		return fmt.Errorf("failed oracle admission is not reflected by the full-parse result")
 	}
 	if admission.Status == staticCStatusResourceLimit {
-		if admission.CgoPeakRSSBytes <= 0 || full.Stop == nil ||
-			(full.Stop.Class != perfScanStopRSSLimit && full.Stop.Class != perfScanStopOOMOrKill) ||
-			full.Stop.Implementation != "c" || full.Stop.Phase != "oracle_admission" {
+		admissionStop := admission.Stop
+		if admission.CgoPeakRSSBytes <= 0 || admissionStop == nil ||
+			(admissionStop.Class != perfScanStopRSSLimit && admissionStop.Class != perfScanStopOOMOrKill) ||
+			admissionStop.Implementation != "c" || admissionStop.Phase != "oracle_admission" ||
+			admissionStop.Attempt != 1 || strings.TrimSpace(admissionStop.Detail) == "" {
 			return fmt.Errorf("cgo resource admission lacks bounded stop evidence")
+		}
+		if full.Stop == nil {
+			return fmt.Errorf("cgo resource admission lacks a full-parse stop")
+		}
+		if full.Stop.Implementation == "c" {
+			if full.Stop.Class != admissionStop.Class || full.Stop.Phase != admissionStop.Phase {
+				return fmt.Errorf("full-parse C stop differs from the cgo resource admission stop")
+			}
+		} else if !perfScanIsGoStop(full.Stop) {
+			return fmt.Errorf("cgo resource admission has an invalid full-parse stop")
 		}
 	}
 	if full.CMedianNs != 0 || full.CMinNs != 0 || full.CMaxNs != 0 || full.Ratio != 0 || full.RatioIsLowerBound || full.Verdict != perfScanBucketNoData {

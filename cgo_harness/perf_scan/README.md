@@ -125,7 +125,8 @@ Three layers record structured stops in `scoreboard.json`:
 2. Per-file cgo admission subprocess with an RSS limit
    (`GTS_PERF_SCAN_CGO_ADMISSION_RSS_LIMIT_MB`, default 4096): the scan stops
    pathological C trees. It records `c_oracle_resource_limit` and continues
-   with the Go measurement and later files.
+   with the Go measurement and later files. The admission record retains its
+   C stop when the full axis must retain a later Go stop.
 3. Per-language subprocess with a hard wall-clock kill
    (`GTS_PERF_SCAN_LANG_TIMEOUT_MS`, default 10 min): the sweep re-execs the
    test binary per language, so hard hangs, native crashes in a C grammar, or

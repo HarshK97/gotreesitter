@@ -1932,6 +1932,7 @@ func (m *perfScanLangMeasurer) admitStaticOracle(src []byte) (*perfScanOracleAdm
 	result, peakRSSBytes, err := m.runCgoOracleAdmission(src, sourceSHA)
 	admission.CgoGrammarSHA256 = m.cgoGrammarSHA
 	admission.CgoPeakRSSBytes = peakRSSBytes
+	admission.Stop = staticCOracleErrorStop(err)
 	if result != nil {
 		admission.ParityDeepSHA256 = result.ParityDeepSHA256
 	}
