@@ -35,9 +35,14 @@ Use this loop for optimization work:
 
 Stable settings:
 - `GOMAXPROCS=1`
-- `-count=10`
+- `-count=1` per process
+- one process per explicit shuffle seed
+- 20 shuffle seeds by default
 - `-benchtime=750ms`
 - `-benchmem`
+
+Use `scripts/run_randomized_benchmarks.sh` for every before-and-after
+comparison. Do not use a fixed-order benchmark run as comparison evidence.
 
 Primary bench trio:
 - `BenchmarkGoParseFullDFA`
@@ -96,7 +101,7 @@ Race preset:
 - Do not run host-side repo-wide race sweeps while diagnosing OOMs.
 
 Perf preset (stable settings):
-- `GOMAXPROCS=1 go test . -run '^$' -bench 'BenchmarkGoParseFullDFA|BenchmarkGoParseIncrementalSingleByteEditDFA|BenchmarkGoParseIncrementalNoEditDFA' -benchmem -count=10 -benchtime=750ms`
+- `bash scripts/run_randomized_benchmarks.sh --output /tmp/gotreesitter-bench.txt`
 
 Full-parse non-truncation probe:
 - `GOT_PARSE_NODE_LIMIT_SCALE=3` may be used for diagnostic full-parse runs when default node budget truncates benchmark/parity cases.
