@@ -154,6 +154,107 @@ func TestParserCoreCorridorRuntimeEquivalence(t *testing.T) {
 	}
 }
 
+// TestParserCoreCorridorReduceShiftIncrementalReceipt checks the first
+// superinstruction through the reuse-consuming public path. The initial
+// candidate tree must remain byte-exact after a changed-source reparse.
+func TestParserCoreCorridorReduceShiftIncrementalReceipt(t *testing.T) {
+	if !corridorReduceShiftEnabled() {
+		t.Skip("set GTS_C4_REDUCE_SHIFT=1 to run the REDUCE_SHIFT receipt")
+	}
+	runParserCoreCorridorSuperinstructionIncrementalReceipt(t, "REDUCE_SHIFT")
+}
+
+// TestParserCoreCorridorReduceChainIncrementalReceipt checks the guarded
+// unary two-step chain through the reuse-consuming public path.
+func TestParserCoreCorridorReduceChainIncrementalReceipt(t *testing.T) {
+	if !corridorReduceChainEnabled() {
+		t.Skip("set GTS_C4_REDUCE_CHAIN=1 to run the REDUCE_CHAIN receipt")
+	}
+	runParserCoreCorridorSuperinstructionIncrementalReceipt(t, "REDUCE_CHAIN")
+}
+
+func runParserCoreCorridorSuperinstructionIncrementalReceipt(t *testing.T, label string) {
+	t.Helper()
+	restoreCorridor := SetParserCoreCorridorEnabledForTest(true)
+	defer restoreCorridor()
+	requireCandidateRouteBudgetMB(t, 256)
+	fixture := loadDiagnosticParserCoreCanonicalFixture(t, "rewrite")
+	candidate := newAdmissionCandidateGoParser(t)
+	candidate.SetAdmissionCandidateRoute(true)
+	production := newAdmissionCandidateGoParser(t)
+	production.SetAdmissionCandidateRoute(false)
+
+	candidateTree, err := candidate.Parse(fixture.Source)
+	if err != nil {
+		t.Fatalf("candidate fresh parse: %v", err)
+	}
+	productionTree, err := production.Parse(fixture.Source)
+	if err != nil {
+		candidateTree.Release()
+		t.Fatalf("production fresh parse: %v", err)
+	}
+
+	edited := append(append([]byte(nil), fixture.Source...), ' ')
+	eof := admissionTestPointAtByte(fixture.Source, len(fixture.Source))
+	edit := InputEdit{
+		StartByte: uint32(len(fixture.Source)), OldEndByte: uint32(len(fixture.Source)),
+		NewEndByte: uint32(len(edited)), StartPoint: eof, OldEndPoint: eof,
+		NewEndPoint: Point{Row: eof.Row, Column: eof.Column + 1},
+	}
+	candidateTree.Edit(edit)
+	candidateIncremental, err := candidate.ParseIncremental(edited, candidateTree)
+	if err != nil {
+		candidateTree.Release()
+		productionTree.Release()
+		t.Fatalf("candidate incremental parse: %v", err)
+	}
+	productionTree.Edit(edit)
+	productionIncremental, err := production.ParseIncremental(edited, productionTree)
+	if err != nil {
+		if candidateIncremental != candidateTree {
+			candidateIncremental.Release()
+		}
+		candidateTree.Release()
+		productionTree.Release()
+		t.Fatalf("production incremental parse: %v", err)
+	}
+
+	candidateDigest := requireDiagnosticParserCoreCanonicalTreeDigest(t, candidateIncremental, candidate.language)
+	productionDigest := requireDiagnosticParserCoreCanonicalTreeDigest(t, productionIncremental, production.language)
+	if candidateDigest != productionDigest {
+		t.Fatalf("incremental deep-tree digest diverged: candidate=%s production=%s", candidateDigest, productionDigest)
+	}
+	candidateRoot, productionRoot := candidateIncremental.RootNode(), productionIncremental.RootNode()
+	if candidateRoot.EndByte() != productionRoot.EndByte() || candidateRoot.HasError() != productionRoot.HasError() {
+		t.Fatalf("incremental root shape diverged: candidate=%d..%d error=%v production=%d..%d error=%v",
+			candidateRoot.StartByte(), candidateRoot.EndByte(), candidateRoot.HasError(),
+			productionRoot.StartByte(), productionRoot.EndByte(), productionRoot.HasError())
+	}
+	candidateRuntime, productionRuntime := candidateIncremental.ParseRuntime(), productionIncremental.ParseRuntime()
+	if candidateRuntime.StopReason != productionRuntime.StopReason ||
+		candidateRuntime.SourceLen != productionRuntime.SourceLen ||
+		candidateRuntime.ExpectedEOFByte != productionRuntime.ExpectedEOFByte ||
+		candidateRuntime.RootEndByte != productionRuntime.RootEndByte ||
+		candidateRuntime.Truncated != productionRuntime.Truncated ||
+		candidateRuntime.TokenSourceEOFEarly != productionRuntime.TokenSourceEOFEarly ||
+		candidateRuntime.LastTokenWasEOF != productionRuntime.LastTokenWasEOF {
+		t.Fatalf("incremental runtime receipt diverged: candidate=%s production=%s", candidateRuntime.Summary(), productionRuntime.Summary())
+	}
+	if candidateIncremental.compactMaterialized || productionIncremental.compactMaterialized {
+		t.Fatalf("incremental result leaked compact materialization: candidate=%v production=%v", candidateIncremental.compactMaterialized, productionIncremental.compactMaterialized)
+	}
+	t.Logf("%s incremental receipt digest=%s runtime=%s", label, candidateDigest, candidateRuntime.Summary())
+
+	if candidateIncremental != candidateTree {
+		candidateIncremental.Release()
+	}
+	candidateTree.Release()
+	if productionIncremental != productionTree {
+		productionIncremental.Release()
+	}
+	productionTree.Release()
+}
+
 // TestParserCoreCorridorPassMixReceipt is obligation R6: stage 2 publishes the
 // pass-mix counter per canonical fixture. Setting GTS_C4_PASSMIX_RESULT writes
 // the board row; without it the test still asserts the counter is populated

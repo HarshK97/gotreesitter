@@ -19,6 +19,7 @@ func TestMetadataAuthenticationLexicalProvenanceRatchet(t *testing.T) {
 	allowedTerminalCallers := map[string]int{
 		"appendDiagnosticPayload":                     0,
 		"shiftClassifiedUncheckpointed":               0,
+		"shiftDirectUncheckpointed":                   0,
 		"shiftOrdinaryClassifiedCohortUncheckpointed": 0,
 		"shiftExtraClassifiedCohortUncheckpointed":    0,
 	}

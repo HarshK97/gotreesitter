@@ -20,6 +20,7 @@ package gotreesitter
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 
 	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
@@ -61,8 +62,8 @@ const (
 	// (spec section 3.5, CHECKPOINT row).
 	corridorOpCheckpoint
 	// corridorOpReduceChain and corridorOpReduceShift are the stage-3 fused
-	// superinstructions (spec section 3.3). Stage 2 reserves the encodings and
-	// never emits them: the analyzer receipts justify them first.
+	// superinstructions (spec section 3.3). Both emit only under explicit
+	// experiment gates while their correctness and timing receipts mature.
 	corridorOpReduceChain
 	corridorOpReduceShift
 
@@ -178,13 +179,15 @@ const (
 	// language table with it, so the corridor never re-walks the parse table
 	// (spec section 6.1). FORK carries the same index in-word, so the fork
 	// lane sees the exact ActionRow the table interpreter would see.
-	corridorShiftWords      = 2
-	corridorShiftExtraWords = 2
-	corridorReduceWords     = 3
-	corridorAcceptWords     = 2
-	corridorForkWords       = 1
-	corridorExitWords       = 1
-	corridorSparsePairWords = 2
+	corridorShiftWords       = 2
+	corridorShiftExtraWords  = 2
+	corridorReduceWords      = 3
+	corridorReduceChainWords = 3
+	corridorReduceShiftWords = 3
+	corridorAcceptWords      = 2
+	corridorForkWords        = 1
+	corridorExitWords        = 1
+	corridorSparsePairWords  = 2
 	// corridorMaxBlockOffset is the narrowest block-offset operand field in
 	// the encoding, not the widest. SHIFT packs 26 bits at bit 6, but
 	// SHIFT_EXTRA spends bit 6 on its self-loop flag and packs only 25 bits at
@@ -193,6 +196,32 @@ const (
 	// against this narrowest field.
 	corridorMaxBlockOffset = 1 << 25
 )
+
+// corridorReduceChainEnabled gates the unary two-step reduction-chain
+// experiment. Keep it explicit while the incremental receipt is still new.
+func corridorReduceChainEnabled() bool {
+	switch os.Getenv("GTS_C4_REDUCE_CHAIN") {
+	case "1", "true", "TRUE", "True", "on", "ON", "yes", "YES":
+		return true
+	default:
+		return false
+	}
+}
+
+// corridorReduceShiftEnabled gates the first stage-3 superinstruction
+// experiment. Keep it explicit while the incremental receipt is still new.
+func corridorReduceShiftEnabled() bool {
+	switch os.Getenv("GTS_C4_REDUCE_SHIFT") {
+	case "1", "true", "TRUE", "True", "on", "ON", "yes", "YES":
+		return true
+	default:
+		return false
+	}
+}
+
+func corridorExperimentalDispositionEnabled() bool {
+	return corridorReduceChainEnabled() || corridorReduceShiftEnabled()
+}
 
 // ParserCoreCorridorProgram is one grammar's compiled corridor program: a
 // single validated []uint32 instruction stream plus the entry index.
@@ -230,13 +259,15 @@ type ParserCoreCorridorProgram struct {
 	census ParserCoreCorridorCensus
 }
 
-// ParserCoreCorridorCensus counts compiled dispositions. Every populated
-// (state, terminal) cell contributes to exactly one field, which is what the
-// exhaustiveness test asserts.
+// ParserCoreCorridorCensus counts compiled dispositions. Reduce includes the
+// fused REDUCE_CHAIN and REDUCE_SHIFT subtypes; the subtype fields report them
+// separately.
 type ParserCoreCorridorCensus struct {
 	Shift            uint64
 	ShiftExtra       uint64
 	Reduce           uint64
+	ReduceChain      uint64
+	ReduceShift      uint64
 	Accept           uint64
 	Fork             uint64
 	ExitGeneric      uint64
@@ -267,15 +298,17 @@ func (p *ParserCoreCorridorProgram) Bytes() int { return p.Words() * 4 }
 // stream offsets exist. Interning happens on this value (spec section 3.6:
 // cell bodies are interned stream-wide, like ParseActionEntry dedup).
 type corridorBodyKind struct {
-	op          parserCoreCorridorOpcode
-	targetState uint32
-	selfLoop    bool
-	prod        uint16
-	lhs         uint16
-	childCount  uint8
-	gotoMode    uint32
-	rowIndex    uint32
-	reason      parserCoreCorridorExitReason
+	op            parserCoreCorridorOpcode
+	targetState   uint32
+	selfLoop      bool
+	prod          uint16
+	lhs           uint16
+	childCount    uint8
+	gotoMode      uint32
+	rowIndex      uint32
+	chainRowIndex uint32
+	shiftRowIndex uint32
+	reason        parserCoreCorridorExitReason
 }
 
 func (b corridorBodyKind) words() int {
@@ -286,6 +319,10 @@ func (b corridorBodyKind) words() int {
 		return corridorShiftExtraWords
 	case corridorOpReduce:
 		return corridorReduceWords
+	case corridorOpReduceChain:
+		return corridorReduceChainWords
+	case corridorOpReduceShift:
+		return corridorReduceShiftWords
 	case corridorOpAccept:
 		return corridorAcceptWords
 	case corridorOpFork:
@@ -315,18 +352,26 @@ func (b *corridorStateBlock) words() int { return corridorExpectWords + b.tableW
 // ParseTable, SmallParseTable(+Map), goto data, LexModes/ExternalLexStates
 // emptiness, ConflictPolicies, and repetition-fold shape. Nothing else.
 type corridorTables struct {
-	lang       *Language
-	denseLimit int
-	smallBase  int
-	tokenCount uint32
-	stateCount int
+	lang               *Language
+	denseLimit         int
+	smallBase          int
+	tokenCount         uint32
+	stateCount         int
+	reduceChainEnabled bool
+	reduceShiftEnabled bool
+	predecessors       [][]StateID
 }
 
 func newCorridorTables(lang *Language) (*corridorTables, error) {
 	if lang == nil {
 		return nil, errors.New("parser-core corridor: nil language")
 	}
-	t := &corridorTables{lang: lang, tokenCount: lang.TokenCount}
+	t := &corridorTables{
+		lang:               lang,
+		tokenCount:         lang.TokenCount,
+		reduceChainEnabled: corridorReduceChainEnabled(),
+		reduceShiftEnabled: corridorReduceShiftEnabled(),
+	}
 	if lang.LargeStateCount > 0 {
 		t.denseLimit = int(lang.LargeStateCount)
 	} else {
@@ -351,6 +396,13 @@ func newCorridorTables(lang *Language) (*corridorTables, error) {
 		return nil, errors.New("parser-core corridor: language has no terminal symbol ceiling")
 	}
 	return t, nil
+}
+
+func (t *corridorTables) predecessorEdges() [][]StateID {
+	if t.predecessors == nil {
+		t.predecessors = corridorPredecessorEdges(t)
+	}
+	return t.predecessors
 }
 
 // actionIndex mirrors Parser.lookupActionIndex without needing a *Parser. It
@@ -548,6 +600,12 @@ func (t *corridorTables) classifyCell(state StateID, sym Symbol, row core.Action
 
 	case core.ActionRowReduce:
 		action := row.At(0)
+		if candidate, ok := t.reduceShiftCandidate(state, sym, row, rowIndex); ok {
+			return candidate
+		}
+		if candidate, ok := t.reduceChainCandidate(state, sym, row, rowIndex); ok {
+			return candidate
+		}
 		return corridorBodyKind{
 			op: corridorOpReduce, prod: action.ProductionID, lhs: uint16(action.Symbol),
 			childCount: action.ChildCount, gotoMode: corridorGotoModeIndexed,
@@ -582,6 +640,95 @@ func (t *corridorTables) classifyCell(state StateID, sym Symbol, row core.Action
 	// Unreachable: ActionRowKind is a closed enumeration and every member is
 	// handled above. Fail closed rather than invent a disposition.
 	return corridorBodyKind{op: corridorOpExitUnsupported, reason: corridorExitUnsupportedRow}
+}
+
+// reduceChainCandidate proves a two-step unary reduction chain. The first
+// reduction must pop one graph edge, and every predecessor edge must land in
+// the same sole-unary-reduce row for this lookahead. The second reduction stays
+// on the generic apply seam; the fused VM only removes its dispatch boundary.
+func (t *corridorTables) reduceChainCandidate(
+	state StateID, sym Symbol, row core.ActionRow, rowIndex uint16,
+) (corridorBodyKind, bool) {
+	if !t.reduceChainEnabled || row.Len() != 1 || row.Descriptor().Kind() != core.ActionRowReduce {
+		return corridorBodyKind{}, false
+	}
+	first := row.At(0)
+	if first.ChildCount != 1 {
+		return corridorBodyKind{}, false
+	}
+	edges := t.predecessorEdges()[int(state)]
+	if len(edges) == 0 {
+		return corridorBodyKind{}, false
+	}
+	var landingState StateID
+	var chainRowIndex uint16
+	for edgeIndex, predecessor := range edges {
+		landing := t.gotoTarget(predecessor, Symbol(first.Symbol))
+		if landing == 0 || int(landing) >= t.stateCount {
+			return corridorBodyKind{}, false
+		}
+		next, nextIndex, err := t.row(landing, sym)
+		if err != nil || next.Len() != 1 || next.Descriptor().Kind() != core.ActionRowReduce || next.At(0).ChildCount != 1 {
+			return corridorBodyKind{}, false
+		}
+		if edgeIndex == 0 {
+			landingState = landing
+			chainRowIndex = nextIndex
+			continue
+		}
+		if landing != landingState || nextIndex != chainRowIndex {
+			return corridorBodyKind{}, false
+		}
+	}
+	return corridorBodyKind{
+		op: corridorOpReduceChain, targetState: uint32(landingState),
+		rowIndex: uint32(rowIndex), chainRowIndex: uint32(chainRowIndex),
+	}, true
+}
+
+// reduceShiftCandidate proves a fixed reduce-then-shift landing row. Require
+// one static goto target and one static landing row across every graph edge.
+// The proof is stricter than the receipt's candidate census, so the VM can
+// fall back after the generic reduction without changing tree semantics.
+func (t *corridorTables) reduceShiftCandidate(
+	state StateID, sym Symbol, row core.ActionRow, rowIndex uint16,
+) (corridorBodyKind, bool) {
+	if !t.reduceShiftEnabled || row.Len() != 1 {
+		return corridorBodyKind{}, false
+	}
+	action := row.At(0)
+	edges := t.predecessorEdges()[int(state)]
+	if len(edges) == 0 {
+		return corridorBodyKind{}, false
+	}
+	var target StateID
+	var shiftRowIndex uint16
+	var shiftTarget StateID
+	for edgeIndex, predecessor := range edges {
+		landingState := t.gotoTarget(predecessor, Symbol(action.Symbol))
+		if landingState == 0 || int(landingState) >= t.stateCount {
+			return corridorBodyKind{}, false
+		}
+		if edgeIndex == 0 {
+			target = landingState
+		} else if landingState != target {
+			return corridorBodyKind{}, false
+		}
+		landing, landingIndex, err := t.row(landingState, sym)
+		if err != nil || landing.Len() != 1 || landing.Descriptor().Kind() != core.ActionRowShift {
+			return corridorBodyKind{}, false
+		}
+		if edgeIndex == 0 {
+			shiftRowIndex = landingIndex
+			shiftTarget = StateID(landing.At(0).State)
+		} else if landingIndex != shiftRowIndex || StateID(landing.At(0).State) != shiftTarget {
+			return corridorBodyKind{}, false
+		}
+	}
+	return corridorBodyKind{
+		op: corridorOpReduceShift, targetState: uint32(shiftTarget),
+		rowIndex: uint32(rowIndex), shiftRowIndex: uint32(shiftRowIndex),
+	}, true
 }
 
 // repetitionSelectable reports whether the generic lane owns a static
@@ -685,6 +832,12 @@ func CompileParserCoreCorridorProgram(lang *Language) (*ParserCoreCorridorProgra
 				census.ShiftExtra++
 			case corridorOpReduce:
 				census.Reduce++
+			case corridorOpReduceChain:
+				census.Reduce++
+				census.ReduceChain++
+			case corridorOpReduceShift:
+				census.Reduce++
+				census.ReduceShift++
 			case corridorOpAccept:
 				census.Accept++
 			case corridorOpFork:
@@ -860,6 +1013,22 @@ func corridorEmitBody(prog []uint32, at uint32, body corridorBodyKind, blockOffs
 		prog[at] = uint32(corridorOpReduce) | body.gotoMode<<6 | uint32(body.childCount)<<8
 		prog[at+1] = uint32(body.prod) | uint32(body.lhs)<<16
 		prog[at+2] = body.rowIndex
+	case corridorOpReduceChain:
+		target, err := blockOffsetFor(body.targetState)
+		if err != nil {
+			return err
+		}
+		prog[at] = uint32(corridorOpReduceChain) | target<<6
+		prog[at+1] = body.rowIndex
+		prog[at+2] = body.chainRowIndex
+	case corridorOpReduceShift:
+		target, err := blockOffsetFor(body.targetState)
+		if err != nil {
+			return err
+		}
+		prog[at] = uint32(corridorOpReduceShift) | target<<6
+		prog[at+1] = body.rowIndex
+		prog[at+2] = body.shiftRowIndex
 	case corridorOpAccept:
 		prog[at] = uint32(corridorOpAccept)
 		prog[at+1] = body.rowIndex
@@ -1031,6 +1200,32 @@ func (p *ParserCoreCorridorProgram) validateBody(at uint32, state int, sym Symbo
 		if err := p.validateRowIndex(p.prog[at+2], state, sym); err != nil {
 			return err
 		}
+	case corridorOpReduceChain:
+		if int(at)+corridorReduceChainWords > len(p.prog) {
+			return fmt.Errorf("parser-core corridor: state %d symbol %d REDUCE_CHAIN overruns the stream", state, sym)
+		}
+		if err := p.validateRowIndex(p.prog[at+1], state, sym); err != nil {
+			return err
+		}
+		if err := p.validateRowIndex(p.prog[at+2], state, sym); err != nil {
+			return err
+		}
+		if err := p.validateBlockTarget(word>>6, state, sym, corridorOpReduceChain); err != nil {
+			return err
+		}
+	case corridorOpReduceShift:
+		if int(at)+corridorReduceShiftWords > len(p.prog) {
+			return fmt.Errorf("parser-core corridor: state %d symbol %d REDUCE_SHIFT overruns the stream", state, sym)
+		}
+		if err := p.validateRowIndex(p.prog[at+1], state, sym); err != nil {
+			return err
+		}
+		if err := p.validateRowIndex(p.prog[at+2], state, sym); err != nil {
+			return err
+		}
+		if err := p.validateBlockTarget(word>>6, state, sym, corridorOpReduceShift); err != nil {
+			return err
+		}
 	case corridorOpAccept:
 		if int(at)+corridorAcceptWords > len(p.prog) {
 			return fmt.Errorf("parser-core corridor: state %d symbol %d ACCEPT overruns the stream", state, sym)
@@ -1066,18 +1261,18 @@ func corridorDispatch(prog []uint32, base uint32, sym Symbol) uint32 {
 		}
 		return table[sym]
 	}
-	lo, hi := 0, len(table)/corridorSparsePairWords
 	target := uint32(sym)
+	lo, hi := 0, len(table)
 	for lo < hi {
-		mid := int(uint(lo+hi) >> 1)
-		if table[mid*corridorSparsePairWords] < target {
-			lo = mid + 1
+		mid := int(uint(lo+hi)>>1) &^ (corridorSparsePairWords - 1)
+		if table[mid] < target {
+			lo = mid + corridorSparsePairWords
 		} else {
 			hi = mid
 		}
 	}
-	if lo < len(table)/corridorSparsePairWords && table[lo*corridorSparsePairWords] == target {
-		return table[lo*corridorSparsePairWords+1]
+	if lo < len(table) && table[lo] == target {
+		return table[lo+1]
 	}
 	return 0
 }
@@ -1086,17 +1281,19 @@ func corridorDispatch(prog []uint32, base uint32, sym Symbol) uint32 {
 // (spec section 5, S2). It names the disposition and carries enough operand
 // detail to reconstruct the constituent table cell.
 type ParserCoreCorridorDecodedCell struct {
-	State        StateID
-	Symbol       Symbol
-	Opcode       string
-	TargetState  StateID
-	SelfLoop     bool
-	ProductionID uint16
-	LHS          Symbol
-	ChildCount   uint8
-	GotoMode     string
-	RowIndex     uint32
-	Reason       string
+	State         StateID
+	Symbol        Symbol
+	Opcode        string
+	TargetState   StateID
+	SelfLoop      bool
+	ProductionID  uint16
+	LHS           Symbol
+	ChildCount    uint8
+	GotoMode      string
+	RowIndex      uint32
+	ChainRowIndex uint32
+	ShiftRowIndex uint32
+	Reason        string
 }
 
 // DecodeCell decodes the compiled disposition of one (state, terminal) cell.
@@ -1137,6 +1334,14 @@ func (p *ParserCoreCorridorProgram) DecodeCell(state StateID, sym Symbol) (Parse
 		} else {
 			decoded.GotoMode = "indexed"
 		}
+	case corridorOpReduceChain:
+		decoded.TargetState = StateID(p.blockState(word >> 6))
+		decoded.RowIndex = p.prog[body+1]
+		decoded.ChainRowIndex = p.prog[body+2]
+	case corridorOpReduceShift:
+		decoded.TargetState = StateID(p.blockState(word >> 6))
+		decoded.RowIndex = p.prog[body+1]
+		decoded.ShiftRowIndex = p.prog[body+2]
 	case corridorOpFork:
 		decoded.RowIndex = word >> 6
 		decoded.Reason = corridorExitConflictRow.String()

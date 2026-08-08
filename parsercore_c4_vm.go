@@ -262,6 +262,81 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchCorridor() (progressed bo
 			}
 			pc = program.stateBlockOffset[next]
 
+		case corridorOpReduceChain:
+			// The compiler proves that every predecessor edge lands in the same
+			// sole-unary-reduce row. Apply the first reduction, preserve the
+			// scheduler poll boundary, then apply the second row without another
+			// dispatch-table walk.
+			handled, err := s.corridorReduce(prog[body+1])
+			if err != nil {
+				return progressed, err
+			}
+			progressed = true
+			if !handled || !s.corridorEligible() {
+				return progressed, nil
+			}
+			if err := s.pollStopControl(); err != nil {
+				return progressed, err
+			}
+			handled, err = s.corridorReduce(prog[body+2])
+			if err != nil {
+				return progressed, err
+			}
+			if !handled || !s.corridorEligible() {
+				return progressed, nil
+			}
+			next, err := s.corridorHeaderState()
+			if err != nil {
+				return progressed, err
+			}
+			if int(next) >= len(program.stateBlockOffset) {
+				return progressed, nil
+			}
+			pc = program.stateBlockOffset[next]
+
+		case corridorOpReduceShift:
+			// Keep the reduction on the generic apply seam. The fused part
+			// removes only the second EXPECT and dispatch, after the reduction
+			// has produced the same authenticated header state.
+			handled, err := s.corridorReduce(prog[body+1])
+			if err != nil {
+				return progressed, err
+			}
+			progressed = true
+			if !handled || !s.corridorEligible() {
+				return progressed, nil
+			}
+			reduceTarget, err := s.corridorHeaderState()
+			if err != nil {
+				return progressed, err
+			}
+			if int(reduceTarget) >= len(program.stateBlockOffset) {
+				return progressed, nil
+			}
+			shifted, err := s.corridorDirectShift(prog[body+2], false)
+			if err != nil {
+				return progressed, err
+			}
+			if !shifted {
+				// Runtime gates may refuse the direct shift. Resume at the
+				// ordinary post-reduce block, with no fused counter spent.
+				pc = program.stateBlockOffset[reduceTarget]
+				continue
+			}
+			if !s.corridorCanLoop() {
+				return progressed, nil
+			}
+			if err := s.pollStopControl(); err != nil {
+				return progressed, err
+			}
+			if err := s.elect(false); err != nil {
+				return progressed, err
+			}
+			if s.stoppedAfterElection || !s.corridorEligible() {
+				return progressed, nil
+			}
+			pc = uint32(word >> 6)
+
 		case corridorOpAccept:
 			if err := s.corridorAccept(prog[body+1]); err != nil {
 				return progressed, err
@@ -354,9 +429,6 @@ func (s *diagnosticParserCoreGenericScheduler) corridorClassify(
 			return cell, nil, err
 		}
 	}
-	s.work.Passes++
-	s.work.SingleHeaderPasses++
-	s.work.CorridorPasses++
 	// This is the indirection the corridor exists to delete: the compiled body
 	// already names the action row, so the lane reads it straight out of the
 	// shared language table instead of walking
@@ -394,23 +466,90 @@ func (s *diagnosticParserCoreGenericScheduler) corridorClassify(
 	// are semantic-event counters, and the refused-pass surplus above is the
 	// gap between "semantic events recorded" and "table reads physically
 	// performed."
-	workCountRecordTableLookup()
+	s.corridorRecordClassification(actions.Len())
 	boundary, err := s.compact.ClassifyBoundaryWithRow(s.headers[0].head, core.Symbol(s.token.Symbol), actions)
 	if err != nil {
 		return cell, nil, err
 	}
-	s.work.ActionLookups++
-	workCountRecordResolvedActionCell(actions.Len())
 	if actions.Descriptor().Kind() != want {
 		return cell, before, &diagnosticParserCoreDecline{
 			boundary: DiagnosticParserCoreRoute,
 			detail:   "parser-core corridor: compiled disposition disagrees with the decoded action row",
 		}
 	}
-	return diagnosticParserCoreGenericCell{headerIndex: 0, boundary: boundary}, before, nil
+	return diagnosticParserCoreGenericCell{
+		headerIndex: 0, boundary: boundary,
+		corridorTrustedReduction: want == core.ActionRowReduce,
+	}, before, nil
+}
+
+func (s *diagnosticParserCoreGenericScheduler) corridorRecordClassification(actionCount int) {
+	s.work.Passes++
+	s.work.SingleHeaderPasses++
+	s.work.CorridorPasses++
+	workCountRecordTableLookup()
+	s.work.ActionLookups++
+	workCountRecordResolvedActionCell(actionCount)
+}
+
+func (s *diagnosticParserCoreGenericScheduler) corridorDirectApplyEligible(extra bool) bool {
+	return s != nil && s.freshSessionOwner != nil && !s.fullReceipts() &&
+		!s.token.ExternalScannerToken && s.corridorCanLoop() &&
+		(!extra || s.extraPostExecutionFault == nil)
+}
+
+func (s *diagnosticParserCoreGenericScheduler) corridorDirectShift(rowIndex uint32, extra bool) (bool, error) {
+	if !s.corridorDirectApplyEligible(extra) {
+		return false, nil
+	}
+	s.corridorRecordClassification(1)
+	if err := s.reserveDispatches(1); err != nil {
+		return false, err
+	}
+	token := s.token
+	action := s.corridorRows[rowIndex].At(0)
+	head, err := s.compact.ShiftDirectWithLiveCondenseCandidatesOwned(
+		*s.freshSessionOwner,
+		nil,
+		s.headers[0].head,
+		core.Symbol(token.Symbol),
+		core.StateID(action.State),
+		extra,
+		core.Token{
+			Symbol:    core.Symbol(token.Symbol),
+			StartByte: token.StartByte,
+			EndByte:   token.EndByte,
+			Extra:     extra,
+			External:  token.ExternalScannerToken,
+		},
+		core.ForkOrder{},
+	)
+	if err != nil {
+		return false, err
+	}
+	s.headers[0].head = head
+	s.headers[0].shifted = true
+	markDiagnosticParserCoreExternalLineage(&s.headers[0], token)
+	s.epochProgress = true
+	if extra {
+		s.work.ExtraShifts++
+	} else {
+		s.work.OrdinaryShifts++
+	}
+	s.work.Dispatches++
+	if err := s.canonicalize(); err != nil {
+		return false, err
+	}
+	if err := s.persistHeaderLineageOwned(*s.freshSessionOwner); err != nil {
+		return false, err
+	}
+	return len(s.headers) == 1, nil
 }
 
 func (s *diagnosticParserCoreGenericScheduler) corridorShift(rowIndex uint32) (bool, error) {
+	if handled, err := s.corridorDirectShift(rowIndex, false); handled || err != nil {
+		return handled, err
+	}
 	cell, before, err := s.corridorClassify(rowIndex, core.ActionRowShift)
 	if err != nil {
 		return false, err
@@ -424,6 +563,9 @@ func (s *diagnosticParserCoreGenericScheduler) corridorShift(rowIndex uint32) (b
 }
 
 func (s *diagnosticParserCoreGenericScheduler) corridorShiftExtra(rowIndex uint32) (bool, error) {
+	if handled, err := s.corridorDirectShift(rowIndex, true); handled || err != nil {
+		return handled, err
+	}
 	cell, before, err := s.corridorClassify(rowIndex, core.ActionRowExtraShift)
 	if err != nil {
 		return false, err

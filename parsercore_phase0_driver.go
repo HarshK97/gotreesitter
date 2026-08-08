@@ -2088,11 +2088,12 @@ const (
 )
 
 type diagnosticParserCoreGenericCell struct {
-	headerIndex     int
-	boundary        core.ClassifiedBoundary
-	selectedOrdinal int
-	relexedSymbol   Symbol
-	selectedBy      diagnosticParserCoreCellSelection
+	headerIndex              int
+	boundary                 core.ClassifiedBoundary
+	selectedOrdinal          int
+	relexedSymbol            Symbol
+	selectedBy               diagnosticParserCoreCellSelection
+	corridorTrustedReduction bool
 }
 
 func (cell *diagnosticParserCoreGenericCell) actions() core.ActionRow { return cell.boundary.Actions() }
@@ -5212,7 +5213,16 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 	if err := s.reserveDispatches(1); err != nil {
 		return err
 	}
-	candidates := s.collectCondenseCandidates(cell.headerIndex)
+	var candidates []core.CondenseCandidate
+	if len(s.headers) == 1 {
+		// The corridor owns only a single header, so this reduction has no live
+		// sibling candidates. Preserve the empty scratch slice because the core
+		// still needs its live scope and fresh-node boundary.
+		s.condenseCandidates = s.condenseCandidates[:0]
+		candidates = s.condenseCandidates
+	} else {
+		candidates = s.collectCondenseCandidates(cell.headerIndex)
+	}
 	ordinal := cell.selectedActionOrdinal()
 	if cell.selectsConflictReduction() {
 		s.compact.SetReduceConflictContext(true)
@@ -5223,9 +5233,17 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		s.compact.SetReduceNoLookaheadContext(true)
 		defer s.compact.SetReduceNoLookaheadContext(false)
 	}
-	outputs, err := s.compact.ReduceOutputsClassifiedIntoWithLiveCondenseCandidatesOwned(
-		owner, candidates, s.reductionOutputs, cell.boundary, ordinal, core.ForkOrder{},
-	)
+	var outputs []core.ReductionOutput
+	var err error
+	if cell.corridorTrustedReduction {
+		outputs, err = s.compact.ReduceOutputsCorridorClassifiedIntoWithLiveCondenseCandidatesOwned(
+			owner, candidates, s.reductionOutputs, cell.boundary, core.ForkOrder{},
+		)
+	} else {
+		outputs, err = s.compact.ReduceOutputsClassifiedIntoWithLiveCondenseCandidatesOwned(
+			owner, candidates, s.reductionOutputs, cell.boundary, ordinal, core.ForkOrder{},
+		)
+	}
 	if err != nil {
 		return err
 	}
