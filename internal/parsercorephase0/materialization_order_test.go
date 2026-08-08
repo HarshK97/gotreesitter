@@ -490,6 +490,11 @@ func requireMaterializationPostorderScratchReset(t *testing.T, scratch *Material
 			t.Fatalf("scratch color %d was not cleared: %d", index, color)
 		}
 	}
+	for index, frame := range scratch.frames[:cap(scratch.frames)] {
+		if frame.record != nil {
+			t.Fatalf("scratch frame %d retained a compact record", index)
+		}
+	}
 }
 
 var errMaterializationOrderStop = materializationOrderTestError("stop")
