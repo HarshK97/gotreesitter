@@ -1566,6 +1566,51 @@ func TestCompleteAcceptedErrorRetrySkipHonorsMinimumSourceBytes(t *testing.T) {
 	}
 }
 
+func TestFreshCompleteAcceptedErrorRetrySkipPreservesLaterMerge(t *testing.T) {
+	const sourceLen = 128
+	tree := &Tree{
+		language: &Language{
+			Name: "synthetic",
+			FullParseAcceptedErrorRetryProfile: FullParseAcceptedErrorRetryProfile{
+				SkipFreshCompleteAcceptedErrorRetry: true,
+				SkipCompleteMinSourceBytes:          sourceLen,
+			},
+		},
+		root: &Node{endByte: sourceLen, flags: nodeFlagHasError},
+		parseRuntime: ParseRuntime{
+			StopReason:       ParseStopAccepted,
+			SourceLen:        sourceLen,
+			ExpectedEOFByte:  sourceLen,
+			RootEndByte:      sourceLen,
+			LastTokenEndByte: sourceLen,
+			LastTokenWasEOF:  true,
+			MaxStacksSeen:    8,
+		},
+	}
+
+	if !certifiedAcceptedErrorRetrySkipsFresh(tree, sourceLen, fullParseRetryOriginFresh) {
+		t.Fatal("fresh complete accepted-error result did not skip the retry ladder")
+	}
+	if certifiedAcceptedErrorRetrySkipsFresh(tree, sourceLen, fullParseRetryOriginIncremental) {
+		t.Fatal("fresh-only profile suppressed an incremental fallback")
+	}
+	if certifiedAcceptedErrorRetrySkipsComplete(tree, sourceLen) {
+		t.Fatal("fresh-only profile suppressed a later complete-tree merge")
+	}
+	if got := fullParseRetryMergePerKeyOverride(tree, sourceLen, 8); got != fullParseRetryMaxMergePerKey {
+		t.Fatalf("later merge override = %d, want %d", got, fullParseRetryMaxMergePerKey)
+	}
+	parser := &Parser{}
+	got := parser.retryFullParseForOrigin(make([]byte, sourceLen), 8, tree, fullParseRetryOriginFresh,
+		func(int, int, int) *Tree {
+			t.Fatal("fresh-only profile ran a retry")
+			return nil
+		})
+	if got != tree {
+		t.Fatal("fresh-only profile replaced the certified initial tree")
+	}
+}
+
 func certifiedFreshErrorNoStacksTestTree(profile bool, sourceLen int) *Tree {
 	lang := &Language{Name: "synthetic"}
 	if profile {

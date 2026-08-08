@@ -19,6 +19,13 @@ type DiagnosticWorkCount struct {
 	boardDirect    DiagnosticWorkCountBoardDirect
 }
 
+// DiagnosticRetryTrace records parse-attempt boundaries without enabling the
+// work counters or the convergence observer. Use it when an observer must not
+// walk or allocate from the live graph.
+type DiagnosticRetryTrace struct {
+	Attempts []DiagnosticWorkCountAttempt `json:"attempts"`
+}
+
 // DiagnosticWorkCountBoardDirect contains board events whose definitions
 // are shared with the locked C diagnostic oracle. It is emitted beside, not
 // inside, the immutable gts-work-count/v2 counter object.
@@ -114,6 +121,8 @@ const workCountInstrumentationEnabled = true
 
 var activeDiagnosticWorkCount *DiagnosticWorkCount
 
+var activeDiagnosticRetryTrace *DiagnosticWorkCount
+
 var pendingDiagnosticWorkCountAttempt struct {
 	logicalRung    string
 	operationCause string
@@ -123,13 +132,26 @@ var pendingDiagnosticWorkCountAttempt struct {
 // protocol runs one parse with GOMAXPROCS=1, so a process-local pointer avoids
 // adding instrumentation state to every production Parser or stack record.
 func BeginDiagnosticWorkCount() {
-	if activeDiagnosticWorkCount != nil {
+	if activeDiagnosticWorkCount != nil || activeDiagnosticRetryTrace != nil {
 		panic("gotreesitter: diagnostic work-count parse already active")
 	}
 	activeDiagnosticWorkCount = &DiagnosticWorkCount{Contract: DiagnosticWorkCountContract, boardDirect: DiagnosticWorkCountBoardDirect{
 		Schema: "gts-work-count-board-direct/v3", FrontierLexerElectionsAvailable: true,
 	}}
 	workCountBeginConvergence(activeDiagnosticWorkCount)
+	pendingDiagnosticWorkCountAttempt = struct {
+		logicalRung    string
+		operationCause string
+	}{}
+}
+
+// BeginDiagnosticRetryTrace starts an attempt-only trace. It does not enable
+// work counters, convergence graph walks, or convergence event allocation.
+func BeginDiagnosticRetryTrace() {
+	if activeDiagnosticWorkCount != nil || activeDiagnosticRetryTrace != nil {
+		panic("gotreesitter: diagnostic parse trace already active")
+	}
+	activeDiagnosticRetryTrace = &DiagnosticWorkCount{Contract: DiagnosticWorkCountContract}
 	pendingDiagnosticWorkCountAttempt = struct {
 		logicalRung    string
 		operationCause string
@@ -158,6 +180,35 @@ func EndDiagnosticWorkCount() DiagnosticWorkCount {
 	workCountEndConvergence()
 	activeDiagnosticWorkCount = nil
 	return out
+}
+
+// EndDiagnosticRetryTrace returns the current attempt-only trace and disables
+// further recording.
+func EndDiagnosticRetryTrace() DiagnosticRetryTrace {
+	if activeDiagnosticRetryTrace == nil {
+		panic("gotreesitter: diagnostic retry trace is not active")
+	}
+	for i := range activeDiagnosticRetryTrace.Attempts {
+		if !activeDiagnosticRetryTrace.Attempts[i].finalized {
+			panic("gotreesitter: diagnostic retry attempt did not finalize")
+		}
+	}
+	out := DiagnosticRetryTrace{
+		Attempts: append([]DiagnosticWorkCountAttempt(nil), activeDiagnosticRetryTrace.Attempts...),
+	}
+	activeDiagnosticRetryTrace = nil
+	return out
+}
+
+func diagnosticAttemptLedger() *DiagnosticWorkCount {
+	if activeDiagnosticWorkCount != nil {
+		return activeDiagnosticWorkCount
+	}
+	return activeDiagnosticRetryTrace
+}
+
+func workCountAttemptTraceActive() bool {
+	return diagnosticAttemptLedger() != nil
 }
 
 func workCountValuesSnapshot(c *DiagnosticWorkCount) DiagnosticWorkCountValues {
@@ -224,7 +275,7 @@ func (c *DiagnosticWorkCount) reconcileOutsideAttempt() {
 }
 
 func workCountSetNextParseAttempt(logicalRung, operationCause string) {
-	if activeDiagnosticWorkCount == nil {
+	if diagnosticAttemptLedger() == nil {
 		return
 	}
 	pendingDiagnosticWorkCountAttempt.logicalRung = logicalRung
@@ -234,7 +285,7 @@ func workCountSetNextParseAttempt(logicalRung, operationCause string) {
 type workCountAttemptToken uint32
 
 func workCountBeginParseAttempt(maxStacks, maxNodes, maxMergePerKey int) workCountAttemptToken {
-	c := activeDiagnosticWorkCount
+	c := diagnosticAttemptLedger()
 	if c == nil {
 		return 0
 	}
@@ -258,7 +309,9 @@ func workCountBeginParseAttempt(maxStacks, maxNodes, maxMergePerKey int) workCou
 		RequestedMaxMergePerKey: maxMergePerKey,
 		entrySnapshot:           workCountValuesSnapshot(c),
 	})
-	workCountResetConvergenceAttempt(index)
+	if activeDiagnosticWorkCount != nil {
+		workCountResetConvergenceAttempt(index)
+	}
 	return workCountAttemptToken(index)
 }
 
@@ -270,7 +323,7 @@ func workCountAttempt(c *DiagnosticWorkCount, token workCountAttemptToken) *Diag
 }
 
 func workCountResolveParseAttempt(token workCountAttemptToken, maxStacks int, retryPass bool, maxMergePerKey, stackCullTrigger, maxIterations, maxNodes int) {
-	c := activeDiagnosticWorkCount
+	c := diagnosticAttemptLedger()
 	attempt := workCountAttempt(c, token)
 	if attempt == nil {
 		return
@@ -287,7 +340,7 @@ func workCountResolveParseAttempt(token workCountAttemptToken, maxStacks int, re
 }
 
 func workCountBeginFinalizeParseAttempt(token workCountAttemptToken) {
-	c := activeDiagnosticWorkCount
+	c := diagnosticAttemptLedger()
 	attempt := workCountAttempt(c, token)
 	if attempt == nil {
 		return
@@ -300,7 +353,7 @@ func workCountBeginFinalizeParseAttempt(token workCountAttemptToken) {
 }
 
 func workCountEndFinalizeParseAttempt(token workCountAttemptToken, stopReason ParseStopReason, tree *Tree) {
-	c := activeDiagnosticWorkCount
+	c := diagnosticAttemptLedger()
 	attempt := workCountAttempt(c, token)
 	if attempt == nil {
 		return

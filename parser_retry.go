@@ -1342,8 +1342,23 @@ func certifiedAcceptedErrorRetryUsesInitialStackCeiling(tree *Tree, sourceLen in
 }
 
 func certifiedAcceptedErrorRetrySkipsComplete(tree *Tree, sourceLen int) bool {
-	if tree == nil || tree.language == nil || sourceLen <= 0 ||
+	if tree == nil || tree.language == nil ||
 		!tree.language.FullParseAcceptedErrorRetryProfile.SkipCompleteAcceptedErrorRetry {
+		return false
+	}
+	return certifiedAcceptedErrorRetrySkipEligible(tree, sourceLen)
+}
+
+func certifiedAcceptedErrorRetrySkipsFresh(tree *Tree, sourceLen int, origin fullParseRetryOrigin) bool {
+	if tree == nil || tree.language == nil || origin != fullParseRetryOriginFresh ||
+		!tree.language.FullParseAcceptedErrorRetryProfile.SkipFreshCompleteAcceptedErrorRetry {
+		return false
+	}
+	return certifiedAcceptedErrorRetrySkipEligible(tree, sourceLen)
+}
+
+func certifiedAcceptedErrorRetrySkipEligible(tree *Tree, sourceLen int) bool {
+	if tree == nil || tree.language == nil || sourceLen <= 0 {
 		return false
 	}
 	profile := tree.language.FullParseAcceptedErrorRetryProfile
@@ -1573,6 +1588,9 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 }
 
 func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tree *Tree, origin fullParseRetryOrigin, runRetry fullParseRetryRunner) *Tree {
+	if certifiedAcceptedErrorRetrySkipsFresh(tree, len(source), origin) {
+		return tree
+	}
 	maxStacksOverride := fullParseRetryMaxStacksOverrideForOrigin(tree, len(source), initialMaxStacks, origin)
 	maxNodesOverride := fullParseRetryNodeLimitOverride(tree, len(source))
 	retryMaxStacks := initialMaxStacks

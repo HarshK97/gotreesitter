@@ -61,3 +61,50 @@ func TestDiagnosticWorkCountSelectedCensusSaturates(t *testing.T) {
 		t.Fatalf("selected census saturation=%+v", counts)
 	}
 }
+
+func TestDiagnosticRetryTraceRecordsAttemptsWithoutWorkObserver(t *testing.T) {
+	BeginDiagnosticRetryTrace()
+	if activeDiagnosticWorkCount != nil {
+		t.Fatal("attempt-only trace enabled the work-count ledger")
+	}
+	if workCountConvergenceActive() {
+		t.Fatal("attempt-only trace enabled the convergence observer")
+	}
+	workCountRecordShift()
+	workCountSetNextParseAttempt("initial_full", "fresh_dfa_full_parse")
+	token := workCountBeginParseAttempt(8, 100, 6)
+	workCountResolveParseAttempt(token, 8, false, 6, 10, 1000, 100)
+	workCountBeginFinalizeParseAttempt(token)
+	workCountEndFinalizeParseAttempt(token, ParseStopNoStacksAlive, nil)
+	trace := EndDiagnosticRetryTrace()
+
+	if len(trace.Attempts) != 1 {
+		t.Fatalf("attempts=%d want=1", len(trace.Attempts))
+	}
+	attempt := trace.Attempts[0]
+	if attempt.LogicalRung != "initial_full" || attempt.OperationCause != "fresh_dfa_full_parse" ||
+		attempt.StopReason != ParseStopNoStacksAlive || attempt.ResolvedMaxStacks != 8 ||
+		attempt.ResolvedRetryPass || attempt.ResolvedMaxMergePerKey != 6 {
+		t.Fatalf("attempt=%+v", attempt)
+	}
+	if attempt.Counters.Shifts != 0 {
+		t.Fatalf("attempt shifts=%d want=0", attempt.Counters.Shifts)
+	}
+}
+
+func TestDiagnosticWorkCountStillRecordsAttemptBoundaries(t *testing.T) {
+	BeginDiagnosticWorkCount()
+	workCountSetNextParseAttempt("initial_full", "fresh_dfa_full_parse")
+	token := workCountBeginParseAttempt(8, 100, 6)
+	workCountResolveParseAttempt(token, 8, false, 6, 10, 1000, 100)
+	workCountBeginFinalizeParseAttempt(token)
+	workCountEndFinalizeParseAttempt(token, ParseStopAccepted, nil)
+	counts := EndDiagnosticWorkCount()
+
+	if len(counts.Attempts) != 1 {
+		t.Fatalf("attempts=%d want=1", len(counts.Attempts))
+	}
+	if attempt := counts.Attempts[0]; attempt.StopReason != ParseStopAccepted || attempt.ResolvedMaxStacks != 8 {
+		t.Fatalf("attempt=%+v", attempt)
+	}
+}

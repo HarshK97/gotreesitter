@@ -42,6 +42,7 @@ const (
 	csharpFreshErrorNoStacksRetryMaxStacks      = 16
 	csharpGSSConvergenceErrorMergePerKey        = 12
 	mesonAcceptedErrorRetryMinSourceBytes       = 2 * 1024
+	vAcceptedErrorRetryMinSourceBytes           = 128 * 1024
 	javascriptAutomaticForestMemoryAllowance    = 128 * 1024 * 1024
 )
 
@@ -165,6 +166,15 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 		blobSHA256: mustRuntimeProfileSHA256("eb39b273148a394f792b322cd30b5483fd6f8ca915b7e15835de4d6482b5a4a7"),
 		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
 			SkipCompleteAcceptedErrorRetry: true,
+		},
+	},
+	// Large V files can reuse the clean wide pass at the recovery-wide slot.
+	// Keep the narrow merge pass because it changes some final V trees.
+	"v": {
+		blobSHA256: mustRuntimeProfileSHA256("f5dc2cd74426384557116c37f01c95174d516c25c9f9f3d88bc49beb7d9839a7"),
+		fullParseAcceptedErrorRetryProfile: gotreesitter.FullParseAcceptedErrorRetryProfile{
+			ReuseCleanWideForWideRetry:   true,
+			ReuseCleanWideMinSourceBytes: vAcceptedErrorRetryMinSourceBytes,
 		},
 	},
 	// Kotlin certifies CompactPrimaryAcceptanceDerivationCertified only.

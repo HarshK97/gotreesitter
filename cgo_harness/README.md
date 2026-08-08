@@ -224,18 +224,18 @@ go run ./cmd/real_corpus_bench_report \
   -out-md ../harness_out/real_corpus_bench_matrix/<run>/REAL_CORPUS_BENCH_REPORT.md
 ```
 
-### Certify external-scanner retry suppression
+### Certify a retry profile
 
-Before adding an exact-blob runtime profile that suppresses the duplicated
-external-scanner retry ladder, run the opt-in corpus certifier. It parses every
-selected file twice: once with the repeat enabled and once with the candidate
-profile, while preserving the complete accepted-error widening and final-merge
-ladder in both paths. Stop reason, full span, error state, and the deep tree
-digest must match file by file, while the candidate must eliminate retry
-attempts and improve aggregate wall time by at least 2%. Every file is also
-parsed by the locked C oracle; the baseline and candidate must preserve the
-same oracle relation, including named pre-existing mismatch, crash, and timeout
-rows. The JSON receipt is written on success or on the first counterexample.
+Run the opt-in certifier before you add an exact-blob retry profile. The test
+parses each selected file with the generic and candidate policies. Each result
+must preserve its stop reason, root span, error state, and deep tree digest.
+An unchanged file must preserve its parse attempt sequence. An activated file
+must remove retry attempts. The candidate must improve total wall time by 2%.
+The locked C oracle checks each file. Both Go policies must preserve the same
+oracle relation. The certifier counterbalances the Go policy order. The receipt
+records mismatches, crashes, and timeouts. An attempt-only trace records retry
+boundaries. It does not enable work counters or convergence graph walks. Each
+policy pair runs in an authenticated pure-Go child process.
 
 ```sh
 cd cgo_harness
@@ -243,6 +243,7 @@ GOWORK=off GOMAXPROCS=1 \
 GTS_PARITY_ALLOW_HOST=1 \
 GTS_RETRY_PROFILE_CERT=1 \
 GTS_RETRY_PROFILE_CERT_LANG=crystal \
+GTS_RETRY_PROFILE_CERT_MODE=skip_external_scanner_repeat \
 GTS_RETRY_PROFILE_CERT_CANDIDATE_REVISION="$(git rev-parse HEAD)" \
 GTS_RETRY_PROFILE_CERT_OUT=../harness_out/retry-profile-crystal.json \
 GTS_REAL_CORPUS_BENCH_ROOT=/path/to/corpus_sources \
@@ -251,20 +252,34 @@ go test -tags 'treesitter_c_parity treesitter_c_perfscan gts_workcount' . \
   -run '^TestRetryProfileCorpusCertification$' -v -count=1 -timeout 2h
 ```
 
+Use `GTS_RETRY_PROFILE_CERT_MODE=skip_complete_accepted_error` to certify a
+complete accepted-error retry skip. The loaded exact-blob profile supplies its
+minimum source size and scratch limit.
+
+Use `GTS_RETRY_PROFILE_CERT_MODE=skip_fresh_complete_accepted_error` to certify
+a fresh-result skip that preserves later retry merges.
+
+Use `GTS_RETRY_PROFILE_CERT_MODE=short_complete_accepted_error_ladder` to
+certify an initial-merge skip with clean-wide reuse.
+
+Use `GTS_RETRY_PROFILE_CERT_MODE=reuse_clean_wide_for_wide_retry` to certify
+clean-wide reuse without an initial-merge skip.
+
 Use `GTS_REAL_CORPUS_BENCH_ORDER`, `GTS_REAL_CORPUS_BENCH_MAX_FILES`, and
 `GTS_REAL_CORPUS_BENCH_MAX_FILE_BYTES` for bounded pilots. A passing pilot is
 not a certification; the profile should be banked only after the locked full
-corpus passes. Each completed file is also appended to
+activation domain passes. Each completed file is also appended to
 `$GTS_RETRY_PROFILE_CERT_OUT.files.jsonl`. Set
-`GTS_RETRY_PROFILE_CERT_RESUME=1` to reuse only schema-v2 rows whose exact
-candidate revision, clean Git worktree, blob, corpus selection and lock,
-parser-affecting environment, and complete static-C oracle identity still
-match. The certifier revalidates each resumed path, source hash, parse result,
-class, deep digest, and oracle relation before accumulation, rejects rows no
-longer selected by the corpus, and never resumes a counterexample. The
-explicit candidate revision is required when Go build metadata does not expose
-one and must resolve to the clean checkout's exact `HEAD`. C-oracle crashes and
-watchdog stops remain explicit row statuses.
+`GTS_RETRY_PROFILE_CERT_RESUME=1` to reuse schema-v6 rows. All authenticated
+inputs must still match. These inputs include the revision, worktree, child,
+blob, corpus, environment, and static C oracle. The certifier revalidates each
+row before accumulation. It rejects unselected rows and counterexamples. Give
+an explicit revision when Go build metadata has none. The revision must resolve
+to the clean checkout's exact `HEAD`. The receipt records C-oracle crashes and
+watchdog stops as explicit row states.
+
+The child pair has a two-minute watchdog. Set
+`GTS_RETRY_PROFILE_CERT_CHILD_TIMEOUT` to change this limit.
 
 ## Run Parity Tests In Docker Sandbox
 

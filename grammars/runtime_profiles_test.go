@@ -624,11 +624,17 @@ func TestBuiltinCompleteAcceptedErrorRetryProfilesAttach(t *testing.T) {
 		{name: "scss", load: ScssLanguage},
 		{name: "swift", load: SwiftLanguage},
 		{name: "tcl", load: TclLanguage},
+		{name: "v", load: VLanguage},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			profile := tt.load().FullParseAcceptedErrorRetryProfile
-			if !profile.SkipCompleteAcceptedErrorRetry {
+			if tt.name == "v" {
+				if profile.SkipInitialCompleteAcceptedErrorMergeRetry || !profile.ReuseCleanWideForWideRetry ||
+					profile.SkipFreshCompleteAcceptedErrorRetry || profile.SkipCompleteAcceptedErrorRetry {
+					t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want clean-wide reuse certification", profile)
+				}
+			} else if !profile.SkipCompleteAcceptedErrorRetry {
 				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want skip-complete certification", profile)
 			}
 			if tt.name == "swift" && profile.SkipCompleteMaxEntryScratchPeak != 3*64*1024 {
@@ -636,6 +642,9 @@ func TestBuiltinCompleteAcceptedErrorRetryProfilesAttach(t *testing.T) {
 			}
 			if tt.name == "meson" && profile.SkipCompleteMinSourceBytes != 2*1024 {
 				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want %d-byte skip minimum", profile, 2*1024)
+			}
+			if tt.name == "v" && profile.ReuseCleanWideMinSourceBytes != vAcceptedErrorRetryMinSourceBytes {
+				t.Fatalf("FullParseAcceptedErrorRetryProfile = %+v, want %d-byte reuse minimum", profile, vAcceptedErrorRetryMinSourceBytes)
 			}
 			if tt.name == "c_sharp" && (profile.SkipCompleteMaxEntryScratchPeak != csharpAcceptedErrorRetryMaxEntryScratchPeak ||
 				profile.FreshErrorNoStacksRetryMaxStacks != csharpFreshErrorNoStacksRetryMaxStacks ||
@@ -846,6 +855,13 @@ func TestResidualRetryProfilesRequireExactBlobIdentity(t *testing.T) {
 				SkipCompleteMinSourceBytes:     2 * 1024,
 			},
 		},
+		{
+			name: "v",
+			want: gotreesitter.FullParseAcceptedErrorRetryProfile{
+				ReuseCleanWideForWideRetry:   true,
+				ReuseCleanWideMinSourceBytes: vAcceptedErrorRetryMinSourceBytes,
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -964,7 +980,7 @@ func TestCollapsedChildNativeCapabilityRequiresExactBlobIdentity(t *testing.T) {
 }
 
 func TestBuiltinCompleteAcceptedErrorRetryProfileRequiresCertifiedBlob(t *testing.T) {
-	for _, name := range []string{"c", "caddy", "c_sharp", "haxe", "kdl", "odin", "rego", "scss", "swift", "tcl"} {
+	for _, name := range []string{"c", "caddy", "c_sharp", "haxe", "kdl", "odin", "rego", "scss", "swift", "tcl", "v"} {
 		t.Run(name, func(t *testing.T) {
 			lang := &gotreesitter.Language{Name: name}
 			if attachBuiltinLanguageRuntimeProfile(name, sha256.Sum256([]byte("uncertified")), lang) {
@@ -981,7 +997,12 @@ func TestBuiltinCompleteAcceptedErrorRetryProfileRequiresCertifiedBlob(t *testin
 			if !attachBuiltinLanguageRuntimeProfile(name, sha256.Sum256(blob), lang) {
 				t.Fatalf("certified %s blob did not attach its runtime profile", name)
 			}
-			if !lang.FullParseAcceptedErrorRetryProfile.SkipCompleteAcceptedErrorRetry {
+			if name == "v" {
+				profile := lang.FullParseAcceptedErrorRetryProfile
+				if profile.SkipInitialCompleteAcceptedErrorMergeRetry || !profile.ReuseCleanWideForWideRetry {
+					t.Fatalf("certified %s retry profile = %+v, want clean-wide reuse certification", name, profile)
+				}
+			} else if !lang.FullParseAcceptedErrorRetryProfile.SkipCompleteAcceptedErrorRetry {
 				t.Fatalf("certified %s retry profile = %+v, want skip-complete certification", name, lang.FullParseAcceptedErrorRetryProfile)
 			}
 		})

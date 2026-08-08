@@ -370,8 +370,8 @@ type FullParseAcceptedErrorRetryProfile struct {
 	InitialStackCeiling            uint16
 	SkipCompleteAcceptedErrorRetry bool
 	FreshErrorNoStacksMaxPasses    uint8
-	// SkipCompleteMaxEntryScratchPeak limits the complete-tree skip to a
-	// certified peak number of live GLR scratch entries. Zero is unbounded.
+	// SkipCompleteMaxEntryScratchPeak limits complete-tree and fresh-result skips
+	// to a certified peak number of live GLR scratch entries. Zero is unbounded.
 	SkipCompleteMaxEntryScratchPeak uint32
 	// FreshErrorNoStacksRetryMaxStacks replaces the generic widened-stack
 	// target for a fresh error-bearing no-stacks parse. Zero keeps the generic
@@ -382,9 +382,8 @@ type FullParseAcceptedErrorRetryProfile struct {
 	// widened-stack and merge retries remain available. Incremental fallbacks
 	// and explicit stack/merge environment overrides ignore it.
 	SkipInitialCompleteAcceptedErrorMergeRetry bool
-	// SkipCompleteMinSourceBytes limits SkipCompleteAcceptedErrorRetry to
-	// sources at least this large. Zero preserves the legacy unbounded skip.
-	// It has no effect on the profile's other retry policies.
+	// SkipCompleteMinSourceBytes limits complete-tree and fresh-result skips to
+	// sources at least this large. Zero preserves the unbounded behavior.
 	SkipCompleteMinSourceBytes uint32
 	// ReuseCleanWideForWideRetry certifies that the complete accepted-error tree
 	// from the non-recovery widened-stack pass is identical to the following
@@ -398,6 +397,10 @@ type FullParseAcceptedErrorRetryProfile struct {
 	// accepted-error retry after a certified cap-one full parse. Zero keeps the
 	// other retry policies. Explicit environment settings disable this policy.
 	GSSConvergenceAcceptedErrorMergePerKey uint16
+	// SkipFreshCompleteAcceptedErrorRetry keeps the initial fresh full-parse
+	// result when it is a complete accepted-error tree. It does not suppress a
+	// later merge retry after a no-stacks or node-limit result.
+	SkipFreshCompleteAcceptedErrorRetry bool
 }
 
 // ResultCompatibilityCapability records result-tree shapes that a language

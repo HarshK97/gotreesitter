@@ -4913,7 +4913,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		return errorTreeWithOwnedArena(reason)
 	}
 	finalizeTree := func(tree *Tree, stopReason ParseStopReason) *Tree {
-		if workCountInstrumentationEnabled && workCountConvergenceActive() { // work-count-assembly: finalize-defer guard
+		if workCountInstrumentationEnabled && workCountAttemptTraceActive() { // work-count-assembly: finalize-defer guard
 			workCountBeginFinalizeParseAttempt(workCountAttempt)
 			defer func() {
 				workCountEndFinalizeParseAttempt(workCountAttempt, stopReason, tree)

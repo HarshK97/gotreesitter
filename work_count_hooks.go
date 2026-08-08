@@ -6,6 +6,8 @@ type workCountAttemptToken uint32
 
 const workCountInstrumentationEnabled = false
 
+func workCountAttemptTraceActive() bool { return false }
+
 // These hooks are compile-time instrumentation seams. The production build
 // supplies empty, inlineable bodies; the gts_workcount build replaces them
 // with parse-local saturating counters.
