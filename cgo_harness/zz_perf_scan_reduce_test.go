@@ -1098,6 +1098,14 @@ func TestPerfScanReduceScoreboards(t *testing.T) {
 			want: "compile/link/timing/digest contract",
 		},
 		{
+			name: "wrong source flag protocol",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Oracle.Common.SourceFlagProtocol = "unlocked"
+				pythonShard.Languages[0].Oracle.Common.SourceFlagProtocol = "unlocked"
+			},
+			want: "compile/link/timing/digest contract",
+		},
+		{
 			name: "wrong parser compile flags",
 			mutate: func(_, pythonShard *perfScanScoreboard) {
 				pythonShard.Oracle.Languages[0].Parser.CompileFlags = "-O0"
@@ -1946,6 +1954,7 @@ func perfScanTestOracleIdentity(lang string) *perfScanOracleIdentity {
 		RuntimeCFlags:        staticCPerfRuntimeCFlags,
 		GrammarCFlags:        staticCPerfGrammarCFlags,
 		GrammarCXXFlags:      staticCPerfGrammarCXXFlags,
+		SourceFlagProtocol:   staticCPerfSourceFlagProtocol,
 		DriverCFlags:         staticCPerfDriverCFlags,
 		LinkFlags:            staticCPerfLinkFlags,
 		TimingRegion:         staticCPerfTimingRegion,
