@@ -13,6 +13,11 @@ type resultRootBuild struct {
 	borrowedResolved      bool
 	borrowed              []*nodeArena
 	replayStack           syntheticRootReplayStackStore
+	replayGapLexMemo      map[syntheticRootReplayGapLexKey]syntheticRootReplayGapToken
+	replayAdvanceMemo     map[syntheticRootReplayAdvanceKey]syntheticRootReplayAdvanceSpan
+	replayAdvancePages    []*[syntheticRootReplayAdvancePageFrames]syntheticRootReplayFrame
+	replayAdvancePageUsed uint16
+	replayAdvanceFrames   uint32
 }
 
 func newResultRootBuild(p *Parser, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node) resultRootBuild {
@@ -220,16 +225,59 @@ type syntheticRootReplayCloseKey struct {
 }
 
 type syntheticRootReplayStackStore struct {
-	nodes     []syntheticRootReplayStackNode
-	intern    map[syntheticRootReplayStackKey]uint32
-	closeMemo map[syntheticRootReplayCloseKey][]syntheticRootReplayFrame
+	nodes         []syntheticRootReplayStackNode
+	intern        map[syntheticRootReplayStackKey]uint32
+	closeMemo     map[syntheticRootReplayCloseKey]syntheticRootReplayCloseSpan
+	closePages    []*[syntheticRootReplayClosePageFrames]syntheticRootReplayFrame
+	closePageUsed uint16
+	closeFrames   uint32
 }
 
 const syntheticRootReplayMaxFrontier = 128
+const syntheticRootReplayFrameSetSlotCount = syntheticRootReplayMaxFrontier * 2
+const syntheticRootReplayGapCursorSetSlotCount = syntheticRootReplayMaxFrontier * 2
 const syntheticRootReplayMaxGapBytes = 4096
 const syntheticRootReplayMaxGapTokens = 64
+const syntheticRootReplayGapLexMemoMaxEntries = 1 << 16
+const syntheticRootReplayAdvanceMemoMaxEntries = 1 << 16
+const syntheticRootReplayAdvanceStreamMaxFrames = 1 << 20
+const syntheticRootReplayCloseMemoMaxEntries = 1 << 18
+
+// Fixed pages avoid stream-growth copies and bound frame storage to 4 MiB.
+const syntheticRootReplayAdvancePageFrames = 1 << 14
+const syntheticRootReplayAdvanceMaxPages = syntheticRootReplayAdvanceStreamMaxFrames / syntheticRootReplayAdvancePageFrames
+const syntheticRootReplayAdvanceSpanOffsetBits = 14
+const syntheticRootReplayAdvanceSpanPageBits = 6
+const syntheticRootReplayAdvanceSpanOffsetMask = 1<<syntheticRootReplayAdvanceSpanOffsetBits - 1
+const syntheticRootReplayAdvanceSpanPageMask = 1<<syntheticRootReplayAdvanceSpanPageBits - 1
+const syntheticRootReplayAdvanceSpanCountShift = syntheticRootReplayAdvanceSpanOffsetBits + syntheticRootReplayAdvanceSpanPageBits
+
+// Close pages bound stored closure frames to 16 MiB.
+const syntheticRootReplayClosePageFrames = 1 << 14
+const syntheticRootReplayCloseMaxPages = 1 << 8
+const syntheticRootReplayCloseSpanOffsetBits = 14
+const syntheticRootReplayCloseSpanPageBits = 8
+const syntheticRootReplayCloseSpanOffsetMask = 1<<syntheticRootReplayCloseSpanOffsetBits - 1
+const syntheticRootReplayCloseSpanPageMask = 1<<syntheticRootReplayCloseSpanPageBits - 1
+const syntheticRootReplayCloseSpanCountShift = syntheticRootReplayCloseSpanOffsetBits + syntheticRootReplayCloseSpanPageBits
+
+type syntheticRootReplayFrameSetScratch struct {
+	slots    [syntheticRootReplayFrameSetSlotCount]uint32
+	occupied [syntheticRootReplayMaxFrontier]uint8
+	count    uint8
+}
+
+// syntheticRootReplayGapCursorSetScratch stores cursor indexes instead of
+// cursor values. The output slice remains the canonical value store, which
+// keeps this scratch compact and preserves exact Point comparisons.
+type syntheticRootReplayGapCursorSetScratch struct {
+	slots    [syntheticRootReplayGapCursorSetSlotCount]uint8
+	occupied [syntheticRootReplayMaxFrontier]uint8
+	count    uint8
+}
 
 func (b *resultRootBuild) syntheticRootReplayPush(frame syntheticRootReplayFrame, state StateID) syntheticRootReplayFrame {
+	perfRecordSyntheticReplayStackPush()
 	if b == nil {
 		return syntheticRootReplayFrame{}
 	}
@@ -244,6 +292,7 @@ func (b *resultRootBuild) syntheticRootReplayPush(frame syntheticRootReplayFrame
 	if store.intern == nil {
 		store.intern = make(map[syntheticRootReplayStackKey]uint32, 256)
 	} else if top, ok := store.intern[key]; ok {
+		perfRecordSyntheticReplayStackInternHit()
 		return syntheticRootReplayFrame{top: top}
 	}
 	if uint64(len(store.nodes)) >= uint64(1)<<32 {
@@ -425,6 +474,74 @@ type syntheticRootReplayLexMemo struct {
 	ok    bool
 }
 
+type syntheticRootReplayGapLexKey struct {
+	point   Point
+	state   StateID
+	byte    uint32
+	endByte uint32
+}
+
+// syntheticRootReplayGapToken is the replay bytecode record. Replay only
+// consumes the symbol and the end position from the full lexer token.
+type syntheticRootReplayGapToken struct {
+	endPoint Point
+	endByte  uint32
+	symbol   Symbol
+}
+
+type syntheticRootReplayAdvanceKey struct {
+	top       uint32
+	lookahead Symbol
+}
+
+// syntheticRootReplayAdvanceSpan packs a page, offset, and output count into
+// one word. A zero count caches a transition with no output.
+type syntheticRootReplayAdvanceSpan uint32
+
+func newSyntheticRootReplayAdvanceSpan(page, offset, count int) syntheticRootReplayAdvanceSpan {
+	return syntheticRootReplayAdvanceSpan(
+		uint32(offset) |
+			uint32(page)<<syntheticRootReplayAdvanceSpanOffsetBits |
+			uint32(count)<<syntheticRootReplayAdvanceSpanCountShift,
+	)
+}
+
+func (s syntheticRootReplayAdvanceSpan) offset() int {
+	return int(uint32(s) & syntheticRootReplayAdvanceSpanOffsetMask)
+}
+
+func (s syntheticRootReplayAdvanceSpan) page() int {
+	return int(uint32(s)>>syntheticRootReplayAdvanceSpanOffsetBits) & syntheticRootReplayAdvanceSpanPageMask
+}
+
+func (s syntheticRootReplayAdvanceSpan) count() int {
+	return int(uint32(s) >> syntheticRootReplayAdvanceSpanCountShift)
+}
+
+// syntheticRootReplayCloseSpan packs a page, offset, and output count into one
+// word. A zero count caches a closure with no output.
+type syntheticRootReplayCloseSpan uint32
+
+func newSyntheticRootReplayCloseSpan(page, offset, count int) syntheticRootReplayCloseSpan {
+	return syntheticRootReplayCloseSpan(
+		uint32(offset) |
+			uint32(page)<<syntheticRootReplayCloseSpanOffsetBits |
+			uint32(count)<<syntheticRootReplayCloseSpanCountShift,
+	)
+}
+
+func (s syntheticRootReplayCloseSpan) offset() int {
+	return int(uint32(s) & syntheticRootReplayCloseSpanOffsetMask)
+}
+
+func (s syntheticRootReplayCloseSpan) page() int {
+	return int(uint32(s)>>syntheticRootReplayCloseSpanOffsetBits) & syntheticRootReplayCloseSpanPageMask
+}
+
+func (s syntheticRootReplayCloseSpan) count() int {
+	return int(uint32(s) >> syntheticRootReplayCloseSpanCountShift)
+}
+
 func (b *resultRootBuild) syntheticRootReplayBridgeGap(frontier []syntheticRootReplayFrame, startByte uint32, startPoint Point, endByte uint32) []syntheticRootReplayFrame {
 	if len(frontier) == 0 {
 		return nil
@@ -435,16 +552,24 @@ func (b *resultRootBuild) syntheticRootReplayBridgeGap(frontier []syntheticRootR
 	if startByte > endByte || endByte > uint32(len(b.source)) || endByte-startByte > syntheticRootReplayMaxGapBytes {
 		return nil
 	}
-	cursors := make([]syntheticRootReplayGapCursor, 0, len(frontier))
+	perfRecordSyntheticReplayGapBridge()
+	var cursorScratch [2][syntheticRootReplayMaxFrontier]syntheticRootReplayGapCursor
+	var cursorSetScratch [2]syntheticRootReplayGapCursorSetScratch
+	cursors := cursorScratch[0][:0]
 	for _, frame := range frontier {
-		cursors = appendSyntheticRootReplayGapCursor(cursors, frame, startByte, startPoint)
+		cursors = cursorSetScratch[0].append(cursors, frame, startByte, startPoint)
 	}
+	var frameScratch [2][syntheticRootReplayMaxFrontier]syntheticRootReplayFrame
+	var frameSetScratch [2]syntheticRootReplayFrameSetScratch
 	for step := 0; step < syntheticRootReplayMaxGapTokens; step++ {
+		perfRecordSyntheticReplayGapStep()
 		allAtEnd := true
-		nextCursors := make([]syntheticRootReplayGapCursor, 0, len(cursors))
+		nextCursors := cursorScratch[(step+1)&1][:0]
+		nextCursorSet := &cursorSetScratch[(step+1)&1]
+		nextCursorSet.reset()
 		for _, cursor := range cursors {
 			if cursor.byte == endByte {
-				nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, cursor.frame, cursor.byte, cursor.point)
+				nextCursors = nextCursorSet.append(nextCursors, cursor.frame, cursor.byte, cursor.point)
 				continue
 			}
 			allAtEnd = false
@@ -456,25 +581,25 @@ func (b *resultRootBuild) syntheticRootReplayBridgeGap(frontier []syntheticRootR
 				if syntheticRootReplayCanSkipGapByte(b.source[cursor.byte]) {
 					nextByte := cursor.byte + 1
 					nextPoint := advancePointByBytes(cursor.point, b.source[cursor.byte:nextByte])
-					nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, cursor.frame, nextByte, nextPoint)
+					nextCursors = nextCursorSet.append(nextCursors, cursor.frame, nextByte, nextPoint)
 				}
 				continue
 			}
-			advanced := b.syntheticRootReplayAdvanceToken([]syntheticRootReplayFrame{cursor.frame}, tok)
+			advanced := b.syntheticRootReplayAdvanceToken([]syntheticRootReplayFrame{cursor.frame}, tok.symbol, frameScratch[0][:0], frameScratch[1][:0], &frameSetScratch[0], &frameSetScratch[1])
 			if len(advanced) == 0 {
 				if syntheticRootReplayCanSkipGapByte(b.source[cursor.byte]) {
 					nextByte := cursor.byte + 1
 					nextPoint := advancePointByBytes(cursor.point, b.source[cursor.byte:nextByte])
-					nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, cursor.frame, nextByte, nextPoint)
+					nextCursors = nextCursorSet.append(nextCursors, cursor.frame, nextByte, nextPoint)
 				}
 				continue
 			}
 			for _, frame := range advanced {
-				nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, frame, tok.EndByte, tok.EndPoint)
-				if tok.EndByte == cursor.byte && cursor.byte < endByte {
+				nextCursors = nextCursorSet.append(nextCursors, frame, tok.endByte, tok.endPoint)
+				if tok.endByte == cursor.byte && cursor.byte < endByte {
 					nextByte := cursor.byte + 1
 					nextPoint := advancePointByBytes(cursor.point, b.source[cursor.byte:nextByte])
-					nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, frame, nextByte, nextPoint)
+					nextCursors = nextCursorSet.append(nextCursors, frame, nextByte, nextPoint)
 				}
 			}
 		}
@@ -498,15 +623,36 @@ func syntheticRootReplayCanSkipGapByte(ch byte) bool {
 	}
 }
 
-func (b *resultRootBuild) syntheticRootReplayLexGapToken(frame syntheticRootReplayFrame, startByte uint32, startPoint Point, endByte uint32) (Token, bool) {
+func (b *resultRootBuild) syntheticRootReplayLexGapToken(frame syntheticRootReplayFrame, startByte uint32, startPoint Point, endByte uint32) (syntheticRootReplayGapToken, bool) {
+	perfRecordSyntheticReplayGapLexAttempt()
 	if b == nil || b.parser == nil || b.lang == nil || len(b.lang.LexStates) == 0 {
-		return Token{}, false
+		return syntheticRootReplayGapToken{}, false
 	}
 	state, ok := b.syntheticRootReplayTopState(frame)
 	if !ok {
-		return Token{}, false
+		return syntheticRootReplayGapToken{}, false
 	}
-	return b.syntheticRootReplayLexGapTokenForState(state, startByte, startPoint, endByte)
+	key := syntheticRootReplayGapLexKey{point: startPoint, state: state, byte: startByte, endByte: endByte}
+	if cached, found := b.replayGapLexMemo[key]; found {
+		perfRecordSyntheticReplayGapLexCacheHit()
+		return cached, cached.symbol != 0
+	}
+	perfRecordSyntheticReplayGapLexCacheMiss()
+	tok, lexOK := b.syntheticRootReplayLexGapTokenForState(state, startByte, startPoint, endByte)
+	var compact syntheticRootReplayGapToken
+	if lexOK {
+		compact = syntheticRootReplayGapToken{endPoint: tok.EndPoint, endByte: tok.EndByte, symbol: tok.Symbol}
+	}
+	if len(b.replayGapLexMemo) < syntheticRootReplayGapLexMemoMaxEntries {
+		if b.replayGapLexMemo == nil {
+			b.replayGapLexMemo = make(map[syntheticRootReplayGapLexKey]syntheticRootReplayGapToken, 256)
+		}
+		b.replayGapLexMemo[key] = compact
+		perfRecordSyntheticReplayGapLexCacheStore()
+	} else {
+		perfRecordSyntheticReplayGapLexCacheCapSkip()
+	}
+	return compact, lexOK
 }
 
 func (b *resultRootBuild) syntheticRootReplayLexGapTokenForState(state StateID, startByte uint32, startPoint Point, endByte uint32) (Token, bool) {
@@ -516,7 +662,6 @@ func (b *resultRootBuild) syntheticRootReplayLexGapTokenForState(state StateID, 
 	if startByte >= endByte || endByte > uint32(len(b.source)) {
 		return Token{}, false
 	}
-	lexer := NewLexer(b.lang.LexStates, b.source)
 	// Gate this gap-token lexer on the language-level C-recovery answer rather
 	// than the live b.parser.errorCostCompetition flag. resolveCRecoverySwallowedError
 	// (parser_api.go) temporarily forces p.errorCostCompetition = false around its
@@ -530,7 +675,13 @@ func (b *resultRootBuild) syntheticRootReplayLexGapTokenForState(state StateID, 
 	// replay only runs during synthetic-root reconstruction, off the steady-state
 	// token loop, so the DiagnoseCRecoveryGate scan behind it stays out of the hot
 	// path.
-	ts := newDFATokenSourceDirectWithCRecovery(lexer, b.lang, b.parser.lookupActionIndex, b.parser.hasKeywordState, b.parser.externalValidByState, b.parser.externalValidMaskByState, errorCostCompetitionLanguage(b.lang))
+	var ts *dfaTokenSource
+	if b.lang.ExternalScanner != nil {
+		ts = acquireDFATokenSourceReusingLexer(b.source, b.lang, b.parser.lookupActionIndex, b.parser.hasKeywordState, b.parser.externalValidByState, b.parser.externalValidMaskByState, errorCostCompetitionLanguage(b.lang))
+	} else {
+		lexer := NewLexer(b.lang.LexStates, b.source)
+		ts = newDFATokenSourceDirectWithCRecovery(lexer, b.lang, b.parser.lookupActionIndex, b.parser.hasKeywordState, b.parser.externalValidByState, b.parser.externalValidMaskByState, errorCostCompetitionLanguage(b.lang))
+	}
 	defer ts.Close()
 	ts.SetParserState(state)
 	ts.SeekTokenFrontier(startByte, startPoint)
@@ -544,48 +695,100 @@ func (b *resultRootBuild) syntheticRootReplayLexGapTokenForState(state StateID, 
 	return tok, true
 }
 
-func (b *resultRootBuild) syntheticRootReplayAdvanceToken(frontier []syntheticRootReplayFrame, tok Token) []syntheticRootReplayFrame {
-	if len(frontier) == 0 || tok.Symbol == 0 {
+func (b *resultRootBuild) syntheticRootReplayAdvanceToken(frontier []syntheticRootReplayFrame, lookahead Symbol, advanceScratch, closeScratch []syntheticRootReplayFrame, advanceSet, closeSet *syntheticRootReplayFrameSetScratch) []syntheticRootReplayFrame {
+	perfRecordSyntheticReplayAdvanceAttempt()
+	if len(frontier) == 0 || lookahead == 0 {
+		perfRecordSyntheticReplayAdvanceOutput(0, false)
 		return nil
 	}
-	closed := b.syntheticRootReplayCloseLookahead(frontier, tok.Symbol)
-	advanced := make([]syntheticRootReplayFrame, 0, len(closed))
+	cacheEligible := b != nil && len(frontier) == 1 && frontier[0].top != 0
+	var cacheKey syntheticRootReplayAdvanceKey
+	if cacheEligible {
+		cacheKey = syntheticRootReplayAdvanceKey{top: frontier[0].top, lookahead: lookahead}
+		if span, found := b.replayAdvanceMemo[cacheKey]; found {
+			count := span.count()
+			if count == 0 {
+				perfRecordSyntheticReplayAdvanceCacheHit()
+				perfRecordSyntheticReplayAdvanceOutput(0, false)
+				return nil
+			}
+			pageIndex := span.page()
+			start := span.offset()
+			end := start + count
+			if pageIndex >= 0 && pageIndex < len(b.replayAdvancePages) && start >= 0 && end >= start && end <= syntheticRootReplayAdvancePageFrames {
+				cached := b.replayAdvancePages[pageIndex][start:end]
+				perfRecordSyntheticReplayAdvanceCacheHit()
+				perfRecordSyntheticReplayAdvanceOutput(len(cached), false)
+				return cached
+			}
+		}
+		perfRecordSyntheticReplayAdvanceCacheMiss()
+	}
+	closed := b.syntheticRootReplayCloseLookahead(frontier, lookahead)
+	advanced := advanceScratch[:0]
+	advanceSet.reset()
 	for _, frame := range closed {
 		top, ok := b.syntheticRootReplayTopState(frame)
 		if !ok {
 			continue
 		}
-		for _, act := range b.syntheticRootReplayActions(frame, tok.Symbol) {
+		for _, act := range b.syntheticRootReplayActions(frame, lookahead) {
 			if act.Type != ParseActionShift {
 				continue
 			}
 			if act.Extra {
-				advanced = appendSyntheticRootReplayFrame(advanced, frame)
+				advanced = advanceSet.append(advanced, frame)
 				continue
 			}
 			target := extraShiftTargetState(top, act)
 			if target == 0 {
 				continue
 			}
-			advanced = appendSyntheticRootReplayFrame(advanced, b.syntheticRootReplayPush(frame, target))
+			advanced = advanceSet.append(advanced, b.syntheticRootReplayPush(frame, target))
 		}
 	}
-	if len(advanced) == 0 {
-		return nil
+	var result []syntheticRootReplayFrame
+	if len(advanced) > 1 {
+		result = b.syntheticRootReplayCloseLookaheadInto(closeScratch, advanced, 0, closeSet)
+	} else if len(advanced) == 1 {
+		result = b.syntheticRootReplayCloseEOF(advanced)
 	}
-	return b.syntheticRootReplayCloseEOF(advanced)
+	if cacheEligible {
+		b.syntheticRootReplayStoreAdvance(cacheKey, result)
+	}
+	perfRecordSyntheticReplayAdvanceOutput(len(result), cacheEligible)
+	return result
 }
 
-func appendSyntheticRootReplayGapCursor(cursors []syntheticRootReplayGapCursor, frame syntheticRootReplayFrame, pos uint32, point Point) []syntheticRootReplayGapCursor {
-	if frame.top == 0 || len(cursors) >= syntheticRootReplayMaxFrontier {
-		return cursors
+func (b *resultRootBuild) syntheticRootReplayStoreAdvance(key syntheticRootReplayAdvanceKey, frames []syntheticRootReplayFrame) {
+	if b == nil || len(frames) > syntheticRootReplayMaxFrontier || len(frames) > int(^uint8(0)) ||
+		len(b.replayAdvanceMemo) >= syntheticRootReplayAdvanceMemoMaxEntries {
+		perfRecordSyntheticReplayAdvanceCacheCapSkip()
+		return
 	}
-	for _, cursor := range cursors {
-		if cursor.byte == pos && cursor.point == point && cursor.frame.top == frame.top {
-			return cursors
+	if b.replayAdvanceMemo == nil {
+		b.replayAdvanceMemo = make(map[syntheticRootReplayAdvanceKey]syntheticRootReplayAdvanceSpan, 256)
+	}
+	if len(frames) == 0 {
+		b.replayAdvanceMemo[key] = 0
+		perfRecordSyntheticReplayAdvanceCacheStore()
+		return
+	}
+	used := int(b.replayAdvancePageUsed)
+	if len(b.replayAdvancePages) == 0 || used+len(frames) > syntheticRootReplayAdvancePageFrames {
+		if len(b.replayAdvancePages) >= syntheticRootReplayAdvanceMaxPages {
+			perfRecordSyntheticReplayAdvanceCacheCapSkip()
+			return
 		}
+		b.replayAdvancePages = append(b.replayAdvancePages, new([syntheticRootReplayAdvancePageFrames]syntheticRootReplayFrame))
+		used = 0
 	}
-	return append(cursors, syntheticRootReplayGapCursor{frame: frame, byte: pos, point: point})
+	pageIndex := len(b.replayAdvancePages) - 1
+	copy(b.replayAdvancePages[pageIndex][used:used+len(frames)], frames)
+	b.replayAdvanceMemo[key] = newSyntheticRootReplayAdvanceSpan(pageIndex, used, len(frames))
+	b.replayAdvancePageUsed = uint16(used + len(frames))
+	b.replayAdvanceFrames += uint32(len(frames))
+	perfRecordSyntheticReplayAdvanceCacheStore()
 }
 
 func syntheticRootReplayGapCursorFrames(cursors []syntheticRootReplayGapCursor) []syntheticRootReplayFrame {
@@ -603,27 +806,103 @@ func (b *resultRootBuild) syntheticRootReplayCloseEOF(frontier []syntheticRootRe
 func (b *resultRootBuild) syntheticRootReplayCloseLookahead(frontier []syntheticRootReplayFrame, lookahead Symbol) []syntheticRootReplayFrame {
 	if len(frontier) == 1 && frontier[0].top != 0 {
 		key := syntheticRootReplayCloseKey{top: frontier[0].top, lookahead: lookahead}
-		if cached, ok := b.replayStack.closeMemo[key]; ok {
-			return cached
+		if span, found := b.replayStack.closeMemo[key]; found {
+			if cached, ok := b.syntheticRootReplayCloseFrames(span); ok {
+				perfRecordSyntheticReplayCloseMemoHit()
+				perfRecordSyntheticReplayCloseOutput(len(cached), false)
+				return cached
+			}
 		}
-		closed := b.syntheticRootReplayCloseLookaheadUncached(frontier, lookahead)
-		if b.replayStack.closeMemo == nil {
-			b.replayStack.closeMemo = make(map[syntheticRootReplayCloseKey][]syntheticRootReplayFrame, 64)
+		perfRecordSyntheticReplayCloseMemoMiss()
+		if !b.syntheticRootReplayCanStoreClose() {
+			perfRecordSyntheticReplayCloseMemoCapSkip()
+			closed := b.syntheticRootReplayCloseLookaheadUncached(frontier, lookahead)
+			perfRecordSyntheticReplayCloseOutput(len(closed), true)
+			return closed
 		}
-		// Replay frames and their canonical stack nodes are immutable for the
-		// lifetime of a result build, so the cached slice is read-only and safe
-		// to share with the replay callers.
-		closed = closed[:len(closed):len(closed)]
-		b.replayStack.closeMemo[key] = closed
-		return closed
+		return b.syntheticRootReplayCloseLookaheadMemoMiss(key, frontier, lookahead)
 	}
 	return b.syntheticRootReplayCloseLookaheadUncached(frontier, lookahead)
 }
 
+func (b *resultRootBuild) syntheticRootReplayCanStoreClose() bool {
+	if b == nil || len(b.replayStack.closeMemo) >= syntheticRootReplayCloseMemoMaxEntries {
+		return false
+	}
+	store := &b.replayStack
+	return len(store.closePages) < syntheticRootReplayCloseMaxPages ||
+		int(store.closePageUsed)+syntheticRootReplayMaxFrontier <= syntheticRootReplayClosePageFrames
+}
+
+func (b *resultRootBuild) syntheticRootReplayCloseLookaheadMemoMiss(key syntheticRootReplayCloseKey, frontier []syntheticRootReplayFrame, lookahead Symbol) []syntheticRootReplayFrame {
+	var frameScratch [syntheticRootReplayMaxFrontier]syntheticRootReplayFrame
+	var setScratch syntheticRootReplayFrameSetScratch
+	closed := b.syntheticRootReplayCloseLookaheadInto(frameScratch[:0], frontier, lookahead, &setScratch)
+	perfRecordSyntheticReplayCloseOutput(len(closed), true)
+	if cached, ok := b.syntheticRootReplayStoreClose(key, closed); ok {
+		return cached
+	}
+	perfRecordSyntheticReplayCloseMemoCapSkip()
+	return b.syntheticRootReplayCloseLookaheadUncached(frontier, lookahead)
+}
+
+func (b *resultRootBuild) syntheticRootReplayCloseFrames(span syntheticRootReplayCloseSpan) ([]syntheticRootReplayFrame, bool) {
+	count := span.count()
+	if count == 0 {
+		return nil, true
+	}
+	pageIndex := span.page()
+	start := span.offset()
+	end := start + count
+	if b == nil || pageIndex >= len(b.replayStack.closePages) || end < start || end > syntheticRootReplayClosePageFrames {
+		return nil, false
+	}
+	return b.replayStack.closePages[pageIndex][start:end:end], true
+}
+
+func (b *resultRootBuild) syntheticRootReplayStoreClose(key syntheticRootReplayCloseKey, frames []syntheticRootReplayFrame) ([]syntheticRootReplayFrame, bool) {
+	if b == nil || len(frames) > syntheticRootReplayMaxFrontier ||
+		len(b.replayStack.closeMemo) >= syntheticRootReplayCloseMemoMaxEntries {
+		return nil, false
+	}
+	store := &b.replayStack
+	if store.closeMemo == nil {
+		store.closeMemo = make(map[syntheticRootReplayCloseKey]syntheticRootReplayCloseSpan, 256)
+	}
+	if len(frames) == 0 {
+		store.closeMemo[key] = 0
+		perfRecordSyntheticReplayCloseMemoStore()
+		return nil, true
+	}
+	used := int(store.closePageUsed)
+	if len(store.closePages) == 0 || used+len(frames) > syntheticRootReplayClosePageFrames {
+		if len(store.closePages) >= syntheticRootReplayCloseMaxPages {
+			return nil, false
+		}
+		store.closePages = append(store.closePages, new([syntheticRootReplayClosePageFrames]syntheticRootReplayFrame))
+		used = 0
+	}
+	pageIndex := len(store.closePages) - 1
+	end := used + len(frames)
+	copy(store.closePages[pageIndex][used:end], frames)
+	store.closeMemo[key] = newSyntheticRootReplayCloseSpan(pageIndex, used, len(frames))
+	store.closePageUsed = uint16(end)
+	store.closeFrames += uint32(len(frames))
+	perfRecordSyntheticReplayCloseMemoStore()
+	return store.closePages[pageIndex][used:end:end], true
+}
+
 func (b *resultRootBuild) syntheticRootReplayCloseLookaheadUncached(frontier []syntheticRootReplayFrame, lookahead Symbol) []syntheticRootReplayFrame {
 	closed := make([]syntheticRootReplayFrame, 0, len(frontier))
+	var setScratch syntheticRootReplayFrameSetScratch
+	return b.syntheticRootReplayCloseLookaheadInto(closed, frontier, lookahead, &setScratch)
+}
+
+func (b *resultRootBuild) syntheticRootReplayCloseLookaheadInto(closed, frontier []syntheticRootReplayFrame, lookahead Symbol, setScratch *syntheticRootReplayFrameSetScratch) []syntheticRootReplayFrame {
+	closed = closed[:0]
+	setScratch.reset()
 	for _, frame := range frontier {
-		closed = appendSyntheticRootReplayFrame(closed, frame)
+		closed = setScratch.append(closed, frame)
 	}
 	for i := 0; i < len(closed); i++ {
 		for _, act := range b.syntheticRootReplayActions(closed[i], lookahead) {
@@ -634,7 +913,7 @@ func (b *resultRootBuild) syntheticRootReplayCloseLookaheadUncached(frontier []s
 			if !ok {
 				continue
 			}
-			closed = appendSyntheticRootReplayFrame(closed, next)
+			closed = setScratch.append(closed, next)
 		}
 	}
 	return closed
@@ -695,6 +974,82 @@ func appendSyntheticRootReplayFrame(frames []syntheticRootReplayFrame, frame syn
 		}
 	}
 	return append(frames, frame)
+}
+
+func (s *syntheticRootReplayFrameSetScratch) reset() {
+	if s == nil {
+		return
+	}
+	for i := 0; i < int(s.count); i++ {
+		s.slots[s.occupied[i]] = 0
+	}
+	s.count = 0
+}
+
+func (s *syntheticRootReplayFrameSetScratch) append(frames []syntheticRootReplayFrame, frame syntheticRootReplayFrame) []syntheticRootReplayFrame {
+	if s == nil {
+		return appendSyntheticRootReplayFrame(frames, frame)
+	}
+	if frame.top == 0 || len(frames) >= syntheticRootReplayMaxFrontier {
+		return frames
+	}
+	index := uint8((frame.top * 2654435761) >> 24)
+	for probe := 0; probe < len(s.slots); probe++ {
+		top := s.slots[index]
+		if top == frame.top {
+			return frames
+		}
+		if top == 0 {
+			s.slots[index] = frame.top
+			s.occupied[s.count] = index
+			s.count++
+			return append(frames, frame)
+		}
+		index++
+	}
+	return appendSyntheticRootReplayFrame(frames, frame)
+}
+
+func (s *syntheticRootReplayGapCursorSetScratch) reset() {
+	if s == nil {
+		return
+	}
+	for i := 0; i < int(s.count); i++ {
+		s.slots[s.occupied[i]] = 0
+	}
+	s.count = 0
+}
+
+func (s *syntheticRootReplayGapCursorSetScratch) append(cursors []syntheticRootReplayGapCursor, frame syntheticRootReplayFrame, pos uint32, point Point) []syntheticRootReplayGapCursor {
+	perfRecordSyntheticReplayGapCursorAttempt()
+	if s == nil || frame.top == 0 || len(cursors) >= syntheticRootReplayMaxFrontier {
+		return cursors
+	}
+	index := syntheticRootReplayGapCursorHash(frame.top, pos, point)
+	for probe := 0; probe < len(s.slots); probe++ {
+		slot := s.slots[index]
+		if slot == 0 {
+			s.slots[index] = uint8(len(cursors) + 1)
+			s.occupied[s.count] = index
+			s.count++
+			perfRecordSyntheticReplayGapCursorPeak(len(cursors) + 1)
+			return append(cursors, syntheticRootReplayGapCursor{frame: frame, byte: pos, point: point})
+		}
+		existing := cursors[int(slot)-1]
+		if existing.frame.top == frame.top && existing.byte == pos && existing.point == point {
+			perfRecordSyntheticReplayGapCursorDedup()
+			return cursors
+		}
+		index++
+	}
+	return cursors
+}
+
+func syntheticRootReplayGapCursorHash(top, pos uint32, point Point) uint8 {
+	hash := top*2654435761 ^ pos*2246822519
+	hash ^= point.Row*3266489917 ^ point.Column*668265263
+	hash ^= hash >> 16
+	return uint8(hash >> 24)
 }
 
 func (b *resultRootBuild) syntheticRootReplaySkipsChild(child *Node) bool {

@@ -20,3 +20,25 @@ uses a fresh scoped query when indexed files or the source set changed.
 
 `refresh_canopy_index.sh` builds a temporary index and validates it. It records
 the Git commit only after it promotes the validated index.
+
+`run_randomized_benchmarks.sh` runs the production, incremental, recovery,
+replay, compact-core, and corridor benchmarks once per explicit shuffle seed.
+Pass each output file to `benchstat` for a before-and-after comparison.
+
+The default set includes:
+
+- the primary full-parse and incremental benchmarks;
+- the random-edit and parser-core controls;
+- the recovery and synthetic-root replay targets;
+- the warm and corridor scheduler lanes;
+- the fresh full and selected-store canonical fixtures;
+- the tags, legacy fact, and compiled `FactProgram` extraction lanes.
+
+Run both checkouts with the same seed range. Alternate checkout order between
+seed batches when the host cannot stay thermally stable.
+
+```sh
+bash scripts/run_randomized_benchmarks.sh --output /tmp/gts-base.txt
+bash scripts/run_randomized_benchmarks.sh --output /tmp/gts-head.txt
+benchstat /tmp/gts-base.txt /tmp/gts-head.txt
+```

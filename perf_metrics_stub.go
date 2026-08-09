@@ -55,6 +55,7 @@ func perfRecordReduceChildrenAllVisible(int)         {}
 func perfRecordReduceChildrenScratch(int)            {}
 func perfRecordReduceScratchNoAlias(int)             {}
 func perfRecordReduceScratchGeneral(int)             {}
+func perfRecordReduceChildBuild(reduceChildPath)     {}
 func perfRecordReduceForkCall(int)                   {}
 func perfRecordPostReduceMergeAttempt()              {}
 func perfRecordPostReduceMergePrimarySuccess()       {}
@@ -78,6 +79,23 @@ func perfRecordForestCoalescePreCapDrop()            {}
 func perfRecordForestCoalesceCap(bool)               {}
 func perfRecordExtraNode()                           {}
 func perfRecordErrorNode()                           {}
+func perfRecordSyntheticReplayGapBridge()            {}
+func perfRecordSyntheticReplayGapStep()              {}
+func perfRecordSyntheticReplayGapCursorAttempt()     {}
+func perfRecordSyntheticReplayGapCursorDedup()       {}
+func perfRecordSyntheticReplayGapCursorPeak(int)     {}
+func perfRecordSyntheticReplayGapLexAttempt()        {}
+func perfRecordSyntheticReplayGapLexCacheHit()       {}
+func perfRecordSyntheticReplayGapLexCacheMiss()      {}
+func perfRecordSyntheticReplayGapLexCacheStore()     {}
+func perfRecordSyntheticReplayGapLexCacheCapSkip()   {}
+func perfRecordSyntheticReplayStackPush()            {}
+func perfRecordSyntheticReplayStackInternHit()       {}
+func perfRecordSyntheticReplayCloseMemoHit()         {}
+func perfRecordSyntheticReplayCloseMemoMiss()        {}
+func perfRecordSyntheticReplayCloseMemoStore()       {}
+func perfRecordSyntheticReplayCloseMemoCapSkip()     {}
+func perfRecordSyntheticReplayCloseOutput(int, bool) {}
 func perfRecordCloneTreeCall()                       {}
 func perfRecordCloneTreePublicNode()                 {}
 func perfRecordCloneTreeFinalRefs(int)               {}
@@ -95,3 +113,10 @@ func perfRecordNodeEditMarked()                      {}
 func perfRecordDenseMutationChildrenCall()           {}
 func perfRecordDenseMutationChildrenDrain()          {}
 func perfRecordMutationChildRefCopyOnWrite(int)      {}
+
+func perfRecordSyntheticReplayAdvanceAttempt()         {}
+func perfRecordSyntheticReplayAdvanceCacheHit()        {}
+func perfRecordSyntheticReplayAdvanceCacheMiss()       {}
+func perfRecordSyntheticReplayAdvanceCacheStore()      {}
+func perfRecordSyntheticReplayAdvanceCacheCapSkip()    {}
+func perfRecordSyntheticReplayAdvanceOutput(int, bool) {}

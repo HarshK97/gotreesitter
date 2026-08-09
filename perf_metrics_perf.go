@@ -63,6 +63,10 @@ type perfCountersData struct {
 	reduceChildrenScratch                atomic.Uint64
 	reduceScratchNoAlias                 atomic.Uint64
 	reduceScratchGeneral                 atomic.Uint64
+	reduceChildEmptyBuilds               atomic.Uint64
+	reduceChildAllVisibleBuilds          atomic.Uint64
+	reduceChildScratchNoAliasBuilds      atomic.Uint64
+	reduceChildScratchGeneralBuilds      atomic.Uint64
 	reduceForkCalls                      atomic.Uint64
 	reduceForkWindows                    atomic.Uint64
 	reduceForkMaxWindows                 atomic.Uint64
@@ -96,6 +100,47 @@ type perfCountersData struct {
 	forestCoalesceCapReplacements        atomic.Uint64
 	extraNodes                           atomic.Uint64
 	errorNodes                           atomic.Uint64
+	syntheticReplayGapBridgeCalls        atomic.Uint64
+	syntheticReplayGapSteps              atomic.Uint64
+	syntheticReplayGapCursorAttempts     atomic.Uint64
+	syntheticReplayGapCursorDedupHits    atomic.Uint64
+	syntheticReplayGapCursorPeak         atomic.Uint64
+	syntheticReplayGapLexAttempts        atomic.Uint64
+	syntheticReplayGapLexCacheHits       atomic.Uint64
+	syntheticReplayGapLexCacheMisses     atomic.Uint64
+	syntheticReplayGapLexCacheStores     atomic.Uint64
+	syntheticReplayGapLexCacheCapSkips   atomic.Uint64
+	syntheticReplayAdvanceAttempts       atomic.Uint64
+	syntheticReplayAdvanceCacheHits      atomic.Uint64
+	syntheticReplayAdvanceCacheMisses    atomic.Uint64
+	syntheticReplayAdvanceCacheStores    atomic.Uint64
+	syntheticReplayAdvanceCacheCapSkips  atomic.Uint64
+	syntheticReplayAdvanceZeroOutputs    atomic.Uint64
+	syntheticReplayAdvanceSingleOutputs  atomic.Uint64
+	syntheticReplayAdvanceMultiOutputs   atomic.Uint64
+	syntheticReplayAdvanceOutputPeak     atomic.Uint64
+	syntheticReplayAdvanceOutputFrames   atomic.Uint64
+	syntheticReplayAdvanceUniqueOutputs  atomic.Uint64
+	syntheticReplayAdvanceUniqueFrames   atomic.Uint64
+	syntheticReplayAdvanceUniqueSingle   atomic.Uint64
+	syntheticReplayAdvanceUniqueMulti    atomic.Uint64
+	syntheticReplayAdvanceUniquePeak     atomic.Uint64
+	syntheticReplayStackPushCalls        atomic.Uint64
+	syntheticReplayStackInternHits       atomic.Uint64
+	syntheticReplayCloseMemoHits         atomic.Uint64
+	syntheticReplayCloseMemoMisses       atomic.Uint64
+	syntheticReplayCloseMemoStores       atomic.Uint64
+	syntheticReplayCloseMemoCapSkips     atomic.Uint64
+	syntheticReplayCloseZeroOutputs      atomic.Uint64
+	syntheticReplayCloseSingleOutputs    atomic.Uint64
+	syntheticReplayCloseMultiOutputs     atomic.Uint64
+	syntheticReplayCloseOutputPeak       atomic.Uint64
+	syntheticReplayCloseOutputFrames     atomic.Uint64
+	syntheticReplayCloseUniqueOutputs    atomic.Uint64
+	syntheticReplayCloseUniqueFrames     atomic.Uint64
+	syntheticReplayCloseUniqueSingle     atomic.Uint64
+	syntheticReplayCloseUniqueMulti      atomic.Uint64
+	syntheticReplayCloseUniquePeak       atomic.Uint64
 	mergeStacksInHist                    [perfMergeHistBins]atomic.Uint64
 	mergeAliveHist                       [perfMergeHistBins]atomic.Uint64
 	mergeOutHist                         [perfMergeHistBins]atomic.Uint64
@@ -166,6 +211,10 @@ func ResetPerfCounters() {
 	perfCounters.reduceChildrenScratch.Store(0)
 	perfCounters.reduceScratchNoAlias.Store(0)
 	perfCounters.reduceScratchGeneral.Store(0)
+	perfCounters.reduceChildEmptyBuilds.Store(0)
+	perfCounters.reduceChildAllVisibleBuilds.Store(0)
+	perfCounters.reduceChildScratchNoAliasBuilds.Store(0)
+	perfCounters.reduceChildScratchGeneralBuilds.Store(0)
 	perfCounters.reduceForkCalls.Store(0)
 	perfCounters.reduceForkWindows.Store(0)
 	perfCounters.reduceForkMaxWindows.Store(0)
@@ -199,6 +248,47 @@ func ResetPerfCounters() {
 	perfCounters.forestCoalesceCapReplacements.Store(0)
 	perfCounters.extraNodes.Store(0)
 	perfCounters.errorNodes.Store(0)
+	perfCounters.syntheticReplayGapBridgeCalls.Store(0)
+	perfCounters.syntheticReplayGapSteps.Store(0)
+	perfCounters.syntheticReplayGapCursorAttempts.Store(0)
+	perfCounters.syntheticReplayGapCursorDedupHits.Store(0)
+	perfCounters.syntheticReplayGapCursorPeak.Store(0)
+	perfCounters.syntheticReplayGapLexAttempts.Store(0)
+	perfCounters.syntheticReplayGapLexCacheHits.Store(0)
+	perfCounters.syntheticReplayGapLexCacheMisses.Store(0)
+	perfCounters.syntheticReplayGapLexCacheStores.Store(0)
+	perfCounters.syntheticReplayGapLexCacheCapSkips.Store(0)
+	perfCounters.syntheticReplayAdvanceAttempts.Store(0)
+	perfCounters.syntheticReplayAdvanceCacheHits.Store(0)
+	perfCounters.syntheticReplayAdvanceCacheMisses.Store(0)
+	perfCounters.syntheticReplayAdvanceCacheStores.Store(0)
+	perfCounters.syntheticReplayAdvanceCacheCapSkips.Store(0)
+	perfCounters.syntheticReplayAdvanceZeroOutputs.Store(0)
+	perfCounters.syntheticReplayAdvanceSingleOutputs.Store(0)
+	perfCounters.syntheticReplayAdvanceMultiOutputs.Store(0)
+	perfCounters.syntheticReplayAdvanceOutputPeak.Store(0)
+	perfCounters.syntheticReplayAdvanceOutputFrames.Store(0)
+	perfCounters.syntheticReplayAdvanceUniqueOutputs.Store(0)
+	perfCounters.syntheticReplayAdvanceUniqueFrames.Store(0)
+	perfCounters.syntheticReplayAdvanceUniqueSingle.Store(0)
+	perfCounters.syntheticReplayAdvanceUniqueMulti.Store(0)
+	perfCounters.syntheticReplayAdvanceUniquePeak.Store(0)
+	perfCounters.syntheticReplayStackPushCalls.Store(0)
+	perfCounters.syntheticReplayStackInternHits.Store(0)
+	perfCounters.syntheticReplayCloseMemoHits.Store(0)
+	perfCounters.syntheticReplayCloseMemoMisses.Store(0)
+	perfCounters.syntheticReplayCloseMemoStores.Store(0)
+	perfCounters.syntheticReplayCloseMemoCapSkips.Store(0)
+	perfCounters.syntheticReplayCloseZeroOutputs.Store(0)
+	perfCounters.syntheticReplayCloseSingleOutputs.Store(0)
+	perfCounters.syntheticReplayCloseMultiOutputs.Store(0)
+	perfCounters.syntheticReplayCloseOutputPeak.Store(0)
+	perfCounters.syntheticReplayCloseOutputFrames.Store(0)
+	perfCounters.syntheticReplayCloseUniqueOutputs.Store(0)
+	perfCounters.syntheticReplayCloseUniqueFrames.Store(0)
+	perfCounters.syntheticReplayCloseUniqueSingle.Store(0)
+	perfCounters.syntheticReplayCloseUniqueMulti.Store(0)
+	perfCounters.syntheticReplayCloseUniquePeak.Store(0)
 	for i := range perfCounters.mergeStacksInHist {
 		perfCounters.mergeStacksInHist[i].Store(0)
 	}
@@ -298,6 +388,10 @@ func PerfCountersSnapshot() PerfCounters {
 	out.ReduceChildrenScratch = perfCounters.reduceChildrenScratch.Load()
 	out.ReduceScratchNoAlias = perfCounters.reduceScratchNoAlias.Load()
 	out.ReduceScratchGeneral = perfCounters.reduceScratchGeneral.Load()
+	out.ReduceChildEmptyBuilds = perfCounters.reduceChildEmptyBuilds.Load()
+	out.ReduceChildAllVisibleBuilds = perfCounters.reduceChildAllVisibleBuilds.Load()
+	out.ReduceChildScratchNoAliasBuilds = perfCounters.reduceChildScratchNoAliasBuilds.Load()
+	out.ReduceChildScratchGeneralBuilds = perfCounters.reduceChildScratchGeneralBuilds.Load()
 	out.ReduceForkCalls = perfCounters.reduceForkCalls.Load()
 	out.ReduceForkWindows = perfCounters.reduceForkWindows.Load()
 	out.ReduceForkMaxWindows = perfCounters.reduceForkMaxWindows.Load()
@@ -331,6 +425,47 @@ func PerfCountersSnapshot() PerfCounters {
 	out.ForestCoalesceCapReplacements = perfCounters.forestCoalesceCapReplacements.Load()
 	out.ExtraNodes = perfCounters.extraNodes.Load()
 	out.ErrorNodes = perfCounters.errorNodes.Load()
+	out.SyntheticReplayGapBridgeCalls = perfCounters.syntheticReplayGapBridgeCalls.Load()
+	out.SyntheticReplayGapSteps = perfCounters.syntheticReplayGapSteps.Load()
+	out.SyntheticReplayGapCursorAttempts = perfCounters.syntheticReplayGapCursorAttempts.Load()
+	out.SyntheticReplayGapCursorDedupHits = perfCounters.syntheticReplayGapCursorDedupHits.Load()
+	out.SyntheticReplayGapCursorPeak = perfCounters.syntheticReplayGapCursorPeak.Load()
+	out.SyntheticReplayGapLexAttempts = perfCounters.syntheticReplayGapLexAttempts.Load()
+	out.SyntheticReplayGapLexCacheHits = perfCounters.syntheticReplayGapLexCacheHits.Load()
+	out.SyntheticReplayGapLexCacheMisses = perfCounters.syntheticReplayGapLexCacheMisses.Load()
+	out.SyntheticReplayGapLexCacheStores = perfCounters.syntheticReplayGapLexCacheStores.Load()
+	out.SyntheticReplayGapLexCacheCapSkips = perfCounters.syntheticReplayGapLexCacheCapSkips.Load()
+	out.SyntheticReplayAdvanceAttempts = perfCounters.syntheticReplayAdvanceAttempts.Load()
+	out.SyntheticReplayAdvanceCacheHits = perfCounters.syntheticReplayAdvanceCacheHits.Load()
+	out.SyntheticReplayAdvanceCacheMisses = perfCounters.syntheticReplayAdvanceCacheMisses.Load()
+	out.SyntheticReplayAdvanceCacheStores = perfCounters.syntheticReplayAdvanceCacheStores.Load()
+	out.SyntheticReplayAdvanceCacheCapSkips = perfCounters.syntheticReplayAdvanceCacheCapSkips.Load()
+	out.SyntheticReplayAdvanceZeroOutputs = perfCounters.syntheticReplayAdvanceZeroOutputs.Load()
+	out.SyntheticReplayAdvanceSingleOutputs = perfCounters.syntheticReplayAdvanceSingleOutputs.Load()
+	out.SyntheticReplayAdvanceMultiOutputs = perfCounters.syntheticReplayAdvanceMultiOutputs.Load()
+	out.SyntheticReplayAdvanceOutputPeak = perfCounters.syntheticReplayAdvanceOutputPeak.Load()
+	out.SyntheticReplayAdvanceOutputFrames = perfCounters.syntheticReplayAdvanceOutputFrames.Load()
+	out.SyntheticReplayAdvanceUniqueOutputs = perfCounters.syntheticReplayAdvanceUniqueOutputs.Load()
+	out.SyntheticReplayAdvanceUniqueFrames = perfCounters.syntheticReplayAdvanceUniqueFrames.Load()
+	out.SyntheticReplayAdvanceUniqueSingle = perfCounters.syntheticReplayAdvanceUniqueSingle.Load()
+	out.SyntheticReplayAdvanceUniqueMulti = perfCounters.syntheticReplayAdvanceUniqueMulti.Load()
+	out.SyntheticReplayAdvanceUniquePeak = perfCounters.syntheticReplayAdvanceUniquePeak.Load()
+	out.SyntheticReplayStackPushCalls = perfCounters.syntheticReplayStackPushCalls.Load()
+	out.SyntheticReplayStackInternHits = perfCounters.syntheticReplayStackInternHits.Load()
+	out.SyntheticReplayCloseMemoHits = perfCounters.syntheticReplayCloseMemoHits.Load()
+	out.SyntheticReplayCloseMemoMisses = perfCounters.syntheticReplayCloseMemoMisses.Load()
+	out.SyntheticReplayCloseMemoStores = perfCounters.syntheticReplayCloseMemoStores.Load()
+	out.SyntheticReplayCloseMemoCapSkips = perfCounters.syntheticReplayCloseMemoCapSkips.Load()
+	out.SyntheticReplayCloseZeroOutputs = perfCounters.syntheticReplayCloseZeroOutputs.Load()
+	out.SyntheticReplayCloseSingleOutputs = perfCounters.syntheticReplayCloseSingleOutputs.Load()
+	out.SyntheticReplayCloseMultiOutputs = perfCounters.syntheticReplayCloseMultiOutputs.Load()
+	out.SyntheticReplayCloseOutputPeak = perfCounters.syntheticReplayCloseOutputPeak.Load()
+	out.SyntheticReplayCloseOutputFrames = perfCounters.syntheticReplayCloseOutputFrames.Load()
+	out.SyntheticReplayCloseUniqueOutputs = perfCounters.syntheticReplayCloseUniqueOutputs.Load()
+	out.SyntheticReplayCloseUniqueFrames = perfCounters.syntheticReplayCloseUniqueFrames.Load()
+	out.SyntheticReplayCloseUniqueSingle = perfCounters.syntheticReplayCloseUniqueSingle.Load()
+	out.SyntheticReplayCloseUniqueMulti = perfCounters.syntheticReplayCloseUniqueMulti.Load()
+	out.SyntheticReplayCloseUniquePeak = perfCounters.syntheticReplayCloseUniquePeak.Load()
 	for i := range out.MergeOutHist {
 		out.MergeOutHist[i] = perfCounters.mergeOutHist[i].Load()
 	}
@@ -612,6 +747,19 @@ func perfRecordReduceScratchGeneral(count int) {
 	}
 }
 
+func perfRecordReduceChildBuild(path reduceChildPath) {
+	switch path {
+	case reduceChildPathNone:
+		perfCounters.reduceChildEmptyBuilds.Add(1)
+	case reduceChildPathAllVisible:
+		perfCounters.reduceChildAllVisibleBuilds.Add(1)
+	case reduceChildPathScratchNoAlias:
+		perfCounters.reduceChildScratchNoAliasBuilds.Add(1)
+	case reduceChildPathScratchGeneral:
+		perfCounters.reduceChildScratchGeneralBuilds.Add(1)
+	}
+}
+
 func perfRecordReduceForkCall(windowCount int) {
 	perfCounters.reduceForkCalls.Add(1)
 	if windowCount > 0 {
@@ -728,6 +876,148 @@ func perfRecordExtraNode() {
 
 func perfRecordErrorNode() {
 	perfCounters.errorNodes.Add(1)
+}
+
+func perfRecordSyntheticReplayGapBridge() {
+	perfCounters.syntheticReplayGapBridgeCalls.Add(1)
+}
+
+func perfRecordSyntheticReplayGapStep() {
+	perfCounters.syntheticReplayGapSteps.Add(1)
+}
+
+func perfRecordSyntheticReplayGapCursorAttempt() {
+	perfCounters.syntheticReplayGapCursorAttempts.Add(1)
+}
+
+func perfRecordSyntheticReplayGapCursorDedup() {
+	perfCounters.syntheticReplayGapCursorDedupHits.Add(1)
+}
+
+func perfRecordSyntheticReplayGapCursorPeak(n int) {
+	if n > 0 {
+		perfMaxUint64(&perfCounters.syntheticReplayGapCursorPeak, uint64(n))
+	}
+}
+
+func perfRecordSyntheticReplayGapLexAttempt() {
+	perfCounters.syntheticReplayGapLexAttempts.Add(1)
+}
+
+func perfRecordSyntheticReplayGapLexCacheHit() {
+	perfCounters.syntheticReplayGapLexCacheHits.Add(1)
+}
+
+func perfRecordSyntheticReplayGapLexCacheMiss() {
+	perfCounters.syntheticReplayGapLexCacheMisses.Add(1)
+}
+
+func perfRecordSyntheticReplayGapLexCacheStore() {
+	perfCounters.syntheticReplayGapLexCacheStores.Add(1)
+}
+
+func perfRecordSyntheticReplayGapLexCacheCapSkip() {
+	perfCounters.syntheticReplayGapLexCacheCapSkips.Add(1)
+}
+
+func perfRecordSyntheticReplayAdvanceAttempt() {
+	perfCounters.syntheticReplayAdvanceAttempts.Add(1)
+}
+
+func perfRecordSyntheticReplayAdvanceCacheHit() {
+	perfCounters.syntheticReplayAdvanceCacheHits.Add(1)
+}
+
+func perfRecordSyntheticReplayAdvanceCacheMiss() {
+	perfCounters.syntheticReplayAdvanceCacheMisses.Add(1)
+}
+
+func perfRecordSyntheticReplayAdvanceCacheStore() {
+	perfCounters.syntheticReplayAdvanceCacheStores.Add(1)
+}
+
+func perfRecordSyntheticReplayAdvanceCacheCapSkip() {
+	perfCounters.syntheticReplayAdvanceCacheCapSkips.Add(1)
+}
+
+func perfRecordSyntheticReplayAdvanceOutput(n int, unique bool) {
+	switch n {
+	case 0:
+		perfCounters.syntheticReplayAdvanceZeroOutputs.Add(1)
+	case 1:
+		perfCounters.syntheticReplayAdvanceSingleOutputs.Add(1)
+	default:
+		perfCounters.syntheticReplayAdvanceMultiOutputs.Add(1)
+	}
+	if n > 0 {
+		perfCounters.syntheticReplayAdvanceOutputFrames.Add(uint64(n))
+		perfMaxUint64(&perfCounters.syntheticReplayAdvanceOutputPeak, uint64(n))
+	}
+	if !unique {
+		return
+	}
+	perfCounters.syntheticReplayAdvanceUniqueOutputs.Add(1)
+	perfCounters.syntheticReplayAdvanceUniqueFrames.Add(uint64(n))
+	if n == 1 {
+		perfCounters.syntheticReplayAdvanceUniqueSingle.Add(1)
+	} else if n > 1 {
+		perfCounters.syntheticReplayAdvanceUniqueMulti.Add(1)
+	}
+	if n > 0 {
+		perfMaxUint64(&perfCounters.syntheticReplayAdvanceUniquePeak, uint64(n))
+	}
+}
+
+func perfRecordSyntheticReplayStackPush() {
+	perfCounters.syntheticReplayStackPushCalls.Add(1)
+}
+
+func perfRecordSyntheticReplayStackInternHit() {
+	perfCounters.syntheticReplayStackInternHits.Add(1)
+}
+
+func perfRecordSyntheticReplayCloseMemoHit() {
+	perfCounters.syntheticReplayCloseMemoHits.Add(1)
+}
+
+func perfRecordSyntheticReplayCloseMemoMiss() {
+	perfCounters.syntheticReplayCloseMemoMisses.Add(1)
+}
+
+func perfRecordSyntheticReplayCloseMemoStore() {
+	perfCounters.syntheticReplayCloseMemoStores.Add(1)
+}
+
+func perfRecordSyntheticReplayCloseMemoCapSkip() {
+	perfCounters.syntheticReplayCloseMemoCapSkips.Add(1)
+}
+
+func perfRecordSyntheticReplayCloseOutput(n int, unique bool) {
+	switch n {
+	case 0:
+		perfCounters.syntheticReplayCloseZeroOutputs.Add(1)
+	case 1:
+		perfCounters.syntheticReplayCloseSingleOutputs.Add(1)
+	default:
+		perfCounters.syntheticReplayCloseMultiOutputs.Add(1)
+	}
+	if n > 0 {
+		perfCounters.syntheticReplayCloseOutputFrames.Add(uint64(n))
+		perfMaxUint64(&perfCounters.syntheticReplayCloseOutputPeak, uint64(n))
+	}
+	if !unique {
+		return
+	}
+	perfCounters.syntheticReplayCloseUniqueOutputs.Add(1)
+	perfCounters.syntheticReplayCloseUniqueFrames.Add(uint64(n))
+	if n == 1 {
+		perfCounters.syntheticReplayCloseUniqueSingle.Add(1)
+	} else if n > 1 {
+		perfCounters.syntheticReplayCloseUniqueMulti.Add(1)
+	}
+	if n > 0 {
+		perfMaxUint64(&perfCounters.syntheticReplayCloseUniquePeak, uint64(n))
+	}
 }
 
 func perfRecordCloneTreeCall() {

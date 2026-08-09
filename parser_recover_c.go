@@ -1322,7 +1322,7 @@ func (p *Parser) cNodeVisibleSubtreeCount(n *Node) int {
 	}
 	if p != nil && len(p.cNodeMemoCache) != 0 {
 		if slot := p.cNodeMemoSlot(n); slot.hasVis && slot.ver == n.equivVersion {
-			return slot.visCount
+			return int(slot.visCount)
 		}
 	}
 	count := 0
@@ -1344,8 +1344,10 @@ func (p *Parser) cNodeVisibleSubtreeCount(n *Node) int {
 				epoch: p.cNodeMemoEpoch,
 			}
 		}
-		slot.visCount = count
-		slot.hasVis = true
+		if uint64(count) <= uint64(^uint32(0)) {
+			slot.visCount = uint32(count)
+			slot.hasVis = true
+		}
 	}
 	return count
 }
@@ -1414,6 +1416,9 @@ func cNodeErrorCostLangWithScratch(scratch *glrMergeScratch, lang *Language, n *
 	if scratch == nil {
 		return cNodeErrorCostLang(lang, n)
 	}
+	if parser := scratch.cErrorCostParser; parser != nil && parser.language == lang {
+		return parser.cNodeErrorCost(n)
+	}
 	if cached, ok := scratch.cErrorCost[n]; ok && cached.ver == n.equivVersion {
 		return cached.cost
 	}
@@ -1481,12 +1486,10 @@ type cNodeMemoCacheEntry struct {
 	node     uintptr
 	ver      uint32
 	cost     uint32
-	visCount int
+	visCount uint32
+	epoch    uint16
 	hasCost  bool
 	hasVis   bool
-	// epoch occupies existing tail padding on 32- and 64-bit platforms,
-	// keeping each cache entry at 20 and 32 bytes respectively.
-	epoch uint16
 }
 
 const (
@@ -1508,6 +1511,13 @@ const (
 	// smaller size, which only costs a recompute (see cNodeMemoSlot) -- never
 	// a wrong answer.
 	cNodeMemoCacheSize = 16384
+	// cNodeMemoRecoveryCacheSize is a temporary second tier for recovery
+	// parses that continue to collide after the standard cache grows. The
+	// packed 24-byte entry makes this tier 6 MiB on 64-bit systems.
+	cNodeMemoRecoveryCacheSize = 262144
+	// cNodeMemoRecoveryThrashGrowThreshold requires one collision per standard
+	// cache entry before the parser allocates the temporary recovery tier.
+	cNodeMemoRecoveryThrashGrowThreshold = cNodeMemoCacheSize
 	// cNodeMemoThrashGrowThreshold is the number of genuine 2-way-set
 	// collisions -- the primary way already holding a live current-epoch
 	// entry for another node, see cNodeMemoSlot's contention branch; the
@@ -1560,43 +1570,117 @@ func cNodeMemoCacheIndex(p uintptr, setCount int) int {
 	return int(h&uint64(setCount-1)) << 1
 }
 
-// growCNodeMemoCache upgrades the parser's per-subtree cost/vis memo from its
-// small per-parse default (cNodeMemoCacheInitialSize) to the full working-set
-// size (cNodeMemoCacheSize). Called from two sites, both input-driven, never
-// from "this Parser instance's unrelated history":
-//  1. cHandleError's crecoveryEnteredErrorState transition, the first time a
-//     lineage actually enters C error handling this parse.
-//  2. cNodeMemoSlot, the first time THIS parse's own memo-set contention
-//     crosses cNodeMemoThrashGrowThreshold (see its doc comment) -- a clean
-//     parse that is simply large/wide enough to thrash the small cache grows
-//     it too, without needing a genuine syntax error anywhere.
-//
-// A no-op once already grown. p.cNodeMemoThrash is reset to 0 by both the
-// per-parse cache (re)initialization (parseInternal) and by a successful grow
-// here (including when called from the cHandleError site, which is harmless:
-// the size guard above already makes any second grow this parse a no-op), so
-// the trigger is scoped to THIS parse's own observed load.
-func (p *Parser) growCNodeMemoCache() {
-	if p == nil || len(p.cNodeMemoCache) >= cNodeMemoCacheSize {
-		return
+func cNodeMemoCacheBytesForEntries(entries int) uint64 {
+	if entries <= 0 {
+		return 0
 	}
-	p.cNodeMemoCache = make([]cNodeMemoCacheEntry, cNodeMemoCacheSize)
-	p.cNodeMemoThrash = 0
+	return uint64(entries) * uint64(unsafe.Sizeof(cNodeMemoCacheEntry{}))
 }
 
-// DebugCNodeMemoCacheStats reports the current size of the parser's
-// C-recovery per-subtree memo cache (0 while unprovisioned/gate off,
-// cNodeMemoCacheInitialSize while small, cNodeMemoCacheSize once grown by
-// either growCNodeMemoCache trigger) and the live cNodeMemoThrash contention
-// counter. It exists so callers (tests, latency tooling) can observe the
-// adaptive-growth decision directly -- deterministically, from a collision
-// count -- instead of inferring it from wall-clock timing. Safe on a nil
+func recoveryNodeMemoTierForEntries(entries int) RecoveryNodeMemoTier {
+	switch {
+	case entries <= 0:
+		return RecoveryNodeMemoTierNone
+	case entries <= cNodeMemoCacheInitialSize:
+		return RecoveryNodeMemoTierInitial
+	case entries <= cNodeMemoCacheSize:
+		return RecoveryNodeMemoTierStandard
+	default:
+		return RecoveryNodeMemoTierTemporary
+	}
+}
+
+func (p *Parser) cNodeMemoCollisionCount() uint64 {
+	if p == nil || p.forestDeclineMemo == nil {
+		return 0
+	}
+	return p.forestDeclineMemo.cNodeMemoCollisions
+}
+
+func (p *Parser) recordCNodeMemoCollision() {
+	if cold := p.ensureParserColdState(); cold != nil {
+		cold.cNodeMemoCollisions++
+	}
+}
+
+// growCNodeMemoCacheTo replaces the active recovery memo with a larger empty
+// cache. A miss always recomputes the exact result, so dropped entries are safe.
+//
+// The temporary tier preserves the standard cache. Parse-operation cleanup
+// restores that cache and releases the larger backing array.
+func (p *Parser) growCNodeMemoCacheTo(target int) {
+	if p == nil || target <= len(p.cNodeMemoCache) {
+		return
+	}
+	if target > cNodeMemoRecoveryCacheSize {
+		target = cNodeMemoRecoveryCacheSize
+	}
+	if target > cNodeMemoCacheSize {
+		cold := p.ensureParserColdState()
+		if cold != nil && cold.cNodeMemoRetainedCache == nil {
+			cold.cNodeMemoRetainedCache = p.cNodeMemoCache
+		}
+	}
+	p.cNodeMemoCache = make([]cNodeMemoCacheEntry, target)
+	if target > cNodeMemoCacheSize {
+		p.activateCNodeMemoMergeSharing()
+	}
+	p.cNodeMemoThrash = 0
+	tier := recoveryNodeMemoTierForEntries(target)
+	if tier > p.cNodeMemoPeakTier {
+		p.cNodeMemoPeakTier = tier
+	}
+	if tier > p.cNodeMemoOperationPeakTier {
+		p.cNodeMemoOperationPeakTier = tier
+	}
+}
+
+func (p *Parser) growCNodeMemoCache() {
+	p.growCNodeMemoCacheTo(cNodeMemoCacheSize)
+}
+
+// activateCNodeMemoMergeSharing moves merge cost comparisons to the parser's
+// bounded memo. Discarded map entries recompute exactly on a cache miss.
+func (p *Parser) activateCNodeMemoMergeSharing() {
+	if p == nil || p.mergeScratch == nil {
+		return
+	}
+	p.mergeScratch.cErrorCostParser = p
+	p.mergeScratch.cErrorCost = nil
+}
+
+// finishCNodeMemoParse releases the temporary recovery tier. It restores the
+// standard cache without an allocation and keeps the parser's warm behavior.
+func (p *Parser) finishCNodeMemoParse() {
+	if p == nil || p.forestDeclineMemo == nil || p.forestDeclineMemo.cNodeMemoRetainedCache == nil {
+		return
+	}
+	p.cNodeMemoCache = p.forestDeclineMemo.cNodeMemoRetainedCache
+	p.forestDeclineMemo.cNodeMemoRetainedCache = nil
+}
+
+// DebugCNodeMemoCacheStats reports the active cache size and the current tier's
+// collision count. Tree.RecoveryNodeMemoRuntime reports the peak tier and the
+// total collision count for a returned tree. This method is safe on a nil
 // receiver.
 func (p *Parser) DebugCNodeMemoCacheStats() (cacheLen int, thrash uint32) {
 	if p == nil {
 		return 0, 0
 	}
 	return len(p.cNodeMemoCache), p.cNodeMemoThrash
+}
+
+// DebugCNodeMemoOperationStats reports the peak cache entries, peak bytes,
+// and collisions from the most recent recovery-capable outer parse operation.
+// A compact-route return does not start such an operation.
+func (p *Parser) DebugCNodeMemoOperationStats() (peakEntries int, peakBytes uint64, collisions uint64) {
+	if p == nil {
+		return 0, 0, 0
+	}
+	peakEntries = int(p.cNodeMemoOperationPeakTier.Entries())
+	return peakEntries,
+		cNodeMemoCacheBytesForEntries(peakEntries),
+		p.cNodeMemoCollisionCount()
 }
 
 // beginCNodeMemoEpoch invalidates every recovery memo entry in O(1). Epoch
@@ -1658,8 +1742,19 @@ func (p *Parser) cNodeMemoSlot(n *Node) *cNodeMemoCacheEntry {
 		// the instance's unrelated history.
 		*victim = *primary
 		p.cNodeMemoThrash++
-		if p.cNodeMemoThrash >= cNodeMemoThrashGrowThreshold && len(p.cNodeMemoCache) < cNodeMemoCacheSize {
-			p.growCNodeMemoCache() // resets p.cNodeMemoThrash to 0 on success
+		p.recordCNodeMemoCollision()
+		growTarget := 0
+		growThreshold := uint32(0)
+		switch {
+		case len(p.cNodeMemoCache) < cNodeMemoCacheSize:
+			growTarget = cNodeMemoCacheSize
+			growThreshold = cNodeMemoThrashGrowThreshold
+		case p.crecoveryEnteredErrorState && len(p.cNodeMemoCache) < cNodeMemoRecoveryCacheSize:
+			growTarget = cNodeMemoRecoveryCacheSize
+			growThreshold = cNodeMemoRecoveryThrashGrowThreshold
+		}
+		if growTarget != 0 && p.cNodeMemoThrash >= growThreshold {
+			p.growCNodeMemoCacheTo(growTarget)
 			// Re-resolve idx/primary against the freshly-grown cache: the
 			// setCount above is now stale, and growCNodeMemoCache reset every
 			// slot to unwritten (epoch 0), so this is guaranteed to be a
@@ -1806,17 +1901,20 @@ func (p *Parser) cErrRegionPostAbsorb(pre cErrRegionAbsorbPre, added ...*Node) {
 		p.debugCheckErrRegionIncremental(n, cost, vis)
 	}
 	if slot := p.cNodeMemoSlot(n); slot != nil {
-		*slot = cNodeMemoCacheEntry{
-			node:     uintptr(unsafe.Pointer(n)),
-			ver:      n.equivVersion,
-			cost:     cost,
-			visCount: vis,
-			hasCost:  true,
-			hasVis:   true,
-			epoch:    p.cNodeMemoEpoch,
+		entry := cNodeMemoCacheEntry{
+			node:    uintptr(unsafe.Pointer(n)),
+			ver:     n.equivVersion,
+			cost:    cost,
+			hasCost: true,
+			epoch:   p.cNodeMemoEpoch,
 		}
+		if uint64(vis) <= uint64(^uint32(0)) {
+			entry.visCount = uint32(vis)
+			entry.hasVis = true
+		}
+		*slot = entry
 	}
-	if ms := p.mergeScratch; ms != nil {
+	if ms := p.mergeScratch; ms != nil && ms.cErrorCostParser != p {
 		if ms.cErrorCost == nil {
 			ms.cErrorCost = make(map[*Node]glrCErrorCostEntry)
 		}
@@ -1833,7 +1931,7 @@ func (p *Parser) cErrRegionPrime(n *Node) {
 	}
 	cost := p.cNodeErrorCost(n)
 	p.cNodeVisibleSubtreeCount(n)
-	if ms := p.mergeScratch; ms != nil {
+	if ms := p.mergeScratch; ms != nil && ms.cErrorCostParser != p {
 		if ms.cErrorCost == nil {
 			ms.cErrorCost = make(map[*Node]glrCErrorCostEntry)
 		}
@@ -3005,13 +3103,19 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 	// resolveCRecoverySwallowedError use this as a cheap pre-filter; the
 	// actual suspicion signal is cRecoveryDroppedErrorForClean, scoped to the
 	// selected result's own lineage in buildResultFromGLR.
+	firstRecoveryEntry := !p.crecoveryEnteredErrorState
 	p.crecoveryEnteredErrorState = true
+	if firstRecoveryEntry {
+		p.activateCNodeMemoMergeSharing()
+	}
 	// This lineage is now doing real recovery-competition work (as opposed to
 	// the routine per-token GLR cost comparisons every capable parse runs even
 	// when well-formed), so it is worth upgrading the per-subtree memo from its
 	// small per-parse default to its full working-set size (see
 	// growCNodeMemoCache / cNodeMemoCacheInitialSize).
-	p.growCNodeMemoCache()
+	if firstRecoveryEntry {
+		p.growCNodeMemoCache()
+	}
 	// Recovery machinery is running: stack error costs can now be nonzero, so
 	// the merge cost competition must run its walks from here on (sticky
 	// per-parse gate, see crecoveryCostCompetitionRelevant).

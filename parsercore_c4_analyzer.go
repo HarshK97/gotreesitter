@@ -43,6 +43,8 @@ type ParserCoreCorridorTableShape struct {
 	Shift           uint64 `json:"disposition_shift"`
 	ShiftExtra      uint64 `json:"disposition_shift_extra"`
 	Reduce          uint64 `json:"disposition_reduce"`
+	ReduceChain     uint64 `json:"disposition_reduce_chain,omitempty"`
+	ReduceShift     uint64 `json:"disposition_reduce_shift,omitempty"`
 	Accept          uint64 `json:"disposition_accept"`
 	Fork            uint64 `json:"disposition_fork"`
 	ExitGeneric     uint64 `json:"disposition_exit_generic"`
@@ -158,6 +160,8 @@ func AnalyzeParserCoreCorridorTables(lang *Language) (ParserCoreCorridorTableSha
 		Shift:           census.Shift,
 		ShiftExtra:      census.ShiftExtra,
 		Reduce:          census.Reduce,
+		ReduceChain:     census.ReduceChain,
+		ReduceShift:     census.ReduceShift,
 		Accept:          census.Accept,
 		Fork:            census.Fork,
 		ExitGeneric:     census.ExitGeneric,

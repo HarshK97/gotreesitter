@@ -729,6 +729,10 @@ func TestReuseTreeWithNewSourceKeepsPrimaryArena(t *testing.T) {
 	if len(reused.borrowedArena) != 0 {
 		t.Fatalf("reused tree borrowed arenas = %d, want 0", len(reused.borrowedArena))
 	}
+	if reused.resultErrorSummary != tree.resultErrorSummary ||
+		reused.resultCompatibilityApplied != tree.resultCompatibilityApplied {
+		t.Fatal("reused tree did not preserve finalized result state")
+	}
 	if got, want := arena.refs.Load(), refsBefore+1; got != want {
 		t.Fatalf("arena refs after reuse = %d, want %d", got, want)
 	}

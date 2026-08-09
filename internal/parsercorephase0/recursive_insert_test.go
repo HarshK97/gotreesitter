@@ -653,6 +653,60 @@ func TestRecursiveInsertAcceptsExactExternalScannerProvenance(t *testing.T) {
 	}
 }
 
+func TestSubtreeExternalProvenanceUsesPackedCache(t *testing.T) {
+	core := newTinyCoreWithLimits(t, Limits{})
+	ordinary, err := core.appendSubtree(subtreeRecord{symbol: 10, terminal: true}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := core.subtrees[ordinary-1].externalProvenanceState; got != subtreeExternalProvenanceExactNoExternal {
+		t.Fatalf("ordinary provenance state = %d", got)
+	}
+
+	start := mustInternCheckpoint(t, core, []byte{1})
+	end := mustInternCheckpoint(t, core, []byte{2})
+	if err := core.SetPhaseExternalTokenScannerCheckpoints(start, end); err != nil {
+		t.Fatal(err)
+	}
+	external, err := core.appendAuthenticatedTerminal(subtreeRecord{
+		symbol: 11, external: true, terminal: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := core.subtrees[external-1].externalProvenanceState; got != subtreeExternalProvenanceExactHasExternal {
+		t.Fatalf("external provenance state = %d", got)
+	}
+	parent, err := core.appendSubtree(subtreeRecord{symbol: 12}, []SubtreeID{ordinary, external}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := core.subtrees[parent-1].externalProvenanceState; got != subtreeExternalProvenanceExactHasExternal {
+		t.Fatalf("parent provenance state = %d", got)
+	}
+
+	var hasExternal, exact bool
+	var provenanceErr error
+	if allocs := testing.AllocsPerRun(100, func() {
+		hasExternal, exact, provenanceErr = core.subtreeExternalProvenance(parent)
+	}); allocs != 0 {
+		t.Fatalf("cached provenance allocations = %f", allocs)
+	}
+	if provenanceErr != nil || !hasExternal || !exact {
+		t.Fatalf("cached provenance = has:%t exact:%t err:%v", hasExternal, exact, provenanceErr)
+	}
+
+	unproven, err := core.appendSubtree(subtreeRecord{
+		symbol: 13, external: true, terminal: true,
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasExternal, exact, err := core.subtreeExternalProvenance(unproven); err != nil || !hasExternal || exact {
+		t.Fatalf("unproven provenance = has:%t exact:%t err:%v", hasExternal, exact, err)
+	}
+}
+
 func TestRecursiveInsertKeepsScannerCheckpointMismatchSeparate(t *testing.T) {
 	core := newTinyCoreWithLimits(t, Limits{MaxDerivations: 8, MaxPopPaths: 8})
 	start := mustInternCheckpoint(t, core, []byte{1})

@@ -53,6 +53,10 @@ type PerfCounters struct {
 	ReduceChildrenScratch                uint64
 	ReduceScratchNoAlias                 uint64
 	ReduceScratchGeneral                 uint64
+	ReduceChildEmptyBuilds               uint64
+	ReduceChildAllVisibleBuilds          uint64
+	ReduceChildScratchNoAliasBuilds      uint64
+	ReduceChildScratchGeneralBuilds      uint64
 	ReduceForkCalls                      uint64
 	ReduceForkWindows                    uint64
 	ReduceForkMaxWindows                 uint64
@@ -86,6 +90,47 @@ type PerfCounters struct {
 	ForestCoalesceCapReplacements        uint64
 	ExtraNodes                           uint64
 	ErrorNodes                           uint64
+	SyntheticReplayGapBridgeCalls        uint64
+	SyntheticReplayGapSteps              uint64
+	SyntheticReplayGapCursorAttempts     uint64
+	SyntheticReplayGapCursorDedupHits    uint64
+	SyntheticReplayGapCursorPeak         uint64
+	SyntheticReplayGapLexAttempts        uint64
+	SyntheticReplayGapLexCacheHits       uint64
+	SyntheticReplayGapLexCacheMisses     uint64
+	SyntheticReplayGapLexCacheStores     uint64
+	SyntheticReplayGapLexCacheCapSkips   uint64
+	SyntheticReplayAdvanceAttempts       uint64
+	SyntheticReplayAdvanceCacheHits      uint64
+	SyntheticReplayAdvanceCacheMisses    uint64
+	SyntheticReplayAdvanceCacheStores    uint64
+	SyntheticReplayAdvanceCacheCapSkips  uint64
+	SyntheticReplayAdvanceZeroOutputs    uint64
+	SyntheticReplayAdvanceSingleOutputs  uint64
+	SyntheticReplayAdvanceMultiOutputs   uint64
+	SyntheticReplayAdvanceOutputPeak     uint64
+	SyntheticReplayAdvanceOutputFrames   uint64
+	SyntheticReplayAdvanceUniqueOutputs  uint64
+	SyntheticReplayAdvanceUniqueFrames   uint64
+	SyntheticReplayAdvanceUniqueSingle   uint64
+	SyntheticReplayAdvanceUniqueMulti    uint64
+	SyntheticReplayAdvanceUniquePeak     uint64
+	SyntheticReplayStackPushCalls        uint64
+	SyntheticReplayStackInternHits       uint64
+	SyntheticReplayCloseMemoHits         uint64
+	SyntheticReplayCloseMemoMisses       uint64
+	SyntheticReplayCloseMemoStores       uint64
+	SyntheticReplayCloseMemoCapSkips     uint64
+	SyntheticReplayCloseZeroOutputs      uint64
+	SyntheticReplayCloseSingleOutputs    uint64
+	SyntheticReplayCloseMultiOutputs     uint64
+	SyntheticReplayCloseOutputPeak       uint64
+	SyntheticReplayCloseOutputFrames     uint64
+	SyntheticReplayCloseUniqueOutputs    uint64
+	SyntheticReplayCloseUniqueFrames     uint64
+	SyntheticReplayCloseUniqueSingle     uint64
+	SyntheticReplayCloseUniqueMulti      uint64
+	SyntheticReplayCloseUniquePeak       uint64
 	MergeStacksInHist                    [maxGLRStacks + 2]uint64
 	MergeAliveHist                       [maxGLRStacks + 2]uint64
 	MergeOutHist                         [maxGLRStacks + 2]uint64

@@ -197,8 +197,8 @@ func TestReturnedTreeNormalizationMarksAcceptedTreeStoppedOnTimeout(t *testing.T
 
 	parser := NewParser(lang)
 	parser.SetTimeoutMicros(100)
-	endBudget := parser.beginParseOperationBudget()
-	defer endBudget()
+	operationBudget := parser.beginParseOperationBudget()
+	defer parser.endParseOperationBudget(operationBudget)
 	time.Sleep(2 * time.Millisecond)
 	parser.normalizeReturnedTreeForParse(tree, tree.Source())
 

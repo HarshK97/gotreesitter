@@ -105,21 +105,24 @@ boundaries, so callers do not need to hand-roll a tree walk.
 ### Code-understanding helpers
 
 For hot indexing paths that need common symbols but not arbitrary tags-query
-semantics, use the one-pass extractors instead of running a fanout of
-queries:
+semantics, compile one `FactProgram` and reuse it across trees:
 
 ```go
-defs := gotreesitter.ExtractDefinitionSpans(tree)
-calls := gotreesitter.ExtractCalls(tree)
-bases := gotreesitter.ExtractHeritage(tree)
+program, err := gotreesitter.NewFactProgram(lang, gotreesitter.FactAll)
+if err != nil {
+	return err
+}
+facts := program.Extract(tree)
 
 enclosing, ok := tree.EnclosingDefinition(offset)
 ```
 
-These helpers cover common Go, JavaScript, TypeScript/TSX, Python, Starlark,
-and Java definitions and calls, plus JavaScript/TypeScript, Python, and Java
-heritage edges. They skip unsupported languages or ambiguous shapes
-conservatively, rather than guess.
+The compiled program extracts definitions, calls, heritage edges, and imports
+during one tree traversal. The individual `ExtractDefinitionSpans`,
+`ExtractCalls`, `ExtractHeritage`, and `ExtractImports` APIs remain available.
+
+These APIs cover common Go, JavaScript, TypeScript/TSX, Python, Starlark, and
+Java facts. They skip unsupported languages or ambiguous shapes.
 
 ### Taproot DSL harness
 
@@ -549,6 +552,24 @@ The ordered, receipt-driven cleanup program is documented in
 
 ## Adding a language
 
+### Optional native Lean grammar
+
+The Lean 4 grammar is an opt-in package during its default-fleet graduation.
+It is authored with grammargen's Go domain-specific language (DSL). It does
+not import another tree-sitter grammar.
+
+```go
+import _ "github.com/odvcencio/gotreesitter/grammars/lean"
+```
+
+The import registers `.lean`, `lean`, and `lean4` detection. Direct users can
+call `lean.Language()` instead. The package includes highlights, outline tags,
+and a Go scanner for nested comments.
+
+Lean modules can extend their parser at runtime. The fixed grammar gives core
+declarations stable nodes and preserves extension-specific lines as
+`custom_command` nodes.
+
 > Adding a language to your own project does **not** require forking this
 > repo or following the in-tree steps below. See
 > [docs/authoring-languages.md](docs/authoring-languages.md) for the
@@ -752,10 +773,14 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.49.0**. It consolidates parser correctness,
-reference parity, recovery bounds, and compact-route work since v0.48.1.
-It also includes the issue #660 field-projection correction and its
-regression guard.
+The current release is **v0.49.0**. Publication remains pending the exact
+commit CI run and the governed soak. The latest immutable published release is
+**v0.48.1**.
+
+This candidate consolidates parser correctness, recovery bounds, parser-core
+bytecode, fact extraction bytecode, replay caches, randomized benchmarks, and
+V10 fleet controls. It also adds opt-in Lean 4 support and scanner corrections
+for JavaScript, TypeScript, and TSX.
 
 Detailed shipped evidence lives in [CHANGELOG.md](CHANGELOG.md). Planned minor
 releases are batched on Thursdays; the immutable-tag process and exceptions are

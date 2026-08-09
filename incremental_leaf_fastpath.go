@@ -1177,6 +1177,8 @@ func reuseTreeWithNewSource(oldTree *Tree, source []byte, dirtyNode *Node, clear
 	tree.forestFastPath = oldTree.forestFastPath
 	tree.incrementalReuseDisabled = oldTree.incrementalReuseDisabled
 	tree.compactMaterialized = oldTree.compactMaterialized
+	tree.resultErrorSummary = oldTree.resultErrorSummary
+	tree.resultCompatibilityApplied = oldTree.resultCompatibilityApplied
 	// This tree shares the old root, so shouldNormalizeIncrementalReturnedTree
 	// skips result normalization for it (same root). Even if a range-limited
 	// pass ever ran here, incrementalReparsedTopLevelRanges would read this

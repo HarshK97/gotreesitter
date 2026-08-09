@@ -153,8 +153,8 @@ func (p *Parser) tryCompactFullParseRoute(source []byte) (*Tree, bool, string) {
 	if err != nil {
 		return nil, false, "runner unavailable: " + err.Error()
 	}
-	endOp := p.beginParseOperationBudget()
-	defer endOp()
+	operationBudget := p.beginParseOperationBudget()
+	defer p.endParseOperationBudget(operationBudget)
 	endParse := p.enterParseBudget()
 	defer endParse()
 	tree, err := runner.parse(source)

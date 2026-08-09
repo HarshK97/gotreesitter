@@ -80,8 +80,8 @@ func mustMaterializeCompactTreeForTailTest(t *testing.T, p *Parser, source []byt
 	if err != nil {
 		t.Fatalf("acquire admission candidate runner: %v", err)
 	}
-	endOp := p.beginParseOperationBudget()
-	defer endOp()
+	operationBudget := p.beginParseOperationBudget()
+	defer p.endParseOperationBudget(operationBudget)
 	endParse := p.enterParseBudget()
 	defer endParse()
 	tree, err := runner.parse(source)

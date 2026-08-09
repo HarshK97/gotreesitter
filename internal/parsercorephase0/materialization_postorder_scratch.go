@@ -3,8 +3,9 @@ package parsercorephase0
 import "errors"
 
 type materializationPostorderFrame struct {
-	id   SubtreeID
-	next uint32
+	id     SubtreeID
+	next   uint32
+	record *subtreeRecord
 }
 
 // MaterializationPostorderScratch retains the transient ownership colors and
@@ -23,6 +24,9 @@ func (scratch *MaterializationPostorderScratch) Reset() {
 	}
 	clear(scratch.colors)
 	scratch.colors = scratch.colors[:0]
+	if cap(scratch.frames) > 0 {
+		clear(scratch.frames[:cap(scratch.frames)])
+	}
 	scratch.frames = scratch.frames[:0]
 	scratch.inUse = false
 }
@@ -83,14 +87,15 @@ func (c *Core) VisitMaterializationPostorderWithScratch(
 	colors := scratch.colors
 	var visited, work uint64
 	for _, root := range roots {
-		if _, err := c.subtree(root); err != nil {
+		record, err := c.subtree(root)
+		if err != nil {
 			return err
 		}
 		if colors[root] != 0 {
 			return errors.New("parser-core phase zero: compact subtree has repeated public-tree ownership")
 		}
 		colors[root] = 1
-		scratch.frames = append(scratch.frames, materializationPostorderFrame{id: root})
+		scratch.frames = append(scratch.frames, materializationPostorderFrame{id: root, record: record})
 		for len(scratch.frames) != 0 {
 			work++
 			if work&255 == 0 {
@@ -99,20 +104,18 @@ func (c *Core) VisitMaterializationPostorderWithScratch(
 				}
 			}
 			top := &scratch.frames[len(scratch.frames)-1]
-			record, err := c.subtree(top.id)
-			if err != nil {
-				return err
-			}
+			record := top.record
 			if top.next < record.childCount {
 				child := c.children[record.firstChild+top.next]
 				top.next++
-				if _, err := c.subtree(child); err != nil {
+				childRecord, err := c.subtree(child)
+				if err != nil {
 					return err
 				}
 				switch colors[child] {
 				case 0:
 					colors[child] = 1
-					scratch.frames = append(scratch.frames, materializationPostorderFrame{id: child})
+					scratch.frames = append(scratch.frames, materializationPostorderFrame{id: child, record: childRecord})
 					continue
 				case 1:
 					return errors.New("parser-core phase zero: compact subtree cycle during materialization")

@@ -319,6 +319,9 @@ func BenchmarkDiagnosticParserCoreWarmMaterializationOnlyQueryCompile(b *testing
 	}
 	parserCoreWarmAdmitAgainstProduction(b, prepared, tree)
 	tree.Release()
+	if perfCountersEnabled {
+		ResetPerfCounters()
+	}
 	b.ReportAllocs()
 	b.SetBytes(int64(len(prepared.source)))
 	b.ResetTimer()
@@ -328,6 +331,19 @@ func BenchmarkDiagnosticParserCoreWarmMaterializationOnlyQueryCompile(b *testing
 			b.Fatal(err)
 		}
 		tree.Release()
+	}
+	if perfCountersEnabled {
+		counters := PerfCountersSnapshot()
+		iterations := float64(b.N)
+		b.ReportMetric(float64(counters.ReduceChildrenFastGSS)/iterations, "fast_gss_children/tree")
+		b.ReportMetric(float64(counters.ReduceChildrenAllVis)/iterations, "all_visible_children/tree")
+		b.ReportMetric(float64(counters.ReduceChildrenScratch)/iterations, "scratch_children/tree")
+		b.ReportMetric(float64(counters.ReduceScratchNoAlias)/iterations, "scratch_no_alias_children/tree")
+		b.ReportMetric(float64(counters.ReduceScratchGeneral)/iterations, "scratch_general_children/tree")
+		b.ReportMetric(float64(counters.ReduceChildEmptyBuilds)/iterations, "empty_builds/tree")
+		b.ReportMetric(float64(counters.ReduceChildAllVisibleBuilds)/iterations, "all_visible_builds/tree")
+		b.ReportMetric(float64(counters.ReduceChildScratchNoAliasBuilds)/iterations, "scratch_no_alias_builds/tree")
+		b.ReportMetric(float64(counters.ReduceChildScratchGeneralBuilds)/iterations, "scratch_general_builds/tree")
 	}
 }
 

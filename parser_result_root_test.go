@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "testing"
+import (
+	"testing"
+	"unsafe"
+)
 
 func TestAttachResultRootExtraSplitOmitsZeroWidthChildren(t *testing.T) {
 	lang := &Language{
@@ -304,7 +307,183 @@ func TestSyntheticRootReplayStackCanonicalPushPop(t *testing.T) {
 	}
 }
 
+func TestSyntheticRootReplayFrameSetScratch(t *testing.T) {
+	var scratch syntheticRootReplayFrameSetScratch
+	frames := make([]syntheticRootReplayFrame, 0, syntheticRootReplayMaxFrontier)
+	for top := uint32(1); top <= syntheticRootReplayMaxFrontier; top++ {
+		frames = scratch.append(frames, syntheticRootReplayFrame{top: top})
+	}
+	if got, want := len(frames), syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("frame set length = %d, want %d", got, want)
+	}
+	for top := uint32(1); top <= syntheticRootReplayMaxFrontier; top++ {
+		frames = scratch.append(frames, syntheticRootReplayFrame{top: top})
+	}
+	if got, want := len(frames), syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("frame set length after duplicates = %d, want %d", got, want)
+	}
+
+	scratch.reset()
+	frames = frames[:0]
+	frames = scratch.append(frames, syntheticRootReplayFrame{top: syntheticRootReplayMaxFrontier + 1})
+	if got, want := len(frames), 1; got != want {
+		t.Fatalf("reset frame set length = %d, want %d", got, want)
+	}
+}
+
+func TestSyntheticRootReplayGapCursorSetScratch(t *testing.T) {
+	var scratch syntheticRootReplayGapCursorSetScratch
+	cursors := make([]syntheticRootReplayGapCursor, 0, syntheticRootReplayMaxFrontier)
+	for top := uint32(1); top <= syntheticRootReplayMaxFrontier; top++ {
+		point := Point{Row: top / 8, Column: top % 8}
+		cursors = scratch.append(cursors, syntheticRootReplayFrame{top: top}, top*3, point)
+	}
+	if got, want := len(cursors), syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("gap cursor set length = %d, want %d", got, want)
+	}
+	for _, cursor := range cursors {
+		cursors = scratch.append(cursors, cursor.frame, cursor.byte, cursor.point)
+	}
+	if got, want := len(cursors), syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("gap cursor set length after duplicates = %d, want %d", got, want)
+	}
+
+	scratch.reset()
+	cursors = cursors[:0]
+	frame := syntheticRootReplayFrame{top: 1}
+	cursors = scratch.append(cursors, frame, 10, Point{Row: 1, Column: 2})
+	cursors = scratch.append(cursors, frame, 10, Point{Row: 1, Column: 3})
+	if got, want := len(cursors), 2; got != want {
+		t.Fatalf("distinct point cursor set length = %d, want %d", got, want)
+	}
+}
+
+func TestSyntheticRootReplayGapLexMemoUsesPackedRecords(t *testing.T) {
+	if got, want := unsafe.Sizeof(syntheticRootReplayGapToken{}), uintptr(16); got != want {
+		t.Fatalf("gap token size = %d, want %d", got, want)
+	}
+
+	lang := newRootFrameReplayGapLanguage()
+	parser := newRootFrameReplayParser(lang)
+	source := []byte("\n\n")
+	builder := newResultRootBuild(parser, source, nil, nil, nil, nil)
+	initial := builder.syntheticRootReplayPush(syntheticRootReplayFrame{}, lang.InitialState)
+	frame := builder.syntheticRootReplayPush(initial, 3)
+
+	first, ok := builder.syntheticRootReplayLexGapToken(frame, 0, Point{}, 1)
+	if !ok || first.symbol != 2 {
+		t.Fatalf("first gap token = %+v, %v; want symbol 2, true", first, ok)
+	}
+	if got, want := len(builder.replayGapLexMemo), 1; got != want {
+		t.Fatalf("first memo length = %d, want %d", got, want)
+	}
+	second, ok := builder.syntheticRootReplayLexGapToken(frame, 0, Point{}, 1)
+	if !ok || second != first {
+		t.Fatalf("cached gap token = %+v, %v; want %+v, true", second, ok, first)
+	}
+	if got, want := len(builder.replayGapLexMemo), 1; got != want {
+		t.Fatalf("cached memo length = %d, want %d", got, want)
+	}
+
+	_, _ = builder.syntheticRootReplayLexGapToken(frame, 0, Point{}, 2)
+	if got, want := len(builder.replayGapLexMemo), 2; got != want {
+		t.Fatalf("end-bound memo length = %d, want %d", got, want)
+	}
+}
+
+func TestSyntheticRootReplayAdvanceMemoUsesPackedStream(t *testing.T) {
+	if got, want := unsafe.Sizeof(syntheticRootReplayAdvanceSpan(0)), uintptr(4); got != want {
+		t.Fatalf("advance span size = %d, want %d", got, want)
+	}
+	packed := newSyntheticRootReplayAdvanceSpan(
+		syntheticRootReplayAdvanceMaxPages-1,
+		syntheticRootReplayAdvancePageFrames-syntheticRootReplayMaxFrontier,
+		syntheticRootReplayMaxFrontier,
+	)
+	if got, want := packed.page(), syntheticRootReplayAdvanceMaxPages-1; got != want {
+		t.Fatalf("packed advance page = %d, want %d", got, want)
+	}
+	if got, want := packed.offset(), syntheticRootReplayAdvancePageFrames-syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("packed advance offset = %d, want %d", got, want)
+	}
+	if got, want := packed.count(), syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("packed advance count = %d, want %d", got, want)
+	}
+
+	lang := newRootFrameReplayGapLanguage()
+	parser := newRootFrameReplayParser(lang)
+	builder := newResultRootBuild(parser, []byte("\n"), nil, nil, nil, nil)
+	initial := builder.syntheticRootReplayPush(syntheticRootReplayFrame{}, lang.InitialState)
+	frame := builder.syntheticRootReplayPush(initial, 3)
+	var frameScratch [2][syntheticRootReplayMaxFrontier]syntheticRootReplayFrame
+	var setScratch [2]syntheticRootReplayFrameSetScratch
+
+	first := builder.syntheticRootReplayAdvanceToken(
+		[]syntheticRootReplayFrame{frame},
+		2,
+		frameScratch[0][:0],
+		frameScratch[1][:0],
+		&setScratch[0],
+		&setScratch[1],
+	)
+	if len(first) == 0 {
+		t.Fatal("first packed transition returned no frames")
+	}
+	wantTops := make([]uint32, len(first))
+	for i := range first {
+		wantTops[i] = first[i].top
+	}
+	if got, want := len(builder.replayAdvanceMemo), 1; got != want {
+		t.Fatalf("advance memo length = %d, want %d", got, want)
+	}
+	if got, want := int(builder.replayAdvanceFrames), len(first); got != want {
+		t.Fatalf("advance stream frame count = %d, want %d", got, want)
+	}
+	pageCount := len(builder.replayAdvancePages)
+
+	second := builder.syntheticRootReplayAdvanceToken(
+		[]syntheticRootReplayFrame{frame},
+		2,
+		frameScratch[0][:0],
+		frameScratch[1][:0],
+		&setScratch[0],
+		&setScratch[1],
+	)
+	if got, want := len(second), len(wantTops); got != want {
+		t.Fatalf("cached transition length = %d, want %d", got, want)
+	}
+	for i, want := range wantTops {
+		if got := second[i].top; got != want {
+			t.Fatalf("cached transition top %d = %d, want %d", i, got, want)
+		}
+	}
+	if got, want := int(builder.replayAdvanceFrames), len(first); got != want {
+		t.Fatalf("cached advance stream frame count = %d, want %d", got, want)
+	}
+	if got := len(builder.replayAdvancePages); got != pageCount {
+		t.Fatalf("cached advance page count = %d, want %d", got, pageCount)
+	}
+}
+
 func TestSyntheticRootReplayCloseMemoPreservesCanonicalClosure(t *testing.T) {
+	if got, want := unsafe.Sizeof(syntheticRootReplayCloseSpan(0)), uintptr(4); got != want {
+		t.Fatalf("close span size = %d, want %d", got, want)
+	}
+	packed := newSyntheticRootReplayCloseSpan(
+		syntheticRootReplayCloseMaxPages-1,
+		syntheticRootReplayClosePageFrames-syntheticRootReplayMaxFrontier,
+		syntheticRootReplayMaxFrontier,
+	)
+	if got, want := packed.page(), syntheticRootReplayCloseMaxPages-1; got != want {
+		t.Fatalf("packed close page = %d, want %d", got, want)
+	}
+	if got, want := packed.offset(), syntheticRootReplayClosePageFrames-syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("packed close offset = %d, want %d", got, want)
+	}
+	if got, want := packed.count(), syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("packed close count = %d, want %d", got, want)
+	}
+
 	lang := newRootFrameReplayReduceLanguage()
 	parser := newRootFrameReplayParser(lang)
 	builder := newResultRootBuild(parser, nil, nil, nil, nil, nil)
@@ -322,6 +501,13 @@ func TestSyntheticRootReplayCloseMemoPreservesCanonicalClosure(t *testing.T) {
 	for i := range first {
 		wantTops[i] = first[i].top
 	}
+	if got, want := len(builder.replayStack.closeMemo), 1; got != want {
+		t.Fatalf("close memo length = %d, want %d", got, want)
+	}
+	if got, want := int(builder.replayStack.closeFrames), len(first); got != want {
+		t.Fatalf("close stream frame count = %d, want %d", got, want)
+	}
+	pageCount := len(builder.replayStack.closePages)
 	nodesAfterFirst := len(builder.replayStack.nodes)
 
 	appended := append(first, initial)
@@ -334,6 +520,12 @@ func TestSyntheticRootReplayCloseMemoPreservesCanonicalClosure(t *testing.T) {
 	}
 	if got := len(builder.replayStack.nodes); got != nodesAfterFirst {
 		t.Fatalf("memoized EOF closure added stack nodes: got %d, want %d", got, nodesAfterFirst)
+	}
+	if got, want := int(builder.replayStack.closeFrames), len(first); got != want {
+		t.Fatalf("memoized close stream frame count = %d, want %d", got, want)
+	}
+	if got := len(builder.replayStack.closePages); got != pageCount {
+		t.Fatalf("memoized close page count = %d, want %d", got, pageCount)
 	}
 	for i, want := range wantTops {
 		if got := second[i].top; got != want {

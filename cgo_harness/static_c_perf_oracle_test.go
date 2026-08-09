@@ -28,37 +28,40 @@ import (
 )
 
 const (
-	staticCPerfSchema             = "gts-static-c-perf/v2"
-	staticCArtifactManifestSchema = "gts-static-c-perf-artifact/v1"
-	staticCPerfTransport          = "static_executable"
-	staticCPerfLinkage            = "fully_static_executable"
-	staticCPerfLinkageProof       = "elf:no_interp,no_needed"
-	staticCPerfRuntimeRepo        = "https://github.com/tree-sitter/tree-sitter.git"
-	staticCPerfOptimizationFlags  = "-O2 -DNDEBUG"
-	staticCPerfRuntimeCFlags      = "-O2 -DNDEBUG -std=c11 -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE"
-	staticCPerfGrammarCFlags      = "-O2 -DNDEBUG -std=c11"
-	staticCPerfGrammarCXXFlags    = "-O2 -DNDEBUG -std=c++17"
-	staticCPerfDriverCFlags       = "-O2 -DNDEBUG -std=c11 -D_POSIX_C_SOURCE=200112L"
-	staticCPerfLinkFlags          = "-static -O2"
-	staticCPerfTimingRegion       = "ts_parser_parse_string_only;process,source,parser_setup,tree_delete_excluded"
-	staticCPerfOrderProtocol      = "whole_file_blocks_alternate_by_language_sha256_low_bit_xor_selected_file_ordinal"
-	staticCPerfFailureVocabulary  = "c_oracle_status/v2:admission_error,parser_error,parser_timeout,transport_error,transport_timeout,digest_error,digest_timeout,measurement_error,protocol_error,incomplete,mismatch"
-	staticCPerfCacheEnv           = "GTS_C_ORACLE_CACHE"
-	staticCPerfCanaryEnv          = "GTS_STATIC_C_PERF_CANARY"
-	staticCPerfWallGrace          = 2 * time.Second
-	staticCSourceLocked           = "locked_commit"
-	staticCSourceGenerated        = "generated_from_locked_grammar"
-	staticCStatusAdmissionError   = "c_oracle_admission_error"
-	staticCStatusParserError      = "c_oracle_parser_error"
-	staticCStatusParserTimeout    = "c_oracle_parser_timeout"
-	staticCStatusTransportError   = "c_oracle_transport_error"
-	staticCStatusTransportTimeout = "c_oracle_transport_timeout"
-	staticCStatusDigestError      = "c_oracle_digest_error"
-	staticCStatusDigestTimeout    = "c_oracle_digest_timeout"
-	staticCStatusMeasurementError = "c_oracle_measurement_error"
-	staticCStatusProtocolError    = "c_oracle_protocol_error"
-	staticCStatusIncomplete       = "c_oracle_incomplete"
-	staticCStatusMismatch         = "c_oracle_mismatch"
+	staticCPerfSchema              = "gts-static-c-perf/v2"
+	staticCArtifactManifestSchema  = "gts-static-c-perf-artifact/v1"
+	staticCPerfTransport           = "static_executable"
+	staticCPerfLinkage             = "fully_static_executable"
+	staticCPerfLinkageProof        = "elf:no_interp,no_needed"
+	staticCPerfRuntimeRepo         = "https://github.com/tree-sitter/tree-sitter.git"
+	staticCPerfOptimizationFlags   = "-O2 -DNDEBUG"
+	staticCPerfRuntimeCFlags       = "-O2 -DNDEBUG -std=c11 -D_POSIX_C_SOURCE=200112L -D_DEFAULT_SOURCE"
+	staticCPerfGrammarCFlags       = "-O2 -DNDEBUG -std=c11"
+	staticCPerfGrammarCAssertFlags = "-O2 -UNDEBUG -std=c11"
+	staticCPerfGrammarCXXFlags     = "-O2 -DNDEBUG -std=c++17"
+	staticCPerfDriverCFlags        = "-O2 -DNDEBUG -std=c11 -D_POSIX_C_SOURCE=200112L"
+	staticCPerfLinkFlags           = "-static -O2"
+	staticCPerfSourceFlagProtocol  = "default_ndebug_with_exact_source_exceptions/v1"
+	staticCPerfTimingRegion        = "ts_parser_parse_string_only;process,source,parser_setup,tree_delete_excluded"
+	staticCPerfOrderProtocol       = "whole_file_blocks_alternate_by_language_sha256_low_bit_xor_selected_file_ordinal"
+	staticCPerfFailureVocabulary   = "c_oracle_status/v3:admission_error,parser_error,parser_timeout,transport_error,transport_timeout,digest_error,digest_timeout,resource_limit,measurement_error,protocol_error,incomplete,mismatch"
+	staticCPerfCacheEnv            = "GTS_C_ORACLE_CACHE"
+	staticCPerfCanaryEnv           = "GTS_STATIC_C_PERF_CANARY"
+	staticCPerfWallGrace           = 2 * time.Second
+	staticCSourceLocked            = "locked_commit"
+	staticCSourceGenerated         = "generated_from_locked_grammar"
+	staticCStatusAdmissionError    = "c_oracle_admission_error"
+	staticCStatusParserError       = "c_oracle_parser_error"
+	staticCStatusParserTimeout     = "c_oracle_parser_timeout"
+	staticCStatusTransportError    = "c_oracle_transport_error"
+	staticCStatusTransportTimeout  = "c_oracle_transport_timeout"
+	staticCStatusDigestError       = "c_oracle_digest_error"
+	staticCStatusDigestTimeout     = "c_oracle_digest_timeout"
+	staticCStatusResourceLimit     = "c_oracle_resource_limit"
+	staticCStatusMeasurementError  = "c_oracle_measurement_error"
+	staticCStatusProtocolError     = "c_oracle_protocol_error"
+	staticCStatusIncomplete        = "c_oracle_incomplete"
+	staticCStatusMismatch          = "c_oracle_mismatch"
 )
 
 type perfScanOracleCommonIdentity struct {
@@ -77,6 +80,7 @@ type perfScanOracleCommonIdentity struct {
 	RuntimeCFlags        string `json:"runtime_c_flags"`
 	GrammarCFlags        string `json:"grammar_c_flags"`
 	GrammarCXXFlags      string `json:"grammar_cxx_flags"`
+	SourceFlagProtocol   string `json:"source_flag_protocol"`
 	DriverCFlags         string `json:"driver_c_flags"`
 	LinkFlags            string `json:"link_flags"`
 	TimingRegion         string `json:"timing_region"`
@@ -95,6 +99,24 @@ type perfScanOracleSourceIdentity struct {
 	Path         string `json:"path"`
 	SHA256       string `json:"sha256"`
 	CompileFlags string `json:"compile_flags"`
+}
+
+type staticCSourceCompileProfileKey struct {
+	Language      string
+	GrammarRepo   string
+	GrammarCommit string
+	Path          string
+	SHA256        string
+}
+
+var staticCSourceCompileProfiles = map[staticCSourceCompileProfileKey]string{
+	{
+		Language:      "just",
+		GrammarRepo:   "https://github.com/IndianBoy42/tree-sitter-just",
+		GrammarCommit: "60df3d5b3fda2a22fdb3621226cafab50b763663",
+		Path:          "scanner.c",
+		SHA256:        "99a4ae2ff08e90a18d21fc42d324411aa0df57ebf486e06e70c0b5dd26d489e8",
+	}: staticCPerfGrammarCAssertFlags,
 }
 
 type perfScanOracleLanguageIdentity struct {
@@ -126,13 +148,16 @@ type perfScanOracleBoardIdentity struct {
 }
 
 type perfScanOracleAdmission struct {
-	DigestFormat     string `json:"digest_format"`
-	SourceSHA256     string `json:"source_sha256"`
-	StaticDeepSHA256 string `json:"static_deep_sha256"`
-	ParityDeepSHA256 string `json:"parity_deep_sha256"`
-	Admitted         bool   `json:"admitted"`
-	Status           string `json:"status,omitempty"`
-	Detail           string `json:"detail,omitempty"`
+	DigestFormat     string        `json:"digest_format"`
+	SourceSHA256     string        `json:"source_sha256"`
+	StaticDeepSHA256 string        `json:"static_deep_sha256"`
+	ParityDeepSHA256 string        `json:"parity_deep_sha256"`
+	CgoGrammarSHA256 string        `json:"cgo_grammar_sha256,omitempty"`
+	CgoPeakRSSBytes  int64         `json:"cgo_peak_rss_bytes,omitempty"`
+	Stop             *perfScanStop `json:"stop,omitempty"`
+	Admitted         bool          `json:"admitted"`
+	Status           string        `json:"status,omitempty"`
+	Detail           string        `json:"detail,omitempty"`
 }
 
 type staticCPerfOracle struct {
@@ -162,6 +187,7 @@ func staticCAdmissionFailureStatus(status string) bool {
 		staticCStatusParserError, staticCStatusParserTimeout,
 		staticCStatusTransportError, staticCStatusTransportTimeout,
 		staticCStatusDigestError, staticCStatusDigestTimeout,
+		staticCStatusResourceLimit,
 		staticCStatusProtocolError,
 		staticCStatusIncomplete, staticCStatusMismatch:
 		return true
@@ -216,6 +242,7 @@ type staticCPerfMeasurement struct {
 type staticCOracleError struct {
 	Status string
 	Detail string
+	Stop   *perfScanStop
 }
 
 func (err *staticCOracleError) Error() string { return err.Detail }
@@ -228,8 +255,21 @@ func staticCOracleErrorStatus(err error) string {
 	return staticCStatusAdmissionError
 }
 
+func staticCOracleErrorStop(err error) *perfScanStop {
+	var oracleErr *staticCOracleError
+	if errors.As(err, &oracleErr) && oracleErr.Stop != nil {
+		stop := *oracleErr.Stop
+		return &stop
+	}
+	return nil
+}
+
 func newStaticCOracleError(status, detail string) error {
 	return &staticCOracleError{Status: status, Detail: detail}
+}
+
+func newStaticCOracleStoppedError(status, detail string, stop *perfScanStop) error {
+	return &staticCOracleError{Status: status, Detail: detail, Stop: stop}
 }
 
 func TestStaticCVerifyArtifactRejectsDynamicExecutable(t *testing.T) {
@@ -443,20 +483,84 @@ func TestStaticCRevalidateBuildInputsRejectsDeterministicMutations(t *testing.T)
 	}
 }
 
+func TestStaticCSourceCompileFlagsLocksAssertionException(t *testing.T) {
+	entry := parityLockEntry{
+		Name:    "just",
+		RepoURL: "https://github.com/IndianBoy42/tree-sitter-just",
+		Commit:  "60df3d5b3fda2a22fdb3621226cafab50b763663",
+	}
+	const scannerSHA = "99a4ae2ff08e90a18d21fc42d324411aa0df57ebf486e06e70c0b5dd26d489e8"
+	flags, err := staticCSourceCompileFlags(entry, "scanner.c", scannerSHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flags != staticCPerfGrammarCAssertFlags {
+		t.Fatalf("exact assertion profile flags=%q, want %q", flags, staticCPerfGrammarCAssertFlags)
+	}
+
+	tests := []struct {
+		name   string
+		entry  parityLockEntry
+		path   string
+		sha    string
+		want   string
+		failed bool
+	}{
+		{name: "wrong language", entry: parityLockEntry{Name: "other", RepoURL: entry.RepoURL, Commit: entry.Commit}, path: "scanner.c", sha: scannerSHA, want: staticCPerfGrammarCFlags},
+		{name: "wrong repository", entry: parityLockEntry{Name: entry.Name, RepoURL: "https://example.invalid/tree-sitter-just", Commit: entry.Commit}, path: "scanner.c", sha: scannerSHA, want: staticCPerfGrammarCFlags},
+		{name: "wrong commit", entry: parityLockEntry{Name: entry.Name, RepoURL: entry.RepoURL, Commit: strings.Repeat("0", 40)}, path: "scanner.c", sha: scannerSHA, want: staticCPerfGrammarCFlags},
+		{name: "wrong path", entry: entry, path: "other.c", sha: scannerSHA, want: staticCPerfGrammarCFlags},
+		{name: "wrong source", entry: entry, path: "scanner.c", sha: strings.Repeat("0", 64), want: staticCPerfGrammarCFlags},
+		{name: "ordinary C++", entry: entry, path: "scanner.cc", sha: scannerSHA, want: staticCPerfGrammarCXXFlags},
+		{name: "unsupported", entry: entry, path: "scanner.rs", sha: scannerSHA, failed: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := staticCSourceCompileFlags(tc.entry, tc.path, tc.sha)
+			if tc.failed {
+				if err == nil {
+					t.Fatalf("unsupported source returned flags %q", got)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("flags=%q want=%q err=%v", got, tc.want, err)
+			}
+		})
+	}
+}
+
+func TestStaticCBuildKeyAuthenticatesScannerCompileFlags(t *testing.T) {
+	common := perfScanOracleCommonIdentity{SourceFlagProtocol: staticCPerfSourceFlagProtocol}
+	language := perfScanOracleLanguageIdentity{
+		Scanners: []perfScanOracleSourceIdentity{{
+			Path: "scanner.c", SHA256: strings.Repeat("1", 64), CompileFlags: staticCPerfGrammarCFlags,
+		}},
+	}
+	defaultKey := staticCBuildKey(common, language)
+	language.Scanners[0].CompileFlags = staticCPerfGrammarCAssertFlags
+	assertKey := staticCBuildKey(common, language)
+	if defaultKey == assertKey {
+		t.Fatal("scanner compile flags did not change the static C build key")
+	}
+}
+
 func TestStaticCPerfOracleCanaries(t *testing.T) {
 	if os.Getenv(staticCPerfCanaryEnv) != "1" {
 		t.Skip("set " + staticCPerfCanaryEnv + "=1 to build locked static C oracle canaries")
 	}
 	tests := []struct {
-		name        string
-		language    string
-		source      string
-		scannerKind string
-		nonzeroRoot bool
+		name         string
+		language     string
+		source       string
+		scannerKind  string
+		scannerFlags string
+		nonzeroRoot  bool
 	}{
 		{name: "no_scanner", language: "go", source: "package main\n\nfunc main() {}\n", scannerKind: "none"},
 		{name: "leading_trivia", language: "go", source: " \n\t", scannerKind: "none", nonzeroRoot: true},
 		{name: "c_scanner", language: "python", source: "def f(x):\n    return x + 1\n", scannerKind: "c"},
+		{name: "c_scanner_assertions", language: "just", source: "name := \"value\"\n", scannerKind: "c", scannerFlags: staticCPerfGrammarCAssertFlags},
 		{name: "cxx_scanner", language: "norg", source: "* Heading\n\nBody\n", scannerKind: "cxx"},
 	}
 	for _, tc := range tests {
@@ -482,6 +586,11 @@ func TestStaticCPerfOracleCanaries(t *testing.T) {
 			}
 			if gotScannerKind != tc.scannerKind {
 				t.Fatalf("scanner kind=%q want %q; sources=%+v", gotScannerKind, tc.scannerKind, oracle.identity.Language.Scanners)
+			}
+			if tc.scannerFlags != "" {
+				if len(oracle.identity.Language.Scanners) != 1 || oracle.identity.Language.Scanners[0].CompileFlags != tc.scannerFlags {
+					t.Fatalf("scanner flags=%+v, want %q", oracle.identity.Language.Scanners, tc.scannerFlags)
+				}
 			}
 
 			cLang, err := ParityCLanguage(tc.language)
@@ -602,6 +711,75 @@ func TestStaticCPerfOracleClosedFailureVocabulary(t *testing.T) {
 			t.Fatalf("missing-sample measurement=%+v", measurement)
 		}
 	})
+	if !staticCAdmissionFailureStatus(staticCStatusResourceLimit) {
+		t.Fatalf("resource status %q is outside the admission vocabulary", staticCStatusResourceLimit)
+	}
+}
+
+func TestPerfScanValidateCgoResourceAdmissionEvidence(t *testing.T) {
+	detail := "cgo parity admission child exceeded 16 MiB"
+	file := &perfScanFile{
+		OracleAdmission: &perfScanOracleAdmission{
+			DigestFormat:    "gts-deep-tree-v1",
+			SourceSHA256:    strings.Repeat("a", 64),
+			CgoPeakRSSBytes: 17 << 20,
+			Stop: &perfScanStop{
+				Class:          perfScanStopRSSLimit,
+				Implementation: "c",
+				Phase:          "oracle_admission",
+				Attempt:        1,
+				Detail:         detail,
+			},
+			Status: staticCStatusResourceLimit,
+			Detail: detail,
+		},
+		Classification: &perfScanFileClassification{
+			Class:    perfScanClassClean,
+			Reason:   "accepted full-span Go tree without ERROR nodes",
+			GoStatus: perfScanStatusOK,
+			FullSpan: true,
+		},
+		Axes: map[string]*perfScanFileAxis{
+			perfScanAxisFull: {
+				Status:     staticCStatusResourceLimit,
+				Detail:     detail,
+				GoMedianNs: 100,
+				GoMinNs:    80,
+				GoMaxNs:    120,
+				Verdict:    perfScanBucketNoData,
+				Stop: &perfScanStop{
+					Class:          perfScanStopRSSLimit,
+					Implementation: "c",
+					Phase:          "oracle_admission",
+					Attempt:        1,
+					Detail:         detail,
+				},
+			},
+		},
+	}
+	if err := perfScanValidateFileOracleEvidence(file, "gts-deep-tree-v1"); err != nil {
+		t.Fatalf("valid resource admission: %v", err)
+	}
+	file.OracleAdmission.CgoPeakRSSBytes = 0
+	if err := perfScanValidateFileOracleEvidence(file, "gts-deep-tree-v1"); err == nil {
+		t.Fatal("resource admission without a measured peak RSS was accepted")
+	}
+	file.OracleAdmission.CgoPeakRSSBytes = 17 << 20
+	file.Axes[perfScanAxisFull].Stop = &perfScanStop{
+		Class:          perfScanStopParserBudget,
+		Reason:         "memory_budget",
+		Implementation: "go",
+		Phase:          "warmup",
+		Attempt:        1,
+		Detail:         "Go parser reached its memory budget",
+	}
+	if err := perfScanValidateFileOracleEvidence(file, "gts-deep-tree-v1"); err != nil {
+		t.Fatalf("valid dual C resource and Go parser stops: %v", err)
+	}
+	file.OracleAdmission.Stop = nil
+	if err := perfScanValidateFileOracleEvidence(file, "gts-deep-tree-v1"); err == nil {
+		t.Fatal("resource admission without its typed C stop was accepted")
+	}
 }
 
 func perfScanOracleBoardFromRows(rows []*perfScanLanguage) (*perfScanOracleBoardIdentity, error) {
@@ -658,6 +836,7 @@ func perfScanValidateOracleEvidenceForMode(board *perfScanScoreboard, mode strin
 		common.RuntimeCFlags != staticCPerfRuntimeCFlags ||
 		common.GrammarCFlags != staticCPerfGrammarCFlags ||
 		common.GrammarCXXFlags != staticCPerfGrammarCXXFlags ||
+		common.SourceFlagProtocol != staticCPerfSourceFlagProtocol ||
 		common.DriverCFlags != staticCPerfDriverCFlags ||
 		common.LinkFlags != staticCPerfLinkFlags ||
 		common.TimingRegion != staticCPerfTimingRegion ||
@@ -741,7 +920,11 @@ func perfScanValidateOracleEvidenceForMode(board *perfScanScoreboard, mode strin
 		if identity.GrammarSourceMode != staticCSourceLocked && identity.GrammarSourceMode != staticCSourceGenerated {
 			return fmt.Errorf("language %q grammar source mode %q is not recognized", row.Language, identity.GrammarSourceMode)
 		}
-		if identity.Parser.Path == "" || identity.Parser.CompileFlags != common.GrammarCFlags {
+		parserFlags, err := staticCSourceCompileFlags(locked, identity.Parser.Path, identity.Parser.SHA256)
+		if err != nil {
+			return fmt.Errorf("language %q parser compile identity: %w", row.Language, err)
+		}
+		if identity.Parser.Path == "" || identity.Parser.CompileFlags != parserFlags {
 			return fmt.Errorf("language %q parser compile identity is not the locked C protocol", row.Language)
 		}
 		if want := staticCBuildKey(common, identity); identity.BuildKeySHA256 != want {
@@ -766,13 +949,9 @@ func perfScanValidateOracleEvidenceForMode(board *perfScanScoreboard, mode strin
 				return fmt.Errorf("language %q has duplicate oracle source %q", row.Language, scanner.Path)
 			}
 			seenSources[scanner.Path] = true
-			wantFlags := common.GrammarCFlags
-			switch strings.ToLower(filepath.Ext(scanner.Path)) {
-			case ".cc", ".cpp", ".cxx":
-				wantFlags = common.GrammarCXXFlags
-			case ".c":
-			default:
-				return fmt.Errorf("language %q scanner %q has unsupported source type", row.Language, scanner.Path)
+			wantFlags, err := staticCSourceCompileFlags(locked, scanner.Path, scanner.SHA256)
+			if err != nil {
+				return fmt.Errorf("language %q scanner %q compile identity: %w", row.Language, scanner.Path, err)
 			}
 			if scanner.CompileFlags != wantFlags {
 				return fmt.Errorf("language %q scanner %q compile flags are not locked", row.Language, scanner.Path)
@@ -802,8 +981,11 @@ func perfScanValidateFileOracleEvidence(file *perfScanFile, digestFormat string)
 	if admission.DigestFormat != digestFormat || !staticCSHA256Identity(admission.SourceSHA256) {
 		return fmt.Errorf("invalid static/cgo admission format or source identity")
 	}
+	if admission.CgoGrammarSHA256 != "" && !staticCSHA256Identity(admission.CgoGrammarSHA256) {
+		return fmt.Errorf("invalid cgo grammar identity")
+	}
 	if admission.Admitted {
-		if admission.Status != "" || admission.Detail != "" ||
+		if admission.Status != "" || admission.Detail != "" || admission.Stop != nil ||
 			!staticCSHA256Identity(admission.StaticDeepSHA256) ||
 			admission.StaticDeepSHA256 != admission.ParityDeepSHA256 {
 			return fmt.Errorf("invalid static/cgo deep admission")
@@ -840,6 +1022,25 @@ func perfScanValidateFileOracleEvidence(file *perfScanFile, digestFormat string)
 	}
 	if full.Status != admission.Status || strings.TrimSpace(full.Detail) == "" || !strings.Contains(full.Detail, admission.Detail) {
 		return fmt.Errorf("failed oracle admission is not reflected by the full-parse result")
+	}
+	if admission.Status == staticCStatusResourceLimit {
+		admissionStop := admission.Stop
+		if admission.CgoPeakRSSBytes <= 0 || admissionStop == nil ||
+			(admissionStop.Class != perfScanStopRSSLimit && admissionStop.Class != perfScanStopOOMOrKill) ||
+			admissionStop.Implementation != "c" || admissionStop.Phase != "oracle_admission" ||
+			admissionStop.Attempt != 1 || strings.TrimSpace(admissionStop.Detail) == "" {
+			return fmt.Errorf("cgo resource admission lacks bounded stop evidence")
+		}
+		if full.Stop == nil {
+			return fmt.Errorf("cgo resource admission lacks a full-parse stop")
+		}
+		if full.Stop.Implementation == "c" {
+			if full.Stop.Class != admissionStop.Class || full.Stop.Phase != admissionStop.Phase {
+				return fmt.Errorf("full-parse C stop differs from the cgo resource admission stop")
+			}
+		} else if !perfScanIsGoStop(full.Stop) {
+			return fmt.Errorf("cgo resource admission has an invalid full-parse stop")
+		}
 	}
 	if full.CMedianNs != 0 || full.CMinNs != 0 || full.CMaxNs != 0 || full.Ratio != 0 || full.RatioIsLowerBound || full.Verdict != perfScanBucketNoData {
 		return fmt.Errorf("failed oracle admission contains fabricated C timing or ratio evidence")
@@ -997,6 +1198,7 @@ func buildStaticCPerfOracle(language string) (*staticCPerfOracle, error) {
 				srcDir,
 				parserPath,
 				scanners,
+				languageIdentity,
 				driverPath,
 				symbol,
 				hasCXX,
@@ -1277,6 +1479,7 @@ func staticCCommonIdentity(runtimeDir, runtimeSource, driverPath string) (perfSc
 		RuntimeCFlags:        staticCPerfRuntimeCFlags,
 		GrammarCFlags:        staticCPerfGrammarCFlags,
 		GrammarCXXFlags:      staticCPerfGrammarCXXFlags,
+		SourceFlagProtocol:   staticCPerfSourceFlagProtocol,
 		DriverCFlags:         staticCPerfDriverCFlags,
 		LinkFlags:            staticCPerfLinkFlags,
 		TimingRegion:         staticCPerfTimingRegion,
@@ -1292,12 +1495,40 @@ func staticCCommonIdentity(runtimeDir, runtimeSource, driverPath string) (perfSc
 	}, nil
 }
 
+func staticCSourceCompileFlags(entry parityLockEntry, path, sourceSHA string) (string, error) {
+	defaultFlags := ""
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".c":
+		defaultFlags = staticCPerfGrammarCFlags
+	case ".cc", ".cpp", ".cxx":
+		defaultFlags = staticCPerfGrammarCXXFlags
+	default:
+		return "", fmt.Errorf("source %q has an unsupported C oracle type", path)
+	}
+	key := staticCSourceCompileProfileKey{
+		Language:      entry.Name,
+		GrammarRepo:   entry.RepoURL,
+		GrammarCommit: entry.Commit,
+		Path:          filepath.ToSlash(path),
+		SHA256:        sourceSHA,
+	}
+	if flags, ok := staticCSourceCompileProfiles[key]; ok {
+		return flags, nil
+	}
+	return defaultFlags, nil
+}
+
 func staticCLanguageIdentity(entry parityLockEntry, grammarDir, srcDir, parserPath string, scanners []string, symbol, sourceMode string, hasCXX bool) (perfScanOracleLanguageIdentity, error) {
 	tree, err := parityGitOutput(grammarDir, "rev-parse", entry.Commit+":"+filepath.ToSlash(entry.Subdir))
 	if err != nil {
 		return perfScanOracleLanguageIdentity{}, err
 	}
 	parserSHA, err := fileSHA256(parserPath)
+	if err != nil {
+		return perfScanOracleLanguageIdentity{}, err
+	}
+	parserRelative := staticCSourceRelative(srcDir, parserPath)
+	parserFlags, err := staticCSourceCompileFlags(entry, parserRelative, parserSHA)
 	if err != nil {
 		return perfScanOracleLanguageIdentity{}, err
 	}
@@ -1309,9 +1540,9 @@ func staticCLanguageIdentity(entry parityLockEntry, grammarDir, srcDir, parserPa
 		GrammarSourceMode: sourceMode,
 		LanguageSymbol:    symbol,
 		Parser: perfScanOracleSourceIdentity{
-			Path:         staticCSourceRelative(srcDir, parserPath),
+			Path:         parserRelative,
 			SHA256:       parserSHA,
-			CompileFlags: staticCPerfGrammarCFlags,
+			CompileFlags: parserFlags,
 		},
 	}
 	for _, scanner := range scanners {
@@ -1319,13 +1550,13 @@ func staticCLanguageIdentity(entry parityLockEntry, grammarDir, srcDir, parserPa
 		if err != nil {
 			return perfScanOracleLanguageIdentity{}, err
 		}
-		flags := staticCPerfGrammarCFlags
-		switch strings.ToLower(filepath.Ext(scanner)) {
-		case ".cc", ".cpp", ".cxx":
-			flags = staticCPerfGrammarCXXFlags
+		relative := staticCSourceRelative(srcDir, scanner)
+		flags, err := staticCSourceCompileFlags(entry, relative, sha)
+		if err != nil {
+			return perfScanOracleLanguageIdentity{}, err
 		}
 		identity.Scanners = append(identity.Scanners, perfScanOracleSourceIdentity{
-			Path: staticCSourceRelative(srcDir, scanner), SHA256: sha, CompileFlags: flags,
+			Path: relative, SHA256: sha, CompileFlags: flags,
 		})
 	}
 	linker := "cc"
@@ -1452,7 +1683,7 @@ func staticCRevalidateBuildInputs(inputs staticCBuildInputSnapshot) error {
 func staticCScannerKey(scanners []perfScanOracleSourceIdentity) string {
 	var parts []string
 	for _, scanner := range scanners {
-		parts = append(parts, scanner.Path+"="+scanner.SHA256)
+		parts = append(parts, scanner.Path+"="+scanner.SHA256+"@"+scanner.CompileFlags)
 	}
 	return strings.Join(parts, ";")
 }
@@ -1462,7 +1693,7 @@ func staticCBuildKey(common perfScanOracleCommonIdentity, language perfScanOracl
 		common.Contract, common.BindingCommit, common.RuntimeCommit,
 		common.RuntimeSourceTreeOID, common.RuntimeSourceSHA256,
 		common.OptimizationFlags, common.RuntimeCFlags, common.GrammarCFlags,
-		common.GrammarCXXFlags, common.DriverCFlags, common.LinkFlags,
+		common.GrammarCXXFlags, common.SourceFlagProtocol, common.DriverCFlags, common.LinkFlags,
 		common.TimingRegion, common.OrderProtocol, common.FailureVocabulary, common.TargetOS, common.TargetArch,
 		common.CompilerPath, common.CompilerVersion, common.CompilerSHA256, common.DriverSHA256,
 		language.Language, language.GrammarRepo, language.GrammarCommit,
@@ -1475,9 +1706,9 @@ func staticCBuildKey(common perfScanOracleCommonIdentity, language perfScanOracl
 	return hex.EncodeToString(key[:])
 }
 
-func staticCEnsureArtifact(buildDir, artifact, buildKey, runtimeDir, runtimeSource, srcDir, parserPath string, scanners []string, driverPath, symbol string, hasCXX bool, compilerPath, linkerPath string, validateInputs func() error) (string, string, error) {
+func staticCEnsureArtifact(buildDir, artifact, buildKey, runtimeDir, runtimeSource, srcDir, parserPath string, scanners []string, language perfScanOracleLanguageIdentity, driverPath, symbol string, hasCXX bool, compilerPath, linkerPath string, validateInputs func() error) (string, string, error) {
 	return staticCEnsureCachedArtifactValidated(buildDir, artifact, buildKey, symbol, validateInputs, func() error {
-		return staticCBuildArtifact(buildDir, artifact, buildKey, runtimeDir, runtimeSource, srcDir, parserPath, scanners, driverPath, symbol, hasCXX, compilerPath, linkerPath, validateInputs)
+		return staticCBuildArtifact(buildDir, artifact, buildKey, runtimeDir, runtimeSource, srcDir, parserPath, scanners, language, driverPath, symbol, hasCXX, compilerPath, linkerPath, validateInputs)
 	})
 }
 
@@ -1544,9 +1775,23 @@ func staticCEnsureCachedArtifactValidated(buildDir, artifact, buildKey, symbol s
 	return artifactSHA, proof, nil
 }
 
-func staticCBuildArtifact(buildDir, artifact, buildKey, runtimeDir, runtimeSource, srcDir, parserPath string, scanners []string, driverPath, symbol string, hasCXX bool, compilerPath, linkerPath string, validateInputs func() error) error {
+func staticCBuildArtifact(buildDir, artifact, buildKey, runtimeDir, runtimeSource, srcDir, parserPath string, scanners []string, language perfScanOracleLanguageIdentity, driverPath, symbol string, hasCXX bool, compilerPath, linkerPath string, validateInputs func() error) error {
 	if !filepath.IsAbs(compilerPath) || !filepath.IsAbs(linkerPath) {
 		return fmt.Errorf("static C compiler/linker paths must be absolute")
+	}
+	if language.BuildKeySHA256 != buildKey {
+		return fmt.Errorf("static C language build key does not match the artifact key")
+	}
+	if staticCSourceRelative(srcDir, parserPath) != language.Parser.Path {
+		return fmt.Errorf("static C parser path does not match its compile identity")
+	}
+	if len(scanners) != len(language.Scanners) {
+		return fmt.Errorf("static C scanner count=%d, compile identities=%d", len(scanners), len(language.Scanners))
+	}
+	for i, scanner := range scanners {
+		if staticCSourceRelative(srcDir, scanner) != language.Scanners[i].Path {
+			return fmt.Errorf("static C scanner %d path does not match its compile identity", i)
+		}
 	}
 	if err := os.MkdirAll(filepath.Dir(buildDir), 0o755); err != nil {
 		return err
@@ -1562,19 +1807,32 @@ func staticCBuildArtifact(buildDir, artifact, buildKey, runtimeDir, runtimeSourc
 		return err
 	}
 	var objects []string
-	compileGrammar := func(source, object string) error {
+	compileGrammar := func(source, object, compileFlags string) error {
+		if strings.TrimSpace(compileFlags) == "" {
+			return fmt.Errorf("static C source %s has empty compile flags", source)
+		}
 		ext := strings.ToLower(filepath.Ext(source))
 		if ext == ".cc" || ext == ".cpp" || ext == ".cxx" {
-			args := append(strings.Fields(staticCPerfGrammarCXXFlags), "-I", srcDir, "-I", filepath.Join(runtimeDir, "lib", "include"), "-c", source, "-o", object)
+			args := append(strings.Fields(compileFlags), "-I", srcDir, "-I", filepath.Join(runtimeDir, "lib", "include"), "-c", source, "-o", object)
 			return runCommand("", linkerPath, args...)
 		}
-		args := append(strings.Fields(staticCPerfGrammarCFlags), "-I", srcDir, "-I", filepath.Join(runtimeDir, "lib", "include"), "-c", source, "-o", object)
+		if ext != ".c" {
+			return fmt.Errorf("static C source %s has unsupported extension %q", source, ext)
+		}
+		args := append(strings.Fields(compileFlags), "-I", srcDir, "-I", filepath.Join(runtimeDir, "lib", "include"), "-c", source, "-o", object)
 		return runCommand("", compilerPath, args...)
 	}
-	allGrammar := append([]string{parserPath}, scanners...)
+	type grammarBuildInput struct {
+		path  string
+		flags string
+	}
+	allGrammar := []grammarBuildInput{{path: parserPath, flags: language.Parser.CompileFlags}}
+	for i, scanner := range scanners {
+		allGrammar = append(allGrammar, grammarBuildInput{path: scanner, flags: language.Scanners[i].CompileFlags})
+	}
 	for i, source := range allGrammar {
 		object := filepath.Join(tmp, fmt.Sprintf("grammar_%d.o", i))
-		if err := compileGrammar(source, object); err != nil {
+		if err := compileGrammar(source.path, object, source.flags); err != nil {
 			return err
 		}
 		objects = append(objects, object)

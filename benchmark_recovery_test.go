@@ -3,8 +3,10 @@ package gotreesitter_test
 import (
 	"crypto/sha256"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
@@ -124,4 +126,84 @@ func BenchmarkKDLRecoveryGarbageSuffix(b *testing.B) {
 		}
 		tree.Release()
 	}
+}
+
+// BenchmarkRecoveryCorpusFile profiles one exact corpus file through its
+// registered grammar. Set GTS_RECOVERY_CORPUS_FILE and
+// GTS_RECOVERY_CORPUS_LANG to enable it. GTS_RECOVERY_CORPUS_TIMEOUT sets the
+// parser timeout as a Go duration. The default timeout is 10 seconds.
+// GTS_RECOVERY_CORPUS_RETRY_MODE selects the runtime, generic, skip-complete,
+// or skip-fresh retry behavior.
+func BenchmarkRecoveryCorpusFile(b *testing.B) {
+	file := strings.TrimSpace(os.Getenv("GTS_RECOVERY_CORPUS_FILE"))
+	langName := strings.TrimSpace(os.Getenv("GTS_RECOVERY_CORPUS_LANG"))
+	if file == "" || langName == "" {
+		b.Skip("set GTS_RECOVERY_CORPUS_FILE and GTS_RECOVERY_CORPUS_LANG")
+	}
+	entry := grammars.DetectLanguageByName(langName)
+	if entry == nil || entry.Language == nil {
+		b.Fatalf("language %q is not registered", langName)
+	}
+	src, err := os.ReadFile(file)
+	if err != nil {
+		b.Fatalf("read corpus file: %v", err)
+	}
+	timeout := 10 * time.Second
+	if raw := strings.TrimSpace(os.Getenv("GTS_RECOVERY_CORPUS_TIMEOUT")); raw != "" {
+		timeout, err = time.ParseDuration(raw)
+		if err != nil || timeout <= 0 {
+			b.Fatalf("invalid GTS_RECOVERY_CORPUS_TIMEOUT %q", raw)
+		}
+	}
+
+	lang := entry.Language()
+	originalProfile := lang.FullParseAcceptedErrorRetryProfile
+	defer func() {
+		lang.FullParseAcceptedErrorRetryProfile = originalProfile
+	}()
+	switch mode := strings.TrimSpace(os.Getenv("GTS_RECOVERY_CORPUS_RETRY_MODE")); mode {
+	case "", "runtime":
+	case "generic":
+		lang.FullParseAcceptedErrorRetryProfile = gotreesitter.FullParseAcceptedErrorRetryProfile{}
+	case "skip-complete":
+		profile := lang.FullParseAcceptedErrorRetryProfile
+		profile.SkipCompleteAcceptedErrorRetry = true
+		lang.FullParseAcceptedErrorRetryProfile = profile
+	case "skip-fresh":
+		profile := lang.FullParseAcceptedErrorRetryProfile
+		profile.SkipFreshCompleteAcceptedErrorRetry = true
+		lang.FullParseAcceptedErrorRetryProfile = profile
+	default:
+		b.Fatalf("invalid GTS_RECOVERY_CORPUS_RETRY_MODE %q", mode)
+	}
+	parser := gotreesitter.NewParser(lang)
+	parser.SetTimeoutMicros(uint64(timeout / time.Microsecond))
+	b.ReportAllocs()
+	b.SetBytes(int64(len(src)))
+	b.ResetTimer()
+
+	var memoEntries, memoBytes, memoCollisions uint64
+	for i := 0; i < b.N; i++ {
+		tree, parseErr := parser.Parse(src)
+		if parseErr != nil {
+			b.Fatalf("parse corpus file: %v", parseErr)
+		}
+		if tree == nil || tree.RootNode() == nil {
+			b.Fatal("parse corpus file: nil tree")
+		}
+		if tree.ParseStoppedEarly() {
+			reason := tree.ParseStopReason()
+			tree.Release()
+			b.Fatalf("parse corpus file stopped early: %s", reason)
+		}
+		memo := tree.RecoveryNodeMemoRuntime()
+		memoEntries += uint64(memo.PeakTier.Entries())
+		memoBytes += uint64(memo.PeakTier.Bytes())
+		memoCollisions += uint64(memo.Collisions)
+		tree.Release()
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(memoEntries)/float64(b.N), "memo_entries/op")
+	b.ReportMetric(float64(memoBytes)/float64(b.N), "memo_bytes/op")
+	b.ReportMetric(float64(memoCollisions)/float64(b.N), "memo_collisions/op")
 }

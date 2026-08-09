@@ -342,6 +342,36 @@ func (c *Core) ShiftClassifiedWithLiveCondenseCandidatesOwned(owner SchedulerTra
 	return c.shiftClassifiedMaybeLiveScopedOwned(owner, candidates, true, boundary, actionOrdinal, shifted, fork)
 }
 
+// ShiftDirectWithLiveCondenseCandidatesOwned applies a corridor-proven shift
+// without rebuilding a ClassifiedBoundary or running the generic shift path.
+// The caller must validate the action shape from the immutable corridor program.
+func (c *Core) ShiftDirectWithLiveCondenseCandidatesOwned(
+	owner SchedulerTransactionToken,
+	candidates []CondenseCandidate,
+	head Head,
+	lookahead Symbol,
+	targetState StateID,
+	extra bool,
+	shifted Token,
+	fork ForkOrder,
+) (out Head, err error) {
+	if err = c.beginSchedulerOwned(owner); err != nil {
+		return out, err
+	}
+	defer c.recoverSchedulerOwnedPanic(owner)
+	if err = c.enterLiveCondenseCandidates(candidates); err != nil {
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	if c.schedulerFrame.fresh {
+		out, err = c.shiftDirectUncheckpointed(head, lookahead, targetState, extra, shifted, fork)
+		c.clearLiveCondenseCandidates()
+		return out, c.finishSchedulerOwned(owner, err)
+	}
+	defer c.clearLiveCondenseCandidates()
+	out, err = c.shiftDirectUncheckpointed(head, lookahead, targetState, extra, shifted, fork)
+	return out, c.finishSchedulerOwned(owner, err)
+}
+
 // shiftClassifiedMaybeLiveScopedOwned inlines the former
 // runSchedulerMaybeLiveScopedOwned/runLiveCondenseCandidates closure chain: it
 // validates the owner, installs the live condense scope (when requested),
@@ -400,6 +430,45 @@ func (c *Core) shiftClassifiedUncheckpointed(boundary ClassifiedBoundary, action
 	phase0AObserveTerminalShift(c, payload, boundary.head.Node, targetState, shifted.EndByte, true, act.Extra, 0, fork)
 	outcome, err := c.condenseWithOutcomeAtomic(c.shiftedBoundaryKey(targetState, shifted.EndByte), linkInput{
 		prev: boundary.head.Node, payload: payload, order: fork,
+	})
+	if err != nil {
+		return Head{}, err
+	}
+	c.addWork(&c.work.Shifts, 1)
+	return outcome.head, nil
+}
+
+func (c *Core) shiftDirectUncheckpointed(
+	head Head,
+	lookahead Symbol,
+	targetState StateID,
+	extra bool,
+	shifted Token,
+	fork ForkOrder,
+) (Head, error) {
+	node, err := c.node(head.Node)
+	if err != nil {
+		return Head{}, err
+	}
+	if shifted.Symbol != lookahead {
+		return Head{}, fmt.Errorf("parser-core phase zero: token symbol %d != lookahead %d", shifted.Symbol, lookahead)
+	}
+	if shifted.Extra != extra {
+		return Head{}, fmt.Errorf("parser-core phase zero: token extra=%t disagrees with compiled action extra=%t", shifted.Extra, extra)
+	}
+	if extra && targetState == 0 {
+		targetState = node.state
+	}
+	payload, err := c.appendAuthenticatedTerminal(subtreeRecord{
+		symbol: shifted.Symbol, startByte: shifted.StartByte, endByte: shifted.EndByte,
+		extra: extra, external: shifted.External, terminal: true,
+	})
+	if err != nil {
+		return Head{}, err
+	}
+	phase0AObserveTerminalShift(c, payload, head.Node, targetState, shifted.EndByte, true, extra, 0, fork)
+	outcome, err := c.condenseWithOutcomeAtomic(c.shiftedBoundaryKey(targetState, shifted.EndByte), linkInput{
+		prev: head.Node, payload: payload, order: fork,
 	})
 	if err != nil {
 		return Head{}, err
@@ -667,6 +736,34 @@ func (c *Core) ReduceOutputsClassifiedIntoWithLiveCondenseCandidatesOwned(owner 
 	return c.reduceOutputsClassifiedIntoMaybeLiveScopedOwned(owner, candidates, true, dst, boundary, actionOrdinal, fork)
 }
 
+// ReduceOutputsCorridorClassifiedIntoWithLiveCondenseCandidatesOwned applies
+// one validated corridor reduction without revalidating its classification.
+// The caller must pass a current boundary from ClassifyBoundaryWithRow and a
+// sole reduce row from a validated corridor program.
+func (c *Core) ReduceOutputsCorridorClassifiedIntoWithLiveCondenseCandidatesOwned(
+	owner SchedulerTransactionToken,
+	candidates []CondenseCandidate,
+	dst []ReductionOutput,
+	boundary ClassifiedBoundary,
+	fork ForkOrder,
+) (frontier []ReductionOutput, err error) {
+	if err = c.beginSchedulerOwned(owner); err != nil {
+		return frontier, err
+	}
+	defer c.recoverSchedulerOwnedPanic(owner)
+	if err = c.enterLiveCondenseCandidates(candidates); err != nil {
+		return frontier, c.finishSchedulerOwned(owner, err)
+	}
+	if c.schedulerFrame.fresh {
+		frontier, err = c.reduceOutputsCorridorClassifiedIntoUncheckpointed(dst, boundary, fork)
+		c.clearLiveCondenseCandidates()
+		return frontier, c.finishSchedulerOwned(owner, err)
+	}
+	defer c.clearLiveCondenseCandidates()
+	frontier, err = c.reduceOutputsCorridorClassifiedIntoUncheckpointed(dst, boundary, fork)
+	return frontier, c.finishSchedulerOwned(owner, err)
+}
+
 // reduceOutputsClassifiedIntoMaybeLiveScopedOwned inlines the former
 // runSchedulerMaybeLiveScopedOwned/runLiveCondenseCandidates closure chain;
 // see shiftClassifiedMaybeLiveScopedOwned's doc comment for the equivalence
@@ -705,13 +802,34 @@ func (c *Core) reduceOutputsClassifiedIntoUncheckpointed(dst []ReductionOutput, 
 	defer c.popScratch.resetLogical()
 	c.reductionScratch.begin()
 	defer c.reductionScratch.finish()
-	return c.reduceOutputsClassifiedIntoActive(frontier, boundary, actionOrdinal, fork)
+	return c.reduceOutputsClassifiedIntoActive(frontier, boundary, actionOrdinal, fork, false)
 }
 
-func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) ([]ReductionOutput, error) {
-	act, err := c.classifiedActionRef(boundary, actionOrdinal)
-	if err != nil {
-		return nil, err
+func (c *Core) reduceOutputsCorridorClassifiedIntoUncheckpointed(dst []ReductionOutput, boundary ClassifiedBoundary, fork ForkOrder) ([]ReductionOutput, error) {
+	frontier := dst[:0]
+	if c.popScratch.busy {
+		return nil, errors.New("parser-core phase zero: reentrant reduction while pop scratch is active")
+	}
+	c.popScratch.busy = true
+	defer c.popScratch.resetLogical()
+	c.reductionScratch.begin()
+	defer c.reductionScratch.finish()
+	return c.reduceOutputsClassifiedIntoActive(frontier, boundary, 0, fork, true)
+}
+
+func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder, corridorTrusted bool) ([]ReductionOutput, error) {
+	var act *Action
+	var err error
+	if corridorTrusted {
+		if boundary.actions.Len() != 1 {
+			return nil, errors.New("parser-core phase zero: corridor reduction requires one action")
+		}
+		act = boundary.actions.actionRef(0)
+	} else {
+		act, err = c.classifiedActionRef(boundary, actionOrdinal)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if act.Type != ActionReduce {
 		return nil, fmt.Errorf("parser-core phase zero: action %d is %v, not reduce", actionOrdinal, act.Type)

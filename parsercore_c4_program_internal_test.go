@@ -104,6 +104,21 @@ func TestParserCoreCorridorCellExhaustiveness(t *testing.T) {
 							t.Fatalf("state=%d symbol=%d REDUCE decoded=%+v table=%+v", state, sym, decoded, action)
 						}
 						byOpcode[corridorOpReduce]++
+					case corridorOpReduceChain.String():
+						requireCorridorKind(t, state, sym, row, core.ActionRowReduce)
+						candidate, ok := tables.reduceChainCandidate(StateID(state), sym, row, tables.actionIndex(StateID(state), sym))
+						if !ok || decoded.RowIndex != uint32(tables.actionIndex(StateID(state), sym)) ||
+							decoded.ChainRowIndex != candidate.chainRowIndex || decoded.TargetState != StateID(candidate.targetState) {
+							t.Fatalf("state=%d symbol=%d REDUCE_CHAIN decoded=%+v candidate=%+v ok=%v", state, sym, decoded, candidate, ok)
+						}
+						byOpcode[corridorOpReduceChain]++
+					case corridorOpReduceShift.String():
+						requireCorridorKind(t, state, sym, row, core.ActionRowReduce)
+						candidate, ok := tables.reduceShiftCandidate(StateID(state), sym, row, tables.actionIndex(StateID(state), sym))
+						if !ok || decoded.ShiftRowIndex != candidate.shiftRowIndex || decoded.TargetState != StateID(candidate.targetState) {
+							t.Fatalf("state=%d symbol=%d REDUCE_SHIFT decoded=%+v candidate=%+v ok=%v", state, sym, decoded, candidate, ok)
+						}
+						byOpcode[corridorOpReduceShift]++
 					case corridorOpAccept.String():
 						requireCorridorKind(t, state, sym, row, core.ActionRowAccept)
 						byOpcode[corridorOpAccept]++
@@ -136,13 +151,15 @@ func TestParserCoreCorridorCellExhaustiveness(t *testing.T) {
 			if walked != census.PopulatedCells {
 				t.Fatalf("walked %d populated cells, compiler census recorded %d", walked, census.PopulatedCells)
 			}
-			sum := byOpcode[corridorOpShift] + byOpcode[corridorOpShiftExtra] + byOpcode[corridorOpReduce] +
+			sum := byOpcode[corridorOpShift] + byOpcode[corridorOpShiftExtra] + byOpcode[corridorOpReduce] + byOpcode[corridorOpReduceChain] + byOpcode[corridorOpReduceShift] +
 				byOpcode[corridorOpAccept] + byOpcode[corridorOpFork] + byOpcode[corridorOpExitGeneric] +
 				byOpcode[corridorOpExitUnsupported]
 			if sum != walked {
 				t.Fatalf("disposition partition sums to %d over %d cells", sum, walked)
 			}
-			if byOpcode[corridorOpShift] != census.Shift || byOpcode[corridorOpReduce] != census.Reduce ||
+			if byOpcode[corridorOpShift] != census.Shift || byOpcode[corridorOpReduce]+byOpcode[corridorOpReduceChain]+byOpcode[corridorOpReduceShift] != census.Reduce ||
+				byOpcode[corridorOpReduceChain] != census.ReduceChain ||
+				byOpcode[corridorOpReduceShift] != census.ReduceShift ||
 				byOpcode[corridorOpShiftExtra] != census.ShiftExtra || byOpcode[corridorOpAccept] != census.Accept ||
 				byOpcode[corridorOpFork] != census.Fork || byOpcode[corridorOpExitGeneric] != census.ExitGeneric ||
 				byOpcode[corridorOpExitUnsupported] != census.ExitUnsupported {
@@ -232,7 +249,7 @@ func TestParserCoreCorridorDecodeBackPerState(t *testing.T) {
 			// is the row ClassifyBoundary would have resolved.
 			switch decoded.Opcode {
 			case corridorOpShift.String(), corridorOpShiftExtra.String(),
-				corridorOpReduce.String(), corridorOpAccept.String(), corridorOpFork.String():
+				corridorOpReduce.String(), corridorOpReduceChain.String(), corridorOpReduceShift.String(), corridorOpAccept.String(), corridorOpFork.String():
 				if decoded.RowIndex != uint32(idx) {
 					t.Fatalf("state=%d symbol=%d %s carries action-row index %d, table index is %d",
 						state, sym, decoded.Opcode, decoded.RowIndex, idx)
@@ -243,7 +260,7 @@ func TestParserCoreCorridorDecodeBackPerState(t *testing.T) {
 			}
 			// Descriptor equality: the compiled opcode must name the same
 			// dispatch shape describeActionRow computed for the reference row.
-			if got := corridorOpcodeForKind(want.Descriptor().Kind(), tables, want); got != decoded.Opcode {
+			if got := corridorOpcodeForKind(StateID(state), sym, want.Descriptor().Kind(), tables, want); got != decoded.Opcode {
 				t.Fatalf("state=%d symbol=%d decodes to %s, reference descriptor implies %s", state, sym, decoded.Opcode, got)
 			}
 			// Constituent-cell equality for the executable forms.
@@ -258,6 +275,18 @@ func TestParserCoreCorridorDecodeBackPerState(t *testing.T) {
 					decoded.LHS != Symbol(action.Symbol) || decoded.ChildCount != action.ChildCount ||
 					decoded.GotoMode != "indexed" {
 					t.Fatalf("state=%d symbol=%d REDUCE operands do not reconstruct the cell: decoded=%+v action=%+v", state, sym, decoded, action)
+				}
+			case corridorOpReduceChain.String():
+				candidate, ok := tables.reduceChainCandidate(StateID(state), sym, want, uint16(idx))
+				if !ok || want.Len() != 1 || decoded.RowIndex != uint32(idx) ||
+					decoded.ChainRowIndex != candidate.chainRowIndex || decoded.TargetState != StateID(candidate.targetState) {
+					t.Fatalf("state=%d symbol=%d REDUCE_CHAIN operands do not reconstruct the cell: decoded=%+v candidate=%+v ok=%v", state, sym, decoded, candidate, ok)
+				}
+			case corridorOpReduceShift.String():
+				candidate, ok := tables.reduceShiftCandidate(StateID(state), sym, want, uint16(idx))
+				if !ok || want.Len() != 1 || decoded.RowIndex != uint32(idx) ||
+					decoded.ShiftRowIndex != candidate.shiftRowIndex || decoded.TargetState != StateID(candidate.targetState) {
+					t.Fatalf("state=%d symbol=%d REDUCE_SHIFT operands do not reconstruct the cell: decoded=%+v candidate=%+v ok=%v", state, sym, decoded, candidate, ok)
 				}
 			case corridorOpShiftExtra.String():
 				action := want.At(0)
@@ -286,13 +315,19 @@ func TestParserCoreCorridorDecodeBackPerState(t *testing.T) {
 // corridorOpcodeForKind names the opcode a descriptor kind must compile to.
 // It is the decode-back side of the dispositions table and is deliberately
 // written independently of classifyCell so the two must agree.
-func corridorOpcodeForKind(kind core.ActionRowKind, tables *corridorTables, row core.ActionRow) string {
+func corridorOpcodeForKind(state StateID, sym Symbol, kind core.ActionRowKind, tables *corridorTables, row core.ActionRow) string {
 	switch kind {
 	case core.ActionRowShift:
 		return corridorOpShift.String()
 	case core.ActionRowExtraShift:
 		return corridorOpShiftExtra.String()
 	case core.ActionRowReduce:
+		if _, ok := tables.reduceShiftCandidate(state, sym, row, tables.actionIndex(state, sym)); ok {
+			return corridorOpReduceShift.String()
+		}
+		if _, ok := tables.reduceChainCandidate(state, sym, row, tables.actionIndex(state, sym)); ok {
+			return corridorOpReduceChain.String()
+		}
 		return corridorOpReduce.String()
 	case core.ActionRowAccept:
 		return corridorOpAccept.String()
@@ -453,6 +488,9 @@ func measureCorridorTableShapes(t *testing.T, paths []string) corridorTableShape
 // when the shipped tables no longer produce the committed numbers, so every
 // figure the stage-2 model rests on stays a measured number.
 func TestParserCoreCorridorTableShapeReceipt(t *testing.T) {
+	if corridorExperimentalDispositionEnabled() {
+		t.Skip("experimental disposition gates change the default table-shape receipt")
+	}
 	const receiptPath = "testdata/c4_table_shape.json"
 	committed, err := os.ReadFile(receiptPath)
 	if err != nil {
@@ -494,6 +532,9 @@ func TestParserCoreCorridorTableShapeReceipt(t *testing.T) {
 // corridor programs retains about 145 MiB and costs real wall time (about
 // 20s), which is unwelcome in the default -tags gts_parsercorephase0 run.
 func TestParserCoreCorridorFleetTableShapeReceipt(t *testing.T) {
+	if corridorExperimentalDispositionEnabled() {
+		t.Skip("experimental disposition gates change the default fleet table-shape receipt")
+	}
 	if os.Getenv("GTS_C4_FLEET_RECEIPT") != "1" {
 		t.Skip("set GTS_C4_FLEET_RECEIPT=1 to run the 206-grammar fleet R3 receipt:\n" +
 			"  GTS_C4_FLEET_RECEIPT=1 go test -tags gts_parsercorephase0 " +

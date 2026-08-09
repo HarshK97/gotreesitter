@@ -6114,7 +6114,7 @@ func (p *Parser) allocAllVisibleReduceChildren(arena *nodeArena, n int, aliasSeq
 	return arena.allocNodeSliceNoClear(n)
 }
 
-func (p *Parser) buildReduceChildrenAllVisible(entries []stackEntry, start, end, childCount int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, parentVisible bool, symbolMeta []SymbolMetadata, arena *nodeArena) ([]*Node, []FieldID, []uint8, bool) {
+func (p *Parser) buildReduceChildrenAllVisible(entries []stackEntry, start, end int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, symbolMeta []SymbolMetadata, arena *nodeArena) ([]*Node, []FieldID, []uint8, bool) {
 	visibleCount := 0
 	structuralChildIndex := 0
 	for i := start; i < end; i++ {
@@ -6216,20 +6216,27 @@ func (p *Parser) buildReduceChildrenWithPath(entries []stackEntry, start, end, c
 			if len(p.unaryWrapperFlatteningSet) != 0 {
 				children = p.flattenNativeUnaryWrapperChildren(parentSymbol, children)
 			}
+			if perfCountersEnabled {
+				perfRecordReduceChildBuild(path)
+			}
 			return children, fieldIDs, fieldSources, path
 		}
 	}
 
 	rawFieldIDs, rawInherited, _ := p.buildFieldIDs(childCount, productionID, arena)
-	if children, fieldIDs, fieldSources, ok := p.buildReduceChildrenAllVisible(entries, start, end, childCount, aliasSeq, rawFieldIDs, rawInherited, parentVisible, symbolMeta, arena); ok {
+	if children, fieldIDs, fieldSources, ok := p.buildReduceChildrenAllVisible(entries, start, end, aliasSeq, rawFieldIDs, rawInherited, symbolMeta, arena); ok {
 		if len(p.unaryWrapperFlatteningSet) != 0 {
 			children = p.flattenNativeUnaryWrapperChildren(parentSymbol, children)
 		}
-		return children, fieldIDs, fieldSources, reduceChildPathForLen(len(children), reduceChildPathAllVisible)
+		path := reduceChildPathForLen(len(children), reduceChildPathAllVisible)
+		if perfCountersEnabled {
+			perfRecordReduceChildBuild(path)
+		}
+		return children, fieldIDs, fieldSources, path
 	}
 
 	scratch := p.newReduceBuildScratch(rawFieldIDs)
-	p.appendReduceChildrenToScratch(scratch, entries, start, end, aliasSeq, rawFieldIDs, rawInherited, parentVisible, symbolMeta, arena, lang)
+	p.appendReduceChildrenToScratch(scratch, entries, start, end, aliasSeq, rawFieldIDs, rawInherited, parentVisible, symbolMeta, arena)
 	if scratch.trackFields {
 		p.suppressReducedChildFields(scratch.nodes, scratch.fieldIDs, scratch.fieldSources)
 		if parentVisible {
@@ -6244,7 +6251,11 @@ func (p *Parser) buildReduceChildrenWithPath(entries []stackEntry, start, end, c
 	if len(p.unaryWrapperFlatteningSet) != 0 {
 		children = p.flattenNativeUnaryWrapperChildren(parentSymbol, children)
 	}
-	return children, fieldIDs, fieldSources, reduceChildPathForLen(len(children), reduceChildPathScratchGeneral)
+	path := reduceChildPathForLen(len(children), reduceChildPathScratchGeneral)
+	if perfCountersEnabled {
+		perfRecordReduceChildBuild(path)
+	}
+	return children, fieldIDs, fieldSources, path
 }
 
 func reduceChildPathForLen(n int, nonEmptyPath reduceChildPath) reduceChildPath {
@@ -6381,53 +6392,40 @@ func (p *Parser) newReduceBuildScratch(rawFieldIDs []FieldID) *reduceBuildScratc
 }
 
 type reduceChildBuildItem struct {
-	node                *Node
-	fieldID             FieldID
-	inherited           bool
-	nextStructuralIndex int
+	node      *Node
+	fieldID   FieldID
+	inherited bool
 }
 
-func (p *Parser) reduceChildBuildItemForEntry(entry stackEntry, structuralChildIndex int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, arena *nodeArena) (reduceChildBuildItem, bool) {
-	n := stackEntryNode(entry)
-	if n == nil {
-		return reduceChildBuildItem{}, false
-	}
-	item := reduceChildBuildItem{
-		node:                n,
-		nextStructuralIndex: structuralChildIndex,
-	}
-	if n.isExtra() {
-		return item, true
-	}
-	if structuralChildIndex < len(rawFieldIDs) {
-		item.fieldID = rawFieldIDs[structuralChildIndex]
-		if structuralChildIndex < len(rawInherited) {
-			item.inherited = rawInherited[structuralChildIndex]
-		}
-	}
-	if structuralChildIndex < len(aliasSeq) {
-		if alias := aliasSeq[structuralChildIndex]; alias != 0 {
-			item.node = p.aliasedNodeInArena(arena, n, alias)
-		}
-	}
-	item.nextStructuralIndex = structuralChildIndex + 1
-	return item, true
-}
-
-func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entries []stackEntry, start, end int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, parentVisible bool, symbolMeta []SymbolMetadata, arena *nodeArena, lang *Language) {
+func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entries []stackEntry, start, end int, aliasSeq []Symbol, rawFieldIDs []FieldID, rawInherited []bool, parentVisible bool, symbolMeta []SymbolMetadata, arena *nodeArena) {
 	structuralChildIndex := 0
 	var pendingPaddingStart uint32
 	var pendingPaddingPoint Point
 	var pendingPaddingSource *Node
 	havePendingPadding := false
 	for i := start; i < end; i++ {
-		item, ok := p.reduceChildBuildItemForEntry(entries[i], structuralChildIndex, aliasSeq, rawFieldIDs, rawInherited, arena)
-		if !ok {
+		n := stackEntryNode(entries[i])
+		if n == nil {
 			continue
 		}
-		structuralChildIndex = item.nextStructuralIndex
-		spanStart, spanEnd := p.appendReduceChildItemToScratch(scratch, item, parentVisible, symbolMeta, havePendingPadding, pendingPaddingStart, pendingPaddingPoint, pendingPaddingSource, arena)
-		if !symbolVisibleForPending(item.node.symbol, symbolMeta) {
+		item := reduceChildBuildItem{node: n}
+		if !n.isExtra() {
+			if structuralChildIndex < len(rawFieldIDs) {
+				item.fieldID = rawFieldIDs[structuralChildIndex]
+				if structuralChildIndex < len(rawInherited) {
+					item.inherited = rawInherited[structuralChildIndex]
+				}
+			}
+			if structuralChildIndex < len(aliasSeq) {
+				if alias := aliasSeq[structuralChildIndex]; alias != 0 {
+					item.node = p.aliasedNodeInArena(arena, n, alias)
+				}
+			}
+			structuralChildIndex++
+		}
+		visible := symbolVisibleForPending(item.node.symbol, symbolMeta)
+		spanStart, spanEnd := p.appendReduceChildItemToScratch(scratch, item, visible, parentVisible, symbolMeta, havePendingPadding, pendingPaddingStart, pendingPaddingPoint, pendingPaddingSource, arena)
+		if !visible {
 			pendingPaddingStart, pendingPaddingPoint, havePendingPadding = flattenedHiddenEntryPadding(item.node, scratch.nodes, spanStart, spanEnd)
 			pendingPaddingSource = item.node
 			continue
@@ -6436,9 +6434,9 @@ func (p *Parser) appendReduceChildrenToScratch(scratch *reduceBuildScratch, entr
 	}
 }
 
-func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, item reduceChildBuildItem, parentVisible bool, symbolMeta []SymbolMetadata, havePadding bool, paddingStartByte uint32, paddingStartPoint Point, paddingSource *Node, arena *nodeArena) (int, int) {
+func (p *Parser) appendReduceChildItemToScratch(scratch *reduceBuildScratch, item reduceChildBuildItem, visible, parentVisible bool, symbolMeta []SymbolMetadata, havePadding bool, paddingStartByte uint32, paddingStartPoint Point, paddingSource *Node, arena *nodeArena) (int, int) {
 	n := item.node
-	if symbolVisibleForPending(n.symbol, symbolMeta) {
+	if visible {
 		if havePadding && flattenedHiddenSiblingPaddingTarget(n, paddingSource, symbolMeta) && paddingStartByte < n.startByte {
 			n = cloneNodeInArena(arena, n)
 			n.startByte = paddingStartByte

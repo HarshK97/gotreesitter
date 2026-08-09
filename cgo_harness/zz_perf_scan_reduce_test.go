@@ -262,6 +262,9 @@ func perfScanReduceScoreboardsForMode(paths []string, lockPath, lockSHA string, 
 		if !shard.Config.HardGate {
 			return nil, fmt.Errorf("shard %s did not run with the hard gate enabled", shardPath)
 		}
+		if shard.Config.CgoAdmissionRSSMB <= 0 {
+			return nil, fmt.Errorf("shard %s did not bound cgo oracle admission RSS", shardPath)
+		}
 		if shard.Config.RequireFleet {
 			return nil, fmt.Errorf("shard %s has require_fleet=true; one-language shards must set it false", shardPath)
 		}
@@ -1098,6 +1101,14 @@ func TestPerfScanReduceScoreboards(t *testing.T) {
 			want: "compile/link/timing/digest contract",
 		},
 		{
+			name: "wrong source flag protocol",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Oracle.Common.SourceFlagProtocol = "unlocked"
+				pythonShard.Languages[0].Oracle.Common.SourceFlagProtocol = "unlocked"
+			},
+			want: "compile/link/timing/digest contract",
+		},
+		{
 			name: "wrong parser compile flags",
 			mutate: func(_, pythonShard *perfScanScoreboard) {
 				pythonShard.Oracle.Languages[0].Parser.CompileFlags = "-O0"
@@ -1129,6 +1140,13 @@ func TestPerfScanReduceScoreboards(t *testing.T) {
 				}
 			},
 			want: "contains reduction provenance",
+		},
+		{
+			name: "unbounded cgo admission",
+			mutate: func(_, pythonShard *perfScanScoreboard) {
+				pythonShard.Config.CgoAdmissionRSSMB = 0
+			},
+			want: "did not bound cgo oracle admission RSS",
 		},
 		{
 			name: "config mismatch",
@@ -1873,6 +1891,7 @@ func perfScanTestShard(lang, lockPath, lockSHA string, lockLanguages int, revisi
 		MaxFileBytes:        4 << 20,
 		Order:               "largest",
 		Axes:                []string{perfScanAxisFull},
+		CgoAdmissionRSSMB:   perfScanDefaultCgoAdmissionRSSMB,
 		HardGate:            true,
 		RequireFleet:        false,
 		CorpusLock:          lockPath,
@@ -1946,6 +1965,7 @@ func perfScanTestOracleIdentity(lang string) *perfScanOracleIdentity {
 		RuntimeCFlags:        staticCPerfRuntimeCFlags,
 		GrammarCFlags:        staticCPerfGrammarCFlags,
 		GrammarCXXFlags:      staticCPerfGrammarCXXFlags,
+		SourceFlagProtocol:   staticCPerfSourceFlagProtocol,
 		DriverCFlags:         staticCPerfDriverCFlags,
 		LinkFlags:            staticCPerfLinkFlags,
 		TimingRegion:         staticCPerfTimingRegion,

@@ -3175,6 +3175,58 @@ func TestCNodeErrorCostScratchTracksEquivVersion(t *testing.T) {
 	}
 }
 
+func TestCNodeErrorCostScratchSharesActiveParserMemo(t *testing.T) {
+	lang := &Language{SymbolMetadata: make([]SymbolMetadata, 12)}
+	lang.SymbolMetadata[11].Visible = true
+
+	skipped := NewLeafNode(11, true, 0, 1, Point{}, Point{Column: 1})
+	errNode := NewParentNode(errorSymbol, false, []*Node{skipped}, nil, 0)
+	parser := &Parser{
+		language:       lang,
+		cNodeMemoCache: make([]cNodeMemoCacheEntry, cNodeMemoCacheInitialSize),
+	}
+	parser.beginCNodeMemoEpoch()
+	scratch := glrMergeScratch{language: lang, cErrorCostParser: parser}
+
+	first := cNodeErrorCostLangWithScratch(&scratch, lang, errNode)
+	if len(scratch.cErrorCost) != 0 {
+		t.Fatalf("merge fallback memo entries = %d, want 0", len(scratch.cErrorCost))
+	}
+	if got := parser.cNodeErrorCost(errNode); got != first {
+		t.Fatalf("parser memo cost = %d, want %d", got, first)
+	}
+
+	skipped.setExtra(true)
+	nodeBumpEquivVersion(errNode)
+	second := cNodeErrorCostLangWithScratch(&scratch, lang, errNode)
+	if want := cNodeErrorCostLang(lang, errNode); second != want {
+		t.Fatalf("shared cost after version bump = %d, want %d", second, want)
+	}
+	if second >= first {
+		t.Fatalf("shared cost did not reflect visible child removal: before=%d after=%d", first, second)
+	}
+}
+
+func TestActivateCNodeMemoMergeSharingDropsFallbackMap(t *testing.T) {
+	lang := &Language{SymbolMetadata: make([]SymbolMetadata, 2)}
+	node := NewLeafNode(1, true, 0, 1, Point{}, Point{Column: 1})
+	scratch := glrMergeScratch{
+		language: lang,
+		cErrorCost: map[*Node]glrCErrorCostEntry{
+			node: {cost: 9},
+		},
+	}
+	parser := &Parser{language: lang, mergeScratch: &scratch}
+	parser.activateCNodeMemoMergeSharing()
+
+	if scratch.cErrorCostParser != parser {
+		t.Fatal("merge scratch did not activate the parser memo")
+	}
+	if scratch.cErrorCost != nil {
+		t.Fatal("merge scratch retained the fallback map after activation")
+	}
+}
+
 func TestTryGSSMainMergeResultClearsMaterializingCache(t *testing.T) {
 	var gssScratch gssScratch
 	node := NewLeafNode(11, true, 0, 5, Point{}, Point{Column: 5})
