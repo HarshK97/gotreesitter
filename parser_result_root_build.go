@@ -435,13 +435,15 @@ func (b *resultRootBuild) syntheticRootReplayBridgeGap(frontier []syntheticRootR
 	if startByte > endByte || endByte > uint32(len(b.source)) || endByte-startByte > syntheticRootReplayMaxGapBytes {
 		return nil
 	}
-	cursors := make([]syntheticRootReplayGapCursor, 0, len(frontier))
+	var cursorScratch [2][syntheticRootReplayMaxFrontier]syntheticRootReplayGapCursor
+	cursors := cursorScratch[0][:0]
 	for _, frame := range frontier {
 		cursors = appendSyntheticRootReplayGapCursor(cursors, frame, startByte, startPoint)
 	}
+	var advanceScratch [syntheticRootReplayMaxFrontier]syntheticRootReplayFrame
 	for step := 0; step < syntheticRootReplayMaxGapTokens; step++ {
 		allAtEnd := true
-		nextCursors := make([]syntheticRootReplayGapCursor, 0, len(cursors))
+		nextCursors := cursorScratch[(step+1)&1][:0]
 		for _, cursor := range cursors {
 			if cursor.byte == endByte {
 				nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, cursor.frame, cursor.byte, cursor.point)
@@ -460,7 +462,7 @@ func (b *resultRootBuild) syntheticRootReplayBridgeGap(frontier []syntheticRootR
 				}
 				continue
 			}
-			advanced := b.syntheticRootReplayAdvanceToken([]syntheticRootReplayFrame{cursor.frame}, tok)
+			advanced := b.syntheticRootReplayAdvanceToken([]syntheticRootReplayFrame{cursor.frame}, tok, advanceScratch[:0])
 			if len(advanced) == 0 {
 				if syntheticRootReplayCanSkipGapByte(b.source[cursor.byte]) {
 					nextByte := cursor.byte + 1
@@ -549,12 +551,12 @@ func (b *resultRootBuild) syntheticRootReplayLexGapTokenForState(state StateID, 
 	return tok, true
 }
 
-func (b *resultRootBuild) syntheticRootReplayAdvanceToken(frontier []syntheticRootReplayFrame, tok Token) []syntheticRootReplayFrame {
+func (b *resultRootBuild) syntheticRootReplayAdvanceToken(frontier []syntheticRootReplayFrame, tok Token, scratch []syntheticRootReplayFrame) []syntheticRootReplayFrame {
 	if len(frontier) == 0 || tok.Symbol == 0 {
 		return nil
 	}
 	closed := b.syntheticRootReplayCloseLookahead(frontier, tok.Symbol)
-	advanced := make([]syntheticRootReplayFrame, 0, len(closed))
+	advanced := scratch[:0]
 	for _, frame := range closed {
 		top, ok := b.syntheticRootReplayTopState(frame)
 		if !ok {
