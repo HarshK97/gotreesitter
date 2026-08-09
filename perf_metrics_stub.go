@@ -110,3 +110,10 @@ func perfRecordNodeEditMarked()                      {}
 func perfRecordDenseMutationChildrenCall()           {}
 func perfRecordDenseMutationChildrenDrain()          {}
 func perfRecordMutationChildRefCopyOnWrite(int)      {}
+
+func perfRecordSyntheticReplayAdvanceAttempt()         {}
+func perfRecordSyntheticReplayAdvanceCacheHit()        {}
+func perfRecordSyntheticReplayAdvanceCacheMiss()       {}
+func perfRecordSyntheticReplayAdvanceCacheStore()      {}
+func perfRecordSyntheticReplayAdvanceCacheCapSkip()    {}
+func perfRecordSyntheticReplayAdvanceOutput(int, bool) {}

@@ -100,6 +100,21 @@ type PerfCounters struct {
 	SyntheticReplayGapLexCacheMisses     uint64
 	SyntheticReplayGapLexCacheStores     uint64
 	SyntheticReplayGapLexCacheCapSkips   uint64
+	SyntheticReplayAdvanceAttempts       uint64
+	SyntheticReplayAdvanceCacheHits      uint64
+	SyntheticReplayAdvanceCacheMisses    uint64
+	SyntheticReplayAdvanceCacheStores    uint64
+	SyntheticReplayAdvanceCacheCapSkips  uint64
+	SyntheticReplayAdvanceZeroOutputs    uint64
+	SyntheticReplayAdvanceSingleOutputs  uint64
+	SyntheticReplayAdvanceMultiOutputs   uint64
+	SyntheticReplayAdvanceOutputPeak     uint64
+	SyntheticReplayAdvanceOutputFrames   uint64
+	SyntheticReplayAdvanceUniqueOutputs  uint64
+	SyntheticReplayAdvanceUniqueFrames   uint64
+	SyntheticReplayAdvanceUniqueSingle   uint64
+	SyntheticReplayAdvanceUniqueMulti    uint64
+	SyntheticReplayAdvanceUniquePeak     uint64
 	SyntheticReplayStackPushCalls        uint64
 	SyntheticReplayStackInternHits       uint64
 	SyntheticReplayCloseMemoHits         uint64

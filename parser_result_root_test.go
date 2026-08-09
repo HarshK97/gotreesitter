@@ -391,6 +391,80 @@ func TestSyntheticRootReplayGapLexMemoUsesPackedRecords(t *testing.T) {
 	}
 }
 
+func TestSyntheticRootReplayAdvanceMemoUsesPackedStream(t *testing.T) {
+	if got, want := unsafe.Sizeof(syntheticRootReplayAdvanceSpan(0)), uintptr(4); got != want {
+		t.Fatalf("advance span size = %d, want %d", got, want)
+	}
+	packed := newSyntheticRootReplayAdvanceSpan(
+		syntheticRootReplayAdvanceMaxPages-1,
+		syntheticRootReplayAdvancePageFrames-syntheticRootReplayMaxFrontier,
+		syntheticRootReplayMaxFrontier,
+	)
+	if got, want := packed.page(), syntheticRootReplayAdvanceMaxPages-1; got != want {
+		t.Fatalf("packed advance page = %d, want %d", got, want)
+	}
+	if got, want := packed.offset(), syntheticRootReplayAdvancePageFrames-syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("packed advance offset = %d, want %d", got, want)
+	}
+	if got, want := packed.count(), syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("packed advance count = %d, want %d", got, want)
+	}
+
+	lang := newRootFrameReplayGapLanguage()
+	parser := newRootFrameReplayParser(lang)
+	builder := newResultRootBuild(parser, []byte("\n"), nil, nil, nil, nil)
+	initial := builder.syntheticRootReplayPush(syntheticRootReplayFrame{}, lang.InitialState)
+	frame := builder.syntheticRootReplayPush(initial, 3)
+	var frameScratch [2][syntheticRootReplayMaxFrontier]syntheticRootReplayFrame
+	var setScratch [2]syntheticRootReplayFrameSetScratch
+
+	first := builder.syntheticRootReplayAdvanceToken(
+		[]syntheticRootReplayFrame{frame},
+		2,
+		frameScratch[0][:0],
+		frameScratch[1][:0],
+		&setScratch[0],
+		&setScratch[1],
+	)
+	if len(first) == 0 {
+		t.Fatal("first packed transition returned no frames")
+	}
+	wantTops := make([]uint32, len(first))
+	for i := range first {
+		wantTops[i] = first[i].top
+	}
+	if got, want := len(builder.replayAdvanceMemo), 1; got != want {
+		t.Fatalf("advance memo length = %d, want %d", got, want)
+	}
+	if got, want := int(builder.replayAdvanceFrames), len(first); got != want {
+		t.Fatalf("advance stream frame count = %d, want %d", got, want)
+	}
+	pageCount := len(builder.replayAdvancePages)
+
+	second := builder.syntheticRootReplayAdvanceToken(
+		[]syntheticRootReplayFrame{frame},
+		2,
+		frameScratch[0][:0],
+		frameScratch[1][:0],
+		&setScratch[0],
+		&setScratch[1],
+	)
+	if got, want := len(second), len(wantTops); got != want {
+		t.Fatalf("cached transition length = %d, want %d", got, want)
+	}
+	for i, want := range wantTops {
+		if got := second[i].top; got != want {
+			t.Fatalf("cached transition top %d = %d, want %d", i, got, want)
+		}
+	}
+	if got, want := int(builder.replayAdvanceFrames), len(first); got != want {
+		t.Fatalf("cached advance stream frame count = %d, want %d", got, want)
+	}
+	if got := len(builder.replayAdvancePages); got != pageCount {
+		t.Fatalf("cached advance page count = %d, want %d", got, pageCount)
+	}
+}
+
 func TestSyntheticRootReplayCloseMemoPreservesCanonicalClosure(t *testing.T) {
 	lang := newRootFrameReplayReduceLanguage()
 	parser := newRootFrameReplayParser(lang)
