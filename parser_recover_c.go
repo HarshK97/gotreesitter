@@ -1856,10 +1856,11 @@ func (p *Parser) cErrRegionPreAbsorb(n *Node) cErrRegionAbsorbPre {
 	}
 	// Route through the standard memoized walks so the delta base is exactly
 	// the full-walk answer at the pre-absorb version (O(1) once warm).
+	cost, vis := p.cNodeErrorCostAndVisibleSubtreeCount(n)
 	return cErrRegionAbsorbPre{
 		node:     n,
-		cost:     p.cNodeErrorCost(n),
-		vis:      p.cNodeVisibleSubtreeCount(n),
+		cost:     cost,
+		vis:      vis,
 		spanCost: cErrRegionSpanCost(n),
 		valid:    true,
 	}
@@ -1883,11 +1884,12 @@ func (p *Parser) cErrRegionPostAbsorb(pre cErrRegionAbsorbPre, added ...*Node) {
 		if c == nil {
 			continue
 		}
-		vis += p.cNodeVisibleSubtreeCount(c)
+		childCost, childVis := p.cNodeErrorCostAndVisibleSubtreeCount(c)
+		vis += childVis
 		if !(c.symbol == errorSymbol && len(c.children) == 0) {
 			// C ERROR leaf children keep subtree error_cost 0 (see
 			// cNodeErrorCostLang); everything else contributes its own cost.
-			cost += p.cNodeErrorCost(c)
+			cost += childCost
 		}
 		if !c.isExtra() {
 			if cSymbolVisibleLang(lang, c.symbol) {
@@ -1929,8 +1931,7 @@ func (p *Parser) cErrRegionPrime(n *Node) {
 	if p == nil || len(p.cNodeMemoCache) == 0 || p.language == nil || n == nil {
 		return
 	}
-	cost := p.cNodeErrorCost(n)
-	p.cNodeVisibleSubtreeCount(n)
+	cost, _ := p.cNodeErrorCostAndVisibleSubtreeCount(n)
 	if ms := p.mergeScratch; ms != nil && ms.cErrorCostParser != p {
 		if ms.cErrorCost == nil {
 			ms.cErrorCost = make(map[*Node]glrCErrorCostEntry)
@@ -2034,6 +2035,92 @@ func (p *Parser) cNodeErrorCost(n *Node) uint32 {
 	return cost
 }
 
+// cNodeErrorCostAndVisibleSubtreeCount computes both C subtree aggregates in
+// one walk. The recovery stack needs both values at the same call sites.
+func (p *Parser) cNodeErrorCostAndVisibleSubtreeCount(n *Node) (uint32, int) {
+	if p == nil || n == nil {
+		return 0, 0
+	}
+	if len(p.cNodeMemoCache) == 0 {
+		return cNodeErrorCostLang(p.language, n), cNodeVisibleSubtreeCountUncachedLang(p.language, n)
+	}
+
+	version := n.equivVersion
+	slot := p.cNodeMemoSlot(n)
+	if slot.ver == version {
+		switch {
+		case slot.hasCost && slot.hasVis:
+			return slot.cost, int(slot.visCount)
+		case slot.hasCost:
+			cost := slot.cost
+			return cost, p.cNodeVisibleSubtreeCount(n)
+		case slot.hasVis:
+			visible := int(slot.visCount)
+			return p.cNodeErrorCost(n), visible
+		}
+	}
+
+	var cost uint32
+	visible := 0
+	if p.cSymbolVisible(n.symbol) {
+		visible++
+	}
+	if n.isMissing() && len(n.children) == 0 {
+		cost = cErrCostPerMissingTree + cErrCostPerRecovery
+	} else {
+		for _, child := range n.children {
+			if child == nil {
+				continue
+			}
+			childCost, childVisible := p.cNodeErrorCostAndVisibleSubtreeCount(child)
+			visible += childVisible
+			if child.symbol != errorSymbol || len(child.children) != 0 {
+				cost += childCost
+			}
+		}
+		if n.symbol == errorSymbol {
+			lang := p.language
+			for _, child := range n.children {
+				if child == nil || child.isExtra() {
+					continue
+				}
+				if cSymbolVisibleLang(lang, child.symbol) {
+					cost += cErrCostPerSkippedTree
+				} else if len(child.children) > 0 {
+					cost += cErrCostPerSkippedTree * uint32(cNodeVisibleChildCountLang(lang, child))
+				}
+			}
+			bytes := uint32(0)
+			rows := uint32(0)
+			if n.endByte > n.startByte {
+				bytes = n.endByte - n.startByte
+			}
+			if n.endPoint.Row > n.startPoint.Row {
+				rows = n.endPoint.Row - n.startPoint.Row
+			}
+			cost += cErrCostPerRecovery + cErrCostPerSkippedChar*bytes + cErrCostPerSkippedLine*rows
+		}
+	}
+
+	// Child recursion can evict the original slot. Resolve it again before the
+	// write and preserve any matching partial entry.
+	slot = p.cNodeMemoSlot(n)
+	if slot.ver != version {
+		*slot = cNodeMemoCacheEntry{
+			node:  uintptr(unsafe.Pointer(n)),
+			ver:   version,
+			epoch: p.cNodeMemoEpoch,
+		}
+	}
+	slot.cost = cost
+	slot.hasCost = true
+	if uint64(visible) <= uint64(^uint32(0)) {
+		slot.visCount = uint32(visible)
+		slot.hasVis = true
+	}
+	return cost, visible
+}
+
 // ---------------------------------------------------------------------------
 // GSS prefix aggregates: O(1) ts_stack_error_cost / node_count reads
 //
@@ -2107,8 +2194,9 @@ func (p *Parser) cStackPrefixAgg(head *gssNode) (uint32, int) {
 	for i := len(path) - 1; i >= 0; i-- {
 		gn := path[i]
 		if n := stackEntryNode(gn.entry); n != nil {
-			cost += p.cNodeErrorCost(n)
-			vis += int32(p.cNodeVisibleSubtreeCount(n))
+			nodeCost, nodeVisible := p.cNodeErrorCostAndVisibleSubtreeCount(n)
+			cost += nodeCost
+			vis += int32(nodeVisible)
 		}
 		gn.aggGen = gen
 		gn.aggVisValid = true
@@ -2275,8 +2363,9 @@ func (p *Parser) cStackEntryAgg(s *glrStack) (uint32, int) {
 	var vis int32
 	for i := range s.entries {
 		if n := stackEntryNode(s.entries[i]); n != nil {
-			cost += p.cNodeErrorCost(n)
-			vis += int32(p.cNodeVisibleSubtreeCount(n))
+			nodeCost, nodeVisible := p.cNodeErrorCostAndVisibleSubtreeCount(n)
+			cost += nodeCost
+			vis += int32(nodeVisible)
 		}
 	}
 	if p != nil && len(p.cNodeMemoCache) != 0 && s.cRec != nil {

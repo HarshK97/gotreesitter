@@ -2,6 +2,34 @@ package gotreesitter
 
 import "testing"
 
+func TestCNodeErrorCostAndVisibleSubtreeCountMatchesIndependentWalks(t *testing.T) {
+	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
+	missing := &Node{symbol: 1, equivVersion: 1}
+	missing.setMissing(true)
+	plain := &Node{symbol: 1, equivVersion: 1}
+	root := &Node{
+		symbol:       errorSymbol,
+		equivVersion: 1,
+		endByte:      4,
+		children:     []*Node{plain, missing},
+	}
+	p := &Parser{
+		language:       lang,
+		cNodeMemoCache: make([]cNodeMemoCacheEntry, cNodeMemoCacheSize),
+	}
+
+	wantCost := cNodeErrorCostLang(lang, root)
+	wantVisible := cNodeVisibleSubtreeCountUncachedLang(lang, root)
+	gotCost, gotVisible := p.cNodeErrorCostAndVisibleSubtreeCount(root)
+	if gotCost != wantCost || gotVisible != wantVisible {
+		t.Fatalf("combined aggregate = (%d, %d), want (%d, %d)", gotCost, gotVisible, wantCost, wantVisible)
+	}
+	slot := p.cNodeMemoSlot(root)
+	if slot.ver != root.equivVersion || !slot.hasCost || !slot.hasVis {
+		t.Fatalf("combined aggregate did not cache both values: %#v", *slot)
+	}
+}
+
 func TestBeforePublicationVersionBumpDoesNotInvalidateLivePrefixes(t *testing.T) {
 	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
 	p := &Parser{
