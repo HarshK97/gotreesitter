@@ -1,6 +1,9 @@
 package gotreesitter
 
-import "testing"
+import (
+	"testing"
+	"unsafe"
+)
 
 func TestAttachResultRootExtraSplitOmitsZeroWidthChildren(t *testing.T) {
 	lang := &Language{
@@ -352,6 +355,39 @@ func TestSyntheticRootReplayGapCursorSetScratch(t *testing.T) {
 	cursors = scratch.append(cursors, frame, 10, Point{Row: 1, Column: 3})
 	if got, want := len(cursors), 2; got != want {
 		t.Fatalf("distinct point cursor set length = %d, want %d", got, want)
+	}
+}
+
+func TestSyntheticRootReplayGapLexMemoUsesPackedRecords(t *testing.T) {
+	if got, want := unsafe.Sizeof(syntheticRootReplayGapToken{}), uintptr(16); got != want {
+		t.Fatalf("gap token size = %d, want %d", got, want)
+	}
+
+	lang := newRootFrameReplayGapLanguage()
+	parser := newRootFrameReplayParser(lang)
+	source := []byte("\n\n")
+	builder := newResultRootBuild(parser, source, nil, nil, nil, nil)
+	initial := builder.syntheticRootReplayPush(syntheticRootReplayFrame{}, lang.InitialState)
+	frame := builder.syntheticRootReplayPush(initial, 3)
+
+	first, ok := builder.syntheticRootReplayLexGapToken(frame, 0, Point{}, 1)
+	if !ok || first.symbol != 2 {
+		t.Fatalf("first gap token = %+v, %v; want symbol 2, true", first, ok)
+	}
+	if got, want := len(builder.replayGapLexMemo), 1; got != want {
+		t.Fatalf("first memo length = %d, want %d", got, want)
+	}
+	second, ok := builder.syntheticRootReplayLexGapToken(frame, 0, Point{}, 1)
+	if !ok || second != first {
+		t.Fatalf("cached gap token = %+v, %v; want %+v, true", second, ok, first)
+	}
+	if got, want := len(builder.replayGapLexMemo), 1; got != want {
+		t.Fatalf("cached memo length = %d, want %d", got, want)
+	}
+
+	_, _ = builder.syntheticRootReplayLexGapToken(frame, 0, Point{}, 2)
+	if got, want := len(builder.replayGapLexMemo), 2; got != want {
+		t.Fatalf("end-bound memo length = %d, want %d", got, want)
 	}
 }
 

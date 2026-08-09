@@ -90,6 +90,20 @@ type PerfCounters struct {
 	ForestCoalesceCapReplacements        uint64
 	ExtraNodes                           uint64
 	ErrorNodes                           uint64
+	SyntheticReplayGapBridgeCalls        uint64
+	SyntheticReplayGapSteps              uint64
+	SyntheticReplayGapCursorAttempts     uint64
+	SyntheticReplayGapCursorDedupHits    uint64
+	SyntheticReplayGapCursorPeak         uint64
+	SyntheticReplayGapLexAttempts        uint64
+	SyntheticReplayGapLexCacheHits       uint64
+	SyntheticReplayGapLexCacheMisses     uint64
+	SyntheticReplayGapLexCacheStores     uint64
+	SyntheticReplayGapLexCacheCapSkips   uint64
+	SyntheticReplayStackPushCalls        uint64
+	SyntheticReplayStackInternHits       uint64
+	SyntheticReplayCloseMemoHits         uint64
+	SyntheticReplayCloseMemoMisses       uint64
 	MergeStacksInHist                    [maxGLRStacks + 2]uint64
 	MergeAliveHist                       [maxGLRStacks + 2]uint64
 	MergeOutHist                         [maxGLRStacks + 2]uint64

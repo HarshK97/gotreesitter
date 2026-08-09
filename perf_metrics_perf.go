@@ -100,6 +100,20 @@ type perfCountersData struct {
 	forestCoalesceCapReplacements        atomic.Uint64
 	extraNodes                           atomic.Uint64
 	errorNodes                           atomic.Uint64
+	syntheticReplayGapBridgeCalls        atomic.Uint64
+	syntheticReplayGapSteps              atomic.Uint64
+	syntheticReplayGapCursorAttempts     atomic.Uint64
+	syntheticReplayGapCursorDedupHits    atomic.Uint64
+	syntheticReplayGapCursorPeak         atomic.Uint64
+	syntheticReplayGapLexAttempts        atomic.Uint64
+	syntheticReplayGapLexCacheHits       atomic.Uint64
+	syntheticReplayGapLexCacheMisses     atomic.Uint64
+	syntheticReplayGapLexCacheStores     atomic.Uint64
+	syntheticReplayGapLexCacheCapSkips   atomic.Uint64
+	syntheticReplayStackPushCalls        atomic.Uint64
+	syntheticReplayStackInternHits       atomic.Uint64
+	syntheticReplayCloseMemoHits         atomic.Uint64
+	syntheticReplayCloseMemoMisses       atomic.Uint64
 	mergeStacksInHist                    [perfMergeHistBins]atomic.Uint64
 	mergeAliveHist                       [perfMergeHistBins]atomic.Uint64
 	mergeOutHist                         [perfMergeHistBins]atomic.Uint64
@@ -207,6 +221,20 @@ func ResetPerfCounters() {
 	perfCounters.forestCoalesceCapReplacements.Store(0)
 	perfCounters.extraNodes.Store(0)
 	perfCounters.errorNodes.Store(0)
+	perfCounters.syntheticReplayGapBridgeCalls.Store(0)
+	perfCounters.syntheticReplayGapSteps.Store(0)
+	perfCounters.syntheticReplayGapCursorAttempts.Store(0)
+	perfCounters.syntheticReplayGapCursorDedupHits.Store(0)
+	perfCounters.syntheticReplayGapCursorPeak.Store(0)
+	perfCounters.syntheticReplayGapLexAttempts.Store(0)
+	perfCounters.syntheticReplayGapLexCacheHits.Store(0)
+	perfCounters.syntheticReplayGapLexCacheMisses.Store(0)
+	perfCounters.syntheticReplayGapLexCacheStores.Store(0)
+	perfCounters.syntheticReplayGapLexCacheCapSkips.Store(0)
+	perfCounters.syntheticReplayStackPushCalls.Store(0)
+	perfCounters.syntheticReplayStackInternHits.Store(0)
+	perfCounters.syntheticReplayCloseMemoHits.Store(0)
+	perfCounters.syntheticReplayCloseMemoMisses.Store(0)
 	for i := range perfCounters.mergeStacksInHist {
 		perfCounters.mergeStacksInHist[i].Store(0)
 	}
@@ -343,6 +371,20 @@ func PerfCountersSnapshot() PerfCounters {
 	out.ForestCoalesceCapReplacements = perfCounters.forestCoalesceCapReplacements.Load()
 	out.ExtraNodes = perfCounters.extraNodes.Load()
 	out.ErrorNodes = perfCounters.errorNodes.Load()
+	out.SyntheticReplayGapBridgeCalls = perfCounters.syntheticReplayGapBridgeCalls.Load()
+	out.SyntheticReplayGapSteps = perfCounters.syntheticReplayGapSteps.Load()
+	out.SyntheticReplayGapCursorAttempts = perfCounters.syntheticReplayGapCursorAttempts.Load()
+	out.SyntheticReplayGapCursorDedupHits = perfCounters.syntheticReplayGapCursorDedupHits.Load()
+	out.SyntheticReplayGapCursorPeak = perfCounters.syntheticReplayGapCursorPeak.Load()
+	out.SyntheticReplayGapLexAttempts = perfCounters.syntheticReplayGapLexAttempts.Load()
+	out.SyntheticReplayGapLexCacheHits = perfCounters.syntheticReplayGapLexCacheHits.Load()
+	out.SyntheticReplayGapLexCacheMisses = perfCounters.syntheticReplayGapLexCacheMisses.Load()
+	out.SyntheticReplayGapLexCacheStores = perfCounters.syntheticReplayGapLexCacheStores.Load()
+	out.SyntheticReplayGapLexCacheCapSkips = perfCounters.syntheticReplayGapLexCacheCapSkips.Load()
+	out.SyntheticReplayStackPushCalls = perfCounters.syntheticReplayStackPushCalls.Load()
+	out.SyntheticReplayStackInternHits = perfCounters.syntheticReplayStackInternHits.Load()
+	out.SyntheticReplayCloseMemoHits = perfCounters.syntheticReplayCloseMemoHits.Load()
+	out.SyntheticReplayCloseMemoMisses = perfCounters.syntheticReplayCloseMemoMisses.Load()
 	for i := range out.MergeOutHist {
 		out.MergeOutHist[i] = perfCounters.mergeOutHist[i].Load()
 	}
@@ -753,6 +795,64 @@ func perfRecordExtraNode() {
 
 func perfRecordErrorNode() {
 	perfCounters.errorNodes.Add(1)
+}
+
+func perfRecordSyntheticReplayGapBridge() {
+	perfCounters.syntheticReplayGapBridgeCalls.Add(1)
+}
+
+func perfRecordSyntheticReplayGapStep() {
+	perfCounters.syntheticReplayGapSteps.Add(1)
+}
+
+func perfRecordSyntheticReplayGapCursorAttempt() {
+	perfCounters.syntheticReplayGapCursorAttempts.Add(1)
+}
+
+func perfRecordSyntheticReplayGapCursorDedup() {
+	perfCounters.syntheticReplayGapCursorDedupHits.Add(1)
+}
+
+func perfRecordSyntheticReplayGapCursorPeak(n int) {
+	if n > 0 {
+		perfMaxUint64(&perfCounters.syntheticReplayGapCursorPeak, uint64(n))
+	}
+}
+
+func perfRecordSyntheticReplayGapLexAttempt() {
+	perfCounters.syntheticReplayGapLexAttempts.Add(1)
+}
+
+func perfRecordSyntheticReplayGapLexCacheHit() {
+	perfCounters.syntheticReplayGapLexCacheHits.Add(1)
+}
+
+func perfRecordSyntheticReplayGapLexCacheMiss() {
+	perfCounters.syntheticReplayGapLexCacheMisses.Add(1)
+}
+
+func perfRecordSyntheticReplayGapLexCacheStore() {
+	perfCounters.syntheticReplayGapLexCacheStores.Add(1)
+}
+
+func perfRecordSyntheticReplayGapLexCacheCapSkip() {
+	perfCounters.syntheticReplayGapLexCacheCapSkips.Add(1)
+}
+
+func perfRecordSyntheticReplayStackPush() {
+	perfCounters.syntheticReplayStackPushCalls.Add(1)
+}
+
+func perfRecordSyntheticReplayStackInternHit() {
+	perfCounters.syntheticReplayStackInternHits.Add(1)
+}
+
+func perfRecordSyntheticReplayCloseMemoHit() {
+	perfCounters.syntheticReplayCloseMemoHits.Add(1)
+}
+
+func perfRecordSyntheticReplayCloseMemoMiss() {
+	perfCounters.syntheticReplayCloseMemoMisses.Add(1)
 }
 
 func perfRecordCloneTreeCall() {
