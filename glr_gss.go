@@ -124,12 +124,16 @@ func (n *gssNode) setExtraLink(i int, link gssMainLink) {
 		panic("gssNode.setExtraLink: index out of range")
 	}
 	unsafe.Slice(n.extraLinks, int(n.extraLinkCount))[i] = link
+	// An extra-link rewrite can change the all-links cleanliness result.
+	// Clear the local result before another merge check reads it.
+	n.cleanZeroState = gssCleanZeroUnknown
 }
 
 func (n *gssNode) appendExtraLink(link gssMainLink) {
 	if n == nil || int(n.extraLinkCount) >= maxMainLinkCount-1 {
 		panic("gssNode.appendExtraLink: link limit exceeded")
 	}
+	n.cleanZeroState = gssCleanZeroUnknown
 	count := int(n.extraLinkCount)
 	capacity := int(n.extraLinkCap)
 	if count < capacity && n.extraLinks != nil {

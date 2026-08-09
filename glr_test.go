@@ -4197,6 +4197,9 @@ func TestGSSNodesCanMergeAllowsCleanPackedPredecessorLinks(t *testing.T) {
 	errorEntry := newStackEntryNode(2, NewLeafNode(99, true, 0, 1, Point{}, Point{Column: 1}))
 	stackEntryNode(errorEntry).setHasError(true)
 	withExtra.setExtraLink(0, gssMainLink{prev: extraPrev, entry: errorEntry})
+	if _, ok := lookupCleanZeroNodeState(withExtra, gssPrefixAggGen.Load()); ok {
+		t.Fatal("extra-link rewrite retained the clean-zero node result")
+	}
 	if gssNodesCanMerge(withExtra, candidate) {
 		t.Fatal("gssNodesCanMerge = true for error-bearing packed predecessor")
 	}
