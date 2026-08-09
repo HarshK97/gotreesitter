@@ -1321,7 +1321,11 @@ func (p *Parser) cNodeVisibleSubtreeCount(n *Node) int {
 		return 0
 	}
 	if p != nil && len(p.cNodeMemoCache) != 0 {
-		if slot := p.cNodeMemoSlot(n); slot.hasVis && slot.ver == n.equivVersion {
+		slot := p.cNodeMemoPrimaryHit(n)
+		if slot == nil {
+			slot = p.cNodeMemoSlot(n)
+		}
+		if slot.hasVis && slot.ver == n.equivVersion {
 			return int(slot.visCount)
 		}
 	}
@@ -1336,7 +1340,10 @@ func (p *Parser) cNodeVisibleSubtreeCount(n *Node) int {
 		// Re-fetch the slot: the recursive calls above may have evicted n's
 		// slot (a child's pointer hashing into the same 2-way set), so the
 		// pointer captured before recursing could now be stale.
-		slot := p.cNodeMemoSlot(n)
+		slot := p.cNodeMemoPrimaryHit(n)
+		if slot == nil {
+			slot = p.cNodeMemoSlot(n)
+		}
 		if slot.ver != n.equivVersion {
 			*slot = cNodeMemoCacheEntry{
 				node:  uintptr(unsafe.Pointer(n)),
@@ -1696,6 +1703,18 @@ func (p *Parser) beginCNodeMemoEpoch() {
 	p.cNodeMemoEpoch++
 }
 
+// cNodeMemoPrimaryHit checks the primary cache way. Callers must provide a
+// non-nil parser and node with a provisioned cache.
+func (p *Parser) cNodeMemoPrimaryHit(n *Node) *cNodeMemoCacheEntry {
+	ptr := uintptr(unsafe.Pointer(n))
+	idx := cNodeMemoCacheIndex(ptr, len(p.cNodeMemoCache)>>1)
+	primary := &p.cNodeMemoCache[idx]
+	if primary.epoch == p.cNodeMemoEpoch && primary.node == ptr {
+		return primary
+	}
+	return nil
+}
+
 // cNodeMemoSlot returns the writable 2-way set-associative slot for node n.
 // A current-epoch miss evicts the primary into the victim half; stale-epoch
 // occupants are ignored. This mirrors map[*Node]cNodeMemoEntry lookup
@@ -1901,7 +1920,11 @@ func (p *Parser) cErrRegionPostAbsorb(pre cErrRegionAbsorbPre, added ...*Node) {
 	if debugRecoveryIncrementalCost {
 		p.debugCheckErrRegionIncremental(n, cost, vis)
 	}
-	if slot := p.cNodeMemoSlot(n); slot != nil {
+	slot := p.cNodeMemoPrimaryHit(n)
+	if slot == nil {
+		slot = p.cNodeMemoSlot(n)
+	}
+	if slot != nil {
 		entry := cNodeMemoCacheEntry{
 			node:    uintptr(unsafe.Pointer(n)),
 			ver:     n.equivVersion,
@@ -1982,7 +2005,11 @@ func (p *Parser) cNodeErrorCost(n *Node) uint32 {
 	if len(p.cNodeMemoCache) == 0 {
 		return cNodeErrorCostLang(p.language, n)
 	}
-	if slot := p.cNodeMemoSlot(n); slot.hasCost && slot.ver == n.equivVersion {
+	slot := p.cNodeMemoPrimaryHit(n)
+	if slot == nil {
+		slot = p.cNodeMemoSlot(n)
+	}
+	if slot.hasCost && slot.ver == n.equivVersion {
 		return slot.cost
 	}
 	if n.isMissing() && len(n.children) == 0 {
@@ -2021,7 +2048,10 @@ func (p *Parser) cNodeErrorCost(n *Node) uint32 {
 	// Re-fetch the slot: the recursive p.cNodeErrorCost(c) calls above may
 	// have evicted n's slot (a child's pointer hashing into the same 2-way
 	// set), so the pointer captured before recursing could now be stale.
-	slot := p.cNodeMemoSlot(n)
+	slot = p.cNodeMemoPrimaryHit(n)
+	if slot == nil {
+		slot = p.cNodeMemoSlot(n)
+	}
 	if slot.ver != n.equivVersion {
 		*slot = cNodeMemoCacheEntry{
 			node:  uintptr(unsafe.Pointer(n)),
@@ -2045,7 +2075,10 @@ func (p *Parser) cNodeErrorCostAndVisibleSubtreeCount(n *Node) (uint32, int) {
 	}
 
 	version := n.equivVersion
-	slot := p.cNodeMemoSlot(n)
+	slot := p.cNodeMemoPrimaryHit(n)
+	if slot == nil {
+		slot = p.cNodeMemoSlot(n)
+	}
 	if slot.ver == version {
 		switch {
 		case slot.hasCost && slot.hasVis:
@@ -2103,7 +2136,10 @@ func (p *Parser) cNodeErrorCostAndVisibleSubtreeCount(n *Node) (uint32, int) {
 
 	// Child recursion can evict the original slot. Resolve it again before the
 	// write and preserve any matching partial entry.
-	slot = p.cNodeMemoSlot(n)
+	slot = p.cNodeMemoPrimaryHit(n)
+	if slot == nil {
+		slot = p.cNodeMemoSlot(n)
+	}
 	if slot.ver != version {
 		*slot = cNodeMemoCacheEntry{
 			node:  uintptr(unsafe.Pointer(n)),
@@ -2132,7 +2168,7 @@ func (p *Parser) cNodeErrorCostAndVisibleSubtreeCount(n *Node) (uint32, int) {
 // merge / competition paths issue hundreds of such calls per token, which
 // dominates error-region parses even with warm per-node memos.
 //
-// The on-node aggregates below (gssNode.aggGen/aggCost/aggVis/aggVisValid)
+// The on-node aggregates below (gssNode.aggGen/aggCost/aggVis/aggValid)
 // restore C's shape: per gssNode, the cumulative aggregates of the prev-chain
 // prefix root..node inclusive. gssNode prev/entry links are write-once at
 // allocation except setGSSMainLink (link-0 rewrite), and node payload
@@ -2146,7 +2182,7 @@ func (p *Parser) cNodeErrorCostAndVisibleSubtreeCount(n *Node) (uint32, int) {
 // ---------------------------------------------------------------------------
 
 // gssPrefixAggGen is the global invalidation generation for the GSS prefix
-// aggregates stored on gssNode (aggGen/aggCost/aggVis/aggVisValid). Bumped by
+// aggregates stored on gssNode (aggGen/aggCost/aggVis/aggValid). Bumped by
 // recovery-relevant nodeBumpEquivVersion mutations (tree.go) and link-0
 // rewrites that change the predecessor or full-Node payload (glr.go). Global
 // rather than per-parser because nodeBumpEquivVersion has no parser in scope;
@@ -2183,7 +2219,7 @@ func (p *Parser) cStackPrefixAgg(head *gssNode) (uint32, int) {
 	path := p.cPrefixPath[:0]
 	gn := head
 	for gn != nil {
-		if gn.aggGen == gen && gn.aggVisValid {
+		if gn.aggGen == gen && gn.aggValid&(gssAggCostValid|gssAggVisValid) == (gssAggCostValid|gssAggVisValid) {
 			cost, vis = gn.aggCost, gn.aggVis
 			break
 		}
@@ -2197,8 +2233,11 @@ func (p *Parser) cStackPrefixAgg(head *gssNode) (uint32, int) {
 			cost += nodeCost
 			vis += int32(nodeVisible)
 		}
+		if gn.aggGen != gen {
+			gn.cleanZeroState = gssCleanZeroUnknown
+		}
 		gn.aggGen = gen
-		gn.aggVisValid = true
+		gn.aggValid = gssAggCostValid | gssAggVisValid
 		gn.aggCost = cost
 		gn.aggVis = vis
 	}
@@ -2216,7 +2255,7 @@ func cStackPrefixCostForMerge(scratch *glrMergeScratch, lang *Language, head *gs
 	path := scratch.cPrefixPath[:0]
 	gn := head
 	for gn != nil {
-		if gn.aggGen == gen {
+		if gn.aggGen == gen && gn.aggValid&gssAggCostValid != 0 {
 			cost = gn.aggCost
 			break
 		}
@@ -2228,8 +2267,11 @@ func cStackPrefixCostForMerge(scratch *glrMergeScratch, lang *Language, head *gs
 		if n := stackEntryNode(gn.entry); n != nil {
 			cost += cNodeErrorCostLangWithScratch(scratch, lang, n)
 		}
+		if gn.aggGen != gen {
+			gn.cleanZeroState = gssCleanZeroUnknown
+		}
 		gn.aggGen = gen
-		gn.aggVisValid = false
+		gn.aggValid = gssAggCostValid
 		gn.aggCost = cost
 	}
 	scratch.cPrefixPath = path

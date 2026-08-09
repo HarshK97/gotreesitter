@@ -406,6 +406,13 @@ type gssCleanZeroErrorCacheEntry struct {
 	clean       bool
 }
 
+const (
+	gssCleanZeroUnknown uint8 = iota
+	gssCleanZeroClean
+	gssCleanZeroDirty
+	gssCleanZeroVisiting
+)
+
 type glrEntryScratch struct {
 	slabs          []stackEntrySlab
 	slabCursor     int
@@ -1154,10 +1161,9 @@ func (s *glrMergeScratch) bumpGSSPointerEpoch() {
 	s.gssPointerEpoch++
 }
 
-// invalidateGSSPointersForReuse drops every merge-scratch reference whose
-// identity is tied to a gssNode address, then advances the epochs guarding the
-// uintptr-keyed caches. Callers may recycle GSS slab slots only after this and
-// after clearing any live glrStack slices that used the old graph.
+// invalidateGSSPointersForReuse invalidates merge-scratch state whose identity
+// is tied to a gssNode address. Callers may recycle GSS slab slots only after
+// this and after clearing live glrStack slices that used the old graph.
 func (s *glrMergeScratch) invalidateGSSPointersForReuse() {
 	if s == nil {
 		return
@@ -1400,6 +1406,38 @@ func (s *glrMergeScratch) beginCleanZeroEpoch() {
 	s.cleanZeroEpoch++
 }
 
+// GSS node cleanliness remains stable between recovery-relevant node changes.
+// Merge paths add only clean links. aggGen invalidates payload mutations, and
+// every allocation or slab recycle resets the state.
+func lookupCleanZeroNodeState(n *gssNode, gen uint64) (bool, bool) {
+	if n == nil || n.aggGen != gen {
+		return false, false
+	}
+	switch n.cleanZeroState {
+	case gssCleanZeroClean:
+		return true, true
+	case gssCleanZeroDirty:
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func storeCleanZeroNodeState(n *gssNode, gen uint64, clean bool) {
+	if n == nil {
+		return
+	}
+	if n.aggGen != gen {
+		n.aggGen = gen
+		n.aggValid = 0
+	}
+	if clean {
+		n.cleanZeroState = gssCleanZeroClean
+	} else {
+		n.cleanZeroState = gssCleanZeroDirty
+	}
+}
+
 // ensureMergeHotCaches provisions the fixed-size merge-attempt caches. Called
 // only for persistent (pooled, per-parse) scratches so their cost amortizes
 // across the whole parse; one-shot local scratches never allocate these.
@@ -1410,10 +1448,6 @@ func (s *glrMergeScratch) ensureMergeHotCaches() {
 	if len(s.shapePrefixCache) == 0 {
 		s.shapePrefixCache = make([]glrShapePrefixCacheEntry, glrShapePrefixCacheSize)
 		s.shapePrefixBytes = int64(cap(s.shapePrefixCache)) * int64(unsafe.Sizeof(glrShapePrefixCacheEntry{}))
-	}
-	if len(s.cleanZeroFront) == 0 {
-		s.cleanZeroFront = make([]glrCleanZeroFrontCacheEntry, glrCleanZeroFrontCacheSize)
-		s.cleanZeroBytes = int64(cap(s.cleanZeroFront)) * int64(unsafe.Sizeof(glrCleanZeroFrontCacheEntry{}))
 	}
 	if len(s.spineEquivCache) == 0 {
 		s.spineEquivCache = make([]glrSpineEquivCacheEntry, glrSpineEquivCacheSize)
@@ -3530,35 +3564,16 @@ func gssNodeCleanZeroErrorAllLinksWithScratch(scratch *glrMergeScratch, n *gssNo
 	if scratch.cleanZeroEpoch == 0 {
 		scratch.beginCleanZeroEpoch()
 	}
-	if clean, ok := lookupCleanZeroFrontCache(scratch, n); ok {
+	cleanGen := gssPrefixAggGen.Load()
+	if clean, ok := lookupCleanZeroNodeState(n, cleanGen); ok {
 		return clean
 	}
-	if entry, ok := scratch.cleanZeroCache[n]; ok && entry.resultEpoch == scratch.cleanZeroEpoch {
-		storeCleanZeroFrontCache(scratch, n, entry.clean)
-		return entry.clean
-	}
-	if scratch.cleanZeroCache == nil {
-		scratch.cleanZeroCache = make(map[*gssNode]gssCleanZeroErrorCacheEntry, 64)
-	}
-	if scratch.cleanZeroScan == ^uint32(0) {
-		for node, entry := range scratch.cleanZeroCache {
-			entry.scanEpoch = 0
-			scratch.cleanZeroCache[node] = entry
-		}
-		scratch.cleanZeroScan = 0
-	}
-	scratch.cleanZeroScan++
-	scanEpoch := scratch.cleanZeroScan
 	frames := scratch.cleanZeroFrames[:0]
 	frames = append(frames, gssCleanZeroFrame{node: n})
 	cacheFailure := func() bool {
 		for _, frame := range frames {
-			scratch.cleanZeroCache[frame.node] = gssCleanZeroErrorCacheEntry{
-				resultEpoch: scratch.cleanZeroEpoch,
-				clean:       false,
-			}
+			storeCleanZeroNodeState(frame.node, cleanGen, false)
 		}
-		storeCleanZeroFrontCache(scratch, n, false)
 		scratch.cleanZeroFrames = frames[:0]
 		return false
 	}
@@ -3567,26 +3582,26 @@ func gssNodeCleanZeroErrorAllLinksWithScratch(scratch *glrMergeScratch, n *gssNo
 		frame := &frames[last]
 		cur := frame.node
 		if frame.nextLink == 0 {
-			entry, ok := scratch.cleanZeroCache[cur]
-			if ok && entry.resultEpoch == scratch.cleanZeroEpoch {
-				if !entry.clean {
-					return cacheFailure()
+			state := gssCleanZeroUnknown
+			if cur.aggGen == cleanGen {
+				state = cur.cleanZeroState
+			}
+			switch state {
+			case gssCleanZeroDirty:
+				return cacheFailure()
+			case gssCleanZeroClean, gssCleanZeroVisiting:
+				frames = frames[:last]
+				continue
+			default:
+				if cur.aggGen != cleanGen {
+					cur.aggGen = cleanGen
+					cur.aggValid = 0
 				}
-				frames = frames[:last]
-				continue
+				cur.cleanZeroState = gssCleanZeroVisiting
 			}
-			if ok && entry.scanEpoch == scanEpoch {
-				frames = frames[:last]
-				continue
-			}
-			entry.scanEpoch = scanEpoch
-			scratch.cleanZeroCache[cur] = entry
 		}
 		if frame.nextLink == cur.linkCount() {
-			scratch.cleanZeroCache[cur] = gssCleanZeroErrorCacheEntry{
-				resultEpoch: scratch.cleanZeroEpoch,
-				clean:       true,
-			}
+			storeCleanZeroNodeState(cur, cleanGen, true)
 			frames = frames[:last]
 			continue
 		}
@@ -3600,7 +3615,6 @@ func gssNodeCleanZeroErrorAllLinksWithScratch(scratch *glrMergeScratch, n *gssNo
 			frames = append(frames, gssCleanZeroFrame{node: prev})
 		}
 	}
-	storeCleanZeroFrontCache(scratch, n, true)
 	scratch.cleanZeroFrames = frames[:0]
 	return true
 }
