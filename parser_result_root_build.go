@@ -440,7 +440,7 @@ func (b *resultRootBuild) syntheticRootReplayBridgeGap(frontier []syntheticRootR
 	for _, frame := range frontier {
 		cursors = appendSyntheticRootReplayGapCursor(cursors, frame, startByte, startPoint)
 	}
-	var advanceScratch [syntheticRootReplayMaxFrontier]syntheticRootReplayFrame
+	var frameScratch [2][syntheticRootReplayMaxFrontier]syntheticRootReplayFrame
 	for step := 0; step < syntheticRootReplayMaxGapTokens; step++ {
 		allAtEnd := true
 		nextCursors := cursorScratch[(step+1)&1][:0]
@@ -462,7 +462,7 @@ func (b *resultRootBuild) syntheticRootReplayBridgeGap(frontier []syntheticRootR
 				}
 				continue
 			}
-			advanced := b.syntheticRootReplayAdvanceToken([]syntheticRootReplayFrame{cursor.frame}, tok, advanceScratch[:0])
+			advanced := b.syntheticRootReplayAdvanceToken([]syntheticRootReplayFrame{cursor.frame}, tok, frameScratch[0][:0], frameScratch[1][:0])
 			if len(advanced) == 0 {
 				if syntheticRootReplayCanSkipGapByte(b.source[cursor.byte]) {
 					nextByte := cursor.byte + 1
@@ -551,12 +551,12 @@ func (b *resultRootBuild) syntheticRootReplayLexGapTokenForState(state StateID, 
 	return tok, true
 }
 
-func (b *resultRootBuild) syntheticRootReplayAdvanceToken(frontier []syntheticRootReplayFrame, tok Token, scratch []syntheticRootReplayFrame) []syntheticRootReplayFrame {
+func (b *resultRootBuild) syntheticRootReplayAdvanceToken(frontier []syntheticRootReplayFrame, tok Token, advanceScratch, closeScratch []syntheticRootReplayFrame) []syntheticRootReplayFrame {
 	if len(frontier) == 0 || tok.Symbol == 0 {
 		return nil
 	}
 	closed := b.syntheticRootReplayCloseLookahead(frontier, tok.Symbol)
-	advanced := scratch[:0]
+	advanced := advanceScratch[:0]
 	for _, frame := range closed {
 		top, ok := b.syntheticRootReplayTopState(frame)
 		if !ok {
@@ -579,6 +579,9 @@ func (b *resultRootBuild) syntheticRootReplayAdvanceToken(frontier []syntheticRo
 	}
 	if len(advanced) == 0 {
 		return nil
+	}
+	if len(advanced) > 1 {
+		return b.syntheticRootReplayCloseLookaheadInto(closeScratch, advanced, 0)
 	}
 	return b.syntheticRootReplayCloseEOF(advanced)
 }
@@ -629,6 +632,11 @@ func (b *resultRootBuild) syntheticRootReplayCloseLookahead(frontier []synthetic
 
 func (b *resultRootBuild) syntheticRootReplayCloseLookaheadUncached(frontier []syntheticRootReplayFrame, lookahead Symbol) []syntheticRootReplayFrame {
 	closed := make([]syntheticRootReplayFrame, 0, len(frontier))
+	return b.syntheticRootReplayCloseLookaheadInto(closed, frontier, lookahead)
+}
+
+func (b *resultRootBuild) syntheticRootReplayCloseLookaheadInto(closed, frontier []syntheticRootReplayFrame, lookahead Symbol) []syntheticRootReplayFrame {
+	closed = closed[:0]
 	for _, frame := range frontier {
 		closed = appendSyntheticRootReplayFrame(closed, frame)
 	}
