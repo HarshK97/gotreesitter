@@ -27,6 +27,11 @@ type parseStopPoller struct {
 
 const parseStopPollMask = 1023
 
+// Materialization checks can run many times inside one parser iteration.
+// Poll the deadline every 64 checks. Check sticky stops and cancellation on
+// every call.
+const materializationDeadlinePollMask = 63
+
 func (p *parseStopPoller) poll() ParseStopReason {
 	if p == nil {
 		return ParseStopNone
@@ -123,6 +128,10 @@ func (p *Parser) activeParseStopCheck() parseStopCheck {
 }
 
 func (p *Parser) activeParseStopReason() ParseStopReason {
+	return p.activeParseStopReasonWithDeadline(true)
+}
+
+func (p *Parser) activeParseStopReasonWithDeadline(checkDeadline bool) ParseStopReason {
 	if p == nil {
 		return ParseStopNone
 	}
@@ -135,10 +144,23 @@ func (p *Parser) activeParseStopReason() ParseStopReason {
 	if flag := p.cancellationFlag; flag != nil && atomic.LoadUint32(flag) != 0 {
 		return p.markActiveParseStopped(ParseStopCancelled)
 	}
-	if !p.parseDeadline.IsZero() && !time.Now().Before(p.parseDeadline) {
+	if checkDeadline && !p.parseDeadline.IsZero() && !time.Now().Before(p.parseDeadline) {
 		return p.markActiveParseStopped(ParseStopTimeout)
 	}
 	return ParseStopNone
+}
+
+func (p *Parser) materializationParseStopReason() ParseStopReason {
+	if p == nil {
+		return ParseStopNone
+	}
+	scratch := p.budgetScratch
+	if scratch == nil || p.parseDeadline.IsZero() {
+		return p.activeParseStopReason()
+	}
+	count := scratch.materializeStopPollCount
+	scratch.materializeStopPollCount++
+	return p.activeParseStopReasonWithDeadline(count&materializationDeadlinePollMask == 0)
 }
 
 func (p *Parser) markActiveParseStopped(reason ParseStopReason) ParseStopReason {

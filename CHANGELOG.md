@@ -7,6 +7,13 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Changed
+
+- Deadline checks during result materialization now read the wall clock every
+  64 checkpoints. Cancellation and sticky stop checks still run at every
+  checkpoint. The 20-seed combined benchmark reduced timed Swift recovery by
+  3.70% and timed Elixir recovery by 3.52%.
+
 ## [0.49.0] - 2026-08-13
 
 ### Removed

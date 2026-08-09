@@ -2182,8 +2182,17 @@ func wireParentLinksWithScratchUntil(
 		stack = local[:0]
 	}
 	stack = append(stack, root)
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		if scratch != nil {
+			*scratch = stack[:0]
+		}
+		if errorSummary != nil && *errorSummary != resultErrorSummaryPresent {
+			*errorSummary = resultErrorSummaryUnknown
+		}
+		return false
+	}
 	for len(stack) > 0 {
-		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		if reason := p.materializationParseStopReason(); parseStopReasonIsTerminal(reason) {
 			if scratch != nil {
 				*scratch = stack[:0]
 			}
@@ -2210,13 +2219,11 @@ func wireParentLinksWithScratchUntil(
 	if scratch != nil {
 		*scratch = stack[:0]
 	}
-	if errorSummary != nil {
-		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-			if *errorSummary != resultErrorSummaryPresent {
-				*errorSummary = resultErrorSummaryUnknown
-			}
-			return false
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		if errorSummary != nil && *errorSummary != resultErrorSummaryPresent {
+			*errorSummary = resultErrorSummaryUnknown
 		}
+		return false
 	}
 	return true
 }
