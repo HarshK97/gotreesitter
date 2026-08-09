@@ -103,7 +103,7 @@ output_dir=$(dirname -- "$output_path")
 mkdir -p -- "$output_dir"
 
 # Keep this set aligned across baseline and candidate runs.
-benchmark_re='^(BenchmarkGoParse(FullDFA|CoreDFA|IncrementalSingleByteEditDFA|IncrementalNoEditDFA|IncrementalRandomSingleByteEdit)|BenchmarkDiagnosticParserCore(CorridorSchedulerOnly|WarmSchedulerOnlyQueryCompile|WarmMaterializationOnlyQueryCompile)|BenchmarkParserCoreFreshFull(Canonical|SelectedStoreCanonical))'
+benchmark_re='^(BenchmarkGoParse(FullDFA|CoreDFA|IncrementalSingleByteEditDFA|IncrementalNoEditDFA|IncrementalRandomSingleByteEdit)|BenchmarkKDLRecoveryGarbageSuffix|BenchmarkExpectedRootCanFrameLongRepeat|BenchmarkDiagnosticParserCore(CorridorSchedulerOnly|WarmSchedulerOnlyQueryCompile|WarmMaterializationOnlyQueryCompile)|BenchmarkParserCoreFreshFull(Canonical|SelectedStoreCanonical))'
 
 printf 'randomized benchmark output: %s\n' "$output_path" >&2
 printf 'seeds: %s..%s\n' "$seed_start" "$((seed_start + runs - 1))" >&2

@@ -7,7 +7,7 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
-## [0.49.0] - 2026-08-04
+## [0.49.0] - 2026-08-13
 
 ### Removed
 
@@ -22,6 +22,24 @@ for tags and release notes while still in `0.x`.
   the exhaustive C-oracle fresh and incremental parity sweep stays green.
 
 ### Added
+
+- Opt-in Lean 4 support now provides a grammar blob, scanner, highlights,
+  outline tags, and focused corpus tests in `grammars/lean`. The default
+  206-language registry remains unchanged.
+
+- The V10 fleet harness now runs bounded Google Cloud spot workers across all
+  registered languages. It enforces wall, memory, disk, and automatic deletion
+  limits. Accepted epoch `20260808T202958Z-v10-full-5003ffba` completed all
+  1,435 measurements for 206 languages.
+
+- `scripts/run_randomized_benchmarks.sh` now runs one process for each shuffle
+  seed and randomizes benchmark order. The standard comparison uses 20 seeds,
+  `GOMAXPROCS=1`, a 750 millisecond benchmark time, and memory reporting.
+
+- Merge-event census instrumentation now records merge decisions and refusal
+  gates on the production and C-oracle paths. Its first constructed receipt
+  reports 15 Go merges against 191 C merges across 104 sources. It records no
+  source where Go merges more often than C.
 
 - A regression guard covers issue #660.
   It checks anonymous comma nodes in Python imports and subscripts on both
@@ -51,6 +69,17 @@ for tags and release notes while still in `0.x`.
   candidate route leaves `ParseRuntime().NormalizationPasses` nil.
 
 ### Fixed
+
+- JavaScript, TypeScript, and TSX scanners now bind external results through
+  each language's positional symbol table. Regenerated blobs no longer mistype
+  shifted external symbols.
+
+- The full-parse retry selector no longer releases an incumbent when a
+  candidate aliases it. This restores selected roots across retry and compact
+  fallback paths.
+
+- The accepted-error retry ladder now honors explicit stack and merge caps.
+  It also keeps bounded pass counts and configured wall budgets across retries.
 
 - Kotlin published an `ERROR` root instead of `source_file` when a parse used
   `Parser.SetIncludedRanges` with more than one range and the parse entered
@@ -149,6 +178,24 @@ for tags and release notes while still in `0.x`.
   C reference parser on real source files.
 
 ### Changed
+
+- The guarded parser-core bytecode experiment now supports `REDUCE_CHAIN` and
+  `REDUCE_SHIFT`. The corridor remains off by default. Each superinstruction
+  also requires its own experiment gate.
+
+- Synthetic-root replay now hashes frames and gap cursors, memoizes gap tokens
+  and advance transitions, reuses scratch, and pools external token sources.
+  Paged advance and close streams bound retained memo storage.
+  Advance memoization cut the hard Elixir target latency by 22.62 percent.
+  Close paging cut bytes per operation by 5.15 percent and allocations by
+  60.48 percent. Its latency remained neutral across 20 balanced pairs. All
+  16 combined-suite latency rows also remained neutral.
+
+- Exact C and V runtime profiles now avoid certified duplicate retry work.
+  Other grammars keep the conservative retry ladder.
+
+- Performance counters now expose maximum resident memory, replay closure
+  distribution, memo capacity skips, and parser stop attribution.
 
 - The compact fresh-path route now skips two tail steps for a language with
   no live result-compatibility entry: the C-recovery-swallow resolver and

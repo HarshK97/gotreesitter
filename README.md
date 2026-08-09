@@ -770,10 +770,14 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.49.0**. It consolidates parser correctness,
-reference parity, recovery bounds, and compact-route work since v0.48.1.
-It also includes the issue #660 field-projection correction and its
-regression guard.
+The current release is **v0.49.0**. Publication remains pending the exact
+commit CI run and the governed soak. The latest immutable published release is
+**v0.48.1**.
+
+This candidate consolidates parser correctness, recovery bounds, parser-core
+bytecode, replay caches, randomized benchmarks, and V10 fleet controls. It
+also adds opt-in Lean 4 support and scanner corrections for JavaScript,
+TypeScript, and TSX.
 
 Detailed shipped evidence lives in [CHANGELOG.md](CHANGELOG.md). Planned minor
 releases are batched on Thursdays; the immutable-tag process and exceptions are
