@@ -304,6 +304,30 @@ func TestSyntheticRootReplayStackCanonicalPushPop(t *testing.T) {
 	}
 }
 
+func TestSyntheticRootReplayFrameSetScratch(t *testing.T) {
+	var scratch syntheticRootReplayFrameSetScratch
+	frames := make([]syntheticRootReplayFrame, 0, syntheticRootReplayMaxFrontier)
+	for top := uint32(1); top <= syntheticRootReplayMaxFrontier; top++ {
+		frames = scratch.append(frames, syntheticRootReplayFrame{top: top})
+	}
+	if got, want := len(frames), syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("frame set length = %d, want %d", got, want)
+	}
+	for top := uint32(1); top <= syntheticRootReplayMaxFrontier; top++ {
+		frames = scratch.append(frames, syntheticRootReplayFrame{top: top})
+	}
+	if got, want := len(frames), syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("frame set length after duplicates = %d, want %d", got, want)
+	}
+
+	scratch.reset()
+	frames = frames[:0]
+	frames = scratch.append(frames, syntheticRootReplayFrame{top: syntheticRootReplayMaxFrontier + 1})
+	if got, want := len(frames), 1; got != want {
+		t.Fatalf("reset frame set length = %d, want %d", got, want)
+	}
+}
+
 func TestSyntheticRootReplayCloseMemoPreservesCanonicalClosure(t *testing.T) {
 	lang := newRootFrameReplayReduceLanguage()
 	parser := newRootFrameReplayParser(lang)
