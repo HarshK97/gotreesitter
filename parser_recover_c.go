@@ -1561,12 +1561,11 @@ const (
 )
 
 func cNodeMemoCacheIndex(p uintptr, setCount int) int {
-	h := uint64(p)
-	h ^= h >> 33
-	h *= 0xff51afd7ed558ccd
-	h ^= h >> 33
-	h *= 0xc4ceb9fe1a85ec53
-	h ^= h >> 33
+	// Nodes come from aligned slabs. Remove the alignment zeros, then fold
+	// slab-address bits into the set index without multiplication.
+	h := uint64(p / unsafe.Alignof(Node{}))
+	h ^= h >> 17
+	h ^= h >> 9
 	return int(h&uint64(setCount-1)) << 1
 }
 
