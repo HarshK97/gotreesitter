@@ -1680,7 +1680,9 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 		t.Release()
 	}
 	replaceBest := func(best **Tree, candidate *Tree) {
-		if candidate == nil {
+		// A candidate can already be the incumbent. Re-ranking and releasing it
+		// would clear the selected tree.
+		if candidate == nil || candidate == *best {
 			return
 		}
 		if preferRetryTree(p, candidate, *best) {

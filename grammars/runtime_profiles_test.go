@@ -85,7 +85,9 @@ func TestBuiltinRuntimeProfilesStayNarrow(t *testing.T) {
 	// language's line-continuation escape byte (Language.LineContinuationEscapeByte)
 	// so bytesAreParserPadding classifies backtick+newline as padding, matching
 	// the C oracle (spore.2026-08-02.birch-g.powershell-bisect).
-	if got, want := len(builtinLanguageRuntimeProfiles), 46; got != want {
+	// 47 = the prior 46 plus the V entry. It reuses a certified clean wide
+	// result during the accepted-error retry ladder.
+	if got, want := len(builtinLanguageRuntimeProfiles), 47; got != want {
 		t.Fatalf("builtinLanguageRuntimeProfiles has %d entries, want %d", got, want)
 	}
 	lang := &gotreesitter.Language{ExternalScanner: KotlinExternalScanner{}}
