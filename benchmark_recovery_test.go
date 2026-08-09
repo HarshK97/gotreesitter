@@ -157,20 +157,22 @@ func BenchmarkRecoveryCorpusFile(b *testing.B) {
 	}
 
 	lang := entry.Language()
+	originalProfile := lang.FullParseAcceptedErrorRetryProfile
+	defer func() {
+		lang.FullParseAcceptedErrorRetryProfile = originalProfile
+	}()
 	switch mode := strings.TrimSpace(os.Getenv("GTS_RECOVERY_CORPUS_RETRY_MODE")); mode {
 	case "", "runtime":
 	case "generic":
-		clone := *lang
-		clone.FullParseAcceptedErrorRetryProfile = gotreesitter.FullParseAcceptedErrorRetryProfile{}
-		lang = &clone
+		lang.FullParseAcceptedErrorRetryProfile = gotreesitter.FullParseAcceptedErrorRetryProfile{}
 	case "skip-complete":
-		clone := *lang
-		clone.FullParseAcceptedErrorRetryProfile.SkipCompleteAcceptedErrorRetry = true
-		lang = &clone
+		profile := lang.FullParseAcceptedErrorRetryProfile
+		profile.SkipCompleteAcceptedErrorRetry = true
+		lang.FullParseAcceptedErrorRetryProfile = profile
 	case "skip-fresh":
-		clone := *lang
-		clone.FullParseAcceptedErrorRetryProfile.SkipFreshCompleteAcceptedErrorRetry = true
-		lang = &clone
+		profile := lang.FullParseAcceptedErrorRetryProfile
+		profile.SkipFreshCompleteAcceptedErrorRetry = true
+		lang.FullParseAcceptedErrorRetryProfile = profile
 	default:
 		b.Fatalf("invalid GTS_RECOVERY_CORPUS_RETRY_MODE %q", mode)
 	}
