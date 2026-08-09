@@ -93,6 +93,9 @@ func perfRecordSyntheticReplayStackPush()            {}
 func perfRecordSyntheticReplayStackInternHit()       {}
 func perfRecordSyntheticReplayCloseMemoHit()         {}
 func perfRecordSyntheticReplayCloseMemoMiss()        {}
+func perfRecordSyntheticReplayCloseMemoStore()       {}
+func perfRecordSyntheticReplayCloseMemoCapSkip()     {}
+func perfRecordSyntheticReplayCloseOutput(int, bool) {}
 func perfRecordCloneTreeCall()                       {}
 func perfRecordCloneTreePublicNode()                 {}
 func perfRecordCloneTreeFinalRefs(int)               {}

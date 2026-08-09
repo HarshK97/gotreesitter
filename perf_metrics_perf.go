@@ -129,6 +129,18 @@ type perfCountersData struct {
 	syntheticReplayStackInternHits       atomic.Uint64
 	syntheticReplayCloseMemoHits         atomic.Uint64
 	syntheticReplayCloseMemoMisses       atomic.Uint64
+	syntheticReplayCloseMemoStores       atomic.Uint64
+	syntheticReplayCloseMemoCapSkips     atomic.Uint64
+	syntheticReplayCloseZeroOutputs      atomic.Uint64
+	syntheticReplayCloseSingleOutputs    atomic.Uint64
+	syntheticReplayCloseMultiOutputs     atomic.Uint64
+	syntheticReplayCloseOutputPeak       atomic.Uint64
+	syntheticReplayCloseOutputFrames     atomic.Uint64
+	syntheticReplayCloseUniqueOutputs    atomic.Uint64
+	syntheticReplayCloseUniqueFrames     atomic.Uint64
+	syntheticReplayCloseUniqueSingle     atomic.Uint64
+	syntheticReplayCloseUniqueMulti      atomic.Uint64
+	syntheticReplayCloseUniquePeak       atomic.Uint64
 	mergeStacksInHist                    [perfMergeHistBins]atomic.Uint64
 	mergeAliveHist                       [perfMergeHistBins]atomic.Uint64
 	mergeOutHist                         [perfMergeHistBins]atomic.Uint64
@@ -265,6 +277,18 @@ func ResetPerfCounters() {
 	perfCounters.syntheticReplayStackInternHits.Store(0)
 	perfCounters.syntheticReplayCloseMemoHits.Store(0)
 	perfCounters.syntheticReplayCloseMemoMisses.Store(0)
+	perfCounters.syntheticReplayCloseMemoStores.Store(0)
+	perfCounters.syntheticReplayCloseMemoCapSkips.Store(0)
+	perfCounters.syntheticReplayCloseZeroOutputs.Store(0)
+	perfCounters.syntheticReplayCloseSingleOutputs.Store(0)
+	perfCounters.syntheticReplayCloseMultiOutputs.Store(0)
+	perfCounters.syntheticReplayCloseOutputPeak.Store(0)
+	perfCounters.syntheticReplayCloseOutputFrames.Store(0)
+	perfCounters.syntheticReplayCloseUniqueOutputs.Store(0)
+	perfCounters.syntheticReplayCloseUniqueFrames.Store(0)
+	perfCounters.syntheticReplayCloseUniqueSingle.Store(0)
+	perfCounters.syntheticReplayCloseUniqueMulti.Store(0)
+	perfCounters.syntheticReplayCloseUniquePeak.Store(0)
 	for i := range perfCounters.mergeStacksInHist {
 		perfCounters.mergeStacksInHist[i].Store(0)
 	}
@@ -430,6 +454,18 @@ func PerfCountersSnapshot() PerfCounters {
 	out.SyntheticReplayStackInternHits = perfCounters.syntheticReplayStackInternHits.Load()
 	out.SyntheticReplayCloseMemoHits = perfCounters.syntheticReplayCloseMemoHits.Load()
 	out.SyntheticReplayCloseMemoMisses = perfCounters.syntheticReplayCloseMemoMisses.Load()
+	out.SyntheticReplayCloseMemoStores = perfCounters.syntheticReplayCloseMemoStores.Load()
+	out.SyntheticReplayCloseMemoCapSkips = perfCounters.syntheticReplayCloseMemoCapSkips.Load()
+	out.SyntheticReplayCloseZeroOutputs = perfCounters.syntheticReplayCloseZeroOutputs.Load()
+	out.SyntheticReplayCloseSingleOutputs = perfCounters.syntheticReplayCloseSingleOutputs.Load()
+	out.SyntheticReplayCloseMultiOutputs = perfCounters.syntheticReplayCloseMultiOutputs.Load()
+	out.SyntheticReplayCloseOutputPeak = perfCounters.syntheticReplayCloseOutputPeak.Load()
+	out.SyntheticReplayCloseOutputFrames = perfCounters.syntheticReplayCloseOutputFrames.Load()
+	out.SyntheticReplayCloseUniqueOutputs = perfCounters.syntheticReplayCloseUniqueOutputs.Load()
+	out.SyntheticReplayCloseUniqueFrames = perfCounters.syntheticReplayCloseUniqueFrames.Load()
+	out.SyntheticReplayCloseUniqueSingle = perfCounters.syntheticReplayCloseUniqueSingle.Load()
+	out.SyntheticReplayCloseUniqueMulti = perfCounters.syntheticReplayCloseUniqueMulti.Load()
+	out.SyntheticReplayCloseUniquePeak = perfCounters.syntheticReplayCloseUniquePeak.Load()
 	for i := range out.MergeOutHist {
 		out.MergeOutHist[i] = perfCounters.mergeOutHist[i].Load()
 	}
@@ -946,6 +982,42 @@ func perfRecordSyntheticReplayCloseMemoHit() {
 
 func perfRecordSyntheticReplayCloseMemoMiss() {
 	perfCounters.syntheticReplayCloseMemoMisses.Add(1)
+}
+
+func perfRecordSyntheticReplayCloseMemoStore() {
+	perfCounters.syntheticReplayCloseMemoStores.Add(1)
+}
+
+func perfRecordSyntheticReplayCloseMemoCapSkip() {
+	perfCounters.syntheticReplayCloseMemoCapSkips.Add(1)
+}
+
+func perfRecordSyntheticReplayCloseOutput(n int, unique bool) {
+	switch n {
+	case 0:
+		perfCounters.syntheticReplayCloseZeroOutputs.Add(1)
+	case 1:
+		perfCounters.syntheticReplayCloseSingleOutputs.Add(1)
+	default:
+		perfCounters.syntheticReplayCloseMultiOutputs.Add(1)
+	}
+	if n > 0 {
+		perfCounters.syntheticReplayCloseOutputFrames.Add(uint64(n))
+		perfMaxUint64(&perfCounters.syntheticReplayCloseOutputPeak, uint64(n))
+	}
+	if !unique {
+		return
+	}
+	perfCounters.syntheticReplayCloseUniqueOutputs.Add(1)
+	perfCounters.syntheticReplayCloseUniqueFrames.Add(uint64(n))
+	if n == 1 {
+		perfCounters.syntheticReplayCloseUniqueSingle.Add(1)
+	} else if n > 1 {
+		perfCounters.syntheticReplayCloseUniqueMulti.Add(1)
+	}
+	if n > 0 {
+		perfMaxUint64(&perfCounters.syntheticReplayCloseUniquePeak, uint64(n))
+	}
 }
 
 func perfRecordCloneTreeCall() {

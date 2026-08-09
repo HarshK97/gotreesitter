@@ -466,6 +466,24 @@ func TestSyntheticRootReplayAdvanceMemoUsesPackedStream(t *testing.T) {
 }
 
 func TestSyntheticRootReplayCloseMemoPreservesCanonicalClosure(t *testing.T) {
+	if got, want := unsafe.Sizeof(syntheticRootReplayCloseSpan(0)), uintptr(4); got != want {
+		t.Fatalf("close span size = %d, want %d", got, want)
+	}
+	packed := newSyntheticRootReplayCloseSpan(
+		syntheticRootReplayCloseMaxPages-1,
+		syntheticRootReplayClosePageFrames-syntheticRootReplayMaxFrontier,
+		syntheticRootReplayMaxFrontier,
+	)
+	if got, want := packed.page(), syntheticRootReplayCloseMaxPages-1; got != want {
+		t.Fatalf("packed close page = %d, want %d", got, want)
+	}
+	if got, want := packed.offset(), syntheticRootReplayClosePageFrames-syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("packed close offset = %d, want %d", got, want)
+	}
+	if got, want := packed.count(), syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("packed close count = %d, want %d", got, want)
+	}
+
 	lang := newRootFrameReplayReduceLanguage()
 	parser := newRootFrameReplayParser(lang)
 	builder := newResultRootBuild(parser, nil, nil, nil, nil, nil)
@@ -483,6 +501,13 @@ func TestSyntheticRootReplayCloseMemoPreservesCanonicalClosure(t *testing.T) {
 	for i := range first {
 		wantTops[i] = first[i].top
 	}
+	if got, want := len(builder.replayStack.closeMemo), 1; got != want {
+		t.Fatalf("close memo length = %d, want %d", got, want)
+	}
+	if got, want := int(builder.replayStack.closeFrames), len(first); got != want {
+		t.Fatalf("close stream frame count = %d, want %d", got, want)
+	}
+	pageCount := len(builder.replayStack.closePages)
 	nodesAfterFirst := len(builder.replayStack.nodes)
 
 	appended := append(first, initial)
@@ -495,6 +520,12 @@ func TestSyntheticRootReplayCloseMemoPreservesCanonicalClosure(t *testing.T) {
 	}
 	if got := len(builder.replayStack.nodes); got != nodesAfterFirst {
 		t.Fatalf("memoized EOF closure added stack nodes: got %d, want %d", got, nodesAfterFirst)
+	}
+	if got, want := int(builder.replayStack.closeFrames), len(first); got != want {
+		t.Fatalf("memoized close stream frame count = %d, want %d", got, want)
+	}
+	if got := len(builder.replayStack.closePages); got != pageCount {
+		t.Fatalf("memoized close page count = %d, want %d", got, pageCount)
 	}
 	for i, want := range wantTops {
 		if got := second[i].top; got != want {

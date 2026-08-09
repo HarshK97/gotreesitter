@@ -225,9 +225,12 @@ type syntheticRootReplayCloseKey struct {
 }
 
 type syntheticRootReplayStackStore struct {
-	nodes     []syntheticRootReplayStackNode
-	intern    map[syntheticRootReplayStackKey]uint32
-	closeMemo map[syntheticRootReplayCloseKey][]syntheticRootReplayFrame
+	nodes         []syntheticRootReplayStackNode
+	intern        map[syntheticRootReplayStackKey]uint32
+	closeMemo     map[syntheticRootReplayCloseKey]syntheticRootReplayCloseSpan
+	closePages    []*[syntheticRootReplayClosePageFrames]syntheticRootReplayFrame
+	closePageUsed uint16
+	closeFrames   uint32
 }
 
 const syntheticRootReplayMaxFrontier = 128
@@ -238,6 +241,7 @@ const syntheticRootReplayMaxGapTokens = 64
 const syntheticRootReplayGapLexMemoMaxEntries = 1 << 16
 const syntheticRootReplayAdvanceMemoMaxEntries = 1 << 16
 const syntheticRootReplayAdvanceStreamMaxFrames = 1 << 20
+const syntheticRootReplayCloseMemoMaxEntries = 1 << 18
 
 // Fixed pages avoid stream-growth copies and bound frame storage to 4 MiB.
 const syntheticRootReplayAdvancePageFrames = 1 << 14
@@ -247,6 +251,15 @@ const syntheticRootReplayAdvanceSpanPageBits = 6
 const syntheticRootReplayAdvanceSpanOffsetMask = 1<<syntheticRootReplayAdvanceSpanOffsetBits - 1
 const syntheticRootReplayAdvanceSpanPageMask = 1<<syntheticRootReplayAdvanceSpanPageBits - 1
 const syntheticRootReplayAdvanceSpanCountShift = syntheticRootReplayAdvanceSpanOffsetBits + syntheticRootReplayAdvanceSpanPageBits
+
+// Close pages bound stored closure frames to 16 MiB.
+const syntheticRootReplayClosePageFrames = 1 << 14
+const syntheticRootReplayCloseMaxPages = 1 << 8
+const syntheticRootReplayCloseSpanOffsetBits = 14
+const syntheticRootReplayCloseSpanPageBits = 8
+const syntheticRootReplayCloseSpanOffsetMask = 1<<syntheticRootReplayCloseSpanOffsetBits - 1
+const syntheticRootReplayCloseSpanPageMask = 1<<syntheticRootReplayCloseSpanPageBits - 1
+const syntheticRootReplayCloseSpanCountShift = syntheticRootReplayCloseSpanOffsetBits + syntheticRootReplayCloseSpanPageBits
 
 type syntheticRootReplayFrameSetScratch struct {
 	slots    [syntheticRootReplayFrameSetSlotCount]uint32
@@ -503,6 +516,30 @@ func (s syntheticRootReplayAdvanceSpan) page() int {
 
 func (s syntheticRootReplayAdvanceSpan) count() int {
 	return int(uint32(s) >> syntheticRootReplayAdvanceSpanCountShift)
+}
+
+// syntheticRootReplayCloseSpan packs a page, offset, and output count into one
+// word. A zero count caches a closure with no output.
+type syntheticRootReplayCloseSpan uint32
+
+func newSyntheticRootReplayCloseSpan(page, offset, count int) syntheticRootReplayCloseSpan {
+	return syntheticRootReplayCloseSpan(
+		uint32(offset) |
+			uint32(page)<<syntheticRootReplayCloseSpanOffsetBits |
+			uint32(count)<<syntheticRootReplayCloseSpanCountShift,
+	)
+}
+
+func (s syntheticRootReplayCloseSpan) offset() int {
+	return int(uint32(s) & syntheticRootReplayCloseSpanOffsetMask)
+}
+
+func (s syntheticRootReplayCloseSpan) page() int {
+	return int(uint32(s)>>syntheticRootReplayCloseSpanOffsetBits) & syntheticRootReplayCloseSpanPageMask
+}
+
+func (s syntheticRootReplayCloseSpan) count() int {
+	return int(uint32(s) >> syntheticRootReplayCloseSpanCountShift)
 }
 
 func (b *resultRootBuild) syntheticRootReplayBridgeGap(frontier []syntheticRootReplayFrame, startByte uint32, startPoint Point, endByte uint32) []syntheticRootReplayFrame {
@@ -769,23 +806,90 @@ func (b *resultRootBuild) syntheticRootReplayCloseEOF(frontier []syntheticRootRe
 func (b *resultRootBuild) syntheticRootReplayCloseLookahead(frontier []syntheticRootReplayFrame, lookahead Symbol) []syntheticRootReplayFrame {
 	if len(frontier) == 1 && frontier[0].top != 0 {
 		key := syntheticRootReplayCloseKey{top: frontier[0].top, lookahead: lookahead}
-		if cached, ok := b.replayStack.closeMemo[key]; ok {
-			perfRecordSyntheticReplayCloseMemoHit()
-			return cached
+		if span, found := b.replayStack.closeMemo[key]; found {
+			if cached, ok := b.syntheticRootReplayCloseFrames(span); ok {
+				perfRecordSyntheticReplayCloseMemoHit()
+				perfRecordSyntheticReplayCloseOutput(len(cached), false)
+				return cached
+			}
 		}
 		perfRecordSyntheticReplayCloseMemoMiss()
-		closed := b.syntheticRootReplayCloseLookaheadUncached(frontier, lookahead)
-		if b.replayStack.closeMemo == nil {
-			b.replayStack.closeMemo = make(map[syntheticRootReplayCloseKey][]syntheticRootReplayFrame, 64)
+		if !b.syntheticRootReplayCanStoreClose() {
+			perfRecordSyntheticReplayCloseMemoCapSkip()
+			closed := b.syntheticRootReplayCloseLookaheadUncached(frontier, lookahead)
+			perfRecordSyntheticReplayCloseOutput(len(closed), true)
+			return closed
 		}
-		// Replay frames and their canonical stack nodes are immutable for the
-		// lifetime of a result build, so the cached slice is read-only and safe
-		// to share with the replay callers.
-		closed = closed[:len(closed):len(closed)]
-		b.replayStack.closeMemo[key] = closed
-		return closed
+		return b.syntheticRootReplayCloseLookaheadMemoMiss(key, frontier, lookahead)
 	}
 	return b.syntheticRootReplayCloseLookaheadUncached(frontier, lookahead)
+}
+
+func (b *resultRootBuild) syntheticRootReplayCanStoreClose() bool {
+	if b == nil || len(b.replayStack.closeMemo) >= syntheticRootReplayCloseMemoMaxEntries {
+		return false
+	}
+	store := &b.replayStack
+	return len(store.closePages) < syntheticRootReplayCloseMaxPages ||
+		int(store.closePageUsed)+syntheticRootReplayMaxFrontier <= syntheticRootReplayClosePageFrames
+}
+
+func (b *resultRootBuild) syntheticRootReplayCloseLookaheadMemoMiss(key syntheticRootReplayCloseKey, frontier []syntheticRootReplayFrame, lookahead Symbol) []syntheticRootReplayFrame {
+	var frameScratch [syntheticRootReplayMaxFrontier]syntheticRootReplayFrame
+	var setScratch syntheticRootReplayFrameSetScratch
+	closed := b.syntheticRootReplayCloseLookaheadInto(frameScratch[:0], frontier, lookahead, &setScratch)
+	perfRecordSyntheticReplayCloseOutput(len(closed), true)
+	if cached, ok := b.syntheticRootReplayStoreClose(key, closed); ok {
+		return cached
+	}
+	perfRecordSyntheticReplayCloseMemoCapSkip()
+	return b.syntheticRootReplayCloseLookaheadUncached(frontier, lookahead)
+}
+
+func (b *resultRootBuild) syntheticRootReplayCloseFrames(span syntheticRootReplayCloseSpan) ([]syntheticRootReplayFrame, bool) {
+	count := span.count()
+	if count == 0 {
+		return nil, true
+	}
+	pageIndex := span.page()
+	start := span.offset()
+	end := start + count
+	if b == nil || pageIndex >= len(b.replayStack.closePages) || end < start || end > syntheticRootReplayClosePageFrames {
+		return nil, false
+	}
+	return b.replayStack.closePages[pageIndex][start:end:end], true
+}
+
+func (b *resultRootBuild) syntheticRootReplayStoreClose(key syntheticRootReplayCloseKey, frames []syntheticRootReplayFrame) ([]syntheticRootReplayFrame, bool) {
+	if b == nil || len(frames) > syntheticRootReplayMaxFrontier ||
+		len(b.replayStack.closeMemo) >= syntheticRootReplayCloseMemoMaxEntries {
+		return nil, false
+	}
+	store := &b.replayStack
+	if store.closeMemo == nil {
+		store.closeMemo = make(map[syntheticRootReplayCloseKey]syntheticRootReplayCloseSpan, 256)
+	}
+	if len(frames) == 0 {
+		store.closeMemo[key] = 0
+		perfRecordSyntheticReplayCloseMemoStore()
+		return nil, true
+	}
+	used := int(store.closePageUsed)
+	if len(store.closePages) == 0 || used+len(frames) > syntheticRootReplayClosePageFrames {
+		if len(store.closePages) >= syntheticRootReplayCloseMaxPages {
+			return nil, false
+		}
+		store.closePages = append(store.closePages, new([syntheticRootReplayClosePageFrames]syntheticRootReplayFrame))
+		used = 0
+	}
+	pageIndex := len(store.closePages) - 1
+	end := used + len(frames)
+	copy(store.closePages[pageIndex][used:end], frames)
+	store.closeMemo[key] = newSyntheticRootReplayCloseSpan(pageIndex, used, len(frames))
+	store.closePageUsed = uint16(end)
+	store.closeFrames += uint32(len(frames))
+	perfRecordSyntheticReplayCloseMemoStore()
+	return store.closePages[pageIndex][used:end:end], true
 }
 
 func (b *resultRootBuild) syntheticRootReplayCloseLookaheadUncached(frontier []syntheticRootReplayFrame, lookahead Symbol) []syntheticRootReplayFrame {

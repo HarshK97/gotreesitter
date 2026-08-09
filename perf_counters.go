@@ -119,6 +119,18 @@ type PerfCounters struct {
 	SyntheticReplayStackInternHits       uint64
 	SyntheticReplayCloseMemoHits         uint64
 	SyntheticReplayCloseMemoMisses       uint64
+	SyntheticReplayCloseMemoStores       uint64
+	SyntheticReplayCloseMemoCapSkips     uint64
+	SyntheticReplayCloseZeroOutputs      uint64
+	SyntheticReplayCloseSingleOutputs    uint64
+	SyntheticReplayCloseMultiOutputs     uint64
+	SyntheticReplayCloseOutputPeak       uint64
+	SyntheticReplayCloseOutputFrames     uint64
+	SyntheticReplayCloseUniqueOutputs    uint64
+	SyntheticReplayCloseUniqueFrames     uint64
+	SyntheticReplayCloseUniqueSingle     uint64
+	SyntheticReplayCloseUniqueMulti      uint64
+	SyntheticReplayCloseUniquePeak       uint64
 	MergeStacksInHist                    [maxGLRStacks + 2]uint64
 	MergeAliveHist                       [maxGLRStacks + 2]uint64
 	MergeOutHist                         [maxGLRStacks + 2]uint64
