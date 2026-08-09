@@ -12,7 +12,8 @@ on:
   # remains pending.
   # The scope job below keeps docs-only PRs lightweight without suppressing the
   # required aggregate `build` context.
-  pull_request: {}
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 concurrency:
