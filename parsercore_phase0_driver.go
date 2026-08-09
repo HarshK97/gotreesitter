@@ -1850,6 +1850,82 @@ type diagnosticParserCoreGenericScheduler struct {
 	// the generic lane resolve one cell to one row.
 	corridorRows  []core.ActionRow
 	corridorCells [1]diagnosticParserCoreGenericCell
+	capPressure   diagnosticParserCoreCapPressurePrediction
+}
+
+const (
+	diagnosticParserCoreCapPressureFirstDivisor  = 8
+	diagnosticParserCoreCapPressureSecondDivisor = 4
+	diagnosticParserCoreCapPressureMarginNum     = 17
+	diagnosticParserCoreCapPressureMarginDen     = 16
+)
+
+// diagnosticParserCoreCapPressurePrediction samples node growth at one
+// eighth and one quarter of the compact node arena. It declines only when
+// both linear projections exceed the cap by 6.25 percent. The source floor
+// suppresses polling on small parses. Source length alone never declines a
+// route. In the 408-file V10 census, 43 successful routes reached the second
+// sample. Their maximum projection was 0.988x. All 12 cap failures exceeded
+// 1.108x.
+type diagnosticParserCoreCapPressurePrediction struct {
+	samples             uint8
+	priorProjectedNodes uint64
+}
+
+func diagnosticParserCoreProjectedNodes(nodes, progressBytes, sourceBytes uint32) uint64 {
+	if nodes == 0 || progressBytes == 0 || sourceBytes == 0 {
+		return 0
+	}
+	product := uint64(nodes) * uint64(sourceBytes)
+	projected := product / uint64(progressBytes)
+	if product%uint64(progressBytes) != 0 {
+		projected++
+	}
+	return projected
+}
+
+func diagnosticParserCoreCapPressureSourceEligible(sourceBytes, maxNodes uint32) bool {
+	return maxNodes >= diagnosticParserCoreCapPressureFirstDivisor &&
+		sourceBytes >= maxNodes/diagnosticParserCoreCapPressureFirstDivisor
+}
+
+func (p *diagnosticParserCoreCapPressurePrediction) nextThreshold(maxNodes uint32) uint32 {
+	if p == nil {
+		return 0
+	}
+	switch p.samples {
+	case 0:
+		return maxNodes / diagnosticParserCoreCapPressureFirstDivisor
+	case 1:
+		return maxNodes / diagnosticParserCoreCapPressureSecondDivisor
+	default:
+		return 0
+	}
+}
+
+func (p *diagnosticParserCoreCapPressurePrediction) observe(
+	nodes, progressBytes, sourceBytes, maxNodes uint32,
+) (decline bool, projected uint64) {
+	if p == nil || !diagnosticParserCoreCapPressureSourceEligible(sourceBytes, maxNodes) {
+		return false, 0
+	}
+	threshold := p.nextThreshold(maxNodes)
+	if threshold == 0 || nodes < threshold {
+		return false, 0
+	}
+	projected = diagnosticParserCoreProjectedNodes(nodes, progressBytes, sourceBytes)
+	if projected == 0 {
+		return false, 0
+	}
+	if p.samples == 0 {
+		p.priorProjectedNodes = projected
+		p.samples = 1
+		return false, projected
+	}
+	p.samples = 2
+	margin := (uint64(maxNodes)*diagnosticParserCoreCapPressureMarginNum + diagnosticParserCoreCapPressureMarginDen - 1) /
+		diagnosticParserCoreCapPressureMarginDen
+	return p.priorProjectedNodes > margin && projected > margin, projected
 }
 
 // Keep only small scheduler scratch buffers between fresh full parses. This
@@ -3581,16 +3657,11 @@ func (s *diagnosticParserCoreGenericScheduler) stopControlMemoryBudgetReason() P
 }
 
 // pollStopControl is the bounded scheduler-boundary poll (spec.campaign.v7
-// tranche B8): the memory-budget check above, then -- only when the caller
-// armed stop control by binding a Parser (stopControlParser, set only by the
-// admission-candidate route) -- the exact production deadline/cancellation
-// check (activeParseStopReason). It runs once before the scheduler's first
-// election and once per iteration of run's dispatch-pass loop: every loop
-// iteration is either one dispatch pass or one re-election round, so this
-// granularity bounds both a runaway dispatch grind and a runaway election
-// cycle. Nil stopControlParser and a zero budget make this two nil/zero
-// comparisons -- the diagnostic and benchmark runners, which never set
-// either, pay that and nothing else.
+// tranche B8): the memory-budget check above, then the exact production
+// deadline and cancellation check. Admission candidates also run the node-cap
+// predictor after those controls. The poll runs before the first election and
+// once per dispatch loop. This cadence bounds a runaway dispatch or election
+// cycle. Diagnostic callers bind no Parser, so they do not run the predictor.
 func (s *diagnosticParserCoreGenericScheduler) pollStopControl() error {
 	if reason := s.stopControlMemoryBudgetReason(); reason != ParseStopNone {
 		return diagnosticParserCoreStopControlTripped(reason)
@@ -3601,6 +3672,56 @@ func (s *diagnosticParserCoreGenericScheduler) pollStopControl() error {
 	}
 	if reason := parser.activeParseStopReason(); parseStopReasonIsActive(reason) {
 		return diagnosticParserCoreStopControlTripped(reason)
+	}
+	return s.observeCapPressure()
+}
+
+// observeCapPressure stops a compact attempt that is on a stable path to the
+// node cap. Production then parses the source once, without the doomed tail.
+func (s *diagnosticParserCoreGenericScheduler) observeCapPressure() error {
+	if s == nil || s.options.stopControlParser == nil || s.compact == nil || s.tokenSource == nil ||
+		len(s.headers) == 0 || s.capPressure.samples >= 2 {
+		return nil
+	}
+	maxNodes := s.options.Limits.MaxNodes
+	sourceLen := s.tokenSource.sourceLength()
+	if sourceLen <= 0 || maxNodes == 0 {
+		return nil
+	}
+	if uint64(sourceLen) > uint64(^uint32(0)) {
+		return errors.New("parser-core phase zero: cap-pressure source length exceeds uint32")
+	}
+	sourceBytes := uint32(sourceLen)
+	if !diagnosticParserCoreCapPressureSourceEligible(sourceBytes, maxNodes) {
+		return nil
+	}
+	stats, err := s.compact.Stats(s.headers[0].head)
+	if err != nil {
+		return err
+	}
+	if threshold := s.capPressure.nextThreshold(maxNodes); threshold == 0 || stats.Nodes < threshold {
+		return nil
+	}
+	progress := s.token.EndByte
+	for _, header := range s.headers {
+		_, byteOffset, boundaryErr := s.compact.Boundary(header.head)
+		if boundaryErr != nil {
+			return boundaryErr
+		}
+		if byteOffset > progress {
+			progress = byteOffset
+		}
+	}
+	prior := s.capPressure.priorProjectedNodes
+	decline, projected := s.capPressure.observe(stats.Nodes, progress, sourceBytes, maxNodes)
+	if decline {
+		return &diagnosticParserCoreDecline{
+			boundary: DiagnosticParserCoreCap,
+			detail: fmt.Sprintf(
+				"scheduler projected node arena cap: nodes=%d progress=%d/%d projected=%d prior=%d cap=%d",
+				stats.Nodes, progress, sourceLen, projected, prior, maxNodes,
+			),
+		}
 	}
 	return nil
 }
