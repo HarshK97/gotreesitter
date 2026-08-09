@@ -516,7 +516,6 @@ func (b *resultRootBuild) syntheticRootReplayLexGapTokenForState(state StateID, 
 	if startByte >= endByte || endByte > uint32(len(b.source)) {
 		return Token{}, false
 	}
-	lexer := NewLexer(b.lang.LexStates, b.source)
 	// Gate this gap-token lexer on the language-level C-recovery answer rather
 	// than the live b.parser.errorCostCompetition flag. resolveCRecoverySwallowedError
 	// (parser_api.go) temporarily forces p.errorCostCompetition = false around its
@@ -530,7 +529,13 @@ func (b *resultRootBuild) syntheticRootReplayLexGapTokenForState(state StateID, 
 	// replay only runs during synthetic-root reconstruction, off the steady-state
 	// token loop, so the DiagnoseCRecoveryGate scan behind it stays out of the hot
 	// path.
-	ts := newDFATokenSourceDirectWithCRecovery(lexer, b.lang, b.parser.lookupActionIndex, b.parser.hasKeywordState, b.parser.externalValidByState, b.parser.externalValidMaskByState, errorCostCompetitionLanguage(b.lang))
+	var ts *dfaTokenSource
+	if b.lang.ExternalScanner != nil {
+		ts = acquireDFATokenSourceReusingLexer(b.source, b.lang, b.parser.lookupActionIndex, b.parser.hasKeywordState, b.parser.externalValidByState, b.parser.externalValidMaskByState, errorCostCompetitionLanguage(b.lang))
+	} else {
+		lexer := NewLexer(b.lang.LexStates, b.source)
+		ts = newDFATokenSourceDirectWithCRecovery(lexer, b.lang, b.parser.lookupActionIndex, b.parser.hasKeywordState, b.parser.externalValidByState, b.parser.externalValidMaskByState, errorCostCompetitionLanguage(b.lang))
+	}
 	defer ts.Close()
 	ts.SetParserState(state)
 	ts.SeekTokenFrontier(startByte, startPoint)
