@@ -317,6 +317,10 @@ func appendHeritageForNode(n *Node, lang *Language, source []byte, refs *[]Herit
 	if !ok {
 		return
 	}
+	appendHeritageForNodeWithSpan(span, n, lang, source, refs)
+}
+
+func appendHeritageForNodeWithSpan(span DefinitionSpan, n *Node, lang *Language, source []byte, refs *[]HeritageRef) {
 	switch lang.Name {
 	case "java":
 		appendJavaHeritage(span, n, source, refs)

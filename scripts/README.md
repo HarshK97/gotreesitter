@@ -31,7 +31,8 @@ The default set includes:
 - the random-edit and parser-core controls;
 - the recovery and synthetic-root replay targets;
 - the warm and corridor scheduler lanes;
-- the fresh full and selected-store canonical fixtures.
+- the fresh full and selected-store canonical fixtures;
+- the tags, legacy fact, and compiled `FactProgram` extraction lanes.
 
 Run both checkouts with the same seed range. Alternate checkout order between
 seed batches when the host cannot stay thermally stable.

@@ -23,6 +23,13 @@ for tags and release notes while still in `0.x`.
 
 ### Added
 
+- `FactProgram` compiles selected definition, call, heritage, and import work
+  into a dense 16-bit instruction stream. One program can process compatible
+  trees with one traversal while the individual extraction APIs remain stable.
+  The 20-seed combined benchmark reduced Go tree inspection time by 71.19%
+  for definitions and calls. The all-facts path reduced time by 84.14%, bytes
+  by 1.88%, and allocations by 49.41%. Parse-plus-extraction stayed unchanged.
+
 - Opt-in Lean 4 support now provides a grammar blob, scanner, highlights,
   outline tags, and focused corpus tests in `grammars/lean`. The default
   206-language registry remains unchanged.

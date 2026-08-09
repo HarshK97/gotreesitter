@@ -6,7 +6,7 @@ usage() {
 	cat >&2 <<'EOF'
 Usage: scripts/run_randomized_benchmarks.sh --output PATH [options]
 
-Run the parser performance set once for each shuffle seed.
+Run the combined performance set once for each shuffle seed.
 
 Options:
   --output PATH       Append raw go test output to PATH.
@@ -103,7 +103,7 @@ output_dir=$(dirname -- "$output_path")
 mkdir -p -- "$output_dir"
 
 # Keep this set aligned across baseline and candidate runs.
-benchmark_re='^(BenchmarkGoParse(FullDFA|CoreDFA|IncrementalSingleByteEditDFA|IncrementalNoEditDFA|IncrementalRandomSingleByteEdit)|BenchmarkKDLRecoveryGarbageSuffix|BenchmarkExpectedRootCanFrameLongRepeat|BenchmarkDiagnosticParserCore(CorridorSchedulerOnly|WarmSchedulerOnlyQueryCompile|WarmMaterializationOnlyQueryCompile)|BenchmarkParserCoreFreshFull(Canonical|SelectedStoreCanonical))'
+benchmark_re='^(BenchmarkGoParse(FullDFA|CoreDFA|IncrementalSingleByteEditDFA|IncrementalNoEditDFA|IncrementalRandomSingleByteEdit)|BenchmarkKDLRecoveryGarbageSuffix|BenchmarkExpectedRootCanFrameLongRepeat|BenchmarkDiagnosticParserCore(CorridorSchedulerOnly|WarmSchedulerOnlyQueryCompile|WarmMaterializationOnlyQueryCompile)|BenchmarkParserCoreFreshFull(Canonical|SelectedStoreCanonical)|Benchmark(TaggerTag(Tree)?Go|ExtractCodeUnderstanding(Tree)?Go|ExtractAllFactsTreeGo|FactProgram(All)?(Tree)?Go))$'
 
 printf 'randomized benchmark output: %s\n' "$output_path" >&2
 printf 'seeds: %s..%s\n' "$seed_start" "$((seed_start + runs - 1))" >&2

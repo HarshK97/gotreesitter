@@ -105,21 +105,24 @@ boundaries, so callers do not need to hand-roll a tree walk.
 ### Code-understanding helpers
 
 For hot indexing paths that need common symbols but not arbitrary tags-query
-semantics, use the one-pass extractors instead of running a fanout of
-queries:
+semantics, compile one `FactProgram` and reuse it across trees:
 
 ```go
-defs := gotreesitter.ExtractDefinitionSpans(tree)
-calls := gotreesitter.ExtractCalls(tree)
-bases := gotreesitter.ExtractHeritage(tree)
+program, err := gotreesitter.NewFactProgram(lang, gotreesitter.FactAll)
+if err != nil {
+	return err
+}
+facts := program.Extract(tree)
 
 enclosing, ok := tree.EnclosingDefinition(offset)
 ```
 
-These helpers cover common Go, JavaScript, TypeScript/TSX, Python, Starlark,
-and Java definitions and calls, plus JavaScript/TypeScript, Python, and Java
-heritage edges. They skip unsupported languages or ambiguous shapes
-conservatively, rather than guess.
+The compiled program extracts definitions, calls, heritage edges, and imports
+during one tree traversal. The individual `ExtractDefinitionSpans`,
+`ExtractCalls`, `ExtractHeritage`, and `ExtractImports` APIs remain available.
+
+These APIs cover common Go, JavaScript, TypeScript/TSX, Python, Starlark, and
+Java facts. They skip unsupported languages or ambiguous shapes.
 
 ### Taproot DSL harness
 
@@ -775,9 +778,9 @@ commit CI run and the governed soak. The latest immutable published release is
 **v0.48.1**.
 
 This candidate consolidates parser correctness, recovery bounds, parser-core
-bytecode, replay caches, randomized benchmarks, and V10 fleet controls. It
-also adds opt-in Lean 4 support and scanner corrections for JavaScript,
-TypeScript, and TSX.
+bytecode, fact extraction bytecode, replay caches, randomized benchmarks, and
+V10 fleet controls. It also adds opt-in Lean 4 support and scanner corrections
+for JavaScript, TypeScript, and TSX.
 
 Detailed shipped evidence lives in [CHANGELOG.md](CHANGELOG.md). Planned minor
 releases are batched on Thursdays; the immutable-tag process and exceptions are
