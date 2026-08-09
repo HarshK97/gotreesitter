@@ -227,11 +227,21 @@ type syntheticRootReplayStackStore struct {
 
 const syntheticRootReplayMaxFrontier = 128
 const syntheticRootReplayFrameSetSlotCount = syntheticRootReplayMaxFrontier * 2
+const syntheticRootReplayGapCursorSetSlotCount = syntheticRootReplayMaxFrontier * 2
 const syntheticRootReplayMaxGapBytes = 4096
 const syntheticRootReplayMaxGapTokens = 64
 
 type syntheticRootReplayFrameSetScratch struct {
 	slots    [syntheticRootReplayFrameSetSlotCount]uint32
+	occupied [syntheticRootReplayMaxFrontier]uint8
+	count    uint8
+}
+
+// syntheticRootReplayGapCursorSetScratch stores cursor indexes instead of
+// cursor values. The output slice remains the canonical value store, which
+// keeps this scratch compact and preserves exact Point comparisons.
+type syntheticRootReplayGapCursorSetScratch struct {
+	slots    [syntheticRootReplayGapCursorSetSlotCount]uint8
 	occupied [syntheticRootReplayMaxFrontier]uint8
 	count    uint8
 }
@@ -443,18 +453,21 @@ func (b *resultRootBuild) syntheticRootReplayBridgeGap(frontier []syntheticRootR
 		return nil
 	}
 	var cursorScratch [2][syntheticRootReplayMaxFrontier]syntheticRootReplayGapCursor
+	var cursorSetScratch [2]syntheticRootReplayGapCursorSetScratch
 	cursors := cursorScratch[0][:0]
 	for _, frame := range frontier {
-		cursors = appendSyntheticRootReplayGapCursor(cursors, frame, startByte, startPoint)
+		cursors = cursorSetScratch[0].append(cursors, frame, startByte, startPoint)
 	}
 	var frameScratch [2][syntheticRootReplayMaxFrontier]syntheticRootReplayFrame
 	var frameSetScratch [2]syntheticRootReplayFrameSetScratch
 	for step := 0; step < syntheticRootReplayMaxGapTokens; step++ {
 		allAtEnd := true
 		nextCursors := cursorScratch[(step+1)&1][:0]
+		nextCursorSet := &cursorSetScratch[(step+1)&1]
+		nextCursorSet.reset()
 		for _, cursor := range cursors {
 			if cursor.byte == endByte {
-				nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, cursor.frame, cursor.byte, cursor.point)
+				nextCursors = nextCursorSet.append(nextCursors, cursor.frame, cursor.byte, cursor.point)
 				continue
 			}
 			allAtEnd = false
@@ -466,7 +479,7 @@ func (b *resultRootBuild) syntheticRootReplayBridgeGap(frontier []syntheticRootR
 				if syntheticRootReplayCanSkipGapByte(b.source[cursor.byte]) {
 					nextByte := cursor.byte + 1
 					nextPoint := advancePointByBytes(cursor.point, b.source[cursor.byte:nextByte])
-					nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, cursor.frame, nextByte, nextPoint)
+					nextCursors = nextCursorSet.append(nextCursors, cursor.frame, nextByte, nextPoint)
 				}
 				continue
 			}
@@ -475,16 +488,16 @@ func (b *resultRootBuild) syntheticRootReplayBridgeGap(frontier []syntheticRootR
 				if syntheticRootReplayCanSkipGapByte(b.source[cursor.byte]) {
 					nextByte := cursor.byte + 1
 					nextPoint := advancePointByBytes(cursor.point, b.source[cursor.byte:nextByte])
-					nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, cursor.frame, nextByte, nextPoint)
+					nextCursors = nextCursorSet.append(nextCursors, cursor.frame, nextByte, nextPoint)
 				}
 				continue
 			}
 			for _, frame := range advanced {
-				nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, frame, tok.EndByte, tok.EndPoint)
+				nextCursors = nextCursorSet.append(nextCursors, frame, tok.EndByte, tok.EndPoint)
 				if tok.EndByte == cursor.byte && cursor.byte < endByte {
 					nextByte := cursor.byte + 1
 					nextPoint := advancePointByBytes(cursor.point, b.source[cursor.byte:nextByte])
-					nextCursors = appendSyntheticRootReplayGapCursor(nextCursors, frame, nextByte, nextPoint)
+					nextCursors = nextCursorSet.append(nextCursors, frame, nextByte, nextPoint)
 				}
 			}
 		}
@@ -593,18 +606,6 @@ func (b *resultRootBuild) syntheticRootReplayAdvanceToken(frontier []syntheticRo
 		return b.syntheticRootReplayCloseLookaheadInto(closeScratch, advanced, 0, closeSet)
 	}
 	return b.syntheticRootReplayCloseEOF(advanced)
-}
-
-func appendSyntheticRootReplayGapCursor(cursors []syntheticRootReplayGapCursor, frame syntheticRootReplayFrame, pos uint32, point Point) []syntheticRootReplayGapCursor {
-	if frame.top == 0 || len(cursors) >= syntheticRootReplayMaxFrontier {
-		return cursors
-	}
-	for _, cursor := range cursors {
-		if cursor.byte == pos && cursor.point == point && cursor.frame.top == frame.top {
-			return cursors
-		}
-	}
-	return append(cursors, syntheticRootReplayGapCursor{frame: frame, byte: pos, point: point})
 }
 
 func syntheticRootReplayGapCursorFrames(cursors []syntheticRootReplayGapCursor) []syntheticRootReplayFrame {
@@ -755,6 +756,45 @@ func (s *syntheticRootReplayFrameSetScratch) append(frames []syntheticRootReplay
 		index++
 	}
 	return appendSyntheticRootReplayFrame(frames, frame)
+}
+
+func (s *syntheticRootReplayGapCursorSetScratch) reset() {
+	if s == nil {
+		return
+	}
+	for i := 0; i < int(s.count); i++ {
+		s.slots[s.occupied[i]] = 0
+	}
+	s.count = 0
+}
+
+func (s *syntheticRootReplayGapCursorSetScratch) append(cursors []syntheticRootReplayGapCursor, frame syntheticRootReplayFrame, pos uint32, point Point) []syntheticRootReplayGapCursor {
+	if s == nil || frame.top == 0 || len(cursors) >= syntheticRootReplayMaxFrontier {
+		return cursors
+	}
+	index := syntheticRootReplayGapCursorHash(frame.top, pos, point)
+	for probe := 0; probe < len(s.slots); probe++ {
+		slot := s.slots[index]
+		if slot == 0 {
+			s.slots[index] = uint8(len(cursors) + 1)
+			s.occupied[s.count] = index
+			s.count++
+			return append(cursors, syntheticRootReplayGapCursor{frame: frame, byte: pos, point: point})
+		}
+		existing := cursors[int(slot)-1]
+		if existing.frame.top == frame.top && existing.byte == pos && existing.point == point {
+			return cursors
+		}
+		index++
+	}
+	return cursors
+}
+
+func syntheticRootReplayGapCursorHash(top, pos uint32, point Point) uint8 {
+	hash := top*2654435761 ^ pos*2246822519
+	hash ^= point.Row*3266489917 ^ point.Column*668265263
+	hash ^= hash >> 16
+	return uint8(hash >> 24)
 }
 
 func (b *resultRootBuild) syntheticRootReplaySkipsChild(child *Node) bool {

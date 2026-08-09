@@ -328,6 +328,33 @@ func TestSyntheticRootReplayFrameSetScratch(t *testing.T) {
 	}
 }
 
+func TestSyntheticRootReplayGapCursorSetScratch(t *testing.T) {
+	var scratch syntheticRootReplayGapCursorSetScratch
+	cursors := make([]syntheticRootReplayGapCursor, 0, syntheticRootReplayMaxFrontier)
+	for top := uint32(1); top <= syntheticRootReplayMaxFrontier; top++ {
+		point := Point{Row: top / 8, Column: top % 8}
+		cursors = scratch.append(cursors, syntheticRootReplayFrame{top: top}, top*3, point)
+	}
+	if got, want := len(cursors), syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("gap cursor set length = %d, want %d", got, want)
+	}
+	for _, cursor := range cursors {
+		cursors = scratch.append(cursors, cursor.frame, cursor.byte, cursor.point)
+	}
+	if got, want := len(cursors), syntheticRootReplayMaxFrontier; got != want {
+		t.Fatalf("gap cursor set length after duplicates = %d, want %d", got, want)
+	}
+
+	scratch.reset()
+	cursors = cursors[:0]
+	frame := syntheticRootReplayFrame{top: 1}
+	cursors = scratch.append(cursors, frame, 10, Point{Row: 1, Column: 2})
+	cursors = scratch.append(cursors, frame, 10, Point{Row: 1, Column: 3})
+	if got, want := len(cursors), 2; got != want {
+		t.Fatalf("distinct point cursor set length = %d, want %d", got, want)
+	}
+}
+
 func TestSyntheticRootReplayCloseMemoPreservesCanonicalClosure(t *testing.T) {
 	lang := newRootFrameReplayReduceLanguage()
 	parser := newRootFrameReplayParser(lang)
