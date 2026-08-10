@@ -3272,7 +3272,9 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 	p.crecoveryHandleErrorSingleStack = len(*stacks) == 1
 
 	// 1. Close in-progress productions: reductions reachable on any symbol.
-	versions, _, reason := p.cDoAllPotentialReductions(source, s.clone(), 0, true, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+	// Promote the error stack to the graph-structured stack before reductions.
+	// Recovery forks then share the immutable prefix instead of copying each deep linear stack.
+	versions, _, reason := p.cDoAllPotentialReductions(source, s.cloneWithScratch(gssScratch), 0, true, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
 	if reason != ParseStopNone {
 		return cRecHalted, false, reason
 	}

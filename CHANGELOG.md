@@ -18,6 +18,13 @@ for tags and release notes while still in `0.x`.
   first. Graph-structured stack (GSS) nodes store clean-zero merge results
   without a larger node layout. Extra-link mutations invalidate the result.
 
+- C-recovery promotes an error stack to the graph-structured stack before
+  reduction forks. Deep recovery branches now share their immutable prefix.
+  The Swift recovery witness reduced time by 9.96%, bytes by 59.65%, and mean
+  peak resident memory by 22.09%. The 20-seed combined suite reduced KDL
+  recovery time by 1.20%, bytes by 13.14%, and allocations by 1.58%.
+  Other parser timings stayed neutral.
+
 - The randomized benchmark suite now accepts an exact recovery corpus file and
   language. The 20-seed comparison against the release boundary reduced the
   timing geomean by 1.77%. Elixir recovery improved by 15.21%, KDL recovery by
