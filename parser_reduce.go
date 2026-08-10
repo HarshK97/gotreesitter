@@ -6627,7 +6627,61 @@ func appendFlattenedHiddenChildren(dst []*Node, out int, n *Node, symbolMeta []S
 	return appendFlattenedHiddenChildrenWithFields(dst, nil, nil, out, n, symbolMeta, preservedHidden)
 }
 
+type hiddenFieldSpan struct {
+	fieldID FieldID
+	count   int
+	source  uint8
+}
+
+type hiddenFieldRepeatScratch struct {
+	inline [8]hiddenFieldSpan
+	spans  []hiddenFieldSpan
+}
+
+func (s *hiddenFieldRepeatScratch) reset() {
+	if s == nil {
+		return
+	}
+	if cap(s.spans) > 1024 {
+		s.spans = s.inline[:0]
+		return
+	}
+	if s.spans == nil {
+		s.spans = s.inline[:0]
+		return
+	}
+	s.spans = s.spans[:0]
+}
+
+func (s *hiddenFieldRepeatScratch) begin() int {
+	if s.spans == nil {
+		s.spans = s.inline[:0]
+	}
+	return len(s.spans)
+}
+
+func (s *hiddenFieldRepeatScratch) record(start int, fieldID FieldID, source uint8) {
+	for i := start; i < len(s.spans); i++ {
+		if s.spans[i].fieldID != fieldID {
+			continue
+		}
+		s.spans[i].count++
+		s.spans[i].source = source
+		return
+	}
+	s.spans = append(s.spans, hiddenFieldSpan{fieldID: fieldID, count: 1, source: source})
+}
+
+func (s *hiddenFieldRepeatScratch) end(start int) {
+	s.spans = s.spans[:start]
+}
+
 func appendFlattenedHiddenChildrenWithFields(dst []*Node, fieldDst []FieldID, fieldSrcDst []uint8, out int, n *Node, symbolMeta []SymbolMetadata, preservedHidden []bool) int {
+	var scratch hiddenFieldRepeatScratch
+	return appendFlattenedHiddenChildrenWithFieldsScratch(&scratch, dst, fieldDst, fieldSrcDst, out, n, symbolMeta, preservedHidden)
+}
+
+func appendFlattenedHiddenChildrenWithFieldsScratch(scratch *hiddenFieldRepeatScratch, dst []*Node, fieldDst []FieldID, fieldSrcDst []uint8, out int, n *Node, symbolMeta []SymbolMetadata, preservedHidden []bool) int {
 	if n == nil {
 		return out
 	}
@@ -6636,18 +6690,14 @@ func appendFlattenedHiddenChildrenWithFields(dst []*Node, fieldDst []FieldID, fi
 		return out + 1
 	}
 	nodeStart := out
+	repeatedStart := scratch.begin()
 	paddingStartByte := n.startByte
 	paddingStartPoint := n.startPoint
 	fieldIDs := n.fieldIDs()
 	fieldSources := n.fieldSources()
-	type hiddenFieldSpan struct {
-		count  int
-		source uint8
-	}
-	var repeated map[FieldID]hiddenFieldSpan
 	for i, child := range n.children {
 		spanStart := out
-		out = appendFlattenedHiddenChildrenWithFields(dst, fieldDst, fieldSrcDst, out, child, symbolMeta, preservedHidden)
+		out = appendFlattenedHiddenChildrenWithFieldsScratch(scratch, dst, fieldDst, fieldSrcDst, out, child, symbolMeta, preservedHidden)
 		paddingStartByte, paddingStartPoint = absorbFlattenedHiddenPaddingNodes(dst, spanStart, out, paddingStartByte, paddingStartPoint, child, nil, symbolMeta)
 		if fieldDst != nil && i < len(fieldIDs) && fieldIDs[i] != 0 {
 			source := fieldSourceAt(fieldSources, i)
@@ -6656,13 +6706,7 @@ func appendFlattenedHiddenChildrenWithFields(dst []*Node, fieldDst []FieldID, fi
 				spanStart, out, fieldIDs[i], source,
 			); deferred {
 				if direct && spanStart < out {
-					if repeated == nil {
-						repeated = make(map[FieldID]hiddenFieldSpan)
-					}
-					span := repeated[fieldIDs[i]]
-					span.count++
-					span.source = fieldSourceDirect
-					repeated[fieldIDs[i]] = span
+					scratch.record(repeatedStart, fieldIDs[i], fieldSourceDirect)
 				}
 				continue
 			}
@@ -6671,23 +6715,18 @@ func appendFlattenedHiddenChildrenWithFields(dst []*Node, fieldDst []FieldID, fi
 			}
 			applyFieldToFlattenedSpan(dst, fieldDst, fieldSrcDst, spanStart, out, fieldIDs[i], source, false)
 			if fieldSourceIsDirect(source) && spanStart < out {
-				if repeated == nil {
-					repeated = make(map[FieldID]hiddenFieldSpan)
-				}
-				span := repeated[fieldIDs[i]]
-				span.count++
-				span.source = source
-				repeated[fieldIDs[i]] = span
+				scratch.record(repeatedStart, fieldIDs[i], source)
 			}
 		}
 	}
-	for fid, span := range repeated {
+	for _, span := range scratch.spans[repeatedStart:] {
 		if span.count < 2 {
 			continue
 		}
-		applyFieldToFlattenedSpan(dst, fieldDst, fieldSrcDst, nodeStart, out, fid, span.source, false)
+		applyFieldToFlattenedSpan(dst, fieldDst, fieldSrcDst, nodeStart, out, span.fieldID, span.source, false)
 	}
 	normalizeMixedSourceFieldSpan(fieldDst, fieldSrcDst, nodeStart, out)
+	scratch.end(repeatedStart)
 	return out
 }
 
@@ -8701,7 +8740,10 @@ func materializeHiddenNodeForAlias(arena *nodeArena, lang *Language, n *Node) *N
 		fieldIDs = arena.allocFieldIDSlice(normalizedCount)
 		fieldSources = arena.allocFieldSourceSlice(normalizedCount)
 	}
-	out := appendFlattenedHiddenChildrenWithFields(children, fieldIDs, fieldSources, 0, n, symbolMeta, nil)
+	repeatScratch := &arena.hiddenFieldRepeatScratch
+	repeatScratch.reset()
+	out := appendFlattenedHiddenChildrenWithFieldsScratch(repeatScratch, children, fieldIDs, fieldSources, 0, n, symbolMeta, nil)
+	repeatScratch.reset()
 	cloned.children = children[:out]
 	if len(fieldIDs) > 0 {
 		fieldIDs = fieldIDs[:out]
