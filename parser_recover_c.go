@@ -1027,10 +1027,10 @@ func cStackPosPoint(s *glrStack) Point {
 // pair with the stack position at that depth, recorded when entering the
 // error state and consulted by ts_parser__recover strategy 1.
 type cStackSummaryEntry struct {
-	depth    int
 	state    StateID
 	posBytes uint32
 	posRow   uint32
+	depth    uint8 // cRecoverMaxSummaryDepth is 16.
 }
 
 // cRecoverElectionScratch owns the reusable cursors and generation-stamped
@@ -1152,10 +1152,10 @@ func (it *cRecoverElectionDepthIter) next(stacks []glrStack) (int, cStackSummary
 		}
 		summary := stacks[mi].cRec.summary
 		cursor := s.cursors[memberOrder]
-		for cursor < len(summary) && summary[cursor].depth < it.depth {
+		for cursor < len(summary) && int(summary[cursor].depth) < it.depth {
 			cursor++
 		}
-		for cursor < len(summary) && summary[cursor].depth == it.depth {
+		for cursor < len(summary) && int(summary[cursor].depth) == it.depth {
 			entry := summary[cursor]
 			cursor++
 			s.cursors[memberOrder] = cursor
@@ -2781,14 +2781,14 @@ func (p *Parser) cRecordSummary(entries []stackEntry) []cStackSummaryEntry {
 	depth := 0
 	record := func(d int, st StateID, posBytes, posRow uint32) {
 		for j := len(summary) - 1; j >= 0; j-- {
-			if summary[j].depth < d {
+			if int(summary[j].depth) < d {
 				break
 			}
-			if summary[j].depth == d && summary[j].state == st {
+			if int(summary[j].depth) == d && summary[j].state == st {
 				return
 			}
 		}
-		summary = append(summary, cStackSummaryEntry{depth: d, state: st, posBytes: posBytes, posRow: posRow})
+		summary = append(summary, cStackSummaryEntry{depth: uint8(d), state: st, posBytes: posBytes, posRow: posRow})
 	}
 	// A node-bearing entry owns its position. Node-less discontinuities use the
 	// next payload below them. The cached index advances monotonically, so this
@@ -3798,7 +3798,7 @@ func (p *Parser) cRecoverStrategy1Election(stacks *[]glrStack, group *cRecGroup,
 			if entry.posBytes == pos {
 				continue
 			}
-			depth := entry.depth + depthBump
+			depth := int(entry.depth) + depthBump
 			// Do not recover in ways that create redundant stack versions.
 			wouldMerge := false
 			for i := range *stacks {

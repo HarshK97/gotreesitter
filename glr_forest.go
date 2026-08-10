@@ -2204,7 +2204,7 @@ func (p *Parser) forestEOFRecoveryCouldCompete(idx *gssForestIndex, arena *nodeA
 			if p.lookupActionIndex(entry.state, 0) == 0 {
 				continue
 			}
-			fork, ok := p.cRecoverToState(&stack, entry.depth, entry.state, arena, &entryScratch, &gssScratch, &trackChildErrors)
+			fork, ok := p.cRecoverToState(&stack, int(entry.depth), entry.state, arena, &entryScratch, &gssScratch, &trackChildErrors)
 			if !ok {
 				continue
 			}
