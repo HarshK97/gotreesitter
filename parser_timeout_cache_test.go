@@ -28,6 +28,27 @@ func TestActiveParseStopCheckReusesBoundMethod(t *testing.T) {
 	}
 }
 
+func TestActiveParseStopCheckSkipsUnbudgetedParser(t *testing.T) {
+	parser := &Parser{}
+	if check := parser.activeParseStopCheck(); check != nil {
+		t.Fatal("unbudgeted active parse stop check is not nil")
+	}
+
+	var cancelled uint32
+	parser.cancellationFlag = &cancelled
+	if check := parser.activeParseStopCheck(); check == nil {
+		t.Fatal("cancellable active parse stop check is nil")
+	}
+}
+
+func TestParseStopReasonNowChecksCancellationBetweenBudgets(t *testing.T) {
+	var cancelled uint32 = 1
+	parser := &Parser{cancellationFlag: &cancelled}
+	if got := parser.parseStopReasonNow(); got != ParseStopCancelled {
+		t.Fatalf("parse stop reason = %q, want %q", got, ParseStopCancelled)
+	}
+}
+
 func TestNewParserBindsActiveParseStopCheck(t *testing.T) {
 	parser := NewParser(nil)
 	if parser.activeParseStopCheckFn == nil {

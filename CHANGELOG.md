@@ -9,10 +9,22 @@ for tags and release notes while still in `0.x`.
 
 ### Changed
 
-- Deadline checks during result materialization now read the wall clock every
-  64 checkpoints. Cancellation and sticky stop checks still run at every
-  checkpoint. The 20-seed combined benchmark reduced timed Swift recovery by
-  3.70% and timed Elixir recovery by 3.52%.
+- Parser stop checks now skip inactive callbacks and keep the common callback
+  direct. Result materialization reads the wall clock every 64 checkpoints.
+  Cancellation and sticky stop checks still run at every checkpoint.
+
+- GLR recovery now computes C-compatible error cost and visible counts in one
+  tree walk. Memo indexing uses pointer-bit folds and checks the primary way
+  first. Graph-structured stack (GSS) nodes store clean-zero merge results
+  without a larger node layout. Extra-link mutations invalidate the result.
+
+- The randomized benchmark suite now accepts an exact recovery corpus file and
+  language. The 20-seed comparison against the release boundary reduced the
+  timing geomean by 1.77%. Elixir recovery improved by 15.21%, KDL recovery by
+  9.12%, full parse by 1.16%, and incremental no-edit by 6.51%.
+  `FactProgram` parse and extraction improved by 1.23%.
+  The parser-core control stayed neutral. No timing, byte, or allocation metric
+  had a significant regression.
 
 ## [0.49.0] - 2026-08-13
 

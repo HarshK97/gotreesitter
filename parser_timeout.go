@@ -118,7 +118,9 @@ func (p *Parser) needsParseBudget() bool {
 }
 
 func (p *Parser) activeParseStopCheck() parseStopCheck {
-	if p == nil {
+	// Long walks treat nil as an unbudgeted check.
+	// Avoid callback polls when no timeout or cancellation is active.
+	if p == nil || !p.needsParseBudget() {
 		return nil
 	}
 	if p.activeParseStopCheckFn == nil {
@@ -127,11 +129,9 @@ func (p *Parser) activeParseStopCheck() parseStopCheck {
 	return p.activeParseStopCheckFn
 }
 
+// Keep the common stop path in this function. The parser loop stores this method as a callback.
+// A wrapper adds one call to each poll.
 func (p *Parser) activeParseStopReason() ParseStopReason {
-	return p.activeParseStopReasonWithDeadline(true)
-}
-
-func (p *Parser) activeParseStopReasonWithDeadline(checkDeadline bool) ParseStopReason {
 	if p == nil {
 		return ParseStopNone
 	}
@@ -144,23 +144,42 @@ func (p *Parser) activeParseStopReasonWithDeadline(checkDeadline bool) ParseStop
 	if flag := p.cancellationFlag; flag != nil && atomic.LoadUint32(flag) != 0 {
 		return p.markActiveParseStopped(ParseStopCancelled)
 	}
-	if checkDeadline && !p.parseDeadline.IsZero() && !time.Now().Before(p.parseDeadline) {
+	if !p.parseDeadline.IsZero() && !time.Now().Before(p.parseDeadline) {
 		return p.markActiveParseStopped(ParseStopTimeout)
 	}
 	return ParseStopNone
 }
 
+// Repeat the cheap stop checks here. This keeps the parser callback direct.
+// Only materialization throttles wall-clock reads.
 func (p *Parser) materializationParseStopReason() ParseStopReason {
 	if p == nil {
 		return ParseStopNone
 	}
-	scratch := p.budgetScratch
-	if scratch == nil || p.parseDeadline.IsZero() {
-		return p.activeParseStopReason()
+	if !p.needsParseBudget() {
+		return ParseStopNone
 	}
-	count := scratch.materializeStopPollCount
-	scratch.materializeStopPollCount++
-	return p.activeParseStopReasonWithDeadline(count&materializationDeadlinePollMask == 0)
+	if parseStopReasonIsActive(p.parseStoppedReason) {
+		return p.parseStoppedReason
+	}
+	if flag := p.cancellationFlag; flag != nil && atomic.LoadUint32(flag) != 0 {
+		return p.markActiveParseStopped(ParseStopCancelled)
+	}
+	if p.parseDeadline.IsZero() {
+		return ParseStopNone
+	}
+	scratch := p.budgetScratch
+	if scratch != nil {
+		count := scratch.materializeStopPollCount
+		scratch.materializeStopPollCount++
+		if count&materializationDeadlinePollMask != 0 {
+			return ParseStopNone
+		}
+	}
+	if !time.Now().Before(p.parseDeadline) {
+		return p.markActiveParseStopped(ParseStopTimeout)
+	}
+	return ParseStopNone
 }
 
 func (p *Parser) markActiveParseStopped(reason ParseStopReason) ParseStopReason {
