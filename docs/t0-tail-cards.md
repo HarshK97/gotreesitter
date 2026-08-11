@@ -3,8 +3,8 @@
 This receipt closes the six R1 tail cards from the accepted V10 epoch.
 It uses existing evidence only. It changes no parser code and runs no new experiment.
 
-Source epoch: `20260808T202958Z-v10-full-5003ffba`  
-Source revision: `5003ffba01e2aee44043e71360c00f5aa93e6e8b`  
+Source epoch: `20260808T202958Z-v10-full-5003ffba`
+Source revision: `5003ffba01e2aee44043e71360c00f5aa93e6e8b`
 Source scoreboard: `harness_out/gcp/20260808T202958Z-v10-full-5003ffba/gts-v10-full/results/scoreboard/scoreboard.json`
 
 R1 counts the Scala 56–58x pair as one card. The table therefore has six cards.
