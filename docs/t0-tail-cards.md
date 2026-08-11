@@ -28,6 +28,45 @@ The Perl card remains not-actionable. Its single 1.2 MB witness cannot separate 
 No card qualifies as hygiene or fixed-candidate.
 Named files remain witnesses. They are not code selectors.
 
+## Top-20 clean-file census
+
+This census ranks clean, full-span, measured rows by the existing full-parse ratio.
+It uses the same V10 scoreboard and performs no new run.
+
+| Rank | Language | File | Ratio | Bytes | Memo tier | Disposition |
+|---:|---|---|---:|---:|---|---|
+| 1 | Python | `Lib/test/test_logging.py` | 209.170723x | 276,682 | initial | recovery candidate |
+| 2 | Elixir | `lib/elixir/lib/enum.ex` | 121.410147x | 154,291 | temporary | recovery candidate |
+| 3 | Python | `Lib/test/test_socket.py` | 108.118260x | 288,768 | initial | recovery candidate |
+| 4 | Scala | `src/compiler/scala/tools/nsc/typechecker/Implicits.scala` | 58.538671x | 103,233 | temporary | recovery candidate |
+| 5 | Scala | `src/compiler/scala/tools/nsc/typechecker/Namers.scala` | 55.995092x | 102,961 | temporary | recovery candidate |
+| 6 | Elixir | `lib/elixir/lib/macro.ex` | 42.503260x | 96,618 | temporary | recovery candidate |
+| 7 | Perl | `dist/Module-CoreList/lib/Module/CoreList.pm` | 40.899346x | 1,266,636 | none | no mechanism fact |
+| 8 | HTTP | `spec/examples/dotenv/with_dotenv.http` | 35.727088x | 0 | none | hygiene; exclude from ratio credit |
+| 9 | HTTP | `spec/examples/dotenv/without_dotenv.http` | 32.834630x | 0 | none | hygiene; exclude from ratio credit |
+| 10 | Solidity | `test/utils/Packing.t.sol` | 30.709653x | 44,712 | initial | recovery candidate |
+| 11 | Common Lisp | `src/code/external-formats/enc-cn-tbl.lisp` | 27.175048x | 959,740 | none | no mechanism fact |
+| 12 | Requirements | `test/integration/targets/ansible-test-integration-constraints/ansible_collections/ns/col/tests/integration/requirements.txt` | 24.254181x | 9 | none | tiny-input candidate |
+| 13 | TOML | `.prettierrc.toml` | 23.040623x | 21 | none | tiny-input candidate |
+| 14 | Solidity | `contracts/governance/Governor.sol` | 22.572329x | 31,997 | initial | recovery candidate |
+| 15 | Enforce | `4_world/entities/dayzplayerimplement.c` | 22.170520x | 104,908 | standard | recovery candidate |
+| 16 | Enforce | `4_world/entities/manbase/dayzplayer/dayzplayercfgbase.c` | 21.968405x | 194,135 | standard | recovery candidate |
+| 17 | Liquid | `performance/tests/tribble/blog.liquid` | 21.734392x | 1,133 | initial | recovery candidate |
+| 18 | Requirements | `test/integration/targets/ansible-test-units-constraints/ansible_collections/ns/col/tests/unit/requirements.txt` | 21.626286x | 9 | none | tiny-input candidate |
+| 19 | Enforce | `4_world/systems/inventory/dayzplayerinventory.c` | 21.493946x | 108,051 | standard | recovery candidate |
+| 20 | PureScript | `src/Data/EuclideanRing.purs` | 21.303608x | 4,059 | initial | recovery candidate |
+
+The top 20 contains four evidence groups:
+
+- Initial, temporary, or standard memo activity appears in 12 rows.
+- No recovery memo fact appears in five rows.
+- Two zero-byte HTTP rows fall below the 1,000 nanosecond hygiene threshold.
+- Three small-input rows need a size series before mechanism attribution.
+
+The memo-bearing rows support one recovery-materialization hypothesis.
+They do not prove one implementation mechanism or justify a parser change.
+The next T0 tranche must compare memo activity with file size, retry count, and materialization lifetime.
+
 ## Evidence boundary
 
 All selected rows have `axes.full.status=ok`, clean full-span trees, and no root error.
