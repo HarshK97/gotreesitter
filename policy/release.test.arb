@@ -1,9 +1,9 @@
-test "planned minor passes after exact hosted CI" {
+test "planned minor passes immediately after exact hosted CI" {
     given {
         release.kind: "planned-minor"
         release.version_increment: "next-minor"
-        release.los_angeles_thursday: true
-        release.soak_seconds: 172800
+        release.los_angeles_thursday: false
+        release.soak_seconds: 0
         release.incident_present: false
         release.delay_rationale_present: false
         evidence.main_exact_candidate: true
