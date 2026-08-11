@@ -773,11 +773,9 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.49.0**. Publication remains pending the exact
-commit CI run and the governed soak. The latest immutable published release is
-**v0.48.1**.
+The current release is **v0.49.0**.
 
-This candidate consolidates parser correctness, recovery bounds, parser-core
+This release consolidates parser correctness, recovery bounds, parser-core
 bytecode, fact extraction bytecode, replay caches, randomized benchmarks, and
 V10 fleet controls. It also adds opt-in Lean 4 support and scanner corrections
 for JavaScript, TypeScript, and TSX.
