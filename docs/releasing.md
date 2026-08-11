@@ -1,22 +1,17 @@
 # Releasing gotreesitter
 
-## Cadence
+## Eligibility
 
-Planned minor releases are cut on Thursdays in `America/Los_Angeles`. A
-Thursday without a coherent, green release is skipped; the schedule is a
-batching boundary, not a reason to ship unfinished work.
+Publish a standard minor release on any day after the exact commit on `main`
+passes the full hosted continuous integration (CI) workflow. Require complete
+correctness and performance evidence. Do not use a calendar delay as a
+replacement for release evidence.
 
-Planned releases require a 48-hour soak after the exact commit completes the
-hosted continuous integration (CI) workflow in `ci.yml`. Keep this conservative
-rule until the project reviews a risk classifier.
+Use the urgent patch route only for urgent correctness, security, or packaging
+regressions. It still requires an incident and a reason that delay is worse.
 
-Patch releases may happen outside the cadence for urgent correctness,
-security, or packaging regressions. Ordinary maintenance waits for the next
-Thursday. Release planning and in-progress campaign notes live in the private
-`hypha://m31labs/gotreesitter` space rather than a public release-train issue.
-
-v0.47.0 is the final planned off-cadence minor. The first cadence release is
-the next eligible Thursday after v0.47.0.
+Keep release planning and campaign notes in the private
+`hypha://m31labs/gotreesitter` space.
 
 ## Release checklist
 
@@ -27,8 +22,8 @@ the next eligible Thursday after v0.47.0.
 3. Dispatch the full hosted `ci.yml` workflow for the exact commit on `main`.
    Require its successful completion. Keep correctness, parity, race, and
    performance evidence distinct.
-4. Wait at least 48 hours after hosted CI completes for a planned minor
-   release. Record the actual soak for an urgent patch.
+4. Complete the selected performance validation. Record its environment and
+   randomized evidence with the release receipt.
 5. Dispatch the manual `release.yml` workflow from `main`. Supply the version,
    candidate commit hash, release route, and signed Hyphae receipt ID.
 6. For an urgent patch, also supply the incident and explain why waiting is
@@ -59,9 +54,8 @@ v1.9.0 from its digest-pinned release archive.
 The strategy denies a release when a fact does not satisfy the release receipt.
 These facts include:
 
-- the weekday;
 - the current `main` commit;
-- the exact manual CI run, result, and soak;
+- the exact manual CI run and result;
 - the document state;
 - the tag and release state;
 - the GitHub service result.
