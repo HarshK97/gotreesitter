@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestPlannedMinorFactsUseLosAngelesThursdayAcrossUTCBoundary(t *testing.T) {
+func TestReleaseFactsRecordLosAngelesWeekdayAcrossUTCBoundary(t *testing.T) {
 	input := plannedInput(t, time.Date(2026, 7, 31, 2, 0, 0, 0, time.UTC))
 	result := collect(t, input)
 	if !result.PolicyFacts.Release.LosAngelesThursday {
@@ -40,7 +40,7 @@ func TestPlannedMinorFactsMarkOtherWeekdays(t *testing.T) {
 	}
 }
 
-func TestUrgentPatchFactsOutsideThursday(t *testing.T) {
+func TestUrgentPatchFactsRecordWeekday(t *testing.T) {
 	input := urgentInput(t, time.Date(2026, 7, 29, 19, 0, 0, 0, time.UTC))
 	result := collect(t, input)
 	facts := result.PolicyFacts.Release
@@ -114,7 +114,7 @@ func TestVersionIncrementFactsDoNotChooseARoute(t *testing.T) {
 	})
 }
 
-func TestSoakFactsPreserveBoundary(t *testing.T) {
+func TestCompletionAgeFactsPreserveBoundary(t *testing.T) {
 	tests := []struct {
 		name        string
 		soak        time.Duration

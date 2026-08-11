@@ -1,4 +1,4 @@
-test "planned minor passes on Thursday after 48 hours" {
+test "planned minor passes after exact hosted CI" {
     given {
         release.kind: "planned-minor"
         release.version_increment: "next-minor"
@@ -50,7 +50,7 @@ test "urgent patch passes outside Thursday without a minimum soak" {
     expect strategy ReleasePublication selected Allow { action: "allow" }
 }
 
-test "planned minor fails outside Thursday" {
+test "planned minor passes outside Thursday" {
     given {
         release.kind: "planned-minor"
         release.version_increment: "next-minor"
@@ -73,10 +73,10 @@ test "planned minor fails outside Thursday" {
         evidence.unreleased_link_matches: true
         evidence.version_link_matches: true
     }
-    expect strategy ReleasePublication selected Deny { action: "deny" }
+    expect strategy ReleasePublication selected Allow { action: "allow" }
 }
 
-test "planned minor fails before 48 hours" {
+test "planned minor passes before 48 hours" {
     given {
         release.kind: "planned-minor"
         release.version_increment: "next-minor"
@@ -99,7 +99,7 @@ test "planned minor fails before 48 hours" {
         evidence.unreleased_link_matches: true
         evidence.version_link_matches: true
     }
-    expect strategy ReleasePublication selected Deny { action: "deny" }
+    expect strategy ReleasePublication selected Allow { action: "allow" }
 }
 
 test "urgent patch fails without both exception reasons" {

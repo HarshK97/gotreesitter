@@ -24,8 +24,6 @@ strategy ReleasePublication returns ReleaseDecision {
             (
                 release.kind == "planned-minor"
                 and release.version_increment == "next-minor"
-                and release.los_angeles_thursday
-                and release.soak_seconds >= 172800
             )
             or (
                 release.kind == "urgent-patch"
