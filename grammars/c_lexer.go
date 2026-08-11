@@ -238,6 +238,20 @@ func (ts *CTokenSource) SupportsIncrementalReuse() bool {
 	return true
 }
 
+// SupportsForestRecoveryFallback permits forest confirmation when the source
+// has no preprocessor directive. The parser DFA does not model directives.
+func (ts *CTokenSource) SupportsForestRecoveryFallback() bool {
+	if ts == nil {
+		return false
+	}
+	for _, b := range ts.src {
+		if b == '#' {
+			return false
+		}
+	}
+	return true
+}
+
 func (ts *CTokenSource) SetParserState(state gotreesitter.StateID) {
 	ts.parserState = state
 }

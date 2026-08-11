@@ -3,6 +3,9 @@ package main
 import (
 	"reflect"
 	"testing"
+
+	gotreesitter "github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
 )
 
 func TestNormalizeSubcommandArgsAllowsGrammarBeforeFlags(t *testing.T) {
@@ -42,5 +45,21 @@ func TestNormalizeSubcommandArgsHandlesAuthoringValueFlags(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("normalizeSubcommandArgs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseResultFailedRejectsMissingNode(t *testing.T) {
+	lang := grammars.CLanguage()
+	tree, err := gotreesitter.NewParser(lang).Parse([]byte("int value"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	defer tree.Release()
+	root := tree.RootNode()
+	if root == nil || !root.HasErrorOrMissing() {
+		t.Fatalf("expected recovery node, got %v", root)
+	}
+	if !parseResultFailed(parseResult{tree: tree, root: root}) {
+		t.Fatal("parseResultFailed accepted a tree with a missing node")
 	}
 }
