@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"testing"
 )
 
 type referenceAtlasSchema struct {
-	Schema    string `json:"schema"`
-	Reference struct {
+	Schema               string `json:"schema"`
+	OrderedEventContract string `json:"ordered_event_contract"`
+	Reference            struct {
 		Commit string `json:"commit"`
 	} `json:"reference"`
 	Identity struct {
@@ -56,6 +58,9 @@ func TestReferenceAtlasEventSchemaIsCompleteAndHonest(t *testing.T) {
 	if schema.Schema != "gts-reference-atlas-event-schema/v1" {
 		t.Fatalf("schema = %q", schema.Schema)
 	}
+	if schema.OrderedEventContract != "gts-reference-atlas-events/v1" {
+		t.Fatalf("ordered event contract = %q", schema.OrderedEventContract)
+	}
 	if schema.Reference.Commit != "f5afe475deb7c0bae6407fb776c76824f717bb61" {
 		t.Fatalf("reference commit = %q", schema.Reference.Commit)
 	}
@@ -69,7 +74,7 @@ func TestReferenceAtlasEventSchemaIsCompleteAndHonest(t *testing.T) {
 		t.Fatal("claim limits must state the evidence boundary")
 	}
 
-	wantStatuses := map[string]bool{"aggregate_only": true, "planned": true}
+	wantStatuses := map[string]bool{"aggregate_only": true, "planned": true, "ordered": true}
 	seen := make(map[string]bool, len(schema.Events))
 	for index, event := range schema.Events {
 		if event.ID == "" || event.Phase == "" {
@@ -100,6 +105,12 @@ func validateReferenceAtlasEngine(t *testing.T, eventID, engine string, value re
 	}
 	if value.Status == "aggregate_only" && len(value.Fields) == 0 {
 		t.Fatalf("event %q %s aggregate status has no counter mapping", eventID, engine)
+	}
+	if value.Status == "ordered" {
+		wantFields := []string{"event_seq", "source_start_byte", "source_end_byte", "parse_state", "symbol", "call_site", "event_kind", "outcome"}
+		if !reflect.DeepEqual(value.Fields, wantFields) {
+			t.Fatalf("event %q %s ordered fields=%v want=%v", eventID, engine, value.Fields, wantFields)
+		}
 	}
 	for _, field := range value.Fields {
 		if field == "" {

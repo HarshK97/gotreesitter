@@ -2,6 +2,7 @@
   "schema": "gts-reference-atlas-event-schema/v1",
   "spec": "spec.parser-graduation.v1#8.1",
   "purpose": "Define matched C and Go event names before adding event emitters.",
+  "ordered_event_contract": "gts-reference-atlas-events/v1",
   "reference": {
     "runtime": "tree-sitter-c",
     "version": "0.25.1",
@@ -35,7 +36,8 @@
   },
   "status_definitions": {
     "aggregate_only": "The engine exposes a counter, but not an ordered event record.",
-    "planned": "The contract names the event, but the current engine exposes no record."
+    "planned": "The contract names the event, but the current engine exposes no record.",
+    "ordered": "The engine emits a bounded ordered record with the contract semantic fields."
   },
   "events": [
     {
@@ -68,7 +70,7 @@
       "required_fields": ["event_seq", "parse_state", "symbol", "call_site", "outcome"],
       "semantic_key": ["parse_state", "symbol", "call_site", "event_kind"],
       "c": {"status": "aggregate_only", "fields": ["table_lookups_proxy", "action_entries_examined_proxy"]},
-      "go": {"status": "aggregate_only", "fields": ["TableLookupsProxy", "ActionEntriesExaminedProxy"]}
+      "go": {"status": "ordered", "fields": ["event_seq", "source_start_byte", "source_end_byte", "parse_state", "symbol", "call_site", "event_kind", "outcome"]}
     },
     {
       "id": "parser.shift",
@@ -76,7 +78,7 @@
       "required_fields": ["event_seq", "source_start_byte", "source_end_byte", "parse_state", "symbol", "call_site", "outcome"],
       "semantic_key": ["source_start_byte", "source_end_byte", "parse_state", "symbol", "event_kind"],
       "c": {"status": "aggregate_only", "fields": ["shifts"]},
-      "go": {"status": "aggregate_only", "fields": ["Shifts"]}
+      "go": {"status": "ordered", "fields": ["event_seq", "source_start_byte", "source_end_byte", "parse_state", "symbol", "call_site", "event_kind", "outcome"]}
     },
     {
       "id": "parser.reduce",
@@ -84,7 +86,7 @@
       "required_fields": ["event_seq", "source_start_byte", "source_end_byte", "parse_state", "symbol", "call_site", "outcome"],
       "semantic_key": ["source_start_byte", "source_end_byte", "parse_state", "symbol", "event_kind"],
       "c": {"status": "aggregate_only", "fields": ["reductions", "reduction_pop_requests"]},
-      "go": {"status": "aggregate_only", "fields": ["Reductions", "ReductionPopRequests"]}
+      "go": {"status": "ordered", "fields": ["event_seq", "source_start_byte", "source_end_byte", "parse_state", "symbol", "call_site", "event_kind", "outcome"]}
     },
     {
       "id": "parser.recover",
@@ -92,7 +94,7 @@
       "required_fields": ["event_seq", "source_start_byte", "source_end_byte", "parse_state", "symbol", "call_site", "outcome"],
       "semantic_key": ["source_start_byte", "source_end_byte", "parse_state", "symbol", "event_kind"],
       "c": {"status": "aggregate_only", "fields": ["explicit_recover_actions"]},
-      "go": {"status": "aggregate_only", "fields": ["ExplicitRecoverActions"]}
+      "go": {"status": "ordered", "fields": ["event_seq", "source_start_byte", "source_end_byte", "parse_state", "symbol", "call_site", "event_kind", "outcome"]}
     },
     {
       "id": "parser.accept",
@@ -100,7 +102,7 @@
       "required_fields": ["event_seq", "source_start_byte", "source_end_byte", "parse_state", "symbol", "call_site", "outcome"],
       "semantic_key": ["source_start_byte", "source_end_byte", "parse_state", "symbol", "event_kind"],
       "c": {"status": "aggregate_only", "fields": ["accept_actions"]},
-      "go": {"status": "aggregate_only", "fields": ["AcceptActions"]}
+      "go": {"status": "ordered", "fields": ["event_seq", "source_start_byte", "source_end_byte", "parse_state", "symbol", "call_site", "event_kind", "outcome"]}
     },
     {
       "id": "stack.copy",
@@ -148,7 +150,7 @@
       "required_fields": ["event_seq", "source_start_byte", "source_end_byte", "parse_state", "call_site", "outcome"],
       "semantic_key": ["source_start_byte", "source_end_byte", "parse_state", "call_site", "event_kind"],
       "c": {"status": "aggregate_only", "fields": ["merge_attempts_proxy", "merge_successes_proxy"]},
-      "go": {"status": "aggregate_only", "fields": ["MergeEventCensusCounts.Attempts", "MergeEventCensusCounts.Successes"]}
+      "go": {"status": "ordered", "fields": ["event_seq", "source_start_byte", "source_end_byte", "parse_state", "symbol", "call_site", "event_kind", "outcome"]}
     },
     {
       "id": "link.duplicate",

@@ -1,6 +1,6 @@
 # C-reference atlas
 
-This document records the first G2 unit from the parser graduation campaign.
+This document records the G2 units from the parser graduation campaign.
 
 ## Unit G2.1
 
@@ -17,7 +17,7 @@ Do not treat either state as cross-engine event equality.
 The contract excludes pointers, stack identifiers, and arena identifiers.
 Use source position, parse state, symbol, call site, and event kind instead.
 
-## Exit for this unit
+## Exit for G2.1
 
 Require these conditions before adding emitters:
 
@@ -28,9 +28,26 @@ Require these conditions before adding emitters:
 - semantic keys exclude physical engine identity;
 - the reference commit remains tree-sitter C 0.25.1.
 
+## Unit G2.2
+
+The Go diagnostic build now emits a bounded ordered stream for these events:
+
+- action table lookup
+- shift
+- reduce
+- accept
+- recovery
+- head merge
+
+The stream uses source spans, parser state, grammar symbol, call site, event
+kind, and outcome. It excludes pointers, stack identifiers, and arena data.
+
+The stream is an observation surface. It does not change parser decisions.
+Aggregate counters remain the comparison authority until the C stream exists.
+
 ## Next units
 
-Add ordered Go events and C events in separate pull requests.
+Add the ordered C stream in a separate pull request.
 Use deterministic controls before reading a real corpus.
 Align events by the schema key, not by final tree shape.
 Reject a receipt when either engine drops or truncates an event stream.
