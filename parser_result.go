@@ -147,7 +147,7 @@ func (p *Parser) currentMaterializationTiming() *parseMaterializationTiming {
 
 func (p *Parser) resultMaterializationStopReason(arena *nodeArena) ParseStopReason {
 	if p != nil {
-		if reason := p.parseStopReasonNow(); parseStopReasonIsActive(reason) {
+		if reason := p.materializationParseStopReason(); parseStopReasonIsActive(reason) {
 			return reason
 		}
 		// compatMemoryBudgetTripped is compat normalization's own sticky

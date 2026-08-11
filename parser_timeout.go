@@ -27,6 +27,11 @@ type parseStopPoller struct {
 
 const parseStopPollMask = 1023
 
+// Materialization checks can run many times inside one parser iteration.
+// Poll the deadline every 64 checks. Check sticky stops and cancellation on
+// every call.
+const materializationDeadlinePollMask = 63
+
 func (p *parseStopPoller) poll() ParseStopReason {
 	if p == nil {
 		return ParseStopNone
@@ -113,7 +118,9 @@ func (p *Parser) needsParseBudget() bool {
 }
 
 func (p *Parser) activeParseStopCheck() parseStopCheck {
-	if p == nil {
+	// Long walks treat nil as an unbudgeted check.
+	// Avoid callback polls when no timeout or cancellation is active.
+	if p == nil || !p.needsParseBudget() {
 		return nil
 	}
 	if p.activeParseStopCheckFn == nil {
@@ -122,6 +129,8 @@ func (p *Parser) activeParseStopCheck() parseStopCheck {
 	return p.activeParseStopCheckFn
 }
 
+// Keep the common stop path in this function. The parser loop stores this method as a callback.
+// A wrapper adds one call to each poll.
 func (p *Parser) activeParseStopReason() ParseStopReason {
 	if p == nil {
 		return ParseStopNone
@@ -136,6 +145,38 @@ func (p *Parser) activeParseStopReason() ParseStopReason {
 		return p.markActiveParseStopped(ParseStopCancelled)
 	}
 	if !p.parseDeadline.IsZero() && !time.Now().Before(p.parseDeadline) {
+		return p.markActiveParseStopped(ParseStopTimeout)
+	}
+	return ParseStopNone
+}
+
+// Repeat the cheap stop checks here. This keeps the parser callback direct.
+// Only materialization throttles wall-clock reads.
+func (p *Parser) materializationParseStopReason() ParseStopReason {
+	if p == nil {
+		return ParseStopNone
+	}
+	if !p.needsParseBudget() {
+		return ParseStopNone
+	}
+	if parseStopReasonIsActive(p.parseStoppedReason) {
+		return p.parseStoppedReason
+	}
+	if flag := p.cancellationFlag; flag != nil && atomic.LoadUint32(flag) != 0 {
+		return p.markActiveParseStopped(ParseStopCancelled)
+	}
+	if p.parseDeadline.IsZero() {
+		return ParseStopNone
+	}
+	scratch := p.budgetScratch
+	if scratch != nil {
+		count := scratch.materializeStopPollCount
+		scratch.materializeStopPollCount++
+		if count&materializationDeadlinePollMask != 0 {
+			return ParseStopNone
+		}
+	}
+	if !time.Now().Before(p.parseDeadline) {
 		return p.markActiveParseStopped(ParseStopTimeout)
 	}
 	return ParseStopNone

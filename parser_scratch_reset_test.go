@@ -32,49 +32,18 @@ func TestGLRMergeScratchResetInvalidatesEquivCacheByEpoch(t *testing.T) {
 	}
 }
 
-func TestGLRMergeScratchResetPreservesCleanZeroEpochAndRejectsReusedAddress(t *testing.T) {
+func TestGLRMergeScratchResetClearsCleanZeroFrames(t *testing.T) {
 	var nodes gssScratch
 	old := nodes.allocNode(stackEntry{state: 1}, nil, 1)
-	var pooled parserScratch
-	scratch := &pooled.merge
-	scratch.ensureMergeHotCaches()
-	scratch.beginCleanZeroEpoch()
-	storeCleanZeroFrontCache(scratch, old, true)
-	scratch.cleanZeroCache = map[*gssNode]gssCleanZeroErrorCacheEntry{
-		old: {resultEpoch: scratch.cleanZeroEpoch, clean: true},
-	}
+	var scratch glrMergeScratch
 	scratch.cleanZeroFrames = append(scratch.cleanZeroFrames, gssCleanZeroFrame{node: old})
 
-	epochBefore := scratch.cleanZeroEpoch
 	scratch.reset()
-	if scratch.cleanZeroEpoch != epochBefore {
-		t.Fatalf("clean-zero epoch after reset = %d, want preserved %d", scratch.cleanZeroEpoch, epochBefore)
-	}
-	if got, ok := lookupCleanZeroFrontCache(scratch, old); !ok || !got {
-		t.Fatalf("clean-zero front after reset = %v, %v; want retained true, true", got, ok)
-	}
-	if len(scratch.cleanZeroCache) != 0 {
-		t.Fatalf("clean-zero map retained %d GSS pointers", len(scratch.cleanZeroCache))
-	}
 	if len(scratch.cleanZeroFrames) != 0 {
 		t.Fatalf("clean-zero traversal scratch not reset: frames=%d", len(scratch.cleanZeroFrames))
 	}
 	if cap(scratch.cleanZeroFrames) > 0 && scratch.cleanZeroFrames[:cap(scratch.cleanZeroFrames)][0].node != nil {
 		t.Fatal("clean-zero frame backing retained a GSS pointer")
-	}
-
-	nodes.recycleForParse()
-	reused := nodes.allocNode(stackEntry{state: 2}, nil, 1)
-	if reused != old {
-		t.Fatalf("recycled GSS address = %p, want %p", reused, old)
-	}
-	parser := NewParser(buildArithmeticLanguage())
-	parser.configureParseScratch(&pooled, nil, nil, nil, arenaClassFull, true)
-	if scratch.cleanZeroEpoch != epochBefore+1 {
-		t.Fatalf("clean-zero epoch after acquisition = %d, want %d", scratch.cleanZeroEpoch, epochBefore+1)
-	}
-	if _, ok := lookupCleanZeroFrontCache(scratch, reused); ok {
-		t.Fatal("clean-zero front hit after a GSS address was reused in a new parse epoch")
 	}
 }
 
@@ -103,6 +72,21 @@ func TestGLRMergeScratchCleanZeroEpochWrapClearsFront(t *testing.T) {
 		if entry != (glrCleanZeroFrontCacheEntry{}) {
 			t.Fatalf("clean-zero front slot %d after wrap = %#v, want zero", i, entry)
 		}
+	}
+}
+
+func TestGSSCleanZeroNodeStateStoresBothResults(t *testing.T) {
+	cleanNode := &gssNode{}
+	dirtyNode := &gssNode{}
+	gen := gssPrefixAggGen.Load()
+	storeCleanZeroNodeState(cleanNode, gen, true)
+	storeCleanZeroNodeState(dirtyNode, gen, false)
+
+	if clean, ok := lookupCleanZeroNodeState(cleanNode, gen); !ok || !clean {
+		t.Fatalf("clean node state = %v, %v; want true, true", clean, ok)
+	}
+	if clean, ok := lookupCleanZeroNodeState(dirtyNode, gen); !ok || clean {
+		t.Fatalf("dirty node state = %v, %v; want false, true", clean, ok)
 	}
 }
 

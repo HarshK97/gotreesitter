@@ -26,6 +26,7 @@ type parserScratch struct {
 	relexSnapshotBuffer      []byte
 	relexSnapshotInUse       bool
 	trackChildErrors         bool
+	materializeStopPollCount uint32
 	budgetBytes              int64
 	budgetBaselineBytes      int64
 	gssBaselineBytes         int64
@@ -187,6 +188,7 @@ func releaseParserScratch(s *parserScratch, skipGSSClear bool) {
 	}
 	s.relexSnapshotInUse = false
 	s.trackChildErrors = false
+	s.materializeStopPollCount = 0
 	s.entries.reset()
 	s.gss.skipClear = skipGSSClear
 	s.gss.audit = nil

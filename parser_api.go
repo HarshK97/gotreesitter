@@ -177,6 +177,8 @@ func finalizeDeferredReturnedTreeTruncation(tree *Tree, _ []byte) {
 
 const forestIncrementalReuseUnsupportedReason = "old tree was built by GSS forest fast path"
 
+const forestRecoveryFallbackReuseReason = "forest_recovery_fallback"
+
 func oldTreeDisablesIncrementalReuse(oldTree *Tree) bool {
 	return oldTree != nil && oldTree.incrementalReuseDisabled
 }
@@ -362,6 +364,22 @@ func profileFreshParseFallback(start time.Time, tree *Tree, reason string) Incre
 	profile.ReparseNanos = time.Since(start).Nanoseconds()
 	profile.ReuseUnsupported = true
 	profile.ReuseUnsupportedReason = reason
+	return profile
+}
+
+func profileForestRecoveryFallback(profile IncrementalParseProfile, tree *Tree, elapsed time.Duration) IncrementalParseProfile {
+	if tree == nil {
+		return profile
+	}
+	profile.ReparseNanos += elapsed.Nanoseconds()
+	profile.ReusedSubtrees = 0
+	profile.ReusedBytes = 0
+	profile.ReuseUnsupported = true
+	profile.ReuseUnsupportedReason = forestRecoveryFallbackReuseReason
+	profile.OldTreeReuseRoute = false
+	profile.StopReason = tree.ParseStopReason()
+	profile.ExpectedEOFByte = tree.ParseRuntime().ExpectedEOFByte
+	profile.LastTokenEndByte = tree.ParseRuntime().LastTokenEndByte
 	return profile
 }
 
@@ -725,6 +743,9 @@ func (p *Parser) parseWithTokenSource(source []byte, ts TokenSource, reparseFact
 		}
 	}
 	p.normalizeReturnedTreeForParse(tree, source)
+	if !p.recoveryInitialOnly {
+		tree, _ = p.maybeReplaceRecoveredTokenSourceTreeWithForest(source, tree, ts)
+	}
 	return tree, nil
 }
 
@@ -766,6 +787,7 @@ func (p *Parser) parseIncrementalWithTokenSourceChanged(source []byte, oldTree *
 		tree = p.retryIncrementalMemoryBudgetAsPlainFullWithTokenSource(source, ts, tree, nil)
 	}
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
+	tree, _ = p.maybeReplaceRecoveredTokenSourceTreeWithForest(source, tree, ts)
 	return tree, nil
 }
 
@@ -989,6 +1011,12 @@ type incrementalReuseUnsupportedReasoner interface {
 	IncrementalReuseUnsupportedReason() string
 }
 
+// forestRecoveryFallbackEligible marks a token source whose clean forest
+// result can replace its recovered result.
+type forestRecoveryFallbackEligible interface {
+	SupportsForestRecoveryFallback() bool
+}
+
 type parserStateTokenSource interface {
 	SetParserState(state StateID)
 	// SetGLRStates provides all active GLR stack states so the token source
@@ -1117,6 +1145,7 @@ func (p *Parser) Parse(source []byte) (*Tree, error) {
 		p.normalizeReturnedTreeForParse(tree, source)
 		if !p.recoveryInitialOnly {
 			tree = p.resolveCRecoverySwallowedError(source, tree)
+			tree, _ = p.maybeReplaceRecoveredTreeWithForest(source, tree)
 		}
 		tree = p.maybeCompactReturnedFullTree(tree, source)
 	}
@@ -1521,6 +1550,7 @@ func (p *Parser) parseIncrementalChanged(source []byte, oldTree *Tree) (*Tree, e
 		tree = p.retryIncrementalMemoryBudgetAsPlainFullWithDFA(source, tree, nil)
 	}
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
+	tree, _ = p.maybeReplaceRecoveredTreeWithForest(source, tree)
 	return tree, nil
 }
 
@@ -1695,7 +1725,13 @@ func (p *Parser) parseIncrementalChangedProfiled(source []byte, oldTree *Tree) (
 		tree = p.retryIncrementalMemoryBudgetAsPlainFullWithDFA(source, tree, timing)
 	}
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
-	return tree, timing.toProfile(), nil
+	forestStart := time.Now()
+	tree, forestRepaired := p.maybeReplaceRecoveredTreeWithForest(source, tree)
+	profile := timing.toProfile()
+	if forestRepaired {
+		profile = profileForestRecoveryFallback(profile, tree, time.Since(forestStart))
+	}
+	return tree, profile, nil
 }
 
 // ParseIncrementalWithTokenSourceProfiled is like ParseIncrementalWithTokenSource
@@ -1736,7 +1772,13 @@ func (p *Parser) parseIncrementalWithTokenSourceChangedProfiled(source []byte, o
 		tree = p.retryIncrementalMemoryBudgetAsPlainFullWithTokenSource(source, ts, tree, timing)
 	}
 	p.normalizeReturnedIncrementalTree(tree, oldTree, source)
-	return tree, timing.toProfile(), nil
+	forestStart := time.Now()
+	tree, forestRepaired := p.maybeReplaceRecoveredTokenSourceTreeWithForest(source, tree, ts)
+	profile := timing.toProfile()
+	if forestRepaired {
+		profile = profileForestRecoveryFallback(profile, tree, time.Since(forestStart))
+	}
+	return tree, profile, nil
 }
 
 // ParseWith parses source using option-based configuration.

@@ -47,6 +47,9 @@ const (
 	fullParseGSSNodeSlabCap    = 32 * 1024
 	maxRetainedGSSNodes        = 256 * 1024
 	maxRetainedGSSStackEntries = 4 * 1024
+
+	gssAggCostValid uint8 = 1 << iota
+	gssAggVisValid
 )
 
 type gssNode struct {
@@ -62,7 +65,7 @@ type gssNode struct {
 	// field equals gssPrefixAggGen (parser_recover_c.go); allocNode resets the
 	// generation to 0 (never valid — the counter starts at 1). aggCost is filled
 	// by both the parser-side and merge-side walks (identical math); aggVis only
-	// by the parser side, hence aggVisValid.
+	// by the parser side. aggValid records which values are current.
 	aggGen uint64
 
 	// extraLinks points at the backing array for links 1..k after a gated
@@ -75,7 +78,11 @@ type gssNode struct {
 	depth          uint32
 	extraLinkCount uint8
 	extraLinkCap   uint8
-	aggVisValid    bool
+	aggValid       uint8
+	// cleanZeroState fills the final layout byte. Allocation and recycling
+	// reset it. aggGen validates it against recovery-relevant node mutations.
+	// These fields do not increase the 64-bit or 32-bit node size.
+	cleanZeroState uint8
 }
 
 type gssMainLink struct {
@@ -117,12 +124,16 @@ func (n *gssNode) setExtraLink(i int, link gssMainLink) {
 		panic("gssNode.setExtraLink: index out of range")
 	}
 	unsafe.Slice(n.extraLinks, int(n.extraLinkCount))[i] = link
+	// An extra-link rewrite can change the all-links cleanliness result.
+	// Clear the local result before another merge check reads it.
+	n.cleanZeroState = gssCleanZeroUnknown
 }
 
 func (n *gssNode) appendExtraLink(link gssMainLink) {
 	if n == nil || int(n.extraLinkCount) >= maxMainLinkCount-1 {
 		panic("gssNode.appendExtraLink: link limit exceeded")
 	}
+	n.cleanZeroState = gssCleanZeroUnknown
 	count := int(n.extraLinkCount)
 	capacity := int(n.extraLinkCap)
 	if count < capacity && n.extraLinks != nil {
@@ -599,7 +610,8 @@ func (s *gssScratch) allocNode(entry stackEntry, prev *gssNode, depth uint32) *g
 			n.extraLinkCount = 0
 			n.extraLinkCap = 0
 			n.aggGen = 0
-			n.aggVisValid = false
+			n.aggValid = 0
+			n.cleanZeroState = 0
 			return n
 		}
 	}
@@ -654,7 +666,8 @@ func (s *gssScratch) allocNodeSlow(entry stackEntry, prev *gssNode, depth uint32
 		n.extraLinkCount = 0
 		n.extraLinkCap = 0
 		n.aggGen = 0
-		n.aggVisValid = false
+		n.aggValid = 0
+		n.cleanZeroState = 0
 		if s.audit != nil {
 			s.audit.recordGSSAlloc(n)
 		}

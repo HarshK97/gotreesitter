@@ -128,7 +128,7 @@ func registerSampleFlags(fs *flag.FlagSet, sample *sampleFlags) {
 func registerParseOptionFlags(fs *flag.FlagSet, opts *parseOptions) {
 	fs.StringVar(&opts.format, "format", "text", "output format: text, sexpr, json")
 	fs.BoolVar(&opts.runtime, "runtime", false, "print parser runtime summary")
-	fs.BoolVar(&opts.strict, "strict", false, "exit non-zero if the parse has ERROR nodes or stops early")
+	fs.BoolVar(&opts.strict, "strict", false, "exit non-zero if the parse has ERROR or MISSING nodes, or stops early")
 	fs.StringVar(&opts.expectPath, "expect", "", "path to expected S-expression file")
 	fs.StringVar(&opts.writeExpectPath, "write-expect", "", "write actual S-expression to this file")
 }
@@ -386,6 +386,7 @@ func printParseResult(result parseResult, lang *gotreesitter.Language, runtime b
 	}
 	fmt.Printf("Root:    %s [%d:%d]\n", root.Type(lang), root.StartByte(), root.EndByte())
 	fmt.Printf("Error:   %v\n", root.HasError())
+	fmt.Printf("Error or missing: %v\n", root.HasErrorOrMissing())
 	fmt.Printf("Stop:    %s\n", result.tree.ParseStopReason())
 	if runtime {
 		fmt.Printf("Runtime: %s\n", result.tree.ParseRuntime().Summary())
@@ -398,7 +399,7 @@ func parseResultFailed(result parseResult) bool {
 	if result.err != nil || result.tree == nil || result.root == nil {
 		return true
 	}
-	return result.root.HasError() || result.tree.ParseStoppedEarly()
+	return result.root.HasErrorOrMissing() || result.tree.ParseStoppedEarly()
 }
 
 func validateParseOptions(opts parseOptions) {
@@ -494,16 +495,17 @@ type parseJSON struct {
 }
 
 type parseStatus struct {
-	OK           bool   `json:"ok"`
-	Root         string `json:"root,omitempty"`
-	StartByte    uint32 `json:"start_byte"`
-	EndByte      uint32 `json:"end_byte"`
-	HasError     bool   `json:"has_error"`
-	StoppedEarly bool   `json:"stopped_early"`
-	StopReason   string `json:"stop_reason,omitempty"`
-	SExpr        string `json:"sexpr,omitempty"`
-	Runtime      string `json:"runtime,omitempty"`
-	Error        string `json:"error,omitempty"`
+	OK                bool   `json:"ok"`
+	Root              string `json:"root,omitempty"`
+	StartByte         uint32 `json:"start_byte"`
+	EndByte           uint32 `json:"end_byte"`
+	HasError          bool   `json:"has_error"`
+	HasErrorOrMissing bool   `json:"has_error_or_missing"`
+	StoppedEarly      bool   `json:"stopped_early"`
+	StopReason        string `json:"stop_reason,omitempty"`
+	SExpr             string `json:"sexpr,omitempty"`
+	Runtime           string `json:"runtime,omitempty"`
+	Error             string `json:"error,omitempty"`
 }
 
 func parseJSONReport(name, sampleName string, sampleBytes int, result parseResult, lang *gotreesitter.Language, runtime bool, golden goldenResult) *parseJSON {
@@ -525,14 +527,15 @@ func parseJSONReport(name, sampleName string, sampleBytes int, result parseResul
 	}
 	root := result.root
 	out.Parse = parseStatus{
-		OK:           !parseResultFailed(result),
-		Root:         root.Type(lang),
-		StartByte:    root.StartByte(),
-		EndByte:      root.EndByte(),
-		HasError:     root.HasError(),
-		StoppedEarly: result.tree.ParseStoppedEarly(),
-		StopReason:   string(result.tree.ParseStopReason()),
-		SExpr:        resultSExpr(result, lang),
+		OK:                !parseResultFailed(result),
+		Root:              root.Type(lang),
+		StartByte:         root.StartByte(),
+		EndByte:           root.EndByte(),
+		HasError:          root.HasError(),
+		HasErrorOrMissing: root.HasErrorOrMissing(),
+		StoppedEarly:      result.tree.ParseStoppedEarly(),
+		StopReason:        string(result.tree.ParseStopReason()),
+		SExpr:             resultSExpr(result, lang),
 	}
 	if runtime {
 		out.Parse.Runtime = result.tree.ParseRuntime().Summary()

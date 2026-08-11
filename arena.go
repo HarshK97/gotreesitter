@@ -131,6 +131,7 @@ type nodeArena struct {
 	fieldSourceSlabs                   []fieldSourceSliceSlab
 	externalScannerNodeCheckpoints     externalScannerCheckpointSet
 	externalScannerNodeCheckpointSlabs []externalScannerCheckpointSlab
+	hiddenFieldRepeatScratch           hiddenFieldRepeatScratch
 	childSlabCursor                    int
 	fieldSlabCursor                    int
 	fieldSourceSlabCursor              int
@@ -576,6 +577,7 @@ func (a *nodeArena) reset() {
 	// Drop any subtree pointer left in the compare scratch so a pooled arena
 	// sitting idle between parses doesn't pin the previous parse's tree.
 	a.forestResultLinkCompareScratch = [2]stackEntry{}
+	a.hiddenFieldRepeatScratch.reset()
 }
 
 func (a *nodeArena) resetPrimaryNodes() {

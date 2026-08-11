@@ -34,6 +34,15 @@ The default set includes:
 - the fresh full and selected-store canonical fixtures;
 - the tags, legacy fact, and compiled `FactProgram` extraction lanes.
 
+Set `GTS_RECOVERY_CORPUS_FILE` and `GTS_RECOVERY_CORPUS_LANG` to add one exact
+corpus file. The script skips `BenchmarkRecoveryCorpusFile` when either value
+is absent. Use the same file and language for both comparison runs.
+
+```sh
+export GTS_RECOVERY_CORPUS_FILE=/absolute/path/to/corpus-file
+export GTS_RECOVERY_CORPUS_LANG=elixir
+```
+
 Run both checkouts with the same seed range. Alternate checkout order between
 seed batches when the host cannot stay thermally stable.
 

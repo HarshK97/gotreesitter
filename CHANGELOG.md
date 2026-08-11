@@ -77,6 +77,14 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- C enum lists with three or more enumerators no longer publish `ERROR` or
+  `MISSING` nodes. A clean forest result can replace a recovered tree only
+  after it covers the full source and contains no recovery nodes. This fixes
+  [issue #667](https://github.com/odvcencio/gotreesitter/issues/667).
+
+- `Node.HasErrorOrMissing` reports both recovery node forms. The
+  `grammargen parse -strict` command now rejects either form.
+
 - JavaScript, TypeScript, and TSX scanners now bind external results through
   each language's positional symbol table. Regenerated blobs no longer mistype
   shifted external symbols.
@@ -185,6 +193,30 @@ for tags and release notes while still in `0.x`.
   C reference parser on real source files.
 
 ### Changed
+
+- Parser stop checks now skip inactive callbacks and keep the common callback
+  direct. Result materialization reads the wall clock every 64 checkpoints.
+  Cancellation and sticky stop checks still run at every checkpoint.
+
+- GLR recovery now computes C-compatible error cost and visible counts in one
+  tree walk. Memo indexing uses pointer-bit folds and checks the primary way
+  first. Graph-structured stack (GSS) nodes store clean-zero merge results
+  without a larger node layout. Extra-link mutations invalidate the result.
+
+- C-recovery promotes an error stack to the graph-structured stack before
+  reduction forks. Deep recovery branches now share their immutable prefix.
+  The Swift recovery witness reduced time by 9.96%, bytes by 59.65%, and mean
+  peak resident memory by 22.09%. The 20-seed combined suite reduced KDL
+  recovery time by 1.20%, bytes by 13.14%, and allocations by 1.58%.
+  Other parser timings stayed neutral.
+
+- The randomized benchmark suite now accepts an exact recovery corpus file and
+  language. The 20-seed comparison against the release boundary reduced the
+  timing geomean by 1.77%. Elixir recovery improved by 15.21%, KDL recovery by
+  9.12%, full parse by 1.16%, and incremental no-edit by 6.51%.
+  `FactProgram` parse and extraction improved by 1.23%.
+  The parser-core control stayed neutral. No timing, byte, or allocation metric
+  had a significant regression.
 
 - The guarded parser-core bytecode experiment now supports `REDUCE_CHAIN` and
   `REDUCE_SHIFT`. The corridor remains off by default. Each superinstruction

@@ -36,6 +36,10 @@ func (p *Parser) endParseOperationBudget(state parseOperationBudgetState) {
 }
 
 func (p *Parser) parseStopReasonNow() ParseStopReason {
+	// Parse loops arm parseBudgetDepth. Retry work can poll cancellation between budgets.
+	if p == nil || (p.parseBudgetDepth == 0 && p.cancellationFlag == nil) {
+		return ParseStopNone
+	}
 	return p.activeParseStopReason()
 }
 

@@ -4019,7 +4019,7 @@ func TestGSSCleanZeroAllLinksRejectsErrorBearingPackedPredecessor(t *testing.T) 
 	}
 }
 
-func TestGSSCleanZeroAllLinksCachesFailureForEveryActiveAncestor(t *testing.T) {
+func TestGSSCleanZeroAllLinksStoresFailureForEveryActiveAncestor(t *testing.T) {
 	var nodes gssScratch
 	var scratch glrMergeScratch
 	scratch.beginEquivEpoch()
@@ -4037,20 +4037,37 @@ func TestGSSCleanZeroAllLinksCachesFailureForEveryActiveAncestor(t *testing.T) {
 	if gssNodeCleanZeroErrorAllLinksWithScratch(&scratch, head) {
 		t.Fatal("clean-zero scan accepted an error-bearing ancestor path")
 	}
+	gen := gssPrefixAggGen.Load()
 	for _, node := range []*gssNode{head, middle, bad} {
-		entry := scratch.cleanZeroCache[node]
-		if entry.resultEpoch != scratch.cleanZeroEpoch || entry.clean {
-			t.Fatalf("ancestor cache = %#v, want current-epoch failure", entry)
+		if clean, ok := lookupCleanZeroNodeState(node, gen); !ok || clean {
+			t.Fatalf("ancestor state = %v, %v; want false, true", clean, ok)
 		}
 	}
-	if entry := scratch.cleanZeroCache[cleanSibling]; entry.resultEpoch != scratch.cleanZeroEpoch || !entry.clean {
-		t.Fatalf("clean sibling cache = %#v, want current-epoch success", entry)
+	if clean, ok := lookupCleanZeroNodeState(cleanSibling, gen); !ok || !clean {
+		t.Fatalf("clean sibling state = %v, %v; want true, true", clean, ok)
 	}
 	if gssNodeCleanZeroErrorAllLinksWithScratch(&scratch, middle) {
 		t.Fatal("cached ancestor failure returned clean")
 	}
 	if len(scratch.cleanZeroFrames) != 0 {
 		t.Fatalf("clean-zero frames after cached failure = %d, want 0", len(scratch.cleanZeroFrames))
+	}
+}
+
+func TestGSSCleanZeroAllLinksTerminatesOnCycle(t *testing.T) {
+	a := &gssNode{entry: stackEntry{state: 1}}
+	b := &gssNode{entry: stackEntry{state: 2}, prev: a}
+	a.prev = b
+	var scratch glrMergeScratch
+
+	if !gssNodeCleanZeroErrorAllLinksWithScratch(&scratch, a) {
+		t.Fatal("clean-zero scan rejected a clean cycle")
+	}
+	gen := gssPrefixAggGen.Load()
+	for _, node := range []*gssNode{a, b} {
+		if clean, ok := lookupCleanZeroNodeState(node, gen); !ok || !clean {
+			t.Fatalf("cycle node state = %v, %v; want true, true", clean, ok)
+		}
 	}
 }
 
@@ -4072,6 +4089,46 @@ func TestGSSCleanZeroAllLinksFreshParseProofFallsBackAfterError(t *testing.T) {
 	childErrors = true
 	if gssNodeCleanZeroErrorAllLinksWithScratch(&mergeScratch, head) {
 		t.Fatal("clean-zero proof did not fall back after an error was recorded")
+	}
+}
+
+func TestGSSCleanZeroNodeStateSurvivesScratchEpochForStableNode(t *testing.T) {
+	var nodes gssScratch
+	payload := NewLeafNode(11, true, 0, 1, Point{}, Point{Column: 1})
+	head := nodes.allocNode(newStackEntryNode(2, payload), nil, 1)
+	var scratch glrMergeScratch
+	scratch.beginEquivEpoch()
+
+	if !gssNodeCleanZeroErrorAllLinksWithScratch(&scratch, head) {
+		t.Fatal("clean-zero scan rejected the initial clean node")
+	}
+	if clean, ok := lookupCleanZeroNodeState(head, gssPrefixAggGen.Load()); !ok || !clean {
+		t.Fatalf("clean-zero node state = %v, %v; want true, true", clean, ok)
+	}
+
+	scratch.cleanZeroCache = nil
+	clear(scratch.cleanZeroFront)
+	scratch.beginCleanZeroEpoch()
+	if !gssNodeCleanZeroErrorAllLinksWithScratch(&scratch, head) {
+		t.Fatal("stable clean-zero node state did not survive a scratch epoch")
+	}
+}
+
+func TestGSSCleanZeroNodeStateRejectsPublishedPayloadMutation(t *testing.T) {
+	var nodes gssScratch
+	payload := NewLeafNode(11, true, 0, 1, Point{}, Point{Column: 1})
+	head := nodes.allocNode(newStackEntryNode(2, payload), nil, 1)
+	var scratch glrMergeScratch
+	scratch.beginEquivEpoch()
+
+	if !gssNodeCleanZeroErrorAllLinksWithScratch(&scratch, head) {
+		t.Fatal("clean-zero scan rejected the initial clean node")
+	}
+	payload.setHasError(true)
+	nodeBumpEquivVersion(payload)
+	scratch.beginCleanZeroEpoch()
+	if gssNodeCleanZeroErrorAllLinksWithScratch(&scratch, head) {
+		t.Fatal("clean-zero state survived a recovery-relevant payload mutation")
 	}
 }
 
@@ -4140,6 +4197,9 @@ func TestGSSNodesCanMergeAllowsCleanPackedPredecessorLinks(t *testing.T) {
 	errorEntry := newStackEntryNode(2, NewLeafNode(99, true, 0, 1, Point{}, Point{Column: 1}))
 	stackEntryNode(errorEntry).setHasError(true)
 	withExtra.setExtraLink(0, gssMainLink{prev: extraPrev, entry: errorEntry})
+	if _, ok := lookupCleanZeroNodeState(withExtra, gssPrefixAggGen.Load()); ok {
+		t.Fatal("extra-link rewrite retained the clean-zero node result")
+	}
 	if gssNodesCanMerge(withExtra, candidate) {
 		t.Fatal("gssNodesCanMerge = true for error-bearing packed predecessor")
 	}

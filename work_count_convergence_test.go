@@ -544,7 +544,7 @@ func TestWorkCountConvergenceHeadErrorCostIsReadOnly(t *testing.T) {
 	missing.setMissing(true)
 	headNode := &gssNode{
 		entry: newStackEntryNode(1, missing), depth: 1,
-		aggGen: 77, aggCost: 13, aggVis: 9, aggVisValid: true,
+		aggGen: 77, aggCost: 13, aggVis: 9, aggValid: gssAggCostValid | gssAggVisValid,
 	}
 	stack := glrStack{gss: gssStack{head: headNode}}
 	sentinel := &gssNode{depth: 99}
@@ -560,13 +560,13 @@ func TestWorkCountConvergenceHeadErrorCostIsReadOnly(t *testing.T) {
 	prefixBefore := append([]*gssNode(nil), parser.cPrefixPath...)
 	mergePrefixBefore := append([]*gssNode(nil), mergeScratch.cPrefixPath...)
 	memoBefore := append([]cNodeMemoCacheEntry(nil), parser.cNodeMemoCache...)
-	aggGen, aggCost, aggVis, aggValid := headNode.aggGen, headNode.aggCost, headNode.aggVis, headNode.aggVisValid
+	aggGen, aggCost, aggVis, aggValid := headNode.aggGen, headNode.aggCost, headNode.aggVis, headNode.aggValid
 
 	head := workCountConvergenceHead(parser, &stack)
 	if !head.ErrorCostComparable || head.ErrorCost == 0 {
 		t.Fatalf("read-only head cost=%+v", head)
 	}
-	if headNode.aggGen != aggGen || headNode.aggCost != aggCost || headNode.aggVis != aggVis || headNode.aggVisValid != aggValid {
+	if headNode.aggGen != aggGen || headNode.aggCost != aggCost || headNode.aggVis != aggVis || headNode.aggValid != aggValid {
 		t.Fatalf("head aggregate cache mutated: %+v", headNode)
 	}
 	if !reflect.DeepEqual(parser.cPrefixPath, prefixBefore) || !reflect.DeepEqual(mergeScratch.cPrefixPath, mergePrefixBefore) || !reflect.DeepEqual(parser.cNodeMemoCache, memoBefore) || parser.cNodeMemoEpoch != 4 {

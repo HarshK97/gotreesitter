@@ -2,6 +2,34 @@ package gotreesitter
 
 import "testing"
 
+func TestCNodeErrorCostAndVisibleSubtreeCountMatchesIndependentWalks(t *testing.T) {
+	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
+	missing := &Node{symbol: 1, equivVersion: 1}
+	missing.setMissing(true)
+	plain := &Node{symbol: 1, equivVersion: 1}
+	root := &Node{
+		symbol:       errorSymbol,
+		equivVersion: 1,
+		endByte:      4,
+		children:     []*Node{plain, missing},
+	}
+	p := &Parser{
+		language:       lang,
+		cNodeMemoCache: make([]cNodeMemoCacheEntry, cNodeMemoCacheSize),
+	}
+
+	wantCost := cNodeErrorCostLang(lang, root)
+	wantVisible := cNodeVisibleSubtreeCountUncachedLang(lang, root)
+	gotCost, gotVisible := p.cNodeErrorCostAndVisibleSubtreeCount(root)
+	if gotCost != wantCost || gotVisible != wantVisible {
+		t.Fatalf("combined aggregate = (%d, %d), want (%d, %d)", gotCost, gotVisible, wantCost, wantVisible)
+	}
+	slot := p.cNodeMemoSlot(root)
+	if slot.ver != root.equivVersion || !slot.hasCost || !slot.hasVis {
+		t.Fatalf("combined aggregate did not cache both values: %#v", *slot)
+	}
+}
+
 func TestBeforePublicationVersionBumpDoesNotInvalidateLivePrefixes(t *testing.T) {
 	lang := &Language{SymbolMetadata: []SymbolMetadata{{}, {Visible: true}}}
 	p := &Parser{
@@ -56,8 +84,9 @@ func TestMetadataVersionBumpKeepsRecoveryPrefixAggregate(t *testing.T) {
 		t.Fatalf("initial aggregate = (%d, %d), want (0, 1)", cost, visible)
 	}
 	gen := gssPrefixAggGen.Load()
-	if head.aggGen != gen || !head.aggVisValid {
-		t.Fatalf("initial cache generation = %d valid=%v, want %d valid", head.aggGen, head.aggVisValid, gen)
+	valid := head.aggValid&(gssAggCostValid|gssAggVisValid) == (gssAggCostValid | gssAggVisValid)
+	if head.aggGen != gen || !valid {
+		t.Fatalf("initial cache generation = %d valid=%v, want %d valid", head.aggGen, valid, gen)
 	}
 
 	payload.parseState = 2
@@ -96,7 +125,7 @@ func TestMergeCostFillInvalidatesAndParserRefillsVisibility(t *testing.T) {
 	if cost, visible := p.cStackPrefixAgg(head); cost != 0 || visible != 2 {
 		t.Fatalf("initial aggregate = (%d, %d), want (0, 2)", cost, visible)
 	}
-	if !base.aggVisValid || !head.aggVisValid {
+	if base.aggValid&gssAggVisValid == 0 || head.aggValid&gssAggVisValid == 0 {
 		t.Fatal("parser aggregate did not validate visibility")
 	}
 
@@ -105,13 +134,13 @@ func TestMergeCostFillInvalidatesAndParserRefillsVisibility(t *testing.T) {
 	if cost := cStackPrefixCostForMerge(&merge, lang, head); cost != 0 {
 		t.Fatalf("merge-side cost = %d, want 0", cost)
 	}
-	if base.aggVisValid || head.aggVisValid {
+	if base.aggValid&gssAggVisValid != 0 || head.aggValid&gssAggVisValid != 0 {
 		t.Fatal("cost-only refill left stale visibility valid")
 	}
 	if cost, visible := p.cStackPrefixAgg(head); cost != 0 || visible != 2 {
 		t.Fatalf("parser refill = (%d, %d), want (0, 2)", cost, visible)
 	}
-	if !base.aggVisValid || !head.aggVisValid {
+	if base.aggValid&gssAggVisValid == 0 || head.aggValid&gssAggVisValid == 0 {
 		t.Fatal("parser refill did not restore visibility validity")
 	}
 }
@@ -221,11 +250,11 @@ func TestSetGSSMainLinkInvalidatesOnlyChangedRecoveryContribution(t *testing.T) 
 	prev := &gssNode{depth: 1}
 	payload := &Node{symbol: 1, equivVersion: 1}
 	head := &gssNode{
-		prev:        prev,
-		entry:       newStackEntryNode(1, payload),
-		depth:       2,
-		aggGen:      gssPrefixAggGen.Load(),
-		aggVisValid: true,
+		prev:     prev,
+		entry:    newStackEntryNode(1, payload),
+		depth:    2,
+		aggGen:   gssPrefixAggGen.Load(),
+		aggValid: gssAggCostValid | gssAggVisValid,
 	}
 
 	gen := gssPrefixAggGen.Load()

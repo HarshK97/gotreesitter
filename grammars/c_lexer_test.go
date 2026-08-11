@@ -32,6 +32,30 @@ func TestNewCTokenSourceOrEOFFallsBack(t *testing.T) {
 	}
 }
 
+func TestCTokenSourceForestRecoveryFallbackEligibility(t *testing.T) {
+	lang := CLanguage()
+	for _, test := range []struct {
+		name string
+		src  []byte
+		want bool
+	}{
+		{name: "plain source", src: []byte("enum E { A, B, C };\n"), want: true},
+		{name: "preprocessor directive", src: []byte("#define FLAG 1\nenum E { A, B, C };\n"), want: false},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			ts, err := NewCTokenSource(test.src, lang)
+			if err != nil {
+				t.Fatalf("NewCTokenSource: %v", err)
+			}
+			defer ts.Close()
+			if got := ts.SupportsForestRecoveryFallback(); got != test.want {
+				t.Fatalf("SupportsForestRecoveryFallback = %t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 func TestCTokenSourceSkipToByte(t *testing.T) {
 	lang := CLanguage()
 	src := []byte("int main(void) {\n  int x = 1;\n  return x;\n}\n")

@@ -417,6 +417,42 @@ func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
 	return tree, true
 }
 
+// maybeReplaceRecoveredTreeWithForest replaces a recovered DFA result only
+// when the forest produces a complete tree without ERROR or MISSING nodes.
+func (p *Parser) maybeReplaceRecoveredTreeWithForest(source []byte, tree *Tree) (*Tree, bool) {
+	if p == nil || tree == nil || tree.rawParseStoppedEarly() || tree.UsedForestFastPath() || p.recoveryInitialOnly {
+		return tree, false
+	}
+	if p.language == nil || p.language.ExternalScanner != nil || len(p.language.ExternalSymbols) != 0 || len(p.included) != 0 {
+		return tree, false
+	}
+	root := rawRootOrNil(tree)
+	if root == nil || !root.HasErrorOrMissing() {
+		return tree, false
+	}
+
+	candidate, ok := p.ParseForestExperimental(source)
+	if !ok || candidate == nil {
+		return tree, false
+	}
+	p.normalizeReturnedTreeForParse(candidate, source)
+	candidateRoot := rawRootOrNil(candidate)
+	if candidate.rawParseStoppedEarly() || candidateRoot == nil || candidateRoot.StartByte() != 0 || candidateRoot.EndByte() != uint32(len(source)) || candidateRoot.HasErrorOrMissing() {
+		candidate.Release()
+		return tree, false
+	}
+	tree.Release()
+	return candidate, true
+}
+
+func (p *Parser) maybeReplaceRecoveredTokenSourceTreeWithForest(source []byte, tree *Tree, ts TokenSource) (*Tree, bool) {
+	eligible, ok := ts.(forestRecoveryFallbackEligible)
+	if !ok || !eligible.SupportsForestRecoveryFallback() {
+		return tree, false
+	}
+	return p.maybeReplaceRecoveredTreeWithForest(source, tree)
+}
+
 // ForestDeclineInfo returns where/why the forest fast path last declined: the
 // byte offset and lookahead symbol at the decline, a short reason code, and (for
 // reason "dead_end") the surviving GLR states. The normal Parse path may then
@@ -2204,7 +2240,7 @@ func (p *Parser) forestEOFRecoveryCouldCompete(idx *gssForestIndex, arena *nodeA
 			if p.lookupActionIndex(entry.state, 0) == 0 {
 				continue
 			}
-			fork, ok := p.cRecoverToState(&stack, entry.depth, entry.state, arena, &entryScratch, &gssScratch, &trackChildErrors)
+			fork, ok := p.cRecoverToState(&stack, int(entry.depth), entry.state, arena, &entryScratch, &gssScratch, &trackChildErrors)
 			if !ok {
 				continue
 			}

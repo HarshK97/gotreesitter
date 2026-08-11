@@ -1539,6 +1539,36 @@ func (n *Node) IsError() bool { return n.symbol == errorSymbol }
 // HasError reports whether this node or any descendant contains a parse error.
 func (n *Node) HasError() bool { return n.hasError() }
 
+// HasErrorOrMissing reports whether this node or a descendant contains an
+// ERROR or MISSING node. Use it for strict parse-health checks.
+func (n *Node) HasErrorOrMissing() bool {
+	if n == nil {
+		return false
+	}
+	if n.hasError() || n.IsError() || n.IsMissing() {
+		return true
+	}
+
+	var local [64]*Node
+	stack := local[:0]
+	stack = append(stack, n)
+	for len(stack) > 0 {
+		last := len(stack) - 1
+		current := stack[last]
+		stack = stack[:last]
+		for _, child := range current.children {
+			if child == nil {
+				continue
+			}
+			if child.hasError() || child.IsError() || child.IsMissing() {
+				return true
+			}
+			stack = append(stack, child)
+		}
+	}
+	return false
+}
+
 // HasChanges reports whether this node was marked dirty by Tree.Edit.
 func (n *Node) HasChanges() bool { return n.dirty() }
 
@@ -2182,8 +2212,17 @@ func wireParentLinksWithScratchUntil(
 		stack = local[:0]
 	}
 	stack = append(stack, root)
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		if scratch != nil {
+			*scratch = stack[:0]
+		}
+		if errorSummary != nil && *errorSummary != resultErrorSummaryPresent {
+			*errorSummary = resultErrorSummaryUnknown
+		}
+		return false
+	}
 	for len(stack) > 0 {
-		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		if reason := p.materializationParseStopReason(); parseStopReasonIsTerminal(reason) {
 			if scratch != nil {
 				*scratch = stack[:0]
 			}
@@ -2210,13 +2249,11 @@ func wireParentLinksWithScratchUntil(
 	if scratch != nil {
 		*scratch = stack[:0]
 	}
-	if errorSummary != nil {
-		if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
-			if *errorSummary != resultErrorSummaryPresent {
-				*errorSummary = resultErrorSummaryUnknown
-			}
-			return false
+	if reason := p.parseStopReasonNow(); parseStopReasonIsTerminal(reason) {
+		if errorSummary != nil && *errorSummary != resultErrorSummaryPresent {
+			*errorSummary = resultErrorSummaryUnknown
 		}
+		return false
 	}
 	return true
 }

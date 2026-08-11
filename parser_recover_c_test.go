@@ -540,17 +540,17 @@ func cRecordSummaryPositionTableReference(entries []stackEntry) []cStackSummaryE
 	for i := range entries {
 		duplicate := false
 		for j := len(summary) - 1; j >= 0; j-- {
-			if summary[j].depth < depth {
+			if int(summary[j].depth) < depth {
 				break
 			}
-			if summary[j].depth == depth && summary[j].state == entries[i].state {
+			if int(summary[j].depth) == depth && summary[j].state == entries[i].state {
 				duplicate = true
 				break
 			}
 		}
 		if !duplicate {
 			summary = append(summary, cStackSummaryEntry{
-				depth:    depth,
+				depth:    uint8(depth),
 				state:    entries[i].state,
 				posBytes: posBytesAt[i],
 				posRow:   posRowAt[i],
@@ -798,7 +798,7 @@ func TestCRecoverElectionDepthIteratorPreservesMergedSummaryOrder(t *testing.T) 
 			if status == cRecoverElectionIterPoll {
 				continue
 			}
-			got = append(got, tuple{depth: entry.depth, state: entry.state, owner: stacks[mi].cRec.groupOrder})
+			got = append(got, tuple{depth: int(entry.depth), state: entry.state, owner: stacks[mi].cRec.groupOrder})
 		}
 	}
 	want := []tuple{
@@ -1597,6 +1597,12 @@ func TestCNodeMemoCacheEntrySize(t *testing.T) {
 	}
 }
 
+func TestCStackSummaryEntrySize(t *testing.T) {
+	if got, want := unsafe.Sizeof(cStackSummaryEntry{}), uintptr(16); got != want {
+		t.Fatalf("cStackSummaryEntry size = %d, want %d", got, want)
+	}
+}
+
 func TestRecoveryMemoTelemetryPreservesAMD64HotLayouts(t *testing.T) {
 	if unsafe.Sizeof(uintptr(0)) != 8 {
 		t.Skip("amd64 layout ratchet")
@@ -1886,17 +1892,17 @@ func frozenCRecoveryStrategy1AttemptTrace(p *Parser, stacks []glrStack, group *c
 		for _, member := range members {
 			rec := stacks[member].cRec
 			for _, entry := range rec.summary {
-				if entry.depth != depth || entry.state == cErrorState {
+				if int(entry.depth) != depth || entry.state == cErrorState {
 					continue
 				}
-				key := seenKey{depth: entry.depth, state: entry.state}
+				key := seenKey{depth: int(entry.depth), state: entry.state}
 				if _, ok := seen[key]; ok {
 					continue
 				}
 				seen[key] = struct{}{}
 				trace = append(trace, electionTraceEntry{
-					EntryDepth:   entry.depth,
-					RecoverDepth: entry.depth + depthBump,
+					EntryDepth:   int(entry.depth),
+					RecoverDepth: int(entry.depth) + depthBump,
 					State:        entry.state,
 					OwnerIndex:   member,
 					OwnerOrder:   rec.groupOrder,
@@ -1955,7 +1961,7 @@ func linearCRecoveryStrategy1AttemptTrace(p *Parser, stacks []glrStack, group *c
 			}
 			rec := stacks[member].cRec
 			trace = append(trace, electionTraceEntry{
-				EntryDepth: entry.depth, RecoverDepth: entry.depth + depthBump,
+				EntryDepth: int(entry.depth), RecoverDepth: int(entry.depth) + depthBump,
 				State: entry.state, OwnerIndex: member, OwnerOrder: rec.groupOrder,
 				PosBytes: entry.posBytes, PosRow: entry.posRow,
 			})
@@ -2402,13 +2408,13 @@ func TestCRecordSummaryDepthsAreMonotonic(t *testing.T) {
 		summary := parser.cRecordSummary(entries)
 		if len(summary) > 0 {
 			summaries++
-			if summary[len(summary)-1].depth > maxDepth {
-				maxDepth = summary[len(summary)-1].depth
+			if int(summary[len(summary)-1].depth) > maxDepth {
+				maxDepth = int(summary[len(summary)-1].depth)
 			}
 		}
 		for i := 1; i < len(summary); i++ {
 			comparisons++
-			if summary[i].depth < summary[i-1].depth {
+			if int(summary[i].depth) < int(summary[i-1].depth) {
 				t.Fatalf("fixture %d summary depth fell at %d: %d -> %d", fixture, i, summary[i-1].depth, summary[i].depth)
 			}
 			if summary[i].depth == summary[i-1].depth {

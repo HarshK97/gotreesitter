@@ -1045,7 +1045,8 @@ func TestGSSScratchRecycleForParseReusesClearedSlots(t *testing.T) {
 	first := scratch.allocNode(newStackEntryNode(2, payload), nil, 1)
 	first.appendExtraLink(gssMainLink{entry: stackEntry{state: 9}})
 	first.aggGen = 12
-	first.aggVisValid = true
+	first.aggValid = gssAggCostValid | gssAggVisValid
+	first.cleanZeroState = gssCleanZeroDirty
 
 	scratch.recycleForParse()
 
@@ -1053,7 +1054,7 @@ func TestGSSScratchRecycleForParseReusesClearedSlots(t *testing.T) {
 		t.Fatalf("used nodes after recycle = %d, want 0", scratch.usedTotal)
 	}
 	if first.prev != nil || first.entry.node != nil || first.extraLinks != nil || first.extraLinkCount != 0 ||
-		first.extraLinkCap != 0 || first.aggGen != 0 || first.aggVisValid {
+		first.extraLinkCap != 0 || first.aggGen != 0 || first.aggValid != 0 || first.cleanZeroState != gssCleanZeroUnknown {
 		t.Fatalf("recycled slot retained state: %+v", *first)
 	}
 	second := scratch.allocNode(stackEntry{state: 4}, nil, 1)
@@ -1081,7 +1082,10 @@ func TestParserRecycleDemotedGSSInvalidatesPointerHolders(t *testing.T) {
 	scratch.merge.result = append(scratch.merge.result, stack, stale)
 	stacks := scratch.merge.result[:1]
 	scratch.merge.cPrefixPath = append(scratch.merge.cPrefixPath, oldHead)
-	scratch.merge.cleanZeroCache = map[*gssNode]gssCleanZeroErrorCacheEntry{oldHead: {clean: true}}
+	scratch.merge.cleanZeroCache = map[*gssNode]gssCleanZeroErrorCacheEntry{
+		oldHead: {resultEpoch: scratch.merge.cleanZeroEpoch, clean: false},
+	}
+	storeCleanZeroNodeState(oldHead, gssPrefixAggGen.Load(), false)
 	scratch.merge.cleanZeroFrames = append(scratch.merge.cleanZeroFrames, gssCleanZeroFrame{node: oldHead})
 	scratch.merge.spineVisit = append(scratch.merge.spineVisit, spinePairKey{a: oldHead, b: oldHead.prev})
 	scratch.merge.mergeSeen = map[gssMergePair]bool{{a: oldHead, b: oldHead.prev}: true}
@@ -1117,8 +1121,11 @@ func TestParserRecycleDemotedGSSInvalidatesPointerHolders(t *testing.T) {
 	if scratch.merge.gssPointerEpoch == gssPointerEpochBefore {
 		t.Fatalf("GSS pointer epoch did not advance: %d", scratch.merge.gssPointerEpoch)
 	}
-	if len(scratch.merge.result) != 0 || len(scratch.merge.cPrefixPath) != 0 || len(scratch.merge.cleanZeroCache) != 0 || len(scratch.merge.mergeSeen) != 0 {
-		t.Fatalf("merge pointer holders not reset: result=%d prefix=%d clean=%d seen=%d", len(scratch.merge.result), len(scratch.merge.cPrefixPath), len(scratch.merge.cleanZeroCache), len(scratch.merge.mergeSeen))
+	if len(scratch.merge.result) != 0 || len(scratch.merge.cPrefixPath) != 0 || len(scratch.merge.mergeSeen) != 0 {
+		t.Fatalf("merge pointer holders not reset: result=%d prefix=%d seen=%d", len(scratch.merge.result), len(scratch.merge.cPrefixPath), len(scratch.merge.mergeSeen))
+	}
+	if len(scratch.merge.cleanZeroCache) != 0 {
+		t.Fatalf("clean-zero cache len after invalidation = %d, want 0", len(scratch.merge.cleanZeroCache))
 	}
 	if scratch.merge.preflight == nil || len(scratch.merge.preflight.virtualLink) != 0 || len(scratch.merge.preflight.reachCache) != 0 {
 		t.Fatal("preflight pointer holders not reset")
@@ -1142,6 +1149,12 @@ func TestParserRecycleDemotedGSSInvalidatesPointerHolders(t *testing.T) {
 	}
 	if got := stacks[0].gss.materialize(nil); len(got) != 2 || stackEntryNode(got[1]) != payload {
 		t.Fatalf("reforked stack entries = %+v", got)
+	}
+	if !gssNodeCleanZeroErrorAllLinksWithScratch(&scratch.merge, stacks[0].gss.head) {
+		t.Fatal("stale clean-zero entry survived recycled-address lookup")
+	}
+	if clean, ok := lookupCleanZeroNodeState(stacks[0].gss.head, gssPrefixAggGen.Load()); !ok || !clean {
+		t.Fatalf("refreshed clean-zero state = %v, %v; want true, true", clean, ok)
 	}
 }
 
