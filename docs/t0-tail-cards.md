@@ -58,14 +58,14 @@ It uses the same V10 scoreboard and performs no new run.
 
 The top 20 contains four evidence groups:
 
-- Initial, temporary, or standard memo activity appears in 12 rows.
-- No recovery memo fact appears in five rows.
+- Initial, temporary, or standard memo activity appears in 13 rows.
+- Two large rows have no recovery memo fact.
 - Two zero-byte HTTP rows fall below the 1,000 nanosecond hygiene threshold.
 - Three small-input rows need a size series before mechanism attribution.
 
 The memo-bearing rows support one recovery-materialization hypothesis.
 They do not prove one implementation mechanism or justify a parser change.
-The next T0 tranche must compare memo activity with file size, retry count, and materialization lifetime.
+The card matrix in `docs/t0-top20-clean-file-cards.md` defines the next evidence gate.
 
 ## Evidence boundary
 
