@@ -6088,6 +6088,37 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					continue
 				}
 				if len(stacks) > 1 {
+					// A GLR fork can leave sibling stacks in states that need
+					// different tokenizations of the same bytes: a keyword
+					// literal versus the grammar's generic word token, a
+					// dedicated operator token versus a shared one, and so
+					// on. This engine lexes one token per iteration for
+					// every live stack (see updateParserStateTokenSource),
+					// so a stack whose state needs the other reading is
+					// starved unless it gets a chance at its own lex mode
+					// first. relexTokenForStackLexState is the same
+					// span-exact, action-verified DFA probe the faithful
+					// C-recovery port already uses for this (issue #454)
+					// and the compact route runs unconditionally
+					// (relexTokenForState); it is a no-op whenever the
+					// re-lex does not land a different, action-bearing
+					// symbol at the identical byte span, so a stack that
+					// genuinely has no other reading is killed exactly as
+					// before.
+					if reTok, ok := p.relexTokenForStackLexState(source, currentState, tok); ok {
+						if p.glrTrace {
+							fmt.Printf("  stack[%d] STACK-RELEX: sym=%d -> sym=%d [%d-%d] in state=%d\n",
+								si, tok.Symbol, reTok.Symbol, reTok.StartByte, reTok.EndByte, currentState)
+						}
+						stackRelexRestoreTok = tok
+						stackRelexActive = true
+						tok = reTok
+						if actionTiming != nil {
+							ns := recordNoActionTiming()
+							actionTiming.actionNoActionRelexNanos += ns
+						}
+						goto retryAction
+					}
 					if p.glrTrace {
 						fmt.Printf("  stack[%d] KILLED: no action for sym=%d in state=%d (multiple stacks)\n", si, tok.Symbol, currentState)
 					}
