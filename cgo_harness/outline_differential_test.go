@@ -358,12 +358,27 @@ func runOutlineDifferentialLanguage(entry grammars.LangEntry) outlineDiffResult 
 	defer cQuery.Close()
 
 	goMatches := outlineDiffGoQueryMatches(goLang, goTree, goQuery, src)
-	cMatches := outlineDiffCQueryMatches(cQuery, cTree, src)
+	cMatches, err := outlineDiffCQueryMatchesWithPredicates(cQuery, cTree, src, tagsQuery)
+	if err != nil {
+		result.status = outlineDiffSkipped
+		result.detail = "C predicate evaluation: " + err.Error()
+		return result
+	}
 
 	result.goMatches = len(goMatches)
 	result.cMatches = len(cMatches)
 	result.goCaptures = outlineDiffCaptureTotal(goMatches)
 	result.cCaptures = outlineDiffCaptureTotal(cMatches)
+
+	// outlineDiffCanonicalOrder (see its doc comment): neither engine
+	// guarantees a relative order between two DIFFERENT patterns that both
+	// start matching at the SAME tree node, and outline.go's builder does
+	// not depend on it either. Canonicalizing both streams the same way
+	// before comparing can only turn a same-multiset, different-order
+	// "diverged" into "equal"; it can never hide a match or a capture that
+	// actually differs, since nothing is merged or dropped, only reordered.
+	outlineDiffCanonicalOrder(goMatches)
+	outlineDiffCanonicalOrder(cMatches)
 
 	if reflect.DeepEqual(goMatches, cMatches) {
 		result.status = outlineDiffEqual
@@ -409,43 +424,15 @@ func outlineDiffGoQueryMatches(lang *gotreesitter.Language, tree *gotreesitter.T
 	return matches
 }
 
-// outlineDiffCQueryMatches is the C-side counterpart of
-// outlineDiffGoQueryMatches; see collectCExactQueryMatches
-// (parity_query_exact_test.go:538-579) for the pattern this mirrors.
-func outlineDiffCQueryMatches(q *sitter.Query, tree *sitter.Tree, source []byte) []exactQueryMatch {
-	cursor := sitter.NewQueryCursor()
-	defer cursor.Close()
-
-	names := q.CaptureNames()
-	iter := cursor.Matches(q, tree.RootNode(), source)
-
-	var matches []exactQueryMatch
-	for {
-		m := iter.Next()
-		if m == nil {
-			break
-		}
-		snap := exactQueryMatch{PatternIndex: int(m.PatternIndex)}
-		for _, c := range m.Captures {
-			name := ""
-			if int(c.Index) < len(names) {
-				name = names[c.Index]
-			}
-			start := uint32(c.Node.StartByte())
-			end := uint32(c.Node.EndByte())
-			snap.Captures = append(snap.Captures, exactQueryCapture{
-				Name:      name,
-				Type:      c.Node.Kind(),
-				Named:     c.Node.IsNamed(),
-				StartByte: start,
-				EndByte:   end,
-				Text:      string(source[start:end]),
-			})
-		}
-		matches = append(matches, snap)
-	}
-	return matches
-}
+// The C-side counterpart of outlineDiffGoQueryMatches is
+// outlineDiffCQueryMatchesWithPredicates (outline_differential_predicates_
+// test.go), not a plain cursor.Matches(...).Next() loop like
+// collectCExactQueryMatches (parity_query_exact_test.go:538-579): a
+// resolved tags query's predicates can sit outside their pattern's own
+// parens (grammars/tags_query_infer.go's elixir/clojure/commonlisp/scheme
+// overrides all do), which gotreesitter's own parser tolerates but the C
+// library compiles into a separate, always-true phantom pattern; see that
+// file's comment for the full mechanism.
 
 func outlineDiffCaptureTotal(matches []exactQueryMatch) int {
 	total := 0
@@ -453,6 +440,70 @@ func outlineDiffCaptureTotal(matches []exactQueryMatch) int {
 		total += len(m.Captures)
 	}
 	return total
+}
+
+// outlineDiffCanonicalOrder sorts a capture-stream snapshot in place into a
+// comparison-stable order: ascending by the match's own earliest capture
+// StartByte (its tree position), then ascending PatternIndex as a tie-break.
+//
+// Both engines walk a parsed tree in the same depth-first, byte-ascending
+// order (this harness's own structural parity suite establishes the two
+// trees are shaped identically fleet-wide; parity_cgo_test.go:59), so a
+// genuine structural difference already shows up as a position or content
+// mismatch under this key. What this key additionally absorbs is
+// narrower: when two DIFFERENT patterns both start matching at the exact
+// same tree node -- elixir's unconditional
+// "(call (identifier) @name) @reference.call" and its predicate-gated
+// "@definition.module"/"@definition.function" siblings all root at the same
+// "call" node -- gotreesitter's own matcher always tries same-rooted
+// patterns in ascending declaration order (query.go's buildRootPatternIndex
+// walks q.patterns 0..N-1 and appends to each symbol's candidate list in
+// that order, unconditionally), which is exactly this key's tie-break, but
+// the C library's compiled NFA does not make the same guarantee (verified:
+// even with every predicate correctly nested in its own pattern's parens,
+// tree-sitter's own query engine still emits elixir's reference.call match
+// before the definition.module match at their shared root node, the
+// reverse of gotreesitter's order).
+//
+// outline.go's builder cannot see this reordering: collectOutlineCandidates
+// discards every "@reference.*"-only match before anything else inspects it
+// (no "@definition.*" capture, defCount == 0), and every OTHER order
+// dependency in that pipeline (filterOutlineCandidates' "keep the first
+// emitted" duplicate tie-break, buildOutlineForest's own explicit
+// start-byte/end-byte sort) only chooses among candidates already proven
+// indistinguishable in every field the returned OutlineSymbol carries. So
+// this reordering changes no real output.
+//
+// The important property for THIS differential is narrower still and does
+// not depend on that outline-specific argument: sorting is a pure
+// reordering applied identically to both streams. It cannot merge or drop a
+// match or a capture, so it can only turn a same-multiset, different-order
+// "diverged" into "equal" -- it can never hide a match or capture that
+// genuinely differs between engines, and outlineDiffFirstMismatch still
+// reports the first differing element in the (now-shared) canonical order.
+func outlineDiffCanonicalOrder(matches []exactQueryMatch) {
+	sort.SliceStable(matches, func(i, j int) bool {
+		pi, pj := outlineDiffMatchPosition(matches[i]), outlineDiffMatchPosition(matches[j])
+		if pi != pj {
+			return pi < pj
+		}
+		return matches[i].PatternIndex < matches[j].PatternIndex
+	})
+}
+
+// outlineDiffMatchPosition is a match's tree position for
+// outlineDiffCanonicalOrder: the smallest StartByte among its own captures.
+// A match with no captures at all (never produced by any resolved tags
+// query in this repository -- every pattern binds at least one capture)
+// sorts last within its PatternIndex group.
+func outlineDiffMatchPosition(m exactQueryMatch) uint32 {
+	pos := ^uint32(0)
+	for _, c := range m.Captures {
+		if c.StartByte < pos {
+			pos = c.StartByte
+		}
+	}
+	return pos
 }
 
 // outlineDiffMismatchCount counts capture-stream positions where the two
