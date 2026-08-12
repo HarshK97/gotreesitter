@@ -7,6 +7,42 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Added
+
+- `TestOutlineOracleDifferential` (`cgo_harness/outline_differential_test.go`)
+  runs each language's resolved tags query through both the pure-Go query
+  engine and the official C tree-sitter runtime, then diffs the two capture
+  streams. It hard-asserts capture parity for the core nine outline
+  languages (`go`, `python`, `javascript`, `typescript`, `tsx`, `rust`,
+  `java`, `c`, `cpp`) and logs a census for every other language with a
+  resolvable tags query.
+
+- `TestOutlineCoverageWitnesses` (`grammars/outline_coverage_witness_test.go`)
+  pins 30 languages against the real `Outliner` pipeline. Each case names an
+  exact symbol its resolved tags query must produce, so a pattern that
+  compiles but never fires now fails the test instead of hiding behind a
+  non-empty query string.
+
+- File-outline tags-query coverage rose from a 30-language floor to 84 of
+  206 registered languages: 83 with a real-corpus fixture and 1 with a
+  smoke-sample fixture (`grammars/testdata/outline_census/baseline.json`).
+  `TestInferredTagsQueryCoverage` (`grammars/registry_test.go`) now enforces
+  84 as the floor. See `docs/outline.md` for the full coverage tiers and the
+  file outline API.
+
+### Fixed
+
+- Seven of the file outline's core nine languages carried tags-query rows
+  that reference a child node type the grammar never produces at that
+  position: `javascript`, `typescript`, `tsx`, `java`, `c`, `cpp`, and
+  `rust`. The C query compiler rejects such a row as an "Impossible
+  pattern" and drops the entire multi-pattern query with it. The pure-Go
+  query engine has no matching check, so it compiled the same row and
+  silently matched nothing. The dead rows are now removed or corrected.
+  `TestOutlineOracleDifferential`'s core-nine tier reports capture-stream
+  parity for all nine languages, and the fix changed no Go outline output —
+  confirmed by unchanged golden fixtures.
+
 ## [0.49.0] - 2026-08-11
 
 ### Removed
