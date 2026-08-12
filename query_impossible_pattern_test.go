@@ -130,19 +130,19 @@ func TestValidateQueryPatternsFlagsHistoricalDeadPatterns(t *testing.T) {
 }
 
 // TestQueryStrictPatternValidationRejectsHistoricalDeadPatterns asserts that
-// NewQuery(source, lang, WithStrictPatternValidation()) fails to compile
-// every historically dead pattern, mirroring tree-sitter C's ts_query_new
-// atomic rejection of the whole query.
+// NewQueryWithOptions(source, lang, WithStrictPatternValidation()) fails to
+// compile every historically dead pattern, mirroring tree-sitter C's
+// ts_query_new atomic rejection of the whole query.
 func TestQueryStrictPatternValidationRejectsHistoricalDeadPatterns(t *testing.T) {
 	for _, tc := range historicalDeadPatterns {
 		t.Run(tc.lang+"/"+tc.child+"_under_"+tc.parent, func(t *testing.T) {
 			lang := historicalDeadPatternLanguage(t, tc.lang)
-			q, err := gotreesitter.NewQuery(tc.pattern, lang, gotreesitter.WithStrictPatternValidation())
+			q, err := gotreesitter.NewQueryWithOptions(tc.pattern, lang, gotreesitter.WithStrictPatternValidation())
 			if err == nil {
-				t.Fatalf("NewQuery with WithStrictPatternValidation() unexpectedly compiled %q successfully (query=%v)", tc.pattern, q)
+				t.Fatalf("NewQueryWithOptions with WithStrictPatternValidation() unexpectedly compiled %q successfully (query=%v)", tc.pattern, q)
 			}
 			if q != nil {
-				t.Errorf("NewQuery returned a non-nil *Query alongside an error: %v", q)
+				t.Errorf("NewQueryWithOptions returned a non-nil *Query alongside an error: %v", q)
 			}
 			if !strings.Contains(err.Error(), tc.child) || !strings.Contains(err.Error(), tc.parent) {
 				t.Errorf("error %q does not mention parent %q / child %q", err.Error(), tc.parent, tc.child)
@@ -204,8 +204,8 @@ func TestValidateQueryPatternsPassesCurrentCleanPatterns(t *testing.T) {
 			}
 
 			// WithStrictPatternValidation must accept the exact same source.
-			if _, err := gotreesitter.NewQuery(tc.pattern, lang, gotreesitter.WithStrictPatternValidation()); err != nil {
-				t.Errorf("NewQuery with WithStrictPatternValidation() rejected a clean pattern %q: %v", tc.pattern, err)
+			if _, err := gotreesitter.NewQueryWithOptions(tc.pattern, lang, gotreesitter.WithStrictPatternValidation()); err != nil {
+				t.Errorf("NewQueryWithOptions with WithStrictPatternValidation() rejected a clean pattern %q: %v", tc.pattern, err)
 			}
 		})
 	}
@@ -312,11 +312,16 @@ func TestValidateQueryPatternsFleetSweepSmoke(t *testing.T) {
 }
 
 // TestNewQueryDefaultBehaviorUnchanged is the byte-identical-default-behavior
-// gate for this change: NewQuery(source, lang) with no options must still
-// compile a structurally-impossible pattern successfully and execute it as
-// a normal (silently zero-match) query, exactly as before
-// WithStrictPatternValidation existed.
+// gate for this change: NewQuery keeps its exact pre-existing signature (a
+// compile-time check, not just a call-site one -- Go func-value assignment
+// requires identical function types, so a variadic NewQuery would fail this
+// even though every existing two-argument call site still compiles), and
+// NewQuery(source, lang) must still compile a structurally-impossible
+// pattern successfully and execute it as a normal (silently zero-match)
+// query, exactly as before WithStrictPatternValidation existed.
 func TestNewQueryDefaultBehaviorUnchanged(t *testing.T) {
+	var _ func(string, *gotreesitter.Language) (*gotreesitter.Query, error) = gotreesitter.NewQuery
+
 	lang := historicalDeadPatternLanguage(t, "javascript")
 	const src = "class Widget {\n  render() {\n    return null\n  }\n}\n"
 	const deadPattern = "(method_definition (identifier) @name) @definition.method"
