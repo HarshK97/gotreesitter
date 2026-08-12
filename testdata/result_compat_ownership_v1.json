@@ -2,14 +2,14 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 39,
-    "dispatcher_languages": 41,
+    "dispatcher_arms": 38,
+    "dispatcher_languages": 40,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
     "post_finalization_languages": 0,
-    "live_entries": 40,
-    "retired_entries": 45
+    "live_entries": 39,
+    "retired_entries": 46
   },
   "live_evidence_baseline": {
     "scope": "baseline_corpus_wide_only",
@@ -1103,7 +1103,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "0000000000000000000000000000000000000000",
+      "retired_commit": "a2f14f5abe9277b4c6a5cec821fa8696914561aa",
       "receipt_refs": [
         "grammars/fidl_versioned_layout_modifier_native_regression_test.go",
         "cgo_harness/fidl_versioned_layout_modifier_parity_cgo_test.go"
