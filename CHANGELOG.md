@@ -65,6 +65,16 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Hyprlang's keyword lexer now classifies boolean values (`true`, `false`,
+  `on`, `off`, `yes`, `no`) at lex time. The grammar's word token pattern can
+  absorb leading whitespace before a keyword, and the keyword re-lex
+  previously required its match to start at byte zero, so it missed that
+  case and left the value as a generic string token. DFA keyword promotion
+  now skips the leading run first, the same way tree-sitter's own generated
+  keyword lexer does. This retires the Hyprlang dispatcher arm and fixes a
+  related bug: a trailing space after the keyword no longer produces an
+  incorrect boolean node.
+
 - Seven of the file outline's core nine languages carried tags-query rows
   that reference a child node type the grammar never produces at that
   position: `javascript`, `typescript`, `tsx`, `java`, `c`, `cpp`, and

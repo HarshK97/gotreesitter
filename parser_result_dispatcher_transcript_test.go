@@ -9,50 +9,25 @@ import (
 	"testing"
 )
 
-// hyprlangTranscriptFixture builds the same known-firing witness as
-// TestNormalizeHyprlangBooleanAssignmentValues (parser_result_hyprlang_test.go):
-// a hand-built hyprlang tree with one boolean-valued assignment
-// ("resize_on_border = true") and one non-boolean assignment
-// ("name = myBezier"). dispatch.hyprlang (runLanguageResultCompatibility's
-// "hyprlang" case) retags the first assignment's string value node to a
-// boolean node with one anonymous child, and leaves the second alone. It is
-// named as the recommended first SA-T cohort proof in the normalization
-// backlog plan, so it doubles as this file's dispatcher-arm witness.
-func hyprlangTranscriptFixture() (lang *Language, source []byte, root, boolValue *Node) {
-	lang = &Language{
-		Name: "hyprlang",
-		SymbolNames: []string{
-			"EOF", "configuration", "assignment", "name", "=", "string", "boolean",
-			"true", "false", "on", "off", "yes", "no",
-		},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF"},
-			{Name: "configuration", Visible: true, Named: true},
-			{Name: "assignment", Visible: true, Named: true},
-			{Name: "name", Visible: true, Named: true},
-			{Name: "=", Visible: true, Named: false},
-			{Name: "string", Visible: true, Named: true},
-			{Name: "boolean", Visible: true, Named: true},
-			{Name: "true", Visible: true, Named: false},
-			{Name: "false", Visible: true, Named: false},
-			{Name: "on", Visible: true, Named: false},
-			{Name: "off", Visible: true, Named: false},
-			{Name: "yes", Visible: true, Named: false},
-			{Name: "no", Visible: true, Named: false},
-		},
-	}
-	source = []byte("resize_on_border = true\nname = myBezier\n")
+// wolframTranscriptFixture builds the same known-firing witness as
+// TestNormalizeWolframSplitInfixRoot (parser_result_wolfram_test.go): a
+// hand-built Wolfram source_file tree with a symbol operand followed by a
+// split prefix ("a" then "+ b", from source "   a + b\n").
+// dispatch.wolfram (runLanguageResultCompatibility's "wolfram" case) merges
+// the two into one infix node, replacing the root's two children with one.
+// This exercises a different transcript shape than a leaf retag: the first
+// divergence is the root's own child_count, not a descendant's node_type.
+func wolframTranscriptFixture() (lang *Language, source []byte, root *Node) {
+	lang = wolframCompatLang()
 	arena := newNodeArena(arenaClassFull)
-	boolName := newLeafNodeInArena(arena, 3, true, 0, 16, Point{}, Point{Column: 16})
-	boolEquals := newLeafNodeInArena(arena, 4, false, 17, 18, Point{Column: 17}, Point{Column: 18})
-	boolValue = newLeafNodeInArena(arena, 5, true, 18, 23, Point{Column: 18}, Point{Column: 23})
-	boolAssignment := newParentNodeInArena(arena, 2, true, []*Node{boolName, boolEquals, boolValue}, nil, 0)
-	stringName := newLeafNodeInArena(arena, 3, true, 24, 28, Point{Row: 1}, Point{Row: 1, Column: 4})
-	stringEquals := newLeafNodeInArena(arena, 4, false, 29, 30, Point{Row: 1, Column: 5}, Point{Row: 1, Column: 6})
-	stringValue := newLeafNodeInArena(arena, 5, true, 30, 39, Point{Row: 1, Column: 6}, Point{Row: 1, Column: 15})
-	stringAssignment := newParentNodeInArena(arena, 2, true, []*Node{stringName, stringEquals, stringValue}, nil, 0)
-	root = newParentNodeInArena(arena, 1, true, []*Node{boolAssignment, stringAssignment}, nil, 0)
-	return lang, source, root, boolValue
+	source = []byte("   a + b\n")
+
+	left := newLeafNodeInArena(arena, 2, true, 3, 4, Point{Row: 0, Column: 3}, Point{Row: 0, Column: 4})
+	op := newLeafNodeInArena(arena, 4, false, 5, 6, Point{Row: 0, Column: 5}, Point{Row: 0, Column: 6})
+	right := newLeafNodeInArena(arena, 2, true, 7, 8, Point{Row: 0, Column: 7}, Point{Row: 0, Column: 8})
+	prefix := newParentNodeInArena(arena, 3, true, []*Node{op, right}, nil, 0)
+	root = newParentNodeInArena(arena, 1, true, []*Node{left, prefix}, nil, 0)
+	return lang, source, root
 }
 
 // jsonLines splits raw JSON-lines content into its non-empty lines.
@@ -68,12 +43,13 @@ func jsonLines(t *testing.T, raw []byte) [][]byte {
 	return lines
 }
 
-// TestDispatcherArmTranscriptRecordsKnownFiringWitness runs dispatch.hyprlang
-// (a known-firing arm: it always retags a boolean-valued assignment) through
-// the real dispatcher switch with GTS_DISPATCHER_TRANSCRIPT=1 and asserts a
-// transcript record appears in the JSON-lines output with the shape the
-// cohort-proof instrument promises: language, arm, a node path into the
-// changed subtree, and a compact node-type/child-count effect.
+// TestDispatcherArmTranscriptRecordsKnownFiringWitness runs dispatch.wolfram
+// (a known-firing arm: it always merges a split infix operand with its
+// operator and right operand) through the real dispatcher switch with
+// GTS_DISPATCHER_TRANSCRIPT=1 and asserts a transcript record appears in the
+// JSON-lines output with the shape the cohort-proof instrument promises:
+// language, arm, a node path into the changed subtree, and a compact
+// child-count effect.
 func TestDispatcherArmTranscriptRecordsKnownFiringWitness(t *testing.T) {
 	resetDispatcherTranscriptSummary()
 	t.Setenv("GTS_DISPATCHER_CENSUS", "")
@@ -83,7 +59,7 @@ func TestDispatcherArmTranscriptRecordsKnownFiringWitness(t *testing.T) {
 	resetDispatcherTranscriptEnvCacheForTest()
 	t.Cleanup(resetDispatcherTranscriptEnvCacheForTest)
 
-	lang, source, root, boolValue := hyprlangTranscriptFixture()
+	lang, source, root := wolframTranscriptFixture()
 	ctx := resultCompatibilityContext{root: root, source: source, lang: lang}
 
 	if result := runLanguageResultCompatibility(ctx); result.stopReason != ParseStopNone {
@@ -91,13 +67,13 @@ func TestDispatcherArmTranscriptRecordsKnownFiringWitness(t *testing.T) {
 	}
 
 	// The witness fired exactly as it does with no instrumentation at all
-	// (TestNormalizeHyprlangBooleanAssignmentValues): the transcript never
-	// alters normalization, it only observes it.
-	if got, want := boolValue.Type(lang), "boolean"; got != want {
-		t.Fatalf("bool value type = %q, want %q", got, want)
+	// (TestNormalizeWolframSplitInfixRoot): the transcript never alters
+	// normalization, it only observes it.
+	if got, want := resultChildCount(root), 1; got != want {
+		t.Fatalf("root child count = %d, want %d", got, want)
 	}
-	if got, want := boolValue.ChildCount(), 1; got != want {
-		t.Fatalf("bool value child count = %d, want %d", got, want)
+	if got, want := root.Child(0).Type(lang), "infix"; got != want {
+		t.Fatalf("merged node type = %q, want %q", got, want)
 	}
 
 	raw, err := os.ReadFile(outPath)
@@ -106,7 +82,7 @@ func TestDispatcherArmTranscriptRecordsKnownFiringWitness(t *testing.T) {
 	}
 	lines := jsonLines(t, raw)
 	if len(lines) != 1 {
-		t.Fatalf("transcript recorded %d lines for dispatch.hyprlang's single case body, want 1: %s", len(lines), raw)
+		t.Fatalf("transcript recorded %d lines for dispatch.wolfram's single case body, want 1: %s", len(lines), raw)
 	}
 
 	var rec dispatcherTranscriptRecord
@@ -114,26 +90,23 @@ func TestDispatcherArmTranscriptRecordsKnownFiringWitness(t *testing.T) {
 		t.Fatalf("unmarshal transcript line %s: %v", lines[0], err)
 	}
 
-	if rec.Language != "hyprlang" {
-		t.Errorf("record language = %q, want %q", rec.Language, "hyprlang")
+	if rec.Language != "wolfram" {
+		t.Errorf("record language = %q, want %q", rec.Language, "wolfram")
 	}
-	if rec.Arm != "dispatch.hyprlang" {
-		t.Errorf("record arm = %q, want %q", rec.Arm, "dispatch.hyprlang")
+	if rec.Arm != "dispatch.wolfram" {
+		t.Errorf("record arm = %q, want %q", rec.Arm, "dispatch.wolfram")
 	}
-	if want := []int{0, 2}; !slices.Equal(rec.NodePath, want) {
-		t.Errorf("record node_path = %v, want %v (root -> first assignment -> its value child)", rec.NodePath, want)
+	if want := []int{}; !slices.Equal(rec.NodePath, want) {
+		t.Errorf("record node_path = %v, want %v (root itself, whose child_count changed)", rec.NodePath, want)
 	}
-	if rec.Effect.NodeType == nil {
-		t.Fatal("record effect has no node_type change, want string -> boolean")
+	if rec.Effect.NodeType != nil {
+		t.Errorf("record node_type = %+v, want nil: the root's own symbol does not change", rec.Effect.NodeType)
 	}
-	if rec.Effect.NodeType.Before != "string" || rec.Effect.NodeType.After != "boolean" {
-		t.Errorf("record node_type = %+v, want {Before:string After:boolean}", rec.Effect.NodeType)
-	}
-	if rec.Effect.ChildCountDelta != 1 {
-		t.Errorf("record child_count_delta = %d, want 1 (the synthesized boolean child)", rec.Effect.ChildCountDelta)
+	if rec.Effect.ChildCountDelta != -1 {
+		t.Errorf("record child_count_delta = %d, want -1 (two root children merge into one)", rec.Effect.ChildCountDelta)
 	}
 	if rec.Effect.Span != nil {
-		t.Errorf("record span = %+v, want nil: the retagged node's byte range does not move", rec.Effect.Span)
+		t.Errorf("record span = %+v, want nil: the root's own byte range does not move", rec.Effect.Span)
 	}
 	if rec.Effect.Error != nil || rec.Effect.Missing != nil {
 		t.Errorf("record error=%+v missing=%+v, want both nil: this witness carries no recovery flags", rec.Effect.Error, rec.Effect.Missing)
@@ -143,8 +116,8 @@ func TestDispatcherArmTranscriptRecordsKnownFiringWitness(t *testing.T) {
 	}
 
 	summary := dispatcherTranscriptSummary()
-	if summary["dispatch.hyprlang"] != 1 {
-		t.Errorf("summary count map[dispatch.hyprlang] = %d, want 1: %v", summary["dispatch.hyprlang"], summary)
+	if summary["dispatch.wolfram"] != 1 {
+		t.Errorf("summary count map[dispatch.wolfram] = %d, want 1: %v", summary["dispatch.wolfram"], summary)
 	}
 }
 
@@ -162,21 +135,22 @@ func TestDispatcherArmTranscriptDisabledRecordsNothing(t *testing.T) {
 	resetDispatcherTranscriptEnvCacheForTest()
 	t.Cleanup(resetDispatcherTranscriptEnvCacheForTest)
 
-	lang, source, root, boolValue := hyprlangTranscriptFixture()
+	lang, source, root := wolframTranscriptFixture()
 	ctx := resultCompatibilityContext{root: root, source: source, lang: lang}
 
 	if result := runLanguageResultCompatibility(ctx); result.stopReason != ParseStopNone {
 		t.Fatalf("dispatcher returned stop reason %v, want none", result.stopReason)
 	}
 
-	if got, want := boolValue.Type(lang), "boolean"; got != want {
-		t.Fatalf("bool value type = %q, want %q (same result as with the flag on)", got, want)
+	if got, want := resultChildCount(root), 1; got != want {
+		t.Fatalf("root child count = %d, want %d (same result as with the flag on)", got, want)
 	}
-	if got, want := boolValue.ChildCount(), 1; got != want {
-		t.Fatalf("bool value child count = %d, want %d (same result as with the flag on)", got, want)
+	infix := root.Child(0)
+	if got, want := infix.Type(lang), "infix"; got != want {
+		t.Fatalf("merged node type = %q, want %q (same result as with the flag on)", got, want)
 	}
-	if child := boolValue.Child(0); child == nil || child.Type(lang) != "true" || child.IsNamed() {
-		t.Fatalf("bool child = %#v, want anonymous true (same result as with the flag on)", child)
+	if got, want := resultChildCount(infix), 3; got != want {
+		t.Fatalf("infix child count = %d, want %d (same result as with the flag on)", got, want)
 	}
 
 	if _, err := os.Stat(outPath); !os.IsNotExist(err) {
