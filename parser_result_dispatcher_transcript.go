@@ -47,19 +47,40 @@ const (
 	dispatcherTranscriptEnvOut  = "GTS_DISPATCHER_TRANSCRIPT_OUT"
 )
 
+// dispatcherTranscriptEnabledOnce and dispatcherTranscriptOutputPathOnce
+// cache the two environment reads below (sync.Once), mirroring
+// admissionCensusEnabled's pattern (admission_census.go): each read happens
+// at most once per process, so every dispatcher-arm call after the first
+// pays one atomic-guarded read instead of a fresh os.Getenv.
+var (
+	dispatcherTranscriptEnabledOnce sync.Once
+	dispatcherTranscriptEnabledVal  bool
+
+	dispatcherTranscriptOutputPathOnce sync.Once
+	dispatcherTranscriptOutputPathVal  string
+)
+
 // dispatcherTranscriptEnabled reports whether GTS_DISPATCHER_TRANSCRIPT=1 is
-// set. Like dispatcherCensusEnabled, this is an uncached os.Getenv check paid
-// once per dispatcher-arm call: the only cost an ordinary parse pays when the
-// transcript is off is this one string comparison.
+// set. The read is cached after the first call (sync.Once): the only cost an
+// ordinary parse pays when the transcript is off, after process start, is
+// one atomic-guarded boolean read, not a fresh os.Getenv.
 func dispatcherTranscriptEnabled() bool {
-	return os.Getenv(dispatcherTranscriptEnvFlag) == "1"
+	dispatcherTranscriptEnabledOnce.Do(func() {
+		dispatcherTranscriptEnabledVal = os.Getenv(dispatcherTranscriptEnvFlag) == "1"
+	})
+	return dispatcherTranscriptEnabledVal
 }
 
 // dispatcherTranscriptOutputPath returns the configured JSON-lines output
 // path, or "" when unset. An enabled transcript with no output path still
 // updates the in-memory summary map; it just has nowhere to write records.
+// The read is cached after the first call (sync.Once), the same as
+// dispatcherTranscriptEnabled above.
 func dispatcherTranscriptOutputPath() string {
-	return os.Getenv(dispatcherTranscriptEnvOut)
+	dispatcherTranscriptOutputPathOnce.Do(func() {
+		dispatcherTranscriptOutputPathVal = os.Getenv(dispatcherTranscriptEnvOut)
+	})
+	return dispatcherTranscriptOutputPathVal
 }
 
 // dispatcherTranscriptSnapshot pairs one captureDispatcherFingerprint-style
@@ -329,6 +350,21 @@ func resetDispatcherTranscriptSummary() {
 	dispatcherTranscriptState.mu.Lock()
 	defer dispatcherTranscriptState.mu.Unlock()
 	dispatcherTranscriptState.counts = nil
+}
+
+// resetDispatcherTranscriptEnvCacheForTest clears
+// dispatcherTranscriptEnabled's and dispatcherTranscriptOutputPath's cached
+// reads (their sync.Once guards). It exists for tests: a fixture that sets
+// GTS_DISPATCHER_TRANSCRIPT or GTS_DISPATCHER_TRANSCRIPT_OUT with t.Setenv
+// needs the next read to see that value immediately, regardless of whether
+// an earlier test in the same binary already read and cached one; call it
+// again (for example via t.Cleanup) after the environment variable is
+// restored, so later tests re-read rather than inherit this test's value.
+func resetDispatcherTranscriptEnvCacheForTest() {
+	dispatcherTranscriptEnabledOnce = sync.Once{}
+	dispatcherTranscriptEnabledVal = false
+	dispatcherTranscriptOutputPathOnce = sync.Once{}
+	dispatcherTranscriptOutputPathVal = ""
 }
 
 // recordDispatcherArmTranscript is the sole entry point dispatcherArmCensus,

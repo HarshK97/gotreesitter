@@ -80,6 +80,8 @@ func TestDispatcherArmTranscriptRecordsKnownFiringWitness(t *testing.T) {
 	t.Setenv("GTS_DISPATCHER_TRANSCRIPT", "1")
 	outPath := filepath.Join(t.TempDir(), "transcript.jsonl")
 	t.Setenv("GTS_DISPATCHER_TRANSCRIPT_OUT", outPath)
+	resetDispatcherTranscriptEnvCacheForTest()
+	t.Cleanup(resetDispatcherTranscriptEnvCacheForTest)
 
 	lang, source, root, boolValue := hyprlangTranscriptFixture()
 	ctx := resultCompatibilityContext{root: root, source: source, lang: lang}
@@ -157,6 +159,8 @@ func TestDispatcherArmTranscriptDisabledRecordsNothing(t *testing.T) {
 	t.Setenv("GTS_DISPATCHER_TRANSCRIPT", "")
 	outPath := filepath.Join(t.TempDir(), "transcript.jsonl")
 	t.Setenv("GTS_DISPATCHER_TRANSCRIPT_OUT", outPath)
+	resetDispatcherTranscriptEnvCacheForTest()
+	t.Cleanup(resetDispatcherTranscriptEnvCacheForTest)
 
 	lang, source, root, boolValue := hyprlangTranscriptFixture()
 	ctx := resultCompatibilityContext{root: root, source: source, lang: lang}
@@ -188,13 +192,19 @@ func TestDispatcherArmTranscriptDisabledRecordsNothing(t *testing.T) {
 // matching GTS_DISPATCHER_CENSUS's existing contract
 // (TestDispatcherCensusRequiresExactOne).
 func TestDispatcherTranscriptRequiresExactOne(t *testing.T) {
+	t.Cleanup(resetDispatcherTranscriptEnvCacheForTest)
 	for _, value := range []string{"", "0", "false", "2"} {
 		t.Setenv("GTS_DISPATCHER_TRANSCRIPT", value)
+		// dispatcherTranscriptEnabled caches its read (sync.Once); reset
+		// before each value so this loop still exercises a fresh read every
+		// iteration instead of pinning the first iteration's result.
+		resetDispatcherTranscriptEnvCacheForTest()
 		if dispatcherTranscriptEnabled() {
 			t.Fatalf("GTS_DISPATCHER_TRANSCRIPT=%q enabled the transcript", value)
 		}
 	}
 	t.Setenv("GTS_DISPATCHER_TRANSCRIPT", "1")
+	resetDispatcherTranscriptEnvCacheForTest()
 	if !dispatcherTranscriptEnabled() {
 		t.Fatal("GTS_DISPATCHER_TRANSCRIPT=1 did not enable the transcript")
 	}
