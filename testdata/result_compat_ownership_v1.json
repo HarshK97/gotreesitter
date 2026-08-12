@@ -62,7 +62,10 @@
           "purpose": "Select an index constraint and construct its attribute-reference children when the selected Ada derivation has the discriminant shape.",
           "authoritative_owner": "derivation_election_selection",
           "witnesses": [
-            "parser_result_test/materialization_subpass_census_test.go"
+            "parser_result_test/materialization_subpass_census_test.go",
+            "cgo_harness/ada_election_local_parity_test.go",
+            "cgo_harness/ada_constraint_kind_election_parity_test.go",
+            "cgo_harness/ada_a3_certification_sweep_test.go"
           ]
         },
         {
@@ -76,7 +79,9 @@
           "purpose": "Select the record, named-array, or positional-array aggregate type.",
           "authoritative_owner": "derivation_election_selection",
           "witnesses": [
-            "parser_result_test/materialization_subpass_census_test.go"
+            "parser_result_test/materialization_subpass_census_test.go",
+            "cgo_harness/ada_election_local_parity_test.go",
+            "cgo_harness/ada_a3_certification_sweep_test.go"
           ]
         },
         {
@@ -91,7 +96,9 @@
           "purpose": "Construct the selected record or array association-choice wrappers.",
           "authoritative_owner": "materialization",
           "witnesses": [
-            "parser_result_test/materialization_subpass_census_test.go"
+            "parser_result_test/materialization_subpass_census_test.go",
+            "cgo_harness/ada_election_local_parity_test.go",
+            "cgo_harness/ada_a3_certification_sweep_test.go"
           ]
         }
       ],
@@ -101,7 +108,10 @@
       "purpose": "Reconcile Ada returned-tree fields, aliases, and spans.",
       "authoritative_owner": "derivation_election_selection",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "cgo_harness/parity_cgo_test.go",
+        "cgo_harness/ada_election_local_parity_test.go",
+        "cgo_harness/ada_constraint_kind_election_parity_test.go",
+        "cgo_harness/ada_a3_certification_sweep_test.go"
       ],
       "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
       "route_coverage": {
@@ -168,7 +178,9 @@
           "purpose": "Materialize the field-access aliases for an Apex class literal.",
           "authoritative_owner": "derivation_election_selection",
           "witnesses": [
-            "parser_result_test/materialization_subpass_census_test.go"
+            "parser_result_test/materialization_subpass_census_test.go",
+            "cgo_harness/apex_generic_local_parity_test.go",
+            "cgo_harness/apex_a3_certification_sweep_test.go"
           ]
         }
       ],
@@ -178,7 +190,9 @@
       "purpose": "Reconcile Apex returned-tree aliases, fields, and spans.",
       "authoritative_owner": "derivation_election_selection",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "cgo_harness/parity_cgo_test.go",
+        "cgo_harness/apex_generic_local_parity_test.go",
+        "cgo_harness/apex_a3_certification_sweep_test.go"
       ],
       "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
       "route_coverage": {
@@ -2288,7 +2302,8 @@
         "normalizeScalaCompatibility"
       ],
       "files": [
-        "parser_result_scala_compilation.go"
+        "parser_result_scala_compilation.go",
+        "parser_result_misc_spans.go"
       ],
       "languages": [
         "scala"
