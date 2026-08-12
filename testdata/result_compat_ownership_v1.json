@@ -158,24 +158,26 @@
           "files": [
             "parser_result_apex.go"
           ],
-          "purpose": "Materialize the field-access aliases for an Apex class literal.",
+          "purpose": "Retags a raw class_literal(type_identifier, \".\", \"class\") node to the C-native field_access(identifier, \".\", identifier) shape for `Type.class`. Inert for production, compact, and incremental since a per-stack DFA relex (parser.go) and a certified primary-derivation preference at accept-time result selection (parser_result.go) made the classic engine elect field_access natively; still reached by the GSS-forest experimental fast path, a separate engine this fix does not cover.",
           "authoritative_owner": "derivation_election_selection",
           "witnesses": [
             "parser_result_test/materialization_subpass_census_test.go",
             "cgo_harness/apex_generic_local_parity_test.go",
-            "cgo_harness/apex_a3_certification_sweep_test.go"
+            "cgo_harness/apex_a3_certification_sweep_test.go",
+            "grammars/apex_class_literal_election_native_regression_test.go"
           ]
         }
       ],
       "languages": [
         "apex"
       ],
-      "purpose": "Reconcile Apex returned-tree aliases, fields, and spans.",
+      "purpose": "Reconciles Apex returned-tree aliases, fields, and spans, including the class_literal/field_access election. The election is now natively C-exact on production, compact, and incremental; this arm stays live only because the GSS-forest experimental fast path (ParseForestExperimental, not in apex's automatic-dispatch set) still needs the retag. See the class-literal-alias subpass for detail.",
       "authoritative_owner": "derivation_election_selection",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go",
         "cgo_harness/apex_generic_local_parity_test.go",
-        "cgo_harness/apex_a3_certification_sweep_test.go"
+        "cgo_harness/apex_a3_certification_sweep_test.go",
+        "grammars/apex_class_literal_election_native_regression_test.go"
       ],
       "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
       "route_coverage": {

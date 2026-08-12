@@ -275,6 +275,22 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 			},
 		},
 		{
+			// The producer now elects field_access natively (a per-stack DFA
+			// relex, parser.go, plus a certified primary-derivation
+			// preference at accept-time result selection, parser_result.go),
+			// so raw and result now match and this pass no longer rewrites
+			// on the production route. Both digests moved: the producer fix
+			// also carries the "object"/"field" field assignments the old
+			// post-parse retag never reconstructed (retagResultRoot only
+			// relabels a node's symbol), so this digest is the first one
+			// verified against the locked C oracle with field comparison on
+			// (cgo_harness/apex_generic_local_parity_test.go
+			// TestApexCloseAngleRawCOracleParity/class_literal_alias). The
+			// pass still checks and still rewrites for the
+			// ParseForestExperimental route, which has its own, separate
+			// dispatch loop this fix does not reach -- see
+			// grammars/apex_class_literal_election_native_regression_test.go
+			// TestApexClassLiteralForestStillNeedsResultCompatibility.
 			name:     "apex_class_literal_alias",
 			language: grammars.ApexLanguage,
 			source: "public class C {\n" +
@@ -282,13 +298,9 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 				"    Object t = RecordPage.class;\n" +
 				"  }\n" +
 				"}\n",
-			wantRawDigest:    "a7ce1bb2fb703f6c85a85bac1116a31f9d14f03cd4560f8fe81f518b19d36f33",
-			wantResultDigest: "691872382855aafce9519a115ca30ac191c4a118d4ab7170e88e0193fd2f5bb6",
+			wantRawDigest:    "35a8cb0bdcf84a752c313b3c9cf296d4bf2acaac240646e0b32578c858832096",
+			wantResultDigest: "35a8cb0bdcf84a752c313b3c9cf296d4bf2acaac240646e0b32578c858832096",
 			expectedSubpasses: []string{
-				"dispatch.apex",
-				"dispatch.apex.class-literal-alias",
-			},
-			rewrittenSubpasses: []string{
 				"dispatch.apex",
 				"dispatch.apex.class-literal-alias",
 			},
