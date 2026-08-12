@@ -46,6 +46,14 @@ for tags and release notes while still in `0.x`.
   resolves all four receiver shapes — value, pointer, generic value, and
   generic pointer — to the receiver's base type name. See `docs/outline.md`
   for the full resolution contract and a worked example.
+### Removed
+
+- Native root-extra folding and reduction now own Elixir comment placement
+  and map entry grouping. Parsing drops the hidden
+  `_newline_before_comment` scanner token without a post-parse pass.
+  Reduction groups map keyword pairs and wraps update and arrow entries in
+  the map grammar's `binary_operator` node. This removes the Elixir
+  result-compatibility dispatcher arm.
 
 ### Fixed
 

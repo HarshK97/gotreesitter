@@ -2,14 +2,14 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 38,
-    "dispatcher_languages": 40,
+    "dispatcher_arms": 37,
+    "dispatcher_languages": 39,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
     "post_finalization_languages": 0,
-    "live_entries": 39,
-    "retired_entries": 46
+    "live_entries": 38,
+    "retired_entries": 47
   },
   "live_evidence_baseline": {
     "scope": "baseline_corpus_wide_only",
@@ -866,21 +866,26 @@
       "languages": [
         "elixir"
       ],
-      "purpose": "Reconcile Elixir recovery and returned-tree shape.",
+      "purpose": "Historical: Elixir dropped a stray external-scanner comment token and grouped map keyword pairs and update entries after publication.",
       "authoritative_owner": "scheduler_action_semantics",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/elixir_extras_and_pairs_native_regression_test.go",
+        "cgo_harness/elixir_extras_and_pairs_retirement_parity_cgo_test.go"
       ],
-      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: native root-extra folding drops the hidden comment-synchronization token, and reduction groups map keyword pairs and update/arrow entries directly. Production and incremental routes are exact. Compact and forest routes remain exact.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "evidence_scope": "baseline_corpus_wide_only"
+      "status": "retired",
+      "retired_commit": "5baffc7237200733e46bf9881cd81bfc3581ccf3",
+      "receipt_refs": [
+        "grammars/elixir_extras_and_pairs_native_regression_test.go",
+        "cgo_harness/elixir_extras_and_pairs_retirement_parity_cgo_test.go"
+      ]
     },
     {
       "id": "dispatch.enforce",
