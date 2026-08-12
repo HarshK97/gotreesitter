@@ -298,27 +298,12 @@
       "id": "dispatch.bash",
       "kind": "dispatcher_arm",
       "functions": [
-        "normalizeBashProgramVariableAssignmentsWithCensus",
         "normalizeBashGeneratedCommandAssignments"
       ],
       "files": [
         "parser_result_bash.go"
       ],
       "subpasses": [
-        {
-          "id": "dispatch.bash.variable-assignment-wrapper-flattening",
-          "functions": [
-            "normalizeBashVariableAssignmentsInNodeWithCensus"
-          ],
-          "files": [
-            "parser_result_bash.go"
-          ],
-          "purpose": "Materialize assignment siblings without a generated variable-assignments wrapper.",
-          "authoritative_owner": "materialization",
-          "witnesses": [
-            "parser_result_test/materialization_subpass_census_test.go"
-          ]
-        },
         {
           "id": "dispatch.bash.generated-command-assignment",
           "functions": [
@@ -332,31 +317,17 @@
           "witnesses": [
             "parser_result_test/materialization_subpass_census_test.go"
           ]
-        },
-        {
-          "id": "dispatch.bash.if-condition-field-projection",
-          "functions": [
-            "assignBashIfConditionField"
-          ],
-          "files": [
-            "parser_result_bash.go"
-          ],
-          "purpose": "Project the condition field from the Bash reduction metadata.",
-          "authoritative_owner": "materialization",
-          "witnesses": [
-            "parser_result_test/materialization_subpass_census_test.go"
-          ]
         }
       ],
       "languages": [
         "bash"
       ],
-      "purpose": "Reconcile Bash assignment and command-argument materialization.",
-      "authoritative_owner": "materialization",
+      "purpose": "Select an assignment action instead of a generated command action.",
+      "authoritative_owner": "scheduler_action_semantics",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
       "route_coverage": {
         "production": "shared_result_compatibility_tail",
         "compact": "shared_result_compatibility_tail",

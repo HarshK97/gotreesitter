@@ -43,6 +43,20 @@ for tags and release notes while still in `0.x`.
   parity for all nine languages, and the fix changed no Go outline output —
   confirmed by unchanged golden fixtures.
 
+### Removed
+
+- **The Bash assignment-wrapper and if-condition-field repairs.** Native
+  reduction already builds the C-shaped `variable_assignments` wrapper for
+  two or more consecutive assignments. It already sets the `condition`
+  field on an if-statement's condition tokens too. The Bash compatibility
+  pass no longer splices that wrapper's children into the enclosing node or
+  rebuilds the field afterward.
+  tree-sitter-bash's own corpus (`test/corpus/literals.txt`) pins the same
+  wrapper for two top-level assignments.
+  Production, compact, forest, and incremental routes match the raw parse
+  exactly, and the isolated C-oracle comparison matches for every case.
+  One unrelated Bash subpass remains live.
+
 ## [0.49.0] - 2026-08-11
 
 ### Removed

@@ -296,19 +296,18 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 			},
 		},
 		{
+			// Materialization keeps the C-shaped variable_assignments wrapper
+			// natively (tree-sitter-bash test/corpus/literals.txt pins the
+			// same wrapper for consecutive top-level assignments), so this
+			// witness no longer rewrites: raw and production now agree.
 			name:             "bash_assignment_wrapper",
 			language:         grammars.BashLanguage,
 			source:           "a=1 b=2 c=3",
 			wantRawDigest:    "acf5436fdf47d1af14d387f9bc7ebc30ec09b4874d6a9e9caf452678e387c9f6",
-			wantResultDigest: "81ace1f9c8a394d177e5ea909ff3012329ec78b255e45a235fc8a3eea4a67a16",
+			wantResultDigest: "acf5436fdf47d1af14d387f9bc7ebc30ec09b4874d6a9e9caf452678e387c9f6",
 			expectedSubpasses: []string{
 				"dispatch.bash",
-				"dispatch.bash.variable-assignment-wrapper-flattening",
 				"dispatch.bash.generated-command-assignment",
-			},
-			rewrittenSubpasses: []string{
-				"dispatch.bash",
-				"dispatch.bash.variable-assignment-wrapper-flattening",
 			},
 		},
 		{
@@ -347,7 +346,6 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 			wantResultDigest: "7d110bcd4998cf43995020d6ee6326ef0e060b587ce44fa75943d95d86156cd5",
 			expectedSubpasses: []string{
 				"dispatch.bash",
-				"dispatch.bash.if-condition-field-projection",
 				"dispatch.bash.generated-command-assignment",
 			},
 		},

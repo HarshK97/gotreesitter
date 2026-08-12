@@ -125,7 +125,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.awk", func() { normalizeAwkCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "bash":
 		dispatcherArmSubpassCensus(ctx, "dispatch.bash", func(census materializationSubpassCensus) {
-			normalizeBashProgramVariableAssignmentsWithCensus(ctx.root, ctx.lang, census)
 			census.run("dispatch.bash.generated-command-assignment", func() {
 				normalizeBashGeneratedCommandAssignments(ctx.root, ctx.source, ctx.lang)
 			})
