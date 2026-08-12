@@ -220,27 +220,23 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 				"begin\n" +
 				"   A := (others => 0);\n" +
 				"end;\n",
-			// Both digests moved with the inherited-field projection repair
-			// (PR #638). The old digests pinned a "name" field on
-			// named_array_aggregate that the C runtime never assigns. C
-			// receipt, taken with field comparison on: the production route
-			// now reports 0 mismatches against the locked C oracle. The raw
-			// route keeps only the 6 pre-existing aggregate-kind and
-			// association-choice election mismatches that
-			// dispatch.ada.aggregate-kind-election and
-			// dispatch.ada.association-choice-materialization repair, and 0
-			// field mismatches.
-			wantRawDigest:    "ad2718a1e309fadba012881bc82689ff1dabec69814106b0dcbe3a39b6d70b27",
+			// Ada's grammar declares conflicts: [[$.component_choice_list,
+			// $.discrete_choice], ...]. A bare "others" choice used to elect
+			// component_choice_list (record reading) where the C oracle
+			// elects discrete_choice (array reading), both plain REDUCE
+			// with no dynamic precedence; the outer named_array_aggregate
+			// reading follows from the inner choice, so the same tie drove
+			// both mismatches. The declared-conflict election policy
+			// (grammars/runtime_profiles.go "ada",
+			// ConflictPolicyDeclaredReduceReduceHighestSymbol) now folds
+			// that row before the GLR engine forks, so the raw route
+			// already matches the C oracle and dispatch.ada.aggregate-kind-election
+			// / dispatch.ada.association-choice-materialization are no
+			// longer engaged on this witness at all.
+			wantRawDigest:    "95edae06bdbba04a19749854656b7c439a334cf9ae7bba367ed762386cf28d15",
 			wantResultDigest: "95edae06bdbba04a19749854656b7c439a334cf9ae7bba367ed762386cf28d15",
 			expectedSubpasses: []string{
 				"dispatch.ada",
-				"dispatch.ada.aggregate-kind-election",
-				"dispatch.ada.association-choice-materialization",
-			},
-			rewrittenSubpasses: []string{
-				"dispatch.ada",
-				"dispatch.ada.aggregate-kind-election",
-				"dispatch.ada.association-choice-materialization",
 			},
 		},
 		{
@@ -250,13 +246,15 @@ func materializationSubpassProbes() []materializationSubpassProbe {
 				"begin\n" +
 				"   A := new T (F => Pkg.Obj'Access);\n" +
 				"end;\n",
+			// Named associations are unambiguous (index_constraint is never
+			// a legal reading for a discriminant_selector_name/'=>' pair);
+			// dispatch.ada.constraint-kind-election now gates its rewrite on
+			// the single-positional-association shape, so it no longer
+			// rewrites this named witness (it still runs, and visits the
+			// discriminant_constraint node, hence it stays checked).
 			wantRawDigest:    "a35538112ad4ae10df6d5544c7f0a58f3e6a3ecb5fd5fb842808d0e31ac27ac2",
-			wantResultDigest: "d0006efd9f34dce85ac48330642b378dc2b5f995004c9c11a20aee98ac6be8a2",
+			wantResultDigest: "a35538112ad4ae10df6d5544c7f0a58f3e6a3ecb5fd5fb842808d0e31ac27ac2",
 			expectedSubpasses: []string{
-				"dispatch.ada",
-				"dispatch.ada.constraint-kind-election",
-			},
-			rewrittenSubpasses: []string{
 				"dispatch.ada",
 				"dispatch.ada.constraint-kind-election",
 			},

@@ -76,25 +76,8 @@
           "files": [
             "parser_result_ada.go"
           ],
-          "purpose": "Select the record, named-array, or positional-array aggregate type.",
+          "purpose": "Select the positional-array aggregate reading over the record aggregate reading for an unnamed comma-separated association list.",
           "authoritative_owner": "derivation_election_selection",
-          "witnesses": [
-            "parser_result_test/materialization_subpass_census_test.go",
-            "cgo_harness/ada_election_local_parity_test.go",
-            "cgo_harness/ada_a3_certification_sweep_test.go"
-          ]
-        },
-        {
-          "id": "dispatch.ada.association-choice-materialization",
-          "functions": [
-            "normalizeAdaArrayAssociationChoicesWithCensus",
-            "normalizeAdaRecordAssociationChoicesWithCensus"
-          ],
-          "files": [
-            "parser_result_ada.go"
-          ],
-          "purpose": "Construct the selected record or array association-choice wrappers.",
-          "authoritative_owner": "materialization",
           "witnesses": [
             "parser_result_test/materialization_subpass_census_test.go",
             "cgo_harness/ada_election_local_parity_test.go",
@@ -105,7 +88,7 @@
       "languages": [
         "ada"
       ],
-      "purpose": "Reconcile Ada returned-tree fields, aliases, and spans.",
+      "purpose": "Reconcile Ada returned-tree fields, aliases, and spans. dispatch.ada.association-choice-materialization retired: the component_choice_list/discrete_choice tie it repaired (record vs array reading of a bare \"others\" choice) is now resolved natively by a declared-conflict election policy before the parser forks (grammars/runtime_profiles.go \"ada\"), so the arm's raw output already matches the C oracle for every registered witness and the post-parse wrapper conversion is unreachable.",
       "authoritative_owner": "derivation_election_selection",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go",
@@ -113,7 +96,7 @@
         "cgo_harness/ada_constraint_kind_election_parity_test.go",
         "cgo_harness/ada_a3_certification_sweep_test.go"
       ],
-      "retirement_condition": "Delete only after materialization emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Delete only after derivation_election_selection emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
       "route_coverage": {
         "production": "shared_result_compatibility_tail",
         "compact": "shared_result_compatibility_tail",
