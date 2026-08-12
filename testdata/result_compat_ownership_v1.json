@@ -2,14 +2,14 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 37,
-    "dispatcher_languages": 39,
+    "dispatcher_arms": 36,
+    "dispatcher_languages": 38,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
     "post_finalization_languages": 0,
-    "live_entries": 38,
-    "retired_entries": 47
+    "live_entries": 37,
+    "retired_entries": 48
   },
   "live_evidence_baseline": {
     "scope": "baseline_corpus_wide_only",
@@ -899,21 +899,26 @@
       "languages": [
         "enforce"
       ],
-      "purpose": "Reconcile Enforce recovery and returned-tree shape.",
+      "purpose": "Historical: Enforce misread a const-int formal parameter's type and name after publication.",
       "authoritative_owner": "scheduler_action_semantics",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/enforce_const_param_native_regression_test.go",
+        "cgo_harness/enforce_const_param_retirement_parity_cgo_test.go"
       ],
-      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: native scheduling and reduction publish the C-equivalent formal_parameter_modifier, type_int, identifier, and default-value shape directly. Production and incremental routes are exact. Compact and forest routes remain exact.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "evidence_scope": "baseline_corpus_wide_only"
+      "status": "retired",
+      "retired_commit": "172177ea09f2dec718a85a4e3f65aee92f8bb20d",
+      "receipt_refs": [
+        "grammars/enforce_const_param_native_regression_test.go",
+        "cgo_harness/enforce_const_param_retirement_parity_cgo_test.go"
+      ]
     },
     {
       "id": "dispatch.ebnf",

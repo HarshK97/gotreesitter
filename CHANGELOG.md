@@ -54,6 +54,14 @@ for tags and release notes while still in `0.x`.
   Reduction groups map keyword pairs and wraps update and arrow entries in
   the map grammar's `binary_operator` node. This removes the Elixir
   result-compatibility dispatcher arm.
+### Removed
+
+- Native scheduling and reduction now own the Enforce `const int` formal
+  parameter shape. Parsing classifies `const` as a
+  `formal_parameter_modifier` and `int` as `type_int` directly. It keeps
+  the parameter's own name and default value instead of losing them to a
+  misread type/name pair. This removes the Enforce result-compatibility
+  dispatcher arm.
 
 ### Fixed
 
