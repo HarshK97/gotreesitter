@@ -1,4 +1,4 @@
-package gotreesitter_test
+package query_test
 
 // Witness suite for the query-engine "silent-wrong" correctness tranche
 // (D1, D3, D4, D5, D8). Each witness was cross-checked against the real C
