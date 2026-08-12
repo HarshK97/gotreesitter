@@ -527,6 +527,28 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 			},
 		},
 	},
+	// QL declares conflicts: [[$.simpleId, $.className], ...]. An upper-case
+	// identifier in signature position (`implements Foo`, `implements
+	// M::Foo`) reduces the shared _upper_id token as either simpleId (162,
+	// building moduleExpr) or className (163, building typeExpr); both are
+	// live GLR alternatives of signatureExpr's choice(typeExpr, moduleExpr,
+	// predicateExpr) with no dynamic precedence on either production. The
+	// locked C oracle (tree-sitter-ql 1fd627a4e8bff8c24c11987474bd33112bead857)
+	// always keeps the className/typeExpr reading; this row-scoped fold
+	// (state/lookahead wildcarded, matched only by the declared-conflict
+	// symbol pair) reproduces that natively instead of relying on a
+	// post-parse tree rewrite.
+	"ql": {
+		blobSHA256: mustRuntimeProfileSHA256("f9e092262139d482fef46ef6274a2ac90f9344ea13766d6528819a4e21e7cc84"),
+		conflictPolicies: []gotreesitter.ConflictPolicy{
+			{
+				State:         gotreesitter.ConflictPolicyAnyState,
+				Lookahead:     gotreesitter.ConflictPolicyAnyLookahead,
+				Kind:          gotreesitter.ConflictPolicyDeclaredReduceReduceHighestSymbol,
+				ReduceSymbols: []gotreesitter.Symbol{162, 163},
+			},
+		},
+	},
 	// PowerShell's backtick immediately followed by a newline is the
 	// language's line-continuation escape: the C reference scanner consumes
 	// it as ordinary skipped trivia (zero ERROR nodes across the sequence,

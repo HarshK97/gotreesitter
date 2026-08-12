@@ -193,8 +193,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 			normalizePowerShellPathCommandNameVariables(ctx.root, ctx.source, ctx.lang)
 			normalizePowerShellEnumStatementKeywordSpans(ctx.root, ctx.source, ctx.lang)
 		})
-	case "ql":
-		dispatcherArmCensus(ctx, "dispatch.ql", func() { normalizeQLCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "python":
 		dispatcherArmCensus(ctx, "dispatch.python", func() { normalizePythonCompatibilityWithParser(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "rust":
