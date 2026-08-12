@@ -2082,7 +2082,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "0000000000000000000000000000000000000000",
+      "retired_commit": "305e32b0bd796a47cfbd566ec596cd8d01ceb124",
       "receipt_refs": [
         "grammars/ql_signature_expr_election_native_regression_test.go",
         "cgo_harness/ql_election_local_parity_test.go"
