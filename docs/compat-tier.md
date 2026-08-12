@@ -15,18 +15,22 @@ without updating that registry.
 
 The v1 registry freezes the current source and registry:
 
-- 40 explicit `runLanguageResultCompatibility` switch arms;
+- 39 explicit `runLanguageResultCompatibility` switch arms;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-The refreshed registry contains 41 live entries and 44 retired entries. It
+The refreshed registry contains 40 live entries and 45 retired entries. It
 names 44 language labels because C/C++, TypeScript/TSX, and the COBOL case
 variants share entries. These counts backfill earlier retirements. This field
 repair change does not remove a dispatcher arm.
 The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
+
+Native parsing already recovers a FIDL versioned-layout-modifier declaration
+into the C-equivalent error shape. This change retires the FIDL dispatcher
+arm.
 
 R2 of `docs/root-normalization-retirement.md` retired three dispatcher arms:
 OCaml's collapsed named-leaf restoration, Ruby's top-level module bound

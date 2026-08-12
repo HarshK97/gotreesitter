@@ -1088,21 +1088,26 @@
       "languages": [
         "fidl"
       ],
-      "purpose": "Reconcile FIDL recovery and returned-tree shape.",
+      "purpose": "Historical: reconciled versioned-layout-modifier recovery shape after publication.",
       "authoritative_owner": "scheduler_action_semantics",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/fidl_versioned_layout_modifier_native_regression_test.go",
+        "cgo_harness/fidl_versioned_layout_modifier_parity_cgo_test.go"
       ],
-      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: native parsing already recovers a versioned-layout-modifier declaration into the C-equivalent error shape without a post-parse pass. Production, compact, forest, incremental, and C-oracle receipts are exact.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_or_fail_closed_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "evidence_scope": "baseline_corpus_wide_only"
+      "status": "retired",
+      "retired_commit": "0000000000000000000000000000000000000000",
+      "receipt_refs": [
+        "grammars/fidl_versioned_layout_modifier_native_regression_test.go",
+        "cgo_harness/fidl_versioned_layout_modifier_parity_cgo_test.go"
+      ]
     },
     {
       "id": "dispatch.go",

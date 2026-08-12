@@ -246,6 +246,9 @@ This change retires the inert section-coalescing subpass and its dispatcher arm.
 Native Bash reduction already emits complete command-name concatenations.
 This change retires the inert command-name subpass.
 The assignment, generated-command, and `if`-field subpasses remain live.
+Native FIDL recovery already emits the C-equivalent versioned-layout-modifier
+error shape for stray modifier arguments.
+This change retires the FIDL dispatcher arm.
 
 Group by invariant, not language:
 
@@ -338,6 +341,7 @@ there.
 | Dart and Elixir inherited fields | retirement change | 2 language-local field repairs | 0 | compatibility-free producer, refreshed corpus, production, compact, forest, incremental, and isolated C-oracle receipts |
 | HTTP document sections | retirement change | 1 subpass / 1 dispatcher arm | 0 | zero-rewrite exact and locked census, compatibility-free producer, compact fail-closed behavior, forest, incremental reuse, and isolated C-oracle receipts |
 | Bash command names | retirement change | 1 Bash subpass | 0 | compatibility-free producer, production, compact fallback, forest, incremental reuse, exact 25-case baseline at `83548f55`, and isolated C-oracle parity |
+| FIDL versioned layout modifiers | retirement change | 1 dispatcher arm | 0 | compatibility-free producer, production, compact fallback, forest-fail-closed, incremental reuse, and isolated C-oracle parity |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.
