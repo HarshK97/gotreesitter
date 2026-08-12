@@ -390,8 +390,8 @@ var inferredTagsQueryOverrides = map[string]string{
 	// repository's compiled grammar output (anchors and #eq?/#any-of? all
 	// fire as expected).
 	"elixir": strings.Join([]string{
-		`(call (identifier) @_head (arguments (alias) @name)) @definition.module (#eq? @_head "defmodule")`,
-		`(call (identifier) @_head (arguments (call (identifier) @name))) @definition.function (#any-of? @_head "def" "defp" "defmacro")`,
+		`(call (identifier) @_head (arguments (alias) @name) (#eq? @_head "defmodule")) @definition.module`,
+		`(call (identifier) @_head (arguments (call (identifier) @name)) (#any-of? @_head "def" "defp" "defmacro")) @definition.function`,
 		// Carried over from the shared table's generic call reference so an
 		// override does not regress reference coverage the shared inference
 		// already gave Elixir (every construct, defmodule/def included, is
@@ -618,12 +618,12 @@ var inferredTagsQueryOverrides = map[string]string{
 	}, "\n"),
 	"commonlisp": strings.Join([]string{
 		"(defun (defun_header function_name: (sym_lit) @name)) @definition.function",
-		`(list_lit . (sym_lit) @_head . (sym_lit) @name) @definition.variable (#eq? @_head "defvar")`,
-		`(list_lit . (sym_lit) @_head . (sym_lit) @name) @definition.variable (#eq? @_head "defparameter")`,
+		`(list_lit . (sym_lit) @_head . (sym_lit) @name (#eq? @_head "defvar")) @definition.variable`,
+		`(list_lit . (sym_lit) @_head . (sym_lit) @name (#eq? @_head "defparameter")) @definition.variable`,
 	}, "\n"),
 	"scheme": strings.Join([]string{
-		`(list . (symbol) @_head . (list . (symbol) @name)) @definition.function (#eq? @_head "define")`,
-		`(list . (symbol) @_head . (symbol) @name) @definition.variable (#eq? @_head "define")`,
+		`(list . (symbol) @_head . (list . (symbol) @name) (#eq? @_head "define")) @definition.function`,
+		`(list . (symbol) @_head . (symbol) @name (#eq? @_head "define")) @definition.variable`,
 	}, "\n"),
 
 	// Lua: found via the cgo_harness C-oracle fleet census (log-only
