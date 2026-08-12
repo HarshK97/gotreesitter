@@ -149,8 +149,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.jsdoc", func() { normalizeJsdocCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "dtd":
 		dispatcherArmCensus(ctx, "dispatch.dtd", func() { normalizeDTDCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "enforce":
-		dispatcherArmCensus(ctx, "dispatch.enforce", func() { normalizeEnforceCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "go":
 		var stopReason ParseStopReason
 		dispatcherArmSubpassCensus(ctx, "dispatch.go", func(census materializationSubpassCensus) {
