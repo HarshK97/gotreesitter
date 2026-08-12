@@ -104,6 +104,13 @@ for tags and release notes while still in `0.x`.
   declaration whose modifier keyword carries a stray `(name=value)` argument
   list. Production, compact, forest, and incremental routes produce the same
   tree, and an isolated C-oracle parity check confirms the shape.
+- The HLSL subscript-assignment declarator member of the result-compatibility
+  dispatcher arm is retired. `structured_binding_declarator` carries a
+  negative dynamic precedence in the grammar. Native parsing already elects
+  the C-equivalent subscript-assignment expression for `Name[index] = value;`
+  without a post-parse pass. Production, compact, forest, and incremental
+  routes stay exact. The negative-number cast and unorm-buffer members of the
+  HLSL arm remain live.
 
 ## [0.49.0] - 2026-08-11
 
