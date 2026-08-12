@@ -45,6 +45,12 @@ Native Objective-C projection also owns protocol type identifiers.
 Generic result selection owns the remaining ambiguous `sizeof` operand.
 No Objective-C result-compatibility repair remains live.
 
+The HLSL dispatcher arm retires its subscript-assignment declarator member.
+`structured_binding_declarator` carries a negative dynamic precedence in the
+grammar, so a clean election already prefers the subscript-assignment
+expression natively. The negative-number cast and unorm-buffer members
+remain live.
+
 The parser covers every byte in each recovered EBNF source.
 This change removes the EBNF compatibility arm.
 
