@@ -126,7 +126,7 @@ definitions the source holds.
 | `NodeType` | `string` | Grammar node type of the captured definition node. |
 | `Range` | `Range` | Full byte and point span of the definition node. |
 | `NameRange` | `Range` | Span of the `@name` capture. Always contained in `Range`; a candidate that breaks containment is omitted, not emitted with a broken span. |
-| `Owner` | `string` | Non-lexical owner, for example a method's receiver type. Always empty today; see "Owner rules" below. |
+| `Owner` | `string` | Non-lexical owner, for example a method's receiver type. Set when an attached `OutlineOwnerRule` resolves one unambiguous owner for this symbol's `NodeType`; `""` otherwise. See "Owner rules" below. |
 | `Children` | `[]OutlineSymbol` | Definitions lexically nested inside this one, in source order. Nesting comes from byte containment, never from the language name. |
 
 ## OutlineReport
@@ -146,7 +146,7 @@ absent one.
 | `OmittedOverlap` | The candidate partially overlapped an already-accepted symbol; neither span contained the other. |
 | `OmittedInvalidNameRange` | The name span sat outside the definition span, or the definition span itself was inverted. |
 | `OmittedMultipleDefinitions` | One query match carried more than one `definition.X` capture, so the outline refused to pick one. |
-| `OwnerRuleMisses` | Reserved for the owner-resolution work. Always `0` today; see "Owner rules" below. |
+| `OwnerRuleMisses` | Counts a symbol whose `NodeType` matched an attached rule that then failed to resolve one unambiguous owner. `0` when no attached rule names the `NodeType` at all, including when no owner rules are attached. See "Owner rules" below. |
 | `DeclineReason` | Why the outliner produced nothing, or `""` if it ran the query. See "Declining and omitting" below. |
 | `Truncated` | The query hit the match limit or the match-work budget; the symbol list is partial. |
 | `TreeHasError` | The parsed tree holds an `ERROR` or a `MISSING` node. See "Declining and omitting" below. |
@@ -245,17 +245,130 @@ Attach rules with the constructor option:
 func WithOutlineOwnerRules(rules []OutlineOwnerRule) OutlinerOption
 ```
 
-**Current status: attachment only, no resolution.** `NewOutliner` validates
-each rule — it must name a `NodeType` and an `OwnerField`, or construction
-fails — and retains it, but `OutlineTree` does not apply owner rules yet.
-`Owner` stays `""` on every symbol, and `OwnerRuleMisses` stays `0`, no
-matter which rules are attached. Two committed tests pin this directly:
-`TestOutlineOwnerStaysEmpty` attaches the Go receiver rule above to a
-fixture and asserts the outline is byte-for-byte identical with and without
-it; `TestOutlineGoFixtureHasReceiverMethods` proves that proof is not
-vacuous by confirming the fixture's methods really do carry a `receiver`
-field. Owner resolution reads a grammar field, so it ships as its own
-change behind its own C-oracle differential gate, described below.
+`NewOutliner` validates each attached rule at construction — it must name a
+`NodeType` and an `OwnerField`, or construction fails — and `OutlineTree`
+resolves `Owner` from the validated rules on every call.
+
+**Resolution, one rule set lookup per symbol, keyed by `NodeType`:**
+
+- No attached rule names that `NodeType`: `Owner` stays `""`, and
+  `OwnerRuleMisses` is not touched. No rule claims that shape, so there is
+  nothing to miss.
+- One or more attached rules name that `NodeType`: each rule runs in order,
+  and the first one that resolves an owner wins.
+- A rule resolves when the node's `OwnerField` is present and walking from
+  it — descending only through the node types `Unwrap` lists, and stopping
+  the moment a node's type is in `NameTypes` — reaches exactly one such
+  node. `Owner` becomes that node's raw source text. Unlike `Name`, nothing
+  trims it and no `#strip!` directive can rewrite it, because the text never
+  passes through a query capture.
+- When every rule for a matched `NodeType` fails — the field is absent, the
+  walk reaches zero or more than one `NameTypes` node, or the matched text
+  is empty — `Owner` stays `""` and `OwnerRuleMisses` counts the symbol
+  once.
+
+This is the same fail-closed contract as every omission counter above: a
+rule that cannot resolve one unambiguous owner never guesses.
+`TestOutlineOwnerRuleFailsClosedWhenFieldIsAbsent` pins the miss path on
+real source. Java's grammar also names its method node
+`method_declaration`, so the Go rule's `NodeType` matches, but Java's
+grammar defines no `receiver` field. Every Java method symbol keeps
+`Owner == ""`, and `OwnerRuleMisses` counts one per method — a genuine
+matched-node-type, absent-field miss, not a constructed one.
+
+**The shipped Go rule resolves all four receiver shapes** to the receiver's
+base type name:
+
+| Receiver | Owner |
+|---|---|
+| `func (v Value) M()` | `Value` |
+| `func (v *Value) M()` | `Value` |
+| `func (b Box[T]) M()` | `Box` |
+| `func (b *Box[T]) M()` | `Box` |
+
+A generic receiver's type argument — the `T` in `Box[T]` — sits inside a
+`type_arguments` node, a type `Unwrap` does not name, so the walk never
+reaches it and resolves the base type name alone.
+`TestOutlineOwnerResolvesGoReceiver` and
+`TestOutlineOwnerResolvesEveryGoReceiverShape` pin all four shapes,
+including every committed Go golden fixture.
+
+**`grammars` gates the shipped table against each language's own compiled
+grammar** before a caller ever sees a row:
+
+```go
+func OutlineOwnerRules(entry LangEntry) []gotreesitter.OutlineOwnerRule
+```
+
+A candidate row whose `NodeType`, `OwnerField`, or any `Unwrap`/`NameTypes`
+entry the language does not define is left out. The gate reads
+`Language.SymbolByName` and `Language.FieldByName` — the same presence
+check `ResolveTagsQuery`'s inference table uses — and caches its result per
+language name. `OutlineOwnerRules` returns `nil` for a language with no
+candidate row, none that survive gating, or an empty `LangEntry`.
+`TestOutlineOwnerRulesGatesOnFieldPresence` proves this with Java: its
+grammar defines `method_declaration` but no `receiver` field, so the Go row
+never reaches a Java caller.
+
+`WithOutlineOwnerRules(nil)` is a no-op, so the accessor composes directly
+into construction, with no nil check:
+
+```go
+package main
+
+import (
+	"fmt"
+
+	gotreesitter "github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
+)
+
+func main() {
+	entry := grammars.DetectLanguageByName("go")
+	lang := entry.Language()
+	query := grammars.ResolveTagsQuery(*entry)
+
+	source := []byte(`package demo
+
+type Registry struct{}
+
+func (r *Registry) Add(name string) {}
+`)
+
+	parser := gotreesitter.NewParser(lang)
+	tree, err := parser.Parse(source)
+	if err != nil {
+		panic(err)
+	}
+
+	outliner, err := gotreesitter.NewOutliner(lang, query,
+		gotreesitter.WithOutlineOwnerRules(grammars.OutlineOwnerRules(*entry)))
+	if err != nil {
+		panic(err)
+	}
+
+	symbols, report := outliner.OutlineTree(tree)
+	for _, sym := range symbols {
+		fmt.Println(sym.Kind, sym.Name, sym.Owner)
+	}
+	fmt.Println("misses:", report.OwnerRuleMisses)
+}
+```
+
+Output:
+
+```
+method Add Registry
+misses: 0
+```
+
+**One gap stays honest to state.** No C-oracle differential yet compares
+`Owner` strings between the pure-Go and the official C runtime, the way
+"The C-oracle differential" section below compares capture streams. The
+general outline differential logs `OwnerRuleMisses` as a diagnostic value
+only, and nothing in that suite gates on it. Resolution correctness today
+rests on the unit and golden proofs cited above, not on a cross-engine
+field comparison.
 
 ## Language coverage
 

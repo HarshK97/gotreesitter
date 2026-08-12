@@ -30,6 +30,23 @@ for tags and release notes while still in `0.x`.
   84 as the floor. See `docs/outline.md` for the full coverage tiers and the
   file outline API.
 
+- `OutlineSymbol.Owner` now resolves on every `OutlineTree` call. A rule
+  attached through `WithOutlineOwnerRules` matches a symbol by `NodeType`,
+  reads its `OwnerField`, and descends through the rule's `Unwrap` node
+  types until it reaches exactly one `NameTypes` terminal. Any other
+  outcome — an absent field, or a walk that reaches zero or more than one
+  terminal — leaves `Owner` empty and counts one
+  `OutlineReport.OwnerRuleMisses`; a `NodeType` no attached rule names
+  touches neither field.
+
+- `grammars.OutlineOwnerRules(entry)` gates the shipped owner-rule table by
+  symbol and field presence in each language's own compiled grammar, the
+  same way `ResolveTagsQuery`'s inference table is gated, and composes
+  directly with `gotreesitter.WithOutlineOwnerRules`. The shipped Go rule
+  resolves all four receiver shapes — value, pointer, generic value, and
+  generic pointer — to the receiver's base type name. See `docs/outline.md`
+  for the full resolution contract and a worked example.
+
 ### Fixed
 
 - Seven of the file outline's core nine languages carried tags-query rows
