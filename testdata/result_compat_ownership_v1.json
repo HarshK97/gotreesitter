@@ -2,14 +2,14 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 40,
-    "dispatcher_languages": 42,
+    "dispatcher_arms": 39,
+    "dispatcher_languages": 41,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
     "post_finalization_languages": 0,
-    "live_entries": 41,
-    "retired_entries": 44
+    "live_entries": 40,
+    "retired_entries": 45
   },
   "live_evidence_baseline": {
     "scope": "baseline_corpus_wide_only",
@@ -2067,21 +2067,26 @@
       "languages": [
         "ql"
       ],
-      "purpose": "Reconcile QL derivation selection and returned-tree shape.",
+      "purpose": "Historical: relabeled the signatureExpr moduleExpr node to typeExpr after the parse, to match the C reading of an ambiguous upper-case identifier in signature position. Retired after a declared-conflict election policy resolved the underlying simpleId/className reduce-reduce conflict during dispatch, before the parser forks.",
       "authoritative_owner": "derivation_election_selection",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/ql_signature_expr_election_native_regression_test.go",
+        "cgo_harness/ql_election_local_parity_test.go"
       ],
       "retirement_condition": "Delete only after derivation_election_selection emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "evidence_scope": "baseline_corpus_wide_only"
+      "status": "retired",
+      "retired_commit": "0000000000000000000000000000000000000000",
+      "receipt_refs": [
+        "grammars/ql_signature_expr_election_native_regression_test.go",
+        "cgo_harness/ql_election_local_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.r",
