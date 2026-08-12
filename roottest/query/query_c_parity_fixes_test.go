@@ -1,4 +1,4 @@
-package gotreesitter_test
+package query_test
 
 // Focused C-parity regression tests for the tree-sitter query-engine
 // parity fixes landed on this branch:

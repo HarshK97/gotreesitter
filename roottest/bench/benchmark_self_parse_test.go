@@ -1,4 +1,4 @@
-package gotreesitter_test
+package bench_test
 
 // Benchmarks that parse gotreesitter's own source files. These files are
 // deliberately pathological: very long, dense switch/select bodies and
