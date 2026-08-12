@@ -157,8 +157,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		return resultCompatibilityResult{stopReason: stopReason}
 	case "hlsl":
 		dispatcherArmCensus(ctx, "dispatch.hlsl", func() { normalizeHLSLCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "hyprlang":
-		dispatcherArmCensus(ctx, "dispatch.hyprlang", func() { normalizeHyprlangCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "javascript":
 		var stopReason ParseStopReason
 		dispatcherArmCensus(ctx, "dispatch.javascript", func() {

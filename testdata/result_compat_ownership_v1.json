@@ -2,14 +2,14 @@
   "schema": "gotreesitter/result-compat-ownership/v1",
   "source_of_truth": true,
   "denominator": {
-    "dispatcher_arms": 36,
-    "dispatcher_languages": 38,
+    "dispatcher_arms": 35,
+    "dispatcher_languages": 37,
     "dispatcher_predicates": 1,
     "generic_passes": 0,
     "post_finalization_arms": 0,
     "post_finalization_languages": 0,
-    "live_entries": 37,
-    "retired_entries": 48
+    "live_entries": 36,
+    "retired_entries": 49
   },
   "live_evidence_baseline": {
     "scope": "baseline_corpus_wide_only",
@@ -1450,21 +1450,26 @@
       "languages": [
         "hyprlang"
       ],
-      "purpose": "Reconcile Hyprlang recovery and returned-tree shape.",
-      "authoritative_owner": "scheduler_action_semantics",
+      "purpose": "Historical: reconciled Hyprlang boolean assignment values by retagging a generic value token. DFA keyword promotion now emits each boolean keyword natively before compatibility.",
+      "authoritative_owner": "materialization",
       "witnesses": [
-        "cgo_harness/parity_cgo_test.go"
+        "grammars/type_projection_native_regression_test.go",
+        "cgo_harness/type_projection_retirement_parity_test.go"
       ],
-      "retirement_condition": "Delete only after scheduler_action_semantics emits the same tree natively for every registered witness and production, compact, forest, incremental, and C-oracle route receipts are exact.",
+      "retirement_condition": "Satisfied: DFA keyword promotion emits each boolean keyword natively, skipping the leading whitespace its word token pattern absorbs. Compatibility-free, production, compact, forest, incremental, and C-oracle receipts return the same tree.",
       "route_coverage": {
-        "production": "shared_result_compatibility_tail",
-        "compact": "shared_result_compatibility_tail",
-        "forest": "shared_result_compatibility_tail",
-        "incremental": "shared_result_compatibility_tail",
-        "c_oracle": "curated_single_grammar_parity"
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
       },
-      "status": "live",
-      "evidence_scope": "baseline_corpus_wide_only"
+      "status": "retired",
+      "retired_commit": "1adc7c8694000b0b670f0ca05cc8b8d7b6588cd3",
+      "receipt_refs": [
+        "grammars/type_projection_native_regression_test.go",
+        "cgo_harness/type_projection_retirement_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.ini",
