@@ -39,7 +39,14 @@ func TestBuildReportUsesF0SignalAndKeepsCohortsSeparate(t *testing.T) {
 	if doc.C0f.Cohorts["alternative_lifetime"].Observed {
 		t.Fatal("unobserved cohort marked observed")
 	}
-	if !strings.Contains(renderMarkdown(doc), "partially gated") {
+	markdown := renderMarkdown(doc)
+	if !strings.Contains(markdown, "partially gated") {
 		t.Fatal("markdown omitted status")
+	}
+	if !strings.HasSuffix(markdown, "\n") {
+		t.Fatal("markdown lacks a final newline")
+	}
+	if strings.HasSuffix(markdown, "\n\n") {
+		t.Fatal("markdown has an extra final newline")
 	}
 }

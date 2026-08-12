@@ -443,6 +443,9 @@ func renderMarkdown(doc *report) string {
 	for _, c := range doc.Conflicts {
 		add("- **%s — %s.** %s %s\n", c.ID, c.Status, c.Finding, c.Action)
 	}
+	if len(b) > 0 && b[len(b)-1] == '\n' {
+		b = b[:len(b)-1]
+	}
 	add("\n")
 	return string(b)
 }
