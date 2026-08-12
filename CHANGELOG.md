@@ -73,6 +73,11 @@ for tags and release notes while still in `0.x`.
   Production, compact, forest, and incremental routes match the raw parse
   exactly, and the isolated C-oracle comparison matches for every case.
   One unrelated Bash subpass remains live.
+- The FIDL result-compatibility dispatcher arm is retired. Native recovery
+  already builds the C-equivalent error shape for a versioned-layout-modifier
+  declaration whose modifier keyword carries a stray `(name=value)` argument
+  list. Production, compact, forest, and incremental routes produce the same
+  tree, and an isolated C-oracle parity check confirms the shape.
 
 ## [0.49.0] - 2026-08-11
 
