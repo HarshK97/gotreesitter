@@ -441,6 +441,210 @@ func TestDispatcherArmCensusTrackedReceipt(t *testing.T) {
 	}
 }
 
+type a0DispatcherCensusManifest struct {
+	Schema                 string                      `json:"schema"`
+	ParserRevision         string                      `json:"parser_revision"`
+	GrammarLockPath        string                      `json:"grammar_lock_path"`
+	GrammarLockSHA256      string                      `json:"grammar_lock_sha256"`
+	CorpusSourceLockPath   string                      `json:"corpus_source_lock_path"`
+	CorpusSourceLockSHA256 string                      `json:"corpus_source_lock_sha256"`
+	FixtureRoot            string                      `json:"fixture_root"`
+	Languages              []string                    `json:"languages"`
+	Entries                []a0DispatcherCensusFixture `json:"entries"`
+	Receipts               []a0DispatcherCensusReceipt `json:"receipts"`
+}
+
+type a0DispatcherCensusFixture struct {
+	Language     string `json:"language"`
+	Bucket       string `json:"bucket"`
+	Bytes        int    `json:"bytes"`
+	SHA256       string `json:"sha256"`
+	SourceRepo   string `json:"source_repo"`
+	SourceCommit string `json:"source_commit"`
+	SourcePath   string `json:"source_path"`
+	OutputPath   string `json:"output_path"`
+}
+
+type a0DispatcherCensusReceipt struct {
+	Language       string `json:"language"`
+	ArmID          string `json:"arm_id"`
+	Files          int    `json:"files"`
+	Checked        uint64 `json:"checked"`
+	Run            uint64 `json:"run"`
+	NodesVisited   uint64 `json:"nodes_visited"`
+	NodesRewritten uint64 `json:"nodes_rewritten"`
+	ErrorRoots     int    `json:"error_roots"`
+	ParseErrors    int    `json:"parse_errors"`
+}
+
+func TestDispatcherArmCensusA0Manifest(t *testing.T) {
+	t.Setenv("GTS_DISPATCHER_CENSUS", "1")
+
+	raw, err := os.ReadFile(filepath.Join("..", "testdata", "dispatcher_census_a0_manifest_v1.json"))
+	if err != nil {
+		t.Fatalf("read A0 manifest: %v", err)
+	}
+	var manifest a0DispatcherCensusManifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatalf("parse A0 manifest: %v", err)
+	}
+	if manifest.Schema != "gts-dispatcher-census-a0/v1" {
+		t.Fatalf("A0 manifest schema = %q", manifest.Schema)
+	}
+	if manifest.ParserRevision == "" || manifest.FixtureRoot != "testdata/dispatcher_census_a0" {
+		t.Fatalf("A0 manifest lacks parser or fixture provenance: %+v", manifest)
+	}
+
+	grammarLock, err := os.ReadFile(filepath.Join("..", filepath.FromSlash(manifest.GrammarLockPath)))
+	if err != nil {
+		t.Fatalf("read A0 grammar lock: %v", err)
+	}
+	grammarDigest := fmt.Sprintf("%x", sha256.Sum256(grammarLock))
+	if grammarDigest != manifest.GrammarLockSHA256 {
+		t.Fatalf("A0 grammar lock SHA-256 = %s, want %s", grammarDigest, manifest.GrammarLockSHA256)
+	}
+	sourceLockDigest, err := os.ReadFile(filepath.Join("..", "cgo_harness", "perf_scan", "corpus_sources.lock.sha256"))
+	if err != nil {
+		t.Fatalf("read A0 source lock receipt: %v", err)
+	}
+	sourceFields := strings.Fields(string(sourceLockDigest))
+	if len(sourceFields) == 0 || sourceFields[0] != manifest.CorpusSourceLockSHA256 {
+		t.Fatalf("A0 source lock SHA-256 = %q, want %s", strings.Join(sourceFields, " "), manifest.CorpusSourceLockSHA256)
+	}
+
+	arms := dispatcherArmLanguages(t)
+	langEntries := map[string]grammars.LangEntry{}
+	for _, entry := range grammars.AllLanguages() {
+		langEntries[entry.Name] = entry
+	}
+	backends := map[string]grammars.ParseBackend{}
+	for _, report := range grammars.AuditParseSupport() {
+		backends[report.Name] = report.Backend
+	}
+
+	wantLanguages := append([]string(nil), manifest.Languages...)
+	sort.Strings(wantLanguages)
+	if len(wantLanguages) != 17 {
+		t.Fatalf("A0 manifest languages = %d, want 17", len(wantLanguages))
+	}
+	for i, language := range wantLanguages {
+		if i > 0 && language == wantLanguages[i-1] {
+			t.Fatalf("A0 manifest repeats language %q", language)
+		}
+		if _, ok := arms[language]; !ok {
+			t.Fatalf("A0 manifest language %q has no dispatcher arm", language)
+		}
+	}
+
+	receipts := map[string]a0DispatcherCensusReceipt{}
+	for _, receipt := range manifest.Receipts {
+		if _, exists := receipts[receipt.Language]; exists {
+			t.Fatalf("A0 manifest repeats receipt for %q", receipt.Language)
+		}
+		receipts[receipt.Language] = receipt
+		if receipt.ArmID != arms[receipt.Language] {
+			t.Fatalf("%s receipt arm = %q, want %q", receipt.Language, receipt.ArmID, arms[receipt.Language])
+		}
+		if receipt.Files == 0 || receipt.Checked == 0 || receipt.Run == 0 {
+			t.Fatalf("%s has a vacuous A0 receipt: %+v", receipt.Language, receipt)
+		}
+	}
+	if len(receipts) != len(wantLanguages) {
+		t.Fatalf("A0 manifest receipts = %d, want %d", len(receipts), len(wantLanguages))
+	}
+
+	type totals struct {
+		files, errorRoots, parseErrors   int
+		checked, run, visited, rewritten uint64
+	}
+	got := map[string]*totals{}
+	previousKey := ""
+	for _, fixture := range manifest.Entries {
+		key := fixture.Language + "\x00" + fixture.OutputPath
+		if key <= previousKey {
+			t.Fatalf("A0 fixtures are not strictly sorted at %q", key)
+		}
+		previousKey = key
+		if fixture.Bucket != "small" && fixture.Bucket != "medium" && fixture.Bucket != "large" {
+			t.Fatalf("%s has invalid A0 bucket %q", fixture.OutputPath, fixture.Bucket)
+		}
+		if !strings.HasPrefix(fixture.OutputPath, manifest.FixtureRoot+"/") ||
+			filepath.IsAbs(fixture.SourcePath) || strings.Contains(fixture.SourcePath, "..") {
+			t.Fatalf("%s has an unsafe A0 path", fixture.OutputPath)
+		}
+		if fixture.SourceRepo == "" || fixture.SourceCommit == "" || fixture.SourcePath == "" {
+			t.Fatalf("%s lacks source provenance", fixture.OutputPath)
+		}
+		entry, ok := langEntries[fixture.Language]
+		if !ok {
+			t.Fatalf("%s has no grammar entry", fixture.Language)
+		}
+		backend, ok := backends[fixture.Language]
+		if !ok {
+			t.Fatalf("%s has no parse backend", fixture.Language)
+		}
+		src, err := os.ReadFile(filepath.Join("..", filepath.FromSlash(fixture.OutputPath)))
+		if err != nil {
+			t.Fatalf("read %s: %v", fixture.OutputPath, err)
+		}
+		if len(src) != fixture.Bytes {
+			t.Errorf("%s bytes = %d, want %d", fixture.OutputPath, len(src), fixture.Bytes)
+		}
+		if digest := fmt.Sprintf("%x", sha256.Sum256(src)); digest != fixture.SHA256 {
+			t.Errorf("%s SHA-256 = %s, want %s", fixture.OutputPath, digest, fixture.SHA256)
+		}
+		if got[fixture.Language] == nil {
+			got[fixture.Language] = &totals{}
+		}
+		got[fixture.Language].files++
+		tree, err := parseRealCorpusFile(entry, backend, entry.Language(), src)
+		if err != nil {
+			got[fixture.Language].parseErrors++
+			continue
+		}
+		if tree == nil || tree.RootNode() == nil {
+			got[fixture.Language].parseErrors++
+			if tree != nil {
+				tree.Release()
+			}
+			continue
+		}
+		if tree.RootNode().HasError() {
+			got[fixture.Language].errorRoots++
+		}
+		runtime := tree.ParseRuntime()
+		if runtime.NormalizationPasses != nil {
+			for _, pass := range *runtime.NormalizationPasses {
+				if pass.Name != arms[fixture.Language] {
+					continue
+				}
+				got[fixture.Language].checked += pass.Checked
+				got[fixture.Language].run += pass.Run
+				got[fixture.Language].visited += pass.NodesVisited
+				got[fixture.Language].rewritten += pass.NodesRewritten
+			}
+		}
+		tree.Release()
+	}
+	if len(got) != len(wantLanguages) {
+		t.Fatalf("A0 fixture languages = %d, want %d", len(got), len(wantLanguages))
+	}
+	for _, language := range wantLanguages {
+		want := receipts[language]
+		have := got[language]
+		if have == nil {
+			t.Fatalf("A0 fixture has no parsed files for %s", language)
+		}
+		if have.files != want.Files || have.checked != want.Checked || have.run != want.Run ||
+			have.visited != want.NodesVisited || have.rewritten != want.NodesRewritten ||
+			have.errorRoots != want.ErrorRoots || have.parseErrors != want.ParseErrors {
+			t.Errorf("%s A0 receipt = files:%d checked:%d run:%d visited:%d rewritten:%d error_roots:%d parse_errors:%d, want files:%d checked:%d run:%d visited:%d rewritten:%d error_roots:%d parse_errors:%d",
+				language, have.files, have.checked, have.run, have.visited, have.rewritten, have.errorRoots, have.parseErrors,
+				want.Files, want.Checked, want.Run, want.NodesVisited, want.NodesRewritten, want.ErrorRoots, want.ParseErrors)
+		}
+	}
+}
+
 func TestTerminalLeafNativeInvariantOverRealCorpus(t *testing.T) {
 	const corpusRoot = "../cgo_harness/corpus_real"
 	corpusInfo, err := os.Stat(corpusRoot)
