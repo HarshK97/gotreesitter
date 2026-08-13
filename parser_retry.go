@@ -265,6 +265,7 @@ func (p *Parser) retryIncrementalAcceptedErrorWithBaseMergeCap(source []byte, fi
 		return first
 	}
 
+	p.recordRecoveryRuntimeRetryTree(first, "initial")
 	p.fullParseRetryPassesTaken++
 	p.recordRecoveryRuntimeRetry("accepted_error_under_wide_incremental_merge")
 	workCountSetNextParseAttempt("incremental_base_merge", "accepted_error_under_wide_incremental_merge")
@@ -275,6 +276,7 @@ func (p *Parser) retryIncrementalAcceptedErrorWithBaseMergeCap(source []byte, fi
 	// A negative override is an exact cap. Positive overrides only widen the
 	// effective cap and therefore cannot lower the incremental default.
 	candidate := run(-baseCap, retryTiming)
+	p.recordRecoveryRuntimeRetryTree(candidate, "incremental_base_merge")
 	adopted := candidate != nil && candidate != first && preferRetryTreeOverFirstPass(p, candidate, first)
 	result := first
 	if adopted {
@@ -298,6 +300,8 @@ func (p *Parser) retryIncrementalAcceptedErrorWithBaseMergeCap(source []byte, fi
 		result.parseRuntime.IncrementalAcceptedErrorRetryMergePerKey = baseCap
 		result.parseRuntime.IncrementalAcceptedErrorRetryCause = IncrementalRetryCauseAcceptedErrorBaseMerge
 	}
+	p.finishRecoveryRuntimeRetryTelemetry(result, len(source))
+	p.clearRecoveryRuntimeRetryTrees()
 	return result
 }
 
