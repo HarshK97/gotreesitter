@@ -33,9 +33,10 @@ benchmark worktree.
 Options:
   --out <dir>                 New private receipt directory.
   --go-backend <backend>      Go backend: production (default), candidate, or
-                              selected-store. Candidate materializes public
-                              nodes; selected-store consumes the authenticated
-                              compact snapshot directly. Neither falls back.
+                              selected-store (diagnostic only). Candidate
+                              materializes public nodes; selected-store
+                              consumes the authenticated compact snapshot
+                              directly. Neither falls back.
   --core <cpu>                Pin all calibration and samples to this CPU.
                               Default: least-busy allowed CPU from a 1s probe.
   --quiet-max-attempts <n>    Bounded quiet checks (default: 12).
@@ -163,6 +164,10 @@ if [[ "$MODE" == "publication" ]]; then
   ((SKIP_QUIET_ADMISSION == 0)) || die "publication mode cannot skip quiet admission"
   ((ALLOW_DIRTY == 0)) || die "publication mode cannot allow a dirty worktree"
   ((ALLOW_GOT_ENV == 0)) || die "publication mode cannot allow GOT_* overrides"
+fi
+
+if [[ "$MODE" == "publication" && "$GO_BACKEND" == "selected-store" ]]; then
+  die "selected-store publication requires a selected-store cgo preflight; use diagnostic mode"
 fi
 
 for command_name in awk git go gzip lscpu realpath sha256sum stat taskset sort tar /usr/bin/time; do
@@ -334,13 +339,18 @@ GO_BIN_SHA="$(sha256sum "$GO_BIN" | awk '{print $1}')"
 go version -m "$GO_BIN" > "$OUT_DIR/preflight/go_binary_modules.txt"
 
 if ((SKIP_CGO_ADMISSION == 0)); then
-  CGO_BUILD_TAGS="treesitter_c_parity,$GO_BUILD_TAGS"
-  (
-    cd "$REPO_ROOT"
-    bash cgo_harness/docker/run_parity_in_docker.sh -- \
-      "cd /workspace && go test -tags '$GO_BUILD_TAGS' . -run '^${GO_PREFLIGHT}$' -count=1 -v && cd /workspace/cgo_harness && GOT_PARSE_PHASE_TIMING=1 go test . -tags '$CGO_BUILD_TAGS' -run '^(TestCanonicalGoBackendBuildTag|TestCanonicalGoBenchmarkPreflight|TestCOracleStaticDeepParity)$' -count=1 -v"
-  ) > "$OUT_DIR/preflight/cgo_static_deep_admission.txt" 2>&1
-  CGO_ADMISSION="PASS"
+  if [[ "$GO_BACKEND" == "selected-store" ]]; then
+    CGO_ADMISSION="NOT_APPLICABLE_SELECTED_STORE"
+    printf '%s\n' "$CGO_ADMISSION" > "$OUT_DIR/preflight/cgo_static_deep_admission.txt"
+  else
+    CGO_BUILD_TAGS="treesitter_c_parity,$GO_BUILD_TAGS"
+    (
+      cd "$REPO_ROOT"
+      bash cgo_harness/docker/run_parity_in_docker.sh -- \
+        "cd /workspace && go test -tags '$GO_BUILD_TAGS' . -run '^${GO_PREFLIGHT}$' -count=1 -v && cd /workspace/cgo_harness && GOT_PARSE_PHASE_TIMING=1 go test . -tags '$CGO_BUILD_TAGS' -run '^(TestCanonicalGoBackendBuildTag|TestCanonicalGoBenchmarkPreflight|TestCOracleStaticDeepParity)$' -count=1 -v"
+    ) > "$OUT_DIR/preflight/cgo_static_deep_admission.txt" 2>&1
+    CGO_ADMISSION="PASS"
+  fi
 else
   CGO_ADMISSION="SKIPPED_NONPUBLICATION_DIAGNOSTIC"
   printf '%s\n' "$CGO_ADMISSION" > "$OUT_DIR/preflight/cgo_static_deep_admission.txt"
@@ -847,7 +857,11 @@ fi
   printf 'benchtime=%s\n' "$BENCHTIME"
   printf 'c_calibration_min_ns=%s\n' "$BENCHTIME_NS"
   printf 'cgo_static_deep_admission=%s\n' "$CGO_ADMISSION"
-  printf 'cgo_admission_contract=root_and_cgo_same_backend_tag+treesitter_c_parity_canonical_static_deep\n'
+  if [[ "$GO_BACKEND" == "selected-store" ]]; then
+    printf 'cgo_admission_contract=not_applicable_selected_store_no_cgo_route\n'
+  else
+    printf 'cgo_admission_contract=root_and_cgo_same_backend_tag+treesitter_c_parity_canonical_static_deep\n'
+  fi
   if [[ "$GO_BACKEND" != "production" ]]; then
     printf 'workload_identity=compact_deep_tree_and_exact_work_admission_v1\n'
   else
