@@ -265,7 +265,9 @@ func (p *Parser) retryIncrementalAcceptedErrorWithBaseMergeCap(source []byte, fi
 		return first
 	}
 
+	p.recordRecoveryRuntimeRetryTree(first, "initial")
 	p.fullParseRetryPassesTaken++
+	p.recordRecoveryRuntimeRetry("accepted_error_under_wide_incremental_merge")
 	workCountSetNextParseAttempt("incremental_base_merge", "accepted_error_under_wide_incremental_merge")
 	var retryTiming *incrementalParseTiming
 	if timing != nil {
@@ -274,6 +276,7 @@ func (p *Parser) retryIncrementalAcceptedErrorWithBaseMergeCap(source []byte, fi
 	// A negative override is an exact cap. Positive overrides only widen the
 	// effective cap and therefore cannot lower the incremental default.
 	candidate := run(-baseCap, retryTiming)
+	p.recordRecoveryRuntimeRetryTree(candidate, "incremental_base_merge")
 	adopted := candidate != nil && candidate != first && preferRetryTreeOverFirstPass(p, candidate, first)
 	result := first
 	if adopted {
@@ -297,6 +300,8 @@ func (p *Parser) retryIncrementalAcceptedErrorWithBaseMergeCap(source []byte, fi
 		result.parseRuntime.IncrementalAcceptedErrorRetryMergePerKey = baseCap
 		result.parseRuntime.IncrementalAcceptedErrorRetryCause = IncrementalRetryCauseAcceptedErrorBaseMerge
 	}
+	p.finishRecoveryRuntimeRetryTelemetry(result, len(source))
+	p.clearRecoveryRuntimeRetryTrees()
 	return result
 }
 
@@ -1588,7 +1593,10 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 }
 
 func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tree *Tree, origin fullParseRetryOrigin, runRetry fullParseRetryRunner) *Tree {
+	p.recordRecoveryRuntimeRetryTree(tree, "initial")
 	if certifiedAcceptedErrorRetrySkipsFresh(tree, len(source), origin) {
+		p.finishRecoveryRuntimeRetryTelemetry(tree, len(source))
+		p.clearRecoveryRuntimeRetryTrees()
 		return tree
 	}
 	maxStacksOverride := fullParseRetryMaxStacksOverrideForOrigin(tree, len(source), initialMaxStacks, origin)
@@ -1690,6 +1698,7 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 				release(*best)
 			}
 			*best = candidate
+			p.recordRecoveryRuntimeSelectedTree(candidate)
 			return
 		}
 		release(candidate)
@@ -1710,6 +1719,8 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 	// normal result compatibility; avoid paying the full retry ladder first.
 	if certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, len(source)) == 0 &&
 		csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree, source) {
+		p.finishRecoveryRuntimeRetryTelemetry(tree, len(source))
+		p.clearRecoveryRuntimeRetryTrees()
 		return tree
 	}
 	runRetryAttempt := func(logicalRung, operationCause string, maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
@@ -1721,6 +1732,7 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 				return nil
 			}
 			p.fullParseRetryPassesTaken++
+			p.recordRecoveryRuntimeRetry(operationCause)
 		}
 		var t0 time.Time
 		if retryDebug {
@@ -1748,10 +1760,16 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 			fmt.Fprintf(os.Stderr, "RETRYDBG pass maxStacks=%d mergePerKey=%d maxNodes=%d took=%v stop=%v hasErr=%v forceClean=%v\n",
 				maxStacks, maxMergePerKeyOverride, maxNodes, time.Since(t0), stop, hasErr, p != nil && p.forceCleanRetryPass)
 		}
+		p.recordRecoveryRuntimeRetryTree(result, logicalRung)
 		return result
 	}
 
 	bestTree := tree
+	defer func() {
+		p.finishRecoveryRuntimeRetryTelemetry(bestTree, len(source))
+		p.clearRecoveryRuntimeRetryTrees()
+	}()
+	p.recordRecoveryRuntimeSelectedTree(bestTree)
 	if shouldRunInitialFullParseMergeRetry(tree, len(source), origin) {
 		if initialMergePerKey := fullParseRetryMergePerKeyOverride(tree, len(source), initialMaxStacks); initialMergePerKey != 0 {
 			mergeRetryTree := runRetryAttempt(
@@ -1875,6 +1893,7 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 						release(bestTree)
 					}
 					bestTree = retryTree
+					p.recordRecoveryRuntimeSelectedTree(bestTree)
 				} else if retryTree != bestTree {
 					release(retryTree)
 				}
@@ -1891,6 +1910,7 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 					release(bestTree)
 				}
 				bestTree = retryTree
+				p.recordRecoveryRuntimeSelectedTree(bestTree)
 			}
 		}
 	}
