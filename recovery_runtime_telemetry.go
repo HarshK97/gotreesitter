@@ -141,7 +141,11 @@ func (p *Parser) recordRecoveryRuntimeRetryTree(tree *Tree, rung string) {
 	}
 	attempt, ok := state.retryAttempts[tree]
 	if !ok {
-		attempt = recoveryRuntimeAttempt{}
+		// A parser may run more than one retry ladder, for example when an
+		// external scanner requests a repeat. The selected tree from the prior
+		// ladder remains the incumbent, so seed this new attempt record from
+		// its immutable snapshot instead of replacing it with zero values.
+		attempt = recoveryRuntimeAttempt{stats: state.stats}
 	}
 	attempt.rung = rung
 	state.retryAttempts[tree] = attempt
@@ -168,7 +172,7 @@ func (p *Parser) finishRecoveryRuntimeRetryTelemetry(tree *Tree, sourceLen int) 
 	if state == nil {
 		return
 	}
-	if attempt, ok := state.retryAttempts[tree]; ok {
+	if attempt, ok := state.retryAttempts[tree]; ok && attempt.stats.Enabled {
 		state.stats = attempt.stats
 		state.stats.RetrySelectedAttempt = attempt.rung
 	}

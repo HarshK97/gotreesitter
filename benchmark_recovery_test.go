@@ -69,7 +69,10 @@ func TestRecoveryRuntimeTelemetry(t *testing.T) {
 	gotreesitter.EnableRecoveryRuntimeTelemetry(true)
 	defer gotreesitter.EnableRecoveryRuntimeTelemetry(false)
 
-	recoveryParser := gotreesitter.NewParser(grammars.KdlLanguage())
+	recoveryLanguage := *grammars.KdlLanguage()
+	recoveryLanguage.AutomaticForestEnabledByDefault = false
+	recoveryParser := gotreesitter.NewParser(&recoveryLanguage)
+	recoveryParser.SetAdmissionCandidateRoute(false)
 	source := makeKDLRecoveryGarbageSource(12, 24)
 	tree, err := recoveryParser.Parse(source)
 	if err != nil {
@@ -94,6 +97,7 @@ func TestRecoveryRuntimeTelemetry(t *testing.T) {
 	}
 
 	cleanParser := gotreesitter.NewParser(grammars.GoLanguage())
+	cleanParser.SetAdmissionCandidateRoute(false)
 	cleanTree, err := cleanParser.Parse([]byte("package p\n"))
 	if err != nil {
 		t.Fatalf("parse clean telemetry control: %v", err)
