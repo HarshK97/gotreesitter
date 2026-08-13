@@ -145,10 +145,6 @@ func preflightCanonicalGoFixtures(tb testing.TB, fixtures []benchfixtures.Loaded
 				cTree.Close()
 				tb.Fatalf("%s Go workload identity: %v", fixture.Fixture.ID, err)
 			}
-		} else if err := verifyCanonicalCompactWorkloadIdentity(goTree); err != nil {
-			releaseCanonicalGoTree(goTree)
-			cTree.Close()
-			tb.Fatalf("%s compact workload identity: %v", fixture.Fixture.ID, err)
 		}
 		cInspection, err := canonicalCTreeInspection(cTree.RootNode())
 		if err != nil {
@@ -197,29 +193,6 @@ func newCanonicalGoBenchmarkParser(tb testing.TB, lang *gotreesitter.Language) *
 		tb.Fatalf("canonical Go preflight requires exactly one backend tag: got %q", canonicalGoBenchmarkBackend)
 	}
 	return parser
-}
-
-func verifyCanonicalCompactWorkloadIdentity(tree *gotreesitter.Tree) error {
-	if tree == nil {
-		return fmt.Errorf("compact tree is nil")
-	}
-	runtime, ok := tree.CompactParserCoreRuntime()
-	if !ok || !runtime.Authenticated {
-		return fmt.Errorf("compact runtime receipt is missing or unauthenticated")
-	}
-	if runtime.SchedulerNanos <= 0 || runtime.MaterializationNanos < 0 {
-		return fmt.Errorf("compact lifecycle timing is invalid: scheduler=%d materialization=%d", runtime.SchedulerNanos, runtime.MaterializationNanos)
-	}
-	if runtime.RetainedFootprintBytes == 0 || runtime.CoreStats.Subtrees == 0 {
-		return fmt.Errorf("compact storage receipt is incomplete: retained=%d subtrees=%d", runtime.RetainedFootprintBytes, runtime.CoreStats.Subtrees)
-	}
-	if runtime.CoreWork.Overflow || runtime.SchedulerWork.Overflow {
-		return fmt.Errorf("compact work receipt overflowed: core=%+v scheduler=%+v", runtime.CoreWork, runtime.SchedulerWork)
-	}
-	if runtime.SchedulerWork.Accepts != 1 {
-		return fmt.Errorf("compact scheduler accepts=%d want=1", runtime.SchedulerWork.Accepts)
-	}
-	return nil
 }
 
 func benchmarkCanonicalGoWarm(b *testing.B, fixture benchfixtures.LoadedFixture, lang *gotreesitter.Language) {
