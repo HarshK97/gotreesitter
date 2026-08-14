@@ -1558,8 +1558,10 @@ func (e *yamlEnv) scan() bool {
 		(vs[yTokBRDqtStrCtn] && (isBR || hasNwl) && e.scnDqtStrCnt(yTokBRDqtStrCtn)) {
 		return true
 	}
+	// Single-quoted flow scalars use the same line-folding rule as
+	// double-quoted flow scalars. See YAML 1.2.2 productions 124 and 125.
 	if (vs[yTokRSqtStrCtn] && isR && e.scnSqtStrCnt(yTokRSqtStrCtn)) ||
-		(vs[yTokBRSqtStrCtn] && isBR && e.scnSqtStrCnt(yTokBRSqtStrCtn)) {
+		(vs[yTokBRSqtStrCtn] && (isBR || hasNwl) && e.scnSqtStrCnt(yTokBRSqtStrCtn)) {
 		return true
 	}
 
