@@ -44,11 +44,11 @@ func (StarlarkExternalScanner) Create() any {
 func (StarlarkExternalScanner) Destroy(payload any) {}
 
 func (StarlarkExternalScanner) Serialize(payload any, buf []byte) int {
-	return PythonExternalScanner{}.Serialize(payload, buf)
+	return serializePythonScannerState(payload.(*pythonScannerState), buf)
 }
 
 func (StarlarkExternalScanner) Deserialize(payload any, buf []byte) {
-	PythonExternalScanner{}.Deserialize(payload, buf)
+	deserializePythonScannerState(payload.(*pythonScannerState), buf)
 }
 
 // SupportsIncrementalReuse remains disabled with Python's scanner: Starlark

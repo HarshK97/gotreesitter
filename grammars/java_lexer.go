@@ -967,15 +967,6 @@ func (ts *JavaTokenSource) eofToken() gotreesitter.Token {
 	}
 }
 
-func firstNonZeroSymbol(symbols ...gotreesitter.Symbol) gotreesitter.Symbol {
-	for _, sym := range symbols {
-		if sym != 0 {
-			return sym
-		}
-	}
-	return 0
-}
-
 func isJavaIdentStart(b byte) bool {
 	return isASCIIAlpha(b) || b == '_' || b == '$'
 }
