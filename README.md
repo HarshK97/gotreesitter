@@ -789,12 +789,15 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.50.0**.
+The current release is **v0.50.1**.
 
 This release consolidates parser correctness, recovery bounds, parser-core
 bytecode, fact extraction bytecode, replay caches, randomized benchmarks, and
 V10 fleet controls. It also adds opt-in Lean 4 support and scanner corrections
 for JavaScript, TypeScript, and TSX.
+
+This patch restores single-language grammar-subset builds and checks each
+registered grammar subset in continuous integration.
 
 Detailed shipped evidence lives in [CHANGELOG.md](CHANGELOG.md). Planned minor
 releases are batched on Thursdays; the immutable-tag process and exceptions are

@@ -7,6 +7,17 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.50.1] - 2026-08-14
+
+### Fixed
+
+- Restore single-language `grammar_subset` builds. Shared lexer helpers and
+  Python-derived scanner state now compile with each grammar that uses them.
+  Derivative-only builds do not register Python scanner metadata.
+
+- Add a blocking subset build sweep. Continuous integration now builds all
+  206 registered grammars with their individual `grammar_subset` tags.
+
 ## [0.50.0] - 2026-08-14
 
 ### Added
@@ -4652,7 +4663,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.50.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.50.1...HEAD
+[0.50.1]: https://github.com/odvcencio/gotreesitter/compare/v0.50.0...v0.50.1
 [0.50.0]: https://github.com/odvcencio/gotreesitter/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/odvcencio/gotreesitter/compare/v0.48.1...v0.49.0
 [0.48.1]: https://github.com/odvcencio/gotreesitter/compare/v0.48.0...v0.48.1
