@@ -7,6 +7,8 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-08-14
+
 ### Added
 
 - `TestOutlineOracleDifferential` (`cgo_harness/outline_differential_test.go`)
@@ -4650,7 +4652,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.49.0...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.50.0...HEAD
+[0.50.0]: https://github.com/odvcencio/gotreesitter/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/odvcencio/gotreesitter/compare/v0.48.1...v0.49.0
 [0.48.1]: https://github.com/odvcencio/gotreesitter/compare/v0.48.0...v0.48.1
 [0.48.0]: https://github.com/odvcencio/gotreesitter/compare/v0.47.1...v0.48.0

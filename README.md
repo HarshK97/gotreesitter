@@ -789,7 +789,7 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.49.0**.
+The current release is **v0.50.0**.
 
 This release consolidates parser correctness, recovery bounds, parser-core
 bytecode, fact extraction bytecode, replay caches, randomized benchmarks, and
