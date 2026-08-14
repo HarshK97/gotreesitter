@@ -65,7 +65,18 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
-- Hyprlang's keyword lexer now classifies boolean values (`true`, `false`,
+- TypeScript and TSX no longer split a signed right-shift operator into two
+  generic closers. `splitCompactCloseAngleToken` narrows a `>>` token to a
+  single `>` so nested closers such as `Array<Array<string>>` parse. Java
+  gated that split behind an "unclosed `<` precedes this run" check, because
+  `>>` is also a shift operator there; TypeScript and TSX carried no such
+  gate. Any `>>` whose next byte was one of `( ) [ ] { } , . ; : ?` was torn
+  apart, so `x = a >> (b)` failed to parse while `x = a >> b` succeeded. The
+  angle-depth gate now covers TypeScript and TSX, and runs only when a `>>`
+  symbol is actually active in the state: with no shift alternative to
+  protect, narrowing to `>` remains the only way to make progress. Found
+  while migrating the GoSX browser runtime to TypeScript, on
+  `indices[i] = (src[i >> 3] >> (i & 7)) & 1;`.
   `on`, `off`, `yes`, `no`) at lex time. The grammar's word token pattern can
   absorb leading whitespace before a keyword, and the keyword re-lex
   previously required its match to start at byte zero, so it missed that
