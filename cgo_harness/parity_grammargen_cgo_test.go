@@ -270,6 +270,9 @@ func TestGrammargenCGOParity(t *testing.T) {
 
 			// Stage 4: Collect corpus samples.
 			candidates := collectGrammargenCorpusSamples(t, g, root, maxCases*8, maxBytes)
+			if g.name == "yaml" {
+				candidates = append(collectOwnedYAMLKubernetesCorpusSamples(t, maxBytes), candidates...)
+			}
 			if len(candidates) == 0 {
 				t.Skip("no corpus samples found")
 				return
@@ -758,6 +761,33 @@ func collectGrammargenCorpusSamples(t *testing.T, g grammargenCGOGrammar, root s
 	sort.Slice(out, func(i, j int) bool { return len(out[i].Text) < len(out[j].Text) })
 	if len(out) > limit {
 		out = out[:limit]
+	}
+	return out
+}
+
+func collectOwnedYAMLKubernetesCorpusSamples(t *testing.T, maxBytes int) []grammargenCorpusSample {
+	t.Helper()
+	root := filepath.Join("..", "grammargen", "testdata", "yaml", "kubernetes")
+	paths := []string{
+		"csi-hostpath-testing.yaml",
+		"etcd-statefulset.yaml",
+	}
+	seen := map[string]struct{}{}
+	out := make([]grammargenCorpusSample, 0, len(paths))
+	for _, path := range paths {
+		data, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			t.Fatalf("read owned YAML Kubernetes fixture %s: %v", path, err)
+		}
+		sample, ok := cleanSample(string(data), maxBytes, seen)
+		if !ok {
+			t.Fatalf("invalid owned YAML Kubernetes fixture %s", path)
+		}
+		out = append(out, grammargenCorpusSample{
+			Text:   sample,
+			Path:   filepath.Join(root, path),
+			Source: "owned_kubernetes",
+		})
 	}
 	return out
 }
