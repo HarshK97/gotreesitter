@@ -1733,7 +1733,7 @@ func (e *yamlEnv) scan() bool {
 			e.mrkEnd()
 			return e.retSym(yTokRDqtStrEnd)
 		}
-		if vs[yTokBRDqtStrEnd] && isBR {
+		if vs[yTokBRDqtStrEnd] && (isBR || hasNwl) {
 			e.adv()
 			e.mrkEnd()
 			return e.retSym(yTokBRDqtStrEnd)
@@ -1768,7 +1768,7 @@ func (e *yamlEnv) scan() bool {
 			e.mrkEnd()
 			return e.retSym(yTokRSqtStrEnd)
 		}
-		if vs[yTokBRSqtStrEnd] && isBR {
+		if vs[yTokBRSqtStrEnd] && (isBR || hasNwl) {
 			e.adv()
 			if e.lka() == '\'' {
 				e.adv()

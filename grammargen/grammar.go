@@ -82,6 +82,7 @@ type Grammar struct {
 	PreferRemoteCallOperatorReduces            bool          // prefer completed remote calls before Elixir-style binary operator shifts
 	PreferStabClauseLeftArrowReduces           bool          // prefer completed stab-clause left operands before Elixir-style -> shifts
 	PreferPreciseExternalLexStates             bool          // prefer LR(1)-precise external lex rows when merged rows lose scanner context
+	CompactParseStates                         bool          // minimize equivalent parser states after conflict resolution
 	ExactPrefixStates                          int           // keep this many LR(1) states exact before merge compaction
 	Precedences                                [][]PrecEntry // ordered precedence levels (each level: earlier = higher prec)
 	ChoiceLiftThreshold                        int           // if >0, lift inline CHOICE nodes with more alternatives than this into auxiliary nonterminals to prevent production explosion
@@ -342,6 +343,7 @@ func ExtendGrammar(name string, base *Grammar, customize func(g *Grammar)) *Gram
 		PreferRemoteCallOperatorReduces:            base.PreferRemoteCallOperatorReduces,
 		PreferStabClauseLeftArrowReduces:           base.PreferStabClauseLeftArrowReduces,
 		PreferPreciseExternalLexStates:             base.PreferPreciseExternalLexStates,
+		CompactParseStates:                         base.CompactParseStates,
 		ExactPrefixStates:                          base.ExactPrefixStates,
 		Precedences:                                clonePrecedenceLevels(base.Precedences),
 		ChoiceLiftThreshold:                        base.ChoiceLiftThreshold,

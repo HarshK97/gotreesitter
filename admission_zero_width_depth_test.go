@@ -11,16 +11,17 @@ import (
 )
 
 type admissionDepthFixture struct {
-	name       string
-	lang       func() *gts.Language
-	source     string
-	wantDigest string
-	mustRoute  bool
+	name         string
+	lang         func() *gts.Language
+	source       string
+	wantDigest   string
+	mustRoute    bool
+	mustFallback bool
 }
 
 func TestAdmissionCandidateYAMLZeroWidthDepth(t *testing.T) {
 	fixtures := []admissionDepthFixture{
-		{name: "github-actions", lang: grammars.YamlLanguage, mustRoute: true, wantDigest: "67d6dbaf8985d9b3e87cf8b09097eabfe63bc902db7863c91e7e061d85ca8cd7", source: `name: Go
+		{name: "github-actions", lang: grammars.YamlLanguage, mustFallback: true, wantDigest: "67d6dbaf8985d9b3e87cf8b09097eabfe63bc902db7863c91e7e061d85ca8cd7", source: `name: Go
 on:
   push:
     branches: [main]
@@ -74,7 +75,7 @@ spec:
               memory: "128Mi"
 `},
 	}
-	requireAdmissionDepthRatchet(t, fixtures, 1)
+	requireAdmissionDepthRatchet(t, fixtures, 0)
 }
 
 func TestAdmissionCandidateRepresentativeDepthRatchet(t *testing.T) {
@@ -128,6 +129,9 @@ func requireAdmissionDepthRatchet(t *testing.T, fixtures []admissionDepthFixture
 			}
 			if fixture.mustRoute && routed != 1 {
 				t.Fatalf("candidate route regressed: fallback=%d reason=%q", fallback, gts.AdmissionCandidateLastFallbackReason())
+			}
+			if fixture.mustFallback && fallback != 1 {
+				t.Fatalf("candidate route bypassed the required fallback: routed=%d", routed)
 			}
 			if routed == 1 {
 				routedFixtures++

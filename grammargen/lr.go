@@ -327,6 +327,9 @@ type LRTables struct {
 	GotoTable            map[int]map[int]int // [state][nonterminal] → target state
 	StateCount           int
 	ExtraChainStateStart int // first synthetic nonterminal-extra state, or -1 if none
+	// CompactCoreKeys are C-compatible state cores retained for optional
+	// post-resolution parser-state minimization.
+	CompactCoreKeys []string
 }
 
 // buildLRTables constructs LR(1) parse tables from a normalized grammar.
@@ -653,6 +656,9 @@ func buildLRTablesInternal(bgCtx context.Context, ng *NormalizedGrammar, trackPr
 		GotoTable:            make(map[int]map[int]int),
 		StateCount:           len(itemSets),
 		ExtraChainStateStart: -1,
+	}
+	if ng.CompactParseStates {
+		tables.CompactCoreKeys = buildCompactStateCoreKeys(ng, itemSets)
 	}
 
 	for stateIdx, itemSet := range itemSets {
@@ -993,7 +999,6 @@ type lrContext struct {
 
 	// FIRST(β) cache: packed (prodIdx, dot) → first set + nullable flag
 	betaCache map[uint32]*betaResult
-
 	// Item set management
 	itemSets        []lrItemSet
 	lalrLR0ItemSets []lr0ItemSet

@@ -57,6 +57,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/odvcencio/gotreesitter/internal/grammarpatch"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -499,12 +500,13 @@ func parityCachedSOPath(cacheDir string, entry parityLockEntry) string {
 }
 
 func parityGrammarPatchPath(entry parityLockEntry) string {
-	if entry.Name != "typescript" && entry.Name != "tsx" {
+	spec, ok := grammarpatch.Lookup(entry.Name)
+	if !ok {
 		return ""
 	}
 	for _, path := range []string{
-		filepath.Join("grammars", "patches", "tree-sitter-typescript-import-type.patch"),
-		filepath.Join("..", "grammars", "patches", "tree-sitter-typescript-import-type.patch"),
+		filepath.Join("grammars", "patches", spec.File),
+		filepath.Join("..", "grammars", "patches", spec.File),
 	} {
 		if _, err := os.Stat(path); err == nil {
 			abs, err := filepath.Abs(path)
@@ -520,8 +522,8 @@ func parityGrammarPatchPath(entry parityLockEntry) string {
 func parityGrammarPatchIdentity(entry parityLockEntry) string {
 	patchPath := parityGrammarPatchPath(entry)
 	if patchPath == "" {
-		if entry.Name == "typescript" || entry.Name == "tsx" {
-			return "missing-typescript-import-type-patch"
+		if spec, ok := grammarpatch.Lookup(entry.Name); ok {
+			return "missing-" + spec.File
 		}
 		return "none"
 	}
@@ -533,20 +535,23 @@ func parityGrammarPatchIdentity(entry parityLockEntry) string {
 }
 
 func applyParityGrammarPatch(entry parityLockEntry, repoDir string) error {
+	spec, hasPatch := grammarpatch.Lookup(entry.Name)
+	if !hasPatch {
+		return nil
+	}
 	patchPath := parityGrammarPatchPath(entry)
 	if patchPath == "" {
-		if entry.Name == "typescript" || entry.Name == "tsx" {
-			return errors.New("missing tree-sitter-typescript import_type patch")
-		}
-		return nil
+		return fmt.Errorf("missing grammar patch %s", spec.File)
 	}
 	for _, args := range [][]string{{"apply", "--check", patchPath}, {"apply", patchPath}} {
 		if err := runCommand(repoDir, "git", args...); err != nil {
 			return fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 		}
 	}
-	if err := regeneratePatchedTypeScriptCParser(repoDir, entry.Subdir); err != nil {
-		return err
+	if spec.RegenerateParser {
+		if err := regeneratePatchedTypeScriptCParser(repoDir, entry.Subdir); err != nil {
+			return err
+		}
 	}
 	return nil
 }

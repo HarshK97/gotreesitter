@@ -10,6 +10,7 @@ func TestYAMLSingleQuotedMultilineScalarWithoutIndent(t *testing.T) {
 	tests := []struct {
 		name          string
 		source        string
+		scalarType    string
 		wantDocuments int
 	}{
 		{
@@ -17,6 +18,7 @@ func TestYAMLSingleQuotedMultilineScalarWithoutIndent(t *testing.T) {
 			source: `root: 'a
 b
 c'` + "\n",
+			scalarType:    "single_quote_scalar",
 			wantDocuments: 1,
 		},
 		{
@@ -25,6 +27,23 @@ c'` + "\n",
   key: 'a
 sibling: b'
 after: c` + "\n",
+			scalarType:    "single_quote_scalar",
+			wantDocuments: 1,
+		},
+		{
+			name: "single-quoted closing delimiter on dedented line",
+			source: `root:
+  key: 'line1
+'` + "\n",
+			scalarType:    "single_quote_scalar",
+			wantDocuments: 1,
+		},
+		{
+			name: "double-quoted closing delimiter on dedented line",
+			source: `root:
+  key: "line1
+"` + "\n",
+			scalarType:    "double_quote_scalar",
 			wantDocuments: 1,
 		},
 		{
@@ -45,6 +64,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: second-service` + "\n",
+			scalarType:    "single_quote_scalar",
 			wantDocuments: 2,
 		},
 	}
@@ -89,8 +109,8 @@ metadata:
 					t.Fatalf("root child %d type = %q, want document", i, got)
 				}
 			}
-			if count := countYAMLNodesByType(root, language, "single_quote_scalar"); count != 1 {
-				t.Fatalf("single_quote_scalar count = %d, want 1: %s", count, root.SExpr(language))
+			if count := countYAMLNodesByType(root, language, test.scalarType); count != 1 {
+				t.Fatalf("%s count = %d, want 1: %s", test.scalarType, count, root.SExpr(language))
 			}
 		})
 	}

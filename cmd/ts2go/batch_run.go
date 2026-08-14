@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/odvcencio/gotreesitter/internal/grammarpatch"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -158,10 +159,11 @@ func RunBatchManifest(manifestPath, outDir, pkg string, compact bool) error {
 // changed upstream context fails loudly instead of silently changing grammar
 // semantics during regeneration.
 func applyUpstreamGrammarPatch(entry ManifestEntry, repoDir, manifestDir string) error {
-	patchPath := upstreamGrammarPatchPath(entry.Name, manifestDir)
-	if patchPath == "" {
+	spec, ok := grammarpatch.Lookup(entry.Name)
+	if !ok {
 		return nil
 	}
+	patchPath := upstreamGrammarPatchPath(entry.Name, manifestDir)
 	if _, err := os.Stat(patchPath); err != nil {
 		return fmt.Errorf("read patch %s: %w", patchPath, err)
 	}
@@ -172,7 +174,7 @@ func applyUpstreamGrammarPatch(entry ManifestEntry, repoDir, manifestDir string)
 			return fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 		}
 	}
-	if entry.Name == "typescript" || entry.Name == "tsx" {
+	if spec.RegenerateParser {
 		if err := regeneratePatchedTypeScriptParser(repoDir, entry.Subdir); err != nil {
 			return err
 		}
@@ -200,12 +202,11 @@ func regeneratePatchedTypeScriptParser(repoDir, subdir string) error {
 }
 
 func upstreamGrammarPatchPath(name, manifestDir string) string {
-	switch name {
-	case "typescript", "tsx":
-		return filepath.Join(manifestDir, "patches", "tree-sitter-typescript-import-type.patch")
-	default:
+	spec, ok := grammarpatch.Lookup(name)
+	if !ok {
 		return ""
 	}
+	return filepath.Join(manifestDir, "patches", spec.File)
 }
 
 type embeddedLoaderSpec struct {
@@ -303,22 +304,24 @@ func loadHighlightQuery(repoDir string) (string, bool) {
 var grammargenOwnedBlobs = map[string]bool{
 	"go":    true,
 	"swift": true,
+	"yaml":  true,
 	"regex": true,
 }
 
 // grammargenOwnedBlobSkipMessage returns the batch-skip log line for a
 // grammargen-owned blob, with a regeneration hint accurate for how that
-// specific language is actually built. "go" and "swift" are grammargen
-// builtin grammar names (see builtinGrammars in cmd/grammargen/main.go) and
-// regenerate via the emit subcommand below. "regex" is NOT a grammargen
-// builtin name — its blob is built ad hoc by importing a resolved
-// tree-sitter grammar.json (grammargen's -json flag), not from a builtin Go
-// DSL grammar, so the builtin-name regen command would fail if run verbatim.
+// specific language is actually built. "go", "swift", and "yaml" are
+// grammargen builtin grammar names (see builtinGrammars in
+// cmd/grammargen/main.go) and regenerate via the emit subcommand below.
+// "regex" is not a grammargen builtin name. It imports a resolved
+// tree-sitter grammar.json with grammargen's -json flag. The builtin command
+// would fail for regex.
 // See grammargen/regex_import_parity_test.go for the import path this blob
-// must stay parity-checked against.
+// must remain parity-checked.
 func grammargenOwnedBlobSkipMessage(name string) string {
-	if name == "go" {
-		return "skipped go (grammargen-owned blob; regenerate with: go run ./cmd/grammargen emit go -bin grammars/grammar_blobs/go.bin)"
+	if name == "go" || name == "yaml" {
+		return fmt.Sprintf("skipped %s (grammargen-owned blob; regenerate with: go run ./cmd/grammargen emit %s -bin grammars/grammar_blobs/%s.bin)",
+			name, name, safeFileBase(name))
 	}
 	if name == "regex" {
 		return fmt.Sprintf("skipped %s (grammargen-owned blob; regex.bin is grammargen-built via a "+
@@ -406,8 +409,8 @@ func externalLexStatesSourceComment(entry ManifestEntry) string {
 		parts = append(parts, "parser.c")
 	}
 	comment := strings.Join(parts, " ")
-	if entry.Name == "typescript" || entry.Name == "tsx" {
-		comment += " + grammars/patches/tree-sitter-typescript-import-type.patch"
+	if spec, ok := grammarpatch.Lookup(entry.Name); ok {
+		comment += " + grammars/patches/" + spec.File
 	}
 	return comment
 }

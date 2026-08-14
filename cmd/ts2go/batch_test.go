@@ -70,13 +70,28 @@ func TestSafeFileBase(t *testing.T) {
 	}
 }
 
-func TestGrammargenOwnedBlobSkipMessageUsesSafeGoCommand(t *testing.T) {
-	message := grammargenOwnedBlobSkipMessage("go")
-	if want := "go run ./cmd/grammargen emit go -bin grammars/grammar_blobs/go.bin"; !strings.Contains(message, want) {
-		t.Fatalf("skip message = %q, want command %q", message, want)
+func TestGrammargenOwnedBlobSkipMessageUsesSafeEmitCommand(t *testing.T) {
+	for _, name := range []string{"go", "yaml"} {
+		t.Run(name, func(t *testing.T) {
+			message := grammargenOwnedBlobSkipMessage(name)
+			want := "go run ./cmd/grammargen emit " + name + " -bin grammars/grammar_blobs/" + name + ".bin"
+			if !strings.Contains(message, want) {
+				t.Fatalf("skip message = %q, want command %q", message, want)
+			}
+			if strings.Contains(message, "-lr-split") {
+				t.Fatalf("skip message contains unsafe %s -lr-split guidance: %q", name, message)
+			}
+		})
 	}
-	if strings.Contains(message, "-lr-split") {
-		t.Fatalf("skip message contains unsafe Go -lr-split guidance: %q", message)
+}
+
+func TestUpstreamGrammarPatchPath(t *testing.T) {
+	dir := t.TempDir()
+	if got := upstreamGrammarPatchPath("yaml", dir); got != filepath.Join(dir, "patches", "tree-sitter-yaml-multiline-quoted-scalars.patch") {
+		t.Fatalf("yaml patch path = %q", got)
+	}
+	if got := upstreamGrammarPatchPath("go", dir); got != "" {
+		t.Fatalf("go patch path = %q, want empty", got)
 	}
 }
 

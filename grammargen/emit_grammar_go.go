@@ -174,6 +174,9 @@ func EmitGrammarGo(g *Grammar, pkgName, funcName string) ([]byte, error) {
 	if g.PreferPreciseExternalLexStates {
 		fmt.Fprintf(&buf, "\tg.PreferPreciseExternalLexStates = true\n\n")
 	}
+	if g.CompactParseStates {
+		fmt.Fprintf(&buf, "\tg.CompactParseStates = true\n\n")
+	}
 
 	if g.ExactPrefixStates != 0 {
 		fmt.Fprintf(&buf, "\tg.ExactPrefixStates = %d\n\n", g.ExactPrefixStates)

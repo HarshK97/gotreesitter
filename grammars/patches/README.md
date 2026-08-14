@@ -17,3 +17,9 @@ The patch applies to the TypeScript commit pinned in `../languages.lock`.
 Regeneration fails if upstream changes the surrounding grammar shape. Remove
 each source change after an upstream release includes the same behavior. Then,
 refresh both TypeScript and TSX blobs and their parity fixtures.
+
+`tree-sitter-yaml-multiline-quoted-scalars.patch` repairs quoted scalar
+continuation and termination after a line break. It applies to the YAML commit
+pinned in `../languages.lock`. The YAML Go DSL and Go scanner contain the same
+behavior. Keep the C oracle patch until the pinned upstream revision includes
+the correction.
