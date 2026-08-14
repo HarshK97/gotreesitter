@@ -4464,6 +4464,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	deferParentLinks := reuse == nil && oldTree == nil
 	scratch := acquireParserScratch()
 	transientReduceParents := p.configureParseScratch(scratch, source, reuse, oldTree, arenaClass, deferParentLinks)
+	scratch.merge.gssOwner = &scratch.gss
 	defer releaseParserScratch(scratch, deferParentLinks)
 	p.reduceScratch = &scratch.reduce
 	p.mergeScratch = &scratch.merge
