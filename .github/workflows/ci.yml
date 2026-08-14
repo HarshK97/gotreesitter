@@ -36,6 +36,9 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Build grammar subsets
+        run: bash scripts/subset_build_sweep.sh
+
       - name: Vet
         run: go vet ./...
 

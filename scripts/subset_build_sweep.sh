@@ -50,6 +50,31 @@ build_one() {
 }
 export -f build_one
 
+contains_lang() {
+	local wanted="$1"
+	local lang
+	for lang in "${langs[@]}"; do
+		if [[ "$lang" == "$wanted" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+verify_python_derivative_metadata() {
+	local lang
+	local out
+	for lang in bitbake mojo starlark; do
+		if ! contains_lang "$lang"; then
+			continue
+		fi
+		if ! out="$(go test -tags "grammar_subset,grammar_subset_${lang}" ./internal/grammarsubsettest -count=1 2>&1)"; then
+			printf 'subset metadata check failed for %s:\n%s\n' "$lang" "$out" >&2
+			return 1
+		fi
+	done
+}
+
 printf '%s\n' "${langs[@]}" | xargs -P "$JOBS" -I{} bash -c 'build_one "$@"' _ {} >"$report"
 
 ok_count="$(grep -c '^OK' "$report" || true)"
@@ -66,5 +91,9 @@ if [[ "$broken_count" -gt 0 ]]; then
   echo
   echo "Move the missing symbol into a file with no grammar_subset tag, or widen"
   echo "the tag on the file that defines it to cover the grammars that need it."
+  exit 1
+fi
+
+if ! verify_python_derivative_metadata; then
   exit 1
 fi

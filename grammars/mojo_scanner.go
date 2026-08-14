@@ -52,11 +52,11 @@ func (MojoExternalScanner) Create() any {
 func (MojoExternalScanner) Destroy(payload any) {}
 
 func (MojoExternalScanner) Serialize(payload any, buf []byte) int {
-	return PythonExternalScanner{}.Serialize(payload, buf)
+	return serializePythonScannerState(payload.(*pythonScannerState), buf)
 }
 
 func (MojoExternalScanner) Deserialize(payload any, buf []byte) {
-	PythonExternalScanner{}.Deserialize(payload, buf)
+	deserializePythonScannerState(payload.(*pythonScannerState), buf)
 }
 
 // SupportsIncrementalReuse remains disabled with Python's scanner: Mojo shares
