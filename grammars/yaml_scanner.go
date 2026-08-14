@@ -1559,7 +1559,7 @@ func (e *yamlEnv) scan() bool {
 		return true
 	}
 	if (vs[yTokRSqtStrCtn] && isR && e.scnSqtStrCnt(yTokRSqtStrCtn)) ||
-		(vs[yTokBRSqtStrCtn] && isBR && e.scnSqtStrCnt(yTokBRSqtStrCtn)) {
+		(vs[yTokBRSqtStrCtn] && (isBR || hasNwl) && e.scnSqtStrCnt(yTokBRSqtStrCtn)) {
 		return true
 	}
 
