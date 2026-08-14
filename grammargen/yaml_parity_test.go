@@ -1,14 +1,17 @@
 package grammargen
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 )
+
+var yamlOwnedGrammarCache struct {
+	lang *gotreesitter.Language
+	err  error
+}
 
 func TestYAMLSimpleMappingParity(t *testing.T) {
 	genLang, refLang := loadGeneratedYAMLLanguagesForParity(t)
@@ -143,46 +146,13 @@ func TestYAMLBlockScalarSequenceParity(t *testing.T) {
 func loadGeneratedYAMLLanguagesForParity(t *testing.T) (*gotreesitter.Language, *gotreesitter.Language) {
 	t.Helper()
 
-	source, err := os.ReadFile(yamlGrammarJSONPathForTest(t))
-	if err != nil {
-		t.Fatalf("read yaml grammar.json: %v", err)
+	if yamlOwnedGrammarCache.lang == nil && yamlOwnedGrammarCache.err == nil {
+		yamlOwnedGrammarCache.lang, yamlOwnedGrammarCache.err = generateWithTimeout(YAMLGrammar(), 90*time.Second)
 	}
-	gram, err := ImportGrammarJSON(source)
-	if err != nil {
-		t.Fatalf("import yaml grammar: %v", err)
-	}
-	genLang, err := generateWithTimeout(gram, 90*time.Second)
-	if err != nil {
-		t.Fatalf("generate yaml language: %v", err)
+	if yamlOwnedGrammarCache.err != nil {
+		t.Fatalf("generate owned YAML grammar: %v", yamlOwnedGrammarCache.err)
 	}
 	refLang := grammars.YamlLanguage()
-	adaptExternalScanner(refLang, genLang)
-	return genLang, refLang
-}
-
-func yamlGrammarJSONPathForTest(t *testing.T) string {
-	t.Helper()
-
-	candidates := []string{
-		"/tmp/grammar_parity/yaml/src/grammar.json",
-		"/tmp/tree-sitter-yaml/src/grammar.json",
-		".parity_seed/yaml/src/grammar.json",
-		"../.parity_seed/yaml/src/grammar.json",
-	}
-	globs := []string{
-		"/tmp/gotreesitter-parity-*/repos/yaml/src/grammar.json",
-	}
-	for _, pattern := range globs {
-		matches, err := filepath.Glob(pattern)
-		if err == nil && len(matches) > 0 {
-			candidates = append(candidates, matches...)
-		}
-	}
-	for _, path := range candidates {
-		if _, err := os.Stat(path); err == nil {
-			return path
-		}
-	}
-	t.Skip("YAML grammar.json not available")
-	return ""
+	adaptExternalScanner(refLang, yamlOwnedGrammarCache.lang)
+	return yamlOwnedGrammarCache.lang, refLang
 }
