@@ -250,8 +250,89 @@ func (s *gssScratch) setSingleStackMode(v bool) {
 }
 
 type gssNodeSlab struct {
-	data []gssNode
-	used int
+	data       []gssNode
+	reachMarks []uint32
+	used       int
+}
+
+// ensureReachMarks provisions one external generation mark per retained GSS
+// slot. Keep the mark outside gssNode so the node remains 64 bytes.
+func (s *gssScratch) ensureReachMarks() {
+	if s == nil {
+		return
+	}
+	changed := false
+	for i := range s.slabs {
+		slab := &s.slabs[i]
+		if len(slab.data) == 0 {
+			continue
+		}
+		if cap(slab.reachMarks) < len(slab.data) {
+			slab.reachMarks = make([]uint32, len(slab.data))
+			changed = true
+		} else {
+			changed = changed || len(slab.reachMarks) != len(slab.data)
+			slab.reachMarks = slab.reachMarks[:len(slab.data)]
+		}
+	}
+	if changed {
+		s.recomputeAllocatedBytes()
+	}
+}
+
+func reachMarkInGSSSlab(slab *gssNodeSlab, nodePtr, nodeSize uintptr) (*uint32, bool) {
+	if slab == nil || len(slab.data) == 0 || len(slab.reachMarks) != len(slab.data) {
+		return nil, false
+	}
+	base := uintptr(unsafe.Pointer(&slab.data[0]))
+	if nodePtr < base {
+		return nil, false
+	}
+	delta := nodePtr - base
+	if delta%nodeSize != 0 {
+		return nil, false
+	}
+	index := delta / nodeSize
+	if index >= uintptr(len(slab.data)) {
+		return nil, false
+	}
+	return &slab.reachMarks[index], true
+}
+
+// reachMarkFor returns the external mark for n when n belongs to this GSS
+// scratch. Nodes built without this scratch use the preflight map fallback.
+func (s *gssScratch) reachMarkFor(n *gssNode, hint *int) (*uint32, bool) {
+	if s == nil || n == nil {
+		return nil, false
+	}
+	nodePtr := uintptr(unsafe.Pointer(n))
+	nodeSize := unsafe.Sizeof(gssNode{})
+	if hint != nil && *hint >= 0 && *hint < len(s.slabs) {
+		if mark, ok := reachMarkInGSSSlab(&s.slabs[*hint], nodePtr, nodeSize); ok {
+			return mark, true
+		}
+	}
+	for i := range s.slabs {
+		if hint != nil && i == *hint {
+			continue
+		}
+		if mark, ok := reachMarkInGSSSlab(&s.slabs[i], nodePtr, nodeSize); ok {
+			if hint != nil {
+				*hint = i
+			}
+			return mark, true
+		}
+	}
+	return nil, false
+}
+
+func (s *gssScratch) clearReachMarks() {
+	if s == nil {
+		return
+	}
+	for i := range s.slabs {
+		clear(s.slabs[i].reachMarks)
+	}
 }
 
 const (
@@ -690,6 +771,9 @@ func (s *gssScratch) recycleForParse() {
 			used = len(s.slabs[i].data)
 		}
 		clear(s.slabs[i].data[:used])
+		if used <= len(s.slabs[i].reachMarks) {
+			clear(s.slabs[i].reachMarks[:used])
+		}
 		s.slabs[i].used = 0
 	}
 	s.slabCursor = 0
@@ -761,6 +845,9 @@ func (s *gssScratch) reset() {
 			used = len(s.slabs[i].data)
 		}
 		clear(s.slabs[i].data[:used])
+		if used <= len(s.slabs[i].reachMarks) {
+			clear(s.slabs[i].reachMarks[:used])
+		}
 		s.slabs[i].used = 0
 	}
 	s.slabCursor = 0
@@ -828,9 +915,17 @@ func (s *gssScratch) recomputeAllocatedBytes() {
 	var total int64
 	for i := range s.slabs {
 		total += gssNodeBytesForCap(len(s.slabs[i].data))
+		total += gssReachMarkBytesForCap(len(s.slabs[i].reachMarks))
 	}
 	total += s.frontier.allocatedBytes()
 	total += s.recoveryElection.allocatedBytes()
 	total += stackEntryBytesForCap(cap(s.stackEntries))
 	s.allocatedBytes = total
+}
+
+func gssReachMarkBytesForCap(n int) int64 {
+	if n <= 0 {
+		return 0
+	}
+	return int64(n) * int64(unsafe.Sizeof(uint32(0)))
 }

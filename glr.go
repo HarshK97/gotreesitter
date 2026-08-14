@@ -247,17 +247,19 @@ type glrMergeScratch struct {
 	// stops allocating a preflight object plus several maps per merge attempt
 	// (the dominant profile cost on low-stack GLR grammars like json — maps
 	// were rebuilt every canMergeNodes call).
-	preflight         *gssMainPreflight
-	mergeSeen         map[gssMergePair]bool
-	pythonShallow     bool
-	budgetBytes       int64
-	resultBytes       int64
-	slotBytes         int64
-	largeSlotBytes    int64
-	equivCacheBytes   int64
-	stackEquivBytes   int64
-	spineEquivBytes   int64
-	frontierHashBytes int64
+	preflight                *gssMainPreflight
+	mergeSeen                map[gssMergePair]bool
+	gssOwner                 *gssScratch
+	preflightReachCacheBytes int64
+	pythonShallow            bool
+	budgetBytes              int64
+	resultBytes              int64
+	slotBytes                int64
+	largeSlotBytes           int64
+	equivCacheBytes          int64
+	stackEquivBytes          int64
+	spineEquivBytes          int64
+	frontierHashBytes        int64
 	// parser backs the in-merge memory-budget poll
 	// (mergeStacksWithScratchLargeCap's survivor loop): the O(survivors^2)
 	// merge-equivalence grind can allocate multiple GB without ever returning
@@ -3760,18 +3762,21 @@ func cloneGSSMergeSeen(seen map[gssMergePair]bool) map[gssMergePair]bool {
 }
 
 type gssMainPreflight struct {
-	seen        map[gssMergePair]bool
-	virtualLink map[*gssNode][]gssMainLink
-	reachStrict bool
-	reachEpoch  uint32
-	reachCache  map[gssReachPair]gssReachCacheEntry
-	reachSeen   map[*gssNode]bool
-	reachStack  []*gssNode
-	reachVisit  []*gssNode
-	cleanCache  map[*gssNode]gssPreflightCleanCacheEntry
-	cleanSeen   map[*gssNode]bool
-	cleanStack  []*gssNode
-	cleanVisit  []*gssNode
+	seen                 map[gssMergePair]bool
+	virtualLink          map[*gssNode][]gssMainLink
+	reachStrict          bool
+	reachEpoch           uint32
+	reachGeneration      uint32
+	reachCacheGeneration uint32
+	reachCache           []gssReachCacheEntry
+	reachSeen            map[*gssNode]bool
+	reachStack           []*gssNode
+	reachVisit           []*gssNode
+	reachSlabHint        int
+	cleanCache           map[*gssNode]gssPreflightCleanCacheEntry
+	cleanSeen            map[*gssNode]bool
+	cleanStack           []*gssNode
+	cleanVisit           []*gssNode
 	// scratch, when non-nil, lets the preflight consult the parse-long
 	// clean-zero caches instead of rebuilding a private verdict map per
 	// preflight (valid only while no virtual links exist — virtual links can
@@ -3789,7 +3794,6 @@ func (p *gssMainPreflight) clearGSSPointersForReuse() {
 	}
 	clear(p.seen)
 	clear(p.virtualLink)
-	clear(p.reachCache)
 	clear(p.reachSeen)
 	clear(p.cleanCache)
 	clear(p.cleanSeen)
@@ -3812,18 +3816,21 @@ func (p *gssMainPreflight) clearGSSPointersForReuse() {
 	}
 	p.reachStrict = true
 	p.reachEpoch = 1
+	p.resetReachGeneration()
+	p.resetReachCacheGeneration()
 }
 
-const maxGSSPreflightReachCacheEntries = 32768
-
-type gssReachPair struct {
-	from   *gssNode
-	target *gssNode
-}
+const (
+	maxGSSPreflightReachCacheEntries = 32768
+	gssPreflightReachCacheSetCount   = maxGSSPreflightReachCacheEntries / 2
+)
 
 type gssReachCacheEntry struct {
-	epoch     uint32
-	reachable bool
+	from       uintptr
+	target     uintptr
+	generation uint32
+	epoch      uint32
+	reachable  bool
 }
 
 type gssPreflightCleanCacheEntry struct {
@@ -3833,11 +3840,43 @@ type gssPreflightCleanCacheEntry struct {
 
 func newGSSMainPreflight(seen map[gssMergePair]bool) *gssMainPreflight {
 	return &gssMainPreflight{
-		seen:        cloneGSSMergeSeen(seen),
-		virtualLink: make(map[*gssNode][]gssMainLink),
-		reachStrict: true,
-		reachEpoch:  1,
+		seen:                 cloneGSSMergeSeen(seen),
+		virtualLink:          make(map[*gssNode][]gssMainLink),
+		reachStrict:          true,
+		reachEpoch:           1,
+		reachGeneration:      1,
+		reachCacheGeneration: 1,
 	}
+}
+
+func (p *gssMainPreflight) resetReachGeneration() {
+	if p == nil {
+		return
+	}
+	if p.reachGeneration == 0 || p.reachGeneration == ^uint32(0) {
+		if p.scratch != nil && p.scratch.gssOwner != nil {
+			p.scratch.gssOwner.clearReachMarks()
+		}
+		p.reachGeneration = 1
+	} else {
+		p.reachGeneration++
+	}
+	p.reachSlabHint = 0
+}
+
+func (p *gssMainPreflight) resetReachCacheGeneration() {
+	if p == nil {
+		return
+	}
+	if p.reachCacheGeneration == 0 || p.reachCacheGeneration == ^uint32(0) {
+		if cap(p.reachCache) > 0 {
+			clear(p.reachCache[:cap(p.reachCache)])
+		}
+		p.reachCacheGeneration = 1
+	} else {
+		p.reachCacheGeneration++
+	}
+	p.reachCache = p.reachCache[:0]
 }
 
 // acquirePreflightForScratch returns the scratch's pooled preflight, reset to
@@ -3854,9 +3893,11 @@ func acquirePreflightForScratch(scratch *glrMergeScratch) *gssMainPreflight {
 	pf := scratch.preflight
 	if pf == nil {
 		pf = &gssMainPreflight{
-			virtualLink: make(map[*gssNode][]gssMainLink),
-			reachStrict: true,
-			reachEpoch:  1,
+			virtualLink:          make(map[*gssNode][]gssMainLink),
+			reachStrict:          true,
+			reachEpoch:           1,
+			reachGeneration:      1,
+			reachCacheGeneration: 1,
 		}
 		scratch.preflight = pf
 	}
@@ -3867,9 +3908,6 @@ func acquirePreflightForScratch(scratch *glrMergeScratch) *gssMainPreflight {
 	}
 	if len(pf.virtualLink) > 0 {
 		clear(pf.virtualLink)
-	}
-	if len(pf.reachCache) > 0 {
-		clear(pf.reachCache)
 	}
 	if len(pf.reachSeen) > 0 {
 		clear(pf.reachSeen)
@@ -3883,6 +3921,11 @@ func acquirePreflightForScratch(scratch *glrMergeScratch) *gssMainPreflight {
 	pf.reachStrict = true
 	pf.reachEpoch = 1
 	pf.scratch = scratch
+	if scratch.gssOwner != nil {
+		scratch.gssOwner.ensureReachMarks()
+	}
+	pf.resetReachGeneration()
+	pf.resetReachCacheGeneration()
 	return pf
 }
 
@@ -3935,32 +3978,69 @@ func (p *gssMainPreflight) bumpReachEpoch() {
 	p.reachEpoch = 1
 }
 
+func gssPreflightReachCacheIndex(from, target uintptr) int {
+	x := uint64(from)
+	y := uint64(target)
+	h := x ^ (y + 0x9e3779b97f4a7c15 + (x << 6) + (x >> 2))
+	h ^= (x >> 4) * 0x85ebca6b
+	h ^= (y >> 7) * 0xc2b2ae35
+	return int(h&uint64(gssPreflightReachCacheSetCount-1)) << 1
+}
+
 func (p *gssMainPreflight) cachedReach(from, target *gssNode) (bool, bool) {
-	entry, ok := p.reachCache[gssReachPair{from: from, target: target}]
-	if !ok {
+	if p == nil || len(p.reachCache) == 0 || from == nil || target == nil {
 		return false, false
 	}
-	if entry.reachable {
-		return true, true
-	}
-	if entry.epoch == p.reachEpoch {
-		return false, true
+	fromPtr := uintptr(unsafe.Pointer(from))
+	targetPtr := uintptr(unsafe.Pointer(target))
+	idx := gssPreflightReachCacheIndex(fromPtr, targetPtr)
+	for i := 0; i < 2; i++ {
+		entry := p.reachCache[idx+i]
+		if entry.generation != p.reachCacheGeneration || entry.from != fromPtr || entry.target != targetPtr {
+			continue
+		}
+		if entry.reachable {
+			return true, true
+		}
+		if entry.epoch == p.reachEpoch {
+			return false, true
+		}
 	}
 	return false, false
 }
 
 func (p *gssMainPreflight) cacheReach(from, target *gssNode, reachable bool) {
-	if p.reachCache == nil {
-		p.reachCache = make(map[gssReachPair]gssReachCacheEntry, 64)
-	}
-	if len(p.reachCache) >= maxGSSPreflightReachCacheEntries {
+	if p == nil || from == nil || target == nil {
 		return
 	}
-	entry := gssReachCacheEntry{reachable: reachable}
-	if !reachable {
-		entry.epoch = p.reachEpoch
+	if len(p.reachCache) == 0 {
+		if cap(p.reachCache) < maxGSSPreflightReachCacheEntries {
+			p.reachCache = make([]gssReachCacheEntry, maxGSSPreflightReachCacheEntries)
+		} else {
+			p.reachCache = p.reachCache[:maxGSSPreflightReachCacheEntries]
+		}
+		if p.scratch != nil {
+			p.scratch.preflightReachCacheBytes = int64(cap(p.reachCache)) * int64(unsafe.Sizeof(gssReachCacheEntry{}))
+		}
 	}
-	p.reachCache[gssReachPair{from: from, target: target}] = entry
+	fromPtr := uintptr(unsafe.Pointer(from))
+	targetPtr := uintptr(unsafe.Pointer(target))
+	idx := gssPreflightReachCacheIndex(fromPtr, targetPtr)
+	p.reachCache[idx+1] = p.reachCache[idx]
+	p.reachCache[idx] = gssReachCacheEntry{
+		from:       fromPtr,
+		target:     targetPtr,
+		generation: p.reachCacheGeneration,
+		epoch:      p.reachEpoch,
+		reachable:  reachable,
+	}
+}
+
+func (p *gssMainPreflight) denseReachMark(n *gssNode) (*uint32, bool) {
+	if p == nil || p.scratch == nil || p.scratch.gssOwner == nil {
+		return nil, false
+	}
+	return p.scratch.gssOwner.reachMarkFor(n, &p.reachSlabHint)
 }
 
 func (p *gssMainPreflight) canReach(from, target *gssNode) bool {
@@ -3978,9 +4058,7 @@ func (p *gssMainPreflight) canReach(from, target *gssNode) bool {
 	if p.reachStrict && from.depth <= target.depth {
 		return false
 	}
-	if p.reachSeen == nil {
-		p.reachSeen = make(map[*gssNode]bool, 64)
-	}
+	p.resetReachGeneration()
 	stack := p.reachStack[:0]
 	visited := p.reachVisit[:0]
 	stack = append(stack, from)
@@ -3988,7 +4066,15 @@ func (p *gssMainPreflight) canReach(from, target *gssNode) bool {
 		last := len(stack) - 1
 		cur := stack[last]
 		stack = stack[:last]
-		if cur == nil || p.reachSeen[cur] {
+		if cur == nil {
+			continue
+		}
+		mark, dense := p.denseReachMark(cur)
+		if dense {
+			if *mark == p.reachGeneration {
+				continue
+			}
+		} else if p.reachSeen != nil && p.reachSeen[cur] {
 			continue
 		}
 		if cur == target {
@@ -4014,8 +4100,15 @@ func (p *gssMainPreflight) canReach(from, target *gssNode) bool {
 				continue
 			}
 		}
-		p.reachSeen[cur] = true
-		visited = append(visited, cur)
+		if dense {
+			*mark = p.reachGeneration
+		} else {
+			if p.reachSeen == nil {
+				p.reachSeen = make(map[*gssNode]bool, 64)
+			}
+			p.reachSeen[cur] = true
+			visited = append(visited, cur)
+		}
 		for i := 0; i < p.linkCount(cur); i++ {
 			prev, _ := p.linkAt(cur, i)
 			stack = append(stack, prev)
@@ -5542,7 +5635,7 @@ func (s *glrMergeScratch) allocatedBytes() int64 {
 	if s == nil {
 		return 0
 	}
-	return s.resultBytes + s.slotBytes + s.largeSlotBytes + s.equivCacheBytes + s.stackEquivBytes + s.spineEquivBytes + s.frontierHashBytes + s.shapePrefixBytes + s.cleanZeroBytes + int64(cap(s.cPrefixPath))*int64(unsafe.Sizeof((*gssNode)(nil)))
+	return s.resultBytes + s.slotBytes + s.largeSlotBytes + s.equivCacheBytes + s.stackEquivBytes + s.spineEquivBytes + s.frontierHashBytes + s.shapePrefixBytes + s.cleanZeroBytes + s.preflightReachCacheBytes + int64(cap(s.cPrefixPath))*int64(unsafe.Sizeof((*gssNode)(nil)))
 }
 
 func (s *glrMergeScratch) reset() {
@@ -5577,6 +5670,9 @@ func (s *glrMergeScratch) reset() {
 	s.stackEquivBytes = glrStackEquivCacheBytesForCap(cap(s.stackEquivCache))
 	s.spineEquivBytes = glrSpineEquivCacheBytesForCap(cap(s.spineEquivCache))
 	s.frontierHashBytes = glrStackFrontierHashCacheBytesForCap(cap(s.frontierHashCache))
+	if s.preflight != nil {
+		s.preflightReachCacheBytes = int64(cap(s.preflight.reachCache)) * int64(unsafe.Sizeof(gssReachCacheEntry{}))
+	}
 	s.frontierMergeHash = false
 	s.cErrorCostParser = nil
 	if len(s.cErrorCost) > maxRetainedMergeResultCap {
@@ -5619,6 +5715,7 @@ func (s *glrMergeScratch) reset() {
 	// Pooled scratch must not retain a live *Parser across parses (GC
 	// retention) or leak a stale in-merge budget-stop flag forward.
 	s.parser = nil
+	s.gssOwner = nil
 	s.mergeBudgetStopReason = ParseStopNone
 }
 
