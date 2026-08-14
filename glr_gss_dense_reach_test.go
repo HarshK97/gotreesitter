@@ -40,3 +40,23 @@ func TestGSSPreflightDenseReachMarks(t *testing.T) {
 		t.Fatalf("reach cache reset = generation %d, len %d; want new generation and empty view", p.reachCacheGeneration, len(p.reachCache))
 	}
 }
+
+func TestGSSPreflightDenseReachMarksFallbackAfterSlabGrowth(t *testing.T) {
+	var owner gssScratch
+	owner.slabs = []gssNodeSlab{{data: make([]gssNode, 1)}}
+	owner.slabCursor = 0
+	owner.recomputeAllocatedBytes()
+	root := owner.allocNode(stackEntry{state: 1}, nil, 1)
+	merge := &glrMergeScratch{gssOwner: &owner}
+	p := acquirePreflightForScratch(merge)
+
+	// Allocate a second slab after mark provisioning. The new slab must use
+	// the documented map fallback until the next preflight acquisition.
+	head := owner.allocNode(stackEntry{state: 2}, root, 2)
+	if got := p.canReach(head, root); !got {
+		t.Fatal("slab-growth fallback rejected a reachable chain")
+	}
+	if p.reachSeen == nil {
+		t.Fatal("slab-growth fallback did not use the visited map")
+	}
+}
