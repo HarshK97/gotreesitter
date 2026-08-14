@@ -1,4 +1,8 @@
-//go:build !grammar_subset || grammar_subset_python
+//go:build !grammar_subset || grammar_subset_python || grammar_subset_bitbake || grammar_subset_mojo || grammar_subset_starlark
+
+// The bitbake, mojo, and starlark scanners are tree-sitter-python derivatives.
+// They reuse pythonScannerState, pyDelimiter, and PythonExternalScanner, so a
+// subset build that selects any of them must compile this file too.
 
 package grammars
 
