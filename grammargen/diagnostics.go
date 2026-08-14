@@ -1259,6 +1259,12 @@ func generateWithReportCtx(bgCtx context.Context, g *Grammar, opts reportBuildOp
 		endPhase(endFields)
 	}
 
+	if ng.CompactParseStates {
+		endPhase = trace.start("minimize_parse_states", trace.lrCounters(tables))
+		minimizeParseStates(tables, ng)
+		endPhase(trace.lrCounters(tables))
+	}
+
 	endPhase = trace.start("add_nonterminal_extra_chains", trace.lrCounters(tables))
 	if err := addNonterminalExtraChainsGuarded(tables, ng, lrCtx); err != nil {
 		endPhase(map[string]any{"error": true})

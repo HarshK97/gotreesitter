@@ -266,7 +266,7 @@ clone_or_update_repo() {
 }
 
 default_langs=(
-    json json5 css html graphql toml ini hcl nix sql make scala gomod go
+	json json5 css html graphql toml yaml ini hcl nix sql make scala gomod go
     javascript typescript tsx
     c c_sharp cobol
     csv diff gitcommit dot ron proto comment pem dockerfile gitattributes jq

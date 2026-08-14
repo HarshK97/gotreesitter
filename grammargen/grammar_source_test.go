@@ -31,6 +31,7 @@ func TestExtendGrammarCopiesImportMetadata(t *testing.T) {
 	base.PreferRemoteCallOperatorReduces = true
 	base.PreferStabClauseLeftArrowReduces = true
 	base.PreferPreciseExternalLexStates = true
+	base.CompactParseStates = true
 	base.ChoiceLiftThreshold = 16
 	base.ExactPrefixStates = 2048
 	base.PreserveHiddenChoicePassthrough = []string{"_capture_expression"}
@@ -67,6 +68,9 @@ func TestExtendGrammarCopiesImportMetadata(t *testing.T) {
 	}
 	if !extended.PreferPreciseExternalLexStates {
 		t.Fatalf("extension did not inherit precise external lex-state preference flag")
+	}
+	if !extended.CompactParseStates {
+		t.Fatalf("extension did not inherit compact parser-state preference flag")
 	}
 	if !slices.Equal(extended.ReuseRepeatAuxForParents, []string{"program", "statement_list"}) {
 		t.Fatalf("ReuseRepeatAuxForParents = %v, want [program statement_list]", extended.ReuseRepeatAuxForParents)
@@ -129,6 +133,7 @@ func TestEmitGrammarGoIncludesImportMetadata(t *testing.T) {
 	g.PreferRemoteCallOperatorReduces = true
 	g.PreferStabClauseLeftArrowReduces = true
 	g.PreferPreciseExternalLexStates = true
+	g.CompactParseStates = true
 	g.ChoiceLiftThreshold = 8
 	g.ExactPrefixStates = 2048
 	g.PreserveHiddenChoicePassthrough = []string{"_capture_expression"}
@@ -154,6 +159,7 @@ func TestEmitGrammarGoIncludesImportMetadata(t *testing.T) {
 		"g.PreferRemoteCallOperatorReduces = true",
 		"g.PreferStabClauseLeftArrowReduces = true",
 		"g.PreferPreciseExternalLexStates = true",
+		"g.CompactParseStates = true",
 		"g.ChoiceLiftThreshold = 8",
 		"g.ExactPrefixStates = 2048",
 		"g.PreserveHiddenChoicePassthrough = []string{",

@@ -57,6 +57,7 @@ const (
 // grammargen → Go runtime → C runtime comparison pipeline.
 type grammargenCGOGrammar struct {
 	name       string
+	grammar    func() *grammargen.Grammar
 	jsonPath   string // path to grammar.json (preferred)
 	jsPath     string // path to grammar.js (fallback)
 	blobFunc   func() *gotreesitter.Language
@@ -110,6 +111,7 @@ var grammargenCGOGrammars = []grammargenCGOGrammar{
 	{name: "html", jsonPath: "/tmp/grammar_parity/html/src/grammar.json", blobFunc: grammars.HtmlLanguage},
 	{name: "graphql", jsonPath: "/tmp/grammar_parity/graphql/src/grammar.json", blobFunc: grammars.GraphqlLanguage},
 	{name: "toml", jsonPath: "/tmp/grammar_parity/toml/src/grammar.json", blobFunc: grammars.TomlLanguage},
+	{name: "yaml", grammar: grammargen.YAMLGrammar, jsonPath: "/tmp/grammar_parity/yaml/src/grammar.json", blobFunc: grammars.YamlLanguage},
 	{name: "ini", jsonPath: "/tmp/grammar_parity/ini/src/grammar.json", blobFunc: grammars.IniLanguage},
 	{name: "hcl", jsonPath: "/tmp/grammar_parity/hcl/src/grammar.json", blobFunc: grammars.HclLanguage, genTimeout: 60 * time.Second},
 	{name: "nix", jsonPath: "/tmp/grammar_parity/nix/src/grammar.json", blobFunc: grammars.NixLanguage},
@@ -655,6 +657,9 @@ func parseComparePath(path string) []int {
 }
 
 func importGrammargenSource(g grammargenCGOGrammar) (*grammargen.Grammar, error) {
+	if g.grammar != nil {
+		return g.grammar(), nil
+	}
 	if g.jsonPath != "" {
 		data, err := os.ReadFile(g.jsonPath)
 		if err != nil {

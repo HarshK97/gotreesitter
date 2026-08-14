@@ -122,6 +122,7 @@ type NormalizedGrammar struct {
 	PreferRemoteCallOperatorReduces            bool
 	PreferStabClauseLeftArrowReduces           bool
 	PreferPreciseExternalLexStates             bool
+	CompactParseStates                         bool
 	SuppressEquivalentExternalReduceLookaheads bool
 	ExternalReduceFollowLookaheads             map[string]bool
 
@@ -710,6 +711,7 @@ func Normalize(g *Grammar) (*NormalizedGrammar, error) {
 	ng.PreferRemoteCallOperatorReduces = g.PreferRemoteCallOperatorReduces
 	ng.PreferStabClauseLeftArrowReduces = g.PreferStabClauseLeftArrowReduces
 	ng.PreferPreciseExternalLexStates = g.PreferPreciseExternalLexStates
+	ng.CompactParseStates = g.CompactParseStates
 	ng.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
 	ng.ExternalReduceFollowLookaheads = stringSetFromSlice(g.ExternalReduceFollowLookaheads)
 
@@ -4513,6 +4515,7 @@ func flattenHiddenChoiceAlts(g *Grammar, generatedHiddenRules map[string]bool) *
 	out.PreferRemoteCallOperatorReduces = g.PreferRemoteCallOperatorReduces
 	out.PreferStabClauseLeftArrowReduces = g.PreferStabClauseLeftArrowReduces
 	out.PreferPreciseExternalLexStates = g.PreferPreciseExternalLexStates
+	out.CompactParseStates = g.CompactParseStates
 	out.ExactPrefixStates = g.ExactPrefixStates
 	out.ChoiceLiftThreshold = g.ChoiceLiftThreshold
 	out.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads
@@ -5300,6 +5303,7 @@ func expandInlineRules(g *Grammar) *Grammar {
 	out.PreferRemoteCallOperatorReduces = g.PreferRemoteCallOperatorReduces
 	out.PreferStabClauseLeftArrowReduces = g.PreferStabClauseLeftArrowReduces
 	out.PreferPreciseExternalLexStates = g.PreferPreciseExternalLexStates
+	out.CompactParseStates = g.CompactParseStates
 	out.ExactPrefixStates = g.ExactPrefixStates
 	out.ChoiceLiftThreshold = g.ChoiceLiftThreshold
 	out.SuppressEquivalentExternalReduceLookaheads = g.SuppressEquivalentExternalReduceLookaheads

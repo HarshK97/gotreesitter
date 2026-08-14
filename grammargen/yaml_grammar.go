@@ -3176,6 +3176,8 @@ func YAMLGrammar() *Grammar {
 	// YAML's external scanner has 113 context-sensitive tokens. Preserve the
 	// precise external lexer states so dedented quoted scalars retain context.
 	g.PreferPreciseExternalLexStates = true
+	// Minimize states only after conflict resolution preserves their behavior.
+	g.CompactParseStates = true
 
 	return g
 }

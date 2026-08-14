@@ -14,6 +14,8 @@ Options:
   --seed-start N      First shuffle seed. Default: 1.
   --benchtime D       Benchmark duration. Default: 750ms.
   --tags TAGS         Go build tags. Default: gts_parsercorephase0.
+  --bench-regex REGEX Benchmark selection regex. Default: combined set.
+  --package PATH      Go package path. Default: .
   --help              Show this help.
 EOF
 }
@@ -23,6 +25,8 @@ runs=20
 seed_start=1
 benchtime=750ms
 build_tags=gts_parsercorephase0
+package_path=.
+benchmark_re='^(BenchmarkGoParse(FullDFA|CoreDFA|IncrementalSingleByteEditDFA|IncrementalNoEditDFA|IncrementalRandomSingleByteEdit)|Benchmark(KDLRecoveryGarbageSuffix|RecoveryCorpusFile)|BenchmarkExpectedRootCanFrameLongRepeat|BenchmarkDiagnosticParserCore(CorridorSchedulerOnly|WarmSchedulerOnlyQueryCompile|WarmMaterializationOnlyQueryCompile)|BenchmarkParserCoreFreshFull(Canonical|SelectedStoreCanonical)|Benchmark(TaggerTag(Tree)?Go|ExtractCodeUnderstanding(Tree)?Go|ExtractAllFactsTreeGo|FactProgram(All)?(Tree)?Go))$'
 
 while (($# > 0)); do
 	case "$1" in
@@ -66,6 +70,22 @@ while (($# > 0)); do
 		build_tags=$2
 		shift 2
 		;;
+	--bench-regex)
+		if (($# < 2)); then
+			printf '%s\n' "--bench-regex requires a regex" >&2
+			exit 2
+		fi
+		benchmark_re=$2
+		shift 2
+		;;
+	--package)
+		if (($# < 2)); then
+			printf '%s\n' "--package requires a path" >&2
+			exit 2
+		fi
+		package_path=$2
+		shift 2
+		;;
 	--help)
 		usage
 		exit 0
@@ -102,17 +122,21 @@ fi
 output_dir=$(dirname -- "$output_path")
 mkdir -p -- "$output_dir"
 
-# Keep this set aligned across baseline and candidate runs.
-benchmark_re='^(BenchmarkGoParse(FullDFA|CoreDFA|IncrementalSingleByteEditDFA|IncrementalNoEditDFA|IncrementalRandomSingleByteEdit)|Benchmark(KDLRecoveryGarbageSuffix|RecoveryCorpusFile)|BenchmarkExpectedRootCanFrameLongRepeat|BenchmarkDiagnosticParserCore(CorridorSchedulerOnly|WarmSchedulerOnlyQueryCompile|WarmMaterializationOnlyQueryCompile)|BenchmarkParserCoreFreshFull(Canonical|SelectedStoreCanonical)|Benchmark(TaggerTag(Tree)?Go|ExtractCodeUnderstanding(Tree)?Go|ExtractAllFactsTreeGo|FactProgram(All)?(Tree)?Go))$'
-
 printf 'randomized benchmark output: %s\n' "$output_path" >&2
 printf 'seeds: %s..%s\n' "$seed_start" "$((seed_start + runs - 1))" >&2
 printf 'benchtime: %s\n' "$benchtime" >&2
+{
+	printf '# package: %s\n' "$package_path"
+	printf '# bench regex: %s\n' "$benchmark_re"
+	printf '# build tags: %s\n' "$build_tags"
+	printf '# seeds: %s..%s\n' "$seed_start" "$((seed_start + runs - 1))"
+	printf '# benchtime: %s\n' "$benchtime"
+} >"$output_path"
 
 for ((offset = 0; offset < runs; offset++)); do
 	seed=$((seed_start + offset))
 	printf 'running shuffle seed %d\n' "$seed" >&2
-	GOMAXPROCS=1 go test -tags "$build_tags" . \
+	GOMAXPROCS=1 go test -tags "$build_tags" "$package_path" \
 		-run '^$' \
 		-bench "$benchmark_re" \
 		-benchmem \
