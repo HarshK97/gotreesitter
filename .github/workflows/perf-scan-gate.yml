@@ -74,6 +74,23 @@ jobs:
           done < "$lock"
           test "$rows" -eq 206 || fail "corpus lock contains $rows language rows, want 206"
 
+      - name: Verify provisioned corpus files
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$PERF_OUT"
+          mkdir -p "$PERF_OUT"
+          (
+            cd cgo_harness
+            GOWORK=off go run ./cmd/real_corpus_inventory \
+              -grammar-dir ../grammars/grammar_blobs \
+              -lock ../grammars/languages.lock \
+              -corpus-source-root "$PERF_CORPUS_DIR/corpus_sources" \
+              -corpus-source-lock "$PERF_CORPUS_DIR/corpus_sources.lock" \
+              -require-corpus-sources \
+              -out-json "../$PERF_OUT/source_inventory.json"
+          )
+
       - name: Restore C reference build cache
         uses: actions/cache@v4
         with:
@@ -84,7 +101,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf "$PERF_OUT"
           bash cgo_harness/docker/run_parity_in_docker.sh \
             --label perf-scan-hard-gate \
             --memory 8g \
