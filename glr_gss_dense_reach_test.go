@@ -41,7 +41,7 @@ func TestGSSPreflightDenseReachMarks(t *testing.T) {
 	}
 }
 
-func TestGSSPreflightDenseReachMarksFallbackAfterSlabGrowth(t *testing.T) {
+func TestGSSPreflightDenseReachMarksAfterSlabGrowth(t *testing.T) {
 	var owner gssScratch
 	owner.slabs = []gssNodeSlab{{data: make([]gssNode, 1)}}
 	owner.slabCursor = 0
@@ -50,13 +50,16 @@ func TestGSSPreflightDenseReachMarksFallbackAfterSlabGrowth(t *testing.T) {
 	merge := &glrMergeScratch{gssOwner: &owner}
 	p := acquirePreflightForScratch(merge)
 
-	// Allocate a second slab after mark provisioning. The new slab must use
-	// the documented map fallback until the next preflight acquisition.
+	// Allocate a second slab after mark provisioning. The first reach walk must
+	// provision marks for the new slab instead of using the pointer-map fallback.
 	head := owner.allocNode(stackEntry{state: 2}, root, 2)
 	if got := p.canReach(head, root); !got {
-		t.Fatal("slab-growth fallback rejected a reachable chain")
+		t.Fatal("slab-growth dense reach rejected a reachable chain")
 	}
-	if p.reachSeen == nil {
-		t.Fatal("slab-growth fallback did not use the visited map")
+	if p.reachSeen != nil {
+		t.Fatal("slab growth allocated the visited map instead of dense marks")
+	}
+	if mark, ok := owner.reachMarkFor(head, &p.reachSlabHint); !ok || *mark != p.reachGeneration {
+		t.Fatalf("slab-growth mark = %v, %v; want current generation", mark, ok)
 	}
 }
