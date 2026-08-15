@@ -179,6 +179,10 @@ const (
 	// pathological GLR bursts that would otherwise allocate huge slot tables
 	// before the next memory-budget check can run.
 	maxMergeAliveStacks = 4096
+	// Keep ordinary pending-stack scratch hot, but drop pathological buffers.
+	// Clearing a million-slot empty buffer at every GSS recycle can cost more
+	// than the parse work between recycles.
+	maxRetainedPendingStackCap = maxMergeAliveStacks
 	// Keep ordinary merge scratch hot while dropping pathological buffers after
 	// the parse. glrMergeSlot is intentionally large because it owns fixed
 	// per-key survivor arrays.
@@ -196,6 +200,19 @@ const (
 	// bounding how far a pathological grind can run before it is stopped.
 	mergeBudgetPollStride = 4096
 )
+
+// resetPendingStackBuffer releases stack references before the buffer is
+// reused. Oversized buffers are dropped with their references because scanning
+// them before dropping them only delays the same garbage collection.
+func resetPendingStackBuffer(stacks []glrStack) []glrStack {
+	if cap(stacks) > maxRetainedPendingStackCap {
+		return nil
+	}
+	if cap(stacks) > 0 {
+		clear(stacks[:cap(stacks)])
+	}
+	return stacks[:0]
+}
 
 type glrMergeScratch struct {
 	result                    []glrStack

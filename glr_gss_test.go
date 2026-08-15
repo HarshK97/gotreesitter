@@ -6,6 +6,11 @@ import (
 	"unsafe"
 )
 
+var (
+	benchmarkPendingStackBuffer      []glrStack
+	benchmarkResetPendingStackBuffer = resetPendingStackBuffer
+)
+
 func gssNodeWithExtraLinks(node gssNode, links ...gssMainLink) *gssNode {
 	n := &node
 	for _, link := range links {
@@ -1064,6 +1069,65 @@ func TestGSSScratchRecycleForParseReusesClearedSlots(t *testing.T) {
 	if scratch.peakUsed != 1 || scratch.usedTotal != 1 {
 		t.Fatalf("allocation high-water peak=%d used=%d", scratch.peakUsed, scratch.usedTotal)
 	}
+}
+
+func TestResetPendingStackBufferRetainsAndClearsSmallBuffer(t *testing.T) {
+	backing := make([]glrStack, 2)
+	backing[0].gss.head = &gssNode{}
+	backing[0].entries = []stackEntry{{state: 1}}
+	backing[1].cRec = &cRecoverState{}
+
+	got := resetPendingStackBuffer(backing[:1])
+
+	if len(got) != 0 || cap(got) != cap(backing) {
+		t.Fatalf("reset len/cap = %d/%d, want 0/%d", len(got), cap(got), cap(backing))
+	}
+	for i := range backing {
+		if backing[i].gss.head != nil || backing[i].entries != nil || backing[i].cRec != nil {
+			t.Fatalf("backing slot %d retained stack references", i)
+		}
+	}
+}
+
+func TestResetPendingStackBufferDropsOversizedBufferWithoutScan(t *testing.T) {
+	backing := make([]glrStack, 1, maxRetainedPendingStackCap+1)
+	head := &gssNode{}
+	backing[0].gss.head = head
+
+	got := resetPendingStackBuffer(backing)
+
+	if got != nil {
+		t.Fatalf("oversized reset retained cap %d, want nil", cap(got))
+	}
+	if backing[0].gss.head != head {
+		t.Fatal("oversized reset scanned the buffer before dropping it")
+	}
+}
+
+func BenchmarkResetPendingStackBuffer(b *testing.B) {
+	const count = maxRetainedPendingStackCap + 1
+	size := int64(count) * int64(unsafe.Sizeof(glrStack{}))
+
+	b.Run("drop_oversized", func(b *testing.B) {
+		backing := make([]glrStack, 0, count)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			benchmarkPendingStackBuffer = benchmarkResetPendingStackBuffer(backing)
+			if benchmarkPendingStackBuffer != nil {
+				b.Fatal("oversized buffer was retained")
+			}
+		}
+	})
+	b.Run("clear_oversized", func(b *testing.B) {
+		backing := make([]glrStack, 0, count)
+		b.SetBytes(size)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			clear(backing[:cap(backing)])
+			backing = backing[:0]
+		}
+		benchmarkPendingStackBuffer = backing
+	})
 }
 
 func TestParserRecycleDemotedGSSInvalidatesPointerHolders(t *testing.T) {

@@ -4456,8 +4456,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	defer p.restoreParseModeFlags(parseFlags)
 	p.clearCurrentExternalTokenCheckpoint()
 	p.resetNormalizationStats()
-	p.pendingForkStacks = p.pendingForkStacks[:0]
-	p.pendingFrontierForkStacks = p.pendingFrontierForkStacks[:0]
+	p.pendingForkStacks = resetPendingStackBuffer(p.pendingForkStacks)
+	p.pendingFrontierForkStacks = resetPendingStackBuffer(p.pendingFrontierForkStacks)
 	if p.logger != nil {
 		p.logf(ParserLogParse, "start len=%d incremental=%t", len(source), reuse != nil || oldTree != nil)
 	}
@@ -7339,14 +7339,8 @@ func (p *Parser) recycleDemotedGSS(stacks []glrStack, scratch *parserScratch) {
 		clear(stacks[:cap(stacks)])
 		stacks[0] = live
 	}
-	if cap(p.pendingForkStacks) > 0 {
-		clear(p.pendingForkStacks[:cap(p.pendingForkStacks)])
-		p.pendingForkStacks = p.pendingForkStacks[:0]
-	}
-	if cap(p.pendingFrontierForkStacks) > 0 {
-		clear(p.pendingFrontierForkStacks[:cap(p.pendingFrontierForkStacks)])
-		p.pendingFrontierForkStacks = p.pendingFrontierForkStacks[:0]
-	}
+	p.pendingForkStacks = resetPendingStackBuffer(p.pendingForkStacks)
+	p.pendingFrontierForkStacks = resetPendingStackBuffer(p.pendingFrontierForkStacks)
 	scratch.gss.recycleForParse()
 }
 
