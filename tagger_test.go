@@ -49,6 +49,36 @@ func TestTagIncrementalStrictReportsTimeout(t *testing.T) {
 	}
 }
 
+func TestTagStrictReportsTimeout(t *testing.T) {
+	tagger, err := NewTagger(buildArithmeticLanguage(), "",
+		WithTaggerTimeoutMicros(100),
+		WithTaggerTokenSourceFactory(func(source []byte) TokenSource {
+			return &slowArithmeticTokenSource{
+				delay: 2 * time.Millisecond,
+				tokens: []Token{
+					{Symbol: 1, StartByte: 0, EndByte: 1},
+					{Symbol: 0, StartByte: 1, EndByte: 1},
+				},
+			}
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tags, err := tagger.TagStrict([]byte("1"))
+	var stopped *ParseStoppedEarlyError
+	if !errors.As(err, &stopped) {
+		t.Fatalf("error = %v, want ParseStoppedEarlyError", err)
+	}
+	if stopped.Reason != ParseStopTimeout {
+		t.Fatalf("stop reason = %q, want %q", stopped.Reason, ParseStopTimeout)
+	}
+	if tags != nil {
+		t.Fatalf("tags = %#v, want nil", tags)
+	}
+}
+
 func TestTaggerBasic(t *testing.T) {
 	lang := queryTestLanguage()
 
