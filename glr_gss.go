@@ -280,27 +280,59 @@ func (s *gssScratch) ensureReachMarks() {
 	}
 }
 
-func reachMarkInGSSSlab(slab *gssNodeSlab, nodePtr, nodeSize uintptr) (*uint32, bool) {
-	if slab == nil || len(slab.data) == 0 || len(slab.reachMarks) != len(slab.data) {
-		return nil, false
+func gssNodeIndexInSlab(slab *gssNodeSlab, nodePtr, nodeSize uintptr) (int, bool) {
+	if slab == nil || len(slab.data) == 0 || nodeSize == 0 {
+		return 0, false
 	}
 	base := uintptr(unsafe.Pointer(&slab.data[0]))
 	if nodePtr < base {
-		return nil, false
+		return 0, false
 	}
 	delta := nodePtr - base
 	if delta%nodeSize != 0 {
-		return nil, false
+		return 0, false
 	}
 	index := delta / nodeSize
 	if index >= uintptr(len(slab.data)) {
+		return 0, false
+	}
+	return int(index), true
+}
+
+func (s *gssScratch) ensureReachMarksForSlab(index int) bool {
+	if s == nil || index < 0 || index >= len(s.slabs) {
+		return false
+	}
+	slab := &s.slabs[index]
+	if len(slab.data) == 0 {
+		return false
+	}
+	if cap(slab.reachMarks) < len(slab.data) {
+		slab.reachMarks = make([]uint32, len(slab.data))
+	} else if len(slab.reachMarks) != len(slab.data) {
+		slab.reachMarks = slab.reachMarks[:len(slab.data)]
+	} else {
+		return true
+	}
+	s.recomputeAllocatedBytes()
+	return true
+}
+
+func (s *gssScratch) reachMarkForSlab(index int, nodePtr, nodeSize uintptr) (*uint32, bool) {
+	if s == nil || index < 0 || index >= len(s.slabs) {
 		return nil, false
 	}
-	return &slab.reachMarks[index], true
+	slab := &s.slabs[index]
+	nodeIndex, ok := gssNodeIndexInSlab(slab, nodePtr, nodeSize)
+	if !ok || !s.ensureReachMarksForSlab(index) {
+		return nil, false
+	}
+	return &slab.reachMarks[nodeIndex], true
 }
 
 // reachMarkFor returns the external mark for n when n belongs to this GSS
-// scratch. Nodes built without this scratch use the preflight map fallback.
+// scratch. A slab that grows after preflight acquisition provisions its marks
+// on first use, so owned nodes do not fall back to a pointer map.
 func (s *gssScratch) reachMarkFor(n *gssNode, hint *int) (*uint32, bool) {
 	if s == nil || n == nil {
 		return nil, false
@@ -308,7 +340,7 @@ func (s *gssScratch) reachMarkFor(n *gssNode, hint *int) (*uint32, bool) {
 	nodePtr := uintptr(unsafe.Pointer(n))
 	nodeSize := unsafe.Sizeof(gssNode{})
 	if hint != nil && *hint >= 0 && *hint < len(s.slabs) {
-		if mark, ok := reachMarkInGSSSlab(&s.slabs[*hint], nodePtr, nodeSize); ok {
+		if mark, ok := s.reachMarkForSlab(*hint, nodePtr, nodeSize); ok {
 			return mark, true
 		}
 	}
@@ -316,7 +348,7 @@ func (s *gssScratch) reachMarkFor(n *gssNode, hint *int) (*uint32, bool) {
 		if hint != nil && i == *hint {
 			continue
 		}
-		if mark, ok := reachMarkInGSSSlab(&s.slabs[i], nodePtr, nodeSize); ok {
+		if mark, ok := s.reachMarkForSlab(i, nodePtr, nodeSize); ok {
 			if hint != nil {
 				*hint = i
 			}
