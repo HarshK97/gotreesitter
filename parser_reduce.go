@@ -926,8 +926,7 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 
 func (p *Parser) pushOrExtendErrorNode(s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) {
 	if p != nil {
-		// An ERROR node is entering a stack: costs can be nonzero from here on
-		// (sticky per-parse gate, see crecoveryCostCompetitionRelevant).
+		// An ERROR node is entering a stack. Costs can be nonzero from here.
 		p.crecoveryCostCompetitionRelevant = true
 	}
 	if s != nil {

@@ -3250,9 +3250,8 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 	if firstRecoveryEntry {
 		p.growCNodeMemoCache()
 	}
-	// Recovery machinery is running: stack error costs can now be nonzero, so
-	// the merge cost competition must run its walks from here on (sticky
-	// per-parse gate, see crecoveryCostCompetitionRelevant).
+	// Recovery machinery is running. Stack error costs can now be nonzero, so
+	// the merge cost competition must run its walks from here.
 	p.crecoveryCostCompetitionRelevant = true
 	// s is re-entering recovery, so whatever marker content it may already
 	// carry from an earlier cRecoverToState fork or condense-drop win (see

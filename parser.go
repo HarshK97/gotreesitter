@@ -246,12 +246,13 @@ type Parser struct {
 	// THIS parse pass, every stack's error cost is provably zero, so the cost
 	// competition cannot change any merge outcome and the O(spine) cost walks
 	// per merge candidate are pure tax. It starts false for a fresh full parse
-	// and flips sticky-true on the first event that can make costs nonzero or
-	// unequal: a stack pausing (cPaused), cHandleError running, an
+	// and flips true on the first event that can make costs nonzero or unequal:
+	// a stack pausing (cPaused), cHandleError running, an
 	// error/missing node being pushed, or — conservatively — any parse that
 	// can REUSE subtrees from an old tree (reused subtrees may already carry
 	// error nodes without any new pause this pass). Reset alongside
-	// crecoveryEnteredErrorState in parseInternal.
+	// crecoveryEnteredErrorState in parseInternal. A transient branch can reset
+	// it after condense when no error payload or open recovery state remains.
 	crecoveryCostCompetitionRelevant bool
 	// Recovery-memo tier and operation fields occupy existing Parser padding.
 	// Keep larger recovery-only state in the lazy cold sidecar at the tail.
@@ -1072,6 +1073,25 @@ func cRecoveryRelevantStack(stacks []glrStack) bool {
 		}
 	}
 	return false
+}
+
+// clearCRecoveryCostIfClean restores the clean merge path after condense
+// removes a transient recovery branch. A false trackChildErrors value proves
+// that this parse has not built an ERROR or MISSING node.
+func (p *Parser) clearCRecoveryCostIfClean(stacks []glrStack, trackChildErrors *bool) {
+	if p == nil || !p.crecoveryCostCompetitionRelevant || trackChildErrors == nil || *trackChildErrors {
+		return
+	}
+	for i := range stacks {
+		s := &stacks[i]
+		if s.dead {
+			continue
+		}
+		if s.cPaused || s.cRec != nil || s.cRecoverMissingGroup != nil {
+			return
+		}
+	}
+	p.crecoveryCostCompetitionRelevant = false
 }
 
 func stopCondenseGatingString(errorCostCompetitionEnabled, anyReduced, condenseRelevant, condenseRan, condenseResumed bool, stacks []glrStack) string {
@@ -6782,6 +6802,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			stopDiagCondenseResumed = condenseResumed
 		}
 
+		p.clearCRecoveryCostIfClean(stacks, trackChildErrors)
+
 		// After processing all stacks: determine whether to advance the
 		// token. If any stack reduced, reuse the same token (the reducing
 		// stacks have new top states and need to re-check the action for
@@ -7242,8 +7264,8 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 	}
 	scratch.merge.language = p.language
 	scratch.merge.trace = p.glrTrace
-	// Sticky per-parse gate: before anything cost-relevant has happened this
-	// pass (see crecoveryCostCompetitionRelevant), every stack's error cost is
+	// Cost gate: before anything cost-relevant has happened in this pass (see
+	// crecoveryCostCompetitionRelevant), every stack's error cost is
 	// provably zero and the merge cost competition cannot change any outcome,
 	// so skip its O(spine) walks entirely on the clean prefix of the parse.
 	scratch.merge.cRecoveryCost = p.errorCostCompetitionEnabled() && p.crecoveryCostCompetitionRelevant

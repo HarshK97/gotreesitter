@@ -2115,8 +2115,8 @@ func cRecoveryMergeCostsDifferForParser(p *Parser, a, b *glrStack) bool {
 	if p == nil || !p.errorCostCompetitionEnabled() {
 		return false
 	}
-	// Sticky per-parse gate: before anything cost-relevant has happened this
-	// pass every stack's error cost is provably zero, so the costs cannot
+	// Cost gate: before anything cost-relevant has happened in this pass,
+	// every stack's error cost is provably zero, so the costs cannot
 	// differ (see crecoveryCostCompetitionRelevant). The pair-local recovery
 	// state check keeps this function sound for callers that construct
 	// paused/recovering stacks directly (unit tests, future call sites)
