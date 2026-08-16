@@ -727,6 +727,129 @@ func TestBuildReduceChildrenDirectFieldPrefersNamedTargetsOnFlattenedSpan(t *tes
 	}
 }
 
+func TestBuildReduceChildrenDirectFieldProjectsAroundExistingDirectField(t *testing.T) {
+	lang := &Language{
+		SymbolNames: []string{"EOF", "_hidden", "left", "=", "right", "root"},
+		SymbolMetadata: []SymbolMetadata{
+			{Name: "EOF", Visible: false},
+			{Name: "_hidden", Visible: false},
+			{Name: "left", Visible: true, Named: true},
+			{Name: "=", Visible: true},
+			{Name: "right", Visible: true, Named: true},
+			{Name: "root", Visible: true, Named: true},
+		},
+		FieldNames:     []string{"", "condition", "inner"},
+		FieldMapSlices: [][2]uint16{{0, 1}},
+		FieldMapEntries: []FieldMapEntry{
+			{FieldID: 1, ChildIndex: 0},
+		},
+	}
+	parser := NewParser(lang)
+	arena := newNodeArena(arenaClassFull)
+	left := newLeafNodeInArena(arena, 2, true, 0, 1, Point{}, Point{Column: 1})
+	equal := newLeafNodeInArena(arena, 3, false, 1, 2, Point{Column: 1}, Point{Column: 2})
+	right := newLeafNodeInArena(arena, 4, true, 2, 3, Point{Column: 2}, Point{Column: 3})
+	hidden := newParentNodeInArenaWithFieldSources(
+		arena,
+		1,
+		false,
+		[]*Node{left, equal, right},
+		[]FieldID{2, 0, 0},
+		[]uint8{fieldSourceDirect, fieldSourceNone, fieldSourceNone},
+		0,
+	)
+
+	children, fieldIDs, fieldSources := parser.buildReduceChildren(
+		[]stackEntry{newStackEntryNode(0, hidden)}, 0, 1, 1, 5, 0, arena,
+	)
+	if len(children) != 3 || len(fieldIDs) != 3 {
+		t.Fatalf("children=%d fields=%d, want three each", len(children), len(fieldIDs))
+	}
+	wantIDs := []FieldID{2, 1, 1}
+	wantSources := []uint8{fieldSourceDirect, fieldSourceDirect, fieldSourceDirect}
+	for i := range wantIDs {
+		if children[i] == nil {
+			t.Fatalf("child[%d] is nil", i)
+		}
+		if children[i].StartByte() != uint32(i) || children[i].EndByte() != uint32(i+1) {
+			t.Fatalf("child[%d] span=[%d,%d), want [%d,%d)", i, children[i].StartByte(), children[i].EndByte(), i, i+1)
+		}
+		if fieldIDs[i] != wantIDs[i] || fieldSourceAt(fieldSources, i) != wantSources[i] {
+			t.Fatalf("child[%d] field=%d source=%d, want field=%d source=%d", i, fieldIDs[i], fieldSourceAt(fieldSources, i), wantIDs[i], wantSources[i])
+		}
+	}
+	root := newParentNodeInArenaWithFieldSources(arena, 5, true, children, fieldIDs, fieldSources, 0)
+	if root.StartByte() != 0 || root.EndByte() != 3 || root.StartPoint() != (Point{}) || root.EndPoint() != (Point{Column: 3}) {
+		t.Fatalf("root span=[%d,%d) points=%v..%v, want [0,3) points 0..3", root.StartByte(), root.EndByte(), root.StartPoint(), root.EndPoint())
+	}
+	wantFields := []string{"inner", "condition", "condition"}
+	for i, want := range wantFields {
+		if got := root.FieldNameForChild(i, lang); got != want {
+			t.Fatalf("child[%d] field name=%q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestApplyFieldToFlattenedSpanPreservesRepeatedDirectConflict(t *testing.T) {
+	tests := []struct {
+		name  string
+		named []bool
+	}{
+		{name: "named-anonymous-named-anonymous", named: []bool{true, false, true, false}},
+		{name: "anonymous-named-anonymous-named", named: []bool{false, true, false, true}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			arena := newNodeArena(arenaClassFull)
+			children := make([]*Node, len(test.named))
+			for i, named := range test.named {
+				children[i] = newLeafNodeInArena(arena, Symbol(i+1), named, uint32(i), uint32(i+1), Point{Column: uint32(i)}, Point{Column: uint32(i + 1)})
+			}
+			fieldIDs := []FieldID{0, 2, 2, 0}
+			fieldSources := []uint8{fieldSourceNone, fieldSourceDirect, fieldSourceDirect, fieldSourceNone}
+
+			applyFieldToFlattenedSpan(children, fieldIDs, fieldSources, 0, len(children), 1, fieldSourceDirect, true)
+
+			want := []FieldID{1, 2, 2, 1}
+			for i, wantID := range want {
+				if fieldIDs[i] != wantID {
+					t.Fatalf("fieldIDs[%d] = %d, want %d", i, fieldIDs[i], wantID)
+				}
+			}
+		})
+	}
+}
+
+func TestApplyFieldToFlattenedSpanDoesNotDuplicateExistingFieldID(t *testing.T) {
+	tests := []struct {
+		name  string
+		named []bool
+	}{
+		{name: "incoming-anonymous-conflict-named", named: []bool{false, true, false}},
+		{name: "incoming-named-conflict-anonymous", named: []bool{true, false, true}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			arena := newNodeArena(arenaClassFull)
+			children := make([]*Node, len(test.named))
+			for i, named := range test.named {
+				children[i] = newLeafNodeInArena(arena, Symbol(i+1), named, uint32(i), uint32(i+1), Point{Column: uint32(i)}, Point{Column: uint32(i + 1)})
+			}
+			fieldIDs := []FieldID{0, 2, 1}
+			fieldSources := []uint8{fieldSourceNone, fieldSourceNone, fieldSourceDirect}
+
+			applyFieldToFlattenedSpan(children, fieldIDs, fieldSources, 0, len(children), 1, fieldSourceDirect, true)
+
+			want := []FieldID{0, 2, 1}
+			for i, wantID := range want {
+				if fieldIDs[i] != wantID {
+					t.Fatalf("fieldIDs[%d] = %d, want %d", i, fieldIDs[i], wantID)
+				}
+			}
+		})
+	}
+}
+
 func TestBuildReduceChildrenRepeatedDirectFieldOnHiddenPathLeavesAnonymousGapUnfielded(t *testing.T) {
 	lang := &Language{
 		SymbolNames: []string{"EOF", "_hidden_inner", ".", "identifier", "visible_parent"},
