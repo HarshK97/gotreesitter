@@ -6056,7 +6056,7 @@ func appendFlattenedHiddenChildrenWithFieldScratch(scratch *reduceBuildScratch, 
 			if idx < 0 || idx >= len(scratch.repeatCount) || scratch.repeatCount[idx] < 2 {
 				continue
 			}
-			applyFieldToFlattenedSpan(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, nodeStart, len(scratch.nodes), fid, scratch.repeatSource[idx], false)
+			applyRepeatedDirectFieldToFlattenedSpan(scratch.nodes, scratch.fieldIDs, scratch.fieldSources, nodeStart, len(scratch.nodes), fid, scratch.repeatSource[idx])
 		}
 		scratch.repeatTouched = scratch.repeatTouched[:touchedStart]
 		normalizeMixedSourceFieldSpan(scratch.fieldIDs, scratch.fieldSources, nodeStart, len(scratch.nodes))
@@ -6725,7 +6725,7 @@ func appendFlattenedHiddenChildrenWithFieldsScratch(scratch *hiddenFieldRepeatSc
 		if span.count < 2 {
 			continue
 		}
-		applyFieldToFlattenedSpan(dst, fieldDst, fieldSrcDst, nodeStart, out, span.fieldID, span.source, false)
+		applyRepeatedDirectFieldToFlattenedSpan(dst, fieldDst, fieldSrcDst, nodeStart, out, span.fieldID, span.source)
 	}
 	normalizeMixedSourceFieldSpan(fieldDst, fieldSrcDst, nodeStart, out)
 	scratch.end(repeatedStart)
@@ -6918,19 +6918,28 @@ func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSource
 	if fid == 0 || fieldIDs == nil || start >= end {
 		return
 	}
+	if flattenedSpanHasFieldID(fieldIDs, start, end, fid) {
+		return
+	}
 	inherited := source == fieldSourceInherited
 	conflictCount, multipleKinds := flattenedSpanConflictSummary(children, fieldIDs, start, end, fid)
 	if !multipleKinds && conflictCount >= 2 {
-		assignFieldToFlattenedSpanTargets(children, fieldIDs, fieldSources, start, end, fid, source, false, false)
+		assignAllUnassignedFlattenedFields(children, fieldIDs, fieldSources, start, end, fid, source, false)
 		return
 	}
 	if !multipleKinds && conflictCount == 1 && preferNamed {
-		if assignFieldToFlattenedSpanTargets(children, fieldIDs, fieldSources, start, end, fid, source, true, true) {
-			return
+		existingDirect := false
+		for i := start; i < end; i++ {
+			if fieldIDs[i] != 0 && fieldIDs[i] != fid && fieldSourceIsDirect(fieldSourceAt(fieldSources, i)) {
+				existingDirect = true
+				break
+			}
 		}
-	}
-	if flattenedSpanHasFieldID(fieldIDs, start, end, fid) {
-		return
+		if !existingDirect || !fieldSourceIsDirect(source) {
+			if assignFieldToFlattenedSpanTargets(children, fieldIDs, fieldSources, start, end, fid, source, true, true) {
+				return
+			}
+		}
 	}
 	if inherited && !preferNamed {
 		if countEligibleNamedFieldTargets(children, fieldIDs, start, end) > 1 {
@@ -6942,6 +6951,40 @@ func applyFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSource
 		return
 	}
 	assignFirstInheritedFieldToFlattenedSpan(children, fieldIDs, fieldSources, start, end, fid, source, preferNamed, inherited)
+}
+
+// Repeated direct fields may resolve inherited conflicts across their full span.
+// Keep this carry path separate from generic duplicate-safe field projection.
+func applyRepeatedDirectFieldToFlattenedSpan(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID, source uint8) {
+	if fid == 0 || fieldIDs == nil || start >= end {
+		return
+	}
+	if !flattenedSpanHasFieldID(fieldIDs, start, end, fid) {
+		applyFieldToFlattenedSpan(children, fieldIDs, fieldSources, start, end, fid, source, false)
+		return
+	}
+	conflictCount, multipleKinds := flattenedSpanConflictSummary(children, fieldIDs, start, end, fid)
+	if multipleKinds || conflictCount < 2 {
+		return
+	}
+	if source == fieldSourceProjectedDirect {
+		source = fieldSourceDirect
+	}
+	for i := start; i < end; i++ {
+		if !flattenedFieldTargetEligible(children[i], false) {
+			continue
+		}
+		if fieldIDs[i] == fid {
+			if i < len(fieldSources) && fieldSources[i] == fieldSourceProjectedDirect {
+				fieldSources[i] = source
+			}
+			continue
+		}
+		if fieldIDs[i] != 0 && fieldSourceIsDirect(fieldSourceAt(fieldSources, i)) {
+			continue
+		}
+		assignFlattenedField(fieldIDs, fieldSources, i, fid, source)
+	}
 }
 
 func assignFieldToFlattenedSpanTargets(children []*Node, fieldIDs []FieldID, fieldSources []uint8, start, end int, fid FieldID, source uint8, requireNamed, firstOnly bool) bool {
