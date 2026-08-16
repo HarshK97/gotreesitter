@@ -84,6 +84,14 @@ if errors.Is(err, gotreesitter.ErrParseStoppedEarly) {
 Strict variants are available for full parse, incremental parse, token-source
 parse, factory parse, `ParseWith`, and `ParserPool`.
 
+`grammars.ParseFilePooledStrict` returns a pooled `*BoundTree` only after a
+complete parse. The caller must call `Release` on a returned tree. It returns
+`nil` and an error for parser setup failures, parse failures, and early stops.
+
+`Tagger.TagStrict` returns tags only after a complete parse. It releases its
+internal tree before it returns. It returns `nil` and an error for parser
+failures and early stops.
+
 High-level analysis can use `WithHighlighterTimeoutMicros` or
 `WithTaggerTimeoutMicros` to bound parser work. The
 `HighlightIncrementalStrict` and `TagIncrementalStrict` methods return the

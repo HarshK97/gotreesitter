@@ -1,6 +1,7 @@
 package grammars
 
 import (
+	"bytes"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -220,5 +221,41 @@ func TestParseFilePooledReplacesPoolForReplacedLanguage(t *testing.T) {
 	}
 	if got := secondPool.Language(); got != pythonLang {
 		t.Fatalf("replacement pool language = %p, want %p", got, pythonLang)
+	}
+}
+
+func TestParseFilePooledStrictRejectsStoppedTree(t *testing.T) {
+	preserveRegistryState(t)
+	const name = "zz_pool_strict"
+	preserveParserPool(t, name)
+
+	entry := DetectLanguage("sample.go")
+	if entry == nil {
+		t.Fatal("Go language is not registered")
+	}
+	entry.Name = name
+	entry.Extensions = []string{".zz-pool-strict"}
+	Register(*entry)
+
+	lang := entry.Language()
+	poolsMu.Lock()
+	pools[name] = gotreesitter.NewParserPool(lang, gotreesitter.WithParserPoolTimeoutMicros(1))
+	poolsMu.Unlock()
+
+	source := append([]byte("package p\n"), bytes.Repeat([]byte("var value int\n"), 10_000)...)
+	tree, err := ParseFilePooledStrict("sample.zz-pool-strict", source)
+	if tree != nil {
+		tree.Release()
+		t.Fatal("ParseFilePooledStrict returned a partial tree")
+	}
+	if !errors.Is(err, gotreesitter.ErrParseStoppedEarly) {
+		t.Fatalf("ParseFilePooledStrict error = %v, want ErrParseStoppedEarly", err)
+	}
+	var stopped *gotreesitter.ParseStoppedEarlyError
+	if !errors.As(err, &stopped) {
+		t.Fatalf("ParseFilePooledStrict error type = %T, want *ParseStoppedEarlyError", err)
+	}
+	if stopped.Reason != gotreesitter.ParseStopTimeout {
+		t.Fatalf("stop reason = %q, want %q", stopped.Reason, gotreesitter.ParseStopTimeout)
 	}
 }

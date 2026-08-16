@@ -91,6 +91,32 @@ func (tg *Tagger) Tag(source []byte) []Tag {
 	return tg.tagTree(tree)
 }
 
+// TagStrict is like Tag, but rejects a partial tree when parsing stops before
+// it accepts all input. It releases the partial tree and returns an error that
+// wraps ErrParseStoppedEarly.
+func (tg *Tagger) TagStrict(source []byte) ([]Tag, error) {
+	if len(source) == 0 {
+		return nil, nil
+	}
+
+	tree, err := tg.parseStrict(source, nil)
+	if err != nil {
+		if tree != nil {
+			tree.Release()
+		}
+		return nil, err
+	}
+	if tree == nil {
+		return nil, nil
+	}
+	defer tree.Release()
+	if tree.RootNode() == nil {
+		return nil, nil
+	}
+
+	return tg.tagTree(tree), nil
+}
+
 // TagUTF16 parses UTF-16 source and returns all tags with UTF-16 ranges.
 func (tg *Tagger) TagUTF16(source []uint16) []UTF16Tag {
 	if len(source) == 0 {
@@ -195,6 +221,10 @@ func (tg *Tagger) TagIncrementalUTF16Bytes(source []byte, oldTree *Tree, order U
 
 func (tg *Tagger) parse(source []byte, oldTree *Tree) *Tree {
 	return dispatchParse(tg.parser, source, oldTree, tg.tokenSourceFactory, tg.lang)
+}
+
+func (tg *Tagger) parseStrict(source []byte, oldTree *Tree) (*Tree, error) {
+	return dispatchParseStrict(tg.parser, source, oldTree, tg.tokenSourceFactory)
 }
 
 func (tg *Tagger) parseUTF16(source []uint16, oldTree *Tree) *Tree {
