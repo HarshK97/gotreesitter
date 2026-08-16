@@ -1,8 +1,6 @@
 package gotreesitter
 
 import (
-	"fmt"
-	"os"
 	"sync/atomic"
 	"time"
 )
@@ -1709,12 +1707,6 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 	}()
 
 	structuralResyncRetry := shouldRetryFullParse(tree, len(source))
-	retryDebug := os.Getenv("GOT_RETRY_DEBUG") == "1"
-	if retryDebug {
-		rt := *tree.rawParseRuntime()
-		fmt.Fprintf(os.Stderr, "RETRYDBG entry stop=%v truncated=%v hasErr=%v maxStacksSeen=%d stacksOverride=%d nodesOverride=%d structResync=%v\n",
-			rt.StopReason, rt.Truncated, retryTreeHasError(tree), rt.MaxStacksSeen, maxStacksOverride, maxNodesOverride, structuralResyncRetry)
-	}
 	// C# namespace recovery can clear this exact accepted-error shape during
 	// normal result compatibility; avoid paying the full retry ladder first.
 	if certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, len(source)) == 0 &&
@@ -1725,6 +1717,7 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 	}
 	runRetryAttempt := func(logicalRung, operationCause string, maxStacks int, maxMergePerKeyOverride int, maxNodes int) *Tree {
 		if p != nil {
+			p.resetCRecoveryCostCompetitionState()
 			if retryPassLimitReached() {
 				// Budget exhausted: a nil candidate is a no-op for every
 				// caller (replaceBest ignores nil), so the incumbent best
@@ -1733,10 +1726,6 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 			}
 			p.fullParseRetryPassesTaken++
 			p.recordRecoveryRuntimeRetry(operationCause)
-		}
-		var t0 time.Time
-		if retryDebug {
-			t0 = time.Now()
 		}
 		var result *Tree
 		workCountSetNextParseAttempt(logicalRung, operationCause)
@@ -1749,16 +1738,6 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 				p.retryStructuralTopLevelResync = prev
 			}()
 			result = runRetry(maxStacks, maxMergePerKeyOverride, maxNodes)
-		}
-		if retryDebug {
-			stop := ParseStopNone
-			hasErr := true
-			if result != nil {
-				stop = result.rawParseStopReason()
-				hasErr = retryTreeHasError(result)
-			}
-			fmt.Fprintf(os.Stderr, "RETRYDBG pass maxStacks=%d mergePerKey=%d maxNodes=%d took=%v stop=%v hasErr=%v forceClean=%v\n",
-				maxStacks, maxMergePerKeyOverride, maxNodes, time.Since(t0), stop, hasErr, p != nil && p.forceCleanRetryPass)
 		}
 		p.recordRecoveryRuntimeRetryTree(result, logicalRung)
 		return result
