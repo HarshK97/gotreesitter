@@ -24,6 +24,21 @@ func dispatchParse(p *Parser, source []byte, oldTree *Tree, tsFactory func([]byt
 	return tree
 }
 
+// dispatchParseStrict preserves parser errors and reports early stops.
+func dispatchParseStrict(p *Parser, source []byte, oldTree *Tree, tsFactory func([]byte) TokenSource) (*Tree, error) {
+	if tsFactory != nil {
+		ts := tsFactory(source)
+		if oldTree != nil {
+			return p.ParseIncrementalWithTokenSourceStrict(source, oldTree, ts)
+		}
+		return p.ParseWithTokenSourceStrict(source, ts)
+	}
+	if oldTree != nil {
+		return p.ParseIncrementalStrict(source, oldTree)
+	}
+	return p.ParseStrict(source)
+}
+
 func dispatchParseUTF16(p *Parser, source []uint16, oldTree *Tree, tsFactory func([]byte) TokenSource, lang *Language) *Tree {
 	var tree *Tree
 	var err error

@@ -50,7 +50,8 @@ func TestTagIncrementalStrictReportsTimeout(t *testing.T) {
 }
 
 func TestTagStrictReportsTimeout(t *testing.T) {
-	tagger, err := NewTagger(buildArithmeticLanguage(), "",
+	query := `(expression) @definition.expression`
+	tagger, err := NewTagger(buildArithmeticLanguage(), query,
 		WithTaggerTimeoutMicros(100),
 		WithTaggerTokenSourceFactory(func(source []byte) TokenSource {
 			return &slowArithmeticTokenSource{
@@ -76,6 +77,35 @@ func TestTagStrictReportsTimeout(t *testing.T) {
 	}
 	if tags != nil {
 		t.Fatalf("tags = %#v, want nil", tags)
+	}
+
+	// Make query execution observable. A stopped strict parse must return
+	// before it reaches tagTree, even when the tag query is non-empty.
+	tagger.query = nil
+	if tags, err := tagger.TagStrict([]byte("1")); !errors.Is(err, ErrParseStoppedEarly) || tags != nil {
+		t.Fatalf("second strict call = tags %#v, err %v; want no tags and ErrParseStoppedEarly", tags, err)
+	}
+
+	complete, err := NewTagger(buildArithmeticLanguage(), query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tags, err = complete.TagStrict([]byte("1"))
+	if err != nil {
+		t.Fatalf("complete strict call error = %v", err)
+	}
+	if len(tags) != 1 || tags[0].Kind != "definition.expression" || tags[0].Name != "1" {
+		t.Fatalf("complete strict tags = %#v, want one expression tag for 1", tags)
+	}
+}
+
+func TestTagStrictPropagatesParserError(t *testing.T) {
+	tagger, err := NewTagger(nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tags, err := tagger.TagStrict([]byte("1")); !errors.Is(err, ErrNoLanguage) || tags != nil {
+		t.Fatalf("TagStrict = tags %#v, err %v; want nil tags and ErrNoLanguage", tags, err)
 	}
 }
 

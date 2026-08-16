@@ -99,14 +99,17 @@ func (tg *Tagger) TagStrict(source []byte) ([]Tag, error) {
 		return nil, nil
 	}
 
-	tree := tg.parse(source, nil)
+	tree, err := tg.parseStrict(source, nil)
+	if err != nil {
+		if tree != nil {
+			tree.Release()
+		}
+		return nil, err
+	}
 	if tree == nil {
 		return nil, nil
 	}
 	defer tree.Release()
-	if err := parseStoppedEarlyError(tree); err != nil {
-		return nil, err
-	}
 	if tree.RootNode() == nil {
 		return nil, nil
 	}
@@ -218,6 +221,10 @@ func (tg *Tagger) TagIncrementalUTF16Bytes(source []byte, oldTree *Tree, order U
 
 func (tg *Tagger) parse(source []byte, oldTree *Tree) *Tree {
 	return dispatchParse(tg.parser, source, oldTree, tg.tokenSourceFactory, tg.lang)
+}
+
+func (tg *Tagger) parseStrict(source []byte, oldTree *Tree) (*Tree, error) {
+	return dispatchParseStrict(tg.parser, source, oldTree, tg.tokenSourceFactory)
 }
 
 func (tg *Tagger) parseUTF16(source []uint16, oldTree *Tree) *Tree {
