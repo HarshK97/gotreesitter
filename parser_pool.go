@@ -111,6 +111,7 @@ func (pp *ParserPool) applyDefaults(p *Parser) {
 	p.SetIncludedRanges(pp.included)
 	p.SetGLRTrace(pp.glrTrace)
 	p.SetAmbiguityProfile(pp.ambiguityProfile)
+	p.clearRecoveryRuntimeTelemetryDetailed()
 	p.resetCRecoveryCostCompetitionState()
 	p.noTreeBenchmarkOnly = false
 	p.noTreeCheckpointBenchmarkOnly = false

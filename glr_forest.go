@@ -182,17 +182,6 @@ type forestDeclineMemoState struct {
 	retainedSourceBytes int
 }
 
-// parserColdState shares the Parser's existing lazy sidecar slot between
-// uncommon features. It preserves the hot Parser layout for ordinary parses.
-type parserColdState struct {
-	forestDeclineMemoState
-	cNodeMemoRetainedCache          []cNodeMemoCacheEntry
-	pendingForkStackReserve         []glrStack
-	pendingFrontierForkStackReserve []glrStack
-	cNodeMemoCollisions             uint64
-	recoveryRuntime                 recoveryRuntimeTelemetry
-}
-
 func (p *Parser) ensureParserColdState() *parserColdState {
 	if p == nil {
 		return nil
@@ -369,6 +358,11 @@ func forestProgressExtra(frontier, work, nextFrontier []*gssForestNode, curIndex
 // out-of-tree benchmarks and validation in packages that attach external
 // scanners (e.g. grammars) can drive it; not part of the stable API.
 func (p *Parser) ParseForestExperimental(source []byte) (*Tree, bool) {
+	p.resetRecoveryRuntimeTelemetryDetailed()
+	return p.parseForestExperimental(source)
+}
+
+func (p *Parser) parseForestExperimental(source []byte) (*Tree, bool) {
 	// Every other public parse entry point (parser_api.go: Parse,
 	// ParseWithTokenSource, ParseIncremental...) establishes the
 	// timeout/cancellation deadline via enterParseBudget before doing any
@@ -434,7 +428,7 @@ func (p *Parser) maybeReplaceRecoveredTreeWithForest(source []byte, tree *Tree) 
 		return tree, false
 	}
 
-	candidate, ok := p.ParseForestExperimental(source)
+	candidate, ok := p.parseForestExperimental(source)
 	if !ok || candidate == nil {
 		return tree, false
 	}
