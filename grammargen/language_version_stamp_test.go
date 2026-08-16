@@ -93,20 +93,9 @@ func TestGeneratedCABI14LexModesRuntime(t *testing.T) {
 	if !hasLaterMode {
 		t.Fatal("generated grammar has no nonzero lex mode after state zero")
 	}
-	// The Go lexer reports EOF out of band, while parser.c represents it as an
-	// explicit DFA accept state. Add that mechanically equivalent edge here so
-	// this probe isolates the locked runtime's ABI-14 lex-mode indexing.
-	eofState := len(lang.LexStates)
-	lang.LexStates = append(lang.LexStates, gotreesitter.LexState{AcceptToken: 0, Skip: true, EOF: -1, Default: -1})
-	for i, mode := range lang.LexModes {
-		if mode.LexState == ^uint16(0) {
-			lang.LexModes[i].LexState = 0
-			mode.LexState = 0
-		}
-		if int(mode.LexState) < eofState {
-			lang.LexStates[mode.LexState].EOF = eofState
-		}
-	}
+	// EmitC synthesizes the EOF token at each parser-start lexer state.
+	// Keep the generated DFA unchanged so this probe exercises the ABI-14
+	// lex-mode layout rather than an artificial EOF state.
 	code, err := EmitC(g.Name, lang)
 	if err != nil {
 		t.Fatalf("EmitC: %v", err)
