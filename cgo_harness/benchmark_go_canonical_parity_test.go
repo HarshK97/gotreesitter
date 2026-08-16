@@ -13,6 +13,18 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
+const (
+	deepDigestExactDisposition   = "exact"
+	lockedCDivergenceDisposition = "locked-C divergence"
+)
+
+func goCDeepDigestDisposition(goDigest, cDigest string) string {
+	if goDigest == cDigest {
+		return deepDigestExactDisposition
+	}
+	return lockedCDivergenceDisposition
+}
+
 // BenchmarkParityGoCanonicalFull measures the same authenticated source and
 // complete warm-parser lifecycle with gotreesitter and the exact C grammar
 // loaded from languages.lock. Grammar identity and deep structural parity are
@@ -44,6 +56,27 @@ func TestCanonicalGoBenchmarkPreflight(t *testing.T) {
 func TestCanonicalGoBackendBuildTag(t *testing.T) {
 	if canonicalGoBenchmarkBackend != "production" && canonicalGoBenchmarkBackend != "candidate" {
 		t.Fatalf("canonical Go preflight requires exactly one backend tag: got %q", canonicalGoBenchmarkBackend)
+	}
+}
+
+func TestGoCDeepDigestDisposition(t *testing.T) {
+	tests := []struct {
+		name   string
+		goHash string
+		cHash  string
+		want   string
+	}{
+		{name: "equal", goHash: "same", cHash: "same", want: deepDigestExactDisposition},
+		{name: "unequal", goHash: "go", cHash: "c", want: lockedCDivergenceDisposition},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := goCDeepDigestDisposition(test.goHash, test.cHash)
+			t.Logf("Go/C deep digest pair Go=%s C=%s disposition=%s", test.goHash, test.cHash, got)
+			if got != test.want {
+				t.Fatalf("Go/C deep digest disposition = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
@@ -162,11 +195,11 @@ func preflightCanonicalGoFixtures(tb testing.TB, fixtures []benchfixtures.Loaded
 			cTree.Close()
 			tb.Fatalf("%s C workload identity: %v", fixture.Fixture.ID, err)
 		}
-		if goInspection.SHA256 != cInspection.SHA256 {
+		if disposition := goCDeepDigestDisposition(goInspection.SHA256, cInspection.SHA256); disposition != deepDigestExactDisposition {
 			first := FirstDivergenceDumpV1(goTree.RootNode(), goLang, cTree.RootNode())
 			releaseCanonicalGoTree(goTree)
 			cTree.Close()
-			tb.Fatalf("%s deep parity digest mismatch Go=%s C=%s first=%s", fixture.Fixture.ID, goInspection.SHA256, cInspection.SHA256, formatRealCorpusDivergence(first))
+			tb.Fatalf("%s deep parity %s Go=%s C=%s first=%s", fixture.Fixture.ID, disposition, goInspection.SHA256, cInspection.SHA256, formatRealCorpusDivergence(first))
 		}
 		goSuiteCoverage.Merge(goInspection.NodeKinds)
 		cSuiteCoverage.Merge(cInspection.NodeKinds)

@@ -259,11 +259,16 @@ func shouldRetryIncrementalAcceptedErrorAtBaseMergeCap(tree *Tree, sourceLen int
 // retry, and a fresh fallback would conceal an incremental correctness defect.
 func (p *Parser) retryIncrementalAcceptedErrorWithBaseMergeCap(source []byte, first *Tree, timing *incrementalParseTiming, run incrementalAcceptedErrorRetryRunner) *Tree {
 	baseCap := incrementalAcceptedErrorBaseMergeCap(p, first, source)
+	p.recordRecoveryRuntimeRetryTree(first, "initial")
+	p.recordRecoveryRuntimeRetryTreeDetailed(first, "initial", "initial_incremental_parse")
 	if baseCap == 0 || run == nil || p.fullParseRetryPassesTaken >= fullParseRetryMaxTotalPasses {
+		p.recordRecoveryRuntimeSelectedTree(first)
+		p.recordRecoveryRuntimeSelectedTreeDetailed(first)
 		return first
 	}
 
-	p.recordRecoveryRuntimeRetryTree(first, "initial")
+	p.recordRecoveryRuntimeSelectedTree(first)
+	p.recordRecoveryRuntimeSelectedTreeDetailed(first)
 	p.fullParseRetryPassesTaken++
 	p.recordRecoveryRuntimeRetry("accepted_error_under_wide_incremental_merge")
 	workCountSetNextParseAttempt("incremental_base_merge", "accepted_error_under_wide_incremental_merge")
@@ -275,10 +280,12 @@ func (p *Parser) retryIncrementalAcceptedErrorWithBaseMergeCap(source []byte, fi
 	// effective cap and therefore cannot lower the incremental default.
 	candidate := run(-baseCap, retryTiming)
 	p.recordRecoveryRuntimeRetryTree(candidate, "incremental_base_merge")
+	p.recordRecoveryRuntimeRetryTreeDetailed(candidate, "incremental_base_merge", "accepted_error_under_wide_incremental_merge")
 	adopted := candidate != nil && candidate != first && preferRetryTreeOverFirstPass(p, candidate, first)
 	result := first
 	if adopted {
 		result = candidate
+		p.recordRecoveryRuntimeCandidateReplacedDetailed(candidate)
 		first.Release()
 	} else if candidate != nil && candidate != first {
 		candidate.Release()
@@ -299,6 +306,7 @@ func (p *Parser) retryIncrementalAcceptedErrorWithBaseMergeCap(source []byte, fi
 		result.parseRuntime.IncrementalAcceptedErrorRetryCause = IncrementalRetryCauseAcceptedErrorBaseMerge
 	}
 	p.finishRecoveryRuntimeRetryTelemetry(result, len(source))
+	p.clearRecoveryRuntimeRetryTreesDetailed()
 	p.clearRecoveryRuntimeRetryTrees()
 	return result
 }
@@ -1592,8 +1600,12 @@ func (p *Parser) retryFullParse(source []byte, initialMaxStacks int, tree *Tree,
 
 func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tree *Tree, origin fullParseRetryOrigin, runRetry fullParseRetryRunner) *Tree {
 	p.recordRecoveryRuntimeRetryTree(tree, "initial")
+	p.recordRecoveryRuntimeRetryTreeDetailed(tree, "initial", "initial_full_parse")
 	if certifiedAcceptedErrorRetrySkipsFresh(tree, len(source), origin) {
+		p.recordRecoveryRuntimeSelectedTree(tree)
+		p.recordRecoveryRuntimeSelectedTreeDetailed(tree)
 		p.finishRecoveryRuntimeRetryTelemetry(tree, len(source))
+		p.clearRecoveryRuntimeRetryTreesDetailed()
 		p.clearRecoveryRuntimeRetryTrees()
 		return tree
 	}
@@ -1691,12 +1703,18 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 		if candidate == nil || candidate == *best {
 			return
 		}
-		if preferRetryTree(p, candidate, *best) {
+		preferCandidate := preferRetryTree
+		if origin == fullParseRetryOriginIncremental && tree != nil && *best == tree {
+			preferCandidate = preferRetryTreeOverFirstPass
+		}
+		if preferCandidate(p, candidate, *best) {
 			if *best != candidate {
 				release(*best)
 			}
 			*best = candidate
 			p.recordRecoveryRuntimeSelectedTree(candidate)
+			p.recordRecoveryRuntimeSelectedTreeDetailed(candidate)
+			p.recordRecoveryRuntimeCandidateReplacedDetailed(candidate)
 			return
 		}
 		release(candidate)
@@ -1711,7 +1729,10 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 	// normal result compatibility; avoid paying the full retry ladder first.
 	if certifiedGSSConvergenceAcceptedErrorMergePerKey(tree, len(source)) == 0 &&
 		csharpAcceptedErrorTreeCanUseNamespaceRecovery(tree, source) {
+		p.recordRecoveryRuntimeSelectedTree(tree)
+		p.recordRecoveryRuntimeSelectedTreeDetailed(tree)
 		p.finishRecoveryRuntimeRetryTelemetry(tree, len(source))
+		p.clearRecoveryRuntimeRetryTreesDetailed()
 		p.clearRecoveryRuntimeRetryTrees()
 		return tree
 	}
@@ -1740,15 +1761,18 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 			result = runRetry(maxStacks, maxMergePerKeyOverride, maxNodes)
 		}
 		p.recordRecoveryRuntimeRetryTree(result, logicalRung)
+		p.recordRecoveryRuntimeRetryTreeDetailed(result, logicalRung, operationCause)
 		return result
 	}
 
 	bestTree := tree
 	defer func() {
 		p.finishRecoveryRuntimeRetryTelemetry(bestTree, len(source))
+		p.clearRecoveryRuntimeRetryTreesDetailed()
 		p.clearRecoveryRuntimeRetryTrees()
 	}()
 	p.recordRecoveryRuntimeSelectedTree(bestTree)
+	p.recordRecoveryRuntimeSelectedTreeDetailed(bestTree)
 	if shouldRunInitialFullParseMergeRetry(tree, len(source), origin) {
 		if initialMergePerKey := fullParseRetryMergePerKeyOverride(tree, len(source), initialMaxStacks); initialMergePerKey != 0 {
 			mergeRetryTree := runRetryAttempt(
@@ -1867,12 +1891,18 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 			// Fold the primary retry into bestTree before we overwrite
 			// nodeRetryTree, so the loser's arena is returned.
 			if retryTree != nil {
-				if preferRetryTree(p, retryTree, bestTree) {
+				preferCandidate := preferRetryTree
+				if origin == fullParseRetryOriginIncremental && tree != nil && bestTree == tree {
+					preferCandidate = preferRetryTreeOverFirstPass
+				}
+				if preferCandidate(p, retryTree, bestTree) {
 					if bestTree != retryTree {
 						release(bestTree)
 					}
 					bestTree = retryTree
 					p.recordRecoveryRuntimeSelectedTree(bestTree)
+					p.recordRecoveryRuntimeSelectedTreeDetailed(bestTree)
+					p.recordRecoveryRuntimeCandidateReplacedDetailed(bestTree)
 				} else if retryTree != bestTree {
 					release(retryTree)
 				}
@@ -1884,12 +1914,18 @@ func (p *Parser) retryFullParseForOrigin(source []byte, initialMaxStacks int, tr
 			// but truncated no-stacks tree, yet still be the evidence that
 			// selects a bounded merge or certified-pressure retry. Releasing it
 			// here clears its runtime data and silently suppresses those rungs.
-			if retryTree != nil && preferRetryTree(p, retryTree, bestTree) {
+			preferCandidate := preferRetryTree
+			if origin == fullParseRetryOriginIncremental && tree != nil && bestTree == tree {
+				preferCandidate = preferRetryTreeOverFirstPass
+			}
+			if retryTree != nil && preferCandidate(p, retryTree, bestTree) {
 				if bestTree != retryTree {
 					release(bestTree)
 				}
 				bestTree = retryTree
 				p.recordRecoveryRuntimeSelectedTree(bestTree)
+				p.recordRecoveryRuntimeSelectedTreeDetailed(bestTree)
+				p.recordRecoveryRuntimeCandidateReplacedDetailed(bestTree)
 			}
 		}
 	}
@@ -2110,9 +2146,13 @@ func (p *Parser) retryIncrementalMemoryBudgetAsPlainFullWithDFA(source []byte, t
 	full := p.parseInternal(source, p.wrapIncludedRanges(retryTS), nil, nil, arenaClassFull, nil, initialMaxStacks, 0, 0, deterministicExternalConflicts)
 	if full == nil || full.RootNode() == nil {
 		full.Release()
+		p.recordRecoveryRuntimeSelectedTree(tree)
+		p.recordRecoveryRuntimeSelectedTreeDetailed(tree)
 		return tree
 	}
 	tree.Release()
+	p.recordRecoveryRuntimeSelectedTree(full)
+	p.recordRecoveryRuntimeSelectedTreeDetailed(full)
 	if timing != nil {
 		timing.totalNanos += time.Since(retryStart).Nanoseconds()
 		timing.reuseUnsupported = true
@@ -2145,9 +2185,13 @@ func (p *Parser) retryIncrementalMemoryBudgetAsPlainFullWithTokenSource(source [
 	full := p.parseInternal(source, p.wrapIncludedRanges(ts), nil, nil, arenaClassFull, nil, initialMaxStacks, 0, 0, deterministicExternalConflicts)
 	if full == nil || full.RootNode() == nil {
 		full.Release()
+		p.recordRecoveryRuntimeSelectedTree(tree)
+		p.recordRecoveryRuntimeSelectedTreeDetailed(tree)
 		return tree
 	}
 	tree.Release()
+	p.recordRecoveryRuntimeSelectedTree(full)
+	p.recordRecoveryRuntimeSelectedTreeDetailed(full)
 	if timing != nil {
 		timing.totalNanos += time.Since(retryStart).Nanoseconds()
 		timing.reuseUnsupported = true

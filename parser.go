@@ -1737,6 +1737,7 @@ func resetSnippetParser(parser *Parser) {
 	if parser == nil {
 		return
 	}
+	parser.clearRecoveryRuntimeTelemetryDetailed()
 	parser.finishCNodeMemoParse()
 	parser.resetCRecoveryCostCompetitionState()
 	resetGSSPrefixPath(&parser.cPrefixPath)
@@ -4565,6 +4566,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	p.reduceScratch = &scratch.reduce
 	p.mergeScratch = &scratch.merge
 	p.beginRecoveryRuntimeTelemetry()
+	p.beginRecoveryRuntimeTelemetryDetailed()
 	// budgetScratch is saved and restored, not just cleared, unlike its
 	// siblings above: a nested parseInternal call (a retry or compat-
 	// normalization sub-parse reachable from this call's own body, however
@@ -5139,6 +5141,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		recordParseRuntimeTokenStats(&parseRuntime, perfTokensConsumed, lastTokenEndByte, lastTokenSymbol, lastTokenWasEOF, tokenSourceEOFEarly)
 		recordParseRuntimeRootStats(&parseRuntime, tree, source, expectedEOFByte, p.included, scratch.audit.enabled || (arena != nil && arena.breakdownEnabled), p.language)
 		p.finishRecoveryRuntimeTelemetry(tree, stacks)
+		p.finishRecoveryRuntimeTelemetryDetailed(tree, &parseRuntime)
 		recordStopDiagnostic(parseRuntime.StopReason, tree)
 		p.copyNormalizationStats(&parseRuntime)
 		if tree != nil {
@@ -6712,7 +6715,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			var resumed bool
 			condenseRan = true
 			var reason ParseStopReason
-			stacks, resumed, tok, reason = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors)
+			if recoveryRuntimeDetailedBuildEnabled {
+				stacks, resumed, tok, reason = p.cCondenseAndResumeDetailed(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors)
+			} else {
+				stacks, resumed, tok, reason = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors)
+			}
 			workCountRefreshConvergenceLookahead(tok)
 			if resultMaterializationShouldStop(reason) {
 				return finalize(stacks, reason)
@@ -6874,7 +6881,11 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			var resumed bool
 			condenseRan = true
 			var reason ParseStopReason
-			stacks, resumed, tok, reason = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors)
+			if recoveryRuntimeDetailedBuildEnabled {
+				stacks, resumed, tok, reason = p.cCondenseAndResumeDetailed(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors)
+			} else {
+				stacks, resumed, tok, reason = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors)
+			}
 			if resultMaterializationShouldStop(reason) {
 				return finalize(stacks, reason)
 			}

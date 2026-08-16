@@ -1434,6 +1434,7 @@ func (p *Parser) ParseUTF16(source []uint16) (*Tree, error) {
 // ParseUTF16Bytes parses UTF-16 source encoded as bytes with an explicit byte
 // order.
 func (p *Parser) ParseUTF16Bytes(source []byte, order UTF16ByteOrder) (*Tree, error) {
+	p.resetRecoveryRuntimeTelemetryDetailed()
 	units, err := DecodeUTF16Bytes(source, order)
 	if err != nil {
 		return nil, err
@@ -1456,6 +1457,7 @@ func (p *Parser) ParseUTF16WithTokenSourceFactory(source []uint16, factory Token
 // ParseUTF16BytesWithTokenSourceFactory parses UTF-16 bytes using a token
 // source built from the parser's canonical UTF-8 source view.
 func (p *Parser) ParseUTF16BytesWithTokenSourceFactory(source []byte, order UTF16ByteOrder, factory TokenSourceFactory) (*Tree, error) {
+	p.resetRecoveryRuntimeTelemetryDetailed()
 	units, err := DecodeUTF16Bytes(source, order)
 	if err != nil {
 		return nil, err
@@ -1479,6 +1481,7 @@ func (p *Parser) ParseWithTokenSourceStrict(source []byte, ts TokenSource) (*Tre
 // ParseWithTokenSourceFactory parses source using a freshly built custom token
 // source. The factory is also retained for recovery reparses.
 func (p *Parser) ParseWithTokenSourceFactory(source []byte, factory TokenSourceFactory) (*Tree, error) {
+	p.resetRecoveryRuntimeTelemetryDetailed()
 	if factory == nil {
 		return nil, ErrNoTokenSourceFactory
 	}
@@ -1603,6 +1606,7 @@ func (p *Parser) ParseIncrementalUTF16(source []uint16, oldTree *Tree) (*Tree, e
 // ParseIncrementalUTF16Bytes re-parses UTF-16 bytes after edits were applied
 // to oldTree.
 func (p *Parser) ParseIncrementalUTF16Bytes(source []byte, oldTree *Tree, order UTF16ByteOrder) (*Tree, error) {
+	p.resetRecoveryRuntimeTelemetryDetailed()
 	units, err := DecodeUTF16Bytes(source, order)
 	if err != nil {
 		return nil, err
@@ -1625,6 +1629,7 @@ func (p *Parser) ParseIncrementalUTF16WithTokenSourceFactory(source []uint16, ol
 // ParseIncrementalUTF16BytesWithTokenSourceFactory re-parses UTF-16 bytes using
 // a token source built from the parser's canonical UTF-8 source view.
 func (p *Parser) ParseIncrementalUTF16BytesWithTokenSourceFactory(source []byte, oldTree *Tree, order UTF16ByteOrder, factory TokenSourceFactory) (*Tree, error) {
+	p.resetRecoveryRuntimeTelemetryDetailed()
 	units, err := DecodeUTF16Bytes(source, order)
 	if err != nil {
 		return nil, err
@@ -1647,6 +1652,7 @@ func (p *Parser) ParseIncrementalWithTokenSourceStrict(source []byte, oldTree *T
 // ParseIncrementalWithTokenSourceFactory is like ParseWithTokenSourceFactory
 // for an edited old tree.
 func (p *Parser) ParseIncrementalWithTokenSourceFactory(source []byte, oldTree *Tree, factory TokenSourceFactory) (*Tree, error) {
+	p.resetRecoveryRuntimeTelemetryDetailed()
 	if factory == nil {
 		return nil, ErrNoTokenSourceFactory
 	}
@@ -1866,6 +1872,7 @@ var ErrNoTokenSource = errors.New("parser has no token source")
 // checkLanguageCompatible returns an error if the parser's language is nil or
 // incompatible with the runtime.
 func (p *Parser) checkLanguageCompatible() error {
+	p.resetRecoveryRuntimeTelemetryDetailed()
 	if p.language == nil {
 		return ErrNoLanguage
 	}

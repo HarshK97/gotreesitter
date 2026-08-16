@@ -813,6 +813,54 @@ type RecoveryNodeMemoRuntime struct {
 	Collisions uint32
 }
 
+// RecoveryRuntimeAttemptStats reports diagnostics for one parser attempt.
+//
+// These facts stay separate from RecoveryRuntimeStats. The latter reports the
+// selected tree. A losing attempt can still consume time and memory.
+type RecoveryRuntimeAttemptStats struct {
+	Ordinal uint32
+	Rung    string
+	Cause   string
+
+	StopReason          ParseStopReason
+	Truncated           bool
+	TokenSourceEOFEarly bool
+	AttemptHasError     bool
+	AttemptFullSpan     bool
+
+	WallNanos            uint64
+	HeapAllocDeltaBytes  int64
+	TotalAllocDeltaBytes uint64
+	MallocsDelta         uint64
+
+	RecoveryEntryCount           uint64
+	Strategy1ElectionCount       uint64
+	RecoveryCostCompetitionCount uint64
+	RecoveryCostWalkCount        uint64
+	RecoveryCostWalkNanos        uint64
+
+	MaterializationNanos                uint64
+	ResultSelectionNanos                uint64
+	TransientParentMaterializationNanos uint64
+	ResultTreeBuildNanos                uint64
+	TransientChildMaterializationNanos  uint64
+	CondenseNanos                       uint64
+
+	ArenaBytesPeak        uint64
+	ScratchBytesPeak      uint64
+	EntryScratchBytesPeak uint64
+	GSSBytesPeak          uint64
+	GSSNodesPeak          uint64
+	NodesAllocated        uint64
+	MaxStacksSeen         uint64
+	PeakStackDepth        uint64
+	LiveVersions          uint64
+	PeakLiveVersions      uint64
+
+	CandidateSelected          bool
+	CandidateReplacedIncumbent bool
+}
+
 // RecoveryRuntimeStats reports opt-in recovery facts for the most recent
 // completed parse attempt on a parser.
 //
@@ -841,6 +889,10 @@ type RecoveryRuntimeStats struct {
 	LiveVersionCount             uint64
 	PeakLiveVersionCount         uint64
 }
+
+// RecoveryRuntimeAttempts contains attempt-local facts for one parse
+// operation. Use Parser.DebugRecoveryRuntimeAttempts to read this receipt.
+type RecoveryRuntimeAttempts []RecoveryRuntimeAttemptStats
 
 // ParseRuntime captures parser-loop diagnostics for a completed tree.
 type ParseRuntime struct {
