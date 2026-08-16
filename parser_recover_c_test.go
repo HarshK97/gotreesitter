@@ -167,6 +167,53 @@ func TestCRecoveryCostCompetitionDisabledInNoTreeModes(t *testing.T) {
 	}
 }
 
+func TestCRecoveryCleanCondenseRetainsPendingConvergence(t *testing.T) {
+	parser := &Parser{
+		crecoveryCostCompetitionRelevant:    true,
+		crecoveryCostCompetitionWalkEnabled: true,
+		pendingForkStacks:                   []glrStack{{}},
+	}
+	trackChildErrors := false
+
+	parser.clearCRecoveryCostIfClean([]glrStack{{}}, &trackChildErrors)
+
+	if !parser.crecoveryCostCompetitionConvergenceEnabled {
+		t.Fatal("clean condense did not retain convergence after a pending fork")
+	}
+	if parser.crecoveryCostCompetitionRelevant {
+		t.Fatal("clean condense kept the active recovery cost state")
+	}
+	if parser.crecoveryCostCompetitionWalkEnabled {
+		t.Fatal("clean condense kept the recovery cost walk enabled")
+	}
+	parser.pendingForkStacks = nil
+	parser.markCRecoveryCostCompetitionRelevant()
+	parser.clearCRecoveryCostIfClean([]glrStack{{}}, &trackChildErrors)
+	if !parser.crecoveryCostCompetitionConvergenceEnabled {
+		t.Fatal("clean condense cleared the established convergence latch")
+	}
+}
+
+func TestCRecoveryCleanCondenseDropsIdleConvergenceState(t *testing.T) {
+	parser := &Parser{
+		crecoveryCostCompetitionRelevant:    true,
+		crecoveryCostCompetitionWalkEnabled: true,
+	}
+	trackChildErrors := false
+
+	parser.clearCRecoveryCostIfClean([]glrStack{{}}, &trackChildErrors)
+
+	if parser.crecoveryCostCompetitionConvergenceEnabled {
+		t.Fatal("clean condense retained idle convergence state")
+	}
+	if parser.crecoveryCostCompetitionRelevant {
+		t.Fatal("clean condense kept the active recovery cost state")
+	}
+	if parser.crecoveryCostCompetitionWalkEnabled {
+		t.Fatal("clean condense kept the recovery cost walk enabled")
+	}
+}
+
 func TestCAbsorbErrorRunKeepsErrorLeafNamed(t *testing.T) {
 	parser := cRecoveryElectionTestParser()
 	arena := acquireNodeArena(arenaClassFull)
@@ -1616,7 +1663,7 @@ func TestRecoveryMemoTelemetryPreservesAMD64HotLayouts(t *testing.T) {
 	if got, want := unsafe.Sizeof(Tree{}), uintptr(3240); got != want {
 		t.Fatalf("Tree size = %d, want %d", got, want)
 	}
-	if got, want := unsafe.Offsetof(Parser{}.cNodeMemoPeakTier), unsafe.Offsetof(Parser{}.crecoveryCostCompetitionRelevant)+1; got != want {
+	if got, want := unsafe.Offsetof(Parser{}.cNodeMemoPeakTier), unsafe.Offsetof(Parser{}.crecoveryCostCompetitionRelevant)+3; got != want {
 		t.Fatalf("Parser memo peak offset = %d, want %d", got, want)
 	}
 	if got, want := unsafe.Offsetof(Parser{}.fullParseRetryPassesTaken), uintptr(984); got != want {

@@ -240,20 +240,24 @@ type Parser struct {
 	// sizing rationale is measured against.
 	crecoveryReductionCandidateAttemptsPeak uint64
 	crecoveryMissingTokenTrialAttemptsPeak  uint64
-	// crecoveryCostCompetitionRelevant gates the C-recovery merge cost walks
-	// (cRecoveryMergeCostsDiffer / cRecoveryCostClassForSlot/Slice via
-	// scratch.merge.cRecoveryCost): until something cost-relevant happens in
-	// THIS parse pass, every stack's error cost is provably zero, so the cost
-	// competition cannot change any merge outcome and the O(spine) cost walks
-	// per merge candidate are pure tax. It starts false for a fresh full parse
-	// and flips true on the first event that can make costs nonzero or unequal:
-	// a stack pausing (cPaused), cHandleError running, an
-	// error/missing node being pushed, or — conservatively — any parse that
-	// can REUSE subtrees from an old tree (reused subtrees may already carry
-	// error nodes without any new pause this pass). Reset alongside
-	// crecoveryEnteredErrorState in parseInternal. A transient branch can reset
-	// it after condense when no error payload or open recovery state remains.
+	// crecoveryCostCompetitionRelevant enables recovery convergence and pending
+	// fork handling for the active recovery frontier. It starts false for a
+	// fresh full parse and flips true on the first event that can make costs
+	// nonzero or unequal: a stack pausing (cPaused), cHandleError running, an
+	// error/missing node being pushed, or — conservatively — any parse that can
+	// REUSE subtrees from an old tree. Reused subtrees may carry error nodes
+	// without a new pause in this pass. A clean condense clears the active cost
+	// state; a separate latch keeps cap-one convergence only after a pending
+	// recovery fork proves that the suffix needs it.
 	crecoveryCostCompetitionRelevant bool
+	// crecoveryCostCompetitionWalkEnabled enables the expensive recovery-cost
+	// walks for the current recovery episode. A clean condense clears this gate
+	// without changing the pending-fork convergence latch.
+	crecoveryCostCompetitionWalkEnabled bool
+	// crecoveryCostCompetitionConvergenceEnabled keeps faithful cap-one
+	// convergence active after a pending recovery fork has been observed. This
+	// is separate from the one-cycle cost walk and the active cost state.
+	crecoveryCostCompetitionConvergenceEnabled bool
 	// Recovery-memo tier and operation fields occupy existing Parser padding.
 	// Keep larger recovery-only state in the lazy cold sidecar at the tail.
 	cNodeMemoPeakTier          RecoveryNodeMemoTier
@@ -1010,7 +1014,12 @@ func (p *Parser) stopFrontierSameHeaderSummary(stacks []glrStack) string {
 	gssAttemptable := 0
 	gssWouldMerge := 0
 	pairBudgetHit := false
-	scratch := glrMergeScratch{language: p.language, cRecoveryCost: p.errorCostCompetitionEnabled()}
+	scratch := glrMergeScratch{
+		language:             p.language,
+		cRecoveryCost:        p.errorCostCompetitionEnabled() && p.crecoveryCostCompetitionRelevant,
+		cRecoveryCostWalk:    p.errorCostCompetitionEnabled() && p.crecoveryCostCompetitionWalkEnabled,
+		cRecoveryConvergence: p.errorCostCompetitionEnabled() && p.crecoveryCostCompetitionConvergenceEnabled,
+	}
 	if p.mergeScratch != nil {
 		// stopFrontierSameHeaderSummary runs synchronously inside parseInternal;
 		// borrow the active arena so pending-parent diagnostics use the same exact
@@ -1075,9 +1084,17 @@ func cRecoveryRelevantStack(stacks []glrStack) bool {
 	return false
 }
 
-// clearCRecoveryCostIfClean restores the clean merge path after condense
-// removes a transient recovery branch. A false trackChildErrors value proves
-// that this parse has not built an ERROR or MISSING node.
+func (p *Parser) markCRecoveryCostCompetitionRelevant() {
+	if p == nil {
+		return
+	}
+	p.crecoveryCostCompetitionRelevant = true
+	p.crecoveryCostCompetitionWalkEnabled = true
+}
+
+// clearCRecoveryCostIfClean ends recovery-cost walks after condense removes a
+// transient recovery branch. A false trackChildErrors value proves that this
+// parse has not built an ERROR or MISSING node.
 func (p *Parser) clearCRecoveryCostIfClean(stacks []glrStack, trackChildErrors *bool) {
 	if p == nil || !p.crecoveryCostCompetitionRelevant || trackChildErrors == nil || *trackChildErrors {
 		return
@@ -1091,6 +1108,10 @@ func (p *Parser) clearCRecoveryCostIfClean(stacks []glrStack, trackChildErrors *
 			return
 		}
 	}
+	if len(p.pendingForkStacks) != 0 || len(p.pendingFrontierForkStacks) != 0 {
+		p.crecoveryCostCompetitionConvergenceEnabled = true
+	}
+	p.crecoveryCostCompetitionWalkEnabled = false
 	p.crecoveryCostCompetitionRelevant = false
 }
 
@@ -2302,7 +2323,7 @@ func (p *Parser) tryInsertMissingSingleShift(source []byte, s *glrStack, tok Tok
 		return true
 	}
 
-	p.crecoveryCostCompetitionRelevant = true // missing-token insertion makes costs relevant
+	p.markCRecoveryCostCompetitionRelevant() // missing-token insertion makes costs relevant
 	missingTok := Token{
 		Symbol:     candidateSym,
 		StartByte:  tok.StartByte,
@@ -2869,7 +2890,7 @@ func (p *Parser) tryInsertMissingSingleShiftAtEOF(s *glrStack, tok Token, nodeCo
 		return false
 	}
 
-	p.crecoveryCostCompetitionRelevant = true // missing-token insertion makes costs relevant
+	p.markCRecoveryCostCompetitionRelevant() // missing-token insertion makes costs relevant
 	missingTok := Token{
 		Symbol:     candidateSym,
 		StartByte:  tok.StartByte,
@@ -4057,7 +4078,7 @@ func (p *Parser) materializeSkippedGapAsExtraError(s *glrStack, state StateID, t
 	// never nil here: the only caller (tryMaterializeSkippedRealGap) reaches
 	// this branch only after p.skippedRealGapContinuesSeparatedList already
 	// returned true, and that function itself returns false for a nil p.
-	p.crecoveryCostCompetitionRelevant = true
+	p.markCRecoveryCostCompetitionRelevant()
 	startPoint := stackEntryNodeEndPoint(s.top())
 	leaf := newLeafNodeInArena(arena, errorSymbol, true, s.byteOffset, tok.StartByte, startPoint, tok.StartPoint)
 	leaf.setHasError(true)
@@ -4568,7 +4589,10 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		// parse uses. Only an old tree that is itself known to have
 		// error/missing content anywhere starts the conservative true
 		// (reused subtrees may carry it in without a new pause this pass).
-		p.crecoveryCostCompetitionRelevant = incrementalOldTreeMayCarryErrorCost(reuse, oldTree)
+		initialCostRelevant := incrementalOldTreeMayCarryErrorCost(reuse, oldTree)
+		p.crecoveryCostCompetitionRelevant = initialCostRelevant
+		p.crecoveryCostCompetitionWalkEnabled = initialCostRelevant
+		p.crecoveryCostCompetitionConvergenceEnabled = false
 		p.cRecoverSharedTokenErrorModeLexed = false
 		p.cRecoverCustomResyncActive = false
 		p.cRecoverCustomResyncByte = 0
@@ -5897,7 +5921,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 					// condense step decides (ts_parser__handle_error skips the
 					// strategy-1 scan for error lookaheads and absorbs it).
 					s.cPaused = true
-					p.crecoveryCostCompetitionRelevant = true
+					p.markCRecoveryCostCompetitionRelevant()
 					if actionTiming != nil {
 						ns := recordNoActionTiming()
 						actionTiming.actionNoActionErrorNanos += ns
@@ -5951,7 +5975,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						// the condense step resumes via ts_parser__handle_error
 						// whose recover_eof wraps the stack in an ERROR root.
 						s.cPaused = true
-						p.crecoveryCostCompetitionRelevant = true
+						p.markCRecoveryCostCompetitionRelevant()
 						if actionTiming != nil {
 							ns := recordNoActionTiming()
 							actionTiming.actionNoActionErrorNanos += ns
@@ -6092,7 +6116,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 						fmt.Printf("  stack[%d] C-PAUSED: no action for sym=%d in state=%d\n", si, tok.Symbol, currentState)
 					}
 					s.cPaused = true
-					p.crecoveryCostCompetitionRelevant = true
+					p.markCRecoveryCostCompetitionRelevant()
 					if actionTiming != nil {
 						ns := recordNoActionTiming()
 						actionTiming.actionNoActionErrorNanos += ns
@@ -7264,11 +7288,11 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 	}
 	scratch.merge.language = p.language
 	scratch.merge.trace = p.glrTrace
-	// Cost gate: before anything cost-relevant has happened in this pass (see
-	// crecoveryCostCompetitionRelevant), every stack's error cost is
-	// provably zero and the merge cost competition cannot change any outcome,
-	// so skip its O(spine) walks entirely on the clean prefix of the parse.
+	// Keep convergence state after a clean recovery branch disappears. Use the
+	// separate walk gate to skip O(spine) cost walks after the one active cycle.
 	scratch.merge.cRecoveryCost = p.errorCostCompetitionEnabled() && p.crecoveryCostCompetitionRelevant
+	scratch.merge.cRecoveryCostWalk = p.errorCostCompetitionEnabled() && p.crecoveryCostCompetitionWalkEnabled
+	scratch.merge.cRecoveryConvergence = p.errorCostCompetitionEnabled() && p.crecoveryCostCompetitionConvergenceEnabled
 	scratch.merge.deferExactDedupe = languageDefersExactDedupe(p.language, p.noTreeBenchmarkOnly)
 	scratch.merge.frontierMergeHash = p.usesGenericFrontierMergeHash()
 	if p.ambiguityProfile != nil {

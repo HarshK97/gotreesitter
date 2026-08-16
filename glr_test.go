@@ -3078,6 +3078,7 @@ func TestMergeStacksCapOnePreservesDifferentCRecoveryCosts(t *testing.T) {
 	var scratch glrMergeScratch
 	scratch.perKeyCap = 1
 	scratch.cRecoveryCost = true
+	scratch.cRecoveryCostWalk = true
 	scratch.beginEquivEpoch()
 
 	result := mergeStacksWithScratch([]glrStack{ordinary, missing}, &scratch)
@@ -3106,6 +3107,7 @@ func TestMergeStacksCRecoveryCostBlocksGSSMerge(t *testing.T) {
 	var scratch glrMergeScratch
 	scratch.perKeyCap = 1
 	scratch.cRecoveryCost = true
+	scratch.cRecoveryCostWalk = true
 	scratch.beginEquivEpoch()
 
 	result := mergeStacksWithScratch([]glrStack{clean, paused}, &scratch)
@@ -3343,7 +3345,7 @@ func TestTryGSSMainMergeResultRejectsDistinctScoreBeforeMutation(t *testing.T) {
 	leftHead := left.gss.head
 	leftLinks := leftHead.linkCount()
 
-	scratch := glrMergeScratch{cRecoveryCost: true}
+	scratch := glrMergeScratch{cRecoveryCost: true, cRecoveryCostWalk: true}
 	scratch.beginEquivEpoch()
 	result := []glrStack{left}
 	merged, attempted := tryGSSMainMergeResult(&scratch, result, 0, &right)
@@ -3477,6 +3479,7 @@ func TestMergeStacksSmallCapOneScansLaterCRecoveryCostClass(t *testing.T) {
 	var scratch glrMergeScratch
 	scratch.perKeyCap = 1
 	scratch.cRecoveryCost = true
+	scratch.cRecoveryCostWalk = true
 	scratch.beginEquivEpoch()
 
 	result := mergeStacksWithScratch([]glrStack{ordinary, missingLow, missingHigh}, &scratch)
@@ -3549,6 +3552,7 @@ func TestMergeStacksSlotCapOnePreservesCRecoveryCostClasses(t *testing.T) {
 	var scratch glrMergeScratch
 	scratch.perKeyCap = 1
 	scratch.cRecoveryCost = true
+	scratch.cRecoveryCostWalk = true
 	scratch.beginEquivEpoch()
 
 	result := mergeStacksWithScratch([]glrStack{
@@ -3629,6 +3633,7 @@ func TestMergeStacksSlotCapOneTracksOverflowCRecoveryCostClasses(t *testing.T) {
 	var scratch glrMergeScratch
 	scratch.perKeyCap = 1
 	scratch.cRecoveryCost = true
+	scratch.cRecoveryCostWalk = true
 	scratch.beginEquivEpoch()
 
 	result := mergeStacksWithScratch(stacks, &scratch)
@@ -3682,6 +3687,7 @@ func TestMergeStacksLargeCapPreservesDifferentCRecoveryCosts(t *testing.T) {
 	var scratch glrMergeScratch
 	scratch.perKeyCap = maxStacksPerMergeKey + 1
 	scratch.cRecoveryCost = true
+	scratch.cRecoveryCostWalk = true
 	scratch.beginEquivEpoch()
 
 	result := mergeStacksWithScratch(stacks, &scratch)
@@ -3723,6 +3729,14 @@ func TestMergeStacksSmallFaithfulGSSUnionPreservesExtraLinks(t *testing.T) {
 			scratch: glrMergeScratch{
 				recoveryCapOneConvergence: true,
 				cRecoveryCost:             true,
+				cRecoveryCostWalk:         true,
+			},
+		},
+		{
+			name: "pending recovery convergence after cost walk",
+			scratch: glrMergeScratch{
+				recoveryCapOneConvergence: true,
+				cRecoveryConvergence:      true,
 			},
 		},
 	}
@@ -3778,8 +3792,16 @@ func TestFaithfulCapOneMergeEnabledByParsePolicy(t *testing.T) {
 		t.Fatal("recovery policy activated before error cost became relevant")
 	}
 	recoveryScratch.cRecoveryCost = true
+	recoveryScratch.cRecoveryCostWalk = true
 	if !faithfulCapOneMergeEnabled(recoveryScratch) {
 		t.Fatal("recovery policy did not activate after error cost became relevant")
+	}
+	convergenceScratch := &glrMergeScratch{
+		recoveryCapOneConvergence: true,
+		cRecoveryConvergence:      true,
+	}
+	if !faithfulCapOneMergeEnabled(convergenceScratch) {
+		t.Fatal("pending recovery convergence did not survive the cost-walk cycle")
 	}
 }
 
