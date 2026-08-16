@@ -10,6 +10,7 @@ Run the combined performance set once for each shuffle seed.
 
 Options:
   --output PATH       Append raw go test output to PATH.
+  --lock-path PATH    Host lock path. Default: /tmp/gotreesitter-run-randomized-benchmarks.lock.
   --runs N            Number of seeds to run. Default: 20.
   --seed-start N      First shuffle seed. Default: 1.
   --benchtime D       Benchmark duration. Default: 750ms.
@@ -21,6 +22,7 @@ EOF
 }
 
 output_path=""
+lock_path="/tmp/gotreesitter-run-randomized-benchmarks.lock"
 runs=20
 seed_start=1
 benchtime=750ms
@@ -36,6 +38,14 @@ while (($# > 0)); do
 			exit 2
 		fi
 		output_path=$2
+		shift 2
+		;;
+	--lock-path)
+		if (($# < 2)); then
+			printf '%s\n' "--lock-path requires a path" >&2
+			exit 2
+		fi
+		lock_path=$2
 		shift 2
 		;;
 	--runs)
@@ -118,6 +128,73 @@ if [[ -e "$output_path" ]]; then
 	printf 'output already exists: %s\n' "$output_path" >&2
 	exit 2
 fi
+
+if [[ -z "$lock_path" ]]; then
+	printf '%s\n' "--lock-path requires a path" >&2
+	exit 2
+fi
+
+if ! command -v flock >/dev/null 2>&1; then
+	printf '%s\n' 'flock is required to serialize benchmark campaigns' >&2
+	exit 2
+fi
+
+lock_dir=$(dirname -- "$lock_path")
+mkdir -p -- "$lock_dir"
+lock_fd=""
+lock_held=0
+
+release_lock() {
+	if ((lock_held == 0)); then
+		return 0
+	fi
+	: >"$lock_path" || true
+	flock -u "$lock_fd" || true
+	lock_held=0
+}
+
+exit_with_lock_status() {
+	local status=$?
+	release_lock
+	exit "$status"
+}
+
+exit_after_signal() {
+	local signal=$1
+	release_lock
+	trap - "$signal"
+	kill -s "$signal" "$$"
+}
+
+trap exit_with_lock_status EXIT
+trap 'exit_after_signal HUP' HUP
+trap 'exit_after_signal INT' INT
+trap 'exit_after_signal TERM' TERM
+
+if ! exec {lock_fd}>>"$lock_path"; then
+	printf 'cannot open benchmark lock: %s\n' "$lock_path" >&2
+	exit 2
+fi
+
+if ! flock -n "$lock_fd"; then
+	printf 'benchmark lock is busy: %s\n' "$lock_path" >&2
+	if [[ -s "$lock_path" ]]; then
+		sed 's/^/owner: /' <"$lock_path" >&2
+	else
+		printf '%s\n' 'owner: metadata unavailable' >&2
+	fi
+	exit 75
+fi
+
+lock_held=1
+lock_started=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+lock_cwd=$(pwd -P)
+{
+	printf 'pid=%s\n' "$$"
+	printf 'started=%s\n' "$lock_started"
+	printf 'cwd=%s\n' "$lock_cwd"
+	printf 'output=%s\n' "$output_path"
+} >"$lock_path"
 
 output_dir=$(dirname -- "$output_path")
 mkdir -p -- "$output_dir"
