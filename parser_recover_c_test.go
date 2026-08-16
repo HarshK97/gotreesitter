@@ -279,26 +279,35 @@ func TestCRecoveryCleanCondenseSingleStackSynchronizesMergeScratch(t *testing.T)
 func TestCRecoveryCostWalkIsOneCycle(t *testing.T) {
 	parser := &Parser{errorCostCompetition: true, mergeScratch: &glrMergeScratch{}}
 	parser.markCRecoveryCostCompetitionRelevant()
-	if !parser.crecoveryCostCompetitionWalkEnabled || !parser.crecoveryCostCompetitionConvergenceEnabled {
-		t.Fatal("recovery start did not enable the walk and convergence latches")
+	if !parser.crecoveryCostCompetitionWalkEnabled || parser.crecoveryCostCompetitionConvergenceEnabled {
+		t.Fatal("recovery start published convergence before a pending fork")
 	}
 
 	trackChildErrors := false
 	parser.clearCRecoveryCostIfClean([]glrStack{{}}, &trackChildErrors)
-	if parser.crecoveryCostCompetitionRelevant || parser.crecoveryCostCompetitionWalkEnabled {
+	if parser.crecoveryCostCompetitionRelevant || parser.crecoveryCostCompetitionWalkEnabled || parser.crecoveryCostCompetitionConvergenceEnabled {
 		t.Fatal("clean recovery exit retained the active walk")
 	}
-	if !parser.crecoveryCostCompetitionConvergenceEnabled {
-		t.Fatal("clean recovery exit discarded the semantic convergence latch")
-	}
-	if parser.mergeScratch.cRecoveryCostWalk || parser.mergeScratch.cRecoveryFallbackSuppression || !parser.mergeScratch.cRecoveryConvergence {
-		t.Fatalf("scratch cycle state walk=%t convergence=%t fallback=%t", parser.mergeScratch.cRecoveryCostWalk, parser.mergeScratch.cRecoveryConvergence, parser.mergeScratch.cRecoveryFallbackSuppression)
+	if parser.mergeScratch.cRecoveryCostWalk || parser.mergeScratch.cRecoveryConvergence || parser.mergeScratch.cRecoveryFallbackSuppression {
+		t.Fatal("clean recovery exit retained scratch state")
 	}
 
+	parser.markCRecoveryCostCompetitionRelevant()
+	parser.pendingForkStacks = []glrStack{newGLRStack(1)}
+	parser.clearCRecoveryCostIfClean([]glrStack{{}}, &trackChildErrors)
+	if !parser.crecoveryCostCompetitionConvergenceEnabled {
+		t.Fatal("clean recovery exit discarded the pending-fork convergence latch")
+	}
+	parser.syncCRecoveryMergeScratch(parser.mergeScratch)
+	if !parser.mergeScratch.cRecoveryConvergence {
+		t.Fatal("pending-fork convergence latch did not reach merge scratch")
+	}
+
+	parser.pendingForkStacks = nil
 	scratch := parserScratch{merge: *parser.mergeScratch}
 	parser.prepareParseStacksForIteration([]glrStack{newGLRStack(1)}, &scratch, nil, arenaClassFull, 0, 0, false, nil, nil)
-	if scratch.merge.cRecoveryCostWalk {
-		t.Fatal("single-stack preparation reopened the completed cost walk")
+	if scratch.merge.cRecoveryCostWalk || scratch.merge.cRecoveryConvergence || scratch.merge.cRecoveryFallbackSuppression {
+		t.Fatalf("single-stack preparation retained scratch state walk=%t convergence=%t fallback=%t", scratch.merge.cRecoveryCostWalk, scratch.merge.cRecoveryConvergence, scratch.merge.cRecoveryFallbackSuppression)
 	}
 }
 

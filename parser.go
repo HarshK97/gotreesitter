@@ -1087,10 +1087,6 @@ func (p *Parser) markCRecoveryCostCompetitionRelevant() {
 	}
 	p.crecoveryCostCompetitionRelevant = true
 	p.crecoveryCostCompetitionWalkEnabled = true
-	p.crecoveryCostCompetitionConvergenceEnabled = true
-	if p.errorCostCompetitionEnabled() {
-		p.syncCRecoveryMergeScratch(p.mergeScratch)
-	}
 }
 
 // syncCRecoveryMergeScratch publishes parser recovery state to active merge
@@ -1111,6 +1107,15 @@ func (p *Parser) syncCRecoveryMergeScratch(scratch *glrMergeScratch) {
 	scratch.cRecoveryConvergence = p.crecoveryCostCompetitionRelevant ||
 		p.crecoveryCostCompetitionConvergenceEnabled
 	scratch.cRecoveryFallbackSuppression = p.crecoveryCostCompetitionRelevant
+}
+
+func resetCRecoveryMergeScratch(scratch *glrMergeScratch) {
+	if scratch == nil {
+		return
+	}
+	scratch.cRecoveryCostWalk = false
+	scratch.cRecoveryConvergence = false
+	scratch.cRecoveryFallbackSuppression = false
 }
 
 func (p *Parser) resetCRecoveryCostCompetitionState() {
@@ -1140,11 +1145,7 @@ func clearCRecoveryMergeScratchEpisode(p *Parser, scratch *glrMergeScratch) {
 // transient recovery branch. A false trackChildErrors value proves that this
 // parse has not built an ERROR or MISSING node.
 func (p *Parser) clearCRecoveryCostIfClean(stacks []glrStack, trackChildErrors *bool) {
-	if p == nil {
-		return
-	}
-	if trackChildErrors == nil || *trackChildErrors {
-		p.syncCRecoveryMergeScratch(p.mergeScratch)
+	if p == nil || trackChildErrors == nil || *trackChildErrors {
 		return
 	}
 	if p.crecoveryCostCompetitionRelevant {
@@ -1154,13 +1155,12 @@ func (p *Parser) clearCRecoveryCostIfClean(stacks []glrStack, trackChildErrors *
 				continue
 			}
 			if s.cPaused || s.cRec != nil || s.cRecoverMissingGroup != nil {
-				p.syncCRecoveryMergeScratch(p.mergeScratch)
 				return
 			}
 		}
-	}
-	if len(p.pendingForkStacks) != 0 || len(p.pendingFrontierForkStacks) != 0 {
-		p.crecoveryCostCompetitionConvergenceEnabled = true
+		if len(p.pendingForkStacks) != 0 || len(p.pendingFrontierForkStacks) != 0 {
+			p.crecoveryCostCompetitionConvergenceEnabled = true
+		}
 	}
 	p.crecoveryCostCompetitionWalkEnabled = false
 	p.crecoveryCostCompetitionRelevant = false
@@ -7326,7 +7326,7 @@ type parseStackPrepResult struct {
 
 func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *parserScratch, arena *nodeArena, arenaClass arenaClass, maxStacks, maxStackCullTrigger int, phaseTiming bool, glrMergeNanos, glrCullNanos *int64) parseStackPrepResult {
 	result := parseStackPrepResult{stacks: stacks}
-	p.syncCRecoveryMergeScratch(&scratch.merge)
+	resetCRecoveryMergeScratch(&scratch.merge)
 	if len(stacks) == 1 {
 		if stacks[0].dead {
 			result.stop(ParseStopNoStacksAlive, false)
@@ -7345,6 +7345,7 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 		result.stop(ParseStopNoStacksAlive, false)
 		return result
 	}
+	p.syncCRecoveryMergeScratch(&scratch.merge)
 	scratch.merge.deferExactDedupe = languageDefersExactDedupe(p.language, p.noTreeBenchmarkOnly)
 	scratch.merge.frontierMergeHash = p.usesGenericFrontierMergeHash()
 	if p.ambiguityProfile != nil {
@@ -7395,8 +7396,7 @@ func (p *Parser) prepareParseStacksForIteration(stacks []glrStack, scratch *pars
 
 func (p *Parser) tryDemoteSingleLinearGSS(stacks []glrStack, scratch *parserScratch) bool {
 	if p == nil || scratch == nil || len(stacks) != 1 || stacks[0].dead ||
-		len(p.pendingForkStacks) != 0 || len(p.pendingFrontierForkStacks) != 0 ||
-		scratch.merge.cRecoveryConvergence {
+		len(p.pendingForkStacks) != 0 || len(p.pendingFrontierForkStacks) != 0 {
 		return false
 	}
 	depth := stacks[0].depth()
