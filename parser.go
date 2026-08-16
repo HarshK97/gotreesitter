@@ -240,24 +240,18 @@ type Parser struct {
 	// sizing rationale is measured against.
 	crecoveryReductionCandidateAttemptsPeak uint64
 	crecoveryMissingTokenTrialAttemptsPeak  uint64
-	// crecoveryCostCompetitionRelevant enables recovery convergence and pending
-	// fork handling for the active recovery frontier. It starts false for a
+	// crecoveryCostCompetitionRelevant enables recovery convergence for the
+	// active recovery frontier. It starts false for a
 	// fresh full parse and flips true on the first event that can make costs
 	// nonzero or unequal: a stack pausing (cPaused), cHandleError running, an
 	// error/missing node being pushed, or — conservatively — any parse that can
 	// REUSE subtrees from an old tree. Reused subtrees may carry error nodes
 	// without a new pause in this pass. A clean condense clears the active cost
-	// state; a separate latch keeps cap-one convergence only after a pending
-	// recovery fork proves that the suffix needs it.
+	// state.
 	crecoveryCostCompetitionRelevant bool
 	// crecoveryCostCompetitionWalkEnabled enables the expensive recovery-cost
-	// walks for the current recovery episode. A clean condense clears this gate
-	// without changing the pending-fork convergence latch.
+	// walks for the current recovery episode. A clean condense clears this gate.
 	crecoveryCostCompetitionWalkEnabled bool
-	// crecoveryCostCompetitionConvergenceEnabled keeps faithful cap-one
-	// convergence active after a pending recovery fork has been observed. This
-	// is separate from the one-cycle cost walk and the active cost state.
-	crecoveryCostCompetitionConvergenceEnabled bool
 	// Recovery-memo tier and operation fields occupy existing Parser padding.
 	// Keep larger recovery-only state in the lazy cold sidecar at the tail.
 	cNodeMemoPeakTier          RecoveryNodeMemoTier
@@ -1105,8 +1099,7 @@ func (p *Parser) syncCRecoveryMergeScratch(scratch *glrMergeScratch) {
 		return
 	}
 	scratch.cRecoveryCostWalk = p.crecoveryCostCompetitionWalkEnabled
-	scratch.cRecoveryConvergence = p.crecoveryCostCompetitionRelevant ||
-		p.crecoveryCostCompetitionConvergenceEnabled
+	scratch.cRecoveryConvergence = p.crecoveryCostCompetitionRelevant
 	scratch.cRecoveryFallbackSuppression = p.crecoveryCostCompetitionRelevant
 }
 
@@ -1126,21 +1119,7 @@ func (p *Parser) resetCRecoveryCostCompetitionState() {
 	}
 	p.crecoveryCostCompetitionRelevant = false
 	p.crecoveryCostCompetitionWalkEnabled = false
-	p.crecoveryCostCompetitionConvergenceEnabled = false
 	p.syncCRecoveryMergeScratch(p.mergeScratch)
-}
-
-// clearCRecoveryMergeScratchEpisode clears transient walk and fallback state
-// while retaining the convergence latch that the clean suffix established.
-func clearCRecoveryMergeScratchEpisode(p *Parser, scratch *glrMergeScratch) {
-	if scratch == nil {
-		return
-	}
-	scratch.cRecoveryCostWalk = false
-	scratch.cRecoveryFallbackSuppression = false
-	if p == nil || !p.crecoveryCostCompetitionConvergenceEnabled {
-		scratch.cRecoveryConvergence = false
-	}
 }
 
 // clearCRecoveryCostIfClean ends recovery-cost walks after condense removes a
@@ -1160,13 +1139,10 @@ func (p *Parser) clearCRecoveryCostIfClean(stacks []glrStack, trackChildErrors *
 				return
 			}
 		}
-		if len(p.pendingForkStacks) != 0 || len(p.pendingFrontierForkStacks) != 0 {
-			p.crecoveryCostCompetitionConvergenceEnabled = true
-		}
 	}
 	p.crecoveryCostCompetitionWalkEnabled = false
 	p.crecoveryCostCompetitionRelevant = false
-	clearCRecoveryMergeScratchEpisode(p, p.mergeScratch)
+	p.syncCRecoveryMergeScratch(p.mergeScratch)
 }
 
 func stopCondenseGatingString(errorCostCompetitionEnabled, anyReduced, condenseRelevant, condenseRan, condenseResumed bool, stacks []glrStack) string {
@@ -4653,7 +4629,6 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		initialCostRelevant := incrementalOldTreeMayCarryErrorCost(reuse, oldTree)
 		p.crecoveryCostCompetitionRelevant = initialCostRelevant
 		p.crecoveryCostCompetitionWalkEnabled = initialCostRelevant
-		p.crecoveryCostCompetitionConvergenceEnabled = false
 		p.cRecoverSharedTokenErrorModeLexed = false
 		p.cRecoverCustomResyncActive = false
 		p.cRecoverCustomResyncByte = 0

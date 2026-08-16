@@ -7,6 +7,11 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Fixed
+
+- End recovery convergence after a clean condense. Pending forks no longer
+  keep clean C initializer suffixes on the recovery merge path.
+
 ## [0.51.0] - 2026-08-16
 
 ### Added
