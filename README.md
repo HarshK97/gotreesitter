@@ -807,9 +807,12 @@ Pull request #732 remains open. Its continuous-integration-only change
 separates query-fleet smoke tests from regular shards and is not part of this
 release.
 
-Detailed shipped evidence lives in [CHANGELOG.md](CHANGELOG.md). Planned minor
-releases are batched on Thursdays; the immutable-tag process and exceptions are
-documented in [docs/releasing.md](docs/releasing.md).
+Detailed shipped evidence lives in [CHANGELOG.md](CHANGELOG.md). Standard minor
+releases may ship on any day after the exact commit on `main` passes the full
+hosted continuous integration workflow. Require complete correctness and
+performance evidence; do not use a calendar delay as a replacement for release
+evidence. The immutable-tag process and urgent-patch exception are documented in
+[docs/releasing.md](docs/releasing.md).
 
 ### Now — cleanup, ownership, and explainability
 

@@ -39,11 +39,11 @@ for tags and release notes while still in `0.x`.
   with generated end-of-file behavior. The probe now checks the emitted layout
   without injecting an end-of-file state.
 
-### CI
+### Continuous integration (CI)
 
-- [PR #732](https://github.com/odvcencio/gotreesitter/pull/732) remains open.
-  It separates query-fleet smoke tests from regular shards and is not part of
-  this release.
+- [Pull request (PR) #732](https://github.com/odvcencio/gotreesitter/pull/732)
+  remains open. Its CI-only change separates query-fleet smoke tests from
+  regular shards and is not part of this release.
 
 ### Open work
 
