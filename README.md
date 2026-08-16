@@ -803,9 +803,9 @@ This release adds strict pooled file parsing and strict one-shot tagging. It
 also bounds generalized LR (GLR) recovery state retention and resets recovery
 state across parser lifecycle boundaries.
 
-Pull request #732 remains open. Its continuous-integration-only change
-separates query-fleet smoke tests from regular shards and is not part of this
-release.
+The project merged [pull request #732](https://github.com/odvcencio/gotreesitter/pull/732).
+Its continuous-integration-only change separates query-fleet smoke tests from
+regular shards and is not part of this release.
 
 Detailed shipped evidence lives in [CHANGELOG.md](CHANGELOG.md). Standard minor
 releases may ship on any day after the exact commit on `main` passes the full

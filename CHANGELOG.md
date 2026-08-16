@@ -41,9 +41,9 @@ for tags and release notes while still in `0.x`.
 
 ### Continuous integration (CI)
 
-- [Pull request (PR) #732](https://github.com/odvcencio/gotreesitter/pull/732)
-  remains open. Its CI-only change separates query-fleet smoke tests from
-  regular shards and is not part of this release.
+- The project merged [pull request (PR) #732](https://github.com/odvcencio/gotreesitter/pull/732).
+  Its CI-only change separates query-fleet smoke tests from regular shards and
+  is not part of this release.
 
 ### Open work
 
