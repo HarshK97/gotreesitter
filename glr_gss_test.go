@@ -2,8 +2,18 @@ package gotreesitter
 
 import (
 	"fmt"
+	"os"
+	"runtime"
+	"strconv"
 	"testing"
 	"unsafe"
+)
+
+var (
+	benchmarkPendingStackBuffer      []glrStack
+	benchmarkResetPendingStackBuffer = func(stacks []glrStack) []glrStack {
+		return resetPendingStackBuffer(stacks, true)
+	}
 )
 
 func gssNodeWithExtraLinks(node gssNode, links ...gssMainLink) *gssNode {
@@ -1063,6 +1073,240 @@ func TestGSSScratchRecycleForParseReusesClearedSlots(t *testing.T) {
 	}
 	if scratch.peakUsed != 1 || scratch.usedTotal != 1 {
 		t.Fatalf("allocation high-water peak=%d used=%d", scratch.peakUsed, scratch.usedTotal)
+	}
+}
+
+func TestResetPendingStackBufferRetainsAndClearsSmallBuffer(t *testing.T) {
+	backing := make([]glrStack, 2)
+	backing[0].gss.head = &gssNode{}
+	backing[0].entries = []stackEntry{{state: 1}}
+	backing[1].cRec = &cRecoverState{}
+
+	got := resetPendingStackBuffer(backing[:1], false)
+
+	if len(got) != 0 || cap(got) != cap(backing) {
+		t.Fatalf("reset len/cap = %d/%d, want 0/%d", len(got), cap(got), cap(backing))
+	}
+	for i := range backing {
+		if backing[i].gss.head != nil || backing[i].entries != nil || backing[i].cRec != nil {
+			t.Fatalf("backing slot %d retained stack references", i)
+		}
+	}
+}
+
+func TestResetPendingStackBufferDropsOversizedBufferWithoutScan(t *testing.T) {
+	backing := make([]glrStack, 1, maxRetainedPendingStackCap+1)
+	head := &gssNode{}
+	backing[0].gss.head = head
+
+	got := resetPendingStackBuffer(backing, true)
+
+	if got != nil {
+		t.Fatalf("oversized reset retained cap %d, want nil", cap(got))
+	}
+	if backing[0].gss.head != head {
+		t.Fatal("oversized reset scanned the buffer before dropping it")
+	}
+}
+
+func BenchmarkResetPendingStackBuffer(b *testing.B) {
+	const count = maxRetainedPendingStackCap + 1
+	size := int64(count) * int64(unsafe.Sizeof(glrStack{}))
+
+	b.Run("drop_oversized", func(b *testing.B) {
+		backing := make([]glrStack, 0, count)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			benchmarkPendingStackBuffer = benchmarkResetPendingStackBuffer(backing)
+			if benchmarkPendingStackBuffer != nil {
+				b.Fatal("oversized buffer was retained")
+			}
+		}
+	})
+	b.Run("clear_oversized", func(b *testing.B) {
+		backing := make([]glrStack, 0, count)
+		b.SetBytes(size)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			clear(backing[:cap(backing)])
+			backing = backing[:0]
+		}
+		benchmarkPendingStackBuffer = backing
+	})
+}
+
+func pendingStackLifecycleBenchmarkCount(b *testing.B) int {
+	b.Helper()
+	const defaultCount = maxRetainedPendingStackCap + 1
+	raw := os.Getenv("GOT_BENCH_PENDING_STACK_COUNT")
+	if raw == "" {
+		return defaultCount
+	}
+	count, err := strconv.Atoi(raw)
+	if err != nil || count <= maxRetainedPendingStackCap {
+		b.Fatalf("GOT_BENCH_PENDING_STACK_COUNT = %q, want an integer above %d", raw, maxRetainedPendingStackCap)
+	}
+	return count
+}
+
+func reportBenchmarkGCs(b *testing.B, before uint32) {
+	b.Helper()
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
+	if b.N > 0 {
+		b.ReportMetric(float64(after.NumGC-before)/float64(b.N), "gc/op")
+	}
+}
+
+func BenchmarkPendingStackProductionLifecycle(b *testing.B) {
+	count := pendingStackLifecycleBenchmarkCount(b)
+	bytesPerCycle := int64(count) * int64(unsafe.Sizeof(glrStack{}))
+
+	b.Run("grow_drain_production_demotion_append", func(b *testing.B) {
+		parser := &Parser{}
+		var scratch parserScratch
+		stacks := make([]glrStack, 1)
+		runtime.GC()
+		var before runtime.MemStats
+		runtime.ReadMemStats(&before)
+		b.ReportAllocs()
+		b.SetBytes(bytesPerCycle)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			for len(parser.pendingForkStacks) < count {
+				parser.pendingForkStacks = append(parser.pendingForkStacks, glrStack{})
+			}
+			parser.pendingForkStacks = parser.pendingForkStacks[:0]
+			stacks[0] = glrStack{gss: buildGSSStack([]stackEntry{{state: 1}}, &scratch.gss)}
+			if !parser.tryDemoteSingleLinearGSS(stacks, &scratch) {
+				b.Fatal("production demotion failed")
+			}
+			parser.pendingForkStacks = append(parser.pendingForkStacks, glrStack{})
+			parser.pendingForkStacks = parser.pendingForkStacks[:0]
+		}
+		b.StopTimer()
+		reportBenchmarkGCs(b, before.NumGC)
+		benchmarkPendingStackBuffer = parser.pendingForkStacks
+	})
+
+	b.Run("grow_drain_pool_release_reacquire_append", func(b *testing.B) {
+		pool := NewParserPool(buildArithmeticLanguage())
+		parser := pool.checkout()
+		pool.release(parser)
+		parser = nil
+		runtime.GC()
+		var before runtime.MemStats
+		runtime.ReadMemStats(&before)
+		b.ReportAllocs()
+		b.SetBytes(bytesPerCycle)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			parser = pool.checkout()
+			for len(parser.pendingForkStacks) < count {
+				parser.pendingForkStacks = append(parser.pendingForkStacks, glrStack{})
+			}
+			parser.pendingForkStacks = parser.pendingForkStacks[:0]
+			pool.release(parser)
+			parser = pool.checkout()
+			parser.pendingForkStacks = append(parser.pendingForkStacks, glrStack{})
+			parser.pendingForkStacks = parser.pendingForkStacks[:0]
+			pool.release(parser)
+		}
+		b.StopTimer()
+		reportBenchmarkGCs(b, before.NumGC)
+		parser = pool.checkout()
+		benchmarkPendingStackBuffer = parser.pendingForkStacks
+		pool.release(parser)
+	})
+}
+
+func TestParserDemotionBoundsOversizedPendingStackBuffers(t *testing.T) {
+	var scratch parserScratch
+	stacks := []glrStack{{
+		gss: buildGSSStack([]stackEntry{{state: 1}}, &scratch.gss),
+	}}
+	parser := &Parser{}
+	forkHead := &gssNode{}
+	forkBacking := make([]glrStack, 1, maxRetainedPendingStackCap+1)
+	forkBacking[0].gss.head = forkHead
+	parser.pendingForkStacks = forkBacking[:0]
+	frontierHead := &gssNode{}
+	frontierBacking := make([]glrStack, 1, maxRetainedPendingStackCap+1)
+	frontierBacking[0].gss.head = frontierHead
+	parser.pendingFrontierForkStacks = frontierBacking[:0]
+
+	if !parser.tryDemoteSingleLinearGSS(stacks, &scratch) {
+		t.Fatal("tryDemoteSingleLinearGSS() = false")
+	}
+	cold := parser.forestDeclineMemo
+	if cold == nil {
+		t.Fatal("oversized production demotion did not allocate the cold sidecar")
+	}
+	if forkBacking[0].gss.head != forkHead || frontierBacking[0].gss.head != frontierHead {
+		t.Fatal("production demotion scanned an oversized backing array")
+	}
+	if got := cap(parser.pendingForkStacks); got != maxRetainedPendingStackCap {
+		t.Fatalf("pending fork capacity = %d, want %d", got, maxRetainedPendingStackCap)
+	}
+	if got := cap(parser.pendingFrontierForkStacks); got != maxRetainedPendingStackCap {
+		t.Fatalf("pending frontier capacity = %d, want %d", got, maxRetainedPendingStackCap)
+	}
+	if got := cap(cold.pendingForkStackReserve); got != maxRetainedPendingStackCap {
+		t.Fatalf("cold pending fork reserve capacity = %d, want %d", got, maxRetainedPendingStackCap)
+	}
+	if got := cap(cold.pendingFrontierForkStackReserve); got != maxRetainedPendingStackCap {
+		t.Fatalf("cold pending frontier reserve capacity = %d, want %d", got, maxRetainedPendingStackCap)
+	}
+	forkReserve := &parser.pendingForkStacks[:cap(parser.pendingForkStacks)][0]
+	frontierReserve := &parser.pendingFrontierForkStacks[:cap(parser.pendingFrontierForkStacks)][0]
+	if got := &cold.pendingForkStackReserve[:cap(cold.pendingForkStackReserve)][0]; got != forkReserve {
+		t.Fatalf("cold pending fork reserve = %p, want %p", got, forkReserve)
+	}
+	if got := &cold.pendingFrontierForkStackReserve[:cap(cold.pendingFrontierForkStackReserve)][0]; got != frontierReserve {
+		t.Fatalf("cold pending frontier reserve = %p, want %p", got, frontierReserve)
+	}
+	for len(parser.pendingForkStacks) < maxRetainedPendingStackCap {
+		parser.pendingForkStacks = append(parser.pendingForkStacks, glrStack{})
+	}
+	for len(parser.pendingFrontierForkStacks) < maxRetainedPendingStackCap {
+		parser.pendingFrontierForkStacks = append(parser.pendingFrontierForkStacks, glrStack{})
+	}
+	parser.pendingForkStacks[0].gss.head = &gssNode{}
+	parser.pendingFrontierForkStacks[0].gss.head = &gssNode{}
+	parser.pendingForkStacks = parser.pendingForkStacks[:0]
+	parser.pendingFrontierForkStacks = parser.pendingFrontierForkStacks[:0]
+	stacks[0] = glrStack{gss: buildGSSStack([]stackEntry{{state: 2}}, &scratch.gss)}
+
+	if !parser.tryDemoteSingleLinearGSS(stacks, &scratch) {
+		t.Fatal("second tryDemoteSingleLinearGSS() = false")
+	}
+	if got := &parser.pendingForkStacks[:cap(parser.pendingForkStacks)][0]; got != forkReserve {
+		t.Fatalf("pending fork reserve changed from %p to %p", forkReserve, got)
+	}
+	if got := &parser.pendingFrontierForkStacks[:cap(parser.pendingFrontierForkStacks)][0]; got != frontierReserve {
+		t.Fatalf("pending frontier reserve changed from %p to %p", frontierReserve, got)
+	}
+	if parser.pendingForkStacks[:cap(parser.pendingForkStacks)][0].gss.head != nil ||
+		parser.pendingFrontierForkStacks[:cap(parser.pendingFrontierForkStacks)][0].gss.head != nil {
+		t.Fatal("bounded reserves retained stack references")
+	}
+}
+
+func TestParserDemotionKeepsPendingReserveSidecarLazy(t *testing.T) {
+	var scratch parserScratch
+	stacks := []glrStack{{
+		gss: buildGSSStack([]stackEntry{{state: 1}}, &scratch.gss),
+	}}
+	parser := &Parser{
+		pendingForkStacks:         make([]glrStack, 0, maxRetainedPendingStackCap),
+		pendingFrontierForkStacks: make([]glrStack, 0, maxRetainedPendingStackCap),
+	}
+
+	if !parser.tryDemoteSingleLinearGSS(stacks, &scratch) {
+		t.Fatal("tryDemoteSingleLinearGSS() = false")
+	}
+	if parser.forestDeclineMemo != nil {
+		t.Fatal("bounded production demotion allocated the cold sidecar")
 	}
 }
 

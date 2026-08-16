@@ -7,6 +7,105 @@ import (
 	"testing"
 )
 
+func TestParserPoolReleaseScrubsPendingStackBuffers(t *testing.T) {
+	pool := NewParserPool(buildArithmeticLanguage())
+	parser := pool.checkout()
+
+	small := make([]glrStack, 1, maxRetainedPendingStackCap)
+	small[0].gss.head = &gssNode{}
+	large := make([]glrStack, 1, maxRetainedPendingStackCap+1)
+	large[0].gss.head = &gssNode{}
+	parser.pendingForkStacks = small
+	parser.pendingFrontierForkStacks = large
+
+	pool.release(parser)
+
+	if parser.pendingForkStacks == nil || len(parser.pendingForkStacks) != 0 || cap(parser.pendingForkStacks) != cap(small) {
+		t.Fatalf("pooled small pending buffer = len %d, cap %d, want len 0, cap %d", len(parser.pendingForkStacks), cap(parser.pendingForkStacks), cap(small))
+	}
+	if parser.pendingForkStacks[:cap(parser.pendingForkStacks)][0].gss.head != nil {
+		t.Fatal("pooled small pending buffer retained a stack reference")
+	}
+	if parser.pendingFrontierForkStacks != nil {
+		t.Fatalf("pooled oversized pending buffer cap = %d, want nil", cap(parser.pendingFrontierForkStacks))
+	}
+	if parser.forestDeclineMemo != nil {
+		t.Fatal("pool release allocated the cold sidecar")
+	}
+}
+
+func TestParserPoolReleaseScrubsColdPendingStackReserves(t *testing.T) {
+	pool := NewParserPool(buildArithmeticLanguage())
+	parser := pool.checkout()
+	cold := parser.ensureParserColdState()
+	forkReserve := make([]glrStack, 1, maxRetainedPendingStackCap)
+	forkReserve[0].gss.head = &gssNode{}
+	cold.pendingForkStackReserve = forkReserve[:0]
+	parser.pendingForkStacks = cold.pendingForkStackReserve
+	frontierReserve := make([]glrStack, 1, maxRetainedPendingStackCap)
+	frontierReserve[0].gss.head = &gssNode{}
+	cold.pendingFrontierForkStackReserve = frontierReserve[:0]
+	frontierBacking := make([]glrStack, 1, maxRetainedPendingStackCap+1)
+	frontierHead := &gssNode{}
+	frontierBacking[0].gss.head = frontierHead
+	parser.pendingFrontierForkStacks = frontierBacking[:0]
+
+	pool.release(parser)
+
+	if frontierBacking[0].gss.head != frontierHead {
+		t.Fatal("pool release scanned the oversized active buffer")
+	}
+	if got := cap(parser.pendingForkStacks); got != maxRetainedPendingStackCap {
+		t.Fatalf("pooled pending fork capacity = %d, want %d", got, maxRetainedPendingStackCap)
+	}
+	if got := cap(parser.pendingFrontierForkStacks); got != maxRetainedPendingStackCap {
+		t.Fatalf("pooled pending frontier capacity = %d, want %d", got, maxRetainedPendingStackCap)
+	}
+	if forkReserve[0].gss.head != nil || frontierReserve[0].gss.head != nil {
+		t.Fatal("pool release retained stack references in the cold reserves")
+	}
+	if cold.pendingForkStackReserve[:cap(cold.pendingForkStackReserve)][0].gss.head != nil ||
+		cold.pendingFrontierForkStackReserve[:cap(cold.pendingFrontierForkStackReserve)][0].gss.head != nil {
+		t.Fatal("cold reserve state retained stack references")
+	}
+
+	reacquired := pool.checkout()
+	if len(reacquired.pendingForkStacks) != 0 || len(reacquired.pendingFrontierForkStacks) != 0 {
+		t.Fatal("reacquired parser retained pending stacks")
+	}
+	if cap(reacquired.pendingForkStacks) > maxRetainedPendingStackCap ||
+		cap(reacquired.pendingFrontierForkStacks) > maxRetainedPendingStackCap {
+		t.Fatal("reacquired parser retained oversized pending capacity")
+	}
+	pool.release(reacquired)
+}
+
+func TestReleaseSnippetParserScrubsPendingStackBuffers(t *testing.T) {
+	parser := NewParser(buildArithmeticLanguage())
+
+	small := make([]glrStack, 1, maxRetainedPendingStackCap)
+	small[0].gss.head = &gssNode{}
+	large := make([]glrStack, 1, maxRetainedPendingStackCap+1)
+	large[0].gss.head = &gssNode{}
+	parser.pendingForkStacks = small
+	parser.pendingFrontierForkStacks = large
+
+	releaseSnippetParser(parser)
+
+	if parser.pendingForkStacks == nil || len(parser.pendingForkStacks) != 0 || cap(parser.pendingForkStacks) != cap(small) {
+		t.Fatalf("snippet small pending buffer = len %d, cap %d, want len 0, cap %d", len(parser.pendingForkStacks), cap(parser.pendingForkStacks), cap(small))
+	}
+	if parser.pendingForkStacks[:cap(parser.pendingForkStacks)][0].gss.head != nil {
+		t.Fatal("snippet small pending buffer retained a stack reference")
+	}
+	if parser.pendingFrontierForkStacks != nil {
+		t.Fatalf("snippet oversized pending buffer cap = %d, want nil", cap(parser.pendingFrontierForkStacks))
+	}
+	if parser.forestDeclineMemo != nil {
+		t.Fatal("snippet release allocated the cold sidecar")
+	}
+}
+
 func TestParserPoolParseConcurrent(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	pool := NewParserPool(lang)

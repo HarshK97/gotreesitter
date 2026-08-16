@@ -179,6 +179,10 @@ const (
 	// pathological GLR bursts that would otherwise allocate huge slot tables
 	// before the next memory-budget check can run.
 	maxMergeAliveStacks = 4096
+	// Keep ordinary pending-stack scratch hot, but drop pathological buffers.
+	// Clearing a million-slot empty buffer at every GSS recycle can cost more
+	// than the parse work between recycles.
+	maxRetainedPendingStackCap = maxMergeAliveStacks
 	// Keep ordinary merge scratch hot while dropping pathological buffers after
 	// the parse. glrMergeSlot is intentionally large because it owns fixed
 	// per-key survivor arrays.
@@ -196,6 +200,83 @@ const (
 	// bounding how far a pathological grind can run before it is stopped.
 	mergeBudgetPollStride = 4096
 )
+
+// resetPendingStackBuffer clears stack references before the buffer is reused.
+// Drop oversized buffers at parse and pool boundaries.
+func resetPendingStackBuffer(stacks []glrStack, dropOversized bool) []glrStack {
+	if dropOversized && cap(stacks) > maxRetainedPendingStackCap {
+		return nil
+	}
+	if cap(stacks) > 0 {
+		clear(stacks[:cap(stacks)])
+	}
+	return stacks[:0]
+}
+
+// resetPendingStackBufferAfterDemotion bounds active-parse retention without
+// rebuilding ordinary fork capacity after each oversized burst. The reserve
+// remains reachable while an append grows stacks onto a larger backing array.
+func resetPendingStackBufferAfterDemotion(stacks []glrStack, reserve *[]glrStack) []glrStack {
+	if cap(stacks) <= maxRetainedPendingStackCap {
+		return resetPendingStackBuffer(stacks, false)
+	}
+	if reserve == nil {
+		return nil
+	}
+	if cap(*reserve) != maxRetainedPendingStackCap {
+		*reserve = make([]glrStack, 0, maxRetainedPendingStackCap)
+	} else {
+		*reserve = resetPendingStackBuffer(*reserve, false)
+	}
+	return (*reserve)[:0]
+}
+
+// resetPendingStackBufferAtBoundary releases oversized active storage and
+// scrubs a bounded reserve before the parser starts or enters a pool.
+func resetPendingStackBufferAtBoundary(stacks []glrStack, reserve *[]glrStack) []glrStack {
+	stacks = resetPendingStackBuffer(stacks, true)
+	if reserve == nil || cap(*reserve) == 0 {
+		return stacks
+	}
+	if cap(stacks) > 0 && &stacks[:1][0] == &(*reserve)[:1][0] {
+		*reserve = stacks
+		return stacks
+	}
+	*reserve = resetPendingStackBuffer(*reserve, false)
+	return (*reserve)[:0]
+}
+
+func (p *Parser) resetPendingStackBuffersAfterDemotion() {
+	if p == nil {
+		return
+	}
+	cold := p.forestDeclineMemo
+	if cold == nil && (cap(p.pendingForkStacks) > maxRetainedPendingStackCap ||
+		cap(p.pendingFrontierForkStacks) > maxRetainedPendingStackCap) {
+		cold = p.ensureParserColdState()
+	}
+	if cold == nil {
+		p.pendingForkStacks = resetPendingStackBufferAfterDemotion(p.pendingForkStacks, nil)
+		p.pendingFrontierForkStacks = resetPendingStackBufferAfterDemotion(p.pendingFrontierForkStacks, nil)
+		return
+	}
+	p.pendingForkStacks = resetPendingStackBufferAfterDemotion(p.pendingForkStacks, &cold.pendingForkStackReserve)
+	p.pendingFrontierForkStacks = resetPendingStackBufferAfterDemotion(p.pendingFrontierForkStacks, &cold.pendingFrontierForkStackReserve)
+}
+
+func (p *Parser) resetPendingStackBuffersAtBoundary() {
+	if p == nil {
+		return
+	}
+	cold := p.forestDeclineMemo
+	if cold == nil {
+		p.pendingForkStacks = resetPendingStackBufferAtBoundary(p.pendingForkStacks, nil)
+		p.pendingFrontierForkStacks = resetPendingStackBufferAtBoundary(p.pendingFrontierForkStacks, nil)
+		return
+	}
+	p.pendingForkStacks = resetPendingStackBufferAtBoundary(p.pendingForkStacks, &cold.pendingForkStackReserve)
+	p.pendingFrontierForkStacks = resetPendingStackBufferAtBoundary(p.pendingFrontierForkStacks, &cold.pendingFrontierForkStackReserve)
+}
 
 type glrMergeScratch struct {
 	result                    []glrStack
