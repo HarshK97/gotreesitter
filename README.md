@@ -797,15 +797,15 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.50.1**.
+The current release is **v0.51.0**.
 
-This release consolidates parser correctness, recovery bounds, parser-core
-bytecode, fact extraction bytecode, replay caches, randomized benchmarks, and
-V10 fleet controls. It also adds opt-in Lean 4 support and scanner corrections
-for JavaScript, TypeScript, and TSX.
+This release adds strict pooled file parsing and strict one-shot tagging. It
+also bounds generalized LR (GLR) recovery state retention and resets recovery
+state across parser lifecycle boundaries.
 
-This patch restores single-language grammar-subset builds and checks each
-registered grammar subset in continuous integration.
+Pull request #732 remains open. Its continuous-integration-only change
+separates query-fleet smoke tests from regular shards and is not part of this
+release.
 
 Detailed shipped evidence lives in [CHANGELOG.md](CHANGELOG.md). Planned minor
 releases are batched on Thursdays; the immutable-tag process and exceptions are

@@ -7,6 +7,60 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+## [0.51.0] - 2026-08-16
+
+### Added
+
+- Add `grammars.ParseFilePooledStrict`. It rejects a partial tree and returns
+  the parser stop error.
+
+- Add `Tagger.TagStrict`. It returns tags only after a complete parse and
+  preserves parser errors.
+
+### Changed
+
+- Bound pending fork-stack retention. Keep a bounded reserve during parsing,
+  and drop oversized storage at parse and parser-pool boundaries.
+
+- Separate C-runtime recovery walk, convergence, and fallback state. Reset
+  these states across parse, retry, snippet, pool, and iteration boundaries.
+
+- Provision dense reach marks when generalized LR (GLR) slabs grow. Owned nodes
+  no longer use the pointer-map fallback.
+
+### Fixed
+
+- Clear stale C-runtime recovery state after a clean condense. A clean suffix
+  no longer inherits an active recovery-cost gate.
+
+### Tests
+
+- Align the Application Binary Interface version 14 (ABI-14) lexer-mode probe
+  with generated end-of-file behavior. The probe now checks the emitted layout
+  without injecting an end-of-file state.
+
+### CI
+
+- [PR #732](https://github.com/odvcencio/gotreesitter/pull/732) remains open.
+  It separates query-fleet smoke tests from regular shards and is not part of
+  this release.
+
+### Open work
+
+The following items remain open:
+
+- [Issue #454](https://github.com/odvcencio/gotreesitter/issues/454) tracks
+  downstream field reports.
+
+- [Issue #576](https://github.com/odvcencio/gotreesitter/issues/576) tracks
+  Swift recovery divergence.
+
+- [Issue #586](https://github.com/odvcencio/gotreesitter/issues/586) tracks
+  shared GLR error-cost bounds.
+
+- [Issue #728](https://github.com/odvcencio/gotreesitter/issues/728) tracks
+  external-scanner incremental reuse.
+
 ## [0.50.1] - 2026-08-14
 
 ### Fixed
@@ -4663,7 +4717,8 @@ Warm-reuse throughput ~10 % higher. 206-grammar parity green under `GTS_PARITY_M
 - Initial standalone pure-Go runtime module.
 - External scanner VM foundation and base parser/lexer/tree infrastructure.
 
-[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.50.1...HEAD
+[Unreleased]: https://github.com/odvcencio/gotreesitter/compare/v0.51.0...HEAD
+[0.51.0]: https://github.com/odvcencio/gotreesitter/compare/v0.50.1...v0.51.0
 [0.50.1]: https://github.com/odvcencio/gotreesitter/compare/v0.50.0...v0.50.1
 [0.50.0]: https://github.com/odvcencio/gotreesitter/compare/v0.49.0...v0.50.0
 [0.49.0]: https://github.com/odvcencio/gotreesitter/compare/v0.48.1...v0.49.0
