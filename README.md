@@ -797,19 +797,22 @@ Test suite covers: smoke tests (206 grammars), golden S-expression snapshots, hi
 
 ## Roadmap
 
-The current release is **v0.50.1**.
+The current release is **v0.51.0**.
 
-This release consolidates parser correctness, recovery bounds, parser-core
-bytecode, fact extraction bytecode, replay caches, randomized benchmarks, and
-V10 fleet controls. It also adds opt-in Lean 4 support and scanner corrections
-for JavaScript, TypeScript, and TSX.
+This release adds strict pooled file parsing and strict one-shot tagging. It
+also bounds generalized LR (GLR) recovery state retention and resets recovery
+state across parser lifecycle boundaries.
 
-This patch restores single-language grammar-subset builds and checks each
-registered grammar subset in continuous integration.
+The project merged [pull request #732](https://github.com/odvcencio/gotreesitter/pull/732).
+Its continuous-integration-only change separates query-fleet smoke tests from
+regular shards and is not part of this release.
 
-Detailed shipped evidence lives in [CHANGELOG.md](CHANGELOG.md). Planned minor
-releases are batched on Thursdays; the immutable-tag process and exceptions are
-documented in [docs/releasing.md](docs/releasing.md).
+Detailed shipped evidence lives in [CHANGELOG.md](CHANGELOG.md). Standard minor
+releases may ship on any day after the exact commit on `main` passes the full
+hosted continuous integration workflow. Require complete correctness and
+performance evidence; do not use a calendar delay as a replacement for release
+evidence. The immutable-tag process and urgent-patch exception are documented in
+[docs/releasing.md](docs/releasing.md).
 
 ### Now — cleanup, ownership, and explainability
 
