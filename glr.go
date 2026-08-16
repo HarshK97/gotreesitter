@@ -201,11 +201,10 @@ const (
 	mergeBudgetPollStride = 4096
 )
 
-// resetPendingStackBuffer releases stack references before the buffer is
-// reused. Oversized buffers are dropped with their references because scanning
-// them before dropping them only delays the same garbage collection.
-func resetPendingStackBuffer(stacks []glrStack) []glrStack {
-	if cap(stacks) > maxRetainedPendingStackCap {
+// resetPendingStackBuffer clears stack references before the buffer is reused.
+// Drop oversized buffers only at parse and pool boundaries.
+func resetPendingStackBuffer(stacks []glrStack, dropOversized bool) []glrStack {
+	if dropOversized && cap(stacks) > maxRetainedPendingStackCap {
 		return nil
 	}
 	if cap(stacks) > 0 {

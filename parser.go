@@ -1697,6 +1697,8 @@ func resetSnippetParser(parser *Parser) {
 	// its reuseCursor.topLevel/*Node alive, preventing arena reclamation.
 	parser.reuseCursor.releaseNodeRefs()
 	parser.reuseScratch.releaseNodeRefs()
+	parser.pendingForkStacks = resetPendingStackBuffer(parser.pendingForkStacks, true)
+	parser.pendingFrontierForkStacks = resetPendingStackBuffer(parser.pendingFrontierForkStacks, true)
 }
 
 // InferredRootSymbol returns the root symbol inferred during parser
@@ -4456,8 +4458,8 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	defer p.restoreParseModeFlags(parseFlags)
 	p.clearCurrentExternalTokenCheckpoint()
 	p.resetNormalizationStats()
-	p.pendingForkStacks = resetPendingStackBuffer(p.pendingForkStacks)
-	p.pendingFrontierForkStacks = resetPendingStackBuffer(p.pendingFrontierForkStacks)
+	p.pendingForkStacks = resetPendingStackBuffer(p.pendingForkStacks, true)
+	p.pendingFrontierForkStacks = resetPendingStackBuffer(p.pendingFrontierForkStacks, true)
 	if p.logger != nil {
 		p.logf(ParserLogParse, "start len=%d incremental=%t", len(source), reuse != nil || oldTree != nil)
 	}
@@ -7339,8 +7341,9 @@ func (p *Parser) recycleDemotedGSS(stacks []glrStack, scratch *parserScratch) {
 		clear(stacks[:cap(stacks)])
 		stacks[0] = live
 	}
-	p.pendingForkStacks = resetPendingStackBuffer(p.pendingForkStacks)
-	p.pendingFrontierForkStacks = resetPendingStackBuffer(p.pendingFrontierForkStacks)
+	// Retain active-parse capacity to avoid repeated fork-burst allocations.
+	p.pendingForkStacks = resetPendingStackBuffer(p.pendingForkStacks, false)
+	p.pendingFrontierForkStacks = resetPendingStackBuffer(p.pendingFrontierForkStacks, false)
 	scratch.gss.recycleForParse()
 }
 

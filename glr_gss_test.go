@@ -8,7 +8,9 @@ import (
 
 var (
 	benchmarkPendingStackBuffer      []glrStack
-	benchmarkResetPendingStackBuffer = resetPendingStackBuffer
+	benchmarkResetPendingStackBuffer = func(stacks []glrStack) []glrStack {
+		return resetPendingStackBuffer(stacks, true)
+	}
 )
 
 func gssNodeWithExtraLinks(node gssNode, links ...gssMainLink) *gssNode {
@@ -1077,7 +1079,7 @@ func TestResetPendingStackBufferRetainsAndClearsSmallBuffer(t *testing.T) {
 	backing[0].entries = []stackEntry{{state: 1}}
 	backing[1].cRec = &cRecoverState{}
 
-	got := resetPendingStackBuffer(backing[:1])
+	got := resetPendingStackBuffer(backing[:1], false)
 
 	if len(got) != 0 || cap(got) != cap(backing) {
 		t.Fatalf("reset len/cap = %d/%d, want 0/%d", len(got), cap(got), cap(backing))
@@ -1094,13 +1096,27 @@ func TestResetPendingStackBufferDropsOversizedBufferWithoutScan(t *testing.T) {
 	head := &gssNode{}
 	backing[0].gss.head = head
 
-	got := resetPendingStackBuffer(backing)
+	got := resetPendingStackBuffer(backing, true)
 
 	if got != nil {
 		t.Fatalf("oversized reset retained cap %d, want nil", cap(got))
 	}
 	if backing[0].gss.head != head {
 		t.Fatal("oversized reset scanned the buffer before dropping it")
+	}
+}
+
+func TestResetPendingStackBufferRetainsOversizedActiveCapacity(t *testing.T) {
+	backing := make([]glrStack, 1, maxRetainedPendingStackCap+1)
+	backing[0].gss.head = &gssNode{}
+
+	got := resetPendingStackBuffer(backing, false)
+
+	if len(got) != 0 || cap(got) != cap(backing) {
+		t.Fatalf("active reset len/cap = %d/%d, want 0/%d", len(got), cap(got), cap(backing))
+	}
+	if backing[0].gss.head != nil {
+		t.Fatal("active reset retained a stack reference")
 	}
 }
 
@@ -1127,6 +1143,44 @@ func BenchmarkResetPendingStackBuffer(b *testing.B) {
 			backing = backing[:0]
 		}
 		benchmarkPendingStackBuffer = backing
+	})
+	b.Run("demotion_reuse", func(b *testing.B) {
+		var pending []glrStack
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			for len(pending) < count {
+				pending = append(pending, glrStack{})
+			}
+			pending = resetPendingStackBuffer(pending, false)
+			for len(pending) < count {
+				pending = append(pending, glrStack{})
+			}
+			pending = resetPendingStackBuffer(pending, false)
+		}
+		benchmarkPendingStackBuffer = pending
+	})
+	b.Run("full_lifecycle", func(b *testing.B) {
+		b.SetBytes(size)
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			var pending []glrStack
+			for len(pending) < count {
+				pending = append(pending, glrStack{})
+			}
+			pending = resetPendingStackBuffer(pending, false)
+			for len(pending) < count {
+				pending = append(pending, glrStack{})
+			}
+			pending = resetPendingStackBuffer(pending, false)
+			pending = resetPendingStackBuffer(pending, true)
+			for len(pending) < count {
+				pending = append(pending, glrStack{})
+			}
+			pending = resetPendingStackBuffer(pending, true)
+			benchmarkPendingStackBuffer = pending
+		}
 	})
 }
 

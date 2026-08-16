@@ -7,6 +7,53 @@ import (
 	"testing"
 )
 
+func TestParserPoolReleaseScrubsPendingStackBuffers(t *testing.T) {
+	pool := NewParserPool(buildArithmeticLanguage())
+	parser := pool.checkout()
+
+	small := make([]glrStack, 1, maxRetainedPendingStackCap)
+	small[0].gss.head = &gssNode{}
+	large := make([]glrStack, 1, maxRetainedPendingStackCap+1)
+	large[0].gss.head = &gssNode{}
+	parser.pendingForkStacks = small
+	parser.pendingFrontierForkStacks = large
+
+	pool.release(parser)
+
+	if parser.pendingForkStacks == nil || len(parser.pendingForkStacks) != 0 || cap(parser.pendingForkStacks) != cap(small) {
+		t.Fatalf("pooled small pending buffer = len %d, cap %d, want len 0, cap %d", len(parser.pendingForkStacks), cap(parser.pendingForkStacks), cap(small))
+	}
+	if parser.pendingForkStacks[:cap(parser.pendingForkStacks)][0].gss.head != nil {
+		t.Fatal("pooled small pending buffer retained a stack reference")
+	}
+	if parser.pendingFrontierForkStacks != nil {
+		t.Fatalf("pooled oversized pending buffer cap = %d, want nil", cap(parser.pendingFrontierForkStacks))
+	}
+}
+
+func TestReleaseSnippetParserScrubsPendingStackBuffers(t *testing.T) {
+	parser := NewParser(buildArithmeticLanguage())
+
+	small := make([]glrStack, 1, maxRetainedPendingStackCap)
+	small[0].gss.head = &gssNode{}
+	large := make([]glrStack, 1, maxRetainedPendingStackCap+1)
+	large[0].gss.head = &gssNode{}
+	parser.pendingForkStacks = small
+	parser.pendingFrontierForkStacks = large
+
+	releaseSnippetParser(parser)
+
+	if parser.pendingForkStacks == nil || len(parser.pendingForkStacks) != 0 || cap(parser.pendingForkStacks) != cap(small) {
+		t.Fatalf("snippet small pending buffer = len %d, cap %d, want len 0, cap %d", len(parser.pendingForkStacks), cap(parser.pendingForkStacks), cap(small))
+	}
+	if parser.pendingForkStacks[:cap(parser.pendingForkStacks)][0].gss.head != nil {
+		t.Fatal("snippet small pending buffer retained a stack reference")
+	}
+	if parser.pendingFrontierForkStacks != nil {
+		t.Fatalf("snippet oversized pending buffer cap = %d, want nil", cap(parser.pendingFrontierForkStacks))
+	}
+}
+
 func TestParserPoolParseConcurrent(t *testing.T) {
 	lang := buildArithmeticLanguage()
 	pool := NewParserPool(lang)
