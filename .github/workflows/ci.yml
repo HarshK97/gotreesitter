@@ -155,7 +155,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
 
@@ -163,11 +163,11 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Root Package Race Tests, Examples, and Fuzz Targets (shard ${{ matrix.shard }} of 4)
+      - name: Root Package Race Tests, Examples, and Fuzz Targets (shard ${{ matrix.shard }} of 5)
         run: |
           set -euo pipefail
           mkdir -p harness_out/root-race
-          pattern="$(bash .github/scripts/root_race_shard.sh regex "${{ matrix.shard }}" 4)"
+          pattern="$(bash .github/scripts/root_race_shard.sh regex "${{ matrix.shard }}" 5)"
           go test . -race -count=1 -timeout 15m -run "$pattern" -json |
             tee "harness_out/root-race/shard-${{ matrix.shard }}.json"
 
