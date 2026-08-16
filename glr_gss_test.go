@@ -1238,6 +1238,10 @@ func TestParserDemotionBoundsOversizedPendingStackBuffers(t *testing.T) {
 	if !parser.tryDemoteSingleLinearGSS(stacks, &scratch) {
 		t.Fatal("tryDemoteSingleLinearGSS() = false")
 	}
+	cold := parser.forestDeclineMemo
+	if cold == nil {
+		t.Fatal("oversized production demotion did not allocate the cold sidecar")
+	}
 	if forkBacking[0].gss.head != forkHead || frontierBacking[0].gss.head != frontierHead {
 		t.Fatal("production demotion scanned an oversized backing array")
 	}
@@ -1247,8 +1251,20 @@ func TestParserDemotionBoundsOversizedPendingStackBuffers(t *testing.T) {
 	if got := cap(parser.pendingFrontierForkStacks); got != maxRetainedPendingStackCap {
 		t.Fatalf("pending frontier capacity = %d, want %d", got, maxRetainedPendingStackCap)
 	}
+	if got := cap(cold.pendingForkStackReserve); got != maxRetainedPendingStackCap {
+		t.Fatalf("cold pending fork reserve capacity = %d, want %d", got, maxRetainedPendingStackCap)
+	}
+	if got := cap(cold.pendingFrontierForkStackReserve); got != maxRetainedPendingStackCap {
+		t.Fatalf("cold pending frontier reserve capacity = %d, want %d", got, maxRetainedPendingStackCap)
+	}
 	forkReserve := &parser.pendingForkStacks[:cap(parser.pendingForkStacks)][0]
 	frontierReserve := &parser.pendingFrontierForkStacks[:cap(parser.pendingFrontierForkStacks)][0]
+	if got := &cold.pendingForkStackReserve[:cap(cold.pendingForkStackReserve)][0]; got != forkReserve {
+		t.Fatalf("cold pending fork reserve = %p, want %p", got, forkReserve)
+	}
+	if got := &cold.pendingFrontierForkStackReserve[:cap(cold.pendingFrontierForkStackReserve)][0]; got != frontierReserve {
+		t.Fatalf("cold pending frontier reserve = %p, want %p", got, frontierReserve)
+	}
 	for len(parser.pendingForkStacks) < maxRetainedPendingStackCap {
 		parser.pendingForkStacks = append(parser.pendingForkStacks, glrStack{})
 	}
@@ -1273,6 +1289,24 @@ func TestParserDemotionBoundsOversizedPendingStackBuffers(t *testing.T) {
 	if parser.pendingForkStacks[:cap(parser.pendingForkStacks)][0].gss.head != nil ||
 		parser.pendingFrontierForkStacks[:cap(parser.pendingFrontierForkStacks)][0].gss.head != nil {
 		t.Fatal("bounded reserves retained stack references")
+	}
+}
+
+func TestParserDemotionKeepsPendingReserveSidecarLazy(t *testing.T) {
+	var scratch parserScratch
+	stacks := []glrStack{{
+		gss: buildGSSStack([]stackEntry{{state: 1}}, &scratch.gss),
+	}}
+	parser := &Parser{
+		pendingForkStacks:         make([]glrStack, 0, maxRetainedPendingStackCap),
+		pendingFrontierForkStacks: make([]glrStack, 0, maxRetainedPendingStackCap),
+	}
+
+	if !parser.tryDemoteSingleLinearGSS(stacks, &scratch) {
+		t.Fatal("tryDemoteSingleLinearGSS() = false")
+	}
+	if parser.forestDeclineMemo != nil {
+		t.Fatal("bounded production demotion allocated the cold sidecar")
 	}
 }
 

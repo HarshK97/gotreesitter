@@ -150,8 +150,7 @@ func (pp *ParserPool) release(p *Parser) {
 	p.reuseScratch.releaseNodeRefs()
 	// Drop pending stack references and pathological retained capacity while
 	// the parser is idle in the pool.
-	p.pendingForkStacks = resetPendingStackBufferAtBoundary(p.pendingForkStacks, &p.pendingForkStackReserve)
-	p.pendingFrontierForkStacks = resetPendingStackBufferAtBoundary(p.pendingFrontierForkStacks, &p.pendingFrontierForkStackReserve)
+	p.resetPendingStackBuffersAtBoundary()
 	// Return the recovery sub-parser so its reuseCursor *Node refs (and the
 	// arena they pin) are released while preserving its language-level caches.
 	p.clearRecoveryParser()

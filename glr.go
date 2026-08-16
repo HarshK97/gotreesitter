@@ -246,6 +246,38 @@ func resetPendingStackBufferAtBoundary(stacks []glrStack, reserve *[]glrStack) [
 	return (*reserve)[:0]
 }
 
+func (p *Parser) resetPendingStackBuffersAfterDemotion() {
+	if p == nil {
+		return
+	}
+	cold := p.forestDeclineMemo
+	if cold == nil && (cap(p.pendingForkStacks) > maxRetainedPendingStackCap ||
+		cap(p.pendingFrontierForkStacks) > maxRetainedPendingStackCap) {
+		cold = p.ensureParserColdState()
+	}
+	if cold == nil {
+		p.pendingForkStacks = resetPendingStackBufferAfterDemotion(p.pendingForkStacks, nil)
+		p.pendingFrontierForkStacks = resetPendingStackBufferAfterDemotion(p.pendingFrontierForkStacks, nil)
+		return
+	}
+	p.pendingForkStacks = resetPendingStackBufferAfterDemotion(p.pendingForkStacks, &cold.pendingForkStackReserve)
+	p.pendingFrontierForkStacks = resetPendingStackBufferAfterDemotion(p.pendingFrontierForkStacks, &cold.pendingFrontierForkStackReserve)
+}
+
+func (p *Parser) resetPendingStackBuffersAtBoundary() {
+	if p == nil {
+		return
+	}
+	cold := p.forestDeclineMemo
+	if cold == nil {
+		p.pendingForkStacks = resetPendingStackBufferAtBoundary(p.pendingForkStacks, nil)
+		p.pendingFrontierForkStacks = resetPendingStackBufferAtBoundary(p.pendingFrontierForkStacks, nil)
+		return
+	}
+	p.pendingForkStacks = resetPendingStackBufferAtBoundary(p.pendingForkStacks, &cold.pendingForkStackReserve)
+	p.pendingFrontierForkStacks = resetPendingStackBufferAtBoundary(p.pendingFrontierForkStacks, &cold.pendingFrontierForkStackReserve)
+}
+
 type glrMergeScratch struct {
 	result                    []glrStack
 	slots                     []glrMergeSlot

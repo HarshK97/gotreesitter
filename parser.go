@@ -453,15 +453,13 @@ type Parser struct {
 	// pendingForkStacks buffers extra stacks produced by gated multi-link GSS
 	// reductions. The dispatch loop drains them into stacks for same-token
 	// re-dispatch.
-	pendingForkStacks               []glrStack
-	pendingFrontierForkStacks       []glrStack
-	pendingForkStackReserve         []glrStack
-	pendingFrontierForkStackReserve []glrStack
-	disablePostReduceForkMerge      bool
-	stopActionDiag                  *parseStopActionDiagnostic
-	// forestDeclineMemo is the lazy parser cold sidecar. It stores the bounded
-	// forest-decline memo and difficult recovery-memo operation state. Parsers
-	// that use neither feature pay no sidecar allocation.
+	pendingForkStacks          []glrStack
+	pendingFrontierForkStacks  []glrStack
+	disablePostReduceForkMerge bool
+	stopActionDiag             *parseStopActionDiagnostic
+	// forestDeclineMemo is the lazy parser cold sidecar. It stores the forest
+	// memo, recovery state, telemetry, and bounded pending-stack reserves.
+	// Parsers that use none of these features pay no sidecar allocation.
 	// Explicit ParseForestExperimental calls intentionally ignore this memo.
 	forestDeclineMemo *parserColdState
 }
@@ -1699,8 +1697,7 @@ func resetSnippetParser(parser *Parser) {
 	// its reuseCursor.topLevel/*Node alive, preventing arena reclamation.
 	parser.reuseCursor.releaseNodeRefs()
 	parser.reuseScratch.releaseNodeRefs()
-	parser.pendingForkStacks = resetPendingStackBufferAtBoundary(parser.pendingForkStacks, &parser.pendingForkStackReserve)
-	parser.pendingFrontierForkStacks = resetPendingStackBufferAtBoundary(parser.pendingFrontierForkStacks, &parser.pendingFrontierForkStackReserve)
+	parser.resetPendingStackBuffersAtBoundary()
 }
 
 // InferredRootSymbol returns the root symbol inferred during parser
@@ -4460,8 +4457,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	defer p.restoreParseModeFlags(parseFlags)
 	p.clearCurrentExternalTokenCheckpoint()
 	p.resetNormalizationStats()
-	p.pendingForkStacks = resetPendingStackBufferAtBoundary(p.pendingForkStacks, &p.pendingForkStackReserve)
-	p.pendingFrontierForkStacks = resetPendingStackBufferAtBoundary(p.pendingFrontierForkStacks, &p.pendingFrontierForkStackReserve)
+	p.resetPendingStackBuffersAtBoundary()
 	if p.logger != nil {
 		p.logf(ParserLogParse, "start len=%d incremental=%t", len(source), reuse != nil || oldTree != nil)
 	}
@@ -7345,8 +7341,7 @@ func (p *Parser) recycleDemotedGSS(stacks []glrStack, scratch *parserScratch) {
 	}
 	// Keep one bounded reserve for later fork bursts. Drop an oversized active
 	// backing array without scanning it before the GSS slabs are recycled.
-	p.pendingForkStacks = resetPendingStackBufferAfterDemotion(p.pendingForkStacks, &p.pendingForkStackReserve)
-	p.pendingFrontierForkStacks = resetPendingStackBufferAfterDemotion(p.pendingFrontierForkStacks, &p.pendingFrontierForkStackReserve)
+	p.resetPendingStackBuffersAfterDemotion()
 	scratch.gss.recycleForParse()
 }
 
