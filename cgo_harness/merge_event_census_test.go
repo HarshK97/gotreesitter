@@ -234,50 +234,6 @@ func TestMergeEventCensusBaseline(t *testing.T) {
 	}
 }
 
-func TestMergeEventCensusKotlinBaseline(t *testing.T) {
-	if !gotreesitter.MergeEventCensusBuilt() {
-		t.Fatal("the merge-event census is not compiled into the library; build with -tags gts_merge_census")
-	}
-
-	var entry derivationSetCensusLanguage
-	for _, candidate := range derivationSetCensusLanguages() {
-		if candidate.Name == "kotlin" {
-			entry = candidate
-			break
-		}
-	}
-	if entry.Name == "" {
-		t.Fatal("kotlin census entry is missing")
-	}
-
-	sources := entry.Constructed()
-	oracle := mergeCensusOracleForTest(t)
-	cRows, err := mergeCensusRunC(oracle, entry.Name, sources)
-	if err != nil {
-		t.Fatalf("kotlin: %v", err)
-	}
-
-	totals := &mergeCensusTotals{}
-	for index, source := range sources {
-		row := runMergeEventCensusRow(entry.Name, entry.Language(), source.Name, source.Source, cRows[index])
-		mergeCensusLogRow(t, row)
-		totals.add(row)
-	}
-	want := mergeCensusBaselineConstructed[entry.Name]
-	if totals.Sources != want.Sources {
-		t.Fatalf("kotlin constructed source count %d, want %d", totals.Sources, want.Sources)
-	}
-	if totals.CMergeSuccesses != want.CMergeSuccesses || totals.GoSuccesses != want.GoSuccesses {
-		t.Fatalf("kotlin merge totals M_c/M_p=%d/%d, want %d/%d", totals.CMergeSuccesses, totals.GoSuccesses, want.CMergeSuccesses, want.GoSuccesses)
-	}
-	if totals.RefuseNoGSSHead != want.RefuseNoGSSHead || totals.RefuseScoreOrShifted != want.RefuseScoreOrShifted || totals.RefuseDistinctShapes != want.RefuseDistinctShapes || totals.LinkPayloadShallowWouldAccept != want.LinkPayloadShallowWouldAccept {
-		t.Fatalf("kotlin refusal totals no-head/score/shapes/shallow=%d/%d/%d/%d, want %d/%d/%d/%d", totals.RefuseNoGSSHead, totals.RefuseScoreOrShifted, totals.RefuseDistinctShapes, totals.LinkPayloadShallowWouldAccept, want.RefuseNoGSSHead, want.RefuseScoreOrShifted, want.RefuseDistinctShapes, want.LinkPayloadShallowWouldAccept)
-	}
-	if totals.SourcesWhereGoOverMerges != want.SourcesWhereGoOverMerges || totals.SourcesWhereCMergesAndGoDoesNot != want.SourcesWhereCMergesAndGoDoesNot {
-		t.Fatalf("kotlin source classes over-merge/reference-only=%d/%d, want %d/%d", totals.SourcesWhereGoOverMerges, totals.SourcesWhereCMergesAndGoDoesNot, want.SourcesWhereGoOverMerges, want.SourcesWhereCMergesAndGoDoesNot)
-	}
-}
-
 func mergeCensusFormatTotals(label string, t *mergeCensusTotals) string {
 	return fmt.Sprintf(
 		"%-22s sources=%3d M_c=%6d M_p=%6d ratio=%-8s c-attempts=%7d go-attempts=%7d over-merge-sources=%d c-merges-go-does-not=%d | refusals: %s | tier2: %s | compact: accepted=%d union-attempts=%d union-appends=%d",

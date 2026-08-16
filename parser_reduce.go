@@ -926,8 +926,9 @@ func (p *Parser) completeConflictReduceFrontier(source []byte, s *glrStack, tok 
 
 func (p *Parser) pushOrExtendErrorNode(s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) {
 	if p != nil {
-		// An ERROR node is entering a stack. Costs can be nonzero from here.
-		p.markCRecoveryCostCompetitionRelevant()
+		// An ERROR node is entering a stack: costs can be nonzero from here on
+		// (sticky per-parse gate, see crecoveryCostCompetitionRelevant).
+		p.crecoveryCostCompetitionRelevant = true
 	}
 	if s != nil {
 		top := stackEntryNode(s.top())
@@ -975,7 +976,7 @@ func (p *Parser) pushOrExtendErrorNode(s *glrStack, state StateID, tok Token, no
 func (p *Parser) pushLexErrorRunLeaf(s *glrStack, state StateID, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) {
 	if p != nil {
 		// See pushOrExtendErrorNode: error content makes costs relevant.
-		p.markCRecoveryCostCompetitionRelevant()
+		p.crecoveryCostCompetitionRelevant = true
 	}
 	leaf := newLeafNodeInArena(arena, errorSymbol, true,
 		tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)

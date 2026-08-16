@@ -301,14 +301,17 @@ type glrMergeScratch struct {
 	// active recovery-cost episode, without extending that policy into a clean
 	// pending-fork convergence suffix.
 	cRecoveryFallbackSuppression bool
-	audit                        *runtimeAudit
-	equivEpoch                   uint32
-	gssPointerEpoch              uint32
-	equivCache                   []glrNodeEquivCacheEntry
-	stackEquivCache              []glrStackEquivCacheEntry
-	spineEquivCache              []glrSpineEquivCacheEntry
-	frontierHashCache            []glrStackFrontierHashCacheEntry
-	cErrorCost                   map[*Node]glrCErrorCostEntry
+	// cRecoveryCost preserves source compatibility for the main-branch merge
+	// tests. Parser paths use the three split fields above.
+	cRecoveryCost     bool
+	audit             *runtimeAudit
+	equivEpoch        uint32
+	gssPointerEpoch   uint32
+	equivCache        []glrNodeEquivCacheEntry
+	stackEquivCache   []glrStackEquivCacheEntry
+	spineEquivCache   []glrSpineEquivCacheEntry
+	frontierHashCache []glrStackFrontierHashCacheEntry
+	cErrorCost        map[*Node]glrCErrorCostEntry
 	// cPrefixPath is the descent scratch for merge-side GSS prefix-aggregate
 	// fills (cStackPrefixCostForMerge, parser_recover_c.go); the aggregates
 	// live on gssNode, validated against gssPrefixAggGen. reset clears the full
@@ -2192,7 +2195,7 @@ func cStackErrorCostForMergeCached(scratch *glrMergeScratch, lang *Language, s *
 }
 
 func cRecoveryMergeCostsDiffer(scratch *glrMergeScratch, a, b *glrStack) bool {
-	if scratch == nil || !scratch.cRecoveryCostWalk || a == nil || b == nil {
+	if scratch == nil || (!scratch.cRecoveryCostWalk && !scratch.cRecoveryCost) || a == nil || b == nil {
 		return false
 	}
 	if !stacksHeaderEquivalent(a, b) {
@@ -4729,7 +4732,7 @@ func preserveCapOneStackInSlot(result *[]glrStack, slot *glrMergeSlot, stack glr
 func faithfulCapOneMergeEnabled(scratch *glrMergeScratch) bool {
 	return glrFaithfulCapOneMerge ||
 		(scratch != nil &&
-			(scratch.faithfulCapOne || (scratch.recoveryCapOneConvergence && scratch.cRecoveryConvergence)))
+			(scratch.faithfulCapOne || (scratch.recoveryCapOneConvergence && (scratch.cRecoveryConvergence || scratch.cRecoveryCost))))
 }
 
 func mergeSlotTrackedCount(slot *glrMergeSlot) int {
@@ -4779,7 +4782,7 @@ func mergeSlotPositionForIndex(slot *glrMergeSlot, idx int) int {
 }
 
 func cRecoveryCostClassForSlot(scratch *glrMergeScratch, result []glrStack, slot *glrMergeSlot, stack *glrStack) (sameCostIndex int, preserveNewCost bool) {
-	if scratch == nil || !scratch.cRecoveryCostWalk || slot == nil || stack == nil || mergeSlotTrackedCount(slot) == 0 {
+	if scratch == nil || (!scratch.cRecoveryCostWalk && !scratch.cRecoveryCost) || slot == nil || stack == nil || mergeSlotTrackedCount(slot) == 0 {
 		return -1, false
 	}
 	candidateCost := cStackErrorCostForMergeCached(scratch, scratch.language, stack)
@@ -4798,7 +4801,7 @@ func cRecoveryCostClassForSlot(scratch *glrMergeScratch, result []glrStack, slot
 }
 
 func cRecoveryCostClassForSlice(scratch *glrMergeScratch, result []glrStack, key glrMergeKey, stack *glrStack) (sameCostIndex int, preserveNewCost bool) {
-	if scratch == nil || !scratch.cRecoveryCostWalk || stack == nil {
+	if scratch == nil || (!scratch.cRecoveryCostWalk && !scratch.cRecoveryCost) || stack == nil {
 		return -1, false
 	}
 	candidateCost := cStackErrorCostForMergeCached(scratch, scratch.language, stack)
@@ -5138,7 +5141,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 				}
 				continue
 			}
-			if scratch != nil && scratch.cRecoveryFallbackSuppression {
+			if scratch != nil && (scratch.cRecoveryFallbackSuppression || scratch.cRecoveryCost) {
 				continue
 			}
 		}
@@ -5327,7 +5330,7 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 				}
 				continue
 			}
-			if scratch != nil && scratch.cRecoveryFallbackSuppression {
+			if scratch != nil && (scratch.cRecoveryFallbackSuppression || scratch.cRecoveryCost) {
 				continue
 			}
 		}
@@ -5805,6 +5808,7 @@ func (s *glrMergeScratch) reset() {
 	s.cRecoveryCostWalk = false
 	s.cRecoveryConvergence = false
 	s.cRecoveryFallbackSuppression = false
+	s.cRecoveryCost = false
 	s.audit = nil
 	s.budgetBytes = 0
 	// Pooled scratch must not retain a live *Parser across parses (GC

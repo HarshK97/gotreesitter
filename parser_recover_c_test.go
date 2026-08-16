@@ -205,6 +205,7 @@ func TestCRecoveryCleanCondenseDropsIdleConvergenceState(t *testing.T) {
 	parser := &Parser{
 		crecoveryCostCompetitionRelevant:    true,
 		crecoveryCostCompetitionWalkEnabled: true,
+		mergeScratch:                        &glrMergeScratch{cRecoveryCostWalk: true, cRecoveryConvergence: true, cRecoveryFallbackSuppression: true},
 	}
 	trackChildErrors := false
 
@@ -218,6 +219,9 @@ func TestCRecoveryCleanCondenseDropsIdleConvergenceState(t *testing.T) {
 	}
 	if parser.crecoveryCostCompetitionWalkEnabled {
 		t.Fatal("clean condense kept the recovery cost walk enabled")
+	}
+	if parser.mergeScratch.cRecoveryCostWalk || parser.mergeScratch.cRecoveryConvergence || parser.mergeScratch.cRecoveryFallbackSuppression {
+		t.Fatal("clean condense kept recovery scratch state")
 	}
 }
 
@@ -282,6 +286,10 @@ func TestCRecoveryCostWalkIsOneCycle(t *testing.T) {
 	if !parser.crecoveryCostCompetitionWalkEnabled || parser.crecoveryCostCompetitionConvergenceEnabled {
 		t.Fatal("recovery start published convergence before a pending fork")
 	}
+	parser.syncCRecoveryMergeScratch(parser.mergeScratch)
+	if !parser.mergeScratch.cRecoveryCostWalk {
+		t.Fatal("recovery start did not publish the active cost walk")
+	}
 
 	trackChildErrors := false
 	parser.clearCRecoveryCostIfClean([]glrStack{{}}, &trackChildErrors)
@@ -299,8 +307,8 @@ func TestCRecoveryCostWalkIsOneCycle(t *testing.T) {
 		t.Fatal("clean recovery exit discarded the pending-fork convergence latch")
 	}
 	parser.syncCRecoveryMergeScratch(parser.mergeScratch)
-	if !parser.mergeScratch.cRecoveryConvergence {
-		t.Fatal("pending-fork convergence latch did not reach merge scratch")
+	if parser.mergeScratch.cRecoveryCostWalk || parser.mergeScratch.cRecoveryFallbackSuppression || !parser.mergeScratch.cRecoveryConvergence {
+		t.Fatalf("pending-fork convergence latch did not reach merge scratch walk=%t convergence=%t fallback=%t", parser.mergeScratch.cRecoveryCostWalk, parser.mergeScratch.cRecoveryConvergence, parser.mergeScratch.cRecoveryFallbackSuppression)
 	}
 
 	parser.pendingForkStacks = nil

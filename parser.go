@@ -1097,6 +1097,7 @@ func (p *Parser) syncCRecoveryMergeScratch(scratch *glrMergeScratch) {
 	}
 	scratch.language = p.language
 	scratch.trace = p.glrTrace
+	scratch.cRecoveryCost = false
 	if !p.errorCostCompetitionEnabled() {
 		scratch.cRecoveryCostWalk = false
 		scratch.cRecoveryConvergence = false
@@ -1116,6 +1117,7 @@ func resetCRecoveryMergeScratch(scratch *glrMergeScratch) {
 	scratch.cRecoveryCostWalk = false
 	scratch.cRecoveryConvergence = false
 	scratch.cRecoveryFallbackSuppression = false
+	scratch.cRecoveryCost = false
 }
 
 func (p *Parser) resetCRecoveryCostCompetitionState() {
