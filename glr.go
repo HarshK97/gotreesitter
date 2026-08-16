@@ -209,21 +209,25 @@ type glrMergeScratch struct {
 	deferExactDedupe          bool
 	frontierMergeHash         bool
 	trace                     bool
-	// cRecoveryCost keeps active recovery-cost-sensitive merge behavior enabled.
-	cRecoveryCost bool
 	// cRecoveryCostWalk enables the expensive per-candidate error-cost walks.
 	cRecoveryCostWalk bool
-	// cRecoveryConvergence keeps faithful cap-one convergence active after a
-	// pending recovery fork has proved that the clean suffix needs it.
+	// cRecoveryConvergence enables faithful cap-one convergence during an active
+	// recovery episode or its pending-fork suffix. Fallback suppression has its
+	// own latch because the clean pending-fork suffix must not inherit the old
+	// active-cost fallback policy.
 	cRecoveryConvergence bool
-	audit                *runtimeAudit
-	equivEpoch           uint32
-	gssPointerEpoch      uint32
-	equivCache           []glrNodeEquivCacheEntry
-	stackEquivCache      []glrStackEquivCacheEntry
-	spineEquivCache      []glrSpineEquivCacheEntry
-	frontierHashCache    []glrStackFrontierHashCacheEntry
-	cErrorCost           map[*Node]glrCErrorCostEntry
+	// cRecoveryFallbackSuppression suppresses the non-GSS fallback after an
+	// active recovery-cost episode, without extending that policy into a clean
+	// pending-fork convergence suffix.
+	cRecoveryFallbackSuppression bool
+	audit                        *runtimeAudit
+	equivEpoch                   uint32
+	gssPointerEpoch              uint32
+	equivCache                   []glrNodeEquivCacheEntry
+	stackEquivCache              []glrStackEquivCacheEntry
+	spineEquivCache              []glrSpineEquivCacheEntry
+	frontierHashCache            []glrStackFrontierHashCacheEntry
+	cErrorCost                   map[*Node]glrCErrorCostEntry
 	// cPrefixPath is the descent scratch for merge-side GSS prefix-aggregate
 	// fills (cStackPrefixCostForMerge, parser_recover_c.go); the aggregates
 	// live on gssNode, validated against gssPrefixAggGen. reset clears the full
@@ -2135,20 +2139,18 @@ func cRecoveryMergeCostsDifferForParser(p *Parser, a, b *glrStack) bool {
 	scratch := p.mergeScratch
 	if scratch == nil {
 		local := glrMergeScratch{
-			language:             p.language,
-			trace:                p.glrTrace,
-			cRecoveryCost:        true,
-			cRecoveryCostWalk:    true,
-			cRecoveryConvergence: true,
-			cErrorCostParser:     p,
+			language:          p.language,
+			trace:             p.glrTrace,
+			cRecoveryCostWalk: true,
+			cErrorCostParser:  p,
 		}
 		return cRecoveryMergeCostsDiffer(&local, a, b)
 	}
 	scratch.language = p.language
 	scratch.trace = p.glrTrace
-	scratch.cRecoveryCost = true
 	scratch.cRecoveryCostWalk = true
 	scratch.cRecoveryConvergence = true
+	scratch.cRecoveryFallbackSuppression = true
 	return cRecoveryMergeCostsDiffer(scratch, a, b)
 }
 
@@ -3274,7 +3276,7 @@ func gssMainCanMergeForParser(p *Parser, a, b *glrStack) bool {
 	}
 	if cRecoveryMergeCostsDifferForParser(p, a, b) {
 		if p != nil && p.glrTrace {
-			scratch := glrMergeScratch{language: p.language, trace: true, cRecoveryCost: true, cRecoveryCostWalk: true, cRecoveryConvergence: true}
+			scratch := glrMergeScratch{language: p.language, trace: true, cRecoveryCostWalk: true, cRecoveryConvergence: true}
 			traceCRecoverMergeDecision(&scratch, "gss-direct", "reject-cost", a, b)
 		}
 		return false
@@ -3289,7 +3291,7 @@ func gssMainCanMergeForParserPhase(p *Parser, a, b *glrStack, phase string) bool
 	if cRecoveryMergeCostsDifferForParser(p, a, b) {
 		workCountRecordGSSReject(p, phase, workCountConvergenceReasonErrorCost, "GSS merge rejected by recovery cost", a, b)
 		if p != nil && p.glrTrace {
-			scratch := glrMergeScratch{language: p.language, trace: true, cRecoveryCost: true, cRecoveryCostWalk: true, cRecoveryConvergence: true}
+			scratch := glrMergeScratch{language: p.language, trace: true, cRecoveryCostWalk: true, cRecoveryConvergence: true}
 			traceCRecoverMergeDecision(&scratch, "gss-direct", "reject-cost", a, b)
 		}
 		return false
@@ -4646,8 +4648,7 @@ func preserveCapOneStackInSlot(result *[]glrStack, slot *glrMergeSlot, stack glr
 func faithfulCapOneMergeEnabled(scratch *glrMergeScratch) bool {
 	return glrFaithfulCapOneMerge ||
 		(scratch != nil &&
-			(scratch.faithfulCapOne || (scratch.recoveryCapOneConvergence &&
-				(scratch.cRecoveryCost || scratch.cRecoveryConvergence))))
+			(scratch.faithfulCapOne || (scratch.recoveryCapOneConvergence && scratch.cRecoveryConvergence)))
 }
 
 func mergeSlotTrackedCount(slot *glrMergeSlot) int {
@@ -5056,7 +5057,7 @@ func mergeStacksWithScratch(stacks []glrStack, scratch *glrMergeScratch) []glrSt
 				}
 				continue
 			}
-			if scratch != nil && scratch.cRecoveryCost {
+			if scratch != nil && scratch.cRecoveryFallbackSuppression {
 				continue
 			}
 		}
@@ -5245,7 +5246,7 @@ func mergeStacksWithScratchDeferExact(alive []glrStack, scratch *glrMergeScratch
 				}
 				continue
 			}
-			if scratch != nil && scratch.cRecoveryCost {
+			if scratch != nil && scratch.cRecoveryFallbackSuppression {
 				continue
 			}
 		}
@@ -5720,9 +5721,9 @@ func (s *glrMergeScratch) reset() {
 	s.faithfulCapOne = false
 	s.recoveryCapOneConvergence = false
 	s.trace = false
-	s.cRecoveryCost = false
 	s.cRecoveryCostWalk = false
 	s.cRecoveryConvergence = false
+	s.cRecoveryFallbackSuppression = false
 	s.audit = nil
 	s.budgetBytes = 0
 	// Pooled scratch must not retain a live *Parser across parses (GC

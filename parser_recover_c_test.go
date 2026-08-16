@@ -172,6 +172,7 @@ func TestCRecoveryCleanCondenseRetainsPendingConvergence(t *testing.T) {
 		crecoveryCostCompetitionRelevant:    true,
 		crecoveryCostCompetitionWalkEnabled: true,
 		pendingForkStacks:                   []glrStack{{}},
+		mergeScratch:                        &glrMergeScratch{cRecoveryCostWalk: true, cRecoveryConvergence: true, cRecoveryFallbackSuppression: true},
 	}
 	trackChildErrors := false
 
@@ -186,11 +187,17 @@ func TestCRecoveryCleanCondenseRetainsPendingConvergence(t *testing.T) {
 	if parser.crecoveryCostCompetitionWalkEnabled {
 		t.Fatal("clean condense kept the recovery cost walk enabled")
 	}
+	if parser.mergeScratch.cRecoveryCostWalk || parser.mergeScratch.cRecoveryFallbackSuppression || !parser.mergeScratch.cRecoveryConvergence {
+		t.Fatalf("clean condense mishandled active scratch walk=%t convergence=%t fallback=%t", parser.mergeScratch.cRecoveryCostWalk, parser.mergeScratch.cRecoveryConvergence, parser.mergeScratch.cRecoveryFallbackSuppression)
+	}
 	parser.pendingForkStacks = nil
 	parser.markCRecoveryCostCompetitionRelevant()
 	parser.clearCRecoveryCostIfClean([]glrStack{{}}, &trackChildErrors)
 	if !parser.crecoveryCostCompetitionConvergenceEnabled {
 		t.Fatal("clean condense cleared the established convergence latch")
+	}
+	if !parser.mergeScratch.cRecoveryConvergence {
+		t.Fatal("clean condense cleared an established active convergence latch")
 	}
 }
 
@@ -211,6 +218,61 @@ func TestCRecoveryCleanCondenseDropsIdleConvergenceState(t *testing.T) {
 	}
 	if parser.crecoveryCostCompetitionWalkEnabled {
 		t.Fatal("clean condense kept the recovery cost walk enabled")
+	}
+}
+
+func TestCRecoveryCleanCondenseSingleStackSynchronizesMergeScratch(t *testing.T) {
+	parser := &Parser{
+		errorCostCompetition:                true,
+		crecoveryCostCompetitionRelevant:    true,
+		crecoveryCostCompetitionWalkEnabled: true,
+		mergeScratch:                        &glrMergeScratch{cRecoveryCostWalk: true, cRecoveryConvergence: true},
+	}
+	scratch := parserScratch{merge: *parser.mergeScratch}
+	parser.mergeScratch = &scratch.merge
+	trackChildErrors := false
+
+	parser.clearCRecoveryCostIfClean([]glrStack{{}}, &trackChildErrors)
+	if scratch.merge.cRecoveryCostWalk || scratch.merge.cRecoveryConvergence {
+		t.Fatalf("clean condense left active merge flags walk=%t convergence=%t", scratch.merge.cRecoveryCostWalk, scratch.merge.cRecoveryConvergence)
+	}
+
+	result := parser.prepareParseStacksForIteration(
+		[]glrStack{newGLRStack(1)},
+		&scratch,
+		nil,
+		arenaClassFull,
+		0,
+		0,
+		false,
+		nil,
+		nil,
+	)
+	if result.stopped {
+		t.Fatalf("single-stack preparation stopped with %v", result.stopReason)
+	}
+	if scratch.merge.cRecoveryCostWalk || scratch.merge.cRecoveryConvergence {
+		t.Fatalf("single-stack early return leaked merge flags walk=%t convergence=%t", scratch.merge.cRecoveryCostWalk, scratch.merge.cRecoveryConvergence)
+	}
+
+	scratch.merge.perKeyCap = 1
+	scratch.merge.recoveryCapOneConvergence = true
+	scratch.merge.beginEquivEpoch()
+	ordinary := newGLRStack(1)
+	ordinary.push(7, NewLeafNode(11, true, 0, 5, Point{}, Point{Column: 5}), nil, nil)
+	missingNode := NewLeafNode(11, true, 5, 5, Point{Column: 5}, Point{Column: 5})
+	missingNode.setMissing(true)
+	missingNode.setHasError(true)
+	missing := newGLRStack(1)
+	missing.push(7, missingNode, nil, nil)
+	missing.cRecoverMissingGroup = &cRecGroup{}
+	key := mergeKeyForStack(&missing)
+	if index, preserve := cRecoveryCostClassForSlice(&scratch.merge, []glrStack{ordinary}, key, &missing); index != -1 || preserve {
+		t.Fatalf("later merge retained a stale cost walk: index=%d preserve=%t", index, preserve)
+	}
+	merged := mergeStacksWithScratch([]glrStack{ordinary, missing}, &scratch.merge)
+	if len(merged) == 0 {
+		t.Fatal("later single-stack merge discarded every survivor")
 	}
 }
 

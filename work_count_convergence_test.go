@@ -165,7 +165,7 @@ func TestWorkCountConvergenceRetainsScorePrefilterDecision(t *testing.T) {
 	result := []glrStack{left}
 	leftHead := left.gss.head
 	leftLinks := leftHead.linkCount()
-	scratch := glrMergeScratch{cRecoveryCost: true}
+	scratch := glrMergeScratch{cRecoveryCostWalk: true}
 
 	token := beginWorkCountConvergenceAttempt(t)
 	merged, attempted := tryGSSMainMergeResult(&scratch, result, 0, &right)
