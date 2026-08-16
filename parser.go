@@ -462,9 +462,9 @@ type Parser struct {
 	pendingFrontierForkStacks  []glrStack
 	disablePostReduceForkMerge bool
 	stopActionDiag             *parseStopActionDiagnostic
-	// forestDeclineMemo is the lazy parser cold sidecar. It stores the bounded
-	// forest-decline memo and difficult recovery-memo operation state. Parsers
-	// that use neither feature pay no sidecar allocation.
+	// forestDeclineMemo is the lazy parser cold sidecar. It stores the forest
+	// memo, recovery state, telemetry, and bounded pending-stack reserves.
+	// Parsers that use none of these features pay no sidecar allocation.
 	// Explicit ParseForestExperimental calls intentionally ignore this memo.
 	forestDeclineMemo *parserColdState
 }
@@ -1783,6 +1783,7 @@ func resetSnippetParser(parser *Parser) {
 	// its reuseCursor.topLevel/*Node alive, preventing arena reclamation.
 	parser.reuseCursor.releaseNodeRefs()
 	parser.reuseScratch.releaseNodeRefs()
+	parser.resetPendingStackBuffersAtBoundary()
 }
 
 // InferredRootSymbol returns the root symbol inferred during parser
@@ -4542,8 +4543,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	defer p.restoreParseModeFlags(parseFlags)
 	p.clearCurrentExternalTokenCheckpoint()
 	p.resetNormalizationStats()
-	p.pendingForkStacks = p.pendingForkStacks[:0]
-	p.pendingFrontierForkStacks = p.pendingFrontierForkStacks[:0]
+	p.resetPendingStackBuffersAtBoundary()
 	if p.logger != nil {
 		p.logf(ParserLogParse, "start len=%d incremental=%t", len(source), reuse != nil || oldTree != nil)
 	}
@@ -7432,14 +7432,9 @@ func (p *Parser) recycleDemotedGSS(stacks []glrStack, scratch *parserScratch) {
 		clear(stacks[:cap(stacks)])
 		stacks[0] = live
 	}
-	if cap(p.pendingForkStacks) > 0 {
-		clear(p.pendingForkStacks[:cap(p.pendingForkStacks)])
-		p.pendingForkStacks = p.pendingForkStacks[:0]
-	}
-	if cap(p.pendingFrontierForkStacks) > 0 {
-		clear(p.pendingFrontierForkStacks[:cap(p.pendingFrontierForkStacks)])
-		p.pendingFrontierForkStacks = p.pendingFrontierForkStacks[:0]
-	}
+	// Keep one bounded reserve for later fork bursts. Drop an oversized active
+	// backing array without scanning it before the GSS slabs are recycled.
+	p.resetPendingStackBuffersAfterDemotion()
 	scratch.gss.recycleForParse()
 }
 

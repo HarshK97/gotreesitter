@@ -182,13 +182,15 @@ type forestDeclineMemoState struct {
 	retainedSourceBytes int
 }
 
-// parserColdState shares the Parser's existing lazy sidecar slot between two
+// parserColdState shares the Parser's existing lazy sidecar slot between
 // uncommon features. It preserves the hot Parser layout for ordinary parses.
 type parserColdState struct {
 	forestDeclineMemoState
-	cNodeMemoRetainedCache []cNodeMemoCacheEntry
-	cNodeMemoCollisions    uint64
-	recoveryRuntime        recoveryRuntimeTelemetry
+	cNodeMemoRetainedCache          []cNodeMemoCacheEntry
+	pendingForkStackReserve         []glrStack
+	pendingFrontierForkStackReserve []glrStack
+	cNodeMemoCollisions             uint64
+	recoveryRuntime                 recoveryRuntimeTelemetry
 }
 
 func (p *Parser) ensureParserColdState() *parserColdState {
