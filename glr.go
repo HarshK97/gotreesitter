@@ -202,7 +202,7 @@ const (
 )
 
 // resetPendingStackBuffer clears stack references before the buffer is reused.
-// Drop oversized buffers only at parse and pool boundaries.
+// Drop oversized buffers at parse and pool boundaries.
 func resetPendingStackBuffer(stacks []glrStack, dropOversized bool) []glrStack {
 	if dropOversized && cap(stacks) > maxRetainedPendingStackCap {
 		return nil
@@ -211,6 +211,39 @@ func resetPendingStackBuffer(stacks []glrStack, dropOversized bool) []glrStack {
 		clear(stacks[:cap(stacks)])
 	}
 	return stacks[:0]
+}
+
+// resetPendingStackBufferAfterDemotion bounds active-parse retention without
+// rebuilding ordinary fork capacity after each oversized burst. The reserve
+// remains reachable while an append grows stacks onto a larger backing array.
+func resetPendingStackBufferAfterDemotion(stacks []glrStack, reserve *[]glrStack) []glrStack {
+	if cap(stacks) <= maxRetainedPendingStackCap {
+		return resetPendingStackBuffer(stacks, false)
+	}
+	if reserve == nil {
+		return nil
+	}
+	if cap(*reserve) != maxRetainedPendingStackCap {
+		*reserve = make([]glrStack, 0, maxRetainedPendingStackCap)
+	} else {
+		*reserve = resetPendingStackBuffer(*reserve, false)
+	}
+	return (*reserve)[:0]
+}
+
+// resetPendingStackBufferAtBoundary releases oversized active storage and
+// scrubs a bounded reserve before the parser starts or enters a pool.
+func resetPendingStackBufferAtBoundary(stacks []glrStack, reserve *[]glrStack) []glrStack {
+	stacks = resetPendingStackBuffer(stacks, true)
+	if reserve == nil || cap(*reserve) == 0 {
+		return stacks
+	}
+	if cap(stacks) > 0 && &stacks[:1][0] == &(*reserve)[:1][0] {
+		*reserve = stacks
+		return stacks
+	}
+	*reserve = resetPendingStackBuffer(*reserve, false)
+	return (*reserve)[:0]
 }
 
 type glrMergeScratch struct {
