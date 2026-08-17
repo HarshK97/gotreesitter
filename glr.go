@@ -293,13 +293,10 @@ type glrMergeScratch struct {
 	// cRecoveryCostWalk enables the expensive per-candidate error-cost walks.
 	cRecoveryCostWalk bool
 	// cRecoveryConvergence enables faithful cap-one convergence during an active
-	// recovery episode or its pending-fork suffix. Fallback suppression has its
-	// own latch because the clean pending-fork suffix must not inherit the old
-	// active-cost fallback policy.
+	// recovery episode. A clean suffix returns to the ordinary merge path.
 	cRecoveryConvergence bool
 	// cRecoveryFallbackSuppression suppresses the non-GSS fallback after an
-	// active recovery-cost episode, without extending that policy into a clean
-	// pending-fork convergence suffix.
+	// active recovery-cost episode.
 	cRecoveryFallbackSuppression bool
 	// cRecoveryCost preserves source compatibility for the main-branch merge
 	// tests. Parser paths use the three split fields above.

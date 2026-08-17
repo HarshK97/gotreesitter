@@ -69,6 +69,26 @@ func TestKotlinA3CompactCertificationFullCorpusSweep(t *testing.T) {
 	a3ReportSweep(t, result, kotlinA3KnownDivergences)
 }
 
+// TestKotlinRecoverySuffixSourcesMatchC keeps exact C parity for the two
+// constructed sources that use clean recovery suffix convergence.
+func TestKotlinRecoverySuffixSourcesMatchC(t *testing.T) {
+	matched := 0
+	for _, source := range kotlinA3AdversarialSources() {
+		if source.Name != "annotated_extension_property_getter_line_comment" &&
+			source.Name != "annotated_extension_property_getter_block_comment" {
+			continue
+		}
+		matched++
+		source := source
+		t.Run(source.Name, func(t *testing.T) {
+			runParityCase(t, parityCase{name: "kotlin"}, source.Name, source.Source)
+		})
+	}
+	if matched != 2 {
+		t.Fatalf("Kotlin recovery suffix sources = %d, want 2", matched)
+	}
+}
+
 // kotlinA3KnownDivergences is an already-triaged, pre-existing
 // production-route defect the tightened sweep criterion surfaced: the
 // compact route only reproduces what production already produces (verified

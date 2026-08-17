@@ -87,23 +87,25 @@ var mergeCensusBaselineConstructed = map[string]struct {
 	// SourcesWhereCMergesAndGoDoesNot is the lane's headline class.
 	SourcesWhereCMergesAndGoDoesNot int
 }{
-	"apex":   {Sources: 25, CMergeSuccesses: 31, GoSuccesses: 1, RefuseNoGSSHead: 53, RefuseScoreOrShifted: 0, RefuseDistinctShapes: 53, LinkPayloadShallowWouldAccept: 0, SourcesWhereGoOverMerges: 0, SourcesWhereCMergesAndGoDoesNot: 5},
-	"perl":   {Sources: 17, CMergeSuccesses: 57, GoSuccesses: 0, RefuseNoGSSHead: 43, RefuseScoreOrShifted: 0, RefuseDistinctShapes: 0, LinkPayloadShallowWouldAccept: 0, SourcesWhereGoOverMerges: 0, SourcesWhereCMergesAndGoDoesNot: 7},
+	"apex": {Sources: 25, CMergeSuccesses: 31, GoSuccesses: 1, RefuseNoGSSHead: 53, RefuseScoreOrShifted: 0, RefuseDistinctShapes: 53, LinkPayloadShallowWouldAccept: 0, SourcesWhereGoOverMerges: 0, SourcesWhereCMergesAndGoDoesNot: 5},
+	"perl": {Sources: 17, CMergeSuccesses: 57, GoSuccesses: 0, RefuseNoGSSHead: 43, RefuseScoreOrShifted: 0, RefuseDistinctShapes: 0, LinkPayloadShallowWouldAccept: 0, SourcesWhereGoOverMerges: 0, SourcesWhereCMergesAndGoDoesNot: 7},
 	// PR #708 elects Ada aggregate conflicts before the GLR fork. This removes
 	// five no-GSS-head opportunities without changing merges or other gates.
-	"ada":    {Sources: 23, CMergeSuccesses: 47, GoSuccesses: 2, RefuseNoGSSHead: 30, RefuseScoreOrShifted: 92, RefuseDistinctShapes: 6, LinkPayloadShallowWouldAccept: 0, SourcesWhereGoOverMerges: 0, SourcesWhereCMergesAndGoDoesNot: 5},
-	"kotlin": {Sources: 13, CMergeSuccesses: 54, GoSuccesses: 12, RefuseNoGSSHead: 2, RefuseScoreOrShifted: 0, RefuseDistinctShapes: 0, LinkPayloadShallowWouldAccept: 10, SourcesWhereGoOverMerges: 0, SourcesWhereCMergesAndGoDoesNot: 3},
+	"ada": {Sources: 23, CMergeSuccesses: 47, GoSuccesses: 2, RefuseNoGSSHead: 30, RefuseScoreOrShifted: 92, RefuseDistinctShapes: 6, LinkPayloadShallowWouldAccept: 0, SourcesWhereGoOverMerges: 0, SourcesWhereCMergesAndGoDoesNot: 5},
+	// Clean-suffix reset removes four redundant Kotlin merges. Exact C tree
+	// parity remains pinned by TestKotlinRecoverySuffixSourcesMatchC.
+	"kotlin": {Sources: 13, CMergeSuccesses: 54, GoSuccesses: 8, RefuseNoGSSHead: 2, RefuseScoreOrShifted: 0, RefuseDistinctShapes: 0, LinkPayloadShallowWouldAccept: 8, SourcesWhereGoOverMerges: 0, SourcesWhereCMergesAndGoDoesNot: 3},
 	"python": {Sources: 26, CMergeSuccesses: 2, GoSuccesses: 0, RefuseNoGSSHead: 9, RefuseScoreOrShifted: 0, RefuseDistinctShapes: 0, LinkPayloadShallowWouldAccept: 0, SourcesWhereGoOverMerges: 0, SourcesWhereCMergesAndGoDoesNot: 2},
 }
 
 // The M0 pinned aggregate over the five A3 sweep corpora's constructed
-// sources. M_p/M_c = 15/191 = 0.0785. That ratio is the lane's progress
+// sources. M_p/M_c = 11/191 = 0.0576. That ratio is the lane's progress
 // number alongside D0's 32 set differences: stage M1 onward drives it toward
 // 1, and gate G6 forbids any source where production merges more than the
 // reference runtime.
 const (
 	mergeCensusBaselineCMerges  uint64 = 191
-	mergeCensusBaselineGoMerges uint64 = 15
+	mergeCensusBaselineGoMerges uint64 = 11
 	// mergeCensusBaselineSources is the constructed-source denominator, the
 	// same 104 sources D0 measures.
 	mergeCensusBaselineSources = 104
