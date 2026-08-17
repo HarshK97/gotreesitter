@@ -19,26 +19,33 @@ import (
 //
 // The trigger is narrow and worth recording precisely:
 //
-//   - the enum must be the first declaration in the file, and some trivia must
-//     precede it. A single leading space, tab, newline, or comment is enough.
-//     With the enum at byte 0 the tree is correct, and with any declaration
-//     ahead of it the tree is correct.
-//   - exactly three enumerators. Two are fine and four are fine.
-//   - every enumerator carries `= value`. Bare enumerators are fine, and a
-//     trailing comma after the last enumerator is fine.
+//   - exactly three enumerators. Two are fine and four are fine. Three is the
+//     only count that diverges: it is the count where the losing fork is also
+//     the last fork. With four, a later fork promotes the stack to a packed GSS
+//     and the merge that keeps the folded history succeeds.
+//   - some trivia must precede the enum. A single space, tab, newline, or
+//     comment is enough.
 //
-// Leading trivia is not the cause. It decides which parser runs. With the enum
-// at byte 0 the GSS-forest fast path accepts the parse and reports
-// ForestFastPath=true with zero iterations. Leading trivia makes that path
-// decline, the production GLR parser runs instead, and it enters recovery
-// (CRecoveryEnteredErrorState=true, CRecoverMissingTokenTrialAttemptsPeak=1)
-// and keeps a missing-token trial that C never needs. The fast path is
-// therefore masking the defect on the inputs it happens to accept.
+// The trivia does not cause the defect. The production GLR parser builds the
+// wrong tree at every offset. What trivia changes is whether the wrong tree
+// escapes: maybeReplaceRecoveredTreeWithForest (glr_forest.go) re-parses any
+// errored production root through the forest engine and swaps in the clean
+// result, but it declines when the candidate root does not start at byte 0.
+// Leading trivia moves the root to byte 1, the repair declines, and the broken
+// tree reaches the caller.
 //
-// Found by differential testing against the pinned C oracle over a 1,567-file
-// corpus: /usr/include/KHR/khrplatform.h was the only file where the oracle
-// parsed completely clean and the Go engine invented a token. Reduced from
-// 11,131 bytes to the 42 below.
+// Root cause. Upstream tree-sitter never executes SHIFT_REPEAT at a conflict
+// cell (lib/src/parser.c, `if (action.shift.repetition) break;`); it folds the
+// repetition first and re-dispatches. gotreesitter implements the same rule as
+// cRepetitionSkipConflictChoice but opts language "c" out (conflict_policy.go).
+// C therefore forks at the cell, and convergence then fails: C forces cap-one
+// merging, the GSS merge refuses because one stack is demoted-linear, and the
+// cap-one depth tiebreak keeps the deeper unfolded branch. The parse dead-ends
+// on `}` and recovery invents the comma. The parse table itself matches
+// upstream byte for byte, so this is a runtime and profile defect.
+//
+// A bare three-enumerator enum (no `= value`) diverges too, with an ERROR wrap
+// instead of an invented comma. This pin covers the valued form.
 //
 // This pin is self-healing: it PASSES automatically once the invented comma
 // disappears.
