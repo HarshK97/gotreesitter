@@ -544,6 +544,22 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 				Kind:          gotreesitter.ConflictPolicyRepetitionShift,
 				ReduceSymbols: []gotreesitter.Symbol{324, 326},
 			},
+			// Fold aux_sym_enumerator_list_repeat1 at its conflict cell instead
+			// of forking. Upstream never executes SHIFT_REPEAT at a conflict cell
+			// (lib/src/parser.c, `if (action.shift.repetition) break;`): it
+			// reduces, renumbers, and re-dispatches the same lookahead. C is
+			// opted out of the engine-wide equivalent (cRepetitionSkipOptOut in
+			// conflict_policy.go), so an enumerator list forks and then depends
+			// on cap-one convergence. When one branch is in demoted-linear form
+			// the GSS merge refuses, the depth tiebreak keeps the unfolded
+			// branch, and a three-enumerator list dead-ends on `}` and invents a
+			// comma. Folding this one symbol restores the upstream order.
+			{
+				State:         gotreesitter.ConflictPolicyAnyState,
+				Lookahead:     gotreesitter.ConflictPolicyAnyLookahead,
+				Kind:          gotreesitter.ConflictPolicyRepetitionReduce,
+				ReduceSymbols: []gotreesitter.Symbol{343},
+			},
 		},
 	},
 	// QL declares conflicts: [[$.simpleId, $.className], ...]. An upper-case

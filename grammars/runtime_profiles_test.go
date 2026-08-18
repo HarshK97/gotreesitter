@@ -569,7 +569,7 @@ func TestBuiltinCConflictPolicyAttachesWildcard(t *testing.T) {
 	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
 
 	lang := CLanguage()
-	if got, want := len(lang.ConflictPolicies), 1; got != want {
+	if got, want := len(lang.ConflictPolicies), 2; got != want {
 		t.Fatalf("c ConflictPolicies = %d rows, want %d", got, want)
 	}
 	policy := lang.ConflictPolicies[0]
@@ -577,6 +577,17 @@ func TestBuiltinCConflictPolicyAttachesWildcard(t *testing.T) {
 		policy.Kind != gotreesitter.ConflictPolicyRepetitionShift || len(policy.ReduceSymbols) != 2 ||
 		policy.ReduceSymbols[0] != 324 || policy.ReduceSymbols[1] != 326 {
 		t.Fatalf("c conflict policy = %+v, want wildcard repetition-shift over translation_unit_repeat1(324)/preproc_if_repeat1(326)", policy)
+	}
+	// C is held out of the engine-wide repetition fold
+	// (cRepetitionSkipConflictChoice), so it carves out the symbols that are
+	// proven safe one row at a time, the way haskell does. This row folds
+	// aux_sym_enumerator_list_repeat1 and stops a three-enumerator list from
+	// inventing a comma; see grammars/c_enum_missing_comma_pin_test.go.
+	fold := lang.ConflictPolicies[1]
+	if fold.State != gotreesitter.ConflictPolicyAnyState || fold.Lookahead != gotreesitter.ConflictPolicyAnyLookahead ||
+		fold.Kind != gotreesitter.ConflictPolicyRepetitionReduce || len(fold.ReduceSymbols) != 1 ||
+		fold.ReduceSymbols[0] != 343 {
+		t.Fatalf("c conflict policy[1] = %+v, want wildcard repetition-reduce over enumerator_list_repeat1(343)", fold)
 	}
 }
 
