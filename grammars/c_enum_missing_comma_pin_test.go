@@ -97,3 +97,62 @@ func pinCountMissing(n *gotreesitter.Node) int {
 	}
 	return count
 }
+
+// Pin for a second C divergence in the same family as the enum comma above,
+// which the enumerator-list fold does NOT repair.
+//
+// C tree-sitter parses this reduced form of libc-test's tls_align_dlopen.c
+// with no error. The Go engine wraps a fragment of `t[i].align` in an ERROR
+// node and marks every enclosing statement as containing an error, while every
+// node span stays identical to the C tree.
+//
+// It is the same convergence failure, reached a different way. Both
+// GOT_FAITHFUL_CONDENSE=1 and GOT_GLR_MAX_MERGE_PER_KEY=2 clear it, so the
+// correct reading exists and cap-one merging discards it. Unlike the enum
+// case, the fork is not at a repetition conflict cell: adding a
+// ConflictPolicyRepetitionReduce row for sized_type_specifier_repeat1(342),
+// _declaration_specifiers_repeat1(336), _field_declaration_declarator_repeat1(344),
+// argument_list_repeat1(354), or declaration_repeat1(332) leaves it unchanged.
+// Folding cannot reach it, so the repair belongs in the merge itself:
+// gssMainCanMergeWithScratch refuses when one candidate is in demoted-linear
+// form (nil head) instead of promoting it, and the cap-one depth tiebreak then
+// keeps the wrong branch.
+//
+// Like the enum pin, this needs leading trivia to be observable at all:
+// maybeReplaceRecoveredTreeWithForest silently repairs an errored production
+// root, but declines when the root does not start at byte 0.
+//
+// This pin is self-healing: it PASSES once the ERROR disappears.
+func TestCleanRegressionPinCStructMemberSubscriptField(t *testing.T) {
+	tree, _ := pinParse(t, "c", tlsAlignFixture)
+	defer tree.Release()
+
+	root := tree.RootNode()
+	if got, want := int(root.EndByte()), len(tlsAlignFixture); got != want {
+		t.Fatalf("c: parse covers %d of %d bytes", got, want)
+	}
+	if !root.HasError() {
+		return // fix landed - pin now green.
+	}
+	t.Skip("KNOWN DIVERGENCE (c struct member subscript field): the Go engine " +
+		"wraps a field access fragment in ERROR where C parses clean; cap-one " +
+		"merging discards the correct branch and no repetition fold reaches it; " +
+		"see file comment")
+}
+
+const tlsAlignFixture = `
+{
+	struct {
+		char *name;
+		unsigned size;
+		unsigned align;
+		unsigned long addr;
+	} *t;
+	if (!t)
+		t_error("dlsym failed\n");
+	else for (i = 0; i < 4; i++) {
+		if (t[i].addr & (t[i].align-1))
+			t_error("bad alignment: %s, size: %u, align: %u, addr: 0x%lx\n",
+				t[i].name, t[i].size, t[i].align, t[i].addr);
+	}
+}`
