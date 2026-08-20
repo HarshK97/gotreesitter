@@ -120,15 +120,20 @@ func TestParitySwiftConditionFieldFamily(t *testing.T) {
 
 func assertSwiftConditionTreeExact(t *testing.T, goTree *gotreesitter.Tree, goLang *gotreesitter.Language, cTree *sitter.Tree) {
 	t.Helper()
+	assertLockedCTreeExact(t, "Swift condition witness", goTree, goLang, cTree)
+}
+
+func assertLockedCTreeExact(t *testing.T, label string, goTree *gotreesitter.Tree, goLang *gotreesitter.Language, cTree *sitter.Tree) {
+	t.Helper()
 	goRoot := goTree.RootNode()
 	cRoot := cTree.RootNode()
 	if goRoot.HasError() || cRoot.HasError() {
-		t.Fatalf("condition witness has an error node: Go=%v C=%v", goRoot.HasError(), cRoot.HasError())
+		t.Fatalf("%s has an error node: Go=%v C=%v", label, goRoot.HasError(), cRoot.HasError())
 	}
 	if diff := FirstDivergenceDumpV1(goRoot, goLang, cRoot); diff != nil {
-		t.Fatalf("node or field divergence: %+v", diff)
+		t.Fatalf("%s node or field divergence: %+v", label, diff)
 	}
-	if diff := firstSwiftConditionFlagDivergence(goRoot, goLang, cRoot, "/source_file"); diff != nil {
+	if diff := firstLockedCTreeFlagDivergence(goRoot, goLang, cRoot, "/"+goRoot.Type(goLang)); diff != nil {
 		t.Fatal(diff)
 	}
 	goInspection, err := benchfixtures.InspectGoTree(goRoot, goLang)
@@ -142,10 +147,10 @@ func assertSwiftConditionTreeExact(t *testing.T, goTree *gotreesitter.Tree, goLa
 	if goInspection.SHA256 != cDigest {
 		t.Fatalf("deep digest Go=%s C=%s", goInspection.SHA256, cDigest)
 	}
-	t.Logf("exact symbols, fields, spans, points, flags, and deep digest %s", goInspection.SHA256)
+	t.Logf("%s: exact symbols, fields, spans, points, flags, and deep digest %s", label, goInspection.SHA256)
 }
 
-func firstSwiftConditionFlagDivergence(goNode *gotreesitter.Node, goLang *gotreesitter.Language, cNode *sitter.Node, path string) error {
+func firstLockedCTreeFlagDivergence(goNode *gotreesitter.Node, goLang *gotreesitter.Language, cNode *sitter.Node, path string) error {
 	if goNode == nil || cNode == nil {
 		return fmt.Errorf("%s: nil mismatch Go=%v C=%v", path, goNode == nil, cNode == nil)
 	}
@@ -159,7 +164,7 @@ func firstSwiftConditionFlagDivergence(goNode *gotreesitter.Node, goLang *gotree
 		goChild := goNode.Child(i)
 		cChild := cNode.Child(uint(i))
 		childPath := fmt.Sprintf("%s/%s[%d]", path, goChild.Type(goLang), i)
-		if err := firstSwiftConditionFlagDivergence(goChild, goLang, cChild, childPath); err != nil {
+		if err := firstLockedCTreeFlagDivergence(goChild, goLang, cChild, childPath); err != nil {
 			return err
 		}
 	}
