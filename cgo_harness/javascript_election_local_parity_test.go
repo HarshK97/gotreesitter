@@ -24,10 +24,7 @@ func mustReadCorpusFile(t *testing.T, path string) []byte {
 
 // TestJavaScriptElectionRawCOracleParity compares the raw production tree
 // (compat tail off) against the locked C oracle for dispatch.javascript's
-// live rewrites: dynamic `import(...)` leaf retyping
-// (normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged) and the
-// top-level object-literal reconstruction
-// (normalizeJavaScriptTopLevelObjectLiterals).
+// remaining live top-level object-literal rewrite.
 func TestJavaScriptElectionRawCOracleParity(t *testing.T) {
 	goLang := grammars.JavascriptLanguage()
 	tests := []struct {
@@ -51,8 +48,8 @@ func TestJavaScriptElectionRawCOracleParity(t *testing.T) {
 		{
 			// dispatcher census witness (parser_result_test/dispatcher_census_test.go
 			// over cgo_harness/corpus_real/javascript): dispatch.javascript
-			// rewrites 7 positions in this exact file; the two dynamic-import
-			// witnesses above show no rewrites, so this is the live-firing shape.
+			// rewrites 7 positions in this exact file. The two dynamic-import
+			// witnesses above remain native, so this is the live-firing shape.
 			//
 			// For `{ key: value }` at the start of a statement, the C oracle
 			// forks between labeled_statement and an object-literal pair, then

@@ -99,26 +99,38 @@ func TestNormalizeJavaScriptTopLevelExpressionStatementBoundsSnapToChildren(t *t
 	}
 }
 
-// newDeferredCompatDynamicImportFixture builds a minimal "program" root with
-// one childless dynamic-import leaf (named "import", symbol 2) over source
-// "import". normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged
-// (still live — not part of the wave11 compat-sunset's six confirmed-dead
-// classes) retypes it into a single-child node the same way the removed
-// empty_statement leaf-retype used to, so it's the fixture below's stand-in
-// observable marker for "did deferred JS/TS compat actually run".
+// newDeferredCompatDynamicImportFixture builds a small TypeScript context.
+// Its childless dynamic-import leaf exercises TypeScript's separate candidate
+// normalizer. This marker shows that deferred TypeScript compatibility ran.
 func newDeferredCompatDynamicImportFixture() (*Language, *Node, *Node) {
 	lang := &Language{
-		Name:        "typescript",
-		SymbolNames: []string{"EOF", "program", "import", "import"},
+		Name: "typescript",
+		SymbolNames: []string{
+			"EOF", "program", "import", "import", "call_expression",
+			"type_arguments", "arguments", "predefined_type",
+			"binary_expression", ">", "parenthesized_expression", "<",
+			"identifier", "member_expression", "sequence_expression",
+		},
 		SymbolMetadata: []SymbolMetadata{
 			{Name: "EOF", Visible: false, Named: false},
 			{Name: "program", Visible: true, Named: true},
-			{Name: "import", Visible: true, Named: true},
 			{Name: "import", Visible: true, Named: false},
+			{Name: "import", Visible: true, Named: true},
+			{Name: "call_expression", Visible: true, Named: true},
+			{Name: "type_arguments", Visible: true, Named: true},
+			{Name: "arguments", Visible: true, Named: true},
+			{Name: "predefined_type", Visible: true, Named: true},
+			{Name: "binary_expression", Visible: true, Named: true},
+			{Name: ">", Visible: true, Named: false},
+			{Name: "parenthesized_expression", Visible: true, Named: true},
+			{Name: "<", Visible: true, Named: false},
+			{Name: "identifier", Visible: true, Named: true},
+			{Name: "member_expression", Visible: true, Named: true},
+			{Name: "sequence_expression", Visible: true, Named: true},
 		},
 	}
 	arena := newNodeArena(arenaClassFull)
-	stmt := newLeafNodeInArena(arena, 2, true, 0, 6, Point{}, Point{Column: 6})
+	stmt := newLeafNodeInArena(arena, 3, true, 0, 6, Point{}, Point{Column: 6})
 	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
 	return lang, root, stmt
 }
