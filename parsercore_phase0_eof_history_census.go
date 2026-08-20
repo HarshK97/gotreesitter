@@ -34,8 +34,78 @@ type EOFAcceptHistoryHead struct {
 	NoAction             bool
 	Header               DiagnosticParserCoreHeaderReceipt
 	Candidates           []EOFAcceptHistoryCandidate
+	RecoveryShadow       *EOFRecoveryShadowReceipt
 	EnumerationTruncated bool
 	EnumerationErr       string
+}
+
+// EOFRecoveryShadowReceipt records one private, bounded recover_eof fold.
+// Its live equality claim covers only the named receipt fields.
+type EOFRecoveryShadowReceipt struct {
+	AcceptIndex          int
+	Kind                 string
+	Steps                uint32
+	MaxSteps             uint32
+	Payloads             uint32
+	MaxPayloads          uint32
+	SourceFootprintBytes uint64
+	CoreHeaderBytes      uint64
+	CopiedArenaBytes     uint64
+	AppendReserveBytes   uint64
+	MapBytes             uint64
+	TemporaryBytes       uint64
+	PreservationBytes    uint64
+	ProviderWrapperBytes uint64
+	// PeakCloneBytes covers all detached Core storage through materialization,
+	// its append reserve, and the isolated reduction-plan wrapper. It excludes
+	// the Parser, runner scratch, and materialized tree.
+	PeakCloneBytes                        uint64
+	MaxCloneBytes                         uint64
+	StartByte                             uint32
+	EndByte                               uint32
+	SubtreesBefore                        uint32
+	SubtreesAfter                         uint32
+	ChildrenBefore                        uint32
+	ChildrenAfter                         uint32
+	CheckpointMapEntries                  uint32
+	RetainedSelectedPolicy                bool
+	SourceSchedulerActive                 bool
+	SchedulerFrameDetached                bool
+	SourceProvidersDetached               bool
+	ProviderConstructedFromIsolatedParser bool
+	ProviderSharesImmutableLanguageTables bool
+	ProviderReductionPlanOnly             bool
+	IsolatedReductionPlansAttached        bool
+	ProviderDiffersFromLive               bool
+	ProviderTableViewDetached             bool
+	ProviderSelectedStoreDetached         bool
+	ValidationStructuralPositions         uint32
+	ValidationRemappedFields              uint32
+	ValidationRemappedAliases             uint32
+	ValidationScratchReserved             bool
+	ValidationScratchNoGrowth             bool
+	CopiedArenaPrefixesEqual              bool
+	CopiedHeadersEqual                    bool
+	MetadataConstructionUnauthenticated   bool
+	RootChildrenExact                     bool
+	MutableStorageDisjoint                bool
+	IsolatedParser                        bool
+	IsolatedScratch                       bool
+	SharedLanguagePointer                 bool
+	LiveHeaderStatsWorkUnchanged          bool
+	RootSymbol                            Symbol
+	RootNamed                             bool
+	RootExtra                             bool
+	RootMissing                           bool
+	RootIsError                           bool
+	RootHasError                          bool
+	RootDynamicPrecedence                 int32
+	RootShape                             string
+	DeepSHA256                            [32]byte
+	ErrorCost                             uint32
+	WorkBefore                            core.Work
+	WorkAfter                             core.Work
+	Error                                 string
 }
 
 // EOFAcceptHistoryFrontier records all compact histories at one certified
@@ -75,6 +145,10 @@ func EOFAcceptHistoryCensusSnapshot() []EOFAcceptHistoryFrontier {
 		for headIndex, head := range frontier.Heads {
 			out[index].Heads[headIndex] = head
 			out[index].Heads[headIndex].Candidates = append([]EOFAcceptHistoryCandidate(nil), head.Candidates...)
+			if head.RecoveryShadow != nil {
+				shadow := *head.RecoveryShadow
+				out[index].Heads[headIndex].RecoveryShadow = &shadow
+			}
 		}
 	}
 	return out
@@ -119,6 +193,9 @@ func (s *diagnosticParserCoreGenericScheduler) censusEOFAcceptHistoryFrontier(
 			continue
 		}
 		order := eofAcceptHistoryFoldOrder(paths)
+		if headRecord.NoAction {
+			s.censusEOFRecoveryShadow(index, paths, &headRecord)
+		}
 		for foldIndex, pathIndex := range order {
 			path := paths[pathIndex]
 			candidate := EOFAcceptHistoryCandidate{
