@@ -20,6 +20,8 @@ const (
 	resultCompatDispatcherCensusEvidencePath = "parser_result_test/dispatcher_census_test.go"
 	resultCompatCOracleEvidencePath          = "cgo_harness/parity_cgo_test.go"
 	resultCompatBaselineEvidenceScope        = "baseline_corpus_wide_only"
+	resultCompatSwiftTernaryRetiredCommit    = "ddaed36e558d60d0e8e96bb9f6c59c0fb63c3b97"
+	resultCompatSwiftTernaryProducerFix      = "71180718521aa6cf53fa4122a50998a7a2ef8020"
 )
 
 var resultCompatRetiredCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -45,24 +47,26 @@ type resultCompatDenominator struct {
 }
 
 type resultCompatOwnershipEntry struct {
-	ID                  string                    `json:"id"`
-	Kind                string                    `json:"kind"`
-	Functions           []string                  `json:"functions"`
-	Files               []string                  `json:"files"`
-	Subpasses           []resultCompatSubpass     `json:"subpasses,omitempty"`
-	Languages           []string                  `json:"languages"`
-	MatchPredicate      string                    `json:"match_predicate,omitempty"`
-	EntrypointCalls     []string                  `json:"entrypoint_calls,omitempty"`
-	SwitchArms          []resultCompatSwitchArm   `json:"switch_arms,omitempty"`
-	Purpose             string                    `json:"purpose"`
-	AuthoritativeOwner  string                    `json:"authoritative_owner"`
-	Witnesses           []string                  `json:"witnesses"`
-	RetirementCondition string                    `json:"retirement_condition"`
-	RouteCoverage       resultCompatRouteCoverage `json:"route_coverage"`
-	Status              string                    `json:"status"`
-	EvidenceScope       string                    `json:"evidence_scope,omitempty"`
-	ReceiptRefs         []string                  `json:"receipt_refs,omitempty"`
-	RetiredCommit       string                    `json:"retired_commit,omitempty"`
+	ID                    string                    `json:"id"`
+	Kind                  string                    `json:"kind"`
+	Functions             []string                  `json:"functions"`
+	Files                 []string                  `json:"files"`
+	Subpasses             []resultCompatSubpass     `json:"subpasses,omitempty"`
+	Languages             []string                  `json:"languages"`
+	MatchPredicate        string                    `json:"match_predicate,omitempty"`
+	EntrypointCalls       []string                  `json:"entrypoint_calls,omitempty"`
+	SwitchArms            []resultCompatSwitchArm   `json:"switch_arms,omitempty"`
+	Purpose               string                    `json:"purpose"`
+	AuthoritativeOwner    string                    `json:"authoritative_owner"`
+	Witnesses             []string                  `json:"witnesses"`
+	RetirementCondition   string                    `json:"retirement_condition"`
+	RouteCoverage         resultCompatRouteCoverage `json:"route_coverage"`
+	Status                string                    `json:"status"`
+	EvidenceScope         string                    `json:"evidence_scope,omitempty"`
+	ReceiptRefs           []string                  `json:"receipt_refs,omitempty"`
+	RetiredCommit         string                    `json:"retired_commit,omitempty"`
+	PositiveControlCommit string                    `json:"positive_control_commit,omitempty"`
+	ProducerFixCommit     string                    `json:"producer_fix_commit,omitempty"`
 }
 
 type resultCompatLiveEvidenceBaseline struct {
@@ -120,6 +124,7 @@ func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 	retiredEntries := 0
 	allowedKinds := map[string]bool{
 		"dispatcher_arm":       true,
+		"dispatcher_subpass":   true,
 		"dispatcher_predicate": true,
 		"generic_pass":         true,
 		"second_pass_fixpoint": true,
@@ -161,6 +166,15 @@ func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 				t.Errorf("%s retired entry has live evidence_scope %q", entry.ID, entry.EvidenceScope)
 			}
 			assertRetiredOwnershipReceiptRefs(t, entry)
+			if entry.Kind == "dispatcher_subpass" {
+				if !resultCompatRetiredCommitPattern.MatchString(entry.PositiveControlCommit) {
+					t.Errorf("%s positive_control_commit = %q, want a lowercase 40-character commit hash", entry.ID, entry.PositiveControlCommit)
+				}
+				if !resultCompatRetiredCommitPattern.MatchString(entry.ProducerFixCommit) {
+					t.Errorf("%s producer_fix_commit = %q, want a lowercase 40-character commit hash", entry.ID, entry.ProducerFixCommit)
+				}
+				assertSwiftTernaryRetirementProvenance(t, entry)
+			}
 		default:
 			t.Errorf("%s has unsupported status %q", entry.ID, entry.Status)
 		}
@@ -194,6 +208,19 @@ func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 func assertRetiredOwnershipReceiptRefs(t *testing.T, entry resultCompatOwnershipEntry) {
 	t.Helper()
 	assertOwnershipEvidencePaths(t, entry.ID+" retirement receipt_refs", entry.ReceiptRefs)
+}
+
+func assertSwiftTernaryRetirementProvenance(t *testing.T, entry resultCompatOwnershipEntry) {
+	t.Helper()
+	if entry.ID != "dispatch.swift.ternary" {
+		return
+	}
+	if got, want := entry.RetiredCommit, resultCompatSwiftTernaryRetiredCommit; got != want {
+		t.Errorf("%s retired_commit = %q, want deletion commit %q", entry.ID, got, want)
+	}
+	if got, want := entry.ProducerFixCommit, resultCompatSwiftTernaryProducerFix; got != want {
+		t.Errorf("%s producer_fix_commit = %q, want producer commit %q", entry.ID, got, want)
+	}
 }
 
 func assertOwnershipEvidencePaths(t *testing.T, label string, paths []string) {
@@ -403,6 +430,7 @@ func assertOwnershipStatusAndRoutes(t *testing.T, entry resultCompatOwnershipEnt
 	t.Helper()
 	allowedStatuses := map[string]map[string]bool{
 		"dispatcher_arm":       {"live": true, "retired": true},
+		"dispatcher_subpass":   {"retired": true},
 		"dispatcher_predicate": {"live": true, "retired": true},
 		"generic_pass":         {"live": true, "retired": true},
 		"second_pass_fixpoint": {"live": true, "retired": true},
@@ -474,7 +502,7 @@ func assertOwnershipStatusAndRoutes(t *testing.T, entry resultCompatOwnershipEnt
 		if entry.MatchPredicate != "" || len(entry.EntrypointCalls) == 0 || len(entry.SwitchArms) == 0 {
 			t.Errorf("%s second-pass fixpoint must declare entrypoint_calls and switch_arms", entry.ID)
 		}
-	case "dispatcher_arm", "generic_pass":
+	case "dispatcher_arm", "dispatcher_subpass", "generic_pass":
 		if entry.MatchPredicate != "" || len(entry.EntrypointCalls) != 0 || len(entry.SwitchArms) != 0 {
 			t.Errorf("%s kind %q has incompatible predicate/fixpoint metadata", entry.ID, entry.Kind)
 		}
