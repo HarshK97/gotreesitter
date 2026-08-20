@@ -3134,8 +3134,28 @@ func diagnosticParserCoreGapIsTolerated(gap []byte) bool {
 // steady state does not re-allocate the public-tree scratch on every parse.
 // scratch is reset on return, so it is safe to reuse for the next parse.
 func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head core.Head, payloads []core.SubtreeID, parser *Parser, source []byte, scratch *parserCoreRunnerScratch, forceReplayParseStates bool, allowErrorRoot bool) (*Tree, error) {
+	return materializeDiagnosticParserCoreAcceptedSelectionWithRootFinalization(
+		compact, head, payloads, parser, source, scratch,
+		forceReplayParseStates, allowErrorRoot, diagnosticParserCoreFinalizeDefault,
+	)
+}
+
+type diagnosticParserCoreRootFinalization uint8
+
+const (
+	diagnosticParserCoreFinalizeDefault diagnosticParserCoreRootFinalization = iota
+	diagnosticParserCoreFinalizeRecoverEOF
+)
+
+// materializeDiagnosticParserCoreAcceptedSelectionWithRootFinalization keeps
+// the default path unchanged. A tagged diagnostic caller can request the
+// locked-C recover_eof root rule.
+func materializeDiagnosticParserCoreAcceptedSelectionWithRootFinalization(compact *core.Core, head core.Head, payloads []core.SubtreeID, parser *Parser, source []byte, scratch *parserCoreRunnerScratch, forceReplayParseStates bool, allowErrorRoot bool, rootFinalization diagnosticParserCoreRootFinalization) (*Tree, error) {
 	if compact == nil || parser == nil || parser.language == nil || head.Node == 0 || len(payloads) == 0 {
 		return nil, errors.New("parser-core phase zero: incomplete accepted-tree selection input")
+	}
+	if rootFinalization != diagnosticParserCoreFinalizeDefault && rootFinalization != diagnosticParserCoreFinalizeRecoverEOF {
+		return nil, errors.New("parser-core phase zero: unknown accepted-root finalization")
 	}
 	if scratch != nil {
 		defer scratch.resetTreeBuffers()
@@ -3469,9 +3489,20 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 		parser.goCompatFrames = &scratch.goCompatFrames
 		defer func() { parser.goCompatFrames = previousGoCompatFrames }()
 	}
-	tree := parser.buildResultFromNodes(nodes, source, arena, nil, nil, linkScratch)
+	var tree *Tree
+	if rootFinalization == diagnosticParserCoreFinalizeRecoverEOF {
+		if len(nodes) != 1 || nodes[0] == nil || !nodes[0].IsError() {
+			return nil, errors.New("parser-core phase zero: recover_eof finalization requires one ERROR payload")
+		}
+		// C publishes the ERROR parent pushed by recover_eof before accept.
+		// Do not apply the generic Go single-error grammar-root framing rule.
+		builder := newResultRootBuild(parser, source, arena, nil, nil, linkScratch)
+		tree = builder.finishTree(nodes[0], builder.shouldWireParentLinks, true)
+	} else {
+		tree = parser.buildResultFromNodes(nodes, source, arena, nil, nil, linkScratch)
+	}
 	if tree != nil {
-		owned = false // buildResultFromNodes transfers arena ownership to tree.
+		owned = false // The result tree owns the materialization arena.
 	}
 	rejectTree := func(err error) (*Tree, error) {
 		if tree != nil {
@@ -3502,8 +3533,19 @@ func materializeDiagnosticParserCoreAcceptedSelection(compact *core.Core, head c
 	}
 	sourceLen := uint32(len(source))
 	root := tree.root
-	if err := finalizeDiagnosticParserCoreAcceptedRootSpan(root, source, sourceLen, allowErrorRoot, parser.language.TokenCount, parser.lineContinuationEscapeByte()); err != nil {
-		return rejectTree(err)
+	if rootFinalization == diagnosticParserCoreFinalizeRecoverEOF {
+		expectedStart := firstNonTriviaByteStart(source)
+		if !allowErrorRoot || !root.IsError() || !root.HasError() ||
+			root.startByte != expectedStart || root.endByte != sourceLen {
+			return rejectTree(fmt.Errorf(
+				"parser-core phase zero: recover_eof root is not exact: span=%d..%d expected=%d..%d error=%t has-error=%t",
+				root.startByte, root.endByte, expectedStart, sourceLen, root.IsError(), root.HasError(),
+			))
+		}
+	} else {
+		if err := finalizeDiagnosticParserCoreAcceptedRootSpan(root, source, sourceLen, allowErrorRoot, parser.language.TokenCount, parser.lineContinuationEscapeByte()); err != nil {
+			return rejectTree(err)
+		}
 	}
 	// accepted-root-leading-gap: the derivation's own root reduce is exempt
 	// from diagnosticParserCoreReduceChildrenTilingGap (isDerivationRootReduce,
