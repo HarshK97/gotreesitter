@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"sync"
 	"unsafe"
 )
@@ -13,53 +14,91 @@ import (
 const (
 	// DiagnosticEOFRecoveryMaxPayloads bounds one private recover_eof fold.
 	DiagnosticEOFRecoveryMaxPayloads = 4096
-	// DiagnosticEOFRecoveryMaxCloneBytes bounds all requested clone storage.
+	// DiagnosticEOFRecoveryMaxCloneBytes bounds the detached Core through
+	// materialization, its append reserve, and its isolated provider wrapper.
 	DiagnosticEOFRecoveryMaxCloneBytes = 16 << 20
 )
 
 // DiagnosticEOFRecoveryForkReceipt proves one bounded private fold. The
 // equality fields cover only copied headers, arenas, and work.
 type DiagnosticEOFRecoveryForkReceipt struct {
-	Steps                    uint32
-	MaxSteps                 uint32
-	Payloads                 uint32
-	MaxPayloads              uint32
-	SourceFootprintBytes     uint64
-	CoreHeaderBytes          uint64
-	CopiedArenaBytes         uint64
-	AppendReserveBytes       uint64
-	MapBytes                 uint64
-	TemporaryBytes           uint64
-	PreservationBytes        uint64
-	PeakCloneBytes           uint64
-	MaxCloneBytes            uint64
-	StartByte                uint32
-	EndByte                  uint32
-	SubtreesBefore           uint32
-	SubtreesAfter            uint32
-	ChildrenBefore           uint32
-	ChildrenAfter            uint32
-	CheckpointMapEntries     uint32
-	RetainedSelectedPolicy   bool
-	SourceSchedulerActive    bool
-	SchedulerFrameDetached   bool
-	ProviderPointersDetached bool
-	CopiedArenaPrefixesEqual bool
-	CopiedHeadersEqual       bool
-	RootChildrenExact        bool
-	MutableStorageDisjoint   bool
-	WorkBefore               Work
-	WorkAfter                Work
+	Steps                uint32
+	MaxSteps             uint32
+	Payloads             uint32
+	MaxPayloads          uint32
+	SourceFootprintBytes uint64
+	CoreHeaderBytes      uint64
+	CopiedArenaBytes     uint64
+	AppendReserveBytes   uint64
+	MapBytes             uint64
+	TemporaryBytes       uint64
+	PreservationBytes    uint64
+	ProviderWrapperBytes uint64
+	// PeakCloneBytes covers all detached Core storage through materialization,
+	// its append reserve, and the isolated reduction-plan wrapper. It excludes
+	// the Parser, runner scratch, and materialized tree.
+	PeakCloneBytes                uint64
+	MaxCloneBytes                 uint64
+	StartByte                     uint32
+	EndByte                       uint32
+	SubtreesBefore                uint32
+	SubtreesAfter                 uint32
+	ChildrenBefore                uint32
+	ChildrenAfter                 uint32
+	CheckpointMapEntries          uint32
+	RetainedSelectedPolicy        bool
+	SourceSchedulerActive         bool
+	SchedulerFrameDetached        bool
+	SourceProvidersDetached       bool
+	ValidationStructuralPositions uint32
+	ValidationRemappedFields      uint32
+	ValidationRemappedAliases     uint32
+	ValidationScratchReserved     bool
+	CopiedArenaPrefixesEqual      bool
+	CopiedHeadersEqual            bool
+	// MetadataConstructionUnauthenticated proves that the diagnostic ERROR
+	// publication cleared the grammar-table authentication marker.
+	MetadataConstructionUnauthenticated bool
+	RootChildrenExact                   bool
+	MutableStorageDisjoint              bool
+	WorkBefore                          Work
+	WorkAfter                           Work
 }
 
 type diagnosticEOFRecoveryClonePlan struct {
-	coreHeaderBytes    uint64
-	copiedArenaBytes   uint64
-	appendReserveBytes uint64
-	mapBytes           uint64
-	temporaryBytes     uint64
-	preservationBytes  uint64
-	peakBytes          uint64
+	coreHeaderBytes      uint64
+	copiedArenaBytes     uint64
+	appendReserveBytes   uint64
+	mapBytes             uint64
+	temporaryBytes       uint64
+	preservationBytes    uint64
+	providerWrapperBytes uint64
+	validationDemand     diagnosticEOFRecoveryValidationDemand
+	peakBytes            uint64
+}
+
+type diagnosticEOFRecoveryValidationDemand struct {
+	structuralPositions int
+	remappedFields      int
+	remappedAliases     int
+}
+
+// DiagnosticEOFRecoveryValidationScratch reports the three Core-owned
+// validation backings that can grow during generic materialization.
+type DiagnosticEOFRecoveryValidationScratch struct {
+	StructuralPositions uint32
+	RemappedFields      uint32
+	RemappedAliases     uint32
+}
+
+// DiagnosticEOFRecoveryProviderReceipt proves that one detached shadow uses
+// only a distinct, read-only reduction-plan provider.
+type DiagnosticEOFRecoveryProviderReceipt struct {
+	SourceProvidersDetached   bool
+	ReductionPlansAttached    bool
+	ProviderDiffersFromSource bool
+	TableViewDetached         bool
+	SelectedStoreDetached     bool
 }
 
 // ForkDiagnosticEOFRecovery copies the stable compact arenas and appends one
@@ -68,6 +107,7 @@ func ForkDiagnosticEOFRecovery(
 	live *Core,
 	head Head,
 	payloads []SubtreeID,
+	providerWrapperBytes uint64,
 ) (*Core, SubtreeID, DiagnosticEOFRecoveryForkReceipt, error) {
 	receipt := DiagnosticEOFRecoveryForkReceipt{
 		MaxSteps:      1,
@@ -92,24 +132,37 @@ func ForkDiagnosticEOFRecovery(
 	receipt.CheckpointMapEntries = uint32(len(live.checkpoints.buckets))
 	receipt.RetainedSelectedPolicy = live.selectedPolicy != nil
 	receipt.SourceSchedulerActive = live.schedulerFrame.active
-	plan, err := planDiagnosticEOFRecoveryClone(live, len(payloads))
+	plan, err := planDiagnosticEOFRecoveryClone(live, payloads, providerWrapperBytes)
 	receipt.CoreHeaderBytes = plan.coreHeaderBytes
 	receipt.CopiedArenaBytes = plan.copiedArenaBytes
 	receipt.AppendReserveBytes = plan.appendReserveBytes
 	receipt.MapBytes = plan.mapBytes
 	receipt.TemporaryBytes = plan.temporaryBytes
 	receipt.PreservationBytes = plan.preservationBytes
+	receipt.ProviderWrapperBytes = plan.providerWrapperBytes
+	receipt.ValidationStructuralPositions = uint32(plan.validationDemand.structuralPositions)
+	receipt.ValidationRemappedFields = uint32(plan.validationDemand.remappedFields)
+	receipt.ValidationRemappedAliases = uint32(plan.validationDemand.remappedAliases)
 	receipt.PeakCloneBytes = plan.peakBytes
 	if err != nil {
 		return nil, 0, receipt, err
 	}
 
-	shadow := cloneDiagnosticEOFRecoveryCore(live, len(payloads))
+	shadow := cloneDiagnosticEOFRecoveryCore(live, len(payloads), plan.validationDemand)
 	receipt.SchedulerFrameDetached = !shadow.schedulerFrame.active && len(shadow.transactions) == 0
-	receipt.ProviderPointersDetached = shadow.tables == nil && shadow.plans == nil && shadow.selectedProvider == nil
+	receipt.SourceProvidersDetached = shadow.tables == nil && shadow.plans == nil && shadow.selectedProvider == nil
+	receipt.ValidationScratchReserved = shadow.DiagnosticEOFRecoveryValidationScratch() == (DiagnosticEOFRecoveryValidationScratch{
+		StructuralPositions: receipt.ValidationStructuralPositions,
+		RemappedFields:      receipt.ValidationRemappedFields,
+		RemappedAliases:     receipt.ValidationRemappedAliases,
+	})
 	receipt.MutableStorageDisjoint = diagnosticEOFRecoveryStorageDisjoint(live, shadow)
+	receipt.CopiedHeadersEqual = diagnosticEOFRecoveryCopiedHeadersEqual(live, shadow)
 	if !receipt.MutableStorageDisjoint {
 		return nil, 0, receipt, errors.New("parser-core phase zero: EOF recovery clone aliases copied storage")
+	}
+	if !receipt.ValidationScratchReserved {
+		return nil, 0, receipt, errors.New("parser-core phase zero: EOF recovery validation scratch reserve mismatch")
 	}
 
 	first, err := shadow.subtree(payloads[0])
@@ -129,9 +182,10 @@ func ForkDiagnosticEOFRecovery(
 	receipt.SubtreesBefore = uint32(len(shadow.subtrees))
 	receipt.ChildrenBefore = uint32(len(shadow.children))
 	receipt.WorkBefore = shadow.Work()
-	root, err := shadow.appendSubtreeRecord(subtreeRecord{
+	root, err := shadow.appendSubtree(subtreeRecord{
 		symbol: ErrorRegionSymbol, startByte: first.startByte, endByte: last.endByte,
 	}, payloads, nil, nil)
+	receipt.MetadataConstructionUnauthenticated = !shadow.metadataConstructionAuthenticated
 	if err != nil {
 		return nil, 0, receipt, err
 	}
@@ -139,14 +193,74 @@ func ForkDiagnosticEOFRecovery(
 	receipt.SubtreesAfter = uint32(len(shadow.subtrees))
 	receipt.ChildrenAfter = uint32(len(shadow.children))
 	receipt.CopiedArenaPrefixesEqual = diagnosticEOFRecoveryCopiedArenasEqual(live, shadow)
-	receipt.CopiedHeadersEqual = diagnosticEOFRecoveryCopiedHeadersEqual(live, shadow)
 	receipt.RootChildrenExact = diagnosticEOFRecoveryRootChildrenEqual(shadow, root, payloads)
 	receipt.WorkAfter = shadow.Work()
 	return shadow, root, receipt, nil
 }
 
-func planDiagnosticEOFRecoveryClone(live *Core, payloadCount int) (diagnosticEOFRecoveryClonePlan, error) {
-	plan := diagnosticEOFRecoveryClonePlan{coreHeaderBytes: uint64(unsafe.Sizeof(Core{}))}
+// BindDiagnosticEOFRecoveryReductionPlans attaches one narrow provider to a
+// detached shadow. It rejects all wider capabilities and all source aliases.
+func (c *Core) BindDiagnosticEOFRecoveryReductionPlans(
+	source *Core,
+	provider ReductionPlanProvider,
+) (DiagnosticEOFRecoveryProviderReceipt, error) {
+	receipt := DiagnosticEOFRecoveryProviderReceipt{}
+	if c == nil || source == nil {
+		return receipt, errors.New("parser-core phase zero: EOF recovery provider bind requires two cores")
+	}
+	if c == source {
+		return receipt, errors.New("parser-core phase zero: EOF recovery provider bind requires a detached shadow")
+	}
+	receipt.SourceProvidersDetached = c.tables == nil && c.plans == nil && c.selectedProvider == nil
+	if !receipt.SourceProvidersDetached {
+		return receipt, errors.New("parser-core phase zero: EOF recovery shadow has a prebound provider")
+	}
+	if provider == nil {
+		return receipt, errors.New("parser-core phase zero: EOF recovery reduction-plan provider is nil")
+	}
+	if _, ok := provider.(TableView); ok {
+		return receipt, errors.New("parser-core phase zero: EOF recovery provider exposes a table view")
+	}
+	if _, ok := provider.(SelectedStorePolicyProvider); ok {
+		return receipt, errors.New("parser-core phase zero: EOF recovery provider exposes selected-store capability")
+	}
+	if !diagnosticEOFRecoveryPointerProvider(provider) {
+		return receipt, errors.New("parser-core phase zero: EOF recovery provider is not a pointer-owned wrapper")
+	}
+	for _, sourceProvider := range []any{source.tables, source.plans, source.selectedProvider} {
+		if diagnosticEOFRecoveryProvidersAlias(provider, sourceProvider) {
+			return receipt, errors.New("parser-core phase zero: EOF recovery provider aliases the source provider")
+		}
+	}
+	c.plans = provider
+	receipt.ReductionPlansAttached = c.plans != nil
+	receipt.ProviderDiffersFromSource = true
+	receipt.TableViewDetached = c.tables == nil
+	receipt.SelectedStoreDetached = c.selectedProvider == nil
+	return receipt, nil
+}
+
+func diagnosticEOFRecoveryPointerProvider(provider any) bool {
+	value := reflect.ValueOf(provider)
+	return value.IsValid() && value.Kind() == reflect.Pointer && !value.IsNil()
+}
+
+func diagnosticEOFRecoveryProvidersAlias(left, right any) bool {
+	if !diagnosticEOFRecoveryPointerProvider(left) || !diagnosticEOFRecoveryPointerProvider(right) ||
+		reflect.TypeOf(left) != reflect.TypeOf(right) {
+		return false
+	}
+	return reflect.ValueOf(left).Pointer() == reflect.ValueOf(right).Pointer()
+}
+
+func planDiagnosticEOFRecoveryClone(live *Core, payloads []SubtreeID, providerWrapperBytes uint64) (diagnosticEOFRecoveryClonePlan, error) {
+	plan := diagnosticEOFRecoveryClonePlan{
+		coreHeaderBytes:      uint64(unsafe.Sizeof(Core{})),
+		providerWrapperBytes: providerWrapperBytes,
+	}
+	if providerWrapperBytes == 0 {
+		return plan, errors.New("parser-core phase zero: EOF recovery provider wrapper storage is not accounted")
+	}
 	if live.selectedPolicy != nil {
 		return plan, errors.New("parser-core phase zero: EOF recovery clone does not support a retained selected policy")
 	}
@@ -159,6 +273,14 @@ func planDiagnosticEOFRecoveryClone(live *Core, payloadCount int) (diagnosticEOF
 	if !live.metadataConstructionAuthenticated {
 		return plan, errors.New("parser-core phase zero: EOF recovery source metadata is not authenticated")
 	}
+	if live.plans == nil {
+		return plan, errors.New("parser-core phase zero: EOF recovery source has no immutable reduction-plan provider")
+	}
+	demand, err := diagnosticEOFRecoveryValidationScratchDemand(live, payloads)
+	if err != nil {
+		return plan, err
+	}
+	plan.validationDemand = demand
 
 	for _, item := range []struct {
 		count int
@@ -186,9 +308,22 @@ func planDiagnosticEOFRecoveryClone(live *Core, payloadCount int) (diagnosticEOF
 	if !diagnosticEOFRecoveryAdd(&plan.appendReserveBytes, coreSubtreeRecordBytes) {
 		return plan, errors.New("parser-core phase zero: EOF recovery subtree reserve overflow")
 	}
-	childReserve, ok := diagnosticEOFRecoveryMul(uint64(payloadCount), coreChildRecordBytes)
+	childReserve, ok := diagnosticEOFRecoveryMul(uint64(len(payloads)), coreChildRecordBytes)
 	if !ok || !diagnosticEOFRecoveryAdd(&plan.appendReserveBytes, childReserve) {
 		return plan, errors.New("parser-core phase zero: EOF recovery child reserve overflow")
+	}
+	for _, item := range []struct {
+		count int
+		bytes uint64
+	}{
+		{demand.structuralPositions, coreUint16Bytes},
+		{demand.remappedFields, coreFieldRecordBytes},
+		{demand.remappedAliases, coreAliasRecordBytes},
+	} {
+		bytes, ok := diagnosticEOFRecoveryMul(uint64(item.count), item.bytes)
+		if !ok || !diagnosticEOFRecoveryAdd(&plan.temporaryBytes, bytes) {
+			return plan, errors.New("parser-core phase zero: EOF recovery validation scratch byte count overflow")
+		}
 	}
 
 	plan.peakBytes = plan.coreHeaderBytes
@@ -198,6 +333,7 @@ func planDiagnosticEOFRecoveryClone(live *Core, payloadCount int) (diagnosticEOF
 		plan.mapBytes,
 		plan.temporaryBytes,
 		plan.preservationBytes,
+		plan.providerWrapperBytes,
 	} {
 		if !diagnosticEOFRecoveryAdd(&plan.peakBytes, bytes) {
 			return plan, errors.New("parser-core phase zero: EOF recovery peak byte count overflow")
@@ -212,7 +348,92 @@ func planDiagnosticEOFRecoveryClone(live *Core, payloadCount int) (diagnosticEOF
 	return plan, nil
 }
 
-func cloneDiagnosticEOFRecoveryCore(live *Core, payloadCount int) *Core {
+func diagnosticEOFRecoveryValidationScratchDemand(
+	live *Core,
+	payloads []SubtreeID,
+) (diagnosticEOFRecoveryValidationDemand, error) {
+	demand := diagnosticEOFRecoveryValidationDemand{}
+	for index := range live.subtrees {
+		record := live.subtrees[index]
+		if record.terminal {
+			continue
+		}
+		end := uint64(record.firstChild) + uint64(record.childCount)
+		if end > uint64(len(live.children)) {
+			return demand, errors.New("parser-core phase zero: EOF recovery source child range is invalid")
+		}
+		children := live.children[record.firstChild:end]
+		if err := diagnosticEOFRecoveryObserveValidationDemand(
+			live,
+			record.productionID,
+			children,
+			int(record.fieldCount),
+			int(record.aliasCount),
+			false,
+			&demand,
+		); err != nil {
+			return demand, err
+		}
+	}
+	if err := diagnosticEOFRecoveryObserveValidationDemand(
+		live,
+		0,
+		payloads,
+		0,
+		0,
+		true,
+		&demand,
+	); err != nil {
+		return demand, err
+	}
+	return demand, nil
+}
+
+func diagnosticEOFRecoveryObserveValidationDemand(
+	live *Core,
+	productionID uint16,
+	children []SubtreeID,
+	storedFieldCount int,
+	storedAliasCount int,
+	syntheticRoot bool,
+	demand *diagnosticEOFRecoveryValidationDemand,
+) error {
+	structuralCount := 0
+	for _, child := range children {
+		record, err := live.subtree(child)
+		if err != nil {
+			return err
+		}
+		if !record.extra {
+			structuralCount++
+		}
+	}
+	plan, err := live.reductionPlanForPair(productionID, structuralCount)
+	if err != nil {
+		return err
+	}
+	wantAliases := 0
+	if len(plan.aliases) != 0 {
+		wantAliases = len(children)
+	}
+	if syntheticRoot {
+		if len(plan.fields) != 0 || wantAliases != 0 {
+			return errors.New("parser-core phase zero: EOF recovery ERROR root requires empty production metadata")
+		}
+	} else if storedFieldCount != len(plan.fields) || storedAliasCount != wantAliases {
+		return errors.New("parser-core phase zero: EOF recovery source metadata counts do not match authenticated plans")
+	}
+	demand.structuralPositions = max(demand.structuralPositions, structuralCount)
+	demand.remappedFields = max(demand.remappedFields, len(plan.fields))
+	demand.remappedAliases = max(demand.remappedAliases, wantAliases)
+	return nil
+}
+
+func cloneDiagnosticEOFRecoveryCore(
+	live *Core,
+	payloadCount int,
+	validationDemand diagnosticEOFRecoveryValidationDemand,
+) *Core {
 	shadow := new(Core)
 	*shadow = *live
 	shadow.tables = nil
@@ -243,7 +464,11 @@ func cloneDiagnosticEOFRecoveryCore(live *Core, payloadCount int) *Core {
 	shadow.reductionSourceOwner = 0
 	shadow.transactions = nil
 	shadow.popScratch = popEnumerationScratch{}
-	shadow.reductionScratch = reductionOutputScratch{}
+	shadow.reductionScratch = reductionOutputScratch{
+		structuralPositions: make([]uint16, 0, validationDemand.structuralPositions),
+		remappedFields:      make([]FieldMapEntry, 0, validationDemand.remappedFields),
+		remappedAliases:     make([]Symbol, 0, validationDemand.remappedAliases),
+	}
 	shadow.historicalNodeScratch = nil
 	shadow.cohortHeadScratch = nil
 	shadow.factorLinkScratch = nil
@@ -252,6 +477,20 @@ func cloneDiagnosticEOFRecoveryCore(live *Core, payloadCount int) *Core {
 	shadow.selectedPool = selectedStoreBacking{}
 	shadow.schedulerFrame = schedulerTransactionFrame{}
 	return shadow
+}
+
+// DiagnosticEOFRecoveryValidationScratch returns the current Core-owned
+// validation capacities. The diagnostic caller compares this value before and
+// after materialization to reject unplanned growth.
+func (c *Core) DiagnosticEOFRecoveryValidationScratch() DiagnosticEOFRecoveryValidationScratch {
+	if c == nil {
+		return DiagnosticEOFRecoveryValidationScratch{}
+	}
+	return DiagnosticEOFRecoveryValidationScratch{
+		StructuralPositions: uint32(cap(c.reductionScratch.structuralPositions)),
+		RemappedFields:      uint32(cap(c.reductionScratch.remappedFields)),
+		RemappedAliases:     uint32(cap(c.reductionScratch.remappedAliases)),
+	}
 }
 
 func cloneDiagnosticSlice[T any](source []T, extraCapacity int) []T {

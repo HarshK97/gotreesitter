@@ -7,9 +7,11 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"unsafe"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
+	core "github.com/odvcencio/gotreesitter/internal/parsercorephase0"
 )
 
 // TestEOFRecoveryShadowDifferential compares one private compact recover_eof
@@ -72,9 +74,18 @@ func TestEOFRecoveryShadowDifferential(t *testing.T) {
 			}
 			assertEOFShadowMemory(t, shadow)
 			if !shadow.MutableStorageDisjoint || !shadow.CopiedArenaPrefixesEqual ||
-				!shadow.CopiedHeadersEqual || !shadow.RootChildrenExact ||
-				!shadow.SchedulerFrameDetached || !shadow.ProviderPointersDetached {
+				!shadow.CopiedHeadersEqual || !shadow.MetadataConstructionUnauthenticated || !shadow.RootChildrenExact ||
+				!shadow.SchedulerFrameDetached || !shadow.SourceProvidersDetached {
 				t.Fatalf("private EOF recovery clone proof=%+v", *shadow)
+			}
+			if !shadow.ProviderConstructedFromIsolatedParser || !shadow.ProviderSharesImmutableLanguageTables ||
+				!shadow.ProviderReductionPlanOnly || !shadow.IsolatedReductionPlansAttached ||
+				!shadow.ProviderDiffersFromLive || !shadow.ProviderTableViewDetached ||
+				!shadow.ProviderSelectedStoreDetached {
+				t.Fatalf("private EOF recovery provider proof=%+v", *shadow)
+			}
+			if !shadow.ValidationScratchReserved || !shadow.ValidationScratchNoGrowth {
+				t.Fatalf("private EOF recovery validation scratch proof=%+v", *shadow)
 			}
 			if !shadow.SourceSchedulerActive || !shadow.IsolatedParser || !shadow.IsolatedScratch || !shadow.SharedLanguagePointer ||
 				!shadow.LiveHeaderStatsWorkUnchanged {
@@ -167,11 +178,17 @@ func assertEOFShadowMemory(t *testing.T, shadow *gotreesitter.EOFRecoveryShadowR
 	if shadow.RetainedSelectedPolicy || shadow.CheckpointMapEntries != 0 {
 		t.Fatalf("private EOF recovery accepted unsupported retained state=%+v", *shadow)
 	}
-	if shadow.MapBytes != 0 || shadow.TemporaryBytes != 0 || shadow.PreservationBytes != 0 {
+	if shadow.ProviderWrapperBytes != 8 {
+		t.Fatalf("private EOF recovery provider wrapper bytes=%d, want 8", shadow.ProviderWrapperBytes)
+	}
+	wantTemporary := uint64(shadow.ValidationStructuralPositions)*uint64(unsafe.Sizeof(uint16(0))) +
+		uint64(shadow.ValidationRemappedFields)*uint64(unsafe.Sizeof(core.FieldMapEntry{})) +
+		uint64(shadow.ValidationRemappedAliases)*uint64(unsafe.Sizeof(core.Symbol(0)))
+	if shadow.MapBytes != 0 || shadow.TemporaryBytes != wantTemporary || shadow.PreservationBytes != 0 {
 		t.Fatalf("private EOF recovery unexpected auxiliary allocation=%+v", *shadow)
 	}
 	want := shadow.CoreHeaderBytes + shadow.CopiedArenaBytes + shadow.AppendReserveBytes +
-		shadow.MapBytes + shadow.TemporaryBytes + shadow.PreservationBytes
+		shadow.MapBytes + shadow.TemporaryBytes + shadow.PreservationBytes + shadow.ProviderWrapperBytes
 	if shadow.PeakCloneBytes != want || shadow.PeakCloneBytes == 0 || shadow.PeakCloneBytes > shadow.MaxCloneBytes {
 		t.Fatalf("private EOF recovery peak accounting=%+v want=%d", *shadow, want)
 	}
