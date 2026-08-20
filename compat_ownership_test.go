@@ -20,6 +20,8 @@ const (
 	resultCompatDispatcherCensusEvidencePath = "parser_result_test/dispatcher_census_test.go"
 	resultCompatCOracleEvidencePath          = "cgo_harness/parity_cgo_test.go"
 	resultCompatBaselineEvidenceScope        = "baseline_corpus_wide_only"
+	resultCompatSwiftTernaryRetiredCommit    = "ddaed36e558d60d0e8e96bb9f6c59c0fb63c3b97"
+	resultCompatSwiftTernaryProducerFix      = "71180718521aa6cf53fa4122a50998a7a2ef8020"
 )
 
 var resultCompatRetiredCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -171,6 +173,7 @@ func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 				if !resultCompatRetiredCommitPattern.MatchString(entry.ProducerFixCommit) {
 					t.Errorf("%s producer_fix_commit = %q, want a lowercase 40-character commit hash", entry.ID, entry.ProducerFixCommit)
 				}
+				assertSwiftTernaryRetirementProvenance(t, entry)
 			}
 		default:
 			t.Errorf("%s has unsupported status %q", entry.ID, entry.Status)
@@ -205,6 +208,19 @@ func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 func assertRetiredOwnershipReceiptRefs(t *testing.T, entry resultCompatOwnershipEntry) {
 	t.Helper()
 	assertOwnershipEvidencePaths(t, entry.ID+" retirement receipt_refs", entry.ReceiptRefs)
+}
+
+func assertSwiftTernaryRetirementProvenance(t *testing.T, entry resultCompatOwnershipEntry) {
+	t.Helper()
+	if entry.ID != "dispatch.swift.ternary" {
+		return
+	}
+	if got, want := entry.RetiredCommit, resultCompatSwiftTernaryRetiredCommit; got != want {
+		t.Errorf("%s retired_commit = %q, want deletion commit %q", entry.ID, got, want)
+	}
+	if got, want := entry.ProducerFixCommit, resultCompatSwiftTernaryProducerFix; got != want {
+		t.Errorf("%s producer_fix_commit = %q, want producer commit %q", entry.ID, got, want)
+	}
 }
 
 func assertOwnershipEvidencePaths(t *testing.T, label string, paths []string) {
