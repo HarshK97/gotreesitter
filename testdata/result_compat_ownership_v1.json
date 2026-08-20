@@ -1546,7 +1546,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "eee20b8a54a1608b47cce0ab7fb934651e204d66",
+      "retired_commit": "8d0648f5e97fb75e4934aab90f0de4b0e3c7e821",
       "positive_control_commit": "143936b2a62b44eb779dda835b09abe0c26cc6d5",
       "producer_fix_commit": "eee20b8a54a1608b47cce0ab7fb934651e204d66",
       "receipt_refs": [
