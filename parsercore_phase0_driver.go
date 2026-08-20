@@ -4212,6 +4212,12 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 				boundary: DiagnosticParserCoreAccept, detail: "generic scheduler requires a sole homogeneous accept frontier", headerIndex: cell.headerIndex,
 			}, nil
 		}
+		if certifiedAcceptWithDeadSiblings {
+			// The G2 EOF-history census observes the complete frontier before
+			// acceptance canonicalization removes its no-action siblings. The
+			// default build supplies an empty inlined stub.
+			s.censusEOFAcceptHistoryFrontier(cell.headerIndex, noActionIndices)
+		}
 		if err := s.applyGenericAccept(before, cell); err != nil {
 			return nil, err
 		}
