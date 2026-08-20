@@ -46,13 +46,6 @@ func normalizeJavaScriptCompatibility(root *Node, source []byte, p *Parser, lang
 	normalizeJavaScriptProgramStart(root, lang)
 
 	poller := parseStopPoller{check: p.activeParseStopCheck(), memoryBudgetParser: p}
-	// Fused walk handles empty_statement, statement keywords (if/while),
-	// optional-chain leaves, call_expression precedence, and builds unary/
-	// binary candidate indexes — six separate full-tree walks collapsed into
-	// one walk + indexed rewrites.
-	if _, reason := normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root, source, lang, &poller); resultMaterializationShouldStop(reason) {
-		return reason
-	}
 	if reason := normalizeJavaScriptTrailingContinueComments(root, source, lang, &poller); resultMaterializationShouldStop(reason) {
 		return reason
 	}
@@ -131,8 +124,8 @@ func normalizeTypeScriptTreeCompatibilityWithParser(root *Node, source []byte, p
 	var syntaxStats javaScriptTypeScriptSyntaxNormalizationStats
 	var haveSyntaxStats bool
 	var syntaxStopReason ParseStopReason
-	// ts_compat_index_walk drives the fused walk: dynamic-import leaf
-	// retyping plus building the TypeScript-compatibility candidate index.
+	// ts_compat_index_walk drives the fused TypeScript-compatibility candidate
+	// index walk.
 	// Renamed from ts_statement_keyword_leaves by the wave11 compat-sunset
 	// (juniper), which removed the walk's empty_statement, existential_type,
 	// statement-keyword, call-precedence, and unary/binary-precedence-
@@ -817,12 +810,12 @@ type javaScriptTypeScriptSyntaxNormalizationStats struct {
 // unary/binary-precedence-rotation handling: a census over ~23MB of real
 // JS/TS/TSX (undici.js, TypeScript's own checker.ts/parser.ts/utilities.ts,
 // real TSX) plus the 5003ac64 regression snippets and independent adversarial
-// precedence chains showed zero rewrites from any of those six passes —
-// later grammargen table fixes made the GLR tables produce the already-
+// precedence chains showed zero rewrites from any of those six passes.
+// Later grammargen table fixes made the GLR tables produce the already-
 // correct shape directly, so the post-hoc rewrite passes had become dead
-// weight on every JS/TS/TSX parse. What remains — dynamic-import leaf
-// retyping and the TypeScript-compatibility candidate index — still does
-// real, live work and keeps the exact same containment discipline.
+// weight on every JS/TS/TSX parse. The parser now also retains dynamic-import
+// token children. The TypeScript-compatibility candidate index remains live
+// and keeps the same containment discipline.
 func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats(root *Node, source []byte, lang *Language, poller *parseStopPoller) (javaScriptTypeScriptSyntaxNormalizationStats, ParseStopReason) {
 	var stats javaScriptTypeScriptSyntaxNormalizationStats
 	if root == nil || lang == nil {
@@ -841,10 +834,6 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 	optionalChainTokenSym, hasOptionalChainTokenSym := symbolByName(lang, "?.")
 	optionalChainTokenNamed := hasOptionalChainTokenSym && symbolIsNamed(lang, optionalChainTokenSym)
 	enableOptionalChain := hasOptionalChainSym && bytes.Contains(source, []byte("?."))
-	dynamicImportSym, hasDynamicImport := lang.symbolByNameAndNamed("import", true)
-	importKeywordSym, hasImportKeyword := lang.symbolByNameAndNamed("import", false)
-	enableDynamicImport := hasDynamicImport && hasImportKeyword && bytes.Contains(source, []byte("import"))
-
 	var typeScriptCtx *typeScriptNormalizationContext
 	if lang.Name == "typescript" || lang.Name == "tsx" {
 		sourceFlags := typeScriptCompatSourceFlagsFor(source)
@@ -856,7 +845,6 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 	index, reason := rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex(
 		root, source, lang,
 		optionalChainSym, optionalChainTokenSym, optionalChainTokenNamed, enableOptionalChain,
-		dynamicImportSym, importKeywordSym, enableDynamicImport,
 		typeScriptCtx,
 		poller,
 	)
@@ -867,13 +855,13 @@ func normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStat
 }
 
 // rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex
-// walks the whole JS/TS/TSX result tree once, doing dynamic-import leaf
-// retyping and building the TypeScript-compatibility candidate index (see
+// walks the TypeScript/TSX result tree once and builds the compatibility
+// candidate index. See
 // normalizeJavaScriptTypeScriptStatementKeywordsAndPrecedenceWithDetailedStats's
 // doc comment for the wave11 census that removed this walk's former
 // empty_statement, existential_type, statement-keyword, call-precedence, and
 // unary/binary-precedence-rotation work — all confirmed dead: zero rewrites
-// across the census corpus).
+// across the census corpus.
 func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBinaryIndex(
 	root *Node,
 	source []byte,
@@ -882,9 +870,6 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	optionalChainTokenSym Symbol,
 	optionalChainTokenNamed bool,
 	enableOptionalChain bool,
-	dynamicImportSym Symbol,
-	importKeywordSym Symbol,
-	enableDynamicImport bool,
 	typeScriptCtx *typeScriptNormalizationContext,
 	poller *parseStopPoller,
 ) (javaScriptTypeScriptUnaryBinaryPrecedenceIndex, ParseStopReason) {
@@ -896,7 +881,7 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	// is nothing to do; returning early avoids materializing final-ref
 	// children for callers (e.g. mock-lang unit tests) that exercise only
 	// other compat passes.
-	if !enableDynamicImport && typeScriptCtx == nil {
+	if typeScriptCtx == nil {
 		return index, ParseStopNone
 	}
 	index.builds = 1
@@ -952,9 +937,6 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 			}
 		}
 		index.nodesVisited++
-		if enableDynamicImport && n.symbol == dynamicImportSym {
-			normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged(n, importKeywordSym)
-		}
 		collectTypeScriptCompatibilityNodeCandidate(&index.typeScriptCompatibility, n, typeScriptCtx)
 
 		if n.childIndex <= finalChildSidecarIndexBase && n.ownerArena != nil {
@@ -1056,15 +1038,6 @@ func rewriteJavaScriptTypeScriptStatementKeywordsCallPrecedenceAndBuildUnaryBina
 	}
 	walk(root)
 	return index, stopReason
-}
-
-func normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged(node *Node, importKeywordSym Symbol) bool {
-	if node == nil || resultChildCount(node) != 0 || node.endByte <= node.startByte {
-		return false
-	}
-	child := newLeafNodeInArena(node.ownerArena, importKeywordSym, false, node.startByte, node.endByte, node.startPoint, node.endPoint)
-	replaceNodeChildrenUnfielded(node, cloneNodeSliceInArena(node.ownerArena, []*Node{child}))
-	return true
 }
 
 type javaScriptTypeScriptPrecedenceCandidate struct {

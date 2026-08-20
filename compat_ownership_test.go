@@ -16,12 +16,16 @@ import (
 )
 
 const (
-	resultCompatOwnershipRegistryPath        = "testdata/result_compat_ownership_v1.json"
-	resultCompatDispatcherCensusEvidencePath = "parser_result_test/dispatcher_census_test.go"
-	resultCompatCOracleEvidencePath          = "cgo_harness/parity_cgo_test.go"
-	resultCompatBaselineEvidenceScope        = "baseline_corpus_wide_only"
-	resultCompatSwiftTernaryRetiredCommit    = "ddaed36e558d60d0e8e96bb9f6c59c0fb63c3b97"
-	resultCompatSwiftTernaryProducerFix      = "71180718521aa6cf53fa4122a50998a7a2ef8020"
+	resultCompatOwnershipRegistryPath         = "testdata/result_compat_ownership_v1.json"
+	resultCompatDispatcherCensusEvidencePath  = "parser_result_test/dispatcher_census_test.go"
+	resultCompatCOracleEvidencePath           = "cgo_harness/parity_cgo_test.go"
+	resultCompatBaselineEvidenceScope         = "baseline_corpus_wide_only"
+	resultCompatSwiftTernaryRetiredCommit     = "ddaed36e558d60d0e8e96bb9f6c59c0fb63c3b97"
+	resultCompatSwiftTernaryProducerFix       = "71180718521aa6cf53fa4122a50998a7a2ef8020"
+	resultCompatJavaScriptImportRetiredCommit = "8d0648f5e97fb75e4934aab90f0de4b0e3c7e821"
+	resultCompatJavaScriptImportPositive      = "143936b2a62b44eb779dda835b09abe0c26cc6d5"
+	resultCompatJavaScriptImportProducerFix   = "eee20b8a54a1608b47cce0ab7fb934651e204d66"
+	resultCompatJavaScriptImportFunction      = "normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged"
 )
 
 var resultCompatRetiredCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -173,7 +177,7 @@ func TestResultCompatibilityOwnershipRegistry(t *testing.T) {
 				if !resultCompatRetiredCommitPattern.MatchString(entry.ProducerFixCommit) {
 					t.Errorf("%s producer_fix_commit = %q, want a lowercase 40-character commit hash", entry.ID, entry.ProducerFixCommit)
 				}
-				assertSwiftTernaryRetirementProvenance(t, entry)
+				assertRetiredSubpassProvenance(t, entry)
 			}
 		default:
 			t.Errorf("%s has unsupported status %q", entry.ID, entry.Status)
@@ -210,16 +214,33 @@ func assertRetiredOwnershipReceiptRefs(t *testing.T, entry resultCompatOwnership
 	assertOwnershipEvidencePaths(t, entry.ID+" retirement receipt_refs", entry.ReceiptRefs)
 }
 
-func assertSwiftTernaryRetirementProvenance(t *testing.T, entry resultCompatOwnershipEntry) {
+func assertRetiredSubpassProvenance(t *testing.T, entry resultCompatOwnershipEntry) {
 	t.Helper()
-	if entry.ID != "dispatch.swift.ternary" {
-		return
-	}
-	if got, want := entry.RetiredCommit, resultCompatSwiftTernaryRetiredCommit; got != want {
-		t.Errorf("%s retired_commit = %q, want deletion commit %q", entry.ID, got, want)
-	}
-	if got, want := entry.ProducerFixCommit, resultCompatSwiftTernaryProducerFix; got != want {
-		t.Errorf("%s producer_fix_commit = %q, want producer commit %q", entry.ID, got, want)
+	switch entry.ID {
+	case "dispatch.swift.ternary":
+		if got, want := entry.RetiredCommit, resultCompatSwiftTernaryRetiredCommit; got != want {
+			t.Errorf("%s retired_commit = %q, want deletion commit %q", entry.ID, got, want)
+		}
+		if got, want := entry.ProducerFixCommit, resultCompatSwiftTernaryProducerFix; got != want {
+			t.Errorf("%s producer_fix_commit = %q, want producer commit %q", entry.ID, got, want)
+		}
+	case "dispatch.javascript.dynamic-import":
+		if got, want := entry.RetiredCommit, resultCompatJavaScriptImportRetiredCommit; got != want {
+			t.Errorf("%s retired_commit = %q, want deletion commit %q", entry.ID, got, want)
+		}
+		if got, want := entry.PositiveControlCommit, resultCompatJavaScriptImportPositive; got != want {
+			t.Errorf("%s positive_control_commit = %q, want %q", entry.ID, got, want)
+		}
+		if got, want := entry.ProducerFixCommit, resultCompatJavaScriptImportProducerFix; got != want {
+			t.Errorf("%s producer_fix_commit = %q, want %q", entry.ID, got, want)
+		}
+		data, err := os.ReadFile("parser_result_javascript_typescript.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), resultCompatJavaScriptImportFunction) {
+			t.Errorf("%s remains in production source", resultCompatJavaScriptImportFunction)
+		}
 	}
 }
 

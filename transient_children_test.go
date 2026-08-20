@@ -254,29 +254,10 @@ func TestTransientChildFinalizationAbortReturnsErrorTree(t *testing.T) {
 }
 
 func TestTransientChildReturnedTreeMaterializationUsesRawRoot(t *testing.T) {
-	// Observable marker: a childless dynamic-import leaf (named "import"),
-	// retyped into a single-child node by
-	// normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged when
-	// deferred TS compat runs. Mirrors newDeferredCompatDynamicImportFixture
-	// in parser_result_javascript_typescript_compat_test.go: this test used
-	// to use an empty_statement leaf as its marker, but the wave11
-	// compat-sunset (juniper) removed empty_statement leaf-retype as one of
-	// six confirmed-dead JS/TS rewrite classes (zero rewrites across a
-	// ~23MB real JS/TS/TSX census).
-	lang := &Language{
-		Name:        "typescript",
-		SymbolNames: []string{"EOF", "program", "import", "import"},
-		SymbolMetadata: []SymbolMetadata{
-			{Name: "EOF", Visible: false, Named: false},
-			{Name: "program", Visible: true, Named: true},
-			{Name: "import", Visible: true, Named: true},
-			{Name: "import", Visible: true, Named: false},
-		},
-	}
-
-	arena := newNodeArena(arenaClassFull)
-	stmt := newLeafNodeInArena(arena, 2, true, 0, 6, Point{}, Point{Column: 6})
-	root := newParentNodeInArena(arena, 1, true, []*Node{stmt}, nil, 0)
+	// The TypeScript candidate path adds the child after deferred compatibility.
+	// This marker proves that transient materialization keeps the raw root.
+	lang, root, stmt := newDeferredCompatDynamicImportFixture()
+	arena := root.ownerArena
 	tree := newTreeWithArenas(root, []byte("import"), lang, arena, nil)
 	tree.deferResultCompatibility()
 

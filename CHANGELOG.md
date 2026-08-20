@@ -12,6 +12,9 @@ for tags and release notes while still in `0.x`.
 - Swift ternary expressions now come directly from the regenerated grammar
   blob. Parsing no longer runs the source-reparse compatibility pass.
 
+- JavaScript dynamic imports now retain their keyword child during parsing.
+  Parsing no longer runs the leaf-repair compatibility path.
+
 ### Fixed
 
 - End recovery convergence after a clean condense. Pending forks no longer

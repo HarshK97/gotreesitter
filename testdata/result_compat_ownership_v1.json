@@ -9,7 +9,7 @@
     "post_finalization_arms": 0,
     "post_finalization_languages": 0,
     "live_entries": 36,
-    "retired_entries": 50
+    "retired_entries": 51
   },
   "live_evidence_baseline": {
     "scope": "baseline_corpus_wide_only",
@@ -1518,6 +1518,41 @@
       },
       "status": "live",
       "evidence_scope": "baseline_corpus_wide_only"
+    },
+    {
+      "id": "dispatch.javascript.dynamic-import",
+      "kind": "dispatcher_subpass",
+      "functions": [
+        "normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged"
+      ],
+      "files": [
+        "parser_result_javascript_typescript.go"
+      ],
+      "languages": [
+        "javascript"
+      ],
+      "purpose": "Historical: add the anonymous import token below a childless named dynamic-import node after materialization.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "grammars/javascript_dynamic_import_retirement_test.go",
+        "cgo_harness/javascript_dynamic_import_retirement_parity_test.go"
+      ],
+      "retirement_condition": "Satisfied: the generic collapsed-child reducer retains the anonymous import token. Production, direct compact, strict forest, edited incremental, and locked C routes are exact.",
+      "route_coverage": {
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
+      },
+      "status": "retired",
+      "retired_commit": "8d0648f5e97fb75e4934aab90f0de4b0e3c7e821",
+      "positive_control_commit": "143936b2a62b44eb779dda835b09abe0c26cc6d5",
+      "producer_fix_commit": "eee20b8a54a1608b47cce0ab7fb934651e204d66",
+      "receipt_refs": [
+        "grammars/javascript_dynamic_import_retirement_test.go",
+        "cgo_harness/javascript_dynamic_import_retirement_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.julia",
