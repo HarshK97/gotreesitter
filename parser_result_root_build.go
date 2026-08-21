@@ -7,6 +7,7 @@ type resultRootBuild struct {
 	reuseState            *parseReuseState
 	linkScratch           *[]*Node
 	lang                  *Language
+	budgetScratch         *parserScratch
 	expectedRootSymbol    Symbol
 	hasExpectedRoot       bool
 	shouldWireParentLinks bool
@@ -22,14 +23,28 @@ type resultRootBuild struct {
 
 func newResultRootBuild(p *Parser, source []byte, arena *nodeArena, oldTree *Tree, reuseState *parseReuseState, linkScratch *[]*Node) resultRootBuild {
 	build := resultRootBuild{
-		parser:                p,
-		source:                source,
-		arena:                 arena,
-		reuseState:            reuseState,
-		linkScratch:           linkScratch,
+		parser:      p,
+		source:      source,
+		arena:       arena,
+		reuseState:  reuseState,
+		linkScratch: linkScratch,
+		budgetScratch: func() *parserScratch {
+			if p != nil {
+				return p.budgetScratch
+			}
+			return nil
+		}(),
 		shouldWireParentLinks: oldTree == nil,
 	}
 	if p != nil {
+		if build.budgetScratch != nil {
+			build.replayAdvancePages = build.budgetScratch.advancePages
+			build.replayAdvancePageUsed = build.budgetScratch.advancePageUsed
+			build.replayAdvanceFrames = build.budgetScratch.advanceFrames
+			build.replayStack.closePages = build.budgetScratch.closePages
+			build.replayStack.closePageUsed = build.budgetScratch.closePageUsed
+			build.replayStack.closeFrames = build.budgetScratch.closeFrames
+		}
 		build.lang = p.language
 		if p.hasRootSymbol {
 			build.expectedRootSymbol = p.rootSymbol
@@ -245,6 +260,8 @@ const syntheticRootReplayCloseMemoMaxEntries = 1 << 18
 
 // Fixed pages avoid stream-growth copies and bound frame storage to 4 MiB.
 const syntheticRootReplayAdvancePageFrames = 1 << 14
+const syntheticRootReplayAdvancePageBytes = syntheticRootReplayAdvancePageFrames * 4
+const syntheticRootReplayClosePageBytes = syntheticRootReplayClosePageFrames * 4
 const syntheticRootReplayAdvanceMaxPages = syntheticRootReplayAdvanceStreamMaxFrames / syntheticRootReplayAdvancePageFrames
 const syntheticRootReplayAdvanceSpanOffsetBits = 14
 const syntheticRootReplayAdvanceSpanPageBits = 6
@@ -716,7 +733,7 @@ func (b *resultRootBuild) syntheticRootReplayAdvanceToken(frontier []syntheticRo
 			start := span.offset()
 			end := start + count
 			if pageIndex >= 0 && pageIndex < len(b.replayAdvancePages) && start >= 0 && end >= start && end <= syntheticRootReplayAdvancePageFrames {
-				cached := b.replayAdvancePages[pageIndex][start:end]
+				cached := b.replayAdvancePages[pageIndex][start:end:end]
 				perfRecordSyntheticReplayAdvanceCacheHit()
 				perfRecordSyntheticReplayAdvanceOutput(len(cached), false)
 				return cached
@@ -780,7 +797,12 @@ func (b *resultRootBuild) syntheticRootReplayStoreAdvance(key syntheticRootRepla
 			perfRecordSyntheticReplayAdvanceCacheCapSkip()
 			return
 		}
-		b.replayAdvancePages = append(b.replayAdvancePages, new([syntheticRootReplayAdvancePageFrames]syntheticRootReplayFrame))
+		if b.budgetScratch != nil {
+			b.budgetScratch.advancePages = append(b.budgetScratch.advancePages, new([syntheticRootReplayAdvancePageFrames]syntheticRootReplayFrame))
+			b.replayAdvancePages = b.budgetScratch.advancePages
+		} else {
+			b.replayAdvancePages = append(b.replayAdvancePages, new([syntheticRootReplayAdvancePageFrames]syntheticRootReplayFrame))
+		}
 		used = 0
 	}
 	pageIndex := len(b.replayAdvancePages) - 1
@@ -788,6 +810,10 @@ func (b *resultRootBuild) syntheticRootReplayStoreAdvance(key syntheticRootRepla
 	b.replayAdvanceMemo[key] = newSyntheticRootReplayAdvanceSpan(pageIndex, used, len(frames))
 	b.replayAdvancePageUsed = uint16(used + len(frames))
 	b.replayAdvanceFrames += uint32(len(frames))
+	if b.budgetScratch != nil {
+		b.budgetScratch.advancePageUsed = b.replayAdvancePageUsed
+		b.budgetScratch.advanceFrames = b.replayAdvanceFrames
+	}
 	perfRecordSyntheticReplayAdvanceCacheStore()
 }
 
@@ -879,7 +905,12 @@ func (b *resultRootBuild) syntheticRootReplayStoreClose(key syntheticRootReplayC
 		if len(store.closePages) >= syntheticRootReplayCloseMaxPages {
 			return nil, false
 		}
-		store.closePages = append(store.closePages, new([syntheticRootReplayClosePageFrames]syntheticRootReplayFrame))
+		if b.budgetScratch != nil {
+			store.closePages = append(b.budgetScratch.closePages, new([syntheticRootReplayClosePageFrames]syntheticRootReplayFrame))
+			b.budgetScratch.closePages = store.closePages
+		} else {
+			store.closePages = append(store.closePages, new([syntheticRootReplayClosePageFrames]syntheticRootReplayFrame))
+		}
 		used = 0
 	}
 	pageIndex := len(store.closePages) - 1
@@ -888,6 +919,10 @@ func (b *resultRootBuild) syntheticRootReplayStoreClose(key syntheticRootReplayC
 	store.closeMemo[key] = newSyntheticRootReplayCloseSpan(pageIndex, used, len(frames))
 	store.closePageUsed = uint16(end)
 	store.closeFrames += uint32(len(frames))
+	if b.budgetScratch != nil {
+		b.budgetScratch.closePageUsed = store.closePageUsed
+		b.budgetScratch.closeFrames = store.closeFrames
+	}
 	perfRecordSyntheticReplayCloseMemoStore()
 	return store.closePages[pageIndex][used:end:end], true
 }
