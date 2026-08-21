@@ -99,7 +99,11 @@ func BenchmarkCTreeSitterGoParseIncrementalSingleByteEdit(b *testing.B) {
 	if tree == nil || tree.RootNode() == nil {
 		b.Fatal("initial parse returned nil root")
 	}
-	defer tree.Close()
+	defer func() {
+		if tree != nil {
+			tree.Close()
+		}
+	}()
 
 	edit := sitter.InputEdit{
 		StartByte:      uint(editAt),
@@ -140,7 +144,11 @@ func BenchmarkCTreeSitterGoParseIncrementalNoEdit(b *testing.B) {
 	if tree == nil || tree.RootNode() == nil {
 		b.Fatal("initial parse returned nil root")
 	}
-	defer tree.Close()
+	defer func() {
+		if tree != nil {
+			tree.Close()
+		}
+	}()
 
 	b.ReportAllocs()
 	b.SetBytes(int64(len(src)))
@@ -170,7 +178,11 @@ func BenchmarkCTreeSitterGoParseIncrementalRandomSingleByteEdit(b *testing.B) {
 	if tree == nil || tree.RootNode() == nil {
 		b.Fatal("initial parse returned nil root")
 	}
-	defer tree.Close()
+	defer func() {
+		if tree != nil {
+			tree.Close()
+		}
+	}()
 
 	seed := uint32(0x9e3779b9)
 	b.ReportAllocs()
