@@ -9,7 +9,7 @@
     "post_finalization_arms": 0,
     "post_finalization_languages": 0,
     "live_entries": 36,
-    "retired_entries": 51
+    "retired_entries": 52
   },
   "live_evidence_baseline": {
     "scope": "baseline_corpus_wide_only",
@@ -1706,7 +1706,7 @@
       "languages": [
         "kotlin"
       ],
-      "purpose": "Reconcile Kotlin derivation selection and returned-tree shape. Member normalizeKotlinRecoveredSourceFileRoot was retired as dead code on 2026-08-02 and RESTORED on 2026-08-03: that census measured the fresh, over-64-KiB, incremental and pinned routes and never measured Parser.SetIncludedRanges. On the included-ranges route the member fires and moves the published ROOT toward the reference runtime. Witness testdata/included_ranges/kotlin_work_queue_test.kt with ranges [0,795), [883,1987) and [2019,3094): without the member the root is ERROR, with the member the root is source_file, and the locked Kotlin C oracle publishes source_file [0,3094). The member's effect is a root retag, and its DOWNSTREAM consequence is not always toward the reference runtime: on kotlinx-coroutines-core/common/test/DelayTest.kt with three ranges, the retag alone is necessary and sufficient to make a later stage flatten a clean class_declaration into root-level members (7 children become 12) where main and the C oracle both keep the class_declaration. Do not read the root receipt as a whole-tree improvement. The member is correct today; re-evaluate it after the unclipped padding scan in bytesAreParserPadding gains range clipping, because that defect is why the route enters recovery at all. The members normalizeKotlinGenericCallTypeArguments and normalizeKotlinPrefixComparisonExpressions stay load-bearing.",
+      "purpose": "Reconcile Kotlin derivation selection and returned-tree shape. Member normalizeKotlinRecoveredSourceFileRoot was retired as dead code on 2026-08-02 and RESTORED on 2026-08-03: that census measured the fresh, over-64-KiB, incremental and pinned routes and never measured Parser.SetIncludedRanges. On the included-ranges route the member fires and moves the published ROOT toward the reference runtime. Witness testdata/included_ranges/kotlin_work_queue_test.kt with ranges [0,795), [883,1987) and [2019,3094): without the member the root is ERROR, with the member the root is source_file, and the locked Kotlin C oracle publishes source_file [0,3094). The member's effect is a root retag, and its DOWNSTREAM consequence is not always toward the reference runtime: on kotlinx-coroutines-core/common/test/DelayTest.kt with three ranges, the retag alone is necessary and sufficient to make a later stage flatten a clean class_declaration into root-level members (7 children become 12) where main and the C oracle both keep the class_declaration. Do not read the root receipt as a whole-tree improvement. The member is correct today; re-evaluate it after the unclipped padding scan in bytesAreParserPadding gains range clipping, because that defect is why the route enters recovery at all. The generic-call and prefix-comparison members remain necessary. The interpolated-call member is retired because generic reduction preserves its hidden named wrapper.",
       "authoritative_owner": "derivation_election_selection",
       "witnesses": [
         "cgo_harness/parity_cgo_test.go",
@@ -1724,6 +1724,41 @@
       },
       "status": "live",
       "evidence_scope": "baseline_corpus_wide_only"
+    },
+    {
+      "id": "dispatch.kotlin.interpolated-call-expressions",
+      "kind": "dispatcher_subpass",
+      "functions": [
+        "normalizeKotlinInterpolatedCallExpressions"
+      ],
+      "files": [
+        "parser_result_kotlin.go"
+      ],
+      "languages": [
+        "kotlin"
+      ],
+      "purpose": "Historical: wrap a navigation expression and its call suffix in a call_expression below an interpolated_expression node.",
+      "authoritative_owner": "materialization",
+      "witnesses": [
+        "grammars/kotlin_interpolated_call_retirement_test.go",
+        "cgo_harness/kotlin_interpolated_call_retirement_parity_test.go"
+      ],
+      "retirement_condition": "Satisfied: generic reduction preserves the hidden named wrapper and emits the aliased call_expression node. Production, direct compact, strict forest, the Kotlin incremental fresh fallback, and locked C are exact.",
+      "route_coverage": {
+        "production": "retired_exact_receipt",
+        "compact": "retired_exact_receipt",
+        "forest": "retired_exact_receipt",
+        "incremental": "retired_exact_receipt",
+        "c_oracle": "retired_exact_receipt"
+      },
+      "status": "retired",
+      "retired_commit": "dcb14a971284eedf064a08963455e940427f7dcc",
+      "positive_control_commit": "a321147042b7374a52570865d6ec44e1771669a4",
+      "producer_fix_commit": "b06804219dc0b27a0804d769a5cc24626568387d",
+      "receipt_refs": [
+        "grammars/kotlin_interpolated_call_retirement_test.go",
+        "cgo_harness/kotlin_interpolated_call_retirement_parity_test.go"
+      ]
     },
     {
       "id": "dispatch.lua",

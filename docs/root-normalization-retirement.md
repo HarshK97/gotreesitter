@@ -175,6 +175,8 @@ PR #471 retired the Lua, Make, and Zig field-projection arms.
 PR #472 retired the trailing-span family.
 The regenerated Swift grammar blob now emits native ternary expressions.
 This change retires the Swift ternary source-reparse subpass.
+Generic reduction now preserves the hidden named Kotlin call wrapper.
+This change retires the Kotlin interpolated-call subpass.
 Shared root finalization now owns the leading-trivia root family.
 This change removes seven language-local repairs and retires Squirrel's arm.
 Pinned alias maps now own the CUE, Git Commit, and R collapsed children.

@@ -15,7 +15,6 @@ func normalizeKotlinCompatibilityWithCensus(
 	census.run("dispatch.kotlin.recovered-source-file-root", func() {
 		normalizeKotlinRecoveredSourceFileRoot(root, source, lang)
 	})
-	normalizeKotlinInterpolatedCallExpressions(root, lang)
 	normalizeKotlinGenericCallTypeArguments(root, source, lang)
 	normalizeKotlinPrefixComparisonExpressions(root, source, lang)
 	normalizeKotlinRawStringTrailingContent(root, source, lang)
@@ -761,35 +760,4 @@ func kotlinRecoveredTopLevelFunction(arena *nodeArena, children []*Node, idx int
 	fn := newParentNodeInArena(funKeyword.ownerArena, fnSym, symbolIsNamed(lang, fnSym), fnChildren, nil, 0)
 	fn.setHasError(true)
 	return fn, true
-}
-
-func normalizeKotlinInterpolatedCallExpressions(root *Node, lang *Language) {
-	if root == nil || lang == nil || lang.Name != "kotlin" {
-		return
-	}
-	callExpressionSym, ok := lang.symbolByNameAndNamed("call_expression", true)
-	if !ok {
-		callExpressionSym, ok = symbolByName(lang, "call_expression")
-		if !ok {
-			return
-		}
-	}
-	callExpressionNamed := symbolIsNamed(lang, callExpressionSym)
-
-	walkResultTree(root, func(n *Node) {
-		if n == nil || symbolTypeName(lang, n.symbol) != "interpolated_expression" || resultChildCount(n) != 2 {
-			return
-		}
-		first := resultChildAt(n, 0)
-		second := resultChildAt(n, 1)
-		if first == nil || second == nil ||
-			symbolTypeName(lang, first.symbol) != "navigation_expression" ||
-			symbolTypeName(lang, second.symbol) != "call_suffix" {
-			return
-		}
-		arena := n.ownerArena
-		callChildren := cloneNodeSliceInArena(arena, []*Node{first, second})
-		call := newParentNodeInArena(arena, callExpressionSym, callExpressionNamed, callChildren, nil, 0)
-		replaceNodeChildrenUnfielded(n, cloneNodeSliceInArena(arena, []*Node{call}))
-	})
 }
