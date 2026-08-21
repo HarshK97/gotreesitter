@@ -176,6 +176,13 @@ func (r *parserCoreFreshFullRunner) executeSchedulerOpen(source []byte, compact 
 		}
 		return nil, nil, err
 	}
+	if err := scheduler.markCompactEOFRecoverySchedulerReturned(source); err != nil {
+		tokenSource.Close()
+		if resetErr := compact.ResetReleasingRetention(); resetErr != nil {
+			err = errors.Join(err, fmt.Errorf("parser-core fresh-full runner: reset after EOF receipt decline: %w", resetErr))
+		}
+		return nil, nil, err
+	}
 	return scheduler, tokenSource, nil
 }
 
@@ -259,7 +266,50 @@ func (r *parserCoreFreshFullRunner) materializeSelection(source []byte, compact 
 	if r == nil || scheduler == nil {
 		return nil, errors.New("parser-core fresh-full selected materialization is incomplete")
 	}
-	return materializeDiagnosticParserCoreAcceptedSelection(compact, scheduler.acceptedHead, scheduler.acceptedPayloads, r.parser, source, &r.scratch, r.replayParseStates, r.s3AllowErrorRoot())
+	gated, err := scheduler.beginCompactEOFRecoveryConstruction(
+		source,
+		compactEOFRecoveryAdmissionRoutePublicTree,
+	)
+	if err != nil {
+		return nil, err
+	}
+	tree, err := materializeDiagnosticParserCoreAcceptedSelection(
+		compact,
+		scheduler.acceptedHead,
+		scheduler.acceptedPayloads,
+		r.parser,
+		source,
+		&r.scratch,
+		r.replayParseStates,
+		r.s3AllowErrorRoot(),
+	)
+	if err != nil && gated {
+		scheduler.failCompactEOFRecoveryConstruction(err)
+	}
+	return tree, err
+}
+
+func (r *parserCoreFreshFullRunner) materializeSelectedStoreSelection(
+	source []byte,
+	compact *core.Core,
+	scheduler *diagnosticParserCoreGenericScheduler,
+	poll func() error,
+) (*core.SelectedStore, error) {
+	if r == nil || compact == nil || scheduler == nil {
+		return nil, errors.New("parser-core fresh-full selected-store construction is incomplete")
+	}
+	gated, err := scheduler.beginCompactEOFRecoveryConstruction(
+		source,
+		compactEOFRecoveryAdmissionRouteSelectedStore,
+	)
+	if err != nil {
+		return nil, err
+	}
+	store, err := compact.BuildAuthenticatedSelectedStore(scheduler.acceptedPayloads, source, poll)
+	if err != nil && gated {
+		scheduler.failCompactEOFRecoveryConstruction(err)
+	}
+	return store, err
 }
 
 // parse runs one fresh full parse and returns the materialized tree, or a
@@ -326,7 +376,7 @@ func (r *parserCoreFreshFullRunner) parseSelectedStore(source []byte) (*core.Sel
 			detail:   "selected-store sealing stopped: " + string(reason),
 		}
 	}
-	store, err := r.compact.BuildAuthenticatedSelectedStore(scheduler.acceptedPayloads, source, poll)
+	store, err := r.materializeSelectedStoreSelection(source, r.compact, scheduler, poll)
 	if err != nil {
 		return nil, err
 	}

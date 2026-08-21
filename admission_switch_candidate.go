@@ -40,12 +40,17 @@ func newAdmissionCandidateRunner(p *Parser) (*parserCoreFreshFullRunner, error) 
 		return nil, errors.New("admission candidate route: parser has no language")
 	}
 	options := DiagnosticParserCorePrefixOptions{
-		ReceiptMode:                     DiagnosticParserCoreReceiptSummary,
-		MaxTokens:                       1 << 24,
-		MaxDispatches:                   1 << 24,
-		Limits:                          admissionCandidateLimits(),
-		freshSchedulerSession:           true,
-		allowEOFAcceptNoActionSiblings:  p.language.CompactEOFAcceptNoActionSiblingsCertified,
+		ReceiptMode:                    DiagnosticParserCoreReceiptSummary,
+		MaxTokens:                      1 << 24,
+		MaxDispatches:                  1 << 24,
+		Limits:                         admissionCandidateLimits(),
+		freshSchedulerSession:          true,
+		allowEOFAcceptNoActionSiblings: p.language.CompactEOFAcceptNoActionSiblingsCertified,
+		// The metadata producer is private to the admission candidate. It runs
+		// only for an exact two-head EOF frontier and proves its own immutable
+		// event topology. An explicit public sibling grant keeps the legacy
+		// bypass and takes precedence in dispatchPassActive.
+		allowMetadataEOFAcceptRecovery:  true,
 		allowPrimaryAcceptDerivation:    p.language.CompactPrimaryAcceptanceDerivationCertified,
 		allowConvergedSplitDropArtifact: p.language.CompactConvergedReductionSplitDropsCertified,
 		// B3 stage S3: Recovery declares that this operation may attempt
