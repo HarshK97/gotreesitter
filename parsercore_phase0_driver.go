@@ -6351,6 +6351,9 @@ func (s *diagnosticParserCoreGenericScheduler) zeroWidthExtraShiftWithoutProgres
 }
 
 func (s *diagnosticParserCoreGenericScheduler) applyGenericAccept(before []DiagnosticParserCoreHeaderReceipt, cell diagnosticParserCoreGenericCell) (err error) {
+	if s.freshSessionOwner != nil {
+		return s.applyGenericAcceptOwned(*s.freshSessionOwner, before, cell)
+	}
 	if err := s.headerRollbackScratch.begin(s.headers); err != nil {
 		return err
 	}
@@ -6364,6 +6367,12 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericAccept(before []Diagn
 		s.dispatches, s.work, s.epochProgress = dispatchesBefore, workBefore, epochProgressBefore
 		s.receipt.Rounds = s.receipt.Rounds[:roundsBefore]
 	}()
+	return s.compact.ApplySchedulerAtomic(func(owner core.SchedulerTransactionToken) error {
+		return s.applyGenericAcceptOwned(owner, before, cell)
+	})
+}
+
+func (s *diagnosticParserCoreGenericScheduler) applyGenericAcceptOwned(owner core.SchedulerTransactionToken, before []DiagnosticParserCoreHeaderReceipt, cell diagnosticParserCoreGenericCell) (err error) {
 	if cell.actions().Len() != 1 || cell.actions().At(0).Type != core.ActionAccept {
 		return errors.New("parser-core phase zero: generic accept requires one accept action")
 	}
@@ -6379,7 +6388,7 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericAccept(before []Diagn
 	s.epochProgress = true
 	s.work.Accepts++
 	s.work.Dispatches++
-	if err := s.canonicalize(); err != nil {
+	if err := s.canonicalizeOwned(owner); err != nil {
 		return err
 	}
 	if s.fullReceipts() {
