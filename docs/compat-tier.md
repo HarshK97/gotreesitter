@@ -20,9 +20,9 @@ The v1 registry freezes the current source and registry:
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-The registry contains 36 live entries and 51 retired entries. The live entries
+The registry contains 36 live entries and 52 retired entries. The live entries
 name 39 language labels. Shared switch arms account for the label difference.
-The retired count includes the Swift ternary and JavaScript dynamic-import subpasses.
+The retired count includes the Swift ternary, JavaScript dynamic-import, and Kotlin interpolated-call subpasses.
 The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
@@ -33,6 +33,9 @@ arm.
 
 The generic collapsed-child reducer retains the JavaScript dynamic-import
 token. The JavaScript arm remains live for its other registered repairs.
+
+Generic reduction preserves the hidden named Kotlin call wrapper. The Kotlin
+arm remains live for its other registered repairs.
 
 R2 of `docs/root-normalization-retirement.md` retired three dispatcher arms:
 OCaml's collapsed named-leaf restoration, Ruby's top-level module bound

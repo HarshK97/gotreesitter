@@ -15,6 +15,9 @@ for tags and release notes while still in `0.x`.
 - JavaScript dynamic imports now retain their keyword child during parsing.
   Parsing no longer runs the leaf-repair compatibility path.
 
+- Kotlin interpolated calls now retain their call-expression wrapper during
+  reduction. Parsing no longer runs the wrapper-repair compatibility path.
+
 ### Fixed
 
 - End recovery convergence after a clean condense. Pending forks no longer

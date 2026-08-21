@@ -26,6 +26,9 @@ const (
 	resultCompatJavaScriptImportPositive      = "143936b2a62b44eb779dda835b09abe0c26cc6d5"
 	resultCompatJavaScriptImportProducerFix   = "eee20b8a54a1608b47cce0ab7fb934651e204d66"
 	resultCompatJavaScriptImportFunction      = "normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged"
+	resultCompatKotlinCallPositive            = "a321147042b7374a52570865d6ec44e1771669a4"
+	resultCompatKotlinCallProducerFix         = "b06804219dc0b27a0804d769a5cc24626568387d"
+	resultCompatKotlinCallFunction            = "normalizeKotlinInterpolatedCallExpressions"
 )
 
 var resultCompatRetiredCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -240,6 +243,20 @@ func assertRetiredSubpassProvenance(t *testing.T, entry resultCompatOwnershipEnt
 		}
 		if strings.Contains(string(data), resultCompatJavaScriptImportFunction) {
 			t.Errorf("%s remains in production source", resultCompatJavaScriptImportFunction)
+		}
+	case "dispatch.kotlin.interpolated-call-expressions":
+		if got, want := entry.PositiveControlCommit, resultCompatKotlinCallPositive; got != want {
+			t.Errorf("%s positive_control_commit = %q, want %q", entry.ID, got, want)
+		}
+		if got, want := entry.ProducerFixCommit, resultCompatKotlinCallProducerFix; got != want {
+			t.Errorf("%s producer_fix_commit = %q, want %q", entry.ID, got, want)
+		}
+		data, err := os.ReadFile("parser_result_kotlin.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), resultCompatKotlinCallFunction) {
+			t.Errorf("%s remains in production source", resultCompatKotlinCallFunction)
 		}
 	}
 }
