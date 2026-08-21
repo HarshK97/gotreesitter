@@ -1243,18 +1243,21 @@ type cRecoverState struct {
 	extraRecoveries uint32
 }
 
+var cRecoverStateCloneObserver func()
+
 func (r *cRecoverState) clone() *cRecoverState {
 	if r == nil {
 		return nil
+	}
+	if observer := cRecoverStateCloneObserver; observer != nil {
+		observer()
 	}
 	cp := &cRecoverState{
 		openErr:         r.openErr,
 		group:           r.group,
 		groupOrder:      r.groupOrder,
 		extraRecoveries: r.extraRecoveries,
-	}
-	if len(r.summary) > 0 {
-		cp.summary = append([]cStackSummaryEntry(nil), r.summary...)
+		summary:         r.summary,
 	}
 	return cp
 }
@@ -2780,21 +2783,58 @@ func cEntryCountsTowardDepth(e stackEntry) bool {
 // spine: entries top-first, depth = crossings of depth-counting links,
 // deduped on (depth, state), bounded by MAX_SUMMARY_DEPTH.
 func (p *Parser) cRecordSummary(entries []stackEntry) []cStackSummaryEntry {
-	// cHandleError and forestEOFRecoveryCouldCompete usually record one state
-	// for each bounded depth. Reserve up to 17 entries for that common shape.
-	// Equal-depth states can exceed this hint, and append must preserve them.
-	summary := make([]cStackSummaryEntry, 0, min(len(entries), cRecoverMaxSummaryDepth+1))
+	summary, _ := p.cRecordSummaryWithScratch(entries, nil, nil)
+	return summary
+}
+
+// cRecordSummaryWithScratch records a summary in parse-scoped GSS scratch.
+// It builds the usual bounded shape inline, then reserves only the final size.
+func (p *Parser) cRecordSummaryWithScratch(entries []stackEntry, gssScratch *gssScratch, arena *nodeArena) ([]cStackSummaryEntry, ParseStopReason) {
+	if len(entries) == 0 {
+		return nil, ParseStopNone
+	}
+	if gssScratch != nil {
+		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+			return nil, reason
+		}
+	}
+	var inline [cRecoverMaxSummaryDepth + 1]cStackSummaryEntry
+	summary := inline[:0]
+	var dynamic []cStackSummaryEntry
+	var reason ParseStopReason
+	reserveDynamic := func() bool {
+		if dynamic != nil {
+			return true
+		}
+		if gssScratch != nil {
+			dynamic, reason = gssScratch.allocRecoverySummary(len(entries))
+			if reason != ParseStopNone {
+				return false
+			}
+			dynamic = dynamic[:len(summary)]
+		} else {
+			dynamic = make([]cStackSummaryEntry, len(entries))
+			dynamic = dynamic[:len(summary)]
+		}
+		copy(dynamic, summary)
+		summary = dynamic
+		return true
+	}
 	depth := 0
-	record := func(d int, st StateID, posBytes, posRow uint32) {
+	record := func(d int, st StateID, posBytes, posRow uint32) bool {
 		for j := len(summary) - 1; j >= 0; j-- {
 			if int(summary[j].depth) < d {
 				break
 			}
 			if int(summary[j].depth) == d && summary[j].state == st {
-				return
+				return true
 			}
 		}
+		if dynamic == nil && len(summary) == cap(summary) && !reserveDynamic() {
+			return false
+		}
 		summary = append(summary, cStackSummaryEntry{depth: uint8(d), state: st, posBytes: posBytes, posRow: posRow})
+		return true
 	}
 	// A node-bearing entry owns its position. Node-less discontinuities use the
 	// next payload below them. The cached index advances monotonically, so this
@@ -2820,7 +2860,9 @@ func (p *Parser) cRecordSummary(entries []stackEntry) []cStackSummaryEntry {
 				posRow = stackEntryNodeEndPoint(entries[nextPayload]).Row
 			}
 		}
-		record(depth, entry.state, posBytes, posRow)
+		if !record(depth, entry.state, posBytes, posRow) {
+			return nil, p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch)
+		}
 		if cEntryCountsTowardDepth(entry) {
 			depth++
 			if depth > cRecoverMaxSummaryDepth {
@@ -2828,7 +2870,23 @@ func (p *Parser) cRecordSummary(entries []stackEntry) []cStackSummaryEntry {
 			}
 		}
 	}
-	return summary
+	if dynamic != nil {
+		return dynamic[:len(summary):len(summary)], ParseStopNone
+	}
+	if gssScratch != nil {
+		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
+			return nil, reason
+		}
+		out, reason := gssScratch.allocRecoverySummary(len(summary))
+		if reason != ParseStopNone {
+			return nil, p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch)
+		}
+		copy(out, summary)
+		return out[:len(summary):len(summary)], ParseStopNone
+	}
+	out := make([]cStackSummaryEntry, len(summary))
+	copy(out, summary)
+	return out[:len(out):len(out)], ParseStopNone
 }
 
 // ---------------------------------------------------------------------------
@@ -3010,7 +3068,6 @@ func (p *Parser) cReductionCandidatesForAction(source []byte, start glrStack, ac
 		return nil, reason
 	}
 	fork := start.cloneWithScratch(gssScratch)
-	fork.cRec = start.cRec.clone()
 	var dummy bool
 	deferParentLinks := p.reduceScratch != nil && p.reduceScratch.transientParents != nil
 	p.applyAction(source, &fork, act, tok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, deferParentLinks, trackChildErrors)
@@ -3400,7 +3457,11 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 				}
 			}
 		}
-		v.cRec = &cRecoverState{summary: p.cRecordSummary(entries), group: group, groupOrder: uint32(vi)}
+		summary, reason := p.cRecordSummaryWithScratch(entries, gssScratch, arena)
+		if reason != ParseStopNone {
+			return cRecHalted, false, reason
+		}
+		v.cRec = &cRecoverState{summary: summary, group: group, groupOrder: uint32(vi)}
 		v.cRecoverMissingGroup = nil
 	}
 

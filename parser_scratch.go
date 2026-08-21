@@ -49,6 +49,7 @@ func (s *parserScratch) setBudget(bytes int64) {
 	s.budgetBytes = bytes
 	s.budgetBaselineBytes = s.allocatedBytes()
 	s.gssBaselineBytes = s.gss.allocatedBytes
+	s.gss.summaryBudgetOwner = s
 	s.merge.budgetBytes = bytes
 }
 
@@ -60,6 +61,14 @@ func (s *parserScratch) clearBudget() {
 	s.budgetBaselineBytes = 0
 	s.gssBaselineBytes = 0
 	s.merge.budgetBytes = 0
+	s.gss.summaryBudgetOwner = nil
+}
+
+func (s *parserScratch) summaryBudgetState() (int64, int64, int64) {
+	if s == nil {
+		return 0, 0, 0
+	}
+	return s.budgetBytes, s.budgetBaselineBytes, s.allocatedBytes()
 }
 
 func (s *parserScratch) allocatedBytes() int64 {

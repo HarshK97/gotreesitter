@@ -34,6 +34,26 @@ func TestParserPoolReleaseScrubsPendingStackBuffers(t *testing.T) {
 	}
 }
 
+func TestCRecoverSummaryArenaResetsAtParseBoundary(t *testing.T) {
+	parser := &Parser{}
+	scratch := acquireParserScratch()
+	entries := recoverySummaryTestEntries(1)
+	if _, reason := parser.cRecordSummaryWithScratch(entries, &scratch.gss, nil); reason != ParseStopNone {
+		t.Fatalf("summary stopped: %s", reason)
+	}
+	if len(scratch.gss.summaryChunks) == 0 || scratch.gss.summaryChunks[0].used == 0 {
+		t.Fatal("summary arena did not allocate before release")
+	}
+	releaseParserScratch(scratch, false)
+	reacquired := acquireParserScratch()
+	defer releaseParserScratch(reacquired, false)
+	for _, chunk := range reacquired.gss.summaryChunks {
+		if chunk.used != 0 {
+			t.Fatal("summary chunk retained live slots after parser-scratch release")
+		}
+	}
+}
+
 func TestParserPoolReleaseScrubsColdPendingStackReserves(t *testing.T) {
 	pool := NewParserPool(buildArithmeticLanguage())
 	parser := pool.checkout()

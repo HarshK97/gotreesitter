@@ -43,11 +43,17 @@ func resetGSSNodeHashPendingForPool(pending *[]*gssNode) bool {
 }
 
 const (
-	defaultGSSNodeSlabCap      = 4 * 1024
-	fullParseGSSNodeSlabCap    = 32 * 1024
-	maxRetainedGSSNodes        = 256 * 1024
-	maxRetainedGSSStackEntries = 4 * 1024
+	defaultGSSNodeSlabCap              = 4 * 1024
+	fullParseGSSNodeSlabCap            = 32 * 1024
+	maxRetainedGSSNodes                = 256 * 1024
+	maxRetainedGSSStackEntries         = 4 * 1024
+	cRecoverSummaryChunkInitialEntries = 256
+	cRecoverSummaryChunkMaxEntries     = 4 * 1024
+	maxRetainedGSSSummaryBytes         = 1 << 20
+	maxRetainedGSSSummaryChunks        = 16
+)
 
+const (
 	gssAggCostValid uint8 = 1 << iota
 	gssAggVisValid
 )
@@ -170,23 +176,53 @@ type gssStack struct {
 	head *gssNode
 }
 
+type gssSummaryChunk struct {
+	data      []cStackSummaryEntry
+	used      int
+	dedicated bool
+}
+
+type gssSummaryBudgetOwner interface {
+	summaryBudgetState() (budgetBytes, baselineBytes, allocatedBytes int64)
+}
+
+type forestGSSSummaryBudgetOwner struct {
+	arena   *nodeArena
+	scratch *gssScratch
+}
+
+func (o *forestGSSSummaryBudgetOwner) summaryBudgetState() (int64, int64, int64) {
+	if o == nil || o.arena == nil {
+		return 0, 0, 0
+	}
+	allocated := o.arena.allocatedBytes
+	if o.scratch != nil {
+		allocated += o.scratch.allocatedBytes
+	}
+	return o.arena.budgetBytes, o.arena.budgetBaselineBytes, allocated
+}
+
 type gssScratch struct {
-	slabs             []gssNodeSlab
-	slabCursor        int
-	initialCap        int
-	skipClear         bool
-	usedTotal         int
-	peakUsed          int
-	allocatedBytes    int64
-	singleStackMode   bool
-	singleStackAllocs uint64
-	multiStackAllocs  uint64
-	demotions         uint64
-	nodesDemoted      uint64
-	audit             *runtimeAudit
-	frontier          conflictReduceFrontierScratch
-	recoveryElection  cRecoverElectionScratch
-	stackEntries      []stackEntry
+	slabs               []gssNodeSlab
+	slabCursor          int
+	initialCap          int
+	skipClear           bool
+	usedTotal           int
+	peakUsed            int
+	allocatedBytes      int64
+	singleStackMode     bool
+	singleStackAllocs   uint64
+	multiStackAllocs    uint64
+	demotions           uint64
+	nodesDemoted        uint64
+	audit               *runtimeAudit
+	frontier            conflictReduceFrontierScratch
+	recoveryElection    cRecoverElectionScratch
+	stackEntries        []stackEntry
+	summaryChunks       []gssSummaryChunk
+	summaryChunkCursor  int
+	summaryNextChunkCap int
+	summaryBudgetOwner  gssSummaryBudgetOwner
 	// everForked latches true the first time this parse observes more than
 	// one live GLR stack (see the singleStackMode writers in parser.go, and
 	// the explicit early latch at the "len(actions) > 1" conflict-fork
@@ -208,6 +244,159 @@ type gssScratch struct {
 	// captureRawShape's doc comment (raw_shape.go) for the full argument, and
 	// spore.2026-07-12.hazel.rawshape-elision-rca for the originating RCA.
 	everForked bool
+}
+
+func gssSummaryBytesForCap(n int) (int64, bool) {
+	if n < 0 {
+		return 0, false
+	}
+	size := uint64(unsafe.Sizeof(cStackSummaryEntry{}))
+	if size == 0 || uint64(n) > uint64(^uint64(0)>>1)/size {
+		return 0, false
+	}
+	return int64(uint64(n) * size), true
+}
+
+func (s *gssScratch) summaryBudgetAllows(additional int64) bool {
+	if s == nil || additional < 0 {
+		return false
+	}
+	owner := s.summaryBudgetOwner
+	if owner == nil {
+		return true
+	}
+	budget, baseline, allocated := owner.summaryBudgetState()
+	if budget <= 0 {
+		return true
+	}
+	used := allocated - baseline
+	if used < 0 {
+		used = 0
+	}
+	remaining := budget - used
+	return remaining > additional
+}
+
+func (s *gssScratch) summaryBudgetStopReason() ParseStopReason {
+	if s == nil || s.summaryBudgetOwner == nil {
+		return ParseStopNone
+	}
+	budget, baseline, allocated := s.summaryBudgetOwner.summaryBudgetState()
+	if budget <= 0 || allocated < baseline {
+		return ParseStopNone
+	}
+	if allocated-baseline >= budget {
+		return ParseStopMemoryBudget
+	}
+	return ParseStopNone
+}
+
+// allocRecoverySummary reserves one contiguous, immutable summary region.
+// A parse never reuses a region until its owning parser scratch is released.
+func (s *gssScratch) allocRecoverySummary(count int) ([]cStackSummaryEntry, ParseStopReason) {
+	if count == 0 {
+		return nil, ParseStopNone
+	}
+	if s == nil || count < 0 {
+		return nil, ParseStopMemoryBudget
+	}
+	if reason := s.summaryBudgetStopReason(); reason != ParseStopNone {
+		return nil, reason
+	}
+	if s.summaryNextChunkCap <= 0 {
+		s.summaryNextChunkCap = cRecoverSummaryChunkInitialEntries
+	}
+	for scanned := 0; scanned < len(s.summaryChunks); scanned++ {
+		chunkIndex := (s.summaryChunkCursor + scanned) % len(s.summaryChunks)
+		chunk := &s.summaryChunks[chunkIndex]
+		if !chunk.dedicated && len(chunk.data)-chunk.used >= count {
+			start := chunk.used
+			chunk.used += count
+			s.summaryChunkCursor = chunkIndex
+			return chunk.data[start : start+count : start+count], ParseStopNone
+		}
+	}
+
+	capacity := count
+	dedicated := count > cRecoverSummaryChunkMaxEntries
+	if !dedicated {
+		capacity = s.summaryNextChunkCap
+		for capacity < count && capacity < cRecoverSummaryChunkMaxEntries {
+			capacity *= 2
+		}
+		if capacity < count {
+			capacity = count
+			dedicated = true
+		}
+	}
+	bytes, ok := gssSummaryBytesForCap(capacity)
+	if !ok || !s.summaryBudgetAllows(bytes) {
+		return nil, ParseStopMemoryBudget
+	}
+	maxInt64 := int64(^uint64(0) >> 1)
+	if s.allocatedBytes > maxInt64-bytes {
+		return nil, ParseStopMemoryBudget
+	}
+	chunk := gssSummaryChunk{data: make([]cStackSummaryEntry, capacity), used: count, dedicated: dedicated}
+	s.summaryChunks = append(s.summaryChunks, chunk)
+	s.summaryChunkCursor = len(s.summaryChunks) - 1
+	if !dedicated {
+		if capacity >= cRecoverSummaryChunkMaxEntries {
+			s.summaryNextChunkCap = cRecoverSummaryChunkMaxEntries
+		} else {
+			s.summaryNextChunkCap = capacity * 2
+		}
+	}
+	s.allocatedBytes += bytes
+	return chunk.data[:count:count], ParseStopNone
+}
+
+// resetRecoverySummary drops dedicated and excess chunks after the parse.
+// Callers must clear all live stacks and pending buffers before gssScratch.reset.
+func (s *gssScratch) resetRecoverySummary() {
+	if s == nil {
+		return
+	}
+	write := 0
+	retainedBytes := 0
+	for read := range s.summaryChunks {
+		chunk := s.summaryChunks[read]
+		clear(chunk.data)
+		chunk.used = 0
+		bytes, ok := gssSummaryBytesForCap(cap(chunk.data))
+		keep := write < maxRetainedGSSSummaryChunks && !chunk.dedicated && ok && bytes <= int64(maxRetainedGSSSummaryBytes-retainedBytes)
+		if keep {
+			retainedBytes += int(bytes)
+			s.summaryChunks[write] = chunk
+			write++
+			continue
+		}
+		chunk.data = nil
+		s.summaryChunks[read] = chunk
+	}
+	for i := write; i < len(s.summaryChunks); i++ {
+		s.summaryChunks[i] = gssSummaryChunk{}
+	}
+	s.summaryChunks = s.summaryChunks[:write]
+	if write == 0 {
+		s.summaryChunks = nil
+	} else if cap(s.summaryChunks) > maxRetainedGSSSummaryChunks {
+		retained := make([]gssSummaryChunk, write)
+		copy(retained, s.summaryChunks)
+		s.summaryChunks = retained
+	}
+	s.summaryChunkCursor = 0
+	if write == 0 {
+		s.summaryNextChunkCap = cRecoverSummaryChunkInitialEntries
+	} else {
+		capacity := cap(s.summaryChunks[write-1].data)
+		if capacity >= cRecoverSummaryChunkMaxEntries {
+			s.summaryNextChunkCap = cRecoverSummaryChunkMaxEntries
+		} else {
+			s.summaryNextChunkCap = capacity * 2
+		}
+	}
+	s.summaryBudgetOwner = nil
 }
 
 // rawShapeElisionDisabledForDiagnostics forces every reduction to capture its
@@ -828,8 +1017,9 @@ func (s *gssScratch) reset() {
 		s.demotions = 0
 		s.nodesDemoted = 0
 		s.skipClear = false
+		s.resetRecoverySummary()
 		s.peakUsed = 0
-		s.allocatedBytes = s.frontier.allocatedBytes() + s.recoveryElection.allocatedBytes() + stackEntryBytesForCap(cap(s.stackEntries))
+		s.recomputeAllocatedBytes()
 		s.audit = nil
 		return
 	}
@@ -892,6 +1082,7 @@ func (s *gssScratch) reset() {
 	s.multiStackAllocs = 0
 	s.demotions = 0
 	s.nodesDemoted = 0
+	s.resetRecoverySummary()
 	s.audit = nil
 	s.recomputeAllocatedBytes()
 }
@@ -948,6 +1139,12 @@ func (s *gssScratch) recomputeAllocatedBytes() {
 	for i := range s.slabs {
 		total += gssNodeBytesForCap(len(s.slabs[i].data))
 		total += gssReachMarkBytesForCap(len(s.slabs[i].reachMarks))
+	}
+	for i := range s.summaryChunks {
+		bytes, ok := gssSummaryBytesForCap(cap(s.summaryChunks[i].data))
+		if ok {
+			total += bytes
+		}
 	}
 	total += s.frontier.allocatedBytes()
 	total += s.recoveryElection.allocatedBytes()
