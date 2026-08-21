@@ -2968,6 +2968,7 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 	versions := []glrStack{start}
 	canShift := false
 	var reduces []ParseAction
+	var singletonCandidate glrStack
 	v := 0
 	candidateAttempts := 0
 	for iter := 0; ; iter++ {
@@ -3012,12 +3013,18 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 				p.crecoveryReductionCandidateCeilingHits++
 				return versions, canShift, ParseStopNone
 			}
-			actionCandidates, reason := p.cReductionCandidatesForAction(source, versions[v], act, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+			actionCandidates, hasSingletonCandidate, reason := p.cReductionCandidatesForActionInto(source, versions[v], act, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors, &singletonCandidate)
 			if reason != ParseStopNone {
 				return versions, canShift, reason
 			}
 			actionReductionVersion := -1
-			if len(actionCandidates) > 0 {
+			if hasSingletonCandidate {
+				var appended bool
+				versions, appended = p.cAppendReductionVersion(versions, singletonCandidate, v)
+				if appended {
+					actionReductionVersion = len(versions) - 1
+				}
+			} else if len(actionCandidates) > 0 {
 				versions, actionReductionVersion = p.cAppendActionReductionVersions(versions, actionCandidates, v, arena)
 			}
 			// C overwrites reduction_version for every reduce action, including
@@ -3060,19 +3067,37 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 }
 
 func (p *Parser) cReductionCandidatesForAction(source []byte, start glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) ([]glrStack, ParseStopReason) {
+	var singletonCandidate glrStack
+	candidates, hasSingletonCandidate, reason := p.cReductionCandidatesForActionInto(source, start, act, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors, &singletonCandidate)
+	if hasSingletonCandidate {
+		return []glrStack{singletonCandidate}, reason
+	}
+	return candidates, reason
+}
+
+func (p *Parser) cReductionCandidatesForActionInto(source []byte, start glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool, singletonCandidate *glrStack) ([]glrStack, bool, ParseStopReason) {
 	p.pendingForkStacks = p.pendingForkStacks[:0]
 	defer func() {
 		p.pendingForkStacks = p.pendingForkStacks[:0]
 	}()
 	if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
-		return nil, reason
+		return nil, false, reason
 	}
 	fork := start.cloneWithScratch(gssScratch)
 	var dummy bool
 	deferParentLinks := p.reduceScratch != nil && p.reduceScratch.transientParents != nil
 	p.applyAction(source, &fork, act, tok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, deferParentLinks, trackChildErrors)
 	if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
-		return nil, reason
+		return nil, false, reason
+	}
+	if len(p.pendingForkStacks) == 0 {
+		if fork.dead {
+			return nil, false, ParseStopNone
+		}
+		// The caller consumes this value synchronously. The append helper copies
+		// it into versions and never retains the caller-owned slot.
+		*singletonCandidate = fork
+		return nil, true, ParseStopNone
 	}
 	candidates := make([]glrStack, 0, 1+len(p.pendingForkStacks))
 	if !fork.dead {
@@ -3081,14 +3106,14 @@ func (p *Parser) cReductionCandidatesForAction(source []byte, start glrStack, ac
 	for i := range p.pendingForkStacks {
 		if i&15 == 0 {
 			if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
-				return candidates, reason
+				return candidates, false, reason
 			}
 		}
 		if !p.pendingForkStacks[i].dead {
 			candidates = append(candidates, p.pendingForkStacks[i])
 		}
 	}
-	return candidates, ParseStopNone
+	return candidates, false, ParseStopNone
 }
 
 func (p *Parser) cAppendActionReductionVersions(versions []glrStack, candidates []glrStack, originalVersion int, arena *nodeArena) ([]glrStack, int) {
