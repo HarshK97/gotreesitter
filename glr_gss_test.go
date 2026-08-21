@@ -34,6 +34,124 @@ func TestGSSNodeLayoutSizeBudget(t *testing.T) {
 	}
 }
 
+func TestCRecoverSummaryArenaCrossesChunkBoundary(t *testing.T) {
+	parser := &Parser{}
+	var scratch gssScratch
+	entries := recoverySummaryTestEntries(1)
+	for i := 0; i < cRecoverSummaryChunkInitialEntries; i++ {
+		if _, reason := parser.cRecordSummaryWithScratch(entries, &scratch, nil); reason != ParseStopNone {
+			t.Fatalf("summary %d stopped: %s", i, reason)
+		}
+	}
+	if len(scratch.summaryChunks) != 1 || scratch.summaryChunks[0].used != cRecoverSummaryChunkInitialEntries {
+		t.Fatalf("first summary chunk = %#v, want full first chunk", scratch.summaryChunks)
+	}
+	if _, reason := parser.cRecordSummaryWithScratch(entries, &scratch, nil); reason != ParseStopNone {
+		t.Fatalf("boundary summary stopped: %s", reason)
+	}
+	if len(scratch.summaryChunks) != 2 || scratch.summaryChunks[1].used != 1 {
+		t.Fatalf("summary arena did not cross chunk boundary: %#v", scratch.summaryChunks)
+	}
+	firstSlot := &scratch.summaryChunks[0].data[0]
+	scratch.reset()
+	reused, reason := parser.cRecordSummaryWithScratch(entries, &scratch, nil)
+	if reason != ParseStopNone {
+		t.Fatalf("retained summary stopped: %s", reason)
+	}
+	if len(reused) != 1 || &reused[0] != firstSlot {
+		t.Fatal("retained summary arena did not restart at its first reusable chunk")
+	}
+}
+
+func TestCRecoverSummaryArenaReusesMixedRetainedChunks(t *testing.T) {
+	var scratch gssScratch
+	for _, count := range []int{cRecoverSummaryChunkInitialEntries, 2 * cRecoverSummaryChunkInitialEntries, 4 * cRecoverSummaryChunkInitialEntries} {
+		if _, reason := scratch.allocRecoverySummary(count); reason != ParseStopNone {
+			t.Fatalf("initial chunk allocation %d stopped: %s", count, reason)
+		}
+	}
+	if len(scratch.summaryChunks) != 3 {
+		t.Fatalf("initial chunk count = %d, want 3", len(scratch.summaryChunks))
+	}
+	first := &scratch.summaryChunks[0].data[0]
+	third := &scratch.summaryChunks[2].data[0]
+	scratch.reset()
+
+	large, reason := scratch.allocRecoverySummary(4 * cRecoverSummaryChunkInitialEntries)
+	if reason != ParseStopNone {
+		t.Fatalf("retained large allocation stopped: %s", reason)
+	}
+	if &large[0] != third {
+		t.Fatal("large allocation did not reuse the retained 1024-entry chunk")
+	}
+	small, reason := scratch.allocRecoverySummary(1)
+	if reason != ParseStopNone {
+		t.Fatalf("retained small allocation stopped: %s", reason)
+	}
+	if &small[0] != first {
+		t.Fatal("small allocation did not wrap to the retained 256-entry chunk")
+	}
+	if len(scratch.summaryChunks) != 3 || scratch.summaryChunks[0].used != 1 || scratch.summaryChunks[2].used != 4*cRecoverSummaryChunkInitialEntries {
+		t.Fatalf("mixed retained chunks changed unexpectedly: %#v", scratch.summaryChunks)
+	}
+}
+
+func TestCRecoverSummaryArenaResetCapsRetainedChunks(t *testing.T) {
+	backing := make([]gssSummaryChunk, maxRetainedGSSSummaryChunks+4)
+	for i := range backing {
+		backing[i].data = make([]cStackSummaryEntry, 1)
+		backing[i].used = 1
+	}
+	var scratch gssScratch
+	scratch.summaryChunks = backing
+	scratch.recomputeAllocatedBytes()
+	scratch.reset()
+	if len(scratch.summaryChunks) != maxRetainedGSSSummaryChunks || cap(scratch.summaryChunks) != maxRetainedGSSSummaryChunks {
+		t.Fatalf("retained summary descriptors = len %d cap %d, want %d", len(scratch.summaryChunks), cap(scratch.summaryChunks), maxRetainedGSSSummaryChunks)
+	}
+	for i := 0; i < maxRetainedGSSSummaryChunks; i++ {
+		if scratch.summaryChunks[i].data == nil || scratch.summaryChunks[i].used != 0 {
+			t.Fatalf("retained chunk %d = %#v, want cleared storage", i, scratch.summaryChunks[i])
+		}
+	}
+	for i := maxRetainedGSSSummaryChunks; i < len(backing); i++ {
+		if backing[i].data != nil {
+			t.Fatalf("dropped chunk %d retained storage", i)
+		}
+	}
+}
+
+func TestCRecoverSummaryArenaAllocatesOversizedSummary(t *testing.T) {
+	parser := &Parser{}
+	var scratch gssScratch
+	entries := recoverySummaryTestEntries(cRecoverSummaryChunkMaxEntries + 1)
+	summary, reason := parser.cRecordSummaryWithScratch(entries, &scratch, nil)
+	if reason != ParseStopNone {
+		t.Fatalf("oversized summary stopped: %s", reason)
+	}
+	if len(scratch.summaryChunks) != 1 || cap(scratch.summaryChunks[0].data) != len(entries) {
+		t.Fatalf("oversized summary chunk = %#v, want exact capacity %d", scratch.summaryChunks, len(entries))
+	}
+	if cap(summary) != len(summary) {
+		t.Fatalf("summary capacity = %d, want fenced capacity %d", cap(summary), len(summary))
+	}
+}
+
+func TestCRecoverSummaryArenaStopsAtMemoryBudget(t *testing.T) {
+	parser := &Parser{}
+	scratch := &parserScratch{}
+	scratch.setBudget(int64(unsafe.Sizeof(cStackSummaryEntry{}))*cRecoverSummaryChunkInitialEntries - 1)
+	entries := recoverySummaryTestEntries(1)
+	summary, reason := parser.cRecordSummaryWithScratch(entries, &scratch.gss, nil)
+	if reason != ParseStopMemoryBudget {
+		t.Fatalf("summary stop reason = %s, want %s", reason, ParseStopMemoryBudget)
+	}
+	if summary != nil || len(scratch.gss.summaryChunks) != 0 {
+		t.Fatalf("budget stop allocated or truncated summary: summary=%v chunks=%d", summary, len(scratch.gss.summaryChunks))
+	}
+	scratch.clearBudget()
+}
+
 func TestGSSStackPushCloneAndTruncate(t *testing.T) {
 	var scratch gssScratch
 	base := newGSSStack(1, &scratch)

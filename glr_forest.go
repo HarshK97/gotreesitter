@@ -2183,11 +2183,12 @@ func forestNodeBestLinearStack(p *Parser, arena *nodeArena, node *gssForestNode)
 // those languages (only `make`, 1 file) is too thin to validate empirically.
 // So for those languages this keeps the original, unconditionally-conservative
 // behavior (any structurally-reachable pop-back declines the forest).
-func (p *Parser) forestEOFRecoveryCouldCompete(idx *gssForestIndex, arena *nodeArena, eofByte uint32, relaxForCleanAcceptLanguages bool) bool {
+func (p *Parser) forestEOFRecoveryCouldCompete(idx *gssForestIndex, arena *nodeArena, eofByte uint32, relaxForCleanAcceptLanguages bool) (bool, ParseStopReason) {
 	if p == nil || idx == nil || idx.len() == 0 {
-		return false
+		return false, ParseStopNone
 	}
 	var gssScratch gssScratch
+	gssScratch.summaryBudgetOwner = &forestGSSSummaryBudgetOwner{arena: arena, scratch: &gssScratch}
 	var entryScratch glrEntryScratch
 	trackChildErrors := false
 	// cRecoverToState (parser_recover_c.go) tags a freshly-recovered fork with
@@ -2229,12 +2230,21 @@ func (p *Parser) forestEOFRecoveryCouldCompete(idx *gssForestIndex, arena *nodeA
 		if node == nil || node.byteOffset != eofByte {
 			continue
 		}
+		if reason := p.forestMemoryBudgetStopReason(arena, false, &gssScratch); reason != ParseStopNone {
+			return false, reason
+		}
 		stack, ok := forestNodeBestLinearStack(p, arena, node)
 		if !ok {
 			continue
 		}
 		entries := cStackEntriesTopFirst(&stack, &gssScratch)
-		summary := p.cRecordSummary(entries)
+		summary, reason := p.cRecordSummaryWithScratch(entries, &gssScratch, arena)
+		if reason != ParseStopNone {
+			return false, reason
+		}
+		if reason := p.forestMemoryBudgetStopReason(arena, false, &gssScratch); reason != ParseStopNone {
+			return false, reason
+		}
 		for _, entry := range summary {
 			if entry.state == cErrorState || entry.posBytes == stack.byteOffset {
 				continue
@@ -2249,10 +2259,10 @@ func (p *Parser) forestEOFRecoveryCouldCompete(idx *gssForestIndex, arena *nodeA
 			if relaxForCleanAcceptLanguages && fork.cRecoveryUnvalidatedMarker {
 				continue
 			}
-			return true
+			return true, ParseStopNone
 		}
 	}
-	return false
+	return false, ParseStopNone
 }
 
 // forestAcceptedIsCleanCompleteParse reports whether the forest's chosen accept
@@ -3870,13 +3880,20 @@ func (p *Parser) parseForest(arena *nodeArena, source []byte, captureExternalChe
 			// corpus here — the C argument is airtight, but we stay conservative.
 			cleanAcceptBeatsRecovery := !recoverActive &&
 				p.forestAcceptedIsCleanCompleteParse(arena, accepted, source)
-			if accepted != nil && !cleanAcceptBeatsRecovery && (recoverActive || p.errorCostCompetitionEnabled()) && p.forestEOFRecoveryCouldCompete(&curIndex, arena, tok.StartByte, !recoverActive) {
-				p.recordForestDecline(forestDeclineEOFRecoveryConflict, tok, nil)
-				if progress.enabled {
-					progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
-						forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, "decline_reason="+forestDeclineEOFRecoveryConflict))
+			if accepted != nil && !cleanAcceptBeatsRecovery && (recoverActive || p.errorCostCompetitionEnabled()) {
+				competes, reason := p.forestEOFRecoveryCouldCompete(&curIndex, arena, tok.StartByte, !recoverActive)
+				if reason != ParseStopNone {
+					p.recordForestDecline(string(reason), tok, nil)
+					return nil, false
 				}
-				return nil, false
+				if competes {
+					p.recordForestDecline(forestDeclineEOFRecoveryConflict, tok, nil)
+					if progress.enabled {
+						progress.emit(time.Now(), "forest_decline", iter, tokens, tok, true, nil, 0, 0, 0, false, 0, 0,
+							forestProgressExtra(frontier, work, nextFrontier, curIndex, nextIndex, processEpoch, recoverCount, reducer, accepted, "decline_reason="+forestDeclineEOFRecoveryConflict))
+					}
+					return nil, false
+				}
 			}
 			if progress.enabled {
 				progress.beginDetail(time.Now(), "forest_collect_root_begin", "forest_collect_root_end", iter, tokens, tok, true, nil, 0, 0, 0, true, 0, 0,
@@ -4100,7 +4117,25 @@ func (p *Parser) forestMemoryBudgetExceeded(arena *nodeArena, final bool) bool {
 	// scratchAllocatedVolume is a nil-safe no-op here today; it is included
 	// for unit consistency with the production watermark rather than because
 	// it currently contributes anything.
-	return p.runtimeMemoryBudgetStopReason(arenaAllocatedVolume(arena)+scratchAllocatedVolume(p.budgetScratch)) == ParseStopMemoryBudget
+	return p.forestMemoryBudgetStopReason(arena, final, nil) != ParseStopNone
+}
+
+func (p *Parser) forestMemoryBudgetStopReason(arena *nodeArena, final bool, summaryScratch *gssScratch) ParseStopReason {
+	if arena != nil && arena.budgetExhausted() {
+		return p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceArena)
+	}
+	if summaryScratch != nil {
+		if reason := summaryScratch.summaryBudgetStopReason(); reason != ParseStopNone {
+			return p.noteMemoryBudgetStop(parseMemoryBudgetStopSourceScratch)
+		}
+	}
+	if final {
+		if p.runtimeMemoryBudgetStopReasonNow() == ParseStopMemoryBudget {
+			return ParseStopMemoryBudget
+		}
+		return ParseStopNone
+	}
+	return p.runtimeMemoryBudgetStopReason(arenaAllocatedVolume(arena) + scratchAllocatedVolume(p.budgetScratch))
 }
 
 // maxForestNoLookaheadSteps bounds consecutive no-lookahead re-lex steps at one

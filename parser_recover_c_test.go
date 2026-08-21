@@ -2665,3 +2665,180 @@ func TestCAcceptRootRebuildPreservesCandidateFields(t *testing.T) {
 		t.Fatalf("root field sources = %v, want %v", got, want)
 	}
 }
+
+func recoverySummaryTestEntries(count int) []stackEntry {
+	entries := make([]stackEntry, count)
+	for i := range entries {
+		entries[i] = stackEntry{state: StateID(i + 1)}
+	}
+	return entries
+}
+
+func runCHandleErrorForSummaryTest(t *testing.T, gss *gssScratch) *cRecoverState {
+	t.Helper()
+	parser := cRecoveryElectionTestParser()
+	arena := acquireNodeArena(arenaClassFull)
+	t.Cleanup(arena.Release)
+	stacks := []glrStack{newGLRStack(2)}
+	var entries glrEntryScratch
+	trackChildErrors := false
+	nodeCount := 0
+	_, _, reason := parser.cHandleError(
+		&stacks,
+		0,
+		[]byte("x"),
+		Token{Symbol: 2, StartByte: 0, EndByte: 1, EndPoint: Point{Column: 1}},
+		&nodeCount,
+		arena,
+		&entries,
+		gss,
+		&trackChildErrors,
+	)
+	if reason != ParseStopNone {
+		t.Fatalf("cHandleError stop reason = %s, want %s", reason, ParseStopNone)
+	}
+	for i := range stacks {
+		if stacks[i].cRec != nil {
+			return stacks[i].cRec
+		}
+	}
+	t.Fatalf("cHandleError produced no recovery state: %#v", stacks)
+	return nil
+}
+
+func forestEOFRecoveryTestParser() *Parser {
+	parser := cRecoveryElectionTestParser()
+	parser.language.ParseTable[2] = []uint16{1, 1}
+	return parser
+}
+
+func TestCRecoverSummaryArenaSurvivesHandleErrorReturn(t *testing.T) {
+	var scratch gssScratch
+	first := runCHandleErrorForSummaryTest(t, &scratch)
+	if len(first.summary) == 0 {
+		t.Fatal("cHandleError recorded an empty summary")
+	}
+	want := first.summary[0]
+	if first.summary[0] != want {
+		t.Fatalf("summary changed before cHandleError returned: got=%v want=%v", first.summary[0], want)
+	}
+	if first.group == nil {
+		t.Fatal("cHandleError did not attach a recovery group")
+	}
+}
+
+func TestCRecoverSummaryArenaDoesNotReuseLiveGroupStorage(t *testing.T) {
+	var scratch gssScratch
+	first := runCHandleErrorForSummaryTest(t, &scratch)
+	second := runCHandleErrorForSummaryTest(t, &scratch)
+	if len(first.summary) == 0 || len(second.summary) == 0 {
+		t.Fatal("cHandleError recorded an empty summary")
+	}
+	if &first.summary[0] == &second.summary[0] {
+		t.Fatal("summary arena reused live group storage")
+	}
+	firstState := first.summary[0].state
+	second.summary[0].state++
+	if first.summary[0].state != firstState {
+		t.Fatal("mutating a later summary changed live group storage")
+	}
+}
+
+func TestCRecoverStateCloneSharesImmutableSummary(t *testing.T) {
+	var scratch gssScratch
+	original := runCHandleErrorForSummaryTest(t, &scratch)
+	clone := original.clone()
+	if clone == original {
+		t.Fatal("clone returned the original recovery state")
+	}
+	if len(clone.summary) != len(original.summary) || &clone.summary[0] != &original.summary[0] {
+		t.Fatal("recovery-state clone copied immutable summary storage")
+	}
+}
+
+func TestForestEOFRecoverySummaryArenaLifetime(t *testing.T) {
+	parser := forestEOFRecoveryTestParser()
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 3, Point{}, Point{Column: 3})
+	base := &gssForestNode{state: 1, byteOffset: 0}
+	node := &gssForestNode{
+		state:      2,
+		byteOffset: 4,
+		links:      []gssLink{{prev: base, subtree: newStackEntryNode(2, leaf)}},
+	}
+	var index gssForestIndex
+	index.init(1)
+	index.set(gssForestKey{state: 2, byteOffset: 4}, node)
+	competes, reason := parser.forestEOFRecoveryCouldCompete(&index, arena, 4, true)
+	if reason != ParseStopNone {
+		t.Fatalf("forest EOF recovery stop reason = %s, want %s", reason, ParseStopNone)
+	}
+	if !competes {
+		t.Fatal("forest EOF recovery path did not evaluate a competing recovery")
+	}
+}
+
+func TestForestEOFRecoverySummaryArenaBudgetStopsBeforeAllocation(t *testing.T) {
+	parser := forestEOFRecoveryTestParser()
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	arena.setBudget(1)
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 3, Point{}, Point{Column: 3})
+	base := &gssForestNode{state: 1, byteOffset: 0}
+	node := &gssForestNode{
+		state:      2,
+		byteOffset: 4,
+		links:      []gssLink{{prev: base, subtree: newStackEntryNode(2, leaf)}},
+	}
+	var index gssForestIndex
+	index.init(1)
+	index.set(gssForestKey{state: 2, byteOffset: 4}, node)
+	competes, reason := parser.forestEOFRecoveryCouldCompete(&index, arena, 4, true)
+	if reason != ParseStopMemoryBudget {
+		t.Fatalf("forest EOF budget reason = %s, want %s", reason, ParseStopMemoryBudget)
+	}
+	if competes {
+		t.Fatal("forest EOF budget stop reported a recovery competitor")
+	}
+}
+
+func TestCReductionCandidateDoesNotDoubleCloneRecoveryState(t *testing.T) {
+	parser := newCRecoverySyntheticReduceParser()
+	arena := acquireNodeArena(arenaClassFull)
+	defer arena.Release()
+	var entryScratch glrEntryScratch
+	var scratch gssScratch
+	leaf := newLeafNodeInArena(arena, 1, true, 0, 1, Point{}, Point{Column: 1})
+	start := newGLRStack(1)
+	start.pushEntry(newStackEntryNode(2, leaf), &entryScratch, &scratch)
+	start.cRec = &cRecoverState{summary: []cStackSummaryEntry{{depth: 0, state: 1}}, group: &cRecGroup{}}
+	cloneCalls := 0
+	previousObserver := cRecoverStateCloneObserver
+	cRecoverStateCloneObserver = func() { cloneCalls++ }
+	defer func() { cRecoverStateCloneObserver = previousObserver }()
+	nodeCount := 0
+	candidates, reason := parser.cReductionCandidatesForAction(
+		nil,
+		start,
+		ParseAction{Type: ParseActionReduce, Symbol: 4, ChildCount: 1},
+		Token{},
+		&nodeCount,
+		arena,
+		&entryScratch,
+		&scratch,
+		nil,
+	)
+	if reason != ParseStopNone {
+		t.Fatalf("reduction candidate stop reason = %s, want %s", reason, ParseStopNone)
+	}
+	if len(candidates) == 0 || candidates[0].cRec == nil {
+		t.Fatal("reduction candidate lost its recovery state")
+	}
+	if cloneCalls != 1 {
+		t.Fatalf("cReductionCandidatesForAction cloned recovery state %d times, want 1", cloneCalls)
+	}
+	if &candidates[0].cRec.summary[0] != &start.cRec.summary[0] {
+		t.Fatal("reduction candidate did not preserve shared immutable recovery summary")
+	}
+}
