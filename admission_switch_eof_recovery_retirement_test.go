@@ -12,6 +12,17 @@ import (
 	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
 )
 
+func cloneAdmissionTestLanguage(language *gts.Language) *gts.Language {
+	source := reflect.ValueOf(language).Elem()
+	clone := reflect.New(source.Type()).Elem()
+	for i := 0; i < source.NumField(); i++ {
+		if source.Type().Field(i).IsExported() {
+			clone.Field(i).Set(source.Field(i))
+		}
+	}
+	return clone.Addr().Interface().(*gts.Language)
+}
+
 func TestAdmissionCandidateRoutesEOFSiblingsWithoutProfileGrant(t *testing.T) {
 	previousForest := os.Getenv("GOT_GLR_FOREST") != "0"
 	gts.SetGLRForestEnabled(false)
@@ -40,9 +51,9 @@ func TestAdmissionCandidateRoutesEOFSiblingsWithoutProfileGrant(t *testing.T) {
 				t.Errorf("loaded profile still sets the legacy EOF sibling bypass")
 			}
 
-			productionLanguage := *loaded
+			productionLanguage := cloneAdmissionTestLanguage(loaded)
 			productionLanguage.CompactEOFAcceptNoActionSiblingsCertified = false
-			production := gts.NewParser(&productionLanguage)
+			production := gts.NewParser(productionLanguage)
 			production.SetAdmissionCandidateRoute(false)
 			source := []byte(grammars.ParseSmokeSample(name))
 			productionTree, err := production.Parse(source)
@@ -50,15 +61,15 @@ func TestAdmissionCandidateRoutesEOFSiblingsWithoutProfileGrant(t *testing.T) {
 				t.Fatalf("production parse: %v", err)
 			}
 			defer productionTree.Release()
-			productionInspection, err := benchfixtures.InspectGoTree(productionTree.RootNode(), &productionLanguage)
+			productionInspection, err := benchfixtures.InspectGoTree(productionTree.RootNode(), productionLanguage)
 			if err != nil {
 				t.Fatalf("inspect production tree: %v", err)
 			}
 
-			legacyLanguage := *loaded
+			legacyLanguage := cloneAdmissionTestLanguage(loaded)
 			legacyLanguage.CompactEOFAcceptNoActionSiblingsCertified = true
 			gts.ResetAdmissionCandidateCountersForTest()
-			legacy := gts.NewParser(&legacyLanguage)
+			legacy := gts.NewParser(legacyLanguage)
 			legacy.SetAdmissionCandidateRoute(true)
 			legacyTree, err := legacy.Parse(source)
 			if err != nil {
@@ -74,7 +85,7 @@ func TestAdmissionCandidateRoutesEOFSiblingsWithoutProfileGrant(t *testing.T) {
 					gts.AdmissionCandidateLastFallbackReason(),
 				)
 			}
-			legacyInspection, err := benchfixtures.InspectGoTree(legacyTree.RootNode(), &legacyLanguage)
+			legacyInspection, err := benchfixtures.InspectGoTree(legacyTree.RootNode(), legacyLanguage)
 			if err != nil {
 				t.Fatalf("inspect legacy tree: %v", err)
 			}
@@ -86,10 +97,10 @@ func TestAdmissionCandidateRoutesEOFSiblingsWithoutProfileGrant(t *testing.T) {
 				)
 			}
 
-			candidateLanguage := *loaded
+			candidateLanguage := cloneAdmissionTestLanguage(loaded)
 			candidateLanguage.CompactEOFAcceptNoActionSiblingsCertified = false
 			gts.ResetAdmissionCandidateCountersForTest()
-			candidate := gts.NewParser(&candidateLanguage)
+			candidate := gts.NewParser(candidateLanguage)
 			candidate.SetAdmissionCandidateRoute(true)
 			candidateTree, err := candidate.Parse(source)
 			if err != nil {
@@ -106,7 +117,7 @@ func TestAdmissionCandidateRoutesEOFSiblingsWithoutProfileGrant(t *testing.T) {
 					gts.AdmissionCandidateLastFallbackReason(),
 				)
 			}
-			candidateInspection, err := benchfixtures.InspectGoTree(candidateTree.RootNode(), &candidateLanguage)
+			candidateInspection, err := benchfixtures.InspectGoTree(candidateTree.RootNode(), candidateLanguage)
 			if err != nil {
 				t.Fatalf("inspect candidate tree: %v", err)
 			}
