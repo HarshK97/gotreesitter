@@ -6,17 +6,26 @@ import "unsafe"
 // once from each record type's real in-memory layout so StorageBytes stays
 // authoritative if a record ever gains or loses a field.
 var (
-	coreNodeRecordBytes    = uint64(unsafe.Sizeof(nodeRecord{}))
-	coreLinkRecordBytes    = uint64(unsafe.Sizeof(linkRecord{}))
-	coreSubtreeRecordBytes = uint64(unsafe.Sizeof(subtreeRecord{}))
-	coreChildRecordBytes   = uint64(unsafe.Sizeof(SubtreeID(0)))
-	coreFieldRecordBytes   = uint64(unsafe.Sizeof(FieldMapEntry{}))
-	coreAliasRecordBytes   = uint64(unsafe.Sizeof(Symbol(0)))
+	coreNodeRecordBytes                 = uint64(unsafe.Sizeof(nodeRecord{}))
+	coreLinkRecordBytes                 = uint64(unsafe.Sizeof(linkRecord{}))
+	coreSubtreeRecordBytes              = uint64(unsafe.Sizeof(subtreeRecord{}))
+	coreChildRecordBytes                = uint64(unsafe.Sizeof(SubtreeID(0)))
+	coreFieldRecordBytes                = uint64(unsafe.Sizeof(FieldMapEntry{}))
+	coreAliasRecordBytes                = uint64(unsafe.Sizeof(Symbol(0)))
+	coreDropCohortActionBytes           = uint64(unsafe.Sizeof(DropCohortActionIdentity{}))
+	coreDropCohortRecordBytes           = uint64(unsafe.Sizeof(dropCohortRecord{}))
+	coreDropCohortMemberBytes           = uint64(unsafe.Sizeof(dropCohortMember{}))
+	coreDropCohortDerivationRecordBytes = uint64(unsafe.Sizeof(dropCohortDerivationRecord{}))
+	coreDropCohortDerivationInternBytes = uint64(unsafe.Sizeof(dropCohortDerivationInternEntry{}))
+	coreDropCohortMutationBytes         = uint64(unsafe.Sizeof(dropCohortMutation{}))
+	coreDropCohortMapEntryBytes         = uint64(unsafe.Sizeof(dropCohortMapEntry{}))
+	coreDropCohortJournalStoreBytes     = uint64(unsafe.Sizeof(dropCohortJournalStoreEntry{}))
+	coreDropCohortReservationBytes      = uint64(unsafe.Sizeof(dropCohortReservation{}))
 )
 
 // StorageBytes returns a cheap, deterministic, O(1) estimate of the compact
 // core's current record storage in bytes: every growable record family's
-// live slice length times that family's real struct size. It costs six
+// live slice length times that family's real struct size. It uses only
 // multiply-adds over already-tracked slice lengths -- no allocation, no
 // traversal, no I/O -- so it is safe to call from a tight scheduler poll
 // (spec.campaign.v7 tranche B8).
@@ -50,13 +59,25 @@ func (c *Core) StorageBytes() uint64 {
 		uint64(len(c.subtrees))*coreSubtreeRecordBytes +
 		uint64(len(c.children))*coreChildRecordBytes +
 		uint64(len(c.fields))*coreFieldRecordBytes +
-		uint64(len(c.aliases))*coreAliasRecordBytes
+		uint64(len(c.aliases))*coreAliasRecordBytes +
+		uint64(len(c.dropCohortRefSpill))*coreDropCohortRefBytes +
+		uint64(len(c.dropCohortActions))*coreDropCohortActionBytes +
+		uint64(len(c.dropCohortRecords))*coreDropCohortRecordBytes +
+		uint64(len(c.dropCohortMembers))*coreDropCohortMemberBytes +
+		uint64(len(c.dropCohortDerivations))*coreDropCohortDerivationRecordBytes +
+		uint64(len(c.dropCohortDerivationIntern))*coreDropCohortDerivationInternBytes +
+		uint64(len(c.dropCohortDerivationBytes)) +
+		uint64(len(c.dropCohortCertificateRefs))*coreDropCohortRefBytes +
+		uint64(len(c.dropCohortMapStore))*coreDropCohortMapEntryBytes +
+		uint64(len(c.dropCohortJournalStore))*coreDropCohortJournalStoreBytes +
+		uint64(len(c.dropCohortReservations))*coreDropCohortReservationBytes +
+		uint64(len(c.dropCohortJournal))*coreDropCohortMutationBytes
 }
 
 // Byte footprints for the additional families FootprintBytes covers that
 // StorageBytes does not: the lineage/checkpoint/provenance side records, the
-// checkpoint interner, the boundary index, and the two dominant per-parse
-// scratch buffers (pop-path enumeration and reduction-output batching).
+// checkpoint interner, the boundary index, producer scratch, and scheduler
+// scratch buffers.
 var (
 	coreNodeLineageRecordBytes    = uint64(unsafe.Sizeof(nodeLineageRecord{}))
 	coreCheckpointIDBytes         = uint64(unsafe.Sizeof(CheckpointID(0)))
@@ -73,6 +94,7 @@ var (
 	coreHeadBytes                 = uint64(unsafe.Sizeof(Head{}))
 	coreLinkRecordSliceBytes      = uint64(unsafe.Sizeof([]linkRecord(nil)))
 	coreSubtreeIDBytes            = uint64(unsafe.Sizeof(SubtreeID(0)))
+	coreDropCohortPathStepBytes   = uint64(unsafe.Sizeof(dropCohortPathStep{}))
 	coreInt64Bytes                = uint64(unsafe.Sizeof(int64(0)))
 	coreForkOrderBytes            = uint64(unsafe.Sizeof(ForkOrder{}))
 	corePathPayloadBytes          = uint64(unsafe.Sizeof(pathPayload{}))
@@ -80,6 +102,7 @@ var (
 	coreReductionBoundaryOutBytes = uint64(unsafe.Sizeof(reductionBoundaryOutput{}))
 	coreBoundaryKeyEntryBytes     = uint64(unsafe.Sizeof(boundaryKey{})) + uint64(unsafe.Sizeof(int(0)))
 	coreUint16Bytes               = uint64(unsafe.Sizeof(uint16(0)))
+	coreDropCohortRefBytes        = uint64(unsafe.Sizeof(DropCohortRef{}))
 )
 
 // FootprintBytes returns a cheap, deterministic, O(1) estimate of the compact
@@ -125,6 +148,24 @@ func (c *Core) FootprintBytes() uint64 {
 	total += uint64(cap(c.boundaryJournal)) * coreBoundaryMutationBytes
 	total += uint64(cap(c.nodeLineageJournal)) * coreNodeLineageMutationBytes
 	total += uint64(cap(c.alternativeSpillArena)) * coreUint32Bytes
+	total += uint64(cap(c.dropCohortRefSpill)) * coreDropCohortRefBytes
+	total += uint64(cap(c.dropCohortActions)) * coreDropCohortActionBytes
+	total += uint64(cap(c.dropCohortRecords)) * coreDropCohortRecordBytes
+	total += uint64(cap(c.dropCohortMembers)) * coreDropCohortMemberBytes
+	total += uint64(cap(c.dropCohortDerivations)) * coreDropCohortDerivationRecordBytes
+	total += uint64(cap(c.dropCohortDerivationIntern)) * coreDropCohortDerivationInternBytes
+	total += uint64(cap(c.dropCohortDerivationBytes))
+	total += uint64(cap(c.dropCohortCertificateRefs)) * coreDropCohortRefBytes
+	total += uint64(cap(c.dropCohortMapStore)) * coreDropCohortMapEntryBytes
+	total += uint64(cap(c.dropCohortJournalStore)) * coreDropCohortJournalStoreBytes
+	total += uint64(cap(c.dropCohortReservations)) * coreDropCohortReservationBytes
+	// A durable reservation is a committed memory budget even before its
+	// backing store is filled. Include it in the containment gauge so nested
+	// sessions cannot hide committed capacity from the scheduler budget.
+	total += c.dropCohortReservedBytes
+	total += uint64(cap(c.dropCohortDerivationScratch))
+	total += uint64(cap(c.dropCohortPathScratch)) * coreDropCohortPathStepBytes
+	total += uint64(cap(c.dropCohortJournal)) * coreDropCohortMutationBytes
 	total += uint64(cap(c.condenseCandidates)) * coreCondenseCandidateBytes
 	total += uint64(cap(c.transactions)) * coreUint64Bytes
 	total += uint64(cap(c.historicalNodeScratch)) * coreNodeIDBytes
@@ -252,6 +293,19 @@ func (c *Core) releaseRecordArenaReserve() {
 	c.links = nil
 	c.subtrees = nil
 	c.children = nil
+	c.dropCohortRefSpill = nil
+	c.dropCohortActions = nil
+	c.dropCohortRecords = nil
+	c.dropCohortMembers = nil
+	c.dropCohortDerivations = nil
+	c.dropCohortDerivationIntern = nil
+	c.dropCohortDerivationBytes = nil
+	c.dropCohortCertificateRefs = nil
+	c.dropCohortMapStore = nil
+	c.dropCohortJournalStore = nil
+	c.dropCohortDerivationScratch = nil
+	c.dropCohortPathScratch = nil
+	c.dropCohortJournal = nil
 }
 
 func (c *Core) releaseOversizedRetention() {
@@ -270,10 +324,26 @@ func (c *Core) releaseOversizedRetention() {
 	c.boundaryJournal = nil
 	c.nodeLineageJournal = nil
 	c.alternativeSpillArena = nil
+	c.dropCohortRefSpill = nil
+	c.dropCohortActions = nil
+	c.dropCohortRecords = nil
+	c.dropCohortMembers = nil
+	c.dropCohortDerivations = nil
+	c.dropCohortDerivationIntern = nil
+	c.dropCohortDerivationBytes = nil
+	c.dropCohortCertificateRefs = nil
+	c.dropCohortMapStore = nil
+	c.dropCohortJournalStore = nil
+	c.dropCohortDerivationScratch = nil
+	c.dropCohortPathScratch = nil
+	c.dropCohortJournal = nil
 	c.transactions = nil
 	c.historicalNodeScratch = nil
 	c.cohortHeadScratch = nil
 	c.factorLinkScratch = nil
+	c.dropCohortReservations = nil
+	clear(c.dropCohortReserved[:])
+	c.dropCohortReservedBytes = 0
 	c.checkpoints.dropOversized()
 	c.boundaries.dropOversized()
 	c.popScratch.dropOversized()

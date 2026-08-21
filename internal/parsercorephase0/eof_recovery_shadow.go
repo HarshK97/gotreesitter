@@ -299,6 +299,12 @@ func planDiagnosticEOFRecoveryClone(live *Core, payloads []SubtreeID, providerWr
 		{len(live.checkpoints.bytes), 1},
 		{len(live.boundaries.slots), coreBoundarySlotBytes},
 		{len(live.alternativeSpillArena), coreUint32Bytes},
+		{len(live.dropCohortRefSpill), coreDropCohortRefBytes},
+		{len(live.dropCohortActions), coreDropCohortActionBytes},
+		{len(live.dropCohortRecords), coreDropCohortRecordBytes},
+		{len(live.dropCohortMembers), coreDropCohortMemberBytes},
+		{len(live.dropCohortDerivations), coreDropCohortDerivationRecordBytes},
+		{len(live.dropCohortDerivationBytes), 1},
 	} {
 		bytes, ok := diagnosticEOFRecoveryMul(uint64(item.count), item.bytes)
 		if !ok || !diagnosticEOFRecoveryAdd(&plan.copiedArenaBytes, bytes) {
@@ -454,10 +460,19 @@ func cloneDiagnosticEOFRecoveryCore(
 	shadow.checkpoints.buckets = nil
 	shadow.boundaries.slots = cloneDiagnosticSlice(live.boundaries.slots, 0)
 	shadow.alternativeSpillArena = cloneDiagnosticSlice(live.alternativeSpillArena, 0)
+	shadow.dropCohortRefSpill = cloneDiagnosticSlice(live.dropCohortRefSpill, 0)
+	shadow.dropCohortActions = cloneDiagnosticSlice(live.dropCohortActions, 0)
+	shadow.dropCohortRecords = cloneDiagnosticSlice(live.dropCohortRecords, 0)
+	shadow.dropCohortMembers = cloneDiagnosticSlice(live.dropCohortMembers, 0)
+	shadow.dropCohortDerivations = cloneDiagnosticSlice(live.dropCohortDerivations, 0)
+	shadow.dropCohortDerivationBytes = cloneDiagnosticSlice(live.dropCohortDerivationBytes, 0)
 
 	// One append does not use live journals, schedulers, or retained builders.
 	shadow.boundaryJournal = nil
 	shadow.nodeLineageJournal = nil
+	shadow.dropCohortJournal = nil
+	shadow.dropCohortDerivationScratch = nil
+	shadow.dropCohortPathScratch = nil
 	shadow.condenseCandidates = nil
 	shadow.condenseNewNode = 0
 	shadow.condenseScopeActive = false
@@ -518,7 +533,13 @@ func diagnosticEOFRecoveryCopiedArenasEqual(live, shadow *Core) bool {
 		equalDiagnosticSlice(live.checkpoints.records, shadow.checkpoints.records) &&
 		equalDiagnosticSlice(live.checkpoints.bytes, shadow.checkpoints.bytes) &&
 		equalDiagnosticSlice(live.boundaries.slots, shadow.boundaries.slots) &&
-		equalDiagnosticSlice(live.alternativeSpillArena, shadow.alternativeSpillArena)
+		equalDiagnosticSlice(live.alternativeSpillArena, shadow.alternativeSpillArena) &&
+		equalDiagnosticSlice(live.dropCohortRefSpill, shadow.dropCohortRefSpill) &&
+		equalDiagnosticSlice(live.dropCohortActions, shadow.dropCohortActions) &&
+		equalDiagnosticSlice(live.dropCohortRecords, shadow.dropCohortRecords) &&
+		equalDiagnosticSlice(live.dropCohortMembers, shadow.dropCohortMembers) &&
+		equalDiagnosticSlice(live.dropCohortDerivations, shadow.dropCohortDerivations) &&
+		equalDiagnosticSlice(live.dropCohortDerivationBytes, shadow.dropCohortDerivationBytes)
 }
 
 func diagnosticEOFRecoveryCopiedHeadersEqual(live, shadow *Core) bool {
@@ -565,7 +586,13 @@ func diagnosticEOFRecoveryStorageDisjoint(live, shadow *Core) bool {
 		disjointDiagnosticSlice(live.checkpoints.records, shadow.checkpoints.records) &&
 		disjointDiagnosticSlice(live.checkpoints.bytes, shadow.checkpoints.bytes) &&
 		disjointDiagnosticSlice(live.boundaries.slots, shadow.boundaries.slots) &&
-		disjointDiagnosticSlice(live.alternativeSpillArena, shadow.alternativeSpillArena)
+		disjointDiagnosticSlice(live.alternativeSpillArena, shadow.alternativeSpillArena) &&
+		disjointDiagnosticSlice(live.dropCohortRefSpill, shadow.dropCohortRefSpill) &&
+		disjointDiagnosticSlice(live.dropCohortActions, shadow.dropCohortActions) &&
+		disjointDiagnosticSlice(live.dropCohortRecords, shadow.dropCohortRecords) &&
+		disjointDiagnosticSlice(live.dropCohortMembers, shadow.dropCohortMembers) &&
+		disjointDiagnosticSlice(live.dropCohortDerivations, shadow.dropCohortDerivations) &&
+		disjointDiagnosticSlice(live.dropCohortDerivationBytes, shadow.dropCohortDerivationBytes)
 }
 
 func disjointDiagnosticSlice[T any](left, right []T) bool {
