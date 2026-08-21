@@ -5,6 +5,7 @@ package gotreesitter
 import (
 	"crypto/sha256"
 	_ "embed"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -66,6 +67,7 @@ type DiagnosticParserCorePrefixOptions struct {
 	// These acceptance options require exact artifact certification. Diagnostic
 	// callers retain the conservative false defaults.
 	allowEOFAcceptNoActionSiblings  bool
+	allowMetadataEOFAcceptRecovery  bool
 	allowPrimaryAcceptDerivation    bool
 	allowConvergedSplitDropArtifact bool
 	// allowCompactStrategy2ErrorRegion permits the generic scheduler to
@@ -137,6 +139,104 @@ type DiagnosticParserCorePrefixOptions struct {
 	materializationForceReplayParseStates bool
 	materializationContextSet             bool
 }
+
+type compactEOFRecoveryAdmissionState uint8
+
+const (
+	compactEOFRecoveryAdmissionEmpty compactEOFRecoveryAdmissionState = iota
+	compactEOFRecoveryAdmissionProduced
+	compactEOFRecoveryAdmissionPreApplyValidated
+	compactEOFRecoveryAdmissionAcceptApplied
+	compactEOFRecoveryAdmissionRecoveryDropped
+	compactEOFRecoveryAdmissionCompleted
+	compactEOFRecoveryAdmissionSchedulerReturned
+	compactEOFRecoveryAdmissionConsumed
+	compactEOFRecoveryAdmissionInvalid compactEOFRecoveryAdmissionState = 255
+)
+
+type compactEOFRecoveryAdmissionEventKind uint8
+
+const (
+	compactEOFRecoveryAdmissionEventNormal compactEOFRecoveryAdmissionEventKind = iota + 1
+	compactEOFRecoveryAdmissionEventRecover
+)
+
+type compactEOFRecoveryAdmissionRoute uint8
+
+const (
+	compactEOFRecoveryAdmissionRoutePublicTree compactEOFRecoveryAdmissionRoute = iota
+	compactEOFRecoveryAdmissionRouteSelectedStore
+	compactEOFRecoveryAdmissionRouteNone compactEOFRecoveryAdmissionRoute = 255
+)
+
+type compactEOFRecoveryAdmissionEvent struct {
+	ordinal           int
+	kind              compactEOFRecoveryAdmissionEventKind
+	cost              uint32
+	dynamicPrecedence int64
+}
+
+type compactEOFRecoveryAdmissionWork struct {
+	polls                      uint64
+	sourceChunks               uint64
+	childGroups                uint64
+	pathsVisited               uint64
+	linksVisited               uint64
+	payloadRecordsVisited      uint64
+	maxDepth                   uint64
+	bytesInspected             uint64
+	maxSourceChunk             uint64
+	maxChildGroup              uint64
+	checkedArithmetic          uint64
+	publicationAttempts        uint64
+	parserConstructions        uint64
+	treeConstructions          uint64
+	selectedStoreConstructions uint64
+	overflow                   bool
+}
+
+type compactEOFRecoveryAdmissionReceipt struct {
+	active              bool
+	valid               bool
+	state               compactEOFRecoveryAdmissionState
+	seal                [32]byte
+	transitionSeals     [7][32]byte
+	transitions         [7]compactEOFRecoveryAdmissionState
+	transitionCount     uint8
+	declineReason       string
+	coreGeneration      uint64
+	electionIndex       int
+	token               Token
+	sourceLength        uint32
+	sourceSHA256        [32]byte
+	normalHead          core.Head
+	recoveryHead        core.Head
+	normalCreationSeq   uint64
+	recoveryCreationSeq uint64
+	normalLineage       uint16
+	recoveryLineage     uint16
+	normalFingerprint   [32]byte
+	recoveryFingerprint [32]byte
+	normalPayloads      uint32
+	recoveryPayloads    uint32
+	normalOccurrences   uint32
+	recoveryOccurrences uint32
+	normalFrontier      uint32
+	recoveryFrontier    uint32
+	events              [2]compactEOFRecoveryAdmissionEvent
+	selectedEvent       int
+	metadataOnly        bool
+	consumptionCount    uint64
+	constructionRoute   compactEOFRecoveryAdmissionRoute
+	observedErrorCost   uint32
+	work                compactEOFRecoveryAdmissionWork
+}
+
+var (
+	compactEOFRecoveryAdmissionFaultHook    func(*diagnosticParserCoreGenericScheduler, string) error
+	compactEOFRecoveryAdmissionOverflowHook func(*diagnosticParserCoreGenericScheduler, string) bool
+	compactEOFRecoveryAdmissionCensusHook   func(compactEOFRecoveryAdmissionReceipt)
+)
 
 type DiagnosticParserCoreScannerCheckpoint struct {
 	Length int
@@ -1831,6 +1931,7 @@ type diagnosticParserCoreGenericScheduler struct {
 	epochProgress                 bool
 	acceptedHead                  core.Head
 	acceptedPayloads              []core.SubtreeID
+	eofRecoveryAdmission          compactEOFRecoveryAdmissionReceipt
 	conflictPostExecutionFault    func() error
 	extraPostExecutionFault       func() error
 	freshSessionOwner             *core.SchedulerTransactionToken
@@ -1851,6 +1952,1234 @@ type diagnosticParserCoreGenericScheduler struct {
 	corridorRows  []core.ActionRow
 	corridorCells [1]diagnosticParserCoreGenericCell
 	capPressure   diagnosticParserCoreCapPressurePrediction
+}
+
+const (
+	compactEOFRecoveryAdmissionSourceChunkBytes = 4096
+	compactEOFRecoveryAdmissionChildGroupSize   = core.EOFAdmissionMetadataGroupSize
+	compactEOFRecoveryAdmissionMaxTopPayloads   = core.EOFAdmissionMaxTopPayloads
+	compactEOFRecoveryAdmissionMaxDepth         = 256
+	compactEOFRecoveryAdmissionMaxOccurrences   = 65536
+)
+
+func (state compactEOFRecoveryAdmissionState) String() string {
+	switch state {
+	case compactEOFRecoveryAdmissionEmpty:
+		return "empty"
+	case compactEOFRecoveryAdmissionProduced:
+		return "produced"
+	case compactEOFRecoveryAdmissionPreApplyValidated:
+		return "pre_apply_validated"
+	case compactEOFRecoveryAdmissionAcceptApplied:
+		return "accept_applied"
+	case compactEOFRecoveryAdmissionRecoveryDropped:
+		return "recovery_dropped"
+	case compactEOFRecoveryAdmissionCompleted:
+		return "completed"
+	case compactEOFRecoveryAdmissionSchedulerReturned:
+		return "scheduler_returned"
+	case compactEOFRecoveryAdmissionConsumed:
+		return "consumed"
+	case compactEOFRecoveryAdmissionInvalid:
+		return "invalid"
+	default:
+		return "unknown"
+	}
+}
+
+func (kind compactEOFRecoveryAdmissionEventKind) String() string {
+	switch kind {
+	case compactEOFRecoveryAdmissionEventNormal:
+		return "normal"
+	case compactEOFRecoveryAdmissionEventRecover:
+		return "recover_eof"
+	default:
+		return "unknown"
+	}
+}
+
+func (route compactEOFRecoveryAdmissionRoute) String() string {
+	switch route {
+	case compactEOFRecoveryAdmissionRoutePublicTree:
+		return "public_tree"
+	case compactEOFRecoveryAdmissionRouteSelectedStore:
+		return "selected_store"
+	default:
+		return "none"
+	}
+}
+
+func compactEOFRecoveryAdmissionCheckedAdd(left, right uint64) (uint64, bool) {
+	if math.MaxUint64-left < right {
+		return 0, false
+	}
+	return left + right, true
+}
+
+func compactEOFRecoveryAdmissionCheckedMul(left, right uint64) (uint64, bool) {
+	if left != 0 && right > math.MaxUint64/left {
+		return 0, false
+	}
+	return left * right, true
+}
+
+func compactEOFRecoveryAdmissionSeal(receipt *compactEOFRecoveryAdmissionReceipt, previous [32]byte) [32]byte {
+	if receipt == nil {
+		return [32]byte{}
+	}
+	hasher := sha256.New()
+	var scratch [8]byte
+	writeUint64 := func(value uint64) {
+		binary.LittleEndian.PutUint64(scratch[:], value)
+		_, _ = hasher.Write(scratch[:])
+	}
+	writeBool := func(value bool) {
+		if value {
+			writeUint64(1)
+			return
+		}
+		writeUint64(0)
+	}
+	_, _ = hasher.Write(previous[:])
+	writeUint64(uint64(receipt.state))
+	writeUint64(uint64(receipt.transitionCount))
+	writeBool(receipt.active)
+	writeBool(receipt.valid)
+	writeUint64(receipt.coreGeneration)
+	writeUint64(uint64(receipt.electionIndex))
+	writeUint64(uint64(receipt.token.Symbol))
+	writeUint64(uint64(receipt.token.StartByte))
+	writeUint64(uint64(receipt.token.EndByte))
+	writeBool(receipt.token.Missing)
+	writeBool(receipt.token.NoLookahead)
+	writeBool(receipt.token.ExternalScannerToken)
+	writeUint64(uint64(receipt.sourceLength))
+	_, _ = hasher.Write(receipt.sourceSHA256[:])
+	writeUint64(uint64(receipt.normalHead.Node))
+	writeUint64(uint64(receipt.recoveryHead.Node))
+	writeUint64(receipt.normalCreationSeq)
+	writeUint64(receipt.recoveryCreationSeq)
+	writeUint64(uint64(receipt.normalLineage))
+	writeUint64(uint64(receipt.recoveryLineage))
+	_, _ = hasher.Write(receipt.normalFingerprint[:])
+	_, _ = hasher.Write(receipt.recoveryFingerprint[:])
+	writeUint64(uint64(receipt.normalPayloads))
+	writeUint64(uint64(receipt.recoveryPayloads))
+	writeUint64(uint64(receipt.normalOccurrences))
+	writeUint64(uint64(receipt.recoveryOccurrences))
+	writeUint64(uint64(receipt.normalFrontier))
+	writeUint64(uint64(receipt.recoveryFrontier))
+	for _, event := range receipt.events {
+		writeUint64(uint64(event.ordinal))
+		writeUint64(uint64(event.kind))
+		writeUint64(uint64(event.cost))
+		writeUint64(uint64(event.dynamicPrecedence))
+	}
+	writeUint64(uint64(receipt.selectedEvent))
+	writeBool(receipt.metadataOnly)
+	writeUint64(receipt.consumptionCount)
+	writeUint64(uint64(receipt.constructionRoute))
+	writeUint64(uint64(receipt.observedErrorCost))
+	work := receipt.work
+	for _, value := range [...]uint64{
+		work.polls,
+		work.sourceChunks,
+		work.childGroups,
+		work.pathsVisited,
+		work.linksVisited,
+		work.payloadRecordsVisited,
+		work.maxDepth,
+		work.bytesInspected,
+		work.maxSourceChunk,
+		work.maxChildGroup,
+		work.checkedArithmetic,
+		work.publicationAttempts,
+		work.parserConstructions,
+		work.treeConstructions,
+		work.selectedStoreConstructions,
+	} {
+		writeUint64(value)
+	}
+	writeBool(work.overflow)
+	var sum [32]byte
+	copy(sum[:], hasher.Sum(nil))
+	return sum
+}
+
+func compactEOFRecoveryAdmissionSealIsValid(receipt *compactEOFRecoveryAdmissionReceipt) bool {
+	if receipt == nil || receipt.transitionCount == 0 ||
+		int(receipt.transitionCount) > len(receipt.transitionSeals) {
+		return false
+	}
+	var previous [32]byte
+	if receipt.transitionCount > 1 {
+		previous = receipt.transitionSeals[receipt.transitionCount-2]
+	}
+	want := compactEOFRecoveryAdmissionSeal(receipt, previous)
+	return receipt.seal != ([32]byte{}) && receipt.seal == want &&
+		receipt.transitionSeals[receipt.transitionCount-1] == want
+}
+
+func compactEOFRecoveryAdmissionTransition(
+	receipt *compactEOFRecoveryAdmissionReceipt,
+	next compactEOFRecoveryAdmissionState,
+) error {
+	if receipt == nil || int(receipt.transitionCount) >= len(receipt.transitions) {
+		return errors.New("parser-core phase zero: EOF recovery receipt transition overflow")
+	}
+	previous := receipt.seal
+	index := receipt.transitionCount
+	receipt.state = next
+	receipt.transitions[index] = next
+	receipt.transitionCount++
+	receipt.seal = compactEOFRecoveryAdmissionSeal(receipt, previous)
+	receipt.transitionSeals[index] = receipt.seal
+	return nil
+}
+
+func compactEOFRecoveryAdmissionInvalidate(
+	receipt *compactEOFRecoveryAdmissionReceipt,
+	reason string,
+) {
+	if receipt == nil {
+		return
+	}
+	receipt.valid = false
+	receipt.state = compactEOFRecoveryAdmissionInvalid
+	receipt.selectedEvent = -1
+	receipt.declineReason = reason
+}
+
+func compactEOFRecoveryAdmissionAddWork(
+	scheduler *diagnosticParserCoreGenericScheduler,
+	receipt *compactEOFRecoveryAdmissionReceipt,
+	target *uint64,
+	amount uint64,
+) error {
+	if receipt == nil || target == nil {
+		return errors.New("parser-core phase zero: EOF recovery work counter is nil")
+	}
+	if compactEOFRecoveryAdmissionOverflowHook != nil &&
+		compactEOFRecoveryAdmissionOverflowHook(scheduler, "counter") {
+		receipt.work.overflow = true
+		compactEOFRecoveryAdmissionInvalidate(receipt, "EOF recovery admission counter overflow")
+		return errors.New("parser-core phase zero: EOF recovery admission counter overflow")
+	}
+	checked, ok := compactEOFRecoveryAdmissionCheckedAdd(receipt.work.checkedArithmetic, 1)
+	if !ok {
+		receipt.work.overflow = true
+		compactEOFRecoveryAdmissionInvalidate(receipt, "EOF recovery admission arithmetic counter overflow")
+		return errors.New("parser-core phase zero: EOF recovery admission arithmetic counter overflow")
+	}
+	receipt.work.checkedArithmetic = checked
+	value, ok := compactEOFRecoveryAdmissionCheckedAdd(*target, amount)
+	if !ok {
+		receipt.work.overflow = true
+		compactEOFRecoveryAdmissionInvalidate(receipt, "EOF recovery admission counter overflow")
+		return errors.New("parser-core phase zero: EOF recovery admission counter overflow")
+	}
+	*target = value
+	return nil
+}
+
+func compactEOFRecoveryAdmissionAddCost(
+	scheduler *diagnosticParserCoreGenericScheduler,
+	receipt *compactEOFRecoveryAdmissionReceipt,
+	target *uint64,
+	amount uint64,
+) error {
+	if compactEOFRecoveryAdmissionOverflowHook != nil &&
+		compactEOFRecoveryAdmissionOverflowHook(scheduler, "cost") {
+		receipt.work.overflow = true
+		compactEOFRecoveryAdmissionInvalidate(receipt, "EOF recovery admission cost overflow")
+		return errors.New("parser-core phase zero: EOF recovery admission cost overflow")
+	}
+	return compactEOFRecoveryAdmissionAddWork(scheduler, receipt, target, amount)
+}
+
+func compactEOFRecoveryAdmissionMultiplyCost(
+	receipt *compactEOFRecoveryAdmissionReceipt,
+	left uint64,
+	right uint64,
+) (uint64, error) {
+	if receipt == nil {
+		return 0, errors.New("parser-core phase zero: EOF recovery cost receipt is nil")
+	}
+	checked, ok := compactEOFRecoveryAdmissionCheckedAdd(receipt.work.checkedArithmetic, 1)
+	if !ok {
+		receipt.work.overflow = true
+		compactEOFRecoveryAdmissionInvalidate(receipt, "EOF recovery admission arithmetic counter overflow")
+		return 0, errors.New("parser-core phase zero: EOF recovery admission arithmetic counter overflow")
+	}
+	receipt.work.checkedArithmetic = checked
+	value, ok := compactEOFRecoveryAdmissionCheckedMul(left, right)
+	if !ok {
+		receipt.work.overflow = true
+		compactEOFRecoveryAdmissionInvalidate(receipt, "EOF recovery admission cost overflow")
+		return 0, errors.New("parser-core phase zero: EOF recovery admission cost overflow")
+	}
+	return value, nil
+}
+
+func compactEOFRecoveryAdmissionPoll(
+	scheduler *diagnosticParserCoreGenericScheduler,
+	receipt *compactEOFRecoveryAdmissionReceipt,
+	poll func() error,
+) error {
+	if err := compactEOFRecoveryAdmissionAddWork(scheduler, receipt, &receipt.work.polls, 1); err != nil {
+		return err
+	}
+	if poll == nil {
+		return nil
+	}
+	if err := poll(); err != nil {
+		compactEOFRecoveryAdmissionInvalidate(receipt, "EOF recovery admission poll failed")
+		return err
+	}
+	return nil
+}
+
+type compactEOFRecoveryAdmissionPath struct {
+	fingerprint       [32]byte
+	payloadCount      uint32
+	occurrenceCount   uint32
+	visibleFrontier   uint32
+	metadataGroups    uint32
+	polls             uint32
+	maxDepth          uint32
+	dynamicPrecedence int64
+}
+
+type compactEOFRecoveryAdmissionFrame struct {
+	payload            core.SubtreeID
+	path               [32]byte
+	incomingAlias      core.Symbol
+	parentStart        uint32
+	parentEnd          uint32
+	hasParent          bool
+	frontierBlocked    bool
+	descendantsBlocked bool
+	startByte          uint32
+	endByte            uint32
+	childCount         uint32
+	nextChild          uint32
+	entered            bool
+}
+
+func compactEOFRecoveryAdmissionWriteUint64(hasher interface{ Write([]byte) (int, error) }, value uint64) {
+	var scratch [8]byte
+	binary.LittleEndian.PutUint64(scratch[:], value)
+	_, _ = hasher.Write(scratch[:])
+}
+
+func compactEOFRecoveryAdmissionWriteBool(hasher interface{ Write([]byte) (int, error) }, value bool) {
+	if value {
+		compactEOFRecoveryAdmissionWriteUint64(hasher, 1)
+		return
+	}
+	compactEOFRecoveryAdmissionWriteUint64(hasher, 0)
+}
+
+func compactEOFRecoveryAdmissionRootPath(role uint64, ordinal uint32) [32]byte {
+	var input [16]byte
+	binary.LittleEndian.PutUint64(input[:8], role)
+	binary.LittleEndian.PutUint64(input[8:], uint64(ordinal))
+	return sha256.Sum256(input[:])
+}
+
+func compactEOFRecoveryAdmissionChildPath(parent [32]byte, ordinal uint32) [32]byte {
+	var input [40]byte
+	copy(input[:32], parent[:])
+	binary.LittleEndian.PutUint64(input[32:], uint64(ordinal))
+	return sha256.Sum256(input[:])
+}
+
+func (s *diagnosticParserCoreGenericScheduler) inspectCompactEOFRecoveryAdmissionSource(
+	receipt *compactEOFRecoveryAdmissionReceipt,
+	source []byte,
+	poll func() error,
+) (uint64, error) {
+	hasher := sha256.New()
+	var newlineCount uint64
+	for start := 0; start < len(source); start += compactEOFRecoveryAdmissionSourceChunkBytes {
+		if err := compactEOFRecoveryAdmissionPoll(s, receipt, poll); err != nil {
+			return 0, err
+		}
+		end := start + compactEOFRecoveryAdmissionSourceChunkBytes
+		if end > len(source) {
+			end = len(source)
+		}
+		chunk := source[start:end]
+		if err := compactEOFRecoveryAdmissionAddWork(s, receipt, &receipt.work.sourceChunks, 1); err != nil {
+			return 0, err
+		}
+		if err := compactEOFRecoveryAdmissionAddWork(s, receipt, &receipt.work.bytesInspected, uint64(len(chunk))); err != nil {
+			return 0, err
+		}
+		if uint64(len(chunk)) > receipt.work.maxSourceChunk {
+			receipt.work.maxSourceChunk = uint64(len(chunk))
+		}
+		for _, value := range chunk {
+			if value == '\n' {
+				newlineCount++
+			}
+		}
+		_, _ = hasher.Write(chunk)
+	}
+	copy(receipt.sourceSHA256[:], hasher.Sum(nil))
+	return newlineCount, nil
+}
+
+func (s *diagnosticParserCoreGenericScheduler) inspectCompactEOFRecoveryAdmissionPath(
+	receipt *compactEOFRecoveryAdmissionReceipt,
+	header diagnosticParserCoreHeader,
+	language *Language,
+	role uint64,
+	sourceLength uint32,
+	poll func() error,
+) (compactEOFRecoveryAdmissionPath, string, error) {
+	var result compactEOFRecoveryAdmissionPath
+	if s == nil || s.compact == nil || receipt == nil || language == nil {
+		return result, "EOF recovery admission audit context is incomplete", nil
+	}
+	generation := receipt.coreGeneration
+	var topPayloads [compactEOFRecoveryAdmissionMaxTopPayloads]core.SubtreeID
+	path, err := s.compact.VisitEOFAdmissionExactPath(
+		header.head,
+		generation,
+		func() error { return compactEOFRecoveryAdmissionPoll(s, receipt, poll) },
+		func(ordinal uint32, payload core.SubtreeID) error {
+			if ordinal >= compactEOFRecoveryAdmissionMaxTopPayloads {
+				return core.ErrEOFAdmissionTopPayloadCap
+			}
+			topPayloads[ordinal] = payload
+			return nil
+		},
+	)
+	if errors.Is(err, core.ErrEOFAdmissionInexactPath) {
+		return result, "EOF recovery admission requires one exact derivation", nil
+	}
+	if errors.Is(err, core.ErrEOFAdmissionTopPayloadCap) {
+		return result, "EOF recovery admission top payload cap", nil
+	}
+	if errors.Is(err, core.ErrEOFAdmissionMalformed) {
+		return result, "EOF recovery admission path is malformed", nil
+	}
+	if err != nil {
+		return result, "", err
+	}
+	if path.Payloads == 0 || path.Payloads > compactEOFRecoveryAdmissionMaxTopPayloads {
+		return result, "EOF recovery admission requires one nonempty exact derivation", nil
+	}
+	result.payloadCount = path.Payloads
+	result.dynamicPrecedence = path.Score
+	result.polls = path.Polls
+	if err := compactEOFRecoveryAdmissionAddWork(s, receipt, &receipt.work.pathsVisited, 1); err != nil {
+		return result, "", err
+	}
+	if err := compactEOFRecoveryAdmissionAddWork(s, receipt, &receipt.work.linksVisited, uint64(path.Links)); err != nil {
+		return result, "", err
+	}
+	topGroups := (uint64(path.Payloads) + compactEOFRecoveryAdmissionChildGroupSize - 1) /
+		compactEOFRecoveryAdmissionChildGroupSize
+	if err := compactEOFRecoveryAdmissionAddWork(s, receipt, &receipt.work.childGroups, topGroups); err != nil {
+		return result, "", err
+	}
+	result.metadataGroups = uint32(topGroups)
+	if group := uint64(path.Payloads); group > compactEOFRecoveryAdmissionChildGroupSize {
+		group = compactEOFRecoveryAdmissionChildGroupSize
+		if group > receipt.work.maxChildGroup {
+			receipt.work.maxChildGroup = group
+		}
+	} else if group > receipt.work.maxChildGroup {
+		receipt.work.maxChildGroup = group
+	}
+
+	hasher := sha256.New()
+	compactEOFRecoveryAdmissionWriteUint64(hasher, role)
+	compactEOFRecoveryAdmissionWriteUint64(hasher, uint64(header.head.Node))
+	compactEOFRecoveryAdmissionWriteUint64(hasher, uint64(path.Payloads))
+	compactEOFRecoveryAdmissionWriteUint64(hasher, uint64(path.Score))
+	compactEOFRecoveryAdmissionWriteUint64(hasher, path.BranchOrder)
+	compactEOFRecoveryAdmissionWriteBool(hasher, path.HasBranchOrder)
+	for _, capValue := range [...]uint64{
+		compactEOFRecoveryAdmissionSourceChunkBytes,
+		compactEOFRecoveryAdmissionChildGroupSize,
+		compactEOFRecoveryAdmissionMaxTopPayloads,
+		compactEOFRecoveryAdmissionMaxDepth,
+		compactEOFRecoveryAdmissionMaxOccurrences,
+	} {
+		compactEOFRecoveryAdmissionWriteUint64(hasher, capValue)
+	}
+
+	var frames [compactEOFRecoveryAdmissionMaxDepth]compactEOFRecoveryAdmissionFrame
+	for rootOrdinal := uint32(0); rootOrdinal < path.Payloads; rootOrdinal++ {
+		frames[0] = compactEOFRecoveryAdmissionFrame{
+			payload: topPayloads[rootOrdinal],
+			path:    compactEOFRecoveryAdmissionRootPath(role, rootOrdinal),
+		}
+		depth := 1
+		for depth != 0 {
+			frame := &frames[depth-1]
+			if !frame.entered {
+				if result.occurrenceCount >= compactEOFRecoveryAdmissionMaxOccurrences {
+					return result, "EOF recovery admission occurrence cap", nil
+				}
+				if err := compactEOFRecoveryAdmissionAddWork(
+					s,
+					receipt,
+					&receipt.work.payloadRecordsVisited,
+					1,
+				); err != nil {
+					return result, "", err
+				}
+				result.occurrenceCount++
+				if uint32(depth) > result.maxDepth {
+					result.maxDepth = uint32(depth)
+				}
+				if uint64(depth) > receipt.work.maxDepth {
+					receipt.work.maxDepth = uint64(depth)
+				}
+
+				decline := ""
+				err := s.compact.VisitEOFAdmissionSubtree(
+					frame.payload,
+					generation,
+					func(view core.EOFAdmissionSubtreeView) error {
+						if view.Identity != frame.payload || view.Generation != generation ||
+							!view.MetadataAuthenticated {
+							decline = "EOF recovery admission subtree identity is unauthenticated"
+							return nil
+						}
+						if view.Missing {
+							decline = "EOF recovery admission rejects a missing subtree"
+							return nil
+						}
+						if view.Extra || view.External {
+							decline = "EOF recovery admission rejects extra or external closure"
+							return nil
+						}
+						if view.Symbol == core.RecoveryErrorSymbol || frame.incomingAlias == core.RecoveryErrorSymbol {
+							span := uint64(view.EndByte - view.StartByte)
+							observed := uint64(core.RecoveryCostPerRecovery + core.RecoveryCostPerSkippedTree)
+							if value, ok := compactEOFRecoveryAdmissionCheckedAdd(observed, span); ok {
+								observed = value
+							} else {
+								observed = math.MaxUint32
+							}
+							if observed > math.MaxUint32 {
+								observed = math.MaxUint32
+							}
+							receipt.observedErrorCost = uint32(observed)
+							decline = "EOF recovery admission rejects an existing ERROR payload"
+							return nil
+						}
+						if view.EndByte > sourceLength ||
+							frame.hasParent && (view.StartByte < frame.parentStart || view.EndByte > frame.parentEnd) {
+							decline = "EOF recovery admission subtree range is malformed"
+							return nil
+						}
+						if view.Terminal && (len(view.Children) != 0 || len(view.Fields) != 0 || len(view.Aliases) != 0) {
+							decline = "EOF recovery admission terminal metadata is malformed"
+							return nil
+						}
+						if len(view.Aliases) != 0 && len(view.Aliases) != len(view.Children) {
+							decline = "EOF recovery admission alias width is malformed"
+							return nil
+						}
+						if int(view.Symbol) >= len(language.SymbolMetadata) {
+							decline = "EOF recovery admission subtree symbol is outside metadata"
+							return nil
+						}
+						aliasedBoundary := frame.incomingAlias != 0
+						if aliasedBoundary {
+							if int(frame.incomingAlias) >= len(language.SymbolMetadata) {
+								decline = "EOF recovery admission alias symbol is outside metadata"
+								return nil
+							}
+						}
+						visibleBoundary := aliasedBoundary || language.SymbolMetadata[view.Symbol].Visible
+						contributes := !frame.frontierBlocked && visibleBoundary
+						if contributes {
+							frontier, ok := compactEOFRecoveryAdmissionCheckedAdd(uint64(result.visibleFrontier), 1)
+							if !ok || frontier > math.MaxUint32 {
+								receipt.work.overflow = true
+								decline = "EOF recovery admission visible frontier overflow"
+								return nil
+							}
+							result.visibleFrontier = uint32(frontier)
+						}
+						frame.descendantsBlocked = frame.frontierBlocked || visibleBoundary
+						frame.startByte, frame.endByte = view.StartByte, view.EndByte
+						frame.childCount = uint32(len(view.Children))
+
+						_, _ = hasher.Write(frame.path[:])
+						for _, value := range [...]uint64{
+							uint64(view.Identity),
+							uint64(frame.incomingAlias),
+							uint64(view.Symbol),
+							uint64(view.ProductionID),
+							uint64(uint16(view.DynamicPrecedence)),
+							uint64(view.StartByte),
+							uint64(view.EndByte),
+							uint64(len(view.Children)),
+							uint64(len(view.Fields)),
+							uint64(len(view.Aliases)),
+						} {
+							compactEOFRecoveryAdmissionWriteUint64(hasher, value)
+						}
+						compactEOFRecoveryAdmissionWriteBool(hasher, view.Extra)
+						compactEOFRecoveryAdmissionWriteBool(hasher, view.External)
+						compactEOFRecoveryAdmissionWriteBool(hasher, view.Terminal)
+						compactEOFRecoveryAdmissionWriteBool(hasher, view.Fragile)
+						compactEOFRecoveryAdmissionWriteBool(hasher, view.Missing)
+						compactEOFRecoveryAdmissionWriteBool(hasher, visibleBoundary)
+						compactEOFRecoveryAdmissionWriteBool(hasher, contributes)
+
+						for start := 0; start < len(view.Children); start += compactEOFRecoveryAdmissionChildGroupSize {
+							if err := compactEOFRecoveryAdmissionPoll(s, receipt, poll); err != nil {
+								return err
+							}
+							result.polls++
+							end := start + compactEOFRecoveryAdmissionChildGroupSize
+							if end > len(view.Children) {
+								end = len(view.Children)
+							}
+							if err := compactEOFRecoveryAdmissionAddWork(s, receipt, &receipt.work.childGroups, 1); err != nil {
+								return err
+							}
+							result.metadataGroups++
+							if group := uint64(end - start); group > receipt.work.maxChildGroup {
+								receipt.work.maxChildGroup = group
+							}
+							for ordinal := start; ordinal < end; ordinal++ {
+								child := view.Children[ordinal]
+								if child == 0 || child >= view.Identity {
+									decline = "EOF recovery admission child identity is malformed"
+									return nil
+								}
+								alias := core.Symbol(0)
+								if len(view.Aliases) != 0 {
+									alias = view.Aliases[ordinal]
+									if alias == core.RecoveryErrorSymbol ||
+										alias != 0 && int(alias) >= len(language.SymbolMetadata) {
+										decline = "EOF recovery admission alias metadata is malformed"
+										return nil
+									}
+								}
+								compactEOFRecoveryAdmissionWriteUint64(hasher, uint64(ordinal))
+								compactEOFRecoveryAdmissionWriteUint64(hasher, uint64(child))
+								compactEOFRecoveryAdmissionWriteUint64(hasher, uint64(alias))
+							}
+						}
+						for start := 0; start < len(view.Fields); start += compactEOFRecoveryAdmissionChildGroupSize {
+							if err := compactEOFRecoveryAdmissionPoll(s, receipt, poll); err != nil {
+								return err
+							}
+							result.polls++
+							end := start + compactEOFRecoveryAdmissionChildGroupSize
+							if end > len(view.Fields) {
+								end = len(view.Fields)
+							}
+							if err := compactEOFRecoveryAdmissionAddWork(s, receipt, &receipt.work.childGroups, 1); err != nil {
+								return err
+							}
+							result.metadataGroups++
+							if group := uint64(end - start); group > receipt.work.maxChildGroup {
+								receipt.work.maxChildGroup = group
+							}
+							for _, field := range view.Fields[start:end] {
+								if uint32(field.ChildIndex) >= uint32(len(view.Children)) {
+									decline = "EOF recovery admission field metadata is malformed"
+									return nil
+								}
+								compactEOFRecoveryAdmissionWriteUint64(hasher, uint64(field.FieldID))
+								compactEOFRecoveryAdmissionWriteUint64(hasher, uint64(field.ChildIndex))
+								compactEOFRecoveryAdmissionWriteBool(hasher, field.Inherited)
+							}
+						}
+						return nil
+					},
+				)
+				if errors.Is(err, core.ErrEOFAdmissionMalformed) {
+					return result, "EOF recovery admission subtree record is malformed", nil
+				}
+				if err != nil {
+					return result, "", err
+				}
+				if decline != "" {
+					return result, decline, nil
+				}
+				frame.entered = true
+				continue
+			}
+			if frame.nextChild >= frame.childCount {
+				frames[depth-1] = compactEOFRecoveryAdmissionFrame{}
+				depth--
+				continue
+			}
+			ordinal := frame.nextChild
+			frame.nextChild++
+			var child core.SubtreeID
+			var alias core.Symbol
+			err := s.compact.VisitEOFAdmissionSubtree(
+				frame.payload,
+				generation,
+				func(view core.EOFAdmissionSubtreeView) error {
+					if ordinal >= uint32(len(view.Children)) {
+						return core.ErrEOFAdmissionMalformed
+					}
+					child = view.Children[ordinal]
+					if len(view.Aliases) != 0 {
+						if len(view.Aliases) != len(view.Children) {
+							return core.ErrEOFAdmissionMalformed
+						}
+						alias = view.Aliases[ordinal]
+					}
+					return nil
+				},
+			)
+			if errors.Is(err, core.ErrEOFAdmissionMalformed) {
+				return result, "EOF recovery admission child metadata is malformed", nil
+			}
+			if err != nil {
+				return result, "", err
+			}
+			if depth >= compactEOFRecoveryAdmissionMaxDepth {
+				return result, "EOF recovery admission depth cap", nil
+			}
+			frames[depth] = compactEOFRecoveryAdmissionFrame{
+				payload:         child,
+				path:            compactEOFRecoveryAdmissionChildPath(frame.path, ordinal),
+				incomingAlias:   alias,
+				parentStart:     frame.startByte,
+				parentEnd:       frame.endByte,
+				hasParent:       true,
+				frontierBlocked: frame.descendantsBlocked,
+			}
+			depth++
+		}
+	}
+	for _, value := range [...]uint64{
+		uint64(result.payloadCount),
+		uint64(result.occurrenceCount),
+		uint64(result.visibleFrontier),
+		uint64(result.metadataGroups),
+		uint64(result.polls),
+		uint64(result.maxDepth),
+	} {
+		compactEOFRecoveryAdmissionWriteUint64(hasher, value)
+	}
+	copy(result.fingerprint[:], hasher.Sum(nil))
+	return result, "", nil
+}
+
+func (s *diagnosticParserCoreGenericScheduler) produceCompactEOFRecoveryAdmission(
+	source []byte,
+	poll func() error,
+) (receipt compactEOFRecoveryAdmissionReceipt, err error) {
+	receipt.selectedEvent = -1
+	receipt.constructionRoute = compactEOFRecoveryAdmissionRouteNone
+	receipt.metadataOnly = true
+	defer func() { s.eofRecoveryAdmission = receipt }()
+	if s == nil || !s.options.allowMetadataEOFAcceptRecovery {
+		return receipt, nil
+	}
+	if s.token.Symbol != 0 {
+		return receipt, nil
+	}
+	receipt.active = true
+	receipt.state = compactEOFRecoveryAdmissionInvalid
+	if s.compact == nil || s.tokenSource == nil || s.tokenSource.language == nil {
+		compactEOFRecoveryAdmissionInvalidate(&receipt, "EOF recovery admission context is incomplete")
+		return receipt, nil
+	}
+	language := s.tokenSource.language
+	if language.ExternalScanner != nil || language.ExternalTokenCount != 0 {
+		compactEOFRecoveryAdmissionInvalidate(&receipt, "EOF recovery admission requires scanner quiescence")
+		return receipt, nil
+	}
+	if s.token.StartByte != s.token.EndByte || s.token.Missing || s.token.NoLookahead ||
+		s.token.ExternalScannerToken || uint64(len(source)) > math.MaxUint32 ||
+		s.token.EndByte != uint32(len(source)) {
+		compactEOFRecoveryAdmissionInvalidate(&receipt, "EOF recovery admission requires authenticated source EOF")
+		return receipt, nil
+	}
+	if len(s.headers) != 2 || s.headers[0].head == s.headers[1].head {
+		compactEOFRecoveryAdmissionInvalidate(&receipt, "EOF recovery admission requires two distinct heads")
+		return receipt, nil
+	}
+	for _, header := range s.headers {
+		if header.s3Region != nil {
+			compactEOFRecoveryAdmissionInvalidate(&receipt, "EOF recovery admission rejects an open strategy-three region")
+			return receipt, nil
+		}
+	}
+
+	normalIndex := -1
+	recoveryIndex := -1
+	for index, header := range s.headers {
+		boundary, boundaryErr := s.compact.ClassifyBoundary(header.head, 0)
+		if boundaryErr != nil {
+			return receipt, boundaryErr
+		}
+		actions := boundary.Actions()
+		switch {
+		case actions.Len() == 1 && actions.At(0).Type == core.ActionAccept:
+			if normalIndex >= 0 {
+				compactEOFRecoveryAdmissionInvalidate(&receipt, "EOF recovery admission found multiple accepting heads")
+				return receipt, nil
+			}
+			normalIndex = index
+		case actions.Len() == 0:
+			if recoveryIndex >= 0 {
+				compactEOFRecoveryAdmissionInvalidate(&receipt, "EOF recovery admission found multiple no-action heads")
+				return receipt, nil
+			}
+			recoveryIndex = index
+		default:
+			compactEOFRecoveryAdmissionInvalidate(&receipt, "EOF recovery admission found an unsupported action row")
+			return receipt, nil
+		}
+	}
+	if normalIndex < 0 || recoveryIndex < 0 {
+		compactEOFRecoveryAdmissionInvalidate(&receipt, "EOF recovery admission requires one accept and one no-action head")
+		return receipt, nil
+	}
+
+	receipt.coreGeneration = s.compact.AuthenticationGeneration()
+	receipt.electionIndex = s.electionIndex
+	receipt.token = s.token
+	receipt.sourceLength = uint32(len(source))
+	newlineCount, inspectErr := s.inspectCompactEOFRecoveryAdmissionSource(&receipt, source, poll)
+	if inspectErr != nil {
+		return receipt, inspectErr
+	}
+	normalHeader := s.headers[normalIndex]
+	recoveryHeader := s.headers[recoveryIndex]
+	normalPath, decline, inspectErr := s.inspectCompactEOFRecoveryAdmissionPath(
+		&receipt,
+		normalHeader,
+		language,
+		uint64(compactEOFRecoveryAdmissionEventNormal),
+		uint32(len(source)),
+		poll,
+	)
+	if inspectErr != nil {
+		return receipt, inspectErr
+	}
+	if decline != "" {
+		compactEOFRecoveryAdmissionInvalidate(&receipt, decline)
+		return receipt, nil
+	}
+	recoveryPath, decline, inspectErr := s.inspectCompactEOFRecoveryAdmissionPath(
+		&receipt,
+		recoveryHeader,
+		language,
+		uint64(compactEOFRecoveryAdmissionEventRecover),
+		uint32(len(source)),
+		poll,
+	)
+	if inspectErr != nil {
+		return receipt, inspectErr
+	}
+	if decline != "" {
+		compactEOFRecoveryAdmissionInvalidate(&receipt, decline)
+		return receipt, nil
+	}
+
+	spanCost, multiplyErr := compactEOFRecoveryAdmissionMultiplyCost(
+		&receipt,
+		uint64(len(source)),
+		core.RecoveryCostPerSkippedChar,
+	)
+	if multiplyErr != nil {
+		return receipt, multiplyErr
+	}
+	lineCost, multiplyErr := compactEOFRecoveryAdmissionMultiplyCost(
+		&receipt,
+		newlineCount,
+		core.RecoveryCostPerSkippedLine,
+	)
+	if multiplyErr != nil {
+		return receipt, multiplyErr
+	}
+	frontierCost, multiplyErr := compactEOFRecoveryAdmissionMultiplyCost(
+		&receipt,
+		uint64(recoveryPath.visibleFrontier),
+		core.RecoveryCostPerSkippedTree,
+	)
+	if multiplyErr != nil {
+		return receipt, multiplyErr
+	}
+	var recoveryCost uint64
+	for _, amount := range [...]uint64{
+		core.RecoveryCostPerRecovery,
+		spanCost,
+		lineCost,
+		frontierCost,
+	} {
+		if err := compactEOFRecoveryAdmissionAddCost(s, &receipt, &recoveryCost, amount); err != nil {
+			return receipt, err
+		}
+	}
+	if recoveryCost > math.MaxUint32 {
+		receipt.work.overflow = true
+		compactEOFRecoveryAdmissionInvalidate(&receipt, "EOF recovery admission cost overflow")
+		return receipt, errors.New("parser-core phase zero: EOF recovery admission cost overflow")
+	}
+
+	receipt.normalHead = normalHeader.head
+	receipt.recoveryHead = recoveryHeader.head
+	receipt.normalCreationSeq = normalHeader.creationSeq
+	receipt.recoveryCreationSeq = recoveryHeader.creationSeq
+	receipt.normalLineage = normalHeader.cleanPathLineage
+	receipt.recoveryLineage = recoveryHeader.cleanPathLineage
+	receipt.normalFingerprint = normalPath.fingerprint
+	receipt.recoveryFingerprint = recoveryPath.fingerprint
+	receipt.normalPayloads = normalPath.payloadCount
+	receipt.recoveryPayloads = recoveryPath.payloadCount
+	receipt.normalOccurrences = normalPath.occurrenceCount
+	receipt.recoveryOccurrences = recoveryPath.occurrenceCount
+	receipt.normalFrontier = normalPath.visibleFrontier
+	receipt.recoveryFrontier = recoveryPath.visibleFrontier
+	receipt.events = [2]compactEOFRecoveryAdmissionEvent{
+		{ordinal: 0, kind: compactEOFRecoveryAdmissionEventNormal, dynamicPrecedence: normalPath.dynamicPrecedence},
+		{ordinal: 1, kind: compactEOFRecoveryAdmissionEventRecover, cost: uint32(recoveryCost), dynamicPrecedence: recoveryPath.dynamicPrecedence},
+	}
+	if receipt.events[0].cost >= receipt.events[1].cost {
+		compactEOFRecoveryAdmissionInvalidate(&receipt, "EOF recovery admission requires a strictly lower normal error cost")
+		return receipt, nil
+	}
+	receipt.selectedEvent = 0
+	receipt.valid = true
+	if err := compactEOFRecoveryAdmissionTransition(&receipt, compactEOFRecoveryAdmissionProduced); err != nil {
+		compactEOFRecoveryAdmissionInvalidate(&receipt, err.Error())
+		return receipt, err
+	}
+	return receipt, nil
+}
+
+func (s *diagnosticParserCoreGenericScheduler) compactEOFRecoveryAdmissionHeader(
+	head core.Head,
+	creationSeq uint64,
+	lineage uint16,
+) (diagnosticParserCoreHeader, bool) {
+	if s == nil {
+		return diagnosticParserCoreHeader{}, false
+	}
+	for _, header := range s.headers {
+		if header.head == head && header.creationSeq == creationSeq &&
+			header.cleanPathLineage == lineage {
+			return header, true
+		}
+	}
+	return diagnosticParserCoreHeader{}, false
+}
+
+func (s *diagnosticParserCoreGenericScheduler) validateCompactEOFRecoveryAdmission(
+	source []byte,
+	wantState compactEOFRecoveryAdmissionState,
+) error {
+	if s == nil || s.compact == nil {
+		return errors.New("parser-core phase zero: EOF recovery receipt has no Core")
+	}
+	receipt := &s.eofRecoveryAdmission
+	if !receipt.active || !receipt.valid || receipt.state != wantState ||
+		receipt.transitionCount == 0 || !compactEOFRecoveryAdmissionSealIsValid(receipt) {
+		return errors.New("parser-core phase zero: EOF recovery receipt is not authentic")
+	}
+	if receipt.coreGeneration == 0 || receipt.coreGeneration != s.compact.AuthenticationGeneration() ||
+		receipt.electionIndex != s.electionIndex || receipt.token != s.token ||
+		uint64(len(source)) > math.MaxUint32 || receipt.sourceLength != uint32(len(source)) ||
+		receipt.sourceSHA256 != sha256.Sum256(source) {
+		return errors.New("parser-core phase zero: EOF recovery receipt binding changed")
+	}
+	if !receipt.metadataOnly || receipt.selectedEvent != 0 ||
+		receipt.events[0].ordinal != 0 || receipt.events[0].kind != compactEOFRecoveryAdmissionEventNormal ||
+		receipt.events[1].ordinal != 1 || receipt.events[1].kind != compactEOFRecoveryAdmissionEventRecover ||
+		receipt.events[0].cost >= receipt.events[1].cost || receipt.work.overflow ||
+		receipt.work.publicationAttempts != 0 || receipt.work.parserConstructions != 0 {
+		return errors.New("parser-core phase zero: EOF recovery receipt policy changed")
+	}
+	wantTransitions := [...]compactEOFRecoveryAdmissionState{
+		compactEOFRecoveryAdmissionProduced,
+		compactEOFRecoveryAdmissionPreApplyValidated,
+		compactEOFRecoveryAdmissionAcceptApplied,
+		compactEOFRecoveryAdmissionRecoveryDropped,
+		compactEOFRecoveryAdmissionCompleted,
+		compactEOFRecoveryAdmissionSchedulerReturned,
+		compactEOFRecoveryAdmissionConsumed,
+	}
+	for index := uint8(0); index < receipt.transitionCount; index++ {
+		if receipt.transitions[index] != wantTransitions[index] ||
+			receipt.transitionSeals[index] == ([32]byte{}) {
+			return errors.New("parser-core phase zero: EOF recovery receipt transition changed")
+		}
+	}
+
+	normal, normalOK := s.compactEOFRecoveryAdmissionHeader(
+		receipt.normalHead,
+		receipt.normalCreationSeq,
+		receipt.normalLineage,
+	)
+	recovery, recoveryOK := s.compactEOFRecoveryAdmissionHeader(
+		receipt.recoveryHead,
+		receipt.recoveryCreationSeq,
+		receipt.recoveryLineage,
+	)
+	switch wantState {
+	case compactEOFRecoveryAdmissionProduced, compactEOFRecoveryAdmissionPreApplyValidated:
+		if len(s.headers) != 2 || !normalOK || !recoveryOK || normal.accepted || recovery.accepted {
+			return errors.New("parser-core phase zero: EOF recovery pre-accept frontier changed")
+		}
+	case compactEOFRecoveryAdmissionAcceptApplied:
+		if len(s.headers) != 2 || !normalOK || !recoveryOK || !normal.accepted || recovery.accepted {
+			return errors.New("parser-core phase zero: EOF recovery accepted frontier changed")
+		}
+	case compactEOFRecoveryAdmissionRecoveryDropped,
+		compactEOFRecoveryAdmissionCompleted,
+		compactEOFRecoveryAdmissionSchedulerReturned,
+		compactEOFRecoveryAdmissionConsumed:
+		if len(s.headers) != 1 || !normalOK || recoveryOK || !normal.accepted {
+			return errors.New("parser-core phase zero: EOF recovery selected frontier changed")
+		}
+	default:
+		return errors.New("parser-core phase zero: EOF recovery receipt state is unsupported")
+	}
+	return nil
+}
+
+func (s *diagnosticParserCoreGenericScheduler) compactEOFRecoveryAdmissionFault(stage string) error {
+	if compactEOFRecoveryAdmissionFaultHook == nil {
+		return nil
+	}
+	return compactEOFRecoveryAdmissionFaultHook(s, stage)
+}
+
+func (s *diagnosticParserCoreGenericScheduler) compactEOFRecoveryAdmissionDropMatches(indices []int) bool {
+	if s == nil || len(indices) != 1 || len(s.headers) != 2 ||
+		s.eofRecoveryAdmission.state != compactEOFRecoveryAdmissionAcceptApplied ||
+		!compactEOFRecoveryAdmissionSealIsValid(&s.eofRecoveryAdmission) {
+		return false
+	}
+	dropIndex := indices[0]
+	if dropIndex < 0 || dropIndex >= len(s.headers) {
+		return false
+	}
+	dropped := s.headers[dropIndex]
+	if dropped.head != s.eofRecoveryAdmission.recoveryHead ||
+		dropped.creationSeq != s.eofRecoveryAdmission.recoveryCreationSeq ||
+		dropped.cleanPathLineage != s.eofRecoveryAdmission.recoveryLineage || dropped.accepted {
+		return false
+	}
+	survivor := s.headers[1-dropIndex]
+	return survivor.head == s.eofRecoveryAdmission.normalHead &&
+		survivor.creationSeq == s.eofRecoveryAdmission.normalCreationSeq &&
+		survivor.cleanPathLineage == s.eofRecoveryAdmission.normalLineage && survivor.accepted
+}
+
+func (s *diagnosticParserCoreGenericScheduler) applyCompactEOFRecoveryAdmission(
+	before []DiagnosticParserCoreHeaderReceipt,
+	cell diagnosticParserCoreGenericCell,
+) (handled bool, err error) {
+	if s == nil || !s.options.allowMetadataEOFAcceptRecovery ||
+		s.options.allowEOFAcceptNoActionSiblings {
+		return false, nil
+	}
+	if len(s.headers) != 2 || len(s.acceptedPayloads) != 0 {
+		return false, nil
+	}
+	var headersBefore [2]diagnosticParserCoreHeader
+	copy(headersBefore[:], s.headers)
+	dispatchesBefore, workBefore := s.dispatches, s.work
+	epochProgressBefore := s.epochProgress
+	acceptedHeadBefore := s.acceptedHead
+	acceptedPayloadsBefore := s.acceptedPayloads
+	roundsBefore := s.receipt.Rounds
+	noActionDropsBefore := s.receipt.NoActionDrops
+	receiptBefore := s.eofRecoveryAdmission
+	rollback := func(cause error) (bool, error) {
+		if cap(s.headers) >= len(headersBefore) {
+			s.headers = s.headers[:len(headersBefore)]
+			copy(s.headers, headersBefore[:])
+		}
+		s.dispatches, s.work = dispatchesBefore, workBefore
+		s.epochProgress = epochProgressBefore
+		s.acceptedHead = acceptedHeadBefore
+		s.acceptedPayloads = acceptedPayloadsBefore
+		s.receipt.Rounds = roundsBefore
+		s.receipt.NoActionDrops = noActionDropsBefore
+		s.eofRecoveryAdmission = receiptBefore
+		compactEOFRecoveryAdmissionInvalidate(&s.eofRecoveryAdmission, cause.Error())
+		return true, cause
+	}
+
+	receipt, produceErr := s.produceCompactEOFRecoveryAdmission(
+		s.options.materializationSource,
+		s.pollStopControl,
+	)
+	if produceErr != nil {
+		return rollback(produceErr)
+	}
+	if !receipt.active || !receipt.valid {
+		return false, nil
+	}
+	if faultErr := s.compactEOFRecoveryAdmissionFault("after_produce"); faultErr != nil {
+		return rollback(faultErr)
+	}
+	if validateErr := s.validateCompactEOFRecoveryAdmission(
+		s.options.materializationSource,
+		compactEOFRecoveryAdmissionProduced,
+	); validateErr != nil {
+		return rollback(validateErr)
+	}
+	if transitionErr := compactEOFRecoveryAdmissionTransition(
+		&s.eofRecoveryAdmission,
+		compactEOFRecoveryAdmissionPreApplyValidated,
+	); transitionErr != nil {
+		return rollback(transitionErr)
+	}
+	if applyErr := s.applyGenericAccept(before, cell); applyErr != nil {
+		return rollback(applyErr)
+	}
+	if transitionErr := compactEOFRecoveryAdmissionTransition(
+		&s.eofRecoveryAdmission,
+		compactEOFRecoveryAdmissionAcceptApplied,
+	); transitionErr != nil {
+		return rollback(transitionErr)
+	}
+	if faultErr := s.compactEOFRecoveryAdmissionFault("after_apply"); faultErr != nil {
+		return rollback(faultErr)
+	}
+	if validateErr := s.validateCompactEOFRecoveryAdmission(
+		s.options.materializationSource,
+		compactEOFRecoveryAdmissionAcceptApplied,
+	); validateErr != nil {
+		return rollback(validateErr)
+	}
+
+	indices := s.dispatchScratch.noActionIndices[:0]
+	accepted := 0
+	for index, header := range s.headers {
+		if header.accepted {
+			accepted++
+			continue
+		}
+		indices = append(indices, index)
+	}
+	if accepted != 1 || len(indices) != 1 {
+		return rollback(errors.New("parser-core phase zero: EOF recovery admission did not preserve one accepting head"))
+	}
+	if dropErr := s.dropGenericNoActionHeads(indices); dropErr != nil {
+		return rollback(dropErr)
+	}
+	if transitionErr := compactEOFRecoveryAdmissionTransition(
+		&s.eofRecoveryAdmission,
+		compactEOFRecoveryAdmissionRecoveryDropped,
+	); transitionErr != nil {
+		return rollback(transitionErr)
+	}
+	if faultErr := s.compactEOFRecoveryAdmissionFault("after_drop"); faultErr != nil {
+		return rollback(faultErr)
+	}
+	if validateErr := s.validateCompactEOFRecoveryAdmission(
+		s.options.materializationSource,
+		compactEOFRecoveryAdmissionRecoveryDropped,
+	); validateErr != nil {
+		return rollback(validateErr)
+	}
+	return true, nil
+}
+
+func (s *diagnosticParserCoreGenericScheduler) markCompactEOFRecoverySchedulerReturned(source []byte) error {
+	if s == nil || !s.eofRecoveryAdmission.active {
+		return nil
+	}
+	if err := s.validateCompactEOFRecoveryAdmission(
+		source,
+		compactEOFRecoveryAdmissionCompleted,
+	); err != nil {
+		compactEOFRecoveryAdmissionInvalidate(&s.eofRecoveryAdmission, err.Error())
+		return err
+	}
+	if err := compactEOFRecoveryAdmissionTransition(
+		&s.eofRecoveryAdmission,
+		compactEOFRecoveryAdmissionSchedulerReturned,
+	); err != nil {
+		compactEOFRecoveryAdmissionInvalidate(&s.eofRecoveryAdmission, err.Error())
+		return err
+	}
+	return nil
+}
+
+func (s *diagnosticParserCoreGenericScheduler) beginCompactEOFRecoveryConstruction(
+	source []byte,
+	route compactEOFRecoveryAdmissionRoute,
+) (bool, error) {
+	if s == nil || !s.eofRecoveryAdmission.active {
+		return false, nil
+	}
+	if route != compactEOFRecoveryAdmissionRoutePublicTree &&
+		route != compactEOFRecoveryAdmissionRouteSelectedStore {
+		compactEOFRecoveryAdmissionInvalidate(
+			&s.eofRecoveryAdmission,
+			"EOF recovery admission rejects a live publication route",
+		)
+		return false, errors.New("parser-core phase zero: EOF recovery receipt route is unsupported")
+	}
+	if err := s.validateCompactEOFRecoveryAdmission(
+		source,
+		compactEOFRecoveryAdmissionSchedulerReturned,
+	); err != nil {
+		compactEOFRecoveryAdmissionInvalidate(&s.eofRecoveryAdmission, err.Error())
+		return false, err
+	}
+	receipt := &s.eofRecoveryAdmission
+	if receipt.consumptionCount != 0 ||
+		receipt.constructionRoute != compactEOFRecoveryAdmissionRouteNone ||
+		receipt.work.treeConstructions != 0 ||
+		receipt.work.selectedStoreConstructions != 0 {
+		compactEOFRecoveryAdmissionInvalidate(receipt, "EOF recovery admission receipt was already consumed")
+		return false, errors.New("parser-core phase zero: EOF recovery receipt was already consumed")
+	}
+	var constructionCounter *uint64
+	switch route {
+	case compactEOFRecoveryAdmissionRoutePublicTree:
+		constructionCounter = &receipt.work.treeConstructions
+	case compactEOFRecoveryAdmissionRouteSelectedStore:
+		constructionCounter = &receipt.work.selectedStoreConstructions
+	}
+	value, ok := compactEOFRecoveryAdmissionCheckedAdd(*constructionCounter, 1)
+	if !ok {
+		receipt.work.overflow = true
+		compactEOFRecoveryAdmissionInvalidate(receipt, "EOF recovery admission construction counter overflow")
+		return false, errors.New("parser-core phase zero: EOF recovery construction counter overflow")
+	}
+	*constructionCounter = value
+	receipt.consumptionCount = 1
+	receipt.constructionRoute = route
+	if err := compactEOFRecoveryAdmissionTransition(
+		receipt,
+		compactEOFRecoveryAdmissionConsumed,
+	); err != nil {
+		compactEOFRecoveryAdmissionInvalidate(receipt, err.Error())
+		return false, err
+	}
+	if compactEOFRecoveryAdmissionCensusHook != nil {
+		compactEOFRecoveryAdmissionCensusHook(*receipt)
+	}
+	return true, nil
+}
+
+func (s *diagnosticParserCoreGenericScheduler) failCompactEOFRecoveryConstruction(err error) {
+	if s == nil || err == nil || !s.eofRecoveryAdmission.active {
+		return
+	}
+	compactEOFRecoveryAdmissionInvalidate(
+		&s.eofRecoveryAdmission,
+		"EOF recovery admission construction failed",
+	)
 }
 
 const (
@@ -4244,6 +5573,25 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 	}
 	if acceptCell >= 0 {
 		cell := cells[acceptCell]
+		if !s.options.allowEOFAcceptNoActionSiblings &&
+			s.options.allowMetadataEOFAcceptRecovery &&
+			len(s.headers) == 2 && len(cells) == 1 && len(noActionIndices) == 1 {
+			handled, err := s.applyCompactEOFRecoveryAdmission(before, cell)
+			if err != nil {
+				return nil, err
+			}
+			if handled {
+				return nil, nil
+			}
+			if s.eofRecoveryAdmission.active && !s.eofRecoveryAdmission.valid &&
+				s.eofRecoveryAdmission.declineReason != "" {
+				return &diagnosticParserCoreGenericUnsupported{
+					boundary:    DiagnosticParserCoreAccept,
+					detail:      s.eofRecoveryAdmission.declineReason,
+					headerIndex: cell.headerIndex,
+				}, nil
+			}
+		}
 		soleAccept := len(s.headers) == 1 && len(cells) == 1 &&
 			len(noActionIndices) == 0 && cell.headerIndex == 0
 		certifiedAcceptWithDeadSiblings := s.options.allowEOFAcceptNoActionSiblings &&
@@ -4819,12 +6167,31 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericAccept(before []Diagn
 	return nil
 }
 
-func (s *diagnosticParserCoreGenericScheduler) completeAcceptance() error {
+func (s *diagnosticParserCoreGenericScheduler) completeAcceptance() (err error) {
+	metadataAdmission := s != nil && s.eofRecoveryAdmission.active &&
+		s.eofRecoveryAdmission.valid &&
+		s.eofRecoveryAdmission.state == compactEOFRecoveryAdmissionRecoveryDropped
+	defer func() {
+		if err != nil && metadataAdmission && s.eofRecoveryAdmission.valid {
+			compactEOFRecoveryAdmissionInvalidate(
+				&s.eofRecoveryAdmission,
+				"EOF recovery admission completion failed",
+			)
+		}
+	}()
 	if s.token.Symbol != 0 || s.token.StartByte != s.token.EndByte || s.token.Missing || s.token.NoLookahead || s.token.ExternalScannerToken {
 		return s.finish(DiagnosticParserCoreAccept, "generic scheduler accept is not authenticated EOF", 0)
 	}
 	if len(s.headers) != 1 {
 		return s.finish(DiagnosticParserCoreAccept, "generic scheduler requires one accepted compact head", 0)
+	}
+	if metadataAdmission {
+		if err := s.validateCompactEOFRecoveryAdmission(
+			s.options.materializationSource,
+			compactEOFRecoveryAdmissionRecoveryDropped,
+		); err != nil {
+			return err
+		}
 	}
 	paths, err := compactDerivationsForAcceptance(s.compact, s.headers[0].head)
 	if err != nil {
@@ -4960,6 +6327,14 @@ func (s *diagnosticParserCoreGenericScheduler) completeAcceptance() error {
 		)
 	}
 	s.publishTotals()
+	if metadataAdmission {
+		if err := compactEOFRecoveryAdmissionTransition(
+			&s.eofRecoveryAdmission,
+			compactEOFRecoveryAdmissionCompleted,
+		); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -5282,6 +6657,7 @@ func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices 
 	if len(indices) == 0 || len(indices) >= len(s.headers) {
 		return errors.New("parser-core phase zero: sibling-backed no-action drop removed the complete frontier")
 	}
+	metadataDrop := s.compactEOFRecoveryAdmissionDropMatches(indices)
 	// F4 disposition (spec.b4b-alternative-set.v2 section 5): a resurrection
 	// descended from a HistoricalBoundaryUnproved dead-node import carries no
 	// recorded provenance to prove, so it fails closed independently of the
@@ -5291,7 +6667,7 @@ func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices 
 	// keys on (admission_switch_converged_path_test.go,
 	// admission_switch_erlang_converged_split_probe_test.go), distinguished
 	// by the trailing clause.
-	if !s.options.allowConvergedSplitDropArtifact {
+	if !metadataDrop && !s.options.allowConvergedSplitDropArtifact {
 		for _, index := range indices {
 			if index >= 0 && index < len(s.headers) && s.headers[index].resurrectionUnproved {
 				return &diagnosticParserCoreDecline{
@@ -5309,8 +6685,11 @@ func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices 
 	// differing-tree cases, the Kotlin witness declines under v2, stage 1's
 	// gates re-passed); erlang's own class-3 probe re-proof miss is scoped
 	// to its stage 3 certificate precondition, not this gate.
-	convergedCoverageDrops, proved := s.diagnosticParserCoreConvergedCoverageDropsV2(indices)
-	if diagnosticParserCoreShadowCensusEnabled() {
+	convergedCoverageDrops, proved := uint64(0), metadataDrop
+	if !metadataDrop {
+		convergedCoverageDrops, proved = s.diagnosticParserCoreConvergedCoverageDropsV2(indices)
+	}
+	if !metadataDrop && diagnosticParserCoreShadowCensusEnabled() {
 		// The retired scalar proof is evaluated only here, next to the v2
 		// decision above, for the ongoing three-proof regression check as
 		// more languages decertify in stage 3. Never influences the
@@ -6314,6 +7693,12 @@ func (s *diagnosticParserCoreGenericScheduler) reserveDispatches(count uint64) e
 }
 
 func (s *diagnosticParserCoreGenericScheduler) elect(first bool) error {
+	if s.eofRecoveryAdmission.active && s.eofRecoveryAdmission.valid &&
+		s.eofRecoveryAdmission.state != compactEOFRecoveryAdmissionEmpty &&
+		s.eofRecoveryAdmission.state != compactEOFRecoveryAdmissionInvalid &&
+		s.eofRecoveryAdmission.state != compactEOFRecoveryAdmissionConsumed {
+		compactEOFRecoveryAdmissionInvalidate(&s.eofRecoveryAdmission, "new election")
+	}
 	if s.tokens >= s.options.MaxTokens {
 		return &diagnosticParserCoreDecline{boundary: DiagnosticParserCoreCap, detail: "generic scheduler token cap"}
 	}
@@ -6493,6 +7878,10 @@ func (s *diagnosticParserCoreGenericScheduler) completeAtClosedByte(target uint3
 }
 
 func (s *diagnosticParserCoreGenericScheduler) finish(boundary DiagnosticParserCoreBoundaryKind, detail string, headerIndex int) error {
+	if s != nil && s.eofRecoveryAdmission.active && s.eofRecoveryAdmission.valid &&
+		s.eofRecoveryAdmission.state != compactEOFRecoveryAdmissionConsumed {
+		compactEOFRecoveryAdmissionInvalidate(&s.eofRecoveryAdmission, detail)
+	}
 	if headerIndex < 0 || headerIndex >= len(s.headers) {
 		return errors.New("parser-core phase zero: generic stop header index out of range")
 	}

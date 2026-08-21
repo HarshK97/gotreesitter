@@ -1381,6 +1381,15 @@ func New(tables TableView, limits Limits) (*Core, error) {
 	return core, nil
 }
 
+// AuthenticationGeneration identifies the current Core capability phase.
+// It changes before an operation can reuse an invalidated arena handle.
+func (c *Core) AuthenticationGeneration() uint64 {
+	if c == nil {
+		return 0
+	}
+	return c.classificationPhase
+}
+
 // Reset returns the compact core to the same empty frontier created by New
 // while retaining its authenticated tables, limits, diagnostic policy, and
 // arena capacities. Reset is deliberately unavailable during an active

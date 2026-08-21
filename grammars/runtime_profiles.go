@@ -71,16 +71,13 @@ var builtinLanguageRuntimeProfiles = map[string]builtinLanguageRuntimeProfile{
 			},
 		},
 	},
-	// These exact artifacts select one accepting EOF head while all sibling
-	// heads have no EOF action. Field-aware C-oracle parity certifies the
-	// production selection for each smoke witness.
+	// These exact artifacts previously needed the EOF sibling grant.
+	// The authenticated metadata route now proves the locked-C election.
 	"http": {
-		blobSHA256:                       mustRuntimeProfileSHA256("332d50a15b3facb407f6c449fe8bbcd2fda55efffefbfd4d8d9ce2c75fbb7bda"),
-		compactEOFAcceptNoActionSiblings: true,
+		blobSHA256: mustRuntimeProfileSHA256("332d50a15b3facb407f6c449fe8bbcd2fda55efffefbfd4d8d9ce2c75fbb7bda"),
 	},
 	"robot": {
-		blobSHA256:                       mustRuntimeProfileSHA256("25075ecf5323eeb88af4f71b55f51867cef38a277aaa60f01b879ee8abb4c74f"),
-		compactEOFAcceptNoActionSiblings: true,
+		blobSHA256: mustRuntimeProfileSHA256("25075ecf5323eeb88af4f71b55f51867cef38a277aaa60f01b879ee8abb4c74f"),
 	},
 	// html_erroneous_end_tag (campaign v7 tranche B3 stage S3): C-oracle parity
 	// certifies native strategy-2 recovery (error-region absorb and

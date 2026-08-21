@@ -151,24 +151,61 @@ func TestBuiltinObjcExactStackEquivalenceProfileRequiresExactBlobIdentity(t *tes
 	}
 }
 
+func TestBuiltinCompactEOFProfilesRetireOnlyHTTPAndRobotField(t *testing.T) {
+	PurgeEmbeddedLanguageCache()
+	t.Cleanup(func() { PurgeEmbeddedLanguageCache() })
+
+	for _, test := range []struct {
+		name string
+		load func() *gotreesitter.Language
+	}{
+		{name: "http", load: HttpLanguage},
+		{name: "robot", load: RobotLanguage},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			profile, ok := builtinLanguageRuntimeProfiles[test.name]
+			if !ok {
+				t.Fatal("retired EOF profile lost its exact blob record")
+			}
+			blob := BlobByName(test.name)
+			if len(blob) == 0 || sha256.Sum256(blob) != profile.blobSHA256 {
+				t.Fatal("retired EOF profile blob identity changed")
+			}
+			if language := test.load(); language.CompactEOFAcceptNoActionSiblingsCertified {
+				t.Fatal("exact built-in artifact retained the legacy EOF sibling field")
+			}
+
+			custom := &gotreesitter.Language{Name: test.name}
+			AttachLanguageSupport(test.name, custom)
+			if custom.CompactEOFAcceptNoActionSiblingsCertified {
+				t.Fatal("same-name custom grammar enabled the retired EOF sibling field")
+			}
+
+			wrongIdentity := &gotreesitter.Language{Name: test.name}
+			if attachBuiltinLanguageRuntimeProfile(test.name, sha256.Sum256([]byte("uncertified")), wrongIdentity) {
+				t.Fatal("wrong blob identity unexpectedly attached a runtime profile")
+			}
+			if wrongIdentity.CompactEOFAcceptNoActionSiblingsCertified {
+				t.Fatal("wrong blob identity enabled the retired EOF sibling field")
+			}
+
+			exact := &gotreesitter.Language{Name: test.name}
+			if attachBuiltinLanguageRuntimeProfile(test.name, profile.blobSHA256, exact) {
+				t.Fatal("exact retired profile unexpectedly changed a language field")
+			}
+			if exact.CompactEOFAcceptNoActionSiblingsCertified {
+				t.Fatal("exact retired profile enabled the legacy EOF sibling field")
+			}
+		})
+	}
+}
+
 func TestBuiltinCompactAcceptanceProfilesRequireExactBlobIdentity(t *testing.T) {
 	tests := []struct {
 		name string
 		load func() *gotreesitter.Language
 		want func(*gotreesitter.Language) bool
 	}{
-		{
-			name: "http", load: HttpLanguage,
-			want: func(lang *gotreesitter.Language) bool {
-				return lang.CompactEOFAcceptNoActionSiblingsCertified
-			},
-		},
-		{
-			name: "robot", load: RobotLanguage,
-			want: func(lang *gotreesitter.Language) bool {
-				return lang.CompactEOFAcceptNoActionSiblingsCertified
-			},
-		},
 		{
 			name: "meson", load: MesonLanguage,
 			want: func(lang *gotreesitter.Language) bool {
