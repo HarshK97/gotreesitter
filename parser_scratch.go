@@ -1,12 +1,21 @@
 package gotreesitter
 
-import "sync"
+import (
+	"sync"
+	"unsafe"
+)
 
 // Keep enough compatibility traversal storage for ordinary generated files
 // without retaining multi-megabyte backing arrays after unusually wide trees.
 const maxRetainedGoCompatFrames = 16 * 1024
 
 type parserScratch struct {
+	advancePages             []*[syntheticRootReplayAdvancePageFrames]syntheticRootReplayFrame
+	closePages               []*[syntheticRootReplayClosePageFrames]syntheticRootReplayFrame
+	advancePageUsed          uint16
+	closePageUsed            uint16
+	advanceFrames            uint32
+	closeFrames              uint32
 	merge                    glrMergeScratch
 	entries                  glrEntryScratch
 	gss                      gssScratch
@@ -75,7 +84,27 @@ func (s *parserScratch) allocatedBytes() int64 {
 	if s == nil {
 		return 0
 	}
-	return s.entries.allocatedBytes + s.gss.allocatedBytes + s.merge.allocatedBytes() + s.transientChildren.allocatedBytes + s.transientParents.allocatedBytes
+	return s.entries.allocatedBytes + s.gss.allocatedBytes + s.merge.allocatedBytes() + s.transientChildren.allocatedBytes + s.transientParents.allocatedBytes + int64(len(s.advancePages))*int64(unsafe.Sizeof([syntheticRootReplayAdvancePageFrames]syntheticRootReplayFrame{})) + int64(len(s.closePages))*int64(unsafe.Sizeof([syntheticRootReplayClosePageFrames]syntheticRootReplayFrame{}))
+}
+
+func (s *parserScratch) resetReplayPages() {
+	if s == nil {
+		return
+	}
+	if cap(s.advancePages) > 1 {
+		clear(s.advancePages[:cap(s.advancePages)][1:])
+	}
+	if cap(s.closePages) > 1 {
+		clear(s.closePages[:cap(s.closePages)][1:])
+	}
+	if len(s.advancePages) > 0 {
+		s.advancePages = s.advancePages[:1:1]
+	}
+	if len(s.closePages) > 0 {
+		s.closePages = s.closePages[:1:1]
+	}
+	s.advancePageUsed, s.closePageUsed = 0, 0
+	s.advanceFrames, s.closeFrames = 0, 0
 }
 
 func (s *parserScratch) budgetExhausted() bool {
@@ -198,6 +227,7 @@ func releaseParserScratch(s *parserScratch, skipGSSClear bool) {
 	s.relexSnapshotInUse = false
 	s.trackChildErrors = false
 	s.materializeStopPollCount = 0
+	s.resetReplayPages()
 	s.entries.reset()
 	s.gss.skipClear = skipGSSClear
 	s.gss.audit = nil
