@@ -134,7 +134,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "b67d12a13bdd4eb8e4b27e9e77b28934c398b8b2",
+      "retired_commit": "2ef4802f2dbb853486d852cc9c1909e2a26f0199",
       "receipt_refs": [
         "grammars/recovery_action_materialization_native_regression_test.go",
         "cgo_harness/inert_recovery_materialization_parity_cgo_test.go"
@@ -273,7 +273,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "b67d12a13bdd4eb8e4b27e9e77b28934c398b8b2",
+      "retired_commit": "2ef4802f2dbb853486d852cc9c1909e2a26f0199",
       "receipt_refs": [
         "grammars/recovery_action_materialization_native_regression_test.go",
         "cgo_harness/inert_recovery_materialization_parity_cgo_test.go"
@@ -378,7 +378,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "b67d12a13bdd4eb8e4b27e9e77b28934c398b8b2",
+      "retired_commit": "2ef4802f2dbb853486d852cc9c1909e2a26f0199",
       "receipt_refs": [
         "grammars/recovery_action_materialization_native_regression_test.go",
         "cgo_harness/inert_recovery_materialization_parity_cgo_test.go"
@@ -508,7 +508,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "2e0ed636316e82eaaea2b3c89aecd957a80af499",
+      "retired_commit": "84aee737500e7b9e0365725fb7af18e059e9d9e5",
       "receipt_refs": [
         "grammars/trailing_span_native_regression_test.go",
         "parsercore_phase0_generic_extra_internal_test.go",
@@ -615,7 +615,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "0b64c6fc02d8a606f919a6a68ae6c6811d2f16ad",
+      "retired_commit": "16d4873e62d7eeff43cf61b552465e27eda87536",
       "receipt_refs": [
         "grammars/crystal_opener_span_native_regression_test.go",
         "cgo_harness/crystal_opener_span_parity_cgo_test.go"
@@ -720,7 +720,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "6a650454e5698d64a0148629cfa444b3dbce6877",
+      "retired_commit": "05cd86a0bb925078f833b69bac21effa3fcca657",
       "receipt_refs": [
         "grammars/d_module_span_native_regression_test.go",
         "grammars/d_call_expression_native_regression_test.go",
@@ -866,7 +866,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "5baffc7237200733e46bf9881cd81bfc3581ccf3",
+      "retired_commit": "ff3acd87af32d98ed0d05ddfe16d5430abbbcb4a",
       "receipt_refs": [
         "grammars/elixir_extras_and_pairs_native_regression_test.go",
         "cgo_harness/elixir_extras_and_pairs_retirement_parity_cgo_test.go"
@@ -899,7 +899,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "172177ea09f2dec718a85a4e3f65aee92f8bb20d",
+      "retired_commit": "062fb1a130c15c030192bc23cdd0dd7eed6af18f",
       "receipt_refs": [
         "grammars/enforce_const_param_native_regression_test.go",
         "cgo_harness/enforce_const_param_retirement_parity_cgo_test.go"
@@ -932,7 +932,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "29b6e302701058e2ed101941c6da5f52a98dfe9a",
+      "retired_commit": "7c07270b3e98b691df5e9c8c6d10151cb8918b62",
       "receipt_refs": [
         "grammars/ebnf_native_regression_test.go",
         "cgo_harness/ebnf_retirement_parity_test.go"
@@ -965,7 +965,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "b67d12a13bdd4eb8e4b27e9e77b28934c398b8b2",
+      "retired_commit": "2ef4802f2dbb853486d852cc9c1909e2a26f0199",
       "receipt_refs": [
         "grammars/recovery_action_materialization_native_regression_test.go",
         "cgo_harness/inert_recovery_materialization_parity_cgo_test.go"
@@ -1032,7 +1032,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "c2721bc558cde4be27f1b8c4fcc131975d52741c",
+      "retired_commit": "9e2a7d8668f99e6f3eb43f6a74f4d449451943b2",
       "receipt_refs": [
         "grammars/fsharp_unary_wrapper_native_regression_test.go",
         "cgo_harness/fsharp_unary_wrapper_retirement_parity_test.go"
@@ -1065,7 +1065,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "44f95347952fdf2b50eb7a70479d2aa6545941de",
+      "retired_commit": "3f2a9256d72a838bb62a39ccf4af2e7cc1724dbb",
       "receipt_refs": [
         "grammars/recovery_action_materialization_native_regression_test.go",
         "cgo_harness/recovery_action_materialization_parity_cgo_test.go"
@@ -1098,7 +1098,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "a2f14f5abe9277b4c6a5cec821fa8696914561aa",
+      "retired_commit": "e12abef4da826db0bef291127ef4ab62ae4071e2",
       "receipt_refs": [
         "grammars/fidl_versioned_layout_modifier_native_regression_test.go",
         "cgo_harness/fidl_versioned_layout_modifier_parity_cgo_test.go"
@@ -1389,7 +1389,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "bcb9d1d27c8f71aa4490412eaec43d120be726ff",
+      "retired_commit": "2427094ae0629d0bd5c6a2fe2c2e801cbc709d3a",
       "receipt_refs": [
         "grammars/expected_root_fallback_native_regression_test.go",
         "cgo_harness/expected_root_fallback_parity_cgo_test.go"
@@ -1452,7 +1452,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "1adc7c8694000b0b670f0ca05cc8b8d7b6588cd3",
+      "retired_commit": "a5c853591fd84b1d004692b9f96651ad433d699d",
       "receipt_refs": [
         "grammars/type_projection_native_regression_test.go",
         "cgo_harness/type_projection_retirement_parity_test.go"
@@ -1485,7 +1485,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "bcb9d1d27c8f71aa4490412eaec43d120be726ff",
+      "retired_commit": "2427094ae0629d0bd5c6a2fe2c2e801cbc709d3a",
       "receipt_refs": [
         "grammars/expected_root_fallback_native_regression_test.go",
         "cgo_harness/expected_root_fallback_parity_cgo_test.go"
@@ -1609,7 +1609,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "2e0ed636316e82eaaea2b3c89aecd957a80af499",
+      "retired_commit": "84aee737500e7b9e0365725fb7af18e059e9d9e5",
       "receipt_refs": [
         "grammars/trailing_span_native_regression_test.go",
         "cgo_harness/retired_dispatch_arm_parity_test.go"
@@ -1788,7 +1788,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "617dd66e8a6e2c270b1f98be021861b838fdff74",
+      "retired_commit": "db34ebb495d1cd0c6540428c7045ac032ac41a22",
       "receipt_refs": [
         "grammars/field_projection_native_regression_test.go",
         "parser_reduce_fields_test.go",
@@ -1822,7 +1822,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "44f95347952fdf2b50eb7a70479d2aa6545941de",
+      "retired_commit": "3f2a9256d72a838bb62a39ccf4af2e7cc1724dbb",
       "receipt_refs": [
         "grammars/recovery_action_materialization_native_regression_test.go",
         "cgo_harness/recovery_action_materialization_parity_cgo_test.go"
@@ -1856,7 +1856,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "617dd66e8a6e2c270b1f98be021861b838fdff74",
+      "retired_commit": "db34ebb495d1cd0c6540428c7045ac032ac41a22",
       "receipt_refs": [
         "grammars/field_projection_native_regression_test.go",
         "parser_reduce_fields_test.go",
@@ -1891,7 +1891,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "d84aff3d1fa3031e911317ce342e2c6d10697f20",
+      "retired_commit": "29b6e302701058e2ed101941c6da5f52a98dfe9a",
       "receipt_refs": [
         "parser_result_objc_test.go",
         "grammars/objc_sizeof_native_regression_test.go",
@@ -1925,7 +1925,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "2e0ed636316e82eaaea2b3c89aecd957a80af499",
+      "retired_commit": "84aee737500e7b9e0365725fb7af18e059e9d9e5",
       "receipt_refs": [
         "grammars/trailing_span_native_regression_test.go",
         "cgo_harness/retired_dispatch_arm_parity_test.go"
@@ -2023,7 +2023,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "2e0ed636316e82eaaea2b3c89aecd957a80af499",
+      "retired_commit": "84aee737500e7b9e0365725fb7af18e059e9d9e5",
       "receipt_refs": [
         "grammars/trailing_span_native_regression_test.go",
         "cgo_harness/retired_dispatch_arm_parity_test.go"
@@ -2276,7 +2276,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "9fe391d597f7cf1e129abeea2c5b68219392edd6",
+      "retired_commit": "0d84d2eb5e597420de90d7d275b945e9b15ba7df",
       "receipt_refs": [
         "grammars/robot_scheme_skipped_error_native_regression_test.go",
         "cgo_harness/robot_scheme_skipped_error_parity_cgo_test.go"
@@ -2404,7 +2404,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "9fe391d597f7cf1e129abeea2c5b68219392edd6",
+      "retired_commit": "0d84d2eb5e597420de90d7d275b945e9b15ba7df",
       "receipt_refs": [
         "grammars/robot_scheme_skipped_error_native_regression_test.go",
         "cgo_harness/robot_scheme_skipped_error_parity_cgo_test.go"
@@ -2711,7 +2711,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "e6f1f05a42440756319a9f04fde41cdedd27815f",
+      "retired_commit": "af6dce4cf9dc323fba10155fdcab6a84a25e3927",
       "receipt_refs": [
         "grammars/typst_indent_native_regression_test.go",
         "cgo_harness/typst_indent_parity_cgo_test.go"
@@ -2772,7 +2772,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "617dd66e8a6e2c270b1f98be021861b838fdff74",
+      "retired_commit": "db34ebb495d1cd0c6540428c7045ac032ac41a22",
       "receipt_refs": [
         "grammars/field_projection_native_regression_test.go",
         "cgo_harness/retired_dispatch_arm_parity_test.go"
@@ -2835,7 +2835,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "242453ea94d36fc2ee36b87076bcaae9a2ac234e",
+      "retired_commit": "27b0f624032680f6246bb4ee307883a2b874afb9",
       "receipt_refs": [
         "parser_result_trailing_extra_native_test.go",
         "grammars/trailing_extra_native_regression_test.go",
@@ -2914,7 +2914,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "7fe7aac5c32c1d63d50b50022fd6bc5afaeb9b90",
+      "retired_commit": "d212e7c52fffc56182b138b08bb29ee7c490aa11",
       "receipt_refs": [
         "parser_collapsed_child_policy_test.go",
         "parser_collapsed_child_policy_external_test.go",
@@ -2984,7 +2984,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "d82f9c2cadb81242cb324ba751aa2805038d4b60",
+      "retired_commit": "8ced58fd8591aa18490d2720cf579e107f472711",
       "receipt_refs": [
         "parser_result_scala_fixpoint_retirement_test.go",
         "parser_result_scala_produced_span_test.go",
@@ -3088,7 +3088,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "34a224bc6e98f49276bc06235c85c497127d1790",
+      "retired_commit": "93ab17820fd007b5808f2ab6b62e22f79df179d1",
       "receipt_refs": [
         "parser_result_javascript_typescript_test.go",
         "glr_forest_dispatch_test.go",
