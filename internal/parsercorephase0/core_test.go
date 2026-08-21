@@ -2658,11 +2658,16 @@ func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
 		t.Fatalf("ClassifiedBoundary size = %d, want <= 56", got)
 	}
 	for name, typ := range map[string]reflect.Type{
-		"node":                reflect.TypeFor[nodeRecord](),
-		"node-lineage":        reflect.TypeFor[nodeLineageRecord](),
-		"link":                reflect.TypeFor[linkRecord](),
-		"subtree":             reflect.TypeFor[subtreeRecord](),
-		"external-provenance": reflect.TypeFor[externalPayloadProvenance](),
+		"node":                   reflect.TypeFor[nodeRecord](),
+		"node-lineage":           reflect.TypeFor[nodeLineageRecord](),
+		"link":                   reflect.TypeFor[linkRecord](),
+		"subtree":                reflect.TypeFor[subtreeRecord](),
+		"external-provenance":    reflect.TypeFor[externalPayloadProvenance](),
+		"drop-cohort-action":     reflect.TypeFor[dropCohortActionIdentity](),
+		"drop-cohort-record":     reflect.TypeFor[dropCohortRecord](),
+		"drop-cohort-member":     reflect.TypeFor[dropCohortMember](),
+		"drop-cohort-derivation": reflect.TypeFor[dropCohortDerivationRecord](),
+		"drop-cohort-mutation":   reflect.TypeFor[dropCohortMutation](),
 	} {
 		for i := 0; i < typ.NumField(); i++ {
 			kind := typ.Field(i).Type.Kind()
@@ -2674,37 +2679,18 @@ func TestCompactArenaRecordsRemainPointerFree(t *testing.T) {
 	if got := unsafe.Sizeof(nodeRecord{}); got != 24 {
 		t.Fatalf("nodeRecord size = %d, want 24", got)
 	}
-	// spec.b4b-alternative-set.v1 section 3.2: nodeLineageRecord grew from 8
-	// bytes to the transition size of 24 (owner uint32 + AlternativeSet's 16
-	// bytes + the still-present transition scalars lineage/rank/converged).
-	// spec.b4b-alternative-set.v2 section 3.2 widened AlternativeSet's inline
-	// members to uint32 (16 -> 24 bytes padded, +8) and added the blended
-	// bool (+1, padded): 24 -> 36. The b4b-width-repair audit (2026-08) then
-	// lowered AlternativeSet's inline capacity from 4 to 2 members (still
-	// uint32-packed (event, branch); the canonical-fixture census shows
-	// 99.8% of elections already spill past 4 members by election time, so
-	// the threshold was not load-bearing) to restore the 16-byte set: 36 ->
-	// 28, 4 bytes over the pre-v2 24 for the still-present blended bool.
-	// Stage 3 deletes the transition scalars for a smaller final record. The
-	// grown field (AlternativeSet) stays pointer-free, checked above.
-	if got := unsafe.Sizeof(nodeLineageRecord{}); got != 28 {
-		t.Fatalf("nodeLineageRecord size = %d, want 28", got)
+	// G18 adds the value-owned drop-cohort reference set to this lineage
+	// record. Keep the 104-byte width explicit because every node pays it.
+	if got := unsafe.Sizeof(nodeLineageRecord{}); got != 104 {
+		t.Fatalf("nodeLineageRecord size = %d, want 104", got)
 	}
 	if got := unsafe.Sizeof(linkRecord{}); got != 32 {
 		t.Fatalf("linkRecord size = %d, want 32", got)
 	}
-	// spec.b4b-alternative-set.v1 section 4: ReductionOutput grew from 12
-	// bytes to 28 with the added HistoricalAlternativeSet field (dead-node
-	// historical import). spec.b4b-alternative-set.v2 section 3.2 widened
-	// AlternativeSet's inline members to uint32 (+8) and added
-	// HistoricalBlended (+1, padded): 28 -> 40. The b4b-width-repair audit
-	// (2026-08) lowered AlternativeSet's inline capacity to 2 (see
-	// nodeLineageRecord's comment above) and reordered fields (Head and
-	// HistoricalAlternativeSet first, both 4-byte aligned) to fold
-	// HistoricalBlended into existing padding: 40 -> 28, exactly the pre-v2
-	// size despite the extra field. Stays pointer-free, checked above.
-	if got := unsafe.Sizeof(ReductionOutput{}); got != 28 {
-		t.Fatalf("ReductionOutput size = %d, want 28", got)
+	// G18 adds one value-owned reference set beside the historical set. Keep
+	// the 104-byte output width explicit for scheduler copies.
+	if got := unsafe.Sizeof(ReductionOutput{}); got != 104 {
+		t.Fatalf("ReductionOutput size = %d, want 104", got)
 	}
 	if got := unsafe.Sizeof(popPath{}); got != 88 {
 		t.Fatalf("popPath size = %d, want 88", got)

@@ -428,28 +428,11 @@ func TestDiagnosticParserCoreCheckpointCompactLayoutsAMD64(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("amd64 layout receipt")
 	}
-	// diagnosticParserCoreHeader grows by 16 bytes for the added altSet
-	// field, then by another 24 bytes (lastPersistedHead core.Head +
-	// lastPersistedAltSet core.AlternativeSet) for the per-dispatch persist
-	// skip: 24 -> 40 -> 64. spec.b4b-alternative-set.v2 section 3.2/3.4
-	// widened altSet and lastPersistedAltSet (uint32 members, +8 bytes each)
-	// and added three bools (blended, resurrectionUnproved,
-	// lastPersistedBlended, +1 each): 64 -> 80 -> 83, padded to 88. The
-	// b4b-width-repair audit (2026-08) lowered AlternativeSet's inline
-	// capacity from 4 to 2 members (core.go; the canonical-fixture census
-	// shows 99.8% of elections already spill past 4 members by election
-	// time, so 4 was not load-bearing), shrinking each embedded set back to
-	// 16 bytes, and reordered this struct's fields (both sets and both Head
-	// copies grouped up front, all 4-byte aligned, ahead of the
-	// byte/uint16-sized fields) so the three added bools fold into what
-	// would otherwise be trailing padding: 88 -> 64, exactly the pre-v2
-	// size despite carrying the full (event, branch) sets and all three
-	// bools. This struct is copied by value on every dispatch (the header
-	// canonicalize double-buffer and the rollback scratch snapshot), so the
-	// 24-byte-per-header reduction applies once per copy, twice per
-	// dispatch.
-	if got := unsafe.Sizeof(diagnosticParserCoreHeader{}); got != 64 {
-		t.Fatalf("scheduler header size=%d, want 64", got)
+	// G18 adds two value-owned DropCohortRefSet fields. Each set is 72 bytes,
+	// so the scheduler header ratchets from 64 to 224 bytes. This header is
+	// copied by the canonicalization and rollback scratch paths.
+	if got := unsafe.Sizeof(diagnosticParserCoreHeader{}); got != 224 {
+		t.Fatalf("scheduler header size=%d, want 224", got)
 	}
 	if got := unsafe.Sizeof(diagnosticParserCorePhaseHead{}); got != 12 {
 		t.Fatalf("canonical phase key size=%d, want 12", got)

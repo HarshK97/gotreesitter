@@ -27,6 +27,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"unsafe"
 )
 
 // Symbol and StateID are grammar-table identifiers. They intentionally use
@@ -328,6 +329,15 @@ type Limits struct {
 	MaxCheckpointBytes     uint64
 	MaxSelectedOccurrences uint32
 	MaxSelectedBytes       uint64
+	// MaxDropCohortRefs bounds the shared spill arena for drop-cohort
+	// references. Inline references remain part of their owning records.
+	MaxDropCohortRefs     uint32
+	MaxDropCohortRefBytes uint64
+	// MaxDropCohorts bounds one scheduler session. MaxDropCohortMembers
+	// bounds the stable branch set of one cohort.
+	MaxDropCohorts       uint32
+	MaxDropCohortMembers uint16
+	MaxDropCohortBytes   uint64
 }
 
 func (l Limits) withDefaults() Limits {
@@ -367,6 +377,34 @@ func (l Limits) withDefaults() Limits {
 	if l.MaxSelectedBytes == 0 {
 		l.MaxSelectedBytes = uint64(l.MaxSelectedOccurrences) * 96
 	}
+	if l.MaxDropCohortRefs == 0 {
+		// Keep enough room for the bounded reference history of every node.
+		// The set itself remains capped by dropCohortRefHardCap.
+		maxRefs := uint64(l.MaxNodes) * uint64(dropCohortRefHardCap)
+		if maxRefs > math.MaxUint32 {
+			l.MaxDropCohortRefs = math.MaxUint32
+		} else {
+			l.MaxDropCohortRefs = uint32(maxRefs)
+		}
+		if l.MaxDropCohortRefs == 0 {
+			l.MaxDropCohortRefs = dropCohortRefHardCap
+		}
+	}
+	if l.MaxDropCohortRefBytes == 0 {
+		l.MaxDropCohortRefBytes = uint64(l.MaxDropCohortRefs) * uint64(unsafe.Sizeof(DropCohortRef{}))
+	}
+	if l.MaxDropCohorts == 0 {
+		l.MaxDropCohorts = 4096
+	}
+	if l.MaxDropCohortMembers == 0 {
+		l.MaxDropCohortMembers = dropCohortRefHardCap
+	}
+	if l.MaxDropCohortBytes == 0 {
+		// Keep the certificate arena bounded without coupling its derivation
+		// budget to the reference spill reserve. The latter is sized for node
+		// lineage history and is too small for a complete parser derivation.
+		l.MaxDropCohortBytes = 128 << 20
+	}
 	return l
 }
 
@@ -403,8 +441,9 @@ type nodeRecord struct {
 }
 
 type nodeLineageRecord struct {
-	owner uint32
-	set   AlternativeSet
+	owner          uint32
+	dropCohortRefs DropCohortRefSet
+	set            AlternativeSet
 	// transition only, deleted at stage 3 cleanup (spec.b4b-alternative-set.v1
 	// section 3.2):
 	lineage   uint16
@@ -425,15 +464,16 @@ type nodeLineageRecord struct {
 // nodeLineageJournal append already names every field, so this reorder is
 // layout-only and touches no call site).
 type nodeLineageMutation struct {
-	node        NodeID
-	owner       uint32
-	setSpillRef uint32
-	setCount    uint8
-	setFlags    uint8
-	lineage     uint16
-	rank        CleanPathRankSelection
-	converged   bool
-	blended     bool
+	node           NodeID
+	owner          uint32
+	dropCohortRefs DropCohortRefSet
+	setSpillRef    uint32
+	setCount       uint8
+	setFlags       uint8
+	lineage        uint16
+	rank           CleanPathRankSelection
+	converged      bool
+	blended        bool
 }
 
 // alternativeSetInlineCapacity is the fixed inline member width of
@@ -749,9 +789,10 @@ type Head struct {
 // CondenseCandidate identifies one active scheduler version that a new action
 // output can merge into. The scheduler excludes the source version.
 type CondenseCandidate struct {
-	Head       Head
-	Shifted    bool
-	Checkpoint CheckpointID
+	Head           Head
+	DropCohortRefs DropCohortRefSet
+	Shifted        bool
+	Checkpoint     CheckpointID
 }
 
 // Derivation is one retained exact root-to-head path after local shallow-link
@@ -876,24 +917,49 @@ type Core struct {
 	// resets to length zero (capacity retained) only on Reset, matching
 	// nodeLineageJournal; a rolled-back or superseded segment leaks arena
 	// space until then, bounded by alternativeSetHardCap per record.
-	alternativeSpillArena []uint32
-	condenseCandidates    []CondenseCandidate
-	condenseNewNode       NodeID
-	condenseScopeActive   bool
-	reductionSourceOwner  uint32
-	transactions          []uint64
-	nextTransaction       uint64
-	classificationPhase   uint64
-	work                  Work
-	popScratch            popEnumerationScratch
-	reductionScratch      reductionOutputScratch
-	historicalNodeScratch []NodeID
-	cohortHeadScratch     []Head
-	factorLinkScratch     []linkRecord
-	selectedBuild         selectedStoreBuildScratch
-	selectedPoolMu        sync.Mutex
-	selectedPool          selectedStoreBacking
-	schedulerFrame        schedulerTransactionFrame
+	alternativeSpillArena          []uint32
+	dropCohortRefSpill             []DropCohortRef
+	dropCohortActions              []dropCohortActionIdentity
+	dropCohortRecords              []dropCohortRecord
+	dropCohortMembers              []dropCohortMember
+	dropCohortDerivations          []dropCohortDerivationRecord
+	dropCohortDerivationIntern     []dropCohortDerivationInternEntry
+	dropCohortDerivationBytes      []byte
+	dropCohortCertificateRefs      []DropCohortRef
+	dropCohortMapStore             []dropCohortMapEntry
+	dropCohortJournalStore         []dropCohortJournalStoreEntry
+	dropCohortDerivationScratch    []byte
+	dropCohortPathScratch          []dropCohortPathStep
+	dropCohortEphemeralBytes       uint64
+	dropCohortEphemeralPeak        uint64
+	dropCohortJournal              []dropCohortMutation
+	dropCohortOwner                uint64
+	dropCohortEpoch                uint64
+	dropCohortNextSequence         uint64
+	dropCohortProducerWrites       [dropCohortProducerCount]uint64
+	dropCohortAuthenticatedHistory uint64
+	dropCohortUnprovedHistory      uint64
+	dropCohortOwnerCheckedLookups  uint64
+	dropCohortReservations         []dropCohortReservation
+	dropCohortReserved             [7]uint64
+	dropCohortReservedBytes        uint64
+	condenseCandidates             []CondenseCandidate
+	condenseNewNode                NodeID
+	condenseScopeActive            bool
+	reductionSourceOwner           uint32
+	transactions                   []uint64
+	nextTransaction                uint64
+	classificationPhase            uint64
+	work                           Work
+	popScratch                     popEnumerationScratch
+	reductionScratch               reductionOutputScratch
+	historicalNodeScratch          []NodeID
+	cohortHeadScratch              []Head
+	factorLinkScratch              []linkRecord
+	selectedBuild                  selectedStoreBuildScratch
+	selectedPoolMu                 sync.Mutex
+	selectedPool                   selectedStoreBacking
+	schedulerFrame                 schedulerTransactionFrame
 	// metadataConstructionAuthenticated remains true only while every compact
 	// subtree was published through the authenticated shift/reduction seams.
 	// Diagnostic generic publication clears it monotonically until Reset.
@@ -977,6 +1043,50 @@ type checkpoint struct {
 	boundaryIndex                                                             boundaryIndexSnapshot
 	journal                                                                   int
 	nodeLineageJournal                                                        int
+	dropCohortRefSpill                                                        int
+	dropCohortActions                                                         int
+	dropCohortRecords                                                         int
+	dropCohortMembers                                                         int
+	dropCohortDerivations                                                     int
+	dropCohortDerivationIntern                                                int
+	dropCohortDerivationBytes                                                 int
+	dropCohortCertificateRefs                                                 int
+	dropCohortMapStore                                                        int
+	dropCohortJournalStore                                                    int
+	dropCohortEphemeralBytes                                                  uint64
+	dropCohortJournal                                                         int
+	dropCohortNextSequence                                                    uint64
+	dropCohortProducerWrites                                                  [dropCohortProducerCount]uint64
+	dropCohortAuthenticatedHistory                                            uint64
+	dropCohortUnprovedHistory                                                 uint64
+	dropCohortOwnerCheckedLookups                                             uint64
+	dropCohortReservations                                                    int
+	dropCohortReserved                                                        [7]uint64
+	dropCohortReservedBytes                                                   uint64
+	dropCohortRefSpillCap                                                     int
+	dropCohortActionsCap                                                      int
+	dropCohortRecordsCap                                                      int
+	dropCohortMembersCap                                                      int
+	dropCohortDerivationsCap                                                  int
+	dropCohortDerivationInternCap                                             int
+	dropCohortDerivationBytesCap                                              int
+	dropCohortCertificateRefsCap                                              int
+	dropCohortMapStoreCap                                                     int
+	dropCohortJournalStoreCap                                                 int
+	dropCohortJournalCap                                                      int
+	dropCohortReservationsCap                                                 int
+	dropCohortRefSpillHeader                                                  []DropCohortRef
+	dropCohortActionsHeader                                                   []dropCohortActionIdentity
+	dropCohortRecordsHeader                                                   []dropCohortRecord
+	dropCohortMembersHeader                                                   []dropCohortMember
+	dropCohortDerivationsHeader                                               []dropCohortDerivationRecord
+	dropCohortDerivationInternHeader                                          []dropCohortDerivationInternEntry
+	dropCohortDerivationBytesHeader                                           []byte
+	dropCohortCertificateRefsHeader                                           []DropCohortRef
+	dropCohortMapStoreHeader                                                  []dropCohortMapEntry
+	dropCohortJournalStoreHeader                                              []dropCohortJournalStoreEntry
+	dropCohortJournalHeader                                                   []dropCohortMutation
+	dropCohortReservationsHeader                                              []dropCohortReservation
 	transaction                                                               uint64
 	work                                                                      Work
 }
@@ -1022,11 +1132,55 @@ func (c *Core) markInto(mark *checkpoint) {
 		externalProvenance: len(c.externalProvenance),
 		children:           len(c.children), fields: len(c.fields), aliases: len(c.aliases),
 		frontier: c.frontier, checkpoint: c.checkpoint,
-		boundaryIndex:      c.boundaries.snapshot(),
-		journal:            len(c.boundaryJournal),
-		nodeLineageJournal: len(c.nodeLineageJournal),
-		transaction:        c.nextTransaction,
-		work:               c.work,
+		boundaryIndex:                    c.boundaries.snapshot(),
+		journal:                          len(c.boundaryJournal),
+		nodeLineageJournal:               len(c.nodeLineageJournal),
+		dropCohortRefSpill:               len(c.dropCohortRefSpill),
+		dropCohortActions:                len(c.dropCohortActions),
+		dropCohortRecords:                len(c.dropCohortRecords),
+		dropCohortMembers:                len(c.dropCohortMembers),
+		dropCohortDerivations:            len(c.dropCohortDerivations),
+		dropCohortDerivationIntern:       len(c.dropCohortDerivationIntern),
+		dropCohortDerivationBytes:        len(c.dropCohortDerivationBytes),
+		dropCohortCertificateRefs:        len(c.dropCohortCertificateRefs),
+		dropCohortMapStore:               len(c.dropCohortMapStore),
+		dropCohortJournalStore:           len(c.dropCohortJournalStore),
+		dropCohortEphemeralBytes:         c.dropCohortEphemeralBytes,
+		dropCohortJournal:                len(c.dropCohortJournal),
+		dropCohortNextSequence:           c.dropCohortNextSequence,
+		dropCohortProducerWrites:         c.dropCohortProducerWrites,
+		dropCohortAuthenticatedHistory:   c.dropCohortAuthenticatedHistory,
+		dropCohortUnprovedHistory:        c.dropCohortUnprovedHistory,
+		dropCohortOwnerCheckedLookups:    c.dropCohortOwnerCheckedLookups,
+		dropCohortReservations:           len(c.dropCohortReservations),
+		dropCohortReserved:               c.dropCohortReserved,
+		dropCohortReservedBytes:          c.dropCohortReservedBytes,
+		dropCohortRefSpillCap:            cap(c.dropCohortRefSpill),
+		dropCohortActionsCap:             cap(c.dropCohortActions),
+		dropCohortRecordsCap:             cap(c.dropCohortRecords),
+		dropCohortMembersCap:             cap(c.dropCohortMembers),
+		dropCohortDerivationsCap:         cap(c.dropCohortDerivations),
+		dropCohortDerivationInternCap:    cap(c.dropCohortDerivationIntern),
+		dropCohortDerivationBytesCap:     cap(c.dropCohortDerivationBytes),
+		dropCohortCertificateRefsCap:     cap(c.dropCohortCertificateRefs),
+		dropCohortMapStoreCap:            cap(c.dropCohortMapStore),
+		dropCohortJournalStoreCap:        cap(c.dropCohortJournalStore),
+		dropCohortJournalCap:             cap(c.dropCohortJournal),
+		dropCohortReservationsCap:        cap(c.dropCohortReservations),
+		dropCohortRefSpillHeader:         c.dropCohortRefSpill,
+		dropCohortActionsHeader:          c.dropCohortActions,
+		dropCohortRecordsHeader:          c.dropCohortRecords,
+		dropCohortMembersHeader:          c.dropCohortMembers,
+		dropCohortDerivationsHeader:      c.dropCohortDerivations,
+		dropCohortDerivationInternHeader: c.dropCohortDerivationIntern,
+		dropCohortDerivationBytesHeader:  c.dropCohortDerivationBytes,
+		dropCohortCertificateRefsHeader:  c.dropCohortCertificateRefs,
+		dropCohortMapStoreHeader:         c.dropCohortMapStore,
+		dropCohortJournalStoreHeader:     c.dropCohortJournalStore,
+		dropCohortJournalHeader:          c.dropCohortJournal,
+		dropCohortReservationsHeader:     c.dropCohortReservations,
+		transaction:                      c.nextTransaction,
+		work:                             c.work,
 	}
 	c.transactions = append(c.transactions, mark.transaction)
 	parent := uint64(0)
@@ -1075,6 +1229,7 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 			continue
 		}
 		c.nodeLineages[nodeIndex].owner = mutation.owner
+		c.nodeLineages[nodeIndex].dropCohortRefs = mutation.dropCohortRefs
 		c.nodeLineages[nodeIndex].set.count = mutation.setCount
 		c.nodeLineages[nodeIndex].set.flags = mutation.setFlags
 		c.nodeLineages[nodeIndex].set.spillRef = mutation.setSpillRef
@@ -1084,6 +1239,34 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 		c.nodeLineages[nodeIndex].blended = mutation.blended
 	}
 	c.boundaries.restore(mark.boundaryIndex)
+	c.dropCohortRefSpill = mark.dropCohortRefSpillHeader
+	for index := len(c.dropCohortJournal) - 1; index >= mark.dropCohortJournal; index-- {
+		mutation := c.dropCohortJournal[index]
+		if mutation.index >= 0 && mutation.index < len(c.dropCohortRecords) {
+			c.dropCohortRecords[mutation.index] = mutation.before
+		}
+	}
+	c.dropCohortActions = mark.dropCohortActionsHeader
+	c.dropCohortRecords = mark.dropCohortRecordsHeader
+	c.dropCohortMembers = mark.dropCohortMembersHeader
+	c.dropCohortDerivations = mark.dropCohortDerivationsHeader
+	c.dropCohortDerivationIntern = mark.dropCohortDerivationInternHeader
+	c.dropCohortDerivationBytes = mark.dropCohortDerivationBytesHeader
+	c.dropCohortCertificateRefs = mark.dropCohortCertificateRefsHeader
+	c.dropCohortMapStore = mark.dropCohortMapStoreHeader
+	c.dropCohortJournalStore = mark.dropCohortJournalStoreHeader
+	c.dropCohortDerivationScratch = c.dropCohortDerivationScratch[:0]
+	c.dropCohortPathScratch = c.dropCohortPathScratch[:0]
+	c.dropCohortEphemeralBytes = mark.dropCohortEphemeralBytes
+	c.dropCohortJournal = mark.dropCohortJournalHeader
+	c.dropCohortNextSequence = mark.dropCohortNextSequence
+	c.dropCohortProducerWrites = mark.dropCohortProducerWrites
+	c.dropCohortAuthenticatedHistory = mark.dropCohortAuthenticatedHistory
+	c.dropCohortUnprovedHistory = mark.dropCohortUnprovedHistory
+	c.dropCohortOwnerCheckedLookups = mark.dropCohortOwnerCheckedLookups
+	c.dropCohortReservations = mark.dropCohortReservationsHeader
+	c.dropCohortReserved = mark.dropCohortReserved
+	c.dropCohortReservedBytes = mark.dropCohortReservedBytes
 	clear(c.boundaryJournal[mark.journal:])
 	c.boundaryJournal = c.boundaryJournal[:mark.journal]
 	clear(c.nodeLineageJournal[mark.nodeLineageJournal:])
@@ -1179,6 +1362,11 @@ func (c *Core) RunFreshSchedulerSession(fn func(SchedulerTransactionToken) error
 	}
 	if frame.epoch == math.MaxUint64 || c.nextTransaction == math.MaxUint64 {
 		return errors.New("parser-core phase zero: fresh scheduler session identity overflow")
+	}
+	// A fresh scheduler session receives a new certificate epoch, even when
+	// the session later commits without calling Reset.
+	if err := c.advanceDropCohortEpoch(); err != nil {
+		return err
 	}
 	frame.clearInactive()
 	frame.epoch++
@@ -1364,6 +1552,10 @@ func New(tables TableView, limits Limits) (*Core, error) {
 	if tables == nil {
 		return nil, errors.New("parser-core phase zero: nil table view")
 	}
+	owner, err := allocateDropCohortOwner()
+	if err != nil {
+		return nil, err
+	}
 	limits = limits.withDefaults()
 	boundaries, err := newBoundaryIndex(limits.MaxNodes)
 	if err != nil {
@@ -1373,6 +1565,8 @@ func New(tables TableView, limits Limits) (*Core, error) {
 		tables: tables, limits: limits, frontier: 1, boundaries: boundaries,
 		checkpoints:                       newCheckpointInterner(limits.MaxCheckpoints, limits.MaxCheckpointBytes),
 		classificationPhase:               1,
+		dropCohortOwner:                   owner,
+		dropCohortEpoch:                   1,
 		diagnostics:                       diagnosticOptions{foldSamePredecessorShallowPayloads: true},
 		metadataConstructionAuthenticated: true,
 	}
@@ -1407,10 +1601,16 @@ func (c *Core) Reset() error {
 	if c.classificationPhase == math.MaxUint64 {
 		return errors.New("parser-core phase zero: classification phase overflow")
 	}
+	if c.dropCohortEpoch == math.MaxUint64 {
+		return errors.New("parser-core phase zero: drop-cohort epoch overflow")
+	}
 	if err := phase0AInvalidateCore(c); err != nil {
 		return err
 	}
 	c.classificationPhase++
+	if err := c.advanceDropCohortEpoch(); err != nil {
+		return err
+	}
 	c.nodes = c.nodes[:0]
 	c.nodeLineages = c.nodeLineages[:0]
 	c.nodeCheckpoints = c.nodeCheckpoints[:0]
@@ -1429,6 +1629,29 @@ func (c *Core) Reset() error {
 	clear(c.nodeLineageJournal)
 	c.nodeLineageJournal = c.nodeLineageJournal[:0]
 	c.alternativeSpillArena = c.alternativeSpillArena[:0]
+	c.dropCohortRefSpill = c.dropCohortRefSpill[:0]
+	c.dropCohortActions = c.dropCohortActions[:0]
+	c.dropCohortRecords = c.dropCohortRecords[:0]
+	c.dropCohortMembers = c.dropCohortMembers[:0]
+	c.dropCohortDerivations = c.dropCohortDerivations[:0]
+	c.dropCohortDerivationIntern = c.dropCohortDerivationIntern[:0]
+	c.dropCohortDerivationBytes = c.dropCohortDerivationBytes[:0]
+	c.dropCohortCertificateRefs = c.dropCohortCertificateRefs[:0]
+	c.dropCohortMapStore = c.dropCohortMapStore[:0]
+	c.dropCohortJournalStore = c.dropCohortJournalStore[:0]
+	c.dropCohortDerivationScratch = c.dropCohortDerivationScratch[:0]
+	c.dropCohortPathScratch = c.dropCohortPathScratch[:0]
+	c.dropCohortEphemeralBytes = 0
+	c.dropCohortEphemeralPeak = 0
+	c.dropCohortJournal = c.dropCohortJournal[:0]
+	c.dropCohortNextSequence = 0
+	clear(c.dropCohortProducerWrites[:])
+	c.dropCohortAuthenticatedHistory = 0
+	c.dropCohortUnprovedHistory = 0
+	c.dropCohortOwnerCheckedLookups = 0
+	c.dropCohortReservations = nil
+	clear(c.dropCohortReserved[:])
+	c.dropCohortReservedBytes = 0
 	c.clearLiveCondenseCandidates()
 	c.reductionSourceOwner = 0
 	c.transactions = c.transactions[:0]
@@ -1991,7 +2214,8 @@ const (
 // (reduceOutputsClassifiedIntoActive, scheduler_owned.go), so this reorder
 // is layout-only (b4b-width-repair audit, 2026-08).
 type ReductionOutput struct {
-	Head Head
+	Head           Head
+	DropCohortRefs DropCohortRefSet
 	// HistoricalAlternativeSet is the union of every dead predecessor's
 	// recorded alternative set discovered while producing this boundary
 	// (spec.b4b-alternative-set.v1 section 4, "Dead-node historical
@@ -2022,6 +2246,7 @@ const inlineReductionBoundaryOutputs = 2
 type reductionBoundaryOutput struct {
 	key                           boundaryKey
 	head                          Head
+	dropCohortRefs                DropCohortRefSet
 	historicalSet                 AlternativeSet
 	historicalLineage             uint16
 	freshness                     ReductionFreshness
@@ -2477,6 +2702,7 @@ const (
 type condenseOutcome struct {
 	head                          Head
 	change                        condenseChange
+	historicalDropCohortRefs      DropCohortRefSet
 	historicalBoundarySplit       bool
 	historicalConvergedSplit      bool
 	historicalForestDeterministic bool
@@ -2547,6 +2773,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 	var historicalCleanPathRank CleanPathRankSelection
 	var historicalLineage uint16
 	var historicalNode NodeID
+	var historicalDropCohortRefs DropCohortRefSet
 	historicalConvergedSplit := false
 	historicalForestDeterministic := false
 	if probe.found && !c.condenseNodeIsLive(oldID) {
@@ -2568,6 +2795,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 			historicalLineage = old.lineage
 			historicalConvergedSplit = old.converged
 		}
+		historicalDropCohortRefs = old.dropCohortRefs
 		oldID = 0
 	}
 	// buildOutcome stamps a returned condenseOutcome with the historical
@@ -2580,6 +2808,7 @@ func (c *Core) condenseWithOutcomeAtomic(key boundaryKey, in linkInput) (condens
 	buildOutcome := func(head Head, change condenseChange) condenseOutcome {
 		return condenseOutcome{
 			head: head, change: change,
+			historicalDropCohortRefs:      historicalDropCohortRefs,
 			historicalBoundarySplit:       historicalBoundarySplit,
 			historicalConvergedSplit:      historicalConvergedSplit,
 			historicalForestDeterministic: historicalForestDeterministic,
