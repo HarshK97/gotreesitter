@@ -26,6 +26,7 @@ const (
 	resultCompatJavaScriptImportPositive      = "143936b2a62b44eb779dda835b09abe0c26cc6d5"
 	resultCompatJavaScriptImportProducerFix   = "eee20b8a54a1608b47cce0ab7fb934651e204d66"
 	resultCompatJavaScriptImportFunction      = "normalizeJavaScriptTypeScriptDynamicImportLeafWithSymbolChanged"
+	resultCompatKotlinCallRetiredCommit       = "dcb14a971284eedf064a08963455e940427f7dcc"
 	resultCompatKotlinCallPositive            = "a321147042b7374a52570865d6ec44e1771669a4"
 	resultCompatKotlinCallProducerFix         = "b06804219dc0b27a0804d769a5cc24626568387d"
 	resultCompatKotlinCallFunction            = "normalizeKotlinInterpolatedCallExpressions"
@@ -245,6 +246,9 @@ func assertRetiredSubpassProvenance(t *testing.T, entry resultCompatOwnershipEnt
 			t.Errorf("%s remains in production source", resultCompatJavaScriptImportFunction)
 		}
 	case "dispatch.kotlin.interpolated-call-expressions":
+		if got, want := entry.RetiredCommit, resultCompatKotlinCallRetiredCommit; got != want {
+			t.Errorf("%s retired_commit = %q, want deletion commit %q", entry.ID, got, want)
+		}
 		if got, want := entry.PositiveControlCommit, resultCompatKotlinCallPositive; got != want {
 			t.Errorf("%s positive_control_commit = %q, want %q", entry.ID, got, want)
 		}
