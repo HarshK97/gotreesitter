@@ -28,9 +28,10 @@ func (p *Parser) cCondenseAndResumeDetailed(
 	arena *nodeArena,
 	entryScratch *glrEntryScratch,
 	gssScratch *gssScratch,
+	tmpEntries *[]stackEntry,
 	trackChildErrors *bool,
 ) ([]glrStack, bool, Token, ParseStopReason) {
-	return p.cCondenseAndResume(stacks, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+	return p.cCondenseAndResume(stacks, source, tok, nodeCount, arena, entryScratch, gssScratch, tmpEntries, trackChildErrors)
 }
 
 // DebugRecoveryRuntimeAttempts returns no attempt receipt in production builds.
