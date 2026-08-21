@@ -228,13 +228,14 @@ func (p *Parser) cCondenseAndResumeDetailed(
 	arena *nodeArena,
 	entryScratch *glrEntryScratch,
 	gssScratch *gssScratch,
+	tmpEntries *[]stackEntry,
 	trackChildErrors *bool,
 ) ([]glrStack, bool, Token, ParseStopReason) {
 	if !recoveryRuntimeTelemetryEnabled {
-		return p.cCondenseAndResume(stacks, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+		return p.cCondenseAndResume(stacks, source, tok, nodeCount, arena, entryScratch, gssScratch, tmpEntries, trackChildErrors)
 	}
 	started := time.Now()
-	resultStacks, resumed, resultToken, reason := p.cCondenseAndResume(stacks, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+	resultStacks, resumed, resultToken, reason := p.cCondenseAndResume(stacks, source, tok, nodeCount, arena, entryScratch, gssScratch, tmpEntries, trackChildErrors)
 	if state := p.detailedRecoveryRuntimeState(false); state != nil {
 		state.activeCondense += detailedNonNegativeUint64(time.Since(started).Nanoseconds())
 	}

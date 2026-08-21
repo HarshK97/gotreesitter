@@ -6691,9 +6691,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			condenseRan = true
 			var reason ParseStopReason
 			if recoveryRuntimeDetailedBuildEnabled {
-				stacks, resumed, tok, reason = p.cCondenseAndResumeDetailed(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors)
+				stacks, resumed, tok, reason = p.cCondenseAndResumeDetailed(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, trackChildErrors)
 			} else {
-				stacks, resumed, tok, reason = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors)
+				stacks, resumed, tok, reason = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, trackChildErrors)
 			}
 			workCountRefreshConvergenceLookahead(tok)
 			if resultMaterializationShouldStop(reason) {
@@ -6857,9 +6857,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 			condenseRan = true
 			var reason ParseStopReason
 			if recoveryRuntimeDetailedBuildEnabled {
-				stacks, resumed, tok, reason = p.cCondenseAndResumeDetailed(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors)
+				stacks, resumed, tok, reason = p.cCondenseAndResumeDetailed(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, trackChildErrors)
 			} else {
-				stacks, resumed, tok, reason = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, trackChildErrors)
+				stacks, resumed, tok, reason = p.cCondenseAndResume(stacks, source, tok, &nodeCount, arena, &scratch.entries, &scratch.gss, &scratch.tmpEntries, trackChildErrors)
 			}
 			if resultMaterializationShouldStop(reason) {
 				return finalize(stacks, reason)

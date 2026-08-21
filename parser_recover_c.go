@@ -2951,7 +2951,7 @@ func (p *Parser) cCollectPotentialReductions(state StateID, lookaheadSym Symbol,
 // overloading lookaheadSym == 0. The caller seed supplies reusable initial
 // capacity for the returned version set; growth beyond that capacity remains
 // ordinary append growth.
-func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookaheadSym Symbol, anyLookahead bool, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool, callerSeed []glrStack) ([]glrStack, bool, ParseStopReason) {
+func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookaheadSym Symbol, anyLookahead bool, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, trackChildErrors *bool, callerSeed []glrStack) ([]glrStack, bool, ParseStopReason) {
 	oldDisablePostReduceForkMerge := p.disablePostReduceForkMerge
 	p.disablePostReduceForkMerge = true
 	defer func() {
@@ -3015,7 +3015,7 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 				p.crecoveryReductionCandidateCeilingHits++
 				return versions, canShift, ParseStopNone
 			}
-			actionCandidates, hasSingletonCandidate, reason := p.cReductionCandidatesForActionInto(source, versions[v], act, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors, &singletonCandidate)
+			actionCandidates, hasSingletonCandidate, reason := p.cReductionCandidatesForActionInto(source, versions[v], act, tok, nodeCount, arena, entryScratch, gssScratch, tmpEntries, trackChildErrors, &singletonCandidate)
 			if reason != ParseStopNone {
 				return versions, canShift, reason
 			}
@@ -3068,16 +3068,16 @@ func (p *Parser) cDoAllPotentialReductions(source []byte, start glrStack, lookah
 	return versions, canShift, ParseStopNone
 }
 
-func (p *Parser) cReductionCandidatesForAction(source []byte, start glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) ([]glrStack, ParseStopReason) {
+func (p *Parser) cReductionCandidatesForAction(source []byte, start glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, trackChildErrors *bool) ([]glrStack, ParseStopReason) {
 	var singletonCandidate glrStack
-	candidates, hasSingletonCandidate, reason := p.cReductionCandidatesForActionInto(source, start, act, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors, &singletonCandidate)
+	candidates, hasSingletonCandidate, reason := p.cReductionCandidatesForActionInto(source, start, act, tok, nodeCount, arena, entryScratch, gssScratch, tmpEntries, trackChildErrors, &singletonCandidate)
 	if hasSingletonCandidate {
 		return []glrStack{singletonCandidate}, reason
 	}
 	return candidates, reason
 }
 
-func (p *Parser) cReductionCandidatesForActionInto(source []byte, start glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool, singletonCandidate *glrStack) ([]glrStack, bool, ParseStopReason) {
+func (p *Parser) cReductionCandidatesForActionInto(source []byte, start glrStack, act ParseAction, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, trackChildErrors *bool, singletonCandidate *glrStack) ([]glrStack, bool, ParseStopReason) {
 	p.pendingForkStacks = p.pendingForkStacks[:0]
 	defer func() {
 		p.pendingForkStacks = p.pendingForkStacks[:0]
@@ -3088,7 +3088,18 @@ func (p *Parser) cReductionCandidatesForActionInto(source []byte, start glrStack
 	fork := start.cloneWithScratch(gssScratch)
 	var dummy bool
 	deferParentLinks := p.reduceScratch != nil && p.reduceScratch.transientParents != nil
-	p.applyAction(source, &fork, act, tok, &dummy, nodeCount, arena, entryScratch, gssScratch, nil, deferParentLinks, trackChildErrors)
+	var localTmpEntries []stackEntry
+	if tmpEntries != nil {
+		localTmpEntries = *tmpEntries
+	}
+	p.applyAction(source, &fork, act, tok, &dummy, nodeCount, arena, entryScratch, gssScratch, &localTmpEntries, deferParentLinks, trackChildErrors)
+	if tmpEntries != nil {
+		if localTmpEntries != nil {
+			*tmpEntries = localTmpEntries[:0]
+		} else {
+			*tmpEntries = (*tmpEntries)[:0]
+		}
+	}
 	if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 		return nil, false, reason
 	}
@@ -3276,7 +3287,7 @@ func (p *Parser) cTerminalNextState(state StateID, sym Symbol) (StateID, ParseAc
 // and whether any new version still needs to act on the current token (the
 // missing-token versions and strategy-1 recoveries) — the caller must force a
 // re-dispatch pass for the same token.
-func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) (cRecoverOutcome, bool, ParseStopReason) {
+func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, trackChildErrors *bool) (cRecoverOutcome, bool, ParseStopReason) {
 	p.recordRecoveryEntry()
 	// C-recovery reads raw shapes unconditionally once it runs (see
 	// cSelectReplacementParentEntry / compareRawStackEntries), and its
@@ -3366,7 +3377,7 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 	// Promote the error stack to the graph-structured stack before reductions.
 	// Recovery forks then share the immutable prefix instead of copying each deep linear stack.
 	var outerResultSeed [2]glrStack
-	versions, _, reason := p.cDoAllPotentialReductions(source, s.cloneWithScratch(gssScratch), 0, true, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors, outerResultSeed[:0])
+	versions, _, reason := p.cDoAllPotentialReductions(source, s.cloneWithScratch(gssScratch), 0, true, tok, nodeCount, arena, entryScratch, gssScratch, tmpEntries, trackChildErrors, outerResultSeed[:0])
 	if reason != ParseStopNone {
 		return cRecHalted, false, reason
 	}
@@ -3442,7 +3453,7 @@ func (p *Parser) cHandleError(stacks *[]glrStack, si int, source []byte, tok Tok
 				if cand.dead {
 					continue
 				}
-				reduced, canShift, reason := p.cDoAllPotentialReductions(source, cand, tok.Symbol, false, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors, missingProbeSeed[:0])
+				reduced, canShift, reason := p.cDoAllPotentialReductions(source, cand, tok.Symbol, false, tok, nodeCount, arena, entryScratch, gssScratch, tmpEntries, trackChildErrors, missingProbeSeed[:0])
 				if reason != ParseStopNone {
 					return cRecHalted, false, reason
 				}
@@ -4448,7 +4459,7 @@ func (p *Parser) isGraphQLRecoveryTripleQuote(sym Symbol) bool {
 // (see cRecoverResumeLookahead) which the caller must adopt so redispatched
 // versions act on the same lookahead the resumed group consumed, and any
 // active budget/timeout stop reason encountered while condensing.
-func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, trackChildErrors *bool) ([]glrStack, bool, Token, ParseStopReason) {
+func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token, nodeCount *int, arena *nodeArena, entryScratch *glrEntryScratch, gssScratch *gssScratch, tmpEntries *[]stackEntry, trackChildErrors *bool) ([]glrStack, bool, Token, ParseStopReason) {
 	checkStop := func() ParseStopReason {
 		if reason := p.resultMaterializationStopReason(arena); resultMaterializationShouldStop(reason) {
 			return reason
@@ -4655,7 +4666,7 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 			if reason := checkStop(); reason != ParseStopNone {
 				return stacks, false, tok, reason
 			}
-			outcome, redispatch, reason := p.cHandleError(&stacks, i, source, tok, nodeCount, arena, entryScratch, gssScratch, trackChildErrors)
+			outcome, redispatch, reason := p.cHandleError(&stacks, i, source, tok, nodeCount, arena, entryScratch, gssScratch, tmpEntries, trackChildErrors)
 			if reason != ParseStopNone {
 				return stacks, false, tok, reason
 			}
