@@ -59,9 +59,12 @@ type DiagnosticParserCorePrefixOptions struct {
 	// unbounded. The boundary is checked before another scanner election.
 	GenericStopAtClosedByte *uint32
 	ReceiptMode             DiagnosticParserCoreReceiptMode
-	MaxDispatches           uint64
-	MaxTokens               uint64
-	Limits                  core.Limits
+	// recordDropCohortCertificates keeps the Slice C certificate stores inert
+	// until a focused authentic producer test enables the later activation.
+	recordDropCohortCertificates bool
+	MaxDispatches                uint64
+	MaxTokens                    uint64
+	Limits                       core.Limits
 	// freshSchedulerSession is set only by the reusable fresh-full runner,
 	// which resets before every call and never exposes a declined core.
 	freshSchedulerSession bool
@@ -7067,66 +7070,68 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		if err := s.compact.RecordReductionLineageOwned(owner, outputs, reductionLineage); err != nil {
 			return err
 		}
-		identity := core.DropCohortActionIdentity{
-			BoundaryState: core.StateID(cell.boundary.State()),
-			Lookahead:     core.Symbol(token.Symbol),
-			ActionOrdinal: int32(ordinal),
-			Action:        cell.actions().At(ordinal),
-			NoLookahead:   token.NoLookahead,
-			Selection:     dropCohortSelectionClass(cell.selectedBy),
-		}
-		cohort, err := s.compact.BeginDropCohortOwned(owner, identity, len(outputs))
-		if err != nil {
-			return err
-		}
-		checkpoint := core.DropCohortSourceCheckpoint{
-			StartByte:    token.StartByte,
-			EndByte:      token.EndByte,
-			StartRow:     token.StartPoint.Row,
-			StartColumn:  token.StartPoint.Column,
-			EndRow:       token.EndPoint.Row,
-			EndColumn:    token.EndPoint.Column,
-			ScannerStart: s.checkpointBeforeID,
-			ScannerEnd:   s.checkpointID,
-		}
-		certificateSkipped := false
-		for outputIndex := range outputs {
-			derivation, skipped, buildErr := s.compact.TryBuildDropCohortDerivationOwned(owner, outputs[outputIndex].Head, checkpoint)
-			if buildErr != nil {
-				return buildErr
+		if s.options.recordDropCohortCertificates {
+			identity := core.DropCohortActionIdentity{
+				BoundaryState: core.StateID(cell.boundary.State()),
+				Lookahead:     core.Symbol(token.Symbol),
+				ActionOrdinal: int32(ordinal),
+				Action:        cell.actions().At(ordinal),
+				NoLookahead:   token.NoLookahead,
+				Selection:     dropCohortSelectionClass(cell.selectedBy),
 			}
-			if skipped {
-				certificateSkipped = true
-				break
-			}
-			if writeErr := s.compact.WriteDropCohortMemberOwned(
-				owner, cohort, outputs[outputIndex].Head, uint16(outputIndex), derivation,
-			); writeErr != nil {
-				return writeErr
-			}
-		}
-		if certificateSkipped {
-			if abandonErr := s.compact.AbandonDropCohortOwned(owner, cohort); abandonErr != nil {
-				return abandonErr
-			}
-		} else {
-			if _, err := s.compact.FinalizeDropCohortOwned(owner, cohort); err != nil {
+			cohort, err := s.compact.BeginDropCohortOwned(owner, identity, len(outputs))
+			if err != nil {
 				return err
 			}
+			checkpoint := core.DropCohortSourceCheckpoint{
+				StartByte:    token.StartByte,
+				EndByte:      token.EndByte,
+				StartRow:     token.StartPoint.Row,
+				StartColumn:  token.StartPoint.Column,
+				EndRow:       token.EndPoint.Row,
+				EndColumn:    token.EndPoint.Column,
+				ScannerStart: s.checkpointBeforeID,
+				ScannerEnd:   s.checkpointID,
+			}
+			certificateSkipped := false
 			for outputIndex := range outputs {
-				ref, refErr := s.compact.DropCohortRefForBranch(cohort, uint16(outputIndex))
-				if refErr != nil {
-					return refErr
+				derivation, skipped, buildErr := s.compact.TryBuildDropCohortDerivationOwned(owner, outputs[outputIndex].Head, checkpoint)
+				if buildErr != nil {
+					return buildErr
 				}
-				refs := outputs[outputIndex].DropCohortRefs
-				if !s.compact.AddDropCohortRef(&refs, ref) {
-					// A bounded reference set can reject publication after the
-					// producer cohort is complete. Keep the ordinary reduction
-					// output and let the current fallback route continue. The
-					// verifier is fail-closed when no complete reference is present.
-					continue
+				if skipped {
+					certificateSkipped = true
+					break
 				}
-				outputs[outputIndex].DropCohortRefs = refs
+				if writeErr := s.compact.WriteDropCohortMemberOwned(
+					owner, cohort, outputs[outputIndex].Head, uint16(outputIndex), derivation,
+				); writeErr != nil {
+					return writeErr
+				}
+			}
+			if certificateSkipped {
+				if abandonErr := s.compact.AbandonDropCohortOwned(owner, cohort); abandonErr != nil {
+					return abandonErr
+				}
+			} else {
+				if _, err := s.compact.FinalizeDropCohortOwned(owner, cohort); err != nil {
+					return err
+				}
+				for outputIndex := range outputs {
+					ref, refErr := s.compact.DropCohortRefForBranch(cohort, uint16(outputIndex))
+					if refErr != nil {
+						return refErr
+					}
+					refs := outputs[outputIndex].DropCohortRefs
+					if !s.compact.AddDropCohortRef(&refs, ref) {
+						// A bounded reference set can reject publication after the
+						// producer cohort is complete. Keep the ordinary reduction
+						// output and let the current fallback route continue. The
+						// verifier is fail-closed when no complete reference is present.
+						continue
+					}
+					outputs[outputIndex].DropCohortRefs = refs
+				}
 			}
 		}
 	}

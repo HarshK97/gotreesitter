@@ -188,7 +188,7 @@ func TestG18AuthenticGenericReductionEstablishesProducerCohort(t *testing.T) {
 			StartPoint: Point{Row: 4, Column: 6}, EndPoint: Point{Row: 4, Column: 7},
 		},
 		nextCleanPathLineage: 1,
-		options:              DiagnosticParserCorePrefixOptions{MaxDispatches: 20}, receipt: &DiagnosticParserCoreGenericScheduler{},
+		options:              DiagnosticParserCorePrefixOptions{MaxDispatches: 20, recordDropCohortCertificates: true}, receipt: &DiagnosticParserCoreGenericScheduler{},
 	}
 	before, err := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
 	if err != nil {
@@ -218,6 +218,75 @@ func TestG18AuthenticGenericReductionEstablishesProducerCohort(t *testing.T) {
 	counters := compact.DropCohortProducerCounts()
 	if counters.ReductionEstablishment != 1 {
 		t.Fatalf("authentic producer counters=%+v, want one establishment", counters)
+	}
+}
+
+func TestG18GenericReductionLeavesDropCohortsInertByDefault(t *testing.T) {
+	table := &genericConflictTable{
+		cells: map[genericConflictCell][]core.Action{
+			{state: 1, symbol: 8}: {{Type: core.ActionShift, State: 3}},
+			{state: 2, symbol: 8}: {{Type: core.ActionShift, State: 3}},
+			{state: 3, symbol: 9}: {{Type: core.ActionReduce, Symbol: 2, ChildCount: 1}},
+		},
+		gotos: map[genericConflictCell]core.StateID{
+			{state: 1, symbol: 2}: 4,
+			{state: 2, symbol: 2}: 4,
+		},
+	}
+	compact, err := core.New(table, core.Limits{MaxDerivations: 8, MaxPopPaths: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed, err := compact.Seed(1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondSeed, err := compact.Seed(2, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := core.Token{Symbol: 8, StartByte: 0, EndByte: 1}
+	if _, err = compact.Shift(seed, 8, 0, token, core.ForkOrder{Present: true, Value: 1}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := compact.Shift(secondSeed, 8, 0, token, core.ForkOrder{Present: true, Value: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := compact.Derivations(second)
+	if err != nil || len(paths) != 2 {
+		t.Fatalf("multi-path setup derivations=%d err=%v", len(paths), err)
+	}
+	scheduler := &diagnosticParserCoreGenericScheduler{
+		compact: compact,
+		headers: []diagnosticParserCoreHeader{{head: second, creationSeq: 1}},
+		token: Token{
+			Symbol: 9, StartByte: 1, EndByte: 2,
+			StartPoint: Point{Row: 4, Column: 6}, EndPoint: Point{Row: 4, Column: 7},
+		},
+		nextCleanPathLineage: 1,
+		options:              DiagnosticParserCorePrefixOptions{MaxDispatches: 20},
+		receipt:              &DiagnosticParserCoreGenericScheduler{},
+	}
+	before, err := diagnosticParserCoreHeaderReceipts(compact, scheduler.headers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cell := mustDiagnosticParserCoreGenericCell(t, compact, 0, scheduler.headers[0], 9)
+	if err := scheduler.applyGenericReduction(before, cell); err != nil {
+		t.Fatal(err)
+	}
+	if len(scheduler.headers) != 1 || scheduler.headers[0].dropCohortRefs.Len() != 0 {
+		t.Fatalf("default-off producer header=%+v, want one branch without cohort refs", scheduler.headers)
+	}
+	if scheduler.headers[0].cleanPathLineage == 0 || scheduler.headers[0].altSet.Len() == 0 || !scheduler.headers[0].convergedReductionSplit {
+		t.Fatalf("default-off lineage state=%+v, want retained lineage and alternative set", scheduler.headers[0])
+	}
+	counters := compact.DropCohortProducerCounts()
+	// RecordReductionLineageOwned remains unconditional. Its one authentic
+	// lineage establishment is distinct from the gated cohort construction.
+	if counters.ReductionEstablishment != 1 {
+		t.Fatalf("default-off producer counters=%+v, want one lineage establishment", counters)
 	}
 }
 
