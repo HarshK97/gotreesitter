@@ -307,7 +307,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "0000000000000000000000000000000000000000",
+      "retired_commit": "2509e61d8cceeeaa017ce46e059fee1a014933c2",
       "receipt_refs": [
         "parser_result_test/materialization_subpass_census_test.go",
         "grammars/bash_generated_command_assignment_native_regression_test.go",

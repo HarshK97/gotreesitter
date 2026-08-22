@@ -10,13 +10,14 @@ import (
 	"testing"
 )
 
-const resultCompatAuthoritativeMainCommit = "bb09ff6978cb2e46d98b805c0e2f6bb7d4429e24"
+const resultCompatAuthoritativeMainCommit = "2509e61d8cceeeaa017ce46e059fee1a014933c2"
 
 // These are zero-based registry indexes. Keep this map explicit so a later
 // ledger regeneration cannot silently restore a parallel retirement commit.
 var resultCompatCorrectedRetiredCommits = map[int]string{
 	1:  "2ef4802f2dbb853486d852cc9c1909e2a26f0199",
 	5:  "2ef4802f2dbb853486d852cc9c1909e2a26f0199",
+	6:  "2509e61d8cceeeaa017ce46e059fee1a014933c2",
 	8:  "2ef4802f2dbb853486d852cc9c1909e2a26f0199",
 	12: "84aee737500e7b9e0365725fb7af18e059e9d9e5",
 	15: "16d4873e62d7eeff43cf61b552465e27eda87536",
@@ -64,6 +65,7 @@ var resultCompatRetirementFixtures = map[string]resultCompatRetirementFixture{
 	"2427094ae0629d0bd5c6a2fe2c2e801cbc709d3a": {true, []string{"dispatch.hurl", "dispatch.ini"}},
 	"27b0f624032680f6246bb4ee307883a2b874afb9": {true, []string{"generic.trailing-extra-trivia"}},
 	"29b6e302701058e2ed101941c6da5f52a98dfe9a": {true, []string{"dispatch.objc"}},
+	"2509e61d8cceeeaa017ce46e059fee1a014933c2": {true, []string{"dispatch.bash"}},
 	"2ef4802f2dbb853486d852cc9c1909e2a26f0199": {true, []string{"dispatch.angular", "dispatch.bibtex", "dispatch.chatito", "dispatch.eds"}},
 	"305e32b0bd796a47cfbd566ec596cd8d01ceb124": {true, []string{"dispatch.ql"}},
 	"31bc9f1ed88bc930d22d0c2eaedc84195604cce1": {true, []string{"generic.terminal-leaf"}},
@@ -100,7 +102,7 @@ func TestResultCompatibilityRetiredCommitProvenance(t *testing.T) {
 	if got, want := len(registry.Entries), 88; got != want {
 		t.Fatalf("registry entries = %d, want %d", got, want)
 	}
-	if got, want := len(resultCompatCorrectedRetiredCommits), 31; got != want {
+	if got, want := len(resultCompatCorrectedRetiredCommits), 32; got != want {
 		t.Fatalf("corrected retired commit rows = %d, want %d", got, want)
 	}
 	for index, wantCommit := range resultCompatCorrectedRetiredCommits {
