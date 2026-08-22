@@ -4597,18 +4597,19 @@ func (p *Parser) cCondenseAndResume(stacks []glrStack, source []byte, tok Token,
 		// least-promising excess keys), and leave same-key duplicates — C's
 		// merged links — to the engine's own boundary merge/cull population
 		// discipline.
-		keyRanks := make(map[cCondenseVersionKey]int, len(stacks))
+		keyRanks := p.cCondenseVersionKeyRanks
+		if keyRanks == nil {
+			keyRanks = make(map[cCondenseVersionKey]uint8, cRecoverMaxVersionCount)
+			p.cCondenseVersionKeyRanks = keyRanks
+		} else {
+			clear(keyRanks)
+		}
 		for i := 0; i < len(stacks); i++ {
 			if reason := checkStop(); reason != ParseStopNone {
 				return stacks, false, tok, reason
 			}
 			key := p.cCondenseVersionKeyFor(&stacks[i])
-			rank, seen := keyRanks[key]
-			if !seen {
-				rank = len(keyRanks)
-				keyRanks[key] = rank
-			}
-			if rank < cRecoverMaxVersionCount {
+			if cCondenseVersionRankFor(keyRanks, key) < cRecoverMaxVersionCount {
 				continue
 			}
 			if p.glrTrace {
@@ -4766,6 +4767,21 @@ type cCondenseVersionKey struct {
 	paused       bool
 	recGroup     *cRecGroup
 	missingGroup *cRecGroup
+}
+
+// cCondenseVersionRankFor returns the same cap decision as the legacy rank
+// map. It stores only ranks below the cap, because every excess rank is
+// dropped and every later copy of an excess key is dropped too.
+func cCondenseVersionRankFor(ranks map[cCondenseVersionKey]uint8, key cCondenseVersionKey) int {
+	rank, seen := ranks[key]
+	if seen {
+		return int(rank)
+	}
+	rank = uint8(len(ranks))
+	if rank < cRecoverMaxVersionCount {
+		ranks[key] = rank
+	}
+	return int(rank)
 }
 
 func (p *Parser) cCondenseVersionKeyFor(s *glrStack) cCondenseVersionKey {

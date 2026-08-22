@@ -2013,6 +2013,101 @@ func TestCCondenseAndResumeComparesMissingGroupStacks(t *testing.T) {
 	}
 }
 
+func TestCCondenseVersionRankScratchMatchesLegacyMap(t *testing.T) {
+	key := func(state StateID) cCondenseVersionKey {
+		return cCondenseVersionKey{state: state}
+	}
+	cases := []struct {
+		name string
+		keys []cCondenseVersionKey
+	}{
+		{
+			name: "accepted",
+			keys: []cCondenseVersionKey{key(0), key(1), key(2), key(3), key(4), key(5)},
+		},
+		{
+			name: "repeated",
+			keys: []cCondenseVersionKey{key(0), key(1), key(2), key(3), key(4), key(5), key(0), key(5), key(1)},
+		},
+		{
+			name: "excess",
+			keys: []cCondenseVersionKey{key(0), key(1), key(2), key(3), key(4), key(5), key(6), key(7)},
+		},
+		{
+			name: "repeated-excess",
+			keys: []cCondenseVersionKey{key(0), key(1), key(2), key(3), key(4), key(5), key(6), key(6), key(7), key(6), key(1), key(7)},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			legacy := make(map[cCondenseVersionKey]int, len(tc.keys))
+			scratch := make(map[cCondenseVersionKey]uint8, cRecoverMaxVersionCount)
+			for i, key := range tc.keys {
+				wantRank, seen := legacy[key]
+				if !seen {
+					wantRank = len(legacy)
+					legacy[key] = wantRank
+				}
+				gotRank := cCondenseVersionRankFor(scratch, key)
+				if (gotRank < cRecoverMaxVersionCount) != (wantRank < cRecoverMaxVersionCount) {
+					t.Fatalf("key %d rank decision = %d, want legacy rank %d", i, gotRank, wantRank)
+				}
+			}
+			if got := len(scratch); got > cRecoverMaxVersionCount {
+				t.Fatalf("scratch stored %d keys, want at most %d", got, cRecoverMaxVersionCount)
+			}
+			for i := 0; i < cRecoverMaxVersionCount; i++ {
+				if _, ok := scratch[key(StateID(i))]; !ok {
+					t.Fatalf("scratch lost accepted key %d", i)
+				}
+			}
+			for i := cRecoverMaxVersionCount; i < 8; i++ {
+				if _, ok := scratch[key(StateID(i))]; ok {
+					t.Fatalf("scratch retained excess key %d", i)
+				}
+			}
+		})
+	}
+}
+
+func TestCCondenseVersionRankScratchResetClearsKeys(t *testing.T) {
+	parser := &Parser{cCondenseVersionKeyRanks: make(map[cCondenseVersionKey]uint8, cRecoverMaxVersionCount)}
+	parser.cCondenseVersionKeyRanks[cCondenseVersionKey{state: 1}] = 0
+	resetSnippetParser(parser)
+	if got := len(parser.cCondenseVersionKeyRanks); got != 0 {
+		t.Fatalf("reset retained %d condense keys, want 0", got)
+	}
+}
+
+func TestCCondenseVersionRankScratchParseExitClearsKeys(t *testing.T) {
+	parser := NewParser(buildArithmeticLanguage())
+	parser.SetAdmissionCandidateRoute(false)
+	parser.cCondenseVersionKeyRanks = make(map[cCondenseVersionKey]uint8, cRecoverMaxVersionCount)
+	parser.cCondenseVersionKeyRanks[cCondenseVersionKey{state: 1}] = 0
+	tree, err := parser.Parse([]byte("1 + 2"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if tree == nil {
+		t.Fatal("parse returned nil tree")
+	}
+	tree.Release()
+	if got := len(parser.cCondenseVersionKeyRanks); got != 0 {
+		t.Fatalf("parse exit retained %d condense keys, want 0", got)
+	}
+}
+
+func TestCCondenseVersionRankScratchLayout(t *testing.T) {
+	var parser Parser
+	parserSize := unsafe.Sizeof(parser)
+	scratchOffset := unsafe.Offsetof(parser.cCondenseVersionKeyRanks)
+	scratchSize := unsafe.Sizeof(parser.cCondenseVersionKeyRanks)
+	if scratchOffset+scratchSize != parserSize {
+		t.Fatalf("condense rank scratch is not at Parser tail: offset=%d size=%d parser_size=%d", scratchOffset, scratchSize, parserSize)
+	}
+	t.Logf("P23_LAYOUT parser_size=%d scratch_offset=%d scratch_size=%d key_size=%d rank_size=%d", parserSize, scratchOffset, scratchSize, unsafe.Sizeof(cCondenseVersionKey{}), unsafe.Sizeof(uint8(0)))
+}
+
 func collidingCNodeMemoNodes(t *testing.T, setCount int) (*Node, *Node, *Node) {
 	t.Helper()
 	nodes := make([]Node, setCount*2+1)
@@ -2150,7 +2245,7 @@ func TestRecoveryMemoTelemetryPreservesAMD64HotLayouts(t *testing.T) {
 	if unsafe.Sizeof(uintptr(0)) != 8 {
 		t.Skip("amd64 layout ratchet")
 	}
-	if got, want := unsafe.Sizeof(Parser{}), uintptr(2176); got != want {
+	if got, want := unsafe.Sizeof(Parser{}), uintptr(2184); got != want {
 		t.Fatalf("Parser size = %d, want %d", got, want)
 	}
 	if got, want := unsafe.Sizeof(ParseRuntime{}), uintptr(3040); got != want {
