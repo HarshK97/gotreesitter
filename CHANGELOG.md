@@ -119,6 +119,22 @@ for tags and release notes while still in `0.x`.
 - Record a durable DTD locked-C blocker receipt. Keep the DTD compatibility
   entry live until both recorded error-flag divergences close.
 
+- Record a durable Doxygen locked-C blocker receipt. Keep `dispatch.doxygen`
+  live. The three A0 witnesses report zero raw and production rewrites. The
+  historical childless and recovered routes report 3 and 14 named rewrites
+  across production, compact, forest, and incremental routes. The real corpus
+  has no Doxygen directory, so its census remains uncovered. The current
+  denominator is 31 dispatcher arms, 33 dispatcher languages, 32 live entries,
+  and 56 retired entries. The focused artifacts are
+  `harness_out/docker/20260822T202538Z-doxygen-blocker-routes-final` and
+  `harness_out/docker/20260822T202308Z-doxygen-blocker-locked-c`, with the
+  registry and census gates at
+  `harness_out/docker/20260822T202324Z-doxygen-blocker-registry-a0` and
+  `harness_out/docker/20260822T202335Z-doxygen-blocker-census`. Locked C
+  differs at `/document` for CMakeLists and example, and at `/ERROR` with
+  `children=0` versus `children=279` for metrics. Status: `NO-GO`;
+  `KEEP LIVE`.
+
 - Make the explicit forest route fail closed on an `ERROR` root. Reuse the
   existing forest decline decision. Keep Ledger recovery triggers on the
   production fallback until their forest trees match the locked C tree.
