@@ -391,6 +391,11 @@ func (p *Parser) parseForestExperimental(source []byte) (*Tree, bool) {
 		arena.Release()
 		return nil, false
 	}
+	if forestRootMustDecline(root) {
+		p.recordForestDecline(forestDeclineErrorRoot, Token{StartByte: root.EndByte()}, nil)
+		arena.Release()
+		return nil, false
+	}
 	p.finalizeForestRoot(root, source)
 	tree := newTreeWithArenas(root, source, p.language, arena, nil)
 	tree.setParseRuntime(forestAcceptedRuntime(root, source))

@@ -63,6 +63,11 @@ Each PR retires one ownership mechanism or one proven-inert family:
 Correctness is the merge gate. Performance measurements may select the next
 candidate, but a performance result cannot substitute for route parity.
 
+The explicit forest route now shares the automatic route's `ERROR`-root
+decline. It records `error_root` and returns no tree. Ledger date-suffix and
+year-directive recovery remain on the production fallback until both forest
+routes match locked C. Reopen Ledger retirement after that proof.
+
 ## Ordered program
 
 ### R0 — inventory and containment

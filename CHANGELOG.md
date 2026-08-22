@@ -49,6 +49,10 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Make the explicit forest route fail closed on an `ERROR` root. Reuse the
+  existing forest decline decision. Keep Ledger recovery triggers on the
+  production fallback until their forest trees match the locked C tree.
+
 - Correct the Markdown scanner documentation for [issue #454](https://github.com/odvcencio/gotreesitter/issues/454).
   Mark Markdown as `certified reuse`. Changed-token and shape-changing edits
   can still use the production full-parse fallback when reuse gates reject the
