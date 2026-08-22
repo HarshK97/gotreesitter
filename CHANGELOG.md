@@ -89,7 +89,9 @@ for tags and release notes while still in `0.x`.
   `/tmp/gts-d6c-nogo-receipt-20260822/harness_out/docker/20260822T202427Z-d6c-grammargen-lr-fallback`.
 
 - Record the Swift #576 unsafe minimal and corpus divergences as open. Keep
-  the focused locked-C receipt without changing parser behavior.
+  the focused locked-C receipt without changing parser behavior. See the
+  [Swift compact-parser blocker receipt](docs/swift-576-compact-correctness-blocker.md)
+  for the first token and recovery divergence and the D6 non-implication.
 
 ### Removed
 
