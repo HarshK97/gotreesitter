@@ -461,6 +461,14 @@ type Parser struct {
 	// Parsers that use none of these features pay no sidecar allocation.
 	// Explicit ParseForestExperimental calls intentionally ignore this memo.
 	forestDeclineMemo *parserColdState
+	// cCondenseVersionKeyRanks is parser-owned scratch for the capped recovery
+	// version window. Parser is not safe for concurrent use, so this map needs no
+	// lock. cCondenseAndResume clears it before each qualifying pass and stores
+	// only the first cRecoverMaxVersionCount keys. The bounded map remains
+	// allocated after the first qualifying pass, but its key values are cleared
+	// at parse and snippet-parser reset boundaries to avoid retaining recovery
+	// groups from an earlier parse.
+	cCondenseVersionKeyRanks map[cCondenseVersionKey]uint8
 }
 
 var snippetParserPools sync.Map
@@ -1747,6 +1755,9 @@ func resetSnippetParser(parser *Parser) {
 	parser.cNodeMemoOperationDepth = 0
 	parser.cNodeMemoPeakTier = RecoveryNodeMemoTierNone
 	parser.cNodeMemoOperationPeakTier = RecoveryNodeMemoTierNone
+	if parser.cCondenseVersionKeyRanks != nil {
+		clear(parser.cCondenseVersionKeyRanks)
+	}
 	if cold := parser.forestDeclineMemo; cold != nil {
 		cold.cNodeMemoRetainedCache = nil
 		cold.cNodeMemoCollisions = 0
@@ -4566,6 +4577,9 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 		p.mergeScratch = nil
 		p.budgetScratch = prevBudgetScratch
 		p.goCompatFrames = nil
+		if p.cCondenseVersionKeyRanks != nil {
+			clear(p.cCondenseVersionKeyRanks)
+		}
 		if p.cNodeMemoOperationDepth == 0 {
 			p.finishCNodeMemoParse()
 		}
