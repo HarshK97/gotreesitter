@@ -212,6 +212,11 @@ tree. The receipts are in these Docker artifacts:
 Reopen the entry if a future Ninja witness rewrites a node or differs on any
 production, compact, forest, incremental, or locked C route.
 
+The explicit forest route now fails closed on a synthetic `ERROR` root.
+It records `error_root` and leaves production fallback to the caller.
+Ledger remains live while its recovery triggers use that fallback. Reopen
+Ledger retirement only after both triggers return locked-C forest receipts.
+
 The live probes parse each source without result compatibility.
 They also compare census-enabled output with normal production output.
 Each digest matches base commit
