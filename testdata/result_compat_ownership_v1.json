@@ -1949,7 +1949,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "0000000000000000000000000000000000000000",
+      "retired_commit": "c3e734a527ed95327cf4fc010167a222cea1900c",
       "receipt_refs": [
         "grammars/ninja_retirement_route_receipt_test.go",
         "cgo_harness/ninja_retirement_parity_test.go"

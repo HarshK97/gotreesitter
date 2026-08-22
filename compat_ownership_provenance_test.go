@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-const resultCompatAuthoritativeMainCommit = "2509e61d8cceeeaa017ce46e059fee1a014933c2"
+const resultCompatAuthoritativeMainCommit = "c3e734a527ed95327cf4fc010167a222cea1900c"
 
 // These are zero-based registry indexes. Keep this map explicit so a later
 // ledger regeneration cannot silently restore a parallel retirement commit.
@@ -38,6 +38,7 @@ var resultCompatCorrectedRetiredCommits = map[int]string{
 	51: "db34ebb495d1cd0c6540428c7045ac032ac41a22",
 	52: "29b6e302701058e2ed101941c6da5f52a98dfe9a",
 	53: "84aee737500e7b9e0365725fb7af18e059e9d9e5",
+	54: "c3e734a527ed95327cf4fc010167a222cea1900c",
 	56: "84aee737500e7b9e0365725fb7af18e059e9d9e5",
 	64: "0d84d2eb5e597420de90d7d275b945e9b15ba7df",
 	68: "0d84d2eb5e597420de90d7d275b945e9b15ba7df",
@@ -66,6 +67,7 @@ var resultCompatRetirementFixtures = map[string]resultCompatRetirementFixture{
 	"27b0f624032680f6246bb4ee307883a2b874afb9": {true, []string{"generic.trailing-extra-trivia"}},
 	"29b6e302701058e2ed101941c6da5f52a98dfe9a": {true, []string{"dispatch.objc"}},
 	"2509e61d8cceeeaa017ce46e059fee1a014933c2": {true, []string{"dispatch.bash"}},
+	"c3e734a527ed95327cf4fc010167a222cea1900c": {true, []string{"dispatch.ninja"}},
 	"2ef4802f2dbb853486d852cc9c1909e2a26f0199": {true, []string{"dispatch.angular", "dispatch.bibtex", "dispatch.chatito", "dispatch.eds"}},
 	"305e32b0bd796a47cfbd566ec596cd8d01ceb124": {true, []string{"dispatch.ql"}},
 	"31bc9f1ed88bc930d22d0c2eaedc84195604cce1": {true, []string{"generic.terminal-leaf"}},
@@ -102,7 +104,7 @@ func TestResultCompatibilityRetiredCommitProvenance(t *testing.T) {
 	if got, want := len(registry.Entries), 88; got != want {
 		t.Fatalf("registry entries = %d, want %d", got, want)
 	}
-	if got, want := len(resultCompatCorrectedRetiredCommits), 32; got != want {
+	if got, want := len(resultCompatCorrectedRetiredCommits), 33; got != want {
 		t.Fatalf("corrected retired commit rows = %d, want %d", got, want)
 	}
 	for index, wantCommit := range resultCompatCorrectedRetiredCommits {
