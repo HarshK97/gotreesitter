@@ -36,9 +36,12 @@ type parserCoreFreshFullRunner struct {
 	certificateAdmissionEnabled bool
 	// frontierRecordingEnabled is armed only by the private D6a test seam.
 	// It never enables historical certificate authentication or admission.
-	frontierRecordingEnabled  bool
-	certificateAdmissionToken *dropCohortActivationToken
-	scannerScratch            []byte
+	frontierRecordingEnabled bool
+	// frontierVerificationEnabled is armed only by the private D6b test seam.
+	// It never enables the production admission route.
+	frontierVerificationEnabled bool
+	certificateAdmissionToken   *dropCohortActivationToken
+	scannerScratch              []byte
 	// scratch retains the reusable per-parse materialization buffers. The runner
 	// is per-Parser and single-goroutine, so reusing these buffers across parses
 	// mirrors production's parser-held arena reuse and keeps the warm steady
@@ -121,6 +124,7 @@ func (r *parserCoreFreshFullRunner) executeSchedulerOpenWithObserver(
 	// this fresh session. The default path remains false and allocation-free.
 	r.options.recordDropCohortCertificates = r.certificateAdmissionEnabled
 	r.options.recordDropCohortFrontiers = r.frontierRecordingEnabled
+	r.options.verifyDropCohortFrontiers = r.frontierVerificationEnabled
 	// B3 stage S3: force the shared token source's error-run lexing on when
 	// native compact recovery is admitted, so a genuinely unlexable byte run
 	// surfaces as its own errorSymbol token (parser_api.go's

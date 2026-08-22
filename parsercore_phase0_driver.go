@@ -65,6 +65,9 @@ type DiagnosticParserCorePrefixOptions struct {
 	// recordDropCohortFrontiers enables only the D6a frontier producer. It does
 	// not enable historical certificate authentication or admission behavior.
 	recordDropCohortFrontiers bool
+	// verifyDropCohortFrontiers enables the D6b consumer only for a private
+	// focused verifier run. The default remains false.
+	verifyDropCohortFrontiers bool
 	MaxDispatches             uint64
 	MaxTokens                 uint64
 	Limits                    core.Limits
@@ -3288,6 +3291,9 @@ func (s *diagnosticParserCoreGenericScheduler) applyCompactEOFRecoveryAdmission(
 			return rollback(publishErr)
 		}
 	}
+	if consumeErr := s.consumeDropCohortFrontierOwned(indices); consumeErr != nil {
+		return rollback(consumeErr)
+	}
 	if dropErr := s.dropGenericNoActionHeads(indices); dropErr != nil {
 		return rollback(dropErr)
 	}
@@ -5838,6 +5844,9 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 					return nil, err
 				}
 			}
+			if err := s.consumeDropCohortFrontierOwned(noActionIndices); err != nil {
+				return nil, err
+			}
 			return nil, s.dropGenericNoActionHeads(noActionIndices)
 		}
 		if len(noActionIndices) != 0 {
@@ -5954,6 +5963,9 @@ func (s *diagnosticParserCoreGenericScheduler) dispatchPassActive() (*diagnostic
 			if err := s.publishDropCohortFrontierOwned(noActionIndices); err != nil {
 				return nil, err
 			}
+		}
+		if err := s.consumeDropCohortFrontierOwned(noActionIndices); err != nil {
+			return nil, err
 		}
 		return nil, s.dropGenericNoActionHeads(noActionIndices)
 	}
@@ -7065,11 +7077,10 @@ func (s *diagnosticParserCoreGenericScheduler) publishDropCohortFrontierOwned(dr
 	if err != nil {
 		return err
 	}
-	// Keep the authenticated handle on every current header. The no-action
-	// consumer can then carry the producer result into D6b without enabling
-	// admission or verifier work in D6a.
+	// Replace every current header sequence with this publication result. A
+	// zero result must clear stale reduction state before the no-action drop.
 	for index := range s.headers {
-		s.headers[index].frontierSequence = mergeDiagnosticParserCoreFrontier(s.headers[index].frontierSequence, sequence)
+		s.headers[index].frontierSequence = sequence
 	}
 	return nil
 }
@@ -7110,6 +7121,53 @@ func (s *diagnosticParserCoreGenericScheduler) attachDiagnosticParserCoreFrontie
 			s.headers[index].frontierSequence = mergeDiagnosticParserCoreFrontier(s.headers[index].frontierSequence, sequence)
 		}
 	}
+}
+
+// consumeDropCohortFrontierOwned authenticates the current frontier before a
+// no-action drop mutates the scheduler headers. The private option stays off.
+func (s *diagnosticParserCoreGenericScheduler) consumeDropCohortFrontierOwned(indices []int) error {
+	if s == nil || !s.options.verifyDropCohortFrontiers {
+		return nil
+	}
+	if s.compact == nil || s.freshSessionOwner == nil {
+		return errors.New("parser-core phase zero: D6b frontier consumer requires an owned fresh session")
+	}
+	if len(s.headers) < 2 || len(s.headers) > diagnosticParserCoreFrontierParticipantCap {
+		return errors.New("parser-core phase zero: D6b frontier consumer requires a bounded multi-participant frontier")
+	}
+	sequence := uint32(0)
+	var heads [diagnosticParserCoreFrontierParticipantCap]core.Head
+	var refs [diagnosticParserCoreFrontierParticipantCap]core.DropCohortRefSet
+	for index, header := range s.headers {
+		if header.frontierSequence == 0 {
+			return errors.New("parser-core phase zero: D6b frontier consumer requires a nonzero frontier sequence")
+		}
+		if sequence == 0 {
+			sequence = header.frontierSequence
+		} else if header.frontierSequence != sequence {
+			return errors.New("parser-core phase zero: D6b frontier consumer requires one common frontier sequence")
+		}
+		heads[index] = header.head
+		refs[index] = header.dropCohortRefs
+	}
+	electionSequence := s.electionIndex + 1
+	if electionSequence <= 0 {
+		return errors.New("parser-core phase zero: D6b frontier consumer has no election sequence")
+	}
+	owner := *s.freshSessionOwner
+	token, ok := s.dropCohortFrontierTokenOwned(owner)
+	if !ok {
+		return errors.New("parser-core phase zero: D6b frontier consumer could not rebuild the frontier token")
+	}
+	return s.compact.ConsumeDropCohortFrontierSequenceOwned(
+		owner,
+		uint64(sequence),
+		uint64(electionSequence),
+		token,
+		heads[:len(s.headers)],
+		refs[:len(s.headers)],
+		indices,
+	)
 }
 
 // dropGenericNoActionHeads removes the paused/no-action heads named by indices.

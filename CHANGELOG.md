@@ -19,6 +19,9 @@ for tags and release notes while still in `0.x`.
   and full derivation. Roll back consumed-state journals. Leave driver and
   admission paths inactive.
 
+- Add default-off D6b driver verification before no-action drops. Keep route
+  admission and production drops disabled.
+
 ### Removed
 
 - Swift ternary expressions now come directly from the regenerated grammar

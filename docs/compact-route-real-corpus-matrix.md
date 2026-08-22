@@ -1,8 +1,8 @@
 # Compact route real-corpus matrix
 
 Current evidence date: 2026-08-22.
-Current base commit: `9ff47f2c` from `main`.
-Current candidate base commit: `9ff47f2c`.
+Current base commit: `f298328a` from `main`.
+Current candidate base commit: `f298328a`.
 
 ## Current bounded result
 
@@ -74,6 +74,12 @@ This receipt does not graduate the route and does not verify D6b.
 D6b adds a default-off authenticated internal consumer for complete frontiers.
 It does not activate the route driver, admission, or production drop wiring.
 
+The driver verifier collects exact current heads and references. It requires
+one common nonzero frontier sequence, rebuilds the frontier token, and consumes
+the authenticated frontier immediately before each of the three drop sites.
+Zero or mixed sequences fail closed. The verifier remains default-off, and the
+route remains ungraduated.
+
 The consumer enforces these contracts:
 
 - Authenticate the owner, epoch, election, token, frontier seal, and ordered records.
@@ -82,12 +88,21 @@ The consumer enforces these contracts:
 - Match the exact survivor reference and compare action and full derivation identity, metadata, and bytes.
 - Journal the consumed state only after proof succeeds, then restore it through checkpoint rollback.
 
-The focused Docker gates passed:
+The focused Docker gate results are:
 
 | Target | Result | Artifact |
 |---|---|---|
 | `TestG18D6b` | PASS, exit 0 | `harness_out/docker/20260822T101332Z-d6b-proof-tests-v4` |
 | `TestG18DropCohortFrontier` plus `TestG18D6b` | PASS, exit 0 | `harness_out/docker/20260822T101347Z-d6b-frontier-regression-v4` |
+| `TestG18D6bDriver` | PASS, exit 0, no out-of-memory (OOM), no timeout | `harness_out/docker/20260822T123532Z-d6b-driver-refresh-v19` |
+| `TestG18D6aProducerTelemetry/go/language` | PASS, exit 0, no OOM, no timeout | `harness_out/docker/20260822T123627Z-d6a-go-language-refresh-v21` |
+| `TestG18D6aProducerTelemetry/erlang/macro_expanded_top_level_function` | PASS, exit 0, no OOM, no timeout | `harness_out/docker/20260822T123634Z-d6a-erlang-refresh-v22` |
+| Default no-tag compile | PASS, exit 0, no OOM, no timeout | `harness_out/docker/20260822T123642Z-d6b-no-tag-refresh-v23` |
+| Combined D6a/D6b gate | FAIL, exit 1, no OOM, no timeout | `harness_out/docker/20260822T123547Z-d6b-d6a-combined-refresh-v20` |
+| Combined D6a/D6b gate | FAIL, exit 1, no OOM, no timeout | `harness_out/docker/20260822T123655Z-d6b-d6a-combined-refresh-v24` |
+
+Both combined gates failed only in the documented process-global pool telemetry comparison.
+The affected subtests changed between runs. The isolated targets passed. No OOM or timeout occurred.
 
 The matrix counts and performance counts remain unchanged.
 This evidence does not graduate the route or wire production drops.
