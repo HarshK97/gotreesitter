@@ -744,6 +744,105 @@ measured before tranche B9 landed, correctly showing `grammargen_lr`
 diagnostic-lane only at that time); it extends the same methodology to the
 newly shipped-route-eligible fixture.
 
+## 2026-08-22 P24a memo-probe performance receipt
+
+Status: **NO-GO**. Do not ship the candidate code.
+
+The receipt uses base commit `6c94426b69f5aa106873b0d667dd4112acc138f9`.
+The candidate changes only these files:
+
+- `parser_recover_c.go`
+- `parser_recover_c_test.go`
+
+The full candidate diff SHA-256 is
+`d56566edb8d6587a13935dc13bc173db892b099950fb612f5c95c688f93cdeea`.
+Compute it with:
+
+```text
+git diff --no-ext-diff --binary 6c94426b69f5aa106873b0d667dd4112acc138f9 -- parser_recover_c.go parser_recover_c_test.go | sha256sum
+```
+
+### Accepted comparison
+
+The accepted publication used 20 seeds and 40 isolated benchmark processes.
+Each seed ran one baseline process and one candidate process.
+Odd seeds ran baseline first. Even seeds ran candidate first.
+Each process used `GOMAXPROCS=1`, `-count=1`, `-benchtime=750ms`, and
+`-benchmem`. The benchmark expression selected the three canonical controls.
+
+All 40 benchmark processes passed and emitted 120 benchmark rows.
+No run reported an out-of-memory event, timeout, panic, or contamination
+marker.
+
+The focused Docker gate passed at
+`/tmp/gts-p24a-cnode-memo-probe/harness_out/docker/20260822T170841Z-p24a-refresh-6c94426b-focused15-corrected-20260822`.
+The historical `focused15` label is not a test count. The command ran 17
+top-level tests and 20 tests when its three subtests were counted.
+
+Exclude both prior attempts from this receipt.
+Exclude the earlier focused attempt at
+`/tmp/gts-p24a-cnode-memo-probe/harness_out/docker/20260822T170828Z-p24a-refresh-6c94426b-focused15-20260822`.
+Its expression ran only five non-memo tests.
+Exclude the quarantined publication at
+`/tmp/gts-p24a-publication-20260822T170915Z`.
+It contains the `QUARANTINED` marker and no accepted benchmark rows.
+
+### Benchstat results
+
+The following values are benchstat medians from
+`/tmp/gts-p24a-analysis-20260822T171127Z/benchstat.txt`.
+
+| Benchmark | Baseline | Candidate | p-value | Result |
+|---|---:|---:|---:|---|
+| `BenchmarkGoParseIncrementalNoEditDFA` | 2.342n | 2.349n | 0.401 | No significant change |
+| `BenchmarkGoParseIncrementalSingleByteEditDFA` | 721.2n | 727.9n | p<0.001 | **+0.93% regression** |
+| `BenchmarkGoParseFullDFA` | 6.604m | 6.620m | 0.242 | No significant change |
+
+The geomean change is +0.48%. The single-byte edit regression is significant.
+
+### Paired results
+
+The paired means use one baseline and one candidate value for each seed.
+Each interval is a 95% paired confidence interval.
+
+| Benchmark | Mean delta | 95% confidence interval | Relative mean |
+|---|---:|---:|---:|
+| `BenchmarkGoParseIncrementalNoEditDFA` | +0.00345 ns/op | [-0.001566, +0.008466] ns/op | +0.1486% |
+| `BenchmarkGoParseIncrementalSingleByteEditDFA` | +5.79 ns/op | [+3.607, +7.973] ns/op | +0.8031% |
+| `BenchmarkGoParseFullDFA` | +11,140.35 ns/op | [-18,442, +40,722] ns/op | +0.1718% |
+
+The order split reports candidate versus baseline means:
+
+| Benchmark | Odd seeds, baseline first | Even seeds, candidate first |
+|---|---:|---:|
+| `BenchmarkGoParseIncrementalNoEditDFA` | +0.077% | +0.218% |
+| `BenchmarkGoParseIncrementalSingleByteEditDFA` | +0.769% | +0.834% |
+| `BenchmarkGoParseFullDFA` | +0.099% | +0.238% |
+
+The candidate remains slower in both orders. The order split does not invert.
+
+### Memory and decision
+
+Incremental benchmarks use 0 B/op and 0 allocations per operation in both
+variants. Full parsing uses 50.50 KiB/op in both variants and 4 allocations
+per operation in both variants. Benchstat reports p=0.066 for full B/op and
+p=1.000 for every allocation comparison.
+
+Use this reject rule: treat the first statistically significant positive
+delta as the regression point. Reject a candidate when a required lane has
+such a delta. Also reject an out-of-memory event, timeout, contamination
+marker, or correctness failure.
+
+P24a fails this rule because the single-byte edit lane is +0.93% slower at
+p<0.001. Its paired interval is wholly positive. No code ships from this
+candidate.
+
+### Receipt sources
+
+- Publication: `/tmp/gts-p24a-publication-20260822T171127Z`
+- Analysis: `/tmp/gts-p24a-analysis-20260822T171127Z/benchstat.txt`
+- Focused Docker gate: `/tmp/gts-p24a-cnode-memo-probe/harness_out/docker/20260822T170841Z-p24a-refresh-6c94426b-focused15-corrected-20260822`
+
 ## Caveats
 
 - This is one run, on one noisy shared host, not a sealed-epoch,

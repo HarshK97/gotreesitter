@@ -69,6 +69,12 @@ for tags and release notes while still in `0.x`.
 - End recovery convergence after a clean condense. Pending forks no longer
   keep clean C initializer suffixes on the recovery merge path.
 
+### Performance
+
+- Record the P24a memo-probe benchmark as a NO-GO. The single-byte edit lane is
+  0.93% slower with p<0.001. Do not ship the two-file candidate. See
+  `docs/perf-attribution.md` for the receipt.
+
 ## [0.51.0] - 2026-08-16
 
 ### Added
