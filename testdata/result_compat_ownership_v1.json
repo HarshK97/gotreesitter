@@ -1633,7 +1633,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "0000000000000000000000000000000000000000",
+      "retired_commit": "cca7215444b29aea8a7046406a928a263fddde0f",
       "receipt_refs": [
         "grammars/ledger_retirement_route_receipt_test.go",
         "cgo_harness/ledger_retirement_parity_test.go"
