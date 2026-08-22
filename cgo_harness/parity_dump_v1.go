@@ -176,6 +176,14 @@ func firstDivergenceDumpV1(goNode *gotreesitter.Node, goLang *gotreesitter.Langu
 			CValue:   fmt.Sprintf("%v", cNode.IsExtra()),
 		}
 	}
+	if goNode.IsMissing() != cNode.IsMissing() {
+		return &DumpV1Divergence{
+			Path:     path,
+			Category: "missing",
+			GoValue:  fmt.Sprintf("%v", goNode.IsMissing()),
+			CValue:   fmt.Sprintf("%v", cNode.IsMissing()),
+		}
+	}
 	if goNode.HasError() != cNode.HasError() {
 		return &DumpV1Divergence{
 			Path:     path,
