@@ -13,21 +13,21 @@ without updating that registry.
 
 ## Current denominator
 
-At exact main commit `d530d969429550555a384525352120138ef6f05d`, the v1
+At exact main commit `f5adfc7091bad6f8adb5088a32f3b2912561fc72`, the v1
 registry freezes the current source and registry:
 
-- 32 explicit `runLanguageResultCompatibility` switch arms;
-- 34 dispatcher languages across those arms;
+- 31 explicit `runLanguageResultCompatibility` switch arms;
+- 33 dispatcher languages across those arms;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms;
 - zero post-finalization languages.
 
-The registry contains 33 live entries and 55 retired entries. The live entries
-name 36 language labels. Shared switch arms account for the label difference.
+The registry contains 32 live entries and 56 retired entries. The live entries
+name 35 language labels. Shared switch arms account for the label difference.
 The retired count includes the Swift ternary, JavaScript dynamic-import, Kotlin
 interpolated-call, Bash generated-command assignment, Ninja recovery, and
-Ledger recovery arms.
+Ledger recovery, and JSDoc recovery arms.
 The 2026-08-22 normalization checkpoint keeps the DTD entry live. See the
 [checkpoint receipt](root-normalization-retirement.md#2026-08-22-normalization-checkpoint).
 The registry covers
@@ -93,11 +93,11 @@ directories: 7 inert arms and 13 active arms. Its exact log is:
 
 `harness_out/docker/20260811T222732Z-a0-arm-census/container.log`
 
-The corpus census does not cover these 19 live arms:
+The corpus census does not cover these 18 live arms:
 
 `dispatch.ada`, `dispatch.apex`, `dispatch.authzed`, `dispatch.bitbake`,
-`dispatch.cooklang`, `dispatch.corn`, `dispatch.doxygen`, `dispatch.jsdoc`,
-`dispatch.dtd`, `dispatch.enforce`, `dispatch.fidl`, `dispatch.hlsl`,
+`dispatch.cooklang`, `dispatch.corn`, `dispatch.doxygen`, `dispatch.dtd`,
+`dispatch.enforce`, `dispatch.fidl`, `dispatch.hlsl`,
 `dispatch.hyprlang`, `dispatch.ql`, `dispatch.solidity`, `dispatch.templ`,
 `dispatch.wgsl`, `dispatch.wolfram`,
 and `predicate.cobol-exact`.
@@ -246,6 +246,13 @@ The exact witnesses and digests are:
 
 Reopen the entry if a future Ledger witness rewrites a node or differs on
 any production, compact, forest, incremental, or locked C route.
+
+The JSDoc recovery arm also retired. Native reduction emits both producer
+witnesses without rewrites. Raw and production match locked C node for node,
+including fields, spans, points, flags, and deep digests.
+
+The focused route receipt covers compact fallback or direct admission, forest
+fallback, and incremental fallback. Reopen the entry if any route diverges.
 
 The live probes parse each source without result compatibility.
 They also compare census-enabled output with normal production output.

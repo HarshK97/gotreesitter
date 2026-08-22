@@ -17,7 +17,6 @@
     "doxygen",
     "dtd",
     "hlsl",
-    "jsdoc",
     "solidity",
     "templ",
     "wgsl",
@@ -325,36 +324,6 @@
       "output_path": "testdata/dispatcher_census_a0/hlsl/small__atomic_cast1.hlsl"
     },
     {
-      "language": "jsdoc",
-      "bucket": "large",
-      "bytes": 6492,
-      "sha256": "fdb568528f96afc6beeb588742d5e2916dc1ee78ab60e8271dd0ec8d326daa01",
-      "source_repo": "https://github.com/lodash/lodash",
-      "source_commit": "a02353279093cca0fea1c8cc468ffbf03bb3485b",
-      "source_path": "lodash.js",
-      "output_path": "testdata/dispatcher_census_a0/jsdoc/large__00203-402411f62d3e.jsdoc"
-    },
-    {
-      "language": "jsdoc",
-      "bucket": "medium",
-      "bytes": 2253,
-      "sha256": "edc73735736f9beec01d701bf19934035dd8e9a50a2378f016402d06c049797b",
-      "source_repo": "https://github.com/lodash/lodash",
-      "source_commit": "a02353279093cca0fea1c8cc468ffbf03bb3485b",
-      "source_path": "lodash.js",
-      "output_path": "testdata/dispatcher_census_a0/jsdoc/medium__00559-2529dc7af514.jsdoc"
-    },
-    {
-      "language": "jsdoc",
-      "bucket": "small",
-      "bytes": 292,
-      "sha256": "064c7aa7f9bd49672a3d5c717e855d0c405d4ac0e8037b151a3faffa62866d77",
-      "source_repo": "https://github.com/lodash/lodash",
-      "source_commit": "a02353279093cca0fea1c8cc468ffbf03bb3485b",
-      "source_path": "fp/_baseConvert.js",
-      "output_path": "testdata/dispatcher_census_a0/jsdoc/small__00010-b09f56666a84.jsdoc"
-    },
-    {
       "language": "solidity",
       "bucket": "large",
       "bytes": 64872,
@@ -584,17 +553,6 @@
       "nodes_visited": 100424,
       "nodes_rewritten": 0,
       "error_roots": 1,
-      "parse_errors": 0
-    },
-    {
-      "language": "jsdoc",
-      "arm_id": "dispatch.jsdoc",
-      "files": 3,
-      "checked": 3,
-      "run": 3,
-      "nodes_visited": 169,
-      "nodes_rewritten": 0,
-      "error_roots": 2,
       "parse_errors": 0
     },
     {
