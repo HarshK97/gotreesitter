@@ -275,6 +275,109 @@ The focused Docker artifacts are:
 - `harness_out/docker/20260822T202324Z-doxygen-blocker-registry-a0`;
 - `harness_out/docker/20260822T202335Z-doxygen-blocker-census`.
 
+## 2026-08-22 Apex blocker receipt
+
+Status: `NO-GO`. `KEEP LIVE`: `dispatch.apex`.
+
+Base commit: `f42b88ac9014537d20d3edd76e2c9caa4330a579`.
+
+Select Apex next because its registry entry has four witnesses and the
+strongest remaining focused route evidence. The existing classic-route tests
+and the A3 sweep report no clean-route divergence.
+
+The registry denominator has 31 dispatcher arms, 33 dispatcher languages, and
+one predicate. It has zero generic passes, zero post-finalization arms, zero
+post-finalization languages, 32 live entries, and 56 retired entries.
+
+The A0 manifest has 14 languages and 14 receipts. It includes Apex with three
+files, three checked, three run, and zero rewrites. Only the seven-fixture
+tracked census excludes Apex. The full real-corpus census is unavailable
+because `cgo_harness/corpus_real` is absent.
+
+The Apex A3 sweep covers 25 constructed sources. It accepts 21 compact routes
+and declines four routes. It reports zero unadjudicated divergences. The real
+source count is zero because Apex has no `corpus_real` directory.
+
+The registry names these four Apex witness families:
+
+- `cgo_harness/parity_cgo_test.go`;
+- `cgo_harness/apex_generic_local_parity_test.go`;
+- `cgo_harness/apex_a3_certification_sweep_test.go`;
+- `grammars/apex_class_literal_election_native_regression_test.go`.
+
+The isolated route receipt adds five clean witnesses and three malformed
+witnesses. Every clean raw, production, compact, and incremental tree matches
+locked C. The raw, production, compact, and incremental routes report zero
+`dispatch.apex` rewrites for every clean witness.
+
+| Witness | Bytes | Source SHA-256 | Clean Go and locked C deep digest |
+| --- | ---: | --- | --- |
+| `registered-class-literal-alias` | 69 | `67d9865508abbd1a9640cbc87d8cbddf72a4b183b745682fe34f503153abad00` | `35a8cb0bdcf84a752c313b3c9cf296d4bf2acaac240646e0b32578c858832096` |
+| `registered-qualified-class-literal-alias` | 70 | `6e38260d6936f22392a03eb1a8c15ac18e7d2998cc7b9ea6364093f146077601` | `74c5a760a71ec70ba65163ce52911f205bb92225f64c6948b34f997a78626069` |
+| `registered-nested-generic-local` | 107 | `9de68692750cafd3be200abcb067c465922abf43a11b440c6718252ebc4f3bd3` | `7d39cbbd2e1ae5eb23bfd005f4a893688c380f3366cc0c2894d66d752e93f0a3` |
+| `registered-right-shift` | 75 | `f4c26cdc96c489b569b5ed006a98f67e80218924e7d420a6417f19e44df30259` | `968e0352600624b2111c45a75dfc8d280da6b81d56d7c7bf3baf40ec91cf7dde` |
+| `positive-plain-field-access` | 73 | `1e1e8663abedb7b72258789988e431d5fe4381022fb8898694f5ea83c53e77eb` | `571dfece7252cfa94c445516451636440e1a85e7638c9974dee7d278b8c66ac8` |
+
+The compact route accepts the generic, shift, and plain-field witnesses. It
+declines both class-literal witnesses for material-acceptance-election.
+
+The forest route exposes two blockers:
+
+- `registered-class-literal-alias`: `dispatch.apex` rewrites 3 nodes. The Go
+  digest is `691872382855aafce9519a115ca30ac191c4a118d4ab7170e88e0193fd2f5bb6`.
+  Locked C is `35a8cb0bdcf84a752c313b3c9cf296d4bf2acaac240646e0b32578c858832096`.
+  The first difference is the empty Go field versus C field `object` at
+  `/parser_output/class_declaration[0]/class_body[3]/method_declaration[1]/block[3]/local_variable_declaration[1]/variable_declarator[1]/field_access[2]/identifier[0]`.
+- `registered-qualified-class-literal-alias`: the forest route rewrites 0
+  nodes. The Go digest is `d07fbabd2be95f7f44171295d492ca520128437dcc5dcd503ef4fa007f69edd3`.
+  Locked C is `74c5a760a71ec70ba65163ce52911f205bb92225f64c6948b34f997a78626069`.
+  The first difference is `class_literal` versus `field_access` at
+  `/parser_output/class_declaration[0]/class_body[3]/method_declaration[1]/block[3]/local_variable_declaration[1]/variable_declarator[1]/class_literal[2]`.
+
+The three malformed witnesses produce error roots. Their raw, production,
+compact, and incremental trees share one Go digest, but differ from C:
+
+- `malformed-missing-class-body`: source SHA-256
+  `a3bd159e3c54195698c93db0910da07c022a13b6f398abb5845bb88d6f5c7f86`;
+  Go `471d9b5ccdc6ec2d3edb1db54108f4c4c29bacbadabf1cb453b990b403c3dea9`;
+  C `5b51972dce75e001300bfe94099d660c769c2a81106f9b2334f09ba467b2efe0`;
+  first difference `/parser_output/ERROR[0]/void_type[4]`, empty Go field versus
+  C field `type`.
+- `malformed-class-literal-dot`: source SHA-256
+  `d2683c1e724221f18ea27687120a863e8aa80ce0af745a61f03934e2f4a405f6`;
+  Go `ed9ef8a595f589c87334ea8abfc5e41aba6664656ae1e58114fc16a6fed39bbd`;
+  C `a6bcbd2878b4529fc71604aa42cd1c21e07aa24e50cc57dc049b80dbd4b177d4`;
+  first difference at `/parser_output/class_declaration[0]/class_body[3]/method_declaration[1]/block[3]/local_variable_declaration[1]`, with 3 Go children and 4 C children.
+- `malformed-class-literal-close`: source SHA-256
+  `d876a4c358f1841cbe7e29994c96da39de55ecb79ff6f5c5cd5ecdc3e0fd3ad5`;
+  Go `27f56a9b801f65fade3be3ce9732f04ede66962a49a9bce3ec22395b0cc5cdfb`;
+  C `a64f5e5f4d06be1d29fc1805ca14ad59247904b1b43b45769dabe69c9f2f27db`;
+  first difference at `/parser_output/ERROR[0]`, with 10 Go children and 12 C children.
+
+The malformed compact route declines during recovery. The malformed forest
+route declines. Every incremental run uses old-tree reuse without unsupported
+fallback.
+
+The live positive controls are:
+
+- `TestApexClassLiteralElectionNeedsNoResultCompatibility`;
+- `TestApexClassLiteralElectionRoutesMatch`;
+- `TestApexClassLiteralForestStillNeedsResultCompatibility`;
+- `TestApexPlainFieldAccessUnaffected`.
+
+Do not retire `dispatch.apex`. The forest route still rewrites the unqualified
+class-literal witness and fails exact locked-C parity on both class-literal
+witnesses. The malformed recovery witnesses also fail exact parity.
+
+The focused Docker artifacts are:
+
+- `harness_out/docker/20260822T212753Z-apex-native`;
+- `harness_out/docker/20260822T212848Z-apex-a3`;
+- `harness_out/docker/20260822T213413Z-apex-registry-census`;
+- `harness_out/docker/20260822T213506Z-apex-blocker-routes-edited`;
+- `harness_out/docker/20260822T220318Z-apex-blocker-final`;
+- `harness_out/docker/20260822T220051Z-apex-census-corrected`.
+
 ## Ordered program
 
 ### R0 — inventory and containment
