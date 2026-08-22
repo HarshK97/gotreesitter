@@ -138,8 +138,8 @@ type InternObservationStats struct {
 //     barrier — normalizers mutate Node.children freely; the intern table
 //     is gone by then.
 
-// internKey is the lookup key for a single node shape. Keep the struct
-// tight: every reduce traverses this struct hot.
+// internKey is the lookup key for one node shape. Keep this struct tight
+// because every reduction traverses it on the hot path.
 type internKey struct {
 	// symbol identifies the node's grammar symbol. uint16 in the runtime;
 	// widened to uint32 here so the struct lays out cleanly without
@@ -148,10 +148,9 @@ type internKey struct {
 	// productionID disambiguates two reductions for the same symbol
 	// that produced different shapes (e.g. different rule alternatives).
 	productionID uint16
-	// flags captures isNamed/isExtra/hasError/isMissing in the same byte
-	// layout as Node.flags. Two nodes with the same shape but different
-	// flags MUST hash to different buckets.
-	flags uint8
+	// flags captures the runtime leaf flags used by the shape. Two nodes with
+	// different shape flags MUST hash to different buckets.
+	flags nodeFlags
 	// childCount is duplicated from len(childrenHash) to allow rejection
 	// without indexing the slice.
 	childCount uint8
@@ -172,6 +171,22 @@ type internKey struct {
 	// values. The pointers themselves live in the table's separate
 	// children-pointer arena; we compare them on hash collision.
 	childrenHash uint64
+}
+
+// internedLeafFlagsMask includes flags that affect a leaf's interned shape.
+// Fragility flags remain path metadata and never enter this key.
+const internedLeafFlagsMask nodeFlags = nodeFlagNamed |
+	nodeFlagExtra |
+	nodeFlagMissing |
+	nodeFlagHasError |
+	nodeFlagDirty |
+	nodeFlagFieldIDCacheComputed |
+	nodeFlagFieldIDCacheHasFieldIDs |
+	nodeFlagExternalScannerToken |
+	nodeFlagLexerSkippedPrefixAtSourceStart
+
+func internedLeafFlags(flags nodeFlags) nodeFlags {
+	return flags & internedLeafFlagsMask
 }
 
 // internEntry holds one intern table entry. The pointer comparison on
@@ -285,7 +300,7 @@ func buildKey(symbol Symbol, productionID uint16, flags nodeFlags, startByte, en
 	return internKey{
 		symbol:       uint32(symbol),
 		productionID: productionID,
-		flags:        uint8(flags),
+		flags:        internedLeafFlags(flags),
 		childCount:   uint8(len(children)),
 		startByte:    startByte,
 		endByte:      endByte,
@@ -302,7 +317,7 @@ func buildKeyFromNode(n *Node) internKey {
 	return internKey{
 		symbol:       uint32(n.symbol),
 		productionID: n.productionID,
-		flags:        uint8(n.flags),
+		flags:        internedLeafFlags(n.flags),
 		childCount:   uint8(len(n.children)),
 		startByte:    n.startByte,
 		endByte:      n.endByte,

@@ -33,3 +33,55 @@ func TestRealTokenAttachmentGapHonorsLexerSkipProvenanceWithIncludedRange(t *tes
 		t.Fatal("badStack.dead = false, want true for mismatched skip provenance")
 	}
 }
+
+func TestNormalizeRootSourceStartRequiresAcceptedSkipProvenance(t *testing.T) {
+	source := []byte{1, '0'}
+	newTree := func(provenance bool) *Node {
+		arena := newNodeArena(arenaClassFull)
+		child := newLeafNodeInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+		child.setLexerSkippedPrefixAtSourceStart(provenance)
+		root := newParentNodeInArena(arena, 2, true, []*Node{child}, nil, 0)
+		root.startByte = 1
+		root.startPoint = Point{Column: 1}
+		return root
+	}
+
+	accepted := newTree(true)
+	(&Parser{}).normalizeRootSourceStart(accepted, source)
+	if accepted.startByte != 1 || accepted.startPoint != (Point{Column: 1}) {
+		t.Fatalf("accepted root span moved across leading skipped byte: %d at %#v", accepted.startByte, accepted.startPoint)
+	}
+
+	unproven := newTree(false)
+	(&Parser{}).normalizeRootSourceStart(unproven, source)
+	if unproven.startByte != 0 || unproven.startPoint != (Point{}) {
+		t.Fatalf("unproven root span = %d at %#v, want pullback to 0", unproven.startByte, unproven.startPoint)
+	}
+}
+
+func TestLeadingSkipProvenanceSurvivesCompactAndPendingPayloads(t *testing.T) {
+	arena := newNodeArena(arenaClassFull)
+	noTreeLeaf := newNoTreeLeafNodeInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	noTreeLeaf.setLexerSkippedPrefixAtSourceStart(true)
+	if !stackEntryHasLeadingLexerSkippedPrefixAtSourceStart(newStackEntryNoTreeNode(1, noTreeLeaf), arena) {
+		t.Fatal("no-tree leaf lost leading skip provenance")
+	}
+
+	compactLeaf := newCompactFullLeafInArena(arena, 1, true, 1, 2, Point{Column: 1}, Point{Column: 2})
+	compactLeaf.setLexerSkippedPrefixAtSourceStart(true)
+	inner := newPendingParentInArena(arena, 2, true, 0,
+		[]stackEntry{newStackEntryCompactFullLeaf(1, compactLeaf)},
+		1, 2, Point{Column: 1}, Point{Column: 2}, false)
+	outer := newPendingParentInArena(arena, 3, true, 0,
+		[]stackEntry{newStackEntryPendingParent(1, inner)},
+		1, 2, Point{Column: 1}, Point{Column: 2}, false)
+	root := newParentNodeInArenaWithFinalChildRefs(arena, 4, true, outer.childRange, 0, false)
+	if !root.hasLeadingLexerSkippedPrefixAtSourceStart() {
+		t.Fatal("compact leaf provenance did not survive pending and final-child payloads")
+	}
+
+	compactLeaf.setLexerSkippedPrefixAtSourceStart(false)
+	if root.hasLeadingLexerSkippedPrefixAtSourceStart() {
+		t.Fatal("unproven compact leaf retained leading skip provenance")
+	}
+}

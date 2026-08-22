@@ -111,12 +111,13 @@ Do not change the registry until the matching candidate condition is complete.
 Status: producer fix accepted by the focused gates. Keep `dispatch.jsdoc` and
 `normalizeJsdocCompatibility` live until a separate retirement change.
 
-Base commit: `6c94426b69f5aa106873b0d667dd4112acc138f9`.
+Base commit: `a01f8037319c9f8f0ea12ae3c96523112656ce22`.
 
 The shared lexer now records the start of a skipped prefix on the emitted real
 token. The parser accepts that prefix as padding only when it begins at the
-stack byte offset. This change keeps the JSDoc normalizer and registry entry
-unchanged.
+stack byte offset. Root finalization preserves the span for an authenticated
+leading skip. It does not preserve an unproven non-trivia gap. This change
+keeps the JSDoc normalizer and registry entry unchanged.
 
 The focused Docker receipts pass for both parser-produced sources:
 
@@ -144,13 +145,21 @@ included-range regression, and the existing non-trivia gap rejection tests.
 The locked-C receipt compares symbols, fields, spans, points, extras, missing
 and error flags, and the deep digest for both witnesses.
 
+The Bash witness `e \\ cho hi` remains clean and matches locked C. The Erlang
+witnesses `\x010` and `\x100` remain clean with the exact root span `1..2`.
+
 The exact Docker artifacts are:
 
-- `harness_out/docker/20260822T173522Z-jsdoc-lexer-skip-provenance-routes-final3`
-- `harness_out/docker/20260822T171919Z-jsdoc-lexer-skip-provenance-locked-c`
-- `harness_out/docker/20260822T171937Z-jsdoc-lexer-skip-provenance-javascript`
-- `harness_out/docker/20260822T171958Z-jsdoc-lexer-skip-provenance-included-range`
-- `harness_out/docker/20260822T172019Z-jsdoc-lexer-skip-provenance-gap-boundary`
+- `harness_out/docker/20260822T181926Z-jsdoc-v20-layout-provenance-20260822`
+- `harness_out/docker/20260822T181942Z-jsdoc-v21-included-range-20260822`
+- `harness_out/docker/20260822T181951Z-jsdoc-v22-root-leading-gap-20260822`
+- `harness_out/docker/20260822T182000Z-jsdoc-v23-bash-gap-20260822`
+- `harness_out/docker/20260822T182017Z-jsdoc-v25-a0-manifest-20260822`
+- `harness_out/docker/20260822T182106Z-jsdoc-v26-erlang-locked-c-final-20260822`
+- `harness_out/docker/20260822T182215Z-jsdoc-v27-bash-locked-c-final-20260822`
+- `harness_out/docker/20260822T182230Z-jsdoc-v28-jsdoc-locked-c-final-20260822`
+- `harness_out/docker/20260822T182245Z-jsdoc-v29-js-unicode-final-20260822`
+- `harness_out/docker/20260822T182252Z-jsdoc-v30-gap-boundaries-final-20260822`
 
 Retire the JSDoc compatibility arm only after raw and production trees match
 locked C, both receipts report zero rewrites, and every listed route passes.

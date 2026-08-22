@@ -1518,8 +1518,11 @@ func (p *Parser) normalizeRootSourceStart(root *Node, source []byte) {
 		return
 	}
 	if firstSource < root.startByte {
-		// A root can start after a dropped leading extra. Pull it back to the
-		// first source token so the root still covers the lost token.
+		// Pull the root back unless the retained leftmost leaf proves that a
+		// DFA skip began at source byte zero and owns the prefix boundary.
+		if root.hasLeadingLexerSkippedPrefixAtSourceStart() {
+			return
+		}
 		root.startByte = firstSource
 		root.startPoint = advancePointByBytes(Point{}, source[:firstSource])
 		return

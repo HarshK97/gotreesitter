@@ -67,6 +67,9 @@ const (
 	nodeFlagFieldIDCacheComputed
 	nodeFlagFieldIDCacheHasFieldIDs
 	nodeFlagExternalScannerToken
+	// nodeFlagLexerSkippedPrefixAtSourceStart records authenticated DFA skip
+	// provenance on the retained leaf that starts after source byte zero.
+	nodeFlagLexerSkippedPrefixAtSourceStart
 	// nodeFlagFragileLeft / nodeFlagFragileRight mirror C tree-sitter's
 	// Subtree.fragile_left / fragile_right (subtree.h): a subtree is fragile
 	// on a given edge when the reduce that produced it happened under an
@@ -114,6 +117,48 @@ func (n *Node) isExternalScannerToken() bool {
 	return n != nil && n.hasFlag(nodeFlagExternalScannerToken)
 }
 func (n *Node) setExternalScannerToken(v bool) { n.setFlag(nodeFlagExternalScannerToken, v) }
+
+func (n *Node) setLexerSkippedPrefixAtSourceStart(v bool) {
+	n.setFlag(nodeFlagLexerSkippedPrefixAtSourceStart, v)
+}
+
+func (n *Node) hasLeadingLexerSkippedPrefixAtSourceStart() bool {
+	if n == nil {
+		return false
+	}
+	if n.hasFlag(nodeFlagLexerSkippedPrefixAtSourceStart) {
+		return true
+	}
+	for i := 0; i < nodeChildCountNoMaterialize(n); i++ {
+		entry, ok := nodeChildEntryAtNoMaterialize(n, i)
+		if !ok || stackEntryNodeIsExtra(entry) {
+			continue
+		}
+		return stackEntryHasLeadingLexerSkippedPrefixAtSourceStart(entry, n.ownerArena)
+	}
+	return false
+}
+
+func stackEntryHasLeadingLexerSkippedPrefixAtSourceStart(entry stackEntry, arena *nodeArena) bool {
+	if n := stackEntryNode(entry); n != nil {
+		return n.hasLeadingLexerSkippedPrefixAtSourceStart()
+	}
+	if n := stackEntryNoTreeNode(entry); n != nil {
+		return n.hasFlag(nodeFlagLexerSkippedPrefixAtSourceStart)
+	}
+	if n := stackEntryCompactFullLeaf(entry); n != nil {
+		return n.hasFlag(nodeFlagLexerSkippedPrefixAtSourceStart)
+	}
+	if parent := stackEntryPendingParent(entry); parent != nil {
+		for i := 0; i < parent.childEntryCount(); i++ {
+			child := parent.childEntry(arena, i)
+			if !stackEntryNodeIsExtra(child) {
+				return stackEntryHasLeadingLexerSkippedPrefixAtSourceStart(child, arena)
+			}
+		}
+	}
+	return false
+}
 func (n *Node) dirty() bool {
 	return n != nil && n.hasFlag(nodeFlagDirty)
 }

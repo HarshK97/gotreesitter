@@ -88,6 +88,148 @@ func TestJsdocLexerSkipProvenanceLockedCParity(t *testing.T) {
 	}
 }
 
+func TestErlangLeadingSkippedPrefixLockedCParity(t *testing.T) {
+	entry, ok := parityEntriesByName["erlang"]
+	if !ok {
+		t.Fatal("missing Erlang grammar entry")
+	}
+	language := entry.Language()
+	cLanguage, err := COracleLanguage("erlang")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		source []byte
+	}{
+		{name: "soh_digit", source: []byte("\x010")},
+		{name: "du_digit", source: []byte("\x100")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cParser := sitter.NewParser()
+			t.Cleanup(cParser.Close)
+			if err := cParser.SetLanguage(cLanguage); err != nil {
+				t.Fatal(err)
+			}
+			cTree := cParser.Parse(test.source, nil)
+			if cTree == nil || cTree.RootNode() == nil {
+				t.Fatal("C oracle returned a nil tree")
+			}
+			t.Cleanup(cTree.Close)
+			cDigest, err := COracleDeepDigest(cTree)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			rawParser := gotreesitter.NewParser(language)
+			raw, err := rawParser.ParseNoResultCompatibilityBenchmarkOnly(test.source)
+			if err != nil {
+				t.Fatalf("raw parse: %v", err)
+			}
+			t.Cleanup(raw.Release)
+			productionParser := gotreesitter.NewParser(language)
+			productionParser.SetAdmissionCandidateRoute(false)
+			production, err := productionParser.Parse(test.source)
+			if err != nil {
+				t.Fatalf("production parse: %v", err)
+			}
+			t.Cleanup(production.Release)
+			candidateParser := gotreesitter.NewParser(language)
+			candidateParser.SetAdmissionCandidateRoute(true)
+			candidate, err := candidateParser.Parse(test.source)
+			if err != nil {
+				t.Fatalf("candidate parse: %v", err)
+			}
+			t.Cleanup(candidate.Release)
+
+			for _, route := range []struct {
+				name string
+				tree *gotreesitter.Tree
+			}{
+				{name: "raw", tree: raw}, {name: "production", tree: production}, {name: "candidate", tree: candidate},
+			} {
+				root := route.tree.RootNode()
+				if root.HasError() {
+					t.Errorf("%s HasError=true, want false", route.name)
+				}
+				if root.StartByte() != 1 || root.EndByte() != 2 {
+					t.Errorf("%s root span=%d..%d, want 1..2", route.name, root.StartByte(), root.EndByte())
+				}
+				assertJsdocLockedCTreeExact(t, "erlang_"+route.name, route.tree, language, cTree, cDigest)
+			}
+			if cRoot := cTree.RootNode(); cRoot.HasError() || cRoot.StartByte() != 1 || cRoot.EndByte() != 2 {
+				t.Fatalf("C root has_error=%t span=%d..%d, want false and 1..2", cRoot.HasError(), cRoot.StartByte(), cRoot.EndByte())
+			}
+		})
+	}
+}
+
+func TestBashSkippedEscapeLockedCParity(t *testing.T) {
+	entry, ok := parityEntriesByName["bash"]
+	if !ok {
+		t.Fatal("missing Bash grammar entry")
+	}
+	language := entry.Language()
+	cLanguage, err := COracleLanguage("bash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := []byte("e \\ cho hi")
+	cParser := sitter.NewParser()
+	t.Cleanup(cParser.Close)
+	if err := cParser.SetLanguage(cLanguage); err != nil {
+		t.Fatal(err)
+	}
+	cTree := cParser.Parse(source, nil)
+	if cTree == nil || cTree.RootNode() == nil {
+		t.Fatal("C oracle returned a nil tree")
+	}
+	t.Cleanup(cTree.Close)
+	cRoot := cTree.RootNode()
+	if cRoot.HasError() {
+		t.Fatalf("C root HasError=true, want false")
+	}
+	cDigest, err := COracleDeepDigest(cTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rawParser := gotreesitter.NewParser(language)
+	raw, err := rawParser.ParseNoResultCompatibilityBenchmarkOnly(source)
+	if err != nil {
+		t.Fatalf("raw parse: %v", err)
+	}
+	t.Cleanup(raw.Release)
+	productionParser := gotreesitter.NewParser(language)
+	productionParser.SetAdmissionCandidateRoute(false)
+	production, err := productionParser.Parse(source)
+	if err != nil {
+		t.Fatalf("production parse: %v", err)
+	}
+	t.Cleanup(production.Release)
+	candidateParser := gotreesitter.NewParser(language)
+	candidateParser.SetAdmissionCandidateRoute(true)
+	candidate, err := candidateParser.Parse(source)
+	if err != nil {
+		t.Fatalf("candidate parse: %v", err)
+	}
+	t.Cleanup(candidate.Release)
+
+	for _, route := range []struct {
+		name string
+		tree *gotreesitter.Tree
+	}{
+		{name: "raw", tree: raw},
+		{name: "production", tree: production},
+		{name: "candidate", tree: candidate},
+	} {
+		if route.tree.RootNode().HasError() {
+			t.Errorf("%s HasError=true, want false", route.name)
+		}
+		assertJsdocLockedCTreeExact(t, "bash_skipped_escape_"+route.name, route.tree, language, cTree, cDigest)
+	}
+}
+
 func assertJsdocLockedCTreeExact(t *testing.T, label string, goTree *gotreesitter.Tree, goLang *gotreesitter.Language, cTree *sitter.Tree, wantDigest string) {
 	t.Helper()
 	goRoot := goTree.RootNode()
