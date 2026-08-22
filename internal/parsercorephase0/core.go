@@ -931,6 +931,7 @@ type Core struct {
 	dropCohortFrontiers            []dropCohortFrontierRecord
 	dropCohortFrontierParticipants []dropCohortFrontierParticipant
 	dropCohortFrontierMembers      []dropCohortFrontierMember
+	dropCohortFrontierJournal      []dropCohortFrontierMutation
 	dropCohortDerivationScratch    []byte
 	dropCohortPathScratch          []dropCohortPathStep
 	dropCohortEphemeralBytes       uint64
@@ -1089,6 +1090,7 @@ type checkpoint struct {
 	dropCohortFrontiers                                                       int
 	dropCohortFrontierParticipants                                            int
 	dropCohortFrontierMembers                                                 int
+	dropCohortFrontierJournal                                                 int
 	dropCohortEphemeralBytes                                                  uint64
 	dropCohortJournal                                                         int
 	dropCohortNextSequence                                                    uint64
@@ -1121,6 +1123,7 @@ type checkpoint struct {
 	dropCohortMapStoreCap                                                     int
 	dropCohortJournalStoreCap                                                 int
 	dropCohortJournalCap                                                      int
+	dropCohortFrontierJournalCap                                              int
 	dropCohortReservationsCap                                                 int
 	dropCohortRefSpillHeader                                                  []DropCohortRef
 	dropCohortActionsHeader                                                   []dropCohortActionIdentity
@@ -1135,6 +1138,7 @@ type checkpoint struct {
 	dropCohortFrontiersHeader                                                 []dropCohortFrontierRecord
 	dropCohortFrontierParticipantsHeader                                      []dropCohortFrontierParticipant
 	dropCohortFrontierMembersHeader                                           []dropCohortFrontierMember
+	dropCohortFrontierJournalHeader                                           []dropCohortFrontierMutation
 	dropCohortJournalHeader                                                   []dropCohortMutation
 	dropCohortReservationsHeader                                              []dropCohortReservation
 	transaction                                                               uint64
@@ -1198,6 +1202,7 @@ func (c *Core) markInto(mark *checkpoint) {
 		dropCohortFrontiers:                  len(c.dropCohortFrontiers),
 		dropCohortFrontierParticipants:       len(c.dropCohortFrontierParticipants),
 		dropCohortFrontierMembers:            len(c.dropCohortFrontierMembers),
+		dropCohortFrontierJournal:            len(c.dropCohortFrontierJournal),
 		dropCohortEphemeralBytes:             c.dropCohortEphemeralBytes,
 		dropCohortJournal:                    len(c.dropCohortJournal),
 		dropCohortNextSequence:               c.dropCohortNextSequence,
@@ -1230,6 +1235,7 @@ func (c *Core) markInto(mark *checkpoint) {
 		dropCohortMapStoreCap:                cap(c.dropCohortMapStore),
 		dropCohortJournalStoreCap:            cap(c.dropCohortJournalStore),
 		dropCohortJournalCap:                 cap(c.dropCohortJournal),
+		dropCohortFrontierJournalCap:         cap(c.dropCohortFrontierJournal),
 		dropCohortReservationsCap:            cap(c.dropCohortReservations),
 		dropCohortRefSpillHeader:             c.dropCohortRefSpill,
 		dropCohortActionsHeader:              c.dropCohortActions,
@@ -1244,6 +1250,7 @@ func (c *Core) markInto(mark *checkpoint) {
 		dropCohortFrontiersHeader:            c.dropCohortFrontiers,
 		dropCohortFrontierParticipantsHeader: c.dropCohortFrontierParticipants,
 		dropCohortFrontierMembersHeader:      c.dropCohortFrontierMembers,
+		dropCohortFrontierJournalHeader:      c.dropCohortFrontierJournal,
 		dropCohortJournalHeader:              c.dropCohortJournal,
 		dropCohortReservationsHeader:         c.dropCohortReservations,
 		transaction:                          c.nextTransaction,
@@ -1313,6 +1320,12 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 			c.dropCohortRecords[mutation.index] = mutation.before
 		}
 	}
+	for index := len(c.dropCohortFrontierJournal) - 1; index >= mark.dropCohortFrontierJournal; index-- {
+		mutation := c.dropCohortFrontierJournal[index]
+		if uint64(mutation.index) < uint64(len(c.dropCohortFrontiers)) {
+			c.dropCohortFrontiers[mutation.index].state = mutation.before
+		}
+	}
 	c.dropCohortActions = mark.dropCohortActionsHeader
 	c.dropCohortRecords = mark.dropCohortRecordsHeader
 	c.dropCohortMembers = mark.dropCohortMembersHeader
@@ -1325,6 +1338,7 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 	c.dropCohortFrontiers = mark.dropCohortFrontiersHeader
 	c.dropCohortFrontierParticipants = mark.dropCohortFrontierParticipantsHeader
 	c.dropCohortFrontierMembers = mark.dropCohortFrontierMembersHeader
+	c.dropCohortFrontierJournal = mark.dropCohortFrontierJournalHeader
 	c.dropCohortDerivationScratch = c.dropCohortDerivationScratch[:0]
 	c.dropCohortPathScratch = c.dropCohortPathScratch[:0]
 	c.dropCohortEphemeralBytes = mark.dropCohortEphemeralBytes
@@ -1739,6 +1753,7 @@ func (c *Core) Reset() error {
 	c.dropCohortFrontiers = c.dropCohortFrontiers[:0]
 	c.dropCohortFrontierParticipants = c.dropCohortFrontierParticipants[:0]
 	c.dropCohortFrontierMembers = c.dropCohortFrontierMembers[:0]
+	c.dropCohortFrontierJournal = c.dropCohortFrontierJournal[:0]
 	c.dropCohortDerivationScratch = c.dropCohortDerivationScratch[:0]
 	c.dropCohortPathScratch = c.dropCohortPathScratch[:0]
 	c.dropCohortEphemeralBytes = 0

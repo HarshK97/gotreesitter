@@ -1,8 +1,8 @@
 # Compact route real-corpus matrix
 
 Current evidence date: 2026-08-22.
-Current base commit: `69d5ccaf` from `main`.
-Current candidate base commit: `69d5ccaf`.
+Current base commit: `9ff47f2c` from `main`.
+Current candidate base commit: `9ff47f2c`.
 
 ## Current bounded result
 
@@ -68,6 +68,29 @@ Discard the earlier sequential full-set comparison because unrelated host
 tests overlapped the candidate run.
 
 This receipt does not graduate the route and does not verify D6b.
+
+## D6b internal-consumer evidence
+
+D6b adds a default-off authenticated internal consumer for complete frontiers.
+It does not activate the route driver, admission, or production drop wiring.
+
+The consumer enforces these contracts:
+
+- Authenticate the owner, epoch, election, token, frontier seal, and ordered records.
+- Reject producer-cap violations, blended references, malformed offsets, and mismatched reference sets.
+- Require one survivor member to match every dropped participant within one common cohort.
+- Match the exact survivor reference and compare action and full derivation identity, metadata, and bytes.
+- Journal the consumed state only after proof succeeds, then restore it through checkpoint rollback.
+
+The focused Docker gates passed:
+
+| Target | Result | Artifact |
+|---|---|---|
+| `TestG18D6b` | PASS, exit 0 | `harness_out/docker/20260822T101332Z-d6b-proof-tests-v4` |
+| `TestG18DropCohortFrontier` plus `TestG18D6b` | PASS, exit 0 | `harness_out/docker/20260822T101347Z-d6b-frontier-regression-v4` |
+
+The matrix counts and performance counts remain unchanged.
+This evidence does not graduate the route or wire production drops.
 
 ## Current fallback taxonomy
 

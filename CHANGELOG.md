@@ -15,6 +15,10 @@ for tags and release notes while still in `0.x`.
   bytes, digest, and checkpoint, and a seal. D6a does not enable admission,
   history, or verification.
 
+- Add default-off authenticated D6b consumption. Prove common survivor action
+  and full derivation. Roll back consumed-state journals. Leave driver and
+  admission paths inactive.
+
 ### Removed
 
 - Swift ternary expressions now come directly from the regenerated grammar
