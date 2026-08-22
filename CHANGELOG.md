@@ -22,6 +22,13 @@ for tags and release notes while still in `0.x`.
 - Add default-off D6b driver verification before no-action drops. Keep route
   admission and production drops disabled.
 
+- Keep D6b fail-closed for malformed frontier records. Require every dropped
+  participant to share one cohort with the survivor candidate before returning
+  a typed decline for a missing common action or exact derivation. Treat a
+  mixed-cohort frontier as a fatal error. Continue with the existing
+  alternative-set proof. The `grammargen_lr` witness uses production fallback
+  because that proof also declines. Keep direct D6b admission ungraduated.
+
 - Record the Swift #576 unsafe minimal and corpus divergences as open. Keep
   the focused locked-C receipt without changing parser behavior.
 

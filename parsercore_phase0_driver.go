@@ -2107,49 +2107,55 @@ func diagnosticParserCoreHeaderPathReceipts(compact *core.Core, headers []diagno
 }
 
 type diagnosticParserCoreGenericScheduler struct {
-	compact                       *core.Core
-	tokenSource                   *dfaTokenSource
-	scannerScratch                *[]byte
-	headers                       []diagnosticParserCoreHeader
-	token                         Token
-	checkpoint                    DiagnosticParserCoreScannerCheckpoint
-	checkpointBeforeID            core.CheckpointID
-	checkpointID                  core.CheckpointID
-	currentElection               DiagnosticParserCoreElection
-	electionIndex                 int
-	noLookaheadSteps              uint8
-	tokens                        uint64
-	dispatches                    uint64
-	branchOrder                   uint64
-	nextSeq                       uint64
-	nextCleanPathLineage          uint16
-	options                       DiagnosticParserCorePrefixOptions
-	receiptBacking                DiagnosticParserCoreGenericScheduler
-	receipt                       *DiagnosticParserCoreGenericScheduler
-	summaryHeaderScratch          []DiagnosticParserCoreHeaderReceipt
-	headerRollbackScratch         diagnosticParserCoreHeaderRollbackScratch
-	canonicalScratch              diagnosticParserCoreCanonicalScratch
-	dispatchScratch               diagnosticParserCoreDispatchScratch
-	conflictScratch               diagnosticParserCoreConflictScratch
-	reductionOutputs              []core.ReductionOutput
-	reductionReplacements         []diagnosticParserCoreHeader
-	classifiedBoundaries          []core.ClassifiedBoundary
-	condenseCandidates            []core.CondenseCandidate
-	electStates                   []StateID
-	electGLRStates                []StateID
-	work                          DiagnosticParserCoreGenericWork
-	epochProgress                 bool
-	acceptedHead                  core.Head
-	acceptedPayloads              []core.SubtreeID
-	eofRecoveryAdmission          compactEOFRecoveryAdmissionReceipt
-	conflictPostExecutionFault    func() error
-	extraPostExecutionFault       func() error
-	freshSessionOwner             *core.SchedulerTransactionToken
-	verifierHeads                 [32]core.Head
-	verifierRefs                  [32]core.DropCohortRef
-	verifierBound                 int
-	verifierHeaderPtr             *diagnosticParserCoreHeader
-	verifierInvocation            uint64
+	compact                    *core.Core
+	tokenSource                *dfaTokenSource
+	scannerScratch             *[]byte
+	headers                    []diagnosticParserCoreHeader
+	token                      Token
+	checkpoint                 DiagnosticParserCoreScannerCheckpoint
+	checkpointBeforeID         core.CheckpointID
+	checkpointID               core.CheckpointID
+	currentElection            DiagnosticParserCoreElection
+	electionIndex              int
+	noLookaheadSteps           uint8
+	tokens                     uint64
+	dispatches                 uint64
+	branchOrder                uint64
+	nextSeq                    uint64
+	nextCleanPathLineage       uint16
+	options                    DiagnosticParserCorePrefixOptions
+	receiptBacking             DiagnosticParserCoreGenericScheduler
+	receipt                    *DiagnosticParserCoreGenericScheduler
+	summaryHeaderScratch       []DiagnosticParserCoreHeaderReceipt
+	headerRollbackScratch      diagnosticParserCoreHeaderRollbackScratch
+	canonicalScratch           diagnosticParserCoreCanonicalScratch
+	dispatchScratch            diagnosticParserCoreDispatchScratch
+	conflictScratch            diagnosticParserCoreConflictScratch
+	reductionOutputs           []core.ReductionOutput
+	reductionReplacements      []diagnosticParserCoreHeader
+	classifiedBoundaries       []core.ClassifiedBoundary
+	condenseCandidates         []core.CondenseCandidate
+	electStates                []StateID
+	electGLRStates             []StateID
+	work                       DiagnosticParserCoreGenericWork
+	epochProgress              bool
+	acceptedHead               core.Head
+	acceptedPayloads           []core.SubtreeID
+	eofRecoveryAdmission       compactEOFRecoveryAdmissionReceipt
+	conflictPostExecutionFault func() error
+	extraPostExecutionFault    func() error
+	freshSessionOwner          *core.SchedulerTransactionToken
+	verifierHeads              [32]core.Head
+	verifierRefs               [32]core.DropCohortRef
+	verifierBound              int
+	verifierHeaderPtr          *diagnosticParserCoreHeader
+	verifierInvocation         uint64
+	// frontierProofVerified binds one successful D6b proof to the immediately
+	// following no-action drop. The state is reset with the scheduler and is
+	// consumed by dropGenericNoActionHeads.
+	frontierProofVerified         bool
+	frontierProofDropCount        uint8
+	frontierProofDropIndices      [diagnosticParserCoreFrontierParticipantCap]int
 	observer                      diagnosticParserCoreSeedObserver
 	stoppedAfterElection          bool
 	requireEOFPostNoLookaheadRoot bool
@@ -7126,7 +7132,12 @@ func (s *diagnosticParserCoreGenericScheduler) attachDiagnosticParserCoreFrontie
 // consumeDropCohortFrontierOwned authenticates the current frontier before a
 // no-action drop mutates the scheduler headers. The private option stays off.
 func (s *diagnosticParserCoreGenericScheduler) consumeDropCohortFrontierOwned(indices []int) error {
-	if s == nil || !s.options.verifyDropCohortFrontiers {
+	if s == nil {
+		return nil
+	}
+	s.frontierProofVerified = false
+	s.frontierProofDropCount = 0
+	if !s.options.verifyDropCohortFrontiers {
 		return nil
 	}
 	if s.compact == nil || s.freshSessionOwner == nil {
@@ -7159,7 +7170,10 @@ func (s *diagnosticParserCoreGenericScheduler) consumeDropCohortFrontierOwned(in
 	if !ok {
 		return errors.New("parser-core phase zero: D6b frontier consumer could not rebuild the frontier token")
 	}
-	return s.compact.ConsumeDropCohortFrontierSequenceOwned(
+	if len(indices) > len(s.frontierProofDropIndices) {
+		return errors.New("parser-core phase zero: D6b frontier consumer drop set exceeds its bounded receipt")
+	}
+	if err := s.compact.ConsumeDropCohortFrontierSequenceOwned(
 		owner,
 		uint64(sequence),
 		uint64(electionSequence),
@@ -7167,7 +7181,18 @@ func (s *diagnosticParserCoreGenericScheduler) consumeDropCohortFrontierOwned(in
 		heads[:len(s.headers)],
 		refs[:len(s.headers)],
 		indices,
-	)
+	); err != nil {
+		if errors.Is(err, core.ErrDropCohortFrontierNoCommonProof) {
+			// D6b declines this authenticated but heterogeneous frontier. Keep
+			// the proof flag clear so the existing alternative-set gate runs.
+			return nil
+		}
+		return err
+	}
+	copy(s.frontierProofDropIndices[:], indices)
+	s.frontierProofDropCount = uint8(len(indices))
+	s.frontierProofVerified = true
+	return nil
 }
 
 // dropGenericNoActionHeads removes the paused/no-action heads named by indices.
@@ -7176,6 +7201,11 @@ func (s *diagnosticParserCoreGenericScheduler) consumeDropCohortFrontierOwned(in
 // runs outside any rollback transaction, so mutating the s.headers backing is
 // safe.
 func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices []int) error {
+	frontierProofVerified := s.frontierProofMatchesDrop(indices)
+	defer func() {
+		s.frontierProofVerified = false
+		s.frontierProofDropCount = 0
+	}()
 	if len(indices) == 0 || len(indices) >= len(s.headers) {
 		return errors.New("parser-core phase zero: sibling-backed no-action drop removed the complete frontier")
 	}
@@ -7209,7 +7239,12 @@ func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices 
 	// to its stage 3 certificate precondition, not this gate.
 	convergedCoverageDrops, proved := uint64(0), metadataDrop
 	if !metadataDrop {
-		convergedCoverageDrops, proved = s.diagnosticParserCoreConvergedCoverageDropsV2(indices)
+		if frontierProofVerified {
+			convergedCoverageDrops = s.frontierProofConvergedDropCount(indices)
+			proved = true
+		} else {
+			convergedCoverageDrops, proved = s.diagnosticParserCoreConvergedCoverageDropsV2(indices)
+		}
 	}
 	if !metadataDrop && diagnosticParserCoreShadowCensusEnabled() {
 		// The retired scalar proof is evaluated only here, next to the v2
@@ -7266,6 +7301,28 @@ func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices 
 	s.work.add(&s.work.ConvergedReductionSplitDrops, convergedReductionSplitDrops)
 	s.work.add(&s.work.ConvergedCoverageDrops, convergedCoverageDrops)
 	return nil
+}
+
+func (s *diagnosticParserCoreGenericScheduler) frontierProofMatchesDrop(indices []int) bool {
+	if s == nil || !s.frontierProofVerified || len(indices) != int(s.frontierProofDropCount) {
+		return false
+	}
+	for index, drop := range indices {
+		if s.frontierProofDropIndices[index] != drop {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *diagnosticParserCoreGenericScheduler) frontierProofConvergedDropCount(indices []int) uint64 {
+	var count uint64
+	for _, index := range indices {
+		if index >= 0 && index < len(s.headers) && s.headers[index].convergedReductionSplit {
+			count++
+		}
+	}
+	return count
 }
 
 // DiagnosticBindDropCohortReferencesForTest binds opaque certificate handles

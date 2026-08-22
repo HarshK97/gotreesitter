@@ -92,6 +92,12 @@ type g18D6aCandidateOutcome struct {
 	ErrorType string
 }
 
+type g18D6bVerifierSnapshot struct {
+	VerifierElections uint64 `json:"verifier_elections"`
+	VerifierProofs    uint64 `json:"verifier_proofs"`
+	VerifierDeclines  uint64 `json:"verifier_declines"`
+}
+
 func g18D6aCloneLanguage(language *gts.Language) *gts.Language {
 	value := reflect.ValueOf(language).Elem()
 	clone := reflect.New(value.Type()).Elem()
@@ -392,5 +398,116 @@ func TestG18D6aKotlinControlsRemainNonCandidate(t *testing.T) {
 				t.Fatalf("Kotlin non-candidate parser consumed admission: %d/%d", routed, fallback)
 			}
 		})
+	}
+}
+
+func TestG18D6bGrammargenLRNoCommonDerivationFallsBack(t *testing.T) {
+	fixtures, err := benchfixtures.LoadGoFullParseFixtures()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture benchfixtures.LoadedFixture
+	for _, candidate := range fixtures {
+		if candidate.Fixture.ID == "grammargen_lr" {
+			fixture = candidate
+			break
+		}
+	}
+	if fixture.Fixture.ID != "grammargen_lr" {
+		t.Fatal("grammargen_lr fixture is unavailable")
+	}
+
+	language := g18D6aCloneLanguage(grammars.GoLanguage())
+	language.CompactConvergedReductionSplitDropsCertified = false
+	parser := gts.NewParser(language)
+	parser.SetAdmissionCandidateRoute(true)
+	gts.ResetAdmissionCandidateCountersForTest()
+	var snapshots []g18D6aObserverPayload
+	restore := parser.DiagnosticEnableDropCohortFrontierVerificationForTest(func(bytes []byte) {
+		snapshots = append(snapshots, g18D6aSnapshotDecode(t, bytes))
+	})
+	candidate, err := parser.Parse(fixture.Source)
+	restore()
+	if err != nil {
+		t.Fatalf("candidate parse: %v", err)
+	}
+	if candidate == nil {
+		t.Fatal("candidate parse returned nil tree")
+	}
+	t.Cleanup(candidate.Release)
+
+	routed, fallback := gts.AdmissionCandidateCounters()
+	wantFallbackReason := "compact route declined at no_action: converged-path reduction split no-action drop lacks alternative-set coverage by one non-blended survivor"
+	if routed != 0 || fallback != 1 || gts.AdmissionCandidateLastFallbackReason() != wantFallbackReason {
+		t.Fatalf("candidate route counters=%d/%d reason=%q, want 0/1 and %q", routed, fallback, gts.AdmissionCandidateLastFallbackReason(), wantFallbackReason)
+	}
+	targetSnapshot := -1
+	for index, snapshot := range snapshots {
+		g18D6aRequireCompleteFrontier(t, snapshot)
+		if g18D6aIsTargetDropFrontier(snapshot) {
+			if targetSnapshot >= 0 {
+				t.Fatalf("target frontier publications=%d, want 1", targetSnapshot+1)
+			}
+			targetSnapshot = index
+		}
+	}
+	if targetSnapshot < 0 {
+		t.Fatalf("frontier publications=%d, none bind the target drop", len(snapshots))
+	}
+
+	candidateInspection, err := benchfixtures.InspectGoTree(candidate.RootNode(), language)
+	if err != nil {
+		t.Fatalf("inspect candidate tree: %v", err)
+	}
+	if err := fixture.Fixture.VerifyDeepTreeDigest(candidateInspection.SHA256); err != nil {
+		t.Fatalf("candidate tree is not exact locked-C parity: %v", err)
+	}
+
+	productionLanguage := g18D6aCloneLanguage(grammars.GoLanguage())
+	productionParser := gts.NewParser(productionLanguage)
+	productionParser.SetAdmissionCandidateRoute(false)
+	production, err := productionParser.Parse(fixture.Source)
+	if err != nil {
+		t.Fatalf("production parse: %v", err)
+	}
+	if production == nil {
+		t.Fatal("production parse returned nil tree")
+	}
+	t.Cleanup(production.Release)
+	productionInspection, err := benchfixtures.InspectGoTree(production.RootNode(), productionLanguage)
+	if err != nil {
+		t.Fatalf("inspect production tree: %v", err)
+	}
+	if err := fixture.Fixture.VerifyDeepTreeDigest(productionInspection.SHA256); err != nil {
+		t.Fatalf("production tree is not exact locked-C parity: %v", err)
+	}
+	if candidateInspection.SHA256 != productionInspection.SHA256 {
+		t.Fatalf("candidate and production digests differ: candidate=%s production=%s", candidateInspection.SHA256, productionInspection.SHA256)
+	}
+
+	var telemetry g18D6bVerifierSnapshot
+	if err := json.Unmarshal(parser.DiagnosticDropCohortSnapshotForTest(), &telemetry); err != nil {
+		t.Fatalf("decode verifier telemetry: %v", err)
+	}
+	if telemetry.VerifierElections != 0 || telemetry.VerifierProofs != 0 || telemetry.VerifierDeclines != 0 {
+		t.Fatalf("verifier telemetry=%+v, want no D6b proof after the typed decline", telemetry)
+	}
+
+	publicationCount := len(snapshots)
+	gts.ResetAdmissionCandidateCountersForTest()
+	repeated, err := parser.Parse(fixture.Source)
+	if err != nil {
+		t.Fatalf("restored candidate parse: %v", err)
+	}
+	if repeated == nil {
+		t.Fatal("restored candidate parse returned nil tree")
+	}
+	t.Cleanup(repeated.Release)
+	routed, fallback = gts.AdmissionCandidateCounters()
+	if routed != 0 || fallback != 1 || gts.AdmissionCandidateLastFallbackReason() != wantFallbackReason {
+		t.Fatalf("restored candidate route counters=%d/%d reason=%q, want 0/1 and %q", routed, fallback, gts.AdmissionCandidateLastFallbackReason(), wantFallbackReason)
+	}
+	if len(snapshots) != publicationCount {
+		t.Fatalf("restored parse published new frontier telemetry: before=%d after=%d", publicationCount, len(snapshots))
 	}
 }

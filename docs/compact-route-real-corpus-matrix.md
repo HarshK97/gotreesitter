@@ -104,6 +104,36 @@ The focused Docker gate results are:
 Both combined gates failed only in the documented process-global pool telemetry comparison.
 The affected subtests changed between runs. The isolated targets passed. No OOM or timeout occurred.
 
+### Safe D6b decline
+
+D6a authenticates each frontier member independently. D6b also requires one common action and exact derivation.
+
+An authenticated frontier can place every dropped participant in one cohort with the survivor candidate.
+If it has no common proof, the consumer returns a typed decline.
+The scheduler then runs the existing alternative-set proof.
+
+A mixed-cohort frontier is not a safe decline. The consumer returns a fatal error and poisons the transaction.
+
+Keep every malformed, stale, foreign, resealed, blended, different-cohort, or otherwise unauthenticated frontier as a fatal error.
+Do not weaken exact derivation comparison.
+
+The `grammargen_lr` witness demonstrates this boundary:
+
+- D6a publishes two complete frontiers.
+- The target frontier has two members with equal actions and different derivation digests.
+- D6b declines the frontier without changing its state or journal.
+- The existing alternative-set proof declines, so production fallback serves the tree.
+- Candidate and production trees have equal locked-C deep digests.
+
+The focused Docker receipts are:
+
+- `harness_out/docker/20260822T184936Z-d6b-core-typed-decline-refresh-review7`
+- `harness_out/docker/20260822T184953Z-d6b-grammargen-lr-safe-decline-refresh-review8`
+- `harness_out/docker/20260822T185008Z-d6b-driver-positive-fatal-refresh-review9`
+- `harness_out/docker/20260822T185021Z-d6b-layout-budgets-refresh-review10`
+
+These receipts do not graduate direct D6b admission.
+
 The matrix counts and performance counts remain unchanged.
 This evidence does not graduate the route or wire production drops.
 
