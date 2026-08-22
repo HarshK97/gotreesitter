@@ -216,6 +216,65 @@ The focused gates pass. The provenance gate accepts retirement commit
 `dispatch.jsdoc` deletion evidence. Reopen this retirement if a future JSDoc
 witness rewrites a node or diverges from locked C on any covered route.
 
+## 2026-08-22 Doxygen blocker receipt
+
+Status: `NO-GO`. `KEEP LIVE`: `dispatch.doxygen`.
+
+Base commit: `97a7bde26bac9b1a110bbf9216cc681ca59cc5aa`.
+The accepted receipt was first recorded on `ed0568d9a822b1c83e7bb7e69b0e0f4b8ad529cf`.
+The initial probe used `0c34a681db29a3e8d27e488c5f26d6d7a5f02592`.
+
+The current registry denominator is 31 dispatcher arms and 33 dispatcher
+languages. It has one predicate, zero generic passes, zero post-finalization
+arms, zero post-finalization languages, 32 live entries, and 56 retired
+entries.
+The registry has 35 live language labels, or 34 after case folding.
+
+The real-corpus census covered 20 languages. It found 5 inert arms, 15 active
+arms, 14 uncovered registered arms, and 31 languages without a dispatcher arm.
+Doxygen remains uncovered because the mounted corpus has no Doxygen directory.
+The three dedicated A0 fixtures provide its current census evidence.
+
+The A0 manifest remains authenticated with 14 languages and 14 receipts. Its
+Doxygen receipt records 3 files, 2 checks, 2 runs, 4 visited nodes, zero
+rewrites, 3 error roots, and zero parse errors.
+
+The focused route receipt covers raw, production, compact, forest, and
+incremental routes for all three A0 files. Raw and production report zero
+rewrites for every file. The CMakeLists and example files record
+`dispatch.doxygen` with zero rewrites. The metrics file has no Doxygen pass
+record because its root is a whole-input `ERROR` node. Compact parsing falls
+back at the parser-core end-of-file check. Forest parsing falls back at
+`dead_end`. Incremental parsing falls back for the external scanner.
+
+The same receipt covers the historical childless and recovered witnesses. The
+named Doxygen pass rewrites 3 nodes for the childless witness and 14 nodes for
+the recovered witness. Each count remains exact on production, compact,
+forest-fallback, and incremental-fallback routes.
+
+The locked-C receipt keeps three A0 divergence classes exact:
+
+- `medium__CMakeLists.txt`: `/document`, category `type`, Go `document`, C
+  `ERROR`.
+- `medium__metrics.py`: `/ERROR`, category `shape`, Go `children=0`, C
+  `children=279`.
+- `small__example.cfg`: `/document`, category `type`, Go `document`, C
+  `ERROR`.
+
+The registered Doxygen smoke witness matches locked C exactly. Its raw and
+production digest is
+`1ae089a98760be594f06d0820951e01714097e99621cc2cd4428ce09ba867083`.
+
+Do not retire `dispatch.doxygen` until each known divergence closes, the
+historical rewrite counts reach zero, and every route matches locked C.
+
+The focused Docker artifacts are:
+
+- `harness_out/docker/20260822T202538Z-doxygen-blocker-routes-final`;
+- `harness_out/docker/20260822T202308Z-doxygen-blocker-locked-c`;
+- `harness_out/docker/20260822T202324Z-doxygen-blocker-registry-a0`;
+- `harness_out/docker/20260822T202335Z-doxygen-blocker-census`.
+
 ## Ordered program
 
 ### R0 — inventory and containment
