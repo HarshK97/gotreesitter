@@ -240,5 +240,9 @@ func TestSwiftUnsafeMinimalWitnessRemainsKnownCStructuralMismatch(t *testing.T) 
 	if diff == nil {
 		t.Fatal("Swift unsafe minimal witness digest differs without a structural divergence")
 	}
+	if diff.Path != "/source_file/property_declaration[0]/call_expression[3]/ERROR[1]" ||
+		diff.Category != "shape" || diff.GoValue != "children=0" || diff.CValue != "children=1" {
+		t.Fatalf("Swift unsafe minimal first divergence changed: %+v", *diff)
+	}
 	t.Logf("SWIFT_576_MINIMAL_C_WITNESS version=1 disposition=known_locked_C_structural_mismatch issue=#576 source_sha256=%s source_bytes=%d grammar=swift grammar_lock_commit=%s c_runtime=%s@%s c_grammar_repo=%s c_grammar_commit=%s c_grammar_artifact_sha256=%s go_blob_sha256=%s go_deep_sha256=%s c_deep_sha256=%s first_difference=%+v", wantSourceSHA256, len(source), identity.GrammarCommit, identity.RuntimeVersion, identity.RuntimeCommit, identity.GrammarRepo, identity.GrammarCommit, identity.GrammarArtifactSHA256, swiftGoBlobSHA256, goInspection.SHA256, cDigest, *diff)
 }
