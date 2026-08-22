@@ -4021,6 +4021,11 @@ func executeDiagnosticParserCoreGenericSchedulerFromSeedInto(
 			return compact.RunFreshSchedulerSession(func(owner core.SchedulerTransactionToken) error {
 				scheduler.freshSessionOwner = &owner
 				defer func() { scheduler.freshSessionOwner = nil }()
+				if options.recordDropCohortCertificates {
+					if err := compact.SetHistoricalCertificateAuthenticationOwned(owner, true); err != nil {
+						return err
+					}
+				}
 				if err := scheduler.persistHeaderLineageOwned(owner); err != nil {
 					return err
 				}

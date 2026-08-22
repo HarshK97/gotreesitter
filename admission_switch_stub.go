@@ -13,6 +13,12 @@ func (p *Parser) tryCompactFullParseRoute(_ []byte) (*Tree, bool, string) {
 	return nil, false, "compact candidate route compiled out (built with -tags gts_no_parsercorephase0)"
 }
 
+// DiagnosticEnableDropCohortCertificateAdmissionForTest is inert when the
+// compact parser build is disabled.
+func (p *Parser) DiagnosticEnableDropCohortCertificateAdmissionForTest() func() {
+	return func() {}
+}
+
 // admissionCandidateCompactStorageBytes is the emergency-build stub: the
 // compact engine is compiled out, so no cached runner and no compact storage
 // ever exist.

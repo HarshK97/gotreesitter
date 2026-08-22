@@ -33,6 +33,13 @@ func admissionCandidateLimits() core.Limits {
 	}
 }
 
+// dropCohortActivationToken identifies one private test activation without a
+// counter wrap. The non-zero payload keeps every allocation independently
+// addressable, even when an older runner is discarded.
+type dropCohortActivationToken struct {
+	marker byte
+}
+
 // newAdmissionCandidateRunner builds a fresh-full runner bound to p's own
 // language, external scanner, and DFA tables.
 func newAdmissionCandidateRunner(p *Parser) (*parserCoreFreshFullRunner, error) {
@@ -108,6 +115,36 @@ func (p *Parser) acquireAdmissionCandidateRunner() (*parserCoreFreshFullRunner, 
 	}
 	p.admissionCandidateRunner = runner
 	return runner, nil
+}
+
+// DiagnosticEnableDropCohortCertificateAdmissionForTest enables one cached
+// candidate parse for focused certificate tests. Production code never calls
+// this method, and the returned closure restores the runner before reuse.
+func (p *Parser) DiagnosticEnableDropCohortCertificateAdmissionForTest() func() {
+	if p == nil || !p.admissionCandidateFullParseEligible(nil, true) {
+		return func() {}
+	}
+	runner, err := p.acquireAdmissionCandidateRunner()
+	if err != nil || runner == nil {
+		return func() {}
+	}
+	token := &dropCohortActivationToken{marker: 1}
+	runner.certificateAdmissionToken = token
+	runner.certificateAdmissionEnabled = true
+	restored := false
+	return func() {
+		if restored {
+			return
+		}
+		restored = true
+		cached, ok := p.admissionCandidateRunner.(*parserCoreFreshFullRunner)
+		if !ok || cached == nil || cached.certificateAdmissionToken != token {
+			return
+		}
+		cached.certificateAdmissionEnabled = false
+		cached.certificateAdmissionToken = nil
+		cached.options.recordDropCohortCertificates = false
+	}
 }
 
 // admissionCandidateCompactStorageBytes reports p's cached admission-candidate
