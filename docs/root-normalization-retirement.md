@@ -69,6 +69,43 @@ year-directive recovery use the production fallback after that decline. The
 Ledger receipt records both forest routes and locked-C parity. Reopen Ledger
 retirement if a future witness differs on any covered route.
 
+## 2026-08-22 normalization checkpoint
+
+Status: NO-GO. Do not retire an entry from this checkpoint.
+
+Base commit: `d530d969429550555a384525352120138ef6f05d`.
+The current registry denominator is 32 dispatcher arms, 34 dispatcher
+languages, one predicate, zero generic passes, zero post-finalization arms,
+zero post-finalization languages, 33 live entries, 55 retired entries, and 36
+live language labels.
+
+The focused evidence keeps the DTD entry live.
+
+| Candidate | Exact passing subset | Current divergence | Evidence |
+| --- | --- | --- | --- |
+| DTD | `historical-large-dbits` raw and production digest `a1655ece34d0000ed54e2954faaf93c315fc86e9cea65430022fda9b33677e1d`; `historical-large-docbook` raw and production digest `5f61a372e602e6e0f772ad1a053e5cc42492add24bb045eef10370096d8cd04f` | `parser-produced-pe-reference-trigger`: `/extSubset/elementdecl[0]/ERROR[4]/Name[0]`, Go `error=true`, C `error=false`; `historical-medium-calstblx`: `/extSubset/AttlistDecl[31]/AttDef[3]/ERROR[3]/)[0]`, Go `error=true`, C `error=false` | `TestDTDDispatchRouteReceipts`; `TestDTDDispatchRetirementLockedCParity`; `harness_out/docker/20260822T164115Z`; `harness_out/docker/20260822T164122Z` |
+
+The DTD route receipt covers raw, production, compact, forest or forest-fallback,
+and incremental parses for all four sources. It requires equal production digests
+and zero dispatcher rewrites on every route.
+The known blocker tree digests are:
+
+- `parser-produced-pe-reference-trigger`: Go `3e32d101e13010d7e964bcd68524291d3439309022f5aeff218d1e1c20478f0c`; C `5c2393834cf7a941dfc5e0c86dacb344cb122822631b379e21f9bf607544c860`.
+- `historical-medium-calstblx`: Go `6aafeee4581dbcbea8dc807d04a56339d500c18fd7a9f034f885439fadaf2311`; C `6316281505e3891906174c07c691814c0b187d3619aa455fc01174efd2736a3e`.
+
+The route digests are:
+
+- `parser-produced-pe-reference-trigger`: `3e32d101e13010d7e964bcd68524291d3439309022f5aeff218d1e1c20478f0c`.
+- `historical-medium-calstblx`: `6aafeee4581dbcbea8dc807d04a56339d500c18fd7a9f034f885439fadaf2311`.
+- `historical-large-dbits`: `a1655ece34d0000ed54e2954faaf93c315fc86e9cea65430022fda9b33677e1d`.
+- `historical-large-docbook`: `5f61a372e602e6e0f772ad1a053e5cc42492add24bb045eef10370096d8cd04f`.
+
+Reopen DTD only after both known divergences close. Then retain exact raw,
+production, compact, forest, incremental, and locked-C receipts for all four
+sources.
+
+Do not change the registry until the matching candidate condition is complete.
+
 ## Ordered program
 
 ### R0 — inventory and containment
