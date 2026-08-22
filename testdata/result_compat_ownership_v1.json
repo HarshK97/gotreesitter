@@ -801,7 +801,7 @@
         "c_oracle": "retired_exact_receipt"
       },
       "status": "retired",
-      "retired_commit": "0000000000000000000000000000000000000000",
+      "retired_commit": "e074c5b22fafc12d587612404bd0b626a2ec628c",
       "receipt_refs": [
         "grammars/jsdoc_retirement_route_receipt_test.go",
         "cgo_harness/jsdoc_retirement_parity_test.go"

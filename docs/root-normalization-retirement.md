@@ -204,14 +204,17 @@ exactly.
 
 The focused Docker artifacts are:
 
-- `harness_out/docker/20260822T185601Z-jsdoc-retirement-routes`;
-- `harness_out/docker/20260822T185607Z-jsdoc-retirement-locked-c`;
-- `harness_out/docker/20260822T185704Z-jsdoc-retirement-census`;
-- `harness_out/docker/20260822T185637Z-jsdoc-retirement-registry`;
-- `harness_out/docker/20260822T185652Z-jsdoc-retirement-javascript-family`.
+- `harness_out/docker/20260822T193405Z-jsdoc-retirement-routes-main`;
+- `harness_out/docker/20260822T193425Z-jsdoc-retirement-locked-c-main`;
+- `harness_out/docker/20260822T193636Z-jsdoc-retirement-registry-provenance-main`;
+- `harness_out/docker/20260822T193645Z-jsdoc-retirement-census-provenance-main`;
+- `harness_out/docker/20260822T193504Z-jsdoc-retirement-javascript-family-main`;
+- `harness_out/docker/20260822T193619Z-jsdoc-retirement-provenance-main`.
 
-The focused gates pass. Reopen this retirement if a future JSDoc witness
-rewrites a node or diverges from locked C on any covered route.
+The focused gates pass. The provenance gate accepts retirement commit
+`e074c5b22fafc12d587612404bd0b626a2ec628c` and records deterministic
+`dispatch.jsdoc` deletion evidence. Reopen this retirement if a future JSDoc
+witness rewrites a node or diverges from locked C on any covered route.
 
 ## Ordered program
 

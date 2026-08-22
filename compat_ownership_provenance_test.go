@@ -22,6 +22,7 @@ var resultCompatCorrectedRetiredCommits = map[int]string{
 	12: "84aee737500e7b9e0365725fb7af18e059e9d9e5",
 	15: "16d4873e62d7eeff43cf61b552465e27eda87536",
 	18: "05cd86a0bb925078f833b69bac21effa3fcca657",
+	21: "e074c5b22fafc12d587612404bd0b626a2ec628c",
 	23: "ff3acd87af32d98ed0d05ddfe16d5430abbbcb4a",
 	24: "062fb1a130c15c030192bc23cdd0dd7eed6af18f",
 	25: "7c07270b3e98b691df5e9c8c6d10151cb8918b62",
@@ -96,6 +97,7 @@ var resultCompatRetirementFixtures = map[string]resultCompatRetirementFixture{
 	"dcb14a971284eedf064a08963455e940427f7dcc": {true, []string{"dispatch.kotlin.interpolated-call-expressions"}},
 	"db34ebb495d1cd0c6540428c7045ac032ac41a22": {true, []string{"dispatch.lua", "dispatch.make", "dispatch.zig"}},
 	"ddaed36e558d60d0e8e96bb9f6c59c0fb63c3b97": {true, []string{"dispatch.swift.ternary"}},
+	"e074c5b22fafc12d587612404bd0b626a2ec628c": {true, []string{"dispatch.jsdoc"}},
 	"e12abef4da826db0bef291127ef4ab62ae4071e2": {true, []string{"dispatch.fidl"}},
 	"ff3acd87af32d98ed0d05ddfe16d5430abbbcb4a": {true, []string{"dispatch.elixir"}},
 	"252a2513688945de445f02addfc6ce9680196577": {true, []string{"dispatch.squirrel"}},
@@ -106,7 +108,7 @@ func TestResultCompatibilityRetiredCommitProvenance(t *testing.T) {
 	if got, want := len(registry.Entries), 88; got != want {
 		t.Fatalf("registry entries = %d, want %d", got, want)
 	}
-	if got, want := len(resultCompatCorrectedRetiredCommits), 34; got != want {
+	if got, want := len(resultCompatCorrectedRetiredCommits), 35; got != want {
 		t.Fatalf("corrected retired commit rows = %d, want %d", got, want)
 	}
 	for index, wantCommit := range resultCompatCorrectedRetiredCommits {
