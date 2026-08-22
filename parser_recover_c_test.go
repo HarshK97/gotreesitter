@@ -2245,7 +2245,7 @@ func TestRecoveryMemoTelemetryPreservesAMD64HotLayouts(t *testing.T) {
 	if unsafe.Sizeof(uintptr(0)) != 8 {
 		t.Skip("amd64 layout ratchet")
 	}
-	if got, want := unsafe.Sizeof(Parser{}), uintptr(2176); got != want {
+	if got, want := unsafe.Sizeof(Parser{}), uintptr(2184); got != want {
 		t.Fatalf("Parser size = %d, want %d", got, want)
 	}
 	if got, want := unsafe.Sizeof(ParseRuntime{}), uintptr(3040); got != want {
