@@ -22,6 +22,9 @@ for tags and release notes while still in `0.x`.
 - Add default-off D6b driver verification before no-action drops. Keep route
   admission and production drops disabled.
 
+- Record the Swift #576 unsafe minimal and corpus divergences as open. Keep
+  the focused locked-C receipt without changing parser behavior.
+
 ### Removed
 
 - Swift ternary expressions now come directly from the regenerated grammar

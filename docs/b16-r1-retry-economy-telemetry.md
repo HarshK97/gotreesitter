@@ -52,7 +52,14 @@ First collect the selected-rung distribution across the generic recovery cohort.
 Then compare correctness, wall time, allocation, and resident set.
 
 Keep the candidate generic.
-Do not add a Swift exception, a source hash, or a grammar-name rule.
+Do not add a Swift exception or a grammar-name rule.
+
+## Swift #576 open disposition
+
+The exact 20-byte `let x = unsafe bar()` witness and the Swift corpus
+divergences remain open under [issue #576](https://github.com/odvcencio/gotreesitter/issues/576).
+The focused locked-C receipt records both deep digests and toolchain identity.
+It does not change parser behavior or close the corpus gap.
 
 ## Commands and artifacts
 

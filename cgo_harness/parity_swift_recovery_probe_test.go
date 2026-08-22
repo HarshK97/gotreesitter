@@ -3,12 +3,14 @@
 package cgoharness
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/odvcencio/gotreesitter/grammars"
 	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -143,4 +145,100 @@ func TestSwiftUnsafeWitnessRemainsKnownCStructuralMismatch(t *testing.T) {
 		t.Fatal("Swift unsafe witness digest differs without a structural divergence")
 	}
 	t.Logf("Swift unsafe witness known C mismatch: Go=%s C=%s", goInspection.SHA256, cDigest)
+}
+
+func TestSwiftUnsafeMinimalWitnessRemainsKnownCStructuralMismatch(t *testing.T) {
+	const sourceText = "let x = unsafe bar()"
+	const wantSourceSHA256 = "b511d81ace2a89b05e8e5e0ca6730c10f2ac9295111dae013097c7c6be8861fe"
+	const swiftGoBlobSHA256 = "be4575bc0acc3c60324aab635d067f940ac5f0557b80a8e3565d1e7d02d53582"
+	const wantGoDigest = "860b79483c37e217690deae43036bada15b259bed77713606124fa851702e62f"
+	const wantCDigest = "c64b894edc4a20e15f2b4127bad4223f698c8996dba091c06c34aa89386d3c68"
+	const wantSwiftGrammarCommit = "41d6e5fe811ec94229ee71771174a8cce558dfee"
+	const wantCRuntimeVersion = "0.25.1"
+	const wantCRuntimeCommit = "f5afe475deb7c0bae6407fb776c76824f717bb61"
+	const wantCGrammarRepo = "https://github.com/alex-pinkus/tree-sitter-swift"
+	const wantCArtifactSHA256 = "2a9f14046d4ca88b6db1316ee5f48b876aea1700e3c09811b3c87257fe827c5c"
+	source := []byte(sourceText)
+	sourceDigest := sha256.Sum256(source)
+	if got := fmt.Sprintf("%x", sourceDigest); got != wantSourceSHA256 {
+		t.Fatalf("Swift unsafe minimal source SHA-256 = %s, want %s", got, wantSourceSHA256)
+	}
+	goBlob := grammars.BlobByName("swift")
+	if len(goBlob) == 0 {
+		t.Fatal("Swift Go grammar blob is empty")
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(goBlob)); got != swiftGoBlobSHA256 {
+		t.Fatalf("Swift Go grammar blob SHA-256 = %s, want %s", got, swiftGoBlobSHA256)
+	}
+
+	goTree, goLang, err := parseWithGo(parityCase{name: "swift"}, source, nil)
+	if err != nil {
+		t.Fatalf("parse Swift unsafe minimal witness with Go: %v", err)
+	}
+	defer releaseGoTree(goTree)
+	goRoot := goTree.RootNode()
+	if goRoot == nil {
+		t.Fatal("Go Swift unsafe minimal witness returned no tree")
+	}
+
+	identity, err := COracleIdentity("swift")
+	if err != nil {
+		t.Fatalf("load Swift C oracle identity: %v", err)
+	}
+	if identity.GrammarCommit != wantSwiftGrammarCommit {
+		t.Fatalf("Swift C grammar commit = %s, want %s", identity.GrammarCommit, wantSwiftGrammarCommit)
+	}
+	if identity.RuntimeVersion != wantCRuntimeVersion {
+		t.Fatalf("Swift C runtime version = %s, want %s", identity.RuntimeVersion, wantCRuntimeVersion)
+	}
+	if identity.RuntimeCommit != wantCRuntimeCommit {
+		t.Fatalf("Swift C runtime commit = %s, want %s", identity.RuntimeCommit, wantCRuntimeCommit)
+	}
+	if identity.GrammarRepo != wantCGrammarRepo {
+		t.Fatalf("Swift C grammar repository = %s, want %s", identity.GrammarRepo, wantCGrammarRepo)
+	}
+	if identity.GrammarArtifactSHA256 != wantCArtifactSHA256 {
+		t.Fatalf("Swift C grammar artifact SHA-256 = %s, want %s", identity.GrammarArtifactSHA256, wantCArtifactSHA256)
+	}
+	cLang, err := ParityCLanguage("swift")
+	if err != nil {
+		t.Fatalf("load locked Swift C parser: %v", err)
+	}
+	cParser := sitter.NewParser()
+	defer cParser.Close()
+	if err := cParser.SetLanguage(cLang); err != nil {
+		t.Fatalf("set locked Swift C parser language: %v", err)
+	}
+	cTree := cParser.Parse(source, nil)
+	if cTree == nil || cTree.RootNode() == nil {
+		t.Fatal("locked Swift C parser returned no tree")
+	}
+	defer cTree.Close()
+	cRoot := cTree.RootNode()
+	if !goRoot.HasError() || !cRoot.HasError() {
+		t.Fatalf("Swift unsafe minimal witness HasError() Go=%v C=%v, want true/true", goRoot.HasError(), cRoot.HasError())
+	}
+
+	goInspection, err := benchfixtures.InspectGoTree(goRoot, goLang)
+	if err != nil {
+		t.Fatalf("inspect Go Swift unsafe minimal witness: %v", err)
+	}
+	cDigest, err := COracleDeepDigest(cTree)
+	if err != nil {
+		t.Fatalf("inspect C Swift unsafe minimal witness: %v", err)
+	}
+	if goInspection.SHA256 == cDigest {
+		t.Fatal("Swift unsafe minimal witness unexpectedly reached C structural parity")
+	}
+	if goInspection.SHA256 != wantGoDigest {
+		t.Fatalf("Go Swift unsafe minimal witness digest = %s, want %s", goInspection.SHA256, wantGoDigest)
+	}
+	if cDigest != wantCDigest {
+		t.Fatalf("locked C Swift unsafe minimal witness digest = %s, want %s", cDigest, wantCDigest)
+	}
+	diff := FirstDivergenceDumpV1(goRoot, goLang, cRoot)
+	if diff == nil {
+		t.Fatal("Swift unsafe minimal witness digest differs without a structural divergence")
+	}
+	t.Logf("SWIFT_576_MINIMAL_C_WITNESS version=1 disposition=known_locked_C_structural_mismatch issue=#576 source_sha256=%s source_bytes=%d grammar=swift grammar_lock_commit=%s c_runtime=%s@%s c_grammar_repo=%s c_grammar_commit=%s c_grammar_artifact_sha256=%s go_blob_sha256=%s go_deep_sha256=%s c_deep_sha256=%s first_difference=%+v", wantSourceSHA256, len(source), identity.GrammarCommit, identity.RuntimeVersion, identity.RuntimeCommit, identity.GrammarRepo, identity.GrammarCommit, identity.GrammarArtifactSHA256, swiftGoBlobSHA256, goInspection.SHA256, cDigest, *diff)
 }
