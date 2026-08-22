@@ -9,6 +9,21 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Recorded the P24e raw-shape hashing rejection. The candidate changed only
+  `raw_shape.go` at base commit
+  `098620ad5e39d7b69b258239d1059a1e33bea892`. The candidate diff SHA-256 is
+  `e92471c690c7d6fed16d593044a449b0557b8b78380718173731a70a62842996`.
+  This receipt is based on main commit
+  `56b97e092d0fb034bddb9e65cc617ebb933cc718`.
+  Focused Docker tests and Go and C parity passed. The accepted 20-seed,
+  40-process publication found a +0.16% geometric mean (geomean) change, with
+  no significant lane improvement. The parity receipt records two tree matches
+  and three known baseline divergences; see
+  `/tmp/gotreesitter-p24e-candidate/harness_out/grammargen_cparity/20260822_143121-p24e-raw-shape-go/container.log`.
+  Full parsing used 54.10 KiB and four allocations per operation in both
+  variants. The candidate code does not ship. See `docs/perf-attribution.md`
+  for the full receipt and reopening condition.
+
 - Recorded the P24d authenticated single-head shift rejection. The candidate
   changed exactly two files in the generic parser-core driver and its tests.
   The combined candidate diff SHA-256 is

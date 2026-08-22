@@ -1,13 +1,147 @@
 # Compact-lane perf attribution board
 
 This document defines one boundary-exact attribution tree over the compact
-parser core's fresh-full-parse CPU. It states the disambiguation rule for
+parser core's fresh-full-parse central processing unit (CPU) time. It states
+the disambiguation rule for
 every function that more than one component could otherwise claim. It
 records the noise floor of the local measurement host, and the first
 published receipt.
 
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
+
+## 2026-08-22 P24e raw-shape hashing receipt
+
+Status: **REJECT / NO-GO**. Ship no candidate code.
+
+This receipt is based on main commit
+`56b97e092d0fb034bddb9e65cc617ebb933cc718`.
+
+P24e tested one bounded hot-path change in raw-shape result selection. The
+candidate read the packed child entry directly inside
+`rawShapeComputeContentHash`. It did not restore parser state that hashing
+does not inspect. This change differs from the rejected P24a through P24d
+scheduler and memo candidates.
+
+The experiment used base commit
+`098620ad5e39d7b69b258239d1059a1e33bea892` and changed exactly one file:
+
+- `raw_shape.go`
+
+The candidate diff SHA-256 is
+`e92471c690c7d6fed16d593044a449b0557b8b78380718173731a70a62842996`.
+
+### P24e profiler attribution
+
+The P19 attribution packet is at `/tmp/gts-p19-evidence`. It used Go 1.25.12,
+`GOMAXPROCS=1`, and 20 samples per scenario. The warm early-newline profile
+used 25 samples. It named `rawShapeComputeContentHash` at 47.25% cumulative
+CPU. It named
+`rawShapeChild.entry` at 24.71% cumulative CPU.
+
+The same packet attributes incremental parse time as follows:
+
+| Component | Observed share |
+|---|---:|
+| `Tree.Edit` | 0.16%–0.95% |
+| Reuse cursor | 0.03%–0.98% |
+| Reuse selection | 0.00%–2.79% |
+| Reparse and rebuild | 96.98%–99.96% |
+
+The candidate therefore targets a named reparse and result-selection cost.
+It does not change `Tree.Edit`, reuse admission, parser decisions, or tree
+shape rules. The proof boundary is the existing packed-entry representation:
+the hash reads node payload fields and never reads the packed parser state.
+
+### P24e correctness evidence
+
+The focused Docker unit gate passed at
+`/tmp/gotreesitter-p24e-candidate/harness_out/docker/20260822T214450Z`.
+It covered raw-shape differential tests, cache eviction, hidden-shape
+comparison, and the C result-selection control. The run exited zero without
+an out-of-memory event or timeout.
+
+The Go real-corpus smoke gate passed 25 of 25 cases for no-error,
+S-expression, and deep parity. Its artifact is
+`/tmp/gotreesitter-p24e-candidate/harness_out/docker/20260822T213032Z-diag-go_lang`.
+
+The Go grammargen-versus-C gate passed five of five cases with two tree
+matches and three known baseline divergences. Its artifact is
+`/tmp/gotreesitter-p24e-candidate/harness_out/grammargen_cparity/20260822_143121-p24e-raw-shape-go`.
+
+### P24e accepted publication
+
+The accepted publication used 20 shuffle seeds and 40 isolated processes.
+Odd seeds ran baseline first. Even seeds ran candidate first. Each process
+used `GOMAXPROCS=1`, `-count=1`, `-benchtime=750ms`, and `-benchmem`.
+
+The primary trio was:
+
+- `BenchmarkGoParseFullDFA`
+- `BenchmarkGoParseIncrementalSingleByteEditDFA`
+- `BenchmarkGoParseIncrementalNoEditDFA`
+
+This trio is a historical generated straight-LR control. It does not prove a
+real generalized LR (GLR) improvement.
+
+The accepted aggregate files are:
+
+- Baseline: `/tmp/gts-p24e-publication/alternating-baseline-20.txt`
+- Candidate: `/tmp/gts-p24e-publication/alternating-candidate-20.txt`
+
+All 40 accepted processes emitted three valid benchmark rows. They reported
+no failure, out-of-memory event, timeout, panic, or contamination marker.
+
+The first seed-1 baseline construction was interrupted and is excluded from
+the aggregate. Its quarantined file is
+`/tmp/gts-p24e-publication/alternating-baseline/seed1.txt`. Clean seed-1
+retries are recorded in the `seed1-retry.txt` files for both variants.
+
+### P24e performance result
+
+The combined benchstat result reports candidate versus baseline. The geometric
+mean (geomean) combines the three primary benchmark lanes.
+
+| Benchmark | Baseline | Candidate | Result | p-value |
+|---|---:|---:|---:|---:|
+| Full parse | 7.101ms | 7.128ms | +0.38% | 0.529 |
+| Single-byte edit | 771.5ns | 772.6ns | +0.14% | 0.516 |
+| No edit | 2.541ns | 2.539ns | −0.08% | 0.605 |
+| Geomean | 2.405µs | 2.409µs | +0.16% | — |
+
+For each seed, compute the geomean across the trio. Each order then compares
+ten seed geomeans. For each order, take the geometric mean of the ten baseline
+seed geomeans and the ten candidate seed geomeans. Report the
+candidate-to-baseline ratio minus one. The order split reports changes of +0.278% when baseline ran
+first and −0.228% when candidate ran first. The direction reverses.
+
+The paired analysis uses equal seeds and the clean seed-1 retries. For each
+pair, compute the candidate-minus-baseline relative change. Use all 20 pairs
+and a Student-t 95% interval. The result is:
+
+| Benchmark | Paired mean | 95% paired interval |
+|---|---:|---:|
+| Full parse | +0.056% | [−0.634%, +0.746%] |
+| Single-byte edit | +0.300% | [−0.707%, +1.307%] |
+| No edit | −0.240% | [−0.937%, +0.457%] |
+| Geomean | +0.034% | [−0.639%, +0.708%] |
+
+Full parsing used 54.10 KiB and four allocations per operation in both
+variants. Both incremental lanes used zero bytes and zero allocations.
+
+An auxiliary exact-setting run measured maximum resident set size at 603,200
+KB for baseline and 609,120 KB for candidate. The publication runner did not
+record per-process resident set size.
+
+The candidate has no significant lane improvement. The accepted result is
+**REJECT / NO-GO**. No code shipped.
+
+### P24e reopening condition
+
+Reopen P24e only with a dedicated real generalized LR (GLR) benchmark that
+exercises raw-shape result selection. Use the same 20-seed, 40-process protocol
+and record per-process resident set size. Require correctness parity before
+performance.
 
 ## 2026-08-22 P24d authenticated single-head shift receipt
 
