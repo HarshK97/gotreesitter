@@ -9,6 +9,125 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
+## 2026-08-22 P24d authenticated single-head shift receipt
+
+Status: **REJECT / NO-GO**. Ship no candidate code.
+
+P24d tested one authenticated proof that a generic scheduler cell is an
+ordinary shift on an exact single-head frontier. The proof lets the apply
+path skip one repeated action-shape check. The experiment used base commit
+`ed0568d9a822b1c83e7bb7e69b0e0f4b8ad529cf` and changed exactly:
+
+- `parsercore_phase0_driver.go`
+- `parsercore_phase0_generic_conflict_internal_test.go`
+
+The combined candidate diff SHA-256 is
+`5181912ec91f0bc1ecd504d06db488d3dd9145fdc5d3d5486300756661a4fc59`.
+The per-file patch SHA-256 values are:
+
+- Driver: `038ad2cf59286f93ecfdd36928cf0157022d6eb6fd414e01d14b95c4622f2fa6`
+- Tests: `cfd9646fd8cf257718b0fb83eb8e735527335827a6bcf8a6429c7adef0aa9d1e`
+
+The candidate source hashes are:
+
+- Driver: `f3e279ea9fc3fece75b5e1b2b8ee760c4d8a26e2a5adb55af1d0c3e805f21a33`
+- Tests: `a97472e2fbad888198fea03a01b0d59ce576b6572a221b9873d0b89982de85f7`
+
+### Proof and validation
+
+The proof requires one header, one elected state, header index zero, no
+relexed symbol, matching checkpoint and parser state, and an unaccepted,
+unshifted, unpaused, non-S3 header. It also requires an allowed selection,
+an ordinary shift row, a valid action ordinal, and a non-extra shift action.
+
+The focused tests cover the positive proof, a second header, a shifted header,
+a checkpoint mismatch, a parser-state mismatch, a relexed symbol, an extra
+shift, and a forged reduce action. Existing descriptor and unsupported-arm
+checks remain active. Core owner, epoch, boundary, transaction, and rollback
+validation remains active after the proof skips the repeated shape check.
+
+The final focused Docker gate passed at
+`/tmp/gts-p24d-docker-candidate-final/20260822T204456Z-p24d-unit-driver-final`.
+The baseline control passed at
+`/tmp/gts-p24d-docker-baseline/20260822T203123Z-p24d-unit-driver`.
+Both runs used the local Go 1.25 image, one CPU, `GOMAXPROCS=1`, and `-p=1`.
+Both runs exited zero without an out-of-memory event or timeout.
+
+### Real-corpus and C parity
+
+The Go real-corpus smoke gate passed five no-error, five S-expression, and
+five deep checks for both variants. The reports are:
+
+- Candidate: `/tmp/gts-p24d-real-candidate-final/diag_go_lang.log`
+- Baseline: `/tmp/gts-p24d-real-baseline/diag_go_lang.log`
+
+The grammargen-versus-C gate passed with five eligible cases and five no-error
+cases for both variants. Both sides reported two tree-parity cases and three
+known divergences. The candidate artifact is
+`/tmp/gotreesitter-p24d-candidate/harness_out/grammargen_cparity/20260822_135328-p24d-candidate-final`.
+The baseline artifact is
+`/tmp/gotreesitter-p24d-baseline/harness_out/grammargen_cparity/20260822_133343-p24d-baseline`.
+
+The known divergences are the blob root child-count difference and the two
+statement-list end-byte differences. The candidate reproduces the baseline.
+
+### Accepted publication
+
+The final publication root is
+`/tmp/gts-p24d-publication-final`.
+The runner metadata is
+`/tmp/gts-p24d-publication-final/runner-metadata.txt`.
+It records 20 seeds, 40 isolated processes, and one process per seed.
+Odd seeds run baseline first. Even seeds run candidate first. Each process
+uses `GOMAXPROCS=1`, `-count=1`, `-benchtime=750ms`, and `-benchmem`.
+The primary trio is:
+
+- `BenchmarkGoParseFullDFA`
+- `BenchmarkGoParseIncrementalSingleByteEditDFA`
+- `BenchmarkGoParseIncrementalNoEditDFA`
+
+All 40 status rows have exit code zero. The raw output and log files contain
+no failure, out-of-memory, timeout, panic, or contamination marker.
+The runner records Go 1.25.1 on host `Chi` and candidate primary-trio maximum
+resident set size of 596,800 KB. The comparable baseline run used 605,120 KB.
+
+### Performance result
+
+The combined benchstat result reports candidate versus baseline:
+
+| Benchmark | Baseline | Candidate | Result | p-value |
+|---|---:|---:|---:|---:|
+| Full parse | 6.635ms | 6.682ms | +0.71% | 0.096 |
+| Single-byte edit | 732.2ns | 736.5ns | +0.59% | 0.256 |
+| No edit | 2.344ns | 2.365ns | +0.87% | 0.031 |
+| Geomean | 2.250µs | 2.266µs | +0.72% | — |
+
+The order split reports these geomeans:
+
+| Order | Baseline | Candidate | Result |
+|---|---:|---:|---:|
+| Baseline first | 2.252µs | 2.260µs | +0.37% |
+| Candidate first | 2.247µs | 2.268µs | +0.93% |
+
+The paired relative timing analysis reports candidate minus baseline:
+
+| Benchmark | Paired mean | 95% paired interval |
+|---|---:|---:|
+| Full parse | +4.088% | [-0.049%, +8.225%] |
+| Single-byte edit | +3.426% | [-1.301%, +8.154%] |
+| No edit | +3.243% | [+0.063%, +6.423%] |
+| Geomean | +3.496% | [+0.179%, +6.813%] |
+
+Full parsing used 50.50 KiB/op for baseline and 50.88 KiB/op for candidate.
+The byte comparison was +0.74% with p=0.024. Incremental lanes used 0 B/op.
+Median full-parse allocations were 4 on both sides with p=0.231. The
+candidate used 5 allocations on seeds 11, 12, and 13; baseline used 4 on
+every seed. Incremental lanes used 0 allocations on every seed.
+
+The candidate is slower in the combined geomean and both order splits. The
+no-edit timing and full-parse byte regressions are statistically significant.
+The accepted result is **REJECT / NO-GO**. No code shipped.
+
 ## 2026-08-22 P24c exact-single-pop helper-inlining receipt
 
 Status: **REJECT / NO-GO**. Ship no candidate code.
