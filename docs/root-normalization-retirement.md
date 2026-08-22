@@ -65,8 +65,9 @@ candidate, but a performance result cannot substitute for route parity.
 
 The explicit forest route now shares the automatic route's `ERROR`-root
 decline. It records `error_root` and returns no tree. Ledger date-suffix and
-year-directive recovery remain on the production fallback until both forest
-routes match locked C. Reopen Ledger retirement after that proof.
+year-directive recovery use the production fallback after that decline. The
+Ledger receipt records both forest routes and locked-C parity. Reopen Ledger
+retirement if a future witness differs on any covered route.
 
 ## Ordered program
 
@@ -264,6 +265,13 @@ Native Ninja reduction emits both registered A0 trees without rewrites.
 The exact raw, production, compact, forest, incremental, and locked C receipts
 match for both witnesses. This change retires the Ninja dispatcher arm.
 Reopen the entry if a future witness rewrites a node or diverges on any route.
+Native Ledger reduction emits the same tree for both parser-trigger witnesses
+and the registered A0 witness without rewrites.
+The exact raw, production, compact, forest, incremental, and locked C receipts
+match for all three witnesses. Compact fallback and `error_root` forest
+fallbacks are documented for the Ledger triggers.
+This change retires the Ledger dispatcher arm.
+Reopen the entry if a future witness rewrites a node or diverges on any route.
 Native FIDL recovery already emits the C-equivalent versioned-layout-modifier
 error shape for stray modifier arguments.
 This change retires the FIDL dispatcher arm.
@@ -366,6 +374,7 @@ there.
 | Bash command names | retirement change | 1 Bash subpass | 0 | compatibility-free producer, production, compact fallback, forest, incremental reuse, exact 25-case baseline at `83548f55`, and isolated C-oracle parity |
 | Bash generated-command assignments | retirement change | 1 Bash subpass / 1 dispatcher arm | 0 | exact raw and production witness, production, compact direct or fallback, forest, incremental fresh or reuse, and locked C parity |
 | Ninja recovery and returned-tree shape | retirement change | 1 dispatcher arm | 0 | two A0 witnesses, raw and production, compact direct, forest direct, incremental reuse, and isolated locked-C parity |
+| Ledger recovery and returned-tree shape | retirement change | 1 dispatcher arm | 0 | two parser-trigger witnesses plus one A0 witness, raw and production, compact fallback, `error_root` forest fallback, incremental reuse, and isolated locked-C parity |
 | FIDL versioned layout modifiers | retirement change | 1 dispatcher arm | 0 | compatibility-free producer, production, compact fallback, forest-fail-closed, incremental reuse, and isolated C-oracle parity |
 | HLSL subscript-assignment declarator | retirement change | 1 HLSL member | 0 | negative dynamic precedence election, compatibility-free producer, production, compact fallback, forest, incremental reuse, and isolated C-oracle parity |
 | Swift ternary source reparse | retirement change | 1 Swift subpass | 0 | exact 16-case manifest, native producer, production, compact fallback, forest fail-closed behavior, incremental fresh fallback, and isolated C-oracle parity |
