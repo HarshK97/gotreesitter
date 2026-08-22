@@ -159,8 +159,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		return resultCompatibilityResult{stopReason: stopReason}
 	case "julia":
 		dispatcherArmCensus(ctx, "dispatch.julia", func() { normalizeJuliaCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "ledger":
-		dispatcherArmCensus(ctx, "dispatch.ledger", func() { normalizeLedgerCompatibility(ctx.root, ctx.source, ctx.parser, ctx.lang) })
 	case "kotlin":
 		dispatcherArmSubpassCensus(ctx, "dispatch.kotlin", func(census materializationSubpassCensus) {
 			normalizeKotlinCompatibilityWithCensus(ctx.root, ctx.source, ctx.lang, census)

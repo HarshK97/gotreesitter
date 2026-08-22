@@ -18,7 +18,6 @@
     "dtd",
     "hlsl",
     "jsdoc",
-    "ledger",
     "solidity",
     "templ",
     "wgsl",
@@ -356,16 +355,6 @@
       "output_path": "testdata/dispatcher_census_a0/jsdoc/small__00010-b09f56666a84.jsdoc"
     },
     {
-      "language": "ledger",
-      "bucket": "small",
-      "bytes": 932,
-      "sha256": "346d9eb6257c54d9fe53aabf9d3d32f8b8d5ebfece9f9142ebcfdedfa88cbbd2",
-      "source_repo": "https://github.com/ledger/ledger",
-      "source_commit": "6ec9bc8f862c713ecc1ac31de4201e0aa5a86f6c",
-      "source_path": "contrib/non-profit-audit-reports/tests/non-profit-test-data.ledger",
-      "output_path": "testdata/dispatcher_census_a0/ledger/small__non-profit-test-data.ledger"
-    },
-    {
       "language": "solidity",
       "bucket": "large",
       "bytes": 64872,
@@ -606,17 +595,6 @@
       "nodes_visited": 31,
       "nodes_rewritten": 0,
       "error_roots": 3,
-      "parse_errors": 0
-    },
-    {
-      "language": "ledger",
-      "arm_id": "dispatch.ledger",
-      "files": 1,
-      "checked": 1,
-      "run": 1,
-      "nodes_visited": 254,
-      "nodes_rewritten": 0,
-      "error_roots": 0,
       "parse_errors": 0
     },
     {

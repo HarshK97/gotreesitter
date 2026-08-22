@@ -47,6 +47,11 @@ for tags and release notes while still in `0.x`.
   witnesses match raw, production, compact, forest, incremental, and locked C
   receipts. Parsing no longer runs the Ninja compatibility path.
 
+- Ledger recovery trees now come directly from native reduction. The two
+  parser-trigger witnesses and the A0 witness match raw, production, compact,
+  forest, incremental, and locked C receipts. Parsing no longer runs the
+  Ledger compatibility path.
+
 ### Fixed
 
 - Make the explicit forest route fail closed on an `ERROR` root. Reuse the

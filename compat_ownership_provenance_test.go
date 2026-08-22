@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-const resultCompatAuthoritativeMainCommit = "c3e734a527ed95327cf4fc010167a222cea1900c"
+const resultCompatAuthoritativeMainCommit = "cca7215444b29aea8a7046406a928a263fddde0f"
 
 // These are zero-based registry indexes. Keep this map explicit so a later
 // ledger regeneration cannot silently restore a parallel retirement commit.
@@ -33,6 +33,7 @@ var resultCompatCorrectedRetiredCommits = map[int]string{
 	39: "a5c853591fd84b1d004692b9f96651ad433d699d",
 	40: "2427094ae0629d0bd5c6a2fe2c2e801cbc709d3a",
 	44: "84aee737500e7b9e0365725fb7af18e059e9d9e5",
+	45: "cca7215444b29aea8a7046406a928a263fddde0f",
 	49: "db34ebb495d1cd0c6540428c7045ac032ac41a22",
 	50: "3f2a9256d72a838bb62a39ccf4af2e7cc1724dbb",
 	51: "db34ebb495d1cd0c6540428c7045ac032ac41a22",
@@ -67,6 +68,7 @@ var resultCompatRetirementFixtures = map[string]resultCompatRetirementFixture{
 	"27b0f624032680f6246bb4ee307883a2b874afb9": {true, []string{"generic.trailing-extra-trivia"}},
 	"29b6e302701058e2ed101941c6da5f52a98dfe9a": {true, []string{"dispatch.objc"}},
 	"2509e61d8cceeeaa017ce46e059fee1a014933c2": {true, []string{"dispatch.bash"}},
+	"cca7215444b29aea8a7046406a928a263fddde0f": {true, []string{"dispatch.ledger"}},
 	"c3e734a527ed95327cf4fc010167a222cea1900c": {true, []string{"dispatch.ninja"}},
 	"2ef4802f2dbb853486d852cc9c1909e2a26f0199": {true, []string{"dispatch.angular", "dispatch.bibtex", "dispatch.chatito", "dispatch.eds"}},
 	"305e32b0bd796a47cfbd566ec596cd8d01ceb124": {true, []string{"dispatch.ql"}},
@@ -104,7 +106,7 @@ func TestResultCompatibilityRetiredCommitProvenance(t *testing.T) {
 	if got, want := len(registry.Entries), 88; got != want {
 		t.Fatalf("registry entries = %d, want %d", got, want)
 	}
-	if got, want := len(resultCompatCorrectedRetiredCommits), 33; got != want {
+	if got, want := len(resultCompatCorrectedRetiredCommits), 34; got != want {
 		t.Fatalf("corrected retired commit rows = %d, want %d", got, want)
 	}
 	for index, wantCommit := range resultCompatCorrectedRetiredCommits {

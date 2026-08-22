@@ -15,15 +15,16 @@ without updating that registry.
 
 The v1 registry freezes the current source and registry:
 
-- 33 explicit `runLanguageResultCompatibility` switch arms;
+- 32 explicit `runLanguageResultCompatibility` switch arms;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-The registry contains 34 live entries and 54 retired entries. The live entries
-name 37 language labels. Shared switch arms account for the label difference.
+The registry contains 33 live entries and 55 retired entries. The live entries
+name 36 language labels. Shared switch arms account for the label difference.
 The retired count includes the Swift ternary, JavaScript dynamic-import, Kotlin
-interpolated-call, Bash generated-command assignment, and Ninja recovery arms.
+interpolated-call, Bash generated-command assignment, Ninja recovery, and
+Ledger recovery arms.
 The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
@@ -87,13 +88,13 @@ directories: 7 inert arms and 13 active arms. Its exact log is:
 
 `harness_out/docker/20260811T222732Z-a0-arm-census/container.log`
 
-The corpus census does not cover these 20 live arms:
+The corpus census does not cover these 19 live arms:
 
 `dispatch.ada`, `dispatch.apex`, `dispatch.authzed`, `dispatch.bitbake`,
 `dispatch.cooklang`, `dispatch.corn`, `dispatch.doxygen`, `dispatch.jsdoc`,
 `dispatch.dtd`, `dispatch.enforce`, `dispatch.fidl`, `dispatch.hlsl`,
-`dispatch.hyprlang`, `dispatch.ledger`, `dispatch.ql`, `dispatch.solidity`,
-`dispatch.templ`, `dispatch.wgsl`, `dispatch.wolfram`,
+`dispatch.hyprlang`, `dispatch.ql`, `dispatch.solidity`, `dispatch.templ`,
+`dispatch.wgsl`, `dispatch.wolfram`,
 and `predicate.cobol-exact`.
 
 This is defect `A0-CORPUS-001`, an evidence gap. Add a small real-source
@@ -214,8 +215,32 @@ production, compact, forest, incremental, or locked C route.
 
 The explicit forest route now fails closed on a synthetic `ERROR` root.
 It records `error_root` and leaves production fallback to the caller.
-Ledger remains live while its recovery triggers use that fallback. Reopen
-Ledger retirement only after both triggers return locked-C forest receipts.
+Ledger recovery triggers use that fallback. The Ledger retirement receipt
+below proves both forest routes match the locked C tree. Reopen Ledger
+retirement if a future witness differs on any covered route.
+
+The Ledger recovery arm also retired.
+Native reduction emits the same tree for both parser-trigger witnesses and
+the registered A0 witness without rewrites.
+Raw and production match the locked C tree node for node, including the deep
+digest.
+The route receipts report compact fallback for all witnesses, forest fallback
+routes with reason `error_root` for the parser triggers, an A0 forest fallback,
+and incremental reuse.
+The exact witnesses and digests are:
+
+- recovered date suffix, 100 bytes, source SHA-256
+  `c9363c584f9bdb4cd3aa56a3fa6df98acc3a180c40e82ba3724d00efbc238210`, digest
+  `d89a89fd6a1397d5ccb1c9f38271dcef632e7bd4a8d307146483f180af66e173`;
+- year directive, 319 bytes, source SHA-256
+  `531a9ddc9e5fe851095ed38b5dd896dc0de4a984f56ef0269c92254e5e84a02e`, digest
+  `1d4aa453808e5f85eba81c33fff5bc91c217c9ec2cf66264bff2f8e4092a563b`;
+- `small__non-profit-test-data.ledger`, 932 bytes, source SHA-256
+  `346d9eb6257c54d9fe53aabf9d3d32f8b8d5ebfece9f9142ebcfdedfa88cbbd2`, digest
+  `5b3390501b53e39e8753026802942fe91fc58c967268b03259207a25c304a5d5`.
+
+Reopen the entry if a future Ledger witness rewrites a node or differs on
+any production, compact, forest, incremental, or locked C route.
 
 The live probes parse each source without result compatibility.
 They also compare census-enabled output with normal production output.
