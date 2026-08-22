@@ -165,8 +165,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmSubpassCensus(ctx, "dispatch.kotlin", func(census materializationSubpassCensus) {
 			normalizeKotlinCompatibilityWithCensus(ctx.root, ctx.source, ctx.lang, census)
 		})
-	case "ninja":
-		dispatcherArmCensus(ctx, "dispatch.ninja", func() { normalizeNinjaCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "perl":
 		dispatcherArmCensus(ctx, "dispatch.perl", func() { normalizePerlCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "php":
