@@ -40,6 +40,10 @@ for tags and release notes while still in `0.x`.
   incremental fresh or reuse behavior. Parsing no longer runs the
   generated-command assignment compatibility path.
 
+- Ninja recovery trees now come directly from native reduction. The two A0
+  witnesses match raw, production, compact, forest, incremental, and locked C
+  receipts. Parsing no longer runs the Ninja compatibility path.
+
 ### Fixed
 
 - End recovery convergence after a clean condense. Pending forks no longer

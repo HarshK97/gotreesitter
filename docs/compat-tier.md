@@ -15,15 +15,15 @@ without updating that registry.
 
 The v1 registry freezes the current source and registry:
 
-- 34 explicit `runLanguageResultCompatibility` switch arms;
+- 33 explicit `runLanguageResultCompatibility` switch arms;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-The registry contains 35 live entries and 53 retired entries. The live entries
-name 38 language labels. Shared switch arms account for the label difference.
+The registry contains 34 live entries and 54 retired entries. The live entries
+name 37 language labels. Shared switch arms account for the label difference.
 The retired count includes the Swift ternary, JavaScript dynamic-import, Kotlin
-interpolated-call, and Bash generated-command assignment subpasses.
+interpolated-call, Bash generated-command assignment, and Ninja recovery arms.
 The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
@@ -87,13 +87,13 @@ directories: 7 inert arms and 13 active arms. Its exact log is:
 
 `harness_out/docker/20260811T222732Z-a0-arm-census/container.log`
 
-The corpus census does not cover these 21 live arms:
+The corpus census does not cover these 20 live arms:
 
 `dispatch.ada`, `dispatch.apex`, `dispatch.authzed`, `dispatch.bitbake`,
 `dispatch.cooklang`, `dispatch.corn`, `dispatch.doxygen`, `dispatch.jsdoc`,
 `dispatch.dtd`, `dispatch.enforce`, `dispatch.fidl`, `dispatch.hlsl`,
-`dispatch.hyprlang`, `dispatch.ledger`, `dispatch.ninja`, `dispatch.ql`,
-`dispatch.solidity`, `dispatch.templ`, `dispatch.wgsl`, `dispatch.wolfram`,
+`dispatch.hyprlang`, `dispatch.ledger`, `dispatch.ql`, `dispatch.solidity`,
+`dispatch.templ`, `dispatch.wgsl`, `dispatch.wolfram`,
 and `predicate.cobol-exact`.
 
 This is defect `A0-CORPUS-001`, an evidence gap. Add a small real-source
@@ -186,6 +186,31 @@ The exact raw and production witness uses
 The production, compact, forest, incremental, and locked C routes return the
 same tree. The route receipt is
 `grammars/bash_generated_command_assignment_native_regression_test.go`.
+
+The Ninja recovery arm also retired.
+Native reduction already emits the registered A0 trees without rewrites.
+The census covered these exact witnesses:
+
+- `small__inherited-fds.ninja`, 545 bytes, source SHA-256
+  `49dbd1856ad0ae2dc46283256da58b4d79459605d2c925e341559bf59bb90fa1`;
+- `small__long-slow-build.ninja`, 793 bytes, source SHA-256
+  `6687e1de9c5819a632ca71eb1755eddf20929a658cb7847ff393865c08da574b`.
+
+The census recorded 397 visited nodes, zero rewrites, zero error roots, and
+zero parse errors. Raw and production matched locked C node for node.
+Both witnesses matched these deep digests on every route:
+
+- `82f80fe2924d6ad679aad38ae8393ed6f33eba2bd7238dc0ce9b8d38b5b94d4c`;
+- `a0783ff8f7a1bf09509da3911f9c9540aab4b5930e6402c647b069cd3f990b6b`.
+
+Compact and forest used direct routes. Incremental parsing reused the old
+tree. The receipts are in these Docker artifacts:
+
+- `harness_out/docker/20260822T132116Z`;
+- `harness_out/docker/20260822T132133Z`.
+
+Reopen the entry if a future Ninja witness rewrites a node or differs on any
+production, compact, forest, incremental, or locked C route.
 
 The live probes parse each source without result compatibility.
 They also compare census-enabled output with normal production output.

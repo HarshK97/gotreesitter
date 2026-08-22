@@ -19,7 +19,6 @@
     "hlsl",
     "jsdoc",
     "ledger",
-    "ninja",
     "solidity",
     "templ",
     "wgsl",
@@ -367,26 +366,6 @@
       "output_path": "testdata/dispatcher_census_a0/ledger/small__non-profit-test-data.ledger"
     },
     {
-      "language": "ninja",
-      "bucket": "small",
-      "bytes": 545,
-      "sha256": "49dbd1856ad0ae2dc46283256da58b4d79459605d2c925e341559bf59bb90fa1",
-      "source_repo": "https://github.com/ninja-build/ninja",
-      "source_commit": "5a7fe11473259e7111dfb6196541f503bc5fa512",
-      "source_path": "misc/inherited-fds.ninja",
-      "output_path": "testdata/dispatcher_census_a0/ninja/small__inherited-fds.ninja"
-    },
-    {
-      "language": "ninja",
-      "bucket": "small",
-      "bytes": 793,
-      "sha256": "6687e1de9c5819a632ca71eb1755eddf20929a658cb7847ff393865c08da574b",
-      "source_repo": "https://github.com/ninja-build/ninja",
-      "source_commit": "5a7fe11473259e7111dfb6196541f503bc5fa512",
-      "source_path": "misc/long-slow-build.ninja",
-      "output_path": "testdata/dispatcher_census_a0/ninja/small__long-slow-build.ninja"
-    },
-    {
       "language": "solidity",
       "bucket": "large",
       "bytes": 64872,
@@ -636,17 +615,6 @@
       "checked": 1,
       "run": 1,
       "nodes_visited": 254,
-      "nodes_rewritten": 0,
-      "error_roots": 0,
-      "parse_errors": 0
-    },
-    {
-      "language": "ninja",
-      "arm_id": "dispatch.ninja",
-      "files": 2,
-      "checked": 2,
-      "run": 2,
-      "nodes_visited": 397,
       "nodes_rewritten": 0,
       "error_roots": 0,
       "parse_errors": 0
