@@ -2037,6 +2037,52 @@ func TestG18FutureRealCertificateLifecycleRED(t *testing.T) {
 	}
 }
 
+func TestG18FutureRealVerifierCertificateStateReasonsRED(t *testing.T) {
+	scheduler, provider, heads := g18FutureBehaviorFixture(t)
+	action := g18FutureActionIdentity()
+	record, digest := g18FutureDerivationRecord()
+	complete := g18FutureBeginCohort(t, provider, 2, uint32(len(record)))
+	g18FutureWriteMember(t, provider, complete, heads[0], 0, action, digest, record)
+	g18FutureWriteMember(t, provider, complete, heads[1], 1, action, digest, record)
+	if err := provider.DiagnosticDropCohortFinalizeForTest(complete); err != nil {
+		t.Fatal(err)
+	}
+	overflowed := g18FutureBeginCohort(t, provider, 1, uint32(len(record)))
+	g18FutureWriteMember(t, provider, overflowed, heads[0], 0, action, digest, record)
+	if err := provider.DiagnosticDropCohortWriteForTest(overflowed, heads[1], 1, action, digest, record); err == nil {
+		t.Fatal("overflowed certificate accepted an extra member")
+	}
+	blended := g18FutureBeginCohort(t, provider, 2, uint32(len(record)))
+	g18FutureWriteMember(t, provider, blended, heads[0], 0, action, digest, record)
+	conflict := action
+	conflict[2]++
+	if err := provider.DiagnosticDropCohortWriteForTest(blended, heads[1], 0, conflict, digest, record); err == nil {
+		t.Fatal("blended certificate accepted a conflicting member")
+	}
+	for _, test := range []struct {
+		name   string
+		handle g18FutureCohortHandle
+		want   string
+	}{
+		{name: "overflowed", handle: overflowed, want: "certificate_overflowed"},
+		{name: "blended", handle: blended, want: "certificate_blended"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if admitted, reason := g18FutureSchedulerVerify(
+				t,
+				scheduler,
+				provider,
+				heads[:2],
+				[]g18FutureCohortHandle{complete, test.handle},
+				[]uint16{0, 1},
+				1,
+			); admitted || reason != test.want {
+				t.Fatalf("state verification=%t reason=%q, want %q", admitted, reason, test.want)
+			}
+		})
+	}
+}
+
 func TestG18FutureSequentialAndNestedCohortsRED(t *testing.T) {
 	scheduler, provider, heads := g18FutureBehaviorFixture(t)
 	action := g18FutureActionIdentity()

@@ -2076,6 +2076,11 @@ type diagnosticParserCoreGenericScheduler struct {
 	conflictPostExecutionFault    func() error
 	extraPostExecutionFault       func() error
 	freshSessionOwner             *core.SchedulerTransactionToken
+	verifierHeads                 [32]core.Head
+	verifierRefs                  [32]core.DropCohortRef
+	verifierBound                 int
+	verifierHeaderPtr             *diagnosticParserCoreHeader
+	verifierInvocation            uint64
 	observer                      diagnosticParserCoreSeedObserver
 	stoppedAfterElection          bool
 	requireEOFPostNoLookaheadRoot bool
@@ -6988,6 +6993,99 @@ func (s *diagnosticParserCoreGenericScheduler) dropGenericNoActionHeads(indices 
 	s.work.add(&s.work.ConvergedReductionSplitDrops, convergedReductionSplitDrops)
 	s.work.add(&s.work.ConvergedCoverageDrops, convergedCoverageDrops)
 	return nil
+}
+
+// DiagnosticBindDropCohortReferencesForTest binds opaque certificate handles
+// to the existing headers. It performs no validation and does not activate the
+// production admission route.
+func (s *diagnosticParserCoreGenericScheduler) DiagnosticBindDropCohortReferencesForTest(handles [][3]uint64, branches []uint16) error {
+	if s == nil || s.compact == nil {
+		return errors.New("parser-core phase zero: nil verifier scheduler")
+	}
+	if len(handles) != len(branches) || len(handles) != len(s.headers) {
+		return errors.New("parser-core phase zero: verifier binding length mismatch")
+	}
+	if len(handles) > len(s.verifierRefs) {
+		return errors.New("parser-core phase zero: verifier header cap")
+	}
+	for index := range s.headers {
+		raw := handles[index]
+		s.verifierRefs[index] = core.DropCohortRef{
+			Owner: raw[0], Epoch: raw[1], Sequence: raw[2], Branch: branches[index],
+		}
+		s.headers[index].dropCohortRefs = core.DropCohortRefSet{
+			Inline: [2]core.DropCohortRef{{
+				Owner: raw[0], Epoch: raw[1], Sequence: raw[2], Branch: branches[index],
+			}},
+			Count: 1,
+		}
+	}
+	s.verifierBound = len(handles)
+	if len(s.headers) == 0 {
+		s.verifierHeaderPtr = nil
+	} else {
+		s.verifierHeaderPtr = &s.headers[0]
+	}
+	return nil
+}
+
+func (s *diagnosticParserCoreGenericScheduler) diagnosticDropCohortVerifierInputs() (int, error) {
+	if s == nil || s.compact == nil {
+		return 0, errors.New("parser-core phase zero: nil verifier scheduler")
+	}
+	if len(s.headers) > len(s.verifierHeads) {
+		return 0, errors.New("parser-core phase zero: verifier header cap")
+	}
+	if s.verifierBound != len(s.headers) {
+		return 0, errors.New("parser-core phase zero: verifier binding is absent")
+	}
+	if len(s.headers) != 0 && s.verifierHeaderPtr != &s.headers[0] {
+		return 0, errors.New("parser-core phase zero: verifier binding is stale")
+	}
+	for index := range s.headers {
+		s.verifierHeads[index] = s.headers[index].head
+		bound := s.headers[index].dropCohortRefs
+		if bound.Count != 1 || bound.Spilled() || bound.Inline[0] != s.verifierRefs[index] {
+			return 0, errors.New("parser-core phase zero: verifier reference binding is stale")
+		}
+	}
+	return len(s.headers), nil
+}
+
+// DiagnosticDropGenericNoActionHeadsForTest runs only the inert certificate
+// verifier. It never compacts headers or changes the production drop route.
+func (s *diagnosticParserCoreGenericScheduler) DiagnosticDropGenericNoActionHeadsForTest(indices []int) (string, error) {
+	count, err := s.diagnosticDropCohortVerifierInputs()
+	if err != nil {
+		return "unknown_cohort", err
+	}
+	return s.compact.DiagnosticVerifyDropCohortRefsForTest(
+		s.verifierHeads[:count], s.verifierRefs[:count], indices,
+	)
+}
+
+// DiagnosticDropGenericNoActionHeadsNonDestructiveForTest evaluates the same
+// certificate without telemetry, header mutation, or arena mutation.
+func (s *diagnosticParserCoreGenericScheduler) DiagnosticDropGenericNoActionHeadsNonDestructiveForTest(indices []int) (string, uint64, [32]byte, error) {
+	var zero [32]byte
+	count, err := s.diagnosticDropCohortVerifierInputs()
+	if err != nil {
+		return "unknown_cohort", s.verifierInvocation, zero, err
+	}
+	if s.verifierInvocation != ^uint64(0) {
+		s.verifierInvocation++
+	}
+	reason, verifyErr := s.compact.DiagnosticVerifyDropCohortRefsNonDestructiveForTest(
+		s.verifierHeads[:count], s.verifierRefs[:count], indices,
+	)
+	return reason, s.verifierInvocation, s.compact.DiagnosticDropCohortVerifierStateDigestForTest(), verifyErr
+}
+
+func (s *diagnosticParserCoreGenericScheduler) DiagnosticDropGenericNoActionHeadsVerifierStateDigestForTest() [32]byte {
+	if s == nil || s.compact == nil {
+		return [32]byte{}
+	}
+	return s.compact.DiagnosticDropCohortVerifierStateDigestForTest()
 }
 
 func (s *diagnosticParserCoreGenericScheduler) applyGenericReduction(before []DiagnosticParserCoreHeaderReceipt, cell diagnosticParserCoreGenericCell) (err error) {

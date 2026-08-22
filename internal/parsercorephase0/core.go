@@ -940,6 +940,16 @@ type Core struct {
 	dropCohortAuthenticatedHistory uint64
 	dropCohortUnprovedHistory      uint64
 	dropCohortOwnerCheckedLookups  uint64
+	dropCohortVerifierElections    uint64
+	dropCohortVerifierProofs       uint64
+	dropCohortVerifierDeclines     uint64
+	dropCohortActionDeclines       uint64
+	dropCohortDerivationDeclines   uint64
+	dropCohortDeclineReasons       [dropCohortVerifierReasonCount]uint64
+	dropCohortInlineReads          uint64
+	dropCohortSpillReads           uint64
+	dropCohortMapReads             uint64
+	dropCohortInternerReads        uint64
 	dropCohortReservations         []dropCohortReservation
 	dropCohortReserved             [7]uint64
 	dropCohortReservedBytes        uint64
@@ -1060,6 +1070,16 @@ type checkpoint struct {
 	dropCohortAuthenticatedHistory                                            uint64
 	dropCohortUnprovedHistory                                                 uint64
 	dropCohortOwnerCheckedLookups                                             uint64
+	dropCohortVerifierElections                                               uint64
+	dropCohortVerifierProofs                                                  uint64
+	dropCohortVerifierDeclines                                                uint64
+	dropCohortActionDeclines                                                  uint64
+	dropCohortDerivationDeclines                                              uint64
+	dropCohortDeclineReasons                                                  [dropCohortVerifierReasonCount]uint64
+	dropCohortInlineReads                                                     uint64
+	dropCohortSpillReads                                                      uint64
+	dropCohortMapReads                                                        uint64
+	dropCohortInternerReads                                                   uint64
 	dropCohortReservations                                                    int
 	dropCohortReserved                                                        [7]uint64
 	dropCohortReservedBytes                                                   uint64
@@ -1152,6 +1172,16 @@ func (c *Core) markInto(mark *checkpoint) {
 		dropCohortAuthenticatedHistory:   c.dropCohortAuthenticatedHistory,
 		dropCohortUnprovedHistory:        c.dropCohortUnprovedHistory,
 		dropCohortOwnerCheckedLookups:    c.dropCohortOwnerCheckedLookups,
+		dropCohortVerifierElections:      c.dropCohortVerifierElections,
+		dropCohortVerifierProofs:         c.dropCohortVerifierProofs,
+		dropCohortVerifierDeclines:       c.dropCohortVerifierDeclines,
+		dropCohortActionDeclines:         c.dropCohortActionDeclines,
+		dropCohortDerivationDeclines:     c.dropCohortDerivationDeclines,
+		dropCohortDeclineReasons:         c.dropCohortDeclineReasons,
+		dropCohortInlineReads:            c.dropCohortInlineReads,
+		dropCohortSpillReads:             c.dropCohortSpillReads,
+		dropCohortMapReads:               c.dropCohortMapReads,
+		dropCohortInternerReads:          c.dropCohortInternerReads,
 		dropCohortReservations:           len(c.dropCohortReservations),
 		dropCohortReserved:               c.dropCohortReserved,
 		dropCohortReservedBytes:          c.dropCohortReservedBytes,
@@ -1264,6 +1294,16 @@ func (c *Core) restoreCheckpoint(mark *checkpoint) {
 	c.dropCohortAuthenticatedHistory = mark.dropCohortAuthenticatedHistory
 	c.dropCohortUnprovedHistory = mark.dropCohortUnprovedHistory
 	c.dropCohortOwnerCheckedLookups = mark.dropCohortOwnerCheckedLookups
+	c.dropCohortVerifierElections = mark.dropCohortVerifierElections
+	c.dropCohortVerifierProofs = mark.dropCohortVerifierProofs
+	c.dropCohortVerifierDeclines = mark.dropCohortVerifierDeclines
+	c.dropCohortActionDeclines = mark.dropCohortActionDeclines
+	c.dropCohortDerivationDeclines = mark.dropCohortDerivationDeclines
+	c.dropCohortDeclineReasons = mark.dropCohortDeclineReasons
+	c.dropCohortInlineReads = mark.dropCohortInlineReads
+	c.dropCohortSpillReads = mark.dropCohortSpillReads
+	c.dropCohortMapReads = mark.dropCohortMapReads
+	c.dropCohortInternerReads = mark.dropCohortInternerReads
 	c.dropCohortReservations = mark.dropCohortReservationsHeader
 	c.dropCohortReserved = mark.dropCohortReserved
 	c.dropCohortReservedBytes = mark.dropCohortReservedBytes
@@ -1649,6 +1689,16 @@ func (c *Core) Reset() error {
 	c.dropCohortAuthenticatedHistory = 0
 	c.dropCohortUnprovedHistory = 0
 	c.dropCohortOwnerCheckedLookups = 0
+	c.dropCohortVerifierElections = 0
+	c.dropCohortVerifierProofs = 0
+	c.dropCohortVerifierDeclines = 0
+	c.dropCohortActionDeclines = 0
+	c.dropCohortDerivationDeclines = 0
+	clear(c.dropCohortDeclineReasons[:])
+	c.dropCohortInlineReads = 0
+	c.dropCohortSpillReads = 0
+	c.dropCohortMapReads = 0
+	c.dropCohortInternerReads = 0
 	c.dropCohortReservations = nil
 	clear(c.dropCohortReserved[:])
 	c.dropCohortReservedBytes = 0
