@@ -378,6 +378,110 @@ The focused Docker artifacts are:
 - `harness_out/docker/20260822T220318Z-apex-blocker-final`;
 - `harness_out/docker/20260822T220051Z-apex-census-corrected`.
 
+## 2026-08-22 document type definition (DTD) blocker receipt
+
+Status: `NO-GO`. `KEEP LIVE`: `dispatch.dtd`.
+
+A document type definition (DTD) is the grammar declaration tested here.
+
+Base commit: `30f470f5c2bf18540f7a18b2b22a7e33b88d4e10`.
+Apex is in this base commit. This isolated draft changes no production or
+registry files.
+
+The registry has 88 entries. It has 78 dispatcher arms, 3 dispatcher
+subpasses, 1 dispatcher predicate, 3 generic passes, and 3 fixpoints.
+The live registry has 31 dispatcher arms, 33 dispatcher languages, 1
+predicate, 32 live entries, and 56 retired entries. It has 35 live language
+labels, or 34 after case folding.
+
+Canopy confirms `normalizeDTDCompatibility` at
+`parser_result_dtd.go:3`. It confirms the dispatcher call at
+`parser_result_compat.go:143`. It also confirms the focused route and locked-C
+guard functions.
+
+The A0 (initial dispatcher census) manifest has 14 languages, 42 files, and
+14 receipts. The DTD receipt has 3 files, 3 checks, and 3 runs. It visits
+105771 nodes. It records zero rewrites, two error roots, and zero parse
+errors.
+
+The tracked receipt has 7 fixtures. It has no DTD fixture. Its limitation
+states that the full authenticated corpus remains an external release gate.
+The full real-corpus census is unavailable because `cgo_harness/corpus_real`
+is absent. `TestDispatcherArmCensusOverRealCorpus` skips for this reason.
+
+The DTD probe covers four authenticated witnesses:
+
+- `parser-produced-pe-reference-trigger`, source SHA-256
+  `f6903445e1a330ae0fd42b19c43538ea30b0da6261c1fe5ae452fc713597f0c7`,
+  30 bytes;
+- `historical-medium-calstblx`, source SHA-256
+  `54c96c2aa55e2a95b4d0f9ac30df90cfdd717fa1c52f6d3547f1cbd3c8ad4b85`,
+  9174 bytes;
+- `historical-large-dbits`, source SHA-256
+  `923e8f6ea911bd940ea95d957028fa3155a11b54a756bbe291d3710e110172d9`,
+  285292 bytes;
+- `historical-large-docbook`, source SHA-256
+  `4f54c108abea1e4ae8e13e98d79bc0534d442012ed7ab40fcb4052dc843f65dd`,
+  198540 bytes.
+
+The combined receipt covers raw, production, compact, forest, and incremental
+routes. The raw route matches the production route by deep digest for all four
+witnesses. Production, compact, forest, and incremental routes each record
+zero `dispatch.dtd` rewrites.
+
+The route results are:
+
+- The PE-reference witness uses compact fallback because
+  `parser-core fresh-full runner did not accept EOF`. The forest fallback uses
+  offset 23, symbol 1, with reason `dead_end`. Each recorded dispatch route
+  visits 13 nodes. Incremental parsing reuses 6 subtrees and 20 bytes.
+- The Calstblx witness uses compact fallback because
+  `parser-core fresh-full runner did not accept EOF`. The forest fallback uses
+  offset 3926, symbol 15, with reason `dead_end`. Each recorded dispatch route
+  visits 890 nodes. Incremental parsing reuses 451 subtrees and 5306 bytes.
+- The Dbits witness uses compact fallback because
+  `parser-core fresh-full runner did not accept EOF`. The forest fallback uses
+  offset 281605, symbol 18, with reason `dead_end`. Each recorded dispatch
+  route visits 62538 nodes. Incremental parsing reuses 40706 subtrees and
+  220587 bytes.
+- The DocBook witness uses compact fallback and direct forest parsing.
+  Each recorded dispatch route visits 42343 nodes. Incremental parsing reuses 1
+  subtree and 198540 bytes.
+
+The locked-C receipt compares symbols, fields, spans, points, extras, missing
+flags, error flags, and deep digests on raw and production trees.
+The two recovery witnesses still diverge:
+
+- `parser-produced-pe-reference-trigger`: path
+  `/extSubset/elementdecl[0]/ERROR[4]/Name[0]`; Go `error=true`; C
+  `error=false`. Go digest `3e32d101e13010d7e964bcd68524291d3439309022f5aeff218d1e1c20478f0c`;
+  C digest `5c2393834cf7a941dfc5e0c86dacb344cb122822631b379e21f9bf607544c860`;
+- `historical-medium-calstblx`: path
+  `/extSubset/AttlistDecl[31]/AttDef[3]/ERROR[3]/)[0]`; Go `error=true`; C
+  `error=false`. Go digest `6aafeee4581dbcbea8dc807d04a56339d500c18fd7a9f034f885439fadaf2311`;
+  C digest `6316281505e3891906174c07c691814c0b187d3619aa455fc01174efd2736a3e`.
+
+The Dbits and DocBook witnesses match locked C exactly on raw and production
+routes. Their digests are `a1655ece34d0000ed54e2954faaf93c315fc86e9cea65430022fda9b33677e1d`
+and `5f61a372e602e6e0f772ad1a053e5cc42492add24bb045eef10370096d8cd04f`.
+The recovery unit guard also passes.
+
+The rebased route, locked-C, registry, census, and unit-recovery receipts
+passed. The real-corpus census reported a controlled skip because the corpus
+is absent.
+
+Keep `dispatch.dtd` live until both C mismatches close and the authenticated
+corpus becomes available. Do not change the registry or delete the arm.
+
+The focused Docker artifacts are:
+
+- `/tmp/dtd-post-apex-artifacts/20260822T230021Z-dtd-route-receipt`;
+- `/tmp/dtd-post-apex-artifacts/20260822T230030Z-dtd-locked-c`;
+- `/tmp/dtd-post-apex-artifacts/20260822T230204Z-dtd-census`;
+- `/tmp/dtd-post-apex-artifacts/20260822T230220Z-dtd-registry`;
+- `/tmp/dtd-post-apex-artifacts/20260822T230229Z-dtd-real-corpus-census`;
+- `/tmp/dtd-post-apex-artifacts/20260822T230234Z-dtd-unit-recovery`.
+
 ## Ordered program
 
 ### R0 — inventory and containment
