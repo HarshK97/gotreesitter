@@ -61,6 +61,24 @@ for tags and release notes while still in `0.x`.
   alternative-set proof. The `grammargen_lr` witness uses production fallback
   because that proof also declines. Keep direct D6b admission ungraduated.
 
+- Record the D6c `grammargen_lr` blocker on receipt branch base `ed0568d9`.
+  The original probe ran at `0c34a681`. The survivor derivation digest is
+  `9b1c3a249bec15d4b74a7462f701c491e022be80f7a51a5590f1520a76fd2c06`
+  with continuation state `1141`. The dropped derivation digest is
+  `d72a6fe90ca3aec9883bd00494eb8ca7110ede90d5f09fb5000fdc6441a79e8f` with
+  continuation state `680`. At path `[0,4]`, span `1030..1037` (`prodIdx`),
+  the survivor is `identifier` symbol `86`, production `0`; the dropped node
+  is `parameter_declaration` symbol `113`, production `36`, with one `type`
+  child. The D6c admission is a NO-GO. Any continuation-state or public-shape
+  mismatch must decline and preserve the existing locked-C production fallback.
+  The focused Docker receipt passes the typed D6b decline and the existing
+  fallback gate; both trees retain locked-C digest
+  `1472cfd9a014d4034dbc1456afd12c282630ef787c3543cf0cecb73619883ad2`.
+  The labeled wrapper artifacts are
+  `/tmp/gts-d6c-nogo-receipt-20260822/harness_out/docker/20260822T202359Z-d6c-frontier-state-public-shape`
+  and
+  `/tmp/gts-d6c-nogo-receipt-20260822/harness_out/docker/20260822T202427Z-d6c-grammargen-lr-fallback`.
+
 - Record the Swift #576 unsafe minimal and corpus divergences as open. Keep
   the focused locked-C receipt without changing parser behavior.
 

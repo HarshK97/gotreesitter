@@ -137,6 +137,41 @@ These receipts do not graduate direct D6b admission.
 The matrix counts and performance counts remain unchanged.
 This evidence does not graduate the route or wire production drops.
 
+### D6c blocker receipt: `grammargen_lr`
+
+The receipt branch uses base commit `ed0568d9`. The focused Docker reproduction
+ran at original probe commit `0c34a681` and records the authenticated frontier
+used by the D6b decline. The frontier drops participant `1`.
+
+| Member | Derivation digest | Length | Continuation state | Head byte |
+|---|---|---:|---:|---:|
+| Survivor | `9b1c3a249bec15d4b74a7462f701c491e022be80f7a51a5590f1520a76fd2c06` | 5,254 | 1,141 | 1,046 |
+| Dropped | `d72a6fe90ca3aec9883bd00494eb8ca7110ede90d5f09fb5000fdc6441a79e8f` | 5,324 | 680 | 1,046 |
+
+Both members use the same authenticated scanner checkpoint at source span
+`1046..1047`. The first continuation-state difference is `1141` versus `680`.
+
+The first public projection difference is path `[0,4]`, span `1030..1037`,
+source text `prodIdx`:
+
+- The survivor materializes terminal `identifier` symbol `86`, production `0`.
+- The dropped member materializes `parameter_declaration` symbol `113`,
+  production `36`, with one `_simple_type` child under field `type`.
+
+The focused regression test records a typed `no_action` D6b decline. The
+existing `grammargen_lr` fallback gate also passes. Candidate and production
+trees retain locked-C deep digest
+`1472cfd9a014d4034dbc1456afd12c282630ef787c3543cf0cecb73619883ad2`.
+
+The labeled Docker artifacts are:
+
+- `/tmp/gts-d6c-nogo-receipt-20260822/harness_out/docker/20260822T202359Z-d6c-frontier-state-public-shape`
+- `/tmp/gts-d6c-nogo-receipt-20260822/harness_out/docker/20260822T202427Z-d6c-grammargen-lr-fallback`
+
+The D6c decision is NO-GO. A drop may proceed only when the authenticated
+continuation state and the canonical public projection match. Any state or
+public-shape mismatch must decline and preserve the production fallback.
+
 ## Current fallback taxonomy
 
 The 30 fallbacks divide into 15 clean production trees and 15 production error trees.
