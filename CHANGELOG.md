@@ -9,6 +9,23 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Recorded the P24c exact-single-pop direct-append rejection. The direct-append
+  path itself already shipped in ancestor `b9106e78635244b59dc9c9b75aa4863b89c99630`.
+  P24c tested only helper inlining inside `condenseWithOutcomeAtomic`. The
+  candidate changed exactly these two files:
+  `internal/parsercorephase0/core.go` and
+  `internal/parsercorephase0/condense_direct_append_test.go`.
+  The audit patch hashes are `2dbcf54b185214e609d0cade7bf53ea6408150e6b0857ac104f24c3fee759438`
+  for the core patch, `418f60f9d20948d161adfe510fc068cc622ca4660f95aeef7476cde6ff05b0af`
+  for the focused test patch, and
+  `48a5ab605ff49373017aa5a5a31b423692619a3cecf71d9be9fd9f46a37190c3` for
+  the combined two-file patch. Focused Docker correctness passed after the
+  final fix. The stale pre-final package attempt is excluded. Generic driver
+  failures reproduced on baseline. JSON and CSS parity each passed 5/5.
+  The accepted 20-seed alternating publication found a +1.72% geomean
+  regression. The candidate code does not ship. See docs/perf-attribution.md
+  for the full receipt.
+
 - Recorded the P24b owner-plus-lineage scheduler transaction as a performance
   no-go. The candidate changed three files and had diff SHA-256
   c064480db960885558cce4eff8b22679a3dffed996d908f938fa5e480f92dee.
