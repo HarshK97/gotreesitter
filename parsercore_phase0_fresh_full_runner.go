@@ -31,7 +31,11 @@ type parserCoreFreshFullRunner struct {
 	options                           DiagnosticParserCorePrefixOptions
 	replayParseStates                 bool
 	allowConvergedReductionSplitDrops bool
-	scannerScratch                    []byte
+	// certificateAdmissionEnabled is armed only by the private test seam.
+	// It is copied into options for each cached parse after Core.Reset.
+	certificateAdmissionEnabled bool
+	certificateAdmissionToken   *dropCohortActivationToken
+	scannerScratch              []byte
 	// scratch retains the reusable per-parse materialization buffers. The runner
 	// is per-Parser and single-goroutine, so reusing these buffers across parses
 	// mirrors production's parser-held arena reuse and keeps the warm steady
@@ -100,6 +104,10 @@ func (r *parserCoreFreshFullRunner) executeSchedulerOpen(source []byte, compact 
 			return nil, nil, err
 		}
 	}
+	// Core.Reset clears the session authentication bit. Refresh the scheduler
+	// option on every cached parse so the owner callback can re-arm it only for
+	// this fresh session. The default path remains false and allocation-free.
+	r.options.recordDropCohortCertificates = r.certificateAdmissionEnabled
 	// B3 stage S3: force the shared token source's error-run lexing on when
 	// native compact recovery is admitted, so a genuinely unlexable byte run
 	// surfaces as its own errorSymbol token (parser_api.go's

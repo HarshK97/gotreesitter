@@ -1395,6 +1395,19 @@ func (c *Core) validateSchedulerTransaction(token SchedulerTransactionToken) err
 	return nil
 }
 
+// SetHistoricalCertificateAuthenticationOwned arms the D2 import checks for
+// the current scheduler session. Require the active owner for every change.
+func (c *Core) SetHistoricalCertificateAuthenticationOwned(token SchedulerTransactionToken, enabled bool) error {
+	if c == nil {
+		return errors.New("parser-core phase zero: historical authentication on nil core")
+	}
+	if err := c.validateSchedulerTransaction(token); err != nil {
+		return err
+	}
+	c.historicalCertificateAuthentication = enabled
+	return nil
+}
+
 // RunFreshSchedulerSession authenticates one scheduler-owned run without
 // taking per-operation arena checkpoints. It is restricted to a core with no
 // active transaction. Successful runs keep their compact graph; any error or
@@ -1436,6 +1449,9 @@ func (c *Core) RunFreshSchedulerSession(fn func(SchedulerTransactionToken) error
 	token := SchedulerTransactionToken{owner: c, epoch: frame.epoch, transaction: frame.mark.transaction}
 	defer func() {
 		recovered := recover()
+		// Historical certificate authentication is scoped to this fresh session.
+		// Clear the policy before invalidating the owner frame on every exit.
+		c.historicalCertificateAuthentication = false
 		if recovered != nil {
 			frame.clearInactive()
 			_ = c.ResetReleasingRetention()
