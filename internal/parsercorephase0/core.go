@@ -991,6 +991,12 @@ type Core struct {
 	// synthetic EOF token. A transparent goto completes an extra in place.
 	// The scheduler sets this only around one authenticated reduction.
 	reduceNoLookaheadContext bool
+	// dropCohortSelectionContext carries the authenticated scheduler selection
+	// class into reduction-owned historical certificate checks.
+	dropCohortSelectionContext DropCohortSelectionClass
+	// historicalCertificateAuthentication keeps D2 certificate checks inert
+	// until an explicit producer fixture enables them.
+	historicalCertificateAuthentication bool
 	// externalPayloadsQuiescent is a one-way language capability. The caller
 	// certifies that external payload identity does not depend on scanner state.
 	// Reset retains it because the property is stable for this core's tables.
@@ -1021,6 +1027,19 @@ func (c *Core) SetReduceNoLookaheadContext(v bool) {
 		return
 	}
 	c.reduceNoLookaheadContext = v
+}
+
+// SetDropCohortSelectionContextOwned sets the transient selection class under
+// the active scheduler owner used by exact certificate authentication.
+func (c *Core) SetDropCohortSelectionContextOwned(owner SchedulerTransactionToken, v DropCohortSelectionClass) error {
+	if c == nil {
+		return errors.New("parser-core phase zero: nil core selection context")
+	}
+	if err := c.validateSchedulerTransaction(owner); err != nil {
+		return err
+	}
+	c.dropCohortSelectionContext = v
+	return nil
 }
 
 // CertifyExternalPayloadsQuiescent permits recursive insertion to compare and
@@ -1714,6 +1733,8 @@ func (c *Core) Reset() error {
 	c.metadataConstructionAuthenticated = true
 	c.reduceConflictContext = false
 	c.reduceNoLookaheadContext = false
+	c.dropCohortSelectionContext = DropCohortSelectionNone
+	c.historicalCertificateAuthentication = false
 	c.externalTokenScannerStart = 0
 	c.externalTokenScannerEnd = 0
 	c.externalTokenScannerExact = false
@@ -2429,7 +2450,7 @@ func (c *Core) ReduceOutputsInto(dst []ReductionOutput, head Head, lookahead Sym
 func (c *Core) ReduceOutputsClassifiedInto(dst []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) (frontier []ReductionOutput, err error) {
 	mark := c.mark()
 	defer c.completeTransaction(mark, &err)
-	return c.reduceOutputsClassifiedIntoUncheckpointed(dst, boundary, actionOrdinal, fork)
+	return c.reduceOutputsClassifiedIntoUncheckpointed(SchedulerTransactionToken{}, dst, boundary, actionOrdinal, fork)
 }
 
 func (c *Core) reductionParentForPath(

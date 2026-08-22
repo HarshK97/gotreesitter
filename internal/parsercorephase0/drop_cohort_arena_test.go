@@ -742,6 +742,7 @@ func TestG18DropCohortDeadHistoryCounterTracksAuthenticImport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	compact.historicalCertificateAuthentication = true
 	seed, err := compact.Seed(1, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -777,7 +778,30 @@ func TestG18DropCohortDeadHistoryCounterTracksAuthenticImport(t *testing.T) {
 		if len(firstOutputs) != 1 || !firstOutputs[0].MultiplePopPaths {
 			return fmt.Errorf("first reduction outputs=%+v, want one multi-path output", firstOutputs)
 		}
-		return compact.RecordReductionLineageOwned(owner, firstOutputs, 7)
+		if err := compact.RecordReductionLineageOwned(owner, firstOutputs, 7); err != nil {
+			return err
+		}
+		cohort, err := compact.BeginDropCohortOwned(owner, DropCohortActionIdentity{
+			BoundaryState: 1,
+			Lookahead:     9,
+			ActionOrdinal: 0,
+			Action:        Action{Type: ActionReduce, Symbol: 2, ChildCount: 1},
+		}, 1)
+		if err != nil {
+			return err
+		}
+		derivation, err := compact.BuildDropCohortDerivationOwned(owner, firstOutputs[0].Head, DropCohortSourceCheckpoint{})
+		if err != nil {
+			return err
+		}
+		if err := compact.WriteDropCohortMemberOwned(owner, cohort, firstOutputs[0].Head, 0, derivation); err != nil {
+			return err
+		}
+		refs, err := compact.FinalizeDropCohortOwned(owner, cohort)
+		if err != nil {
+			return err
+		}
+		return compact.RecordHeadLineageRefsOwned(owner, firstOutputs[0].Head, refs)
 	})
 	if err != nil {
 		t.Fatal(err)
