@@ -20,8 +20,8 @@ import (
 // accepted-root-leading-gap decline, the shared post-materialization
 // normalizeRootSourceStart (parser_result_root_build.go) pulled the public
 // root span back over the dropped byte on the assumption of a legitimately
-// elided leading extra, publishing HasError()==false while production
-// correctly reports an error for the same bytes.
+// elided leading extra. The locked C oracle keeps clean skipped-byte
+// witnesses outside the root span, so the route must preserve that span.
 func TestCompactRouteRootLeadingGapDeclines(t *testing.T) {
 	// html, erlang, and haskell are not otherwise loaded by the always-on
 	// (untagged) suite; purge the process-wide embedded cache afterward so
@@ -30,18 +30,20 @@ func TestCompactRouteRootLeadingGapDeclines(t *testing.T) {
 	t.Cleanup(func() { grammars.PurgeEmbeddedLanguageCache() })
 
 	cases := []struct {
-		name   string
-		lang   string
-		source string
+		name      string
+		lang      string
+		source    string
+		wantError bool
+		wantStart uint32
 	}{
-		{"html_amp_digit", "html", "&0"},
-		{"html_amp_semicolon", "html", "&;"},
-		{"html_amp_hash", "html", "&#"},
-		{"html_close_angle_digit", "html", ">0"},
-		{"html_amp_zeros", "html", "&000"},
-		{"erlang_soh_digit", "erlang", "\x010"},
-		{"erlang_du_digit", "erlang", "\x100"},
-		{"haskell_unterminated_string", "haskell", "\"\n"},
+		{"html_amp_digit", "html", "&0", true, 0},
+		{"html_amp_semicolon", "html", "&;", true, 0},
+		{"html_amp_hash", "html", "&#", true, 0},
+		{"html_close_angle_digit", "html", ">0", true, 0},
+		{"html_amp_zeros", "html", "&000", true, 0},
+		{"erlang_soh_digit", "erlang", "\x010", false, 1},
+		{"erlang_du_digit", "erlang", "\x100", false, 1},
+		{"haskell_unterminated_string", "haskell", "\"\n", true, 0},
 	}
 
 	for _, c := range cases {
@@ -61,8 +63,11 @@ func TestCompactRouteRootLeadingGapDeclines(t *testing.T) {
 				t.Fatalf("production parse: %v", err)
 			}
 			defer productionTree.Release()
-			if !productionTree.RootNode().HasError() {
-				t.Fatalf("production HasError=false, want true for %q", c.source)
+			if got := productionTree.RootNode().HasError(); got != c.wantError {
+				t.Fatalf("production HasError=%t, want %t for %q", got, c.wantError, c.source)
+			}
+			if got := productionTree.RootNode().StartByte(); got != c.wantStart {
+				t.Fatalf("production root startByte=%d, want %d for %q", got, c.wantStart, c.source)
 			}
 
 			gts.ResetAdmissionCandidateCountersForTest()

@@ -61,6 +61,17 @@ for tags and release notes while still in `0.x`.
   existing forest decline decision. Keep Ledger recovery triggers on the
   production fallback until their forest trees match the locked C tree.
 
+- Preserve lexer skip-transition provenance for JSDoc padding. The focused
+  Docker receipts record zero `dispatch.jsdoc` rewrites and equal raw and
+  production digests on every covered route. Keep the JSDoc compatibility arm
+  and registry entry live until one-grammar locked-C parity proves node, field,
+  span, point, extra, missing, and error equality. Preserve the root span for
+  an authenticated leading DFA skip. Keep unproven non-trivia gaps fail-closed.
+
+- Align the Bash skipped-escape and Erlang leading-skip witnesses with locked
+  C. Keep Bash `e \\ cho hi` clean. Keep Erlang `\x010` and `\x100` clean with
+  root span `1..2`.
+
 - Correct the Markdown scanner documentation for [issue #454](https://github.com/odvcencio/gotreesitter/issues/454).
   Mark Markdown as `certified reuse`. Changed-token and shape-changing edits
   can still use the production full-parse fallback when reuse gates reject the

@@ -38,29 +38,9 @@ import (
 //     instances in the record's own sweep) is real and is closed by this
 //     predicate retirement in general; this specific witness just no
 //     longer needs that closure to already be correct.
-//   - bash_stray_backslash_space: NOT a false-clean at all, and NOT a
-//     closure. The C oracle parses `e \ cho hi` CLEAN
-//     (HasError()==false): a backslash-space is a scanner-skipped escape
-//     in bash, and the two skipped bytes are legitimately uncovered by any
-//     leaf in C's OWN tree -- the leaf-tiling invariant this gate enforces
-//     is not a C invariant for scanner-skip escape classes. Before this
-//     fix, compact accepted this input directly and matched the C oracle
-//     byte-exactly. After this fix, the now-narrower
-//     bytesAreSingleByteDecorationTrivia-free auditor cannot tell this
-//     shape apart from a genuine drop, so it declines -- a coverage loss
-//     traded for safety, not a defect closure: the auditor's own decline
-//     contract is "stop rather than guess," and it is honoring that
-//     contract correctly here even though the input was actually fine.
-//     The production tree served after the decline (a flat
-//     ERROR[0:10], HasError()==true) diverges from the C oracle; that
-//     divergence is a pre-existing, unrelated production defect in how
-//     the GLR engine handles a bare backslash-space escape (real shell:
-//     `echo \ leading`, `tar -c \ -f x.tar dir`, `VAR=1 \ cmd`;
-//     backslash-newline line continuation is a different, unaffected
-//     class), not something this PR introduces or fixes. It is exposed
-//     here only because compact no longer masks it by accepting the
-//     input directly. Tracked separately as a production bash repair
-//     lane; out of scope for this PR.
+//   - bash_stray_backslash_space: the C oracle and every Go route report a
+//     clean, byte-exact tree. This witness is a scanner-skipped escape,
+//     not a false-clean closure. Keep the test aligned with locked C.
 func TestCompactRouteLexerSkippedByteGapDeclines(t *testing.T) {
 	// html and javascript are not otherwise loaded by the always-on
 	// (untagged) suite; purge the process-wide embedded cache afterward so
@@ -83,11 +63,8 @@ func TestCompactRouteLexerSkippedByteGapDeclines(t *testing.T) {
 		// makes compact accept this input correctly. See the doc comment
 		// above.
 		{"html_amp_stray", "html", "<html> & <body>Hello</body></html>"},
-		// NOT a false-clean: the C oracle reports this input clean. Pins
-		// the auditor's fail-closed decline contract, not a defect
-		// closure; the production-served tree's own divergence from C is
-		// a separate, pre-existing production defect. See the doc comment
-		// above.
+		// The C oracle reports this input clean. Keep this route regression
+		// guard aligned with the exact production and candidate trees.
 		{"bash_stray_backslash_space", "bash", "e \\ cho hi"},
 	}
 
@@ -108,14 +85,9 @@ func TestCompactRouteLexerSkippedByteGapDeclines(t *testing.T) {
 				t.Fatalf("production parse: %v", err)
 			}
 			defer productionTree.Release()
-			// Production's own verdict is HasError()==true for all four
-			// cases, including bash_stray_backslash_space -- that witness's
-			// production tree diverges from the C oracle (see the doc
-			// comment above), but production still reports it as an error
-			// on its own terms, which is the verdict the route-safety check
-			// below holds compact's served tree to.
-			if !productionTree.RootNode().HasError() {
-				t.Fatalf("production HasError=false, want true for %q", c.source)
+			wantError := c.name != "bash_stray_backslash_space"
+			if got := productionTree.RootNode().HasError(); got != wantError {
+				t.Fatalf("production HasError=%t, want %t for %q", got, wantError, c.source)
 			}
 
 			gts.ResetAdmissionCandidateCountersForTest()

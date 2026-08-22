@@ -106,6 +106,65 @@ sources.
 
 Do not change the registry until the matching candidate condition is complete.
 
+## 2026-08-22 JSDoc producer-fix checkpoint
+
+Status: producer fix accepted by the focused gates. Keep `dispatch.jsdoc` and
+`normalizeJsdocCompatibility` live until a separate retirement change.
+
+Base commit: `a01f8037319c9f8f0ea12ae3c96523112656ce22`.
+
+The shared lexer now records the start of a skipped prefix on the emitted real
+token. The parser accepts that prefix as padding only when it begins at the
+stack byte offset. Root finalization preserves the span for an authenticated
+leading skip. It does not preserve an unproven non-trivia gap. This change
+keeps the JSDoc normalizer and registry entry unchanged.
+
+The focused Docker receipts pass for both parser-produced sources:
+
+| Witness | Source SHA-256 | Raw and production digest | Dispatch rewrites |
+| --- | --- | --- | ---: |
+| multi-tag trigger | `8a1683a43035994f3abf03f2f9556b96514a745018c5373ff77d3127fb27d201` | `63238fbed1257ab8d7b198d02beed85a8f4915b5a48149a85bf7b7a993e9388b` | 0 |
+| single-tag control | `0f4dbe6ca5d62b8c033c09ac26689c787a66298540c46b3af7a9760a7240b5ce` | `b8aec819c51b10e62d76937186fc52a8cdf91b66f4d198baa53f4a5860b3b232` | 0 |
+
+The route receipt records these exact routes:
+
+- Trigger: compact fallback for `accepted-leaf-tiling-gap`, forest fallback
+  at `51:22:dead_end`, and incremental fallback for
+  `external_scanner_unsupported`.
+- Control: compact direct, forest fallback at
+  `31:0:nolook_relex_empty`, and incremental fallback for
+  `external_scanner_unsupported`.
+
+The direct-route rule is: the control compact direct route bypasses
+normalization and requires no `dispatch.jsdoc` record. Its forest production
+fallback requires zero JSDoc rewrites and may record `dispatch.jsdoc`. Other
+fallback routes require their own `dispatch.jsdoc` record with zero rewrites.
+
+The focused Docker gates pass for the JavaScript unicode regression, the
+included-range regression, and the existing non-trivia gap rejection tests.
+The locked-C receipt compares symbols, fields, spans, points, extras, missing
+and error flags, and the deep digest for both witnesses.
+
+The Bash witness `e \\ cho hi` remains clean and matches locked C. The Erlang
+witnesses `\x010` and `\x100` remain clean with the exact root span `1..2`.
+
+The exact Docker artifacts are:
+
+- `harness_out/docker/20260822T181926Z-jsdoc-v20-layout-provenance-20260822`
+- `harness_out/docker/20260822T181942Z-jsdoc-v21-included-range-20260822`
+- `harness_out/docker/20260822T181951Z-jsdoc-v22-root-leading-gap-20260822`
+- `harness_out/docker/20260822T182000Z-jsdoc-v23-bash-gap-20260822`
+- `harness_out/docker/20260822T182017Z-jsdoc-v25-a0-manifest-20260822`
+- `harness_out/docker/20260822T182106Z-jsdoc-v26-erlang-locked-c-final-20260822`
+- `harness_out/docker/20260822T182215Z-jsdoc-v27-bash-locked-c-final-20260822`
+- `harness_out/docker/20260822T182230Z-jsdoc-v28-jsdoc-locked-c-final-20260822`
+- `harness_out/docker/20260822T182245Z-jsdoc-v29-js-unicode-final-20260822`
+- `harness_out/docker/20260822T182252Z-jsdoc-v30-gap-boundaries-final-20260822`
+
+Retire the JSDoc compatibility arm only after raw and production trees match
+locked C, both receipts report zero rewrites, and every listed route passes.
+Reopen the candidate if any node, flag, digest, or route result diverges.
+
 ## Ordered program
 
 ### R0 — inventory and containment

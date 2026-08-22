@@ -2551,6 +2551,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 			leaf := newCompactCheckpointLeafInArena(arena, tok.Symbol, named, tok.StartByte, tok.EndByte, cp)
 			leaf.setExtra(extra)
 			leaf.setExternalScannerToken(tok.ExternalScannerToken)
+			leaf.setLexerSkippedPrefixAtSourceStart(tok.lexerSkippedPrefix && tok.lexerSkippedPrefixStart == 0)
 			leaf.preGotoState = currentState
 			leaf.parseState = targetState
 			p.pushStackCompactCheckpointLeaf(s, targetState, leaf, entryScratch, gssScratch)
@@ -2559,6 +2560,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 				tok.StartByte, tok.EndByte, tok.StartPoint, tok.EndPoint)
 			leaf.setExtra(extra)
 			leaf.setExternalScannerToken(tok.ExternalScannerToken)
+			leaf.setLexerSkippedPrefixAtSourceStart(tok.lexerSkippedPrefix && tok.lexerSkippedPrefixStart == 0)
 			leaf.preGotoState = currentState
 			leaf.parseState = targetState
 			p.pushStackNoTreeNode(s, targetState, leaf, entryScratch, gssScratch)
@@ -2574,6 +2576,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 			leaf.hasCheckpoint = true
 		}
 		leaf.setExternalScannerToken(tok.ExternalScannerToken)
+		leaf.setLexerSkippedPrefixAtSourceStart(tok.lexerSkippedPrefix && tok.lexerSkippedPrefixStart == 0)
 		leaf.preGotoState = currentState
 		leaf.parseState = targetState
 		p.pushStackCompactFullLeaf(s, targetState, leaf, entryScratch, gssScratch)
@@ -2596,11 +2599,14 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 		if tok.ExternalScannerToken {
 			flags |= nodeFlagExternalScannerToken
 		}
+		if tok.lexerSkippedPrefix && tok.lexerSkippedPrefixStart == 0 {
+			flags |= nodeFlagLexerSkippedPrefixAtSourceStart
+		}
 		substituteActive := internLeavesSubstituteEnabled || (p != nil && p.leafInternByLang)
 		if substituteActive {
 			key := internKey{
 				symbol:       uint32(tok.Symbol),
-				flags:        uint8(flags),
+				flags:        internedLeafFlags(flags),
 				startByte:    tok.StartByte,
 				endByte:      tok.EndByte,
 				parseState:   targetState,
@@ -2642,6 +2648,7 @@ func (p *Parser) applyShiftAction(s *glrStack, act ParseAction, tok Token, nodeC
 		}
 		leaf.setExtra(act.Extra)
 		leaf.setExternalScannerToken(tok.ExternalScannerToken)
+		leaf.setLexerSkippedPrefixAtSourceStart(tok.lexerSkippedPrefix && tok.lexerSkippedPrefixStart == 0)
 		if leaf.isExtra() && perfCountersEnabled {
 			perfRecordExtraNode()
 		}

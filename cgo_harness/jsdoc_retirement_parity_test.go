@@ -1,0 +1,255 @@
+//go:build cgo && treesitter_c_parity
+
+package cgoharness
+
+import (
+	"crypto/sha256"
+	"fmt"
+	"testing"
+
+	gotreesitter "github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/internal/benchfixtures"
+	sitter "github.com/tree-sitter/go-tree-sitter"
+)
+
+const (
+	jsdocProducerTrigger       = "/**\n * @param {string} name\n * @returns {number}\n */\n"
+	jsdocProducerControl       = "/**\n * @param {string} name\n */\n"
+	jsdocProducerTriggerSHA256 = "8a1683a43035994f3abf03f2f9556b96514a745018c5373ff77d3127fb27d201"
+	jsdocProducerControlSHA256 = "0f4dbe6ca5d62b8c033c09ac26689c787a66298540c46b3af7a9760a7240b5ce"
+)
+
+func TestJsdocLexerSkipProvenanceLockedCParity(t *testing.T) {
+	t.Setenv("GTS_DISPATCHER_CENSUS", "1")
+	entry, ok := parityEntriesByName["jsdoc"]
+	if !ok {
+		t.Fatal("missing JSDoc grammar entry")
+	}
+	language := entry.Language()
+	cLanguage, err := COracleLanguage("jsdoc")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name   string
+		source []byte
+		sha256 string
+	}{
+		{name: "multi_tag_trigger", source: []byte(jsdocProducerTrigger), sha256: jsdocProducerTriggerSHA256},
+		{name: "single_tag_control", source: []byte(jsdocProducerControl), sha256: jsdocProducerControlSHA256},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := fmt.Sprintf("%x", sha256.Sum256(test.source)); got != test.sha256 {
+				t.Fatalf("source SHA-256 = %s, want %s", got, test.sha256)
+			}
+
+			rawParser := gotreesitter.NewParser(language)
+			rawParser.SetAdmissionCandidateRoute(false)
+			raw, err := rawParser.ParseNoResultCompatibilityBenchmarkOnly(test.source)
+			if err != nil {
+				t.Fatalf("raw parse: %v", err)
+			}
+			t.Cleanup(raw.Release)
+
+			productionParser := gotreesitter.NewParser(language)
+			productionParser.SetAdmissionCandidateRoute(false)
+			production, err := productionParser.Parse(test.source)
+			if err != nil {
+				t.Fatalf("production parse: %v", err)
+			}
+			t.Cleanup(production.Release)
+
+			cParser := sitter.NewParser()
+			t.Cleanup(cParser.Close)
+			if err := cParser.SetLanguage(cLanguage); err != nil {
+				t.Fatal(err)
+			}
+			cTree := cParser.Parse(test.source, nil)
+			if cTree == nil || cTree.RootNode() == nil {
+				t.Fatal("C oracle returned a nil tree")
+			}
+			t.Cleanup(cTree.Close)
+
+			cDigest, err := COracleDeepDigest(cTree)
+			if err != nil {
+				t.Fatalf("inspect C deep tree: %v", err)
+			}
+			rawRuntime := raw.ParseRuntime()
+			productionRuntime := production.ParseRuntime()
+			if rawRuntime.NormalizationNodesRewritten != 0 || productionRuntime.NormalizationNodesRewritten != 0 {
+				t.Fatalf("JSDoc normalization rewrote nodes: raw=%d production=%d", rawRuntime.NormalizationNodesRewritten, productionRuntime.NormalizationNodesRewritten)
+			}
+			t.Logf("witness=%s bytes=%d source_sha256=%s raw_rewrites=%d production_rewrites=%d c_digest=%s", test.name, len(test.source), test.sha256, rawRuntime.NormalizationNodesRewritten, productionRuntime.NormalizationNodesRewritten, cDigest)
+
+			assertJsdocLockedCTreeExact(t, "raw", raw, language, cTree, cDigest)
+			assertJsdocLockedCTreeExact(t, "production", production, language, cTree, cDigest)
+		})
+	}
+}
+
+func TestErlangLeadingSkippedPrefixLockedCParity(t *testing.T) {
+	entry, ok := parityEntriesByName["erlang"]
+	if !ok {
+		t.Fatal("missing Erlang grammar entry")
+	}
+	language := entry.Language()
+	cLanguage, err := COracleLanguage("erlang")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		source []byte
+	}{
+		{name: "soh_digit", source: []byte("\x010")},
+		{name: "du_digit", source: []byte("\x100")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cParser := sitter.NewParser()
+			t.Cleanup(cParser.Close)
+			if err := cParser.SetLanguage(cLanguage); err != nil {
+				t.Fatal(err)
+			}
+			cTree := cParser.Parse(test.source, nil)
+			if cTree == nil || cTree.RootNode() == nil {
+				t.Fatal("C oracle returned a nil tree")
+			}
+			t.Cleanup(cTree.Close)
+			cDigest, err := COracleDeepDigest(cTree)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			rawParser := gotreesitter.NewParser(language)
+			raw, err := rawParser.ParseNoResultCompatibilityBenchmarkOnly(test.source)
+			if err != nil {
+				t.Fatalf("raw parse: %v", err)
+			}
+			t.Cleanup(raw.Release)
+			productionParser := gotreesitter.NewParser(language)
+			productionParser.SetAdmissionCandidateRoute(false)
+			production, err := productionParser.Parse(test.source)
+			if err != nil {
+				t.Fatalf("production parse: %v", err)
+			}
+			t.Cleanup(production.Release)
+			candidateParser := gotreesitter.NewParser(language)
+			candidateParser.SetAdmissionCandidateRoute(true)
+			candidate, err := candidateParser.Parse(test.source)
+			if err != nil {
+				t.Fatalf("candidate parse: %v", err)
+			}
+			t.Cleanup(candidate.Release)
+
+			for _, route := range []struct {
+				name string
+				tree *gotreesitter.Tree
+			}{
+				{name: "raw", tree: raw}, {name: "production", tree: production}, {name: "candidate", tree: candidate},
+			} {
+				root := route.tree.RootNode()
+				if root.HasError() {
+					t.Errorf("%s HasError=true, want false", route.name)
+				}
+				if root.StartByte() != 1 || root.EndByte() != 2 {
+					t.Errorf("%s root span=%d..%d, want 1..2", route.name, root.StartByte(), root.EndByte())
+				}
+				assertJsdocLockedCTreeExact(t, "erlang_"+route.name, route.tree, language, cTree, cDigest)
+			}
+			if cRoot := cTree.RootNode(); cRoot.HasError() || cRoot.StartByte() != 1 || cRoot.EndByte() != 2 {
+				t.Fatalf("C root has_error=%t span=%d..%d, want false and 1..2", cRoot.HasError(), cRoot.StartByte(), cRoot.EndByte())
+			}
+		})
+	}
+}
+
+func TestBashSkippedEscapeLockedCParity(t *testing.T) {
+	entry, ok := parityEntriesByName["bash"]
+	if !ok {
+		t.Fatal("missing Bash grammar entry")
+	}
+	language := entry.Language()
+	cLanguage, err := COracleLanguage("bash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := []byte("e \\ cho hi")
+	cParser := sitter.NewParser()
+	t.Cleanup(cParser.Close)
+	if err := cParser.SetLanguage(cLanguage); err != nil {
+		t.Fatal(err)
+	}
+	cTree := cParser.Parse(source, nil)
+	if cTree == nil || cTree.RootNode() == nil {
+		t.Fatal("C oracle returned a nil tree")
+	}
+	t.Cleanup(cTree.Close)
+	cRoot := cTree.RootNode()
+	if cRoot.HasError() {
+		t.Fatalf("C root HasError=true, want false")
+	}
+	cDigest, err := COracleDeepDigest(cTree)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rawParser := gotreesitter.NewParser(language)
+	raw, err := rawParser.ParseNoResultCompatibilityBenchmarkOnly(source)
+	if err != nil {
+		t.Fatalf("raw parse: %v", err)
+	}
+	t.Cleanup(raw.Release)
+	productionParser := gotreesitter.NewParser(language)
+	productionParser.SetAdmissionCandidateRoute(false)
+	production, err := productionParser.Parse(source)
+	if err != nil {
+		t.Fatalf("production parse: %v", err)
+	}
+	t.Cleanup(production.Release)
+	candidateParser := gotreesitter.NewParser(language)
+	candidateParser.SetAdmissionCandidateRoute(true)
+	candidate, err := candidateParser.Parse(source)
+	if err != nil {
+		t.Fatalf("candidate parse: %v", err)
+	}
+	t.Cleanup(candidate.Release)
+
+	for _, route := range []struct {
+		name string
+		tree *gotreesitter.Tree
+	}{
+		{name: "raw", tree: raw},
+		{name: "production", tree: production},
+		{name: "candidate", tree: candidate},
+	} {
+		if route.tree.RootNode().HasError() {
+			t.Errorf("%s HasError=true, want false", route.name)
+		}
+		assertJsdocLockedCTreeExact(t, "bash_skipped_escape_"+route.name, route.tree, language, cTree, cDigest)
+	}
+}
+
+func assertJsdocLockedCTreeExact(t *testing.T, label string, goTree *gotreesitter.Tree, goLang *gotreesitter.Language, cTree *sitter.Tree, wantDigest string) {
+	t.Helper()
+	goRoot := goTree.RootNode()
+	cRoot := cTree.RootNode()
+	if diff := FirstDivergenceDumpV1(goRoot, goLang, cRoot); diff != nil {
+		t.Errorf("%s tree diverges from the locked C oracle: %+v", label, diff)
+		return
+	}
+	if diff := firstLockedCTreeFlagDivergence(goRoot, goLang, cRoot, "/"+goRoot.Type(goLang)); diff != nil {
+		t.Errorf("%s tree has a missing or error flag divergence: %v", label, diff)
+		return
+	}
+	inspection, err := benchfixtures.InspectGoTree(goRoot, goLang)
+	if err != nil {
+		t.Errorf("inspect %s Go deep tree: %v", label, err)
+		return
+	}
+	if inspection.SHA256 != wantDigest {
+		t.Errorf("%s deep digest Go=%s C=%s", label, inspection.SHA256, wantDigest)
+		return
+	}
+	t.Logf("%s route matches locked C exactly: symbols, fields, spans, points, extras, missing/error flags, deep digest=%s", label, inspection.SHA256)
+}

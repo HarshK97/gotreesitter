@@ -160,8 +160,11 @@ func (n *noTreeNode) setMissing(v bool)              { n.setFlag(nodeFlagMissing
 func (n *noTreeNode) hasError() bool                 { return n.hasFlag(nodeFlagHasError) }
 func (n *noTreeNode) setHasError(v bool)             { n.setFlag(nodeFlagHasError, v) }
 func (n *noTreeNode) setExternalScannerToken(v bool) { n.setFlag(nodeFlagExternalScannerToken, v) }
-func (n *noTreeNode) dirty() bool                    { return n.hasFlag(nodeFlagDirty) }
-func (n *noTreeNode) setDirty(v bool)                { n.setFlag(nodeFlagDirty, v) }
+func (n *noTreeNode) setLexerSkippedPrefixAtSourceStart(v bool) {
+	n.setFlag(nodeFlagLexerSkippedPrefixAtSourceStart, v)
+}
+func (n *noTreeNode) dirty() bool     { return n.hasFlag(nodeFlagDirty) }
+func (n *noTreeNode) setDirty(v bool) { n.setFlag(nodeFlagDirty, v) }
 
 // setFragileLeft/setFragileRight/isFragileLeft/isFragileRight mirror the
 // Node methods of the same name (tree.go); see markReduceFragility
