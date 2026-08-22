@@ -15,14 +15,15 @@ without updating that registry.
 
 The v1 registry freezes the current source and registry:
 
-- 35 explicit `runLanguageResultCompatibility` switch arms;
+- 34 explicit `runLanguageResultCompatibility` switch arms;
 - one predicate-dispatched COBOL entry matching exactly `cobol` or `COBOL`;
 - zero generic passes after language dispatch;
 - zero post-finalization second-pass fixpoint arms.
 
-The registry contains 36 live entries and 52 retired entries. The live entries
-name 39 language labels. Shared switch arms account for the label difference.
-The retired count includes the Swift ternary, JavaScript dynamic-import, and Kotlin interpolated-call subpasses.
+The registry contains 35 live entries and 53 retired entries. The live entries
+name 38 language labels. Shared switch arms account for the label difference.
+The retired count includes the Swift ternary, JavaScript dynamic-import, Kotlin
+interpolated-call, and Bash generated-command assignment subpasses.
 The registry covers
 only this documented internal result-compatibility tier. Scheduler experiments
 and other engine research belong in their owning subsystem's durable traces.
@@ -139,7 +140,8 @@ post-parse normalization tail.
 
 ## Materialization subpass census
 
-One live arm, Bash, still uses `materialization` as its aggregate owner.
+The Bash arm has no live compatibility subpass after this change. Its
+assignment-wrapper and `if`-condition cases remain native producer controls.
 Ada's and Apex's entries now aggregate under `derivation_election_selection`.
 Two of Ada's three subpasses pick a winning derivation from source text. They
 choose between grammatically distinct productions. The entry-level owner now
@@ -163,7 +165,6 @@ The census does not change parser output when it is disabled.
 | Apex | generic local declaration | `derivation_election_selection` |
 | Apex | class literal alias | `derivation_election_selection` |
 | Bash | assignment wrapper flattening | `materialization` |
-| Bash | generated command assignment | `scheduler_action_semantics` |
 | Bash | `if` condition field projection | `materialization` |
 | Cooklang | trailing step tail | `scanner_checkpoint_state` |
 | Cooklang | recovered recipe | `scheduler_action_semantics` |
@@ -177,6 +178,14 @@ reported zero rewrites. Native route tests now preserve that receipt.
 The Bash command-name concatenation subpass also retired.
 Native reduction already constructs the historical command name.
 The exact 25-case corpus matches baseline `83548f55`.
+
+The Bash generated-command assignment subpass also retired.
+Native scheduling already emits the assignment action for its witness.
+The exact raw and production witness uses
+`zipname=npm-$(node ../cli.js -v).zip`.
+The production, compact, forest, incremental, and locked C routes return the
+same tree. The route receipt is
+`grammars/bash_generated_command_assignment_native_regression_test.go`.
 
 The live probes parse each source without result compatibility.
 They also compare census-enabled output with normal production output.

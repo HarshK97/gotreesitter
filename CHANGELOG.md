@@ -30,6 +30,13 @@ for tags and release notes while still in `0.x`.
 - Kotlin interpolated calls now retain their call-expression wrapper during
   reduction. Parsing no longer runs the wrapper-repair compatibility path.
 
+- Bash generated-command assignments now come directly from native scheduling.
+  The `zipname=npm-$(node ../cli.js -v).zip` witness matches the raw,
+  production, compact, forest, incremental, and locked C trees. The route
+  receipt also records direct compact admission or a bounded fallback, plus
+  incremental fresh or reuse behavior. Parsing no longer runs the
+  generated-command assignment compatibility path.
+
 ### Fixed
 
 - End recovery convergence after a clean condense. Pending forks no longer
