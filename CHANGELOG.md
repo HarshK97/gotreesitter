@@ -149,6 +149,11 @@ for tags and release notes while still in `0.x`.
   witnesses. The full authenticated Rust census is unavailable. The Rust
   real-corpus run still reports two structural mismatches in `weird-exprs.rs`.
   Keep the registry unchanged. See `docs/root-normalization-retirement.md`.
+- Record the `dispatch.apex` blocker receipt at base
+  `f42b88ac9014537d20d3edd76e2c9caa4330a579`. Keep the arm live. The receipt
+  covers four registered witness families, five clean route witnesses, and
+  three malformed recovery witnesses. The forest route still diverges from
+  locked C. See `docs/root-normalization-retirement.md`.
 
 - Record a durable DTD locked-C blocker receipt. Keep the DTD compatibility
   entry live until both recorded error-flag divergences close.
