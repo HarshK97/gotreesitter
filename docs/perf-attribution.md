@@ -10,6 +10,125 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
+## 2026-08-22 P24f stack-entry state receipt
+
+Status: **REJECT / NO-GO**. Ship no candidate code.
+
+This receipt is based on main commit
+`f42b88ac9014537d20d3edd76e2c9caa4330a579`.
+
+The candidate experiment used base commit
+`48e844d9a73863cb92367c4db10f02bc5c09375d`.
+
+P24f tested one bounded hot-path change in stack-entry state extraction. The
+candidate rewrote `stackEntryNodeParseState` in `no_tree_node.go`. It checks
+the payload pointer once, then selects the payload type from the stack-entry
+kind. It does not change parser state, reuse selection, tree construction, or
+recovery decisions.
+
+The candidate changed exactly one file:
+
+- `no_tree_node.go`
+
+The candidate diff SHA-256 is
+`3f930b8109c3a2be5b8aabfa4161c71148aa9a15277e2407dab32976b8c8e7d1`.
+
+### P24f profiler attribution
+
+The P19 packet at `/tmp/gts-p19-evidence` used one central processing unit
+(CPU), `GOMAXPROCS=1`, and 20 samples per scenario. Its warm early-newline
+profile used 25 samples. It named `stackEntryNodeParseState` at 24.55% flat
+CPU and 24.67% cumulative CPU.
+
+P24f targets state extraction inside the reparse and rebuild component. It does
+not repeat the rejected P24a through P24e candidates. Its proof boundary is
+the existing stack-entry representation. Each supported payload type stores
+`parseState` at the field used by the old accessor path. A nil payload and an
+unknown kind still return zero.
+
+### P24f correctness evidence
+
+The baseline focused Docker gate passed at
+`/tmp/gts-p24f-artifacts/20260822T222719Z-p24f-baseline-stack-entry-state`.
+The candidate focused Docker gate passed at
+`/tmp/gts-p24f-artifacts/20260822T222738Z-p24f-candidate-stack-entry-state`.
+The tests covered raw-shape behavior, raw-shape reclamation, cache eviction,
+and incremental equality with a fresh parse. Both runs exited zero without an
+out-of-memory event or timeout.
+
+The Go and C parity Docker gate passed at
+`/tmp/gts-p24f-artifacts/20260822T222826Z-p24f-go-c-parity`. It passed the Go
+generalized LR (GLR) canary and three multiline `Tree.Edit` coordinate cases.
+
+### P24f publication protocol
+
+The publication used 20 shuffle seeds and 40 isolated processes. Odd seeds ran
+the baseline first. Even seeds ran the candidate first. Each process used
+`GOMAXPROCS=1`, `-count=1`, `-benchtime=750ms`, and `-benchmem`.
+
+The primary trio was:
+
+- `BenchmarkGoParseFullDFA`
+- `BenchmarkGoParseIncrementalSingleByteEditDFA`
+- `BenchmarkGoParseIncrementalNoEditDFA`
+
+The raw publication files are in `/tmp/gts-p24f-publication`. The aggregate
+files are:
+
+- `/tmp/gts-p24f-publication/baseline-all.txt`
+- `/tmp/gts-p24f-publication/candidate-all.txt`
+- `/tmp/gts-p24f-publication/benchstat.txt`
+- `/tmp/gts-p24f-publication/paired-stats.txt`
+
+All 40 processes emitted three valid benchmark rows. They reported no failure,
+out-of-memory event, timeout, panic, or contamination marker.
+
+### P24f performance result
+
+The benchstat result compares the candidate with the baseline. The geometric
+mean (geomean) combines the three primary benchmark lanes.
+
+| Benchmark | Baseline | Candidate | Result | p-value |
+|---|---:|---:|---:|---:|
+| Full parse | 7.181ms | 7.189ms | +0.11% | 0.862 |
+| Single-byte edit | 770.4ns | 770.5ns | +0.01% | 0.616 |
+| No edit | 2.549ns | 2.549ns | +0.00% | 0.909 |
+| Geomean | 2.416µs | 2.417µs | +0.04% | — |
+
+For each seed, compute the geomean across the trio. For each order, take the
+geometric mean of the ten baseline seed geomeans and the ten candidate seed
+geomeans. Report the candidate-to-baseline ratio minus one. The order formula
+reports −0.167% when baseline ran first and −0.317% when candidate ran first.
+
+The paired analysis uses equal seeds. For each pair, compute the
+candidate-minus-baseline relative change. Use all 20 pairs and a Student-t
+95% interval.
+
+| Benchmark | Paired mean | 95% paired interval |
+|---|---:|---:|
+| Full parse | −0.359% | [−1.405%, +0.688%] |
+| Single-byte edit | −0.262% | [−0.804%, +0.280%] |
+| No edit | −0.070% | [−0.518%, +0.378%] |
+| Geomean | −0.236% | [−0.772%, +0.300%] |
+
+All incremental lanes used zero bytes and zero allocations. Full parsing used
+54.97 KiB and four allocations per operation in both aggregate variants.
+
+An auxiliary exact-setting run measured maximum resident set size at 591,840
+KiB for the baseline and 608,000 KiB for the candidate. The publication runner
+did not record resident set size for each process.
+
+The candidate has no significant lane improvement. The paired geomean interval
+crosses zero, and the auxiliary candidate run used more resident memory. The
+accepted result is **REJECT / NO-GO**. No code shipped.
+
+### P24f reopening condition
+
+Reopen P24f only if a new profile confirms this helper as a material cost. Use
+a real incremental or generalized LR workload. Require focused correctness and
+parity first. Then repeat the 20-seed, 40-process protocol and require an
+interval that excludes zero without a resident-memory regression.
+
 ## 2026-08-22 P24e raw-shape hashing receipt
 
 Status: **REJECT / NO-GO**. Ship no candidate code.
@@ -260,7 +379,7 @@ every seed. Incremental lanes used 0 allocations on every seed.
 
 The candidate is slower in the combined geomean and both order splits. The
 no-edit timing and full-parse byte regressions are statistically significant.
-The accepted result is **REJECT / NO-GO**. No code shipped.
+The result is **REJECT / NO-GO**. No code shipped.
 
 ## 2026-08-22 P24c exact-single-pop helper-inlining receipt
 

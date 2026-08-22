@@ -9,6 +9,21 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Recorded the P24f stack-entry state extraction rejection. The candidate
+  changed exactly one file, `no_tree_node.go`, from experiment base commit
+  `48e844d9a73863cb92367c4db10f02bc5c09375d`. This receipt uses main commit
+  `f42b88ac9014537d20d3edd76e2c9caa4330a579`. The candidate diff SHA-256 is
+  `3f930b8109c3a2be5b8aabfa4161c71148aa9a15277e2407dab32976b8c8e7d1`.
+  Focused Docker tests and Go and C parity passed. The 20-seed publication
+  used 40 isolated processes, alternating order, `GOMAXPROCS=1`, `-count=1`,
+  750 milliseconds, and `-benchmem` on the primary trio. Benchstat found a
+  +0.04% geomean change with no significant lane improvement. The paired
+  geomean result was −0.236%, with a 95% interval of [−0.772%, +0.300%].
+  Allocations stayed neutral. An auxiliary run measured 591,840 KiB baseline
+  resident set size (RSS) and 608,000 KiB candidate RSS. The candidate code
+  does not ship. See
+  `docs/perf-attribution.md` for the proof boundary and reopening condition.
+
 - Recorded the P24e raw-shape hashing rejection. The candidate changed only
   `raw_shape.go` at base commit
   `098620ad5e39d7b69b258239d1059a1e33bea892`. The candidate diff SHA-256 is
