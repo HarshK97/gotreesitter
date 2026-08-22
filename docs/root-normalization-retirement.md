@@ -316,6 +316,98 @@ Status: the first dispatcher retirement merged in PR #463.
 PR #470 retired the Rust dot-range repair.
 Other Rust recovery behavior remains live.
 
+#### `dispatch.rust` blocker receipt — 2026-08-22
+
+Status: NO-GO. Keep `dispatch.rust` live.
+
+Base commit: `97a7bde26bac9b1a110bbf9216cc681ca59cc5aa`.
+
+The registry contains 88 entries: 78 dispatcher arms, three dispatcher
+subpasses, one dispatcher predicate, three generic passes, and three fixpoint
+passes. Its denominator contains 31 dispatcher arms, 33 dispatcher languages,
+one predicate, zero generic passes, zero post-finalization arms, 32 live
+entries, and 56 retired entries.
+
+The receipt covers 23 Rust witnesses. Every witness reports zero production
+rewrites. The raw and production deep digests match for every witness.
+
+The witness groups are:
+
+- Registered smoke and tracked route witnesses: `ownership-registry-smoke`
+  (25 bytes), `tracked-census-rust_ast.rs` (66,281 bytes).
+- Clean recovery controls: `admission-depth` (76), `token-tree` (334),
+  `recovered-impl-item` (493), `doc-comment` (39), `token-binding` (35),
+  `pattern-statement` (52), and `struct-expression` (60).
+- Expanded clean controls: `admission-direct-external-payload` (6,436),
+  `outline-rust-lib` (382), `parity-lifetime-and-abstract-types` (159),
+  `parity-pattern-statements` (175), `parity-macro-invocations` (132),
+  `parity-weird-expressions` (745), and `parity-weird-top-level` (780).
+- Malformed recovery controls: `malformed-function-impl-type` (42),
+  `malformed-top-level-impl` (54), `malformed-let-closure` (31),
+  `malformed-token-tree` (31), `malformed-pattern-statement` (28),
+  `malformed-struct-expression` (48), and `malformed-doc-comment` (15).
+
+The nine route witnesses report `dispatch.rust` checked 1, run 1, and
+rewritten 0. Their visited-node totals are 16, 17,506, 42, 164, 160, 20,
+19, 31, and 22, in the order listed above.
+
+The locked-C deep receipt covers the registered smoke and tracked witnesses.
+Both raw, production, compact, forest, and incremental trees match locked C.
+
+| Witness | Source SHA-256 | Raw, production, and C digest | Appended route digest |
+| --- | --- | --- | --- |
+| `ownership-registry-smoke` | `5ea70a939eaf182a1d392818bc49b8f25a74334f1002a409865050305a1abf5e` | `f7120d52d2861af7fe4dc6b6d7f0073404236fe8cc6f812f9e40a16253521c63` | `7db86c0ca563a97cef50489560a0819768cc58ad0fce9dd567a12fcd82dc6c07` |
+| `tracked-census-rust_ast.rs` | `43fc2344174da29bb3c032b260a009828e4636965c1ab8cfff62b651caf91b92` | `be989d589814c4ca7e4b62203ad79e817a1c8c8903182f3d74b4a11421415faa` | `59aa777b44241ea9755a8065fd92efe57ef15e2b9965362d1bc06dd58516cd61` |
+
+The compact route admitted both witnesses directly. It recorded two candidate
+admissions and zero fallbacks. The forest route accepted both witnesses with
+`ForestFastPath=true`. The incremental route matched the target digest, but
+it used the documented `external_scanner_unsupported` fallback. It reused
+zero subtrees and zero bytes.
+
+The expanded and malformed traces emitted no dispatcher transcript records.
+They therefore found no actual Rust rewrite in the 23-source probe. The live
+positive controls still exercise direct recovery mutations:
+
+- `TestNormalizeRustTokenBindingPatterns`;
+- `TestNormalizeRustRecoveredFunctionItems`;
+- `TestNormalizeRustRecoveredPatternStatementsRetagsCleanTopLevelRoot`.
+
+The full authenticated Rust corpus census remains unavailable. The A0 manifest
+contains 14 languages, 42 fixtures, and 14 receipts. It contains no Rust
+entry. The tracked census contains seven fixtures and one Rust entry. The
+real-corpus census skips because `cgo_harness/corpus_real` is absent.
+
+The Rust real-corpus parity run reports two structural differences in one
+`weird-exprs.rs` sample. It parses 25 of 25 samples without errors, but only
+24 of 25 samples match the reference tree.
+
+- `root/function_item[12]/block/let_declaration/unary_expression/parenthesized_expression/binary_expression/call_expression/parenthesized_expression/closure_expression/closure_parameters/tuple_pattern/or_pattern`: generated `or_pattern`, reference `closure_expression`, source `|__@_|__`;
+- `root/function_item[21]/block/let_declaration[1]/tuple_pattern/or_pattern`: generated `or_pattern`, reference `closure_expression`, source `|x| x`.
+
+These mismatches block retirement. The registry condition also requires exact
+native output for every registered witness and every listed route. The current
+receipt lacks the full authenticated Rust corpus and does not remove the
+positive recovery controls. Do not change the registry or delete the arm.
+
+Focused Docker artifacts:
+
+- `/tmp/gts-dispatch-rust-probe.4eC4qF/harness_out/docker/20260822T205644Z` — locked-C deep routes;
+- `/tmp/gts-dispatch-rust-probe.4eC4qF/harness_out/docker/20260822T205936Z` — expanded clean trace;
+- `/tmp/gts-dispatch-rust-probe.4eC4qF/harness_out/docker/20260822T210303Z` — malformed recovery trace;
+- `/tmp/gts-dispatch-rust-probe.4eC4qF/harness_out/docker/20260822T210319Z` — positive controls;
+- `/tmp/gts-dispatch-rust-probe.4eC4qF/harness_out/docker/20260822T205946Z-diag-rust` — Rust real-corpus mismatch;
+- `/tmp/gts-dispatch-rust-probe.4eC4qF/harness_out/docker/20260822T205656Z` — registry receipt;
+- `/tmp/gts-dispatch-rust-probe.4eC4qF/harness_out/docker/20260822T205722Z` — A0 manifest receipt;
+- `/tmp/gts-dispatch-rust-probe.4eC4qF/harness_out/docker/20260822T205754Z` — unavailable full-corpus receipt.
+- `/tmp/gts-dispatch-rust-blocker.nhpp7W/harness_out/docker/20260822T210941Z` — registry validation;
+- `/tmp/gts-dispatch-rust-blocker.nhpp7W/harness_out/docker/20260822T211014Z` — A0 and tracked census validation;
+- `/tmp/gts-dispatch-rust-blocker.nhpp7W/harness_out/docker/20260822T214433Z` — focused blocker guard.
+
+Keep this entry live until a producer fix closes both structural mismatches.
+Require the authenticated Rust corpus.
+Move the recovery controls to their owning subsystem.
+
 The mandatory shape is census before migration. Historical audits already
 found that table or engine fixes can leave old normalizers behind.
 

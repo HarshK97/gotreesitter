@@ -127,6 +127,14 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Record the `dispatch.rust` blocker receipt at base
+  `97a7bde26bac9b1a110bbf9216cc681ca59cc5aa`. Keep the arm live. The receipt
+  covers 23 zero-rewrite Rust witnesses and exact locked-C production, compact,
+  forest, and incremental output for the registered smoke and tracked
+  witnesses. The full authenticated Rust census is unavailable. The Rust
+  real-corpus run still reports two structural mismatches in `weird-exprs.rs`.
+  Keep the registry unchanged. See `docs/root-normalization-retirement.md`.
+
 - Record a durable DTD locked-C blocker receipt. Keep the DTD compatibility
   entry live until both recorded error-flag divergences close.
 
