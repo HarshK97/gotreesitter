@@ -123,12 +123,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.authzed", func() { normalizeAuthzedCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "awk":
 		dispatcherArmCensus(ctx, "dispatch.awk", func() { normalizeAwkCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "bash":
-		dispatcherArmSubpassCensus(ctx, "dispatch.bash", func(census materializationSubpassCensus) {
-			census.run("dispatch.bash.generated-command-assignment", func() {
-				normalizeBashGeneratedCommandAssignments(ctx.root, ctx.source, ctx.lang)
-			})
-		})
 	case "bitbake":
 		dispatcherArmCensus(ctx, "dispatch.bitbake", func() { normalizeBitbakeCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "c", "cpp":

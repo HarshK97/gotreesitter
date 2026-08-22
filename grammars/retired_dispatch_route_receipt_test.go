@@ -29,15 +29,36 @@ func retiredDispatchRouteReceiptsAllowCompactFallback(
 	return retiredDispatchRouteReceiptsWithCompactPolicy(t, lang, baseSource, false)
 }
 
+func retiredDispatchRouteReceiptsAllowCompactFallbackExactSource(
+	t *testing.T,
+	lang *gotreesitter.Language,
+	source []byte,
+) []retiredDispatchRouteReceipt {
+	return retiredDispatchRouteReceiptsWithCompactPolicyAndNewline(t, lang, source, false, false)
+}
+
 func retiredDispatchRouteReceiptsWithCompactPolicy(
 	t *testing.T,
 	lang *gotreesitter.Language,
 	baseSource []byte,
 	requireDirectCompact bool,
 ) []retiredDispatchRouteReceipt {
+	return retiredDispatchRouteReceiptsWithCompactPolicyAndNewline(t, lang, baseSource, requireDirectCompact, true)
+}
+
+func retiredDispatchRouteReceiptsWithCompactPolicyAndNewline(
+	t *testing.T,
+	lang *gotreesitter.Language,
+	baseSource []byte,
+	requireDirectCompact bool,
+	appendTrailingNewline bool,
+) []retiredDispatchRouteReceipt {
 	t.Helper()
 
 	source := append(append([]byte(nil), baseSource...), '\n')
+	if !appendTrailingNewline {
+		source = append([]byte(nil), baseSource...)
+	}
 
 	productionParser := gotreesitter.NewParser(lang)
 	productionParser.SetAdmissionCandidateRoute(false)
@@ -91,14 +112,19 @@ func retiredDispatchRouteReceiptsWithCompactPolicy(
 	}
 	t.Cleanup(oldTree.Release)
 	endPoint := retiredDispatchPointAtByte(baseSource, len(baseSource))
-	oldTree.Edit(gotreesitter.InputEdit{
+	edit := gotreesitter.InputEdit{
 		StartByte:   uint32(len(baseSource)),
 		OldEndByte:  uint32(len(baseSource)),
-		NewEndByte:  uint32(len(source)),
+		NewEndByte:  uint32(len(baseSource)),
 		StartPoint:  endPoint,
 		OldEndPoint: endPoint,
-		NewEndPoint: gotreesitter.Point{Row: endPoint.Row + 1},
-	})
+		NewEndPoint: endPoint,
+	}
+	if appendTrailingNewline {
+		edit.NewEndByte = uint32(len(source))
+		edit.NewEndPoint = gotreesitter.Point{Row: endPoint.Row + 1}
+	}
+	oldTree.Edit(edit)
 	incremental, incrementalProfile, err := oldParser.ParseIncrementalProfiled(source, oldTree)
 	if err != nil {
 		t.Fatalf("incremental parse failed: %v", err)
