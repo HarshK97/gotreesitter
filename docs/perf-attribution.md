@@ -9,6 +9,115 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
+## 2026-08-22 P24c exact-single-pop helper-inlining receipt
+
+Status: **REJECT / NO-GO**. Ship no candidate code.
+
+The original direct-append path already shipped in ancestor
+`b9106e78635244b59dc9c9b75aa4863b89c99630` (`b9106e78`). P24c tested only
+helper inlining inside `condenseWithOutcomeAtomic`. The audited candidate used
+base commit `c46c9597005faf57ea810e3268e2cf55239da7e4` and changed exactly:
+
+- `internal/parsercorephase0/core.go`
+- `internal/parsercorephase0/condense_direct_append_test.go`
+
+The audit recorded these three patch SHA-256 values:
+
+- Core patch: `2dbcf54b185214e609d0cade7bf53ea6408150e6b0857ac104f24c3fee759438`
+- Focused test patch: `418f60f9d20948d161adfe510fc068cc622ca4660f95aeef7476cde6ff05b0af`
+- Combined two-file patch: `48a5ab605ff49373017aa5a5a31b423692619a3cecf71d9be9fd9f46a37190c3`
+
+The focused tests directly cover direct publication shape, ordering, rollback,
+and arena-cap behavior.
+
+### Correctness evidence
+
+The focused Docker unit gate passed at
+`/tmp/gts-p24c-correctness/20260822T185424Z-p24c-direct-candidate-unit`.
+The final parser-core package gate passed at
+`/tmp/gts-p24c-correctness/20260822T185528Z-p24c-direct-candidate-package-r2`.
+
+Exclude the stale pre-final package attempt at
+`/tmp/gts-p24c-correctness/20260822T185452Z-p24c-direct-candidate-package`.
+Its initial inline composite literal failed
+`TestCondenseWithOutcomeAtomicProvenanceRatchet`. The final candidate fixed
+that provenance-ratchet issue before the accepted package gate.
+
+The generic driver failures reproduced on baseline. The candidate artifact is
+`/tmp/gts-p24c-correctness/20260822T185553Z-p24c-direct-candidate-driver`.
+The baseline artifact is
+`/tmp/gts-p24c-correctness/20260822T185626Z-p24c-direct-baseline-driver`.
+The shared failures are baseline-reproduced fixture and counter failures.
+Do not attribute them to helper inlining.
+
+The JSON real-corpus parity gate passed 5/5 on baseline and 5/5 on candidate.
+Each side reported five no-error, five S-expression, and five deep checks.
+The candidate report is
+`/tmp/gts-p24c-reports/candidate-json/diag_json.log`.
+The baseline report is
+`/tmp/gts-p24c-reports/baseline-json/diag_json.log`.
+The CSS grammargen-versus-C parity gate passed 5/5 on baseline and 5/5 on
+candidate, with zero tree divergences on each side. The candidate artifact is
+`/tmp/gts-p24c-single-pop-candidate/harness_out/grammargen_cparity/20260822_115824-p24c-direct-candidate-cgo`.
+The baseline artifact is
+`/tmp/gts-p24c-single-pop-baseline/harness_out/grammargen_cparity/20260822_115856-p24c-direct-baseline-cgo`.
+
+### Accepted publication
+
+The accepted publication root is
+`/tmp/gts-p24c-publication-p24c-20260822-single-pop`.
+It used 20 shuffle seeds, 40 isolated processes, and 120 benchmark rows.
+Odd seeds ran baseline first. Even seeds ran candidate first. Each process
+used `GOMAXPROCS=1`, `-count=1`, `-benchtime=750ms`, and `-benchmem`.
+The primary trio was:
+
+- `BenchmarkGoParseFullDFA`
+- `BenchmarkGoParseIncrementalSingleByteEditDFA`
+- `BenchmarkGoParseIncrementalNoEditDFA`
+
+All 40 processes passed. The publication recorded no failures, out-of-memory
+events, timeouts, or contamination. Raw headers prove the benchmark expression,
+build tag, shuffle seed, and 750ms benchtime. The publication directory does
+not itself encode GOMAXPROCS, count, benchmem, or isolated-process settings.
+Those settings rely on external runner records.
+
+### Performance result
+
+The combined benchstat result reports candidate minus baseline:
+
+| Benchmark | Baseline | Candidate | Result | p-value |
+|---|---:|---:|---:|---:|
+| Full parse | 6.512ms | 6.624ms | +1.72% | 0.925 |
+| Single-byte edit | 725.2ns | 727.9ns | +0.37% | 0.805 |
+| No edit | 2.347ns | 2.420ns | +3.11% | 0.129 |
+| Geomean | 2.230µs | 2.268µs | +1.72% | — |
+
+The order split reports these geomeans:
+
+| Order | Baseline | Candidate | Result |
+|---|---:|---:|---:|
+| Baseline first | 2.246µs | 2.304µs | +2.60% |
+| Candidate first | 2.229µs | 2.257µs | +1.26% |
+
+The paired timing analysis reports candidate minus baseline:
+
+| Benchmark | Paired mean | 95% paired interval |
+|---|---:|---:|
+| Full parse | +0.4707% | [-1.6206%, +2.5620%] |
+| Single-byte edit | +0.4155% | [-1.6074%, +2.4385%] |
+| No edit | +0.3220% | [-2.8235%, +3.4676%] |
+| Geomean | +0.3163% | [-1.1488%, +1.7814%] |
+
+Full parsing used 50.13 KiB/op for baseline and 51.07 KiB/op for candidate.
+The byte comparison had p=0.370. Incremental lanes used 0 B/op in both
+variants. Full parsing used 4 allocations per operation in both variants.
+Incremental lanes used 0 allocations per operation in both variants. Every
+allocation comparison had p=1.000.
+
+The geomean rose in the combined publication. Each paired interval includes
+zero. The order split did not show a credible directional win. The accepted
+result is **REJECT / NO-GO**. No code shipped.
+
 ## P24b owner-plus-lineage transaction receipt
 
 P24b tested one scheduler transaction for owner and lineage state.
