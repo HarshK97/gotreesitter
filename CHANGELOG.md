@@ -182,8 +182,13 @@ for tags and release notes while still in `0.x`.
   three malformed recovery witnesses. The forest route still diverges from
   locked C. See `docs/root-normalization-retirement.md`.
 
-- Record a durable DTD locked-C blocker receipt. Keep the DTD compatibility
-  entry live until both recorded error-flag divergences close.
+- Reconfirm the DTD locked-C blocker at base
+  `30f470f5c2bf18540f7a18b2b22a7e33b88d4e10`. Keep `dispatch.dtd` live. The
+  raw route matches the production route by deep digest for all four
+  witnesses. Production, compact, forest, and incremental routes record zero
+  dispatcher rewrites. Two recovery witnesses still differ from locked C at
+  exact error flags. The full authenticated corpus remains unavailable. See
+  `docs/root-normalization-retirement.md`.
 
 - Record a durable Doxygen locked-C blocker receipt. Keep `dispatch.doxygen`
   live. The three A0 witnesses report zero raw and production rewrites. The
