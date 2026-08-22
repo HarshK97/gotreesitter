@@ -159,6 +159,26 @@ func newDropCohortFrontierTwoCohortFixture(t *testing.T, shared bool) dropCohort
 	return fixture
 }
 
+func newDropCohortFrontierSameCohortDifferentDerivationFixture(t *testing.T) dropCohortFrontierFixture {
+	t.Helper()
+	fixture := newDropCohortFrontierFixture(t, 2, 2)
+	branchZero, ok := fixture.core.DropCohortRefAt(fixture.refs[0], 0)
+	if !ok {
+		t.Fatal("source branch zero reference is unavailable")
+	}
+	branchOne, ok := fixture.core.DropCohortRefAt(fixture.refs[0], 1)
+	if !ok {
+		t.Fatal("source branch one reference is unavailable")
+	}
+	var survivorRefs, droppedRefs DropCohortRefSet
+	if !fixture.core.AddDropCohortRef(&survivorRefs, branchZero) ||
+		!fixture.core.AddDropCohortRef(&droppedRefs, branchOne) {
+		t.Fatal("same-cohort branch reference subset construction failed")
+	}
+	fixture.refs[0], fixture.refs[1] = survivorRefs, droppedRefs
+	return fixture
+}
+
 func TestG18DropCohortFrontierPublishesOrderedOwnedRecord(t *testing.T) {
 	fixture := newDropCohortFrontierFixture(t, 2, 1)
 	publishDropCohortFrontierFixture(t, &fixture)
@@ -791,21 +811,7 @@ func TestG18D6bConsumeDropCohortFrontierSequenceOwnedRejectsResealedBlendedRefs(
 }
 
 func TestG18D6bConsumeDropCohortFrontierSequenceOwnedRejectsValidBranchDerivationMismatch(t *testing.T) {
-	fixture := newDropCohortFrontierFixture(t, 2, 2)
-	branchZero, ok := fixture.core.DropCohortRefAt(fixture.refs[0], 0)
-	if !ok {
-		t.Fatal("source branch zero reference is unavailable")
-	}
-	branchOne, ok := fixture.core.DropCohortRefAt(fixture.refs[0], 1)
-	if !ok {
-		t.Fatal("source branch one reference is unavailable")
-	}
-	var survivorRefs, droppedRefs DropCohortRefSet
-	if !fixture.core.AddDropCohortRef(&survivorRefs, branchZero) ||
-		!fixture.core.AddDropCohortRef(&droppedRefs, branchOne) {
-		t.Fatal("source branch reference subset construction failed")
-	}
-	fixture.refs[0], fixture.refs[1] = survivorRefs, droppedRefs
+	fixture := newDropCohortFrontierSameCohortDifferentDerivationFixture(t)
 	publishDropCohortFrontierFixture(t, &fixture)
 	if !fixture.frontierOK {
 		t.Fatal("frontier did not publish")
@@ -866,18 +872,65 @@ func TestG18D6bConsumeDropCohortFrontierSequenceOwnedRejectsNoCommonCohort(t *te
 		t.Fatal("frontier did not publish")
 	}
 	err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
-		return fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+		consumeErr := fixture.core.ConsumeDropCohortFrontierSequenceOwned(
 			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
 		)
+		if consumeErr == nil {
+			t.Fatal("no-common cohort was accepted")
+		}
+		if errors.Is(consumeErr, ErrDropCohortFrontierNoCommonProof) {
+			t.Fatalf("different cohort returned typed decline: %v", consumeErr)
+		}
+		if fixture.core.schedulerFrame.poisoned == nil {
+			t.Fatal("different-cohort error did not poison the scheduler transaction")
+		}
+		return consumeErr
 	})
 	if err == nil {
-		t.Fatal("frontier with no common cohort was accepted")
+		t.Fatal("different-cohort frontier did not poison the transaction")
+	}
+	if errors.Is(err, ErrDropCohortFrontierNoCommonProof) {
+		t.Fatalf("different cohort returned typed decline: %v", err)
 	}
 	if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierComplete {
 		t.Fatalf("frontier state after no-common decline=%v, want complete", got)
 	}
 	if len(fixture.core.dropCohortFrontierJournal) != 0 {
 		t.Fatalf("frontier journal after no-common decline=%d, want 0", len(fixture.core.dropCohortFrontierJournal))
+	}
+}
+
+func TestG18D6bNoCommonProofLeavesSchedulerOwnerUsable(t *testing.T) {
+	fixture := newDropCohortFrontierSameCohortDifferentDerivationFixture(t)
+	publishDropCohortFrontierFixture(t, &fixture)
+	if !fixture.frontierOK {
+		t.Fatal("frontier did not publish")
+	}
+	var consumeErr error
+	err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		consumeErr = fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
+		)
+		if !errors.Is(consumeErr, ErrDropCohortFrontierNoCommonProof) {
+			return errors.New("no-common frontier did not return its typed outcome")
+		}
+		state, _, _, _, stateErr := fixture.core.DropCohortFrontierStateOwned(owner, fixture.frontier)
+		if stateErr != nil {
+			return stateErr
+		}
+		if state != DropCohortFrontierComplete {
+			return errors.New("no-common frontier changed state before the legacy proof")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(consumeErr, ErrDropCohortFrontierNoCommonProof) {
+		t.Fatalf("consume result=%v, want typed no-common proof", consumeErr)
+	}
+	if len(fixture.core.dropCohortFrontierJournal) != 0 {
+		t.Fatalf("frontier journal after typed decline=%d, want 0", len(fixture.core.dropCohortFrontierJournal))
 	}
 }
 

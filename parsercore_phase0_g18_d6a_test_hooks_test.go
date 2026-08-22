@@ -152,3 +152,60 @@ func DiagnosticParseCandidateWithDropCohortFrontierModeForTest(
 	runner.frontierRecordingEnabled = false
 	return tree, published, candidateErr, err
 }
+
+// DiagnosticEnableDropCohortFrontierVerificationForTest enables the D6a
+// producer and D6b consumer for one cached candidate parse. The closure is
+// idempotent and restores the runner before cached reuse.
+func (p *Parser) DiagnosticEnableDropCohortFrontierVerificationForTest(observer DiagnosticParserCoreFrontierObserverForTest) func() {
+	if p == nil || !p.admissionCandidateFullParseEligible(nil, true) {
+		return func() {}
+	}
+	runner, err := p.acquireAdmissionCandidateRunner()
+	if err != nil || runner == nil {
+		return func() {}
+	}
+	token := &dropCohortActivationToken{marker: 2}
+	previousObserver := runner.frontierPublishedObserver
+	runner.frontierVerificationToken = token
+	runner.certificateAdmissionEnabled = true
+	runner.frontierRecordingEnabled = true
+	runner.frontierVerificationEnabled = true
+	runner.frontierPublishedObserver = func(scheduler *diagnosticParserCoreGenericScheduler, owner core.SchedulerTransactionToken, dropIndices []int) error {
+		if observer != nil {
+			observer(diagnosticParserCoreFrontierObserverPayload(scheduler, owner, dropIndices))
+		}
+		return nil
+	}
+	restored := false
+	return func() {
+		if restored {
+			return
+		}
+		restored = true
+		cached, ok := p.admissionCandidateRunner.(*parserCoreFreshFullRunner)
+		if !ok || cached == nil || cached.frontierVerificationToken != token {
+			return
+		}
+		cached.certificateAdmissionEnabled = false
+		cached.frontierRecordingEnabled = false
+		cached.frontierVerificationEnabled = false
+		cached.frontierVerificationToken = nil
+		cached.frontierPublishedObserver = previousObserver
+		cached.options.recordDropCohortCertificates = false
+		cached.options.recordDropCohortFrontiers = false
+		cached.options.verifyDropCohortFrontiers = false
+	}
+}
+
+// DiagnosticDropCohortSnapshotForTest returns the cached candidate runner's
+// verifier telemetry. It is available only in the focused parser-core tests.
+func (p *Parser) DiagnosticDropCohortSnapshotForTest() []byte {
+	if p == nil {
+		return nil
+	}
+	runner, ok := p.admissionCandidateRunner.(*parserCoreFreshFullRunner)
+	if !ok || runner == nil || runner.compact == nil {
+		return nil
+	}
+	return runner.compact.DiagnosticDropCohortSnapshotForTest()
+}

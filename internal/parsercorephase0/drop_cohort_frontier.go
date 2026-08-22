@@ -7,6 +7,11 @@ import (
 	"errors"
 )
 
+// ErrDropCohortFrontierNoCommonProof identifies an authenticated frontier that
+// has no common action and exact derivation across its survivor and drops.
+// Callers may decline D6b and continue with the older alternative-set proof.
+var ErrDropCohortFrontierNoCommonProof = errors.New("parser-core phase zero: frontier dropped members lack a common action and derivation")
+
 // DropCohortFrontierHandle identifies one authenticated scheduler frontier.
 // The owner and epoch are checked before the sequence is read.
 type DropCohortFrontierHandle struct {
@@ -875,41 +880,43 @@ func (c *Core) dropCohortFrontierHasMatchingMemberForCohortOwned(
 	refs DropCohortRefSet,
 	target DropCohortRef,
 	want dropCohortFrontierMember,
-) (bool, error) {
+) (bool, bool, error) {
 	if err := c.validateSchedulerTransaction(owner); err != nil {
-		return false, err
+		return false, false, err
 	}
 	count, valid := c.dropCohortRefCount(refs)
 	if !valid || count <= 0 || count > dropCohortRefHardCap {
-		return false, errors.New("parser-core phase zero: frontier candidate reference set is invalid")
+		return false, false, errors.New("parser-core phase zero: frontier candidate reference set is invalid")
 	}
 	if participantIndex < 0 || participantIndex >= len(c.dropCohortFrontierParticipants) {
-		return false, errors.New("parser-core phase zero: frontier candidate participant is absent")
+		return false, false, errors.New("parser-core phase zero: frontier candidate participant is absent")
 	}
 	participant := c.dropCohortFrontierParticipants[participantIndex]
 	start := uint64(participant.memberStart)
 	end := start + uint64(count)
 	if end < start || end > uint64(len(c.dropCohortFrontierMembers)) {
-		return false, errors.New("parser-core phase zero: frontier candidate member bounds are invalid")
+		return false, false, errors.New("parser-core phase zero: frontier candidate member bounds are invalid")
 	}
+	commonCohort := false
 	for refIndex := 0; refIndex < count; refIndex++ {
 		if err := c.validateSchedulerTransaction(owner); err != nil {
-			return false, err
+			return false, false, err
 		}
 		ref, ok := c.DropCohortRefAtOwned(owner, refs, refIndex)
 		if !ok {
-			return false, errors.New("parser-core phase zero: frontier candidate reference accessor failed")
+			return false, false, errors.New("parser-core phase zero: frontier candidate reference accessor failed")
 		}
 		if !dropCohortFrontierSameCohort(ref, target) {
 			continue
 		}
+		commonCohort = true
 		member := c.dropCohortFrontierMembers[int(start)+refIndex]
 		if member.action == want.action &&
 			c.dropCohortVerifierDerivationEqual(member.derivation, want.derivation, false) {
-			return true, nil
+			return true, true, nil
 		}
 	}
-	return false, nil
+	return false, commonCohort, nil
 }
 
 func (c *Core) consumeDropCohortFrontierSequenceOwned(
@@ -1065,6 +1072,7 @@ func (c *Core) consumeDropCohortFrontierSequenceOwned(
 		return errors.New("parser-core phase zero: frontier survivor reference set is invalid")
 	}
 	proof := false
+	noCommonActionOrDerivation := false
 	for candidateIndex := 0; candidateIndex < survivorCount; candidateIndex++ {
 		if err := c.validateSchedulerTransaction(owner); err != nil {
 			return err
@@ -1092,8 +1100,9 @@ func (c *Core) consumeDropCohortFrontierSequenceOwned(
 			continue
 		}
 		candidateProof := true
+		candidateCommonCohort := true
 		for _, drop := range drops {
-			matched, memberErr := c.dropCohortFrontierHasMatchingMemberForCohortOwned(
+			matched, commonCohort, memberErr := c.dropCohortFrontierHasMatchingMemberForCohortOwned(
 				owner, int(participantStart)+drop, refs[drop], candidate, survivorMember,
 			)
 			if memberErr != nil {
@@ -1102,18 +1111,26 @@ func (c *Core) consumeDropCohortFrontierSequenceOwned(
 			if err := c.validateSchedulerTransaction(owner); err != nil {
 				return err
 			}
+			if !commonCohort {
+				candidateCommonCohort = false
+			}
 			if !matched {
 				candidateProof = false
-				break
 			}
 		}
 		if candidateProof {
 			proof = true
 			break
 		}
+		if candidateCommonCohort {
+			noCommonActionOrDerivation = true
+		}
 	}
 	if !proof {
-		return errors.New("parser-core phase zero: frontier dropped members lack a common action and derivation")
+		if noCommonActionOrDerivation {
+			return ErrDropCohortFrontierNoCommonProof
+		}
+		return errors.New("parser-core phase zero: frontier dropped members lack a common cohort")
 	}
 	if uint64(index) > uint64(^uint32(0)) {
 		return errors.New("parser-core phase zero: frontier index overflow")
@@ -1144,6 +1161,12 @@ func (c *Core) ConsumeDropCohortFrontierSequenceOwned(
 	}
 	defer c.recoverSchedulerOwnedPanic(owner)
 	err = c.consumeDropCohortFrontierSequenceOwned(owner, sequence, electionSequence, token, heads, refs, drops)
+	if errors.Is(err, ErrDropCohortFrontierNoCommonProof) {
+		// This result leaves the frontier complete and the journal unchanged. Do
+		// not poison the active scheduler transaction; the caller may continue
+		// with the existing alternative-set proof.
+		return err
+	}
 	return c.finishSchedulerOwned(owner, err)
 }
 

@@ -40,6 +40,7 @@ type parserCoreFreshFullRunner struct {
 	// frontierVerificationEnabled is armed only by the private D6b test seam.
 	// It never enables the production admission route.
 	frontierVerificationEnabled bool
+	frontierVerificationToken   *dropCohortActivationToken
 	certificateAdmissionToken   *dropCohortActivationToken
 	scannerScratch              []byte
 	// scratch retains the reusable per-parse materialization buffers. The runner
@@ -48,6 +49,9 @@ type parserCoreFreshFullRunner struct {
 	// state from re-allocating the public-tree scratch on every parse.
 	scratch   parserCoreRunnerScratch
 	scheduler diagnosticParserCoreGenericScheduler
+	// frontierPublishedObserver is populated only by the focused D6 test seam.
+	// The production route leaves it nil and keeps the observer allocation-free.
+	frontierPublishedObserver func(*diagnosticParserCoreGenericScheduler, core.SchedulerTransactionToken, []int) error
 }
 
 func newParserCoreFreshFullRunner(scanner ExternalScanner, options DiagnosticParserCorePrefixOptions) (*parserCoreFreshFullRunner, error) {
@@ -113,6 +117,9 @@ func (r *parserCoreFreshFullRunner) executeSchedulerOpenWithObserver(
 ) (*diagnosticParserCoreGenericScheduler, *dfaTokenSource, error) {
 	if r == nil || r.parser == nil || r.lang == nil || r.tables == nil || compact == nil {
 		return nil, nil, errors.New("parser-core fresh-full runner is incomplete")
+	}
+	if observer.frontierPublished == nil {
+		observer.frontierPublished = r.frontierPublishedObserver
 	}
 	if reset {
 		if err := compact.Reset(); err != nil {
