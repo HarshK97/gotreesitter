@@ -142,6 +142,18 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Record the issue #454 compact-parser correctness blocker. A 1 KiB fresh Go
+  tree differs from locked C at
+  `/translation_unit/function_definition[0]/compound_statement[2]/ERROR[2]/number_literal[0]`.
+  Issue #454 reports C latency with correctness marked OK. This repository uses
+  an internal deterministic C witness. Go marks the `number_literal` as an
+  error, and C does not. The original source has 140,288 bytes. The edited
+  source has 140,287 bytes. The same difference persists at 4, 16, 64, and
+  137 KiB. Incremental Go equals fresh Go at 137 KiB, and the memory-budget fallback reports
+  `incremental_parse_memory_budget_full_retry`. The fresh-parse mismatch makes
+  retry selection unable to fix C parity. Status: NO-GO. Keep issue #454 open.
+  See [the issue #454 compact-parser correctness blocker receipt](docs/issue-454-compact-correctness-blocker.md).
+
 - Record the `dispatch.rust` blocker receipt at base
   `97a7bde26bac9b1a110bbf9216cc681ca59cc5aa`. Keep the arm live. The receipt
   covers 23 zero-rewrite Rust witnesses and exact locked-C production, compact,
