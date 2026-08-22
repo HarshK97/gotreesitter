@@ -232,6 +232,9 @@ The following items remain open:
 - [Issue #586](https://github.com/odvcencio/gotreesitter/issues/586) tracks
   shared GLR error-cost bounds.
 
+- The [Swift #586 compact-parser receipt](docs/swift-586-compact-correctness-blocker.md)
+  records a NO-GO recovery-cost and token-producer blocker. Keep the issue open.
+
 - [Issue #728](https://github.com/odvcencio/gotreesitter/issues/728) tracks
   external-scanner incremental reuse.
 
