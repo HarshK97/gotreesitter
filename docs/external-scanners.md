@@ -365,9 +365,10 @@ not certify a scanner by themselves: CMake, SQL, and HTML opt in, while Python,
 Mojo, Starlark, and Svelte explicitly opt out. Custom
 `TokenSource` implementations have their own
 `IncrementalReuseTokenSource` contract and are outside this registry matrix.
-The registered Markdown and Markdown Inline scanners remain uncertified, so
-changed-token or shape-changing edits take the production full-parse fallback
-rather than scanner-dependent reuse.
+The Markdown scanner is certified for incremental reuse. The Markdown Inline
+scanner remains uncertified. Changed-token or shape-changing edits can still
+take the production full-parse fallback when dirty-span, fragility,
+byte-equality, scanner-boundary, or error-tree gates reject reuse.
 
 PowerShell's scanner is stateless: it recognizes one zero-width statement
 terminator from the current lookahead and valid-symbol set, carries no payload,

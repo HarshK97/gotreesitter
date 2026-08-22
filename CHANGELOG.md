@@ -46,6 +46,11 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Correct the Markdown scanner documentation for [issue #454](https://github.com/odvcencio/gotreesitter/issues/454).
+  Mark Markdown as `certified reuse`. Changed-token and shape-changing edits
+  can still use the production full-parse fallback when reuse gates reject the
+  edit. Keep Markdown Inline as `fallback (uncertified)`.
+
 - End recovery convergence after a clean condense. Pending forks no longer
   keep clean C initializer suffixes on the recovery merge path.
 
