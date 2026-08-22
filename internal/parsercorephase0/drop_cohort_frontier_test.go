@@ -1,6 +1,7 @@
 package parsercorephase0
 
 import (
+	"errors"
 	"testing"
 )
 
@@ -101,6 +102,61 @@ func publishDropCohortFrontierFixture(t *testing.T, fixture *dropCohortFrontierF
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func buildDropCohortFrontierTestCohort(
+	t *testing.T,
+	core *Core,
+	identity DropCohortActionIdentity,
+	state StateID,
+	byteOffset uint32,
+) DropCohortRefSet {
+	t.Helper()
+	seed, err := core.Seed(state, byteOffset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := g18ProducerHead(t, core, seed, Symbol(120+state), byteOffset+1)
+	var refs DropCohortRefSet
+	if err := core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		cohort, beginErr := core.BeginDropCohortOwned(owner, identity, 1)
+		if beginErr != nil {
+			return beginErr
+		}
+		derivation, buildErr := core.BuildDropCohortDerivationOwned(owner, head, DropCohortSourceCheckpoint{
+			StartByte: byteOffset, EndByte: byteOffset + 1,
+		})
+		if buildErr != nil {
+			return buildErr
+		}
+		if writeErr := core.WriteDropCohortMemberOwned(owner, cohort, head, 0, derivation); writeErr != nil {
+			return writeErr
+		}
+		refs, err = core.FinalizeDropCohortOwned(owner, cohort)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return refs
+}
+
+func newDropCohortFrontierTwoCohortFixture(t *testing.T, shared bool) dropCohortFrontierFixture {
+	t.Helper()
+	fixture := newDropCohortFrontierFixture(t, 2, 1)
+	first := fixture.refs[0]
+	secondIdentity := g18ProducerIdentity()
+	secondIdentity.ActionOrdinal++
+	second := buildDropCohortFrontierTestCohort(t, fixture.core, secondIdentity, 3, 10)
+	if shared {
+		combined := first
+		if !fixture.core.UnionDropCohortRefs(&combined, second) {
+			t.Fatal("multi-cohort reference union did not change the set")
+		}
+		fixture.refs[0], fixture.refs[1] = combined, combined
+	} else {
+		fixture.refs[0], fixture.refs[1] = first, second
+	}
+	return fixture
 }
 
 func TestG18DropCohortFrontierPublishesOrderedOwnedRecord(t *testing.T) {
@@ -393,5 +449,722 @@ func TestG18DropCohortFrontierStaleTokenPoisonsAndRollsBackOuterMutation(t *test
 		len(fixture.core.dropCohortFrontierMembers) != beforeMembers ||
 		fixture.core.dropCohortFrontierNextSequence != beforeSequence {
 		t.Fatalf("stale-token rollback retained state: writes=%v/%v records=%d/%d participants=%d/%d members=%d/%d sequence=%d/%d", fixture.core.dropCohortProducerWrites, beforeWrites, len(fixture.core.dropCohortFrontiers), beforeRecords, len(fixture.core.dropCohortFrontierParticipants), beforeParticipants, len(fixture.core.dropCohortFrontierMembers), beforeMembers, fixture.core.dropCohortFrontierNextSequence, beforeSequence)
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedSucceedsAndRejectsReplay(t *testing.T) {
+	fixture := newDropCohortFrontierFixture(t, 2, 1)
+	publishDropCohortFrontierFixture(t, &fixture)
+	if !fixture.frontierOK {
+		t.Fatal("frontier did not publish")
+	}
+	if err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
+		)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierConsumed {
+		t.Fatalf("frontier state=%v, want consumed", got)
+	}
+	if len(fixture.core.dropCohortFrontierJournal) != 1 {
+		t.Fatalf("frontier journal length=%d, want 1", len(fixture.core.dropCohortFrontierJournal))
+	}
+	mutation := fixture.core.dropCohortFrontierJournal[0]
+	if mutation.index != uint32(fixture.frontier.Sequence-1) || mutation.before != DropCohortFrontierComplete {
+		t.Fatalf("frontier mutation=%+v, want prior complete state for sequence %d", mutation, fixture.frontier.Sequence)
+	}
+	replayErr := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
+		)
+	})
+	if replayErr == nil {
+		t.Fatal("replayed frontier consumption succeeded")
+	}
+	if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierConsumed {
+		t.Fatalf("frontier state after replay=%v, want consumed", got)
+	}
+	if len(fixture.core.dropCohortFrontierJournal) != 1 {
+		t.Fatalf("frontier journal length after replay=%d, want 1", len(fixture.core.dropCohortFrontierJournal))
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedRollsBackOuterError(t *testing.T) {
+	fixture := newDropCohortFrontierFixture(t, 2, 1)
+	publishDropCohortFrontierFixture(t, &fixture)
+	if !fixture.frontierOK {
+		t.Fatal("frontier did not publish")
+	}
+	beforeJournal := len(fixture.core.dropCohortFrontierJournal)
+	err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		if consumeErr := fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
+		); consumeErr != nil {
+			return consumeErr
+		}
+		return errors.New("forced outer rollback")
+	})
+	if err == nil {
+		t.Fatal("forced outer error did not roll back")
+	}
+	if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierComplete {
+		t.Fatalf("frontier state after rollback=%v, want complete", got)
+	}
+	if len(fixture.core.dropCohortFrontierJournal) != beforeJournal {
+		t.Fatalf("frontier journal length after rollback=%d, want %d", len(fixture.core.dropCohortFrontierJournal), beforeJournal)
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedJournalByteCapDeclines(t *testing.T) {
+	fixture := newDropCohortFrontierFixture(t, 2, 1)
+	publishDropCohortFrontierFixture(t, &fixture)
+	if !fixture.frontierOK {
+		t.Fatal("frontier did not publish")
+	}
+	retained, err := fixture.core.dropCohortRetainedOtherBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range fixture.core.dropCohortRetainedStoreBytes() {
+		retained, err = dropCohortAddChecked(retained, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	retained, err = dropCohortAddChecked(retained, fixture.core.dropCohortReservedBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.core.limits.MaxDropCohortBytes = retained
+	beforeJournalLen := len(fixture.core.dropCohortFrontierJournal)
+	beforeJournalCap := cap(fixture.core.dropCohortFrontierJournal)
+	err = fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
+		)
+	})
+	if err == nil {
+		t.Fatal("journal byte-cap decline was accepted")
+	}
+	if len(fixture.core.dropCohortFrontierJournal) != beforeJournalLen || cap(fixture.core.dropCohortFrontierJournal) != beforeJournalCap {
+		t.Fatalf("frontier journal changed after byte-cap decline: len=%d/%d cap=%d/%d", len(fixture.core.dropCohortFrontierJournal), beforeJournalLen, cap(fixture.core.dropCohortFrontierJournal), beforeJournalCap)
+	}
+	if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierComplete {
+		t.Fatalf("frontier state after byte-cap decline=%v, want complete", got)
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedResetClearsConsumedState(t *testing.T) {
+	fixture := newDropCohortFrontierFixture(t, 2, 1)
+	publishDropCohortFrontierFixture(t, &fixture)
+	if !fixture.frontierOK {
+		t.Fatal("frontier did not publish")
+	}
+	if err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
+		)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.core.Reset(); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.core.dropCohortFrontiers) != 0 || len(fixture.core.dropCohortFrontierParticipants) != 0 ||
+		len(fixture.core.dropCohortFrontierMembers) != 0 || len(fixture.core.dropCohortFrontierJournal) != 0 {
+		t.Fatalf("reset retained consumed frontier stores: frontiers=%d participants=%d members=%d journal=%d", len(fixture.core.dropCohortFrontiers), len(fixture.core.dropCohortFrontierParticipants), len(fixture.core.dropCohortFrontierMembers), len(fixture.core.dropCohortFrontierJournal))
+	}
+}
+
+func TestG18D6bResetReleasingRetentionDropsConsumedFrontierJournal(t *testing.T) {
+	fixture := newDropCohortFrontierFixture(t, 2, 1)
+	publishDropCohortFrontierFixture(t, &fixture)
+	if !fixture.frontierOK {
+		t.Fatal("frontier did not publish")
+	}
+	if err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
+		)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if cap(fixture.core.dropCohortFrontierJournal) == 0 {
+		t.Fatal("consumed frontier did not retain journal capacity")
+	}
+	if err := fixture.core.ResetReleasingRetention(); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.core.dropCohortFrontierJournal) != 0 || cap(fixture.core.dropCohortFrontierJournal) != 0 {
+		t.Fatalf("retention reset kept frontier journal len=%d cap=%d", len(fixture.core.dropCohortFrontierJournal), cap(fixture.core.dropCohortFrontierJournal))
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedRejectsMalformedStoredOffsets(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Core)
+	}{
+		{name: "participant_start", mutate: func(core *Core) {
+			core.dropCohortFrontiers[0].participantStart = ^uint32(0)
+		}},
+		{name: "member_start", mutate: func(core *Core) {
+			core.dropCohortFrontiers[0].memberStart = ^uint32(0)
+		}},
+		{name: "participant_member_start", mutate: func(core *Core) {
+			core.dropCohortFrontierParticipants[0].memberStart = ^uint32(0)
+		}},
+	}
+	for _, testCase := range cases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newDropCohortFrontierFixture(t, 2, 2)
+			publishDropCohortFrontierFixture(t, &fixture)
+			if !fixture.frontierOK {
+				t.Fatal("frontier did not publish")
+			}
+			testCase.mutate(fixture.core)
+			var consumeErr error
+			outerErr := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+				consumeErr = fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+					owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{0},
+				)
+				return consumeErr
+			})
+			if consumeErr == nil || outerErr == nil {
+				t.Fatalf("malformed offset accepted: consume=%v outer=%v", consumeErr, outerErr)
+			}
+			if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierComplete {
+				t.Fatalf("frontier state after malformed offset=%v, want complete", got)
+			}
+			if len(fixture.core.dropCohortFrontierJournal) != 0 {
+				t.Fatalf("frontier journal after malformed offset=%d, want 0", len(fixture.core.dropCohortFrontierJournal))
+			}
+		})
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedRejectsStoredCountCaps(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Core)
+	}{
+		{name: "expected_participants", mutate: func(core *Core) {
+			core.dropCohortFrontiers[0].expectedParticipants = dropCohortFrontierParticipantHardCap + 1
+		}},
+		{name: "expected_members", mutate: func(core *Core) {
+			core.dropCohortFrontiers[0].expectedMembers = dropCohortFrontierMemberHardCap + 1
+		}},
+		{name: "stored_per_head_references", mutate: func(core *Core) {
+			core.dropCohortFrontierParticipants[0].memberCount = dropCohortRefHardCap + 1
+		}},
+	}
+	for _, testCase := range cases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newDropCohortFrontierFixture(t, 2, 2)
+			publishDropCohortFrontierFixture(t, &fixture)
+			if !fixture.frontierOK {
+				t.Fatal("frontier did not publish")
+			}
+			testCase.mutate(fixture.core)
+			var consumeErr error
+			outerErr := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+				consumeErr = fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+					owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{0},
+				)
+				return consumeErr
+			})
+			if consumeErr == nil || outerErr == nil {
+				t.Fatalf("stored count cap accepted: consume=%v outer=%v", consumeErr, outerErr)
+			}
+			if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierComplete {
+				t.Fatalf("frontier state after stored count cap=%v, want complete", got)
+			}
+			if len(fixture.core.dropCohortFrontierJournal) != 0 {
+				t.Fatalf("frontier journal after stored count cap=%d, want 0", len(fixture.core.dropCohortFrontierJournal))
+			}
+		})
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedRejectsMismatchedAction(t *testing.T) {
+	fixture := newDropCohortFrontierFixture(t, 2, 1)
+	publishDropCohortFrontierFixture(t, &fixture)
+	if !fixture.frontierOK {
+		t.Fatal("frontier did not publish")
+	}
+	fixture.core.dropCohortFrontierMembers[1].action.ActionOrdinal++
+	if err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		seal, ok := fixture.core.dropCohortFrontierSealOwned(owner, 0)
+		if !ok {
+			return errors.New("frontier seal could not be rebuilt")
+		}
+		fixture.core.dropCohortFrontiers[0].seal = seal
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
+		)
+	})
+	if err == nil {
+		t.Fatal("mismatched action was accepted")
+	}
+	if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierComplete {
+		t.Fatalf("frontier state after action mismatch=%v, want complete", got)
+	}
+	if len(fixture.core.dropCohortFrontierJournal) != 0 {
+		t.Fatalf("frontier journal after action mismatch=%d, want 0", len(fixture.core.dropCohortFrontierJournal))
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedRejectsMismatchedDerivation(t *testing.T) {
+	fixture := newDropCohortFrontierFixture(t, 2, 1)
+	publishDropCohortFrontierFixture(t, &fixture)
+	if !fixture.frontierOK {
+		t.Fatal("frontier did not publish")
+	}
+	fixture.core.dropCohortFrontierMembers[1].derivationLength++
+	if err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		seal, ok := fixture.core.dropCohortFrontierSealOwned(owner, 0)
+		if !ok {
+			return errors.New("frontier seal could not be rebuilt")
+		}
+		fixture.core.dropCohortFrontiers[0].seal = seal
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
+		)
+	})
+	if err == nil {
+		t.Fatal("mismatched derivation was accepted")
+	}
+	if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierComplete {
+		t.Fatalf("frontier state after derivation mismatch=%v, want complete", got)
+	}
+	if len(fixture.core.dropCohortFrontierJournal) != 0 {
+		t.Fatalf("frontier journal after derivation mismatch=%d, want 0", len(fixture.core.dropCohortFrontierJournal))
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedRejectsResealedBlendedRefs(t *testing.T) {
+	fixture := newDropCohortFrontierFixture(t, 2, 1)
+	publishDropCohortFrontierFixture(t, &fixture)
+	if !fixture.frontierOK {
+		t.Fatal("frontier did not publish")
+	}
+	fixture.refs[0].Flags |= dropCohortRefFlagBlended
+	fixture.core.dropCohortFrontierParticipants[0].referenceFlags |= dropCohortRefFlagBlended
+	if err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		seal, ok := fixture.core.dropCohortFrontierSealOwned(owner, 0)
+		if !ok {
+			return errors.New("frontier seal could not be rebuilt")
+		}
+		fixture.core.dropCohortFrontiers[0].seal = seal
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
+		)
+	})
+	if err == nil {
+		t.Fatal("resealed blended references were accepted")
+	}
+	if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierComplete {
+		t.Fatalf("frontier state after blended rejection=%v, want complete", got)
+	}
+	if len(fixture.core.dropCohortFrontierJournal) != 0 {
+		t.Fatalf("frontier journal after blended rejection=%d, want 0", len(fixture.core.dropCohortFrontierJournal))
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedRejectsValidBranchDerivationMismatch(t *testing.T) {
+	fixture := newDropCohortFrontierFixture(t, 2, 2)
+	branchZero, ok := fixture.core.DropCohortRefAt(fixture.refs[0], 0)
+	if !ok {
+		t.Fatal("source branch zero reference is unavailable")
+	}
+	branchOne, ok := fixture.core.DropCohortRefAt(fixture.refs[0], 1)
+	if !ok {
+		t.Fatal("source branch one reference is unavailable")
+	}
+	var survivorRefs, droppedRefs DropCohortRefSet
+	if !fixture.core.AddDropCohortRef(&survivorRefs, branchZero) ||
+		!fixture.core.AddDropCohortRef(&droppedRefs, branchOne) {
+		t.Fatal("source branch reference subset construction failed")
+	}
+	fixture.refs[0], fixture.refs[1] = survivorRefs, droppedRefs
+	publishDropCohortFrontierFixture(t, &fixture)
+	if !fixture.frontierOK {
+		t.Fatal("frontier did not publish")
+	}
+	err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
+		)
+	})
+	if err == nil {
+		t.Fatal("valid branch derivation mismatch was accepted")
+	}
+	if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierComplete {
+		t.Fatalf("frontier state after valid branch mismatch=%v, want complete", got)
+	}
+	if len(fixture.core.dropCohortFrontierJournal) != 0 {
+		t.Fatalf("frontier journal after valid branch mismatch=%d, want 0", len(fixture.core.dropCohortFrontierJournal))
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedSelectsMatchingLaterBranch(t *testing.T) {
+	fixture := newDropCohortFrontierFixture(t, 2, 2)
+	branchZero, ok := fixture.core.DropCohortRefAt(fixture.refs[0], 0)
+	if !ok {
+		t.Fatal("source branch zero reference is unavailable")
+	}
+	branchOne, ok := fixture.core.DropCohortRefAt(fixture.refs[0], 1)
+	if !ok {
+		t.Fatal("source branch one reference is unavailable")
+	}
+	var survivorRefs, droppedRefs DropCohortRefSet
+	if !fixture.core.AddDropCohortRef(&survivorRefs, branchZero) ||
+		!fixture.core.AddDropCohortRef(&survivorRefs, branchOne) ||
+		!fixture.core.AddDropCohortRef(&droppedRefs, branchOne) {
+		t.Fatal("same-cohort branch reference subset construction failed")
+	}
+	fixture.refs[0], fixture.refs[1] = survivorRefs, droppedRefs
+	publishDropCohortFrontierFixture(t, &fixture)
+	if !fixture.frontierOK {
+		t.Fatal("frontier did not publish")
+	}
+	if err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
+		)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierConsumed {
+		t.Fatalf("frontier state after same-cohort branch fallback=%v, want consumed", got)
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedRejectsNoCommonCohort(t *testing.T) {
+	fixture := newDropCohortFrontierTwoCohortFixture(t, false)
+	publishDropCohortFrontierFixture(t, &fixture)
+	if !fixture.frontierOK {
+		t.Fatal("frontier did not publish")
+	}
+	err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
+		)
+	})
+	if err == nil {
+		t.Fatal("frontier with no common cohort was accepted")
+	}
+	if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierComplete {
+		t.Fatalf("frontier state after no-common decline=%v, want complete", got)
+	}
+	if len(fixture.core.dropCohortFrontierJournal) != 0 {
+		t.Fatalf("frontier journal after no-common decline=%d, want 0", len(fixture.core.dropCohortFrontierJournal))
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedSelectsMultiRefCandidate(t *testing.T) {
+	fixture := newDropCohortFrontierFixture(t, 2, 2)
+	branchZero, ok := fixture.core.DropCohortRefAt(fixture.refs[0], 0)
+	if !ok {
+		t.Fatal("first source branch zero reference is unavailable")
+	}
+	branchOne, ok := fixture.core.DropCohortRefAt(fixture.refs[0], 1)
+	if !ok {
+		t.Fatal("first source branch one reference is unavailable")
+	}
+	second := buildDropCohortFrontierTestCohort(t, fixture.core, func() DropCohortActionIdentity {
+		identity := g18ProducerIdentity()
+		identity.ActionOrdinal++
+		return identity
+	}(), 3, 10)
+	secondRef, ok := fixture.core.DropCohortRefAt(second, 0)
+	if !ok {
+		t.Fatal("second source reference is unavailable")
+	}
+	var survivorRefs, droppedRefs DropCohortRefSet
+	for _, ref := range []DropCohortRef{branchZero, secondRef} {
+		if !fixture.core.AddDropCohortRef(&survivorRefs, ref) {
+			t.Fatal("survivor multi-ref construction failed")
+		}
+	}
+	for _, ref := range []DropCohortRef{branchOne, secondRef} {
+		if !fixture.core.AddDropCohortRef(&droppedRefs, ref) {
+			t.Fatal("dropped multi-ref construction failed")
+		}
+	}
+	fixture.refs[0], fixture.refs[1] = survivorRefs, droppedRefs
+	publishDropCohortFrontierFixture(t, &fixture)
+	if !fixture.frontierOK {
+		t.Fatal("frontier did not publish")
+	}
+	if fixture.refs[0].Len() != 2 {
+		t.Fatalf("multi-ref fixture count=%d, want 2", fixture.refs[0].Len())
+	}
+	if err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		return fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
+		)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierConsumed {
+		t.Fatalf("frontier state after multi-ref proof=%v, want consumed", got)
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedJournalRollbackRestoresCheckpointHeader(t *testing.T) {
+	fixture := newDropCohortFrontierFixture(t, 2, 1)
+	publishDropCohortFrontierFixture(t, &fixture)
+	if !fixture.frontierOK {
+		t.Fatal("frontier did not publish")
+	}
+	if err := fixture.core.dropCohortFrontierReserveJournalCapacity(1); err != nil {
+		t.Fatal(err)
+	}
+	beforeJournalLen := len(fixture.core.dropCohortFrontierJournal)
+	beforeJournalCap := cap(fixture.core.dropCohortFrontierJournal)
+	err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		if consumeErr := fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{1},
+		); consumeErr != nil {
+			return consumeErr
+		}
+		return errors.New("forced outer rollback")
+	})
+	if err == nil {
+		t.Fatal("forced outer error did not roll back")
+	}
+	if len(fixture.core.dropCohortFrontierJournal) != beforeJournalLen ||
+		cap(fixture.core.dropCohortFrontierJournal) != beforeJournalCap {
+		t.Fatalf("frontier journal checkpoint changed: len=%d/%d cap=%d/%d", len(fixture.core.dropCohortFrontierJournal), beforeJournalLen, cap(fixture.core.dropCohortFrontierJournal), beforeJournalCap)
+	}
+	if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierComplete {
+		t.Fatalf("frontier state after journal rollback=%v, want complete", got)
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedRejectsCurrentInputMutations(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*uint64, *DropCohortFrontierToken, []Head, []DropCohortRefSet, *[]int)
+	}{
+		{name: "wrong_election", mutate: func(election *uint64, _ *DropCohortFrontierToken, _ []Head, _ []DropCohortRefSet, _ *[]int) {
+			*election = 12
+		}},
+		{name: "token_symbol", mutate: func(_ *uint64, token *DropCohortFrontierToken, _ []Head, _ []DropCohortRefSet, _ *[]int) {
+			token.Symbol++
+		}},
+		{name: "scanner_digest", mutate: func(_ *uint64, token *DropCohortFrontierToken, _ []Head, _ []DropCohortRefSet, _ *[]int) {
+			token.ScannerBeforeDigest[0] ^= 0xff
+		}},
+		{name: "swapped_heads", mutate: func(_ *uint64, _ *DropCohortFrontierToken, heads []Head, _ []DropCohortRefSet, _ *[]int) {
+			heads[0], heads[1] = heads[1], heads[0]
+		}},
+		{name: "reference_flags", mutate: func(_ *uint64, _ *DropCohortFrontierToken, _ []Head, refs []DropCohortRefSet, _ *[]int) {
+			refs[0].Flags ^= dropCohortRefFlagBlended
+		}},
+		{name: "reference_count", mutate: func(_ *uint64, _ *DropCohortFrontierToken, _ []Head, refs []DropCohortRefSet, _ *[]int) {
+			refs[0].Count--
+		}},
+		{name: "ordered_reference", mutate: func(_ *uint64, _ *DropCohortFrontierToken, _ []Head, refs []DropCohortRefSet, _ *[]int) {
+			refs[0].Inline[0], refs[0].Inline[1] = refs[0].Inline[1], refs[0].Inline[0]
+		}},
+		{name: "empty_drops", mutate: func(_ *uint64, _ *DropCohortFrontierToken, _ []Head, _ []DropCohortRefSet, drops *[]int) {
+			*drops = []int{}
+		}},
+		{name: "duplicate_drops", mutate: func(_ *uint64, _ *DropCohortFrontierToken, _ []Head, _ []DropCohortRefSet, drops *[]int) {
+			*drops = []int{0, 0}
+		}},
+		{name: "descending_drops", mutate: func(_ *uint64, _ *DropCohortFrontierToken, _ []Head, _ []DropCohortRefSet, drops *[]int) {
+			*drops = []int{1, 0}
+		}},
+		{name: "negative_drop", mutate: func(_ *uint64, _ *DropCohortFrontierToken, _ []Head, _ []DropCohortRefSet, drops *[]int) {
+			*drops = []int{-1}
+		}},
+		{name: "out_of_range_drop", mutate: func(_ *uint64, _ *DropCohortFrontierToken, _ []Head, _ []DropCohortRefSet, drops *[]int) {
+			*drops = []int{2}
+		}},
+		{name: "all_header_drops", mutate: func(_ *uint64, _ *DropCohortFrontierToken, _ []Head, _ []DropCohortRefSet, drops *[]int) {
+			*drops = []int{0, 1}
+		}},
+	}
+	for _, testCase := range cases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newDropCohortFrontierFixture(t, 2, 2)
+			publishDropCohortFrontierFixture(t, &fixture)
+			if !fixture.frontierOK {
+				t.Fatal("frontier did not publish")
+			}
+			election := uint64(11)
+			token := fixture.token
+			heads := append([]Head(nil), fixture.heads...)
+			refs := append([]DropCohortRefSet(nil), fixture.refs...)
+			drops := []int{1}
+			testCase.mutate(&election, &token, heads, refs, &drops)
+			var ownedErr error
+			outerErr := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+				ownedErr = fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+					owner, fixture.frontier.Sequence, election, token, heads, refs, drops,
+				)
+				return ownedErr
+			})
+			if ownedErr == nil || outerErr == nil {
+				t.Fatalf("mutated input accepted: owned=%v outer=%v", ownedErr, outerErr)
+			}
+			if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierComplete {
+				t.Fatalf("frontier state after rollback=%v, want complete", got)
+			}
+			if len(fixture.core.dropCohortFrontierJournal) != 0 {
+				t.Fatalf("frontier journal length after rollback=%d, want 0", len(fixture.core.dropCohortFrontierJournal))
+			}
+		})
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedRejectsStoredAuthenticationMutations(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*Core)
+	}{
+		{name: "record_seal", mutate: func(core *Core) {
+			core.dropCohortFrontiers[0].seal[0] ^= 0xff
+		}},
+		{name: "participant_head", mutate: func(core *Core) {
+			core.dropCohortFrontierParticipants[0].head.Node++
+		}},
+		{name: "participant_branch_order", mutate: func(core *Core) {
+			core.dropCohortFrontierParticipants[0].branchOrder++
+		}},
+		{name: "participant_reference_flags", mutate: func(core *Core) {
+			core.dropCohortFrontierParticipants[0].referenceFlags ^= dropCohortRefFlagBlended
+		}},
+		{name: "participant_member_count", mutate: func(core *Core) {
+			core.dropCohortFrontierParticipants[0].memberCount++
+		}},
+		{name: "member_participant", mutate: func(core *Core) {
+			core.dropCohortFrontierMembers[0].participant++
+		}},
+		{name: "member_ref_branch", mutate: func(core *Core) {
+			core.dropCohortFrontierMembers[0].ref.Branch++
+		}},
+		{name: "member_participant_head", mutate: func(core *Core) {
+			core.dropCohortFrontierMembers[0].participantHead.Node++
+		}},
+		{name: "member_branch_order", mutate: func(core *Core) {
+			core.dropCohortFrontierMembers[0].branchOrder++
+		}},
+		{name: "member_derivation_digest", mutate: func(core *Core) {
+			core.dropCohortFrontierMembers[0].derivationDigest[0] ^= 0xff
+		}},
+	}
+	for _, testCase := range cases {
+		testCase := testCase
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newDropCohortFrontierFixture(t, 2, 2)
+			publishDropCohortFrontierFixture(t, &fixture)
+			if !fixture.frontierOK {
+				t.Fatal("frontier did not publish")
+			}
+			testCase.mutate(fixture.core)
+			var ownedErr error
+			outerErr := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+				ownedErr = fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+					owner, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{0},
+				)
+				return ownedErr
+			})
+			if ownedErr == nil || outerErr == nil {
+				t.Fatalf("stored mutation accepted: owned=%v outer=%v", ownedErr, outerErr)
+			}
+			if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierComplete {
+				t.Fatalf("frontier state after rollback=%v, want complete", got)
+			}
+			if len(fixture.core.dropCohortFrontierJournal) != 0 {
+				t.Fatalf("frontier journal length after rollback=%d, want 0", len(fixture.core.dropCohortFrontierJournal))
+			}
+		})
+	}
+}
+
+func TestG18D6bConsumeDropCohortFrontierSequenceOwnedRejectsStaleAndForeignOwners(t *testing.T) {
+	fixture := newDropCohortFrontierFixture(t, 2, 2)
+	publishDropCohortFrontierFixture(t, &fixture)
+	if !fixture.frontierOK {
+		t.Fatal("frontier did not publish")
+	}
+	var stale SchedulerTransactionToken
+	if err := fixture.core.ApplySchedulerAtomic(func(owner SchedulerTransactionToken) error {
+		stale = owner
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	beforeChecks := fixture.core.dropCohortOwnerCheckedLookups
+	var staleOwnedErr error
+	staleOuterErr := fixture.core.ApplySchedulerAtomic(func(_ SchedulerTransactionToken) error {
+		staleOwnedErr = fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+			stale, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{0},
+		)
+		return nil
+	})
+	if staleOwnedErr == nil || staleOuterErr == nil {
+		t.Fatalf("stale owner accepted: owned=%v outer=%v", staleOwnedErr, staleOuterErr)
+	}
+	if fixture.core.dropCohortOwnerCheckedLookups != beforeChecks {
+		t.Fatalf("stale owner changed frontier lookup count: got=%d want=%d", fixture.core.dropCohortOwnerCheckedLookups, beforeChecks)
+	}
+	if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierComplete {
+		t.Fatalf("frontier state after stale owner=%v, want complete", got)
+	}
+	if len(fixture.core.dropCohortFrontierJournal) != 0 {
+		t.Fatalf("frontier journal after stale owner=%d, want 0", len(fixture.core.dropCohortFrontierJournal))
+	}
+
+	foreignCore := newTinyCoreWithLimits(t, Limits{})
+	beforeChecks = fixture.core.dropCohortOwnerCheckedLookups
+	var foreignOwnedErr, fixtureOuterErr error
+	foreignOuterErr := foreignCore.ApplySchedulerAtomic(func(foreign SchedulerTransactionToken) error {
+		fixtureOuterErr = fixture.core.ApplySchedulerAtomic(func(_ SchedulerTransactionToken) error {
+			foreignOwnedErr = fixture.core.ConsumeDropCohortFrontierSequenceOwned(
+				foreign, fixture.frontier.Sequence, 11, fixture.token, fixture.heads, fixture.refs, []int{0},
+			)
+			return nil
+		})
+		return nil
+	})
+	if foreignOuterErr != nil {
+		t.Fatalf("foreign core transaction failed: %v", foreignOuterErr)
+	}
+	if foreignOwnedErr == nil || fixtureOuterErr == nil {
+		t.Fatalf("foreign owner accepted: owned=%v outer=%v", foreignOwnedErr, fixtureOuterErr)
+	}
+	if fixture.core.dropCohortOwnerCheckedLookups != beforeChecks {
+		t.Fatalf("foreign owner changed frontier lookup count: got=%d want=%d", fixture.core.dropCohortOwnerCheckedLookups, beforeChecks)
+	}
+	if got := fixture.core.dropCohortFrontiers[0].state; got != DropCohortFrontierComplete {
+		t.Fatalf("frontier state after foreign owner=%v, want complete", got)
+	}
+	if len(fixture.core.dropCohortFrontierJournal) != 0 {
+		t.Fatalf("frontier journal after foreign owner=%d, want 0", len(fixture.core.dropCohortFrontierJournal))
 	}
 }

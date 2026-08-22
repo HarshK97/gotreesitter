@@ -42,6 +42,7 @@ const (
 	DropCohortFrontierComplete
 	DropCohortFrontierOverflowed
 	DropCohortFrontierIncomplete
+	DropCohortFrontierConsumed
 )
 
 const (
@@ -86,6 +87,11 @@ type dropCohortFrontierRecord struct {
 	seal                 [32]byte
 }
 
+type dropCohortFrontierMutation struct {
+	index  uint32
+	before DropCohortFrontierState
+}
+
 func dropCohortFrontierProtocolHandle(handle DropCohortFrontierHandle) [3]uint64 {
 	return [3]uint64{handle.Owner, handle.Epoch, handle.Sequence}
 }
@@ -100,6 +106,8 @@ func dropCohortFrontierProtocolState(state DropCohortFrontierState) string {
 		return "overflowed"
 	case DropCohortFrontierIncomplete:
 		return "incomplete"
+	case DropCohortFrontierConsumed:
+		return "consumed"
 	default:
 		return "unknown"
 	}
@@ -230,6 +238,52 @@ func (c *Core) dropCohortFrontierReserveCapacity(additionalRecords, additionalPa
 		grown := make([]dropCohortFrontierMember, len(c.dropCohortFrontierMembers), int(members))
 		copy(grown, c.dropCohortFrontierMembers)
 		c.dropCohortFrontierMembers = grown
+	}
+	return nil
+}
+
+func (c *Core) dropCohortFrontierReserveJournalCapacity(additional int) error {
+	if c == nil || additional < 0 {
+		return errors.New("parser-core phase zero: frontier journal capacity demand is invalid")
+	}
+	maxInt := uint64(^uint(0) >> 1)
+	if uint64(additional) > maxInt-uint64(len(c.dropCohortFrontierJournal)) {
+		return errors.New("parser-core phase zero: frontier journal capacity overflow")
+	}
+	needed := uint64(len(c.dropCohortFrontierJournal)) + uint64(additional)
+
+	retained, err := c.dropCohortRetainedOtherBytes()
+	if err != nil {
+		return err
+	}
+	for _, value := range c.dropCohortRetainedStoreBytes() {
+		retained, err = dropCohortAddChecked(retained, value)
+		if err != nil {
+			return err
+		}
+	}
+	retained, err = dropCohortAddChecked(retained, c.dropCohortReservedBytes)
+	if err != nil {
+		return err
+	}
+	if needed > uint64(cap(c.dropCohortFrontierJournal)) {
+		additionalCapacity := needed - uint64(cap(c.dropCohortFrontierJournal))
+		additionalBytes, mulErr := dropCohortMulChecked(additionalCapacity, coreDropCohortFrontierMutationBytes)
+		if mulErr != nil {
+			return mulErr
+		}
+		retained, err = dropCohortAddChecked(retained, additionalBytes)
+		if err != nil {
+			return err
+		}
+	}
+	if retained > c.limits.MaxDropCohortBytes {
+		return errors.New("parser-core phase zero: frontier journal byte cap")
+	}
+	if needed > uint64(cap(c.dropCohortFrontierJournal)) {
+		grown := make([]dropCohortFrontierMutation, len(c.dropCohortFrontierJournal), int(needed))
+		copy(grown, c.dropCohortFrontierJournal)
+		c.dropCohortFrontierJournal = grown
 	}
 	return nil
 }
@@ -753,6 +807,343 @@ func (c *Core) ValidateDropCohortFrontierSequenceOwned(owner SchedulerTransactio
 			Owner: c.dropCohortOwner, Epoch: c.dropCohortEpoch, Sequence: sequence,
 		}, heads)
 	}
+	return c.finishSchedulerOwned(owner, err)
+}
+
+func (c *Core) validateDropCohortFrontierStoredCounts(record dropCohortFrontierRecord) error {
+	if uint64(record.expectedParticipants) == 0 ||
+		uint64(record.expectedParticipants) > uint64(dropCohortFrontierParticipantHardCap) {
+		return errors.New("parser-core phase zero: stored frontier participant cap")
+	}
+	if uint64(record.expectedMembers) == 0 ||
+		uint64(record.expectedMembers) > uint64(dropCohortFrontierMemberHardCap) {
+		return errors.New("parser-core phase zero: stored frontier member cap")
+	}
+	if uint64(record.writtenParticipants) > uint64(dropCohortFrontierParticipantHardCap) ||
+		uint64(record.writtenMembers) > uint64(dropCohortFrontierMemberHardCap) {
+		return errors.New("parser-core phase zero: stored frontier written count cap")
+	}
+	return nil
+}
+
+func dropCohortFrontierSameCohort(left, right DropCohortRef) bool {
+	return left.Owner != 0 && left.Owner == right.Owner &&
+		left.Epoch != 0 && left.Epoch == right.Epoch &&
+		left.Sequence != 0 && left.Sequence == right.Sequence
+}
+
+func (c *Core) dropCohortFrontierMemberForRefOwned(
+	owner SchedulerTransactionToken,
+	participantIndex int,
+	refs DropCohortRefSet,
+	target DropCohortRef,
+) (dropCohortFrontierMember, bool, error) {
+	if err := c.validateSchedulerTransaction(owner); err != nil {
+		return dropCohortFrontierMember{}, false, err
+	}
+	count, valid := c.dropCohortRefCount(refs)
+	if !valid || count <= 0 || count > dropCohortRefHardCap {
+		return dropCohortFrontierMember{}, false, errors.New("parser-core phase zero: frontier candidate reference set is invalid")
+	}
+	if participantIndex < 0 || participantIndex >= len(c.dropCohortFrontierParticipants) {
+		return dropCohortFrontierMember{}, false, errors.New("parser-core phase zero: frontier candidate participant is absent")
+	}
+	participant := c.dropCohortFrontierParticipants[participantIndex]
+	start := uint64(participant.memberStart)
+	end := start + uint64(count)
+	if end < start || end > uint64(len(c.dropCohortFrontierMembers)) {
+		return dropCohortFrontierMember{}, false, errors.New("parser-core phase zero: frontier candidate member bounds are invalid")
+	}
+	for refIndex := 0; refIndex < count; refIndex++ {
+		if err := c.validateSchedulerTransaction(owner); err != nil {
+			return dropCohortFrontierMember{}, false, err
+		}
+		ref, ok := c.DropCohortRefAtOwned(owner, refs, refIndex)
+		if !ok {
+			return dropCohortFrontierMember{}, false, errors.New("parser-core phase zero: frontier candidate reference accessor failed")
+		}
+		if ref == target {
+			return c.dropCohortFrontierMembers[int(start)+refIndex], true, nil
+		}
+	}
+	return dropCohortFrontierMember{}, false, nil
+}
+
+func (c *Core) dropCohortFrontierHasMatchingMemberForCohortOwned(
+	owner SchedulerTransactionToken,
+	participantIndex int,
+	refs DropCohortRefSet,
+	target DropCohortRef,
+	want dropCohortFrontierMember,
+) (bool, error) {
+	if err := c.validateSchedulerTransaction(owner); err != nil {
+		return false, err
+	}
+	count, valid := c.dropCohortRefCount(refs)
+	if !valid || count <= 0 || count > dropCohortRefHardCap {
+		return false, errors.New("parser-core phase zero: frontier candidate reference set is invalid")
+	}
+	if participantIndex < 0 || participantIndex >= len(c.dropCohortFrontierParticipants) {
+		return false, errors.New("parser-core phase zero: frontier candidate participant is absent")
+	}
+	participant := c.dropCohortFrontierParticipants[participantIndex]
+	start := uint64(participant.memberStart)
+	end := start + uint64(count)
+	if end < start || end > uint64(len(c.dropCohortFrontierMembers)) {
+		return false, errors.New("parser-core phase zero: frontier candidate member bounds are invalid")
+	}
+	for refIndex := 0; refIndex < count; refIndex++ {
+		if err := c.validateSchedulerTransaction(owner); err != nil {
+			return false, err
+		}
+		ref, ok := c.DropCohortRefAtOwned(owner, refs, refIndex)
+		if !ok {
+			return false, errors.New("parser-core phase zero: frontier candidate reference accessor failed")
+		}
+		if !dropCohortFrontierSameCohort(ref, target) {
+			continue
+		}
+		member := c.dropCohortFrontierMembers[int(start)+refIndex]
+		if member.action == want.action &&
+			c.dropCohortVerifierDerivationEqual(member.derivation, want.derivation, false) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (c *Core) consumeDropCohortFrontierSequenceOwned(
+	owner SchedulerTransactionToken,
+	sequence uint64,
+	electionSequence uint64,
+	token DropCohortFrontierToken,
+	heads []Head,
+	refs []DropCohortRefSet,
+	drops []int,
+) error {
+	if err := c.validateSchedulerTransaction(owner); err != nil {
+		return err
+	}
+	if sequence == 0 {
+		return errors.New("parser-core phase zero: zero frontier sequence")
+	}
+	if electionSequence == 0 {
+		return errors.New("parser-core phase zero: zero frontier election sequence")
+	}
+	if len(heads) < 2 {
+		return errors.New("parser-core phase zero: frontier requires multiple participants")
+	}
+	if len(heads) != len(refs) {
+		return errors.New("parser-core phase zero: frontier header and reference count mismatch")
+	}
+	handle := DropCohortFrontierHandle{Owner: c.dropCohortOwner, Epoch: c.dropCohortEpoch, Sequence: sequence}
+	index, err := c.validateDropCohortFrontierIdentity(handle)
+	if err != nil {
+		return err
+	}
+	record := c.dropCohortFrontiers[index]
+	if record.handle.Owner != c.dropCohortOwner || record.handle.Epoch != c.dropCohortEpoch || record.handle.Sequence != sequence {
+		return errors.New("parser-core phase zero: frontier owner or epoch identity mismatch")
+	}
+	if record.state == DropCohortFrontierConsumed {
+		return errors.New("parser-core phase zero: frontier has already been consumed")
+	}
+	if record.state != DropCohortFrontierComplete {
+		return errors.New("parser-core phase zero: frontier is not complete")
+	}
+	if record.electionSequence != electionSequence {
+		return errors.New("parser-core phase zero: frontier election sequence mismatch")
+	}
+	if record.token != token {
+		return errors.New("parser-core phase zero: frontier token mismatch")
+	}
+	if !c.dropCohortFrontierTokenValid(owner, token) {
+		return errors.New("parser-core phase zero: frontier token receipt is invalid")
+	}
+	if err := c.validateDropCohortFrontierStoredCounts(record); err != nil {
+		return err
+	}
+	if record.writtenParticipants != record.expectedParticipants || int(record.expectedParticipants) != len(heads) {
+		return errors.New("parser-core phase zero: frontier participant count mismatch")
+	}
+	if record.expectedMembers == 0 || record.expectedMembers != record.writtenMembers {
+		return errors.New("parser-core phase zero: frontier member count mismatch")
+	}
+	participantStart := uint64(record.participantStart)
+	participantEnd := participantStart + uint64(record.expectedParticipants)
+	if participantEnd < participantStart || participantEnd > uint64(len(c.dropCohortFrontierParticipants)) {
+		return errors.New("parser-core phase zero: frontier participant store is incomplete")
+	}
+	memberStart := uint64(record.memberStart)
+	memberEnd := memberStart + uint64(record.writtenMembers)
+	if memberEnd < memberStart || memberEnd > uint64(len(c.dropCohortFrontierMembers)) {
+		return errors.New("parser-core phase zero: frontier member store is incomplete")
+	}
+	nextMember := memberStart
+	for participantIndex, head := range heads {
+		participant := c.dropCohortFrontierParticipants[int(participantStart)+participantIndex]
+		if participant.head != head {
+			return errors.New("parser-core phase zero: frontier header identity mismatch")
+		}
+		if participant.branchOrder != uint64(participantIndex) {
+			return errors.New("parser-core phase zero: frontier branch order mismatch")
+		}
+		if uint64(participant.memberCount) == 0 || uint64(participant.memberCount) > uint64(dropCohortRefHardCap) {
+			return errors.New("parser-core phase zero: stored frontier reference count cap")
+		}
+		participantMemberStart := uint64(participant.memberStart)
+		participantMemberEnd := participantMemberStart + uint64(participant.memberCount)
+		if participantMemberEnd < participantMemberStart || participantMemberStart != nextMember ||
+			participantMemberStart < memberStart || participantMemberEnd > memberEnd ||
+			participantMemberEnd > uint64(len(c.dropCohortFrontierMembers)) {
+			return errors.New("parser-core phase zero: frontier participant member bounds are invalid")
+		}
+		count, valid := c.dropCohortRefCount(refs[participantIndex])
+		if !valid || refs[participantIndex].Overflowed() || refs[participantIndex].Blended() ||
+			participant.referenceFlags&dropCohortRefFlagBlended != 0 || count <= 0 || count > dropCohortRefHardCap ||
+			uint16(count) != participant.memberCount || refs[participantIndex].Flags != participant.referenceFlags {
+			return errors.New("parser-core phase zero: frontier reference set is blended or mismatched")
+		}
+		for memberIndex := 0; memberIndex < count; memberIndex++ {
+			if err := c.validateSchedulerTransaction(owner); err != nil {
+				return err
+			}
+			ref, ok := c.DropCohortRefAtOwned(owner, refs[participantIndex], memberIndex)
+			if !ok {
+				return errors.New("parser-core phase zero: frontier reference accessor failed")
+			}
+			member := c.dropCohortFrontierMembers[int(participantMemberStart)+memberIndex]
+			if ref != member.ref {
+				return errors.New("parser-core phase zero: frontier reference order mismatch")
+			}
+			if member.participant != uint16(participantIndex) || member.participantHead != participant.head ||
+				member.branchOrder != participant.branchOrder {
+				return errors.New("parser-core phase zero: frontier member identity mismatch")
+			}
+			if !c.dropCohortFrontierMemberValid(owner, member) {
+				return errors.New("parser-core phase zero: frontier member is invalid")
+			}
+		}
+		nextMember = participantMemberEnd
+	}
+	if nextMember != memberEnd {
+		return errors.New("parser-core phase zero: frontier member count is incomplete")
+	}
+	if seal, ok := c.dropCohortFrontierSealOwned(owner, index); !ok || seal != record.seal {
+		return errors.New("parser-core phase zero: frontier seal mismatch")
+	}
+	if len(drops) == 0 || len(drops) >= len(heads) {
+		return errors.New("parser-core phase zero: frontier drop set is invalid")
+	}
+	previousDrop := -1
+	for _, drop := range drops {
+		if drop < 0 || drop >= len(heads) || drop <= previousDrop {
+			return errors.New("parser-core phase zero: frontier drop order is invalid")
+		}
+		previousDrop = drop
+	}
+	survivorIndex := -1
+	for participantIndex := range heads {
+		isDropped := false
+		for _, drop := range drops {
+			if participantIndex == drop {
+				isDropped = true
+				break
+			}
+		}
+		if !isDropped {
+			survivorIndex = participantIndex
+			break
+		}
+	}
+	if survivorIndex < 0 {
+		return errors.New("parser-core phase zero: frontier has no surviving participant")
+	}
+	survivorRefs := refs[survivorIndex]
+	survivorCount, survivorValid := c.dropCohortRefCount(survivorRefs)
+	if !survivorValid || survivorRefs.Overflowed() || survivorCount <= 0 || survivorCount > dropCohortRefHardCap {
+		return errors.New("parser-core phase zero: frontier survivor reference set is invalid")
+	}
+	proof := false
+	for candidateIndex := 0; candidateIndex < survivorCount; candidateIndex++ {
+		if err := c.validateSchedulerTransaction(owner); err != nil {
+			return err
+		}
+		candidate, ok := c.DropCohortRefAtOwned(owner, survivorRefs, candidateIndex)
+		if !ok {
+			continue
+		}
+		if err := c.validateSchedulerTransaction(owner); err != nil {
+			return err
+		}
+		candidateRecordIndex, _, reason := c.dropCohortVerifierLookup(candidate, false)
+		if reason != dropCohortVerifierProved {
+			continue
+		} else if reason = dropCohortVerifierClassifyRecord(c.dropCohortRecords[candidateRecordIndex]); reason != dropCohortVerifierProved {
+			continue
+		}
+		survivorMember, found, memberErr := c.dropCohortFrontierMemberForRefOwned(
+			owner, int(participantStart)+survivorIndex, survivorRefs, candidate,
+		)
+		if memberErr != nil {
+			return memberErr
+		}
+		if !found {
+			continue
+		}
+		candidateProof := true
+		for _, drop := range drops {
+			matched, memberErr := c.dropCohortFrontierHasMatchingMemberForCohortOwned(
+				owner, int(participantStart)+drop, refs[drop], candidate, survivorMember,
+			)
+			if memberErr != nil {
+				return memberErr
+			}
+			if err := c.validateSchedulerTransaction(owner); err != nil {
+				return err
+			}
+			if !matched {
+				candidateProof = false
+				break
+			}
+		}
+		if candidateProof {
+			proof = true
+			break
+		}
+	}
+	if !proof {
+		return errors.New("parser-core phase zero: frontier dropped members lack a common action and derivation")
+	}
+	if uint64(index) > uint64(^uint32(0)) {
+		return errors.New("parser-core phase zero: frontier index overflow")
+	}
+	if err := c.dropCohortFrontierReserveJournalCapacity(1); err != nil {
+		return err
+	}
+	c.dropCohortFrontierJournal = append(c.dropCohortFrontierJournal, dropCohortFrontierMutation{
+		index: uint32(index), before: record.state,
+	})
+	c.dropCohortFrontiers[index].state = DropCohortFrontierConsumed
+	return nil
+}
+
+// ConsumeDropCohortFrontierSequenceOwned authenticates and consumes one
+// complete scheduler frontier by sequence.
+func (c *Core) ConsumeDropCohortFrontierSequenceOwned(
+	owner SchedulerTransactionToken,
+	sequence uint64,
+	electionSequence uint64,
+	token DropCohortFrontierToken,
+	heads []Head,
+	refs []DropCohortRefSet,
+	drops []int,
+) (err error) {
+	if err = c.beginSchedulerOwned(owner); err != nil {
+		return err
+	}
+	defer c.recoverSchedulerOwnedPanic(owner)
+	err = c.consumeDropCohortFrontierSequenceOwned(owner, sequence, electionSequence, token, heads, refs, drops)
 	return c.finishSchedulerOwned(owner, err)
 }
 

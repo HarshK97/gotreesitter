@@ -349,6 +349,7 @@ func (c *Core) dropCohortStoreBytes() uint64 {
 		uint64(len(c.dropCohortFrontiers))*coreDropCohortFrontierRecordBytes +
 		uint64(len(c.dropCohortFrontierParticipants))*coreDropCohortFrontierParticipantBytes +
 		uint64(len(c.dropCohortFrontierMembers))*coreDropCohortFrontierMemberBytes +
+		uint64(len(c.dropCohortFrontierJournal))*coreDropCohortFrontierMutationBytes +
 		uint64(len(c.dropCohortReservations))*uint64(coreDropCohortReservationBytes) +
 		uint64(len(c.dropCohortJournal))*uint64(coreDropCohortMutationBytes)
 }
@@ -419,6 +420,10 @@ func (c *Core) dropCohortRetainedOtherBytes() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
+	frontierJournal, err := dropCohortMulChecked(uint64(cap(c.dropCohortFrontierJournal)), coreDropCohortFrontierMutationBytes)
+	if err != nil {
+		return 0, err
+	}
 	retained, err := dropCohortAddChecked(journal, reservations)
 	if err != nil {
 		return 0, err
@@ -431,7 +436,11 @@ func (c *Core) dropCohortRetainedOtherBytes() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return dropCohortAddChecked(retained, members)
+	retained, err = dropCohortAddChecked(retained, members)
+	if err != nil {
+		return 0, err
+	}
+	return dropCohortAddChecked(retained, frontierJournal)
 }
 
 func (c *Core) dropCohortStoreGrowthBytes(index int, demand, derivationBytes uint64) (uint64, error) {

@@ -24,6 +24,7 @@ var (
 	coreDropCohortFrontierRecordBytes      = uint64(unsafe.Sizeof(dropCohortFrontierRecord{}))
 	coreDropCohortFrontierParticipantBytes = uint64(unsafe.Sizeof(dropCohortFrontierParticipant{}))
 	coreDropCohortFrontierMemberBytes      = uint64(unsafe.Sizeof(dropCohortFrontierMember{}))
+	coreDropCohortFrontierMutationBytes    = uint64(unsafe.Sizeof(dropCohortFrontierMutation{}))
 )
 
 // StorageBytes returns a cheap, deterministic, O(1) estimate of the compact
@@ -76,6 +77,7 @@ func (c *Core) StorageBytes() uint64 {
 		uint64(len(c.dropCohortFrontiers))*coreDropCohortFrontierRecordBytes +
 		uint64(len(c.dropCohortFrontierParticipants))*coreDropCohortFrontierParticipantBytes +
 		uint64(len(c.dropCohortFrontierMembers))*coreDropCohortFrontierMemberBytes +
+		uint64(len(c.dropCohortFrontierJournal))*coreDropCohortFrontierMutationBytes +
 		uint64(len(c.dropCohortReservations))*coreDropCohortReservationBytes +
 		uint64(len(c.dropCohortJournal))*coreDropCohortMutationBytes
 }
@@ -167,6 +169,7 @@ func (c *Core) FootprintBytes() uint64 {
 	total += uint64(cap(c.dropCohortFrontiers)) * coreDropCohortFrontierRecordBytes
 	total += uint64(cap(c.dropCohortFrontierParticipants)) * coreDropCohortFrontierParticipantBytes
 	total += uint64(cap(c.dropCohortFrontierMembers)) * coreDropCohortFrontierMemberBytes
+	total += uint64(cap(c.dropCohortFrontierJournal)) * coreDropCohortFrontierMutationBytes
 	total += uint64(cap(c.dropCohortReservations)) * coreDropCohortReservationBytes
 	// A durable reservation is a committed memory budget even before its
 	// backing store is filled. Include it in the containment gauge so nested
@@ -315,6 +318,7 @@ func (c *Core) releaseRecordArenaReserve() {
 	c.dropCohortFrontiers = nil
 	c.dropCohortFrontierParticipants = nil
 	c.dropCohortFrontierMembers = nil
+	c.dropCohortFrontierJournal = nil
 	c.dropCohortDerivationScratch = nil
 	c.dropCohortPathScratch = nil
 	c.dropCohortJournal = nil
@@ -349,6 +353,7 @@ func (c *Core) releaseOversizedRetention() {
 	c.dropCohortFrontiers = nil
 	c.dropCohortFrontierParticipants = nil
 	c.dropCohortFrontierMembers = nil
+	c.dropCohortFrontierJournal = nil
 	c.dropCohortDerivationScratch = nil
 	c.dropCohortPathScratch = nil
 	c.dropCohortJournal = nil
