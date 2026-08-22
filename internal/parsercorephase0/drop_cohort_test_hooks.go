@@ -1,7 +1,7 @@
 package parsercorephase0
 
 // This file contains the narrow Core contract used by the tagged G18 tests.
-// It does not provide certificate admission, verification, or parser hooks.
+// It exposes verifier test hooks while production certificate admission remains inactive.
 
 import (
 	"crypto/sha256"
@@ -139,6 +139,16 @@ func (c *Core) DiagnosticDropCohortSnapshotForTest() []byte {
 	snapshot.AuthenticatedHistory = c.dropCohortAuthenticatedHistory
 	snapshot.UnprovedHistory = c.dropCohortUnprovedHistory
 	snapshot.DeclineReasons = map[string]uint64{}
+	snapshot.VerifierElections = c.dropCohortVerifierElections
+	snapshot.VerifierProofs = c.dropCohortVerifierProofs
+	snapshot.VerifierDeclines = c.dropCohortVerifierDeclines
+	snapshot.ActionDeclines = c.dropCohortActionDeclines
+	snapshot.DerivationDeclines = c.dropCohortDerivationDeclines
+	for reason := dropCohortVerifierReason(1); reason < dropCohortVerifierReasonCount; reason++ {
+		if count := c.dropCohortDeclineReasons[reason]; count != 0 {
+			snapshot.DeclineReasons[dropCohortVerifierReasonString(reason)] = count
+		}
+	}
 	for _, record := range c.dropCohortRecords {
 		snapshot.Cohorts = append(snapshot.Cohorts, dropCohortProtocolCohort{
 			Handle: dropCohortProtocolHandle(record.handle), State: dropCohortProtocolState(record.state),
@@ -158,6 +168,10 @@ func (c *Core) DiagnosticDropCohortSnapshotForTest() []byte {
 	snapshot.PhysicalStorageBytes = c.StorageBytes()
 	snapshot.PhysicalFootprintBytes = c.FootprintBytes()
 	snapshot.OwnerCheckedLookups = c.dropCohortOwnerCheckedLookups
+	snapshot.InlineReads = c.dropCohortInlineReads
+	snapshot.SpillReads = c.dropCohortSpillReads
+	snapshot.MapReads = c.dropCohortMapReads
+	snapshot.InternerReads = c.dropCohortInternerReads
 	encoded, err := json.Marshal(snapshot)
 	if err != nil {
 		return []byte(`{"schema":"gts-drop-cohort-certificate-arena/v2"}`)
@@ -413,8 +427,10 @@ func (c *Core) DiagnosticDropCohortMarkUnprovedForTest(rawHandle [3]uint64) erro
 		if err != nil {
 			return err
 		}
-		if c.dropCohortRecords[index].state != DropCohortComplete {
-			return errors.New("parser-core phase zero: drop-cohort is not complete")
+		record := c.dropCohortRecords[index]
+		if (record.state != DropCohortBuilding && record.state != DropCohortComplete) ||
+			record.expected == 0 || record.written != record.expected {
+			return errors.New("parser-core phase zero: drop-cohort is incomplete")
 		}
 		c.recordDropCohortMutation(index)
 		c.dropCohortRecords[index].state = DropCohortUnproved
