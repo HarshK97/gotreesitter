@@ -9,6 +9,15 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Recorded the P24d authenticated single-head shift rejection. The candidate
+  changed exactly two files in the generic parser-core driver and its tests.
+  The combined candidate diff SHA-256 is
+  `5181912ec91f0bc1ecd504d06db488d3dd9145fdc5d3d5486300756661a4fc59`.
+  The accepted 20-seed publication found a +0.72% geomean regression, a
+  significant no-edit regression, and a significant full-parse byte increase.
+  The candidate code does not ship. See docs/perf-attribution.md for the
+  correctness, parity, and performance receipt.
+
 - Recorded the P24c exact-single-pop direct-append rejection. The direct-append
   path itself already shipped in ancestor `b9106e78635244b59dc9c9b75aa4863b89c99630`.
   P24c tested only helper inlining inside `condenseWithOutcomeAtomic`. The
