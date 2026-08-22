@@ -428,9 +428,9 @@ func TestDiagnosticParserCoreCheckpointCompactLayoutsAMD64(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("amd64 layout receipt")
 	}
-	// G18 adds two value-owned DropCohortRefSet fields. Each set is 72 bytes,
-	// so the scheduler header ratchets from 64 to 224 bytes. This header is
-	// copied by the canonicalization and rollback scratch paths.
+	// G18 adds two value-owned DropCohortRefSet fields. Each set is 72 bytes.
+	// The exact scheduler header size is 224 bytes. Canonicalization and
+	// rollback copy this header.
 	if got := unsafe.Sizeof(diagnosticParserCoreHeader{}); got != 224 {
 		t.Fatalf("scheduler header size=%d, want 224", got)
 	}

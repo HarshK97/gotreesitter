@@ -1,8 +1,8 @@
 # Compact route real-corpus matrix
 
-Current evidence date: 2026-07-30.
-Current base commit: `83548f55` from `main`.
-Current candidate base commit: `44e0a0fc`.
+Current evidence date: 2026-08-22.
+Current base commit: `69d5ccaf` from `main`.
+Current candidate base commit: `69d5ccaf`.
 
 ## Current bounded result
 
@@ -23,6 +23,51 @@ The AWK medium file needs a separate slow-path budget.
 
 The direct route served 64 percent of the selected files.
 Production served every fallback and every ineligible file.
+
+## D6a producer evidence
+
+D6a publishes an authenticated drop-cohort frontier with the feature disabled
+by default. It does not enable route admission, frontier history, or frontier
+verification. The bounded matrix counts above remain unchanged because D6a is
+producer-only.
+
+The isolated Docker targets accepted these published and member counts:
+
+| Grammar | Target | Published/member | Route | Natural fallback |
+|---|---|---:|---:|---|
+| Go | `query_compile` | 2/6 | 0/1 | Unchanged |
+| Go | `rewrite` | 2/6 | 0/1 | Unchanged |
+| Go | `language` | 2/2 | 0/1 | Unchanged |
+| Go | `grammargen_lr` | 2/2 | 0/1 | Unchanged |
+| Erlang | `macro_function_clauses` | 8/26 | 0/1 | Unchanged |
+| Erlang | `macro_expanded_top_level_function` | 3/6 | 0/1 | Unchanged |
+| Haskell | `smoke` | 2/2 | 0/1 | Unchanged |
+| JavaScript | `functions` | 2/8 | 0/1 | Unchanged |
+| Bash | `converged_split` | 4/24 | 0/1 | Unchanged |
+
+The gate fixed complete frontier byte accounting and stale-token transaction
+poisoning.
+It ran 10 internal tests. The root and no-core gates passed.
+The final Docker artifacts span `20260822T065000Z` through
+`20260822T065433Z`.
+
+### Interleaved performance receipt
+
+The accepted receipt uses 20 interleaved seeds and the primary benchmark trio.
+
+| Benchmark | Candidate versus base | Probability |
+|---|---:|---:|
+| Full parse | -3.01% | `p=0.678` |
+| Incremental single-byte edit | -1.09% | `p=0.758` |
+| Incremental no-edit | +7.34% | `p=0.910` |
+| Geomean | +0.97% | — |
+
+Full-parse bytes per operation changed by -3.10 percent.
+Allocation counts remained unchanged.
+Discard the earlier sequential full-set comparison because unrelated host
+tests overlapped the candidate run.
+
+This receipt does not graduate the route and does not verify D6b.
 
 ## Current fallback taxonomy
 

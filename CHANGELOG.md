@@ -7,6 +7,14 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Added
+
+- Add the default-off authenticated D6a drop-cohort frontier producer. It
+  binds the scheduler owner and epoch, the election token and scanner
+  checkpoints, the ordered participants, the action identity, the derivation
+  bytes, digest, and checkpoint, and a seal. D6a does not enable admission,
+  history, or verification.
+
 ### Removed
 
 - Swift ternary expressions now come directly from the regenerated grammar
