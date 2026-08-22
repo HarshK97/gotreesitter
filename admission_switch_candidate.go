@@ -129,6 +129,8 @@ func (p *Parser) DiagnosticEnableDropCohortCertificateAdmissionForTest() func() 
 		return func() {}
 	}
 	token := &dropCohortActivationToken{marker: 1}
+	runner.frontierRecordingEnabled = false
+	runner.options.recordDropCohortFrontiers = false
 	runner.certificateAdmissionToken = token
 	runner.certificateAdmissionEnabled = true
 	restored := false
@@ -142,8 +144,10 @@ func (p *Parser) DiagnosticEnableDropCohortCertificateAdmissionForTest() func() 
 			return
 		}
 		cached.certificateAdmissionEnabled = false
+		cached.frontierRecordingEnabled = false
 		cached.certificateAdmissionToken = nil
 		cached.options.recordDropCohortCertificates = false
+		cached.options.recordDropCohortFrontiers = false
 	}
 }
 

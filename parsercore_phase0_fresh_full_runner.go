@@ -31,11 +31,14 @@ type parserCoreFreshFullRunner struct {
 	options                           DiagnosticParserCorePrefixOptions
 	replayParseStates                 bool
 	allowConvergedReductionSplitDrops bool
-	// certificateAdmissionEnabled is armed only by the private test seam.
+	// certificateAdmissionEnabled is armed only by the private D3 test seam.
 	// It is copied into options for each cached parse after Core.Reset.
 	certificateAdmissionEnabled bool
-	certificateAdmissionToken   *dropCohortActivationToken
-	scannerScratch              []byte
+	// frontierRecordingEnabled is armed only by the private D6a test seam.
+	// It never enables historical certificate authentication or admission.
+	frontierRecordingEnabled  bool
+	certificateAdmissionToken *dropCohortActivationToken
+	scannerScratch            []byte
 	// scratch retains the reusable per-parse materialization buffers. The runner
 	// is per-Parser and single-goroutine, so reusing these buffers across parses
 	// mirrors production's parser-held arena reuse and keeps the warm steady
@@ -96,6 +99,15 @@ func newParserCoreFreshFullRunner(scanner ExternalScanner, options DiagnosticPar
 }
 
 func (r *parserCoreFreshFullRunner) executeSchedulerOpen(source []byte, compact *core.Core, reset bool) (*diagnosticParserCoreGenericScheduler, *dfaTokenSource, error) {
+	return r.executeSchedulerOpenWithObserver(source, compact, reset, diagnosticParserCoreSeedObserver{})
+}
+
+func (r *parserCoreFreshFullRunner) executeSchedulerOpenWithObserver(
+	source []byte,
+	compact *core.Core,
+	reset bool,
+	observer diagnosticParserCoreSeedObserver,
+) (*diagnosticParserCoreGenericScheduler, *dfaTokenSource, error) {
 	if r == nil || r.parser == nil || r.lang == nil || r.tables == nil || compact == nil {
 		return nil, nil, errors.New("parser-core fresh-full runner is incomplete")
 	}
@@ -108,6 +120,7 @@ func (r *parserCoreFreshFullRunner) executeSchedulerOpen(source []byte, compact 
 	// option on every cached parse so the owner callback can re-arm it only for
 	// this fresh session. The default path remains false and allocation-free.
 	r.options.recordDropCohortCertificates = r.certificateAdmissionEnabled
+	r.options.recordDropCohortFrontiers = r.frontierRecordingEnabled
 	// B3 stage S3: force the shared token source's error-run lexing on when
 	// native compact recovery is admitted, so a genuinely unlexable byte run
 	// surfaces as its own errorSymbol token (parser_api.go's
@@ -162,7 +175,7 @@ func (r *parserCoreFreshFullRunner) executeSchedulerOpen(source []byte, compact 
 	}()
 	scheduler, err := executeDiagnosticParserCoreGenericSchedulerFromSeedInto(
 		&r.scheduler, compact, tokenSource, &r.scannerScratch, r.lang.InitialState,
-		r.options, diagnosticParserCoreSeedObserver{},
+		r.options, observer,
 	)
 	if err != nil {
 		tokenSource.Close()
@@ -339,6 +352,13 @@ func (r *parserCoreFreshFullRunner) materializeSelectedStoreSelection(
 // redundancy costs one extra FootprintBytes comparison on the decline path,
 // never on the accepted-and-returned path.
 func (r *parserCoreFreshFullRunner) parse(source []byte) (tree *Tree, err error) {
+	return r.parseWithObserver(source, diagnosticParserCoreSeedObserver{})
+}
+
+func (r *parserCoreFreshFullRunner) parseWithObserver(
+	source []byte,
+	observer diagnosticParserCoreSeedObserver,
+) (tree *Tree, err error) {
 	if r == nil || r.compact == nil {
 		return nil, errors.New("parser-core fresh-full runner is incomplete")
 	}
@@ -350,7 +370,7 @@ func (r *parserCoreFreshFullRunner) parse(source []byte) (tree *Tree, err error)
 			err = errors.Join(err, fmt.Errorf("parser-core fresh-full runner: reset after decline: %w", resetErr))
 		}
 	}()
-	scheduler, tokenSource, err2 := r.executeSchedulerOpen(source, r.compact, true)
+	scheduler, tokenSource, err2 := r.executeSchedulerOpenWithObserver(source, r.compact, true, observer)
 	if err2 != nil {
 		return nil, err2
 	}

@@ -346,6 +346,9 @@ func (c *Core) dropCohortStoreBytes() uint64 {
 		uint64(len(c.dropCohortCertificateRefs))*uint64(coreDropCohortRefBytes) +
 		uint64(len(c.dropCohortMapStore))*uint64(coreDropCohortMapEntryBytes) +
 		uint64(len(c.dropCohortJournalStore))*uint64(coreDropCohortJournalStoreBytes) +
+		uint64(len(c.dropCohortFrontiers))*coreDropCohortFrontierRecordBytes +
+		uint64(len(c.dropCohortFrontierParticipants))*coreDropCohortFrontierParticipantBytes +
+		uint64(len(c.dropCohortFrontierMembers))*coreDropCohortFrontierMemberBytes +
 		uint64(len(c.dropCohortReservations))*uint64(coreDropCohortReservationBytes) +
 		uint64(len(c.dropCohortJournal))*uint64(coreDropCohortMutationBytes)
 }
@@ -404,7 +407,31 @@ func (c *Core) dropCohortRetainedOtherBytes() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	return dropCohortAddChecked(journal, reservations)
+	frontiers, err := dropCohortMulChecked(uint64(cap(c.dropCohortFrontiers)), coreDropCohortFrontierRecordBytes)
+	if err != nil {
+		return 0, err
+	}
+	participants, err := dropCohortMulChecked(uint64(cap(c.dropCohortFrontierParticipants)), coreDropCohortFrontierParticipantBytes)
+	if err != nil {
+		return 0, err
+	}
+	members, err := dropCohortMulChecked(uint64(cap(c.dropCohortFrontierMembers)), coreDropCohortFrontierMemberBytes)
+	if err != nil {
+		return 0, err
+	}
+	retained, err := dropCohortAddChecked(journal, reservations)
+	if err != nil {
+		return 0, err
+	}
+	retained, err = dropCohortAddChecked(retained, frontiers)
+	if err != nil {
+		return 0, err
+	}
+	retained, err = dropCohortAddChecked(retained, participants)
+	if err != nil {
+		return 0, err
+	}
+	return dropCohortAddChecked(retained, members)
 }
 
 func (c *Core) dropCohortStoreGrowthBytes(index int, demand, derivationBytes uint64) (uint64, error) {
@@ -2339,9 +2366,7 @@ func (c *Core) FinalizeDropCohortOwned(owner SchedulerTransactionToken, cohort D
 	return refs, err
 }
 
-// DropCohortRefForBranch returns one finalized reference for a scheduler
-// output header. It performs no arena mutation.
-func (c *Core) DropCohortRefForBranch(cohort DropCohortHandle, branch uint16) (DropCohortRef, error) {
+func (c *Core) dropCohortRefForBranch(cohort DropCohortHandle, branch uint16) (DropCohortRef, error) {
 	index, err := c.validateDropCohortIdentity(cohort)
 	if err != nil {
 		return DropCohortRef{}, err
@@ -2354,6 +2379,21 @@ func (c *Core) DropCohortRefForBranch(cohort DropCohortHandle, branch uint16) (D
 		return DropCohortRef{}, fmt.Errorf("parser-core phase zero: drop-cohort branch %d is absent", branch)
 	}
 	return DropCohortRef{Owner: cohort.Owner, Epoch: cohort.Epoch, Sequence: cohort.Sequence, Branch: branch}, nil
+}
+
+// DropCohortRefForBranch returns one finalized reference for a scheduler
+// output header. It performs no arena mutation.
+func (c *Core) DropCohortRefForBranch(cohort DropCohortHandle, branch uint16) (DropCohortRef, error) {
+	return c.dropCohortRefForBranch(cohort, branch)
+}
+
+// DropCohortRefForBranchOwned reads one finalized branch only under the
+// active scheduler token. It validates ownership before the cohort store read.
+func (c *Core) DropCohortRefForBranchOwned(owner SchedulerTransactionToken, cohort DropCohortHandle, branch uint16) (DropCohortRef, error) {
+	if c == nil || c.validateSchedulerTransaction(owner) != nil {
+		return DropCohortRef{}, errors.New("parser-core phase zero: drop-cohort branch owner mismatch")
+	}
+	return c.dropCohortRefForBranch(cohort, branch)
 }
 
 // DropCohortState returns one cohort's producer state and counts.
@@ -2379,9 +2419,7 @@ func (c *Core) DropCohortAction(handle DropCohortHandle) (DropCohortActionIdenti
 	return c.dropCohortActions[actionIndex], true
 }
 
-// DropCohortDerivationRecord returns the immutable record metadata and its
-// canonical bytes. The byte slice aliases the Core and is read-only.
-func (c *Core) DropCohortDerivationRecord(handle DropCohortDerivationHandle) (DropCohortDerivationRecord, bool) {
+func (c *Core) dropCohortDerivationRecord(handle DropCohortDerivationHandle) (DropCohortDerivationRecord, bool) {
 	if c == nil || handle.Owner != c.dropCohortOwner || handle.Epoch != c.dropCohortEpoch || handle.Index == 0 || uint64(handle.Index) > uint64(len(c.dropCohortDerivations)) {
 		return DropCohortDerivationRecord{}, false
 	}
@@ -2396,6 +2434,21 @@ func (c *Core) DropCohortDerivationRecord(handle DropCohortDerivationHandle) (Dr
 		RootSymbol: record.rootSymbol, StackDepth: record.stackDepth,
 		Checkpoint: record.checkpoint, Bytes: c.dropCohortDerivationBytes[start:end],
 	}, true
+}
+
+// DropCohortDerivationRecord returns the immutable record metadata and its
+// canonical bytes. The byte slice aliases the Core and is read-only.
+func (c *Core) DropCohortDerivationRecord(handle DropCohortDerivationHandle) (DropCohortDerivationRecord, bool) {
+	return c.dropCohortDerivationRecord(handle)
+}
+
+// dropCohortDerivationRecordOwned reads derivation storage only under the
+// active scheduler token. Frontier verification uses this private adapter.
+func (c *Core) dropCohortDerivationRecordOwned(owner SchedulerTransactionToken, handle DropCohortDerivationHandle) (DropCohortDerivationRecord, bool) {
+	if c == nil || c.validateSchedulerTransaction(owner) != nil {
+		return DropCohortDerivationRecord{}, false
+	}
+	return c.dropCohortDerivationRecord(handle)
 }
 
 // DropCohortDerivationRecord is a read-only view of one graph derivation.
