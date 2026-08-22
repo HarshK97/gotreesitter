@@ -1,6 +1,7 @@
 package parsercorephase0
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math"
@@ -806,12 +807,12 @@ func (c *Core) ReduceOutputsCorridorClassifiedIntoWithLiveCondenseCandidatesOwne
 		return frontier, c.finishSchedulerOwned(owner, err)
 	}
 	if c.schedulerFrame.fresh {
-		frontier, err = c.reduceOutputsCorridorClassifiedIntoUncheckpointed(dst, boundary, fork)
+		frontier, err = c.reduceOutputsCorridorClassifiedIntoUncheckpointed(owner, dst, boundary, fork)
 		c.clearLiveCondenseCandidates()
 		return frontier, c.finishSchedulerOwned(owner, err)
 	}
 	defer c.clearLiveCondenseCandidates()
-	frontier, err = c.reduceOutputsCorridorClassifiedIntoUncheckpointed(dst, boundary, fork)
+	frontier, err = c.reduceOutputsCorridorClassifiedIntoUncheckpointed(owner, dst, boundary, fork)
 	return frontier, c.finishSchedulerOwned(owner, err)
 }
 
@@ -825,23 +826,23 @@ func (c *Core) reduceOutputsClassifiedIntoMaybeLiveScopedOwned(owner SchedulerTr
 	}
 	defer c.recoverSchedulerOwnedPanic(owner)
 	if !liveScoped {
-		frontier, err = c.reduceOutputsClassifiedIntoUncheckpointed(dst, boundary, actionOrdinal, fork)
+		frontier, err = c.reduceOutputsClassifiedIntoUncheckpointed(owner, dst, boundary, actionOrdinal, fork)
 		return frontier, c.finishSchedulerOwned(owner, err)
 	}
 	if err = c.enterLiveCondenseCandidates(candidates); err != nil {
 		return frontier, c.finishSchedulerOwned(owner, err)
 	}
 	if c.schedulerFrame.fresh {
-		frontier, err = c.reduceOutputsClassifiedIntoUncheckpointed(dst, boundary, actionOrdinal, fork)
+		frontier, err = c.reduceOutputsClassifiedIntoUncheckpointed(owner, dst, boundary, actionOrdinal, fork)
 		c.clearLiveCondenseCandidates()
 		return frontier, c.finishSchedulerOwned(owner, err)
 	}
 	defer c.clearLiveCondenseCandidates()
-	frontier, err = c.reduceOutputsClassifiedIntoUncheckpointed(dst, boundary, actionOrdinal, fork)
+	frontier, err = c.reduceOutputsClassifiedIntoUncheckpointed(owner, dst, boundary, actionOrdinal, fork)
 	return frontier, c.finishSchedulerOwned(owner, err)
 }
 
-func (c *Core) reduceOutputsClassifiedIntoUncheckpointed(dst []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) ([]ReductionOutput, error) {
+func (c *Core) reduceOutputsClassifiedIntoUncheckpointed(owner SchedulerTransactionToken, dst []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder) ([]ReductionOutput, error) {
 	frontier := dst[:0]
 	if c.popScratch.busy {
 		return nil, errors.New("parser-core phase zero: reentrant reduction while pop scratch is active")
@@ -853,10 +854,99 @@ func (c *Core) reduceOutputsClassifiedIntoUncheckpointed(dst []ReductionOutput, 
 	defer c.popScratch.resetLogical()
 	c.reductionScratch.begin()
 	defer c.reductionScratch.finish()
-	return c.reduceOutputsClassifiedIntoActive(frontier, boundary, actionOrdinal, fork, false)
+	return c.reduceOutputsClassifiedIntoActive(owner, frontier, boundary, actionOrdinal, fork, false)
 }
 
-func (c *Core) reduceOutputsCorridorClassifiedIntoUncheckpointed(dst []ReductionOutput, boundary ClassifiedBoundary, fork ForkOrder) ([]ReductionOutput, error) {
+func (c *Core) historicalImportEnvelope(owner SchedulerTransactionToken, refs DropCohortRefSet, historicalNode NodeID) (int, bool) {
+	if c == nil || historicalNode == 0 || c.validateSchedulerTransaction(owner) != nil || refs.Empty() || refs.Overflowed() || refs.Blended() {
+		return 0, false
+	}
+	if _, err := c.nodeLineage(historicalNode); err != nil {
+		return 0, false
+	}
+	count, valid := c.dropCohortRefCount(refs)
+	if !valid || count == 0 {
+		return 0, false
+	}
+	storeBytes, addErr := dropCohortAddChecked(c.dropCohortStoreBytes(), c.dropCohortReservedBytes)
+	if addErr != nil || storeBytes > c.limits.MaxDropCohortBytes {
+		return 0, false
+	}
+	return count, true
+}
+
+func (c *Core) historicalImportRef(ref DropCohortRef, historicalNode NodeID, expected DropCohortActionIdentity) bool {
+	if ref.Owner != c.dropCohortOwner || ref.Epoch != c.dropCohortEpoch || ref.Sequence == 0 {
+		return false
+	}
+	recordIndex, handle, reason := c.dropCohortVerifierLookup(ref, false)
+	if reason != dropCohortVerifierProved || recordIndex < 0 || recordIndex >= len(c.dropCohortRecords) {
+		return false
+	}
+	record := c.dropCohortRecords[recordIndex]
+	if record.handle != handle || dropCohortVerifierClassifyRecord(record) != dropCohortVerifierProved {
+		return false
+	}
+	member, memberReason := c.dropCohortVerifierMember(record, Head{Node: historicalNode}, ref.Branch)
+	if memberReason != dropCohortVerifierProved || member.action != expected {
+		return false
+	}
+	return c.historicalImportDerivation(member.derivation, member.head, historicalNode)
+}
+
+func (c *Core) historicalImportDerivation(derivation DropCohortDerivationHandle, memberHead Head, historicalNode NodeID) bool {
+	if derivation.Owner != c.dropCohortOwner || derivation.Epoch != c.dropCohortEpoch || derivation.Index == 0 ||
+		uint64(derivation.Index) > uint64(len(c.dropCohortDerivations)) {
+		return false
+	}
+	record := c.dropCohortDerivations[derivation.Index-1]
+	if record.handle != derivation || record.head != memberHead || record.head.Node != historicalNode ||
+		uint64(record.byteLength) > c.limits.MaxDropCohortBytes {
+		return false
+	}
+	start := uint64(record.byteOffset)
+	length := uint64(record.byteLength)
+	if start > uint64(len(c.dropCohortDerivationBytes)) || length > uint64(len(c.dropCohortDerivationBytes))-start {
+		return false
+	}
+	end := int(start + length)
+	bytes := c.dropCohortDerivationBytes[int(start):end]
+	return sha256.Sum256(bytes) == record.digest && c.historicalImportDerivationInterned(record)
+}
+
+func (c *Core) historicalImportDerivationInterned(record dropCohortDerivationRecord) bool {
+	for _, entry := range c.dropCohortDerivationIntern {
+		if entry.digest == record.digest && entry.byteOffset == record.byteOffset && entry.byteLength == record.byteLength {
+			return true
+		}
+	}
+	return false
+}
+
+// authenticateHistoricalDropCohortImport validates one dead-node reference
+// set under the active scheduler owner before historical state can be reused.
+// It reads only immutable certificate records and never publishes verifier
+// diagnostics or changes the production drop route.
+func (c *Core) authenticateHistoricalDropCohortImport(
+	owner SchedulerTransactionToken,
+	refs DropCohortRefSet,
+	historicalNode NodeID,
+	expected DropCohortActionIdentity,
+) bool {
+	count, ok := c.historicalImportEnvelope(owner, refs, historicalNode)
+	if !ok {
+		return false
+	}
+	for index := 0; index < count; index++ {
+		ref, ok := c.DropCohortRefAt(refs, index)
+		if !ok || !c.historicalImportRef(ref, historicalNode, expected) {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Core) reduceOutputsCorridorClassifiedIntoUncheckpointed(owner SchedulerTransactionToken, dst []ReductionOutput, boundary ClassifiedBoundary, fork ForkOrder) ([]ReductionOutput, error) {
 	frontier := dst[:0]
 	if c.popScratch.busy {
 		return nil, errors.New("parser-core phase zero: reentrant reduction while pop scratch is active")
@@ -865,10 +955,10 @@ func (c *Core) reduceOutputsCorridorClassifiedIntoUncheckpointed(dst []Reduction
 	defer c.popScratch.resetLogical()
 	c.reductionScratch.begin()
 	defer c.reductionScratch.finish()
-	return c.reduceOutputsClassifiedIntoActive(frontier, boundary, 0, fork, true)
+	return c.reduceOutputsClassifiedIntoActive(owner, frontier, boundary, 0, fork, true)
 }
 
-func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder, corridorTrusted bool) ([]ReductionOutput, error) {
+func (c *Core) reduceOutputsClassifiedIntoActive(owner SchedulerTransactionToken, frontier []ReductionOutput, boundary ClassifiedBoundary, actionOrdinal int, fork ForkOrder, corridorTrusted bool) ([]ReductionOutput, error) {
 	var act *Action
 	var err error
 	if corridorTrusted {
@@ -884,6 +974,14 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 	}
 	if act.Type != ActionReduce {
 		return nil, fmt.Errorf("parser-core phase zero: action %d is %v, not reduce", actionOrdinal, act.Type)
+	}
+	expectedHistoricalAction := DropCohortActionIdentity{
+		BoundaryState: boundary.state,
+		Lookahead:     boundary.lookahead,
+		ActionOrdinal: int32(actionOrdinal),
+		Action:        *act,
+		NoLookahead:   c.reduceNoLookaheadContext,
+		Selection:     c.dropCohortSelectionContext,
 	}
 	source, err := c.nodeLineage(boundary.head.Node)
 	if err != nil {
@@ -1045,20 +1143,56 @@ func (c *Core) reduceOutputsClassifiedIntoActive(frontier []ReductionOutput, bou
 			// record that was itself blended, mark this boundary's accumulated
 			// historicalSet blended -- computed before the union mutates it.
 			if outcome.historicalConvergedSplit {
-				if dead, err := c.nodeLineage(outcome.historicalNode); err == nil {
-					incomparable := c.AlternativeSetIncomparable(historicalSet, dead.set)
-					unionChanged := c.alternativeSetUnion(&historicalSet, dead.set)
-					wasBlended := historicalBlended
-					historicalBlended = historicalBlended || dead.blended || incomparable
-					if unionChanged || historicalBlended != wasBlended {
+				if !c.historicalCertificateAuthentication {
+					// Preserve the pre-D2 historical union and counter behavior.
+					if dead, err := c.nodeLineage(outcome.historicalNode); err == nil {
+						incomparable := c.AlternativeSetIncomparable(historicalSet, dead.set)
+						unionChanged := c.alternativeSetUnion(&historicalSet, dead.set)
+						wasBlended := historicalBlended
+						historicalBlended = historicalBlended || dead.blended || incomparable
+						if unionChanged || historicalBlended != wasBlended {
+							c.addDropCohortProducerWrite(dropCohortProducerDeadHistoryImport)
+							if c.dropCohortAuthenticatedHistory != math.MaxUint64 {
+								c.dropCohortAuthenticatedHistory++
+							}
+						}
+					}
+					if _, refsErr := c.dropCohortRefUnion(&dropCohortRefs, outcome.historicalDropCohortRefs); refsErr != nil {
+						return nil, refsErr
+					}
+				} else {
+					markUnproved := func() {
+						historicalConvergedSplit = false
+						historicalForestDeterministic = false
+						historicalCleanPathRank = CleanPathRankUnknown
+						historicalLineage = 0
+						historicalSet = AlternativeSet{}
+						historicalBlended = false
+						// Do not retain source or historical certificate refs on an
+						// unproved result.
+						dropCohortRefs = DropCohortRefSet{}
+						if c.dropCohortUnprovedHistory != math.MaxUint64 {
+							c.dropCohortUnprovedHistory++
+						}
+					}
+					if !c.authenticateHistoricalDropCohortImport(
+						owner, outcome.historicalDropCohortRefs, outcome.historicalNode, expectedHistoricalAction,
+					) {
+						markUnproved()
+					} else if dead, err := c.nodeLineage(outcome.historicalNode); err != nil {
+						markUnproved()
+					} else {
 						c.addDropCohortProducerWrite(dropCohortProducerDeadHistoryImport)
 						if c.dropCohortAuthenticatedHistory != math.MaxUint64 {
 							c.dropCohortAuthenticatedHistory++
 						}
+						incomparable := c.AlternativeSetIncomparable(historicalSet, dead.set)
+						historicalBlended = historicalBlended || dead.blended || incomparable
+						c.alternativeSetUnion(&historicalSet, dead.set)
+						if _, refsErr := c.dropCohortRefUnion(&dropCohortRefs, outcome.historicalDropCohortRefs); refsErr != nil {
+							return nil, refsErr
+						}
 					}
-				}
-				if _, refsErr := c.dropCohortRefUnion(&dropCohortRefs, outcome.historicalDropCohortRefs); refsErr != nil {
-					return nil, refsErr
 				}
 			}
 		}

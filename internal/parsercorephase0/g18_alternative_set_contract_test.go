@@ -44,6 +44,25 @@ func TestG18HistoricalAlternativeSetProducerPath(t *testing.T) {
 	}
 }
 
+func TestG18HistoricalAlternativeSetDefaultOffCompatibility(t *testing.T) {
+	compact, outputs := g18HistoricalAlternativeSetProducerFixture(t, nil, nil)
+	if len(compact.dropCohortRecords) != 0 {
+		t.Fatalf("default-off fixture created %d certificates", len(compact.dropCohortRecords))
+	}
+	if len(outputs) != 1 || outputs[0].HistoricalBoundaryProvenance != HistoricalBoundaryConverged ||
+		outputs[0].HistoricalAlternativeSet.Len() != 3 || !outputs[0].DropCohortRefs.Empty() {
+		t.Fatalf("default-off output=%+v, want pre-D2 converged union without refs", outputs)
+	}
+	if compact.dropCohortAuthenticatedHistory != 1 || compact.dropCohortUnprovedHistory != 0 ||
+		compact.dropCohortProducerWrites[dropCohortProducerDeadHistoryImport] != 1 {
+		t.Fatalf("default-off telemetry authenticated=%d unproved=%d dead=%d, want 1/0/1",
+			compact.dropCohortAuthenticatedHistory,
+			compact.dropCohortUnprovedHistory,
+			compact.dropCohortProducerWrites[dropCohortProducerDeadHistoryImport],
+		)
+	}
+}
+
 // TestG18HistoricalAlternativeSetCertificateTelemetryRED binds the real
 // dead-node import to the future certificate arena. Current main does not
 // publish this telemetry.
@@ -51,7 +70,7 @@ func TestG18HistoricalAlternativeSetCertificateTelemetryRED(t *testing.T) {
 	var provider g18FutureHistoricalCertificateTelemetryProvider
 	var before g18FutureHistoricalCertificateTelemetry
 	var after g18FutureHistoricalCertificateTelemetry
-	g18HistoricalAlternativeSetProducerFixture(
+	g18HistoricalAlternativeSetProducerFixtureAuthenticated(
 		t,
 		func(compact *Core) {
 			var ok bool
@@ -90,6 +109,102 @@ func TestG18HistoricalAlternativeSetCertificateTelemetryRED(t *testing.T) {
 	}
 }
 
+func TestG18HistoricalAlternativeSetImportRejectsMissingCertificate(t *testing.T) {
+	compact, outputs := g18HistoricalAlternativeSetProducerFixtureWithCertificate(t, nil, nil, false)
+	if len(outputs) != 1 || outputs[0].HistoricalBoundaryProvenance != HistoricalBoundaryUnproved ||
+		outputs[0].HistoricalAlternativeSet.Len() != 0 || !outputs[0].DropCohortRefs.Empty() {
+		t.Fatalf("missing-certificate output=%+v, want unproved history without imported state", outputs)
+	}
+	if compact.dropCohortAuthenticatedHistory != 0 || compact.dropCohortUnprovedHistory != 1 ||
+		compact.dropCohortProducerWrites[dropCohortProducerDeadHistoryImport] != 0 {
+		t.Fatalf("missing-certificate telemetry authenticated=%d unproved=%d writes=%d",
+			compact.dropCohortAuthenticatedHistory,
+			compact.dropCohortUnprovedHistory,
+			compact.dropCohortProducerWrites[dropCohortProducerDeadHistoryImport],
+		)
+	}
+}
+
+func TestG18HistoricalAlternativeSetImportRejectsIdentityCorruption(t *testing.T) {
+	mutateRef := func(mutate func(*DropCohortRef)) func(*Core) {
+		return func(compact *Core) {
+			for index := range compact.nodeLineages {
+				refs := &compact.nodeLineages[index].dropCohortRefs
+				if refs.Empty() || refs.Spilled() {
+					continue
+				}
+				mutate(&refs.Inline[0])
+				return
+			}
+			t.Fatal("certificate fixture has no inline historical reference")
+		}
+	}
+	tests := []struct {
+		name   string
+		mutate func(*Core)
+	}{
+		{
+			name: "foreign-reference",
+			mutate: mutateRef(func(ref *DropCohortRef) {
+				ref.Owner ^= 1
+			}),
+		},
+		{
+			name: "stale-reference",
+			mutate: mutateRef(func(ref *DropCohortRef) {
+				ref.Epoch++
+			}),
+		},
+		{
+			name: "building",
+			mutate: func(compact *Core) {
+				compact.dropCohortRecords[0].state = DropCohortBuilding
+			},
+		},
+		{
+			name: "terminal",
+			mutate: func(compact *Core) {
+				compact.dropCohortRecords[0].state = DropCohortOverflowed
+			},
+		},
+		{
+			name: "action",
+			mutate: func(compact *Core) {
+				compact.dropCohortMembers[0].action.Action.Symbol++
+			},
+		},
+		{
+			name: "derivation",
+			mutate: func(compact *Core) {
+				compact.dropCohortDerivationBytes[0] ^= 0xff
+			},
+		},
+		{
+			name: "over-budget",
+			mutate: func(compact *Core) {
+				compact.limits.MaxDropCohortBytes = 1
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			compact, outputs := g18HistoricalAlternativeSetProducerFixtureWithCertificate(t, test.mutate, nil, true)
+			if len(outputs) != 1 || outputs[0].HistoricalBoundaryProvenance != HistoricalBoundaryUnproved ||
+				outputs[0].HistoricalAlternativeSet.Len() != 0 || !outputs[0].DropCohortRefs.Empty() {
+				t.Fatalf("corrupt %s output=%+v, want unproved history without imported set", test.name, outputs)
+			}
+			if compact.dropCohortAuthenticatedHistory != 0 || compact.dropCohortUnprovedHistory != 1 ||
+				compact.dropCohortProducerWrites[dropCohortProducerDeadHistoryImport] != 0 {
+				t.Fatalf("corrupt %s telemetry authenticated=%d unproved=%d writes=%d", test.name,
+					compact.dropCohortAuthenticatedHistory,
+					compact.dropCohortUnprovedHistory,
+					compact.dropCohortProducerWrites[dropCohortProducerDeadHistoryImport],
+				)
+			}
+		})
+	}
+}
+
 func g18DecodeHistoricalSnapshot(
 	t *testing.T,
 	provider g18FutureHistoricalCertificateTelemetryProvider,
@@ -117,6 +232,33 @@ func g18HistoricalAlternativeSetProducerFixture(
 	beforeReduce func(*Core),
 	afterReduce func(*Core),
 ) (*Core, []ReductionOutput) {
+	return g18HistoricalAlternativeSetProducerFixtureWithCertificateAndAuth(t, beforeReduce, afterReduce, false, false)
+}
+
+func g18HistoricalAlternativeSetProducerFixtureAuthenticated(
+	t *testing.T,
+	beforeReduce func(*Core),
+	afterReduce func(*Core),
+) (*Core, []ReductionOutput) {
+	return g18HistoricalAlternativeSetProducerFixtureWithCertificateAndAuth(t, beforeReduce, afterReduce, true, true)
+}
+
+func g18HistoricalAlternativeSetProducerFixtureWithCertificate(
+	t *testing.T,
+	beforeReduce func(*Core),
+	afterReduce func(*Core),
+	withCertificate bool,
+) (*Core, []ReductionOutput) {
+	return g18HistoricalAlternativeSetProducerFixtureWithCertificateAndAuth(t, beforeReduce, afterReduce, withCertificate, true)
+}
+
+func g18HistoricalAlternativeSetProducerFixtureWithCertificateAndAuth(
+	t *testing.T,
+	beforeReduce func(*Core),
+	afterReduce func(*Core),
+	withCertificate bool,
+	authenticate bool,
+) (*Core, []ReductionOutput) {
 	t.Helper()
 	tables := &fakeTable{
 		actions: map[tableCell][]Action{
@@ -128,6 +270,7 @@ func g18HistoricalAlternativeSetProducerFixture(
 	if err != nil {
 		t.Fatal(err)
 	}
+	compact.historicalCertificateAuthentication = authenticate
 	compact.diagnostics.foldSamePredecessorShallowPayloads = false
 	seed, err := compact.Seed(1, 0)
 	if err != nil {
@@ -169,6 +312,31 @@ func g18HistoricalAlternativeSetProducerFixture(
 		}}, 7); err != nil {
 			return err
 		}
+		if withCertificate {
+			cohort, beginErr := compact.BeginDropCohortOwned(owner, DropCohortActionIdentity{
+				BoundaryState: 3,
+				Lookahead:     9,
+				ActionOrdinal: 0,
+				Action:        Action{Type: ActionReduce, Symbol: 2, ChildCount: 1},
+			}, 1)
+			if beginErr != nil {
+				return beginErr
+			}
+			derivation, derivationErr := compact.BuildDropCohortDerivationOwned(owner, retired, DropCohortSourceCheckpoint{})
+			if derivationErr != nil {
+				return derivationErr
+			}
+			if writeErr := compact.WriteDropCohortMemberOwned(owner, cohort, retired, 0, derivation); writeErr != nil {
+				return writeErr
+			}
+			refs, finalizeErr := compact.FinalizeDropCohortOwned(owner, cohort)
+			if finalizeErr != nil {
+				return finalizeErr
+			}
+			if err := compact.RecordHeadLineageRefsOwned(owner, retired, refs); err != nil {
+				return err
+			}
+		}
 		set := NewAlternativeSetMember(7, 0)
 		compact.UnionAlternativeSet(&set, NewAlternativeSetMember(7, 1))
 		compact.UnionAlternativeSet(&set, NewAlternativeSetMember(7, 2))
@@ -195,8 +363,8 @@ func g18HistoricalAlternativeSetProducerFixture(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(outputs) != 1 || outputs[0].HistoricalBoundaryProvenance != HistoricalBoundaryConverged {
-		t.Fatalf("replacement outputs=%+v, want one converged historical boundary", outputs)
+	if len(outputs) != 1 {
+		t.Fatalf("replacement outputs=%+v, want one historical boundary", outputs)
 	}
 	return compact, outputs
 }

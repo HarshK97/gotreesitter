@@ -1496,6 +1496,16 @@ func executeDiagnosticParserCoreGenericConflictDetailed(
 	// on every exit path, including error returns from RunSchedulerOwned.
 	compact.SetReduceConflictContext(true)
 	defer compact.SetReduceConflictContext(false)
+	if err := compact.SetDropCohortSelectionContextOwned(owner, core.DropCohortSelectionConflictPolicy); err != nil {
+		return diagnosticParserCoreConflictExecution{}, err
+	}
+	defer func() {
+		_ = compact.SetDropCohortSelectionContextOwned(owner, core.DropCohortSelectionNone)
+	}()
+	if token.NoLookahead {
+		compact.SetReduceNoLookaheadContext(true)
+		defer compact.SetReduceNoLookaheadContext(false)
+	}
 	secondaryCount := uint64(actions.Len() - 1)
 	if secondaryCount > math.MaxUint64-branchOrder {
 		return diagnosticParserCoreConflictExecution{}, errors.New("parser-core phase zero: conflict branch order overflow")
@@ -7138,6 +7148,12 @@ func (s *diagnosticParserCoreGenericScheduler) applyGenericReductionOwned(owner 
 		s.compact.SetReduceNoLookaheadContext(true)
 		defer s.compact.SetReduceNoLookaheadContext(false)
 	}
+	if err := s.compact.SetDropCohortSelectionContextOwned(owner, dropCohortSelectionClass(cell.selectedBy)); err != nil {
+		return err
+	}
+	defer func() {
+		_ = s.compact.SetDropCohortSelectionContextOwned(owner, core.DropCohortSelectionNone)
+	}()
 	var outputs []core.ReductionOutput
 	var err error
 	if cell.corridorTrustedReduction {
