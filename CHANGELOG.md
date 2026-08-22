@@ -9,6 +9,16 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Recorded the P24g conditional recovery-scratch reset rejection. The
+  candidate changed only `parser.go` at base commit
+  `30f470f5c2bf18540f7a18b2b22a7e33b88d4e10`. The candidate diff SHA-256 is
+  `f1bf93c698c41d06c77a123ee6ab255e7caae61f6406d7171cbeee4355bdaa01`.
+  Focused Docker tests passed. Go real-corpus and Go-to-C parity matched the
+  baseline known divergences. The 20-seed, 40-process publication found
+  significant regressions in full parsing and no-edit incremental parsing.
+  The candidate code does not ship. See `docs/perf-attribution.md` for the
+  full receipt and reopening condition.
+
 - Recorded the P24f stack-entry state extraction rejection. The candidate
   changed exactly one file, `no_tree_node.go`, from experiment base commit
   `48e844d9a73863cb92367c4db10f02bc5c09375d`. This receipt uses main commit
