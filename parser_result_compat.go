@@ -139,8 +139,6 @@ func runLanguageResultCompatibility(ctx resultCompatibilityContext) resultCompat
 		dispatcherArmCensus(ctx, "dispatch.dart", func() { normalizeDartCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "doxygen":
 		dispatcherArmCensus(ctx, "dispatch.doxygen", func() { normalizeDoxygenCompatibility(ctx.root, ctx.source, ctx.lang) })
-	case "jsdoc":
-		dispatcherArmCensus(ctx, "dispatch.jsdoc", func() { normalizeJsdocCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "dtd":
 		dispatcherArmCensus(ctx, "dispatch.dtd", func() { normalizeDTDCompatibility(ctx.root, ctx.source, ctx.lang) })
 	case "go":

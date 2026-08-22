@@ -69,14 +69,12 @@ func TestJsdocLexerSkipProvenanceRoutes(t *testing.T) {
 
 			rawDigest := jsdocTreeDigest(t, raw, language)
 			productionDigest := jsdocTreeDigest(t, production, language)
-			pass := jsdocDispatchPass(t, production)
-			if pass.NodesRewritten != 0 {
-				t.Fatalf("dispatch.jsdoc rewrote %d nodes after the producer fix: %+v", pass.NodesRewritten, pass)
-			}
+			jsdocRequireNoDispatchRewrites(t, raw, "raw")
+			jsdocRequireNoDispatchRewrites(t, production, "production")
 			if rawDigest != productionDigest {
 				t.Fatalf("raw digest=%s production digest=%s", rawDigest, productionDigest)
 			}
-			t.Logf("witness=%s bytes=%d source_sha256=%s raw_digest=%s production_digest=%s dispatch=%+v", test.name, len(test.source), test.sha256, rawDigest, productionDigest, pass)
+			t.Logf("witness=%s bytes=%d source_sha256=%s raw_digest=%s production_digest=%s raw_rewrites=%d production_rewrites=%d", test.name, len(test.source), test.sha256, rawDigest, productionDigest, raw.ParseRuntime().NormalizationNodesRewritten, production.ParseRuntime().NormalizationNodesRewritten)
 
 			compactRoute, compactDigest := jsdocCompactRoute(t, language, test.source, productionDigest)
 			if compactRoute != test.compactRoute {
@@ -99,20 +97,6 @@ func TestJsdocLexerSkipProvenanceRoutes(t *testing.T) {
 	}
 }
 
-func jsdocDispatchPass(t *testing.T, tree *gotreesitter.Tree) gotreesitter.NormalizationPassRuntime {
-	t.Helper()
-	if tree.ParseRuntime().NormalizationPasses == nil {
-		t.Fatal("missing normalization pass records")
-	}
-	for _, pass := range *tree.ParseRuntime().NormalizationPasses {
-		if pass.Name == "dispatch.jsdoc" {
-			return pass
-		}
-	}
-	t.Fatal("missing dispatch.jsdoc pass record")
-	return gotreesitter.NormalizationPassRuntime{}
-}
-
 func jsdocTreeDigest(t *testing.T, tree *gotreesitter.Tree, language *gotreesitter.Language) string {
 	t.Helper()
 	inspection, err := benchfixtures.InspectGoTree(tree.RootNode(), language)
@@ -122,13 +106,19 @@ func jsdocTreeDigest(t *testing.T, tree *gotreesitter.Tree, language *gotreesitt
 	return inspection.SHA256
 }
 
-func jsdocRequireZeroDispatchRewrites(t *testing.T, tree *gotreesitter.Tree, route string) gotreesitter.NormalizationPassRuntime {
+func jsdocRequireNoDispatchRewrites(t *testing.T, tree *gotreesitter.Tree, route string) {
 	t.Helper()
-	pass := jsdocDispatchPass(t, tree)
-	if pass.NodesRewritten != 0 {
-		t.Fatalf("%s route rewrote %d JSDoc nodes: %+v", route, pass.NodesRewritten, pass)
+	runtime := tree.ParseRuntime()
+	if runtime.NormalizationNodesRewritten != 0 {
+		t.Fatalf("%s route rewrote %d JSDoc nodes", route, runtime.NormalizationNodesRewritten)
 	}
-	return pass
+	if runtime.NormalizationPasses != nil {
+		for _, pass := range *runtime.NormalizationPasses {
+			if pass.Name == "dispatch.jsdoc" {
+				t.Fatalf("%s route unexpectedly recorded retired dispatch.jsdoc: %+v", route, pass)
+			}
+		}
+	}
 }
 
 func jsdocRequireDirectBypass(t *testing.T, tree *gotreesitter.Tree, route string) {
@@ -146,13 +136,9 @@ func jsdocRequireDirectBypass(t *testing.T, tree *gotreesitter.Tree, route strin
 	}
 }
 
-func jsdocRequireZeroDispatchRewritesOrBypass(t *testing.T, tree *gotreesitter.Tree, route string) {
+func jsdocRequireNoDispatchRewritesOrBypass(t *testing.T, tree *gotreesitter.Tree, route string) {
 	t.Helper()
-	if tree.ParseRuntime().NormalizationPasses == nil {
-		jsdocRequireDirectBypass(t, tree, route)
-		return
-	}
-	jsdocRequireZeroDispatchRewrites(t, tree, route)
+	jsdocRequireNoDispatchRewrites(t, tree, route)
 }
 
 func jsdocCompactRoute(t *testing.T, language *gotreesitter.Language, source []byte, wantDigest string) (string, string) {
@@ -179,7 +165,7 @@ func jsdocCompactRoute(t *testing.T, language *gotreesitter.Language, source []b
 		if reason == "" {
 			t.Fatal("compact fallback has no reason")
 		}
-		jsdocRequireZeroDispatchRewrites(t, tree, "compact fallback")
+		jsdocRequireNoDispatchRewrites(t, tree, "compact fallback")
 		return "fallback:" + reason, digest
 	default:
 		t.Fatalf("compact counters routed=%d/%d fallback=%d/%d", routedBefore, routedAfter, fallbackBefore, fallbackAfter)
@@ -206,7 +192,7 @@ func jsdocForestRoute(t *testing.T, language *gotreesitter.Language, source []by
 		if digest != wantDigest {
 			t.Fatalf("%s digest=%s production digest=%s", route, digest, wantDigest)
 		}
-		jsdocRequireZeroDispatchRewritesOrBypass(t, fallback, route)
+		jsdocRequireNoDispatchRewritesOrBypass(t, fallback, route)
 		return fmt.Sprintf("fallback:%d:%d:%s", offset, symbol, reason), digest
 	}
 	t.Cleanup(tree.Release)
@@ -254,7 +240,7 @@ func jsdocIncrementalRoute(t *testing.T, language *gotreesitter.Language, source
 		if profile.ReuseUnsupportedReason == "" {
 			t.Fatalf("incremental fallback has no reason: %+v", profile)
 		}
-		jsdocRequireZeroDispatchRewrites(t, tree, "incremental fallback")
+		jsdocRequireNoDispatchRewrites(t, tree, "incremental fallback")
 		return "fallback:" + profile.ReuseUnsupportedReason, digest
 	}
 	jsdocRequireDirectBypass(t, tree, "incremental reuse")

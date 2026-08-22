@@ -108,8 +108,8 @@ Do not change the registry until the matching candidate condition is complete.
 
 ## 2026-08-22 JSDoc producer-fix checkpoint
 
-Status: producer fix accepted by the focused gates. Keep `dispatch.jsdoc` and
-`normalizeJsdocCompatibility` live until a separate retirement change.
+Status: producer fix accepted by the focused gates at this checkpoint. The
+separate retirement slice below removes the now-inert JSDoc compatibility arm.
 
 Base commit: `a01f8037319c9f8f0ea12ae3c96523112656ce22`.
 
@@ -135,10 +135,11 @@ The route receipt records these exact routes:
   `31:0:nolook_relex_empty`, and incremental fallback for
   `external_scanner_unsupported`.
 
-The direct-route rule is: the control compact direct route bypasses
-normalization and requires no `dispatch.jsdoc` record. Its forest production
-fallback requires zero JSDoc rewrites and may record `dispatch.jsdoc`. Other
-fallback routes require their own `dispatch.jsdoc` record with zero rewrites.
+At this checkpoint, the direct-route rule was: the control compact direct
+route bypassed normalization and required no `dispatch.jsdoc` record. Its
+forest production fallback required zero JSDoc rewrites and could record
+`dispatch.jsdoc`. Other fallback routes required their own record with zero
+rewrites. The retirement receipt below removes that record.
 
 The focused Docker gates pass for the JavaScript unicode regression, the
 included-range regression, and the existing non-trivia gap rejection tests.
@@ -164,6 +165,53 @@ The exact Docker artifacts are:
 Retire the JSDoc compatibility arm only after raw and production trees match
 locked C, both receipts report zero rewrites, and every listed route passes.
 Reopen the candidate if any node, flag, digest, or route result diverges.
+
+## 2026-08-22 JSDoc dispatcher retirement
+
+Status: GO in the isolated retirement worktree. The exact base is
+`f5adfc7091bad6f8adb5088a32f3b2912561fc72`.
+
+Native JSDoc reduction now emits both registered producer witnesses without
+result rewrites. The retirement removes `dispatch.jsdoc` from the live switch,
+deletes `parser_result_jsdoc.go`, and keeps lexer skip provenance unchanged.
+
+The registry census changes as follows:
+
+| Measure | Before | After |
+| --- | ---: | ---: |
+| Live dispatcher arms | 32 | 31 |
+| Live dispatcher languages | 34 | 33 |
+| Live registry entries | 33 | 32 |
+| Retired registry entries | 55 | 56 |
+| A0 manifest languages and receipts | 15 | 14 |
+
+The removed JSDoc A0 receipt covered three files, 169 visited nodes, and zero
+rewrites. The focused route receipt still covers both producer sources:
+
+- multi-tag trigger: source SHA-256
+  `8a1683a43035994f3abf03f2f9556b96514a745018c5373ff77d3127fb27d201`, deep
+  digest `63238fbed1257ab8d7b198d02beed85a8f4915b5a48149a85bf7b7a993e9388b`;
+- single-tag control: source SHA-256
+  `0f4dbe6ca5d62b8c033c09ac26689c787a66298540c46b3af7a9760a7240b5ce`, deep
+  digest `b8aec819c51b10e62d76937186fc52a8cdf91b66f4d198baa53f4a5860b3b232`.
+
+Both raw and production routes report zero rewrites. Compact, forest, and
+incremental routes retain their documented direct or fallback behavior.
+
+The locked-C receipt compares symbols, fields, spans, points, extras, missing
+and error flags, and deep digests for both sources. Raw and production match C
+exactly.
+
+The focused Docker artifacts are:
+
+- `harness_out/docker/20260822T185601Z-jsdoc-retirement-routes`;
+- `harness_out/docker/20260822T185607Z-jsdoc-retirement-locked-c`;
+- `harness_out/docker/20260822T185704Z-jsdoc-retirement-census`;
+- `harness_out/docker/20260822T185637Z-jsdoc-retirement-registry`;
+- `harness_out/docker/20260822T185652Z-jsdoc-retirement-javascript-family`.
+
+The focused gates pass. Reopen this retirement if a future JSDoc witness
+rewrites a node or diverges from locked C on any covered route.
 
 ## Ordered program
 
@@ -475,6 +523,7 @@ there.
 | HLSL subscript-assignment declarator | retirement change | 1 HLSL member | 0 | negative dynamic precedence election, compatibility-free producer, production, compact fallback, forest, incremental reuse, and isolated C-oracle parity |
 | Swift ternary source reparse | retirement change | 1 Swift subpass | 0 | exact 16-case manifest, native producer, production, compact fallback, forest fail-closed behavior, incremental fresh fallback, and isolated C-oracle parity |
 | JavaScript dynamic-import token child | retirement change | 1 JavaScript subpass | 0 | exact historical controls, generic collapsed-child producer, production, direct compact, strict forest, edited incremental reuse, and isolated C-oracle parity |
+| JSDoc recovery and returned-tree shape | retirement change | 1 dispatcher arm | 0 | two producer witnesses, raw and production zero-rewrite receipt, compact or fallback routes, incremental fallback, and isolated locked-C parity |
 
 Mark a row merged only after CI and merge evidence exist. Detailed per-entry
 receipts stay in the JSON registry and durable run findings stay in Hyphae.
