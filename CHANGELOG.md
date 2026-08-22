@@ -7,6 +7,21 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Performance
+
+- Recorded the P24b owner-plus-lineage scheduler transaction as a performance
+  no-go. The candidate changed three files and had diff SHA-256
+  c064480db960885558cce4eff8b22679a3dffed996d908f938fa5e480f92dee.
+  Focused correctness gates passed. The publication used 20 seeds, 40
+  isolated processes, and 120 rows. Benchstat found no significant target
+  improvement. Paired means rose in all three lanes. The candidate code does
+  not ship. The corrected unit receipt is
+  `/tmp/gts-p24b-owner-lineage-20260822/harness_out/docker/20260822T184141Z-p24b-owner-lineage-unit-corrected-20260822`.
+  It runs all seven combined owner-lineage tests and the existing owner-only
+  rollback control. The earlier `20260822T180959Z-p24b-owner-lineage-unit-final2`
+  receipt is superseded and excluded: its anchored expression matched no
+  combined test. See docs/perf-attribution.md for the full receipt.
+
 ### Added
 
 - Add the default-off authenticated D6a drop-cohort frontier producer. It

@@ -9,6 +9,126 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
+## P24b owner-plus-lineage transaction receipt
+
+P24b tested one scheduler transaction for owner and lineage state.
+The hypothesis was that one transaction would reduce repeated scheduler work.
+The candidate combined owner and lineage writes for converged, reference-bearing heads.
+It preserved owner-only calls, rollback, journaling, and token validation.
+It kept production defaults and profile grants unchanged.
+
+The base commit was
+a01f8037319c9f8f0ea12ae3c96523112656ce22.
+The candidate changed these three files:
+
+- internal/parsercorephase0/scheduler_owned.go
+- parsercore_phase0_driver.go
+- internal/parsercorephase0/scheduler_owned_owner_lineage_test.go
+
+The full candidate diff had SHA-256
+c064480db960885558cce4eff8b22679a3dffed996d908f938fa5e480f92dee.
+
+Focused correctness gates passed. The corrected unit gate used
+`/tmp/gts-p24b-owner-lineage-20260822/harness_out/docker/20260822T184141Z-p24b-owner-lineage-unit-corrected-20260822`.
+Its Docker command selected these eight tests:
+
+- `TestRecordHeadOwnerAndLineageOwnedCommitsAllState`
+- `TestRecordHeadOwnerAndLineageOwnedRollsBackAllState`
+- `TestRecordHeadOwnerAndLineageOwnedRejectsInvalidOwnerLineage`
+- `TestRecordHeadOwnerAndLineageOwnedRejectsOwnerConflict`
+- `TestRecordHeadOwnerAndLineageOwnedRejectsStaleToken`
+- `TestRecordHeadOwnerAndLineageOwnedRollsBackReferenceFailure`
+- `TestRecordHeadOwnerAndLineageOwnedHonorsSetDirtyFalse`
+- `TestHeadOwnerRollsBackWithSchedulerTransaction`
+
+The earlier unit receipt
+`/tmp/gts-p24b-owner-lineage-20260822/harness_out/docker/20260822T180959Z-p24b-owner-lineage-unit-final2`
+is superseded and excluded from this unit claim. Its anchored expression
+matched no combined owner-lineage test, so it did not cover the new combined
+operation.
+The driver gate used
+`/tmp/gts-p24b-owner-lineage-20260822/harness_out/docker/20260822T180751Z-p24b-owner-lineage-driver-final`.
+The real-corpus smoke gate used
+`/tmp/gts-p24b-owner-lineage-20260822/harness_out/docker/20260822T180806Z-diag-go_lang`.
+The candidate C parity gate used
+`/tmp/gts-p24b-owner-lineage-20260822/harness_out/grammargen_cparity/20260822_110830-p24b-owner-lineage-cgo-final`.
+The baseline C parity gate used
+`/tmp/gts-p24b-baseline-20260822/harness_out/grammargen_cparity/20260822_110533-p24b-owner-lineage-baseline-cgo`.
+The candidate and baseline C receipts showed the same three pre-existing
+grammar divergences. They showed two EndByte differences and one root
+child-count difference.
+
+### Publication protocol
+
+The accepted publication is
+`/tmp/gts-p24b-publication-20260822T181351Z`.
+It used the three required benchmarks:
+`BenchmarkGoParseFullDFA`,
+`BenchmarkGoParseIncrementalSingleByteEditDFA`, and
+`BenchmarkGoParseIncrementalNoEditDFA`.
+It used 20 seeds and 40 isolated processes.
+Each process used `GOMAXPROCS=1`, `-count=1`,
+`-benchtime=750ms`, `-benchmem`, and `-test.shuffle=<seed>`.
+Odd seeds ran the baseline first. Even seeds ran the candidate first.
+The run produced 120 accepted benchmark rows.
+The run reported no out-of-memory event, timeout, or contamination.
+
+The first attempt was quarantined at
+`/tmp/gts-p24b-publication-20260822T181256Z-QUARANTINED`.
+Its validator expected a hyphenated benchmark suffix.
+Go emitted whitespace after the benchmark name.
+The attempt contained only three seed-one baseline rows.
+The analysis excluded that attempt from every aggregate and decision.
+
+### Benchstat result
+
+The analysis used
+`/tmp/gts-p24b-analysis-20260822T182318Z/benchstat.txt`.
+The table reports candidate minus baseline.
+
+| Benchmark | Baseline median | Candidate median | Change | p-value |
+|---|---:|---:|---:|---:|
+| Full parse | 6.616ms | 6.585ms | -0.47% | 0.512 |
+| Single-byte edit | 721.1ns | 722.0ns | +0.12% | 0.644 |
+| No edit | 2.350ns | 2.347ns | -0.13% | 0.784 |
+| Geomean | 2.238µs | 2.234µs | -0.17% | — |
+
+Memory stayed neutral.
+Full parse used 50.50 KiB and 4 allocations per operation in both variants.
+Incremental benchmarks used zero bytes and zero allocations in both variants.
+The full-parse allocation comparison had p=1.000.
+The full-parse byte comparison had p=0.757.
+
+### Paired and order results
+
+The paired analysis is in
+`/tmp/gts-p24b-analysis-20260822T182318Z/paired-summary.txt`.
+Each interval uses 20 matched seeds and reports candidate minus baseline.
+
+| Benchmark | Paired mean | 95% paired interval |
+|---|---:|---:|
+| Full parse | +0.389% | [-1.376%, +2.154%] |
+| Single-byte edit | +1.779% | [-0.198%, +3.756%] |
+| No edit | +0.452% | [-0.555%, +1.459%] |
+
+The order split is in
+`/tmp/gts-p24b-analysis-20260822T182318Z/order-split.txt`.
+
+| Order | Full parse | Single-byte edit | No edit |
+|---|---:|---:|---:|
+| Baseline first | +0.643% | +1.417% | +0.282% |
+| Candidate first | +0.135% | +2.140% | +0.622% |
+
+### Decision
+
+**REJECT / NO-GO.**
+
+The keep rule requires a target improvement without a correctness regression.
+No benchmark lane improved with statistical significance.
+The paired mean rose in all three lanes.
+The memory result stayed neutral.
+The candidate code does not ship.
+
 ## Why this document exists
 
 Three prior estimates put the compact scheduler's share of full-parse CPU at
