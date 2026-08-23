@@ -9,6 +9,17 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Recorded the P25b issue #454 performance blocker at source commit
+  `18d63b6f7802b28a0ddb889327fcd4ebebb99426`. The exact 137 KiB base source
+  matched the locked C tree. The one-byte edited source did not. The Go fresh
+  and incremental edited trees matched each other, but both differed from C
+  at the first error node. The incremental run rejected reuse, allocated
+  3,165,354 to 3,213,594 transient nodes, and replaced the discarded result
+  with one default-budget full parse. The focused Docker correctness and
+  locked-C ratchets passed. Keep issue #454 and the performance arm live. No
+  production code changed. See `docs/perf-attribution.md` for the receipt,
+  artifacts, and reopening condition.
+
 - Recorded the P25a fresh-profile performance blocker at main commit
   `0448715e9a80305556b687b6ecaf041da42e9d9d`. The primary trio produced no
   defensible bounded candidate. The profile used one CPU, `GOMAXPROCS=1`,

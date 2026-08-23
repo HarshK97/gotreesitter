@@ -1913,6 +1913,158 @@ candidate.
 - Analysis: `/tmp/gts-p24a-analysis-20260822T171127Z/benchstat.txt`
 - Focused Docker gate: `/tmp/gts-p24a-cnode-memo-probe/harness_out/docker/20260822T170841Z-p24a-refresh-6c94426b-focused15-corrected-20260822`
 
+## 2026-08-24 P25b issue #454 performance blocker receipt
+
+Status: **NO-GO**. Keep issue #454 and the performance arm live.
+
+This receipt records the P25b baseline investigation. It does not record a
+candidate code change. The source worktree was at commit
+`18d63b6f7802b28a0ddb889327fcd4ebebb99426`. This docs-only receipt is based on
+main commit `b800161da38ce04ed66f29095d74818ae918e4d8`.
+
+### Witness construction
+
+Build the source with `benchfixtures.Issue454CSource`.
+The constructor writes repeated C functions and pads the result with spaces.
+The base source length is exactly 137 KiB, or 140,288 bytes.
+The edit deletes the first `x` in `x0` at byte offset 19.
+The edited source length is 140,287 bytes.
+
+The base source SHA-256 is
+`8c4f63057e4b28fdcbbc7e08763078d9aa23dee7486f6fca56247e107ff7a98d`.
+The edited source SHA-256 is
+`600bf905d3c001a25546c33d230e4e56016b4ffabdd0197ce4ea988f57b1be72`.
+
+The phrase “exact 137 KiB Go/C parity witness” is not correct for the edited
+tree. The Go and C base trees match exactly. The edited trees do not.
+Use “137 KiB base-source witness with a known edited-tree divergence”.
+
+### Fresh and incremental profiles
+
+The profile used one CPU, `GOMAXPROCS=1`, three runs, and one test process.
+The fresh lane parsed the 140,287-byte edited source.
+Each fresh Go tree had 205,934 nodes, reached byte 140,287, and had an error.
+All three fresh Go digests were
+`9c979bb436f92e7f96885454de81d9d95d2befff242145b1026addf5d9395c4d`.
+
+| Lane | Wall time | Go allocations | Maximum RSS | Result |
+|---|---:|---:|---:|---|
+| Fresh, three runs | 186.7 to 293.8 ms | 31.8 to 121.9 MB; 734,803 to 742,605 mallocs | 575,520 KiB | Accepted error tree |
+| Incremental, three runs | 13.47 to 17.80 s | 747.2 to 819.1 MB; 9,085 to 9,287 mallocs | 921,456 KiB | Replaced by fresh full parse |
+
+`Tree.Edit` took 1.704 to 1.974 ms and allocated 224 bytes in five mallocs.
+The reuse cursor took 181 to 360 microseconds.
+The profile recorded three reused subtrees and ten reused bytes.
+It rejected one dirty node, five dirty ancestors, and four changed root
+non-leaf nodes. It recorded no scanner, fragile-node, or block-splice rejects.
+
+The incremental profile recorded 3,165,354 to 3,213,594 new nodes.
+These nodes belong to the discarded memory-budget attempt.
+The final runtime recorded 205,934 nodes, 39,558,912 arena bytes,
+22,812,236 scratch bytes, and 16,810,028 GSS bytes.
+The final tree reached byte 140,287 and had an error.
+
+The exact retry reason was
+`incremental_parse_memory_budget_full_retry`.
+The fallback released the failed tree and selected one default-budget full
+parse. The profile reports zero ordinary retry passes because this fallback
+does not use the widening retry ladder.
+
+The detailed attempt receipt resets when the fallback starts.
+It therefore retains the selected full parse, not the discarded attempt.
+The selected attempt took 145.0 to 308.4 ms.
+Subtracting it from the measured incremental wall time infers
+13.32 to 17.49 seconds for the discarded attempt.
+Treat that interval as an inference, not a direct attempt timestamp.
+
+Recovery telemetry recorded one recovery entry and 44,532 cost competitions
+per run. Recovery cost walks took 22.13 to 35.26 ms.
+The final runtime marked C recovery as entered and marked a clean result as
+dropped before the fallback replaced it.
+
+### Correctness and locked-C result
+
+The focused Go Docker test passed all three edit classes.
+Replace, insert, and delete all matched their fresh Go trees.
+The delete case required the exact memory-budget fallback reason.
+The test also confirmed a clean, deterministic base tree.
+
+The one KiB locked-C test passed its known-divergence ratchet.
+It recorded this first difference:
+
+```text
+/translation_unit/function_definition[0]/compound_statement[2]/ERROR[2]/number_literal[0]
+category=error Go=true C=false
+```
+
+The 137 KiB locked-C test also passed.
+Its base digests matched:
+
+```text
+Go base = 3f51a3e4c10824342dd1a92eee794c94548d214c4cbbf295bec07ef734b9fbf3
+C base  = 3f51a3e4c10824342dd1a92eee794c94548d214c4cbbf295bec07ef734b9fbf3
+```
+
+The edited digests did not match:
+
+```text
+Go fresh       = 9c979bb436f92e7f96885454de81d9d95d2befff242145b1026addf5d9395c4d
+Go incremental = 9c979bb436f92e7f96885454de81d9d95d2befff242145b1026addf5d9395c4d
+C fresh        = 8fe04819317a4f225b5c298a71acdceb5aa965abb3a397e35eb48c5849888d5c
+```
+
+Go incremental and Go fresh are equal.
+Both differ from C at the error flag shown above.
+The locked-C test accepts this known divergence and checks Go self-consistency.
+It does not prove exact Go/C parity.
+
+### Canopy call path
+
+The narrow, no-cache Canopy query recorded this path:
+
+```text
+ParseIncrementalProfiled
+  -> parseIncrementalChangedProfiled
+  -> retryIncrementalMemoryBudgetAsPlainFullWithDFA
+  -> parseInternal with no old tree and the default budget
+```
+
+The changed-path call is at `parser_api.go:1741`.
+The fallback implementation is at `parser_retry.go:2137`.
+The profile test calls `Tree.Edit` at `p25b_issue454_profile_test.go:105`.
+
+### Decision and reopening condition
+
+Do not publish a performance candidate from this receipt.
+Do not call the edited witness C-exact.
+Keep the performance arm live until a producer fix removes the first error
+divergence and preserves the memory-budget fallback.
+
+Reopen a bounded performance candidate only after all of these conditions hold:
+
+- Match the 137 KiB edited witness against the locked C tree by deep digest.
+- Preserve equality between fresh Go and incremental Go trees.
+- Preserve the fallback reason and final root span.
+- Report the discarded attempt and the selected runtime separately.
+- Repeat the focused Docker correctness and locked-C tests.
+- Run a quiet, reproducible performance comparison with the same settings.
+
+### P25b artifact paths
+
+- Fresh profile: `/tmp/gts-p25b-artifacts/20260823T025558Z-c137-fresh-base-v2`
+- Incremental profile: `/tmp/gts-p25b-artifacts/20260823T025620Z-c137-incremental-delete-base`
+- Go correctness: `/tmp/gts-p25b-artifacts/20260823T025804Z-c137-correctness-go-base`
+- Locked-C one KiB: `/tmp/gts-p25b-artifacts/20260823T025832Z-c137-locked-c-1k-base`
+- Locked-C 137 KiB: `/tmp/gts-p25b-artifacts/20260823T030032Z-c137-locked-c-137k-base-v2`
+- Canopy profile path: `/tmp/p25b-canopy-profiled.json`
+- Canopy retry callers: `/tmp/p25b-canopy-retry2.json`
+- Canopy `Tree.Edit` callers: `/tmp/p25b-canopy-edit-all.json`
+
+Exclude the failed construction attempts from this receipt:
+
+- `/tmp/gts-p25b-artifacts/20260823T025456Z-c137-fresh-base`
+- `/tmp/gts-p25b-artifacts/20260823T025935Z-c137-locked-c-137k-base`
+
 ## Caveats
 
 - This is one run, on one noisy shared host, not a sealed-epoch,
