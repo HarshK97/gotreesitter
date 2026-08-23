@@ -173,6 +173,140 @@ and every registered recovery witness matches locked C on raw, production,
 compact, forest, incremental, and C-oracle routes. Require zero dispatcher
 rewrites on the matching witnesses. Keep the registry unchanged.
 
+## 2026-08-24 TypeScript dispatcher blocker receipt
+
+Status: `KEEP LIVE / NO-GO`. Keep `dispatch.typescript` live.
+
+Base commit: `731f8a9d9440a006b2cc6b56ef5b31c0ff3b5ce7`.
+This receipt adds one focused route test. It changes no parser or registry
+behavior.
+
+The registry entry is `dispatch.typescript`. It calls
+`normalizeTypeScriptTreeCompatibilityWithParser` in
+`parser_result_javascript_typescript.go`. Its authoritative owner is
+`derivation_election_selection`. Retirement requires exact production,
+compact, forest, incremental, and locked-C output for every registered
+witness.
+
+The grammar lock pins TypeScript and TypeScript JSX (TSX) to commit
+`75b3874edb2dc714fb1fd77a32013d0f8699989f` in
+`grammars/languages.lock`. The A0 (initial dispatcher census) manifest has 14
+languages and 42 files. It excludes TypeScript and TSX. Its parser revision is
+`3c55dca287c9dd6ed987c764b9aafd90b22281a2`. Its grammar lock digest is
+`9ddb6324afd014f6ecdd1cae3dd1ba238f1e62ce03d126e6d8b267ce34d72ecb`.
+The manifest names `corpus_sources.lock`, but that file is absent.
+
+The tracked census has seven fixtures. Its TypeScript receipt is
+`cgo_harness/corpus_structural/typescript_sample.ts`. The source SHA-256 is
+`40b4a7a06fde353d8c2b726acb16f59aab44d49d1b6257c37345c2a1f56b9fb7`.
+The receipt records one check, one run, 1,462 visited nodes, 15 rewritten
+nodes, and no error root. The 15 rewrites remain active evidence. They do not
+support retirement.
+
+The full authenticated TypeScript and TSX corpus is unavailable. Neither
+`cgo_harness/corpus_real/typescript` nor `cgo_harness/corpus_real/tsx` exists.
+The checked-in `grammars/testdata/typescript_issue_544.ts` file is a structural
+control, not an authenticated corpus receipt. The corpus manifests reference
+TypeScript paths that are not present in this worktree.
+
+The focused probe is
+`cgo_harness/typescript_dispatch_blocker_receipt_test.go`. It records raw,
+production, compact, forest, incremental, and locked-C routes. It also checks
+the TypeScript external scanner. The scanner reports
+`supports_incremental_reuse=true`.
+
+The tracked witness matches locked C on every available route. Its deep digest
+is `0c29d566e57e5bdee435a7c8f17578bc2b0e5ff53c8dfea720655fec2b9f7f39`.
+Production records `dispatch.typescript` as 1,462 visited and 15 rewritten.
+Compact declines with this fail-closed reason:
+`converged-path reduction split no-action drop lacks alternative-set coverage
+by one non-blended survivor`. Forest accepts. Incremental reuse records 406
+subtrees and 2,289 bytes. Its pass records 1,462 visited and 10 rewritten.
+
+The positive control `const value: number = 1;` matches locked C at digest
+`1e38064181b465fdf83382149c49a085ccad8cc2a7fcefad67b187c6d87ee619`.
+Production records 12 visited and zero rewritten. Compact accepts, forest
+accepts, and incremental reuse records 5 subtrees and 18 bytes.
+
+The typed-arrow control `const f = (a: A): B => a;` matches locked C at digest
+`6c5d7858e8ca512ff1f3082e2f4be701ce95c4741ea01ddb41e1f2d681e83d00` under the
+default cap. Production records 21 visited and zero rewritten. Compact falls
+back, forest accepts, and incremental reuse records 6 subtrees and 10 bytes.
+The generic-arrow comma control also matches locked C. Its production pass is
+27 visited and zero rewritten. Compact falls back and incremental reuse records
+4 subtrees and 8 bytes.
+
+The simple generic-call control matches locked C at digest
+`5fd25b615488dd97468bc371bfb05af01b4fa13d17559c52c35246d27174739b`.
+Production records 14 visited and zero rewritten. Compact falls back, forest
+accepts, and incremental reuse records 2 subtrees and 9 bytes.
+
+The existing ternary generic-call selection test remains skipped. Its direct
+route witness currently matches locked C at digest
+`d0ba1c98d9058b3aff2795d1cf5b019a57306a6b247724f92dc961a62b802f02`.
+The production pass records 51 visited and zero rewritten. Compact accepts and
+incremental reuse records 9 subtrees and 52 bytes. The skipped test still
+marks the unresolved PrecDynamic tie-break boundary.
+
+The checked-in issue-544 structural control matches locked C at digest
+`6049f72952e720eb432bad16a60ca80f541f16785f17d2ea143b5e4ac3422103`.
+Production records 832 visited and two rewritten. Compact falls back, forest
+accepts, and incremental reuse records 11 subtrees and 64 bytes.
+
+The controlled diagnostic forces `GOT_GLR_MAX_MERGE_PER_KEY=1`. It is not the
+shipping profile. The typed-arrow raw Go digest becomes
+`43ea0e22e93ca342e3180c8675e86c043674bec8d056d775cffeb30f2e017a42`.
+Locked C remains
+`6c5d7858e8ca512ff1f3082e2f4be701ce95c4741ea01ddb41e1f2d681e83d00`.
+The first divergence is `/program`, where Go has an error and C does not.
+Production records 20 visited and zero rewritten at cap one. Forest still
+returns the exact C tree. The generic-arrow comma form shows the same
+cap-one selection family. This diagnostic identifies a parser-core boundary.
+It does not prove a safe grammar-agnostic correction.
+
+The held-out `typescript/src/lib/webworker.generated.d.ts` receipt remains
+open. The 786,262-byte source fails the default 512 MiB budget with Go root
+`ERROR`, C root `program`, and child counts 330 versus 1,484. The source is
+absent from this worktree. This receipt was not rerun locally. The
+recorded threshold remains above 576 MiB and at or below 640 MiB.
+
+Canopy traces the first producer path from
+`runLanguageResultCompatibility` to `dispatcherArmCensus`, then to
+`normalizeTypeScriptTreeCompatibilityWithParser`, the fused JavaScript and
+TypeScript walk, and the TypeScript candidate collector. The route evidence
+does not show that the producer emits the C tree for the authenticated corpus.
+No safe producer or parser-core fix is proven.
+
+The focused artifacts are:
+
+- `/tmp/gts-n31b-artifacts/20260823T035236Z-n31b-registry-tracked`;
+- `/tmp/gts-n31b-artifacts/20260823T035715Z-n31b-typescript-core`;
+- `/tmp/gts-n31b-artifacts/20260823T035737Z-n31b-typescript-parser-result`;
+- `/tmp/gts-n31b-artifacts/20260823T040002Z-n31b-typescript-routes-v4`;
+- `/tmp/gts-n31b-artifacts/20260823T040319Z-n31b-typescript-cap1-gap`;
+- `/tmp/gts-n31b-artifacts/20260823T040340Z-n31b-typescript-lineage-parity`;
+- `/tmp/gts-n31b-artifacts/20260823T040347Z-n31b-typescript-grammar-gaps`;
+- `/tmp/gts-n31b-artifacts/20260823T040450Z-n31b-typescript-import-types`;
+- `/tmp/gts-n31b-artifacts/20260823T040459Z-n31b-typescript-grammar-regressions`.
+- `/tmp/gts-n31b-artifacts/20260823T041728Z-n31b-typescript-blocker-receipt-routes-v2`;
+- `/tmp/gts-n31b-artifacts/20260823T041826Z-n31b-typescript-blocker-receipt-cap1`;
+- `/tmp/gts-n31b-artifacts/20260823T041925Z-n31b-typescript-blocker-receipt-docs-v3`.
+
+Retire `dispatch.typescript` only after all of these conditions hold:
+
+1. Add `corpus_sources.lock` and authenticated TypeScript and TSX A0 receipts.
+2. Rerun every registered witness at the locked grammar revision.
+3. Prove exact raw, production, compact, forest, incremental, and locked-C
+   output for every witness and control.
+4. Preserve exact scanner reuse receipts on all incremental routes.
+5. Resolve and unskip the generic-call selection test with a
+   grammar-agnostic PrecDynamic tie-break proof.
+6. Prove typed-arrow selection without a source-specific exception.
+7. Close the default-budget webworker divergence with a safe condense design.
+
+Keep `dispatch.typescript` live until each condition passes.
+Keep the registry entry unchanged until each condition passes.
+
 ## 2026-08-22 normalization checkpoint
 
 Status: NO-GO. Do not retire an entry from this checkpoint.
