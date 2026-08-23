@@ -10,6 +10,91 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
+## 2026-08-24 P25f GSS entry hash candidate
+
+Status: **CANDIDATE ACCEPTED FOR REVIEW**. Keep issue #454 open.
+
+The publication base is main commit
+`5e307cb2509fa5b4c6b0e50aba7454f5ec6748a3`.
+The performance evidence uses base commit
+`f0904533b6398775d5df5e01bc34d32feee34900`.
+
+The candidate changes only `glr_gss.go`. It removes duplicate dynamic-
+precedence dispatch in `gssEntryHash`. The switch reads the same field for
+`Node`, `noTreeNode`, `compactFullLeaf`, and `pendingParent` entries. Nil and
+unknown entries keep the existing sentinel path. The raw diff SHA-256 is
+`7ba71f7d82f3273e7c1028ea23034bfffb18ba1fb2e42714713e8e1566edb5c3`.
+
+### Performance receipt
+
+The primary trio used one Go grammar and 20 sequential seeds. Each seed used
+one process, `GOMAXPROCS=1`, `GOFLAGS=-p=1`, `-count=1`, `-benchtime=750ms`,
+`-benchmem`, and its own shuffle seed. Docker used one CPU, four GiB of
+memory, and `GOMEMLIMIT=3GiB`.
+
+| Benchmark | Candidate change | Result |
+|---|---:|---|
+| Full parse | `+0.16%` | neutral (`p=0.718`, `n=20`) |
+| Incremental single-byte edit | `+0.21%` | neutral (`p=0.473`, `n=20`) |
+| Incremental no-edit | `-3.86%` | significant (`p=0.000`, `n=20`) |
+| Trio geomean | `-1.18%` | — |
+
+Bytes per operation and allocations per operation stayed unchanged. Full
+parses used `53.67 KiB/op` and four allocations. Both incremental lanes used
+zero bytes and zero allocations. The primary raw outputs are:
+
+- `/tmp/gts-p25f-baseline/p25f-primary-baseline-final.txt`
+- `/tmp/gts-p25f-candidate/p25f-primary-candidate-final.txt`
+
+The real `grammargen_lr` run improved by `-3.13%` (`p=0.004`, `n=20`).
+Bytes per operation were effectively neutral. The candidate reported `157`
+allocations in two samples. Its other samples reported `156` allocations.
+
+The three-sample RSS medians were `615840 KiB` for the baseline and `593760
+KiB` for the candidate. The median change was `-3.59%`.
+
+- Baseline RSS: `/tmp/gts-p25f-baseline/harness_out/docker/20260823T063727Z-p25f-rss-baseline-repeat`
+- Candidate RSS: `/tmp/gts-p25f-candidate/harness_out/docker/20260823T063750Z-p25f-rss-candidate-repeat`
+
+The one-sample P25f values were `602720 KiB` for the baseline and `595040 KiB`
+for the candidate. No accepted run timed out or exhausted memory.
+
+### Attribution and correctness
+
+The P25e CPU profile supplies the candidate attribution. It was collected at
+base commit `14f6692fac65eab817f65af8cc6072e423ca6563`. Its SHA-256 is
+`96bead7a8c448a597e4986839b000b602a08bf72b5ffaa5685fa72dcc432715c`.
+The profile path is
+`/tmp/gts-p25e-investigation/harness_out/p25e-real-go-grammargen.pprof`.
+The profile reports `gssEntryHash` at `3.67%` flat CPU and `7.35%` cumulative
+CPU. P25f did not create a new CPU profile. Keep this provenance explicit.
+
+The accepted correctness artifacts are:
+
+- `/tmp/gts-p25f-artifacts/20260823T061027Z-p25f-candidate-correctness`
+- `/tmp/gts-p25f-artifacts/20260823T061054Z-p25f-candidate-locked-c`
+- `/tmp/gts-p25f-artifacts/20260823T061605Z-p25f-candidate-path-tests`
+
+The current-main reruns passed at:
+
+- `/tmp/gts-p25f-publication-20260824/harness_out/docker/20260823T064341Z-p25f-publication-go-correctness`
+- `/tmp/gts-p25f-publication-20260824/harness_out/docker/20260823T064348Z-p25f-publication-go-locked-c`
+- `/tmp/gts-p25f-publication-20260824/harness_out/docker/20260823T064403Z-p25f-publication-path-tests`
+
+The focused path tests cover hash semantics, dynamic precedence, linear and
+forked GSS paths, materialization, raw-shape handling, forest parsing, and
+incremental parsing. The candidate and baseline runtime probes report the
+same accepted parse, budget, retry, recovery, stack, node, arena, scratch,
+and GSS telemetry.
+
+The initial candidate runtime probe failed because it referenced unavailable
+`ParseRuntime` fields. Exclude its artifact:
+`/tmp/gts-p25f-artifacts/20260823T061724Z-p25f-candidate-runtime`.
+The corrected candidate probe passed at
+`/tmp/gts-p25f-artifacts/20260823T061757Z-p25f-candidate-runtime`.
+
+Keep issue #454 open. Review the candidate on current main before merge.
+
 ## 2026-08-23 P25e one-Go-grammar fresh-profile evidence receipt
 
 Status: **KEEP ISSUE #454 LIVE / NO-GO**. Ship no candidate code.
