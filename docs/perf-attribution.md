@@ -2239,6 +2239,197 @@ Reopen a bounded candidate only after all conditions hold:
 - Retry Canopy: `/tmp/p25c-canopy-retry.json`
 - Stack-cap Canopy: `/tmp/p25c-canopy-maxstacks.json`
 
+## 2026-08-24 P25d issue #454 C# fresh-parse performance blocker receipt
+
+Status: **KEEP LIVE / NO-GO**. Keep issue #454 live. Ship no candidate code.
+
+This receipt records a fresh-parse C# performance investigation. It does not
+measure incremental C# performance. The temporary probe changed no production
+or test code in the repository. Its source worktree used base commit
+`731f8a9d9440a006b2cc6b56ef5b31c0ff3b5ce7`.
+
+The probe generated synthetic C# source. It deleted the first `x` from `x0`
+in the edited source. The edit produced `var 0`, which enters recovery. The
+source is not an authenticated issue #454 corpus. It has no direct locked-C
+parity proof. Treat every result as a diagnostic performance witness.
+
+### Source sizes and hashes
+
+The probe requested 2, 4, 8, 16, and 32 kibibytes (KiB). The generated source
+lengths differ from those targets because the constructor adds C# text.
+
+| Requested | Clean bytes | Clean SHA-256 | Edited bytes | Edited SHA-256 |
+|---:|---:|---|---:|---|
+| 2 KiB | 2,102 | `9c9f78d2043c8d27e3e8012d8243f6684c295935a3e5ec9852083189fc64ccac` | 2,101 | `deba24ea52600d712a86dacded0d2371525930b440598f7746ca0bc0cfd450f2` |
+| 4 KiB | 4,152 | `bc47d64777684a917aad73c5fc69cfb3e0fec778e3a5624e8eeb241f7fbff0e0` | 4,151 | `3cb49ea0a1697e6474c2a06072e2cb89c3e068a7f4154a2b7364c82741bb8ed7` |
+| 8 KiB | 8,257 | `399145dcd25b8d4fe973d3d4176885d7ffb8b3e56f79676c6a109a8f1871d66f` | 8,256 | `7ff5a2e0e6669d92637136e45e11f2f4d21a8fe5d24599a11dd6f9115bf2c131` |
+| 16 KiB | 16,435 | `60720c7371d1bdc14dee2c462fd1a6d9c71e71ee8a839b84bf6278823d39f3c9` | 16,434 | `bfa97fc71f5fdbce2c3240b548e34713f1902343c95c6d0310d2c8aa14a0079a` |
+| 32 KiB | 32,791 | `7d179877f56356777aa9861afda11db0517eb8226c2dfdc610192180a30b25cd` | 32,790 | `abab13f6f776074a408b97661c57c30224a1fc866d8f3d647d51a29537f3e4a6` |
+
+### Fresh production results
+
+The production lane materialized a tree from each edited source. The wall
+times below are approximate values from corrected production runs.
+
+| Requested | Edited bytes | Wall time | Nodes | Maximum stacks | Peak depth | Recovery cost walks | Heap delta | Mallocs | Selected attempt |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 2 KiB | 2,101 | 60.2 ms | 2,861 | 10 | 14 | 2,485 | 55,433,064 | 25,097 | `initial` |
+| 4 KiB | 4,151 | 28.0 ms | 25,638 | 16 | 65 | 48,262 | 31,630,600 | 742 | `initial_merge` |
+| 8 KiB | 8,256 | 60.3 ms | 52,038 | 16 | 115 | 100,862 | 40,700,552 | 860 | `initial_merge` |
+| 16 KiB | 16,434 | 113.9 ms | 101,670 | 16 | 209 | 199,750 | 60,607,464 | 1,066 | `initial_merge` |
+| 32 KiB | 32,790 | 243.3 ms | 200,154 | 16 | 397 | 397,528 | 87,286,120 | 1,468 | `initial_merge` |
+
+The 2 KiB production record reports about 60.2 milliseconds. A separate
+instrumented 2 KiB run reports 71.1 milliseconds. Do not treat 71.1
+milliseconds as the production timing. Its artifact is
+`/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/docker/20260823T042419Z-p25d-csharp-production-2k-timing`.
+
+The first 2 KiB attempt was clean. The selected `initial` attempt therefore
+has `root_error=false`, `c_recovery_entered=true`, and
+`c_recovery_dropped_error=false`. The 4 KiB through 32 KiB records selected
+`initial_merge`, set `root_error=true`, entered C recovery, and dropped the
+clean result. Each record reports one retry pass. The 4 KiB through 32 KiB
+retry reason is `initial_result_requires_merge_width`.
+
+The final 32 KiB record is also confirmed by
+`/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/docker/20260823T043142Z-p25d-csharp-production-32k-final`.
+It reports about 244.5 milliseconds.
+
+### Clean, raw, and no-tree controls
+
+The clean control parsed the unedited source. The raw control parsed the
+edited source without the production wrapper. The no-tree control parsed the
+edited source without tree materialization.
+
+| Requested | Clean production | Raw edited | No-tree edited |
+|---:|---:|---:|---:|
+| 2 KiB | 2.86 ms, root error false | 15.14 ms, root error true | 2.56 ms, root error false |
+| 4 KiB | 4.60 ms, root error false | 28.99 ms, root error true | 3.82 ms, root error false |
+| 8 KiB | 7.30 ms, root error false | 61.00 ms, root error true | 7.72 ms, root error false |
+| 16 KiB | 13.20 ms, root error false | 105.36 ms, root error true | 7.68 ms, root error false |
+| 32 KiB | 29.19 ms, root error false | 232.43 ms, root error true | 12.73 ms, root error false |
+
+The 32 KiB production record reports 200,154 nodes, depth 397, 397,528
+recovery cost walks, 87,286,120 heap bytes, and 1,468 mallocs. The clean
+32 KiB control reports 25,289 nodes. The no-tree edited control reports
+28,347 nodes and does not materialize a tree.
+
+### RSS, scanner, and retry limits
+
+RSS means maximum resident set size. The production RSS sequence was:
+
+| Requested | RSS |
+|---:|---:|
+| 2 KiB | 44,968 KiB |
+| 4 KiB | 39,796 KiB |
+| 8 KiB | 51,012 KiB |
+| 16 KiB | 62,528 KiB |
+| 32 KiB | 89,984 KiB |
+
+The probe records an external scanner. The C# scanner does not support
+incremental reuse. Locked-C route logs report `incremental_reuse=false` and
+`external_scanner_unsupported`. P25d therefore reports no `Tree.Edit`, reuse,
+or incremental reparse timing.
+
+Every final production record reports one retry pass. The 2 KiB record
+selected `initial`. The larger records selected `initial_merge`. The final
+2 KiB root is clean. The larger edited roots report errors. All edited
+production records entered C recovery.
+
+Every one of the 32 Docker metadata records reports
+`wall_timed_out=false` and `oom_killed=false`. Three records failed before a
+valid run. Quarantine them instead of counting them as performance results.
+
+### Coarse pprof and Canopy attribution
+
+The 32 KiB production CPU profile is
+`/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/profiles/p25d-csharp-production-32k.pprof`.
+Its SHA-256 is
+`98b3e8d16a123273c14eefdb6035f7817b815a49e218e6d6ee64185b55cdabb2`.
+The text report is
+`/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/profiles/p25d-csharp-production-32k.pprof.txt`.
+Its SHA-256 is
+`16da805a8e5a77e88104ce7d0ed3a35d339ee1ed5c7b4d1cc8a32445e2c9a523`.
+
+The profile ran for 433.96 milliseconds and sampled 280 milliseconds.
+`parseInternal` accounts for 82.14% cumulative CPU. Other broad frames
+include `applyShiftAction`, `cStackPrefixCostForMerge`, `stackCompareMerge`,
+`stackHash`, graph-structured stack (GSS) hash and merge, and arena node
+creation. Sparse samples support only coarse attribution. They do not prove a
+safe local optimization.
+
+The Canopy artifacts are:
+
+- `/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/canopy/dispatcher-census-depth2.json`
+- `/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/canopy/normalize-csharp-depth2.json`
+- `/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/canopy/parse-internal-depth2.json`
+- `/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/canopy/recovered-top-level-chunks-depth2.json`
+- `/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/canopy/stack-error-cost-depth2.json`
+- `/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/canopy/stack-prefix-cost-depth2.json`
+
+The narrow query traces incremental parsing through
+`parseIncrementalChangedProfiled`, `parseIncrementalInternal`, and
+`retryIncrementalMemoryBudgetAsPlainFullWithDFA`. P25d did not measure that
+path. The stack-cost query reaches
+`cStackPrefixCostForMerge` and generic node visibility and error-cost helpers.
+
+### Locked-C routes
+
+The corrected route test passed at
+`/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/docker/20260823T043105Z-p25d-csharp-locked-c-routes-v2`.
+It used one CPU, one test worker, `GOMAXPROCS=1`, and a 30-minute timeout.
+The metadata reports exit code zero, no timeout, and no out-of-memory event.
+
+The four route witnesses produced these results:
+
+- The JSON-reader witness diverged in raw shape, with five Go children and six C children. Production, compact, and incremental error flags differed.
+- The simple positive witness matched all routes.
+- The historical issue #454 witness differed in an error flag at `ERROR[1]/integer_literal[0]`. Compact fallback and forest decline matched the route logs.
+- The malformed missing-body witness differed by one extra error node. Compact fallback and forest decline matched the route logs.
+
+These route results do not establish direct parity for the synthetic sources.
+They show known route behavior and a positive control only.
+
+### Quarantined artifacts
+
+Quarantine these failed artifacts:
+
+- `/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/docker/20260823T042231Z-p25d-csharp-production-2k` — constructor field type errors.
+- `/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/docker/20260823T042311Z-p25d-csharp-production-2k-v2` — remaining constructor field type errors.
+- `/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/docker/20260823T043054Z-p25d-csharp-locked-c-routes` — wrong package path.
+
+Use these corrected replacements:
+
+- `/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/docker/20260823T042327Z-p25d-csharp-production-2k-v3`
+- `/tmp/gts-p25d-csharp-20260824.gMbLCq/artifacts/docker/20260823T043105Z-p25d-csharp-locked-c-routes-v2`
+
+### Decision and reopening condition
+
+Do not publish a performance candidate from this receipt. Keep issue #454
+live. The synthetic source is fresh, not incremental. It has no direct
+locked-C parity proof. The scanner limitation blocks an incremental result.
+
+Reopen a bounded performance candidate only after all conditions hold:
+
+- Use an authenticated issue #454 C# source.
+- Match fresh and incremental Go trees to the locked C tree by deep digest.
+- Run separate clean and malformed lanes.
+- Measure an incremental lane only when scanner reuse is supported.
+- Preserve retry selection, error flags, recovery behavior, and memory-budget contracts.
+- Record `Tree.Edit`, reuse selection, and reparse or rebuild attribution separately.
+- Repeat focused Docker correctness and locked-C route gates.
+- Use a quiet reproducible profile before proposing one generic candidate.
+
+The P25d evidence supports **KEEP LIVE / NO-GO**. No parser or test change
+survives.
+
+### P25d artifact root
+
+The audited artifact root is
+`/tmp/gts-p25d-csharp-20260824.gMbLCq/`. The temporary probe is
+`/tmp/gts-p25d-csharp-20260824.gMbLCq/repo/grammars/p25d_csharp_probe_test.go`.
+The probe remains outside this documentation patch.
+
 ## Caveats
 
 - This is one run, on one noisy shared host, not a sealed-epoch,
