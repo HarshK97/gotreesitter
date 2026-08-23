@@ -10,6 +10,202 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
+## 2026-08-23 P25e one-Go-grammar fresh-profile evidence receipt
+
+Status: **KEEP ISSUE #454 LIVE / NO-GO**. Ship no candidate code.
+
+The evidence was collected at main commit
+`14f6692fac65eab817f65af8cc6072e423ca6563`.
+
+This publication is based on main commit
+`2b755f744aef8dd253a4415ca4a5816fa85b0dbb`.
+
+The workload used one Go grammar. It used four authenticated Go source
+fixtures. It measured fresh parsing only.
+
+### Fixture identity
+
+The fixture registry records these identities:
+
+| Fixture | Bytes | Source SHA-256 | Deep tree SHA-256 |
+|---|---:|---|---|
+| `query_compile` | 20,168 | `b788ee19b0075f0b9b567a9f93ea657e715bc8a6a40a99d3ca5c761404e71894` | `ecc090a83a4343a1c7c2afbad63277f5b4d60c42d8d94a2af2a9b16e46f2ccb5` |
+| `rewrite` | 5,116 | `74c0705f8729670559492fb5460a01b2a1a2a109928e1aeb52736e485e8ff097` | `b3f9814b65763642d4eac58b9065018048ea13e6f10d56afb28a0479bf5a68a1` |
+| `language` | 41,387 | `009aa9fd5352c712f3839670c7df8a9b00ae878ee20dc88131a438b2d5edfd9a` | `583df223904fe414c33bba3b474c6557ecdb20e7f47e304b9a09bfcc2da44539` |
+| `grammargen_lr` | 235,626 | `a7e4a1a64b25a60aea36183b9d6d53dcd9240942cdb10e67a3cf9e6ce30f95b2` | `1472cfd9a014d4034dbc1456afd12c282630ef787c3543cf0cecb73619883ad2` |
+
+The fixture source revision is
+`a5df0aa5b3c5b20ce12bb21250bd166b9f47bd68`.
+
+The locked Go grammar commit is
+`2346a3ab1bb3857b48b29d779a1ef9799a248cd7`.
+
+The embedded Go grammar blob SHA-256 is
+`9cf914d26d962d1a62e7954f8b20b302337a44cb7d4a07218eec482c45a57a08`.
+
+The production admission test verifies source bytes, source SHA-256, deep tree
+SHA-256, grammar identity, clean roots, and production runtime identity.
+
+### Benchmark protocol
+
+The Docker run used 20 sequential seeds from 1 through 20. Each seed used:
+
+- one test process;
+- `GOMAXPROCS=1`;
+- `GOFLAGS=-p=1`;
+- `-count=1`;
+- `-benchtime=750ms`;
+- `-benchmem`;
+- `-shuffle=<seed>`.
+
+The benchmark container exposed four CPUs. It did not pin a host CPU.
+
+The log contains 20 seed lines, 80 benchmark lines, and 20 successful
+package results. The four sub-benchmarks are all Go fixtures.
+
+| Fixture | ns/op mean [range] | Bytes per operation (B/op) mean [range] | Allocations per operation (allocs/op) mean [range] |
+|---|---:|---:|---:|
+| `query_compile` | 9,622,952.45 [9,447,310–9,815,779] | 50,662.75 [46,747–55,918] | 13 [13–13] |
+| `rewrite` | 1,766,833.55 [1,744,667–1,797,896] | 2,024 [2,024–2,024] | 13 [13–13] |
+| `language` | 9,186,618.25 [9,052,142–9,386,829] | 59,781.10 [58,503–65,605] | 25 [25–25] |
+| `grammargen_lr` | 116,920,537 [114,068,642–121,898,438] | 5,621,264.05 [5,618,872–5,629,496] | 156.05 [156–157] |
+
+The benchmark output is in
+`/tmp/gts-p25e-investigation/harness_out/docker/20260823T050959Z/container.log`.
+
+The run metadata is in
+`/tmp/gts-p25e-investigation/harness_out/docker/20260823T050959Z/metadata.txt`.
+
+### Resident set size
+
+Resident set size (RSS) is process memory held in RAM.
+
+The RSS run measured one `grammargen_lr` benchmark. It used
+`GOMAXPROCS=1` and `/usr/bin/time -v`.
+
+The Docker metadata exposed four CPUs and no CPU pin.
+
+The maximum RSS was `601600 KiB`. This result is one sample. It is not a
+20-seed RSS campaign.
+
+The RSS log is in
+`/tmp/gts-p25e-investigation/harness_out/docker/20260823T051343Z/container.log`.
+
+### Runtime telemetry
+
+The runtime probe reported these common values for all four fixtures:
+
+`stop=accepted budget=536870912 source="" heap=0 sys=0 retry_initial=0
+retry_legacy=0 swift_retry=0 recovery=false dropped=false fallback=false
+ceilings=0/0 peaks=0/0`.
+
+The zero heap and system fields describe budget-stop telemetry. They do not
+describe total heap use.
+
+| Fixture | Stack range | Nodes | Arena bytes | Scratch bytes | GSS bytes |
+|---|---:|---:|---:|---:|---:|
+| `query_compile` | 12/5,216 | 31,859 | 9,996,480 | 7,101,760 | 2,248,736 |
+| `rewrite` | 12/937 | 5,569 | 9,996,480 | 7,101,760 | 2,248,736 |
+| `language` | 18/4,955 | 31,697 | 11,403,912 | 7,105,200 | 2,248,816 |
+| `grammargen_lr` | 18/53,125 | 330,478 | 56,654,840 | 27,813,904 | 6,705,264 |
+
+The runtime log is in
+`/tmp/gts-p25e-investigation/harness_out/docker/20260823T051725Z/container.log`.
+
+### Profile and Canopy attribution
+
+The profile is a CPU profile. It contains 2.45 seconds of samples from a
+2.59-second run. The profile SHA-256 is
+`96bead7a8c448a597e4986839b000b602a08bf72b5ffaa5685fa72dcc432715c`.
+
+The profile path is
+`/tmp/gts-p25e-investigation/harness_out/p25e-real-go-grammargen.pprof`.
+
+The profile includes the untimed
+`admitRealGoBenchmarkFixture` path. That path accounts for 18.78 percent
+cumulative CPU in the profile.
+
+| Frame | Flat CPU | Cumulative CPU |
+|---|---:|---:|
+| `Parser.parseInternal` | 6.94% | 89.80% |
+| `Parser.applyReduceActionDispatch` | 1.22% | 29.80% |
+| `Parser.applyReduceActionFromGSSTransientParents` | 2.45% | 28.57% |
+| `gssEntryHash` | 3.67% | 7.35% |
+| `Parser.captureRawShape` | 1.63% | 6.53% |
+| `normalizeGoNewMakeTypeArgument.func1` | 1.63% | 2.04% |
+
+Canopy found reduction dispatch callers in
+`parser_default_reduce.go` and `parser_reduce.go`.
+
+Canopy found raw-shape capture in parser reduction, recovery, and forest
+paths. It found field-source parent construction in reduction, pending-parent,
+and transient-parent paths.
+
+The Go normalizer has one Go-specific caller. The broad parser frames cross
+many grammars and parser paths. No profile frame identifies a safe,
+grammar-agnostic candidate.
+
+### Parity and freshness limits
+
+The production fixture test ran in Docker at:
+
+`/tmp/gts-p25e-investigation/harness_out/docker/20260823T050750Z`.
+
+The Go/C preflight ran in Docker at:
+
+`/tmp/gts-p25e-investigation/harness_out/docker/20260823T050833Z`.
+
+The Go/C preflight used the compact candidate backend. It does not prove
+production-route parity.
+
+The fresh benchmark does not call `Tree.Edit`. It does not measure reuse,
+incremental parsing, retry selection, or recovery.
+
+The campaign does not test the 137 KiB C# witness. It does not provide
+issue #454 locked-C recovery proof.
+
+### Excluded and ancillary artifacts
+
+The `050742Z` run used the wrong package. It reported `[no tests to run]`.
+
+The `050817Z` run failed to compile with the disabled parser-core tag. It
+reported undefined diagnostic census symbols. It is excluded.
+
+The `050801Z` run used no backend tag. It failed the backend preflight.
+
+The `050941Z` run used one benchmark iteration. It is not campaign evidence.
+
+The `051713Z` runtime probe used a zero budget and reported zero work. It is
+not runtime evidence.
+
+All accepted cited runs reported exit code zero, no out-of-memory event, and
+no wall-clock timeout. The accepted benchmark ran sequentially. The metadata
+uses the same Docker image for each cited run.
+
+### Decision and reopening condition
+
+Keep issue #454 live. Ship no parser or test change from P25e.
+
+Reopen P25e only when a fresh profile identifies one bounded helper above
+the measured noise floor. Prove the helper on production and compact routes,
+fresh and incremental trees, and locked-C recovery.
+
+Then run the exact 20-seed, 40-process protocol with one CPU, alternating
+process order, `GOMAXPROCS=1`, count one, 750 milliseconds, benchmark memory
+reporting, and per-process RSS.
+
+Reopen the issue #454 correctness work only when all conditions pass:
+
+1. Keep the 1 KiB known-divergence ratchet.
+2. Derive a new grammar-agnostic semantic predicate for the leaf error flag.
+3. Clear that flag only when the predicate proves C recovery semantics.
+4. Preserve all unrelated grammar census and digest results.
+5. Match locked C at 1, 4, 16, 64, and 137 KiB for fresh and incremental trees.
+6. Pass the replace, insert, delete, parser-result, and C recovery gates.
+7. Preserve the memory-budget fallback as a separate correctness concern.
+
+The P25e evidence does not meet these conditions.
+
 ## 2026-08-23 P25a fresh-profile performance blocker receipt
 
 Status: **KEEP LIVE / NO-GO**. Ship no candidate code.
