@@ -914,11 +914,13 @@ jobs:
       - name: CGo Parity Smoke Gate
         # TestOutlineOracleDifferential (cgo_harness/outline_differential_test.go)
         # joined this regex next to its query/capture-parity sibling
-        # TestParityHighlight. Every cgo parity lane in this file runs a
-        # FIXED --run regex, so a new cgo test runs nowhere unless it is
-        # named here; see docs/ci-gate-coverage.md. Its CoreNine subtest
-        # hard-gates the nine core languages; its FleetCensus subtest only
-        # logs a census row, so naming the whole test is safe.
+        # TestParityHighlight. The Dart live-arm probe and receipt guard are
+        # also named explicitly so their blocker receipt remains executable.
+        # Every cgo parity lane in this file runs a FIXED --run regex, so a
+        # new cgo test runs nowhere unless it is named here; see
+        # docs/ci-gate-coverage.md. Its CoreNine subtest hard-gates the nine
+        # core languages; its FleetCensus subtest only logs a census row, so
+        # naming the whole test is safe.
         run: |
           GTS_PARITY_MODE=smoke \
           bash cgo_harness/docker/run_parity_in_docker.sh \
@@ -930,7 +932,7 @@ jobs:
             --goflags -p=1 \
             --test-parallel 1 \
             --timeout 20m \
-            --run '^TestParityFreshParse$|^TestParityIncrementalParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityGLRCanaryGo$|^TestParityGLRCanarySet$|^TestParityGLRCapPressureTopLanguages$|^TestParityGateCoverageRatchet$|^TestParityHighlight$|^TestOutlineOracleDifferential$|^TestParityJavaScriptAutomaticSemicolonBeforeTrailingComment$|^TestParityJavaScriptAdjacentBlockCommentsDoNotConsumeFollowingToken$|^TestIncludedRangesGoRootParity$|^TestIncludedRangesGoArmGuardsRootSymbol$|^TestIncludedRangesKotlinRootParity$'
+            --run '^TestParityFreshParse$|^TestParityIncrementalParse$|^TestParityHasNoErrors$|^TestParityIssue3Repros$|^TestParityGLRCanaryGo$|^TestParityGLRCanarySet$|^TestParityGLRCapPressureTopLanguages$|^TestParityGateCoverageRatchet$|^TestParityHighlight$|^TestOutlineOracleDifferential$|^TestParityJavaScriptAutomaticSemicolonBeforeTrailingComment$|^TestParityJavaScriptAdjacentBlockCommentsDoNotConsumeFollowingToken$|^TestIncludedRangesGoRootParity$|^TestIncludedRangesGoArmGuardsRootSymbol$|^TestIncludedRangesKotlinRootParity$|^TestDartNextLiveArmProbe$|^TestDartNextLiveArmReceiptDocument$'
 
   parity-cgo-exhaustive:
     needs: exhaustive_parity_scope

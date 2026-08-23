@@ -332,6 +332,9 @@ func TestDartNextLiveArmProbe(t *testing.T) {
 			if profile.OldTreeReuseRoute != witness.incrementalReuse || profile.ReuseUnsupported != witness.incrementalUnsupported {
 				t.Fatalf("incremental reuse=%t unsupported=%t, want reuse=%t unsupported=%t (reason=%q)", profile.OldTreeReuseRoute, profile.ReuseUnsupported, witness.incrementalReuse, witness.incrementalUnsupported, profile.ReuseUnsupportedReason)
 			}
+			if profile.OldTreeReuseRoute && (profile.ReusedSubtrees == 0 || profile.ReusedBytes == 0) {
+				t.Fatalf("incremental reuse route reported no material reuse: subtrees=%d bytes=%d", profile.ReusedSubtrees, profile.ReusedBytes)
+			}
 			assertDartNextRoute(t, "incremental", incremental, language, cTree, cDigest, witness.incrementalDigest, witness.incrementalRewrites, witness.productionDivergencePath, witness.productionDivergenceCat, true)
 			t.Logf("route=incremental reuse=%t unsupported=%t reason=%q reused_subtrees=%d reused_bytes=%d %s", profile.OldTreeReuseRoute, profile.ReuseUnsupported, profile.ReuseUnsupportedReason, profile.ReusedSubtrees, profile.ReusedBytes, dartNextReceipt(incremental, language, cTree, cDigest))
 		})

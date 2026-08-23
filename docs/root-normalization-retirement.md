@@ -2001,7 +2001,7 @@ document guard used the same limits and passed with no out-of-memory kill or
 wall timeout. Its maximum resident set size was 231520 KiB.
 
 
-## 2026-08-24 Dart dispatcher blocker receipt
+## 2026-08-23 Dart dispatcher blocker receipt
 
 Status: `KEEP LIVE / NO-GO`. Keep `dispatch.dart` live.
 The Dart arm remains live.
