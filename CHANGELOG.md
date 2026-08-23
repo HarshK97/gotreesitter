@@ -131,6 +131,17 @@ for tags and release notes while still in `0.x`.
 
 ### Correctness
 
+- Record the C26b Swift issue #576 conformance-list recovery blocker at main
+  commit `838aba943038248529429a572c4d6d98359bd87e`. The 66-byte
+  `associatedtype` witness still differs from locked C. Go emits
+  `ERROR[51:64]` with the comma only. Locked C emits `ERROR[51:63]` with a
+  nested `Comparable` error. The Go trace first pauses on the comma in parser
+  state `2811`. A zero-width `_implicit_semi` then extends the Go span. The
+  `stdlib_Stride.swift` corpus ratchet passes, but the audit found no
+  grammar-agnostic fix. No production or test change survives. Keep issue #576
+  open. See
+  `docs/compact-route-real-corpus-matrix.md` for the receipt.
+
 - Record the C26a Swift issue #576 token-production blocker at main commit
   `18d63b6f7802b28a0ddb889327fcd4ebebb99426`. The 20-byte witness still
   differs from the locked C reference parser at the first error node. The

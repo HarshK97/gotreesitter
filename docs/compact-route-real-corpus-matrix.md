@@ -86,6 +86,87 @@ runtime change produces the locked C error token without a Swift-specific
 rule. Then run the 20-byte witness and one corpus witness in separate Docker
 parity runs. Keep issue #576 open until both witnesses pass.
 
+## C26b Swift issue #576 conformance-list recovery blocker
+
+Receipt base: `838aba943038248529429a572c4d6d98359bd87e`.
+
+Status: **NO-GO / KEEP LIVE**. No production or test change survives. Keep
+issue #576 open.
+
+The 66-byte witness is:
+
+```swift
+protocol P {
+  associatedtype Stride: SignedNumeric, Comparable
+}
+```
+
+The source SHA-256 digest is
+`9cbe9baf046f1ec48eef0c3fb6e4ceadf2e38fa24e6fc23a3c9bf77d2b7b03a9`.
+The Go deep-tree digest is
+`8146289d41f1937be85d27f1c0b03ce84eb2d5e7f27b0ba7300bba11c19f274e`.
+The locked C deep-tree digest is
+`596a0910e6111ff5db146630797aea26722d830aa6ea06f4933d0b7062dd4bed`.
+
+Both roots span `0..66` and report an error. The first divergent node is
+`/source_file/protocol_declaration[0]/protocol_body[2]/ERROR[2]`.
+Go emits `ERROR[51:64]` with one child, the comma at `51..52`.
+Locked C emits `ERROR[51:63]` with two children:
+
+- The comma at `51..52`.
+- A nested `ERROR` node named `Comparable` at `53..63`.
+
+The Go recovery trace identifies the first event. At byte `51`, the comma has
+no parser action in state `2811`. Three recovery stacks pause. Recovery then
+resumes at state `1584`. Condense chooses the ordinary lineage over the error
+group at byte `63`.
+
+At byte `64`, Go receives a zero-width `_implicit_semi` token.
+`cRecoverDispatchInError` passes this token to `cAbsorbTokenIntoError`.
+This extends the open Go error to byte `64`. Locked C ends the error at byte
+`63` and keeps `Comparable` as a nested error.
+
+Direct no-cache Canopy queries trace token acquisition through
+`cRecoverAcquireToken`. They trace recovery through `cRecoverResumeLookahead`,
+`cRecoverToState`, and `cCondenseAndResume`. They trace materialization through
+`cAppendVisibleSplice` and `cSetNodeSpan`. They trace zero-width absorption
+through `cRecoverDispatchInError` and `cAbsorbTokenIntoError`.
+No Swift-specific parser-result helper participates in this path.
+
+The corpus witness is `grammars/testdata/swift_corpus/stdlib_Stride.swift`.
+It contains 26,410 bytes. Its source SHA-256 digest is
+`4890e76decb629479ada497343e93f6c979d8f438c72b9ef0769b7b61e5e6fe1`.
+The Go deep-tree digest is
+`42d6eb25ba0da35d3e45e4b41cbb5d1f86f06beee67ba1f0f5c12f477c510073`.
+The locked C deep-tree digest is
+`992c548f12780cae0ca9eb7f456a32dd27b9f625e4748a898e22cf2cc3075a7b`.
+Go emits one whole-file `ERROR` node at `0..26410`. Locked C emits the local
+target error at `3991..4003` with two children. The first full-tree difference
+is the existing root shape divergence. The known-failing corpus ratchet passes.
+
+Existing generic recovery tests require zero-width skipped tokens to advance
+and to update error spans. A generic change that drops this behavior could
+change other grammars. A condense-ranking change also lacks cross-language
+proof. Do not add a Swift rule, source-hash exception, blob exception, or
+witness repair. The audit found no safe grammar-agnostic correction.
+
+The focused Docker artifacts are:
+
+- Minimal probe: `/tmp/gts-c26b-artifacts/20260823T031009Z-swift576-associatedtype-probe-base`.
+- Corpus probe: `/tmp/gts-c26b-artifacts/20260823T031024Z-swift576-associatedtype-probe-corpus-base`.
+- Corpus ratchet: `/tmp/gts-c26b-artifacts/20260823T031211Z-swift576-associatedtype-corpus-ratchet-base`.
+- Go recovery trace: `/tmp/gts-c26b-artifacts/20260823T031320Z-swift576-associatedtype-go-trace-base`.
+- Field projection guard: `/tmp/gts-c26b-artifacts/20260823T030838Z-swift576-associatedtype-minimal-base`.
+
+Each run used one Swift workload, one CPU, and `GOMAXPROCS=1`. Every run
+passed without an out-of-memory failure or timeout.
+
+Reopen implementation work after an upstream grammar or table change, or
+after a generic recovery change gains cross-language proof. Require the
+minimal witness, the corpus ratchet, locked-C parity, field projection, and
+generic zero-width tests to pass. Keep issue #576 open until both witnesses
+match locked C.
+
 ## Current bounded result
 
 The bounded matrix completed with no silent divergence.
