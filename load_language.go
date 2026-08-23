@@ -3,6 +3,7 @@ package gotreesitter
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
@@ -53,7 +54,8 @@ func LoadLanguage(data []byte) (*Language, error) {
 	if trailer != nil {
 		lang.LargeStateGotos = trailer
 	}
-
+	lang.grammarBlobSHA256 = sha256.Sum256(data)
+	lang.grammarBlobSHA256Valid = true
 	InferGeneratedRepeatAuxMetadata(&lang)
 
 	return &lang, nil

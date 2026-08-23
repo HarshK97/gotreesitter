@@ -150,6 +150,9 @@ func copyExternalScannerCheckpointToNode(dst, src *Node) bool {
 	if dst == nil || src == nil || dst.ownerArena == nil || src.ownerArena == nil {
 		return false
 	}
+	if !dst.ownerArena.inheritExternalScannerCheckpointIdentity(src.ownerArena) {
+		return false
+	}
 	cp, ok := externalScannerCheckpointRefForNode(src)
 	if !ok {
 		return false
@@ -372,6 +375,12 @@ func canReuseNodeWithExternalScannerCheckpointAtLookahead(ts TokenSource, startS
 		return externalScannerCheckpointRef{}, externalScannerBoundaryQuiescentWithoutCheckpoint(dts.language)
 	}
 	if node == nil || startState != node.PreGotoState() {
+		return externalScannerCheckpointRef{}, false
+	}
+	// An identity-bearing scanner may not reuse a raw checkpoint from an arena
+	// that lacks the same grammar and scanner identity. This check runs before
+	// checkpointless admission, so equal raw bytes cannot bypass the proof.
+	if !node.ownerArena.externalScannerCheckpointIdentityMatches(dts.language) {
 		return externalScannerCheckpointRef{}, false
 	}
 	cp, ok := externalScannerCheckpointRefForNode(node)

@@ -40,7 +40,12 @@ func loadPreferredLanguageOverride(name string) *gotreesitter.Language {
 
 	entry := getPreferredLanguageOverrideCacheEntry(path)
 	entry.once.Do(func() {
-		entry.lang, entry.err = decodeLanguageBlobFromPath(path)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			entry.err = fmt.Errorf("read grammar blob %q: %w", path, err)
+			return
+		}
+		entry.lang, entry.err = decodeLanguageBlobData(path, data)
 		if entry.err != nil {
 			return
 		}

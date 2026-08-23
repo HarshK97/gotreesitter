@@ -3455,6 +3455,7 @@ func (t *Tree) Copy() *Tree {
 		class = t.arena.class
 	}
 	arena := acquireNodeArena(class)
+	arena.inheritExternalScannerCheckpointIdentity(t.arena)
 	out.root = cloneTreeNodesIntoArena(t.root, arena)
 	out.arena = arena
 	return out
@@ -3604,6 +3605,9 @@ func cloneNodeHeaderInto(dst, src *Node, arena *nodeArena, offset *cloneOffset) 
 	dst.parent = nil
 	dst.childIndex = -1
 	dst.ownerArena = arena
+	if arena != nil && src.ownerArena != nil {
+		arena.inheritExternalScannerCheckpointIdentity(src.ownerArena)
+	}
 	if src.ownerArena == nil || src.ownerArena.externalScannerCheckpointRecords == 0 {
 		return
 	}
@@ -3725,6 +3729,9 @@ func cloneFinalChildRefsIntoArenaWithMetrics(src, dst *Node, arena *nodeArena, o
 }
 
 func cloneStackEntryIntoArena(srcArena, dstArena *nodeArena, entry stackEntry, offset *cloneOffset, metrics cloneMetricScope) stackEntry {
+	if dstArena != nil && srcArena != nil {
+		dstArena.inheritExternalScannerCheckpointIdentity(srcArena)
+	}
 	if node := stackEntryNode(entry); node != nil {
 		cloned := cloneTreeNodesIntoArenaWithOffset(node, dstArena, offset)
 		return newStackEntryNode(cloned.parseState, cloned)

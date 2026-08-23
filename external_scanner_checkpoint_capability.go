@@ -16,11 +16,146 @@ type ExternalScannerCheckpointIdentity struct {
 // checkpointed scanner. CheckpointIdentity must return stable identifiers for
 // the scanner implementation and the exact grammar blob.
 //
-// This capability is not consumed by parser production, GLR scheduling,
-// recovery, merge, or incremental-reuse paths yet.
+// The production parser consumes this capability only at the checkpoint-aware
+// incremental reuse boundary. It does not alter GLR scheduling or recovery.
 type ExternalScannerCheckpointIdentityProvider interface {
 	CheckpointedExternalScanner
 	CheckpointIdentity() (ExternalScannerCheckpointIdentity, bool)
+}
+
+// externalScannerCheckpointIdentityState stores one immutable identity for an
+// arena. Fixed storage keeps checkpoint identity outside parser hot structures.
+type externalScannerCheckpointIdentityState struct {
+	scanner    [externalScannerCheckpointIdentityMaxBytes]byte
+	grammar    [externalScannerCheckpointIdentityMaxBytes]byte
+	scannerLen uint16
+	grammarLen uint16
+	valid      bool
+	conflict   bool
+}
+
+func (s *externalScannerCheckpointIdentityState) set(id ExternalScannerCheckpointIdentity) bool {
+	if s == nil || s.conflict || !id.complete() {
+		return false
+	}
+	if s.valid {
+		if s.matches(id) {
+			return true
+		}
+		s.conflict = true
+		return false
+	}
+	copy(s.scanner[:], id.Scanner)
+	copy(s.grammar[:], id.Grammar)
+	s.scannerLen = uint16(len(id.Scanner))
+	s.grammarLen = uint16(len(id.Grammar))
+	s.valid = true
+	return true
+}
+
+func (s *externalScannerCheckpointIdentityState) inherit(source *externalScannerCheckpointIdentityState) bool {
+	if s == nil {
+		return false
+	}
+	if source == nil {
+		return true
+	}
+	if s.conflict {
+		return false
+	}
+	if source.conflict {
+		s.conflict = true
+		return false
+	}
+	if !source.valid {
+		return true
+	}
+	if !s.valid {
+		copy(s.scanner[:], source.scanner[:source.scannerLen])
+		copy(s.grammar[:], source.grammar[:source.grammarLen])
+		s.scannerLen = source.scannerLen
+		s.grammarLen = source.grammarLen
+		s.valid = true
+		return true
+	}
+	if s.scannerLen == source.scannerLen && s.grammarLen == source.grammarLen &&
+		bytes.Equal(s.scanner[:s.scannerLen], source.scanner[:source.scannerLen]) &&
+		bytes.Equal(s.grammar[:s.grammarLen], source.grammar[:source.grammarLen]) {
+		return true
+	}
+	s.conflict = true
+	return false
+}
+
+func (s *externalScannerCheckpointIdentityState) matches(id ExternalScannerCheckpointIdentity) bool {
+	return s != nil && s.valid && !s.conflict && id.complete() &&
+		s.scannerLen == uint16(len(id.Scanner)) && s.grammarLen == uint16(len(id.Grammar)) &&
+		bytes.Equal(s.scanner[:s.scannerLen], id.Scanner) &&
+		bytes.Equal(s.grammar[:s.grammarLen], id.Grammar)
+}
+
+func (s *externalScannerCheckpointIdentityState) clear() {
+	if s == nil {
+		return
+	}
+	*s = externalScannerCheckpointIdentityState{}
+}
+
+func (s *externalScannerCheckpointIdentityState) bytesAllocated() int64 {
+	if s == nil || !s.valid || s.conflict {
+		return 0
+	}
+	return int64(s.scannerLen) + int64(s.grammarLen)
+}
+
+// externalScannerCheckpointIdentityStatus reports whether a language requires
+// identity-aware checkpoint reuse and whether its current identity is valid.
+// A scanner without this provider keeps the legacy reuse behavior.
+func externalScannerCheckpointIdentityStatus(lang *Language) (ExternalScannerCheckpointIdentity, bool, bool) {
+	if lang == nil || lang.ExternalScanner == nil {
+		return ExternalScannerCheckpointIdentity{}, false, true
+	}
+	provider, ok := lang.ExternalScanner.(ExternalScannerCheckpointIdentityProvider)
+	if !ok || !provider.UsesExternalScannerCheckpoints() {
+		return ExternalScannerCheckpointIdentity{}, false, true
+	}
+	identity, ok := provider.CheckpointIdentity()
+	return identity, true, ok && identity.complete()
+}
+
+func (a *nodeArena) setExternalScannerCheckpointIdentityForLanguage(lang *Language) bool {
+	if a == nil {
+		return false
+	}
+	identity, required, valid := externalScannerCheckpointIdentityStatus(lang)
+	if !required || !valid {
+		return false
+	}
+	before := a.externalScannerCheckpointIdentity.bytesAllocated()
+	if !a.externalScannerCheckpointIdentity.set(identity) {
+		a.allocatedBytes += a.externalScannerCheckpointIdentity.bytesAllocated() - before
+		return false
+	}
+	a.allocatedBytes += a.externalScannerCheckpointIdentity.bytesAllocated() - before
+	return true
+}
+
+func (a *nodeArena) inheritExternalScannerCheckpointIdentity(source *nodeArena) bool {
+	if a == nil || source == nil {
+		return false
+	}
+	before := a.externalScannerCheckpointIdentity.bytesAllocated()
+	ok := a.externalScannerCheckpointIdentity.inherit(&source.externalScannerCheckpointIdentity)
+	a.allocatedBytes += a.externalScannerCheckpointIdentity.bytesAllocated() - before
+	return ok
+}
+
+func (a *nodeArena) externalScannerCheckpointIdentityMatches(lang *Language) bool {
+	identity, required, valid := externalScannerCheckpointIdentityStatus(lang)
+	if !required {
+		return true
+	}
+	return valid && a != nil && a.externalScannerCheckpointIdentity.matches(identity)
 }
 
 type externalScannerCheckpointRecord struct {
