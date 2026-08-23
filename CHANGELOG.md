@@ -194,6 +194,30 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Rejected the P25ar lazy node-equivalence table allocation at base
+  `e24ccf5a87bbd7febc21f67f014c2d5301d229d0`. The candidate kept the full
+  `16384` entry table and deferred its allocation until the first store.
+  Focused cache tests and authenticated recovery parity passed. Swift time
+  improved `9.36%` and JavaScript time improved `5.38%`, but both lanes had
+  zero bytes-per-operation change. Recovery time regressed `6.10%`, and the
+  primary single-byte edit control regressed `2.29%`. Primary full-parse
+  bytes per operation rose `0.55%`. The candidate failed the allocation and
+  one-percent control gates. Reverted `glr.go` and `glr_test.go`. Retain the
+  P25aq and P25ar evidence in `docs/perf-attribution.md`.
+
+- Recorded the P25aq node-equivalence telemetry screen at base
+  `e24ccf5a87bbd7febc21f67f014c2d5301d229d0`. Recovery deletion had 3,431
+  lookups, 49 hits, and five depth-zero misses. Swift had 20,549 lookups,
+  9,072 hits, and 91 depth-zero misses. The standalone P25aq telemetry log
+  recorded zero JavaScript lookups and zero hits. A later focused-cache rerun
+  recorded six lookups and two hits; this receipt uses that rerun value. The
+  receipt does not infer a cause. The primary trio had zero probes. Depth-zero
+  probes produced no hits and were not material. No bypass candidate was
+  tested. The focused cache tests and authenticated recovery parity passed.
+  The full canonical run stopped at the existing Python external-scanner
+  fallback case. No code, test, or documentation change shipped. See
+  `docs/perf-attribution.md` for artifact hashes.
+
 - Rejected the P25an two-entry node-equivalence cache after collision
   hardening and two-language screening. The deterministic test covered full
   node keys, versions, depth, epoch, eviction, and parse-result stability.
