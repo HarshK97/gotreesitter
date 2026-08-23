@@ -10,6 +10,124 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
+## 2026-08-23 P25aq node-equivalence depth telemetry
+
+Status: **NO-GO / NO CANDIDATE**. Keep `glrNodeEquivCacheSize` at `16384`.
+
+P25aq used clean worktrees at base
+`e24ccf5a87bbd7febc21f67f014c2d5301d229d0`. Canopy traced the node lookup
+and store paths in `glr.go`. The temporary probe kept the full key, version,
+depth, epoch, collision, and eviction checks. The probe counted lookups,
+hits, misses, stores, and depth-zero results by depth.
+
+| Workload | Lookups | Hits | Misses | Stores | Depth-zero lookups | Depth-zero hits |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Authenticated recovery deletion | 3,431 | 49 | 3,382 | 3,382 | 5 | 0 |
+| Swift high-hit control | 20,549 | 9,072 | 11,477 | 11,477 | 91 | 0 |
+| JavaScript control (focused rerun) | 6 | 2 | 4 | 4 | 0 | 0 |
+| Primary full parse | 0 | 0 | 0 | 0 | 0 | 0 |
+| Primary single-byte edit | 0 | 0 | 0 | 0 | 0 | 0 |
+| Primary no-edit | 0 | 0 | 0 | 0 | 0 | 0 |
+
+The standalone P25aq telemetry log at
+`/tmp/gts-p25aq-artifacts/20260823T172421Z-telemetry/container.log` recorded
+zero JavaScript lookups and zero hits. A later focused-cache rerun at
+`/tmp/gts-p25aq-artifacts/20260823T173419Z-correctness-cache/container.log`
+recorded six lookups and two hits. This receipt uses the focused rerun value
+in the table. It does not infer a cause for the difference.
+
+Depth-zero probes were `0.15%` of recovery lookups and `0.44%` of Swift
+lookups. They produced no hits. The probe did not show material cost, so no
+depth-zero bypass candidate was tested. Do not infer a candidate from profile
+samples alone.
+
+Each base benchmark used 20 randomized seeds, `GOMAXPROCS=1`, one process per
+seed, `-count=1`, `-benchtime=750ms`, and `-benchmem` in Docker. The base-only
+reference medians were:
+
+| Lane | Time | Bytes | Allocs |
+| --- | ---: | ---: | ---: |
+| Full parse | 7.261 ms/op | 55.42 KiB/op | 4 |
+| Single-byte edit | 788.4 ns/op | 0 B/op | 0 |
+| No edit | 2.620 ns/op | 0 B/op | 0 |
+| Swift | 89.85 ms/op | 11.20 MiB/op | 5,178 |
+| JavaScript | 1.658 ms/op | 188.9 KiB/op | 471 |
+| Recovery deletion | 9.080 ms/op | 4.540 MiB/op | 111 |
+
+Focused cache tests and the telemetry test passed. Authenticated recovery
+parity passed. The full canonical parity run reached recovery deletion, then
+stopped at the existing Python external-scanner fallback case. No candidate
+passed the allocation or time gate. Therefore, no RSS run was needed.
+
+P25aq artifacts and SHA-256 values are:
+
+- Telemetry log: `/tmp/gts-p25aq-artifacts/20260823T172421Z-telemetry/container.log`, `88d5e8a179d41cea798ef64fd77ee041755c36bfff63f36168c068c983f64472`.
+- Focused correctness log: `/tmp/gts-p25aq-artifacts/20260823T173419Z-correctness-cache/container.log`, `46c788ac277008caccbe32f7284e8a6a46a6e563cb207dda59ade48a867861b6`.
+- Canonical parity log: `/tmp/gts-p25aq-artifacts/20260823T173433Z-correctness-canonical/container.log`, `ed304ac03a8dd542d41625c8d17539741b10081ed2dc401366bf1db960e35c02`.
+- Recovery parity log: `/tmp/gts-p25aq-artifacts/20260823T173531Z-correctness-recovery-enabled/container.log`, `a650c0cd8021b49dd28b237c9f37d43b5602d8fa9e20890ab6d6879700e12b85`.
+- Primary benchmark output: `/tmp/gts-p25aq-base-20260824/harness_out/p25aq/base/primary.txt`, `3773bb1cc5a303befc8d6b2acdf5e247135a6758e730fceb09eb3ab3d02cb248`.
+- Swift benchmark output: `/tmp/gts-p25aq-base-20260824/harness_out/p25aq/base/swift.txt`, `4d8574735a787d063f63c726345bb3478ff670d9a61724904677035e8fe486af`.
+- JavaScript benchmark output: `/tmp/gts-p25aq-base-20260824/harness_out/p25aq/base/js.txt`, `89979a97fa53de8a9baa214d3a09b2022591473aae797ee574c9427f510e56c8`.
+- Recovery benchmark output: `/tmp/gts-p25aq-base-20260824/harness_out/p25aq/base/recovery.txt`, `02d3259192dc4243e989f71bc516a2dcf258f8bedfaac74ea5c27dc67cdfe766`.
+
+The temporary telemetry, test, and benchmark files were removed. No P25aq
+production or test change remains.
+
+## 2026-08-23 P25ar lazy node-equivalence table allocation
+
+Status: **NO-GO / REVERTED**. Keep the eager full-table behavior at
+`glrNodeEquivCacheSize = 16384`.
+
+P25ar used the clean base
+`e24ccf5a87bbd7febc21f67f014c2d5301d229d0`. Canopy traced construction in
+`beginEquivEpoch`, lookup guards, store paths, and `allocatedBytes`.
+The candidate removed allocation from `beginEquivEpoch`. The first valid store
+allocated the existing full table. Zero-probe epochs kept a nil table and zero
+node-cache bytes. Full key, version, depth, epoch, collision, and eviction
+semantics stayed unchanged in the candidate.
+
+The deterministic candidate tests covered these cases:
+
+- A zero-probe epoch allocated no node-equivalence table.
+- The first store allocated all `16384` entries.
+- Two colliding entries retained their separate results.
+- A new epoch rejected entries from the previous epoch.
+
+Focused cache tests passed. Authenticated `recovery_deletion` parity passed.
+Each benchmark used 20 randomized seeds, `GOMAXPROCS=1`, one process per
+seed, `-count=1`, `-benchtime=750ms`, and `-benchmem` in Docker.
+
+| Lane | Time change | Bytes change | Allocs change | Decision |
+| --- | ---: | ---: | ---: | --- |
+| Primary full parse | `+0.64%` | `+0.55%` | unchanged | Reject |
+| Primary single-byte edit | `+2.29%` | `0%` | unchanged | Reject |
+| Primary no-edit | `-0.27%` | `0%` | unchanged | Control |
+| Swift high-hit | `-9.36%` | `0%` | `0%` | No allocation win |
+| JavaScript control | `-5.38%` | `0%` | `0%` | Pass |
+| Recovery deletion | `+6.10%` | `+0.03%` | `0%` | Reject |
+
+The candidate did not improve bytes or allocations by at least five percent on
+any target lane. It also regressed the primary edit control by more than one
+percent. No RSS run was needed because the allocation and time gates failed.
+The candidate diff for `glr.go` and `glr_test.go` has SHA-256
+`c250f6297adc23371de2282ce132dc99fa20167d937cc8616d08af8a8f3eb605`.
+
+P25ar artifacts and SHA-256 values are:
+
+- Lazy-cache correctness log: `/tmp/gts-p25ar-artifacts/20260823T174052Z-correctness-lazy-node-cache/container.log`, `006d52c81cf97d36cfc63a30cf256ad4de10fef9b1a46079a50c7ba523a2d264`.
+- Recovery parity log: `/tmp/gts-p25ar-artifacts/20260823T174127Z-correctness-recovery-lazy-node-cache/container.log`, `0b5ebb6f1851be877653f101d6c26808cd6148281aaca8b3bf2a661daadf8d15`.
+- Primary base output: `/tmp/gts-p25ar-artifacts/benchmark-outputs/base-primary.txt`, `56bf71e79676f447d09924dda1de77fc19ec105e08d12204f9f89c63802383cb`.
+- Primary candidate output: `/tmp/gts-p25ar-artifacts/benchmark-outputs/candidate-primary.txt`, `7153c2b149a965b90c17585ff02e270dc0d391680b1da5b9b1572c04b7b4a500`.
+- Swift base output: `/tmp/gts-p25ar-artifacts/benchmark-outputs/base-swift.txt`, `2e4359c91e2af28f44193687adf383b97d66dd419b4f51232b20d4f9cca7ff8a`.
+- Swift candidate output: `/tmp/gts-p25ar-artifacts/benchmark-outputs/candidate-swift.txt`, `84d7f55726472f50f9dc917e88056a7898b382cefdec32027c7e1e11bd5ea2f9`.
+- JavaScript base output: `/tmp/gts-p25ar-artifacts/benchmark-outputs/base-javascript.txt`, `20071f85a4ae1657cb36bb521c04f7705ffa4ea60e1e5062ae3f2b0b8418e9fa`.
+- JavaScript candidate output: `/tmp/gts-p25ar-artifacts/benchmark-outputs/candidate-javascript.txt`, `5427417d4007987655620d5a7c91199cfd868508eda5525f2a442e89fb4a2352`.
+- Recovery base output: `/tmp/gts-p25ar-artifacts/benchmark-outputs/base-recovery.txt`, `48ea11b07c9fbf8fcff56bb9231d437db4d42d55c7efd6618f41380ec50f2d11`.
+- Recovery candidate output: `/tmp/gts-p25ar-artifacts/benchmark-outputs/candidate-recovery.txt`, `4e54a2b5461fb5385406d8527eecd74c3b383714fe5295d1124b7666639fe531`.
+
+The candidate production and test changes were reverted. No P25ar code or
+test change remains.
+
 ## 2026-08-23 P25ao adaptive node-equivalence cache screen
 
 Status: **NO-GO / REVERTED**. Keep `glrNodeEquivCacheSize` at `16384`.
