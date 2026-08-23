@@ -2466,6 +2466,169 @@ Require an authenticated Go corpus and source lock.
 Require included-ranges root, semicolon, sibling-boundary, and `new`/`make`
 parity before retirement. Do not change production or registry state.
 
+## 2026-08-23 Doxygen dispatcher blocker receipt
+
+Status: `KEEP LIVE / NO-GO`. Keep `dispatch.doxygen` live.
+The evidence and publication base is
+`a62b9db306bcb983852cbf0043852546e864e856`.
+This receipt adds one focused probe, one changelog entry, and this document.
+It changes no production or registry file.
+
+The registry has 88 entries. It has 31 live dispatcher arms, 32 live entries,
+and 56 retired entries. The Doxygen arm calls
+`normalizeDoxygenCompatibility` in `parser_result_doxygen.go`. Its owner is
+`scheduler_action_semantics`. Its witness is the C harness parity test.
+The C oracle uses one curated grammar witness set.
+
+The grammar lock pins tree-sitter-doxygen commit
+`ccd998f378c3f9345ea4eeb223f56d7b84d16687`. The lock file SHA-256 is
+`9ddb6324afd014f6ecdd1cae3dd1ba238f1e62ce03d126e6d8b267ce34d72ecb`.
+The A0 manifest pins the Doxygen source repository
+`https://github.com/doxygen/doxygen` at commit
+`b3e7fb3b6e2f4278c21317d4af1f6f3fdb388f72`.
+Its three files have these byte counts and SHA-256 values:
+
+- `CMakeLists.txt`: 7,220 bytes,
+  `66408d6539b27d7c49b1e51777605c38c91b6d924267db5109ee00e2a1cfcf41`.
+- `metrics.py`: 9,777 bytes,
+  `31622a6c075ffa6f78a16af6e379f517213d42ff67729bbd0d10551c5fca9702`.
+- `example.cfg`: 260 bytes,
+  `86998161914382f8152e4984db091e7bf486799c1091fc6c57db4e704eee4a3b`.
+
+The A0 aggregate has three files, two checked files, two run files, four
+visited nodes, zero rewrites, three error roots, and zero parse errors.
+The A0 Doxygen fixtures have zero rewrites.
+The A0 Doxygen fixtures exist under `testdata/dispatcher_census_a0/doxygen`.
+The tracked corpus has no Doxygen fixture, and the authenticated real-corpus
+mount is unavailable. Included-ranges coverage is not applicable to Doxygen.
+
+The locked C oracle uses contract `tree-sitter-c-v1`, runtime `0.25.1`, and
+runtime commit `f5afe475deb7c0bae6407fb776c76824f717bb61`. It uses grammar
+repository `https://github.com/amaanq/tree-sitter-doxygen` at commit
+`ccd998f378c3f9345ea4eeb223f56d7b84d16687`.
+The C artifact SHA-256 is
+`1fe84dfe69da98a5860f2261fc8deb2cf250aa4ae07c2ecf3bace5dfe396d11e`.
+
+The focused probe pins six witnesses. It checks source SHA-256 values, raw
+digests, production digests, C digests, route digests, pass presence, and
+rewrite counts.
+
+The focused Doxygen probe covers raw, production, compact, forest,
+incremental, and locked-C routes.
+
+- `CMakeLists.txt` has 7,220 bytes. Go digest
+  `01d09d1ffd9d09af0333bcd887c35e68bcb4a96d15ff0d96c29a1780971b7e04`.
+  C digest `d6f623d2b87344001e98de5528b44e38b102e564491871a9ffb64c1b73d193c5`.
+- `metrics.py` has 9,777 bytes. Go digest
+  `5adbacb1ec949237a802a56a5c95c3c7a1ce17fe9c8db5423b63f083da62d5d1`.
+  C digest `6660931c2bf1bf1e0f909a1cac1e4cd8446853ae4466781c943e28fbcc61e860`.
+- `example.cfg` has 260 bytes. Go digest
+  `3b803e3d4b9ffcf99c771c352118f3f7026420ea5f26c8d934349ac848789b23`.
+  C digest `f1938d5c7bc544856a5df6c204af75af10a5395bd1f89f560c74caef5acf191f`.
+
+The A0 production passes report checked/run/rewritten values of `1/1/0` for
+`CMakeLists.txt` and `example.cfg`. The `metrics.py` witness has no
+`dispatch.doxygen` pass and reports `0/0/0`. The raw, production, compact,
+and incremental Go digests match their pinned values.
+
+The compact counter deltas are exact. The first value is routed and the second
+value is fallback.
+
+| Witness | Routed delta | Fallback delta |
+| --- | ---: | ---: |
+| `CMakeLists.txt` | 0 | 1 |
+| `metrics.py` | 0 | 1 |
+| `example.cfg` | 0 | 1 |
+| historical childless error | 0 | 1 |
+| historical recovered document | 0 | 1 |
+| registered smoke | 1 | 0 |
+
+Forest decline reasons are witness-specific. The A0 witnesses and the
+recovered historical witness report `dead_end`. The childless witness reports
+`eof_no_root`. The smoke control reports `nolook_relex_empty`.
+Incremental parsing reports `external_scanner_unsupported` with zero reused
+subtrees and zero reused bytes.
+
+The historical childless witness has source SHA-256
+`ff90d209911d0d32bf44ebff0742e6f42ff40a6f4978860a00ec3f7228b2af24`.
+Its raw digest is
+`6c16ff1b99a3b116d575f90aa0fe5456381b442a58af021dac36e6954345ce4c`.
+Its route digest is
+`0e1129b2130636e62dd05b2494c22a9a2b5b6ec044aea2eeb4dc836380e38b38`.
+The C digest equals that route digest. The production, compact, and
+incremental dispatch passes report three rewrites. Compact falls back, forest
+declines with `eof_no_root`, and incremental parsing uses the external-scanner
+fallback with zero reuse.
+
+The historical recovered witness has source SHA-256
+`f6deae068bcf0fe684f8623d671ee5dfbfab47c93d7827ec03c3b4b5330f8309`.
+Its raw digest is
+`c5869cce363642fbe2dc1350d194685f5ff81fe14ef6f45f4f4044f4304d204a`.
+Its route digest is
+`21374502deb13653ec081dd59a4e21311f501aa9adfd34ea1fe3a2f09bc5f8d5`.
+Its C digest is
+`05813d8b13788902a7f9b9322ca16127ecf5e9c3694d60726acc7a511be622fe`.
+The production, compact, and incremental dispatch passes report fourteen
+rewrites. Compact falls back, forest declines at `dead_end`, and incremental
+parsing uses the external-scanner fallback with zero reuse.
+
+The registered smoke witness has source SHA-256
+`e2d564b999c40b0a53450771ffa82adf7880375449e8628fefd118aae21056d7`.
+Go and C both report digest
+`1ae089a98760be594f06d0820951e01714097e99621cc2cd4428ce09ba867083`.
+The production and incremental passes report zero rewrites. Compact accepts
+this control. Forest declines with `nolook_relex_empty`. Incremental parsing reports the
+external-scanner fallback with zero reuse.
+
+### Known locked-C divergences
+
+The A0 C divergences are known and remain open:
+
+- `CMakeLists.txt` differs at `/document`, type: Go has `document`, and C has
+  `ERROR`.
+- `metrics.py` differs at `/ERROR`, shape: Go has `children=0`, and C has
+  `children=279`.
+- `example.cfg` differs at `/document`, type: Go has `document`, and C has
+  `ERROR`.
+- The recovered witness differs at `/document`, shape: Go has `children=4`,
+  and C has `children=3`.
+
+The smoke control matches locked C exactly. The focused probe uses one Doxygen
+grammar, one CPU, 4 GiB, 512 process IDs, `GOMEMLIMIT=3GiB`,
+`GOMAXPROCS=1`, `GOFLAGS=-p=1`, `-parallel=1`, and a 20-minute timeout.
+It exited zero without timeout or out-of-memory failure.
+
+The successful route receipt is under
+`/tmp/gts-n31k-doxygen-artifacts/20260823T152330Z-n31k-route-repair-v2`.
+Its `container.log` SHA-256 is
+`5c9e3f3173bb43294152bf2555413cdc9e95e63d6e2821e841c3bd79e7216626`.
+The first document guard receipt is under
+`/tmp/gts-n31k-doxygen-artifacts/20260823T152357Z-n31k-document-first-repair-v1`.
+Its `container.log` SHA-256 is
+`3bcc26bfbdb52b8e98e001f74f204c34e60e85e387fb6f2950f79a8cc7c7aa77`.
+The final document guard receipt is under
+`/tmp/gts-n31k-doxygen-artifacts/20260823T152453Z-n31k-document-final-repair-v1`.
+Its `container.log` SHA-256 is
+`cea994a81199e3f792ffc1865f6405dcc891fa9a35d277b954441490575843c3`.
+The final marker-validation artifact is under
+`/tmp/gts-n31k-doxygen-artifacts/20260823T152530Z-n31k-document-final-repair-v2`.
+Its `container.log` SHA-256 is
+`42dadbaefc2af5496b8cb2bcaeda7ab0e90dcfdc8e3c74751a3d50ac9185f241`.
+The next document guard is the terminal external verifier. Do not self-pin
+its path or hash because self-pinning creates a circular receipt.
+
+Each incremental check parses the pinned source with one trailing space. The
+incremental probe deletes one deterministic trailing space from each parsed
+source, then checks the original source digest and profile. The route reports
+external-scanner fallback and zero reuse for every witness.
+
+The evidence does not prove a safe shared producer invariant. Keep
+`dispatch.doxygen` live until `scheduler_action_semantics` emits exact C output
+for every witness and route. Require zero dispatcher rewrites, exact compact
+and forest route semantics, incremental scanner-state proof, an authenticated
+Doxygen corpus, and included-ranges coverage if that route becomes applicable.
+Do not change production or registry state before every condition passes.
+
 ### R3 — move materialization invariants upstream
 
 Status: in progress.
