@@ -247,6 +247,14 @@ for tags and release notes while still in `0.x`.
   exact error flags. The full authenticated corpus remains unavailable. See
   `docs/root-normalization-retirement.md`.
 
+- Record the `dispatch.corn` blocker receipt at base
+  `613a0775a329998a0af0c6f24251c8008c6783aa`. Keep the arm live. The A0
+  manifest records three Corn files, three checks, three runs, and zero
+  rewrites. The quoted-path trigger rewrites four nodes and still differs from
+  locked C. The malformed quoted-path witness differs in one error flag. The
+  full Corn corpus is unavailable. No registry or production code changes are
+  included. See `docs/root-normalization-retirement.md`.
+
 - Record the `dispatch.ada` blocker receipt at base
   `30f470f5c2bf18540f7a18b2b22a7e33b88d4e10`. Keep the arm live. The receipt
   covers nine clean and two malformed witnesses across raw, production,
