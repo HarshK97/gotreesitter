@@ -38,6 +38,21 @@ for tags and release notes while still in `0.x`.
   Compact falls back, and the external scanner provides no incremental reuse.
   Keep the arm live. No registry or production code changes are included. See
   `docs/root-normalization-retirement.md`.
+- Recorded the unreceipted `dispatch.wgsl` blocker.
+  The evidence and measurement base is
+  `cf58fba517ed4fa6a8f5d1328ac2f850d48a8c75`.
+  The review publication base is
+  `d134ed5f963c7ed1d27fa1247aeb2a16746ab585`.
+  The receipt covers three A0 WGSL witnesses and two controls.
+  It covers raw, production, compact, forest, incremental, and locked-C routes.
+  It pins source, grammar, blob, C artifact, runtime, binding, compiler, and scanner identities.
+  It also pins route digests, divergences, dispatch counts, compact outcomes, and reuse counts.
+  The one-CPU Docker test passed.
+  Keep the arm live because production rewrites remain.
+  Compact also falls back on recovery.
+  Locked C still differs in shape, type, and error state.
+  No parser or registry change is included.
+  See `docs/root-normalization-retirement.md`.
 
 - Recorded the unreceipted `dispatch.wolfram` blocker at base
   `f8b9d718ee19f65598e274035f5481a899ab2b72`. The A0 manifest records three
