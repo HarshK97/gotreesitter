@@ -45,6 +45,21 @@ for tags and release notes while still in `0.x`.
   `docs/root-normalization-retirement.md` for the route receipt, artifacts,
   and reopening condition.
 
+- Recorded the N31h Dart dispatcher blocker at evidence base
+  `7b6f40fe089283674f5d0d19408d2380f77caf68` and publication base
+  `09cb5faa41af35a6bc84fefccbab1a17850d38cc`. Keep `dispatch.dart` live.
+  The focused probe covers eight clean witnesses and one malformed witness
+  on raw, production, compact, forest, incremental, and locked-C routes.
+  Four generic-call witnesses differ from locked C on raw routes. The
+  single-type and generic-return witnesses still differ on production and
+  incremental routes. Forest repairs those witnesses with 10 and 44
+  `dispatch.dart` rewrites. The authenticated Dart corpus is unavailable.
+  The focused guard pins source and C digests, divergence paths, route mode,
+  pass rewrites, and scanner reuse. No safe shared producer invariant was
+  identified. Ship no parser, registry, or production change. See
+  `docs/root-normalization-retirement.md` for the receipt and reopening
+  condition.
+
 - Recorded the AWK dispatcher blocker at main commit
   `5648911ecf509df8ec870a1214917d9e95cf54f1`. Keep `dispatch.awk` live.
   The focused receipt proves clean raw, production, compact, forest, and
