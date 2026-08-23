@@ -3103,6 +3103,162 @@ The final Docker artifacts are:
   `container.log` SHA-256
   `f8b701422f118969189208595b6ee29cf9373d317778e29751793cafc27f1ab4`.
 
+## 2026-08-24 Templ dispatcher blocker receipt
+
+Status: `KEEP LIVE / NO-GO`. Keep `dispatch.templ` live.
+
+Base commit: `3c2a2106102769bab891047174dbcfec15045e74`.
+
+Independent-review base: `cf58fba517ed4fa6a8f5d1328ac2f850d48a8c75`.
+Pull request (PR) #839 merged compact-route documentation and changelog
+changes only. This receipt also includes the focused Templ route test. PR #839
+changed no executable or fixture inputs used by the retained Templ gates.
+
+The repository history and receipt search ran before this edit. It found no
+Templ or WGSL dispatcher receipt in `CHANGELOG.md`, this document, or the
+focused receipt tests. Accepted receipts already cover c_cpp, awk, c_sharp,
+TypeScript, Python, DTD, Ada, Corn, BitBake, Rust, HLSL, Authzed, Dart,
+Cooklang, Go, Doxygen, Solidity, and Wolfram. Templ is the selected arm.
+It has three authenticated A0 files and two focused normalizer families.
+WGSL remains live and unreceipted for a later arm.
+
+The live source arm is `dispatch.templ` in `parser_result_compat.go`. It calls
+`normalizeTemplCompatibility` in `parser_result_templ.go`. The normalizer
+owns component-import argument repair and dangling-quote recovery repair.
+This receipt changes no parser or registry behavior.
+
+The A0 manifest SHA-256 is
+`215df59aa56d28caa403f799733ef915db1c4ac07eb2bc96a9402f80cf67f80a`.
+The manifest records three Templ files, three checks, three runs, 1138
+visited nodes, 76 rewrites, one error root, and zero parse errors. The tracked
+census excludes Templ. The authenticated corpus sidecar has SHA-256
+`2b2209597d1701ccc813bd35d1685b5b13730e6ebd285e66485ce812e35877cf` and
+contains the expected lock digest
+`41c744279c8b1d7c9fe7b1b8e26fba733423e77cd48efea46927309c22d163ea`.
+The referenced `corpus_sources.lock` is absent. The receipt rejects both
+missing lock paths and the empty sidecar case.
+
+The receipt covers raw, production with admission forced off, compact, forest,
+incremental, and locked-C routes. It does not read this document. It rejects
+stale or empty source, manifest, lock, blob, and C artifact evidence.
+
+The pinned identity is:
+
+- grammar lock SHA-256:
+  `9ddb6324afd014f6ecdd1cae3dd1ba238f1e62ce03d126e6d8b267ce34d72ecb`;
+- embedded and file blob SHA-256:
+  `78f20ce45f9a4df12c458aadfbe9a98c80572bb13e0e2d01ffc43060e8d04701`;
+- grammar repository and commit:
+  `https://github.com/vrischmann/tree-sitter-templ` at
+  `1c6db04effbcd7773c826bded9783cbc3061bd55`;
+- C grammar artifact SHA-256:
+  `91e455a6392a736912a481f0322c67bf571896c067ad0c7fba4ce4e9a7038081`;
+- C contract: `tree-sitter-c-v1`, static runtime linkage, and shared grammar
+  linkage;
+- binding: `github.com/tree-sitter/go-tree-sitter` version `v0.25.0`, commit
+  `adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3`;
+- runtime: version `0.25.1`, commit
+  `f5afe475deb7c0bae6407fb776c76824f717bb61`;
+- compiler: `/usr/bin/cc`, `cc (Debian 12.2.0-14+deb12u1) 12.2.0`, with
+  `-std=c11 -fPIC -O2 -I .`.
+
+Templ reports scanner type `grammars.TemplExternalScanner`. It does not
+implement `IncrementalReuseExternalScanner`. Included-range proof does not
+apply to this grammar.
+
+The authenticated source digests are:
+
+- `medium__main.templ`, 2161 bytes:
+  `4415618a310cc880cb67fcd902bb7e9f82e91b9d0f461349e0cfb5cd0b1fa007`;
+- `medium__template.templ`, 2999 bytes:
+  `e4a5934ad709206e1c5ca82ab9bc86cd20467df61484357096e6378b5dbb7791`;
+- `small__template.templ`, 257 bytes:
+  `bdc8798d13311d9f459108d3fad77f291dde4156fe68295671706684b8dd3eb3`.
+
+The route digests are:
+
+| Witness | Locked C | Raw | Production, compact, incremental | Forest |
+| --- | --- | --- | --- | --- |
+| `a0-medium-main` | `efab90f3a4a75a4deba8c94d67c741dd842a7c8c6708bed3f59e37e0a994a11f` | `895657a1c4978896653cf968b2dedddf7badd40f464d558e97dd95a9d9675595` | `895657a1c4978896653cf968b2dedddf7badd40f464d558e97dd95a9d9675595` | declined: `dead_end` |
+| `a0-medium-template` | `7de9788750436a485bee98ec6200da09d5062700368333fe380562d71f171891` | `33a54940b5da62255e5a03056b2ed7935994773b53a746b9a7e706b60a1a8dcb` | `2499953c81a152ca9db474f121b1a8a9de0c888c6f00a25125301c157bcb0b0e` | `2499953c81a152ca9db474f121b1a8a9de0c888c6f00a25125301c157bcb0b0e` |
+| `a0-small-template` | `cb81fe10587416eae568216d16d2f7258bda32d00136030d8a4fcd2198e12594` | `80e67baee0a78d252f4621c42b4eab3e1334bc919bdcba000d17034d04f954f3` | `cb81fe10587416eae568216d16d2f7258bda32d00136030d8a4fcd2198e12594` | `cb81fe10587416eae568216d16d2f7258bda32d00136030d8a4fcd2198e12594` |
+| `clean-component-import` | `be90e19cd2f34f20303a530e3af710dae87e72d681d336aadcf7e5b605050cb6` | `ba6bdf62e3dd580ad78d0bd2f6ec2b4aeef7cad28c8d4c05b9ee76107aa55301` | `ba6bdf62e3dd580ad78d0bd2f6ec2b4aeef7cad28c8d4c05b9ee76107aa55301` | declined: `dead_end` |
+| `malformed-dangling-quote` | `6d468842ea01aeb519c3e7cf49e000862800c3b5324e4b2a6429616788c4cd42` | `43b2a79e97c3f8f5d426e889610a2eef8c8256cc4b770333ef18088e9949c173` | `43b2a79e97c3f8f5d426e889610a2eef8c8256cc4b770333ef18088e9949c173` | declined: `dead_end` |
+
+The first divergences are:
+
+- `a0-medium-main`: `/source_file`, category `error`, Go `true`, C `false`
+  on raw and normalized routes;
+- `a0-medium-template`: raw
+  `/source_file/component_declaration[26]/component_block[3]`, category
+  `shape`, Go `children=20`, C `children=11`; normalized routes keep the
+  same path with Go `children=12`;
+- `a0-small-template`: raw
+  `/source_file/component_declaration[3]/component_block[3]/element[2]/element[1]`,
+  category `shape`, Go `children=4`, C `children=3`; normalized routes match
+  locked C;
+- `clean-component-import`: `/source_file/ERROR[1]`, category `range`, Go
+  `2:0-3:0 @11..55`, C `2:0-2:43 @11..54`;
+- `malformed-dangling-quote`: `/source_file`, category `shape`, Go
+  `children=4`, C `children=2`.
+
+Raw dispatch is `none`. Production, compact, forest when accepted, and
+incremental report these `checked/run/visited/rewritten` counts:
+
+| Witness | Dispatch counts |
+| --- | --- |
+| `a0-medium-main` | `1/1/317/0` |
+| `a0-medium-template` | `1/1/737/53` |
+| `a0-small-template` | `1/1/84/23` |
+| `clean-component-import` | `1/1/7/0` |
+| `malformed-dangling-quote` | `1/1/14/0` |
+
+Compact routes record zero routed candidates and one fallback for every
+witness. The counter deltas are cumulative. They are `0/0 -> 0/1`,
+`0/1 -> 0/2`, and `0/2 -> 0/3`. They continue with `0/3 -> 0/4` and
+`0/4 -> 0/5`. The main file and both
+synthetic controls use the recovery reason
+`compact route declined at recovery [mechanism=recovery-entered]: did not
+accept EOF: generic scheduler has no table action for the elected token`.
+The two template fixtures use the no-action reason
+`compact route declined at no_action [mechanism=scheduler-frontier-shape]:
+converged-path reduction split no-action drop lacks alternative-set coverage
+by one non-blended survivor`.
+
+Forest accepts the medium and small template fixtures. It declines the main
+file and both synthetic controls with `dead_end`. Incremental parsing deletes
+one deterministic trailing space from a parsed copy. Every witness records
+`external_scanner_unsupported`, `OldTreeReuseRoute=false`, zero reused
+subtrees, and zero reused bytes. The route remains a fresh parse.
+
+The focused Docker artifact is
+`/tmp/gts-n31q-templ-receipt/20260823T194058Z-n31q-templ-receipt`.
+The run uses one central processing unit (CPU), 4 GiB, `GOMEMLIMIT=3GiB`,
+`GOFLAGS=-p=1`, `-parallel=1`, and one grammar. It passes without an
+out-of-memory kill or wall timeout. The container log SHA-256 is
+`d31349e91ad173d0c23911ca4f46afc5eb2510e9a059d4ba7975fb1b0c5cfa99`.
+The metadata SHA-256 is
+`b3d808d6eaf3d1e6e1ce2958ef09ac9d4bfd9aa1a7ceaf763293af78361cedb8`.
+The inspect SHA-256 is
+`7029db998009c4047ec66f232cefd0cd72c26295bef7071437e0d8fbad0e808c`.
+The Docker image digest is
+`sha256:5060d2a11578710fdb0adc48e638efab98b3e7ff18bb5082596911fe86011b08`.
+The focused normalizer unit gate is
+`/tmp/gts-n31q-templ-unit/20260823T194141Z-n31q-templ-unit`. Its container log
+SHA-256 is
+`a9df3fd3eb7e70f53cbd07272e409a6ab25975f3f5869758eb72dfbf29493c4f`.
+Its metadata SHA-256 is
+`c13006c75423a818472295de2d5e566a3f03fc2590957ffb0d011e59d5dc4ee6`.
+Its inspect SHA-256 is
+`1a65c2ce103d03ea6c19246e9e435973584bb5dfa704a02d30bc5d25d8fef503`.
+
+Keep `dispatch.templ` live. Do not retire it because the authenticated corpus
+lock is absent. The main error-root route diverges from locked C. The medium
+template route retains a shape divergence after 53 rewrites. Compact falls
+back for every witness. Incremental reuse is unsupported. Reopen after a
+producer fix closes the listed divergences, proves scanner-aware reuse,
+supplies the authenticated corpus lock, and repeats all six route classes.
+
 ## Progress ledger
 
 | Ratchet | Status | Before | After | Evidence |

@@ -9,6 +9,21 @@ for tags and release notes while still in `0.x`.
 
 ### Correctness
 
+- Recorded the next unreceipted `dispatch.templ` blocker at base
+  `3c2a2106102769bab891047174dbcfec15045e74`. The A0 manifest records three
+  Templ files, three checks, three runs, 1138 visited nodes, 76 rewrites, and
+  one error root. The focused Docker receipt covers raw, production with
+  admission forced off, compact, forest, incremental, and locked-C routes.
+  It pins source, manifest, grammar lock and blob, C artifact, runtime,
+  binding, compiler, scanner identity, route digests, divergences, and dispatch
+  counts. It also pins compact counters and reasons, forest outcomes, and
+  incremental reuse. Templ has no authenticated corpus lock. The medium
+  witness retains a locked-C divergence. The small witness matches locked C
+  only after dispatch.
+  Compact falls back, and the external scanner provides no incremental reuse.
+  Keep the arm live. No registry or production code changes are included. See
+  `docs/root-normalization-retirement.md`.
+
 - Recorded the unreceipted `dispatch.wolfram` blocker at base
   `f8b9d718ee19f65598e274035f5481a899ab2b72`. The A0 manifest records three
   Wolfram files, six checks, six runs, 77 visited nodes, zero rewrites, and
