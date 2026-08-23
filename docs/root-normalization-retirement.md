@@ -2977,7 +2977,7 @@ The focused Solidity normalizer unit run passed in Docker. Its artifact is
 `/tmp/gts-n31n-solidity-20260824/harness_out/docker/20260823T171759Z-n31n-solidity-rebased-unit`.
 
 - `container.log` SHA-256:
-  `fdf7d98846132ef4d7ee6ac2aab9c5cb499a7a148de998edfef8463050b79714`;
+  `73600ce227dc724efca51658b401f4095ceb2e86f1a972d06b54618e68736633`;
 - `metadata.txt` SHA-256:
   `535c21ff6fd93a2a53f81d4b57197bcc39ccf617079e6a65c3c74950a4c6aa32`;
 - `inspect.json` SHA-256:
