@@ -30,9 +30,10 @@ The rejected parser diff hash is
 PR #793 is closed without merge. No candidate parser code ships. Keep issue
 #454 open.
 
-### CI event matrix
+### Continuous integration (CI) event matrix
 
-CI run `32609724840` is red. The event matrix records the required outcomes:
+Continuous integration (CI) run `32609724840` is red. The event matrix records
+the required outcomes:
 
 | Event | Result |
 | --- | --- |
@@ -54,6 +55,8 @@ The candidate has two independent changes. The matrix isolates each change:
 - Remove `leaf.setHasError(true)` from `cAbsorbTokenIntoError`.
 - Add a field-preserving hidden splice and scratch materialization in
   `cRecoverToState`.
+
+A0 means the initial dispatcher census for a witness set.
 
 | Variant | Parser-result tests | Cobol A0 rewrites | WGSL A0 rewrites | Cooklang raw result |
 | --- | --- | ---: | ---: | --- |
@@ -114,18 +117,20 @@ The 1 KiB ratchet receipts use the `*-issue454-1k-ratchet` directories.
 
 The exploratory C-name guard has diff hash
 `8143175e94fcbc4073cf36fa4ea8e51f7f276fec4ac0f69d829dca7b91188027`.
-It passes the C size and incremental probes. Reject it because it selects a
+It passes the five-size C probe and the incremental probes. Reject it because it selects a
 grammar name instead of a grammar-agnostic semantic predicate.
 
 ### Controlled memory result
 
-The controlled real-corpus audit used three alternating race-shard pairs.
+The controlled real-corpus audit used three alternating base and candidate pairs.
 The logs are under `/tmp/gts-issue454-rss-audit/`.
 The paired diagnostic logs are:
 
 - `/tmp/gts-issue454-rss-audit/rep1-base/20260823T004613Z/real_corpus/diag_c_lang.log` and `/tmp/gts-issue454-rss-audit/rep1-candidate/20260823T004629Z/real_corpus/diag_c_lang.log`.
 - `/tmp/gts-issue454-rss-audit/rep2-base/20260823T004702Z/real_corpus/diag_c_lang.log` and `/tmp/gts-issue454-rss-audit/rep2-candidate/20260823T004646Z/real_corpus/diag_c_lang.log`.
 - `/tmp/gts-issue454-rss-audit/rep3-base/20260823T004719Z/real_corpus/diag_c_lang.log` and `/tmp/gts-issue454-rss-audit/rep3-candidate/20260823T004917Z/real_corpus/diag_c_lang.log`.
+
+Resident set size (RSS) is the process memory held in RAM.
 
 | Pair | Base RSS | Candidate RSS | Base elapsed | Candidate elapsed |
 | --- | ---: | ---: | ---: | ---: |
