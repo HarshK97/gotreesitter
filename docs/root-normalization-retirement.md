@@ -2001,6 +2001,182 @@ document guard used the same limits and passed with no out-of-memory kill or
 wall timeout. Its maximum resident set size was 231520 KiB.
 
 
+## 2026-08-24 Dart dispatcher blocker receipt
+
+Status: `KEEP LIVE / NO-GO`. Keep `dispatch.dart` live.
+The Dart arm remains live.
+
+Evidence base: `7b6f40fe089283674f5d0d19408d2380f77caf68`.
+Publication base: `09cb5faa41af35a6bc84fefccbab1a17850d38cc`.
+This isolated draft changes only the receipt and its focused ratchet test.
+
+### Dart ownership and producer reachability
+
+The registry contains 88 entries. It contains 78 dispatcher arms, one
+dispatcher predicate, three dispatcher subpasses, three generic passes, and
+three second-pass fixpoints. It contains 31 live dispatcher arms, 33 live
+language labels, 32 live entries, and 56 retired entries.
+
+The registry entry is `dispatch.dart`. Its function is
+`normalizeDartCompatibility` in `parser_result_dart.go`. Its authoritative
+owner is `derivation_election_selection`. Its witness is
+`cgo_harness/parity_cgo_test.go`. Its production, compact, forest, and
+incremental routes use `shared_result_compatibility_tail`. Its C-oracle route
+uses `curated_single_grammar_parity`.
+
+Canopy traces this call chain:
+
+```text
+Parse or parseWithTokenSource
+  -> normalizeReturnedTreeForParse
+  -> normalizeReturnedTree
+  -> normalizeResultCompatibility
+  -> applyResultCompatibility
+  -> runLanguageResultCompatibility
+  -> normalizeDartCompatibility
+```
+
+The Dart function calls helpers for free calls, function-type calls, nested
+relational calls, generic return calls, and constructor signatures. These
+helpers repair returned-tree choices after derivation selection. Canopy found
+no shared producer invariant that closes the recorded Dart differences.
+
+Retirement requires native derivation selection for every registered witness.
+Require exact production, compact, forest, incremental, and locked-C output.
+
+### Dart grammar, oracle, and census identity
+
+The grammar lock pins Dart to
+`https://github.com/UserNobody14/tree-sitter-dart` commit
+`0fc19c3a57b1109802af41d2b8f60d8835c5da3a`.
+The grammar lock SHA-256 is
+`9ddb6324afd014f6ecdd1cae3dd1ba238f1e62ce03d126e6d8b267ce34d72ecb`.
+The embedded Dart grammar blob SHA-256 is
+`06bac15a9921a2e6af2810fb37ecb29a358b120e137345b9af5fb5f6c6632f59`.
+
+The locked C oracle uses contract `tree-sitter-c-v1`.
+It uses binding `github.com/tree-sitter/go-tree-sitter` version `v0.25.0`.
+Its binding commit is `adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3`.
+Its runtime is version `0.25.1` at commit
+`f5afe475deb7c0bae6407fb776c76824f717bb61`.
+The compiler is `/usr/bin/cc`, Debian 12.2.0.
+
+The Dart external scanner is present and supports incremental reuse.
+The tier receipt records the default election and `0/40` staged-state parity.
+The parser limits Dart incremental reuse to sources up to 256 KiB.
+
+A0 means the initial dispatcher census. A0 has 14 languages and 42 files.
+It has 14 receipt rows, 44 checked files, 44 run files, 3,267 rewrites, and
+20 error roots. It has no Dart entry or receipt.
+Its parser revision is `3c55dca287c9dd6ed987c764b9aafd90b22281a2`.
+
+The tracked census has seven fixtures across six languages. It has nine
+checked files, nine run files, 2,107 rewrites, and no error roots.
+It has no Dart fixture. The authenticated corpus is unavailable because
+`cgo_harness/corpus_real` and `cgo_harness/perf_scan/corpus_sources.lock` are
+absent. The sidecar records only expected lock SHA-256
+`41c744279c8b1d7c9fe7b1b8e26fba733423e77cd48efea46927309c22d163ea`.
+
+The two existing Dart selection-fidelity tests remain skipped. They cover a
+single type-argument free call and a complex generic return call.
+
+### Dart focused route receipt
+
+The focused probe uses eight clean witnesses and one malformed recovery
+witness. It asserts each source SHA-256, locked-C digest, route digest, first
+divergence path and category, `dispatch.dart` pass rewrites, compact mode,
+forest mode, and incremental reuse state.
+
+The common positive controls are the class, private, and enum constructor
+witnesses. Every route matches locked C for each control. The relational
+control also matches locked C on every route without a rewrite.
+
+| Witness | Bytes | Source SHA-256 | Locked-C digest | Raw / production / compact / forest / incremental |
+| --- | ---: | --- | --- | --- |
+| `single-type-free-call` | 56 | `09d754270caf75b1ff52126fcbe2ed8cccaf34cb05fbda8ba24b042f01297e51` | `4d1969523ca9d897b2d5154740cc3b34372ee6e8b100384cbec327eef80e5f26` | `4592ebedc702c08c6694e1631a31acdb1a9aedd068110c2961194f897d28de58` / same / same / C / same |
+| `complex-void-function-type-call` | 167 | `98073341a8cdc5dfb052f667072fa968141cd1538852c9143db2619991971210` | `f06b1f0088eead7eb346506de36942dfaea6d9a1fd2089d23ac683cb620eddac` | `c2865b8258531e7d5caaa5b79ea036ab1cfd64518328f627f72713b1707f41ab` / C / C / C / C |
+| `nested-function-type-call` | 211 | `9fc3f24b921fa53d0e66ebe1b7ba216a7e4ac7e4b5bfb23688c3b4ca442bbb0f` | `fe747a4e459dd83d2c02d7d21d4e3d608367fd03e2609986464a1fcaf2f94760` | `adae85234671a704c4b9efd5a6c3fcfc6f445db4cdfca6f505b8a3f58357a84c` / C / C / C / C |
+| `complex-generic-return-call` | 170 | `a40a05fc1cdace3bd60fa334475c12ecfe1e804c1fca55612483addf9cb3059a` | `03aac429467894dc376a66896c792e92a5236ec403cffa8517cffb8c929b1dfc` | `b424eb39c84e034d2dd3acdf3522f452e0517cccea06da36c0ba4b39dbd7e0ae` / same / same / C / same |
+| `class-constructor` | 46 | `af8089b2a7696122fc2d2a8197469c9b484a0dded579f7b3bd4275d5d9b2b164` | `4f0ac97990578f9eb695a85db58d310c9674ca58c702a22937bcb224ea95f0b1` | C / C / C / C / C |
+| `private-constructor` | 91 | `c9fbb9bddc9aa395934e00a3a45df2bab56b1285584876cca563e17f8e94197d` | `b5f6fcdde084e50cfc8dd4fce75514f5a632e52130e52a70c411bf42c89366d8` | C / C / C / C / C |
+| `enum-constructor` | 112 | `5cf4ddaf26fd35854bcd5b41a5bbf0a6ed0bb1717cf98bed6825adda041f3f7c` | `ac3f1a92f0ec55fe7862e61bde3b92cfab1a4f393dbfab9280c10d5243902285` | C / C / C / C / C |
+| `relational-control` | 31 | `54b13169d4e0b73846307abcd87184c19e4c0304e9ce077e461d7e1d9460a8a3` | `8545e51b499fd18fe3aa153fcdeef2873a2637567ad4fe6a87a9ec85adc186b0` | C / C / C / C / C |
+| `library-recovery` | 9 | `09c63fb57f8540f571c1defda4fbdc59ec9ec1cdfe3c3e23a1613c083abc04e7` | `324de0a5a06943713b7a9346b4029a8d35f796a8144f2f748c78afcd7662e5f9` | C / C / C / C / C |
+
+The single-type witness differs from locked C on raw, production, compact,
+and incremental routes. Its first difference is
+`/program/class_definition[0]/class_body[2]/declaration[1]/initialized_identifier_list[1]/initialized_identifier[0]/relational_expression[2]/identifier[0]`.
+The category is `type`. The forest route rewrites 10 nodes and matches C.
+The compact route falls back. Incremental parsing reuses five subtrees and
+18 bytes.
+
+The void and nested function-type witnesses differ from C on raw only.
+Production, compact, forest, and incremental routes match C after four
+`dispatch.dart` rewrites on production, compact, and incremental routes.
+Their first raw difference is the same relational-expression path under
+`class_body[4]`. Its category is `type`. Incremental parsing reuses five
+subtrees and 26 bytes for each witness.
+
+The generic-return witness differs from C on raw, production, compact, and
+incremental routes. Its first difference is
+`/program/class_definition[0]/class_body[4]/declaration[1]/initialized_identifier_list[2]/initialized_identifier[0]`.
+The category is `shape`; Go has three children and C has four.
+The forest route rewrites 44 nodes and matches C. Incremental parsing reuses
+five subtrees and 26 bytes.
+
+The constructor controls match C on every route without a rewrite.
+Their compact routes fall back because the fresh full runner rejects EOF.
+Their forest routes are accepted. The relational control compact route is
+accepted without a `dispatch.dart` pass. Its incremental route reuses five
+subtrees and 13 bytes.
+
+The malformed `library;` witness matches C on raw, production, compact, and
+incremental routes. Compact falls back during recovery. Forest declines.
+Incremental parsing reuses two subtrees and 14 bytes.
+
+Production pass counts are `1/1/27/0`, `1/1/62/4`, `1/1/78/4`,
+`1/1/63/0`, `1/1/19/0`, `1/1/28/0`, `1/1/46/0`, `1/1/20/0`, and
+`1/1/6/0` in witness order. Forest pass counts are `1/1/27/10`,
+`1/1/62/0`, `1/1/78/0`, and `1/1/63/44` for the first four witnesses.
+All later accepted forest controls report zero rewrites.
+Visited counts are diagnostic. The focused test ratchets checked, run, and
+rewritten counts.
+
+Every returned Go route reports `NativeRecoveredStructureAuthoritative=false`.
+
+### Dart decision, limits, and reopening conditions
+
+The raw, production, compact, forest, incremental, and locked-C receipts do
+not prove native ownership. Keep `dispatch.dart` live.
+No safe shared producer invariant was identified. Ship no parser, registry,
+or production change.
+
+Reopen retirement only after all conditions pass:
+
+1. Restore an authenticated Dart corpus and its source lock.
+2. Add Dart to the A0 and tracked denominators, or add an authenticated Dart receipt.
+3. Make derivation election emit the locked-C tree for every generic-call witness.
+4. Prove exact production, compact, forest, incremental, and locked-C output.
+5. Preserve the bounded Dart scanner-reuse receipt through 256 KiB.
+6. Remove the Dart rewrite helpers only after the producer proof passes.
+
+Do not add a Dart-specific parser branch. Do not change the registry or
+production state until every condition passes.
+
+The successful focused Docker artifacts are:
+
+- `/tmp/gts-n31h-dart-artifacts/20260823T094153Z-n31h-dart-ratchet-fix-final` — route ratchet; `container.log` SHA-256 `d096d137b5f4b25edc4d8a1f87b2067cd26e43d18e0229ff608a0116a0a82563`.
+- `/tmp/gts-n31h-dart-artifacts/20260823T094327Z-n31h-dart-document-fix-final` — document guard; `container.log` SHA-256 `1102ce9697cb851d9d8bdac0de3b1cdef9bb0b123c736e4c8db47b7648e3a8e0`.
+- `/tmp/gts-n31h-dart-artifacts/20260823T091057Z-n31h-dart-registry` — registry gate; `container.log` SHA-256 `04c3d0e371a1be593aebe1f1723dc99f634c4cc3ea4dd73a1963cf00f4c16059`.
+- `/tmp/gts-n31h-dart-artifacts/20260823T091105Z-n31h-dart-a0` — A0 gate; `container.log` SHA-256 `9b732373da75a783947ab8a2cebbc685763d2980800461c07ffb0754096c1346`.
+- `/tmp/gts-n31h-dart-artifacts/20260823T091113Z-n31h-dart-tracked` — tracked census gate; `container.log` SHA-256 `fd098996c733a13d11f268796a17957ae9c432c87e9c9209a21a8549bce5c19d`.
+- `/tmp/gts-n31h-dart-artifacts/20260823T091121Z-n31h-dart-real-corpus` — controlled unavailable-corpus result; `container.log` SHA-256 `a1a4c0590e4788b508dd36f5d6d9be33a4a0e8f3f96df45081bbb784b341384e`.
+
+Each run used one grammar, one CPU, 4 GiB memory, 512 process IDs,
+`GOMAXPROCS=1`, `GOFLAGS=-p=1`, and a 3 GiB Go memory limit.
+The route run used a 20-minute timeout. Every successful run exited zero.
+No run timed out or exhausted memory.
+
 ### R3 — move materialization invariants upstream
 
 Status: in progress.
