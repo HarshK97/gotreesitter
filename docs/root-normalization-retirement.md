@@ -742,6 +742,133 @@ Keep this entry live until a producer fix closes both structural mismatches.
 Require the authenticated Rust corpus.
 Move the recovery controls to their owning subsystem.
 
+## 2026-08-22 HLSL blocker receipt
+
+Status: NO-GO. KEEP LIVE: `dispatch.hlsl`. The HLSL arm remains live.
+
+Base commit: `0b4470b0156afb1e3492f7f5f6a618c9e50f7c33`.
+
+The registry contains 88 entries. It contains 78 dispatcher arms, three
+dispatcher subpasses, one dispatcher predicate, three generic passes, and
+three fixpoint passes. The live denominator contains 31 dispatcher arms, 33
+dispatcher-arm language labels, one predicate, 32 live entries, and 56 retired
+entries. It contains zero generic passes and zero post-finalization arms.
+It contains zero post-finalization language labels.
+
+The registry keeps `dispatch.hlsl` live. It names
+`normalizeHLSLCompatibility` in `parser_result_hlsl.go`. Its remaining
+members repair negative-number casts and unorm buffer template arguments.
+Its three registered witnesses are:
+
+- `cgo_harness/parity_cgo_test.go`;
+- `grammars/hlsl_subscript_assignment_native_regression_test.go`;
+- `cgo_harness/hlsl_subscript_assignment_parity_cgo_test.go`.
+
+The A0 (authenticated dispatcher census) manifest has 14 languages, 42 files,
+and 14 receipts. A0 has three HLSL files, three checked, three run, and zero
+rewrites.
+It records 100,424 visited nodes, one error root, and zero parse errors.
+The HLSL files are:
+
+- `large__scalar-operators-assign-exact-precision.hlsl`;
+- `medium__SubD11_SmoothPS.hlsl`;
+- `small__atomic_cast1.hlsl`.
+
+The tracked census has seven fixtures in six languages. It excludes HLSL.
+The authenticated real-corpus census is unavailable because
+`cgo_harness/corpus_real` is not mounted. No HLSL A3 receipt is registered.
+
+The focused route receipt uses six witnesses. It covers raw, production,
+compact, forest, incremental, and locked-C routes. It also includes two
+malformed recovery witnesses and two native subscript controls.
+
+The clean cast witness uses source SHA-256
+`495d7be10c3780d26df6dc12d4190d6621a5fc51543a041374e65166ca572132`.
+Its raw Go digest is
+`e5d64d87ea862f2e28d3f53dd6bf53dd21936ee79496c9137d2fa944171eb1ca`.
+Locked C digest is
+`87800a73e5ce82b935120f2a14ae20ea6cc61023a631333cc7986a52f78a6ead`.
+Raw and C differ at
+`/translation_unit/function_definition[0]/compound_statement[2]/return_statement[1]/cast_expression[1]`.
+Go has `cast_expression`. C has `binary_expression`.
+
+Production, compact, forest, and incremental routes produce digest
+`c6895007d3b8523d87aa77eadf1123f1e96c60def279c9ce77f506609f74334f`.
+The clean cast witness rewrites one cast_expression node on production,
+compact, forest, and incremental routes. The normalized routes diverge from
+locked C at the missing left field.
+The first normalized difference is
+`/translation_unit/function_definition[0]/compound_statement[2]/return_statement[1]/binary_expression[1]/parenthesized_expression[0]`, with Go field empty and C field `left`.
+Forest and incremental receipts report
+`dispatch.hlsl` as `1/1/23/8`. Incremental reuse is unsupported because the
+HLSL external scanner requires a fresh fallback.
+The four values are checked, run, visited, and rewritten. The final `8` is the
+dispatcher node-rewrite count. The source-level rewrite is one
+cast_expression-to-binary replacement.
+
+The malformed cast witness uses source SHA-256
+`5626b370caee23a1da24c0c428ef6acece8539f59c9af40de0e1a62e8c4703d8`.
+It keeps Go digest
+`1313f71496a9b8c1f981085f87c1b1bc3eb484815c640554e63697d301414f02` on raw,
+production, compact, and incremental routes. Locked C digest is
+`ff8d5517a3727d8cc08631b3e71fc4efb99818cf800fb2db0b96206dee969b6b`.
+The first difference remains the cast-versus-binary node type at
+`/translation_unit/function_definition[0]/compound_statement[2]/return_statement[1]/cast_expression[1]`.
+The forest route declines. Compact recovery falls back because the scheduler
+has no table action for the elected token. Incremental reuse is unsupported.
+
+The valid unorm buffer control uses source SHA-256
+`23d5e4a473c6518140c0f63fd9c58d91b79d792562a616e9c56a2adb28dd127c`.
+It matches locked C on raw, production, compact,
+and incremental routes. Its Go and C digest is
+`8cbb8f76171423dfab0b254e1602c4619a85b1f0ab7184edfadbad3b886ad647`.
+Production, compact, and incremental report `dispatch.hlsl` as `1/1/15/0`.
+The forest route declines. The malformed unorm witness uses source SHA-256
+`95326c7ce08df600cc54d8e785a6794a51099f51968e697b2e6e3903c9c62dcd`.
+It keeps Go digest
+`05b2bf7a42e5c0ebbcf90d1ed35fddff902e995f97ce767404941a6299d337d9`.
+Locked C digest is
+`d3aa05dea7693d685f06f9dd32b9f2b155c92dac3bc5715b4195a4e7857de668`.
+Production, compact, and incremental report `dispatch.hlsl` as `1/1/14/0`.
+The first difference is `/translation_unit/expression_statement[0]`.
+Go has `expression_statement`. C has `declaration`. The malformed forest
+route declines. Compact recovery falls back because the scheduler has no
+table action for the elected token. Incremental reuse is unsupported.
+The two unorm witnesses produce no unorm rewrite. The authenticated corpus is
+required before classifying that member as unreachable.
+
+The valid unorm compact route also falls back. Its scheduler frontier lacks
+alternative-set coverage by one non-blended survivor. The function subscript
+compact route falls back for the same scheduler-frontier reason. The top-level
+subscript compact route falls back because it lacks a sole homogeneous accept
+frontier. Forest accepts both subscript controls.
+
+The function subscript control uses source SHA-256
+`d288bf6a5b940b282cb1285d60209e4690589374d2ed76e214fc572d993e42f6`.
+It matches locked C on every route with digest
+`688445ba93476a6948684073b044cc8cf3dd13cbf4fbe889681221e12b774737`.
+The top-level control uses source SHA-256
+`fb0d81ee0973f6d1611b7cccea93cfccb267087fb65002d5d6d8a1fe541f639f`.
+It matches locked C on every route with digest
+`55f06b3603d46533fa00b5bdb6b586df5f6999aad99829764c05140bb1335266`.
+Both controls report zero rewrites. They preserve the retired subscript
+member's native election. Compact may decline at a scheduler frontier.
+
+The successful focused Docker artifacts are:
+
+- `/tmp/hlsl-next-artifacts/20260822T235342Z-hlsl-next-blocker-final3` — route and document guard;
+- `/tmp/hlsl-next-artifacts/20260822T235504Z-hlsl-next-document-guard-final2` — final document guard;
+- `/tmp/hlsl-next-artifacts/20260822T234934Z-hlsl-next-registry` — registry receipt;
+- `/tmp/hlsl-next-artifacts/20260822T234940Z-hlsl-next-a0` — A0 manifest receipt;
+- `/tmp/hlsl-next-artifacts/20260822T234948Z-hlsl-next-tracked` — tracked census receipt;
+- `/tmp/hlsl-next-artifacts/20260822T234955Z-hlsl-next-real-corpus` — unavailable corpus receipt.
+
+The receipt remains NO-GO. Keep `dispatch.hlsl` live. Require the native
+producer to emit the locked-C cast and unorm shapes before compatibility.
+Require exact production, compact, forest, incremental, and locked-C parity.
+Keep dispatch.hlsl live until scheduler_action_semantics emits the C field.
+Require the authenticated HLSL corpus before retirement.
+
 The mandatory shape is census before migration. Historical audits already
 found that table or engine fixes can leave old normalizers behind.
 

@@ -209,6 +209,15 @@ for tags and release notes while still in `0.x`.
   three malformed recovery witnesses. The forest route still diverges from
   locked C. See `docs/root-normalization-retirement.md`.
 
+- Record the `dispatch.hlsl` blocker receipt at base
+  `0b4470b0156afb1e3492f7f5f6a618c9e50f7c33`. Keep the arm live. The A0
+  manifest records three HLSL files, three checks, three runs, and zero
+  rewrites. The clean negative-number cast rewrites on production, compact,
+  forest, and incremental routes, but normalized output misses the C `left`
+  field. The malformed cast and unorm witnesses still diverge from locked C.
+  The authenticated HLSL corpus is unavailable. No registry or production
+  code changes are included. See `docs/root-normalization-retirement.md`.
+
 - Reconfirm the DTD locked-C blocker at base
   `30f470f5c2bf18540f7a18b2b22a7e33b88d4e10`. Keep `dispatch.dtd` live. The
   raw route matches the production route by deep digest for all four
