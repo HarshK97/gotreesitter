@@ -297,6 +297,123 @@ change produces the locked-C sibling `ERROR` without a Swift-specific rule.
 Require the 14-byte witness, the 13-byte control, the corpus ratchet, focused
 generic recovery tests, and locked-C parity to pass. Keep issue #576 open.
 
+## C26d Swift issue #576 optional-binding recovery blocker
+
+Receipt base: `11d9aec70eaef0c0d65c3cd14b8f594d64869c7b`.
+
+Evidence was collected on `731f8a9d9440a006b2cc6b56ef5b31c0ff3b5ce7`.
+The probe artifacts use `issue-590` labels. Issue #576 remains the open
+umbrella for this Swift recovery family.
+
+Status: **NO-GO / KEEP ISSUE #576 OPEN**. No production or test change
+survives.
+
+The focused probe uses two witnesses. The first witness has the label
+`issue-590-chunked-minimal`. It has 118 bytes. Its source SHA-256 digest is
+`66a0ffea75dcba15e0fe65f8c1e14221421a888e3f80b3809ba195ce88a5c0ef`.
+Locked C reports a clean `source_file` root over `0..118`. Its tree digest is
+`0cdb8862939d6d21cbb9b6792939381144e980ee5e45ee9dcab97a3e0930e9e7`.
+
+The Go raw, production, compact, incremental-production, and
+incremental-compact routes all report `has_error=true`. Each route reports a
+`source_file` root over `0..118` with digest
+`3a90ba023387b89a692aa8e9c755ee9d54008437486b26e90a77552ffec03c3b`.
+The first error is `/source_file/ERROR[0]` over `0..118`. The nested error is
+`/source_file/ERROR[0]/statements[8]/if_statement[0]/ERROR[5]` over `98..114`.
+
+The Go forest route reports a clean root over `0..118` with digest
+`e44be93f73b5bf5b669aba5dbc9d65e7ac065798e4a33471a70ac91df16c286e`.
+It still differs from locked C at
+`/source_file/class_declaration[0]/class_body[2]/function_declaration[1]/function_body[4]/statements[1]/if_statement[0]/statements[6]/if_statement[0]/call_expression[1]/call_suffix[1]/value_arguments[0]/value_argument[3]/navigation_expression[0]/user_type[0]`.
+Go emits `user_type`. Locked C emits `simple_identifier`.
+
+The second witness has the label `issue-590-chunked-corpus`. It is
+`grammars/testdata/swift_corpus/swift-algorithms_Chunked.swift`. It has 27,814
+bytes. Its source SHA-256 digest is
+`78edea4a5ca6c8bf26b1cdf9c4f40b3f38cca0782cd45ec5ccddd14c02f7d38c`.
+Locked C reports a clean `source_file` root over `0..27814`. Its tree digest
+is `48b7dc83a6cfb41c5a9a631abf91b71b24e5295fb4dc35c9052ede79d984bbf8`.
+
+The Go raw, production, compact, incremental-production, and
+incremental-compact routes all report `has_error=true`. Each route reports a
+`source_file` root over `0..27814` with digest
+`27f732bd09e3676f54b637f1dfd2fbb87762f2b447e3a87d352e513df47c9bfc`.
+The corpus forest route declines with `forest route declined`. It produces no
+forest digest. The Go corpus result therefore does not establish C parity.
+
+The runtime records no concrete recovery action for either witness. It
+reports `action=false` with zero state, byte, token, type, and result fields.
+It also reports `normalize=0/0`, `rewritten=0`, and `retry=0`.
+
+Fresh production and compact routes report one `swift_legacy` entry for each
+witness. Raw routes report zero. The minimal forest route reports zero. The
+incremental logs omit this field. Do not infer a complete legacy-pass total.
+
+Both incremental-production and incremental-compact routes report
+`external_scanner_unsupported`. They report zero reused subtrees, zero reused
+bytes, and `OldTreeReuseRoute=false`. They do not establish incremental reuse.
+
+The focused condition-family controls passed fresh production, incremental
+production, fresh compact, and incremental compact routes. The controls are
+`issue-590-condition-list` with digest
+`f9b26a3b9b7a881e53dbe70a512733c98b6c77f86ab7550a04924b370035df63` and
+`issue-591-else-if-binding` with digest
+`018cecb4cb76ff3c7bbecb40546c1832fdfcaa644debd1c489c634a762b91c84`.
+These controls do not establish parity for the optional-binding witness.
+
+The Swift detector boundaries are narrow:
+
+- `swiftIfStatementSwallowedThenBlockKeywordEnd` requires a first child of
+  type `if`. It accepts only an `ERROR` child whose first child is `else`.
+- `swiftFindElseIfKeywordEnd` skips trivia. It accepts only word-boundaried
+  `else` followed by `if`.
+- `swiftFindOptionalBindingRHSEnd` stops at the first depth-zero comma. It
+  ignores commas inside parentheses or brackets, comments, and strings.
+- `swiftFindConditionBodyBrace` finds the first depth-zero `{`. It skips
+  comments and strings and rejects a depth-zero `}` or `;`.
+
+Direct no-cache Canopy queries traced this ownership path:
+
+- `normalizeResultCompatibility` in `parser_result_compat.go:28` calls
+  `applyResultCompatibility` at line 41.
+- `applyResultCompatibility` calls `runLanguageResultCompatibility` at line
+  103.
+- `runLanguageResultCompatibility` calls `dispatcherArmSubpassCensus` at line
+  408 for `dispatch.swift`.
+- The Swift arm calls `normalizeSwiftCompatibilityWithCensus` at
+  `parser_result_swift.go:22`.
+- That path calls `normalizeSwiftRecoveredTrailingClosureConditions` at
+  `parser_result_swift_conditions.go:40`.
+- The condition helper calls `swiftCollectConditionParenInserts` at line 114,
+  then `parseSwiftCleanFullSourceRecovery` at `parser_result_swift.go:62`.
+- Recovery calls `parseForRecoveryWithMode` at `parser_api.go:568`, then
+  `Parse` at line 1064.
+
+No safe generic parser-core correction remains. The generic swallowed-error
+hook returns unchanged when the returned root has an error. The compact error
+region hook fails closed for deeper resume, missing insertion, or end of file.
+Neither hook can synthesize the missing Swift structure.
+
+The successful Docker runs used one Swift workload at a time, one CPU,
+`GOMAXPROCS=1`, `-p=1`, and test parallelism one. They completed without an
+out-of-memory failure or timeout:
+
+- Probe: `/tmp/gts-c26d-artifacts/20260823T043130Z-swift-590-probe-v2`.
+- Corpus ratchet: `/tmp/gts-c26d-artifacts/20260823T043210Z-swift-chunked-ratchet`.
+- Condition controls: `/tmp/gts-c26d-artifacts/20260823T042421Z-swift-condition-family`.
+
+The corpus manifest test and `TestSwiftCorpusProbeMatchesLegacy` passed. The
+legacy comparison proves Go probe and legacy equality only. It does not prove
+Go and locked-C parity.
+
+Reopen implementation work after a grammar, table, or generic parser change.
+Require Go and locked C equality on all six minimal routes. Run raw,
+production, compact, forest, incremental-production, and incremental-compact
+routes. Then run the chunked corpus controls on every available route. Require
+the corpus forest route to produce a certified comparison instead of
+declining. Require the condition-family controls to pass. Keep issue #576 open
+until these controls pass.
+
 ## Current bounded result
 
 The bounded matrix completed with no silent divergence.

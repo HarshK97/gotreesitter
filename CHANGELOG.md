@@ -151,6 +151,15 @@ for tags and release notes while still in `0.x`.
 
 ### Correctness
 
+- Record the C26d Swift optional-binding recovery blocker at main commit
+  `11d9aec70eaef0c0d65c3cd14b8f594d64869c7b`. The `issue-590` artifacts show
+  a 118-byte witness and a 27,814-byte corpus witness that differ from locked
+  C. Forest reports a `user_type` versus `simple_identifier` mismatch for the
+  minimal witness, and the corpus forest route declines. Incremental routes
+  report `external_scanner_unsupported` with zero reuse. No production or test
+  change survives. Keep issue #576 open. See
+  `docs/compact-route-real-corpus-matrix.md` for digests and controls.
+
 - Record the C26c Swift masking-shift blocker under open issue #576.
   The main commit is `77ec4288a115e4ddb1969d2945e8507dad92f1af`.
   This item originated as closed issue #574. The canonical 14-byte
