@@ -9,6 +9,16 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Recorded the P25d issue #454 C# fresh-parse performance blocker at base
+  commit `731f8a9d9440a006b2cc6b56ef5b31c0ff3b5ce7`. The synthetic source
+  sweep used requested sizes from 2 KiB through 32 KiB. It has no direct
+  locked-C parity proof and does not measure incremental parsing because the
+  C# scanner does not support incremental reuse. Keep issue #454 live. Ship
+  no candidate code. Three failed construction artifacts are quarantined;
+  corrected replacements passed. See `docs/perf-attribution.md` for exact
+  source hashes, controls, resource results, artifacts, and reopening
+  conditions.
+
 - Recorded the P25c issue #454 Objective-C transient-delete performance
   blocker at source commit `838aba943038248529429a572c4d6d98359bd87e`.
   The eight-size sweep found no discrete threshold between 512 KiB and
