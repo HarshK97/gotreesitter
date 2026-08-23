@@ -139,9 +139,16 @@ for tags and release notes while still in `0.x`.
   `/tmp/gts-d6c-nogo-receipt-20260822/harness_out/docker/20260822T202427Z-d6c-grammargen-lr-fallback`.
 
 - Record the Swift #576 unsafe minimal and corpus divergences as open. Keep
-  the focused locked-C receipt without changing parser behavior. See the
+  the focused locked-C receipt without changing parser behavior. The locked
+  grammar uses commit `41d6e5fe811ec94229ee71771174a8cce558dfee`, version
+  `0.7.2`. Current upstream main uses commit
+  `172ada1cc4117d0260d9340680b4134adba2bc2c`, version `0.7.3`. Regeneration
+  changes the blob size and hash, but it keeps the minimal Go digest and the
+  first `bar` mismatch. The corpus target region remains an `ERROR` span from
+  `6828` to `6984`, with `MutableSpan` at `6828..6839`. No parser or grammar
+  code ships. Keep issue #576 open. See the
   [Swift compact-parser blocker receipt](docs/swift-576-compact-correctness-blocker.md)
-  for the first token and recovery divergence and the D6 non-implication.
+  for the full provenance probe and reopening condition.
 
 ### Removed
 
