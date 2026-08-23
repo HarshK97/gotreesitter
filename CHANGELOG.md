@@ -141,6 +141,19 @@ for tags and release notes while still in `0.x`.
 
 ### Correctness
 
+- Record the C26c Swift masking-shift blocker under open issue #576.
+  The main commit is `77ec4288a115e4ddb1969d2945e8507dad92f1af`.
+  This item originated as closed issue #574. The canonical 14-byte
+  newline witness has Go and locked-C tree digests
+  `0a080f094102d27305084a234d22396a1c4b64cad5be9ab55a9969249f2a67aa` and
+  `14b99aace77ea88a972e0d1bbefcdef9f226bb764aeba12bb41c2cf1509610e9`.
+  Go absorbs `7` into the infix expression. Locked C emits a sibling error.
+  The known-failing `stdlib_ASCII.swift` ratchet passes; it does not establish
+  Go/C parity. The audit found no safe grammar-agnostic fix.
+  No production or test change survives. Keep issue #576 open. See
+  `docs/compact-route-real-corpus-matrix.md` for the control, traces, and
+  reopening condition.
+
 - Record the C26b Swift issue #576 conformance-list recovery blocker at main
   commit `838aba943038248529429a572c4d6d98359bd87e`. The 66-byte
   `associatedtype` witness still differs from locked C. Go emits
