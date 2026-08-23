@@ -9,6 +9,20 @@ for tags and release notes while still in `0.x`.
 
 ### Correctness
 
+- Recorded the unreceipted `dispatch.wolfram` blocker at base
+  `f8b9d718ee19f65598e274035f5481a899ab2b72`. The A0 manifest records three
+  Wolfram files, six checks, six runs, 77 visited nodes, zero rewrites, and
+  three error roots. The receipt covers raw, production, compact, forest,
+  incremental, and locked-C routes. It pins the grammar lock, embedded blob,
+  C artifact, runtime, binding, compiler, grammar repository, source digests,
+  route digests, divergences, dispatch counts, compact deltas, and external
+  scanner identity. The incremental profile records
+  `external_scanner_unsupported` with zero reuse. Other routes log scanner
+  identity without inventing reuse fields. The full authenticated corpus is
+  absent. Keep the arm live.
+  No registry or production code changes are included. See
+  `docs/root-normalization-retirement.md`.
+
 - Added authenticated generated-SQL scanner identity to the grammargen C
   parity route. The route now reloads the generated blob through `LoadLanguage`
   before scanner adaptation. The scanner binds checkpoints to exact generated

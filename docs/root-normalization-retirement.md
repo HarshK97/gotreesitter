@@ -2999,6 +2999,110 @@ Reopen retirement only after all conditions pass:
 The receipt remains NO-GO. The documentation does not authenticate itself.
 The route test supplies the independent evidence.
 
+## 2026-08-24 Wolfram blocker receipt
+
+Status: `NO-GO`. Keep `dispatch.wolfram` live.
+
+Base commit: `f8b9d718ee19f65598e274035f5481a899ab2b72`.
+
+Wolfram is the next unreceipted live arm after the accepted Dart, Cooklang,
+Go, Doxygen, and Solidity receipts. Corn already has blocker receipt PR #795.
+Wolfram has one live dispatcher arm and three authenticated A0 fixtures. No
+focused locked-C route receipt existed for this arm.
+
+The A0 manifest records three files, six checks, six runs, 77 visited nodes,
+zero rewrites, three error roots, and zero parse errors. The witnesses are:
+
+- `large__EvaluationUtilities.wl`;
+- `medium__OutputHandlingUtilities.wl`;
+- `small__PacletInfo.m`.
+
+The tracked census excludes Wolfram. The authenticated real-corpus lock and
+directory are absent. Wolfram uses an external scanner. Included-range proof
+does not apply to this grammar.
+
+The receipt runs raw, production with admission forced off, compact, forest,
+incremental, and locked-C routes. It rejects empty or stale source, manifest,
+lock, blob, and C artifact evidence. It does not read this document. Each
+witness logs the pinned identity, source digest, route digest, first
+divergence, dispatch count, and route outcome.
+
+The pinned identity is:
+
+- grammar lock SHA-256:
+  `9ddb6324afd014f6ecdd1cae3dd1ba238f1e62ce03d126e6d8b267ce34d72ecb`;
+- embedded and file blob SHA-256:
+  `049223fe9382f88405b2758c21811af85cb0a7d771de71970817198ff703c169`;
+- grammar repository and commit:
+  `https://github.com/bostick/tree-sitter-wolfram` at
+  `63ebdac6f040d9082d3d8fa88be96ce24549adc5`;
+- C grammar artifact SHA-256:
+  `3dce4fc1569d56ec22a3f4beee18d1268d643916d635281764743275ce8bc463`;
+- C contract: `tree-sitter-c-v1`, static runtime linkage, and shared grammar
+  linkage;
+- binding: `github.com/tree-sitter/go-tree-sitter` version `v0.25.0`, commit
+  `adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3`;
+- runtime: version `0.25.1`, commit
+  `f5afe475deb7c0bae6407fb776c76824f717bb61`;
+- compiler: `/usr/bin/cc`, `cc (Debian 12.2.0-14+deb12u1) 12.2.0`, with
+  `-std=c11 -fPIC -O2 -I .`.
+
+The A0 source digests are:
+
+- `EvaluationUtilities.wl`:
+  `e03c8588214ce3a0a5ba48d1f1335276c1826356052c33df1f3184a6d6303a53`;
+- `OutputHandlingUtilities.wl`:
+  `45a6287c3c8ad5f4f37298d4915d1bfb29e6e91ee0eccde1c842efb7c90e3dec`;
+- `PacletInfo.m`:
+  `55be9b6143e5dd68ddb433bb9c95c0388a505b65c452fb6036e064d537e3f602`.
+
+The route digests are:
+
+| Witness | Locked C | Raw | Production, compact, incremental |
+| --- | --- | --- | --- |
+| `EvaluationUtilities.wl` | `d5ed73a998ea3abb1778b3882b31824db86b1b18428e00176b3cd8cd72e685e1` | `fe5f88dd4b103ced493354d2bf9161964eb5d59333a633178f2629b5cf293af1` | `fe5f88dd4b103ced493354d2bf9161964eb5d59333a633178f2629b5cf293af1` |
+| `OutputHandlingUtilities.wl` | `5cc3a3615d9f5e1113e43ebc10ede08cefefc293bce9fb6306621cd0c1b106c1` | `756d9dea72eca24759de158fa88d5779c1b8cf02d6b908327468ff9b3e443d56` | `756d9dea72eca24759de158fa88d5779c1b8cf02d6b908327468ff9b3e443d56` |
+| `PacletInfo.m` | `8e9966945e16f3a6fa173cc41ed6a171821f4a196bb4198057786ba4edbd464d` | `a800797037893e3541b1265a179b09ab8795c26c9b174bbee7fe23d9c0814b6d` | `a800797037893e3541b1265a179b09ab8795c26c9b174bbee7fe23d9c0814b6d` |
+| `a + b` | `f55efd4d7590d69c7a0cf938c4276db5a91c67fe864951e58fd6e222bb9dc3e8` | `f55efd4d7590d69c7a0cf938c4276db5a91c67fe864951e58fd6e222bb9dc3e8` | `f55efd4d7590d69c7a0cf938c4276db5a91c67fe864951e58fd6e222bb9dc3e8` |
+| `a` | `d417ec327539473cae7cc3baffce13f6391e31563ee60835f2f289baf5c1dcba` | `d417ec327539473cae7cc3baffce13f6391e31563ee60835f2f289baf5c1dcba` | `d417ec327539473cae7cc3baffce13f6391e31563ee60835f2f289baf5c1dcba` |
+| `a +` | `0239eda45e2781be67dce8d9a1cf61168e8b41e46c67f5d2be17795830b9c99a` | `647d0ecc7542b5eeab97d968c582b031258772a0d694f654a2662a88bdf96c3e` | `647d0ecc7542b5eeab97d968c582b031258772a0d694f654a2662a88bdf96c3e` |
+
+The three A0 routes produce error roots and differ from locked C at the
+`source_file` root. Production dispatch counts are `2/2/16/0`, `2/2/16/0`,
+and `2/2/45/0`. Compact falls back with one fallback delta for each file.
+Forest declines. Incremental reuse is unsupported because the external
+scanner reports `external_scanner_unsupported`, with zero reused subtrees and
+bytes. Raw dispatch is `none`; production, compact, and incremental dispatch
+counts match for each A0 file.
+
+The split-infix control (`a + b`) and plain-symbol control (`a`) match locked
+C on all accepted routes. Compact routes each record one routed delta. Forest
+accepts both controls. The malformed control (`a +`) differs at the
+`/source_file` child count and records one compact fallback. Every route pins
+its digest, divergence, and dispatch result. The language reports an external
+scanner without the incremental-reuse interface. The incremental route pins
+the unsupported reason and zero reuse. Other routes log the scanner identity
+and interface absence; they do not expose an incremental reuse profile. The
+accepted split-infix forest and incremental counts are `1/1/5/0`; the
+accepted plain-symbol counts are `1/1/2/0`. Compact dispatch is `none` for
+both accepted controls.
+
+Keep `dispatch.wolfram` live. Reopen retirement only after the producer closes
+the A0 error-root divergences, proves scanner-aware incremental reuse, supplies
+an authenticated real corpus, and repeats all six route receipts.
+
+The final Docker artifacts are:
+
+- route receipt: `/tmp/gts-n31p-20260824/harness_out/docker/20260823T181352Z-n31p-wolfram-final-routes-v3`;
+  `container.log` SHA-256
+  `e3acfcc25a6563d978938bfa88682545f9147cc25519a6a1453728d7a159e2c2`;
+- focused normalizer unit: `/tmp/gts-n31p-20260824/harness_out/docker/20260823T181403Z-n31p-wolfram-unit-v3`;
+  `container.log` SHA-256
+  `f8b701422f118969189208595b6ee29cf9373d317778e29751793cafc27f1ab4`;
+- dispatcher transcript unit: `/tmp/gts-n31p-20260824/harness_out/docker/20260823T181411Z-n31p-wolfram-dispatch-unit-v3`;
+  `container.log` SHA-256
+  `f8b701422f118969189208595b6ee29cf9373d317778e29751793cafc27f1ab4`.
+
 ## Progress ledger
 
 | Ratchet | Status | Before | After | Evidence |
