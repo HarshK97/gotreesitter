@@ -10,6 +10,131 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
+## 2026-08-22 P24h transient-parent dispatch predicate receipt
+
+Status: **REJECT / NO-GO**. Ship no candidate code.
+
+This receipt is based on main commit
+`30f470f5c2bf18540f7a18b2b22a7e33b88d4e10`.
+
+P24h tested one bounded predicate in `applyReduceActionDispatch`. The
+candidate changed exactly one file:
+
+- `parser_reduce.go`
+
+The candidate diff SHA-256 is
+`2a57aef7c0eac33b802439506ac01b92e29d3286ee5a78fc482f26d4b7630c8c`.
+
+### P24h profiler attribution and proof boundary
+
+The P19 attribution packet is at `/tmp/gts-p19-evidence`. It used one central
+processing unit (CPU), `GOMAXPROCS=1`, and stable benchmark settings. The warm
+profiles place `applyReduceActionDispatch` at 20.00% to 28.64% cumulative CPU
+across the early-newline, same-line, and token scenarios.
+
+The candidate evaluates the transient-parent predicate once per dispatch. The
+old code evaluated the same predicate at both dispatch sites. Production code
+sets `p.reduceScratch.transientParents` once at parse setup and does not replace
+the pointer during this dispatch. The candidate therefore selects the same
+transient-parent or ordinary reduction path. It changes no reduction inputs,
+children, fields, parser state, or tree output.
+
+### P24h focused correctness and parity evidence
+
+The focused Docker tests passed:
+
+- `/tmp/gotreesitter-p24h-investigation.xb2SWG/harness_out/docker/20260822T231855Z`
+
+The tests covered transient-parent reduction state and temporary entry reuse.
+The run exited zero without an out-of-memory event or timeout.
+
+The candidate Go real-corpus run reported 25 of 25 no-error cases, 24 of 25
+S-expression matches, and 24 of 25 deep matches. It reported the known Go
+range divergence. Its artifact is
+`/tmp/gotreesitter-p24h-investigation.xb2SWG/harness_out/docker/20260822T231910Z-diag-go_lang`.
+
+The candidate Go-to-C run reported 20 of 20 no-error cases, 7 of 20 tree
+matches, and 15 known divergences. Its artifact is
+`/tmp/gotreesitter-p24h-investigation.xb2SWG/harness_out/grammargen_cparity/20260822_161943/container.log`.
+These counts match the baseline run from the same base commit.
+
+### P24h randomized publication
+
+The publication is at `/tmp/gts-p24h-publication.X0MEre`.
+
+It used 20 shuffle seeds and 40 isolated processes. Odd seeds ran the baseline
+first. Even seeds ran the candidate first. Each process used:
+
+- `GOMAXPROCS=1`
+- `-count=1`
+- `-benchtime=750ms`
+- `-benchmem`
+- one process for each seed and variant
+
+The primary trio was:
+
+- `BenchmarkGoParseFullDFA`
+- `BenchmarkGoParseIncrementalSingleByteEditDFA`
+- `BenchmarkGoParseIncrementalNoEditDFA`
+
+The runner metadata is at
+`/tmp/gts-p24h-publication.X0MEre/runner-metadata.txt`. All 40 processes
+exited zero. The logs contain no failure, out-of-memory, timeout, panic, or
+contamination marker.
+
+For each seed, compute the geometric mean (geomean) across the three lanes.
+For each order, take the geomean of the ten baseline seed geomeans and the ten
+candidate seed geomeans. Report the candidate-to-baseline ratio minus one.
+
+The paired analysis uses equal seeds. It uses the candidate-minus-baseline
+relative change for each pair and a Student-t 95% interval over 20 pairs.
+
+### P24h performance result
+
+The benchstat result is at
+`/tmp/gts-p24h-publication.X0MEre/benchstat.txt`.
+
+| Benchmark | Baseline | Candidate | Result | p-value |
+|---|---:|---:|---:|---:|
+| Full parse | 7.036ms | 7.061ms | +0.36% | 0.620 |
+| Single-byte edit | 768.5ns | 771.2ns | +0.35% | 0.172 |
+| No edit | 2.537ns | 2.534ns | −0.12% | 0.909 |
+| Geomean | 2.394µs | 2.399µs | +0.20% | — |
+
+The paired intervals are in
+`/tmp/gts-p24h-publication.X0MEre/paired-stats.txt`.
+
+| Benchmark | Paired mean | 95% paired interval |
+|---|---:|---:|
+| Full parse | +0.124143% | [−0.532215%, +0.780502%] |
+| Single-byte edit | +0.275082% | [−0.286294%, +0.836458%] |
+| No edit | +0.122733% | [−0.406059%, +0.651525%] |
+| Geomean | +0.170048% | [−0.231804%, +0.571901%] |
+
+The order geomean formula reports +0.214736% for baseline-first and +0.118408%
+for candidate-first. Both order results include zero in their paired
+intervals.
+
+Raw FullDFA bytes per operation (B/op) averaged 54,885.9 for the baseline and
+55,190.4 for the candidate. The candidate-to-baseline ratio was +0.554696%.
+Benchstat rounded both medians to 53.67 KiB. Both variants used four
+allocations per operation (allocs/op) in every sample. Both incremental lanes
+used zero B/op and zero allocs/op.
+
+An auxiliary exact-setting run measured maximum resident set size (RSS) at
+602,400 KB for the baseline and 601,440 KB for the candidate. The run used one
+process for each variant. It does not replace the 40-process campaign.
+
+The candidate has no significant timing improvement. Its raw FullDFA byte
+mean increased. The accepted result is **REJECT / NO-GO**. No code shipped.
+
+### P24h reopening condition
+
+Reopen P24h only with a different profiler-backed target. The new candidate
+must show a clear primary-trio opportunity and improve a measured target.
+Require focused correctness, Go and C parity, the same 20-seed campaign, and
+per-process RSS before publication.
+
 ## 2026-08-22 P24g conditional recovery-scratch reset receipt
 
 Status: **REJECT / NO-GO**. Ship no candidate code.
