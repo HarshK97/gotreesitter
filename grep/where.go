@@ -61,11 +61,41 @@ func CompileWhere(where string) (WhereFilter, error) {
 	}, nil
 }
 
-// splitClauses splits a where string on semicolons and newlines.
+// splitClauses splits a where string on semicolons and newlines that occur
+// outside of single- or double-quoted arguments. A quote preceded by an odd
+// run of backslashes is escaped and does not terminate the argument; an even
+// run does not escape it.
 func splitClauses(s string) []string {
-	// Replace newlines with semicolons, then split.
-	s = strings.ReplaceAll(s, "\n", ";")
-	return strings.Split(s, ";")
+	var clauses []string
+	var cur strings.Builder
+	var quote byte
+	var bs int
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case quote != 0:
+			cur.WriteByte(c)
+			if c == '\\' {
+				bs++
+				continue
+			}
+			if c == quote && bs%2 == 0 {
+				quote = 0
+			}
+			bs = 0
+		case c == '"' || c == '\'':
+			quote = c
+			bs = 0
+			cur.WriteByte(c)
+		case c == ';' || c == '\n':
+			clauses = append(clauses, cur.String())
+			cur.Reset()
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	clauses = append(clauses, cur.String())
+	return clauses
 }
 
 // compileClause compiles a single where constraint.
@@ -169,9 +199,19 @@ func parseTwoArgFunc(clause, funcName string) (capName, arg string, err error) {
 // stripQuotes removes surrounding double quotes or single quotes from s.
 func stripQuotes(s string) string {
 	if len(s) >= 2 {
-		if (s[0] == '"' && s[len(s)-1] == '"') ||
-			(s[0] == '\'' && s[len(s)-1] == '\'') {
-			return s[1 : len(s)-1]
+		q := s[0]
+		if (q == '"' || q == '\'') && s[len(s)-1] == q {
+			s = s[1 : len(s)-1]
+			var out strings.Builder
+			for i := 0; i < len(s); i++ {
+				if s[i] == '\\' && i+1 < len(s) && s[i+1] == q {
+					out.WriteByte(q)
+					i++
+					continue
+				}
+				out.WriteByte(s[i])
+			}
+			return out.String()
 		}
 	}
 	return s

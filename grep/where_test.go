@@ -183,6 +183,60 @@ func TestCompileWhere_MultipleClauses(t *testing.T) {
 	}
 }
 
+func TestCompileWhere_QuotedSeparators(t *testing.T) {
+	match := func(where, text string) bool {
+		filter, err := CompileWhere(where)
+		if err != nil {
+			t.Fatalf("unexpected error for %q: %v", where, err)
+		}
+		r := &Result{Captures: map[string]Capture{
+			"NAME": {Name: "NAME", Text: []byte(text)},
+		}}
+		return filter(r, nil, nil)
+	}
+
+	// Quoted separators stay within one clause.
+	if !match(`contains($NAME, "a;b")`, "a;b") {
+		t.Error("double-quoted semicolon should stay in one clause")
+	}
+	if !match(`contains($NAME, 'a;b')`, "a;b") {
+		t.Error("single-quoted semicolon should stay in one clause")
+	}
+	if !match("contains($NAME, \"a\nb\")", "a\nb") {
+		t.Error("double-quoted newline should stay in one clause")
+	}
+	if !match("contains($NAME, 'a\nb')", "a\nb") {
+		t.Error("single-quoted newline should stay in one clause")
+	}
+
+	// Backslash-escaped matching quote, separator later in same argument.
+	if !match(`contains($NAME, "a\";b")`, `a";b`) {
+		t.Error("escaped double quote should not close the argument")
+	}
+	if !match(`contains($NAME, 'a\';b')`, `a';b`) {
+		t.Error("escaped single quote should not close the argument")
+	}
+	if !match(`contains($NAME, "\d+")`, `\d+`) {
+		t.Error("unrelated regex-style backslashes should be preserved")
+	}
+
+	// An even run of backslashes does not escape the following quote.
+	if !match(`contains($NAME, "a\\b"); contains($NAME, "c")`, `a\\bc`) {
+		t.Error("even backslash run should not falsely escape the quote")
+	}
+
+	// Ordinary separators still split into ANDed clauses.
+	if !match(`contains($NAME, "f"); not contains($NAME, "t")`, "foo") {
+		t.Error("semicolon should split clauses")
+	}
+	if !match("contains($NAME, \"f\")\nnot contains($NAME, \"t\")", "foo") {
+		t.Error("newline should split clauses")
+	}
+	if match(`contains($NAME, "f"); not contains($NAME, "t")`, "tofu") {
+		t.Error("clauses should be ANDed")
+	}
+}
+
 func TestCompileWhere_MissingCapture(t *testing.T) {
 	filter, err := CompileWhere(`contains($MISSING, "hello")`)
 	if err != nil {
