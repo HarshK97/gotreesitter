@@ -56,7 +56,7 @@ P25ao benchmark outputs are:
 - Swift base: `/tmp/gts-p25ao-base-20260824/p25ao-swift-base.txt`, SHA-256 `aa52fba3be698259b3cd7469611d86cb6049968ce263a8369efff0a54e707a9d`.
 - Swift candidate: `/tmp/p25ao-rejected-artifacts/p25ao-swift-candidate.txt` (moved after cleanup), SHA-256 `569f974853d5febc7708690398313606883f7d451faac631c3c0d16c4d8b3fc6`.
 - JavaScript base: `/tmp/gts-p25ao-base-20260824/p25ao-js-base.txt`, SHA-256 `47e82bc438df89ab05d15e512e43c8166a4f3b1a305cd22064ca39e5b7bc1579`.
-- JavaScript candidate: `/tmp/p25ao-rejected-artifacts/p25ao-js-candidate.txt` (moved after cleanup), SHA-256 `daf3c4d371683a85484eb8f99c56b6d62857652e52e47cf4efb95ec225664f6`.
+- JavaScript candidate: `/tmp/p25ao-rejected-artifacts/p25ao-js-candidate.txt` (moved after cleanup), SHA-256 `daf3c4d371683a85484eb8f99c56b6d62857652e52e47cf4efb95ec225664f6e`.
 - Primary trio base: `/tmp/gts-p25ao-base-20260824/p25ao-primary-base.txt`, SHA-256 `8c3f9ce3e30843da0aad237d7aa168e6a9b26d9cac3ef5af5728e241f884d2a7`.
 - Primary trio candidate: `/tmp/p25ao-rejected-artifacts/p25ao-primary-candidate.txt` (moved after cleanup), SHA-256 `7fdf1d96b36dab18a2e27811a0994d3a7977dfaf1e55b4c0d9f3d443583bf7d0`.
 - Recovery base: `/tmp/gts-p25ao-base-20260824/p25ao-recovery-base.txt`, SHA-256 `d3ae96bf7ff110e0dcd071c1cb5f5dc6ff5f390ab45f9593da9b63c210d1fc74`.
