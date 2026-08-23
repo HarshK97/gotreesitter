@@ -142,6 +142,21 @@ for tags and release notes while still in `0.x`.
   No code ships. Keep issue #454 open. See `docs/perf-attribution.md` for
   artifacts and the reopening condition.
 
+- Recorded the P25ac-P25ae issue #454 incremental arena retention screen at
+  P25ac evidence base `8c80a46e450d906fc9ce1665c189497b02483a3e`, P25ad-P25ae
+  evidence base `af8a9a5bdb5bd1ac03762bc9a4f1a89f42463682`, and publication
+  base `6a22fcf82c4d84ab613c68084ad356eb52bb4eac`. P25ac used a same-length
+  edit that took the token-invariant leaf fast path, so it recorded zero
+  incremental arena acquisition and zero new nodes. P25ad traced that path
+  and selected the authenticated Go `recovery_deletion` edit. P25ae's 2 MiB
+  retention candidate improved the pooled lane, but the drained control
+  improved bytes per operation by only 0.61% and increased maximum resident
+  set size (RSS) by 7.39%. Keep issue #454 open. The candidate was fully
+  reverted. Ship no
+  production or test change. Reopen only when the drained lane meets the
+  allocation target and the RSS limit. See `docs/perf-attribution.md` for
+  artifacts, counters, limits, and the superseding receipt.
+
 - Recorded the P25k-P25w performance blocker at publication base
   `3d6cd2628f7a42c348f51dce0a0ed9b92b183c6a`. P25k ranked the remaining
   source-owned full-parse costs but found no safe duplicate operation.
