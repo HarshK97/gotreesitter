@@ -112,6 +112,25 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Recorded the P25x-P25ab performance blocker at publication base
+  `8c80a46e450d906fc9ce1665c189497b02483a3e`. P25x used evidence base
+  `3d6cd2628f7a42c348f51dce0a0ed9b92b183c6a`. P25y and P25z used evidence
+  base `675697a1144fad306489c5142aedaae0825545d9`. P25aa and P25ab used
+  evidence base `2c533f5c19f5f7ab9b586cd8454f0cdc4ece014b`. P25x's
+  condense guard passed focused correctness checks but lacked a proven generic
+  invariant. P25y regressed the primary trio by geometric means of `+7.01%`,
+  `+3.79%`, and `+2.23%`; recovery rose `+2.41%`. P25z found no safe
+  reduction shortcut. P25aa's field-scan candidate rose `+1.70%` on the
+  six-seed recovery screen. P25ab found material field-path execution, but no
+  safe optimization. Node-arena growth used `74.98%` of allocated bytes.
+  The retry bypass remains correctness-invalid. No 20-seed run was warranted.
+  Earlier P25y figures `+1.40%`, `+2.95%`, `+0.44%`, and `+2.62%` are
+  unsupported by this artifact set. Earlier P25aa figures `+1.00%` and
+  `+0.86%` are also unsupported. The authenticated raw files supersede both
+  sets of figures.
+  No code ships. Keep issue #454 open. See `docs/perf-attribution.md` for
+  artifacts and the reopening condition.
+
 - Recorded the P25k-P25w performance blocker at publication base
   `3d6cd2628f7a42c348f51dce0a0ed9b92b183c6a`. P25k ranked the remaining
   source-owned full-parse costs but found no safe duplicate operation.
