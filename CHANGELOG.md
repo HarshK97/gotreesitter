@@ -7,6 +7,21 @@ for tags and release notes while still in `0.x`.
 
 ## [Unreleased]
 
+### Performance
+
+- Recorded P25at at publication base `b65a9c235915edc3198851cf07b0257e3caed6d6`.
+  Measurements used `3c2a2106102769bab891047174dbcfec15045e74`; relevant
+  source files are unchanged between these bases.
+  `nodeArena.ensureNodeCapacity` ran twice for authenticated recovery.
+  The exact-fit candidate improved recovery bytes per operation (B/op) by
+  `9.39%`, but increased allocations by `4.92%`. Primary full parse time
+  increased by `+7.95%`.
+  Primary full parse B/op increased by `+7.88%`. Primary edit time increased
+  by `+12.47%`.
+  The candidate is **NO-GO / REVERTED**. No 20-seed or maximum resident set
+  size (RSS) run was justified.
+  See `docs/perf-attribution.md` for exact identities, commands, and artifacts.
+
 ### Correctness
 
 - Recorded the next unreceipted `dispatch.templ` blocker at base
