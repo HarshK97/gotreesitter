@@ -19,6 +19,19 @@ for tags and release notes while still in `0.x`.
   the C recovery or token-source gaps. Ship no parser, registry, or test
   change. See `docs/root-normalization-retirement.md` for identities,
   artifacts, exclusions, and reopening conditions.
+- Recorded the N31f Authzed dispatcher blocker at evidence base
+  `ab2010d74da5330d64dbddb0d9c58969da766d6d` and publication base
+  `5d39d9658f5071c5c0f476eaadc6ae067e6c77e1`. Keep `dispatch.authzed` live.
+  A0 lists three Authzed files, three checked files, three run files, and
+  18 recorded rewrites. The refreshed route probe reports 17 rewrites and a
+  four-node receipt drift. The probe covers raw, production, compact, forest,
+  incremental, and locked C routes. It includes clean controls and malformed
+  recovery witnesses. The authenticated corpus and its source lock are
+  unavailable. The focused guard pins each source and C digest, route mode,
+  divergence path and category, rewrite count, and reuse state. No safe shared
+  producer invariant was identified. Ship no parser or registry change. See
+  `docs/root-normalization-retirement.md` for the route receipt, artifacts,
+  and reopening condition.
 
 - Recorded the AWK dispatcher blocker at main commit
   `5648911ecf509df8ec870a1214917d9e95cf54f1`. Keep `dispatch.awk` live.

@@ -1770,6 +1770,237 @@ count over a three-file corpus is a lead, not proof. Only a native-parse
 regression test — run after removing the candidate code, not before — can
 confirm dead code.
 
+## 2026-08-24 Authzed dispatcher blocker receipt
+
+Status: NO-GO. Keep `dispatch.authzed` live.
+
+A0 means the initial dispatcher census. This receipt uses evidence base
+`ab2010d74da5330d64dbddb0d9c58969da766d6d`; its publication base is
+`5d39d9658f5071c5c0f476eaadc6ae067e6c77e1`.
+
+The registry has 88 entries, 32 live entries, and 56 retired entries. The
+live denominator has 31 dispatcher arms. The Authzed arm calls
+`normalizeAuthzedCompatibility` in `parser_result_authzed.go`.
+
+The registry assigns this arm to `scheduler_action_semantics`. It lists
+`cgo_harness/parity_cgo_test.go` as its witness. It requires exact native
+output for every registered witness and every production, compact, forest,
+incremental, and C-oracle route.
+
+### Ownership and producer reachability
+
+Canopy traced this call chain:
+
+```text
+Parse or parseWithTokenSource
+  -> normalizeReturnedTreeForParse
+  -> normalizeReturnedTree
+  -> normalizeResultCompatibility
+  -> applyResultCompatibility
+  -> runLanguageResultCompatibility
+  -> normalizeAuthzedCompatibility
+```
+
+The incremental chain calls the same compatibility tail after changed-tree
+parsing. Compact and forest routes enter through result finalization before
+the same compatibility tail. Canopy found no shared producer invariant that
+explains the Authzed mismatches below.
+
+The dispatcher invokes these ten direct passes:
+
+```text
+normalizeAuthzedCleanRootShape
+normalizeAuthzedObjectCaveatRecovery
+normalizeAuthzedUnclosedCaveatRecovery
+normalizeAuthzedStrayCaveatTailRecovery
+normalizeAuthzedSingleQuotedCaveatRecovery
+normalizeAuthzedSingleQuotedCaveatBlockRecovery
+normalizeAuthzedUnsupportedUseDirective
+normalizeAuthzedMalformedDefinitionRoot
+normalizeAuthzedMissingPermissionExpression
+normalizeAuthzedWholeRootErrorTrivia
+```
+
+Canopy found these helper members in the same file:
+
+```text
+authzedDefinitionFromFlatRootChildren
+authzedRebuildSingleQuotedCaveatBlock
+authzedNormalizeDefinitionInvalidRelation
+authzedPartialRelationBeforeError
+authzedRelationFieldIDs
+authzedNormalizeMalformedDefinitionErrorChild
+authzedNormalizeMalformedDefinitionErrorChildChildren
+authzedCollapseToSourceFileError
+authzedCollapseToSourceFileWithLeadingError
+authzedUnsupportedUseDirectiveStart
+authzedLeadingCommentChildren
+authzedLeadingDefinitionsBeforeUse
+authzedMalformedDefinitionErrorChildren
+authzedCoalescePartialPermissionBeforeLineError
+authzedPermissionFieldIDs
+authzedFindDirectChild
+authzedRecoveryChildren
+authzedFindDirectChildText
+authzedNextByte
+authzedLineEnd
+authzedNextNonHorizontalSpace
+authzedExtraError
+authzedCaveatExpressionStatement
+authzedInterpretedStringExpressionStatement
+authzedIsBinaryOperator
+authzedBinaryExpressionFieldIDs
+authzedCaveatFieldIDs
+authzedDefinitionFieldIDs
+authzedAppendRootTailFromSource
+authzedSimpleDefinitionFromSource
+authzedSimpleBlockFromSource
+authzedLeafByName
+authzedEOFLeaf
+authzedLeaf
+authzedSetNodeRange
+authzedHasNewlineBeforeNextRetainedChild
+authzedRetainedErrorTriviaChildren
+```
+
+### Registry, census, and locks
+
+The Authzed arm has three A0 files, three checked files, and three run files.
+The A0 receipt records 8,326 visited nodes, 18 rewrites, one error root, and
+zero parse errors. Its parser revision is
+`3c55dca287c9dd6ed987c764b9aafd90b22281a2`, older than this receipt base.
+
+The tracked census has seven fixtures, six languages, nine checked files,
+nine run files, 26,022 visited nodes, 2,107 rewrites, and zero error roots.
+It has no Authzed fixture. It is a small continuous-integration ratchet and
+does not replace the authenticated corpus.
+
+The A0 Authzed files are:
+
+| Witness | Bytes | Source SHA-256 | Authenticated source |
+| --- | ---: | --- | --- |
+| `large__superlarge.zed` | 106126 | `86921255ed996dbf67a519adf1e33d5353aa873f025f77e2150ded76ac81197c` | `authzed/spicedb` commit `024601e66c148a398be733f06f444e14c57ccd25`, `pkg/schemadsl/parser/tests/superlarge.zed` |
+| `small__doccomments.zed` | 692 | `fac84d359ebf4b628e54f567b30657792550d0c58441c42fb10a2a044b379574` | same source commit, `pkg/schemadsl/parser/tests/doccomments.zed` |
+| `small__localimport_with_quotes_in_quotes.zed` | 280 | `a78131bee5849e2ce1b002605896a090a0003e052574e76ea469c3b895c534e0` | same source commit, `pkg/schemadsl/parser/tests/localimport_with_quotes_in_quotes.zed` |
+
+The grammar lock pins `authzed` to
+`https://github.com/mleonidas/tree-sitter-authzed` commit
+`83e5c26a8687eb4688fe91d690c735cc3d21ad81`. The lock file SHA-256 is
+`9ddb6324afd014f6ecdd1cae3dd1ba238f1e62ce03d126e6d8b267ce34d72ecb`.
+
+Authzed has no external scanner. The Go token source supports incremental
+reuse. The C oracle is tree-sitter `0.25.1` at commit
+`f5afe475deb7c0bae6407fb776c76824f717bb61`. Its grammar uses the same locked
+commit. The loaded oracle artifact SHA-256 is
+`a4751c61607fc68c14adfe4b438390c7a5555bb2f58f690002be67889e228159`.
+
+The authenticated corpus lock is unavailable. The repository has no
+`corpus_sources.lock` or `cgo_harness/corpus_real` directory. The available
+sidecar records only the expected lock SHA-256
+`41c744279c8b1d7c9fe7b1b8e26fba733423e77cd48efea46927309c22d163ea`.
+
+### Route receipt
+
+The focused probe used 11 witnesses: three A0 files, two clean positive
+controls, and six malformed recovery controls. Every Go route compared its
+tree with the locked C oracle. `=` means exact deep digest equality. `!=`
+means that the listed first divergence remains.
+
+The focused test asserts every source and locked-C digest. It asserts route
+mode, divergence path and category, rewrite counts, and incremental reuse state.
+It does not pin reuse subtree counts or reused bytes. Those counts do not define
+the blocker. It does not pin visited counts because the A0 denominator drifts.
+It does not pin whitespace-only divergence values.
+
+The clean controls are `positive-clean-schema`, 388 bytes with source SHA-256
+`32ac093bcf4c41596f2d6ace463df54bdd2d8ad3880ad0241c0993612a56b502`, and
+`positive-empty-definition`, 19 bytes with source SHA-256
+`5b622d08904a68f8dc95905b1807d0792434f203aa3962084aa8c7ff60606e71`.
+
+| Witness | Go digest | C digest | Raw | Production | Compact / forest | Incremental |
+| --- | --- | --- | --- | --- | --- | --- |
+| `a0-large-superlarge` | `d9c96edd4ddc6b69484fb1fc71b1f5da15386509b91d3b7a797ef1d849e08345` | same | `=` | `=`, 0 rewrites | accepted `=` / declined | `=`, reuse 5182 subtrees and 99087 bytes |
+| `a0-small-doccomments` | `d40e29166c95e851e9c4e924cb588bde163b118c2f336df7cd631e09638551ce` | `3106320fc4b5649e232fc96f368a1bb8d25d3eae3baa3b30e4042692176981fd` | `!=` at `/source_file`, children 16 versus 6 | `!=`, 0 rewrites | fallback / accepted `!=` | `!=`, no reuse; `forest_recovery_fallback` |
+| `a0-small-localimport` | `febf866c4e81009c7dc7be7abca2716bb7dba6a59696c8bae222a13f65c8c069` | `442465537f4e5ee65298701ef8832b6c326a48c6523c40abeb25eaa105601d25` | `!=` at `/source_file/ERROR[2]/\\n[0]` | `=`, 17 rewrites | fallback / declined | `=`, reuse 2 subtrees and 118 bytes |
+| `positive-clean-schema` | `e5a70c33ef46081de56bd282ed8b314a17577fed33fe18390afcd2626da3a15c` | same | `=` | `=`, 0 rewrites | accepted `=` / declined | `=`, reuse 52 subtrees and 301 bytes |
+| `positive-empty-definition` | `9314a3abd9b53ae58dd026fc30d8929a07c4fdbb72857a63d1a650b15844bb6c` | same | `=` | `=`, 0 rewrites | accepted `=` / accepted `=` | `=`, reuse 4 subtrees and 16 bytes |
+
+The refreshed A0 production routes visited 8,322 nodes and rewrote 17 nodes.
+The static receipt reports 8,326 nodes and 18 rewrites. This four-node and
+one-rewrite drift blocks a denominator update until the A0 run uses this
+parser base.
+
+The compact route accepted three witnesses. It fell back on eight witnesses.
+The fallback reason was: `generic scheduler has no table action for the
+elected token` while recovery did not accept end of file. The forest route
+accepted two witnesses and declined nine witnesses.
+
+### Malformed and recovery controls
+
+| Witness | Bytes / source SHA-256 | Go digest | C digest | First divergence | Production / incremental |
+| --- | ---: | --- | --- | --- | --- |
+| `recovery-single-quoted-caveat` | 177 / `9bc941c8a15cdc634cc27e8b0694b1e2d7f42c76f32c3eabb06eaa4556d3077b` | `320b6bec5f40133b859fefe9ab71b6e9365d43daff175deba61f9e8ec90bbfeb` | `1e725f32692398293473557052f21ded90b7b638e8a26367b8fcbe3243978078` | `/source_file/\\n[5]`: Go empty type, C `}` | `!=`, 0 / `!=`, reuse 20 and 124 bytes |
+| `recovery-stray-caveat-tail` | 84 / `a15377a7a655c1543f7146b0667f9862cae28a288d04a09902709348b0ff2149` | `40cb42f2872b8e27b26adf238c56ba1ead92e12c035d84588a47605b05df7c8c` | `50d04110529fd05ab2d699c5fea863bb9a90e6c485339bb83979f851664ad68b` | `/source_file/\\n[3]`: Go empty type, C `}` | `!=`, 0 / `!=`, reuse 10 and 58 bytes |
+| `recovery-unclosed-caveat` | 114 / `e8d2fcc0194cf928e66ba9c5f9c7db189766848513fcec7683f9d4c69a6ea6ac` | `21fc05856ec3e6188a3d37e9763067750f6ca5bc3a6114560033e2897ade1ecd` | `281c359752fd28f8e51bae5329e70d9edfd78be0ba115ae022e502b38cbca93b` | `/source_file/caveat[2]/block_c[3]/ERROR[2]/{[0]`: Go error, C no error | `!=`, 0 / `!=`, reuse 15 and 82 bytes |
+| `recovery-use-directive` | 110 / `54f2f51dd7c0a9d03c312e346224eb56144f84c1d8abf143af11f4578aee18f9` | `f62b682b3119d3e50336e18ec258f6ceca80a9aaac89cc264a7941a75448581e` | `e4eef8bc22e9f86a8aec754a2020a503e48ca5d70ffca10d5ce80fc358a8acdf` | `/source_file/ERROR[0]/\\n[0]`: Go error, C no error | `=`, 11 / `=`, reuse true, zero subtrees and zero bytes |
+| `recovery-missing-permission-expression` | 44 / `c70345ec2be6e59fee29a9913ae4983cac0f775d4f69bad97b11c001e5c771ab` | `d92cae8ce3fe890414a86663d628ed38ad44ad9440427d0b74224bc275d3bbb7` | same | none | `=`, 0 / `=`, reuse 6 and 34 bytes |
+| `recovery-malformed-relation` | 43 / `7e36b3bf0f6f2be9c578aa5393ca82f2d5e3ba9768ada6ebfa1884c09fe5e2cb` | `19e021d8e44fef573b634a370fd3bba4e6175f315e041cfcbcb802d48a8a6cb3` | `fdbf594f12c71c8924e103838bc96ce963008f897bfed7a4355c2dff7bda3cf2` | `/source_file/ERROR[0]/\\n[5]`: Go error, C no error | `!=`, 0 / `!=`, reuse 5 and 34 bytes |
+
+All malformed compact routes fell back. All malformed forest routes declined.
+The incremental route matched production for every witness. It reused the
+old tree except for `a0-small-doccomments`, which reported unsupported reuse
+after forest recovery fallback.
+
+The clean controls matched the C oracle on every accepted route. They show
+that the probe can observe zero rewrites and exact native output. The
+`a0-small-localimport` witness needs 17 production rewrites. The
+`recovery-use-directive` witness needs 11 production rewrites. These positive
+rewrite controls keep the arm live.
+
+### Authzed decision and reopening conditions
+
+No safe shared producer invariant was identified. The root shape mismatch,
+the local-import repair, and the recovery mismatches use different producer
+invariants. A shared parser-core change would risk unrelated languages.
+
+Keep `dispatch.authzed` live. Ship no production or registry change.
+
+Keep `dispatch.authzed` live until a producer change closes every recorded divergence.
+Remove the 17-node local-import repair and the 11-node use-directive repair.
+Require exact deep parity on all registered witnesses and all six routes.
+Require the authenticated Authzed corpus and its source lock.
+Re-run A0 and the tracked census against the current parser base.
+Use a generic parser-core fix only when Canopy proves a shared producer
+invariant. Do not add an Authzed-specific branch.
+
+Focused Docker artifacts:
+
+- `/tmp/gts-n31f-authzed-artifacts/20260823T083429Z-rebased-routes/container.log`;
+  SHA-256 `6264cfdea00d4b04a311c4af674cfe3b87b15efdb67f21fa8319b34ac8a76b37`.
+- `/tmp/gts-n31f-authzed-artifacts/20260823T083429Z-rebased-routes/inspect.json`;
+  SHA-256 `537ed43f9d373a2f7bc886413efbdbc8e42d99ba673bb103e342c121c0db1017`.
+- `/tmp/gts-n31f-authzed-artifacts/20260823T083429Z-rebased-routes/metadata.txt`;
+  SHA-256 `95cc9e7b3a58b58b4bb36cf340d5ad625a0cad143b90d68da1b90ca95f263964`.
+- `/tmp/gts-n31f-authzed-artifacts/20260823T083450Z-rebased-document/container.log`;
+  SHA-256 `a9dcdee98656bb472baa0683eb879d484762a2f029aaa6b99ecb000298ebbfc1`.
+- `/tmp/gts-n31f-authzed-artifacts/20260823T083450Z-rebased-document/inspect.json`;
+  SHA-256 `d1c4ee1f580266ec75914384ae4a5f9cc32d052243d2031741b184fc17002e4d`.
+- `/tmp/gts-n31f-authzed-artifacts/20260823T083450Z-rebased-document/metadata.txt`;
+  SHA-256 `f0c069027cbc32233da2dbb049488065a09d7a4aca57196bc88fcdfa92390d09`.
+- `/tmp/gts-n31f-authzed-artifacts/transcript/authzed-transcript.jsonl`;
+  SHA-256 `367eeeb4764eadc071f85ce75c094947e1074e66380729b4b1bf00320fe2f023`.
+
+The transcript has eight `dispatch.authzed` arm records. Its effect objects
+are empty, so the pass counters above provide the exact rewrite counts.
+
+The route Docker run used one Authzed grammar, one CPU, 4 GiB memory,
+512 process slots, a 3 GiB Go memory limit, `GOMAXPROCS=1`, `GOFLAGS=-p=1`,
+one test worker, and a 20-minute test timeout. It passed with no out-of-memory
+kill and no wall timeout. Maximum resident set size was 231200 KiB. The
+document guard used the same limits and passed with no out-of-memory kill or
+wall timeout. Its maximum resident set size was 231520 KiB.
+
+
 ### R3 — move materialization invariants upstream
 
 Status: in progress.
