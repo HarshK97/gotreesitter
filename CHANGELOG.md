@@ -9,6 +9,18 @@ for tags and release notes while still in `0.x`.
 
 ### Correctness
 
+- Recorded the C26i, C26j, and C26k Swift issue #576 scanner checkpoint
+  blocker. C26i and C26j use evidence base
+  `137860ebd80921094e5a8069007d49188dcb5e50`. C26k uses evidence base
+  `5d39d9658f5071c5c0f476eaadc6ae067e6c77e1`. This receipt uses publication
+  base `7b6f40fe089283674f5d0d19408d2380f77caf68`. Locked C retries its
+  external and internal lexer in error mode, then emits `ERROR` at row 156.
+  Go emits identifier symbol `160` for `MutableSpan` before recovery. No
+  generic per-version scanner checkpoint contract exists. No parser, grammar,
+  or test change ships. Keep issue #576 open. See
+  `docs/compact-route-real-corpus-matrix.md` for identities, traces, routes,
+  and reopening conditions.
+
 - Recorded the N31e C and C++ dispatcher blocker at main commit
   `ab2010d74da5330d64dbddb0d9c58969da766d6d`. Keep `dispatch.c_cpp` live.
   The initial dispatcher census (A0) excludes both languages, and the
