@@ -743,6 +743,162 @@ Run raw, production, compact, forest, and incremental routes.
 Require compact and forest routes to produce certified comparisons.
 Require the same proof on the authenticated corpus.
 
+## C26h Swift issue #576 MutableSpan producer-boundary blocker
+
+Receipt base: `41d0b9de133de777aeba9c1dca091903da052a7f`.
+
+Evidence base: `54c7f521505e23b7a32c84c2a14d3bd3175c09dd`.
+
+Status: **NO-GO / KEEP ISSUE #576 OPEN**. No production or test change
+survives.
+
+This receipt extends C26f with a durable producer trace.
+It does not alter compact admission or D6 status.
+
+### Identities and prefixes
+
+The source is
+`grammars/testdata/swift_corpus/stdlib_FloatingPointToString.swift`.
+It has 104,681 bytes.
+Its source SHA-256 digest is
+`ec96801e5237dff8da773f617a8a2f36e95b6a0a7c94b581855a451cd6507fdc`.
+
+The Go Swift blob is
+`be4575bc0acc3c60324aab635d067f940ac5f0557b80a8e3565d1e7d02d53582`.
+The Swift grammar commit is
+`41d6e5fe811ec94229ee71771174a8cce558dfee`.
+
+The locked C grammar artifact is
+`2a9f14046d4ca88b6db1316ee5f48b876aea1700e3c09811b3c87257fe827c5c`.
+The locked C runtime is `0.25.1` at commit
+`f5afe475deb7c0bae6407fb776c76824f717bb61`.
+
+The full-source Go deep digest is
+`ec51c633a3f99515cc0cd1c0cff435a44ddc7db8e83705977d28f78bdfb0fc0e`.
+The full-source locked-C deep digest is
+`ab96dddf088487acc700d72af9342c338901504dcf1d32b9644e9f6f6638190d`.
+
+The six focused prefixes have these identities and digests:
+
+| Bytes | Source SHA-256 | Go deep SHA-256 | Locked-C deep SHA-256 | First difference |
+|---:|---|---|---|---|
+| 6,805 | `525674aacceaeddb55fddef838cbb6b167db636dc0a171df3a8351ca15248c30` | `205b67cae26d6d42733c0bc1223e27406d2a435c25a162ed994a6571303ef688` | `47d1f1c78f541925f9deebf02d38bb78a68860057905e251aad4c99890fe3c99` | `/source_file`, type, Go `source_file`, C `ERROR` |
+| 6,855 | `d3e340b8ef6c87769933cbb000557eeb87eff04ae8fbc27568ccefeecb0f44f7` | `1b8299a2c6ce8c6f7aafed2468fb426b191941e5966e0fa84bf162739c807498` | `3f3ea8f5fcdfba0ae9ac2e8d1b8672f2e1dfcd34c3d6625781bb0c54724ab8c4` | `function_declaration[129]/function_body[14]`, shape, 5 versus 4 children |
+| 6,883 | `1d067da11cccfb64db6cb1025748994cb53cfdfb00a761b06e8b31b93af411ae` | `ac5aa2b8ff258c40c1b9405189fcea61d7d93b609fa018bb65ff40840eb37834` | `5e1bb7b780e5dedb4df2017895e203da0fb4d4e00c0eac6769788c430593494c` | `function_declaration[129]/function_body[14]`, shape, 5 versus 4 children |
+| 6,912 | `c65a11b82e34178bb7189140f85e81b3c632ee4ed292b34b6257f294f25de690` | `73496d47059acfd101e1e3ee752cd8709e11432fbe0656510e8016f7fcb8ad07` | `90c282b8896a39a531e789084e80383fc48f2bffb23bb1fc7a39dce51d2950b9` | `/source_file`, type, Go `source_file`, C `ERROR` |
+| 6,913 | `7f7870469f8b9e345b4295aa98d067235b0fee476617ee1f9379d54d96d7053a` | `06868a0ba3857e49cf34aba018f31e2ee8b1339153913503c4fc8468ebb2905b` | `9f43c73bc5858107e510b2455060e3f315ee17a6526bc4001fe106dce454b09a` | `function_declaration[129]/function_body[14]`, shape, 5 versus 4 children |
+| 7,316 | `6ebf3b26112a3df3611eafe82cd16ffa3f639b7b0f57608d9fdc422ccde78e72` | `1460dfcc13dee3135ca5f8368cb58bdd374c203a06c45b19a23e56cca179cf36` | `2b72cea53a148ffc499ce3f8a817cfb8a27cf2a08efc158c2e011150426704d8` | `function_declaration[129]/function_body[14]`, shape, 5 versus 4 children |
+
+Raw, production, compact, and incremental Go routes retain each Go digest.
+Each route differs from locked C for every prefix.
+
+### Durable producer trace
+
+The event-origin artifacts are:
+
+- `/tmp/gts-c26h-swift-20260824/harness_out/docker/20260823T074540Z-c26h-swift-event-origin/container.log`
+- `/tmp/gts-c26h-swift-20260824/harness_out/docker/20260823T074540Z-c26h-swift-event-origin/metadata.txt`
+- `/tmp/gts-c26h-swift-20260824/harness_out/docker/20260823T074540Z-c26h-swift-event-origin/inspect.json`
+
+The trace records this Go event:
+
+```text
+DFA tok 160 ... 6828 6839 MutableSpan state=10
+```
+
+Go then emits token 35 from byte 6839.
+
+Locked C enters external state 1 and internal state 0 at row 156, column 23.
+It emits `ERROR` with size 2.
+It calls `detect_error`, resumes version 0, and skips the `ERROR` token.
+
+The C trace later skips unrecognized characters before later recovery events.
+The first mismatch is therefore producer-visible.
+It occurs before recovery election, condense, or tree materialization.
+
+### Route and resource results
+
+The route artifacts are:
+
+- `/tmp/gts-c26h-swift-20260824/harness_out/docker/20260823T074338Z-c26h-swift-probe-cgo/container.log`
+- `/tmp/gts-c26h-swift-20260824/harness_out/docker/20260823T074338Z-c26h-swift-probe-cgo/metadata.txt`
+- `/tmp/gts-c26h-swift-20260824/harness_out/docker/20260823T074338Z-c26h-swift-probe-cgo/inspect.json`
+
+The timed route artifacts are:
+
+- `/tmp/gts-c26h-swift-20260824/harness_out/docker/20260823T074507Z-c26h-swift-routes-time/container.log`
+- `/tmp/gts-c26h-swift-20260824/harness_out/docker/20260823T074507Z-c26h-swift-routes-time/metadata.txt`
+- `/tmp/gts-c26h-swift-20260824/harness_out/docker/20260823T074507Z-c26h-swift-routes-time/inspect.json`
+
+The compact route declines every prefix.
+Each focused counter delta records zero admissions and one fallback.
+
+The forest route declines every prefix.
+
+The incremental route reports `external_scanner_unsupported`.
+It reuses zero subtrees and zero bytes.
+At 7,316 bytes, it allocates 1,877 new nodes and sees 14 stacks.
+
+The timed run observes 232,640 KiB maximum resident set size (RSS).
+This value is a workload observation, not a performance comparison.
+
+The explicit controls are one Swift grammar workload, one CPU, 4 GiB,
+`-parallel=1`, `GOFLAGS=-p=1`, and `GOMEMLIMIT=3GiB`.
+The wrapper metadata does not record `GOMAXPROCS=1`.
+This receipt makes no claim about that setting.
+
+The route and event runs report exit code zero.
+They report no out-of-memory failure and no timeout.
+
+### Canopy ownership and candidate boundary
+
+Canopy version: `v0.18.0-19-g01a5f95-dirty`.
+
+Scoped no-cache queries trace these generic paths:
+
+- `dfaTokenSource.Next` at `parser_dfa_token_source.go:466`.
+- `nextExternalToken` at `parser_dfa_token_source.go:2967`.
+- `nextTokenForLexState` at `parser_dfa_token_source.go:945`.
+- `cRecoverAcquireToken` at `parser_recover_c.go:776`.
+- `cRecoverInternalErrorModeToken` at `parser_recover_c.go:926`.
+- `cHandleError` at `parser_recover_c.go:3290`.
+- `cRecover` at `parser_recover_c.go:3579`.
+- `cCondenseAndResume` at `parser_recover_c.go:4462`.
+- `updateParserStateTokenSource` at `parser.go:7823`.
+
+The internal error-mode helper declines languages with an external scanner.
+The Swift scanner therefore keeps its own error-mode semantics.
+
+Do not convert identifier token 160 to `ERROR`.
+That change could reject valid identifiers in other states and grammars.
+
+Do not force Go to skip the identifier.
+That change could discard a valid producer token.
+
+Do not use a Swift rule, source hash, grammar blob, or artifact policy.
+No grammar-agnostic correction is proven.
+
+### Artifacts and reopening condition
+
+The local C26h report is
+`/tmp/gts-c26h-artifacts/20260823T0745Z-c26h-swift-boundary/report.md`.
+Its SHA-256 digest is
+`86f7d0aac31462ad8bce98d56b360eeb324a7137b910b6603541c997479b2a6e`.
+
+The local report records the corrected controls and all six route digests.
+The prior C26g route and event logs remain retained:
+
+- `/tmp/gts-c26g-swift-20260824/harness_out/docker/20260823T071059Z-c26g-swift-prefix-routes/container.log`
+- `/tmp/gts-c26g-swift-20260824/harness_out/docker/20260823T071125Z-c26g-swift-event-trace/container.log`
+
+Reopen implementation work only after a scanner-aware, grammar-agnostic
+error-mode token-frontier contract gains proof.
+Require matching token identity, span, and skip behavior on this boundary.
+Require clean controls and locked-C parity on raw, production, compact,
+forest, and incremental routes.
+Require the authenticated corpus and its source lock before retirement.
+Keep issue #576 open until these conditions pass.
+
 ## Current bounded result
 
 The bounded matrix completed with no silent divergence.
