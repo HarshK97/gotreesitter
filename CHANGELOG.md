@@ -24,10 +24,11 @@ for tags and release notes while still in `0.x`.
 - Removed duplicate dynamic-precedence dispatch in `gssEntryHash` while
   preserving semantics. The primary trio changed by `+0.16%` for full parsing,
   `+0.21%` for single-byte edits, and `-3.86%` for no-edit parsing. Its
-  geomean changed by `-1.18%`. Bytes per operation and allocations per
-  operation stayed unchanged. The real `grammargen_lr` run improved by
-  `-3.13%` (`p=0.004`, `n=20`). The three-sample RSS medians were `615840`
-  and `593760 KiB` (`-3.59%`). The candidate has two `157 allocs/op`
+  geometric mean (geomean) changed by `-1.18%`. Bytes per operation and
+  allocations per operation stayed unchanged. The real `grammargen_lr` run
+  improved by `-3.13%` (`p=0.004`, `n=20`). The three-sample maximum resident
+  set size (RSS) medians were `615840 KiB` and `593760 KiB` (`-3.59%`). The
+  candidate has two `157 allocs/op`
   outliers; other samples report `156 allocs/op`. Focused Go, locked-C, hash,
   merge, forest, raw-shape, and incremental gates passed. The P25e profile
   supplies attribution. Its SHA-256 is

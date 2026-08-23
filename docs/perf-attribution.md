@@ -10,7 +10,7 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
-## 2026-08-24 P25f GSS entry hash candidate
+## 2026-08-24 P25f graph-structured stack (GSS) entry hash candidate
 
 Status: **CANDIDATE ACCEPTED FOR REVIEW**. Keep issue #454 open.
 
@@ -37,7 +37,7 @@ memory, and `GOMEMLIMIT=3GiB`.
 | Full parse | `+0.16%` | neutral (`p=0.718`, `n=20`) |
 | Incremental single-byte edit | `+0.21%` | neutral (`p=0.473`, `n=20`) |
 | Incremental no-edit | `-3.86%` | significant (`p=0.000`, `n=20`) |
-| Trio geomean | `-1.18%` | — |
+| Trio geometric mean (geomean) | `-1.18%` | — |
 
 Bytes per operation and allocations per operation stayed unchanged. Full
 parses used `53.67 KiB/op` and four allocations. Both incremental lanes used
@@ -50,8 +50,9 @@ The real `grammargen_lr` run improved by `-3.13%` (`p=0.004`, `n=20`).
 Bytes per operation were effectively neutral. The candidate reported `157`
 allocations in two samples. Its other samples reported `156` allocations.
 
-The three-sample RSS medians were `615840 KiB` for the baseline and `593760
-KiB` for the candidate. The median change was `-3.59%`.
+The three-sample maximum resident set size (RSS) medians were `615840 KiB` for
+the baseline and `593760 KiB` for the candidate. The median change was
+`-3.59%`.
 
 - Baseline RSS: `/tmp/gts-p25f-baseline/harness_out/docker/20260823T063727Z-p25f-rss-baseline-repeat`
 - Candidate RSS: `/tmp/gts-p25f-candidate/harness_out/docker/20260823T063750Z-p25f-rss-candidate-repeat`
