@@ -200,6 +200,15 @@ for tags and release notes while still in `0.x`.
   exact error flags. The full authenticated corpus remains unavailable. See
   `docs/root-normalization-retirement.md`.
 
+- Record the `dispatch.ada` blocker receipt at base
+  `30f470f5c2bf18540f7a18b2b22a7e33b88d4e10`. Keep the arm live. The receipt
+  covers nine clean and two malformed witnesses across raw, production,
+  compact, forest, and incremental routes. The raw route elects the wrong
+  derivation for seven clean witnesses. The production pass rewrites seven
+  witnesses and still differs on two. Both malformed witnesses differ from
+  locked C. The full real-corpus census is unavailable. See
+  `docs/root-normalization-retirement.md`.
+
 - Record a durable Doxygen locked-C blocker receipt. Keep `dispatch.doxygen`
   live. The three A0 witnesses report zero raw and production rewrites. The
   historical childless and recovered routes report 3 and 14 named rewrites

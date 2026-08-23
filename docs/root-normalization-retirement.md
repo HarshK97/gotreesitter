@@ -482,6 +482,133 @@ The focused Docker artifacts are:
 - `/tmp/dtd-post-apex-artifacts/20260822T230229Z-dtd-real-corpus-census`;
 - `/tmp/dtd-post-apex-artifacts/20260822T230234Z-dtd-unit-recovery`.
 
+## 2026-08-22 Ada blocker receipt
+
+Status: `NO-GO`. `KEEP LIVE`: `dispatch.ada`.
+
+Base commit: `30f470f5c2bf18540f7a18b2b22a7e33b88d4e10`.
+
+Select Ada after the Apex, Rust, Doxygen, and DTD investigations. Ada has the
+strongest remaining focused evidence among the zero-rewrite A0 arms. Existing
+Ada tests cover raw parity, derivation elections, and the A3 compact
+certification sweep.
+
+The remaining zero-rewrite A0 arms are Ada, Corn, HLSL, and Wolfram. Corn and
+Wolfram lack an equivalent focused locked-C route receipt. HLSL has two known
+live members. Ada has the broadest focused evidence among these candidates.
+
+The ownership registry records 78 dispatcher arms. It records 31 live arms,
+47 retired arms, one live predicate, 32 live entries, and 56 retired entries.
+The live dispatcher arms cover 33 language labels.
+
+The registry records `dispatch.ada` with these subpasses:
+
+- `dispatch.ada.constraint-kind-election`;
+- `dispatch.ada.aggregate-kind-election`.
+
+Both subpasses call `normalizeAdaCompatibilityWithCensus` in
+`parser_result_ada.go`. The registry assigns derivation election selection as
+the authoritative owner.
+
+The A0 (initial dispatcher census) manifest has 14 languages and 14 receipts.
+Ada reports three files, three checked, three runs, 17861 nodes visited, zero
+rewritten nodes, zero error roots, and zero parse errors.
+
+The tracked census has seven fixtures across six languages. It excludes Ada.
+The full real-corpus census is unavailable because
+`cgo_harness/corpus_real` is absent. The focused census test skips this lane.
+
+The A3 (compact certification sweep) has 23 constructed sources and no real
+corpus sources. It reports 20 accepted routes, three declined routes, and zero
+unadjudicated divergences. The decline classes are two
+`material-acceptance-election` cases and one `no-eof-accept` case.
+
+The isolated receipt covers nine clean witnesses and two malformed witnesses.
+It runs raw, production, compact, forest, and incremental routes. Every
+incremental run reuses the old tree and reports `reuse_unsupported=false`.
+
+| Witness | Source SHA-256 | Locked C digest | Route result |
+| --- | --- | --- | --- |
+| `positional-object-decl-access` | `438601cf3ab4e8530a28ef369308d32f33c9ba93cb2af7f1ddba990be33f4710` | `4802317080861161572ad64b8186f0cc207df05eb4c348c2ac00ba95f937f02a` | Raw differs. Production rewrites 21 nodes and matches. Compact falls back and matches. Forest and incremental match. |
+| `positional-subtype-decl-access` | `75297a2141a0752b6f85b0e6603dd1629ed8f8d742c1494d453b3ca1e6d8be5d` | `6364a3353a36a4fe9d23fab0a1479425b4dc35e9ae89c5194ebb5f44496762be` | Raw differs. Production rewrites 21 nodes and matches. Compact falls back and matches. Forest and incremental match. |
+| `positional-record-component-access` | `115014deda4ea4f6ea5c955d123f39e879c82be371446cd0a34b7d81a7f35bea` | `725d1f35f72151989492731f321816097e74ec2303811998987008ac115084d0` | Raw differs. Production rewrites 24 nodes and matches. Compact falls back and matches. Forest and incremental match. |
+| `positional-nested-selector-access` | `26f9e5730eff55859815ac7d7f7d1eb2d9703fd756acfd730ae4e7f891456be8` | `a98a7102a5379b460c251254e52d86cd51f41accedefdbdefde3bfd137a25902` | Raw differs. Production rewrites 24 nodes and matches. Compact falls back and matches. Forest and incremental match. |
+| `positional-allocator-access` | `0e692276407f81c0335054ddb2ba0f87823aabeb6fcc0d272ea485c6cc60244c` | `39c57a7494b06c554088cfbf481565214f82957011f2f116d00bcd19fe470100` | Raw differs. Production rewrites 16 nodes and still differs. Compact, forest, and incremental retain the same divergence. |
+| `positional-object-decl-size` | `b18f3836c72f58b167394a08dc857059f2c38b5f4af7e1f89f7edfcc7ca3be07` | `736482700417ccad93eb25b2baff8cadfab5502608899c1a2dc270276c47a473` | Raw differs. Production rewrites 18 nodes and still differs. Compact, forest, and incremental retain the same divergence. |
+| `positional-array-aggregate` | `f507e195d424e0deea4651429140847a5ec7aef3cbddcbb3d9f55290b22aaba6` | `d58ee0a74c0cda930f06996759bf776efd2aaa263e43906347c38f993cf7d6a6` | Raw differs. Production and forest rewrite 18 nodes and match. Compact accepts directly and matches. Incremental matches. |
+| `named-association-control` | `4e53062ce52bee02944da551d4202771624fec474001c7b588934d946eecd0b5` | `1ff63805d27116ae37f295a738ea5edbdf8e67d4b35a6ce12252221b5450216a` | All five routes match. All `dispatch.ada` pass counts are zero. |
+| `array-others-control` | `234c680409f4a7c7719cdf3e30db7ac46b15ba6470b072dcdcba6dcf93b0cff1` | `792acfe40259059b0cc90820e27afdea91d5a057d8aeb895d2d4c85ac81a5c6e` | All five routes match. The `dispatch.ada` pass count is zero. |
+| `malformed-truncated-association` | `1045848382c3e5ffd917d614196ba9fde076a561529b21b9e26c6c966f62a044` | `4f4c3a61c7bb09d5aabf794d4b1c7af48b53c1d7238925a9663aafb73fa8ff26` | Raw, production, compact, and incremental differ under an `ERROR` root. Forest declines. No rewrite occurs. |
+| `malformed-truncated-array-aggregate` | `deac6f71adfa4f875839eb6e2fd0f7cb7b4793123a8d9e486ef2fbba47028dab` | `a5fe2f991a85e4f5009a4b5f3831dcbc9d85658f04dac5db49868465cc071298` | Raw, production, compact, and incremental differ under an `ERROR` root. Forest declines. No rewrite occurs. |
+
+The compact route falls back for every positional attribute witness. It accepts
+the array aggregate and both controls directly. Malformed compact parses fall
+back during recovery.
+
+The forest route accepts all nine clean witnesses. It declines both malformed
+witnesses. The incremental route reuses old trees for all eleven witnesses.
+
+The raw route differs from locked C at these clean witnesses:
+
+- `positional-object-decl-access`: `discriminant_constraint` versus
+  `index_constraint` at
+  `/compilation/compilation_unit[0]/subprogram_body[0]/non_empty_declarative_part[2]/object_declaration[0]/discriminant_constraint[3]`;
+- `positional-subtype-decl-access`: `discriminant_constraint` versus
+  `index_constraint` at
+  `/compilation/compilation_unit[0]/subprogram_body[0]/non_empty_declarative_part[2]/subtype_declaration[0]/discriminant_constraint[4]`;
+- `positional-record-component-access`: `discriminant_constraint` versus
+  `index_constraint` at
+  `/compilation/compilation_unit[0]/subprogram_body[0]/non_empty_declarative_part[2]/full_type_declaration[0]/record_type_definition[3]/record_definition[0]/component_list[1]/component_declaration[0]/component_definition[2]/discriminant_constraint[1]`;
+- `positional-nested-selector-access`: `discriminant_constraint` versus
+  `index_constraint` at
+  `/compilation/compilation_unit[0]/subprogram_body[0]/non_empty_declarative_part[2]/object_declaration[0]/discriminant_constraint[3]`;
+- `positional-allocator-access`: `discriminant_association` versus
+  `expression` at
+  `/compilation/compilation_unit[0]/subprogram_body[0]/handled_sequence_of_statements[3]/assignment_statement[0]/expression[2]/term[0]/allocator[0]/discriminant_constraint[2]/discriminant_association[1]`;
+- `positional-object-decl-size`: `discriminant_constraint` versus
+  `index_constraint` at
+  `/compilation/compilation_unit[0]/subprogram_body[0]/non_empty_declarative_part[2]/object_declaration[0]/discriminant_constraint[3]`;
+- `positional-array-aggregate`: `record_aggregate` versus
+  `positional_array_aggregate` at
+  `/compilation/compilation_unit[0]/package_declaration[0]/object_declaration[4]/expression[5]/term[0]/record_aggregate[0]`.
+
+The production route still differs after the native dispatch pass for these
+witnesses:
+
+- `positional-allocator-access`: `index_constraint` versus
+  `discriminant_constraint` at
+  `/compilation/compilation_unit[0]/subprogram_body[0]/handled_sequence_of_statements[3]/assignment_statement[0]/expression[2]/term[0]/allocator[0]/index_constraint[2]`;
+- `positional-object-decl-size`: `access` versus `identifier` in the
+  attribute designator at
+  `/compilation/compilation_unit[0]/subprogram_body[0]/non_empty_declarative_part[2]/object_declaration[0]/index_constraint[3]/attribute_designator[3]/access[0]`.
+
+The malformed association witness differs at `/compilation/ERROR[0]`:
+Go emits `ERROR`, while locked C emits `compilation_unit`.
+
+The malformed aggregate witness differs at
+`/compilation/ERROR[0]/identifier[7]`: Go has an empty field, while locked C
+has the `subtype_mark` field.
+
+The live controls are `named-association-control` and
+`array-others-control`. Existing controls also pass in
+`TestAdaConstraintKindElectionCParity`.
+
+Keep `dispatch.ada` live. The raw route still elects the wrong derivation for
+seven clean witnesses. The production pass still rewrites seven witnesses and
+fails exact parity on two of them. Two malformed witnesses fail exact parity.
+
+Do not change registry or production state.
+Reopen retirement only after the derivation election owner emits exact trees.
+Require zero `dispatch.ada` rewrites on all five routes.
+Require both malformed witnesses to match locked C.
+
+The focused Docker artifacts are:
+
+- `/tmp/ada-next-live-rebased-artifacts/20260822T232057Z-ada-route-probe`;
+- `/tmp/ada-next-live-rebased-artifacts/20260822T232109Z-ada-existing-guards`;
+- `/tmp/ada-next-live-rebased-artifacts/20260822T232118Z-ada-census-registry`;
+- `/tmp/ada-next-live-rebased-artifacts/20260822T232128Z-ada-real-census`.
+
 ## Ordered program
 
 ### R0 — inventory and containment
