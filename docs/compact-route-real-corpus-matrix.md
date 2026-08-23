@@ -2206,6 +2206,174 @@ The locked production leaf used state `16613` and returned the expected
 guards. The production and test changes were reverted. Keep issue #576 open
 until a generic replay contract proves production-equivalent reuse.
 
+## C26ad SQL compact replay state provenance
+
+C26ad used evidence base
+`cf58fba517ed4fa6a8f5d1328ac2f850d48a8c75`.
+This receipt is rebased onto publication base
+`515df769b9b4e2f8e3ea715e78b75a44faa3b6d6` after PR #868 merged.
+
+Status: NO-GO. Keep issue #576 open.
+
+The pinned SQL source remains commit
+`587f30d184b058450be2a2330878210c5f33b3f9`.
+
+- `src/grammar.json`: `42f011860137175a5a0cb820d1a694e5ccca1d17f226729ff6a4e886910cde1c`
+- `src/scanner.cc`: `d437ad9f517d7a1f4248ccd05abe58370b5040c0037c877dab1f0aefeaa04af6`
+
+The source was mounted read-only from
+`/tmp/gts-c26ad-grammar_parity`.
+
+### Clean baseline
+
+Run the focused generated SQL parity test with this command:
+
+```sh
+bash cgo_harness/docker/run_parity_in_docker.sh \
+  --repo-root /tmp/gts-c26ad-sql-state-provenance-20260824 \
+  --out-root /tmp/gts-c26ad-artifacts \
+  --label c26ad-clean-baseline --no-build --memory 4g --cpus 1 \
+  --goflags -p=1 --test-parallel 1 --timeout 10m \
+  --mount /tmp/gts-c26ad-grammar_parity:/tmp/grammar_parity:ro -- \
+  'export PATH=/usr/local/go/bin:$PATH; cd /workspace/cgo_harness && \
+   go test -tags "cgo treesitter_c_parity" . \
+   -run "^TestSQLGrammargenCGORegressionCases$" -count=1 -v'
+```
+
+The artifact is
+`/tmp/gts-c26ad-artifacts/20260823T201241Z-c26ad-clean-baseline`.
+
+- `container.log`: `d00a60bdabbcb837f69972c60020cd0fa77816ec1737957941d0b30cc79e8441`
+- `metadata.txt`: `54dddcb902722f22553947592c221c0fb9a1c5fae9e3b7d0f0c5f3b135c4bc42`
+- `inspect.json`: `98deafbaf286b9cb219d17517cde873c5e18913b3f6829376edfd68a303bb90e`
+
+The run used one central processing unit, 4 GiB, `GOMEMLIMIT=6GiB`,
+`GOFLAGS=-p=1`, and test parallelism one. It failed only the generated
+dollar-quoted witness. The run passed the identifier and parenthesized
+witnesses. The generated tree has an `ERROR` root child, while the locked blob
+and locked C trees match.
+
+The generated route recorded 13 old checkpoints, 4 old leaves, 4 old snapshots,
+1 reused subtree, and 16 reused bytes. The stale grammar route recorded zero
+reused subtrees and zero bytes. These counters do not certify the failed
+dollar-quoted route.
+
+### State provenance
+
+Generation copies normalized external symbol IDs into `Language.ExternalSymbols`
+(`grammargen/assemble.go:179-188`). The blob encoder serializes that language
+(`grammargen/encode.go:102-106`). `LoadLanguage` restores the language tables
+and records the exact blob hash (`load_language.go:34-59`).
+
+The embedded loader binds a registered scanner to the target language before
+it falls back to external-order adaptation (`grammars/embedded_loader.go:437-499`).
+The SQL scanner currently binds grammar identity only. Its `Scan` method reads
+symbols from the reference `SqlLanguage()` (`grammars/sql_scanner.go:74-86`,
+`grammars/sql_scanner.go:155-160`).
+
+The narrow SQL source repair is to bind the target language's external symbols
+inside `ExternalScannerForLanguage` and use them in `Scan`. The temporary probe
+used that repair and passed the generated production and compact witnesses.
+This repair is SQL-specific. It does not preserve parser-state identity across
+different language tables, so C26ad reverted it and did not ship it.
+
+The generated and locked identities are:
+
+| Route | Grammar or blob identity | External symbols | Content state | Scanner span |
+| --- | --- | --- | --- | --- |
+| Generated production | `4ffb2a6d09e2000126f10101db9028d28e0752ac3e4f83e401f045c3b028ca7c` | `[286,287,288]` | `pre=180`, `parse=449` | `[9,12)` |
+| Generated compact, target symbols | `4ffb2a6d09e2000126f10101db9028d28e0752ac3e4f83e401f045c3b028ca7c` | `[286,287,288]` | `pre=180`, `parse=449` | `[9,12)` |
+| Locked production | `e21421cbab52b54cf5ba15c8f78a2bb4729bf4e8c0da14368069e897de451268` | `[285,286,287]` | `pre=16613`, `parse=16652` | `[9,12)` |
+
+The generated scanner identity is
+`7e493677411a501e6d8592c6b9cc158e21a1bfed44c72ca914e2d81e4e34861d`.
+The locked identity uses the same scanner implementation and a different
+grammar blob identity.
+
+Temporary target-symbol binding produced the generated rows above. Its
+diagnostic artifact is
+`/tmp/gts-c26ad-artifacts/20260823T200735Z-temp-state-three-languages`.
+It passed its temporary probe. Its container log, metadata, and inspection
+hashes are:
+
+- `container.log`: `ed3141558aaf211d66608ed3ad08122177c51277ad5ccfb9b8ce5f6400e3f8a6`
+- `metadata.txt`: `cd6cecaa55441901200004709e2918cbc2a9d6b46615d8a786045979ef7ed91c`
+- `inspect.json`: `20fe89ad5fc3f5a82802b5983e23e699150dfebf0565083eddab234058c3204c`
+
+The target-symbol scan at state `180` used generated content symbol `287` and
+returned action `309` with span `[9,12)`. The compact route reconstructed the
+same generated states and returned the correct tree. The temporary files and
+test changes were removed after this probe.
+
+The earlier C26aa mixed-table witness remains at
+`/tmp/gts-c26z-artifacts/20260823T182021Z-c26aa-state-debug`.
+Its container log hash is
+`ac3f991ed44055fd93a1fb3a689adcd21a40eabd0937546fa6e1981001974737`.
+It shows generated state `180` scanning `[9,14)` and locked state `16613`
+scanning `[9,12)`. Its generated probe also reports `want_sym=277`, which is
+not the generated symbol table in the target-symbol probe. This confirms that
+the C26aa comparison crossed scanner or language-table identity.
+
+### Replay boundary
+
+Compact records retain symbol, production, span, child, alias, and external
+flags. They retain sparse scanner checkpoint references for authenticated
+external terminals (`internal/parsercorephase0/core.go:691-731`,
+`internal/parsercorephase0/core.go:5115-5133`).
+
+`MaterializationSubtreeView` does not expose parser states or checkpoint
+references (`internal/parsercorephase0/core.go:822-841`). The materializer
+replays each compact derivation against the parser's current language table and
+stamps the resulting states (`parsercore_phase0_driver.go:4786-4828`).
+`replayTransition` selects that current table's shift or goto action
+(`parsestate_replay.go:109-126`). Production leaves receive their states from
+the current shift action (`parser_reduce.go:2542-2582`).
+
+The incremental leaf path restores `preGotoState`, reauthenticates the scanner,
+and requires an exact token symbol and span (`incremental_leaf_fastpath.go:60-86`,
+`incremental_leaf_fastpath.go:848-860`).
+
+The reuse cursor walks old nodes in source order. `tryReuseSubtree` checks the
+current parser state, the stored node state, and the scanner checkpoint gate
+before it reuses a node (`incremental.go:10-85`, `incremental.go:609-657`).
+`reuseTargetState` looks up the current language table and rejects a leaf when
+its stored parse state does not match a current shift (`incremental.go:1028-1065`).
+
+State `180` and state `16613` therefore have local meaning. State `180` proves
+the generated table transition. State `16613` proves the locked table
+transition. A numeric remap cannot prove equal shift, goto, reduction, hidden
+derivation, or scanner-validity behavior. Span equality and scanner identity do
+not add that proof. The compact record has no generic cross-table state map.
+
+The current origin route remains fail-closed when compact scanner sidecars are
+absent. The temporary generated compact route had no runtime parse work and
+reconstructed the generated states only after target-symbol binding. No generic
+state remap passed the equality and stale-identity guards. The C26z candidate
+was reverted. No code or test change survives C26ad.
+
+The focused scanner unit gate passed:
+
+```sh
+go test ./grammars -run '^TestSQLScanner' -count=1
+```
+
+### Decision and reopening condition
+
+Reject the generic state-remap fix. Keep compact replay disabled for this
+scanner route and keep issue #576 open.
+
+Reopen only after a replay contract binds all of these values to one language
+identity:
+
+- parser action and goto tables;
+- external symbol order and scanner identity;
+- scanner checkpoint bytes and source spans;
+- compact derivation identity, including hidden symbols and aliases; and
+- a parity test that proves fresh, compact, incremental, and locked-C trees.
+
+The contract must reject a missing or changed identity before it attempts
+scanner replay. A numeric state translation alone is not sufficient.
+
 ## Corpus state
 
 The current manifest has these properties:
