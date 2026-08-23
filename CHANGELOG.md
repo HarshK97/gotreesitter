@@ -9,6 +9,16 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Recorded the P24h transient-parent dispatch predicate rejection. The
+  candidate changed only `parser_reduce.go` at base commit
+  `30f470f5c2bf18540f7a18b2b22a7e33b88d4e10`. The candidate diff SHA-256 is
+  `2a57aef7c0eac33b802439506ac01b92e29d3286ee5a78fc482f26d4b7630c8c`.
+  Focused Docker tests and Go and C parity matched the baseline. The accepted
+  20-seed, 40-process publication found no significant timing improvement.
+  Full-parse bytes increased in the raw means, while allocations stayed
+  neutral. The candidate code does not ship. See `docs/perf-attribution.md`
+  for the full receipt and reopening condition.
+
 - Recorded the P24g conditional recovery-scratch reset rejection. The
   candidate changed only `parser.go` at base commit
   `30f470f5c2bf18540f7a18b2b22a7e33b88d4e10`. The candidate diff SHA-256 is
