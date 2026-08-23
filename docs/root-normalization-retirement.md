@@ -609,6 +609,117 @@ The focused Docker artifacts are:
 - `/tmp/ada-next-live-rebased-artifacts/20260822T232118Z-ada-census-registry`;
 - `/tmp/ada-next-live-rebased-artifacts/20260822T232128Z-ada-real-census`.
 
+## 2026-08-23 Corn blocker receipt
+
+Status: NO-GO. KEEP LIVE: `dispatch.corn`. The Corn arm remains live.
+
+Base commit: `613a0775a329998a0af0c6f24251c8008c6783aa`.
+
+Select Corn after the Apex, Rust, Doxygen, DTD, Ada, and HLSL investigations.
+Corn has the strongest remaining clean zero-rewrite A0 evidence. BitBake has
+40,358 visited nodes but two error roots. Wolfram has 77 visited nodes and
+three error roots. Corn has 792 visited nodes and zero error roots.
+
+The ownership registry contains 88 entries. It contains 78 dispatcher arms,
+three dispatcher subpasses, one dispatcher predicate, three generic passes,
+and three fixpoint passes. It contains 31 live dispatcher arms, 33
+dispatcher-arm language labels, one live predicate, 32 live entries, and 56
+retired entries. It contains zero live generic passes and zero live
+post-finalization arms.
+
+The registry keeps `dispatch.corn` live. It names
+`normalizeCornCompatibility` in `parser_result_corn.go`. The authoritative
+owner is `scheduler_action_semantics`. The registered witness is
+`cgo_harness/parity_cgo_test.go`. The registry covers production, compact,
+forest, incremental, and locked-C routes.
+
+The A0 (authenticated dispatcher census) manifest has 14 languages, 42 files,
+and 14 receipts. A0 has three Corn files, three checked, three run, and zero
+rewrites. It records 792 visited nodes, zero error roots, and zero parse
+errors. The files are:
+
+- `small__compact.corn`;
+- `small__complex.corn`;
+- `small__readme_example.corn`.
+
+The tracked census has seven fixtures in six languages. It excludes Corn. The
+authenticated real-corpus census is unavailable because
+`cgo_harness/corpus_real` is not mounted. No Corn A3 receipt is registered.
+
+The focused receipt covers six witnesses. It runs raw, production, compact,
+forest, incremental, and locked-C routes. It includes three A0 files, one
+quoted-path trigger, one plain-path control, and one malformed witness. Corn
+has no external scanner. Every incremental route reuses the old tree and
+reports `reuse_unsupported=false`.
+
+The three A0 witnesses match locked C on every accepted route. They report
+zero `dispatch.corn` rewrites:
+
+| Witness | Source SHA-256 | Locked C and Go digest | Production pass |
+| --- | --- | --- | --- |
+| `a0-compact` | `e9793277f21b19593024cf7f670934333deefb54eae122caaa1f66cf41c7606a` | `6925a38d869d585460c85ab53d4d3486e675f6e6ed8e97f92e6c5702bcf951ad` | `1/1/246/0` |
+| `a0-complex` | `98aaba0d478418a7855fa538cb9cd52ab81b2d2e581402d212bc3951a6a5db02` | `2e25bed381c2d79a7ba0bdd909dfbd30e738b3c8be29a7fc7352ea1fd975969a` | `1/1/287/0` |
+| `a0-readme-example` | `7d412d6e3c5e396818885601df14ad092b8cbe4aac690a45d7a4c29e0410da94` | `8d705f274c5421a5a60b9ef31013e8768f0c12dbd737bedca57ce3730a644a50` | `1/1/259/0` |
+
+The four values are checked, run, visited, and rewritten. Compact accepts all
+three files. Forest accepts all three files. Incremental reuse reports 57,
+97, and 138 reused subtrees for the three files.
+
+The quoted-path trigger uses source SHA-256
+`7bcdf348ffbe92ef87dcb79b45ebae007811fe7af717c2d2cdea09f8c61872c8`.
+Raw Go digest is
+`2e3f95ebc022876fe74c65948a03d6725855723e24592f6a56851b474b175ff8`.
+Locked C digest is
+`92b1b5257e650d85af9692640cf30b287453eb7ec15af25f1c1560899d3b7615`.
+Raw Go differs at `/source_file/object[0]`: Go has seven children and C has
+eight. The raw tree has an error root. Production, compact, and incremental
+routes produce digest
+`714e0b57f2920716ba5ac832d2284ac17db8189e7e12c21f4f6978e3d3936e2e`.
+They still differ from locked C at that path. Production and compact routes
+rewrite four nodes. Forest declines. Incremental reuse reports three reused
+subtrees. The production pass reports `1/1/71/4`.
+The quoted-path trigger rewrites four nodes and still differs from locked C.
+
+The plain-path control uses source SHA-256
+`40dc0c83705af7393578499a43eab93269e4b91b99f3c1ec901dad1fd76f4bd0`.
+All routes match locked C with digest
+`1c9dd43135dfa64e87c1af706f3fa9d66c420ec4003d54dd0e37e5d2f9896a08`.
+All routes report zero rewrites. Compact accepts the control. Forest accepts
+the control. Incremental reuse reports two reused subtrees.
+
+The malformed quoted-path witness uses source SHA-256
+`b86b200a916bc043d21c2b9b45f35968db1b88733c789984ae070cde7d56d324`.
+Raw Go digest is
+`39af32691e83a255b944db485ae4b05a164ab696da70860215805d75c7b7a73c`.
+Locked C, production, compact, and incremental digest is
+`e55d7e35692aa8895adedf98d61b37f5b4d6fbdbc78f5a4106ae2cac94badbdf`.
+The malformed quoted-path witness differs from locked C at the error flag.
+Raw differs at
+`/source_file/object[0]/pair[1]/path[0]/path_seg[0]/ERROR[1]/.[0]`.
+Go marks the dot error. C does not. Production performs one rewrite and
+matches C. Compact falls back because the scheduler has no table action for
+the elected token. Forest declines. Incremental reuse reports two reused
+subtrees.
+
+The receipt remains NO-GO. Keep `dispatch.corn` live. The quoted-path trigger
+still differs from locked C after four rewrites. The malformed witness still
+requires one recovery rewrite.
+
+Keep dispatch.corn live until scheduler_action_semantics emits the locked-C
+quoted-path tree. Require malformed recovery to match locked C. Require exact
+production, compact, forest, incremental, and locked-C receipts. Require the
+authenticated Corn corpus before retirement. Do not change the registry or
+production code.
+
+The successful focused Docker artifacts are:
+
+- `/tmp/corn-next-artifacts/20260823T002827Z-corn-next-final` — route and document guard;
+- `/tmp/corn-next-artifacts/20260823T002844Z-corn-next-document-guard-final` — final document guard;
+- `/tmp/corn-next-artifacts/20260823T002433Z-corn-next-registry` — registry receipt;
+- `/tmp/corn-next-artifacts/20260823T002440Z-corn-next-a0` — A0 receipt;
+- `/tmp/corn-next-artifacts/20260823T002449Z-corn-next-tracked` — tracked census receipt;
+- `/tmp/corn-next-artifacts/20260823T002457Z-corn-next-real-corpus` — controlled corpus skip.
+
 ## Ordered program
 
 ### R0 — inventory and containment
