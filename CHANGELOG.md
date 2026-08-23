@@ -22,6 +22,31 @@ for tags and release notes while still in `0.x`.
   absent. Keep the arm live.
   No registry or production code changes are included. See
   `docs/root-normalization-retirement.md`.
+- Recorded the C26y SQL compact checkpoint trace on base
+  `e24ccf5a87bbd7febc21f67f014c2d5301d229d0`. The pinned source uses commit
+  `587f30d184b058450be2a2330878210c5f33b3f9`. The grammar and scanner source
+  hashes are `42f011860137175a5a0cb820d1a694e5ccca1d17f226729ff6a4e886910cde1c`
+  and `d437ad9f517d7a1f4248ccd05abe58370b5040c0037c877dab1f0aefeaa04af6`.
+  The semantically correct locked-blob and target-symbol routes share four
+  scanner transitions. At `7-9`, the state changes from `00` to `242400`.
+  At `9-12`, it remains `242400`. At `12-14`, it changes to `00`. At `14-15`,
+  it remains `00`. The direct generated route emits an error tree with
+  13/4/4 values. Correct production routes record 14/5/5. Compact admission
+  records zero sidecars and zero incremental reuse. Reject the compact
+  candidate.
+  Keep issue #576 open until compact sidecars and safe nonzero reuse have a
+  generic proof.
+
+- Screened generic compact-admission sidecars for checkpointed scanners in
+  C26z. The diagnostic SQL route recorded 14 records, 5 leaves, and 5
+  snapshots with the correct `7-9`, `9-12`, `12-14`, and `14-15` scanner
+  transitions. Generated, locked-blob, and locked-C trees matched. Compact
+  reuse was 1 subtree and 6 bytes. Production reuse was 1 subtree and 16
+  bytes. The candidate was reverted after C26aa traced the gap to compact
+  parse-state replay. Generated content replay state `180` made checkpoint
+  scanning return error span `9-14`. Locked production state `16613` returned
+  expected span `9-12`. A stale grammar identity reused zero subtrees and zero
+  bytes. Keep issue #576 open.
 
 - Added authenticated generated-SQL scanner identity to the grammargen C
   parity route. The route now reloads the generated blob through `LoadLanguage`
