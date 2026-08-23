@@ -97,6 +97,29 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Recorded the P25k-P25w performance blocker at publication base
+  `3d6cd2628f7a42c348f51dce0a0ed9b92b183c6a`. P25k ranked the remaining
+  source-owned full-parse costs but found no safe duplicate operation.
+  P25l through P25n found no safe dispatch, token-source, lexer, or GLR
+  ranking reduction. P25o could not use branch counters because Docker
+  reported `No permission to enable branches event`. P25p found no new
+  target. P25q separated incremental edit and no-edit costs: the edit path
+  spent `88.8 ns` in `Tree.Edit`, `420.0 ns` in reuse, and zero time in
+  reparse or rebuild; the no-edit path was a same-source identity check.
+  All profile containers used one CPU and reported no timeout or out-of-memory
+  event. P25r through P25t isolated the Go `recovery_deletion` forward path,
+  but found no generic operation to remove. P25u audited that evidence and
+  kept the performance lane open. P25v compared the accepted-error retry with
+  a diagnostic bypass; all deep Go/C digests stayed equal, but single-run wall
+  and RSS differences are diagnostic, not performance evidence. P25v's focused
+  parity diagnostic passed, but no candidate passed the proof boundary. No
+  production code ships, and issue #454 remains open. P25w superseded the
+  P25v hypothesis: the independent exact route exposed an incremental digest
+  mismatch when the retry was bypassed. No randomized performance gate ran.
+  See
+  `docs/perf-attribution.md` for artifacts and the
+  reopening condition.
+
 - Recorded the P25h-P25j parser-core dispatch blocker at evidence base
   `41d0b9de133de777aeba9c1dca091903da052a7f`. P25i used evidence base
   `137860ebd80921094e5a8069007d49188dcb5e50`. P25j used evidence base

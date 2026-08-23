@@ -10,6 +10,265 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
+## 2026-08-23 P25k-P25w incremental and source-hotspot blocker
+
+Status: **KEEP ISSUE #454 LIVE / NO-GO**. Ship no code.
+
+The publication base is main commit
+`3d6cd2628f7a42c348f51dce0a0ed9b92b183c6a`. P25k through P25q used evidence
+base `09cb5faa41af35a6bc84fefccbab1a17850d38cc`. Every investigation
+worktree remained code-clean.
+
+### P25k fresh profile and remaining source hotspots
+
+P25k collected a quiet Docker profile for the authenticated Go
+`grammargen_lr` workload. The container used one central processing unit
+(CPU), four GiB of memory, `GOMEMLIMIT=3GiB`, `GOMAXPROCS=1`, and
+`GOFLAGS=-p=1`. The three-second benchmark reported `96,500,616 ns/op`,
+`8,630 B/op`, and `123 allocs/op` over 32 iterations.
+
+The profile ranked source-owned work outside the exhausted copy, dispatch,
+token-source, lexer, generalized LR (GLR) ranking, checkpoint, and
+graph-structured stack (GSS) hash lanes:
+
+| Function | Flat time | Cumulative time | Result |
+|---|---:|---:|---|
+| `VisitMaterializationPostorderWithScratch` | `110 ms` | `370 ms` | Required traversal |
+| `reduceOutputsClassifiedIntoActive` | `110 ms` | `880 ms` | Required reduction and condensation |
+| `appendSubtreeRecord` | `100 ms` | `140 ms` | Required provenance append |
+| `lookupActionIndexSmall` | `70 ms` | — | State and symbol dependent |
+| `applyGenericShiftsOwned` | `60 ms` | `540 ms` | Required authenticated shift |
+| `condenseDirectAppend` | `50 ms` | `180 ms` | Required graph publication |
+| `persistHeaderLineageOwned` | `40 ms` | `290 ms` | Already skips clean state |
+| `appendNodeAt` | `40 ms` | `120 ms` | Required graph validation |
+| `popPaths` | `10 ms` | `130 ms` | Required ambiguous traversal |
+
+Canopy and source review found no duplicate operation with a generic
+invariant. The profile and symbol binary are:
+
+- CPU profile: `/tmp/gts-p25k-investigation/harness_out/p25k-profile/grammargen_lr.cpu.pprof`, SHA-256 `45b04d62b726bb9683eca458fade8c238cb18ff8b0f8f098e8d3823d46b8b1ef`.
+- Allocation profile: `/tmp/gts-p25k-investigation/harness_out/p25k-profile/grammargen_lr.alloc.pprof`, SHA-256 `9148278e831f4b48c801bbdb206e83ee46d3b310f1cc61ebe28a55733ac07bb9`.
+- Test binary: `/tmp/gts-p25k-investigation/harness_out/p25k-profile/gotreesitter.test`, SHA-256 `f92306de048603a8029efbf7603d9429b3f1da62b97a45be98394694d9bb0405`.
+- Docker metadata: `/tmp/gts-p25k-investigation/harness_out/docker/20260823T091826Z-p25k-fresh-profile/metadata.txt`, SHA-256 `f0b8e34630730b6ab896977908d8a846d9df29e4fa9035e4917112a17837fb30`.
+
+### P25l through P25p source attribution
+
+P25l traced `dispatchPassActive` and `elect`. Canopy mapped their callers,
+state ownership, rollback points, and parity-sensitive operations. No
+provably duplicate lookup or operation remained.
+
+P25m traced the `tokenSource.Next` cost. The existing profile placed about
+`460 ms` of flat time in that function. Checkpoint and scanner sites each
+used about `20` to `40 ms`. The trace found no safe serialization or lookup
+to remove.
+
+P25n separated the lexer and GLR token paths. `Lexer.scan` used about
+`110 ms` flat time. `scanPreferredTokenForState` used about `90 ms` flat
+time. Rune decoding, table access, state restoration, and candidate ranking
+remain semantics-sensitive. No generic redundant operation was proven.
+
+P25o attempted dynamic branch evidence. Docker installed `perf`, but the
+kernel rejected branch events with `No permission to enable branches event`.
+The permission context reported `perf_event_paranoid=2`. The blocker
+artifacts are:
+
+- Install probe: `/tmp/gts-p25o-investigation/harness_out/docker/20260823T093535Z-p25o-perf-install-probe`, metadata SHA-256 `b75d25658cb815a64385b20c478d69a865efaaefb8088cec9c15fa8b55aad`.
+- Permission probe: `/tmp/gts-p25o-investigation/harness_out/docker/20260823T093722Z-p25o-perf-permission-context`, metadata SHA-256 `3c857661b771725fd1d1a442b729b706d15016074f01223457ebea4679f08669`.
+
+P25p reused the P25k profile to rank the remaining source-owned functions.
+It found no exact redundant operation and created no code or new benchmark
+artifact. P25l through P25p did not run correctness or parity gates because
+no candidate passed the proof boundary.
+
+### P25q incremental attribution
+
+P25q collected separate edit and no-edit profiles with one CPU,
+`GOMAXPROCS=1`, `GOFLAGS=-p=1`, `-count=1`, `-benchmem`, and two-second
+Docker runs. Both runs passed without an out-of-memory event or timeout.
+
+The edit benchmark reported `791.5 ns/op`, `0 B/op`, and `0 allocs/op`.
+The edit profile placed `Tree.Edit` at `8.51%` flat and `16.41%`
+cumulative CPU. `tryTokenInvariantLeafEdit` used `43.47%` cumulative CPU,
+and `parseIncrementalChanged` used `58.36%` cumulative CPU. The edit
+telemetry reported `88.8 ns` in `Tree.Edit`, `420.0 ns` in reuse, and zero
+reparse or rebuild time per iteration. It reused one subtree and 19,294
+bytes. It created no new nodes and performed no recovery work.
+
+The no-edit benchmark reported `2.625 ns/op`, `0 B/op`, and `0 allocs/op`.
+It is a same-source identity path, not a reparse workload. Its profile placed
+`checkLanguageCompatible` at `16.91%` flat CPU,
+`ensureResultCompatibility` at `10.79%`, and
+`canReuseUnchangedTree` at `9.35%`. Compatibility caching is unsafe without
+an immutable-language invariant and the existing telemetry reset.
+
+P25q artifacts are:
+
+- Edit CPU profile: `/tmp/gts-p25q-investigation/harness_out/p25q-edit/edit.cpu.pprof`, SHA-256 `a47c9c712b29e639c0a965ae239ca9f9977742b9f883429e1de6cd8d8bd88141`.
+- Edit allocation profile: `/tmp/gts-p25q-investigation/harness_out/p25q-edit/edit.alloc.pprof`, SHA-256 `b85eba69409d1e24003967ee94a3d2d7760c75c9c4086662405578e8b4951492`.
+- No-edit CPU profile: `/tmp/gts-p25q-investigation/harness_out/p25q-noedit/noedit.cpu.pprof`, SHA-256 `e9d53a47367b877ec5126425e75dfae4d7f8e67ded76494d636c2b88586ccbb7`.
+- No-edit allocation profile: `/tmp/gts-p25q-investigation/harness_out/p25q-noedit/noedit.alloc.pprof`, SHA-256 `a671e53fad75cc7d47a022b8f86e4606d051d0872261006526bace67e949aca9`.
+- Edit metadata: `/tmp/gts-p25q-investigation/harness_out/docker/20260823T094337Z-p25q-incremental-edit-profile-final/metadata.txt`, SHA-256 `cd5607f50c9fa887d90f1484d76b319bac200039a2afc4058771fb20be65fd80`.
+- No-edit metadata: `/tmp/gts-p25q-investigation/harness_out/docker/20260823T094349Z-p25q-incremental-noedit-profile-final/metadata.txt`, SHA-256 `1907b4a2563a77a5c799643ef5785f2e70428403688c74544141802043ee8afd`.
+- Edit telemetry metadata: `/tmp/gts-p25q-investigation/harness_out/docker/20260823T094511Z-p25q-incremental-edit-stats/metadata.txt`, SHA-256 `871f72defab4f08178c6bad5d93f9879ed290e5ebc98572cbf2c07dfb7943ade`.
+
+### P25r through P25u recovery-forward investigation
+
+P25r through P25t used evidence base
+`f9a141c57c6588a63d51301820867730079ce87b`. P25u and P25v used the later
+clean evidence base `929609ccde78b0c9f4e57cf2225e0ae1204149cb`. The receipt
+publication base is the current main commit stated above.
+
+P25r measured the authenticated Go `recovery_deletion` edit from the pinned
+canonical incremental manifest. The source uses the Go grammar and the
+`rewrite` fixture. The Docker container used four GiB of memory, one CPU,
+`GOMEMLIMIT=3GiB`, `GOMAXPROCS=1`, `GOFLAGS=-p=1`, and a 15-minute test limit.
+The 750-millisecond run completed 193 iterations at `4,351,195 ns/op`,
+`1,331,622 B/op`, and 63 allocations per operation.
+
+P25s's first one-iteration profile recorded `5,696,921 ns` parse wall time,
+`5,530,209 ns` parser-loop time, `4,979,592 ns` reparse time, 123 reused
+subtrees, 2,745 reused bytes, 11,564 new nodes, 1,300 tokens, 15 maximum
+stacks, 257 single-stack iterations, and 1,294 multi-stack iterations. It
+recorded one accepted-error retry attempt and did not adopt that retry.
+
+P25s isolated the same forward path. Its one-iteration benchmark reported
+`6,155,260 ns/op`, `3,102,704 B/op`, and 120 allocations. The profile used
+the same Docker limits. P25t repeated the forward path for 20 iterations.
+The stable counters stayed at 123 reused subtrees, 2,745 reused bytes,
+11,564 new nodes, 1,300 tokens, 15 maximum stacks, 257 single-stack
+iterations, and 1,294 multi-stack iterations. The stable three-run mean was
+`6,165,450 ns/op`. The run-mean range was `5,863,544` to `6,500,572 ns/op`,
+with a coefficient of variation (CV) of `4.24%`. Within-run iteration
+extremes ranged from `4,854,679` to `9,648,997 ns`; do not treat these
+extremes as run means. No timeout or out-of-memory event occurred.
+The three warm RSS samples were `236,960`, `236,640`, and `236,320 KiB`.
+
+P25u performed a read-only structural audit of the forward-only construction.
+It rejected the construction as a performance candidate. The path proved
+correctness for the pinned Go/C control, but it did not prove a generic
+optimization invariant. No P25u standalone artifact exists. The focused
+correctness and locked-C gates therefore remained separate from benchmark
+evidence. No production or test change survived.
+
+P25r through P25t artifacts are:
+
+- P25r Docker metadata: `/tmp/gts-p25r-investigation/harness_out/docker/20260823T100544Z-p25r-recovery-deletion-profile/metadata.txt`, SHA-256 `a25a2ba79e7dbd5595a2f18e6983bf7edc07ff7129b7c6e054e44c93938544dd`.
+- P25s first profile CPU: `/tmp/gts-p25r-investigation/harness_out/docker/p25s-forward-cpu.pprof`, SHA-256 `aa7672bbc9239674dfe25b8171f79c80893bd5b00135030c7cdc8bd8bbea1f22`.
+- P25s first profile memory: `/tmp/gts-p25r-investigation/harness_out/docker/p25s-forward-mem.pprof`, SHA-256 `7cc9aa0a50f576492442db6bc7861f979f5a324a24fa9db386b5bfb151df52d3`.
+- P25s first Docker metadata: `/tmp/gts-p25r-investigation/harness_out/docker/20260823T101146Z-p25s-forward-profile/metadata.txt`, SHA-256 `e8d995bc08e5c8b1c0042f7ecfc8878a83dd23c1f67a3987fcbc51ce1cbe3710`.
+- P25s forward-only CPU: `/tmp/gts-p25s-forward-harness/harness_out/docker/p25s-forward-only-cpu.pprof`, SHA-256 `6ff678d4c9bc56f52a3fa0a8b354e6c49598ac1c1f6056312dc43b0cf55bc8e1`.
+- P25s forward-only memory: `/tmp/gts-p25s-forward-harness/harness_out/docker/p25s-forward-only-mem.pprof`, SHA-256 `9d8a91841fc0a7814f9c88cd95a6c8f033d8126d7504e59e25753b511b93cdcc`.
+- P25s forward-only Docker metadata: `/tmp/gts-p25s-forward-harness/harness_out/docker/20260823T101441Z-p25s-forward-only-profile/metadata.txt`, SHA-256 `bae57770b0e99a246e39295377bdc8f58d3a575410524826c7fe4e338d0e16c9`.
+- P25t CPU: `/tmp/gts-p25t-forward-harness/harness_out/docker/p25t-forward-cpu.pprof`, SHA-256 `731815fd36ee20ee0cd70a09967a912795c47d8dcc147f23f76f062e16f16081`.
+- P25t memory: `/tmp/gts-p25t-forward-harness/harness_out/docker/p25t-forward-mem.pprof`, SHA-256 `4f14c7aec62ebf0763745628b7a49c828983b2d195762478e7f3fee005e671cb`.
+- P25t iteration log: `/tmp/gts-p25t-forward-harness/harness_out/docker/p25t-forward-iterations.tsv`, SHA-256 `23a41ff57766edda5b01617315d20d3ff68b9e0f33eeb2ba84af44755401407e`.
+- P25t Docker metadata: `/tmp/gts-p25t-forward-harness/harness_out/docker/20260823T101908Z-p25t-forward-profile/metadata.txt`, SHA-256 `df72dfd0b4ebbc52949e4751568ec85fd9e9e7e74a410b921eb873519d29561c`.
+
+### P25v accepted-error retry diagnostic
+
+P25v tested one bounded hypothesis: skip the accepted-error base-merge retry
+when `GOT_DIAGNOSTIC_SKIP_ACCEPTED_ERROR_BASE_MERGE_RETRY=1`. The test used
+the Go `recovery_deletion` case, a clean same-length leaf control, and an
+accepted-error same-line-length control. The source and edited-source hashes
+are pinned in both JSON reports. Recovery uses
+`74c0705f8729670559492fb5460a01b2a1a2a109928e1aeb52736e485e8ff097` to
+`81543368d0ec807dd951edfdb04fb66ee9ef14ca32b0bb5c53fc8a4d0f2e7b07`.
+The leaf control uses `938253936e03230126ab1aa1f78ccd919a51e20f7207f0199704144636fe5b9a`
+to `f6993788c45b23a3584d971316d7493ec20cf063e393629a215e13c6322d1820`.
+The same-line control uses
+`009aa9fd5352c712f3839670c7df8a9b00ae878ee20dc88131a438b2d5edfd9a` to
+`3e8bcd61b37b35bc8af614e6bf6e547d8909de39b8850b2d1ac955b13678962e`.
+The Go and locked-C roots matched in every case. Fresh, incremental, and
+cross-route deep digests were equal.
+
+The successful Docker runs used four GiB of memory, one CPU, `GOMEMLIMIT=3GiB`,
+`GOMAXPROCS=1`, `GOFLAGS=-p=1`, one test worker, and a five-minute test limit.
+The final enabled run used 314,560 KiB maximum RSS. The bypassed run used
+322,408 KiB maximum RSS. The first enabled construction failed during compile:
+`ParseStopReason.String` was undefined. It exited with code one and is
+quarantined. The enabled rerun and final enabled run passed. The bypassed run
+passed. These single-run enabled or bypassed wall and RSS differences are
+diagnostic, not performance evidence.
+
+The enabled route recorded one retry attempt for `recovery_deletion`, with
+merge cap three and no retry adoption. It recorded no retry for the leaf
+control. The same-line control recorded one adopted retry. The bypass route
+recorded zero retry attempts for all three cases. These changed retry counters
+show why the toggle cannot serve as a performance candidate. They do not show
+that the retry is redundant.
+
+P25v artifacts are:
+
+- Enabled JSON: `/tmp/gts-p25v-artifacts/p25v-enabled-final.json`, SHA-256 `5c69a5e648d54424ab972a1cd35d32a66d91aeb054004b4f895b7cc4e19754e4`.
+- Bypassed JSON: `/tmp/gts-p25v-artifacts/p25v-bypassed.json`, SHA-256 `3350b1b6d3dc33ababceecb30ba150fd36c7e8072fb7841aeeb6f246e185e894`.
+- Paired test source: `/tmp/gts-p25v-paired-harness/cgo_harness/p25v_retry_paired_test.go`, SHA-256 `103d43cbd613d3b2a948a01bbad449839c1a2f3bef020da766c48a9a0fa8bd7d`.
+- Final enabled metadata: `/tmp/gts-p25v-artifacts/20260823T103537Z-p25v-enabled-final/metadata.txt`, SHA-256 `dcc7acfa59333567635e21099d28cf3b3c89440ee186548395fb1a065edd5195`.
+- Bypassed metadata: `/tmp/gts-p25v-artifacts/20260823T103501Z-p25v-bypassed/metadata.txt`, SHA-256 `8a961b6c58c8fb6b7f9f496d9959a1e37f6e23697b6cdca207466e83ff8e1ee8`.
+- Failed construction metadata: `/tmp/gts-p25v-artifacts/20260823T103346Z-p25v-enabled/metadata.txt`, SHA-256 `60d3c00a5f60dcb2a65f1a5d3b2c3580fea7b4c33326494b900f7904353d5ad`; quarantine this artifact.
+- Failed construction log: `/tmp/gts-p25v-artifacts/20260823T103346Z-p25v-enabled/container.log`, SHA-256 `fe804510ba96f52ff2e66877ea9ead3c440c4331adfb143bc7e25cb581ccbce1`; it contains the compile error.
+
+P25v was a candidate hypothesis only. P25w superseded it. No production or
+test change ships, and no randomized performance gate ran.
+
+### P25w independent exact-route defect
+
+P25w reran the P25v bypass hypothesis with an independent parser test. The
+enabled route produced equal fresh, incremental Go, fresh C, and incremental
+C digests: `d5af3b86c49049bf95e1ebf5a098a4194a3d17d08b233c5fb9e5bfd90e37c801`.
+The bypassed Go incremental digest was
+`a8b8e0eeb01df1f70d692f1099bd038a9b092dc8bf4baec3791ed156c7444fb7`.
+The bypassed route produced a root `ERROR` with 196 children and a first error
+span `[39332,39426)`. Fresh Go and both C routes stayed clean with 195
+children. The independent route therefore exposed a correctness defect.
+
+The route used case `language/same_line_length_change`. Its source SHA-256 is
+`009aa9fd5352c712f3839670c7df8a9b00ae878ee20dc88131a438b2d5edfd9a`.
+Its edited-source SHA-256 is
+`3e8bcd61b37b35bc8af614e6bf6e547d8909de39b8850b2d1ac955b13678962e`.
+The enabled JSON is `/tmp/gts-p25w-artifacts/results/p25w-exact-enabled.json`,
+SHA-256 `65cdca44c94895cb1cee8e12d343fc3823a4be474ede80cec50bfb5dfd1a1fad`.
+The bypassed JSON is `/tmp/gts-p25w-artifacts/results/p25w-exact-bypassed.json`,
+SHA-256 `d4ec9de7014725338850d401ac4af1a2b2367b60bfc173138310ce2d907e75d4`.
+The independent test source is
+`/tmp/gts-p25w-canonical/cgo_harness/p25w_exact_language_route_test.go`,
+SHA-256 `f6f14ed2a935abb846b10c98ee775c0591c3ae0b20ef3bb91fecb852ce1190a3`.
+
+The enabled exact-route Docker run used four GiB of memory, one CPU,
+`GOMEMLIMIT=3GiB`, `GOMAXPROCS=1`, `GOFLAGS=-p=1`, one test worker, and a
+five-minute limit. It passed with maximum RSS `318,240 KiB`. The bypassed
+run used the same limits, reported maximum RSS `233,600 KiB`, and failed the
+deep-digest assertion. Neither run timed out or exhausted memory. The exact
+enabled metadata is `/tmp/gts-p25w-artifacts/20260823T104558Z-p25w-exact-enabled/metadata.txt`,
+SHA-256 `9dea0f1e490103d6697cb7946b5c4de4006bab358e0da069b351ec3468c3638d`.
+The bypassed metadata is `/tmp/gts-p25w-artifacts/20260823T104610Z-p25w-exact-bypassed/metadata.txt`,
+SHA-256 `0b8c2aec33a495e12b8d107b69b4088fcd7bde3c0f3ed56279f897b30f3aba71`.
+
+The canonical suite also reports its existing Python scanner limitation:
+`python_scanner_dedent` uses the expected `external_scanner_unsupported`
+fallback. Treat this as a known suite limitation, not as a P25w candidate
+finding. The bypass hypothesis is discarded. P25v's shared paired diagnostic
+was insufficient because it did not isolate this exact route.
+
+### Decision and reopening condition
+
+Reject every P25k through P25w candidate or speculative lever. No production
+or test change survives. Keep issue #454 open. Do not publish a 20-seed
+campaign because no candidate passed correctness and performance screening.
+
+The Docker profile runs are performance evidence only. They do not replace
+focused correctness tests or locked-C parity. Run those gates before any
+future candidate benchmark.
+
+Reopen this lane only when a fresh profile identifies one bounded,
+grammar-agnostic operation, including a condense operation. Preserve the
+operation's ownership, rollback, and output invariants. For an accepted-error
+retry predicate, first prove full authenticated canonical correctness and
+locked-C correctness. Include fresh, incremental, recovery, field, raw-shape,
+and memory-safety checks. Then run six-seed screens.
+Run the 20-seed primary and authenticated GLR campaigns only after a
+significant target win with neutral bytes, allocations, maximum resident set
+size (RSS), and work counters.
+
 ## 2026-08-23 P25h-P25j parser-core dispatch copy blocker
 
 Status: **KEEP ISSUE #454 LIVE / NO-GO**. Ship no code.
