@@ -11,6 +11,91 @@ The mechanically checked compatibility inventory remains
 [`testdata/result_compat_ownership_v1.json`](../testdata/result_compat_ownership_v1.json).
 This document defines the retirement program around that inventory.
 
+## 2026-08-24 AWK dispatcher blocker receipt
+
+Status: `KEEP LIVE / NO-GO`. Keep `dispatch.awk` live.
+
+Base commit: `5648911ecf509df8ec870a1214917d9e95cf54f1`.
+This receipt adds one focused test. It changes no parser or registry behavior.
+
+The registry entry is `dispatch.awk`. It calls
+`normalizeAwkCompatibility` in `parser_result_awk.go`. Its authoritative owner
+is `scheduler_action_semantics`. Canopy confirms the dispatcher call at
+`parser_result_compat.go:125`. Retirement requires exact production, compact,
+forest, incremental, and locked-C output for every registered witness.
+
+The grammar lock pins AWK to Beaglefoot commit
+`34bbdc7cce8e803096f47b625979e34c1be38127`. The generated AWK blob SHA-256 is
+`925312ca0bc6e279602402c64700b8198c55ed949ac967ce92bae40f7f21cedf`.
+The A0 (initial dispatcher census) manifest has 14 languages and 42 files.
+It excludes AWK. Its parser revision is
+`3c55dca287c9dd6ed987c764b9aafd90b22281a2`. Its grammar-lock digest is
+`9ddb6324afd014f6ecdd1cae3dd1ba238f1e62ce03d126e6d8b267ce34d72ecb`.
+The manifest names `corpus_sources.lock`, but that file is absent from this
+worktree. The sidecar records the expected SHA-256
+`41c744279c8b1d7c9fe7b1b8e26fba733423e77cd48efea46927309c22d163ea`.
+
+The tracked census has seven fixtures. It has no AWK fixture. The outline
+baseline has 206 languages. AWK is T4, with no tags query, smoke capture, or
+recorded real corpus. The external AWK checkout has 454 files, including 316
+files under `testdir`. It is pinned by the authenticated lock at
+`5739fd79bcfc75ba7526773d0cf634521f8aca3c`.
+
+The tracked fixture is
+`testdata/awk_recovered_rule_split/T.gawk.b64`. Its decoded source is 7,392
+bytes with SHA-256
+`f3dd8c811b2ad06c865fb1ad59ac0098fef57bdbb89377ac96ddb4e845f6bfba`.
+The fixture comment and the top-50 manifest cite provenance commit
+`61a7c75e225e3035390be32d635545e40d8c5faf`. That commit is distinct from the
+authenticated corpus-lock revision. The current external `testdir/T.gawk`
+has the same bytes and SHA-256.
+
+The focused test is
+`cgo_harness/awk_dispatch_blocker_receipt_test.go`. Both witnesses cover raw,
+production, compact, forest, and locked-C routes.
+Only the clean witness has an incremental receipt. Recovery incremental telemetry remains absent. The clean source is 18 bytes with SHA-256
+`99d1043aabedfc2a53a4d50d35fd0e5f257beb49612617c0855c37ab4baa6ec1`.
+Every clean route has digest
+`6cd4e8645947bff0604ea5131f9b2188322a021b84db5f3f7c729a76b330d5d2`.
+The clean incremental route reuses one subtree and 18 bytes with zero
+reported reparse time. The AWK external scanner is stateless, preserves state
+on scan failure, and supports incremental reuse.
+
+The recovery raw Go digest is
+`6d53efe8af8b1e47aaf1defa8d2a727a6bcd43c7a9fc37516c6bb2b45ad0db56`.
+Production and compact digest to
+`cead9d68f270583fa37ed19b470ca4482ce315b41a30528b7432e95a07fefee8`.
+Locked C digests to
+`bb33c51db03cf6f16c5b206ce6d47d8369e4904f86466fecd9440311e5995925`.
+The first divergence is at `/program`, where raw Go has 454 children and
+locked C has 338. Production and compact have 408 children. The first deep
+span differs at `rule[0:11]` in Go and `rule[0:47]` in C. Compact falls back
+to production because the fresh full runner does not accept end of file.
+The forest route declines. The raw-to-production digest change records live
+compatibility work; route telemetry `rewrites=0` does not mean zero
+normalizer rewrites.
+
+Docker used image `gotreesitter/cgo-harness:go1.25-local`, 4 GiB memory, one
+CPU, 4,096 PIDs, `GOMAXPROCS=1`, `GOFLAGS=-p=1`, and `GOMEMLIMIT=3GiB`.
+The successful artifacts are:
+
+- `/tmp/gts-n31d-awk-receipt-draft/harness_out/docker/20260823T061200Z`
+- `/tmp/gts-n31d-awk-receipt-draft/harness_out/docker/20260823T061046Z`
+- `/tmp/gts-n31d-awk-receipt-draft/harness_out/docker/20260823T061107Z`
+
+These artifacts completed without timeout or out-of-memory failure. The original
+generated probe sources are absent. The following failed attempts remain
+excluded from the successful receipt:
+
+- `/tmp/gts-n31d-artifacts/20260823T054932Z-awk-c-routes` failed at probe compilation.
+- `/tmp/gts-n31d-artifacts/20260823T055314Z-awk-normalizer-order` failed at test setup.
+
+No safe grammar-agnostic correction follows from one recovery mismatch. Keep
+the arm live until the authenticated AWK corpus enters the A0 and tracked
+coverage, recovery incremental telemetry is recorded, and every registered
+witness matches locked C on all required routes. Then trace the correction to
+scheduler action semantics. Ship no parser or registry change.
+
 ## End state
 
 The root is clean when all of the following are true:
