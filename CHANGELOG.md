@@ -192,6 +192,17 @@ for tags and release notes while still in `0.x`.
 
 ### Fixed
 
+- Reject the issue #454 generic recovery candidate from PR #793. The candidate
+  code and test hash is
+  `71fdb2ab00f8f31e74b7e165f381c0856bd3720abdeb4d1556454d0cc75c50fa`.
+  The rejected parser diff hash is
+  `60a2252eca3f65cf427d709c96729eb41572f2388b1fad64c946d390c3a94db1`.
+  CI run `32609724840` exposed deterministic Cobol, WGSL, and Cooklang changes.
+  The field splice is safe alone, but no grammar-agnostic predicate supports
+  the leaf change. Reject the C-name guard. No parser code ships. Keep issue
+  #454 open. See
+  [the issue #454 rejection receipt](docs/issue-454-compact-correctness-blocker.md).
+
 - Record the issue #454 compact-parser correctness blocker. A 1 KiB fresh Go
   tree differs from locked C at
   `/translation_unit/function_definition[0]/compound_statement[2]/ERROR[2]/number_literal[0]`.
