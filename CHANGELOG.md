@@ -78,6 +78,22 @@ for tags and release notes while still in `0.x`.
   expected span `9-12`. A stale grammar identity reused zero subtrees and zero
   bytes. Keep issue #576 open.
 
+- Recorded the C26ad SQL compact replay state-provenance blocker at publication
+  base `515df769b9b4e2f8e3ea715e78b75a44faa3b6d6`. The evidence base was
+  `cf58fba517ed4fa6a8f5d1328ac2f850d48a8c75`. The pinned source uses commit
+  `587f30d184b058450be2a2330878210c5f33b3f9`. Its grammar and scanner source
+  hashes are `42f011860137175a5a0cb820d1a694e5ccca1d17f226729ff6a4e886910cde1c`
+  and `d437ad9f517d7a1f4248ccd05abe58370b5040c0037c877dab1f0aefeaa04af6`.
+  Generated and locked SQL tables assign different state and external-symbol
+  identities. Generated state `180` is valid with generated symbol `287` and
+  scans content `[9,12)`. Locked state `16613` is valid with locked symbol `286`
+  and scans the same span. A numeric remap cannot prove equal parser
+  transitions across tables. The clean Docker route still fails generated
+  dollar-quoted parity with the generated scanner's reference symbol mapping;
+  temporary target-symbol binding repaired that route but did not establish a
+  generic replay contract. No parser, scanner, or test change ships. Keep issue
+  #576 open. See `docs/compact-route-real-corpus-matrix.md`.
+
 - Added authenticated generated-SQL scanner identity to the grammargen C
   parity route. The route now reloads the generated blob through `LoadLanguage`
   before scanner adaptation. The scanner binds checkpoints to exact generated
