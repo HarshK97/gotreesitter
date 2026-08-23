@@ -10,6 +10,147 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
+## 2026-08-23 P25at `nodeArena.ensureNodeCapacity` screen
+
+Status: **NO-GO / REVERTED**. Keep the geometric growth loop in
+`nodeArena.ensureNodeCapacity`.
+
+P25at publishes against clean base commit
+`b65a9c235915edc3198851cf07b0257e3caed6d6`. The measurements used clean base
+`3c2a2106102769bab891047174dbcfec15045e74`. The relevant source files are
+byte-identical between these bases. Canopy traced the only parser caller at
+`parser.go:7169`. The caller performs incremental initial sizing. Full parses
+use `ensureExactNodeCapacity`.
+
+The current function allocates a new primary node slice before node use. It
+copies zero bytes. The temporary probe recorded requested nodes, capacity
+growth, allocation bytes, live capacity, waste, and retained pool capacity.
+
+| Lane | Calls | Growths | Requested nodes | Old/new capacity | Allocated bytes | Copied bytes | Live/capacity | Retained capacity/waste |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Primary full parse | 0 | 0 | 0 | 0/0 | 0 | 0 | 14,506/20,164 | 20,164/20,164 |
+| Primary single-byte edit | 0 | 0 | 0 | 0/0 | 0 | 0 | 14,506/20,164 | 20,164/20,164 |
+| Primary no-edit | 0 | 0 | 0 | 0/0 | 0 | 0 | 14,506/20,164 | 20,164/20,164 |
+| Authenticated recovery deletion | 2 | 2 | 8,863 | 314/11,304 | 1,175,616 | 0 | 7,311/11,147 | 2,355/2,355 |
+| Swift high-hit edit | 0 | 0 | 0 | 0/0 | 0 | 0 | 25,596/40,328 | 40,328/40,328 |
+| JavaScript control | 0 | 0 | 0 | 0/0 | 0 | 0 | 2,240/20,164 | 20,164/20,164 |
+
+The source identities are:
+
+- Primary source: `2e0f9d4676549c8560cebc3c53877932f921ab9d77c88518227f3018573af4b7`.
+- Primary edited source: `63d6743bdfcf50d94242b6c85923570d38b4ed8a24b2e9b636e91526874b71cd`.
+- Recovery source: `74c0705f8729670559492fb5460a01b2a1a2a109928e1aeb52736e485e8ff097`.
+- Recovery edited source: `81543368d0ec807dd951edfdb04fb66ee9ef14ca32b0bb5c53fc8a4d0f2e7b07`.
+- Swift source: `7ccfed56194d956b47724c935ea3a6e1abcdddbfa23f440a9c19a3e5eab03c6c`.
+- Swift edited source: `c5bd1ee190dde2a3c3d227563a281b31b938b43fadf7f58eccacf011dcafc9ac`.
+- JavaScript source: `d84deac86ad03c7f23ef4a257aba49ca1ad40e4fd89a5a501e461b45bd099faa`.
+
+The recovery lane entered the hotspot twice. Geometric growth requested
+8,863 nodes and allocated 1,175,616 bytes. The final tree used 7,311 nodes.
+Reset retained 2,355 nodes after the retention trim.
+
+The rejected candidate used `newCap = max(min, minArenaNodeCap)`.
+Its counters were calls `2`, growths `2`, requested nodes `8,863`, and old
+capacity `314`. Its new capacity was `8,863`.
+It allocated `921,752` bytes and discarded `32,656` bytes. It copied `0`
+bytes. It retained `7,311` live nodes, `10,530` capacity nodes, and `3,219`
+waste nodes. Its retained capacity and waste were `1,738/1,738`.
+Both implementations copied zero bytes.
+
+Focused candidate tests passed. Authenticated recovery parity passed in Docker.
+The candidate failed the performance gate.
+
+The gate required at least five percent improvement in target bytes per
+operation (B/op) and allocations per operation (allocs/op). Controls could not
+regress by more than one percent. The six-seed medians were:
+
+| Lane | Base median | Candidate median | Change | Gate result |
+| --- | ---: | ---: | ---: | --- |
+| Recovery time | 6.057196 ms/op | 4.9153135 ms/op | -18.85% | Pass |
+| Recovery B/op | 1,331,057.5 | 1,206,127.5 | -9.39% | Pass |
+| Recovery allocs/op | 61 | 64 | +4.92% | Fail |
+| Primary full parse time | 9.8366225 ms/op | 10.6181605 ms/op | +7.95% | Fail |
+| Primary full parse B/op | 75,844.5 | 81,819.5 | +7.88% | Fail |
+| Primary edit time | 1,025.65 ns/op | 1,153.5 ns/op | +12.47% | Fail |
+| Primary no-edit time | 3.394 ns/op | 3.432 ns/op | +1.12% | Fail |
+
+Primary edit, primary no-edit, and primary full allocations stayed at zero,
+zero, and five, respectively. Primary edit and no-edit B/op stayed at zero.
+The candidate failed the allocation target and the control threshold. Do not
+run the required 20-seed campaign. Do not run a maximum resident set size
+(RSS) campaign.
+
+The Swift edit returned a full arena with an error-bearing root. It did not
+exercise the incremental allocator. Treat it as a route control, not as a
+Swift incremental witness.
+
+The temporary probe, benchmark functions, wrappers, and candidate code were
+removed. No parser or test change remains.
+
+P25at used these structural commands:
+
+```text
+scripts/canopy_query.sh search refs ensureNodeCapacity . --limit 200 --json
+scripts/canopy_query.sh graph calls --reverse ensureNodeCapacity . --json --depth 4
+scripts/canopy_query.sh search symbols . --name 'ensure(Node|Exact)NodeCapacity|nodeArena|parse.*Arena.*Capacity|maxRetainedNodeCapacityForClass' --limit 300 --json
+canopy search refs ensureNodeCapacity parser.go --no-cache --limit 50 --json
+```
+
+The telemetry command ran one workload per Docker container. The workload
+values were `primary_full`, `primary_edit`, `primary_no_edit`,
+`recovery_deletion`, `swift_collection`, and `javascript_control`.
+
+```text
+bash cgo_harness/docker/run_parity_in_docker.sh --repo-root /tmp/gts-p25at-capacity-20260823 --out-root /tmp/gts-p25at-artifacts --label telemetry-<workload> --no-build --memory 8g --cpus 1 --goflags '-p=1' --test-parallel 1 --timeout 20m -- "cd /workspace && GOMAXPROCS=1 P25AT_WORKLOAD=<workload> go test . -run '^TestP25ATNodeCapacityTelemetry$' -count=1 -parallel 1 -timeout 20m -v"
+```
+
+The candidate telemetry used the same command with
+`P25AT_WORKLOAD=recovery_deletion` and the candidate source.
+
+The correctness commands were:
+
+```text
+bash cgo_harness/docker/run_parity_in_docker.sh --repo-root /tmp/gts-p25at-capacity-20260823 --out-root /tmp/gts-p25at-artifacts --label candidate-correctness-arena --no-build --memory 8g --cpus 1 --goflags '-p=1' --test-parallel 1 --timeout 30m -- "cd /workspace && GOMAXPROCS=1 go test . -run '^(TestEnsureNodeCapacity|TestEnsureExactNodeCapacity|TestArenaResetRetainsOverflow|TestNodeRetentionCapRespectsByteLimit|TestArenaByteBreakdown)' -count=1 -parallel 1 -timeout 20m -v"
+bash cgo_harness/docker/run_parity_in_docker.sh --repo-root /tmp/gts-p25at-capacity-20260823 --out-root /tmp/gts-p25at-artifacts --label candidate-correctness-recovery-parity --no-build --memory 8g --cpus 1 --goflags '-p=1' --test-parallel 1 --timeout 30m -- "cd /workspace/cgo_harness && GOMAXPROCS=1 GTS_CANONICAL_GO_INCREMENTAL=1 go test . -tags treesitter_c_parity -run '^TestCanonicalGoIncrementalParity/recovery_deletion$' -count=1 -parallel 1 -timeout 20m -v"
+```
+
+The benchmark runner used `GOMAXPROCS=1`, `-count=1`, `-benchmem`, one process
+per shuffle seed, `-benchtime=750ms`, Docker CPU limit 1, and `GOFLAGS=-p=1`.
+It ran seeds 1 through 6. The exact inner commands were:
+
+```text
+scripts/run_randomized_benchmarks.sh --output /artifacts/baseline-recovery-6.txt --runs 6 --seed-start 1 --benchtime 750ms --bench-regex '^BenchmarkP25ATRecoveryDeletion$'
+scripts/run_randomized_benchmarks.sh --output /artifacts/candidate-recovery-6.txt --runs 6 --seed-start 1 --benchtime 750ms --bench-regex '^BenchmarkP25ATRecoveryDeletion$'
+scripts/run_randomized_benchmarks.sh --output /artifacts/baseline-primary-6.txt --runs 6 --seed-start 1 --benchtime 750ms --bench-regex '^BenchmarkGoParse(FullDFA|IncrementalSingleByteEditDFA|IncrementalNoEditDFA)$'
+scripts/run_randomized_benchmarks.sh --output /artifacts/candidate-primary-6.txt --runs 6 --seed-start 1 --benchtime 750ms --bench-regex '^BenchmarkGoParse(FullDFA|IncrementalSingleByteEditDFA|IncrementalNoEditDFA)$'
+benchstat -format csv /tmp/gts-p25at-artifacts/baseline-recovery-6.txt /tmp/gts-p25at-artifacts/candidate-recovery-6.txt
+benchstat -format csv /tmp/gts-p25at-artifacts/baseline-primary-6.txt /tmp/gts-p25at-artifacts/candidate-primary-6.txt
+```
+
+P25at artifacts and SHA-256 values are:
+
+- Primary full telemetry: `/tmp/gts-p25at-artifacts/20260823T193944Z-telemetry-primary-full-v3/container.log`, `054267246c3fa299ecb1dca0c6d32c793df37f2b50bacf3f62d5591002c88270`.
+- Primary edit telemetry: `/tmp/gts-p25at-artifacts/20260823T194014Z-telemetry-primary-edit/container.log`, `213e2e34d1d0b156ab9410940dbcfd6de33d5f8edc97fd60343c4edfc4314ae0`.
+- Primary no-edit telemetry: `/tmp/gts-p25at-artifacts/20260823T194031Z-telemetry-primary-no-edit/container.log`, `3f78c18499223dd014833c149d2dabf83b4664e2c0dcc2bd6208ba49738ac98a`.
+- Recovery telemetry: `/tmp/gts-p25at-artifacts/20260823T194056Z-telemetry-recovery-deletion/container.log`, `f3a9b7e901c229899001b38addb9a7cd49bc2bddf538a0ca7c124f87a182a7a7`.
+- Swift telemetry: `/tmp/gts-p25at-artifacts/20260823T194153Z-telemetry-swift-collection-incremental/container.log`, `39dd529617431148d89f5ac4beb9dd29b4b77a47168e459fcfd66d69d305a37f`.
+- JavaScript telemetry: `/tmp/gts-p25at-artifacts/20260823T194143Z-telemetry-javascript-control/container.log`, `2c15e5d368d3a427e1a6fd4c65566a7b469255c63b229fb4bdd2911357aee267`.
+- Candidate recovery telemetry: `/tmp/gts-p25at-artifacts/20260823T194553Z-candidate-telemetry-recovery/container.log`, `1c5663f3fb23abc07bfdf15088d3507ac313bf8aa5f5a0b9af0189892824c32f`.
+- Baseline recovery benchmark: `/tmp/gts-p25at-artifacts/baseline-recovery-6.txt`, `c45911b3ca83cbb2ec1319e0a5f8a59a6b23f28f004fb8ef159ef5393e7e5bfd`.
+- Candidate recovery benchmark: `/tmp/gts-p25at-artifacts/candidate-recovery-6.txt`, `11063c61cec9f2415ac616ff6ca3113341c151cb9206217e846eb8134e7e09db`.
+- Baseline primary benchmark: `/tmp/gts-p25at-artifacts/baseline-primary-6.txt`, `de657e266dff4ad318e7f23a0f85238e6a3c51fe224fb0da929613b4bc15539e`.
+- Candidate primary benchmark: `/tmp/gts-p25at-artifacts/candidate-primary-6.txt`, `05d44d0470db8d3b8ef2656a0b81a1f623637494883b70cebfc7633345c7b740`.
+- Arena correctness: `/tmp/gts-p25at-artifacts/20260823T194635Z-candidate-correctness-arena/container.log`, `1ff62ea02937c4afe94a67c74d7de9d19ca0120ed90f17ad520135e589e51f9a`.
+- Recovery parity: `/tmp/gts-p25at-artifacts/20260823T194648Z-candidate-correctness-recovery-parity/container.log`, `cc99c4245b1a42f6c923c9b7a8a63f6e511da8e1c9776f384e1aa25a613fabbf`.
+
+Residual risk remains. The Swift lane lacks a valid incremental witness. The
+current receipt must not claim Swift allocator coverage. Reopen the screen only
+when an authenticated Swift edit enters the incremental arena, preserves parser
+parity, and meets both target allocation gates.
+
+Checkpoint candidate: exact-fit sizing. Decision: **NO-GO**. Next action:
+retain geometric growth and obtain the missing Swift incremental witness.
+
 ## 2026-08-23 P25aq node-equivalence depth telemetry
 
 Status: **NO-GO / NO CANDIDATE**. Keep `glrNodeEquivCacheSize` at `16384`.
