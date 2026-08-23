@@ -9,6 +9,24 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Recorded the P25e issue #454 fresh-profile investigation collected at
+  evidence base `14f6692fac65eab817f65af8cc6072e423ca6563` and published
+  from main commit `2b755f744aef8dd253a4415ca4a5816fa85b0dbb`. The workload
+  used one Go
+  grammar and four authenticated fixtures. It used 20 sequential seeds,
+  `GOMAXPROCS=1`, `GOFLAGS=-p=1`, `-count=1`, `-benchtime=750ms`,
+  `-benchmem`, and shuffle seeds 1 through 20. The receipt records every
+  fixture identity, deep digest, metric mean, and metric range. One resident
+  set size (RSS) sample measured `601600 KiB` on four Docker CPUs without
+  CPU pinning. The CPU profile SHA-256 is
+  `96bead7a8c448a597e4986839b000b602a08bf72b5ffaa5685fa72dcc432715c`.
+  The profile includes untimed admission work. The broad frames do not
+  identify a safe grammar-agnostic candidate. The evidence has no
+  incremental or issue #454 recovery proof. Exclude the no-test
+  `050742Z` run and the compile-failed `050817Z` run. Keep issue #454 live.
+  Ship no candidate code. See `docs/perf-attribution.md` for the complete
+  evidence receipt and reopening condition.
+
 - Recorded the P25d issue #454 C# fresh-parse performance blocker at base
   commit `731f8a9d9440a006b2cc6b56ef5b31c0ff3b5ce7`. The synthetic source
   sweep used requested sizes from 2 KiB through 32 KiB. It has no direct
