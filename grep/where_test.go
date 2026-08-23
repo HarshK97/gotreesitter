@@ -220,8 +220,8 @@ func TestCompileWhere_QuotedSeparators(t *testing.T) {
 		t.Error("unrelated regex-style backslashes should be preserved")
 	}
 
-	// An even run of backslashes does not escape the following quote.
-	if !match(`contains($NAME, "a\\b"); contains($NAME, "c")`, `a\\bc`) {
+	// An even run of backslashes does not escape the closing quote.
+	if !match(`contains($NAME, "a\\"); contains($NAME, "b")`, `a\\b`) {
 		t.Error("even backslash run should not falsely escape the quote")
 	}
 
@@ -234,6 +234,31 @@ func TestCompileWhere_QuotedSeparators(t *testing.T) {
 	}
 	if match(`contains($NAME, "f"); not contains($NAME, "t")`, "tofu") {
 		t.Error("clauses should be ANDed")
+	}
+}
+
+func TestCompileWhere_UnquotedApostropheStillSplitsClauses(t *testing.T) {
+	filter, err := CompileWhere(`contains($NAME, don't); contains($NAME, stop)`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	matching := &Result{Captures: map[string]Capture{
+		"NAME": {Name: "NAME", Text: []byte("don't stop")},
+	}}
+	if !filter(matching, nil, nil) {
+		t.Error("expected both unquoted clauses to match")
+	}
+	notMatching := &Result{Captures: map[string]Capture{
+		"NAME": {Name: "NAME", Text: []byte("don't go")},
+	}}
+	if filter(notMatching, nil, nil) {
+		t.Error("expected second unquoted clause to reject the capture")
+	}
+}
+
+func TestCompileWhere_RejectsUnterminatedQuotedArgument(t *testing.T) {
+	if _, err := CompileWhere(`contains($NAME, "a;b)`); err == nil {
+		t.Fatal("expected an unterminated quoted argument error")
 	}
 }
 

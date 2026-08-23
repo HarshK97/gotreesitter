@@ -31,7 +31,10 @@ func CompileWhere(where string) (WhereFilter, error) {
 	}
 
 	// Split on semicolons and newlines to support multiple constraints.
-	clauses := splitClauses(where)
+	clauses, err := splitClauses(where)
+	if err != nil {
+		return nil, fmt.Errorf("split where clauses: %w", err)
+	}
 
 	var filters []WhereFilter
 	for _, clause := range clauses {
@@ -62,10 +65,10 @@ func CompileWhere(where string) (WhereFilter, error) {
 }
 
 // splitClauses splits a where string on semicolons and newlines that occur
-// outside of single- or double-quoted arguments. A quote preceded by an odd
-// run of backslashes is escaped and does not terminate the argument; an even
-// run does not escape it.
-func splitClauses(s string) []string {
+// outside of single- or double-quoted arguments. A quote opens a quoted region
+// only at an argument boundary, so apostrophes in unquoted words remain data.
+// A quote preceded by an odd run of backslashes is escaped; an even run is not.
+func splitClauses(s string) ([]string, error) {
 	var clauses []string
 	var cur strings.Builder
 	var quote byte
@@ -84,6 +87,10 @@ func splitClauses(s string) []string {
 			}
 			bs = 0
 		case c == '"' || c == '\'':
+			if !atWhereArgumentStart(cur.String()) {
+				cur.WriteByte(c)
+				continue
+			}
 			quote = c
 			bs = 0
 			cur.WriteByte(c)
@@ -94,8 +101,19 @@ func splitClauses(s string) []string {
 			cur.WriteByte(c)
 		}
 	}
+	if quote != 0 {
+		return nil, fmt.Errorf("unterminated %c quote in where clause", quote)
+	}
 	clauses = append(clauses, cur.String())
-	return clauses
+	return clauses, nil
+}
+
+func atWhereArgumentStart(s string) bool {
+	i := len(s) - 1
+	for i >= 0 && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n') {
+		i--
+	}
+	return i < 0 || s[i] == '(' || s[i] == ','
 }
 
 // compileClause compiles a single where constraint.
