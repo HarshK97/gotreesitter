@@ -10,6 +10,114 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
+## 2026-08-23 P25g parser-core dispatch blocker
+
+Status: **KEEP ISSUE #454 LIVE / NO-GO**. Ship no code.
+
+The publication base is main commit
+`54c7f521505e23b7a32c84c2a14d3bd3175c09dd`. The performance evidence uses
+base commit `1c30650814ec6e65cbf31184301bf4776f3e5f41`.
+
+### Fresh profile and hypothesis
+
+The fresh profile used one quiet Docker CPU, `GOMAXPROCS=1`, and a three-second
+capture. It used the authenticated Go `grammargen_lr` workload.
+
+The profile placed `12.29%` flat CPU in `runtime.duffcopy` and `5.98%` flat CPU
+in `dispatchPassActive`. It placed `1.33%` flat CPU in
+`applyGenericReductionOwned` and `2.99%` in materialization.
+
+The profile artifact is
+`/tmp/gts-p25g-investigation/harness_out/docker/20260823T072006Z-p25g-fresh-attribution`.
+The shipped `grammargen_lr` profile SHA-256 is
+`b1e190976237e4d344555042468a05faf44843aa1433d86fcb839d0ccb900bb5`.
+
+The rejected hypothesis changed only `dispatchPassActive`. It replaced one
+224-byte header value copy with indexed access. The raw diff SHA-256 is
+`7c9b90937af20c0d5ffb5768e224fe718201a2592f2f4cf1469e50da40fbac65`.
+The rejected source change was removed from its isolated worktree. No code
+ships.
+
+### Correctness and parity
+
+The candidate attribution capture passed at
+`/tmp/gts-p25g-investigation/harness_out/docker/20260823T072827Z-p25g-candidate-attribution`.
+The acceptance and materialization focused test passed within
+`20260823T074121Z-p25g-candidate-scheduler-tests`.
+
+The scheduler boundary test failed on both candidate and baseline. Both runs
+reported `ConvergedReductionSplitDrops=6`; the existing test expects `5`.
+Treat this as a baseline-reproduced test limitation, not a candidate finding.
+
+The Go locked-C run reproduced the same known divergence on both sides. It
+reported `24/25` deep-parity samples. The first difference was the same
+`declarations.txt` parameter span. Candidate and baseline produced no new
+divergence.
+
+- Candidate parity: `/tmp/gts-p25g-investigation/harness_out/docker/20260823T072904Z-diag-go_lang`
+- Baseline parity: `/tmp/gts-p25g-baseline/harness_out/docker/20260823T073012Z-diag-go_lang`
+- Candidate focused tests: `/tmp/gts-p25g-investigation/harness_out/docker/20260823T074121Z-p25g-candidate-scheduler-tests`
+- Baseline focused tests: `/tmp/gts-p25g-baseline/harness_out/docker/20260823T074142Z-p25g-baseline-scheduler-tests`
+
+### Performance result
+
+The primary protocol used 20 seeds. Each seed used one process,
+`GOMAXPROCS=1`, `GOFLAGS=-p=1`, `-count=1`, `-benchtime=750ms`,
+`-benchmem`, and one shuffle seed.
+
+| Benchmark | Candidate minus baseline | p-value | Result |
+|---|---:|---:|---|
+| Full parse | `+6.29%` | `0.043` | Regression |
+| Single-byte edit | `+7.99%` | `0.038` | Regression |
+| No edit | Neutral | `0.073` | No change |
+| Trio geomean | `+7.02%` | — | Regression |
+
+Full-parse bytes per operation rose `+9.49%` (`p=0.028`). Allocation counts
+stayed unchanged in the primary trio.
+
+- Baseline primary output: `/tmp/gts-p25g-investigation/harness_out/p25g-baseline-primary.txt`
+- Candidate primary output: `/tmp/gts-p25g-investigation/harness_out/p25g-candidate-primary.txt`
+- Primary benchstat: `/tmp/gts-p25g-investigation/benchstat-p25g-primary.txt`
+
+The authenticated `grammargen_lr` control used the same 20-seed protocol.
+
+| Metric | Candidate minus baseline | p-value |
+|---|---:|---:|
+| Time per operation | `+54.28%` | `<0.001` |
+| Bytes per operation | `+74.57%` | `<0.001` |
+| Allocations per operation | `+0.64%` | `0.005` |
+
+Structural counters stayed equal. Both runs reported `330,478` nodes,
+`49,912` tokens, `18` maximum stacks, and `58` peak depth.
+
+- Baseline GLR output: `/tmp/gts-p25g-baseline/harness_out/p25g-baseline-glr.txt`
+- Candidate GLR output: `/tmp/gts-p25g-investigation/harness_out/p25g-candidate-glr.txt`
+- GLR benchstat: `/tmp/gts-p25g-baseline/benchstat-p25g-glr.txt`
+
+The three-sample maximum resident set size (RSS) medians were `607040 KiB`
+for baseline and `618720 KiB` for candidate. The median change was `+1.92%`.
+
+- Baseline RSS: `/tmp/gts-p25g-baseline/harness_out/docker/20260823T073737Z-p25g-baseline-rss`
+- Candidate RSS: `/tmp/gts-p25g-investigation/harness_out/docker/20260823T073712Z-p25g-candidate-rss2`
+
+All accepted Docker runs reported no out-of-memory event and no wall timeout.
+The first RSS construction attempt expanded its shell variable incorrectly.
+Exclude `/tmp/gts-p25g-investigation/harness_out/docker/20260823T073705Z-p25g-candidate-rss`.
+
+### Decision and reopening condition
+
+Reject the indexed header access. It regresses the primary trio, the
+authenticated generalized LR (GLR) control, bytes, and RSS.
+
+Keep issue #454 open. Do not change parser code, tests, or registry state.
+
+Reopen this lane only after a fresh quiet profile identifies a field-level
+header projection that avoids the 224-byte value copy without pointer aliasing.
+Prove equal parser work, raw shape, fields, fragility, recovery, materialization,
+incremental behavior, and locked-C parity before another benchmark campaign.
+
+The receipt records no accepted candidate. It records no production code.
+
 ## 2026-08-24 P25f graph-structured stack (GSS) entry hash candidate
 
 Status: **CANDIDATE ACCEPTED FOR REVIEW**. Keep issue #454 open.
