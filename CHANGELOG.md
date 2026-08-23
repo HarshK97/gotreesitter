@@ -118,6 +118,16 @@ for tags and release notes while still in `0.x`.
   receipt is superseded and excluded: its anchored expression matched no
   combined test. See docs/perf-attribution.md for the full receipt.
 
+### Correctness
+
+- Record the C26a Swift issue #576 token-production blocker at main commit
+  `18d63b6f7802b28a0ddb889327fcd4ebebb99426`. The 20-byte witness still
+  differs from the locked C reference parser at the first error node. The
+  isolated grammar-agnostic predicate did not change the output. No
+  production or test change survives. Keep issue #576 open. See
+  `docs/compact-route-real-corpus-matrix.md` for the digests, trace artifact,
+  and reopening condition.
+
 ### Added
 
 - Add the default-off authenticated D6a drop-cohort frontier producer. It
