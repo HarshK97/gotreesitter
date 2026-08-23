@@ -32,6 +32,20 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Recorded the P25g parser-core dispatch blocker at evidence base
+  `1c30650814ec6e65cbf31184301bf4776f3e5f41` and publication base
+  `54c7f521505e23b7a32c84c2a14d3bd3175c09dd`. A fresh quiet profile measured
+  central processing unit (CPU) time. It placed `12.29%` flat time in
+  `runtime.duffcopy` and `5.98%` in the generic dispatch pass. The rejected hypothesis replaced one 224-byte header value
+  copy with indexed access. Its raw diff SHA-256 is
+  `7c9b90937af20c0d5ffb5768e224fe718201a2592f2f4cf1469e50da40fbac65`.
+  The candidate regressed the primary trio geomean by `+7.02%`, and the
+  authenticated `grammargen_lr` control by `+54.28%`. Full-parse bytes rose
+  `+9.49%`. The three-sample maximum resident set size (RSS) median rose
+  `+1.92%`. No code ships.
+  Keep issue #454 open. See `docs/perf-attribution.md` for the proof limits,
+  artifacts, and field-level projection reopening condition.
+
 - Removed duplicate dynamic-precedence dispatch in `gssEntryHash` while
   preserving semantics. The primary trio changed by `+0.16%` for full parsing,
   `+0.21%` for single-byte edits, and `-3.86%` for no-edit parsing. Its
