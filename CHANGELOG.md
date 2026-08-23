@@ -197,6 +197,20 @@ for tags and release notes while still in `0.x`.
 
 ### Correctness
 
+- Record the C26f Swift issue #576 `FloatingPointToString.swift` recovery
+  blocker at evidence base `5648911ecf509df8ec870a1214917d9e95cf54f1`.
+  The 104,681-byte source and its complete 7,316-byte prefix have raw,
+  production, and incremental Go trees that differ from locked C. Compact
+  and forest routes decline before a certified comparison. The Go Swift blob is
+  `be4575bc0acc3c60324aab635d067f940ac5f0557b80a8e3565d1e7d02d53582`.
+  The Swift grammar commit is
+  `41d6e5fe811ec94229ee71771174a8cce558dfee`.
+  C26f artifacts contain incorrect tree-sitter-Go identity fields.
+  Treat those fields as artifact defects, not evidence. No production or
+  test change survives. Keep issue #576 open. See
+  `docs/compact-route-real-corpus-matrix.md` for digests, route telemetry,
+  artifact exclusions, Canopy reachability, and reopening conditions.
+
 - Record the C26e Swift issue #576 CollectionAlgorithms recovery blocker at
   current main commit `f0904533b6398775d5df5e01bc34d32feee34900`. Evidence
   comes from `14f6692fac65eab817f65af8cc6072e423ca6563`. The exact 16,871-byte

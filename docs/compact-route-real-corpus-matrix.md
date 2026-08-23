@@ -537,6 +537,212 @@ and forest routes to produce certified comparisons. Require the authenticated
 corpus and its source lock before release retirement. Keep issue #576 open
 until these conditions pass.
 
+## C26f Swift issue #576 FloatingPointToString recovery blocker
+
+Receipt base: `1c30650814ec6e65cbf31184301bf4776f3e5f41`.
+
+Evidence base: `5648911ecf509df8ec870a1214917d9e95cf54f1`.
+
+Status: **NO-GO / KEEP ISSUE #576 OPEN**. No production or test change
+survives.
+
+This receipt covers one tracked Swift source and one faithful prefix.
+It does not claim an authoritative first-token trace.
+
+### Grammar identities
+
+The source is
+`grammars/testdata/swift_corpus/stdlib_FloatingPointToString.swift`.
+The manifest names `swiftlang/swift` at `swift-6.3-RELEASE`.
+The manifest path is `stdlib/public/core/FloatingPointToString.swift`.
+
+The Go Swift identity is:
+
+| Field | Value |
+|---|---|
+| `go_swift_blob_sha256` | `be4575bc0acc3c60324aab635d067f940ac5f0557b80a8e3565d1e7d02d53582` |
+| `swift_grammar_commit` | `41d6e5fe811ec94229ee71771174a8cce558dfee` |
+
+The locked C identity is:
+
+| Field | Value |
+|---|---|
+| `c_contract` | `tree-sitter-c-v1` |
+| `c_transport` | `cgo_parity_binding` |
+| `c_binding` | `v0.25.0@adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3` |
+| `c_runtime` | `0.25.1@f5afe475deb7c0bae6407fb776c76824f717bb61` |
+| `c_grammar_repo` | [tree-sitter-swift](https://github.com/alex-pinkus/tree-sitter-swift) |
+| `c_grammar_commit` | `41d6e5fe811ec94229ee71771174a8cce558dfee` |
+| `c_grammar_artifact` | `/workspace/harness_out/parity_c_ref_cache/linux_amd64/swift-8d91e4446b76c6a7.so` |
+| `c_grammar_artifact_sha256` | `2a9f14046d4ca88b6db1316ee5f48b876aea1700e3c09811b3c87257fe827c5c` |
+| `compiler` | `/usr/bin/cc`, Debian 12.2.0-14+deb12u1 |
+
+Two C26f route logs contain an identity defect:
+
+| Artifact | Incorrect field values |
+|---|---|
+| `/tmp/gts-c26f-artifacts/20260823T061320Z-c26f-routes/container.log:2` | `go_grammar_commit=2346a3ab1bb3857b48b29d779a1ef9799a248cd7`; `go_grammar_blob_sha256=9cf914d26d962d1a62e7954f8b20b302337a44cb7d4a07218eec482c45a57a08` |
+| `/tmp/gts-c26f-artifacts/20260823T061947Z-c26f-routes-gomax1/container.log:2` | `go:2346a3ab1bb3857b48b29d779a1ef9799a248cd7/9cf914d26d962d1a62e7954f8b20b302337a44cb7d4a07218eec482c45a57a08` |
+
+These fields identify tree-sitter-Go. They do not identify Swift.
+Treat them as artifact defects. Use the corrected Swift identity above.
+
+### Witness bytes and tree digests
+
+The full source has 104,681 bytes.
+Its SHA-256 digest is
+`ec96801e5237dff8da773f617a8a2f36e95b6a0a7c94b581855a451cd6507fdc`.
+The faithful prefix has 7,316 bytes.
+Its SHA-256 digest is
+`6ebf3b26112a3df3611eafe82cd16ffa3f639b7b0f57608d9fdc422ccde78e72`.
+The prefix ends after the complete `_float16ToStringImpl` function.
+
+| Witness | Go deep SHA-256 | C deep SHA-256 | Go root | C root | First difference |
+|---|---|---|---|---|---|
+| Full, 104,681 bytes | `ec51c633a3f99515cc0cd1c0cff435a44ddc7db8e83705977d28f78bdfb0fc0e` | `ab96dddf088487acc700d72af9342c338901504dcf1d32b9644e9f6f6638190d` | `0..104681`, 1 child | `0..104681`, 353 children | `/source_file`, shape, Go children 1; C children 353 |
+| Prefix, 7,316 bytes | `1460dfcc13dee3135ca5f8368cb58bdd374c203a06c45b19a23e56cca179cf36` | `2b72cea53a148ffc499ce3f8a817cfb8a27cf2a08efc158c2e011150426704d8` | `0..7316`, 130 children | `0..7316`, 130 children | `/source_file/function_declaration[129]/function_body[14]`, shape, Go children 5; C children 4 |
+
+The full first errors are:
+
+| Tree | First error |
+|---|---|
+| Go | `ERROR[0..104680] children=719` |
+| Locked C | `ERROR[6828..6839] children=3` |
+
+The prefix first errors are:
+
+| Tree | First error |
+|---|---|
+| Go | `ERROR[6827..7314] children=6` |
+| Locked C | `ERROR[6828..6839] children=3` |
+
+The first full-source difference is a root shape difference.
+The first prefix difference is a function-body child count.
+The artifacts do not prove a first-token cause.
+
+### Route results
+
+Raw, production, compact, and incremental Go routes retain the Go digest.
+Each route differs from locked C for both witnesses.
+
+| Route | Full result | Prefix result |
+|---|---|---|
+| Raw | `exact=false`; Go deep digest above; stop accepted | `exact=false`; Go deep digest above; stop accepted |
+| Production | `exact=false`; Go deep digest above; stop accepted | `exact=false`; Go deep digest above; stop accepted |
+| Compact | `0/0 -> 0/1`; fallback at recovery | `0/1 -> 0/2`; fallback at recovery |
+| Forest | `accepted=false`; offset 6254; symbol 175; `dead_end`; states `[10 2814]` | Same decline and state set |
+| Incremental | `exact=false`; zero reuse; 124,563 new nodes | `exact=false`; zero reuse; 1,877 new nodes |
+
+The compact decline is:
+
+```text
+compact route declined at recovery [mechanism=recovery-entered]: did not accept EOF: generic scheduler has no table action for the elected token
+```
+
+The forest route declines at offset 6254 with symbol 175.
+It reports `dead_end` and states `[10 2814]` for both witnesses.
+
+Incremental reuse is unsupported because of
+`external_scanner_unsupported`.
+It reports zero reused subtrees and zero reused bytes.
+The full incremental profile reports `new_nodes=124563`.
+The prefix profile reports `new_nodes=1877`.
+
+### Recovery and pass telemetry
+
+The full route reports these recovery values:
+
+| Entries | Strategy 1 | Competitions | Walks | Error nodes | Error span | Retry passes | Retry attempts | Selected |
+|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| 390 | 1,621 | 193,358 | 386,716 | 372 | 104,680 | 4 | 4 | `initial_merge` |
+
+The full retry reason is `initial_result_requires_merge_width`.
+The incremental route reports eight retry passes in its final fallback ladder.
+The prefix route reports 13 entries, 36 strategy-one actions, 917
+competitions, 1,834 walks, 6 error nodes, and error span 487.
+The prefix route reports zero retry passes and zero retry attempts.
+
+The full route reports `max_stacks=28` and `peak_depth=637`.
+The prefix route reports `max_stacks=14` and `peak_depth=153`.
+
+Normalization performs no rewrites.
+Full pass counters are `1/1/19290/0` for each Swift pass.
+Prefix pass counters are `1/1/447/0` for each Swift pass.
+The pass visits do not establish parity.
+
+### Memory and run controls
+
+Resident set size (RSS) values are workload observations.
+They are not a performance comparison.
+
+| Artifact | Workload | RSS | Controls |
+|---|---|---:|---|
+| `/tmp/gts-c26f-artifacts/20260823T060621Z-c26f-prefix-raw` | Raw probe | 445,268 KiB | One CPU; the log does not state `GOMAXPROCS=1` |
+| `/tmp/gts-c26f-artifacts/20260823T061320Z-c26f-routes` | Full and prefix routes | 1,210,240 KiB | One CPU; the log does not state `GOMAXPROCS=1` |
+| `/tmp/gts-c26f-artifacts/20260823T061947Z-c26f-routes-gomax1` | Full and prefix routes | 988,640 KiB | One CPU; `GOMAXPROCS=1` |
+| `/tmp/gts-c26f-artifacts/20260823T062159Z-c26f-reduction-min` | Incomplete reductions | 297,728 KiB | One CPU; `GOMAXPROCS=1` |
+
+The Docker runs used 4 GiB of memory, a 3 GiB Go memory limit, `-p=1`,
+test parallelism one, and a 20-minute timeout.
+The retained logs report exit code zero.
+No run timed out or hit an out-of-memory failure.
+Do not compare these RSS values as a stable performance result.
+
+### Reduction scope and exclusions
+
+The raw prefix artifact includes two excluded, different-family slices:
+
+| Bytes | Source SHA-256 | Exclusion |
+|---:|---|---|
+| 781 | `24bd84e42e555749833bc8652e3ca6893297593ca532af6faeef689db3b21008` | `/source_file/comparison_expression[3]`; Go has `comparison_expression`, C has `constructor_expression` |
+| 711 | `9dae29100a640d762fa8eca8cec13a336d46778e4c0126e1f9d5c7dbe6a34eac` | `/source_file/comparison_expression[3]`; Go has `comparison_expression`, C has `constructor_expression` |
+
+These slices are not C26f evidence.
+They use a different divergence family.
+
+The minimum reduction artifact is
+`/tmp/gts-c26f-artifacts/20260823T062159Z-c26f-reduction-min`.
+It contains incomplete prefixes at 6805, 6855, 6883, 6912, and 6913 bytes.
+It does not contain the canonical 7,316-byte prefix.
+
+The full reduction sweep is
+`/tmp/gts-c26f-artifacts/20260823T062139Z-c26f-reduction-sweep`.
+It contains endpoints 6913, 6978, 7042, 7088, 7121, 7266, and 7316.
+Only endpoint 7316 is the complete canonical prefix.
+Do not use the other endpoints as complete witnesses.
+
+### Canopy reachability
+
+Canopy version: `v0.18.0-19-g01a5f95-dirty`.
+
+Scoped no-cache queries confirmed these reachable generic paths:
+
+- `cHandleError`: `parser_recover_c.go:3290-3566`; call at line 4670.
+- `cCondenseAndResume`: `parser.go:6713` and `parser.go:6879`.
+- `parseForRecoveryWithMode`: `parser_api.go:568`; wrappers at lines 540 and 546.
+- `nextGLRUnionDFAToken`: `parser_dfa_token_source.go:1113-1279`; calls at lines 539 and 746.
+- `dispatchPass`: `parsercore_phase0_driver.go:5521`; called by `run` at line 5503.
+- `dropGenericNoActionHeads`: `parsercore_phase0_driver.go:7203-7304`; calls at lines 5856 and 5976.
+
+These paths show reachability only.
+The retained artifacts contain tree shapes and counters.
+They do not contain an authoritative first-token event trace.
+Therefore, this receipt does not assign the first divergence to one token.
+
+### Decision and reopening condition
+
+Keep issue #576 open.
+Do not ship parser, grammar, or test changes.
+Do not add a Swift rule, source hash exception, or blob exception.
+
+Reopen implementation work only after a generic grammar, lexer, or parser
+producer change supplies an authoritative trace and a safe proof.
+Require the corrected Swift identities and an authenticated source lock.
+Require Go and locked C equality on the full and 7,316-byte witnesses.
+Run raw, production, compact, forest, and incremental routes.
+Require compact and forest routes to produce certified comparisons.
+Require the same proof on the authenticated corpus.
+
 ## Current bounded result
 
 The bounded matrix completed with no silent divergence.
