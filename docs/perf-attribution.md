@@ -107,11 +107,13 @@ P25an artifacts are:
 
 - Correctness log: `/home/draco/work/gotreesitter/harness_out/docker/20260823T155519Z-p25an-collision-correctness/container.log`, SHA-256 `f8b701422f118969189208595b6ee29cf9373d317778e29751793cafc27f1ab4`.
 - Swift base: `/tmp/gts-p25al-base-20260824/p25an-swift-base.txt`, SHA-256 `c5cf3294ba250ef28634268ab1caa205fda71a38b70d23f4a4bc27e900d39238`.
-- Swift candidate: `/tmp/gts-p25aj-screen-20260824-aj/p25an-swift-candidate-v2.txt`, SHA-256 `af8feb9106a8171937d68cf9d6568a29891e86f7701883944e726236be7fb571`.
+- Swift candidate: `/tmp/gts-p25aj-screen-20260824-aj/p25an-swift-candidate-v2.txt` (removed after cleanup), SHA-256 `af8feb9106a8171937d68cf9d6568a29891e86f7701883944e726236be7fb571`.
 - JavaScript base: `/tmp/gts-p25al-base-20260824/p25an-js-base.txt`, SHA-256 `ad83319ad36c5ee1c46e97a14bc0384d907818a09e8896a5314a79314626ebcf`.
-- JavaScript candidate: `/tmp/gts-p25aj-screen-20260824-aj/p25an-js-candidate.txt`, SHA-256 `c61ff75df97fbc6db0cec3042cd151cc303d67da7352502c35cfd6bf1631921f`.
+- JavaScript candidate: `/tmp/gts-p25aj-screen-20260824-aj/p25an-js-candidate.txt` (removed after cleanup), SHA-256 `c61ff75df97fbc6db0cec3042cd151cc303d67da7352502c35cfd6bf1631921f`.
 
-The candidate was reverted. No production or test change remains.
+Cleanup removed the P25an candidate output files. Their hashes remain for
+traceability. The candidate was reverted. No production or test change
+remains.
 
 ## 2026-08-23 P25ak-P25al node-equivalence cache screen
 
