@@ -1217,6 +1217,290 @@ capability proves all of the following:
 - Use an authenticated source lock and corpus evidence.
 
 
+## C26q SQL scanner identity gate
+
+Publication base: `a62b9db306bcb983852cbf0043852546e864e856`.
+
+Status: **GO FOR THE BOUNDED IDENTITY GATE. KEEP ISSUE #576 OPEN.**
+
+C26q binds an external scanner checkpoint to its scanner and grammar identity.
+The gate runs at incremental checkpoint reuse. It does not change GLR
+scheduling, recovery election, condense, merge, or forest ownership.
+
+### Identity inputs
+
+The native SQL scanner uses these authenticated inputs:
+
+- Upstream repository: [tree-sitter-sql](https://github.com/m-novikov/tree-sitter-sql).
+- Upstream commit: `587f30d184b058450be2a2330878210c5f33b3f9`.
+- `src/grammar.json`: 319,142 bytes,
+  SHA-256 `42f011860137175a5a0cb820d1a694e5ccca1d17f226729ff6a4e886910cde1c`.
+- `src/scanner.cc`: 4,333 bytes,
+  SHA-256 `d437ad9f517d7a1f4248ccd05abe58370b5040c0037c877dab1f0aefeaa04af6`.
+- External names: `_dollar_quoted_string_tag`,
+  `_dollar_quoted_string_content`, and `_dollar_quoted_string_end_tag`.
+- Scanner semantics: tagged state, zero-length empty state, bounded tags,
+  content-end scanning, state preservation on failure, and a 4,095-byte tag
+  limit.
+
+The scanner identity is the raw SHA-256 value
+`7e493677411a501e6d8592c6b9cc158e21a1bfed44c72ca914e2d81e4e34861d`.
+It includes the local Go port hash
+`588328cd27eea49e88b704b9bd8e46958046564187a5db1a70f6622308a7fff8`.
+The focused test hashes the marked local source region. A semantics change
+fails the test until the scanner identity is updated with review.
+
+The checked-in SQL blob is `grammars/grammar_blobs/sql.bin`. It has 581,443
+bytes and SHA-256
+`e21421cbab52b54cf5ba15c8f78a2bb4729bf4e8c0da14368069e897de451268`.
+The trusted exact-byte loader records this hash before it adapts the SQL
+scanner. The public `Language` API has no grammar identity setter. Callers
+cannot relabel a loaded language after adaptation.
+
+`gotreesitter.LoadLanguage` is the trusted construction path for this identity.
+It hashes the exact input bytes after envelope validation. A manually created
+`Language` has no trusted grammar identity and fails closed at reuse. The
+focused tests reject scanner and grammar drift when raw checkpoint bytes remain
+equal. The SQL source guard uses test-only file reads. Production code does not
+read its source file. Identity set and inherit paths charge only the exact
+state delta. Conflict state removes the charge, and reset clears it.
+
+The override loader reads the exact override bytes and hashes them before
+scanner adaptation. It never copies the checked-in grammar identity.
+Each SQL identity contains two raw 32-byte SHA-256 values. The arena accounts
+for 64 identity bytes in the parser memory budget. Arena reset clears them.
+Tree copies and checkpoint copies preserve them. Legacy scanners without the
+capability keep their previous reuse behavior.
+
+### Native SQL certification
+
+The native SQL language loaded the checked-in blob identity above. The focused
+tests passed for identity stability, local-port source binding, checkpoint
+round trips, scanner failure restore, native blob identity, cross-scanner
+rejection, exact arena accounting, and SQL incremental certification.
+
+The route probe reported this digest for every accepted route:
+`2c78089192b45b7aa6f2870fa8d2e492f00ce403c6b4b26fd59d6dfa28572982`.
+Production, compact, included-ranges, and incremental routes matched.
+Forest admission was true. The route artifact used one CPU, 4 GiB,
+`GOMEMLIMIT=3GiB`, and `GOFLAGS=-p=1`.
+
+`/tmp/gts-c26q-hardening-artifacts/20260823T141907Z-c26q-hardening-sql-route`
+
+Its `container.log` SHA-256 is
+`269d63d598e8ffbcf9590412af73e2f18469846dc9108e29d11e8eb15b662ce4`.
+Its `metadata.txt` SHA-256 is
+`d40840ee4aa12992707fd8344e73ab2b540e6abb10e17b21fcf2beb6293d5cb4`.
+
+The SQL incremental certification artifact is:
+
+`/tmp/gts-c26q-hardening-artifacts/20260823T141430Z-c26q-hardening-sql-incremental`
+
+Its `container.log` SHA-256 is
+`a9c95e8b30bea5437c8f0e39116a08b70565b5ccada0280ec97073546261156f`.
+Its `metadata.txt` SHA-256 is
+`a607c51e6cceef40f86a9a8ecb5ea6666b504c00b64d518840b05b8675d68c79`.
+
+The post-hardening raw and range gate covered SQL scanner recovery, the
+no-tree retry, SQL incremental certification, and the included-range parser
+probe. Its artifact is:
+
+`/tmp/gts-c26q-hardening-artifacts/20260823T143124Z-c26q-hardening-sql-raw-ranges`
+
+Its `container.log` SHA-256 is
+`8d475defa727ff4e5c07647a2aadf68520c9e4892e8ab6efd024b76ced7042f2`.
+Its `metadata.txt` SHA-256 is
+`2b4fadadb9726a4d00d6cb32039daaebff9fd322e9151045c41fb5226a2677ac`.
+
+The SQL real-corpus probe passed 25 of 25 no-error cases, 25 of 25
+S-expression comparisons, and 25 of 25 deep comparisons. It saw 28 of 186
+available samples. Maximum resident set size was 1,087,976 KiB. The run used
+one CPU, 4 GiB, `GOMAXPROCS=1`, and `GOFLAGS=-p=1`.
+The Docker artifact is:
+
+`/tmp/gts-c26q-production-proof-20260823/harness_out/docker/20260823T142119Z-diag-sql`
+
+Its `container.log` SHA-256 is
+`c397c45908dfbe46bc8375d9f1e33fe44056d7b7ee9da70b78f1eb008e15acff`.
+Its `metadata.txt` SHA-256 is
+`995ff318234b4e2325904a24339b677ef9825787f8fd6eacacf5268654afc10a`.
+
+### Generated SQL override proof
+
+The generated override tests use the checked-in SQL blob as input. They
+change only the language name before gzip and gob encoding. The positive
+override is 582,159 bytes with SHA-256
+`2e484c002ffc7773fe02944901c5b2e87194932ca32025c0e3d9dac597540149`.
+Its scanner receives that override hash, not the checked-in hash. Equal
+override identities preserve incremental reuse and fresh-tree equality.
+
+The drift test uses these two generated blobs:
+
+- First: 582,165 bytes,
+  SHA-256 `ec701f2ea2286db40bb0b6fa09957aab6f901962bfa5f7c103db6a0459ae2fb6`.
+- Second: 582,165 bytes,
+  SHA-256 `493e63f1a5645be6c6948244abb0be5654b624e98f9aed97fcff848e0fa4fe3f`.
+
+The new language rejects the old tree after this drift. It reuses zero
+subtrees and zero bytes. The fresh and incremental trees remain equal.
+Adaptation without a target grammar identity keeps the scanner usable but
+returns no checkpoint identity. The identity gate then fails closed.
+
+The post-hardening SQL and override gate artifact is:
+
+`/tmp/gts-c26q-hardening-artifacts/20260823T141319Z-c26q-hardening-sql`
+
+Its `container.log` SHA-256 is
+`2e125602ce5fb7ff33d8b9464b8edd37784ab46459cdebcd55485b72ec182cd5`.
+Its `metadata.txt` SHA-256 is
+`1d461d8740c49d8d18a79b5ef9ff5e922ca6891d1b7b9530ba56be652c29d241`.
+
+The post-hardening race artifact covers the native scanner and generated
+override tests. It used one CPU, 4 GiB, `GOMAXPROCS=1`, and `GOFLAGS=-p=1`.
+Its artifact is:
+
+`/tmp/gts-c26q-hardening-artifacts/20260823T141349Z-c26q-hardening-sql-race`
+
+Its `container.log` SHA-256 is
+`bd6d48591e98924cd49ba82725b5b864a98076d9553b69f2b808646f49adbed3`.
+Its `metadata.txt` SHA-256 is
+`915f4559d2a01d13a6fd99bd99187a7a764ff062281d0aee340ba31a5e35e847`.
+
+### Generated SQL locked-C boundary
+
+The generated SQL route is not the checked-in native SQL blob route. The
+locked-C probe used 25 eligible samples. It reported 23 of 25 no-error
+results, 21 of 25 tree matches, and four divergences.
+
+The four known divergences are:
+
+- `SELECT $$hey$$;`: generated SQL adds an `ERROR` at bytes 12 to 14.
+- `SELECT $$(a + b)$$;`: generated SQL adds an `ERROR` at bytes 16 to 18.
+- `CREATE DOMAIN test;`: generated `CREATE_DOMAIN` has one child; C has zero.
+- `CREATE DOMAIN test AS text;`: generated `CREATE_DOMAIN` has one child; C has zero.
+
+The checked-in SQL blob matches C for these witnesses. These four generated
+grammar divergences remain outside the bounded native identity gate.
+
+The post-hardening primary locked-C artifact is:
+
+`/tmp/gts-c26q-production-proof-20260823/harness_out/grammargen_cparity/20260823_071725-c26q-hardening-sql-locked-c`
+
+Its `container.log` SHA-256 is
+`3da06f65285aa598d7b2f931a1b7e519314dcf7be9ac833e5b2977ae6d21e2c8`.
+Its `metadata.txt` SHA-256 is
+`7e28e8013623b9f3664621b1d34739f27393f14615af1eaf50db18118c947bad`.
+
+### Post-hardening validation
+
+The final hardening reran the root, SQL, race, incremental, route,
+real-corpus, and locked-C gates. Each run used one container and one CPU.
+No run reported an out-of-memory kill or a wall timeout.
+
+The final root gate artifact is:
+
+`/tmp/gts-c26q-hardening-artifacts/20260823T143340Z-c26q-hardening-root-final`
+
+Its `container.log` SHA-256 is
+`9cf08c045266c069239c06b10a6e134fe7e6eb7c797d9804aa35ec5bd5aa77f9`.
+Its `metadata.txt` SHA-256 is
+`1ce71c4845672333cf1fdcf2b2291d3ed0e4a8c703ac27a227ecf395d6dd9ddf`.
+
+The root race artifact is:
+
+`/tmp/gts-c26q-hardening-artifacts/20260823T141242Z-c26q-hardening-root-race`
+
+Its `container.log` SHA-256 is
+`cb69e6ec92349fa703a93e0fa45dccdfe087b7b838412cc23eed17b8f3daca6a`.
+Its `metadata.txt` SHA-256 is
+`8fcf380350708abaf4337d3d5b9e952da3128c67a807351e88dd9d4bb5e86d39`.
+
+The SQL race, incremental, route, and diagnostic screen artifacts are:
+
+- SQL race: `/tmp/gts-c26q-hardening-artifacts/20260823T141349Z-c26q-hardening-sql-race`.
+- Incremental: `/tmp/gts-c26q-hardening-artifacts/20260823T141430Z-c26q-hardening-sql-incremental`.
+- Routes: `/tmp/gts-c26q-hardening-artifacts/20260823T141907Z-c26q-hardening-sql-route`.
+- Diagnostic screen, candidate: `/tmp/gts-c26q-hardening-artifacts/20260823T142008Z-c26q-hardening-sql-perf-candidate`.
+- Diagnostic screen, base: `/tmp/gts-c26q-hardening-artifacts/20260823T142021Z-c26q-hardening-sql-perf-base`.
+
+The diagnostic screen is not performance evidence. It used a temporary
+benchmark and one sample. Treat the accounting change as correctness-only.
+
+The real-corpus artifact is:
+
+`/tmp/gts-c26q-production-proof-20260823/harness_out/docker/20260823T142119Z-diag-sql`
+
+The locked-C artifact is:
+
+`/tmp/gts-c26q-production-proof-20260823/harness_out/grammargen_cparity/20260823_071725-c26q-hardening-sql-locked-c`
+
+The SQL race metadata records `GOMAXPROCS=1` and `GOFLAGS=-p=1`.
+The route metadata records `GOMEMLIMIT=3GiB` and `GOFLAGS=-p=1`.
+The real-corpus metadata records `GOMAXPROCS=1` and `GOFLAGS=-p=1`.
+
+### Focused Docker gates and scope
+
+The root identity tests passed. The root race tests passed. SQL scanner,
+override, incremental, raw, included-ranges, real-corpus, and locked-C gates
+also passed their process exit checks. No run reported an out-of-memory kill
+or wall timeout. The focused runs used one CPU and 4 GiB. SQL race and
+locked-C runs set `GOMAXPROCS=1` and `GOFLAGS=-p=1`. The real-corpus metadata
+records `GOMAXPROCS=1` and `GOFLAGS=-p=1`.
+
+The proof excludes Swift, other grammar changes, GLR scheduler changes,
+recovery election changes, condense or merge changes, forest ownership
+changes, and performance claims. It does not close the generated SQL parity
+gap.
+
+The code and test patch SHA-256 against the publication base is
+`cdc8d0d83204a7ea613442cafa461d961f27b81d3ad7fd3e3e85aebe3906ee48`.
+The patch contains these files:
+
+- `arena.go`
+- `external_scanner_checkpoint_capability.go`
+- `external_scanner_checkpoint_identity_test.go`
+- `external_scanner_checkpoints.go`
+- `grammars/embedded_loader.go`
+- `grammars/grammargen_blob_override.go`
+- `grammars/grammargen_blob_override_test.go`
+- `grammars/sql_scanner.go`
+- `grammars/sql_scanner_test.go`
+- `language.go`
+- `load_language.go`
+- `parser.go`
+- `tree.go`
+
+The receipt adds only `CHANGELOG.md` and this document. No C26q document
+guard test exists. Therefore, no two-stage document-guard chain is needed.
+The diagnostic C parity log change was restored before this receipt.
+
+Several commands were quarantined. The root command `go test ./cgo_harness ...`
+was invalid because `cgo_harness` is a separate module. A later command used
+`cd /workspace/cgo_harness && go test . ...`. A trial passed the unsupported
+`--gomaxprocs` option to `run_parity_in_docker.sh`; the wrapper printed usage.
+Later probes passed unsupported `--out-root` and `--src-dir` options, and one
+sent SQL to a wrapper that excludes SQL. Those probes produced no test
+evidence. The final direct runner commands above are the evidence.
+
+### C26q decision and reopening condition
+
+GO applies only to the bounded native SQL identity gate and generated override
+fail-closed behavior. This gate does not prove generated SQL parity with C.
+Keep issue #576 open.
+
+Reopen the generated SQL path only after all of the following conditions hold:
+
+- Explain and fix the four generated SQL locked-C divergences.
+- Prove generated source and grammar identities from an authenticated lock.
+- Pass equal-identity reuse and changed-identity rejection on generated SQL.
+- Pass raw, production, compact, forest, included-ranges, and incremental
+  parity for native and generated SQL.
+- Avoid source-hash, blob-exception, witness-repair, and language-specific
+  policy.
+
+Keep issue #576 open until the generated route
+passes the full locked-C proof.
+
 ## Current bounded result
 
 The bounded matrix completed with no silent divergence.

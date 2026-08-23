@@ -1,11 +1,8 @@
 package grammars
 
 import (
-	"bytes"
-	"compress/gzip"
 	"container/list"
 	"crypto/sha256"
-	"encoding/gob"
 	"fmt"
 	"os"
 	"strconv"
@@ -526,63 +523,18 @@ func decodeEmbeddedLanguage(blobName string) (*gotreesitter.Language, [32]byte, 
 }
 
 func decodeLanguageBlobData(blobName string, data []byte) (*gotreesitter.Language, error) {
-	compressed, expectsTrailer, err := gotreesitter.UnwrapLanguageBlobEnvelope(data)
+	lang, err := gotreesitter.LoadLanguage(data)
 	if err != nil {
 		return nil, fmt.Errorf("decode grammar blob %q: %w", blobName, err)
 	}
-	gzr, err := gzip.NewReader(bytes.NewReader(compressed))
-	if err != nil {
-		return nil, fmt.Errorf("open gzip grammar blob %q: %w", blobName, err)
-	}
-	defer gzr.Close()
+	compactDecodedLanguage(lang)
+	repairNoLookaheadLexModes(lang)
+	repairJavaScriptTypeScriptOptionalChainTokenSymbol(blobName, lang)
+	repairDartCollapsedLeafTokenSymbols(blobName, lang)
+	repairDhallUnicodeAnonymousSymbolNames(blobName, lang)
+	attachReduceChainHints(blobName, lang)
 
-	// Decode from a fully-buffered *bytes.Reader, not gzr directly: gob's
-	// Decoder can read ahead past its own message boundary on a streaming
-	// reader, which would silently swallow the optional LargeStateGotos
-	// trailer (see gotreesitter.DecodeLargeStateGotosTrailer) before we get a
-	// chance to read it.
-	//
-	// Pre-size that buffer from the gzip ISIZE trailer instead of a plain
-	// io.ReadAll: for the largest shipped grammars (Swift's ~308 MB
-	// decompressed table is the extreme case) io.ReadAll's repeated buffer
-	// doublings roughly double peak transient allocation on every
-	// Language() call, which is what actually trips container memory
-	// limits. See ReadAllGzipWithSizeHint's doc comment for the full
-	// rationale; this is the same helper gotreesitter.LoadLanguage uses.
-	raw, err := gotreesitter.ReadAllGzipWithSizeHint(gzr, compressed)
-	if err != nil {
-		return nil, fmt.Errorf("read gzip grammar blob %q: %w", blobName, err)
-	}
-
-	br := bytes.NewReader(raw)
-	dec := gob.NewDecoder(br)
-	var lang gotreesitter.Language
-	if err := dec.Decode(&lang); err != nil {
-		return nil, fmt.Errorf("decode grammar blob %q: %w", blobName, err)
-	}
-	trailer, err := gotreesitter.DecodeLargeStateGotosTrailer(br)
-	if err != nil {
-		return nil, fmt.Errorf("decode grammar blob %q: %w", blobName, err)
-	}
-	if expectsTrailer && len(trailer) == 0 {
-		return nil, fmt.Errorf("decode grammar blob %q: envelope requires a non-empty large-state-gotos trailer", blobName)
-	}
-	if !expectsTrailer && len(trailer) != 0 {
-		return nil, fmt.Errorf("decode grammar blob %q: large-state-gotos trailer requires a versioned envelope", blobName)
-	}
-	if trailer != nil {
-		lang.LargeStateGotos = trailer
-	}
-
-	gotreesitter.InferGeneratedRepeatAuxMetadata(&lang)
-	compactDecodedLanguage(&lang)
-	repairNoLookaheadLexModes(&lang)
-	repairJavaScriptTypeScriptOptionalChainTokenSymbol(blobName, &lang)
-	repairDartCollapsedLeafTokenSymbols(blobName, &lang)
-	repairDhallUnicodeAnonymousSymbolNames(blobName, &lang)
-	attachReduceChainHints(blobName, &lang)
-
-	return &lang, nil
+	return lang, nil
 }
 
 func repairDhallUnicodeAnonymousSymbolNames(blobName string, lang *gotreesitter.Language) {

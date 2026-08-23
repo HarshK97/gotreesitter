@@ -132,6 +132,7 @@ type nodeArena struct {
 	fieldSourceSlabs                   []fieldSourceSliceSlab
 	externalScannerNodeCheckpoints     externalScannerCheckpointSet
 	externalScannerNodeCheckpointSlabs []externalScannerCheckpointSlab
+	externalScannerCheckpointIdentity  externalScannerCheckpointIdentityState
 	hiddenFieldRepeatScratch           hiddenFieldRepeatScratch
 	childSlabCursor                    int
 	fieldSlabCursor                    int
@@ -561,6 +562,7 @@ func (a *nodeArena) reset() {
 	a.resetCounters()
 	a.resetFieldSlabs()
 	a.resetFieldSourceSlabs()
+	a.externalScannerCheckpointIdentity.clear()
 	a.childSlabCursor = 0
 	a.fieldSlabCursor = 0
 	a.fieldSourceSlabCursor = 0
@@ -1886,6 +1888,7 @@ func (a *nodeArena) recomputeAllocatedBytes() {
 	for i := range a.externalScannerNodeCheckpointSlabs {
 		total += a.externalScannerNodeCheckpointSlabs[i].checkpoints.bytesAllocated()
 	}
+	total += a.externalScannerCheckpointIdentity.bytesAllocated()
 	a.allocatedBytes = total
 }
 

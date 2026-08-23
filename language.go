@@ -560,6 +560,10 @@ type Language struct {
 	// External scanner (nil if not needed)
 	ExternalScanner ExternalScanner
 	ExternalSymbols []Symbol // external token index -> symbol
+	// grammarBlobSHA256 identifies the exact compressed grammar bytes that
+	// produced this Language. Keep it private so blob encoding stays stable.
+	grammarBlobSHA256      [32]byte
+	grammarBlobSHA256Valid bool
 	// ImmediateTokens is a bitmask of symbol IDs that are token.immediate() tokens.
 	// When the lexer matches one of these after consuming whitespace, the match
 	// should be rejected — immediate tokens must match at the original position.
@@ -990,6 +994,14 @@ func (l *Language) Version() uint32 {
 		return 0
 	}
 	return l.LanguageVersion
+}
+
+// GrammarBlobSHA256 returns the exact compressed grammar blob identity.
+func (l *Language) GrammarBlobSHA256() ([32]byte, bool) {
+	if l == nil || !l.grammarBlobSHA256Valid {
+		return [32]byte{}, false
+	}
+	return l.grammarBlobSHA256, true
 }
 
 // CompatibleWithRuntime reports whether this language can be parsed by the

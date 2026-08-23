@@ -4729,6 +4729,7 @@ func (p *Parser) parseInternal(source []byte, ts TokenSource, reuse *reuseCursor
 	p.ensureParseInitialCapacity(source, arenaClass, arena, scratch)
 	memoryBudget := parseMemoryBudgetForParser(p, len(source))
 	arena.setBudget(memoryBudget)
+	arena.setExternalScannerCheckpointIdentityForLanguage(p.language)
 	scratch.setBudget(memoryBudget)
 	restoreRuntimeMemoryBudget := p.enterRuntimeMemoryBudget(memoryBudget, len(source))
 	if restoreRuntimeMemoryBudget.parser != nil {

@@ -9,6 +9,23 @@ for tags and release notes while still in `0.x`.
 
 ### Correctness
 
+- Added the C26q SQL scanner identity gate on publication base
+  `a62b9db306bcb983852cbf0043852546e864e856`. Native SQL binds each
+  checkpoint to its scanner and exact grammar blob. Generated overrides hash
+  their exact bytes before scanner adaptation. Equal identities permit reuse;
+  missing or changed identities fail closed. The scanner identity is
+  `7e493677411a501e6d8592c6b9cc158e21a1bfed44c72ca914e2d81e4e34861d`.
+  It includes local port hash
+  `588328cd27eea49e88b704b9bd8e46958046564187a5db1a70f6622308a7fff8`.
+  A test hashes the marked local source region. Production code does not read
+  source files. The exact-byte loader owns grammar identity. The public
+  language API cannot relabel a loaded language. Equal raw bytes with a
+  changed scanner identity fail closed. Arena identity set and inherit paths
+  use exact allocation deltas. Reset clears the identity. Native SQL passed
+  the route and real-corpus gates. Generated SQL still has four locked-C
+  divergences. A one-shot accounting screen is diagnostic only. It does not
+  provide release performance evidence. Keep issue #576 open.
+
 - Recorded the C26i, C26j, and C26k Swift issue #576 scanner checkpoint
   blocker. C26i and C26j use evidence base
   `137860ebd80921094e5a8069007d49188dcb5e50`. C26k uses evidence base
