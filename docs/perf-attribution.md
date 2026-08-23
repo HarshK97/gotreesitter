@@ -42,7 +42,8 @@ C incremental used digest
 `b03cf98e18bdddbd5ee3d2a0bc39410c51e21c41fbde89f7c5f3107c63276502`.
 
 The candidate did not prove a grammar-agnostic skip. P25x therefore stopped
-before publication and removed the candidate.
+before publication. The candidate remains uncommitted in the isolated
+`/tmp/gts-p25x-condense` worktree; no candidate code ships.
 
 P25x artifacts are:
 
@@ -182,8 +183,10 @@ P25ab artifacts are:
 - Performance compile: `/tmp/gts-p25ab-artifacts/20260823T114626Z-p25ab-compile-perf`.
 
 All P25ab Docker metadata used one CPU, four GiB, `GOMEMLIMIT=3GiB`,
-`GOMAXPROCS=1`, `GOFLAGS=-p=1`, and test parallelism one. Every run passed
-without timeout or out-of-memory failure. The telemetry was removed.
+`GOFLAGS=-p=1`, and test parallelism one. Seven of the nine receipts explicitly
+set `GOMAXPROCS=1`; the normal and performance compile receipts do not record
+it. Every run passed without timeout or out-of-memory failure. The telemetry
+was removed.
 
 ### P25x-P25ab decision and reopening condition
 
