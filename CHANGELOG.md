@@ -21,6 +21,22 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Removed duplicate dynamic-precedence dispatch in `gssEntryHash` while
+  preserving semantics. The primary trio changed by `+0.16%` for full parsing,
+  `+0.21%` for single-byte edits, and `-3.86%` for no-edit parsing. Its
+  geometric mean (geomean) changed by `-1.18%`. Bytes per operation and
+  allocations per operation stayed unchanged. The real `grammargen_lr` run
+  improved by `-3.13%` (`p=0.004`, `n=20`). The three-sample maximum resident
+  set size (RSS) medians were `615840 KiB` and `593760 KiB` (`-3.59%`). The
+  candidate has two `157 allocs/op`
+  outliers; other samples report `156 allocs/op`. Focused Go, locked-C, hash,
+  merge, forest, raw-shape, and incremental gates passed. The P25e profile
+  supplies attribution. Its SHA-256 is
+  `96bead7a8c448a597e4986839b000b602a08bf72b5ffaa5685fa72dcc432715c`.
+  Exclude the failed `20260823T061724Z` runtime probe. No accepted run timed
+  out or exhausted memory. Keep issue #454 open. See
+  `docs/perf-attribution.md` for the evidence base and validation artifacts.
+
 - Recorded the P25e issue #454 fresh-profile investigation collected at
   evidence base `14f6692fac65eab817f65af8cc6072e423ca6563` and published
   from main commit `2b755f744aef8dd253a4415ca4a5816fa85b0dbb`. The workload
