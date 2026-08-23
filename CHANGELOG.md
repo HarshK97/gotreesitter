@@ -9,6 +9,16 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Recorded the P25c issue #454 Objective-C transient-delete performance
+  blocker at source commit `838aba943038248529429a572c4d6d98359bd87e`.
+  The eight-size sweep found no discrete threshold between 512 KiB and
+  1 MiB. Each delete used five attempt entries and four retry passes.
+  Fresh and incremental trees matched by digest. The Objective-C stack-cap
+  helper is grammar-specific. No safe grammar-agnostic candidate passed the
+  proof boundary. Keep issue #454 and the performance arm live. No production
+  or test change survives. See `docs/perf-attribution.md` for the receipt,
+  artifacts, and reopening condition.
+
 - Recorded the P25b issue #454 performance blocker at source commit
   `18d63b6f7802b28a0ddb889327fcd4ebebb99426`. The exact 137 KiB base source
   matched the locked C tree. The one-byte edited source did not. The Go fresh

@@ -2065,6 +2065,180 @@ Exclude the failed construction attempts from this receipt:
 - `/tmp/gts-p25b-artifacts/20260823T025456Z-c137-fresh-base`
 - `/tmp/gts-p25b-artifacts/20260823T025935Z-c137-locked-c-137k-base`
 
+## 2026-08-24 P25c issue #454 Objective-C transient-delete blocker receipt
+
+Status: **NO-GO**. Keep issue #454 and the performance arm live.
+
+This receipt records the P25c Objective-C transient-delete investigation.
+It does not record a candidate code change. The source worktree used commit
+`838aba943038248529429a572c4d6d98359bd87e`. This docs-only receipt is based on
+main commit `db3105ce9f253b9a4b17ca83c4d61c6ccf6fe0fd`.
+No production or test change survives.
+
+### Witness and method
+
+The fixture reconstructs repeated Objective-C methods and pads each source.
+The base edit deletes the `x` in the first `x0` identifier.
+The insert control adds one `x` before that identifier.
+The delete control creates the transient-error path.
+
+This synthetic fixture is not an authenticated issue #454 corpus.
+Do not call this synthetic witness C-exact.
+
+The sweep covered 4, 64, 256, 512, 640, 768, 896, and 1,024 KiB.
+Each size ran in one Docker process. The run used one CPU and `GOMAXPROCS=1`.
+The run used `GOFLAGS=-p=1`, one test worker, and `GOMEMLIMIT=6GiB`.
+The container memory limit was 8 GiB. No workload was active before the sweep.
+
+The table gives wall time in milliseconds. RSS means maximum resident set size.
+
+| Base | Full | Fresh insert | Incremental insert | Fresh delete | Incremental delete | RSS KiB |
+|---:|---:|---:|---:|---:|---:|---:|
+| 4 KiB | 3.658 | 1.167 | 1.293 | 13.478 | 13.797 | 609,120 |
+| 64 KiB | 18.988 | 19.921 | 18.253 | 240.219 | 221.642 | 592,160 |
+| 256 KiB | 91.708 | 67.277 | 80.331 | 990.174 | 976.860 | 603,360 |
+| 512 KiB | 152.709 | 132.829 | 153.948 | 2,129.643 | 2,021.328 | 593,920 |
+| 640 KiB | 214.215 | 165.593 | 189.911 | 2,842.216 | 2,996.034 | 984,112 |
+| 768 KiB | 264.178 | 186.887 | 227.263 | 3,401.347 | 3,521.943 | 1,120,356 |
+| 896 KiB | 296.456 | 267.544 | 267.031 | 3,998.901 | 3,992.069 | 1,121,428 |
+| 1,024 KiB | 353.429 | 258.753 | 381.133 | 4,562.481 | 4,477.760 | 1,255,104 |
+
+The sweep shows no discrete threshold between 512 KiB and 1 MiB.
+Delete time grows with source size and shows normal run variation.
+The 640 KiB RSS increase does not change the retry or recovery structure.
+
+### Attribution and resources
+
+The profile separates edit, reuse selection, and reparse work.
+The table gives the incremental timings in milliseconds.
+
+| Base | Insert edit | Insert reuse | Insert reparse | Delete edit | Delete reuse | Delete reparse |
+|---:|---:|---:|---:|---:|---:|---:|
+| 4 KiB | 0.020 | 0.209 | 1.050 | 0.020 | 0.011 | 3.434 |
+| 64 KiB | 0.273 | 2.741 | 15.347 | 0.272 | 0.015 | 51.469 |
+| 256 KiB | 2.233 | 9.735 | 69.306 | 1.959 | 0.021 | 205.875 |
+| 512 KiB | 5.527 | 19.990 | 130.415 | 5.436 | 0.020 | 413.120 |
+| 640 KiB | 7.114 | 24.409 | 161.095 | 7.266 | 0.021 | 641.736 |
+| 768 KiB | 8.872 | 29.604 | 191.340 | 8.599 | 0.018 | 665.690 |
+| 896 KiB | 10.483 | 34.164 | 225.275 | 9.909 | 0.018 | 818.165 |
+| 1,024 KiB | 11.236 | 43.374 | 329.556 | 11.767 | 0.023 | 867.905 |
+
+At 1,024 KiB, the incremental delete took 4,477.760 ms.
+`Tree.Edit` took 11.767 ms. Reuse selection took 0.023 ms.
+Reparse took 867.905 ms. The parser loop took 767.362 ms.
+Result selection took 59.762 ms. Result-tree build took 0.017 ms.
+
+The 1,024 KiB delete allocated 848,689,760 heap bytes.
+It allocated 1,608,685,968 total bytes in 3,857 mallocs.
+It created 1,515,998 new nodes. Arena, scratch, and GSS bytes were
+217,695,656, 103,489,980, and 100,715,300.
+The maximum RSS was 1,255,104 KiB.
+
+The incremental-delete allocation receipts were:
+
+| Base | Heap bytes | Total bytes | Mallocs | New nodes | Recovery competitions |
+|---:|---:|---:|---:|---:|---:|
+| 4 KiB | 2,986,752 | 2,986,752 | 296 | 6,956 | 3,400 |
+| 64 KiB | 30,779,992 | 30,779,992 | 502 | 103,620 | 50,608 |
+| 256 KiB | 164,929,600 | 192,926,672 | 1,095 | 395,160 | 192,988 |
+| 512 KiB | 290,100,032 | 347,076,816 | 1,892 | 783,794 | 382,786 |
+| 640 KiB | 828,444,512 | 1,003,922,912 | 2,352 | 970,586 | 474,010 |
+| 768 KiB | 1,038,118,424 | 1,214,357,984 | 2,677 | 1,152,390 | 562,798 |
+| 896 KiB | 1,008,104,296 | 1,402,656,736 | 2,943 | 1,334,194 | 651,586 |
+| 1,024 KiB | 848,689,760 | 1,608,685,968 | 3,857 | 1,515,998 | 740,374 |
+
+Every insert used the old-tree reuse route and one stack.
+Every delete reused 53 bytes and rejected one dirty node.
+Each delete rejected seven dirty ancestors and five changed root non-leaves.
+No scanner or fragile-node rejection occurred.
+Every delete used five attempt entries:
+
+- `initial`
+- `initial_merge`
+- `clean_wide`
+- `recovery_wide_or_node`
+- `final_merge`
+
+Each delete used four retry passes and selected `initial`.
+The retry reason was empty. Accepted-error retry attempts remained zero.
+Each delete entered C recovery and recorded one recovery entry.
+Each delete recorded `CRecoveryDroppedErrorForClean=true`.
+The swallowed-error fallback did not run.
+
+Recovery competitions ranged from 3,400 at 4 KiB to 740,374 at 1,024 KiB.
+The memory budget was 536,870,912 bytes for every incremental delete.
+No run stopped for that budget. No run truncated its source.
+Normalization ran zero passes and rewrote zero nodes.
+
+Every fresh and incremental insert digest matched.
+Every fresh and incremental delete digest matched.
+The 512 KiB correctness receipt records these delete digests:
+
+```text
+fresh       = 346ff2142b2069c7a59b6f3f9ba6a06c0cac4401a97ba70cd83dceb85f186bc2
+incremental = 346ff2142b2069c7a59b6f3f9ba6a06c0cac4401a97ba70cd83dceb85f186bc2
+```
+
+### Correctness and locked-C result
+
+The focused Go Docker correctness test passed.
+It checked fresh and incremental roots, spans, errors, and digests.
+The focused Objective-C locked-C tests also passed.
+Those tests cover nearby Objective-C witnesses, not this synthetic source.
+They do not prove exact locked-C parity for the transient delete.
+
+### Canopy path and helper decision
+
+The narrow, no-cache Canopy query recorded this path:
+
+```text
+ParseIncrementalProfiled
+  -> parseIncrementalChangedProfiled
+  -> parseIncrementalInternal
+  -> retryIncrementalAcceptedErrorWithDFA
+  -> normalizeReturnedIncrementalTree
+```
+
+The retry caller query found both changed incremental callers.
+The stack-cap query found `effectiveFullParseInitialMaxStacks`.
+That helper caps default Objective-C full parses at two stacks.
+The transient incremental delete reached five stacks.
+The helper is grammar-specific. Reject it as a grammar-agnostic candidate.
+
+### Decision and reopening condition
+
+Do not publish a performance candidate from this receipt.
+Do not change production or registry state.
+Keep issue #454 and the performance arm live.
+
+Reopen a bounded candidate only after all conditions hold:
+
+- Use an authenticated Objective-C issue #454 corpus.
+- Repeat a quiet sweep around 512, 640, 768, 896, and 1,024 KiB.
+- Use at least three samples per size or an approved 20-seed campaign.
+- Preserve fresh and incremental deep-digest equality.
+- Prove exact locked-C parity for the edited witness.
+- Record the first divergence when parity fails.
+- Bound recovery retries and memory use.
+- Consider a generic helper only after a profile names a safe helper.
+- Repeat the focused correctness and locked-C Docker gates.
+
+### P25c artifact paths
+
+- Correctness: `/tmp/gts-p25c-artifacts/20260823T034301Z-objc-correctness-512k-v2`
+- Locked-C: `/tmp/gts-p25c-artifacts/20260823T034551Z-objc-locked-c-focused`
+- 4 KiB: `/tmp/gts-p25c-artifacts/20260823T034351Z-objc-4k-baseline-v2`
+- 64 KiB: `/tmp/gts-p25c-artifacts/20260823T034402Z-objc-64k-sweep-v2`
+- 256 KiB: `/tmp/gts-p25c-artifacts/20260823T034411Z-objc-256k-sweep-v2`
+- 512 KiB: `/tmp/gts-p25c-artifacts/20260823T034023Z-objc-512k-sweep-v2`
+- 640 KiB: `/tmp/gts-p25c-artifacts/20260823T033951Z-objc-640k-sweep-v2`
+- 768 KiB: `/tmp/gts-p25c-artifacts/20260823T034055Z-objc-768k-sweep-v2`
+- 896 KiB: `/tmp/gts-p25c-artifacts/20260823T034203Z-objc-896k-sweep-v2`
+- 1,024 KiB: `/tmp/gts-p25c-artifacts/20260823T034124Z-objc-1m-sweep-v2`
+- Incremental Canopy: `/tmp/p25c-canopy-incremental.json`
+- Retry Canopy: `/tmp/p25c-canopy-retry.json`
+- Stack-cap Canopy: `/tmp/p25c-canopy-maxstacks.json`
+
 ## Caveats
 
 - This is one run, on one noisy shared host, not a sealed-epoch,
