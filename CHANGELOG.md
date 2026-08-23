@@ -9,6 +9,16 @@ for tags and release notes while still in `0.x`.
 
 ### Correctness
 
+- Added authenticated generated-SQL scanner identity to the grammargen C
+  parity route. The route now reloads the generated blob through `LoadLanguage`
+  before scanner adaptation. The scanner binds checkpoints to exact generated
+  bytes. The focused edit reuses 1 subtree and 16 bytes after recording 13
+  checkpoint records, 4 checkpoint leaves, and 4 snapshots. Fresh and
+  incremental trees match. A stale
+  reference grammar identity reuses zero subtrees and zero bytes. The four
+  generated SQL locked-C divergences remain. Keep issue #576 open until
+  generated and locked-C trees match.
+
 - Added the C26q SQL scanner identity gate on publication base
   `a62b9db306bcb983852cbf0043852546e864e856`. Native SQL binds each
   checkpoint to its scanner and exact grammar blob. Generated overrides hash
