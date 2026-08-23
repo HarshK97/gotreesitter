@@ -82,9 +82,9 @@ fixtures. A focused unit result cannot replace these route proofs.
 
 ### P24i decision
 
-**KEEP LIVE / NO-GO.** Do not remove a dispatcher arm or change production
-code. Do not start a performance publication without a new candidate and a
-fresh quiet-host profile.
+**KEEP LIVE / NO-GO.** Do not ship a candidate or change production code. Do
+not start a performance publication without a new candidate and a fresh
+quiet-host profile.
 
 ### P24i reopening condition
 
