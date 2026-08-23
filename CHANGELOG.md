@@ -9,6 +9,17 @@ for tags and release notes while still in `0.x`.
 
 ### Correctness
 
+- Recorded the N31e C and C++ dispatcher blocker at main commit
+  `ab2010d74da5330d64dbddb0d9c58969da766d6d`. Keep `dispatch.c_cpp` live.
+  The initial dispatcher census (A0) excludes both languages, and the
+  declared corpus lock is absent. The C++ clean control matches locked C.
+  The recovery witness still differs in the root error shape and field
+  metadata. The focused parity test reports nine missing C++ field names.
+  The C++ field-preservation repair is language-specific. It does not resolve
+  the C recovery or token-source gaps. Ship no parser, registry, or test
+  change. See `docs/root-normalization-retirement.md` for identities,
+  artifacts, exclusions, and reopening conditions.
+
 - Recorded the AWK dispatcher blocker at main commit
   `5648911ecf509df8ec870a1214917d9e95cf54f1`. Keep `dispatch.awk` live.
   The focused receipt proves clean raw, production, compact, forest, and

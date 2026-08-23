@@ -11,6 +11,184 @@ The mechanically checked compatibility inventory remains
 [`testdata/result_compat_ownership_v1.json`](../testdata/result_compat_ownership_v1.json).
 This document defines the retirement program around that inventory.
 
+## 2026-08-24 C and C++ dispatcher blocker receipt
+
+Status: `KEEP LIVE / NO-GO`. Keep `dispatch.c_cpp` live.
+
+Base commit: `ab2010d74da5330d64dbddb0d9c58969da766d6d`.
+This receipt changes no parser, registry, or test behavior.
+
+The registry arm is `dispatch.c_cpp`. It covers `c` and `cpp`.
+It calls `normalizeCCompatibilityWithParser` in `parser_result_c.go`.
+Its authoritative owner is `derivation_election_selection`.
+The C++ subpass calls `normalizeCppMalformedClassFunctionDefinition`.
+Canopy traces the dispatcher to all seven C and C++ compatibility walks.
+Canopy also traces the C++ malformed-class rewrite and its field reconstruction.
+
+Retirement requires native derivation selection for every registered witness.
+Require exact production, compact, forest, incremental, and C-oracle outputs.
+
+### Grammar and oracle identity
+
+The grammar lock has SHA-256
+`9ddb6324afd014f6ecdd1cae3dd1ba238f1e62ce03d126e6d8b267ce34d72ecb`.
+It pins C to commit `ae19b676b13bdcc13b7665397e6d9b14975473dd`.
+It pins C++ to commit `8b5b49eb196bec7040441bee33b2c9a4838d6967`.
+
+The embedded Go C grammar blob has SHA-256
+`9aee42825fd1446ce5b754951db26edadcdba5d2f26b61578a30e87ed2dbbd3c`.
+The embedded Go C++ grammar blob has SHA-256
+`d351f902c8f2ca85257a9296d3c9991862d57701ac6e9006e386ae173fd35178`.
+
+The locked C oracle uses contract `tree-sitter-c-v1`.
+It uses binding `github.com/tree-sitter/go-tree-sitter` version `v0.25.0`.
+Its binding commit is `adc13ffd8b2c0b01b878fda9f7c422ce0df5fad3`.
+Its runtime is version `0.25.1` at commit
+`f5afe475deb7c0bae6407fb776c76824f717bb61`.
+The compiler is `/usr/bin/cc`, Debian 12.2.0.
+
+The C oracle grammar artifact has SHA-256
+`adbc130b95c3a8bacda2cace3b1073f0262c35863c64cbf13aba671eaf04f20d`.
+The C++ oracle grammar artifact has SHA-256
+`72917cdbce9526d245ee631f06c7830b564b72dc8ab592b19ca13815f15a7f32`.
+
+### Census and corpus coverage
+
+The initial dispatcher census (A0) has 14 languages and 42 files.
+Its committed source is `testdata/dispatcher_census_a0_manifest_v1.json`.
+It excludes both C and C++.
+Its parser revision is `3c55dca287c9dd6ed987c764b9aafd90b22281a2`.
+The tracked census has seven fixtures and no C or C++ fixture.
+Its committed source is `testdata/dispatcher_census_tracked_v1.json`.
+
+The A0 manifest declares `corpus_sources.lock`.
+That file is absent from this worktree.
+The authenticated corpus lock therefore has no committed C or C++ receipt.
+The grammar lock alone does not prove corpus coverage.
+
+### Route evidence
+
+The clean C++ witness is 61 bytes.
+Its source SHA-256 is
+`6bc15c37731ac9d1f14aed5157c4f22233ee04ec327b554643c48e428c04d437`.
+Its locked-C digest is
+`88f181c147ad7d3931da91e713bd2321a07bf0022a0091767ce994a6f94025b4`.
+Raw, production, token-source production, compact, and forest match C.
+Normal incremental parsing matches C but reports unsupported scanner reuse.
+Token-source incremental parsing reuses five subtrees and 31 bytes.
+It still diverges with digest
+`95107e18b0867af36eb3db0f8ca1da82545d2f57a964bce1b1065f31ebee99d2`.
+
+The C++ recovery witness is 347 bytes.
+Its source SHA-256 is
+`66a2bc245f487266b2281ae0407d2045adb5f834cc2ea236b545cafd3e94379f`.
+Its locked-C digest is
+`09ff7ac3e0e1aa3a9ee610b741c9926f428a1455563d11f0e1bec996ad99794e`.
+Raw and production use digest
+`9fa1894c3d15e4de5e58c9513be13b816a26ea467e890b29817312b45673b360`.
+The first difference is `/translation_unit`, where C has an error and Go does not.
+Compact declines at the scheduler frontier and falls back to production.
+Forest declines. Normal incremental parsing reports unsupported scanner reuse.
+Token-source production changes the digest to
+`b32c5a96585e23270ea003b6a335b645adffeccdd70aa6c55b2771faa24ed8c8`.
+Its first difference is
+`/translation_unit/function_definition[1]/class_specifier[0]`.
+The difference is field metadata: Go has no field and C has `type`.
+Token-source incremental parsing reports `incremental_parse_full_retry`.
+It reuses six subtrees and 11 bytes, but it keeps the field divergence.
+
+The clean C witness is 29 bytes.
+Its source SHA-256 is
+`2ad75d95660563887d8d3f1d0ae1dcf18c2379cbd83a5c72f5ab276351ee6949`.
+Every tested route matches C at digest
+`b35547117f044e74311e70eeb45bd3967598fdca38a963937e2eeaad29bed7b7`.
+Incremental parsing reuses four subtrees and 14 bytes.
+
+The C recovery witness is 1,023 bytes.
+Its source SHA-256 is
+`5d50ac3fdf9303cccf76fd9c4c0be0c9c4c48839b8c2ba72939fd96494f164ba`.
+Its locked-C digest is
+`35c4b6da0092ff35252de94385dbe959f282c317b6904a9c1e2a380d5481fbf9`.
+Go uses digest
+`026f2be4af2d3105a2d0930abd4374970b48eb0deafc9a398a3472d9ddcb4c16`.
+The first difference is
+`/translation_unit/function_definition[0]/compound_statement[2]/ERROR[2]/number_literal[0]`.
+Go marks the node as an error. C does not.
+Compact declines during recovery. Forest declines.
+Incremental parsing reuses six subtrees and 20 bytes, but the digest remains different.
+It allocates 9,208 new nodes after the edit.
+
+### Focused C++ field proof
+
+`TestCppTemplateTypeParameterParity` passes.
+`TestCppCollapsedKeywordCompatibilityParity` passes.
+`TestCppMalformedClassFunctionDefinitionRecoveryParity` fails by design.
+It reports nine missing field names on the 347-byte recovery witness:
+
+- `type`, `name`, and `body` under the class carrier;
+- `declarator` at two levels;
+- `scope` and `name` under the declarator;
+- `parameters` and `body` on the function definition.
+
+The C++ field-preservation repair is language-specific.
+It changes field metadata on one C++ recovery shape.
+It does not resolve the C recovery divergence.
+It does not resolve the token-source incremental retry.
+Do not replace this arm with a C++ branch or a source-specific rule.
+
+### Resource bounds and artifacts
+
+Docker used image `gotreesitter/cgo-harness:go1.25-local`.
+Each run used 4 GiB memory, one central processing unit, and 512 process IDs.
+Each run used `GOMAXPROCS=1`, `GOFLAGS=-p=1`, and `GOMEMLIMIT=3GiB`.
+The test timeout was 20 minutes.
+Successful runs exited zero without timeout or out-of-memory failure.
+The focused parity failure exited one because its nine-field assertion failed.
+
+The successful route artifacts are:
+
+- `/tmp/gts-n31e-artifacts/20260823T064647Z-n31e-c`;
+- `/tmp/gts-n31e-artifacts/20260823T064713Z-n31e-cpp`;
+- `/tmp/gts-n31e-artifacts/20260823T065124Z-n31e-c-routes`;
+- `/tmp/gts-n31e-artifacts/20260823T065140Z-n31e-cpp-routes`.
+
+The focused negative artifact is:
+
+- `/tmp/gts-n31e-artifacts/20260823T065234Z-n31e-cpp-focused`.
+
+The token-source attempt is excluded because its parity assertion failed:
+
+- `/tmp/gts-n31e-artifacts/20260823T065042Z-n31e-cpp-token-source`.
+
+The first C setup and package-path attempts are excluded:
+
+- `/tmp/gts-n31e-artifacts/20260823T064616Z-n31e-c`;
+- `/tmp/gts-n31e-artifacts/20260823T064622Z-n31e-c`.
+
+The C issue #454 ratchet artifacts are excluded from this C/C++ receipt:
+
+- `/tmp/gts-n31e-artifacts/20260823T065017Z-n31e-c-issue454`;
+- `/tmp/gts-n31e-artifacts/20260823T065223Z-n31e-c-ratchet`.
+
+### Decision and reopening conditions
+
+Keep `dispatch.c_cpp` live. No safe generic correction is proven.
+The C++ field repair is language-specific and incomplete.
+The C recovery gap and token-source gap remain separate blockers.
+Ship no parser, registry, or test change.
+
+Reopen retirement only after all conditions pass:
+
+1. Add C and C++ to the A0 manifest and tracked census denominator.
+2. Restore an authenticated `corpus_sources.lock` with C and C++ entries.
+3. Run every registered witness at the locked grammar revisions.
+4. Prove exact raw, production, compact, forest, incremental, and C-oracle trees.
+5. Preserve incremental reuse or retry receipts for both C and C++.
+6. Replace the C++ field repair with a generic producer invariant.
+7. Close the C recovery and token-source gaps without language-name rules.
+
+Keep the registry arm unchanged until every condition passes.
+
 ## 2026-08-24 AWK dispatcher blocker receipt
 
 Status: `KEEP LIVE / NO-GO`. Keep `dispatch.awk` live.
