@@ -10,6 +10,199 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
+## 2026-08-23 P25x-P25ab field and reduction performance blocker
+
+Status: **KEEP ISSUE #454 LIVE / NO-GO**. Ship no code.
+
+The publication base is main commit
+`8c80a46e450d906fc9ce1665c189497b02483a3e`.
+
+P25x used evidence base
+`3d6cd2628f7a42c348f51dce0a0ed9b92b183c6a`. P25y and P25z used evidence base
+`675697a1144fad306489c5142aedaae0825545d9`. P25aa and P25ab used evidence
+base `2c533f5c19f5f7ab9b586cd8454f0cdc4ece014b`.
+
+No production or test change survives this receipt. No twenty-seed campaign
+was warranted because no candidate passed the proof boundary.
+
+### P25x condense and resume guard
+
+P25x audited `cCondenseAndResume` for one redundant resume relex operation.
+Canopy traced the call through C recovery lookahead, shared-token state, and
+custom-source state. The temporary candidate added a guard before
+`cRecoverResumeLookahead`.
+
+The one-file candidate diff changed `parser_recover_c.go`. Its raw diff
+SHA-256 was
+`4ac139b25516f7856bba0ed7967ba4fb777a00bcd60bbfde6802f80257a40c6e`.
+
+Focused condense tests passed. The authenticated forward
+`recovery_deletion` parity test passed. Go fresh, Go incremental, C fresh, and
+C incremental used digest
+`b03cf98e18bdddbd5ee3d2a0bc39410c51e21c41fbde89f7c5f3107c63276502`.
+
+The candidate did not prove a grammar-agnostic skip. P25x therefore stopped
+before publication and removed the candidate.
+
+P25x artifacts are:
+
+- Final trace: `/tmp/gts-p25x-artifacts/20260823T105447Z-p25x-condense-trace-final/container.log`, SHA-256 `abf435f20497da1455019be66d45188800f6e8bfd6b4cbb41117451bebf56958`.
+- Candidate recovery metadata: `/tmp/gts-p25x-artifacts/20260823T110154Z-p25x-condense-candidate-recovery-enabled/metadata.txt`, SHA-256 `45d6b7fd839d6441148e30243410ffa1d46f1261fe14644e711a2bbf4750ff3e`.
+- Base benchmark: `/tmp/gts-p25x-artifacts/20260823T110343Z-p25x-condense-base-bench-2/container.log`.
+- Candidate benchmark: `/tmp/gts-p25x-artifacts/20260823T110330Z-p25x-condense-candidate-bench-2/container.log`.
+
+### P25y six-seed rejection
+
+P25y re-applied only the P25x guard at evidence base
+`675697a1144fad306489c5142aedaae0825545d9`.
+
+The artifact set contains six base and six candidate runs, paired by shuffle
+seed. Its metadata records one central processing unit (CPU), four GiB of
+memory, `GOFLAGS=-p=1`, `-count=1`, `-benchtime=750ms`, `-benchmem`, and
+`-parallel=1`. It does not record `GOMAXPROCS=1` or an alternating process
+order protocol.
+
+The table reports per-lane geometric means over the six cited base files and
+the six cited candidate files. The change is candidate minus base.
+
+| Lane | Base | Candidate | Change |
+| --- | ---: | ---: | ---: |
+| Full parse | `7,160,818 ns/op` | `7,663,006 ns/op` | `+7.01%` |
+| Single-byte edit | `788.657 ns/op` | `818.586 ns/op` | `+3.79%` |
+| No edit | `2.527652 ns/op` | `2.584016 ns/op` | `+2.23%` |
+| `recovery_deletion` | `4,131,437 ns/op` | `4,231,133 ns/op` | `+2.41%` |
+
+The candidate also raised full-parse allocations at seed four and seed six.
+The candidate failed the screen. No twenty-seed campaign ran.
+
+P25y artifacts are:
+
+- Root controls: `/tmp/gts-p25y-artifacts/20260823T110859Z-p25y-condense-root` and `/tmp/gts-p25y-artifacts/20260823T110908Z-p25y-condense-recovery`.
+- Base seeds: `/tmp/gts-p25y-artifacts/20260823T110931Z-p25y-base-s01` through `/tmp/gts-p25y-artifacts/20260823T111236Z-p25y-base-s06`.
+- Candidate seeds: `/tmp/gts-p25y-artifacts/20260823T110950Z-p25y-candidate-s01` through `/tmp/gts-p25y-artifacts/20260823T111255Z-p25y-candidate-s06`.
+- Candidate seed-six log SHA-256: `31aaad9ea03b18ff58015c69267561465568c1f06feee759a698c13aea1fa287`.
+
+The candidate worktree was restored clean. No parser code ships.
+
+### P25z reduction-path audit
+
+P25z audited `applyReduceActionFromGSS` and `applyReduceActionDispatch`.
+Canopy traced reduction lookup, field propagation, dynamic precedence, GSS
+mutation, and rollback. It found no distinct duplicate operation with a safe
+generic invariant.
+
+The focused reduction unit and suite passed. The authenticated
+`recovery_deletion` parity test passed. A short six-run recovery screen showed
+`4,076,831 ns/op` for base and `4,027,230 ns/op` for the temporary candidate,
+or `-1.22%`. The screen lacked a primary-trio result, confidence interval,
+and a proven invariant. It did not justify a twenty-seed run.
+
+P25z artifacts are:
+
+- Reduction unit: `/tmp/gts-p25z-artifacts/20260823T112225Z-p25z-reduce-unit`.
+- Reduction suite: `/tmp/gts-p25z-artifacts/20260823T112315Z-p25z-reduce-suite`.
+- Recovery parity: `/tmp/gts-p25z-artifacts/20260823T112349Z-p25z-reduce-recovery-parity/metadata.txt`, SHA-256 `47f223530f35b524e215b3477853455db49108b73763f0ae444ad53ad0e78a82`.
+- Base six-run screen: `/tmp/gts-p25z-bench/20260823T112644Z-p25z-base-recovery-bench-count6`.
+- Candidate six-run screen: `/tmp/gts-p25z-bench/20260823T112701Z-p25z-candidate-recovery-bench-count6/container.log`, SHA-256 `35397216dc0e9351975fdbd77d1eb463b87638af2da549bf4dc22c464e6a33f1`.
+
+P25z removed its temporary candidate. Treat the short improvement as
+diagnostic noise, not as a performance result.
+
+### P25aa hidden-field scan rejection
+
+P25aa tested one `parser_reduce.go` change. It attempted to skip a duplicate
+visibility scan in the hidden-field reduction path.
+
+The candidate diff SHA-256 was
+`749b9748010a818c2524305a48709347eb22274a7d46f2d0906d9f2ff9debbc6`.
+
+All focused field tests passed. The authenticated forward
+`recovery_deletion` parity test passed. The six-seed recovery screen reported
+`4,053,945 ns/op` for base and `4,122,966 ns/op` for the candidate.
+The candidate rose `+1.70%` by geometric mean. No twenty-seed campaign ran.
+
+Two baseline setup attempts were quarantined. The first used the wrong package
+path. The second used a missing script path. The third baseline run passed.
+
+P25aa artifacts are:
+
+- Field tests: `/tmp/gts-p25aa-artifacts/20260823T113505Z-p25aa-fields` and `/tmp/gts-p25aa-artifacts/20260823T113541Z-p25aa-reduce-tests`.
+- Recovery parity: `/tmp/gts-p25aa-artifacts/20260823T113559Z-p25aa-recovery-parity/metadata.txt`, SHA-256 `b2200bf0bb11ed176a420d0faf4368acdc9458f7db81ae58e289cf9dcbdc5ff9`.
+- Baseline six-seed output: `/tmp/gts-p25aa-bench/p25aa-base-3.txt`.
+- Candidate six-seed output: `/tmp/gts-p25aa-bench/p25aa-candidate.txt`, SHA-256 `ab826a40ffc30e91c0bd82031a8b1080ac626021295e79617d687fb71f4e865d`.
+- Failed baseline metadata: `/tmp/gts-p25aa-artifacts/20260823T113707Z-p25aa-base-bench/metadata.txt` and `/tmp/gts-p25aa-artifacts/20260823T113717Z-p25aa-base-bench2/metadata.txt`.
+
+P25aa removed the candidate. No parser or test change ships.
+
+Earlier P25y figures `+1.40%`, `+2.95%`, `+0.44%`, and `+2.62%` are
+unsupported by this artifact set. Earlier P25aa figures `+1.00%` and
+`+0.86%` are also unsupported. The authenticated raw files supersede both
+sets of figures.
+
+### P25ab field-path telemetry
+
+P25ab added temporary performance counters for three field paths:
+
+- Hidden-field scratch fallback.
+- `appendFlattenedHiddenChildrenWithFieldScratch`.
+- `applyParentFieldToFlattenedHiddenSpan`.
+
+The smallest field control executed one fallback, two flatten calls, seven
+hidden nodes, 11 source bytes, four output nodes, and one parent-field call.
+It used three parent-field span nodes. Its diagnostic benchmark reported
+`2,656 ns/op`, `5,008 B/op`, and `32 allocs/op`.
+
+The authenticated forward recovery control matched all four deep digests:
+Go fresh, Go incremental, C fresh, and C incremental. Each digest was
+`b03cf98e18bdddbd5ee3d2a0bc39410c51e21c41fbde89f7c5f3107c63276502`.
+
+The recovery counters reported 1,183 fallbacks, 2,363 flatten calls, 7,065
+hidden nodes, 188,613 source bytes, 3,932 output nodes, and 3,275 parent-field
+calls. The diagnostic benchmark reported `1,972,669 B/op` and `112 allocs/op`.
+
+The CPU profile placed `29.22%` cumulative time in
+`retryIncrementalAcceptedErrorWithBaseMergeCap`, `27.92%` in
+`applyReduceActionFromGSS`, and `1.30%` flat time in
+`appendFlattenedHiddenChildrenWithFieldScratch`. The temporary timer added
+`time.Now` overhead. Do not read its absolute helper time as production cost.
+
+The allocation profile placed `74.98%` of allocated bytes in
+`nodeArena.ensureNodeCapacity`. The field helpers did not appear as allocation
+sources. P25ab collected no separate RSS sample.
+
+P25ab artifacts are:
+
+- Field control: `/tmp/gts-p25ab-artifacts/20260823T115059Z-p25ab-field-control-v2`.
+- Field benchmark: `/tmp/gts-p25ab-artifacts/20260823T115134Z-p25ab-field-bench`.
+- Recovery control: `/tmp/gts-p25ab-artifacts/20260823T115143Z-p25ab-recovery-control`.
+- Recovery benchmark: `/tmp/gts-p25ab-artifacts/20260823T115222Z-p25ab-recovery-bench`.
+- CPU profile: `/tmp/gts-p25ab-profile/p25ab-recovery.pprof`, SHA-256 `d718da2a0cb18f586df1b97c609469a340e1ddaa9fcb276121df1154f01b02f2`.
+- Allocation profile: `/tmp/gts-p25ab-profile/p25ab-recovery.mprof`, SHA-256 `7025b862af5934db0dfcb1a31746c451ef899cca2de8bc87482bd782c3419a1d`.
+- Normal compile: `/tmp/gts-p25ab-artifacts/20260823T114626Z-p25ab-compile-normal`.
+- Performance compile: `/tmp/gts-p25ab-artifacts/20260823T114626Z-p25ab-compile-perf`.
+
+All P25ab Docker metadata used one CPU, four GiB, `GOMEMLIMIT=3GiB`,
+`GOMAXPROCS=1`, `GOFLAGS=-p=1`, and test parallelism one. Every run passed
+without timeout or out-of-memory failure. The telemetry was removed.
+
+### P25x-P25ab decision and reopening condition
+
+Reject every P25x through P25ab candidate. No production or test change
+survives. Keep issue #454 open.
+
+The accepted-error retry bypass is correctness-invalid. P25w found a root
+`ERROR` with 196 children and a different first error span when the bypass ran.
+
+The field helpers execute materially, but they are not the dominant source.
+The next source-owned investigation is `nodeArena.ensureNodeCapacity`, with
+separate attribution for arena growth and parser work. Keep correctness and
+performance gates separate.
+
+Reopen this lane only when a fresh profile identifies one bounded,
+grammar-agnostic operation. Prove fresh, incremental, and locked-C equality.
+Run six-seed screens before any twenty-seed campaign. Require neutral bytes,
+allocations, RSS, and parser-work counters before publication.
+
 ## 2026-08-23 P25k-P25w incremental and source-hotspot blocker
 
 Status: **KEEP ISSUE #454 LIVE / NO-GO**. Ship no code.
