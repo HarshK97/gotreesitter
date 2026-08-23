@@ -9,6 +9,14 @@ for tags and release notes while still in `0.x`.
 
 ### Performance
 
+- Recorded the P24i final performance blocker at main commit
+  `603f64155651888d46937e6b5df461873283b9a1`. After P24a through P24h, no
+  safe bounded candidate remained. P24i made no code change and ran no
+  20-seed campaign. The focused Docker baseline passed at
+  `/tmp/gotreesitter-p24i-investigation/harness_out/docker/20260822T234737Z`.
+  Keep the performance arm live until a fresh quiet-host profile identifies a
+  bounded candidate. See `docs/perf-attribution.md` for the proof obligations.
+
 - Recorded the P24h transient-parent dispatch predicate rejection. The
   candidate changed only `parser_reduce.go` at base commit
   `30f470f5c2bf18540f7a18b2b22a7e33b88d4e10`. The candidate diff SHA-256 is

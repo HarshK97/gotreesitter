@@ -10,6 +10,93 @@ published receipt.
 This is measurement infrastructure only. It changes no parser code, no
 routing, and no shipped behavior.
 
+## 2026-08-22 P24i final performance blocker receipt
+
+Status: **KEEP LIVE / NO-GO**. Ship no candidate code.
+
+This receipt is based on main commit
+`603f64155651888d46937e6b5df461873283b9a1`.
+
+P24i reviewed the bounded performance candidates from P24a through P24h. It
+found no safe bounded candidate for the next performance slot. The remaining
+targets cross graph-structured stack (GSS) ownership, raw-shape selection,
+field metadata, fragility, recovery, or incremental reuse boundaries.
+
+P24i made no production or test-code change. It ran no 20-seed campaign. It
+records a blocker and keeps the performance arm live.
+
+### P24i focused baseline control
+
+The focused Docker baseline passed at
+`/tmp/gotreesitter-p24i-investigation/harness_out/docker/20260822T234737Z`.
+The artifact runs these controls:
+
+- `TestParseGoIncrementalRepeatedSingleByteEdit`
+- `TestParserIncrementalArithmeticEditMatchesFreshParse`
+- `TestRawShapeElisionDifferentialRecoveryFromSingleStackPrefix`
+
+The Docker command exited zero. The metadata records no timeout and no
+out-of-memory event. This artifact is a baseline control. It is not a
+candidate result.
+
+The artifact used commit `86bc8ae4641a884d94bf28dd2bf8e309367252ee`, the first
+parent of the P24i experiment main. Later main commits added documentation and
+one parity test. They did not change parser production code.
+
+No P24i publication directory exists. No 20-seed, 40-process, or benchstat
+receipt exists for P24i.
+
+### P24i remaining profile attribution
+
+The prior receipts leave these named profile ranges:
+
+| Target | Observed profile range | Receipt |
+|---|---:|---|
+| `rawShapeComputeContentHash` | 47.25% cumulative CPU | P24e |
+| `rawShapeChild.entry` | 24.71% cumulative CPU | P24e |
+| `stackEntryNodeParseState` | 24.55% flat, 24.67% cumulative CPU | P24f |
+| `prepareParseStacksForIteration` | 7.54% to 15.58% cumulative CPU | P24g |
+| `applyReduceActionDispatch` | 20.00% to 28.64% cumulative CPU | P24h |
+| `condenseWithOutcomeAtomic` | 9.2% cumulative CPU | Attribution board |
+
+P24a through P24d supplied no fresh quiet-host profile range for a new
+decision. These ranges do not prove that a safe local edit exists. They show
+where a future profile must start.
+
+### P24i proof obligations
+
+Require every future bounded candidate to prove all of these properties:
+
+- Prove equal results on linear and forked graph-structured stack (GSS) paths.
+- Preserve child order, byte ranges, parser states, and selected lineage.
+- Preserve pending-parent ownership, child references, flags, and materialization.
+- Preserve raw-shape availability, hashes, precedence, and result selection.
+- Preserve field identifiers, field sources, hidden flattening, and field order.
+- Preserve fragility flags and fragile non-leaf reuse rejection.
+- Preserve locked-C recovery, retries, missing tokens, and fallback decisions.
+- Prove incremental trees equal fresh parses after clean and malformed edits.
+
+The proof must cover both production and compact routes. It must cover clean,
+forked, pending-parent, raw-shape, field, fragile, recovery, and incremental
+fixtures. A focused unit result cannot replace these route proofs.
+
+### P24i decision
+
+**KEEP LIVE / NO-GO.** Do not remove a dispatcher arm or change production
+code. Do not start a performance publication without a new candidate and a
+fresh quiet-host profile.
+
+### P24i reopening condition
+
+Reopen P24i only when a fresh quiet-host profile identifies one bounded target.
+The profile must use one CPU, `GOMAXPROCS=1`, and no concurrent CPU work. It
+must name a function, show a range above the measured noise floor, and support
+one local candidate edit.
+
+After the proof obligations pass, run focused Docker correctness and parity.
+Then run the full 20-seed, 40-process campaign with per-process RSS. Reject
+the candidate when any route, proof, parity result, or required lane fails.
+
 ## 2026-08-22 P24h transient-parent dispatch predicate receipt
 
 Status: **REJECT / NO-GO**. Ship no candidate code.
