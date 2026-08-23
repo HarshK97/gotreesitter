@@ -34,6 +34,51 @@ It uses tree-sitter runtime `0.25.1` at commit
 The C grammar artifact SHA-256 is
 `2a9f14046d4ca88b6db1316ee5f48b876aea1700e3c09811b3c87257fe827c5c`.
 
+## Upstream provenance probe
+
+The locked Swift grammar uses commit
+`41d6e5fe811ec94229ee71771174a8cce558dfee` and package version `0.7.2`.
+
+The authoritative `tree-sitter-swift` `origin/main` uses commit
+`172ada1cc4117d0260d9340680b4134adba2bc2c` and package version `0.7.3`.
+
+The current upstream grammar adds newer Swift syntax. It does not add an
+`unsafe` expression rule. Its new `unsafe` reference appears only in
+`nonisolated(unsafe)`.
+
+The isolated probe regenerated the current upstream grammar with this command:
+
+```text
+go run ./cmd/grammargen -json /tmp/tree-sitter-swift-ref.Hslb4F/src/grammar.json -bin /tmp/swift-current.bin -go /tmp/swift_grammar.go -pkg grammargen -func SwiftGrammarUpstreamProbe
+```
+
+The generated blob has 373,991 bytes and SHA-256
+`be5cd0bf8df7077804fe4b54ee47d76005c9a85c7c33b857ef6d2aff34461286`.
+The shipped blob has 373,670 bytes and SHA-256
+`be4575bc0acc3c60324aab635d067f940ac5f0557b80a8e3565d1e7d02d53582`.
+
+The regenerated minimal witness keeps Go digest
+`860b79483c37e217690deae43036bada15b259bed77713606124fa851702e62f`.
+It keeps the first mismatch at `15..18`: Go has a childless `ERROR`, while
+locked C has an `ERROR` child containing `bar`.
+
+The regenerated corpus digest is
+`758b85044c6cd5600ace2884f999ea1c834dd565066a2a6732996ed5e572f2df`.
+The broader digest changes because the current grammar contains unrelated
+updates. The target region does not improve. It remains an `ERROR` span
+`6828..6984`, with `MutableSpan` at `6828..6839` inside the error.
+
+The focused generated-language Docker artifact is:
+
+`/tmp/gts-swift-upstream-probe-artifacts/20260823T000638Z-swift-upstream-issue576-range`
+
+The focused generated-language parity artifact is:
+
+`/tmp/gts-swift-upstream-probe-artifacts/20260823T000433Z-swift-upstream-issue576-parity`
+
+Both artifacts passed with one CPU, one test worker, no out-of-memory kill,
+and no timeout.
+
 ## First parser-visible divergence
 
 The minimal diagnostic fixture added one trailing newline. It therefore had 21 bytes. The pinned witness has 20 bytes. The first divergent span is unchanged.
@@ -98,8 +143,13 @@ A forced candidate probe recorded `strategy2=false`, `frontier_drop=false`,
 
 ## Decision
 
-Keep both focused tests and the known mismatch receipts. Do not add a Swift exception or a grammar-name rule. Reopen implementation work only after a Swift grammar or lexer change emits the locked-C error token.
-Require both Docker witnesses to pass before implementation work resumes.
+Keep both focused tests and the known mismatch receipts. Do not add a Swift
+exception or a grammar-name rule. Do not ship parser or grammar code.
+
+Keep issue #576 open. Reopen implementation only after an authoritative
+upstream grammar or lexer change alters token production at `bar`, or after a
+generic runtime fix produces the locked-C error token without a Swift rule.
+Then regenerate the blob and require both Docker witnesses to pass.
 
 ## Docker receipts
 
