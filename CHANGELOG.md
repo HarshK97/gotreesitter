@@ -138,6 +138,21 @@ for tags and release notes while still in `0.x`.
   change. See `docs/root-normalization-retirement.md` for the route receipt,
   artifacts, and reopening condition.
 
+- Recorded the N31k Doxygen dispatcher blocker at evidence and publication
+  base `a62b9db306bcb983852cbf0043852546e864e856`. Keep `dispatch.doxygen`
+  live. The focused probe covers six witnesses across raw, production,
+  compact, forest, incremental, and locked-C routes. The A0 fixtures have
+  zero rewrites. The compact counters record exact routed and fallback deltas.
+  The probe uses a deterministic trailing-space deletion for every incremental
+  witness. The historical childless and recovered witnesses require three and
+  fourteen dispatcher rewrites, respectively. The childless and smoke C digests are pinned,
+  and exact witnesses require Go/C digest equality. The A0 fixtures and the
+  recovered historical witness still show locked-C divergence, and the
+  authenticated Doxygen corpus is unavailable. Ship no
+  parser, registry, or production change. See
+  `docs/root-normalization-retirement.md` for identities, artifacts, and
+  reopening conditions.
+
 ### Performance
 
 - Recorded the P25x-P25ab performance blocker at publication base
