@@ -899,6 +899,244 @@ forest, and incremental routes.
 Require the authenticated corpus and its source lock before retirement.
 Keep issue #576 open until these conditions pass.
 
+## C26i Swift issue #576 scanner-aware token-frontier blocker
+
+Evidence base: `137860ebd80921094e5a8069007d49188dcb5e50`.
+Publication base: `7b6f40fe089283674f5d0d19408d2380f77caf68`.
+
+Status: **NO-GO / KEEP ISSUE #576 OPEN**. No production or test change
+survives.
+
+This receipt audits the C26h producer boundary from the evidence base.
+The evidence base changes no parser, lexer, scanner, or grammar code.
+
+### Witness identities and results
+
+The source is
+`grammars/testdata/swift_corpus/stdlib_FloatingPointToString.swift`.
+It has 104,681 bytes.
+Its source SHA-256 digest is
+`ec96801e5237dff8da773f617a8a2f36e95b6a0a7c94b581855a451cd6507fdc`.
+
+The Go Swift blob is
+`be4575bc0acc3c60324aab635d067f940ac5f0557b80a8e3565d1e7d02d53582`.
+The Swift grammar commit is
+`41d6e5fe811ec94229ee71771174a8cce558dfee`.
+The locked C grammar artifact SHA-256 digest is
+`2a9f14046d4ca88b6db1316ee5f48b876aea1700e3c09811b3c87257fe827c5c`.
+The locked C runtime is `0.25.1` at commit
+`f5afe475deb7c0bae6407fb776c76824f717bb61`.
+
+The full-source Go deep digest is
+`ec51c633a3f99515cc0cd1c0cff435a44ddc7db8e83705977d28f78bdfb0fc0e`.
+The full-source locked-C deep digest is
+`ab96dddf088487acc700d72af9342c338901504dcf1d32b9644e9f6f6638190d`.
+Go has one root child. Locked C has 353 root children.
+Go's first error spans `0..104680`. C's first error spans `6828..6839`.
+
+The six prefix witnesses retain the C26h identities and results.
+
+| Bytes | Source SHA-256 | Go deep SHA-256 | Locked-C deep SHA-256 |
+|---:|---|---|---|
+| 6,805 | `525674aacceaeddb55fddef838cbb6b167db636dc0a171df3a8351ca15248c30` | `205b67cae26d6d42733c0bc1223e27406d2a435c25a162ed994a6571303ef688` | `47d1f1c78f541925f9deebf02d38bb78a68860057905e251aad4c99890fe3c99` |
+| 6,855 | `d3e340b8ef6c87769933cbb000557eeb87eff04ae8fbc27568ccefeecb0f44f7` | `1b8299a2c6ce8c6f7aafed2468fb426b191941e5966e0fa84bf162739c807498` | `3f3ea8f5fcdfba0ae9ac2e8d1b8672f2e1dfcd34c3d6625781bb0c54724ab8c4` |
+| 6,883 | `1d067da11cccfb64db6cb1025748994cb53cfdfb00a761b06e8b31b93af411ae` | `ac5aa2b8ff258c40c1b9405189fcea61d7d93b609fa018bb65ff40840eb37834` | `5e1bb7b780e5dedb4df2017895e203da0fb4d4e00c0eac6769788c430593494c` |
+| 6,912 | `c65a11b82e34178bb7189140f85e81b3c632ee4ed292b34b6257f294f25de690` | `73496d47059acfd101e1e3ee752cd8709e11432fbe0656510e8016f7fcb8ad07` | `90c282b8896a39a531e789084e80383fc48f2bffb23bb1fc7a39dce51d2950b9` |
+| 6,913 | `7f7870469f8b9e345b4295aa98d067235b0fee476617ee1f9379d54d96d7053a` | `06868a0ba3857e49cf34aba018f31e2ee8b1339153913503c4fc8468ebb2905b` | `9f43c73bc5858107e510b2455060e3f315ee17a6526bc4001fe106dce454b09a` |
+| 7,316 | `6ebf3b26112a3df3611eafe82cd16ffa3f639b7b0f57608d9fdc422ccde78e72` | `1460dfcc13dee3135ca5f8368cb58bdd374c203a06c45b19a23e56cca179cf36` | `2b72cea53a148ffc499ce3f8a817cfb8a27cf2a08efc158c2e011150426704d8` |
+
+Raw, production, compact, and incremental routes retain the Go digest.
+Each route differs from locked C on every prefix.
+Compact declines every prefix with one fallback and zero admissions.
+Forest declines every prefix.
+Incremental reports `external_scanner_unsupported` and zero reuse.
+The 7,316-byte run allocates 1,877 new nodes and sees 14 stacks.
+
+### Focused validation
+
+The full-witness Docker artifact is
+`/tmp/gts-c26i-swift-20260824/harness_out/docker/20260823T081122Z-c26i-swift-full-base`.
+Its command runs the full and minimal Swift mismatch guards.
+The run passed with exit code zero.
+It used one Swift grammar, one CPU, 4 GiB, `-parallel=1`, `GOFLAGS=-p=1`,
+and `GOMEMLIMIT=3GiB`.
+The command did not set `GOMAXPROCS`.
+The run had no out-of-memory kill and no wall timeout.
+
+The exact six-prefix route artifacts remain at:
+
+- `/tmp/gts-c26h-swift-20260824/harness_out/docker/20260823T074338Z-c26h-swift-probe-cgo`
+- `/tmp/gts-c26h-swift-20260824/harness_out/docker/20260823T074507Z-c26h-swift-routes-time`
+
+The timed C26h route observed 232,640 KiB maximum resident set size (RSS).
+This value is a workload observation, not a performance comparison.
+
+### Producer trace and Canopy ownership
+
+The durable event trace is
+`/tmp/gts-c26h-swift-20260824/harness_out/docker/20260823T074540Z-c26h-swift-event-origin/container.log`.
+It records this Go event:
+
+```text
+DFA tok 160 ... 6828 6839 MutableSpan state=10
+```
+
+Go then emits token 35 from byte 6839.
+Locked C reaches row 156, column 21, with parser state 2408.
+It tries external state 25 and internal state 716.
+Both normal attempts fail.
+It retries external state 1 and internal state 0.
+It skips one unrecognized character and emits `ERROR` with size 2 at column 23.
+It calls `detect_error`, resumes version 0, and skips the `ERROR` token.
+
+The C and Go traces use different parser-state number spaces.
+Do not equate C state 2408 with Go state 198 or state 10.
+The first difference occurs before recovery election, condense, or materialization.
+
+Canopy version `v0.18.0-19-g01a5f95-dirty` traced these generic paths:
+
+- `dfaTokenSource.Next` to `nextExternalToken` and `nextDFAToken`.
+- `nextDFAToken` to `scanPreferredTokenForState` and `nextTokenForLexState`.
+- `cRecoverAcquireToken` to `cRecoverInternalErrorModeToken`.
+- `updateParserStateTokenSource` to the shared parser-state frontier.
+- `cHandleError`, `cRecover`, and `cCondenseAndResume` after token production.
+
+The scoped commands were:
+
+```text
+scripts/canopy_query.sh search symbols parser_dfa_token_source.go --limit 120
+scripts/canopy_query.sh search symbols parser_recover_c.go --limit 120
+canopy graph calls 'nextExternalToken' parser_dfa_token_source.go --no-cache --reverse --depth 3
+canopy graph calls 'scanPreferredTokenForState' parser_dfa_token_source.go --no-cache --reverse --depth 3
+canopy graph calls 'cRecoverAcquireToken' parser_recover_c.go --no-cache --depth 3
+```
+
+### Generic contract boundary
+
+The reusable invariant is this:
+
+> A parser version in recovery error mode must retry its scanner-aware error
+> frontier before it accepts a normal token. Apply this retry only after its
+> normal external and internal lex attempts fail.
+
+The contract must bind the parser version, scanner state, external lex state,
+internal lex state, token span, and skip result.
+The current token source shares one scanner payload across live versions.
+The internal error-mode helper rejects languages with an external scanner.
+Swift serializes its raw-string hash only.
+Its carried previous-rune state is not serialized.
+No generic scanner-state transfer proof exists.
+
+Changing identifier symbol 160 to `ERROR` can reject valid identifiers.
+Forcing Go to skip the identifier can discard valid input.
+No grammar-agnostic candidate diff exists.
+The temporary inspection test was removed.
+
+D6a and D6b authenticate compact drop frontiers after token production.
+They cannot create C's missing token or alter scanner state.
+D6 frontier work does not change this blocker.
+
+### C26j per-version scanner ownership follow-up
+
+Evidence base: `137860ebd80921094e5a8069007d49188dcb5e50`.
+
+The C26j audit found one mutable `externalPayload` in each
+`dfaTokenSource`. A GLR stack clone copies parser and recovery data, but it
+does not copy an external scanner payload or checkpoint.
+
+`updateParserStateTokenSource` selects one primary parser state. It sends the
+union of active GLR states to the shared token source. Retry snapshots save and
+restore that same shared payload.
+
+`relexTokenForStackLexState` uses the internal DFA for a parser version. It
+does not re-enter the external scanner. `cCondenseAndResume` selects and
+resumes a version, but it does not transfer scanner state to that version.
+
+Swift `Serialize` writes its raw-string hash count. `Deserialize` clears
+`carriedPreviousRune` and `carriedPreviousValid`. Serialized bytes alone
+cannot restore every value that can affect the next scanner call.
+
+The default-off, opt-in complete checkpoint capability must meet seven requirements:
+
+1. Clone complete scanner state for every parser version.
+2. Bind the checkpoint to scanner identity, grammar blob, parser-version
+   lineage, source byte and point, external lex state, and serialized state.
+3. Record state before and after successful and failed scans.
+4. Copy the checkpoint when GLR creates a parser version.
+5. Transfer the selected checkpoint during recovery relex, condense, and
+   resume, and discard checkpoints for dead versions.
+6. Require exact checkpoint identity before versions merge or share a token.
+7. Revalidate the checkpoint before edit reuse, then fail closed when the
+   scanner does not support the contract.
+
+The root controls passed
+`TestNextExternalTokenRetriesScannerAfterFailedPreferredCandidate`,
+`TestCRecoveryGateValidatesParseTableActionAndGotoBounds`, and
+`TestParserExternalScannerToken`. The scanner-free control
+`TestParserIncrementalArithmeticEditMatchesFreshParse` also passed.
+The Swift controls passed
+`TestParitySwiftCleanRecoveryProbeControls` and both known-mismatch guards.
+
+The root-control artifact is
+`/tmp/gts-c26j-scanner-contract-20260824/harness_out/docker/20260823T082443Z-c26j-controls`.
+The Swift-control artifact is
+`/tmp/gts-c26j-scanner-contract-20260824/harness_out/docker/20260823T082454Z-c26j-swift`.
+The Swift run used one Swift grammar. Both runs used one CPU, 4 GiB,
+`-parallel=1`, `GOFLAGS=-p=1`, and `GOMEMLIMIT=3GiB`.
+Neither metadata record sets `GOMAXPROCS`.
+Both runs passed without an out-of-memory kill or wall timeout.
+
+The next proof must exercise two parser versions through a failed scan, GLR
+fork, C recovery retry, condense, resume, merge, and edit reuse. Run one
+external-scanner control and one scanner-free control. Require locked-C parity
+before testing compact admission.
+
+### C26k conclusion
+
+Evidence base: `5d39d9658f5071c5c0f476eaadc6ae067e6c77e1`.
+
+The existing `CheckpointedExternalScanner` contract proves incremental
+checkpoint boundaries only. It does not assign scanner state to a parser
+version. `Language` has no generic grammar-blob identity. A record-only slice
+cannot prove ownership across GLR forks, merges, or recovery resumes.
+
+The integration blast radius includes the token source, GLR stack and
+scheduler, merge paths, C recovery, and incremental reuse. Focused controls
+passed. The exact artifacts are:
+
+- `/tmp/gts-c26k-checkpoint-contract-20260824/harness_out/docker/20260823T084110Z-c26k-root-controls`
+- `/tmp/gts-c26k-checkpoint-contract-20260824/harness_out/docker/20260823T084134Z-c26k-external-control`
+- `/tmp/gts-c26k-checkpoint-contract-20260824/harness_out/docker/20260823T084144Z-c26k-scanner-free-control`
+- `/tmp/gts-c26k-checkpoint-contract-20260824/harness_out/docker/20260823T084153Z-c26k-offmode-bench`
+- `/tmp/gts-c26k-checkpoint-contract-20260824/harness_out/docker/20260823T084251Z-c26k-checkpoint-boundary-controls`
+
+The runs used one CPU, 4 GiB, `GOMEMLIMIT=3GiB`, `GOFLAGS=-p=1`, and
+`-parallel=1`. The metadata does not set `GOMAXPROCS`. No candidate exists, so
+the off-mode benchmark is observational only. It recorded 13.69 ms/op,
+14.03 MB/op, and 3,742 allocations per operation.
+
+The narrower prerequisite is a complete checkpoint API with identity. Add
+synthetic tests for independent fork copies, exact merge identity, elected
+state transfer during recovery, failed-scan restoration, an external-scanner
+control, and a scanner-free control. Keep the capability default off and fail
+closed when identity or completeness is unavailable. No code or test change
+was made.
+
+### C26i decision and reopening condition
+
+Keep issue #576 open.
+Ship no parser, grammar, or test change.
+
+Reopen implementation work only after a generic scanner-aware frontier
+capability proves all of the following:
+
+- Preserve per-version scanner state or an authenticated scanner checkpoint.
+- Match normal and error token identity, span, and skip behavior.
+- Pass clean controls and all six prefixes in locked-C parity.
+- Pass the full witness on raw, production, compact, forest, and incremental routes.
+- Use an authenticated source lock and corpus evidence.
+
+
 ## Current bounded result
 
 The bounded matrix completed with no silent divergence.
