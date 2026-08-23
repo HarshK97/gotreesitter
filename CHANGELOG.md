@@ -154,6 +154,20 @@ for tags and release notes while still in `0.x`.
   `docs/compact-route-real-corpus-matrix.md` for the control, traces, and
   reopening condition.
 
+- Record the N31b TypeScript dispatcher blocker at main commit
+  `731f8a9d9440a006b2cc6b56ef5b31c0ff3b5ce7`. The tracked fixture has source
+  SHA-256 `40b4a7a06fde353d8c2b726acb16f59aab44d49d1b6257c37345c2a1f56b9fb7`.
+  It records 1,462 visited nodes and 15 rewritten nodes. The available
+  positive, typed-arrow, generic-call, and issue-544 controls match locked C
+  on the checked routes. Compact fallback remains fail closed. Incremental
+  scanner reuse remains enabled. The cap-one diagnostic exposes a typed-arrow
+  root-error divergence. The A0 manifest and authenticated corpus do not
+  include TypeScript. The generic-call selection test remains skipped. The
+  held-out webworker receipt was not rerun because its source is unavailable.
+  Keep `dispatch.typescript` live. No production code changed. See
+  `docs/root-normalization-retirement.md` for the receipt, artifacts, and
+  reopening condition.
+
 - Record the C26b Swift issue #576 conformance-list recovery blocker at main
   commit `838aba943038248529429a572c4d6d98359bd87e`. The 66-byte
   `associatedtype` witness still differs from locked C. Go emits
