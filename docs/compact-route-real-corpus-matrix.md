@@ -1325,6 +1325,46 @@ Its `container.log` SHA-256 is
 Its `metadata.txt` SHA-256 is
 `995ff318234b4e2325904a24339b677ef9825787f8fd6eacacf5268654afc10a`.
 
+### Generated SQL identity gate
+
+The direct grammargen route now generates and reloads its exact blob through
+`LoadLanguage`. SQL scanner adaptation then receives the generated blob hash.
+The focused regression checks scanner and language identities for equality.
+Missing or changed identities fail closed before checkpoint reuse.
+
+This proof uses publication base
+`d54147516440a91b8eda6983251c7cd6c4be2707` and the authenticated SQL source
+under `/tmp/grammar_parity/sql`. The final focused Docker artifact is:
+
+`/tmp/gts-c26r-artifacts/20260823T155352Z-c26r-sql-rebase-d5414751`
+
+Its `container.log` SHA-256 is
+`a70b0473a0a59f3cfcec52dfef99c9dc88e58a2c6fc8be952c717f7dc597fe7b`.
+Its `metadata.txt` SHA-256 is
+`1d86b47e74bd620424e46407ede358a9eef30d89afb27f1b5198e8e2f19b894e`.
+The test logged scanner identity
+`7e493677411a501e6d8592c6b9cc158e21a1bfed44c72ca914e2d81e4e34861d` and
+generated blob identity
+`4ffb2a6d09e2000126f10101db9028d28e0752ac3e4f83e401f045c3b028ca7c`.
+The old parse recorded 13 checkpoint records, 4 checkpoint leaves, and 4
+snapshots. The edited parse
+reused 1 subtree and 16 bytes. Fresh and incremental trees matched.
+The reference SQL scanner supplied stale grammar identity
+`e21421cbab52b54cf5ba15c8f78a2bb4729bf4e8c0da14368069e897de451268`.
+The stale checkpoint reused zero subtrees and zero bytes.
+
+The full regression artifact recorded the existing dollar-quote divergence:
+
+`/tmp/gts-c26r-artifacts/20260823T154425Z-c26r-sql-full-final`
+
+Its `container.log` SHA-256 is
+`7b77af8d87280b5e1de43b1234504ab7ec110f68385530d223a3562e41dbecd2`.
+Its `metadata.txt` SHA-256 is
+`ccede21b768050fcd6b08cfe8b4e735c3e584da63a85e7ff0bc1d818f773507e`.
+
+The route remains blocked by four generated SQL locked-C divergences. Keep
+issue #576 open until those trees match node for node.
+
 ### Generated SQL override proof
 
 The generated override tests use the checked-in SQL blob as input. They
