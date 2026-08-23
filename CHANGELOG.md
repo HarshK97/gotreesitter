@@ -222,6 +222,22 @@ for tags and release notes while still in `0.x`.
 
 ### Correctness
 
+- Record the C26h Swift issue #576 producer-boundary blocker at main commit
+  `41d0b9de133de777aeba9c1dca091903da052a7f`. The six prefixes from
+  `FloatingPointToString.swift` retain different Go and locked-C digests.
+  Go emits deterministic finite automaton (DFA) identifier token 160 for
+  `MutableSpan` at bytes `6828..6839`. Locked C emits `ERROR`, detects the
+  error, resumes, and skips it. The divergence occurs before recovery
+  election and tree materialization. Compact and forest routes decline.
+  Incremental reuse reports `external_scanner_unsupported`. The explicit
+  controls were one CPU, 4 GiB, `-parallel=1`, `GOFLAGS=-p=1`, and
+  `GOMEMLIMIT=3GiB`. The wrapper does not record `GOMAXPROCS=1`. A timed
+  run observed 232,640 KiB maximum resident set size (RSS). No safe
+  grammar-agnostic correction is proven. Ship no parser, grammar, or test
+  change. Keep issue #576 open. See
+  `docs/compact-route-real-corpus-matrix.md` for digests, traces, artifacts,
+  and the scanner-aware reopening contract.
+
 - Record the C26f Swift issue #576 `FloatingPointToString.swift` recovery
   blocker at evidence base `5648911ecf509df8ec870a1214917d9e95cf54f1`.
   The 104,681-byte source and its complete 7,316-byte prefix have raw,
