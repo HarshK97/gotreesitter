@@ -3615,6 +3615,217 @@ The audited artifact root is
 `/tmp/gts-p25d-csharp-20260824.gMbLCq/repo/grammars/p25d_csharp_probe_test.go`.
 The probe remains outside this documentation patch.
 
+## 2026-08-24 P25ac-P25ae incremental arena retention receipt
+
+Status: **NO-GO**. Keep issue #454 open. Ship no candidate code.
+
+This receipt supersedes the P25ac primary-route screen. P25ac measured a
+same-length edit that used the token-invariant leaf fast path. P25ad traced
+the route and selected the authenticated Go `recovery_deletion` edit.
+P25ae then measured a temporary incremental arena retention ceiling.
+
+The evidence base for P25ac is
+`8c80a46e450d906fc9ce1665c189497b02483a3e`.
+The evidence and candidate base for P25ad and P25ae is
+`af8a9a5bdb5bd1ac03762bc9a4f1a89f42463682`.
+This docs-only receipt uses publication base
+`6a22fcf82c4d84ab613c68084ad356eb52bb4eac`.
+
+### P25ac route attribution
+
+P25ac used the generated Go incremental single-byte edit benchmark. The edit
+had equal old and new lengths. The route entered
+`tryTokenInvariantLeafEdit` and returned through `reuseTreeWithNewSource`.
+It did not enter `parseInternal` or acquire an incremental arena.
+
+The primary receipt recorded these counters:
+
+- `new_nodes=0`
+- `parse_ns=0`
+- `arena_inc_acquire=0`
+- `arena_inc_new=0`
+
+The route reused the old tree arena. The P25ac arena tests and locked-C
+recovery parity gate passed. The temporary candidate was fully reverted.
+
+### P25ad arena trace
+
+Canopy traced the actual incremental path as follows:
+
+```text
+ParseIncrementalProfiled
+  -> parseIncrementalChangedProfiled
+  -> parseIncrementalInternal
+  -> parseInternal
+  -> acquireNodeArena
+  -> incrementalArenaPool.acquire
+```
+
+`nodeArena.Release` resets the primary array and overflow slabs before it
+returns the arena to the eight-entry incremental pool. `DrainArenaPools`
+clears that pool. `recordIncrementalArenaUsage` updates the capacity hint with
+12.5% headroom. `ensureParseInitialCapacity` applies that hint before parsing.
+
+The authenticated workload is the Go `recovery_deletion` edit from the
+canonical incremental manifest:
+
+| Item | Identity |
+|---|---|
+| Source SHA-256 | `74c0705f8729670559492fb5460a01b2a1a2a109928e1aeb52736e485e8ff097` |
+| Edited SHA-256 | `81543368d0ec807dd951edfdb04fb66ee9ef14ca32b0bb5c53fc8a4d0f2e7b07` |
+| Edit | Delete `)` at byte `2076` |
+| Forward new nodes | `12,598` |
+| Reverse new nodes | `8,301` |
+| Forward route | `recovery_incremental` |
+| Reverse route | `genuine_incremental_glr` |
+| Locked-C result | Fresh and incremental Go and C digests match |
+
+The workload bypasses the leaf fast path because its source length changes.
+Its source length also selects the incremental arena class. The existing
+profile records forward and reverse parity, accepted roots, stack peaks, and
+retry facts. It does not claim a new grammar or corpus lock.
+
+### P25ae bounded screen
+
+The temporary candidate changed `maxRetainedIncrementalNodeBytes` from 256
+kibibytes (KiB) to 2 mebibytes (MiB). It changed no retry, recovery, parser,
+or test logic. The
+candidate diff SHA-256 was
+`d2506e03d97cb7161667096c5b2108dbd4f7caa6c29f402ce2c5355120ec1c8f`.
+
+Both worktrees ran one Go grammar in Docker. The limits were one CPU, 4 GiB,
+512 process IDs (PIDs), `GOMEMLIMIT=3GiB`, `GOMAXPROCS=1`, `GOFLAGS=-p=1`,
+`-parallel=1`, `-count=1`, and `-benchtime=750ms`.
+The six-seed screen used seeds 1 through 6. The locked-C gate ran before the
+performance screen.
+
+The pooled six-seed result follows. The table reports bytes per operation
+(B/op) and allocations per operation (allocations/op):
+
+| Metric | 256 KiB | 2 MiB | Change |
+|---|---:|---:|---:|
+| Time | 4.182 ms | 3.660 ms | −12.49%, p=0.002 |
+| B/op | 1297.98 KiB | 44.03 KiB | −96.61%, p=0.002 |
+| Allocations/op | 61.00 | 60.00 | −1.64%, p=0.002 |
+| Arena acquire/op | 1.500 | 1.502 | unchanged |
+| Arena new/op | 0 | 0 | unchanged |
+| New nodes/op | 9,355 | 9,362 | unchanged |
+| Retry attempts/op | 0.5000 | 0.5021 | unchanged |
+| Maximum stacks | 18 | 18 | unchanged |
+| Memory-budget stops/op | 0 | 0 | unchanged |
+
+The pooled one-seed maximum resident set size (RSS) was `234560 KiB` for 256 KiB and
+`234880 KiB` for 2 MiB. The change was `+0.14%`.
+
+The drained six-seed control produced these results:
+
+| Metric | 256 KiB | 2 MiB | Change |
+|---|---:|---:|---:|
+| Time | 5.419 ms | 5.549 ms | not significant |
+| B/op | 2.731 MiB | 2.714 MiB | −0.61% |
+| Allocations/op | 114.0 | 113.5 | not significant |
+| Arena acquire/op | 1.502 | 1.502 | unchanged |
+| Arena new/op | 1.490 | 1.490 | unchanged |
+| New nodes/op | 9,361 | 9,360 | unchanged |
+| Retry attempts/op | 0.5013 | 0.5013 | unchanged |
+| Maximum stacks | 18 | 18 | unchanged |
+| Memory-budget stops/op | 0 | 0 | unchanged |
+
+The drained six-seed maximum RSS was `306028 KiB` for 256 KiB and
+`328640 KiB` for 2 MiB. The change was `+7.39%`.
+
+The pooled lane met the B/op target. The drained lane did not meet the 5%
+allocation target and exceeded the 1% RSS regression limit. The candidate
+therefore failed the release gate and was fully reverted.
+
+### Correctness and decision
+
+The focused arena tests passed in both worktrees. The authenticated Go
+`recovery_deletion` locked-C parity test passed in both worktrees. No run
+timed out or exhausted memory. No production or test change remains.
+
+Do not accept a pooled-only improvement. Reopen this candidate only when the
+drained lane also meets these conditions:
+
+- Reduce B/op or allocations by at least 5%.
+- Keep target time, primary benchmarks, bytes, allocations, RSS, counters,
+  and memory-budget outcomes within 1% of baseline.
+- Preserve fresh Go, incremental Go, fresh C, and incremental C digest parity.
+- Preserve retry, recovery, stack, and arena ownership telemetry.
+- Repeat the focused arena tests and the one-Go-grammar locked-C Docker gate.
+
+### P25ac and P25ad artifact paths
+
+P25ac successful artifact roots:
+
+- `/tmp/gts-p25ac-artifacts/20260823T122843Z-baseline-arena-correctness/metadata.txt` — SHA-256 `5a7b9f6ae577a91851dcec4bab61ca17860d2bbf0a606ef11e92e685fa5899ba`
+- `/tmp/gts-p25ac-artifacts/20260823T123328Z-candidate-arena-correctness/metadata.txt` — SHA-256 `766fa4f24f6be5654243be1f853782a36d92dcace61a0179355c4a48eb5fd603`
+- `/tmp/gts-p25ac-artifacts/20260823T123222Z-baseline-go-recovery-parity-v3/metadata.txt` — SHA-256 `f601ea6a7caf8390857d67e4cad26dc648140d1e22211c0622e0f1a70c44e581`
+- `/tmp/gts-p25ac-artifacts/20260823T123400Z-candidate-go-recovery-parity/metadata.txt` — SHA-256 `14ed67900a4f982ee5a220bbb018ad1e5b201d1bc9bf8967e698ced0edcaba2a`
+- `/tmp/gts-p25ac-artifacts/baseline-pool-six.txt` — SHA-256 `1fd1501f63904c7ccd8b66a6685ab4ec0bfacbab93852ba6c77c14ba900bd431`
+- `/tmp/gts-p25ac-artifacts/candidate-pool-six.txt` — SHA-256 `136d5c6a096a140243cf8ff6b516ec358d8b06d3220c08191d734e1f87c2f3d7`
+- `/tmp/gts-p25ac-artifacts/baseline-drained-six.txt` — SHA-256 `b44398da034b11614d7468b421d3fc4f33c1b3de0247821485e8cf84926bb042`
+- `/tmp/gts-p25ac-artifacts/candidate-drained-six.txt` — SHA-256 `7295a8d898f76739ed9907f46dcde19403b7c3789ed9f57309333d4d84f3b4f5`
+
+P25ac supplementary metric and RSS artifacts:
+
+- `/tmp/gts-p25ac-artifacts/baseline-pool-metrics.txt` — SHA-256 `fba67e380897294d686fa90358f9afe9738b04a0c491eab8467c375b31eeaac5`
+- `/tmp/gts-p25ac-artifacts/candidate-pool-metrics.txt` — SHA-256 `08b28b06e6f8ac315982e4793bd8fe62ce0fb333180cb0d70ef0bd77873ddd96`
+- `/tmp/gts-p25ac-artifacts/baseline-drained-metrics.txt` — SHA-256 `1f585943bfc0102cb280c9722605f5138dc852491dab7b43ce96739c81fc2129`
+- `/tmp/gts-p25ac-artifacts/candidate-drained-metrics.txt` — SHA-256 `d01336a6ca19de5ca6f9943783ba230139e41917f0a990d9221ee217313ad388`
+- `/tmp/gts-p25ac-artifacts/20260823T123605Z-baseline-six-pool/metadata.txt` — SHA-256 `a08b8247a8a5b8748de96b10db5878e74044276d0423a4e0c8ca9195c042665d`
+- `/tmp/gts-p25ac-artifacts/20260823T124015Z-candidate-six-pool/metadata.txt` — SHA-256 `bc719a367d6d6cd32cae0743ef8d0d94525ba4cf287392a7a1bd655bf1be9595`
+- `/tmp/gts-p25ac-artifacts/20260823T124428Z-baseline-six-drained/metadata.txt` — SHA-256 `1eea46406b178fdea6fde4b3a986f99a936e32b3b0f0fca33f7d162626715c2f`
+- `/tmp/gts-p25ac-artifacts/20260823T124832Z-candidate-six-drained/metadata.txt` — SHA-256 `3ca96f19792a605a8b411fa8d5b19ee5663d2a57507c3671894c4e5d6c5f9fb9`
+- `/tmp/gts-p25ac-artifacts/20260823T125352Z-baseline-rss-pool/metadata.txt` — SHA-256 `ce179124088e44c881f3838944a67880502d264d31b709d9f4d05c38ac211b8c`
+- `/tmp/gts-p25ac-artifacts/20260823T125442Z-candidate-rss-pool/metadata.txt` — SHA-256 `727ea001f918f6b3f09f6a79107faa1aec7b7d1aa6a9fdb957c0ed33d86957c7`
+- `/tmp/gts-p25ac-artifacts/20260823T125529Z-baseline-rss-drained/metadata.txt` — SHA-256 `f75eb3b4a3b08979be117157f3f43f9e468d7b18817ed56d886e87a23ff2064b`
+- `/tmp/gts-p25ac-artifacts/20260823T125616Z-candidate-rss-drained/metadata.txt` — SHA-256 `b69aee0a816c2446c549c3022487243a836ea5894ff78e5fde9ebcdbc68f0c9b`
+
+P25ad structural artifacts:
+
+- `/tmp/p25ad-acquire-reverse.json` — SHA-256 `de3786e1db8e81f10e8663cc653dfe10b92708e7781774353ba5bc38ecc07aa6`
+- `/tmp/p25ad-leaf-edit.json` — SHA-256 `ea7603229a482134725ee87825cc63a494e9f626393a1bbd909da529bb93a941`
+- `/tmp/p25ad-incremental-calls.json` — SHA-256 `951ad60486fffb485bd6c4b327138b58519602807d399c0179414665141ce327`
+- `/tmp/p25ad-capacity-calls.json` — SHA-256 `541b7fd7aa2b0741a093a54d0f7f5f8c81940b2af71c3b6b09db3f844bcd7ab6`
+- `/tmp/gts-p25ad-arena-attribution-20260824/cgo_harness/testdata/canonical_incremental_before_state_receipt_v1.json` — SHA-256 `281cc43c515dbccd0c8eeb2900c68426a85761c3825cf85c2e8abff69d02aa0d`
+
+P25ae durable aggregate and Docker run artifacts:
+
+The six-seed benchmark stdout files were written inside the containers at
+the paths below. Container cleanup removed those files. The durable aggregate
+source is `p25ae-results.txt`; do not treat the P25ac benchmark files above as
+P25ae raw evidence.
+
+- Pooled baseline stdout: `/workspace/cgo_harness/p25ae-baseline-six.txt`
+- Pooled candidate stdout: `/workspace/cgo_harness/p25ae-candidate-six.txt`
+- Drained baseline stdout: `/workspace/cgo_harness/p25ae-baseline-drained-six.txt`
+- Drained candidate stdout: `/workspace/cgo_harness/p25ae-candidate-drained-six.txt`
+
+The host-side raw Docker logs have these paths and hashes:
+
+- Pooled baseline log: `/tmp/gts-p25ae-artifacts/20260823T131639Z-baseline-recovery-six/container.log` — SHA-256 `7a56f08a69b23d6d45ffdb442efb821da6b3a0447df2b17c165d5e71db246bc5`
+- Pooled candidate log: `/tmp/gts-p25ae-artifacts/20260823T131709Z-candidate-recovery-six/container.log` — SHA-256 `c2bd45e95a2499aaba8bfee2cb0853e18ac6a927cb5acf16bfbe8ee80e192384`
+- Drained baseline log: `/tmp/gts-p25ae-artifacts/20260823T131758Z-baseline-recovery-drained-six/container.log` — SHA-256 `59ae755984d28384d9911140cc5d3ea6c71659fc8dff68d9a3116aaa6fea178c`
+- Drained candidate log: `/tmp/gts-p25ae-artifacts/20260823T131832Z-candidate-recovery-drained-six/container.log` — SHA-256 `a78ad1f9050ae756e46355abb25b67484d67ec4a4c5b9bcf3e7b384f543cbb1f`
+
+The one-seed RSS logs are:
+
+- Baseline RSS log: `/tmp/gts-p25ae-artifacts/20260823T131925Z-baseline-recovery-pooled-rss/container.log` — SHA-256 `f83a72d7afd3c9cb12a806c1bf4165463431a7d3325548f4b30b6a9a015c8b48`
+- Candidate RSS log: `/tmp/gts-p25ae-artifacts/20260823T131936Z-candidate-recovery-pooled-rss/container.log` — SHA-256 `5f12e0820c59f4c190232f136129b258a1e1c9d1d7e894e91ac850a11ae8dbd6`
+
+P25ae durable aggregate:
+
+- `/tmp/gts-p25ae-artifacts/20260823T131222Z-baseline-arena-correctness/metadata.txt` — SHA-256 `e269ed046d78bd9c11ce130676feb3661fc1cf229fe1e3793c17bcc3de6fc056`
+- `/tmp/gts-p25ae-artifacts/20260823T131239Z-candidate-arena-correctness/metadata.txt` — SHA-256 `e23c43e0b1020f6c1c322a52c4d3f35af4a49fc542657ac28ea18fd07d841127`
+- `/tmp/gts-p25ae-artifacts/20260823T131323Z-baseline-go-recovery-parity/metadata.txt` — SHA-256 `4e3bfe20aac3fb381550c8c5e0563dab1dd1abe18a92555dde36070684627f71`
+- `/tmp/gts-p25ae-artifacts/20260823T131334Z-candidate-go-recovery-parity/metadata.txt` — SHA-256 `71c01015dd1cd0f693fd1b6c9f76d299c4d7ec5aaaa7bcb5cf46cfd937fe7b7c`
+- `/tmp/gts-p25ae-artifacts/20260823T131639Z-baseline-recovery-six/metadata.txt` — SHA-256 `3ea47e8356fde2b5d7e09cb456d4a87f71fb530fa35e933844fc285476895ee6`
+- `/tmp/gts-p25ae-artifacts/20260823T131709Z-candidate-recovery-six/metadata.txt` — SHA-256 `383eb5328fc7c897d25b0439a7fc3ca37aa65c2e8db3b05ddaa386b02e6de188`
+- `/tmp/gts-p25ae-artifacts/20260823T131758Z-baseline-recovery-drained-six/metadata.txt` — SHA-256 `5e0d0d2c8eee8ea1b7f4bd31dd5cf28681d139b119f19e7bc9e961a6ee454c9c`
+- `/tmp/gts-p25ae-artifacts/20260823T131832Z-candidate-recovery-drained-six/metadata.txt` — SHA-256 `a2fdafd0f7de08e7fd3f4b100b4459a637d95d533b0109cce473572949b93ee9`
+- `/tmp/gts-p25ae-artifacts/p25ae-results.txt` — SHA-256 `9ede57e007e753d1ecd2d67f9587497578166fa91c99fcfc8d3f7ffb967b3e39`
+
 ## Caveats
 
 - This is one run, on one noisy shared host, not a sealed-epoch,
