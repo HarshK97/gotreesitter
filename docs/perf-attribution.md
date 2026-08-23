@@ -118,7 +118,7 @@ incremental behavior, and locked-C parity before another benchmark campaign.
 
 The receipt records no accepted candidate. It records no production code.
 
-## 2026-08-24 P25f graph-structured stack (GSS) entry hash candidate
+## 2026-08-23 P25f graph-structured stack (GSS) entry hash candidate
 
 Status: **CANDIDATE ACCEPTED FOR REVIEW**. Keep issue #454 open.
 
@@ -132,6 +132,14 @@ precedence dispatch in `gssEntryHash`. The switch reads the same field for
 `Node`, `noTreeNode`, `compactFullLeaf`, and `pendingParent` entries. Nil and
 unknown entries keep the existing sentinel path. The raw diff SHA-256 is
 `7ba71f7d82f3273e7c1028ea23034bfffb18ba1fb2e42714713e8e1566edb5c3`.
+Use this command to reproduce the digest:
+
+```sh
+git -c core.abbrev=8 diff --no-ext-diff --no-color --binary 5133fcd1^ 5133fcd1 -- glr_gss.go | sha256sum
+```
+
+This command produces the recorded
+`7ba71f7d82f3273e7c1028ea23034bfffb18ba1fb2e42714713e8e1566edb5c3` digest.
 
 ### Performance receipt
 

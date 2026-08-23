@@ -397,18 +397,61 @@ func TestGSSEntryHashMatchesAccessorSemantics(t *testing.T) {
 		childRange: newPendingChildRange(0, 0, 3),
 	}
 
-	entries := []stackEntry{
-		{state: 1},
-		newStackEntryNode(2, node),
-		newStackEntryNoTreeNode(3, noTree),
-		newStackEntryCompactFullLeaf(4, compactLeaf),
-		newStackEntryPendingParent(5, pending),
+	builders := []struct {
+		kind  string
+		build func(dynamicPrecedence int32) stackEntry
+	}{
+		{"Node", func(p int32) stackEntry {
+			n := *node
+			n.dynamicPrecedence = p
+			return newStackEntryNode(2, &n)
+		}},
+		{"noTreeNode", func(p int32) stackEntry {
+			n := *noTree
+			n.dynamicPrecedence = p
+			return newStackEntryNoTreeNode(3, &n)
+		}},
+		{"compactFullLeaf", func(p int32) stackEntry {
+			n := *compactLeaf
+			n.dynamicPrecedence = p
+			return newStackEntryCompactFullLeaf(4, &n)
+		}},
+		{"pendingParent", func(p int32) stackEntry {
+			n := *pending
+			n.dynamicPrecedence = p
+			return newStackEntryPendingParent(5, &n)
+		}},
 	}
-	for _, entry := range entries {
-		got := gssEntryHash(gssHashSeed, entry)
-		want := gssEntryHashViaAccessors(gssHashSeed, entry)
-		if got != want {
-			t.Fatalf("gssEntryHash(%+v) = %d, want %d", entry, got, want)
+
+	cases := []struct {
+		name       string
+		precedence int32
+	}{
+		{"zero", 0},
+		{"positive-9", 9},
+		{"negative-9", -9},
+	}
+
+	nilEntry := stackEntry{state: 1}
+	got := gssEntryHash(gssHashSeed, nilEntry)
+	want := gssEntryHashViaAccessors(gssHashSeed, nilEntry)
+	if got != want {
+		t.Fatalf("nil entry: direct hash = %d, want accessor hash = %d", got, want)
+	}
+
+	for _, b := range builders {
+		zeroEntry := b.build(0)
+		zeroHash := gssEntryHash(gssHashSeed, zeroEntry)
+		for _, tc := range cases {
+			entry := b.build(tc.precedence)
+			got := gssEntryHash(gssHashSeed, entry)
+			want := gssEntryHashViaAccessors(gssHashSeed, entry)
+			if got != want {
+				t.Fatalf("%s %s: direct hash = %d, want accessor hash = %d", b.kind, tc.name, got, want)
+			}
+			if tc.precedence != 0 && got == zeroHash {
+				t.Fatalf("%s %s: hash = %d equals %s zero-precedence hash = %d", b.kind, tc.name, got, b.kind, zeroHash)
+			}
 		}
 	}
 }
